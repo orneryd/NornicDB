@@ -275,3 +275,79 @@ func TestPendingIndexCanceledPopulationAndRetry(t *testing.T) {
 	require.NoError(t, privateErr)
 	require.Equal(t, sortedCopy(want), sortedCopy(privateIDs))
 }
+
+// IndexNode's admission is the index write lock: a caller canceled while
+// another holder retains that lock leaves with its own error and files
+// nothing, and a healthy retry after the holder releases files the node.
+func TestIndexNodeCanceledLockWaiter(t *testing.T) {
+	index := &CompositeIndex{
+		Name:        "wait_write",
+		Label:       "Item",
+		Properties:  []string{"left", "right"},
+		values:      make(map[interface{}][]NodeID),
+		fullIndex:   make(map[string][]NodeID),
+		prefixIndex: make(map[string][]NodeID),
+	}
+	props := map[string]interface{}{"left": "a", "right": "b"}
+	require.NoError(t, index.IndexNode(t.Context(), "kept", props))
+	before := schemaIndexPostings(index)
+
+	base, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	ctx := &indexWaitContext{Context: base, entered: make(chan struct{})}
+	index.mu.Lock()
+	unlocked := false
+	unlock := func() {
+		if !unlocked {
+			unlocked = true
+			index.mu.Unlock()
+		}
+	}
+	defer unlock()
+	done := make(chan error, 1)
+	joined := make(chan struct{})
+	t.Cleanup(func() {
+		cancel()
+		unlock()
+		select {
+		case <-joined:
+		case <-time.After(5 * time.Second):
+			t.Error("IndexNode worker did not join after cleanup")
+		}
+	})
+	go func() { defer close(joined); done <- index.IndexNode(ctx, "cancelled", props) }()
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	select {
+	case <-ctx.entered:
+	case <-timer.C:
+		cancel()
+		unlock()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("IndexNode did not join after admission timeout")
+		}
+		t.Fatal("IndexNode did not reach held-lock wait")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-timer.C:
+		unlock()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("IndexNode did not join after lock release")
+		}
+		t.Fatal("canceled IndexNode did not leave while the holder retained its lock")
+	}
+	unlock()
+	require.Equal(t, before, schemaIndexPostings(index), "a canceled waiter files nothing")
+
+	require.NoError(t, index.IndexNode(t.Context(), "cancelled", props))
+	ids, err := index.LookupFull(t.Context(), "a", "b")
+	require.NoError(t, err)
+	require.Equal(t, []NodeID{"kept", "cancelled"}, ids)
+}

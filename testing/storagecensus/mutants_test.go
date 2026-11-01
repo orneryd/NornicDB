@@ -32,6 +32,22 @@ const commitCountLockInline = "\tif err := tx.acquireCommitPublicationLocked(); 
 
 var mutants = []mutant{
 	{
+		name: "unreviewed prepared prefix field stays unclassified", file: "pkg/storage/schema_composite_index_entries.go",
+		edits: [][2]string{
+			{"\tprefixCount    int\n", "\tprefixCount    int\n\tcensusUnknownPrefixProgress int\n"},
+			{"\tkeys.prefixCount++\n", "\tkeys.prefixCount++\n\tkeys.censusUnknownPrefixProgress++\n"},
+		},
+		want: []string{"unclassified field: pkg/storage.preparedCompositeNodeKeys.censusUnknownPrefixProgress"},
+	},
+	{
+		name: "unreviewed snapshot boundary field stays unclassified", file: "pkg/storage/schema_property_index_snapshot.go",
+		edits: [][2]string{
+			{"\tgroupEnds []int\n", "\tgroupEnds []int\n\tcensusUnknownBoundaryEnds []int\n"},
+			{"\t\t\tsnapshot.groupEnds = append(snapshot.groupEnds, len(snapshot.ids))\n", "\t\t\tsnapshot.groupEnds = append(snapshot.groupEnds, len(snapshot.ids))\n\t\t\tsnapshot.censusUnknownBoundaryEnds = append(snapshot.censusUnknownBoundaryEnds, len(snapshot.ids))\n"},
+		},
+		want: []string{"unclassified field: pkg/storage.propertyIndexSnapshot.censusUnknownBoundaryEnds"},
+	},
+	{
 		name: "selected count mutex uses wrong selector", file: "pkg/storage/badger_label_count.go",
 		edits: [][2]string{{"mu := b.namedCountMutex(kind)\n\tmu.Lock()", "mu := b.namedCountMutex(countDeltaKindLabel)\n\tmu.Lock()"}},
 		want:  []string{"unordered write:", "prefixMVCCMetaEdgeTypeCount"},

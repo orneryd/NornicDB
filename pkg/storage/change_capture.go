@@ -367,8 +367,16 @@ func (tx *BadgerTransaction) writeChangeEventsLocked(w *batchWriter, operations 
 			current = before
 		}
 		event.EdgeKeys = keys.ofEdge(current)
-		event.StartKeys = keys.ofNode(labels.node(current.StartNode))
-		event.EndKeys = keys.ofNode(labels.node(current.EndNode))
+		startKeys, startErr := keys.ofNode(labels.node(current.StartNode))
+		if startErr != nil {
+			return startErr
+		}
+		event.StartKeys = startKeys
+		endKeys, endErr := keys.ofNode(labels.node(current.EndNode))
+		if endErr != nil {
+			return endErr
+		}
+		event.EndKeys = endKeys
 		return write(event)
 	}
 	for _, op := range operations {
@@ -411,7 +419,11 @@ func (tx *BadgerTransaction) writeChangeEventsLocked(w *batchWriter, operations 
 				if whole == nil {
 					whole = states.committedNodes[id]
 				}
-				event.Keys = keys.ofNode(whole)
+				nodeKeys, keysErr := keys.ofNode(whole)
+				if keysErr != nil {
+					return keysErr
+				}
+				event.Keys = nodeKeys
 				if err := write(event); err != nil {
 					return err
 				}
@@ -547,13 +559,20 @@ type changeKeys struct {
 
 // ofNode is a node's key values per label: for each NODE KEY constraint on
 // one of its labels, in constraint-name order, the constrained properties'
-// values. Nil when it has none.
-func (k changeKeys) ofNode(node *Node) map[string][]map[string]any {
+// values. Nil when it has none; a discovery failure is returned.
+func (k changeKeys) ofNode(node *Node) (map[string][]map[string]any, error) {
 	if node == nil || k.schema == nil {
-		return nil
+		return nil, nil
+	}
+	// Change capture records the key values of a write the engine already
+	// accepted, so this discovery has the accepted write's lifetime: there is
+	// no request to cancel.
+	constraints, err := k.schema.GetConstraintsForLabels(context.Background(), node.Labels)
+	if err != nil {
+		return nil, err
 	}
 	var keys map[string][]map[string]any
-	for _, constraint := range k.schema.GetConstraintsForLabels(node.Labels) {
+	for _, constraint := range constraints {
 		if constraint.Type != ConstraintNodeKey || constraint.EffectiveEntityType() != ConstraintEntityNode {
 			continue
 		}
@@ -564,7 +583,7 @@ func (k changeKeys) ofNode(node *Node) map[string][]map[string]any {
 			keys[constraint.Label] = append(keys[constraint.Label], values)
 		}
 	}
-	return keys
+	return keys, nil
 }
 
 // ofEdge is a relationship's key values: for each RELATIONSHIP KEY

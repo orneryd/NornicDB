@@ -60,14 +60,15 @@ func normalizationFlatList(count int) []interface{} {
 	return values
 }
 
-// schemaIndexPostings renders a composite index's posting maps as comparable
-// text (fmt orders map keys), so a canceled preparation can be shown to have
-// filed nothing.
+// schemaIndexPostings renders a composite index's filing state as comparable
+// text (fmt orders map keys), so a canceled or failed preparation can be shown
+// to have filed nothing and to have left the dirty flag and fill state alone.
 func schemaIndexPostings(index *CompositeIndex) string {
 	index.mu.RLock()
 	defer index.mu.RUnlock()
 	var out strings.Builder
-	fmt.Fprintf(&out, "values:%v\nfull:%v\nprefix:%v", index.values, index.fullIndex, index.prefixIndex)
+	fmt.Fprintf(&out, "values:%v\nfull:%v\nprefix:%v\ndirty:%t\nunfilled:%t",
+		index.values, index.fullIndex, index.prefixIndex, index.keysDirty, index.unfilled.Load())
 	return out.String()
 }
 
@@ -169,7 +170,7 @@ func TestCompositeIndexLookupCanceledFlatListPreparation(t *testing.T) {
 	index, exists := sm.GetCompositeIndex("normalization_pair")
 	require.True(t, exists)
 	value := normalizationFlatList(count)
-	require.NoError(t, index.IndexNode("pair-node", map[string]interface{}{"p": value, "q": int64(1)}))
+	require.NoError(t, index.IndexNode(t.Context(), "pair-node", map[string]interface{}{"p": value, "q": int64(1)}))
 
 	for name, read := range map[string]func(context.Context) ([]NodeID, error){
 		"full": func(ctx context.Context) ([]NodeID, error) { return index.LookupFull(ctx, value, int64(1)) },
@@ -189,6 +190,70 @@ func TestCompositeIndexLookupCanceledFlatListPreparation(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, []NodeID{"pair-node"}, ids)
 			require.Equal(t, before, schemaIndexPostings(index))
+		})
+	}
+}
+
+// TestIndexNodeCanceledKeyPreparationFilesNothing cancels a real context while
+// a large property value's canonical key is being prepared. The attempt returns
+// the caller's error and leaves the whole filing state exactly as it was —
+// values, full and prefix populations, dirty flag and fill state — and a retry
+// on a live lifetime files the node. Both the scalar (values) and composite
+// (full/prefix) filing paths are covered because both stage keys before the
+// first posting write.
+func TestIndexNodeCanceledKeyPreparationFilesNothing(t *testing.T) {
+	const count = 4096
+	value := normalizationFlatList(count)
+	for _, test := range []struct {
+		name          string
+		properties    []string
+		lookup        []interface{}
+		propertiesFor func(node int) map[string]interface{}
+	}{
+		{
+			name:       "scalar",
+			properties: []string{"p"},
+			lookup:     []interface{}{value},
+			propertiesFor: func(int) map[string]interface{} {
+				return map[string]interface{}{"p": value}
+			},
+		},
+		{
+			name:       "composite",
+			properties: []string{"p", "q"},
+			lookup:     []interface{}{value, int64(1)},
+			propertiesFor: func(int) map[string]interface{} {
+				return map[string]interface{}{"p": value, "q": int64(1)}
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			index := &CompositeIndex{
+				Name:        "cancel_" + test.name,
+				Label:       "Item",
+				Properties:  test.properties,
+				values:      make(map[interface{}][]NodeID),
+				keysDirty:   true,
+				fullIndex:   make(map[string][]NodeID),
+				prefixIndex: make(map[string][]NodeID),
+			}
+			require.NoError(t, index.IndexNode(t.Context(), "item:1", test.propertiesFor(1)))
+			// A healthy attempt on the same value counts the observations the
+			// preparation makes on its caller lifetime, so the cancellation lands
+			// inside the preparation rather than before or after it.
+			counter := &normalizationPollCounter{Context: t.Context()}
+			require.NoError(t, index.IndexNode(counter, "item:2", test.propertiesFor(2)))
+			require.Positive(t, counter.polls)
+
+			before := schemaIndexPostings(index)
+			err := index.IndexNode(newNormalizationPollCancelContext(t, counter.polls/2), "item:3", test.propertiesFor(3))
+			require.ErrorIs(t, err, context.Canceled, "cancellation during preparation is the caller's error")
+			require.Equal(t, before, schemaIndexPostings(index), "a canceled preparation files nothing")
+
+			require.NoError(t, index.IndexNode(t.Context(), "item:3", test.propertiesFor(3)))
+			ids, err := index.LookupFull(t.Context(), test.lookup...)
+			require.NoError(t, err)
+			require.Equal(t, []NodeID{"item:1", "item:2", "item:3"}, ids, "the healthy retry files the node")
 		})
 	}
 }

@@ -97,6 +97,9 @@ type BadgerTransaction struct {
 	knowledgeSchemaDirty      bool
 	schemaRuntime             *SchemaManager
 	schemaTransaction         bool
+	// schemaAdmission owns the live manager's compound DDL admission from
+	// before this transaction's snapshot until native publication or rollback.
+	schemaAdmission *SchemaManager
 
 	// Badger's native transaction. It carries the transaction's conflict-
 	// tracked reads; statement-time writes are staged in pendingWrites /
@@ -458,6 +461,10 @@ func (tx *BadgerTransaction) closeLocked(status TransactionStatus, discard bool,
 	tx.Status = status
 	tx.closedErr = closedErr
 	tx.releaseSnapshotReaderLocked()
+	if schema := tx.schemaAdmission; schema != nil {
+		tx.schemaAdmission = nil
+		schema.schemaMutationMu.Unlock()
+	}
 }
 
 // clearSnapshotCachesLocked drops what the transaction cached from its
@@ -1004,9 +1011,9 @@ func (tx *BadgerTransaction) UpdateGraphNode(updateRequest NodeUpdateRequest) er
 		}
 	}
 
-	// Validate policy constraints on label changes.
+	// Validate policy constraints on the staging write's accepted lifetime.
 	if !tx.deferConstraintValidation && !labelsEqual(node.Labels, oldNode.Labels) {
-		if err := tx.validatePolicyOnNodeLabelChange(node, oldNode); err != nil {
+		if err := tx.validatePolicyOnNodeLabelChange(context.Background(), node, oldNode); err != nil {
 			return err
 		}
 	}

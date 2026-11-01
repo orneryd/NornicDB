@@ -77,12 +77,64 @@ func hasAccessState(entry *knowledgepolicy.AccessMetaEntry) bool {
 		entry.LastMutatedAt != 0 || entry.MutationCount != 0 || len(entry.Overflow) != 0 || len(entry.KalmanFilters) != 0)
 }
 
-func (b *BadgerEngine) PutAccessMeta(entityID string, entry *knowledgepolicy.AccessMetaEntry) error {
+// WriteAccessMeta stores access state through the existing publication owner.
+// RecordState preserves unconditional restore/work-key semantics. A flush holds
+// native entity authority for both typed IDs, drains preceding buffered writes,
+// then checks stored-inclusive presence and writes in the same transaction.
+// A skipped flush returns false without changing retained metadata.
+func (b *BadgerEngine) WriteAccessMeta(request knowledgepolicy.AccessMetaWriteRequest) (bool, error) {
+	if request.Entry == nil {
+		return false, ErrInvalidData
+	}
+	switch request.Mode {
+	case knowledgepolicy.RecordState, knowledgepolicy.FlushExistingEntity:
+	default:
+		return false, ErrInvalidData
+	}
+	entityID, entry := request.EntityID, request.Entry
+	if request.Mode == knowledgepolicy.FlushExistingEntity && (entityID == "" || entityID[0] == 0) {
+		return false, ErrInvalidData
+	}
 	target := entityID
 	if len(entityID) > 0 && entityID[0] == 0 {
 		target = entry.TargetID
 	}
-	return b.withPublishingUpdate(context.Background(), func(txn *badger.Txn) error {
+	ctx := context.Background()
+	var stages []func(*commitWriter) error
+	if request.Mode == knowledgepolicy.FlushExistingEntity {
+		write, release, err := b.beginEntityWrite(ctx, entityID, false, nil, entityWritePlan{known: writtenEntities{edges: []EdgeID{EdgeID(entityID)}}})
+		if err != nil {
+			return false, err
+		}
+		defer func() { release(); b.drainCommitNotifications() }()
+		ctx = write.ctx
+		stages = []func(*commitWriter) error{write.stagePublication}
+		if b.writeBehind != nil {
+			var order orderHold
+			if _, err := b.orderAfterBufferedCommits(ctx, &order, writtenEntities{nodes: []NodeID{NodeID(entityID)}, edges: []EdgeID{EdgeID(entityID)}}); err != nil {
+				return false, err
+			}
+			defer order.release()
+		}
+	}
+	written := false
+	err := b.withPublishingUpdate(ctx, func(txn *badger.Txn) error {
+		if request.Mode == knowledgepolicy.FlushExistingEntity {
+			view := storedEntityView{read: embeddingRecordReader{txn: txn}}
+			node, err := view.node(b, NodeID(entityID))
+			if err != nil {
+				return err
+			}
+			if node == nil {
+				edge, err := view.edge(b, EdgeID(entityID))
+				if err != nil {
+					return err
+				}
+				if edge == nil {
+					return nil
+				}
+			}
+		}
 		current, err := accessMetaInTxn(txn, entityID, accessMetaRead, nil)
 		if err != nil {
 			return err
@@ -95,8 +147,10 @@ func (b *BadgerEngine) PutAccessMeta(entityID string, entry *knowledgepolicy.Acc
 			updated.Deindexed = current.Deindexed
 		}
 		_, err = accessMetaInTxn(txn, entityID, accessMetaWrite, &updated)
+		written = err == nil
 		return err
-	}, nil, func() []any { return []any{namespaceWriteKey(namespaceForNodeID(NodeID(target)))} }, nil)
+	}, nil, func() []any { return []any{namespaceWriteKey(namespaceForNodeID(NodeID(target)))} }, nil, stages...)
+	return written && err == nil, err
 }
 
 func (b *BadgerEngine) DeleteAccessMeta(entityID string) error {

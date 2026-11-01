@@ -22,7 +22,7 @@ func TestEvidenceFilledIndexAdmissionCancellation(t *testing.T) {
 			require.NoError(t, schema.AddConstraint(constraint))
 			idx, exists := schema.ConstraintPropertyIndex(constraint.Name)
 			require.True(t, exists)
-			require.NoError(t, schema.BackfillCompositeIndex(idx.Name, nil))
+			require.NoError(t, schema.BackfillCompositeIndex(t.Context(), idx.Name, nil))
 			properties := map[string]interface{}{"tenant": int64(7), "id": int64(42)}
 			keys, err := schema.uniqueMergeKeys(t.Context(), []string{"Tuple"}, properties)
 			require.NoError(t, err)

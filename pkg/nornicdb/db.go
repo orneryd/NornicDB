@@ -1939,11 +1939,14 @@ func (db *DB) BuildSearchIndexes(ctx context.Context) error {
 		case <-entry.build.Done():
 			// The initial build finished earlier: this call rebuilds below.
 		default:
-			// This call starts or joins the initial build and reports it.
+			// Join the initial build before rebuilding from current storage.
+			// Its snapshot may predate data loaded before this call.
 			db.startSearchIndexBuild(entry, ctx)
 			select {
 			case <-entry.build.Done():
-				return entry.build.Err()
+				if err := entry.build.Err(); err != nil {
+					return err
+				}
 			case <-svc.LifetimeContext().Done():
 				return svc.LifetimeContext().Err()
 			case <-ctx.Done():

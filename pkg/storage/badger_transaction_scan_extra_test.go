@@ -26,7 +26,7 @@ func TestBadgerTransaction_ScanForUniqueViolation_HookNamespaceAndExclude(t *tes
 	defer restore()
 
 	// Namespace-limited scan should hit test:u1 and return a violation.
-	err = tx.scanForUniqueViolation("test", "User", "email", "a@example.com", "")
+	err = tx.scanForUniqueViolation(context.Background(), "test", "User", "email", "a@example.com", "")
 	require.Error(t, err)
 	var cv *ConstraintViolationError
 	require.ErrorAs(t, err, &cv)
@@ -34,12 +34,12 @@ func TestBadgerTransaction_ScanForUniqueViolation_HookNamespaceAndExclude(t *tes
 	require.Equal(t, 1, hookCalls)
 
 	// Excluding the existing node ID should suppress the violation.
-	err = tx.scanForUniqueViolation("test", "User", "email", "a@example.com", "test:u1")
+	err = tx.scanForUniqueViolation(context.Background(), "test", "User", "email", "a@example.com", "test:u1")
 	require.NoError(t, err)
 	require.Equal(t, 2, hookCalls)
 
 	// Namespace mismatch should skip other:u2 and remain clean.
-	err = tx.scanForUniqueViolation("missing", "User", "email", "a@example.com", "")
+	err = tx.scanForUniqueViolation(context.Background(), "missing", "User", "email", "a@example.com", "")
 	require.NoError(t, err)
 	require.Equal(t, 3, hookCalls)
 }
@@ -56,7 +56,7 @@ func TestBadgerTransaction_ScanForNodeKeyViolation_AndCheckNodeKeyConstraintBran
 	defer tx.Rollback()
 
 	// Direct scan branch: existing storage node violates composite key.
-	err = tx.scanForNodeKeyViolation("test", "Account", []string{"tenant", "ext"}, []any{"t1", "e1"}, "")
+	err = tx.scanForNodeKeyViolation(context.Background(), "test", "Account", []string{"tenant", "ext"}, []any{"t1", "e1"}, "")
 	require.Error(t, err)
 	var cv *ConstraintViolationError
 	require.ErrorAs(t, err, &cv)

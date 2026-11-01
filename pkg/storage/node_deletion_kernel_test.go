@@ -43,7 +43,8 @@ func TestDirectDeleteKernelCatalogAndRollback(t *testing.T) {
 			_, err := b.CreateNode(&Node{ID: id, Labels: []string{"L"}})
 			require.NoError(t, err)
 			original := &knowledgepolicy.AccessMetaEntry{TargetID: string(id), TargetScope: knowledgepolicy.ScopeNode, HasAccessState: true, LastMutatedAt: 123, HasIndexKeys: true, IndexKeys: [][]byte{{1, 2}}, Deindexed: true}
-			require.NoError(t, b.PutAccessMeta(string(id), original))
+			_, accessWriteErr1 := b.WriteAccessMeta(knowledgepolicy.AccessMetaWriteRequest{Mode: knowledgepolicy.RecordState, EntityID: string(id), Entry: original})
+			require.NoError(t, accessWriteErr1)
 			originalResult, e := b.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: string(id)})
 			require.NoError(t, e)
 			originalEntry := originalResult.Entry

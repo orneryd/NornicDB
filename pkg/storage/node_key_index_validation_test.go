@@ -38,7 +38,7 @@ func TestNodeKeyIndex_ValidationUsesFilledIndex(t *testing.T) {
 	require.True(t, owned, "a multi-property NODE KEY owns an equality index")
 	require.Equal(t, factKey.Properties, idx.Properties)
 	require.Nil(t, checkedIndexRead[*CompositeIndex](t)(sm.filledKeyIndex(t.Context(), "Fact", factKey.Properties)), "the owned index starts unfilled")
-	require.NoError(t, sm.BackfillCompositeIndex(idx.Name, nil))
+	require.NoError(t, sm.BackfillCompositeIndex(t.Context(), idx.Name, nil))
 	require.NotNil(t, checkedIndexRead[*CompositeIndex](t)(sm.filledKeyIndex(t.Context(), "Fact", factKey.Properties)))
 
 	var nodes []*Node

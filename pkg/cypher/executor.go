@@ -1547,27 +1547,36 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	}
 	txEngine := engines.txEngine
 
-	// If no transaction support, fall back to direct execution (legacy mode)
-	// This is less safe but maintains backward compatibility
+	// Local writes require a rollback owner before any execution or callback.
+	// Delegated Fabric and inherited statement owners were selected above.
 	if txEngine == nil {
 		if inlineEmbeddingEnabled {
 			return nil, localizedError(localization.CypherCoreEmbeddingTransactionStorageRequired(), nil)
 		}
-		result, err := execute(ctx, e)
-		if err == nil {
-			// Legacy engines apply writes directly; successful execution is
-			// their publication boundary, with no pending transaction.
-			e.publishDirectStatementCommit(ctx, cypher)
-		}
-		return result, err
+		return nil, localizedError(localization.CypherTransactionsEngineUnsupported(), nil)
 	}
 
 	// Start implicit transaction. Constraint validation is deferred to
 	// commit, which avoids duplicate per-operation checks and improves write
 	// throughput.
-	tx, bookkeeping, err := e.openTransaction(ctx, txEngine, transactionStart{implicit: true, namespace: engines.namespace})
+	start := transactionStart{implicit: true, namespace: engines.namespace}
+	if _, body := parseExecutionMode(cypher); isOrdinarySchemaDDL(body) {
+		start.schema = e.storage.GetSchema()
+		if provider, ok := e.storage.(interface {
+			GetSchemaForNamespace(string) *storage.SchemaManager
+		}); ok && engines.namespace != "" {
+			start.schema = provider.GetSchemaForNamespace(engines.namespace)
+		}
+	}
+	tx, bookkeeping, err := e.openTransaction(ctx, txEngine, start)
 	if err != nil {
 		return nil, err
+	}
+	if start.schema != nil {
+		// Rejections before the native commit (including managed-owner rejection)
+		// still close the schema statement's snapshot and admission. Already
+		// closed transactions retain their terminal outcome and own no lease.
+		defer func() { _ = tx.Rollback() }()
 	}
 
 	// Create a transactional wrapper that routes writes through the transaction

@@ -28,7 +28,7 @@ func TestStoredReadViewHiddenIntegrity(t *testing.T) {
 						require.NoError(t, sm.AddConstraint(factKey))
 						idx, ok := sm.ConstraintPropertyIndex(factKey.Name)
 						require.True(t, ok)
-						require.NoError(t, sm.BackfillCompositeIndex(idx.Name, nil))
+						require.NoError(t, sm.BackfillCompositeIndex(t.Context(), idx.Name, nil))
 						holder = factNode("holder", 1, "name", 1)
 						require.NoError(t, bufferedTry(t, b, holder))
 						require.NoError(t, b.FlushWriteBehind(nil))

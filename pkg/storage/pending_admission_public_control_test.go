@@ -30,7 +30,7 @@ func TestPublicPublishCommitWarmPendingAdmissionCancellation(t *testing.T) {
 	require.NoError(t, schema.AddConstraint(c))
 	idx, exists := schema.ConstraintPropertyIndex(c.Name)
 	require.True(t, exists)
-	require.NoError(t, schema.BackfillCompositeIndex(idx.Name, nil))
+	require.NoError(t, schema.BackfillCompositeIndex(t.Context(), idx.Name, nil))
 	w := engine.writeBehind
 	require.NotNil(t, w)
 	w.mu.RLock()
@@ -49,7 +49,7 @@ func TestPublicPublishCommitWarmPendingAdmissionCancellation(t *testing.T) {
 	_, err = tx.CreateMintedNode(&Node{ID: id, Labels: []string{"Tuple"}, Properties: map[string]interface{}{"tenant": int64(1), "id": int64(2)}})
 	require.NoError(t, err)
 	require.NoError(t, tx.SetMetadata(map[string]interface{}{"control": "warm pending admission"}))
-	barrier.target = tx.ID()
+	barrier.target = tx.ID
 	ctx, cancel := context.WithCancel(t.Context())
 	waited := make(chan context.Context, 1)
 	restore := setAdmissionWaitObserver(func(owner any, observed context.Context) {

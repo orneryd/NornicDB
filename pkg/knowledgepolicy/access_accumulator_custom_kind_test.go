@@ -21,7 +21,7 @@ func TestAccumulator_CustomKeyKindFixedByFirstUse(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := newMockStore()
-			_ = store.PutAccessMeta("n1", &AccessMetaEntry{TargetID: "n1", Overflow: map[string]interface{}{"x": int64(150)}})
+			_, _ = store.WriteAccessMeta(AccessMetaWriteRequest{Mode: RecordState, EntityID: "n1", Entry: &AccessMetaEntry{TargetID: "n1", Overflow: map[string]interface{}{"x": int64(150)}}})
 			acc := NewAccessAccumulator(true, 0)
 			writes := []func(){
 				func() { acc.IncrementCustom("n1", "x", 100) },

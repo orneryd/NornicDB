@@ -92,7 +92,7 @@ func TestPropertyIndexLookupAnyLabelUnionsArity1IndexesOnly(t *testing.T) {
 	require.NoError(t, sm.PropertyIndexInsert("B", "uid", "b1", int64(7)))
 	pair, ok := sm.GetCompositeIndex("c_uid_ver")
 	require.True(t, ok)
-	require.NoError(t, pair.IndexNode("c1", map[string]interface{}{"uid": int64(7), "ver": int64(1)}))
+	require.NoError(t, pair.IndexNode(t.Context(), "c1", map[string]interface{}{"uid": int64(7), "ver": int64(1)}))
 
 	ids := checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookupAnyLabel(t.Context(), "uid", int64(7)))
 	require.ElementsMatch(t, []NodeID{"a1", "b1"}, ids, "the union covers every label's arity-1 index and skips the composite one")

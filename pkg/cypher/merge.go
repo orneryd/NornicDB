@@ -248,7 +248,11 @@ func (e *StorageExecutor) findMergeNode(ctx context.Context, store storage.Engin
 	if schema != nil {
 		label := labels[0]
 
-		for _, idx := range schema.SeekableCompositeIndexesForLabel(label) {
+		indexes, err := schema.SeekableCompositeIndexesForLabel(ctx, label)
+		if err != nil {
+			return nil, err
+		}
+		for _, idx := range indexes {
 			if !mergeIndexMatchesAllProperties(idx, props) {
 				continue
 			}
@@ -478,7 +482,11 @@ func (e *StorageExecutor) mergeNodeIndexedCandidateIDs(ctx context.Context, stor
 			return nil, true, nil
 		}
 	}
-	for _, idx := range schema.SeekableCompositeIndexesForLabel(label) {
+	indexes, err := schema.SeekableCompositeIndexesForLabel(ctx, label)
+	if err != nil {
+		return nil, false, err
+	}
+	for _, idx := range indexes {
 		if mergeIndexMatchesAllProperties(idx, props) {
 			e.markMergeSchemaLookupUsed()
 			ids, err := compositeIndexLookup(ctx, store, idx, compositeLookupValues(idx, props), true)

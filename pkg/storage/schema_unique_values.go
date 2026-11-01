@@ -216,7 +216,11 @@ func (sm *SchemaManager) appendConstraintValueKeys(ctx context.Context, keys []u
 		if node == nil || len(node.Properties) == 0 {
 			continue
 		}
-		for _, c := range sm.GetConstraintsForLabels(node.Labels) {
+		constraints, err := sm.GetConstraintsForLabels(ctx, node.Labels)
+		if err != nil {
+			return nil, err
+		}
+		for _, c := range constraints {
 			if c.EffectiveEntityType() != ConstraintEntityNode {
 				continue
 			}
@@ -237,7 +241,11 @@ func (sm *SchemaManager) appendConstraintValueKeys(ctx context.Context, keys []u
 		if edge == nil || len(edge.Properties) == 0 {
 			continue
 		}
-		for _, c := range sm.GetConstraintsForLabels([]string{edge.Type}) {
+		constraints, err := sm.GetConstraintsForLabels(ctx, []string{edge.Type})
+		if err != nil {
+			return nil, err
+		}
+		for _, c := range constraints {
 			if c.EffectiveEntityType() != ConstraintEntityRelationship || (c.Type != ConstraintUnique && c.Type != ConstraintRelationshipKey) {
 				continue
 			}
@@ -715,7 +723,11 @@ func (sm *SchemaManager) uniqueMergeKeys(ctx context.Context, labels []string, p
 	}
 	var keys []mergeAdmissionKey
 	node := &Node{Properties: props}
-	for _, c := range sm.GetConstraintsForLabels(labels) {
+	constraints, err := sm.GetConstraintsForLabels(ctx, labels)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range constraints {
 		if c.EffectiveEntityType() != ConstraintEntityNode || (c.Type != ConstraintUnique && c.Type != ConstraintNodeKey) {
 			continue
 		}

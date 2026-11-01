@@ -214,7 +214,10 @@ func TestTemporalHistoryLookupsDescending(t *testing.T) {
 	n1 := &Node{ID: "test:n1", Labels: []string{"Role"}, Properties: map[string]any{"role": "captain", "valid_from": base, "valid_to": base.Add(24 * time.Hour)}}
 	_, err := engine.CreateNode(n1)
 	require.NoError(t, err)
-	c := sm.GetConstraintsForLabels([]string{"Role"})[0]
+	roleConstraints, err := sm.GetConstraintsForLabels(t.Context(), []string{"Role"})
+	require.NoError(t, err)
+	require.Len(t, roleConstraints, 1)
+	c := roleConstraints[0]
 
 	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		target, err := engine.writeTemporalIndexForNodeInTxn(txn, ns, n1, c)

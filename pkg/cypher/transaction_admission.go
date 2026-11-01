@@ -8,13 +8,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-// beginTransactionSnapshot opens a transaction snapshot directly on the
-// transaction-capable engine. Writes are committed synchronously by their
-// statements, so no cache visibility barrier is needed.
-func beginTransactionSnapshot(txEngine TransactionCapableEngine) (*storage.BadgerTransaction, error) {
-	return txEngine.BeginTransaction()
-}
-
 // transactionStart describes how openTransaction opens one transaction.
 // implicit marks an auto-commit statement's transaction: it applies the
 // statement's metadata, defers constraint validation to commit and skips the
@@ -27,6 +20,9 @@ type transactionStart struct {
 	drain     interface{ FlushWriteBehind(context.Context) error }
 	// drainContext is the caller's context for drain.
 	drainContext context.Context
+	// schema admits autocommit DDL before its physical snapshot; explicit
+	// transactions retain their existing snapshot/conflict semantics.
+	schema *storage.SchemaManager
 }
 
 // openTransaction is the one way a Cypher transaction is opened, for explicit
@@ -63,7 +59,12 @@ func (e *StorageExecutor) openTransaction(ctx context.Context, txEngine Transact
 			return nil, bookkeeping, localizedError(begin(err), err)
 		}
 	}
-	tx, err := beginTransactionSnapshot(txEngine)
+	var err error
+	if start.schema != nil {
+		tx, err = start.schema.BeginSchemaTransaction(ctx, txEngine.BeginTransaction)
+	} else {
+		tx, err = txEngine.BeginTransaction()
+	}
 	if err != nil {
 		return nil, bookkeeping, localizedError(begin(err), err)
 	}

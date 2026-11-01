@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"slices"
@@ -35,7 +36,10 @@ func createKnowledgeProfile[T any](
 	validate func(*T) error,
 	ifNotExists bool,
 ) error {
-	lease := sm.beginSchemaMutation()
+	lease, admitErr := sm.beginSchemaMutation(context.Background())
+	if admitErr != nil {
+		return admitErr
+	}
 	if _, exists := (*profiles)[name]; exists {
 		lease.release()
 		if ifNotExists {
@@ -59,7 +63,10 @@ func alterKnowledgeProfile[T any](
 	name string,
 	updates map[string]interface{},
 ) error {
-	lease := sm.beginSchemaMutation()
+	lease, admitErr := sm.beginSchemaMutation(context.Background())
+	if admitErr != nil {
+		return admitErr
+	}
 	profile, ok := (*profiles)[name]
 	if !ok {
 		lease.release()
@@ -96,7 +103,10 @@ func (sm *SchemaManager) CreateDecayProfileBundle(bundle knowledgepolicy.DecayPr
 
 // CreateDecayProfileBinding adds a decay profile binding to the schema.
 func (sm *SchemaManager) CreateDecayProfileBinding(binding knowledgepolicy.DecayProfileBinding, ifNotExists ...bool) error {
-	lease := sm.beginSchemaMutation()
+	lease, admitErr := sm.beginSchemaMutation(context.Background())
+	if admitErr != nil {
+		return admitErr
+	}
 
 	if _, exists := sm.decayProfileBindings[binding.Name]; exists {
 		lease.release()
@@ -129,7 +139,10 @@ func (sm *SchemaManager) CreateDecayProfileBinding(binding knowledgepolicy.Decay
 
 // DropDecayProfile removes a decay profile bundle or binding by name.
 func (sm *SchemaManager) DropDecayProfile(name string, ifExists ...bool) error {
-	lease := sm.beginSchemaMutation()
+	lease, admitErr := sm.beginSchemaMutation(context.Background())
+	if admitErr != nil {
+		return admitErr
+	}
 
 	if _, exists := sm.decayProfileBundles[name]; exists {
 		if sm.isBundleReferenced(name) {
@@ -165,7 +178,10 @@ func (sm *SchemaManager) AlterDecayProfile(name string, updates map[string]inter
 
 // AlterDecayProfileBinding replaces the target and APPLY definition of an existing binding.
 func (sm *SchemaManager) AlterDecayProfileBinding(name string, replacement knowledgepolicy.DecayProfileBinding) error {
-	lease := sm.beginSchemaMutation()
+	lease, admitErr := sm.beginSchemaMutation(context.Background())
+	if admitErr != nil {
+		return admitErr
+	}
 
 	existing, ok := sm.decayProfileBindings[name]
 	if !ok {
@@ -215,7 +231,10 @@ func (sm *SchemaManager) CreatePromotionProfile(profile knowledgepolicy.Promotio
 
 // DropPromotionProfile removes a promotion profile by name.
 func (sm *SchemaManager) DropPromotionProfile(name string, ifExists ...bool) error {
-	lease := sm.beginSchemaMutation()
+	lease, admitErr := sm.beginSchemaMutation(context.Background())
+	if admitErr != nil {
+		return admitErr
+	}
 
 	if _, exists := sm.promotionProfiles[name]; !exists {
 		lease.release()
@@ -257,7 +276,10 @@ func (sm *SchemaManager) ShowPromotionProfiles() []knowledgepolicy.PromotionProf
 
 // CreatePromotionPolicy adds a promotion policy to the schema.
 func (sm *SchemaManager) CreatePromotionPolicy(policy knowledgepolicy.PromotionPolicyDef, ifNotExists ...bool) error {
-	lease := sm.beginSchemaMutation()
+	lease, admitErr := sm.beginSchemaMutation(context.Background())
+	if admitErr != nil {
+		return admitErr
+	}
 
 	if _, exists := sm.promotionPolicies[policy.Name]; exists {
 		lease.release()
@@ -287,7 +309,10 @@ func (sm *SchemaManager) CreatePromotionPolicy(policy knowledgepolicy.PromotionP
 
 // DropPromotionPolicy removes a promotion policy by name.
 func (sm *SchemaManager) DropPromotionPolicy(name string, ifExists ...bool) error {
-	lease := sm.beginSchemaMutation()
+	lease, admitErr := sm.beginSchemaMutation(context.Background())
+	if admitErr != nil {
+		return admitErr
+	}
 
 	if _, exists := sm.promotionPolicies[name]; !exists {
 		lease.release()
@@ -322,7 +347,10 @@ func ValidatePromotionPolicyOptions(updates map[string]interface{}) error {
 // AlterPromotionPolicy updates an existing promotion policy.
 // Invalid options are rejected before changing the policy or persisting schema.
 func (sm *SchemaManager) AlterPromotionPolicy(name string, updates map[string]interface{}) error {
-	lease := sm.beginSchemaMutation()
+	lease, admitErr := sm.beginSchemaMutation(context.Background())
+	if admitErr != nil {
+		return admitErr
+	}
 
 	existing, ok := sm.promotionPolicies[name]
 	if !ok {
@@ -351,7 +379,10 @@ func (sm *SchemaManager) AlterPromotionPolicy(name string, updates map[string]in
 
 // AlterPromotionPolicyDefinition replaces the target and APPLY definition of an existing policy.
 func (sm *SchemaManager) AlterPromotionPolicyDefinition(name string, replacement knowledgepolicy.PromotionPolicyDef) error {
-	lease := sm.beginSchemaMutation()
+	lease, admitErr := sm.beginSchemaMutation(context.Background())
+	if admitErr != nil {
+		return admitErr
+	}
 
 	existing, ok := sm.promotionPolicies[name]
 	if !ok {
@@ -402,19 +433,16 @@ func (sm *SchemaManager) SetBindingTable(bt *knowledgepolicy.BindingTable) {
 	sm.bindingTable = bt
 }
 
-// rebuildBindingTableLocked recompiles the BindingTable from current schema
-// state. Called under sm.mu.Lock() after every accepted mutating DDL operation
-// so the scorer always sees a consistent, up-to-date table.
-func (sm *SchemaManager) rebuildBindingTableLocked() {
-	bt, err := knowledgepolicy.BuildBindingTable(
+// compileBindingTableLocked compiles a candidate without publishing it.
+// Callers propagate errors before persistence and publish only accepted tables.
+// REQUIRES: caller owns sm exclusively or holds sm.mu.
+func (sm *SchemaManager) compileBindingTableLocked() (*knowledgepolicy.BindingTable, error) {
+	return knowledgepolicy.BuildBindingTable(
 		sm.decayProfileBundles,
 		sm.decayProfileBindings,
 		sm.promotionProfiles,
 		sm.promotionPolicies,
 	)
-	if err == nil {
-		sm.bindingTable = bt
-	}
 }
 
 func (sm *SchemaManager) isBundleReferenced(name string) bool {

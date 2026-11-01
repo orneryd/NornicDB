@@ -7,9 +7,12 @@ return an error in addition to their existing result:
 | Owner | Operations | Results |
 | --- | --- | --- |
 | `CompositeIndex` | `LookupFull`, `LookupPrefix`, `LookupWithFilter` | IDs, error |
+| `CompositeIndex` | `IndexNode` | error |
 | `SchemaManager` | `PropertyIndexLookup`, `PropertyIndexLookupAnyLabel`, `PropertyIndexTopK`, `PropertyIndexAllNonNil` | IDs, error |
 | `SchemaManager` | `GetPropertyIndex` | index, found, error |
 | `SchemaManager` | `HasPropertyIndex` | found, error |
+| `SchemaManager` | `GetConstraintsForLabels` | constraints, error |
+| `SchemaManager` | `SeekableCompositeIndexesForLabel` | filled indexes, error |
 | `SchemaManager` | `PropertyIndexRange` | IDs, index availability, error |
 | `SchemaManager` | `VisitPropertyIndexGroups`, `VisitPropertyIndexGroupsInRange` | index availability, error |
 | `SchemaManager` | `LookupUniqueConstraintValue` | holder ID, found, constraint exists, cache complete, error |
@@ -43,6 +46,19 @@ request was also canceled.
 Accepted writes retain their own integrity-check lifetime. Existing context-free
 Go maintenance and integrity boundaries explicitly select `context.Background()`;
 statement reads must not substitute that context for their caller's context.
+
+`CompositeIndex.IndexNode` is the write-side counterpart of those reads and takes
+the lifetime of the caller filing the node. Native maintenance and fills that
+carry no request pass `context.Background()`; preparation made for a request, such
+as a relationship constraint's candidate cache, passes that request's context.
+The call acquires the index write lock under that lifetime, stages the scalar,
+full and prefix keys before the first posting write, checks the lifetime once more
+and only then publishes. A cancelled or failed preparation therefore leaves the
+existing values, full and prefix populations, dirty flag and fill state exactly as
+they were, and a healthy retry files the node normally. A complete composite key
+reuses its full-key digest for the longest prefix, so the same values still
+produce the same key hash; stored keys, payloads and storage version are
+unchanged.
 
 The regression budget is measured from actual cancellation or deadline expiry
 until backend work stops, separately from total request time. The release target
@@ -98,3 +114,17 @@ The constructor retains Go's formatting behavior, including caller-supplied
 calls; it cannot preempt arbitrary Go code executing inside one such method.
 The 100 ms measured regression target applies to the reproduced indexed-read
 workload, with input size and cancellation point recorded alongside the result.
+
+`SchemaManager.BackfillCompositeIndex(ctx, name, entries)` retains the DDL
+request through schema/pending admission and each node's prepared keys. A canceled
+fill never marks an unfilled constraint index ready, and the enclosing schema
+transaction publishes nothing;
+a healthy retry fills the index. Context-free import/startup maintenance still
+uses its documented native lifetime.
+
+Relationship candidate-cache replacement prepares the complete posting projection
+before removing an old entry, then removes and inserts under one index lock.
+Cancellation leaves the old postings, key map and metadata unchanged. This is
+a component atomicity guarantee: request-built relationship caches are local until
+published, while maintenance of already-published caches uses the accepted write's
+non-cancelable lifetime.

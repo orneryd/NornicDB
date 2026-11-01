@@ -21,12 +21,16 @@ package storage
 //   - Errors are logged (via the engine logger) and NOT returned; a
 //     single bad write must not block an entire bulk CREATE. The caller
 //     can still detect failure via end-to-end correctness checks.
+//   - IndexNode's keys belong to the write the engine already accepted, so
+//     maintenance passes context.Background() rather than a request's
+//     context.
 //
 // This file deliberately stays storage-local — it references only
 // *BadgerEngine / *SchemaManager / *Node, no cypher / knowledgepolicy
 // imports.
 
 import (
+	"context"
 	"log/slog"
 )
 
@@ -52,7 +56,7 @@ func (b *BadgerEngine) maintainCompositeIndexesOnNodeCreated(node *Node, sm *Sch
 			if idx == nil {
 				continue
 			}
-			if err := idx.IndexNode(node.ID, node.Properties); err != nil {
+			if err := idx.IndexNode(context.Background(), node.ID, node.Properties); err != nil {
 				b.log.Warn("composite index insert failed",
 					slog.String("component", "storage"),
 					slog.String("label", label),
@@ -96,7 +100,7 @@ func (b *BadgerEngine) maintainCompositeIndexesOnNodeUpdated(node, oldNode *Node
 			if idx == nil {
 				continue
 			}
-			if err := idx.IndexNode(node.ID, node.Properties); err != nil {
+			if err := idx.IndexNode(context.Background(), node.ID, node.Properties); err != nil {
 				b.log.Warn("composite index insert (new) failed",
 					slog.String("component", "storage"),
 					slog.String("label", label),

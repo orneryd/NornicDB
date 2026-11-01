@@ -119,7 +119,8 @@ func TestNativeBulkConstraintScopesAndErrorOwnership(t *testing.T) {
 	var violation *ConstraintViolationError
 	require.ErrorAs(t, err, &violation)
 	violation.Properties[0] = "changed"
-	constraints := e.GetSchemaForNamespace("alpha").GetConstraintsForLabels([]string{"Value"})
+	constraints, err := e.GetSchemaForNamespace("alpha").GetConstraintsForLabels(t.Context(), []string{"Value"})
+	require.NoError(t, err)
 	require.Len(t, constraints, 1)
 	require.Equal(t, []string{"v"}, constraints[0].Properties, "error property slice must remain independently owned")
 }

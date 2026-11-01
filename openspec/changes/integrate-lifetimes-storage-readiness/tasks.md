@@ -5,6 +5,8 @@ The approved dependency order is current #1684 terminal-outcome prerequisite,
 label-index readiness and remaining preparation. Preserve each author's work;
 port into current owners rather than restoring obsolete implementations.
 
+Current gate (2026-11-01): full `make verify BASE=origin/release/v1.4.4` on a frozen committed candidate, with unchanged duplicate checker best effort. Earlier deferred/test-only directions and running-job notes below are historical; the current-prerequisite integration section and external current-resume.json record the active state. All four remaining API decisions are explicitly approved. No final verification pass or published correction head is claimed.
+
 - [x] Preserve original #1636, #1693 and #1667 heads and the separate #1667 prototype.
 - [x] Rebase #1636 S1–S4 onto current #1684 (61d13cded), preserving release APOC I/O policy.
 - [x] Rebase #1693 foundation commits onto the lifetime stack without merge commits.
@@ -84,7 +86,7 @@ Current index and unique API migration builds; focused50K cancellation, pending/
 
 - [x] Private filled composite-index discovery retains caller context through actual schema-lock admission and metadata/property enumeration; integrated admission/validation/discovery race controls pass3.356s.
 - [x] Pure metadata relocation preserves91 function declarations/bodies/docs,19 global declarations/order and complete comments/import union; schema.go2424lines.
-- [ ] Maintainer decision pending for two remaining request-bearing exported discovery contracts: SeekableCompositeIndexesForLabel and GetConstraintsForLabels. Public PrepareMergeNode masking RED is retained, not claimed fixed by private controls.
+- [x] Migrate the two remaining request-bearing exported discovery contracts: SeekableCompositeIndexesForLabel and GetConstraintsForLabels take the caller context and return an error, all typed callers/tests are migrated and the old signatures are retired. The public PrepareMergeNode held-schema-writer control now passes: discovery admission receives the statement context, the canceled request returns context.Canceled, admits no key, and healthy retries (including another namespace) still work.
 
 ## Updated verification gate (maintainer direction)
 
@@ -135,7 +137,7 @@ Current index and unique API migration builds; focused50K cancellation, pending/
 - [ ] Complete DDL proposal regression repairs: concurrent index-name admission, transactional persistence-failure fixture, and scoped traversal fixture. DeepSeek job `365956528c1447ed95d507b5d8dc20ff`.
 - [ ] Review exact schema string persistence through the existing lossless JSON owner, including old ordinary JSON compatibility and durable reopen. DeepSeek job `c3511b2986d146379f5e48b67a61b078`; no storage-layout migration is approved.
 - [ ] Review whether deterministic mid-fill publication tests require a new global test seam; prefer existing owners and require suite-safe cleanup. DeepSeek job `1891fe79e9b24ba79c3b9544981a895c`.
-- [ ] Obtain the pending typed access writer, remaining discovery APIs, and custom-engine atomicity contract decisions before dependent implementation.
+- [x] Obtain typed access writer, remaining discovery APIs, and custom-engine atomicity contract decisions; all approved in the latest operator reply.
 - [ ] Follow the latest user gate: full `make verify`; duplicate checker best effort, with any timeout/incomplete inventory reported explicitly. Do not change checker rules or claim a clean result from missing output.
 
 - [x] Complete fresh whole Search after reader/IVF/retirement fixture repairs: PASS244.040s. Original900s timeout and later237s failure remain preserved. Test-only forwarding fixture then retired; focused race repeated for canonical callers.
@@ -153,3 +155,35 @@ Current index and unique API migration builds; focused50K cancellation, pending/
 - [x] Repeat unchanged installed advisory checker on frozen alternate-index tree628503fc6f043db44580808c4929835148a18a53: INCOMPLETE database tx/commit timeout. Advisoryexit0 is not a pass; realindexSHA unchanged; no checker/config modifications. Continue priorinventory/sourceownerreview per maintainer instruction.
 - [ ] Complete all original DDL publication tests with minimum safe one-shot test seam and actualjoins; preserve original9tests and addforeignfillcontrol. DeepSeekddf303.
 - [ ] Reproduce/fix public schema import destination persistence before readiness; no dismissal as baseline/unrelated. DeepSeekfab8 publicRED andwritecontractproposal first.
+
+
+## 2026-11-01 current-prerequisite integration
+
+- [x] Rebase the combined source onto prerequisite `11416628493f2a219a01ed1f2e56154dd55b532c`; retain release base `de70c0e8375e9c74800d5ab6d7da5a6505650cb8`. Local checkpoint `8dd04737d` is not the published PR head.
+- [x] Run full `make verify BASE=origin/release/v1.4.4` diagnostic: localization/UI/build and GraphQL passed; MCP coverage and first complete Cypher traversal failed. Preserve results; supersede repeat traversal before integration. Remaining steps were unexecuted, not passed.
+- [x] Integrate canonical buffered/grouped/non-null index reads, native pre-snapshot DDL admission, actual initial-search-build join correction and request-valued Pre/PostExecute callbacks. Focused integrated race checks and whole MCP coverage pass; all-package compile-only passes, not full qualification.
+- [x] Migrate retired status-helper/transaction-field test callers without restoring removed APIs.
+- [x] Verify the disputed unlabeled MERGE followed by constrained-label SET against pinned Neo4j 5.26.30. Retain permanent UNIQUE status, genuine stale-MVCC transient controls, winner-only state and manual retry convergence. No broad retry heuristic restored.
+- [x] Carry commit preparation context into canonical node/relationship constraint enumerations and the scalar relationship-uniqueness cache owner. Include cancellable cache admission and discard incomplete cold cache builds. Parent integrated focused race passes (6.169s).
+- [x] Classify only `propertyIndexSnapshot.groupEnds` as owned read-result group offsets; a planted sibling slice field remains unclassified (focused positive/negative census controls pass, 28.408s). Full extra race-instrumented census package runs timed out at 30 minutes and remain incomplete.
+- [x] Complete approved context-first IndexNode and request-owned BackfillCompositeIndex migration. Canonical prepare/apply preserves old postings on canceled replacement; all callers/docs migrated; both-parser public DDL cancellation/retry and unchanged list equality/membership controls pass in combined parent race.
+- [x] Integrate durable schema replacement, strict pre-persist binding compilation and direct-loader failure atomicity. Independent integrated focused race passes storage5.916s/adminimport4.014s; full combined qualification pending. No persisted layout/version change.
+- [x] Obtain explicit approval for typed conditional WriteAccessMeta, context/error GetConstraintsForLabels and SeekableCompositeIndexesForLabel, and fail-closed atomicity for custom local write engines. All three contract choices are approved; implementation and final combined qualification remain pending.
+- [ ] Reconcile current source pins and regenerate stored-entity census artifacts from the final frozen source. Historical counts and retired guards are not current qualification.
+- [ ] Commit the final local candidate so the allocation ratchet measures the corrected source, then run a fresh full `make verify BASE=origin/release/v1.4.4`. Fix every actual failure before readiness.
+- [x] Attempt unchanged advisory duplicate checking; graph commit timed out. Continue prior inventory/current-source ownership review per maintainer best-effort policy; no clean result or checker/hook modification claimed.
+- [ ] Publish the qualified PR head with a protected lease, exact verification evidence and updated Linear acceptance state; keep review/merge ownership with the maintainer.
+- [ ] Perform task-owned workspace cleanup using the cleanup skill after readiness, preserving active work and required evidence. Shared Go cache cleanup remains deferred while verification/workers use it.
+
+- [x] Integrate fail-closed local-write atomic capability check and preserve delegated/native owner behavior. Parent focused default checks pass; independent public/callback/native/deferred-outcome race checks pass5.942s.
+- [x] Complete approved WriteAccessMeta atomic-presence owner and all Go callers/docs. After two failed DeepSeek jobs (connection reset, malformed response), native takeover reused existing typed authority, buffer order and same-transaction stored reads. Parent native/kp race passes3.703s/1.459s. No storage-format change.
+- [x] Integrate approved discovery migration from DeepSeek `a5ea54f497b64cbcb6676d2b30283c75`, including all typed callers and embedding migration documentation. Worker public held-schema-writer fail-first and focused controls pass; parent integrated race passes storage3.671s/adminimport3.353s; Cypher compiled with no matched tests, not a test pass.
+- [ ] Correct IndexNode follow-up review findings: preserve old posting until all new keys are prepared; propagate request context through DDL backfill. Existing production request cache build is unpublished, so no published-cache corruption is claimed without proof.
+
+## Final contract integration checkpoint
+
+- [x] Parent fresh combined focused race passes storage10.346s, Cypher8.877s, adminimport6.970s, knowledgepolicy7.073s. It includes index/discovery/DDL/constraint preparation, durable schema replacement and conditional access-state publication. The earlier missed Backfill test caller compile failure is preserved and corrected; no test skipped.
+- [x] Fresh whole-module compile-only passes with `go test ./... -run '^$' -count=1 -timeout=8m`; this is not a suite pass.
+- [x] Parent full adminimport race passes3.850s before the final migrations; final combined affected controls also pass afterward.
+- [ ] Finish normal current-source census controls; preserve prior incomplete race runs.
+- [ ] Create the frozen local candidate and run full `make verify BASE=origin/release/v1.4.4`; no qualified push or readiness claim before actual results.

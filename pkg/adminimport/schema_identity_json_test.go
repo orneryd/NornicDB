@@ -257,9 +257,10 @@ func TestNeo4jCSVSchemaDefinitionKeepsOrdinaryBytesAndAcceptsLegacyDocument(t *t
 // schema names survive a durable Badger reopen, the reopened consumer's export
 // document stays standard JSON, and the public import consumer restores them.
 //
-// ReplaceFromDefinition is an in-memory replacement by contract, so the reopen
-// assertion is owned by the persistent source consumer rather than by an
-// import target that does not persist a schema key.
+// The reopen assertion is owned by the persistent source consumer; the import
+// destination below is an in-memory engine, which publishes the document
+// through the same accepted definition replacement the native Badger
+// destination persists (schema_badger_durability_test.go).
 func TestNeo4jCSVSchemaDefinitionPreservesEscapedIdentitiesAfterBadgerReopen(t *testing.T) {
 	high := adminImportEscapedUnit(t, "d800")
 	low := adminImportEscapedUnit(t, "dc00")

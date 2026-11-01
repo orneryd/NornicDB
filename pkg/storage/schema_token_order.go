@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"sort"
 	"sync"
 )
@@ -88,7 +89,10 @@ func (sm *SchemaManager) RegisterTokens(labels, relationships []string) error {
 		return nil
 	}
 
-	lease := sm.beginSchemaMutation()
+	lease, admitErr := sm.beginSchemaMutation(context.Background())
+	if admitErr != nil {
+		return admitErr
+	}
 	defer lease.release()
 	if sm.tokenOrder.labelPositions == nil {
 		sm.tokenOrder = newSchemaTokenOrder(nil, nil)

@@ -21,7 +21,10 @@ import (
 //	// CREATE CONSTRAINT person_contract FOR (n:Person) REQUIRE { n.id IS UNIQUE ... }
 //	err := schema.DropConstraint("person_contract") // removes the contract and person_contract__entry_01
 func (sm *SchemaManager) DropConstraint(name string) error {
-	lease := sm.beginSchemaMutation()
+	lease, admitErr := sm.beginSchemaMutation(context.Background())
+	if admitErr != nil {
+		return admitErr
+	}
 	defer lease.release()
 
 	var restore func()

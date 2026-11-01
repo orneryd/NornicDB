@@ -3,6 +3,7 @@ package cypher
 import (
 	"container/heap"
 	"context"
+	"errors"
 	"github.com/orneryd/nornicdb/internal/ctxsort"
 	"strings"
 
@@ -104,6 +105,9 @@ func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern
 		}
 		return true
 	})
+	if errors.Is(err, storage.ErrPropertyIndexValueOrderUnavailable) {
+		return nil, false, nil
+	}
 	if err != nil {
 		return nil, false, err
 	}

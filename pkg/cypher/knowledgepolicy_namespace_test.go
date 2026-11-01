@@ -49,7 +49,8 @@ func TestKnowledgePolicyUsesScopedAccessMetadata(t *testing.T) {
 						require.NoError(t, store.CreateEdge(&storage.Edge{ID: "edge:1", StartNode: storage.NodeID(id), EndNode: "end", Type: "LINKS", Properties: map[string]interface{}{"summary": "visible"}, CreatedAt: old, UpdatedAt: old}))
 						for entity, scope := range map[string]knowledgepolicy.ScopeType{id: knowledgepolicy.ScopeNode, "edge:1": knowledgepolicy.ScopeEdge} {
 							storedID := database + ":" + entity
-							require.NoError(t, base.PutAccessMeta(storedID, &knowledgepolicy.AccessMetaEntry{TargetID: storedID, TargetScope: scope, Fixed: knowledgepolicy.AccessMetaFixedFields{AccessCount: 3, LastAccessedAt: now.UnixNano()}}))
+							_, accessWriteErr1 := base.WriteAccessMeta(knowledgepolicy.AccessMetaWriteRequest{Mode: knowledgepolicy.RecordState, EntityID: storedID, Entry: &knowledgepolicy.AccessMetaEntry{TargetID: storedID, TargetScope: scope, Fixed: knowledgepolicy.AccessMetaFixedFields{AccessCount: 3, LastAccessedAt: now.UnixNano()}}})
+							require.NoError(t, accessWriteErr1)
 						}
 						exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 						ctx := context.Background()

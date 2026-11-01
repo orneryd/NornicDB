@@ -29,27 +29,33 @@ type temporalIndexDescriptor struct {
 // temporalConstraintForLookup finds the single-key temporal constraint on label
 // whose properties are exactly (keyProp, startProp, endProp). Composite-key
 // constraints are not addressable by one key property.
-func temporalConstraintForLookup(schema *SchemaManager, label, keyProp, startProp, endProp string) (Constraint, bool) {
+func temporalConstraintForLookup(ctx context.Context, schema *SchemaManager, label, keyProp, startProp, endProp string) (Constraint, bool, error) {
 	if schema == nil {
-		return Constraint{}, false
+		return Constraint{}, false, nil
 	}
-	constraints := schema.GetConstraintsForLabels([]string{label}, ConstraintTemporal)
+	constraints, err := schema.GetConstraintsForLabels(ctx, []string{label}, ConstraintTemporal)
+	if err != nil {
+		return Constraint{}, false, err
+	}
 	for _, c := range constraints {
 		if len(c.Properties) != 3 {
 			continue
 		}
 		if c.Label == label && c.Properties[0] == keyProp && c.Properties[1] == startProp && c.Properties[2] == endProp {
-			return c, true
+			return c, true, nil
 		}
 	}
-	return Constraint{}, false
+	return Constraint{}, false, nil
 }
 
-func temporalConstraintsForLabels(schema *SchemaManager, labels []string) []Constraint {
+func temporalConstraintsForLabels(ctx context.Context, schema *SchemaManager, labels []string) ([]Constraint, error) {
 	if schema == nil {
-		return nil
+		return nil, nil
 	}
-	constraints := schema.GetConstraintsForLabels(labels, ConstraintTemporal)
+	constraints, err := schema.GetConstraintsForLabels(ctx, labels, ConstraintTemporal)
+	if err != nil {
+		return nil, err
+	}
 	out := constraints[:0]
 	for _, c := range constraints {
 		if c.EffectiveEntityType() != ConstraintEntityNode {
@@ -59,7 +65,7 @@ func temporalConstraintsForLabels(schema *SchemaManager, labels []string) []Cons
 			out = append(out, c)
 		}
 	}
-	return out
+	return out, nil
 }
 
 // makeTemporalDescriptor builds the index descriptor of one grouping key of a
@@ -342,7 +348,13 @@ func (b *BadgerEngine) deleteTemporalIndexForNodeInTxn(txn *badger.Txn, namespac
 func (b *BadgerEngine) applyTemporalIndexesForNodeChangeInTxn(txn *badger.Txn, namespace string, schema *SchemaManager, oldNode, newNode *Node) error {
 	targets := make(map[string]temporalRefreshTarget)
 	if oldNode != nil {
-		for _, c := range temporalConstraintsForLabels(schema, oldNode.Labels) {
+		// A transaction's own temporal index maintenance has the accepted
+		// write's lifetime: it carries no request to cancel.
+		constraints, discoveryErr := temporalConstraintsForLabels(context.Background(), schema, oldNode.Labels)
+		if discoveryErr != nil {
+			return discoveryErr
+		}
+		for _, c := range constraints {
 			target, err := b.deleteTemporalIndexForNodeInTxn(txn, namespace, oldNode, c)
 			if err != nil {
 				return err
@@ -353,7 +365,11 @@ func (b *BadgerEngine) applyTemporalIndexesForNodeChangeInTxn(txn *badger.Txn, n
 		}
 	}
 	if newNode != nil {
-		for _, c := range temporalConstraintsForLabels(schema, newNode.Labels) {
+		constraints, discoveryErr := temporalConstraintsForLabels(context.Background(), schema, newNode.Labels)
+		if discoveryErr != nil {
+			return discoveryErr
+		}
+		for _, c := range constraints {
 			target, err := b.writeTemporalIndexForNodeInTxn(txn, namespace, newNode, c)
 			if err != nil {
 				return err
@@ -375,7 +391,12 @@ func (b *BadgerEngine) GetTemporalNodeAsOfInNamespace(namespace, label, keyProp 
 		return nil, err
 	}
 	schema := b.GetSchemaForNamespace(namespace)
-	constraint, ok := temporalConstraintForLookup(schema, label, keyProp, validFromProp, validToProp)
+	// This published read has no request context of its own: the schema
+	// discovery has the read's lifetime.
+	constraint, ok, discoveryErr := temporalConstraintForLookup(context.Background(), schema, label, keyProp, validFromProp, validToProp)
+	if discoveryErr != nil {
+		return nil, discoveryErr
+	}
 	if !ok {
 		return nil, nil
 	}
@@ -495,7 +516,12 @@ func (b *BadgerEngine) IsCurrentTemporalNodeInNamespace(namespace string, node *
 		return false, nil
 	}
 	schema := b.GetSchemaForNamespace(namespace)
-	constraints := temporalConstraintsForLabels(schema, node.Labels)
+	// This published read has no request context of its own: the schema
+	// discovery has the read's lifetime.
+	constraints, discoveryErr := temporalConstraintsForLabels(context.Background(), schema, node.Labels)
+	if discoveryErr != nil {
+		return false, discoveryErr
+	}
 	if len(constraints) == 0 {
 		return true, nil
 	}
@@ -615,7 +641,11 @@ func (b *BadgerEngine) rebuildTemporalNodeInTxn(txn *badger.Txn, node *Node, asO
 		return nil
 	}
 	schema := b.GetSchemaForNamespace(namespace)
-	constraints := temporalConstraintsForLabels(schema, node.Labels)
+	// Rebuild maintenance has its own lifetime and no request to cancel.
+	constraints, discoveryErr := temporalConstraintsForLabels(context.Background(), schema, node.Labels)
+	if discoveryErr != nil {
+		return discoveryErr
+	}
 	if len(constraints) == 0 {
 		return nil
 	}
@@ -801,7 +831,11 @@ func (b *BadgerEngine) PruneTemporalHistory(ctx context.Context, opts TemporalPr
 			return nil
 		}
 		schema := b.GetSchemaForNamespace(namespace)
-		for _, constraint := range temporalConstraintsForLabels(schema, node.Labels) {
+		constraints, discoveryErr := temporalConstraintsForLabels(ctx, schema, node.Labels)
+		if discoveryErr != nil {
+			return discoveryErr
+		}
+		for _, constraint := range constraints {
 			keyValue, start, end, hasEnd, ok := temporalNodeState(node, constraint)
 			if !ok || !hasEnd {
 				continue
@@ -884,7 +918,11 @@ func (tx *BadgerTransaction) bufferTemporalIndexWrites() (map[string]temporalRef
 				continue
 			}
 			schema := tx.engine.GetSchemaForNamespace(dbName)
-			for _, c := range temporalConstraintsForLabels(schema, op.Node.Labels) {
+			constraints, discoveryErr := temporalConstraintsForLabels(context.Background(), schema, op.Node.Labels)
+			if discoveryErr != nil {
+				return nil, discoveryErr
+			}
+			for _, c := range constraints {
 				target, start, ok := temporalTargetForNode(dbName, op.Node, c)
 				if !ok {
 					continue
@@ -897,7 +935,11 @@ func (tx *BadgerTransaction) bufferTemporalIndexWrites() (map[string]temporalRef
 				dbName, _, ok := ParseDatabasePrefix(string(op.OldNode.ID))
 				if ok {
 					schema := tx.engine.GetSchemaForNamespace(dbName)
-					for _, c := range temporalConstraintsForLabels(schema, op.OldNode.Labels) {
+					constraints, discoveryErr := temporalConstraintsForLabels(context.Background(), schema, op.OldNode.Labels)
+					if discoveryErr != nil {
+						return nil, discoveryErr
+					}
+					for _, c := range constraints {
 						target, start, ok := temporalTargetForNode(dbName, op.OldNode, c)
 						if !ok {
 							continue
@@ -911,7 +953,11 @@ func (tx *BadgerTransaction) bufferTemporalIndexWrites() (map[string]temporalRef
 				dbName, _, ok := ParseDatabasePrefix(string(op.Node.ID))
 				if ok {
 					schema := tx.engine.GetSchemaForNamespace(dbName)
-					for _, c := range temporalConstraintsForLabels(schema, op.Node.Labels) {
+					constraints, discoveryErr := temporalConstraintsForLabels(context.Background(), schema, op.Node.Labels)
+					if discoveryErr != nil {
+						return nil, discoveryErr
+					}
+					for _, c := range constraints {
 						target, start, ok := temporalTargetForNode(dbName, op.Node, c)
 						if !ok {
 							continue
@@ -930,7 +976,11 @@ func (tx *BadgerTransaction) bufferTemporalIndexWrites() (map[string]temporalRef
 				continue
 			}
 			schema := tx.engine.GetSchemaForNamespace(dbName)
-			for _, c := range temporalConstraintsForLabels(schema, op.OldNode.Labels) {
+			constraints, discoveryErr := temporalConstraintsForLabels(context.Background(), schema, op.OldNode.Labels)
+			if discoveryErr != nil {
+				return nil, discoveryErr
+			}
+			for _, c := range constraints {
 				target, start, ok := temporalTargetForNode(dbName, op.OldNode, c)
 				if !ok {
 					continue
@@ -1018,7 +1068,11 @@ func (b *BadgerEngine) refreshTemporalCurrentPointers(w *batchWriter, targets ma
 		if !ok {
 			continue
 		}
-		for _, c := range temporalConstraintsForLabels(b.GetSchemaForNamespace(namespace), node.Labels) {
+		constraints, discoveryErr := temporalConstraintsForLabels(context.Background(), b.GetSchemaForNamespace(namespace), node.Labels)
+		if discoveryErr != nil {
+			return discoveryErr
+		}
+		for _, c := range constraints {
 			target, _, ok := temporalTargetForNode(namespace, node, c)
 			if !ok {
 				continue

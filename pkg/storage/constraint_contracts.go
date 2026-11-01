@@ -227,7 +227,10 @@ func (sm *SchemaManager) GetConstraintContractsForTarget(entityType ConstraintEn
 // can still reject. An IF NOT EXISTS match costs the name check alone: it
 // exports, clones, persists and replaces nothing.
 func (sm *SchemaManager) AddConstraintContractBundle(contract ConstraintContract, compiledConstraints []Constraint, compiledTypes []PropertyTypeConstraint, ifNotExists bool) error {
-	lease := sm.beginSchemaMutation()
+	lease, admitErr := sm.beginSchemaMutation(context.Background())
+	if admitErr != nil {
+		return admitErr
+	}
 	defer lease.release()
 
 	if existing, exists := sm.constraintContracts[contract.Name]; exists {

@@ -1,11 +1,18 @@
 package storage
 
-import "github.com/orneryd/nornicdb/pkg/knowledgepolicy"
+import (
+	"errors"
+	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
+)
 
 // GetEntityMeta returns the metadata needed by the access flusher to resolve
 // ON ACCESS policies and property visibility for either nodes or edges.
 func (b *BadgerEngine) GetEntityMeta(entityID string) (knowledgepolicy.EntityMeta, error) {
-	if node, err := b.GetNode(NodeID(entityID)); err == nil && node != nil {
+	node, err := b.GetStoredNode(NodeID(entityID))
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return knowledgepolicy.EntityMeta{}, err
+	}
+	if err == nil && node != nil {
 		propKeys := make([]string, 0, len(node.Properties))
 		for key := range node.Properties {
 			propKeys = append(propKeys, key)
@@ -24,8 +31,11 @@ func (b *BadgerEngine) GetEntityMeta(entityID string) (knowledgepolicy.EntityMet
 		}, nil
 	}
 
-	edge, err := b.GetEdge(EdgeID(entityID))
+	edge, err := b.GetStoredEdge(EdgeID(entityID))
 	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return knowledgepolicy.EntityMeta{}, errors.Join(knowledgepolicy.ErrEntityMetaNotFound, err)
+		}
 		return knowledgepolicy.EntityMeta{}, err
 	}
 	propKeys := make([]string, 0, len(edge.Properties))

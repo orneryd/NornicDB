@@ -2,9 +2,7 @@ package storage
 
 import (
 	"context"
-	"github.com/orneryd/nornicdb/internal/ctxsort"
 	"slices"
-	"strings"
 )
 
 // pendingNodeIndex indexes the nodes an AsyncEngine holds in its write
@@ -31,9 +29,10 @@ type pendingNodeIndex struct {
 	tracked map[string]map[string]struct{}
 	// byValue: (label, property, value key) → pending node IDs, without
 	// duplicates. A value usually has one pending holder, so a slice is
-	// cheaper to build and read than a set.
+	// cheaper to build and read than a set. A private membership-only marker
+	// retains unkeyable nonnull values without treating them as equal.
 	byValue map[pendingValueKey][]NodeID
-	// byProperty: (label, property) → pending node ID → value key, for the
+	// byProperty: (label, property) → pending node ID → membership key, for the
 	// ordered and not-null scans of a property index.
 	byProperty map[pendingPropertyKey]map[NodeID]interface{}
 }
@@ -63,7 +62,7 @@ func newPendingNodeIndex() *pendingNodeIndex {
 }
 
 // add lists node under its labels and each tracked (label, property) with a
-// comparable non-null value (the values the property indexes hold).
+// non-null membership (an equality key when the value is keyable).
 func (p *pendingNodeIndex) add(node *Node) {
 	if node == nil {
 		return
@@ -81,11 +80,11 @@ func (p *pendingNodeIndex) add(node *Node) {
 	}
 }
 
-// addValue indexes node's value of property under label.
+// addValue records node's nonnull property membership under label.
 func (p *pendingNodeIndex) addValue(node *Node, label, property string) {
 	// The pending index mirrors writes the engine already accepted, so the key
 	// has that write's lifetime: it cannot cancel.
-	valueKey, ok, err := indexValueKey(context.Background(), node.Properties[property])
+	valueKey, ok, err := indexNonNilMembershipKey(context.Background(), node.Properties[property])
 	if err != nil || !ok {
 		return
 	}
@@ -116,7 +115,7 @@ func (p *pendingNodeIndex) remove(node *Node) {
 			}
 		}
 		for property := range p.tracked[label] {
-			valueKey, ok, err := indexValueKey(context.Background(), node.Properties[property])
+			valueKey, ok, err := indexNonNilMembershipKey(context.Background(), node.Properties[property])
 			if err != nil || !ok {
 				continue
 			}
@@ -182,11 +181,11 @@ func (p *pendingNodeIndex) sameEntries(prev, node *Node) bool {
 	}
 	for _, label := range node.Labels {
 		for property := range p.tracked[label] {
-			before, beforeOK, err := indexValueKey(context.Background(), prev.Properties[property])
+			before, beforeOK, err := indexNonNilMembershipKey(context.Background(), prev.Properties[property])
 			if err != nil {
 				return false
 			}
-			after, afterOK, err := indexValueKey(context.Background(), node.Properties[property])
+			after, afterOK, err := indexNonNilMembershipKey(context.Background(), node.Properties[property])
 			if err != nil {
 				return false
 			}
@@ -232,7 +231,7 @@ func (p *pendingNodeIndex) track(ctx context.Context, label, property string, ca
 		if node == nil || !hasLabel(node.Labels, label) {
 			continue
 		}
-		value, ok, err := indexValueKey(ctx, node.Properties[property])
+		value, ok, err := indexNonNilMembershipKey(ctx, node.Properties[property])
 		if err != nil {
 			return err
 		}
@@ -443,100 +442,4 @@ func endPendingRead(source pendingWriteSource) {
 	if source != nil {
 		source.unlockPendingWrites()
 	}
-}
-
-// orderedIDsLocked lists an index's node IDs in value order (descending when
-// asked), skipping null values, merged with the pending view: stale engine
-// entries are dropped and pending nodes placed at their values. IDs with the
-// same value are in ID order. limit < 0 lists all. Caller holds idx.mu.
-// keep, when not nil, selects the index keys to list (PropertyIndexRange).
-func (idx *PropertyIndex) orderedIDsLocked(ctx context.Context, view pendingWriteView, property string, descending bool, limit int, bounds PropertyIndexBounds) ([]NodeID, error) {
-	inRange, _, err := idx.sortedKeyRangeLocked(ctx, bounds)
-	if err != nil {
-		return nil, err
-	}
-	keys := make([]interface{}, 0, len(inRange))
-	for _, key := range inRange {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		if !bounds.bounded() || bounds.contains(key) {
-			keys = append(keys, key)
-		}
-	}
-	pending, err := view.propertyEntries(ctx, idx.Label, property)
-	if err != nil {
-		return nil, err
-	}
-	if len(pending) > 0 {
-		for valueKey := range pending {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			if valueKey == nil || (bounds.bounded() && !bounds.contains(valueKey)) {
-				continue
-			}
-			if len(idx.values[valueKey]) == 0 {
-				keys = append(keys, valueKey)
-			}
-		}
-		if err := ctxsort.Sort(ctx, keys, compareSchemaIndexValues, true); err != nil {
-			return nil, err
-		}
-	}
-	capacity := len(keys)
-	if limit >= 0 && limit < capacity {
-		capacity = limit
-	}
-	out := make([]NodeID, 0, capacity)
-	appendKey := func(valueKey interface{}) (bool, error) {
-		ids := make([]NodeID, 0, len(idx.values[valueKey])+len(pending[valueKey]))
-		for _, id := range idx.values[valueKey] {
-			if err := ctx.Err(); err != nil {
-				return false, err
-			}
-			if view.keep(id) {
-				ids = append(ids, id)
-			}
-		}
-		for _, id := range pending[valueKey] {
-			if err := ctx.Err(); err != nil {
-				return false, err
-			}
-			ids = append(ids, id)
-		}
-		if err := ctxsort.Sort(ctx, ids, func(a, b NodeID) int { return strings.Compare(string(a), string(b)) }, false); err != nil {
-			return false, err
-		}
-		for _, id := range ids {
-			if err := ctx.Err(); err != nil {
-				return false, err
-			}
-			out = append(out, id)
-			if limit >= 0 && len(out) >= limit {
-				return false, nil
-			}
-		}
-		return true, nil
-	}
-	for n := 0; n < len(keys); n++ {
-		i := n
-		if descending {
-			i = len(keys) - 1 - n
-		}
-		more, err := appendKey(keys[i])
-		if err != nil {
-			return nil, err
-		}
-		if !more {
-			break
-		}
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if len(out) == 0 {
-		return nil, nil
-	}
-	return out, nil
 }

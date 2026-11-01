@@ -209,7 +209,10 @@ func TestBadgerTransactionUniqueConstraintIndexMatchesNumericCompareSemantics(t 
 
 		t.Fatalf("lookupUniqueConstraintValueForValidation() = (%q, %v, %v, %v), want (%q, true, true, true)", got, found, cacheComplete, constrained, firstID)
 	}
-	constraints := schema.GetConstraintsForLabels([]string{"User"})
+	constraints, err := schema.GetConstraintsForLabels(t.Context(), []string{"User"})
+	if err != nil {
+		t.Fatalf("GetConstraintsForLabels failed: %v", err)
+	}
 	if len(constraints) != 1 {
 		t.Fatalf("GetConstraintsForLabels(User) returned %d constraint(s), want 1", len(constraints))
 	}

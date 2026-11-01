@@ -18,7 +18,7 @@ func TestMergeAdmissionCanonicalTuple(t *testing.T) {
 			require.NoError(t, RefreshUniqueConstraintValuesForEngine(NewNamespacedEngine(engine, "test"), schema))
 			idx, owned := schema.ConstraintPropertyIndex(c.Name)
 			require.True(t, owned)
-			require.NoError(t, schema.BackfillCompositeIndex(idx.Name, nil))
+			require.NoError(t, schema.BackfillCompositeIndex(t.Context(), idx.Name, nil))
 			props := map[string]interface{}{"tenant": int64(7), "id": int64(42)}
 			keys, keyErr := schema.uniqueMergeKeys(t.Context(), []string{"Tuple"}, props)
 			require.NoError(t, keyErr)
@@ -97,7 +97,7 @@ func TestMergeAdmissionTupleIntegerPrecision(t *testing.T) {
 			require.NoError(t, RefreshUniqueConstraintValuesForEngine(NewNamespacedEngine(engine, "test"), schema))
 			idx, owned := schema.ConstraintPropertyIndex(c.Name)
 			require.True(t, owned)
-			require.NoError(t, schema.BackfillCompositeIndex(idx.Name, nil))
+			require.NoError(t, schema.BackfillCompositeIndex(t.Context(), idx.Name, nil))
 			evenProps := map[string]interface{}{"tenant": int64(7), "id": even}
 			oddProps := map[string]interface{}{"tenant": int64(7), "id": odd}
 

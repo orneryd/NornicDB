@@ -67,7 +67,13 @@ func (b *BadgerEngine) validateBulkNodeConstraints(nodes []*Node) error {
 			continue
 		}
 
-		for _, c := range schema.GetConstraintsForLabels(node.Labels) {
+		// Bulk preflight is part of an accepted write, so its constraint
+		// discovery has the write's lifetime and no request to cancel.
+		constraints, err := schema.GetConstraintsForLabels(context.Background(), node.Labels)
+		if err != nil {
+			return err
+		}
+		for _, c := range constraints {
 			var values []interface{}
 			switch c.Type {
 			case ConstraintUnique:

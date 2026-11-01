@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -13,12 +14,12 @@ func TestBadgerTransaction_ValidateEdgeConstraints_EarlyReturns(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
 
-	require.NoError(t, tx.validateEdgeConstraints(nil))
-	require.NoError(t, tx.validateEdgeConstraints(&Edge{}))
-	require.NoError(t, tx.validateEdgeConstraints(&Edge{ID: "test:e", Type: "REL"})) // namespace not pinned
+	require.NoError(t, tx.validateEdgeConstraints(context.Background(), nil))
+	require.NoError(t, tx.validateEdgeConstraints(context.Background(), &Edge{}))
+	require.NoError(t, tx.validateEdgeConstraints(context.Background(), &Edge{ID: "test:e", Type: "REL"})) // namespace not pinned
 
 	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, tx.validateEdgeConstraints(&Edge{ID: "test:e", Type: "REL"})) // no constraints
+	require.NoError(t, tx.validateEdgeConstraints(context.Background(), &Edge{ID: "test:e", Type: "REL"})) // no constraints
 }
 
 func TestBadgerTransaction_ValidateEdgeConstraints_BranchCoverage(t *testing.T) {
@@ -49,36 +50,36 @@ func TestBadgerTransaction_ValidateEdgeConstraints_BranchCoverage(t *testing.T) 
 	require.NoError(t, tx.SetNamespace("test"))
 
 	// EXISTS failure branch.
-	err = tx.validateEdgeConstraints(&Edge{ID: "test:e-missing", StartNode: "test:c", EndNode: "test:c", Type: "LINK", Properties: map[string]any{}})
+	err = tx.validateEdgeConstraints(context.Background(), &Edge{ID: "test:e-missing", StartNode: "test:c", EndNode: "test:c", Type: "LINK", Properties: map[string]any{}})
 	var violation *ConstraintViolationError
 	require.ErrorAs(t, err, &violation)
 	require.Equal(t, ConstraintExists, violation.Type)
 
 	// UNIQUE against committed branch.
-	err = tx.validateEdgeConstraints(&Edge{ID: "test:e-dup", StartNode: "test:a", EndNode: "test:c", Type: "LINK", Properties: map[string]any{"token": "dup", "status": "ok", "rank": int64(3)}})
+	err = tx.validateEdgeConstraints(context.Background(), &Edge{ID: "test:e-dup", StartNode: "test:a", EndNode: "test:c", Type: "LINK", Properties: map[string]any{"token": "dup", "status": "ok", "rank": int64(3)}})
 	require.Error(t, err)
 
 	// DOMAIN branch.
-	err = tx.validateEdgeConstraints(&Edge{ID: "test:e-domain", StartNode: "test:c", EndNode: "test:c", Type: "LINK", Properties: map[string]any{"token": "u2", "status": "bad", "rank": int64(1)}})
+	err = tx.validateEdgeConstraints(context.Background(), &Edge{ID: "test:e-domain", StartNode: "test:c", EndNode: "test:c", Type: "LINK", Properties: map[string]any{"token": "u2", "status": "bad", "rank": int64(1)}})
 	require.Error(t, err)
 
 	// CARDINALITY branch (existing outgoing from test:a already reaches max=1).
-	err = tx.validateEdgeConstraints(&Edge{ID: "test:e-card", StartNode: "test:a", EndNode: "test:c", Type: "LINK", Properties: map[string]any{"token": "u3", "status": "ok", "rank": int64(1)}})
+	err = tx.validateEdgeConstraints(context.Background(), &Edge{ID: "test:e-card", StartNode: "test:a", EndNode: "test:c", Type: "LINK", Properties: map[string]any{"token": "u3", "status": "ok", "rank": int64(1)}})
 	require.Error(t, err)
 
 	// POLICY branch (Employee -> Department disallowed).
-	err = tx.validateEdgeConstraints(&Edge{ID: "test:e-policy", StartNode: "test:c", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"token": "u4", "status": "ok", "rank": int64(1)}})
+	err = tx.validateEdgeConstraints(context.Background(), &Edge{ID: "test:e-policy", StartNode: "test:c", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"token": "u4", "status": "ok", "rank": int64(1)}})
 	require.Error(t, err)
 
 	// PROPERTY TYPE branch.
-	err = tx.validateEdgeConstraints(&Edge{ID: "test:e-type", StartNode: "test:c", EndNode: "test:c", Type: "LINK", Properties: map[string]any{"token": "u5", "status": "ok", "rank": "not-int"}})
+	err = tx.validateEdgeConstraints(context.Background(), &Edge{ID: "test:e-type", StartNode: "test:c", EndNode: "test:c", Type: "LINK", Properties: map[string]any{"token": "u5", "status": "ok", "rank": "not-int"}})
 	require.Error(t, err)
 
 	// TEMPORAL success + violation branches.
 	start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2025, 2, 1, 0, 0, 0, 0, time.UTC)
-	require.NoError(t, tx.validateEdgeConstraints(&Edge{ID: "test:t1", StartNode: "test:c", EndNode: "test:c", Type: "TEMP_LINK", Properties: map[string]any{"key": "k", "valid_from": start, "valid_to": end}}))
+	require.NoError(t, tx.validateEdgeConstraints(context.Background(), &Edge{ID: "test:t1", StartNode: "test:c", EndNode: "test:c", Type: "TEMP_LINK", Properties: map[string]any{"key": "k", "valid_from": start, "valid_to": end}}))
 	tx.pendingEdges["test:t-pending"] = &Edge{ID: "test:t-pending", StartNode: "test:c", EndNode: "test:c", Type: "TEMP_LINK", Properties: map[string]any{"key": "k", "valid_from": start.Add(24 * time.Hour), "valid_to": end.Add(24 * time.Hour)}}
-	err = tx.validateEdgeConstraints(&Edge{ID: "test:t2", StartNode: "test:c", EndNode: "test:c", Type: "TEMP_LINK", Properties: map[string]any{"key": "k", "valid_from": start, "valid_to": end}})
+	err = tx.validateEdgeConstraints(context.Background(), &Edge{ID: "test:t2", StartNode: "test:c", EndNode: "test:c", Type: "TEMP_LINK", Properties: map[string]any{"key": "k", "valid_from": start, "valid_to": end}})
 	require.Error(t, err)
 }

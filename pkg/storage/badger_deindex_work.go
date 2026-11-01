@@ -22,9 +22,10 @@ func putDeindexWorkItemInTxn(txn *badger.Txn, item *DeindexWorkItem) error {
 }
 
 func (b *BadgerEngine) PutDeindexWorkItem(item *DeindexWorkItem) error {
-	return b.PutAccessMeta(policyWorkMetaIDPrefix+item.WorkItemID, &knowledgepolicy.AccessMetaEntry{
+	_, err := b.WriteAccessMeta(knowledgepolicy.AccessMetaWriteRequest{Mode: knowledgepolicy.RecordState, EntityID: policyWorkMetaIDPrefix + item.WorkItemID, Entry: &knowledgepolicy.AccessMetaEntry{
 		TargetID: item.TargetID, TargetScope: knowledgepolicy.ScopeType(item.TargetScope), DeindexWork: item,
-	})
+	}})
+	return err
 }
 
 func (b *BadgerEngine) GetDeindexWorkItem(workItemID string) (*DeindexWorkItem, error) {

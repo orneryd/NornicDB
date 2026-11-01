@@ -26,13 +26,13 @@ func (s *classAccessStore) ReadAccessMeta(r kp.AccessMetaReadRequest) (kp.Access
 	}
 	return kp.AccessMetaReadResult{}, nil
 }
-func (s *classAccessStore) PutAccessMeta(string, *kp.AccessMetaEntry) error {
+func (s *classAccessStore) WriteAccessMeta(kp.AccessMetaWriteRequest) (bool, error) {
 	if s.entered != nil {
 		s.once.Do(func() { close(s.entered) })
 		<-s.release
 	}
 	s.writes.Add(1)
-	return s.writeErr
+	return s.writeErr == nil, s.writeErr
 }
 func classAccessStop(f *kp.AccessFlusher) error {
 	if owner, ok := any(f).(interface{ Stop() error }); ok {

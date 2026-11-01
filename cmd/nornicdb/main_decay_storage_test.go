@@ -39,7 +39,8 @@ func TestDecayCommandsReadAccessThroughWALStorage(t *testing.T) {
 			old := now.Add(-72 * time.Hour)
 			_, err = db.GetStorage().CreateNode(&storage.Node{ID: "recent:id", Labels: []string{"Doc"}, Properties: map[string]interface{}{"body": "still visible"}, CreatedAt: old, UpdatedAt: old})
 			require.NoError(t, err)
-			require.NoError(t, base.PutAccessMeta("nornic:recent:id", &knowledgepolicy.AccessMetaEntry{TargetID: "nornic:recent:id", TargetScope: knowledgepolicy.ScopeNode, Fixed: knowledgepolicy.AccessMetaFixedFields{AccessCount: 3, LastAccessedAt: now.UnixNano()}}))
+			_, accessWriteErr1 := base.WriteAccessMeta(knowledgepolicy.AccessMetaWriteRequest{Mode: knowledgepolicy.RecordState, EntityID: "nornic:recent:id", Entry: &knowledgepolicy.AccessMetaEntry{TargetID: "nornic:recent:id", TargetScope: knowledgepolicy.ScopeNode, Fixed: knowledgepolicy.AccessMetaFixedFields{AccessCount: 3, LastAccessedAt: now.UnixNano()}}})
+			require.NoError(t, accessWriteErr1)
 			require.NoError(t, db.Close())
 
 			var output bytes.Buffer

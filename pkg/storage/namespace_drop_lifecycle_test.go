@@ -148,17 +148,20 @@ func TestNamespaceDropPendingMetadataWritersUseActualTarget(t *testing.T) {
 	b.dropPrefixTailHook = func(string) error { return sentinel }
 	_, _, err := b.DeleteByPrefix("victim:")
 	require.ErrorIs(t, err, sentinel)
-	require.ErrorIs(t, b.PutAccessMeta("victim:n", &knowledgepolicy.AccessMetaEntry{TargetID: "victim:n"}), ErrConflict)
+	_, accessWriteErr1 := b.WriteAccessMeta(knowledgepolicy.AccessMetaWriteRequest{Mode: knowledgepolicy.RecordState, EntityID: "victim:n", Entry: &knowledgepolicy.AccessMetaEntry{TargetID: "victim:n"}})
+	require.ErrorIs(t, accessWriteErr1, ErrConflict)
 	require.ErrorIs(t, b.DeleteAccessMeta("victim:n"), ErrConflict)
 	require.ErrorIs(t, b.PutDeindexWorkItem(&DeindexWorkItem{WorkItemID: "opaque-peer-looking", TargetID: "victim:n"}), ErrConflict)
 	require.NoError(t, b.PutDeindexWorkItem(&DeindexWorkItem{WorkItemID: "victim:opaque", TargetID: "peer:n"}))
 	require.NoError(t, b.DeleteDeindexWorkItem("victim:opaque"))
-	require.NoError(t, b.PutAccessMeta("peer:n", &knowledgepolicy.AccessMetaEntry{TargetID: "peer:n"}))
+	_, accessWriteErr2 := b.WriteAccessMeta(knowledgepolicy.AccessMetaWriteRequest{Mode: knowledgepolicy.RecordState, EntityID: "peer:n", Entry: &knowledgepolicy.AccessMetaEntry{TargetID: "peer:n"}})
+	require.NoError(t, accessWriteErr2)
 	b.AddToPendingEmbeddings("victim:new")
 	err = b.withView(func(txn *badger.Txn) error { _, err := txn.Get(pendingEmbedKey("victim:new")); return err })
 	require.ErrorIs(t, err, badger.ErrKeyNotFound, "void pending producer must not leave durable work in an unfinished DROP")
 	b.dropPrefixTailHook = nil
 	_, _, err = b.DeleteByPrefix("victim:")
 	require.NoError(t, err)
-	require.NoError(t, b.PutAccessMeta("victim:n", &knowledgepolicy.AccessMetaEntry{TargetID: "victim:n"}))
+	_, accessWriteErr3 := b.WriteAccessMeta(knowledgepolicy.AccessMetaWriteRequest{Mode: knowledgepolicy.RecordState, EntityID: "victim:n", Entry: &knowledgepolicy.AccessMetaEntry{TargetID: "victim:n"}})
+	require.NoError(t, accessWriteErr3)
 }

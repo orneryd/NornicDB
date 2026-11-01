@@ -187,7 +187,7 @@ func TestCompositeIndexLookupsRejectCancelledContext(t *testing.T) {
 		fullIndex:   map[string][]NodeID{},
 		prefixIndex: map[string][]NodeID{},
 	}
-	require.NoError(t, idx.IndexNode("pair:1", map[string]interface{}{"left": "a", "right": "b"}))
+	require.NoError(t, idx.IndexNode(t.Context(), "pair:1", map[string]interface{}{"left": "a", "right": "b"}))
 
 	ids, err := idx.LookupFull(t.Context(), "a", "b")
 	require.NoError(t, err)
@@ -236,4 +236,157 @@ func TestNewCompositeKeyStopsFormattingAfterCancellation(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, healthy.Hash, again.Hash)
 	require.Equal(t, values, healthy.Values)
+}
+
+// Composite-index and constraint discovery are request-bearing reads: a
+// discovery waiting on another goroutine's schema write leaves with its own
+// cancellation instead of waiting for the holder, keeps no partial answer, and
+// a healthy retry after the holder releases still finds the schema.
+func TestSchemaDiscoveryCancelsWhileSchemaLockHeld(t *testing.T) {
+	type result struct {
+		indexes     []*CompositeIndex
+		constraints []Constraint
+		err         error
+	}
+	for _, target := range []string{"composite indexes", "constraints"} {
+		t.Run(target, func(t *testing.T) {
+			sm := NewSchemaManager()
+			require.NoError(t, sm.AddPropertyIndex("pair_ab", "Pair", []string{"a", "b"}))
+			require.NoError(t, sm.AddUniqueConstraint("pair_key", "Pair", "k"))
+			read := func(ctx context.Context) result {
+				if target == "composite indexes" {
+					indexes, err := sm.SeekableCompositeIndexesForLabel(ctx, "Pair")
+					return result{indexes: indexes, err: err}
+				}
+				constraints, err := sm.GetConstraintsForLabels(ctx, []string{"Pair"})
+				return result{constraints: constraints, err: err}
+			}
+			sm.mu.Lock()
+			var released sync.Once
+			release := func() { released.Do(sm.mu.Unlock) }
+			base, cancel := context.WithCancel(t.Context())
+			ctx := &indexWaitContext{Context: base, entered: make(chan struct{})}
+			returned, done := make(chan result, 1), make(chan struct{})
+			t.Cleanup(func() {
+				cancel()
+				release()
+				select {
+				case <-done:
+				case <-time.After(5 * time.Second):
+					t.Error("discovery did not join after holder release")
+				}
+			})
+			go func() { defer close(done); returned <- read(ctx) }()
+			select {
+			case <-ctx.entered:
+			case <-time.After(5 * time.Second):
+				t.Fatal("discovery never reached the actual held-lock wait")
+			}
+			cancel()
+			var canceled result
+			select {
+			case canceled = <-returned:
+			case <-time.After(5 * time.Second):
+				t.Fatal("canceled discovery did not return while the holder retained its lock")
+			}
+			require.ErrorIs(t, canceled.err, context.Canceled)
+			require.Nil(t, canceled.indexes)
+			require.Nil(t, canceled.constraints)
+			release()
+			healthy := read(t.Context())
+			require.NoError(t, healthy.err)
+			if target == "composite indexes" {
+				require.Len(t, healthy.indexes, 1)
+				require.Equal(t, "pair_ab", healthy.indexes[0].Name)
+			} else {
+				require.Len(t, healthy.constraints, 1)
+				require.Equal(t, "pair_key", healthy.constraints[0].Name)
+			}
+		})
+	}
+}
+
+// Discovery enumerates every declared constraint or index, so a cancellation
+// that arrives mid-enumeration must end it: the caller gets its context's error
+// and no partially collected list, and the next live call still sees the whole
+// schema.
+func TestSchemaDiscoveryStopsMidEnumeration(t *testing.T) {
+	const population = 2 * bulkReadCancellationInterval
+	t.Run("constraints", func(t *testing.T) {
+		sm := NewSchemaManager()
+		for i := 0; i < population; i++ {
+			require.NoError(t, sm.AddConstraint(Constraint{
+				Name: fmt.Sprintf("other_%d", i), Type: ConstraintExists,
+				Label: fmt.Sprintf("Other%d", i), Properties: []string{"value"},
+			}))
+		}
+		// Nothing matches Wanted, so the enumeration must visit every entry.
+		constraints, err := sm.GetConstraintsForLabels(newIndexPollCancelContext(t, 2), []string{"Wanted"})
+		require.ErrorIs(t, err, context.Canceled, "the enumeration must observe cancellation mid-scan")
+		require.Nil(t, constraints, "a canceled enumeration returns no partial candidate list")
+
+		// Positive control: the same population under a live context is empty,
+		// not an error, and a matching constraint is still discoverable.
+		constraints, err = sm.GetConstraintsForLabels(t.Context(), []string{"Wanted"})
+		require.NoError(t, err)
+		require.Empty(t, constraints)
+		require.NoError(t, sm.AddConstraint(Constraint{Name: "wanted_value", Type: ConstraintExists, Label: "Wanted", Properties: []string{"value"}}))
+		constraints, err = sm.GetConstraintsForLabels(t.Context(), []string{"Wanted"})
+		require.NoError(t, err)
+		require.Len(t, constraints, 1)
+		require.Equal(t, "wanted_value", constraints[0].Name)
+	})
+	t.Run("composite indexes", func(t *testing.T) {
+		sm := NewSchemaManager()
+		for i := 0; i < population; i++ {
+			require.NoError(t, sm.AddPropertyIndex(fmt.Sprintf("other_%d", i), fmt.Sprintf("Other%d", i), []string{"value"}))
+		}
+		indexes, err := sm.SeekableCompositeIndexesForLabel(newIndexPollCancelContext(t, 2), "Wanted")
+		require.ErrorIs(t, err, context.Canceled, "the enumeration must observe cancellation mid-scan")
+		require.Nil(t, indexes, "a canceled enumeration returns no partial candidate list")
+
+		indexes, err = sm.SeekableCompositeIndexesForLabel(t.Context(), "Wanted")
+		require.NoError(t, err)
+		require.Empty(t, indexes)
+		require.NoError(t, sm.AddPropertyIndex("wanted_pair", "Wanted", []string{"a", "b"}))
+		indexes, err = sm.SeekableCompositeIndexesForLabel(t.Context(), "Wanted")
+		require.NoError(t, err)
+		require.Len(t, indexes, 1)
+		require.Equal(t, "wanted_pair", indexes[0].Name)
+	})
+}
+
+// The longest prefix a complete arity-N insert files is the same key as its
+// full key, and both are the canonical composite-key digest of the same values.
+// IndexNode stages the full digest once and reuses it for that prefix, so the
+// reuse cannot change a stored key hash.
+func TestCompositeIndexFinalPrefixKeepsFullKeyHash(t *testing.T) {
+	properties := map[string]interface{}{"country": "US", "city": "NYC", "zipcode": int64(10001)}
+	index := &CompositeIndex{
+		Name:        "location",
+		Label:       "User",
+		Properties:  []string{"country", "city", "zipcode"},
+		values:      make(map[interface{}][]NodeID),
+		keysDirty:   true,
+		fullIndex:   make(map[string][]NodeID),
+		prefixIndex: make(map[string][]NodeID),
+	}
+	require.NoError(t, index.IndexNode(t.Context(), "user:1", properties))
+
+	// The values are the canonical ones the index files, so these are the exact
+	// digests a caller's lookup prepares for the same property map.
+	values, err := compositeIndexValues(t.Context(), index, properties)
+	require.NoError(t, err)
+	require.Len(t, values, len(index.Properties))
+
+	full, err := NewCompositeKey(t.Context(), values...)
+	require.NoError(t, err)
+	require.Equal(t, []NodeID{"user:1"}, index.fullIndex[full.Hash], "the full key is the canonical digest of every value")
+	require.Equal(t, []NodeID{"user:1"}, index.prefixIndex[full.Hash], "the full key is also its own longest prefix")
+
+	for i := 1; i < len(values); i++ {
+		prefix, err := NewCompositeKey(t.Context(), values[:i]...)
+		require.NoError(t, err)
+		require.Equal(t, []NodeID{"user:1"}, index.prefixIndex[prefix.Hash], "prefix %d is the canonical digest of its values", i)
+	}
 }

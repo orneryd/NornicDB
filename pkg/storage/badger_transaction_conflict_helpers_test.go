@@ -252,11 +252,11 @@ func TestBadgerTransaction_CheckEdgeUniqueness_CompositeMissingPropertyBranches(
 		Type:       "REL",
 		Properties: map[string]any{"k1": "v1", "k2": "x"},
 	}
-	require.NoError(t, tx.checkEdgeUniqueness(candidate, c, "test"))
+	require.NoError(t, tx.checkEdgeUniqueness(context.Background(), candidate, c, "test"))
 
 	// Committed-edge branch (allPresent=false => nil).
 	tx.pendingEdges = map[EdgeID]*Edge{}
-	require.NoError(t, tx.checkEdgeUniqueness(candidate, c, "test"))
+	require.NoError(t, tx.checkEdgeUniqueness(context.Background(), candidate, c, "test"))
 }
 
 func TestBadgerTransaction_NodeConstraintExtraBranches(t *testing.T) {

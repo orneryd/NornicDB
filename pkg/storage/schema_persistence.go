@@ -273,15 +273,24 @@ func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
 //
 // This does NOT persist anything, and it intentionally discards runtime caches
 // (unique value maps, index maps, etc.). Those must be rebuilt from data.
+// Loading and binding compilation complete before publication; rejected
+// definitions leave every existing family and compiled binding table intact.
 func (sm *SchemaManager) ReplaceFromDefinition(def *SchemaDefinition) error {
 	defer sm.trackPendingPairs()
 	if def == nil {
 		return nil
 	}
 
+	// Build and validate off to the side. A binding compile failure must not
+	// replace some live families while leaving the previously compiled table.
+	candidate := NewSchemaManager()
+	if err := candidate.replaceFromDefinitionLocked(def); err != nil {
+		return err
+	}
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	return sm.replaceFromDefinitionLocked(def)
+	sm.installSchemaLocked(candidate, acceptedDefinitionInstallation)
+	return nil
 }
 
 func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) error {
@@ -443,7 +452,11 @@ func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) erro
 		sm.promotionPolicies[pc.Name] = &pc
 	}
 
-	sm.rebuildBindingTableLocked()
+	compiled, compileErr := sm.compileBindingTableLocked()
+	if compileErr != nil {
+		return compileErr
+	}
+	sm.bindingTable = compiled
 
 	return nil
 }

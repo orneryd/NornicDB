@@ -77,7 +77,10 @@ type nodeConstraintValidation struct {
 }
 
 func (v nodeConstraintValidation) validate(node *Node) error {
-	constraints := v.schema.GetConstraintsForLabels(node.Labels)
+	constraints, err := v.schema.GetConstraintsForLabels(v.ctx, node.Labels)
+	if err != nil {
+		return err
+	}
 	for _, c := range constraints {
 		switch c.Type {
 		case ConstraintUnique:
@@ -475,7 +478,12 @@ func (b *BadgerEngine) validateEdgeConstraintsInTxn(txn *badger.Txn, edge *Edge,
 		return nil
 	}
 
-	constraints := schema.GetConstraintsForLabels([]string{edge.Type})
+	// A native callback validates inside an accepted engine write, so this
+	// discovery has the write's lifetime and no request to cancel.
+	constraints, err := schema.GetConstraintsForLabels(context.Background(), []string{edge.Type})
+	if err != nil {
+		return err
+	}
 	for _, c := range constraints {
 		if c.EffectiveEntityType() != ConstraintEntityRelationship {
 			continue
@@ -853,7 +861,12 @@ func (b *BadgerEngine) checkEdgeCardinalityInTxn(txn *badger.Txn, edge *Edge, c 
 // All policies for the edge type are evaluated as a set: DISALLOWED policies are checked
 // individually, while ALLOWED policies form a union (at least one must match).
 func (b *BadgerEngine) checkEdgePolicyInTxn(txn *badger.Txn, edge *Edge, schema *SchemaManager, namespace string) error {
-	constraints := schema.GetConstraintsForLabels([]string{edge.Type})
+	// A native callback validates inside an accepted engine write, so this
+	// discovery has the write's lifetime and no request to cancel.
+	constraints, err := schema.GetConstraintsForLabels(context.Background(), []string{edge.Type})
+	if err != nil {
+		return err
+	}
 
 	var allowedPolicies []Constraint
 	var disallowedPolicies []Constraint
@@ -1041,7 +1054,10 @@ func (b *BadgerEngine) validatePolicyForEdgesWithPrefixInTxn(txn *badger.Txn, pr
 		}
 
 		// Check policy constraints for this edge type.
-		constraints := schema.GetConstraintsForLabels([]string{edge.Type})
+		constraints, err := schema.GetConstraintsForLabels(context.Background(), []string{edge.Type})
+		if err != nil {
+			return err
+		}
 		var allowedPolicies []Constraint
 		var disallowedPolicies []Constraint
 		for _, c := range constraints {

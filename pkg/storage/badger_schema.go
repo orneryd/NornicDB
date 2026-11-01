@@ -226,8 +226,10 @@ func (b *BadgerEngine) rebuildUniqueConstraintValues(namespace string, sm *Schem
 							continue
 						}
 						// IndexNode files arity-1 under values and arity-N
-						// under full/prefix, so one pass fills every index.
-						if err := idx.IndexNode(node.ID, node.Properties); err != nil {
+						// under full/prefix, so one pass fills every index. A
+						// rebuild carries no request: its keys have the rebuild's
+						// own lifetime.
+						if err := idx.IndexNode(context.Background(), node.ID, node.Properties); err != nil {
 							return fmt.Errorf("schema: rebuild composite indexes: namespace=%q index=%q: %w", namespace, idx.Name, err)
 						}
 					}

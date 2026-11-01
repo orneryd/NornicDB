@@ -52,8 +52,15 @@ func TestPropertyIndexFilesListsForEqualityOnly(t *testing.T) {
 	require.Equal(t, []NodeID{"n3"}, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "P", "tags", []string{"a"})))
 	require.Empty(t, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "P", "tags", []interface{}{int64(2), int64(1)})))
 	require.Equal(t, []NodeID{"n1"}, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookupAnyLabel(t.Context(), "tags", []interface{}{int64(1), int64(2)})))
-	// Ordered scans read scalar keys only.
-	require.Equal(t, []NodeID{"n2"}, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexAllNonNil(t.Context(), "P", "tags", false)))
+	// Ordered reads cannot silently omit list memberships. Unordered nonnull
+	// candidates retain every member; the query owner sorts their actual values.
+	ids, err := sm.PropertyIndexAllNonNil(t.Context(), "P", "tags", false)
+	require.ErrorIs(t, err, ErrPropertyIndexValueOrderUnavailable)
+	require.Nil(t, ids)
+	ids, found, err := sm.PropertyIndexNonNilCandidates(t.Context(), "P", "tags")
+	require.NoError(t, err)
+	require.True(t, found)
+	require.ElementsMatch(t, []NodeID{"n1", "n2", "n3"}, ids)
 
 	require.NoError(t, sm.PropertyIndexDelete("P", "tags", "n1", []interface{}{int64(1), int64(2)}))
 	require.Empty(t, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "P", "tags", []interface{}{int64(1), int64(2)})))

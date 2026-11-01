@@ -10,10 +10,12 @@ import (
 // scriptedAccessMetaStore records the flusher's read requests and lets a test
 // inject a read result or error for the whole request boundary.
 type scriptedAccessMetaStore struct {
-	reads  []AccessMetaReadRequest
-	entry  *AccessMetaEntry
-	err    error
-	writes map[string]*AccessMetaEntry
+	reads     []AccessMetaReadRequest
+	entry     *AccessMetaEntry
+	err       error
+	writes    map[string]*AccessMetaEntry
+	writeErr  error
+	skipWrite bool
 }
 
 func (s *scriptedAccessMetaStore) ReadAccessMeta(request AccessMetaReadRequest) (AccessMetaReadResult, error) {
@@ -24,18 +26,26 @@ func (s *scriptedAccessMetaStore) ReadAccessMeta(request AccessMetaReadRequest) 
 	return AccessMetaReadResult{Entry: s.entry}, nil
 }
 
-func (s *scriptedAccessMetaStore) PutAccessMeta(entityID string, entry *AccessMetaEntry) error {
+func (s *scriptedAccessMetaStore) WriteAccessMeta(request AccessMetaWriteRequest) (bool, error) {
+	entityID, entry := request.EntityID, request.Entry
+	if s.writeErr != nil {
+		return false, s.writeErr
+	}
+	if s.skipWrite {
+		return false, nil
+	}
+
 	if s.writes == nil {
 		s.writes = make(map[string]*AccessMetaEntry)
 	}
 	s.writes[entityID] = entry
-	return nil
+	return true, nil
 }
 
 func TestMockStoreReadAccessMetaPointCopiesEntry(t *testing.T) {
 	store := newMockStore()
 	stored := &AccessMetaEntry{TargetID: "n1", Fixed: AccessMetaFixedFields{AccessCount: 4}}
-	if err := store.PutAccessMeta("n1", stored); err != nil {
+	if _, err := store.WriteAccessMeta(AccessMetaWriteRequest{Mode: RecordState, EntityID: "n1", Entry: stored}); err != nil {
 		t.Fatal(err)
 	}
 	stored.Fixed.AccessCount = 9
@@ -70,7 +80,7 @@ func TestMockStoreReadAccessMetaPointCopiesEntry(t *testing.T) {
 func TestMockStoreReadAccessMetaAllIsDeterministic(t *testing.T) {
 	store := newMockStore()
 	for _, id := range []string{"c", "a", "b"} {
-		if err := store.PutAccessMeta(id, &AccessMetaEntry{TargetID: id}); err != nil {
+		if _, err := store.WriteAccessMeta(AccessMetaWriteRequest{Mode: RecordState, EntityID: id, Entry: &AccessMetaEntry{TargetID: id}}); err != nil {
 			t.Fatal(err)
 		}
 	}

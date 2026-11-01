@@ -653,13 +653,14 @@ func TestE2E_CallNornicDbKnowledgePolicyResolve(t *testing.T) {
 		CreatedAt: time.Unix(0, storage.DecayScoringTime()-6*3600*1e9),
 	})
 	require.NoError(t, err)
-	require.NoError(t, be.PutAccessMeta(string(nodeID), &knowledgepolicy.AccessMetaEntry{
+	_, accessWriteErr1 := be.WriteAccessMeta(knowledgepolicy.AccessMetaWriteRequest{Mode: knowledgepolicy.RecordState, EntityID: string(nodeID), Entry: &knowledgepolicy.AccessMetaEntry{
 		TargetID:    string(nodeID),
 		TargetScope: knowledgepolicy.ScopeNode,
 		Fixed: knowledgepolicy.AccessMetaFixedFields{
 			AccessCount: 3,
 		},
-	}))
+	}})
+	require.NoError(t, accessWriteErr1)
 
 	result, err := exec.Execute(ctx, fmt.Sprintf("CALL kp.resolve('%s', '', '')", nodeID), nil)
 	require.NoError(t, err)

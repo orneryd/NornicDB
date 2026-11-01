@@ -956,6 +956,12 @@ func (w *WriteBehindBuffer) lockPendingWrites(ctx context.Context) (pendingWrite
 	if err := w.mu.RLockContext(ctx); err != nil {
 		return pendingWriteView{}, err
 	}
+	// The lease is still owned by the returned source even when no mutation
+	// can shadow a committed ID. Include raw order and draining generations:
+	// a delete-only generation must never be mistaken for empty membership.
+	if w.opCount == 0 && len(w.draining) == 0 && (w.active == nil || len(w.active.order) == 0) {
+		return pendingWriteView{}, nil
+	}
 	return pendingWriteView{index: w.pendingIndex, owner: w}, nil
 }
 

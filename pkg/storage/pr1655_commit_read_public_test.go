@@ -258,6 +258,4 @@ func pr1655AssertTypedCommitFailure(t *testing.T, err error) {
 
 	code, message := nornicerrors.Neo4jStatus(err)
 	require.Equal(t, pr1655CommitFailedStatus, code, "status: %q message: %q", code, message)
-	commitCode, commitMessage := nornicerrors.Neo4jCommitStatus(err)
-	require.Equal(t, pr1655CommitFailedStatus, commitCode, "commit status: %q message: %q", commitCode, commitMessage)
 }

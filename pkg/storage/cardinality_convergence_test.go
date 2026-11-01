@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"strconv"
 	"strings"
@@ -414,7 +415,7 @@ func TestStagedCardinalityMatchesCurrentAdjacencySelection(t *testing.T) {
 				tx.deletedEdges[id] = struct{}{}
 			}
 
-			streamed := tx.checkEdgeCardinality(probe, outgoingMaxTwo, "test")
+			streamed := tx.checkEdgeCardinality(context.Background(), probe, outgoingMaxTwo, "test")
 			viaAdjacency := stagedCardinalityViaCurrentAdjacency(tx, probe, outgoingMaxTwo, "test")
 			require.Equal(t, streamed == nil, viaAdjacency == nil,
 				"staged selection and current-adjacency selection disagree: %v vs %v", streamed, viaAdjacency)

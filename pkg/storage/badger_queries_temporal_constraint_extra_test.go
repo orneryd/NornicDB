@@ -88,7 +88,10 @@ func TestBadgerEngine_TemporalIndexHelpers_ExtraBranches(t *testing.T) {
 	_, err = engine.CreateNode(n2)
 	require.NoError(t, err)
 
-	c := sm.GetConstraintsForLabels([]string{"Role"})[0]
+	roleConstraints, err := sm.GetConstraintsForLabels(t.Context(), []string{"Role"})
+	require.NoError(t, err)
+	require.Len(t, roleConstraints, 1)
+	c := roleConstraints[0]
 	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 		// writeTemporalIndexForNodeInTxn !ok branch.
 		target, err := engine.writeTemporalIndexForNodeInTxn(txn, ns, &Node{ID: "test:bad", Labels: []string{"Role"}, Properties: map[string]any{}}, c)

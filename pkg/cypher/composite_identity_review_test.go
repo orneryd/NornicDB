@@ -136,7 +136,8 @@ func TestCompositeReviewPolicyReadsSourceMetadata(t *testing.T) {
 				base.GetSchemaForNamespace(database).SetBindingTable(table)
 				for id, scope := range map[string]knowledgepolicy.ScopeType{"same": knowledgepolicy.ScopeNode, "same-rel": knowledgepolicy.ScopeEdge} {
 					target := database + ":" + id
-					require.NoError(t, base.PutAccessMeta(target, &knowledgepolicy.AccessMetaEntry{TargetID: target, TargetScope: scope, Fixed: knowledgepolicy.AccessMetaFixedFields{AccessCount: int64(index + 3), LastAccessedAt: time.Now().UnixNano()}}))
+					_, accessWriteErr1 := base.WriteAccessMeta(knowledgepolicy.AccessMetaWriteRequest{Mode: knowledgepolicy.RecordState, EntityID: target, Entry: &knowledgepolicy.AccessMetaEntry{TargetID: target, TargetScope: scope, Fixed: knowledgepolicy.AccessMetaFixedFields{AccessCount: int64(index + 3), LastAccessedAt: time.Now().UnixNano()}}})
+					require.NoError(t, accessWriteErr1)
 				}
 			}
 			result, err := exec.Execute(context.Background(), "USE comp MATCH (n:P)-[r:R]->() RETURN decay(n).policy,decay(r).policy,policy(n).accessCount,policy(r).accessCount ORDER BY elementId(n)", nil)

@@ -2317,7 +2317,7 @@ func (s *Service) closeResources() error {
 	s.cleanupPopulationArtifacts()
 	s.persistRunMu.Unlock()
 	s.publishClusterServing()
-	return compose.Outcomes(relationshipErr, s.lifetimeWork.Err())
+	return errors.Join(relationshipErr, s.lifetimeWork.Err())
 }
 
 // schedulePersist schedules a write of BM25 and vector indexes to disk after an idle delay.

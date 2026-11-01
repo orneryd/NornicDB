@@ -51,8 +51,9 @@ func BenchmarkConstraintLookup(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for range b.N {
-				if len(schema.GetConstraintsForLabels(labels)) != count {
-					b.Fatal("missing constraints")
+				constraints, err := schema.GetConstraintsForLabels(b.Context(), labels)
+				if err != nil || len(constraints) != count {
+					b.Fatalf("constraint lookup: %v, %d constraints", err, len(constraints))
 				}
 			}
 		})

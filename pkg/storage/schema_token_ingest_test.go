@@ -65,7 +65,7 @@ func TestKnownSchemaTokenSnapshotFollowsTransactionSchemaInstall(t *testing.T) {
 	transactionSchema := NewSchemaManager()
 	require.NoError(t, transactionSchema.ReplaceFromDefinition(&SchemaDefinition{LabelTokens: []string{"Replacement"}}))
 	schema.mu.Lock()
-	schema.installTransactionSchemaLocked(transactionSchema)
+	schema.installSchemaLocked(transactionSchema, transactionSchemaInstallation)
 	schema.mu.Unlock()
 
 	sentinel := errors.New("token write rejected")

@@ -28,8 +28,8 @@ type AccessMetaReadResult struct {
 }
 
 // AccessMetaStore is the persistence interface for AccessMetaEntry. ReadAccessMeta
-// is the only read entry point; PutAccessMeta writes one entity's entry.
+// is the only read entry point; WriteAccessMeta writes one entity's entry under an explicit policy.
 type AccessMetaStore interface {
 	ReadAccessMeta(request AccessMetaReadRequest) (AccessMetaReadResult, error)
-	PutAccessMeta(entityID string, entry *AccessMetaEntry) error
+	WriteAccessMeta(request AccessMetaWriteRequest) (written bool, err error)
 }

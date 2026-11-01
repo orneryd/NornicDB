@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
@@ -106,7 +107,7 @@ func BenchmarkCardinalityRoutes(b *testing.B) {
 				b.ReportAllocs()
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
-					if err := tx.checkEdgeCardinality(probe, constraint, "test"); err != nil {
+					if err := tx.checkEdgeCardinality(context.Background(), probe, constraint, "test"); err != nil {
 						b.Fatalf("checkEdgeCardinality: %v", err)
 					}
 					calls++

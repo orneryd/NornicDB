@@ -57,7 +57,11 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(ctx context.
 	// the leading k properties → LookupPrefix. The residual nodeMatchesProps
 	// step still enforces every non-indexed predicate.
 	if len(nodeInfo.labels) > 0 {
-		for _, idx := range schema.SeekableCompositeIndexesForLabel(nodeInfo.labels[0]) {
+		indexes, err := schema.SeekableCompositeIndexesForLabel(ctx, nodeInfo.labels[0])
+		if err != nil {
+			return nil, false, err
+		}
+		for _, idx := range indexes {
 			if idx == nil || len(idx.Properties) < 2 {
 				// Arity-1 indexes are served by the per-property loop below,
 				// whose authoritative-miss logic handles values an index can't

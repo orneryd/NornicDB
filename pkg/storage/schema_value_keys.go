@@ -49,6 +49,27 @@ func indexValueKey(ctx context.Context, value interface{}) (interface{}, bool, e
 	return key, true, nil
 }
 
+// nonNilUnorderedIndexKey is membership only, never an equality key. It keeps
+// accepted nonnull values without an indexValueKey (for example []byte) in the
+// same arity-one/pending property population used by complete candidate reads.
+type nonNilUnorderedIndexKey struct{}
+
+func indexNonNilMembershipKey(ctx context.Context, value interface{}) (interface{}, bool, error) {
+	key, keyed, err := indexValueKey(ctx, value)
+	if err != nil || keyed || value == nil {
+		return key, keyed, err
+	}
+	return nonNilUnorderedIndexKey{}, true, nil
+}
+
+func unorderedIndexMembership(key interface{}) bool {
+	switch key.(type) {
+	case compositeIndexKey, nonNilUnorderedIndexKey:
+		return true
+	}
+	return false
+}
+
 // numericIndexKey keys a number by its exact value: as float64 when a float64
 // holds it exactly (every float, and every integer within ±2^53 or otherwise
 // representable), else as the integer itself, uint64 when non-negative and
@@ -102,7 +123,8 @@ func exactUnsignedIndexKey(n uint64) interface{} {
 // compositeIndexKey is the index key of a list or map value: a canonical text
 // of its elements, numbers in their numeric form, so [1, 2] and [1.0, 2.0]
 // share a key, and map entries in key order. Its own type keeps it apart from
-// string keys. Ordered index scans skip it (sortedKeysViewLocked).
+// string keys. It contributes to complete nonnull candidates, but is not a
+// property value that an ordered index read can sort.
 type compositeIndexKey string
 
 func compositeIndexKeyOf(ctx context.Context, value interface{}) (compositeIndexKey, bool, error) {

@@ -777,17 +777,17 @@ func TestCompositeIndexOperations(t *testing.T) {
 		idx, _ := sm.GetCompositeIndex("location_idx")
 
 		// Index some nodes
-		idx.IndexNode("user1", map[string]interface{}{
+		idx.IndexNode(t.Context(), "user1", map[string]interface{}{
 			"country": "US",
 			"city":    "NYC",
 			"zipcode": "10001",
 		})
-		idx.IndexNode("user2", map[string]interface{}{
+		idx.IndexNode(t.Context(), "user2", map[string]interface{}{
 			"country": "US",
 			"city":    "NYC",
 			"zipcode": "10002",
 		})
-		idx.IndexNode("user3", map[string]interface{}{
+		idx.IndexNode(t.Context(), "user3", map[string]interface{}{
 			"country": "US",
 			"city":    "LA",
 			"zipcode": "90001",
@@ -818,22 +818,22 @@ func TestCompositeIndexOperations(t *testing.T) {
 		idx, _ := sm.GetCompositeIndex("location_idx")
 
 		// Index some nodes
-		idx.IndexNode("user1", map[string]interface{}{
+		idx.IndexNode(t.Context(), "user1", map[string]interface{}{
 			"country": "US",
 			"city":    "NYC",
 			"zipcode": "10001",
 		})
-		idx.IndexNode("user2", map[string]interface{}{
+		idx.IndexNode(t.Context(), "user2", map[string]interface{}{
 			"country": "US",
 			"city":    "NYC",
 			"zipcode": "10002",
 		})
-		idx.IndexNode("user3", map[string]interface{}{
+		idx.IndexNode(t.Context(), "user3", map[string]interface{}{
 			"country": "US",
 			"city":    "LA",
 			"zipcode": "90001",
 		})
-		idx.IndexNode("user4", map[string]interface{}{
+		idx.IndexNode(t.Context(), "user4", map[string]interface{}{
 			"country": "UK",
 			"city":    "London",
 			"zipcode": "SW1A",
@@ -875,7 +875,7 @@ func TestCompositeIndexOperations(t *testing.T) {
 		}
 
 		// Index and verify
-		idx.IndexNode("user1", props)
+		idx.IndexNode(t.Context(), "user1", props)
 		results := checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), "US", "NYC"))
 		if len(results) != 1 {
 			t.Fatal("Index failed")
@@ -901,7 +901,7 @@ func TestCompositeIndexOperations(t *testing.T) {
 		idx, _ := sm.GetCompositeIndex("location_idx")
 
 		// Node with only some properties
-		idx.IndexNode("user1", map[string]interface{}{
+		idx.IndexNode(t.Context(), "user1", map[string]interface{}{
 			"country": "US",
 			"city":    "NYC",
 			// No zipcode
@@ -931,9 +931,9 @@ func TestCompositeIndexOperations(t *testing.T) {
 		idx, _ := sm.GetCompositeIndex("location_idx")
 
 		// Index some nodes - we'll filter by ID for simplicity
-		idx.IndexNode("user1", map[string]interface{}{"country": "US", "city": "NYC"})
-		idx.IndexNode("user2", map[string]interface{}{"country": "US", "city": "NYC"})
-		idx.IndexNode("user3", map[string]interface{}{"country": "US", "city": "NYC"})
+		idx.IndexNode(t.Context(), "user1", map[string]interface{}{"country": "US", "city": "NYC"})
+		idx.IndexNode(t.Context(), "user2", map[string]interface{}{"country": "US", "city": "NYC"})
+		idx.IndexNode(t.Context(), "user3", map[string]interface{}{"country": "US", "city": "NYC"})
 
 		// Filter to only even-numbered users (user2)
 		results := checkedIndexRead[[]NodeID](t)(idx.LookupWithFilter(t.Context(), func(id NodeID) bool {
@@ -950,8 +950,8 @@ func TestCompositeIndexOperations(t *testing.T) {
 		sm.AddCompositeIndex("location_idx", "User", []string{"country", "city", "zipcode"})
 		idx, _ := sm.GetCompositeIndex("location_idx")
 
-		idx.IndexNode("user1", map[string]interface{}{"country": "US", "city": "NYC", "zipcode": "10001"})
-		idx.IndexNode("user2", map[string]interface{}{"country": "US", "city": "LA", "zipcode": "90001"})
+		idx.IndexNode(t.Context(), "user1", map[string]interface{}{"country": "US", "city": "NYC", "zipcode": "10001"})
+		idx.IndexNode(t.Context(), "user2", map[string]interface{}{"country": "US", "city": "LA", "zipcode": "90001"})
 
 		stats := idx.Stats()
 
@@ -994,7 +994,7 @@ func TestCompositeIndexConcurrency(t *testing.T) {
 				}
 
 				// Index
-				idx.IndexNode(nodeID, props)
+				idx.IndexNode(t.Context(), nodeID, props)
 
 				// Lookup
 				checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), fmt.Sprintf("a-%d", gid), fmt.Sprintf("b-%d", i)))
@@ -1057,7 +1057,7 @@ func TestCompositeIndexEdgeCases(t *testing.T) {
 
 		// Indexing with a nil leading value: like a single-property index,
 		// null has no index key, so the node is not filed under any key.
-		err := idx.IndexNode("user1", map[string]interface{}{
+		err := idx.IndexNode(t.Context(), "user1", map[string]interface{}{
 			"a": nil,
 			"b": "test",
 		})
@@ -1077,7 +1077,7 @@ func TestCompositeIndexEdgeCases(t *testing.T) {
 		sm.AddCompositeIndex("test_idx", "User", []string{"a", "b"})
 		idx, _ := sm.GetCompositeIndex("test_idx")
 
-		idx.IndexNode("user1", map[string]interface{}{
+		idx.IndexNode(t.Context(), "user1", map[string]interface{}{
 			"a": "",
 			"b": "test",
 		})
@@ -1093,7 +1093,7 @@ func TestCompositeIndexEdgeCases(t *testing.T) {
 		sm.AddCompositeIndex("test_idx", "Node", []string{"int_val", "float_val", "bool_val"})
 		idx, _ := sm.GetCompositeIndex("test_idx")
 
-		idx.IndexNode("node1", map[string]interface{}{
+		idx.IndexNode(t.Context(), "node1", map[string]interface{}{
 			"int_val":   42,
 			"float_val": 3.14,
 			"bool_val":  true,
@@ -1119,8 +1119,8 @@ func TestCompositeIndexEdgeCases(t *testing.T) {
 		props := map[string]interface{}{"a": "x", "b": "y"}
 
 		// Index same node twice
-		idx.IndexNode("user1", props)
-		idx.IndexNode("user1", props)
+		idx.IndexNode(t.Context(), "user1", props)
+		idx.IndexNode(t.Context(), "user1", props)
 
 		// Should still only have one entry
 		results := checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), "x", "y"))
@@ -1144,7 +1144,7 @@ func TestCompositeIndexEdgeCases(t *testing.T) {
 		idx, _ := sm.GetCompositeIndex("test_idx")
 
 		// Index a node with all 5 properties
-		idx.IndexNode("user1", map[string]interface{}{
+		idx.IndexNode(t.Context(), "user1", map[string]interface{}{
 			"a": "1", "b": "2", "c": "3", "d": "4", "e": "5",
 		})
 
@@ -1166,7 +1166,7 @@ func BenchmarkCompositeIndex(b *testing.B) {
 
 	// Pre-populate with some data
 	for i := 0; i < 10000; i++ {
-		idx.IndexNode(NodeID(prefixTestID(fmt.Sprintf("user-%d", i))), map[string]interface{}{
+		idx.IndexNode(b.Context(), NodeID(prefixTestID(fmt.Sprintf("user-%d", i))), map[string]interface{}{
 			"country": fmt.Sprintf("country-%d", i%100),
 			"city":    fmt.Sprintf("city-%d", i%1000),
 			"zipcode": fmt.Sprintf("zip-%d", i),
@@ -1175,7 +1175,7 @@ func BenchmarkCompositeIndex(b *testing.B) {
 
 	b.Run("IndexNode", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			idx.IndexNode(NodeID(prefixTestID(fmt.Sprintf("bench-user-%d", i))), map[string]interface{}{
+			idx.IndexNode(b.Context(), NodeID(prefixTestID(fmt.Sprintf("bench-user-%d", i))), map[string]interface{}{
 				"country": "US",
 				"city":    "NYC",
 				"zipcode": fmt.Sprintf("1000%d", i),
@@ -1555,9 +1555,9 @@ func TestCompositeIndex_LookupWithFilter(t *testing.T) {
 		prefixIndex: make(map[string][]NodeID),
 	}
 
-	idx.IndexNode("test:n1", map[string]interface{}{"country": "US", "city": "NYC"})
-	idx.IndexNode("test:n2", map[string]interface{}{"country": "US", "city": "LA"})
-	idx.IndexNode("test:n3", map[string]interface{}{"country": "UK", "city": "LDN"})
+	idx.IndexNode(t.Context(), "test:n1", map[string]interface{}{"country": "US", "city": "NYC"})
+	idx.IndexNode(t.Context(), "test:n2", map[string]interface{}{"country": "US", "city": "LA"})
+	idx.IndexNode(t.Context(), "test:n3", map[string]interface{}{"country": "UK", "city": "LDN"})
 
 	// Filter by prefix "US", then apply filter to only keep n1
 	results := checkedIndexRead[[]NodeID](t)(idx.LookupWithFilter(t.Context(), func(id NodeID) bool {
@@ -1580,7 +1580,7 @@ func TestCompositeIndex_Stats(t *testing.T) {
 		prefixIndex: make(map[string][]NodeID),
 	}
 
-	idx.IndexNode("test:n1", map[string]interface{}{"country": "US", "city": "NYC"})
+	idx.IndexNode(t.Context(), "test:n1", map[string]interface{}{"country": "US", "city": "NYC"})
 
 	stats := idx.Stats()
 	assert.Equal(t, "stats_idx", stats["name"])
@@ -1597,7 +1597,7 @@ func TestSchemaManager_LookupPrefix_FullMatch(t *testing.T) {
 		prefixIndex: make(map[string][]NodeID),
 	}
 
-	idx.IndexNode("test:n1", map[string]interface{}{"country": "US", "city": "NYC"})
+	idx.IndexNode(t.Context(), "test:n1", map[string]interface{}{"country": "US", "city": "NYC"})
 
 	// LookupPrefix with all properties is a full match
 	results := checkedIndexRead[[]NodeID](t)(idx.LookupPrefix(t.Context(), "US", "NYC"))
@@ -1622,8 +1622,8 @@ func TestCompositeIndex_RemoveNode(t *testing.T) {
 	}
 
 	// Index a node
-	idx.IndexNode("test:n1", map[string]interface{}{"country": "US", "city": "NYC"})
-	idx.IndexNode("test:n2", map[string]interface{}{"country": "US", "city": "LA"})
+	idx.IndexNode(t.Context(), "test:n1", map[string]interface{}{"country": "US", "city": "NYC"})
+	idx.IndexNode(t.Context(), "test:n2", map[string]interface{}{"country": "US", "city": "LA"})
 
 	// Verify indexed
 	results := checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), "US", "NYC"))

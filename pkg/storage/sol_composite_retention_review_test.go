@@ -19,10 +19,10 @@ func TestSolCompositeRetiredIDCollectible(t *testing.T) {
 				props := map[string]any{"a": 1, "b": 2}
 				ref := func() weak.Pointer[byte] {
 					id := NodeID(strings.Repeat("retired-id", 8192))
-					if err := idx.IndexNode("test:kept", props); err != nil {
+					if err := idx.IndexNode(t.Context(), "test:kept", props); err != nil {
 						t.Fatal(err)
 					}
-					if err := idx.IndexNode(id, props); err != nil {
+					if err := idx.IndexNode(t.Context(), id, props); err != nil {
 						t.Fatal(err)
 					}
 					ref := weak.Make(unsafe.StringData(string(id)))

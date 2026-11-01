@@ -20,8 +20,10 @@ func TestSchemaManager_GetConstraintsForLabelsOrderedByName(t *testing.T) {
 		}
 		require.NoError(t, sm.AddConstraint(Constraint{Name: name, Type: ConstraintExists, Label: label, Properties: []string{name}}))
 	}
+	constraints, err := sm.GetConstraintsForLabels(t.Context(), []string{"User"})
+	require.NoError(t, err)
 	var names []string
-	for _, c := range sm.GetConstraintsForLabels([]string{"User"}) {
+	for _, c := range constraints {
 		names = append(names, c.Name)
 	}
 	require.Equal(t, []string{"a_exists", "b_key", "c_unique"}, names)

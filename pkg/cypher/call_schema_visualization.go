@@ -33,7 +33,10 @@ func (e *StorageExecutor) callDbSchemaVisualizationWithContext(ctx context.Conte
 	virtualNodes := make([]*storage.Node, 0, len(labels))
 	virtualByLabel := make(map[string]*storage.Node, len(labels))
 	for _, label := range collection.SortedKeys(labels) {
-		indexes, constraints := schemaVisualizationLabelMetadata(store.GetSchema(), label)
+		indexes, constraints, err := schemaVisualizationLabelMetadata(ctx, store.GetSchema(), label)
+		if err != nil {
+			return nil, err
+		}
 		node := &storage.Node{
 			ID:         storage.NodeID("-" + strconv.Itoa(len(virtualNodes)+1)),
 			Labels:     []string{label},
@@ -84,11 +87,15 @@ func (e *StorageExecutor) callDbSchemaVisualizationWithContext(ctx context.Conte
 	}, nil
 }
 
-func schemaVisualizationLabelMetadata(schema *storage.SchemaManager, label string) ([]string, []string) {
+func schemaVisualizationLabelMetadata(ctx context.Context, schema *storage.SchemaManager, label string) ([]string, []string, error) {
 	indexes := []string{}
 	constraints := []string{}
 	ownedIndexes := make(map[string]bool)
-	for _, constraint := range schema.GetConstraintsForLabels([]string{label}) {
+	discovered, err := schema.GetConstraintsForLabels(ctx, []string{label})
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, constraint := range discovered {
 		if constraint.EffectiveEntityType() != storage.ConstraintEntityNode {
 			continue
 		}
@@ -120,5 +127,5 @@ func schemaVisualizationLabelMetadata(schema *storage.SchemaManager, label strin
 	}
 	slices.Sort(indexes)
 	slices.Sort(constraints)
-	return indexes, constraints
+	return indexes, constraints, nil
 }

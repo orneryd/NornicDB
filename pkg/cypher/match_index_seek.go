@@ -1313,8 +1313,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexNotNull(ctx context.Co
 		return nil, false, nil
 	}
 	nodes, used, err := e.collectNodesFromIndexedProperty(ctx, schema, nodePattern, property, func(label string) ([]storage.NodeID, bool, error) {
-		ids, err := schema.PropertyIndexAllNonNil(ctx, label, property, false)
-		return ids, true, err
+		return schema.PropertyIndexNonNilCandidates(ctx, label, property)
 	})
 	return nodes, used, err
 }

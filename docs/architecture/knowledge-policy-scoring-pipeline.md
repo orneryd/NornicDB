@@ -73,7 +73,7 @@ flowchart TD
     MERGE --> PSUP["evaluatePropertySuppression<br/>scoreEntityProperty per property"]
     PSUP --> EMB{"property suppression changed<br/>and target is not an edge?"}
     EMB -- yes --> EI["EmbedInvalidate"]
-    EMB -- no --> WRITE["PutAccessMeta"]
+    EMB -- no --> WRITE["WriteAccessMeta"]
     EI --> WRITE
     WRITE --> AMS
     WRITE --> RECHECK["SuppressionRecheck"]

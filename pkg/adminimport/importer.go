@@ -951,7 +951,7 @@ func (c closers) Close() error {
 
 func applySchema(ctx context.Context, engine storage.Engine, path string) error {
 	if strings.EqualFold(filepath.Ext(path), ".json") {
-		return applySchemaDefinition(engine, path)
+		return applySchemaDefinition(ctx, engine, path)
 	}
 	contents, err := os.ReadFile(path)
 	if err != nil {
@@ -969,7 +969,7 @@ func applySchema(ctx context.Context, engine storage.Engine, path string) error 
 	return nil
 }
 
-func applySchemaDefinition(engine storage.Engine, path string) error {
+func applySchemaDefinition(ctx context.Context, engine storage.Engine, path string) error {
 	contents, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -978,54 +978,7 @@ func applySchemaDefinition(engine storage.Engine, path string) error {
 	if err := jsontext.Unmarshal(contents, &def); err != nil {
 		return err
 	}
-	schema := engine.GetSchema()
-	if err := schema.ReplaceFromDefinition(&def); err != nil {
-		return err
-	}
-	if err := rebuildSchemaDerivedState(engine, schema); err != nil {
-		return err
-	}
-	for _, constraint := range schema.GetAllConstraints() {
-		if err := storage.ValidateConstraintOnCreationForEngine(engine, constraint); err != nil {
-			return err
-		}
-	}
-	for _, typeConstraint := range schema.GetAllPropertyTypeConstraints() {
-		if err := storage.ValidatePropertyTypeConstraintOnCreationForEngine(engine, typeConstraint); err != nil {
-			return err
-		}
-	}
-	for _, contract := range schema.GetAllConstraintContracts() {
-		if err := storage.ValidateConstraintContractOnCreationForEngine(engine, contract); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func rebuildSchemaDerivedState(engine storage.Engine, schema *storage.SchemaManager) error {
-	if err := storage.RefreshUniqueConstraintValuesForEngine(engine, schema); err != nil {
-		return err
-	}
-	// Every stored node, those the visibility layer hides from reads
-	// included: the indexes are trusted to hold every matching node.
-	if err := storage.StreamStoredNodes(context.Background(), engine, storage.StreamNodesOptions{}, func(node *storage.Node) error {
-		for _, label := range node.Labels {
-			for _, idx := range schema.GetCompositeIndexesForLabel(label) {
-				if idx == nil {
-					continue
-				}
-				if err := idx.IndexNode(node.ID, node.Properties); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
-	schema.MarkPropertyIndexesFilled()
-	return nil
+	return engine.GetSchema().ReplaceDefinitionDurable(ctx, engine, &def)
 }
 
 func splitCypherStatements(source string) []string {

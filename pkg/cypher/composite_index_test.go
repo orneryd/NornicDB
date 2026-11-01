@@ -554,7 +554,9 @@ func TestCompositeIndexEqualitySeekAndMerge(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, []string{"a", "b"}, idx.Properties)
 	// Backfilled and therefore seekable.
-	require.Len(t, schema.SeekableCompositeIndexesForLabel("L"), 1)
+	seekable, err := schema.SeekableCompositeIndexesForLabel(ctx, "L")
+	require.NoError(t, err)
+	require.Len(t, seekable, 1)
 
 	// MERGE resolves the full key through the composite index (no label scan).
 	result, err := exec.Execute(ctx, `MERGE (n:L {a: 1, b: 2}) ON CREATE SET n.created = true RETURN n.created`, nil)

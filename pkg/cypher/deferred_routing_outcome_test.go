@@ -51,7 +51,7 @@ func TestExecuteRoutedDeferredOutcome(t *testing.T) {
 		{name: "PROFILE USE", query: "PROFILE USE nornic " + create, frame: 3, persisted: 1, committed: true},
 		{name: "procedure re-entry", query: "CALL apoc.cypher.run('CREATE (:DeferredRouted) RETURN 1 AS one', {}) YIELD value RETURN value", frame: 1, persisted: 1, committed: true},
 		{name: "procedure parameters", query: "CALL apoc.cypher.run($query, {}) YIELD value RETURN value", params: map[string]interface{}{"query": "CREATE (:DeferredRouted) RETURN 1 AS one"}, frame: 1, persisted: 1, committed: true},
-		{name: "legacy write", fixture: "legacy", query: create, frame: 1, persisted: 1, committed: true},
+		{name: "transaction-unsupported write", fixture: "no_tx", query: create, frame: 1, failed: true},
 		{name: "CALL USE", query: "CALL { USE nornic CREATE (:DeferredRouted) } RETURN 1 AS one", frame: 1, persisted: 1, committed: true},
 		{name: "CALL in transactions", query: "UNWIND [1,2,3] AS x CALL (x) { CREATE (:DeferredRouted {x: x}) } IN TRANSACTIONS OF 1 ROWS", frame: 1, persisted: 3, committed: true},
 		{name: "USE CALL in transactions", query: "USE nornic UNWIND [1,2,3] AS x CALL (x) { CREATE (:DeferredRouted {x: x}) } IN TRANSACTIONS OF 1 ROWS", frame: 2, persisted: 3, committed: true},
@@ -74,8 +74,8 @@ func TestExecuteRoutedDeferredOutcome(t *testing.T) {
 		{name: "CALL in transactions read", query: "UNWIND [1,2] AS x CALL (x) { RETURN x AS y } IN TRANSACTIONS OF 1 ROWS RETURN y", frame: 1},
 		{name: "procedure parameters read", query: "CALL apoc.cypher.run($query, {}) YIELD value RETURN value", params: map[string]interface{}{"query": "RETURN 1 AS one"}, frame: 1},
 		{name: "procedure literal read", query: "CALL apoc.cypher.run($query, {}) YIELD value RETURN value", params: map[string]interface{}{"query": "RETURN 'CREATE' AS word"}, frame: 1},
-		{name: "legacy read", fixture: "legacy", query: "RETURN 1 AS one", frame: 1},
-		{name: "legacy literal read", fixture: "legacy", query: "RETURN 'CREATE' AS word", frame: 1},
+		{name: "legacy read", fixture: "no_tx", query: "RETURN 1 AS one", frame: 1},
+		{name: "transaction-unsupported literal read", fixture: "no_tx", query: "RETURN 'CREATE' AS word", frame: 1},
 		{name: "USE explicit uncommitted", prepare: []string{"BEGIN"}, query: "USE nornic " + create, frame: 2},
 		{name: "transaction rollback", query: "BEGIN " + create + " ROLLBACK", frame: 1},
 		{name: "USE failed child", query: "USE nornic RETURN missingDeferredVariable", frame: 2, failed: true},
@@ -86,7 +86,7 @@ func TestExecuteRoutedDeferredOutcome(t *testing.T) {
 			session, stores := nestedUseRouterExecutor(t, "nornic")
 			observer := NewStorageExecutor(stores["nornic"])
 			observer.SetDatabaseManager(session.dbManager)
-			if tc.fixture == "legacy" {
+			if tc.fixture == "no_tx" {
 				manager := session.dbManager
 				session = NewStorageExecutor(nonTransactionalEngine{Engine: stores["nornic"]})
 				session.SetDatabaseManager(manager)
@@ -133,6 +133,9 @@ func TestExecuteRoutedDeferredOutcome(t *testing.T) {
 				require.NotNil(t, result)
 			} else if tc.failed {
 				require.Error(t, err)
+				if tc.fixture == "no_tx" {
+					require.ErrorContains(t, err, "engine does not support transactions")
+				}
 				require.NotErrorIs(t, err, context.Canceled, "preserve the execution failure")
 			} else {
 				require.ErrorIs(t, err, context.Canceled)

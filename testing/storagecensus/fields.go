@@ -125,6 +125,18 @@ var fieldClasses = map[string]fieldRow{
 	// quota, suppression or publication-order value. Classify the exact field,
 	// so new state on the type still requires its own census decision.
 	"pkg/storage.bulkReadCancellation.remaining": {class: "request-local cancellation polling progress"},
+	// These offsets delimit equal-value groups in the privately owned ID result
+	// of readPropertyIndexSnapshot. They are query-result metadata, created by
+	// snapshotPropertyIndexLocked and consumed after the source leases end; they
+	// are not stored entity counts, quotas, suppression or publication state.
+	// Classify only this field so future fields still require their own review.
+	"pkg/storage.propertyIndexSnapshot.groupEnds": {class: "owned read-snapshot group boundaries"},
+	// IndexNode and relationshipUniqueIndex.put own this local prepared-key
+	// image until applyNodeKeysLocked copies its hashes into posting maps.
+	// appendPrefix advances only this scratch cursor; it is not an entity
+	// count, quota, suppression or publication-order field. No other field on
+	// preparedCompositeNodeKeys inherits this exact classification.
+	"pkg/storage.preparedCompositeNodeKeys.prefixCount": {class: "index-entry preparation prefix cursor"},
 	// This counter belongs to one synchronous constraint validation. It is
 	// neither an engine total nor quota/publication state; only counts changes
 	// it as the validation streams its selected edge images.

@@ -1254,10 +1254,14 @@ func (tx *BadgerTransaction) labelScanScopeLocked(prefixes ...string) string {
 // state from changing under the check. Nodes this transaction deletes or
 // rewrites are left out; the checks compare their pending versions
 // separately.
-func (tx *BadgerTransaction) committedConstraintNodesLocked(label string) ([]*Node, error) {
-	// A commit-time integrity scan on the accepted write's own lifetime
-	// (context.Background): a canceled statement read never cancels it.
-	nodes, err := tx.engine.GetStoredNodesByLabel(context.Background(), label)
+//
+// ctx is the lifetime of that enumeration, like validateNodeConstraints': a
+// commit passes the commit preparation context, so a terminated statement stops
+// inside the canonical bulk reader instead of after materializing every node of
+// the label; a staging write passes its own context, which is the staging
+// write's lifetime.
+func (tx *BadgerTransaction) committedConstraintNodesLocked(ctx context.Context, label string) ([]*Node, error) {
+	nodes, err := tx.engine.GetStoredNodesByLabel(ctx, label)
 	if err != nil {
 		return nil, err
 	}

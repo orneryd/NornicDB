@@ -23,8 +23,8 @@ func TestCompositeIndexSeparatesDelimiterShapedValues(t *testing.T) {
 	require.NoError(t, schema.AddCompositeIndex("tuple", "Pair", []string{"left", "right"}))
 	idx, ok := schema.GetCompositeIndex("tuple")
 	require.True(t, ok)
-	require.NoError(t, idx.IndexNode("one", map[string]interface{}{"left": left[0], "right": left[1]}))
-	require.NoError(t, idx.IndexNode("two", map[string]interface{}{"left": right[0], "right": right[1]}))
+	require.NoError(t, idx.IndexNode(t.Context(), "one", map[string]interface{}{"left": left[0], "right": left[1]}))
+	require.NoError(t, idx.IndexNode(t.Context(), "two", map[string]interface{}{"left": right[0], "right": right[1]}))
 	for _, test := range []struct {
 		values []interface{}
 		id     NodeID

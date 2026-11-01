@@ -409,15 +409,19 @@ func parseUnwindLookupClause(clause string) (unwindMergeChainLookupPlan, bool) {
 	}, true
 }
 
-func unwindLookupSetHasUniqueAnchor(schema *storage.SchemaManager, lookupPlan unwindMergeChainLookupPlan) bool {
+func unwindLookupSetHasUniqueAnchor(ctx context.Context, schema *storage.SchemaManager, lookupPlan unwindMergeChainLookupPlan) (bool, error) {
 	if schema == nil || lookupPlan.anyLabel || len(lookupPlan.labels) != 1 || len(lookupPlan.matchAssignments) == 0 {
-		return false
+		return false, nil
 	}
 	matchedProps := make(map[string]struct{}, len(lookupPlan.matchAssignments))
 	for _, assignment := range lookupPlan.matchAssignments {
 		matchedProps[assignment.prop] = struct{}{}
 	}
-	for _, constraint := range schema.GetConstraintsForLabels([]string{lookupPlan.labels[0]}) {
+	constraints, err := schema.GetConstraintsForLabels(ctx, []string{lookupPlan.labels[0]})
+	if err != nil {
+		return false, err
+	}
+	for _, constraint := range constraints {
 		if constraint.EffectiveEntityType() != storage.ConstraintEntityNode {
 			continue
 		}
@@ -435,23 +439,27 @@ func unwindLookupSetHasUniqueAnchor(schema *storage.SchemaManager, lookupPlan un
 			}
 		}
 		if allConstraintPropsMatched {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
-func unwindMergeChainMatchSetLookupsAreUnique(store storage.Engine, plan unwindMergeChainPlan) bool {
+func unwindMergeChainMatchSetLookupsAreUnique(ctx context.Context, store storage.Engine, plan unwindMergeChainPlan) (bool, error) {
 	schema := store.GetSchema()
 	for _, step := range plan.steps {
 		if step.lookup == nil || len(step.lookup.setAssignments) == 0 {
 			continue
 		}
-		if !unwindLookupSetHasUniqueAnchor(schema, *step.lookup) {
-			return false
+		anchored, err := unwindLookupSetHasUniqueAnchor(ctx, schema, *step.lookup)
+		if err != nil {
+			return false, err
+		}
+		if !anchored {
+			return false, nil
 		}
 	}
-	return true
+	return true, nil
 }
 
 func unwindMergeLabelsKey(labels []string) string {

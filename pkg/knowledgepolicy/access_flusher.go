@@ -2,6 +2,7 @@ package knowledgepolicy
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -253,7 +254,10 @@ func (f *AccessFlusher) flush() {
 					entry.TargetScope = meta.Scope
 				}
 			} else {
-				f.outcomes.Record("access entity metadata", err)
+				if !errors.Is(err, ErrEntityMetaNotFound) {
+					f.outcomes.Record("access entity metadata", err)
+				}
+				continue
 			}
 		}
 
@@ -295,15 +299,21 @@ func (f *AccessFlusher) flush() {
 		entry.LastMutatedAt = now
 		entry.MutationCount++
 
-		if f.evaluatePropertySuppression(entityID, entry, meta, now) {
+		changed := f.evaluatePropertySuppression(entityID, entry, meta, now)
+		written, err := f.store.WriteAccessMeta(AccessMetaWriteRequest{Mode: FlushExistingEntity, EntityID: entityID, Entry: entry})
+		if err != nil {
+			f.outcomes.Record("access metadata write", err)
+			continue
+		}
+		if !written {
+			continue
+		}
+		if changed {
 			propertySuppressionChanges++
-			// Suppression state changed — trigger re-embedding.
 			if f.embedInvalidate != nil && entry.TargetScope != ScopeEdge {
 				f.embedInvalidate(entityID)
 			}
 		}
-
-		f.outcomes.Record("access metadata write", f.store.PutAccessMeta(entityID, entry))
 		if f.suppressionRecheck != nil {
 			f.suppressionRecheck(entityID, meta)
 		}

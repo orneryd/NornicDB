@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"

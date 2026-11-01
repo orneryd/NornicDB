@@ -102,13 +102,13 @@ func (tx *BadgerTransaction) publishKnowledgePolicySchemaLocked() func() {
 	committed := tx.engine.GetSchemaForNamespace(tx.namespace)
 	committed.mu.Lock()
 	if tx.schemaRuntime != nil {
-		committed.installTransactionSchemaLocked(tx.schemaRuntime)
+		committed.installSchemaLocked(tx.schemaRuntime, transactionSchemaInstallation)
 	}
 	committed.decayProfileBundles = snapshot.decayProfileBundles
 	committed.decayProfileBindings = snapshot.decayProfileBindings
 	committed.promotionProfiles = snapshot.promotionProfiles
 	committed.promotionPolicies = snapshot.promotionPolicies
-	committed.rebuildBindingTableLocked()
+	committed.bindingTable = snapshot.bindingTable
 	onChanged := committed.knowledgePolicyChanged
 	committed.mu.Unlock()
 	if tx.schemaRuntime != nil {

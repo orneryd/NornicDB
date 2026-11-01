@@ -108,7 +108,7 @@ func TestBadgerTransaction_CheckEdgeTemporalConstraint_GetEdgesByTypeErrorIsProp
 	c := Constraint{Type: ConstraintTemporal, Label: "REL", Properties: []string{"k", "vf", "vt"}}
 
 	require.NoError(t, engine.Close())
-	err = tx.checkEdgeTemporalConstraint(edge, c, "test")
+	err = tx.checkEdgeTemporalConstraint(context.Background(), edge, c, "test")
 	require.ErrorIs(t, err, ErrStorageClosed)
 }
 
@@ -130,7 +130,7 @@ func TestBadgerTransaction_ValidatePolicyOnNodeLabelChange_UsesPendingEdges(t *t
 	tx.pendingEdges["test:pe-out"] = &Edge{ID: "test:pe-out", StartNode: "test:n1", EndNode: "test:n2", Type: "REL"}
 	tx.pendingEdges["test:pe-in"] = &Edge{ID: "test:pe-in", StartNode: "test:n2", EndNode: "test:n1", Type: "REL"}
 
-	err = tx.validatePolicyOnNodeLabelChange(
+	err = tx.validatePolicyOnNodeLabelChange(context.Background(),
 		&Node{ID: "test:n1", Labels: []string{"A", "C"}},
 		&Node{ID: "test:n1", Labels: []string{"A"}},
 	)

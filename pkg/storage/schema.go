@@ -100,7 +100,7 @@ type SchemaManager struct {
 	// lock to that lock, for deadlock detection (#961).
 	uniqueConstraintLockWaits      map[string]*uniqueConstraintCommitLock
 	uniqueConstraintLockWaitShared map[string]bool
-	schemaMutationMu               sync.Mutex
+	schemaMutationMu               contextRWMutex
 
 	// Constraints
 	uniqueConstraints       map[string]*UniqueConstraint      // key: "Label:property"
@@ -504,10 +504,20 @@ type schemaMutationLease struct {
 // mutation cannot read the manager between a native commit's physical write
 // and its publication, and a native commit waiting for the gate holds no
 // schema lock.
-func (sm *SchemaManager) beginSchemaMutation() schemaMutationLease {
-	sm.publicationGate.Lock()
-	sm.mu.Lock()
-	return schemaMutationLease{schema: sm}
+func (sm *SchemaManager) beginSchemaMutation(ctx context.Context) (schemaMutationLease, error) {
+	if err := sm.publicationGate.LockContext(ctx); err != nil {
+		return schemaMutationLease{}, err
+	}
+	if err := sm.mu.LockContext(ctx); err != nil {
+		sm.publicationGate.Unlock()
+		return schemaMutationLease{}, err
+	}
+	lease := schemaMutationLease{schema: sm}
+	if err := ctx.Err(); err != nil {
+		lease.release()
+		return schemaMutationLease{}, err
+	}
+	return lease, nil
 }
 
 // release abandons a mutation that published nothing: the schema lock and then
@@ -525,6 +535,16 @@ func (lease schemaMutationLease) release() {
 // re-enters the engine and admits itself again.
 func (lease schemaMutationLease) commitPolicy(restore func()) error {
 	sm := lease.schema
+	// The staged families are compiled before the persister runs: a definition
+	// whose decay bindings or policy references do not compile is rejected
+	// instead of being persisted, and the previously published table keeps
+	// serving until an accepted candidate replaces it.
+	compiled, err := sm.compileBindingTableLocked()
+	if err != nil {
+		restore()
+		lease.release()
+		return err
+	}
 	if persist := sm.persist; persist != nil {
 		if err := persist(sm.exportDefinitionLocked()); err != nil {
 			restore()
@@ -532,7 +552,7 @@ func (lease schemaMutationLease) commitPolicy(restore func()) error {
 			return err
 		}
 	}
-	sm.rebuildBindingTableLocked()
+	sm.bindingTable = compiled
 	onChanged := sm.knowledgePolicyChanged
 	lease.release()
 	if onChanged != nil {
@@ -682,7 +702,10 @@ type RangeIndex struct {
 // Pass ifNotExists=true for IF NOT EXISTS semantics (duplicate is no-op).
 func (sm *SchemaManager) AddUniqueConstraint(name, label, property string, ifNotExists ...bool) error {
 	defer sm.trackPendingPairs()
-	lease := sm.beginSchemaMutation()
+	lease, admitErr := sm.beginSchemaMutation(context.Background())
+	if admitErr != nil {
+		return admitErr
+	}
 	defer lease.release()
 
 	silent := len(ifNotExists) > 0 && ifNotExists[0]
@@ -777,7 +800,10 @@ type PropertyTypeConstraintOptions struct {
 // Example: sm.AddPropertyTypeConstraint("age_type", "Person", "age",
 // PropertyTypeInteger, PropertyTypeConstraintOptions{EntityType: ConstraintEntityNode}).
 func (sm *SchemaManager) AddPropertyTypeConstraint(name, label, property string, expectedType PropertyType, opts PropertyTypeConstraintOptions) error {
-	lease := sm.beginSchemaMutation()
+	lease, admitErr := sm.beginSchemaMutation(context.Background())
+	if admitErr != nil {
+		return admitErr
+	}
 	defer lease.release()
 	ptc := PropertyTypeConstraint{
 		Name:         name,
@@ -850,7 +876,10 @@ func (sm *SchemaManager) AddCompositeIndex(name, label string, properties []stri
 	// once the lock is released.
 	defer sm.trackPendingPairs()
 
-	lease := sm.beginSchemaMutation()
+	lease, admitErr := sm.beginSchemaMutation(context.Background())
+	if admitErr != nil {
+		return admitErr
+	}
 	defer lease.release()
 
 	if _, exists := sm.compositeIndexes[name]; exists {
@@ -910,26 +939,45 @@ func (sm *SchemaManager) GetCompositeIndexesForLabel(label string) []*CompositeI
 // seek paths may use: filled only. Writes and rebuilds maintain every index
 // through GetCompositeIndexesForLabel, so a DDL-created index mid-backfill is
 // populated but never trusted for reads (#875).
-func (sm *SchemaManager) SeekableCompositeIndexesForLabel(label string) []*CompositeIndex {
-	sm.mu.RLock()
+//
+// ctx is the request the discovery serves: it bounds the wait for the schema
+// lock and the scan of every declared index, and a discovery that observes its
+// cancellation reports that error and no candidates rather than the indexes it
+// had already collected.
+func (sm *SchemaManager) SeekableCompositeIndexesForLabel(ctx context.Context, label string) ([]*CompositeIndex, error) {
+	if err := sm.mu.RLockContext(ctx); err != nil {
+		return nil, err
+	}
 	defer sm.mu.RUnlock()
 
 	var indexes []*CompositeIndex
+	var cancellation bulkReadCancellation
 	for _, idx := range sm.compositeIndexes {
+		if err := cancellation.check(ctx); err != nil {
+			return nil, err
+		}
 		if idx != nil && idx.Label == label && !idx.unfilled.Load() {
 			indexes = append(indexes, idx)
 		}
 	}
-	return indexes
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return indexes, nil
 }
 
 // BackfillCompositeIndex fills a newly created composite index from the
 // already-stored nodes, mirroring BackfillPropertyIndex. Nodes with pending
 // writes in an attached AsyncEngine are skipped: the engine indexes them when
 // they are flushed, and lookups see them through the pending view until then
-// (#719). On success the index is marked filled so seeks can use it.
-func (sm *SchemaManager) BackfillCompositeIndex(name string, entries map[NodeID]map[string]interface{}) error {
-	sm.mu.RLock()
+// (#719). On success the index is marked filled so seeks can use it. The caller
+// retains ctx through pending admission and every node preparation; a canceled
+// fill never marks an unfilled index ready; the DDL owner discards a canceled
+// staged declaration before it becomes visible.
+func (sm *SchemaManager) BackfillCompositeIndex(ctx context.Context, name string, entries map[NodeID]map[string]interface{}) error {
+	if err := sm.mu.RLockContext(ctx); err != nil {
+		return err
+	}
 	idx := sm.compositeIndexes[name]
 	sm.mu.RUnlock()
 	if idx == nil {
@@ -945,144 +993,28 @@ func (sm *SchemaManager) BackfillCompositeIndex(name string, entries map[NodeID]
 		}
 	}
 
-	// Backfill is a context-free Go maintenance boundary.
-	view, source, err := sm.beginPendingRead(context.Background())
+	// A DDL request owns this preparation until the completed index is admitted.
+	view, source, err := sm.beginPendingRead(ctx)
 	if err != nil {
 		return err
 	}
 	defer endPendingRead(source)
 	for nodeID, props := range entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if !view.keep(nodeID) {
 			continue
 		}
-		if err := idx.IndexNode(nodeID, props); err != nil {
+		if err := idx.IndexNode(ctx, nodeID, props); err != nil {
 			return err
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	idx.unfilled.Store(false)
 	return nil
-}
-
-// IndexNodeComposite indexes a node in a composite index. An arity-1 index
-// files the node under its canonical single-property key (values, the
-// encoding ORDER BY / range / equality seeks read); an arity >= 2 index files
-// it under its full and every leading-prefix composite key.
-// Call this when creating or updating a node with the indexed properties.
-func (idx *CompositeIndex) IndexNode(nodeID NodeID, properties map[string]interface{}) error {
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
-
-	if len(idx.Properties) == 1 {
-		value, exists := properties[idx.Properties[0]]
-		if !exists {
-			return nil
-		}
-		// IndexNode files the key of a write the engine already accepted, so the
-		// key has that write's lifetime: it cannot cancel.
-		valueKey, ok, err := indexValueKey(context.Background(), value)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return nil // null / byte array / non-comparable: no key to file
-		}
-		if idx.values == nil {
-			idx.values = make(map[interface{}][]NodeID)
-		}
-		if _, exists := idx.values[valueKey]; !exists {
-			idx.keysDirty = true
-		}
-		idx.values[valueKey] = appendUnique(idx.values[valueKey], nodeID)
-		return nil
-	}
-
-	// IndexNode files the keys of a write the engine already accepted, so the
-	// keys have that write's lifetime: maintenance must not be abandoned
-	// half-applied, and an accepted write carries no request to cancel it.
-	values, err := compositeIndexValues(context.Background(), idx, properties)
-	if err != nil {
-		return err
-	}
-
-	// Index full key if all properties present and keyable.
-	if len(values) == len(idx.Properties) {
-		full, err := NewCompositeKey(context.Background(), values...)
-		if err != nil {
-			return err
-		}
-		idx.fullIndex[full.Hash] = appendUnique(idx.fullIndex[full.Hash], nodeID)
-	}
-
-	// Index all prefixes for partial lookups.
-	for i := 1; i <= len(values); i++ {
-		prefixKey, err := NewCompositeKey(context.Background(), values[:i]...)
-		if err != nil {
-			return err
-		}
-		idx.prefixIndex[prefixKey.Hash] = appendUnique(idx.prefixIndex[prefixKey.Hash], nodeID)
-	}
-
-	return nil
-}
-
-// RemoveNode removes a node from the composite index.
-// Call this when deleting a node or updating its indexed properties.
-func (idx *CompositeIndex) RemoveNode(nodeID NodeID, properties map[string]interface{}) {
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
-
-	if len(idx.Properties) == 1 {
-		value, exists := properties[idx.Properties[0]]
-		if !exists {
-			return
-		}
-		// RemoveNode follows the write that removed the node's index entry, so
-		// the key has that write's lifetime: it cannot cancel.
-		valueKey, ok, err := indexValueKey(context.Background(), value)
-		if err != nil || !ok {
-			return
-		}
-		ids := removeNodeID(idx.values[valueKey], nodeID)
-		if len(ids) > 0 {
-			idx.values[valueKey] = ids
-		} else {
-			delete(idx.values, valueKey)
-			idx.keysDirty = true
-		}
-		return
-	}
-
-	// RemoveNode follows the write that removed the node's index entry: its
-	// keys digest on that write's lifetime, which cannot cancel, so a full or
-	// prefix key is either complete or the entry is left in place.
-	values, err := compositeIndexValues(context.Background(), idx, properties)
-	if err != nil {
-		return
-	}
-
-	// Remove from full index.
-	if len(values) == len(idx.Properties) {
-		key, err := NewCompositeKey(context.Background(), values...)
-		if err != nil {
-			return
-		}
-		idx.fullIndex[key.Hash] = removeNodeID(idx.fullIndex[key.Hash], nodeID)
-		if len(idx.fullIndex[key.Hash]) == 0 {
-			delete(idx.fullIndex, key.Hash)
-		}
-	}
-
-	// Remove from all prefix indexes.
-	for i := 1; i <= len(values); i++ {
-		prefixKey, err := NewCompositeKey(context.Background(), values[:i]...)
-		if err != nil {
-			return
-		}
-		idx.prefixIndex[prefixKey.Hash] = removeNodeID(idx.prefixIndex[prefixKey.Hash], nodeID)
-		if len(idx.prefixIndex[prefixKey.Hash]) == 0 {
-			delete(idx.prefixIndex, prefixKey.Hash)
-		}
-	}
 }
 
 // LookupFull finds nodes matching all property values exactly.
@@ -1106,7 +1038,7 @@ func (idx *CompositeIndex) LookupFull(ctx context.Context, values ...interface{}
 			return nil, err
 		}
 		defer idx.mu.RUnlock()
-		return copyIndexNodeIDs(ctx, idx.values[valueKey])
+		return appendIndexNodeIDs(ctx, nil, idx.values[valueKey])
 	}
 	canonical, ok, err := compositeLookupKeyValues(ctx, values)
 	if err != nil {
@@ -1122,17 +1054,21 @@ func (idx *CompositeIndex) LookupFull(ctx context.Context, values ...interface{}
 	return idx.lookupFullHash(ctx, key.Hash)
 }
 
-// copyIndexNodeIDs bounds cancellation latency while copying an index population.
-func copyIndexNodeIDs(ctx context.Context, ids []NodeID) ([]NodeID, error) {
+// appendIndexNodeIDs appends a borrowed index population into owned output in
+// bounded blocks. No partial output escapes on cancellation. A nil output
+// requests a fresh owned copy, including the existing nonnil empty-slice case.
+func appendIndexNodeIDs(ctx context.Context, out, ids []NodeID) ([]NodeID, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	out := make([]NodeID, len(ids))
-	for start := 0; start < len(ids); start += 256 {
+	if out == nil {
+		out = make([]NodeID, 0, len(ids))
+	}
+	for start := 0; start < len(ids); start += bulkReadCancellationInterval {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		copy(out[start:min(start+256, len(ids))], ids[start:min(start+256, len(ids))])
+		out = append(out, ids[start:min(start+bulkReadCancellationInterval, len(ids))]...)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -1148,7 +1084,7 @@ func (idx *CompositeIndex) lookupFullHash(ctx context.Context, hash string) ([]N
 	}
 	defer idx.mu.RUnlock()
 	if nodes, exists := idx.fullIndex[hash]; exists {
-		return copyIndexNodeIDs(ctx, nodes)
+		return appendIndexNodeIDs(ctx, nil, nodes)
 	}
 	return nil, ctx.Err()
 }
@@ -1193,7 +1129,7 @@ func (idx *CompositeIndex) LookupPrefix(ctx context.Context, values ...interface
 		source = idx.fullIndex
 	}
 	if nodes, exists := source[key.Hash]; exists {
-		return copyIndexNodeIDs(ctx, nodes)
+		return appendIndexNodeIDs(ctx, nil, nodes)
 	}
 	return nil, ctx.Err()
 }
@@ -1227,18 +1163,23 @@ func (idx *CompositeIndex) LookupWithFilter(ctx context.Context, filter func(Nod
 	return result, nil
 }
 
-// Stats returns statistics about the composite index.
+// Stats returns statistics about the composite index. valueEntries counts
+// equality-key buckets; membership-only unkeyable values are excluded.
 func (idx *CompositeIndex) Stats() map[string]interface{} {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 
+	valueEntries := len(idx.values)
+	if _, exists := idx.values[nonNilUnorderedIndexKey{}]; exists {
+		valueEntries--
+	}
 	return map[string]interface{}{
 		"name":             idx.Name,
 		"label":            idx.Label,
 		"properties":       idx.Properties,
 		"fullIndexEntries": len(idx.fullIndex),
 		"prefixEntries":    len(idx.prefixIndex),
-		"valueEntries":     len(idx.values),
+		"valueEntries":     valueEntries,
 	}
 }
 
@@ -1271,7 +1212,10 @@ func (sm *SchemaManager) AddFulltextIndex(name string, targets, properties []str
 	if entityType != ConstraintEntityNode && entityType != ConstraintEntityRelationship {
 		return fmt.Errorf("%w: full-text entity kind %q", ErrInvalidData, entityType)
 	}
-	lease := sm.beginSchemaMutation()
+	lease, admitErr := sm.beginSchemaMutation(context.Background())
+	if admitErr != nil {
+		return admitErr
+	}
 	defer lease.release()
 	if _, exists := sm.fulltextIndexes[name]; exists {
 		return nil
@@ -1297,7 +1241,10 @@ func (sm *SchemaManager) AddFulltextIndex(name string, targets, properties []str
 // Example: sm.AddVectorIndex("doc_vector", "Doc", "embedding", 384,
 // "cosine", ConstraintEntityNode).
 func (sm *SchemaManager) AddVectorIndex(name, label, property string, dimensions int, similarityFunc string, entityType ConstraintEntityType) error {
-	lease := sm.beginSchemaMutation()
+	lease, admitErr := sm.beginSchemaMutation(context.Background())
+	if admitErr != nil {
+		return admitErr
+	}
 	defer lease.release()
 
 	if _, exists := sm.vectorIndexes[name]; exists {
@@ -1343,7 +1290,10 @@ func (sm *SchemaManager) addIndexForEntity(kind IndexKind, name, label string, p
 		return localizedError(localization.StorageSchemaRangeIndexPropertiesRequired(), nil)
 	}
 
-	lease := sm.beginSchemaMutation()
+	lease, admitErr := sm.beginSchemaMutation(context.Background())
+	if admitErr != nil {
+		return admitErr
+	}
 	defer lease.release()
 
 	if _, exists := sm.rangeIndexes[name]; exists {
@@ -1548,14 +1498,25 @@ func (sm *SchemaManager) GetConstraints() []UniqueConstraint {
 // entity breaks several constraints. Returns constraints from the constraints
 // map, preserving their original types. Optional types restrict the result
 // before copying, so specialized consumers do not allocate unrelated rules.
-func (sm *SchemaManager) GetConstraintsForLabels(labels []string, types ...ConstraintType) []Constraint {
-	sm.mu.RLock()
+//
+// ctx is the request the discovery serves: it bounds the wait for the schema
+// lock and the scan of every declared constraint, and a discovery that observes
+// its cancellation reports that error and no constraints rather than the
+// partially filtered list it had already collected.
+func (sm *SchemaManager) GetConstraintsForLabels(ctx context.Context, labels []string, types ...ConstraintType) ([]Constraint, error) {
+	if err := sm.mu.RLockContext(ctx); err != nil {
+		return nil, err
+	}
 	defer sm.mu.RUnlock()
 
 	result := make([]Constraint, 0)
+	var cancellation bulkReadCancellation
 
 	// Get constraints from the constraints map (preserves original type)
 	for _, c := range sm.constraints {
+		if err := cancellation.check(ctx); err != nil {
+			return nil, err
+		}
 		if len(types) > 0 && !slices.Contains(types, c.Type) {
 			continue
 		}
@@ -1567,8 +1528,11 @@ func (sm *SchemaManager) GetConstraintsForLabels(labels []string, types ...Const
 		}
 	}
 	slices.SortFunc(result, func(a, b Constraint) int { return strings.Compare(a.Name, b.Name) })
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
-	return result
+	return result, nil
 }
 
 // GetAllConstraints returns all constraints in the schema, regardless of label.
@@ -1659,7 +1623,10 @@ func allowedValuesEqual(a, b []interface{}) bool {
 // Pass ifNotExists=true when the DDL includes IF NOT EXISTS; duplicate-schema is then a no-op.
 func (sm *SchemaManager) AddConstraint(c Constraint, ifNotExists ...bool) error {
 	defer sm.trackPendingPairs()
-	lease := sm.beginSchemaMutation()
+	lease, admitErr := sm.beginSchemaMutation(context.Background())
+	if admitErr != nil {
+		return admitErr
+	}
 	defer lease.release()
 
 	silentOnDuplicate := len(ifNotExists) > 0 && ifNotExists[0]
@@ -1673,7 +1640,10 @@ func (sm *SchemaManager) AddConstraint(c Constraint, ifNotExists ...bool) error 
 // DropIndex removes an index (by name) from the schema.
 // It searches across all index types: property, composite, fulltext, vector, and range.
 func (sm *SchemaManager) DropIndex(name string) error {
-	lease := sm.beginSchemaMutation()
+	lease, admitErr := sm.beginSchemaMutation(context.Background())
+	if admitErr != nil {
+		return admitErr
+	}
 	defer lease.release()
 
 	// Track what we dropped for rollback on persist failure.
@@ -1949,13 +1919,12 @@ func (sm *SchemaManager) PropertyIndexInsert(label, property string, nodeID Node
 
 	// An insert files the value of a write the engine already accepted, so the
 	// key has that write's lifetime: it cannot cancel.
-	valueKey, ok, err := indexValueKey(context.Background(), value)
+	valueKey, ok, err := indexNonNilMembershipKey(context.Background(), value)
 	if err != nil {
 		return err
 	}
 	if !ok {
-		// Ignore non-comparable values (maps/slices). These cannot be stored in
-		// Go map keys and must not crash index maintenance paths.
+		// Null has no nonnull membership.
 		return nil
 	}
 
@@ -2021,7 +1990,7 @@ func (sm *SchemaManager) PropertyIndexDelete(label, property string, nodeID Node
 
 	// A delete follows the write that removed the node, so the key has that
 	// write's lifetime: it cannot cancel.
-	valueKey, ok, err := indexValueKey(context.Background(), value)
+	valueKey, ok, err := indexNonNilMembershipKey(context.Background(), value)
 	if err != nil {
 		return err
 	}
@@ -2127,20 +2096,9 @@ func (idx *PropertyIndex) lookupLocked(ctx context.Context, view pendingWriteVie
 		out = make([]NodeID, 0, len(stored)+len(pending))
 	}
 	if view.index == nil {
-		// No overlay can shadow committed IDs. Copy bounded blocks directly
-		// instead of testing visibility and the context for every member.
-		for start := 0; start < len(stored); start += bulkReadCancellationInterval {
-			if err := ctx.Err(); err != nil {
-				idx.mu.RUnlock()
-				return nil, err
-			}
-			out = append(out, stored[start:min(start+bulkReadCancellationInterval, len(stored))]...)
-		}
+		out, err := appendIndexNodeIDs(ctx, out, stored)
 		idx.mu.RUnlock()
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		return out, nil
+		return out, err
 	}
 	var cancellation bulkReadCancellation
 	for _, id := range stored {
@@ -2188,6 +2146,8 @@ func (sm *SchemaManager) PropertyIndexLookup(ctx context.Context, label, propert
 
 // PropertyIndexTopK returns up to limit node IDs from a property index ordered by
 // indexed property value, merged with the pending writes. Nil keys are skipped.
+// ErrPropertyIndexValueOrderUnavailable reports nonnull memberships the index
+// cannot value-order; callers must order the actual property values instead.
 func (sm *SchemaManager) PropertyIndexTopK(ctx context.Context, label, property string, limit int, descending bool) ([]NodeID, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -2195,44 +2155,17 @@ func (sm *SchemaManager) PropertyIndexTopK(ctx context.Context, label, property 
 	if limit <= 0 {
 		return nil, nil
 	}
-	ids, _, err := sm.orderedPropertyIndexIDs(ctx, label, property, descending, limit, PropertyIndexBounds{})
-	return ids, err
+	snapshot, _, err := sm.readPropertyIndexSnapshot(ctx, label, property, propertyIndexRead{descending: descending, limit: limit, exactBounds: true})
+	return snapshot.ids, err
 }
 
 // PropertyIndexAllNonNil returns all node IDs from the property index in key order,
-// excluding nil keys, merged with the pending writes.
+// excluding nil keys, merged with the pending writes. Unorderable memberships
+// return ErrPropertyIndexValueOrderUnavailable, never a partial population.
+// IS NOT NULL planners use PropertyIndexNonNilCandidates instead.
 func (sm *SchemaManager) PropertyIndexAllNonNil(ctx context.Context, label, property string, descending bool) ([]NodeID, error) {
-	ids, _, err := sm.orderedPropertyIndexIDs(ctx, label, property, descending, -1, PropertyIndexBounds{})
-	return ids, err
-}
-
-// orderedPropertyIndexIDs is the one ordered scan of a property index
-// (orderedIDsLocked), merged with the pending writes; limit < 0 lists all,
-// and keep, when set, selects the index values listed. exists is false when
-// the label and property have no index.
-func (sm *SchemaManager) orderedPropertyIndexIDs(ctx context.Context, label, property string, descending bool, limit int, bounds PropertyIndexBounds) (ids []NodeID, exists bool, err error) {
-	if err := sm.mu.RLockContext(ctx); err != nil {
-		return nil, false, err
-	}
-	idx, found, lookupErr := sm.seekablePropertyIndexLocked(ctx, label, property)
-	sm.mu.RUnlock()
-	if lookupErr != nil {
-		return nil, false, lookupErr
-	}
-	if !found {
-		return nil, false, nil
-	}
-	view, source, err := sm.beginPendingRead(ctx)
-	if err != nil {
-		return nil, false, err
-	}
-	defer endPendingRead(source)
-	if err := idx.rLockWithFreshKeys(ctx); err != nil {
-		return nil, false, err
-	}
-	defer idx.mu.RUnlock()
-	ids, err = idx.orderedIDsLocked(ctx, view, property, descending, limit, bounds)
-	return ids, true, err
+	snapshot, _, err := sm.readPropertyIndexSnapshot(ctx, label, property, propertyIndexRead{descending: descending, limit: -1, exactBounds: true})
+	return snapshot.ids, err
 }
 
 // rLockWithFreshKeys takes idx.mu for reading with the sorted-key cache
@@ -2281,7 +2214,8 @@ func (idx *PropertyIndex) sortedKeysViewLocked(ctx context.Context) ([]interface
 			if key == nil || len(ids) == 0 {
 				continue
 			}
-			if _, composite := key.(compositeIndexKey); composite {
+			if unorderedIndexMembership(key) {
+				kinds.unordered = true
 				continue
 			}
 			keys = append(keys, key)
@@ -2354,7 +2288,10 @@ func compareSchemaIndexValues(a, b interface{}) int {
 	return 0
 }
 
-// IndexStats represents statistics about an index.
+// IndexStats represents statistics about an index. For an arity-one equality
+// index, TotalEntries and UniqueValues describe equality-keyed entries only;
+// they exclude membership-only unkeyable values, preserving their established
+// meaning. They are not a count of complete nonnull candidates.
 type IndexStats struct {
 	Name         string   `json:"name"`
 	Type         string   `json:"type"`
@@ -2382,10 +2319,14 @@ func (sm *SchemaManager) GetIndexStats() []IndexStats {
 		totalEntries := int64(0)
 		uniqueValues := int64(0)
 		if len(idx.Properties) == 1 {
-			for _, ids := range idx.values {
+			for key, ids := range idx.values {
+				// Membership-only markers are not equality values.
+				if _, marker := key.(nonNilUnorderedIndexKey); marker {
+					continue
+				}
 				totalEntries += int64(len(ids))
+				uniqueValues++
 			}
-			uniqueValues = int64(len(idx.values))
 		} else {
 			for _, ids := range idx.fullIndex {
 				totalEntries += int64(len(ids))

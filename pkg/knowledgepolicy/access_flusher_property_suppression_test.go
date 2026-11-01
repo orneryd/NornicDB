@@ -6,6 +6,7 @@ import (
 )
 
 type mockEntityMeta struct {
+	err       error
 	scope     ScopeType
 	labels    []string
 	edgeType  string
@@ -15,6 +16,9 @@ type mockEntityMeta struct {
 }
 
 func (m *mockEntityMeta) GetEntityMeta(entityID string) (EntityMeta, error) {
+	if m.err != nil {
+		return EntityMeta{}, m.err
+	}
 	scope := m.scope
 	if scope == "" {
 		scope = ScopeNode

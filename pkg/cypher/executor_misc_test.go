@@ -602,18 +602,18 @@ func TestApocPeriodicIterateAndCommit_Direct(t *testing.T) {
 func TestExecuteWithImplicitTransaction_Branches(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("fallback when tx unsupported", func(t *testing.T) {
+	t.Run("reject when tx unsupported", func(t *testing.T) {
 		base := newTestMemoryEngine(t)
 		store := storage.NewNamespacedEngine(base, "test")
 		exec := NewStorageExecutor(&nonTransactionalEngine{Engine: store})
 
 		result, err := exec.executeWithImplicitTransaction(ctx, "CREATE (:FallbackTx {id:'1'})", "CREATE (:FALLBACKTX {ID:'1'})")
-		require.NoError(t, err)
-		require.NotNil(t, result)
+		require.ErrorContains(t, err, "engine does not support transactions")
+		require.Nil(t, result)
 
 		readBack, err := exec.Execute(ctx, "MATCH (n:FallbackTx {id:'1'}) RETURN count(n)", nil)
 		require.NoError(t, err)
-		require.Equal(t, int64(1), readBack.Rows[0][0])
+		require.Equal(t, int64(0), readBack.Rows[0][0])
 	})
 
 	t.Run("begin transaction failure", func(t *testing.T) {
