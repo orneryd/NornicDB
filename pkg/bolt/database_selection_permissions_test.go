@@ -44,7 +44,7 @@ func TestBoltDatabaseSelectionUsesStatementPermissions(t *testing.T) {
 		require.NoError(t, stores.roles.CreateRole(ctx, access.role))
 		require.NoError(t, stores.entitlements.Set(ctx, access.role, []string{"read", "write"}))
 		require.NoError(t, stores.privileges.SavePrivilege(ctx, access.role, "nornic", access.read, access.write))
-		_, err := users.CreateUser(access.role, "password123", []auth.Role{auth.Role(access.role)})
+		_, err := users.CreateUser(context.Background(), access.role, "password123", []auth.Role{auth.Role(access.role)})
 		require.NoError(t, err)
 		driver, err := neo4jdriver.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4jdriver.BasicAuth(access.role, "password123", ""))
 		require.NoError(t, err)

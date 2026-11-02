@@ -29,11 +29,11 @@ func TestOwnerClassStorageFinalDrainOutcome(t *testing.T) {
 	engine.writeBehind.Close()
 	failure := errors.New("r4 final write-behind drain failure")
 	engine.writeBehind.apply = func(*CommitBuffer) error { return failure }
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("r4"))
-	_, err = tx.CreateNode(&Node{ID: "r4:final-drain", Properties: map[string]any{"value": int64(1)}})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "r4:final-drain", Properties: map[string]any{"value": int64(1)}})
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 	finalOutcome = engine.Close()

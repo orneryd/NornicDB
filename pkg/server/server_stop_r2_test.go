@@ -216,7 +216,7 @@ func stopR2Install(t *testing.T, s *Server, p *stopR2Plugin) {
 	t.Helper()
 	heimdall.ResetSubsystemManagerForTests()
 	t.Cleanup(heimdall.ResetSubsystemManagerForTests)
-	s.loadHeimdallPlugins(heimdall.SubsystemContext{Context: s.shutdown.work.Context()}, nil)
+	s.loadHeimdallPlugins(s.shutdown.work.Context(), heimdall.SubsystemHost{}, nil)
 	require.NoError(t, heimdall.GetSubsystemManager().RegisterPlugin(p, "", true))
 }
 func TestServerStopR2PluginLifetime(t *testing.T) {

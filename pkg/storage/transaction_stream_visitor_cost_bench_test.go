@@ -25,25 +25,25 @@ func BenchmarkTransactionStreamVisitorRetake(b *testing.B) {
 	require.NoError(b, err)
 	b.Cleanup(func() { _ = engine.Close() })
 	for _, name := range []string{"alice", "bob", "carol"} {
-		_, err := engine.CreateNode(&Node{
+		_, err := engine.CreateNode(b.Context(), &Node{
 			ID:         NodeID("bench:" + name),
 			Labels:     []string{"Person"},
 			Properties: map[string]any{"name": name},
 		})
 		require.NoError(b, err)
-		require.NoError(b, engine.CreateEdge(&Edge{
+		require.NoError(b, engine.CreateEdge(b.Context(), &Edge{
 			ID:        EdgeID("bench:e-" + name),
 			StartNode: "bench:alice",
 			EndNode:   NodeID("bench:" + name),
 			Type:      "KNOWS",
 		}))
 	}
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(b.Context())
 	require.NoError(b, err)
 	b.Cleanup(func() { _ = tx.Rollback() })
-	_, err = tx.CreateNode(&Node{ID: "bench:pending", Labels: []string{"Person"}})
+	_, err = tx.CreateNode(b.Context(), &Node{ID: "bench:pending", Labels: []string{"Person"}})
 	require.NoError(b, err)
-	require.NoError(b, tx.CreateEdge(&Edge{
+	require.NoError(b, tx.CreateEdge(b.Context(), &Edge{
 		ID:        "bench:e-pending",
 		StartNode: "bench:alice",
 		EndNode:   "bench:pending",

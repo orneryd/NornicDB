@@ -89,7 +89,7 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		if reveal && !scope.reveal {
 			return nil, newSemanticError("Neo.ClientError.Statement.AccessMode", "AccessMode", "Nested reveal requires reveal in the enclosing statement")
 		}
-		ctx = storage.InheritQueryRevealScopes(ctx, scope.context)
+		ctx = storage.InheritQueryRevealScopes(ctx, scope.scopes)
 		reveal = reveal || scope.reveal
 	}
 	ctx, cleanupReveal, readScopeEngine := setRevealOnEngine(ctx, e.storage, reveal)
@@ -390,10 +390,10 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 		if err := e.validateStaticBooleanOperands(ctx, part); err != nil {
 			return nil, err
 		}
-		if err := e.validateRangeCalls(part, nil); err != nil {
+		if err := e.validateRangeCalls(ctx, part, nil); err != nil {
 			return nil, err
 		}
-		if err := e.validateRowSubscriptTypes(part, nil); err != nil {
+		if err := e.validateRowSubscriptTypes(ctx, part, nil); err != nil {
 			return nil, err
 		}
 
@@ -512,7 +512,7 @@ func (e *StorageExecutor) validateSyntax(ctx context.Context, cypher string, cyp
 			return err
 		}
 		if parserError == nil {
-			e.markCachedValidSyntax(cypher, syntaxValidANTLR|syntaxGrammarAccepted)
+			e.markCachedValidSyntax(ctx, cypher, syntaxValidANTLR|syntaxGrammarAccepted)
 			return nil
 		}
 	}
@@ -642,21 +642,21 @@ func (e *StorageExecutor) validateSyntax(ctx context.Context, cypher string, cyp
 		if braceCount != 0 {
 			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: unbalanced curly braces")
 		}
-		e.markCachedValidSyntax(original, syntaxValidNornic)
+		e.markCachedValidSyntax(ctx, original, syntaxValidNornic)
 		cypher = original
 	}
 	if parserError != nil {
 		if err := e.validateMatchSemanticScopes(ctx, cypher, cypher25); err != nil {
 			return err
 		}
-		if err := validateKnownFunctions(cypher); err != nil {
+		if err := validateKnownFunctions(ctx, cypher); err != nil {
 			return err
 		}
 		err := syntaxAdmissionError(ctx, cypher, AcceptedSource, parserError)
 		return observability.RedactError(err, observability.ContextCredentials(cypher)...)
 	}
 	if validator == syntaxValidANTLR {
-		e.markCachedValidSyntax(cypher, syntaxValidANTLR)
+		e.markCachedValidSyntax(ctx, cypher, syntaxValidANTLR)
 	}
 	return nil
 }
@@ -987,11 +987,11 @@ func (e *StorageExecutor) hasCachedValidSyntax(cypher string, validator uint8) b
 	return accepted&validator != 0
 }
 
-func (e *StorageExecutor) markCachedValidSyntax(cypher string, validator uint8) {
-	if cypher == "" {
+func (e *StorageExecutor) markCachedValidSyntax(ctx context.Context, cypher string, validator uint8) {
+	if ctx.Err() != nil || cypher == "" {
 		return
 	}
-	scopes, cacheable := e.cacheDependencyScopes(cypher)
+	scopes, cacheable := e.cacheDependencyScopes(ctx, cypher)
 	if !cacheable {
 		return
 	}
@@ -1010,6 +1010,10 @@ func (e *StorageExecutor) markCachedValidSyntax(cypher string, validator uint8) 
 func unresolvedReturnItemError(ctx context.Context, item string) error {
 	if failure := getExpressionFailure(ctx); failure != nil {
 		return failure
+	}
+	if err := ctx.Err(); err != nil {
+		recordExpressionFailure(ctx, err)
+		return err
 	}
 	err := newSemanticError(
 		"Neo.ClientError.Statement.SyntaxError",

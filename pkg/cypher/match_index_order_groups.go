@@ -74,7 +74,7 @@ func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern
 				visitErr = err
 				return false
 			}
-			node, err := e.getQueryNode(e.storage, id)
+			node, err := e.getQueryNode(ctx, e.storage, id)
 			if err != nil || node == nil {
 				continue
 			}

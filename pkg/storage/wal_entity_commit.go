@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"sync"
 )
 
@@ -76,17 +77,12 @@ func (w *WALEngine) submitEntityCommit(ctx context.Context, prepared *PreparedEn
 	logicalID := prepared.LogicalID()
 	handle := NewAcceptedEntityCommitHandle(prepared)
 	// The existing WAL mutex joins registration to its closed admission cut.
-	if err := w.wal.mu.LockContext(ctx); err != nil {
+	if err := w.wal.lockAdmission(ctx); err != nil {
 		releaseMutation()
 		releaseAuthority()
 		return nil, err
 	}
-	if w.wal.work.Closing() {
-		w.wal.mu.Unlock()
-		releaseMutation()
-		releaseAuthority()
-		return nil, ErrWALClosed
-	}
+
 	receipt, resolve := NewCommitReceipt(func(outcome CommitOutcome) {
 		releaseAuthority()
 		handle.Retire()
@@ -110,10 +106,11 @@ func (w *WALEngine) submitEntityCommit(ctx context.Context, prepared *PreparedEn
 		// Journal entry transfers the mutation lease to the accepted receipt.
 		releaseMutation = nil
 		journalStarted = true
-		return w.wal.AppendWithDatabase(OpEntityCommit, walEntityCommitData{Payload: payload}, prepared.Namespace())
+		return w.wal.AppendWithDatabase(OpEntityCommit, &walEntityCommitData{Payload: payload}, prepared.Namespace())
 	})
 	if err != nil {
-		if !journalStarted {
+		var rejection *walRecordRejection
+		if !journalStarted || errors.Is(err, ErrWALClosed) || errors.As(err, &rejection) {
 			w.pendingEntityCommits.Delete(logicalID)
 			handle.Retire()
 			releaseAcceptedMutation()

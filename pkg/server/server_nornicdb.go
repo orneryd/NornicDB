@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/orneryd/nornicdb/internal/httpresponse"
 	"io"
 	"log/slog"
 	"net/http"
@@ -14,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/orneryd/nornicdb/internal/httpresponse"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -894,7 +895,7 @@ func (s *Server) handleSimilar(w http.ResponseWriter, r *http.Request) {
 	defer releaseProjection()
 
 	// Get the target node from namespaced storage
-	targetNode, err := storageEngine.GetNode(storage.NodeID(req.NodeID))
+	targetNode, err := storageEngine.GetNode(ctx, storage.NodeID(req.NodeID))
 	if err != nil {
 		s.writeLocalizedError(w, r, http.StatusNotFound, localization.SearchNodeNotFound(req.NodeID), ErrNotFound)
 		return

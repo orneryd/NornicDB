@@ -20,13 +20,13 @@ import (
 // exported schema population also carries a relationship type token.
 func adminImportSeedRelationshipPair(t *testing.T, engine storage.Engine) {
 	t.Helper()
-	_, err := engine.CreateNode(&storage.Node{
+	_, err := engine.CreateNode(t.Context(), &storage.Node{
 		ID:         "u2",
 		Labels:     []string{"Person"},
 		Properties: map[string]any{"name": "Bob"},
 	})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&storage.Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "e1",
 		Type:      "KNOWS",
 		StartNode: "u1",
@@ -174,7 +174,7 @@ func adminImportSchemaSummary(def *storage.SchemaDefinition) string {
 // a hand-built rendering.
 func adminImportReExportSchemaDocument(t *testing.T, schema *storage.SchemaManager) string {
 	t.Helper()
-	def := schema.ExportDefinition()
+	def := schemaDefinitionForTest(t, schema)
 	require.True(t, hasSchemaDefinitionContent(def),
 		"schema manager carries no schema document content (%s): the imported definition is absent",
 		adminImportSchemaSummary(def))
@@ -234,14 +234,14 @@ func adminImportSeedDurableDestination(t *testing.T, dir, database string, impor
 	engine, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 	require.NoError(t, err)
 	schema := engine.GetSchemaForNamespace(database)
-	require.NoError(t, schema.RegisterTokens(imported.LabelTokens, imported.RelationshipTypeTokens))
+	require.NoError(t, schema.RegisterTokens(t.Context(), imported.LabelTokens, imported.RelationshipTypeTokens))
 	require.NoError(t, schema.AddUniqueConstraint("legacy_key_unique", "Legacy", "key"))
-	durable := schema.ExportDefinition()
+	durable := schemaDefinitionForTest(t, schema)
 	require.NoError(t, engine.Close())
 
 	reopened, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 	require.NoError(t, err)
-	served := reopened.GetSchemaForNamespace(database).ExportDefinition()
+	served := schemaDefinitionForTest(t, reopened.GetSchemaForNamespace(database))
 	require.NoError(t, reopened.Close())
 	require.Equal(t, durable, served,
 		"the destination's pre-import schema must already be durable before the rejection case starts")
@@ -289,7 +289,7 @@ func TestImportFullSchemaDefinitionSurvivesNativeBadgerReopen(t *testing.T) {
 
 		require.NoError(t, engine.Close())
 		reopenedSchema := adminImportReopenBadger(t, dir).GetSchemaForNamespace("dest")
-		t.Logf("schema retained after close/reopen: %s", adminImportSchemaSummary(reopenedSchema.ExportDefinition()))
+		t.Logf("schema retained after close/reopen: %s", adminImportSchemaSummary(schemaDefinitionForTest(t, reopenedSchema)))
 		require.Equal(t, string(document), adminImportReExportSchemaDocument(t, reopenedSchema),
 			"a native Badger destination must retain the imported schema document across close and reopen")
 	})
@@ -317,7 +317,7 @@ func TestImportFullSchemaDefinitionSurvivesNativeBadgerReopen(t *testing.T) {
 
 		require.NoError(t, engine.Close())
 		reopenedSchema := adminImportReopenBadger(t, dir).GetSchemaForNamespace("dest")
-		t.Logf("schema retained after close/reopen: %s", adminImportSchemaSummary(reopenedSchema.ExportDefinition()))
+		t.Logf("schema retained after close/reopen: %s", adminImportSchemaSummary(schemaDefinitionForTest(t, reopenedSchema)))
 		adminImportRequireEscapedSchema(t, reopenedSchema, identities)
 		require.Equal(t, string(document), adminImportReExportSchemaDocument(t, reopenedSchema),
 			"a native Badger destination must retain the imported escaped-identity schema document across close and reopen")
@@ -351,7 +351,7 @@ func TestImportFullSchemaDefinitionSurvivesNativeBadgerReopen(t *testing.T) {
 		engine, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 		require.NoError(t, err)
 		destination := engine.GetSchemaForNamespace("dest")
-		require.Equal(t, oldDefinition, destination.ExportDefinition(),
+		require.Equal(t, oldDefinition, schemaDefinitionForTest(t, destination),
 			"the reopened destination must serve its durable schema before the import")
 
 		rejection := errors.New("schema persistence rejected")
@@ -369,7 +369,7 @@ func TestImportFullSchemaDefinitionSurvivesNativeBadgerReopen(t *testing.T) {
 			BuildIndexes: false,
 			Now:          fixedImportTime,
 		})
-		t.Logf("live schema after the rejected import: %s", adminImportSchemaSummary(destination.ExportDefinition()))
+		t.Logf("live schema after the rejected import: %s", adminImportSchemaSummary(schemaDefinitionForTest(t, destination)))
 
 		// A rejected durable write is a failed import: the destination must not
 		// publish, and must not report success for, a schema it never persisted.
@@ -377,7 +377,7 @@ func TestImportFullSchemaDefinitionSurvivesNativeBadgerReopen(t *testing.T) {
 		assert.ErrorIs(t, err, rejection, "the import must surface the schema persistence rejection itself")
 		assert.Equal(t, "failed", report.Status)
 		// The published schema keeps serving the pre-import definition.
-		assert.Equal(t, oldDefinition, destination.ExportDefinition(),
+		assert.Equal(t, oldDefinition, schemaDefinitionForTest(t, destination),
 			"a rejected schema replacement must leave the published schema unchanged")
 		// One durable write of the prospective document is what the replacement
 		// commits, so a rejection is attributable to that write alone. The write
@@ -394,19 +394,19 @@ func TestImportFullSchemaDefinitionSurvivesNativeBadgerReopen(t *testing.T) {
 		require.NoError(t, engine.Close())
 		reopened := adminImportReopenBadger(t, dir)
 		reopenedSchema := reopened.GetSchemaForNamespace("dest")
-		t.Logf("schema retained after close/reopen: %s", adminImportSchemaSummary(reopenedSchema.ExportDefinition()))
-		assert.Equal(t, oldDefinition, reopenedSchema.ExportDefinition(),
+		t.Logf("schema retained after close/reopen: %s", adminImportSchemaSummary(schemaDefinitionForTest(t, reopenedSchema)))
+		assert.Equal(t, oldDefinition, schemaDefinitionForTest(t, reopenedSchema),
 			"a rejected schema replacement must leave the durable definition unchanged")
 
 		// The pre-import runtime index and UNIQUE caches are the replaced
 		// manager's, so the definition the rejection left published must still
 		// enforce its constraint through them.
 		probe := storage.NewNamespacedEngine(reopened, "dest")
-		_, err = probe.CreateNode(&storage.Node{
+		_, err = probe.CreateNode(t.Context(), &storage.Node{
 			ID: "legacy-1", Labels: []string{"Legacy"}, Properties: map[string]any{"key": "k1"},
 		})
 		require.NoError(t, err, "the pre-import schema must still accept a first constrained value")
-		_, err = probe.CreateNode(&storage.Node{
+		_, err = probe.CreateNode(t.Context(), &storage.Node{
 			ID: "legacy-2", Labels: []string{"Legacy"}, Properties: map[string]any{"key": "k1"},
 		})
 		require.Error(t, err,
@@ -422,7 +422,7 @@ func TestImportFullSchemaDefinitionSurvivesNativeBadgerReopen(t *testing.T) {
 			"source",
 		)
 		for _, id := range []string{"u1", "u2"} {
-			_, err := source.CreateNode(&storage.Node{
+			_, err := source.CreateNode(t.Context(), &storage.Node{
 				ID:         storage.NodeID(id),
 				Labels:     []string{"Person"},
 				Properties: map[string]any{"email": "shared@example.com"},
@@ -435,13 +435,13 @@ func TestImportFullSchemaDefinitionSurvivesNativeBadgerReopen(t *testing.T) {
 		// rejection is decided on a document an operator can hand to the
 		// importer.
 		documentSchema := storage.NewSchemaManager()
-		require.NoError(t, documentSchema.RegisterTokens([]string{"Person"}, nil))
+		require.NoError(t, documentSchema.RegisterTokens(t.Context(), []string{"Person"}, nil))
 		require.NoError(t, documentSchema.AddUniqueConstraint("person_email_unique", "Person", "email"))
 		schemaFile := filepath.Join(t.TempDir(), Neo4jCSVNornicSchemaFileName)
 		require.NoError(t, exportNornicSchemaDefinition(schemaFile, documentSchema))
 
 		dir := t.TempDir()
-		oldDefinition := adminImportSeedDurableDestination(t, dir, "dest", documentSchema.ExportDefinition())
+		oldDefinition := adminImportSeedDurableDestination(t, dir, "dest", schemaDefinitionForTest(t, documentSchema))
 
 		nodeSources, relSources, err := DiscoverNeo4jCSVSources(outDir, Options{})
 		require.NoError(t, err)
@@ -463,7 +463,7 @@ func TestImportFullSchemaDefinitionSurvivesNativeBadgerReopen(t *testing.T) {
 			BuildIndexes: false,
 			Now:          fixedImportTime,
 		})
-		t.Logf("live schema after the unsatisfiable import: %s", adminImportSchemaSummary(destination.ExportDefinition()))
+		t.Logf("live schema after the unsatisfiable import: %s", adminImportSchemaSummary(schemaDefinitionForTest(t, destination)))
 
 		// The existing classification, unchanged: an unapplied schema document
 		// fails the import under the constraint-violation exit.
@@ -475,13 +475,13 @@ func TestImportFullSchemaDefinitionSurvivesNativeBadgerReopen(t *testing.T) {
 		// cannot satisfy attempts no schema write at all.
 		assert.Empty(t, attempted,
 			"a definition the data cannot satisfy must be rejected before it is persisted")
-		assert.Equal(t, oldDefinition, destination.ExportDefinition(),
+		assert.Equal(t, oldDefinition, schemaDefinitionForTest(t, destination),
 			"a rejected schema replacement must leave the published schema unchanged")
 
 		require.NoError(t, engine.Close())
 		reopenedSchema := adminImportReopenBadger(t, dir).GetSchemaForNamespace("dest")
-		t.Logf("schema retained after close/reopen: %s", adminImportSchemaSummary(reopenedSchema.ExportDefinition()))
-		assert.Equal(t, oldDefinition, reopenedSchema.ExportDefinition(),
+		t.Logf("schema retained after close/reopen: %s", adminImportSchemaSummary(schemaDefinitionForTest(t, reopenedSchema)))
+		assert.Equal(t, oldDefinition, schemaDefinitionForTest(t, reopenedSchema),
 			"a rejected schema replacement must leave the durable definition unchanged")
 	})
 }

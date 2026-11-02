@@ -3,12 +3,13 @@ package nornicdb_test
 
 import (
 	"context"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
-	"github.com/orneryd/nornicdb/pkg/nornicdb"
-	"github.com/orneryd/nornicdb/pkg/storage"
 	"sync"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/orneryd/nornicdb/pkg/nornicdb"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 type classTimerEmbedder struct{}
@@ -31,7 +32,7 @@ func TestOwnerClassEmbedTimerActualCompletion(t *testing.T) {
 	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	engine.SetEmbeddingsEnabled(true)
 	defer engine.Close()
-	_, err := engine.CreateNode(&storage.Node{ID: "docs:note", Labels: []string{"Note"}, Properties: map[string]interface{}{"content": "accepted embedding work must retain its completion callback"}})
+	_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "docs:note", Labels: []string{"Note"}, Properties: map[string]interface{}{"content": "accepted embedding work must retain its completion callback"}})
 	if err != nil {
 		t.Fatal(err)
 	}

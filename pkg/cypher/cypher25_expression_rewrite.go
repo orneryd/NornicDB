@@ -44,10 +44,10 @@ const mapFromPairsFunction = "__nornic_map_from_pairs"
 // the result with each pass's rewrite, in order (restore them in reverse).
 // cypher25 is the statement's version, which decides where RETURN ALL
 // begins (projectionAllEdits).
-func desugarCypher25Expressions(query string, cypher25 bool) (string, []*queryRewrite, error) {
+func desugarCypher25Expressions(ctx context.Context, query string, cypher25 bool) (string, []*queryRewrite, error) {
 	var rewrites []*queryRewrite
 	projectionAll := func(query string) ([]labelRewriteEdit, error) { return projectionAllEdits(query, cypher25) }
-	for _, pass := range []func(string) ([]labelRewriteEdit, error){interpolationEdits, mapComprehensionEdits, projectionAll, groupByEdits} {
+	for _, pass := range []func(string) ([]labelRewriteEdit, error){interpolationEdits, mapComprehensionEdits, projectionAll, func(query string) ([]labelRewriteEdit, error) { return groupByEdits(ctx, query) }} {
 		edits, err := pass(query)
 		if err != nil {
 			return query, nil, err

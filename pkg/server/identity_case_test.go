@@ -24,7 +24,7 @@ func TestIdentityRemoteAliasPermissionIsolation(t *testing.T) {
 			wire := httptest.NewServer(remote.buildRouter())
 			t.Cleanup(wire.Close)
 			coordinator, users := setupTestServer(t)
-			_, err := users.CreateUser("unit-alias-editor", "password123", []auth.Role{auth.RoleEditor})
+			_, err := users.CreateUser(context.Background(), "unit-alias-editor", "password123", []auth.Role{auth.RoleEditor})
 			require.NoError(t, err)
 			token := "Bearer " + getAuthToken(t, users, "unit-alias-editor")
 			high, low, literal := "Route_\xed\xa0\x80", "Route_\xed\xb0\x80", `Route_\ud800`

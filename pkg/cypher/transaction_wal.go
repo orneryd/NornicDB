@@ -47,14 +47,20 @@ func (w transactionWAL) finish(ctx context.Context, committed bool, opCount int,
 
 // finishCommitted is the one completion of a natively committed transaction,
 // explicit or implicit: its post-commit actions run, then its logical COMMIT
-// record is always written. A failed action is a committed outcome either
-// way: the failed record keeps it as its primary, and a written record makes
-// it the same committed terminal value without a WAL failure, recorded for the
-// statement like every other terminal outcome.
-func (w transactionWAL) finishCommitted(ctx context.Context, opCount int, actions func() error) (receipt *storage.Receipt, completionErr, bookkeepingErr error) {
+// record is always written. ctx is the admitted commit lifetime that committed
+// the graph, so the actions it queued cannot be cancelled after acceptance.
+// A failed action is a committed outcome either way: the failed record keeps
+// it as its primary, and a written record makes it the same committed terminal
+// value without a WAL failure, recorded for the statement like every other
+// terminal outcome.
+func (w transactionWAL) finishCommitted(ctx context.Context, opCount int, actions func(context.Context) error) (receipt *storage.Receipt, completionErr, bookkeepingErr error) {
+	// Every caller has confirmed the native commit. Its accepted completion
+	// must also finish for callers without a txphase owner, including Bolt.
+	// Retain request values for bookkeeping, but not cancellation authority.
+	ctx = context.WithoutCancel(ctx)
 	var actionErr error
 	if actions != nil {
-		actionErr = actions()
+		actionErr = actions(ctx)
 	}
 	receipt, bookkeepingErr = w.finish(ctx, true, opCount, "", actionErr, nornicerrors.TerminalCommit)
 	if actionErr != nil && bookkeepingErr == nil {

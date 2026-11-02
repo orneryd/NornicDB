@@ -2,8 +2,9 @@ package search
 
 import (
 	"context"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -17,7 +18,7 @@ func TestSearchStreamLifecycleInvalidation(t *testing.T) {
 			t.Cleanup(func() { require.NoError(t, base.Close()) })
 			store := storage.NewNamespacedEngine(base, "test")
 			for _, id := range []storage.NodeID{"a", "b"} {
-				_, err := store.CreateNode(&storage.Node{ID: id})
+				_, err := store.CreateNode(t.Context(), &storage.Node{ID: id})
 				require.NoError(t, err)
 			}
 			svc := NewService(store, DefaultVectorDimensions, nil)
@@ -35,13 +36,13 @@ func TestSearchStreamLifecycleInvalidation(t *testing.T) {
 			first := start()
 			switch end {
 			case "write", "abandoned_write":
-				_, err = store.CreateNode(&storage.Node{ID: "c"})
+				_, err = store.CreateNode(t.Context(), &storage.Node{ID: "c"})
 				require.NoError(t, err)
 			case "backfill":
-				node, err := store.GetNode("b")
+				node, err := store.GetNode(t.Context(), "b")
 				require.NoError(t, err)
 				node.ChunkEmbeddings = [][]float32{{1, 0}}
-				require.NoError(t, store.UpdateNode(storage.NodeUpdateRequest{After: node}))
+				require.NoError(t, store.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
 			case "policy":
 				svc.SetCompleteContinuationPolicy(CompleteContinuationPolicy{MaxMembers: 10})
 			}

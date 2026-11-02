@@ -46,7 +46,7 @@ func TestPublicPublishCommitWarmPendingAdmissionCancellation(t *testing.T) {
 	require.NoError(t, tx.SetValidationSetting(DeferredConstraintValidation, true))
 	require.NoError(t, tx.SetValidationSetting(SkipCreateCommitHeadReload, true))
 	id := NodeID("test:" + uuid.NewString())
-	_, err = tx.CreateMintedNode(&Node{ID: id, Labels: []string{"Tuple"}, Properties: map[string]interface{}{"tenant": int64(1), "id": int64(2)}})
+	_, err = tx.CreateMintedNode(t.Context(), &Node{ID: id, Labels: []string{"Tuple"}, Properties: map[string]interface{}{"tenant": int64(1), "id": int64(2)}})
 	require.NoError(t, err)
 	require.NoError(t, tx.SetMetadata(map[string]interface{}{"control": "warm pending admission"}))
 	barrier.target = tx.ID
@@ -153,7 +153,7 @@ func TestPublicPublishCommitWarmPendingAdmissionCancellation(t *testing.T) {
 	require.ErrorIs(t, result, context.Canceled)
 	require.False(t, published.Load(), "canceled validation cannot publish or invoke callback")
 	require.NoError(t, engine.FlushWriteBehind(t.Context()))
-	_, err = engine.GetNode(id)
+	_, err = engine.GetNode(t.Context(), id)
 	require.ErrorIs(t, err, ErrNotFound, "canceled request must leave no buffered or backing node")
 	retry := beginMergeKeyTx(t, engine)
 	t.Cleanup(func() {
@@ -163,11 +163,11 @@ func TestPublicPublishCommitWarmPendingAdmissionCancellation(t *testing.T) {
 	})
 	require.NoError(t, retry.SetValidationSetting(DeferredConstraintValidation, true))
 	require.NoError(t, retry.SetValidationSetting(SkipCreateCommitHeadReload, true))
-	_, err = retry.CreateMintedNode(&Node{ID: id, Labels: []string{"Tuple"}, Properties: map[string]interface{}{"tenant": int64(1), "id": int64(2)}})
+	_, err = retry.CreateMintedNode(t.Context(), &Node{ID: id, Labels: []string{"Tuple"}, Properties: map[string]interface{}{"tenant": int64(1), "id": int64(2)}})
 	require.NoError(t, err)
 	require.NoError(t, retry.PublishCommit(t.Context(), CommitPublication{}))
 	require.NoError(t, engine.FlushWriteBehind(t.Context()))
-	node, err := engine.GetNode(id)
+	node, err := engine.GetNode(t.Context(), id)
 	require.NoError(t, err)
 	require.Equal(t, id, node.ID)
 }

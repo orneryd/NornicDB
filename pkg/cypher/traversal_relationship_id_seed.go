@@ -32,7 +32,7 @@ func (e *StorageExecutor) relationshipIDSeedNodes(ctx context.Context, pattern, 
 		return nil, true, true
 	}
 	store := e.getStorage(ctx)
-	edge, err := store.GetEdge(storage.EdgeID(lookupID))
+	edge, err := store.GetEdge(ctx, storage.EdgeID(lookupID))
 	if err != nil || edge == nil {
 		return nil, true, true
 	}
@@ -52,7 +52,7 @@ func (e *StorageExecutor) relationshipIDSeedNodes(ctx context.Context, pattern, 
 	// The traversal trusts its seeds: each must match the start node's own
 	// labels and properties, as a bound start node does.
 	for _, id := range endpoints {
-		if node, getErr := e.newRelationshipEndpointReader(store).readRetained(id, nil); getErr == nil && node != nil && e.matchesEndPattern(node, &match.StartNode) {
+		if node, getErr := e.newRelationshipEndpointReader(store).readRetained(ctx, id, nil); getErr == nil && node != nil && e.matchesEndPattern(node, &match.StartNode) {
 			nodes = append(nodes, node)
 		}
 	}

@@ -47,7 +47,7 @@ func TestLabelIndex_SurvivesEngineReopen(t *testing.T) {
 				fixtureowner.Own(t, engine1)
 			}
 			require.NoError(t, err)
-			_, err = engine1.CreateNode(tc.node)
+			_, err = engine1.CreateNode(t.Context(), tc.node)
 			require.NoError(t, err)
 			if tc.checkBody {
 				pre, err := engine1.GetNodesByLabel(context.Background(), "Foo")
@@ -114,15 +114,15 @@ func TestLabelIndex_BulkCreatedNodesSurviveReopen(t *testing.T) {
 				}
 			}
 			if tc.bulk {
-				require.NoError(t, before.BulkCreateNodes(nodes))
+				require.NoError(t, before.BulkCreateNodes(t.Context(), nodes))
 			} else {
 				for _, node := range nodes {
-					_, err = writer.CreateNode(node)
+					_, err = writer.CreateNode(t.Context(), node)
 					require.NoError(t, err)
 				}
 			}
 			if tc.readNamespace != "" {
-				_, err = NewNamespacedEngine(before, "other").CreateNode(&Node{ID: "scope-control", Labels: []string{tc.label}})
+				_, err = NewNamespacedEngine(before, "other").CreateNode(t.Context(), &Node{ID: "scope-control", Labels: []string{tc.label}})
 				require.NoError(t, err)
 			}
 			if tc.wipe {
@@ -187,7 +187,7 @@ func TestLabelIndex_DiskKeyExistsAfterReopen(t *testing.T) {
 		fixtureowner.Own(t, engine1)
 	}
 	require.NoError(t, err)
-	_, err = engine1.CreateNode(&Node{ID: "test:disk-1", Labels: []string{"DiskCheck"}})
+	_, err = engine1.CreateNode(t.Context(), &Node{ID: "test:disk-1", Labels: []string{"DiskCheck"}})
 	require.NoError(t, err)
 	require.NoError(t, engine1.Close())
 
@@ -226,7 +226,7 @@ func TestLabelIndex_IDDictionaryReverseMapPopulatedOnReopen(t *testing.T) {
 		fixtureowner.Own(t, engine1)
 	}
 	require.NoError(t, err)
-	_, err = engine1.CreateNode(&Node{ID: "test:dict-1", Labels: []string{"L"}})
+	_, err = engine1.CreateNode(t.Context(), &Node{ID: "test:dict-1", Labels: []string{"L"}})
 	require.NoError(t, err)
 
 	// Capture the numID assigned during the first session so we can
@@ -259,7 +259,7 @@ func TestLabelIndex_QueryMatchesPropertyAndLabelFunctions(t *testing.T) {
 	}
 	require.NoError(t, err)
 	for i := 0; i < 10; i++ {
-		_, err := engine1.CreateNode(&Node{
+		_, err := engine1.CreateNode(t.Context(), &Node{
 			ID:         NodeID(fmt.Sprintf("test:agree-%02d", i)),
 			Labels:     []string{"Agree"},
 			Properties: map[string]any{"i": int64(i)},

@@ -503,7 +503,12 @@ func exportNornicSchemaDefinition(path string, schema *storage.SchemaManager) er
 	if schema == nil {
 		return nil
 	}
-	def := schema.ExportDefinition()
+	// Admin export is an offline operation that owns its own lifetime, so the
+	// definition snapshot runs under it rather than a caller request.
+	def, err := schema.ExportDefinition(context.Background())
+	if err != nil {
+		return err
+	}
 	if !hasSchemaDefinitionContent(def) {
 		return nil
 	}

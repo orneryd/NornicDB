@@ -29,7 +29,7 @@ func TestWALTerminalPostCommitActionFailure(t *testing.T) {
 					t.Cleanup(func() { _ = wal.Close() })
 					engine := &walOutcomeEngine{MemoryEngine: newTestMemoryEngine(t), wal: wal}
 					store := storage.NewNamespacedEngine(engine, "wal_outcome")
-					_, err = store.CreateNode(&storage.Node{ID: "post-commit", Labels: []string{"WalOutcome"}})
+					_, err = store.CreateNode(t.Context(), &storage.Node{ID: "post-commit", Labels: []string{"WalOutcome"}})
 					require.NoError(t, err)
 					cause := errors.New("post-commit suppression rejected")
 					if transient {

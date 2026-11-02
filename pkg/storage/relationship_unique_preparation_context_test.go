@@ -13,12 +13,12 @@ func TestRelationshipUniquePreparationCancellationColdRetryWarm(t *testing.T) {
 	// No earlier check can have initialized the derived equality cache.
 	engine := relationshipUniqueCommitFixture(t, 1)
 	require.Empty(t, engine.relationshipUniqueIndexes.entries)
-	staged, err := engine.BeginTransaction()
+	staged, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = staged.Rollback() })
 	require.NoError(t, staged.SetValidationSetting(DeferredConstraintValidation, true))
 	edge := &Edge{ID: "test:cancelled", StartNode: "test:a", EndNode: "test:b", Type: "T", Properties: map[string]interface{}{"id": int64(0)}}
-	require.NoError(t, staged.CreateEdge(edge))
+	require.NoError(t, staged.CreateEdge(t.Context(), edge))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	scans := 0
@@ -28,27 +28,27 @@ func TestRelationshipUniquePreparationCancellationColdRetryWarm(t *testing.T) {
 	require.Equal(t, 1, scans, "first derived cache build must reach the real scan boundary")
 	require.ErrorIs(t, err, context.Canceled, "canceled preparation must not materialize the peer and report its constraint violation")
 	require.Equal(t, TxStatusRolledBack, staged.Status)
-	_, err = engine.GetStoredEdge("test:cancelled")
+	_, err = engine.GetStoredEdge(t.Context(), "test:cancelled")
 	require.ErrorIs(t, err, ErrNotFound)
 	require.Empty(t, engine.relationshipUniqueIndexes.entries, "cancellation must not publish a reusable partial cache")
 	require.False(t, engine.relationshipUniqueIndexes.active.Load())
 
-	retry, err := engine.BeginTransaction()
+	retry, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, retry.SetValidationSetting(DeferredConstraintValidation, true))
-	require.NoError(t, retry.CreateEdge(&Edge{ID: "test:healthy", StartNode: "test:a", EndNode: "test:b", Type: "T", Properties: map[string]interface{}{"id": int64(7)}}))
+	require.NoError(t, retry.CreateEdge(t.Context(), &Edge{ID: "test:healthy", StartNode: "test:a", EndNode: "test:b", Type: "T", Properties: map[string]interface{}{"id": int64(7)}}))
 	require.NoError(t, retry.CommitContext(context.Background()))
-	_, err = engine.GetStoredEdge("test:healthy")
+	_, err = engine.GetStoredEdge(t.Context(), "test:healthy")
 	require.NoError(t, err)
 	require.Len(t, engine.relationshipUniqueIndexes.entries, 1)
 
 	// A warm cache wait is preparation too. Cancel at the actual blocked lock
 	// boundary, before it can read cached candidates or report a violation.
-	blocked, err := engine.BeginTransaction()
+	blocked, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, blocked.SetValidationSetting(DeferredConstraintValidation, true))
 	edge.ID = "test:warm-cancelled"
-	require.NoError(t, blocked.CreateEdge(edge))
+	require.NoError(t, blocked.CreateEdge(t.Context(), edge))
 	lockCtx, lockCancel := context.WithCancel(context.Background())
 	defer lockCancel()
 	set := &engine.relationshipUniqueIndexes
@@ -66,7 +66,7 @@ func TestRelationshipUniquePreparationCancellationColdRetryWarm(t *testing.T) {
 	require.True(t, waited)
 	require.ErrorIs(t, err, context.Canceled)
 	require.Equal(t, TxStatusRolledBack, blocked.Status)
-	_, err = engine.GetStoredEdge(edge.ID)
+	_, err = engine.GetStoredEdge(t.Context(), edge.ID)
 	require.ErrorIs(t, err, ErrNotFound)
 	require.Len(t, set.entries, 1, "canceled warm lookup must preserve its complete cache")
 	cancelled, cancelLookup := context.WithCancel(context.Background())
@@ -77,14 +77,14 @@ func TestRelationshipUniquePreparationCancellationColdRetryWarm(t *testing.T) {
 	require.False(t, indexed)
 
 	// A healthy warm-cache duplicate remains a real semantic violation.
-	warm, err := engine.BeginTransaction()
+	warm, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, warm.SetValidationSetting(DeferredConstraintValidation, true))
 	edge.ID = "test:warm-duplicate"
-	require.NoError(t, warm.CreateEdge(edge))
+	require.NoError(t, warm.CreateEdge(t.Context(), edge))
 	var violation *ConstraintViolationError
 	require.ErrorAs(t, warm.CommitContext(context.Background()), &violation)
-	_, err = engine.GetStoredEdge(edge.ID)
+	_, err = engine.GetStoredEdge(t.Context(), edge.ID)
 	require.ErrorIs(t, err, ErrNotFound)
 }
 

@@ -24,7 +24,7 @@ func TestColdBufferedWriteAfterReopen(t *testing.T) {
 		return b
 	}
 	b := open()
-	_, err := b.CreateNode(&Node{ID: "cold:a", Properties: map[string]any{"value": int64(1)}})
+	_, err := b.CreateNode(t.Context(), &Node{ID: "cold:a", Properties: map[string]any{"value": int64(1)}})
 	require.NoError(t, err)
 	require.NoError(t, b.Close())
 	b = open()
@@ -34,7 +34,7 @@ func TestColdBufferedWriteAfterReopen(t *testing.T) {
 	b.SetBufferedCommitWAL(wal)
 	done := make(chan error, 1)
 	go func() {
-		tx, err := b.BeginTransaction()
+		tx, err := b.BeginTransaction(t.Context())
 		if err == nil {
 			err = tx.SetNamespace("cold")
 		}
@@ -42,7 +42,7 @@ func TestColdBufferedWriteAfterReopen(t *testing.T) {
 			err = tx.SetImplicit(true)
 		}
 		if err == nil {
-			err = tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "cold:a", Properties: map[string]any{"value": int64(2)}}, Policy: ClientNodeEdits})
+			err = tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "cold:a", Properties: map[string]any{"value": int64(2)}}, Policy: ClientNodeEdits})
 		}
 		if err == nil {
 			err = tx.Commit()

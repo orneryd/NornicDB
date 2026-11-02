@@ -79,7 +79,7 @@ func (e *StorageExecutor) evictMergeNodeCacheEntries(labels []string, props map[
 	}
 }
 
-func (e *StorageExecutor) findMergeNodeInCache(store storage.Engine, labels []string, props map[string]interface{}) *storage.Node {
+func (e *StorageExecutor) findMergeNodeInCache(ctx context.Context, store storage.Engine, labels []string, props map[string]interface{}) *storage.Node {
 	if len(labels) == 0 || len(props) == 0 {
 		return nil
 	}
@@ -105,7 +105,7 @@ func (e *StorageExecutor) findMergeNodeInCache(store storage.Engine, labels []st
 		return cachedNode
 	}
 
-	liveNode, err := e.getQueryNode(store, cachedNode.ID)
+	liveNode, err := e.getQueryNode(ctx, store, cachedNode.ID)
 	if err == nil && mergeNodeMatches(liveNode, labels, props) {
 		return liveNode
 	}
@@ -163,7 +163,7 @@ func (e *StorageExecutor) loadMergeCandidateNodes(ctx context.Context, store sto
 			continue
 		}
 		seen[id] = struct{}{}
-		n, err := e.getQueryNode(store, id)
+		n, err := e.getQueryNode(ctx, store, id)
 		if err != nil || n == nil {
 			continue
 		}
@@ -236,7 +236,7 @@ func (e *StorageExecutor) findMergeNode(ctx context.Context, store storage.Engin
 		return nil, nil
 	}
 
-	if cached := e.findMergeNodeInCache(store, labels, props); cached != nil {
+	if cached := e.findMergeNodeInCache(ctx, store, labels, props); cached != nil {
 		e.markMergeSchemaLookupUsed()
 		return cached, nil
 	}

@@ -41,8 +41,8 @@ type callCancellationBeginOwner struct {
 	began bool
 }
 
-func (o *callCancellationBeginOwner) BeginTransaction() (*storage.BadgerTransaction, error) {
-	tx, err := o.base.BeginTransaction()
+func (o *callCancellationBeginOwner) BeginTransaction(ctx context.Context) (*storage.BadgerTransaction, error) {
+	tx, err := o.base.BeginTransaction(ctx)
 	if err == nil && o.begin != nil && !o.began {
 		o.began = true
 		o.begin()

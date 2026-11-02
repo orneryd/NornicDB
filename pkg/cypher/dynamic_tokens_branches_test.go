@@ -176,13 +176,13 @@ func TestDynamicTokenBranches(t *testing.T) {
 	negated := &labelExpression{kind: labelExpressionNot, operands: []*labelExpression{{kind: labelExpressionDynamic, expression: "x"}}}
 	_, _, err = negated.resolveDynamic(func(string) (interface{}, bool, error) { return nil, true, nil })
 	requireCode(t, err, "Neo.ClientError.Statement.TypeError")
-	r := &labelExpressionRewriter{query: "n:$(x)", writeItems: true}
+	r := &labelExpressionRewriter{ctx: t.Context(), query: "n:$(x)", writeItems: true}
 	value2, constant, err := r.resolveConstant("$1")
 	require.NoError(t, err)
 	require.False(t, constant)
 	require.Nil(t, value2)
 	require.False(t, r.writeItemHead(0))
-	got, _, err := desugarLabelExpressions("MATCH (n) SET n IS $(x RETURN n", nil, false)
+	got, _, err := desugarLabelExpressions(t.Context(), "MATCH (n) SET n IS $(x RETURN n", nil, false)
 	require.NoError(t, err)
 	require.Equal(t, "MATCH (n) SET n IS $(x RETURN n", got)
 	var references []string
@@ -227,17 +227,17 @@ func TestDynamicTokenBranches(t *testing.T) {
 	require.NoError(t, err)
 
 	// Seed real persisted properties so REMOVE must write and report rejection.
-	node, err = store.GetNode(node.ID)
+	node, err = store.GetNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	node.Properties["k"] = int64(1)
-	require.NoError(t, store.UpdateNode(storage.NodeUpdateRequest{After: node}))
-	edge, err = store.GetEdge(edge.ID)
+	require.NoError(t, store.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
+	edge, err = store.GetEdge(t.Context(), edge.ID)
 	require.NoError(t, err)
 	if edge.Properties == nil {
 		edge.Properties = make(map[string]interface{})
 	}
 	edge.Properties["k"] = int64(1)
-	require.NoError(t, store.UpdateEdge(storage.EdgeUpdateRequest{After: edge}))
+	require.NoError(t, store.UpdateEdge(t.Context(), storage.EdgeUpdateRequest{After: edge}))
 	err = failing.pipelineApplyRemove(ctx, []pipelineRow{{"n": node}}, "REMOVE n.k", result)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	err = failing.pipelineApplyRemove(ctx, []pipelineRow{{"r": edge}}, "REMOVE r.k", result)

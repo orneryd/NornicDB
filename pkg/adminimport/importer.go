@@ -8,14 +8,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/orneryd/nornicdb/internal/cyphertext"
-	"github.com/orneryd/nornicdb/internal/jsontext"
 	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/orneryd/nornicdb/internal/jsontext"
 
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -118,7 +119,7 @@ func ImportFull(ctx context.Context, engine storage.Engine, opts Options) (Repor
 	}
 
 	target := storage.NewNamespacedEngine(engine, opts.DatabaseName)
-	if err := ensureEmpty(target); err != nil {
+	if err := ensureEmpty(ctx, target); err != nil {
 		return report, err
 	}
 
@@ -286,7 +287,7 @@ func importNodeSource(ctx context.Context, engine storage.Engine, opts Options, 
 		}
 		nodes = append(nodes, node)
 		if len(nodes) >= opts.ChunkSize {
-			if err := engine.BulkCreateNodes(nodes); err != nil {
+			if err := engine.BulkCreateNodes(ctx, nodes); err != nil {
 				return err
 			}
 			report.NodesImported += int64(len(nodes))
@@ -294,7 +295,7 @@ func importNodeSource(ctx context.Context, engine storage.Engine, opts Options, 
 		}
 	}
 	if len(nodes) > 0 {
-		if err := engine.BulkCreateNodes(nodes); err != nil {
+		if err := engine.BulkCreateNodes(ctx, nodes); err != nil {
 			return err
 		}
 		report.NodesImported += int64(len(nodes))
@@ -353,7 +354,7 @@ func importRelationshipSource(ctx context.Context, engine storage.Engine, opts O
 		}
 		edges = append(edges, edge)
 		if len(edges) >= opts.ChunkSize {
-			if err := engine.BulkCreateEdges(edges); err != nil {
+			if err := engine.BulkCreateEdges(ctx, edges); err != nil {
 				if errors.Is(err, storage.ErrAlreadyExists) {
 					return newImportError(ExitDuplicateID, localization.AdminImportDuplicateRelationshipID(), err)
 				}
@@ -364,7 +365,7 @@ func importRelationshipSource(ctx context.Context, engine storage.Engine, opts O
 		}
 	}
 	if len(edges) > 0 {
-		if err := engine.BulkCreateEdges(edges); err != nil {
+		if err := engine.BulkCreateEdges(ctx, edges); err != nil {
 			if errors.Is(err, storage.ErrAlreadyExists) {
 				return newImportError(ExitDuplicateID, localization.AdminImportDuplicateRelationshipID(), err)
 			}
@@ -1022,12 +1023,12 @@ func splitCypherStatements(source string) []string {
 	return out
 }
 
-func ensureEmpty(engine storage.Engine) error {
-	nodes, err := engine.NodeCount()
+func ensureEmpty(ctx context.Context, engine storage.Engine) error {
+	nodes, err := engine.NodeCount(ctx)
 	if err != nil {
 		return err
 	}
-	edges, err := engine.EdgeCount()
+	edges, err := engine.EdgeCount(ctx)
 	if err != nil {
 		return err
 	}

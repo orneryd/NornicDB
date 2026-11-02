@@ -17,7 +17,7 @@ func BenchmarkSchemaRefreshNativePopulated(b *testing.B) {
 	b.Cleanup(func() { _ = engine.Close() })
 	target := NewNamespacedEngine(engine, "test")
 	for i := 0; i < 128; i++ {
-		_, err = target.CreateNode(&Node{ID: NodeID(fmt.Sprint(i)), Labels: []string{"Item"}, Properties: map[string]any{"a": i, "b": i, "c": i, "d": i}})
+		_, err = target.CreateNode(b.Context(), &Node{ID: NodeID(fmt.Sprint(i)), Labels: []string{"Item"}, Properties: map[string]any{"a": i, "b": i, "c": i, "d": i}})
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -44,7 +44,7 @@ func BenchmarkSchemaRefreshNativePopulated(b *testing.B) {
 			if err != nil || !found || !exists || !complete {
 				b.Fatalf("claim %s=%d: found=%v exists=%v complete=%v err=%v", property, value, found, exists, complete, err)
 			}
-			node, err := target.GetNode(id)
+			node, err := target.GetNode(b.Context(), id)
 			if err != nil || node == nil || node.Properties[property] != int64(value) && node.Properties[property] != value {
 				b.Fatalf("claim %s=%d resolved to %v: %v", property, value, node, err)
 			}

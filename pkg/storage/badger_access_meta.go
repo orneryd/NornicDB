@@ -82,7 +82,13 @@ func hasAccessState(entry *knowledgepolicy.AccessMetaEntry) bool {
 // native entity authority for both typed IDs, drains preceding buffered writes,
 // then checks stored-inclusive presence and writes in the same transaction.
 // A skipped flush returns false without changing retained metadata.
-func (b *BadgerEngine) WriteAccessMeta(request knowledgepolicy.AccessMetaWriteRequest) (bool, error) {
+//
+// ctx belongs to the operation that owns the write: an access flush passes its
+// own cycle lifetime. ctx owns admission, buffered-order drain and presence
+// preparation; once the publishing update is admitted the write and its
+// notification complete in the store, and a canceled ctx returns its own error
+// with no published entry.
+func (b *BadgerEngine) WriteAccessMeta(ctx context.Context, request knowledgepolicy.AccessMetaWriteRequest) (bool, error) {
 	if request.Entry == nil {
 		return false, ErrInvalidData
 	}
@@ -99,7 +105,6 @@ func (b *BadgerEngine) WriteAccessMeta(request knowledgepolicy.AccessMetaWriteRe
 	if len(entityID) > 0 && entityID[0] == 0 {
 		target = entry.TargetID
 	}
-	ctx := context.Background()
 	var stages []func(*commitWriter) error
 	if request.Mode == knowledgepolicy.FlushExistingEntity {
 		write, release, err := b.beginEntityWrite(ctx, entityID, false, nil, entityWritePlan{known: writtenEntities{edges: []EdgeID{EdgeID(entityID)}}})
@@ -151,13 +156,16 @@ func (b *BadgerEngine) WriteAccessMeta(request knowledgepolicy.AccessMetaWriteRe
 		return err
 	}, nil, func(context.Context) ([]any, error) {
 		return []any{namespaceWriteKey(namespaceForNodeID(NodeID(target)))}, nil
-	}, nil, stages...)
+	}, nil, nil, stages...)
 	return written && err == nil, err
 }
 
-func (b *BadgerEngine) DeleteAccessMeta(entityID string) error {
+// DeleteAccessMeta removes one entity's access state, retaining its index
+// catalog state. ctx owns admission and preparation; an admitted deletion
+// completes in the store.
+func (b *BadgerEngine) DeleteAccessMeta(ctx context.Context, entityID string) error {
 	target := entityID
-	return b.withPublishingUpdate(context.Background(), func(txn *badger.Txn) error {
+	return b.withPublishingUpdate(ctx, func(txn *badger.Txn) error {
 		entry, err := accessMetaInTxn(txn, entityID, accessMetaRead, nil)
 		if err != nil {
 			return err
@@ -176,7 +184,7 @@ func (b *BadgerEngine) DeleteAccessMeta(entityID string) error {
 		return txn.Delete(accessMetaKey(entityID))
 	}, nil, func(context.Context) ([]any, error) {
 		return []any{namespaceWriteKey(namespaceForNodeID(NodeID(target)))}, nil
-	}, nil)
+	}, nil, nil)
 }
 
 // ReadAccessMeta is the one implementation of committed access metadata reads

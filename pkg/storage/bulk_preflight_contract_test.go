@@ -46,14 +46,14 @@ func TestNativeBulkConstraintEqualityContract(t *testing.T) {
 					var err error
 					want := int64(2)
 					if bulk {
-						err = e.BulkCreateNodes(nodes)
+						err = e.BulkCreateNodes(t.Context(), nodes)
 						if tc.duplicate {
 							want = 0
 						}
 					} else {
-						_, firstErr := e.CreateNode(nodes[0])
+						_, firstErr := e.CreateNode(t.Context(), nodes[0])
 						assert.NoError(t, firstErr)
-						_, err = e.CreateNode(nodes[1])
+						_, err = e.CreateNode(t.Context(), nodes[1])
 						if tc.duplicate {
 							want = 1
 						}
@@ -64,12 +64,12 @@ func TestNativeBulkConstraintEqualityContract(t *testing.T) {
 					} else {
 						assert.NoError(t, err)
 					}
-					count, countErr := e.NodeCount()
+					count, countErr := e.NodeCount(t.Context())
 					assert.NoError(t, countErr)
 					assert.Equal(t, want, count)
 					if bulk && tc.duplicate {
 						for _, node := range nodes {
-							_, readErr := e.GetStoredNode(node.ID)
+							_, readErr := e.GetStoredNode(t.Context(), node.ID)
 							assert.ErrorIs(t, readErr, ErrNotFound, "duplicate bulk must publish none")
 						}
 					}
@@ -97,7 +97,7 @@ func BenchmarkNativeBulkConstraintPreflight(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				if err = e.validateBulkNodeConstraints(nodes); err != nil {
+				if err = e.validateBulkNodeConstraints(b.Context(), nodes); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -112,11 +112,11 @@ func TestNativeBulkConstraintScopesAndErrorOwnership(t *testing.T) {
 	}
 	// BulkCreateNodes itself is single-namespace; exercise the preflight's
 	// complete grouping contract directly without changing that public rule.
-	require.NoError(t, e.validateBulkNodeConstraints([]*Node{{ID: "alpha:a", Labels: []string{"Value"}, Properties: map[string]interface{}{"v": int64(1)}}, {ID: "beta:b", Labels: []string{"Value"}, Properties: map[string]interface{}{"v": int64(1)}}}))
+	require.NoError(t, e.validateBulkNodeConstraints(t.Context(), []*Node{{ID: "alpha:a", Labels: []string{"Value"}, Properties: map[string]interface{}{"v": int64(1)}}, {ID: "beta:b", Labels: []string{"Value"}, Properties: map[string]interface{}{"v": int64(1)}}}))
 	require.NoError(t, e.GetSchemaForNamespace("alpha").AddUniqueConstraint("other:name", "Other", "v"))
-	require.NoError(t, e.BulkCreateNodes([]*Node{{ID: "alpha:a", Labels: []string{"Value"}, Properties: map[string]interface{}{"v": int64(1)}}, {ID: "alpha:b", Labels: []string{"Other"}, Properties: map[string]interface{}{"v": int64(1)}}}))
+	require.NoError(t, e.BulkCreateNodes(t.Context(), []*Node{{ID: "alpha:a", Labels: []string{"Value"}, Properties: map[string]interface{}{"v": int64(1)}}, {ID: "alpha:b", Labels: []string{"Other"}, Properties: map[string]interface{}{"v": int64(1)}}}))
 	nodes := []*Node{{ID: "alpha:c", Labels: []string{"Value"}, Properties: map[string]interface{}{"v": int64(2)}}, {ID: "alpha:d", Labels: []string{"Value"}, Properties: map[string]interface{}{"v": int64(2)}}}
-	err := e.validateBulkNodeConstraints(nodes)
+	err := e.validateBulkNodeConstraints(t.Context(), nodes)
 	var violation *ConstraintViolationError
 	require.ErrorAs(t, err, &violation)
 	violation.Properties[0] = "changed"

@@ -131,9 +131,12 @@ func (m *managedBadgerDB) viewHeld(fn func(txn *badger.Txn) error) error {
 	return fn(txn)
 }
 
-// updateHeld is Update for the loaders that rebuild stored state in Restore,
-// while holdReads turns every other read away: it reads past the hold.
-func (m *managedBadgerDB) updateHeld(fn func(txn *badger.Txn) error) error {
+// updateHeld is update for the loaders that rebuild stored state in Restore,
+// while holdReads turns every other read away: it reads past the hold. It
+// commits through the same writer as update with the owning context its
+// caller selected, so a fold that runs under it stops at admission on that
+// context instead of committing under an unowned root.
+func (m *managedBadgerDB) updateHeld(ctx context.Context, fn func(txn *badger.Txn) error) error {
 	if m.DB.IsClosed() {
 		return badger.ErrDBClosed
 	}
@@ -144,7 +147,7 @@ func (m *managedBadgerDB) updateHeld(fn func(txn *badger.Txn) error) error {
 	if err := fn(txn); err != nil {
 		return err
 	}
-	return m.commit(context.Background(), txn, nil)
+	return m.commit(ctx, txn, nil)
 }
 
 // heldViewer is viewHeld for the loaders that take a badgerViewer.
@@ -219,7 +222,7 @@ func (m *managedBadgerDB) commit(ctx context.Context, txn *badger.Txn, publicati
 	if err != nil {
 		return err
 	}
-	return m.oracle.waitPublished(nil, ts)
+	return m.oracle.waitPublished(context.Background(), ts)
 }
 
 func (m *managedBadgerDB) commitShared(ctx context.Context, txn *badger.Txn, publish *commitPublication) (uint64, error) {
@@ -257,7 +260,11 @@ func (m *managedBadgerDB) commitShared(ctx context.Context, txn *badger.Txn, pub
 	if publish != nil && publish.metadata {
 		actionCtx = WithPublicationDecision(ctx, nil)
 	}
-	if err := m.commitDurableWrite(txn, ts, scope, actionCtx); err != nil {
+	var journal *commitWriter
+	if publish != nil && !publish.metadata && publish.owner != nil && publish.owner.entityWAL != nil {
+		journal = publish.owner
+	}
+	if err := m.commitDurableWrite(txn, ts, scope, actionCtx, journal); err != nil {
 		return ts, err
 	}
 	if publish != nil && publish.owner != nil {
@@ -348,7 +355,7 @@ func (m *managedBadgerDB) DropPrefix(ctx context.Context, options prefixDropOpti
 							return err
 						}
 						key := it.Item().KeyCopy(nil)
-						if err := cw.write(func(txn *badger.Txn) error { return txn.Delete(key) }); err != nil {
+						if err := cw.write(cw.ctx, func(txn *badger.Txn) error { return txn.Delete(key) }); err != nil {
 							return err
 						}
 					}
@@ -371,7 +378,7 @@ func (m *managedBadgerDB) DropPrefix(ctx context.Context, options prefixDropOpti
 			return err
 		}
 		defer m.oracle.finish(ts)
-		return m.durableAction(ts, cacheWriteScope{known: options.metadata}, WithPublicationDecision(ctx, nil), func() error { return m.DB.DropPrefix(prefixes...) })
+		return m.durableAction(ts, cacheWriteScope{known: options.metadata}, WithPublicationDecision(ctx, nil), nil, func() error { return m.DB.DropPrefix(prefixes...) })
 	}
 	if options.engine != nil {
 		return recoverBadgerClosedPanic(drop)
@@ -392,7 +399,7 @@ func (m *managedBadgerDB) DropAll(ctx context.Context) error {
 		return err
 	}
 	defer m.oracle.finish(ts)
-	return m.durableAction(ts, cacheWriteScope{}, WithPublicationDecision(ctx, nil), m.DB.DropAll)
+	return m.durableAction(ts, cacheWriteScope{}, WithPublicationDecision(ctx, nil), nil, m.DB.DropAll)
 }
 
 // NewTransaction is not available on the managed handle: a transaction must
@@ -439,7 +446,7 @@ func (m *managedBadgerDB) Load(ctx context.Context, r io.Reader, maxPendingWrite
 		return err
 	}
 	defer m.oracle.finish(ts)
-	if err := m.durableAction(ts, cacheWriteScope{}, WithPublicationDecision(ctx, nil), func() error { return m.DB.Load(r, maxPendingWrites) }); err != nil {
+	if err := m.durableAction(ts, cacheWriteScope{}, WithPublicationDecision(ctx, nil), nil, func() error { return m.DB.Load(r, maxPendingWrites) }); err != nil {
 		return err
 	}
 	m.oracle.advanceTo(m.DB.MaxVersion())
@@ -463,14 +470,14 @@ type batchWriter struct {
 // batchTarget is where a batchWriter's batches come from and go to.
 type batchTarget interface {
 	openBatch() *badger.Txn
-	commitBatch(txn *badger.Txn) error
+	commitBatch(ctx context.Context, txn *badger.Txn) error
 }
 
 // write runs op against the open batch, moving to a new batch once if op
 // does not fit. op must be repeatable: after it did not fit, it runs again,
 // from the start, in the new batch. An op that does not fit an empty batch
 // returns badger.ErrTxnTooBig.
-func (w *batchWriter) write(op func(txn *badger.Txn) error) error {
+func (w *batchWriter) write(ctx context.Context, op func(txn *badger.Txn) error) error {
 	if w.txn == nil {
 		w.txn = w.to.openBatch()
 	}
@@ -478,29 +485,22 @@ func (w *batchWriter) write(op func(txn *badger.Txn) error) error {
 	if !errors.Is(err, badger.ErrTxnTooBig) || w.to == nil {
 		return err
 	}
-	if err := w.flush(); err != nil {
+	if err := w.flush(ctx); err != nil {
 		return err
 	}
 	w.txn = w.to.openBatch()
 	return op(w.txn)
 }
 
-// writeOnce runs op against the open batch only, for an op that cannot be
-// repeated: if it does not fit, badger.ErrTxnTooBig is returned. The writer
-// must have a batch open (withUpdate starts it on the helper transaction).
-func (w *batchWriter) writeOnce(op func(txn *badger.Txn) error) error {
-	return op(w.txn)
-}
-
 // flush commits the open batch, if any. The writer stays usable.
-func (w *batchWriter) flush() error {
+func (w *batchWriter) flush(ctx context.Context) error {
 	if w.txn == nil {
 		return nil
 	}
 	txn := w.txn
 	w.txn = nil
 	defer txn.Discard()
-	return w.to.commitBatch(txn)
+	return w.to.commitBatch(ctx, txn)
 }
 
 // discard drops the open batch without committing it.
@@ -517,9 +517,14 @@ func (m *managedBadgerDB) openBatch() *badger.Txn {
 	return m.DB.NewTransactionAt(m.oracle.published.Load(), true)
 }
 
-// commitBatch commits a maintenance batch as an ordinary commit.
-func (m *managedBadgerDB) commitBatch(txn *badger.Txn) error {
-	return m.commit(context.Background(), txn, nil)
+// commitBatch persists dictionary metadata without acknowledging an entity commit.
+// It retains the selected preparation lifetime and waits for ordered publication.
+func (m *managedBadgerDB) commitBatch(ctx context.Context, txn *badger.Txn) error {
+	ts, err := m.commitShared(ctx, txn, &commitPublication{metadata: true})
+	if err != nil {
+		return err
+	}
+	return m.oracle.waitPublished(ctx, ts)
 }
 
 // NewWriteBatch returns a batched writer for bulk maintenance writes (index
@@ -546,16 +551,16 @@ type managedWriteBatch struct {
 }
 
 func (wb *managedWriteBatch) openBatch() *badger.Txn { return wb.db.openBatch() }
-func (wb *managedWriteBatch) commitBatch(txn *badger.Txn) error {
+func (wb *managedWriteBatch) commitBatch(ctx context.Context, txn *badger.Txn) error {
 	scope := wb.projection.scope()
-	err := wb.db.commit(wb.ctx, txn, &commitPublication{cacheScope: &scope, metadata: true})
+	err := wb.db.commit(ctx, txn, &commitPublication{cacheScope: &scope, metadata: true})
 	wb.projection = physicalCacheProjection{}
 	return err
 }
 
 // Set writes key = value.
 func (wb *managedWriteBatch) Set(key, value []byte) error {
-	return wb.w.write(func(txn *badger.Txn) error {
+	return wb.w.write(wb.ctx, func(txn *badger.Txn) error {
 		wb.projection.add(wb.db.cacheOwner, key, value)
 		return txn.Set(key, value)
 	})
@@ -563,14 +568,14 @@ func (wb *managedWriteBatch) Set(key, value []byte) error {
 
 // Delete deletes key.
 func (wb *managedWriteBatch) Delete(key []byte) error {
-	return wb.w.write(func(txn *badger.Txn) error {
+	return wb.w.write(wb.ctx, func(txn *badger.Txn) error {
 		wb.projection.add(wb.db.cacheOwner, key, nil)
 		return txn.Delete(key)
 	})
 }
 
 // Flush commits the pending writes. The writer stays usable.
-func (wb *managedWriteBatch) Flush() error { return wb.w.flush() }
+func (wb *managedWriteBatch) Flush() error { return wb.w.flush(wb.ctx) }
 
 // Cancel discards writes not yet flushed.
 func (wb *managedWriteBatch) Cancel() { wb.w.discard() }
@@ -579,11 +584,12 @@ func (wb *managedWriteBatch) Cancel() { wb.w.discard() }
 // batch. beginLargeCommit takes the commit gate exclusively; finish or abort
 // releases it. Not safe for concurrent use.
 type largeCommit struct {
-	ctx            context.Context
-	cacheScope     func() cacheWriteScope
-	finalTxn       *badger.Txn
-	originalReadTs uint64
-	db             *managedBadgerDB
+	ctx              context.Context
+	cacheScope       func() cacheWriteScope
+	finalTxn         *badger.Txn
+	finalPublication *commitPublication
+	originalReadTs   uint64
+	db               *managedBadgerDB
 	// intentTs is the timestamp the intent record was written at. It stays
 	// unfinished in the oracle until the commit publishes or rolls back,
 	// which holds the published timestamp below every batch.
@@ -614,7 +620,7 @@ func (m *managedBadgerDB) beginLargeCommitContext(ctx context.Context, onAssign 
 	binary.BigEndian.PutUint64(val[:], intentTs)
 	err = txn.Set(largeCommitIntentKey, val[:])
 	if err == nil {
-		err = m.commitDurableWrite(txn, intentTs, cacheWriteScope{known: true}, WithPublicationDecision(ctx, nil))
+		err = m.commitDurableWrite(txn, intentTs, cacheWriteScope{known: true}, WithPublicationDecision(ctx, nil), nil)
 	}
 	if err == nil {
 		// The intent must be durable before any batch is.
@@ -638,7 +644,7 @@ func (lc *largeCommit) openBatch() *badger.Txn {
 
 // commitBatch writes txn as the next batch of the large commit. A conflict
 // on the first batch comes back as badger.ErrConflict.
-func (lc *largeCommit) commitBatch(txn *badger.Txn) error {
+func (lc *largeCommit) commitBatch(ctx context.Context, txn *badger.Txn) error {
 	ts, err := lc.db.oracle.assign()
 	if err != nil {
 		return err
@@ -649,11 +655,14 @@ func (lc *largeCommit) commitBatch(txn *badger.Txn) error {
 	if lc.cacheScope != nil {
 		scope = lc.cacheScope()
 	}
-	ctx := WithPublicationDecision(lc.ctx, nil)
-	if txn == lc.finalTxn {
-		ctx = lc.ctx
+	if txn != lc.finalTxn {
+		ctx = WithPublicationDecision(ctx, nil)
 	}
-	if err := lc.db.commitDurableWrite(txn, ts, scope, ctx); err != nil {
+	var journal *commitWriter
+	if txn == lc.finalTxn && lc.finalPublication != nil && lc.finalPublication.owner != nil && lc.finalPublication.owner.entityWAL != nil {
+		journal = lc.finalPublication.owner
+	}
+	if err := lc.db.commitDurableWrite(txn, ts, scope, ctx, journal); err != nil {
 		return err
 	}
 	lc.lastTs = ts
@@ -665,6 +674,9 @@ func (lc *largeCommit) commitBatch(txn *badger.Txn) error {
 // publishes the whole commit and releases the gate. On error the caller must
 // abort.
 func (lc *largeCommit) finish(w *batchWriter, publication ...*commitPublication) error {
+	if len(publication) > 0 {
+		lc.finalPublication = publication[0]
+	}
 	if len(publication) > 0 && publication[0] != nil && publication[0].owner != nil {
 		preparationContext := commitPreparationLifetime(lc.ctx)
 		if err := publication[0].owner.prepareStoredEntityPublication(preparationContext); err != nil {
@@ -675,13 +687,13 @@ func (lc *largeCommit) finish(w *batchWriter, publication ...*commitPublication)
 	// Every earlier batch must be durable before the intent's deletion is.
 	err := lc.db.syncIfPersistent()
 	if err == nil {
-		err = w.write(func(txn *badger.Txn) error { return txn.Delete(largeCommitIntentKey) })
+		err = w.write(lc.ctx, func(txn *badger.Txn) error { return txn.Delete(largeCommitIntentKey) })
 	}
 	if err == nil {
 		// Deleting the intent may spill a preparation batch; only the actual
 		// transaction that now holds its deletion decides logical success.
 		lc.finalTxn = w.txn
-		err = w.flush()
+		err = w.flush(lc.ctx)
 	}
 	if err != nil {
 		return err
@@ -735,6 +747,9 @@ func (lc *largeCommit) release() {
 // persisted copy must stay too; an unused token is harmless (see
 // propertyKeyDictionary).
 func (m *managedBadgerDB) rollbackSince(sinceTs uint64) error {
+	// Compensation completes independently of the failed operation: it must
+	// neither inherit its cancellation nor repeat its publication decision.
+	ctx := context.Background()
 	restoreTs, err := m.oracle.assign()
 	if err != nil {
 		return err
@@ -768,7 +783,7 @@ func (m *managedBadgerDB) rollbackSince(sinceTs uint64) error {
 			batches.projection.add(m.cacheOwner, key, value)
 		})
 		if err == nil {
-			err = w.write(restore)
+			err = w.write(ctx, restore)
 		}
 		if err != nil {
 			return err
@@ -776,10 +791,10 @@ func (m *managedBadgerDB) rollbackSince(sinceTs uint64) error {
 	}
 	err = m.syncIfPersistent()
 	if err == nil {
-		err = w.write(func(txn *badger.Txn) error { return txn.Delete(largeCommitIntentKey) })
+		err = w.write(ctx, func(txn *badger.Txn) error { return txn.Delete(largeCommitIntentKey) })
 	}
 	if err == nil {
-		err = w.flush()
+		err = w.flush(ctx)
 	}
 	return err
 }
@@ -972,8 +987,9 @@ func (o *commitOracle) advanceTo(ts uint64) {
 // waitPublished waits until ts is published, so a committer reads its own
 // write. It only waits behind commits that were assigned an earlier
 // timestamp and are still writing.
-// A preparation waiter supplies its context. Completed user actions pass nil
-// so cancellation cannot turn an accepted physical success into a rollback.
+// A preparation waiter supplies its context. Accepted user actions supply an
+// explicit unbounded completion context so cancellation cannot turn an
+// accepted physical success into a rollback. All callers supply a nonnil context.
 func (o *commitOracle) waitPublished(ctx context.Context, ts uint64) error {
 	for {
 		if o.published.Load() >= ts {
@@ -994,14 +1010,10 @@ func (o *commitOracle) waitPublished(ctx context.Context, ts uint64) error {
 		}
 		wake := o.wake
 		o.mu.Unlock()
-		if ctx == nil {
-			<-wake
-		} else {
-			select {
-			case <-wake:
-			case <-ctx.Done():
-				return ctx.Err()
-			}
+		select {
+		case <-wake:
+		case <-ctx.Done():
+			return ctx.Err()
 		}
 	}
 }
@@ -1084,8 +1096,8 @@ func (r *restoreBatches) openBatch() *badger.Txn {
 	return r.db.DB.NewTransactionAt(r.sinceTs, true)
 }
 
-func (r *restoreBatches) commitBatch(txn *badger.Txn) error {
-	err := r.db.commitDurableWrite(txn, r.restoreTs, r.projection.scope(), nil)
+func (r *restoreBatches) commitBatch(ctx context.Context, txn *badger.Txn) error {
+	err := r.db.commitDurableWrite(txn, r.restoreTs, r.projection.scope(), ctx, nil)
 	r.projection = physicalCacheProjection{}
 	return err
 }

@@ -1,6 +1,8 @@
 package nornicdb_test
 
 import (
+	"context"
+
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"errors"
@@ -20,12 +22,12 @@ type reviewRejectedUpdateStore struct {
 	paused   atomic.Bool
 }
 
-func (s *reviewRejectedUpdateStore) UpdateNodeEmbeddingSidecar(node *storage.Node) error {
+func (s *reviewRejectedUpdateStore) UpdateNodeEmbeddingSidecar(ctx context.Context, node *storage.Node) error {
 	if s.attempts.Add(1) == 1 {
 		s.paused.Store(true)
 		return errors.New("review: first sidecar rejected")
 	}
-	return s.NamespacedEngine.UpdateNodeEmbeddingSidecar(node)
+	return s.NamespacedEngine.UpdateNodeEmbeddingSidecar(ctx, node)
 }
 
 // The retired retained-save repro is now a current-body retry contract. Update
@@ -39,7 +41,7 @@ func TestReviewR73RejectedSaveUpdateRequestsCurrentBody(t *testing.T) {
 			defer disk.Close()
 			disk.SetEmbeddingsEnabled(true)
 			s := &reviewRejectedUpdateStore{NamespacedEngine: storage.NewNamespacedEngine(disk, "rejectedupdate")}
-			_, err = s.CreateNode(&storage.Node{ID: "doc", Properties: map[string]any{"text": "same provider input", "counter": int64(1)}})
+			_, err = s.CreateNode(t.Context(), &storage.Node{ID: "doc", Properties: map[string]any{"text": "same provider input", "counter": int64(1)}})
 			require.NoError(t, err)
 			cfg := nornicdb.DefaultEmbedWorkerConfig()
 			cfg.DeferWorkerStart, cfg.NumWorkers, cfg.EmbedBatchSize = true, 1, 1
@@ -61,20 +63,20 @@ func TestReviewR73RejectedSaveUpdateRequestsCurrentBody(t *testing.T) {
 			worker.SetShouldYield(s.paused.Load)
 			worker.StartWorkers()
 			require.Eventually(t, func() bool { return s.paused.Load() && worker.Stats().InFlight == 0 }, 3*time.Second, time.Millisecond)
-			node, err := s.GetNode("doc")
+			node, err := s.GetNode(t.Context(), "doc")
 			require.NoError(t, err)
 			node.Properties["counter"] = int64(2)
 			if mode == "consumed_enqueued" {
 				node.Properties["text"] = "new provider input"
 			}
-			require.NoError(t, s.UpdateNode(storage.NodeUpdateRequest{After: node}))
+			require.NoError(t, s.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
 			if mode != "unconsumed_no_enqueue" {
 				worker.Enqueue("doc")
 			}
 			s.paused.Store(false)
 			worker.TriggerImmediate()
 			require.Eventually(t, func() bool { return worker.Stats().Processed == 1 && worker.Stats().InFlight == 0 }, 3*time.Second, time.Millisecond)
-			stored, err := s.GetNode("doc")
+			stored, err := s.GetNode(t.Context(), "doc")
 			require.NoError(t, err)
 			require.EqualValues(t, 2, stored.Properties["counter"])
 			require.NotEmpty(t, stored.ChunkEmbeddings)

@@ -20,14 +20,14 @@ func TestFastPath_MatchCreateDeleteRel(t *testing.T) {
 
 	// Setup: Create test nodes
 	for i := 0; i < 10; i++ {
-		engine.CreateNode(&storage.Node{
+		engine.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("actor%d", i)),
 			Labels: []string{"Actor"},
 			Properties: map[string]interface{}{
 				"name": fmt.Sprintf("Actor_%d", i),
 			},
 		})
-		engine.CreateNode(&storage.Node{
+		engine.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("movie%d", i)),
 			Labels: []string{"Movie"},
 			Properties: map[string]interface{}{
@@ -71,7 +71,7 @@ func TestFastPath_LDBCPattern(t *testing.T) {
 
 	// Setup: Create Person nodes with id properties (LDBC style)
 	for i := 1; i <= 10; i++ {
-		engine.CreateNode(&storage.Node{
+		engine.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("person%d", i)),
 			Labels: []string{"Person"},
 			Properties: map[string]interface{}{
@@ -113,7 +113,7 @@ func TestFastPath_CreateDeleteRelCount_HelperBranches(t *testing.T) {
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	executor := NewStorageExecutor(engine)
 
-	_, err := engine.CreateNode(&storage.Node{
+	_, err := engine.CreateNode(t.Context(), &storage.Node{
 		ID:     "p1",
 		Labels: []string{"Person"},
 		Properties: map[string]interface{}{
@@ -121,7 +121,7 @@ func TestFastPath_CreateDeleteRelCount_HelperBranches(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{
+	_, err = engine.CreateNode(t.Context(), &storage.Node{
 		ID:     "p2",
 		Labels: []string{"Person"},
 		Properties: map[string]interface{}{
@@ -168,7 +168,7 @@ func TestFastPath_CreateDeleteRel_HelperBranches(t *testing.T) {
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	executor := NewStorageExecutor(engine)
 
-	_, err := engine.CreateNode(&storage.Node{
+	_, err := engine.CreateNode(t.Context(), &storage.Node{
 		ID:     "a1",
 		Labels: []string{"Actor"},
 		Properties: map[string]interface{}{
@@ -176,7 +176,7 @@ func TestFastPath_CreateDeleteRel_HelperBranches(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{
+	_, err = engine.CreateNode(t.Context(), &storage.Node{
 		ID:     "m1",
 		Labels: []string{"Movie"},
 		Properties: map[string]interface{}{
@@ -214,11 +214,11 @@ func BenchmarkFastPath_WithLimit(b *testing.B) {
 
 	// Setup
 	for i := 0; i < 10; i++ {
-		_, _ = engine.CreateNode(&storage.Node{
+		_, _ = engine.CreateNode(b.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("actor%d", i)),
 			Labels: []string{"Actor"},
 		})
-		_, _ = engine.CreateNode(&storage.Node{
+		_, _ = engine.CreateNode(b.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("movie%d", i)),
 			Labels: []string{"Movie"},
 		})
@@ -249,7 +249,7 @@ func BenchmarkFastPath_LDBC(b *testing.B) {
 
 	// Setup
 	for i := 1; i <= 10; i++ {
-		_, _ = engine.CreateNode(&storage.Node{
+		_, _ = engine.CreateNode(b.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("person%d", i)),
 			Labels: []string{"Person"},
 			Properties: map[string]interface{}{

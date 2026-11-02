@@ -20,21 +20,21 @@ func TestResidualCacheFloorRetention(t *testing.T) {
 	b.nodeCacheMaxEntries, b.edgeCacheMaxItems, b.adjCacheMaxNodes = capacity, capacity, capacity
 	b.edgeTypeCacheMaxTypes, b.labelFirstCacheMax = capacity, capacity
 	for _, id := range []NodeID{"test:floor-peer", "test:floor-peer-end", "test:floor-target"} {
-		_, err := b.CreateNode(&Node{ID: id, Properties: map[string]any{"v": int64(1)}})
+		_, err := b.CreateNode(t.Context(), &Node{ID: id, Properties: map[string]any{"v": int64(1)}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, b.CreateEdge(&Edge{ID: "test:floor-peer-edge", StartNode: "test:floor-peer", EndNode: "test:floor-peer-end", Type: "KEEP"}))
+	require.NoError(t, b.CreateEdge(t.Context(), &Edge{ID: "test:floor-peer-edge", StartNode: "test:floor-peer", EndNode: "test:floor-peer-end", Type: "KEEP"}))
 	_, err = b.GetEdgesBetween(context.Background(), "test:floor-peer", "test:floor-peer-end")
 	require.NoError(t, err)
 	b.edgeCacheMu.RLock()
 	peerEdge := b.edgeCache["test:floor-peer-edge"]
 	b.edgeCacheMu.RUnlock()
 	require.NotNil(t, peerEdge)
-	prior, err := b.GetStoredNode("test:floor-target")
+	prior, err := b.GetStoredNode(t.Context(), "test:floor-target")
 	require.NoError(t, err)
 	oldSource := b.db.oracle.published.Load()
-	require.NoError(t, b.UpdateNode(NodeUpdateRequest{After: &Node{ID: prior.ID, Properties: map[string]any{"v": int64(2)}}}))
-	_, err = b.GetStoredNode("test:floor-peer")
+	require.NoError(t, b.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: prior.ID, Properties: map[string]any{"v": int64(2)}}}))
+	_, err = b.GetStoredNode(t.Context(), "test:floor-peer")
 	require.NoError(t, err)
 	b.nodeCacheMu.RLock()
 	peer := b.nodeCache["test:floor-peer"]
@@ -42,9 +42,9 @@ func TestResidualCacheFloorRetention(t *testing.T) {
 	require.NotNil(t, peer)
 	for i := 0; i < 4*capacity; i++ {
 		id := NodeID(fmt.Sprintf("test:floor-churn-%d", i))
-		_, err := b.CreateNode(&Node{ID: id})
+		_, err := b.CreateNode(t.Context(), &Node{ID: id})
 		require.NoError(t, err)
-		require.NoError(t, b.DeleteNode(id))
+		require.NoError(t, b.DeleteNode(t.Context(), id))
 	}
 	b.durableCaches.mu.Lock()
 	retained := len(b.durableCaches.nodes) + len(b.durableCaches.edges) + len(b.durableCaches.adjacency) + len(b.durableCaches.types) + len(b.durableCaches.labels)
@@ -52,7 +52,7 @@ func TestResidualCacheFloorRetention(t *testing.T) {
 	// Model an earlier writer whose physical action finished but whose cache
 	// publication was delayed. It carries its actual old physical source cut.
 	b.cacheStoreNode(prior, oldSource)
-	current, err := b.GetStoredNode(prior.ID)
+	current, err := b.GetStoredNode(t.Context(), prior.ID)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), current.Properties["v"])
 	b.nodeCacheMu.RLock()
@@ -77,10 +77,10 @@ func TestResidualClosedCacheProvenance(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = b.Close() })
 	for _, id := range []NodeID{"test:close-a", "test:close-b"} {
-		_, err = b.CreateNode(&Node{ID: id})
+		_, err = b.CreateNode(t.Context(), &Node{ID: id})
 		require.NoError(t, err)
 	}
-	require.NoError(t, b.CreateEdge(&Edge{ID: "test:close-e", StartNode: "test:close-a", EndNode: "test:close-b", Type: "CLOSE"}))
+	require.NoError(t, b.CreateEdge(t.Context(), &Edge{ID: "test:close-e", StartNode: "test:close-a", EndNode: "test:close-b", Type: "CLOSE"}))
 	// Settle construction/count work first: an incidental count-fold fence on
 	// Close must not be the lifetime owner of the new cache provenance state.
 	require.NoError(t, b.Close())
@@ -88,7 +88,7 @@ func TestResidualClosedCacheProvenance(t *testing.T) {
 	require.NoError(t, err)
 	_, err = b.GetOutgoingEdges(context.Background(), "test:close-a")
 	require.NoError(t, err)
-	require.NoError(t, b.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:close-a", Properties: map[string]any{"v": int64(2)}}}))
+	require.NoError(t, b.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:close-a", Properties: map[string]any{"v": int64(2)}}}))
 	require.NotEmpty(t, b.edgeCacheSources)
 	require.NotEmpty(t, b.durableCaches.nodes)
 	require.NoError(t, b.Close())

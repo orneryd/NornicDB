@@ -1,10 +1,11 @@
 package nornicdb
 
 import (
-	"github.com/orneryd/nornicdb/pkg/storage"
-	"github.com/stretchr/testify/require"
 	"sync"
 	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
 )
 
 // The maintainer's MAIN-first rule supersedes global admission backpressure.
@@ -40,7 +41,8 @@ func TestEmbedWorkerDLQConcurrentClaims(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			node, _ := worker.claimNextNodeResult()
+			node, _, claimErr := worker.claimNextNodeResult()
+			require.NoError(t, claimErr)
 			if node != nil {
 				claims <- node
 			}
@@ -60,7 +62,7 @@ func TestEmbedWorkerRejectedRetryContinuesSamePass(t *testing.T) {
 			worker, queue, provider := nodeSaveRetryFixture(t, mode, 1, 1000)
 			require.True(t, worker.processNextBatch())
 			calls := provider.GetEmbedCount()
-			_, err := queue.CreateNode(&storage.Node{ID: "healthy", Labels: []string{"Doc"}, Properties: map[string]any{"text": "healthy pending source"}})
+			_, err := queue.CreateNode(t.Context(), &storage.Node{ID: "healthy", Labels: []string{"Doc"}, Properties: map[string]any{"text": "healthy pending source"}})
 			require.NoError(t, err)
 			queue.AddToPendingEmbeddings("healthy")
 			queue.attempts["healthy"] = 1000
@@ -69,7 +71,7 @@ func TestEmbedWorkerRejectedRetryContinuesSamePass(t *testing.T) {
 			require.True(t, worker.processNextBatch(), "a rejected retry must continue to fresh work in this pass")
 			require.Equal(t, int64(1), worker.processed.Load())
 			require.Equal(t, 1, queue.attempts["node-000"], "DLQ is ignored while MAIN is nonempty")
-			stored, err := queue.GetNode("healthy")
+			stored, err := queue.GetNode(t.Context(), "healthy")
 			require.NoError(t, err)
 			require.NotEmpty(t, stored.ChunkEmbeddings)
 			require.Equal(t, calls+1, provider.GetEmbedCount())
@@ -84,14 +86,17 @@ func TestEmbedWorkerDLQClaimExclusive(t *testing.T) {
 	require.True(t, worker.processNextBatch())
 	require.True(t, worker.processNextBatch())
 	makeNodeSaveRetriesReady(worker)
-	first, _ := worker.claimNextNodeResult()
+	first, _, claimErr := worker.claimNextNodeResult()
+	require.NoError(t, claimErr)
 	require.NotNil(t, first)
 	defer worker.releaseNodeClaim(first.ID)
-	second, _ := worker.claimNextNodeResult()
+	second, _, claimErr := worker.claimNextNodeResult()
+	require.NoError(t, claimErr)
 	require.NotNil(t, second)
 	defer worker.releaseNodeClaim(second.ID)
 	require.NotEqual(t, first.ID, second.ID, "an in-flight DLQ claim cannot be selected again")
-	third, _ := worker.claimNextNodeResult()
+	third, _, claimErr := worker.claimNextNodeResult()
+	require.NoError(t, claimErr)
 	require.Nil(t, third)
 	require.Equal(t, 2, worker.PendingEmbeddingsCount(), "the two active DLQ claims count once each")
 }

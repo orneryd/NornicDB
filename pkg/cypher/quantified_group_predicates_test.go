@@ -443,7 +443,7 @@ func TestLocalScopeAndPatternStructureReaders(t *testing.T) {
 	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "call_locals")
 	exec := NewStorageExecutor(engine)
 	node := &storage.Node{ID: "n1", Labels: []string{"Outer"}, Properties: map[string]interface{}{"x": int64(5)}}
-	_, createErr := engine.CreateNode(node)
+	_, createErr := engine.CreateNode(t.Context(), node)
 	require.NoError(t, createErr)
 	require.NoError(t, RegisterUserProcedure(
 		ProcedureSpec{Name: "custom.lexical_call_args", Mode: ProcedureModeRead, MinArgs: 2, MaxArgs: 2,

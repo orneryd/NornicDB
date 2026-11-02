@@ -19,7 +19,7 @@ func TestReadyLabelIDStreamStopsAfterCallerCancellation(t *testing.T) {
 	for i := range nodes {
 		nodes[i] = &Node{ID: NodeID(fmt.Sprintf("test:cancel-%04d", i)), Labels: []string{"CancelLabel"}}
 	}
-	require.NoError(t, engine.BulkCreateNodes(nodes))
+	require.NoError(t, engine.BulkCreateNodes(t.Context(), nodes))
 	for _, cancelAt := range []int{1, count} {
 		t.Run(fmt.Sprintf("cancel-at-%d", cancelAt), func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())

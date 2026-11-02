@@ -11,12 +11,12 @@ import (
 func TestBadgerTransaction_ScanForUniqueViolation_HookNamespaceAndExclude(t *testing.T) {
 	engine := newTestEngine(t)
 
-	_, err := engine.CreateNode(&Node{ID: "test:u1", Labels: []string{"User"}, Properties: map[string]any{"email": "a@example.com"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:u1", Labels: []string{"User"}, Properties: map[string]any{"email": "a@example.com"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "other:u2", Labels: []string{"User"}, Properties: map[string]any{"email": "a@example.com"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "other:u2", Labels: []string{"User"}, Properties: map[string]any{"email": "a@example.com"}})
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	defer tx.Rollback()
@@ -47,10 +47,10 @@ func TestBadgerTransaction_ScanForUniqueViolation_HookNamespaceAndExclude(t *tes
 func TestBadgerTransaction_ScanForNodeKeyViolation_AndCheckNodeKeyConstraintBranches(t *testing.T) {
 	engine := newTestEngine(t)
 
-	_, err := engine.CreateNode(&Node{ID: "test:k1", Labels: []string{"Account"}, Properties: map[string]any{"tenant": "t1", "ext": "e1"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:k1", Labels: []string{"Account"}, Properties: map[string]any{"tenant": "t1", "ext": "e1"}})
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	defer tx.Rollback()

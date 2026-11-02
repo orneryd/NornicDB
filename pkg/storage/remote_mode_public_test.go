@@ -112,19 +112,26 @@ func TestRemoteStorageOperationsSupplyDeclaredAccessMode(t *testing.T) {
 		value interface{}
 		run   func(*RemoteEngine) error
 	}{
-		{"create node", RemoteAccessWrite, node, func(e *RemoteEngine) error { _, err := e.CreateNode(&Node{ID: "n"}); return err }},
-		{"update node", RemoteAccessWrite, int64(1), func(e *RemoteEngine) error { return e.UpdateNode(NodeUpdateRequest{After: &Node{ID: "n"}}) }},
-		{"delete node", RemoteAccessWrite, int64(1), func(e *RemoteEngine) error { return e.DeleteNode("n") }},
-		{"create edge", RemoteAccessWrite, edge, func(e *RemoteEngine) error {
-			return e.CreateEdge(&Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "LINK"})
+		{"create node", RemoteAccessWrite, node, func(e *RemoteEngine) error { _, err := e.CreateNode(t.Context(), &Node{ID: "n"}); return err }},
+		{"update node", RemoteAccessWrite, int64(1), func(e *RemoteEngine) error {
+			return e.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "n"}})
 		}},
-		{"update edge", RemoteAccessWrite, int64(1), func(e *RemoteEngine) error { return e.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "e"}}) }},
-		{"delete edge", RemoteAccessWrite, int64(1), func(e *RemoteEngine) error { return e.DeleteEdge("e") }},
-		{"get node", RemoteAccessRead, node, func(e *RemoteEngine) error { _, err := e.GetNode("n"); return err }},
-		{"get edge", RemoteAccessRead, edge, func(e *RemoteEngine) error { _, err := e.GetEdge("e"); return err }},
-		{"node count", RemoteAccessRead, int64(1), func(e *RemoteEngine) error { _, err := e.NodeCount(); return err }},
-		{"edge count", RemoteAccessRead, int64(1), func(e *RemoteEngine) error { _, err := e.EdgeCount(); return err }},
-		{"positional count", RemoteAccessRead, int64(1), func(e *RemoteEngine) error { _, err := e.EdgeCountByStartLabel("L", "LINK"); return err }},
+		{"delete node", RemoteAccessWrite, int64(1), func(e *RemoteEngine) error { return e.DeleteNode(t.Context(), "n") }},
+		{"create edge", RemoteAccessWrite, edge, func(e *RemoteEngine) error {
+			return e.CreateEdge(t.Context(), &Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "LINK"})
+		}},
+		{"update edge", RemoteAccessWrite, int64(1), func(e *RemoteEngine) error {
+			return e.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "e"}})
+		}},
+		{"delete edge", RemoteAccessWrite, int64(1), func(e *RemoteEngine) error { return e.DeleteEdge(t.Context(), "e") }},
+		{"get node", RemoteAccessRead, node, func(e *RemoteEngine) error { _, err := e.GetNode(t.Context(), "n"); return err }},
+		{"get edge", RemoteAccessRead, edge, func(e *RemoteEngine) error { _, err := e.GetEdge(t.Context(), "e"); return err }},
+		{"node count", RemoteAccessRead, int64(1), func(e *RemoteEngine) error { _, err := e.NodeCount(t.Context()); return err }},
+		{"edge count", RemoteAccessRead, int64(1), func(e *RemoteEngine) error { _, err := e.EdgeCount(t.Context()); return err }},
+		{"positional count", RemoteAccessRead, int64(1), func(e *RemoteEngine) error {
+			_, err := e.EdgeCountByStartLabel(context.Background(), "L", "LINK")
+			return err
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			calls := 0

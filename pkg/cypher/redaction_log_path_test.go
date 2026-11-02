@@ -259,7 +259,7 @@ func TestSlowQueryLog_ExtensionStatementKeepsStructureOnly(t *testing.T) {
 		t.Fatalf("%q is not an extension statement", query)
 	}
 	exec, logged := captureSlowQueryLog(t)
-	exec.markCachedValidSyntax(query, syntaxValidANTLR)
+	exec.markCachedValidSyntax(t.Context(), query, syntaxValidANTLR)
 	exec.emitSlowQueryLog(t.Context(), query, nil, time.Second)
 	got := logged()
 	if len(got) != 1 {

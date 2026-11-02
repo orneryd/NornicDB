@@ -34,9 +34,9 @@ func TestBadgerMVCC_CorruptionAndErrorPaths(t *testing.T) {
 		return nil
 	}))
 
-	_, err := engine.GetNodeCurrentHead(node.ID)
+	_, err := engine.GetNodeCurrentHead(context.Background(), node.ID)
 	require.Error(t, err)
-	_, err = engine.GetEdgeCurrentHead(edge.ID)
+	_, err = engine.GetEdgeCurrentHead(context.Background(), edge.ID)
 	require.Error(t, err)
 
 	// Restore valid heads and inject malformed version records.
@@ -64,9 +64,9 @@ func TestBadgerMVCC_CorruptionAndErrorPaths(t *testing.T) {
 		return nil
 	}))
 
-	_, err = engine.GetNodeVisibleAt(node.ID, v2)
+	_, err = engine.GetNodeVisibleAt(t.Context(), node.ID, v2)
 	require.Error(t, err)
-	_, err = engine.GetEdgeVisibleAt(edge.ID, v2)
+	_, err = engine.GetEdgeVisibleAt(t.Context(), edge.ID, v2)
 	require.Error(t, err)
 
 	// Error paths: invalid logical key shape/prefix for load/write helpers.

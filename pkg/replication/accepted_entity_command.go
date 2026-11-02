@@ -135,7 +135,7 @@ func (e *ReplicatedEngine) SubmitEntityCommit(ctx context.Context, prepared *sto
 	return receipt, err
 }
 
-func submitAcceptedByApply(ctx context.Context, cmd *Command, settle func(storage.CommitOutcome), validate func() error, apply func(*Command, time.Duration) error, timeout time.Duration) (*storage.CommitReceipt, error) {
+func submitAcceptedByApply(ctx context.Context, cmd *Command, settle func(storage.CommitOutcome), validate func() error, apply func(context.Context, *Command, time.Duration) error, timeout time.Duration) (*storage.CommitReceipt, error) {
 	if err := validate(); err != nil {
 		return nil, err
 	}
@@ -144,7 +144,8 @@ func submitAcceptedByApply(ctx context.Context, cmd *Command, settle func(storag
 	}
 	receipt, resolve := storage.NewCommitReceipt(settle)
 	go func() {
-		err := apply(cmd, timeout)
+		completionCtx := context.Background()
+		err := apply(completionCtx, cmd, timeout)
 		if cmd.accepted != nil && !cmd.accepted.started.Load() && (errors.Is(err, ErrClosed) || errors.Is(err, ErrNotReady) || errors.Is(err, ErrNotLeader) || errors.Is(err, ErrStandbyMode)) {
 			cmd.accepted.prepared.AbortNative()
 			_ = resolve.Resolve(storage.CommitOutcome{State: storage.CommitDiscarded, Err: err})
@@ -194,19 +195,21 @@ func (e *ReplicatedEngine) ForwardEntityChanges(ctx context.Context, ops []stora
 	if len(ops) == 0 {
 		return nil
 	}
-	if ctx != nil && ctx.Err() != nil {
+	// This existing optional-context entry keeps its detached nil contract.
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if ctx.Err() != nil {
 		return ctx.Err()
 	}
 	forward := *e
-	if ctx != nil {
-		if deadline, ok := ctx.Deadline(); ok {
-			remaining := time.Until(deadline)
-			if remaining <= 0 {
-				return context.DeadlineExceeded
-			}
-			if remaining < forward.timeout {
-				forward.timeout = remaining
-			}
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return context.DeadlineExceeded
+		}
+		if remaining < forward.timeout {
+			forward.timeout = remaining
 		}
 	}
 	if mode == storage.CommitModeDirect {
@@ -216,18 +219,18 @@ func (e *ReplicatedEngine) ForwardEntityChanges(ctx context.Context, ops []stora
 		op := ops[0]
 		switch op.Type {
 		case storage.OpCreateNode:
-			_, err := forward.CreateNode(op.Node)
+			_, err := forward.CreateNode(ctx, op.Node)
 			return err
 		case storage.OpUpdateNode:
-			return forward.UpdateNode(op.NodeUpdate())
+			return forward.UpdateNode(ctx, op.NodeUpdate())
 		case storage.OpDeleteNode:
-			return forward.DeleteNode(op.NodeID)
+			return forward.DeleteNode(ctx, op.NodeID)
 		case storage.OpCreateEdge:
-			return forward.CreateEdge(op.Edge)
+			return forward.CreateEdge(ctx, op.Edge)
 		case storage.OpUpdateEdge:
-			return forward.UpdateEdge(op.EdgeUpdate())
+			return forward.UpdateEdge(ctx, op.EdgeUpdate())
 		case storage.OpDeleteEdge:
-			return forward.DeleteEdge(op.EdgeID)
+			return forward.DeleteEdge(ctx, op.EdgeID)
 		}
 	}
 	if mode != storage.CommitModeImplicit {
@@ -245,25 +248,25 @@ func (e *ReplicatedEngine) ForwardEntityChanges(ctx context.Context, ops []stora
 		for i := range ops {
 			nodes[i] = ops[i].Node
 		}
-		return forward.BulkCreateNodes(nodes)
+		return forward.BulkCreateNodes(ctx, nodes)
 	case storage.OpCreateEdge:
 		edges := make([]*storage.Edge, len(ops))
 		for i := range ops {
 			edges[i] = ops[i].Edge
 		}
-		return forward.BulkCreateEdges(edges)
+		return forward.BulkCreateEdges(ctx, edges)
 	case storage.OpDeleteNode:
 		ids := make([]storage.NodeID, len(ops))
 		for i := range ops {
 			ids[i] = ops[i].NodeID
 		}
-		return forward.BulkDeleteNodes(ids)
+		return forward.BulkDeleteNodes(ctx, ids)
 	case storage.OpDeleteEdge:
 		ids := make([]storage.EdgeID, len(ops))
 		for i := range ops {
 			ids[i] = ops[i].EdgeID
 		}
-		return forward.BulkDeleteEdges(ids)
+		return forward.BulkDeleteEdges(ctx, ids)
 	}
 	return storage.ErrInvalidData
 }

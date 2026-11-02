@@ -107,7 +107,7 @@ func TestCallDbRetrieveAndRerank(t *testing.T) {
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:         storage.NodeID("doc-1"),
 		Labels:     []string{"Document"},
 		Properties: map[string]interface{}{"content": "alpha retrieval test"},
@@ -141,7 +141,7 @@ func TestCallDbRetrieveUsesPerChunkOuterRRF(t *testing.T) {
 		{ID: "repeated", Labels: []string{"Document"}, Properties: map[string]interface{}{"content": "repeated"}, ChunkEmbeddings: [][]float32{{1, 0}, {0, 1}}},
 		{ID: "averaged", Labels: []string{"Document"}, Properties: map[string]interface{}{"content": "averaged"}, ChunkEmbeddings: [][]float32{{0.70710677, 0.70710677}}},
 	} {
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 
@@ -164,7 +164,7 @@ func TestCallDbRetrieveContinuesBeyondInitialLimit(t *testing.T) {
 	exec := NewStorageExecutor(store)
 
 	for index := 0; index < 5; index++ {
-		_, err := store.CreateNode(&storage.Node{
+		_, err := store.CreateNode(t.Context(), &storage.Node{
 			ID:         storage.NodeID(fmt.Sprintf("doc-%d", index)),
 			Labels:     []string{"Document"},
 			Properties: map[string]interface{}{"content": "alpha continuation document"},
@@ -199,7 +199,7 @@ func TestCallDbRetrieveContinuationBypassesCypherResultCache(t *testing.T) {
 	exec.SetSearchService(service)
 
 	for index := 0; index < 3; index++ {
-		_, err := store.CreateNode(&storage.Node{
+		_, err := store.CreateNode(t.Context(), &storage.Node{
 			ID:         storage.NodeID(fmt.Sprintf("doc-%d", index)),
 			Labels:     []string{"Document"},
 			Properties: map[string]interface{}{"content": "cached continuation"},
@@ -252,7 +252,7 @@ func TestCallDbRetrieveIDContinuationGroupsAllPassages(t *testing.T) {
 		{ID: "frame-a", Labels: []string{"Frame"}, Properties: map[string]interface{}{"collection": "summer", "asset_id": "asset-a"}},
 		{ID: "winter", Labels: []string{"Frame"}, Properties: map[string]interface{}{"collection": "winter", "asset_id": "asset-c"}},
 	} {
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 
@@ -305,7 +305,7 @@ func TestCallDbRetrieveAppliesPropertyFilters(t *testing.T) {
 		{ID: "wrong-generation", Labels: []string{"Document"}, Properties: map[string]interface{}{"content": "policy document", "lifecycle": "active", "generation": int64(5), "artifact": "source"}},
 		{ID: "wrong-artifact", Labels: []string{"Document"}, Properties: map[string]interface{}{"content": "policy document", "lifecycle": "active", "generation": int64(3), "artifact": "derived"}},
 	} {
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 
@@ -510,7 +510,7 @@ func TestCallDbRetrieveFailClosedPreservesEmbedderCause(t *testing.T) {
 func TestCallDbRetrieveFailOpenReturnsEmbeddingFallbackReason(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
-	_, err := store.CreateNode(&storage.Node{ID: "doc", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "alpha fallback document"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "doc", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "alpha fallback document"}})
 	require.NoError(t, err)
 	exec := NewStorageExecutor(store)
 	exec.SetEmbedder(&failingVectorEmbedder{err: context.DeadlineExceeded})
@@ -827,7 +827,7 @@ func TestRerankTruthfulnessFilteredOutcomePublicPaths(t *testing.T) {
 			ctx := context.Background()
 			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 			for _, id := range []string{"a", "b", "c"} {
-				_, err := engine.CreateNode(&storage.Node{
+				_, err := engine.CreateNode(t.Context(), &storage.Node{
 					ID: storage.NodeID(id), Labels: []string{"Document"},
 					Properties:      map[string]interface{}{"content": "alpha complete query chunk one chunk two " + id},
 					ChunkEmbeddings: [][]float32{{1, 0}, {0, 1}},
@@ -938,7 +938,7 @@ func TestCallRagHelpers_MessageAndCandidateParsingBranches(t *testing.T) {
 func TestCallDbRetrieveFailClosedReportsFailedSearch(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
-	_, err := store.CreateNode(&storage.Node{ID: "doc", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "alpha document"},
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "doc", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "alpha document"},
 		ChunkEmbeddings: [][]float32{{1, 0, 0, 0}}})
 	require.NoError(t, err)
 	exec := NewStorageExecutor(store)

@@ -151,7 +151,7 @@ func TestCreateRejectedRelationshipWritesNothing(t *testing.T) {
 		_, err := exec.Execute(ctx, stmt, nil)
 		require.Error(t, err, stmt)
 		require.Contains(t, err.Error(), "UNIQUE on REL.[k]", stmt)
-		count, err := store.NodeCount()
+		count, err := store.NodeCount(t.Context())
 		require.NoError(t, err)
 		require.Equal(t, int64(2), count, "the rejected statement kept none of its nodes: %s", stmt)
 		edges, err := store.AllEdges(ctx)
@@ -165,7 +165,7 @@ func TestCreateRejectedRelationshipWritesNothing(t *testing.T) {
 	// not satisfied by a statement that never writes at all.
 	_, err = exec.Execute(ctx, "CREATE (:T {id: 3})-[:REL {k: 'fresh'}]->(:T {id: 4})", nil)
 	require.NoError(t, err)
-	count, err := store.NodeCount()
+	count, err := store.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, int64(4), count)
 	edges, err := store.AllEdges(ctx)

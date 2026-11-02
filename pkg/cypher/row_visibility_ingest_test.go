@@ -15,11 +15,11 @@ func TestVisibleRowPropertyAccessAvoidsUnselectedProjection(t *testing.T) {
 	e, _ := reviewPropertyExecutor(t)
 	expr := &rowPropertyChainNode{variable: "row", chain: "quantity"}
 	values := map[string]interface{}{"row": map[string]interface{}{"quantity": int64(3), "unselected": map[string]interface{}{"name": "other", "values": []interface{}{int64(1), int64(2)}}}}
-	value, ok, err := expr.eval(e, values, nil)
+	value, ok, err := expr.eval(t.Context(), e, values, nil)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, int64(3), value)
-	allocs := testing.AllocsPerRun(100, func() { rowVisibilitySink, _, _ = expr.eval(e, values, nil) })
+	allocs := testing.AllocsPerRun(100, func() { rowVisibilitySink, _, _ = expr.eval(t.Context(), e, values, nil) })
 	require.LessOrEqual(t, allocs, float64(1), "scalar row access should not copy unrelated nested values")
 }
 
@@ -30,15 +30,15 @@ func BenchmarkVisibleRowPropertyAccess(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rowVisibilitySink, _, _ = expr.eval(e, values, nil)
+		rowVisibilitySink, _, _ = expr.eval(b.Context(), e, values, nil)
 	}
 }
 
 func TestVisibleRowPropertyChainPreservesNestedEntityVisibility(t *testing.T) {
 	e, b := reviewPropertyExecutor(t)
-	node, err := b.GetNode("review:a")
+	node, err := b.GetNode(t.Context(), "review:a")
 	require.NoError(t, err)
-	edge, err := b.GetEdge("review:ab")
+	edge, err := b.GetEdge(t.Context(), "review:ab")
 	require.NoError(t, err)
 	base := map[string]interface{}{"outer": map[string]interface{}{"node": node, "edge": edge, "plain": map[string]interface{}{"quantity": int64(3)}}}
 	for _, chain := range []string{"outer.node.body", "outer.node.title", "outer.edge.summary", "outer.node", "outer.plain.quantity", "outer.plain", "outer.absent"} {

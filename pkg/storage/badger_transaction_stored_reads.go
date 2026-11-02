@@ -6,13 +6,13 @@ import (
 
 // GetStoredNode reads a node through the transaction's snapshot and pending
 // writes, without applying suppression or decay to its committed body.
-func (tx *BadgerTransaction) GetStoredNode(id NodeID) (*Node, error) {
-	return readTransactionEntity(tx, id, (*BadgerTransaction).nodeReadState, cloneTransactionNode, loadTransactionNode, nil, transactionNodeRead{mvccEntityRead: mvccEntityRead{vectors: true, visibility: storedRead}})
+func (tx *BadgerTransaction) GetStoredNode(ctx context.Context, id NodeID) (*Node, error) {
+	return readTransactionEntity(ctx, tx, id, (*BadgerTransaction).nodeReadState, cloneTransactionNode, loadTransactionNode, nil, transactionNodeRead{mvccEntityRead: mvccEntityRead{vectors: true, visibility: storedRead}})
 }
 
 // GetStoredEdge is GetStoredNode for a relationship.
-func (tx *BadgerTransaction) GetStoredEdge(id EdgeID) (*Edge, error) {
-	return readTransactionEntity(tx, id, (*BadgerTransaction).edgeReadState, cloneTransactionEdge, (*BadgerTransaction).getCommittedEdgeReadLocked, nil, storedRead)
+func (tx *BadgerTransaction) GetStoredEdge(ctx context.Context, id EdgeID) (*Edge, error) {
+	return readTransactionEntity(ctx, tx, id, (*BadgerTransaction).edgeReadState, cloneTransactionEdge, loadTransactionEdge, nil, storedRead)
 }
 
 // GetStoredOutgoingEdges returns the transaction's physical outgoing edges.

@@ -43,11 +43,11 @@ func TestMatchWhereSize(t *testing.T) {
 		Labels:     []string{"Doc"},
 		Properties: map[string]interface{}{"name": "empty"},
 	}
-	_, err := store.CreateNode(n1)
+	_, err := store.CreateNode(t.Context(), n1)
 	require.NoError(t, err)
-	_, err = store.CreateNode(n2)
+	_, err = store.CreateNode(t.Context(), n2)
 	require.NoError(t, err)
-	_, err = store.CreateNode(n3)
+	_, err = store.CreateNode(t.Context(), n3)
 	require.NoError(t, err)
 
 	t.Run("WHERE size(n.content) > 10000 returns only large", func(t *testing.T) {
@@ -107,11 +107,11 @@ func TestMatchWhereExists(t *testing.T) {
 			"openai_embedding": []float32{0.3},
 		},
 	}
-	_, err := store.CreateNode(n1)
+	_, err := store.CreateNode(t.Context(), n1)
 	require.NoError(t, err)
-	_, err = store.CreateNode(n2)
+	_, err = store.CreateNode(t.Context(), n2)
 	require.NoError(t, err)
-	_, err = store.CreateNode(n3)
+	_, err = store.CreateNode(t.Context(), n3)
 	require.NoError(t, err)
 
 	t.Run("WHERE exists(n.openai_embedding) returns only nodes with embedding", func(t *testing.T) {
@@ -168,11 +168,11 @@ func TestMatchWhereSizeAndExists(t *testing.T) {
 			"name":             "small-with-embedding",
 		},
 	}
-	_, err := store.CreateNode(n1)
+	_, err := store.CreateNode(t.Context(), n1)
 	require.NoError(t, err)
-	_, err = store.CreateNode(n2)
+	_, err = store.CreateNode(t.Context(), n2)
 	require.NoError(t, err)
-	_, err = store.CreateNode(n3)
+	_, err = store.CreateNode(t.Context(), n3)
 	require.NoError(t, err)
 
 	t.Run("WHERE size(n.content) > 10000 AND exists(n.openai_embedding) returns only large with embedding", func(t *testing.T) {

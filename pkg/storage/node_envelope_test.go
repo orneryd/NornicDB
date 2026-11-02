@@ -110,7 +110,7 @@ func TestNodeEnvelopeModes(t *testing.T) {
 
 func TestNodeEnvelopeWALRebinding(t *testing.T) {
 	source := createTestBadgerEngine(t)
-	_, err := source.CreateNode(&Node{ID: "test:wal", Properties: map[string]any{"alpha": int64(7)}})
+	_, err := source.CreateNode(t.Context(), &Node{ID: "test:wal", Properties: map[string]any{"alpha": int64(7)}})
 	require.NoError(t, err)
 	var body []byte
 	require.NoError(t, source.withView(func(txn *badger.Txn) error {
@@ -131,7 +131,7 @@ func TestNodeEnvelopeWALRebinding(t *testing.T) {
 	for _, legacy := range []bool{false, true} {
 		t.Run(fmt.Sprint(legacy), func(t *testing.T) {
 			destination := createTestBadgerEngine(t)
-			_, err := destination.CreateNode(&Node{ID: "test:sentinel", Properties: map[string]any{"beta": "keep"}})
+			_, err := destination.CreateNode(t.Context(), &Node{ID: "test:sentinel", Properties: map[string]any{"beta": "keep"}})
 			require.NoError(t, err)
 			data := &WALBufferedCommitData{Namespace: "test", TxID: "envelope", Writes: map[string][]byte{string(nodeKey("test:wal")): body}}
 			if legacy {

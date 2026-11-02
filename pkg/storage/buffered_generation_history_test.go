@@ -24,31 +24,31 @@ func TestBufferedRecoveryMultipleCommitsPreserveHistory(t *testing.T) {
 		return b, w
 	}
 	b, w := open()
-	tx, err := b.BeginTransaction()
+	tx, err := b.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
-	_, err = tx.CreateNode(&Node{ID: "test:a", Properties: map[string]any{"v": int64(1)}})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:a", Properties: map[string]any{"v": int64(1)}})
 	require.NoError(t, err)
-	_, err = tx.CreateNode(&Node{ID: "test:b"})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:b"})
 	require.NoError(t, err)
-	require.NoError(t, tx.CreateEdge(&Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "R", Properties: map[string]any{"v": int64(1)}}))
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "R", Properties: map[string]any{"v": int64(1)}}))
 	require.NoError(t, tx.Commit())
 	h, err := b.loadNodeMVCCHead("test:a")
 	require.NoError(t, err)
 	versions := []MVCCVersion{h.Version}
 	for _, v := range []int64{2, 3} {
-		tx, err = b.BeginTransaction()
+		tx, err = b.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		require.NoError(t, tx.SetNamespace("test"))
 		require.NoError(t, tx.SetImplicit(true))
-		n, err := tx.GetNode("test:a")
+		n, err := tx.GetNode(t.Context(), "test:a")
 		require.NoError(t, err)
 		n.Properties = map[string]any{"v": v}
-		require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: n, Policy: ClientNodeEdits}))
-		e, err := tx.GetEdge("test:r")
+		require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: n, Policy: ClientNodeEdits}))
+		e, err := tx.GetEdge(t.Context(), "test:r")
 		require.NoError(t, err)
 		e.Properties = map[string]any{"v": v}
-		require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: e}))
+		require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: e}))
 		require.NoError(t, tx.Commit())
 		require.True(t, tx.AcknowledgedBuffered())
 	}
@@ -73,10 +73,10 @@ func TestBufferedRecoveryMultipleCommitsPreserveHistory(t *testing.T) {
 	check := func(stage string) {
 		t.Helper()
 		for i, v := range versions {
-			n, err := b.GetNodeVisibleAt("test:a", v)
+			n, err := b.GetNodeVisibleAt(t.Context(), "test:a", v)
 			require.NoError(t, err, stage)
 			require.Equal(t, int64(i+1), n.Properties["v"], stage+" node")
-			e, err := b.GetEdgeVisibleAt("test:r", v)
+			e, err := b.GetEdgeVisibleAt(t.Context(), "test:r", v)
 			require.NoError(t, err, stage)
 			require.Equal(t, int64(i+1), e.Properties["v"], stage+" edge")
 		}

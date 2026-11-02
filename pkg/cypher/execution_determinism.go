@@ -84,7 +84,7 @@ func compileExecutionPolicy(ctx context.Context, text string, depth int) *execut
 	if requirements.Write || requirements.Schema || requirements.Admin {
 		return policy
 	}
-	if err := forEachFunctionInvocation(text, func(name, normalized string, open int) error {
+	if err := forEachFunctionInvocation(ctx, text, func(name, normalized string, open int) error {
 		volatility, known := functionCacheDeclarations[normalized]
 		if !known || volatility == functionVolatile {
 			return errNonDeterministicExecution

@@ -23,13 +23,13 @@ func BenchmarkRegisterEdgeTokens(b *testing.B) {
 					edges[i] = &Edge{Type: names[i%distinct]}
 				}
 				schema := NewSchemaManager()
-				if err := schema.RegisterTokens(nil, names); err != nil {
+				if err := schema.RegisterTokens(b.Context(), nil, names); err != nil {
 					b.Fatal(err)
 				}
 				b.ReportAllocs()
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
-					if err := schema.RegisterEdgeTokens(edges); err != nil {
+					if err := schema.RegisterEdgeTokens(b.Context(), edges); err != nil {
 						b.Fatal(err)
 					}
 				}

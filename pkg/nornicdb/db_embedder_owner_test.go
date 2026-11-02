@@ -62,7 +62,7 @@ func TestDB_EmbedderOwnershipClosesAfterUsersAndReturnsError(t *testing.T) {
 	db, err := Open("", nil)
 	require.NoError(t, err)
 	var joined atomic.Bool
-	require.True(t, db.RunBackgroundTask(func() {
+	require.True(t, db.RunBackgroundTask(func(context.Context) {
 		<-db.LifetimeContext().Done()
 		joined.Store(true)
 	}))

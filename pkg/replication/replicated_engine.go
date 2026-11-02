@@ -18,6 +18,9 @@ import (
 //
 // This wrapper intentionally operates on the *base* storage (the engine that stores
 // fully-qualified IDs like "<db>:<id>") so multi-database isolation is preserved.
+// Write contexts control leader preparation and admission; accepted native work
+// retains an independent completion lifetime. Reads pass their context to the
+// embedded local engine.
 type ReplicatedEngine struct {
 	storage.Engine
 
@@ -96,8 +99,8 @@ func (e *ReplicatedEngine) IsLeader() bool {
 	return e.replicator.IsLeader()
 }
 
-func (e *ReplicatedEngine) CreateNode(node *storage.Node) (storage.NodeID, error) {
-	if err := e.applyEntityCommand(CmdCreateNode, node); err != nil {
+func (e *ReplicatedEngine) CreateNode(ctx context.Context, node *storage.Node) (storage.NodeID, error) {
+	if err := e.applyEntityCommand(ctx, CmdCreateNode, node); err != nil {
 		return "", err
 	}
 	return node.ID, nil
@@ -106,48 +109,48 @@ func (e *ReplicatedEngine) CreateNode(node *storage.Node) (storage.NodeID, error
 // UpdateNode sends the blind update image when the caller supplied no observed
 // preimage and kept the client-edit policy, and otherwise forwards the typed
 // request so its leader can plan against Before.
-func (e *ReplicatedEngine) UpdateNode(updateRequest storage.NodeUpdateRequest) error {
+func (e *ReplicatedEngine) UpdateNode(ctx context.Context, updateRequest storage.NodeUpdateRequest) error {
 	if updateRequest.Before == nil && updateRequest.Policy == storage.ClientNodeEdits {
-		return e.applyEntityCommand(CmdUpdateNode, updateRequest.After)
+		return e.applyEntityCommand(ctx, CmdUpdateNode, updateRequest.After)
 	}
-	return e.applyEntityCommand(CmdUpdateNodeRequest, updateRequest)
+	return e.applyEntityCommand(ctx, CmdUpdateNodeRequest, updateRequest)
 }
 
-func (e *ReplicatedEngine) DeleteNode(id storage.NodeID) error {
-	return e.applyEntityCommand(CmdDeleteNode, id)
+func (e *ReplicatedEngine) DeleteNode(ctx context.Context, id storage.NodeID) error {
+	return e.applyEntityCommand(ctx, CmdDeleteNode, id)
 }
 
-func (e *ReplicatedEngine) CreateEdge(edge *storage.Edge) error {
-	return e.applyEntityCommand(CmdCreateEdge, edge)
+func (e *ReplicatedEngine) CreateEdge(ctx context.Context, edge *storage.Edge) error {
+	return e.applyEntityCommand(ctx, CmdCreateEdge, edge)
 }
 
 // UpdateEdge keeps the blind update image for a request with no observed
 // preimage and otherwise forwards the typed relationship request.
-func (e *ReplicatedEngine) UpdateEdge(updateRequest storage.EdgeUpdateRequest) error {
+func (e *ReplicatedEngine) UpdateEdge(ctx context.Context, updateRequest storage.EdgeUpdateRequest) error {
 	if updateRequest.Before == nil {
-		return e.applyEntityCommand(CmdUpdateEdge, updateRequest.After)
+		return e.applyEntityCommand(ctx, CmdUpdateEdge, updateRequest.After)
 	}
-	return e.applyEntityCommand(CmdUpdateEdgeRequest, updateRequest)
+	return e.applyEntityCommand(ctx, CmdUpdateEdgeRequest, updateRequest)
 }
 
-func (e *ReplicatedEngine) DeleteEdge(id storage.EdgeID) error {
-	return e.applyEntityCommand(CmdDeleteEdge, id)
+func (e *ReplicatedEngine) DeleteEdge(ctx context.Context, id storage.EdgeID) error {
+	return e.applyEntityCommand(ctx, CmdDeleteEdge, id)
 }
 
-func (e *ReplicatedEngine) BulkCreateNodes(nodes []*storage.Node) error {
-	return e.applyEntityCommand(CmdBulkCreateNodes, nodes)
+func (e *ReplicatedEngine) BulkCreateNodes(ctx context.Context, nodes []*storage.Node) error {
+	return e.applyEntityCommand(ctx, CmdBulkCreateNodes, nodes)
 }
 
-func (e *ReplicatedEngine) BulkCreateEdges(edges []*storage.Edge) error {
-	return e.applyEntityCommand(CmdBulkCreateEdges, edges)
+func (e *ReplicatedEngine) BulkCreateEdges(ctx context.Context, edges []*storage.Edge) error {
+	return e.applyEntityCommand(ctx, CmdBulkCreateEdges, edges)
 }
 
-func (e *ReplicatedEngine) BulkDeleteNodes(ids []storage.NodeID) error {
-	return e.applyEntityCommand(CmdBulkDeleteNodes, ids)
+func (e *ReplicatedEngine) BulkDeleteNodes(ctx context.Context, ids []storage.NodeID) error {
+	return e.applyEntityCommand(ctx, CmdBulkDeleteNodes, ids)
 }
 
-func (e *ReplicatedEngine) BulkDeleteEdges(ids []storage.EdgeID) error {
-	return e.applyEntityCommand(CmdBulkDeleteEdges, ids)
+func (e *ReplicatedEngine) BulkDeleteEdges(ctx context.Context, ids []storage.EdgeID) error {
+	return e.applyEntityCommand(ctx, CmdBulkDeleteEdges, ids)
 }
 
 func (e *ReplicatedEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesDeleted int64, err error) {
@@ -157,7 +160,7 @@ func (e *ReplicatedEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, ed
 	if err != nil {
 		return 0, 0, localizedError(localization.ReplicationEngineEncodeDeletePrefixFailed(err), err)
 	}
-	if err := e.replicator.Apply(&Command{Type: CmdDeleteByPrefix, Data: payload, Timestamp: time.Now()}, e.timeout); err != nil {
+	if err := e.replicator.Apply(context.Background(), &Command{Type: CmdDeleteByPrefix, Data: payload, Timestamp: time.Now()}, e.timeout); err != nil {
 		return 0, 0, err
 	}
 	// Best-effort counts are not returned by the replication protocol today.
@@ -182,10 +185,13 @@ func (e *ReplicatedEngine) SubscribeEvents(handlers storage.EventHandlers) error
 }
 
 // applyEntityCommand keeps native direct/bulk wire kinds and their producer policy.
-func (e *ReplicatedEngine) applyEntityCommand(kind CommandType, value any) error {
+func (e *ReplicatedEngine) applyEntityCommand(ctx context.Context, kind CommandType, value any) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	data, err := encodeEntityCommandPayload(kind, value)
 	if err != nil {
 		return err
 	}
-	return e.replicator.Apply(&Command{Type: kind, Data: data, Timestamp: time.Now()}, e.timeout)
+	return e.replicator.Apply(ctx, &Command{Type: kind, Data: data, Timestamp: time.Now()}, e.timeout)
 }

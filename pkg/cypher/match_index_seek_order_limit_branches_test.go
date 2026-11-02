@@ -20,7 +20,7 @@ func TestTryCollectNodesFromPropertyIndexOrderLimit_Branches(t *testing.T) {
 
 	for i := 0; i < 250; i++ {
 		active := i < 10 // only low ranks active
-		_, err := eng.CreateNode(&storage.Node{
+		_, err := eng.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("nornic:p-%03d", i)),
 			Labels: []string{"Person"},
 			Properties: map[string]interface{}{

@@ -18,7 +18,7 @@ func TestListInputStringConsumers(t *testing.T) {
 			continue
 		}
 		t.Run(input.Name, func(t *testing.T) {
-			_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(input.Name), Labels: []string{"StringList"}, Properties: map[string]interface{}{"name": input.Name, "xs": input.PropertyValue()}})
+			_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(input.Name), Labels: []string{"StringList"}, Properties: map[string]interface{}{"name": input.Name, "xs": input.PropertyValue()}})
 			require.NoError(t, err)
 			params := map[string]interface{}{"name": input.Name, "xs": input.Value}
 			for _, template := range []string{"string.join(%s,',')", "split('c:a:c',%s)"} {

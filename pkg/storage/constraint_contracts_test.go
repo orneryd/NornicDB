@@ -691,7 +691,7 @@ func TestSplitTopLevelCSV_Empty(t *testing.T) {
 
 func TestGetAllConstraintContracts_Empty(t *testing.T) {
 	sm := NewSchemaManager()
-	contracts := sm.GetAllConstraintContracts()
+	contracts := constraintContractsForTest(t, sm)
 	if len(contracts) != 0 {
 		t.Fatalf("expected 0 contracts, got %d", len(contracts))
 	}
@@ -718,7 +718,7 @@ func TestGetAllConstraintContracts_Sorted(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	contracts := sm.GetAllConstraintContracts()
+	contracts := constraintContractsForTest(t, sm)
 	if len(contracts) != 2 {
 		t.Fatalf("expected 2 contracts, got %d", len(contracts))
 	}
@@ -862,19 +862,19 @@ func TestBadgerTransactionCurrentStateHelpers(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = engine.Close() })
 
-	if _, err := engine.CreateNode(&Node{ID: "tenant::n1"}); err != nil {
+	if _, err := engine.CreateNode(t.Context(), &Node{ID: "tenant::n1"}); err != nil {
 		t.Fatalf("create n1: %v", err)
 	}
-	if _, err := engine.CreateNode(&Node{ID: "tenant::n2"}); err != nil {
+	if _, err := engine.CreateNode(t.Context(), &Node{ID: "tenant::n2"}); err != nil {
 		t.Fatalf("create n2: %v", err)
 	}
-	if _, err := engine.CreateNode(&Node{ID: "tenant::n3"}); err != nil {
+	if _, err := engine.CreateNode(t.Context(), &Node{ID: "tenant::n3"}); err != nil {
 		t.Fatalf("create n3: %v", err)
 	}
-	if err := engine.CreateEdge(&Edge{ID: "tenant::out", StartNode: "tenant::n1", EndNode: "tenant::n2", Type: "REL"}); err != nil {
+	if err := engine.CreateEdge(t.Context(), &Edge{ID: "tenant::out", StartNode: "tenant::n1", EndNode: "tenant::n2", Type: "REL"}); err != nil {
 		t.Fatalf("create out edge: %v", err)
 	}
-	if err := engine.CreateEdge(&Edge{ID: "tenant::in", StartNode: "tenant::n2", EndNode: "tenant::n1", Type: "REL"}); err != nil {
+	if err := engine.CreateEdge(t.Context(), &Edge{ID: "tenant::in", StartNode: "tenant::n2", EndNode: "tenant::n1", Type: "REL"}); err != nil {
 		t.Fatalf("create in edge: %v", err)
 	}
 
@@ -892,21 +892,21 @@ func TestBadgerTransactionCurrentStateHelpers(t *testing.T) {
 		deletedEdges: map[EdgeID]struct{}{"tenant::in": {}},
 	}
 
-	node, err := tx.currentNodeLocked("tenant::pending")
+	node, err := tx.currentNodeLocked(t.Context(), "tenant::pending")
 	if err != nil || node == nil || node.ID != "tenant::pending" {
 		t.Fatalf("expected pending node, node=%v err=%v", node, err)
 	}
-	node, err = tx.currentNodeLocked("tenant::deleted")
+	node, err = tx.currentNodeLocked(t.Context(), "tenant::deleted")
 	if err != nil || node != nil {
 		t.Fatalf("expected deleted node to be hidden, node=%v err=%v", node, err)
 	}
 
-	edge, err := tx.currentEdgeLocked("tenant::pending-out")
+	edge, err := tx.currentEdgeLocked(t.Context(), "tenant::pending-out")
 	if err != nil || edge == nil || edge.ID != "tenant::pending-out" {
 		t.Fatalf("expected pending edge, edge=%v err=%v", edge, err)
 	}
 	tx.deletedEdges["tenant::deleted-edge"] = struct{}{}
-	edge, err = tx.currentEdgeLocked("tenant::deleted-edge")
+	edge, err = tx.currentEdgeLocked(t.Context(), "tenant::deleted-edge")
 	if err != nil || edge != nil {
 		t.Fatalf("expected deleted edge to be hidden, edge=%v err=%v", edge, err)
 	}

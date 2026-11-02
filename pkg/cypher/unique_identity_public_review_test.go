@@ -113,7 +113,7 @@ func TestPublicUniqueIdentityReview(t *testing.T) {
 					}
 					_, err = e.Execute(ctx, "DROP CONSTRAINT "+drop, nil)
 					require.NoError(t, err)
-					definition := target.GetSchema().ExportDefinition()
+					definition := schemaDefinitionForTest(t, target.GetSchema())
 					require.Len(t, definition.Constraints, 1, "only the other entity's rule remains")
 					require.NoError(t, b.Close())
 					reopened, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(path))
@@ -122,7 +122,7 @@ func TestPublicUniqueIdentityReview(t *testing.T) {
 					t.Cleanup(func() { _ = reopened.Close() })
 					target = storage.NewNamespacedEngine(reopened, "identity")
 					e = NewStorageExecutor(target)
-					require.Equal(t, definition, target.GetSchema().ExportDefinition(), "ordinary persisted schema survives reopen without a format migration")
+					require.Equal(t, definition, schemaDefinitionForTest(t, target.GetSchema()), "ordinary persisted schema survives reopen without a format migration")
 					nodeWrite := "CREATE (:Shared {code:'same'})"
 					relWrite := "CREATE ()-[:Shared {code:'same'}]->()"
 					allowed, rejected := nodeWrite, relWrite

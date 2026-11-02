@@ -108,11 +108,13 @@ func (g *scanGuardEngine) GetNodesByLabelInScope(ctx context.Context, scope, lab
 	return nodes, err
 }
 
-func (g *scanGuardEngine) GetFirstNodeByLabelInScope(scope, label string) (*Node, error) {
-	node, err := g.inner.GetFirstNodeByLabelInScope(scope, label)
+func (g *scanGuardEngine) GetFirstNodeByLabelInScope(ctx context.Context, scope, label string) (*Node, error) {
+	node, err := g.inner.GetFirstNodeByLabelInScope(ctx, scope, label)
 	g.recordNodes(node)
 	return node, err
 }
+
+var _ ScopedLabelNodeReader = (*scanGuardEngine)(nil)
 
 func (g *scanGuardEngine) StreamNodesByLabelProjectedInScope(ctx context.Context, scope, label string, properties []string, visit func(*Node) error) error {
 	return g.inner.StreamNodesByLabelProjectedInScope(ctx, scope, label, properties, func(node *Node) error {
@@ -179,7 +181,7 @@ func populateOtherDatabase(t testing.TB, inner Engine, nodes, otherEdges, sameTy
 			Properties: map[string]any{"email": "dup@example.com", "uid": i},
 		})
 	}
-	require.NoError(t, nsB.BulkCreateNodes(batch))
+	require.NoError(t, nsB.BulkCreateNodes(context.Background(), batch))
 	edges := make([]*Edge, 0, otherEdges+sameTypeEdges)
 	for i := 0; i < otherEdges+sameTypeEdges; i++ {
 		edgeType := "OTHER"
@@ -194,7 +196,7 @@ func populateOtherDatabase(t testing.TB, inner Engine, nodes, otherEdges, sameTy
 			Properties: map[string]any{"k": "dup", "from": "2020-01-01T00:00:00Z", "to": "2030-01-01T00:00:00Z", "v": "nope"},
 		})
 	}
-	require.NoError(t, nsB.BulkCreateEdges(edges))
+	require.NoError(t, nsB.BulkCreateEdges(context.Background(), edges))
 }
 
 func relationshipConstraintKinds() []Constraint {
@@ -221,10 +223,10 @@ func TestConstraintCreation_DoesNotScanOtherDatabases(t *testing.T) {
 	guard := newScanGuardEngine(inner)
 	nsA := NewNamespacedEngine(guard, "a")
 	for _, id := range []NodeID{"x", "y"} {
-		_, err := nsA.CreateNode(&Node{ID: id, Labels: []string{"A"}, Properties: map[string]any{}})
+		_, err := nsA.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"A"}, Properties: map[string]any{}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, nsA.CreateEdge(&Edge{ID: "r1", StartNode: "x", EndNode: "y", Type: "REL",
+	require.NoError(t, nsA.CreateEdge(t.Context(), &Edge{ID: "r1", StartNode: "x", EndNode: "y", Type: "REL",
 		Properties: map[string]any{"k": "one", "from": "2020-01-01T00:00:00Z", "to": "2021-01-01T00:00:00Z", "v": "ok"}}))
 
 	for _, c := range relationshipConstraintKinds() {
@@ -263,11 +265,11 @@ func TestConstraintCreation_DoesNotScanOtherDatabases(t *testing.T) {
 func seedRelDatabase(t *testing.T, ns *NamespacedEngine, edges ...*Edge) {
 	t.Helper()
 	for id, labels := range map[NodeID][]string{"x": {"A"}, "y": {"A"}, "p": {"Person"}, "q": {"Person"}} {
-		_, err := ns.CreateNode(&Node{ID: id, Labels: labels, Properties: map[string]any{}})
+		_, err := ns.CreateNode(t.Context(), &Node{ID: id, Labels: labels, Properties: map[string]any{}})
 		require.NoError(t, err)
 	}
 	for _, edge := range edges {
-		require.NoError(t, ns.CreateEdge(edge))
+		require.NoError(t, ns.CreateEdge(t.Context(), edge))
 	}
 }
 
@@ -347,28 +349,28 @@ func TestRelationshipPropertyTypeCreation_StreamsOnlyTypeAndDatabase(t *testing.
 	nsA := NewNamespacedEngine(inner, "a")
 	seedRelDatabase(t, nsA, relEdge("e1", "x", "y", "OTHER", bad), relEdge("e2", "x", "y", "REL", map[string]any{"k": "s"}))
 	require.NoError(t, ValidatePropertyTypeConstraintOnCreationForEngine(context.Background(), nsA, ptc))
-	require.NoError(t, nsA.CreateEdge(relEdge("e3", "y", "x", "REL", bad)))
+	require.NoError(t, nsA.CreateEdge(t.Context(), relEdge("e3", "y", "x", "REL", bad)))
 	require.Error(t, ValidatePropertyTypeConstraintOnCreationForEngine(context.Background(), nsA, ptc))
 }
 
 func TestBadgerValidateRelationshipConstraint_StreamsType(t *testing.T) {
 	e := newTestMemoryEngine(t)
 	for _, id := range []NodeID{"t:x", "t:y"} {
-		_, err := e.CreateNode(&Node{ID: id, Labels: []string{"A"}, Properties: map[string]any{}})
+		_, err := e.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"A"}, Properties: map[string]any{}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, e.CreateEdge(relEdge("t:o1", "t:x", "t:y", "OTHER", map[string]any{"k": "dup"})))
-	require.NoError(t, e.CreateEdge(relEdge("t:o2", "t:y", "t:x", "OTHER", map[string]any{})))
-	require.NoError(t, e.CreateEdge(relEdge("t:r1", "t:x", "t:y", "REL", map[string]any{"k": "dup"})))
+	require.NoError(t, e.CreateEdge(t.Context(), relEdge("t:o1", "t:x", "t:y", "OTHER", map[string]any{"k": "dup"})))
+	require.NoError(t, e.CreateEdge(t.Context(), relEdge("t:o2", "t:y", "t:x", "OTHER", map[string]any{})))
+	require.NoError(t, e.CreateEdge(t.Context(), relEdge("t:r1", "t:x", "t:y", "REL", map[string]any{"k": "dup"})))
 
 	unique := RelationshipConstraint{Name: "u", Type: ConstraintUnique, RelType: "REL", Properties: []string{"k"}}
 	exists := RelationshipConstraint{Name: "e", Type: ConstraintExists, RelType: "REL", Properties: []string{"k"}}
 	require.NoError(t, e.ValidateRelationshipConstraint(context.Background(), unique))
 	require.NoError(t, e.ValidateRelationshipConstraint(context.Background(), exists))
 
-	require.NoError(t, e.CreateEdge(relEdge("t:r2", "t:y", "t:x", "REL", map[string]any{"k": "dup"})))
+	require.NoError(t, e.CreateEdge(t.Context(), relEdge("t:r2", "t:y", "t:x", "REL", map[string]any{"k": "dup"})))
 	require.ErrorContains(t, e.ValidateRelationshipConstraint(context.Background(), unique), "r1")
-	require.NoError(t, e.CreateEdge(relEdge("t:r3", "t:y", "t:y", "REL", map[string]any{})))
+	require.NoError(t, e.CreateEdge(t.Context(), relEdge("t:r3", "t:y", "t:y", "REL", map[string]any{})))
 	require.ErrorContains(t, e.ValidateRelationshipConstraint(context.Background(), exists), "r3")
 }
 
@@ -424,12 +426,12 @@ func TestStreamEdgesByType_TransactionMergesPendingWrites(t *testing.T) {
 		relEdge("keep", "x", "y", "REL", map[string]any{"k": "old"}),
 		relEdge("drop", "x", "y", "REL", nil),
 	)
-	tx, err := e.BeginTransaction()
+	tx, err := e.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
-	require.NoError(t, tx.CreateEdge(relEdge("a:new", "a:y", "a:x", "REL", nil)))
-	require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: relEdge("a:keep", "a:x", "a:y", "REL", map[string]any{"k": "new"})}))
-	require.NoError(t, tx.DeleteEdge("a:drop"))
+	require.NoError(t, tx.CreateEdge(t.Context(), relEdge("a:new", "a:y", "a:x", "REL", nil)))
+	require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: relEdge("a:keep", "a:x", "a:y", "REL", map[string]any{"k": "new"})}))
+	require.NoError(t, tx.DeleteEdge(t.Context(), "a:drop"))
 
 	seen := map[EdgeID]*Edge{}
 	require.NoError(t, tx.StreamEdgesByType(context.Background(), "REL", func(edge *Edge) error {
@@ -548,7 +550,7 @@ func TestRefreshUniqueConstraintValues_StreamedMatchesFullScan(t *testing.T) {
 		{ID: "d1", Labels: []string{"Admin"}, Properties: map[string]any{"uid": int64(3), "email": "a@x"}},
 		{ID: "o1", Labels: []string{"Other"}, Properties: map[string]any{"email": "a@x"}},
 	} {
-		_, err := nsA.CreateNode(n)
+		_, err := nsA.CreateNode(t.Context(), n)
 		require.NoError(t, err, "node %d", i)
 	}
 	schema := nsA.GetSchema()
@@ -569,7 +571,7 @@ func TestRefreshUniqueConstraintValues_StreamedMatchesFullScan(t *testing.T) {
 	// A duplicate among constrained values is still reported.
 	nsDup := NewNamespacedEngine(inner, "dup")
 	for _, id := range []NodeID{"d1", "d2"} {
-		_, err := nsDup.CreateNode(&Node{ID: id, Labels: []string{"User"}, Properties: map[string]any{"email": "same@x"}})
+		_, err := nsDup.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"User"}, Properties: map[string]any{"email": "same@x"}})
 		require.NoError(t, err)
 	}
 	dupSchema := nsDup.GetSchema()

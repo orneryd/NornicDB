@@ -62,7 +62,7 @@ type firstLabelEngine struct {
 	err  error
 }
 
-func (e *firstLabelEngine) GetFirstNodeByLabel(label string) (*Node, error) {
+func (e *firstLabelEngine) GetFirstNodeByLabel(ctx context.Context, label string) (*Node, error) {
 	if e.err != nil {
 		return nil, e.err
 	}
@@ -146,4 +146,13 @@ func testNodeIDs(nodes []*Node) []NodeID {
 		ids = append(ids, node.ID)
 	}
 	return ids
+}
+
+// requireEmbeddingCandidate keeps legacy healthy-selection fixtures explicit
+// about the migrated error result; nil remains the valid no-candidate value.
+func requireEmbeddingCandidate(t testing.TB, find func(context.Context) (*Node, error)) *Node {
+	t.Helper()
+	node, err := find(context.Background())
+	require.NoError(t, err)
+	return node
 }

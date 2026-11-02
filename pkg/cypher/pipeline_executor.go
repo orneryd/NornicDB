@@ -1794,7 +1794,7 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 				continue
 			}
 			// The WHERE sees the path too (WHERE length(p) = 0).
-			bound := e.pipelineBindZeroLengthPath(row, pathVariable, node)
+			bound := e.pipelineBindZeroLengthPath(ctx, row, pathVariable, node)
 			if materializedWhere == "" || e.evaluateMatchWhereCondition(ctx, materializedWhere, map[string]interface{}(bound)) {
 				out = append(out, bound)
 			}
@@ -1842,7 +1842,7 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 		for _, node := range candidates.nodes {
 			var path interface{}
 			if pathVariable != "" {
-				path = e.pathToMap(PathResult{Nodes: []*storage.Node{node}})
+				path = e.pathToMapContext(ctx, PathResult{Nodes: []*storage.Node{node}})
 			}
 			if materializedWhere != "" {
 				if probe == nil {
@@ -1877,7 +1877,7 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 	return out, true, nil
 }
 
-func (e *StorageExecutor) pipelineBindZeroLengthPath(row pipelineRow, variable string, node *storage.Node) pipelineRow {
+func (e *StorageExecutor) pipelineBindZeroLengthPath(ctx context.Context, row pipelineRow, variable string, node *storage.Node) pipelineRow {
 	if variable == "" {
 		return row
 	}
@@ -1885,7 +1885,7 @@ func (e *StorageExecutor) pipelineBindZeroLengthPath(row pipelineRow, variable s
 	for name, value := range row {
 		joined[name] = value
 	}
-	joined[variable] = e.pathToMap(PathResult{Nodes: []*storage.Node{node}})
+	joined[variable] = e.pathToMapContext(ctx, PathResult{Nodes: []*storage.Node{node}})
 	return joined
 }
 
@@ -2161,8 +2161,8 @@ func (e *StorageExecutor) pipelineApplyBoundRelationshipListMatch(ctx context.Co
 			if !startValid || !endValid {
 				continue
 			}
-			start, startErr := e.getQueryNode(store, startID)
-			end, endErr := e.getQueryNode(store, endID)
+			start, startErr := e.getQueryNode(ctx, store, startID)
+			end, endErr := e.getQueryNode(ctx, store, endID)
 			if startErr != nil || endErr != nil || start == nil || end == nil ||
 				!e.pipelineNodeMatchesPattern(start, match.StartNode) || !e.pipelineNodeMatchesPattern(end, match.EndNode) {
 				continue

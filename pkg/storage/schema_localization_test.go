@@ -63,7 +63,7 @@ func TestStorageSchemaLocalizedErrorsHaveTypedIdentity(t *testing.T) {
 
 	t.Run("constraint contract violation", func(t *testing.T) {
 		engine := newTestMemoryEngine(t)
-		_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]any{"team": "ops"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]any{"team": "ops"}})
 		require.NoError(t, err)
 		contract := ConstraintContract{
 			Name:              "core_team",

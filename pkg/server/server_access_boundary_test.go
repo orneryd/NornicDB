@@ -762,7 +762,7 @@ func TestAuthMeAndRoleByIDBranches(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 
 	// handleMe OAuth metadata path.
-	_ = authn.UpdateUser("admin", "admin@example.com", map[string]string{
+	_ = authn.UpdateUser(context.Background(), "admin", "admin@example.com", map[string]string{
 		"auth_method":         "oauth",
 		"oauth_access_token":  "provider-access-secret",
 		"oauth_refresh_token": "provider-refresh-secret",
@@ -823,7 +823,7 @@ func TestAuthMeAndRoleByIDBranches(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 
 	// DELETE detaches the role while retaining the user.
-	_, _ = authn.CreateUser("role_user", "password123", []auth.Role{"r1"})
+	_, _ = authn.CreateUser(context.Background(), "role_user", "password123", []auth.Role{"r1"})
 	req = httptest.NewRequest(http.MethodDelete, "/auth/roles/r1", nil)
 	rec = httptest.NewRecorder()
 	server.handleRoles(rec, req)

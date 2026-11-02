@@ -23,11 +23,11 @@ type walLabelFallbackEngine struct {
 	labelErr     error
 }
 
-func (e *walStatsLookupEngine) NodeCountByLabel(string) (int64, error) {
+func (e *walStatsLookupEngine) NodeCountByLabel(context.Context, string) (int64, error) {
 	return e.labelCount, nil
 }
 
-func (e *walStatsLookupEngine) NodeCountByLabelInNamespace(string, string) (int64, error) {
+func (e *walStatsLookupEngine) NodeCountByLabelInNamespace(context.Context, string, string) (int64, error) {
 	return e.namespaceCount, nil
 }
 
@@ -82,7 +82,7 @@ func TestWALEngine_TemporalDelegation(t *testing.T) {
 	// IsCurrentTemporalNode delegates; with no temporal index the
 	// underlying engine returns true (no temporal data ⇒ everything
 	// "current"). The wrapper just plumbs that through.
-	got, err := w.IsCurrentTemporalNode(&Node{ID: "test:n"}, time.Now())
+	got, err := w.IsCurrentTemporalNode(context.Background(), &Node{ID: "test:n"}, time.Now())
 	require.NoError(t, err)
 	_ = got // either result is acceptable; what matters is no panic
 
@@ -118,7 +118,7 @@ func TestWALEngine_NamespaceListing(t *testing.T) {
 
 	// Adding a node populates the per-namespace count map; the
 	// delegation must surface the namespace through the wrapper.
-	_, err := base.CreateNode(&Node{
+	_, err := base.CreateNode(t.Context(), &Node{
 		ID: "test:n", Labels: []string{"L"}, Properties: map[string]any{},
 	})
 	require.NoError(t, err)
@@ -129,14 +129,14 @@ func TestWALEngine_NamespaceListing(t *testing.T) {
 func TestWALEngine_AdjacentAndLabelCountFallbacks(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	for _, id := range []NodeID{"tenant:n1", "tenant:n2", "tenant:n3"} {
-		_, err := base.CreateNode(&Node{ID: id, Labels: []string{"Endpoint"}})
+		_, err := base.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Endpoint"}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, base.CreateEdge(&Edge{ID: "tenant:out", StartNode: "tenant:n1", EndNode: "tenant:n2", Type: "R"}))
-	require.NoError(t, base.CreateEdge(&Edge{ID: "tenant:in", StartNode: "tenant:n3", EndNode: "tenant:n1", Type: "R"}))
-	_, err := base.CreateNode(&Node{ID: "tenant:p1", Labels: []string{"Person"}})
+	require.NoError(t, base.CreateEdge(t.Context(), &Edge{ID: "tenant:out", StartNode: "tenant:n1", EndNode: "tenant:n2", Type: "R"}))
+	require.NoError(t, base.CreateEdge(t.Context(), &Edge{ID: "tenant:in", StartNode: "tenant:n3", EndNode: "tenant:n1", Type: "R"}))
+	_, err := base.CreateNode(t.Context(), &Node{ID: "tenant:p1", Labels: []string{"Person"}})
 	require.NoError(t, err)
-	_, err = base.CreateNode(&Node{ID: "other:p2", Labels: []string{"Person"}})
+	_, err = base.CreateNode(t.Context(), &Node{ID: "other:p2", Labels: []string{"Person"}})
 	require.NoError(t, err)
 
 	w := NewWALEngine(base, nil)
@@ -147,10 +147,10 @@ func TestWALEngine_AdjacentAndLabelCountFallbacks(t *testing.T) {
 	require.Len(t, in, 1)
 	require.Equal(t, EdgeID("tenant:in"), in[0].ID)
 
-	count, err := w.NodeCountByLabel("Person")
+	count, err := w.NodeCountByLabel(t.Context(), "Person")
 	require.NoError(t, err)
 	require.EqualValues(t, 2, count)
-	count, err = w.NodeCountByLabelInNamespace("tenant", "Person")
+	count, err = w.NodeCountByLabelInNamespace(t.Context(), "tenant", "Person")
 	require.NoError(t, err)
 	require.EqualValues(t, 1, count)
 	w.RecordMaterializedAccess("tenant:p1")
@@ -174,10 +174,10 @@ type walLabelCapabilityExpectation struct {
 // or falls back to, including the nil-visitor and early-stop iteration contract.
 func assertWALLabelCapabilities(t *testing.T, w *WALEngine, want walLabelCapabilityExpectation) {
 	t.Helper()
-	count, err := w.NodeCountByLabel("Person")
+	count, err := w.NodeCountByLabel(t.Context(), "Person")
 	require.NoError(t, err)
 	require.EqualValues(t, want.labelCount, count)
-	count, err = w.NodeCountByLabelInNamespace("tenant", "Person")
+	count, err = w.NodeCountByLabelInNamespace(t.Context(), "tenant", "Person")
 	require.NoError(t, err)
 	require.EqualValues(t, want.namespaceCount, count)
 	var visited []NodeID
@@ -248,9 +248,9 @@ func TestWALEngine_LabelFallbackBranches(t *testing.T) {
 
 	wantErr := errors.New("label lookup failed")
 	base.labelErr = wantErr
-	_, err := w.NodeCountByLabel("Person")
+	_, err := w.NodeCountByLabel(t.Context(), "Person")
 	require.ErrorIs(t, err, wantErr)
-	_, err = w.NodeCountByLabelInNamespace("tenant", "Person")
+	_, err = w.NodeCountByLabelInNamespace(t.Context(), "tenant", "Person")
 	require.ErrorIs(t, err, wantErr)
 	err = w.ForEachNodeIDByLabel(context.Background(), "Person", func(NodeID) bool { return true })
 	require.ErrorIs(t, err, wantErr)
@@ -260,24 +260,24 @@ func TestWALEngine_MVCCHeadDelegation(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	w := NewWALEngine(base, nil)
 
-	_, err := base.CreateNode(&Node{
+	_, err := base.CreateNode(t.Context(), &Node{
 		ID: "test:n", Labels: []string{"L"}, Properties: map[string]any{},
 	})
 	require.NoError(t, err)
-	_, err = base.CreateNode(&Node{
+	_, err = base.CreateNode(t.Context(), &Node{
 		ID: "test:m", Labels: []string{"L"}, Properties: map[string]any{},
 	})
 	require.NoError(t, err)
-	require.NoError(t, base.CreateEdge(&Edge{
+	require.NoError(t, base.CreateEdge(t.Context(), &Edge{
 		ID: "test:e", StartNode: "test:n", EndNode: "test:m", Type: "REL",
 	}))
 
-	nodeHead, err := w.GetNodeCurrentHead("test:n")
+	nodeHead, err := w.GetNodeCurrentHead(context.Background(), "test:n")
 	require.NoError(t, err)
 	require.False(t, nodeHead.Tombstoned)
 	require.False(t, nodeHead.Version.IsZero())
 
-	edgeHead, err := w.GetEdgeCurrentHead("test:e")
+	edgeHead, err := w.GetEdgeCurrentHead(context.Background(), "test:e")
 	require.NoError(t, err)
 	require.False(t, edgeHead.Tombstoned)
 	require.False(t, edgeHead.Version.IsZero())
@@ -287,20 +287,20 @@ func TestWALEngine_LatestEffectiveAndVisible(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	w := NewWALEngine(base, nil)
 
-	_, err := base.CreateNode(&Node{ID: "test:n", Labels: []string{"L"}, Properties: map[string]any{"v": int64(1)}})
+	_, err := base.CreateNode(t.Context(), &Node{ID: "test:n", Labels: []string{"L"}, Properties: map[string]any{"v": int64(1)}})
 	require.NoError(t, err)
-	_, err = base.CreateNode(&Node{ID: "test:m", Labels: []string{"L"}, Properties: map[string]any{}})
+	_, err = base.CreateNode(t.Context(), &Node{ID: "test:m", Labels: []string{"L"}, Properties: map[string]any{}})
 	require.NoError(t, err)
-	require.NoError(t, base.CreateEdge(&Edge{
+	require.NoError(t, base.CreateEdge(t.Context(), &Edge{
 		ID: "test:e", StartNode: "test:n", EndNode: "test:m", Type: "REL",
 	}))
 
-	gotNode, err := w.GetNodeLatestEffective("test:n")
+	gotNode, err := w.GetNodeLatestEffective(context.Background(), "test:n")
 	require.NoError(t, err)
 	require.NotNil(t, gotNode)
 	require.Equal(t, NodeID("test:n"), gotNode.ID)
 
-	gotEdge, err := w.GetEdgeLatestEffective("test:e")
+	gotEdge, err := w.GetEdgeLatestEffective(context.Background(), "test:e")
 	require.NoError(t, err)
 	require.NotNil(t, gotEdge)
 	require.Equal(t, EdgeID("test:e"), gotEdge.ID)
@@ -310,13 +310,13 @@ func TestWALEngine_FallbacksForNonOptionalInterfaces(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	w := NewWALEngine(&nonMVCCEngine{Engine: base}, nil)
 
-	_, err := base.CreateNode(&Node{ID: "test:n", Labels: []string{"L"}, Properties: map[string]any{}})
+	_, err := base.CreateNode(t.Context(), &Node{ID: "test:n", Labels: []string{"L"}, Properties: map[string]any{}})
 	require.NoError(t, err)
-	_, err = base.CreateNode(&Node{ID: "test:m", Labels: []string{"L"}, Properties: map[string]any{}})
+	_, err = base.CreateNode(t.Context(), &Node{ID: "test:m", Labels: []string{"L"}, Properties: map[string]any{}})
 	require.NoError(t, err)
-	require.NoError(t, base.CreateEdge(&Edge{ID: "test:e", StartNode: "test:n", EndNode: "test:m", Type: "REL"}))
+	require.NoError(t, base.CreateEdge(t.Context(), &Edge{ID: "test:e", StartNode: "test:n", EndNode: "test:m", Type: "REL"}))
 
-	ok, err := w.IsCurrentTemporalNode(&Node{ID: "test:n"}, time.Now())
+	ok, err := w.IsCurrentTemporalNode(context.Background(), &Node{ID: "test:n"}, time.Now())
 	require.NoError(t, err)
 	require.True(t, ok)
 
@@ -325,19 +325,19 @@ func TestWALEngine_FallbacksForNonOptionalInterfaces(t *testing.T) {
 	require.NoError(t, err)
 	require.Zero(t, pruned)
 
-	node, err := w.GetNodeLatestEffective("test:n")
+	node, err := w.GetNodeLatestEffective(context.Background(), "test:n")
 	require.NoError(t, err)
 	require.Equal(t, NodeID("test:n"), node.ID)
 
-	edge, err := w.GetEdgeLatestEffective("test:e")
+	edge, err := w.GetEdgeLatestEffective(context.Background(), "test:e")
 	require.NoError(t, err)
 	require.Equal(t, EdgeID("test:e"), edge.ID)
 
-	node, err = w.GetNodeLatestVisible("test:n")
+	node, err = w.GetNodeLatestVisible(t.Context(), "test:n")
 	require.NoError(t, err)
 	require.Equal(t, NodeID("test:n"), node.ID)
 
-	edge, err = w.GetEdgeLatestVisible("test:e")
+	edge, err = w.GetEdgeLatestVisible(t.Context(), "test:e")
 	require.NoError(t, err)
 	require.Equal(t, EdgeID("test:e"), edge.ID)
 

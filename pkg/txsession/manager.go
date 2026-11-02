@@ -84,7 +84,7 @@ type leaseRetention struct {
 // newLease enrolls the request in the manager's lifetime. It is refused once
 // the manager is closing; the caller then still owns session.requestMu.
 func (m *Manager) newLease(session *Session) (*Lease, bool) {
-	_, work, accepted := m.work.Acquire(context.Background())
+	_, work, accepted := m.work.Acquire(m.work.Context())
 	if !accepted {
 		return nil, false
 	}
@@ -185,7 +185,7 @@ func (m *Manager) openForOwner(ctx context.Context, dbName string, owner string,
 	if m.factory == nil {
 		return nil, fmt.Errorf("transaction manager factory is not configured")
 	}
-	_, release, accepted := m.work.Acquire(context.Background())
+	_, release, accepted := m.work.Acquire(m.work.Context())
 	if !accepted {
 		return nil, fmt.Errorf("transaction manager is closed")
 	}
@@ -218,7 +218,7 @@ func (m *Manager) openWithExecutorForOwner(ctx context.Context, dbName string, e
 	if executor == nil {
 		return nil, fmt.Errorf("transaction executor is not available")
 	}
-	_, release, accepted := m.work.Acquire(context.Background())
+	_, release, accepted := m.work.Acquire(m.work.Context())
 	if !accepted {
 		return nil, fmt.Errorf("transaction manager is closed")
 	}
@@ -324,7 +324,7 @@ func (m *Manager) Delete(txID string) {
 	session := m.sessions[txID]
 	release, accepted := func() {}, false
 	if session != nil {
-		_, release, accepted = m.work.Acquire(context.Background())
+		_, release, accepted = m.work.Acquire(m.work.Context())
 	}
 	m.mu.Unlock()
 	if !accepted {
@@ -412,7 +412,7 @@ func (m *Manager) beginClose() {
 	sessions := make([]*Session, 0, len(m.sessions))
 	releases := make([]func(), 0, len(m.sessions))
 	for _, session := range m.sessions {
-		_, release, _ := m.work.Acquire(context.Background())
+		_, release, _ := m.work.Acquire(m.work.Context())
 		sessions = append(sessions, session)
 		releases = append(releases, release)
 	}
@@ -493,7 +493,7 @@ func (m *Manager) resetExpiryTimerLocked(session *Session) {
 
 // retainWork enrolls one unit of manager work, such as an armed expiry timer.
 func (m *Manager) retainWork() (func(), bool) {
-	_, release, accepted := m.work.Acquire(context.Background())
+	_, release, accepted := m.work.Acquire(m.work.Context())
 	return release, accepted
 }
 

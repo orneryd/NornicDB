@@ -1,6 +1,20 @@
 # Access metadata writes
 
-Go storage providers implement `WriteAccessMeta(AccessMetaWriteRequest) (written bool, err error)` in v1.4.4. Callers must choose an explicit, nonzero mode. The previous `PutAccessMeta` entry point is retired; implementations and plugins must rebuild.
+Go storage providers implement
+`WriteAccessMeta(ctx context.Context, request AccessMetaWriteRequest) (written bool, err error)`.
+Callers must choose an explicit, nonzero mode and pass the lifetime of the
+operation that owns the write. The previous `PutAccessMeta` entry point is
+retired; implementations and plugins must rebuild.
+
+`ctx` owns admission, buffered-order drain and presence preparation. Once the
+publishing update is admitted the write and its notification complete in the
+store, so a canceled context returns its own error and leaves no published
+entry. The access flusher passes its own flush-cycle lifetime: it has already
+drained those deltas from the accumulator, and the run lifetime is canceled
+before its final flush, so a request or run context would abandon accepted
+counters. A store that is reached through a context-free queue entry
+(`PutDeindexWorkItem`, `DeleteDeindexWorkItem`) passes that entry's own explicit
+unbounded lifetime instead.
 
 | Mode | Contract |
 | --- | --- |
@@ -8,7 +22,7 @@ Go storage providers implement `WriteAccessMeta(AccessMetaWriteRequest) (written
 | `knowledgepolicy.FlushExistingEntity` | Write only if the stored node or relationship exists at the atomic write boundary. Hidden entities remain eligible. Return `false, nil` for absence and preserve any retained state. |
 
 ```go
-written, err := engine.WriteAccessMeta(knowledgepolicy.AccessMetaWriteRequest{
+written, err := engine.WriteAccessMeta(ctx, knowledgepolicy.AccessMetaWriteRequest{
     Mode: knowledgepolicy.RecordState,
     EntityID: id,
     Entry: restoredEntry,

@@ -23,7 +23,7 @@ func TestLouvainEntryPointsShareRingCommunities(t *testing.T) {
 	for i := range nodes {
 		nodes[i] = &community.Node{ID: int64(i)}
 		relationships[i] = &community.Relationship{ID: int64(i), StartNode: int64(i), EndNode: int64((i + 1) % 4)}
-		require.NoError(t, exec.storage.CreateEdge(&storage.Edge{ID: storage.EdgeID(strconv.Itoa(i)), StartNode: storage.NodeID(strconv.Itoa(i)), EndNode: storage.NodeID(strconv.Itoa((i + 1) % 4)), Type: "R"}))
+		require.NoError(t, exec.storage.CreateEdge(t.Context(), &storage.Edge{ID: storage.EdgeID(strconv.Itoa(i)), StartNode: storage.NodeID(strconv.Itoa(i)), EndNode: storage.NodeID(strconv.Itoa((i + 1) % 4)), Type: "R"}))
 	}
 	for _, query := range []string{
 		"CALL apoc.algo.louvain(['N'])",
@@ -72,7 +72,7 @@ func TestLouvainEntryPointsSelfLoopsAndParallelEdges(t *testing.T) {
 			var rels []*community.Relationship
 			graph := louvain.NewGraph(4)
 			for i, edge := range tc.edges {
-				require.NoError(t, exec.storage.CreateEdge(&storage.Edge{ID: storage.EdgeID(strconv.Itoa(i)), StartNode: storage.NodeID(strconv.Itoa(edge[0])), EndNode: storage.NodeID(strconv.Itoa(edge[1])), Type: "R", Properties: map[string]interface{}{"w": int64(edge[2])}}))
+				require.NoError(t, exec.storage.CreateEdge(t.Context(), &storage.Edge{ID: storage.EdgeID(strconv.Itoa(i)), StartNode: storage.NodeID(strconv.Itoa(edge[0])), EndNode: storage.NodeID(strconv.Itoa(edge[1])), Type: "R", Properties: map[string]interface{}{"w": int64(edge[2])}}))
 				rels = append(rels, &community.Relationship{ID: int64(i), StartNode: int64(edge[0]), EndNode: int64(edge[1]), Properties: map[string]interface{}{"weight": float64(edge[2])}})
 				graph.Link(edge[0], edge[1], float64(edge[2]))
 			}

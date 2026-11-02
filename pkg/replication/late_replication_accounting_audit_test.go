@@ -22,7 +22,7 @@ type managedRouteReplicator struct {
 	pendingOwner storage.CommitReceiptOwner
 }
 
-func (r *managedRouteReplicator) Apply(cmd *Command, timeout time.Duration) error {
+func (r *managedRouteReplicator) Apply(ctx context.Context, cmd *Command, timeout time.Duration) error {
 	r.calls++
 	if r.reject {
 		return ErrNotLeader
@@ -31,11 +31,12 @@ func (r *managedRouteReplicator) Apply(cmd *Command, timeout time.Duration) erro
 		r.pending = cmd
 		return context.DeadlineExceeded
 	}
-	if err := r.Replicator.Apply(cmd, timeout); err != nil {
+	if err := r.Replicator.Apply(ctx, cmd, timeout); err != nil {
 		return err
 	}
 	// Only wire fields cross to the peer, as with replication transport/WAL.
-	return r.peer.ApplyCommand(&Command{Type: cmd.Type, Data: cmd.Data, Timestamp: cmd.Timestamp, RequestID: cmd.RequestID})
+	_, err := r.peer.ApplyCommand(context.Background(), &Command{Type: cmd.Type, Data: cmd.Data, Timestamp: cmd.Timestamp, RequestID: cmd.RequestID}, WALQueued)
+	return err
 }
 
 func TestManagedReplicationLateApplyUsesAccountingOwner(t *testing.T) {
@@ -57,11 +58,11 @@ func TestManagedReplicationLateApplyUsesAccountingOwner(t *testing.T) {
 	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "late_apply"}))
 	view, err := manager.GetStorage("late_apply")
 	require.NoError(t, err)
-	_, err = view.CreateNode(&storage.Node{ID: "n", Labels: []string{"Doc"}})
+	_, err = view.CreateNode(t.Context(), &storage.Node{ID: "n", Labels: []string{"Doc"}})
 	require.NoError(t, err)
 	before, _, _ := manager.GetStorageSize("late_apply")
 	r.delay = true
-	err = view.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "n", Labels: []string{"Doc"}, Properties: map[string]any{"payload": "late committed body"}}})
+	err = view.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: &storage.Node{ID: "n", Labels: []string{"Doc"}, Properties: map[string]any{"payload": "late committed body"}}})
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	require.False(t, nornicerrors.IsCommitRolledBack(err), "replication timeout cannot certify logical rollback")
 	require.NotNil(t, r.pending)
@@ -69,7 +70,7 @@ func TestManagedReplicationLateApplyUsesAccountingOwner(t *testing.T) {
 	require.Equal(t, before, unchanged)
 	// Consensus can apply after the originating caller has returned.
 	require.NoError(t, r.applyPending(adapter, r.pending))
-	node, err := view.GetNode("n")
+	node, err := view.GetNode(t.Context(), "n")
 	require.NoError(t, err)
 	require.Equal(t, "late committed body", node.Properties["payload"])
 	tracked, _, _ := manager.GetStorageSize("late_apply")
@@ -105,9 +106,9 @@ func (r *managedRouteReplicator) SubmitAcceptedCommand(ctx context.Context, cmd 
 	}, r.Apply, 0)
 }
 func (r *managedRouteReplicator) applyPending(adapter *StorageAdapter, cmd *Command) error {
-	err := adapter.ApplyCommand(cmd)
+	_, err := adapter.ApplyCommand(context.Background(), cmd, WALQueued)
 	if err == nil {
-		err = r.peer.ApplyCommand(&Command{Type: cmd.Type, Data: cmd.Data, Timestamp: cmd.Timestamp, RequestID: cmd.RequestID})
+		_, err = r.peer.ApplyCommand(context.Background(), &Command{Type: cmd.Type, Data: cmd.Data, Timestamp: cmd.Timestamp, RequestID: cmd.RequestID}, WALQueued)
 	}
 	outcome := acceptedCommandOutcome(cmd, err)
 	if resolveErr := r.pendingOwner.Resolve(outcome); resolveErr != nil {

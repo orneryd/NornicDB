@@ -15,11 +15,11 @@ import (
 
 func bufferedTry(t *testing.T, engine *BadgerEngine, node *Node) error {
 	t.Helper()
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
-	if _, err := tx.CreateNode(node); err != nil {
+	if _, err := tx.CreateNode(t.Context(), node); err != nil {
 		_ = tx.Rollback()
 		return err
 	}

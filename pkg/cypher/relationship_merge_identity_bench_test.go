@@ -81,7 +81,7 @@ func newRelationshipMergeIdentityBenchmark(b *testing.B, fanout int) (*StorageEx
 		{ID: "source", Labels: []string{"Source"}, Properties: map[string]interface{}{"id": "source"}},
 		{ID: "target", Labels: []string{"Target"}, Properties: map[string]interface{}{"id": "target"}},
 	} {
-		if _, err := store.CreateNode(node); err != nil {
+		if _, err := store.CreateNode(b.Context(), node); err != nil {
 			b.Fatalf("seed relationship endpoint: %v", err)
 		}
 	}
@@ -97,7 +97,7 @@ func newRelationshipMergeIdentityBenchmark(b *testing.B, fanout int) (*StorageEx
 			EndNode:    "target",
 			Properties: props,
 		}
-		if err := store.CreateEdge(edge); err != nil {
+		if err := store.CreateEdge(b.Context(), edge); err != nil {
 			b.Fatalf("seed relationship %d: %v", i, err)
 		}
 	}
@@ -118,24 +118,24 @@ func BenchmarkRelationshipMergeOneOfManyRelationships(b *testing.B) {
 				{ID: "source", Labels: []string{"Source"}, Properties: map[string]interface{}{"id": "source"}},
 				{ID: "target", Labels: []string{"Target"}, Properties: map[string]interface{}{"id": "target"}},
 			} {
-				if _, err := store.CreateNode(node); err != nil {
+				if _, err := store.CreateNode(b.Context(), node); err != nil {
 					b.Fatal(err)
 				}
 			}
 			for i := 0; i < others; i++ {
 				other := storage.NodeID(fmt.Sprintf("other-%d", i))
-				if _, err := store.CreateNode(&storage.Node{ID: other, Labels: []string{"Other"}}); err != nil {
+				if _, err := store.CreateNode(b.Context(), &storage.Node{ID: other, Labels: []string{"Other"}}); err != nil {
 					b.Fatal(err)
 				}
-				if err := store.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("to-other-%d", i)), Type: "ASSERTS", StartNode: "source", EndNode: other, Properties: map[string]interface{}{"scope_id": "scope-001"}}); err != nil {
+				if err := store.CreateEdge(b.Context(), &storage.Edge{ID: storage.EdgeID(fmt.Sprintf("to-other-%d", i)), Type: "ASSERTS", StartNode: "source", EndNode: other, Properties: map[string]interface{}{"scope_id": "scope-001"}}); err != nil {
 					b.Fatal(err)
 				}
-				if err := store.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("other-type-%d", i)), Type: fmt.Sprintf("T%d", i%8), StartNode: "source", EndNode: "target", Properties: map[string]interface{}{"scope_id": "scope-001"}}); err != nil {
+				if err := store.CreateEdge(b.Context(), &storage.Edge{ID: storage.EdgeID(fmt.Sprintf("other-type-%d", i)), Type: fmt.Sprintf("T%d", i%8), StartNode: "source", EndNode: "target", Properties: map[string]interface{}{"scope_id": "scope-001"}}); err != nil {
 					b.Fatal(err)
 				}
 			}
 			matchProps := map[string]interface{}{"scope_id": "scope-001", "evidence_source": "source-001"}
-			if err := store.CreateEdge(&storage.Edge{ID: deterministicRelationshipMergeEdgeID("source", "target", "ASSERTS", matchProps, 0), Type: "ASSERTS", StartNode: "source", EndNode: "target", Properties: matchProps}); err != nil {
+			if err := store.CreateEdge(b.Context(), &storage.Edge{ID: deterministicRelationshipMergeEdgeID("source", "target", "ASSERTS", matchProps, 0), Type: "ASSERTS", StartNode: "source", EndNode: "target", Properties: matchProps}); err != nil {
 				b.Fatal(err)
 			}
 			params := map[string]interface{}{"scope_id": "scope-001", "evidence_source": "source-001"}

@@ -218,7 +218,7 @@ func TestSwiftFileIndexerTagQueriesExecuteReduceExpressions(t *testing.T) {
 		exec := NewStorageExecutor(store)
 		ctx := context.Background()
 
-		_, err := store.CreateNode(&storage.Node{
+		_, err := store.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID("nornic:file-main-go"),
 			Labels: []string{"File", "Node"},
 			Properties: map[string]any{
@@ -267,7 +267,7 @@ RETURN f.file_tags as file_tags, f.tags as tags
 			assert.ElementsMatch(t, []interface{}{"File", "ws", "backend", "existing", "hello"}, tags)
 		}
 
-		node, err := store.GetNode(storage.NodeID("nornic:file-main-go"))
+		node, err := store.GetNode(t.Context(), storage.NodeID("nornic:file-main-go"))
 		require.NoError(t, err)
 		require.NotNil(t, node)
 		_, storedAsString := node.Properties["file_tags"].(string)

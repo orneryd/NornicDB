@@ -15,7 +15,7 @@ func TestMatchRelationshipWithLimitReturnsBoundRows(t *testing.T) {
 	ctx := context.Background()
 
 	for _, id := range []storage.NodeID{"a", "b", "c", "d"} {
-		_, err := ns.CreateNode(&storage.Node{ID: id, Labels: []string{"T"}})
+		_, err := ns.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"T"}})
 		require.NoError(t, err)
 	}
 
@@ -24,7 +24,7 @@ func TestMatchRelationshipWithLimitReturnsBoundRows(t *testing.T) {
 		{ID: "r2", StartNode: "b", EndNode: "c", Type: "REL", Properties: map[string]interface{}{"group_id": "old"}},
 		{ID: "r3", StartNode: "c", EndNode: "d", Type: "REL", Properties: map[string]interface{}{"group_id": "old"}},
 	} {
-		require.NoError(t, ns.CreateEdge(edge), "edge %d", i)
+		require.NoError(t, ns.CreateEdge(t.Context(), edge), "edge %d", i)
 	}
 
 	res, err := exec.Execute(ctx, "MATCH ()-[r:REL]->() WHERE r.group_id='old' WITH r LIMIT 1 RETURN r", nil)

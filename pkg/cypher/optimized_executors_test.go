@@ -273,20 +273,20 @@ func TestExecuteEdgePropertyAggOptimized_Branches(t *testing.T) {
 	ctx := context.Background()
 
 	// End nodes (group targets)
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:         "p1",
 		Labels:     []string{"Product"},
 		Properties: map[string]interface{}{"name": "P1"},
 	})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:         "p2",
 		Labels:     []string{"Product"},
 		Properties: map[string]interface{}{"name": "P2"},
 	})
 	require.NoError(t, err)
 	// Start node just to make edges realistic.
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:         "c1",
 		Labels:     []string{"Customer"},
 		Properties: map[string]interface{}{"name": "C1"},
@@ -294,28 +294,28 @@ func TestExecuteEdgePropertyAggOptimized_Branches(t *testing.T) {
 	require.NoError(t, err)
 
 	// Numeric + int + missing + non-numeric + dangling end-node branches.
-	require.NoError(t, store.CreateEdge(&storage.Edge{
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{
 		ID:         "e1",
 		StartNode:  "c1",
 		EndNode:    "p1",
 		Type:       "REVIEWED",
 		Properties: map[string]interface{}{"rating": float64(4.5)},
 	}))
-	require.NoError(t, store.CreateEdge(&storage.Edge{
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{
 		ID:         "e2",
 		StartNode:  "c1",
 		EndNode:    "p1",
 		Type:       "REVIEWED",
 		Properties: map[string]interface{}{"rating": int64(5)},
 	}))
-	require.NoError(t, store.CreateEdge(&storage.Edge{
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{
 		ID:         "e3",
 		StartNode:  "c1",
 		EndNode:    "p2",
 		Type:       "REVIEWED",
 		Properties: map[string]interface{}{"other": 9}, // missing rating -> skipped
 	}))
-	require.NoError(t, store.CreateEdge(&storage.Edge{
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{
 		ID:         "e4",
 		StartNode:  "c1",
 		EndNode:    "p2",
@@ -347,7 +347,7 @@ func TestExecuteEdgePropertyAggOptimized_Branches(t *testing.T) {
 
 	// getNodeCached nil branch for missing node ID.
 	cache := map[storage.NodeID]*storage.Node{}
-	assert.Nil(t, exec.getNodeCached("missing-end", cache))
+	assert.Nil(t, exec.getNodeCached(t.Context(), "missing-end", cache))
 }
 
 func TestDetectQueryPattern_EdgePropertyAgg(t *testing.T) {
@@ -739,7 +739,7 @@ func TestGetNodeCached(t *testing.T) {
 	cache := make(map[storage.NodeID]*storage.Node)
 
 	// First call should fetch from storage
-	node1 := exec.getNodeCached(nodeID, cache)
+	node1 := exec.getNodeCached(t.Context(), nodeID, cache)
 	require.NotNil(t, node1)
 	assert.Equal(t, "TestNode", node1.Properties["name"])
 
@@ -747,7 +747,7 @@ func TestGetNodeCached(t *testing.T) {
 	assert.Contains(t, cache, nodeID)
 
 	// Second call should use cache
-	node2 := exec.getNodeCached(nodeID, cache)
+	node2 := exec.getNodeCached(t.Context(), nodeID, cache)
 	require.NotNil(t, node2)
 	assert.Equal(t, node1, node2, "Should return same cached node")
 }

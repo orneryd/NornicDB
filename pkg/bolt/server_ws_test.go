@@ -318,10 +318,10 @@ func startAuthEnabledWSBoltServer(t *testing.T) (port int, adminToken string, ba
 	authenticator, err := auth.NewAuthenticator(authCfg, mem)
 	requireNoError(t, err)
 
-	_, err = authenticator.CreateUser("admin", "admin-password", []auth.Role{auth.RoleAdmin})
+	_, err = authenticator.CreateUser(context.Background(), "admin", "admin-password", []auth.Role{auth.RoleAdmin})
 	requireNoError(t, err)
 
-	tokenResp, _, err := authenticator.Authenticate("admin", "admin-password", "127.0.0.1", "test")
+	tokenResp, _, err := authenticator.Authenticate(context.Background(), "admin", "admin-password", "127.0.0.1", "test")
 	requireNoError(t, err)
 	if tokenResp == nil || tokenResp.AccessToken == "" {
 		t.Fatal("expected admin token from Authenticate")

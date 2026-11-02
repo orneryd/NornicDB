@@ -38,8 +38,11 @@ func (sm *SchemaManager) DropConstraint(name string) error {
 	}
 
 	if sm.persist != nil {
-		def := sm.exportDefinitionLocked()
-		if err := sm.persist(def); err != nil {
+		def, err := sm.exportDefinitionLocked(context.Background()) // accepted mutation owns its completion
+		if err == nil {
+			err = sm.persist(def)
+		}
+		if err != nil {
 			restore()
 			return err
 		}

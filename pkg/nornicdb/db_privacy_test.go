@@ -782,7 +782,7 @@ func TestClearAllEmbeddings_UnwrapsStorageLayers(t *testing.T) {
 		defer db.Close()
 
 		// Create a node with embedding via the namespaced storage engine
-		_, err = db.storage.CreateNode(&storage.Node{
+		_, err = db.storage.CreateNode(t.Context(), &storage.Node{
 			ID:              storage.NodeID(generateID()),
 			Labels:          []string{"Memory"},
 			Properties:      map[string]interface{}{"content": "Test content"},
@@ -983,7 +983,7 @@ func TestDeleteNode_RemovesFromSearchIndex(t *testing.T) {
 
 		// Create nodes via storage (this triggers OnNodeCreated callback)
 		for _, node := range nodes {
-			_, err := db.storage.CreateNode(node)
+			_, err := db.storage.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 		}
 
@@ -994,7 +994,7 @@ func TestDeleteNode_RemovesFromSearchIndex(t *testing.T) {
 			"Embedding count should increase by 3 after creating nodes")
 
 		// Delete node1 via storage (this triggers OnNodeDeleted callback)
-		err = db.storage.DeleteNode("embed-callback-test-1")
+		err = db.storage.DeleteNode(t.Context(), "embed-callback-test-1")
 		require.NoError(t, err)
 
 		require.Eventually(t, func() bool {
@@ -1003,7 +1003,7 @@ func TestDeleteNode_RemovesFromSearchIndex(t *testing.T) {
 			"Embedding count should decrease by 1 after deleting node1")
 
 		// Delete node2
-		err = db.storage.DeleteNode("embed-callback-test-2")
+		err = db.storage.DeleteNode(t.Context(), "embed-callback-test-2")
 		require.NoError(t, err)
 		require.Eventually(t, func() bool {
 			return db.EmbeddingCount() == initialCount+1
@@ -1011,7 +1011,7 @@ func TestDeleteNode_RemovesFromSearchIndex(t *testing.T) {
 			"Embedding count should decrease by 2 after deleting node2")
 
 		// Delete node3
-		err = db.storage.DeleteNode("embed-callback-test-3")
+		err = db.storage.DeleteNode(t.Context(), "embed-callback-test-3")
 		require.NoError(t, err)
 		require.Eventually(t, func() bool {
 			return db.EmbeddingCount() == initialCount

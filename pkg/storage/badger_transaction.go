@@ -43,13 +43,6 @@ type BadgerTransaction struct {
 	// first write (SetWriteAdmission); nil once it admitted, or without one.
 	writeAdmission func() error
 
-	// commitCtx is the caller's context while a commit runs: commit-time
-	// constraint validation polls it, so a terminated or abandoned statement
-	// stops before anything is written instead of validating to the end
-	// (#1115). Commit has no caller to cancel it and passes its own lifetime
-	// (context.Background); it is nil only outside a commit.
-	commitCtx context.Context
-
 	// changeCapture holds the database's change log while a capturing
 	// commit runs (change_capture.go, #937).
 	changeCapture *txChangeCapture
@@ -294,7 +287,14 @@ func (b *BadgerEngine) currentMVCCReadVersion(namespace string) MVCCVersion {
 // coarse or backward clocks cannot hide rows in the physical snapshot. The
 // first prefixed write, point read, or SetNamespace rebinds this boundary to
 // that namespace's exact begin-time version.
-func (b *BadgerEngine) BeginTransaction() (*BadgerTransaction, error) {
+func (b *BadgerEngine) BeginTransaction(ctx context.Context) (*BadgerTransaction, error) {
+	// Admission is request-owned: a canceled or expired request must not start
+	// a transaction. Once begun, the handle keeps its own captured snapshot
+	// lifetime and never retains this request context; each later statement
+	// supplies its own context.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	b.mu.RLock()
 	if b.work.Closing() {
 		b.mu.RUnlock()
@@ -308,12 +308,18 @@ func (b *BadgerEngine) BeginTransaction() (*BadgerTransaction, error) {
 	if b.writeBehind != nil {
 		bufferEpoch = b.writeBehind.readEpoch.Load()
 	}
-	snapshotTx, badgerReadTs, beginPresence, err := b.beginTransactionSnapshot(badgerDB)
+	snapshotTx, badgerReadTs, beginPresence, err := b.beginTransactionSnapshot(ctx, badgerDB)
 	if err != nil {
 		return nil, err
 	}
 	readTS := b.currentMVCCReadVersion("")
-	beginSnapshot := b.snapshotNamespaceVersions()
+	beginSnapshot, err := b.snapshotNamespaceVersions(ctx)
+	if err != nil {
+		snapshotTx.Discard()
+		beginPresence.release()
+		badgerDB.endRead(badgerReadTs)
+		return nil, err
+	}
 	// Unpinned scans span namespaces in the already captured physical snapshot.
 	// A wall-clock-only version (sequence zero) sorts before a committed head
 	// at the same timestamp on coarse clocks, or after a backward clock step.
@@ -789,7 +795,7 @@ func (tx *BadgerTransaction) flushBufferedWrites(ctx context.Context, w *batchWr
 		if tx.commitW != nil {
 			tx.commitW.rawCache.add(tx.engine, key, tx.pendingWrites[keyStr])
 		}
-		if err := w.write(func(txn *badger.Txn) error { return txn.Delete(key) }); err != nil {
+		if err := w.write(ctx, func(txn *badger.Txn) error { return txn.Delete(key) }); err != nil {
 			return fmt.Errorf("flushing delete for key %s: %w", keyStr, err)
 		}
 	}
@@ -807,7 +813,7 @@ func (tx *BadgerTransaction) flushBufferedWrites(ctx context.Context, w *batchWr
 		if tx.commitW != nil {
 			tx.commitW.rawCache.add(tx.engine, key, tx.pendingWrites[keyStr])
 		}
-		if err := w.write(func(txn *badger.Txn) error {
+		if err := w.write(ctx, func(txn *badger.Txn) error {
 			return tx.engine.setKeyWithPendingHint(txn, key, value)
 		}); err != nil {
 			return fmt.Errorf("flushing write for key %s: %w", keyStr, err)
@@ -824,23 +830,28 @@ func (tx *BadgerTransaction) flushBufferedWrites(ctx context.Context, w *batchWr
 // CreateNode adds a node to the transaction with constraint validation.
 // REQUIRES: node.ID must be prefixed with namespace (e.g., "nornic:node-123").
 // This enforces that all nodes are namespaced at the storage layer.
-func (tx *BadgerTransaction) CreateNode(node *Node) (NodeID, error) {
-	return tx.createNode(node, false)
+func (tx *BadgerTransaction) CreateNode(ctx context.Context, node *Node) (NodeID, error) {
+	return tx.createNode(ctx, node, false)
 }
 
 // CreateMintedNode is CreateNode for a node whose ID the caller minted for
 // this create from a random UUID, as Cypher CREATE and MERGE do. No stored
 // entity, visible or hidden, can hold such an ID, so storage is not read for
 // one. A stable or imported ID, UUID-shaped or not, takes CreateNode.
-func (tx *BadgerTransaction) CreateMintedNode(node *Node) (NodeID, error) {
-	return tx.createNode(node, true)
+func (tx *BadgerTransaction) CreateMintedNode(ctx context.Context, node *Node) (NodeID, error) {
+	return tx.createNode(ctx, node, true)
 }
 
-func (tx *BadgerTransaction) createNode(node *Node, minted bool) (NodeID, error) {
-	tx.mu.Lock()
+func (tx *BadgerTransaction) createNode(ctx context.Context, node *Node, minted bool) (NodeID, error) {
+	if err := tx.mu.LockContext(ctx); err != nil {
+		return "", err
+	}
 	defer tx.mu.Unlock()
 
 	if err := tx.ensureOperationAllowedLocked(transactionDataWrite); err != nil {
+		return "", err
+	}
+	if err := ctx.Err(); err != nil {
 		return "", err
 	}
 
@@ -853,12 +864,10 @@ func (tx *BadgerTransaction) createNode(node *Node, minted bool) (NodeID, error)
 	// The write uses its key names now; it encodes them only at commit.
 	tx.engine.NotePropertyKeysInNamespace(tx.namespace, node.Properties)
 
-	// Validate constraints BEFORE writing. Staging is the context-free
-	// transaction API (CreateNode/UpdateGraphNode take no context), so
-	// context.Background is this constraint read's own lifetime: a canceled
-	// commit or statement read cannot cancel a write's accepted staging check.
+	// Validate constraints BEFORE writing. The caller's context owns this
+	// staging preparation read, so a canceled statement stages nothing.
 	if !tx.deferConstraintValidation {
-		if err := tx.validateNodeConstraints(context.Background(), node); err != nil {
+		if err := tx.validateNodeConstraints(ctx, node); err != nil {
 			return "", err
 		}
 	}
@@ -872,7 +881,7 @@ func (tx *BadgerTransaction) createNode(node *Node, minted bool) (NodeID, error)
 	// still occupies its ID and must reject every CREATE route, including the
 	// write-behind bulk/implicit paths, unless the ID was minted for it.
 	if _, deleted := tx.deletedNodes[node.ID]; !deleted && !minted {
-		_, err := tx.getCommittedNodeLocked(node.ID)
+		_, err := tx.getCommittedNodeLocked(ctx, node.ID)
 		if err == nil {
 			return "", ErrAlreadyExists
 		}
@@ -907,7 +916,7 @@ func (tx *BadgerTransaction) createNode(node *Node, minted bool) (NodeID, error)
 
 	// Track for read-your-writes and constraint validation
 	nodeCopy := copyNode(node)
-	_ = tx.pendingNodeChangedLocked(context.Background(), tx.pendingNodes[node.ID], nodeCopy) // context-free native staging
+	_ = tx.pendingNodeChangedLocked(ctx, tx.pendingNodes[node.ID], nodeCopy)
 	tx.pendingNodes[node.ID] = nodeCopy
 	delete(tx.deletedNodes, node.ID)
 
@@ -932,15 +941,20 @@ func (tx *BadgerTransaction) createNode(node *Node, minted bool) (NodeID, error)
 // UpdateGraphNode stages a node using the supplied image interpretation.
 // ClientNodeEdits reconciles managed embeddings; StoredNodeImages installs a
 // complete authoritative image. Policies may differ between operations in one frame.
-func (tx *BadgerTransaction) UpdateGraphNode(updateRequest NodeUpdateRequest) error {
+func (tx *BadgerTransaction) UpdateGraphNode(ctx context.Context, updateRequest NodeUpdateRequest) error {
 	node, policy := updateRequest.After, updateRequest.Policy
 	if policy > StoredNodeImages {
 		return ErrInvalidData
 	}
-	tx.mu.Lock()
+	if err := tx.mu.LockContext(ctx); err != nil {
+		return err
+	}
 	defer tx.mu.Unlock()
 
 	if err := tx.ensureOperationAllowedLocked(transactionDataWrite); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 
@@ -952,11 +966,10 @@ func (tx *BadgerTransaction) UpdateGraphNode(updateRequest NodeUpdateRequest) er
 	}
 	tx.engine.NotePropertyKeysInNamespace(tx.namespace, node.Properties)
 
-	// Validate constraints. Like CreateNode, UpdateGraphNode stages
-	// without a caller context: context.Background is this read's own
-	// lifetime, not a forwarded default.
+	// Validate constraints. The caller's context owns this staging
+	// preparation read, as it does for CreateNode.
 	if !tx.deferConstraintValidation {
-		if err := tx.validateNodeConstraints(context.Background(), node); err != nil {
+		if err := tx.validateNodeConstraints(ctx, node); err != nil {
 			return err
 		}
 	}
@@ -979,9 +992,9 @@ func (tx *BadgerTransaction) UpdateGraphNode(updateRequest NodeUpdateRequest) er
 	} else {
 		var err error
 		if committedImage {
-			oldNode, err = tx.getCommittedNodeReadLocked(node.ID, true, storedRead)
+			oldNode, err = tx.getCommittedNodeReadLocked(ctx, node.ID, true, storedRead)
 		} else {
-			oldNode, err = tx.getCommittedNodeLocked(node.ID)
+			oldNode, err = tx.getCommittedNodeLocked(ctx, node.ID)
 		}
 		if err == ErrNotFound {
 			if updateRequest.Before != nil {
@@ -1016,9 +1029,9 @@ func (tx *BadgerTransaction) UpdateGraphNode(updateRequest NodeUpdateRequest) er
 		}
 	}
 
-	// Validate policy constraints on the staging write's accepted lifetime.
+	// Validate policy constraints as part of the same staging preparation.
 	if !tx.deferConstraintValidation && !labelsEqual(node.Labels, oldNode.Labels) {
-		if err := tx.validatePolicyOnNodeLabelChange(context.Background(), node, oldNode); err != nil {
+		if err := tx.validatePolicyOnNodeLabelChange(ctx, node, oldNode); err != nil {
 			return err
 		}
 	}
@@ -1091,13 +1104,13 @@ func (tx *BadgerTransaction) UpdateGraphNode(updateRequest NodeUpdateRequest) er
 	// Positional (label, type) counters follow the node's relabel: its
 	// tx-visible incident edges move between label buckets (issue #638).
 	added, removed := nodeLabelChangeDeltas(oldNode.Labels, node.Labels)
-	if err := tx.bufferNodeLabelChangeEdgeTypeDeltasLocked(node.ID, added, removed); err != nil {
+	if err := tx.bufferNodeLabelChangeEdgeTypeDeltasLocked(ctx, node.ID, added, removed); err != nil {
 		return err
 	}
 
 	// Track for read-your-writes
 	nodeCopy := copyNode(node)
-	_ = tx.pendingNodeChangedLocked(context.Background(), tx.pendingNodes[node.ID], nodeCopy) // context-free native staging
+	_ = tx.pendingNodeChangedLocked(ctx, tx.pendingNodes[node.ID], nodeCopy)
 	tx.pendingNodes[node.ID] = nodeCopy
 	if len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0 {
 		tx.bufferDelete(pendingEmbedKey(node.ID))
@@ -1371,7 +1384,7 @@ func (tx *BadgerTransaction) incidentEdgesLocked(ctx context.Context, nodeID Nod
 // per-type and positional (label, type) counters, for each relationship a
 // node delete cascades (incidentEdgesLocked): committed, buffered or staged
 // (#741) alike.
-func (tx *BadgerTransaction) bufferRemoveEdgeBookkeepingBuffered(edge *Edge, deletedNodeID NodeID, deletedNodeLabels []string) error {
+func (tx *BadgerTransaction) bufferRemoveEdgeBookkeepingBuffered(ctx context.Context, edge *Edge, deletedNodeID NodeID, deletedNodeLabels []string) error {
 	tx.bufferDelete(edgeKey(edge.ID))
 	if outKey := tx.engine.outgoingIndexKeyStringLookup(edge.StartNode, edge.ID); outKey != nil {
 		tx.bufferDelete(outKey)
@@ -1394,13 +1407,13 @@ func (tx *BadgerTransaction) bufferRemoveEdgeBookkeepingBuffered(edge *Edge, del
 	startLabels := deletedNodeLabels
 	endLabels := deletedNodeLabels
 	if edge.StartNode == deletedNodeID && edge.EndNode != deletedNodeID {
-		peer, err := tx.nodeLabelsTxVisibleLocked(edge.EndNode)
+		peer, err := tx.nodeLabelsTxVisibleLocked(ctx, edge.EndNode)
 		if err != nil {
 			return err
 		}
 		endLabels = peer
 	} else if edge.EndNode == deletedNodeID && edge.StartNode != deletedNodeID {
-		peer, err := tx.nodeLabelsTxVisibleLocked(edge.StartNode)
+		peer, err := tx.nodeLabelsTxVisibleLocked(ctx, edge.StartNode)
 		if err != nil {
 			return err
 		}
@@ -1418,13 +1431,18 @@ func (tx *BadgerTransaction) bufferRemoveEdgeBookkeepingBuffered(edge *Edge, del
 //
 // Examples:
 //
-//	tx.DeleteGraphNode(id, CascadeEdges) // DETACH DELETE
-//	tx.DeleteGraphNode(id, RejectConnected) // DELETE
-func (tx *BadgerTransaction) DeleteGraphNode(nodeID NodeID, mode NodeDeletionMode) error {
-	tx.mu.Lock()
+//	tx.DeleteGraphNode(ctx, id, CascadeEdges) // DETACH DELETE
+//	tx.DeleteGraphNode(ctx, id, RejectConnected) // DELETE
+func (tx *BadgerTransaction) DeleteGraphNode(ctx context.Context, nodeID NodeID, mode NodeDeletionMode) error {
+	if err := tx.mu.LockContext(ctx); err != nil {
+		return err
+	}
 	defer tx.mu.Unlock()
 
 	if err := tx.ensureOperationAllowedLocked(transactionDataWrite); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 
@@ -1442,7 +1460,7 @@ func (tx *BadgerTransaction) DeleteGraphNode(nodeID NodeID, mode NodeDeletionMod
 	if _, deleted := tx.deletedNodes[nodeID]; deleted {
 		return ErrNotFound
 	}
-	if err := tx.materializeDeferredEdgesLocked(context.Background()); err != nil {
+	if err := tx.materializeDeferredEdgesLocked(ctx); err != nil {
 		return err
 	}
 
@@ -1452,7 +1470,7 @@ func (tx *BadgerTransaction) DeleteGraphNode(nodeID NodeID, mode NodeDeletionMod
 		oldNode = copyNode(pending)
 	} else {
 		var err error
-		oldNode, err = tx.getCommittedNodeLocked(nodeID)
+		oldNode, err = tx.getCommittedNodeLocked(ctx, nodeID)
 		if err == ErrNotFound {
 			return ErrNotFound
 		}
@@ -1472,11 +1490,11 @@ func (tx *BadgerTransaction) DeleteGraphNode(nodeID NodeID, mode NodeDeletionMod
 		tx.deletedNodes[nodeID] = struct{}{}
 		return nil
 	}
-	result, err := tx.engine.executeNodeDeletion(context.Background(), tx.staged(), nodeID, oldNode)
+	result, err := tx.engine.executeNodeDeletion(ctx, tx.staged(), nodeID, oldNode)
 	if err != nil {
 		return err
 	}
-	return tx.recordNodeDeletionLocked(context.Background(), nodeID, result)
+	return tx.recordNodeDeletionLocked(ctx, nodeID, result)
 }
 
 // enrollCommittedWriteLocked adds key, the primary key of a committed node or
@@ -1549,14 +1567,14 @@ func (tx *BadgerTransaction) IncidentEdges(ctx context.Context, nodeID NodeID) (
 }
 
 // CreateEdge adds an edge to the transaction.
-func (tx *BadgerTransaction) CreateEdge(edge *Edge) error {
-	return tx.bulkCreateEdges([]*Edge{edge}, false)
+func (tx *BadgerTransaction) CreateEdge(ctx context.Context, edge *Edge) error {
+	return tx.bulkCreateEdges(ctx, []*Edge{edge}, false)
 }
 
 // CreateMintedEdge is CreateEdge for a relationship whose ID the caller
 // minted for this create, as CreateMintedNode is for a node.
-func (tx *BadgerTransaction) CreateMintedEdge(edge *Edge) error {
-	return tx.bulkCreateEdges([]*Edge{edge}, true)
+func (tx *BadgerTransaction) CreateMintedEdge(ctx context.Context, edge *Edge) error {
+	return tx.bulkCreateEdges(ctx, []*Edge{edge}, true)
 }
 
 // EdgeCreateWasNoOp reports whether CreateEdge found a stored hidden
@@ -1584,21 +1602,26 @@ func (tx *BadgerTransaction) EdgeCreateWasNoOp(id EdgeID) bool {
 // before any is buffered, so a rejected edge leaves the batch unwritten
 // instead of the edges before it buffered, and each edge is then buffered as
 // CreateEdge buffers one (bufferNewEdgeLocked).
-func (tx *BadgerTransaction) BulkCreateEdges(edges []*Edge) error {
-	return tx.bulkCreateEdges(edges, false)
+func (tx *BadgerTransaction) BulkCreateEdges(ctx context.Context, edges []*Edge) error {
+	return tx.bulkCreateEdges(ctx, edges, false)
 }
 
 // BulkCreateMintedEdges is BulkCreateEdges for relationships whose IDs the
 // caller minted for this create (CreateMintedEdge).
-func (tx *BadgerTransaction) BulkCreateMintedEdges(edges []*Edge) error {
-	return tx.bulkCreateEdges(edges, true)
+func (tx *BadgerTransaction) BulkCreateMintedEdges(ctx context.Context, edges []*Edge) error {
+	return tx.bulkCreateEdges(ctx, edges, true)
 }
 
-func (tx *BadgerTransaction) bulkCreateEdges(edges []*Edge, minted bool) error {
-	tx.mu.Lock()
+func (tx *BadgerTransaction) bulkCreateEdges(ctx context.Context, edges []*Edge, minted bool) error {
+	if err := tx.mu.LockContext(ctx); err != nil {
+		return err
+	}
 	defer tx.mu.Unlock()
 
 	if err := tx.ensureOperationAllowedLocked(transactionDataWrite); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if len(edges) == 0 {
@@ -1618,20 +1641,23 @@ func (tx *BadgerTransaction) bulkCreateEdges(edges []*Edge, minted bool) error {
 	labels, noOps := singleLabels[:], singleNoOp[:]
 	if len(edges) > 1 {
 		endpoints := make(map[NodeID]endpoint, util.SafePreallocProduct(len(edges), 2))
-		resolve = func(id NodeID) ([]string, bool) {
+		resolve = func(ctx context.Context, id NodeID) ([]string, bool, error) {
 			if cached, ok := endpoints[id]; ok {
-				return cached.labels, cached.visible
+				return cached.labels, cached.visible, nil
 			}
-			labels, visible := tx.visibleNodeLabelsLocked(id)
+			labels, visible, err := tx.visibleNodeLabelsLocked(ctx, id)
+			if err != nil {
+				return nil, false, err
+			}
 			endpoints[id] = endpoint{labels: labels, visible: visible}
-			return labels, visible
+			return labels, visible, nil
 		}
 		batch = make(map[EdgeID]struct{}, len(edges))
 		labels = make([][2][]string, len(edges))
 		noOps = make([]bool, len(edges))
 	}
 	for i, edge := range edges {
-		startLabels, endLabels, noOp, err := tx.validateNewEdgeLocked(edge, resolve, batch, minted)
+		startLabels, endLabels, noOp, err := tx.validateNewEdgeLocked(ctx, edge, resolve, batch, minted)
 		if err != nil {
 			return err
 		}
@@ -1661,7 +1687,7 @@ func (tx *BadgerTransaction) bulkCreateEdges(edges []*Edge, minted bool) error {
 // committed edge has its ID (ErrAlreadyExists). Storage is read for every ID
 // but a minted one (CreateMintedEdge): stable imports may use UUID-shaped IDs
 // too, so an ID's shape proves nothing.
-func (tx *BadgerTransaction) validateNewEdgeLocked(edge *Edge, endpoint func(NodeID) ([]string, bool), batch map[EdgeID]struct{}, minted bool) (startLabels, endLabels []string, noOp bool, err error) {
+func (tx *BadgerTransaction) validateNewEdgeLocked(ctx context.Context, edge *Edge, endpoint func(context.Context, NodeID) ([]string, bool, error), batch map[EdgeID]struct{}, minted bool) (startLabels, endLabels []string, noOp bool, err error) {
 	// A nil edge is invalid data and an empty ID an invalid ID, as in the
 	// engines' CreateEdge.
 	if edge == nil {
@@ -1680,17 +1706,23 @@ func (tx *BadgerTransaction) validateNewEdgeLocked(edge *Edge, endpoint func(Nod
 		return nil, nil, false, ErrAlreadyExists
 	}
 	if _, deleted := tx.deletedEdges[edge.ID]; deleted || minted {
-		startLabels, visible := endpoint(edge.StartNode)
+		startLabels, visible, err := endpoint(ctx, edge.StartNode)
+		if err != nil {
+			return nil, nil, false, err
+		}
 		if !visible {
 			return nil, nil, false, localizedError(localization.StorageTransactionStartNodeMissing(string(edge.StartNode)), tx.missingWriteTargetLocked(bufferedNodeEntity, string(edge.StartNode)))
 		}
-		endLabels, visible := endpoint(edge.EndNode)
+		endLabels, visible, err := endpoint(ctx, edge.EndNode)
+		if err != nil {
+			return nil, nil, false, err
+		}
 		if !visible {
 			return nil, nil, false, localizedError(localization.StorageTransactionEndNodeMissing(string(edge.EndNode)), tx.missingWriteTargetLocked(bufferedNodeEntity, string(edge.EndNode)))
 		}
 		return startLabels, endLabels, false, nil
 	}
-	existing, err := tx.getCommittedEdgeLocked(edge.ID)
+	existing, err := tx.getCommittedEdgeLocked(ctx, edge.ID)
 	if err == nil {
 		if !tx.engine.filterEntityByDecay(visibleRead, existing, DecayScoringTime()) {
 			return nil, nil, false, ErrAlreadyExists
@@ -1703,11 +1735,17 @@ func (tx *BadgerTransaction) validateNewEdgeLocked(edge *Edge, endpoint func(Nod
 	if !errors.Is(err, ErrNotFound) {
 		return nil, nil, false, fmt.Errorf("checking edge existence: %w", err)
 	}
-	startLabels, visible := endpoint(edge.StartNode)
+	startLabels, visible, err := endpoint(ctx, edge.StartNode)
+	if err != nil {
+		return nil, nil, false, err
+	}
 	if !visible {
 		return nil, nil, false, localizedError(localization.StorageTransactionStartNodeMissing(string(edge.StartNode)), tx.missingWriteTargetLocked(bufferedNodeEntity, string(edge.StartNode)))
 	}
-	endLabels, visible = endpoint(edge.EndNode)
+	endLabels, visible, err = endpoint(ctx, edge.EndNode)
+	if err != nil {
+		return nil, nil, false, err
+	}
 	if !visible {
 		return nil, nil, false, localizedError(localization.StorageTransactionEndNodeMissing(string(edge.EndNode)), tx.missingWriteTargetLocked(bufferedNodeEntity, string(edge.EndNode)))
 	}
@@ -1813,9 +1851,11 @@ func (tx *BadgerTransaction) bufferNewEdgeLocked(edge *Edge, startLabels, endLab
 //     commit time; callers (and Bolt clients, via
 //     Neo.TransientError.Transaction.Outdated) should retry on a fresh
 //     snapshot.
-func (tx *BadgerTransaction) UpdateEdge(updateRequest EdgeUpdateRequest) error {
+func (tx *BadgerTransaction) UpdateEdge(ctx context.Context, updateRequest EdgeUpdateRequest) error {
 	edge := updateRequest.After
-	tx.mu.Lock()
+	if err := tx.mu.LockContext(ctx); err != nil {
+		return err
+	}
 	defer tx.mu.Unlock()
 
 	if edge == nil {
@@ -1852,7 +1892,7 @@ func (tx *BadgerTransaction) UpdateEdge(updateRequest EdgeUpdateRequest) error {
 		oldEdge = copyEdge(pending)
 	} else {
 		var err error
-		oldEdge, err = tx.getCommittedEdgeForUpdateLocked(edge.ID)
+		oldEdge, err = tx.getCommittedEdgeForUpdateLocked(ctx, edge.ID)
 		if err == ErrNotFound {
 			if updateRequest.Before != nil {
 				return localizedError(localization.StorageTransactionEdgeChanged(string(edge.ID)), ErrConflict)
@@ -1872,10 +1912,14 @@ func (tx *BadgerTransaction) UpdateEdge(updateRequest EdgeUpdateRequest) error {
 
 	// If endpoints changed, verify they exist and update outgoing/incoming indexes.
 	if oldEdge.StartNode != edge.StartNode || oldEdge.EndNode != edge.EndNode {
-		if !tx.nodeExists(edge.StartNode) {
+		if _, visible, err := tx.visibleNodeLabelsLocked(ctx, edge.StartNode); err != nil {
+			return err
+		} else if !visible {
 			return localizedError(localization.StorageTransactionStartNodeMissing(string(edge.StartNode)), tx.missingWriteTargetLocked(bufferedNodeEntity, string(edge.StartNode)))
 		}
-		if !tx.nodeExists(edge.EndNode) {
+		if _, visible, err := tx.visibleNodeLabelsLocked(ctx, edge.EndNode); err != nil {
+			return err
+		} else if !visible {
 			return localizedError(localization.StorageTransactionEndNodeMissing(string(edge.EndNode)), tx.missingWriteTargetLocked(bufferedNodeEntity, string(edge.EndNode)))
 		}
 
@@ -1943,7 +1987,7 @@ func (tx *BadgerTransaction) UpdateEdge(updateRequest EdgeUpdateRequest) error {
 	// Track for read-your-writes.
 	edgeCopy := copyEdge(edge)
 	tx.setPendingEdgeLocked(edgeCopy)
-	if err := tx.bufferEdgeReplacementCountDeltasLocked(oldEdge, edge); err != nil {
+	if err := tx.bufferEdgeReplacementCountDeltasLocked(ctx, oldEdge, edge); err != nil {
 		return err
 	}
 
@@ -1961,18 +2005,18 @@ func (tx *BadgerTransaction) UpdateEdge(updateRequest EdgeUpdateRequest) error {
 // bufferEdgeReplacementCountDeltasLocked owns typed and positional counter
 // changes for an UPDATE that changes the stored relationship image.
 // An unchanged type and endpoints contribute no delta.
-func (tx *BadgerTransaction) bufferEdgeReplacementCountDeltasLocked(oldEdge, edge *Edge) error {
+func (tx *BadgerTransaction) bufferEdgeReplacementCountDeltasLocked(ctx context.Context, oldEdge, edge *Edge) error {
 	if oldEdge.Type != edge.Type {
 		tx.bufferAdjustEdgeTypeCount(namespaceForEdgeID(edge.ID), oldEdge.Type, -1)
 		tx.bufferAdjustEdgeTypeCount(namespaceForEdgeID(edge.ID), edge.Type, 1)
 	}
 	// Positional (label, type) counters move with type or endpoint changes.
 	if oldEdge.Type != edge.Type || oldEdge.StartNode != edge.StartNode || oldEdge.EndNode != edge.EndNode {
-		oldStartLabels, err := tx.nodeLabelsTxVisibleLocked(oldEdge.StartNode)
+		oldStartLabels, err := tx.nodeLabelsTxVisibleLocked(ctx, oldEdge.StartNode)
 		if err != nil {
 			return fmt.Errorf("old start labels: %w", err)
 		}
-		oldEndLabels, err := tx.nodeLabelsTxVisibleLocked(oldEdge.EndNode)
+		oldEndLabels, err := tx.nodeLabelsTxVisibleLocked(ctx, oldEdge.EndNode)
 		if err != nil {
 			return fmt.Errorf("old end labels: %w", err)
 		}
@@ -1980,13 +2024,13 @@ func (tx *BadgerTransaction) bufferEdgeReplacementCountDeltasLocked(oldEdge, edg
 		newStartLabels := oldStartLabels
 		newEndLabels := oldEndLabels
 		if oldEdge.StartNode != edge.StartNode {
-			newStartLabels, err = tx.nodeLabelsTxVisibleLocked(edge.StartNode)
+			newStartLabels, err = tx.nodeLabelsTxVisibleLocked(ctx, edge.StartNode)
 			if err != nil {
 				return fmt.Errorf("new start labels: %w", err)
 			}
 		}
 		if oldEdge.EndNode != edge.EndNode {
-			newEndLabels, err = tx.nodeLabelsTxVisibleLocked(edge.EndNode)
+			newEndLabels, err = tx.nodeLabelsTxVisibleLocked(ctx, edge.EndNode)
 			if err != nil {
 				return fmt.Errorf("new end labels: %w", err)
 			}
@@ -1998,11 +2042,16 @@ func (tx *BadgerTransaction) bufferEdgeReplacementCountDeltasLocked(oldEdge, edg
 }
 
 // DeleteEdge deletes an edge from the transaction.
-func (tx *BadgerTransaction) DeleteEdge(edgeID EdgeID) error {
-	tx.mu.Lock()
+func (tx *BadgerTransaction) DeleteEdge(ctx context.Context, edgeID EdgeID) error {
+	if err := tx.mu.LockContext(ctx); err != nil {
+		return err
+	}
 	defer tx.mu.Unlock()
 
 	if err := tx.ensureOperationAllowedLocked(transactionDataWrite); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 
@@ -2030,7 +2079,7 @@ func (tx *BadgerTransaction) DeleteEdge(edgeID EdgeID) error {
 		edge = pending
 	} else {
 		var err error
-		edge, err = tx.getCommittedEdgeLocked(edgeID)
+		edge, err = tx.getCommittedEdgeLocked(ctx, edgeID)
 		if err == ErrNotFound {
 			return ErrNotFound
 		}
@@ -2071,11 +2120,11 @@ func (tx *BadgerTransaction) DeleteEdge(edgeID EdgeID) error {
 
 	// Positional (label, type) counters follow the endpoints' tx-visible
 	// labels read before the edge is removed.
-	startLabels, err := tx.nodeLabelsTxVisibleLocked(edge.StartNode)
+	startLabels, err := tx.nodeLabelsTxVisibleLocked(ctx, edge.StartNode)
 	if err != nil {
 		return fmt.Errorf("start labels: %w", err)
 	}
-	endLabels, err := tx.nodeLabelsTxVisibleLocked(edge.EndNode)
+	endLabels, err := tx.nodeLabelsTxVisibleLocked(ctx, edge.EndNode)
 	if err != nil {
 		return fmt.Errorf("end labels: %w", err)
 	}
@@ -2105,14 +2154,6 @@ const maxSnapshotProjectedLabelStreams = 8
 // completion, so a commit is never partially applied.
 func (tx *BadgerTransaction) CommitContext(ctx context.Context) error {
 	return tx.PublishCommit(ctx, CommitPublication{})
-}
-
-// commitCancelledLocked reports the commit context's error once it is done.
-func (tx *BadgerTransaction) commitCancelledLocked() error {
-	if tx.commitCtx == nil {
-		return nil
-	}
-	return tx.commitCtx.Err()
 }
 
 // commitCancelPollEvery is how many nodes commit-time validation checks
@@ -2279,8 +2320,8 @@ func (tx *BadgerTransaction) ReleaseMergeKeys() {
 // has observed nothing yet moves its snapshot forward; one that has fails
 // with ErrConflict, since its MERGE would miss the node and create the key
 // again.
-func (tx *BadgerTransaction) catchUpToNode(nodeID NodeID) error {
-	head, err := tx.engine.GetNodeCurrentHead(nodeID)
+func (tx *BadgerTransaction) catchUpToNode(ctx context.Context, nodeID NodeID) error {
+	head, err := tx.engine.GetNodeCurrentHead(ctx, nodeID)
 	if err == ErrNotFound {
 		return nil
 	}
@@ -2302,7 +2343,7 @@ func (tx *BadgerTransaction) catchUpToNode(nodeID NodeID) error {
 		// See docs/plans/consumer-pinned-error-contract-plan.md §2.2.
 		return localizedError(localization.StorageTransactionNodeChanged(string(nodeID)), ErrConflict)
 	}
-	return tx.advanceSnapshotLocked(false)
+	return tx.advanceSnapshotLocked(ctx, false)
 }
 
 // observedLocked reports whether the transaction has read through its
@@ -2358,89 +2399,6 @@ func (tx *BadgerTransaction) rebaseBadgerAfterDrainLocked(ctx context.Context) e
 	tx.badgerTx = next
 	tx.clearSnapshotCachesLocked()
 	return tx.validateSnapshotIsolationConflicts(ctx)
-}
-
-// ResumeAfterIndependentCommit advances an implicit caller's read view while
-// retaining its entire pending write set and rollback ownership. Explicit
-// transactions never enter this path. Before advancing, old pending mutations
-// are checked against their old snapshot so a batch cannot mask a conflict.
-func (tx *BadgerTransaction) ResumeAfterIndependentCommit() error {
-	tx.mu.Lock()
-	defer tx.mu.Unlock()
-	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
-		return err
-	}
-	if tx.commitMode != CommitModeImplicit {
-		return fmt.Errorf("independent-commit continuation requires an implicit transaction")
-	}
-	return tx.advanceSnapshotLocked(true)
-}
-
-func (tx *BadgerTransaction) advanceSnapshotLocked(preserveWrites bool) error {
-	lifecycleSeq := tx.engine.prefixDrops.seq.Load()
-	var bufferEpoch uint64
-	if tx.engine.writeBehind != nil {
-		bufferEpoch = tx.engine.writeBehind.readEpoch.Load()
-	}
-	snapshotTx, badgerReadTs, beginPresence, err := tx.engine.beginTransactionSnapshot(tx.badgerDB)
-	if err != nil {
-		return err
-	}
-	// Pin the next view before validating the old footprint. A publication
-	// after validation then remains newer than the next view and is checked
-	// again at commit; no interval can silently erase a write conflict.
-	beginSnapshot := tx.engine.snapshotNamespaceVersions()
-	if preserveWrites {
-		if len(tx.operations) > 0 && tx.engine.prefixDroppedSince(tx.lifecycleSeq, tx.namespace) {
-			err = fmt.Errorf("%w: namespace %q was deleted or rewritten by maintenance before continuation", ErrConflict, tx.namespace)
-		} else if tx.schemaRuntime != nil && tx.engine.currentMVCCReadVersion(tx.namespace).CommitSequence != tx.readTS.CommitSequence {
-			err = fmt.Errorf("schema snapshot changed before continuation: %w", ErrConflict)
-		} else {
-			err = tx.validateSnapshotIsolationConflicts(context.Background())
-		}
-		if err != nil {
-			snapshotTx.Discard()
-			beginPresence.release()
-			tx.badgerDB.endRead(badgerReadTs)
-			return err
-		}
-	}
-	nextWriter := tx.badgerDB.newTxnAt(badgerReadTs, true)
-	if tx.badgerTx != nil && tx.engine.idDict != nil {
-		if preserveWrites {
-			tx.engine.idDict.moveTxnCounters(tx.badgerTx, nextWriter)
-		} else {
-			tx.engine.idDict.discardTxnCounters(tx.badgerTx)
-		}
-	}
-	if tx.badgerTx != nil && tx.engine.propKeyDict != nil {
-		if preserveWrites {
-			tx.engine.propKeyDict.moveTxnCounters(tx.badgerTx, nextWriter)
-		} else {
-			tx.engine.propKeyDict.discardTxnCounters(tx.badgerTx)
-		}
-	}
-	if tx.badgerTx != nil {
-		tx.badgerTx.Discard()
-	}
-	if tx.snapshotTx != nil {
-		tx.snapshotTx.Discard()
-	}
-	if tx.badgerReadHeld {
-		tx.badgerDB.endRead(tx.badgerReadTs)
-		tx.badgerReadHeld = false
-	}
-	tx.beginPresence.release()
-	tx.beginPresence = beginPresence
-	tx.snapshotTx = snapshotTx
-	tx.badgerReadTs = badgerReadTs
-	tx.badgerReadHeld = true
-	tx.badgerTx = nextWriter
-	tx.lifecycleSeq = lifecycleSeq
-	tx.bufferEpoch = bufferEpoch
-	tx.beginSnapshot = beginSnapshot
-	tx.clearSnapshotCachesLocked()
-	return tx.refreshReadVersionForNamespaceLocked()
 }
 
 // ConstraintViolationError is returned when a constraint is violated.

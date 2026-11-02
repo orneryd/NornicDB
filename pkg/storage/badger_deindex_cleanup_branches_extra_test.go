@@ -55,7 +55,7 @@ func TestDeindexCleanupJob_AdditionalBranches(t *testing.T) {
 			return txn.Set(deindexWorkItemKey(item.WorkItemID), data)
 		}))
 
-		require.NoError(t, job.processWorkItem(item))
+		require.NoError(t, job.processWorkItem(context.Background(), item))
 		require.NoError(t, engine.withView(func(txn *badger.Txn) error {
 			_, err := txn.Get(deindexWorkItemKey(item.WorkItemID))
 			require.ErrorIs(t, err, badger.ErrKeyNotFound)
@@ -71,7 +71,7 @@ func TestDeindexCleanupJob_AdditionalBranches(t *testing.T) {
 			TargetID:   "test:already",
 			Status:     "pending",
 		}
-		require.NoError(t, engine.PutIndexEntryCatalog(item.TargetID, &IndexEntryCatalog{
+		require.NoError(t, engine.PutIndexEntryCatalog(context.Background(), item.TargetID, &IndexEntryCatalog{
 			TargetID:    item.TargetID,
 			TargetScope: "NODE",
 			Deindexed:   true,
@@ -84,7 +84,7 @@ func TestDeindexCleanupJob_AdditionalBranches(t *testing.T) {
 			return txn.Set(deindexWorkItemKey(item.WorkItemID), data)
 		}))
 
-		require.NoError(t, job.processWorkItem(item))
+		require.NoError(t, job.processWorkItem(context.Background(), item))
 		require.NoError(t, engine.withView(func(txn *badger.Txn) error {
 			_, err := txn.Get(deindexWorkItemKey(item.WorkItemID))
 			require.ErrorIs(t, err, badger.ErrKeyNotFound)

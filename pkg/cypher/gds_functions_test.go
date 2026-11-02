@@ -181,14 +181,14 @@ var errEdgeRead = errors.New("edge read failed")
 func TestGDSLinkPredictionReportsFailedReads(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "gds_failed_reads")
 	for _, id := range []storage.NodeID{"a", "b", "c"} {
-		_, err := store.CreateNode(&storage.Node{ID: id})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: id})
 		require.NoError(t, err)
 	}
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "ac", StartNode: "a", EndNode: "c", Type: "K"}))
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "bc", StartNode: "b", EndNode: "c", Type: "K"}))
-	a, err := store.GetNode("a")
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "ac", StartNode: "a", EndNode: "c", Type: "K"}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "bc", StartNode: "b", EndNode: "c", Type: "K"}))
+	a, err := store.GetNode(t.Context(), "a")
 	require.NoError(t, err)
-	b, err := store.GetNode("b")
+	b, err := store.GetNode(t.Context(), "b")
 	require.NoError(t, err)
 	engine := &directionalReadFaultEngine{Engine: store}
 	call := func(name string) (interface{}, error) {

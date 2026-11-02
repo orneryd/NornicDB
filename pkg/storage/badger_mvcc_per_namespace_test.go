@@ -122,10 +122,10 @@ func TestPerNamespaceMVCC_BeginTransactionInOneNamespaceCannotObserveAnother(t *
 	engine := newTestEngine(t)
 
 	// Seed a node in namespace_b.
-	tx1, err := engine.BeginTransaction()
+	tx1, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx1.SetNamespace("namespace_b"))
-	_, err = tx1.CreateNode(&Node{
+	_, err = tx1.CreateNode(t.Context(), &Node{
 		ID:         NodeID("namespace_b:visible"),
 		Labels:     []string{"L"},
 		Properties: map[string]any{"v": int64(1)},
@@ -134,14 +134,14 @@ func TestPerNamespaceMVCC_BeginTransactionInOneNamespaceCannotObserveAnother(t *
 	require.NoError(t, tx1.Commit())
 
 	// Open a transaction in namespace_a.
-	tx2, err := engine.BeginTransaction()
+	tx2, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx2.SetNamespace("namespace_a"))
 
 	// The node lives in namespace_b — namespace_a transaction must not
 	// fetch it via its own prefix, and the cross-namespace lookup must
 	// fail with the per-tx pin guard.
-	_, err = tx2.GetNode(NodeID("namespace_a:visible"))
+	_, err = tx2.GetNode(t.Context(), NodeID("namespace_a:visible"))
 	require.ErrorIs(t, err, ErrNotFound,
 		"transaction in namespace_a must not find a namespace_b node via its own prefix")
 	require.NoError(t, tx2.Rollback())
@@ -227,7 +227,7 @@ func TestEnsureNamespaceMVCC_RecoversSequenceFromExistingHeadsAfterReopen(t *tes
 	}
 	require.NoError(t, err)
 
-	_, err = engine.CreateNode(&Node{ID: NodeID("nornic:node-1"), Labels: []string{"L"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: NodeID("nornic:node-1"), Labels: []string{"L"}})
 	require.NoError(t, err)
 
 	persistedBeforeClose, err := engine.loadPersistedNamespaceSequence("nornic")
@@ -248,16 +248,16 @@ func TestEnsureNamespaceMVCC_RecoversSequenceFromExistingHeadsAfterReopen(t *tes
 	require.Equal(t, uint64(1), persistedAfterEnsure,
 		"EnsureNamespaceMVCC must persist the recovered namespace floor so later restarts do not fall back to seq=0")
 
-	tx, err := reopened.BeginTransaction()
+	tx, err := reopened.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("nornic"))
 	require.Equal(t, uint64(1), tx.readTS.CommitSequence,
 		"transaction snapshot must bind to the recovered namespace sequence instead of seq=0")
 
-	node, err := tx.GetNode(NodeID("nornic:node-1"))
+	node, err := tx.GetNode(t.Context(), NodeID("nornic:node-1"))
 	require.NoError(t, err)
 	node.Properties = map[string]any{"updated": true}
-	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 	require.NoError(t, tx.Commit(),
 		"updating a pre-reopen node must not conflict against a recovered namespace floor")
 }

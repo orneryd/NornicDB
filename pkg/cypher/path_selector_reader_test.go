@@ -103,6 +103,6 @@ func TestShortestFunctionCancellationAndBoundErrors(t *testing.T) {
 	traversal.EndNode.variable = traversal.StartNode.variable
 	traversal.Relationship.MinHops = 0
 	require.Equal(t, statusText(errShortestCommonEndpoints()), statusText(shortestPathPatternError("shortestPath", "(a)-[:T*0..]->(a)", traversal)))
-	require.NoError(t, validateShortestCallBindings("MATCH (a) RETURN a", nil))
-	require.NoError(t, validateShortestCallBindings("MATCH p = shortestPath((a)-[:T*]->(b)) WHERE "+pathSelectorFunction+"('SHORTEST',1,false,'WALK',true)", nil))
+	require.NoError(t, validateShortestCallBindings(ctx, "MATCH (a) RETURN a", nil))
+	require.NoError(t, validateShortestCallBindings(ctx, "MATCH p = shortestPath((a)-[:T*]->(b)) WHERE "+pathSelectorFunction+"('SHORTEST',1,false,'WALK',true)", nil))
 }

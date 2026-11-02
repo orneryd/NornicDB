@@ -29,11 +29,11 @@ type httpMatrixEngine struct {
 }
 
 func (e *httpMatrixEngine) GetWAL() *storage.WAL { return e.wal }
-func (e *httpMatrixEngine) BeginTransaction() (*storage.BadgerTransaction, error) {
+func (e *httpMatrixEngine) BeginTransaction(ctx context.Context) (*storage.BadgerTransaction, error) {
 	if e.begin != nil {
 		return nil, e.begin
 	}
-	return e.MemoryEngine.BeginTransaction()
+	return e.MemoryEngine.BeginTransaction(ctx)
 }
 func (e *httpMatrixEngine) CommitTransaction(ctx context.Context, tx *storage.BadgerTransaction) error {
 	if e.commit != nil {
@@ -48,7 +48,7 @@ type httpMatrixSuppression struct {
 }
 
 func (e *httpMatrixSuppression) GetInnerEngine() storage.Engine { return e.Engine }
-func (e *httpMatrixSuppression) SetManualSuppression(storage.StoredEntityKind, string, bool) error {
+func (e *httpMatrixSuppression) SetManualSuppression(context.Context, storage.StoredEntityKind, string, bool) error {
 	return e.cause
 }
 
@@ -108,7 +108,7 @@ func TestHTTPWALTerminalOutcomeMatrix(t *testing.T) {
 			t.Cleanup(func() { _ = wal.Close() })
 			engine := &httpMatrixEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), wal: wal}
 			store := storage.NewNamespacedEngine(engine, "nornic")
-			_, err = store.CreateNode(&storage.Node{ID: "matrix-seed", Labels: []string{"WalMatrixSeed"}})
+			_, err = store.CreateNode(t.Context(), &storage.Node{ID: "matrix-seed", Labels: []string{"WalMatrixSeed"}})
 			require.NoError(t, err)
 			closeWAL := func() {
 				if cell.closed {

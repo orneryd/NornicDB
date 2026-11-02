@@ -540,7 +540,7 @@ func PrepareEntityChanges(ctx context.Context, engine Engine, namespace string, 
 			}
 		}
 	}
-	tx, err := BeginEntityTransaction(engine, mode)
+	tx, err := BeginEntityTransaction(ctx, engine, mode)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -552,7 +552,7 @@ func PrepareEntityChanges(ctx context.Context, engine Engine, namespace string, 
 		return nil, nil, err
 	}
 	for _, op := range operations {
-		if err = ApplyEntityChange(tx, op, func(request NodeUpdateRequest) error { return ApplyNodeUpdate(tx, request) }, func(id NodeID) error { return tx.DeleteGraphNode(id, CascadeEdges) }); err != nil {
+		if err = ApplyEntityChange(ctx, tx, op, func(ctx context.Context, request NodeUpdateRequest) error { return ApplyNodeUpdate(ctx, tx, request) }, func(ctx context.Context, id NodeID) error { return tx.DeleteGraphNode(ctx, id, CascadeEdges) }); err != nil {
 			return nil, nil, err
 		}
 	}

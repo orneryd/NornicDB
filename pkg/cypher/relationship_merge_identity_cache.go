@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"encoding/json"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"sort"
@@ -39,9 +40,9 @@ func newRelationshipMergeIdentityCache() *relationshipMergeIdentityCache {
 }
 
 // relationships is findRelationshipsForMerge through the cache.
-func (c *relationshipMergeIdentityCache) relationships(store storage.Engine, startID, endID storage.NodeID, relType string, matchProps map[string]interface{}) ([]*storage.Edge, error) {
+func (c *relationshipMergeIdentityCache) relationships(ctx context.Context, store storage.Engine, startID, endID storage.NodeID, relType string, matchProps map[string]interface{}) ([]*storage.Edge, error) {
 	if c == nil || mergeIdentityCacheDisabled {
-		return findRelationshipsForMerge(store, startID, endID, relType, matchProps)
+		return findRelationshipsForMerge(ctx, store, startID, endID, relType, matchProps)
 	}
 	if relationshipMergeIdentityContainsNaN(matchProps) {
 		return nil, nil
@@ -50,7 +51,7 @@ func (c *relationshipMergeIdentityCache) relationships(store storage.Engine, sta
 	entryKey := relationshipMergeIdentityEntryKey(startID, endID, relType, keys)
 	entry, ok := c.entries[entryKey]
 	if !ok {
-		edges, err := storage.MatchEdgesBetween(store, startID, endID, relType, keys, func(*storage.Edge) bool { return true })
+		edges, err := storage.MatchEdgesBetween(ctx, store, startID, endID, relType, keys, func(*storage.Edge) bool { return true })
 		if err != nil {
 			return nil, err
 		}

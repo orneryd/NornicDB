@@ -9,8 +9,8 @@ import (
 // Keep the optional bulk enumeration contract bound to its native implementation.
 var _ MVCCEnumerationEngine = (*BadgerEngine)(nil)
 
-func (b *BadgerEngine) GetNodeVisibleAt(id NodeID, version MVCCVersion) (*Node, error) {
-	return readEntityAtWithView(b, id, version, mvccEntityRead{vectors: true, visibility: visibleRead}, b.withView, (*BadgerEngine).getNodeAtInTxn)
+func (b *BadgerEngine) GetNodeVisibleAt(ctx context.Context, id NodeID, version MVCCVersion) (*Node, error) {
+	return readEntityAtWithView(ctx, b, id, version, mvccEntityRead{vectors: true, visibility: visibleRead}, b.withView, (*BadgerEngine).getNodeAtInTxn)
 }
 
 // getNodeAtInTxn resolves logical visibility and hydration against the supplied

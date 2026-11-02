@@ -3,11 +3,12 @@ package txsession
 import (
 	"context"
 	"errors"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -16,17 +17,17 @@ import (
 type managerBeginGateEngine struct {
 	storage.Engine
 	beginner interface {
-		BeginTransaction() (*storage.BadgerTransaction, error)
+		BeginTransaction(context.Context) (*storage.BadgerTransaction, error)
 	}
 	entered chan struct{}
 	release chan struct{}
 	once    sync.Once
 }
 
-func (e *managerBeginGateEngine) BeginTransaction() (*storage.BadgerTransaction, error) {
+func (e *managerBeginGateEngine) BeginTransaction(ctx context.Context) (*storage.BadgerTransaction, error) {
 	e.once.Do(func() { close(e.entered) })
 	<-e.release
-	return e.beginner.BeginTransaction()
+	return e.beginner.BeginTransaction(ctx)
 }
 
 func TestManagerTouchAfterCommitDoesNotRestartExpiry(t *testing.T) {

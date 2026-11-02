@@ -2,6 +2,7 @@
 package bolt
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -233,8 +234,14 @@ func (a *AuthenticatorAdapter) Authenticate(scheme, principal, credentials strin
 	// - Account lockout (after failed attempts)
 	// - Account disabled status
 	// - Audit logging
+	//
+	// BoltAuthenticator.Authenticate is a connection-scoped HELLO contract and
+	// carries no request context. This is an independent credential check, not
+	// connection-bound cancellation. Giving Bolt's HELLO a cancelable lifetime
+	// means changing BoltAuthenticator itself, which is a
+	// separate contract decision rather than a caller migration.
 	generation := a.basicAuthCache.Generation()
-	_, user, err := a.auth.Authenticate(principal, credentials, "bolt", "Bolt/4.4")
+	_, user, err := a.auth.Authenticate(context.Background(), principal, credentials, "bolt", "Bolt/4.4")
 	if err != nil {
 		return nil, err
 	}

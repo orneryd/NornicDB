@@ -62,7 +62,7 @@ func TestLabelIndexBackfill_HandlesMultiLabelNodesCorrectly(t *testing.T) {
 	}
 	require.NoError(t, err)
 	for i := 0; i < 50; i++ {
-		_, err := engine1.CreateNode(&Node{
+		_, err := engine1.CreateNode(t.Context(), &Node{
 			ID:     NodeID(fmt.Sprintf("test:multi-%03d", i)),
 			Labels: []string{"Aprodan", "Academic", "Concept"},
 		})
@@ -114,7 +114,7 @@ func TestLabelIndexBackfill_IsIdempotentAcrossRestarts(t *testing.T) {
 	}
 	require.NoError(t, err)
 	for i := 0; i < 10; i++ {
-		_, err := engine1.CreateNode(&Node{
+		_, err := engine1.CreateNode(t.Context(), &Node{
 			ID:     NodeID(fmt.Sprintf("test:idem-%02d", i)),
 			Labels: []string{"L"},
 		})
@@ -175,7 +175,7 @@ func TestLabelIndexBackfill_BackfillCancelledOnClose(t *testing.T) {
 			Labels: []string{"BG"},
 		}
 	}
-	require.NoError(t, engine1.BulkCreateNodes(nodes))
+	require.NoError(t, engine1.BulkCreateNodes(t.Context(), nodes))
 	wipeLabelIndexAndMarker(t, engine1, prefixLabelIndex)
 	require.NoError(t, engine1.Close())
 
@@ -209,7 +209,7 @@ func TestLabelIndexBackfill_RebuildIsFreshNotMerged(t *testing.T) {
 		fixtureowner.Own(t, engine1)
 	}
 	require.NoError(t, err)
-	_, err = engine1.CreateNode(&Node{ID: "test:fresh-1", Labels: []string{"Real"}})
+	_, err = engine1.CreateNode(t.Context(), &Node{ID: "test:fresh-1", Labels: []string{"Real"}})
 	require.NoError(t, err)
 
 	// Plant a fake stale index entry. Use a numID nobody allocated
@@ -312,7 +312,7 @@ func TestLabelIndexBackfill_LegacyMarkerRebuildsCurrentScheme(t *testing.T) {
 	engine := openBackfillTestEngine(t, dir, false)
 	for _, namespace := range []string{"alpha", "beta"} {
 		store := NewNamespacedEngine(engine, namespace)
-		_, err := store.CreateNode(&Node{ID: "existing", Labels: []string{"Label", "Second"}, Properties: map[string]interface{}{"id": namespace}})
+		_, err := store.CreateNode(t.Context(), &Node{ID: "existing", Labels: []string{"Label", "Second"}, Properties: map[string]interface{}{"id": namespace}})
 		require.NoError(t, err)
 	}
 	wipeLabelIndexAndMarker(t, engine, prefixLabelIndex)

@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"errors"
+
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"path/filepath"
@@ -53,7 +54,7 @@ func testHNSWBackgroundExact(t *testing.T, fileBacked bool) {
 		{"excluded", []float32{1, 0, 0}},
 	} {
 		node := &storage.Node{ID: storage.NodeID(item.id), ChunkEmbeddings: [][]float32{item.v}}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, svc.IndexNode(node))
 	}

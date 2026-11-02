@@ -37,7 +37,7 @@ func (e *StorageExecutor) executeUserStatement(ctx context.Context, statement st
 			}
 		}()
 	}
-	if err := internalFunctionCallError(statement); err != nil {
+	if err := internalFunctionCallError(ctx, statement); err != nil {
 		// Refused like any statement of the caller's transaction: it fails
 		// an explicit transaction (executeInternal fails it for the rest).
 		return nil, e.failTransaction(ctx, err)
@@ -159,7 +159,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 
 	// Local fragments own their lowering and restore generated names before
 	// returning to Fabric or their containing expression.
-	desugared, labelRewrite, err := desugarLabelExpressions(cypher, params, cypherVersionFromContext(ctx) == "25")
+	desugared, labelRewrite, err := desugarLabelExpressions(ctx, cypher, params, cypherVersionFromContext(ctx) == "25")
 	if err != nil {
 		return nil, err
 	}
@@ -190,7 +190,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	if err := e.validateBoundParameterExpressions(ctx, cypher, params); err != nil {
 		return nil, err
 	}
-	upper := e.cachedUpperQuery(cypher)
+	upper := e.cachedUpperQuery(ctx, cypher)
 	// This is executable, normalized statement text with its actual parameter
 	// values installed. Nested dynamic handlers return through this same gate;
 	// no admission parser attempts to reconstruct their arguments.

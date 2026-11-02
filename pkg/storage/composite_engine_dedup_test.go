@@ -30,10 +30,10 @@ func TestCompositeEngine_StreamNodesByLabelProjected(t *testing.T) {
 	shared := NodeID(prefixTestID("shared-projected"))
 	unique := NodeID(prefixTestID("unique-projected"))
 	for _, engine := range []*MemoryEngine{first, second} {
-		_, err := engine.CreateNode(&Node{ID: shared, Labels: []string{"Evidence"}, Properties: map[string]any{"asset_id": "shared", "unused": "hidden"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: shared, Labels: []string{"Evidence"}, Properties: map[string]any{"asset_id": "shared", "unused": "hidden"}})
 		require.NoError(t, err)
 	}
-	_, err := second.CreateNode(&Node{ID: unique, Labels: []string{"Evidence"}, Properties: map[string]any{"asset_id": "unique", "unused": "hidden"}})
+	_, err := second.CreateNode(t.Context(), &Node{ID: unique, Labels: []string{"Evidence"}, Properties: map[string]any{"asset_id": "unique", "unused": "hidden"}})
 	require.NoError(t, err)
 	composite := NewCompositeEngine(
 		map[string]Engine{"first": first, "second": second}, nil,
@@ -120,12 +120,12 @@ func TestCompositeEngine_ReadsPreserveEqualIDsAcrossDatabases(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			first, second := newTestMemoryEngine(t), newTestMemoryEngine(t)
 			for _, engine := range []*MemoryEngine{first, second} {
-				_, err := engine.CreateNode(&Node{ID: node1, Labels: []string{"Person"}})
+				_, err := engine.CreateNode(t.Context(), &Node{ID: node1, Labels: []string{"Person"}})
 				require.NoError(t, err)
 				if test.edgeRead {
-					_, err = engine.CreateNode(&Node{ID: node2, Labels: []string{"Person"}})
+					_, err = engine.CreateNode(t.Context(), &Node{ID: node2, Labels: []string{"Person"}})
 					require.NoError(t, err)
-					require.NoError(t, engine.CreateEdge(&Edge{ID: edge, StartNode: node1, EndNode: node2, Type: "KNOWS"}))
+					require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: edge, StartNode: node1, EndNode: node2, Type: "KNOWS"}))
 				}
 			}
 			composite := NewCompositeEngine(map[string]Engine{"db1": first, "db2": second}, map[string]string{"db1": "db1", "db2": "db2"}, map[string]string{"db1": "read_write", "db2": "read_write"})

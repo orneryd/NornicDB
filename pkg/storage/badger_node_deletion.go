@@ -87,7 +87,7 @@ func (b *BadgerEngine) executeNodeDeletion(ctx context.Context, w kvWriter, id N
 			return r, err
 		}
 		if isStaged {
-			err = tx.bufferRemoveEdgeBookkeepingBuffered(edge, id, r.node.Labels)
+			err = tx.bufferRemoveEdgeBookkeepingBuffered(ctx, edge, id, r.node.Labels)
 		} else {
 			err = b.deleteEdgeInTxn(raw, edge.ID)
 			if errors.Is(err, ErrNotFound) {
@@ -140,7 +140,7 @@ func (b *BadgerEngine) executeNodeDeletion(ctx context.Context, w kvWriter, id N
 		if !ok {
 			return r, nil
 		}
-		if err = b.applyTemporalIndexesForNodeChangeInTxn(raw, ns, b.GetSchemaForNamespace(ns), r.node, nil); err != nil {
+		if err = b.applyTemporalIndexesForNodeChangeInTxn(ctx, raw, ns, b.GetSchemaForNamespace(ns), r.node, nil); err != nil {
 			return r, err
 		}
 		if err = b.adjustNodeLabelCountsInTxn(raw, ns, r.node.Labels, nil); err != nil {

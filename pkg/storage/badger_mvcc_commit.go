@@ -132,7 +132,7 @@ func (b *BadgerEngine) materializeMVCCCommitWithHeads(ctx context.Context, w *ba
 			if op.Node == nil {
 				continue
 			}
-			err = w.write(func(txn *badger.Txn) error {
+			err = w.write(ctx, func(txn *badger.Txn) error {
 				// FreshID is set only when the ID was asserted new at
 				// CreateNode time (UUID-shape). For explicit user-supplied
 				// IDs we fall back to the load-existing-floor path to keep
@@ -146,7 +146,7 @@ func (b *BadgerEngine) materializeMVCCCommitWithHeads(ctx context.Context, w *ba
 			if op.Node == nil {
 				continue
 			}
-			err = w.write(func(txn *badger.Txn) error {
+			err = w.write(ctx, func(txn *badger.Txn) error {
 				var err error
 				if old := states.committedNodes[op.Node.ID]; retainsHistory && old != nil {
 					err = heads.archiveNodeUpdate(txn, op.Node.ID, old, states.finalNodes[op.Node.ID], version)
@@ -157,7 +157,7 @@ func (b *BadgerEngine) materializeMVCCCommitWithHeads(ctx context.Context, w *ba
 				return err
 			})
 		case OpDeleteNode:
-			err = w.write(func(txn *badger.Txn) error {
+			err = w.write(ctx, func(txn *badger.Txn) error {
 				var err error
 				if old := states.committedNodes[op.NodeID]; retainsHistory && old != nil {
 					err = heads.archiveNode(txn, op.NodeID, old)
@@ -175,7 +175,7 @@ func (b *BadgerEngine) materializeMVCCCommitWithHeads(ctx context.Context, w *ba
 				if err != nil {
 					break
 				}
-				err = w.write(func(txn *badger.Txn) error {
+				err = w.write(ctx, func(txn *badger.Txn) error {
 					edge, fresh := createdEdgeBodies[edgeID]
 					var err error
 					if !fresh {
@@ -211,7 +211,7 @@ func (b *BadgerEngine) materializeMVCCCommitWithHeads(ctx context.Context, w *ba
 				}
 				createdEdgeBodies[op.Edge.ID] = op.Edge
 			}
-			err = w.write(func(txn *badger.Txn) error {
+			err = w.write(ctx, func(txn *badger.Txn) error {
 				if err := b.writeEdgeAdjacencyDeltaInTxn(txn, nil, op.Edge, version); err != nil {
 					return err
 				}
@@ -227,7 +227,7 @@ func (b *BadgerEngine) materializeMVCCCommitWithHeads(ctx context.Context, w *ba
 			if _, fresh := createdEdgeBodies[op.Edge.ID]; fresh {
 				createdEdgeBodies[op.Edge.ID] = op.Edge
 			}
-			err = w.write(func(txn *badger.Txn) error {
+			err = w.write(ctx, func(txn *badger.Txn) error {
 				var err error
 				if op.OldEdge != nil && (op.OldEdge.StartNode != op.Edge.StartNode || op.OldEdge.EndNode != op.Edge.EndNode) {
 					err = b.writeEdgeAdjacencyDeltaInTxn(txn, op.OldEdge, op.Edge, version)
@@ -242,7 +242,7 @@ func (b *BadgerEngine) materializeMVCCCommitWithHeads(ctx context.Context, w *ba
 			})
 		case OpDeleteEdge:
 			delete(createdEdgeBodies, op.EdgeID)
-			err = w.write(func(txn *badger.Txn) error {
+			err = w.write(ctx, func(txn *badger.Txn) error {
 				var err error
 				if op.OldEdge != nil {
 					err = b.writeEdgeAdjacencyDeltaInTxn(txn, op.OldEdge, nil, version)

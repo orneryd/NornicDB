@@ -1,8 +1,9 @@
 package multidb
 
 import (
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -18,7 +19,7 @@ func TestBug_DropDatabaseClearsSchema(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, store.GetSchema().AddUniqueConstraint("person_id_unique", "Person", "id"))
 		require.NoError(t, store.GetSchema().AddPropertyTypeConstraint("person_age_type", "Person", "age", storage.PropertyTypeInteger, storage.PropertyTypeConstraintOptions{}))
-		_, err = store.CreateNode(&storage.Node{ID: "p1", Labels: []string{"Person"}, Properties: map[string]any{"id": "p1", "age": int64(3)}})
+		_, err = store.CreateNode(t.Context(), &storage.Node{ID: "p1", Labels: []string{"Person"}, Properties: map[string]any{"id": "p1", "age": int64(3)}})
 		require.NoError(t, err)
 	}
 	requireEmptySchema := func(t *testing.T, store storage.Engine) {
@@ -26,9 +27,9 @@ func TestBug_DropDatabaseClearsSchema(t *testing.T) {
 		require.Empty(t, store.GetSchema().GetAllConstraints())
 		require.Empty(t, store.GetSchema().GetAllPropertyTypeConstraints())
 		// The dropped rules no longer apply: a duplicate id and a non-integer age both write.
-		_, err := store.CreateNode(&storage.Node{ID: "x1", Labels: []string{"Person"}, Properties: map[string]any{"id": "p1", "age": "old"}})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: "x1", Labels: []string{"Person"}, Properties: map[string]any{"id": "p1", "age": "old"}})
 		require.NoError(t, err)
-		_, err = store.CreateNode(&storage.Node{ID: "x2", Labels: []string{"Person"}, Properties: map[string]any{"id": "p1"}})
+		_, err = store.CreateNode(t.Context(), &storage.Node{ID: "x2", Labels: []string{"Person"}, Properties: map[string]any{"id": "p1"}})
 		require.NoError(t, err)
 	}
 

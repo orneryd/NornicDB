@@ -18,7 +18,7 @@ func TestLabelsRejectsStaticallyKnownPathArguments(t *testing.T) {
 
 func TestLabelsRejectsNonNodeValuesResolvedAtRuntime(t *testing.T) {
 	executor := &StorageExecutor{}
-	_, _, err := executor.evaluateRowValue("labels(items[1])", pipelineRow{
+	_, _, err := executor.evaluateRowValue(t.Context(), "labels(items[1])", pipelineRow{
 		"items": []interface{}{&storage.Node{}, int64(1)},
 	})
 	require.Error(t, err)
@@ -37,7 +37,7 @@ func TestTypeRejectsStaticallyKnownNodeArguments(t *testing.T) {
 
 func TestTypeValidatesEveryListComprehensionValueAtRuntime(t *testing.T) {
 	executor := &StorageExecutor{}
-	_, _, err := executor.evaluateRowValue("[value IN items | type(value)]", pipelineRow{
+	_, _, err := executor.evaluateRowValue(t.Context(), "[value IN items | type(value)]", pipelineRow{
 		"items": []interface{}{&storage.Edge{Type: "T"}, int64(1)},
 	})
 	require.Error(t, err)

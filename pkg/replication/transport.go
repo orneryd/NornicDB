@@ -263,7 +263,8 @@ func (t *ClusterTransport) Connect(ctx context.Context, addr string) (PeerConnec
 	if t.dialNative != nil {
 		netConn, err = t.dialNative(dialCtx, "tcp", addr)
 	} else if t.tlsClient != nil {
-		netConn, err = tls.DialWithDialer(&d, "tcp", addr, t.tlsClient)
+		tlsDialer := tls.Dialer{NetDialer: &d, Config: t.tlsClient}
+		netConn, err = tlsDialer.DialContext(dialCtx, "tcp", addr)
 	} else {
 		netConn, err = d.DialContext(dialCtx, "tcp", addr)
 	}

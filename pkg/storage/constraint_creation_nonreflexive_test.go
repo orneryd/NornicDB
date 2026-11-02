@@ -54,7 +54,7 @@ func TestConstraintCreationNonreflexivePublicValidation(t *testing.T) {
 				e := newTestEngine(t)
 				if entity == ConstraintEntityRelationship {
 					for _, id := range []NodeID{"test:a", "test:b"} {
-						_, err := e.CreateNode(&Node{ID: id})
+						_, err := e.CreateNode(t.Context(), &Node{ID: id})
 						require.NoError(t, err)
 					}
 				}
@@ -65,10 +65,10 @@ func TestConstraintCreationNonreflexivePublicValidation(t *testing.T) {
 					}
 					props := map[string]interface{}{"v": value}
 					if entity == ConstraintEntityNode {
-						_, err := e.CreateNode(&Node{ID: NodeID(fmt.Sprintf("test:n%d", i)), Labels: []string{"Value"}, Properties: props})
+						_, err := e.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("test:n%d", i)), Labels: []string{"Value"}, Properties: props})
 						require.NoError(t, err)
 					} else {
-						require.NoError(t, e.CreateEdge(&Edge{ID: EdgeID(fmt.Sprintf("test:e%d", i)), StartNode: "test:a", EndNode: "test:b", Type: "Value", Properties: props}))
+						require.NoError(t, e.CreateEdge(t.Context(), &Edge{ID: EdgeID(fmt.Sprintf("test:e%d", i)), StartNode: "test:a", EndNode: "test:b", Type: "Value", Properties: props}))
 					}
 				}
 				require.NoError(t, ValidateConstraintOnCreationForEngine(context.Background(), e, Constraint{Name: "nan_values", Type: ConstraintUnique, EntityType: entity, Label: "Value", Properties: []string{"v"}}))

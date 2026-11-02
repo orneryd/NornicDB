@@ -91,7 +91,7 @@ func (e *StorageExecutor) executePeriodicBatch(ctx context.Context, procedure st
 	// The implicit wrapper is still the same rollback owner. Its staged outer
 	// writes stay pending while the next clause reads the committed batch too.
 	if wrapper, ok := e.storage.(*transactionStorageWrapper); ok {
-		if err := wrapper.tx.ResumeAfterIndependentCommit(); err != nil {
+		if err := wrapper.tx.ResumeAfterIndependentCommit(ctx); err != nil {
 			recordExpressionFailure(callerContext, err)
 			return nil, err
 		}

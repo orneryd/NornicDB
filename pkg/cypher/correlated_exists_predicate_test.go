@@ -21,7 +21,7 @@ func TestCorrelatedExistsPredicatesApplyInnerFilter(t *testing.T) {
 	w2 := &storage.Node{ID: "w-2", Labels: []string{"Workload"}, Properties: map[string]interface{}{"id": "w2"}}
 	w3 := &storage.Node{ID: "w-3", Labels: []string{"Workload"}, Properties: map[string]interface{}{"id": "w3"}}
 	for _, node := range []*storage.Node{fn1, fn2, w1, w2, w3} {
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 	for _, edge := range []*storage.Edge{
@@ -29,7 +29,7 @@ func TestCorrelatedExistsPredicatesApplyInnerFilter(t *testing.T) {
 		{ID: "fn2-w2", Type: "RUNS_IN", StartNode: fn2.ID, EndNode: w2.ID},
 		{ID: "fn2-w3", Type: "RUNS_IN", StartNode: fn2.ID, EndNode: w3.ID},
 	} {
-		require.NoError(t, store.CreateEdge(edge))
+		require.NoError(t, store.CreateEdge(t.Context(), edge))
 	}
 
 	exists := func(row map[string]interface{}) bool {

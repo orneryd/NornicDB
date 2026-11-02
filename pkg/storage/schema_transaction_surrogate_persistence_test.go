@@ -38,7 +38,7 @@ func schemaTransactionOpen(t *testing.T, directory string) *BadgerEngine {
 
 func schemaTransactionBegin(t *testing.T, engine *BadgerEngine, namespace string) *BadgerTransaction {
 	t.Helper()
-	transaction, err := engine.BeginTransaction()
+	transaction, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, transaction.SetNamespace(namespace))
 	t.Cleanup(func() { _ = transaction.Rollback() })
@@ -156,7 +156,7 @@ func TestKnowledgePolicySchemaTransactionPayloadLayout(t *testing.T) {
 		require.NoError(t, transaction.Commit())
 
 		committed := engine.GetSchemaForNamespace(namespace)
-		expected, err := encjson.Marshal(committed.ExportDefinition())
+		expected, err := encjson.Marshal(schemaDefinitionForTest(t, committed))
 		require.NoError(t, err)
 		payload := schemaTransactionPayload(t, engine, namespace)
 		require.Equal(t, string(expected), string(payload),
@@ -207,7 +207,7 @@ func TestKnowledgePolicySchemaTransactionPayloadLayout(t *testing.T) {
 		require.Equal(t, "legacy_policy", loaded.ShowPromotionPolicies()[0].Name)
 		require.Equal(t, []string{"Café"}, loaded.ShowPromotionPolicies()[0].TargetLabels)
 		require.Equal(t, "legacy_profile", loaded.ShowPromotionProfiles()[0].Name)
-		require.Equal(t, []string{"Café", "😀"}, loaded.ExportDefinition().LabelTokens)
+		require.Equal(t, []string{"Café", "😀"}, schemaDefinitionForTest(t, loaded).LabelTokens)
 
 		// A transaction rewrite of the legacy definition keeps the values and
 		// writes an ordinary payload the old codec still reads.

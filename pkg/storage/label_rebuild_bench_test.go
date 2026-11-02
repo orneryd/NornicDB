@@ -22,7 +22,7 @@ func BenchmarkLabelRebuildReadCosts(b *testing.B) {
 				for index := offset; index < min(offset+1000, size); index++ {
 					nodes = append(nodes, &Node{ID: NodeID(fmt.Sprintf("bench:n%06d", index)), Labels: []string{"Record"}, Properties: map[string]any{"value": int64(index)}})
 				}
-				require.NoError(b, engine.BulkCreateNodes(nodes))
+				require.NoError(b, engine.BulkCreateNodes(b.Context(), nodes))
 			}
 			for _, state := range []string{"ready", "building"} {
 				if state == "building" {

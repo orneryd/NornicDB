@@ -57,13 +57,13 @@ type vanishingNodeEngine struct {
 	getNodeErr error
 }
 
-func (v *vanishingNodeEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
+func (v *vanishingNodeEngine) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	return nil, v.getNodeErr
 }
 
 func TestLabellessPropertyMatchFullReadOutcomes(t *testing.T) {
 	inner := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
-	_, err := inner.CreateNode(&storage.Node{ID: "n1", Properties: map[string]interface{}{"id": "a"}})
+	_, err := inner.CreateNode(t.Context(), &storage.Node{ID: "n1", Properties: map[string]interface{}{"id": "a"}})
 	require.NoError(t, err)
 
 	gone := &vanishingNodeEngine{NamespacedEngine: inner, getNodeErr: storage.ErrNotFound}

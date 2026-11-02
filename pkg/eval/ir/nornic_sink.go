@@ -78,7 +78,7 @@ func (s *NornicDocumentSink) StoreDocument(ctx context.Context, document Documen
 			"text":    document.Text,
 		},
 	}
-	_, err := s.Engine.CreateNode(node)
+	_, err := s.Engine.CreateNode(ctx, node)
 	if err != nil {
 		return err
 	}

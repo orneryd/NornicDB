@@ -122,7 +122,7 @@ func (e *StorageExecutor) resolveCallBatchSize(ctx context.Context, spec *transa
 		values = rowValuesInExpressionContext(ctx, values)
 		values[scalarExpressionSyntaxKey] = shape
 	}
-	value, resolved, err := e.evaluateRowValue(spec.Expression, values)
+	value, resolved, err := e.evaluateRowValue(ctx, spec.Expression, values)
 	if err != nil {
 		return 0, err
 	}

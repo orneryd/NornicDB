@@ -1093,7 +1093,7 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		return nil, fmt.Errorf("failed to initialize mvcc sequence: %w", err)
 	}
 
-	if err := engine.recoverNamespaceDrops(nil); err != nil {
+	if err := engine.recoverNamespaceDrops(context.Background(), nil); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("recover namespace DROP: %w", err)
 	}

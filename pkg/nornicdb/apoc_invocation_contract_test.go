@@ -58,7 +58,7 @@ func (CheckedPlugin) Functions()map[string]interface{}{return map[string]interfa
 }}
 var Plugin CheckedPlugin
 `)
-	require.NoError(t, LoadPluginsFromDir(directory, nil))
+	require.NoError(t, LoadPluginsFromDir(t.Context(), directory, nil))
 	cfg := DefaultConfig()
 	cfg.Memory.EmbeddingProvider = "none"
 	db, err := Open(filepath.Join(t.TempDir(), "db"), cfg)
@@ -127,7 +127,7 @@ func (BadPlugin) Version()string{return "1"}
 `+bad.body+`
 var Plugin BadPlugin
 `)
-			require.Error(t, LoadPluginsFromDir(dir, nil))
+			require.Error(t, LoadPluginsFromDir(t.Context(), dir, nil))
 			_, published := GetPluginFunction("apoc.nor184.unchecked")
 			require.False(t, published)
 		})

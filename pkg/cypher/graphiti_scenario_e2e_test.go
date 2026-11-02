@@ -93,24 +93,24 @@ type graphitiCopyCountingEngine struct {
 	edgeGets    int64
 }
 
-func (e *graphitiCopyCountingEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
+func (e *graphitiCopyCountingEngine) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	atomic.AddInt64(&e.nodeGets, 1)
-	return e.Engine.GetNode(id)
+	return e.Engine.GetNode(ctx, id)
 }
 
-func (e *graphitiCopyCountingEngine) GetEdge(id storage.EdgeID) (*storage.Edge, error) {
+func (e *graphitiCopyCountingEngine) GetEdge(ctx context.Context, id storage.EdgeID) (*storage.Edge, error) {
 	atomic.AddInt64(&e.edgeGets, 1)
-	return e.Engine.GetEdge(id)
+	return e.Engine.GetEdge(ctx, id)
 }
 
-func (e *graphitiCopyCountingEngine) UpdateNode(updateRequest storage.NodeUpdateRequest) error {
+func (e *graphitiCopyCountingEngine) UpdateNode(ctx context.Context, updateRequest storage.NodeUpdateRequest) error {
 	atomic.AddInt64(&e.nodeUpdates, 1)
-	return e.Engine.UpdateNode(updateRequest)
+	return e.Engine.UpdateNode(ctx, updateRequest)
 }
 
-func (e *graphitiCopyCountingEngine) UpdateEdge(updateRequest storage.EdgeUpdateRequest) error {
+func (e *graphitiCopyCountingEngine) UpdateEdge(ctx context.Context, updateRequest storage.EdgeUpdateRequest) error {
 	atomic.AddInt64(&e.edgeUpdates, 1)
-	return e.Engine.UpdateEdge(updateRequest)
+	return e.Engine.UpdateEdge(ctx, updateRequest)
 }
 
 func (e *graphitiCopyCountingEngine) NodeUpdateCount() int64 {
@@ -399,7 +399,7 @@ func TestGraphitiScenarioE2E_VerbatimCopyIdempotentEntitiesAndTypedVectors(t *te
 
 	// --- typed vector values --------------------------------------------------
 	nodeID := storedNodeID(t, exec, ctx, "MATCH (n:Entity {uuid:'entity-000000'})", nil)
-	firstNode, err := ns.GetNode(storage.NodeID(nodeID))
+	firstNode, err := ns.GetNode(t.Context(), storage.NodeID(nodeID))
 	require.NoError(t, err)
 	require.Equal(t, wantVector, firstNode.Properties["name_embedding"], "bulk copy must store the payload's exact float64 vector")
 	firstImage := cloneProperties(firstNode.Properties)
@@ -416,7 +416,7 @@ func TestGraphitiScenarioE2E_VerbatimCopyIdempotentEntitiesAndTypedVectors(t *te
 	require.NoError(t, err)
 	require.Len(t, res.Rows, len(payload.edges))
 
-	secondNode, err := ns.GetNode(storage.NodeID(nodeID))
+	secondNode, err := ns.GetNode(t.Context(), storage.NodeID(nodeID))
 	require.NoError(t, err)
 	require.Equal(t, firstImage, secondNode.Properties, "identical bulk copy must leave the stored image unchanged")
 	require.Equal(t, int64(len(payload.nodes)), countEntities(), "identical bulk copy must not duplicate entities")
@@ -432,7 +432,7 @@ func TestGraphitiScenarioE2E_VerbatimCopyIdempotentEntitiesAndTypedVectors(t *te
 	require.Len(t, res.Rows, 1)
 	require.Zero(t, res.Stats.NodesCreated, "changed bulk node copy must update, not create")
 	require.NotZero(t, res.Stats.PropertiesSet, "changed bulk node copy must write properties")
-	thirdNode, err := ns.GetNode(storage.NodeID(nodeID))
+	thirdNode, err := ns.GetNode(t.Context(), storage.NodeID(nodeID))
 	require.NoError(t, err)
 	require.Equal(t, "renamed entity 000000", thirdNode.Properties["name"], "a changed value must reach storage")
 	require.Equal(t, changedVector, thirdNode.Properties["name_embedding"], "a changed vector must replace the stored vector")
@@ -1103,7 +1103,7 @@ func BenchmarkGraphitiRelationshipFulltextCallTail(b *testing.B) {
 	require.NoError(b, err)
 	_, err = exec.Execute(ctx, graphitiBulkEdgeSaveQuery, map[string]interface{}{"entity_edges": payload.edges})
 	require.NoError(b, err)
-	edgeTotal, err := ns.EdgeCount()
+	edgeTotal, err := ns.EdgeCount(b.Context())
 	require.NoError(b, err)
 	require.Equal(b, int64(edgeCount), edgeTotal)
 	rawFulltext, err := exec.Execute(ctx, `CALL db.index.fulltext.queryRelationships("rel_ft", "*", {limit: $limit}) YIELD relationship AS rel, score RETURN rel.uuid AS uuid, score`, map[string]interface{}{"limit": limit})

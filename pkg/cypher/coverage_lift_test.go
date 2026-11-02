@@ -23,16 +23,16 @@ func TestCoverageLiftVectorRelationshipHelpers(t *testing.T) {
 
 	left := &storage.Node{ID: "left", Labels: []string{"Left"}, Properties: map[string]interface{}{"name": "l"}}
 	right := &storage.Node{ID: "right", Labels: []string{"Right"}, Properties: map[string]interface{}{"name": "r"}}
-	_, err := store.CreateNode(left)
+	_, err := store.CreateNode(t.Context(), left)
 	require.NoError(t, err)
-	_, err = store.CreateNode(right)
+	_, err = store.CreateNode(t.Context(), right)
 	require.NoError(t, err)
 	edge := &storage.Edge{ID: "edge", Type: "REL", StartNode: left.ID, EndNode: right.ID, Properties: map[string]interface{}{"embedding": []float32{1, 0}, "active": true}}
-	require.NoError(t, store.CreateEdge(edge))
+	require.NoError(t, store.CreateEdge(t.Context(), edge))
 
 	pattern, ok := exec.parseSimpleMatchRelationshipPattern("(l:Left)-[e:REL]->(r:Right)")
 	require.True(t, ok)
-	nodeCtx, edgeCtx, ok := exec.buildRelationshipContext(pattern, edge)
+	nodeCtx, edgeCtx, ok := exec.buildRelationshipContext(t.Context(), pattern, edge)
 	require.True(t, ok)
 	require.Equal(t, left.ID, nodeCtx["l"].ID)
 	require.Equal(t, right.ID, nodeCtx["r"].ID)
@@ -42,15 +42,15 @@ func TestCoverageLiftVectorRelationshipHelpers(t *testing.T) {
 
 	reversePattern, ok := exec.parseSimpleMatchRelationshipPattern("(r:Right)<-[e:REL]-(l:Left)")
 	require.True(t, ok)
-	nodeCtx, edgeCtx, ok = exec.buildRelationshipContext(reversePattern, edge)
+	nodeCtx, edgeCtx, ok = exec.buildRelationshipContext(t.Context(), reversePattern, edge)
 	require.True(t, ok)
 	assert.Equal(t, right.ID, nodeCtx["r"].ID)
 	assert.Equal(t, left.ID, nodeCtx["l"].ID)
 	assert.Same(t, edge, edgeCtx["e"])
 
-	_, _, ok = exec.buildRelationshipContext(parsedSimpleMatchRelationshipPattern{leftVar: "l", leftLabels: []string{"Missing"}, relVar: "e"}, edge)
+	_, _, ok = exec.buildRelationshipContext(t.Context(), parsedSimpleMatchRelationshipPattern{leftVar: "l", leftLabels: []string{"Missing"}, relVar: "e"}, edge)
 	assert.False(t, ok)
-	_, _, ok = exec.buildRelationshipContext(pattern, nil)
+	_, _, ok = exec.buildRelationshipContext(t.Context(), pattern, nil)
 	assert.False(t, ok)
 
 	assert.Equal(t, "[-1,2.5]", formatInlineFloat32Vector([]float32{-1, 2.5}))
@@ -390,14 +390,14 @@ func TestCoverageLiftUnwindAndRelationshipBatchEdgeBranches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{ID: "bag", Labels: []string{"Bag"}, Properties: map[string]interface{}{"items": []interface{}{"keep", "drop"}}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "bag", Labels: []string{"Bag"}, Properties: map[string]interface{}{"items": []interface{}{"keep", "drop"}}})
 	require.NoError(t, err)
 	result, err := exec.Execute(ctx, "MATCH (n:Bag) UNWIND n.items AS item WITH item WHERE item = 'keep' RETURN item", getParamsFromContext(ctx))
 	require.NoError(t, err)
 	assert.Equal(t, []string{"item"}, result.Columns)
 	assert.Equal(t, [][]interface{}{{"keep"}}, result.Rows)
 
-	_, err = store.CreateNode(&storage.Node{ID: "svc", Labels: []string{"Service"}, Properties: map[string]interface{}{"key": "svc-a"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "svc", Labels: []string{"Service"}, Properties: map[string]interface{}{"key": "svc-a"}})
 	require.NoError(t, err)
 	batchRows := []interface{}{map[string]interface{}{"source_key": "svc-a", "uuid": "edge-1"}}
 	restQuery := `MATCH (source:Service {key: row.source_key})

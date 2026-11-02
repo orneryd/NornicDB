@@ -111,7 +111,7 @@ func (tx *BadgerTransaction) prepareMergeAdmissionKey(ctx context.Context, schem
 		return err
 	}
 	if found && !write {
-		return tx.catchUpToNode(nodeID)
+		return tx.catchUpToNode(ctx, nodeID)
 	}
 	if !found && !complete {
 		return nil
@@ -144,7 +144,7 @@ func (tx *BadgerTransaction) prepareMergeAdmissionKey(ctx context.Context, schem
 				return err
 			}
 		}
-		return tx.catchUpToNode(nodeID)
+		return tx.catchUpToNode(ctx, nodeID)
 	}
 	return nil
 }
@@ -183,7 +183,7 @@ func (tx *BadgerTransaction) settleBufferedNode(ctx context.Context, nodeID Node
 		}
 		return nil
 	}
-	return tx.advanceSnapshotLocked(false)
+	return tx.advanceSnapshotLocked(ctx, false)
 }
 
 // mergeAdmissionHolder reads key's committed holder, outside the transaction
@@ -213,7 +213,11 @@ func (tx *BadgerTransaction) mergeAdmissionHolder(ctx context.Context, schema *S
 		if err := cancellation.check(ctx); err != nil {
 			return "", false, false, err
 		}
-		if tx.engine.committedKeyHolder(id, namespace, label, properties, props) != nil {
+		holder, err := tx.engine.committedKeyHolder(ctx, id, namespace, label, properties, props)
+		if err != nil {
+			return "", false, false, err
+		}
+		if holder != nil {
 			return id, true, true, nil
 		}
 	}

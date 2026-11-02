@@ -73,7 +73,7 @@ func forEachHiddenRelationshipFixture(t *testing.T, check func(t *testing.T, bas
 				require.NoError(t, err)
 				require.Len(t, edges, 1)
 				before := storage.CopyEdge(edges[0])
-				require.NoError(t, base.SetManualSuppression(storage.StoredEntityEdgeKind, string(before.ID), true))
+				require.NoError(t, base.SetManualSuppression(context.Background(), storage.StoredEntityEdgeKind, string(before.ID), true))
 				check(t, base, exec, before)
 			})
 		}
@@ -85,15 +85,15 @@ func forEachHiddenRelationshipFixture(t *testing.T, check func(t *testing.T, bas
 func requireHiddenRelationshipUnchanged(t *testing.T, base *storage.BadgerEngine, before *storage.Edge) {
 	t.Helper()
 	require.NoError(t, base.FlushWriteBehind(nil))
-	after, err := base.GetStoredEdge(before.ID)
+	after, err := base.GetStoredEdge(t.Context(), before.ID)
 	require.NoError(t, err)
 	require.Equal(t, before.Properties, after.Properties)
 	require.Equal(t, before.StartNode, after.StartNode)
 	require.Equal(t, before.EndNode, after.EndNode)
 	require.True(t, before.CreatedAt.Equal(after.CreatedAt))
-	_, err = base.GetEdge(before.ID)
+	_, err = base.GetEdge(t.Context(), before.ID)
 	require.ErrorIs(t, err, storage.ErrNotFound)
-	count, err := base.EdgeCount()
+	count, err := base.EdgeCount(t.Context())
 	require.NoError(t, err)
 	require.EqualValues(t, 1, count)
 }
@@ -238,7 +238,7 @@ func TestHiddenRelationshipIdentityUsesStoredValueRepresentation(t *testing.T) {
 					require.NoError(t, err)
 					require.Len(t, edges, 1)
 					before := storage.CopyEdge(edges[0])
-					require.NoError(t, base.SetManualSuppression(storage.StoredEntityEdgeKind, string(before.ID), true))
+					require.NoError(t, base.SetManualSuppression(context.Background(), storage.StoredEntityEdgeKind, string(before.ID), true))
 
 					result, err := exec.Execute(ctx, hiddenRelationshipMerge+" ON CREATE SET r.payload = "+tc.same, tc.params)
 					require.NoError(t, err, "an identical value is the permitted no-op")

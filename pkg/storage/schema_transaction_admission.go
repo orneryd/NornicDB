@@ -12,7 +12,7 @@ import "context"
 //
 // For example, tx, err := schema.BeginSchemaTransaction(ctx, engine.BeginTransaction)
 // opens a schema statement whose peer cannot snapshot an unpublished definition.
-func (sm *SchemaManager) BeginSchemaTransaction(ctx context.Context, begin func() (*BadgerTransaction, error)) (*BadgerTransaction, error) {
+func (sm *SchemaManager) BeginSchemaTransaction(ctx context.Context, begin func(context.Context) (*BadgerTransaction, error)) (*BadgerTransaction, error) {
 	if err := sm.schemaMutationMu.LockContext(ctx); err != nil {
 		return nil, err
 	}
@@ -22,7 +22,7 @@ func (sm *SchemaManager) BeginSchemaTransaction(ctx context.Context, begin func(
 			sm.schemaMutationMu.Unlock()
 		}
 	}()
-	tx, err := begin()
+	tx, err := begin(ctx)
 	if err != nil {
 		return nil, err
 	}

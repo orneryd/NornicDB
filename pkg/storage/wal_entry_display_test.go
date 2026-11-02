@@ -104,7 +104,7 @@ func TestEntryPayloadJSONRendersCompressedBufferedCommit(t *testing.T) {
 	for i := range nodes {
 		nodes[i] = &Node{ID: NodeID(fmt.Sprintf("display:node%d", i)), Properties: map[string]any{"i": int64(i)}}
 	}
-	require.NoError(t, engine.BulkCreateNodes(nodes))
+	require.NoError(t, engine.BulkCreateNodes(t.Context(), nodes))
 	// Adjacency keys and compact relationship bodies both refer to numeric
 	// dictionary IDs. Allocate the source edge IDs before building the fixture.
 	edgeNumIDs := make(map[EdgeID]uint64, pairs)

@@ -49,7 +49,7 @@ func moveClusterMember(t *testing.T, f *cgFixture, from, to int) (string, []floa
 	}
 	require.NotEmpty(t, vec)
 	require.Equal(t, to, routing.NearestClusters(vec, 1)[0])
-	node, err := f.engine.GetNode(storage.NodeID(vectorOwnerForTest(t, id)))
+	node, err := f.engine.GetNode(t.Context(), storage.NodeID(vectorOwnerForTest(t, id)))
 	require.NoError(t, err)
 	node.ChunkEmbeddings = [][]float32{vec}
 	require.NoError(t, f.write(node))

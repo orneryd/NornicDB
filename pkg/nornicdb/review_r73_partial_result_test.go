@@ -62,7 +62,7 @@ func TestReviewR73PartialDocumentResult(t *testing.T) {
 				published := 0
 				worker.SetOnEmbedded(func(*storage.Node) { published++ })
 				require.Equal(t, embedBatchWorked, worker.processNextBatchResult())
-				saved, err := queue.GetNode("node-000")
+				saved, err := queue.GetNode(t.Context(), "node-000")
 				require.NoError(t, err)
 				t.Logf("valid=%v processed=%d failed=%d published=%d retries=%d sidecar_writes=%d chunk_vectors=%v", valid, worker.processed.Load(), worker.failed.Load(), published, len(worker.nodeRetries), queue.attempts["node-000"], saved.ChunkEmbeddings)
 				if valid {

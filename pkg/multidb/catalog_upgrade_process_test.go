@@ -54,12 +54,12 @@ func TestCatalogV4ProcessInterruptionAndReopen(t *testing.T) {
 	ref := ConstituentRef{Alias: "r", DatabaseName: "nornic", Type: "remote", AccessMode: "read", URI: "http://synthetic-user:synthetic-process-password@127.0.0.1:1?token=enc:v1:literal"}
 	manager.databases["legacy"] = &DatabaseInfo{Name: "legacy", Type: "composite", Status: "online", Constituents: []ConstituentRef{ref}}
 	system := storage.NewNamespacedEngine(inner, "system")
-	node, err := system.GetNode(storage.NodeID(metadataNodeID))
+	node, err := system.GetNode(t.Context(), storage.NodeID(metadataNodeID))
 	require.NoError(t, err)
 	legacy, err := json.Marshal(manager.databases)
 	require.NoError(t, err)
 	node.Properties["data"] = string(legacy)
-	require.NoError(t, system.UpdateNode(storage.NodeUpdateRequest{After: node}))
+	require.NoError(t, system.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
 	require.NoError(t, manager.Close())
 	markClosedASCIICatalogFixtureV3(t, dir)
 	before := closedCatalogFixtureDigest(t, dir)
@@ -124,7 +124,7 @@ func TestCatalogV4ProcessInterruptionAndReopen(t *testing.T) {
 	decoded, err := manager.openRemoteConnection(refs[0])
 	require.NoError(t, err)
 	require.Equal(t, ref.URI, decoded.uri)
-	node, err = storage.NewNamespacedEngine(inner, "system").GetNode(storage.NodeID(metadataNodeID))
+	node, err = storage.NewNamespacedEngine(inner, "system").GetNode(t.Context(), storage.NodeID(metadataNodeID))
 	require.NoError(t, err)
 	require.NotContains(t, node.Properties["data"], "synthetic-process-password")
 }

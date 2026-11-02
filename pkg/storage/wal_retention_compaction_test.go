@@ -49,7 +49,7 @@ func newRetentionWALEngine(t *testing.T, root string, maxAge time.Duration, maxS
 func createWALNodes(t *testing.T, walEngine *WALEngine, from, to int) {
 	t.Helper()
 	for i := from; i <= to; i++ {
-		_, err := walEngine.CreateNode(&Node{ID: NodeID(fmt.Sprintf("nornic:n%02d", i)), Labels: []string{"Doc"}})
+		_, err := walEngine.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("nornic:n%02d", i)), Labels: []string{"Doc"}})
 		require.NoError(t, err)
 	}
 }

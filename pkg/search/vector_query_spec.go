@@ -3,9 +3,10 @@ package search
 import (
 	"context"
 	"errors"
-	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"sort"
 	"strings"
+
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
@@ -748,7 +749,7 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			node, err := s.getNodeWithoutEmbeddings(storage.NodeID(candidate.id))
+			node, err := s.getNodeWithoutEmbeddings(ctx, storage.NodeID(candidate.id))
 			if err != nil || !opts.Where(node) {
 				continue
 			}
@@ -796,7 +797,7 @@ func (s *Service) exactStoredNodeScores(ctx context.Context, prepared cypherVect
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		node, err := s.engine.GetNode(storage.NodeID(id))
+		node, err := s.engine.GetNode(ctx, storage.NodeID(id))
 		if errors.Is(err, storage.ErrNotFound) {
 			continue
 		}

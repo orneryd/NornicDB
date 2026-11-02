@@ -12,14 +12,14 @@ func TestBadgerEngine_NodeCacheStoresDeepCopies(t *testing.T) {
 
 	node := testNode("n1")
 	node.Properties["name"] = "Alice"
-	_, err := engine.CreateNode(node)
+	_, err := engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	// Mutate the original node without persisting. If the cache stores pointers
 	// directly, this would corrupt cached state.
 	node.Properties["name"] = "Eve"
 
-	got, err := engine.GetNode(node.ID)
+	got, err := engine.GetNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	require.Equal(t, "Alice", got.Properties["name"])
 }
@@ -29,7 +29,7 @@ func TestBadgerEngine_AllNodesPopulatesNodeCache(t *testing.T) {
 
 	node := testNode("allnodes-cache")
 	node.Properties["name"] = "Alice"
-	_, err := engine.CreateNode(node)
+	_, err := engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	engine.nodeCacheMu.Lock()
@@ -54,7 +54,7 @@ func TestBadgerEngine_NodeCacheNormalizesHomogeneousPropertyArrays(t *testing.T)
 
 	node := testNode("ncache-array")
 	node.Properties["embedding"] = []interface{}{0.7, 0.2, 0.05, 0.05}
-	_, err := engine.CreateNode(node)
+	_, err := engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	nodes, err := engine.AllNodes(context.Background())
@@ -69,13 +69,13 @@ func TestBadgerEngine_UpdateEdge_UpdatesTypeIndexAndInvalidatesCache(t *testing.
 
 	n1 := testNode("n1")
 	n2 := testNode("n2")
-	_, err := engine.CreateNode(n1)
+	_, err := engine.CreateNode(t.Context(), n1)
 	require.NoError(t, err)
-	_, err = engine.CreateNode(n2)
+	_, err = engine.CreateNode(t.Context(), n2)
 	require.NoError(t, err)
 
 	edge := testEdge("e1", n1.ID, n2.ID, "KNOWS")
-	err = engine.CreateEdge(edge)
+	err = engine.CreateEdge(t.Context(), edge)
 	require.NoError(t, err)
 
 	// Warm the edge-type cache for KNOWS.
@@ -85,7 +85,7 @@ func TestBadgerEngine_UpdateEdge_UpdatesTypeIndexAndInvalidatesCache(t *testing.
 	require.Equal(t, edge.ID, knows[0].ID)
 
 	edge.Type = "LIKES"
-	err = engine.UpdateEdge(EdgeUpdateRequest{After: edge})
+	err = engine.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge})
 	require.NoError(t, err)
 
 	// Old type should be empty (both index updated + cache invalidated).

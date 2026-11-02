@@ -39,11 +39,11 @@ func TestTemporalConstraintBackfillsBufferedNodes(t *testing.T) {
 	t.Cleanup(func() { _ = inner.Close() })
 	engine := NewNamespacedEngine(inner, "test")
 	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	tx, err := inner.BeginTransaction()
+	tx, err := inner.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	require.NoError(t, tx.SetImplicit(true))
-	_, err = tx.CreateNode(&Node{ID: "test:period1", Labels: []string{"Period"}, Properties: map[string]any{"key": "k", "from": from, "to": from.Add(24 * time.Hour)}})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:period1", Labels: []string{"Period"}, Properties: map[string]any{"key": "k", "from": from, "to": from.Add(24 * time.Hour)}})
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 	require.True(t, tx.AcknowledgedBuffered(), "the create is acknowledged, not yet applied")
@@ -64,14 +64,14 @@ func TestTemporalConstraintBackfillsBufferedNodes(t *testing.T) {
 func TestBetweenSelfHealWritesOnlyWhatIsStored(t *testing.T) {
 	b := newWriteBehindTestEngine(t, time.Hour)
 	for _, id := range []NodeID{"test:a", "test:b"} {
-		_, err := b.CreateNode(&Node{ID: id})
+		_, err := b.CreateNode(t.Context(), &Node{ID: id})
 		require.NoError(t, err)
 	}
-	require.NoError(t, b.CreateEdge(&Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}))
+	require.NoError(t, b.CreateEdge(t.Context(), &Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}))
 	require.NoError(t, b.FlushWriteBehind(nil))
 	// Drift: the between index lost the relationship; the legacy outgoing
 	// index still holds it.
-	edge, err := b.GetEdge("test:e")
+	edge, err := b.GetEdge(t.Context(), "test:e")
 	require.NoError(t, err)
 	require.NoError(t, b.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error { return b.deleteEdgeBetweenIndexesInTxn(txn, edge) }))
 	require.Zero(t, countKeysWithPrefix(t, b, prefixEdgeBetweenIndex))
@@ -79,7 +79,7 @@ func TestBetweenSelfHealWritesOnlyWhatIsStored(t *testing.T) {
 	var once sync.Once
 	restore := setBetweenSelfHealHook(func() {
 		once.Do(func() {
-			require.NoError(t, b.DeleteEdge("test:e"))
+			require.NoError(t, b.DeleteEdge(t.Context(), "test:e"))
 			require.NoError(t, b.FlushWriteBehind(nil))
 		})
 	})
@@ -154,7 +154,7 @@ func TestTemporalRebuildRunsAcrossNoWrite(t *testing.T) {
 			period := func(start time.Time) *Node {
 				return &Node{ID: "p1", Labels: []string{"Period"}, Properties: map[string]any{"key": "k", "from": start, "to": start.Add(24 * time.Hour)}}
 			}
-			_, err := engine.CreateNode(period(from))
+			_, err := engine.CreateNode(t.Context(), period(from))
 			require.NoError(t, err)
 			require.NoError(t, inner.FlushWriteBehind(nil))
 
@@ -164,7 +164,7 @@ func TestTemporalRebuildRunsAcrossNoWrite(t *testing.T) {
 				moved.ID = "test:p1"
 				var err error
 				attempts, err = conflictRetried(inner, func(tx *BadgerTransaction) error {
-					return tx.UpdateGraphNode(NodeUpdateRequest{After: moved, Policy: ClientNodeEdits})
+					return tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: moved, Policy: ClientNodeEdits})
 				})
 				if err != nil {
 					return err
@@ -199,7 +199,7 @@ func TestIDRepairRunsAcrossNoWrite(t *testing.T) {
 			dir := t.TempDir()
 			seed := openBackfillTestEngine(t, dir, false)
 			for _, node := range []*Node{{ID: "test:a", Labels: []string{"Doc"}}, {ID: "test:b", Labels: []string{"Doc", "Source"}}} {
-				_, err := seed.CreateNode(node)
+				_, err := seed.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 			}
 			dropDictionaryEntries(t, seed, []NodeID{"test:b"}, nil)
@@ -210,7 +210,7 @@ func TestIDRepairRunsAcrossNoWrite(t *testing.T) {
 			hook, wait := writeAtPause(pauseIDRepairRestore, func() error {
 				var err error
 				attempts, err = conflictRetried(b, func(tx *BadgerTransaction) error {
-					return tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:b", Labels: []string{"Doc", "Source", "Fresh"}}, Policy: ClientNodeEdits})
+					return tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:b", Labels: []string{"Doc", "Source", "Fresh"}}, Policy: ClientNodeEdits})
 				})
 				if err != nil {
 					return err

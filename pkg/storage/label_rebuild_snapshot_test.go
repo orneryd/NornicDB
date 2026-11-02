@@ -15,10 +15,10 @@ func TestLabelRebuildPreservesReadyTransactionSnapshot(t *testing.T) {
 	engine, err := fixture.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	for _, id := range []NodeID{"test:a", "test:b", "test:c"} {
-		_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"ReadySnapshot"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"ReadySnapshot"}})
 		require.NoError(t, err)
 	}
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("test"))

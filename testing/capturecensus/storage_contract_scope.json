@@ -55,10 +55,6 @@
       "Reason": "pending Linear entry 'Cypher evaluator drops the statement context, so graph functions and row expressions run under Background()' (sig/handoff/linear-pending-issues.md): the row-evaluation fallback (temporal_values.go)",
       "Approver": "Nornic2 (31 October 2026)"
     },
-    "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).evaluateRowValueText": {
-      "Reason": "pending Linear entry 'Cypher evaluator drops the statement context, so graph functions and row expressions run under Background()' (sig/handoff/linear-pending-issues.md): the shortest-path row branch (row_expression.go)",
-      "Approver": "Nornic2 (31 October 2026)"
-    },
     "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).endSuppressions": {
       "Reason": "owned by #1691 obligation 3; the decision lands with #1691 in the stack.",
       "Approver": "Nornic2 (31 October 2026)",
@@ -84,5 +80,59 @@
   "publicEntries": [
     "github.com/orneryd/nornicdb/pkg/cypher.RedactLiterals"
   ],
-  "reviewedHeldValues": {}
+  "reviewedHeldValues": {
+    "(*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).rollbackSince": {
+      "EndsEdges": [
+        {
+          "Caller": "(*github.com/orneryd/nornicdb/pkg/storage.largeCommit).abort",
+          "Callee": "(*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).rollbackSince",
+          "Reason": "compensation restores previously written unpublished batches independently of rejected request",
+          "Kind": "body-boundary"
+        },
+        {
+          "Caller": "(*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).recoverInterruptedLargeCommit",
+          "Callee": "(*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).rollbackSince",
+          "Reason": "startup compensation before exposing any reader/writer",
+          "Kind": "body-boundary"
+        }
+      ],
+      "TrackedHolders": null,
+      "RouteSources": null,
+      "Held": null,
+      "Sources": {
+        "(*github.com/orneryd/nornicdb/pkg/storage.commitWriter).abort": "2477b994090b6360fcf9c692e0d937e60a5ce0320ebbefc1b63fd9d97fb6d0f4",
+        "(*github.com/orneryd/nornicdb/pkg/storage.largeCommit).abort": "7f720cadb1bb9bf92153ba0f5e133c97bd431cd1ce476190663a4aa3308460bb",
+        "(*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).beginLargeCommitContext": "ec7db85c0b4808cbe88b07af28103f8c88d013c75f3c4368d1d7e83d10dfc8b9",
+        "(*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).commitDurableWrite": "2a98bebf4b3a864812cdba473f63484b10613b5b32a370be81fcc688b0459731",
+        "(*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).recoverInterruptedLargeCommit": "033f47b8f1cbcf4da038d013aa772a6c5fa0bb8150504b64fc84a22181eb3c67",
+        "(*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).rollbackSince": "d739e5791c8705a0edf93c33185159fe1431fa01c887711dd28452777b50662b",
+        "(*github.com/orneryd/nornicdb/pkg/storage.restoreBatches).commitBatch": "ce93dece3f1200a7bbb1b9e69b889f229fb51635ebc0be4051d889065516fce9",
+        "github.com/orneryd/nornicdb/pkg/storage.openManagedBadger": "129540497b14a56ab10fa76aeb9cbc68d6c74c289b4b82abb78bcded033de129",
+        "github.com/orneryd/nornicdb/pkg/localization.NewLocalizedError": "dbcf8d98df7baf557aeeb265e3617f8d7794c96128b6173ee3a0581c6955be5d",
+        "github.com/orneryd/nornicdb/pkg/localization.StorageTransactionLargeCommitUnrecoverable": "6221814dd2ac48094f47e73e94aecf8fc8ab8eb6439107a71f5292635ef1fc51",
+        "github.com/orneryd/nornicdb/pkg/localization.storageErrorText": "d987e031e4f69a070b6ed5a9fb2601a8b4881ca3815c9fff0fd5f51584125d97",
+        "github.com/orneryd/nornicdb/pkg/localization.storageValidationMessage": "990e006cdab070bd32672fc600fc66523cbc03ff3cffccfe48fdfc34109a9b98",
+        "github.com/orneryd/nornicdb/pkg/math/libm.Float64frombits": "24f405596402e464051c8ad40a4db07d999ea97c63c8fc036aa8dc90edeea498"
+      },
+      "Closure": "41d2c2db90d0bc6705c5dca5ac47e53beaca835cf08ba83fe9591b87902b50cd",
+      "Modules": null,
+      "Callers": {
+        "(*github.com/orneryd/nornicdb/pkg/storage.largeCommit).abort": [
+          "(*github.com/orneryd/nornicdb/pkg/storage.commitWriter).abort",
+          "(*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).beginLargeCommitContext"
+        ],
+        "(*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).recoverInterruptedLargeCommit": [
+          "github.com/orneryd/nornicdb/pkg/storage.openManagedBadger"
+        ],
+        "(*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).rollbackSince": [
+          "(*github.com/orneryd/nornicdb/pkg/storage.largeCommit).abort",
+          "(*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).recoverInterruptedLargeCommit"
+        ]
+      },
+      "FieldWriters": null,
+      "Methods": null,
+      "Reason": "Maintainer-approved compensation-only completion: rollback of previously written unpublished batches and startup crash repair must finish independently of canceled request work. Exact two caller edges and their transitive sources/caller sets are pinned; ordinary preparation and any new caller remain unapproved.",
+      "Approver": "Tim Sweet (OrneryD), explicit approval 2026-11-01; principal-agent source review and public/mutation controls in rollback-phase-current-review"
+    }
+  }
 }

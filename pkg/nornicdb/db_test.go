@@ -3,13 +3,14 @@ package nornicdb
 import (
 	"context"
 	"errors"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"math"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/inference"
@@ -127,10 +128,10 @@ type closeErrReplicator struct {
 }
 
 func (r *closeErrReplicator) Start(ctx context.Context) error { return nil }
-func (r *closeErrReplicator) Apply(cmd *replication.Command, timeout time.Duration) error {
+func (r *closeErrReplicator) Apply(ctx context.Context, cmd *replication.Command, timeout time.Duration) error {
 	return nil
 }
-func (r *closeErrReplicator) ApplyBatch(cmds []*replication.Command, timeout time.Duration) error {
+func (r *closeErrReplicator) ApplyBatch(ctx context.Context, cmds []*replication.Command, timeout time.Duration) error {
 	return nil
 }
 func (r *closeErrReplicator) IsLeader() bool                          { return true }
@@ -163,32 +164,32 @@ func (e *nilSchemaEngine) GetSchema() *storage.SchemaManager {
 	return nil
 }
 
-func (e *restoreFailEngine) CreateNode(node *storage.Node) (storage.NodeID, error) {
+func (e *restoreFailEngine) CreateNode(ctx context.Context, node *storage.Node) (storage.NodeID, error) {
 	if e.createNodeErr != nil {
 		return "", e.createNodeErr
 	}
-	return e.Engine.CreateNode(node)
+	return e.Engine.CreateNode(ctx, node)
 }
 
-func (e *restoreFailEngine) UpdateNode(updateRequest storage.NodeUpdateRequest) error {
+func (e *restoreFailEngine) UpdateNode(ctx context.Context, updateRequest storage.NodeUpdateRequest) error {
 	if e.updateNodeErr != nil {
 		return e.updateNodeErr
 	}
-	return e.Engine.UpdateNode(updateRequest)
+	return e.Engine.UpdateNode(ctx, updateRequest)
 }
 
-func (e *restoreFailEngine) CreateEdge(edge *storage.Edge) error {
+func (e *restoreFailEngine) CreateEdge(ctx context.Context, edge *storage.Edge) error {
 	if e.createEdgeErr != nil {
 		return e.createEdgeErr
 	}
-	return e.Engine.CreateEdge(edge)
+	return e.Engine.CreateEdge(ctx, edge)
 }
 
-func (e *restoreFailEngine) UpdateEdge(updateRequest storage.EdgeUpdateRequest) error {
+func (e *restoreFailEngine) UpdateEdge(ctx context.Context, updateRequest storage.EdgeUpdateRequest) error {
 	if e.updateEdgeErr != nil {
 		return e.updateEdgeErr
 	}
-	return e.Engine.UpdateEdge(updateRequest)
+	return e.Engine.UpdateEdge(ctx, updateRequest)
 }
 
 func TestOpen(t *testing.T) {
@@ -540,11 +541,11 @@ func TestCreateNode_WithEmbeddings(t *testing.T) {
 			Properties:      map[string]interface{}{"content": "Memory with embedding"},
 			ChunkEmbeddings: [][]float32{{1.0, 0.0, 0.0}},
 		}
-		actualID, err := db.storage.CreateNode(n)
+		actualID, err := db.storage.CreateNode(t.Context(), n)
 		require.NoError(t, err)
 
 		// Retrieve and verify embeddings are stored (use the returned ID)
-		retrieved, err := db.storage.GetNode(actualID)
+		retrieved, err := db.storage.GetNode(t.Context(), actualID)
 		require.NoError(t, err)
 		require.NotEmpty(t, retrieved.ChunkEmbeddings)
 		assert.Equal(t, []float32{1.0, 0.0, 0.0}, retrieved.ChunkEmbeddings[0])
@@ -945,7 +946,9 @@ func TestStats(t *testing.T) {
 		require.NoError(t, err)
 		defer db.Close()
 
-		stats := db.Stats()
+		stats, err := db.Stats(t.Context())
+
+		require.NoError(t, err)
 		assert.GreaterOrEqual(t, stats.NodeCount, int64(0))
 		assert.GreaterOrEqual(t, stats.EdgeCount, int64(0))
 	})
@@ -955,14 +958,34 @@ func TestStats(t *testing.T) {
 		require.NoError(t, err)
 		defer db.Close()
 
-		initialStats := db.Stats()
+		initialStats, err := db.Stats(t.Context())
+
+		require.NoError(t, err)
 
 		_, err = db.CreateNode(ctx, []string{"Concept"}, map[string]interface{}{"content": "stats test"})
 		require.NoError(t, err)
 
-		stats := db.Stats()
+		stats, err := db.Stats(t.Context())
+
+		require.NoError(t, err)
 		assert.GreaterOrEqual(t, stats.NodeCount, initialStats.NodeCount)
 	})
+}
+
+func TestStatsDoesNotReportCanceledReadsAsZeroSuccess(t *testing.T) {
+	db, err := Open(t.TempDir(), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	_, err = db.CreateNode(t.Context(), []string{"StatsCancellation"}, nil)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	stats, err := db.Stats(ctx)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Equal(t, DBStats{}, stats)
+	stats, err = db.Stats(t.Context())
+	require.NoError(t, err)
+	require.Positive(t, stats.NodeCount)
 }
 
 func TestExecuteCypher(t *testing.T) {
@@ -1529,7 +1552,7 @@ func storeNodeWithEmbeddingID(t *testing.T, eng storage.Engine, id storage.NodeI
 		Properties:      map[string]interface{}{"content": content},
 		ChunkEmbeddings: [][]float32{embedding},
 	}
-	actualID, err := eng.CreateNode(n)
+	actualID, err := eng.CreateNode(t.Context(), n)
 	require.NoError(t, err)
 	// NamespacedEngine.CreateNode returns the unprefixed ID
 	return actualID
@@ -1634,7 +1657,7 @@ func TestFindSimilar(t *testing.T) {
 		base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = base.Close() })
 		ns := storage.NewNamespacedEngine(base, "test")
-		_, err := ns.CreateNode(&storage.Node{
+		_, err := ns.CreateNode(t.Context(), &storage.Node{
 			ID:              "root",
 			Labels:          []string{"Doc"},
 			ChunkEmbeddings: [][]float32{{1.0, 0.0}},
@@ -2046,7 +2069,7 @@ func TestRestore(t *testing.T) {
 		}
 		closeTestDBOnCleanup(t, db)
 
-		_, err := base.CreateNode(&storage.Node{
+		_, err := base.CreateNode(t.Context(), &storage.Node{
 			ID:     "n1",
 			Labels: []string{"Person"},
 			Properties: map[string]any{
@@ -2054,7 +2077,7 @@ func TestRestore(t *testing.T) {
 			},
 		})
 		require.NoError(t, err)
-		_, err = base.CreateNode(&storage.Node{
+		_, err = base.CreateNode(t.Context(), &storage.Node{
 			ID:     "n2",
 			Labels: []string{"Person"},
 			Properties: map[string]any{
@@ -2062,7 +2085,7 @@ func TestRestore(t *testing.T) {
 			},
 		})
 		require.NoError(t, err)
-		require.NoError(t, base.CreateEdge(&storage.Edge{
+		require.NoError(t, base.CreateEdge(t.Context(), &storage.Edge{
 			ID:        "e1",
 			StartNode: "n1",
 			EndNode:   "n2",
@@ -2087,11 +2110,11 @@ func TestRestore(t *testing.T) {
 
 		require.NoError(t, db.Restore(ctx, p))
 
-		n1, err := base.GetNode("n1")
+		n1, err := base.GetNode(t.Context(), "n1")
 		require.NoError(t, err)
 		require.Equal(t, "NewAlice", n1.Properties["name"])
 
-		e1, err := base.GetEdge("e1")
+		e1, err := base.GetEdge(t.Context(), "e1")
 		require.NoError(t, err)
 		require.Equal(t, "2026", e1.Properties["since"])
 	})
@@ -2180,7 +2203,7 @@ func TestRestoreNativeRebuildsLiveSchemaAndSearch(t *testing.T) {
 	require.NoError(t, source.storage.GetSchema().AddUniqueConstraint("doc_key", "Doc", "key"))
 	// An index of its own on another property: the constraint owns the key's (#884).
 	require.NoError(t, source.storage.GetSchema().AddPropertyIndex("doc_content_index", "Doc", []string{"content"}))
-	_, err = source.storage.CreateNode(&storage.Node{
+	_, err = source.storage.CreateNode(t.Context(), &storage.Node{
 		ID: "doc", Labels: []string{"Doc"},
 		Properties:      map[string]interface{}{"key": "k1", "content": "restored"},
 		ChunkEmbeddings: [][]float32{{1, 0, 0}},
@@ -2197,9 +2220,9 @@ func TestRestoreNativeRebuildsLiveSchemaAndSearch(t *testing.T) {
 	require.NoError(t, target.Restore(requestCtx, backupPath))
 	cancelRequest()
 	require.FileExists(t, filepath.Join(targetDir, nativeRestoreMarker))
-	require.Len(t, target.storage.GetSchema().ExportDefinition().Constraints, 1)
-	require.Len(t, target.storage.GetSchema().ExportDefinition().PropertyIndexes, 1)
-	_, err = target.storage.CreateNode(&storage.Node{
+	require.Len(t, schemaDefinitionForTest(t, target.storage.GetSchema()).Constraints, 1)
+	require.Len(t, schemaDefinitionForTest(t, target.storage.GetSchema()).PropertyIndexes, 1)
+	_, err = target.storage.CreateNode(t.Context(), &storage.Node{
 		ID: "duplicate", Labels: []string{"Doc"}, Properties: map[string]interface{}{"key": "k1"},
 	})
 	require.Error(t, err)
@@ -2215,8 +2238,8 @@ func TestRestoreNativeRebuildsLiveSchemaAndSearch(t *testing.T) {
 	reopened, err := Open(targetDir, config)
 	require.NoError(t, err)
 	defer reopened.Close()
-	require.Len(t, reopened.storage.GetSchema().ExportDefinition().Constraints, 1)
-	require.Len(t, reopened.storage.GetSchema().ExportDefinition().PropertyIndexes, 1)
+	require.Len(t, schemaDefinitionForTest(t, reopened.storage.GetSchema()).Constraints, 1)
+	require.Len(t, schemaDefinitionForTest(t, reopened.storage.GetSchema()).PropertyIndexes, 1)
 }
 
 func TestDB_TemporalMaintenance(t *testing.T) {

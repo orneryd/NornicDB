@@ -51,8 +51,8 @@ func (f *cgFixture) node(id string, topic int, text string) *storage.Node {
 
 // write stores and indexes node (create or update), as a live mutation.
 func (f *cgFixture) write(node *storage.Node) error {
-	if _, err := f.engine.CreateNode(node); err != nil {
-		if err := f.engine.UpdateNode(storage.NodeUpdateRequest{After: node}); err != nil {
+	if _, err := f.engine.CreateNode(f.t.Context(), node); err != nil {
+		if err := f.engine.UpdateNode(f.t.Context(), storage.NodeUpdateRequest{After: node}); err != nil {
 			return err
 		}
 	}
@@ -358,13 +358,13 @@ func TestClusterGenerationMatrix(t *testing.T) {
 			f.duringBuild(func() { require.NoError(f.t, f.svc.RemoveNode("n-0002")) })
 		}},
 		{"b3 text-only update between generations", cgAllChecks, func(f *cgFixture) {
-			node, err := f.engine.GetNode("n-0003")
+			node, err := f.engine.GetNode(t.Context(), "n-0003")
 			require.NoError(f.t, err)
 			node.Properties["text"] = "zebraword retexted"
 			require.NoError(f.t, f.write(node))
 		}},
 		{"b3 text-only update during build", cgAllChecks, func(f *cgFixture) {
-			node, err := f.engine.GetNode("n-0003")
+			node, err := f.engine.GetNode(t.Context(), "n-0003")
 			require.NoError(f.t, err)
 			node.Properties["text"] = "zebraword retexted"
 			f.duringBuild(func() { require.NoError(f.t, f.write(node)) })
@@ -507,15 +507,15 @@ func TestClusterGenerationConcurrentProperty(t *testing.T) {
 					vec := []float32{0, 0, 0, 0}
 					vec[topic] = 1
 					node := &storage.Node{ID: storage.NodeID(id), Properties: map[string]any{"text": cgTopics[topic] + " concurrent"}, ChunkEmbeddings: [][]float32{vec}}
-					if _, err := f.engine.CreateNode(node); err == nil {
+					if _, err := f.engine.CreateNode(t.Context(), node); err == nil {
 						_ = f.svc.IndexNode(node)
 					}
 				case 1:
 					_ = f.svc.RemoveNode(storage.NodeID(fmt.Sprintf("n-%04d", 1+rng.Intn(60))))
 				default:
-					if node, err := f.engine.GetNode(storage.NodeID(fmt.Sprintf("n-%04d", 1+rng.Intn(60)))); err == nil {
+					if node, err := f.engine.GetNode(t.Context(), storage.NodeID(fmt.Sprintf("n-%04d", 1+rng.Intn(60)))); err == nil {
 						node.Properties["text"] = fmt.Sprintf("retext %d", rng.Intn(5))
-						_ = f.engine.UpdateNode(storage.NodeUpdateRequest{After: node})
+						_ = f.engine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node})
 						_ = f.svc.IndexNode(node)
 					}
 				}

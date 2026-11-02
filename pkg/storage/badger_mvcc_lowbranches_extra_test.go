@@ -34,11 +34,11 @@ func TestMVCC_MaterializeCommit_NilOpsAndHeadDecodeErrors(t *testing.T) {
 	engine := createMVCCBadgerEngine(t)
 	version := MVCCVersion{CommitTimestamp: time.Now().UTC().Add(time.Second), CommitSequence: 1010}
 
-	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"L"}, Properties: map[string]any{"p": "v"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:n1", Labels: []string{"L"}, Properties: map[string]any{"p": "v"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:n2", Labels: []string{"L"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:n2", Labels: []string{"L"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:n1", EndNode: "test:n2", Type: "R", Properties: map[string]any{"p": "v"}}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:n1", EndNode: "test:n2", Type: "R", Properties: map[string]any{"p": "v"}}))
 
 	// Hit nil-op continue branches and create branches.
 	err = engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
@@ -86,7 +86,7 @@ func TestMVCC_MaterializeCommit_NilOpsAndHeadDecodeErrors(t *testing.T) {
 
 func TestMVCC_RebuildAndBootstrap_ContextAndSkipBranches(t *testing.T) {
 	engine := createMVCCBadgerEngine(t)
-	_, err := engine.CreateNode(&Node{ID: "test:b1", Labels: []string{"L"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:b1", Labels: []string{"L"}})
 	require.NoError(t, err)
 
 	// Existing head should trigger skip branch in applyMVCCBootstrapBatch.

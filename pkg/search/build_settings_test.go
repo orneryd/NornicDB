@@ -2,11 +2,12 @@ package search
 
 import (
 	"context"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -48,7 +49,7 @@ func TestSearchBuildSettingsRoundTrip(t *testing.T) {
 // An index built with different format settings must be rebuilt from storage.
 func TestSearchBuildSettingsRebuildsMismatchedFulltextCache(t *testing.T) {
 	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	_, err := engine.CreateNode(&storage.Node{ID: "nornic:current", Properties: map[string]any{"text": "freshlyindexed"}})
+	_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "nornic:current", Properties: map[string]any{"text": "freshlyindexed"}})
 	require.NoError(t, err)
 	svc := NewService(engine, 3, nil)
 	t.Cleanup(func() { _ = svc.Close() })

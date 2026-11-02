@@ -130,7 +130,7 @@ func TestBackwardsCompatibility(t *testing.T) {
 			ID:     storage.NodeID("legacy-node"),
 			Labels: []string{"Legacy"},
 		}
-		_, err = store.CreateNode(node)
+		_, err = store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	})
 
@@ -170,11 +170,11 @@ func TestBackwardsCompatibility(t *testing.T) {
 				"legacy": true,
 			},
 		}
-		_, err = store.CreateNode(node)
+		_, err = store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 
 		// Should be retrievable
-		retrieved, err := store.GetNode(storage.NodeID("existing-node"))
+		retrieved, err := store.GetNode(t.Context(), storage.NodeID("existing-node"))
 		require.NoError(t, err)
 		assert.True(t, retrieved.Properties["legacy"].(bool))
 	})

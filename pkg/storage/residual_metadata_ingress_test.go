@@ -19,7 +19,7 @@ func TestResidualMetadataIngressOwnership(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = b.Close() })
 			b.SetChangeCapture("test", storage.ChangeCaptureFull)
-			tx, err := b.BeginTransaction()
+			tx, err := b.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			metadata := map[string]any{
@@ -40,7 +40,7 @@ func TestResidualMetadataIngressOwnership(t *testing.T) {
 			default:
 				t.Fatalf("unexpected metadata map %T", value)
 			}
-			_, err = tx.CreateNode(&storage.Node{ID: "test:metadata-owned"})
+			_, err = tx.CreateNode(t.Context(), &storage.Node{ID: "test:metadata-owned"})
 			require.NoError(t, err)
 			require.NoError(t, tx.Commit())
 			events, err := b.ChangeEvents("test", 0, 0, 0)
@@ -80,7 +80,7 @@ func TestResidualBatchSerializationOwnsInput(t *testing.T) {
 		}
 	}
 	require.True(t, found)
-	stored, err := b.GetStoredNode(node.ID)
+	stored, err := b.GetStoredNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	require.Equal(t, "before", stored.Properties["nested"].(map[string]any)["value"])
 }

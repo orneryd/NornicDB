@@ -43,12 +43,12 @@ func (value resettingTypedProperty) EncodeMsgpack(enc *msgpack.Encoder) error {
 
 func TestTokenizedPropertyCustomEncoderOwnsValueBuffer(t *testing.T) {
 	engine := newTestEngine(t)
-	_, err := engine.CreateNode(&Node{ID: "test:custom-value", Properties: map[string]any{
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:custom-value", Properties: map[string]any{
 		"custom": resettingTypedProperty(42),
 		"other":  int64(17),
 	}})
 	require.NoError(t, err)
-	node, err := engine.GetStoredNode("test:custom-value")
+	node, err := engine.GetStoredNode(t.Context(), "test:custom-value")
 	require.NoError(t, err)
 	require.Equal(t, int64(42), node.Properties["custom"])
 	require.Equal(t, int64(17), node.Properties["other"])
@@ -60,17 +60,17 @@ func TestTokenizedPropertyNestedCustomEncoderPreservesContainers(t *testing.T) {
 		"list":   []any{int64(17), resettingTypedProperty(42)},
 		"nested": map[string]any{"custom": resettingTypedProperty(7), "other": "kept"},
 	}
-	_, err := engine.CreateNode(&Node{ID: "test:nested", Properties: properties})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:nested", Properties: properties})
 	require.NoError(t, err)
-	node, err := engine.GetStoredNode("test:nested")
+	node, err := engine.GetStoredNode(t.Context(), "test:nested")
 	require.NoError(t, err)
 	require.Equal(t, []int64{17, 42}, node.Properties["list"])
 	require.Equal(t, map[string]any{"custom": int64(7), "other": "kept"}, node.Properties["nested"])
 
-	_, err = engine.CreateNode(&Node{ID: "test:other"})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:other"})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:edge", StartNode: "test:nested", EndNode: "test:other", Type: "LINK", Properties: properties}))
-	edge, err := engine.GetStoredEdge("test:edge")
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:edge", StartNode: "test:nested", EndNode: "test:other", Type: "LINK", Properties: properties}))
+	edge, err := engine.GetStoredEdge(t.Context(), "test:edge")
 	require.NoError(t, err)
 	require.Equal(t, []int64{17, 42}, edge.Properties["list"])
 	require.Equal(t, map[string]any{"custom": int64(7), "other": "kept"}, edge.Properties["nested"])
@@ -89,7 +89,7 @@ func (malformedTokenizedProperty) EncodeMsgpack(enc *msgpack.Encoder) error {
 func TestTokenizedPropertyRejectsMalformedCustomValue(t *testing.T) {
 	engine := newTestEngine(t)
 	for _, value := range []any{malformedTokenizedProperty{}, []any{malformedTokenizedProperty{}}, map[string]any{"x": malformedTokenizedProperty{}}} {
-		_, err := engine.CreateNode(&Node{ID: "test:bad", Properties: map[string]any{"bad": value}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: "test:bad", Properties: map[string]any{"bad": value}})
 		require.ErrorIs(t, err, ErrInvalidData)
 	}
 }

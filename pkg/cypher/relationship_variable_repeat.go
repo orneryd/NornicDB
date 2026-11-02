@@ -39,7 +39,7 @@ func (r *labelExpressionRewriter) repeatedRelationshipVariables(start, end int, 
 	if indexASCIIFold(q[start:end], "shortestpath") >= 0 {
 		scope := matchSemanticScope{}
 		for _, part := range splitTopLevelComma(q[start:end]) {
-			if err := validateShortestCallBindings(part, scope); err != nil {
+			if err := validateShortestCallBindings(r.ctx, part, scope); err != nil {
 				return nil, err
 			}
 			for _, variable := range extractRelationshipVariables(part) {

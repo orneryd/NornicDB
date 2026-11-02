@@ -16,33 +16,33 @@ func TestNamespacedEntitiesPreserveSuppressionFlag(t *testing.T) {
 			metadata := node.RuntimeMetadata()
 			metadata.VisibilitySuppressed = !update
 			node.SetRuntimeMetadata(metadata)
-			_, err := ns.CreateNode(node)
+			_, err := ns.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 			if update {
 				metadata := node.RuntimeMetadata()
 				metadata.VisibilitySuppressed = true
 				node.SetRuntimeMetadata(metadata)
 				node.Properties = map[string]any{"edited": true}
-				require.NoError(t, ns.UpdateNode(NodeUpdateRequest{After: node}))
+				require.NoError(t, ns.UpdateNode(t.Context(), NodeUpdateRequest{After: node}))
 			}
-			got, err := eng.GetNode("test:n")
+			got, err := eng.GetNode(t.Context(), "test:n")
 			require.NoError(t, err)
 			require.True(t, got.RuntimeMetadata().VisibilitySuppressed, "namespace node copies retain visibility metadata")
 			require.Equal(t, NodeID("n"), node.ID)
 		}},
 		{"TestNamespacedEdgesPreserveSuppressionFlag", func(t *testing.T, eng *BadgerEngine, ns *NamespacedEngine, update bool) {
 			for _, id := range []NodeID{"a", "b"} {
-				_, err := ns.CreateNode(&Node{ID: id})
+				_, err := ns.CreateNode(t.Context(), &Node{ID: id})
 				require.NoError(t, err)
 			}
 			edge := &Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "LINKS", VisibilitySuppressed: !update}
-			require.NoError(t, ns.CreateEdge(edge))
+			require.NoError(t, ns.CreateEdge(t.Context(), edge))
 			if update {
 				edge.VisibilitySuppressed = true
 				edge.Properties = map[string]any{"edited": true}
-				require.NoError(t, ns.UpdateEdge(EdgeUpdateRequest{After: edge}))
+				require.NoError(t, ns.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge}))
 			}
-			got, err := eng.GetEdge("test:e")
+			got, err := eng.GetEdge(t.Context(), "test:e")
 			require.NoError(t, err)
 			require.True(t, got.VisibilitySuppressed, "namespace translation must retain stored visibility metadata")
 			require.Equal(t, EdgeID("e"), edge.ID, "caller IDs are unchanged")

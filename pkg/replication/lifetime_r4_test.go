@@ -135,7 +135,7 @@ func TestReplicationR4FailedConstructionAdmission(t *testing.T) {
 			defer owner.Shutdown()
 			assert.False(t, owner.Health().Healthy, "failed constructor advertised a healthy native lifetime")
 			assert.Error(t, owner.Start(context.Background()), "retry bypassed the failed constructor and reported success")
-			assert.ErrorIs(t, owner.Apply(&Command{Type: CmdCreateNode, Data: []byte("r4")}, time.Second), ErrNotReady, "failed construction opened command admission")
+			assert.ErrorIs(t, owner.Apply(t.Context(), &Command{Type: CmdCreateNode, Data: []byte("r4")}, time.Second), ErrNotReady, "failed construction opened command admission")
 		})
 	}
 }
@@ -650,7 +650,7 @@ func TestReplicationR4ForeignObservationReentry(t *testing.T) {
 				_, err := owner.HandleRaftVote(&RaftVoteRequest{Term: 1000, CandidateID: "peer"})
 				require.NoError(t, err)
 			case "apply failure":
-				require.ErrorIs(t, owner.Apply(&Command{Type: CmdCreateNode, Data: []byte("r4")}, time.Second), applyFailure)
+				require.ErrorIs(t, owner.Apply(ctx, &Command{Type: CmdCreateNode, Data: []byte("r4")}, time.Second), applyFailure)
 			}
 			select {
 			case <-handler.observed:

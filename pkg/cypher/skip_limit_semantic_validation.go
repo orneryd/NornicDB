@@ -56,7 +56,7 @@ func (e *StorageExecutor) validateStaticPaginationExpressions(ctx context.Contex
 		if strings.Contains(expression, "$") {
 			continue
 		}
-		value, evaluated, err := e.evaluateRowValue(expression, pipelineRow{})
+		value, evaluated, err := e.evaluateRowValue(ctx, expression, pipelineRow{})
 		if err != nil {
 			return err
 		}
@@ -101,7 +101,7 @@ func (e *StorageExecutor) validateRuntimePaginationExpressions(ctx context.Conte
 		}
 		values := make(pipelineRow, len(params))
 		bindParameterRow(ctx, values)
-		value, evaluated, err := e.evaluateRowValue(pagination.value, values)
+		value, evaluated, err := e.evaluateRowValue(ctx, pagination.value, values)
 		if err != nil {
 			return err
 		}

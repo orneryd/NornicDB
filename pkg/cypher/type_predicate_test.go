@@ -117,9 +117,9 @@ func TestTypePredicateSplittingAndRowValueErrors(t *testing.T) {
 	require.Equal(t, "x    ", maskTypePredicateTypes("x :: "))
 
 	e := setupTestExecutor(t)
-	_, _, err = e.evaluateRowValue("1 IS :: FOO", pipelineRow{})
+	_, _, err = e.evaluateRowValue(t.Context(), "1 IS :: FOO", pipelineRow{})
 	require.Error(t, err)
-	_, ok, err = e.evaluateRowValue("missing.v IS :: INTEGER", pipelineRow{})
+	_, ok, err = e.evaluateRowValue(t.Context(), "missing.v IS :: INTEGER", pipelineRow{})
 	require.False(t, ok && err == nil, "an operand without a value is not a result")
 }
 

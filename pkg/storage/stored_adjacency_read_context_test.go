@@ -14,13 +14,13 @@ import (
 func seedIncidentContextGraph(t testing.TB, engine *BadgerEngine, count int) NodeID {
 	t.Helper()
 	const hub NodeID = "ctx:hub"
-	_, err := engine.CreateNode(&Node{ID: hub, Labels: []string{"Hub"}})
+	_, err := engine.CreateNode(context.Background(), &Node{ID: hub, Labels: []string{"Hub"}})
 	require.NoError(t, err)
 	for i := range count {
 		leaf := NodeID(fmt.Sprintf("ctx:leaf%d", i))
-		_, err = engine.CreateNode(&Node{ID: leaf, Labels: []string{"Leaf"}})
+		_, err = engine.CreateNode(context.Background(), &Node{ID: leaf, Labels: []string{"Leaf"}})
 		require.NoError(t, err)
-		require.NoError(t, engine.CreateEdge(&Edge{
+		require.NoError(t, engine.CreateEdge(context.Background(), &Edge{
 			ID:        EdgeID(fmt.Sprintf("ctx:e%d", i)),
 			StartNode: hub,
 			EndNode:   leaf,
@@ -36,12 +36,12 @@ func seedIncidentContextGraph(t testing.TB, engine *BadgerEngine, count int) Nod
 // write-behind retirement boundary (captureReadView).
 func bufferedIncidentScopeWrite(t testing.TB, engine *BadgerEngine) {
 	t.Helper()
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(context.Background())
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("ctx"))
-	_, err = tx.CreateNode(&Node{ID: "ctx:pending", Labels: []string{"Hub"}})
+	_, err = tx.CreateNode(context.Background(), &Node{ID: "ctx:pending", Labels: []string{"Hub"}})
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 }
@@ -58,7 +58,7 @@ func TestStoredAdjacencyReadObservesCancellationAtHeldReadAdmission(t *testing.T
 	hub := seedIncidentContextGraph(t, engine, 2)
 	bufferedIncidentScopeWrite(t, engine)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 

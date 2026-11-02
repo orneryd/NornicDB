@@ -413,8 +413,10 @@ func errBoundShortestRelationships(function string) error {
 
 // validateShortestCallBindings checks calls against the incoming semantic
 // scope. Subqueries are checked by their own scope walk, and selector calls
-// inserted by the rewrite have the selector's equality semantics instead.
-func validateShortestCallBindings(text string, scope matchSemanticScope) error {
+// inserted by the rewrite have the selector's equality semantics instead. ctx
+// is the caller's lifetime: a canceled pattern read returns its error rather
+// than reading as "not a pattern".
+func validateShortestCallBindings(ctx context.Context, text string, scope matchSemanticScope) error {
 	if indexASCIIFold(text, "shortestpath") < 0 {
 		return nil
 	}
@@ -438,7 +440,13 @@ func validateShortestCallBindings(text string, scope matchSemanticScope) error {
 		if equalFoldASCII(word, "shortestPath") || equalFoldASCII(word, "allShortestPaths") {
 			_, pattern, index, ok := extractShortestPathCall(text[at:])
 			if ok && index == 0 {
-				if items, ok := parsePathPatternItems(pattern, false); ok && len(items) == 3 && items[1].kind == pathPatternRelationship {
+				items, patternOK := parsePathPatternItemsContext(ctx, pattern, false)
+				if err := ctx.Err(); err != nil {
+					// A canceled read is not "not a pattern": the caller's
+					// own error ends the statement.
+					return err
+				}
+				if patternOK && len(items) == 3 && items[1].kind == pathPatternRelationship {
 					if items[0].variable != "" && items[0].variable == items[2].variable && items[1].min <= 1 {
 						return errShortestCommonEndpoints()
 					}

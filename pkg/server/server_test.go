@@ -93,11 +93,11 @@ func setupTestServerWithConfig(t testing.TB, configure func(*Config)) (*Server, 
 	}
 
 	// Create a test user
-	_, err = authenticator.CreateUser("admin", "password123", []auth.Role{auth.RoleAdmin})
+	_, err = authenticator.CreateUser(context.Background(), "admin", "password123", []auth.Role{auth.RoleAdmin})
 	if err != nil {
 		t.Fatalf("failed to create test user: %v", err)
 	}
-	_, err = authenticator.CreateUser("reader", "password123", []auth.Role{auth.RoleViewer})
+	_, err = authenticator.CreateUser(context.Background(), "reader", "password123", []auth.Role{auth.RoleViewer})
 	if err != nil {
 		t.Fatalf("failed to create reader user: %v", err)
 	}
@@ -127,7 +127,7 @@ func setupTestServerWithConfig(t testing.TB, configure func(*Config)) (*Server, 
 
 func getAuthToken(t testing.TB, authenticator *auth.Authenticator, username string) string {
 	t.Helper()
-	tokenResp, _, err := authenticator.Authenticate(username, "password123", "127.0.0.1", "TestAgent")
+	tokenResp, _, err := authenticator.Authenticate(context.Background(), username, "password123", "127.0.0.1", "TestAgent")
 	if err != nil {
 		t.Fatalf("failed to get auth token: %v", err)
 	}
@@ -935,7 +935,7 @@ func TestNornicDBHandlers_AdditionalCoverage(t *testing.T) {
 		// target node without embedding
 		st, err := server.dbManager.GetStorage(dbName)
 		require.NoError(t, err)
-		_, _ = st.CreateNode(&storage.Node{ID: "no-emb-node", Labels: []string{"Doc"}, Properties: map[string]interface{}{"name": "x"}})
+		_, _ = st.CreateNode(t.Context(), &storage.Node{ID: "no-emb-node", Labels: []string{"Doc"}, Properties: map[string]interface{}{"name": "x"}})
 		req = httptest.NewRequest(http.MethodPost, "/nornicdb/similar", strings.NewReader(`{"database":"`+dbName+`","node_id":"no-emb-node"}`)).WithContext(adminCtx)
 		rec = httptest.NewRecorder()
 		server.handleSimilar(rec, req)
@@ -946,8 +946,8 @@ func TestNornicDBHandlers_AdditionalCoverage(t *testing.T) {
 		embA[0] = 1
 		embB := make([]float32, 16)
 		embB[0] = 0.9
-		_, _ = st.CreateNode(&storage.Node{ID: "target-emb-node", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{embA}})
-		_, _ = st.CreateNode(&storage.Node{ID: "other-emb-node", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{embB}})
+		_, _ = st.CreateNode(t.Context(), &storage.Node{ID: "target-emb-node", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{embA}})
+		_, _ = st.CreateNode(t.Context(), &storage.Node{ID: "other-emb-node", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{embB}})
 		req = httptest.NewRequest(http.MethodPost, "/nornicdb/similar", strings.NewReader(`{"database":"`+dbName+`","node_id":"target-emb-node","limit":1}`)).WithContext(adminCtx)
 		rec = httptest.NewRecorder()
 		server.handleSimilar(rec, req)
@@ -971,8 +971,8 @@ func TestGPUHandlers_SuccessPathsWithManager(t *testing.T) {
 	vecA[0] = 1
 	vecB := make([]float32, 8)
 	vecB[0] = 0.95
-	_, _ = st.CreateNode(&storage.Node{ID: "gpu_target", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{vecA}})
-	_, _ = st.CreateNode(&storage.Node{ID: "gpu_other", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{vecB}})
+	_, _ = st.CreateNode(t.Context(), &storage.Node{ID: "gpu_target", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{vecA}})
+	_, _ = st.CreateNode(t.Context(), &storage.Node{ID: "gpu_other", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{vecB}})
 
 	// status happy path with manager set
 	req := httptest.NewRequest(http.MethodGet, "/admin/gpu/status", nil)

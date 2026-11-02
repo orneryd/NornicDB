@@ -32,7 +32,7 @@ func TestQuantifierRuntimePredicateEvaluatorParity(t *testing.T) {
 	for _, function := range []string{"all", "any", "none", "single"} {
 		expression := fmt.Sprintf("%s(x IN [1,2] WHERE x+n.id)", function)
 		t.Run(function+"/text", func(t *testing.T) {
-			_, _, err := exec.evaluateRowValueText(expression, values)
+			_, _, err := exec.evaluateRowValueText(t.Context(), expression, values)
 			requireQuantifierRuntimeTypeError(t, err)
 		})
 		t.Run(function+"/compiled", func(t *testing.T) {
@@ -41,7 +41,7 @@ func TestQuantifierRuntimePredicateEvaluatorParity(t *testing.T) {
 			// which tests ran before.
 			root, _ := (&rowValueCompiler{}).compile(expression)
 			require.Empty(t, firstRowTextNode(root), "the quantifier must not be read from the text")
-			_, _, err := root.eval(exec, values, nil)
+			_, _, err := root.eval(t.Context(), exec, values, nil)
 			requireQuantifierRuntimeTypeError(t, err)
 		})
 		t.Run(function+"/context", func(t *testing.T) {

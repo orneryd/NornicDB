@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"io"
 	"log/slog"
 	"net"
@@ -18,6 +17,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
 	cfgpkg "github.com/orneryd/nornicdb/pkg/config"
@@ -143,7 +144,7 @@ func stopR3Install(t *testing.T, s *Server, plugins ...*stopR3Plugin) {
 	heimdall.ResetSubsystemManagerForTests()
 	t.Cleanup(heimdall.ResetSubsystemManagerForTests)
 	m := heimdall.GetSubsystemManager()
-	s.loadHeimdallPlugins(heimdall.SubsystemContext{Context: s.shutdown.work.Context(), Config: heimdall.Config{APIURL: "https://user:password@example.invalid", APIKey: "r3-private-key"}, Heimdall: heimdall.NewLiveHeimdallInvoker(m, nil, nil, nil, nil)}, nil)
+	s.loadHeimdallPlugins(s.shutdown.work.Context(), heimdall.SubsystemHost{Config: heimdall.Config{APIURL: "https://user:password@example.invalid", APIKey: "r3-private-key"}, Heimdall: heimdall.NewLiveHeimdallInvoker(m, nil, nil, nil, nil)}, nil)
 	for _, p := range plugins {
 		require.NoError(t, m.RegisterPlugin(p, "", true))
 	}
@@ -347,14 +348,14 @@ func TestServerStopR3HookLineage(t *testing.T) {
 type stopR3BeginEngine struct {
 	storage.Engine
 	beginner interface {
-		BeginTransaction() (*storage.BadgerTransaction, error)
+		BeginTransaction(context.Context) (*storage.BadgerTransaction, error)
 	}
 	gate *stopR2Gate
 	tx   *storage.BadgerTransaction
 }
 
-func (e *stopR3BeginEngine) BeginTransaction() (*storage.BadgerTransaction, error) {
-	tx, err := e.beginner.BeginTransaction()
+func (e *stopR3BeginEngine) BeginTransaction(ctx context.Context) (*storage.BadgerTransaction, error) {
+	tx, err := e.beginner.BeginTransaction(ctx)
 	e.tx = tx
 	return tx, err
 }

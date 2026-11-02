@@ -56,7 +56,7 @@ func (f adjacencyFailingEngine) GetIncomingEdges(ctx context.Context, _ storage.
 	return nil, errAdjacencyRead
 }
 
-func (f adjacencyFailingEngine) DeleteGraphNode(storage.NodeID, storage.NodeDeletionMode) error {
+func (f adjacencyFailingEngine) DeleteGraphNode(ctx context.Context, _ storage.NodeID, _ storage.NodeDeletionMode) error {
 	return nil
 }
 

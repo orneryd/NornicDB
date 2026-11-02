@@ -47,7 +47,7 @@ type adminImportSchemaIdentities struct {
 
 func adminImportSeedNode(t *testing.T, engine storage.Engine) {
 	t.Helper()
-	_, err := engine.CreateNode(&storage.Node{
+	_, err := engine.CreateNode(t.Context(), &storage.Node{
 		ID:         "u1",
 		Labels:     []string{"Person"},
 		Properties: map[string]any{"name": "Alice"},
@@ -177,7 +177,7 @@ func TestNeo4jCSVSchemaDefinitionPreservesEscapedSchemaIdentities(t *testing.T) 
 	require.NotContains(t, string(raw), `\ufffd`, "escaped lone unit must not be normalized on export")
 
 	dest := adminImportImportSchema(t, outDir, schemaFile, "dest")
-	require.Equal(t, source.GetSchema().ExportDefinition(), dest.GetSchema().ExportDefinition())
+	require.Equal(t, schemaDefinitionForTest(t, source.GetSchema()), schemaDefinitionForTest(t, dest.GetSchema()))
 	adminImportRequireEscapedSchema(t, dest.GetSchema(), identities)
 }
 
@@ -221,7 +221,7 @@ func TestNeo4jCSVSchemaDefinitionKeepsOrdinaryBytesAndAcceptsLegacyDocument(t *t
 	require.True(t, json.Valid(raw))
 	require.True(t, utf8.Valid(raw))
 
-	def := schema.ExportDefinition()
+	def := schemaDefinitionForTest(t, schema)
 	want, err := json.MarshalIndent(def, "", "  ")
 	require.NoError(t, err)
 	want = append(want, '\n')
@@ -231,7 +231,7 @@ func TestNeo4jCSVSchemaDefinitionKeepsOrdinaryBytesAndAcceptsLegacyDocument(t *t
 	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 
 	dest := adminImportImportSchema(t, outDir, schemaFile, "dest")
-	require.Equal(t, def, dest.GetSchema().ExportDefinition())
+	require.Equal(t, def, schemaDefinitionForTest(t, dest.GetSchema()))
 
 	// A legacy document produced for identities an older exporter normalized
 	// keeps that stored replacement identity instead of failing the import.
@@ -289,6 +289,6 @@ func TestNeo4jCSVSchemaDefinitionPreservesEscapedIdentitiesAfterBadgerReopen(t *
 	require.NotContains(t, string(raw), "\ufffd", "escaped lone unit must not be normalized on export")
 
 	dest := adminImportImportSchema(t, outDir, schemaFile, "dest")
-	require.Equal(t, stored.ExportDefinition(), dest.GetSchema().ExportDefinition())
+	require.Equal(t, schemaDefinitionForTest(t, stored), schemaDefinitionForTest(t, dest.GetSchema()))
 	adminImportRequireEscapedSchema(t, dest.GetSchema(), identities)
 }

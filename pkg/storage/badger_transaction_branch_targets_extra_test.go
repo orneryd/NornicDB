@@ -14,7 +14,7 @@ func TestBadgerTransaction_SetNamespace_ClosedBranches(t *testing.T) {
 	engine := newTestEngine(t)
 
 	t.Run("returns closedErr when present", func(t *testing.T) {
-		tx, err := engine.BeginTransaction()
+		tx, err := engine.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		want := errors.New("synthetic-close")
 		tx.mu.Lock()
@@ -26,7 +26,7 @@ func TestBadgerTransaction_SetNamespace_ClosedBranches(t *testing.T) {
 	})
 
 	t.Run("returns ErrTransactionClosed when closedErr nil", func(t *testing.T) {
-		tx, err := engine.BeginTransaction()
+		tx, err := engine.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		tx.mu.Lock()
 		tx.Status = TxStatusRolledBack
@@ -40,11 +40,11 @@ func TestBadgerTransaction_SetNamespace_ClosedBranches(t *testing.T) {
 func TestBadgerTransaction_UpdateAndDelete_ReadCommittedDecodeErrors(t *testing.T) {
 	engine := newTestEngine(t)
 
-	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"Doc"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:n1", Labels: []string{"Doc"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:n2", Labels: []string{"Doc"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:n2", Labels: []string{"Doc"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:n1", EndNode: "test:n2", Type: "REL"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:n1", EndNode: "test:n2", Type: "REL"}))
 
 	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		if err := txn.Set(nodeKey("test:n1"), []byte("corrupt-node")); err != nil {
@@ -53,16 +53,16 @@ func TestBadgerTransaction_UpdateAndDelete_ReadCommittedDecodeErrors(t *testing.
 		return txn.Set(edgeKey("test:e1"), []byte("corrupt-edge"))
 	}))
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	defer tx.Rollback()
 
-	err = tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:n1", Labels: []string{"Doc"}}, Policy: ClientNodeEdits})
+	err = tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:n1", Labels: []string{"Doc"}}, Policy: ClientNodeEdits})
 	require.Error(t, err)
 	require.ErrorContains(t, err, "reading node")
 
-	err = tx.DeleteEdge("test:e1")
+	err = tx.DeleteEdge(t.Context(), "test:e1")
 	require.Error(t, err)
 	require.ErrorContains(t, err, "reading edge")
 }
@@ -80,7 +80,7 @@ func TestBadgerTransaction_ValidateNodeConstraints_DomainBranch(t *testing.T) {
 		AllowedValues: []interface{}{"active", "pending"},
 	}))
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	defer tx.Rollback()
@@ -95,7 +95,7 @@ func TestBadgerTransaction_ValidateNodeConstraints_DomainBranch(t *testing.T) {
 func TestBadgerTransaction_CheckEdgeTemporalConstraint_GetEdgesByTypeErrorIsPropagated(t *testing.T) {
 	engine := newTestEngine(t)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	defer tx.Rollback()
@@ -115,12 +115,12 @@ func TestBadgerTransaction_CheckEdgeTemporalConstraint_GetEdgesByTypeErrorIsProp
 func TestBadgerTransaction_ValidatePolicyOnNodeLabelChange_UsesPendingEdges(t *testing.T) {
 	engine := newTestEngine(t)
 
-	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"A"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:n1", Labels: []string{"A"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:n2", Labels: []string{"B"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:n2", Labels: []string{"B"}})
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	defer tx.Rollback()

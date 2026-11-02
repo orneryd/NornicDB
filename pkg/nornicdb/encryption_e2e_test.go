@@ -2,7 +2,6 @@ package nornicdb
 
 import (
 	"context"
-	"github.com/orneryd/nornicdb/pkg/replication"
 	"net"
 	"os"
 	"path/filepath"
@@ -10,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/replication"
 
 	"github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -449,7 +450,7 @@ func TestEncryptionDisabledDoesNotEncrypt(t *testing.T) {
 	require.NoError(t, err)
 
 	// Raw storage should have plaintext
-	rawNode, err := db.storage.GetNode(storageNodeID(node.ID))
+	rawNode, err := db.storage.GetNode(t.Context(), storageNodeID(node.ID))
 	require.NoError(t, err)
 
 	rawSSN, _ := rawNode.Properties["ssn"].(string)

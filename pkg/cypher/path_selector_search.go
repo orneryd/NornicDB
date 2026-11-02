@@ -89,13 +89,6 @@ type pathPatternItem struct {
 	group int
 }
 
-// parsePathPatternItems reads a selected pattern into its elements. ok is
-// false for text that isn't a path pattern: node patterns joined by
-// relationship patterns, quantified groups and juxtapositions.
-func parsePathPatternItems(pattern string, nested bool) ([]pathPatternItem, bool) {
-	return parsePathPatternItemsContext(context.Background(), pattern, nested)
-}
-
 func parsePathPatternItemsContext(ctx context.Context, pattern string, nested bool) ([]pathPatternItem, bool) {
 	var items []pathPatternItem
 	for at := skipASCIISpaces(pattern, 0, len(pattern)); at < len(pattern); at = skipASCIISpaces(pattern, at, len(pattern)) {

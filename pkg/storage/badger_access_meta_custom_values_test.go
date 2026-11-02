@@ -44,7 +44,7 @@ func TestAccessMetaCustomValuesRoundTripThroughFlush(t *testing.T) {
 			for _, value := range values {
 				id := fmt.Sprintf("test:custom-%d", value)
 				// A flush writes metadata only for an existing graph entity.
-				_, err := engine.CreateNode(&Node{ID: NodeID(id)})
+				_, err := engine.CreateNode(t.Context(), &Node{ID: NodeID(id)})
 				require.NoError(t, err)
 
 				acc.IncrementCustom(id, "views", value)

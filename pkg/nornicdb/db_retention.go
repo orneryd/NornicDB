@@ -31,7 +31,7 @@ func (db *DB) startRetentionSweep(ctx context.Context) {
 		}
 	}
 
-	started := db.startBackgroundTask(func() {
+	started := db.RunBackgroundTask(func(backgroundCtx context.Context) {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 

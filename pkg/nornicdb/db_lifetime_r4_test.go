@@ -3,13 +3,14 @@ package nornicdb
 import (
 	"context"
 	"errors"
-	"github.com/orneryd/nornicdb/pkg/inference"
-	"github.com/orneryd/nornicdb/pkg/storage"
-	"github.com/stretchr/testify/require"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/inference"
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
 )
 
 type r4InferenceWriter struct {
@@ -20,7 +21,7 @@ type r4InferenceWriter struct {
 	first, second error
 }
 
-func (w *r4InferenceWriter) CreateEdge(e *storage.Edge) error {
+func (w *r4InferenceWriter) CreateEdge(ctx context.Context, e *storage.Edge) error {
 	w.once.Do(func() { close(w.entered) })
 	<-w.gate
 	if w.calls.Add(1)%2 == 0 {

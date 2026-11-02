@@ -192,12 +192,12 @@ func TestWalReadUnpacksActualCompressedBufferedCommit(t *testing.T) {
 	t.Cleanup(func() { _ = wal.Close() })
 	t.Cleanup(func() { _ = engine.Close() })
 	engine.SetBufferedCommitWAL(wal)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	require.NoError(t, tx.SetImplicit(true))
 	for i := 0; i < 40; i++ {
-		_, err = tx.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("test:n%d", i)), Properties: map[string]any{"name": "Ada"}})
+		_, err = tx.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("test:n%d", i)), Properties: map[string]any{"name": "Ada"}})
 		require.NoError(t, err)
 	}
 	require.NoError(t, tx.Commit())

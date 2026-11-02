@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -1217,12 +1218,12 @@ func TestCSVSourceReader_ReadHeaderTwiceReturnsEOF(t *testing.T) {
 func TestEnsureEmpty_RejectsNonEmptyEngine(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	ns := storage.NewNamespacedEngine(base, "occupied")
-	_, err := ns.CreateNode(&storage.Node{ID: "n1", Labels: []string{"X"}})
+	_, err := ns.CreateNode(t.Context(), &storage.Node{ID: "n1", Labels: []string{"X"}})
 	require.NoError(t, err)
-	require.Error(t, ensureEmpty(ns))
+	require.Error(t, ensureEmpty(t.Context(), ns))
 
 	empty := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "empty")
-	require.NoError(t, ensureEmpty(empty))
+	require.NoError(t, ensureEmpty(t.Context(), empty))
 }
 
 // ============================================================================
@@ -1235,12 +1236,12 @@ func TestReplaceDefinitionDurable_IndexesExistingNodes(t *testing.T) {
 	ns := storage.NewNamespacedEngine(base, "rebuild-db")
 
 	// Seed two Person nodes BEFORE the schema knows about indexes.
-	_, err := ns.CreateNode(&storage.Node{
+	_, err := ns.CreateNode(t.Context(), &storage.Node{
 		ID: "u1", Labels: []string{"Person"},
 		Properties: map[string]any{"email": "alice@example.com", "country": "US", "city": "NYC"},
 	})
 	require.NoError(t, err)
-	_, err = ns.CreateNode(&storage.Node{
+	_, err = ns.CreateNode(t.Context(), &storage.Node{
 		ID: "u2", Labels: []string{"Person"},
 		Properties: map[string]any{"email": "bob@example.com", "country": "US", "city": "LA"},
 	})
@@ -1716,7 +1717,7 @@ func TestImportFull_ValidatesInputsBeforeAnyWrite(t *testing.T) {
 		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		// Pre-seed a node under the target namespace.
 		ns := storage.NewNamespacedEngine(base, "occupied")
-		_, err := ns.CreateNode(&storage.Node{ID: "n1", Labels: []string{"X"}})
+		_, err := ns.CreateNode(t.Context(), &storage.Node{ID: "n1", Labels: []string{"X"}})
 		require.NoError(t, err)
 
 		report, err := ImportFull(ctx, base, Options{

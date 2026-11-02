@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/config"
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
 	"github.com/orneryd/nornicdb/pkg/lifecycle"
 )
 
@@ -74,9 +75,12 @@ func (w *WALEngine) ListNamespaces() []string {
 }
 
 // IsCurrentTemporalNode delegates current-version checks to the wrapped engine when supported.
-func (w *WALEngine) IsCurrentTemporalNode(node *Node, asOf time.Time) (bool, error) {
+func (w *WALEngine) IsCurrentTemporalNode(ctx context.Context, node *Node, asOf time.Time) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	if provider, ok := w.engine.(TemporalCurrentNodeEngine); ok {
-		return provider.IsCurrentTemporalNode(node, asOf)
+		return provider.IsCurrentTemporalNode(ctx, node, asOf)
 	}
 	return true, nil
 }
@@ -129,50 +133,53 @@ func (w *WALEngine) PruneMVCCVersions(ctx context.Context, opts MVCCPruneOptions
 	return 0, ErrNotImplemented
 }
 
-// GetNodeLatestEffective delegates MVCC latest-effective reads to the wrapped engine when supported.
-func (w *WALEngine) GetNodeLatestEffective(id NodeID) (*Node, error) {
+// GetNodeLatestEffective delegates MVCC latest-effective reads to the wrapped
+// engine when supported. Both the capability read and the plain fallback run on
+// the caller's context.
+func (w *WALEngine) GetNodeLatestEffective(ctx context.Context, id NodeID) (*Node, error) {
 	if provider, ok := w.engine.(MVCCLatestEffectiveEngine); ok {
-		return provider.GetNodeLatestEffective(id)
+		return provider.GetNodeLatestEffective(ctx, id)
 	}
-	return w.engine.GetNode(id)
+	return w.engine.GetNode(ctx, id)
 }
 
-// GetEdgeLatestEffective delegates MVCC latest-effective edge reads to the wrapped engine when supported.
-func (w *WALEngine) GetEdgeLatestEffective(id EdgeID) (*Edge, error) {
+// GetEdgeLatestEffective delegates MVCC latest-effective edge reads to the
+// wrapped engine when supported, on the caller's context.
+func (w *WALEngine) GetEdgeLatestEffective(ctx context.Context, id EdgeID) (*Edge, error) {
 	if provider, ok := w.engine.(MVCCLatestEffectiveEngine); ok {
-		return provider.GetEdgeLatestEffective(id)
+		return provider.GetEdgeLatestEffective(ctx, id)
 	}
-	return w.engine.GetEdge(id)
+	return w.engine.GetEdge(ctx, id)
 }
 
 // GetNodeLatestVisible delegates latest-visible node reads when supported.
-func (w *WALEngine) GetNodeLatestVisible(id NodeID) (*Node, error) {
+func (w *WALEngine) GetNodeLatestVisible(ctx context.Context, id NodeID) (*Node, error) {
 	if provider, ok := w.engine.(MVCCVisibilityEngine); ok {
-		return provider.GetNodeLatestVisible(id)
+		return provider.GetNodeLatestVisible(ctx, id)
 	}
-	return w.GetNodeLatestEffective(id)
+	return w.GetNodeLatestEffective(ctx, id)
 }
 
 // GetEdgeLatestVisible delegates latest-visible edge reads when supported.
-func (w *WALEngine) GetEdgeLatestVisible(id EdgeID) (*Edge, error) {
+func (w *WALEngine) GetEdgeLatestVisible(ctx context.Context, id EdgeID) (*Edge, error) {
 	if provider, ok := w.engine.(MVCCVisibilityEngine); ok {
-		return provider.GetEdgeLatestVisible(id)
+		return provider.GetEdgeLatestVisible(ctx, id)
 	}
-	return w.GetEdgeLatestEffective(id)
+	return w.GetEdgeLatestEffective(ctx, id)
 }
 
 // GetNodeVisibleAt delegates snapshot-visible node reads when supported.
-func (w *WALEngine) GetNodeVisibleAt(id NodeID, version MVCCVersion) (*Node, error) {
+func (w *WALEngine) GetNodeVisibleAt(ctx context.Context, id NodeID, version MVCCVersion) (*Node, error) {
 	if provider, ok := w.engine.(MVCCVisibilityEngine); ok {
-		return provider.GetNodeVisibleAt(id, version)
+		return provider.GetNodeVisibleAt(ctx, id, version)
 	}
 	return nil, ErrNotImplemented
 }
 
 // GetEdgeVisibleAt delegates snapshot-visible edge reads when supported.
-func (w *WALEngine) GetEdgeVisibleAt(id EdgeID, version MVCCVersion) (*Edge, error) {
+func (w *WALEngine) GetEdgeVisibleAt(ctx context.Context, id EdgeID, version MVCCVersion) (*Edge, error) {
 	if provider, ok := w.engine.(MVCCVisibilityEngine); ok {
-		return provider.GetEdgeVisibleAt(id, version)
+		return provider.GetEdgeVisibleAt(ctx, id, version)
 	}
 	return nil, ErrNotImplemented
 }
@@ -271,18 +278,20 @@ func (w *WALEngine) TopLifecycleDebtKeys(limit int) []MVCCLifecycleDebtKey {
 	return nil
 }
 
-// GetNodeCurrentHead delegates node head lookup when supported.
-func (w *WALEngine) GetNodeCurrentHead(id NodeID) (MVCCHead, error) {
+// GetNodeCurrentHead delegates node head lookup when supported, on the caller's
+// context.
+func (w *WALEngine) GetNodeCurrentHead(ctx context.Context, id NodeID) (MVCCHead, error) {
 	if provider, ok := w.engine.(MVCCHeadEngine); ok {
-		return provider.GetNodeCurrentHead(id)
+		return provider.GetNodeCurrentHead(ctx, id)
 	}
 	return MVCCHead{}, ErrNotImplemented
 }
 
-// GetEdgeCurrentHead delegates edge head lookup when supported.
-func (w *WALEngine) GetEdgeCurrentHead(id EdgeID) (MVCCHead, error) {
+// GetEdgeCurrentHead delegates edge head lookup when supported, on the caller's
+// context.
+func (w *WALEngine) GetEdgeCurrentHead(ctx context.Context, id EdgeID) (MVCCHead, error) {
 	if provider, ok := w.engine.(MVCCHeadEngine); ok {
-		return provider.GetEdgeCurrentHead(id)
+		return provider.GetEdgeCurrentHead(ctx, id)
 	}
 	return MVCCHead{}, ErrNotImplemented
 }
@@ -427,6 +436,9 @@ func (w *WALEngine) createSnapshotAndCompact(ctx context.Context) error {
 	if w.wal.work.Closing() {
 		return ErrWALClosed
 	}
+	if err := checkNativeSnapshotPublication(w.engine); err != nil {
+		return err
+	}
 	if err := removeInterruptedSnapshotFiles(w.snapshotDir); err != nil {
 		return err
 	}
@@ -566,78 +578,39 @@ func cloneNodeForWAL(dbName string, node *Node) *Node {
 	return &c
 }
 
-func cloneEdgeForWAL(dbName string, edge *Edge) *Edge {
-	if edge == nil {
-		return nil
-	}
-	c := *edge
-	c.ID = EdgeID(StripDatabasePrefix(dbName, string(edge.ID)))
-	c.StartNode = NodeID(StripDatabasePrefix(dbName, string(edge.StartNode)))
-	c.EndNode = NodeID(StripDatabasePrefix(dbName, string(edge.EndNode)))
-	return &c
-}
-
-// CreateNode logs then executes node creation.
-func (w *WALEngine) CreateNode(node *Node) (NodeID, error) {
-	w.mutationMu.RLock()
-	defer w.mutationMu.RUnlock()
-
-	if node != nil {
-		initializeCreationTimes(&node.CreatedAt, &node.UpdatedAt)
-	}
-
-	if config.IsWALEnabled() {
-		dbName := w.databaseFromNode(node)
-		if err := w.wal.AppendWithDatabase(OpCreateNode, WALNodeData{Node: cloneNodeForWAL(dbName, node)}, dbName); err != nil {
-			return "", fmt.Errorf("wal: failed to log create_node: %w", err)
-		}
-	}
-	return w.engine.CreateNode(node)
-}
-
-// UpdateNode logs then executes node update.
-func (w *WALEngine) UpdateNode(updateRequest NodeUpdateRequest) error {
-	node := updateRequest.After
-	if config.IsWALEnabled() && (updateRequest.Before != nil || updateRequest.Policy != ClientNodeEdits) {
-		return w.commitObservedEntityChange(w.databaseFromNode(updateRequest.After), updateRequest.Operation())
-	}
-	// Observed/authoritative requests normalize at native staging before
-	// encoding. Blind direct images retain their existing audit-log timestamp.
-	if node != nil && updateRequest.Before == nil && updateRequest.Policy == ClientNodeEdits && node.UpdatedAt.IsZero() {
-		node.UpdatedAt = time.Now()
-	}
-	w.mutationMu.RLock()
-	defer w.mutationMu.RUnlock()
-
-	if config.IsWALEnabled() {
-		dbName := w.databaseFromNode(node)
-		if err := w.wal.AppendWithDatabase(OpUpdateNode, WALNodeData{Node: cloneNodeForWAL(dbName, node)}, dbName); err != nil {
-			return fmt.Errorf("wal: failed to log update_node: %w", err)
-		}
-	}
-	return w.engine.UpdateNode(updateRequest)
-}
-
 // UpdateNodeEmbeddingSidecar logs the OpUpdateEmbedding audit record and
 // executes the sidecar embedding-only write (embedding key space, never the
 // node record) on the wrapped engine. Every production inner engine implements
 // EmbeddingSidecarUpdater (compile-time asserted); anything else is an
 // invariant violation, reported as an error rather than silently degraded.
-func (w *WALEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
-	w.mutationMu.RLock()
-	defer w.mutationMu.RUnlock()
-
-	if config.IsWALEnabled() {
-		dbName := w.databaseFromNode(node)
-		if err := w.wal.AppendWithDatabase(OpUpdateEmbedding, WALNodeData{Node: cloneNodeForWAL(dbName, node)}, dbName); err != nil {
-			return fmt.Errorf("wal: failed to log update_embedding: %w", err)
-		}
+func (w *WALEngine) UpdateNodeEmbeddingSidecar(ctx context.Context, node *Node) error {
+	if err := w.mutationMu.RLockContext(ctx); err != nil {
+		return err
 	}
+	defer w.mutationMu.RUnlock()
 	sidecar, ok := w.engine.(EmbeddingSidecarUpdater)
 	if !ok {
 		return fmt.Errorf("storage engine %T does not support embedding sidecar writes", w.engine)
 	}
-	return sidecar.UpdateNodeEmbeddingSidecar(node)
+	if !config.IsWALEnabled() {
+		return sidecar.UpdateNodeEmbeddingSidecar(ctx, node)
+	}
+	publication := WithPublicationDecision(ctx, func(_ context.Context, _ PublicationIdentity, action func() error) error {
+		// Compose the original semantic decision once. Native preparation and
+		// source validation precede this action; cancellation cannot reject the
+		// physical action after its journal record was accepted.
+		return DecidePublication(ctx, func() error {
+			dbName := w.databaseFromNode(node)
+			if err := w.wal.AppendWithDatabase(OpUpdateEmbedding, WALNodeData{Node: cloneNodeForWAL(dbName, node)}, dbName); err != nil {
+				return fmt.Errorf("wal: failed to log update_embedding: %w", err)
+			}
+			return action()
+		})
+	})
+	// OpUpdateEmbedding remains an audit-only record ignored by ReplayWALEntry.
+	// The native owner supplies the actual outcome; no semantic receipt or
+	// recovery-pending promise is synthesized for an embedding attempt.
+	return sidecar.UpdateNodeEmbeddingSidecar(publication, node)
 }
 
 // StreamParkedEmbeddingFailures forwards the sidecar failure scan to the
@@ -649,238 +622,30 @@ func (w *WALEngine) StreamParkedEmbeddingFailures(ctx context.Context, visit fun
 	return 0, nil
 }
 
-// DeleteNode logs then executes node deletion.
-func (w *WALEngine) DeleteNode(id NodeID) error {
-	w.mutationMu.RLock()
-	defer w.mutationMu.RUnlock()
-
-	if config.IsWALEnabled() {
-		dbName, unprefixedID := w.getDatabaseName(), string(id)
-		if parsedDB, parsedID, ok := ParseDatabasePrefix(string(id)); ok {
-			dbName, unprefixedID = parsedDB, parsedID
-		}
-		if err := w.wal.AppendWithDatabase(OpDeleteNode, WALDeleteData{ID: unprefixedID}, dbName); err != nil {
-			return fmt.Errorf("wal: failed to log delete_node: %w", err)
-		}
-	}
-	return w.engine.DeleteNode(id)
-}
-
-// CreateEdge logs then executes edge creation.
-func (w *WALEngine) CreateEdge(edge *Edge) error {
-	w.mutationMu.RLock()
-	defer w.mutationMu.RUnlock()
-
-	if edge != nil {
-		initializeCreationTimes(&edge.CreatedAt, &edge.UpdatedAt)
-	}
-
-	if config.IsWALEnabled() {
-		dbName, err := w.databaseFromEdge(edge)
-		if err != nil {
-			return err
-		}
-		if err := w.wal.AppendWithDatabase(OpCreateEdge, WALEdgeData{Edge: cloneEdgeForWAL(dbName, edge)}, dbName); err != nil {
-			return fmt.Errorf("wal: failed to log create_edge: %w", err)
-		}
-	}
-	return w.engine.CreateEdge(edge)
-}
-
-// UpdateEdge logs then executes edge update.
-func (w *WALEngine) UpdateEdge(updateRequest EdgeUpdateRequest) error {
-	if config.IsWALEnabled() && updateRequest.Before != nil {
-		namespace, err := w.databaseFromEdge(updateRequest.After)
-		if err != nil {
-			return err
-		}
-		return w.commitObservedEntityChange(namespace, updateRequest.Operation())
-	}
-	edge := updateRequest.After
-	w.mutationMu.RLock()
-	defer w.mutationMu.RUnlock()
-
-	if config.IsWALEnabled() {
-		dbName, err := w.databaseFromEdge(edge)
-		if err != nil {
-			return err
-		}
-		if err := w.wal.AppendWithDatabase(OpUpdateEdge, WALEdgeData{Edge: cloneEdgeForWAL(dbName, edge)}, dbName); err != nil {
-			return fmt.Errorf("wal: failed to log update_edge: %w", err)
-		}
-	}
-	return w.engine.UpdateEdge(updateRequest)
-}
-
-// DeleteEdge logs then executes edge deletion.
-func (w *WALEngine) DeleteEdge(id EdgeID) error {
-	w.mutationMu.RLock()
-	defer w.mutationMu.RUnlock()
-
-	if config.IsWALEnabled() {
-		dbName, unprefixedID := w.getDatabaseName(), string(id)
-		if parsedDB, parsedID, ok := ParseDatabasePrefix(string(id)); ok {
-			dbName, unprefixedID = parsedDB, parsedID
-		}
-		if err := w.wal.AppendWithDatabase(OpDeleteEdge, WALDeleteData{ID: unprefixedID}, dbName); err != nil {
-			return fmt.Errorf("wal: failed to log delete_edge: %w", err)
-		}
-	}
-	return w.engine.DeleteEdge(id)
-}
-
-// BulkCreateNodes logs then executes bulk node creation.
-func (w *WALEngine) BulkCreateNodes(nodes []*Node) error {
-	w.mutationMu.RLock()
-	defer w.mutationMu.RUnlock()
-
-	for _, entity := range nodes {
-		if entity != nil {
-			initializeCreationTimes(&entity.CreatedAt, &entity.UpdatedAt)
-		}
-	}
-
-	if config.IsWALEnabled() {
-		dbName := w.getDatabaseName()
-		cloned := make([]*Node, 0, len(nodes))
-		for _, node := range nodes {
-			if node == nil {
-				cloned = append(cloned, nil)
-				continue
-			}
-			if db, _, ok := ParseDatabasePrefix(string(node.ID)); ok {
-				if dbName == "" || dbName == "nornic" {
-					dbName = db
-				} else if db != dbName {
-					return fmt.Errorf("wal: bulk nodes contain multiple databases: %q vs %q", dbName, db)
-				}
-			}
-			cloned = append(cloned, cloneNodeForWAL(dbName, node))
-		}
-		if err := w.wal.AppendWithDatabase(OpBulkNodes, WALBulkNodesData{Nodes: cloned}, dbName); err != nil {
-			return fmt.Errorf("wal: failed to log bulk_create_nodes: %w", err)
-		}
-	}
-	return w.engine.BulkCreateNodes(nodes)
-}
-
-// BulkCreateEdges logs then executes bulk edge creation.
-func (w *WALEngine) BulkCreateEdges(edges []*Edge) error {
-	w.mutationMu.RLock()
-	defer w.mutationMu.RUnlock()
-
-	for _, entity := range edges {
-		if entity != nil {
-			initializeCreationTimes(&entity.CreatedAt, &entity.UpdatedAt)
-		}
-	}
-
-	if config.IsWALEnabled() {
-		dbName := w.getDatabaseName()
-		cloned := make([]*Edge, 0, len(edges))
-		for _, edge := range edges {
-			if edge == nil {
-				cloned = append(cloned, nil)
-				continue
-			}
-			db, err := w.databaseFromEdge(edge)
-			if err != nil {
-				return err
-			}
-			if dbName == "" || dbName == "nornic" {
-				dbName = db
-			} else if db != dbName {
-				return fmt.Errorf("wal: bulk edges contain multiple databases: %q vs %q", dbName, db)
-			}
-			cloned = append(cloned, cloneEdgeForWAL(dbName, edge))
-		}
-		if err := w.wal.AppendWithDatabase(OpBulkEdges, WALBulkEdgesData{Edges: cloned}, dbName); err != nil {
-			return fmt.Errorf("wal: failed to log bulk_create_edges: %w", err)
-		}
-	}
-	return w.engine.BulkCreateEdges(edges)
-}
-
-// BulkDeleteNodes logs then executes bulk node deletion.
-func (w *WALEngine) BulkDeleteNodes(ids []NodeID) error {
-	w.mutationMu.RLock()
-	defer w.mutationMu.RUnlock()
-
-	if config.IsWALEnabled() {
-		// Convert to strings for serialization
-		strIDs := make([]string, len(ids))
-		dbName := w.getDatabaseName()
-		for i, id := range ids {
-			str := string(id)
-			if db, unprefixed, ok := ParseDatabasePrefix(str); ok {
-				if dbName == "" || dbName == "nornic" {
-					dbName = db
-				} else if db != dbName {
-					return fmt.Errorf("wal: bulk delete nodes contains multiple databases: %q vs %q", dbName, db)
-				}
-				str = unprefixed
-			}
-			strIDs[i] = str
-		}
-		if err := w.wal.AppendWithDatabase(OpBulkDeleteNodes, WALBulkDeleteNodesData{IDs: strIDs}, dbName); err != nil {
-			return fmt.Errorf("wal: failed to log bulk_delete_nodes: %w", err)
-		}
-	}
-	return w.engine.BulkDeleteNodes(ids)
-}
-
-// BulkDeleteEdges logs then executes bulk edge deletion.
-func (w *WALEngine) BulkDeleteEdges(ids []EdgeID) error {
-	w.mutationMu.RLock()
-	defer w.mutationMu.RUnlock()
-
-	if config.IsWALEnabled() {
-		// Convert to strings for serialization
-		strIDs := make([]string, len(ids))
-		dbName := w.getDatabaseName()
-		for i, id := range ids {
-			str := string(id)
-			if db, unprefixed, ok := ParseDatabasePrefix(str); ok {
-				if dbName == "" || dbName == "nornic" {
-					dbName = db
-				} else if db != dbName {
-					return fmt.Errorf("wal: bulk delete edges contains multiple databases: %q vs %q", dbName, db)
-				}
-				str = unprefixed
-			}
-			strIDs[i] = str
-		}
-		if err := w.wal.AppendWithDatabase(OpBulkDeleteEdges, WALBulkDeleteEdgesData{IDs: strIDs}, dbName); err != nil {
-			return fmt.Errorf("wal: failed to log bulk_delete_edges: %w", err)
-		}
-	}
-	return w.engine.BulkDeleteEdges(ids)
-}
-
 // Delegate read operations directly to underlying engine
 
 // GetNode delegates to underlying engine.
-func (w *WALEngine) GetNode(id NodeID) (*Node, error) {
-	return w.engine.GetNode(id)
+func (w *WALEngine) GetNode(ctx context.Context, id NodeID) (*Node, error) {
+	return w.engine.GetNode(ctx, id)
 }
 
 // GetQueryNode delegates the query-row node read (QueryNodeReader) when the
 // wrapped engine supports it, else reads the full node.
-func (w *WALEngine) GetQueryNode(id NodeID) (*Node, error) {
+func (w *WALEngine) GetQueryNode(ctx context.Context, id NodeID) (*Node, error) {
 	if reader, ok := w.engine.(QueryNodeReader); ok {
-		return reader.GetQueryNode(id)
+		return reader.GetQueryNode(ctx, id)
 	}
-	return w.engine.GetNode(id)
+	return w.engine.GetNode(ctx, id)
 }
 
 // GetNodeWithoutEmbeddings delegates an embedding-free node read when the
 // wrapped engine supports it. The full read fallback preserves compatibility
 // for engines that do not expose the optional projection contract.
-func (w *WALEngine) GetNodeWithoutEmbeddings(id NodeID) (*Node, error) {
+func (w *WALEngine) GetNodeWithoutEmbeddings(ctx context.Context, id NodeID) (*Node, error) {
 	if reader, ok := w.engine.(NodeWithoutEmbeddingsReader); ok {
-		return reader.GetNodeWithoutEmbeddings(id)
+		return reader.GetNodeWithoutEmbeddings(ctx, id)
 	}
-	node, err := w.engine.GetNode(id)
+	node, err := w.engine.GetNode(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -888,8 +653,8 @@ func (w *WALEngine) GetNodeWithoutEmbeddings(id NodeID) (*Node, error) {
 }
 
 // GetEdge delegates to underlying engine.
-func (w *WALEngine) GetEdge(id EdgeID) (*Edge, error) {
-	return w.engine.GetEdge(id)
+func (w *WALEngine) GetEdge(ctx context.Context, id EdgeID) (*Edge, error) {
+	return w.engine.GetEdge(ctx, id)
 }
 
 // GetNodesByLabel delegates to underlying engine.
@@ -925,8 +690,8 @@ func (w *WALEngine) ForEachNodeIDByLabel(ctx context.Context, label string, visi
 }
 
 // GetFirstNodeByLabel delegates to underlying engine.
-func (w *WALEngine) GetFirstNodeByLabel(label string) (*Node, error) {
-	return w.engine.GetFirstNodeByLabel(label)
+func (w *WALEngine) GetFirstNodeByLabel(ctx context.Context, label string) (*Node, error) {
+	return w.engine.GetFirstNodeByLabel(ctx, label)
 }
 
 // GetNodesByLabelInScope delegates a scoped label read (ScopedLabelNodeReader).
@@ -935,8 +700,8 @@ func (w *WALEngine) GetNodesByLabelInScope(ctx context.Context, scope, label str
 }
 
 // GetFirstNodeByLabelInScope delegates a scoped first-node read (ScopedLabelNodeReader).
-func (w *WALEngine) GetFirstNodeByLabelInScope(scope, label string) (*Node, error) {
-	return getFirstNodeByLabelInScope(w.engine, scope, label)
+func (w *WALEngine) GetFirstNodeByLabelInScope(ctx context.Context, scope, label string) (*Node, error) {
+	return getFirstNodeByLabelInScope(ctx, w.engine, scope, label)
 }
 
 // StreamNodesByLabelProjectedInScope delegates a scoped projected label scan (ScopedLabelNodeReader).
@@ -1005,8 +770,8 @@ func (w *WALEngine) GetEdgesBetween(ctx context.Context, startID, endID NodeID) 
 }
 
 // GetEdgeBetween delegates to underlying engine.
-func (w *WALEngine) GetEdgeBetween(startID, endID NodeID, edgeType string) *Edge {
-	return w.engine.GetEdgeBetween(startID, endID, edgeType)
+func (w *WALEngine) GetEdgeBetween(ctx context.Context, startID, endID NodeID, edgeType string) (*Edge, error) {
+	return w.engine.GetEdgeBetween(ctx, startID, endID, edgeType)
 }
 
 // AllNodes delegates to underlying engine.
@@ -1025,13 +790,13 @@ func (w *WALEngine) GetEdgesByType(ctx context.Context, edgeType string) ([]*Edg
 }
 
 // GetInDegree delegates to underlying engine.
-func (w *WALEngine) GetInDegree(nodeID NodeID) int {
-	return w.engine.GetInDegree(nodeID)
+func (w *WALEngine) GetInDegree(ctx context.Context, nodeID NodeID) (int, error) {
+	return w.engine.GetInDegree(ctx, nodeID)
 }
 
 // GetOutDegree delegates to underlying engine.
-func (w *WALEngine) GetOutDegree(nodeID NodeID) int {
-	return w.engine.GetOutDegree(nodeID)
+func (w *WALEngine) GetOutDegree(ctx context.Context, nodeID NodeID) (int, error) {
+	return w.engine.GetOutDegree(ctx, nodeID)
 }
 
 // GetSchema delegates to underlying engine.
@@ -1048,22 +813,23 @@ func (w *WALEngine) GetSchemaForNamespace(namespace string) *SchemaManager {
 }
 
 // NodeCount delegates to underlying engine.
-func (w *WALEngine) NodeCount() (int64, error) {
-	return w.engine.NodeCount()
+func (w *WALEngine) NodeCount(ctx context.Context) (int64, error) {
+	return w.engine.NodeCount(ctx)
 }
 
 // NodeCountByPrefix counts the nodes whose ID begins with prefix: the prefix
 // counter, the streaming enumeration and the whole-collection read are the same
 // three sources for nodes and edges, and countByPrefix chooses among them once.
-func (w *WALEngine) NodeCountByPrefix(prefix string) (int64, error) {
-	return w.countByPrefix(prefix, countPrefixNodes)
+func (w *WALEngine) NodeCountByPrefix(ctx context.Context, prefix string) (int64, error) {
+	return w.countByPrefix(ctx, prefix, countPrefixNodes)
 }
 
-func (w *WALEngine) NodeCountByLabel(label string) (int64, error) {
+// NodeCountByLabel preserves the caller context through counter or scan dispatch.
+func (w *WALEngine) NodeCountByLabel(ctx context.Context, label string) (int64, error) {
 	if stats, ok := w.engine.(LabelStatsEngine); ok {
-		return stats.NodeCountByLabel(label)
+		return stats.NodeCountByLabel(ctx, label)
 	}
-	nodes, err := w.engine.GetNodesByLabel(context.Background(), label)
+	nodes, err := w.engine.GetNodesByLabel(ctx, label)
 	if err != nil {
 		return 0, err
 	}
@@ -1072,16 +838,16 @@ func (w *WALEngine) NodeCountByLabel(label string) (int64, error) {
 
 // EdgeCountByType delegates to the inner engine's per-type counter
 // (issue #638). No edge materialization on this path.
-func (w *WALEngine) EdgeCountByType(edgeType string) (int64, error) {
-	return w.engine.EdgeCountByType(edgeType)
+func (w *WALEngine) EdgeCountByType(ctx context.Context, edgeType string) (int64, error) {
+	return w.engine.EdgeCountByType(ctx, edgeType)
 }
 
-func (w *WALEngine) EdgeCountByStartLabel(label, edgeType string) (int64, error) {
-	return w.engine.EdgeCountByStartLabel(label, edgeType)
+func (w *WALEngine) EdgeCountByStartLabel(ctx context.Context, label, edgeType string) (int64, error) {
+	return w.engine.EdgeCountByStartLabel(ctx, label, edgeType)
 }
 
-func (w *WALEngine) EdgeCountByEndLabel(label, edgeType string) (int64, error) {
-	return w.engine.EdgeCountByEndLabel(label, edgeType)
+func (w *WALEngine) EdgeCountByEndLabel(ctx context.Context, label, edgeType string) (int64, error) {
+	return w.engine.EdgeCountByEndLabel(ctx, label, edgeType)
 }
 
 // NotePropertyKeysInNamespace forwards to the wrapped engine
@@ -1098,18 +864,18 @@ func (w *WALEngine) PropertyKeyKnownInNamespace(namespace, name string) bool {
 	return w.keyRegistry != nil && w.keyRegistry.PropertyKeyKnownInNamespace(namespace, name)
 }
 
-func (w *WALEngine) NodeCountByLabelInNamespace(namespace, label string) (int64, error) {
-	return namespaceLabelCount(w.engine, namespace, label)
+func (w *WALEngine) NodeCountByLabelInNamespace(ctx context.Context, namespace, label string) (int64, error) {
+	return namespaceLabelCount(ctx, w.engine, namespace, label)
 }
 
 // EdgeCount delegates to underlying engine.
-func (w *WALEngine) EdgeCount() (int64, error) {
-	return w.engine.EdgeCount()
+func (w *WALEngine) EdgeCount(ctx context.Context) (int64, error) {
+	return w.engine.EdgeCount(ctx)
 }
 
 // EdgeCountByPrefix is NodeCountByPrefix for relationships.
-func (w *WALEngine) EdgeCountByPrefix(prefix string) (int64, error) {
-	return w.countByPrefix(prefix, countPrefixEdges)
+func (w *WALEngine) EdgeCountByPrefix(ctx context.Context, prefix string) (int64, error) {
+	return w.countByPrefix(ctx, prefix, countPrefixEdges)
 }
 
 // prefixCountKind selects the collection a prefix count covers.
@@ -1122,17 +888,20 @@ const (
 
 // countByPrefix counts the records whose ID begins with prefix through the
 // cheapest capability the wrapped engine offers: its prefix counter, else its
-// streaming enumeration, else a whole-collection read. Each read runs on
-// context.Background, the true lifetime at this context-free count boundary (see
-// bulkReadCancellation): a count has no caller to cancel it. A streaming read
-// that fails returns the count it reached together with its own error; a
-// whole-collection read that fails returns no count.
-func (w *WALEngine) countByPrefix(prefix string, kind prefixCountKind) (int64, error) {
+// streaming enumeration, else a whole-collection read. ctx is the caller's count
+// context: the counter read, the streamed enumeration and the whole-collection
+// read all run on it, so a canceled request reports its own error instead of a
+// total. A streaming read that fails returns the count it reached together with
+// its own error; a whole-collection read that fails returns no count.
+func (w *WALEngine) countByPrefix(ctx context.Context, prefix string, kind prefixCountKind) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	if stats, ok := w.engine.(PrefixStatsEngine); ok {
 		if kind == countPrefixEdges {
-			return stats.EdgeCountByPrefix(prefix)
+			return stats.EdgeCountByPrefix(ctx, prefix)
 		}
-		return stats.NodeCountByPrefix(prefix)
+		return stats.NodeCountByPrefix(ctx, prefix)
 	}
 
 	// Correctness fallback (slower).
@@ -1140,14 +909,14 @@ func (w *WALEngine) countByPrefix(prefix string, kind prefixCountKind) (int64, e
 		var count int64
 		var err error
 		if kind == countPrefixEdges {
-			err = streamer.StreamEdges(context.Background(), func(edge *Edge) error {
+			err = streamer.StreamEdges(ctx, func(edge *Edge) error {
 				if strings.HasPrefix(string(edge.ID), prefix) {
 					count++
 				}
 				return nil
 			})
 		} else {
-			err = streamer.StreamNodes(context.Background(), func(node *Node) error {
+			err = streamer.StreamNodes(ctx, func(node *Node) error {
 				if strings.HasPrefix(string(node.ID), prefix) {
 					count++
 				}
@@ -1158,13 +927,13 @@ func (w *WALEngine) countByPrefix(prefix string, kind prefixCountKind) (int64, e
 	}
 
 	if kind == countPrefixEdges {
-		edges, err := w.engine.AllEdges(context.Background())
+		edges, err := w.engine.AllEdges(ctx)
 		if err != nil {
 			return 0, err
 		}
 		return countWithPrefix(edges, prefix, func(edge *Edge) string { return string(edge.ID) }), nil
 	}
-	nodes, err := w.engine.AllNodes(context.Background())
+	nodes, err := w.engine.AllNodes(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -1192,7 +961,14 @@ func (w *WALEngine) Close() error {
 		}
 		w.work.Leave()
 	}
-	w.work.BeginStop(w.engine.Close)
+	oracle, _ := nativePublicationOracle(w.engine)
+	w.work.BeginStop(func() error {
+		err := w.engine.Close()
+		if oracle != nil {
+			return compose.Outcomes(err, oracle.failure())
+		}
+		return err
+	})
 	return w.work.JoinStopped()
 }
 
@@ -1220,11 +996,16 @@ func (w *WALEngine) GetWAL() *WAL {
 }
 
 // FindNodeNeedingEmbedding delegates to underlying engine if it supports it.
-func (w *WALEngine) FindNodeNeedingEmbedding() *Node {
-	if finder, ok := w.engine.(interface{ FindNodeNeedingEmbedding() *Node }); ok {
-		return finder.FindNodeNeedingEmbedding()
+func (w *WALEngine) FindNodeNeedingEmbedding(ctx context.Context) (*Node, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	return nil
+	if finder, ok := w.engine.(interface {
+		FindNodeNeedingEmbedding(context.Context) (*Node, error)
+	}); ok {
+		return finder.FindNodeNeedingEmbedding(ctx)
+	}
+	return nil, nil
 }
 
 // RefreshPendingEmbeddingsIndex delegates to underlying engine if it supports it.
@@ -1371,36 +1152,3 @@ var _ StreamingEngine = (*WALEngine)(nil)
 
 // Verify WALEngine implements PrefixStreamingEngine interface
 var _ PrefixStreamingEngine = (*WALEngine)(nil)
-
-// commitObservedEntityChange validates caller observations before any replayable
-// journal record exists. The accepted semantic commit owns journal uncertainty.
-func (w *WALEngine) commitObservedEntityChange(namespace string, operation Operation) error {
-	w.mutationMu.RLock()
-	var mutationOnce sync.Once
-	releaseMutation := func() { mutationOnce.Do(w.mutationMu.RUnlock) }
-	leaseTransferred := false
-	defer func() {
-		if !leaseTransferred {
-			releaseMutation()
-		}
-	}()
-	ctx := context.Background()
-	prepared, settle, err := PrepareEntityChanges(ctx, w.engine, namespace, []Operation{operation}, CommitModeDirect)
-	if err != nil || prepared == nil {
-		return err
-	}
-	leaseTransferred = true
-	receipt, err := w.submitEntityCommit(ctx, prepared, settle, releaseMutation)
-	if err != nil {
-		prepared.Abort()
-		if settle != nil {
-			settle(CommitOutcome{State: CommitDiscarded, Err: err})
-		}
-		return err
-	}
-	outcome := receipt.WaitOutcome(ctx)
-	if outcome.Err == nil || outcome.State == CommitDiscarded {
-		return outcome.Err
-	}
-	return &AcceptedCommitError{State: outcome.State, LogicalID: prepared.LogicalID(), Err: outcome.Err}
-}

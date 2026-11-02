@@ -45,14 +45,14 @@ func TestQdrantGRPC_AuthAndRBAC(t *testing.T) {
 	authenticator, err := auth.NewAuthenticator(authCfg, authStore)
 	require.NoError(t, err)
 
-	_, err = authenticator.CreateUser("admin", "AdminPass123!", []auth.Role{auth.RoleAdmin})
+	_, err = authenticator.CreateUser(context.Background(), "admin", "AdminPass123!", []auth.Role{auth.RoleAdmin})
 	require.NoError(t, err)
-	_, err = authenticator.CreateUser("viewer", "ViewerPass123!", []auth.Role{auth.RoleViewer})
+	_, err = authenticator.CreateUser(context.Background(), "viewer", "ViewerPass123!", []auth.Role{auth.RoleViewer})
 	require.NoError(t, err)
 
-	adminTok, _, err := authenticator.Authenticate("admin", "AdminPass123!", "127.0.0.1", "test")
+	adminTok, _, err := authenticator.Authenticate(context.Background(), "admin", "AdminPass123!", "127.0.0.1", "test")
 	require.NoError(t, err)
-	viewerTok, _, err := authenticator.Authenticate("viewer", "ViewerPass123!", "127.0.0.1", "test")
+	viewerTok, _, err := authenticator.Authenticate(context.Background(), "viewer", "ViewerPass123!", "127.0.0.1", "test")
 	require.NoError(t, err)
 
 	cfg := DefaultConfig()
@@ -284,7 +284,7 @@ func TestServer_IsRunning_StreamAuthAndStreamContext(t *testing.T) {
 	authCfg.SecurityEnabled = true
 	authenticator, err := auth.NewAuthenticator(authCfg, authStore)
 	require.NoError(t, err)
-	_, err = authenticator.CreateUser("viewer2", "ViewerPass123!", []auth.Role{auth.RoleViewer})
+	_, err = authenticator.CreateUser(context.Background(), "viewer2", "ViewerPass123!", []auth.Role{auth.RoleViewer})
 	require.NoError(t, err)
 
 	cfg := DefaultConfig()
@@ -324,7 +324,7 @@ func TestServer_IsRunning_StreamAuthAndStreamContext(t *testing.T) {
 	require.NoError(t, err)
 
 	// Bearer auth path for stream interceptor.
-	token, _, err := authenticator.Authenticate("viewer2", "ViewerPass123!", "127.0.0.1", "test")
+	token, _, err := authenticator.Authenticate(context.Background(), "viewer2", "ViewerPass123!", "127.0.0.1", "test")
 	require.NoError(t, err)
 	bearerCtx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer "+token.AccessToken))
 	err = srv.streamAuthInterceptor(nil, &testServerStream{ctx: bearerCtx}, &grpc.StreamServerInfo{
@@ -399,7 +399,7 @@ func TestServer_BasicAuthAndNoAuthInterceptorBranches(t *testing.T) {
 	authCfg.SecurityEnabled = true
 	authenticator, err := auth.NewAuthenticator(authCfg, authStore)
 	require.NoError(t, err)
-	_, err = authenticator.CreateUser("viewer3", "ViewerPass123!", []auth.Role{auth.RoleViewer})
+	_, err = authenticator.CreateUser(context.Background(), "viewer3", "ViewerPass123!", []auth.Role{auth.RoleViewer})
 	require.NoError(t, err)
 
 	srvAuth, err := NewServer(DefaultConfig(), store, fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil, authenticator)
@@ -503,7 +503,7 @@ func TestServer_AuthInterceptorErrorBranches(t *testing.T) {
 	authCfg.SecurityEnabled = true
 	authenticator, err := auth.NewAuthenticator(authCfg, authStore)
 	require.NoError(t, err)
-	_, err = authenticator.CreateUser("viewer4", "ViewerPass123!", []auth.Role{auth.RoleViewer})
+	_, err = authenticator.CreateUser(context.Background(), "viewer4", "ViewerPass123!", []auth.Role{auth.RoleViewer})
 	require.NoError(t, err)
 
 	store := newTestCollectionStore(t)

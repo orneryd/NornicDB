@@ -128,7 +128,7 @@ func newRelationshipConstraintCheck(ctx context.Context, engine Engine, c Constr
 	case ConstraintCardinality:
 		return newRelCardinalityCheck(c), nil
 	case ConstraintPolicy:
-		return newRelPolicyCheck(engine, c), nil
+		return newRelPolicyCheck(ctx, engine, c), nil
 	default:
 		return relEdgeCheck{}, localizedError(localization.StorageValidationRelationshipConstraintTypeUnsupported(string(c.Type)), nil)
 	}
@@ -340,7 +340,7 @@ func newRelCardinalityCheck(c Constraint) relEdgeCheck {
 // For ALLOWED policies, the full set of ALLOWED policies for this
 // relationship type (existing ones from the schema plus the new one being
 // created) must cover every edge of the type.
-func newRelPolicyCheck(engine Engine, c Constraint) relEdgeCheck {
+func newRelPolicyCheck(ctx context.Context, engine Engine, c Constraint) relEdgeCheck {
 	var allowedSet []Constraint
 	if c.PolicyMode == "ALLOWED" {
 		if schema := engine.GetSchema(); schema != nil {
@@ -355,11 +355,11 @@ func newRelPolicyCheck(engine Engine, c Constraint) relEdgeCheck {
 	}
 
 	return relEdgeCheck{visit: ofType(c.Label, func(edge *Edge) error {
-		srcNode, err := GetStoredNode(engine, edge.StartNode)
+		srcNode, err := GetStoredNode(ctx, engine, edge.StartNode)
 		if err != nil || srcNode == nil {
 			return nil
 		}
-		tgtNode, err := GetStoredNode(engine, edge.EndNode)
+		tgtNode, err := GetStoredNode(ctx, engine, edge.EndNode)
 		if err != nil || tgtNode == nil {
 			return nil
 		}
@@ -429,5 +429,5 @@ func validateCardinalityOnCreationForEngine(ctx context.Context, edges []*Edge, 
 }
 
 func validatePolicyOnCreationForEngine(ctx context.Context, engine Engine, edges []*Edge, c Constraint) error {
-	return checkEdgeSlice(ctx, newRelPolicyCheck(engine, c), edges)
+	return checkEdgeSlice(ctx, newRelPolicyCheck(ctx, engine, c), edges)
 }

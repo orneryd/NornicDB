@@ -16,7 +16,7 @@ type managedEntityOwner struct {
 	route storage.EntityCommitRoute
 	found bool
 	begin interface {
-		BeginTransaction() (*storage.BadgerTransaction, error)
+		BeginTransaction(context.Context) (*storage.BadgerTransaction, error)
 	}
 	observer        storedEntityObserverInitializer
 	registry        storage.ManagedEntityRuntimeRegistry
@@ -37,7 +37,7 @@ func managedEntityOwnerFor(engine storage.Engine) managedEntityOwner {
 		}
 		if owner.begin == nil {
 			owner.begin, _ = engine.(interface {
-				BeginTransaction() (*storage.BadgerTransaction, error)
+				BeginTransaction(context.Context) (*storage.BadgerTransaction, error)
 			})
 		}
 		if owner.registry == nil {

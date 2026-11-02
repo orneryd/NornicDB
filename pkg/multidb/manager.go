@@ -378,7 +378,7 @@ func (m *DatabaseManager) cleanupLeakedSystemNodes() {
 			continue
 		}
 		for id := range candidateIDs {
-			if err := engine.DeleteNode(id); err == nil {
+			if err := engine.DeleteNode(m.lifetime().Context(), id); err == nil {
 				removed++
 			}
 		}

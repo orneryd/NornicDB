@@ -86,7 +86,7 @@ func assertPR1655ProtocolBodyUnchanged(t *testing.T, fault *pr1655ExecuteFault) 
 	fault.armed.Store(false)
 	fault.restore(t)
 	require.NoError(t, fault.engine.FlushWriteBehind(nil))
-	node, err := fault.engine.GetStoredNode(fault.nodeID)
+	node, err := fault.engine.GetStoredNode(t.Context(), fault.nodeID)
 	require.NoError(t, err)
 	require.Equal(t, "before", node.Properties["summary_input"], "failed commit published its pending body")
 }

@@ -19,14 +19,14 @@ func TestGH448_EmbeddingWritebackPersistsAcrossBadgerReopen(t *testing.T) {
 	store := NewNamespacedEngine(engine, "gh448_disk")
 
 	for _, id := range []NodeID{"embedded", "pending"} {
-		_, err := store.CreateNode(&Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"id": string(id)}})
+		_, err := store.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"id": string(id)}})
 		require.NoError(t, err)
 	}
-	node, err := store.GetNode("embedded")
+	node, err := store.GetNode(t.Context(), "embedded")
 	require.NoError(t, err)
 	node.ChunkEmbeddings = [][]float32{{0.25, 0.5, 0.75}}
 	node.EmbedMeta = map[string]any{"embedded": true, "chunk_count": 1}
-	require.NoError(t, store.UpdateNodeEmbeddingSidecar(node))
+	require.NoError(t, store.UpdateNodeEmbeddingSidecar(context.Background(), node))
 	staged, err := store.GetNodesByLabel(context.Background(), "Doc")
 	require.NoError(t, err)
 	require.Len(t, staged, 2)
@@ -39,10 +39,10 @@ func TestGH448_EmbeddingWritebackPersistsAcrossBadgerReopen(t *testing.T) {
 	nodes, err := store.GetNodesByLabel(context.Background(), "Doc")
 	require.NoError(t, err)
 	require.Len(t, nodes, 2)
-	count, err := store.NodeCountByLabel("Doc")
+	count, err := store.NodeCountByLabel(t.Context(), "Doc")
 	require.NoError(t, err)
 	require.Equal(t, int64(2), count)
-	reloaded, err := store.GetNode("embedded")
+	reloaded, err := store.GetNode(t.Context(), "embedded")
 	require.NoError(t, err)
 	require.Equal(t, [][]float32{{0.25, 0.5, 0.75}}, reloaded.ChunkEmbeddings)
 	require.Equal(t, map[string]any{"embedded": true, "chunk_count": 1}, reloaded.EmbedMeta)

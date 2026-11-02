@@ -74,7 +74,7 @@ func RunRetry(t *testing.T, factory func(*testing.T, int, Policy) Fixture) {
 			query[0] = 1
 			for i := 0; i < CandidateCap; i++ {
 				node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("retry-%02d", i)), ChunkEmbeddings: [][]float32{query}}
-				_, err := f.Engine.CreateNode(node)
+				_, err := f.Engine.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 				require.NoError(t, f.Service.IndexNode(node))
 			}

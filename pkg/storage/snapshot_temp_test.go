@@ -37,7 +37,7 @@ func TestAutoCompactionRemovesInterruptedSnapshots(t *testing.T) {
 	}
 	require.DirExists(t, nested)
 	require.FileExists(t, filepath.Join(nested, filepath.Base(stale)))
-	_, err = engine.CreateNode(&Node{ID: "nornic:cleanup", Properties: map[string]any{"name": "retained"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "nornic:cleanup", Properties: map[string]any{"name": "retained"}})
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(stale, []byte("interrupted"), 0644))
 	require.NoError(t, engine.createSnapshotAndCompact(engine.work.Context()))

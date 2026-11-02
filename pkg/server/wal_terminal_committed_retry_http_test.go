@@ -41,7 +41,7 @@ func TestHTTPWALTerminalCommittedOutcomeIsNotRetriable(t *testing.T) {
 					}
 				}
 				store := storage.NewNamespacedEngine(engine, "nornic")
-				_, err = store.CreateNode(&storage.Node{ID: "committed-retry", Labels: []string{"WalOutcome"}})
+				_, err = store.CreateNode(t.Context(), &storage.Node{ID: "committed-retry", Labels: []string{"WalOutcome"}})
 				require.NoError(t, err)
 				faulty := &httpMatrixSuppression{Engine: store, cause: storage.ErrStorageRestoring}
 				s, auth := setupTestServer(t)

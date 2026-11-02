@@ -532,7 +532,7 @@ func TestChaos_PacketLoss(t *testing.T) {
 	successCount := 0
 	for i := 0; i < 20; i++ {
 		cmd := &Command{Type: CmdCreateNode, Data: []byte{byte(i)}}
-		err := replicator.Apply(cmd, 5*time.Second)
+		err := replicator.Apply(ctx, cmd, 5*time.Second)
 		if err == nil {
 			successCount++
 		}
@@ -584,7 +584,7 @@ func TestChaos_HighLatency_CrossRegion(t *testing.T) {
 
 	// Apply a command with generous timeout for cross-region
 	cmd := &Command{Type: CmdCreateNode, Data: []byte("cross-region-test")}
-	err = replicator.Apply(cmd, 10*time.Second) // 10 second timeout
+	err = replicator.Apply(t.Context(), cmd, 10*time.Second) // 10 second timeout
 
 	elapsed := time.Since(start)
 	t.Logf("Cross-region operation took: %v", elapsed)
@@ -676,7 +676,7 @@ func TestChaos_ConnectionDrop(t *testing.T) {
 	dropCount := 0
 	for i := 0; i < 10; i++ {
 		cmd := &Command{Type: CmdCreateNode, Data: []byte{byte(i)}}
-		err := replicator.Apply(cmd, time.Second)
+		err := replicator.Apply(ctx, cmd, time.Second)
 		if err != nil {
 			dropCount++
 		}
@@ -807,7 +807,7 @@ func TestChaos_MixedFailures(t *testing.T) {
 			Timestamp: time.Now(),
 		}
 
-		err := replicator.Apply(cmd, 2*time.Second)
+		err := replicator.Apply(ctx, cmd, 2*time.Second)
 		if err == nil {
 			successCount++
 		} else {
@@ -898,7 +898,7 @@ func TestChaos_RecoveryAfterPartition(t *testing.T) {
 
 	// Apply before partition
 	cmd1 := &Command{Type: CmdCreateNode, Data: []byte("before-partition")}
-	require.NoError(t, replicator.Apply(cmd1, time.Second))
+	require.NoError(t, replicator.Apply(t.Context(), cmd1, time.Second))
 
 	// Simulate partition by closing transport
 	transport.Close()
@@ -906,7 +906,7 @@ func TestChaos_RecoveryAfterPartition(t *testing.T) {
 	// Operations should fail during partition
 	cmd2 := &Command{Type: CmdCreateNode, Data: []byte("during-partition")}
 	// This may or may not fail depending on timing
-	_ = replicator.Apply(cmd2, time.Second)
+	_ = replicator.Apply(t.Context(), cmd2, time.Second)
 
 	// Create new transport (simulating network recovery)
 	newTransport := NewMockTransport()

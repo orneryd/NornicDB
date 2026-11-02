@@ -21,9 +21,9 @@ type countingEdgeLookupEngine struct {
 
 // GetEdgeBetween counts committed relationship lookups so hot-path tests can
 // distinguish true batch-local reuse from storage-level fanout scans.
-func (e *countingEdgeLookupEngine) GetEdgeBetween(startID, endID storage.NodeID, edgeType string) *storage.Edge {
+func (e *countingEdgeLookupEngine) GetEdgeBetween(ctx context.Context, startID, endID storage.NodeID, edgeType string) (*storage.Edge, error) {
 	atomic.AddInt64(&e.edgeBetweenCalls, 1)
-	return e.Engine.GetEdgeBetween(startID, endID, edgeType)
+	return e.Engine.GetEdgeBetween(ctx, startID, endID, edgeType)
 }
 
 func TestUnwindCollectDistinctProjection_UsesSharedPipeline(t *testing.T) {
@@ -276,7 +276,7 @@ RETURN count(f) AS prepared
 			if component {
 				exec = NewStorageExecutor(store)
 				// Demonstrate the counter observes this supplied owner before measuring.
-				store.GetEdgeBetween("missing-start", "missing-end", "MISSING")
+				store.GetEdgeBetween(t.Context(), "missing-start", "missing-end", "MISSING")
 				require.EqualValues(t, 1, atomic.LoadInt64(&store.edgeBetweenCalls))
 				atomic.StoreInt64(&store.edgeBetweenCalls, 0)
 				res, err = exec.executeRequiredPipeline(withParams(ctx, params), query)
@@ -667,7 +667,7 @@ func TestGenericMerge_MultiPropertyLookup_UsesCompositeSchemaPath(t *testing.T) 
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &allNodesForbiddenEngine{MemoryEngine: base}
 
-	_, err := eng.CreateNode(&storage.Node{
+	_, err := eng.CreateNode(t.Context(), &storage.Node{
 		ID:     "nornic:translated-1",
 		Labels: []string{"TranslatedText"},
 		Properties: map[string]interface{}{

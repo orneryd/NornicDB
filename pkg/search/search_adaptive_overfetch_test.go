@@ -2,8 +2,9 @@ package search
 
 import (
 	"context"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"math"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"testing"
 
@@ -340,7 +341,7 @@ func TestFullTextSearchOnlyUsesAdaptiveWidening(t *testing.T) {
 		{ID: "nornic:doc-2", Labels: []string{"Doc"}},
 		{ID: "nornic:doc-3", Labels: []string{"Doc"}},
 	} {
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 	index := &recordingBM25Index{results: []indexResult{

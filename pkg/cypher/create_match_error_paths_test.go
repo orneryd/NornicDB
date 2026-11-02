@@ -53,14 +53,14 @@ func (e *createMatchErrEngine) GetIncomingEdges(ctx context.Context, endID stora
 	})
 }
 
-func (e *createMatchErrEngine) CreateNode(node *storage.Node) (storage.NodeID, error) {
+func (e *createMatchErrEngine) CreateNode(ctx context.Context, node *storage.Node) (storage.NodeID, error) {
 	e.writes++
-	return e.Engine.CreateNode(node)
+	return e.Engine.CreateNode(ctx, node)
 }
 
-func (e *createMatchErrEngine) CreateEdge(edge *storage.Edge) error {
+func (e *createMatchErrEngine) CreateEdge(ctx context.Context, edge *storage.Edge) error {
 	e.writes++
-	return e.Engine.CreateEdge(edge)
+	return e.Engine.CreateEdge(ctx, edge)
 }
 
 // readerEntryCancelContext is a real context created by context.WithCancel that
@@ -135,9 +135,9 @@ func requireFrameContaining(t *testing.T, frames []string, suffix string) {
 func TestComponentMatchCreateSurfacesLabelReadFailure(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "create_match_err_label")
-	_, err := store.CreateNode(&storage.Node{ID: "a1", Labels: []string{"A"}, Properties: map[string]interface{}{"id": "a1"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "a1", Labels: []string{"A"}, Properties: map[string]interface{}{"id": "a1"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "b1", Labels: []string{"B"}, Properties: map[string]interface{}{"id": "b1"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "b1", Labels: []string{"B"}, Properties: map[string]interface{}{"id": "b1"}})
 	require.NoError(t, err)
 
 	query := "MATCH (a:A),(b:B) WHERE NOT (a)-[:R]->(b) CREATE (a)-[:R]->(b) RETURN count(*) AS n"
@@ -162,7 +162,7 @@ func TestComponentMatchCreateSurfacesLabelReadFailure(t *testing.T) {
 func TestComponentMatchCreateSurfacesAllNodesReadFailure(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "create_match_err_all")
-	_, err := store.CreateNode(&storage.Node{ID: "a1", Labels: []string{"A"}, Properties: map[string]interface{}{"id": "a1"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "a1", Labels: []string{"A"}, Properties: map[string]interface{}{"id": "a1"}})
 	require.NoError(t, err)
 
 	query := "MATCH (a),(b) WHERE NOT (a)-[:R]->(b) CREATE (a)-[:R]->(b) RETURN count(*) AS n"
@@ -185,9 +185,9 @@ func TestComponentMatchCreateSurfacesAllNodesReadFailure(t *testing.T) {
 func TestComponentMatchCreateSurfacesRelationshipCheckReadFailure(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "create_match_err_rel")
-	_, err := store.CreateNode(&storage.Node{ID: "a1", Labels: []string{"A"}, Properties: map[string]interface{}{"id": "a1"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "a1", Labels: []string{"A"}, Properties: map[string]interface{}{"id": "a1"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "b1", Labels: []string{"B"}, Properties: map[string]interface{}{"id": "b1"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "b1", Labels: []string{"B"}, Properties: map[string]interface{}{"id": "b1"}})
 	require.NoError(t, err)
 	query := "MATCH (a:A),(b:B) WHERE a.id = 'a1' AND b.id = 'b1' AND NOT (a)-[:R]->(b) CREATE (a)-[:R]->(b) RETURN count(*) AS n"
 
@@ -219,7 +219,7 @@ func TestComponentMatchCreatePredicateReadFailureStopsWrites(t *testing.T) {
 		t.Run(direction, func(t *testing.T) {
 			store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "predicate_failure")
 			for _, identifier := range []storage.NodeID{"a", "b"} {
-				_, err := store.CreateNode(&storage.Node{ID: identifier, Labels: []string{"Endpoint"}, Properties: map[string]interface{}{"id": string(identifier)}})
+				_, err := store.CreateNode(t.Context(), &storage.Node{ID: identifier, Labels: []string{"Endpoint"}, Properties: map[string]interface{}{"id": string(identifier)}})
 				require.NoError(t, err)
 			}
 			query := "MATCH (a:Endpoint {id:'a'}), (b:Endpoint {id:'b'}) WHERE NOT " + direction + " CREATE (:Unexpected)"

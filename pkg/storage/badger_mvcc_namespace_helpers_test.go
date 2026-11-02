@@ -60,10 +60,10 @@ func TestEnsureNamespaceMVCC_WarmsColdStateWithPersistedAndRecoveredFloors(t *te
 
 	// Recovered floor from existing node MVCC head.
 	n := &Node{ID: NodeID("tenant:n1"), Labels: []string{"L"}, Properties: map[string]any{"k": "v"}}
-	_, err = engine.CreateNode(n)
+	_, err = engine.CreateNode(t.Context(), n)
 	require.NoError(t, err)
 	n.Properties["k"] = "v2"
-	err = engine.UpdateNode(NodeUpdateRequest{After: n})
+	err = engine.UpdateNode(t.Context(), NodeUpdateRequest{After: n})
 	require.NoError(t, err)
 
 	// Force cold state so EnsureNamespaceMVCC takes the recovery path.
@@ -92,7 +92,8 @@ func TestSnapshotNamespaceVersions_UsesHighWaterClamp(t *testing.T) {
 	engine.mvccByNamespace["tenant"] = state
 	engine.mvccByNamespaceMu.Unlock()
 
-	snap := engine.snapshotNamespaceVersions()
+	snap, err := engine.snapshotNamespaceVersions(t.Context())
+	require.NoError(t, err)
 	require.Contains(t, snap, "tenant")
 	require.Equal(t, uint64(11), snap["tenant"].CommitSequence)
 	require.GreaterOrEqual(t, snap["tenant"].CommitTimestamp.UnixNano(), future)

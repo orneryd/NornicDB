@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"errors"
@@ -105,11 +106,11 @@ func TestConstraintPropertyIndexListedOnlyAsConstraintIndex(t *testing.T) {
 		require.NotEqual(t, "PROPERTY", stat.Type)
 	}
 	require.False(t, sm.isPropertyInStructuralIndex([]string{"Rec"}, "uid"))
-	require.Empty(t, sm.ExportDefinition().PropertyIndexes)
+	require.Empty(t, schemaDefinitionForTest(t, sm).PropertyIndexes)
 
 	require.NoError(t, sm.AddPropertyIndex("i_name", "Rec", []string{"name"}))
 	require.True(t, sm.isPropertyInStructuralIndex([]string{"Rec"}, "name"))
-	require.Len(t, sm.ExportDefinition().PropertyIndexes, 1)
+	require.Len(t, schemaDefinitionForTest(t, sm).PropertyIndexes, 1)
 }
 
 // Loading a definition recreates the owned index unfilled; a store written
@@ -120,17 +121,17 @@ func TestConstraintPropertyIndexFromDefinition(t *testing.T) {
 	require.NoError(t, source.AddUniqueConstraint("c_uid", "Rec", "uid"))
 
 	loaded := NewSchemaManager()
-	require.NoError(t, loaded.ReplaceFromDefinition(source.ExportDefinition()))
+	require.NoError(t, loaded.ReplaceFromDefinition(context.Background(), schemaDefinitionForTest(t, source)))
 	idx, owned := loaded.ConstraintPropertyIndex("c_uid")
 	require.True(t, owned)
 	require.True(t, idx.unfilled.Load())
 	require.True(t, loaded.MaintainsPropertyIndex("Rec", "uid"))
 	require.False(t, checkedIndexRead[bool](t)(loaded.HasPropertyIndex(t.Context(), "Rec", "uid")))
 
-	legacy := source.ExportDefinition()
+	legacy := schemaDefinitionForTest(t, source)
 	legacy.PropertyIndexes = []SchemaPropertyIndexDef{{Name: "i_uid", Label: "Rec", Properties: []string{"uid"}}}
 	both := NewSchemaManager()
-	require.NoError(t, both.ReplaceFromDefinition(legacy))
+	require.NoError(t, both.ReplaceFromDefinition(context.Background(), legacy))
 	_, owned = both.ConstraintPropertyIndex("c_uid")
 	require.False(t, owned)
 	standalone, ok := checkedIndexRange[*PropertyIndex](t)(both.GetPropertyIndex(t.Context(), "Rec", "uid"))
@@ -191,13 +192,13 @@ func TestBadgerConstraintPropertyIndexMaintainedAndRebuilt(t *testing.T) {
 	schema := engine.GetSchemaForNamespace("test")
 	require.NoError(t, schema.AddUniqueConstraint("c_uid", "Rec", "uid"))
 
-	_, err := engine.CreateNode(&Node{ID: NodeID(prefixTestID("n1")), Labels: []string{"Rec"}, Properties: map[string]interface{}{"uid": "a"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("n1")), Labels: []string{"Rec"}, Properties: map[string]interface{}{"uid": "a"}})
 	require.NoError(t, err)
 	require.Nil(t, checkedIndexRead[[]NodeID](t)(schema.PropertyIndexLookup(t.Context(), "Rec", "uid", "a")))
 	require.NoError(t, schema.BackfillPropertyIndex("Rec", "uid", nil))
 	require.Len(t, checkedIndexRead[[]NodeID](t)(schema.PropertyIndexLookup(t.Context(), "Rec", "uid", "a")), 1)
 
-	_, err = engine.CreateNode(&Node{ID: NodeID(prefixTestID("n2")), Labels: []string{"Rec"}, Properties: map[string]interface{}{"uid": "b"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("n2")), Labels: []string{"Rec"}, Properties: map[string]interface{}{"uid": "b"}})
 	require.NoError(t, err)
 	require.NoError(t, engine.Close())
 

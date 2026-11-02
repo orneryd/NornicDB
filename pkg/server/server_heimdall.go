@@ -335,8 +335,8 @@ func (r *heimdallDBRouter) Stats(ctx context.Context, database string) (heimdall
 		return heimdall.DatabaseStats{}, err
 	}
 
-	nodeCount, _ := engine.NodeCount()
-	edgeCount, _ := engine.EdgeCount()
+	nodeCount, _ := engine.NodeCount(ctx)
+	edgeCount, _ := engine.EdgeCount(ctx)
 
 	result := heimdall.DatabaseStats{
 		NodeCount:         nodeCount,
@@ -484,8 +484,8 @@ type heimdallRelatedAcceptor struct {
 	visible storage.QueryResultProjection
 }
 
-func (a heimdallRelatedAcceptor) Discover(_ context.Context, n *relatedwalk.Neighbor) (heimdall.RelatedNode, bool, bool) {
-	node, err := a.engine.GetNode(storage.NodeID(n.ID))
+func (a heimdallRelatedAcceptor) Discover(ctx context.Context, n *relatedwalk.Neighbor) (heimdall.RelatedNode, bool, bool) {
+	node, err := a.engine.GetNode(ctx, storage.NodeID(n.ID))
 	if err != nil || node == nil {
 		return heimdall.RelatedNode{}, false, false
 	}

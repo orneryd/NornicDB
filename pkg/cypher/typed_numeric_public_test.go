@@ -91,7 +91,7 @@ func TestTypedNumericPublicBoundaries(t *testing.T) {
 		for _, input := range listinputs.NumericInputs() {
 			t.Run(fmt.Sprintf("programsDisabled=%t/%s", disabled, input.Name), func(t *testing.T) {
 				if !disabled {
-					_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(input.Name), Labels: []string{"NumericInput"}, Properties: map[string]interface{}{"name": input.Name, "xs": input.Property}})
+					_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(input.Name), Labels: []string{"NumericInput"}, Properties: map[string]interface{}{"name": input.Name, "xs": input.Property}})
 					require.NoError(t, err)
 				}
 				params := map[string]interface{}{"xs": input.List, "boxed": []interface{}{input.Scalar}, "name": input.Name}
@@ -220,7 +220,7 @@ func TestTypedNumericPublicWidths(t *testing.T) {
 			}
 			t.Run(fmt.Sprintf("programsDisabled=%t/%s", disabled, input.Name), func(t *testing.T) {
 				if !disabled {
-					_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(input.Name), Labels: []string{"NumericWidth"}, Properties: map[string]interface{}{"name": input.Name, "xs": input.PropertyValue()}})
+					_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(input.Name), Labels: []string{"NumericWidth"}, Properties: map[string]interface{}{"name": input.Name, "xs": input.PropertyValue()}})
 					require.NoError(t, err)
 				}
 				params := map[string]interface{}{"xs": input.Value, "name": input.Name}
@@ -325,7 +325,7 @@ func TestTypedNumericReviewRepros(t *testing.T) {
 					continue
 				}
 				if !disabled {
-					_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(input.Name), Labels: []string{"NumericReview"}, Properties: map[string]interface{}{"name": input.Name, "xs": input.PropertyValue()}})
+					_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(input.Name), Labels: []string{"NumericReview"}, Properties: map[string]interface{}{"name": input.Name, "xs": input.PropertyValue()}})
 					require.NoError(t, err)
 				}
 				params := map[string]interface{}{"xs": input.Value, "name": input.Name}
@@ -357,7 +357,7 @@ func TestTypedNumericReviewRepros(t *testing.T) {
 // This probe is evidence, not a green assertion of any changed contract.
 func TestTypedNumericSubscriptPolicyProbe(t *testing.T) {
 	exec, store := typedNumericExecutor(t)
-	_, err := store.CreateNode(&storage.Node{ID: "policy", Labels: []string{"NumericPolicy"}, Properties: map[string]interface{}{"text": "a\u00e9\U0001f642", "xs": []int64{3, 1, 3}}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "policy", Labels: []string{"NumericPolicy"}, Properties: map[string]interface{}{"text": "a\u00e9\U0001f642", "xs": []int64{3, 1, 3}}})
 	require.NoError(t, err)
 	for _, disabled := range []bool{false, true} {
 		rowValueProgramsDisabled.Store(disabled)

@@ -26,7 +26,7 @@ func TestScopedLabelIDReadCostIgnoresOtherDatabases(t *testing.T) {
 			for index := 0; index < population.count; index++ {
 				nodes = append(nodes, &Node{ID: NodeID(fmt.Sprintf("%s:n%d", population.namespace, index)), Labels: []string{"Person"}})
 			}
-			require.NoError(t, engine.BulkCreateNodes(nodes))
+			require.NoError(t, engine.BulkCreateNodes(t.Context(), nodes))
 		}
 		return engine
 	}

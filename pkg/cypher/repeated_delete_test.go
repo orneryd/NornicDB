@@ -62,14 +62,14 @@ func TestTransactionWrapperBulkDeleteEdgesSkipsDeleted(t *testing.T) {
 	require.Len(t, edges, 1)
 
 	require.NoError(t, base.EnsureNamespaceMVCC("test"))
-	tx, err := base.BeginTransaction()
+	tx, err := base.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
 	require.NoError(t, tx.SetNamespace("test"))
 	wrapper := &transactionStorageWrapper{tx: tx, underlying: store, namespace: "test", separator: ":", mutatedNodeIDs: make(map[string]struct{})}
-	require.NoError(t, wrapper.BulkDeleteEdges([]storage.EdgeID{edges[0].ID, edges[0].ID, "missing"}))
+	require.NoError(t, wrapper.BulkDeleteEdges(t.Context(), []storage.EdgeID{edges[0].ID, edges[0].ID, "missing"}))
 	require.NoError(t, tx.Commit())
-	count, err := base.EdgeCount()
+	count, err := base.EdgeCount(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, int64(0), count)
 }
@@ -79,7 +79,9 @@ type failingDeleteEdgeEngine struct {
 	err error
 }
 
-func (e *failingDeleteEdgeEngine) DeleteEdge(storage.EdgeID) error { return e.err }
+func (e *failingDeleteEdgeEngine) DeleteEdge(ctx context.Context, _ storage.EdgeID) error {
+	return e.err
+}
 
 // The canonical DELETE owner keeps its two-way decision about a relationship
 // delete: a relationship the statement already deleted (or that is gone) is

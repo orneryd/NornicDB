@@ -37,7 +37,7 @@ func newApocUseNativeProof(t *testing.T) (*StorageExecutor, *apocUseAuthProbeMan
 		engine storage.Engine
 		value  string
 	}{{home, "home-value"}, {other, "other-only-secret"}} {
-		_, err := x.engine.CreateNode(&storage.Node{ID: "secret", Labels: []string{"Secret"}, Properties: map[string]any{"value": x.value}})
+		_, err := x.engine.CreateNode(t.Context(), &storage.Node{ID: "secret", Labels: []string{"Secret"}, Properties: map[string]any{"value": x.value}})
 		require.NoError(t, err)
 	}
 	manager := &apocUseAuthProbeManager{standardDBManager: standardDBManager{engines: map[string]storage.Engine{"nornic": home, "other": other}, aliases: map[string]string{"other_alias": "other"}}}
@@ -192,7 +192,7 @@ func TestNativeDynamicCoordinatorAtomicCallbacks(t *testing.T) {
 							return nil, err
 						}
 						if scenario == "direct-write" {
-							_, err := nested.storage.CreateNode(&storage.Node{ID: "owner-direct", Labels: []string{"OwnerProof"}})
+							_, err := nested.storage.CreateNode(t.Context(), &storage.Node{ID: "owner-direct", Labels: []string{"OwnerProof"}})
 							if err != nil {
 								return nil, err
 							}
@@ -211,7 +211,7 @@ func TestNativeDynamicCoordinatorAtomicCallbacks(t *testing.T) {
 							if scenario == "batch-callback-first-writer" {
 								cleanupAdmissionProcedure(t, "ownerproof.batchcreate")
 								require.NoError(t, RegisterUserProcedure(ProcedureSpec{Name: "ownerproof.batchcreate", Mode: ProcedureModeWrite}, func(_ context.Context, e *StorageExecutor, _ string, _ []interface{}) (*ExecuteResult, error) {
-									_, err := e.storage.CreateNode(&storage.Node{ID: "batch-direct", Labels: []string{"OwnerBatch"}})
+									_, err := e.storage.CreateNode(t.Context(), &storage.Node{ID: "batch-direct", Labels: []string{"OwnerBatch"}})
 									return &ExecuteResult{}, err
 								}))
 								action = "CALL ownerproof.batchcreate()"
@@ -448,7 +448,7 @@ func TestNativeDynamicCoordinatorIssuedStorageSelection(t *testing.T) {
 					t.Run(fmt.Sprintf("%s/spoofed=%t", scenario, spoofed), func(t *testing.T) {
 						executor, manager := newApocUseNativeProof(t)
 						alien := storage.NewNamespacedEngine(newTestMemoryEngine(t), "other")
-						_, err := alien.CreateNode(&storage.Node{ID: "secret", Labels: []string{"Secret"}, Properties: map[string]any{"value": "wrong-manager"}})
+						_, err := alien.CreateNode(t.Context(), &storage.Node{ID: "secret", Labels: []string{"Secret"}, Properties: map[string]any{"value": "wrong-manager"}})
 						require.NoError(t, err)
 						replacement := &apocUseAuthProbeManager{standardDBManager: standardDBManager{engines: map[string]storage.Engine{"other": alien, "nornic": manager.engines["nornic"]}}}
 						failure := errors.New("issued carrier child rollback")
@@ -509,7 +509,7 @@ func TestNativeDynamicCoordinatorEmptyReaderOwner(t *testing.T) {
 	for _, scenario := range []string{"read", "noop-write", "metadata", "empty-wal-error", "completion-action", "knowledge-schema"} {
 		t.Run(scenario, func(t *testing.T) {
 			executor, engine, store := newWALOutcomeExecutor(t)
-			id, err := store.CreateNode(&storage.Node{ID: "seed", Labels: []string{"WalOutcome"}})
+			id, err := store.CreateNode(t.Context(), &storage.Node{ID: "seed", Labels: []string{"WalOutcome"}})
 			require.NoError(t, err)
 			commits := 0
 			engine.commit = func(ctx context.Context, tx *storage.BadgerTransaction) error {
@@ -563,12 +563,12 @@ func TestNativeDynamicCoordinatorEmptyReaderOwner(t *testing.T) {
 			} else {
 				require.Zero(t, commits, "empty snapshots must not enter native publication")
 			}
-			_, readErr := snapshot.GetNode(id)
+			_, readErr := snapshot.GetNode(t.Context(), id)
 			require.ErrorIs(t, readErr, storage.ErrTransactionClosed, "terminal owner releases actual snapshot")
 			if scenario == "completion-action" {
-				_, err = store.GetNode(id)
+				_, err = store.GetNode(t.Context(), id)
 				require.ErrorIs(t, err, storage.ErrNotFound)
-				_, err = storage.GetStoredNode(store, id)
+				_, err = storage.GetStoredNode(t.Context(), store, id)
 				require.NoError(t, err, "suppression keeps stored entity")
 			}
 		})

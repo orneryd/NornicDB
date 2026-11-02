@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"unsafe"
 
 	"github.com/stretchr/testify/require"
 )
@@ -94,4 +95,60 @@ func TestSearchLayerHeapKernel_ContextCancellation(t *testing.T) {
 	_, err := idx.searchLayerHeapPooledFromEntriesWithContext(cancelled, query, []uint32{idx.entryPoint}, 12, 0)
 	idx.mu.RUnlock()
 	require.Error(t, err, "cancelled context must abort the query-path expansion")
+}
+
+// TestSearchLayerHeapKernel_ModeOwnsItsContext pins the typed mode contract of
+// the shared layer kernel: the only context a kernel call can observe is the
+// context carried by the mode value it is given. layerNoCtx therefore carries
+// no context field at all (zero-sized, so its probes and its quantized-query
+// lookup compile out), while layerWithCtx owns the caller's query context and
+// is the only mode that reads it.
+func TestSearchLayerHeapKernel_ModeOwnsItsContext(t *testing.T) {
+	require.Zero(t, unsafe.Sizeof(layerNoCtx{}), "the no-context mode must stay zero-sized")
+	require.NoError(t, layerNoCtx{}.popProbe())
+	require.NoError(t, layerNoCtx{}.neighborProbe())
+	require.Nil(t, layerNoCtx{}.quantizedQuery(), "the no-context mode has no context to read a scorer from")
+
+	scorer := &hnswQuantizedQuery{}
+	ctx := context.WithValue(context.Background(), hnswQuantizedQueryKey{}, scorer)
+	mode := layerWithCtx{ctx: ctx}
+	require.Same(t, scorer, mode.quantizedQuery(), "the context mode must read the scorer from its own context")
+	require.NoError(t, mode.popProbe())
+	require.NoError(t, mode.neighborProbe())
+
+	cancelledCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	cancelledMode := layerWithCtx{ctx: cancelledCtx}
+	require.ErrorIs(t, cancelledMode.popProbe(), context.Canceled)
+	require.ErrorIs(t, cancelledMode.neighborProbe(), context.Canceled)
+
+	// The canonical generic entry takes the mode value itself, so the
+	// build-path instantiation has no context argument to supply.
+	const (
+		dims = 32
+		n    = 64
+		ef   = 12
+	)
+	idx := NewHNSWIndex(dims, HNSWConfig{M: 16, EfConstruction: 64})
+	for i := 0; i < n; i++ {
+		vec := make([]float32, dims)
+		for j := range vec {
+			vec[j] = float32((i*9 + j*5) % 71)
+		}
+		require.NoError(t, idx.Add(fmt.Sprintf("v%d", i), vec))
+	}
+	query := make([]float32, dims)
+	for j := range query {
+		query[j] = float32((j*3 + 7) % 67)
+	}
+
+	idx.mu.RLock()
+	entry := idx.entryPoint
+	ids, _, err := searchLayerHeapKernel[layerNoCtx](idx, layerNoCtx{}, query, entry, nil, ef, 0, true)
+	want := idx.searchLayerHeap(query, entry, ef, 0)
+	idx.mu.RUnlock()
+	require.NoError(t, err)
+	require.Equal(t, want, ids, "the typed no-context mode must reproduce the build-path candidate order")
+	idx.releaseCandidateIDs(ids)
+	idx.releaseCandidateIDs(want)
 }

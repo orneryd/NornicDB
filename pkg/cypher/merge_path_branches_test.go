@@ -42,11 +42,11 @@ func (e *mergeConflictEngine) createFailure() error {
 	return storage.ErrAlreadyExists
 }
 
-func (e *mergeConflictEngine) CreateNode(*storage.Node) (storage.NodeID, error) {
+func (e *mergeConflictEngine) CreateNode(ctx context.Context, _ *storage.Node) (storage.NodeID, error) {
 	return "", e.createFailure()
 }
 
-func (e *mergeConflictEngine) BulkCreateNodes([]*storage.Node) error {
+func (e *mergeConflictEngine) BulkCreateNodes(ctx context.Context, _ []*storage.Node) error {
 	return e.createFailure()
 }
 

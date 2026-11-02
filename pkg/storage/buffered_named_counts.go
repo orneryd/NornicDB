@@ -24,11 +24,12 @@ func sumBufferedNamedCount[K comparable](ctx context.Context, cancel *bulkReadCa
 
 // namedCountDelta is the single buffered label/type-count reader. Public
 // context-free adapters pass their own lifetime; request reads pass their ctx.
+// That lifetime governs the read admission too, so a canceled count leaves the
+// wait with the caller's own error instead of waiting for the buffer to be free.
 func (w *WriteBehindBuffer) namedCountDelta(ctx context.Context, kind byte, namespace, name string, scoped bool) (int64, error) {
-	if err := ctx.Err(); err != nil {
+	if err := w.mu.RLockContext(ctx); err != nil {
 		return 0, err
 	}
-	w.mu.RLock()
 	defer w.mu.RUnlock()
 	var total int64
 	var cancel bulkReadCancellation

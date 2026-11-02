@@ -287,9 +287,9 @@ func TestApplyAndValidateIndexHints(t *testing.T) {
 	eng := storage.NewNamespacedEngine(base, "test")
 	schema := eng.GetSchema()
 
-	_, err := eng.CreateNode(&storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice", "age": int64(30)}})
+	_, err := eng.CreateNode(t.Context(), &storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice", "age": int64(30)}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "n2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob", "age": int64(40)}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "n2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob", "age": int64(40)}})
 	require.NoError(t, err)
 
 	require.NoError(t, schema.AddPropertyIndex("person_name_idx", "Person", []string{"name"}))

@@ -39,7 +39,7 @@ func TestCompositeSchemaTargetPrecedesAtomicCapability(t *testing.T) {
 					require.ErrorContains(t, err, "constituent target")
 					require.Nil(t, result)
 					require.ElementsMatch(t, before, constituent.GetSchema().GetIndexes(), "rejection must not mutate a constituent")
-					count, err := constituent.NodeCount()
+					count, err := constituent.NodeCount(t.Context())
 					require.NoError(t, err)
 					require.Zero(t, count)
 				})
@@ -56,7 +56,7 @@ func TestCompositeSchemaTargetPrecedesAtomicCapability(t *testing.T) {
 			_, err = NewStorageExecutor(unsupported).Execute(denied, "CREATE (:DeniedAtomicWrite)", nil)
 			require.ErrorAs(t, err, &permission, "authorization must also precede unsupported local write capability")
 			require.Zero(t, unsupported.calls)
-			count, err := constituent.NodeCount()
+			count, err := constituent.NodeCount(t.Context())
 			require.NoError(t, err)
 			require.Zero(t, count)
 

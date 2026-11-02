@@ -147,7 +147,7 @@ func sortProcedurePrivileges(ctx context.Context, grants []ProcedurePrivilege) e
 // one. A read that fails is an error, never "no grant".
 func (p *ProcedurePrivilegeStore) Lookup(ctx context.Context, role, procedure string, boosted bool) (ProcedurePrivilege, bool, error) {
 	key := ProcedurePrivilege{Role: NormalizeRoleName(role), Procedure: strings.TrimSpace(procedure), Boosted: boosted}
-	node, err := p.storage.GetNode(procedurePrivilegeNodeID(key))
+	node, err := p.storage.GetNode(ctx, procedurePrivilegeNodeID(key))
 	if errors.Is(err, storage.ErrNotFound) {
 		return ProcedurePrivilege{}, false, nil
 	}
@@ -164,7 +164,7 @@ func (p *ProcedurePrivilegeStore) Lookup(ctx context.Context, role, procedure st
 // immutable.
 func (p *ProcedurePrivilegeStore) Grant(ctx context.Context, role, procedure string, boosted, immutable bool) error {
 	key := ProcedurePrivilege{Role: NormalizeRoleName(role), Procedure: strings.TrimSpace(procedure), Boosted: boosted}
-	before, err := p.storage.GetNode(procedurePrivilegeNodeID(key))
+	before, err := p.storage.GetNode(ctx, procedurePrivilegeNodeID(key))
 	if err != nil && !errors.Is(err, storage.ErrNotFound) {
 		return err
 	}
@@ -186,9 +186,9 @@ func (p *ProcedurePrivilegeStore) Grant(ctx context.Context, role, procedure str
 	}
 	if found {
 		// Keep the actual stored predecessor separate from the replacement grant.
-		return p.storage.UpdateNode(storage.NodeUpdateRequest{Before: before, After: node})
+		return p.storage.UpdateNode(ctx, storage.NodeUpdateRequest{Before: before, After: node})
 	}
-	_, err = p.storage.CreateNode(node)
+	_, err = p.storage.CreateNode(ctx, node)
 	return err
 }
 
@@ -200,7 +200,7 @@ func (p *ProcedurePrivilegeStore) Revoke(ctx context.Context, role, procedure st
 	if err != nil || !found || (immutableOnly && !grant.Immutable) {
 		return false, err
 	}
-	if err := p.storage.DeleteNode(procedurePrivilegeNodeID(grant)); err != nil {
+	if err := p.storage.DeleteNode(ctx, procedurePrivilegeNodeID(grant)); err != nil {
 		return false, err
 	}
 	return true, nil

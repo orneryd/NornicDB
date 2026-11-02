@@ -48,7 +48,7 @@ func TestWriteBehind_IdleFilledKeyConstraints(t *testing.T) {
 					require.NoError(t, bufferedTry(t, b, factNode("holder", 1, "name", 1)))
 					require.NoError(t, b.FlushWriteBehind(nil))
 				} else {
-					_, err := b.CreateNode(factNode("holder", 1, "name", 1))
+					_, err := b.CreateNode(t.Context(), factNode("holder", 1, "name", 1))
 					require.NoError(t, err)
 				}
 				require.Empty(t, b.writeBehind.draining)

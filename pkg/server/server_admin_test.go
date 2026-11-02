@@ -529,7 +529,7 @@ func TestGDPRDeleteWithConfirmation(t *testing.T) {
 	server, authenticator := setupTestServer(t)
 
 	// Create a test user to delete
-	_, err := authenticator.CreateUser("deletetest", "password123", []auth.Role{auth.RoleViewer})
+	_, err := authenticator.CreateUser(context.Background(), "deletetest", "password123", []auth.Role{auth.RoleViewer})
 	if err != nil {
 		t.Fatalf("failed to create test user: %v", err)
 	}
@@ -809,7 +809,7 @@ func TestEnsureSearchBuildStartedForKnownDatabases_NilAndNoopBranches(t *testing
 
 func TestServerAuthAndAuxHandlers_AdditionalBranches(t *testing.T) {
 	server, authenticator := setupTestServer(t)
-	_, adminUser, err := authenticator.Authenticate("admin", "password123", "127.0.0.1", "test")
+	_, adminUser, err := authenticator.Authenticate(context.Background(), "admin", "password123", "127.0.0.1", "test")
 	require.NoError(t, err)
 	require.NotNil(t, adminUser)
 	require.NotEmpty(t, adminUser.ID)
@@ -869,7 +869,7 @@ func TestServerAuthAndAuxHandlers_AdditionalBranches(t *testing.T) {
 		server.handleRoles(rec, req)
 		require.Equal(t, http.StatusCreated, rec.Code)
 
-		_ = server.auth.UpdateRoles("reader", []auth.Role{auth.Role("analyst")})
+		_ = server.auth.UpdateRoles(context.Background(), "reader", []auth.Role{auth.Role("analyst")})
 
 		req = httptest.NewRequest(http.MethodDelete, "/auth/roles/analyst", nil)
 		rec = httptest.NewRecorder()
@@ -881,7 +881,7 @@ func TestServerAuthAndAuxHandlers_AdditionalBranches(t *testing.T) {
 		require.False(t, server.roleStore.Exists("analyst"))
 		require.NoError(t, server.roleStore.CreateRole(context.Background(), "analyst"))
 
-		_ = server.auth.UpdateRoles("reader", []auth.Role{auth.RoleViewer})
+		_ = server.auth.UpdateRoles(context.Background(), "reader", []auth.Role{auth.RoleViewer})
 		req = httptest.NewRequest(http.MethodDelete, "/auth/roles/analyst", nil)
 		rec = httptest.NewRecorder()
 		server.handleRoles(rec, req)
@@ -907,10 +907,14 @@ func TestServerAuthAndAuxHandlers_AdditionalBranches(t *testing.T) {
 func TestNeo4jConversionAndTxHelpers_AdditionalBranches(t *testing.T) {
 	server, _ := setupTestServer(t)
 
-	require.Nil(t, server.convertValueToNeo4jFormat((*storage.Node)(nil), "nornicdb"))
-	require.Nil(t, server.convertValueToNeo4jFormat((*storage.Edge)(nil), "nornicdb"))
+	projectedValue1, projectionErr1 := server.convertValueToNeo4jFormat(t.Context(), (*storage.Node)(nil), "nornicdb")
+	require.NoError(t, projectionErr1)
+	require.Nil(t, projectedValue1)
+	projectedValue2, projectionErr2 := server.convertValueToNeo4jFormat(t.Context(), (*storage.Edge)(nil), "nornicdb")
+	require.NoError(t, projectionErr2)
+	require.Nil(t, projectedValue2)
 
-	converted := server.convertValueToNeo4jFormat(map[string]interface{}{
+	converted, projectionErr3 := server.convertValueToNeo4jFormat(t.Context(), map[string]interface{}{
 		"_pathResult": "drop",
 		"node": &storage.Node{
 			ID:         "cv-node",
@@ -922,24 +926,27 @@ func TestNeo4jConversionAndTxHelpers_AdditionalBranches(t *testing.T) {
 			"text",
 		},
 	}, "nornicdb")
+	require.NoError(t, projectionErr3)
 	m, ok := converted.(map[string]interface{})
 	require.True(t, ok)
 	require.Equal(t, "drop", m["_pathResult"])
 	require.Contains(t, m, "node")
 	require.Contains(t, m, "vals")
 
-	withProps := server.convertValueToNeo4jFormat(map[string]interface{}{
+	withProps, projectionErr4 := server.convertValueToNeo4jFormat(t.Context(), map[string]interface{}{
 		"labels":     []string{"Doc"},
 		"properties": map[string]interface{}{"title": "t"},
 	}, "nornicdb")
+	require.NoError(t, projectionErr4)
 	props, ok := withProps.(map[string]interface{})["properties"].(map[string]interface{})
 	require.True(t, ok)
 	require.Equal(t, "t", props["title"])
 
-	withMixedLabels := server.convertValueToNeo4jFormat(map[string]interface{}{
+	withMixedLabels, projectionErr5 := server.convertValueToNeo4jFormat(t.Context(), map[string]interface{}{
 		"labels": []interface{}{"A", 123, "B"},
 		"name":   "mixed",
 	}, "nornicdb")
+	require.NoError(t, projectionErr5)
 	labels, ok := withMixedLabels.(map[string]interface{})["labels"].([]interface{})
 	require.True(t, ok)
 	require.Equal(t, "A", labels[0])
@@ -956,24 +963,24 @@ func TestNeo4jConversionAndTxHelpers_AdditionalBranches(t *testing.T) {
 	require.Contains(t, server.transactionCommitURL(txReq, "nornic", "tx-1"), "http://localhost:")
 
 	resp := &TransactionResponse{Results: make([]QueryResult, 0)}
-	server.appendStatementResult(resp, &cypher.ExecuteResult{
+	require.NoError(t, server.appendStatementResult(t.Context(), resp, &cypher.ExecuteResult{
 		Columns: []string{"n"},
 		Rows:    [][]interface{}{{map[string]interface{}{"elementId": "4:nornicdb:abc"}}},
 		Metadata: map[string]interface{}{
 			"receipt":    map[string]interface{}{"writes": 1},
 			"optimistic": map[string]interface{}{"createdNodeIds": []string{"nornic:1"}},
 		},
-	}, "nornicdb", false)
+	}, "nornicdb", false))
 	require.Len(t, resp.Results, 1)
 	require.NotNil(t, resp.Receipt)
 	require.NotNil(t, resp.Optimistic)
 
 	// Nil result columns must serialize as [] for UI safety.
 	resp = &TransactionResponse{Results: make([]QueryResult, 0)}
-	server.appendStatementResult(resp, &cypher.ExecuteResult{
+	require.NoError(t, server.appendStatementResult(t.Context(), resp, &cypher.ExecuteResult{
 		Columns: nil,
 		Rows:    [][]interface{}{},
-	}, "nornicdb", false)
+	}, "nornicdb", false))
 	require.Len(t, resp.Results, 1)
 	require.NotNil(t, resp.Results[0].Columns)
 	require.Len(t, resp.Results[0].Columns, 0)
@@ -1002,9 +1009,9 @@ func TestDbConfigStatusAndHeimdallRoutes_AdditionalBranches(t *testing.T) {
 	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "status_db"}))
 	st, err := server.dbManager.GetStorage("status_db")
 	require.NoError(t, err)
-	_, _ = st.CreateNode(&storage.Node{ID: "s1", Labels: []string{"Doc"}})
-	_, _ = st.CreateNode(&storage.Node{ID: "s2", Labels: []string{"Doc"}})
-	_ = st.CreateEdge(&storage.Edge{ID: "e1", StartNode: "s1", EndNode: "s2", Type: "REL"})
+	_, _ = st.CreateNode(t.Context(), &storage.Node{ID: "s1", Labels: []string{"Doc"}})
+	_, _ = st.CreateNode(t.Context(), &storage.Node{ID: "s2", Labels: []string{"Doc"}})
+	_ = st.CreateEdge(t.Context(), &storage.Edge{ID: "e1", StartNode: "s1", EndNode: "s2", Type: "REL"})
 
 	statusReq := httptest.NewRequest(http.MethodGet, "/status", nil)
 	statusRec := httptest.NewRecorder()
@@ -1070,7 +1077,7 @@ func TestAuthHandlers_BranchExpansion(t *testing.T) {
 
 	t.Run("token locked account path", func(t *testing.T) {
 		for i := 0; i < 6; i++ {
-			_, _, _ = server.auth.Authenticate("reader", "bad-pass", "127.0.0.1", "test")
+			_, _, _ = server.auth.Authenticate(context.Background(), "reader", "bad-pass", "127.0.0.1", "test")
 		}
 		req := httptest.NewRequest(http.MethodPost, "/auth/token", strings.NewReader(`{"username":"reader","password":"bad-pass","grant_type":"password"}`))
 		rec := httptest.NewRecorder()
@@ -1123,7 +1130,7 @@ func TestAuthHandlers_BranchExpansion(t *testing.T) {
 		server.handleRoles(rec, req)
 		require.Equal(t, http.StatusCreated, rec.Code)
 
-		require.NoError(t, server.auth.UpdateRoles("reader", []auth.Role{auth.Role("role_src")}))
+		require.NoError(t, server.auth.UpdateRoles(context.Background(), "reader", []auth.Role{auth.Role("role_src")}))
 
 		req = httptest.NewRequest(http.MethodPatch, "/auth/roles/role_src", strings.NewReader(`{"name":"role_dst"}`))
 		rec = httptest.NewRecorder()

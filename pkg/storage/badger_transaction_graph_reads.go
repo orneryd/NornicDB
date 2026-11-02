@@ -22,8 +22,8 @@ import (
 // and visibility checks against a head whose FloorVersion is non-zero
 // reject every committed value as "not yet visible" — which manifests as
 // lost updates under the Read-Modify-Write retry loop in DB.Update.
-func (tx *BadgerTransaction) GetNode(nodeID NodeID) (*Node, error) {
-	return readTransactionEntity(tx, nodeID, (*BadgerTransaction).nodeReadState, cloneTransactionNode, loadTransactionNode, nil, transactionNodeRead{mvccEntityRead: mvccEntityRead{vectors: true, visibility: visibleRead}})
+func (tx *BadgerTransaction) GetNode(ctx context.Context, nodeID NodeID) (*Node, error) {
+	return readTransactionEntity(ctx, tx, nodeID, (*BadgerTransaction).nodeReadState, cloneTransactionNode, loadTransactionNode, nil, transactionNodeRead{mvccEntityRead: mvccEntityRead{vectors: true, visibility: visibleRead}})
 }
 
 // GetQueryNode implements QueryNodeReader inside the
@@ -35,10 +35,10 @@ func (tx *BadgerTransaction) GetNode(nodeID NodeID) (*Node, error) {
 // vectors reads with GetNode. Query execution reads nodes this way: rows
 // never carry vectors, and an update reconciles embeddings against the stored
 // node (reconcileManagedEmbeddingsLocked), not the caller's copy.
-func (tx *BadgerTransaction) GetQueryNode(nodeID NodeID) (*Node, error) {
+func (tx *BadgerTransaction) GetQueryNode(ctx context.Context, nodeID NodeID) (*Node, error) {
 	// Query visibility belongs to this capability. The common point-read owner
 	// invokes the completion policy before releasing the transaction lock.
-	return readTransactionEntity(tx, nodeID, (*BadgerTransaction).nodeReadState, cloneTransactionNode, loadTransactionNode, func(tx *BadgerTransaction, node *Node, _ transactionNodeRead, err error) (*Node, error) {
+	return readTransactionEntity(ctx, tx, nodeID, (*BadgerTransaction).nodeReadState, cloneTransactionNode, loadTransactionNode, func(tx *BadgerTransaction, node *Node, _ transactionNodeRead, err error) (*Node, error) {
 		if err == nil && tx.engine.filterEntityByDecay(visibleRead, node, DecayScoringTime()) {
 			return nil, ErrNotFound
 		}
@@ -53,16 +53,16 @@ func (tx *BadgerTransaction) GetQueryNode(nodeID NodeID) (*Node, error) {
 // slice means "full node". Visibility is the transaction's own: pending
 // writes, deletes, connected deletes and the MVCC snapshot all apply exactly
 // as in GetNode.
-func (tx *BadgerTransaction) GetNodeProjected(nodeID NodeID, properties []string) (*Node, error) {
-	return readTransactionEntity(tx, nodeID, (*BadgerTransaction).nodeReadState, cloneTransactionNode, loadTransactionNode, nil, transactionNodeRead{mvccEntityRead: mvccEntityRead{visibility: visibleRead}, properties: properties, projected: true})
+func (tx *BadgerTransaction) GetNodeProjected(ctx context.Context, nodeID NodeID, properties []string) (*Node, error) {
+	return readTransactionEntity(ctx, tx, nodeID, (*BadgerTransaction).nodeReadState, cloneTransactionNode, loadTransactionNode, nil, transactionNodeRead{mvccEntityRead: mvccEntityRead{visibility: visibleRead}, properties: properties, projected: true})
 }
 
 // getCommittedNodeProjectedLocked is getCommittedNodeLocked for a projected
 // read: the same write-behind overlay, snapshot caches and MVCC resolution,
 // but decoding only the requested properties and never hydrating embeddings.
-func (tx *BadgerTransaction) getCommittedNodeProjectedLocked(nodeID NodeID, properties []string) (*Node, error) {
+func (tx *BadgerTransaction) getCommittedNodeProjectedLocked(ctx context.Context, nodeID NodeID, properties []string) (*Node, error) {
 	if tx.engine != nil && tx.engine.writeBehind != nil {
-		return tx.engine.GetNodeProjected(nodeID, properties)
+		return tx.engine.GetNodeProjected(ctx, nodeID, properties)
 	}
 	if node, ok := tx.snapshotPrefixNodeByID[nodeID]; ok {
 		return projectCachedNodeForRead(node, properties, true), nil
@@ -80,10 +80,10 @@ func (tx *BadgerTransaction) getCommittedNodeProjectedLocked(nodeID NodeID, prop
 	if tx.readTS.IsZero() {
 		return tx.getNodeFromBadgerSnapshotProjectedLocked(nodeID, propertyProjectionSet(properties))
 	}
-	node, err := readEntityAtWithView(tx.engine, nodeID, tx.readTS, properties, tx.withSnapshotViewLocked, (*BadgerEngine).getNodeProjectedVisibleAtInTxn)
+	node, err := readEntityAtWithView(ctx, tx.engine, nodeID, tx.readTS, properties, tx.withSnapshotViewLocked, (*BadgerEngine).getNodeProjectedVisibleAtInTxn)
 	if err == ErrNotVisibleAtSnapshot {
 		if tx.engine.writeBehind != nil {
-			if fresh, freshErr := tx.engine.GetNodeProjected(nodeID, properties); freshErr == nil {
+			if fresh, freshErr := tx.engine.GetNodeProjected(ctx, nodeID, properties); freshErr == nil {
 				return fresh, nil
 			}
 		}
@@ -98,7 +98,7 @@ func (tx *BadgerTransaction) getCommittedNodeProjectedLocked(nodeID NodeID, prop
 			return nil, fallbackErr
 		}
 		if tx.engine.writeBehind != nil {
-			if fresh, freshErr := tx.engine.GetNodeProjected(nodeID, properties); freshErr == nil {
+			if fresh, freshErr := tx.engine.GetNodeProjected(ctx, nodeID, properties); freshErr == nil {
 				return fresh, nil
 			}
 		}
@@ -182,8 +182,8 @@ func (tx *BadgerTransaction) RelationshipEndpointVisible(id NodeID) (visible, an
 // Like GetNode, reads pin the transaction to the edge's namespace so the
 // readTS is bound to the namespace's actual sequence rather than the
 // pre-pin sequence-0 placeholder.
-func (tx *BadgerTransaction) GetEdge(edgeID EdgeID) (*Edge, error) {
-	return readTransactionEntity(tx, edgeID, (*BadgerTransaction).edgeReadState, cloneTransactionEdge, (*BadgerTransaction).getCommittedEdgeReadLocked, nil, visibleRead)
+func (tx *BadgerTransaction) GetEdge(ctx context.Context, edgeID EdgeID) (*Edge, error) {
+	return readTransactionEntity(ctx, tx, edgeID, (*BadgerTransaction).edgeReadState, cloneTransactionEdge, loadTransactionEdge, nil, visibleRead)
 }
 
 // ReadEdges returns the requested native transaction adjacency, including pending
@@ -249,20 +249,17 @@ func (tx *BadgerTransaction) ReadEdges(ctx context.Context, request TransactionE
 }
 
 // GetEdgeBetween returns a matching edge including pending transaction writes.
-func (tx *BadgerTransaction) GetEdgeBetween(startID, endID NodeID, edgeType string) *Edge {
-	// This point read has no caller context of its own, so it runs on the
-	// transaction's own lifetime: context.Background is the true lifetime at
-	// this context-free entry point, not a forwarded default.
-	edges, err := tx.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadBetween, Node: startID, Other: endID})
+func (tx *BadgerTransaction) GetEdgeBetween(ctx context.Context, startID, endID NodeID, edgeType string) (*Edge, error) {
+	edges, err := tx.ReadEdges(ctx, TransactionEdgeRead{Kind: TransactionReadBetween, Node: startID, Other: endID})
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	for _, edge := range edges {
 		if edgeType == "" || edge.Type == edgeType {
-			return edge
+			return edge, nil
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 // getCommittedEdgesByTypeLocked reads the committed edges of edgeType ("" is
@@ -876,11 +873,9 @@ func (tx *BadgerTransaction) streamPendingLabelNodesLocked(
 }
 
 // GetFirstNodeByLabel returns the first visible node with the given label.
-func (tx *BadgerTransaction) GetFirstNodeByLabel(label string) (*Node, error) {
-	// The first-node read has no caller context of its own, so it runs on the
-	// transaction's own lifetime: context.Background is the true lifetime at
-	// this context-free entry point, not a forwarded default.
-	nodes, err := tx.GetNodesByLabel(context.Background(), label)
+func (tx *BadgerTransaction) GetFirstNodeByLabel(ctx context.Context, label string) (*Node, error) {
+	// Label discovery retains this statement's own admission context.
+	nodes, err := tx.GetNodesByLabel(ctx, label)
 	if err != nil {
 		return nil, err
 	}
@@ -1103,15 +1098,18 @@ func estimateRetainedEdgeBytes(edge *Edge) int64 {
 // bookkeeping. It reads what storage holds, so a node the visibility layer
 // hides is found (storedRead). GetNode and GetQueryNode read the same way
 // through the visibility layer (getCommittedNodeReadLocked).
-func (tx *BadgerTransaction) getCommittedNodeLocked(nodeID NodeID) (*Node, error) {
-	return tx.getCommittedNodeReadLocked(nodeID, true, storedRead)
+func (tx *BadgerTransaction) getCommittedNodeLocked(ctx context.Context, nodeID NodeID) (*Node, error) {
+	return tx.getCommittedNodeReadLocked(ctx, nodeID, true, storedRead)
 }
 
 // getCommittedNodeReadLocked reads a committed node through the visibility
 // layer when v applies it. With vectors false it reads no separately stored
 // embedding vector (GetQueryNode), and a node already held in memory shares
 // its vectors instead of copying them.
-func (tx *BadgerTransaction) getCommittedNodeReadLocked(nodeID NodeID, vectors bool, v readVisibility) (*Node, error) {
+func (tx *BadgerTransaction) getCommittedNodeReadLocked(ctx context.Context, nodeID NodeID, vectors bool, v readVisibility) (*Node, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	copyRead := copyNode
 	if !vectors {
 		copyRead = copyNodeForCaller
@@ -1120,9 +1118,9 @@ func (tx *BadgerTransaction) getCommittedNodeReadLocked(nodeID NodeID, vectors b
 	// visible to every later transaction, ahead of any snapshot read.
 	if tx.engine != nil && tx.engine.writeBehind != nil {
 		if vectors {
-			return tx.engine.getNode(nodeID, v)
+			return tx.engine.getNode(ctx, nodeID, v)
 		}
-		return tx.engine.readNodeMetadata(nodeID, v, nodeItemQueryMetadata)
+		return tx.engine.readNodeMetadata(ctx, nodeID, v, nodeItemQueryMetadata)
 	}
 	if node, ok := tx.snapshotPrefixNodeByID[nodeID]; ok {
 		return copyRead(node), nil
@@ -1142,7 +1140,7 @@ func (tx *BadgerTransaction) getCommittedNodeReadLocked(nodeID NodeID, vectors b
 	if tx.readTS.IsZero() {
 		return tx.getNodeFromBadgerSnapshotLocked(nodeID)
 	}
-	node, err := readEntityAtWithView(tx.engine, nodeID, tx.readTS, mvccEntityRead{vectors: vectors, visibility: v}, tx.withSnapshotViewLocked, (*BadgerEngine).getNodeAtInTxn)
+	node, err := readEntityAtWithView(ctx, tx.engine, nodeID, tx.readTS, mvccEntityRead{vectors: vectors, visibility: v}, tx.withSnapshotViewLocked, (*BadgerEngine).getNodeAtInTxn)
 	if err == ErrNotVisibleAtSnapshot {
 		// The head exists but isn't visible at the reader's snapshot.
 		// Treat as a hard miss — falling back to a primary-key read
@@ -1153,7 +1151,7 @@ func (tx *BadgerTransaction) getCommittedNodeReadLocked(nodeID NodeID, vectors b
 			// snapshot pinned before the flush can miss a committed node.
 			// The overlay covers still-buffered writes; a fresh
 			// latest-committed read covers the flush window.
-			if fresh, freshErr := tx.engine.getNode(nodeID, v); freshErr == nil {
+			if fresh, freshErr := tx.engine.getNode(ctx, nodeID, v); freshErr == nil {
 				return fresh, nil
 			}
 		}
@@ -1176,7 +1174,7 @@ func (tx *BadgerTransaction) getCommittedNodeReadLocked(nodeID NodeID, vectors b
 			// The pinned snapshot may predate the flush of a node
 			// committed through the buffer (head and record both
 			// absent at pin time). A fresh read resolves it.
-			if fresh, freshErr := tx.engine.getNode(nodeID, v); freshErr == nil {
+			if fresh, freshErr := tx.engine.getNode(ctx, nodeID, v); freshErr == nil {
 				return fresh, nil
 			}
 		}
@@ -1237,17 +1235,17 @@ func (tx *BadgerTransaction) getNodeFromBadgerSnapshotLocked(nodeID NodeID) (*No
 // bookkeeping. It reads what storage holds, so a relationship the visibility
 // layer hides is found (storedRead). GetEdge reads the same way through the
 // visibility layer (getCommittedEdgeReadLocked).
-func (tx *BadgerTransaction) getCommittedEdgeLocked(edgeID EdgeID) (*Edge, error) {
-	return tx.getCommittedEdgeReadLocked(edgeID, storedRead)
+func (tx *BadgerTransaction) getCommittedEdgeLocked(ctx context.Context, edgeID EdgeID) (*Edge, error) {
+	return tx.getCommittedEdgeReadLocked(ctx, edgeID, storedRead)
 }
 
 // getCommittedEdgeReadLocked reads a committed relationship through the
 // visibility layer when v applies it.
-func (tx *BadgerTransaction) getCommittedEdgeReadLocked(edgeID EdgeID, v readVisibility) (*Edge, error) {
+func (tx *BadgerTransaction) getCommittedEdgeReadLocked(ctx context.Context, edgeID EdgeID, v readVisibility) (*Edge, error) {
 	// Write-behind overlay: buffered-but-unflushed writes are committed and
 	// visible to every later transaction, ahead of any snapshot read.
 	if tx.engine != nil && tx.engine.writeBehind != nil {
-		return tx.engine.getEdge(edgeID, v)
+		return tx.engine.getEdge(ctx, edgeID, v)
 	}
 	if tx.readTS.IsZero() {
 		key := edgeKey(edgeID)
@@ -1267,7 +1265,7 @@ func (tx *BadgerTransaction) getCommittedEdgeReadLocked(edgeID EdgeID, v readVis
 		}
 		return tx.engine.decodeEdgeBodyWithID(tx.badgerTx, namespaceForEdgeID(edgeID), edgeBytes, edgeID)
 	}
-	edge, err := readEntityAtWithView(tx.engine, edgeID, tx.readTS, mvccEntityRead{visibility: v}, tx.withSnapshotViewLocked, (*BadgerEngine).getEdgeAtInTxn)
+	edge, err := readEntityAtWithView(ctx, tx.engine, edgeID, tx.readTS, mvccEntityRead{visibility: v}, tx.withSnapshotViewLocked, (*BadgerEngine).getEdgeAtInTxn)
 	if err == ErrNotVisibleAtSnapshot {
 		// SI: edge head exists but isn't visible at our snapshot.
 		// Surface as ErrNotFound so callers can't observe peer
@@ -1277,7 +1275,7 @@ func (tx *BadgerTransaction) getCommittedEdgeReadLocked(edgeID EdgeID, v readVis
 			// head appears only when the flusher lands it, so a snapshot
 			// pinned before the flush can miss a committed edge. A fresh
 			// latest-committed read covers the flush window.
-			if fresh, freshErr := tx.engine.getEdge(edgeID, v); freshErr == nil {
+			if fresh, freshErr := tx.engine.getEdge(ctx, edgeID, v); freshErr == nil {
 				return fresh, nil
 			}
 		}
@@ -1286,7 +1284,7 @@ func (tx *BadgerTransaction) getCommittedEdgeReadLocked(edgeID EdgeID, v readVis
 	if err == ErrNotFound && tx.engine.writeBehind != nil {
 		// The pinned snapshot may predate the flush of an edge committed
 		// through the buffer (head and record both absent at pin time).
-		if fresh, freshErr := tx.engine.getEdge(edgeID, v); freshErr == nil {
+		if fresh, freshErr := tx.engine.getEdge(ctx, edgeID, v); freshErr == nil {
 			return fresh, nil
 		}
 	}
@@ -1317,26 +1315,26 @@ func (tx *BadgerTransaction) getCommittedEdgeReadLocked(edgeID EdgeID, v readVis
 // (nothing live at latest-committed state), ErrNotFound remains correct.
 // Read paths (GetEdge) are intentionally untouched — snapshot isolation
 // still hides peer commits from reads.
-func (tx *BadgerTransaction) getCommittedEdgeForUpdateLocked(edgeID EdgeID) (*Edge, error) {
+func (tx *BadgerTransaction) getCommittedEdgeForUpdateLocked(ctx context.Context, edgeID EdgeID) (*Edge, error) {
 	// Write-behind overlay: a buffered-but-unflushed edge is committed and
 	// read-committed-visible, exactly as getCommittedEdgeLocked reports it.
 	// Updating it is therefore not a write-write conflict — it is the same
 	// latest-committed state the update read from (monster retest part 1,
 	// "SET on a buffered relationship fails with a conflict").
 	if tx.engine != nil && tx.engine.writeBehind != nil {
-		return tx.engine.getEdge(edgeID, storedRead)
+		return tx.engine.getEdge(ctx, edgeID, storedRead)
 	}
 	if tx.readTS.IsZero() {
-		return tx.getCommittedEdgeLocked(edgeID)
+		return tx.getCommittedEdgeLocked(ctx, edgeID)
 	}
-	edge, err := readEntityAtWithView(tx.engine, edgeID, tx.readTS, mvccEntityRead{visibility: storedRead}, tx.withSnapshotViewLocked, (*BadgerEngine).getEdgeAtInTxn)
+	edge, err := readEntityAtWithView(ctx, tx.engine, edgeID, tx.readTS, mvccEntityRead{visibility: storedRead}, tx.withSnapshotViewLocked, (*BadgerEngine).getEdgeAtInTxn)
 	// A peer-created edge has no head at the pinned physical snapshot.
 	// Classify it using latest state just like a logically newer edge; never
 	// replace an existing snapshot body with that latest body.
 	if !errors.Is(err, ErrNotVisibleAtSnapshot) && !errors.Is(err, ErrNotFound) {
 		return edge, err
 	}
-	_, _, latestErr := tx.engine.readLatestEntity(string(edgeID), true, storedRead)
+	_, _, latestErr := tx.engine.readLatestEntity(ctx, string(edgeID), true, storedRead)
 	switch {
 	case latestErr == nil:
 		// Live at latest-committed state: a write-write conflict, not a
@@ -1430,27 +1428,26 @@ func (tx *BadgerTransaction) committedEdgeSupersededLocked(id EdgeID) bool {
 	return rewritten
 }
 
-// nodeExists checks if a node exists (pending or storage).
-func (tx *BadgerTransaction) nodeExists(nodeID NodeID) bool {
-	_, visible := tx.visibleNodeLabelsLocked(nodeID)
-	return visible
-}
-
 // visibleNodeLabelsLocked reports whether a node exists for the transaction
-// (pending, or committed and visible at its snapshot, and not deleted by it)
-// and returns its labels, from the one read that decides it. The committed
-// read is a stored read: a node the visibility layer hides from user reads
-// is still a relationship's endpoint. A failed read counts as not visible.
-func (tx *BadgerTransaction) visibleNodeLabelsLocked(nodeID NodeID) ([]string, bool) {
+// (pending, or committed and visible at its snapshot, and not deleted by it).
+// Stored endpoints remain valid when user-visible decay hides them. Missing
+// endpoints are distinct from failed or canceled storage reads.
+func (tx *BadgerTransaction) visibleNodeLabelsLocked(ctx context.Context, nodeID NodeID) ([]string, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
 	if _, deleted := tx.deletedNodes[nodeID]; deleted {
-		return nil, false
+		return nil, false, nil
 	}
 	if node, exists := tx.pendingNodes[nodeID]; exists {
-		return node.Labels, true
+		return node.Labels, true, nil
 	}
-	labels, err := tx.committedNodeLabelsLocked(nodeID)
+	labels, err := tx.committedNodeLabelsLocked(ctx, nodeID)
+	if errors.Is(err, ErrNotFound) {
+		return nil, false, nil
+	}
 	if err != nil {
-		return nil, false
+		return nil, false, err
 	}
-	return labels, true
+	return labels, true, nil
 }

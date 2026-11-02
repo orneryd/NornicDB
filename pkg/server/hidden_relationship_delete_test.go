@@ -52,7 +52,7 @@ func openHiddenDeleteServer(t *testing.T, dir string, writeBehind bool, route st
 		JWTSecret:       []byte("test-secret-key-for-testing-only-32b"),
 	}, storage.NewNamespacedEngine(db.GetBaseStorageForManager(), "system"))
 	require.NoError(t, err)
-	if _, err := authenticator.CreateUser("admin", "password123", []auth.Role{auth.RoleAdmin}); err != nil {
+	if _, err := authenticator.CreateUser(context.Background(), "admin", "password123", []auth.Role{auth.RoleAdmin}); err != nil {
 		require.ErrorIs(t, err, auth.ErrUserExists)
 	}
 	serverConfig := DefaultConfig()
@@ -294,13 +294,13 @@ func TestSuppressedRelationshipReMergeKeepsCounts(t *testing.T) {
 						physicalID = stored[0].ID
 					}
 					assert.Equal(t, physicalID, stored[0].ID)
-					for _, read := range []func() (int64, error){
+					for _, read := range []func(context.Context) (int64, error){
 						store.EdgeCount,
-						func() (int64, error) { return store.EdgeCountByType("INGEST") },
-						func() (int64, error) { return store.EdgeCountByStartLabel("Source", "INGEST") },
-						func() (int64, error) { return store.EdgeCountByEndLabel("Target", "INGEST") },
+						func(ctx context.Context) (int64, error) { return store.EdgeCountByType(ctx, "INGEST") },
+						func(ctx context.Context) (int64, error) { return store.EdgeCountByStartLabel(ctx, "Source", "INGEST") },
+						func(ctx context.Context) (int64, error) { return store.EdgeCountByEndLabel(ctx, "Target", "INGEST") },
 					} {
-						count, err := read()
+						count, err := read(t.Context())
 						require.NoError(t, err)
 						assert.EqualValues(t, 1, count, "stored counters must match the single physical record")
 					}

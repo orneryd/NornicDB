@@ -132,11 +132,11 @@ func TestRemoteEngineHTTPNullParameters(t *testing.T) {
 	// UpdateNode with a nil collection removes the property instead of
 	// storing an empty one.
 	t.Run("update_node", func(t *testing.T) {
-		id, err := engine.CreateNode(&Node{ID: NodeID(run + "-node"), Labels: []string{"RemoteNullParameter"}, Properties: map[string]interface{}{
+		id, err := engine.CreateNode(t.Context(), &Node{ID: NodeID(run + "-node"), Labels: []string{"RemoteNullParameter"}, Properties: map[string]interface{}{
 			"run": run, "tags": []string{"a"}, "list": []interface{}{int64(1)}, "extra": "x", "kept": int64(7),
 		}})
 		require.NoError(t, err)
-		require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: id, Properties: map[string]interface{}{
+		require.NoError(t, engine.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: id, Properties: map[string]interface{}{
 			"tags": []string(nil), "list": []interface{}(nil), "extra": map[string]string(nil),
 		}}}))
 		_, rows, err := engine.QueryCypher(ctx, "MATCH (n:RemoteNullParameter {id: $id}) RETURN n.tags IS NULL, n.list IS NULL, n.extra IS NULL, n.kept", map[string]interface{}{"id": string(id)}, RemoteAccessRead)

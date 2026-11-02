@@ -638,7 +638,7 @@ func (e *StorageExecutor) tryExecuteCallTailRelationshipMatchProjection(
 		if node := nodes[id]; node != nil {
 			return node, nil
 		}
-		node, err := e.getQueryNode(e.storage, id)
+		node, err := e.getQueryNode(ctx, e.storage, id)
 		if err == nil && node != nil {
 			nodes[id] = node
 		}
@@ -1510,8 +1510,14 @@ func (e *StorageExecutor) callNornicDbVersion() (*ExecuteResult, error) {
 }
 
 func (e *StorageExecutor) callNornicDbStats(ctx context.Context) (*ExecuteResult, error) {
-	nodeCount, _ := e.storage.NodeCount()
-	edgeCount, _ := e.storage.EdgeCount()
+	nodeCount, err := e.storage.NodeCount(ctx)
+	if err != nil {
+		return nil, err
+	}
+	edgeCount, err := e.storage.EdgeCount(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	return &ExecuteResult{
 		Columns: columnNames(nornicdbStatsColumns),

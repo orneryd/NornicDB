@@ -71,7 +71,7 @@ func TestExecuteCallTailSingleRow_NodeAndScalarBindings(t *testing.T) {
 		Labels:     []string{"N"},
 		Properties: map[string]interface{}{"id": "n1", "name": "first"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	seedCols := []string{"n", "score"}

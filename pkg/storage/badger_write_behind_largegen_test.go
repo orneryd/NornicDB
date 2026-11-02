@@ -22,11 +22,11 @@ func flushLargeWriteBehindGeneration(t *testing.T, engine *BadgerEngine, n int, 
 	t.Helper()
 
 	for i := 0; i < n; i++ {
-		tx, err := engine.BeginTransaction()
+		tx, err := engine.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		require.NoError(t, tx.SetImplicit(true))
 		require.NoError(t, tx.SetNamespace("test"))
-		_, err = tx.CreateNode(nodeFor(i))
+		_, err = tx.CreateNode(t.Context(), nodeFor(i))
 		require.NoError(t, err)
 		require.NoError(t, tx.Commit())
 	}
@@ -78,11 +78,11 @@ func TestWriteBehind_SyncLargeCommitControl(t *testing.T) {
 	t.Cleanup(func() { _ = engine.Close() })
 
 	const n = 25000
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	for i := 0; i < n; i++ {
-		_, err = tx.CreateNode(&Node{
+		_, err = tx.CreateNode(t.Context(), &Node{
 			ID:         NodeID("test:zz" + strconv.Itoa(i)),
 			Labels:     []string{"ZZ"},
 			Properties: nil,

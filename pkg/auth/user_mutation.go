@@ -28,16 +28,16 @@ func (a *Authenticator) UpdateRolesAndStatus(ctx context.Context, username strin
 			auditLog: func(event AuditEvent) { events = append(events, event) },
 		}
 		if roles != nil {
-			if err := staged.UpdateRoles(username, roles); err != nil {
+			if err := staged.UpdateRoles(ctx, username, roles); err != nil {
 				return err
 			}
 		}
 		if disabled != nil {
 			var err error
 			if *disabled {
-				err = staged.ChangeUserState(username, UserDisable)
+				err = staged.ChangeUserState(ctx, username, UserDisable)
 			} else {
-				err = staged.ChangeUserState(username, UserEnable)
+				err = staged.ChangeUserState(ctx, username, UserEnable)
 			}
 			if err != nil {
 				return err

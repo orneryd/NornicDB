@@ -27,18 +27,18 @@ func pr1655PresenceLifetimeEngine(t *testing.T) (*BadgerEngine, *memory.Policy) 
 
 func pr1655PresenceLifetimeCreate(t *testing.T, engine *BadgerEngine, id NodeID) {
 	t.Helper()
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetImplicit(true))
-	_, err = tx.CreateNode(&Node{ID: id, Properties: map[string]interface{}{"body": "buffered presence"}})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: id, Properties: map[string]interface{}{"body": "buffered presence"}})
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 }
 
 func pr1655PresenceLifetimeReader(t *testing.T, engine *BadgerEngine) *BadgerTransaction {
 	t.Helper()
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if tx.IsActive() {
@@ -120,7 +120,7 @@ func TestPR1655BeginPresenceCloseOpenAndAbandoned(t *testing.T) {
 		t.Run(fmt.Sprintf("abandoned=%t", abandoned), func(t *testing.T) {
 			engine, policy := pr1655PresenceLifetimeEngine(t)
 			pr1655PresenceLifetimeCreate(t, engine, "test:close")
-			reader, err := engine.BeginTransaction()
+			reader, err := engine.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			presence := reader.beginPresence
 			require.NotNil(t, presence)
@@ -164,7 +164,7 @@ func TestPR1655BeginPresenceImplicitAdvanceReplacesPins(t *testing.T) {
 	newGeneration := engine.writeBehind.active
 	engine.writeBehind.mu.RUnlock()
 	require.NotSame(t, oldGeneration, newGeneration)
-	require.NoError(t, reader.ResumeAfterIndependentCommit())
+	require.NoError(t, reader.ResumeAfterIndependentCommit(t.Context()))
 	requirePR1655PresenceReleased(t, oldPresence)
 	require.Zero(t, oldGeneration.beginPins.Load())
 	require.True(t, oldGeneration.leasesReleased.Load())

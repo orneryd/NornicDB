@@ -34,7 +34,7 @@ func tlfEngine(t *testing.T, relationship bool) (*BadgerEngine, *NamespacedEngin
 	engine := NewNamespacedEngine(inner, "test")
 	if relationship {
 		for _, id := range []NodeID{"left", "right"} {
-			_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"TLF_ENDPOINT"}})
+			_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"TLF_ENDPOINT"}})
 			require.NoError(t, err)
 		}
 	}
@@ -45,10 +45,10 @@ func tlfSeed(t *testing.T, engine *NamespacedEngine, c Constraint, id string, pr
 	t.Helper()
 	require.NoError(t, validatePropertiesForStorage(properties), "public write accepts the property values")
 	if c.EffectiveEntityType() == ConstraintEntityRelationship {
-		require.NoError(t, engine.CreateEdge(&Edge{ID: EdgeID(id), StartNode: "left", EndNode: "right", Type: c.Label, Properties: properties}))
+		require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: EdgeID(id), StartNode: "left", EndNode: "right", Type: c.Label, Properties: properties}))
 		return
 	}
-	_, err := engine.CreateNode(&Node{ID: NodeID(id), Labels: []string{c.Label}, Properties: properties})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: NodeID(id), Labels: []string{c.Label}, Properties: properties})
 	require.NoError(t, err)
 }
 
@@ -257,13 +257,13 @@ func TestTemporalListFamilyTemporalListEnforcement(t *testing.T) {
 					first := tlfListProperties(values[0], composite, 0, 10*time.Hour)
 					probe := tlfListProperties(values[1], composite, 5*time.Hour, 15*time.Hour)
 					if mode == "pending" {
-						tx, err := inner.BeginTransaction()
+						tx, err := inner.BeginTransaction(t.Context())
 						require.NoError(t, err)
 						defer tx.Rollback()
 						require.NoError(t, tx.SetNamespace("test"))
-						_, err = tx.CreateNode(&Node{ID: "test:first", Labels: []string{c.Label}, Properties: first})
+						_, err = tx.CreateNode(t.Context(), &Node{ID: "test:first", Labels: []string{c.Label}, Properties: first})
 						require.NoError(t, err)
-						_, err = tx.CreateNode(&Node{ID: "test:second", Labels: []string{c.Label}, Properties: probe})
+						_, err = tx.CreateNode(t.Context(), &Node{ID: "test:second", Labels: []string{c.Label}, Properties: probe})
 						phase := "stage-second"
 						if err == nil {
 							phase, err = "commit", tx.Commit()
@@ -295,16 +295,16 @@ func TestTemporalListFamilyTemporalListEnforcement(t *testing.T) {
 					var err error
 					phase := "direct"
 					if strings.HasSuffix(mode, "transaction") {
-						tx, beginErr := inner.BeginTransaction()
+						tx, beginErr := inner.BeginTransaction(t.Context())
 						require.NoError(t, beginErr)
 						defer tx.Rollback()
 						require.NoError(t, tx.SetNamespace("test"))
 						require.NoError(t, tx.SetValidationSetting(DeferredConstraintValidation, true))
-						_, err = tx.CreateNode(&Node{ID: "test:second", Labels: []string{c.Label}, Properties: probe})
+						_, err = tx.CreateNode(t.Context(), &Node{ID: "test:second", Labels: []string{c.Label}, Properties: probe})
 						require.NoError(t, err, "deferred stage reaches Commit")
 						phase, err = "commit", tx.Commit()
 					} else {
-						_, err = engine.CreateNode(&Node{ID: "second", Labels: []string{c.Label}, Properties: probe})
+						_, err = engine.CreateNode(t.Context(), &Node{ID: "second", Labels: []string{c.Label}, Properties: probe})
 					}
 					t.Logf("TLF_LIST_ENFORCEMENT mode=%s phase=%s authoritative=%t err=%v", mode, phase, !scanMode, err)
 					tlfOutcome(t, err, true)
@@ -550,16 +550,16 @@ func TestTemporalListFamilyTemporalMixedEnforcement(t *testing.T) {
 						var err error
 						phase := "direct"
 						if strings.HasSuffix(mode, "transaction") {
-							tx, beginErr := inner.BeginTransaction()
+							tx, beginErr := inner.BeginTransaction(t.Context())
 							require.NoError(t, beginErr)
 							defer tx.Rollback()
 							require.NoError(t, tx.SetNamespace("test"))
 							require.NoError(t, tx.SetValidationSetting(DeferredConstraintValidation, true))
-							_, err = tx.CreateNode(&Node{ID: "test:second", Labels: []string{c.Label}, Properties: pair[1]})
+							_, err = tx.CreateNode(t.Context(), &Node{ID: "test:second", Labels: []string{c.Label}, Properties: pair[1]})
 							require.NoError(t, err, "deferred stage reaches Commit")
 							phase, err = "commit", tx.Commit()
 						} else {
-							_, err = engine.CreateNode(&Node{ID: "second", Labels: []string{c.Label}, Properties: pair[1]})
+							_, err = engine.CreateNode(t.Context(), &Node{ID: "second", Labels: []string{c.Label}, Properties: pair[1]})
 						}
 						t.Logf("TLF_MIXED_ENFORCEMENT mode=%s phase=%s authoritative=%t shape=%s err=%v", mode, phase, !scanMode, shape, err)
 						tlfOutcome(t, err, violation)
@@ -585,7 +585,7 @@ func TestTemporalListFamilyTemporalMixedIsCurrent(t *testing.T) {
 						tlfForceScan(t, inner, engine, c)
 					}
 					asOf := pair[0]["from"].(time.Time).Add(time.Hour)
-					scanned, err := inner.currentTemporalNodeByScanInNamespace("test", c, key, asOf)
+					scanned, err := inner.currentTemporalNodeByScanInNamespace(context.Background(), "test", c, key, asOf)
 					require.NoError(t, err)
 					require.NotNil(t, scanned)
 					require.Equal(t, NodeID("test:first"), scanned.ID)
@@ -594,7 +594,7 @@ func TestTemporalListFamilyTemporalMixedIsCurrent(t *testing.T) {
 					require.Empty(t, missing)
 					require.True(t, spec.keyEqual(key, projectedKey))
 					for _, properties := range []map[string]interface{}{pair[0], projected} {
-						current, err := inner.IsCurrentTemporalNodeInNamespace("test", &Node{ID: "test:first", Labels: []string{c.Label}, Properties: properties}, asOf)
+						current, err := inner.IsCurrentTemporalNodeInNamespace(context.Background(), "test", &Node{ID: "test:first", Labels: []string{c.Label}, Properties: properties}, asOf)
 						t.Logf("TLF_CURRENT authoritative=%t scalar=%T:%v current=%t err=%v", !scanMode, properties["scalar"], properties["scalar"], current, err)
 						require.NoError(t, err)
 						require.True(t, current)
@@ -719,7 +719,7 @@ func TestTemporalListFamilyCanonicalNodeDDLControls(t *testing.T) {
 				_, engine := tlfEngine(t, false)
 				values := tlfListPair(order, false)
 				for i, id := range []string{"first", "second"} {
-					_, err := engine.CreateNode(&Node{ID: NodeID(id), Labels: []string{"TLF_CANONICAL"}, Properties: map[string]interface{}{"key": values[i], "group": "same"}})
+					_, err := engine.CreateNode(t.Context(), &Node{ID: NodeID(id), Labels: []string{"TLF_CANONICAL"}, Properties: map[string]interface{}{"key": values[i], "group": "same"}})
 					require.NoError(t, err)
 				}
 				c := Constraint{Name: "tlf_canonical", Type: kind, EntityType: ConstraintEntityNode, Label: "TLF_CANONICAL", Properties: []string{"key", "group"}}

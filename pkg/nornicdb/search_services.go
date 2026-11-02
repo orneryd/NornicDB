@@ -714,7 +714,7 @@ func (db *DB) startSearchIndexBuild(entry *dbSearchService, ctx context.Context)
 	// completion; the first to run executes the build. A refused dispatch
 	// completes a build that never started with ErrClosed, so no waiter is
 	// stranded.
-	if !db.startBackgroundTask(func() {
+	if !db.RunBackgroundTask(func(backgroundCtx context.Context) {
 		entry.build.Do(func() error { return db.runInitialSearchIndexBuild(entry, ctx) })
 	}) {
 		entry.build.Do(func() error { return ErrClosed })
@@ -761,7 +761,7 @@ func (db *DB) ensurePendingFlush(entry *dbSearchService) {
 		entry.pendingFlushRunning = true
 		entry.pendingFlushMu.Unlock()
 
-		started := db.startBackgroundTask(func() {
+		started := db.RunBackgroundTask(func(backgroundCtx context.Context) {
 			reschedulePending := true
 			defer func() {
 				entry.pendingFlushMu.Lock()
@@ -782,6 +782,9 @@ func (db *DB) ensurePendingFlush(entry *dbSearchService) {
 				return
 			}
 
+			// Accepted refreshes retain this admitted task credit through completion,
+			// even when database stop cancels its scheduling lifetime.
+			completionCtx := context.WithoutCancel(backgroundCtx)
 			for {
 				nodes, edges := entry.drainPending()
 				if len(nodes)+len(edges) == 0 {
@@ -790,14 +793,14 @@ func (db *DB) ensurePendingFlush(entry *dbSearchService) {
 				// A refresh whose read fails is retried (searchRefreshRetry),
 				// not taken for a deletion.
 				for _, id := range collection.SortedKeys(nodes) {
-					err := entry.svc.RefreshNodeWithMutation(nodes[id])
+					err := entry.svc.RefreshNodeWithMutation(completionCtx, nodes[id])
 					db.logSearchRefreshError("node", id, entry, err)
 					if err == nil {
 						db.finishSearchRefresh(entry, search.RefreshRetry{Node: nodes[id]})
 					}
 				}
 				for _, id := range collection.SortedKeys(edges) {
-					err := entry.svc.RefreshEdgeWithMutation(edges[id])
+					err := entry.svc.RefreshEdgeWithMutation(completionCtx, edges[id])
 					db.logSearchRefreshError("relationship", id, entry, err)
 					if err == nil {
 						db.finishSearchRefresh(entry, search.RefreshRetry{Edge: edges[id]})
@@ -921,10 +924,12 @@ func (db *DB) indexNodeFromEvent(node *storage.Node) {
 	if node == nil {
 		return
 	}
+	// This accepted callback has no request-context contract; its independent
+	// completion context lives only on this stack, never in stored metadata.
 	// Accepted embedding outcomes publish before storage delivers the worker
 	// completion callback. Body events and outcomes awaiting a build use the
 	// same deferred refresh owner below.
-	if node.EmbeddingAttempt() != nil && db.publishEmbeddedNode(node) {
+	if node.EmbeddingAttempt() != nil && db.publishEmbeddedNode(context.Background(), node) {
 		return
 	}
 	db.queueSearchRefreshEvent(searchNodeWrite, string(node.ID))
@@ -1017,7 +1022,7 @@ func (db *DB) queueSearchRefreshEvent(kind searchRefreshEventKind, id string) {
 //
 // Only the node's ID is used: the refresh reads its stored state, so a newer
 // write or delete wins over the worker's copy, and supersedes older queued work.
-func (db *DB) publishEmbeddedNode(node *storage.Node) bool {
+func (db *DB) publishEmbeddedNode(ctx context.Context, node *storage.Node) bool {
 	if db == nil || node == nil {
 		return false
 	}
@@ -1034,7 +1039,7 @@ func (db *DB) publishEmbeddedNode(node *storage.Node) bool {
 	if progress := entry.svc.GetBuildProgress(); !progress.Ready || progress.Building {
 		return false
 	}
-	if err := entry.svc.RefreshNode(storage.NodeID(local)); err != nil {
+	if err := entry.svc.RefreshNode(ctx, storage.NodeID(local)); err != nil {
 		if db.shouldIgnoreSearchIndexingError(err) {
 			return true
 		}

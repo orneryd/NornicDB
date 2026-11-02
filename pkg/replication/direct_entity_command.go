@@ -1,6 +1,7 @@
 package replication
 
 import (
+	"context"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -63,37 +64,37 @@ func decodeEntityCommandOperations(kind CommandType, data []byte) ([]storage.Ope
 	}
 	return nil, false, nil
 }
-func applyDirectEntityCommand(engine storage.Engine, kind CommandType, ops []storage.Operation) error {
+func applyDirectEntityCommand(ctx context.Context, engine storage.Engine, kind CommandType, ops []storage.Operation) error {
 	switch kind {
 	case CmdBulkCreateNodes:
 		nodes := make([]*storage.Node, len(ops))
 		for i := range ops {
 			nodes[i] = ops[i].Node
 		}
-		return engine.BulkCreateNodes(nodes)
+		return engine.BulkCreateNodes(ctx, nodes)
 	case CmdBulkCreateEdges:
 		edges := make([]*storage.Edge, len(ops))
 		for i := range ops {
 			edges[i] = ops[i].Edge
 		}
-		return engine.BulkCreateEdges(edges)
+		return engine.BulkCreateEdges(ctx, edges)
 	case CmdBulkDeleteNodes:
 		ids := make([]storage.NodeID, len(ops))
 		for i := range ops {
 			ids[i] = ops[i].NodeID
 		}
-		return engine.BulkDeleteNodes(ids)
+		return engine.BulkDeleteNodes(ctx, ids)
 	case CmdBulkDeleteEdges:
 		ids := make([]storage.EdgeID, len(ops))
 		for i := range ops {
 			ids[i] = ops[i].EdgeID
 		}
-		return engine.BulkDeleteEdges(ids)
+		return engine.BulkDeleteEdges(ctx, ids)
 	}
 	if len(ops) != 1 {
 		return storage.ErrInvalidData
 	}
-	return storage.ApplyEntityChange(engine, ops[0], engine.UpdateNode, engine.DeleteNode)
+	return storage.ApplyEntityChange(ctx, engine, ops[0], engine.UpdateNode, engine.DeleteNode)
 }
 
 // encodeEntityCommandPayload is the legacy entity wire construction owner.

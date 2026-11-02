@@ -46,15 +46,23 @@ func (e *StorageExecutor) prepareSchemaTransaction(ctx context.Context) error {
 	return nil
 }
 
-func (e *StorageExecutor) afterCommit(ctx context.Context, action func() error) error {
+// afterCommit runs action under the lifetime that actually executes it.
+// Without an explicit transaction it runs now, under the caller's context.
+// Inside one it runs when the transaction commits, under that commit's admitted
+// context, so an accepted metadata side effect never borrows the finished
+// statement that queued it.
+func (e *StorageExecutor) afterCommit(ctx context.Context, action func(context.Context) error) error {
 	if wrapper := e.membership(ctx).storage; wrapper != nil {
 		wrapper.commitActions = append(wrapper.commitActions, action)
 		return nil
 	}
-	return action()
+	return action(ctx)
 }
 
 func (e *StorageExecutor) mutateSchema(ctx context.Context, mutation func(*storage.SchemaManager) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := e.prepareSchemaTransaction(ctx); err != nil {
 		return err
 	}

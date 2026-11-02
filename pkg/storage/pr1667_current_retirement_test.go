@@ -82,7 +82,7 @@ func pr1667CreateTargetNodes(t *testing.T, b *BadgerEngine, ids ...string) []str
 
 func pr1667CreateTargetNode(t *testing.T, b *BadgerEngine, id, name string) {
 	t.Helper()
-	_, err := b.CreateNode(&Node{
+	_, err := b.CreateNode(t.Context(), &Node{
 		ID:         NodeID(id),
 		Labels:     []string{pr1667RetirementLabel},
 		Properties: map[string]any{"name": name},
@@ -259,7 +259,7 @@ func TestPR1667CurrentReleaseLabelStreamAcrossTwoDrops(t *testing.T) {
 	pr1667DropPrefix(t, b, "a:")
 	pr1667DropPrefix(t, b, "b:")
 	pr1667CreateTargetNode(t, b, "b:1", "recreated")
-	recreated, err := b.GetNode("b:1")
+	recreated, err := b.GetNode(t.Context(), "b:1")
 	require.NoError(t, err)
 	require.Equal(t, "recreated", recreated.Properties["name"],
 		"the re-create writes new state; the paused stream must not resolve it")
@@ -312,16 +312,16 @@ func TestPR1667CurrentReleaseLabelStreamAndBackupInterleavedWithDrops(t *testing
 func TestPR1667CurrentReleaseSnapshotKeepsPropertiesAcrossDrop(t *testing.T) {
 	b := pr1667NewEngine(t)
 	pr1667CreateTargetNode(t, b, "a:old", "original")
-	tx, err := b.BeginTransaction()
+	tx, err := b.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("a"))
 	pr1667DropPrefix(t, b, "a:")
-	_, err = b.CreateNode(&Node{ID: "a:old", Labels: []string{pr1667RetirementLabel}, Properties: map[string]any{"different": int64(99)}})
+	_, err = b.CreateNode(t.Context(), &Node{ID: "a:old", Labels: []string{pr1667RetirementLabel}, Properties: map[string]any{"different": int64(99)}})
 	require.NoError(t, err)
 	var got []*Node
 	require.NoError(t, tx.StreamNodesByLabelProjected(context.Background(), pr1667RetirementLabel, nil, func(n *Node) error { got = append(got, n); return nil }))
-	point, err := tx.GetNode("a:old")
+	point, err := tx.GetNode(t.Context(), "a:old")
 	require.NoError(t, err)
 	require.Equal(t, map[string]any{"name": "original"}, point.Properties)
 	require.Len(t, got, 1)

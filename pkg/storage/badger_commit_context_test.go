@@ -22,12 +22,12 @@ func TestBadgerTransactionCommitContextCancelsValidation(t *testing.T) {
 		t.Fatalf("AddUniqueConstraint failed: %v", err)
 	}
 
-	tx1, err := engine.BeginTransaction()
+	tx1, err := engine.BeginTransaction(t.Context())
 	if err != nil {
 		t.Fatalf("BeginTransaction failed: %v", err)
 	}
 	for i := 0; i < 300; i++ {
-		if _, err := tx1.CreateNode(&Node{ID: NodeID(prefixTestID(fmt.Sprintf("item-%d", i))), Labels: []string{"Item"}, Properties: map[string]interface{}{"k": int64(i)}}); err != nil {
+		if _, err := tx1.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID(fmt.Sprintf("item-%d", i))), Labels: []string{"Item"}, Properties: map[string]interface{}{"k": int64(i)}}); err != nil {
 			t.Fatalf("CreateNode failed: %v", err)
 		}
 	}
@@ -35,12 +35,12 @@ func TestBadgerTransactionCommitContextCancelsValidation(t *testing.T) {
 		t.Fatalf("CommitContext with a live context failed: %v", err)
 	}
 
-	tx2, err := engine.BeginTransaction()
+	tx2, err := engine.BeginTransaction(t.Context())
 	if err != nil {
 		t.Fatalf("BeginTransaction failed: %v", err)
 	}
 	for i := 1000; i < 2000; i++ {
-		if _, err := tx2.CreateNode(&Node{ID: NodeID(prefixTestID(fmt.Sprintf("item-%d", i))), Labels: []string{"Item"}, Properties: map[string]interface{}{"k": int64(i)}}); err != nil {
+		if _, err := tx2.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID(fmt.Sprintf("item-%d", i))), Labels: []string{"Item"}, Properties: map[string]interface{}{"k": int64(i)}}); err != nil {
 			t.Fatalf("CreateNode failed: %v", err)
 		}
 	}
@@ -64,16 +64,16 @@ func TestBadgerTransactionCommitContextCancelsValidation(t *testing.T) {
 	if scans > commitCancelPollEvery+1 {
 		t.Fatalf("validation ran %d label scans after cancellation, want it to stop within one poll interval", scans)
 	}
-	if _, err := engine.GetNode(NodeID(prefixTestID("item-1500"))); err == nil {
+	if _, err := engine.GetNode(t.Context(), NodeID(prefixTestID("item-1500"))); err == nil {
 		t.Fatalf("a node of the cancelled commit was stored")
 	}
 
 	// An already-cancelled context fails before any work.
-	tx3, err := engine.BeginTransaction()
+	tx3, err := engine.BeginTransaction(t.Context())
 	if err != nil {
 		t.Fatalf("BeginTransaction failed: %v", err)
 	}
-	if _, err := tx3.CreateNode(&Node{ID: NodeID(prefixTestID("item-x")), Labels: []string{"Item"}, Properties: map[string]interface{}{"k": int64(99999)}}); err != nil {
+	if _, err := tx3.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("item-x")), Labels: []string{"Item"}, Properties: map[string]interface{}{"k": int64(99999)}}); err != nil {
 		t.Fatalf("CreateNode failed: %v", err)
 	}
 	if err := tx3.CommitContext(ctx); !errors.Is(err, context.Canceled) {

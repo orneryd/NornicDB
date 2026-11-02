@@ -296,7 +296,7 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 				if err != nil {
 					return nil, err
 				}
-				return e.extractSeedNodesFromResult(outerRes, variable)
+				return e.extractSeedNodesFromResult(ctx, outerRes, variable)
 			}
 			filtered := make([]*storage.Node, 0, len(nodes))
 			for _, n := range nodes {
@@ -314,7 +314,7 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 				if err != nil {
 					return nil, err
 				}
-				return e.extractSeedNodesFromResult(outerRes, variable)
+				return e.extractSeedNodesFromResult(ctx, outerRes, variable)
 			}
 			return filtered, nil
 		}
@@ -328,10 +328,10 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 	if err != nil {
 		return nil, err
 	}
-	return e.extractSeedNodesFromResult(outerRes, variable)
+	return e.extractSeedNodesFromResult(ctx, outerRes, variable)
 }
 
-func (e *StorageExecutor) extractSeedNodesFromResult(outerRes *ExecuteResult, variable string) ([]*storage.Node, error) {
+func (e *StorageExecutor) extractSeedNodesFromResult(ctx context.Context, outerRes *ExecuteResult, variable string) ([]*storage.Node, error) {
 	if outerRes == nil || len(outerRes.Rows) == 0 {
 		return []*storage.Node{}, nil
 	}
@@ -359,11 +359,11 @@ func (e *StorageExecutor) extractSeedNodesFromResult(outerRes *ExecuteResult, va
 				seedNodes = append(seedNodes, v)
 			}
 		case map[string]interface{}:
-			if n := e.seedNodeFromMap(v); n != nil {
+			if n := e.seedNodeFromMap(ctx, v); n != nil {
 				seedNodes = append(seedNodes, n)
 			}
 		case string:
-			if n := e.seedNodeFromIDString(v); n != nil {
+			if n := e.seedNodeFromIDString(ctx, v); n != nil {
 				seedNodes = append(seedNodes, n)
 			}
 		case []interface{}:
@@ -375,11 +375,11 @@ func (e *StorageExecutor) extractSeedNodesFromResult(outerRes *ExecuteResult, va
 						seedNodes = append(seedNodes, wrapped)
 					}
 				case map[string]interface{}:
-					if n := e.seedNodeFromMap(wrapped); n != nil {
+					if n := e.seedNodeFromMap(ctx, wrapped); n != nil {
 						seedNodes = append(seedNodes, n)
 					}
 				case string:
-					if n := e.seedNodeFromIDString(wrapped); n != nil {
+					if n := e.seedNodeFromIDString(ctx, wrapped); n != nil {
 						seedNodes = append(seedNodes, n)
 					}
 				}
@@ -389,11 +389,11 @@ func (e *StorageExecutor) extractSeedNodesFromResult(outerRes *ExecuteResult, va
 	return seedNodes, nil
 }
 
-func (e *StorageExecutor) seedNodeFromMap(m map[string]interface{}) *storage.Node {
+func (e *StorageExecutor) seedNodeFromMap(ctx context.Context, m map[string]interface{}) *storage.Node {
 	for _, key := range []string{"_nodeId", "id", "_id", "elementId"} {
 		if raw, ok := m[key]; ok {
 			if id, ok := raw.(string); ok && id != "" {
-				if n := e.seedNodeFromIDString(id); n != nil {
+				if n := e.seedNodeFromIDString(ctx, id); n != nil {
 					return n
 				}
 			}
@@ -402,19 +402,19 @@ func (e *StorageExecutor) seedNodeFromMap(m map[string]interface{}) *storage.Nod
 	return nil
 }
 
-func (e *StorageExecutor) seedNodeFromIDString(id string) *storage.Node {
+func (e *StorageExecutor) seedNodeFromIDString(ctx context.Context, id string) *storage.Node {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return nil
 	}
 	// Direct NodeID lookup first.
-	if n, err := e.getQueryNode(e.storage, storage.NodeID(id)); err == nil && n != nil {
+	if n, err := e.getQueryNode(ctx, e.storage, storage.NodeID(id)); err == nil && n != nil {
 		return n
 	}
 	// Handle elementId-style values: "<prefix>:<db>:<id>" -> "<id>"
 	if last := strings.LastIndex(id, ":"); last >= 0 && last+1 < len(id) {
 		idTail := id[last+1:]
-		if n, err := e.getQueryNode(e.storage, storage.NodeID(idTail)); err == nil && n != nil {
+		if n, err := e.getQueryNode(ctx, e.storage, storage.NodeID(idTail)); err == nil && n != nil {
 			return n
 		}
 	}
@@ -1149,7 +1149,7 @@ func (e *StorageExecutor) refreshCallSeedNodeAfterWrite(ctx context.Context, nod
 	if node == nil || !queryStatsMayContainNodeMutation(stats) {
 		return node, nil
 	}
-	current, err := e.getQueryNode(e.getStorage(ctx), node.ID)
+	current, err := e.getQueryNode(ctx, e.getStorage(ctx), node.ID)
 	if errors.Is(err, storage.ErrNotFound) {
 		return node, nil
 	}

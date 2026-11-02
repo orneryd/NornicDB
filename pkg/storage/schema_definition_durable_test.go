@@ -18,12 +18,12 @@ const durableDefinitionNamespace = "nornic"
 func TestReplaceDefinitionDurablePublishesTheDefinitionItPersisted(t *testing.T) {
 	engine := newTestMemoryEngine(t)
 	target := NewNamespacedEngine(engine, durableDefinitionNamespace)
-	_, err := target.CreateNode(&Node{
+	_, err := target.CreateNode(t.Context(), &Node{
 		ID: "u1", Labels: []string{"Person"},
 		Properties: map[string]any{"name": "Alice", "email": "alice@example.com"},
 	})
 	require.NoError(t, err)
-	_, err = target.CreateNode(&Node{
+	_, err = target.CreateNode(t.Context(), &Node{
 		ID: "u2", Labels: []string{"Person"},
 		Properties: map[string]any{"name": "Bob", "email": "bob@example.com"},
 	})
@@ -51,9 +51,9 @@ func TestReplaceDefinitionDurablePublishesTheDefinitionItPersisted(t *testing.T)
 	}))
 
 	require.Len(t, persisted, 1, "one accepted replacement is one durable schema write")
-	require.Equal(t, schema.ExportDefinition(), persisted[0],
+	require.Equal(t, schemaDefinitionForTest(t, schema), persisted[0],
 		"the durable definition must be the definition the replacement published")
-	require.Equal(t, []string{"Person"}, schema.ExportDefinition().LabelTokens,
+	require.Equal(t, []string{"Person"}, schemaDefinitionForTest(t, schema).LabelTokens,
 		"the replacement's token order must be published with it")
 
 	// The derived UNIQUE values were rebuilt from the stored nodes.
@@ -83,7 +83,7 @@ func TestReplaceDefinitionDurableRejectsUnsatisfiedDefinitionBeforeWriting(t *te
 	engine := newTestMemoryEngine(t)
 	target := NewNamespacedEngine(engine, durableDefinitionNamespace)
 	for _, id := range []string{"d1", "d2"} {
-		_, err := target.CreateNode(&Node{
+		_, err := target.CreateNode(t.Context(), &Node{
 			ID: NodeID(id), Labels: []string{"Person"},
 			Properties: map[string]any{"email": "shared@example.com"},
 		})
@@ -91,7 +91,7 @@ func TestReplaceDefinitionDurableRejectsUnsatisfiedDefinitionBeforeWriting(t *te
 	}
 
 	schema := engine.GetSchema()
-	before := schema.ExportDefinition()
+	before := schemaDefinitionForTest(t, schema)
 	attempts := 0
 	schema.SetPersister(func(*SchemaDefinition) error {
 		attempts++
@@ -109,7 +109,7 @@ func TestReplaceDefinitionDurableRejectsUnsatisfiedDefinitionBeforeWriting(t *te
 	})
 	require.Error(t, err, "stored entities that violate the definition must reject it")
 	require.Zero(t, attempts, "a rejected definition must be rejected before it is persisted")
-	require.Equal(t, before, schema.ExportDefinition(),
+	require.Equal(t, before, schemaDefinitionForTest(t, schema),
 		"a rejected definition must leave the published schema unchanged")
 }
 
@@ -122,11 +122,11 @@ func TestReplaceDefinitionDurableRejectedWriteKeepsTheOldCaches(t *testing.T) {
 	target := NewNamespacedEngine(engine, durableDefinitionNamespace)
 	schema := engine.GetSchema()
 	require.NoError(t, schema.AddUniqueConstraint("legacy_key_unique", "Legacy", "key"))
-	_, err := target.CreateNode(&Node{
+	_, err := target.CreateNode(t.Context(), &Node{
 		ID: "legacy-1", Labels: []string{"Legacy"}, Properties: map[string]any{"key": "k1"},
 	})
 	require.NoError(t, err)
-	before := schema.ExportDefinition()
+	before := schemaDefinitionForTest(t, schema)
 
 	rejection := errors.New("schema persistence rejected")
 	schema.SetPersister(func(*SchemaDefinition) error { return rejection })
@@ -141,7 +141,7 @@ func TestReplaceDefinitionDurableRejectedWriteKeepsTheOldCaches(t *testing.T) {
 		}},
 	})
 	require.ErrorIs(t, err, rejection)
-	require.Equal(t, before, schema.ExportDefinition(),
+	require.Equal(t, before, schemaDefinitionForTest(t, schema),
 		"a rejected replacement must leave the published schema unchanged")
 
 	holder, found, exists, _, err := schema.LookupUniqueConstraintValue(
@@ -152,7 +152,7 @@ func TestReplaceDefinitionDurableRejectedWriteKeepsTheOldCaches(t *testing.T) {
 	require.True(t, found, "the previous UNIQUE cache must keep the published value")
 	require.Equal(t, NodeID(durableDefinitionNamespace+":legacy-1"), holder)
 
-	_, err = target.CreateNode(&Node{
+	_, err = target.CreateNode(t.Context(), &Node{
 		ID: "legacy-2", Labels: []string{"Legacy"}, Properties: map[string]any{"key": "k1"},
 	})
 	require.Error(t, err, "a rejected replacement must leave the previous UNIQUE constraint enforced")
@@ -163,7 +163,7 @@ func TestReplaceDefinitionDurableRequiresContextAndEngine(t *testing.T) {
 	target := NewNamespacedEngine(engine, durableDefinitionNamespace)
 	schema := target.GetSchema()
 	require.NoError(t, schema.AddUniqueConstraint("before", "Person", "id"))
-	before := schema.ExportDefinition()
+	before := schemaDefinitionForTest(t, schema)
 	attempts := 0
 	schema.SetPersister(func(*SchemaDefinition) error { attempts++; return nil })
 	for _, tc := range []struct {
@@ -177,7 +177,7 @@ func TestReplaceDefinitionDurableRequiresContextAndEngine(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			require.Error(t, schema.ReplaceDefinitionDurable(tc.ctx, tc.engine, &SchemaDefinition{}))
 			require.Zero(t, attempts)
-			require.Equal(t, before, schema.ExportDefinition())
+			require.Equal(t, before, schemaDefinitionForTest(t, schema))
 		})
 	}
 }

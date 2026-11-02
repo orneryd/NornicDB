@@ -357,7 +357,12 @@ func (sm *SchemaManager) applyConstraintLocked(c Constraint) {
 		}
 	}
 
-	sm.addConstraintPropertyIndexLocked(c)
+	// A native DDL mutation holds the schema write lock and has no caller
+	// context, so its own equality-index discovery runs on that mutation's
+	// lifetime and cannot cancel mid-way.
+	if err := sm.addConstraintPropertyIndexLocked(context.Background(), c); err != nil {
+		panic(fmt.Sprintf("storage: non-cancellable DDL constraint-index discovery failed: %v", err))
+	}
 
 	if c.Type == ConstraintUnique && c.EffectiveEntityType() == ConstraintEntityNode && len(c.Properties) == 1 {
 		uniqueKey := nodePropertyKey{label: c.Label, property: c.Properties[0]}
@@ -400,15 +405,17 @@ func constraintCompositeKeyIndexWanted(c Constraint) bool {
 // owned index it starts unfilled: writes maintain it, and a fill (the DDL
 // backfill or the startup rebuild) makes it usable for validation and seeks.
 // An existing standalone index on exactly these properties serves instead.
-func (sm *SchemaManager) addConstraintCompositeKeyIndexLocked(c Constraint) {
-	// AddConstraint/schema import own this write-held DDL mutation. Their
-	// exported boundary has no request context, so this scan cannot cancel.
-	existing, err := sm.compositeKeyIndexLocked(context.Background(), c.Label, c.Properties)
+//
+// ctx is the lifetime of the mutation that owns the registration, as for the
+// arity-1 owned index: a schema replacement discovers on its preparation
+// context, a native DDL mutation on its write-held lifetime.
+func (sm *SchemaManager) addConstraintCompositeKeyIndexLocked(ctx context.Context, c Constraint) error {
+	existing, err := sm.compositeKeyIndexLocked(ctx, c.Label, c.Properties)
 	if err != nil {
-		panic(fmt.Sprintf("storage: non-cancellable DDL composite-index discovery failed: %v", err))
+		return err
 	}
 	if existing != nil {
-		return
+		return nil
 	}
 	name := c.OwnedIndex
 	if name == "" {
@@ -426,6 +433,7 @@ func (sm *SchemaManager) addConstraintCompositeKeyIndexLocked(c Constraint) {
 	}
 	idx.unfilled.Store(true)
 	sm.compositeIndexes[name] = idx
+	return nil
 }
 
 // addConstraintPropertyIndexLocked registers the equality index a
@@ -436,18 +444,22 @@ func (sm *SchemaManager) addConstraintCompositeKeyIndexLocked(c Constraint) {
 // other indexes, or by an import's rebuild. A store from before this index
 // existed may already have an index of its own on the property, which then
 // serves the seeks.
-func (sm *SchemaManager) addConstraintPropertyIndexLocked(c Constraint) {
+//
+// ctx is the lifetime of the mutation that owns the registration: a schema
+// replacement discovers on its own preparation context and reports a canceled
+// scan, while a native DDL mutation holds the schema write lock and passes its
+// own non-cancellable lifetime.
+func (sm *SchemaManager) addConstraintPropertyIndexLocked(ctx context.Context, c Constraint) error {
 	if constraintCompositeKeyIndexWanted(c) {
-		sm.addConstraintCompositeKeyIndexLocked(c)
-		return
+		return sm.addConstraintCompositeKeyIndexLocked(ctx, c)
 	}
 	if constraintPropertyIndexKey(c) == "" {
-		return
+		return nil
 	}
-	// A schema mutation holds the schema write lock: its index scan has that
-	// mutation's lifetime, which never cancels mid-way.
-	if _, exists, err := sm.arity1PropertyIndexLocked(context.Background(), c.Label, c.Properties[0]); err != nil || exists {
-		return
+	if _, exists, err := sm.arity1PropertyIndexLocked(ctx, c.Label, c.Properties[0]); err != nil {
+		return err
+	} else if exists {
+		return nil
 	}
 	name := c.OwnedIndex
 	if name == "" {
@@ -462,6 +474,7 @@ func (sm *SchemaManager) addConstraintPropertyIndexLocked(c Constraint) {
 		keysDirty:        true,
 	}
 	sm.compositeIndexes[name].unfilled.Store(true)
+	return nil
 }
 
 // MarkPropertyIndexesFilled lets seeks use every equality index, once a
@@ -546,7 +559,14 @@ func (lease schemaMutationLease) commitPolicy(restore func()) error {
 		return err
 	}
 	if persist := sm.persist; persist != nil {
-		if err := persist(sm.exportDefinitionLocked()); err != nil {
+		// An accepted schema mutation owns its completion and has no caller
+		// context to cancel, so its definition snapshot runs under its own
+		// explicit unbounded lifetime.
+		def, err := sm.exportDefinitionLocked(context.Background())
+		if err == nil {
+			err = persist(def)
+		}
+		if err != nil {
 			restore()
 			lease.release()
 			return err
@@ -742,7 +762,13 @@ func (sm *SchemaManager) addSchemaRuleLocked(admit func() (bool, error), stage f
 	}
 	rollback := stage()
 	apply()
-	if err := sm.persist(sm.exportDefinitionLocked()); err != nil {
+	// The definition snapshot of an accepted mutation runs under its own
+	// explicit unbounded lifetime; it has no caller context to cancel.
+	def, err := sm.exportDefinitionLocked(context.Background())
+	if err == nil {
+		err = sm.persist(def)
+	}
+	if err != nil {
 		rollback()
 		return err
 	}
@@ -902,8 +928,11 @@ func (sm *SchemaManager) AddCompositeIndex(name, label string, properties []stri
 	// (#875), because its fill is deferred to a rebuild.
 
 	if sm.persist != nil {
-		def := sm.exportDefinitionLocked()
-		if err := sm.persist(def); err != nil {
+		def, err := sm.exportDefinitionLocked(context.Background()) // accepted mutation owns its completion
+		if err == nil {
+			err = sm.persist(def)
+		}
+		if err != nil {
 			delete(sm.compositeIndexes, name)
 			return err
 		}
@@ -1228,7 +1257,11 @@ func (sm *SchemaManager) AddFulltextIndex(name string, targets, properties []str
 	}
 	sm.fulltextIndexes[name] = definition
 	if sm.persist != nil {
-		if err := sm.persist(sm.exportDefinitionLocked()); err != nil {
+		def, err := sm.exportDefinitionLocked(context.Background()) // accepted mutation owns its completion
+		if err == nil {
+			err = sm.persist(def)
+		}
+		if err != nil {
 			delete(sm.fulltextIndexes, name)
 			return err
 		}
@@ -1264,8 +1297,11 @@ func (sm *SchemaManager) AddVectorIndex(name, label, property string, dimensions
 	}
 
 	if sm.persist != nil {
-		def := sm.exportDefinitionLocked()
-		if err := sm.persist(def); err != nil {
+		def, err := sm.exportDefinitionLocked(context.Background()) // accepted mutation owns its completion
+		if err == nil {
+			err = sm.persist(def)
+		}
+		if err != nil {
 			delete(sm.vectorIndexes, name)
 			return err
 		}
@@ -1313,8 +1349,11 @@ func (sm *SchemaManager) addIndexForEntity(kind IndexKind, name, label string, p
 	}
 
 	if sm.persist != nil {
-		def := sm.exportDefinitionLocked()
-		if err := sm.persist(def); err != nil {
+		def, err := sm.exportDefinitionLocked(context.Background()) // accepted mutation owns its completion
+		if err == nil {
+			err = sm.persist(def)
+		}
+		if err != nil {
 			delete(sm.rangeIndexes, name)
 			return err
 		}
@@ -1679,7 +1718,11 @@ func (sm *SchemaManager) DropIndex(name string) error {
 		d = dropped{kind: "range", key: name}
 	} else if entityType, ok := sm.dropLookupIndexLocked(name); ok {
 		if sm.persist != nil {
-			if err := sm.persist(sm.exportDefinitionLocked()); err != nil {
+			def, err := sm.exportDefinitionLocked(context.Background()) // accepted mutation owns its completion
+			if err == nil {
+				err = sm.persist(def)
+			}
+			if err != nil {
 				sm.lookupIndexes[entityType] = name
 				return err
 			}
@@ -1713,8 +1756,11 @@ func (sm *SchemaManager) DropIndex(name string) error {
 	}
 
 	if sm.persist != nil {
-		def := sm.exportDefinitionLocked()
-		if err := sm.persist(def); err != nil {
+		def, err := sm.exportDefinitionLocked(context.Background()) // accepted mutation owns its completion
+		if err == nil {
+			err = sm.persist(def)
+		}
+		if err != nil {
 			// Rollback in-memory delete.
 			switch d.kind {
 			case "composite":

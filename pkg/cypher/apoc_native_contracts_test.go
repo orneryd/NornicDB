@@ -34,11 +34,11 @@ func nativeAPOCFixture(t *testing.T) *StorageExecutor {
 	})
 	s := storage.NewNamespacedEngine(newTestMemoryEngine(t), "native_apoc")
 	for _, id := range []storage.NodeID{"a", "b", "c"} {
-		_, err := s.CreateNode(&storage.Node{ID: id, Labels: []string{"NativeAPOC"}, Properties: map[string]interface{}{"key": string(id)}})
+		_, err := s.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"NativeAPOC"}, Properties: map[string]interface{}{"key": string(id)}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, s.CreateEdge(&storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "APOC_R"}))
-	require.NoError(t, s.CreateEdge(&storage.Edge{ID: "bc", StartNode: "b", EndNode: "c", Type: "APOC_S"}))
+	require.NoError(t, s.CreateEdge(t.Context(), &storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "APOC_R"}))
+	require.NoError(t, s.CreateEdge(t.Context(), &storage.Edge{ID: "bc", StartNode: "b", EndNode: "c", Type: "APOC_S"}))
 	return NewStorageExecutor(s)
 }
 
@@ -117,7 +117,7 @@ func TestAPOCNativeContractsBoundaries(t *testing.T) {
 		})
 	}
 	// Self-relationships contribute twice to BOTH degree, once per directed degree.
-	require.NoError(t, e.storage.CreateEdge(&storage.Edge{ID: "loop", StartNode: "a", EndNode: "a", Type: "APOC_LOOP"}))
+	require.NoError(t, e.storage.CreateEdge(t.Context(), &storage.Edge{ID: "loop", StartNode: "a", EndNode: "a", Type: "APOC_LOOP"}))
 	r, err := e.Execute(ctx, "MATCH (a:NativeAPOC {key:'a'}) RETURN apoc.node.degree(a),apoc.node.degree(a,'APOC_LOOP>')", nil)
 	require.NoError(t, err)
 	require.EqualValues(t, []interface{}{int64(3), int64(1)}, r.Rows[0])

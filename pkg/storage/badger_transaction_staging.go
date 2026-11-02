@@ -180,13 +180,13 @@ func kvHas(w kvWriter, key []byte) (bool, error) {
 // its Badger commit; a large commit before its first batch, ahead of the
 // exclusive commit gate (lock order: write barrier, count locks, commit
 // gate). Idempotent.
-func (tx *BadgerTransaction) acquireCommitPublicationLocked() error {
+func (tx *BadgerTransaction) acquireCommitPublicationLocked(ctx context.Context) error {
 	if tx.commitCountsHeld {
 		return nil
 	}
 	if len(tx.pendingEdgeTypeLabelCountDeltas) > 0 {
 		// The count-lock admission runs on the selected non-nil phase scope.
-		if err := tx.engine.edgeTypeCountWriteMu.LockContext(commitPreparationLifetime(tx.commitCtx)); err != nil {
+		if err := tx.engine.edgeTypeCountWriteMu.LockContext(ctx); err != nil {
 			return err
 		}
 		tx.commitEdgeTypeCounts = true
@@ -211,16 +211,16 @@ func (tx *BadgerTransaction) releaseEdgeTypeCountLockLocked() {
 // per statement (PR #1043 retest @39f0f03f, issue C) and closes the
 // publication gap where committed entities were briefly visible without their
 // deltas.
-func (tx *BadgerTransaction) writeScalarCountDeltasInCommitLocked(w *batchWriter) error {
+func (tx *BadgerTransaction) writeScalarCountDeltasInCommitLocked(ctx context.Context, w *batchWriter) error {
 	for key, delta := range tx.pendingLabelCountDeltas {
-		if err := w.write(func(t *badger.Txn) error {
+		if err := w.write(ctx, func(t *badger.Txn) error {
 			return tx.engine.adjustLabelCountInTxn(t, key.namespace, key.label, delta)
 		}); err != nil {
 			return err
 		}
 	}
 	for key, delta := range tx.pendingEdgeTypeCountDeltas {
-		if err := w.write(func(t *badger.Txn) error {
+		if err := w.write(ctx, func(t *badger.Txn) error {
 			return tx.engine.adjustEdgeTypeCountInTxn(t, key.namespace, key.edgeType, delta)
 		}); err != nil {
 			return err

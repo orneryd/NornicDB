@@ -235,7 +235,7 @@ func nor283ReleaseCase(t *testing.T, traversal, lifecycle, kind, entry string) {
 		nor283Node("nornic:doc-a", "orchard orchard orchard citrus", []float32{1, 0, 0}),
 		nor283Node("nornic:doc-c", "orchard meadow", []float32{0, 0, 1}),
 	} {
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 	source, _ := nor283Source(t, engine, traversal)
@@ -274,13 +274,13 @@ func nor283ReleaseCase(t *testing.T, traversal, lifecycle, kind, entry string) {
 		// Preserve #1344's live-before-build dimension: a live write is present
 		// before first read, and rejected disk text must not strand older nodes.
 		node := nor283Node("nornic:doc-b", "harbor ferry", []float32{0, 1, 0})
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, service.IndexNode(node))
 	} else if entry == "live_before_first_read" {
 		// The accepted control does not introduce a newer population into its
 		// checkpoint; an unchanged live node still exercises this entry route.
-		node, err := engine.GetNode("nornic:doc-a")
+		node, err := engine.GetNode(t.Context(), "nornic:doc-a")
 		require.NoError(t, err)
 		require.NoError(t, service.IndexNode(node))
 	}

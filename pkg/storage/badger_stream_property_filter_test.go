@@ -21,7 +21,7 @@ func TestBadgerStreamNodesPropertyFilter(t *testing.T) {
 		{ID: "ns:b", Labels: []string{"Code"}, Properties: map[string]interface{}{"id": "b", "body": "y"}},
 		{ID: "ns:c", Labels: []string{"Other"}, Properties: map[string]interface{}{"body": "z"}},
 	} {
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 

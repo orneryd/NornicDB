@@ -45,7 +45,7 @@ func TestCheckAndRepairIDDictionary(t *testing.T) {
 		{ID: "test:a", Labels: []string{"Doc"}}, {ID: "test:b", Labels: []string{"Doc", "Source"}},
 		{ID: "test:c", Labels: []string{"Doc"}}, {ID: "test:bare"},
 	} {
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 	for _, edge := range []*Edge{
@@ -55,13 +55,13 @@ func TestCheckAndRepairIDDictionary(t *testing.T) {
 		{ID: "test:kept", StartNode: "test:b", EndNode: "test:c", Type: "CITES"},
 		{ID: "test:fromBare", StartNode: "test:bare", EndNode: "test:c", Type: "SEES"},
 	} {
-		require.NoError(t, engine.CreateEdge(edge))
+		require.NoError(t, engine.CreateEdge(t.Context(), edge))
 	}
 	report, err := engine.CheckIDDictionary()
 	require.NoError(t, err)
 	require.Empty(t, report.Nodes, "a healthy store has no gaps")
 	require.Empty(t, report.Edges)
-	countBefore, err := engine.EdgeCountByType("CITES")
+	countBefore, err := engine.EdgeCountByType(context.Background(), "CITES")
 	require.NoError(t, err)
 	require.Equal(t, int64(2), countBefore)
 
@@ -96,7 +96,7 @@ func TestCheckAndRepairIDDictionary(t *testing.T) {
 	sources, err := engine.GetNodesByLabel(context.Background(), "Source")
 	require.NoError(t, err)
 	require.Len(t, sources, 1)
-	countAfter, err := engine.EdgeCountByType("CITES")
+	countAfter, err := engine.EdgeCountByType(context.Background(), "CITES")
 	require.NoError(t, err)
 	require.Equal(t, countBefore, countAfter, "relationships between repaired nodes are counted again")
 
@@ -126,14 +126,14 @@ func TestRepairIDDictionaryMismatchedAfterHeadRebuild(t *testing.T) {
 	}
 	require.NoError(t, err)
 	for _, node := range []*Node{{ID: "test:a", Labels: []string{"Doc"}}, {ID: "test:lone", Labels: []string{"Doc"}}, {ID: "test:c", Labels: []string{"Doc"}}} {
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 	for _, edge := range []*Edge{
 		{ID: "test:link", StartNode: "test:a", EndNode: "test:c", Type: "CITES", Properties: map[string]any{"stage": "interpretation"}},
 		{ID: "test:kept", StartNode: "test:c", EndNode: "test:a", Type: "CITES"},
 	} {
-		require.NoError(t, engine.CreateEdge(edge))
+		require.NoError(t, engine.CreateEdge(t.Context(), edge))
 	}
 	linkNum, _ := engine.idDict.lookupEdgeNumID("test:link")
 	// A node with relationships can't lose its entry and be renumbered: the
@@ -189,7 +189,7 @@ func TestRepairIDDictionaryMismatchedAfterHeadRebuild(t *testing.T) {
 		docs, err := engine.GetNodesByLabel(context.Background(), "Doc")
 		require.NoError(t, err)
 		require.Len(t, docs, 3)
-		count, err := engine.EdgeCountByType("CITES")
+		count, err := engine.EdgeCountByType(context.Background(), "CITES")
 		require.NoError(t, err)
 		require.Equal(t, int64(2), count)
 		report, err := engine.CheckIDDictionary()
@@ -211,7 +211,7 @@ func TestRepairIDDictionaryMismatchedAfterHeadRebuild(t *testing.T) {
 // head moves nothing and still replaces the entry (#907, I29).
 func TestRestoreIDEntryWithoutPreviousHead(t *testing.T) {
 	engine := createTestBadgerEngine(t)
-	_, err := engine.CreateNode(&Node{ID: "test:x", Labels: []string{"Doc"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:x", Labels: []string{"Doc"}})
 	require.NoError(t, err)
 	previous, ok := engine.idDict.lookupNodeNumID("test:x")
 	require.True(t, ok)

@@ -11,7 +11,7 @@ func TestTransactionOwnershipViewPreservesEventPublisher(t *testing.T) {
 	view := &transactionOwnedStorage{Engine: inner, owner: &TransactionContext{active: true}}
 	var created []storage.NodeID
 	require.NoError(t, storage.SubscribeEvents(view, storage.EventHandlers{NodeCreated: func(node *storage.Node) { created = append(created, node.ID) }}))
-	_, err := inner.CreateNode(&storage.Node{ID: "one", Labels: []string{"Event"}})
+	_, err := inner.CreateNode(t.Context(), &storage.Node{ID: "one", Labels: []string{"Event"}})
 	require.NoError(t, err)
 	require.Equal(t, []storage.NodeID{"one"}, created)
 	require.Same(t, inner, view.GetInnerEngine())

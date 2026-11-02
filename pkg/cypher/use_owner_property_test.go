@@ -115,7 +115,7 @@ func newUsePropertyFixture(t *testing.T) *usePropertyFixture {
 		require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: name}))
 		store, err := manager.GetStorage(name)
 		require.NoError(t, err)
-		_, err = store.CreateNode(&storage.Node{ID: "seed", Labels: []string{"UseProperty"}, Properties: map[string]interface{}{"v": int64(1)}})
+		_, err = store.CreateNode(t.Context(), &storage.Node{ID: "seed", Labels: []string{"UseProperty"}, Properties: map[string]interface{}{"v": int64(1)}})
 		require.NoError(t, err)
 	}
 	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "cmp", []multidb.ConstituentRef{{Alias: "a", DatabaseName: "use_property_shard", Type: "local", AccessMode: "read_write"}}))
@@ -134,7 +134,7 @@ func newUsePropertyFixture(t *testing.T) *usePropertyFixture {
 
 func usePropertyFunctions(query string) ([]string, error) {
 	functions := []string{}
-	err := forEachFunctionCall(query, func(_, normalized string) error { functions = append(functions, normalized); return nil })
+	err := forEachFunctionCall(context.Background(), query, func(_, normalized string) error { functions = append(functions, normalized); return nil })
 	sort.Strings(functions)
 	return functions, err
 }
@@ -229,7 +229,7 @@ func (f *usePropertyFixture) check(ctx context.Context, statement usePropertySta
 	// dynamic selector acquires dependencies when its runtime target is resolved;
 	// the static-name population must be tracked before routing or normalization.
 	if owner.Function == "" {
-		scopes, valid := f.exec.cacheDependencyScopes(input("dependencies"))
+		scopes, valid := f.exec.cacheDependencyScopes(ctx, input("dependencies"))
 		check("dependencies", valid, true)
 		if statement.uses == 0 {
 			check("dependencies", len(scopes), 0)

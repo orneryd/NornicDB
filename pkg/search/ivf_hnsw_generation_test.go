@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"math/rand"
@@ -38,7 +39,7 @@ func TestIVFHNSWPublicQueriesSpanGrowthDrivenReclustering(t *testing.T) {
 	}
 	engine := newNamespacedEngine(t)
 	for i := 0; i < initial; i++ {
-		_, err := engine.CreateNode(newNode(fmt.Sprintf("initial-%04d", i)))
+		_, err := engine.CreateNode(t.Context(), newNode(fmt.Sprintf("initial-%04d", i)))
 		require.NoError(t, err)
 	}
 	svc := NewService(engine, dimensions, nil)
@@ -53,7 +54,7 @@ func TestIVFHNSWPublicQueriesSpanGrowthDrivenReclustering(t *testing.T) {
 
 	for i := 0; i < grown; i++ {
 		node := newNode(fmt.Sprintf("grown-%04d", i))
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, svc.IndexNode(node))
 	}
@@ -261,7 +262,7 @@ func TestIVFHNSWReclusteringReconcilesAdmissionsDuringCompute(t *testing.T) {
 					for d := range vec {
 						vec[d] = float32(rng.NormFloat64())
 					}
-					_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("seed-%04d", i)), ChunkEmbeddings: [][]float32{vec}})
+					_, err := engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("seed-%04d", i)), ChunkEmbeddings: [][]float32{vec}})
 					require.NoError(t, err)
 				}
 				svc := NewService(engine, dims, nil)
@@ -274,7 +275,7 @@ func TestIVFHNSWReclusteringReconcilesAdmissionsDuringCompute(t *testing.T) {
 				late := &storage.Node{ID: "late", ChunkEmbeddings: [][]float32{{1, 0, 0, 0, 0, 0, 0, 0}}}
 				mutate := func() error {
 					if mutation == "add" {
-						if _, err := engine.CreateNode(late); err != nil {
+						if _, err := engine.CreateNode(t.Context(), late); err != nil {
 							return err
 						}
 						return svc.IndexNode(late)

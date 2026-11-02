@@ -11,7 +11,7 @@ func TestIndexTombstone_WriteAndProbe(t *testing.T) {
 	eng := newTestEngine(t)
 
 	origKey := labelIndexKey("person", 1)
-	if err := eng.SetIndexTombstones([][]byte{origKey}, true); err != nil {
+	if err := eng.SetIndexTombstones(context.Background(), [][]byte{origKey}, true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -30,10 +30,10 @@ func TestIndexTombstone_Delete(t *testing.T) {
 	eng := newTestEngine(t)
 
 	origKey := labelIndexKey("person", 1)
-	if err := eng.SetIndexTombstones([][]byte{origKey}, true); err != nil {
+	if err := eng.SetIndexTombstones(context.Background(), [][]byte{origKey}, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := eng.SetIndexTombstones([][]byte{origKey}, false); err != nil {
+	if err := eng.SetIndexTombstones(context.Background(), [][]byte{origKey}, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -56,7 +56,7 @@ func tombstoneLabelIndexEntry(t *testing.T, eng *BadgerEngine, label string, id 
 	if tombstoneKey == nil {
 		t.Fatalf("missing numID for %s", id)
 	}
-	if err := eng.SetIndexTombstones([][]byte{tombstoneKey}, true); err != nil {
+	if err := eng.SetIndexTombstones(context.Background(), [][]byte{tombstoneKey}, true); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -74,10 +74,10 @@ func TestIndexTombstone_LabelIndexSkipsTombstoned(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Bob"},
 	}
-	if _, err := eng.CreateNode(node1); err != nil {
+	if _, err := eng.CreateNode(t.Context(), node1); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := eng.CreateNode(node2); err != nil {
+	if _, err := eng.CreateNode(t.Context(), node2); err != nil {
 		t.Fatal(err)
 	}
 
@@ -103,7 +103,7 @@ func TestIndexTombstone_RevealAllBypassesTombstone(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Charlie"},
 	}
-	if _, err := eng.CreateNode(node); err != nil {
+	if _, err := eng.CreateNode(t.Context(), node); err != nil {
 		t.Fatal(err)
 	}
 
@@ -130,10 +130,10 @@ func TestIndexTombstone_RevealAllBypassesTombstone(t *testing.T) {
 
 func TestIndexTombstone_EmptyWriteNoError(t *testing.T) {
 	eng := newTestEngine(t)
-	if err := eng.SetIndexTombstones(nil, true); err != nil {
+	if err := eng.SetIndexTombstones(context.Background(), nil, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := eng.SetIndexTombstones(nil, false); err != nil {
+	if err := eng.SetIndexTombstones(context.Background(), nil, false); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -147,7 +147,7 @@ func TestIndexTombstone_ForEachNodeIDSkipsTombstoned(t *testing.T) {
 			Labels:     []string{"Item"},
 			Properties: map[string]interface{}{"name": id},
 		}
-		if _, err := eng.CreateNode(node); err != nil {
+		if _, err := eng.CreateNode(t.Context(), node); err != nil {
 			t.Fatal(err)
 		}
 	}

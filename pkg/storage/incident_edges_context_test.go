@@ -18,7 +18,7 @@ func TestTransactionIncidentEdgesCarriesCallerContext(t *testing.T) {
 	engine := newWriteBehindTestEngine(t, time.Hour)
 	hub := seedIncidentContextGraph(t, engine, population)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 

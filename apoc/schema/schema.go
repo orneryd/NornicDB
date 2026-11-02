@@ -65,23 +65,47 @@ func Assert(indexes, constraints map[string]interface{}) map[string]interface{} 
 // Example:
 //
 //	apoc.schema.nodes() => [{label: 'Person', properties: [...]}]
-func (f *Functions) Nodes() []map[string]interface{} {
-	// apoc.schema.nodes is procedure-classified and the bundled plugin
-	// implements no such procedure: no statement context reaches this helper,
-	// whose whole-graph read runs on the background lifetime.
-	nodes, err := f.backend.AllNodes(context.Background())
+func (f *Functions) Nodes(ctx context.Context) ([]map[string]interface{}, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	// The caller supplies the lifetime for storage work.
+	nodes, err := f.backend.AllNodes(ctx)
 	if err != nil {
-		return []map[string]interface{}{}
+		return nil, err
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	if err != nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return []map[string]interface{}{}, nil
 	}
 
 	// Collect unique labels and their properties
 	labelProps := make(map[string]map[string]bool)
 	for _, node := range nodes {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		for _, label := range node.Labels {
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
 			if labelProps[label] == nil {
 				labelProps[label] = make(map[string]bool)
 			}
 			for prop := range node.Properties {
+				if operationError := ctx.Err(); operationError != nil {
+					return nil, operationError
+				}
+
 				labelProps[label][prop] = true
 			}
 		}
@@ -89,8 +113,16 @@ func (f *Functions) Nodes() []map[string]interface{} {
 
 	results := make([]map[string]interface{}, 0)
 	for label, props := range labelProps {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		propList := make([]string, 0, len(props))
 		for prop := range props {
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
 			propList = append(propList, prop)
 		}
 		results = append(results, map[string]interface{}{
@@ -98,7 +130,10 @@ func (f *Functions) Nodes() []map[string]interface{} {
 			"properties": propList,
 		})
 	}
-	return results
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return results, nil
 }
 
 // Relationships returns schema information for relationship types.
@@ -106,30 +141,58 @@ func (f *Functions) Nodes() []map[string]interface{} {
 // Example:
 //
 //	apoc.schema.relationships() => [{type: 'KNOWS', properties: [...]}]
-func (f *Functions) Relationships() []map[string]interface{} {
-	// apoc.schema.relationships is procedure-classified and the bundled plugin
-	// implements no such procedure: no statement context reaches this helper,
-	// whose whole-graph read runs on the background lifetime.
-	rels, err := f.backend.AllRelationships(context.Background())
+func (f *Functions) Relationships(ctx context.Context) ([]map[string]interface{}, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	// The caller supplies the lifetime for storage work.
+	rels, err := f.backend.AllRelationships(ctx)
 	if err != nil {
-		return []map[string]interface{}{}
+		return nil, err
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	if err != nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return []map[string]interface{}{}, nil
 	}
 
 	// Collect unique types and their properties
 	typeProps := make(map[string]map[string]bool)
 	for _, rel := range rels {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		if typeProps[rel.Type] == nil {
 			typeProps[rel.Type] = make(map[string]bool)
 		}
 		for prop := range rel.Properties {
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
 			typeProps[rel.Type][prop] = true
 		}
 	}
 
 	results := make([]map[string]interface{}, 0)
 	for relType, props := range typeProps {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		propList := make([]string, 0, len(props))
 		for prop := range props {
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
 			propList = append(propList, prop)
 		}
 		results = append(results, map[string]interface{}{
@@ -137,7 +200,10 @@ func (f *Functions) Relationships() []map[string]interface{} {
 			"properties": propList,
 		})
 	}
-	return results
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return results, nil
 }
 
 // NodeConstraints returns all node constraints.
@@ -205,15 +271,38 @@ func NodeIndexExists(label string, properties []string) bool {
 // Example:
 //
 //	apoc.schema.properties.distinct('Person') => ['name', 'age']
-func (f *Functions) PropertiesDistinct(ctx context.Context, label string) []string {
+func (f *Functions) PropertiesDistinct(ctx context.Context, label string) ([]string, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	propSet := make(map[string]bool)
 
 	nodes, err := f.backend.AllNodes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	if err == nil {
 		for _, node := range nodes {
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
 			for _, l := range node.Labels {
+				if operationError := ctx.Err(); operationError != nil {
+					return nil, operationError
+				}
+
 				if l == label {
 					for prop := range node.Properties {
+						if operationError := ctx.Err(); operationError != nil {
+							return nil, operationError
+						}
+
 						propSet[prop] = true
 					}
 					break
@@ -224,9 +313,16 @@ func (f *Functions) PropertiesDistinct(ctx context.Context, label string) []stri
 
 	result := make([]string, 0, len(propSet))
 	for prop := range propSet {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		result = append(result, prop)
 	}
-	return result
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return result, nil
 }
 
 // Labels returns all node labels.
@@ -234,13 +330,32 @@ func (f *Functions) PropertiesDistinct(ctx context.Context, label string) []stri
 // Example:
 //
 //	apoc.schema.labels() => ['Person', 'Company', 'Product']
-func (f *Functions) Labels(ctx context.Context) []string {
+func (f *Functions) Labels(ctx context.Context) ([]string, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	labelSet := make(map[string]bool)
 
 	nodes, err := f.backend.AllNodes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	if err == nil {
 		for _, node := range nodes {
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
 			for _, label := range node.Labels {
+				if operationError := ctx.Err(); operationError != nil {
+					return nil, operationError
+				}
+
 				labelSet[label] = true
 			}
 		}
@@ -248,9 +363,16 @@ func (f *Functions) Labels(ctx context.Context) []string {
 
 	result := make([]string, 0, len(labelSet))
 	for label := range labelSet {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		result = append(result, label)
 	}
-	return result
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return result, nil
 }
 
 // Types returns all relationship types.
@@ -258,21 +380,43 @@ func (f *Functions) Labels(ctx context.Context) []string {
 // Example:
 //
 //	apoc.schema.types() => ['KNOWS', 'WORKS_AT', 'BOUGHT']
-func (f *Functions) Types(ctx context.Context) []string {
+func (f *Functions) Types(ctx context.Context) ([]string, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	typeSet := make(map[string]bool)
 
 	rels, err := f.backend.AllRelationships(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	if err == nil {
 		for _, rel := range rels {
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
 			typeSet[rel.Type] = true
 		}
 	}
 
 	result := make([]string, 0, len(typeSet))
 	for relType := range typeSet {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		result = append(result, relType)
 	}
-	return result
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return result, nil
 }
 
 // Info returns comprehensive schema information.
@@ -280,13 +424,25 @@ func (f *Functions) Types(ctx context.Context) []string {
 // Example:
 //
 //	apoc.schema.info() => {labels: [...], types: [...], constraints: [...], indexes: [...]}
-func (f *Functions) Info(ctx context.Context) map[string]interface{} {
+func (f *Functions) Info(ctx context.Context) (map[string]interface{}, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	helperValue1, helperError1 := f.Labels(ctx)
+	if helperError1 != nil {
+		return nil, helperError1
+	}
+	helperValue2, helperError2 := f.Types(ctx)
+	if helperError2 != nil {
+		return nil, helperError2
+	}
 	return map[string]interface{}{
-		"labels":      f.Labels(ctx),
-		"types":       f.Types(ctx),
+		"labels":      helperValue1,
+		"types":       helperValue2,
 		"constraints": append(NodeConstraints(), RelationshipConstraints()...),
 		"indexes":     append(NodeIndexes(), RelationshipIndexes()...),
-	}
+	}, nil
 }
 
 // CreateIndex creates an index.
@@ -403,13 +559,25 @@ func Import(schemaDef map[string]interface{}) error {
 // Example:
 //
 //	apoc.schema.stats() => {labelCount: 5, typeCount: 10, ...}
-func (f *Functions) Stats(ctx context.Context) map[string]interface{} {
+func (f *Functions) Stats(ctx context.Context) (map[string]interface{}, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	helperValue3, helperError3 := f.Labels(ctx)
+	if helperError3 != nil {
+		return nil, helperError3
+	}
+	helperValue4, helperError4 := f.Types(ctx)
+	if helperError4 != nil {
+		return nil, helperError4
+	}
 	return map[string]interface{}{
-		"labelCount":      len(f.Labels(ctx)),
-		"typeCount":       len(f.Types(ctx)),
+		"labelCount":      len(helperValue3),
+		"typeCount":       len(helperValue4),
 		"constraintCount": len(NodeConstraints()) + len(RelationshipConstraints()),
 		"indexCount":      len(NodeIndexes()) + len(RelationshipIndexes()),
-	}
+	}, nil
 }
 
 // Analyze analyzes schema usage.

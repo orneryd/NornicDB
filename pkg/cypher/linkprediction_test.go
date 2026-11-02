@@ -221,10 +221,10 @@ func TestGdsLinkPredictionPredict(t *testing.T) {
 	// Add embeddings
 	context.Background()
 	for _, nodeID := range []storage.NodeID{"alice", "bob", "charlie", "diana"} {
-		node, _ := engine.GetNode(nodeID)
+		node, _ := engine.GetNode(t.Context(), nodeID)
 		if node != nil {
 			node.ChunkEmbeddings = [][]float32{{0.1, 0.2, 0.3, 0.4}}
-			engine.UpdateNode(storage.NodeUpdateRequest{After: node})
+			engine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node})
 		}
 	}
 
@@ -356,7 +356,7 @@ func setupTestGraph(t *testing.T, engine storage.Engine) {
 	}
 
 	for _, node := range nodes {
-		if _, err := engine.CreateNode(node); err != nil {
+		if _, err := engine.CreateNode(t.Context(), node); err != nil {
 			t.Fatalf("Failed to create node: %v", err)
 		}
 	}
@@ -369,7 +369,7 @@ func setupTestGraph(t *testing.T, engine storage.Engine) {
 	}
 
 	for _, edge := range edges {
-		if err := engine.CreateEdge(edge); err != nil {
+		if err := engine.CreateEdge(t.Context(), edge); err != nil {
 			t.Fatalf("Failed to create edge: %v", err)
 		}
 	}

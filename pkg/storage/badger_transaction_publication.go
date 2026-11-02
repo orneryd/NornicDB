@@ -43,7 +43,7 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	afterPublication, prepare := request.AfterPublication, request.prepare
 	// A nil publication context is the explicit detached native boundary.
 	// Private preparation and publication receive this unbounded completion
-	// lifetime, preserving commitCtx's nil contract independently of the engine
+	// lifetime, preserving the public nil contract independently of the engine
 	// stop signal.
 	preparationContext := commitPreparationLifetime(ctx)
 	if ctx != nil {
@@ -51,14 +51,12 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 			return err
 		}
 	}
-	if err := tx.mu.LockContext(ctx); err != nil {
+	if err := tx.mu.LockContext(preparationContext); err != nil {
 		return err
 	}
-	tx.commitCtx = ctx
 	var knowledgePolicyChanged func()
 	var notification, publication *commitNotification
 	defer func() {
-		tx.commitCtx = nil
 		tx.mu.Unlock()
 		if commitErr == nil && afterPublication != nil {
 			afterPublication()
@@ -96,7 +94,7 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 		tx.releaseWriteBarrierLocked()
 	}
 	if tx.commitReleaseWrite == nil {
-		lease, writeErr := tx.engine.beginBarrierWrite(ctx, tx.schemaRuntime != nil, false)
+		lease, writeErr := tx.engine.beginBarrierWrite(preparationContext, tx.schemaRuntime != nil, false)
 		if writeErr != nil {
 			tx.closeLocked(TxStatusRolledBack, true, nil)
 			return writeErr
@@ -186,7 +184,7 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 			tx.closeLocked(TxStatusRolledBack, true, nil)
 			return keyErr
 		}
-		releaseCommitLocks, err = schemaForValues.acquireUniqueConstraintCommitLocks(ctx, tx.ID, valueKeys)
+		releaseCommitLocks, err = schemaForValues.acquireUniqueConstraintCommitLocks(preparationContext, tx.ID, valueKeys)
 		if err != nil {
 			tx.closeLocked(TxStatusRolledBack, true, nil)
 			return err
@@ -229,13 +227,13 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 		if err := prepare(preparationContext); err != nil {
 			return tx.abortCommitLocked(err)
 		}
+		// The sole private preparation continuation returns success only after
+		// its terminal owner accepts the command. Completion is detached from
+		// both the original caller and engine stop from this handoff onward.
+		preparationContext = context.Background()
 	}
 
-	// Accepted prepared commits clear commitCtx at the handoff. Their completion
-	// is detached even from engine stop; plain commits retain the caller lifetime.
-	// Every later private publication helper receives this selected non-nil scope
-	// instead of reading the mutable marker again.
-	preparationContext = commitPreparationLifetime(tx.commitCtx)
+	// Plain commits retain the caller lifetime until publication acceptance.
 	if err := preparationContext.Err(); err != nil {
 		return tx.abortCommitLocked(err)
 	}
@@ -258,7 +256,7 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	if tx.engine.writeBehindEnabled() && tx.commitMode == CommitModeImplicit && tx.schemaRuntime == nil &&
 		!tx.knowledgeSchemaDirty && len(temporalTargets) == 0 &&
 		(tx.namespace == "" || tx.engine.ChangeCapture(tx.namespace) == ChangeCaptureOff) {
-		return tx.commitBufferedLocked()
+		return tx.commitBufferedLocked(preparationContext)
 	}
 
 	// A commit the buffer does not take writes Badger itself: it is ordered
@@ -298,7 +296,7 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 		}
 		// A capturing database's commits take its change log in turn, from
 		// here until the commit ends (#937).
-		if err := tx.beginChangeCaptureLocked(); err != nil {
+		if err := tx.beginChangeCaptureLocked(preparationContext); err != nil {
 			tx.closeLocked(TxStatusRolledBack, true, nil)
 			return err
 		}
@@ -332,9 +330,9 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 		}
 	}()
 	acceptedRelease := tx.commitReleaseAcceptedAuthority
-	// A prepared command's accepted continuation deliberately cleared commitCtx;
-	// its acceptance owner already made the semantic decision. The writer runs
-	// on the selected unbounded phase scope either way.
+	// A prepared command's acceptance owner already made the semantic decision.
+	// The writer runs on the selected phase scope; ordinary commits still use
+	// their caller context before publication acceptance.
 	cw := tx.engine.newCommitWriter(preparationContext, tx.badgerDB, tx.badgerTx)
 	logicalID := tx.ID
 	if tx.commitLogicalID != "" {
@@ -355,6 +353,7 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	// commits. Register it before the timestamp becomes visible; its stage may
 	// help an earlier same-key publisher without waiting for that goroutine.
 	operations := tx.operations
+	cw.entityOperations, cw.entityLogicalID, cw.entityMode = physicalOperations, logicalID, tx.commitMode
 	engine, namespace := tx.engine, tx.namespace
 	if len(operations) > 0 || tx.knowledgeSchemaDirty {
 		schema := engine.GetSchemaForNamespace(namespace)
@@ -424,7 +423,7 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	// commit queue once instead of once for data and once per count tier
 	// (PR #1043 retest @39f0f03f, issue C). The positional (label, type)
 	// tier stays a read-modify-write after finish below, under its lock.
-	if err := tx.writeScalarCountDeltasInCommitLocked(&cw.batchWriter); err != nil {
+	if err := tx.writeScalarCountDeltasInCommitLocked(preparationContext, &cw.batchWriter); err != nil {
 		return tx.abortCommitLocked(fmt.Errorf("staging scalar count deltas in commit: %w", err))
 	}
 
@@ -442,7 +441,7 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	// From here to the end of the tail the derived counts this commit
 	// changes stay locked; see acquireCommitPublicationLocked. A large
 	// commit acquired them before its first batch.
-	if err := tx.acquireCommitPublicationLocked(); err != nil {
+	if err := tx.acquireCommitPublicationLocked(preparationContext); err != nil {
 		return tx.abortCommitLocked(err)
 	}
 
@@ -481,7 +480,7 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	// the final recovery boundary.
 	// Data is already durable. Retain the metadata tail's accepted lifetime:
 	// caller cancellation cannot veto counts or their repair after publication.
-	completionContext := commitPreparationLifetime(nil)
+	completionContext := context.Background()
 	if err := tx.engine.applyEdgeTypeLabelCountDeltasLocked(completionContext, tx.pendingEdgeTypeLabelCountDeltas); err != nil {
 		if repairErr := tx.engine.rebuildAuthoritativeEdgeTypeCountsLocked(completionContext); repairErr != nil {
 			tx.engine.log.Error("failed to repair derived (label, type) counts after transaction commit",

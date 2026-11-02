@@ -40,7 +40,7 @@ func TestAutoCompactionSnapshotStopsWithOwner(t *testing.T) {
 	require.NoError(t, err)
 	inner := &snapshotHoldEngine{MemoryEngine: newTestMemoryEngine(t), entered: make(chan struct{})}
 	engine := NewWALEngine(inner, wal)
-	_, err = engine.CreateNode(&Node{ID: "nornic:snapshot-owner", Properties: map[string]any{"name": "held"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "nornic:snapshot-owner", Properties: map[string]any{"name": "held"}})
 	require.NoError(t, err)
 	require.NoError(t, engine.EnableAutoCompaction(dir))
 	select {

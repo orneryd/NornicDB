@@ -667,7 +667,7 @@ func (e *StorageExecutor) callApocImportJson(ctx context.Context, args []interfa
 					}
 
 					if node.ID != "" {
-						if _, err := store.CreateNode(node); err == nil {
+						if _, err := store.CreateNode(ctx, node); err == nil {
 							nodesImported++
 						}
 					}
@@ -700,7 +700,7 @@ func (e *StorageExecutor) callApocImportJson(ctx context.Context, args []interfa
 					}
 
 					if edge.ID != "" && edge.StartNode != "" && edge.EndNode != "" {
-						if err := store.CreateEdge(edge); err == nil {
+						if err := store.CreateEdge(ctx, edge); err == nil {
 							relsImported++
 						}
 					}

@@ -36,7 +36,7 @@ func TestBadgerUniqueConstraintCommit_DisjointFunctionBatchesAreParallel(t *test
 
 	transactions := make([]*BadgerTransaction, badgerUniqueLockWriters)
 	for writer := range badgerUniqueLockWriters {
-		tx, err := engine.BeginTransaction()
+		tx, err := engine.BeginTransaction(t.Context())
 		if err != nil {
 			t.Fatalf("BeginTransaction writer %d: %v", writer, err)
 		}
@@ -45,7 +45,7 @@ func TestBadgerUniqueConstraintCommit_DisjointFunctionBatchesAreParallel(t *test
 		}
 		for key := range badgerUniqueLockKeysPerWriter {
 			node := badgerUniqueFunctionNode(writer, key, 1)
-			if err := tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}); err != nil {
+			if err := tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node, Policy: ClientNodeEdits}); err != nil {
 				t.Fatalf("UpdateNode writer %d key %d: %v", writer, key, err)
 			}
 		}
@@ -128,7 +128,7 @@ func TestBadgerUniqueConstraintCommit_SameUIDRetryPreservesExactness(t *testing.
 
 	nodeID := NodeID("test:same-uid")
 	uid := "content-entity:same-uid"
-	if _, err := engine.CreateNode(&Node{
+	if _, err := engine.CreateNode(t.Context(), &Node{
 		ID:         nodeID,
 		Labels:     []string{"Function"},
 		Properties: map[string]interface{}{"uid": uid, "revision": 0},
@@ -145,14 +145,14 @@ func TestBadgerUniqueConstraintCommit_SameUIDRetryPreservesExactness(t *testing.
 	}
 	transactions := make([]*BadgerTransaction, 2)
 	for index := range transactions {
-		tx, err := engine.BeginTransaction()
+		tx, err := engine.BeginTransaction(t.Context())
 		if err != nil {
 			t.Fatalf("BeginTransaction revision %d: %v", index+1, err)
 		}
 		if err := tx.SetValidationSetting(DeferredConstraintValidation, true); err != nil {
 			t.Fatalf("SetDeferredConstraintValidation revision %d: %v", index+1, err)
 		}
-		if err := tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{
+		if err := tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{
 			ID:         nodeID,
 			Labels:     []string{"Function"},
 			Properties: map[string]interface{}{"uid": uid, "revision": index + 1},
@@ -203,14 +203,14 @@ func TestBadgerUniqueConstraintCommit_SameUIDRetryPreservesExactness(t *testing.
 		t.Fatalf("same-UID loser error = %v, want ErrConflict cause", loser.err)
 	}
 
-	retry, err := engine.BeginTransaction()
+	retry, err := engine.BeginTransaction(t.Context())
 	if err != nil {
 		t.Fatalf("BeginTransaction retry: %v", err)
 	}
 	if err := retry.SetValidationSetting(DeferredConstraintValidation, true); err != nil {
 		t.Fatalf("SetDeferredConstraintValidation retry: %v", err)
 	}
-	if err := retry.UpdateGraphNode(NodeUpdateRequest{After: &Node{
+	if err := retry.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{
 		ID:         nodeID,
 		Labels:     []string{"Function"},
 		Properties: map[string]interface{}{"uid": uid, "revision": loser.revision},
@@ -259,7 +259,7 @@ func BenchmarkBadgerUniqueConstraintCommit_DisjointFunctionBatches(b *testing.B)
 		b.StopTimer()
 		transactions := make([]*BadgerTransaction, badgerUniqueLockWriters)
 		for writer := range badgerUniqueLockWriters {
-			tx, err := engine.BeginTransaction()
+			tx, err := engine.BeginTransaction(b.Context())
 			if err != nil {
 				b.Fatalf("BeginTransaction writer %d: %v", writer, err)
 			}
@@ -267,7 +267,7 @@ func BenchmarkBadgerUniqueConstraintCommit_DisjointFunctionBatches(b *testing.B)
 				b.Fatalf("SetDeferredConstraintValidation writer %d: %v", writer, err)
 			}
 			for key := range badgerUniqueLockKeysPerWriter {
-				if err := tx.UpdateGraphNode(NodeUpdateRequest{After: badgerUniqueFunctionNode(writer, key, iteration+1), Policy: ClientNodeEdits}); err != nil {
+				if err := tx.UpdateGraphNode(b.Context(), NodeUpdateRequest{After: badgerUniqueFunctionNode(writer, key, iteration+1), Policy: ClientNodeEdits}); err != nil {
 					b.Fatalf("UpdateNode writer %d key %d: %v", writer, key, err)
 				}
 			}
@@ -301,7 +301,7 @@ func BenchmarkBadgerUniqueConstraintCommit_DisjointFunctionBatches(b *testing.B)
 
 func seedBadgerUniqueFunctions(t testing.TB, engine *BadgerEngine) {
 	t.Helper()
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(context.Background())
 	if err != nil {
 		t.Fatalf("BeginTransaction seed: %v", err)
 	}
@@ -310,7 +310,7 @@ func seedBadgerUniqueFunctions(t testing.TB, engine *BadgerEngine) {
 	}
 	for writer := range badgerUniqueLockWriters {
 		for key := range badgerUniqueLockKeysPerWriter {
-			if _, err := tx.CreateNode(badgerUniqueFunctionNode(writer, key, 0)); err != nil {
+			if _, err := tx.CreateNode(context.Background(), badgerUniqueFunctionNode(writer, key, 0)); err != nil {
 				t.Fatalf("CreateNode seed writer %d key %d: %v", writer, key, err)
 			}
 		}

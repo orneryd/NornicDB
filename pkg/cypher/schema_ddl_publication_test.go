@@ -292,7 +292,7 @@ func ddlIndexValueOwnerIDs(t *testing.T, store storage.Engine, label, property, 
 
 // ddlSuppressor exposes the storage's stored-entity suppression capability.
 type ddlSuppressor interface {
-	SetManualSuppression(storage.StoredEntityKind, string, bool) error
+	SetManualSuppression(context.Context, storage.StoredEntityKind, string, bool) error
 }
 
 // TestOrdinarySchemaDDLStatementContract pins the classification the executor
@@ -588,7 +588,7 @@ func TestCreateIndexFillsFromStoredHiddenNodes(t *testing.T) {
 			require.NotEmpty(t, hiddenID)
 			suppressor, ok := fixture.engine.(ddlSuppressor)
 			require.True(t, ok, "the fixture engine must support stored-entity suppression")
-			require.NoError(t, suppressor.SetManualSuppression(storage.StoredEntityNodeKind, string(hiddenID), true))
+			require.NoError(t, suppressor.SetManualSuppression(context.Background(), storage.StoredEntityNodeKind, string(hiddenID), true))
 
 			require.Equal(t, []string{"alice", "alice"},
 				ddlEqualityValues(t, exec, label, property, "alice", "hidden_alice"))
@@ -602,7 +602,7 @@ func TestCreateIndexFillsFromStoredHiddenNodes(t *testing.T) {
 			require.Len(t, ddlIndexValueOwnerIDs(t, fixture.store, label, property, "bob"), 1,
 				"the fill skipped a stored node the visibility layer hides")
 
-			require.NoError(t, suppressor.SetManualSuppression(storage.StoredEntityNodeKind, string(hiddenID), false))
+			require.NoError(t, suppressor.SetManualSuppression(context.Background(), storage.StoredEntityNodeKind, string(hiddenID), false))
 			require.Equal(t, []string{"bob"},
 				ddlEqualityValues(t, exec, label, property, "bob", "revealed_bob"))
 		})

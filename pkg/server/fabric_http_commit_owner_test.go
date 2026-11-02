@@ -30,7 +30,7 @@ func TestReviewR7HTTPCommitOwner(t *testing.T) {
 			require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "idleblocked"}))
 			leaf, err := server.dbManager.GetStorage("idleblocked")
 			require.NoError(t, err)
-			_, err = leaf.CreateNode(&storage.Node{ID: "seed", Labels: []string{"Seed"}})
+			_, err = leaf.CreateNode(t.Context(), &storage.Node{ID: "seed", Labels: []string{"Seed"}})
 			require.NoError(t, err)
 			require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "commitcomp", []multidb.ConstituentRef{{Alias: "l", DatabaseName: "idleblocked", Type: "local", AccessMode: "read_write"}}))
 			// Warm the public planner before measuring a sub-second COMMIT budget.

@@ -28,7 +28,7 @@ func benchmarkCardinalityEngine(b *testing.B, size, pending int) (*BadgerEngine,
 	}
 	b.Cleanup(func() { _ = engine.Close() })
 	for _, id := range []NodeID{"test:hub", "test:leaf"} {
-		if _, err := engine.CreateNode(&Node{ID: id, Labels: []string{"Endpoint"}}); err != nil {
+		if _, err := engine.CreateNode(b.Context(), &Node{ID: id, Labels: []string{"Endpoint"}}); err != nil {
 			b.Fatalf("CreateNode(%q): %v", id, err)
 		}
 	}
@@ -37,7 +37,7 @@ func benchmarkCardinalityEngine(b *testing.B, size, pending int) (*BadgerEngine,
 			ID: EdgeID(fmt.Sprintf("test:e%d", i)), StartNode: "test:hub", EndNode: "test:leaf", Type: "OWNS",
 			Properties: map[string]any{},
 		}
-		if err := engine.CreateEdge(edge); err != nil {
+		if err := engine.CreateEdge(b.Context(), edge); err != nil {
 			b.Fatalf("CreateEdge(%q): %v", edge.ID, err)
 		}
 	}

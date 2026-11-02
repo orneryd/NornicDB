@@ -151,7 +151,7 @@ func (e *StorageExecutor) validatePipelineProjectionValues(ctx context.Context, 
 	}
 	for _, expression := range projectionExpressions(ctx, clause, keyword) {
 		for _, row := range rows {
-			if err := e.validateRowSubscriptTypes(expression, row); err != nil {
+			if err := e.validateRowSubscriptTypes(ctx, expression, row); err != nil {
 				return err
 			}
 		}

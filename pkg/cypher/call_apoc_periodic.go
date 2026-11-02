@@ -37,7 +37,7 @@ func (e *StorageExecutor) callApocPeriodicIterate(ctx context.Context, procedure
 
 	// An action that calls an internal function is the call's error
 	// (#1105), not a failure per row.
-	if err := internalFunctionCallError(actionQuery); err != nil {
+	if err := internalFunctionCallError(ctx, actionQuery); err != nil {
 		return nil, err
 	}
 
@@ -155,7 +155,7 @@ func (e *StorageExecutor) callApocPeriodicCommit(ctx context.Context, args []int
 
 	// A statement that calls an internal function is the call's error
 	// (#1105), not a run that stops at its first failure.
-	if err := internalFunctionCallError(statement); err != nil {
+	if err := internalFunctionCallError(ctx, statement); err != nil {
 		return nil, err
 	}
 

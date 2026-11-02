@@ -107,6 +107,10 @@ func (f *nilFlow) projectFieldAt(value ssa.Value, path []int, at ssa.Instruction
 		case *ssa.Extract:
 			if call, ok := x.Tuple.(*ssa.Call); ok {
 				f.projectFieldReturns(call, x.Index, path, use, project, unknown)
+			} else if selection, ok := x.Tuple.(*ssa.Select); ok {
+				// A receive case's value slot: the selected-state edge and the
+				// closed channel population decide it, not the slot's type.
+				f.projectSelectReceive(x, selection, path, use, project, unknown)
 			} else {
 				unknown("unknown result " + name)
 			}

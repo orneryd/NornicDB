@@ -621,7 +621,7 @@ func (e *StorageExecutor) rowPredicatePartValue(ctx context.Context, part *rowPr
 	textValue := func() (interface{}, error) {
 		value, _, err := deferredExpressionValue(ctx, func(ctx context.Context) interface{} {
 			values := rowValuesInExpressionContext(ctx, scope.materialize())
-			value, ok, err := e.evaluateRowValue(part.text, values)
+			value, ok, err := e.evaluateRowValue(ctx, part.text, values)
 			if err != nil {
 				recordExpressionFailure(ctx, err)
 				return nil

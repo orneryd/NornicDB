@@ -147,11 +147,7 @@ func labelStringSlice(in []string) []interface{} {
 	return out
 }
 
-// pathToMap converts a PathResult to a map representation
-func (e *StorageExecutor) pathToMap(path PathResult) map[string]interface{} {
-	return e.pathToMapContext(context.Background(), path)
-}
-
+// pathToMapContext converts a PathResult to a map representation while retaining cancellation.
 func (e *StorageExecutor) pathToMapContext(ctx context.Context, path PathResult) map[string]interface{} {
 	if ctx.Err() != nil {
 		return nil

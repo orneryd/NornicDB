@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -68,22 +69,22 @@ type invalidEntityPolicyStarter struct {
 	calls int
 }
 
-func (s *invalidEntityPolicyStarter) BeginTransaction() (*BadgerTransaction, error) {
+func (s *invalidEntityPolicyStarter) BeginTransaction(ctx context.Context) (*BadgerTransaction, error) {
 	s.calls++
 	return nil, ErrInvalidData
 }
 func TestEntityTransactionRejectsPolicyBeforeNativeAcquisition(t *testing.T) {
 	starter := &invalidEntityPolicyStarter{}
-	tx, err := BeginEntityTransaction(starter, EntityCommitMode(255))
+	tx, err := BeginEntityTransaction(t.Context(), starter, EntityCommitMode(255))
 	require.ErrorIs(t, err, ErrInvalidData)
 	require.Nil(t, tx)
 	require.Zero(t, starter.calls)
 
 	frame := &BadgerTransaction{Status: TxStatusActive}
-	require.ErrorIs(t, frame.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:n"}, Policy: EntityImagePolicy(255)}), ErrInvalidData)
+	require.ErrorIs(t, frame.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:n"}, Policy: EntityImagePolicy(255)}), ErrInvalidData)
 	require.Empty(t, frame.namespace, "invalid policy must not pin a namespace")
 	require.Empty(t, frame.pendingNodes)
 	// Stored images still obey the original client-detachment boundary.
 	frame.clientDetached.Store(true)
-	require.ErrorIs(t, frame.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:n"}, Policy: StoredNodeImages}), ErrTransactionClosed)
+	require.ErrorIs(t, frame.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:n"}, Policy: StoredNodeImages}), ErrTransactionClosed)
 }

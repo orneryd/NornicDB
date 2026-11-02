@@ -28,12 +28,12 @@ func TestResidualFlushWaitCancellation(t *testing.T) {
 		})
 	}
 	ack := func(id NodeID) {
-		tx, err := b.BeginTransaction()
+		tx, err := b.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		defer tx.Rollback()
 		require.NoError(t, tx.SetNamespace("test"))
 		require.NoError(t, tx.SetImplicit(true))
-		_, err = tx.CreateNode(&Node{ID: id})
+		_, err = tx.CreateNode(t.Context(), &Node{ID: id})
 		require.NoError(t, err)
 		require.NoError(t, tx.Commit())
 	}
@@ -119,6 +119,6 @@ func TestResidualFlushWaitCancellation(t *testing.T) {
 		t.Fatal("worker did not settle accepted replay after the peer left")
 	}
 	require.True(t, second.IsApplied())
-	_, err = b.GetStoredNode("test:flush-two")
+	_, err = b.GetStoredNode(t.Context(), "test:flush-two")
 	require.NoError(t, err)
 }

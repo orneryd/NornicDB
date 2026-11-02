@@ -34,10 +34,10 @@ func TestCloseWaitsForInFlightListener(t *testing.T) {
 				<-release
 				finished.Store(true)
 			})
-			tx, err := b.BeginTransaction()
+			tx, err := b.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			require.NoError(t, tx.SetImplicit(true))
-			_, err = tx.CreateNode(&Node{ID: "test:held", Properties: map[string]any{"v": int64(1)}})
+			_, err = tx.CreateNode(t.Context(), &Node{ID: "test:held", Properties: map[string]any{"v": int64(1)}})
 			require.NoError(t, err)
 			require.NoError(t, tx.Commit()) // acknowledged into the buffer
 

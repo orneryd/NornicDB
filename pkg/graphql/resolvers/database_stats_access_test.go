@@ -17,16 +17,16 @@ func TestGraphQLStatsRequireSelectedDatabaseRead(t *testing.T) {
 	dbManager := testutil.DatabaseManager(t, db)
 	query := &queryResolver{NewResolver(db, dbManager)}
 
-	_, err := db.GetStorage().CreateNode(&storage.Node{ID: "default-node", Labels: []string{"DefaultDoc"}})
+	_, err := db.GetStorage().CreateNode(t.Context(), &storage.Node{ID: "default-node", Labels: []string{"DefaultDoc"}})
 	require.NoError(t, err)
 	require.NoError(t, dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "named"}))
 	named, err := dbManager.GetStorage("named")
 	require.NoError(t, err)
 	for _, id := range []storage.NodeID{"named-a", "named-b"} {
-		_, err = named.CreateNode(&storage.Node{ID: id, Labels: []string{"NamedDoc"}})
+		_, err = named.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"NamedDoc"}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, named.CreateEdge(&storage.Edge{ID: "named-edge", StartNode: "named-a", EndNode: "named-b", Type: "LINKS"}))
+	require.NoError(t, named.CreateEdge(t.Context(), &storage.Edge{ID: "named-edge", StartNode: "named-a", EndNode: "named-b", Type: "LINKS"}))
 
 	tests := []struct {
 		name          string

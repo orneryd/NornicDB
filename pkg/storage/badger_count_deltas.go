@@ -212,6 +212,10 @@ type countFoldSource struct {
 // next open (or the next read past the fold threshold). Keys are collected
 // up front, so a delta appended by a concurrent commit after collection is
 // never deleted without being summed.
+//
+// ctx is the fold phase that owns this fold and is handed to whichever
+// admission owner source selects, so a fold that stops at admission writes
+// nothing and leaves every delta key to the next fold.
 func (b *BadgerEngine) foldCountDeltaKeys(ctx context.Context, source countFoldSource, baseKey func(string, string) []byte, keys [][]byte) error {
 	sums := make(map[namespaceLabel]int64)
 	write := func(txn *badger.Txn) error {
@@ -266,9 +270,9 @@ func (b *BadgerEngine) foldCountDeltaKeys(ctx context.Context, source countFoldS
 		return b.withUpdate(ctx, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, write)
 	}
 	if source.held {
-		return source.db.updateHeld(write)
+		return source.db.updateHeld(ctx, write)
 	}
-	return source.db.Update(write)
+	return source.db.update(ctx, write, nil)
 }
 
 // foldCountDeltaKeysChunked folds keys in bounded transactions.

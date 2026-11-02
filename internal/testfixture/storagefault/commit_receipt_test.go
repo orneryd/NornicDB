@@ -23,11 +23,11 @@ func TestFinishPreparedReceipt(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			base, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: t.TempDir(), LowMemory: true}))
 			require.NoError(t, err)
-			tx, err := base.BeginTransaction()
+			tx, err := base.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			require.NoError(t, tx.SetNamespace("test"))
-			_, err = tx.CreateNode(&storage.Node{ID: "test:receipt"})
+			_, err = tx.CreateNode(t.Context(), &storage.Node{ID: "test:receipt"})
 			require.NoError(t, err)
 			prepared, err := tx.PrepareEntityCommit(t.Context(), storage.EntityCommitRequest{LogicalID: tx.ID})
 			require.NoError(t, err)
@@ -65,7 +65,7 @@ func TestFinishPreparedReceipt(t *testing.T) {
 					require.ErrorIs(t, receipt.Wait(t.Context()), storage.ErrConflict)
 				}
 			}
-			node, readErr := base.GetStoredNode("test:receipt")
+			node, readErr := base.GetStoredNode(t.Context(), "test:receipt")
 			if test.state == storage.CommitApplied && !test.alreadyAborted {
 				require.NoError(t, readErr)
 				require.Equal(t, storage.NodeID("test:receipt"), node.ID)

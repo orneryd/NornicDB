@@ -104,7 +104,7 @@ func TestRecoveryReplayUndoPreservesEntityFields(t *testing.T) {
 			e.EndNode = "b"
 			engine := newTestMemoryEngine(t)
 			ns := NewNamespacedEngine(engine, "test")
-			_, err := ns.CreateNode(&Node{ID: "b"})
+			_, err := ns.CreateNode(t.Context(), &Node{ID: "b"})
 			require.NoError(t, err)
 			apply := func(op OperationType, data any) WALEntry {
 				raw, err := marshalWALRecoveryPayload(nil, data)
@@ -120,10 +120,10 @@ func TestRecoveryReplayUndoPreservesEntityFields(t *testing.T) {
 				apply(OpCreateNode, WALNodeData{Node: n})
 				apply(OpCreateEdge, WALEdgeData{Edge: e})
 			}
-			gotN, err := ns.GetNode("a")
+			gotN, err := ns.GetNode(t.Context(), "a")
 			require.NoError(t, err)
 			assertRecoveryNodeFields(t, n, gotN)
-			gotE, err := ns.GetEdge("e")
+			gotE, err := ns.GetEdge(t.Context(), "e")
 			require.NoError(t, err)
 			assertRecoveryEdgeFields(t, e, gotE)
 			var deleteN, deleteE WALEntry
@@ -136,24 +136,24 @@ func TestRecoveryReplayUndoPreservesEntityFields(t *testing.T) {
 			}
 			require.NoError(t, UndoWALEntry(engine, deleteN))
 			require.NoError(t, UndoWALEntry(engine, deleteE))
-			gotN, err = ns.GetNode("a")
+			gotN, err = ns.GetNode(t.Context(), "a")
 			require.NoError(t, err)
 			assertRecoveryNodeFields(t, n, gotN)
-			gotE, err = ns.GetEdge("e")
+			gotE, err = ns.GetEdge(t.Context(), "e")
 			require.NoError(t, err)
 			assertRecoveryEdgeFields(t, e, gotE)
 			updated := *n
 			updated.UpdatedAt = n.UpdatedAt.Add(time.Hour)
 			entry := apply(OpUpdateNode, WALNodeData{Node: &updated, OldNode: n})
 			require.NoError(t, UndoWALEntry(engine, entry))
-			gotN, err = ns.GetNode("a")
+			gotN, err = ns.GetNode(t.Context(), "a")
 			require.NoError(t, err)
 			assertRecoveryNodeFields(t, n, gotN)
 			updatedE := *e
 			updatedE.Confidence = 0.9
 			entry = apply(OpUpdateEdge, WALEdgeData{Edge: &updatedE, OldEdge: e})
 			require.NoError(t, UndoWALEntry(engine, entry))
-			gotE, err = ns.GetEdge("e")
+			gotE, err = ns.GetEdge(t.Context(), "e")
 			require.NoError(t, err)
 			assertRecoveryEdgeFields(t, e, gotE)
 		})
@@ -192,10 +192,10 @@ func TestRecoverySnapshotSaveRestoreAcrossRoutes(t *testing.T) {
 			require.NoError(t, err)
 			assert.True(t, status.SnapshotStreaming)
 			for _, engine := range []Engine{memory, target} {
-				got, err := engine.GetNode(NodeID(namespace + ":a"))
+				got, err := engine.GetNode(t.Context(), NodeID(namespace+":a"))
 				require.NoError(t, err)
 				assertRecoveryNodeFields(t, n, got)
-				gotE, err := engine.GetEdge(EdgeID(namespace + ":e"))
+				gotE, err := engine.GetEdge(t.Context(), EdgeID(namespace+":e"))
 				require.NoError(t, err)
 				assertRecoveryEdgeFields(t, e, gotE)
 			}
@@ -284,7 +284,7 @@ func TestRecoveryMaterializedSnapshotKeepsLargeEntitySupport(t *testing.T) {
 	t.Cleanup(func() { _ = target.Close() })
 	_, _, err = RecoverIntoEngine(target, t.TempDir(), path)
 	require.NoError(t, err)
-	got, err := target.GetNode(node.ID)
+	got, err := target.GetNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	assert.Equal(t, node.Properties, got.Properties)
 }

@@ -39,7 +39,7 @@ func TestKnowledgePolicyScalarContracts(t *testing.T) {
 			engine, exec := setupDecayEngine(t, !tc.disabled)
 			id := "nornic:" + tc.id
 			if tc.tracked {
-				_, accessWriteErr1 := engine.WriteAccessMeta(knowledgepolicy.AccessMetaWriteRequest{Mode: knowledgepolicy.RecordState, EntityID: id, Entry: &knowledgepolicy.AccessMetaEntry{TargetID: id, TargetScope: knowledgepolicy.ScopeNode, Fixed: knowledgepolicy.AccessMetaFixedFields{AccessCount: 42, LastAccessedAt: time.Now().Add(-time.Hour).UnixNano()}}})
+				_, accessWriteErr1 := engine.WriteAccessMeta(context.Background(), knowledgepolicy.AccessMetaWriteRequest{Mode: knowledgepolicy.RecordState, EntityID: id, Entry: &knowledgepolicy.AccessMetaEntry{TargetID: id, TargetScope: knowledgepolicy.ScopeNode, Fixed: knowledgepolicy.AccessMetaFixedFields{AccessCount: 42, LastAccessedAt: time.Now().Add(-time.Hour).UnixNano()}}})
 				require.NoError(t, accessWriteErr1)
 			}
 			node := makeNode(id, []string{tc.label}, tc.age)

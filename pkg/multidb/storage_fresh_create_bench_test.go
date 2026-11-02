@@ -21,7 +21,7 @@ func BenchmarkSizeTrackingFreshCreate(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			id := storage.NodeID("fresh-node-" + strconv.Itoa(i))
-			if _, err := engine.CreateNode(&storage.Node{ID: id, Labels: []string{"Fresh"}}); err != nil {
+			if _, err := engine.CreateNode(b.Context(), &storage.Node{ID: id, Labels: []string{"Fresh"}}); err != nil {
 				b.Fatal(err)
 			}
 		}
@@ -31,7 +31,7 @@ func BenchmarkSizeTrackingFreshCreate(b *testing.B) {
 		manager, engine := benchmarkSizeTrackingEngine(b)
 		defer manager.Close()
 		for _, id := range []storage.NodeID{"start", "end"} {
-			if _, err := engine.CreateNode(&storage.Node{ID: id}); err != nil {
+			if _, err := engine.CreateNode(b.Context(), &storage.Node{ID: id}); err != nil {
 				b.Fatal(err)
 			}
 		}
@@ -44,7 +44,7 @@ func BenchmarkSizeTrackingFreshCreate(b *testing.B) {
 				EndNode:   "end",
 				Type:      "FRESH",
 			}
-			if err := engine.CreateEdge(edge); err != nil {
+			if err := engine.CreateEdge(b.Context(), edge); err != nil {
 				b.Fatal(err)
 			}
 		}

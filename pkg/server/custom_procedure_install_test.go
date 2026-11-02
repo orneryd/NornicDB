@@ -50,7 +50,7 @@ func TestCustomProcedureIsReplacedOnlyByAdministrators(t *testing.T) {
 
 	// The editor may use nornic only.
 	require.NoError(t, server.allowlistStore.SaveRoleDatabases(ctx, "editor", []string{"nornic"}))
-	_, err := users.CreateUser("ed", "password123", []auth.Role{auth.RoleEditor})
+	_, err := users.CreateUser(context.Background(), "ed", "password123", []auth.Role{auth.RoleEditor})
 	require.NoError(t, err)
 	editor := getAuthToken(t, users, "ed")
 	require.Equal(t, "Neo.ClientError.Security.Forbidden", txErrorCode(t, server, "vault", editor, "MATCH (s:Secret) RETURN s.v AS v"))

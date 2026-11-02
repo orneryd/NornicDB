@@ -48,7 +48,7 @@ func TestTransactionCommitUsesManagedOwner(t *testing.T) {
 				require.NoError(t, err)
 			}
 			require.Equal(t, 1, engine.commits, "one managed publication per transaction")
-			count, err := engine.NodeCount()
+			count, err := engine.NodeCount(t.Context())
 			require.NoError(t, err)
 			require.EqualValues(t, 1, count)
 		})

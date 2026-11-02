@@ -1,5 +1,7 @@
 package storage
 
+import "context"
+
 // embeddingPublicationProof certifies a conflict-checked body at the actual
 // sidecar commit, not at a later sampling of the current publication timestamp.
 // It is private, process-local outcome state, never a second revision registry.
@@ -26,7 +28,7 @@ func (cw *commitWriter) commitOutcome() error {
 	if err != nil {
 		return err
 	}
-	if err := cw.db.oracle.waitPublished(nil, ts); err != nil {
+	if err := cw.db.oracle.waitPublished(context.Background(), ts); err != nil {
 		return err
 	}
 	cw.db.oracle.stage.apply(ts)

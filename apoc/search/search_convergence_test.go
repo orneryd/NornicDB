@@ -164,31 +164,49 @@ func TestLabeledScanKeepsScanOrderAndDocumentedResults(t *testing.T) {
 	}})
 
 	t.Run("order and label filter", func(t *testing.T) {
-		require.Equal(t, []int64{4, 9, 2, 1}, scanNodeIDs(functions.Missing(context.Background(), "Person", "unset")))
+		apocCallValue1, apocCallError1 := functions.Missing(context.Background(), "Person", "unset")
+		if apocCallError1 != nil {
+			t.Fatalf("APOC helper failed: %v", apocCallError1)
+		}
+		require.Equal(t, []int64{4, 9, 2, 1}, scanNodeIDs(apocCallValue1))
 	})
 
 	t.Run("no label match returns an empty non-nil slice", func(t *testing.T) {
-		results := functions.Missing(context.Background(), "Missing", "unset")
+		results, apocCallError2 := functions.Missing(context.Background(), "Missing", "unset")
+		if apocCallError2 != nil {
+			t.Fatalf("APOC helper failed: %v", apocCallError2)
+		}
+
 		require.NotNil(t, results)
 		require.Empty(t, results)
 	})
 
 	t.Run("no operation match returns an empty non-nil slice", func(t *testing.T) {
-		results := functions.Exists(context.Background(), "Person", "unset")
+		results, apocCallError3 := functions.Exists(context.Background(), "Person", "unset")
+		if apocCallError3 != nil {
+			t.Fatalf("APOC helper failed: %v", apocCallError3)
+		}
+
 		require.NotNil(t, results)
 		require.Empty(t, results)
 	})
 
-	t.Run("failed read returns an empty non-nil slice", func(t *testing.T) {
+	t.Run("failed read propagates its original error", func(t *testing.T) {
 		failed := installProbe(t, &probeStorage{readErr: storage.ErrNodeNotFound})
-		results := failed.Missing(context.Background(), "Person", "unset")
-		require.NotNil(t, results)
+		results, apocCallError4 := failed.Missing(context.Background(), "Person", "unset")
+		require.ErrorIs(t, apocCallError4, storage.ErrNodeNotFound)
+
+		require.Nil(t, results)
 		require.Empty(t, results)
 	})
 
 	t.Run("empty store returns an empty non-nil slice", func(t *testing.T) {
 		empty := installProbe(t, &probeStorage{nodes: nil})
-		results := empty.Missing(context.Background(), "Person", "unset")
+		results, apocCallError5 := empty.Missing(context.Background(), "Person", "unset")
+		if apocCallError5 != nil {
+			t.Fatalf("APOC helper failed: %v", apocCallError5)
+		}
+
 		require.NotNil(t, results)
 		require.Empty(t, results)
 	})
@@ -209,7 +227,11 @@ func TestLabeledScanObservesItsCallerAtAdmissionAndBeforePublishing(t *testing.T
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		observing := &observingContext{Context: ctx}
-		results := functions.Missing(observing, "Person", "unset")
+		results, apocCallError6 := functions.Missing(observing, "Person", "unset")
+		if apocCallError6 != nil {
+			t.Fatalf("APOC helper failed: %v", apocCallError6)
+		}
+
 		require.Equal(t, population, len(results))
 		require.Equal(t, 1, probe.reads)
 		require.Equal(t, 2, observing.observed,
@@ -223,11 +245,13 @@ func TestLabeledScanObservesItsCallerAtAdmissionAndBeforePublishing(t *testing.T
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		observing := &observingContext{Context: ctx}
-		results := functions.Missing(observing, "Person", "unset")
-		require.Equal(t, 2, observing.observed,
-			"admission and publication both observe the stopped caller; neither reads storage")
+		results, apocCallError7 := functions.Missing(observing, "Person", "unset")
+		require.ErrorIs(t, apocCallError7, context.Canceled)
+
+		require.Equal(t, 1, observing.observed,
+			"a stopped caller is rejected at admission without storage or publication")
 		require.Zero(t, probe.reads, "a stopped caller must not read storage")
-		require.NotNil(t, results)
+		require.Nil(t, results)
 		require.Empty(t, results)
 	})
 
@@ -236,11 +260,13 @@ func TestLabeledScanObservesItsCallerAtAdmissionAndBeforePublishing(t *testing.T
 		defer cancel()
 		stopping := installProbe(t, &probeStorage{nodes: labeledScanNodes(population), afterRead: cancel})
 		observing := &observingContext{Context: ctx}
-		results := stopping.Missing(observing, "Person", "unset")
+		results, apocCallError8 := stopping.Missing(observing, "Person", "unset")
+		require.ErrorIs(t, apocCallError8, context.Canceled)
+
 		require.ErrorIs(t, ctx.Err(), context.Canceled)
 		require.Equal(t, 2, observing.observed,
 			"admission and publication both observe the caller; the cached Done channel stops the traversal")
-		require.NotNil(t, results)
+		require.Nil(t, results)
 		require.Empty(t, results, "a stopped scan must not publish the matches it had collected")
 	})
 }
@@ -263,7 +289,10 @@ func TestLabeledScanStopsWithinOneIntervalOfCancelInYield(t *testing.T) {
 	const population = 4 * scanInterval
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	scan := installProbe(t, &probeStorage{nodes: intervalNodes(population)}).newResultScan(ctx, "Person")
+	scan, apocCallError9 := installProbe(t, &probeStorage{nodes: intervalNodes(population)}).newResultScan(ctx, "Person")
+	if apocCallError9 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError9)
+	}
 
 	const cancelAtYield = 3
 	yielded := 0
@@ -296,8 +325,12 @@ func TestLabeledScanStopsWithinOneIntervalOfCancelInYield(t *testing.T) {
 		"no more than one interval of records is examined after the cancellation")
 	require.Len(t, scan.matches, cancelAtYield,
 		"the scan had collected matches before the caller stopped")
-	require.NotNil(t, scan.result())
-	require.Empty(t, scan.result(),
+	apocCallValue10, apocCallError10 := scan.result()
+	require.ErrorIs(t, apocCallError10, context.Canceled)
+	require.Nil(t, apocCallValue10)
+	apocCallValue11, apocCallError11 := scan.result()
+	require.ErrorIs(t, apocCallError11, context.Canceled)
+	require.Empty(t, apocCallValue11,
 		"a scan whose caller stopped inside a yield publishes nothing")
 }
 
@@ -308,13 +341,20 @@ func TestLabeledScanPublishesEveryMatchForALiveCaller(t *testing.T) {
 	const population = 4 * scanInterval
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	scan := installProbe(t, &probeStorage{nodes: intervalNodes(population)}).newResultScan(ctx, "Person")
+	scan, apocCallError10 := installProbe(t, &probeStorage{nodes: intervalNodes(population)}).newResultScan(ctx, "Person")
+	if apocCallError10 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError10)
+	}
 
 	for node := range scan.each() {
 		scan.add(node)
 	}
 
-	published := scan.result()
+	published, apocCallError13 := scan.result()
+	if apocCallError13 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError13)
+	}
+
 	require.Len(t, published, population/2)
 	for index, node := range published {
 		require.Equal(t, int64(2*index+1), node.ID, "matches are published in scan order")
@@ -332,7 +372,10 @@ func TestLabeledScanDoesNotPublishAfterCancelInFinalBlock(t *testing.T) {
 	const population = 10
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	scan := installProbe(t, &probeStorage{nodes: labeledScanNodes(population)}).newResultScan(ctx, "Person")
+	scan, apocCallError11 := installProbe(t, &probeStorage{nodes: labeledScanNodes(population)}).newResultScan(ctx, "Person")
+	if apocCallError11 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError11)
+	}
 
 	const cancelAtYield = 5
 	yielded := 0
@@ -358,8 +401,12 @@ func TestLabeledScanDoesNotPublishAfterCancelInFinalBlock(t *testing.T) {
 	require.LessOrEqual(t, examinedAfterCancel, scanInterval)
 	require.Equal(t, cancelAtYield, len(scan.matches),
 		"the scan had collected matches before the caller stopped in the final block")
-	require.NotNil(t, scan.result())
-	require.Empty(t, scan.result(),
+	apocCallValue15, apocCallError15 := scan.result()
+	require.ErrorIs(t, apocCallError15, context.Canceled)
+	require.Nil(t, apocCallValue15)
+	apocCallValue16, apocCallError16 := scan.result()
+	require.ErrorIs(t, apocCallError16, context.Canceled)
+	require.Empty(t, apocCallValue16,
 		"a scan whose caller stopped in the final partial block must not publish its matches")
 	require.ErrorIs(t, ctx.Err(), context.Canceled)
 }
@@ -370,13 +417,20 @@ func TestLabeledScanDoesNotPublishAfterCancelInFinalBlock(t *testing.T) {
 func TestLabeledScanPublishesTheFinalPartialBlockForALiveCaller(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	scan := installProbe(t, &probeStorage{nodes: labeledScanNodes(10)}).newResultScan(ctx, "Person")
+	scan, apocCallError12 := installProbe(t, &probeStorage{nodes: labeledScanNodes(10)}).newResultScan(ctx, "Person")
+	if apocCallError12 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError12)
+	}
 
 	for node := range scan.each() {
 		scan.add(node)
 	}
 
-	require.Equal(t, []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, scanNodeIDs(scan.result()))
+	apocCallValue18, apocCallError18 := scan.result()
+	if apocCallError18 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError18)
+	}
+	require.Equal(t, []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, scanNodeIDs(apocCallValue18))
 }
 
 // TestLabeledScanHonorsCallerDeadline stops the scan on a deadline that expires
@@ -389,10 +443,11 @@ func TestLabeledScanHonorsCallerDeadline(t *testing.T) {
 		afterRead: func() { <-ctx.Done() },
 	})
 
-	results := functions.Missing(ctx, "Person", "unset")
+	results, apocCallError9 := functions.Missing(ctx, "Person", "unset")
+	require.ErrorIs(t, apocCallError9, context.DeadlineExceeded)
 
 	require.ErrorIs(t, ctx.Err(), context.DeadlineExceeded)
-	require.NotNil(t, results)
+	require.Nil(t, results)
 	require.Empty(t, results)
 }
 
@@ -408,8 +463,12 @@ func TestSelectLabelsStopsWhenTheCallerStops(t *testing.T) {
 			{ID: 3, Labels: []string{"Person"}, Properties: map[string]interface{}{"status": "active"}},
 		}}
 		functions := installProbe(t, probe)
-		results := functions.MultiSearchAll(context.Background(), []string{"Person", "Company"},
+		results, apocCallError10 := functions.MultiSearchAll(context.Background(), []string{"Person", "Company"},
 			map[string]interface{}{"status": "active"})
+		if apocCallError10 != nil {
+			t.Fatalf("APOC helper failed: %v", apocCallError10)
+		}
+
 		require.Equal(t, []int64{1, 3, 1, 2}, scanNodeIDs(results),
 			"each label is scanned in the order given, so a node carrying two labels appears once per label")
 		require.Equal(t, 2, probe.reads, "one whole-graph read per label")
@@ -426,11 +485,13 @@ func TestSelectLabelsStopsWhenTheCallerStops(t *testing.T) {
 			afterRead: cancel,
 		}
 		functions := installProbe(t, probe)
-		results := functions.MultiSearchAll(ctx, []string{"Person", "Company"},
+		results, apocCallError11 := functions.MultiSearchAll(ctx, []string{"Person", "Company"},
 			map[string]interface{}{"status": "active"})
+		require.ErrorIs(t, apocCallError11, context.Canceled)
+
 		require.ErrorIs(t, ctx.Err(), context.Canceled)
 		require.Equal(t, 1, probe.reads, "the second label is not read after the caller stopped")
-		require.NotNil(t, results)
+		require.Nil(t, results)
 		require.Empty(t, results, "a stopped multi-label search must not publish the labels it had collected")
 	})
 
@@ -439,10 +500,12 @@ func TestSelectLabelsStopsWhenTheCallerStops(t *testing.T) {
 		cancel()
 		probe := &probeStorage{nodes: labeledScanNodes(4)}
 		functions := installProbe(t, probe)
-		results := functions.MultiSearchAll(ctx, []string{"Person", "Company"},
+		results, apocCallError12 := functions.MultiSearchAll(ctx, []string{"Person", "Company"},
 			map[string]interface{}{"status": "active"})
+		require.ErrorIs(t, apocCallError12, context.Canceled)
+
 		require.Zero(t, probe.reads, "a stopped caller must not read storage")
-		require.NotNil(t, results)
+		require.Nil(t, results)
 		require.Empty(t, results)
 	})
 }
@@ -571,51 +634,111 @@ func TestSearchHelpersCompareEveryValueShape(t *testing.T) {
 		want []int64
 	}{
 		{name: "Node: list property against an equal list", call: func() []*NodeType {
-			return functions.Node(ctx, "Person", "tags", []interface{}{"a", "b"})
+			apocCallValue13, apocCallError13 := functions.Node(ctx, "Person", "tags", []interface{}{"a", "b"})
+			if apocCallError13 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError13)
+			}
+			return apocCallValue13
 		}, want: []int64{1}},
 		{name: "Node: list property against another list", call: func() []*NodeType {
-			return functions.Node(ctx, "Person", "tags", []interface{}{"b", "a"})
+			apocCallValue14, apocCallError14 := functions.Node(ctx, "Person", "tags", []interface{}{"b", "a"})
+			if apocCallError14 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError14)
+			}
+			return apocCallValue14
 		}, want: []int64{}},
 		{name: "Node: map property against an equal map", call: func() []*NodeType {
-			return functions.Node(ctx, "Person", "meta", map[string]interface{}{"k": "v"})
+			apocCallValue15, apocCallError15 := functions.Node(ctx, "Person", "meta", map[string]interface{}{"k": "v"})
+			if apocCallError15 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError15)
+			}
+			return apocCallValue15
 		}, want: []int64{2}},
 		{name: "Node: NaN equals nothing, itself included", call: func() []*NodeType {
-			return functions.Node(ctx, "Person", "score", math.NaN())
+			apocCallValue16, apocCallError16 := functions.Node(ctx, "Person", "score", math.NaN())
+			if apocCallError16 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError16)
+			}
+			return apocCallValue16
 		}, want: []int64{}},
 		{name: "Node: typed nil property against typed nil", call: func() []*NodeType {
-			return functions.Node(ctx, "Person", "ref", typedNil)
+			apocCallValue17, apocCallError17 := functions.Node(ctx, "Person", "ref", typedNil)
+			if apocCallError17 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError17)
+			}
+			return apocCallValue17
 		}, want: []int64{5}},
 		{name: "Node: typed nil property against nil", call: func() []*NodeType {
-			return functions.Node(ctx, "Person", "ref", nil)
+			apocCallValue18, apocCallError18 := functions.Node(ctx, "Person", "ref", nil)
+			if apocCallError18 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError18)
+			}
+			return apocCallValue18
 		}, want: []int64{}},
 		{name: "Node: scalar equality stays strict by dynamic type", call: func() []*NodeType {
-			return functions.Node(ctx, "Person", "n", int64(7))
+			apocCallValue19, apocCallError19 := functions.Node(ctx, "Person", "n", int64(7))
+			if apocCallError19 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError19)
+			}
+			return apocCallValue19
 		}, want: []int64{6}},
 		{name: "Node: the other scalar type does not match", call: func() []*NodeType {
-			return functions.Node(ctx, "Person", "n", int(7))
+			apocCallValue20, apocCallError20 := functions.Node(ctx, "Person", "n", int(7))
+			if apocCallError20 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError20)
+			}
+			return apocCallValue20
 		}, want: []int64{7}},
 		{name: "Node: a scalar property against a list value", call: func() []*NodeType {
-			return functions.Node(ctx, "Person", "n", []interface{}{int64(7)})
+			apocCallValue21, apocCallError21 := functions.Node(ctx, "Person", "n", []interface{}{int64(7)})
+			if apocCallError21 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError21)
+			}
+			return apocCallValue21
 		}, want: []int64{}},
 		{name: "NodeAll: list and map criteria", call: func() []*NodeType {
-			return functions.NodeAll(ctx, "Person", map[string]interface{}{"tags": []interface{}{"a", "b"}})
+			apocCallValue22, apocCallError22 := functions.NodeAll(ctx, "Person", map[string]interface{}{"tags": []interface{}{"a", "b"}})
+			if apocCallError22 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError22)
+			}
+			return apocCallValue22
 		}, want: []int64{1}},
 		{name: "NodeAny: list or scalar criteria", call: func() []*NodeType {
-			return functions.NodeAny(ctx, "Person", map[string]interface{}{
+			apocCallValue23, apocCallError23 := functions.NodeAny(ctx, "Person", map[string]interface{}{
 				"tags": []interface{}{"c"}, "n": int64(7),
 			})
+			if apocCallError23 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError23)
+			}
+			return apocCallValue23
 		}, want: []int64{3, 6}},
 		{name: "In: list property against an equal list value", call: func() []*NodeType {
-			return functions.In(ctx, "Person", "tags", []interface{}{[]interface{}{"a", "b"}})
+			apocCallValue24, apocCallError24 := functions.In(ctx, "Person", "tags", []interface{}{[]interface{}{"a", "b"}})
+			if apocCallError24 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError24)
+			}
+			return apocCallValue24
 		}, want: []int64{1}},
 		{name: "In: list property against scalar values", call: func() []*NodeType {
-			return functions.In(ctx, "Person", "tags", []interface{}{"a"})
+			apocCallValue25, apocCallError25 := functions.In(ctx, "Person", "tags", []interface{}{"a"})
+			if apocCallError25 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError25)
+			}
+			return apocCallValue25
 		}, want: []int64{}},
 		{name: "In: map property against an equal map value", call: func() []*NodeType {
-			return functions.In(ctx, "Person", "meta", []interface{}{map[string]interface{}{"k": "v"}})
+			apocCallValue26, apocCallError26 := functions.In(ctx, "Person", "meta", []interface{}{map[string]interface{}{"k": "v"}})
+			if apocCallError26 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError26)
+			}
+			return apocCallValue26
 		}, want: []int64{2}},
 		{name: "NotIn: list and map values", call: func() []*NodeType {
-			return functions.NotIn(ctx, "Person", "tags", []interface{}{"a", []interface{}{"c"}})
+			apocCallValue27, apocCallError27 := functions.NotIn(ctx, "Person", "tags", []interface{}{"a", []interface{}{"c"}})
+			if apocCallError27 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError27)
+			}
+			return apocCallValue27
 		}, want: []int64{1}},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -641,13 +764,37 @@ func TestMultiSearchAnyMatchesEitherCriterion(t *testing.T) {
 	ctx := context.Background()
 	mixed := map[string]interface{}{"name": "Alice", "missing": "x"}
 
-	require.Equal(t, []int64{1, 2}, scanNodeIDs(functions.NodeAny(ctx, "Person", mixed)))
-	require.Equal(t, []int64{1, 2, 3, 4}, scanNodeIDs(functions.MultiSearchAny(ctx, []string{"Person", "Company"}, mixed)))
-	require.Equal(t, []int64{4}, scanNodeIDs(functions.MultiSearchAll(ctx, []string{"Person", "Company"}, mixed)),
+	apocCallValue28, apocCallError28 := functions.NodeAny(ctx, "Person", mixed)
+	if apocCallError28 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError28)
+	}
+	require.Equal(t, []int64{1, 2}, scanNodeIDs(apocCallValue28))
+	apocCallValue29, apocCallError29 := functions.MultiSearchAny(ctx, []string{"Person", "Company"}, mixed)
+	if apocCallError29 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError29)
+	}
+	require.Equal(t, []int64{1, 2, 3, 4}, scanNodeIDs(apocCallValue29))
+	apocCallValue30, apocCallError30 := functions.MultiSearchAll(ctx, []string{"Person", "Company"}, mixed)
+	if apocCallError30 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError30)
+	}
+	require.Equal(t, []int64{4}, scanNodeIDs(apocCallValue30),
 		"multiSearchAll keeps all-criteria semantics: only the node satisfying every criterion matches")
-	require.Equal(t, []int64{1, 2}, scanNodeIDs(functions.MultiSearchAny(ctx, []string{"Person"}, mixed)))
-	require.Equal(t, []int64{}, scanNodeIDs(functions.MultiSearchAny(ctx, []string{"Missing"}, mixed)))
-	require.Equal(t, []int64{}, scanNodeIDs(functions.MultiSearchAny(ctx, []string{"Person", "Company"}, nil)),
+	apocCallValue31, apocCallError31 := functions.MultiSearchAny(ctx, []string{"Person"}, mixed)
+	if apocCallError31 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError31)
+	}
+	require.Equal(t, []int64{1, 2}, scanNodeIDs(apocCallValue31))
+	apocCallValue32, apocCallError32 := functions.MultiSearchAny(ctx, []string{"Missing"}, mixed)
+	if apocCallError32 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError32)
+	}
+	require.Equal(t, []int64{}, scanNodeIDs(apocCallValue32))
+	apocCallValue33, apocCallError33 := functions.MultiSearchAny(ctx, []string{"Person", "Company"}, nil)
+	if apocCallError33 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError33)
+	}
+	require.Equal(t, []int64{}, scanNodeIDs(apocCallValue33),
 		"no criteria matches nothing")
 }
 
@@ -686,56 +833,180 @@ func TestSearchHelpersPreserveTheirPredicates(t *testing.T) {
 		call func() []*NodeType
 		want []int64
 	}{
-		{name: "Node", call: func() []*NodeType { return functions.Node(ctx, "Person", "status", "active") }, want: []int64{1, 4}},
+		{name: "Node", call: func() []*NodeType {
+			apocCallValue34, apocCallError34 := functions.Node(ctx, "Person", "status", "active")
+			if apocCallError34 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError34)
+			}
+			return apocCallValue34
+		}, want: []int64{1, 4}},
 		{name: "Node/property type differs", call: func() []*NodeType {
-			return functions.Node(ctx, "Person", "age", int64(30))
+			apocCallValue35, apocCallError35 := functions.Node(ctx, "Person", "age", int64(30))
+			if apocCallError35 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError35)
+			}
+			return apocCallValue35
 		}, want: []int64{1}},
 		{name: "NodeAll", call: func() []*NodeType {
-			return functions.NodeAll(ctx, "Person", map[string]interface{}{"status": "active", "age": int64(30)})
+			apocCallValue36, apocCallError36 := functions.NodeAll(ctx, "Person", map[string]interface{}{"status": "active", "age": int64(30)})
+			if apocCallError36 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError36)
+			}
+			return apocCallValue36
 		}, want: []int64{1}},
 		{name: "NodeAll/empty criteria matches every labeled node", call: func() []*NodeType {
-			return functions.NodeAll(ctx, "Person", map[string]interface{}{})
+			apocCallValue37, apocCallError37 := functions.NodeAll(ctx, "Person", map[string]interface{}{})
+			if apocCallError37 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError37)
+			}
+			return apocCallValue37
 		}, want: []int64{1, 2, 3, 4, 6}},
 		{name: "NodeAny", call: func() []*NodeType {
-			return functions.NodeAny(ctx, "Person", map[string]interface{}{"name": "Bob", "status": "active"})
+			apocCallValue38, apocCallError38 := functions.NodeAny(ctx, "Person", map[string]interface{}{"name": "Bob", "status": "active"})
+			if apocCallError38 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError38)
+			}
+			return apocCallValue38
 		}, want: []int64{1, 3, 4}},
 		{name: "NodeAny/empty criteria matches nothing", call: func() []*NodeType {
-			return functions.NodeAny(ctx, "Person", map[string]interface{}{})
+			apocCallValue39, apocCallError39 := functions.NodeAny(ctx, "Person", map[string]interface{}{})
+			if apocCallError39 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError39)
+			}
+			return apocCallValue39
 		}, want: []int64{}},
-		{name: "FullText", call: func() []*NodeType { return functions.FullText(ctx, "Person", "name", "Alice Bob") }, want: []int64{1, 3}},
-		{name: "Fuzzy", call: func() []*NodeType { return functions.Fuzzy(ctx, "Person", "name", "Alise", 2) }, want: []int64{1, 2}},
-		{name: "Regex", call: func() []*NodeType {
-			return functions.Regex(ctx, "Person", "email", `.*@example\.com$`)
+		{name: "FullText", call: func() []*NodeType {
+			apocCallValue40, apocCallError40 := functions.FullText(ctx, "Person", "name", "Alice Bob")
+			if apocCallError40 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError40)
+			}
+			return apocCallValue40
+		}, want: []int64{1, 3}},
+		{name: "Fuzzy", call: func() []*NodeType {
+			apocCallValue41, apocCallError41 := functions.Fuzzy(ctx, "Person", "name", "Alise", 2)
+			if apocCallError41 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError41)
+			}
+			return apocCallValue41
 		}, want: []int64{1, 2}},
-		{name: "Regex/invalid pattern", call: func() []*NodeType { return functions.Regex(ctx, "Person", "email", "[") }, want: []int64{}},
-		{name: "Prefix", call: func() []*NodeType { return functions.Prefix(ctx, "Person", "name", "Al") }, want: []int64{1, 2}},
-		{name: "Suffix", call: func() []*NodeType { return functions.Suffix(ctx, "Person", "email", ".com") }, want: []int64{1, 2}},
-		{name: "Contains", call: func() []*NodeType { return functions.Contains(ctx, "Person", "name", "li") }, want: []int64{1, 2, 4}},
+		{name: "Regex", call: func() []*NodeType {
+			apocCallValue42, apocCallError42 := functions.Regex(ctx, "Person", "email", `.*@example\.com$`)
+			if apocCallError42 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError42)
+			}
+			return apocCallValue42
+		}, want: []int64{1, 2}},
+		{name: "Regex/invalid pattern", call: func() []*NodeType {
+			apocCallValue43, apocCallError43 := functions.Regex(ctx, "Person", "email", "[")
+			if apocCallError43 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError43)
+			}
+			return apocCallValue43
+		}, want: []int64{}},
+		{name: "Prefix", call: func() []*NodeType {
+			apocCallValue44, apocCallError44 := functions.Prefix(ctx, "Person", "name", "Al")
+			if apocCallError44 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError44)
+			}
+			return apocCallValue44
+		}, want: []int64{1, 2}},
+		{name: "Suffix", call: func() []*NodeType {
+			apocCallValue45, apocCallError45 := functions.Suffix(ctx, "Person", "email", ".com")
+			if apocCallError45 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError45)
+			}
+			return apocCallValue45
+		}, want: []int64{1, 2}},
+		{name: "Contains", call: func() []*NodeType {
+			apocCallValue46, apocCallError46 := functions.Contains(ctx, "Person", "name", "li")
+			if apocCallError46 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError46)
+			}
+			return apocCallValue46
+		}, want: []int64{1, 2, 4}},
 		{name: "Range/integer", call: func() []*NodeType {
-			return functions.Range(ctx, "Person", "age", int64(18), int64(50))
+			apocCallValue47, apocCallError47 := functions.Range(ctx, "Person", "age", int64(18), int64(50))
+			if apocCallError47 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError47)
+			}
+			return apocCallValue47
 		}, want: []int64{1, 2}},
 		{name: "Range/string", call: func() []*NodeType {
-			return functions.Range(ctx, "Person", "name", "Alice", "Alison")
+			apocCallValue48, apocCallError48 := functions.Range(ctx, "Person", "name", "Alice", "Alison")
+			if apocCallError48 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError48)
+			}
+			return apocCallValue48
 		}, want: []int64{1, 2}},
 		{name: "In", call: func() []*NodeType {
-			return functions.In(ctx, "Person", "status", []interface{}{"active"})
+			apocCallValue49, apocCallError49 := functions.In(ctx, "Person", "status", []interface{}{"active"})
+			if apocCallError49 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError49)
+			}
+			return apocCallValue49
 		}, want: []int64{1, 4}},
 		{name: "NotIn", call: func() []*NodeType {
-			return functions.NotIn(ctx, "Person", "status", []interface{}{"active"})
+			apocCallValue50, apocCallError50 := functions.NotIn(ctx, "Person", "status", []interface{}{"active"})
+			if apocCallError50 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError50)
+			}
+			return apocCallValue50
 		}, want: []int64{2, 3}},
-		{name: "Exists", call: func() []*NodeType { return functions.Exists(ctx, "Person", "email") }, want: []int64{1, 2, 3}},
-		{name: "Missing", call: func() []*NodeType { return functions.Missing(ctx, "Person", "email") }, want: []int64{4, 6}},
-		{name: "Null", call: func() []*NodeType { return functions.Null(ctx, "Person", "note") }, want: []int64{1}},
-		{name: "NotNull", call: func() []*NodeType { return functions.NotNull(ctx, "Person", "note") }, want: []int64{}},
-		{name: "Match", call: func() []*NodeType { return functions.Match(ctx, "Person", "name", "Al*") }, want: []int64{1, 2}},
+		{name: "Exists", call: func() []*NodeType {
+			apocCallValue51, apocCallError51 := functions.Exists(ctx, "Person", "email")
+			if apocCallError51 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError51)
+			}
+			return apocCallValue51
+		}, want: []int64{1, 2, 3}},
+		{name: "Missing", call: func() []*NodeType {
+			apocCallValue52, apocCallError52 := functions.Missing(ctx, "Person", "email")
+			if apocCallError52 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError52)
+			}
+			return apocCallValue52
+		}, want: []int64{4, 6}},
+		{name: "Null", call: func() []*NodeType {
+			apocCallValue53, apocCallError53 := functions.Null(ctx, "Person", "note")
+			if apocCallError53 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError53)
+			}
+			return apocCallValue53
+		}, want: []int64{1}},
+		{name: "NotNull", call: func() []*NodeType {
+			apocCallValue54, apocCallError54 := functions.NotNull(ctx, "Person", "note")
+			if apocCallError54 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError54)
+			}
+			return apocCallValue54
+		}, want: []int64{}},
+		{name: "Match", call: func() []*NodeType {
+			apocCallValue55, apocCallError55 := functions.Match(ctx, "Person", "name", "Al*")
+			if apocCallError55 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError55)
+			}
+			return apocCallValue55
+		}, want: []int64{1, 2}},
 		{name: "Parallel", call: func() []*NodeType {
-			return functions.Parallel(ctx, []string{"Person", "Company"}, "name", "Alice")
+			apocCallValue56, apocCallError56 := functions.Parallel(ctx, []string{"Person", "Company"}, "name", "Alice")
+			if apocCallError56 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError56)
+			}
+			return apocCallValue56
 		}, want: []int64{1}},
 		{name: "MultiSearchAll", call: func() []*NodeType {
-			return functions.MultiSearchAll(ctx, []string{"Person", "Company"}, map[string]interface{}{"status": "active"})
+			apocCallValue57, apocCallError57 := functions.MultiSearchAll(ctx, []string{"Person", "Company"}, map[string]interface{}{"status": "active"})
+			if apocCallError57 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError57)
+			}
+			return apocCallValue57
 		}, want: []int64{1, 4, 5}},
 		{name: "MultiSearchAny", call: func() []*NodeType {
-			return functions.MultiSearchAny(ctx, []string{"Person", "Company"}, map[string]interface{}{"status": "active"})
+			apocCallValue58, apocCallError58 := functions.MultiSearchAny(ctx, []string{"Person", "Company"}, map[string]interface{}{"status": "active"})
+			if apocCallError58 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError58)
+			}
+			return apocCallValue58
 		}, want: []int64{1, 4, 5}},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -755,12 +1026,32 @@ func TestSearchSuggestionsPreserveTheirPredicates(t *testing.T) {
 	}})
 	ctx := context.Background()
 
-	require.Equal(t, []string{"Alice", "Alison"}, functions.Suggest(ctx, "Person", "name", "Al", 5))
-	require.Equal(t, []string{"Alice"}, functions.Suggest(ctx, "Person", "name", "Al", 1))
-	require.Equal(t, []string{}, functions.Suggest(ctx, "Person", "name", "Al", 0))
-	require.Equal(t, []string{"Alice", "Alison"}, functions.Suggest(ctx, "Person", "name", "Al"),
+	apocCallValue59, apocCallError59 := functions.Suggest(ctx, "Person", "name", "Al", 5)
+	if apocCallError59 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError59)
+	}
+	require.Equal(t, []string{"Alice", "Alison"}, apocCallValue59)
+	apocCallValue60, apocCallError60 := functions.Suggest(ctx, "Person", "name", "Al", 1)
+	if apocCallError60 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError60)
+	}
+	require.Equal(t, []string{"Alice"}, apocCallValue60)
+	apocCallValue61, apocCallError61 := functions.Suggest(ctx, "Person", "name", "Al", 0)
+	if apocCallError61 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError61)
+	}
+	require.Equal(t, []string{}, apocCallValue61)
+	apocCallValue62, apocCallError62 := functions.Suggest(ctx, "Person", "name", "Al")
+	if apocCallError62 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError62)
+	}
+	require.Equal(t, []string{"Alice", "Alison"}, apocCallValue62,
 		"the default limit selects every match of this population")
-	require.Equal(t, []string{"Alice", "Alison"}, functions.DidYouMean(ctx, "Person", "name", "Alise"))
+	apocCallValue63, apocCallError63 := functions.DidYouMean(ctx, "Person", "name", "Alise")
+	if apocCallError63 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError63)
+	}
+	require.Equal(t, []string{"Alice", "Alison"}, apocCallValue63)
 }
 
 // TestSearchSuggestionsObserveTheirCaller pins the collection guard: a caller
@@ -775,13 +1066,21 @@ func TestSearchSuggestionsObserveTheirCaller(t *testing.T) {
 			{ID: 2, Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alison"}},
 		},
 	})
-	live := functions.Suggest(ctx, "Person", "name", "Al", 5)
+	live, apocCallError64 := functions.Suggest(ctx, "Person", "name", "Al", 5)
+	if apocCallError64 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError64)
+	}
+
 	require.Equal(t, []string{"Alice", "Alison"}, live)
 
 	canceled, stop := context.WithCancel(context.Background())
 	stop()
-	require.Equal(t, []string{}, functions.Suggest(canceled, "Person", "name", "Al", 5))
-	require.Equal(t, []string{}, functions.DidYouMean(canceled, "Person", "name", "Alise"))
+	apocCallValue65, apocCallError65 := functions.Suggest(canceled, "Person", "name", "Al", 5)
+	require.ErrorIs(t, apocCallError65, context.Canceled)
+	require.Nil(t, apocCallValue65)
+	apocCallValue66, apocCallError66 := functions.DidYouMean(canceled, "Person", "name", "Alise")
+	require.ErrorIs(t, apocCallError66, context.Canceled)
+	require.Nil(t, apocCallValue66)
 
 	stopping := installProbe(t, &probeStorage{
 		nodes: []*storage.Node{
@@ -790,7 +1089,9 @@ func TestSearchSuggestionsObserveTheirCaller(t *testing.T) {
 		},
 		afterRead: cancel,
 	})
-	require.Equal(t, []string{}, stopping.Suggest(ctx, "Person", "name", "Al", 5),
+	apocCallValue67, apocCallError67 := stopping.Suggest(ctx, "Person", "name", "Al", 5)
+	require.ErrorIs(t, apocCallError67, context.Canceled)
+	require.Nil(t, apocCallValue67,
 		"a caller that stops during the read publishes no suggestion")
 }
 
@@ -805,29 +1106,47 @@ func TestSearchPostProcessingObserveTheirCaller(t *testing.T) {
 	probe := &probeStorage{nodes: nodes}
 	functions := installProbe(t, probe)
 	ctx := context.Background()
-	matched := functions.Prefix(ctx, "Person", "name", "Ali")
+	matched, apocCallError68 := functions.Prefix(ctx, "Person", "name", "Ali")
+	if apocCallError68 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError68)
+	}
+
 	require.Len(t, matched, 2)
 
 	scored := functions.Score(ctx, matched, "name", "Alice")
 	require.Len(t, scored, 2)
 	require.Equal(t, 1.0, scored[0]["score"])
 
-	reduced := functions.NodeReduced(ctx, "Person", map[string]interface{}{"name": "Alice"}, 1)
+	reduced, apocCallError69 := functions.NodeReduced(ctx, "Person", map[string]interface{}{"name": "Alice"}, 1)
+	if apocCallError69 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError69)
+	}
+
 	require.Equal(t, []int64{1}, scanNodeIDs(reduced))
-	require.Equal(t, []int64{1, 2}, scanNodeIDs(functions.NodeReduced(ctx, "Person", map[string]interface{}{}, 10)))
+	apocCallValue70, apocCallError70 := functions.NodeReduced(ctx, "Person", map[string]interface{}{}, 10)
+	if apocCallError70 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError70)
+	}
+	require.Equal(t, []int64{1, 2}, scanNodeIDs(apocCallValue70))
 
 	canceled, stop := context.WithCancel(context.Background())
 	stop()
 	probe.reads = 0
 	require.NotNil(t, functions.Score(canceled, matched, "name", "Alice"))
 	require.Empty(t, functions.Score(canceled, matched, "name", "Alice"))
-	require.NotNil(t, functions.NodeReduced(canceled, "Person", map[string]interface{}{}, 10))
-	require.Empty(t, functions.NodeReduced(canceled, "Person", map[string]interface{}{}, 10))
+	apocCallValue71, apocCallError71 := functions.NodeReduced(canceled, "Person", map[string]interface{}{}, 10)
+	require.ErrorIs(t, apocCallError71, context.Canceled)
+	require.Nil(t, apocCallValue71)
+	apocCallValue72, apocCallError72 := functions.NodeReduced(canceled, "Person", map[string]interface{}{}, 10)
+	require.ErrorIs(t, apocCallError72, context.Canceled)
+	require.Empty(t, apocCallValue72)
 	require.Zero(t, probe.reads, "a stopped caller reads no storage")
 
 	expired, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
 	defer cancel()
 	<-expired.Done()
 	require.Empty(t, functions.Score(expired, matched, "name", "Alice"))
-	require.Empty(t, functions.NodeReduced(expired, "Person", map[string]interface{}{}, 10))
+	apocCallValue73, apocCallError73 := functions.NodeReduced(expired, "Person", map[string]interface{}{}, 10)
+	require.ErrorIs(t, apocCallError73, context.DeadlineExceeded)
+	require.Empty(t, apocCallValue73)
 }

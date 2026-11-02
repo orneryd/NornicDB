@@ -35,28 +35,31 @@ func remoteNativeContextEntries() []nativeContextEntry {
 	scalar := [][]interface{}{{int64(2)}}
 	return []nativeContextEntry{
 		{name: "GetNode", mode: RemoteAccessRead, columns: []string{"n"}, rows: [][]interface{}{{node}}, want: NodeID("node:one"), run: func(engine *RemoteEngine) (interface{}, error) {
-			value, err := engine.GetNode("node:one")
+			value, err := engine.GetNode(context.Background(), "node:one")
 			if err != nil {
 				return nil, err
 			}
 			return value.ID, nil
 		}},
 		{name: "GetEdge", mode: RemoteAccessRead, columns: []string{"r"}, rows: [][]interface{}{{edge}}, want: EdgeID("edge:one"), run: func(engine *RemoteEngine) (interface{}, error) {
-			value, err := engine.GetEdge("edge:one")
+			value, err := engine.GetEdge(context.Background(), "edge:one")
 			if err != nil {
 				return nil, err
 			}
 			return value.ID, nil
 		}},
 		{name: "GetFirstNodeByLabel", mode: RemoteAccessRead, columns: []string{"n"}, rows: [][]interface{}{{node}}, want: NodeID("node:one"), run: func(engine *RemoteEngine) (interface{}, error) {
-			value, err := engine.GetFirstNodeByLabel("Person")
+			value, err := engine.GetFirstNodeByLabel(context.Background(), "Person")
 			if err != nil {
 				return nil, err
 			}
 			return value.ID, nil
 		}},
 		{name: "GetEdgeBetween", mode: RemoteAccessRead, columns: []string{"r"}, rows: [][]interface{}{{edge}}, want: EdgeID("edge:one"), run: func(engine *RemoteEngine) (interface{}, error) {
-			value := engine.GetEdgeBetween("node:a", "node:b", "LINK")
+			value, err := engine.GetEdgeBetween(context.Background(), "node:a", "node:b", "LINK")
+			if err != nil {
+				return nil, err
+			}
 			if value == nil {
 				return nil, nil
 			}
@@ -70,37 +73,37 @@ func remoteNativeContextEntries() []nativeContextEntry {
 			return int64(len(values)), nil
 		}},
 		{name: "GetInDegree", mode: RemoteAccessRead, columns: []string{"count(r)"}, rows: scalar, want: 2, run: func(engine *RemoteEngine) (interface{}, error) {
-			return engine.GetInDegree("node:one"), nil
+			return engine.GetInDegree(context.Background(), "node:one")
 		}},
 		{name: "GetOutDegree", mode: RemoteAccessRead, columns: []string{"count(r)"}, rows: scalar, want: 2, run: func(engine *RemoteEngine) (interface{}, error) {
-			return engine.GetOutDegree("node:one"), nil
+			return engine.GetOutDegree(context.Background(), "node:one")
 		}},
 		{name: "NodeCount", mode: RemoteAccessRead, columns: []string{"count(n)"}, rows: scalar, want: int64(2), run: func(engine *RemoteEngine) (interface{}, error) {
-			return engine.NodeCount()
+			return engine.NodeCount(context.Background())
 		}},
 		{name: "EdgeCount", mode: RemoteAccessRead, columns: []string{"count(r)"}, rows: scalar, want: int64(2), run: func(engine *RemoteEngine) (interface{}, error) {
-			return engine.EdgeCount()
+			return engine.EdgeCount(context.Background())
 		}},
 		{name: "EdgeCountByType", mode: RemoteAccessRead, columns: []string{"count(r)"}, rows: scalar, want: int64(2), run: func(engine *RemoteEngine) (interface{}, error) {
-			return engine.EdgeCountByType("LINK")
+			return engine.EdgeCountByType(context.Background(), "LINK")
 		}},
 		{name: "EdgeCountByStartLabel", mode: RemoteAccessRead, columns: []string{"count(r)"}, rows: scalar, want: int64(2), run: func(engine *RemoteEngine) (interface{}, error) {
-			return engine.EdgeCountByStartLabel("Person", "LINK")
+			return engine.EdgeCountByStartLabel(context.Background(), "Person", "LINK")
 		}},
 		{name: "EdgeCountByEndLabel", mode: RemoteAccessRead, columns: []string{"count(r)"}, rows: scalar, want: int64(2), run: func(engine *RemoteEngine) (interface{}, error) {
-			return engine.EdgeCountByEndLabel("Person", "LINK")
+			return engine.EdgeCountByEndLabel(context.Background(), "Person", "LINK")
 		}},
 		{name: "UpdateNode", mode: RemoteAccessWrite, columns: []string{"count(n)"}, rows: [][]interface{}{{int64(1)}}, want: nil, run: func(engine *RemoteEngine) (interface{}, error) {
-			return nil, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "node:one"}})
+			return nil, engine.UpdateNode(context.Background(), NodeUpdateRequest{After: &Node{ID: "node:one"}})
 		}},
 		{name: "UpdateEdge", mode: RemoteAccessWrite, columns: []string{"count(r)"}, rows: [][]interface{}{{int64(1)}}, want: nil, run: func(engine *RemoteEngine) (interface{}, error) {
-			return nil, engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "edge:one"}})
+			return nil, engine.UpdateEdge(context.Background(), EdgeUpdateRequest{After: &Edge{ID: "edge:one"}})
 		}},
 		{name: "DeleteNode", mode: RemoteAccessWrite, columns: nil, rows: nil, want: nil, run: func(engine *RemoteEngine) (interface{}, error) {
-			return nil, engine.DeleteNode("node:one")
+			return nil, engine.DeleteNode(context.Background(), "node:one")
 		}},
 		{name: "DeleteEdge", mode: RemoteAccessWrite, columns: nil, rows: nil, want: nil, run: func(engine *RemoteEngine) (interface{}, error) {
-			return nil, engine.DeleteEdge("edge:one")
+			return nil, engine.DeleteEdge(context.Background(), "edge:one")
 		}},
 	}
 }

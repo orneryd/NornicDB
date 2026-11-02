@@ -397,7 +397,7 @@ func TestStorageMembershipStorageIsAuthoritative(t *testing.T) {
 	require.NoError(t, err)
 	_, err = right.Execute(ctx, "COMMIT", nil)
 	require.NoError(t, err)
-	count, err := base.NodeCount()
+	count, err := base.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.Zero(t, count)
 	_, err = nested.Execute(ctx, "BEGIN CREATE (:Escaped) COMMIT", nil)
@@ -429,7 +429,7 @@ func TestStorageMembershipBatchControl(t *testing.T) {
 			}
 			_, err = owner.Execute(ctx, "ROLLBACK", nil)
 			require.NoError(t, err)
-			count, err := base.NodeCount()
+			count, err := base.NodeCount(t.Context())
 			require.NoError(t, err)
 			require.Zero(t, count)
 		})
@@ -448,7 +448,7 @@ func TestStorageMembershipControllerFailure(t *testing.T) {
 	require.ErrorContains(t, err, "owned")
 	_, err = owner.Execute(ctx, "COMMIT", nil)
 	require.ErrorContains(t, err, "was rolled back")
-	count, err := base.NodeCount()
+	count, err := base.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.Zero(t, count)
 }

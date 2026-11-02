@@ -38,7 +38,7 @@ func TestGH464_WithOrderByPreservesAggregateAlias(t *testing.T) {
 				{ID: "o1", Labels: []string{"O"}, Properties: map[string]interface{}{"id": int64(1)}},
 				{ID: "o2", Labels: []string{"O"}, Properties: map[string]interface{}{"id": int64(2)}},
 			} {
-				_, err := store.CreateNode(node)
+				_, err := store.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 			}
 			for _, edge := range []*storage.Edge{
@@ -46,7 +46,7 @@ func TestGH464_WithOrderByPreservesAggregateAlias(t *testing.T) {
 				{ID: "o1-c3", StartNode: "o1", EndNode: "c3", Type: "HAS", Properties: map[string]interface{}{"n": int64(1)}},
 				{ID: "o2-a1", StartNode: "o2", EndNode: "a1", Type: "HAS", Properties: map[string]interface{}{"n": int64(5)}},
 			} {
-				require.NoError(t, store.CreateEdge(edge))
+				require.NoError(t, store.CreateEdge(t.Context(), edge))
 			}
 			exec := NewStorageExecutor(store)
 			ctx := context.Background()

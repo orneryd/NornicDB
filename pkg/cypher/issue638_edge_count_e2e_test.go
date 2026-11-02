@@ -58,7 +58,7 @@ func newIssue638E2EStore(t *testing.T) (*storage.NamespacedEngine, *storage.Badg
 	ctx := context.Background()
 
 	for i := 0; i < 20; i++ {
-		_, err = store.CreateNode(&storage.Node{
+		_, err = store.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("f%d", i)),
 			Labels: []string{"Function"},
 		})
@@ -92,11 +92,11 @@ func newIssue638E2EStore(t *testing.T) (*storage.NamespacedEngine, *storage.Badg
 	}
 	for start := 0; start < n; start += 2000 {
 		end := min(start+2000, n)
-		require.NoError(t, store.BulkCreateNodes(calNodes[start:end]))
-		require.NoError(t, store.BulkCreateNodes(xNodes[start:end]))
-		require.NoError(t, store.BulkCreateNodes(yNodes[start:end]))
-		require.NoError(t, store.BulkCreateEdges(callsEdges[start:end]))
-		require.NoError(t, store.BulkCreateEdges(linksEdges[start:end]))
+		require.NoError(t, store.BulkCreateNodes(t.Context(), calNodes[start:end]))
+		require.NoError(t, store.BulkCreateNodes(t.Context(), xNodes[start:end]))
+		require.NoError(t, store.BulkCreateNodes(t.Context(), yNodes[start:end]))
+		require.NoError(t, store.BulkCreateEdges(t.Context(), callsEdges[start:end]))
+		require.NoError(t, store.BulkCreateEdges(t.Context(), linksEdges[start:end]))
 	}
 	return store, base, exec, probe
 }
@@ -187,13 +187,13 @@ func TestOptionalOrderCountAfterBulkEdges(t *testing.T) {
 	ctx := context.Background()
 	const products = 200
 	for index := 0; index < products; index++ {
-		_, err := store.CreateNode(&storage.Node{
+		_, err := store.CreateNode(t.Context(), &storage.Node{
 			ID: storage.NodeID(fmt.Sprintf("product%d", index)), Labels: []string{"Product"},
 			Properties: map[string]interface{}{"productName": fmt.Sprintf("Product %d", index)},
 		})
 		require.NoError(t, err)
 	}
-	_, err := store.CreateNode(&storage.Node{ID: "order", Labels: []string{"Order"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "order", Labels: []string{"Order"}})
 	require.NoError(t, err)
 	edges := make([]*storage.Edge, products)
 	for index := range edges {
@@ -202,7 +202,7 @@ func TestOptionalOrderCountAfterBulkEdges(t *testing.T) {
 			StartNode: "order", EndNode: storage.NodeID(fmt.Sprintf("product%d", max(1, index))),
 		}
 	}
-	require.NoError(t, store.BulkCreateEdges(edges))
+	require.NoError(t, store.BulkCreateEdges(t.Context(), edges))
 	result, err := exec.Execute(ctx, `MATCH (p:Product)
 		OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order)
 		RETURN p.productName AS productName, count(o) AS orderCount
@@ -241,10 +241,10 @@ func TestOptionalOrderCountThroughAsyncStorage(t *testing.T) {
 		{ID: "p2", Labels: []string{"Product"}, Properties: map[string]interface{}{"productName": "No orders"}},
 		{ID: "o1", Labels: []string{"Order"}},
 	} {
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "line1", Type: "ORDERS", StartNode: "o1", EndNode: "p1"}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "line1", Type: "ORDERS", StartNode: "o1", EndNode: "p1"}))
 	exec := NewStorageExecutor(&forwardingNamespacedEngine{Engine: store})
 	result, err := exec.Execute(context.Background(), `MATCH (p:Product)
 		OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order)

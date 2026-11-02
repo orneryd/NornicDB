@@ -69,7 +69,7 @@ func (m *DatabaseManager) transitionCatalog(ctx context.Context, policy catalogT
 		release()
 		return err
 	}
-	tx, err := storage.BeginEntityTransaction(m.inner, storage.CommitModeDirect)
+	tx, err := storage.BeginEntityTransaction(ctx, m.inner, storage.CommitModeDirect)
 	if err != nil {
 		release()
 		return err
@@ -79,18 +79,18 @@ func (m *DatabaseManager) transitionCatalog(ctx context.Context, policy catalogT
 		release()
 		return err
 	}
-	qualified, err := storage.NewNamespacedEngine(m.inner, m.config.SystemDatabase).NodeWriteInput(node)
+	qualified, err := storage.NewNamespacedEngine(m.inner, m.config.SystemDatabase).NodeWriteInput(ctx, node)
 	if err != nil {
 		_ = tx.Rollback()
 		release()
 		return err
 	}
-	previous, readErr := tx.GetNode(qualified.ID)
+	previous, readErr := tx.GetNode(ctx, qualified.ID)
 	operation := storage.Operation{Type: storage.OpUpdateNode, Node: qualified}
 	var apply func() error
 	if errors.Is(readErr, storage.ErrNotFound) {
 		operation.Type = storage.OpCreateNode
-		apply = func() error { _, err := tx.CreateNode(qualified); return err }
+		apply = func() error { _, err := tx.CreateNode(ctx, qualified); return err }
 	} else if readErr != nil {
 		_ = tx.Rollback()
 		release()
@@ -99,7 +99,7 @@ func (m *DatabaseManager) transitionCatalog(ctx context.Context, policy catalogT
 		qualified.CreatedAt = previous.CreatedAt
 		operation.OldNode = previous
 		apply = func() error {
-			return tx.UpdateGraphNode(storage.NodeUpdateRequest{Before: previous, After: qualified, Policy: storage.ClientNodeEdits})
+			return tx.UpdateGraphNode(ctx, storage.NodeUpdateRequest{Before: previous, After: qualified, Policy: storage.ClientNodeEdits})
 		}
 	}
 	for i := len(owner.writeBoundaries) - 1; i >= 0; i-- {

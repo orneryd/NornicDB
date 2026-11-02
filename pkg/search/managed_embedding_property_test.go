@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"testing"
@@ -31,7 +32,7 @@ func TestManagedEmbeddingContentIsExcludedFromSearchTextAndResults(t *testing.T)
 
 	service.SetFulltextProperties(nil)
 	node.Properties["_embedding_content"] = "large-image-payload"
-	_, err := engine.CreateNode(node)
+	_, err := engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	opts := &SearchOptions{Limit: 1, ExcludeProperties: []string{"_embedding_content"}}
@@ -68,7 +69,7 @@ func TestContinuationHydrationPreservesCallerPropertyProjection(t *testing.T) {
 	node := &storage.Node{ID: "test:visual", Properties: map[string]any{
 		"title": "diagram", "structured_payload": "opaque-value",
 	}}
-	_, err := engine.CreateNode(node)
+	_, err := engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	projection := newResultPropertyProjection([]string{"title"}, nil)

@@ -14,11 +14,11 @@ func TestBadgerEngine_DeleteByPrefix_MalformedSecondaryIndexKeysIgnored(t *testi
 	const targetPrefix = "target:"
 	n1 := &Node{ID: NodeID(targetPrefix + "n1"), Labels: []string{"Person"}}
 	n2 := &Node{ID: NodeID(targetPrefix + "n2"), Labels: []string{"Person"}}
-	_, err := engine.CreateNode(n1)
+	_, err := engine.CreateNode(t.Context(), n1)
 	require.NoError(t, err)
-	_, err = engine.CreateNode(n2)
+	_, err = engine.CreateNode(t.Context(), n2)
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: EdgeID(targetPrefix + "e1"), StartNode: n1.ID, EndNode: n2.ID, Type: "KNOWS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: EdgeID(targetPrefix + "e1"), StartNode: n1.ID, EndNode: n2.ID, Type: "KNOWS"}))
 
 	validLabelIdx := append(append([]byte{prefixLabelIndex}, []byte("Person")...), 0x00)
 	validLabelIdx = append(validLabelIdx, []byte(targetPrefix+"orphan-node")...)
@@ -56,7 +56,7 @@ func TestBadgerEngine_DeleteByPrefix_MalformedSecondaryIndexKeysIgnored(t *testi
 func TestBadgerEngine_DeleteByPrefix_DBClosedDuringOperationReturnsError(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 
-	_, err := engine.CreateNode(&Node{ID: NodeID("test:n1")})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: NodeID("test:n1")})
 	require.NoError(t, err)
 
 	require.NoError(t, engine.db.Close())

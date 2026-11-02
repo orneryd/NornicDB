@@ -92,7 +92,7 @@ func TestLockHoldTrackerRecordsDeliveryUnderAStripe(t *testing.T) {
 	mark := lockHolds.mark()
 	var stripes orderStripeSet
 	stripes.add("test:n")
-	require.NoError(t, engine.writeBehind.order.lockContext(nil, &stripes, true))
+	require.NoError(t, engine.writeBehind.order.lockContext(t.Context(), &stripes, true))
 	deliverNodeUpdate(engine, listenerOrderNode("held"))
 	engine.writeBehind.order.unlock(&stripes, true)
 	recorded := lockHolds.since(mark)

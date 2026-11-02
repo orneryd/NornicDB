@@ -10,11 +10,11 @@ import (
 func TestStoredEdgeDecodePreservesCommitWork(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 	for _, id := range []NodeID{"decode:a", "decode:b"} {
-		_, err := engine.CreateNode(&Node{ID: id})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: id})
 		require.NoError(t, err)
 	}
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "decode:e", StartNode: "decode:a", EndNode: "decode:b", Type: "LINK", Properties: map[string]any{"weight": int64(3)}}))
-	tx, err := engine.BeginTransaction()
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "decode:e", StartNode: "decode:a", EndNode: "decode:b", Type: "LINK", Properties: map[string]any{"weight": int64(3)}}))
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, tx.Rollback()) })
 	require.NoError(t, tx.SetNamespace("decode"))
@@ -23,11 +23,11 @@ func TestStoredEdgeDecodePreservesCommitWork(t *testing.T) {
 	require.Empty(t, tx.pendingDeletes)
 	require.Empty(t, tx.GetMetadata())
 	require.False(t, tx.HasKnowledgePolicyChanges())
-	first, err := tx.GetEdge("decode:e")
+	first, err := tx.GetEdge(t.Context(), "decode:e")
 	require.NoError(t, err)
 	require.Equal(t, int64(3), first.Properties["weight"])
 	first.Properties["weight"] = int64(99)
-	again, err := tx.GetEdge("decode:e")
+	again, err := tx.GetEdge(t.Context(), "decode:e")
 	require.NoError(t, err)
 	require.Equal(t, int64(3), again.Properties["weight"])
 	require.Equal(t, NodeID("decode:a"), again.StartNode)

@@ -113,7 +113,16 @@ func (w *WriteBehindBuffer) logicalReceiptPresentLocked(ctx context.Context, nam
 // physical generation receipts and namespace-scoped logical entity receipts.
 func bufferedCommitMarkerKey(namespace, txID, logicalID string) []byte {
 	if logicalID != "" {
-		txID = "replication/" + strconv.Itoa(len(namespace)) + ":" + namespace + "/" + logicalID
+		var decimal [20]byte
+		length := strconv.AppendInt(decimal[:0], int64(len(namespace)), 10)
+		key := make([]byte, 0, 1+len("replication/")+len(length)+1+len(namespace)+1+len(logicalID))
+		key = append(key, prefixBufferedFlush)
+		key = append(key, "replication/"...)
+		key = append(key, length...)
+		key = append(key, ':')
+		key = append(key, namespace...)
+		key = append(key, '/')
+		return append(key, logicalID...)
 	}
 	key := make([]byte, 0, 1+len(txID))
 	key = append(key, prefixBufferedFlush)

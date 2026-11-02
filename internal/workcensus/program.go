@@ -38,8 +38,11 @@ type Program struct {
 	nilFlow       *nilFlow                         // MayBeNil's memo; a Program is queried by one goroutine
 	// dynamicTargets is CallTargets' memo of DynamicCallTargets.
 	dynamicTargets map[ssa.CallInstruction][]*ssa.Function
-	sources        *loadedSources
-	load           packages.Config // the load settings, reused to read a dependency's bodies on demand
+	// channelFamilies is channelFamilyOf's memo of one exact element type's
+	// closed channel population.
+	channelFamilies map[types.Type]*channelFamily
+	sources         *loadedSources
+	load            packages.Config // the load settings, reused to read a dependency's bodies on demand
 }
 
 // LoadProgram owns generic package loading, SSA construction and VTA/CHA. It

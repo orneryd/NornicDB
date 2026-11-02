@@ -24,7 +24,7 @@ func TestSubsystemLifecycleErrorsRedactConfiguredCredentials(t *testing.T) {
 	endpoint := "https://synthetic-user:synthetic-pass@example.invalid/v1"
 	apiKey := "synthetic-api-key"
 	manager := &SubsystemManager{plugins: make(map[string]*LoadedHeimdallPlugin), actions: make(map[string]ActionFunc)}
-	manager.SetContext(SubsystemContext{Config: Config{APIURL: endpoint, APIKey: apiKey}, Bifrost: &NoOpBifrost{}})
+	manager.SetContext(SubsystemHost{Config: Config{APIURL: endpoint, APIKey: apiKey}, Bifrost: &NoOpBifrost{}})
 	plugin := &credentialErrorPlugin{MockHeimdallPlugin: NewMockPlugin("credential-redaction"), endpoint: endpoint, apiKey: apiKey}
 	if err := manager.RegisterPlugin(plugin, "synthetic-plugin", true); err != nil {
 		t.Fatal("failed to register the test plugin")

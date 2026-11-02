@@ -707,7 +707,7 @@ func TestSubsystemManager_AllHealth(t *testing.T) {
 		plugins: make(map[string]*LoadedHeimdallPlugin),
 		actions: make(map[string]ActionFunc),
 	}
-	ctx := SubsystemContext{Config: DefaultConfig(), Bifrost: &NoOpBifrost{}}
+	ctx := SubsystemHost{Config: DefaultConfig(), Bifrost: &NoOpBifrost{}}
 	manager.SetContext(ctx)
 
 	p1 := NewMockPlugin("svc_a")
@@ -728,7 +728,7 @@ func TestSubsystemManager_AllSummaries(t *testing.T) {
 		plugins: make(map[string]*LoadedHeimdallPlugin),
 		actions: make(map[string]ActionFunc),
 	}
-	ctx := SubsystemContext{Config: DefaultConfig(), Bifrost: &NoOpBifrost{}}
+	ctx := SubsystemHost{Config: DefaultConfig(), Bifrost: &NoOpBifrost{}}
 	manager.SetContext(ctx)
 
 	plugin := NewMockPlugin("summarized_svc")
@@ -744,7 +744,7 @@ func TestSubsystemManager_DuplicatePlugin(t *testing.T) {
 		plugins: make(map[string]*LoadedHeimdallPlugin),
 		actions: make(map[string]ActionFunc),
 	}
-	ctx := SubsystemContext{Config: DefaultConfig(), Bifrost: &NoOpBifrost{}}
+	ctx := SubsystemHost{Config: DefaultConfig(), Bifrost: &NoOpBifrost{}}
 	manager.SetContext(ctx)
 
 	p1 := NewMockPlugin("dup_plugin")

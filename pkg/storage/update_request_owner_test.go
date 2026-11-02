@@ -67,7 +67,7 @@ func TestWithUpdateCancellationAtHeldOrderWritesNothing(t *testing.T) {
 	entity := writtenEntities{nodes: []NodeID{"test:order-held"}}
 	var stripes orderStripeSet
 	stripes.entities(entity)
-	require.NoError(t, engine.writeBehind.order.lockContext(nil, &stripes, true))
+	require.NoError(t, engine.writeBehind.order.lockContext(t.Context(), &stripes, true))
 	released := false
 	releaseOrder := func() {
 		if released {
@@ -287,10 +287,10 @@ func TestAcceptedReplayCountsSurviveCallerCancellation(t *testing.T) {
 	}
 	require.True(t, generation.IsApplied())
 
-	node, err := engine.GetNode("test:accepted-counts")
+	node, err := engine.GetNode(t.Context(), "test:accepted-counts")
 	require.NoError(t, err)
 	require.Contains(t, node.Labels, "Accepted")
-	count, err := engine.NodeCountByLabel("Accepted")
+	count, err := engine.NodeCountByLabel(t.Context(), "Accepted")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), count, "the accepted replay's count writes must complete after caller cancellation")
 }

@@ -49,7 +49,7 @@ type statementColumner interface {
 // rewritten (see above) and the rewrite that maps the result back, or query
 // and nil when it has none. columns names a query's result columns.
 func desugarQueryStructure(ctx context.Context, query string, columns statementColumner) (string, *queryRewrite, error) {
-	if !mayUseQueryStructure(query) {
+	if !mayUseQueryStructure(ctx, query) {
 		return query, nil, nil
 	}
 	r := &structureRewriter{ctx: ctx, query: query, columns: columns}
@@ -65,9 +65,9 @@ func desugarQueryStructure(ctx context.Context, query string, columns statementC
 
 // mayUseQueryStructure is desugarQueryStructure's quick check: NEXT or WHEN
 // appear, or a brace starts the statement or follows UNION.
-func mayUseQueryStructure(query string) bool {
+func mayUseQueryStructure(ctx context.Context, query string) bool {
 	if strings.Contains(query, "{") {
-		opener := &labelExpressionRewriter{query: query}
+		opener := &labelExpressionRewriter{ctx: ctx, query: query}
 		for index := 0; index < len(query); index++ {
 			if isCypherQuoteByte(query[index]) {
 				index = skipCypherQuotedText(query, index, query[index]) - 1
@@ -290,7 +290,7 @@ func (r *structureRewriter) hasDistinctUnion(start, end int) bool {
 
 // subqueries rewrites the subquery bodies in q[start:end].
 func (r *structureRewriter) subqueries(start, end int) error {
-	opener := &labelExpressionRewriter{query: r.query}
+	opener := &labelExpressionRewriter{ctx: r.ctx, query: r.query}
 	for i := start; i < end; i++ {
 		switch c := r.query[i]; cypherLexicalByte(c) {
 		case cypherQuoteClass:

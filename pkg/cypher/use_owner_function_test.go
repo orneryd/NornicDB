@@ -25,7 +25,7 @@ func TestUseOwnerFunctionInventory(t *testing.T) {
 			t.Run(selector+test.reference, func(t *testing.T) {
 				query := selector + test.reference + " RETURN abs(-1) AS n"
 				var got []string
-				require.NoError(t, forEachFunctionInvocation(query, func(name, normalized string, open int) error {
+				require.NoError(t, forEachFunctionInvocation(t.Context(), query, func(name, normalized string, open int) error {
 					require.Equal(t, byte('('), query[open])
 					// Invocation coordinates still address the original source.
 					require.True(t, strings.HasSuffix(strings.ToLower(strings.TrimSpace(query[:open])), normalized), name)
@@ -33,27 +33,27 @@ func TestUseOwnerFunctionInventory(t *testing.T) {
 					return nil
 				}))
 				require.Equal(t, append(append([]string{}, test.want...), "abs"), got)
-				require.NoError(t, validateKnownFunctions(query))
+				require.NoError(t, validateKnownFunctions(t.Context(), query))
 			})
 		}
 		query := "CALL { " + selector + "graph.byName(toLower('CMP.A')) RETURN abs(-1) AS n } RETURN n"
 		var got []string
-		require.NoError(t, forEachFunctionCall(query, func(_, normalized string) error {
+		require.NoError(t, forEachFunctionCall(t.Context(), query, func(_, normalized string) error {
 			got = append(got, normalized)
 			return nil
 		}))
 		require.Equal(t, []string{"tolower", "abs"}, got)
-		requireSemanticDetail(t, validateKnownFunctions(selector+"graph.byName(noSuchSelectorArgument()) RETURN 1"), "UnknownFunction")
+		requireSemanticDetail(t, validateKnownFunctions(t.Context(), selector+"graph.byName(noSuchSelectorArgument()) RETURN 1"), "UnknownFunction")
 	}
 	var got []string
-	require.NoError(t, forEachFunctionCall("CALL db.labels(toString(1)) YIELD label RETURN size(label)", func(_, normalized string) error {
+	require.NoError(t, forEachFunctionCall(t.Context(), "CALL db.labels(toString(1)) YIELD label RETURN size(label)", func(_, normalized string) error {
 		got = append(got, normalized)
 		return nil
 	}))
 	require.Equal(t, []string{"tostring", "size"}, got, "CALL retains its separate procedure-name handling")
 	for _, query := range []string{"RETURN n.use, abs(-1)", "RETURN {use: abs(-1)}", "WITH 1 AS use RETURN abs(use)"} {
 		got = nil
-		require.NoError(t, forEachFunctionCall(query, func(_, normalized string) error {
+		require.NoError(t, forEachFunctionCall(t.Context(), query, func(_, normalized string) error {
 			got = append(got, normalized)
 			return nil
 		}))

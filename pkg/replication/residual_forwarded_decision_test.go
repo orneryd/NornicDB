@@ -24,7 +24,7 @@ type residualForwardingReplicator struct {
 }
 
 func (*residualForwardingReplicator) IsLeader() bool { return false }
-func (r *residualForwardingReplicator) Apply(cmd *Command, timeout time.Duration) error {
+func (r *residualForwardingReplicator) Apply(ctx context.Context, cmd *Command, timeout time.Duration) error {
 	r.kinds = append(r.kinds, cmd.Type)
 	wire, err := storage.EncodeCommandPayload(cmd)
 	if err != nil {
@@ -34,7 +34,7 @@ func (r *residualForwardingReplicator) Apply(cmd *Command, timeout time.Duration
 	if err := storage.DecodeCommandPayload(wire, &forwarded); err != nil {
 		return err
 	}
-	return r.StandaloneReplicator.Apply(&forwarded, timeout)
+	return r.StandaloneReplicator.Apply(ctx, &forwarded, timeout)
 }
 
 type managedForwardingFixture struct {
@@ -105,9 +105,9 @@ func TestManagedForwardedPublicationDecision(t *testing.T) {
 				count := int64(1)
 				if bulk {
 					count = 2
-					err = view.BulkCreateNodes([]*storage.Node{entry("one"), entry("two")})
+					err = view.BulkCreateNodes(t.Context(), []*storage.Node{entry("one"), entry("two")})
 				} else {
-					_, err = view.CreateNode(entry("one"))
+					_, err = view.CreateNode(t.Context(), entry("one"))
 				}
 				wantKind := CmdCreateNode
 				if bulk {

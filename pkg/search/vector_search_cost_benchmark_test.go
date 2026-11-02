@@ -3,12 +3,13 @@ package search
 import (
 	"context"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"math"
 	"math/rand"
 	"path/filepath"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/gpu"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -60,7 +61,7 @@ func selectiveClusteredService(tb testing.TB, strategy string) (*Service, []floa
 		}
 		id := fmt.Sprintf("doc-%04d", i)
 		node := &storage.Node{ID: storage.NodeID(id), Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{v}}
-		if _, err := engine.CreateNode(node); err != nil {
+		if _, err := engine.CreateNode(tb.Context(), node); err != nil {
 			tb.Fatal(err)
 		}
 		if err := svc.IndexNode(node); err != nil {
@@ -169,7 +170,7 @@ func BenchmarkChunkedCorpusVectorSearch(b *testing.B) {
 					embeddings[c] = next()
 				}
 				node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("doc-%04d", n)), Labels: []string{"Doc"}, ChunkEmbeddings: embeddings}
-				if _, err := engine.CreateNode(node); err != nil {
+				if _, err := engine.CreateNode(b.Context(), node); err != nil {
 					b.Fatal(err)
 				}
 				if err := svc.IndexNode(node); err != nil {

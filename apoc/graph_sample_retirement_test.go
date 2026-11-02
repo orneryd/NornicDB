@@ -11,11 +11,11 @@ import (
 
 func TestGraphSampleRetirementPreservesCanonicalGraph(t *testing.T) {
 	backend := storage.NewInMemoryStorage()
-	first, err := backend.CreateNode([]string{"Person"}, nil)
+	first, err := backend.CreateNode(t.Context(), []string{"Person"}, nil)
 	require.NoError(t, err)
-	second, err := backend.CreateNode([]string{"Person"}, nil)
+	second, err := backend.CreateNode(t.Context(), []string{"Person"}, nil)
 	require.NoError(t, err)
-	_, err = backend.CreateRelationship(first.ID, second.ID, "KNOWS", nil)
+	_, err = backend.CreateRelationship(t.Context(), first.ID, second.ID, "KNOWS", nil)
 	require.NoError(t, err)
 	require.NoError(t, Initialize(backend, nil))
 	require.NotContains(t, List(), "apoc.meta.graphSample")
@@ -24,7 +24,11 @@ func TestGraphSampleRetirementPreservesCanonicalGraph(t *testing.T) {
 	require.False(t, exists, "retire the misleading Go helper rather than forwarding it")
 	_, err = Call("apoc.meta.graphSample", []interface{}{1})
 	require.Error(t, err)
-	want := meta.New(backend).Graph()
+	want, apocCallError1 := meta.New(backend).Graph(t.Context())
+	if apocCallError1 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError1)
+	}
+
 	require.Equal(t, 2, want["nodes"])
 	require.Equal(t, 1, want["relationships"])
 	require.Equal(t, map[string]int{"Person": 2}, want["labels"])

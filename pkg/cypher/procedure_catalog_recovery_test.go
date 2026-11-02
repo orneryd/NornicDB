@@ -24,7 +24,7 @@ func TestProcedureCatalogMutationRecoversLegacyIdentity(t *testing.T) {
 					record := persistedProcedureRecord{Name: "custom.Report", Mode: "READ", Body: "RETURN 1 AS v", Signature: "custom.Report() :: (v :: INTEGER)"}
 					blob, err := msgpack.Marshal(record)
 					require.NoError(t, err)
-					_, err = base.CreateNode(&storage.Node{ID: procedureCatalogNodeID("custom.report"), Labels: []string{procedureCatalogLabel}, Properties: map[string]interface{}{"name": record.Name, "record": base64.StdEncoding.EncodeToString(blob)}})
+					_, err = base.CreateNode(t.Context(), &storage.Node{ID: procedureCatalogNodeID("custom.report"), Labels: []string{procedureCatalogLabel}, Properties: map[string]interface{}{"name": record.Name, "record": base64.StdEncoding.EncodeToString(blob)}})
 					require.NoError(t, err)
 				}
 				if arrival == "failed startup migration" {
@@ -107,7 +107,7 @@ func TestProcedureCatalogMutationRecoveryFailureIsRetryable(t *testing.T) {
 				blob, err := msgpack.Marshal(original)
 				require.NoError(t, err)
 				legacy := procedureCatalogNodeID("custom.report")
-				_, err = base.CreateNode(&storage.Node{ID: legacy, Labels: []string{procedureCatalogLabel}, Properties: map[string]interface{}{"name": original.Name, "record": base64.StdEncoding.EncodeToString(blob)}})
+				_, err = base.CreateNode(t.Context(), &storage.Node{ID: legacy, Labels: []string{procedureCatalogLabel}, Properties: map[string]interface{}{"name": original.Name, "record": base64.StdEncoding.EncodeToString(blob)}})
 				require.NoError(t, err)
 				fault := errors.New("mutation catalog " + stage + " unavailable")
 				switch stage {
@@ -125,7 +125,7 @@ func TestProcedureCatalogMutationRecoveryFailureIsRetryable(t *testing.T) {
 					return exec.installPersistedProcedure(context.Background(), persistedProcedureRecord{Name: "custom.report", Mode: "READ", Body: "RETURN 2 AS v", Signature: "custom.report() :: (v :: INTEGER)"}, true)
 				}
 				require.ErrorIs(t, mutate(), fault)
-				preserved, err := base.GetNode(legacy)
+				preserved, err := base.GetNode(t.Context(), legacy)
 				require.NoError(t, err)
 				record, err := decodeProcedureCatalogRecord(preserved)
 				require.NoError(t, err)
@@ -181,7 +181,7 @@ func TestProcedureCatalogMutationValidatesPayloadBeforeReuse(t *testing.T) {
 			store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 			exec := NewStorageExecutor(store)
 			id := procedureCatalogNodeID("custom.report")
-			_, err := store.CreateNode(&storage.Node{ID: id, Labels: []string{procedureCatalogLabel}, Properties: map[string]interface{}{"name": valid.Name, "record": tc.payload}})
+			_, err := store.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{procedureCatalogLabel}, Properties: map[string]interface{}{"name": valid.Name, "record": tc.payload}})
 			require.NoError(t, err)
 			err = exec.installPersistedProcedure(context.Background(), persistedProcedureRecord{Name: "custom.report", Mode: "READ", Body: "RETURN 2 AS v", Signature: "custom.report() :: (v :: INTEGER)"}, true)
 			if tc.valid {
@@ -193,7 +193,7 @@ func TestProcedureCatalogMutationValidatesPayloadBeforeReuse(t *testing.T) {
 				require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
 			} else {
 				require.Error(t, err)
-				node, getErr := store.GetNode(id)
+				node, getErr := store.GetNode(t.Context(), id)
 				require.NoError(t, getErr)
 				require.Equal(t, tc.payload, node.Properties["record"], "invalid or unrelated payload must not be replaced")
 			}

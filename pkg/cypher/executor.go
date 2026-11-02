@@ -1410,8 +1410,10 @@ func cypherSyntaxConfusableReplacement(character rune) (string, bool) {
 
 // TransactionCapableEngine is an engine that supports ACID transactions.
 // Used for type assertion to wrap implicit writes in rollback-capable transactions.
+// BeginTransaction uses ctx for admission and snapshot capture. The returned
+// handle has its own lifetime; subsequent operations supply their own contexts.
 type TransactionCapableEngine interface {
-	BeginTransaction() (*storage.BadgerTransaction, error)
+	BeginTransaction(context.Context) (*storage.BadgerTransaction, error)
 }
 
 type implicitTxEngines struct {
@@ -1690,8 +1692,12 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 		// same wire shape.
 		return nil, nornicerrors.TransactionControlFailure(nornicerrors.TerminalCommit, localizedError(localization.CypherCoreImplicitTransactionCommitFailed(err), err))
 	}
-	receipt, completionErr, bookkeepingErr := bookkeeping.finishCommitted(ctx, tx.OperationCount(), func() error {
-		completionErr := txWrapper.completeCommitActions()
+	// The admitted commit lifetime above owns both halves of acceptance: the
+	// native commit and the completion actions it queued. The cancelable
+	// statement context admitted the commit; it cannot cancel what admission
+	// accepted. The implicit and explicit paths share that one lifetime.
+	receipt, completionErr, bookkeepingErr := bookkeeping.finishCommitted(commitCtx, tx.OperationCount(), func(admittedCtx context.Context) error {
+		completionErr := txWrapper.completeCommitActions(admittedCtx)
 		txExec.refreshSearchAfterCommit(txWrapper)
 		return completionErr
 	})
@@ -1732,7 +1738,7 @@ func (e *StorageExecutor) applyInlineEmbeddingMutations(ctx context.Context, ids
 	store := e.getStorage(ctx)
 	typedEmbedder, hasTypedEmbedder := embedder.(typedQueryEmbedder)
 	for id := range ids {
-		node, err := store.GetNode(storage.NodeID(id))
+		node, err := store.GetNode(ctx, storage.NodeID(id))
 		if err != nil {
 			if err == storage.ErrNotFound {
 				continue
@@ -1784,7 +1790,7 @@ func (e *StorageExecutor) applyInlineEmbeddingMutations(ctx context.Context, ids
 		before.EmbedMeta = maps.Clone(node.EmbedMeta)
 		embeddingutil.ApplyManagedEmbedding(node, embeddings, model, dimensions, time.Now())
 		embeddingutil.RecordChunkSpans(node, source, chunks)
-		if err := store.UpdateNode(storage.NodeUpdateRequest{Before: &before, After: node}); err != nil {
+		if err := store.UpdateNode(ctx, storage.NodeUpdateRequest{Before: &before, After: node}); err != nil {
 			return err
 		}
 	}

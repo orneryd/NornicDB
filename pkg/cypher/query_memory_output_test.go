@@ -39,11 +39,11 @@ func queryMemoryOutputFixture(t *testing.T) (*StorageExecutor, *storage.BadgerEn
 	be.SetDecayEnabled(true)
 	old := time.Now().Add(-time.Hour)
 	for _, id := range []storage.NodeID{"review:a", "review:b"} {
-		_, err = be.CreateNode(&storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]interface{}{"secret": "node-hidden", "title": string(id)}, CreatedAt: old, UpdatedAt: old})
+		_, err = be.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]interface{}{"secret": "node-hidden", "title": string(id)}, CreatedAt: old, UpdatedAt: old})
 		require.NoError(t, err)
 	}
 	for i := 0; i < 2; i++ {
-		require.NoError(t, be.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("review:r%d", i)), StartNode: "review:a", EndNode: "review:b", Type: "LINK", Properties: map[string]interface{}{"secret": "edge-hidden", "weight": int64(7)}, CreatedAt: old, UpdatedAt: old}))
+		require.NoError(t, be.CreateEdge(t.Context(), &storage.Edge{ID: storage.EdgeID(fmt.Sprintf("review:r%d", i)), StartNode: "review:a", EndNode: "review:b", Type: "LINK", Properties: map[string]interface{}{"secret": "edge-hidden", "weight": int64(7)}, CreatedAt: old, UpdatedAt: old}))
 	}
 	return NewStorageExecutor(storage.NewNamespacedEngine(be, "review"), QueryCachePolicy{MaxEntries: 0, TTL: 0}), be
 }
@@ -140,9 +140,9 @@ func TestQueryMemoryOutputStreamedCarrierVisibility(t *testing.T) {
 }
 func TestQueryMemoryOutputCarrierRepresentations(t *testing.T) {
 	exec, be := queryMemoryOutputFixture(t)
-	n, err := be.GetQueryNode("review:a")
+	n, err := be.GetQueryNode(t.Context(), "review:a")
 	require.NoError(t, err)
-	r, err := be.GetEdge("review:r0")
+	r, err := be.GetEdge(t.Context(), "review:r0")
 	require.NoError(t, err)
 	p := PathResult{Nodes: []*storage.Node{n}, Relationships: []*storage.Edge{r}, Length: 1}
 	for name, value := range map[string]interface{}{
@@ -174,11 +174,11 @@ func TestQueryMemoryOutputScoredStreamRetention(t *testing.T) {
 			defer be.Close()
 			be.SetDecayEnabled(enabled)
 			for _, id := range []storage.NodeID{"review:a", "review:b"} {
-				_, err = be.CreateNode(&storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": string(id)}})
+				_, err = be.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": string(id)}})
 				require.NoError(t, err)
 			}
 			for i := 0; i < 16384; i++ {
-				require.NoError(t, be.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("review:r%06d", i)), StartNode: "review:a", EndNode: "review:b", Type: "LINK", Properties: map[string]interface{}{"secret": strings.Repeat(fmt.Sprintf("%08d", i), 512)}}))
+				require.NoError(t, be.CreateEdge(t.Context(), &storage.Edge{ID: storage.EdgeID(fmt.Sprintf("review:r%06d", i)), StartNode: "review:a", EndNode: "review:b", Type: "LINK", Properties: map[string]interface{}{"secret": strings.Repeat(fmt.Sprintf("%08d", i), 512)}}))
 			}
 			exec := NewStorageExecutor(storage.NewNamespacedEngine(be, "review"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 			// First-pass Badger block/index cache fills belong to the engine,

@@ -21,10 +21,10 @@ func TestResidualReplicatedPublicationDecision(t *testing.T) {
 			t.Cleanup(func() { _ = base.Close() })
 			r, mirror := newAcceptedReplicationFixture(t, base, nil, &Config{})
 			owner := NewReplicatedEngine(base, r, time.Second)
-			tx, err := base.BeginTransaction()
+			tx, err := base.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
-			_, err = tx.CreateNode(&storage.Node{ID: "test:replicated-decision", Properties: map[string]any{"v": int64(1)}})
+			_, err = tx.CreateNode(t.Context(), &storage.Node{ID: "test:replicated-decision", Properties: map[string]any{"v": int64(1)}})
 			require.NoError(t, err)
 			var calls atomic.Int32
 			var retained func() error
@@ -66,7 +66,7 @@ func TestResidualReplicatedPublicationDecision(t *testing.T) {
 			require.NoError(t, callbackErr)
 			require.EqualValues(t, 1, calls.Load())
 			require.ErrorIs(t, retained(), storage.ErrInvalidData)
-			_, err = base.GetStoredNode("test:replicated-decision")
+			_, err = base.GetStoredNode(t.Context(), "test:replicated-decision")
 			if veto {
 				require.ErrorIs(t, err, storage.ErrNotFound)
 			} else {

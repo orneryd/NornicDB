@@ -134,8 +134,8 @@ func (intent *namespaceDropIntent) head() []byte {
 
 // writeNamespaceDropIntent uses the current atomic/large commit owner. The head
 // and bounded victim chunks become visible together, before any destructive I/O.
-func (b *BadgerEngine) writeNamespaceDropIntent(intent *namespaceDropIntent, lifecycle *lifecycleWrite) error {
-	err := b.commitEngineWrite(lifecycle.ctx, func(cw *commitWriter) error {
+func (b *BadgerEngine) writeNamespaceDropIntent(ctx context.Context, intent *namespaceDropIntent, lifecycle *lifecycleWrite) error {
+	err := b.commitEngineWrite(ctx, func(cw *commitWriter) error {
 		for kind, victims := range map[byte]map[uint64]struct{}{1: intent.nodes, 2: intent.edges} {
 			if len(victims) == 0 {
 				continue
@@ -147,7 +147,7 @@ func (b *BadgerEngine) writeNamespaceDropIntent(intent *namespaceDropIntent, lif
 					return nil
 				}
 				key, data := namespaceDropKey(intent.namespace, kind, chunk), value
-				if err := cw.write(func(txn *badger.Txn) error { return txn.Set(key, data) }); err != nil {
+				if err := cw.write(cw.ctx, func(txn *badger.Txn) error { return txn.Set(key, data) }); err != nil {
 					return err
 				}
 				chunk++
@@ -166,7 +166,7 @@ func (b *BadgerEngine) writeNamespaceDropIntent(intent *namespaceDropIntent, lif
 				return err
 			}
 		}
-		return cw.write(func(txn *badger.Txn) error { return txn.Set(namespaceDropKey(intent.namespace, 0, 0), intent.head()) })
+		return cw.write(cw.ctx, func(txn *badger.Txn) error { return txn.Set(namespaceDropKey(intent.namespace, 0, 0), intent.head()) })
 	}, engineWriteOptions{lifecycle: lifecycle})
 	if err != nil {
 		return err
@@ -175,22 +175,22 @@ func (b *BadgerEngine) writeNamespaceDropIntent(intent *namespaceDropIntent, lif
 	return b.db.syncIfPersistent()
 }
 
-func (b *BadgerEngine) completeNamespaceDrop(intent *namespaceDropIntent, lifecycle *lifecycleWrite) error {
+func (b *BadgerEngine) completeNamespaceDrop(ctx context.Context, intent *namespaceDropIntent, lifecycle *lifecycleWrite) error {
 	// Earlier independently committed cleanup must be durable before a
 	// completion tombstone can possibly become durable (as in largeCommit.finish).
 	if err := b.db.syncIfPersistent(); err != nil {
 		return err
 	}
-	err := b.commitEngineWrite(lifecycle.ctx, func(cw *commitWriter) error {
+	err := b.commitEngineWrite(ctx, func(cw *commitWriter) error {
 		for kind, count := range map[byte]int{1: len(intent.nodes), 2: len(intent.edges)} {
 			for chunk := 0; chunk < (count+namespaceDropChunkIDs-1)/namespaceDropChunkIDs; chunk++ {
 				key := namespaceDropKey(intent.namespace, kind, uint64(chunk))
-				if err := cw.write(func(txn *badger.Txn) error { return txn.Delete(key) }); err != nil {
+				if err := cw.write(cw.ctx, func(txn *badger.Txn) error { return txn.Delete(key) }); err != nil {
 					return err
 				}
 			}
 		}
-		return cw.write(func(txn *badger.Txn) error {
+		return cw.write(cw.ctx, func(txn *badger.Txn) error {
 			if err := txn.Delete(schemaKey(intent.namespace)); err != nil {
 				return err
 			}
@@ -290,7 +290,7 @@ func (b *BadgerEngine) loadNamespaceDrops() ([]*namespaceDropIntent, error) {
 
 // recoverNamespaceDrops runs at open or under Restore's existing lifecycle.
 // Only open obtains a lease here; Restore must never recursively take its W lock.
-func (b *BadgerEngine) recoverNamespaceDrops(held *lifecycleWrite) error {
+func (b *BadgerEngine) recoverNamespaceDrops(ctx context.Context, held *lifecycleWrite) error {
 	intents, err := b.loadNamespaceDrops()
 	if err != nil {
 		return err
@@ -304,7 +304,7 @@ func (b *BadgerEngine) recoverNamespaceDrops(held *lifecycleWrite) error {
 		return nil
 	}
 	if held == nil {
-		lease, err := b.beginLifecycleWrite(context.Background(), "")
+		lease, err := b.beginLifecycleWrite(ctx, "")
 		if err != nil {
 			return err
 		}
@@ -313,7 +313,7 @@ func (b *BadgerEngine) recoverNamespaceDrops(held *lifecycleWrite) error {
 	}
 	for _, intent := range intents {
 		b.transitionPending(namespaceDropInstall, "", []*namespaceDropIntent{intent})
-		if _, _, _, err := b.deleteByPrefixHeld(intent.namespace+":", held, true); err != nil {
+		if _, _, _, err := b.deleteByPrefixHeld(ctx, intent.namespace+":", held, true); err != nil {
 			return err
 		}
 	}

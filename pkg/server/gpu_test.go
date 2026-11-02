@@ -3,6 +3,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -152,7 +153,7 @@ func TestHandleGPUTest(t *testing.T) {
 		Properties:      map[string]interface{}{"content": "Test memory for vector search"},
 		ChunkEmbeddings: [][]float32{emb},
 	}
-	storedID, err := server.db.GetStorage().CreateNode(testNode)
+	storedID, err := server.db.GetStorage().CreateNode(t.Context(), testNode)
 	if err != nil {
 		t.Fatalf("failed to store test memory: %v", err)
 	}
@@ -204,7 +205,7 @@ func TestGPUEndpointsRequireAdmin(t *testing.T) {
 	server, authenticator := setupTestServer(t)
 
 	// Create a regular user first
-	_, err := authenticator.CreateUser("regularuser", "password123", []auth.Role{auth.RoleViewer})
+	_, err := authenticator.CreateUser(context.Background(), "regularuser", "password123", []auth.Role{auth.RoleViewer})
 	if err != nil {
 		t.Fatalf("failed to create test user: %v", err)
 	}

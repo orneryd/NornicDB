@@ -206,7 +206,7 @@ func TestExecuteQueryAgainstStorage_DispatchCoverage(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:         "dispatch-node",
 		Labels:     []string{"Dispatch"},
 		Properties: map[string]interface{}{"name": "n1"},

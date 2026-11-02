@@ -12,11 +12,11 @@ import (
 
 // redactedHostPluginContext mirrors the supported publication in
 // pkg/server/heimdall_plugins.go: the host keeps the configured client in its
-// own private diagnostic context, and plugins receive the redacted copy with no
-// API key.
-func redactedHostPluginContext(apiURL, apiKey string) SubsystemContext {
+// own private diagnostic context, and plugins receive host metadata holding the
+// redacted copy with no API key.
+func redactedHostPluginContext(apiURL, apiKey string) SubsystemHost {
 	credentials := observability.ClientCredentials(apiURL, apiKey)
-	return SubsystemContext{
+	return SubsystemHost{
 		Config: Config{
 			APIURL: observability.RedactText(apiURL, credentials...),
 			APIKey: "",
@@ -97,7 +97,7 @@ func TestSubsystemRegistrationRedactsUnpublishedCleanupErrors(t *testing.T) {
 			// The supported host path: the configured client reaches only the
 			// manager's private diagnostic context, the published context is
 			// already redacted and keyless.
-			manager.SetHostContext(SubsystemContext{
+			manager.SetHostContext(SubsystemHost{
 				Config:  Config{APIURL: endpoint, APIKey: apiKey},
 				Bifrost: &NoOpBifrost{},
 			})
@@ -107,7 +107,7 @@ func TestSubsystemRegistrationRedactsUnpublishedCleanupErrors(t *testing.T) {
 			// only the manager's retained diagnostic credentials can remove the
 			// values below from the reported error.
 			manager.mu.RLock()
-			hostConfig := manager.ctx.Config
+			hostConfig := manager.host.Config
 			manager.mu.RUnlock()
 			require.Empty(t, hostConfig.APIKey)
 			require.False(t, managerOutputContainsCredential(hostConfig.APIURL, fragments),

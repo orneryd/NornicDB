@@ -39,7 +39,7 @@ func TestGraphQLCypherEnforcesViewerPermissions(t *testing.T) {
 	viewerToken := getAuthToken(t, authenticator, "reader")
 	store, err := server.dbManager.GetDefaultStorage()
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "graphql-authorization-protected",
 		Labels: []string{"GraphQLAuthorizationProtected"},
 	})

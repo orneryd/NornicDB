@@ -63,7 +63,7 @@ func (db *DB) HealthCheck(ctx context.Context) error {
 	if db.storage == nil {
 		return localizedError(localization.NornicDBCoreStorageEngineNotInitialized(), nil)
 	}
-	if _, err := db.storage.NodeCount(); err != nil {
+	if _, err := db.storage.NodeCount(ctx); err != nil {
 		return localizedError(localization.NornicDBCoreStorageProbeFailed(err), err)
 	}
 	return nil

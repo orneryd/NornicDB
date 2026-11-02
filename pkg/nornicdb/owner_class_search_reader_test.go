@@ -3,12 +3,13 @@ package nornicdb_test
 
 import (
 	"context"
-	"github.com/orneryd/nornicdb/pkg/search"
-	"github.com/orneryd/nornicdb/pkg/storage"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/search"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 type classReaderEngine struct {
@@ -16,9 +17,9 @@ type classReaderEngine struct {
 	enter func()
 }
 
-func (e *classReaderEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
+func (e *classReaderEngine) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	e.enter()
-	return e.Engine.GetNode(id)
+	return e.Engine.GetNode(ctx, id)
 }
 
 func TestOwnerClassSearchReaderReentry(t *testing.T) {

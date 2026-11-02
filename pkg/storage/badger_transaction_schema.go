@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 )
@@ -46,7 +47,7 @@ func (tx *BadgerTransaction) StageSchemaChanges() error {
 		return nil
 	}
 	snapshot := NewSchemaManager()
-	if err := snapshot.ReplaceFromDefinition(tx.knowledgeSchemaDefinition); err != nil {
+	if err := snapshot.ReplaceFromDefinition(context.Background(), tx.knowledgeSchemaDefinition); err != nil {
 		return err
 	}
 	for key, constraint := range snapshot.uniqueConstraints {

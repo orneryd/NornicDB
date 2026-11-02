@@ -963,7 +963,7 @@ func (r *RemoteEngine) mutateRemoteEntity(ctx context.Context, statement, id str
 	return err
 }
 
-func (r *RemoteEngine) CreateNode(node *Node) (NodeID, error) {
+func (r *RemoteEngine) CreateNode(ctx context.Context, node *Node) (NodeID, error) {
 	props := map[string]interface{}{}
 	for k, v := range node.Properties {
 		props[k] = v
@@ -974,8 +974,6 @@ func (r *RemoteEngine) CreateNode(node *Node) (NodeID, error) {
 		}
 	}
 	stmt := fmt.Sprintf("CREATE (n%s) SET n += $props RETURN n", labelsExpr(node.Labels))
-	ctx, cancel := defaultCtx()
-	defer cancel()
 	_, rows, err := r.transport.query(ctx, stmt, map[string]interface{}{"props": props}, RemoteAccessWrite)
 	if err != nil {
 		return "", err
@@ -990,19 +988,17 @@ func (r *RemoteEngine) CreateNode(node *Node) (NodeID, error) {
 	return created.ID, nil
 }
 
-func (r *RemoteEngine) GetNode(id NodeID) (*Node, error) {
-	ctx, cancel := defaultCtx()
+func (r *RemoteEngine) GetNode(ctx context.Context, id NodeID) (*Node, error) {
+	ctx, cancel := remoteReadContext(ctx)
 	defer cancel()
 	return queryRemoteEntities(r, ctx, "MATCH (n) WHERE n.id = $id RETURN n LIMIT 1", map[string]interface{}{"id": string(id)}, valueToNode, firstRemoteEntity[Node])
 }
 
-func (r *RemoteEngine) UpdateNode(updateRequest NodeUpdateRequest) error {
+func (r *RemoteEngine) UpdateNode(ctx context.Context, updateRequest NodeUpdateRequest) error {
 	node := updateRequest.After
 	if node == nil {
 		return ErrInvalidData
 	}
-	ctx, cancel := defaultCtx()
-	defer cancel()
 	err := r.mutateRemoteEntity(ctx, "MATCH (n) WHERE n.id = $id SET n += $props RETURN count(n)", string(node.ID), node.Properties, true)
 	if err == ErrNotFound && updateRequest.Before != nil {
 		return ErrConflict
@@ -1010,13 +1006,11 @@ func (r *RemoteEngine) UpdateNode(updateRequest NodeUpdateRequest) error {
 	return err
 }
 
-func (r *RemoteEngine) DeleteNode(id NodeID) error {
-	ctx, cancel := defaultCtx()
-	defer cancel()
+func (r *RemoteEngine) DeleteNode(ctx context.Context, id NodeID) error {
 	return r.mutateRemoteEntity(ctx, "MATCH (n) WHERE n.id = $id DETACH DELETE n", string(id), nil, false)
 }
 
-func (r *RemoteEngine) CreateEdge(edge *Edge) error {
+func (r *RemoteEngine) CreateEdge(ctx context.Context, edge *Edge) error {
 	if edge == nil {
 		return ErrInvalidData
 	}
@@ -1041,8 +1035,6 @@ func (r *RemoteEngine) CreateEdge(edge *Edge) error {
 			cyphertext.PrintIdentifier(edge.Type, nil, cyphertext.RawSource),
 		)
 	}
-	ctx, cancel := defaultCtx()
-	defer cancel()
 	_, rows, err := r.transport.query(ctx, stmt, params, RemoteAccessWrite)
 	if err != nil {
 		return err
@@ -1053,19 +1045,17 @@ func (r *RemoteEngine) CreateEdge(edge *Edge) error {
 	return nil
 }
 
-func (r *RemoteEngine) GetEdge(id EdgeID) (*Edge, error) {
-	ctx, cancel := defaultCtx()
+func (r *RemoteEngine) GetEdge(ctx context.Context, id EdgeID) (*Edge, error) {
+	ctx, cancel := remoteReadContext(ctx)
 	defer cancel()
 	return queryRemoteEntities(r, ctx, "MATCH ()-[r]->() WHERE r.id = $id RETURN r LIMIT 1", map[string]interface{}{"id": string(id)}, valueToEdge, firstRemoteEntity[Edge])
 }
 
-func (r *RemoteEngine) UpdateEdge(updateRequest EdgeUpdateRequest) error {
+func (r *RemoteEngine) UpdateEdge(ctx context.Context, updateRequest EdgeUpdateRequest) error {
 	edge := updateRequest.After
 	if edge == nil {
 		return ErrInvalidData
 	}
-	ctx, cancel := defaultCtx()
-	defer cancel()
 	err := r.mutateRemoteEntity(ctx, "MATCH ()-[r]->() WHERE r.id = $id SET r += $props RETURN count(r)", string(edge.ID), edge.Properties, true)
 	if err == ErrNotFound && updateRequest.Before != nil {
 		return ErrConflict
@@ -1073,9 +1063,7 @@ func (r *RemoteEngine) UpdateEdge(updateRequest EdgeUpdateRequest) error {
 	return err
 }
 
-func (r *RemoteEngine) DeleteEdge(id EdgeID) error {
-	ctx, cancel := defaultCtx()
-	defer cancel()
+func (r *RemoteEngine) DeleteEdge(ctx context.Context, id EdgeID) error {
 	return r.mutateRemoteEntity(ctx, "MATCH ()-[r]->() WHERE r.id = $id DELETE r", string(id), nil, false)
 }
 
@@ -1104,8 +1092,8 @@ func (r *RemoteEngine) getNodesByLabelWithReveal(ctx context.Context, label stri
 	return queryRemoteEntities(r, ctx, stmt, nil, valueToNode, allRemoteEntities[Node])
 }
 
-func (r *RemoteEngine) GetFirstNodeByLabel(label string) (*Node, error) {
-	ctx, cancel := defaultCtx()
+func (r *RemoteEngine) GetFirstNodeByLabel(ctx context.Context, label string) (*Node, error) {
+	ctx, cancel := remoteReadContext(ctx)
 	defer cancel()
 	stmt := "MATCH (n) RETURN n LIMIT 1"
 	if strings.TrimSpace(label) != "" {
@@ -1148,14 +1136,17 @@ func (r *RemoteEngine) GetEdgesBetween(ctx context.Context, startID, endID NodeI
 	return r.readEdgesBetween(ctx, startID, endID, nil)
 }
 
-func (r *RemoteEngine) GetEdgeBetween(startID, endID NodeID, edgeType string) *Edge {
-	ctx, cancel := defaultCtx()
+func (r *RemoteEngine) GetEdgeBetween(ctx context.Context, startID, endID NodeID, edgeType string) (*Edge, error) {
+	ctx, cancel := remoteReadContext(ctx)
 	defer cancel()
-	edges, _ := r.readEdgesBetween(ctx, startID, endID, &edgeType)
-	if len(edges) == 0 {
-		return nil
+	edges, err := r.readEdgesBetween(ctx, startID, endID, &edgeType)
+	if err != nil {
+		return nil, err
 	}
-	return edges[0]
+	if len(edges) == 0 {
+		return nil, nil
+	}
+	return edges[0], nil
 }
 
 func (r *RemoteEngine) GetEdgesByType(ctx context.Context, edgeType string) ([]*Edge, error) {
@@ -1215,14 +1206,14 @@ func (r *RemoteEngine) AllEdges(ctx context.Context) ([]*Edge, error) {
 	return queryRemoteEntities(r, ctx, "MATCH ()-[r]->() RETURN r", nil, valueToEdge, allRemoteEntities[Edge])
 }
 
-func (r *RemoteEngine) GetInDegree(nodeID NodeID) int {
-	count, _ := r.nativeRemoteCount("MATCH ()-[r]->(n) WHERE n.id = $id RETURN count(r)", map[string]interface{}{"id": string(nodeID)})
-	return int(count)
+func (r *RemoteEngine) GetInDegree(ctx context.Context, nodeID NodeID) (int, error) {
+	count, err := r.remoteCount(ctx, "MATCH ()-[r]->(n) WHERE n.id = $id RETURN count(r)", map[string]interface{}{"id": string(nodeID)}, RemoteAccessRead)
+	return int(count), err
 }
 
-func (r *RemoteEngine) GetOutDegree(nodeID NodeID) int {
-	count, _ := r.nativeRemoteCount("MATCH (n)-[r]->() WHERE n.id = $id RETURN count(r)", map[string]interface{}{"id": string(nodeID)})
-	return int(count)
+func (r *RemoteEngine) GetOutDegree(ctx context.Context, nodeID NodeID) (int, error) {
+	count, err := r.remoteCount(ctx, "MATCH (n)-[r]->() WHERE n.id = $id RETURN count(r)", map[string]interface{}{"id": string(nodeID)}, RemoteAccessRead)
+	return int(count), err
 }
 
 func (r *RemoteEngine) GetSchema() *SchemaManager { return r.schema }
@@ -1230,9 +1221,7 @@ func (r *RemoteEngine) GetSchema() *SchemaManager { return r.schema }
 // Bulk operations use batched queries to avoid N+1 round-trips.
 const remoteBulkChunkSize = 100
 
-func (r *RemoteEngine) BulkCreateNodes(nodes []*Node) error {
-	ctx, cancel := defaultCtx()
-	defer cancel()
+func (r *RemoteEngine) BulkCreateNodes(ctx context.Context, nodes []*Node) error {
 	for i := 0; i < len(nodes); i += remoteBulkChunkSize {
 		end := i + remoteBulkChunkSize
 		if end > len(nodes) {
@@ -1261,9 +1250,7 @@ func (r *RemoteEngine) BulkCreateNodes(nodes []*Node) error {
 	return nil
 }
 
-func (r *RemoteEngine) BulkCreateEdges(edges []*Edge) error {
-	ctx, cancel := defaultCtx()
-	defer cancel()
+func (r *RemoteEngine) BulkCreateEdges(ctx context.Context, edges []*Edge) error {
 	for i := 0; i < len(edges); i += remoteBulkChunkSize {
 		end := i + remoteBulkChunkSize
 		if end > len(edges) {
@@ -1297,9 +1284,7 @@ func (r *RemoteEngine) BulkCreateEdges(edges []*Edge) error {
 	return nil
 }
 
-func (r *RemoteEngine) BulkDeleteNodes(ids []NodeID) error {
-	ctx, cancel := defaultCtx()
-	defer cancel()
+func (r *RemoteEngine) BulkDeleteNodes(ctx context.Context, ids []NodeID) error {
 	for i := 0; i < len(ids); i += remoteBulkChunkSize {
 		end := i + remoteBulkChunkSize
 		if end > len(ids) {
@@ -1319,9 +1304,7 @@ func (r *RemoteEngine) BulkDeleteNodes(ids []NodeID) error {
 	return nil
 }
 
-func (r *RemoteEngine) BulkDeleteEdges(ids []EdgeID) error {
-	ctx, cancel := defaultCtx()
-	defer cancel()
+func (r *RemoteEngine) BulkDeleteEdges(ctx context.Context, ids []EdgeID) error {
 	for i := 0; i < len(ids); i += remoteBulkChunkSize {
 		end := i + remoteBulkChunkSize
 		if end > len(ids) {
@@ -1360,39 +1343,33 @@ func (r *RemoteEngine) BatchGetNodes(ctx context.Context, ids []NodeID) (map[Nod
 
 func (r *RemoteEngine) Close() error { return r.transport.close() }
 
-func (r *RemoteEngine) NodeCount() (int64, error) {
-	return r.nativeRemoteCount("MATCH (n) RETURN count(n)", nil)
+func (r *RemoteEngine) NodeCount(ctx context.Context) (int64, error) {
+	return r.remoteCount(ctx, "MATCH (n) RETURN count(n)", nil, RemoteAccessRead)
 }
 
-func (r *RemoteEngine) EdgeCount() (int64, error) {
-	return r.nativeRemoteCount("MATCH ()-[r]->() RETURN count(r)", nil)
+func (r *RemoteEngine) EdgeCount(ctx context.Context) (int64, error) {
+	return r.remoteCount(ctx, "MATCH ()-[r]->() RETURN count(r)", nil, RemoteAccessRead)
 }
 
 // EdgeCountByType answers the typed count from the remote instance's own
 // per-type counter fast path (issue #638): the remote server serves this
 // shape O(1) from its counters, so no client-side edge materialization exists
 // on this path.
-func (r *RemoteEngine) EdgeCountByType(edgeType string) (int64, error) {
-	ctx, cancel := defaultCtx()
-	defer cancel()
+func (r *RemoteEngine) EdgeCountByType(ctx context.Context, edgeType string) (int64, error) {
 	return r.remotePositionalCount(ctx, "", edgeType, false)
 }
 
 // EdgeCountByStartLabel answers the positional (label, type) count from the
 // remote instance's own counters: the remote server serves
 // MATCH (s:L)-[r:T]->() O(1).
-func (r *RemoteEngine) EdgeCountByStartLabel(label, edgeType string) (int64, error) {
-	ctx, cancel := defaultCtx()
-	defer cancel()
+func (r *RemoteEngine) EdgeCountByStartLabel(ctx context.Context, label, edgeType string) (int64, error) {
 	return r.remotePositionalCount(ctx, label, edgeType, false)
 }
 
 // EdgeCountByEndLabel answers the positional (label, type) count from the
 // remote instance's own counters: the remote server serves
 // MATCH ()-[r:T]->(e:L) O(1).
-func (r *RemoteEngine) EdgeCountByEndLabel(label, edgeType string) (int64, error) {
-	ctx, cancel := defaultCtx()
-	defer cancel()
+func (r *RemoteEngine) EdgeCountByEndLabel(ctx context.Context, label, edgeType string) (int64, error) {
 	return r.remotePositionalCount(ctx, label, edgeType, true)
 }
 

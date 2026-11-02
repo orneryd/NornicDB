@@ -647,13 +647,13 @@ func TestE2E_CallNornicDbKnowledgePolicyResolve(t *testing.T) {
 	_, err = exec.Execute(ctx, "CREATE PROMOTION POLICY policy_alpha FOR (n:MemoryEpisode) APPLY { WHEN n.accessCount >= 3 APPLY PROFILE promo_alpha }", nil)
 	require.NoError(t, err)
 
-	nodeID, err := be.CreateNode(&storage.Node{
+	nodeID, err := be.CreateNode(t.Context(), &storage.Node{
 		ID:        storage.NodeID("nornic:episode-1"),
 		Labels:    []string{"MemoryEpisode"},
 		CreatedAt: time.Unix(0, storage.DecayScoringTime()-6*3600*1e9),
 	})
 	require.NoError(t, err)
-	_, accessWriteErr1 := be.WriteAccessMeta(knowledgepolicy.AccessMetaWriteRequest{Mode: knowledgepolicy.RecordState, EntityID: string(nodeID), Entry: &knowledgepolicy.AccessMetaEntry{
+	_, accessWriteErr1 := be.WriteAccessMeta(context.Background(), knowledgepolicy.AccessMetaWriteRequest{Mode: knowledgepolicy.RecordState, EntityID: string(nodeID), Entry: &knowledgepolicy.AccessMetaEntry{
 		TargetID:    string(nodeID),
 		TargetScope: knowledgepolicy.ScopeNode,
 		Fixed: knowledgepolicy.AccessMetaFixedFields{
@@ -689,11 +689,11 @@ func TestE2E_CallNornicDbKnowledgePolicyResolve_AcceptsNeo4jElementIDs(t *testin
 
 	createdAt := time.Unix(1700000000, 0)
 	for _, nodeID := range []storage.NodeID{"node-1", "node-2"} {
-		_, err = store.CreateNode(&storage.Node{ID: nodeID, Labels: []string{"MemoryEpisode"}, CreatedAt: createdAt})
+		_, err = store.CreateNode(t.Context(), &storage.Node{ID: nodeID, Labels: []string{"MemoryEpisode"}, CreatedAt: createdAt})
 		require.NoError(t, err)
 	}
 	edgeID := storage.EdgeID("edge-1")
-	require.NoError(t, store.CreateEdge(&storage.Edge{
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{
 		ID: edgeID, StartNode: "node-1", EndNode: "node-2", Type: "REFERENCES", CreatedAt: createdAt,
 	}))
 

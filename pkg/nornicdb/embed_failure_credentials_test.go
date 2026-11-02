@@ -2,11 +2,12 @@ package nornicdb
 
 import (
 	"errors"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"io"
 	"os"
 	"strings"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -15,7 +16,7 @@ import (
 func TestTerminalEmbeddingFailureDiagnosticsRedactConfiguredCredentials(t *testing.T) {
 	const marker = "synthetic-r73-embed-failure-764219"
 	store := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:         "tenant:document",
 		Labels:     []string{"Document"},
 		Properties: map[string]any{"text": "synthetic document"},
@@ -48,7 +49,7 @@ func TestTerminalEmbeddingFailureDiagnosticsRedactConfiguredCredentials(t *testi
 		_ = reader.Close()
 	})
 	os.Stdout = writer
-	worker.markNodeEmbeddingFailed("tenant:document", errors.New(
+	worker.markNodeEmbeddingFailed(t.Context(), "tenant:document", errors.New(
 		"provider rejected https://remote.example.invalid/vectors?api_key="+marker+" key="+marker,
 	))
 	_ = writer.Close()
@@ -56,7 +57,7 @@ func TestTerminalEmbeddingFailureDiagnosticsRedactConfiguredCredentials(t *testi
 	output, _ := io.ReadAll(reader)
 	_ = reader.Close()
 
-	node, err := store.GetNode("tenant:document")
+	node, err := store.GetNode(t.Context(), "tenant:document")
 	if err != nil {
 		t.Fatal("failed node was not stored")
 	}

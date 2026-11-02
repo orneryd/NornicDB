@@ -119,7 +119,7 @@ func TestDecay_ScoreMatchesDecayScore(t *testing.T) {
 // one scoring instant for every decay function, in RETURN and in WHERE (#866).
 func TestDecay_OneStatementScoresAtOneInstant(t *testing.T) {
 	eng, exec := setupDecayEngine(t)
-	_, err := eng.CreateNode(makeNode("nornic:ep3", []string{"MemoryEpisode"}, 2*time.Hour))
+	_, err := eng.CreateNode(t.Context(), makeNode("nornic:ep3", []string{"MemoryEpisode"}, 2*time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}

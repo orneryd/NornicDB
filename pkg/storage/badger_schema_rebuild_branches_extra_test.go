@@ -13,7 +13,7 @@ func TestBadgerEngine_RebuildUniqueConstraintValues_PropertyCompositeAndErrors(t
 	t.Run("rebuild populates unique/property/composite caches", func(t *testing.T) {
 		engine := newIsolatedBadgerEngine(t)
 
-		_, err := engine.CreateNode(&Node{
+		_, err := engine.CreateNode(t.Context(), &Node{
 			ID:     "alpha:u1",
 			Labels: []string{"User"},
 			Properties: map[string]interface{}{
@@ -24,7 +24,7 @@ func TestBadgerEngine_RebuildUniqueConstraintValues_PropertyCompositeAndErrors(t
 			},
 		})
 		require.NoError(t, err)
-		_, err = engine.CreateNode(&Node{
+		_, err = engine.CreateNode(t.Context(), &Node{
 			ID:     "alpha:u2",
 			Labels: []string{"User"},
 			Properties: map[string]interface{}{
@@ -74,9 +74,9 @@ func TestBadgerEngine_RebuildUniqueConstraintValues_PropertyCompositeAndErrors(t
 
 	t.Run("rebuild returns error on duplicate unique values", func(t *testing.T) {
 		engine := newIsolatedBadgerEngine(t)
-		_, err := engine.CreateNode(&Node{ID: "dup:u1", Labels: []string{"User"}, Properties: map[string]interface{}{"email": "same@example.com"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: "dup:u1", Labels: []string{"User"}, Properties: map[string]interface{}{"email": "same@example.com"}})
 		require.NoError(t, err)
-		_, err = engine.CreateNode(&Node{ID: "dup:u2", Labels: []string{"User"}, Properties: map[string]interface{}{"email": "same@example.com"}})
+		_, err = engine.CreateNode(t.Context(), &Node{ID: "dup:u2", Labels: []string{"User"}, Properties: map[string]interface{}{"email": "same@example.com"}})
 		require.NoError(t, err)
 
 		sm := NewSchemaManager()

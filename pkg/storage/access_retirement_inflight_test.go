@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
@@ -21,18 +22,18 @@ type inflightAccessEntityMeta struct {
 	afterLookup bool
 }
 
-func (g *inflightAccessEntityMeta) GetEntityMeta(id string) (knowledgepolicy.EntityMeta, error) {
+func (g *inflightAccessEntityMeta) GetEntityMeta(ctx context.Context, id string) (knowledgepolicy.EntityMeta, error) {
 	var meta knowledgepolicy.EntityMeta
 	var err error
 	if g.afterLookup {
-		meta, err = g.engine.GetEntityMeta(id)
+		meta, err = g.engine.GetEntityMeta(ctx, id)
 	}
 	g.once.Do(func() { close(g.entered) })
 	<-g.release
 	if g.afterLookup {
 		return meta, err
 	}
-	return g.engine.GetEntityMeta(id)
+	return g.engine.GetEntityMeta(ctx, id)
 }
 
 // This component regression covers a batch already owned by the flusher when
@@ -47,13 +48,13 @@ func TestAccessRetirementWithInflightDrainedBatch(t *testing.T) {
 			}
 			t.Run(kind+"/"+phase, func(t *testing.T) {
 				engine := newTestEngine(t)
-				_, err := engine.CreateNode(&Node{ID: "inflight:node"})
+				_, err := engine.CreateNode(t.Context(), &Node{ID: "inflight:node"})
 				require.NoError(t, err)
 				id := "inflight:node"
 				if kind == "edge" {
-					_, err = engine.CreateNode(&Node{ID: "inflight:peer"})
+					_, err = engine.CreateNode(t.Context(), &Node{ID: "inflight:peer"})
 					require.NoError(t, err)
-					require.NoError(t, engine.CreateEdge(&Edge{ID: "inflight:edge", StartNode: "inflight:node", EndNode: "inflight:peer", Type: "LINK"}))
+					require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "inflight:edge", StartNode: "inflight:node", EndNode: "inflight:peer", Type: "LINK"}))
 					id = "inflight:edge"
 				}
 				acc := knowledgepolicy.NewAccessAccumulator(true, 0)
@@ -62,7 +63,7 @@ func TestAccessRetirementWithInflightDrainedBatch(t *testing.T) {
 				gate := &inflightAccessEntityMeta{afterLookup: afterLookup, engine: engine, entered: make(chan struct{}), release: make(chan struct{})}
 				flusher.SetPropertySuppression(nil, gate, nil)
 				callbacks := 0
-				flusher.SetSuppressionRecheck(func(string, knowledgepolicy.EntityMeta) { callbacks++ })
+				flusher.SetSuppressionRecheck(func(context.Context, string, knowledgepolicy.EntityMeta) { callbacks++ })
 				var releaseOnce sync.Once
 				release := func() { releaseOnce.Do(func() { close(gate.release) }) }
 				joined := make(chan struct{})
@@ -91,9 +92,9 @@ func TestAccessRetirementWithInflightDrainedBatch(t *testing.T) {
 				// publication cannot remove it from the flusher's private merged map.
 				require.Empty(t, acc.DrainAll())
 				if kind == "node" {
-					require.NoError(t, engine.DeleteNode(NodeID(id)))
+					require.NoError(t, engine.DeleteNode(t.Context(), NodeID(id)))
 				} else {
-					require.NoError(t, engine.DeleteEdge(EdgeID(id)))
+					require.NoError(t, engine.DeleteEdge(t.Context(), EdgeID(id)))
 				}
 				release()
 				select {

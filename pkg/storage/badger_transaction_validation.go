@@ -24,7 +24,7 @@ func (tx *BadgerTransaction) validateSnapshotIsolationConflicts(ctx context.Cont
 	// against a predecessor another writer changed, revealed or deleted after
 	// statement-time classification.
 	for edgeID, candidate := range tx.edgeCreateNoOps {
-		stored, err := tx.engine.GetStoredEdge(edgeID)
+		stored, err := tx.engine.GetStoredEdge(ctx, edgeID)
 		if err != nil || !tx.engine.filterEntityByDecay(visibleRead, stored, DecayScoringTime()) {
 			return ErrAlreadyExists
 		}
@@ -43,7 +43,7 @@ func (tx *BadgerTransaction) validateSnapshotIsolationConflicts(ctx context.Cont
 		switch op.Type {
 		case OpCreateNode:
 			if !op.FreshID {
-				if err := tx.checkNodeCreateConflict(op.NodeID); err != nil {
+				if err := tx.checkNodeCreateConflict(ctx, op.NodeID); err != nil {
 					return err
 				}
 			}
@@ -52,7 +52,7 @@ func (tx *BadgerTransaction) validateSnapshotIsolationConflicts(ctx context.Cont
 				return err
 			}
 			if op.Type == OpDeleteNode {
-				if err := tx.checkNodeAdjacencyConflict(op.NodeID); err != nil {
+				if err := tx.checkNodeAdjacencyConflict(ctx, op.NodeID); err != nil {
 					return err
 				}
 			}
@@ -64,25 +64,25 @@ func (tx *BadgerTransaction) validateSnapshotIsolationConflicts(ctx context.Cont
 				continue
 			}
 			if !op.FreshID {
-				if err := tx.checkEdgeWriteConflict(op.EdgeID); err != nil {
+				if err := tx.checkEdgeWriteConflict(ctx, op.EdgeID); err != nil {
 					return err
 				}
 			}
-			if err := tx.checkEdgeEndpointConflicts(op.Edge); err != nil {
+			if err := tx.checkEdgeEndpointConflicts(ctx, op.Edge); err != nil {
 				return err
 			}
 		case OpUpdateEdge:
 			if _, deleted := tx.deletedEdges[op.EdgeID]; deleted {
 				continue
 			}
-			if err := tx.checkEdgeWriteConflict(op.EdgeID); err != nil {
+			if err := tx.checkEdgeWriteConflict(ctx, op.EdgeID); err != nil {
 				return err
 			}
-			if err := tx.checkEdgeEndpointConflicts(op.Edge); err != nil {
+			if err := tx.checkEdgeEndpointConflicts(ctx, op.Edge); err != nil {
 				return err
 			}
 		case OpDeleteEdge:
-			if err := tx.checkEdgeWriteConflict(op.EdgeID); err != nil {
+			if err := tx.checkEdgeWriteConflict(ctx, op.EdgeID); err != nil {
 				return err
 			}
 		}
@@ -122,8 +122,8 @@ func (tx *BadgerTransaction) snapshotIsolationConflict(headVersion MVCCVersion) 
 	return headVersion.Compare(tx.readTS) > 0
 }
 
-func (tx *BadgerTransaction) checkNodeCreateConflict(nodeID NodeID) error {
-	head, err := tx.engine.GetNodeCurrentHead(nodeID)
+func (tx *BadgerTransaction) checkNodeCreateConflict(ctx context.Context, nodeID NodeID) error {
+	head, err := tx.engine.GetNodeCurrentHead(ctx, nodeID)
 	if err == ErrNotFound {
 		return nil
 	}
@@ -144,7 +144,7 @@ func (tx *BadgerTransaction) checkNodeCreateConflict(nodeID NodeID) error {
 }
 
 func (tx *BadgerTransaction) checkNodeWriteConflict(ctx context.Context, nodeID NodeID) error {
-	head, err := tx.engine.GetNodeCurrentHead(nodeID)
+	head, err := tx.engine.GetNodeCurrentHead(ctx, nodeID)
 	if err == ErrNotFound {
 		return nil
 	}
@@ -253,8 +253,8 @@ func (tx *BadgerTransaction) classifyUpdateConflictAsUniqueViolation(ctx context
 	return nil
 }
 
-func (tx *BadgerTransaction) checkEdgeWriteConflict(edgeID EdgeID) error {
-	head, err := tx.engine.GetEdgeCurrentHead(edgeID)
+func (tx *BadgerTransaction) checkEdgeWriteConflict(ctx context.Context, edgeID EdgeID) error {
+	head, err := tx.engine.GetEdgeCurrentHead(ctx, edgeID)
 	if err == ErrNotFound {
 		return nil
 	}
@@ -271,7 +271,7 @@ func (tx *BadgerTransaction) checkEdgeWriteConflict(edgeID EdgeID) error {
 	return nil
 }
 
-func (tx *BadgerTransaction) checkEdgeEndpointConflicts(edge *Edge) error {
+func (tx *BadgerTransaction) checkEdgeEndpointConflicts(ctx context.Context, edge *Edge) error {
 	if edge == nil {
 		return nil
 	}
@@ -296,9 +296,9 @@ func (tx *BadgerTransaction) checkEdgeEndpointConflicts(edge *Edge) error {
 				continue
 			}
 		}
-		head, err := tx.endpointHead(nodeID)
+		head, err := tx.endpointHead(ctx, nodeID)
 		if err == ErrNotFound {
-			if _, nodeErr := tx.engine.GetStoredNode(nodeID); nodeErr == nil {
+			if _, nodeErr := tx.engine.GetStoredNode(ctx, nodeID); nodeErr == nil {
 				continue
 			} else if nodeErr == ErrNotFound {
 				return missingEndpoint(nodeID)
@@ -312,7 +312,7 @@ func (tx *BadgerTransaction) checkEdgeEndpointConflicts(edge *Edge) error {
 		if head.Tombstoned {
 			// An acknowledged re-create the write-behind buffer has not
 			// applied yet is the endpoint's current state.
-			if _, nodeErr := tx.engine.GetStoredNode(nodeID); nodeErr == nil {
+			if _, nodeErr := tx.engine.GetStoredNode(ctx, nodeID); nodeErr == nil {
 				continue
 			} else if nodeErr != ErrNotFound {
 				return &CommitFailureError{Cause: nodeErr}
@@ -335,11 +335,11 @@ func (tx *BadgerTransaction) checkEdgeEndpointConflicts(edge *Edge) error {
 // node instead of twice per edge. The cache is only read within a single
 // commit validation pass, which is point-in-time by construction, so the
 // memoized value is exactly as fresh as the first read.
-func (tx *BadgerTransaction) endpointHead(nodeID NodeID) (MVCCHead, error) {
+func (tx *BadgerTransaction) endpointHead(ctx context.Context, nodeID NodeID) (MVCCHead, error) {
 	if head, ok := tx.nodeHeadCache[nodeID]; ok {
 		return head, nil
 	}
-	head, err := tx.engine.GetNodeCurrentHead(nodeID)
+	head, err := tx.engine.GetNodeCurrentHead(ctx, nodeID)
 	if err == nil {
 		if tx.nodeHeadCache == nil {
 			tx.nodeHeadCache = make(map[NodeID]MVCCHead, 64)
@@ -349,7 +349,7 @@ func (tx *BadgerTransaction) endpointHead(nodeID NodeID) (MVCCHead, error) {
 	return head, err
 }
 
-func (tx *BadgerTransaction) checkNodeAdjacencyConflict(nodeID NodeID) error {
+func (tx *BadgerTransaction) checkNodeAdjacencyConflict(ctx context.Context, nodeID NodeID) error {
 	err := tx.engine.withView(func(viewTx *badger.Txn) error {
 		var prefixes [][]byte
 		if outPrefix := tx.engine.outgoingIndexPrefixString(nodeID); outPrefix != nil {
@@ -588,7 +588,7 @@ func (tx *BadgerTransaction) scanForUniqueViolation(ctx context.Context, namespa
 	}
 	for i, existingNode := range nodes {
 		if i%commitCancelPollEvery == 0 {
-			if err := tx.commitCancelledLocked(); err != nil {
+			if err := ctx.Err(); err != nil {
 				return err
 			}
 		}
@@ -677,12 +677,15 @@ func (tx *BadgerTransaction) checkNodeKeyConstraint(ctx context.Context, node *N
 // committedKeyHolder returns candidate id's committed node when it holds the
 // key (nodeHoldsKey): the MERGE admission read of a composite equality-index
 // candidate.
-func (b *BadgerEngine) committedKeyHolder(id NodeID, namespace, label string, properties []string, props map[string]interface{}) *Node {
-	existing, err := b.GetNode(id)
-	if err != nil || existing == nil || !nodeHoldsKey(existing, namespace, label, properties, props) {
-		return nil
+func (b *BadgerEngine) committedKeyHolder(ctx context.Context, id NodeID, namespace, label string, properties []string, props map[string]interface{}) (*Node, error) {
+	existing, err := b.GetNode(ctx, id)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return nil, err
 	}
-	return existing
+	if existing == nil || !nodeHoldsKey(existing, namespace, label, properties, props) {
+		return nil, nil
+	}
+	return existing, nil
 }
 
 // nodeHoldsKey reports whether node belongs to namespace, carries label and
@@ -720,7 +723,7 @@ func (tx *BadgerTransaction) scanForNodeKeyViolation(ctx context.Context, namesp
 	}
 	for i, existingNode := range nodes {
 		if i%commitCancelPollEvery == 0 {
-			if err := tx.commitCancelledLocked(); err != nil {
+			if err := ctx.Err(); err != nil {
 				return err
 			}
 		}
@@ -864,7 +867,7 @@ func (tx *BadgerTransaction) validateAllConstraints(ctx context.Context) error {
 	checked := 0
 	for _, node := range tx.pendingNodes {
 		if checked%commitCancelPollEvery == 0 {
-			if err := tx.commitCancelledLocked(); err != nil {
+			if err := ctx.Err(); err != nil {
 				return err
 			}
 		}
@@ -1023,7 +1026,7 @@ func (tx *BadgerTransaction) checkEdgeUniqueness(ctx context.Context, edge *Edge
 			if id == edge.ID || tx.committedEdgeSupersededLocked(id) {
 				continue
 			}
-			existing, err := tx.engine.GetStoredEdge(id)
+			existing, err := tx.engine.GetStoredEdge(ctx, id)
 			if errors.Is(err, ErrNotFound) {
 				continue
 			}
@@ -1230,7 +1233,7 @@ func (tx *BadgerTransaction) checkEdgePolicy(ctx context.Context, edge *Edge, sc
 	}
 
 	// Read source node labels (check pending first for read-your-writes).
-	srcLabels, err := tx.getNodeLabels(NodeID(edge.StartNode))
+	srcLabels, err := tx.getNodeLabels(ctx, NodeID(edge.StartNode))
 	if err != nil {
 		return err
 	}
@@ -1239,7 +1242,7 @@ func (tx *BadgerTransaction) checkEdgePolicy(ctx context.Context, edge *Edge, sc
 	}
 
 	// Read target node labels.
-	tgtLabels, err := tx.getNodeLabels(NodeID(edge.EndNode))
+	tgtLabels, err := tx.getNodeLabels(ctx, NodeID(edge.EndNode))
 	if err != nil {
 		return err
 	}
@@ -1335,7 +1338,7 @@ func (tx *BadgerTransaction) validatePolicyOnNodeLabelChange(ctx context.Context
 			} else {
 				otherNodeID = NodeID(edge.StartNode)
 			}
-			otherLabels, err := tx.getNodeLabels(otherNodeID)
+			otherLabels, err := tx.getNodeLabels(ctx, otherNodeID)
 			if err != nil {
 				return err
 			}
@@ -1402,14 +1405,17 @@ func (tx *BadgerTransaction) validatePolicyOnNodeLabelChange(ctx context.Context
 
 // getNodeLabels returns labels for a node, checking pending nodes first for read-your-writes.
 // Storage failures are preserved for fail-closed policy validation.
-func (tx *BadgerTransaction) getNodeLabels(nodeID NodeID) ([]string, error) {
+func (tx *BadgerTransaction) getNodeLabels(ctx context.Context, nodeID NodeID) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if _, deleted := tx.deletedNodes[nodeID]; deleted {
 		return nil, nil
 	}
 	if pending, exists := tx.pendingNodes[nodeID]; exists {
 		return pending.Labels, nil
 	}
-	node, err := tx.getCommittedNodeLocked(nodeID)
+	node, err := tx.getCommittedNodeLocked(ctx, nodeID)
 	if errors.Is(err, ErrNotFound) {
 		return nil, nil
 	}

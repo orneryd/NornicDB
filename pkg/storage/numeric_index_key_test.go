@@ -26,7 +26,7 @@ func TestPropertyIndexNumericKeysExact(t *testing.T) {
 	ids := make([]NodeID, len(values))
 	for i, value := range values {
 		ids[i] = NodeID(fmt.Sprintf("nornic:%02d", i))
-		_, err := engine.CreateNode(&Node{ID: ids[i], Labels: []string{"P"}, Properties: map[string]interface{}{"id": value}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: ids[i], Labels: []string{"P"}, Properties: map[string]interface{}{"id": value}})
 		require.NoError(t, err)
 	}
 	exact := func(v interface{}) *big.Float {

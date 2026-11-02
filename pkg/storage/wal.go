@@ -636,7 +636,7 @@ func (w *WAL) AppendWithDatabaseReturningSeq(op OperationType, data interface{},
 	// Entity-bearing records use their single lossless recovery representation.
 	dataBytes, err := marshalWALRecoveryPayload(dataBuf, data)
 	if err != nil {
-		return 0, fmt.Errorf("wal: failed to marshal data: %w", err)
+		return 0, &walRecordRejection{cause: fmt.Errorf("wal: failed to marshal data: %w", err)}
 	}
 
 	// Create entry
@@ -1310,6 +1310,10 @@ type Snapshot struct {
 func (w *WAL) CreateSnapshot(engine Engine) (*Snapshot, error) {
 	if w.work.Closing() {
 		return nil, ErrWALClosed
+	}
+
+	if err := checkNativeSnapshotPublication(engine); err != nil {
+		return nil, err
 	}
 
 	// Get current sequence
@@ -2319,7 +2323,13 @@ func ReadWALEntriesAfter(path string, afterSeq uint64, scope WALReadScope) ([]WA
 // ReplayWALEntry applies a single WAL entry to the engine.
 // Uses the database name from the entry if present, otherwise wraps with default database.
 func ReplayWALEntry(engine Engine, entry WALEntry) error {
-	if entry.Operation != OpCheckpoint && entry.Operation != OpTxBegin && entry.Operation != OpTxCommit && entry.Operation != OpTxAbort {
+	switch entry.Operation {
+	case OpCheckpoint, OpTxBegin, OpTxCommit, OpTxAbort, OpUpdateEmbedding:
+		// Control records do not change graph state. Embedding audit records
+		// are regenerable, not semantic replay instructions.
+		return nil
+	}
+	{
 		// Retain engine state through provenance, import and physical apply.
 		// A lifetime lease permits delegated CRUD to acquire its own write
 		// barrier; holding that barrier here would risk recursive-read deadlock.
@@ -2369,7 +2379,7 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal node: %w", err)
 		}
-		_, err := namespacedEngine.CreateNode(data.Node)
+		_, err := namespacedEngine.CreateNode(context.Background(), data.Node)
 		return err
 
 	case OpUpdateNode:
@@ -2377,49 +2387,49 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal node: %w", err)
 		}
-		return namespacedEngine.UpdateNode(NodeUpdateRequest{After: data.Node})
+		return namespacedEngine.UpdateNode(context.Background(), NodeUpdateRequest{After: data.Node})
 
 	case OpDeleteNode:
 		var data WALDeleteData
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal delete: %w", err)
 		}
-		return namespacedEngine.DeleteNode(NodeID(data.ID))
+		return namespacedEngine.DeleteNode(context.Background(), NodeID(data.ID))
 
 	case OpCreateEdge:
 		var data WALEdgeData
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal edge: %w", err)
 		}
-		return namespacedEngine.CreateEdge(data.Edge)
+		return namespacedEngine.CreateEdge(context.Background(), data.Edge)
 
 	case OpUpdateEdge:
 		var data WALEdgeData
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal edge: %w", err)
 		}
-		return namespacedEngine.UpdateEdge(EdgeUpdateRequest{After: data.Edge})
+		return namespacedEngine.UpdateEdge(context.Background(), EdgeUpdateRequest{After: data.Edge})
 
 	case OpDeleteEdge:
 		var data WALDeleteData
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal delete: %w", err)
 		}
-		return namespacedEngine.DeleteEdge(EdgeID(data.ID))
+		return namespacedEngine.DeleteEdge(context.Background(), EdgeID(data.ID))
 
 	case OpBulkNodes:
 		var data WALBulkNodesData
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal bulk nodes: %w", err)
 		}
-		return namespacedEngine.BulkCreateNodes(data.Nodes)
+		return namespacedEngine.BulkCreateNodes(context.Background(), data.Nodes)
 
 	case OpBulkEdges:
 		var data WALBulkEdgesData
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal bulk edges: %w", err)
 		}
-		return namespacedEngine.BulkCreateEdges(data.Edges)
+		return namespacedEngine.BulkCreateEdges(context.Background(), data.Edges)
 
 	case OpBulkDeleteNodes:
 		var data WALBulkDeleteNodesData
@@ -2430,7 +2440,7 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 		for i, id := range data.IDs {
 			ids[i] = NodeID(id)
 		}
-		return namespacedEngine.BulkDeleteNodes(ids)
+		return namespacedEngine.BulkDeleteNodes(context.Background(), ids)
 
 	case OpBulkDeleteEdges:
 		var data WALBulkDeleteEdgesData
@@ -2441,18 +2451,19 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 		for i, id := range data.IDs {
 			ids[i] = EdgeID(id)
 		}
-		return namespacedEngine.BulkDeleteEdges(ids)
+		return namespacedEngine.BulkDeleteEdges(context.Background(), ids)
 
 	case OpBufferedCommit:
 		// A write-behind commit's full payload. Replay it through the same
 		// commit application path the flusher uses, so MVCC heads, ID
 		// counters, indexes and caches all land identically. Only
-		// BadgerEngine destinations support this; anything else skips.
+		// Native Badger destinations, including their canonical engine wrappers,
+		// support physical replay; other engines cannot materialize these keys.
 		data, err := decodeBufferedWALRecord(entry)
 		if err != nil {
 			return err
 		}
-		b, ok := baseEngine.(*BadgerEngine)
+		b, ok := UnwrapEngine(baseEngine).(*BadgerEngine)
 		if !ok || b == nil {
 			return fmt.Errorf("wal: buffered commit replay requires a BadgerEngine destination, got %T", baseEngine)
 		}
@@ -2464,15 +2475,6 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 			return err
 		}
 		return b.applyBufferedCommits([]bufferedCommit{c})
-
-	case OpCheckpoint:
-		// Checkpoints are markers, no action needed
-		return nil
-
-	case OpTxBegin, OpTxCommit, OpTxAbort:
-		// Transaction boundaries are markers handled at a higher level
-		// Individual replay doesn't need to process them
-		return nil
 
 	default:
 		return fmt.Errorf("wal: unknown operation: %s", entry.Operation)
@@ -2518,7 +2520,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if data.Node == nil {
 			return ErrNoUndoData
 		}
-		return namespacedEngine.DeleteNode(data.Node.ID)
+		return namespacedEngine.DeleteNode(context.Background(), data.Node.ID)
 
 	case OpUpdateNode:
 		// Undo update = restore old node
@@ -2529,7 +2531,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if data.OldNode == nil {
 			return ErrNoUndoData
 		}
-		return namespacedEngine.UpdateNode(NodeUpdateRequest{After: data.OldNode})
+		return namespacedEngine.UpdateNode(context.Background(), NodeUpdateRequest{After: data.OldNode})
 
 	case OpDeleteNode:
 		// Undo delete = recreate old node
@@ -2540,7 +2542,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if data.OldNode == nil {
 			return ErrNoUndoData
 		}
-		_, err := namespacedEngine.CreateNode(data.OldNode)
+		_, err := namespacedEngine.CreateNode(context.Background(), data.OldNode)
 		return err
 
 	case OpCreateEdge:
@@ -2552,7 +2554,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if data.Edge == nil {
 			return ErrNoUndoData
 		}
-		return namespacedEngine.DeleteEdge(data.Edge.ID)
+		return namespacedEngine.DeleteEdge(context.Background(), data.Edge.ID)
 
 	case OpUpdateEdge:
 		// Undo update = restore old edge
@@ -2563,7 +2565,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if data.OldEdge == nil {
 			return ErrNoUndoData
 		}
-		return namespacedEngine.UpdateEdge(EdgeUpdateRequest{After: data.OldEdge})
+		return namespacedEngine.UpdateEdge(context.Background(), EdgeUpdateRequest{After: data.OldEdge})
 
 	case OpDeleteEdge:
 		// Undo delete = recreate old edge
@@ -2574,7 +2576,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if data.OldEdge == nil {
 			return ErrNoUndoData
 		}
-		return namespacedEngine.CreateEdge(data.OldEdge)
+		return namespacedEngine.CreateEdge(context.Background(), data.OldEdge)
 
 	case OpBulkNodes:
 		// Undo bulk create = delete all
@@ -2586,7 +2588,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		for i, n := range data.Nodes {
 			ids[i] = n.ID
 		}
-		return engine.BulkDeleteNodes(ids)
+		return engine.BulkDeleteNodes(context.Background(), ids)
 
 	case OpBulkEdges:
 		// Undo bulk create = delete all
@@ -2598,7 +2600,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		for i, e := range data.Edges {
 			ids[i] = e.ID
 		}
-		return engine.BulkDeleteEdges(ids)
+		return engine.BulkDeleteEdges(context.Background(), ids)
 
 	case OpBulkDeleteNodes:
 		// Undo bulk delete = recreate all
@@ -2609,7 +2611,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if len(data.OldNodes) == 0 {
 			return ErrNoUndoData
 		}
-		return namespacedEngine.BulkCreateNodes(data.OldNodes)
+		return namespacedEngine.BulkCreateNodes(context.Background(), data.OldNodes)
 
 	case OpBulkDeleteEdges:
 		// Undo bulk delete = recreate all
@@ -2620,7 +2622,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if len(data.OldEdges) == 0 {
 			return ErrNoUndoData
 		}
-		return namespacedEngine.BulkCreateEdges(data.OldEdges)
+		return namespacedEngine.BulkCreateEdges(context.Background(), data.OldEdges)
 
 	case OpCheckpoint, OpTxBegin, OpTxCommit, OpTxAbort, OpUpdateEmbedding:
 		// These don't need undo
@@ -2732,10 +2734,10 @@ func RecoverWithTransactions(walDir, snapshotPath string) (*MemoryEngine, *Trans
 			}
 			// Wrap engine with NamespacedEngine for snapshot restore (snapshot nodes have unprefixed IDs)
 			namespacedEngine := NewNamespacedEngine(engine, dbName)
-			if err := namespacedEngine.BulkCreateNodes(snapshot.Nodes); err != nil {
+			if err := namespacedEngine.BulkCreateNodes(context.Background(), snapshot.Nodes); err != nil {
 				return nil, result, fmt.Errorf("wal: failed to restore nodes: %w", err)
 			}
-			if err := namespacedEngine.BulkCreateEdges(snapshot.Edges); err != nil {
+			if err := namespacedEngine.BulkCreateEdges(context.Background(), snapshot.Edges); err != nil {
 				return nil, result, fmt.Errorf("wal: failed to restore edges: %w", err)
 			}
 		}
@@ -2997,10 +2999,10 @@ func RecoverFromWALWithResult(walDir, snapshotPath string) (*MemoryEngine, Repla
 				}
 
 				namespacedEngine := NewNamespacedEngine(engine, dbName)
-				if err := namespacedEngine.BulkCreateNodes(snapshot.Nodes); err != nil {
+				if err := namespacedEngine.BulkCreateNodes(context.Background(), snapshot.Nodes); err != nil {
 					return nil, result, fmt.Errorf("wal: failed to restore nodes: %w", err)
 				}
-				if err := namespacedEngine.BulkCreateEdges(snapshot.Edges); err != nil {
+				if err := namespacedEngine.BulkCreateEdges(context.Background(), snapshot.Edges); err != nil {
 					return nil, result, fmt.Errorf("wal: failed to restore edges: %w", err)
 				}
 			}
@@ -3044,7 +3046,7 @@ type engineSnapshotVisitor struct {
 }
 
 func (v engineSnapshotVisitor) VisitNode(node *Node) error {
-	_, err := v.engine.CreateNode(qualifyRecoverySnapshotNode(node))
+	_, err := v.engine.CreateNode(context.Background(), qualifyRecoverySnapshotNode(node))
 	if err != nil {
 		return fmt.Errorf("wal: failed to restore nodes: %w", err)
 	}
@@ -3052,7 +3054,7 @@ func (v engineSnapshotVisitor) VisitNode(node *Node) error {
 }
 
 func (v engineSnapshotVisitor) VisitEdge(edge *Edge) error {
-	if err := v.engine.CreateEdge(qualifyRecoverySnapshotEdge(edge)); err != nil {
+	if err := v.engine.CreateEdge(context.Background(), qualifyRecoverySnapshotEdge(edge)); err != nil {
 		return fmt.Errorf("wal: failed to restore edges: %w", err)
 	}
 	return nil

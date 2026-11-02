@@ -356,7 +356,7 @@ func ApplyIndexHint(ctx context.Context, store storage.Engine, schema *storage.S
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			node, err := store.GetNode(nodeID)
+			node, err := store.GetNode(ctx, nodeID)
 			if err == nil && node != nil {
 				result = append(result, node)
 			}

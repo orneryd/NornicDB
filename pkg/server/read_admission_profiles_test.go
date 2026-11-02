@@ -28,7 +28,7 @@ func TestReadAdmissionRemoteCompositeProfiles(t *testing.T) {
 	const role = "mixed-reader"
 	require.NoError(t, s.roleStore.CreateRole(ctx, role))
 	require.NoError(t, s.roleEntitlementsStore.Set(ctx, role, []string{"read"}))
-	_, err := users.CreateUser(role, "password123", []auth.Role{auth.Role(role)})
+	_, err := users.CreateUser(context.Background(), role, "password123", []auth.Role{auth.Role(role)})
 	require.NoError(t, err)
 	claims := &auth.JWTClaims{Roles: []string{role}}
 	var liveRead func() bool

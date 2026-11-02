@@ -222,11 +222,11 @@ func isSimpleWithPassthroughClause(clause string) bool {
 	return true
 }
 
-func (e *StorageExecutor) evaluateUnwindBatchLookupExpr(match matchClauseSpec, row unwindBatchRow) (interface{}, bool) {
-	return e.evaluateBatchLookupExpr(match, row.item, row.itemMap)
+func (e *StorageExecutor) evaluateUnwindBatchLookupExpr(ctx context.Context, match matchClauseSpec, row unwindBatchRow) (interface{}, bool) {
+	return e.evaluateBatchLookupExpr(ctx, match, row.item, row.itemMap)
 }
 
-func (e *StorageExecutor) evaluateBatchLookupExpr(match matchClauseSpec, bindingValue interface{}, bindingMap map[string]interface{}) (interface{}, bool) {
+func (e *StorageExecutor) evaluateBatchLookupExpr(ctx context.Context, match matchClauseSpec, bindingValue interface{}, bindingMap map[string]interface{}) (interface{}, bool) {
 	if match.rowField != "" && bindingMap != nil {
 		if v, ok := bindingMap[match.rowField]; ok {
 			return normalizePropValue(v), true
@@ -244,7 +244,7 @@ func (e *StorageExecutor) evaluateBatchLookupExpr(match matchClauseSpec, binding
 	if match.bindingVar != "" {
 		values[match.bindingVar] = bindingValue
 	}
-	value, resolved, err := e.evaluateExpressionFromValuesResult(rowStatementContextOrBackground(values), expr, values)
+	value, resolved, err := e.evaluateExpressionFromValuesResult(ctx, expr, values)
 	return normalizePropValue(value), resolved && err == nil
 }
 

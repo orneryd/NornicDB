@@ -4,13 +4,14 @@ package search_test
 import (
 	"context"
 	"errors"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -103,7 +104,7 @@ func TestOwnerClassSearchRetainsPersistenceOutcome(t *testing.T) {
 	if err := os.WriteFile(parent, []byte("cannot contain an index"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := engine.CreateNode(&storage.Node{ID: "nornic:n", Labels: []string{"Note"}, Properties: map[string]interface{}{"text": "search lifetime outcome"}}); err != nil {
+	if _, err := engine.CreateNode(t.Context(), &storage.Node{ID: "nornic:n", Labels: []string{"Note"}, Properties: map[string]interface{}{"text": "search lifetime outcome"}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.BuildIndexes(context.Background()); err != nil {

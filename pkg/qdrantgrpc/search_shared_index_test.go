@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/search"
@@ -379,7 +380,7 @@ func TestSharedIndexLazySearchAndQueryWarmBeforeAnswering(t *testing.T) {
 			// Populate storage directly to model an existing database on first read.
 			store, err := dbm.GetStorage("lazy")
 			require.NoError(t, err)
-			_, err = store.CreateNode(&storage.Node{ID: pointIDToNodeID(&qpb.PointId{PointIdOptions: &qpb.PointId_Num{Num: 1}}), Labels: []string{QdrantPointLabel}, NamedEmbeddings: map[string][]float32{"default": unitVector(4, 0)}})
+			_, err = store.CreateNode(t.Context(), &storage.Node{ID: pointIDToNodeID(&qpb.PointId{PointIdOptions: &qpb.PointId_Num{Num: 1}}), Labels: []string{QdrantPointLabel}, NamedEmbeddings: map[string][]float32{"default": unitVector(4, 0)}})
 			require.NoError(t, err)
 			exact := true
 			if useQuery {

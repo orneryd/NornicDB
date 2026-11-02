@@ -27,8 +27,8 @@ type refreshReadBarrier struct {
 	opened   sync.Once
 }
 
-func (b *refreshReadBarrier) GetNode(id storage.NodeID) (*storage.Node, error) {
-	node, err := b.Engine.GetNode(id)
+func (b *refreshReadBarrier) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
+	node, err := b.Engine.GetNode(ctx, id)
 	if b.armed.Load() && b.observed(node, err) && b.armed.CompareAndSwap(true, false) {
 		close(b.entered)
 		<-b.release
@@ -76,7 +76,7 @@ func applyQueued(t *testing.T, entry *dbSearchService) {
 	t.Helper()
 	nodes, _ := entry.drainPending()
 	for _, mutation := range nodes {
-		require.NoError(t, entry.svc.RefreshNodeWithMutation(mutation))
+		require.NoError(t, entry.svc.RefreshNodeWithMutation(t.Context(), mutation))
 	}
 }
 
@@ -96,28 +96,28 @@ func TestSearchMutationDrainsPreserveNewerMutations(t *testing.T) {
 		t.Run("newer="+newerPath, func(t *testing.T) {
 			db, entry, store, _ := newMutationOrderDB(t)
 			old := &storage.Node{ID: "source", Properties: map[string]any{"content": "obsolete"}, ChunkEmbeddings: [][]float32{{1, 0}}}
-			_, err := store.CreateNode(old)
+			_, err := store.CreateNode(t.Context(), old)
 			require.NoError(t, err)
 			db.queueSearchRefreshEvent(searchNodeWrite, "test:source")
 			stale, _ := entry.drainPending()
 			newer := storage.CopyNode(old)
 			newer.Properties["content"] = "current"
 			newer.ChunkEmbeddings = [][]float32{{0, 1}}
-			require.NoError(t, store.UpdateNode(storage.NodeUpdateRequest{After: newer}))
+			require.NoError(t, store.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: newer}))
 			switch newerPath {
 			case "event":
 				db.indexNodeFromEvent(&storage.Node{ID: "test:source"})
 				applyQueued(t, entry)
 			case "direct":
-				require.NoError(t, entry.svc.RefreshNode("source"))
+				require.NoError(t, entry.svc.RefreshNode(t.Context(), "source"))
 			case "embedded":
-				require.True(t, db.publishEmbeddedNode(&storage.Node{ID: "test:source"}))
+				require.True(t, db.publishEmbeddedNode(t.Context(), &storage.Node{ID: "test:source"}))
 			}
 			require.Equal(t, 1, entry.svc.EmbeddingCount())
-			require.NoError(t, store.DeleteNode("source"))
+			require.NoError(t, store.DeleteNode(t.Context(), "source"))
 			db.queueSearchRefreshEvent(searchNodeDelete, "test:source")
 			applyQueued(t, entry)
-			require.NoError(t, entry.svc.RefreshNodeWithMutation(stale["source"]))
+			require.NoError(t, entry.svc.RefreshNodeWithMutation(t.Context(), stale["source"]))
 			require.Zero(t, entry.svc.EmbeddingCount(), "an old drain resurrected a deleted vector")
 			require.Zero(t, fulltextHits(t, entry.svc, "obsolete"))
 		})
@@ -143,12 +143,12 @@ func runStaleRefreshRace(t *testing.T, newerWrite func(node *storage.Node, store
 	t.Helper()
 	db, entry, store, barrier := newMutationOrderDB(t)
 	node := &storage.Node{ID: "source", Properties: map[string]any{"content": "alpha"}, ChunkEmbeddings: [][]float32{{1, 0}}}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	barrier.observed = storedContent("alpha")
 	barrier.armed.Store(true)
 	done := make(chan bool, 1)
-	go func() { done <- db.publishEmbeddedNode(&storage.Node{ID: "test:source"}) }()
+	go func() { done <- db.publishEmbeddedNode(t.Context(), &storage.Node{ID: "test:source"}) }()
 	barrier.wait(t)
 	require.NoError(t, newerWrite(node, store))
 	db.indexNodeFromEvent(&storage.Node{ID: "test:source"})
@@ -162,7 +162,7 @@ func runStaleRefreshRace(t *testing.T, newerWrite func(node *storage.Node, store
 // must not resurrect it. The barrier pauses the older refresh after its read.
 func TestRefreshReadBeforeNewerDeleteCannotResurrect(t *testing.T) {
 	runStaleRefreshRace(t,
-		func(_ *storage.Node, store storage.Engine) error { return store.DeleteNode("source") },
+		func(_ *storage.Node, store storage.Engine) error { return store.DeleteNode(t.Context(), "source") },
 		func(entry *dbSearchService) {
 			require.Zero(t, entry.svc.EmbeddingCount(), "a refresh that read before the delete resurrected the vector")
 		})
@@ -174,7 +174,7 @@ func TestRefreshReadBeforeNewerWriteCannotOverwrite(t *testing.T) {
 		func(node *storage.Node, store storage.Engine) error {
 			newer := storage.CopyNode(node)
 			newer.Properties["content"] = "bravo"
-			return store.UpdateNode(storage.NodeUpdateRequest{After: newer})
+			return store.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: newer})
 		},
 		func(entry *dbSearchService) {
 			require.Equal(t, 1, fulltextHits(t, entry.svc, "bravo"))
@@ -187,7 +187,7 @@ func TestRefreshReadBeforeNewerWriteCannotOverwrite(t *testing.T) {
 func TestSearchMutationConcurrentPublicationAndDrains(t *testing.T) {
 	db, entry, store, _ := newMutationOrderDB(t)
 	for i := range 8 {
-		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("n%d", i))})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("n%d", i))})
 		require.NoError(t, err)
 	}
 	var workers sync.WaitGroup
@@ -198,16 +198,16 @@ func TestSearchMutationConcurrentPublicationAndDrains(t *testing.T) {
 			for i := range 32 {
 				id := storage.NodeID(fmt.Sprintf("n%d", i%8))
 				node := &storage.Node{ID: id, Properties: map[string]any{"content": fmt.Sprintf("payload %d %d", worker, i)}, ChunkEmbeddings: [][]float32{{1, 0}}}
-				_ = store.UpdateNode(storage.NodeUpdateRequest{After: node})
+				_ = store.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node})
 				qualified := &storage.Node{ID: "test:" + id}
 				db.indexNodeFromEvent(qualified)
 				stale, _ := entry.drainPending()
-				_ = db.publishEmbeddedNode(qualified)
+				_ = db.publishEmbeddedNode(t.Context(), qualified)
 				if i%2 == 0 {
-					_ = entry.svc.RefreshNode(id)
+					_ = entry.svc.RefreshNode(t.Context(), id)
 				}
 				for _, mutation := range stale {
-					_ = entry.svc.RefreshNodeWithMutation(mutation)
+					_ = entry.svc.RefreshNodeWithMutation(t.Context(), mutation)
 				}
 			}
 		}()
@@ -216,12 +216,12 @@ func TestSearchMutationConcurrentPublicationAndDrains(t *testing.T) {
 	stale, _ := entry.drainPending()
 	for i := range 8 {
 		id := storage.NodeID(fmt.Sprintf("n%d", i))
-		require.NoError(t, store.DeleteNode(id))
+		require.NoError(t, store.DeleteNode(t.Context(), id))
 		db.queueSearchRefreshEvent(searchNodeDelete, "test:"+string(id))
 	}
 	applyQueued(t, entry)
 	for _, mutation := range stale {
-		require.NoError(t, entry.svc.RefreshNodeWithMutation(mutation))
+		require.NoError(t, entry.svc.RefreshNodeWithMutation(t.Context(), mutation))
 	}
 	require.Zero(t, entry.svc.EmbeddingCount())
 }

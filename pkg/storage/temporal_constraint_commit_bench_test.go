@@ -43,7 +43,7 @@ func BenchmarkTemporalConstraintCreate(b *testing.B) {
 					return p
 				}
 				for i := 0; i < existing; i++ {
-					_, err := engine.CreateNode(&Node{ID: NodeID(fmt.Sprintf("seed%d", i)), Labels: []string{"Period"}, Properties: properties(i, 0)})
+					_, err := engine.CreateNode(b.Context(), &Node{ID: NodeID(fmt.Sprintf("seed%d", i)), Labels: []string{"Period"}, Properties: properties(i, 0)})
 					require.NoError(b, err)
 				}
 				b.ReportAllocs()
@@ -51,7 +51,7 @@ func BenchmarkTemporalConstraintCreate(b *testing.B) {
 				for i := 0; i < b.N; i++ {
 					node := &Node{ID: NodeID(fmt.Sprintf("new%d", i)), Labels: []string{"Period"}, Properties: properties(i%existing, 1+i/existing)}
 					b.StartTimer()
-					_, err := engine.CreateNode(node)
+					_, err := engine.CreateNode(b.Context(), node)
 					b.StopTimer()
 					require.NoError(b, err)
 				}

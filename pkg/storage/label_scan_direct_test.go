@@ -34,13 +34,13 @@ func labelScanFixture(t *testing.T, count int) (*BadgerEngine, []NodeID) {
 			labels = append(labels, "Rare")
 		}
 		id := NodeID(fmt.Sprintf("test:n%04d", i))
-		_, err := eng.CreateNode(&Node{ID: id, Labels: labels, Properties: map[string]any{"i": int64(i), "big": "x"}})
+		_, err := eng.CreateNode(t.Context(), &Node{ID: id, Labels: labels, Properties: map[string]any{"i": int64(i), "big": "x"}})
 		require.NoError(t, err)
 		created = append(created, id)
 	}
-	_, err := eng.CreateNode(&Node{ID: "test:other", Labels: []string{"Other"}})
+	_, err := eng.CreateNode(t.Context(), &Node{ID: "test:other", Labels: []string{"Other"}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&Node{ID: "elsewhere:n0", Labels: []string{"Common"}})
+	_, err = eng.CreateNode(t.Context(), &Node{ID: "elsewhere:n0", Labels: []string{"Common"}})
 	require.NoError(t, err)
 	eng.nodeCacheMu.Lock()
 	clear(eng.nodeCache)
@@ -142,7 +142,7 @@ func TestStreamNodesByLabelProjectedSkipsMissingRecords(t *testing.T) {
 		for _, node := range nodes {
 			require.NotContains(t, gone, node.ID)
 		}
-		tx, err := eng.BeginTransaction()
+		tx, err := eng.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		require.NoError(t, tx.SetNamespace("test"))
 		var txNodes []*Node
@@ -188,7 +188,7 @@ func TestStreamNodesByLabelProjectedRejectsCorruptRecords(t *testing.T) {
 					require.Error(t, eng.StreamNodesByLabelProjectedInScope(context.Background(), "test:", "Common", properties, func(*Node) error {
 						return nil
 					}))
-					tx, err := eng.BeginTransaction()
+					tx, err := eng.BeginTransaction(t.Context())
 					require.NoError(t, err)
 					require.NoError(t, tx.SetNamespace("test"))
 					defer func() { _ = tx.Rollback() }()
@@ -205,7 +205,7 @@ func TestTransactionLabelScanReadsRemainingNodesInOnePass(t *testing.T) {
 	const count = labelScanPointLookups + 200
 	eng, created := labelScanFixture(t, count)
 	for _, properties := range [][]string{nil, {"i"}} {
-		tx, err := eng.BeginTransaction()
+		tx, err := eng.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		require.NoError(t, tx.SetNamespace("test"))
 		require.NotNil(t, tx.snapshotTx)
@@ -252,7 +252,7 @@ func TestLabelScanReportsCorruptionInVisitOrder(t *testing.T) {
 						return eng.StreamNodesByLabelProjectedInScope(context.Background(), "test:", "Common", properties, visit)
 					}
 					if transaction {
-						tx, err := eng.BeginTransaction()
+						tx, err := eng.BeginTransaction(t.Context())
 						require.NoError(t, err)
 						require.NoError(t, tx.SetNamespace("test"))
 						defer func() { _ = tx.Rollback() }()
@@ -318,7 +318,7 @@ func BenchmarkLabelRecordReads(b *testing.B) {
 				Properties: map[string]any{"i": int64(index), "big": "x"},
 			})
 		}
-		require.NoError(b, eng.BulkCreateNodes(nodes))
+		require.NoError(b, eng.BulkCreateNodes(b.Context(), nodes))
 	}
 	txn, readTs, err := eng.db.beginTxn(false)
 	require.NoError(b, err)

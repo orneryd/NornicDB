@@ -12,11 +12,11 @@ import (
 func TestBadgerMVCC_BootstrapInTxn_HeadDecodeErrorBranches(t *testing.T) {
 	engine := createMVCCBadgerEngine(t)
 
-	_, err := engine.CreateNode(&Node{ID: "test:bn1", Labels: []string{"N"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:bn1", Labels: []string{"N"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:bn2", Labels: []string{"N"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:bn2", Labels: []string{"N"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:be1", StartNode: "test:bn1", EndNode: "test:bn2", Type: "R"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:be1", StartNode: "test:bn1", EndNode: "test:bn2", Type: "R"}))
 
 	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		// prefix-only garbage keys exercise len(key)<=1 skip branches.
@@ -92,8 +92,8 @@ func TestBadgerMVCC_PruneMVCCKeyspaceInTxn_TombstoneReclaim_NodeAndEdge(t *testi
 		return nil
 	}))
 
-	_, err := engine.GetNodeCurrentHead("test:n-reclaim")
+	_, err := engine.GetNodeCurrentHead(context.Background(), "test:n-reclaim")
 	require.ErrorIs(t, err, ErrNotFound)
-	_, err = engine.GetEdgeCurrentHead("test:e-reclaim")
+	_, err = engine.GetEdgeCurrentHead(context.Background(), "test:e-reclaim")
 	require.ErrorIs(t, err, ErrNotFound)
 }

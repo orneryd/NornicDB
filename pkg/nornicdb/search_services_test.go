@@ -3,12 +3,13 @@ package nornicdb
 import (
 	"context"
 	"errors"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	featureflags "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/search"
@@ -54,7 +55,7 @@ func TestManagedSearchServiceBindsContinuationToItsDatabaseWhenRequestOmitsDatab
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 
 	for _, id := range []storage.NodeID{"continuation-a", "continuation-b"} {
-		_, err := db.storage.CreateNode(&storage.Node{ID: id, Labels: []string{"Document"}})
+		_, err := db.storage.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"Document"}})
 		require.NoError(t, err)
 	}
 	service, err := db.GetOrCreateSearchService(db.defaultDatabaseName(), db.storage)
@@ -207,7 +208,7 @@ func TestSearchServices_HelperBranches(t *testing.T) {
 		}
 		entry.build.Do(func() error { return nil }) // the initial build has completed
 
-		_, err := store.CreateNode(&storage.Node{ID: "debounced", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{1, 2, 3}}})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: "debounced", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{1, 2, 3}}})
 		require.NoError(t, err)
 		seedReservedSearchRefresh(entry, "debounced", search.RefreshRetry{Node: entry.svc.ReserveNodeMutation("debounced")})
 		db.ensurePendingFlush(entry)
@@ -257,7 +258,7 @@ func TestSearchServices_PerDatabaseIsolation_EventRouting(t *testing.T) {
 		},
 		ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}},
 	}
-	_, err = db.storage.CreateNode(alpha)
+	_, err = db.storage.CreateNode(t.Context(), alpha)
 	require.NoError(t, err)
 	db.indexNodeFromEvent(&storage.Node{
 		ID:              storage.NodeID("nornic:alpha"),
@@ -276,7 +277,7 @@ func TestSearchServices_PerDatabaseIsolation_EventRouting(t *testing.T) {
 		},
 		ChunkEmbeddings: [][]float32{{0.4, 0.5, 0.6}},
 	}
-	_, err = db2Storage.CreateNode(beta)
+	_, err = db2Storage.CreateNode(t.Context(), beta)
 	require.NoError(t, err)
 	db.indexNodeFromEvent(&storage.Node{
 		ID:              storage.NodeID("db2:beta"),
@@ -396,7 +397,7 @@ func TestSearchServices_ClusteringRunnerInitializesKnownNamespaces(t *testing.T)
 
 	// Create a node in a second database without touching the search service cache.
 	db2Storage := storage.NewNamespacedEngine(db.baseStorage, "db2")
-	_, err = db2Storage.CreateNode(&storage.Node{
+	_, err = db2Storage.CreateNode(t.Context(), &storage.Node{
 		ID:     storage.NodeID("beta"),
 		Labels: []string{"Doc"},
 		Properties: map[string]any{
@@ -464,7 +465,7 @@ func TestSearchServices_RunClusteringOnceAllDatabases(t *testing.T) {
 
 		// Default DB with one embedding and completed build.
 		defaultStorage := db.storage
-		_, err := defaultStorage.CreateNode(&storage.Node{
+		_, err := defaultStorage.CreateNode(t.Context(), &storage.Node{
 			ID:              storage.NodeID("alpha"),
 			Labels:          []string{"Doc"},
 			ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}},
@@ -543,7 +544,7 @@ func TestSearchServices_RunClusteringOnceAllDatabases(t *testing.T) {
 		readyEngine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "ready_cov")
 		readySvc := search.NewService(readyEngine, 3, nil)
 		readySvc.EnableClustering(nil, 2)
-		_, err := readyEngine.CreateNode(&storage.Node{
+		_, err := readyEngine.CreateNode(t.Context(), &storage.Node{
 			ID:              "r1",
 			ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}},
 			Properties:      map[string]any{"content": "ready"},
@@ -1099,7 +1100,7 @@ func TestSearchServices_EnsurePendingFlush_ReplaysQueuedOps(t *testing.T) {
 
 	// Queue refreshes before the build completes: one for a node that is
 	// missing (tolerated) and one for a stored node (applied).
-	_, err := engine.CreateNode(&storage.Node{ID: "n1", Properties: map[string]any{"content": "flush"}, ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}}})
+	_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "n1", Properties: map[string]any{"content": "flush"}, ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}}})
 	require.NoError(t, err)
 	seedReservedSearchRefresh(entry, "missing", search.RefreshRetry{Node: entry.svc.ReserveNodeMutation("missing")})
 	seedReservedSearchRefresh(entry, "n1", search.RefreshRetry{Node: entry.svc.ReserveNodeMutation("n1")})
@@ -1127,7 +1128,7 @@ func TestSearchServices_LazyWriteEventDoesNotStartIndexBuild(t *testing.T) {
 
 	const dbName = "tenant_lazy_ingest"
 	// The write and the event storage publishes for it.
-	_, err = storage.NewNamespacedEngine(db.baseStorage, dbName).CreateNode(&storage.Node{
+	_, err = storage.NewNamespacedEngine(db.baseStorage, dbName).CreateNode(t.Context(), &storage.Node{
 		ID:              "n1",
 		Labels:          []string{"Entity"},
 		Properties:      map[string]any{"name": "alice"},
@@ -1227,7 +1228,7 @@ func TestSearchServices_GetOrCreate_ResolverAndPersistPaths(t *testing.T) {
 
 	// The full-text index persists under its current filename.
 	tenantStorage := storage.NewNamespacedEngine(db.baseStorage, "tenant_cfg")
-	_, err = tenantStorage.CreateNode(&storage.Node{
+	_, err = tenantStorage.CreateNode(t.Context(), &storage.Node{
 		ID:              "persist-1",
 		Properties:      map[string]any{"content": "persist me"},
 		ChunkEmbeddings: [][]float32{{1, 0, 0, 0, 0, 0, 0}},
@@ -1264,7 +1265,7 @@ func TestSearchServices_EventDuringBuild_IsDeterministicallyReplay(t *testing.T)
 			mutateBeforeService: true,
 			mutate: func(t *testing.T, db *DB, tenantStorage storage.Engine) {
 				// Create node while build is still blocked and emit event.
-				_, err := tenantStorage.CreateNode(&storage.Node{
+				_, err := tenantStorage.CreateNode(t.Context(), &storage.Node{
 					ID:              "late",
 					Labels:          []string{"Doc"},
 					Properties:      map[string]any{"content": "late"},
@@ -1291,7 +1292,7 @@ func TestSearchServices_EventDuringBuild_IsDeterministicallyReplay(t *testing.T)
 			seed:   true,
 			mutate: func(t *testing.T, db *DB, tenantStorage storage.Engine) {
 				// Delete and queue its remove event while build is blocked.
-				require.NoError(t, tenantStorage.DeleteNode("gone"))
+				require.NoError(t, tenantStorage.DeleteNode(t.Context(), "gone"))
 				db.queueSearchRefreshEvent(searchNodeDelete, "tenant_remove_race:gone")
 			},
 			check: func(t *testing.T, svc *search.Service) {
@@ -1323,7 +1324,7 @@ func TestSearchServices_EventDuringBuild_IsDeterministicallyReplay(t *testing.T)
 
 			if tc.seed {
 				// Seed a node and start a blocked build so remove event is queued.
-				_, err = tenantStorage.CreateNode(&storage.Node{
+				_, err = tenantStorage.CreateNode(t.Context(), &storage.Node{
 					ID:              "gone",
 					Labels:          []string{"Doc"},
 					Properties:      map[string]any{"content": "gone"},

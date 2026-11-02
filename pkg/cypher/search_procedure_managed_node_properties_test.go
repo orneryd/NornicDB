@@ -29,13 +29,13 @@ func TestSearchProcedureManagedNodeProperties(t *testing.T) {
 			vector[0] = 1
 			for i := 1; i <= 2; i++ {
 				id := storage.NodeID(fmt.Sprintf("managed-%d", i))
-				_, err := store.CreateNode(&storage.Node{ID: id, Labels: []string{"RetrievalSource"}, Properties: map[string]interface{}{"id": string(id), "title": "retrieval catalogue", "ordinary": int64(42)}})
+				_, err := store.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"RetrievalSource"}, Properties: map[string]interface{}{"id": string(id), "title": "retrieval catalogue", "ordinary": int64(42)}})
 				require.NoError(t, err)
-				node, err := base.GetNode("test:" + id)
+				node, err := base.GetNode(t.Context(), "test:"+id)
 				require.NoError(t, err)
 				node.ChunkEmbeddings = [][]float32{vector}
 				node.EmbedMeta = map[string]interface{}{"has_embedding": true, "chunk_count": 1}
-				require.NoError(t, base.UpdateNodeEmbeddingSidecar(node))
+				require.NoError(t, base.UpdateNodeEmbeddingSidecar(t.Context(), node))
 			}
 			svc := search.NewService(store, 2048, nil)
 			t.Cleanup(func() { require.NoError(t, svc.Close()) })

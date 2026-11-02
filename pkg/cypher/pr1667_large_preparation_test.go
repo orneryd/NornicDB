@@ -24,7 +24,7 @@ func TestPR1667LargeIndexedPreparationCancellation(t *testing.T) {
 		for i := offset; i < offset+1000; i++ {
 			nodes = append(nodes, &storage.Node{ID: storage.NodeID(fmt.Sprintf("pr1667:n%06d", i)), Labels: []string{"P"}, Properties: map[string]any{"k": int64(1), "payload": strings.Repeat("x", 512)}})
 		}
-		require.NoError(t, b.BulkCreateNodes(nodes))
+		require.NoError(t, b.BulkCreateNodes(t.Context(), nodes))
 	}
 	_, err = e.Execute(context.Background(), pr1667IndexK, nil)
 	require.NoError(t, err)

@@ -699,8 +699,8 @@ func TestHandler_Integration_BifrostToPlugin(t *testing.T) {
 	bridge := handler.Bifrost()
 	require.NotNil(t, bridge)
 
-	// Verify the bridge can be used in SubsystemContext
-	ctx := SubsystemContext{
+	// Verify the bridge can be used in the host metadata
+	ctx := SubsystemHost{
 		Config:  cfg,
 		Bifrost: bridge,
 	}

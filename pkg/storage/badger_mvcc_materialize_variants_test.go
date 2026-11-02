@@ -15,11 +15,11 @@ func TestBadgerMVCC_MaterializeCommit_VariantBranches(t *testing.T) {
 	defer engine.activeMVCCSnapshotReaders.Store(0)
 
 	// Seed base entities.
-	_, err := engine.CreateNode(&Node{ID: "test:a", Labels: []string{"N"}, Properties: map[string]any{"v": int64(1)}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:a", Labels: []string{"N"}, Properties: map[string]any{"v": int64(1)}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:b", Labels: []string{"N"}, Properties: map[string]any{"v": int64(2)}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:b", Labels: []string{"N"}, Properties: map[string]any{"v": int64(2)}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "R", Properties: map[string]any{"w": int64(1)}}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "R", Properties: map[string]any{"w": int64(1)}}))
 
 	v := MVCCVersion{CommitTimestamp: time.Now().UTC().Add(2 * time.Second), CommitSequence: 5001}
 
@@ -57,13 +57,13 @@ func TestBadgerMVCC_MaterializeCommit_VariantBranches(t *testing.T) {
 		return engine.materializeMVCCCommit(t.Context(), singleBatchWriter(txn), v, ops)
 	}))
 
-	_, err = engine.GetNodeCurrentHead("test:c-fresh")
+	_, err = engine.GetNodeCurrentHead(context.Background(), "test:c-fresh")
 	require.NoError(t, err)
-	_, err = engine.GetNodeCurrentHead("test:c-plain")
+	_, err = engine.GetNodeCurrentHead(context.Background(), "test:c-plain")
 	require.NoError(t, err)
-	_, err = engine.GetEdgeCurrentHead("test:e-fresh")
+	_, err = engine.GetEdgeCurrentHead(context.Background(), "test:e-fresh")
 	require.NoError(t, err)
-	_, err = engine.GetEdgeCurrentHead("test:e-plain")
+	_, err = engine.GetEdgeCurrentHead(context.Background(), "test:e-plain")
 	require.NoError(t, err)
 }
 
@@ -72,11 +72,11 @@ func TestBadgerMVCC_MaterializeCommit_HeadDecodeErrorsOnDeletePaths(t *testing.T
 	engine.activeMVCCSnapshotReaders.Store(1)
 	defer engine.activeMVCCSnapshotReaders.Store(0)
 
-	_, err := engine.CreateNode(&Node{ID: "test:n-bad", Labels: []string{"N"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:n-bad", Labels: []string{"N"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:n2-bad", Labels: []string{"N"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:n2-bad", Labels: []string{"N"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e-bad", StartNode: "test:n-bad", EndNode: "test:n2-bad", Type: "R"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e-bad", StartNode: "test:n-bad", EndNode: "test:n2-bad", Type: "R"}))
 
 	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		nh, err := engine.mvccNodeHeadKeyString(txn, "test:n-bad")
@@ -111,11 +111,11 @@ func TestBadgerMVCC_MaterializeCommit_HeadDecodeErrorsOnDeletePaths(t *testing.T
 func TestBadgerMVCC_MaterializeCommit_ReadOnlyTxnWriteFailures(t *testing.T) {
 	engine := createMVCCBadgerEngine(t)
 	for _, nodeID := range []NodeID{"test:ro-a", "test:ro-b", "test:ro-c"} {
-		_, err := engine.CreateNode(&Node{ID: nodeID, Labels: []string{"N"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: nodeID, Labels: []string{"N"}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:ro-edge", StartNode: "test:ro-a", EndNode: "test:ro-b", Type: "R"}))
-	oldEdge, err := engine.GetEdge("test:ro-edge")
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:ro-edge", StartNode: "test:ro-a", EndNode: "test:ro-b", Type: "R"}))
+	oldEdge, err := engine.GetEdge(t.Context(), "test:ro-edge")
 	require.NoError(t, err)
 
 	v := MVCCVersion{CommitTimestamp: time.Now().UTC().Add(4 * time.Second), CommitSequence: 7001}

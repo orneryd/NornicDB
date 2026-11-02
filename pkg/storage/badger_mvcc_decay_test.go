@@ -61,7 +61,7 @@ func createTestNode(t *testing.T, engine *BadgerEngine, id string, labels []stri
 		CreatedAt:  createdAt,
 		UpdatedAt:  createdAt,
 	}
-	if _, err := engine.CreateNode(node); err != nil {
+	if _, err := engine.CreateNode(t.Context(), node); err != nil {
 		t.Fatal(err)
 	}
 }

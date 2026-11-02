@@ -1,6 +1,7 @@
 package testfixture
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"reflect"
@@ -126,8 +127,10 @@ func (entry lifetimeEntry) isClosed() (bool, bool) {
 	if resource, ok := entry.resource.(interface{ IsClosed() bool }); ok {
 		return resource.IsClosed(), true
 	}
-	if resource, ok := entry.resource.(interface{ NodeCount() (int64, error) }); ok && entry.closedError != nil {
-		_, err := resource.NodeCount()
+	if resource, ok := entry.resource.(interface {
+		NodeCount(context.Context) (int64, error)
+	}); ok && entry.closedError != nil {
+		_, err := resource.NodeCount(context.Background())
 		return errors.Is(err, entry.closedError), true
 	}
 	return false, false

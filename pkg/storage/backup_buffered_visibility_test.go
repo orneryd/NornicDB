@@ -48,21 +48,21 @@ func TestNativeBackupIncludesAcknowledgedBufferedWrites(t *testing.T) {
 	// then a later commit that rewrites properties on both the node and the
 	// relationship.
 	bufferedWrite(t, source, func(tx *BadgerTransaction) error {
-		if _, err := tx.CreateNode(&Node{
+		if _, err := tx.CreateNode(t.Context(), &Node{
 			ID:         "test:anchor",
 			Labels:     []string{"Doc"},
 			Properties: map[string]any{"name": "anchor", "revision": int64(1)},
 		}); err != nil {
 			return err
 		}
-		if _, err := tx.CreateNode(&Node{
+		if _, err := tx.CreateNode(t.Context(), &Node{
 			ID:         "test:peer",
 			Labels:     []string{"Doc"},
 			Properties: map[string]any{"name": "peer", "weight": int64(2)},
 		}); err != nil {
 			return err
 		}
-		return tx.CreateEdge(&Edge{
+		return tx.CreateEdge(t.Context(), &Edge{
 			ID:         "test:edge",
 			StartNode:  "test:anchor",
 			EndNode:    "test:peer",
@@ -71,32 +71,32 @@ func TestNativeBackupIncludesAcknowledgedBufferedWrites(t *testing.T) {
 		})
 	})
 	bufferedWrite(t, source, func(tx *BadgerTransaction) error {
-		anchor, err := tx.GetNode("test:anchor")
+		anchor, err := tx.GetNode(t.Context(), "test:anchor")
 		if err != nil {
 			return err
 		}
 		anchor.Properties["revision"] = int64(2)
 		anchor.Properties["note"] = "acknowledged"
-		if err := tx.UpdateGraphNode(NodeUpdateRequest{After: anchor, Policy: ClientNodeEdits}); err != nil {
+		if err := tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: anchor, Policy: ClientNodeEdits}); err != nil {
 			return err
 		}
-		edge, err := tx.GetEdge("test:edge")
+		edge, err := tx.GetEdge(t.Context(), "test:edge")
 		if err != nil {
 			return err
 		}
 		edge.Properties["since"] = int64(2025)
 		edge.Properties["durable"] = true
-		return tx.UpdateEdge(EdgeUpdateRequest{After: edge})
+		return tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge})
 	})
 
 	// Before the backup every write is acknowledged through the overlay and
 	// still absent from Badger itself: the pending state is genuine, not an
 	// artifact of the read path.
 	require.Positive(t, source.writeBehind.PendingOps(), "the acknowledged commits must still be buffered")
-	anchor, err := source.GetNode("test:anchor")
+	anchor, err := source.GetNode(t.Context(), "test:anchor")
 	require.NoError(t, err)
 	require.Equal(t, map[string]any{"name": "anchor", "revision": int64(2), "note": "acknowledged"}, anchor.Properties)
-	edge, err := source.GetEdge("test:edge")
+	edge, err := source.GetEdge(t.Context(), "test:edge")
 	require.NoError(t, err)
 	require.Equal(t, map[string]any{"since": int64(2025), "durable": true}, edge.Properties)
 	requirePhysicalKeyState(t, source, false, nodeKey("test:anchor"), nodeKey("test:peer"), edgeKey("test:edge"))
@@ -131,16 +131,16 @@ func TestNativeBackupIncludesAcknowledgedBufferedWrites(t *testing.T) {
 	require.Equal(t, "LINK", edges[0].Type)
 	require.Equal(t, map[string]any{"since": int64(2025), "durable": true}, edges[0].Properties)
 
-	nodeCount, err := restored.NodeCount()
+	nodeCount, err := restored.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, int64(2), nodeCount)
-	edgeCount, err := restored.EdgeCount()
+	edgeCount, err := restored.EdgeCount(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, int64(1), edgeCount)
-	docCount, err := restored.NodeCountByLabel("Doc")
+	docCount, err := restored.NodeCountByLabel(t.Context(), "Doc")
 	require.NoError(t, err)
 	require.Equal(t, int64(2), docCount)
-	linkCount, err := restored.EdgeCountByType("LINK")
+	linkCount, err := restored.EdgeCountByType(context.Background(), "LINK")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), linkCount)
 

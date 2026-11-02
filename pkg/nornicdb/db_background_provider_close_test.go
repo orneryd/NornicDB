@@ -67,7 +67,7 @@ func TestDBCloseJoinsActualBackgroundProviderCall(t *testing.T) {
 				provider = &heldTypedBatchProvider{p}
 			}
 			require.True(t, db.SetEmbedder(provider))
-			_, err = db.GetStorage().CreateNode(&storage.Node{ID: "held-document", Labels: []string{"File"}, Properties: map[string]any{"content": "a document that must remain owned during provider shutdown"}})
+			_, err = db.GetStorage().CreateNode(t.Context(), &storage.Node{ID: "held-document", Labels: []string{"File"}, Properties: map[string]any{"content": "a document that must remain owned during provider shutdown"}})
 			require.NoError(t, err)
 			db.GetEmbedQueue().Trigger()
 			select {

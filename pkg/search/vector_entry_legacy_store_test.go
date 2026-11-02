@@ -61,7 +61,7 @@ func TestLegacyVectorStoreIsRebuiltFromStorage(t *testing.T) {
 			engine := newNamespacedEngine(t)
 			nodes := []*storage.Node{vectorOwnerChunkNode("x", 0, 1, 2), vectorOwnerChunkNode("x-chunk-1", 3)}
 			for _, node := range nodes {
-				_, err := engine.CreateNode(cloneVectorOwnerNode(node))
+				_, err := engine.CreateNode(t.Context(), cloneVectorOwnerNode(node))
 				require.NoError(t, err)
 			}
 			dir := t.TempDir()

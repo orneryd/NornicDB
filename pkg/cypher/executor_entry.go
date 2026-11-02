@@ -320,7 +320,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// Transparent routing continues already-admitted text, including generated
 	// functions. A public reentrant call still admits its own client text.
 	if clientText {
-		if err := internalFunctionCallError(cypher); err != nil {
+		if err := internalFunctionCallError(ctx, cypher); err != nil {
 			return nil, err
 		}
 	}
@@ -395,7 +395,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		}
 	}
 	if !rewriteFree(rewriteFreeCypher25Expressions, cypher25, cypher) {
-		expanded, expressionRewrites, err := desugarCypher25Expressions(cypher, cypher25)
+		expanded, expressionRewrites, err := desugarCypher25Expressions(ctx, cypher, cypher25)
 		if err != nil {
 			return nil, err
 		}
@@ -427,7 +427,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			defer func() {
 				result, retErr = (resultRestoration{source: structureRewrite}).restore(withoutGeneratedColumns(result), retErr, nil)
 			}()
-		} else if !mayUseQueryStructure(cypher) {
+		} else if !mayUseQueryStructure(ctx, cypher) {
 			// Only the quick check's verdict is the text's alone.
 			markRewriteFree(rewriteFreeQueryStructure, false, cypher)
 		}
@@ -658,7 +658,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// predicates the local evaluator reads. Route source Cypher first: remote
 	// evaluators do not implement our internal functions. The result's columns and
 	// errors are mapped back (#860).
-	desugared, labelRewrite, err := desugarLabelExpressions(cypher, params, cypherVersionFromContext(ctx) == "25")
+	desugared, labelRewrite, err := desugarLabelExpressions(ctx, cypher, params, cypherVersionFromContext(ctx) == "25")
 	if err != nil {
 		return nil, err
 	}
@@ -942,7 +942,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 
 	// For routing, we still need upperQuery for some handlers
 	// TODO: Migrate handlers to use QueryInfo directly
-	upperQuery := e.cachedUpperQuery(cypher)
+	upperQuery := e.cachedUpperQuery(ctx, cypher)
 
 	// Capture the storage and search-index revisions before execution so
 	// mutations performed outside this executor cannot leave a stale cached

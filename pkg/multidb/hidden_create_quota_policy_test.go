@@ -1,6 +1,7 @@
 package multidb
 
 import (
+	"context"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -13,40 +14,40 @@ func TestHiddenNodeIDRemainsOccupiedAtAndBelowQuota(t *testing.T) {
 	require.NoError(t, err)
 	base := manager.inner.(*storage.MemoryEngine)
 
-	_, err = engine.CreateNode(&storage.Node{
+	_, err = engine.CreateNode(t.Context(), &storage.Node{
 		ID: "hidden", Labels: []string{"Original"}, Properties: map[string]any{"value": int64(1)},
 	})
 	require.NoError(t, err)
-	require.NoError(t, base.SetManualSuppression(storage.StoredEntityNodeKind, string(db+":hidden"), true))
+	require.NoError(t, base.SetManualSuppression(context.Background(), storage.StoredEntityNodeKind, string(db+":hidden"), true))
 	beforeTotal, beforeNodes, beforeEdges := manager.GetStorageSize(db)
 	require.Positive(t, beforeNodes)
 
 	// Below a quota, physical identity still wins over query visibility.
-	_, err = engine.CreateNode(&storage.Node{ID: "hidden", Labels: []string{"Replacement"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "hidden", Labels: []string{"Replacement"}})
 	require.ErrorIs(t, err, storage.ErrAlreadyExists)
 	require.Equal(t, []string{"Original"}, mustStoredNode(t, engine, "hidden").Labels)
 
-	count, err := engine.NodeCount()
+	count, err := engine.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, manager.SetDatabaseLimits(t.Context(), db, &Limits{Storage: StorageLimits{MaxNodes: count, MaxBytes: beforeTotal}}))
-	_, err = engine.CreateNode(&storage.Node{ID: "hidden", Labels: []string{"Replacement"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "hidden", Labels: []string{"Replacement"}})
 	require.ErrorIs(t, err, storage.ErrAlreadyExists, "the same occupied ID is not misreported as quota exhaustion")
-	_, err = engine.CreateNode(&storage.Node{ID: "fresh", Labels: []string{"Fresh"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "fresh", Labels: []string{"Fresh"}})
 	require.ErrorIs(t, err, ErrStorageLimitExceeded, "the hidden stored node consumes count and byte quota")
 
 	total, nodes, edges := manager.GetStorageSize(db)
 	require.Equal(t, beforeTotal, total)
 	require.Equal(t, beforeNodes, nodes)
 	require.Equal(t, beforeEdges, edges)
-	nodeCount, err := engine.NodeCount()
+	nodeCount, err := engine.NodeCount(t.Context())
 	require.EqualValues(t, 1, mustCountValue(t, nodeCount, err))
 
 	// One added slot admits a genuinely fresh write; rejection did not poison
 	// the accounting cache.
 	require.NoError(t, manager.SetDatabaseLimits(t.Context(), db, &Limits{Storage: StorageLimits{MaxNodes: count + 1}}))
-	_, err = engine.CreateNode(&storage.Node{ID: "fresh", Labels: []string{"Fresh"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "fresh", Labels: []string{"Fresh"}})
 	require.NoError(t, err)
-	nodeCount, err = engine.NodeCount()
+	nodeCount, err = engine.NodeCount(t.Context())
 	require.EqualValues(t, 2, mustCountValue(t, nodeCount, err))
 }
 
@@ -56,27 +57,27 @@ func TestBulkRollbackDoesNotDeleteIdenticalHiddenEdgeNoOp(t *testing.T) {
 	require.NoError(t, err)
 	base := manager.inner.(*storage.MemoryEngine)
 	for _, id := range []storage.NodeID{"a", "b"} {
-		_, err = engine.CreateNode(&storage.Node{ID: id})
+		_, err = engine.CreateNode(t.Context(), &storage.Node{ID: id})
 		require.NoError(t, err)
 	}
 	original := &storage.Edge{
 		ID: "hidden", StartNode: "a", EndNode: "b", Type: "LINK", Properties: map[string]any{"key": "same"},
 	}
-	require.NoError(t, engine.CreateEdge(original))
-	require.NoError(t, base.SetManualSuppression(storage.StoredEntityEdgeKind, string(db+":hidden"), true))
+	require.NoError(t, engine.CreateEdge(t.Context(), original))
+	require.NoError(t, base.SetManualSuppression(context.Background(), storage.StoredEntityEdgeKind, string(db+":hidden"), true))
 	storedBefore := mustStoredEdge(t, engine, "hidden")
 	beforeTotal, beforeNodes, beforeEdges := manager.GetStorageSize(db)
 
-	err = engine.BulkCreateEdges([]*storage.Edge{
+	err = engine.BulkCreateEdges(t.Context(), []*storage.Edge{
 		{ID: "hidden", StartNode: "a", EndNode: "b", Type: "LINK", Properties: map[string]any{"key": "same"}},
 		{ID: "fresh", StartNode: "a", EndNode: "b", Type: "LINK"},
 		{ID: "hidden", StartNode: "a", EndNode: "b", Type: "LINK", Properties: map[string]any{"key": "different"}},
 	})
 	require.ErrorIs(t, err, storage.ErrAlreadyExists)
 	require.Equal(t, storedBefore, mustStoredEdge(t, engine, "hidden"), "rollback preserves the predecessor exactly")
-	_, err = storage.GetStoredEdge(engine, "fresh")
+	_, err = storage.GetStoredEdge(t.Context(), engine, "fresh")
 	require.ErrorIs(t, err, storage.ErrNotFound, "only the genuinely created batch member is compensated")
-	edgeCount, err := engine.EdgeCount()
+	edgeCount, err := engine.EdgeCount(t.Context())
 	require.EqualValues(t, 1, mustCountValue(t, edgeCount, err))
 	total, nodes, edges := manager.GetStorageSize(db)
 	require.Equal(t, beforeTotal, total)
@@ -90,30 +91,30 @@ func TestHiddenEdgeIDAtQuotaDefersToStorage(t *testing.T) {
 	require.NoError(t, err)
 	base := manager.inner.(*storage.MemoryEngine)
 	for _, id := range []storage.NodeID{"a", "b"} {
-		_, err = engine.CreateNode(&storage.Node{ID: id})
+		_, err = engine.CreateNode(t.Context(), &storage.Node{ID: id})
 		require.NoError(t, err)
 	}
-	require.NoError(t, engine.CreateEdge(&storage.Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{
 		ID: "hidden", StartNode: "a", EndNode: "b", Type: "LINK", Properties: map[string]any{"key": "same"},
 	}))
-	require.NoError(t, base.SetManualSuppression(storage.StoredEntityEdgeKind, string(db+":hidden"), true))
+	require.NoError(t, base.SetManualSuppression(context.Background(), storage.StoredEntityEdgeKind, string(db+":hidden"), true))
 	storedBefore := mustStoredEdge(t, engine, "hidden")
 	beforeTotal, beforeNodes, beforeEdges := manager.GetStorageSize(db)
-	edgeCount, err := engine.EdgeCount()
+	edgeCount, err := engine.EdgeCount(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, manager.SetDatabaseLimits(t.Context(), db, &Limits{Storage: StorageLimits{MaxEdges: edgeCount}}))
 
 	// At capacity, the occupied physical ID is decided by storage, not
 	// misreported as quota exhaustion.
-	require.NoError(t, engine.CreateEdge(&storage.Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{
 		ID: "hidden", StartNode: "a", EndNode: "b", Type: "LINK", Properties: map[string]any{"key": "same"},
 	}), "an identical hidden relationship is a no-op at quota")
-	err = engine.CreateEdge(&storage.Edge{
+	err = engine.CreateEdge(t.Context(), &storage.Edge{
 		ID: "hidden", StartNode: "a", EndNode: "b", Type: "LINK", Properties: map[string]any{"key": "different"},
 	})
 	require.ErrorIs(t, err, storage.ErrAlreadyExists, "a different image is the storage conflict, not a quota error")
 	require.NotErrorIs(t, err, ErrStorageLimitExceeded)
-	err = engine.CreateEdge(&storage.Edge{ID: "fresh", StartNode: "a", EndNode: "b", Type: "LINK"})
+	err = engine.CreateEdge(t.Context(), &storage.Edge{ID: "fresh", StartNode: "a", EndNode: "b", Type: "LINK"})
 	require.ErrorIs(t, err, ErrStorageLimitExceeded, "the hidden stored relationship consumes the edge quota")
 
 	require.Equal(t, storedBefore, mustStoredEdge(t, engine, "hidden"))
@@ -121,20 +122,20 @@ func TestHiddenEdgeIDAtQuotaDefersToStorage(t *testing.T) {
 	require.Equal(t, beforeTotal, total)
 	require.Equal(t, beforeNodes, nodes)
 	require.Equal(t, beforeEdges, edges)
-	edgeCount, err = engine.EdgeCount()
+	edgeCount, err = engine.EdgeCount(t.Context())
 	require.EqualValues(t, 1, mustCountValue(t, edgeCount, err))
 }
 
 func mustStoredNode(t *testing.T, engine storage.Engine, id storage.NodeID) *storage.Node {
 	t.Helper()
-	node, err := storage.GetStoredNode(engine, id)
+	node, err := storage.GetStoredNode(t.Context(), engine, id)
 	require.NoError(t, err)
 	return node
 }
 
 func mustStoredEdge(t *testing.T, engine storage.Engine, id storage.EdgeID) *storage.Edge {
 	t.Helper()
-	edge, err := storage.GetStoredEdge(engine, id)
+	edge, err := storage.GetStoredEdge(t.Context(), engine, id)
 	require.NoError(t, err)
 	return edge
 }

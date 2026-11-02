@@ -39,7 +39,7 @@ func seedRelationshipLimitData(t *testing.T, eng *relationshipScanGuardEngine, c
 	for i := 0; i < count; i++ {
 		origID := storage.NodeID(fmt.Sprintf("nornic:orig-%03d", i))
 		trID := storage.NodeID(fmt.Sprintf("nornic:tr-%03d", i))
-		_, err := eng.CreateNode(&storage.Node{
+		_, err := eng.CreateNode(t.Context(), &storage.Node{
 			ID:     origID,
 			Labels: []string{"OriginalText"},
 			Properties: map[string]interface{}{
@@ -47,7 +47,7 @@ func seedRelationshipLimitData(t *testing.T, eng *relationshipScanGuardEngine, c
 			},
 		})
 		require.NoError(t, err)
-		_, err = eng.CreateNode(&storage.Node{
+		_, err = eng.CreateNode(t.Context(), &storage.Node{
 			ID:     trID,
 			Labels: []string{"TranslatedText"},
 			Properties: map[string]interface{}{
@@ -56,7 +56,7 @@ func seedRelationshipLimitData(t *testing.T, eng *relationshipScanGuardEngine, c
 			},
 		})
 		require.NoError(t, err)
-		require.NoError(t, eng.CreateEdge(&storage.Edge{
+		require.NoError(t, eng.CreateEdge(t.Context(), &storage.Edge{
 			ID:        storage.EdgeID(fmt.Sprintf("nornic:edge-%03d", i)),
 			Type:      "TRANSLATES_TO",
 			StartNode: origID,
@@ -190,14 +190,14 @@ func TestRelationshipMatchEndSeededTopKSupportsFixedMultiHop(t *testing.T) {
 		origID := storage.NodeID(fmt.Sprintf("nornic:o-hop-%d", i))
 		midID := storage.NodeID(fmt.Sprintf("nornic:m-hop-%d", i))
 		targetID := storage.NodeID(fmt.Sprintf("nornic:t-hop-%d", i))
-		_, err := base.CreateNode(&storage.Node{ID: origID, Labels: []string{"OriginalText"}, Properties: map[string]interface{}{"textKey": fmt.Sprintf("hop-%d", i)}})
+		_, err := base.CreateNode(t.Context(), &storage.Node{ID: origID, Labels: []string{"OriginalText"}, Properties: map[string]interface{}{"textKey": fmt.Sprintf("hop-%d", i)}})
 		require.NoError(t, err)
-		_, err = base.CreateNode(&storage.Node{ID: midID, Labels: []string{"Bridge"}, Properties: map[string]interface{}{"rank": i}})
+		_, err = base.CreateNode(t.Context(), &storage.Node{ID: midID, Labels: []string{"Bridge"}, Properties: map[string]interface{}{"rank": i}})
 		require.NoError(t, err)
-		_, err = base.CreateNode(&storage.Node{ID: targetID, Labels: []string{"TranslatedText"}, Properties: map[string]interface{}{"language": "fr", "createdAt": fmt.Sprintf("2026-04-%02dT12:00:00Z", i+1)}})
+		_, err = base.CreateNode(t.Context(), &storage.Node{ID: targetID, Labels: []string{"TranslatedText"}, Properties: map[string]interface{}{"language": "fr", "createdAt": fmt.Sprintf("2026-04-%02dT12:00:00Z", i+1)}})
 		require.NoError(t, err)
-		require.NoError(t, base.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("nornic:e-hop-a-%d", i)), Type: "STEP", StartNode: origID, EndNode: midID}))
-		require.NoError(t, base.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("nornic:e-hop-b-%d", i)), Type: "STEP", StartNode: midID, EndNode: targetID}))
+		require.NoError(t, base.CreateEdge(t.Context(), &storage.Edge{ID: storage.EdgeID(fmt.Sprintf("nornic:e-hop-a-%d", i)), Type: "STEP", StartNode: origID, EndNode: midID}))
+		require.NoError(t, base.CreateEdge(t.Context(), &storage.Edge{ID: storage.EdgeID(fmt.Sprintf("nornic:e-hop-b-%d", i)), Type: "STEP", StartNode: midID, EndNode: targetID}))
 	}
 
 	_, err := exec.Execute(ctx, "CREATE INDEX idx_hop_target_created_at FOR (t:TranslatedText) ON (t.createdAt)", nil)

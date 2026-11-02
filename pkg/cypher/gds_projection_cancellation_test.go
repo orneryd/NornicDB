@@ -54,11 +54,11 @@ func gdsProjectionSeededGraph(t *testing.T, nodes, edges int) *storage.Namespace
 	for i := 0; i < nodes; i++ {
 		id := storage.NodeID(fmt.Sprintf("n%07d", i))
 		ids[i] = id
-		_, err := engine.CreateNode(&storage.Node{ID: id, Labels: []string{"P"}, Properties: map[string]interface{}{"age": int64(i)}})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"P"}, Properties: map[string]interface{}{"age": int64(i)}})
 		require.NoError(t, err)
 	}
 	for i := 0; i < edges; i++ {
-		err := engine.CreateEdge(&storage.Edge{
+		err := engine.CreateEdge(t.Context(), &storage.Edge{
 			ID:         storage.EdgeID(fmt.Sprintf("e%07d", i)),
 			Type:       "K",
 			StartNode:  ids[i%nodes],

@@ -2,12 +2,14 @@ package nornicdb
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -20,8 +22,8 @@ type orderedEmbeddingQueue struct {
 	pending []storage.NodeID
 }
 
-func (e *orderedEmbeddingQueue) UpdateNodeEmbeddingSidecar(node *storage.Node) error {
-	return e.Engine.(storage.EmbeddingSidecarUpdater).UpdateNodeEmbeddingSidecar(node)
+func (e *orderedEmbeddingQueue) UpdateNodeEmbeddingSidecar(ctx context.Context, node *storage.Node) error {
+	return e.Engine.(storage.EmbeddingSidecarUpdater).UpdateNodeEmbeddingSidecar(ctx, node)
 }
 
 type delayedTransientEmbeddingError struct{ delay time.Duration }
@@ -61,7 +63,7 @@ func BenchmarkPendingDocumentsProviderBatching(b *testing.B) {
 				ids := make([]storage.NodeID, 64)
 				for i := range ids {
 					ids[i] = storage.NodeID(fmt.Sprintf("doc-%03d", i))
-					_, err := store.CreateNode(&storage.Node{ID: ids[i], Labels: []string{"Doc"}, Properties: map[string]interface{}{"text": string(ids[i])}})
+					_, err := store.CreateNode(b.Context(), &storage.Node{ID: ids[i], Labels: []string{"Doc"}, Properties: map[string]interface{}{"text": string(ids[i])}})
 					require.NoError(b, err)
 				}
 				queue := &orderedEmbeddingQueue{Engine: store, pending: append([]storage.NodeID(nil), ids...)}
@@ -84,14 +86,17 @@ func BenchmarkPendingDocumentsProviderBatching(b *testing.B) {
 
 func (q *orderedEmbeddingQueue) RefreshPendingEmbeddingsIndex() int { return 0 }
 
-func (q *orderedEmbeddingQueue) FindNodeNeedingEmbedding() *storage.Node {
+func (q *orderedEmbeddingQueue) FindNodeNeedingEmbedding(ctx context.Context) (*storage.Node, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if len(q.pending) == 0 {
-		return nil
+		return nil, nil
 	}
-	node, _ := q.Engine.GetNode(q.pending[0])
-	return node
+	node, err := q.Engine.GetNode(ctx, q.pending[0])
+	if errors.Is(err, storage.ErrNotFound) {
+		return nil, nil
+	}
+	return node, err
 }
 
 func (q *orderedEmbeddingQueue) MarkNodeEmbedded(id storage.NodeID) {
@@ -216,14 +221,16 @@ func TestTransientDocumentBatchFailureDoesNotBisectProviderOutage(t *testing.T) 
 
 func TestTransientProviderDelayIsPerNodeAndHonorsRequestedDelay(t *testing.T) {
 	worker, queue, _ := nodeSaveRetryFixture(t, "whole", 2, 1000)
-	node := worker.claimNextNode()
+	node, claimErr := worker.claimNextNode()
+	require.NoError(t, claimErr)
 	require.NotNil(t, node)
 	worker.failNodeEmbedding(node, delayedTransientEmbeddingError{delay: 50 * time.Second})
 	worker.releaseNodeClaim(node.ID)
 	state := worker.nodeRetries[node.ID]
 	require.Equal(t, 1, state.failures)
 	require.GreaterOrEqual(t, time.Until(state.retryAt), 49*time.Second)
-	other := worker.claimNextNode()
+	other, claimErr := worker.claimNextNode()
+	require.NoError(t, claimErr)
 	require.NotNil(t, other, "a provider-requested delay never blocks MAIN")
 	require.NotEqual(t, node.ID, other.ID)
 	worker.releaseNodeClaim(other.ID)
@@ -232,7 +239,7 @@ func TestTransientProviderDelayIsPerNodeAndHonorsRequestedDelay(t *testing.T) {
 func TestTerminalEmbeddingFailuresRemainDiscoverableAndRetryableAfterWorkerRestart(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(base, "embedding-failure-recovery")
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:         "picture",
 		Labels:     []string{"Image"},
 		Properties: map[string]any{"caption": "recover me"},
@@ -240,7 +247,7 @@ func TestTerminalEmbeddingFailuresRemainDiscoverableAndRetryableAfterWorkerResta
 	require.NoError(t, err)
 
 	first := NewEmbedWorker(nil, store, &EmbedWorkerConfig{NumWorkers: 0, DeferWorkerStart: true})
-	first.markNodeEmbeddingFailed("picture", &embed.ProviderError{Provider: "test", StatusCode: 400, Body: "invalid image"})
+	first.markNodeEmbeddingFailed(t.Context(), "picture", &embed.ProviderError{Provider: "test", StatusCode: 400, Body: "invalid image"})
 	first.Close()
 
 	restarted := NewEmbedWorker(nil, store, &EmbedWorkerConfig{NumWorkers: 0, DeferWorkerStart: true})
@@ -260,7 +267,7 @@ func TestTerminalEmbeddingFailuresRemainDiscoverableAndRetryableAfterWorkerResta
 	require.NoError(t, err)
 	require.Equal(t, 1, retried)
 	require.Zero(t, restarted.Stats().Parked)
-	node, err := store.GetNode("picture")
+	node, err := store.GetNode(t.Context(), "picture")
 	require.NoError(t, err)
 	require.True(t, storage.NodeNeedsEmbedding(node))
 	require.Nil(t, node.EmbedMeta)
@@ -271,7 +278,7 @@ func TestRejectedDocumentIsIsolatedFromBatchNeighbors(t *testing.T) {
 	store := storage.NewNamespacedEngine(base, "embedding-batch-isolation")
 	ids := []storage.NodeID{"first", "poison", "third"}
 	for _, id := range ids {
-		_, err := store.CreateNode(&storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]interface{}{"text": string(id)}})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]interface{}{"text": string(id)}})
 		require.NoError(t, err)
 	}
 	queue := &orderedEmbeddingQueue{Engine: store, pending: append([]storage.NodeID(nil), ids...)}
@@ -287,17 +294,17 @@ func TestRejectedDocumentIsIsolatedFromBatchNeighbors(t *testing.T) {
 	require.True(t, worker.processNextBatch())
 	require.Greater(t, provider.batchCalls, 1, "the rejected batch should be bisected")
 	for _, id := range []storage.NodeID{"first", "third"} {
-		node, err := store.GetNode(id)
+		node, err := store.GetNode(t.Context(), id)
 		require.NoError(t, err)
 		require.Len(t, node.ChunkEmbeddings, 1)
 	}
-	poison, err := store.GetNode("poison")
+	poison, err := store.GetNode(t.Context(), "poison")
 	require.NoError(t, err)
 	require.NotEqual(t, true, poison.EmbedMeta["embedding_failed"], "initial failure enters DLQ before its one allowed retry")
 	require.Equal(t, 1, worker.PendingEmbeddingsCount())
 	makeNodeSaveRetriesReady(worker)
 	worker.processNextBatch()
-	poison, err = store.GetNode("poison")
+	poison, err = store.GetNode(t.Context(), "poison")
 	require.NoError(t, err)
 	require.Equal(t, true, poison.EmbedMeta["embedding_failed"])
 	require.Zero(t, worker.PendingEmbeddingsCount())
@@ -308,7 +315,7 @@ func TestEmbedWorkerReportsClaimedNodesDuringBatchBisection(t *testing.T) {
 	store := storage.NewNamespacedEngine(base, "embedding-bisect-stats")
 	ids := []storage.NodeID{"first", "second"}
 	for _, id := range ids {
-		_, err := store.CreateNode(&storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"text": string(id)}})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"text": string(id)}})
 		require.NoError(t, err)
 	}
 	queue := &orderedEmbeddingQueue{Engine: store, pending: append([]storage.NodeID(nil), ids...)}
@@ -354,7 +361,7 @@ func TestRejectedNodeIsParkedWhileFollowingNodeCompletes(t *testing.T) {
 		{ID: "poison", Labels: []string{"Doc"}, Properties: map[string]interface{}{"text": "poison"}},
 		{ID: "good", Labels: []string{"Doc"}, Properties: map[string]interface{}{"text": "good"}},
 	} {
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 	queue := &orderedEmbeddingQueue{Engine: store, pending: []storage.NodeID{"poison", "good"}}
@@ -371,10 +378,10 @@ func TestRejectedNodeIsParkedWhileFollowingNodeCompletes(t *testing.T) {
 		worker.processNextBatch()
 	}
 
-	poison, err := store.GetNode("poison")
+	poison, err := store.GetNode(t.Context(), "poison")
 	require.NoError(t, err)
 	require.Equal(t, true, poison.EmbedMeta["embedding_failed"])
-	good, err := store.GetNode("good")
+	good, err := store.GetNode(t.Context(), "good")
 	require.NoError(t, err)
 	require.Len(t, good.ChunkEmbeddings, 1)
 }
@@ -384,7 +391,7 @@ func TestPendingDocumentsShareProviderBatch(t *testing.T) {
 	store := storage.NewNamespacedEngine(base, "embedding-cross-node-batch")
 	ids := []storage.NodeID{"first", "second", "third"}
 	for _, id := range ids {
-		_, err := store.CreateNode(&storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]interface{}{"text": string(id)}})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]interface{}{"text": string(id)}})
 		require.NoError(t, err)
 	}
 	queue := &orderedEmbeddingQueue{Engine: store, pending: append([]storage.NodeID(nil), ids...)}
@@ -397,7 +404,7 @@ func TestPendingDocumentsShareProviderBatch(t *testing.T) {
 	require.True(t, worker.processNextBatch())
 	require.Equal(t, 1, provider.batchCalls)
 	for _, id := range ids {
-		node, err := store.GetNode(id)
+		node, err := store.GetNode(t.Context(), id)
 		require.NoError(t, err)
 		require.Len(t, node.ChunkEmbeddings, 1)
 	}

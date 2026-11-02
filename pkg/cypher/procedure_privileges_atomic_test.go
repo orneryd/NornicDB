@@ -67,15 +67,15 @@ func TestRoleDeletionJoinsExplicitTransaction(t *testing.T) {
 			grants := auth.NewProcedurePrivilegeStore(system)
 			require.NoError(t, grants.Grant(ctx, "ops", "db.a", true, true))
 			exec := NewStorageExecutor(system)
-			_, err := exec.handleBegin(nil)
+			_, err := exec.handleBegin(t.Context())
 			require.NoError(t, err)
 			view := &transactionStorageWrapper{tx: exec.txContext.tx.(*storage.BadgerTransaction), underlying: system, namespace: "system", separator: ":"}
 			roles := auth.NewRoleStore(view)
 			require.NoError(t, roles.Load(ctx))
 			require.NoError(t, roles.DeleteRole(ctx, "ops"))
-			_, err = view.GetNode("role:ops")
+			_, err = view.GetNode(t.Context(), "role:ops")
 			require.ErrorIs(t, err, storage.ErrNotFound)
-			_, err = system.GetNode("role:ops")
+			_, err = system.GetNode(t.Context(), "role:ops")
 			require.NoError(t, err)
 			if commit {
 				_, err = exec.handleCommit(context.Background())
@@ -83,7 +83,7 @@ func TestRoleDeletionJoinsExplicitTransaction(t *testing.T) {
 				_, err = exec.handleRollback(context.Background(), nil)
 			}
 			require.NoError(t, err)
-			_, err = system.GetNode("role:ops")
+			_, err = system.GetNode(t.Context(), "role:ops")
 			if commit {
 				require.ErrorIs(t, err, storage.ErrNotFound)
 			} else {

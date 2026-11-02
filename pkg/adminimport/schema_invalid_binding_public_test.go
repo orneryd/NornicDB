@@ -110,7 +110,7 @@ func assertSchemaFamiliesUnchanged(t *testing.T, schema *storage.SchemaManager, 
 	t.Helper()
 	assert.Same(t, beforeTable, schema.GetBindingTable(),
 		"a rejected document must leave the compiled binding table serving")
-	live := schema.ExportDefinition()
+	live := schemaDefinitionForTest(t, schema)
 	want := *before
 	// Accepted data rows may extend token order, but no other definition field
 	// may change on rejection, including fields added to SchemaDefinition later.
@@ -160,7 +160,7 @@ func TestImportFullJSONSchemaInvalidBindingIsRejectedBeforePublication(t *testin
 		})
 		beforeTable := schema.GetBindingTable()
 		require.NotNil(t, beforeTable, "the seed must have published a compiled binding table")
-		beforeDefinition := schema.ExportDefinition()
+		beforeDefinition := schemaDefinitionForTest(t, schema)
 
 		report, importErr := adminimport.ImportFull(t.Context(), base, adminimport.Options{
 			DatabaseName: invalidBindingNamespace,
@@ -181,7 +181,7 @@ func TestImportFullJSONSchemaInvalidBindingIsRejectedBeforePublication(t *testin
 		assertSchemaFamiliesUnchanged(t, live, beforeTable, beforeDefinition)
 
 		namespaced := storage.NewNamespacedEngine(base, invalidBindingNamespace)
-		count, err := namespaced.NodeCount()
+		count, err := namespaced.NodeCount(t.Context())
 		require.NoError(t, err)
 		assert.Equal(t, int64(2), report.NodesImported,
 			"both accepted rows must have been counted as imported")
@@ -203,7 +203,7 @@ func TestImportFullJSONSchemaInvalidBindingIsRejectedBeforePublication(t *testin
 		seedPublishedKnowledgePolicy(t, schema)
 		beforeTable := schema.GetBindingTable()
 		require.NotNil(t, beforeTable, "the seed must have published a compiled binding table")
-		beforeDefinition := schema.ExportDefinition()
+		beforeDefinition := schemaDefinitionForTest(t, schema)
 
 		report, importErr := adminimport.ImportFull(t.Context(), base, adminimport.Options{
 			DatabaseName: invalidBindingNamespace,
@@ -219,7 +219,7 @@ func TestImportFullJSONSchemaInvalidBindingIsRejectedBeforePublication(t *testin
 		assertSchemaFamiliesUnchanged(t, live, beforeTable, beforeDefinition)
 
 		namespaced := storage.NewNamespacedEngine(base, invalidBindingNamespace)
-		count, err := namespaced.NodeCount()
+		count, err := namespaced.NodeCount(t.Context())
 		require.NoError(t, err)
 		assert.Equal(t, int64(2), report.NodesImported)
 		assert.Equal(t, int64(2), count)
@@ -235,14 +235,14 @@ func TestImportFullJSONSchemaInvalidBindingIsRejectedBeforePublication(t *testin
 		t.Logf("durable constraints after native reopen: %v", schemaConstraintNames(durable))
 		assert.True(t, hasSchemaConstraint(durable, schemaCancellationBaselineConstraint),
 			"the pre-import schema must remain the durable definition")
-		durableDefinition := durable.ExportDefinition()
+		durableDefinition := schemaDefinitionForTest(t, durable)
 		require.Len(t, durableDefinition.DecayProfileBundles, 1)
 		require.Len(t, durableDefinition.DecayProfileBindings, 1)
 		assert.Equal(t, invalidBindingBaselineName, durableDefinition.DecayProfileBindings[0].Name,
 			"the durable definition must be the seed binding, not the rejected document")
 
 		reopenedNamespaced := storage.NewNamespacedEngine(reopened, invalidBindingNamespace)
-		count, err = reopenedNamespaced.NodeCount()
+		count, err = reopenedNamespaced.NodeCount(t.Context())
 		require.NoError(t, err)
 		assert.Equal(t, int64(2), count,
 			"accepted data writes need not be rolled back across a native reopen")

@@ -29,13 +29,14 @@ func putIndexTombstoneInTxn(txn *badger.Txn, originalKey []byte) error {
 // SetIndexTombstones changes visibility markers for the original index keys
 // atomically. present=true hides entries; present=false removes their markers.
 // An empty batch performs no write. Keys and stored marker bytes are unchanged.
-func (b *BadgerEngine) SetIndexTombstones(keys [][]byte, present bool) error {
+// ctx is the owning job's admitted lifetime: it owns admission, while an
+// admitted batch completes in the store, so a canceled ctx returns its own
+// error and writes no marker.
+func (b *BadgerEngine) SetIndexTombstones(ctx context.Context, keys [][]byte, present bool) error {
 	if len(keys) == 0 {
 		return nil
 	}
-	// Exported context-free entry: its own explicit unbounded lifetime, keeping
-	// the current public signature and its callers' semantics unchanged.
-	return b.withUpdate(context.Background(), updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+	return b.withUpdate(ctx, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		for _, key := range keys {
 			var err error
 			if present {

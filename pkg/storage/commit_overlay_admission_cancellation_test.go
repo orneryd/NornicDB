@@ -18,16 +18,16 @@ func TestCommitPreparationBufferedConflictAdmissionCancellation(t *testing.T) {
 	for _, plain := range []bool{false, true} {
 		t.Run(map[bool]string{false: "prepare", true: "plain"}[plain], func(t *testing.T) {
 			b := newWriteBehindTestEngine(t, time.Hour)
-			_, err := b.CreateNode(&Node{ID: "test:target", Properties: map[string]any{"payload": "before"}})
+			_, err := b.CreateNode(t.Context(), &Node{ID: "test:target", Properties: map[string]any{"payload": "before"}})
 			require.NoError(t, err)
-			tx, err := b.BeginTransaction()
+			tx, err := b.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
-			node, err := tx.GetNode("test:target")
+			node, err := tx.GetNode(t.Context(), "test:target")
 			require.NoError(t, err)
 			before := CopyNode(node)
 			node.Properties["payload"] = "unaccepted"
-			require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{Before: before, After: node, Policy: ClientNodeEdits}))
+			require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{Before: before, After: node, Policy: ClientNodeEdits}))
 			// A real later acknowledged native commit keeps the buffered conflict reader
 			// active. Its unrelated identity cannot legitimately conflict with target.
 			bufferedCreate(t, b, &Node{ID: "test:acknowledged", Properties: map[string]any{"payload": "peer"}})
@@ -119,20 +119,20 @@ func TestCommitPreparationBufferedConflictAdmissionCancellation(t *testing.T) {
 			marker, markerErr := b.observeBufferedCommitReceipt(t.Context(), bufferedReceiptRead{namespace: "test", logicalID: "buffered-canceled"})
 			require.NoError(t, markerErr)
 			assert.False(t, marker.present, "canceled preparation must not publish its logical receipt")
-			actual, err := b.GetNode("test:target")
+			actual, err := b.GetNode(t.Context(), "test:target")
 			require.NoError(t, err)
 			assert.Equal(t, "before", actual.Properties["payload"])
-			peer, err := b.GetNode("test:acknowledged")
+			peer, err := b.GetNode(t.Context(), "test:acknowledged")
 			require.NoError(t, err)
 			assert.Equal(t, "peer", peer.Properties["payload"])
-			retry, err := b.BeginTransaction()
+			retry, err := b.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = retry.Rollback() })
-			retryNode, err := retry.GetNode("test:target")
+			retryNode, err := retry.GetNode(t.Context(), "test:target")
 			require.NoError(t, err)
 			retryBefore := CopyNode(retryNode)
 			retryNode.Properties["payload"] = "healthy-buffered"
-			require.NoError(t, retry.UpdateGraphNode(NodeUpdateRequest{Before: retryBefore, After: retryNode, Policy: ClientNodeEdits}))
+			require.NoError(t, retry.UpdateGraphNode(t.Context(), NodeUpdateRequest{Before: retryBefore, After: retryNode, Policy: ClientNodeEdits}))
 			prepared, err := retry.PrepareEntityCommit(t.Context(), EntityCommitRequest{LogicalID: "buffered-canceled"})
 			require.NoError(t, err)
 			t.Cleanup(prepared.Abort)
@@ -143,7 +143,7 @@ func TestCommitPreparationBufferedConflictAdmissionCancellation(t *testing.T) {
 			outcome := receipt.WaitOutcome(waitCtx)
 			require.Equal(t, CommitApplied, outcome.State)
 			require.NoError(t, outcome.Err)
-			actual, err = b.GetNode("test:target")
+			actual, err = b.GetNode(t.Context(), "test:target")
 			require.NoError(t, err)
 			require.Equal(t, "healthy-buffered", actual.Properties["payload"])
 		})
@@ -212,11 +212,11 @@ func (c *bufferedOperationPollContext) Err() error {
 }
 func TestBufferedConflictPreparationCancelsAtInnerBulkPoll(t *testing.T) {
 	b := newWriteBehindTestEngine(t, time.Hour)
-	tx, err := b.BeginTransaction()
+	tx, err := b.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	for i := range bulkReadCancellationInterval*2 + 1 {
-		_, err := tx.CreateNode(&Node{ID: NodeID(fmt.Sprintf("test:unaccepted%d", i))})
+		_, err := tx.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("test:unaccepted%d", i))})
 		require.NoError(t, err)
 	}
 	bufferedCreate(t, b, &Node{ID: "test:peer", Properties: map[string]any{"payload": "peer"}})
@@ -227,11 +227,11 @@ func TestBufferedConflictPreparationCancelsAtInnerBulkPoll(t *testing.T) {
 	assert.Equal(t, int64(2), ctx.polls.Load(), "must cancel at the actual second inner bulk poll")
 	assert.ErrorIs(t, err, context.Canceled)
 	assert.ErrorIs(t, real.Err(), context.Canceled)
-	count, countErr := b.NodeCount()
+	count, countErr := b.NodeCount(t.Context())
 	require.NoError(t, countErr)
 	assert.Equal(t, int64(1), count, "none of the staged operation population may publish")
 	for _, id := range []NodeID{"test:unaccepted0", NodeID(fmt.Sprintf("test:unaccepted%d", bulkReadCancellationInterval*2))} {
-		_, err = b.GetNode(id)
+		_, err = b.GetNode(t.Context(), id)
 		assert.ErrorIs(t, err, ErrNotFound)
 	}
 	prepareContextRetry(t, b, "test:peer", "healthy-inner-poll")

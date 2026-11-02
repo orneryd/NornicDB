@@ -124,8 +124,9 @@ type HeimdallPlugin interface {
 
 	// === Lifecycle Management ===
 
-	// Initialize is called when the subsystem is loaded
-	// Receives context for accessing database, config, etc.
+	// Initialize is called when the subsystem is loaded. It receives the host
+	// metadata this registration was published under together with the work
+	// context the registration was admitted under.
 	Initialize(ctx SubsystemContext) error
 
 	// Start begins the subsystem's background operations (if any)
@@ -190,10 +191,12 @@ type HeimdallPlugin interface {
 	// See types.go for interface definitions.
 }
 
-// SubsystemContext is provided to plugins during initialization.
-type SubsystemContext struct {
-	// Context is the retained initialization call.
-	Context context.Context
+// SubsystemHost is the host metadata a plugin subsystem is initialized from.
+//
+// It deliberately has no context: an initialization receives the work context
+// its registration was admitted under, so host metadata never carries a caller
+// context.
+type SubsystemHost struct {
 	// Lifetime is the host's work owner: plugin callbacks enroll in it, its
 	// context is their stop signal, and their outcomes are recorded in it. A
 	// manager given no host lifetime owns one itself; work is never untracked.
@@ -220,6 +223,18 @@ type SubsystemContext struct {
 	// Plugins can use this to trigger actions or send prompts to the SLM
 	// based on accumulated events or other triggers.
 	Heimdall HeimdallInvoker
+}
+
+// SubsystemContext is provided to plugins during initialization. It is the host
+// metadata the registration published together with the work context that
+// registration was admitted under.
+type SubsystemContext struct {
+	// Context is valid for Initialize. Registration completion, caller
+	// cancellation, or host stop cancels it. Use callback contexts for later
+	// actions; this is never a context retained from a host setter.
+	Context context.Context
+
+	SubsystemHost
 }
 
 // HeimdallInvoker allows plugins to autonomously trigger SLM actions.
@@ -779,7 +794,7 @@ type SubsystemManager struct {
 	plugins               map[string]*LoadedHeimdallPlugin // keyed by plugin name
 	actionOrder           []string                         // successful registrations, FIFO; sorted within each plugin
 	actions               map[string]ActionFunc            // keyed by full name: slm.plugin.action
-	ctx                   SubsystemContext                 // shared context for subsystems
+	host                  SubsystemHost                    // retained host metadata; never a caller context
 	diagnosticCredentials []string                         // host-owned; never included in the plugin context
 	initialized           bool
 	orderedPlugins        []*LoadedHeimdallPlugin
@@ -792,6 +807,12 @@ type SubsystemManager struct {
 	// owned is the lifetime of a manager whose context supplies none.
 	owned    *lifecycle.WorkLifetime
 	starting map[string]*LoadedHeimdallPlugin // initialized, not yet exposed to actions
+}
+
+// pluginContext publishes the retained host metadata with the admitted work
+// context the plugin's initialization was accepted under.
+func (h SubsystemHost) pluginContext(workCtx context.Context) SubsystemContext {
+	return SubsystemContext{Context: workCtx, SubsystemHost: h}
 }
 
 // acquireCallbackWork carries the actual callback ticket and host cancellation.
@@ -820,15 +841,15 @@ func (m *SubsystemManager) recordOutcome(operation string, err error) {
 // context supplies none.
 func (m *SubsystemManager) lifetime() *lifecycle.WorkLifetime {
 	m.mu.RLock()
-	host := m.ctx.Lifetime
+	host := m.host.Lifetime
 	m.mu.RUnlock()
 	if host != nil {
 		return host
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.ctx.Lifetime != nil {
-		return m.ctx.Lifetime
+	if m.host.Lifetime != nil {
+		return m.host.Lifetime
 	}
 	if m.owned == nil {
 		m.owned = lifecycle.NewWorkLifetime(context.Background())
@@ -853,8 +874,8 @@ func (m *SubsystemManager) redactOutcome(err error) error {
 	return observability.RedactError(err, credentials...)
 }
 
-func (m *SubsystemManager) setContext(ctx SubsystemContext, newHost bool) {
-	credentials := observability.ClientCredentials(ctx.Config.APIURL, ctx.Config.APIKey)
+func (m *SubsystemManager) setContext(host SubsystemHost, newHost bool) {
+	credentials := observability.ClientCredentials(host.Config.APIURL, host.Config.APIKey)
 	if newHost {
 		// A new host's registration epoch exists only after the previous one
 		// stopped: its accepted initializations are joined first.
@@ -869,7 +890,7 @@ func (m *SubsystemManager) setContext(ctx SubsystemContext, newHost bool) {
 		}
 	}
 	m.mu.Lock()
-	m.ctx = ctx
+	m.host = host
 	// Retain prior keys while their accepted cleanup can still report. This is
 	// private diagnostic context, not a credential-bearing plugin configuration.
 	m.diagnosticCredentials = append(m.diagnosticCredentials, credentials...)
@@ -879,10 +900,11 @@ func (m *SubsystemManager) setContext(ctx SubsystemContext, newHost bool) {
 	m.mu.Unlock()
 }
 
-// SetHostContext starts a new host lifetime. Ordinary SetContext does not reopen
-// admission while an accepted plugin file is still finishing initialization.
-func (m *SubsystemManager) SetHostContext(ctx SubsystemContext) {
-	m.setContext(ctx, true)
+// SetHostContext installs host metadata and starts a new host lifetime.
+// Ordinary SetContext does not reopen admission while an accepted plugin file
+// is still finishing initialization.
+func (m *SubsystemManager) SetHostContext(host SubsystemHost) {
+	m.setContext(host, true)
 }
 
 // CloseAdmission seals new registrations; accepted initialization remains joined.
@@ -931,9 +953,10 @@ func GetSubsystemManager() *SubsystemManager {
 	return globalManager
 }
 
-// SetContext configures the shared context for all subsystems.
-func (m *SubsystemManager) SetContext(ctx SubsystemContext) {
-	m.setContext(ctx, false)
+// SetContext reconfigures the shared host metadata for all subsystems without
+// starting a new host lifetime.
+func (m *SubsystemManager) SetContext(host SubsystemHost) {
+	m.setContext(host, false)
 }
 
 // RegisterPlugin registers an SLM plugin and initializes it.
@@ -949,7 +972,7 @@ func (m *SubsystemManager) RegisterStartedPlugin(ctx context.Context, p Heimdall
 
 func (m *SubsystemManager) registerPlugin(callCtx context.Context, p HeimdallPlugin, path string, builtin, start bool) error {
 	m.mu.RLock()
-	host := m.ctx
+	host := m.host
 	m.mu.RUnlock()
 	lp := &LoadedHeimdallPlugin{Plugin: p, Path: path, Builtin: builtin}
 	// Every registration, started here or later by StartAll, carries the same
@@ -998,8 +1021,7 @@ func (m *SubsystemManager) registerPlugin(callCtx context.Context, p HeimdallPlu
 	}
 	m.starting[name] = lp
 	registrations := m.registrations
-	ctx := m.ctx
-	ctx.Context = workCtx
+	initializeHost := m.host
 	m.mu.Unlock()
 	defer func() {
 		m.mu.Lock()
@@ -1009,7 +1031,7 @@ func (m *SubsystemManager) registerPlugin(callCtx context.Context, p HeimdallPlu
 		registered()
 	}()
 
-	if err := p.Initialize(ctx); err != nil {
+	if err := p.Initialize(initializeHost.pluginContext(workCtx)); err != nil {
 		return fail(fmt.Errorf("failed to initialize %s: %w", name, err), true)
 	}
 	if registrations.Closing() {
@@ -1159,7 +1181,7 @@ func (m *SubsystemManager) StopAll() error {
 // ShutdownAll shuts down all registered subsystems.
 func (m *SubsystemManager) ShutdownAll() error {
 	m.mu.RLock()
-	hosted := m.ctx.Lifetime != nil
+	hosted := m.host.Lifetime != nil
 	m.mu.RUnlock()
 	if hosted {
 		// A host lifetime is joined by its host before it disposes plugins.
@@ -1241,9 +1263,10 @@ func (m *SubsystemManager) AllSummaries() map[string]string {
 	return result
 }
 
-// LoadHeimdallPluginsFromDir scans a directory for .so files and loads them.
+// LoadHeimdallPluginsFromDir scans a directory for .so files and loads them
+// under the supplied host metadata.
 // Called at startup if NORNICDB_HEIMDALL_PLUGINS_DIR is set.
-func LoadHeimdallPluginsFromDir(dir string, ctx SubsystemContext) error {
+func LoadHeimdallPluginsFromDir(dir string, host SubsystemHost) error {
 	if dir == "" {
 		return nil
 	}
@@ -1269,7 +1292,7 @@ func LoadHeimdallPluginsFromDir(dir string, ctx SubsystemContext) error {
 	}
 
 	manager := GetSubsystemManager()
-	manager.SetContext(ctx)
+	manager.SetContext(host)
 
 	logHeimdallPrintf(slog.LevelInfo, "╔══════════════════════════════════════════════════════════════╗")
 	logHeimdallPrintf(slog.LevelInfo, "║ Loading SLM Plugins                                          ║")
@@ -2107,18 +2130,25 @@ const (
 type pluginEventQueue struct {
 	name  string
 	hook  DatabaseEventHook
-	ch    *eventchannel.Channel[databaseEventWork]
+	ch    *eventchannel.Channel[pluginEventDelivery]
 	owner *LoadedHeimdallPlugin
 	// worker is the queue worker's one completion; disposal joins it.
 	worker lifecycle.OnceCompletion
 }
 
-// Retain transport work separately from the published event. Every subscriber
-// receives the original pointer and its own host-lifetime release obligation.
-type databaseEventWork struct {
+// A plugin's own queue buffers only what its worker reads: the published event
+// and the host-lifetime release its hook must return. Every subscriber receives
+// the original pointer and its own release obligation.
+type pluginEventDelivery struct {
 	event   *DatabaseEvent
-	ctx     context.Context
 	release func()
+}
+
+// Ingress work additionally retains the admitted context. Its parent ticket is
+// what lets each plugin enroll its own delivery after host admission closes.
+type databaseEventWork struct {
+	pluginEventDelivery
+	ctx context.Context
 }
 
 // StartEventDispatcher starts the background event dispatcher.
@@ -2258,7 +2288,7 @@ func (d *dbEventDispatcher) ensurePluginQueue(name string, hook DatabaseEventHoo
 	queue := &pluginEventQueue{
 		name:  name,
 		hook:  hook,
-		ch:    eventchannel.New[databaseEventWork](defaultDatabaseEventQueue),
+		ch:    eventchannel.New[pluginEventDelivery](defaultDatabaseEventQueue),
 		owner: owner,
 	}
 	d.pluginQueues[name] = queue
@@ -2303,11 +2333,13 @@ func (d *dbEventDispatcher) enqueueEventWorkForGeneration(name string, hook Data
 	if d.afterQueueSnapshot != nil {
 		d.afterQueueSnapshot()
 	}
-	ctx, release, accepted := GetSubsystemManager().acquireWork(parent)
+	// Admission context belongs to ingress transport, not to delivery: the
+	// element carries the event and its release alone.
+	_, release, accepted := GetSubsystemManager().acquireWork(parent)
 	if !accepted {
 		return
 	}
-	if !queue.ch.TrySend(databaseEventWork{event: event, ctx: ctx, release: release}) {
+	if !queue.ch.TrySend(pluginEventDelivery{event: event, release: release}) {
 		release()
 		logHeimdallPrintf(slog.LevelWarn, "[Heimdall] DatabaseEvent queue full or closed for %s, dropping event: %s", name, event.Type)
 	}
@@ -2338,7 +2370,10 @@ func EmitDatabaseEvent(event *DatabaseEvent) {
 
 	// Non-blocking send
 	select {
-	case events <- databaseEventWork{event: event, ctx: ctx, release: release}:
+	case events <- databaseEventWork{
+		pluginEventDelivery: pluginEventDelivery{event: event, release: release},
+		ctx:                 ctx,
+	}:
 		// Event queued successfully
 	default:
 		release()

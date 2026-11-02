@@ -149,7 +149,7 @@ func (e *StorageExecutor) prepareCreateCompositeDatabase(ctx context.Context, cy
 	// Parse constituents (ALIAS ... FOR DATABASE ... [AT ...] [SECRET REF ...])
 	constituents := []interface{}{}
 	if remaining != "" {
-		tokens, spans, err := tokenizeSource(remaining)
+		tokens, spans, err := tokenizeSource(ctx, remaining)
 		if err != nil {
 			return nil, localizedError(localization.CypherCompositeCreateTokenizeFailed(err), err)
 		}
@@ -259,7 +259,7 @@ func (e *StorageExecutor) prepareAlterCompositeDatabase(ctx context.Context, cyp
 	// Check for ADD or DROP
 	remainingStart := dbNameEnd + len(cypher[dbNameEnd:]) - len(strings.TrimLeftFunc(cypher[dbNameEnd:], cyphertext.IsWhitespace))
 	remaining := strings.TrimSpace(cypher[remainingStart:])
-	tokens, spans, err := tokenizeSource(remaining)
+	tokens, spans, err := tokenizeSource(ctx, remaining)
 	if err != nil {
 		return nil, localizedError(localization.CypherCompositeAlterTokenizeFailed(err), err)
 	}

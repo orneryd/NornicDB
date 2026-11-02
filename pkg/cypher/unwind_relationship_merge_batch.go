@@ -405,7 +405,7 @@ func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(ctx context.Conte
 		distinct := make(map[string]interface{}, len(rows))
 		for _, match := range group {
 			for _, row := range rows {
-				if value, ok := e.evaluateRelationshipBatchLookupExpr(match, row); ok {
+				if value, ok := e.evaluateRelationshipBatchLookupExpr(ctx, match, row); ok {
 					distinct[propEqKeyBatch(value)] = value
 				}
 			}
@@ -430,7 +430,7 @@ func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(ctx context.Conte
 					if err := ctx.Err(); err != nil {
 						return nil, false, err
 					}
-					node, err := e.getQueryNode(store, id)
+					node, err := e.getQueryNode(ctx, store, id)
 					if err == nil && nodeBatchMatchesValue(node, key, value) {
 						matched++
 						idx[valueKey] = node
@@ -509,16 +509,16 @@ func nodeBatchMatchesValue(node *storage.Node, key nodeBatchMatchKey, value inte
 	return propEqKeyBatch(nodeValue) == propEqKeyBatch(value)
 }
 
-func (e *StorageExecutor) lookupRelationshipBatchMatchedNode(index map[nodeBatchMatchKey]map[string]*storage.Node, match matchClauseSpec, row map[string]interface{}) *storage.Node {
-	value, ok := e.evaluateRelationshipBatchLookupExpr(match, row)
+func (e *StorageExecutor) lookupRelationshipBatchMatchedNode(ctx context.Context, index map[nodeBatchMatchKey]map[string]*storage.Node, match matchClauseSpec, row map[string]interface{}) *storage.Node {
+	value, ok := e.evaluateRelationshipBatchLookupExpr(ctx, match, row)
 	if !ok {
 		return nil
 	}
 	return index[nodeBatchMatchKey{label: match.label, prop: match.propName}][propEqKeyBatch(value)]
 }
 
-func (e *StorageExecutor) evaluateRelationshipBatchLookupExpr(match matchClauseSpec, row map[string]interface{}) (interface{}, bool) {
-	return e.evaluateBatchLookupExpr(match, row, row)
+func (e *StorageExecutor) evaluateRelationshipBatchLookupExpr(ctx context.Context, match matchClauseSpec, row map[string]interface{}) (interface{}, bool) {
+	return e.evaluateBatchLookupExpr(ctx, match, row, row)
 }
 
 // normalizeRelationshipBatchRowProperties builds the property map written by

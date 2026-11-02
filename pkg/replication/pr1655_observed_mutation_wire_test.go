@@ -228,12 +228,12 @@ func TestPR1655LeaderNormalizesRequest(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, adapter.Close()) })
 
 	ctx := context.Background()
-	require.NoError(t, adapter.ApplyCommand(&Command{
+	require.NoError(t, applyQueued(t, adapter, &Command{
 		Type:      CmdCreateNode,
 		Data:      fixtureowner.Encode(t, storage.EncodeNodePayload, pr1655Node("test:n", map[string]any{"name": "stored"})),
 		Timestamp: time.Now(),
 	}))
-	_, err = backing.GetNode("test:n")
+	_, err = backing.GetNode(t.Context(), "test:n")
 	require.NoError(t, err)
 
 	request := storage.NodeUpdateRequest{
@@ -255,7 +255,7 @@ func TestPR1655LeaderNormalizesRequest(t *testing.T) {
 	if settle != nil {
 		settle(storage.CommitOutcome{State: storage.CommitDiscarded})
 	}
-	stored, err := backing.GetNode("test:n")
+	stored, err := backing.GetNode(t.Context(), "test:n")
 	require.NoError(t, err)
 	require.Equal(t, "stored", stored.Properties["name"], "preparing admission must not publish the mutation")
 }

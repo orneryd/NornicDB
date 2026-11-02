@@ -5,13 +5,14 @@ import (
 
 	"bufio"
 	"context"
+	"io"
+	"testing"
+
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
-	"io"
-	"testing"
 )
 
 func TestSearchStreamDeliveryBoltFailedPullAfterRunSuccess(t *testing.T) {
@@ -19,7 +20,7 @@ func TestSearchStreamDeliveryBoltFailedPullAfterRunSuccess(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	store := storage.NewNamespacedEngine(base, "nornic")
 	for _, id := range []storage.NodeID{"a", "b"} {
-		_, err := store.CreateNode(&storage.Node{ID: id})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: id})
 		require.NoError(t, err)
 	}
 	svc := search.NewService(store, search.DefaultVectorDimensions, nil)
@@ -48,7 +49,7 @@ func newPageDeliverySession(t *testing.T, capacity int) (*Session, *errorConn, *
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	store := storage.NewNamespacedEngine(base, "nornic")
 	for _, id := range []storage.NodeID{"a", "b", "c"} {
-		_, err := store.CreateNode(&storage.Node{ID: id, Properties: map[string]any{"content": "transport boundary"}})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: id, Properties: map[string]any{"content": "transport boundary"}})
 		require.NoError(t, err)
 	}
 	svc := search.NewService(store, search.DefaultVectorDimensions, nil)

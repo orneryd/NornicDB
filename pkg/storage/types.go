@@ -387,25 +387,30 @@ type Edge struct {
 //		_ = edge
 //	}
 type Engine interface {
+	// Context contract for every method that takes one: the caller's context
+	// controls admission, preparation and read materialization. Durable work
+	// accepted by an earlier call, its publication, callbacks and their
+	// ordering keep their existing independent completion lifetime.
+	//
 	// Node operations
-	CreateNode(node *Node) (NodeID, error) // Returns the actual stored ID (may be prefixed for namespaced engines)
-	GetNode(id NodeID) (*Node, error)
-	UpdateNode(updateRequest NodeUpdateRequest) error
-	DeleteNode(id NodeID) error
+	CreateNode(ctx context.Context, node *Node) (NodeID, error) // Returns the actual stored ID (may be prefixed for namespaced engines)
+	GetNode(ctx context.Context, id NodeID) (*Node, error)
+	UpdateNode(ctx context.Context, updateRequest NodeUpdateRequest) error
+	DeleteNode(ctx context.Context, id NodeID) error
 
 	// Edge operations
-	CreateEdge(edge *Edge) error
-	GetEdge(id EdgeID) (*Edge, error)
-	UpdateEdge(updateRequest EdgeUpdateRequest) error
-	DeleteEdge(id EdgeID) error
+	CreateEdge(ctx context.Context, edge *Edge) error
+	GetEdge(ctx context.Context, id EdgeID) (*Edge, error)
+	UpdateEdge(ctx context.Context, updateRequest EdgeUpdateRequest) error
+	DeleteEdge(ctx context.Context, id EdgeID) error
 
 	// Query operations
 	GetNodesByLabel(ctx context.Context, label string) ([]*Node, error)
-	GetFirstNodeByLabel(label string) (*Node, error) // Optimized for LIMIT 1
+	GetFirstNodeByLabel(ctx context.Context, label string) (*Node, error) // Optimized for LIMIT 1
 	GetOutgoingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error)
 	GetIncomingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error)
 	GetEdgesBetween(ctx context.Context, startID, endID NodeID) ([]*Edge, error)
-	GetEdgeBetween(startID, endID NodeID, edgeType string) *Edge
+	GetEdgeBetween(ctx context.Context, startID, endID NodeID, edgeType string) (*Edge, error)
 	GetEdgesByType(ctx context.Context, edgeType string) ([]*Edge, error) // Fast lookup by edge type
 	AllNodes(ctx context.Context) ([]*Node, error)
 	AllEdges(ctx context.Context) ([]*Edge, error)
@@ -418,19 +423,19 @@ type Engine interface {
 	StreamNodesWithOptions(ctx context.Context, opts StreamNodesOptions, fn func(node *Node) error) error
 
 	// Degree operations (for graph algorithms)
-	GetInDegree(nodeID NodeID) int
-	GetOutDegree(nodeID NodeID) int
+	GetInDegree(ctx context.Context, nodeID NodeID) (int, error)
+	GetOutDegree(ctx context.Context, nodeID NodeID) (int, error)
 
 	// Schema operations
 	GetSchema() *SchemaManager
 
 	// Bulk operations (for import)
-	BulkCreateNodes(nodes []*Node) error
-	BulkCreateEdges(edges []*Edge) error
+	BulkCreateNodes(ctx context.Context, nodes []*Node) error
+	BulkCreateEdges(ctx context.Context, edges []*Edge) error
 
 	// Bulk delete operations (for async flush performance)
-	BulkDeleteNodes(ids []NodeID) error
-	BulkDeleteEdges(ids []EdgeID) error
+	BulkDeleteNodes(ctx context.Context, ids []NodeID) error
+	BulkDeleteEdges(ctx context.Context, ids []EdgeID) error
 
 	// Batch read operations (for traversal performance)
 	// BatchGetNodes fetches multiple nodes in a single operation
@@ -441,22 +446,24 @@ type Engine interface {
 	Close() error
 
 	// Stats
-	NodeCount() (int64, error)
-	EdgeCount() (int64, error)
+	NodeCount(ctx context.Context) (int64, error)
+	EdgeCount(ctx context.Context) (int64, error)
 
 	// EdgeCountByType returns the number of edges of the given relationship
 	// type. Every engine maintains this per type so typed relationship counts
 	// are answered from counters (O(1) point reads), never by materializing
-	// edges (issue #638).
-	EdgeCountByType(edgeType string) (int64, error)
+	// edges (issue #638). The caller context owns admission of the counter
+	// read, including any namespace fan-out it performs.
+	EdgeCountByType(ctx context.Context, edgeType string) (int64, error)
 
 	// EdgeCountByStartLabel / EdgeCountByEndLabel return the number of edges
 	// of the given type whose physical start / end endpoint carries the label.
 	// These are the positional (label, type) counters behind the
 	// one-labeled-endpoint count shapes (issue #638), e.g.
-	// MATCH (s:Label)-[:T]->() and MATCH ()-[:T]->(e:Label).
-	EdgeCountByStartLabel(label, edgeType string) (int64, error)
-	EdgeCountByEndLabel(label, edgeType string) (int64, error)
+	// MATCH (s:Label)-[:T]->() and MATCH ()-[:T]->(e:Label). The caller context
+	// owns admission of the counter read.
+	EdgeCountByStartLabel(ctx context.Context, label, edgeType string) (int64, error)
+	EdgeCountByEndLabel(ctx context.Context, label, edgeType string) (int64, error)
 
 	// DeleteByPrefix deletes all nodes and edges with IDs starting with the given prefix.
 	// Used for DROP DATABASE operations to delete all data in a namespace.
@@ -474,16 +481,19 @@ type Engine interface {
 // and is applied to stored NodeID/EdgeID values (not the internal key prefix bytes).
 //
 // This is primarily used by NamespacedEngine so that NodeCount/EdgeCount can remain fast
-// in multi-database deployments while still returning namespace-scoped results.
+// in multi-database deployments while still returning namespace-scoped results. The
+// caller context owns admission and any prefix scan the implementation performs: a
+// canceled request gets its own context error, never a successful count.
 type PrefixStatsEngine interface {
-	NodeCountByPrefix(prefix string) (int64, error)
-	EdgeCountByPrefix(prefix string) (int64, error)
+	NodeCountByPrefix(ctx context.Context, prefix string) (int64, error)
+	EdgeCountByPrefix(ctx context.Context, prefix string) (int64, error)
 }
 
 // LabelStatsEngine is an optional extension interface for fast label-cardinality
-// lookups without materializing rows.
+// lookups without materializing rows. The caller context owns admission and any
+// count scan; canceled reads return the original context error.
 type LabelStatsEngine interface {
-	NodeCountByLabel(label string) (int64, error)
+	NodeCountByLabel(ctx context.Context, label string) (int64, error)
 }
 
 // NamespaceEdgeTypeStatsProvider is an optional extension interface for
@@ -491,15 +501,15 @@ type LabelStatsEngine interface {
 // per-(namespace, type) counters implement it; NamespacedEngine uses it to
 // stay exact in multi-database deployments.
 type NamespaceEdgeTypeStatsProvider interface {
-	EdgeCountByTypeInNamespace(namespace, edgeType string) (int64, error)
-	EdgeCountByStartLabelInNamespace(namespace, label, edgeType string) (int64, error)
-	EdgeCountByEndLabelInNamespace(namespace, label, edgeType string) (int64, error)
+	EdgeCountByTypeInNamespace(ctx context.Context, namespace, edgeType string) (int64, error)
+	EdgeCountByStartLabelInNamespace(ctx context.Context, namespace, label, edgeType string) (int64, error)
+	EdgeCountByEndLabelInNamespace(ctx context.Context, namespace, label, edgeType string) (int64, error)
 }
 
 // NamespaceLabelStatsProvider is an optional extension interface for fast
-// namespace-scoped label-cardinality lookups.
+// namespace-scoped label-cardinality lookups under the caller context.
 type NamespaceLabelStatsProvider interface {
-	NodeCountByLabelInNamespace(namespace, label string) (int64, error)
+	NodeCountByLabelInNamespace(ctx context.Context, namespace, label string) (int64, error)
 }
 
 // AdjacentEdgesEngine is an optional extension interface for fetching both
@@ -523,7 +533,7 @@ type AdjacentEdgesEngine interface {
 // but Properties contains only the requested keys. A nil properties slice means
 // "full node"; an empty non-nil slice means "no user properties".
 type ProjectedNodeReader interface {
-	GetNodeProjected(id NodeID, properties []string) (*Node, error)
+	GetNodeProjected(ctx context.Context, id NodeID, properties []string) (*Node, error)
 }
 
 // RelationshipEndpointChecker is an optional extension interface for
@@ -546,8 +556,8 @@ type RelationshipEndpointChecker interface {
 // filter such as decay can hide a relationship); the caller then uses
 // GetOutgoingEdges / GetIncomingEdges.
 type EdgeHeaderReader interface {
-	OutgoingEdgeHeaders(nodeID NodeID) (edges []*Edge, answered bool, err error)
-	IncomingEdgeHeaders(nodeID NodeID) (edges []*Edge, answered bool, err error)
+	OutgoingEdgeHeaders(ctx context.Context, nodeID NodeID) (edges []*Edge, answered bool, err error)
+	IncomingEdgeHeaders(ctx context.Context, nodeID NodeID) (edges []*Edge, answered bool, err error)
 }
 
 // NodeWithoutEmbeddingsReader is an optional extension interface for read paths
@@ -556,7 +566,7 @@ type EdgeHeaderReader interface {
 // and embedding metadata, while avoiding separately stored vector payloads when
 // possible.
 type NodeWithoutEmbeddingsReader interface {
-	GetNodeWithoutEmbeddings(id NodeID) (*Node, error)
+	GetNodeWithoutEmbeddings(ctx context.Context, id NodeID) (*Node, error)
 }
 
 // QueryNodeReader is an optional extension interface for the node a query
@@ -568,7 +578,7 @@ type NodeWithoutEmbeddingsReader interface {
 // GetNode. Unlike NodeWithoutEmbeddingsReader, whose read leaves the sidecar
 // out, the metadata is the full read's.
 type QueryNodeReader interface {
-	GetQueryNode(id NodeID) (*Node, error)
+	GetQueryNode(ctx context.Context, id NodeID) (*Node, error)
 }
 
 // BatchNodeWithoutEmbeddingsReader is an optional extension interface for
@@ -584,7 +594,7 @@ type BatchNodeWithoutEmbeddingsReader interface {
 // chunk places) without its vectors, which an embedding-free read may leave
 // out (Badger keeps it in the embedding sidecar).
 type NodeEmbeddingMetaReader interface {
-	GetNodeEmbeddingMeta(id NodeID) (map[string]any, error)
+	GetNodeEmbeddingMeta(ctx context.Context, id NodeID) (map[string]any, error)
 }
 
 // BatchNodeWithoutEmbeddingsCapability lets wrappers expose whether their
@@ -660,25 +670,25 @@ type NamespaceSchemaProvider interface {
 // TemporalLookupEngine is an optional extension interface for efficient temporal lookups
 // on a namespaced engine view.
 type TemporalLookupEngine interface {
-	GetTemporalNodeAsOf(label, keyProp string, keyValue interface{}, validFromProp, validToProp string, asOf time.Time) (*Node, error)
+	GetTemporalNodeAsOf(ctx context.Context, label, keyProp string, keyValue interface{}, validFromProp, validToProp string, asOf time.Time) (*Node, error)
 }
 
 // NamespaceTemporalLookupProvider is an optional extension interface that provides
 // efficient temporal lookups scoped to a storage namespace.
 type NamespaceTemporalLookupProvider interface {
-	GetTemporalNodeAsOfInNamespace(namespace, label, keyProp string, keyValue interface{}, validFromProp, validToProp string, asOf time.Time) (*Node, error)
+	GetTemporalNodeAsOfInNamespace(ctx context.Context, namespace, label, keyProp string, keyValue interface{}, validFromProp, validToProp string, asOf time.Time) (*Node, error)
 }
 
 // TemporalCurrentNodeEngine is an optional extension interface for deciding whether
 // a temporal node represents the current/live version for indexing and query routing.
 type TemporalCurrentNodeEngine interface {
-	IsCurrentTemporalNode(node *Node, asOf time.Time) (bool, error)
+	IsCurrentTemporalNode(ctx context.Context, node *Node, asOf time.Time) (bool, error)
 }
 
 // NamespaceTemporalCurrentNodeProvider is an optional extension interface that
 // evaluates current/live temporal versions within a namespace.
 type NamespaceTemporalCurrentNodeProvider interface {
-	IsCurrentTemporalNodeInNamespace(namespace string, node *Node, asOf time.Time) (bool, error)
+	IsCurrentTemporalNodeInNamespace(ctx context.Context, namespace string, node *Node, asOf time.Time) (bool, error)
 }
 
 // TemporalPruneOptions controls pruning of older temporal versions.
@@ -815,12 +825,13 @@ type MVCCPruneOptions struct {
 }
 
 // MVCCVisibilityEngine is an optional extension interface for latest and
-// snapshot-visible node and edge reads.
+// snapshot-visible node and edge reads under the caller's context, which owns
+// admission and the read's materialization.
 type MVCCVisibilityEngine interface {
-	GetNodeLatestVisible(id NodeID) (*Node, error)
-	GetNodeVisibleAt(id NodeID, version MVCCVersion) (*Node, error)
-	GetEdgeLatestVisible(id EdgeID) (*Edge, error)
-	GetEdgeVisibleAt(id EdgeID, version MVCCVersion) (*Edge, error)
+	GetNodeLatestVisible(ctx context.Context, id NodeID) (*Node, error)
+	GetNodeVisibleAt(ctx context.Context, id NodeID, version MVCCVersion) (*Node, error)
+	GetEdgeLatestVisible(ctx context.Context, id EdgeID) (*Edge, error)
+	GetEdgeVisibleAt(ctx context.Context, id EdgeID, version MVCCVersion) (*Edge, error)
 }
 
 // MVCCIndexedVisibilityEngine is an optional extension interface for
@@ -834,10 +845,11 @@ type MVCCIndexedVisibilityEngine interface {
 	GetEdgesBetweenVisibleAt(ctx context.Context, startID, endID NodeID, version MVCCVersion) ([]*Edge, error)
 }
 
-// MVCCHeadEngine is an optional extension interface for persisted head lookups.
+// MVCCHeadEngine is an optional extension interface for persisted head lookups
+// under the caller's context, which owns admission of the head read.
 type MVCCHeadEngine interface {
-	GetNodeCurrentHead(id NodeID) (MVCCHead, error)
-	GetEdgeCurrentHead(id EdgeID) (MVCCHead, error)
+	GetNodeCurrentHead(ctx context.Context, id NodeID) (MVCCHead, error)
+	GetEdgeCurrentHead(ctx context.Context, id EdgeID) (MVCCHead, error)
 }
 
 // MVCCAppendEngine is an optional extension interface for immutable MVCC writes.
@@ -864,10 +876,11 @@ type StartupMaintenanceStateEngine interface {
 }
 
 // MVCCLatestEffectiveEngine is an optional extension interface for wrapper-level
-// latest reads that merge pending, in-flight, and persisted state.
+// latest reads that merge pending, in-flight, and persisted state. The caller
+// context owns admission and the read's materialization.
 type MVCCLatestEffectiveEngine interface {
-	GetNodeLatestEffective(id NodeID) (*Node, error)
-	GetEdgeLatestEffective(id EdgeID) (*Edge, error)
+	GetNodeLatestEffective(ctx context.Context, id NodeID) (*Node, error)
+	GetEdgeLatestEffective(ctx context.Context, id EdgeID) (*Edge, error)
 }
 
 // MVCCEnumerationEngine is an optional extension interface for latest-visible iteration.
@@ -1534,16 +1547,27 @@ func NodeNeedsEmbedding(node *Node) bool {
 	return true
 }
 
-// CountNodesWithLabel counts nodes with a specific label using streaming.
+// CountNodesWithLabel counts nodes with a specific label, using metadata when
+// available and streaming otherwise. ctx must be nonnil and owns both paths.
 func CountNodesWithLabel(ctx context.Context, engine Engine, label string) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	if stats, ok := engine.(LabelStatsEngine); ok {
-		return stats.NodeCountByLabel(label)
+		return stats.NodeCountByLabel(ctx, label)
 	}
 
 	var count int64
+	var cancel bulkReadCancellation
 
 	err := StreamNodesWithFallback(ctx, engine, 1000, func(node *Node) error {
+		if err := cancel.check(ctx); err != nil {
+			return err
+		}
 		for _, l := range node.Labels {
+			if err := cancel.check(ctx); err != nil {
+				return err
+			}
 			if l == label {
 				count++
 				break
@@ -1552,7 +1576,10 @@ func CountNodesWithLabel(ctx context.Context, engine Engine, label string) (int6
 		return nil
 	})
 
-	return count, err
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 // CollectLabels collects all unique labels using streaming.

@@ -145,16 +145,16 @@ func (b *BadgerEngine) withUpdate(ctx context.Context, request updateRequest, fn
 	scope, metadata := request.scope, request.metadata
 	return b.commitEngineWrite(ctx, func(cw *commitWriter) error {
 		cw.declaredCache, cw.metadata = &scope, metadata
-		return cw.writeOnce(fn)
+		return fn(cw.txn)
 	})
 }
 
 // withPublishingUpdate binds a memory-only delta to the existing atomic writer.
 // keys reads the prior/written images captured by fn, after fn succeeds.
-func (b *BadgerEngine) withPublishingUpdate(ctx context.Context, fn func(*badger.Txn) error, publish func(*commitCacheImages), keys func(context.Context) ([]any, error), notification *commitNotification, stages ...func(*commitWriter) error) error {
+func (b *BadgerEngine) withPublishingUpdate(ctx context.Context, fn func(*badger.Txn) error, publish func(*commitCacheImages), keys func(context.Context) ([]any, error), notification *commitNotification, operations *[]Operation, stages ...func(*commitWriter) error) error {
 	return b.commitEngineWrite(ctx, func(cw *commitWriter) error {
 		cw.notification = notification
-		if err := cw.writeOnce(fn); err != nil {
+		if err := fn(cw.txn); err != nil {
 			return err
 		}
 		cw.publish = publish
@@ -165,6 +165,9 @@ func (b *BadgerEngine) withPublishingUpdate(ctx context.Context, fn func(*badger
 			if err != nil {
 				return err
 			}
+		}
+		if operations != nil {
+			cw.entityOperations = *operations
 		}
 		for _, stage := range stages {
 			if err := stage(cw); err != nil {
@@ -228,7 +231,7 @@ func (b *BadgerEngine) commitEngineWrite(ctx context.Context, write func(cw *com
 		var writeErr error
 		if option.units != nil {
 			for _, unit := range option.units {
-				if writeErr = cw.write(unit); writeErr != nil {
+				if writeErr = cw.write(cw.ctx, unit); writeErr != nil {
 					break
 				}
 			}

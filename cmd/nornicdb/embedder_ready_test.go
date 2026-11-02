@@ -52,7 +52,7 @@ func TestHybridSearchPicksUpEmbedderAfterStartup(t *testing.T) {
 			db, err := nornicdb.Open(t.TempDir(), cfg)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = db.Close() })
-			_, err = db.GetStorage().CreateNode(&storage.Node{
+			_, err = db.GetStorage().CreateNode(t.Context(), &storage.Node{
 				ID: "doc", Labels: []string{"Document"},
 				Properties:      map[string]interface{}{"content": "alpha"},
 				ChunkEmbeddings: [][]float32{{1, 0}},

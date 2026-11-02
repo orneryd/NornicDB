@@ -4,10 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
@@ -21,7 +22,7 @@ func TestDatabaseManagerPersistentIdentity(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "identity_test"}))
 	metadata := func() (*storage.Node, map[string]map[string]interface{}) {
-		node, err := storage.NewNamespacedEngine(inner, "system").GetNode(storage.NodeID(metadataNodeID))
+		node, err := storage.NewNamespacedEngine(inner, "system").GetNode(t.Context(), storage.NodeID(metadataNodeID))
 		require.NoError(t, err)
 		var databases map[string]map[string]interface{}
 		require.NoError(t, json.Unmarshal([]byte(node.Properties["data"].(string)), &databases))
@@ -69,7 +70,7 @@ func TestDatabaseManagerIdentityLegacyMetadata(t *testing.T) {
 	manager, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 	engine := storage.NewNamespacedEngine(inner, "system")
-	node, err := engine.GetNode(storage.NodeID(metadataNodeID))
+	node, err := engine.GetNode(t.Context(), storage.NodeID(metadataNodeID))
 	require.NoError(t, err)
 	var databases map[string]map[string]interface{}
 	require.NoError(t, json.Unmarshal([]byte(node.Properties["data"].(string)), &databases))
@@ -81,13 +82,13 @@ func TestDatabaseManagerIdentityLegacyMetadata(t *testing.T) {
 	node.Properties["data"] = string(data)
 	delete(node.Properties, "server_id")
 	delete(node.Properties, "server_created_at")
-	require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: node}))
+	require.NoError(t, engine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
 	standby, err := NewDatabaseManager(t.Context(), &identityReadOnlyEngine{Engine: inner}, nil)
 	require.NoError(t, err)
 	serverID, createdAt := standby.ServerIdentity()
 	require.Empty(t, serverID)
 	require.Equal(t, node.CreatedAt.UTC(), createdAt.UTC())
-	unchanged, err := engine.GetNode(storage.NodeID(metadataNodeID))
+	unchanged, err := engine.GetNode(t.Context(), storage.NodeID(metadataNodeID))
 	require.NoError(t, err)
 	require.Equal(t, node.Properties, unchanged.Properties)
 	upgraded, err := NewDatabaseManager(t.Context(), inner, nil)
@@ -108,10 +109,10 @@ func TestDatabaseManagerIdentityLegacyMetadata(t *testing.T) {
 	actualID, actualCreatedAt := reloaded.ServerIdentity()
 	require.Equal(t, serverID, actualID)
 	require.Equal(t, createdAt.UTC(), actualCreatedAt.UTC())
-	node, err = engine.GetNode(storage.NodeID(metadataNodeID))
+	node, err = engine.GetNode(t.Context(), storage.NodeID(metadataNodeID))
 	require.NoError(t, err)
 	node.Properties["server_created_at"] = "not-a-date"
-	require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: node}))
+	require.NoError(t, engine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
 	_, err = NewDatabaseManager(t.Context(), inner, nil)
 	require.Error(t, err)
 }
@@ -253,15 +254,15 @@ func TestDatabaseManagerStorageEnforcesRuntimeLimitReplacement(t *testing.T) {
 
 	engine, err := manager.GetStorage("nornic")
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "first"})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "first"})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "blocked"})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "blocked"})
 	require.ErrorIs(t, err, ErrStorageLimitExceeded)
 
 	require.NoError(t, manager.SetDatabaseLimits(t.Context(), "nornic", &Limits{Storage: StorageLimits{MaxNodes: 2}}))
-	_, err = engine.CreateNode(&storage.Node{ID: "second"})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "second"})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "still-blocked"})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "still-blocked"})
 	require.ErrorIs(t, err, ErrStorageLimitExceeded)
 }
 
@@ -274,16 +275,16 @@ func TestDatabaseManagerStorageEnforcesMaxBytesUpdateDelta(t *testing.T) {
 
 	engine, err := manager.GetStorage("nornic")
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "node", Properties: map[string]any{"value": "small"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "node", Properties: map[string]any{"value": "small"}})
 	require.NoError(t, err)
 	currentBytes, _, _ := manager.GetStorageSize("nornic")
 	require.Positive(t, currentBytes)
 	require.NoError(t, manager.SetDatabaseLimits(t.Context(), "nornic", &Limits{Storage: StorageLimits{MaxBytes: currentBytes + 32}}))
 
-	err = engine.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "node", Properties: map[string]any{"value": string(make([]byte, 4096))}}})
+	err = engine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: &storage.Node{ID: "node", Properties: map[string]any{"value": string(make([]byte, 4096))}}})
 	require.ErrorIs(t, err, ErrStorageLimitExceeded)
 
-	stored, err := engine.GetNode("node")
+	stored, err := engine.GetNode(t.Context(), "node")
 	require.NoError(t, err)
 	require.Equal(t, "small", stored.Properties["value"])
 }
@@ -359,11 +360,11 @@ func TestDatabaseManager_DropDatabase_DeletesNodesAndEdges(t *testing.T) {
 			store, err := manager.GetStorage(tc.name)
 			require.NoError(t, err)
 			for _, node := range tc.nodes {
-				_, err = store.CreateNode(node)
+				_, err = store.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 			}
 			for _, edge := range tc.edges {
-				require.NoError(t, store.CreateEdge(edge))
+				require.NoError(t, store.CreateEdge(t.Context(), edge))
 			}
 			nodes, err := store.AllNodes(context.Background())
 			require.NoError(t, err)
@@ -372,11 +373,11 @@ func TestDatabaseManager_DropDatabase_DeletesNodesAndEdges(t *testing.T) {
 			require.NoError(t, err)
 			assert.Len(t, edges, len(tc.edges))
 			for _, node := range tc.nodes {
-				_, err = inner.GetNode(storage.NodeID(tc.name + ":" + string(node.ID)))
+				_, err = inner.GetNode(t.Context(), storage.NodeID(tc.name+":"+string(node.ID)))
 				require.NoError(t, err)
 			}
 			for _, edge := range tc.edges {
-				_, err = inner.GetEdge(storage.EdgeID(tc.name + ":" + string(edge.ID)))
+				_, err = inner.GetEdge(t.Context(), storage.EdgeID(tc.name+":"+string(edge.ID)))
 				require.NoError(t, err)
 			}
 			beforeNodes, err := inner.AllNodes(context.Background())
@@ -388,12 +389,12 @@ func TestDatabaseManager_DropDatabase_DeletesNodesAndEdges(t *testing.T) {
 			require.NoError(t, manager.DropDatabase(t.Context(), tc.name))
 			assert.False(t, manager.Exists(tc.name))
 			for _, node := range tc.nodes {
-				_, err = inner.GetNode(storage.NodeID(tc.name + ":" + string(node.ID)))
+				_, err = inner.GetNode(t.Context(), storage.NodeID(tc.name+":"+string(node.ID)))
 				assert.Error(t, err)
 				assert.Equal(t, storage.ErrNotFound, err)
 			}
 			for _, edge := range tc.edges {
-				_, err = inner.GetEdge(storage.EdgeID(tc.name + ":" + string(edge.ID)))
+				_, err = inner.GetEdge(t.Context(), storage.EdgeID(tc.name+":"+string(edge.ID)))
 				assert.Error(t, err)
 				assert.Equal(t, storage.ErrNotFound, err)
 			}
@@ -436,23 +437,23 @@ func TestDatabaseManager_NodeNamespacePrefix(t *testing.T) {
 			"name": "Test Person",
 		},
 	}
-	_, err = store.CreateNode(node)
+	_, err = store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	// Verify the node exists in the namespaced storage
-	retrieved, err := store.GetNode(nodeID)
+	retrieved, err := store.GetNode(t.Context(), nodeID)
 	require.NoError(t, err)
 	assert.Equal(t, "Test Person", retrieved.Properties["name"])
 
 	// Verify the underlying storage has the prefixed ID
 	prefixedID := storage.NodeID(dbName + ":" + string(nodeID))
-	prefixedNode, err := inner.GetNode(prefixedID)
+	prefixedNode, err := inner.GetNode(t.Context(), prefixedID)
 	require.NoError(t, err)
 	assert.Equal(t, prefixedID, prefixedNode.ID, "Node ID should be prefixed in underlying storage")
 	assert.Equal(t, "Test Person", prefixedNode.Properties["name"])
 
 	// Verify the unprefixed ID does NOT exist in underlying storage
-	_, err = inner.GetNode(nodeID)
+	_, err = inner.GetNode(t.Context(), nodeID)
 	assert.Error(t, err, "Unprefixed node ID should not exist in underlying storage")
 	assert.Equal(t, storage.ErrNotFound, err)
 
@@ -505,7 +506,7 @@ func TestDatabaseManagerStorageRoutes(t *testing.T) {
 			"name": "test",
 		},
 	}
-	_, err = store.CreateNode(node)
+	_, err = store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	// Get the same storage again (should be cached)
@@ -534,12 +535,12 @@ func TestDatabaseManagerStorageRoutes(t *testing.T) {
 
 		tenantAStore, err := manager.GetStorage("tenant_a")
 		require.NoError(t, err)
-		_, err = tenantAStore.CreateNode(&storage.Node{ID: "node-a", Labels: []string{"Shared"}})
+		_, err = tenantAStore.CreateNode(t.Context(), &storage.Node{ID: "node-a", Labels: []string{"Shared"}})
 		require.NoError(t, err)
 
 		tenantBStore, err := manager.GetStorage("tenant_b")
 		require.NoError(t, err)
-		_, err = tenantBStore.CreateNode(&storage.Node{ID: "node-b", Labels: []string{"Shared"}})
+		_, err = tenantBStore.CreateNode(t.Context(), &storage.Node{ID: "node-b", Labels: []string{"Shared"}})
 		require.NoError(t, err)
 
 		err = manager.CreateCompositeDatabase(t.Context(), "composite_db", []ConstituentRef{
@@ -584,11 +585,11 @@ func TestDatabaseManagerLazilyReconcilesStorageSizes(t *testing.T) {
 			store, err := seed.GetStorage(database)
 			require.NoError(t, err)
 			for _, node := range tc.nodes {
-				_, err = store.CreateNode(node)
+				_, err = store.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 			}
 			if tc.edge != nil {
-				require.NoError(t, store.CreateEdge(tc.edge))
+				require.NoError(t, store.CreateEdge(t.Context(), tc.edge))
 			}
 			manager := seed
 			var wantSingle int64
@@ -598,7 +599,7 @@ func TestDatabaseManagerLazilyReconcilesStorageSizes(t *testing.T) {
 				t.Cleanup(func() { _ = manager.Close() })
 				restartedStorage, err := manager.GetStorage(database)
 				require.NoError(t, err)
-				storedNode, err := restartedStorage.GetNode("persisted")
+				storedNode, err := restartedStorage.GetNode(t.Context(), "persisted")
 				require.NoError(t, err)
 				wantSingle, err = calculateNodeSize(storedNode)
 				require.NoError(t, err)
@@ -667,7 +668,7 @@ func TestDatabaseManager_GetStorage_Isolation(t *testing.T) {
 			"tenant": "a",
 		},
 	}
-	_, err = storeA.CreateNode(nodeA)
+	_, err = storeA.CreateNode(t.Context(), nodeA)
 	require.NoError(t, err)
 
 	// Create node in tenant_b
@@ -678,7 +679,7 @@ func TestDatabaseManager_GetStorage_Isolation(t *testing.T) {
 			"tenant": "b",
 		},
 	}
-	_, err = storeB.CreateNode(nodeB)
+	_, err = storeB.CreateNode(t.Context(), nodeB)
 	require.NoError(t, err)
 
 	// Verify isolation: tenant_a should only see its node
@@ -875,7 +876,7 @@ func TestDatabaseManager_BackwardsCompatibility(t *testing.T) {
 			"name": "legacy",
 		},
 	}
-	_, err = store.CreateNode(node)
+	_, err = store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	// Can query nodes
@@ -902,7 +903,7 @@ func TestDatabaseManager_GetStorageSize_IncrementalTrackingMatchesExactBytes(t *
 	assert.Zero(t, nodeBytes)
 	assert.Zero(t, edgeBytes)
 
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     storage.NodeID("n1"),
 		Labels: []string{"Item"},
 		Properties: map[string]any{
@@ -910,7 +911,7 @@ func TestDatabaseManager_GetStorageSize_IncrementalTrackingMatchesExactBytes(t *
 		},
 	})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     storage.NodeID("n2"),
 		Labels: []string{"Item"},
 		Properties: map[string]any{
@@ -918,7 +919,7 @@ func TestDatabaseManager_GetStorageSize_IncrementalTrackingMatchesExactBytes(t *
 		},
 	})
 	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{
 		ID:         storage.EdgeID("e1"),
 		StartNode:  storage.NodeID("n1"),
 		EndNode:    storage.NodeID("n2"),
@@ -927,7 +928,7 @@ func TestDatabaseManager_GetStorageSize_IncrementalTrackingMatchesExactBytes(t *
 	}))
 
 	// Update node to change byte footprint.
-	require.NoError(t, store.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{
+	require.NoError(t, store.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: &storage.Node{
 		ID:     storage.NodeID("n1"),
 		Labels: []string{"Item"},
 		Properties: map[string]any{
@@ -937,7 +938,7 @@ func TestDatabaseManager_GetStorageSize_IncrementalTrackingMatchesExactBytes(t *
 	}}))
 
 	// Delete node with connected edge; cached edge bytes should also decrement.
-	require.NoError(t, store.DeleteNode(storage.NodeID("n1")))
+	require.NoError(t, store.DeleteNode(t.Context(), storage.NodeID("n1")))
 
 	gotTotal, gotNodeBytes, gotEdgeBytes := manager.GetStorageSize("tenant_delta")
 	base := storage.NewNamespacedEngine(inner, "tenant_delta")
@@ -960,7 +961,7 @@ func TestDatabaseManager_StorageSizeSnapshot_NoRaceWithListDatabases(t *testing.
 	store, err := manager.GetStorage("tenant_race")
 	require.NoError(t, err)
 
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     storage.NodeID("n1"),
 		Labels: []string{"Item"},
 		Properties: map[string]any{

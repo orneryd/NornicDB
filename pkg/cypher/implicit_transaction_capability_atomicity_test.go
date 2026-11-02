@@ -22,12 +22,12 @@ type capabilityHiddenFailingCreateEngine struct {
 	failure error
 }
 
-func (e *capabilityHiddenFailingCreateEngine) CreateNode(node *storage.Node) (storage.NodeID, error) {
+func (e *capabilityHiddenFailingCreateEngine) CreateNode(ctx context.Context, node *storage.Node) (storage.NodeID, error) {
 	e.calls++
 	if e.calls == 2 {
 		return "", e.failure
 	}
-	return e.Engine.CreateNode(node)
+	return e.Engine.CreateNode(ctx, node)
 }
 
 func TestImplicitWriteRequiresTransactionCapabilityBeforeExecution(t *testing.T) {
@@ -59,10 +59,10 @@ func TestImplicitWriteRequiresTransactionCapabilityBeforeExecution(t *testing.T)
 				t.Run(query, func(t *testing.T) {
 					root := newTestMemoryEngine(t)
 					store := storage.NewNamespacedEngine(root, "atomic_capability")
-					id, err := store.CreateNode(&storage.Node{ID: "existing", Labels: []string{"Existing"}, Properties: map[string]interface{}{"value": "before"}})
+					id, err := store.CreateNode(t.Context(), &storage.Node{ID: "existing", Labels: []string{"Existing"}, Properties: map[string]interface{}{"value": "before"}})
 					require.NoError(t, err)
 					beforeIndexes := store.GetSchema().GetIndexes()
-					before, err := store.GetNode(id)
+					before, err := store.GetNode(t.Context(), id)
 					require.NoError(t, err)
 					failure := errors.New("controlled second native CreateNode failure")
 					backend := &capabilityHiddenFailingCreateEngine{Engine: store, failure: failure}
@@ -81,10 +81,10 @@ func TestImplicitWriteRequiresTransactionCapabilityBeforeExecution(t *testing.T)
 					assert.Zero(t, backend.calls, "reject before the first native create, not after backend failure")
 					assert.Zero(t, mutations.Load(), "no mutation callbacks before transaction admission")
 					assert.Equal(t, callsBefore, procedureCalls.Load(), "no procedure callback before transaction admission")
-					count, countErr := root.NodeCount()
+					count, countErr := root.NodeCount(t.Context())
 					assert.NoError(t, countErr)
 					assert.Equal(t, int64(1), count, "no partial creates or deletes in actual storage")
-					after, readErr := store.GetNode(id)
+					after, readErr := store.GetNode(t.Context(), id)
 					assert.NoError(t, readErr)
 					if assert.NotNil(t, after) {
 						assert.Equal(t, before.ID, after.ID)
@@ -113,9 +113,9 @@ func TestNativeImplicitWritesRemainAtomicAndNamespaced(t *testing.T) {
 			root := newTestMemoryEngine(t)
 			store := storage.NewNamespacedEngine(root, "atomic_native")
 			other := storage.NewNamespacedEngine(root, "atomic_other")
-			otherID, err := other.CreateNode(&storage.Node{ID: "kept", Labels: []string{"AtomicUnique"}, Properties: map[string]interface{}{"key": "duplicate"}})
+			otherID, err := other.CreateNode(t.Context(), &storage.Node{ID: "kept", Labels: []string{"AtomicUnique"}, Properties: map[string]interface{}{"key": "duplicate"}})
 			require.NoError(t, err)
-			before, err := other.GetNode(otherID)
+			before, err := other.GetNode(t.Context(), otherID)
 			require.NoError(t, err)
 			exec := NewStorageExecutor(store)
 			_, err = exec.Execute(t.Context(), "CREATE CONSTRAINT atomic_unique FOR (n:AtomicUnique) REQUIRE n.key IS UNIQUE", nil)
@@ -134,12 +134,12 @@ func TestNativeImplicitWritesRemainAtomicAndNamespaced(t *testing.T) {
 			nodes, err = store.GetNodesByLabel(t.Context(), "AtomicUnique")
 			require.NoError(t, err)
 			require.Len(t, nodes, 2)
-			after, err := other.GetNode(otherID)
+			after, err := other.GetNode(t.Context(), otherID)
 			require.NoError(t, err)
 			require.Equal(t, before.ID, after.ID)
 			require.Equal(t, before.Labels, after.Labels)
 			require.Equal(t, before.Properties, after.Properties)
-			count, err := root.NodeCount()
+			count, err := root.NodeCount(t.Context())
 			require.NoError(t, err)
 			require.Equal(t, int64(3), count)
 		})

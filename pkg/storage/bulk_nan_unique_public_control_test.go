@@ -25,18 +25,18 @@ func TestNativeBulkUniqueNaNMatchesIndividualWrites(t *testing.T) {
 				{ID: "test:nan_b", Labels: []string{"Value"}, Properties: map[string]interface{}{"v": math.NaN()}},
 			}
 			if bulk {
-				assert.NoError(t, engine.BulkCreateNodes(nodes))
+				assert.NoError(t, engine.BulkCreateNodes(t.Context(), nodes))
 			} else {
 				for _, node := range nodes {
-					_, err := engine.CreateNode(node)
+					_, err := engine.CreateNode(t.Context(), node)
 					assert.NoError(t, err)
 				}
 			}
-			count, err := engine.NodeCount()
+			count, err := engine.NodeCount(t.Context())
 			assert.NoError(t, err)
 			assert.Equal(t, int64(2), count, "compare actual persisted population, not attempted writes")
 			for _, node := range nodes {
-				stored, err := engine.GetStoredNode(node.ID)
+				stored, err := engine.GetStoredNode(t.Context(), node.ID)
 				if assert.NoError(t, err) && assert.NotNil(t, stored) {
 					value, ok := stored.Properties["v"].(float64)
 					assert.True(t, ok)

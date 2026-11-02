@@ -50,7 +50,7 @@ func TestMergeAdmissionCanonicalTuple(t *testing.T) {
 			// Commit uses the exact lock held by MERGE, so it must wait too.
 			peer := beginMergeKeyTx(t, engine)
 			id := NodeID(prefixTestID("tuple"))
-			_, err := peer.CreateNode(&Node{ID: id, Labels: []string{"Tuple"}, Properties: props})
+			_, err := peer.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Tuple"}, Properties: props})
 			require.NoError(t, err)
 			done := make(chan error, 1)
 			go func() { done <- peer.Commit() }()
@@ -64,15 +64,15 @@ func TestMergeAdmissionCanonicalTuple(t *testing.T) {
 
 			fresh := beginMergeKeyTx(t, engine)
 			stale := beginMergeKeyTx(t, engine)
-			_, err = stale.CreateNode(&Node{ID: NodeID(prefixTestID("audit"))})
+			_, err = stale.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("audit"))})
 			require.NoError(t, err)
 			newProps := map[string]interface{}{"tenant": int64(8), "id": int64(42)}
 			writer := beginMergeKeyTx(t, engine)
-			_, err = writer.CreateNode(&Node{ID: NodeID(prefixTestID("new-tuple")), Labels: []string{"Tuple"}, Properties: newProps})
+			_, err = writer.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("new-tuple")), Labels: []string{"Tuple"}, Properties: newProps})
 			require.NoError(t, err)
 			require.NoError(t, writer.Commit())
 			require.NoError(t, fresh.PrepareMergeNode(context.Background(), []string{"Tuple"}, newProps))
-			_, err = fresh.GetNode(NodeID(prefixTestID("new-tuple")))
+			_, err = fresh.GetNode(t.Context(), NodeID(prefixTestID("new-tuple")))
 			require.NoError(t, err)
 			require.ErrorIs(t, stale.PrepareMergeNode(context.Background(), []string{"Tuple"}, newProps), ErrConflict)
 			require.NoError(t, fresh.Rollback())
@@ -103,22 +103,22 @@ func TestMergeAdmissionTupleIntegerPrecision(t *testing.T) {
 
 			// One transaction may hold both tuples; a second copy is still a duplicate.
 			both := beginMergeKeyTx(t, engine)
-			_, err := both.CreateNode(&Node{ID: NodeID(prefixTestID("pending-even")), Labels: []string{"Tuple"}, Properties: evenProps})
+			_, err := both.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("pending-even")), Labels: []string{"Tuple"}, Properties: evenProps})
 			require.NoError(t, err)
-			_, err = both.CreateNode(&Node{ID: NodeID(prefixTestID("pending-odd")), Labels: []string{"Tuple"}, Properties: oddProps})
+			_, err = both.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("pending-odd")), Labels: []string{"Tuple"}, Properties: oddProps})
 			require.NoError(t, err)
-			_, err = both.CreateNode(&Node{ID: NodeID(prefixTestID("pending-copy")), Labels: []string{"Tuple"}, Properties: oddProps})
+			_, err = both.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("pending-copy")), Labels: []string{"Tuple"}, Properties: oddProps})
 			require.Error(t, err)
 			require.NoError(t, both.Rollback())
 
 			evenID := NodeID(prefixTestID("even"))
 			writer := beginMergeKeyTx(t, engine)
-			_, err = writer.CreateNode(&Node{ID: evenID, Labels: []string{"Tuple"}, Properties: evenProps})
+			_, err = writer.CreateNode(t.Context(), &Node{ID: evenID, Labels: []string{"Tuple"}, Properties: evenProps})
 			require.NoError(t, err)
 			require.NoError(t, writer.Commit())
 
 			stale := beginMergeKeyTx(t, engine)
-			_, err = stale.CreateNode(&Node{ID: NodeID(prefixTestID("audit"))})
+			_, err = stale.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("audit"))})
 			require.NoError(t, err)
 			fresh := beginMergeKeyTx(t, engine)
 			// The older adjacent tuple alone is not the holder: admission locks.
@@ -129,11 +129,11 @@ func TestMergeAdmissionTupleIntegerPrecision(t *testing.T) {
 
 			oddID := NodeID(prefixTestID("odd"))
 			writer = beginMergeKeyTx(t, engine)
-			_, err = writer.CreateNode(&Node{ID: oddID, Labels: []string{"Tuple"}, Properties: oddProps})
+			_, err = writer.CreateNode(t.Context(), &Node{ID: oddID, Labels: []string{"Tuple"}, Properties: oddProps})
 			require.NoError(t, err)
 			require.NoError(t, writer.Commit(), "adjacent tuple is not a duplicate")
 			copyTx := beginMergeKeyTx(t, engine)
-			_, err = copyTx.CreateNode(&Node{ID: NodeID(prefixTestID("copy")), Labels: []string{"Tuple"}, Properties: oddProps})
+			_, err = copyTx.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("copy")), Labels: []string{"Tuple"}, Properties: oddProps})
 			if err == nil {
 				err = copyTx.Commit()
 			} else {
@@ -162,7 +162,7 @@ func TestMergeAdmissionTupleIntegerPrecision(t *testing.T) {
 
 			require.ErrorIs(t, stale.PrepareMergeNode(context.Background(), []string{"Tuple"}, oddProps), ErrConflict)
 			require.NoError(t, fresh.PrepareMergeNode(context.Background(), []string{"Tuple"}, oddProps))
-			got, err := fresh.GetNode(oddID)
+			got, err := fresh.GetNode(t.Context(), oddID)
 			require.NoError(t, err)
 			require.Equal(t, odd, got.Properties["id"])
 			require.NoError(t, fresh.Rollback())

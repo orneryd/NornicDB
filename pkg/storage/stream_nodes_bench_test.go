@@ -16,7 +16,7 @@ func seedStreamBenchNodes(b *testing.B, count int) *BadgerEngine {
 	require.NoError(b, err)
 	b.Cleanup(func() { _ = badger.Close() })
 	for index := 0; index < count; index++ {
-		_, err := badger.CreateNode(&Node{
+		_, err := badger.CreateNode(b.Context(), &Node{
 			ID:         NodeID(fmt.Sprintf("db:n-%05d", index)),
 			Labels:     []string{"Doc"},
 			Properties: map[string]any{"a": int64(index), "b": "value"},

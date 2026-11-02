@@ -172,7 +172,7 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 	}
 	// Every function a statement calls, in any clause, is known (#1166).
 	// Neo4j reports the statement's other semantic errors first.
-	if err := validateKnownFunctions(cypher); err != nil {
+	if err := validateKnownFunctions(ctx, cypher); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {

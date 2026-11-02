@@ -13,25 +13,25 @@ func TestCallSubqueryHelpers_SeedLookupAndRowMatching(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(baseStore, "test")
 
-	_, err := store.CreateNode(&storage.Node{ID: "n1", Labels: []string{"Seed"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "n1", Labels: []string{"Seed"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "tail", Labels: []string{"Seed"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "tail", Labels: []string{"Seed"}})
 	require.NoError(t, err)
 
 	exec := NewStorageExecutor(store)
 
-	seed := exec.seedNodeFromIDString(" n1 ")
+	seed := exec.seedNodeFromIDString(t.Context(), " n1 ")
 	require.NotNil(t, seed)
 	require.Equal(t, storage.NodeID("n1"), seed.ID)
 
-	seed = exec.seedNodeFromIDString("bolt:db:tail")
+	seed = exec.seedNodeFromIDString(t.Context(), "bolt:db:tail")
 	require.NotNil(t, seed)
 	require.Equal(t, storage.NodeID("tail"), seed.ID)
 
-	require.Nil(t, exec.seedNodeFromIDString("   "))
-	require.Nil(t, exec.seedNodeFromMap(map[string]interface{}{"id": "missing"}))
+	require.Nil(t, exec.seedNodeFromIDString(t.Context(), "   "))
+	require.Nil(t, exec.seedNodeFromMap(t.Context(), map[string]interface{}{"id": "missing"}))
 
-	seed = exec.seedNodeFromMap(map[string]interface{}{"_nodeId": "n1"})
+	seed = exec.seedNodeFromMap(t.Context(), map[string]interface{}{"_nodeId": "n1"})
 	require.NotNil(t, seed)
 	require.Equal(t, storage.NodeID("n1"), seed.ID)
 

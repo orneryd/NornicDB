@@ -26,20 +26,20 @@ func TestConcurrentTransactionsSharingLabelCountCommitIndependently(t *testing.T
 			t.Cleanup(func() { require.NoError(t, engine.Close()) })
 			if tc.relabel {
 				for i := 0; i < 2; i++ {
-					_, err = engine.CreateNode(&Node{ID: NodeID(fmt.Sprintf("db1:update-%d", i)), Labels: []string{"Pending"}})
+					_, err = engine.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("db1:update-%d", i)), Labels: []string{"Pending"}})
 					require.NoError(t, err)
 				}
 			}
 			for round := 0; round < tc.rounds; round++ {
 				transactions := make([]*BadgerTransaction, 2)
 				for writer := range transactions {
-					transactions[writer], err = engine.BeginTransaction()
+					transactions[writer], err = engine.BeginTransaction(t.Context())
 					require.NoError(t, err)
 					defer transactions[writer].Rollback()
 					if tc.relabel {
-						require.NoError(t, transactions[writer].UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: NodeID(fmt.Sprintf("db1:update-%d", writer)), Labels: []string{tc.label}}, Policy: ClientNodeEdits}))
+						require.NoError(t, transactions[writer].UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: NodeID(fmt.Sprintf("db1:update-%d", writer)), Labels: []string{tc.label}}, Policy: ClientNodeEdits}))
 					} else {
-						_, err = transactions[writer].CreateNode(&Node{ID: NodeID(fmt.Sprintf("db1:concurrent-%d-%d", round, writer)), Labels: []string{tc.label}})
+						_, err = transactions[writer].CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("db1:concurrent-%d-%d", round, writer)), Labels: []string{tc.label}})
 						require.NoError(t, err)
 					}
 				}
@@ -48,11 +48,11 @@ func TestConcurrentTransactionsSharingLabelCountCommitIndependently(t *testing.T
 				}
 			}
 			if tc.relabel {
-				pending, err := engine.NodeCountByLabelInNamespace("db1", "Pending")
+				pending, err := engine.NodeCountByLabelInNamespace(t.Context(), "db1", "Pending")
 				require.NoError(t, err)
 				require.Zero(t, pending)
 			}
-			count, err := engine.NodeCountByLabelInNamespace("db1", tc.label)
+			count, err := engine.NodeCountByLabelInNamespace(t.Context(), "db1", tc.label)
 			require.NoError(t, err)
 			require.Equal(t, int64(tc.rounds*2), count)
 		})
@@ -63,14 +63,14 @@ func TestConflictingTransactionDoesNotPublishLabelCountDelta(t *testing.T) {
 	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
-	_, err = engine.CreateNode(&Node{ID: "db1:same-node", Labels: []string{"Pending"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "db1:same-node", Labels: []string{"Pending"}})
 	require.NoError(t, err)
 
 	transactions := make([]*BadgerTransaction, 2)
 	for writer := range transactions {
-		transactions[writer], err = engine.BeginTransaction()
+		transactions[writer], err = engine.BeginTransaction(t.Context())
 		require.NoError(t, err)
-		require.NoError(t, transactions[writer].UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "db1:same-node", Labels: []string{"Complete"}}, Policy: ClientNodeEdits}))
+		require.NoError(t, transactions[writer].UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "db1:same-node", Labels: []string{"Complete"}}, Policy: ClientNodeEdits}))
 	}
 
 	commitErrors := commitTransactionsConcurrently(transactions)
@@ -82,10 +82,10 @@ func TestConflictingTransactionDoesNotPublishLabelCountDelta(t *testing.T) {
 	}
 	require.Equal(t, 1, successes)
 
-	count, err := engine.NodeCountByLabelInNamespace("db1", "Pending")
+	count, err := engine.NodeCountByLabelInNamespace(t.Context(), "db1", "Pending")
 	require.NoError(t, err)
 	require.Zero(t, count)
-	count, err = engine.NodeCountByLabelInNamespace("db1", "Complete")
+	count, err = engine.NodeCountByLabelInNamespace(t.Context(), "db1", "Complete")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), count)
 }
@@ -100,13 +100,13 @@ func TestTransactionRepairsMalformedDerivedLabelCountAfterCommit(t *testing.T) {
 		return txn.Set(labelCountKey("db1", "Work"), malformed)
 	}))
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	_, err = tx.CreateNode(&Node{ID: "db1:repair-count", Labels: []string{"Work"}})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "db1:repair-count", Labels: []string{"Work"}})
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 
-	count, err := engine.NodeCountByLabelInNamespace("db1", "Work")
+	count, err := engine.NodeCountByLabelInNamespace(t.Context(), "db1", "Work")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), count)
 }
@@ -116,13 +116,13 @@ func TestRolledBackTransactionDoesNotPublishLabelCountDelta(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	_, err = tx.CreateNode(&Node{ID: "db1:rolled-back", Labels: []string{"Work"}})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "db1:rolled-back", Labels: []string{"Work"}})
 	require.NoError(t, err)
 	require.NoError(t, tx.Rollback())
 
-	count, err := engine.NodeCountByLabelInNamespace("db1", "Work")
+	count, err := engine.NodeCountByLabelInNamespace(t.Context(), "db1", "Work")
 	require.NoError(t, err)
 	require.Zero(t, count)
 }
@@ -154,13 +154,13 @@ func BenchmarkConcurrentTransactionsCreatingSameLabel(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			tx, beginErr := engine.BeginTransaction()
+			tx, beginErr := engine.BeginTransaction(b.Context())
 			if beginErr != nil {
 				b.Error(beginErr)
 				continue
 			}
 			id := nextID.Add(1)
-			if _, createErr := tx.CreateNode(&Node{
+			if _, createErr := tx.CreateNode(b.Context(), &Node{
 				ID:     NodeID(fmt.Sprintf("db1:benchmark-%d", id)),
 				Labels: []string{"Work"},
 			}); createErr != nil {

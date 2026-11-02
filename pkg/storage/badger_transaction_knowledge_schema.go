@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -45,7 +46,9 @@ func (tx *BadgerTransaction) Schema(purpose SchemaPurpose) (*SchemaManager, erro
 		}
 	}
 	view := NewSchemaManager()
-	if err := view.ReplaceFromDefinition(definition); err != nil {
+	// The transaction's schema view is built as part of the transaction's own
+	// accepted lifetime, not a caller request.
+	if err := view.ReplaceFromDefinition(context.Background(), definition); err != nil {
 		return nil, err
 	}
 	view.SetPersister(func(updated *SchemaDefinition) error {
@@ -96,7 +99,8 @@ func (tx *BadgerTransaction) publishKnowledgePolicySchemaLocked() func() {
 	}
 	definition := tx.knowledgeSchemaDefinition
 	snapshot := NewSchemaManager()
-	if err := snapshot.ReplaceFromDefinition(definition); err != nil {
+	// Commit publication is accepted work; it completes under its own lifetime.
+	if err := snapshot.ReplaceFromDefinition(context.Background(), definition); err != nil {
 		return nil
 	}
 	committed := tx.engine.GetSchemaForNamespace(tx.namespace)

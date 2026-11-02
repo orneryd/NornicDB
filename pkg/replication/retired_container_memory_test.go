@@ -29,11 +29,11 @@ func TestRetiredReplicationBatchCollectible(t *testing.T) {
 	t.Cleanup(func() { _ = wal.Close() })
 	owner := &StorageAdapter{wal: wal}
 	reference := func() weak.Pointer[walWriteRequest] {
-		request := &walWriteRequest{barrier: true, posCh: make(chan uint64, 1)}
+		request := &walWriteRequest{barrier: true, done: make(chan walCompletion, 1)}
 		owner.walBatch = []*walWriteRequest{request}
 		ref := weak.Make(request)
-		owner.flushWALBatch()
-		require.Equal(t, wal.Sequence(), <-request.posCh)
+		owner.flushWALBatch(false)
+		require.Equal(t, wal.Sequence(), (<-request.done).position)
 		return ref
 	}()
 	runtime.GC()

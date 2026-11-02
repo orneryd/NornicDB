@@ -22,8 +22,8 @@ const (
 
 // MutationFailureEngine decorates a real engine and fails exactly the selected
 // operation with the supplied error; every other call reaches that engine
-// unchanged, so earlier staged writes are already in the same real
-// transaction when the selected failure is injected.
+// unchanged with the caller's context, so earlier staged writes are already in
+// the same real transaction when the selected failure is injected.
 //
 // Nth counts calls of the selected operation only: 0 fails every call of it,
 // n fails its nth call. Failure, Nth and ID are plain fields so a test can
@@ -81,14 +81,14 @@ func (e *MutationFailureEngine) WithStoreTransaction(ctx context.Context, mutate
 	})
 }
 
-func (e *MutationFailureEngine) CreateNode(node *storage.Node) (storage.NodeID, error) {
+func (e *MutationFailureEngine) CreateNode(ctx context.Context, node *storage.Node) (storage.NodeID, error) {
 	if e.Fails(MutationCreate, node.ID) {
 		return "", e.Failure
 	}
-	return e.Engine.CreateNode(node)
+	return e.Engine.CreateNode(ctx, node)
 }
 
-func (e *MutationFailureEngine) UpdateNode(updateRequest storage.NodeUpdateRequest) error {
+func (e *MutationFailureEngine) UpdateNode(ctx context.Context, updateRequest storage.NodeUpdateRequest) error {
 	id := storage.NodeID("")
 	if updateRequest.After != nil {
 		id = updateRequest.After.ID
@@ -101,21 +101,21 @@ func (e *MutationFailureEngine) UpdateNode(updateRequest storage.NodeUpdateReque
 	if e.Fails(MutationUpdate, id) {
 		return e.Failure
 	}
-	return e.Engine.UpdateNode(updateRequest)
+	return e.Engine.UpdateNode(ctx, updateRequest)
 }
 
-func (e *MutationFailureEngine) DeleteNode(id storage.NodeID) error {
+func (e *MutationFailureEngine) DeleteNode(ctx context.Context, id storage.NodeID) error {
 	if e.Fails(MutationDelete, id) {
 		return e.Failure
 	}
-	return e.Engine.DeleteNode(id)
+	return e.Engine.DeleteNode(ctx, id)
 }
 
-func (e *MutationFailureEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
+func (e *MutationFailureEngine) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	if e.Fails(MutationGet, id) {
 		return nil, e.Failure
 	}
-	return e.Engine.GetNode(id)
+	return e.Engine.GetNode(ctx, id)
 }
 
 func (e *MutationFailureEngine) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {

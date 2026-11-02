@@ -69,7 +69,7 @@ func apocHandlerTakesContext(signature reflect.Type) bool {
 
 // callRegisteredSearch invokes a registered apoc.search handler through the same
 // checked binding the Cypher adapter uses, with the caller's context.
-func callRegisteredSearch(t *testing.T, name string, ctx context.Context, args ...interface{}) interface{} {
+func callRegisteredSearch(t *testing.T, name string, ctx context.Context, wantErr error, args ...interface{}) interface{} {
 	t.Helper()
 	info, found := apoc.GetInfo(name)
 	require.True(t, found, "%s must be registered", name)
@@ -77,6 +77,11 @@ func callRegisteredSearch(t *testing.T, name string, ctx context.Context, args .
 	require.True(t, apocHandlerTakesContext(info.Handler.Signature()),
 		"%s takes the caller context first", name)
 	result, err := info.Handler.CallWithPolicy(args, []reflect.Value{reflect.ValueOf(ctx)}, registry.CypherArguments)
+	if wantErr != nil {
+		require.ErrorIs(t, err, wantErr, name)
+		require.Nil(t, result, name)
+		return nil
+	}
 	require.NoError(t, err, name)
 	return result
 }
@@ -101,26 +106,26 @@ func matchedNodeIDs(t *testing.T, result interface{}) []int64 {
 // matching selects the node that satisfies at least one criterion.
 func TestRegisteredSearchAnyCriteriaMatchesEitherCriterion(t *testing.T) {
 	backend := apocstorage.NewInMemoryStorage()
-	_, err := backend.CreateNode([]string{"Person"}, map[string]interface{}{
+	_, err := backend.CreateNode(t.Context(), []string{"Person"}, map[string]interface{}{
 		"name": "Alice",
 		"tags": []interface{}{"one"},
 	})
 	require.NoError(t, err)
-	_, err = backend.CreateNode([]string{"Person"}, map[string]interface{}{"name": "Bob"})
+	_, err = backend.CreateNode(t.Context(), []string{"Person"}, map[string]interface{}{"name": "Bob"})
 	require.NoError(t, err)
 	installHandlerScanStorage(t, backend)
 	ctx := context.Background()
 	mixed := map[string]interface{}{"name": "Alice", "missing": "x"}
 
-	nodes, ok := callRegisteredSearch(t, "apoc.search.multiSearchAny", ctx, []string{"Person"}, mixed).([]*search.NodeType)
+	nodes, ok := callRegisteredSearch(t, "apoc.search.multiSearchAny", ctx, nil, []string{"Person"}, mixed).([]*search.NodeType)
 	require.True(t, ok)
 	require.Len(t, nodes, 1, "multiSearchAny must select the node that satisfies one of the criteria")
 	require.Equal(t, "Alice", nodes[0].Properties["name"])
 
-	anyNodes, ok := callRegisteredSearch(t, "apoc.search.nodeAny", ctx, "Person", mixed).([]*search.NodeType)
+	anyNodes, ok := callRegisteredSearch(t, "apoc.search.nodeAny", ctx, nil, "Person", mixed).([]*search.NodeType)
 	require.True(t, ok)
 	require.Len(t, anyNodes, 1)
-	allNodes, ok := callRegisteredSearch(t, "apoc.search.nodeAll", ctx, "Person", mixed).([]*search.NodeType)
+	allNodes, ok := callRegisteredSearch(t, "apoc.search.nodeAll", ctx, nil, "Person", mixed).([]*search.NodeType)
 	require.True(t, ok)
 	require.Empty(t, allNodes, "nodeAll keeps all-criteria semantics")
 }
@@ -249,7 +254,7 @@ func TestRegisteredSearchComparesListAndMapValues(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			installHandlerScanStorage(t, &handlerScanStorage{nodes: listAndMapPropertyNodes()})
 			require.NotPanics(t, func() {
-				result := callRegisteredSearch(t, testCase.helper, ctx, testCase.args...)
+				result := callRegisteredSearch(t, testCase.helper, ctx, nil, testCase.args...)
 				require.Equal(t, testCase.want, matchedNodeIDs(t, result))
 			})
 		})
@@ -291,7 +296,7 @@ func TestRegisteredSearchMembershipMatchesScalarValues(t *testing.T) {
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			installHandlerScanStorage(t, &handlerScanStorage{nodes: nodes})
-			result := callRegisteredSearch(t, testCase.helper, context.Background(), testCase.args...)
+			result := callRegisteredSearch(t, testCase.helper, context.Background(), nil, testCase.args...)
 			require.Equal(t, testCase.want, matchedNodeIDs(t, result))
 		})
 	}
@@ -315,9 +320,9 @@ func TestRegisteredSearchFollowsCallerCancel(t *testing.T) {
 			installHandlerScanStorage(t, &handlerScanStorage{nodes: listAndMapPropertyNodes()})
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel()
-			result := callRegisteredSearch(t, helper, ctx, args...)
-			require.NotNil(t, result)
-			require.Empty(t, matchedNodeIDs(t, result))
+			result := callRegisteredSearch(t, helper, ctx, context.Canceled, args...)
+			require.Nil(t, result)
+			require.Nil(t, result)
 			require.ErrorIs(t, ctx.Err(), context.Canceled)
 		})
 
@@ -328,9 +333,9 @@ func TestRegisteredSearchFollowsCallerCancel(t *testing.T) {
 				nodes:     listAndMapPropertyNodes(),
 				afterRead: cancel,
 			})
-			result := callRegisteredSearch(t, helper, ctx, args...)
-			require.NotNil(t, result)
-			require.Empty(t, matchedNodeIDs(t, result),
+			result := callRegisteredSearch(t, helper, ctx, context.Canceled, args...)
+			require.Nil(t, result)
+			require.Nil(t, result,
 				"a scan whose caller stopped after the read must not publish matches")
 			require.ErrorIs(t, ctx.Err(), context.Canceled)
 		})
@@ -350,18 +355,18 @@ func TestRegisteredSearchFollowsCallerDeadline(t *testing.T) {
 					<-ctx.Done()
 				},
 			})
-			result := callRegisteredSearch(t, helper, ctx, "Person", "tags", []interface{}{"a"})
-			require.NotNil(t, result)
-			require.Empty(t, matchedNodeIDs(t, result))
+			result := callRegisteredSearch(t, helper, ctx, context.DeadlineExceeded, "Person", "tags", []interface{}{"a"})
+			require.Nil(t, result)
+			require.Nil(t, result)
 			require.ErrorIs(t, ctx.Err(), context.DeadlineExceeded)
 		})
 	}
 }
 
-// TestRegisteredSearchKeepsDocumentedEmptyResultOnStorageFailure pins the
-// contract the helpers already had: a storage error is not surfaced as an error,
-// the helper returns its documented empty result.
-func TestRegisteredSearchKeepsDocumentedEmptyResultOnStorageFailure(t *testing.T) {
+// TestRegisteredSearchPropagatesStorageFailure pins the
+// error contract: a failed storage read preserves its original error and
+// publishes no result.
+func TestRegisteredSearchPropagatesStorageFailure(t *testing.T) {
 	installHandlerScanStorage(t, &handlerScanStorage{readErr: apocstorage.ErrNodeNotFound})
 	for _, helper := range []string{"apoc.search.in", "apoc.search.notIn", "apoc.search.multiSearchAll"} {
 		helper := helper
@@ -373,9 +378,9 @@ func TestRegisteredSearchKeepsDocumentedEmptyResultOnStorageFailure(t *testing.T
 			default:
 				args = []interface{}{"Person", "tags", []interface{}{"a"}}
 			}
-			result := callRegisteredSearch(t, helper, context.Background(), args...)
-			require.NotNil(t, result)
-			require.Empty(t, matchedNodeIDs(t, result))
+			result := callRegisteredSearch(t, helper, context.Background(), apocstorage.ErrNodeNotFound, args...)
+			require.Nil(t, result)
+			require.Nil(t, result)
 		})
 	}
 }
@@ -426,7 +431,7 @@ func TestRegisteredSearchDoesNotPublishWhenItsTraversalIsCanceled(t *testing.T) 
 	defer cancel()
 	stopping := &cancelOnDoneContext{Context: ctx, cancel: cancel}
 
-	result := callRegisteredSearch(t, "apoc.search.in", stopping,
+	result := callRegisteredSearch(t, "apoc.search.in", stopping, context.Canceled,
 		"Person", "tags", []interface{}{[]interface{}{"a", "b"}})
 
 	require.Equal(t, 1, stopping.asked,
@@ -434,13 +439,13 @@ func TestRegisteredSearchDoesNotPublishWhenItsTraversalIsCanceled(t *testing.T) 
 	require.Equal(t, 1, backend.reads,
 		"the whole-graph read returned before the cancellation landed")
 	require.ErrorIs(t, ctx.Err(), context.Canceled)
-	require.NotNil(t, result)
-	require.Empty(t, matchedNodeIDs(t, result),
+	require.Nil(t, result)
+	require.Nil(t, result,
 		"a caller that stopped while its scan ran must not receive the match the scan had found")
 
 	healthy := &handlerScanStorage{nodes: listAndMapPropertyNodes()}
 	installHandlerScanStorage(t, healthy)
-	require.Equal(t, []int64{1}, matchedNodeIDs(t, callRegisteredSearch(t, "apoc.search.in", context.Background(),
+	require.Equal(t, []int64{1}, matchedNodeIDs(t, callRegisteredSearch(t, "apoc.search.in", context.Background(), nil,
 		"Person", "tags", []interface{}{[]interface{}{"a", "b"}})),
 		"the healthy control of the same call publishes the match the stopped caller must not receive")
 }
@@ -566,17 +571,17 @@ func TestRegisteredSearchSuggestionNamesKeepTheirLimits(t *testing.T) {
 	installHandlerScanStorage(t, &handlerScanStorage{nodes: nodes})
 	ctx := context.Background()
 
-	limited := callRegisteredSearch(t, "apoc.search.suggest", ctx, "Person", "name", "Al", int64(5))
+	limited := callRegisteredSearch(t, "apoc.search.suggest", ctx, nil, "Person", "name", "Al", int64(5))
 	limitedSuggestions, ok := limited.([]string)
 	require.True(t, ok)
 	require.Len(t, limitedSuggestions, 5)
 
-	unlimited := callRegisteredSearch(t, "apoc.search.suggest", ctx, "Person", "name", "Al")
+	unlimited := callRegisteredSearch(t, "apoc.search.suggest", ctx, nil, "Person", "name", "Al")
 	defaultSuggestions, ok := unlimited.([]string)
 	require.True(t, ok)
 	require.Len(t, defaultSuggestions, 10, "a suggest call without a limit keeps the default")
 
-	completed := callRegisteredSearch(t, "apoc.search.autocomplete", ctx, "Person", "name", "Al")
+	completed := callRegisteredSearch(t, "apoc.search.autocomplete", ctx, nil, "Person", "name", "Al")
 	completions, ok := completed.([]string)
 	require.True(t, ok)
 	require.Equal(t, defaultSuggestions, completions,

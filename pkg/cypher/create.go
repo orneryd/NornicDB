@@ -306,7 +306,7 @@ func (e *StorageExecutor) applyCreatePlan(ctx context.Context, plan *createPlan,
 	case 0:
 	case 1:
 		node := plan.nodes[0]
-		actualID, err := createMintedNode(store, node)
+		actualID, err := createMintedNode(ctx, store, node)
 		if err != nil {
 			return localizedError(localization.CypherMutationsCreateNodeFailed(err), err)
 		}
@@ -314,7 +314,7 @@ func (e *StorageExecutor) applyCreatePlan(ctx context.Context, plan *createPlan,
 			node.ID = actualID
 		}
 	default:
-		if err := bulkCreateMintedNodes(store, plan.nodes); err != nil {
+		if err := bulkCreateMintedNodes(ctx, store, plan.nodes); err != nil {
 			return localizedError(localization.CypherMutationsCreateNodeFailed(err), err)
 		}
 	}
@@ -322,9 +322,9 @@ func (e *StorageExecutor) applyCreatePlan(ctx context.Context, plan *createPlan,
 	switch len(plan.edges) {
 	case 0:
 	case 1:
-		edgeErr = createMintedEdge(store, plan.edges[0])
+		edgeErr = createMintedEdge(ctx, store, plan.edges[0])
 	default:
-		edgeErr = bulkCreateMintedEdges(store, plan.edges)
+		edgeErr = bulkCreateMintedEdges(ctx, store, plan.edges)
 	}
 	if edgeErr != nil {
 		// The clause's nodes are already written; remove them so the clause
@@ -334,7 +334,7 @@ func (e *StorageExecutor) applyCreatePlan(ctx context.Context, plan *createPlan,
 			for i, node := range plan.nodes {
 				ids[i] = node.ID
 			}
-			_ = store.BulkDeleteNodes(ids)
+			_ = store.BulkDeleteNodes(ctx, ids)
 		}
 		return localizedError(localization.CypherMutationsCreateRelationshipFailed(edgeErr), edgeErr)
 	}
@@ -402,7 +402,7 @@ func (e *StorageExecutor) projectCreateReturn(ctx context.Context, out *createOu
 	}
 	row := e.mergeBindingRow(ctx, out.nodes, out.edges)
 	for name, path := range out.paths {
-		row[name] = e.pathToMap(path)
+		row[name] = e.pathToMapContext(ctx, path)
 	}
 	projected, err := e.projectMergeReturn(ctx, []pipelineRow{row}, out.cypher[out.returnIdx:])
 	if err != nil {
@@ -1301,7 +1301,7 @@ func (e *StorageExecutor) tryResolveMatchNodesByIDFromWhere(
 	// Try to resolve each variable from an ID equality predicate.
 	resolved := make(map[string]*storage.Node, len(variables))
 	for _, term := range allWhereTerms {
-		varName, node := e.resolveNodeFromIDEqualityTerm(term, params)
+		varName, node := e.resolveNodeFromIDEqualityTerm(ctx, term, params)
 		if varName == "" || node == nil {
 			continue
 		}
@@ -1336,7 +1336,7 @@ func (e *StorageExecutor) tryResolveMatchNodesByIDFromWhere(
 // elementId(<var>) = <value> or id(<var>) = <value> and resolves the node.
 // Returns the variable name and resolved node, or ("", nil) if the term
 // doesn't match the expected shape.
-func (e *StorageExecutor) resolveNodeFromIDEqualityTerm(
+func (e *StorageExecutor) resolveNodeFromIDEqualityTerm(ctx context.Context,
 	term string,
 	params map[string]interface{},
 ) (string, *storage.Node) {
@@ -1416,7 +1416,7 @@ func (e *StorageExecutor) resolveNodeFromIDEqualityTerm(
 		return "", nil
 	}
 
-	node, err := e.getQueryNode(e.storage, storage.NodeID(lookupID))
+	node, err := e.getQueryNode(ctx, e.storage, storage.NodeID(lookupID))
 	if err != nil || node == nil {
 		return "", nil
 	}

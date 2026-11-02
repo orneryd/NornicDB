@@ -22,7 +22,7 @@ func TestIncidentEdgesCancelsWaitingForTransactionLock(t *testing.T) {
 	engine := newWriteBehindTestEngine(t, time.Hour)
 	hub := seedIncidentContextGraph(t, engine, 2)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -118,7 +118,7 @@ func TestIncidentEdgesKeepsTransactionStateErrorPrecedence(t *testing.T) {
 	engine := newWriteBehindTestEngine(t, time.Hour)
 	hub := seedIncidentContextGraph(t, engine, 1)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.Rollback())
 

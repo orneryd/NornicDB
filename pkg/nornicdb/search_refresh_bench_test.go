@@ -64,7 +64,7 @@ func BenchmarkSearchRefreshEventDrain(b *testing.B) {
 	nodes := make([]*storage.Node, 256)
 	for i := range nodes {
 		node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("n%d", i)), Labels: []string{"Doc"}, Properties: map[string]any{"content": fmt.Sprintf("word%d", i)}, ChunkEmbeddings: [][]float32{{1, 0, 0, float32(i)}}}
-		if _, err := db.storage.CreateNode(node); err != nil {
+		if _, err := db.storage.CreateNode(b.Context(), node); err != nil {
 			b.Fatal(err)
 		}
 		node.ID = storage.NodeID(dbName + ":" + string(node.ID))

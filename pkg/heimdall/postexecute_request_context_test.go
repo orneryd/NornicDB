@@ -308,7 +308,7 @@ func runStreamedActionProbe(t *testing.T, path string, requestContext context.Co
 	plugin := newStreamPostExecuteContextPlugin(router)
 
 	subsystems := GetSubsystemManager()
-	subsystems.SetHostContext(SubsystemContext{
+	subsystems.SetHostContext(SubsystemHost{
 		Config:   DefaultConfig(),
 		Database: router,
 		Bifrost:  &NoOpBifrost{},

@@ -44,11 +44,11 @@ func TestReplaceDefinitionDurableCancellationDuringUniquePreparation(t *testing.
 	engine := newIsolatedBadgerEngine(t)
 	target := NewNamespacedEngine(engine, "test")
 	for _, id := range []NodeID{"a", "b"} {
-		_, err := target.CreateNode(&Node{ID: id, Labels: []string{"Item"}, Properties: map[string]any{"code": "duplicate"}})
+		_, err := target.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Item"}, Properties: map[string]any{"code": "duplicate"}})
 		require.NoError(t, err)
 	}
 	schema := target.GetSchema()
-	before := schema.ExportDefinition()
+	before := schemaDefinitionForTest(t, schema)
 	definition := &SchemaDefinition{Constraints: []Constraint{{Name: "item_code_unique", Type: ConstraintUnique, Label: "Item", Properties: []string{"code"}, OwnedIndex: "item_code_unique"}}}
 	// Preserve the actual native durable writer and count only accepted writes.
 	persisted := 0
@@ -61,7 +61,7 @@ func TestReplaceDefinitionDurableCancellationDuringUniquePreparation(t *testing.
 	require.Error(t, err)
 	require.NotErrorIs(t, err, context.Canceled)
 	require.Zero(t, persisted)
-	require.Equal(t, before, schema.ExportDefinition())
+	require.Equal(t, before, schemaDefinitionForTest(t, schema))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -75,24 +75,24 @@ func TestReplaceDefinitionDurableCancellationDuringUniquePreparation(t *testing.
 	// Nonfatal so unchanged-state and healthy-retry controls still execute on RED.
 	assert.ErrorIs(t, err, context.Canceled, "preparation must stop before testing a later duplicate")
 	assert.Zero(t, persisted)
-	assert.Equal(t, before, schema.ExportDefinition())
+	assert.Equal(t, before, schemaDefinitionForTest(t, schema))
 	require.NoError(t, engine.loadPersistedSchemas())
 	target = NewNamespacedEngine(engine, "test")
-	require.Equal(t, before, target.GetSchema().ExportDefinition(), "native durable definition remains unchanged")
+	require.Equal(t, before, schemaDefinitionForTest(t, target.GetSchema()), "native durable definition remains unchanged")
 	for _, id := range []NodeID{"a", "b"} {
-		node, readErr := target.GetNode(id)
+		node, readErr := target.GetNode(t.Context(), id)
 		require.NoError(t, readErr)
 		require.Equal(t, "duplicate", node.Properties["code"])
 	}
 
-	node, err := target.GetNode("b")
+	node, err := target.GetNode(t.Context(), "b")
 	require.NoError(t, err)
 	node.Properties["code"] = "distinct"
-	require.NoError(t, target.UpdateNode(NodeUpdateRequest{After: node}))
+	require.NoError(t, target.UpdateNode(t.Context(), NodeUpdateRequest{After: node}))
 	require.NoError(t, target.GetSchema().ReplaceDefinitionDurable(context.Background(), target, definition))
 	require.NoError(t, engine.loadPersistedSchemas())
 	reloaded := NewNamespacedEngine(engine, "test").GetSchema()
-	require.Len(t, reloaded.ExportDefinition().Constraints, 1)
+	require.Len(t, schemaDefinitionForTest(t, reloaded).Constraints, 1)
 	for _, value := range []string{"duplicate", "distinct"} {
 		_, found, exists, complete, lookupErr := reloaded.LookupUniqueConstraintValue(context.Background(), "Item", "code", value)
 		require.NoError(t, lookupErr)
@@ -107,7 +107,7 @@ func TestUniquePreparationCancellationPreservesPublishedCaches(t *testing.T) {
 	engine := newIsolatedBadgerEngine(t)
 	target := NewNamespacedEngine(engine, "test")
 	for _, id := range []NodeID{"a", "b"} {
-		_, err := target.CreateNode(&Node{ID: id, Labels: []string{"Item"}, Properties: map[string]any{"code": string(id)}})
+		_, err := target.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Item"}, Properties: map[string]any{"code": string(id)}})
 		require.NoError(t, err)
 	}
 	schema := target.GetSchema()
@@ -159,7 +159,7 @@ func TestApplyUniqueValueCancellationKeepsCurrentClaim(t *testing.T) {
 func TestRefreshSelectedUniqueConstraintsDeduplicatesAdmission(t *testing.T) {
 	engine := newIsolatedBadgerEngine(t)
 	target := NewNamespacedEngine(engine, "test")
-	_, err := target.CreateNode(&Node{ID: "a", Labels: []string{"Item"}, Properties: map[string]any{"code": "a"}})
+	_, err := target.CreateNode(t.Context(), &Node{ID: "a", Labels: []string{"Item"}, Properties: map[string]any{"code": "a"}})
 	require.NoError(t, err)
 	schema := target.GetSchema()
 	require.NoError(t, schema.AddUniqueConstraint("unique_code", "Item", "code"))
@@ -177,7 +177,7 @@ func TestRefreshSelectedUniqueConstraintsDeduplicatesAdmission(t *testing.T) {
 func TestRefreshUniqueConstraintsRejectsReplacedSelection(t *testing.T) {
 	engine := newIsolatedBadgerEngine(t)
 	target := NewNamespacedEngine(engine, "test")
-	_, err := target.CreateNode(&Node{ID: "a", Labels: []string{"Item"}, Properties: map[string]any{"code": "a"}})
+	_, err := target.CreateNode(t.Context(), &Node{ID: "a", Labels: []string{"Item"}, Properties: map[string]any{"code": "a"}})
 	require.NoError(t, err)
 	schema := target.GetSchema()
 	require.NoError(t, schema.AddUniqueConstraint("old_code", "Item", "code"))

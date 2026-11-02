@@ -628,7 +628,7 @@ func (e *StorageExecutor) dropIndexByName(name string, ifExists bool) error {
 	// Tear down the matching in-memory vector data after the schema entry
 	// is gone so concurrent reads can't see a half-dropped index.
 	if droppedVectorIndex != nil {
-		if err := e.afterCommit(context.Background(), func() error {
+		if err := e.afterCommit(context.Background(), func(context.Context) error {
 			if svc := e.search(); svc != nil && droppedVectorIndex.Property != "" {
 				svc.RemovePropertyVectorIndex(droppedVectorIndex.Property)
 			}

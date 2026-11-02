@@ -95,7 +95,7 @@ func (e *StorageExecutor) isDeleteStreamingEligible(matchSegment, deleteVars str
 	return cyphertext.IsIdentifier(deleteVars)
 }
 
-func (e *StorageExecutor) normalizeSetMatchRowsToNodes(matchResult *ExecuteResult, store storage.Engine) {
+func (e *StorageExecutor) normalizeSetMatchRowsToNodes(ctx context.Context, matchResult *ExecuteResult, store storage.Engine) {
 	if matchResult == nil {
 		return
 	}
@@ -114,7 +114,7 @@ func (e *StorageExecutor) normalizeSetMatchRowsToNodes(matchResult *ExecuteResul
 			if !ok || nodeID == "" {
 				continue
 			}
-			node, err := e.getQueryNode(store, storage.NodeID(nodeID))
+			node, err := e.getQueryNode(ctx, store, storage.NodeID(nodeID))
 			if err != nil || node == nil {
 				continue
 			}
@@ -123,7 +123,7 @@ func (e *StorageExecutor) normalizeSetMatchRowsToNodes(matchResult *ExecuteResul
 	}
 }
 
-func (e *StorageExecutor) normalizeSetMatchRowsToEdges(matchResult *ExecuteResult, store storage.Engine) {
+func (e *StorageExecutor) normalizeSetMatchRowsToEdges(ctx context.Context, matchResult *ExecuteResult, store storage.Engine) {
 	if matchResult == nil {
 		return
 	}
@@ -142,7 +142,7 @@ func (e *StorageExecutor) normalizeSetMatchRowsToEdges(matchResult *ExecuteResul
 			if !ok || edgeID == "" {
 				continue
 			}
-			edge, err := store.GetEdge(storage.EdgeID(edgeID))
+			edge, err := store.GetEdge(ctx, storage.EdgeID(edgeID))
 			if err != nil || edge == nil {
 				continue
 			}
@@ -678,7 +678,7 @@ func validatePolicyOnLabelChange(ctx context.Context, store storage.Engine, node
 	// Check outgoing edges (node is the source).
 	outgoing, _ := store.GetOutgoingEdges(ctx, node.ID)
 	for _, edge := range outgoing {
-		targetNode, err := store.GetNode(storage.NodeID(edge.EndNode))
+		targetNode, err := store.GetNode(ctx, storage.NodeID(edge.EndNode))
 		if err != nil || targetNode == nil {
 			continue
 		}
@@ -690,7 +690,7 @@ func validatePolicyOnLabelChange(ctx context.Context, store storage.Engine, node
 	// Check incoming edges (node is the target).
 	incoming, _ := store.GetIncomingEdges(ctx, node.ID)
 	for _, edge := range incoming {
-		sourceNode, err := store.GetNode(storage.NodeID(edge.StartNode))
+		sourceNode, err := store.GetNode(ctx, storage.NodeID(edge.StartNode))
 		if err != nil || sourceNode == nil {
 			continue
 		}

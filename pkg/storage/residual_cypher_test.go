@@ -145,17 +145,17 @@ func TestResidualPrefixDropDurableFence(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = b.Close() })
 	for _, id := range []storage.NodeID{"victim:a", "victim:b"} {
-		_, err = b.CreateNode(&storage.Node{ID: id, Labels: []string{"Owned"}, Properties: map[string]any{"v": int64(1)}})
+		_, err = b.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"Owned"}, Properties: map[string]any{"v": int64(1)}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, b.CreateEdge(&storage.Edge{ID: "victim:e", StartNode: "victim:a", EndNode: "victim:b", Type: "OWNED"}))
+	require.NoError(t, b.CreateEdge(t.Context(), &storage.Edge{ID: "victim:e", StartNode: "victim:a", EndNode: "victim:b", Type: "OWNED"}))
 	reader := cypher.NewStorageExecutor(storage.NewNamespacedEngine(b, "victim"), cypher.QueryCachePolicy{MaxEntries: 0})
 	const query = "MATCH (n:Owned) RETURN n.v"
 	_, err = reader.Execute(context.Background(), query, nil)
 	require.NoError(t, err)
-	_, err = b.GetStoredNode("victim:a")
+	_, err = b.GetStoredNode(t.Context(), "victim:a")
 	require.NoError(t, err)
-	_, err = b.GetStoredEdge("victim:e")
+	_, err = b.GetStoredEdge(t.Context(), "victim:e")
 	require.NoError(t, err)
 	observed, nodeCached, edgeCached := false, false, false
 	var duringReadErr error

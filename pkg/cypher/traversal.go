@@ -136,9 +136,9 @@ func (e *StorageExecutor) traversalEdges(ctx *TraversalContext, nodeID storage.N
 		var answered bool
 		var err error
 		if outgoing {
-			edges, answered, err = reader.OutgoingEdgeHeaders(nodeID)
+			edges, answered, err = reader.OutgoingEdgeHeaders(ctx.cancelCtx, nodeID)
 		} else {
-			edges, answered, err = reader.IncomingEdgeHeaders(nodeID)
+			edges, answered, err = reader.IncomingEdgeHeaders(ctx.cancelCtx, nodeID)
 		}
 		if err != nil {
 			recordExpressionFailure(ctx.cancelCtx, err)
@@ -461,7 +461,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 			rows := make([]traversalOptRow, 0, len(paths))
 			for _, path := range paths {
 				pathContext := e.buildPathContext(path, matches)
-				rows = append(rows, traversalOptRow{values: e.pathContextValues(pathContext)})
+				rows = append(rows, traversalOptRow{values: e.pathContextValues(ctx, pathContext)})
 			}
 			aggregated, err := e.aggregateTraversalOptionalRows(ctx, rows, returnItems)
 			if err != nil {
@@ -1297,7 +1297,7 @@ func (e *StorageExecutor) relationshipTypeSeedNodes(ctx context.Context, match *
 			return
 		}
 		seen[id] = true
-		if node, getErr := e.newRelationshipEndpointReader(store).readRetained(id, nil); getErr == nil && node != nil {
+		if node, getErr := e.newRelationshipEndpointReader(store).readRetained(ctx, id, nil); getErr == nil && node != nil {
 			nodes = append(nodes, node)
 		}
 	}
@@ -1786,7 +1786,7 @@ func (e *StorageExecutor) loadTraversalEndpointNode(ctx *TraversalContext, nextN
 			properties = []string{}
 		}
 		var err error
-		nextNode, err = e.newRelationshipEndpointReader(e.storage).readRetained(nextNodeID, properties)
+		nextNode, err = e.newRelationshipEndpointReader(e.storage).readRetained(ctx.cancelCtx, nextNodeID, properties)
 		if err != nil || nextNode == nil {
 			return nil, false
 		}
@@ -1986,7 +1986,7 @@ type PathContext struct {
 
 // pathContextValues returns the path's variables as row values: nodes and
 // relationships as themselves, named paths as the pipeline's path maps.
-func (e *StorageExecutor) pathContextValues(pathCtx PathContext) map[string]interface{} {
+func (e *StorageExecutor) pathContextValues(ctx context.Context, pathCtx PathContext) map[string]interface{} {
 	values := make(map[string]interface{}, len(pathCtx.nodes)+len(pathCtx.rels)+len(pathCtx.paths))
 	for name, node := range pathCtx.nodes {
 		if node != nil {
@@ -2000,7 +2000,7 @@ func (e *StorageExecutor) pathContextValues(pathCtx PathContext) map[string]inte
 	}
 	for name, path := range pathCtx.paths {
 		if path != nil {
-			values[name] = e.pathContextRowValue(path)
+			values[name] = e.pathContextRowValue(ctx, path)
 		}
 	}
 	return values
@@ -2041,11 +2041,11 @@ func pathContextEntryValue(path *PathResult) interface{} {
 // pathContextRowValue is a path context entry's value for the row
 // evaluator: a variable-length relationship variable is its list of
 // relationships, a named path the pipeline's path map (#882).
-func (e *StorageExecutor) pathContextRowValue(path *PathResult) interface{} {
+func (e *StorageExecutor) pathContextRowValue(ctx context.Context, path *PathResult) interface{} {
 	if relationshipOnlyPath(path) {
 		return relationshipListValue(path.Relationships)
 	}
-	return e.pathToMap(*path)
+	return e.pathToMapContext(ctx, *path)
 }
 
 // buildPathContext creates a context for evaluating expressions over a path
@@ -2131,8 +2131,8 @@ func (e *StorageExecutor) buildPathContext(path PathResult, match *TraversalMatc
 }
 
 // getRelType gets the type of a relationship - used for type(r) function
-func (e *StorageExecutor) getRelType(relID storage.EdgeID) string {
-	edge, err := e.storage.GetEdge(relID)
+func (e *StorageExecutor) getRelType(ctx context.Context, relID storage.EdgeID) string {
+	edge, err := e.storage.GetEdge(ctx, relID)
 	if err != nil || edge == nil {
 		return ""
 	}
@@ -2165,7 +2165,7 @@ func (e *StorageExecutor) filterPathsByWhere(ctx context.Context, paths []PathRe
 				}
 			}
 		}
-		values := e.pathContextValues(context)
+		values := e.pathContextValues(ctx, context)
 		bindParameterRow(ctx, values)
 		if where.holds(e, ctx, values) {
 			filtered = append(filtered, path)
@@ -2177,7 +2177,7 @@ func (e *StorageExecutor) filterPathsByWhere(ctx context.Context, paths []PathRe
 // evaluateWhereOnPath evaluates a WHERE condition against a path context.
 // Handles conditions like: i.name = 'value', e.score < 90, etc.
 func (e *StorageExecutor) evaluateWhereOnPath(ctx context.Context, whereClause string, pathCtx PathContext) bool {
-	values := e.pathContextValues(pathCtx)
+	values := e.pathContextValues(ctx, pathCtx)
 	bindParameterRow(ctx, values)
 	return e.evaluateRowPredicate(ctx, strings.TrimSpace(whereClause), values)
 }

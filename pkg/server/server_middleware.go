@@ -145,7 +145,7 @@ func (s *Server) handleBasicAuth(authHeader string, r *http.Request) (*auth.Toke
 	username, password := parts[0], parts[1]
 
 	// Authenticate and get token
-	tokenResp, user, err := s.auth.Authenticate(username, password, getClientIP(r), r.UserAgent())
+	tokenResp, user, err := s.auth.Authenticate(r.Context(), username, password, getClientIP(r), r.UserAgent())
 	if err != nil {
 		return nil, nil, err
 	}

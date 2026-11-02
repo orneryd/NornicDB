@@ -241,7 +241,7 @@ func TestMigrationV2ToV3PreservesLegacyPolicyMetadata(t *testing.T) {
 		}
 	})
 	node := &Node{ID: "test:legacy", Labels: []string{"Person"}}
-	_, err = engine.CreateNode(node)
+	_, err = engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	catalog, err := engine.GetIndexEntryCatalog(string(node.ID))
 	require.NoError(t, err)
@@ -311,11 +311,11 @@ func TestMigrationV3LegacyRelationshipHeadCatalogCollision(t *testing.T) {
 	start := NodeID("nornic:007a09cd-ab24-4fbf-a307-07cb74ed2469")
 	end := NodeID("nornic:f2e09b17-6bc2-4f12-ac71-85ae3b346949")
 	for _, id := range []NodeID{start, end} {
-		_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"Room"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Room"}})
 		require.NoError(t, err)
 	}
 	edge := &Edge{ID: "nornic:legacy-edge", StartNode: start, EndNode: end, Type: "in_room"}
-	require.NoError(t, engine.CreateEdge(edge))
+	require.NoError(t, engine.CreateEdge(t.Context(), edge))
 	legacyKey := append([]byte{0x12}, []byte(string(start)+"\x00"+string(end)+"\x00"+edge.Type)...)
 	require.NoError(t, engine.db.Update(func(txn *badger.Txn) error {
 		return txn.Set(legacyKey, []byte(edge.ID))
@@ -331,7 +331,7 @@ func TestMigrationV3LegacyRelationshipHeadCatalogCollision(t *testing.T) {
 	version, err := engine.readSchemaVersion()
 	require.NoError(t, err)
 	require.Equal(t, storageVersionCurrent, version)
-	got, err := engine.GetEdge(edge.ID)
+	got, err := engine.GetEdge(t.Context(), edge.ID)
 	require.NoError(t, err)
 	require.Equal(t, edge.ID, got.ID)
 	catalog, err := engine.GetIndexEntryCatalog(string(edge.ID))
@@ -365,7 +365,7 @@ func TestMigrationV2ToV3MakesLabelAndTypeKeysExactCase(t *testing.T) {
 		{ID: lower, Labels: []string{"person"}},
 		{ID: both, Labels: []string{"Person", "Other"}},
 	} {
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 	for _, edge := range []*Edge{
@@ -373,7 +373,7 @@ func TestMigrationV2ToV3MakesLabelAndTypeKeysExactCase(t *testing.T) {
 		{ID: "case:knows", StartNode: upper, EndNode: lower, Type: "knows"},
 		{ID: "case:KNOWS2", StartNode: both, EndNode: lower, Type: "KNOWS"},
 	} {
-		require.NoError(t, engine.CreateEdge(edge))
+		require.NoError(t, engine.CreateEdge(t.Context(), edge))
 	}
 	// A deindexed node and relationship: their tombstones must follow the
 	// new keys.
@@ -381,9 +381,9 @@ func TestMigrationV2ToV3MakesLabelAndTypeKeysExactCase(t *testing.T) {
 		catalog, err := engine.GetIndexEntryCatalog(id)
 		require.NoError(t, err)
 		require.NotNil(t, catalog)
-		require.NoError(t, engine.SetIndexTombstones(catalog.IndexKeys, true))
+		require.NoError(t, engine.SetIndexTombstones(context.Background(), catalog.IndexKeys, true))
 		catalog.Deindexed = true
-		require.NoError(t, engine.PutIndexEntryCatalog(id, catalog))
+		require.NoError(t, engine.PutIndexEntryCatalog(context.Background(), id, catalog))
 	}
 	exactLabelKeys := keysUnder(t, engine, prefixLabelIndex)
 	exactTypeKeys := keysUnder(t, engine, prefixEdgeTypeIndex)
@@ -453,22 +453,26 @@ func TestMigrationV2ToV3MakesLabelAndTypeKeysExactCase(t *testing.T) {
 	require.Empty(t, nodes)
 
 	for label, want := range map[string]int64{"Person": 2, "person": 1, "PERSON": 0, "Other": 1} {
-		count, err := engine.NodeCountByLabel(label)
+		count, err := engine.NodeCountByLabel(t.Context(), label)
 		require.NoError(t, err)
 		require.Equal(t, want, count, label)
 	}
 	for edgeType, want := range map[string]int64{"KNOWS": 2, "knows": 1, "Knows": 0} {
-		count, err := engine.EdgeCountByType(edgeType)
+		count, err := engine.EdgeCountByType(context.Background(), edgeType)
 		require.NoError(t, err)
 		require.Equal(t, want, count, edgeType)
 	}
-	edge := engine.GetEdgeBetween(upper, lower, "knows")
+	edge, err := engine.GetEdgeBetween(t.Context(), upper, lower, "knows")
+	require.NoError(t, err)
 	require.NotNil(t, edge)
 	require.Equal(t, EdgeID("case:knows"), edge.ID)
-	edge = engine.GetEdgeBetween(upper, lower, "KNOWS")
+	edge, err = engine.GetEdgeBetween(t.Context(), upper, lower, "KNOWS")
+	require.NoError(t, err)
 	require.NotNil(t, edge)
 	require.Equal(t, EdgeID("case:KNOWS"), edge.ID)
-	require.Nil(t, engine.GetEdgeBetween(upper, lower, "Knows"))
+	edge, err = engine.GetEdgeBetween(t.Context(), upper, lower, "Knows")
+	require.NoError(t, err)
+	require.Nil(t, edge)
 	edges, err := engine.GetEdgesByType(context.Background(), "knows")
 	require.NoError(t, err)
 	require.Len(t, edges, 1)

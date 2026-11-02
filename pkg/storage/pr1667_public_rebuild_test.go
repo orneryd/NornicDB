@@ -22,7 +22,7 @@ func TestPR1667PublicReadsDuringLabelRebuild(t *testing.T) {
 	require.NoError(t, err)
 	for _, namespace := range []string{"alpha", "beta"} {
 		for i := 0; i < 3; i++ {
-			_, err := initial.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("%s:n%d", namespace, i)), Labels: []string{"Repair"}, Properties: map[string]any{"value": int64(i)}})
+			_, err := initial.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("%s:n%d", namespace, i)), Labels: []string{"Repair"}, Properties: map[string]any{"value": int64(i)}})
 			require.NoError(t, err)
 		}
 	}
@@ -89,7 +89,7 @@ func TestPR1667PublicReadsDuringLabelRebuild(t *testing.T) {
 	require.ErrorIs(t, engine.StreamNodesByLabelProjectedInScope(canceled, "alpha:", "absent", nil, func(*storage.Node) error { t.Error("canceled callback ran"); return nil }), context.Canceled)
 	// A transaction pinned before readiness cannot borrow a later view's
 	// positive readiness proof after the rebuild publishes.
-	pinned, err := engine.BeginTransaction()
+	pinned, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = pinned.Rollback() })
 	require.NoError(t, pinned.SetNamespace("alpha"))

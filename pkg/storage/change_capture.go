@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"reflect"
 	"sort"
@@ -286,13 +287,13 @@ type txChangeCapture struct {
 // a capturing database, before any of the commit's writes and locks (so a
 // large commit's publication locks are always taken after it), and
 // allocates the commit's place in the change order.
-func (tx *BadgerTransaction) beginChangeCaptureLocked() error {
+func (tx *BadgerTransaction) beginChangeCaptureLocked(ctx context.Context) error {
 	mode := tx.engine.ChangeCapture(tx.namespace)
 	if mode == ChangeCaptureOff {
 		return nil
 	}
 	log := tx.engine.changeLogFor(tx.namespace)
-	if err := log.mu.LockContext(tx.commitCtx); err != nil {
+	if err := log.mu.LockContext(ctx); err != nil {
 		return err
 	}
 	if !log.loaded {
@@ -353,7 +354,7 @@ func (tx *BadgerTransaction) writeChangeEventsLocked(ctx context.Context, w *bat
 		}
 		key := changeEventKey(tx.namespace, event.CommitSeq, event.Seq)
 		capture.wrote = true
-		return w.write(func(txn *badger.Txn) error { return txn.Set(key, value) })
+		return w.write(ctx, func(txn *badger.Txn) error { return txn.Set(key, value) })
 	}
 	labels := newChangeEndpointLabels(b, states)
 	keys := changeKeys{schema: b.GetSchemaForNamespace(tx.namespace)}
@@ -364,7 +365,7 @@ func (tx *BadgerTransaction) writeChangeEventsLocked(ctx context.Context, w *bat
 			return nil
 		}
 		seenEdges[id] = true
-		event, ok := edgeChangeEvent(base, before, after, labels)
+		event, ok := edgeChangeEvent(base, before, after)
 		if !ok {
 			return nil
 		}
@@ -377,12 +378,26 @@ func (tx *BadgerTransaction) writeChangeEventsLocked(ctx context.Context, w *bat
 		if err != nil {
 			return err
 		}
-		startKeys, startErr := keys.ofNode(ctx, labels.node(current.StartNode))
+		startNode, err := labels.node(ctx, current.StartNode)
+		if err != nil {
+			return err
+		}
+		endNode, err := labels.node(ctx, current.EndNode)
+		if err != nil {
+			return err
+		}
+		if startNode != nil {
+			event.StartLabels = copyStrings(startNode.Labels)
+		}
+		if endNode != nil {
+			event.EndLabels = copyStrings(endNode.Labels)
+		}
+		startKeys, startErr := keys.ofNode(ctx, startNode)
 		if startErr != nil {
 			return startErr
 		}
 		event.StartKeys = startKeys
-		endKeys, endErr := keys.ofNode(ctx, labels.node(current.EndNode))
+		endKeys, endErr := keys.ofNode(ctx, endNode)
 		if endErr != nil {
 			return endErr
 		}
@@ -405,7 +420,7 @@ func (tx *BadgerTransaction) writeChangeEventsLocked(ctx context.Context, w *bat
 						continue
 					}
 					var edge *Edge
-					err := w.write(func(txn *badger.Txn) error {
+					err := w.write(ctx, func(txn *badger.Txn) error {
 						var loadErr error
 						edge, loadErr = b.loadEdgeForAdjacencyTombstoneInTxn(txn, edgeID)
 						if loadErr == ErrNotFound {
@@ -488,7 +503,7 @@ func nodeChangeEvent(base ChangeEvent, before, after *Node) (ChangeEvent, bool) 
 
 // edgeChangeEvent is a relationship's change from before to after; false
 // when the transaction left it as it was, or created and deleted it.
-func edgeChangeEvent(base ChangeEvent, before, after *Edge, labels *changeEndpointLabels) (ChangeEvent, bool) {
+func edgeChangeEvent(base ChangeEvent, before, after *Edge) (ChangeEvent, bool) {
 	event := base
 	current := after
 	switch {
@@ -516,7 +531,6 @@ func edgeChangeEvent(base ChangeEvent, before, after *Edge, labels *changeEndpoi
 	}
 	event.ID, event.Type = localEntityID(string(current.ID)), current.Type
 	event.Start, event.End = localEntityID(string(current.StartNode)), localEntityID(string(current.EndNode))
-	event.StartLabels, event.EndLabels = labels.of(current.StartNode), labels.of(current.EndNode)
 	return event, true
 }
 
@@ -534,34 +548,30 @@ func newChangeEndpointLabels(engine *BadgerEngine, states commitStates) *changeE
 	return &changeEndpointLabels{engine: engine, states: states, read: make(map[NodeID]*Node)}
 }
 
-func (l *changeEndpointLabels) of(id NodeID) []string {
-	if node := l.node(id); node != nil {
-		return copyStrings(node.Labels)
-	}
-	return nil
-}
-
 // node is the endpoint's state: at the end of the transaction when the
 // transaction touched it (before its delete when it deleted it), else as
 // stored; nil when there is none.
-func (l *changeEndpointLabels) node(id NodeID) *Node {
+func (l *changeEndpointLabels) node(ctx context.Context, id NodeID) (*Node, error) {
 	if node, touched := l.states.finalNodes[id]; touched {
 		if node == nil {
 			node = l.states.committedNodes[id]
 		}
 		if node != nil {
-			return node
+			return node, nil
 		}
 	}
 	if node, ok := l.read[id]; ok {
-		return node
+		return node, nil
 	}
-	node, err := l.engine.GetNodeWithoutEmbeddings(id)
+	node, err := l.engine.GetNodeWithoutEmbeddings(ctx, id)
 	if err != nil {
+		if !errors.Is(err, ErrNotFound) {
+			return nil, err
+		}
 		node = nil
 	}
 	l.read[id] = node
-	return node
+	return node, nil
 }
 
 // changeKeys reads an entity's key-constraint property values from its
@@ -730,7 +740,15 @@ func localEntityID(id string) string {
 // PruneChangeEvents deletes a database's events of transactions committed
 // before cutoff, returning how many it deleted. The last transaction's
 // events are always kept: they are where db.cdc.current() stands.
-func (b *BadgerEngine) PruneChangeEvents(namespace string, cutoff time.Time) (int, error) {
+//
+// ctx is the retention job's admitted lifetime, not an initiating request: it
+// bounds the scan and admission of every delete batch. A batch that was
+// admitted completes in the store; a canceled ctx stops before the next batch
+// and returns the count actually deleted.
+func (b *BadgerEngine) PruneChangeEvents(ctx context.Context, namespace string, cutoff time.Time) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	prefix := changeEventPrefix(namespace)
 	_, last, err := b.ChangeBounds(namespace)
 	if err != nil {
@@ -743,6 +761,9 @@ func (b *BadgerEngine) PruneChangeEvents(namespace string, cutoff time.Time) (in
 		it := txn.NewIterator(opts)
 		defer it.Close()
 		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			var event ChangeEvent
 			if err := it.Item().Value(func(value []byte) error { return decodeValue(value, &event) }); err != nil {
 				return err
@@ -759,11 +780,7 @@ func (b *BadgerEngine) PruneChangeEvents(namespace string, cutoff time.Time) (in
 	}
 	for start := 0; start < len(expired); start += 1000 {
 		end := min(start+1000, len(expired))
-		// Exported context-free pruning entry: the batch writes under this
-		// entry's own explicit unbounded lifetime. Preserving worker
-		// cancellation here needs the context-first public contract that this
-		// method does not have yet.
-		if err := b.withUpdate(context.Background(), updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+		if err := b.withUpdate(ctx, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 			for _, key := range expired[start:end] {
 				if err := txn.Delete(key); err != nil {
 					return err
@@ -835,17 +852,18 @@ func (j *changeRetentionJob) loop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			j.RunOnce(time.Now())
+			j.RunOnce(ctx, time.Now())
 		}
 	}
 }
 
 // RunOnce deletes the expired events of every capturing database.
-func (j *changeRetentionJob) RunOnce(now time.Time) {
+// ctx is the run's admitted lifetime.
+func (j *changeRetentionJob) RunOnce(ctx context.Context, now time.Time) {
 	cutoff := now.Add(-j.engine.changeRetention())
 	j.engine.changes.modes.Range(func(key, _ any) bool {
 		namespace := key.(string)
-		if n, err := j.engine.PruneChangeEvents(namespace, cutoff); err != nil {
+		if n, err := j.engine.PruneChangeEvents(ctx, namespace, cutoff); err != nil {
 			j.engine.log.Warn("change event retention failed", "component", "cdc", "database", namespace, "error", err)
 		} else if n > 0 {
 			j.engine.log.Debug("change events expired", "component", "cdc", "database", namespace, "events", n)

@@ -3,7 +3,6 @@ package storage
 import (
 	"context"
 	"strings"
-	"sync"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -31,14 +30,15 @@ type readViewOptions struct {
 }
 
 type badgerReadView struct {
-	scope     string
+	scope  string
+	txn    *badger.Txn
+	db     *managedBadgerDB
+	engine *BadgerEngine
+	readTs uint64
+	mu     contextRWMutex
+	// Keep the small state fields together after aligned admission state.
 	scopeKind readScopeKind
-	txn       *badger.Txn
-	db        *managedBadgerDB
-	engine    *BadgerEngine
-	readTs    uint64
 	longLived bool
-	mu        sync.Mutex
 	closed    bool
 }
 
@@ -169,16 +169,21 @@ func (v *badgerReadView) Close() {
 
 // Long-lived views hold only the oracle timestamp between scans. Engine Close
 // waits for an active scan, never for the entire build lifetime.
-func (v *badgerReadView) withView(read func(*badger.Txn) error) error {
+func (v *badgerReadView) withView(ctx context.Context, read func(*badger.Txn) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if !v.longLived {
 		return read(v.txn)
 	}
-	v.mu.Lock()
+	if err := v.mu.LockContext(ctx); err != nil {
+		return err
+	}
 	defer v.mu.Unlock()
 	if v.closed {
 		return ErrStorageClosed
 	}
-	if err := v.engine.pendingReadConflict(v.scopeKind, v.scope, nil, nil); err != nil {
+	if err := v.engine.pendingReadConflict(v.scopeKind, v.scope, nil, ctx); err != nil {
 		return err
 	}
 
@@ -205,12 +210,12 @@ func (b *BadgerEngine) withReadView(ctx context.Context, capture func(*WriteBehi
 	if err != nil || view == nil {
 		return err
 	}
-	return view.readAndClose(read)
+	return view.readAndClose(ctx, read)
 }
 
-func (v *badgerReadView) readAndClose(read func(*badger.Txn) error) error {
+func (v *badgerReadView) readAndClose(ctx context.Context, read func(*badger.Txn) error) error {
 	defer v.Close()
-	return recoverBadgerClosedPanic(func() error { return v.withView(read) })
+	return recoverBadgerClosedPanic(func() error { return v.withView(ctx, read) })
 }
 
 // Only materializers opting into current body caches need group validation.
@@ -223,11 +228,11 @@ func (b *BadgerEngine) withCurrentReadView(ctx context.Context, capture func(*Wr
 	}
 	defer view.Close()
 
-	err = recoverBadgerClosedPanic(func() error { return view.withView(read) })
+	err = recoverBadgerClosedPanic(func() error { return view.withView(ctx, read) })
 	if nodeGen != b.nodeCacheGen.current() || edgeGen != b.edgeCacheGen.current() {
 		// Re-evaluate only internal materialization, never a user callback.
 		*opts.current = false
-		return recoverBadgerClosedPanic(func() error { return view.withView(read) })
+		return recoverBadgerClosedPanic(func() error { return view.withView(ctx, read) })
 	}
 	return err
 }

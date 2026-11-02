@@ -62,7 +62,7 @@ func (e *StorageExecutor) openTransaction(ctx context.Context, txEngine Transact
 	if start.schema != nil {
 		tx, err = start.schema.BeginSchemaTransaction(ctx, txEngine.BeginTransaction)
 	} else {
-		tx, err = txEngine.BeginTransaction()
+		tx, err = txEngine.BeginTransaction(ctx)
 	}
 	if err != nil {
 		return nil, bookkeeping, localizedError(begin(err), err)

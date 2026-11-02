@@ -39,7 +39,7 @@ func setupAsyncUnwindServer(t *testing.T) *Server {
 		JWTSecret:       []byte("test-secret-key-for-testing-only-32b"),
 	}, authStorage)
 	require.NoError(t, err)
-	_, _ = authn.CreateUser("admin", "password123", []auth.Role{auth.RoleAdmin})
+	_, _ = authn.CreateUser(context.Background(), "admin", "password123", []auth.Role{auth.RoleAdmin})
 
 	cfg := DefaultConfig()
 	cfg.Port = 0
@@ -66,7 +66,7 @@ func setupAsyncUnwindServerWithDir(t *testing.T, dir string) (*Server, *nornicdb
 		JWTSecret:       []byte("test-secret-key-for-testing-only-32b"),
 	}, authStorage)
 	require.NoError(t, err)
-	_, _ = authn.CreateUser("admin", "password123", []auth.Role{auth.RoleAdmin})
+	_, _ = authn.CreateUser(context.Background(), "admin", "password123", []auth.Role{auth.RoleAdmin})
 
 	cfg := DefaultConfig()
 	cfg.Port = 0

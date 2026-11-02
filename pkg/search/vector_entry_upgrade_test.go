@@ -5,12 +5,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -57,7 +58,7 @@ func TestVectorEntryUpgradeFromRelease143Store(t *testing.T) {
 	assertVectorOwners(t, svc, []vectorOwnerQuery{{axis: 1, owner: "x"}, {axis: 3, owner: "x-chunk-1"}})
 	// Exercise writes made after the upgrade, then reopen the graph and indexes.
 	control := vectorOwnerChunkNode("rollback-control", 2)
-	_, err = engine.CreateNode(control)
+	_, err = engine.CreateNode(t.Context(), control)
 	require.NoError(t, err)
 	require.NoError(t, svc.IndexNode(control))
 	svc.PersistIndexesToDisk()
@@ -70,7 +71,7 @@ func TestVectorEntryUpgradeFromRelease143Store(t *testing.T) {
 	t.Cleanup(func() { _ = svc.Close(); _ = base.Close() })
 	require.Equal(t, 5, svc.EmbeddingCount())
 	assertVectorOwners(t, svc, []vectorOwnerQuery{{axis: 1, owner: "x"}, {axis: 3, owner: "x-chunk-1"}})
-	require.NoError(t, engine.DeleteNode("x"))
+	require.NoError(t, engine.DeleteNode(t.Context(), "x"))
 	require.NoError(t, svc.RemoveNode("x"))
 	assertVectorOwners(t, svc, []vectorOwnerQuery{{axis: 3, owner: "x-chunk-1"}})
 }

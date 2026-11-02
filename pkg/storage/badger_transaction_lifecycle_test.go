@@ -37,7 +37,7 @@ func TestSchemaTransactionLifecycleAndRuntimeSnapshot(t *testing.T) {
 	retainedUnique := committed.uniqueConstraints[nodePropertyKey{label: "Account", property: "retainedUID"}]
 	retainedComposite := committed.compositeIndexes["retained_composite"]
 	retainedRange, _ := committed.GetRangeIndex("retained_range")
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.ErrorContains(t, tx.StageSchemaChanges(), "require a transaction schema view")
 	require.NoError(t, tx.SetNamespace("schema_lifetime"))
@@ -82,33 +82,35 @@ func TestSchemaTransactionLifecycleAndRuntimeSnapshot(t *testing.T) {
 
 func TestSchemaTransactionRejectsAllEntityMutations(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("schema_mutations"))
 	_, err = tx.Schema(OrdinarySchemaChanges)
 	require.NoError(t, err)
-	_, err = tx.CreateNode(&Node{ID: "schema_mutations:node"})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "schema_mutations:node"})
 	require.ErrorContains(t, err, "ForbiddenDueToTransactionType")
 	for _, mutation := range []func() error{
 		func() error {
-			return tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "schema_mutations:node"}, Policy: ClientNodeEdits})
+			return tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "schema_mutations:node"}, Policy: ClientNodeEdits})
 		},
-		func() error { return tx.DeleteGraphNode("schema_mutations:node", CascadeEdges) },
-		func() error { return tx.CreateEdge(&Edge{ID: "schema_mutations:edge"}) },
-		func() error { return tx.BulkCreateEdges([]*Edge{{ID: "schema_mutations:edge"}}) },
-		func() error { return tx.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "schema_mutations:edge"}}) },
-		func() error { return tx.DeleteEdge("schema_mutations:edge") },
+		func() error { return tx.DeleteGraphNode(t.Context(), "schema_mutations:node", CascadeEdges) },
+		func() error { return tx.CreateEdge(t.Context(), &Edge{ID: "schema_mutations:edge"}) },
+		func() error { return tx.BulkCreateEdges(t.Context(), []*Edge{{ID: "schema_mutations:edge"}}) },
+		func() error {
+			return tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "schema_mutations:edge"}})
+		},
+		func() error { return tx.DeleteEdge(t.Context(), "schema_mutations:edge") },
 	} {
 		require.ErrorContains(t, mutation(), "ForbiddenDueToTransactionType")
 	}
 	require.NoError(t, tx.Rollback())
-	_, err = tx.CreateNode(&Node{ID: "schema_mutations:node"})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "schema_mutations:node"})
 	require.Error(t, err)
 	_, err = tx.Schema(OrdinarySchemaChanges)
 	require.Error(t, err)
-	tx, err = engine.BeginTransaction()
+	tx, err = engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	_, err = tx.CreateNode(&Node{ID: "schema_mutations:node"})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "schema_mutations:node"})
 	require.NoError(t, err)
 	_, err = tx.Schema(OrdinarySchemaChanges)
 	require.ErrorContains(t, err, "ForbiddenDueToTransactionType")
@@ -218,7 +220,7 @@ func TestBeginTransaction_WithLifecycleAdmissionDoesNotDeadlock(t *testing.T) {
 	var tx *BadgerTransaction
 	var err error
 	go func() {
-		tx, err = engine.BeginTransaction()
+		tx, err = engine.BeginTransaction(t.Context())
 		if err == nil && tx != nil {
 			err = tx.SetNamespace("test")
 		}
@@ -247,7 +249,7 @@ func TestBeginTransaction_LifecycleAdmissionFailureReturnsError(t *testing.T) {
 	controller := &txLifecycleControllerStub{enabled: true, err: ErrMVCCResourcePressure}
 	engine.SetLifecycleController(controller)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NotNil(t, tx)
 	pinErr := tx.SetNamespace("test")
@@ -261,7 +263,7 @@ func TestTransaction_GracefulSnapshotExpirationCancelsWorkAndReleasesReader(t *t
 	controller := &txLifecycleControllerStub{enabled: true}
 	engine.SetLifecycleController(controller)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NotNil(t, tx)
 	// Pin the transaction so the snapshot reader is registered with the
@@ -272,7 +274,7 @@ func TestTransaction_GracefulSnapshotExpirationCancelsWorkAndReleasesReader(t *t
 	controller.gracefulExpire = true
 	controller.mu.Unlock()
 
-	_, err = tx.GetNode(NodeID("nornic:missing"))
+	_, err = tx.GetNode(t.Context(), NodeID("nornic:missing"))
 	require.ErrorIs(t, err, ErrMVCCSnapshotGracefulCancel)
 	require.Equal(t, TxStatusRolledBack, tx.Status)
 	require.Equal(t, 1, controller.releaseCount)
@@ -284,7 +286,7 @@ func TestTransaction_HardSnapshotExpirationFailsCommitAndReleasesReader(t *testi
 	controller := &txLifecycleControllerStub{enabled: true}
 	engine.SetLifecycleController(controller)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NotNil(t, tx)
 	require.NoError(t, tx.SetNamespace("nornic"))

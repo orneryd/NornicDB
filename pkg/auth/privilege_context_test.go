@@ -47,23 +47,23 @@ func (e *recordScanCancelEngine) GetNodesByLabel(ctx context.Context, label stri
 	return e.Engine.GetNodesByLabel(ctx, label)
 }
 
-func (e *recordScanCancelEngine) CreateNode(node *storage.Node) (storage.NodeID, error) {
+func (e *recordScanCancelEngine) CreateNode(ctx context.Context, node *storage.Node) (storage.NodeID, error) {
 	noteWrite(&e.probe.writes, e.probe.canceled, "create", node.ID)
-	return e.Engine.CreateNode(node)
+	return e.Engine.CreateNode(ctx, node)
 }
 
-func (e *recordScanCancelEngine) DeleteNode(id storage.NodeID) error {
+func (e *recordScanCancelEngine) DeleteNode(ctx context.Context, id storage.NodeID) error {
 	noteWrite(&e.probe.writes, e.probe.canceled, "delete", id)
-	return e.Engine.DeleteNode(id)
+	return e.Engine.DeleteNode(ctx, id)
 }
 
-func (e *recordScanCancelEngine) UpdateNode(request storage.NodeUpdateRequest) error {
+func (e *recordScanCancelEngine) UpdateNode(ctx context.Context, request storage.NodeUpdateRequest) error {
 	id := storage.NodeID("")
 	if request.After != nil {
 		id = request.After.ID
 	}
 	noteWrite(&e.probe.writes, e.probe.canceled, "update", id)
-	return e.Engine.UpdateNode(request)
+	return e.Engine.UpdateNode(ctx, request)
 }
 
 // WithStoreTransaction keeps the decorated engine's real transaction and hands
@@ -109,23 +109,23 @@ func (e *postReadCancelEngine) GetNodesByLabel(ctx context.Context, label string
 	return nodes, err
 }
 
-func (e *postReadCancelEngine) CreateNode(node *storage.Node) (storage.NodeID, error) {
+func (e *postReadCancelEngine) CreateNode(ctx context.Context, node *storage.Node) (storage.NodeID, error) {
 	noteWrite(&e.probe.writes, e.probe.canceled, "create", node.ID)
-	return e.Engine.CreateNode(node)
+	return e.Engine.CreateNode(ctx, node)
 }
 
-func (e *postReadCancelEngine) DeleteNode(id storage.NodeID) error {
+func (e *postReadCancelEngine) DeleteNode(ctx context.Context, id storage.NodeID) error {
 	noteWrite(&e.probe.writes, e.probe.canceled, "delete", id)
-	return e.Engine.DeleteNode(id)
+	return e.Engine.DeleteNode(ctx, id)
 }
 
-func (e *postReadCancelEngine) UpdateNode(request storage.NodeUpdateRequest) error {
+func (e *postReadCancelEngine) UpdateNode(ctx context.Context, request storage.NodeUpdateRequest) error {
 	id := storage.NodeID("")
 	if request.After != nil {
 		id = request.After.ID
 	}
 	noteWrite(&e.probe.writes, e.probe.canceled, "update", id)
-	return e.Engine.UpdateNode(request)
+	return e.Engine.UpdateNode(ctx, request)
 }
 
 // WithStoreTransaction keeps the decorated engine's real transaction and hands
@@ -246,12 +246,12 @@ func TestRoleMutationUsesCallerContextAtRecordScan(t *testing.T) {
 		require.True(t, roles.Exists("renamed"))
 		require.False(t, roles.Exists("ops"))
 		for from, to := range roleSeedRecords {
-			_, err := system.GetNode(to)
+			_, err := system.GetNode(context.Background(), to)
 			require.NoError(t, err, "rename moves %s", from)
-			_, err = system.GetNode(from)
+			_, err = system.GetNode(context.Background(), from)
 			require.ErrorIs(t, err, storage.ErrNotFound, "rename leaves no %s", from)
 		}
-		user, err := system.GetNode("user:worker")
+		user, err := system.GetNode(context.Background(), "user:worker")
 		require.NoError(t, err)
 		require.Equal(t, `["renamed","viewer"]`, user.Properties["roles"])
 	})
@@ -263,10 +263,10 @@ func TestRoleMutationUsesCallerContextAtRecordScan(t *testing.T) {
 		require.NoError(t, roles.DeleteRoleWithStores(ctx, "ops", RoleMutationStores{}))
 		require.False(t, roles.Exists("ops"))
 		for from := range roleSeedRecords {
-			_, err := system.GetNode(from)
+			_, err := system.GetNode(context.Background(), from)
 			require.ErrorIs(t, err, storage.ErrNotFound, "deletion removes %s", from)
 		}
-		user, err := system.GetNode("user:worker")
+		user, err := system.GetNode(context.Background(), "user:worker")
 		require.NoError(t, err)
 		require.Equal(t, `["viewer"]`, user.Properties["roles"], "deletion detaches the role from a shared user record")
 	})

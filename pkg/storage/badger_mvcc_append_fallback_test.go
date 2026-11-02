@@ -31,7 +31,7 @@ func TestBadgerMVCC_AppendAndFallbackVisibility(t *testing.T) {
 	}
 
 	// No primary-key node exists, so this exercises the MVCC-head/version fallback path.
-	latestNode, err := engine.GetNodeLatestVisible(nodeID)
+	latestNode, err := engine.GetNodeLatestVisible(t.Context(), nodeID)
 	if err != nil {
 		t.Fatalf("GetNodeLatestVisible failed: %v", err)
 	}
@@ -39,7 +39,7 @@ func TestBadgerMVCC_AppendAndFallbackVisibility(t *testing.T) {
 		t.Fatalf("unexpected latest node: %#v", latestNode)
 	}
 
-	nodeAtV1, err := engine.GetNodeVisibleAt(nodeID, v1)
+	nodeAtV1, err := engine.GetNodeVisibleAt(t.Context(), nodeID, v1)
 	if err != nil {
 		t.Fatalf("GetNodeVisibleAt(v1) failed: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestBadgerMVCC_AppendAndFallbackVisibility(t *testing.T) {
 	if err := engine.AppendNodeTombstone(nodeID, v2); err != nil {
 		t.Fatalf("AppendNodeTombstone failed: %v", err)
 	}
-	if _, err := engine.GetNodeVisibleAt(nodeID, v2); !errors.Is(err, ErrNotFound) {
+	if _, err := engine.GetNodeVisibleAt(t.Context(), nodeID, v2); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound at tombstone version, got: %v", err)
 	}
 
@@ -66,7 +66,7 @@ func TestBadgerMVCC_AppendAndFallbackVisibility(t *testing.T) {
 		t.Fatalf("AppendEdgeVersion failed: %v", err)
 	}
 
-	latestEdge, err := engine.GetEdgeLatestVisible(edgeID)
+	latestEdge, err := engine.GetEdgeLatestVisible(t.Context(), edgeID)
 	if err != nil {
 		t.Fatalf("GetEdgeLatestVisible failed: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestBadgerMVCC_AppendAndFallbackVisibility(t *testing.T) {
 	if err := engine.AppendEdgeTombstone(edgeID, v2); err != nil {
 		t.Fatalf("AppendEdgeTombstone failed: %v", err)
 	}
-	if _, err := engine.GetEdgeVisibleAt(edgeID, v2); !errors.Is(err, ErrNotFound) {
+	if _, err := engine.GetEdgeVisibleAt(t.Context(), edgeID, v2); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound for tombstoned edge at v2, got: %v", err)
 	}
 }
@@ -99,7 +99,7 @@ func TestBadgerMVCC_RebuildHeads_NilContext(t *testing.T) {
 		t.Fatalf("RebuildMVCCHeads(nil) failed: %v", err)
 	}
 
-	got, err := engine.GetNodeLatestVisible("test:rebuild-node")
+	got, err := engine.GetNodeLatestVisible(t.Context(), "test:rebuild-node")
 	if err != nil {
 		t.Fatalf("GetNodeLatestVisible after rebuild failed: %v", err)
 	}

@@ -133,15 +133,21 @@ persistent indexes, WAL formats or storage versions.
 ## Manual visibility
 
 The optional `storage.ManualSuppressionEngine` capability now requires one method:
-`SetManualSuppression(kind storage.StoredEntityKind, id string, suppressed bool) error`.
+`SetManualSuppression(ctx context.Context, kind storage.StoredEntityKind, id string, suppressed bool) error`.
 Replace node calls with `storage.StoredEntityNodeKind` and relationship calls with
 `storage.StoredEntityEdgeKind`, converting typed IDs to `string` explicitly.
 The separate `SetNodeManuallySuppressed` and `SetEdgeManuallySuppressed` methods
 are removed; custom capability implementations must migrate too.
 
 ```go
-err := visibility.SetManualSuppression(storage.StoredEntityNodeKind, string(nodeID), true)
+err := visibility.SetManualSuppression(ctx, storage.StoredEntityNodeKind, string(nodeID), true)
 ```
+
+`ctx` is the lifetime that executes the change: the `kp.suppress` statement for
+an autocommit call, or the transaction's admitted commit when the change is
+deferred to COMMIT. It owns admission, the buffered-order drain and the stored
+body read; an admitted suppression writes its flag and publication in the store,
+so a canceled context returns its own error and changes nothing.
 
 Namespace wrappers preserve their existing ID qualification rules. WAL wrappers
 forward the visibility change without adding a graph-write log entry. Persisted

@@ -134,10 +134,10 @@ func TestCountFromStoreSeesTransactionWrites(t *testing.T) {
 	require.NoError(t, err)
 	committed := exec.txContext.storageWrapper
 	require.NotNil(t, committed)
-	nodesBefore, err := committed.NodeCount()
+	nodesBefore, err := committed.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, int64(6), nodesBefore)
-	edgesBefore, err := committed.EdgeCount()
+	edgesBefore, err := committed.EdgeCount(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, int64(9), edgesBefore)
 	_, err = exec.Execute(ctx, "MATCH (a:User {id: 1}), (x:Other {id: 4}) CREATE (a)-[:Friend]->(x), (x)-[:Friend]->(a), (:User {id: 7})-[:Friend]->(:Other {id: 8})", nil)
@@ -155,10 +155,10 @@ func TestCountFromStoreSeesTransactionWrites(t *testing.T) {
 		require.Equal(t, [][]interface{}{{want}}, result.Rows, query)
 	}
 	wrapper := exec.txContext.storageWrapper
-	nodes, err := wrapper.NodeCount()
+	nodes, err := wrapper.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, int64(8), nodes)
-	edges, err := wrapper.EdgeCount()
+	edges, err := wrapper.EdgeCount(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, int64(12), edges)
 }
@@ -170,15 +170,17 @@ type failingCountEngine struct {
 
 var errCountStore = errors.New("counter unavailable")
 
-func (f failingCountEngine) EdgeCountByStartLabel(string, string) (int64, error) {
+func (f failingCountEngine) EdgeCountByStartLabel(ctx context.Context, _ string, _ string) (int64, error) {
 	return 0, errCountStore
 }
 
-func (f failingCountEngine) EdgeCountByEndLabel(string, string) (int64, error) {
+func (f failingCountEngine) EdgeCountByEndLabel(ctx context.Context, _ string, _ string) (int64, error) {
 	return 0, errCountStore
 }
 
-func (f failingCountEngine) NodeCountByLabel(string) (int64, error) { return 0, errCountStore }
+func (f failingCountEngine) NodeCountByLabel(context.Context, string) (int64, error) {
+	return 0, errCountStore
+}
 
 func (f failingCountEngine) AllEdges(ctx context.Context) ([]*storage.Edge, error) {
 	if f.nilEdges {

@@ -18,12 +18,12 @@ func TestMultiRegionApplyPreservesOuterReadinessBeforeDelegation(t *testing.T) {
 				r.work.CloseAdmission()
 			}
 			r.started.Store(test.started)
-			require.ErrorIs(t, r.Apply(&Command{}, time.Second), test.want)
+			require.ErrorIs(t, r.Apply(t.Context(), &Command{}, time.Second), test.want)
 		})
 	}
 	local := &RaftReplicator{}
 	local.work.CloseAdmission()
 	r := &MultiRegionReplicator{localRaft: local}
 	r.started.Store(true)
-	require.ErrorIs(t, r.Apply(&Command{}, time.Second), ErrClosed, "ready outer mode delegates to actual local Raft")
+	require.ErrorIs(t, r.Apply(t.Context(), &Command{}, time.Second), ErrClosed, "ready outer mode delegates to actual local Raft")
 }

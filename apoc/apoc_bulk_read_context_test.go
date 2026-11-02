@@ -10,7 +10,6 @@ package apoc
 
 import (
 	"context"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -21,6 +20,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/apoc/registry"
 	apocstorage "github.com/orneryd/nornicdb/apoc/storage"
@@ -46,14 +47,14 @@ var apocBulkReadContextCallers = map[string][]string{
 	"warmup": {"Indexes", "Nodes", "Properties", "Progress", "Relationships", "Run", "RunWithParams"},
 }
 
-// apocBulkReadContextFreeCallers are the APOC helpers that reach the
+// apocBulkReadProcedureCallers are the APOC helpers that reach the
 // whole-graph read with no statement path: apoc/plugin_exports.go classifies
 // each name as procedure-only, and docs/features/apoc-procedure-capabilities.md
 // records that the bundled runtime and plugin implement none of those
 // procedures. Their only entry is a Go caller (apoc.Call or a direct call),
 // which carries no caller context, so their read states its background
 // lifetime where it reads instead of taking a context nothing could supply.
-var apocBulkReadContextFreeCallers = map[string][]string{
+var apocBulkReadProcedureCallers = map[string][]string{
 	"meta":   {"Graph", "Stats"},
 	"schema": {"Nodes", "Relationships"},
 	"stats":  {"Degrees"},
@@ -369,7 +370,7 @@ func apocPinnedSource() map[string][]string {
 	for directory, functions := range apocBulkReadContextCallers {
 		pinned[directory] = append(pinned[directory], functions...)
 	}
-	for directory, functions := range apocBulkReadContextFreeCallers {
+	for directory, functions := range apocBulkReadProcedureCallers {
 		pinned[directory] = append(pinned[directory], functions...)
 	}
 	for directory, functions := range apocBulkReadGoOnlyCallers {
@@ -422,10 +423,9 @@ func TestAPOCBulkReadPopulationCoversEveryHelper(t *testing.T) {
 	require.NotEmpty(t, inventory, "the extractor must find the whole-graph helpers")
 }
 
-// TestAPOCStatementHelpersTakeCallerContext checks the extracted population
-// against the registered handlers: every helper reachable from a statement
-// declares the caller's context first, and every helper without a statement
-// path reads on a stated background lifetime instead.
+// TestAPOCStatementHelpersTakeCallerContext checks both statement handlers and
+// native Go helpers for caller-owned contexts. Procedure classification and
+// bundled-runtime capability gaps remain separate from the Go API contract.
 func TestAPOCStatementHelpersTakeCallerContext(t *testing.T) {
 	inventory, sources := apocSourceInventory(t)
 	require.Equal(t, apocPinnedSource(), inventory)
@@ -466,38 +466,16 @@ func TestAPOCStatementHelpersTakeCallerContext(t *testing.T) {
 		}
 	}
 
-	pinnedContextFree := map[string]bool{}
-	for directory, functions := range apocBulkReadContextFreeCallers {
-		for _, function := range functions {
-			pinnedContextFree[directory+"."+function] = true
-		}
-	}
-	for directory, functions := range apocBulkReadContextFreeCallers {
+	for directory, functions := range apocBulkReadProcedureCallers {
 		for _, function := range functions {
 			helper, found := handlers[directory][function]
 			require.True(t, found, "%s.%s must be registered", directory, function)
-			require.NotNil(t, helper.handler.Signature(), helper.name)
-			require.True(t, isProcedureName(helper.name),
-				"%s must be procedure-classified to have no statement path", helper.name)
-			require.NotContains(t, PluginFunctionNames(), helper.name,
-				"procedure-classified %s must not be a scalar plugin export", helper.name)
-			require.Contains(t, apocProcedureAuditGaps(t), helper.name,
-				"%s must be recorded as unanswered by the procedure capability audit", helper.name)
-			require.False(t, apocHandlerTakesCallerContext(helper.handler.Signature()),
-				"%s has no statement path, so it keeps its context-free Go API", helper.name)
-			if strings.Contains(sources[directory].bodies[function], "context.Background()") {
-				continue
-			}
-			forwarded := false
-			for callee := range sources[directory].calls[function] {
-				if pinnedContextFree[directory+"."+callee] {
-					forwarded = true
-					break
-				}
-			}
-			require.True(t, forwarded,
-				"%s.%s neither reads on a stated background lifetime nor forwards to a context-free helper",
-				directory, function)
+			require.True(t, isProcedureName(helper.name), "procedure classification is unchanged")
+			require.NotContains(t, PluginFunctionNames(), helper.name)
+			require.Contains(t, apocProcedureAuditGaps(t), helper.name)
+			require.True(t, apocHandlerTakesCallerContext(helper.handler.Signature()), "the native Go helper now requires its caller context")
+			require.True(t, sources[directory].contexts[function])
+			require.NotContains(t, sources[directory].bodies[function], "context.Background()")
 		}
 	}
 
@@ -506,9 +484,8 @@ func TestAPOCStatementHelpersTakeCallerContext(t *testing.T) {
 			_, registered := handlers[directory][function]
 			require.False(t, registered,
 				"%s.%s must have no registered APOC name to be a Go-only entry", directory, function)
-			require.Contains(t, sources[directory].bodies[function], "context.Background()",
-				"%s.%s has no caller context, so its whole-graph read names its background lifetime",
-				directory, function)
+			require.True(t, sources[directory].contexts[function], "%s.%s requires its native Go caller context", directory, function)
+			require.NotContains(t, sources[directory].bodies[function], "context.Background()")
 		}
 	}
 
@@ -606,37 +583,43 @@ func (r *recordingAPOCStorage) reset() {
 	r.afterRead = nil
 }
 
-func (r *recordingAPOCStorage) GetNode(int64) (*apocstorage.Node, error) {
+func (r *recordingAPOCStorage) GetNode(context.Context, int64) (*apocstorage.Node, error) {
 	return nil, apocstorage.ErrNodeNotFound
 }
 
-func (r *recordingAPOCStorage) CreateNode([]string, map[string]interface{}) (*apocstorage.Node, error) {
+func (r *recordingAPOCStorage) CreateNode(context.Context, []string, map[string]interface{}) (*apocstorage.Node, error) {
 	return &apocstorage.Node{}, nil
 }
 
-func (r *recordingAPOCStorage) UpdateNode(int64, map[string]interface{}) error { return nil }
+func (r *recordingAPOCStorage) UpdateNode(context.Context, int64, map[string]interface{}) error {
+	return nil
+}
 
-func (r *recordingAPOCStorage) DeleteNode(int64) error { return nil }
+func (r *recordingAPOCStorage) DeleteNode(context.Context, int64) error { return nil }
 
-func (r *recordingAPOCStorage) AddLabels(int64, []string) error { return nil }
+func (r *recordingAPOCStorage) AddLabels(context.Context, int64, []string) error { return nil }
 
-func (r *recordingAPOCStorage) RemoveLabels(int64, []string) error { return nil }
+func (r *recordingAPOCStorage) RemoveLabels(context.Context, int64, []string) error { return nil }
 
-func (r *recordingAPOCStorage) UpdateNodeLabels(int64, []string) error { return nil }
+func (r *recordingAPOCStorage) UpdateNodeLabels(context.Context, int64, []string) error { return nil }
 
-func (r *recordingAPOCStorage) GetRelationship(int64) (*apocstorage.Relationship, error) {
+func (r *recordingAPOCStorage) GetRelationship(context.Context, int64) (*apocstorage.Relationship, error) {
 	return nil, apocstorage.ErrRelationshipNotFound
 }
 
-func (r *recordingAPOCStorage) CreateRelationship(int64, int64, string, map[string]interface{}) (*apocstorage.Relationship, error) {
+func (r *recordingAPOCStorage) CreateRelationship(context.Context, int64, int64, string, map[string]interface{}) (*apocstorage.Relationship, error) {
 	return &apocstorage.Relationship{}, nil
 }
 
-func (r *recordingAPOCStorage) UpdateRelationship(int64, map[string]interface{}) error { return nil }
+func (r *recordingAPOCStorage) UpdateRelationship(context.Context, int64, map[string]interface{}) error {
+	return nil
+}
 
-func (r *recordingAPOCStorage) DeleteRelationship(int64) error { return nil }
+func (r *recordingAPOCStorage) DeleteRelationship(context.Context, int64) error { return nil }
 
-func (r *recordingAPOCStorage) UpdateRelationshipType(int64, string) error { return nil }
+func (r *recordingAPOCStorage) UpdateRelationshipType(context.Context, int64, string) error {
+	return nil
+}
 
 func (r *recordingAPOCStorage) AllRelationships(ctx context.Context) ([]*apocstorage.Relationship, error) {
 	if err := r.record(apocBulkReadRelationships, ctx); err != nil {
@@ -645,31 +628,31 @@ func (r *recordingAPOCStorage) AllRelationships(ctx context.Context) ([]*apocsto
 	return nil, nil
 }
 
-func (r *recordingAPOCStorage) GetNodeRelationships(int64, string, apocstorage.Direction) ([]*apocstorage.Relationship, error) {
+func (r *recordingAPOCStorage) GetNodeRelationships(context.Context, int64, string, apocstorage.Direction) ([]*apocstorage.Relationship, error) {
 	return nil, nil
 }
 
-func (r *recordingAPOCStorage) GetNodeNeighbors(int64, string, apocstorage.Direction) ([]*apocstorage.Node, error) {
+func (r *recordingAPOCStorage) GetNodeNeighbors(context.Context, int64, string, apocstorage.Direction) ([]*apocstorage.Node, error) {
 	return nil, nil
 }
 
-func (r *recordingAPOCStorage) GetNodeDegree(int64, string, apocstorage.Direction) (int, error) {
+func (r *recordingAPOCStorage) GetNodeDegree(context.Context, int64, string, apocstorage.Direction) (int, error) {
 	return 0, nil
 }
 
-func (r *recordingAPOCStorage) FindShortestPath(int64, int64, string, int) (*apocstorage.Path, error) {
+func (r *recordingAPOCStorage) FindShortestPath(context.Context, int64, int64, string, int) (*apocstorage.Path, error) {
 	return nil, apocstorage.ErrPathNotFound
 }
 
-func (r *recordingAPOCStorage) FindAllPaths(int64, int64, string, int) ([]*apocstorage.Path, error) {
+func (r *recordingAPOCStorage) FindAllPaths(context.Context, int64, int64, string, int) ([]*apocstorage.Path, error) {
 	return nil, nil
 }
 
-func (r *recordingAPOCStorage) BFS(int64, string, int, func(*apocstorage.Node) bool) error {
+func (r *recordingAPOCStorage) BFS(context.Context, int64, string, int, func(*apocstorage.Node) bool) error {
 	return nil
 }
 
-func (r *recordingAPOCStorage) DFS(int64, string, int, func(*apocstorage.Node) bool) error {
+func (r *recordingAPOCStorage) DFS(context.Context, int64, string, int, func(*apocstorage.Node) bool) error {
 	return nil
 }
 
@@ -785,7 +768,8 @@ func TestAPOCBulkReadGuardedHelpersStopAfterInFlightCancel(t *testing.T) {
 			registry.CypherArguments,
 		)
 		cancel()
-		require.NoError(t, callErr, helper.name)
+		require.ErrorIs(t, callErr, context.Canceled, helper.name)
+		require.Nil(t, result, helper.name)
 		require.ErrorIs(t, ctx.Err(), context.Canceled, helper.name)
 		observed := fixtureowner.Snapshot(&recorder.mu, &recorder.observations)
 		require.Len(t, observed, 1,
@@ -826,7 +810,8 @@ func TestAPOCAdmissionCanceledSearchHelpersReadNothing(t *testing.T) {
 			[]reflect.Value{reflect.ValueOf(ctx)},
 			registry.CypherArguments,
 		)
-		require.NoError(t, callErr, helper.name)
+		require.ErrorIs(t, callErr, context.Canceled, helper.name)
+		require.Nil(t, result, helper.name)
 		require.Empty(t, fixtureowner.Snapshot(&recorder.mu, &recorder.observations),
 			"%s must not read storage for a caller that had already stopped", helper.name)
 		require.Empty(t, apocResultLength(t, result), helper.name)
@@ -854,10 +839,9 @@ func apocResultLength(t *testing.T, result interface{}) []interface{} {
 	return items
 }
 
-// TestAPOCBulkReadFailureKeepsDocumentedEmptyResults pins the outputs a
-// stopped read already produced: the helpers still return their documented
-// empty result instead of a new error or a partial value.
-func TestAPOCBulkReadFailureKeepsDocumentedEmptyResults(t *testing.T) {
+// TestAPOCBulkReadHelpersPropagateStoppedCaller pins the outputs a
+// stopped caller cannot produce successful zero values or partial results.
+func TestAPOCBulkReadHelpersPropagateStoppedCaller(t *testing.T) {
 	require.NoError(t, Initialize(apocstorage.NewInMemoryStorage(), nil))
 	recorder := &recordingAPOCStorage{}
 	installRecordingStorage(t, recorder)
@@ -868,27 +852,63 @@ func TestAPOCBulkReadFailureKeepsDocumentedEmptyResults(t *testing.T) {
 	// The recorder-bound instances are the ones an admitted caller holds: the
 	// documented empty result comes from the helper's own backend.
 	bound := newBoundFunctions(recorder)
-	require.False(t, bound.label.Exists(ctx, "Person"))
-	require.Zero(t, bound.label.Count(ctx, "Person"))
-	require.Empty(t, bound.label.List(ctx))
-	require.Empty(t, bound.meta.NodeLabels(ctx))
-	require.Empty(t, bound.meta.PropertyKeys(ctx))
-	require.Empty(t, bound.schema.Labels(ctx))
-	require.Empty(t, bound.search.Fuzzy(ctx, "Person", "name", "Alise", 2))
-	require.Empty(t, bound.search.NodeReduced(ctx, "Person", map[string]interface{}{"name": "Alice"}, 10))
-	require.Empty(t, bound.search.MultiSearchAny(ctx, []string{"Person", "Company"}, map[string]interface{}{"name": "Alice"}))
-	require.Empty(t, bound.search.MultiSearchAll(ctx, []string{"Person", "Company"}, map[string]interface{}{"name": "Alice"}))
-	require.Empty(t, bound.search.Parallel(ctx, []string{"Person", "Company"}, "name", "Alice"))
-	require.Empty(t, bound.search.Suggest(ctx, "Person", "name", "Al", 5))
-	require.Empty(t, bound.search.DidYouMean(ctx, "Person", "name", "Alise"))
+	labelCallValue1, labelCallError1 := bound.label.Exists(ctx, "Person")
+	require.ErrorIs(t, labelCallError1, context.Canceled)
+	require.False(t, labelCallValue1)
+	labelCallValue2, labelCallError2 := bound.label.Count(ctx, "Person")
+	require.ErrorIs(t, labelCallError2, context.Canceled)
+	require.Zero(t, labelCallValue2)
+	labelCallValue3, labelCallError3 := bound.label.List(ctx)
+	require.ErrorIs(t, labelCallError3, context.Canceled)
+	require.Empty(t, labelCallValue3)
+	apocCallValue1, apocCallError1 := bound.meta.NodeLabels(ctx)
+	require.ErrorIs(t, apocCallError1, context.Canceled)
+	require.Empty(t, apocCallValue1)
+	apocCallValue2, apocCallError2 := bound.meta.PropertyKeys(ctx)
+	require.ErrorIs(t, apocCallError2, context.Canceled)
+	require.Empty(t, apocCallValue2)
+	apocCallValue3, apocCallError3 := bound.schema.Labels(ctx)
+	require.ErrorIs(t, apocCallError3, context.Canceled)
+	require.Empty(t, apocCallValue3)
+	apocCallValue4, apocCallError4 := bound.search.Fuzzy(ctx, "Person", "name", "Alise", 2)
+	require.ErrorIs(t, apocCallError4, context.Canceled)
+	require.Empty(t, apocCallValue4)
+	apocCallValue5, apocCallError5 := bound.search.NodeReduced(ctx, "Person", map[string]interface{}{"name": "Alice"}, 10)
+	require.ErrorIs(t, apocCallError5, context.Canceled)
+	require.Empty(t, apocCallValue5)
+	apocCallValue6, apocCallError6 := bound.search.MultiSearchAny(ctx, []string{"Person", "Company"}, map[string]interface{}{"name": "Alice"})
+	require.ErrorIs(t, apocCallError6, context.Canceled)
+	require.Empty(t, apocCallValue6)
+	apocCallValue7, apocCallError7 := bound.search.MultiSearchAll(ctx, []string{"Person", "Company"}, map[string]interface{}{"name": "Alice"})
+	require.ErrorIs(t, apocCallError7, context.Canceled)
+	require.Empty(t, apocCallValue7)
+	apocCallValue8, apocCallError8 := bound.search.Parallel(ctx, []string{"Person", "Company"}, "name", "Alice")
+	require.ErrorIs(t, apocCallError8, context.Canceled)
+	require.Empty(t, apocCallValue8)
+	apocCallValue9, apocCallError9 := bound.search.Suggest(ctx, "Person", "name", "Al", 5)
+	require.ErrorIs(t, apocCallError9, context.Canceled)
+	require.Empty(t, apocCallValue9)
+	apocCallValue10, apocCallError10 := bound.search.DidYouMean(ctx, "Person", "name", "Alise")
+	require.ErrorIs(t, apocCallError10, context.Canceled)
+	require.Empty(t, apocCallValue10)
 	require.Empty(t, bound.search.Score(ctx, []*apocstorage.Node{
 		{ID: 1, Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}},
 	}, "name", "Alice"),
 		"a post-processing helper observes the stopped caller too")
-	require.Zero(t, bound.refactor.RenameLabel(ctx, "OldLabel", "NewLabel"))
-	require.Empty(t, bound.meta.RelTypes(ctx))
-	require.Empty(t, bound.schema.Types(ctx))
-	require.Zero(t, bound.warmup.Relationships(ctx, []string{"KNOWS"})["relationshipsLoaded"])
-	require.Zero(t, bound.refactor.RenameType(ctx, "OLD", "NEW"))
-	require.NotEmpty(t, fixtureowner.Snapshot(&recorder.mu, &recorder.observations), "the stopped reads must have reached the storage read")
+	apocCallValue11, apocCallError11 := bound.refactor.RenameLabel(ctx, "OldLabel", "NewLabel")
+	require.ErrorIs(t, apocCallError11, context.Canceled)
+	require.Zero(t, apocCallValue11)
+	apocCallValue12, apocCallError12 := bound.meta.RelTypes(ctx)
+	require.ErrorIs(t, apocCallError12, context.Canceled)
+	require.Empty(t, apocCallValue12)
+	apocCallValue13, apocCallError13 := bound.schema.Types(ctx)
+	require.ErrorIs(t, apocCallError13, context.Canceled)
+	require.Empty(t, apocCallValue13)
+	apocCallValue14, apocCallError14 := bound.warmup.Relationships(ctx, []string{"KNOWS"})
+	require.ErrorIs(t, apocCallError14, context.Canceled)
+	require.Nil(t, apocCallValue14)
+	apocCallValue15, apocCallError15 := bound.refactor.RenameType(ctx, "OLD", "NEW")
+	require.ErrorIs(t, apocCallError15, context.Canceled)
+	require.Zero(t, apocCallValue15)
+	require.Empty(t, fixtureowner.Snapshot(&recorder.mu, &recorder.observations), "a stopped caller is rejected before a backend read")
 }

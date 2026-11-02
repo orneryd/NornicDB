@@ -93,7 +93,7 @@ func checkSnapshotTranscoder(t *testing.T, engine *BadgerEngine, edge *Edge, str
 func reflectedSnapshotEdgeFrame(t testing.TB, edge *Edge) []byte {
 	t.Helper()
 	var encoder valueEncoder
-	encoder.reset()
+	encoder.reset(storedValueFraming)
 	encoder.msgpack.SetSortMapKeys(true)
 	require.NoError(t, encoder.msgpack.Encode(prepareRecoveryEdge(edge)))
 	payload := encoder.buffer.Bytes()

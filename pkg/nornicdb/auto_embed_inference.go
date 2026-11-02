@@ -1,6 +1,7 @@
 package nornicdb
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -22,14 +23,14 @@ func (db *DB) onNodeEmbedded(node *storage.Node) {
 	}
 	// Full-text publication belongs exclusively to the accepted storage event. Only inference is asynchronous.
 	nodeCopy := storage.CopyNode(node)
-	db.RunBackgroundTask(func() {
-		if err := db.runInferenceForEmbeddedNode(nodeCopy); err != nil {
+	db.RunBackgroundTask(func(backgroundCtx context.Context) {
+		if err := db.runInferenceForEmbeddedNode(backgroundCtx, nodeCopy); err != nil {
 			db.recordBackgroundError(fmt.Errorf("embedded node %s inference: %w", nodeCopy.ID, err))
 		}
 	})
 }
 
-func (db *DB) runInferenceForEmbeddedNode(node *storage.Node) error {
+func (db *DB) runInferenceForEmbeddedNode(ctx context.Context, node *storage.Node) error {
 	if db == nil || node == nil {
 		return nil
 	}
@@ -63,7 +64,7 @@ func (db *DB) runInferenceForEmbeddedNode(node *storage.Node) error {
 		return nil
 	}
 
-	suggestions, err := inferEngine.OnStoreBestOfChunks(db.LifetimeContext(), local, node.ChunkEmbeddings)
+	suggestions, err := inferEngine.OnStoreBestOfChunks(ctx, local, node.ChunkEmbeddings)
 	if err != nil || len(suggestions) == 0 {
 		return err
 	}
@@ -91,7 +92,7 @@ func (db *DB) runInferenceForEmbeddedNode(node *storage.Node) error {
 				"method": suggestion.Method,
 			},
 		}
-		outcomes = compose.Outcomes(outcomes, storageEngine.CreateEdge(edge))
+		outcomes = compose.Outcomes(outcomes, storageEngine.CreateEdge(ctx, edge))
 	}
 	return outcomes
 }

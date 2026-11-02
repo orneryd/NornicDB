@@ -301,7 +301,7 @@ func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body strin
 		}
 	}
 	if cypherVersionFromContext(ctx) != "25" {
-		grouped, err := cypher5ImportGrouping(body, values)
+		grouped, err := cypher5ImportGrouping(ctx, body, values)
 		if err != nil {
 			return nil, false, err
 		}
@@ -479,7 +479,7 @@ func (e *StorageExecutor) boundNodeLookupCount(ctx context.Context, body string,
 	}
 	properties := make(map[string]interface{}, len(shape.keys))
 	for index, key := range shape.keys {
-		value, resolved, err := e.evaluateRowValue(shape.values[index], values)
+		value, resolved, err := e.evaluateRowValue(ctx, shape.values[index], values)
 		if err != nil {
 			recordExpressionFailure(ctx, err)
 			return 0, true
@@ -833,7 +833,7 @@ func (e *StorageExecutor) entityRowWithPaths(ctx context.Context, nodes map[stri
 	values := entityRow(ctx, nodes, rels)
 	for name, path := range paths {
 		if path != nil {
-			values[name] = e.pathContextRowValue(path)
+			values[name] = e.pathContextRowValue(ctx, path)
 		}
 	}
 	return values

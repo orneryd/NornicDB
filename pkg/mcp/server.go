@@ -50,14 +50,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/orneryd/nornicdb/internal/localizationboundary"
-	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"io"
 	"net/http"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/orneryd/nornicdb/internal/localizationboundary"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 
 	"github.com/orneryd/nornicdb/internal/httpresponse"
 	"github.com/orneryd/nornicdb/internal/relatedwalk"
@@ -2137,7 +2138,7 @@ type mcpRelatedAcceptor struct {
 
 func (a mcpRelatedAcceptor) Discover(ctx context.Context, n *relatedwalk.Neighbor) (RelatedNode, bool, bool) {
 	nodeType, title := "Node", ""
-	if node, err := a.engine.GetNode(storage.NodeID(n.ID)); err == nil && node != nil {
+	if node, err := a.engine.GetNode(ctx, storage.NodeID(n.ID)); err == nil && node != nil {
 		props := a.visible.NodeProperties(node)
 		nodeType = getLabelType(node.Labels)
 		title = getStringProp(props, "title")

@@ -44,13 +44,13 @@ func TestPendingClaimPhysicalWork(t *testing.T) {
 				if tail {
 					id = "test:a"
 				}
-				_, err := e.CreateNode(&Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"content": "pending"}})
+				_, err := e.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"content": "pending"}})
 				require.NoError(t, err)
 				// Recovery may load the persistent index once; active claims must not repeat it.
-				require.NotNil(t, e.FindNodeNeedingEmbedding())
+				require.NotNil(t, requireEmbeddingCandidate(t, e.FindNodeNeedingEmbedding))
 				for i := 0; i < 3; i++ {
 					before := metric.Value()
-					node := e.FindNodeNeedingEmbedding()
+					node := requireEmbeddingCandidate(t, e.FindNodeNeedingEmbedding)
 					work := metric.Value() - before
 					require.NotNil(t, node)
 					require.Equal(t, id, node.ID)

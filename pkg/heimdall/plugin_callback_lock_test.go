@@ -84,7 +84,7 @@ func TestSubsystemManagerCallbacksReenter(t *testing.T) {
 						t.Errorf("%s could not consult installed peers", method)
 					}
 					// A write also proves callbacks are outside read locks.
-					manager.SetContext(SubsystemContext{})
+					manager.SetContext(SubsystemHost{})
 					seen[method] = true
 				},
 			}
@@ -183,7 +183,7 @@ func TestSubsystemManagerShutdownCallbackRegistersPlugin(t *testing.T) {
 			manager := newMatrixSubsystemManager()
 			if hosted {
 				owner := lifecycle.NewWorkLifetime(t.Context())
-				manager.SetHostContext(SubsystemContext{Lifetime: owner})
+				manager.SetHostContext(SubsystemHost{Lifetime: owner})
 				t.Cleanup(func() {
 					manager.CloseAdmission()
 					require.NoError(t, manager.StopAll())

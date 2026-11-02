@@ -20,7 +20,7 @@ func newRangeIndexEngine(t *testing.T, flushed, pending []interface{}) *SchemaMa
 	require.NoError(t, schema.AddPropertyIndex("item_v", "Item", []string{"v"}))
 	create := func(prefix string, values []interface{}) {
 		for i, v := range values {
-			_, err := badger.CreateNode(&Node{ID: NodeID(fmt.Sprintf("nornic:%s-%d", prefix, i)), Labels: []string{"Item"}, Properties: map[string]any{"v": v}})
+			_, err := badger.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("nornic:%s-%d", prefix, i)), Labels: []string{"Item"}, Properties: map[string]any{"v": v}})
 			require.NoError(t, err)
 		}
 	}

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/gob"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -14,6 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -61,7 +62,7 @@ func TestGraphBuilder_Parallel(t *testing.T) {
 	// Create larger graph for parallelization test
 	nodeCount := 100
 	for i := 0; i < nodeCount; i++ {
-		engine.CreateNode(&storage.Node{
+		engine.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("test:node-%d", i)),
 			Labels: []string{"Test"},
 		})
@@ -72,7 +73,7 @@ func TestGraphBuilder_Parallel(t *testing.T) {
 	for i := 0; i < nodeCount; i++ {
 		for j := i + 1; j < nodeCount; j++ {
 			if (i+j)%7 == 0 { // Sparse edges
-				engine.CreateEdge(&storage.Edge{
+				engine.CreateEdge(t.Context(), &storage.Edge{
 					ID:        storage.EdgeID(fmt.Sprintf("test:e-%d", edgeCount)),
 					StartNode: storage.NodeID(fmt.Sprintf("test:node-%d", i)),
 					EndNode:   storage.NodeID(fmt.Sprintf("test:node-%d", j)),
@@ -118,7 +119,7 @@ func TestGraphBuilder_ChunkedProcessing(t *testing.T) {
 	// Create graph
 	nodeCount := 50
 	for i := 0; i < nodeCount; i++ {
-		engine.CreateNode(&storage.Node{
+		engine.CreateNode(t.Context(), &storage.Node{
 			ID: storage.NodeID(fmt.Sprintf("test:n%d", i)),
 		})
 	}
@@ -151,7 +152,7 @@ func TestGraphBuilder_ContextCancellation(t *testing.T) {
 
 	// Create graph
 	for i := 0; i < 100; i++ {
-		engine.CreateNode(&storage.Node{
+		engine.CreateNode(t.Context(), &storage.Node{
 			ID: storage.NodeID(fmt.Sprintf("test:n%d", i)),
 		})
 	}
@@ -180,7 +181,7 @@ func TestGraphBuilder_GCAfterChunk(t *testing.T) {
 
 	// Create graph
 	for i := 0; i < 30; i++ {
-		engine.CreateNode(&storage.Node{
+		engine.CreateNode(t.Context(), &storage.Node{
 			ID: storage.NodeID(fmt.Sprintf("test:n%d", i)),
 		})
 	}
@@ -583,7 +584,7 @@ func TestParallelAlgorithms_Cancellation(t *testing.T) {
 
 	// Create larger graph
 	for i := 0; i < 100; i++ {
-		engine.CreateNode(&storage.Node{
+		engine.CreateNode(t.Context(), &storage.Node{
 			ID: storage.NodeID(fmt.Sprintf("test:n%d", i)),
 		})
 	}
@@ -645,7 +646,7 @@ func TestGraphStreamer_Cancellation(t *testing.T) {
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 
 	for i := 0; i < 50; i++ {
-		engine.CreateNode(&storage.Node{
+		engine.CreateNode(t.Context(), &storage.Node{
 			ID: storage.NodeID(fmt.Sprintf("test:n%d", i)),
 		})
 	}
@@ -735,7 +736,7 @@ func BenchmarkGraphBuilder_Small(b *testing.B) {
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	for i := 0; i < 100; i++ {
-		engine.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("test:n%d", i))})
+		engine.CreateNode(b.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("test:n%d", i))})
 	}
 
 	config := DefaultBuildConfig()
@@ -754,13 +755,13 @@ func BenchmarkGraphBuilder_Parallel(b *testing.B) {
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	for i := 0; i < 500; i++ {
-		engine.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("test:n%d", i))})
+		engine.CreateNode(b.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("test:n%d", i))})
 	}
 	// Add edges
 	for i := 0; i < 500; i++ {
 		for j := i + 1; j < 500; j++ {
 			if (i+j)%10 == 0 {
-				engine.CreateEdge(&storage.Edge{
+				engine.CreateEdge(b.Context(), &storage.Edge{
 					ID:        storage.EdgeID(fmt.Sprintf("test:e%d-%d", i, j)),
 					StartNode: storage.NodeID(fmt.Sprintf("test:n%d", i)),
 					EndNode:   storage.NodeID(fmt.Sprintf("test:n%d", j)),
@@ -788,12 +789,12 @@ func BenchmarkParallelAdamicAdar(b *testing.B) {
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	nodeCount := 200
 	for i := 0; i < nodeCount; i++ {
-		engine.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("test:n%d", i))})
+		engine.CreateNode(b.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("test:n%d", i))})
 	}
 	for i := 0; i < nodeCount; i++ {
 		for j := i + 1; j < nodeCount; j++ {
 			if (i+j)%5 == 0 {
-				engine.CreateEdge(&storage.Edge{
+				engine.CreateEdge(b.Context(), &storage.Edge{
 					ID:        storage.EdgeID(fmt.Sprintf("test:e%d-%d", i, j)),
 					StartNode: storage.NodeID(fmt.Sprintf("test:n%d", i)),
 					EndNode:   storage.NodeID(fmt.Sprintf("test:n%d", j)),
@@ -829,7 +830,7 @@ func setupTestGraphForBuilder(t *testing.T, engine storage.Engine) {
 
 	nodes := []string{"alice", "bob", "charlie", "diana", "eve"}
 	for _, name := range nodes {
-		engine.CreateNode(&storage.Node{
+		engine.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID(name),
 			Labels: []string{"Person"},
 		})
@@ -845,7 +846,7 @@ func setupTestGraphForBuilder(t *testing.T, engine storage.Engine) {
 	}
 
 	for i, e := range edges {
-		engine.CreateEdge(&storage.Edge{
+		engine.CreateEdge(t.Context(), &storage.Edge{
 			ID:        storage.EdgeID(fmt.Sprintf("test:e%d", i)),
 			StartNode: storage.NodeID(e.from),
 			EndNode:   storage.NodeID(e.to),

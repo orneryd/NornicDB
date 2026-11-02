@@ -3,12 +3,13 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"github.com/orneryd/nornicdb/pkg/multidb"
-	"github.com/orneryd/nornicdb/pkg/storage"
-	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/url"
 	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/multidb"
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
 )
 
 func TestHTTPCompositeReviewRetrieval(t *testing.T) {
@@ -18,7 +19,7 @@ func TestHTTPCompositeReviewRetrieval(t *testing.T) {
 		require.NoError(t, s.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: database}))
 		store, err := s.dbManager.GetStorage(database)
 		require.NoError(t, err)
-		_, err = store.CreateNode(&storage.Node{ID: "same", Labels: []string{"Review"}, Properties: map[string]interface{}{"content": "identityprobe"}})
+		_, err = store.CreateNode(t.Context(), &storage.Node{ID: "same", Labels: []string{"Review"}, Properties: map[string]interface{}{"content": "identityprobe"}})
 		require.NoError(t, err)
 		svc, err := s.db.GetOrCreateSearchService(database, store)
 		require.NoError(t, err)

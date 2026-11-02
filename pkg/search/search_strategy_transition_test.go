@@ -30,7 +30,7 @@ func indexTestNode(t *testing.T, svc *Service, id string, vec []float32) {
 			"content": id,
 		},
 	}
-	_, err := svc.engine.CreateNode(node)
+	_, err := svc.engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, svc.IndexNode(node))
 }

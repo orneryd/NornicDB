@@ -20,20 +20,27 @@ var rowPredicatePrograms = newBoundedCache[string, *rowPredicateProgram](4096, b
 
 // rowPredicateProgramFor returns expression's program, or nil when it is to
 // be read from the text this time.
-func rowPredicateProgramFor(expression string) *rowPredicateProgram {
+func rowPredicateProgramFor(ctx context.Context, expression string) *rowPredicateProgram {
 	if rowPredicateProgramsDisabled.Load() || rowValueProgramsDisabled.Load() {
 		return nil
 	}
 	program, cached := rowPredicatePrograms.get(expression)
 	if !cached {
-		rowPredicatePrograms.put(expression, rowPredicateSeen)
+		// A canceled scan reads only part of the expression, so neither this
+		// marker nor the program it leads to is published: the entry must come
+		// from a completed read.
+		if ctx.Err() == nil {
+			rowPredicatePrograms.put(expression, rowPredicateSeen)
+		}
 		return nil
 	}
 	if program != rowPredicateSeen {
 		return program
 	}
-	program = compileRowPredicateProgram(expression)
-	rowPredicatePrograms.put(expression, program)
+	program = compileRowPredicateProgram(ctx, expression)
+	if ctx.Err() == nil {
+		rowPredicatePrograms.put(expression, program)
+	}
 	return program
 }
 
@@ -47,8 +54,8 @@ type rowPredicateNode interface {
 	holds(e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool
 }
 
-func compileRowPredicateProgram(expression string) *rowPredicateProgram {
-	p := &rowPredicateProgram{expression: expression, statementContext: rowPredicateNeedsStatementContext(expression)}
+func compileRowPredicateProgram(ctx context.Context, expression string) *rowPredicateProgram {
+	p := &rowPredicateProgram{expression: expression, statementContext: rowPredicateNeedsStatementContext(ctx, expression)}
 	if mayContainCaseKeyword(expression) && len(caseBlockSpans(expression)) > 0 {
 		p.root = &rowPredicateStrictNode{text: expression, value: compileRowPredicateValue(expression), arithmetic: predicateIsArithmetic(expression)}
 	} else {
@@ -219,7 +226,7 @@ func (o *rowPredicateOperand) evaluate(e *StorageExecutor, ctx context.Context, 
 		value, ok := e.rowPredicateOperand(ctx, o.text, values)
 		return value, ok, getExpressionFailure(ctx)
 	}
-	return o.value.eval(e, values, nil)
+	return o.value.eval(ctx, e, values, nil)
 }
 
 func (o *rowPredicateOperand) resolve(e *StorageExecutor, ctx context.Context, values map[string]interface{}) (interface{}, bool) {
@@ -268,7 +275,7 @@ type rowPredicateStrictNode struct {
 }
 
 func (n *rowPredicateStrictNode) holds(e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
-	value, evaluated, err := n.value.eval(e, values, nil)
+	value, evaluated, err := n.value.eval(ctx, e, values, nil)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return false
@@ -348,12 +355,12 @@ type rowPredicateMembershipNode struct {
 }
 
 func (n *rowPredicateMembershipNode) holds(e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
-	needle, leftOK, err := n.needle.eval(e, values, nil)
+	needle, leftOK, err := n.needle.eval(ctx, e, values, nil)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return false
 	}
-	haystack, rightOK, err := n.haystack.eval(e, values, nil)
+	haystack, rightOK, err := n.haystack.eval(ctx, e, values, nil)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return false

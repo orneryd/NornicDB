@@ -62,7 +62,7 @@ func TestCourseChangeGraphNamedGraph(t *testing.T) {
 	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "graph"}))
 	graph, err := manager.GetStorage("graph")
 	require.NoError(t, err)
-	_, err = graph.CreateNode(&storage.Node{ID: "course-change", Labels: []string{"Probe"}})
+	_, err = graph.CreateNode(t.Context(), &storage.Node{ID: "course-change", Labels: []string{"Probe"}})
 	require.NoError(t, err)
 	executor := NewStorageExecutor(newTestMemoryEngine(t))
 	executor.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})

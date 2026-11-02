@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
@@ -21,7 +22,7 @@ func BenchmarkManagedSourceWritePath(b *testing.B) {
 			nodes := make([]*Node, pool)
 			for i := range nodes {
 				n := &Node{ID: NodeID(fmt.Sprintf("test:source-bench-%d", i)), Labels: []string{"Doc"}, Properties: map[string]any{"text": "hello", "id": "old", "updatedAt": "old"}, UpdatedAt: time.Now()}
-				if _, err := engine.CreateNode(n); err != nil {
+				if _, err := engine.CreateNode(b.Context(), n); err != nil {
 					b.Fatal(err)
 				}
 				keys := "0:"
@@ -33,7 +34,7 @@ func BenchmarkManagedSourceWritePath(b *testing.B) {
 				if sourceAware {
 					n.EmbedMeta["__nornic_embedding_source"] = "1:1:1:4:text0:" + keys
 				}
-				if err := engine.UpdateNodeEmbeddingSidecar(n); err != nil {
+				if err := engine.UpdateNodeEmbeddingSidecar(context.Background(), n); err != nil {
 					b.Fatal(err)
 				}
 				nodes[i] = n
@@ -46,9 +47,9 @@ func BenchmarkManagedSourceWritePath(b *testing.B) {
 				if mode == "body-unconsumed" {
 					n.UpdatedAt = time.Now()
 					n.Properties["updatedAt"] = i
-					err = engine.UpdateNode(NodeUpdateRequest{After: n})
+					err = engine.UpdateNode(b.Context(), NodeUpdateRequest{After: n})
 				} else {
-					err = engine.UpdateNodeEmbeddingSidecar(n)
+					err = engine.UpdateNodeEmbeddingSidecar(context.Background(), n)
 				}
 				if err != nil {
 					b.Fatal(err)

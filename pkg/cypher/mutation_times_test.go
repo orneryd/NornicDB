@@ -24,20 +24,20 @@ type observationEngine struct {
 	edgeErr      error
 }
 
-func (e *observationEngine) UpdateNode(updateRequest storage.NodeUpdateRequest) error {
+func (e *observationEngine) UpdateNode(ctx context.Context, updateRequest storage.NodeUpdateRequest) error {
 	e.nodeRequests = append(e.nodeRequests, updateRequest)
 	if e.nodeErr != nil {
 		return e.nodeErr
 	}
-	return e.Engine.UpdateNode(updateRequest)
+	return e.Engine.UpdateNode(ctx, updateRequest)
 }
 
-func (e *observationEngine) UpdateEdge(updateRequest storage.EdgeUpdateRequest) error {
+func (e *observationEngine) UpdateEdge(ctx context.Context, updateRequest storage.EdgeUpdateRequest) error {
 	e.edgeRequests = append(e.edgeRequests, updateRequest)
 	if e.edgeErr != nil {
 		return e.edgeErr
 	}
-	return e.Engine.UpdateEdge(updateRequest)
+	return e.Engine.UpdateEdge(ctx, updateRequest)
 }
 
 func (e *observationEngine) lastNodeRequest(t *testing.T) storage.NodeUpdateRequest {
@@ -58,11 +58,11 @@ func TestFailedCypherMutationPreservesVersionTime(t *testing.T) {
 	store := &observationEngine{nodeErr: want, edgeErr: want}
 	node := &storage.Node{CreatedAt: old, UpdatedAt: old}
 	edge := &storage.Edge{CreatedAt: old, UpdatedAt: old}
-	require.ErrorIs(t, mutateNodeWithObservation(store, observeNode(node), node), want)
+	require.ErrorIs(t, mutateNodeWithObservation(t.Context(), store, observeNode(node), node), want)
 	require.Equal(t, old, node.UpdatedAt)
 	require.Equal(t, old, node.CreatedAt)
 	require.Equal(t, old, beforeNode(t, store).UpdatedAt)
-	require.ErrorIs(t, mutateEdgeWithObservation(store, observeEdge(edge), edge), want)
+	require.ErrorIs(t, mutateEdgeWithObservation(t.Context(), store, observeEdge(edge), edge), want)
 	require.Equal(t, old, edge.UpdatedAt)
 	require.Equal(t, old, edge.CreatedAt)
 	require.Equal(t, old, beforeEdge(t, store).UpdatedAt)
@@ -82,9 +82,9 @@ func TestCypherMutationObservationIsTheUnchangedEntity(t *testing.T) {
 		CreatedAt:  old,
 		UpdatedAt:  old,
 	}
-	_, err := source.CreateNode(node)
+	_, err := source.CreateNode(t.Context(), node)
 	require.NoError(t, err)
-	require.NoError(t, mutateNodeWithObservation(store, observeNode(node), node))
+	require.NoError(t, mutateNodeWithObservation(t.Context(), store, observeNode(node), node))
 	nodeRequest := store.lastNodeRequest(t)
 	require.NotNil(t, nodeRequest.Before, "a Cypher mutation always observes the entity it writes")
 	require.Same(t, node, nodeRequest.After)
@@ -105,11 +105,11 @@ func TestCypherMutationObservationIsTheUnchangedEntity(t *testing.T) {
 		UpdatedAt:  old,
 	}
 	for _, id := range []storage.NodeID{"a", "b"} {
-		_, err := source.CreateNode(&storage.Node{ID: id})
+		_, err := source.CreateNode(t.Context(), &storage.Node{ID: id})
 		require.NoError(t, err)
 	}
-	require.NoError(t, source.CreateEdge(edge))
-	require.NoError(t, mutateEdgeWithObservation(store, observeEdge(edge), edge))
+	require.NoError(t, source.CreateEdge(t.Context(), edge))
+	require.NoError(t, mutateEdgeWithObservation(t.Context(), store, observeEdge(edge), edge))
 	edgeRequest := store.lastEdgeRequest(t)
 	require.NotNil(t, edgeRequest.Before)
 	require.Same(t, edge, edgeRequest.After)
@@ -125,11 +125,11 @@ func TestCypherMutationFailureRestoresObservation(t *testing.T) {
 	want := errors.New("storage rejected mutation")
 	store := &observationEngine{Engine: newTestMemoryEngine(t), nodeErr: want, edgeErr: want}
 	node := &storage.Node{ID: "n1", Labels: []string{"Clock"}, Properties: map[string]interface{}{"title": "v1"}, CreatedAt: old, UpdatedAt: old}
-	require.ErrorIs(t, mutateNodeWithObservation(store, observeNode(node), node), want)
+	require.ErrorIs(t, mutateNodeWithObservation(t.Context(), store, observeNode(node), node), want)
 	require.Equal(t, old, node.UpdatedAt, "a failed mutation keeps the caller's version time")
 	require.Equal(t, old, beforeNode(t, store).UpdatedAt, "and so does the observation it shared")
 	edge := &storage.Edge{ID: "e1", Type: "VERSION", Properties: map[string]interface{}{"v": int64(1)}, CreatedAt: old, UpdatedAt: old}
-	require.ErrorIs(t, mutateEdgeWithObservation(store, observeEdge(edge), edge), want)
+	require.ErrorIs(t, mutateEdgeWithObservation(t.Context(), store, observeEdge(edge), edge), want)
 	require.Equal(t, old, edge.UpdatedAt)
 	require.Equal(t, old, beforeEdge(t, store).UpdatedAt)
 }
@@ -276,9 +276,9 @@ func seedMutationShape(t *testing.T, store storage.Engine) (node *storage.Node, 
 		CreatedAt:  old,
 		UpdatedAt:  old,
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "b", Labels: []string{"Other"}, Properties: map[string]interface{}{}, CreatedAt: old, UpdatedAt: old})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"Other"}, Properties: map[string]interface{}{}, CreatedAt: old, UpdatedAt: old})
 	require.NoError(t, err)
 	edge = &storage.Edge{
 		ID:         "e",
@@ -289,7 +289,7 @@ func seedMutationShape(t *testing.T, store storage.Engine) (node *storage.Node, 
 		CreatedAt:  old,
 		UpdatedAt:  old,
 	}
-	require.NoError(t, store.CreateEdge(edge))
+	require.NoError(t, store.CreateEdge(t.Context(), edge))
 	return node, edge
 }
 
@@ -383,16 +383,16 @@ func TestCypherMutationPublicNativeStoresChangedEntity(t *testing.T) {
 		t.Run(tc.query, func(t *testing.T) {
 			store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "clock")
 			seedMutationShape(t, store)
-			snapshotNode, err := store.GetNode("a")
+			snapshotNode, err := store.GetNode(t.Context(), "a")
 			require.NoError(t, err)
-			snapshotEdge, err := store.GetEdge("e")
+			snapshotEdge, err := store.GetEdge(t.Context(), "e")
 			require.NoError(t, err)
 			before := time.Now()
 			_, err = NewStorageExecutor(store).Execute(context.Background(), tc.query, nil)
 			require.NoError(t, err)
-			node, err := store.GetNode("a")
+			node, err := store.GetNode(t.Context(), "a")
 			require.NoError(t, err)
-			edge, err := store.GetEdge("e")
+			edge, err := store.GetEdge(t.Context(), "e")
 			require.NoError(t, err)
 			tc.changed(t, node, edge)
 			if tc.edge {
@@ -443,9 +443,9 @@ func TestCypherMutationPublicNativeRollbackAndRefusal(t *testing.T) {
 			require.NoError(t, err)
 			_, err = exec.Execute(ctx, "ROLLBACK", nil)
 			require.NoError(t, err)
-			node, err := store.GetNode("a")
+			node, err := store.GetNode(t.Context(), "a")
 			require.NoError(t, err)
-			edge, err := store.GetEdge("e")
+			edge, err := store.GetEdge(t.Context(), "e")
 			require.NoError(t, err)
 			require.Equal(t, "v1", node.Properties["title"], "a rolled-back statement must not reach the node")
 			require.Equal(t, []string{"Clock", "Old"}, node.Labels, "a rolled-back statement must not change node labels")
@@ -461,9 +461,9 @@ func TestCypherMutationPublicNativeRollbackAndRefusal(t *testing.T) {
 
 	t.Run("commit refusal keeps the stored entity", func(t *testing.T) {
 		store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "clock")
-		_, err := store.CreateNode(&storage.Node{ID: "a", Labels: []string{"Clock"}, Properties: map[string]interface{}{"title": "v1", "key": "k1"}, CreatedAt: old, UpdatedAt: old})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"Clock"}, Properties: map[string]interface{}{"title": "v1", "key": "k1"}, CreatedAt: old, UpdatedAt: old})
 		require.NoError(t, err)
-		_, err = store.CreateNode(&storage.Node{ID: "b", Labels: []string{"Clock"}, Properties: map[string]interface{}{"title": "other", "key": "k2"}, CreatedAt: old, UpdatedAt: old})
+		_, err = store.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"Clock"}, Properties: map[string]interface{}{"title": "other", "key": "k2"}, CreatedAt: old, UpdatedAt: old})
 		require.NoError(t, err)
 		exec := NewStorageExecutor(store)
 		ctx := context.Background()
@@ -472,7 +472,7 @@ func TestCypherMutationPublicNativeRollbackAndRefusal(t *testing.T) {
 		_, err = exec.Execute(ctx, "MATCH (n:Clock {title: 'v1'}) SET n.key = 'k2'", nil)
 		var violation *storage.ConstraintViolationError
 		require.ErrorAs(t, err, &violation, "storage must refuse the conflicting value at commit")
-		node, err := store.GetNode("a")
+		node, err := store.GetNode(t.Context(), "a")
 		require.NoError(t, err)
 		require.Equal(t, "k1", node.Properties["key"], "a refused mutation must not reach storage")
 		require.True(t, old.Equal(node.UpdatedAt), "a refused mutation must not publish a version time")
@@ -519,10 +519,10 @@ func TestCypherMutationUpdatesVersionTime(t *testing.T) {
 							{ID: "a", Labels: []string{"Clock", "Old"}, Properties: map[string]interface{}{"title": "v1", "emb": []float64{1, 2}}, CreatedAt: old, UpdatedAt: old},
 							{ID: "b", Labels: []string{"Other"}, Properties: map[string]interface{}{}, CreatedAt: old, UpdatedAt: old},
 						} {
-							_, err := store.CreateNode(node)
+							_, err := store.CreateNode(t.Context(), node)
 							require.NoError(t, err)
 						}
-						require.NoError(t, store.CreateEdge(&storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "VERSION", Properties: map[string]interface{}{"v": int64(1), "emb": []float64{1, 2}}, CreatedAt: old, UpdatedAt: old}))
+						require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "VERSION", Properties: map[string]interface{}{"v": int64(1), "emb": []float64{1, 2}}, CreatedAt: old, UpdatedAt: old}))
 						exec := NewStorageExecutor(store)
 						if explicit {
 							_, err := exec.Execute(ctx, "BEGIN", nil)
@@ -538,11 +538,11 @@ func TestCypherMutationUpdatesVersionTime(t *testing.T) {
 						}
 						var created, updated time.Time
 						if tc.edge {
-							edge, err := store.GetEdge("e")
+							edge, err := store.GetEdge(t.Context(), "e")
 							require.NoError(t, err)
 							created, updated = edge.CreatedAt, edge.UpdatedAt
 						} else {
-							node, err := store.GetNode("a")
+							node, err := store.GetNode(t.Context(), "a")
 							require.NoError(t, err)
 							created, updated = node.CreatedAt, node.UpdatedAt
 						}

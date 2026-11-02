@@ -27,10 +27,10 @@ func TestSnapshotOverlayQueryNodeVectorModes(t *testing.T) {
 						require.Zero(t, b.writeBehind.PendingOps())
 					}
 					b.invalidateCachesAfterRestore()
-					tx, err := b.BeginTransaction()
+					tx, err := b.BeginTransaction(t.Context())
 					require.NoError(t, err)
 					defer tx.Rollback()
-					for _, read := range []func(NodeID) (*Node, error){b.GetQueryNode, tx.GetQueryNode} {
+					for _, read := range []func(NodeID) (*Node, error){func(id NodeID) (*Node, error) { return b.GetQueryNode(t.Context(), id) }, func(id NodeID) (*Node, error) { return tx.GetQueryNode(t.Context(), id) }} {
 						for i := 0; i < 2; i++ {
 							node, err := read(id)
 							require.NoError(t, err)
@@ -41,9 +41,9 @@ func TestSnapshotOverlayQueryNodeVectorModes(t *testing.T) {
 							require.Equal(t, "t", node.Properties["title"])
 						}
 					}
-					_, err = b.GetNode(id)
+					_, err = b.GetNode(t.Context(), id)
 					require.ErrorContains(t, err, "embedding chunk 0")
-					_, err = tx.GetNode(id)
+					_, err = tx.GetNode(t.Context(), id)
 					require.ErrorContains(t, err, "embedding chunk 0")
 				})
 			}

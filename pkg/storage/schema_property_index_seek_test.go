@@ -66,7 +66,7 @@ func TestVisitPropertyIndexGroupsInRange(t *testing.T) {
 	schema := engine.GetSchema()
 	require.NoError(t, schema.AddPropertyIndex("idx_item_t", "Item", []string{"t"}))
 	for i := 0; i < 10; i++ {
-		_, err := engine.CreateNode(&Node{ID: NodeID("nornic:" + string(rune('a'+i))), Labels: []string{"Item"}, Properties: map[string]interface{}{"t": int64(i / 2)}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: NodeID("nornic:" + string(rune('a'+i))), Labels: []string{"Item"}, Properties: map[string]interface{}{"t": int64(i / 2)}})
 		require.NoError(t, err)
 	}
 	bare := func(ids []NodeID) []NodeID {
@@ -111,7 +111,7 @@ func TestPropertyIndexRangeConcurrentReaders(t *testing.T) {
 	schema := engine.GetSchema()
 	require.NoError(t, schema.AddPropertyIndex("idx_item_t", "Item", []string{"t"}))
 	create := func(i int) error {
-		_, err := engine.CreateNode(&Node{ID: NodeID(fmt.Sprintf("nornic:n%d", i)), Labels: []string{"Item"}, Properties: map[string]interface{}{"t": int64(i)}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("nornic:n%d", i)), Labels: []string{"Item"}, Properties: map[string]interface{}{"t": int64(i)}})
 		return err
 	}
 	for i := 0; i < 200; i++ {
@@ -161,7 +161,7 @@ func TestVisitPropertyIndexGroupsInRangeEqualKeysOfTwoTypes(t *testing.T) {
 	schema := engine.GetSchema()
 	require.NoError(t, schema.AddPropertyIndex("idx_item_t", "Item", []string{"t"}))
 	for id, value := range map[string]interface{}{"nornic:a": int64(1), "nornic:b": int64(2), "nornic:c": "2", "nornic:d": int64(3)} {
-		_, err := engine.CreateNode(&Node{ID: NodeID(id), Labels: []string{"Item"}, Properties: map[string]interface{}{"t": value}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: NodeID(id), Labels: []string{"Item"}, Properties: map[string]interface{}{"t": value}})
 		require.NoError(t, err)
 	}
 	for _, descending := range []bool{false, true} {

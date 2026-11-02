@@ -43,9 +43,9 @@ type countingTransactionEngine struct {
 // BeginTransaction counts and delegates real MemoryEngine transaction
 // allocation. The wrapper intentionally has no unwrapping method so the Cypher
 // executor must exercise this boundary.
-func (e *countingTransactionEngine) BeginTransaction() (*storage.BadgerTransaction, error) {
+func (e *countingTransactionEngine) BeginTransaction(ctx context.Context) (*storage.BadgerTransaction, error) {
 	e.begins.Add(1)
-	return e.inner.BeginTransaction()
+	return e.inner.BeginTransaction(ctx)
 }
 
 func (e *countingTransactionEngine) StreamNodesByLabelProjected(ctx context.Context, label string, properties []string, visit func(*storage.Node) error) error {

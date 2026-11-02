@@ -17,7 +17,7 @@ func quantizationCachedService(t *testing.T) *Service {
 	t.Setenv("NORNICDB_VECTOR_HNSW_QUANTIZATION", "binary")
 	t.Setenv(EnvSearchResultCacheEnabled, "true")
 	store := newNamespacedEngine(t)
-	_, err := store.CreateNode(&storage.Node{ID: "one", NamedEmbeddings: map[string][]float32{"default": {1, 0, 0, 0}}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "one", NamedEmbeddings: map[string][]float32{"default": {1, 0, 0, 0}}})
 	require.NoError(t, err)
 	svc := NewService(store, 4, nil)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })

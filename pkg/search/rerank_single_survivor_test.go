@@ -65,6 +65,6 @@ func TestRerankSingleSurvivorAndHeaderBudget(t *testing.T) {
 	require.False(t, rerankScoresFlat(2, 2, func() float64 { return 0.5 }))
 
 	titled := &storage.Node{ID: "t", Properties: map[string]any{"title": strings.Repeat("т", 100), "content": "body text"}}
-	content := svc.rerankCandidateContent(titled, rrfResult{ID: "t"}, "body", 5)
+	content := svc.rerankCandidateContent(t.Context(), titled, rrfResult{ID: "t"}, "body", 5)
 	require.LessOrEqual(t, utf8.RuneCountInString(content), 5)
 }

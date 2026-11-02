@@ -1167,7 +1167,7 @@ func (w *WriteBehindBuffer) Flush() error {
 func (w *WriteBehindBuffer) flush(dispatch, frontier bool) error {
 	// flush owns no request context, so it states the detached completion
 	// lifetime explicitly: the drain wait it starts cannot cancel.
-	return w.flushContext(commitPreparationLifetime(nil), dispatch, frontier)
+	return w.flushContext(context.Background(), dispatch, frontier)
 }
 
 // flushContext drains the generations this caller observes under its

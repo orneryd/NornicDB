@@ -30,23 +30,23 @@ func TestAdjacencyReadsIgnoreDeletedNeighbourKeys(t *testing.T) {
 	// the surviving nodes' adjacency prefixes.
 	const droppedEdges = 20_000
 	for i := 0; i <= droppedEdges; i++ {
-		_, err := engine.CreateNode(&Node{ID: NodeID(fmt.Sprintf("gone:n%d", i)), Labels: []string{"V"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("gone:n%d", i)), Labels: []string{"V"}})
 		require.NoError(t, err)
 	}
 	for i := 0; i < droppedEdges; i++ {
-		require.NoError(t, engine.CreateEdge(&Edge{
+		require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 			ID: EdgeID(fmt.Sprintf("gone:e%d", i)), Type: "NEXT",
 			StartNode: NodeID(fmt.Sprintf("gone:n%d", i)), EndNode: NodeID(fmt.Sprintf("gone:n%d", i+1)),
 		}))
 	}
 	const probes = 500
 	for i := 0; i < probes; i++ {
-		_, err := engine.CreateNode(&Node{ID: NodeID(fmt.Sprintf("keep:n%d", i)), Labels: []string{"V"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("keep:n%d", i)), Labels: []string{"V"}})
 		require.NoError(t, err)
 	}
 
 	readAll := func() time.Duration {
-		tx, err := engine.BeginTransaction()
+		tx, err := engine.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		defer func() { _ = tx.Rollback() }()
 		start := time.Now()
@@ -212,7 +212,7 @@ func TestTemporalHistoryLookupsDescending(t *testing.T) {
 	}))
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	n1 := &Node{ID: "test:n1", Labels: []string{"Role"}, Properties: map[string]any{"role": "captain", "valid_from": base, "valid_to": base.Add(24 * time.Hour)}}
-	_, err := engine.CreateNode(n1)
+	_, err := engine.CreateNode(t.Context(), n1)
 	require.NoError(t, err)
 	roleConstraints, err := sm.GetConstraintsForLabels(t.Context(), []string{"Role"})
 	require.NoError(t, err)

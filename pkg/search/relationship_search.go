@@ -465,7 +465,7 @@ func (s *Service) embedPendingRelationships(ctx context.Context, rs *relationshi
 		rs.mu.RUnlock()
 		edge := reported
 		if reported == nil || entry == nil || rs.source(reported) != entry.Source {
-			stored, err := s.engine.GetEdge(storage.EdgeID(id))
+			stored, err := s.engine.GetEdge(ctx, storage.EdgeID(id))
 			if err != nil {
 				if reported == nil {
 					continue
@@ -781,7 +781,7 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 		if len(admitted) >= limit {
 			break
 		}
-		edge, err := s.engine.GetEdge(storage.EdgeID(c.id))
+		edge, err := s.engine.GetEdge(ctx, storage.EdgeID(c.id))
 		if err != nil {
 			continue // deleted, or hidden from reads
 		}
@@ -790,10 +790,10 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 		}
 		if opts.RelationshipWhere != nil {
 			var start, end *storage.Node
-			if node, err := s.engine.GetNode(edge.StartNode); err == nil {
+			if node, err := s.engine.GetNode(ctx, edge.StartNode); err == nil {
 				start = node
 			}
-			if node, err := s.engine.GetNode(edge.EndNode); err == nil {
+			if node, err := s.engine.GetNode(ctx, edge.EndNode); err == nil {
 				end = node
 			}
 			if !opts.RelationshipWhere(edge, start, end) {

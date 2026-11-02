@@ -17,10 +17,12 @@ type revealScopeState struct {
 // executionReadScope binds the live storage read lease to its issued executor
 // and transaction storage, just as composite membership and mode observation do.
 // A procedure's fresh context must not recursively acquire its owner's mutex.
+// scopes is the opaque lease handle captured from the owner's actual context, so
+// the bound executor keeps no request context of its own.
 type executionReadScope struct {
-	context context.Context
-	engine  *storage.BadgerEngine
-	reveal  bool
+	scopes storage.RevealScopes
+	engine *storage.BadgerEngine
+	reveal bool
 }
 
 func (e *StorageExecutor) executionReadScopeOf() *executionReadScope {
@@ -42,7 +44,7 @@ func (e *StorageExecutor) bindExecutionReadScope(ctx context.Context) (*StorageE
 		return e, func() {}
 	}
 	bound := e.cloneWithStorage(e.storage)
-	bound.readScope = &executionReadScope{context: ctx, engine: scope.engine, reveal: scope.reveal}
+	bound.readScope = &executionReadScope{scopes: storage.QueryRevealScopes(ctx), engine: scope.engine, reveal: scope.reveal}
 	if wrapper, ok := bound.storage.(*transactionStorageWrapper); ok {
 		previous := wrapper.readScope.Swap(bound.readScope)
 		return bound, func() { wrapper.readScope.Store(previous) }
@@ -98,10 +100,10 @@ func setRevealOnEngine(ctx context.Context, eng storage.Engine, reveal bool) (co
 	if hasFailure {
 		failure.mu.Lock()
 		activeEngine := failure.readScopeEngine
-		activeContext := failure.readScopeContext
+		activeScopes := failure.readScopes
 		failure.mu.Unlock()
 		if activeEngine == be {
-			return storage.InheritQueryRevealScopes(ctx, activeContext), func() {}, nil
+			return storage.InheritQueryRevealScopes(ctx, activeScopes), func() {}, nil
 		}
 	}
 	ctx, cleanup := storage.BeginQueryRevealScopeContext(ctx, eng, reveal)
@@ -111,7 +113,7 @@ func setRevealOnEngine(ctx context.Context, eng storage.Engine, reveal bool) (co
 		activeEngine := failure.readScopeEngine
 		if activeEngine == nil {
 			failure.readScopeEngine = be
-			failure.readScopeContext = ctx
+			failure.readScopes = storage.QueryRevealScopes(ctx)
 			failure.mu.Unlock()
 			return ctx, cleanup, be
 		}
@@ -135,7 +137,7 @@ func clearRevealScope(ctx context.Context, engine *storage.BadgerEngine) {
 	failure.mu.Lock()
 	if failure.readScopeEngine == engine {
 		failure.readScopeEngine = nil
-		failure.readScopeContext = nil
+		failure.readScopes = storage.RevealScopes{}
 	}
 	failure.mu.Unlock()
 }

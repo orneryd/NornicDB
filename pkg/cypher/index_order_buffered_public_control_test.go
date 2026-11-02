@@ -22,7 +22,7 @@ func TestIndexedOrderIncludesAcknowledgedBufferedCommit(t *testing.T) {
 			id   storage.NodeID
 			rank int64
 		}{{"committed-ten", 10}, {"committed-twenty", 20}} {
-			_, err := store.CreateNode(&storage.Node{ID: entry.id, Labels: []string{"BufferedOrder"}, Properties: map[string]interface{}{"rank": entry.rank}})
+			_, err := store.CreateNode(t.Context(), &storage.Node{ID: entry.id, Labels: []string{"BufferedOrder"}, Properties: map[string]interface{}{"rank": entry.rank}})
 			require.NoError(t, err)
 		}
 		writer := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})

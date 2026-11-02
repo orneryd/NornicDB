@@ -26,7 +26,7 @@ func TestUnwindMatchSetBatch_UsesIndexedLookupWithoutCreatingMissingNodes(t *tes
 			// same property is what Neo4j rejects (#884).
 			require.NoError(t, schema.AddUniqueConstraint("unique_function_uid", "Function", "uid"))
 
-			existingID, err := store.CreateNode(&storage.Node{
+			existingID, err := store.CreateNode(t.Context(), &storage.Node{
 				ID:     "fn-1",
 				Labels: []string{"Function"},
 				Properties: map[string]interface{}{
@@ -68,7 +68,7 @@ SET n.name = row.name,
 			}
 			require.NoError(t, err)
 
-			node, err := store.GetNode(existingID)
+			node, err := store.GetNode(t.Context(), existingID)
 			require.NoError(t, err)
 			require.Equal(t, "after", node.Properties["name"])
 			require.Equal(t, "function", node.Properties["semantic_kind"])
@@ -90,7 +90,7 @@ func TestUnwindMatchSetBatch_FallsBackForNonUniqueMatchSet(t *testing.T) {
 	require.NoError(t, schema.AddPropertyIndex("idx_function_uid", "Function", []string{"uid"}))
 
 	for _, id := range []storage.NodeID{"fn-1", "fn-2"} {
-		nodeID, err := store.CreateNode(&storage.Node{
+		nodeID, err := store.CreateNode(t.Context(), &storage.Node{
 			ID:     id,
 			Labels: []string{"Function"},
 			Properties: map[string]interface{}{

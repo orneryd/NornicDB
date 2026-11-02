@@ -3,8 +3,9 @@ package qdrantgrpc
 import (
 	"context"
 	"errors"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/search"
 	qpb "github.com/qdrant/go-client/qdrant"
@@ -851,9 +852,9 @@ func (f *fakeCollectionStore) Drop(ctx context.Context, name string) error {
 	_ = name
 	return nil
 }
-func (f *fakeCollectionStore) Exists(name string) bool {
+func (f *fakeCollectionStore) Exists(ctx context.Context, name string) (bool, error) {
 	_ = name
-	return true
+	return true, ctx.Err()
 }
 func (f *fakeCollectionStore) PointCount(ctx context.Context, name string) (int64, error) {
 	_ = ctx

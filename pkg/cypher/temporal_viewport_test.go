@@ -27,9 +27,9 @@ func TestCollectNodesWithStreaming_RespectsTemporalViewport(t *testing.T) {
 	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
-	_, err := base.CreateNode(&storage.Node{ID: "nornic:visible", Labels: []string{"Doc"}, Properties: map[string]any{"idx": 1}})
+	_, err := base.CreateNode(t.Context(), &storage.Node{ID: "nornic:visible", Labels: []string{"Doc"}, Properties: map[string]any{"idx": 1}})
 	require.NoError(t, err)
-	_, err = base.CreateNode(&storage.Node{ID: "nornic:hidden", Labels: []string{"Doc"}, Properties: map[string]any{"idx": 2}})
+	_, err = base.CreateNode(t.Context(), &storage.Node{ID: "nornic:hidden", Labels: []string{"Doc"}, Properties: map[string]any{"idx": 2}})
 	require.NoError(t, err)
 
 	probe := &temporalViewportProbeEngine{

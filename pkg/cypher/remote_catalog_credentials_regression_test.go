@@ -57,7 +57,7 @@ func TestRemoteQueryCredentialPublic(t *testing.T) {
 	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "probe", []multidb.ConstituentRef{{Alias: "r", DatabaseName: "remote", Type: "remote", AccessMode: "read", URI: "http://example.test/?" + query.String()}}))
 	system, err := manager.GetStorage("system")
 	require.NoError(t, err)
-	node, err := system.GetNode("databases:metadata")
+	node, err := system.GetNode(t.Context(), "databases:metadata")
 	require.NoError(t, err)
 	data, err := json.Marshal(node.Properties)
 	require.NoError(t, err)

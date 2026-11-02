@@ -87,18 +87,18 @@ func (p *pr1667PreparationProbe) GetSchema() *storage.SchemaManager {
 // GetNode and GetQueryNode are the two candidate materialization seams the
 // executor uses (StorageExecutor.getQueryNode prefers the storage.QueryNodeReader
 // view and falls back to Engine.GetNode).
-func (p *pr1667PreparationProbe) GetNode(id storage.NodeID) (*storage.Node, error) {
+func (p *pr1667PreparationProbe) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	p.candidateReads++
-	node, err := p.NamespacedEngine.GetNode(id)
+	node, err := p.NamespacedEngine.GetNode(ctx, id)
 	if !p.canceledAt.IsZero() {
 		p.readsAfterCancel++
 	}
 	return node, err
 }
 
-func (p *pr1667PreparationProbe) GetQueryNode(id storage.NodeID) (*storage.Node, error) {
+func (p *pr1667PreparationProbe) GetQueryNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	p.candidateReads++
-	node, err := p.NamespacedEngine.GetQueryNode(id)
+	node, err := p.NamespacedEngine.GetQueryNode(ctx, id)
 	if !p.canceledAt.IsZero() {
 		p.readsAfterCancel++
 	}

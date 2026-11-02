@@ -179,21 +179,21 @@ type graphifyCountingEngine struct {
 	edgeUpdates int64
 }
 
-func (e *graphifyCountingEngine) CreateNode(node *storage.Node) (storage.NodeID, error) {
+func (e *graphifyCountingEngine) CreateNode(ctx context.Context, node *storage.Node) (storage.NodeID, error) {
 	atomic.AddInt64(&e.nodeCreates, 1)
-	return e.Engine.CreateNode(node)
+	return e.Engine.CreateNode(ctx, node)
 }
-func (e *graphifyCountingEngine) UpdateNode(updateRequest storage.NodeUpdateRequest) error {
+func (e *graphifyCountingEngine) UpdateNode(ctx context.Context, updateRequest storage.NodeUpdateRequest) error {
 	atomic.AddInt64(&e.nodeUpdates, 1)
-	return e.Engine.UpdateNode(updateRequest)
+	return e.Engine.UpdateNode(ctx, updateRequest)
 }
-func (e *graphifyCountingEngine) CreateEdge(edge *storage.Edge) error {
+func (e *graphifyCountingEngine) CreateEdge(ctx context.Context, edge *storage.Edge) error {
 	atomic.AddInt64(&e.edgeCreates, 1)
-	return e.Engine.CreateEdge(edge)
+	return e.Engine.CreateEdge(ctx, edge)
 }
-func (e *graphifyCountingEngine) UpdateEdge(updateRequest storage.EdgeUpdateRequest) error {
+func (e *graphifyCountingEngine) UpdateEdge(ctx context.Context, updateRequest storage.EdgeUpdateRequest) error {
 	atomic.AddInt64(&e.edgeUpdates, 1)
-	return e.Engine.UpdateEdge(updateRequest)
+	return e.Engine.UpdateEdge(ctx, updateRequest)
 }
 
 func (e *graphifyCountingEngine) NodeCreateCount() int64 { return atomic.LoadInt64(&e.nodeCreates) }
@@ -462,7 +462,7 @@ func TestGraphifyScenarioE2E_ReRunDoesNotCreateEntitiesOrRewriteUnchangedPayload
 	pushGraphifyPayload(t, exec, ctx, payload)
 
 	nodeID := storedNodeID(t, exec, ctx, fmt.Sprintf("MATCH (n:%s {id: $id})", payload.nodes[0].label), map[string]interface{}{"id": payload.nodes[0].id})
-	firstNode, err := ns.GetNode(storage.NodeID(nodeID))
+	firstNode, err := ns.GetNode(t.Context(), storage.NodeID(nodeID))
 	require.NoError(t, err)
 	firstImage := cloneProperties(firstNode.Properties)
 
@@ -483,7 +483,7 @@ func TestGraphifyScenarioE2E_ReRunDoesNotCreateEntitiesOrRewriteUnchangedPayload
 		require.Zero(t, result.Stats.RelationshipsCreated, "identical edge upsert must reuse its entity")
 	}
 
-	secondNode, err := ns.GetNode(storage.NodeID(nodeID))
+	secondNode, err := ns.GetNode(t.Context(), storage.NodeID(nodeID))
 	require.NoError(t, err)
 	require.Equal(t, firstImage, secondNode.Properties, "an identical payload must leave the stored image unchanged")
 	require.True(t, firstNode.UpdatedAt.Equal(secondNode.UpdatedAt),
@@ -500,7 +500,7 @@ func TestGraphifyScenarioE2E_ReRunDoesNotCreateEntitiesOrRewriteUnchangedPayload
 	})
 	require.NoError(t, err)
 	require.Zero(t, res.Stats.NodesCreated, "a changed payload must update, not create")
-	thirdNode, err := ns.GetNode(storage.NodeID(nodeID))
+	thirdNode, err := ns.GetNode(t.Context(), storage.NodeID(nodeID))
 	require.NoError(t, err)
 	require.Equal(t, "Renamed_000", thirdNode.Properties["label"], "a changed value must reach storage")
 	require.False(t, thirdNode.UpdatedAt.Equal(firstNode.UpdatedAt), "a changed value must rewrite the stored entity")

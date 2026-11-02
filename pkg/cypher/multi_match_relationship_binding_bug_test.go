@@ -181,7 +181,7 @@ func TestBug_MultiMatchRelationshipBindingLost(t *testing.T) {
 		require.Equal(t, "manual", remaining[0].Properties["evidence_source"])
 
 		for _, id := range reducerEdgeIDs {
-			_, err := exec.getStorage(ctx).GetEdge(id)
+			_, err := exec.getStorage(ctx).GetEdge(t.Context(), id)
 			require.Error(t, err, "reducer edge %s must be gone after DELETE", id)
 		}
 	})
@@ -277,7 +277,7 @@ func TestBug_MultiMatchRelationshipBindingLost_Variations(t *testing.T) {
 			require.Equal(t, "manual", remaining[0].Properties["evidence_source"])
 
 			for _, id := range reducerEdgeIDs {
-				_, err := exec.getStorage(ctx).GetEdge(id)
+				_, err := exec.getStorage(ctx).GetEdge(t.Context(), id)
 				require.Error(t, err, "reducer edge %s must be gone after WITH-pipelined DELETE", id)
 			}
 		})

@@ -74,7 +74,7 @@ func (e *StorageExecutor) executeCreateIndex(ctx context.Context, cypher string)
 				return nil, err
 			}
 			if svc := e.search(); !parsed.isRelationship && (svc == nil || svc.VectorEnabled()) {
-				if err := e.afterCommit(ctx, func() error {
+				if err := e.afterCommit(ctx, func(context.Context) error {
 					e.registerVectorSpace(name, label, property, dimensions, similarity)
 					return nil
 				}); err != nil {

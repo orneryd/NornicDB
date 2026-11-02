@@ -152,7 +152,7 @@ func RegisterClusterHandlers(t *ClusterTransport, r Replicator) {
 
 	// Write forwarding: leader applies commands forwarded from followers
 	type forwardApplyHandler interface {
-		HandleForwardApply(cmd *Command, timeout time.Duration) error
+		HandleForwardApply(ctx context.Context, cmd *Command, timeout time.Duration) error
 	}
 	if h, ok := r.(forwardApplyHandler); ok {
 		t.RegisterHandler(ClusterMsgForwardApply, func(ctx context.Context, nodeID string, msg *ClusterMessage) (*ClusterMessage, error) {
@@ -167,7 +167,7 @@ func RegisterClusterHandlers(t *ClusterTransport, r Replicator) {
 					timeout = d
 				}
 			}
-			err := h.HandleForwardApply(&cmd, timeout)
+			err := h.HandleForwardApply(ctx, &cmd, timeout)
 			respPayload := forwardApplyResponse{}
 			if err != nil {
 				respPayload.Err = err.Error()

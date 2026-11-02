@@ -77,7 +77,7 @@
   },
   "pkg/cypher/deleted_entity_projection.go:replace": {
     "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets.",
-    "sha256": "16b048e61e7619c3803b7628a8c1db2914025c8f9af783e02b487bc5e7b11da8"
+    "sha256": "ab76f090ca3a4f2a502f752ccbbe6c89623ae446b35100e8385e0bfbb3edf352"
   },
   "pkg/cypher/dynamic_tokens.go:dynamicLabelNames": {
     "reason": "String/token or type/format rendering policy; it does not convert numeric elements. Length dispatch already has a reflection fallback for every list width.",

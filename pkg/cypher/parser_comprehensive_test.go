@@ -29,7 +29,7 @@ func TestParseNodePatterns(t *testing.T) {
 		{ID: "n4", Labels: []string{"Person", "Employee"}, Properties: map[string]interface{}{"name": "Carol"}},
 	}
 	for _, n := range nodes {
-		_, err := store.CreateNode(n)
+		_, err := store.CreateNode(t.Context(), n)
 		require.NoError(t, err)
 	}
 
@@ -148,7 +148,7 @@ func TestParseRelationshipPatterns(t *testing.T) {
 		{ID: "c1", Labels: []string{"Company"}, Properties: map[string]interface{}{"name": "Acme"}},
 	}
 	for _, n := range nodes {
-		_, err := store.CreateNode(n)
+		_, err := store.CreateNode(t.Context(), n)
 		require.NoError(t, err)
 	}
 
@@ -159,7 +159,7 @@ func TestParseRelationshipPatterns(t *testing.T) {
 		{ID: "e4", Type: "LIKES", StartNode: "p1", EndNode: "p3"},
 	}
 	for _, e := range edges {
-		require.NoError(t, store.CreateEdge(e))
+		require.NoError(t, store.CreateEdge(t.Context(), e))
 	}
 
 	tests := []struct {
@@ -277,7 +277,7 @@ func TestParseVariableLengthPaths(t *testing.T) {
 		{ID: "n4", Labels: []string{"Node"}, Properties: map[string]interface{}{"level": int64(4)}},
 	}
 	for _, n := range nodes {
-		_, err := store.CreateNode(n)
+		_, err := store.CreateNode(t.Context(), n)
 		require.NoError(t, err)
 	}
 
@@ -287,7 +287,7 @@ func TestParseVariableLengthPaths(t *testing.T) {
 		{ID: "e3", Type: "NEXT", StartNode: "n3", EndNode: "n4"},
 	}
 	for _, e := range edges {
-		require.NoError(t, store.CreateEdge(e))
+		require.NoError(t, store.CreateEdge(t.Context(), e))
 	}
 
 	tests := []struct {
@@ -381,7 +381,7 @@ func TestParseWhereOperators(t *testing.T) {
 		}},
 	}
 	for _, n := range nodes {
-		_, err := store.CreateNode(n)
+		_, err := store.CreateNode(t.Context(), n)
 		require.NoError(t, err)
 	}
 
@@ -575,7 +575,7 @@ func TestParseReturnClause(t *testing.T) {
 		{ID: "n3", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Carol", "age": int64(25)}},
 	}
 	for _, n := range nodes {
-		_, err := store.CreateNode(n)
+		_, err := store.CreateNode(t.Context(), n)
 		require.NoError(t, err)
 	}
 
@@ -757,7 +757,7 @@ func TestParseWithClause(t *testing.T) {
 		{ID: "n4", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Dave", "dept": "Sales", "salary": int64(85000)}},
 	}
 	for _, n := range nodes {
-		_, err := store.CreateNode(n)
+		_, err := store.CreateNode(t.Context(), n)
 		require.NoError(t, err)
 	}
 
@@ -859,7 +859,7 @@ func TestParseOrderBySkipLimit(t *testing.T) {
 		{ID: "n4", Labels: []string{"Item"}, Properties: map[string]interface{}{"name": "D", "value": int64(40)}},
 	}
 	for _, n := range nodes {
-		_, err := store.CreateNode(n)
+		_, err := store.CreateNode(t.Context(), n)
 		require.NoError(t, err)
 	}
 
@@ -1388,7 +1388,7 @@ func TestParseSpecialCharacters(t *testing.T) {
 		{ID: "sp9", Labels: []string{"Special"}, Properties: map[string]interface{}{"name": "Emoji 🎉 Test"}},
 	}
 	for _, n := range nodes {
-		_, err := store.CreateNode(n)
+		_, err := store.CreateNode(t.Context(), n)
 		require.NoError(t, err)
 	}
 
@@ -1490,7 +1490,7 @@ func TestParseMultipleMatchPatterns(t *testing.T) {
 		{ID: "skill-1", Labels: []string{"Skill"}, Properties: map[string]interface{}{"name": "Go"}},
 	}
 	for _, n := range nodes {
-		_, err := store.CreateNode(n)
+		_, err := store.CreateNode(t.Context(), n)
 		require.NoError(t, err)
 	}
 
@@ -1501,7 +1501,7 @@ func TestParseMultipleMatchPatterns(t *testing.T) {
 		{ID: "e4", Type: "WORKS_AT", StartNode: "person-2", EndNode: "company-1"},
 	}
 	for _, e := range edges {
-		require.NoError(t, store.CreateEdge(e))
+		require.NoError(t, store.CreateEdge(t.Context(), e))
 	}
 
 	tests := []struct {
@@ -1595,7 +1595,7 @@ func TestParseOptionalMatch(t *testing.T) {
 		{ID: "addr1", Labels: []string{"Address"}, Properties: map[string]interface{}{"city": "NYC"}},
 	}
 	for _, n := range nodes {
-		_, err := store.CreateNode(n)
+		_, err := store.CreateNode(t.Context(), n)
 		require.NoError(t, err)
 	}
 
@@ -1603,7 +1603,7 @@ func TestParseOptionalMatch(t *testing.T) {
 		{ID: "e1", Type: "LIVES_AT", StartNode: "p1", EndNode: "addr1"},
 	}
 	for _, e := range edges {
-		require.NoError(t, store.CreateEdge(e))
+		require.NoError(t, store.CreateEdge(t.Context(), e))
 	}
 
 	tests := []struct {
@@ -1727,7 +1727,7 @@ func TestParseParameters(t *testing.T) {
 		{ID: "n2", Labels: []string{"Param"}, Properties: map[string]interface{}{"name": "Test2", "value": int64(200)}},
 	}
 	for _, n := range nodes {
-		_, err := store.CreateNode(n)
+		_, err := store.CreateNode(t.Context(), n)
 		require.NoError(t, err)
 	}
 
@@ -1809,7 +1809,7 @@ func TestParseCaseExpressions(t *testing.T) {
 		{ID: "n3", Labels: []string{"Score"}, Properties: map[string]interface{}{"value": int64(50)}},
 	}
 	for _, n := range nodes {
-		_, err := store.CreateNode(n)
+		_, err := store.CreateNode(t.Context(), n)
 		require.NoError(t, err)
 	}
 
@@ -1887,7 +1887,7 @@ func TestParseStringFunctions(t *testing.T) {
 			"name": "Alice",
 		},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	tests := []struct {

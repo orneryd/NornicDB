@@ -62,9 +62,9 @@ func TestSeedNodesFromOuterMatch_ErrorAndNilBranches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{ID: storage.NodeID("e1"), Labels: []string{"ErrSeed"}, Properties: map[string]interface{}{"id": "e1"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID("e1"), Labels: []string{"ErrSeed"}, Properties: map[string]interface{}{"id": "e1"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: storage.NodeID("n1"), Labels: []string{"NilSeed"}, Properties: map[string]interface{}{"id": "n1", "team": "red"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID("n1"), Labels: []string{"NilSeed"}, Properties: map[string]interface{}{"id": "n1", "team": "red"}})
 	require.NoError(t, err)
 
 	_, err = exec.seedNodesFromOuterMatch(ctx, "MATCH (n:ErrSeed)", "n")

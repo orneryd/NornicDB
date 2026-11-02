@@ -50,21 +50,22 @@ func numericConstraintValue(value interface{}) (float64, bool) {
 	return convert.NumericFloat64(value)
 }
 
-func (b *BadgerEngine) validateNodeConstraintsInTxn(txn *badger.Txn, node *Node, schema *SchemaManager, namespace string, excludeNodeID NodeID) error {
+func (b *BadgerEngine) validateNodeConstraintsInTxn(ctx context.Context, txn *badger.Txn, node *Node, schema *SchemaManager, namespace string, excludeNodeID NodeID) error {
 	if node == nil || schema == nil {
 		return nil
 	}
-	// Native callbacks are already inside an accepted engine write. Integrity
-	// validation retains that write lifetime; statement transaction validation
-	// enters through validateNodeConstraints with its actual request context.
-	return (nodeConstraintValidation{ctx: context.Background(), engine: b, native: txn, schema: schema, namespace: namespace, exclude: excludeNodeID}).validate(node)
+	// Before-durability native callbacks retain the write's preparation
+	// lifetime. Statement transaction validation uses the same owner with
+	// its actual request context.
+	return (nodeConstraintValidation{ctx: ctx, engine: b, native: txn, schema: schema, namespace: namespace, exclude: excludeNodeID}).validate(node)
 }
 
 // nodeConstraintValidation owns schema iteration, first-error ordering, DOMAIN
 // and property-type policy. Reads remain attached to their actual authority:
 // a transaction's pending/current view or the caller's physical publishing txn,
 // and to their own lifetime (ctx): the staging write's own for a context-free
-// transaction API, the commit's caller context for a commit. The concrete
+// transaction API, the commit's caller context for a commit, and the native
+// write's preparation lifetime before durability. The concrete
 // context avoids interface boxes and retains original error values.
 type nodeConstraintValidation struct {
 	ctx         context.Context
@@ -479,14 +480,14 @@ func (b *BadgerEngine) scanForTemporalOverlapInTxn(ctx context.Context, txn *bad
 
 // validateEdgeConstraintsInTxn checks all relationship constraints for an edge within a transaction.
 // The excludeEdgeID allows excluding the edge being updated from uniqueness checks.
-func (b *BadgerEngine) validateEdgeConstraintsInTxn(txn *badger.Txn, edge *Edge, schema *SchemaManager, namespace string, excludeEdgeID EdgeID) error {
+func (b *BadgerEngine) validateEdgeConstraintsInTxn(ctx context.Context, txn *badger.Txn, edge *Edge, schema *SchemaManager, namespace string, excludeEdgeID EdgeID) error {
 	if edge == nil || schema == nil || edge.Type == "" {
 		return nil
 	}
 
-	// A native callback validates inside an accepted engine write, so this
-	// discovery has the write's lifetime and no request to cancel.
-	constraints, err := schema.GetConstraintsForLabels(context.Background(), []string{edge.Type})
+	// Discovery retains the native write's preparation lifetime; it runs
+	// before durable publication, where cancellation may still reject it.
+	constraints, err := schema.GetConstraintsForLabels(ctx, []string{edge.Type})
 	if err != nil {
 		return err
 	}
@@ -536,7 +537,7 @@ func (b *BadgerEngine) validateEdgeConstraintsInTxn(txn *badger.Txn, edge *Edge,
 	}
 
 	// Policy constraints must be evaluated as a set (all ALLOWED policies form a union).
-	if err := b.checkEdgePolicyInTxn(txn, edge, schema, namespace); err != nil {
+	if err := b.checkEdgePolicyInTxn(ctx, txn, edge, schema, namespace); err != nil {
 		return err
 	}
 
@@ -866,10 +867,10 @@ func (b *BadgerEngine) checkEdgeCardinalityInTxn(txn *badger.Txn, edge *Edge, c 
 // checkEdgePolicyInTxn validates DISALLOWED and ALLOWED endpoint policies for an edge.
 // All policies for the edge type are evaluated as a set: DISALLOWED policies are checked
 // individually, while ALLOWED policies form a union (at least one must match).
-func (b *BadgerEngine) checkEdgePolicyInTxn(txn *badger.Txn, edge *Edge, schema *SchemaManager, namespace string) error {
-	// A native callback validates inside an accepted engine write, so this
-	// discovery has the write's lifetime and no request to cancel.
-	constraints, err := schema.GetConstraintsForLabels(context.Background(), []string{edge.Type})
+func (b *BadgerEngine) checkEdgePolicyInTxn(ctx context.Context, txn *badger.Txn, edge *Edge, schema *SchemaManager, namespace string) error {
+	// Discovery retains the native write's preparation lifetime; it runs
+	// before durable publication, where cancellation may still reject it.
+	constraints, err := schema.GetConstraintsForLabels(ctx, []string{edge.Type})
 	if err != nil {
 		return err
 	}
@@ -966,7 +967,7 @@ func (b *BadgerEngine) readNodeLabelsInTxn(txn *badger.Txn, nodeID NodeID) ([]st
 // validatePolicyOnNodeLabelChangeInTxn checks all policy constraints on edges connected
 // to a node whose labels are changing. This enforces that label mutations (SET n:Label,
 // REMOVE n:Label) don't violate endpoint policies.
-func (b *BadgerEngine) validatePolicyOnNodeLabelChangeInTxn(txn *badger.Txn, node *Node, oldNode *Node, schema *SchemaManager, namespace string) error {
+func (b *BadgerEngine) validatePolicyOnNodeLabelChangeInTxn(ctx context.Context, txn *badger.Txn, node *Node, oldNode *Node, schema *SchemaManager, namespace string) error {
 	if schema == nil || node == nil || oldNode == nil {
 		return nil
 	}
@@ -976,19 +977,19 @@ func (b *BadgerEngine) validatePolicyOnNodeLabelChangeInTxn(txn *badger.Txn, nod
 	}
 
 	// Check all edges connected to this node.
-	return b.validatePolicyForAdjacentEdgesInTxn(txn, node, schema, namespace)
+	return b.validatePolicyForAdjacentEdgesInTxn(ctx, txn, node, schema, namespace)
 }
 
 // validatePolicyForAdjacentEdgesInTxn scans all outgoing and incoming edges for a node
 // and re-validates policy constraints with the node's current labels.
-func (b *BadgerEngine) validatePolicyForAdjacentEdgesInTxn(txn *badger.Txn, node *Node, schema *SchemaManager, namespace string) error {
+func (b *BadgerEngine) validatePolicyForAdjacentEdgesInTxn(ctx context.Context, txn *badger.Txn, node *Node, schema *SchemaManager, namespace string) error {
 	if outPrefix := b.outgoingIndexPrefixString(node.ID); outPrefix != nil {
-		if err := b.validatePolicyForEdgesWithPrefixInTxn(txn, outPrefix, node, true, schema, namespace); err != nil {
+		if err := b.validatePolicyForEdgesWithPrefixInTxn(ctx, txn, outPrefix, node, true, schema, namespace); err != nil {
 			return err
 		}
 	}
 	if inPrefix := b.incomingIndexPrefixString(node.ID); inPrefix != nil {
-		return b.validatePolicyForEdgesWithPrefixInTxn(txn, inPrefix, node, false, schema, namespace)
+		return b.validatePolicyForEdgesWithPrefixInTxn(ctx, txn, inPrefix, node, false, schema, namespace)
 	}
 	return nil
 }
@@ -996,7 +997,7 @@ func (b *BadgerEngine) validatePolicyForAdjacentEdgesInTxn(txn *badger.Txn, node
 // validatePolicyForEdgesWithPrefixInTxn scans edges with the given index prefix and
 // validates policy constraints. isOutgoing indicates whether the node is the source (true)
 // or target (false) of the edges.
-func (b *BadgerEngine) validatePolicyForEdgesWithPrefixInTxn(txn *badger.Txn, prefix []byte, node *Node, isOutgoing bool, schema *SchemaManager, namespace string) error {
+func (b *BadgerEngine) validatePolicyForEdgesWithPrefixInTxn(ctx context.Context, txn *badger.Txn, prefix []byte, node *Node, isOutgoing bool, schema *SchemaManager, namespace string) error {
 	iter := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	defer iter.Close()
 
@@ -1060,7 +1061,7 @@ func (b *BadgerEngine) validatePolicyForEdgesWithPrefixInTxn(txn *badger.Txn, pr
 		}
 
 		// Check policy constraints for this edge type.
-		constraints, err := schema.GetConstraintsForLabels(context.Background(), []string{edge.Type})
+		constraints, err := schema.GetConstraintsForLabels(ctx, []string{edge.Type})
 		if err != nil {
 			return err
 		}

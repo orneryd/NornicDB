@@ -34,15 +34,15 @@ func TestCompareValues_MixedAndFallbackBranches(t *testing.T) {
 func TestBadgerEngine_MaterializeAdjEdges_CacheMissAndDecodeError(t *testing.T) {
 	engine := newTestEngine(t)
 
-	_, err := engine.CreateNode(&Node{ID: "test:a", Labels: []string{"N"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:a", Labels: []string{"N"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:b", Labels: []string{"N"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:b", Labels: []string{"N"}})
 	require.NoError(t, err)
 
 	e1 := &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "R"}
 	e2 := &Edge{ID: "test:e2", StartNode: "test:a", EndNode: "test:b", Type: "R"}
-	require.NoError(t, engine.CreateEdge(e1))
-	require.NoError(t, engine.CreateEdge(e2))
+	require.NoError(t, engine.CreateEdge(t.Context(), e1))
+	require.NoError(t, engine.CreateEdge(t.Context(), e2))
 
 	// Force one cache hit path.
 	engine.cacheStoreEdge(e1, engine.db.oracle.published.Load())
@@ -83,9 +83,9 @@ func TestBadgerEngine_TemporalIndexHelpers_ExtraBranches(t *testing.T) {
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	n1 := &Node{ID: "test:n1", Labels: []string{"Role"}, Properties: map[string]any{"role": "captain", "valid_from": base, "valid_to": base.Add(24 * time.Hour)}}
 	n2 := &Node{ID: "test:n2", Labels: []string{"Role"}, Properties: map[string]any{"role": "captain", "valid_from": base.Add(48 * time.Hour), "valid_to": base.Add(72 * time.Hour)}}
-	_, err := engine.CreateNode(n1)
+	_, err := engine.CreateNode(t.Context(), n1)
 	require.NoError(t, err)
-	_, err = engine.CreateNode(n2)
+	_, err = engine.CreateNode(t.Context(), n2)
 	require.NoError(t, err)
 
 	roleConstraints, err := sm.GetConstraintsForLabels(t.Context(), []string{"Role"})
@@ -131,7 +131,7 @@ func TestBadgerEngine_RebuildTemporalIndexes_ClosedAndCanceled(t *testing.T) {
 	require.Error(t, engine.RebuildTemporalIndexes(context.Background()))
 
 	engine2 := newTestEngine(t)
-	_, err := engine2.CreateNode(&Node{ID: "test:n1", Labels: []string{"L"}})
+	_, err := engine2.CreateNode(t.Context(), &Node{ID: "test:n1", Labels: []string{"L"}})
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

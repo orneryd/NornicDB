@@ -39,7 +39,7 @@ func TestVectorEntryClusterMarkerTokens(t *testing.T) {
 					nodes[0], nodes[1] = nodes[1], nodes[0]
 				}
 				for _, node := range nodes {
-					_, err := engine.CreateNode(node)
+					_, err := engine.CreateNode(t.Context(), node)
 					require.NoError(t, err)
 					require.NoError(t, svc.IndexNode(node))
 				}
@@ -64,10 +64,10 @@ func TestVectorEntryClusterMarkerTokens(t *testing.T) {
 				}
 				checkTerms()
 				marker.Properties["text"] = "updatedtoken"
-				require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: marker}))
+				require.NoError(t, engine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: marker}))
 				require.NoError(t, svc.IndexNode(marker))
 				checkTerms()
-				require.NoError(t, engine.DeleteNode(marker.ID))
+				require.NoError(t, engine.DeleteNode(t.Context(), marker.ID))
 				require.NoError(t, svc.RemoveNode(marker.ID))
 				checkTerms()
 				hits, err := svc.VectorSearchCandidates(context.Background(), vectorOwnerAxis(0), &SearchOptions{Limit: 10})

@@ -28,7 +28,7 @@ func TestSearchService_BuildIndexesSkipsHistoricalTemporalVersions(t *testing.T)
 	v1Start := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	v1End := time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC)
 	v2Start := time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC)
-	_, err = ns.CreateNode(&storage.Node{
+	_, err = ns.CreateNode(t.Context(), &storage.Node{
 		ID:     "fact-v1",
 		Labels: []string{"FactVersion"},
 		Properties: map[string]any{
@@ -40,7 +40,7 @@ func TestSearchService_BuildIndexesSkipsHistoricalTemporalVersions(t *testing.T)
 		ChunkEmbeddings: [][]float32{{1, 0, 0}},
 	})
 	require.NoError(t, err)
-	_, err = ns.CreateNode(&storage.Node{
+	_, err = ns.CreateNode(t.Context(), &storage.Node{
 		ID:     "fact-v2",
 		Labels: []string{"FactVersion"},
 		Properties: map[string]any{
@@ -83,7 +83,7 @@ func TestSearchService_IndexNodeRemovesClosedTemporalVersion(t *testing.T) {
 		},
 		ChunkEmbeddings: [][]float32{{1, 0, 0}},
 	}
-	_, err = ns.CreateNode(node)
+	_, err = ns.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	svc := NewService(ns, 3, nil)
@@ -92,7 +92,7 @@ func TestSearchService_IndexNodeRemovesClosedTemporalVersion(t *testing.T) {
 
 	closed := storage.CopyNode(node)
 	closed.Properties["valid_to"] = time.Now().UTC().Add(-time.Hour)
-	require.NoError(t, ns.UpdateNode(storage.NodeUpdateRequest{After: closed}))
+	require.NoError(t, ns.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: closed}))
 	require.NoError(t, svc.IndexNode(closed))
 	require.Equal(t, 0, svc.EmbeddingCount())
 

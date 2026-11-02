@@ -51,19 +51,19 @@ type projectedCountingEngine struct {
 // GetInnerEngine is the canonical EngineUnwrapper accessor.
 func (e *projectedCountingEngine) GetInnerEngine() storage.Engine { return e.Engine }
 
-func (e *projectedCountingEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
+func (e *projectedCountingEngine) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	e.getNodeCalls++
-	return e.Engine.GetNode(id)
+	return e.Engine.GetNode(ctx, id)
 }
 
-func (e *projectedCountingEngine) GetNodeProjected(id storage.NodeID, properties []string) (*storage.Node, error) {
+func (e *projectedCountingEngine) GetNodeProjected(ctx context.Context, id storage.NodeID, properties []string) (*storage.Node, error) {
 	e.projectedCalls++
 	props := append([]string(nil), properties...)
 	e.projectedProps = append(e.projectedProps, props)
 	if reader, ok := e.Engine.(storage.ProjectedNodeReader); ok {
-		return reader.GetNodeProjected(id, properties)
+		return reader.GetNodeProjected(ctx, id, properties)
 	}
-	node, err := e.Engine.GetNode(id)
+	node, err := e.Engine.GetNode(ctx, id)
 	if err != nil || node == nil {
 		return node, err
 	}

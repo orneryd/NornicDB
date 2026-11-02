@@ -76,7 +76,11 @@ func (sm *SchemaManager) AddLookupIndex(name string, entityType ConstraintEntity
 	}
 	sm.lookupIndexes[entityType] = name
 	if sm.persist != nil {
-		if err := sm.persist(sm.exportDefinitionLocked()); err != nil {
+		def, err := sm.exportDefinitionLocked(context.Background()) // accepted mutation owns its completion
+		if err == nil {
+			err = sm.persist(def)
+		}
+		if err != nil {
 			delete(sm.lookupIndexes, entityType)
 			return err
 		}

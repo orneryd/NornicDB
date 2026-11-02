@@ -40,19 +40,24 @@ type DBStats struct {
 }
 
 // Stats returns current database statistics.
-func (db *DB) Stats() DBStats {
+func (db *DB) Stats(ctx context.Context) (DBStats, error) {
 	stats := DBStats{}
 	db.mu.RLock()
 	st := db.storage
 	db.mu.RUnlock()
-
-	if st != nil {
-		nodeCount, _ := st.NodeCount()
-		edgeCount, _ := st.EdgeCount()
-		stats.NodeCount = nodeCount
-		stats.EdgeCount = edgeCount
+	if st == nil {
+		return stats, nil
 	}
-	return stats
+	nodeCount, err := st.NodeCount(ctx)
+	if err != nil {
+		return DBStats{}, err
+	}
+	edgeCount, err := st.EdgeCount(ctx)
+	if err != nil {
+		return DBStats{}, err
+	}
+	stats.NodeCount, stats.EdgeCount = nodeCount, edgeCount
+	return stats, nil
 }
 
 // SetGPUManager sets the GPU manager for vector search acceleration.
@@ -516,7 +521,7 @@ func (db *DB) GetNode(ctx context.Context, id string) (*Node, error) {
 		return nil, ErrClosed
 	}
 
-	n, err := db.storage.GetNode(storage.NodeID(id))
+	n, err := db.storage.GetNode(ctx, storage.NodeID(id))
 	if err != nil {
 		return nil, ErrNotFound
 	}
@@ -557,7 +562,7 @@ func (db *DB) createNode(ctx context.Context, id string, labels []string, proper
 	embedQueue := db.embedQueue
 	db.mu.RUnlock()
 	if rejectExisting {
-		if _, err := storageEngine.GetNode(storage.NodeID(id)); err == nil {
+		if _, err := storageEngine.GetNode(ctx, storage.NodeID(id)); err == nil {
 			return nil, localizedError(localization.NornicDBCoreNodeAlreadyExists(id), nil)
 		} else if !errors.Is(err, storage.ErrNotFound) {
 			return nil, err
@@ -576,7 +581,7 @@ func (db *DB) createNode(ctx context.Context, id string, labels []string, proper
 		CreatedAt:  now,
 	}
 
-	actualID, err := storageEngine.CreateNode(node)
+	actualID, err := storageEngine.CreateNode(ctx, node)
 	if err != nil {
 		return nil, err
 	}
@@ -590,7 +595,7 @@ func (db *DB) createNode(ctx context.Context, id string, labels []string, proper
 	// Storage event callbacks still provide eventual consistency for external writers.
 	svc, svcErr := db.GetOrCreateSearchService(db.defaultDatabaseName(), storageEngine)
 	if svcErr == nil && svc != nil {
-		if indexErr := svc.RefreshNode(actualID); indexErr != nil && !db.shouldIgnoreSearchIndexingError(indexErr) {
+		if indexErr := svc.RefreshNode(context.WithoutCancel(ctx), actualID); indexErr != nil && !db.shouldIgnoreSearchIndexingError(indexErr) {
 			return nil, indexErr
 		}
 	}
@@ -614,7 +619,7 @@ func (db *DB) UpdateNode(ctx context.Context, id string, properties map[string]i
 	embedQueue := db.embedQueue
 	db.mu.RUnlock()
 
-	n, err := storageEngine.GetNode(storage.NodeID(id))
+	n, err := storageEngine.GetNode(ctx, storage.NodeID(id))
 	if err != nil {
 		return nil, ErrNotFound
 	}
@@ -643,7 +648,7 @@ func (db *DB) UpdateNode(ctx context.Context, id string, properties map[string]i
 		embeddingutil.InvalidateManagedEmbeddings(n)
 	}
 
-	if err := storageEngine.UpdateNode(storage.NodeUpdateRequest{Before: &before, After: n}); err != nil {
+	if err := storageEngine.UpdateNode(ctx, storage.NodeUpdateRequest{Before: &before, After: n}); err != nil {
 		return nil, err
 	}
 
@@ -656,7 +661,7 @@ func (db *DB) UpdateNode(ctx context.Context, id string, properties map[string]i
 	// Keep search results immediately consistent after updates.
 	svc, svcErr := db.GetOrCreateSearchService(db.defaultDatabaseName(), storageEngine)
 	if svcErr == nil && svc != nil {
-		if indexErr := svc.RefreshNode(n.ID); indexErr != nil && !db.shouldIgnoreSearchIndexingError(indexErr) {
+		if indexErr := svc.RefreshNode(context.WithoutCancel(ctx), n.ID); indexErr != nil && !db.shouldIgnoreSearchIndexingError(indexErr) {
 			return nil, indexErr
 		}
 	}
@@ -684,7 +689,7 @@ func (db *DB) DeleteNode(ctx context.Context, id string) error {
 	defaultDB := db.defaultDatabaseName()
 	db.mu.RUnlock()
 
-	if err := storageEngine.DeleteNode(storage.NodeID(id)); err != nil {
+	if err := storageEngine.DeleteNode(ctx, storage.NodeID(id)); err != nil {
 		return err
 	}
 	if embedQueue != nil {
@@ -764,7 +769,7 @@ func (db *DB) GetEdge(ctx context.Context, id string) (*GraphEdge, error) {
 		return nil, ErrClosed
 	}
 
-	e, err := db.storage.GetEdge(storage.EdgeID(id))
+	e, err := db.storage.GetEdge(ctx, storage.EdgeID(id))
 	if err != nil {
 		return nil, ErrNotFound
 	}
@@ -840,10 +845,10 @@ func (db *DB) CreateEdge(ctx context.Context, source, target, edgeType string, p
 	db.mu.RUnlock()
 
 	// Verify nodes exist
-	if _, err := storageEngine.GetNode(storage.NodeID(source)); err != nil {
+	if _, err := storageEngine.GetNode(ctx, storage.NodeID(source)); err != nil {
 		return nil, localizedError(localization.NornicDBCoreSourceNodeNotFound(), nil)
 	}
-	if _, err := storageEngine.GetNode(storage.NodeID(target)); err != nil {
+	if _, err := storageEngine.GetNode(ctx, storage.NodeID(target)); err != nil {
 		return nil, localizedError(localization.NornicDBCoreTargetNodeNotFound(), nil)
 	}
 
@@ -859,7 +864,7 @@ func (db *DB) CreateEdge(ctx context.Context, source, target, edgeType string, p
 		CreatedAt:  now,
 	}
 
-	if err := storageEngine.CreateEdge(edge); err != nil {
+	if err := storageEngine.CreateEdge(ctx, edge); err != nil {
 		return nil, err
 	}
 
@@ -883,7 +888,7 @@ func (db *DB) DeleteEdge(ctx context.Context, id string) error {
 	storageEngine := db.storage
 	db.mu.RUnlock()
 
-	return storageEngine.DeleteEdge(storage.EdgeID(id))
+	return storageEngine.DeleteEdge(ctx, storage.EdgeID(id))
 }
 
 // SearchResult holds a search result with score.
@@ -1073,7 +1078,7 @@ func (db *DB) FindSimilarInDatabase(ctx context.Context, engine storage.Engine, 
 	defer releaseProjection()
 
 	// Get target node
-	target, err := engine.GetNode(storage.NodeID(nodeID))
+	target, err := engine.GetNode(ctx, storage.NodeID(nodeID))
 	if err != nil {
 		return nil, ErrNotFound
 	}
@@ -1570,10 +1575,10 @@ legacyJSONRestore:
 
 	// Restore nodes
 	for _, node := range backup.Nodes {
-		_, err := db.storage.CreateNode(node)
+		_, err := db.storage.CreateNode(ctx, node)
 		if err != nil {
 			// Try update if node exists
-			if updateErr := db.storage.UpdateNode(storage.NodeUpdateRequest{After: node}); updateErr != nil {
+			if updateErr := db.storage.UpdateNode(ctx, storage.NodeUpdateRequest{After: node}); updateErr != nil {
 				db.mu.Unlock()
 				return localizedError(localization.NornicDBCoreRestoreNodeFailed(string(node.ID), err), err)
 			}
@@ -1582,9 +1587,9 @@ legacyJSONRestore:
 
 	// Restore edges
 	for _, edge := range backup.Edges {
-		if err := db.storage.CreateEdge(edge); err != nil {
+		if err := db.storage.CreateEdge(ctx, edge); err != nil {
 			// Try update if edge exists
-			if updateErr := db.storage.UpdateEdge(storage.EdgeUpdateRequest{After: edge}); updateErr != nil {
+			if updateErr := db.storage.UpdateEdge(ctx, storage.EdgeUpdateRequest{After: edge}); updateErr != nil {
 				db.mu.Unlock()
 				return localizedError(localization.NornicDBCoreRestoreEdgeFailed(string(edge.ID), err), err)
 			}
@@ -1826,7 +1831,7 @@ func (db *DB) AnonymizeUserData(ctx context.Context, userID string) error {
 
 	// Now update the collected nodes
 	for _, request := range toUpdate {
-		if err := storageEngine.UpdateNode(request); err != nil {
+		if err := storageEngine.UpdateNode(ctx, request); err != nil {
 			return err
 		}
 		if embedQueue != nil {

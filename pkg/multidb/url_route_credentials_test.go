@@ -70,7 +70,7 @@ func TestR73ReviewHTTPQueryCredentials(t *testing.T) {
 	if err := manager.CreateCompositeDatabase(t.Context(), "route_lifecycle", []ConstituentRef{ref}); err != nil {
 		t.Fatal("remote metadata setup failed")
 	}
-	node, err := storage.NewNamespacedEngine(inner, "system").GetNode(storage.NodeID(metadataNodeID))
+	node, err := storage.NewNamespacedEngine(inner, "system").GetNode(t.Context(), storage.NodeID(metadataNodeID))
 	if err != nil {
 		t.Fatal("metadata read failed")
 	}

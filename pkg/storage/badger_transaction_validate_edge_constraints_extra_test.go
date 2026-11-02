@@ -10,7 +10,7 @@ import (
 
 func TestBadgerTransaction_ValidateEdgeConstraints_EarlyReturns(t *testing.T) {
 	engine := newTestEngine(t)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
 
@@ -29,11 +29,11 @@ func TestBadgerTransaction_ValidateEdgeConstraints_BranchCoverage(t *testing.T) 
 		{ID: "test:b", Labels: []string{"Person", "Department"}, Properties: map[string]any{"dept": "sales"}},
 		{ID: "test:c", Labels: []string{"Person", "Employee"}, Properties: map[string]any{"dept": "eng"}},
 	} {
-		_, err := engine.CreateNode(n)
+		_, err := engine.CreateNode(t.Context(), n)
 		require.NoError(t, err)
 	}
 
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e-existing", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"token": "dup", "rank": int64(7)}}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e-existing", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"token": "dup", "rank": int64(7)}}))
 
 	sm := engine.GetSchemaForNamespace("test")
 	require.NoError(t, sm.AddConstraint(Constraint{Name: "rel_exists", Type: ConstraintExists, EntityType: ConstraintEntityRelationship, Label: "LINK", Properties: []string{"token"}}))
@@ -44,7 +44,7 @@ func TestBadgerTransaction_ValidateEdgeConstraints_BranchCoverage(t *testing.T) 
 	require.NoError(t, sm.AddPropertyTypeConstraint("rel_rank_type", "LINK", "rank", PropertyTypeInteger, PropertyTypeConstraintOptions{EntityType: ConstraintEntityRelationship}))
 	require.NoError(t, sm.AddConstraint(Constraint{Name: "rel_temporal", Type: ConstraintTemporal, EntityType: ConstraintEntityRelationship, Label: "TEMP_LINK", Properties: []string{"key", "valid_from", "valid_to"}}))
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
 	require.NoError(t, tx.SetNamespace("test"))

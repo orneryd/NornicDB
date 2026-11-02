@@ -54,7 +54,7 @@ func BenchmarkNonNilCandidatesAgainstCorrectScan(b *testing.B) {
 		if i%8 == 0 {
 			value = []byte{1, 2, 3, 4}
 		}
-		if _, err := store.CreateNode(&Node{ID: id, Labels: []string{"Item"}, Properties: map[string]interface{}{"value": value}}); err != nil {
+		if _, err := store.CreateNode(b.Context(), &Node{ID: id, Labels: []string{"Item"}, Properties: map[string]interface{}{"value": value}}); err != nil {
 			b.Fatal(err)
 		}
 		values[id] = value

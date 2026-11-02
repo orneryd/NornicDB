@@ -98,7 +98,7 @@ func TestSubsystemHostGenerationRetainsDiagnosticCredentials(t *testing.T) {
 	shutdownFailure := errors.New("synthetic accepted cleanup shutdown failure")
 
 	manager := newMatrixSubsystemManager()
-	manager.SetHostContext(SubsystemContext{
+	manager.SetHostContext(SubsystemHost{
 		Config:  Config{APIURL: firstEndpoint, APIKey: firstKey},
 		Bifrost: &NoOpBifrost{},
 	})
@@ -156,7 +156,7 @@ func TestSubsystemHostGenerationRetainsDiagnosticCredentials(t *testing.T) {
 	})
 	go func() {
 		defer close(transitionDone)
-		manager.SetHostContext(SubsystemContext{
+		manager.SetHostContext(SubsystemHost{
 			Config:  Config{APIURL: secondEndpoint, APIKey: secondKey},
 			Bifrost: &NoOpBifrost{},
 		})

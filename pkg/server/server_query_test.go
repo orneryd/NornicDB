@@ -679,7 +679,7 @@ func TestHandleSearchContinuationBeyondInitialLimit(t *testing.T) {
 			},
 		}
 	}
-	require.NoError(t, engine.BulkCreateNodes(nodes))
+	require.NoError(t, engine.BulkCreateNodes(t.Context(), nodes))
 
 	rebuild := makeRequest(t, server, http.MethodPost, "/nornicdb/search/rebuild", map[string]any{"database": database}, "Bearer "+token)
 	require.Equal(t, http.StatusOK, rebuild.Code, rebuild.Body.String())
@@ -780,7 +780,7 @@ func TestHandleSearchIDContinuationGroupsAllPassages(t *testing.T) {
 		{ID: "frame-a", Labels: []string{"Frame"}, Properties: map[string]any{"collection": "summer", "asset_id": "asset-a"}},
 		{ID: "winter", Labels: []string{"Frame"}, Properties: map[string]any{"collection": "winter", "asset_id": "asset-c"}},
 	} {
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 
@@ -857,7 +857,7 @@ func TestSearchContinuationQIDIsSharedFromHTTPToCypher(t *testing.T) {
 	engine, err := server.dbManager.GetStorage(database)
 	require.NoError(t, err)
 	for _, id := range []string{"cross-a", "cross-b"} {
-		_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{"Document"}})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(id), Labels: []string{"Document"}})
 		require.NoError(t, err)
 	}
 
@@ -913,7 +913,7 @@ func TestSearchContinuationQIDIsSharedAcrossDefaultHTTPAndCypherRequestsWithoutA
 	engine, err := server.dbManager.GetStorage(database)
 	require.NoError(t, err)
 	for _, id := range []string{"anonymous-cross-a", "anonymous-cross-b", "anonymous-cross-c"} {
-		_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{"Document"}})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(id), Labels: []string{"Document"}})
 		require.NoError(t, err)
 	}
 
@@ -992,7 +992,7 @@ func TestHandleSearch_FiltersParameter(t *testing.T) {
 			},
 		},
 	}
-	require.NoError(t, eng.BulkCreateNodes(nodes))
+	require.NoError(t, eng.BulkCreateNodes(t.Context(), nodes))
 
 	// Trigger search index rebuild so the new nodes are indexed.
 	rebuildResp := makeRequest(t, server, http.MethodPost, "/nornicdb/search/rebuild",
@@ -1326,7 +1326,7 @@ func TestHandleSearch_LongChunkedBranches(t *testing.T) {
 	// Seed vectors so vectorSearchUsable=true.
 	seed := make([]float32, 1024)
 	seed[0] = 1
-	_, _ = st.CreateNode(&storage.Node{
+	_, _ = st.CreateNode(t.Context(), &storage.Node{
 		ID:              "t_seed",
 		Labels:          []string{"Doc"},
 		Properties:      map[string]interface{}{"title": "seed"},
@@ -1459,7 +1459,7 @@ func TestHandleImplicitTransaction_AsyncWriteAccepted(t *testing.T) {
 				JWTSecret:       []byte("test-secret-key-for-testing-only-32b"),
 			}, authStorage)
 			require.NoError(t, err)
-			_, _ = authn.CreateUser("admin", "password123", []auth.Role{auth.RoleAdmin})
+			_, _ = authn.CreateUser(context.Background(), "admin", "password123", []auth.Role{auth.RoleAdmin})
 
 			cfg := DefaultConfig()
 			cfg.Port = 0
@@ -1550,7 +1550,7 @@ func TestHandleImplicitTransaction_AsyncEnabledBuffersSetWriteReturnsAccepted(t 
 		JWTSecret:       []byte("test-secret-key-for-testing-only-32b"),
 	}, authStorage)
 	require.NoError(t, err)
-	_, _ = authn.CreateUser("admin", "password123", []auth.Role{auth.RoleAdmin})
+	_, _ = authn.CreateUser(context.Background(), "admin", "password123", []auth.Role{auth.RoleAdmin})
 
 	cfg := DefaultConfig()
 	cfg.Port = 0
@@ -1656,7 +1656,7 @@ func TestHandleSimilar(t *testing.T) {
 		Properties:      map[string]interface{}{"name": "Target Node"},
 		ChunkEmbeddings: [][]float32{targetEmbedding},
 	}
-	_, err = storageEngine.CreateNode(targetNode)
+	_, err = storageEngine.CreateNode(t.Context(), targetNode)
 	require.NoError(t, err, "should create target node")
 
 	// Create a similar node with a similar embedding (slight variation)
@@ -1670,7 +1670,7 @@ func TestHandleSimilar(t *testing.T) {
 		Properties:      map[string]interface{}{"name": "Similar Node"},
 		ChunkEmbeddings: [][]float32{similarEmbedding},
 	}
-	_, err = storageEngine.CreateNode(similarNode)
+	_, err = storageEngine.CreateNode(t.Context(), similarNode)
 	require.NoError(t, err, "should create similar node")
 
 	// Create a dissimilar node with a very different embedding
@@ -1684,7 +1684,7 @@ func TestHandleSimilar(t *testing.T) {
 		Properties:      map[string]interface{}{"name": "Dissimilar Node"},
 		ChunkEmbeddings: [][]float32{dissimilarEmbedding},
 	}
-	_, err = storageEngine.CreateNode(dissimilarNode)
+	_, err = storageEngine.CreateNode(t.Context(), dissimilarNode)
 	require.NoError(t, err, "should create dissimilar node")
 
 	// Test the similar endpoint
@@ -1731,7 +1731,7 @@ func TestHandleSimilar(t *testing.T) {
 		Properties:      map[string]interface{}{"name": "No Embedding"},
 		ChunkEmbeddings: nil, // No embedding
 	}
-	_, err = storageEngine.CreateNode(nodeWithoutEmbedding)
+	_, err = storageEngine.CreateNode(t.Context(), nodeWithoutEmbedding)
 	require.NoError(t, err, "should create node without embedding")
 
 	resp = makeRequest(t, server, "POST", "/nornicdb/similar", map[string]interface{}{

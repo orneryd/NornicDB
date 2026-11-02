@@ -186,19 +186,31 @@ func constraintContractEqual(a, b ConstraintContract) bool {
 	return true
 }
 
-func (sm *SchemaManager) GetAllConstraintContracts() []ConstraintContract {
-	sm.mu.RLock()
+// GetAllConstraintContracts returns detached copies of every constraint
+// contract ordered by name. ctx bounds metadata admission, cloning and
+// ordering; its only errors are context cancellation/deadline errors, and an
+// error returns no partial contracts.
+func (sm *SchemaManager) GetAllConstraintContracts(ctx context.Context) ([]ConstraintContract, error) {
+	if err := sm.mu.RLockContext(ctx); err != nil {
+		return nil, err
+	}
 	defer sm.mu.RUnlock()
 
 	contracts := make([]ConstraintContract, 0, len(sm.constraintContracts))
 	for _, contract := range sm.constraintContracts {
-		cloned, _ := cloneConstraintContract(context.Background(), contract) // native metadata snapshot cannot cancel
+		cloned, err := cloneConstraintContract(ctx, contract)
+		if err != nil {
+			return nil, err
+		}
 		contracts = append(contracts, cloned)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	sort.Slice(contracts, func(i, j int) bool {
 		return contracts[i].Name < contracts[j].Name
 	})
-	return contracts
+	return contracts, nil
 }
 
 // HasAnyConstraintContract reports whether this schema has at least one
@@ -295,7 +307,13 @@ func (sm *SchemaManager) AddConstraintContractBundle(contract ConstraintContract
 	sm.constraintContracts[contract.Name] = cloned
 
 	if sm.persist != nil {
-		def := sm.exportDefinitionLocked()
+		// This bundle is an accepted native mutation with no caller context of
+		// its own, so its definition snapshot runs under its own lifetime.
+		def, err := sm.exportDefinitionLocked(context.Background())
+		if err != nil {
+			rollback()
+			return err
+		}
 		if err := sm.persist(def); err != nil {
 			rollback()
 			return err
@@ -415,7 +433,7 @@ func validateConstraintContractForEdgeEngine(ctx context.Context, engine Engine,
 type constraintGraphView interface {
 	OutgoingEdges(ctx context.Context, id NodeID) ([]*Edge, error)
 	IncomingEdges(ctx context.Context, id NodeID) ([]*Edge, error)
-	Node(id NodeID) (*Node, error)
+	Node(ctx context.Context, id NodeID) (*Node, error)
 }
 
 type engineConstraintView struct{ engine Engine }
@@ -428,8 +446,11 @@ func (v engineConstraintView) OutgoingEdges(ctx context.Context, id NodeID) ([]*
 func (v engineConstraintView) IncomingEdges(ctx context.Context, id NodeID) ([]*Edge, error) {
 	return GetStoredIncomingEdges(ctx, v.engine, id)
 }
-func (v engineConstraintView) Node(id NodeID) (*Node, error) {
-	return GetStoredNode(v.engine, id)
+
+// Generic Engine point readers read under the constraint check's own context.
+// The transaction view uses its private request-owned reader instead.
+func (v engineConstraintView) Node(ctx context.Context, id NodeID) (*Node, error) {
+	return GetStoredNode(ctx, v.engine, id)
 }
 
 type txConstraintView struct{ tx *BadgerTransaction }
@@ -440,8 +461,8 @@ func (v txConstraintView) OutgoingEdges(ctx context.Context, id NodeID) ([]*Edge
 func (v txConstraintView) IncomingEdges(ctx context.Context, id NodeID) ([]*Edge, error) {
 	return v.tx.currentDirectedEdgesLocked(ctx, id, adjacencyIncoming)
 }
-func (v txConstraintView) Node(id NodeID) (*Node, error) {
-	return v.tx.currentNodeLocked(id)
+func (v txConstraintView) Node(ctx context.Context, id NodeID) (*Node, error) {
+	return v.tx.currentNodeLocked(ctx, id)
 }
 
 func evaluateNodeConstraintContractExpressionEngine(ctx context.Context, engine Engine, node *Node, expr string) (bool, error) {
@@ -540,11 +561,11 @@ func compileRelationshipConstraintContractExpression(expr string) (contractRelat
 
 	if matched, leftProp, rightProp := parseEndpointPropertyEqualityExpression(expr); matched {
 		return func(ctx context.Context, view constraintGraphView, edge *Edge) (bool, error) {
-			startNode, err := view.Node(edge.StartNode)
+			startNode, err := view.Node(ctx, edge.StartNode)
 			if err != nil {
 				return false, err
 			}
-			endNode, err := view.Node(edge.EndNode)
+			endNode, err := view.Node(ctx, edge.EndNode)
 			if err != nil {
 				return false, err
 			}
@@ -1243,7 +1264,7 @@ func countMatchingPatternEdges(ctx context.Context, view constraintGraphView, no
 			if pattern.Direction == "INCOMING" {
 				otherID = edge.StartNode
 			}
-			otherNode, err := view.Node(otherID)
+			otherNode, err := view.Node(ctx, otherID)
 			if err != nil {
 				return 0, err
 			}
@@ -1309,7 +1330,7 @@ func (tx *BadgerTransaction) validateConstraintContracts(ctx context.Context) er
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		node, err := tx.currentNodeLocked(nodeID)
+		node, err := tx.currentNodeLocked(ctx, nodeID)
 		if err != nil {
 			return err
 		}
@@ -1336,7 +1357,7 @@ func (tx *BadgerTransaction) validateConstraintContracts(ctx context.Context) er
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		edge, err := tx.currentEdgeLocked(edgeID)
+		edge, err := tx.currentEdgeLocked(ctx, edgeID)
 		if err != nil {
 			return err
 		}
@@ -1502,28 +1523,31 @@ func (tx *BadgerTransaction) countMatchingPatternEdgesLocked(ctx context.Context
 	return countMatchingPatternEdges(ctx, txConstraintView{tx}, node, pattern)
 }
 
-func (tx *BadgerTransaction) currentNodeLocked(nodeID NodeID) (*Node, error) {
+func (tx *BadgerTransaction) currentNodeLocked(ctx context.Context, nodeID NodeID) (*Node, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if _, deleted := tx.deletedNodes[nodeID]; deleted {
 		return nil, nil
 	}
 	if pending, exists := tx.pendingNodes[nodeID]; exists {
 		return copyNode(pending), nil
 	}
-	node, err := tx.getCommittedNodeLocked(nodeID)
+	node, err := tx.getCommittedNodeLocked(ctx, nodeID)
 	if err == ErrNotFound {
 		return nil, nil
 	}
 	return node, err
 }
 
-func (tx *BadgerTransaction) currentEdgeLocked(edgeID EdgeID) (*Edge, error) {
+func (tx *BadgerTransaction) currentEdgeLocked(ctx context.Context, edgeID EdgeID) (*Edge, error) {
 	if _, deleted := tx.deletedEdges[edgeID]; deleted {
 		return nil, nil
 	}
 	if pending, exists := tx.pendingEdges[edgeID]; exists {
 		return copyEdge(pending), nil
 	}
-	edge, err := tx.getCommittedEdgeLocked(edgeID)
+	edge, err := tx.getCommittedEdgeLocked(ctx, edgeID)
 	if err == ErrNotFound {
 		return nil, nil
 	}

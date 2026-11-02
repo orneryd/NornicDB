@@ -905,8 +905,13 @@ func (r *RaftReplicator) processApply(ctx context.Context, future *applyFuture, 
 			}
 		}
 		timeout := queue[0].timeout
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		select {
 		case r.applyCh <- future:
+		case <-ctx.Done():
+			return ctx.Err()
 		case <-r.work.Context().Done():
 			return ErrClosed
 		case <-time.After(timeout):
@@ -1096,7 +1101,7 @@ func (r *RaftReplicator) advanceCommitIndex(known ...raftCommittedFrontier) {
 		var err error
 		if entry.Command != nil {
 			r.logMu.Unlock()
-			err = r.storage.ApplyCommand(entry.Command)
+			_, err = r.storage.ApplyCommand(r.work.Context(), entry.Command, WALQueued)
 			if err != nil {
 				r.config.logPrintf(context.Background(), slog.LevelError, "[Raft %s] Failed to apply entry %d", r.config.NodeID, entry.Index)
 			}
@@ -1476,13 +1481,13 @@ type forwardApplySender interface {
 
 // HandleForwardApply applies a command received from a follower (write forwarding).
 // Only the leader should receive these; it applies the command through Raft as usual.
-func (r *RaftReplicator) HandleForwardApply(cmd *Command, timeout time.Duration) error {
-	return r.Apply(cmd, timeout)
+func (r *RaftReplicator) HandleForwardApply(ctx context.Context, cmd *Command, timeout time.Duration) error {
+	return r.Apply(ctx, cmd, timeout)
 }
 
 // Apply applies a command through Raft consensus.
 // If this node is not the leader, it forwards the command to the leader automatically.
-func (r *RaftReplicator) Apply(cmd *Command, timeout time.Duration) error {
+func (r *RaftReplicator) Apply(ctx context.Context, cmd *Command, timeout time.Duration) error {
 	// Plan 04-06-03 D-15a: observe apply latency at the function-exit
 	// chokepoint via the pre-bound MET-25 observer (zero alloc when ctx
 	// has no sampled span). Wrapped at the outer entry so retries /
@@ -1498,6 +1503,9 @@ func (r *RaftReplicator) Apply(cmd *Command, timeout time.Duration) error {
 		return err
 	}
 
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	r.mu.RLock()
 	isLeader := r.state == StateLeader
 	leaderAddr := r.leaderAddr
@@ -1511,7 +1519,7 @@ func (r *RaftReplicator) Apply(cmd *Command, timeout time.Duration) error {
 		if r.transport == nil {
 			return ErrNotLeader
 		}
-		fwdCtx, cancel := context.WithTimeout(context.Background(), timeout)
+		fwdCtx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 		conn, err := r.transport.Connect(fwdCtx, leaderAddr)
 		if err != nil {
@@ -1529,18 +1537,18 @@ func (r *RaftReplicator) Apply(cmd *Command, timeout time.Duration) error {
 		return ErrNotLeader
 	}
 
-	if handled, err := routeLeaderEntityCommand(r.storage, r, cmd, timeout); handled {
+	if handled, err := routeLeaderEntityCommand(ctx, r.storage, r, cmd, timeout); handled {
 		return err
 	}
 
 	future := &applyFuture{cmd: cmd, errCh: make(chan error, 1)}
-	return r.processApply(context.Background(), future, raftApplyQueue{timeout: timeout})
+	return r.processApply(ctx, future, raftApplyQueue{timeout: timeout})
 }
 
 // ApplyBatch applies multiple commands atomically.
-func (r *RaftReplicator) ApplyBatch(cmds []*Command, timeout time.Duration) error {
+func (r *RaftReplicator) ApplyBatch(ctx context.Context, cmds []*Command, timeout time.Duration) error {
 	for _, cmd := range cmds {
-		if err := r.Apply(cmd, timeout); err != nil {
+		if err := r.Apply(ctx, cmd, timeout); err != nil {
 			return err
 		}
 	}

@@ -21,12 +21,12 @@ func TestResidualDecisionContainsPhysicalAction(t *testing.T) {
 			b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), LowMemory: route == "large"}))
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = b.Close() })
-			_, err = b.CreateNode(&Node{ID: "test:physical", Properties: map[string]any{"v": int64(1)}})
+			_, err = b.CreateNode(t.Context(), &Node{ID: "test:physical", Properties: map[string]any{"v": int64(1)}})
 			require.NoError(t, err)
-			tx, err := b.BeginTransaction()
+			tx, err := b.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
-			require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:physical", Properties: map[string]any{"v": int64(2)}}, Policy: ClientNodeEdits}))
+			require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:physical", Properties: map[string]any{"v": int64(2)}}, Policy: ClientNodeEdits}))
 			if route == "large" {
 				stageLargeCreate(t, tx, 6000)
 			}
@@ -87,7 +87,7 @@ func TestResidualDecisionContainsPhysicalAction(t *testing.T) {
 			}
 			require.Equal(t, 1, calls)
 			require.NoError(t, observed)
-			stored, err := b.GetStoredNode("test:physical")
+			stored, err := b.GetStoredNode(t.Context(), "test:physical")
 			require.NoError(t, err)
 			want := int64(2)
 			if route == "ordinary-conflict" {

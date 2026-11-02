@@ -137,7 +137,7 @@ func TestStatementDeleteStagesNothingOnCanceledNativeIncidentRead(t *testing.T) 
 	begin := func(t *testing.T, base *storage.MemoryEngine, store storage.Engine) (*storage.BadgerTransaction, *transactionStorageWrapper, *heldNativeIncidentLister, *StorageExecutor) {
 		t.Helper()
 		require.NoError(t, base.EnsureNamespaceMVCC(namespace))
-		tx, err := base.BeginTransaction()
+		tx, err := base.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = tx.Rollback() })
 		require.NoError(t, tx.SetNamespace(namespace))

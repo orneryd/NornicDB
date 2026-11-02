@@ -45,13 +45,13 @@ func TestBulkNodeKeyAcceptsDistinctDelimiterValues(t *testing.T) {
 		{ID: "tuple:one", Labels: []string{"Pair"}, Properties: map[string]interface{}{"left": "a|string:b", "right": "c"}},
 		{ID: "tuple:two", Labels: []string{"Pair"}, Properties: map[string]interface{}{"left": "a", "right": "b|string:c"}},
 	}
-	require.NoError(t, engine.BulkCreateNodes(nodes), "distinct tuples are valid even if their text contains a separator/type tag")
+	require.NoError(t, engine.BulkCreateNodes(t.Context(), nodes), "distinct tuples are valid even if their text contains a separator/type tag")
 	for _, expected := range nodes {
-		actual, err := engine.GetNode(expected.ID)
+		actual, err := engine.GetNode(t.Context(), expected.ID)
 		require.NoError(t, err)
 		require.Equal(t, expected.Properties, actual.Properties)
 	}
-	err := engine.BulkCreateNodes([]*Node{
+	err := engine.BulkCreateNodes(t.Context(), []*Node{
 		{ID: "tuple:three", Labels: []string{"Pair"}, Properties: map[string]interface{}{"left": "same", "right": "value"}},
 		{ID: "tuple:four", Labels: []string{"Pair"}, Properties: map[string]interface{}{"left": "same", "right": "value"}},
 	})
@@ -59,7 +59,7 @@ func TestBulkNodeKeyAcceptsDistinctDelimiterValues(t *testing.T) {
 	require.ErrorAs(t, err, &violation)
 	require.Equal(t, ConstraintNodeKey, violation.Type)
 	for _, id := range []NodeID{"tuple:three", "tuple:four"} {
-		_, err := engine.GetNode(id)
+		_, err := engine.GetNode(t.Context(), id)
 		require.ErrorIs(t, err, ErrNotFound, "true duplicate batch must not partially publish")
 	}
 }

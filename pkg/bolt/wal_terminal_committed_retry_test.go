@@ -41,7 +41,7 @@ func TestBoltWALTerminalCommittedOutcomeIsNotRetried(t *testing.T) {
 				}
 			}
 			store := storage.NewNamespacedEngine(engine, "nornic")
-			_, err = store.CreateNode(&storage.Node{ID: "committed-retry", Labels: []string{"WalOutcome"}, Properties: map[string]any{"writes": int64(0)}})
+			_, err = store.CreateNode(t.Context(), &storage.Node{ID: "committed-retry", Labels: []string{"WalOutcome"}, Properties: map[string]any{"writes": int64(0)}})
 			require.NoError(t, err)
 			port := startTransactionLifecycleServerWithStore(t, &boltMatrixSuppression{Engine: store, cause: storage.ErrStorageRestoring})
 

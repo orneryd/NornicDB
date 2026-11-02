@@ -5,7 +5,30 @@ The approved dependency order is current #1684 terminal-outcome prerequisite,
 label-index readiness and remaining preparation. Preserve each author's work;
 port into current owners rather than restoring obsolete implementations.
 
-Current gate (maintainer override, 2026-11-01): **`make test` only** on the final integrated committed head; full `make verify` was canceled and broader qualification is deferred to CI. Exact clean checkpoint893 failed:137 packages passed,7 failed,0 cached. Corrections and independent review are in progress; no final pass, readiness or new push is claimed. Historical verification-policy notes below remain historical. Existing duplicate checker stays unchanged/advisory.
+Current gate (maintainer override, 2026-11-01): **`make test` only** on the final integrated committed head; broader `make verify` remains deferred to CI. Frozen checkpoint `41118c05a11942508fed54898482e851c0334d08`, tree `5ffb2acc1cdd9333ac1ddee29bc43626a2c0ddc3`, completed a fresh full run: **143 packages passed, one failed, zero cached**. Sole failure: `TestStorageNilContextCensus`. That census remains blocking by explicit maintainer decision; duplicate comparison stays unchanged/advisory and timed out incomplete. No final pass, qualified push or readiness is claimed.
+
+## Remaining context-census correction batch
+
+- [x] Preserve the full failed41118 receipt and unchanged frozen source tree.
+- [x] Retire nine exact stale nil-flow allowances with tombstones; add no acceptance rule.
+- [x] Correct public snapshot scan cancellation/admission and complete private callback consumers; parent public racecount3 passes3.602s. View state72→96B; completed-cache admission remains zero allocations.
+- [x] Stop retaining unused plugin setter contexts; preserve actual admitted initialization contexts. Full integrated heimdall race passes13.857s.
+- [x] Carry the existing preparation lifetime through six private constraint-validation owners; integrated constraint/snapshot racecount3 passes3.249s. No new public cancellation bug claimed for context-free CRUD.
+- [x] Use the existing manager lifetime for six session enrollment roots; full parent txsession race passes7.994s. Preserve original request context at BEGIN and independent rollback completion.
+- [x] Qualify typed HNSW mode ownership on the integrated source (parent race2.822s, actual receiver proof1.029s); shared-load timings are inconclusive, not a performance gain. Historical claims that NoCtx probes were machine-code eliminated are not supported: before/after assembly retains indirect dispatch; the canonical typed modes and allocation controls are the supported contract.
+- [x] Integrate approved SubsystemHost/RevealScopes Go metadata APIs and canonical callers/docs. Host full package20.898s/full race24.677s and composition race Heimdall3.321s/database2.109s/server31.320s pass; reveal race storage2.558s/Cypher3.867s passes. Final census/full-suite gate remains pending.
+- [x] Qualify integrated approved context-first parser/retry APIs and original terminal-error preservation. Integrated normal Cypher1.228s/Bolt1.882s/internal1.820s; race3.785s/4.399s/2.563s pass. Label/namespace public race storage4.714s/Cypher2.662s passes. A newly identified private Bolt write-classification context gap remains in the next correction batch; the full gate is still pending.
+- [x] Complete the private batch-context pipeline and actual metadata receiver proof (parent phase race10.250s; actual receiver nil witnesses zero); retire redundant adapter, preserve intermediate/final publication decisions and independent rollback repair. No analyzer prototype or new phase-boundary record is accepted merely because generic fixtures pass. The exact two-edge cold rollback phase record remains unactivated pending human review.
+- [x] Retire the nullable transaction commitCtx marker; private helpers receive the selected phase context directly, including beforeLarge. Integrated public nil/admitted-late-cancel racecount3 passes3.481s; five identical explicit completion selections pass existing backup/flush/close controls under race3.839s.
+- [x] Retire the maintenance lease context field and migrate its private consumers. Lease layout48→32B (representation evidence); integrated backup/drop/recovery/dictionary/temporal race passes5.787s. Release body and native I/O policy are unchanged.
+- [x] Reproduce and correct actual TLS replication dial cancellation; retain configured certificate/auth checks. Integrated public TLS racecount3 passes2.260s.
+- [x] Correct private Bolt RUN write classification to retain actual operation context and fail closed without replacing accepted result or original error; integrated normal0.984s/race3.165s passes.
+- [ ] Resolve remaining scoped context findings with actual source/phase proof and public regression controls; preserve required defensive redaction and independent BEGIN snapshot ownership. Latest unchanged diagnostic after commitCtx retirement:17nil+134other=151; it predates the later lease/direct-completion corrections. All104 WorkLifetime.Context sites are source-classified, not automatically approved or final-source re-extracted.
+- [ ] Qualify the delegated private function/row-cache and path/label-rewriter context corrections; retain canonical scanners and no canceled cache verdicts.
+- [ ] Qualify the per-plugin event-queue representation experiment while retaining the ingress parent ticket and public nested accepted-admission behavior.
+- [ ] Establish the actual StorageAdapter WAL close/backlog contract and reproduce any supported durability failure before correcting it; currently unproved, not claimed data loss.
+- [ ] Refresh affected inventories only after integrated source freezes, then obtain unchanged strict census and fresh full make-test pass before commit/publication.
+
 
 ## Current make-test regression corrections
 
@@ -309,3 +332,82 @@ Current index and unique API migration builds; focused50K cancellation, pending/
 - [x] Retire private parameter-binding nil fallback and ineffective map-comparison path; parent integrated race3.354s. Both-parser MERGE coverage establishes actual helper reach; same-map mutation/rebind refresh remains intact.
 - [x] Reproduce actual CALL cancellation error regression against old owner (parent real-CancelFunc baselineRED1.076s), propagate canonical parser errors, and qualify integrated race6.644s. Parent rejected manufactured deadline context and used a real expired deadline for reader/public-entry controls; no mid-BEGIN deadline claim.
 - [ ] Finish remaining optional journal representation and old whole-field projection consolidation, teardown owner proof and final inventories. Fresh round8 audit fails84nil/177other on unchanged source; those findings are not all runtime bugs and are not waived.
+
+## Approved compensation and current integration (2026-11-01)
+
+- [x] Record the maintainer's explicit approval of exactly two rollback/recovery compensation boundaries. Whole-module installed-record proof passes83.058s, including all five changed-source/new-caller rejection controls. Runtime behavior and census rules unchanged. Evidence: rollback-phase-current-review/installed-whole-proof.log.
+- [x] Integrate the reviewed private point-read context packet, including actual request-owned commit endpoint checks and latest-visible batch reads. Context-free public point APIs retain their existing contract; no new optional capability or storage change.
+- [x] Integrate sole FIFO replication WAL publication, sealed ingress/drain, ordered publication windows and retained shutdown errors. Gate excludes native storage/listener callbacks; accepted recovery intents remain logged.
+- [x] Parent integrated point-read race count2 PASS3.340s and replication adapter race count2 PASS13.360s. Logs preserved in private-point-read-context/parent-integrated-race.log and adapter-close-backlog-review/parent-integrated-race.log. These are focused checks, not full make test.
+- [ ] Complete fresh source-pinned context census after these integrations; fix remaining blocking findings.
+- [ ] Resolve reproduced HA quorum stale-position acknowledgement through the pending typed Go API decision; no implementation assumed approved.
+- [ ] Freeze source and pass full make test before commit/push/readiness. Broader make verify remains for CI. Duplicate inventory remains advisory/incomplete under maintainer instruction.
+
+- [x] Retire ordinary private lock nil sentinels; context-first acquisition requires its actual nonnil lifetime. Nine affected cancellation/admission controls race count2 PASS5.000s; reviewed source-record test PASS10.874s. Quiet alternating lock-kernel samples preserve0B/0alloc; medians ordinary18.41→18.33ns, request20.29→20.27ns, tracked20.87→20.89ns. This is a bounded kernel check, not ingestion or system throughput qualification.
+- [x] Retire exactly three obsolete detached nil-call records (removed commitCtx field and two ordinary tracked lock calls), retaining tombstones; no active exception or census rule added.
+- [ ] Complete private count-fold context correction (DeepSeek a03f5b5ebc3d4b3892dcca2a49321a02) and ingress event-field proof review (DeepSeek df6af1b042ad43718742d94849cd2f6e). Latest completed diagnostic before these changes:11nil+130other, source unchanged, FAIL.
+- [x] Parent independently reproduces private fold context contract failure on integrated preimage (canceled/deadline contexts wrongly return nil); preserve managed-fold-context/parent-preimage-red-race.log. Apply reviewed three-file private correction and focused component regression; parent integrated race count2 in progress. Actual Restore/Close callers still choose independent lifetimes: no public request-cancellation defect claimed.
+- [ ] Latest explicit-lock diagnostic has3nil+133other, FAIL. Its production source stayed stable, but newly copied count_delta_fold_context_test.go appears in before/after source drift; do not call it an unchanged whole-source run. Remaining nils are event channel Extract(Select) provenance, not established runtime nil values. Ordinary lock roots now appear as substitution findings; approved rollback source-closure pin correctly became stale after lock code changed and requires exact member review.
+- [ ] Await explicit Go compatibility decisions for HA per-command publication and the four remaining NOR337 public API families. Concrete proposals are ha-quorum-position-review/proposal.md and remaining-public-context-contracts-proposal.md in task evidence. No dependent API changes implemented.
+
+- [x] Parent integrated fold/count/restore/recovery race count2 PASS23.638s. This is private phase-context convergence, not public request cancellation qualification.
+- [x] Review stale compensation closure member diff:64identities unchanged, onlycontextRWMutex.acquire body changed. Same2approvedcompensation edges and nonnil unbounded completion retained. Refresh single closure pin after review; installedrecord+5mutationrejection controls PASS80.718s. No census rules or duplicate checker edits.
+- [ ] Evaluate isolated event-channel projection experiment DeepSeek739659e55b0c45dbbf302055d7b0fe0a. No product guard/pointerchannel/allocation workaround; no accepted model patch. Must reject unselectedcase, closedchannel, unknown/escaped/reassignedproducer and zero-value sends.
+
+## Approved remaining Go contract migration
+
+- [x] Maintainer approves typed HA own-record publication API and all four remaining Go context-first families. No pending compatibility question; do not ask again for these contracts or their canonical callers.
+- [ ] HA exact publication/one total ACK budget: DeepSeek43db160b82e549b0946bc33fda3ee17a.
+- [ ] Storage point CRUD/native staging/admission/capabilities: DeepSeek5da0e3c7b2884841a4450fec3e4f2ce3. Family includes query/projected/MVCC point readers; ensure no capability still drops actual context.
+- [ ] Metadata/auth/schema families: DeepSeekc43dea3f4d7e42ac9a684824e0fac1df. Preserve security publication/cache/audit order and accepted completion.
+- [ ] Canonical external callers in isolated native lanes while all DeepSeek slots are occupied: Cypher; service/cmd/test/APOC storage adapter and consumers. No context forwarding wrappers or stored request fields.
+- [ ] Accept accurate census receive projection only after repeated-send and hidden-carrier escape regressions are fixed. Parent reproduced a missed second send and fixed enumeration; independent native review reproduced actual reflection/unsafe close hidden by private-field exposure. Prototype remains isolated; no R model/policy/checker modification.
+- [x] Parent integrates accurate Select projection (4 files) after both repeated-send and actual hidden-reflection-close false-proof corrections; complete internal/workcensus race PASS175.670s. No predicate weakening, policy exception or duplicate-checker script edit.
+- [ ] Fresh source-pinned select-projection diagnostic remains FAIL1nil+132other (unchanged source); sole nil is accepted managed commit wait after its source line shifted. Replace two actual publication-wait nil sentinels with explicit independent Background, retire private oracle optional-nil branch, migrate2tests; affected commit/oracle/embedding/recovery race in progress. No nil-zero claim without fresh extraction.
+
+### Approved remaining Go API integration — 2026-11-02
+
+- [x] Integrate frozen storage CoreV2 (184 files), Cypher (461 files), metadata/auth/schema (243 files), typed HA publication/Engine callers, and service callers (446 files), preserving overlapping edits with exact source preimages. Integration is not qualification.
+- [x] Correct the documented optional-nil `PrepareEntityCommit` boundary once using the existing preparation lifetime owner. The original cleanup-hang regression and new caller-identity boundary checks pass in the internal storage population; focused race checks pass (2.768s).
+- [x] Pass focused token cancellation/publication race controls (4.485s): stopped calls publish nothing, canceled admission releases its wait, and accepted persistence finishes publication.
+- [x] Migrate entity-metadata lookup to the accepted flush cycle context; `go test -count=1 ./pkg/knowledgepolicy` passes. Storage lifecycle package passes (1.801s).
+- [ ] Complete APOC backend-reaching caller/error-result migration; preserve ordinary missing results and propagate cancellation. Failed DeepSeek transport output retained; native takeover active.
+- [ ] Finish remaining optional-capability service callers and fixture/tool consumers, then compile the complete test population.
+- [ ] Fix the reproduced public WAL client cancellation defect: a rejected native create currently leaves a replayable create record. Preserve accepted state-machine intent semantics; do not filter records after native failure.
+- [ ] Complete independent defensive security review of the new auth/metadata ownership.
+- [ ] Pass the blocking context census on combined source, then a fresh full `make test`. Prior 143-package checkpoint does not qualify the current API migration.
+- [ ] Rebase onto current release, verify final source, commit/push, update PR/Linear and perform task-owned cleanup. No automatic merge; duplicate inventory remains advisory this round as instructed.
+
+### Current approved corrections — November 2
+
+- [x] Integrate `SubgraphAll` nodes/rels map plus error contract; parent focused race check passes (1.460s).
+- [x] Integrate exactly two approved census soundness fixes: exclusive success-edge error guards and source-proven global initialization. Parent focused controls pass (2.658s); full model verification passes (33.673s). No phi-precision or scope-exclusion change.
+- [x] Integrate sidecar audit-only replay, external storage fixture migration, clustering progress correction, explicit admission-refusal transaction cleanup, and selective CLI bootstrap failure propagation. Focused evidence retained in the readiness evidence directory.
+- [ ] Finish native WAL publication/recovery/compaction correction and independently accept its workload-specific performance. Rejected generic prepared candidate remains excluded.
+- [x] Recover interrupted private read/revision context migration; original failure and partial edits retained, 19-file packet integrated.
+- [ ] Complete exact lifecycle phase proof and obtain any required source-pinned approval; no blanket census waiver.
+- [ ] Run fresh blocking context census and full `make test` on integrated final source before commit/push.
+
+- [x] Compile the entire integrated test population: `go test ./... -run '^$' -count=1` exits 0. This is compilation evidence only; full runtime gate remains outstanding.
+
+### Joined worker packets
+
+- [x] Integrate private accounting/embedding read-context packet (19 files) and native WAL correction packet, preserving prepared-inner admission ownership, buffered replay idempotency and accepted-failure snapshot retention.
+- [x] Joined storage/nornicdb/multidb focused race controls pass (14.101s / 3.835s / 1.687s). No full-suite claim.
+- [ ] Frozen-source census `final-packets-soundness` fails (289.518s; unchanged source): 98 context records and 1,013 nil traces from three admission roots. Approved source-order proof and exact phase review remain in progress.
+- [ ] Direct single-node WAL benchmark is a confirmed regression: 27,956 to 31,061 ns/op (+11.11%), +8.93% bytes and +19 allocations. Profile-guided correction is active; do not claim a performance pass.
+- [x] Exact public quota-managed outer-WAL control: original submission binding removal reproduces missing recovery (0.533s); current race proof passes (1.592s). Quota setup integrated after the diagnostic finished.
+
+- [x] Integrate bounded existing-encoder semantic scratch (three fewer allocations); direct performance qualification remains open.
+- [ ] Full storage package failed (601.141s): unsupported-wrapper write fixture plus naturally timed-out stopped-write-behind snapshot fixture. Preserve both failures and fix without weakening assertions.
+- [ ] Finish actual schema preparation/admission cancellation, buffered named-count admission, and temporal preparation corrections in isolated DeepSeek lanes; validate each original failure and joined consumers.
+- [ ] Implement newly approved same-package source-order census proof with early-call/mutation/escape/unknown-ordering rejection controls; no runtime guard or duplicate-checker change.
+
+### Current whole-package fallout
+
+- [x] Schema preparation/live-admission, temporal preparation and buffered count cancellation packets integrated; public fail-first controls retained. Joined storage race passes (4.082s).
+- [x] Approved source-order proof integrated; parent focus passes (9.707s), child full model normal/race pass (40.209s/151.120s). Five actual same-package refusal callsites remain unproved.
+- [ ] Storage round3 completes with failures (465.188s; 19 root groups), while the full adminimport package passes (3.093s). Fix WAL authority routing and remaining remote/helper contract regressions; do not waive them.
+- [ ] Wait for required public Fabric callback context-first contract decision before scanner implementation; actual both-parser post-cancel RED and healthy controls are retained.
+- [ ] Record the operator's direct-WAL latency tradeoff decision; map/scratch allocation reductions are integrated, ID optimization remains held. No claimed <=5% primitive latency result.
+- [ ] Finish strict context-census phase proofs/records and remaining real findings, then fresh full make test before commit/push. No duplicate-checker blocker or automatic merge.

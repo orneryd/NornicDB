@@ -743,7 +743,10 @@ func (e *StorageExecutor) executeShowConstraintContracts(ctx context.Context) (*
 	schema := e.storage.GetSchema()
 	rows := [][]interface{}{}
 	if schema != nil {
-		contracts := schema.GetAllConstraintContracts()
+		contracts, err := schema.GetAllConstraintContracts(ctx)
+		if err != nil {
+			return nil, err
+		}
 		for _, contract := range contracts {
 			compiledCount := int64(0)
 			runtimeCount := int64(0)
@@ -960,8 +963,14 @@ func functionSignatureDescriptions(signature string) ([]interface{}, string) {
 
 // executeShowDatabase handles SHOW DATABASE command (singular - shows current database)
 func (e *StorageExecutor) executeShowDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	nodeCount, _ := e.storage.NodeCount()
-	edgeCount, _ := e.storage.EdgeCount()
+	nodeCount, err := e.storage.NodeCount(ctx)
+	if err != nil {
+		return nil, err
+	}
+	edgeCount, err := e.storage.EdgeCount(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	// Try to get database name from context or use default
 	dbName := "nornic" // Default fallback
@@ -1355,8 +1364,11 @@ func (e *StorageExecutor) executeDropAlias(ctx context.Context, cypher string) (
 	}
 
 	// Admit the entire name and optional suffix before resolving or mutating it.
-	tokens, spans, tokenErr := tokenizeSource(cypher)
+	tokens, spans, tokenErr := tokenizeSource(ctx, cypher)
 	if tokenErr != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		return nil, &classifiedCypherError{cause: tokenErr, code: "Neo.ClientError.Statement.SyntaxError", detail: "InvalidAliasSyntax"}
 	}
 	invalid := func() error {

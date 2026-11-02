@@ -36,7 +36,7 @@ func BenchmarkScopedLabelReaders(b *testing.B) {
 					}
 					nodes = append(nodes, &Node{ID: NodeID(fmt.Sprintf("%s:n%05d", population.namespace, index)), Labels: []string{label}, Properties: map[string]any{"age": int64(index)}})
 				}
-				require.NoError(b, engine.BulkCreateNodes(nodes))
+				require.NoError(b, engine.BulkCreateNodes(b.Context(), nodes))
 			}
 			namespace := NewNamespacedEngine(engine, "a")
 			for _, mode := range []string{"slice", "projected", "first", "snapshot_first", "id_first", "absent"} {
@@ -50,11 +50,11 @@ func BenchmarkScopedLabelReaders(b *testing.B) {
 					for iteration := 0; iteration < b.N; iteration++ {
 						switch mode {
 						case "first":
-							node, err := engine.GetFirstNodeByLabelInScope("a:", "Person")
+							node, err := engine.GetFirstNodeByLabelInScope(b.Context(), "a:", "Person")
 							require.NoError(b, err)
 							require.Equal(b, NodeID("a:n00000"), node.ID)
 						case "snapshot_first":
-							tx, err := engine.BeginTransaction()
+							tx, err := engine.BeginTransaction(b.Context())
 							require.NoError(b, err)
 							require.NoError(b, tx.SetNamespace("a"))
 							err = tx.StreamNodesByLabelProjected(context.Background(), "Person", []string{"age"}, func(*Node) error { return ErrIterationStopped })
@@ -69,7 +69,7 @@ func BenchmarkScopedLabelReaders(b *testing.B) {
 							}))
 							require.Equal(b, 1, seen)
 						case "absent":
-							node, err := engine.GetFirstNodeByLabelInScope("a:", "Missing")
+							node, err := engine.GetFirstNodeByLabelInScope(b.Context(), "a:", "Missing")
 							require.NoError(b, err)
 							require.Nil(b, node)
 						}

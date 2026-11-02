@@ -850,7 +850,8 @@ func TestTransactionHTTPValueBoundaries(t *testing.T) {
 		{"path marker", map[string]interface{}{"_pathResult": &path}, []interface{}{map[string]interface{}{}, map[string]interface{}{}, map[string]interface{}{}}, 1},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			row, metadata := server.transactionHTTPValue(testCase.value, "nornic")
+			row, metadata, projectionErr1 := server.transactionHTTPValue(t.Context(), testCase.value, "nornic")
+			require.NoError(t, projectionErr1)
 			require.Equal(t, testCase.row, row)
 			require.Len(t, metadata, testCase.metaCount)
 		})
@@ -898,7 +899,7 @@ func TestGh668_HTTPNonfiniteRecursiveProperties(t *testing.T) {
 	path := cypher.PathResult{Nodes: []*storage.Node{node, node}, Relationships: []*storage.Edge{edge}}
 	for _, value := range []interface{}{values, properties, node, edge, path} {
 		response := TransactionResponse{}
-		server.appendStatementResult(&response, &cypher.ExecuteResult{Columns: []string{"value"}, Rows: [][]interface{}{{value}}}, "nornic", false, []string{"row", "graph"})
+		require.NoError(t, server.appendStatementResult(t.Context(), &response, &cypher.ExecuteResult{Columns: []string{"value"}, Rows: [][]interface{}{{value}}}, "nornic", false, []string{"row", "graph"}))
 		encoded, err := json.Marshal(response)
 		require.NoError(t, err)
 		require.True(t, json.Valid(encoded))

@@ -13,7 +13,7 @@ import (
 // after the deletion returns never meets the dropped one's derived state.
 func TestDeleteByPrefixReturnsAfterResetConsumed(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	_, err := engine.CreateNode(&Node{ID: "test:keep"})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:keep"})
 	require.NoError(t, err)
 
 	delivering := make(chan struct{})
@@ -29,7 +29,7 @@ func TestDeleteByPrefixReturnsAfterResetConsumed(t *testing.T) {
 		NamespaceReset: func(string) { consumed.Store(true) },
 	}))
 	go func() {
-		_, _ = engine.CreateNode(&Node{ID: "test:slow"})
+		_, _ = engine.CreateNode(t.Context(), &Node{ID: "test:slow"})
 	}()
 	<-delivering // that writer now delivers; the reset queues behind it
 

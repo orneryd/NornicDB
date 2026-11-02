@@ -46,9 +46,9 @@ func TestBadgerEngine_MVCCAppendAndHead_ErrorPaths(t *testing.T) {
 	require.NoError(t, engine.AppendNodeTombstone(NodeID("bad-id"), version))
 	require.NoError(t, engine.AppendEdgeTombstone(EdgeID("bad-edge"), version))
 
-	_, err := engine.GetNodeCurrentHead(NodeID("test:never-created"))
+	_, err := engine.GetNodeCurrentHead(context.Background(), NodeID("test:never-created"))
 	require.ErrorIs(t, err, ErrNotFound)
-	_, err = engine.GetEdgeCurrentHead(EdgeID("test:never-created"))
+	_, err = engine.GetEdgeCurrentHead(context.Background(), EdgeID("test:never-created"))
 	require.ErrorIs(t, err, ErrNotFound)
 
 	require.NoError(t, engine.UpdateNodeCurrentHead(NodeID("bad-id"), version, false))
@@ -66,10 +66,10 @@ func TestBadgerEngine_MVCCAppendAndHead_ErrorPaths(t *testing.T) {
 	require.NoError(t, engine.AppendEdgeVersion(&Edge{ID: edgeID, StartNode: start, EndNode: end, Type: "REL"}, version))
 	require.NoError(t, engine.AppendEdgeTombstone(edgeID, MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 9}))
 
-	nHead, err := engine.GetNodeCurrentHead(nodeID)
+	nHead, err := engine.GetNodeCurrentHead(context.Background(), nodeID)
 	require.NoError(t, err)
 	require.True(t, nHead.Tombstoned)
-	eHead, err := engine.GetEdgeCurrentHead(edgeID)
+	eHead, err := engine.GetEdgeCurrentHead(context.Background(), edgeID)
 	require.NoError(t, err)
 	require.True(t, eHead.Tombstoned)
 }
@@ -83,9 +83,9 @@ func TestBadgerEngine_MVCCLoadHelpers_DecodeAndLookupBranches(t *testing.T) {
 	start := NodeID(prefixTestID("mvcc-load-start"))
 	end := NodeID(prefixTestID("mvcc-load-end"))
 
-	_, err := engine.CreateNode(&Node{ID: start, Labels: []string{"Doc"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: start, Labels: []string{"Doc"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: end, Labels: []string{"Doc"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: end, Labels: []string{"Doc"}})
 	require.NoError(t, err)
 	require.NoError(t, engine.AppendNodeVersion(&Node{ID: nodeID, Labels: []string{"Doc"}, Properties: map[string]any{"v": 1}}, version))
 	require.NoError(t, engine.AppendEdgeVersion(&Edge{ID: edgeID, StartNode: start, EndNode: end, Type: "REL"}, version))

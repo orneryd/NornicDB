@@ -343,17 +343,25 @@ func TestCollectionStorePointCountBranches(t *testing.T) {
 	require.NoError(t, store.Create(ctx, "counted", 2, qpb.Distance_Cosine))
 	engine, _, err := store.Open(ctx, "counted")
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "qdrant:point:a", Labels: []string{QdrantPointLabel}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "qdrant:point:a", Labels: []string{QdrantPointLabel}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "not-a-point", Labels: []string{"Other"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "not-a-point", Labels: []string{"Other"}})
 	require.NoError(t, err)
 
 	count, err := store.PointCount(ctx, "counted")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), count)
 
-	require.False(t, dbStore.Exists(""))
-	require.False(t, dbStore.Exists("missing"))
+	{
+		exists, existsErr := dbStore.Exists(t.Context(), "")
+		require.NoError(t, existsErr)
+		require.False(t, exists)
+	}
+	{
+		exists, existsErr := dbStore.Exists(t.Context(), "missing")
+		require.NoError(t, existsErr)
+		require.False(t, exists)
+	}
 	_, err = dbStore.PointCount(ctx, "missing")
 	require.ErrorIs(t, err, ErrCollectionNotFound)
 }

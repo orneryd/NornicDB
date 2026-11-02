@@ -260,7 +260,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 			if getExpressionFailure(ctx) != nil {
 				return nil
 			}
-			result, err := e.relationshipEndpointValue(value, function == "endnode")
+			result, err := e.relationshipEndpointValue(ctx, value, function == "endnode")
 			if err != nil {
 				recordExpressionFailure(ctx, err)
 				return nil
@@ -1133,7 +1133,7 @@ func (e *StorageExecutor) evaluateQuantifierWithContext(ctx context.Context, fun
 		pathValues = make(map[string]interface{}, len(paths))
 		for name, path := range paths {
 			if path != nil {
-				pathValues[name] = e.pathContextRowValue(path)
+				pathValues[name] = e.pathContextRowValue(ctx, path)
 			}
 		}
 	}
@@ -1163,7 +1163,7 @@ func (e *StorageExecutor) evaluateQuantifierWithContext(ctx context.Context, fun
 	for name, value := range parameterRowValues(ctx) {
 		bindAbsent(name, value)
 	}
-	if needsRowStatementContext(predicate) {
+	if needsRowStatementContext(ctx, predicate) {
 		bindAbsent(rowStatementContextKey, ctx)
 	}
 	value, _, err := rowQuantifierLoop(function, coerceToUnwindItems(list), func(item interface{}) { values[varName] = item }, func() (interface{}, bool, error) {

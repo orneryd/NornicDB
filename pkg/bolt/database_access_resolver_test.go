@@ -28,7 +28,7 @@ func TestBoltReadAndWriteFromTheProductionResolver(t *testing.T) {
 	require.NoError(t, stores.entitlements.Set(ctx, "analyst", []string{"read"}))
 	require.NoError(t, stores.entitlements.Set(ctx, "loader", []string{"read", "write"}))
 	for user, role := range map[string]auth.Role{"ed": auth.RoleEditor, "pat": "plain", "ann": "analyst", "lou": "loader"} {
-		_, err := authenticator.CreateUser(user, "password123", []auth.Role{role})
+		_, err := authenticator.CreateUser(context.Background(), user, "password123", []auth.Role{role})
 		require.NoError(t, err)
 	}
 	authorize := func(ctx context.Context, query string, _ map[string]any) error {

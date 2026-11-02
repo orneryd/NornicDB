@@ -91,7 +91,7 @@ func TestCypher25ExpressionRewriteEdges(t *testing.T) {
 		`RETURN s"a{ s'x{' }" AS v`,
 		`RETURN s"abc`,
 	} {
-		_, _, err := desugarCypher25Expressions(query, false)
+		_, _, err := desugarCypher25Expressions(t.Context(), query, false)
 		require.Error(t, err, query)
 		requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 	}
@@ -103,7 +103,7 @@ func TestCypher25ExpressionRewriteEdges(t *testing.T) {
 		"RETURN {k: v IN {a: 1} | : 1} AS m",
 		"RETURN 1 /* s'x */ AS v",
 	} {
-		rewritten, _, err := desugarCypher25Expressions(query, false)
+		rewritten, _, err := desugarCypher25Expressions(t.Context(), query, false)
 		require.NoError(t, err, query)
 		require.NotContains(t, rewritten, mapFromPairsFunction, query)
 	}
@@ -132,7 +132,7 @@ func TestGroupByRewriteEdges(t *testing.T) {
 		require.NoError(t, err, query)
 		require.ElementsMatch(t, want, result.Rows, query)
 	}
-	edits, err := groupByEdits("MATCH (n) GROUP BY n")
+	edits, err := groupByEdits(t.Context(), "MATCH (n) GROUP BY n")
 	require.NoError(t, err)
 	require.Empty(t, edits, "a GROUP BY with no RETURN or WITH before it is left to the parser")
 }
@@ -172,7 +172,7 @@ func TestCypher25BatchTwoEdges(t *testing.T) {
 	// A string list a Go caller stored ([]string) is read as a list.
 	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "string_lists")
 	stringLists := NewStorageExecutor(engine)
-	_, err = engine.CreateNode(&storage.Node{ID: "s1", Labels: []string{"Tagged"}, Properties: map[string]interface{}{"tags": []string{"a", "b"}}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "s1", Labels: []string{"Tagged"}, Properties: map[string]interface{}{"tags": []string{"a", "b"}}})
 	require.NoError(t, err)
 	result, err = stringLists.Execute(ctx, "MATCH (n:Tagged) SET n.copy = [x IN n.tags] RETURN n.copy AS c", nil)
 	require.NoError(t, err)
@@ -244,7 +244,7 @@ func TestCypher25BatchTwoSweepCases(t *testing.T) {
 		requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 	}
 	// Map comprehensions build their map without APOC, with Neo4j's answers.
-	rewritten, _, err := desugarCypher25Expressions("RETURN {k: v IN {a: 1} | k: v} AS r", false)
+	rewritten, _, err := desugarCypher25Expressions(t.Context(), "RETURN {k: v IN {a: 1} | k: v} AS r", false)
 	require.NoError(t, err)
 	require.NotContains(t, strings.ToLower(rewritten), "apoc")
 	for query, want := range map[string]interface{}{

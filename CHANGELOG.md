@@ -22,6 +22,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Go parser and MERGE retry classifiers take an explicit operation context;
+  canceled classification preserves the original commit error. See the
+  [preparation API guide](docs/development/cypher-preparation-context-api.md).
+- Go label-count capabilities receive the caller context through native metadata
+  and wrapper scans; see [label counts](docs/api-reference/storage-label-counts.md).
+  Reveal-lease inheritance uses an opaque `RevealScopes` handle instead of
+  retaining a statement context; see [reveal handles](docs/development/reveal-scope-metadata-api.md).
+
+- Plugin host configuration uses typed `heimdall.SubsystemHost` metadata;
+  registration work retains its own context. Go hosts and plugins must rebuild
+  and migrate loader calls and keyed literals; see [the migration guide](docs/development/plugin-host-metadata-api.md).
+
 - Owned shutdowns join the existing completion channel with `WorkLifetime.JoinStopped`; bounded waits retain their caller budgets. See the [lifetime guide](docs/development/work-lifetime.md).
 
 - Composite index and node-key tuple hashes frame each property separately, so

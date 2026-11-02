@@ -352,7 +352,7 @@ func TestSessionSendRecord_TimeEncodingRespectsNegotiatedCompatibility(t *testin
 		session := newTestSession(conn, nil)
 		session.version = BoltV4_4
 
-		err := session.sendRecord([]any{dt})
+		err := session.sendRecord(t.Context(), []any{dt})
 		if err != nil {
 			t.Fatalf("sendRecord() error = %v", err)
 		}
@@ -378,7 +378,7 @@ func TestSessionSendRecord_TimeEncodingRespectsNegotiatedCompatibility(t *testin
 		}
 		conn.writeData = nil
 
-		err = session.sendRecord([]any{dt})
+		err = session.sendRecord(t.Context(), []any{dt})
 		if err != nil {
 			t.Fatalf("sendRecord() error = %v", err)
 		}
@@ -392,7 +392,7 @@ func TestSessionSendRecord_TimeEncodingRespectsNegotiatedCompatibility(t *testin
 		session := newTestSession(conn, nil)
 		session.version = 0x0500
 
-		err := session.sendRecord([]any{dt})
+		err := session.sendRecord(t.Context(), []any{dt})
 		if err != nil {
 			t.Fatalf("sendRecord() error = %v", err)
 		}
@@ -2144,7 +2144,7 @@ func TestSendRecord(t *testing.T) {
 	// Send a record
 	done := make(chan error, 1)
 	go func() {
-		err := session.sendRecord([]any{"Alice", 30, true, 3.14})
+		err := session.sendRecord(t.Context(), []any{"Alice", 30, true, 3.14})
 		done <- err
 	}()
 

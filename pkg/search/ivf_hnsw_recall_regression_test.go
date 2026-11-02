@@ -31,7 +31,7 @@ func TestIVFHNSWPublicQueryPreservesConcentratedNeighbours(t *testing.T) {
 			vec[cluster] = 1
 			vec[cluster+1] = float32(point) / 1000
 			id := fmt.Sprintf("topic-%02d-point-%02d", cluster, point)
-			_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{"Doc"}, NamedEmbeddings: map[string][]float32{"default": vec}})
+			_, err := engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(id), Labels: []string{"Doc"}, NamedEmbeddings: map[string][]float32{"default": vec}})
 			require.NoError(t, err)
 			if cluster == 0 {
 				want = append(want, id)
@@ -77,7 +77,7 @@ func TestIVFHNSWPublicHybridSearchPreservesLexicalGraphRoute(t *testing.T) {
 		if i >= 4 {
 			text, vec = "beta auth", []float32{0.8, 0.6}
 		}
-		_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("point-%d", i)), Labels: []string{"Doc"}, Properties: map[string]any{"text": text}, NamedEmbeddings: map[string][]float32{"default": vec}})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("point-%d", i)), Labels: []string{"Doc"}, Properties: map[string]any{"text": text}, NamedEmbeddings: map[string][]float32{"default": vec}})
 		require.NoError(t, err)
 	}
 	svc := NewService(engine, 2, nil)
@@ -135,7 +135,7 @@ func TestIVFHNSWBinaryTiesResolvedByOversampling(t *testing.T) {
 					vec[cluster] = 1
 					vec[(cluster+1)%dimensions] = float32(point) / 1000
 					id := fmt.Sprintf("topic-%02d-point-%02d", cluster, point)
-					_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{"Doc"}, NamedEmbeddings: map[string][]float32{"default": vec}})
+					_, err := engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(id), Labels: []string{"Doc"}, NamedEmbeddings: map[string][]float32{"default": vec}})
 					require.NoError(t, err)
 					if cluster == 0 {
 						want = append(want, id)

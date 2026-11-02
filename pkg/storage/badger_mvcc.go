@@ -1071,7 +1071,12 @@ func (b *BadgerEngine) UpdateEdgeCurrentHead(id EdgeID, version MVCCVersion, tom
 	}, writtenEntities{edges: []EdgeID{id}})
 }
 
-func (b *BadgerEngine) GetNodeCurrentHead(id NodeID) (MVCCHead, error) {
+// GetNodeCurrentHead reads the node's persisted head under the caller's
+// context, which owns admission of the point read.
+func (b *BadgerEngine) GetNodeCurrentHead(ctx context.Context, id NodeID) (MVCCHead, error) {
+	if err := ctx.Err(); err != nil {
+		return MVCCHead{}, err
+	}
 	if err := b.pendingNamespaceConflict(namespaceForNodeID(id)); err != nil {
 		return MVCCHead{}, err
 	}
@@ -1085,7 +1090,11 @@ func (b *BadgerEngine) GetNodeCurrentHead(id NodeID) (MVCCHead, error) {
 	return head, err
 }
 
-func (b *BadgerEngine) GetEdgeCurrentHead(id EdgeID) (MVCCHead, error) {
+// GetEdgeCurrentHead reads the edge's persisted head under the caller's context.
+func (b *BadgerEngine) GetEdgeCurrentHead(ctx context.Context, id EdgeID) (MVCCHead, error) {
+	if err := ctx.Err(); err != nil {
+		return MVCCHead{}, err
+	}
 	if err := b.pendingNamespaceConflict(namespaceForEdgeID(id)); err != nil {
 		return MVCCHead{}, err
 	}
@@ -1099,32 +1108,35 @@ func (b *BadgerEngine) GetEdgeCurrentHead(id EdgeID) (MVCCHead, error) {
 	return head, err
 }
 
-func (b *BadgerEngine) GetNodeLatestVisible(id NodeID) (*Node, error) {
-	node, _, err := b.readLatestEntity(string(id), false, visibleRead)
+func (b *BadgerEngine) GetNodeLatestVisible(ctx context.Context, id NodeID) (*Node, error) {
+	node, _, err := b.readLatestEntity(ctx, string(id), false, visibleRead)
 	return node, err
 }
 
-func (b *BadgerEngine) GetEdgeLatestVisible(id EdgeID) (*Edge, error) {
-	_, edge, err := b.readLatestEntity(string(id), true, visibleRead)
+func (b *BadgerEngine) GetEdgeLatestVisible(ctx context.Context, id EdgeID) (*Edge, error) {
+	_, edge, err := b.readLatestEntity(ctx, string(id), true, visibleRead)
 	return edge, err
 }
 
 // readLatestEntity first uses the captured current-body owner. Only a missing
 // body consults the committed MVCC head and its retained version records, as
 // required for older persisted stores. All paths apply the same read policy.
-func (b *BadgerEngine) readLatestEntity(id string, isEdge bool, v readVisibility) (*Node, *Edge, error) {
+func (b *BadgerEngine) readLatestEntity(ctx context.Context, id string, isEdge bool, v readVisibility) (*Node, *Edge, error) {
 	var node *Node
 	var edge *Edge
 	var err error
 	if isEdge {
-		edge, err = b.getEdge(EdgeID(id), v)
+		edge, err = b.getEdge(ctx, EdgeID(id), v)
 	} else {
-		node, err = b.getNode(NodeID(id), v)
+		node, err = b.getNode(ctx, NodeID(id), v)
 	}
 	if err == nil {
 		return node, edge, nil
 	}
 	if !errors.Is(err, ErrNotFound) {
+		return nil, nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
 	node, edge = nil, nil
@@ -1170,11 +1182,16 @@ func (b *BadgerEngine) readLatestEntity(id string, isEdge bool, v readVisibility
 		}
 		return nil
 	})
+	if err == nil {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+	}
 	return node, edge, err
 }
 
-func (b *BadgerEngine) GetEdgeVisibleAt(id EdgeID, version MVCCVersion) (*Edge, error) {
-	return readEntityAtWithView(b, id, version, mvccEntityRead{visibility: visibleRead}, b.withView, (*BadgerEngine).getEdgeAtInTxn)
+func (b *BadgerEngine) GetEdgeVisibleAt(ctx context.Context, id EdgeID, version MVCCVersion) (*Edge, error) {
+	return readEntityAtWithView(ctx, b, id, version, mvccEntityRead{visibility: visibleRead}, b.withView, (*BadgerEngine).getEdgeAtInTxn)
 }
 
 func (b *BadgerEngine) GetOutgoingEdgesVisibleAt(ctx context.Context, nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
@@ -1197,8 +1214,14 @@ func (b *BadgerEngine) BatchGetNodesLatestVisible(ctx context.Context, ids []Nod
 		if err := cancel.check(ctx); err != nil {
 			return nil, err
 		}
-		node, err := b.GetNodeLatestVisible(id)
-		if err == nil && node != nil {
+		node, _, err := b.readLatestEntity(ctx, string(id), false, visibleRead)
+		if err != nil {
+			if cancellation := ctx.Err(); cancellation != nil {
+				return nil, cancellation
+			}
+			continue
+		}
+		if node != nil {
 			result[id] = node
 		}
 	}

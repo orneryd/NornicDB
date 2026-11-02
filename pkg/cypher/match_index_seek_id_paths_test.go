@@ -21,7 +21,7 @@ func newIDSeekTestGraph(t *testing.T, namespace string, seeds []*storage.Node) (
 	exec := NewStorageExecutor(store)
 
 	for i, node := range seeds {
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err, "create seek node %d", i)
 	}
 
@@ -43,7 +43,7 @@ func TestTryCollectNodesFromIDEquality_Branches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:     storage.NodeID("person-1"),
 		Labels: []string{"Person", "Actor"},
 		Properties: map[string]interface{}{
@@ -240,10 +240,10 @@ func TestTryCollectNodesFromIDInParam_AndIndexCandidateLabels(t *testing.T) {
 	require.Empty(t, labels)
 
 	for _, nodeID := range []storage.NodeID{"p1", "p2", "m1"} {
-		node, err := store.GetNode(nodeID)
+		node, err := store.GetNode(t.Context(), nodeID)
 		require.NoError(t, err)
 		node.Labels = append(node.Labels, "All")
-		require.NoError(t, store.UpdateNode(storage.NodeUpdateRequest{After: node}))
+		require.NoError(t, store.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
 	}
 	_, err = exec.Execute(ctx, "CREATE INDEX idx_all_name_cov FOR (n:All) ON (n.name)", nil)
 	require.NoError(t, err)

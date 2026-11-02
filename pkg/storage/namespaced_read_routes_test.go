@@ -31,38 +31,38 @@ func (f *pointRouteFixture) edgeResult(op string, id EdgeID, v MVCCVersion) (*Ed
 	f.record(op, string(id), v)
 	return f.edge, f.err
 }
-func (f *pointRouteFixture) GetNode(id NodeID) (*Node, error) {
+func (f *pointRouteFixture) GetNode(ctx context.Context, id NodeID) (*Node, error) {
 	return f.nodeResult("GetNode", id, MVCCVersion{})
 }
-func (f *pointRouteFixture) GetQueryNode(id NodeID) (*Node, error) {
+func (f *pointRouteFixture) GetQueryNode(ctx context.Context, id NodeID) (*Node, error) {
 	return f.nodeResult("GetQueryNode", id, MVCCVersion{})
 }
-func (f *pointRouteFixture) GetNodeLatestVisible(id NodeID) (*Node, error) {
+func (f *pointRouteFixture) GetNodeLatestVisible(ctx context.Context, id NodeID) (*Node, error) {
 	return f.nodeResult("GetNodeLatestVisible", id, MVCCVersion{})
 }
-func (f *pointRouteFixture) GetNodeLatestEffective(id NodeID) (*Node, error) {
+func (f *pointRouteFixture) GetNodeLatestEffective(ctx context.Context, id NodeID) (*Node, error) {
 	return f.nodeResult("GetNodeLatestEffective", id, MVCCVersion{})
 }
-func (f *pointRouteFixture) GetNodeVisibleAt(id NodeID, v MVCCVersion) (*Node, error) {
+func (f *pointRouteFixture) GetNodeVisibleAt(ctx context.Context, id NodeID, v MVCCVersion) (*Node, error) {
 	return f.nodeResult("GetNodeVisibleAt", id, v)
 }
-func (f *pointRouteFixture) GetEdge(id EdgeID) (*Edge, error) {
+func (f *pointRouteFixture) GetEdge(ctx context.Context, id EdgeID) (*Edge, error) {
 	return f.edgeResult("GetEdge", id, MVCCVersion{})
 }
-func (f *pointRouteFixture) GetEdgeLatestVisible(id EdgeID) (*Edge, error) {
+func (f *pointRouteFixture) GetEdgeLatestVisible(ctx context.Context, id EdgeID) (*Edge, error) {
 	return f.edgeResult("GetEdgeLatestVisible", id, MVCCVersion{})
 }
-func (f *pointRouteFixture) GetEdgeLatestEffective(id EdgeID) (*Edge, error) {
+func (f *pointRouteFixture) GetEdgeLatestEffective(ctx context.Context, id EdgeID) (*Edge, error) {
 	return f.edgeResult("GetEdgeLatestEffective", id, MVCCVersion{})
 }
-func (f *pointRouteFixture) GetEdgeVisibleAt(id EdgeID, v MVCCVersion) (*Edge, error) {
+func (f *pointRouteFixture) GetEdgeVisibleAt(ctx context.Context, id EdgeID, v MVCCVersion) (*Edge, error) {
 	return f.edgeResult("GetEdgeVisibleAt", id, v)
 }
-func (f *pointRouteFixture) GetNodeCurrentHead(id NodeID) (MVCCHead, error) {
+func (f *pointRouteFixture) GetNodeCurrentHead(ctx context.Context, id NodeID) (MVCCHead, error) {
 	f.record("GetNodeCurrentHead", string(id), MVCCVersion{})
 	return MVCCHead{Version: MVCCVersion{CommitSequence: 23}}, f.err
 }
-func (f *pointRouteFixture) GetEdgeCurrentHead(id EdgeID) (MVCCHead, error) {
+func (f *pointRouteFixture) GetEdgeCurrentHead(ctx context.Context, id EdgeID) (MVCCHead, error) {
 	f.record("GetEdgeCurrentHead", string(id), MVCCVersion{})
 	return MVCCHead{Version: MVCCVersion{CommitSequence: 23}}, f.err
 }
@@ -75,11 +75,11 @@ func TestNamespacedPointRoutingPreservesProviderContracts(t *testing.T) {
 		read func(*NamespacedEngine) (*Node, error)
 		keep bool
 	}{
-		{"GetNode", func(n *NamespacedEngine) (*Node, error) { return n.GetNode("n") }, false},
-		{"GetQueryNode", func(n *NamespacedEngine) (*Node, error) { return n.GetQueryNode("n") }, false},
-		{"GetNodeLatestVisible", func(n *NamespacedEngine) (*Node, error) { return n.GetNodeLatestVisible("n") }, true},
-		{"GetNodeLatestEffective", func(n *NamespacedEngine) (*Node, error) { return n.GetNodeLatestEffective("n") }, true},
-		{"GetNodeVisibleAt", func(n *NamespacedEngine) (*Node, error) { return n.GetNodeVisibleAt("n", version) }, true},
+		{"GetNode", func(n *NamespacedEngine) (*Node, error) { return n.GetNode(t.Context(), "n") }, false},
+		{"GetQueryNode", func(n *NamespacedEngine) (*Node, error) { return n.GetQueryNode(t.Context(), "n") }, false},
+		{"GetNodeLatestVisible", func(n *NamespacedEngine) (*Node, error) { return n.GetNodeLatestVisible(t.Context(), "n") }, true},
+		{"GetNodeLatestEffective", func(n *NamespacedEngine) (*Node, error) { return n.GetNodeLatestEffective(context.Background(), "n") }, true},
+		{"GetNodeVisibleAt", func(n *NamespacedEngine) (*Node, error) { return n.GetNodeVisibleAt(t.Context(), "n", version) }, true},
 	}
 	for _, tc := range nodes {
 		for _, missing := range []bool{false, true} {
@@ -124,10 +124,10 @@ func TestNamespacedPointRoutingPreservesProviderContracts(t *testing.T) {
 		read func(*NamespacedEngine) (*Edge, error)
 		keep bool
 	}{
-		{"GetEdge", func(n *NamespacedEngine) (*Edge, error) { return n.GetEdge("e") }, false},
-		{"GetEdgeLatestVisible", func(n *NamespacedEngine) (*Edge, error) { return n.GetEdgeLatestVisible("e") }, true},
-		{"GetEdgeLatestEffective", func(n *NamespacedEngine) (*Edge, error) { return n.GetEdgeLatestEffective("e") }, true},
-		{"GetEdgeVisibleAt", func(n *NamespacedEngine) (*Edge, error) { return n.GetEdgeVisibleAt("e", version) }, true},
+		{"GetEdge", func(n *NamespacedEngine) (*Edge, error) { return n.GetEdge(t.Context(), "e") }, false},
+		{"GetEdgeLatestVisible", func(n *NamespacedEngine) (*Edge, error) { return n.GetEdgeLatestVisible(t.Context(), "e") }, true},
+		{"GetEdgeLatestEffective", func(n *NamespacedEngine) (*Edge, error) { return n.GetEdgeLatestEffective(context.Background(), "e") }, true},
+		{"GetEdgeVisibleAt", func(n *NamespacedEngine) (*Edge, error) { return n.GetEdgeVisibleAt(t.Context(), "e", version) }, true},
 	}
 	for _, tc := range edges {
 		for _, missing := range []bool{false, true} {
@@ -179,10 +179,10 @@ func TestNamespacedPointRoutingPreservesProviderContracts(t *testing.T) {
 				var err error
 				op, id := "GetNodeCurrentHead", "tenant:n"
 				if edgeCase {
-					head, err = n.GetEdgeCurrentHead("e")
+					head, err = n.GetEdgeCurrentHead(context.Background(), "e")
 					op, id = "GetEdgeCurrentHead", "tenant:e"
 				} else {
-					head, err = n.GetNodeCurrentHead("n")
+					head, err = n.GetNodeCurrentHead(context.Background(), "n")
 				}
 				require.Equal(t, f.err, err)
 				require.EqualValues(t, 23, head.Version.CommitSequence)
@@ -198,8 +198,8 @@ func TestNamespacedPointRoutingPreservesProviderContracts(t *testing.T) {
 			f.err = injected
 		}
 		n := NewNamespacedEngine(struct{ Engine }{f}, "tenant")
-		for _, read := range []func(NodeID) (*Node, error){n.GetQueryNode, n.GetNodeLatestVisible, n.GetNodeLatestEffective} {
-			got, err := read("n")
+		for _, read := range []func(context.Context, NodeID) (*Node, error){func(ctx context.Context, id NodeID) (*Node, error) { return n.GetQueryNode(ctx, id) }, func(ctx context.Context, id NodeID) (*Node, error) { return n.GetNodeLatestVisible(ctx, id) }, n.GetNodeLatestEffective} {
+			got, err := read(context.Background(), "n")
 			require.Equal(t, f.err, err)
 			if failed {
 				require.Nil(t, got)
@@ -207,8 +207,8 @@ func TestNamespacedPointRoutingPreservesProviderContracts(t *testing.T) {
 				require.Equal(t, NodeID("n"), got.ID)
 			}
 		}
-		for _, read := range []func(EdgeID) (*Edge, error){n.GetEdgeLatestVisible, n.GetEdgeLatestEffective} {
-			got, err := read("e")
+		for _, read := range []func(context.Context, EdgeID) (*Edge, error){func(ctx context.Context, id EdgeID) (*Edge, error) { return n.GetEdgeLatestVisible(ctx, id) }, n.GetEdgeLatestEffective} {
+			got, err := read(context.Background(), "e")
 			require.Equal(t, f.err, err)
 			if failed {
 				require.Nil(t, got)
@@ -217,13 +217,13 @@ func TestNamespacedPointRoutingPreservesProviderContracts(t *testing.T) {
 			}
 		}
 		require.Equal(t, []string{"GetNode", "GetNode", "GetNode", "GetEdge", "GetEdge"}, f.calls)
-		_, err := n.GetNodeVisibleAt("n", version)
+		_, err := n.GetNodeVisibleAt(t.Context(), "n", version)
 		require.ErrorIs(t, err, ErrNotImplemented)
-		_, err = n.GetEdgeVisibleAt("e", version)
+		_, err = n.GetEdgeVisibleAt(t.Context(), "e", version)
 		require.ErrorIs(t, err, ErrNotImplemented)
-		_, err = n.GetNodeCurrentHead("n")
+		_, err = n.GetNodeCurrentHead(context.Background(), "n")
 		require.ErrorIs(t, err, ErrNotImplemented)
-		_, err = n.GetEdgeCurrentHead("e")
+		_, err = n.GetEdgeCurrentHead(context.Background(), "e")
 		require.ErrorIs(t, err, ErrNotImplemented)
 	}
 }

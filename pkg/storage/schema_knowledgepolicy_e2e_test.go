@@ -1,6 +1,7 @@
 package storage_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/cypher"
@@ -721,11 +722,11 @@ APPLY {
     APPLY PROFILE 'reinforced_tier'
 }`)
 
-	def := sm.ExportDefinition()
+	def := schemaDefinitionForTest(t, sm)
 	require.NotNil(t, def)
 
 	sm2 := storage.NewSchemaManager()
-	require.NoError(t, sm2.ReplaceFromDefinition(def))
+	require.NoError(t, sm2.ReplaceFromDefinition(context.Background(), def))
 
 	bundles2, bindings2 := sm2.ShowDecayProfiles()
 	assert.Len(t, bundles2, 2)

@@ -3997,7 +3997,7 @@ func (s *Service) handleOrphanedEmbedding(ctx context.Context, nodeIDStr string,
 		return true // already logged and refreshed this request
 	}
 	s.logPrintf("[search] orphaned embedding detected, removing from indexes: nodeID=%s", nodeIDStr)
-	if removeErr := s.RefreshNode(storage.NodeID(nodeIDStr)); removeErr != nil {
+	if removeErr := s.RefreshNode(ctx, storage.NodeID(nodeIDStr)); removeErr != nil {
 		s.logPrintf("[search] failed to remove orphaned embedding for nodeID=%s: %v", nodeIDStr, removeErr)
 	}
 	if seenOrphans != nil {
@@ -4138,7 +4138,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 		return fmt.Errorf("search: vector disk storage requires index persistence and a configured vector index path")
 	}
 	var storageNodeCount int64
-	if n, err := s.engine.NodeCount(); err == nil {
+	if n, err := s.engine.NodeCount(ctx); err == nil {
 		storageNodeCount = n
 		if n > 0 {
 			s.buildTotalNodes.Store(n)
@@ -6724,11 +6724,11 @@ func envDurationSec(key string, fallbackSec int) time.Duration {
 	return time.Duration(sec) * time.Second
 }
 
-func (s *Service) getNodeWithoutEmbeddings(id storage.NodeID) (*storage.Node, error) {
+func (s *Service) getNodeWithoutEmbeddings(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	if reader, ok := s.engine.(storage.NodeWithoutEmbeddingsReader); ok {
-		return reader.GetNodeWithoutEmbeddings(id)
+		return reader.GetNodeWithoutEmbeddings(ctx, id)
 	}
-	return s.engine.GetNode(id)
+	return s.engine.GetNode(ctx, id)
 }
 
 func (s *Service) batchGetNodesWithoutEmbeddings(ctx context.Context, ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
@@ -6746,7 +6746,7 @@ func (s *Service) batchGetNodesWithoutEmbeddings(ctx context.Context, ids []stor
 	}
 	nodes := make(map[storage.NodeID]*storage.Node, len(ids))
 	for _, id := range ids {
-		node, err := s.getNodeWithoutEmbeddings(id)
+		node, err := s.getNodeWithoutEmbeddings(ctx, id)
 		if err != nil {
 			if errors.Is(err, storage.ErrNotFound) {
 				continue
@@ -6782,7 +6782,7 @@ func (s *Service) filterCandidatesByType(ctx context.Context, candidates []Searc
 
 	filtered := make([]SearchCandidate, 0, len(candidates))
 	for _, cand := range candidates {
-		node, err := s.getNodeWithoutEmbeddings(storage.NodeID(cand.ID))
+		node, err := s.getNodeWithoutEmbeddings(ctx, storage.NodeID(cand.ID))
 		if err != nil {
 			if s.handleOrphanedEmbedding(ctx, cand.ID, err, seenOrphans) {
 				continue
@@ -6996,7 +6996,7 @@ func (s *Service) applyMMR(ctx context.Context, results []rrfResult, queryEmbedd
 	candidates := make([]docWithEmbed, 0, len(results))
 	for _, r := range results {
 		// Get embedding from storage
-		node, err := s.engine.GetNode(storage.NodeID(r.ID))
+		node, err := s.engine.GetNode(ctx, storage.NodeID(r.ID))
 		if err != nil {
 			if s.handleOrphanedEmbedding(ctx, r.ID, err, seenOrphans) {
 				continue
@@ -7106,7 +7106,7 @@ func (s *Service) applyStage2Rerank(ctx context.Context, query string, results [
 			candidates = append(candidates, candidate)
 			continue
 		}
-		node, err := s.getNodeWithoutEmbeddings(storage.NodeID(r.ID))
+		node, err := s.getNodeWithoutEmbeddings(ctx, storage.NodeID(r.ID))
 		if err != nil {
 			_ = s.handleOrphanedEmbedding(ctx, r.ID, err, seenOrphans)
 			candidates = append(candidates, candidate)
@@ -7117,7 +7117,7 @@ func (s *Service) applyStage2Rerank(ctx context.Context, query string, results [
 			continue
 		}
 
-		candidate.Content = s.rerankCandidateContent(node, r, query, maxDocumentChars)
+		candidate.Content = s.rerankCandidateContent(ctx, node, r, query, maxDocumentChars)
 		if candidate.Content != "" {
 			newCandidates++
 		}
@@ -7822,7 +7822,7 @@ func (s *Service) filterByProperties(ctx context.Context, results []indexResult,
 	}
 	var filtered []indexResult
 	for _, r := range results {
-		node, err := s.getNodeWithoutEmbeddings(storage.NodeID(r.ID))
+		node, err := s.getNodeWithoutEmbeddings(ctx, storage.NodeID(r.ID))
 		if err != nil {
 			if s.handleOrphanedEmbedding(ctx, r.ID, err, seenOrphans) {
 				continue
@@ -7919,7 +7919,7 @@ func (s *Service) filterByType(ctx context.Context, results []indexResult, types
 
 	var filtered []indexResult
 	for _, r := range results {
-		node, err := s.getNodeWithoutEmbeddings(storage.NodeID(r.ID))
+		node, err := s.getNodeWithoutEmbeddings(ctx, storage.NodeID(r.ID))
 		if err != nil {
 			if s.handleOrphanedEmbedding(ctx, r.ID, err, seenOrphans) {
 				continue

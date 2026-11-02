@@ -107,7 +107,9 @@ func (w *WriteBehindBuffer) totalCountDeltaForPrefix(ctx context.Context, prefix
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	w.mu.RLock()
+	if err := w.mu.RLockContext(ctx); err != nil {
+		return 0, err
+	}
 	defer w.mu.RUnlock()
 	var delta int64
 	for _, buf := range w.liveBuffers() {

@@ -44,7 +44,7 @@ func testCallableDecodedIdentity(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, [][]interface{}{{tc.want}}, r.Rows)
 			require.Equal(t, tc.want, e.evaluateExpressionWithContext(context.Background(), tc.expr, nil, nil))
-			v, ok, err := e.evaluateRowValue(tc.expr, nil)
+			v, ok, err := e.evaluateRowValue(t.Context(), tc.expr, nil)
 			require.NoError(t, err)
 			require.True(t, ok)
 			require.Equal(t, tc.want, v)

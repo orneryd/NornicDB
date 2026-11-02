@@ -118,7 +118,7 @@ func TestAllowlistStore_CopyAndSeedSkipPaths(t *testing.T) {
 		t.Fatalf("expected nil database list for global role, got %#v", got)
 	}
 
-	node, err := eng.GetNode(storage.NodeID(roleDbAccessPrefix + "analyst"))
+	node, err := eng.GetNode(context.Background(), storage.NodeID(roleDbAccessPrefix+"analyst"))
 	if err != nil {
 		t.Fatalf("get analyst allowlist node: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestAllowlistStore_CopyAndSeedSkipPaths(t *testing.T) {
 	if err := store.SaveRoleDatabases(ctx, "analyst", []string{"system"}); err != nil {
 		t.Fatalf("update analyst allowlist failed: %v", err)
 	}
-	node2, err := eng.GetNode(storage.NodeID(roleDbAccessPrefix + "analyst"))
+	node2, err := eng.GetNode(context.Background(), storage.NodeID(roleDbAccessPrefix+"analyst"))
 	if err != nil {
 		t.Fatalf("get updated analyst allowlist node: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestAllowlistStore_LoadAndHasDataHelpers(t *testing.T) {
 		t.Fatalf("expected no allowlist data on empty store")
 	}
 
-	_, err = eng.CreateNode(&storage.Node{
+	_, err = eng.CreateNode(context.Background(), &storage.Node{
 		ID:     storage.NodeID("role_db_access:reader"),
 		Labels: []string{roleDbAccessLabel, roleDbAccessSystems},
 		Properties: map[string]any{
@@ -159,7 +159,7 @@ func TestAllowlistStore_LoadAndHasDataHelpers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create allowlist node: %v", err)
 	}
-	_, err = eng.CreateNode(&storage.Node{
+	_, err = eng.CreateNode(context.Background(), &storage.Node{
 		ID:     storage.NodeID("system:bad-node"),
 		Labels: []string{roleDbAccessLabel},
 		Properties: map[string]any{
@@ -169,7 +169,7 @@ func TestAllowlistStore_LoadAndHasDataHelpers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create invalid allowlist node: %v", err)
 	}
-	_, err = eng.CreateNode(&storage.Node{
+	_, err = eng.CreateNode(context.Background(), &storage.Node{
 		ID:     storage.NodeID("role_db_access:other"),
 		Labels: []string{"Other"},
 		Properties: map[string]any{

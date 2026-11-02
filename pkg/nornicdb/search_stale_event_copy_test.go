@@ -32,7 +32,7 @@ func TestSearchFlushKeepsEmbeddingOverAnOlderEventCopy(t *testing.T) {
 		Properties:      map[string]any{"content": "embedded before its creation event was delivered"},
 		ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}},
 	}
-	_, err = db.storage.CreateNode(embedded)
+	_, err = db.storage.CreateNode(t.Context(), embedded)
 	require.NoError(t, err)
 	require.Eventually(t, func() bool { return svc.EmbeddingCount() == 1 }, 5*time.Second, 10*time.Millisecond)
 

@@ -4,13 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/orneryd/nornicdb/internal/httpresponse"
 	"net/http"
 	"reflect"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/orneryd/nornicdb/internal/httpresponse"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
@@ -972,7 +973,7 @@ func (s *Server) collectLatestNeighborhood(ctx context.Context, engine storage.E
 			collection.truncated = true
 			continue
 		}
-		node, err := engine.GetNode(storage.NodeID(seedID))
+		node, err := engine.GetNode(ctx, storage.NodeID(seedID))
 		node = projection.Node(node)
 		if err != nil || node == nil {
 			continue
@@ -1012,7 +1013,7 @@ func (s *Server) collectLatestNeighborhood(ctx context.Context, engine storage.E
 			if otherID == current.nodeID {
 				otherID = string(edge.EndNode)
 			}
-			neighbor, err := engine.GetNode(storage.NodeID(otherID))
+			neighbor, err := engine.GetNode(ctx, storage.NodeID(otherID))
 			neighbor = projection.Node(neighbor)
 			if err != nil || neighbor == nil {
 				continue
@@ -1048,7 +1049,7 @@ func (s *Server) collectLatestPath(ctx context.Context, engine storage.Engine, s
 	defer releaseProjection()
 	if sourceID == targetID {
 		collection := newGraphCollection()
-		node, err := engine.GetNode(storage.NodeID(sourceID))
+		node, err := engine.GetNode(ctx, storage.NodeID(sourceID))
 		node = projection.Node(node)
 		if err != nil || node == nil {
 			return collection, storage.ErrNotFound
@@ -1099,7 +1100,7 @@ func (s *Server) collectLatestPath(ctx context.Context, engine storage.Engine, s
 			if nextID == current {
 				nextID = string(edge.EndNode)
 			}
-			node, err := engine.GetNode(storage.NodeID(nextID))
+			node, err := engine.GetNode(ctx, storage.NodeID(nextID))
 			node = projection.Node(node)
 			if err != nil || node == nil || !filters.allowNode(node) {
 				continue
@@ -1134,7 +1135,7 @@ func (s *Server) collectLatestPath(ctx context.Context, engine storage.Engine, s
 	collection := newGraphCollection()
 	current := targetID
 	for {
-		node, err := engine.GetNode(storage.NodeID(current))
+		node, err := engine.GetNode(ctx, storage.NodeID(current))
 		node = projection.Node(node)
 		if err == nil && node != nil {
 			collection.addNode(node, "")
@@ -1157,7 +1158,7 @@ func (s *Server) collectLatestInducedSubgraph(ctx context.Context, engine storag
 	collection := newGraphCollection()
 	visible := normalizeNodeIDs(nodeIDs)
 	for _, nodeID := range visible {
-		node, err := engine.GetNode(storage.NodeID(nodeID))
+		node, err := engine.GetNode(ctx, storage.NodeID(nodeID))
 		if err != nil || node == nil || !filters.allowNode(node) {
 			continue
 		}
@@ -1205,7 +1206,10 @@ func (s *Server) collectSnapshotInducedSubgraph(ctx context.Context, engine stor
 
 	collection := newGraphCollection()
 	for _, nodeID := range normalizeNodeIDs(nodeIDs) {
-		node, err := provider.GetNodeVisibleAt(storage.NodeID(nodeID), version)
+		node, err := provider.GetNodeVisibleAt(ctx, storage.NodeID(nodeID), version)
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return graphCollection{}, err
+		}
 		if err != nil || node == nil || !filters.allowNode(node) {
 			continue
 		}

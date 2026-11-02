@@ -168,7 +168,7 @@ func TestHeimdallRouterRefusesCompositeSearchAndStats(t *testing.T) {
 	}))
 	closed, err := server.dbManager.GetStorage("closed_part")
 	require.NoError(t, err)
-	_, err = closed.CreateNode(&storage.Node{ID: "closed-1", Labels: []string{"Document"}, Properties: map[string]interface{}{"title": "closed notes"}})
+	_, err = closed.CreateNode(t.Context(), &storage.Node{ID: "closed-1", Labels: []string{"Document"}, Properties: map[string]interface{}{"title": "closed notes"}})
 	require.NoError(t, err)
 
 	compositeOnly := heimdallPrincipal([]string{"portfolio"}, func(database string, permission auth.Permission) bool {
@@ -217,7 +217,7 @@ func TestHeimdallAsyncActionKeepsCallerPrincipal(t *testing.T) {
 	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "async_named"}))
 	named, err := server.dbManager.GetStorage("async_named")
 	require.NoError(t, err)
-	_, err = named.CreateNode(&storage.Node{ID: "async-named-node", Labels: []string{"Doc"}})
+	_, err = named.CreateNode(t.Context(), &storage.Node{ID: "async-named-node", Labels: []string{"Doc"}})
 	require.NoError(t, err)
 	type outcome struct {
 		rows []map[string]interface{}

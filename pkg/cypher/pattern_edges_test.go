@@ -56,7 +56,7 @@ func TestPatternEdges(t *testing.T) {
 		require.NoError(t, err)
 		return result.Rows[0][0]
 	}
-	rewritten, _, err := desugarLabelExpressions("MATCH p = SHORTEST 2 (a)-->+(b) RETURN p", nil, false)
+	rewritten, _, err := desugarLabelExpressions(t.Context(), "MATCH p = SHORTEST 2 (a)-->+(b) RETURN p", nil, false)
 	require.NoError(t, err)
 	body := strings.TrimSuffix(strings.TrimPrefix(rewritten, "MATCH "), " RETURN p")
 	m, ok, err := exec.parseShortestPathMatch(ctx, body)

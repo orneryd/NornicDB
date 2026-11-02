@@ -54,9 +54,9 @@ package cypher
 // Established limits of the current source (not corrected here; no route turns
 // them into a mutation):
 //
-//   - the private drop helper (call_compat.go dropIndexOfKind) threads no
-//     caller context into mutateSchema, so nothing inside the drop observes a
-//     cancellation itself. The implicit route cannot turn that into a mutation
+//   - the private drop helper now retains its caller in mutateSchema and
+//     rejects cancellation before schema preparation. Terminal cancellation
+//     races below still cannot turn a rejected drop into a live mutation
 //     (the drop edits the statement's own isolated schema view, whose
 //     schema-mutation lock no other statement holds, and both publication gates
 //     reject a canceled publication). The explicit routes cannot either: the
@@ -117,9 +117,9 @@ type indexDropCommitBoundary struct {
 	released time.Time
 }
 
-func (b *indexDropCommitBoundary) BeginTransaction() (*storage.BadgerTransaction, error) {
+func (b *indexDropCommitBoundary) BeginTransaction(ctx context.Context) (*storage.BadgerTransaction, error) {
 	b.begins++
-	return b.base.BeginTransaction()
+	return b.base.BeginTransaction(ctx)
 }
 
 func (b *indexDropCommitBoundary) CommitTransaction(ctx context.Context, tx *storage.BadgerTransaction) error {

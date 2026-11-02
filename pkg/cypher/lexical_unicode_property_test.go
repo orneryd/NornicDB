@@ -32,7 +32,7 @@ func TestLexicalUnicodeBoundaryScanners(t *testing.T) {
 			functions, err := usePropertyFunctions(query)
 			require.NoError(t, err)
 			require.Equal(t, []string{"abs"}, functions)
-			tokens, _, err := tokenizeSource(query, nil)
+			tokens, _, err := tokenizeSource(t.Context(), query, nil)
 			require.NoError(t, err)
 			require.Equal(t, []string{"RETURN", "abs", "(", "-", "1", ")", "AS", "café"}, tokens)
 			for _, keyword := range []string{"RETURN", "ORDER BY", "IS NOT NULL"} {
@@ -152,11 +152,11 @@ func TestUseOwnerGeneratedCacheDependencies(t *testing.T) {
 						}
 						scope, err := manager.StatementCacheScope(selection)
 						require.NoError(t, err)
-						scopes, valid := exec.cacheDependencyScopes(query)
+						scopes, valid := exec.cacheDependencyScopes(t.Context(), query)
 						require.True(t, valid)
 						require.True(t, containsStatementScope(scopes, scope), "selection identity absent for U%04X", gap)
 						require.NoError(t, exec.validateSyntax(t.Context(), query, false, syntaxStatement))
-						exec.cachedUpperQuery(query)
+						exec.cachedUpperQuery(t.Context(), query)
 						require.NotZero(t, exec.cachedSyntaxVerdict(query))
 						exec.ensureUpperQueryCache().mu.RLock()
 						_, warm := exec.ensureUpperQueryCache().cache[query]
@@ -193,7 +193,7 @@ func TestUseOwnerGeneratedCacheDependencies(t *testing.T) {
 						require.NotSame(t, scope, fresh)
 						require.Zero(t, exec.cachedSyntaxVerdict(query))
 						require.NoError(t, exec.validateSyntax(t.Context(), query, false, syntaxStatement))
-						scopes, valid = exec.cacheDependencyScopes(query)
+						scopes, valid = exec.cacheDependencyScopes(t.Context(), query)
 						require.True(t, valid)
 						require.True(t, containsStatementScope(scopes, fresh))
 					}

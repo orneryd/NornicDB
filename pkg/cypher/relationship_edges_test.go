@@ -38,7 +38,7 @@ func (e *adjacentEdgeEngine) GetAdjacentEdges(ctx context.Context, id storage.No
 func TestUndirectedIncidentEdges(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "incident")
 	for _, id := range []storage.NodeID{"a", "b"} {
-		_, err := store.CreateNode(&storage.Node{ID: id})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: id})
 		require.NoError(t, err)
 	}
 	for _, edge := range []*storage.Edge{
@@ -46,7 +46,7 @@ func TestUndirectedIncidentEdges(t *testing.T) {
 		{ID: "aa", StartNode: "a", EndNode: "a", Type: "T"},
 		{ID: "ba", StartNode: "b", EndNode: "a", Type: "T"},
 	} {
-		require.NoError(t, store.CreateEdge(edge))
+		require.NoError(t, store.CreateEdge(t.Context(), edge))
 	}
 	ids := func(edges []*storage.Edge) []string {
 		out := make([]string, 0, len(edges))

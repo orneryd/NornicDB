@@ -21,11 +21,11 @@ func indexEntryCatalogKey(entityID string) []byte {
 	return accessMetaKey(entityID)
 }
 
-// PutIndexEntryCatalog is an exported context-free catalog write: it is its
-// own entry, so it passes its own explicit unbounded lifetime. Its callers
-// remain context-free until a context-first public contract is approved.
-func (b *BadgerEngine) PutIndexEntryCatalog(entityID string, cat *IndexEntryCatalog) error {
-	return b.withUpdate(context.Background(), updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+// PutIndexEntryCatalog records an entity's secondary-index keys under the
+// caller's operation lifetime. ctx owns admission; an admitted catalog write
+// completes in the store and a canceled ctx returns its own error unwritten.
+func (b *BadgerEngine) PutIndexEntryCatalog(ctx context.Context, entityID string, cat *IndexEntryCatalog) error {
+	return b.withUpdate(ctx, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		return putIndexEntryCatalogInTxn(txn, entityID, cat)
 	})
 }

@@ -760,15 +760,23 @@ func runServe(cmd *cobra.Command, args []string) (runErr error) {
 		if adminPasswordFlagChanged && adminPasswordFlag != "" {
 			adminPassword = adminPasswordFlag
 		}
-		_, err := authenticator.CreateUser(adminUsername, adminPassword, []auth.Role{auth.RoleAdmin})
-		if err != nil {
-			// User might already exist
-			commandPrintln(cmd, localization.NornicDBCLIAdminSetupFailed())
-		} else {
+		// Bootstrap runs under the command's own lifecycle, not a later HTTP request.
+		_, err := authenticator.CreateUser(cmd.Context(), adminUsername, adminPassword, []auth.Role{auth.RoleAdmin})
+		switch {
+		case err == nil:
 			commandPrintln(cmd, localization.NornicDBCLIAdminCreated(adminUsername))
 			if usesDefaultAdminPassword(cfg) {
 				commandPrintln(cmd, localization.NornicDBCLIDefaultPasswordWarning())
 			}
+		case errors.Is(err, auth.ErrUserExists):
+			// An existing admin account is the expected steady state on restart:
+			// keep the established nonfatal wording and continue startup.
+			commandPrintln(cmd, localization.NornicDBCLIAdminSetupFailed())
+		default:
+			// Any other bootstrap failure (cancellation, rejected credential, failed
+			// persistence) is reported with its own cause instead of starting a
+			// server that has no intended admin account.
+			return newCommandError(cmd, localization.NornicDBCLICreateAuthenticatorFailed(err), err)
 		}
 	}
 	// Note: Auth status logged at server startup
@@ -1901,7 +1909,7 @@ func runDecaySuppress(cmd *cobra.Command, args []string) (runErr error) {
 		)
 
 		if res.FinalScore < threshold {
-			becameSuppressed, err := be.EnqueueDeindexIfSuppressed(entityID, false)
+			becameSuppressed, err := be.EnqueueDeindexIfSuppressed(cmd.Context(), entityID, false)
 			if err != nil {
 				commandPrintln(cmd, localization.NornicDBCLIDecaySuppressWarning(string(node.ID), err))
 				continue

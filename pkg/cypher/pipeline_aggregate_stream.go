@@ -472,7 +472,7 @@ func (state *pipelineAggregateState) add(ctx context.Context, executor *StorageE
 		}
 		stored := pipelineRow{}
 		if len(state.percentileRows) == 0 {
-			if err := executor.validatePercentileCalls(state.name+"("+state.expression+")", row); err != nil {
+			if err := executor.validatePercentileCalls(ctx, state.name+"("+state.expression+")", row); err != nil {
 				recordExpressionFailure(ctx, err)
 				return false
 			}

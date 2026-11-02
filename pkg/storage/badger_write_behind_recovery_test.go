@@ -30,10 +30,10 @@ func TestBufferedRecoveryRetiresBatchBeforeReadingLaterInvalidRecord(t *testing.
 	replayed, err := RecoverBufferedCommits(engine, wal)
 	require.ErrorContains(t, err, "unmarshal buffered commit")
 	require.Equal(t, 1, replayed, "a completed bounded batch must not remain retained until WAL EOF")
-	node, err := engine.GetNode("test:bounded")
+	node, err := engine.GetNode(t.Context(), "test:bounded")
 	require.NoError(t, err)
 	require.Len(t, node.Properties["payload"].(string), 5<<20)
-	count, err := engine.NodeCountByLabelInNamespace("test", "L")
+	count, err := engine.NodeCountByLabelInNamespace(t.Context(), "test", "L")
 	require.NoError(t, err)
 	require.EqualValues(t, 1, count)
 	replayed, err = RecoverBufferedCommits(engine, wal)
@@ -86,11 +86,11 @@ func TestWriteBehind_BufferedCommitSurvivesCrashAndReplays(t *testing.T) {
 
 	// Buffered, acknowledged create: nothing reaches Badger, the payload
 	// reaches the WAL.
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
-	_, err = tx.CreateNode(&Node{ID: "test:n1", Labels: []string{"L"}, Properties: map[string]any{"v": int64(42)}})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:n1", Labels: []string{"L"}, Properties: map[string]any{"v": int64(42)}})
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 	require.True(t, tx.AcknowledgedBuffered())
@@ -114,7 +114,7 @@ func TestWriteBehind_BufferedCommitSurvivesCrashAndReplays(t *testing.T) {
 	wal2 := recovered.bufferedCommitWAL
 
 	// Before recovery the node is gone from Badger.
-	_, err = recovered.GetNode("test:n1")
+	_, err = recovered.GetNode(t.Context(), "test:n1")
 	require.Error(t, err)
 
 	// Replay the acknowledged-but-lost commit.
@@ -122,12 +122,12 @@ func TestWriteBehind_BufferedCommitSurvivesCrashAndReplays(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
 
-	got, err := recovered.GetNode("test:n1")
+	got, err := recovered.GetNode(t.Context(), "test:n1")
 	require.NoError(t, err)
 	require.Equal(t, int64(42), got.Properties["v"])
 
 	// Derived counts were rebuilt from the committed entity.
-	count, err := recovered.NodeCountByLabelInNamespace("test", "L")
+	count, err := recovered.NodeCountByLabelInNamespace(t.Context(), "test", "L")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), count)
 }
@@ -137,11 +137,11 @@ func TestWriteBehind_RecoverSkipsFlushedCommits(t *testing.T) {
 	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 	wal := engine.bufferedCommitWAL
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
-	_, err = tx.CreateNode(&Node{ID: "test:n1", Labels: []string{"L"}, Properties: map[string]any{"v": int64(7)}})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:n1", Labels: []string{"L"}, Properties: map[string]any{"v": int64(7)}})
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 
@@ -163,11 +163,11 @@ func TestWriteBehind_RecoverSkipsFlushedCommits(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, n)
 
-	got, err := recovered.GetNode("test:n1")
+	got, err := recovered.GetNode(t.Context(), "test:n1")
 	require.NoError(t, err)
 	require.Equal(t, int64(7), got.Properties["v"])
 
-	count, err := recovered.NodeCount()
+	count, err := recovered.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, int64(1), count)
 }
@@ -179,11 +179,11 @@ func TestReplayWALEntry_AppliesBufferedCommit(t *testing.T) {
 	// serialized form from the WAL.
 	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 	wal := engine.bufferedCommitWAL
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
-	_, err = tx.CreateNode(&Node{ID: "test:n1", Labels: []string{"L"}, Properties: map[string]any{"v": int64(99)}})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:n1", Labels: []string{"L"}, Properties: map[string]any{"v": int64(99)}})
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 
@@ -207,7 +207,7 @@ func TestReplayWALEntry_AppliesBufferedCommit(t *testing.T) {
 
 	require.NoError(t, ReplayWALEntry(fresh, bufferedEntry))
 
-	got, err := fresh.GetNode("test:n1")
+	got, err := fresh.GetNode(t.Context(), "test:n1")
 	require.NoError(t, err)
 	// Legacy integer lexemes retain exact signed-integer values through the
 	// same recovery reader used by ordinary WAL entries and startup replay.

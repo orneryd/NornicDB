@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 	"time"
@@ -31,13 +32,13 @@ func TestWALEngine_UpdateNodeEmbeddingSidecar(t *testing.T) {
 		CreatedAt:  now,
 		UpdatedAt:  now,
 	}
-	_, err = engine.CreateNode(node)
+	_, err = engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
-	err = engine.UpdateNodeEmbeddingSidecar(embeddingWriteback(t, engine, node.ID, [][]float32{{0.1, 0.2, 0.3}}, map[string]any{"has_embedding": true, "chunk_count": 1}, now))
+	err = engine.UpdateNodeEmbeddingSidecar(context.Background(), embeddingWriteback(t, engine, node.ID, [][]float32{{0.1, 0.2, 0.3}}, map[string]any{"has_embedding": true, "chunk_count": 1}, now))
 	require.NoError(t, err)
 
-	got, err := engine.GetNode(node.ID)
+	got, err := engine.GetNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	require.Equal(t, [][]float32{{0.1, 0.2, 0.3}}, got.ChunkEmbeddings)
 	require.Equal(t, true, got.EmbedMeta["has_embedding"])

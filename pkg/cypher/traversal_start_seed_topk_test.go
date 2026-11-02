@@ -39,11 +39,11 @@ func TestDrawerFeedTraversal_UsesStartSeedTopK(t *testing.T) {
 	exec := NewStorageExecutor(eng)
 	ctx := context.Background()
 
-	_, err := eng.CreateNode(&storage.Node{ID: "wing-1", Labels: []string{"Wing"}, Properties: map[string]interface{}{"name": "Main Wing"}})
+	_, err := eng.CreateNode(t.Context(), &storage.Node{ID: "wing-1", Labels: []string{"Wing"}, Properties: map[string]interface{}{"name": "Main Wing"}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "room-1", Labels: []string{"Room"}, Properties: map[string]interface{}{"name": "Root Room"}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "room-1", Labels: []string{"Room"}, Properties: map[string]interface{}{"name": "Root Room"}})
 	require.NoError(t, err)
-	require.NoError(t, eng.CreateEdge(&storage.Edge{ID: "edge-room-wing", Type: "IN_WING", StartNode: "room-1", EndNode: "wing-1"}))
+	require.NoError(t, eng.CreateEdge(t.Context(), &storage.Edge{ID: "edge-room-wing", Type: "IN_WING", StartNode: "room-1", EndNode: "wing-1"}))
 
 	drawers := []struct {
 		id       string
@@ -60,7 +60,7 @@ func TestDrawerFeedTraversal_UsesStartSeedTopK(t *testing.T) {
 
 	for _, drawer := range drawers {
 		drawerNodeID := storage.NodeID(drawer.id)
-		_, err := eng.CreateNode(&storage.Node{
+		_, err := eng.CreateNode(t.Context(), &storage.Node{
 			ID:     drawerNodeID,
 			Labels: []string{"Drawer"},
 			Properties: map[string]interface{}{
@@ -71,7 +71,7 @@ func TestDrawerFeedTraversal_UsesStartSeedTopK(t *testing.T) {
 			},
 		})
 		require.NoError(t, err)
-		require.NoError(t, eng.CreateEdge(&storage.Edge{ID: storage.EdgeID(drawer.id + "-room"), Type: "IN_ROOM", StartNode: drawerNodeID, EndNode: "room-1"}))
+		require.NoError(t, eng.CreateEdge(t.Context(), &storage.Edge{ID: storage.EdgeID(drawer.id + "-room"), Type: "IN_ROOM", StartNode: drawerNodeID, EndNode: "room-1"}))
 	}
 
 	_, err = exec.Execute(ctx, "CREATE INDEX idx_drawer_filed_at FOR (d:Drawer) ON (d.filed_at)", nil)

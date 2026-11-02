@@ -142,7 +142,7 @@ func pr1667SeedLabelNodes(t *testing.T, engine *BadgerEngine, namespace, label s
 				Properties: map[string]any{"seq": int64(i)},
 			})
 		}
-		require.NoError(t, engine.BulkCreateNodes(batch), "seeding nodes %d..%d as one bounded commit", offset, end)
+		require.NoError(t, engine.BulkCreateNodes(t.Context(), batch), "seeding nodes %d..%d as one bounded commit", offset, end)
 	}
 	return time.Since(start)
 }

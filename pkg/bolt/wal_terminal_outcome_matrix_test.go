@@ -26,11 +26,11 @@ type boltMatrixEngine struct {
 }
 
 func (e *boltMatrixEngine) GetWAL() *storage.WAL { return e.wal }
-func (e *boltMatrixEngine) BeginTransaction() (*storage.BadgerTransaction, error) {
+func (e *boltMatrixEngine) BeginTransaction(ctx context.Context) (*storage.BadgerTransaction, error) {
 	if e.begin != nil {
 		return nil, e.begin
 	}
-	return e.MemoryEngine.BeginTransaction()
+	return e.MemoryEngine.BeginTransaction(ctx)
 }
 func (e *boltMatrixEngine) CommitTransaction(ctx context.Context, tx *storage.BadgerTransaction) error {
 	if e.commit != nil {
@@ -46,7 +46,7 @@ type boltMatrixSuppression struct {
 }
 
 func (e *boltMatrixSuppression) GetInnerEngine() storage.Engine { return e.Engine }
-func (e *boltMatrixSuppression) SetManualSuppression(storage.StoredEntityKind, string, bool) error {
+func (e *boltMatrixSuppression) SetManualSuppression(context.Context, storage.StoredEntityKind, string, bool) error {
 	return e.cause
 }
 
@@ -126,7 +126,7 @@ func TestBoltWALTerminalOutcomeMatrix(t *testing.T) {
 			t.Cleanup(func() { _ = wal.Close() })
 			engine := &boltMatrixEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), wal: wal}
 			store := storage.NewNamespacedEngine(engine, "nornic")
-			_, err = store.CreateNode(&storage.Node{ID: "matrix-seed", Labels: []string{"WalMatrixSeed"}})
+			_, err = store.CreateNode(t.Context(), &storage.Node{ID: "matrix-seed", Labels: []string{"WalMatrixSeed"}})
 			require.NoError(t, err)
 			closeWAL := func() {
 				if cell.closed {

@@ -117,13 +117,15 @@ func (generation *CommitBuffer) releaseMemoryLeases() {
 // under the existing retirement lock; failure releases both resources. BEGIN
 // does not read any entity population, so its empty ID scope leaves admission
 // to each subsequent bound, prefix-scoped or global operation.
-func (b *BadgerEngine) beginTransactionSnapshot(db *managedBadgerDB) (*badger.Txn, uint64, *transactionBeginPresence, error) {
-	// This context-free owner has no request cancellation; its read capture
-	// shares the synchronous operation's lifetime.
-
+//
+// ctx is the beginning request's admission context: the physical cut, the
+// read-view admission and the buffered prefix capture all run on it, so a
+// canceled BEGIN returns its own error instead of capturing a snapshot. The
+// frame keeps the captured lease, not ctx.
+func (b *BadgerEngine) beginTransactionSnapshot(ctx context.Context, db *managedBadgerDB) (*badger.Txn, uint64, *transactionBeginPresence, error) {
 	var presence *transactionBeginPresence
 	var captureErr error
-	view, err := b.captureReadView(context.Background(), func(w *WriteBehindBuffer) {
+	view, err := b.captureReadView(ctx, func(w *WriteBehindBuffer) {
 		presence, captureErr = w.pinTransactionBeginLocked()
 	}, readViewOptions{longLived: true, scopeKind: readNodeIDsScope})
 	if err == nil {

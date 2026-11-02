@@ -1,6 +1,8 @@
 package knowledgepolicy
 
 import (
+	"context"
+
 	"fmt"
 	"sync"
 	"testing"
@@ -239,7 +241,7 @@ func TestAccumulator_CrossShardMergeRules(t *testing.T) {
 		}{{0, 200}, {150, 200}, {300, 300}} {
 			store := newMockStore()
 			if tc.stored != 0 {
-				_, _ = store.WriteAccessMeta(AccessMetaWriteRequest{Mode: RecordState, EntityID: "n1", Entry: &AccessMetaEntry{
+				_, _ = store.WriteAccessMeta(context.Background(), AccessMetaWriteRequest{Mode: RecordState, EntityID: "n1", Entry: &AccessMetaEntry{
 					TargetID: "n1",
 					Overflow: map[string]interface{}{"seenAt": tc.stored, "views": int64(10)},
 				}})

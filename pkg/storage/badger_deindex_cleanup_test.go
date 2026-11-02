@@ -16,7 +16,7 @@ func TestDeindexCleanup_ProcessesPendingItems(t *testing.T) {
 		Labels:     []string{"Thing"},
 		Properties: map[string]interface{}{"name": "test"},
 	}
-	if _, err := eng.CreateNode(node); err != nil {
+	if _, err := eng.CreateNode(t.Context(), node); err != nil {
 		t.Fatal(err)
 	}
 
@@ -67,7 +67,7 @@ func TestDeindexCleanup_Idempotent(t *testing.T) {
 		Labels:     []string{"Thing"},
 		Properties: map[string]interface{}{"name": "test"},
 	}
-	if _, err := eng.CreateNode(node); err != nil {
+	if _, err := eng.CreateNode(t.Context(), node); err != nil {
 		t.Fatal(err)
 	}
 

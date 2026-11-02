@@ -41,7 +41,7 @@ func TestBadgerDeindexEnqueue_NodeEdgeBranchCoverage(t *testing.T) {
 
 	t.Run("evaluate node suppression clears stale flag when node becomes visible", func(t *testing.T) {
 		node := &Node{runtime: &nodeRuntime{metadata: NodeRuntimeMetadata{VisibilitySuppressed: true}}, ID: NodeID("test:node-unsuppress"), Labels: []string{"L"}}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 
 		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
@@ -63,9 +63,9 @@ func TestBadgerDeindexEnqueue_NodeEdgeBranchCoverage(t *testing.T) {
 	})
 
 	t.Run("evaluate edge suppression handles missing/corrupt edge and clears stale flag", func(t *testing.T) {
-		_, err := engine.CreateNode(&Node{ID: NodeID("test:edge-a")})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: NodeID("test:edge-a")})
 		require.NoError(t, err)
-		_, err = engine.CreateNode(&Node{ID: NodeID("test:edge-b")})
+		_, err = engine.CreateNode(t.Context(), &Node{ID: NodeID("test:edge-b")})
 		require.NoError(t, err)
 
 		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
@@ -97,7 +97,7 @@ func TestBadgerDeindexEnqueue_NodeEdgeBranchCoverage(t *testing.T) {
 			Type:                 "REL",
 			VisibilitySuppressed: true,
 		}
-		require.NoError(t, engine.CreateEdge(edge))
+		require.NoError(t, engine.CreateEdge(t.Context(), edge))
 
 		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			evaluation6, err := engine.evaluateSuppressionInTxn(txn, suppressionEvaluation{id: string(edge.ID), isEdge: true})
@@ -110,7 +110,7 @@ func TestBadgerDeindexEnqueue_NodeEdgeBranchCoverage(t *testing.T) {
 			return nil
 		}))
 
-		got, err := engine.GetEdge(edge.ID)
+		got, err := engine.GetEdge(t.Context(), edge.ID)
 		require.NoError(t, err)
 		require.NotNil(t, got)
 		require.False(t, got.VisibilitySuppressed)
@@ -132,7 +132,7 @@ func TestBadgerDeindexEnqueue_NodeEdgeBranchCoverage(t *testing.T) {
 
 	t.Run("rescore suppression after label change branch paths", func(t *testing.T) {
 		node := &Node{runtime: &nodeRuntime{metadata: NodeRuntimeMetadata{VisibilitySuppressed: true}}, ID: NodeID("test:rescore"), Labels: []string{"L"}}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 
 		engine.SetDecayEnabled(false)
@@ -162,7 +162,7 @@ func TestBadgerDeindexEnqueue_NodeEdgeBranchCoverage(t *testing.T) {
 		require.False(t, suppressed)
 
 		node2 := &Node{ID: NodeID("test:rescore-no-change"), Labels: []string{"L"}}
-		_, err = engine.CreateNode(node2)
+		_, err = engine.CreateNode(t.Context(), node2)
 		require.NoError(t, err)
 		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			evaluation11, err := engine.evaluateSuppressionInTxn(txn, suppressionEvaluation{staged: true, node: node2})

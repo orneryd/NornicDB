@@ -32,10 +32,10 @@ func TestSingleShotLookupPreservesSelectedNilResult(t *testing.T) {
 		t.Run(operation, func(t *testing.T) {
 			store := newTestMemoryEngine(t)
 			for _, id := range []storage.NodeID{"nornic:a", "nornic:b"} {
-				_, err := store.CreateNode(&storage.Node{ID: id, Labels: []string{"Source"}})
+				_, err := store.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"Source"}})
 				require.NoError(t, err)
 			}
-			require.NoError(t, store.CreateEdge(&storage.Edge{ID: "nornic:e", StartNode: "nornic:a", EndNode: "nornic:b", Type: "R"}))
+			require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "nornic:e", StartNode: "nornic:a", EndNode: "nornic:b", Type: "R"}))
 			engine := &subqueryLookupFailureEngine{Engine: store, operation: operation}
 			read := func() (int, error) {
 				if operation == "node" {

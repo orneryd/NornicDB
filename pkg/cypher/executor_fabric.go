@@ -454,7 +454,7 @@ func (e *StorageExecutor) validateFabricSemanticScopes(ctx context.Context, cyph
 		ctx = withQuotedVariableNames(ctx, names)
 		params = names.parameterValues(params)
 	}
-	desugared, _, err := desugarLabelExpressions(canonical, params, cypherVersionFromContext(ctx) == "25")
+	desugared, _, err := desugarLabelExpressions(ctx, canonical, params, cypherVersionFromContext(ctx) == "25")
 	if err == nil {
 		err = e.validateSemanticScopes(ctx, desugared)
 	}
@@ -847,7 +847,7 @@ func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *S
 	// scope/type owner runs. As at the composite entry, this validation copy
 	// must desugar label expressions first. executeInternal owns rewriting the
 	// actual local execution and restoring its result to the fragment source.
-	scopeQuery, _, scopeErr := desugarLabelExpressions(query, params, cypherVersionFromContext(ctx) == "25")
+	scopeQuery, _, scopeErr := desugarLabelExpressions(ctx, query, params, cypherVersionFromContext(ctx) == "25")
 	if scopeErr == nil {
 		scopeErr = exec.validateMatchSemanticScopes(ctx, scopeQuery, cypherVersionFromContext(ctx) == "25")
 	}

@@ -105,13 +105,13 @@ func TestWriteCSVField(t *testing.T) {
 func TestAPOCExportCSVOrdinaryBytes(t *testing.T) {
 	exec, dir := csvFieldsExecutor(t)
 
-	_, err := exec.storage.CreateNode(&storage.Node{
+	_, err := exec.storage.CreateNode(t.Context(), &storage.Node{
 		ID:         "n1",
 		Labels:     []string{"Person", "Employee"},
 		Properties: map[string]interface{}{"name": "Alice"},
 	})
 	require.NoError(t, err)
-	require.NoError(t, exec.storage.CreateEdge(&storage.Edge{
+	require.NoError(t, exec.storage.CreateEdge(t.Context(), &storage.Edge{
 		ID:         "e1",
 		StartNode:  "n1",
 		EndNode:    "n1",
@@ -159,7 +159,7 @@ func TestAPOCExportCSVSpecialFieldsRoundtrip(t *testing.T) {
 			}
 			ids = append(ids, `node,"all"_together`)
 			for i, id := range ids {
-				_, err := exec.storage.CreateNode(&storage.Node{
+				_, err := exec.storage.CreateNode(t.Context(), &storage.Node{
 					ID:         id,
 					Labels:     []string{"la,bel" + csvFieldsSpecialValues[i%len(csvFieldsSpecialValues)] + "x"},
 					Properties: map[string]interface{}{"index": int64(i)},
@@ -168,7 +168,7 @@ func TestAPOCExportCSVSpecialFieldsRoundtrip(t *testing.T) {
 			}
 			edgeType := "LI,N\"K\"Z\rX"
 			for i, id := range ids {
-				require.NoError(t, exec.storage.CreateEdge(&storage.Edge{
+				require.NoError(t, exec.storage.CreateEdge(t.Context(), &storage.Edge{
 					ID:         storage.EdgeID("edge," + string(id)),
 					StartNode:  id,
 					EndNode:    ids[(i+1)%len(ids)],
@@ -245,7 +245,7 @@ func TestAPOCExportCSVSpecialFieldsRoundtrip(t *testing.T) {
 				ids[i] = storage.NodeID(fmt.Sprintf("node,%d \"x\"\nid", i))
 			}
 			for i, id := range ids {
-				_, err := exec.storage.CreateNode(&storage.Node{
+				_, err := exec.storage.CreateNode(t.Context(), &storage.Node{
 					ID:         id,
 					Labels:     []string{"Ex,port"},
 					Properties: map[string]interface{}{"index": int64(i)},
@@ -253,7 +253,7 @@ func TestAPOCExportCSVSpecialFieldsRoundtrip(t *testing.T) {
 				require.NoError(t, err)
 			}
 			for i, id := range ids {
-				require.NoError(t, exec.storage.CreateEdge(&storage.Edge{
+				require.NoError(t, exec.storage.CreateEdge(t.Context(), &storage.Edge{
 					ID:         storage.EdgeID(fmt.Sprintf("edge,%d\r\"id", i)),
 					StartNode:  id,
 					EndNode:    ids[(i+1)%len(ids)],

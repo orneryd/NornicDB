@@ -105,8 +105,7 @@ func (b *BadgerEngine) SetBufferedCommitWAL(w *WAL) {
 // transaction as committed without writing to Badger. The caller has already
 // run every validation phase (constraints, snapshot isolation, connected
 // deletes) and holds the engine write barrier.
-func (tx *BadgerTransaction) commitBufferedLocked() error {
-	preparationContext := commitPreparationLifetime(tx.commitCtx)
+func (tx *BadgerTransaction) commitBufferedLocked(preparationContext context.Context) error {
 	// The commit is acknowledged under its entities' write-order stripes, so
 	// a write of the same entities that commits to Badger itself
 	// (orderAfterBufferedCommits) falls wholly before or after it. They are
@@ -122,7 +121,7 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 	for _, id := range entities.deletedNodes {
 		deletions.add(string(id))
 	}
-	if err := tx.engine.writeBehind.order.lockMixedContext(tx.commitCtx, &stripes, &deletions); err != nil {
+	if err := tx.engine.writeBehind.order.lockMixedContext(preparationContext, &stripes, &deletions); err != nil {
 		return tx.abortCommitLocked(err)
 	}
 	defer tx.engine.writeBehind.order.unlockMixed(&stripes, &deletions)
@@ -240,7 +239,7 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 	// kill -9 loss window without reintroducing the per-commit fsync the
 	// buffer exists to avoid; power-loss durability remains the durable
 	// synchronous path's contract.
-	if err := DecidePublication(tx.commitCtx, func() error {
+	if err := DecidePublication(preparationContext, func() error {
 		if tx.engine.bufferedCommitWAL != nil {
 			c.walIDs = tx.engine.idDict
 			err := tx.engine.bufferedCommitWAL.AppendBufferedCommit(&c, tx.engine.propKeyDict)
@@ -286,11 +285,11 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 // and must not re-enter it), and through ordinary commits otherwise,
 // mirroring the sync commit path's finish.
 func (b *BadgerEngine) persistReplayTxnCounters(cw *commitWriter, drain propKeyTxnDrain) error {
-	var to batchTarget = metadataBatches{db: b.db, ctx: cw.ctx}
+	var to batchTarget = b.db
 	if cw.large != nil {
 		to = cw.large
 	}
-	return b.propKeyDict.persistTxnCounters(to, drain)
+	return b.propKeyDict.persistTxnCounters(cw.ctx, to, drain)
 }
 
 // replayWriteBehind replays one drained generation into Badger. It marks
@@ -332,11 +331,15 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 		return nil
 	}
 
-	txn := b.db.DB.NewTransactionAt(b.db.oracle.published.Load(), true)
+	txn, readTs, err := b.db.beginTxn(true)
+	if err != nil {
+		return err
+	}
+	defer b.db.endRead(readTs)
 	// Acknowledged replay owns detached completion, independent of both the
 	// original caller and engine-stop cancellation. Select it once for the
 	// writer, token persistence and required post-durable count tail.
-	accepted := commitPreparationLifetime(nil)
+	accepted := context.Background()
 	cw := b.newCommitWriter(accepted, b.db, txn)
 	recovered := false
 	for _, commit := range commits {
@@ -359,6 +362,16 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 	// (discarded) transaction.
 	w := &cw.batchWriter
 
+	originalHoldLabel, originalHoldEdge := false, false
+	for _, commit := range commits {
+		originalHoldLabel = originalHoldLabel || len(commit.labelDeltas) > 0
+		originalHoldEdge = originalHoldEdge || len(commit.edgeTypeDeltas) > 0 || len(commit.edgeTypeLabelDeltas) > 0
+	}
+	commits, err = unappliedBufferedCommits(accepted, txn, commits)
+	if err != nil {
+		cw.discard()
+		return err
+	}
 	versions := make(map[string]MVCCVersion, 1)
 	var maxNode, maxEdge uint64
 	anyCounters := false
@@ -378,8 +391,8 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 			edgeTypeLabelDeltas[k] += d
 		}
 	}
-	holdLabel := len(labelDeltas) > 0
-	holdEdge := len(edgeTypeDeltas) > 0 || len(edgeTypeLabelDeltas) > 0
+	holdLabel := len(labelDeltas) > 0 || originalHoldLabel
+	holdEdge := len(edgeTypeDeltas) > 0 || len(edgeTypeLabelDeltas) > 0 || originalHoldEdge
 	countsHeld := false
 	acquireCounts := func() {
 		if countsHeld {
@@ -394,7 +407,7 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 		b.totalCountWriteMu.Lock()
 		countsHeld = true
 	}
-	cw.beforeLarge = func() error { acquireCounts(); return nil }
+	cw.beforeLarge = func(context.Context) error { acquireCounts(); return nil }
 	defer func() {
 		if countsHeld {
 			b.totalCountWriteMu.Unlock()
@@ -420,6 +433,26 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 		}
 		cw.discard()
 		return err
+	}
+
+	if len(commits) == 0 {
+		cw.discard()
+		acquireCounts()
+		if publishCounts != nil {
+			publishCounts()
+		}
+		b.totalCountWriteMu.Unlock()
+		if holdEdge {
+			b.edgeTypeCountWriteMu.Unlock()
+		}
+		if holdLabel {
+			b.labelCountWriteMu.Unlock()
+		}
+		countsHeld = false
+		for _, before := range beforeNotifications {
+			before()
+		}
+		return nil
 	}
 
 	// Capture constraint metadata before any write can promote the physical
@@ -494,7 +527,7 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 		for keyStr := range deletes {
 			key := []byte(keyStr)
 			cw.rawCache.add(b, key, c.writes[keyStr])
-			if err := w.write(func(t *badger.Txn) error { return t.Delete(key) }); err != nil {
+			if err := w.write(accepted, func(t *badger.Txn) error { return t.Delete(key) }); err != nil {
 				return abort(err)
 			}
 		}
@@ -505,7 +538,7 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 			key := []byte(keyStr)
 			cw.rawCache.add(b, key, c.writes[keyStr])
 			val := value
-			if err := w.write(func(t *badger.Txn) error { return b.setKeyWithPendingHint(t, key, val) }); err != nil {
+			if err := w.write(accepted, func(t *badger.Txn) error { return b.setKeyWithPendingHint(t, key, val) }); err != nil {
 				return abort(err)
 			}
 		}
@@ -514,7 +547,7 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 		// replay can treat marker-present as already-applied.
 		if c.txID != "" {
 			markerKey := bufferedCommitMarkerKey(c.namespace, c.txID, c.logicalTxID)
-			if err := w.write(func(t *badger.Txn) error { return t.Set(markerKey, nil) }); err != nil {
+			if err := w.write(accepted, func(t *badger.Txn) error { return t.Set(markerKey, nil) }); err != nil {
 				return abort(err)
 			}
 		}

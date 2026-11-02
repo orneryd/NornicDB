@@ -55,7 +55,7 @@ func validateStaticPropertySubscripts(text string, scope staticTypeScope) error 
 	return nil
 }
 
-func (e *StorageExecutor) validateRowSubscriptTypes(expression string, row pipelineRow) error {
+func (e *StorageExecutor) validateRowSubscriptTypes(ctx context.Context, expression string, row pipelineRow) error {
 	expression = strings.TrimSpace(expression)
 	if !strings.HasSuffix(expression, "]") {
 		return nil
@@ -78,10 +78,10 @@ func (e *StorageExecutor) validateRowSubscriptTypes(expression string, row pipel
 		return nil
 	}
 	indexExpression := strings.TrimSpace(expression[open+1 : len(expression)-1])
-	if err := e.validateRowSubscriptTypes(baseExpression, row); err != nil {
+	if err := e.validateRowSubscriptTypes(ctx, baseExpression, row); err != nil {
 		return err
 	}
-	base, baseOK, err := e.evaluateRowValue(baseExpression, row)
+	base, baseOK, err := e.evaluateRowValue(ctx, baseExpression, row)
 	if err != nil {
 		return err
 	}
@@ -99,7 +99,7 @@ func (e *StorageExecutor) validateRowSubscriptTypes(expression string, row pipel
 			if boundExpression == "" {
 				continue
 			}
-			bound, ok, err := e.evaluateRowValue(boundExpression, row)
+			bound, ok, err := e.evaluateRowValue(ctx, boundExpression, row)
 			if err != nil {
 				return err
 			}
@@ -109,7 +109,7 @@ func (e *StorageExecutor) validateRowSubscriptTypes(expression string, row pipel
 		}
 		return nil
 	}
-	index, indexOK, err := e.evaluateRowValue(indexExpression, row)
+	index, indexOK, err := e.evaluateRowValue(ctx, indexExpression, row)
 	if err != nil {
 		return err
 	}
@@ -319,11 +319,11 @@ func (e *StorageExecutor) validatePipelineSizeArguments(ctx context.Context, row
 		}
 		// Aggregates have no value in an input row. Their argument is checked
 		// by the aggregate projection after its group has been evaluated.
-		if containsAggregateFunc(argument) || needsRowStatementContext(argument) {
+		if containsAggregateFunc(argument) || needsRowStatementContext(ctx, argument) {
 			continue
 		}
 		for _, row := range rows {
-			value, ok, err := e.evaluateRowValue(argument, row)
+			value, ok, err := e.evaluateRowValue(ctx, argument, row)
 			if err != nil {
 				return err
 			}

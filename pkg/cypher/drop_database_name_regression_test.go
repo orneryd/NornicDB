@@ -52,7 +52,7 @@ func TestDatabaseDropTargetAdmission(t *testing.T) {
 					}
 					store, err := manager.GetStorage("source")
 					require.NoError(t, err)
-					_, err = store.CreateNode(&storage.Node{ID: "marker", Properties: map[string]interface{}{"value": "preserved"}})
+					_, err = store.CreateNode(t.Context(), &storage.Node{ID: "marker", Properties: map[string]interface{}{"value": "preserved"}})
 					require.NoError(t, err)
 					exec := NewStorageExecutor(store)
 					exec.SetDatabaseManager(adapter)
@@ -66,7 +66,7 @@ func TestDatabaseDropTargetAdmission(t *testing.T) {
 						require.False(t, manager.Exists("ab"))
 					}
 					require.True(t, manager.Exists("source"), "DROP must preserve the other database")
-					marker, err := store.GetNode("marker")
+					marker, err := store.GetNode(t.Context(), "marker")
 					require.NoError(t, err)
 					require.Equal(t, "preserved", marker.Properties["value"])
 				})

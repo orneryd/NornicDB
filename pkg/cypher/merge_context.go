@@ -130,7 +130,7 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(ctx context.
 			if labelErr != nil {
 				return nil, false, labelErr
 			}
-			if labellessPropertyIndexUsable(store, labels...) {
+			if labellessPropertyIndexUsable(ctx, store, labels...) {
 				ids, err = schema.PropertyIndexLookupAnyLabel(ctx, prop, val)
 				probed = true
 			}
@@ -185,7 +185,7 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(ctx context.
 		if !hit {
 			continue
 		}
-		n, err := e.getQueryNode(store, id)
+		n, err := e.getQueryNode(ctx, store, id)
 		if err != nil || n == nil {
 			continue
 		}
@@ -304,12 +304,12 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 		// fields. Scan the bounded endpoint pair so same-type relationships with
 		// different property identities remain distinct.
 		if existingEdge == nil {
-			existingEdge, err = findRelationshipForMerge(store, mergeStartNode.ID, mergeEndNode.ID, parsedPattern.relType, parsedPattern.properties)
+			existingEdge, err = findRelationshipForMerge(ctx, store, mergeStartNode.ID, mergeEndNode.ID, parsedPattern.relType, parsedPattern.properties)
 			if err != nil {
 				return nil, localizedError(localization.CypherMergeFindRelationshipFailed(err), err)
 			}
 			if existingEdge == nil && parsedPattern.direction == mergeRelationshipUndirected {
-				existingEdge, err = findRelationshipForMerge(store, mergeEndNode.ID, mergeStartNode.ID, parsedPattern.relType, parsedPattern.properties)
+				existingEdge, err = findRelationshipForMerge(ctx, store, mergeEndNode.ID, mergeStartNode.ID, parsedPattern.relType, parsedPattern.properties)
 				if err != nil {
 					return nil, localizedError(localization.CypherMergeFindRelationshipFailed(err), err)
 				}
@@ -404,7 +404,7 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 		if err := validatePropertyValues(node.Properties); err != nil {
 			return nil, err
 		}
-		actualID, err := createMintedNode(store, node)
+		actualID, err := createMintedNode(ctx, store, node)
 		if err != nil {
 			if !mergeCreateConflict(err) {
 				return nil, localizedError(localization.CypherMergeCreateNodeFailed(err), err)
@@ -850,6 +850,9 @@ func (e *StorageExecutor) projectMergeReturnPlan(ctx context.Context, rows []pip
 	result, handled := e.pipelineApplyReturnPlan(ctx, rows, plan, source, false, preparedGroups...)
 	if failure := getExpressionFailure(ctx); failure != nil && (!handled || priorFailure == nil) {
 		return nil, failure
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	if handled {
 		return result, nil

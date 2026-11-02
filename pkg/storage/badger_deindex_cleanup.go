@@ -81,7 +81,7 @@ func (j *DeindexCleanupJob) RunOnce(ctx context.Context) (int, error) {
 			return deindexed, ctx.Err()
 		}
 
-		if err := j.processWorkItem(item); err != nil {
+		if err := j.processWorkItem(ctx, item); err != nil {
 			j.engine.log.Warn("deindex work item failed",
 				"component", "deindex",
 				"target_id", item.TargetID,
@@ -96,7 +96,11 @@ func (j *DeindexCleanupJob) RunOnce(ctx context.Context) (int, error) {
 	return deindexed, nil
 }
 
-func (j *DeindexCleanupJob) processWorkItem(item *DeindexWorkItem) error {
+// processWorkItem owns one work item under the job run's admitted lifetime: a
+// canceled run stops before the first tombstone, and a batch that was admitted
+// completes in the store. The work item itself stays pending until the catalog
+// and its tombstones are both accepted, so a canceled run retries it.
+func (j *DeindexCleanupJob) processWorkItem(ctx context.Context, item *DeindexWorkItem) error {
 	cat, err := j.engine.GetIndexEntryCatalog(item.TargetID)
 	if err != nil {
 		return fmt.Errorf("get catalog for %s: %w", item.TargetID, err)
@@ -108,12 +112,12 @@ func (j *DeindexCleanupJob) processWorkItem(item *DeindexWorkItem) error {
 		return j.engine.DeleteDeindexWorkItem(item.WorkItemID)
 	}
 
-	if err := j.engine.SetIndexTombstones(cat.IndexKeys, true); err != nil {
+	if err := j.engine.SetIndexTombstones(ctx, cat.IndexKeys, true); err != nil {
 		return fmt.Errorf("write tombstones for %s: %w", item.TargetID, err)
 	}
 
 	cat.Deindexed = true
-	if err := j.engine.PutIndexEntryCatalog(item.TargetID, cat); err != nil {
+	if err := j.engine.PutIndexEntryCatalog(ctx, item.TargetID, cat); err != nil {
 		return fmt.Errorf("mark catalog deindexed for %s: %w", item.TargetID, err)
 	}
 

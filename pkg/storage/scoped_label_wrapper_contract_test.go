@@ -60,7 +60,7 @@ func TestScopedLabelTracingPreservesReaderCapabilities(t *testing.T) {
 		nodes, err := namespace.GetNodesByLabel(context.Background(), "Person")
 		require.NoError(t, err)
 		require.Equal(t, []NodeID{"z", "a", "m"}, testNodeIDs(nodes))
-		first, err := namespace.GetFirstNodeByLabel("Person")
+		first, err := namespace.GetFirstNodeByLabel(t.Context(), "Person")
 		require.NoError(t, err)
 		require.Equal(t, NodeID("z"), first.ID)
 	}

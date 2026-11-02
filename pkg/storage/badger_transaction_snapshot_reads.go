@@ -77,9 +77,12 @@ func (tx *BadgerTransaction) storeSnapshotLabelPrefixLocked(txn *badger.Txn, key
 	}
 }
 
-func (tx *BadgerTransaction) committedNodeLabelsLocked(identifier NodeID) ([]string, error) {
+func (tx *BadgerTransaction) committedNodeLabelsLocked(ctx context.Context, identifier NodeID) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if tx.engine.writeBehind != nil {
-		node, err := tx.engine.getNodeProjected(identifier, []string{}, storedRead)
+		node, err := tx.engine.getNodeProjected(ctx, identifier, []string{}, storedRead)
 		if err != nil {
 			return nil, err
 		}
@@ -88,7 +91,7 @@ func (tx *BadgerTransaction) committedNodeLabelsLocked(identifier NodeID) ([]str
 	if labels, cached := tx.snapshotNodeLabels[identifier]; cached {
 		return labels, nil
 	}
-	node, err := tx.getCommittedNodeLocked(identifier)
+	node, err := tx.getCommittedNodeLocked(ctx, identifier)
 	if err != nil {
 		return nil, err
 	}
@@ -471,22 +474,24 @@ func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLocked(ctx context.C
 
 // OutgoingEdgeHeaders implements EdgeHeaderReader at the transaction's
 // snapshot, with its own writes merged as GetOutgoingEdges merges them.
-func (tx *BadgerTransaction) OutgoingEdgeHeaders(nodeID NodeID) ([]*Edge, bool, error) {
-	return tx.edgeHeaders(nodeID, Outgoing)
+func (tx *BadgerTransaction) OutgoingEdgeHeaders(ctx context.Context, nodeID NodeID) ([]*Edge, bool, error) {
+	return tx.edgeHeaders(ctx, nodeID, Outgoing)
 }
 
 // IncomingEdgeHeaders implements EdgeHeaderReader at the transaction's
 // snapshot, with its own writes merged as GetIncomingEdges merges them.
-func (tx *BadgerTransaction) IncomingEdgeHeaders(nodeID NodeID) ([]*Edge, bool, error) {
-	return tx.edgeHeaders(nodeID, Incoming)
+func (tx *BadgerTransaction) IncomingEdgeHeaders(ctx context.Context, nodeID NodeID) ([]*Edge, bool, error) {
+	return tx.edgeHeaders(ctx, nodeID, Incoming)
 }
 
 // edgeHeaders lists the snapshot's relationships of nodeID as
 // getCommittedAdjacentEdgesLocked does, taking each one's type and other end
 // from its adjacency entry value where it can. It declines without a pinned
 // snapshot and under decay filtering.
-func (tx *BadgerTransaction) edgeHeaders(nodeID NodeID, direction EdgeDirection) ([]*Edge, bool, error) {
-	tx.mu.Lock()
+func (tx *BadgerTransaction) edgeHeaders(ctx context.Context, nodeID NodeID, direction EdgeDirection) ([]*Edge, bool, error) {
+	if err := tx.mu.LockContext(ctx); err != nil {
+		return nil, true, err
+	}
 	defer tx.mu.Unlock()
 	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return nil, true, err
@@ -504,14 +509,14 @@ func (tx *BadgerTransaction) edgeHeaders(nodeID NodeID, direction EdgeDirection)
 		var committed []*Edge
 		var err error
 		if direction == Outgoing {
-			committed, _, err = tx.engine.OutgoingEdgeHeaders(nodeID)
+			committed, _, err = tx.engine.OutgoingEdgeHeaders(ctx, nodeID)
 		} else {
-			committed, _, err = tx.engine.IncomingEdgeHeaders(nodeID)
+			committed, _, err = tx.engine.IncomingEdgeHeaders(ctx, nodeID)
 		}
 		if err != nil {
 			return nil, true, err
 		}
-		edges, mergeErr := tx.mergePendingEdgesLocked(context.Background(), committed, func(edge *Edge) bool {
+		edges, mergeErr := tx.mergePendingEdgesLocked(ctx, committed, func(edge *Edge) bool {
 			if direction == Outgoing {
 				return edge.StartNode == nodeID
 			}
@@ -522,14 +527,13 @@ func (tx *BadgerTransaction) edgeHeaders(nodeID NodeID, direction EdgeDirection)
 		}
 		return edges, true, nil
 	}
-	// Header reads keep their existing public API (no caller context): the
-	// snapshot adjacency read runs on the transaction's own lifetime, which is
-	// context.Background at this context-free boundary.
-	committed, err := tx.readCachedSnapshotAdjacentEdgesLocked(context.Background(), nodeID, direction, true)
+	// The statement's context bounds the snapshot adjacency read and the pending
+	// merge; it never outlives this call on the handle.
+	committed, err := tx.readCachedSnapshotAdjacentEdgesLocked(ctx, nodeID, direction, true)
 	if err != nil {
 		return nil, true, err
 	}
-	edges, mergeErr := tx.mergePendingEdgesLocked(context.Background(), committed, func(edge *Edge) bool {
+	edges, mergeErr := tx.mergePendingEdgesLocked(ctx, committed, func(edge *Edge) bool {
 		if direction == Outgoing {
 			return edge.StartNode == nodeID
 		}

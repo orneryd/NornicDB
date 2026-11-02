@@ -98,11 +98,11 @@ func TestSetPropagatesUniqueConstraintRefusalForWholeEntityReplacement(t *testin
 func TestComponentSetAttributesStorageUpdateErrorToWholeEntityReplacement(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
-	_, err := store.CreateNode(&storage.Node{ID: "a", Labels: []string{"Person"}, Properties: map[string]any{"name": "Alice"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"Person"}, Properties: map[string]any{"name": "Alice"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "b", Labels: []string{"Person"}, Properties: map[string]any{"name": "Bob"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"Person"}, Properties: map[string]any{"name": "Bob"}})
 	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "r1", StartNode: "a", EndNode: "b", Type: "KNOWS", Properties: map[string]any{"since": int64(2020)}}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "r1", StartNode: "a", EndNode: "b", Type: "KNOWS", Properties: map[string]any{"since": int64(2020)}}))
 
 	wantErr := errors.New("replace edge failed")
 	failing := NewStorageExecutor(&updateErrorEngine{Engine: store, edgeErr: wantErr})

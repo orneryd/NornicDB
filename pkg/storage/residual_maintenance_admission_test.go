@@ -69,11 +69,11 @@ func TestResidualMaintenanceAdmissionCancellation(t *testing.T) {
 				}
 			case "between-repair":
 				for _, id := range []NodeID{"test:a", "test:b"} {
-					_, err := b.CreateNode(&Node{ID: id})
+					_, err := b.CreateNode(t.Context(), &Node{ID: id})
 					require.NoError(t, err)
 				}
 				edge := &Edge{ID: "test:repair", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}
-				require.NoError(t, b.CreateEdge(edge))
+				require.NoError(t, b.CreateEdge(t.Context(), edge))
 				require.NoError(t, b.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 					return b.deleteEdgeBetweenIndexesInTxn(txn, edge)
 				}))
@@ -151,9 +151,9 @@ func TestResidualCleanMarkerKeepsGraphCachesWarm(t *testing.T) {
 	b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = b.Close() })
-	_, err = b.CreateNode(&Node{ID: "test:marker-peer"})
+	_, err = b.CreateNode(t.Context(), &Node{ID: "test:marker-peer"})
 	require.NoError(t, err)
-	_, err = b.GetNode("test:marker-peer")
+	_, err = b.GetNode(t.Context(), "test:marker-peer")
 	require.NoError(t, err)
 	b.nodeCacheMu.RLock()
 	before := b.nodeCache["test:marker-peer"]

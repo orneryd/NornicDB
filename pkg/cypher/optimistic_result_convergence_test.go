@@ -34,11 +34,11 @@ func TestOptimisticMetadataConvergesAcrossAPOCAndCallTail(t *testing.T) {
 				require.Len(t, meta.CreatedNodeIDs, wantNodes)
 				require.Len(t, meta.CreatedRelationshipIDs, wantEdges)
 				for _, id := range meta.CreatedNodeIDs {
-					_, err := store.GetNode(storage.NodeID(id))
+					_, err := store.GetNode(t.Context(), storage.NodeID(id))
 					require.NoError(t, err, "actual created node %q", id)
 				}
 				for _, id := range meta.CreatedRelationshipIDs {
-					_, err := store.GetEdge(storage.EdgeID(id))
+					_, err := store.GetEdge(t.Context(), storage.EdgeID(id))
 					require.NoError(t, err, "actual created relationship %q", id)
 				}
 				nodes, err := store.GetNodesByLabel(t.Context(), "OptimisticOwner")

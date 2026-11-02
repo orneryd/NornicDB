@@ -15,12 +15,18 @@ import (
 // suppressed, it clears the suppression and deletes any tombstones.
 // The returned bool is true only when the entity transitioned into the
 // suppressed state during this call.
-func (b *BadgerEngine) EnqueueDeindexIfSuppressed(entityID string, isEdge bool) (bool, error) {
+//
+// ctx belongs to the callback that owns the rescore: an accepted access write
+// or decay job passes its own admitted lifetime. ctx owns admission, the
+// buffered-order drain and the score/rewrite preparation; once the publishing
+// update is admitted, the transition, its work item and its publication
+// complete in the store, so a canceled ctx reports no transition.
+func (b *BadgerEngine) EnqueueDeindexIfSuppressed(ctx context.Context, entityID string, isEdge bool) (bool, error) {
 	if !b.decayEnabled {
 		return false, nil
 	}
 
-	write, releaseWrite, err := b.beginEntityWrite(context.Background(), entityID, isEdge, nil)
+	write, releaseWrite, err := b.beginEntityWrite(ctx, entityID, isEdge, nil)
 	if err != nil {
 		return false, err
 	}
@@ -72,7 +78,7 @@ func (b *BadgerEngine) EnqueueDeindexIfSuppressed(entityID string, isEdge bool) 
 			becameSuppressed = true
 		}
 		return err
-	}, publish, keys, notification, write.stagePublication)
+	}, publish, keys, notification, nil, write.stagePublication)
 	return becameSuppressed, err
 }
 

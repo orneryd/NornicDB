@@ -5,6 +5,7 @@ package storage
 // cycle; every child is joined after Close releases the host publication lock.
 
 import (
+	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
@@ -22,7 +23,7 @@ type classReentrantController struct {
 func (c *classReentrantController) StopLifecycle() {
 	done := make(chan struct{})
 	c.readers = append(c.readers, done)
-	go func() { defer close(done); _, _ = c.engine.NodeCount() }()
+	go func() { defer close(done); _, _ = c.engine.NodeCount(context.Background()) }()
 	select {
 	case <-done:
 		c.blocked = append(c.blocked, false)

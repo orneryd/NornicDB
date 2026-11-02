@@ -349,16 +349,17 @@ func analyzeQuery(cypher string) *QueryInfo {
 // The analyzer's keyword flags are conservative (CREATE in ON CREATE SET or
 // in a string sets HasCreate), so when one of them is set the statement's
 // clauses decide (#961): MERGE … ON CREATE SET … is MERGE work, not CREATE.
-func IsRetrySafeMergeCommitQuery(info *QueryInfo) bool {
-	if info == nil || !info.HasMerge {
+// A canceled classification is not retry-safe; it never replaces the commit error.
+func IsRetrySafeMergeCommitQuery(ctx context.Context, info *QueryInfo) bool {
+	if ctx.Err() != nil || info == nil || !info.HasMerge {
 		return false
 	}
 	if info.HasCreate || info.HasDelete || info.HasDetachDelete || info.HasRemove ||
 		info.HasForeach || info.HasLoadCSV || info.HasCall || info.HasSchema ||
 		info.HasShow || info.HasUnion {
-		return mergeOnlyClauses(context.Background(), info.rawQuery)
+		return mergeOnlyClauses(ctx, info.rawQuery) && ctx.Err() == nil
 	}
-	return true
+	return ctx.Err() == nil
 }
 
 // mergeOnlyClauses reports whether query is a single statement of MERGE
@@ -412,13 +413,20 @@ type CommitStatement struct {
 // SET o.id = 'sha256:' + $h can't clash on V.id. Every other write may reach a
 // node with more labels than its pattern names (a matched node), so it counts
 // whatever its pattern says.
-func MergeUniqueConflictIsRetrySafe(statements []CommitStatement, err error) bool {
+// A canceled classification returns false, retaining the caller's commit outcome.
+func MergeUniqueConflictIsRetrySafe(ctx context.Context, statements []CommitStatement, err error) bool {
 	var violation *storage.ConstraintViolationError
+	if ctx.Err() != nil {
+		return false
+	}
 	if !stderrors.As(err, &violation) || violation == nil {
 		return false
 	}
 	for _, statement := range statements {
-		items, mergeKeys, ok := mergeStatementSetItems(context.Background(), statement.Query, violation.Label)
+		if ctx.Err() != nil {
+			return false
+		}
+		items, mergeKeys, ok := mergeStatementSetItems(ctx, statement.Query, violation.Label)
 		if !ok {
 			return false
 		}
@@ -433,7 +441,7 @@ func MergeUniqueConflictIsRetrySafe(statements []CommitStatement, err error) boo
 			}
 		}
 	}
-	return true
+	return ctx.Err() == nil
 }
 
 // mergeSetItem is one SET item of a MERGE statement. exactLabels is set when

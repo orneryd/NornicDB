@@ -2,12 +2,13 @@ package txsession
 
 import (
 	"context"
+	"testing"
+	"time"
+
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
-	"testing"
-	"time"
 )
 
 type managerPanicCommitEngine struct {
@@ -16,8 +17,8 @@ type managerPanicCommitEngine struct {
 	started *storage.BadgerTransaction
 }
 
-func (e *managerPanicCommitEngine) BeginTransaction() (*storage.BadgerTransaction, error) {
-	tx, err := e.base.BeginTransaction()
+func (e *managerPanicCommitEngine) BeginTransaction(ctx context.Context) (*storage.BadgerTransaction, error) {
+	tx, err := e.base.BeginTransaction(ctx)
 	e.started = tx
 	return tx, err
 }

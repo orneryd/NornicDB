@@ -66,17 +66,17 @@ func TestQueryMemoryTraversalDifferential(t *testing.T) {
 				if mode == "promotion" || mode == "suppression" {
 					exec, base = queryMemoryPolicyFixture(t)
 					if mode == "suppression" {
-						require.NoError(t, base.DeleteEdge("policy:a-edge"))
+						require.NoError(t, base.DeleteEdge(t.Context(), "policy:a-edge"))
 					}
 					// Internal-node visibility has a separate public matrix; this
 					// differential isolates policy and transaction query views.
-					require.NoError(t, base.DeleteEdge("policy:internal-edge"))
+					require.NoError(t, base.DeleteEdge(t.Context(), "policy:internal-edge"))
 					if mode == "promotion" {
-						require.NoError(t, base.CreateEdge(&storage.Edge{ID: "policy:a-edge-2", StartNode: "policy:a", EndNode: "policy:b", Type: "REL", Properties: map[string]interface{}{"marker": "visible"}}))
+						require.NoError(t, base.CreateEdge(t.Context(), &storage.Edge{ID: "policy:a-edge-2", StartNode: "policy:a", EndNode: "policy:b", Type: "REL", Properties: map[string]interface{}{"marker": "visible"}}))
 					}
-					_, err := base.GetNode("policy:a")
+					_, err := base.GetNode(t.Context(), "policy:a")
 					require.NoError(t, err, "promotion control")
-					_, err = base.GetNode("policy:expired")
+					_, err = base.GetNode(t.Context(), "policy:expired")
 					require.ErrorIs(t, err, storage.ErrNotFound, "suppression control")
 				} else {
 					var err error

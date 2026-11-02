@@ -9,9 +9,9 @@ import (
 func TestStoredEntityViewUsesStoredInclusiveTypedOverlay(t *testing.T) {
 	b := newTestEngine(t)
 	const id = "test:same"
-	_, err := b.CreateNode(&Node{ID: NodeID(id), Properties: map[string]any{"value": "physical"}})
+	_, err := b.CreateNode(t.Context(), &Node{ID: NodeID(id), Properties: map[string]any{"value": "physical"}})
 	require.NoError(t, err)
-	require.NoError(t, b.CreateEdge(&Edge{ID: EdgeID(id), StartNode: NodeID(id), EndNode: NodeID(id), Type: "R", Properties: map[string]any{"value": "physical"}}))
+	require.NoError(t, b.CreateEdge(t.Context(), &Edge{ID: EdgeID(id), StartNode: NodeID(id), EndNode: NodeID(id), Type: "R", Properties: map[string]any{"value": "physical"}}))
 	b.markManualSuppression(manualSuppressionNode, id, true)
 	b.markManualSuppression(manualSuppressionEdge, id, true)
 	w := NewWriteBehindBuffer(time.Hour, 1000, func(*CommitBuffer) error { return nil })
@@ -56,7 +56,7 @@ func TestStoredEntityViewUsesStoredInclusiveTypedOverlay(t *testing.T) {
 	edge, err = view.edge(t.Context(), b, EdgeID(id))
 	require.NoError(t, err)
 	require.Nil(t, edge)
-	physical, err := b.GetStoredNode(NodeID(id))
+	physical, err := b.GetStoredNode(t.Context(), NodeID(id))
 	require.NoError(t, err)
 	require.Equal(t, "physical", physical.Properties["value"], "typed overlay tombstone masks pinned physical predecessor")
 }

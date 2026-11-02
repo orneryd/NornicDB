@@ -371,7 +371,7 @@ func (r *labelExpressionRewriter) parenthesisedPathWhere(start, end int, rewrite
 // rewrite's edits applied, for text that moves elsewhere in the statement.
 func (r *labelExpressionRewriter) rewrittenExpression(start, end int) (string, error) {
 	q := r.query
-	sub := &labelExpressionRewriter{query: q, generated: r.generated, named: r.named}
+	sub := &labelExpressionRewriter{ctx: r.ctx, query: q, generated: r.generated, named: r.named}
 	if err := sub.expression(start, end); err != nil {
 		return "", err
 	}

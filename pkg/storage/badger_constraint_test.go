@@ -26,12 +26,12 @@ func TestBadgerTransaction_FullScanUniqueConstraint(t *testing.T) {
 	})
 
 	// Insert first user (should succeed)
-	tx1, err := engine.BeginTransaction()
+	tx1, err := engine.BeginTransaction(t.Context())
 	if err != nil {
 		t.Fatalf("BeginTransaction failed: %v", err)
 	}
 
-	_, err = tx1.CreateNode(&Node{
+	_, err = tx1.CreateNode(t.Context(), &Node{
 		ID:     NodeID(prefixTestID("user-1")),
 		Labels: []string{"User"},
 		Properties: map[string]interface{}{
@@ -48,12 +48,12 @@ func TestBadgerTransaction_FullScanUniqueConstraint(t *testing.T) {
 	}
 
 	// Try to insert duplicate email in NEW transaction (should fail with full scan)
-	tx2, err := engine.BeginTransaction()
+	tx2, err := engine.BeginTransaction(t.Context())
 	if err != nil {
 		t.Fatalf("BeginTransaction failed: %v", err)
 	}
 
-	_, err = tx2.CreateNode(&Node{
+	_, err = tx2.CreateNode(t.Context(), &Node{
 		ID:     NodeID(prefixTestID("user-2")),
 		Labels: []string{"User"},
 		Properties: map[string]interface{}{
@@ -74,8 +74,8 @@ func TestBadgerTransaction_FullScanUniqueConstraint(t *testing.T) {
 	tx2.Rollback()
 
 	// Verify different email succeeds
-	tx3, _ := engine.BeginTransaction()
-	_, err = tx3.CreateNode(&Node{
+	tx3, _ := engine.BeginTransaction(t.Context())
+	_, err = tx3.CreateNode(t.Context(), &Node{
 		ID:     NodeID(prefixTestID("user-3")),
 		Labels: []string{"User"},
 		Properties: map[string]interface{}{
@@ -101,11 +101,11 @@ func TestBadgerTransactionUniqueConstraintUsesRegisteredValueIndex(t *testing.T)
 	}
 
 	firstID := NodeID(prefixTestID("user-unique-index-1"))
-	tx1, err := engine.BeginTransaction()
+	tx1, err := engine.BeginTransaction(t.Context())
 	if err != nil {
 		t.Fatalf("BeginTransaction failed: %v", err)
 	}
-	if _, err := tx1.CreateNode(&Node{
+	if _, err := tx1.CreateNode(t.Context(), &Node{
 		ID:     firstID,
 		Labels: []string{"User"},
 		Properties: map[string]interface{}{
@@ -147,11 +147,11 @@ func TestBadgerTransactionUniqueConstraintUsesRegisteredValueIndex(t *testing.T)
 		t.Fatalf("delete label index: %v", err)
 	}
 
-	tx2, err := engine.BeginTransaction()
+	tx2, err := engine.BeginTransaction(t.Context())
 	if err != nil {
 		t.Fatalf("BeginTransaction failed: %v", err)
 	}
-	_, err = tx2.CreateNode(&Node{
+	_, err = tx2.CreateNode(t.Context(), &Node{
 		ID:     NodeID(prefixTestID("user-unique-index-2")),
 		Labels: []string{"User"},
 		Properties: map[string]interface{}{
@@ -174,11 +174,11 @@ func TestBadgerTransactionUniqueConstraintIndexMatchesNumericCompareSemantics(t 
 	schema, first, duplicate := numericUniqueClaimFixture(t, engine, "user-unique-age-1", "user-unique-age-2")
 
 	firstID := first.ID
-	tx1, err := engine.BeginTransaction()
+	tx1, err := engine.BeginTransaction(t.Context())
 	if err != nil {
 		t.Fatalf("BeginTransaction failed: %v", err)
 	}
-	if _, err := tx1.CreateNode(first); err != nil {
+	if _, err := tx1.CreateNode(t.Context(), first); err != nil {
 		t.Fatalf("CreateNode failed: %v", err)
 	}
 	if err := tx1.Commit(); err != nil {
@@ -223,7 +223,7 @@ func TestBadgerTransactionUniqueConstraintIndexMatchesNumericCompareSemantics(t 
 	})
 	defer restoreHook()
 
-	tx2, err := engine.BeginTransaction()
+	tx2, err := engine.BeginTransaction(t.Context())
 	if err != nil {
 		t.Fatalf("BeginTransaction failed: %v", err)
 	}
@@ -234,7 +234,7 @@ func TestBadgerTransactionUniqueConstraintIndexMatchesNumericCompareSemantics(t 
 	if err := tx2.checkUniqueConstraint(t.Context(), duplicate, constraints[0]); err == nil {
 		t.Fatal("expected direct unique constraint check failure")
 	}
-	_, err = tx2.CreateNode(duplicate)
+	_, err = tx2.CreateNode(t.Context(), duplicate)
 	if err == nil {
 		t.Fatal("expected unique constraint violation from numeric-equivalent registered value")
 	}
@@ -250,17 +250,17 @@ func TestBadgerTransactionUniqueConstraintPendingMatchesNumericValueSemantics(t 
 
 	_, first, duplicate := numericUniqueClaimFixture(t, engine, "user-unique-age-pending-1", "user-unique-age-pending-2")
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	if err != nil {
 		t.Fatalf("BeginTransaction failed: %v", err)
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.CreateNode(first); err != nil {
+	if _, err := tx.CreateNode(t.Context(), first); err != nil {
 		t.Fatalf("CreateNode(first) failed: %v", err)
 	}
 
-	_, err = tx.CreateNode(duplicate)
+	_, err = tx.CreateNode(t.Context(), duplicate)
 	if err == nil {
 		t.Fatal("expected pending numeric-equivalent value to violate the unique constraint")
 	}
@@ -285,7 +285,7 @@ func TestBadgerTransactionUniqueConstraintPendingNonComparableValueDoesNotPanic(
 		t.Fatalf("AddUniqueConstraint failed: %v", err)
 	}
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	if err != nil {
 		t.Fatalf("BeginTransaction failed: %v", err)
 	}
@@ -298,7 +298,7 @@ func TestBadgerTransactionUniqueConstraintPendingNonComparableValueDoesNotPanic(
 		{id: "user-unique-tags-1", tags: []string{"one"}},
 		{id: "user-unique-tags-2", tags: []string{"two"}},
 	} {
-		_, err := tx.CreateNode(&Node{
+		_, err := tx.CreateNode(t.Context(), &Node{
 			ID:     NodeID(prefixTestID(entry.id)),
 			Labels: []string{"User"},
 			Properties: map[string]interface{}{
@@ -328,8 +328,8 @@ func TestBadgerTransaction_FullScanNodeKeyConstraint(t *testing.T) {
 	})
 
 	// Insert first user
-	tx1, _ := engine.BeginTransaction()
-	tx1.CreateNode(&Node{
+	tx1, _ := engine.BeginTransaction(t.Context())
+	tx1.CreateNode(t.Context(), &Node{
 		ID:     NodeID(prefixTestID("user-1")),
 		Labels: []string{"User"},
 		Properties: map[string]interface{}{
@@ -340,8 +340,8 @@ func TestBadgerTransaction_FullScanNodeKeyConstraint(t *testing.T) {
 	tx1.Commit()
 
 	// Try to insert duplicate composite key in NEW transaction
-	tx2, _ := engine.BeginTransaction()
-	_, err := tx2.CreateNode(&Node{
+	tx2, _ := engine.BeginTransaction(t.Context())
+	_, err := tx2.CreateNode(t.Context(), &Node{
 		ID:     NodeID(prefixTestID("user-2")),
 		Labels: []string{"User"},
 		Properties: map[string]interface{}{
@@ -357,8 +357,8 @@ func TestBadgerTransaction_FullScanNodeKeyConstraint(t *testing.T) {
 	tx2.Rollback()
 
 	// Different domain should succeed
-	tx3, _ := engine.BeginTransaction()
-	_, err = tx3.CreateNode(&Node{
+	tx3, _ := engine.BeginTransaction(t.Context())
+	_, err = tx3.CreateNode(t.Context(), &Node{
 		ID:     NodeID(prefixTestID("user-3")),
 		Labels: []string{"User"},
 		Properties: map[string]interface{}{
@@ -380,15 +380,15 @@ func TestBadgerEngine_ValidateConstraintOnCreation(t *testing.T) {
 	defer cleanup()
 
 	// Insert data with duplicates
-	tx, _ := engine.BeginTransaction()
-	tx.CreateNode(&Node{
+	tx, _ := engine.BeginTransaction(t.Context())
+	tx.CreateNode(t.Context(), &Node{
 		ID:     NodeID(prefixTestID("user-1")),
 		Labels: []string{"User"},
 		Properties: map[string]interface{}{
 			"email": "duplicate@example.com",
 		},
 	})
-	tx.CreateNode(&Node{
+	tx.CreateNode(t.Context(), &Node{
 		ID:     NodeID(prefixTestID("user-2")),
 		Labels: []string{"User"},
 		Properties: map[string]interface{}{
@@ -425,8 +425,8 @@ func TestBadgerEngine_ValidateExistenceConstraintOnCreation(t *testing.T) {
 	defer cleanup()
 
 	// Insert data with missing required property
-	tx, _ := engine.BeginTransaction()
-	tx.CreateNode(&Node{
+	tx, _ := engine.BeginTransaction(t.Context())
+	tx.CreateNode(t.Context(), &Node{
 		ID:     NodeID(prefixTestID("person-1")),
 		Labels: []string{"Person"},
 		Properties: map[string]interface{}{
@@ -461,10 +461,10 @@ func TestBadgerTransaction_UniqueConstraintWithinTransaction(t *testing.T) {
 		Properties: []string{"id"},
 	})
 
-	tx, _ := engine.BeginTransaction()
+	tx, _ := engine.BeginTransaction(t.Context())
 
 	// First node - OK
-	tx.CreateNode(&Node{
+	tx.CreateNode(t.Context(), &Node{
 		ID:     NodeID(prefixTestID("node-1")),
 		Labels: []string{"Node"},
 		Properties: map[string]interface{}{
@@ -473,7 +473,7 @@ func TestBadgerTransaction_UniqueConstraintWithinTransaction(t *testing.T) {
 	})
 
 	// Second node with same ID - should fail immediately
-	_, err := tx.CreateNode(&Node{
+	_, err := tx.CreateNode(t.Context(), &Node{
 		ID:     NodeID(prefixTestID("node-2")),
 		Labels: []string{"Node"},
 		Properties: map[string]interface{}{
@@ -500,10 +500,10 @@ func TestBadgerTransaction_NullValuesAllowed(t *testing.T) {
 		Properties: []string{"optionalField"},
 	})
 
-	tx, _ := engine.BeginTransaction()
+	tx, _ := engine.BeginTransaction(t.Context())
 
 	// Multiple nodes with NULL - should be allowed
-	tx.CreateNode(&Node{
+	tx.CreateNode(t.Context(), &Node{
 		ID:         NodeID(prefixTestID("node-1")),
 		Labels:     []string{"Node"},
 		Properties: map[string]interface{}{
@@ -511,7 +511,7 @@ func TestBadgerTransaction_NullValuesAllowed(t *testing.T) {
 		},
 	})
 
-	_, err := tx.CreateNode(&Node{
+	_, err := tx.CreateNode(t.Context(), &Node{
 		ID:         NodeID(prefixTestID("node-2")),
 		Labels:     []string{"Node"},
 		Properties: map[string]interface{}{
@@ -538,10 +538,10 @@ func TestBadgerTransaction_NodeKeyRequiresAllProperties(t *testing.T) {
 		Properties: []string{"part1", "part2"},
 	})
 
-	tx, _ := engine.BeginTransaction()
+	tx, _ := engine.BeginTransaction(t.Context())
 
 	// Missing part2 - should fail
-	_, err := tx.CreateNode(&Node{
+	_, err := tx.CreateNode(t.Context(), &Node{
 		ID:     NodeID(prefixTestID("entity-1")),
 		Labels: []string{"Entity"},
 		Properties: map[string]interface{}{
@@ -576,10 +576,10 @@ func TestBadgerTransaction_ExistenceConstraint(t *testing.T) {
 		Properties: []string{"email"},
 	})
 
-	tx, _ := engine.BeginTransaction()
+	tx, _ := engine.BeginTransaction(t.Context())
 
 	// Missing required property - should fail
-	_, err := tx.CreateNode(&Node{
+	_, err := tx.CreateNode(t.Context(), &Node{
 		ID:     NodeID(prefixTestID("user-1")),
 		Labels: []string{"User"},
 		Properties: map[string]interface{}{
@@ -595,8 +595,8 @@ func TestBadgerTransaction_ExistenceConstraint(t *testing.T) {
 	tx.Rollback()
 
 	// With required property - should succeed
-	tx2, _ := engine.BeginTransaction()
-	_, err = tx2.CreateNode(&Node{
+	tx2, _ := engine.BeginTransaction(t.Context())
+	_, err = tx2.CreateNode(t.Context(), &Node{
 		ID:     NodeID(prefixTestID("user-2")),
 		Labels: []string{"User"},
 		Properties: map[string]interface{}{
@@ -632,10 +632,10 @@ func TestBadgerTransaction_MultipleConstraints(t *testing.T) {
 		Properties: []string{"name"},
 	})
 
-	tx, _ := engine.BeginTransaction()
+	tx, _ := engine.BeginTransaction(t.Context())
 
 	// Violates EXISTS constraint
-	_, err := tx.CreateNode(&Node{
+	_, err := tx.CreateNode(t.Context(), &Node{
 		ID:     NodeID(prefixTestID("user-1")),
 		Labels: []string{"User"},
 		Properties: map[string]interface{}{
@@ -651,8 +651,8 @@ func TestBadgerTransaction_MultipleConstraints(t *testing.T) {
 	tx.Rollback()
 
 	// Satisfies all constraints
-	tx2, _ := engine.BeginTransaction()
-	_, err = tx2.CreateNode(&Node{
+	tx2, _ := engine.BeginTransaction(t.Context())
+	_, err = tx2.CreateNode(t.Context(), &Node{
 		ID:     NodeID(prefixTestID("user-2")),
 		Labels: []string{"User"},
 		Properties: map[string]interface{}{
@@ -709,7 +709,7 @@ func TestBadgerEngine_UpdateNode_EnforcesUniqueConstraint(t *testing.T) {
 		Properties: []string{"email"},
 	})
 
-	_, err := engine.CreateNode(&Node{
+	_, err := engine.CreateNode(t.Context(), &Node{
 		ID:     NodeID(prefixTestID("user-1")),
 		Labels: []string{"User"},
 		Properties: map[string]interface{}{
@@ -720,7 +720,7 @@ func TestBadgerEngine_UpdateNode_EnforcesUniqueConstraint(t *testing.T) {
 		t.Fatalf("CreateNode failed: %v", err)
 	}
 
-	_, err = engine.CreateNode(&Node{
+	_, err = engine.CreateNode(t.Context(), &Node{
 		ID:     NodeID(prefixTestID("user-2")),
 		Labels: []string{"User"},
 		Properties: map[string]interface{}{
@@ -731,7 +731,7 @@ func TestBadgerEngine_UpdateNode_EnforcesUniqueConstraint(t *testing.T) {
 		t.Fatalf("CreateNode failed: %v", err)
 	}
 
-	err = engine.UpdateNode(NodeUpdateRequest{After: &Node{
+	err = engine.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{
 		ID:     NodeID(prefixTestID("user-2")),
 		Labels: []string{"User"},
 		Properties: map[string]interface{}{
@@ -757,7 +757,7 @@ func TestBadgerEngine_DeleteNode_UnregistersUniqueConstraint(t *testing.T) {
 		Properties: []string{"email"},
 	})
 
-	_, err := engine.CreateNode(&Node{
+	_, err := engine.CreateNode(t.Context(), &Node{
 		ID:     NodeID(prefixTestID("user-1")),
 		Labels: []string{"User"},
 		Properties: map[string]interface{}{
@@ -768,11 +768,11 @@ func TestBadgerEngine_DeleteNode_UnregistersUniqueConstraint(t *testing.T) {
 		t.Fatalf("CreateNode failed: %v", err)
 	}
 
-	if err := engine.DeleteNode(NodeID(prefixTestID("user-1"))); err != nil {
+	if err := engine.DeleteNode(t.Context(), NodeID(prefixTestID("user-1"))); err != nil {
 		t.Fatalf("DeleteNode failed: %v", err)
 	}
 
-	_, err = engine.CreateNode(&Node{
+	_, err = engine.CreateNode(t.Context(), &Node{
 		ID:     NodeID(prefixTestID("user-2")),
 		Labels: []string{"User"},
 		Properties: map[string]interface{}{
@@ -797,8 +797,8 @@ func TestBadgerTransaction_ConstraintAcrossCommits(t *testing.T) {
 	})
 
 	// Transaction 1: Create alice
-	tx1, _ := engine.BeginTransaction()
-	tx1.CreateNode(&Node{
+	tx1, _ := engine.BeginTransaction(t.Context())
+	tx1.CreateNode(t.Context(), &Node{
 		ID:     NodeID(prefixTestID("account-1")),
 		Labels: []string{"Account"},
 		Properties: map[string]interface{}{
@@ -808,8 +808,8 @@ func TestBadgerTransaction_ConstraintAcrossCommits(t *testing.T) {
 	tx1.Commit()
 
 	// Transaction 2: Try to create another alice
-	tx2, _ := engine.BeginTransaction()
-	_, err := tx2.CreateNode(&Node{
+	tx2, _ := engine.BeginTransaction(t.Context())
+	_, err := tx2.CreateNode(t.Context(), &Node{
 		ID:     NodeID(prefixTestID("account-2")),
 		Labels: []string{"Account"},
 		Properties: map[string]interface{}{
@@ -824,8 +824,8 @@ func TestBadgerTransaction_ConstraintAcrossCommits(t *testing.T) {
 	tx2.Rollback()
 
 	// Transaction 3: Different username should work
-	tx3, _ := engine.BeginTransaction()
-	_, err = tx3.CreateNode(&Node{
+	tx3, _ := engine.BeginTransaction(t.Context())
+	_, err = tx3.CreateNode(t.Context(), &Node{
 		ID:     NodeID(prefixTestID("account-3")),
 		Labels: []string{"Account"},
 		Properties: map[string]interface{}{

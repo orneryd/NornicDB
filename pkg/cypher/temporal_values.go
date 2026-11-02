@@ -178,16 +178,22 @@ const rowStatementContextKey = "\x00statement_context"
 // needsRowStatementContext preserves statement state for function dispatch and
 // graph expressions. This applies to nested calls as well as whole expressions:
 // every registry function must see the same execution identity and version.
-func needsRowStatementContext(expression string) bool {
+func needsRowStatementContext(ctx context.Context, expression string) bool {
 	if containsStatementClockCall(expression) || mayContainSubqueryExpression(expression) ||
-		containsRelationshipPattern(expression) || containsContextPluginCall(expression) {
+		containsRelationshipPattern(expression) || containsContextPluginCall(ctx, expression) {
 		return true
 	}
 	called := false
-	_ = forEachFunctionCall(expression, func(string, string) error {
+	if err := forEachFunctionCall(ctx, expression, func(string, string) error {
 		called = true
 		return nil
-	})
+	}); err != nil {
+		// The scan stopped at the caller's cancellation before reading the whole
+		// expression, so it cannot say the expression calls no function: the
+		// statement context is retained rather than dropped for a verdict the
+		// scan never completed.
+		return true
+	}
 	return called
 }
 

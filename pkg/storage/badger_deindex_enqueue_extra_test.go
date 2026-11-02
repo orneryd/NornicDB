@@ -13,7 +13,7 @@ func TestBadgerEngine_EnqueueDeindexIfSuppressed_DecayDisabledNoop(t *testing.T)
 	engine := createTestBadgerEngine(t)
 	engine.SetDecayEnabled(false)
 
-	changed, err := engine.EnqueueDeindexIfSuppressed("test:any", false)
+	changed, err := engine.EnqueueDeindexIfSuppressed(context.Background(), "test:any", false)
 	require.NoError(t, err)
 	require.False(t, changed)
 }

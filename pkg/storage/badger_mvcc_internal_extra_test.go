@@ -113,12 +113,12 @@ func TestBadgerEngine_CollectVisibleAdjacencyEdgeIDsInTxn_EmptyPrefix(t *testing
 
 func TestBadgerEngine_CollectVisibleAdjacencyEdgeIDsInTxn_MalformedRecord(t *testing.T) {
 	engine := createMVCCBadgerEngine(t)
-	_, err := engine.CreateNode(&Node{ID: "test:adj-a", Labels: []string{"N"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:adj-a", Labels: []string{"N"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:adj-b", Labels: []string{"N"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:adj-b", Labels: []string{"N"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:adj-edge", StartNode: "test:adj-a", EndNode: "test:adj-b", Type: "R"}))
-	head, err := engine.GetEdgeCurrentHead("test:adj-edge")
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:adj-edge", StartNode: "test:adj-a", EndNode: "test:adj-b", Type: "R"}))
+	head, err := engine.GetEdgeCurrentHead(context.Background(), "test:adj-edge")
 	require.NoError(t, err)
 
 	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
@@ -138,12 +138,12 @@ func TestBadgerEngine_CollectVisibleAdjacencyEdgeIDsInTxn_MalformedRecord(t *tes
 
 func TestBadgerEngine_VisibleAdjacencyReaders_PropagateEdgeLookupErrors(t *testing.T) {
 	engine := createMVCCBadgerEngine(t)
-	_, err := engine.CreateNode(&Node{ID: "test:ga", Labels: []string{"N"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:ga", Labels: []string{"N"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:gb", Labels: []string{"N"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:gb", Labels: []string{"N"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:ge", StartNode: "test:ga", EndNode: "test:gb", Type: "R"}))
-	head, err := engine.GetEdgeCurrentHead("test:ge")
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:ge", StartNode: "test:ga", EndNode: "test:gb", Type: "R"}))
+	head, err := engine.GetEdgeCurrentHead(context.Background(), "test:ge")
 	require.NoError(t, err)
 
 	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {

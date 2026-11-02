@@ -233,11 +233,11 @@ func LoadFromNeo4jExport(engine Engine, path string) error {
 	nodes, edges := FromNeo4jExport(&export)
 
 	// Bulk insert for efficiency
-	if err := engine.BulkCreateNodes(nodes); err != nil {
+	if err := engine.BulkCreateNodes(context.Background(), nodes); err != nil {
 		return localizedError(localization.StorageLoaderCreatingNodes(err), err)
 	}
 
-	if err := engine.BulkCreateEdges(edges); err != nil {
+	if err := engine.BulkCreateEdges(context.Background(), edges); err != nil {
 		return localizedError(localization.StorageLoaderCreatingEdges(err), err)
 	}
 
@@ -397,7 +397,7 @@ func loadNodesFromReader(engine Engine, r io.Reader) error {
 	}
 
 	if len(nodes) > 0 {
-		return engine.BulkCreateNodes(nodes)
+		return engine.BulkCreateNodes(context.Background(), nodes)
 	}
 
 	return nil
@@ -449,7 +449,7 @@ func loadRelationshipsFromReader(engine Engine, r io.Reader) error {
 	}
 
 	if len(edges) > 0 {
-		return engine.BulkCreateEdges(edges)
+		return engine.BulkCreateEdges(context.Background(), edges)
 	}
 
 	return nil
@@ -521,22 +521,27 @@ type ExportableEngine interface {
 
 // FindNodeNeedingEmbedding finds a single node that needs embedding.
 // This is more efficient than AllNodes() as it stops after finding one.
-func FindNodeNeedingEmbedding(engine Engine) *Node {
+func FindNodeNeedingEmbedding(ctx context.Context, engine Engine) (*Node, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	// Use AllNodes but stop early - not ideal but works with any engine
 	if exportable, ok := engine.(ExportableEngine); ok {
-		// Selection has no caller context: context.Background is the true
-		// lifetime at this context-free boundary.
-		nodes, err := exportable.AllNodes(context.Background())
+		// Collection and selection retain the requesting job's context.
+		nodes, err := exportable.AllNodes(ctx)
 		if err != nil {
-			return nil
+			return nil, err
 		}
 		for _, node := range nodes {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			if NodeNeedsEmbedding(node) {
-				return node
+				return node, nil
 			}
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 // NOTE: MemoryEngine now inherits AllNodes(), AllEdges(), GetEdgesByType()

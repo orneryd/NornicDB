@@ -158,7 +158,7 @@ func TestSchemaVersion_LegacyEdgeBetweenReadyMarkerRecovers(t *testing.T) {
 // refuse manual invocation before even an older V2-to-V3 arm changes state.
 func TestManualMigrationHonorsCatalogOpeningBoundary(t *testing.T) {
 	b := newTestEngine(t)
-	_, err := b.CreateNode(&Node{ID: "test:opening-boundary", Properties: map[string]interface{}{"value": "retained"}})
+	_, err := b.CreateNode(t.Context(), &Node{ID: "test:opening-boundary", Properties: map[string]interface{}{"value": "retained"}})
 	require.NoError(t, err)
 	require.NoError(t, b.writeSchemaVersion(storageVersionPropKeyDictV2))
 	before := catalogV4Snapshot(t, b)

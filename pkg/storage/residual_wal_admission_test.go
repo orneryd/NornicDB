@@ -25,11 +25,11 @@ func TestResidualWALAcceptanceAdmission(t *testing.T) {
 			t.Cleanup(func() { _ = b.Close() })
 			owner := NewWALEngine(b, wal)
 			t.Cleanup(func() { _ = owner.Close() })
-			tx, err := b.BeginTransaction()
+			tx, err := b.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			require.NoError(t, tx.SetNamespace("test"))
-			_, err = tx.CreateNode(&Node{ID: "test:wal-wait"})
+			_, err = tx.CreateNode(t.Context(), &Node{ID: "test:wal-wait"})
 			require.NoError(t, err)
 			var decisions atomic.Int32
 			ctx, cancel := context.WithCancel(context.Background())
@@ -90,7 +90,7 @@ func TestResidualWALAcceptanceAdmission(t *testing.T) {
 			require.Equal(t, ctx, admittedContext)
 			require.Zero(t, decisions.Load())
 			prepared.Abort()
-			_, err = b.GetStoredNode("test:wal-wait")
+			_, err = b.GetStoredNode(t.Context(), "test:wal-wait")
 			require.ErrorIs(t, err, ErrNotFound)
 		})
 	}

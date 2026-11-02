@@ -77,12 +77,20 @@ func (b *BadgerEngine) initializeCounts() error {
 	return nil
 }
 
-func (b *BadgerEngine) NodeCount() (int64, error) {
+func (b *BadgerEngine) NodeCount(ctx context.Context) (int64, error) {
+	// A counter read has no materialization step to cancel, but a canceled
+	// request must not be answered with a successful count: it already owns no
+	// result, and reporting one would let a canceled statement publish a total.
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	if err := b.pendingNamespaceConflict(""); err != nil {
 		return 0, err
 	}
 
-	b.totalCountWriteMu.RLock()
+	if err := b.totalCountWriteMu.RLockContext(ctx); err != nil {
+		return 0, err
+	}
 	defer b.totalCountWriteMu.RUnlock()
 	if err := b.ensureOpen(false); err != nil {
 		return 0, err
@@ -93,7 +101,11 @@ func (b *BadgerEngine) NodeCount() (int64, error) {
 	// at ACK: fold in the buffered delta so the count is read-your-writes
 	// (PR #1043 read-overlay parity).
 	if b.writeBehind != nil {
-		count += b.writeBehind.NodeCountDeltaForPrefix("")
+		delta, err := b.writeBehind.totalCountDeltaForPrefix(ctx, "", false)
+		if err != nil {
+			return 0, err
+		}
+		count += delta
 	}
 	return count, nil
 }
@@ -188,18 +200,26 @@ func (b *BadgerEngine) countByPrefix(ctx context.Context, prefix string, keyType
 //
 // This is an optional fast-path used by NamespacedEngine to provide accurate
 // per-database counts without decoding values.
-func (b *BadgerEngine) NodeCountByPrefix(prefix string) (int64, error) {
-	return b.entityCountByPrefix(context.Background(), prefix, prefixNode)
+func (b *BadgerEngine) NodeCountByPrefix(ctx context.Context, prefix string) (int64, error) {
+	return b.entityCountByPrefix(ctx, prefix, prefixNode)
 }
 
 // EdgeCount returns the total number of valid, decodable edges.
 // This is consistent with AllEdges() - only counts edges that can be successfully decoded.
-func (b *BadgerEngine) EdgeCount() (int64, error) {
+func (b *BadgerEngine) EdgeCount(ctx context.Context) (int64, error) {
+	// A counter read has no materialization step to cancel, but a canceled
+	// request must not be answered with a successful count: it already owns no
+	// result, and reporting one would let a canceled statement publish a total.
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	if err := b.pendingNamespaceConflict(""); err != nil {
 		return 0, err
 	}
 
-	b.totalCountWriteMu.RLock()
+	if err := b.totalCountWriteMu.RLockContext(ctx); err != nil {
+		return 0, err
+	}
 	defer b.totalCountWriteMu.RUnlock()
 	if err := b.ensureOpen(false); err != nil {
 		return 0, err
@@ -210,15 +230,19 @@ func (b *BadgerEngine) EdgeCount() (int64, error) {
 	// at ACK: fold in the buffered delta so the count is read-your-writes
 	// (PR #1043 read-overlay parity).
 	if b.writeBehind != nil {
-		count += b.writeBehind.EdgeCountDelta()
+		delta, err := b.writeBehind.totalCountDeltaForPrefix(ctx, "", true)
+		if err != nil {
+			return 0, err
+		}
+		count += delta
 	}
 	return count, nil
 }
 
 // EdgeCountByPrefix counts edges whose EdgeID begins with the provided prefix.
 // The prefix refers to the EdgeID string prefix (e.g., database namespace "nornic:").
-func (b *BadgerEngine) EdgeCountByPrefix(prefix string) (int64, error) {
-	return b.entityCountByPrefix(context.Background(), prefix, prefixEdge)
+func (b *BadgerEngine) EdgeCountByPrefix(ctx context.Context, prefix string) (int64, error) {
+	return b.entityCountByPrefix(ctx, prefix, prefixEdge)
 }
 
 // GetSchema returns the schema manager.
@@ -266,7 +290,7 @@ func (b *BadgerEngine) sealAdmission() {
 	// Drain acknowledged write-behind commits before tearing down Badger so
 	// a shutdown never loses writes that were acknowledged to clients.
 	if b.writeBehind != nil {
-		drainErr := b.FlushWriteBehind(commitPreparationLifetime(nil))
+		drainErr := b.FlushWriteBehind(context.Background())
 		if drainErr != nil && b.log != nil {
 			b.log.Error("write-behind drain on close failed", "subsystem", "storage", "error", drainErr)
 		}
@@ -406,30 +430,35 @@ func (b *BadgerEngine) Size() (lsm, vlog int64) {
 // engine write that cleans the markers before it; cleanup larger than one
 // Badger batch commits batch by batch, so it always makes progress. Claim
 // serialization remains with the worker. This exported optional-interface
-// method carries no caller context (the worker's is erased by the interface),
-// so its own explicit unbounded lifetime is the claim's boundary; it does not
-// claim the worker's cancellation.
-func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
-	if b.pendingNamespaceConflict("") != nil {
-		return nil
+// method carries the worker job context through catalog admission, iteration
+// and cleanup preparation. An actual storage error is returned, while no
+// eligible candidate is (nil, nil).
+func (b *BadgerEngine) FindNodeNeedingEmbedding(ctx context.Context) (*Node, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := b.pendingNamespaceConflict(""); err != nil {
+		return nil, err
 	}
 
-	if b.ensureOpen(false) != nil {
-		return nil
+	if err := b.ensureOpen(false); err != nil {
+		return nil, err
 	}
 	p := &b.pendingCandidates
-	p.mu.Lock()
+	if err := p.mu.LockContext(ctx); err != nil {
+		return nil, err
+	}
 	defer p.mu.Unlock()
 	// Hints can be lost: an empty catalog cannot prove an empty durable
 	// index. Reconcile at the empty boundary; a previously verified empty
 	// snapshot is reusable until storage publishes another commit. Live
 	// claims keep their point-read path; worker scheduling owns idle backoff.
 	reconciled := len(p.ids) == 0 || !p.loaded || p.generation != b.pendingCandidatesGeneration.Load()
-	if p.load(b) != nil {
-		return nil
+	if err := p.load(ctx, b); err != nil {
+		return nil, err
 	}
 	if len(p.ids) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	var found *Node
@@ -441,8 +470,11 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 		// prefix of stale markers larger than one batch must still make
 		// durable progress toward the live candidates behind it.
 		batchFull := false
-		err := b.withUpdate(context.Background(), updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+		err := b.withUpdate(ctx, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 			for len(p.ids) > 0 && !batchFull {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
 				nodeID := p.ids[0]
 				if _, err := txn.Get(pendingEmbedKey(nodeID)); err == badger.ErrKeyNotFound {
 					p.removeFirst()
@@ -513,7 +545,7 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 		if err != nil {
 			// A failed cleanup commit must not discard still-durable candidates.
 			b.InvalidatePendingEmbeddingsIndex()
-			return nil
+			return nil, err
 		}
 		if batchFull {
 			continue
@@ -524,8 +556,8 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 		// The last cached hints were stale. A committed marker whose hint was
 		// lost may still exist, so check the durable index before returning nil.
 		reconciled = true
-		if p.load(b) != nil {
-			return nil
+		if err := p.load(ctx, b); err != nil {
+			return nil, err
 		}
 	}
 	// Log at most once per call (avoid per-entry spam on large stale indexes).
@@ -537,7 +569,7 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 		)
 	}
 
-	return found
+	return found, nil
 }
 
 // MarkNodeEmbedded removes a node from the pending embeddings index.
@@ -545,7 +577,7 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 func (b *BadgerEngine) MarkNodeEmbedded(nodeID NodeID) {
 	_ = b.withPublishingUpdate(context.Background(), func(txn *badger.Txn) error {
 		return txn.Delete(pendingEmbedKey(nodeID))
-	}, nil, func(context.Context) ([]any, error) { return []any{namespaceWriteKey(namespaceForNodeID(nodeID))}, nil }, nil)
+	}, nil, func(context.Context) ([]any, error) { return []any{namespaceWriteKey(namespaceForNodeID(nodeID))}, nil }, nil, nil)
 }
 
 // AddToPendingEmbeddings adds a node to the pending embeddings index.
@@ -569,7 +601,7 @@ func (b *BadgerEngine) AddToPendingEmbeddings(nodeID NodeID) {
 			return err
 		}
 		return b.setPendingEmbeddingInTxn(txn, nodeID)
-	}, nil, func(context.Context) ([]any, error) { return []any{namespaceWriteKey(namespaceForNodeID(nodeID))}, nil }, nil)
+	}, nil, func(context.Context) ([]any, error) { return []any{namespaceWriteKey(namespaceForNodeID(nodeID))}, nil }, nil, nil)
 }
 
 // PendingEmbeddingsCount returns the number of nodes waiting for embedding.
@@ -1191,13 +1223,13 @@ func (b *BadgerEngine) ClearAllEmbeddingsForPrefix(idPrefix string) (int, error)
 	// Now update each node to clear its embedding, hidden ones included: they
 	// must not keep an embedding of the model being replaced.
 	for _, id := range nodeIDs {
-		node, err := b.GetStoredNode(id)
+		node, err := b.GetStoredNode(context.Background(), id)
 		if err != nil {
 			continue // Skip if node no longer exists
 		}
 		before := *node
 		node.ChunkEmbeddings = nil
-		if err := b.UpdateNode(NodeUpdateRequest{Before: &before, After: node, Policy: StoredNodeImages}); err != nil {
+		if err := b.UpdateNode(context.Background(), NodeUpdateRequest{Before: &before, After: node, Policy: StoredNodeImages}); err != nil {
 			b.log.Warn("failed to clear embedding for node",
 				"subsystem", "embeddings_index",
 				"node_id", string(id),

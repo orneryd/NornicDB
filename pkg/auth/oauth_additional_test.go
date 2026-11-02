@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"encoding/json"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"net/http"
@@ -88,7 +89,7 @@ func TestOAuthManager_HandleCallbackAndRefreshFlow(t *testing.T) {
 
 	state := "state-1"
 	mgr.states[state] = time.Now().Add(time.Minute)
-	user, token, expiry, err := mgr.HandleCallback("code-1", state)
+	user, token, expiry, err := mgr.HandleCallback(context.Background(), "code-1", state)
 	if err != nil {
 		t.Fatalf("handle callback failed: %v", err)
 	}
@@ -111,7 +112,7 @@ func TestOAuthManager_HandleCallbackAndRefreshFlow(t *testing.T) {
 
 	existingState := "state-2"
 	mgr.states[existingState] = time.Now().Add(time.Minute)
-	_, existingToken, _, err := mgr.HandleCallback("code-2", existingState)
+	_, existingToken, _, err := mgr.HandleCallback(context.Background(), "code-2", existingState)
 	if err != nil {
 		t.Fatalf("handle callback for existing OAuth user failed: %v", err)
 	}

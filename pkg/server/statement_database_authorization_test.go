@@ -25,7 +25,7 @@ func TestHTTPEveryDatabaseAStatementSelectsIsAuthorized(t *testing.T) {
 		{Alias: "a", DatabaseName: "da", Type: "local", AccessMode: "read_write"},
 		{Alias: "b", DatabaseName: "db", Type: "local", AccessMode: "read_write"},
 	}))
-	_, err := authenticator.CreateUser("limited", "password123", []auth.Role{auth.RoleEditor})
+	_, err := authenticator.CreateUser(context.Background(), "limited", "password123", []auth.Role{auth.RoleEditor})
 	require.NoError(t, err)
 	require.NoError(t, server.allowlistStore.SaveRoleDatabases(ctx, "editor", []string{"da", "cmp"}))
 	for _, db := range []string{"da", "cmp"} {

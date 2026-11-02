@@ -13,7 +13,7 @@ import (
 func TestSearchStreamParameterAwareCache(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "bench")
 	for _, id := range []storage.NodeID{"a", "b"} {
-		_, err := store.CreateNode(&storage.Node{ID: id, Properties: map[string]any{"content": "library transcript"}})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: id, Properties: map[string]any{"content": "library transcript"}})
 		require.NoError(t, err)
 	}
 	svc := search.NewService(store, search.DefaultVectorDimensions, nil)

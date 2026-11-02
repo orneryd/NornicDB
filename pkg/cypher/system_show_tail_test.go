@@ -53,7 +53,7 @@ func TestSystemShowTailThroughExecutor(t *testing.T) {
 		t.Run(route.database+"/"+route.prefix, func(t *testing.T) {
 			exec, stores := nestedUseRouterExecutor(t, route.database)
 			const marker = "system-show-tail-private-value"
-			_, err := stores["system"].CreateNode(&storage.Node{
+			_, err := stores["system"].CreateNode(t.Context(), &storage.Node{
 				ID: "show-tail-user", Labels: []string{"_User"},
 				Properties: map[string]interface{}{"username": "show-tail-user", "password_hash": marker},
 			})
@@ -76,7 +76,7 @@ func TestSystemShowTailThroughExecutor(t *testing.T) {
 			written, err := stores["system"].GetNodesByLabel(ctx, "ShowTailWrite")
 			require.NoError(t, err)
 			require.Empty(t, written, "no continuation clause ran")
-			user, err := stores["system"].GetNode("show-tail-user")
+			user, err := stores["system"].GetNode(t.Context(), "show-tail-user")
 			require.NoError(t, err)
 			require.Equal(t, marker, user.Properties["password_hash"])
 			result, err := exec.Execute(ctx, route.prefix+"SHOW PROCEDURES YIELD name ORDER BY name LIMIT 1 RETURN name", nil)

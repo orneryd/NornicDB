@@ -27,7 +27,7 @@ type EntityMeta struct {
 // EntityMetaLookup provides entity metadata needed by flusher policy and
 // property suppression evaluation.
 type EntityMetaLookup interface {
-	GetEntityMeta(entityID string) (EntityMeta, error)
+	GetEntityMeta(ctx context.Context, entityID string) (EntityMeta, error)
 }
 
 // ScorerFunc returns a Scorer for the given namespace. Returns nil if none.
@@ -36,8 +36,11 @@ type ScorerFunc func(namespace string) *Scorer
 // EmbedInvalidateFunc is called when property suppression state changes.
 type EmbedInvalidateFunc func(entityID string)
 
-// SuppressionRecheckFunc re-evaluates entity visibility after access metadata changes.
-type SuppressionRecheckFunc func(entityID string, meta EntityMeta)
+// SuppressionRecheckFunc re-evaluates entity visibility after access metadata
+// changes. ctx is the flush cycle's own accepted lifetime, so a recheck that
+// mutates metadata (a decay resuppression) runs under the work that produced it
+// rather than a request or run lifetime that has already ended.
+type SuppressionRecheckFunc func(ctx context.Context, entityID string, meta EntityMeta)
 
 // AccessFlusher periodically drains the accumulator and persists deltas.
 type AccessFlusher struct {
@@ -211,8 +214,12 @@ func (f *AccessFlusher) flush() {
 		return
 	}
 
-	// Wrap the non-empty flush in a span so downstream storage writes nest
-	// beneath it (one coherent trace per flush batch).
+	// A flush cycle is its own accepted unit of work: DrainAll has already
+	// removed these deltas from the accumulator, and the run lifetime is
+	// canceled before its own final flush, so the cycle persists them under
+	// its own lifetime rather than a caller or run lifetime that would
+	// abandon them. The span nests the storage writes beneath it (one
+	// coherent trace per flush batch).
 	flushCtx := context.Background()
 	var span trace.Span
 	flushCtx, span = otel.Tracer("nornicdb/knowledge_policy").Start(
@@ -249,7 +256,7 @@ func (f *AccessFlusher) flush() {
 
 		meta := EntityMeta{Scope: entry.TargetScope}
 		if f.entityMeta != nil {
-			if resolved, err := f.entityMeta.GetEntityMeta(entityID); err == nil {
+			if resolved, err := f.entityMeta.GetEntityMeta(flushCtx, entityID); err == nil {
 				meta = resolved
 				if meta.Scope != "" {
 					entry.TargetScope = meta.Scope
@@ -301,7 +308,7 @@ func (f *AccessFlusher) flush() {
 		entry.MutationCount++
 
 		changed := f.evaluatePropertySuppression(entityID, entry, meta, now)
-		written, err := f.store.WriteAccessMeta(AccessMetaWriteRequest{Mode: FlushExistingEntity, EntityID: entityID, Entry: entry})
+		written, err := f.store.WriteAccessMeta(flushCtx, AccessMetaWriteRequest{Mode: FlushExistingEntity, EntityID: entityID, Entry: entry})
 		if err != nil {
 			f.outcomes.Record("access metadata write", err)
 			continue
@@ -316,7 +323,7 @@ func (f *AccessFlusher) flush() {
 			}
 		}
 		if f.suppressionRecheck != nil {
-			f.suppressionRecheck(entityID, meta)
+			f.suppressionRecheck(flushCtx, entityID, meta)
 		}
 	}
 }

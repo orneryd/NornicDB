@@ -61,10 +61,10 @@ func TestBadgerEngine_GetNodeProjectedSkipsUnrequestedVectorProperty(t *testing.
 		"name_embedding": embedding,
 	}
 
-	_, err := engine.CreateNode(node)
+	_, err := engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
-	projected, err := engine.GetNodeProjected(node.ID, []string{"uuid", "group_id"})
+	projected, err := engine.GetNodeProjected(t.Context(), node.ID, []string{"uuid", "group_id"})
 	require.NoError(t, err)
 	require.Equal(t, node.ID, projected.ID)
 	require.Equal(t, []string{"Entity"}, projected.Labels)
@@ -72,7 +72,7 @@ func TestBadgerEngine_GetNodeProjectedSkipsUnrequestedVectorProperty(t *testing.
 	require.Equal(t, "episode-1", projected.Properties["group_id"])
 	require.NotContains(t, projected.Properties, "name_embedding")
 
-	full, err := engine.GetNode(node.ID)
+	full, err := engine.GetNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	require.Contains(t, full.Properties, "name_embedding")
 	require.Len(t, full.Properties["name_embedding"], 1024)
@@ -83,10 +83,10 @@ func TestBadgerEngine_GetNodeProjectedEmptyPropertyList(t *testing.T) {
 	node := testNode("projected-empty")
 	node.Properties = map[string]any{"uuid": "entity-1"}
 
-	_, err := engine.CreateNode(node)
+	_, err := engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
-	projected, err := engine.GetNodeProjected(node.ID, []string{})
+	projected, err := engine.GetNodeProjected(t.Context(), node.ID, []string{})
 	require.NoError(t, err)
 	require.Equal(t, node.ID, projected.ID)
 	require.Empty(t, projected.Properties)
@@ -112,17 +112,17 @@ func TestNamespacedEngine_GetNodeWithoutEmbeddingsSkipsSeparateVectors(t *testin
 	engine := createTestBadgerEngine(t)
 	tenant := NewNamespacedEngine(engine, "tenant")
 	node := newLargeVectorEvidenceNode("large-vector-node", "asset-a")
-	_, err := tenant.CreateNode(node)
+	_, err := tenant.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
-	light, err := tenant.GetNodeWithoutEmbeddings(node.ID)
+	light, err := tenant.GetNodeWithoutEmbeddings(t.Context(), node.ID)
 	require.NoError(t, err)
 	require.Equal(t, node.ID, light.ID)
 	require.Equal(t, "asset-a", light.Properties["asset_id"])
 	require.Empty(t, light.ChunkEmbeddings)
 	require.Empty(t, light.NamedEmbeddings)
 
-	full, err := tenant.GetNode(node.ID)
+	full, err := tenant.GetNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	require.False(t, full.RuntimeMetadata().EmbeddingsStoredSeparately)
 	require.Len(t, full.ChunkEmbeddings, 2)
@@ -133,7 +133,7 @@ func TestNamespacedEngine_BatchGetNodesWithoutEmbeddingsSkipsSeparateVectors(t *
 	engine := createTestBadgerEngine(t)
 	tenant := NewNamespacedEngine(engine, "tenant")
 	for _, id := range []NodeID{"large-vector-a", "large-vector-b"} {
-		_, err := tenant.CreateNode(newLargeVectorEvidenceNode(id, string(id)+"-asset"))
+		_, err := tenant.CreateNode(t.Context(), newLargeVectorEvidenceNode(id, string(id)+"-asset"))
 		require.NoError(t, err)
 	}
 
@@ -152,7 +152,7 @@ func TestNamespacedWAL_StreamNodesByLabelProjected(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = wal.Close() })
 	tenant := NewNamespacedEngine(NewWALEngine(engine, wal), "tenant")
-	_, err = tenant.CreateNode(&Node{ID: "one", Labels: []string{"Evidence"}, Properties: map[string]any{"asset_id": "found", "unused": "hidden"}})
+	_, err = tenant.CreateNode(t.Context(), &Node{ID: "one", Labels: []string{"Evidence"}, Properties: map[string]any{"asset_id": "found", "unused": "hidden"}})
 	require.NoError(t, err)
 	var found []*Node
 	err = tenant.StreamNodesByLabelProjected(context.Background(), "Evidence", []string{"asset_id"}, func(node *Node) error {
@@ -199,7 +199,7 @@ func TestBadgerEngine_GetNodeKernel_CacheStoreAsymmetry(t *testing.T) {
 		Properties:      map[string]any{"title": "T"},
 		ChunkEmbeddings: [][]float32{make([]float32, 10_000)},
 	}
-	_, err := tenant.CreateNode(node)
+	_, err := tenant.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	storedID := NodeID("tenant:cache-asym")
 
@@ -210,7 +210,7 @@ func TestBadgerEngine_GetNodeKernel_CacheStoreAsymmetry(t *testing.T) {
 
 	// Cold read without embeddings: must not populate the cache.
 	beforeMisses := atomic.LoadInt64(&engine.cacheMisses)
-	light, err := engine.GetNodeWithoutEmbeddings(storedID)
+	light, err := engine.GetNodeWithoutEmbeddings(t.Context(), storedID)
 	require.NoError(t, err)
 	require.Equal(t, "T", light.Properties["title"])
 	require.Equal(t, beforeMisses+1, atomic.LoadInt64(&engine.cacheMisses))
@@ -219,17 +219,17 @@ func TestBadgerEngine_GetNodeKernel_CacheStoreAsymmetry(t *testing.T) {
 	engine.nodeCacheMu.RUnlock()
 	require.False(t, cached, "without-embeddings read must not store into the node cache")
 
-	_, err = engine.GetNodeWithoutEmbeddings(storedID)
+	_, err = engine.GetNodeWithoutEmbeddings(t.Context(), storedID)
 	require.NoError(t, err)
 	require.Equal(t, beforeMisses+2, atomic.LoadInt64(&engine.cacheMisses), "without-embeddings read must not cache")
 
 	// A full read caches; the next without-embeddings read is a cache hit
 	// that copies without embeddings.
-	full, err := engine.GetNode(storedID)
+	full, err := engine.GetNode(t.Context(), storedID)
 	require.NoError(t, err)
 	require.NotEmpty(t, full.ChunkEmbeddings)
 	beforeHits := atomic.LoadInt64(&engine.cacheHits)
-	fromCache, err := engine.GetNodeWithoutEmbeddings(storedID)
+	fromCache, err := engine.GetNodeWithoutEmbeddings(t.Context(), storedID)
 	require.NoError(t, err)
 	require.Equal(t, beforeHits+1, atomic.LoadInt64(&engine.cacheHits), "after a full read the without-embeddings read is a cache hit")
 	require.Empty(t, fromCache.ChunkEmbeddings)
@@ -237,7 +237,7 @@ func TestBadgerEngine_GetNodeKernel_CacheStoreAsymmetry(t *testing.T) {
 
 	// Copies: mutating a returned node must not leak into the cache.
 	light.Properties["title"] = "mutated"
-	again, err := engine.GetNodeWithoutEmbeddings(storedID)
+	again, err := engine.GetNodeWithoutEmbeddings(t.Context(), storedID)
 	require.NoError(t, err)
 	require.Equal(t, "T", again.Properties["title"])
 }
@@ -256,13 +256,13 @@ func TestNamespacedEngine_ProjectedStreamingIsolation(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			engine := createTestBadgerEngine(t)
 			tenantA, tenantB := NewNamespacedEngine(engine, "tenant_a"), NewNamespacedEngine(engine, "tenant_b")
-			_, err := tenantA.CreateNode(&Node{ID: test.id, Labels: []string{"Evidence"}, Properties: map[string]any{"asset_id": "wanted", "embedding": make([]float64, 1024)}})
+			_, err := tenantA.CreateNode(t.Context(), &Node{ID: test.id, Labels: []string{"Evidence"}, Properties: map[string]any{"asset_id": "wanted", "embedding": make([]float64, 1024)}})
 			require.NoError(t, err)
 			if test.extra {
-				_, err = tenantA.CreateNode(&Node{ID: "other-one", Labels: []string{"Evidence"}, Properties: map[string]any{"asset_id": "same-tenant-other-prefix"}})
+				_, err = tenantA.CreateNode(t.Context(), &Node{ID: "other-one", Labels: []string{"Evidence"}, Properties: map[string]any{"asset_id": "same-tenant-other-prefix"}})
 				require.NoError(t, err)
 			}
-			_, err = tenantB.CreateNode(&Node{ID: test.otherID, Labels: []string{"Evidence"}, Properties: map[string]any{"asset_id": test.otherAsset}})
+			_, err = tenantB.CreateNode(t.Context(), &Node{ID: test.otherID, Labels: []string{"Evidence"}, Properties: map[string]any{"asset_id": test.otherAsset}})
 			require.NoError(t, err)
 			var nodes []*Node
 			err = test.read(tenantA, context.Background(), test.selector, []string{"asset_id"}, func(node *Node) error { nodes = append(nodes, node); return nil })

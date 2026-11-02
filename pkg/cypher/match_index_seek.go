@@ -150,7 +150,7 @@ func (e *StorageExecutor) tryCollectNodesFromIDEquality(ctx context.Context, nod
 		return []*storage.Node{}, true, nil
 	}
 
-	node, err := e.getQueryNode(e.storage, storage.NodeID(lookupID))
+	node, err := e.getQueryNode(ctx, e.storage, storage.NodeID(lookupID))
 	if err != nil || node == nil {
 		return []*storage.Node{}, true, nil
 	}
@@ -263,7 +263,7 @@ func (e *StorageExecutor) tryCollectNodesFromIDEqualityParam(
 		return []*storage.Node{}, true, nil
 	}
 
-	node, err := e.getQueryNode(e.storage, storage.NodeID(lookupID))
+	node, err := e.getQueryNode(ctx, e.storage, storage.NodeID(lookupID))
 	if err != nil || node == nil {
 		return []*storage.Node{}, true, nil
 	}
@@ -450,7 +450,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexAnyOf(ctx context.Cont
 		if err := ctx.Err(); err != nil {
 			return nil, false, err
 		}
-		node, err := e.getQueryNode(e.storage, storage.NodeID(id))
+		node, err := e.getQueryNode(ctx, e.storage, storage.NodeID(id))
 		if err != nil || node == nil {
 			continue
 		}
@@ -556,7 +556,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInAnyOf(ctx context.Co
 		if err := ctx.Err(); err != nil {
 			return nil, false, err
 		}
-		node, err := e.getQueryNode(e.storage, storage.NodeID(id))
+		node, err := e.getQueryNode(ctx, e.storage, storage.NodeID(id))
 		if err != nil || node == nil {
 			continue
 		}
@@ -652,7 +652,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInLiteralAnyOf(
 		if err := ctx.Err(); err != nil {
 			return nil, false, err
 		}
-		node, err := e.getQueryNode(e.storage, storage.NodeID(id))
+		node, err := e.getQueryNode(ctx, e.storage, storage.NodeID(id))
 		if err != nil || node == nil {
 			continue
 		}
@@ -901,7 +901,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInOrParam(ctx context.
 		if err := ctx.Err(); err != nil {
 			return nil, false, err
 		}
-		node, err := e.getQueryNode(e.storage, storage.NodeID(id))
+		node, err := e.getQueryNode(ctx, e.storage, storage.NodeID(id))
 		if err != nil || node == nil {
 			continue
 		}
@@ -1019,7 +1019,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrEquality(
 		if err := ctx.Err(); err != nil {
 			return nil, false, err
 		}
-		node, err := e.getQueryNode(e.storage, storage.NodeID(id))
+		node, err := e.getQueryNode(ctx, e.storage, storage.NodeID(id))
 		if err != nil || node == nil {
 			continue
 		}
@@ -1137,7 +1137,7 @@ func (e *StorageExecutor) tryCollectNodesFromIDIn(
 		}
 		seen[lookupID] = struct{}{}
 
-		node, err := e.getQueryNode(e.storage, storage.NodeID(lookupID))
+		node, err := e.getQueryNode(ctx, e.storage, storage.NodeID(lookupID))
 		if err != nil || node == nil {
 			continue
 		}
@@ -1373,7 +1373,7 @@ func (e *StorageExecutor) indexCandidateLabels(ctx context.Context, schema *stor
 		out = append(out, label)
 	}
 	sort.Strings(out)
-	if !labellessPropertyIndexUsable(e.storage, out...) {
+	if !labellessPropertyIndexUsable(ctx, e.storage, out...) {
 		return nil, nil
 	}
 	return out, nil
@@ -2046,7 +2046,7 @@ func (e *StorageExecutor) collectNodesFromIndexedProperty(ctx context.Context,
 		}
 		// An ID the index still lists for a node that is gone or lost a
 		// pattern label is skipped.
-		if node, err := e.getQueryNode(e.storage, id); err == nil && node != nil && mergeNodeHasLabels(node, nodePattern.labels) {
+		if node, err := e.getQueryNode(ctx, e.storage, id); err == nil && node != nil && mergeNodeHasLabels(node, nodePattern.labels) {
 			nodes = append(nodes, node)
 		}
 	}

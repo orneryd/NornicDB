@@ -4,8 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -162,7 +163,7 @@ func BenchmarkStartupDerivedIndexPreparation(b *testing.B) {
 				Properties: map[string]any{"index": index},
 			})
 		}
-		require.NoError(b, engine.BulkCreateNodes(nodes))
+		require.NoError(b, engine.BulkCreateNodes(b.Context(), nodes))
 	}
 
 	b.Run("unclean_rebuild", func(b *testing.B) {

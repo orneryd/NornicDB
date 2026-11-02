@@ -303,11 +303,11 @@ func (e *StorageExecutor) callGdsLinkPredictionPredict(ctx context.Context, args
 	// embeddings, every chunk, each named embedding with its namesake
 	// (#1186). The source's embeddings are read once.
 	var sourceEmbeddings map[string][][]float32
-	if sourceNode, err := config.identityStore.GetNode(config.SourceNode); err == nil {
+	if sourceNode, err := config.identityStore.GetNode(ctx, config.SourceNode); err == nil {
 		sourceEmbeddings = nodeEmbeddingGroups(sourceNode)
 	}
 	scorer.SetSemanticScorer(func(ctx context.Context, source, target storage.NodeID) float64 {
-		targetNode, err := config.identityStore.GetNode(target)
+		targetNode, err := config.identityStore.GetNode(ctx, target)
 		if err != nil || source != config.SourceNode {
 			return 0.0
 		}
@@ -356,7 +356,7 @@ func (e *StorageExecutor) linkPredictionGraph(ctx context.Context, config *linkP
 		if err != nil {
 			return nil, nil, err
 		}
-		config.bindIdentity(e.storage, projection)
+		config.bindIdentity(ctx, e.storage, projection)
 		if missing := missingNames(config.RelationshipTypes, projection.Types); len(missing) > 0 {
 			return nil, nil, localizedError(localization.CypherGraphProceduresRelationshipTypesNotInGraph(gdsNameList(missing), gdsNameList(projection.Types)), nil)
 		}
@@ -388,7 +388,7 @@ func (e *StorageExecutor) linkPredictionGraph(ctx context.Context, config *linkP
 		degree = func(node storage.NodeID) int { return len(relationships[node]) }
 	} else {
 		view := identityGraphEngine(e.storage, e.graphIdentityScope)
-		config.bindIdentity(view, nil)
+		config.bindIdentity(ctx, view, nil)
 		build := linkpredict.DefaultBuildConfig()
 		build.RelationshipTypes = config.RelationshipTypes
 		built, err := linkpredict.BuildGraphFromEngineOptimized(ctx, view, build)

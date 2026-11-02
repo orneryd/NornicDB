@@ -32,7 +32,7 @@ func writeRawValue(t *testing.T, engine *BadgerEngine, key, value []byte) {
 func TestForEachStoredRecordInChunks(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 	for _, id := range []NodeID{"test:a", "test:b", "test:c"} {
-		_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"L"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"L"}})
 		require.NoError(t, err)
 	}
 	var logged bytes.Buffer
@@ -57,11 +57,11 @@ func TestForEachStoredRecordInChunks(t *testing.T) {
 func TestRebuildEdgeTypeIndexBranches(t *testing.T) {
 	t.Run("skips short keys and untyped edges; rebuilds the typed one", func(t *testing.T) {
 		engine := createTestBadgerEngine(t)
-		_, err := engine.CreateNode(&Node{ID: "test:a"})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: "test:a"})
 		require.NoError(t, err)
-		_, err = engine.CreateNode(&Node{ID: "test:b"})
+		_, err = engine.CreateNode(t.Context(), &Node{ID: "test:b"})
 		require.NoError(t, err)
-		require.NoError(t, engine.CreateEdge(&Edge{ID: "test:typed", StartNode: "test:a", EndNode: "test:b", Type: "Knows"}))
+		require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:typed", StartNode: "test:a", EndNode: "test:b", Type: "Knows"}))
 		seedRawRecord(t, engine, &Edge{ID: "test:untyped", StartNode: "test:a", EndNode: "test:b"})
 		writeRawValue(t, engine, []byte{prefixEdge}, []byte{0})
 
@@ -81,7 +81,7 @@ func TestRebuildEdgeTypeIndexBranches(t *testing.T) {
 	})
 	t.Run("write error", func(t *testing.T) {
 		engine, _ := createTestBadgerEngineOnDisk(t)
-		_, err := engine.CreateNode(&Node{ID: "test:a"})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: "test:a"})
 		require.NoError(t, err)
 		seedRawRecord(t, engine, &Edge{ID: "test:huge", StartNode: "test:a", EndNode: "test:a", Type: oversizedName})
 		_, err = engine.rebuildEdgeTypeIndex(context.Background())
@@ -102,7 +102,7 @@ func TestRebuildEdgeTypeIndexBranches(t *testing.T) {
 func TestRebuildLabelAndEdgeBetweenIndexSkipsAndWriteErrors(t *testing.T) {
 	t.Run("label index skips short keys and nodes without a database", func(t *testing.T) {
 		engine := createTestBadgerEngine(t)
-		_, err := engine.CreateNode(&Node{ID: "test:a", Labels: []string{"L"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: "test:a", Labels: []string{"L"}})
 		require.NoError(t, err)
 		writeRawValue(t, engine, []byte{prefixNode}, []byte{0})
 		writeRawValue(t, engine, nodeKey("nodatabase"), []byte{0})
@@ -118,7 +118,7 @@ func TestRebuildLabelAndEdgeBetweenIndexSkipsAndWriteErrors(t *testing.T) {
 	})
 	t.Run("edge-between index write error", func(t *testing.T) {
 		engine, _ := createTestBadgerEngineOnDisk(t)
-		_, err := engine.CreateNode(&Node{ID: "test:a"})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: "test:a"})
 		require.NoError(t, err)
 		seedRawRecord(t, engine, &Edge{ID: "test:huge", StartNode: "test:a", EndNode: "test:a", Type: oversizedName})
 		_, err = engine.rebuildRelationshipIndexes(context.Background(), rebuildEdgeBetweenOnly)
@@ -128,7 +128,7 @@ func TestRebuildLabelAndEdgeBetweenIndexSkipsAndWriteErrors(t *testing.T) {
 
 func putCatalog(t *testing.T, engine *BadgerEngine, cat *IndexEntryCatalog) {
 	t.Helper()
-	require.NoError(t, engine.PutIndexEntryCatalog(cat.TargetID, cat))
+	require.NoError(t, engine.PutIndexEntryCatalog(context.Background(), cat.TargetID, cat))
 }
 
 func TestRewriteIndexEntryCatalogsBranches(t *testing.T) {
@@ -147,7 +147,7 @@ func TestRewriteIndexEntryCatalogsBranches(t *testing.T) {
 	})
 	t.Run("sets a node's current keys", func(t *testing.T) {
 		engine := createTestBadgerEngine(t)
-		_, err := engine.CreateNode(&Node{ID: "test:n", Labels: []string{"A", "B"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: "test:n", Labels: []string{"A", "B"}})
 		require.NoError(t, err)
 		current, err := engine.GetIndexEntryCatalog("test:n")
 		require.NoError(t, err)
@@ -313,7 +313,7 @@ func TestRebuildCaseSensitiveIndexesErrors(t *testing.T) {
 	})
 	t.Run("edge-between index", func(t *testing.T) {
 		engine, _ := createTestBadgerEngineOnDisk(t)
-		_, err := engine.CreateNode(&Node{ID: "test:a"})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: "test:a"})
 		require.NoError(t, err)
 		// A type-index key (type + 10 bytes) fits Badger's 65,000-byte key
 		// limit; an edge-between key (type + 26 bytes) doesn't.
@@ -361,7 +361,7 @@ func TestStartupUpgradeFailsOnAFailedV2ToV3IndexRebuild(t *testing.T) {
 		fixtureowner.Own(t, engine)
 	}
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:a", Labels: []string{"L"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:a", Labels: []string{"L"}})
 	require.NoError(t, err)
 	writeRawValue(t, engine, nodeKey("test:bad"), []byte{0xFF, 0x00})
 	require.NoError(t, engine.writeSchemaVersion(storageVersionPropKeyDictV2))
@@ -376,19 +376,19 @@ func TestStartupUpgradeFailsOnAFailedV2ToV3IndexRebuild(t *testing.T) {
 // it moves the relationship's endpoint-label count to the new label.
 func TestTransactionRelabelMovesEndpointLabelCounts(t *testing.T) {
 	engine := createTestBadgerEngine(t)
-	_, err := engine.CreateNode(&Node{ID: "test:a", Labels: []string{"Person"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:a", Labels: []string{"Person"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:b", Labels: []string{"Thing"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:b", Labels: []string{"Thing"}})
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	require.NoError(t, tx.CreateEdge(&Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "R"}))
-	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:a", Labels: []string{"person"}}, Policy: ClientNodeEdits}))
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "R"}))
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:a", Labels: []string{"person"}}, Policy: ClientNodeEdits}))
 	require.NoError(t, tx.Commit())
 
 	for label, want := range map[string]int64{"person": 1, "Person": 0} {
-		count, err := engine.EdgeCountByStartLabel(label, "R")
+		count, err := engine.EdgeCountByStartLabel(context.Background(), label, "R")
 		require.NoError(t, err)
 		require.Equal(t, want, count, label)
 	}

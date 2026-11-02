@@ -3,12 +3,13 @@ package search
 import (
 	"context"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/voyage"
@@ -172,7 +173,7 @@ func assertReviewerEnvelope(t *testing.T, provider reviewerBoundaryProvider, tes
 			ID: storage.NodeID(string(rune('a' + index))), Labels: []string{"Doc"},
 			Properties: map[string]any{"content": fixture.content}, ChunkEmbeddings: [][]float32{fixture.embedding},
 		}
-		if _, err := engine.CreateNode(node); err != nil {
+		if _, err := engine.CreateNode(t.Context(), node); err != nil {
 			t.Fatal(err)
 		}
 		if err := service.IndexNode(node); err != nil {
@@ -327,7 +328,7 @@ func TestReviewerAliasedFieldsBoundary(t *testing.T) {
 					ID: storage.NodeID(string(rune('a' + index))), Labels: []string{"Doc"},
 					Properties: map[string]any{"content": word + " query"}, ChunkEmbeddings: [][]float32{{1, 0}},
 				}
-				if _, err := engine.CreateNode(node); err != nil {
+				if _, err := engine.CreateNode(t.Context(), node); err != nil {
 					t.Fatal(err)
 				}
 				if err := service.IndexNode(node); err != nil {

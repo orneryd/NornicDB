@@ -94,7 +94,7 @@ func (r *RoleStore) changeRole(ctx context.Context, oldName, newName string, rem
 		if err != nil {
 			return err
 		}
-		stagedUsers, err = applyRoleRecords(view, records, oldName, newName, remove)
+		stagedUsers, err = applyRoleRecords(ctx, view, records, oldName, newName, remove)
 		if err != nil {
 			return err
 		}
@@ -237,7 +237,7 @@ func roleOwnedRecords(ctx context.Context, view storage.Engine, oldName, newName
 // applyRoleRecords uses exactly the enumerated records for either operation.
 // Rename preserves properties, including immutable grants. Deletion removes
 // owned nodes and detaches the role from shared user records.
-func applyRoleRecords(view storage.Engine, records []roleOwnedRecord, oldName, newName string, remove bool) (map[string]*User, error) {
+func applyRoleRecords(ctx context.Context, view storage.Engine, records []roleOwnedRecord, oldName, newName string, remove bool) (map[string]*User, error) {
 	changedUsers := make(map[string]*User)
 	for _, record := range records {
 		if user := record.user; user != nil {
@@ -253,14 +253,14 @@ func applyRoleRecords(view storage.Engine, records []roleOwnedRecord, oldName, n
 			}
 			user.Roles = roles
 			user.UpdatedAt = time.Now()
-			if err := (&Authenticator{storage: view}).saveUser(user, view); err != nil {
+			if err := (&Authenticator{storage: view}).saveUser(ctx, user, view); err != nil {
 				return nil, err
 			}
 			changedUsers[user.Username] = user
 			continue
 		}
 		if !remove {
-			if _, err := view.GetNode(record.replacementID); err != storage.ErrNotFound {
+			if _, err := view.GetNode(ctx, record.replacementID); err != storage.ErrNotFound {
 				if err != nil {
 					return nil, err
 				}
@@ -273,11 +273,11 @@ func applyRoleRecords(view storage.Engine, records []roleOwnedRecord, oldName, n
 				copy.Properties[key] = value
 			}
 			copy.Properties[record.roleProperty] = record.replacementRole
-			if _, err := view.CreateNode(&copy); err != nil {
+			if _, err := view.CreateNode(ctx, &copy); err != nil {
 				return nil, err
 			}
 		}
-		if err := view.DeleteNode(record.node.ID); err != nil {
+		if err := view.DeleteNode(ctx, record.node.ID); err != nil {
 			return nil, err
 		}
 	}

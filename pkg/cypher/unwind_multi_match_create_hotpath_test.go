@@ -105,9 +105,9 @@ func TestUnwindMultiMatchCreate_ElementIDEndpointsHitsBatchPath(t *testing.T) {
 	exec := testutil.SetupTestExecutorWithStore(t, store)
 	ctx := context.Background()
 
-	leftID, err := store.CreateNode(&storage.Node{ID: "left", Labels: []string{"Entity"}})
+	leftID, err := store.CreateNode(ctx, &storage.Node{ID: "left", Labels: []string{"Entity"}})
 	require.NoError(t, err)
-	rightID, err := store.CreateNode(&storage.Node{ID: "right", Labels: []string{"Entity"}})
+	rightID, err := store.CreateNode(ctx, &storage.Node{ID: "right", Labels: []string{"Entity"}})
 	require.NoError(t, err)
 
 	query := `

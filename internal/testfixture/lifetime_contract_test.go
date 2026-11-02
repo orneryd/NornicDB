@@ -1,6 +1,7 @@
 package testfixture
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -24,7 +25,7 @@ type countLifetimeState struct {
 	readErr error
 }
 
-func (state *countLifetimeState) NodeCount() (int64, error) {
+func (state *countLifetimeState) NodeCount(context.Context) (int64, error) {
 	if state.closed {
 		return 0, lifetimeClosed
 	}
@@ -34,8 +35,10 @@ func (state *countLifetimeState) NodeCount() (int64, error) {
 // Hide IsClosed to exercise the storage engine's closed-error contract.
 type countOnlyLifetime struct{ state *countLifetimeState }
 
-func (resource *countOnlyLifetime) Close() error              { return resource.state.Close() }
-func (resource *countOnlyLifetime) NodeCount() (int64, error) { return resource.state.NodeCount() }
+func (resource *countOnlyLifetime) Close() error { return resource.state.Close() }
+func (resource *countOnlyLifetime) NodeCount(context.Context) (int64, error) {
+	return resource.state.NodeCount(context.Background())
+}
 
 type unknownLifetime struct{ state *lifetimeState }
 

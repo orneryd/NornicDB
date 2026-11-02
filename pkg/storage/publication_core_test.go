@@ -133,7 +133,7 @@ func TestPublicationCoreMetadataCommitDoesNotWaitOnStage(t *testing.T) {
 	})
 	go func() {
 		defer close(olderDone)
-		olderErr = b.withPublishingUpdate(context.Background(), func(txn *badger.Txn) error { return txn.Set([]byte("core:entity"), []byte("body")) }, func(*commitCacheImages) { close(entered); <-release }, func(context.Context) ([]any, error) { return []any{NodeID("db:n")}, nil }, nil)
+		olderErr = b.withPublishingUpdate(context.Background(), func(txn *badger.Txn) error { return txn.Set([]byte("core:entity"), []byte("body")) }, func(*commitCacheImages) { close(entered); <-release }, func(context.Context) ([]any, error) { return []any{NodeID("db:n")}, nil }, nil, nil)
 	}()
 	if !awaitPublicationCore(t, entered, "older commit rendezvous") {
 		return
@@ -170,7 +170,7 @@ func TestPublicationCoreLargeCommitPublishesOnceAndAbortPublishesNothing(t *test
 				cw.publishKeys = []any{NodeID("db:n")}
 				payload := make([]byte, 64)
 				for i := 0; i < 20000; i++ {
-					if e := cw.write(func(txn *badger.Txn) error { return txn.Set([]byte(fmt.Sprintf("core:large:%06d", i)), payload) }); e != nil {
+					if e := cw.write(cw.ctx, func(txn *badger.Txn) error { return txn.Set([]byte(fmt.Sprintf("core:large:%06d", i)), payload) }); e != nil {
 						return e
 					}
 				}
@@ -215,7 +215,7 @@ func TestPublicationCoreFailedCommitRetiresReservedNotification(t *testing.T) {
 		if e = b.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error { return txn.Set([]byte("core:conflict"), []byte("B")) }); e != nil {
 			return e
 		}
-		return cw.writeOnce(func(txn *badger.Txn) error { return txn.Set([]byte("core:conflict"), []byte("C")) })
+		return (func(txn *badger.Txn) error { return txn.Set([]byte("core:conflict"), []byte("C")) })(cw.txn)
 	})
 	require.ErrorIs(t, err, badger.ErrConflict)
 	require.True(t, n.reserved)

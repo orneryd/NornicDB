@@ -10,7 +10,7 @@ import (
 func TestConstraintLexicalFoundation(t *testing.T) {
 	engine := constraintContractsEngineFixture(t)
 	node := &Node{ID: "test:lexical", Labels: []string{"Person"}, Properties: map[string]any{"kind": "a;b"}}
-	_, err := engine.CreateNode(node)
+	_, err := engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	for _, expression := range []string{
 		"COUNT\u00a0{\u00a0(n)-[:OWNS]->(:Item)\u00a0}\u00a0<=\u00a00",

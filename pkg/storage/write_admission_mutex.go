@@ -8,6 +8,8 @@ import (
 // contextRWMutex is the shared cancellation-aware admission kernel. No
 // goroutine outlives the wait. Index/buffer locks use it directly; publication
 // locks add their existing ownership observation through trackedRWMutex.
+// Context-taking calls require their actual non-nil lifetime. Ordinary Lock and
+// RLock select an unbounded lifetime at their context-free entry.
 type contextRWMutex struct {
 	mu             sync.Mutex
 	readers        int
@@ -22,7 +24,7 @@ func (m *contextRWMutex) acquire(ctx context.Context, exclusive bool, owner any)
 		m.waitingWriters++
 	}
 	for {
-		if ctx != nil && ctx.Err() != nil {
+		if ctx.Err() != nil {
 			if exclusive {
 				m.waitingWriters--
 				m.signalLocked()
@@ -46,13 +48,9 @@ func (m *contextRWMutex) acquire(ctx context.Context, exclusive bool, owner any)
 		changed := m.changed
 		m.mu.Unlock()
 		observeWriteAdmissionWait(owner, ctx)
-		if ctx == nil {
-			<-changed
-		} else {
-			select {
-			case <-changed:
-			case <-ctx.Done():
-			}
+		select {
+		case <-changed:
+		case <-ctx.Done():
 		}
 		m.mu.Lock()
 	}
@@ -67,8 +65,8 @@ func (m *contextRWMutex) signalLocked() {
 
 func (m *contextRWMutex) LockContext(ctx context.Context) error  { return m.acquire(ctx, true, m) }
 func (m *contextRWMutex) RLockContext(ctx context.Context) error { return m.acquire(ctx, false, m) }
-func (m *contextRWMutex) Lock()                                  { _ = m.LockContext(nil) }
-func (m *contextRWMutex) RLock()                                 { _ = m.RLockContext(nil) }
+func (m *contextRWMutex) Lock()                                  { _ = m.LockContext(context.Background()) }
+func (m *contextRWMutex) RLock()                                 { _ = m.RLockContext(context.Background()) }
 func (m *contextRWMutex) Unlock()                                { m.release(true) }
 func (m *contextRWMutex) RUnlock()                               { m.release(false) }
 
@@ -135,8 +133,8 @@ func (m *trackedRWMutex) acquire(ctx context.Context, exclusive bool) error {
 }
 func (m *trackedRWMutex) LockContext(ctx context.Context) error  { return m.acquire(ctx, true) }
 func (m *trackedRWMutex) RLockContext(ctx context.Context) error { return m.acquire(ctx, false) }
-func (m *trackedRWMutex) Lock()                                  { _ = m.LockContext(nil) }
-func (m *trackedRWMutex) RLock()                                 { _ = m.RLockContext(nil) }
+func (m *trackedRWMutex) Lock()                                  { _ = m.LockContext(context.Background()) }
+func (m *trackedRWMutex) RLock()                                 { _ = m.RLockContext(context.Background()) }
 func (m *trackedRWMutex) Unlock()                                { m.release(true) }
 func (m *trackedRWMutex) RUnlock()                               { m.release(false) }
 func (m *trackedRWMutex) TryLock() bool                          { return m.tryAcquire(true) }

@@ -726,7 +726,7 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 		}
 		filtered := make([]*storage.Node, 0, util.SafePreallocCap(len(ids)))
 		for _, id := range ids {
-			node, getErr := e.getQueryNode(store, id)
+			node, getErr := e.getQueryNode(ctx, store, id)
 			if getErr != nil {
 				return getErr
 			}
@@ -787,7 +787,7 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 			if projected == nil || !matches(projected.Properties) {
 				return nil
 			}
-			node, err := e.getQueryNode(store, projected.ID)
+			node, err := e.getQueryNode(ctx, store, projected.ID)
 			if errors.Is(err, storage.ErrNotFound) {
 				return nil
 			}

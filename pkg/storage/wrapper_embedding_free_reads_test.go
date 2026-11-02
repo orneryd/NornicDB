@@ -26,9 +26,9 @@ func (s *embeddingFreeReadSpy) StreamNodesWithOptions(ctx context.Context, opts 
 	return s.Engine.StreamNodesWithOptions(ctx, opts, visit)
 }
 
-func (s *embeddingFreeReadSpy) GetNode(id NodeID) (*Node, error) {
+func (s *embeddingFreeReadSpy) GetNode(ctx context.Context, id NodeID) (*Node, error) {
 	s.fullReads++
-	return s.Engine.GetNode(id)
+	return s.Engine.GetNode(ctx, id)
 }
 
 func (s *embeddingFreeReadSpy) BatchGetNodes(ctx context.Context, ids []NodeID) (map[NodeID]*Node, error) {
@@ -36,9 +36,9 @@ func (s *embeddingFreeReadSpy) BatchGetNodes(ctx context.Context, ids []NodeID) 
 	return s.Engine.BatchGetNodes(ctx, ids)
 }
 
-func (s *embeddingFreeReadSpy) GetNodeWithoutEmbeddings(id NodeID) (*Node, error) {
+func (s *embeddingFreeReadSpy) GetNodeWithoutEmbeddings(ctx context.Context, id NodeID) (*Node, error) {
 	s.lightReads++
-	return s.Engine.(NodeWithoutEmbeddingsReader).GetNodeWithoutEmbeddings(id)
+	return s.Engine.(NodeWithoutEmbeddingsReader).GetNodeWithoutEmbeddings(ctx, id)
 }
 
 func (s *embeddingFreeReadSpy) BatchGetNodesWithoutEmbeddings(ctx context.Context, ids []NodeID) (map[NodeID]*Node, error) {
@@ -65,7 +65,7 @@ func TestEmbeddingFreeBatchReadsTraverseNamespacedWALStack(t *testing.T) {
 		},
 		NamedEmbeddings: map[string][]float32{"visual": make([]float32, 4096)},
 	}
-	_, err = tenant.CreateNode(node)
+	_, err = tenant.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	pending := &Node{
 		ID:              "pending",
@@ -73,7 +73,7 @@ func TestEmbeddingFreeBatchReadsTraverseNamespacedWALStack(t *testing.T) {
 		Properties:      map[string]any{"state": "queued"},
 		ChunkEmbeddings: [][]float32{make([]float32, 4096)},
 	}
-	_, err = tenant.CreateNode(pending)
+	_, err = tenant.CreateNode(t.Context(), pending)
 	require.NoError(t, err)
 
 	require.True(t, tenant.BatchGetNodesWithoutEmbeddingsSupported())
@@ -100,10 +100,10 @@ func TestEmbeddingFreeSingleReadsTraverseWALStack(t *testing.T) {
 	wal := NewWALEngine(spy, walLog)
 
 	node := &Node{ID: "nornic:persisted", ChunkEmbeddings: [][]float32{make([]float32, 4096)}}
-	_, err = wal.CreateNode(node)
+	_, err = wal.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
-	light, err := wal.GetNodeWithoutEmbeddings(node.ID)
+	light, err := wal.GetNodeWithoutEmbeddings(t.Context(), node.ID)
 	require.NoError(t, err)
 	require.Empty(t, light.ChunkEmbeddings)
 	require.Equal(t, 1, spy.lightReads)
@@ -116,7 +116,7 @@ func TestEmbeddingFreeSingleReadFallbackStripsEmbeddings(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = badger.Close() })
 		id := NodeID("test:light-read")
-		_, err = badger.CreateNode(&Node{
+		_, err = badger.CreateNode(t.Context(), &Node{
 			ID: id, Properties: map[string]any{"keep": "visible"},
 			ChunkEmbeddings: [][]float32{{1, 0}},
 			NamedEmbeddings: map[string][]float32{"named": {0, 1}},
@@ -128,16 +128,16 @@ func TestEmbeddingFreeSingleReadFallbackStripsEmbeddings(t *testing.T) {
 		wal := NewWALEngine(fallback, log)
 		t.Cleanup(func() { _ = wal.Close() })
 		reader := wal
-		light, err := reader.GetNodeWithoutEmbeddings(id)
+		light, err := reader.GetNodeWithoutEmbeddings(t.Context(), id)
 		require.NoError(t, err)
 		require.Equal(t, "visible", light.Properties["keep"])
 		require.Empty(t, light.ChunkEmbeddings)
 		require.Empty(t, light.NamedEmbeddings)
-		original, err := badger.GetNode(id)
+		original, err := badger.GetNode(t.Context(), id)
 		require.NoError(t, err)
 		require.NotEmpty(t, original.ChunkEmbeddings)
 		require.NotEmpty(t, original.NamedEmbeddings)
-		_, err = reader.GetNodeWithoutEmbeddings("test:missing")
+		_, err = reader.GetNodeWithoutEmbeddings(t.Context(), "test:missing")
 		require.ErrorIs(t, err, ErrNotFound)
 	})
 }
@@ -155,10 +155,10 @@ func TestNamespacedEmbeddingFreeReadFallbackStripsEmbeddings(t *testing.T) {
 		ChunkEmbeddings: [][]float32{{1, 0}},
 		NamedEmbeddings: map[string][]float32{"named": {0, 1}},
 	}
-	_, err = tenant.CreateNode(node)
+	_, err = tenant.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
-	light, err := tenant.GetNodeWithoutEmbeddings(node.ID)
+	light, err := tenant.GetNodeWithoutEmbeddings(t.Context(), node.ID)
 	require.NoError(t, err)
 	require.Equal(t, node.ID, light.ID)
 	require.Equal(t, "visible", light.Properties["keep"])
@@ -166,7 +166,7 @@ func TestNamespacedEmbeddingFreeReadFallbackStripsEmbeddings(t *testing.T) {
 	require.Empty(t, light.ChunkEmbeddings)
 	require.Empty(t, light.NamedEmbeddings)
 
-	full, err := tenant.GetNode(node.ID)
+	full, err := tenant.GetNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	require.NotEmpty(t, full.ChunkEmbeddings)
 	require.NotEmpty(t, full.NamedEmbeddings)
@@ -179,7 +179,7 @@ func BenchmarkEmbeddingFreeSingleReadFallback(b *testing.B) {
 	}
 	b.Cleanup(func() { _ = badger.Close() })
 	id := NodeID("test:light-read-bench")
-	_, err = badger.CreateNode(&Node{
+	_, err = badger.CreateNode(b.Context(), &Node{
 		ID: id, Properties: map[string]any{"keep": "visible"},
 		ChunkEmbeddings: [][]float32{{1, 0}},
 		NamedEmbeddings: map[string][]float32{"named": {0, 1}},
@@ -190,7 +190,7 @@ func BenchmarkEmbeddingFreeSingleReadFallback(b *testing.B) {
 	fallback := &engineWithoutLightRead{Engine: badger}
 	namespacedID := NodeID("test:namespaced-light-read-bench")
 	namespaced := NewNamespacedEngine(fallback, "benchmark")
-	_, err = namespaced.CreateNode(&Node{
+	_, err = namespaced.CreateNode(b.Context(), &Node{
 		ID: namespacedID, Properties: map[string]any{"keep": "visible"},
 		ChunkEmbeddings: [][]float32{{1, 0}},
 		NamedEmbeddings: map[string][]float32{"named": {0, 1}},
@@ -209,11 +209,11 @@ func BenchmarkEmbeddingFreeSingleReadFallback(b *testing.B) {
 		id   NodeID
 		read func(NodeID) (*Node, error)
 	}{
-		{name: "full", id: id, read: badger.GetNode},
-		{name: "native-light", id: id, read: badger.GetNodeWithoutEmbeddings},
-		{name: "wal-fallback", id: id, read: wal.GetNodeWithoutEmbeddings},
-		{name: "namespaced-full-baseline", id: namespacedID, read: namespaced.GetNode},
-		{name: "namespaced-fallback", id: namespacedID, read: namespaced.GetNodeWithoutEmbeddings},
+		{name: "full", id: id, read: func(id NodeID) (*Node, error) { return badger.GetNode(context.Background(), id) }},
+		{name: "native-light", id: id, read: func(id NodeID) (*Node, error) { return badger.GetNodeWithoutEmbeddings(context.Background(), id) }},
+		{name: "wal-fallback", id: id, read: func(id NodeID) (*Node, error) { return wal.GetNodeWithoutEmbeddings(context.Background(), id) }},
+		{name: "namespaced-full-baseline", id: namespacedID, read: func(id NodeID) (*Node, error) { return namespaced.GetNode(context.Background(), id) }},
+		{name: "namespaced-fallback", id: namespacedID, read: func(id NodeID) (*Node, error) { return namespaced.GetNodeWithoutEmbeddings(context.Background(), id) }},
 	} {
 		b.Run(entry.name, func(b *testing.B) {
 			b.ReportAllocs()
@@ -239,7 +239,7 @@ func TestEmbeddingFreePrefixScansTraverseNamespacedWALStack(t *testing.T) {
 		{ID: "persisted", Properties: map[string]any{"keep": "yes", "drop": "large"}, EmbedMeta: map[string]any{"embedding_failed": true}, ChunkEmbeddings: [][]float32{make([]float32, 4096)}},
 		{ID: "pending", Properties: map[string]any{"keep": "also", "drop": "large"}, EmbedMeta: map[string]any{"embedding_failed": true}, ChunkEmbeddings: [][]float32{make([]float32, 4096)}},
 	} {
-		_, err = tenant.CreateNode(node)
+		_, err = tenant.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 
@@ -269,7 +269,7 @@ func TestEmbeddingFreeBatchCapabilityRejectsUnsupportedInnerEngine(t *testing.T)
 
 	require.False(t, wal.BatchGetNodesWithoutEmbeddingsSupported())
 	require.False(t, tenant.BatchGetNodesWithoutEmbeddingsSupported())
-	_, err = tenant.CreateNode(&Node{
+	_, err = tenant.CreateNode(t.Context(), &Node{
 		ID:              "cached",
 		ChunkEmbeddings: [][]float32{make([]float32, 4096)},
 	})
@@ -311,7 +311,7 @@ func BenchmarkNamespacedWALBatchNodeReads(b *testing.B) {
 		for chunk := 0; chunk < 8; chunk++ {
 			node.ChunkEmbeddings = append(node.ChunkEmbeddings, make([]float32, 1024))
 		}
-		_, err = tenant.CreateNode(node)
+		_, err = tenant.CreateNode(b.Context(), node)
 		require.NoError(b, err)
 	}
 

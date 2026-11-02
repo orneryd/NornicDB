@@ -24,25 +24,25 @@ func TestEmbeddingRangeManifestOldWriterRoundTrip(t *testing.T) {
 			t.Cleanup(func() { require.NoError(t, engine.Close()) })
 			engine.SetEmbeddingTextPolicy(EmbeddingTextPolicy{Include: []string{"text"}})
 			body := &Node{ID: NodeID("test:downgrade-" + shape), Labels: []string{"Doc"}, Properties: map[string]any{"text": "unchanged source"}}
-			_, err := engine.CreateNode(body)
+			_, err := engine.CreateNode(t.Context(), body)
 			require.NoError(t, err)
 			initial := CopyNode(body)
 			initial.ChunkEmbeddings = [][]float32{{1, 2}}
 			initial.EmbedMeta = map[string]any{"chunk_count": 1, "embedding_dimensions": 2}
-			require.NoError(t, engine.UpdateNodeEmbeddingSidecar(initial))
+			require.NoError(t, engine.UpdateNodeEmbeddingSidecar(context.Background(), initial))
 			require.NoError(t, engine.withView(func(txn *badger.Txn) error {
 				item, err := txn.Get(embeddingMetaKey(body.ID))
 				require.NoError(t, err)
 				require.Equal(t, embeddingRangeManifestBound, item.UserMeta(), "only the new range owner binds its freshly derived layout")
 				return nil
 			}))
-			held, err := engine.BeginTransaction()
+			held, err := engine.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, held.Rollback()) })
 
 			// Actual old hydration removes only the content stamp. It does not
 			// invent, invalidate or maintain the unknown layout entry.
-			older, err := engine.GetNodeWithoutEmbeddings(body.ID)
+			older, err := engine.GetNodeWithoutEmbeddings(t.Context(), body.ID)
 			require.NoError(t, err)
 			require.NoError(t, engine.withView(func(txn *badger.Txn) error {
 				meta, fresh, err := engine.loadEmbeddingSidecar(embeddingRecordReader{txn: txn}, older, older.ID)
@@ -71,7 +71,7 @@ func TestEmbeddingRangeManifestOldWriterRoundTrip(t *testing.T) {
 			}
 			older.EmbedMeta["chunk_count"] = len(older.ChunkEmbeddings)
 			older.EmbedMeta["embedding_dimensions"] = len(older.ChunkEmbeddings[0])
-			require.NoError(t, engine.persistSidecarBeforeManifest(older))
+			require.NoError(t, engine.persistSidecarBeforeManifest(t.Context(), older))
 			require.NoError(t, engine.withView(func(txn *badger.Txn) error {
 				item, err := txn.Get(embeddingMetaKey(body.ID))
 				require.NoError(t, err)
@@ -87,17 +87,17 @@ func TestEmbeddingRangeManifestOldWriterRoundTrip(t *testing.T) {
 			if strings.HasSuffix(shape, "_freshness") {
 				// A source-preserving transaction must not launder an old
 				// writer's unbound layout into a trusted range.
-				retained, err := engine.GetNode(body.ID)
+				retained, err := engine.GetNode(t.Context(), body.ID)
 				require.NoError(t, err)
 				retained.Properties["views"] = int64(1)
-				tx, err := engine.BeginTransaction()
+				tx, err := engine.BeginTransaction(t.Context())
 				require.NoError(t, err)
-				require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: retained, Policy: ClientNodeEdits}))
+				require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: retained, Policy: ClientNodeEdits}))
 				require.NoError(t, tx.Commit())
-				saved, err := engine.GetNode(body.ID)
+				saved, err := engine.GetNode(t.Context(), body.ID)
 				require.NoError(t, err)
 				require.Equal(t, older.ChunkEmbeddings, saved.ChunkEmbeddings, "the fixture must preserve the source and its actual old-writer layout")
-				body, err = engine.GetNodeWithoutEmbeddings(body.ID)
+				body, err = engine.GetNodeWithoutEmbeddings(t.Context(), body.ID)
 				require.NoError(t, err)
 				require.NoError(t, engine.withView(func(txn *badger.Txn) error {
 					item, err := txn.Get(embeddingMetaKey(body.ID))
@@ -113,7 +113,7 @@ func TestEmbeddingRangeManifestOldWriterRoundTrip(t *testing.T) {
 			current := CopyNode(body)
 			current.ChunkEmbeddings = [][]float32{{7, 8}}
 			current.EmbedMeta = map[string]any{"chunk_count": 1, "embedding_dimensions": 2}
-			require.NoError(t, engine.UpdateNodeEmbeddingSidecar(current))
+			require.NoError(t, engine.UpdateNodeEmbeddingSidecar(context.Background(), current))
 			require.NoError(t, engine.withView(func(txn *badger.Txn) error {
 				item, err := txn.Get(embeddingMetaKey(body.ID))
 				require.NoError(t, err)
@@ -124,11 +124,11 @@ func TestEmbeddingRangeManifestOldWriterRoundTrip(t *testing.T) {
 				}
 				return nil
 			}))
-			saved, err := engine.GetNode(body.ID)
+			saved, err := engine.GetNode(t.Context(), body.ID)
 			require.NoError(t, err)
 			require.Equal(t, current.ChunkEmbeddings, saved.ChunkEmbeddings)
 			require.NotContains(t, saved.EmbedMeta, embeddingRangeManifestKey)
-			old, err := held.GetNode(body.ID)
+			old, err := held.GetNode(t.Context(), body.ID)
 			require.NoError(t, err)
 			require.Equal(t, initial.ChunkEmbeddings, old.ChunkEmbeddings)
 		})
@@ -136,7 +136,7 @@ func TestEmbeddingRangeManifestOldWriterRoundTrip(t *testing.T) {
 }
 
 // Exact base d854845e9b08e510b56587fddf49694b208e6a3b public writer; only helper names changed.
-func (b *BadgerEngine) persistSidecarBeforeManifest(node *Node) error {
+func (b *BadgerEngine) persistSidecarBeforeManifest(ctx context.Context, node *Node) error {
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
 	if node == nil {
@@ -199,10 +199,10 @@ func (b *BadgerEngine) persistSidecarBeforeManifest(node *Node) error {
 		units = append(units, func(txn *badger.Txn) error { return txn.Delete(metaKey) })
 	}
 	units = append(units, func(txn *badger.Txn) error { return txn.Delete(pendingEmbedKey(node.ID)) })
-	err = b.commitEngineWrite(context.Background(), func(cw *commitWriter) error {
+	err = b.commitEngineWrite(ctx, func(cw *commitWriter) error {
 		var writes []func(txn *badger.Txn) error
-		if err := cw.writeOnce(func(txn *badger.Txn) error {
-			if err := b.checkEmbeddingSourceInTxn(txn, node); err != nil {
+		if err := (func(txn *badger.Txn) error {
+			if err := b.checkEmbeddingSourceInTxn(ctx, txn, node); err != nil {
 				return err
 			}
 			it := txn.NewIterator(badgerPrefixIteratorOptions(embeddingPrefix(node.ID)))
@@ -215,11 +215,11 @@ func (b *BadgerEngine) persistSidecarBeforeManifest(node *Node) error {
 				(*hook)()
 			}
 			return nil
-		}); err != nil {
+		})(cw.txn); err != nil {
 			return err
 		}
 		for _, unit := range append(writes, units...) {
-			if err := cw.write(unit); err != nil {
+			if err := cw.write(cw.ctx, unit); err != nil {
 				return err
 			}
 		}

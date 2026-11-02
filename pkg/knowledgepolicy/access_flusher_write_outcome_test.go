@@ -1,6 +1,8 @@
 package knowledgepolicy
 
 import (
+	"context"
+
 	"errors"
 	"testing"
 	"time"
@@ -29,7 +31,7 @@ func TestAccessFlusherCallbacksFollowAcceptedWrite(t *testing.T) {
 			f := NewAccessFlusher(acc, store, time.Hour)
 			invalidates, rechecks := 0, 0
 			f.SetPropertySuppression(nil, &mockEntityMeta{err: tc.lookupErr}, func(string) { invalidates++ })
-			f.SetSuppressionRecheck(func(string, EntityMeta) { rechecks++ })
+			f.SetSuppressionRecheck(func(context.Context, string, EntityMeta) { rechecks++ })
 			acc.IncrementAccess("test:n")
 			f.Flush()
 			require.Len(t, store.writes, tc.wantWrites)

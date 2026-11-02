@@ -250,8 +250,10 @@ func (b *BadgerEngine) rebuildAuthoritativeLabelCountsLocked(ctx context.Context
 	return b.rebuildLabelCounts(ctx, counts)
 }
 
-func (b *BadgerEngine) NodeCountByLabelInNamespace(namespace, label string) (int64, error) {
-	return b.namedCountInNamespace(context.Background(), countDeltaKindLabel, namespace, label)
+// NodeCountByLabelInNamespace reads the stored namespace count and pending
+// deltas under ctx, including any required derived-count repair.
+func (b *BadgerEngine) NodeCountByLabelInNamespace(ctx context.Context, namespace, label string) (int64, error) {
+	return b.namedCountInNamespace(ctx, countDeltaKindLabel, namespace, label)
 }
 
 // repairNamedCountLocked rebuilds a label or relationship-type base count and
@@ -353,8 +355,9 @@ func (b *BadgerEngine) foldAllLabelCountDeltas(ctx context.Context) error {
 	return b.foldNamedCountDeltas(ctx, countDeltaKindLabel, "", "", true)
 }
 
-func (b *BadgerEngine) NodeCountByLabel(label string) (int64, error) {
-	return b.namedCount(context.Background(), countDeltaKindLabel, label)
+// NodeCountByLabel reads the label cardinality across namespaces under ctx.
+func (b *BadgerEngine) NodeCountByLabel(ctx context.Context, label string) (int64, error) {
+	return b.namedCount(ctx, countDeltaKindLabel, label)
 }
 
 func (b *BadgerEngine) labelCountReady() (bool, error) {

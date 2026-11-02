@@ -72,15 +72,15 @@ func TestWALEnginePrefixCountPartialResults(t *testing.T) {
 		nodes:  []*Node{{ID: "test:n1"}},
 		edges:  []*Edge{{ID: "test:e1", Type: "REL"}},
 	})
-	unmatched, err := outside.NodeCountByPrefix("absent:")
+	unmatched, err := outside.NodeCountByPrefix(context.Background(), "absent:")
 	require.NoError(t, err)
 	require.Zero(t, unmatched, "a prefix no record matches counts nothing")
 
-	nodes, err := walEngine.NodeCountByPrefix("test:")
+	nodes, err := walEngine.NodeCountByPrefix(context.Background(), "test:")
 	require.ErrorIs(t, err, streamErr, "the streaming read's own error reaches the caller")
 	require.Equal(t, int64(2), nodes, "a streaming read keeps the count it reached")
 
-	edges, err := walEngine.EdgeCountByPrefix("test:")
+	edges, err := walEngine.EdgeCountByPrefix(context.Background(), "test:")
 	require.ErrorIs(t, err, streamErr)
 	require.Equal(t, int64(1), edges)
 }
@@ -94,11 +94,11 @@ func TestWALEnginePrefixCountFailsWithoutACount(t *testing.T) {
 		edgeErr: readErr,
 	})
 
-	nodes, err := walEngine.NodeCountByPrefix("test:")
+	nodes, err := walEngine.NodeCountByPrefix(context.Background(), "test:")
 	require.ErrorIs(t, err, readErr)
 	require.Zero(t, nodes)
 
-	edges, err := walEngine.EdgeCountByPrefix("test:")
+	edges, err := walEngine.EdgeCountByPrefix(context.Background(), "test:")
 	require.ErrorIs(t, err, readErr)
 	require.Zero(t, edges)
 }

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -176,7 +177,7 @@ func (v *recoverySnapshotVisitor) flushNodes() error {
 	if len(v.nodes) == 0 {
 		return nil
 	}
-	if err := v.engine.BulkCreateNodes(v.nodes); err != nil {
+	if err := v.engine.BulkCreateNodes(context.Background(), v.nodes); err != nil {
 		return fmt.Errorf("wal: failed to restore nodes: %w", err)
 	}
 	clear(v.nodes)
@@ -188,7 +189,7 @@ func (v *recoverySnapshotVisitor) flushEdges() error {
 	if len(v.edges) == 0 {
 		return nil
 	}
-	if err := v.engine.BulkCreateEdges(v.edges); err != nil {
+	if err := v.engine.BulkCreateEdges(context.Background(), v.edges); err != nil {
 		return fmt.Errorf("wal: failed to restore edges: %w", err)
 	}
 	clear(v.edges)
@@ -216,10 +217,10 @@ func restoreLegacySnapshot(destination Engine, snapshot *Snapshot) error {
 		edge.EndNode = NodeID(StripDatabasePrefix(dbName, string(edge.EndNode)))
 	}
 	namespaced := NewNamespacedEngine(destination, dbName)
-	if err := namespaced.BulkCreateNodes(snapshot.Nodes); err != nil {
+	if err := namespaced.BulkCreateNodes(context.Background(), snapshot.Nodes); err != nil {
 		return fmt.Errorf("wal: failed to restore nodes: %w", err)
 	}
-	if err := namespaced.BulkCreateEdges(snapshot.Edges); err != nil {
+	if err := namespaced.BulkCreateEdges(context.Background(), snapshot.Edges); err != nil {
 		return fmt.Errorf("wal: failed to restore edges: %w", err)
 	}
 	return nil

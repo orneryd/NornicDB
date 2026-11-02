@@ -152,9 +152,9 @@ func TestCDCReductionStatement(t *testing.T) {
 	// A cursor older than the retained feed is expired.
 	capture, _ := storage.ChangeCaptureOf(store)
 	type pruner interface {
-		PruneChangeEvents(namespace string, cutoff time.Time) (int, error)
+		PruneChangeEvents(_ context.Context, namespace string, cutoff time.Time) (int, error)
 	}
-	_, err = capture.(pruner).PruneChangeEvents("test", time.Now().Add(time.Hour))
+	_, err = capture.(pruner).PruneChangeEvents(context.Background(), "test", time.Now().Add(time.Hour))
 	require.NoError(t, err)
 	_, err = exec.Execute(ctx, cdcReductionStatement, map[string]interface{}{"cursor": start, "selectors": cdcReductionSelectors, "limit": 5000})
 	requireStatusCode(t, err, "Neo.ClientError.ChangeDataCapture.InvalidIdentifier")

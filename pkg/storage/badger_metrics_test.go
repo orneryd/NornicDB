@@ -87,7 +87,7 @@ func TestStorageOp_ObservesReads(t *testing.T) {
 		minimum         uint64
 	}{
 		{name: "TestStorageOp_ObservesGet", operation: "get", minimum: 1,
-			read: func(be *BadgerEngine) { _, _ = be.GetNode("nornic:nope") }},
+			read: func(be *BadgerEngine) { _, _ = be.GetNode(t.Context(), "nornic:nope") }},
 		{name: "TestStorageOp_ObservesScan", operation: "scan", minimum: 2,
 			read: func(be *BadgerEngine) {
 				_, _ = be.AllNodes(context.Background())
@@ -109,10 +109,10 @@ func TestStorageOp_ObservesPut(t *testing.T) {
 		nodeID: "nornic:n1",
 		// CreateNode + UpdateNode both record on op="put".
 		write: func(be *BadgerEngine, node *Node) error {
-			if _, err := be.CreateNode(node); err != nil {
+			if _, err := be.CreateNode(t.Context(), node); err != nil {
 				return err
 			}
-			return be.UpdateNode(NodeUpdateRequest{After: node})
+			return be.UpdateNode(t.Context(), NodeUpdateRequest{After: node})
 		},
 		op:       "put",
 		minCount: uint64(2),
@@ -126,10 +126,10 @@ func TestStorageOp_ObservesDelete(t *testing.T) {
 		nodeID: "nornic:n2",
 		// CreateNode + DeleteNode record one sample on op="delete".
 		write: func(be *BadgerEngine, node *Node) error {
-			if _, err := be.CreateNode(node); err != nil {
+			if _, err := be.CreateNode(t.Context(), node); err != nil {
 				return err
 			}
-			return be.DeleteNode(node.ID)
+			return be.DeleteNode(t.Context(), node.ID)
 		},
 		op:       "delete",
 		minCount: uint64(1),
@@ -148,7 +148,7 @@ func TestStorageOp_NoOpWithoutAttach(t *testing.T) {
 	bag := observability.NewStorageMetrics(reg, false, probe)
 	_ = bag // bag exists in registry but is NOT attached to the engine
 
-	_, _ = be.GetNode("nornic:nope")
+	_, _ = be.GetNode(t.Context(), "nornic:nope")
 	// metricsAttached is still false so GetNode does not record on the bag.
 	require.Equal(t, uint64(0), findOpDurationSampleCount(t, reg, "get"))
 }
@@ -193,11 +193,11 @@ func TestPressureBand_UpdateBandRoundTrip(t *testing.T) {
 func TestStorageHotPath_NoNewAllocs(t *testing.T) {
 	be, _, _, _ := setupAttachedEngine(t)
 	node := &Node{ID: "nornic:hot", Labels: []string{"L"}}
-	_, err := be.CreateNode(node)
+	_, err := be.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	allocs := testing.AllocsPerRun(50, func() {
-		_, _ = be.GetNode("nornic:hot")
+		_, _ = be.GetNode(t.Context(), "nornic:hot")
 	})
 	// Hot-path budget after instrumentation: GetNode itself does some
 	// allocations (cache decode, copyNode); the instrumentation alone

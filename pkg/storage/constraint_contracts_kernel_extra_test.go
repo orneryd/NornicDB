@@ -49,7 +49,7 @@ func TestConstraintContracts_ValidateKernel_DeterministicOrderAndParity(t *testi
 	}
 	require.NoError(t, sm.AddConstraintContractBundle(edgeBeta, nil, nil, false))
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	defer tx.Rollback()
@@ -100,10 +100,10 @@ func BenchmarkConstraintContracts_ValidateLocked_Node(b *testing.B) {
 	if err := sm.AddConstraintContractBundle(contract, nil, nil, false); err != nil {
 		b.Fatal(err)
 	}
-	if _, err := engine.CreateNode(&Node{ID: "test:p1", Labels: []string{"Person"}, Properties: map[string]any{"team": "core"}}); err != nil {
+	if _, err := engine.CreateNode(b.Context(), &Node{ID: "test:p1", Labels: []string{"Person"}, Properties: map[string]any{"team": "core"}}); err != nil {
 		b.Fatal(err)
 	}
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(b.Context())
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func BenchmarkConstraintContracts_ValidateLocked_Node(b *testing.B) {
 	if err := tx.SetNamespace("test"); err != nil {
 		b.Fatal(err)
 	}
-	node, err := tx.currentNodeLocked("test:p1")
+	node, err := tx.currentNodeLocked(b.Context(), "test:p1")
 	if err != nil {
 		b.Fatal(err)
 	}

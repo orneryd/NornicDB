@@ -8,10 +8,10 @@ import (
 // nativeDeletionFootprint reads stored-inclusive adjacency, including hidden
 // and acknowledged entities. Preflight supplies identities only; mutation keeps
 // its canonical final read after ownership and write-behind settlement.
-func (b *BadgerEngine) nativeDeletionFootprint(id string, isEdge bool) (writtenEntities, error) {
+func (b *BadgerEngine) nativeDeletionFootprint(ctx context.Context, id string, isEdge bool) (writtenEntities, error) {
 	var edges []*Edge
 	if isEdge {
-		edge, err := b.GetStoredEdge(EdgeID(id))
+		edge, err := b.GetStoredEdge(ctx, EdgeID(id))
 		if err != nil && !errors.Is(err, ErrNotFound) {
 			return writtenEntities{}, err
 		}
@@ -19,14 +19,13 @@ func (b *BadgerEngine) nativeDeletionFootprint(id string, isEdge bool) (writtenE
 			edges = append(edges, edge)
 		}
 	} else {
-		// Deletion footprint is a write-owned integrity read: its lifetime is
-		// the accepted write's own (context.Background), never a statement
-		// read's context.
-		outgoing, err := b.GetStoredOutgoingEdges(context.Background(), NodeID(id))
+		// Preflight uses the caller's preparation context; final validation
+		// passes the actual write owner's selected lifetime.
+		outgoing, err := b.GetStoredOutgoingEdges(ctx, NodeID(id))
 		if err != nil {
 			return writtenEntities{}, err
 		}
-		incoming, err := b.GetStoredIncomingEdges(context.Background(), NodeID(id))
+		incoming, err := b.GetStoredIncomingEdges(ctx, NodeID(id))
 		if err != nil {
 			return writtenEntities{}, err
 		}
@@ -81,7 +80,7 @@ func (sm *SchemaManager) requireEntityFootprint(owner string, footprint writtenE
 }
 
 func (b *BadgerEngine) validateNativeDeletionFootprint(write *entityWriteContext, id string, isEdge bool) error {
-	footprint, err := b.nativeDeletionFootprint(id, isEdge)
+	footprint, err := b.nativeDeletionFootprint(write.ctx, id, isEdge)
 	if err != nil {
 		return err
 	}

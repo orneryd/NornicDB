@@ -102,7 +102,7 @@ func TestCompoundMatchOptionalMatch_OrderStatusPharmacy(t *testing.T) {
 			"details":         "[]",
 		},
 	}
-	_, err := store.CreateNode(o)
+	_, err := store.CreateNode(t.Context(), o)
 	require.NoError(t, err)
 
 	// Pharmacy
@@ -114,7 +114,7 @@ func TestCompoundMatchOptionalMatch_OrderStatusPharmacy(t *testing.T) {
 			"name": "Store 4521",
 		},
 	}
-	_, err = store.CreateNode(ph)
+	_, err = store.CreateNode(t.Context(), ph)
 	require.NoError(t, err)
 
 	// FILLED_AT edge
@@ -125,7 +125,7 @@ func TestCompoundMatchOptionalMatch_OrderStatusPharmacy(t *testing.T) {
 		EndNode:    ph.ID,
 		Properties: map[string]interface{}{},
 	}
-	require.NoError(t, store.CreateEdge(edge))
+	require.NoError(t, store.CreateEdge(t.Context(), edge))
 
 	query := `MATCH (n:OrderStatus) WHERE n.userId = 'user-1' AND NOT (n)-[:SUPERSEDED_BY]->()
 OPTIONAL MATCH (n)-[:FILLED_AT]->(ph:Pharmacy)
@@ -166,7 +166,7 @@ func TestCompoundMatchOptionalMatch_OrderStatusNoPharmacy(t *testing.T) {
 			"orderDate": "2026-02-04",
 		},
 	}
-	_, err := store.CreateNode(o)
+	_, err := store.CreateNode(t.Context(), o)
 	require.NoError(t, err)
 
 	query := `MATCH (n:OrderStatus) WHERE n.userId = 'user-1' AND NOT (n)-[:SUPERSEDED_BY]->()

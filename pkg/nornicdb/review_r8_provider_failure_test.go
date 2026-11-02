@@ -36,7 +36,7 @@ func TestReviewOldProviderFailureAfterSetter(t *testing.T) {
 			require.NoError(t, err)
 			defer disk.Close()
 			disk.SetEmbeddingsEnabled(true)
-			_, err = disk.CreateNode(&storage.Node{ID: "review:doc", Properties: map[string]any{"text": "input accepted by the replacement provider"}})
+			_, err = disk.CreateNode(t.Context(), &storage.Node{ID: "review:doc", Properties: map[string]any{"text": "input accepted by the replacement provider"}})
 			require.NoError(t, err)
 			events := make(chan *storage.Node, 4)
 			disk.OnNodeUpdated(func(node *storage.Node) { events <- storage.CopyNode(node) })
@@ -64,7 +64,7 @@ func TestReviewOldProviderFailureAfterSetter(t *testing.T) {
 				t.Fatal("worker never published a result or failure")
 			}
 			worker.Close()
-			node, err := disk.GetNode("review:doc")
+			node, err := disk.GetNode(t.Context(), "review:doc")
 			require.NoError(t, err)
 			t.Logf("after completed %s setter: replacement calls=%d pending=%d parked=%d stored vectors=%d event metadata=%v stored metadata=%v", setter, replacement.GetEmbedCount(), disk.PendingEmbeddingsCount(), worker.parked.Load(), len(node.ChunkEmbeddings), event.EmbedMeta, node.EmbedMeta)
 			require.NotEqual(t, true, node.EmbedMeta["embedding_failed"], "the old generation cannot terminally park replacement-provider work")

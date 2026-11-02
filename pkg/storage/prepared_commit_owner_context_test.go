@@ -9,11 +9,11 @@ import (
 
 func TestPreparedCommitOwnerSurvivesPreparationWaitCancellation(t *testing.T) {
 	b := newTestEngine(t)
-	tx, err := b.BeginTransaction()
+	tx, err := b.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.SetNamespace("test"))
-	_, err = tx.CreateNode(&Node{ID: "test:accepted-owner"})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:accepted-owner"})
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
@@ -24,7 +24,7 @@ func TestPreparedCommitOwnerSurvivesPreparationWaitCancellation(t *testing.T) {
 	// waiting. The native completion API must not reuse that waiter's context.
 	cancel()
 	require.NoError(t, p.Commit(nil))
-	node, err := b.GetStoredNode("test:accepted-owner")
+	node, err := b.GetStoredNode(t.Context(), "test:accepted-owner")
 	require.NoError(t, err)
 	require.Equal(t, NodeID("test:accepted-owner"), node.ID)
 }

@@ -75,7 +75,7 @@ func (sm *SchemaManager) ReplaceDefinitionDurable(ctx context.Context, engine En
 	}
 
 	prospective := NewSchemaManager()
-	if err := prospective.ReplaceFromDefinition(def); err != nil {
+	if err := prospective.ReplaceFromDefinition(ctx, def); err != nil {
 		return err
 	}
 	if err := rebuildSchemaDerivedStateForEngine(ctx, engine, prospective); err != nil {
@@ -85,7 +85,10 @@ func (sm *SchemaManager) ReplaceDefinitionDurable(ctx context.Context, engine En
 		return err
 	}
 
-	definition := prospective.ExportDefinition()
+	definition, err := prospective.ExportDefinition(ctx)
+	if err != nil {
+		return err
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -164,7 +167,11 @@ func validateSchemaDefinitionForEngine(ctx context.Context, engine Engine, schem
 			return err
 		}
 	}
-	for _, contract := range schema.GetAllConstraintContracts() {
+	contracts, err := schema.GetAllConstraintContracts(ctx)
+	if err != nil {
+		return err
+	}
+	for _, contract := range contracts {
 		if err := ValidateConstraintContractOnCreationForEngine(ctx, engine, contract); err != nil {
 			return err
 		}

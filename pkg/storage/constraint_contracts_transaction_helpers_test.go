@@ -8,14 +8,14 @@ import (
 
 func TestConstraintContracts_CurrentStateHelpers(t *testing.T) {
 	engine := newTestEngine(t)
-	_, err := engine.CreateNode(&Node{ID: "test:a", Labels: []string{"Person"}, Properties: map[string]any{"team": "core"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:a", Labels: []string{"Person"}, Properties: map[string]any{"team": "core"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:b", Labels: []string{"Person"}, Properties: map[string]any{"team": "core"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:b", Labels: []string{"Person"}, Properties: map[string]any{"team": "core"}})
 	require.NoError(t, err)
-	err = engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "KNOWS", Properties: map[string]any{"kind": "friend"}})
+	err = engine.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "KNOWS", Properties: map[string]any{"kind": "friend"}})
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	defer tx.Rollback()
@@ -25,19 +25,19 @@ func TestConstraintContracts_CurrentStateHelpers(t *testing.T) {
 	tx.deletedNodes["test:missing"] = struct{}{}
 	tx.deletedEdges["test:e_deleted"] = struct{}{}
 
-	n, err := tx.currentNodeLocked("test:p")
+	n, err := tx.currentNodeLocked(t.Context(), "test:p")
 	require.NoError(t, err)
 	require.Equal(t, NodeID("test:p"), n.ID)
 
-	n, err = tx.currentNodeLocked("test:missing")
+	n, err = tx.currentNodeLocked(t.Context(), "test:missing")
 	require.NoError(t, err)
 	require.Nil(t, n)
 
-	e, err := tx.currentEdgeLocked("test:ep")
+	e, err := tx.currentEdgeLocked(t.Context(), "test:ep")
 	require.NoError(t, err)
 	require.Equal(t, EdgeID("test:ep"), e.ID)
 
-	e, err = tx.currentEdgeLocked("test:e_deleted")
+	e, err = tx.currentEdgeLocked(t.Context(), "test:e_deleted")
 	require.NoError(t, err)
 	require.Nil(t, e)
 
@@ -56,21 +56,21 @@ func TestConstraintContracts_CurrentStateHelpers(t *testing.T) {
 
 func TestConstraintContracts_EvaluateExpressions_Locked(t *testing.T) {
 	engine := newTestEngine(t)
-	_, err := engine.CreateNode(&Node{ID: "test:left", Labels: []string{"Person", "Team"}, Properties: map[string]any{"team": "core", "name": "L"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:left", Labels: []string{"Person", "Team"}, Properties: map[string]any{"team": "core", "name": "L"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:right", Labels: []string{"Person", "Team"}, Properties: map[string]any{"team": "core", "name": "R"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:right", Labels: []string{"Person", "Team"}, Properties: map[string]any{"team": "core", "name": "R"}})
 	require.NoError(t, err)
-	err = engine.CreateEdge(&Edge{ID: "test:works", StartNode: "test:left", EndNode: "test:right", Type: "WORKS_WITH", Properties: map[string]any{"kind": "peer", "weight": 2.0}})
+	err = engine.CreateEdge(t.Context(), &Edge{ID: "test:works", StartNode: "test:left", EndNode: "test:right", Type: "WORKS_WITH", Properties: map[string]any{"kind": "peer", "weight": 2.0}})
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	defer tx.Rollback()
 
-	node, err := tx.currentNodeLocked("test:left")
+	node, err := tx.currentNodeLocked(t.Context(), "test:left")
 	require.NoError(t, err)
-	edge, err := tx.currentEdgeLocked("test:works")
+	edge, err := tx.currentEdgeLocked(t.Context(), "test:works")
 	require.NoError(t, err)
 
 	ok, err := tx.evaluateNodeConstraintContractExpressionLocked(t.Context(), node, "n.team IN ['core', 'ops']")
@@ -143,23 +143,23 @@ func TestConstraintContracts_ValidateLocked_SuccessAndViolation(t *testing.T) {
 	}
 	require.NoError(t, sm.AddConstraintContractBundle(relContract, nil, nil, false))
 
-	_, err := engine.CreateNode(&Node{ID: "test:p1", Labels: []string{"Person"}, Properties: map[string]any{"team": "core"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:p1", Labels: []string{"Person"}, Properties: map[string]any{"team": "core"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:p2", Labels: []string{"Person"}, Properties: map[string]any{"team": "core"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:p2", Labels: []string{"Person"}, Properties: map[string]any{"team": "core"}})
 	require.NoError(t, err)
-	err = engine.CreateEdge(&Edge{ID: "test:r1", StartNode: "test:p1", EndNode: "test:p2", Type: "WORKS_WITH", Properties: map[string]any{}})
+	err = engine.CreateEdge(t.Context(), &Edge{ID: "test:r1", StartNode: "test:p1", EndNode: "test:p2", Type: "WORKS_WITH", Properties: map[string]any{}})
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	defer tx.Rollback()
 
-	node, err := tx.currentNodeLocked("test:p1")
+	node, err := tx.currentNodeLocked(t.Context(), "test:p1")
 	require.NoError(t, err)
 	require.NoError(t, tx.validateConstraintContractsForNodeLocked(t.Context(), node))
 
-	edge, err := tx.currentEdgeLocked("test:r1")
+	edge, err := tx.currentEdgeLocked(t.Context(), "test:r1")
 	require.NoError(t, err)
 	require.NoError(t, tx.validateConstraintContractsForEdgeLocked(t.Context(), edge))
 

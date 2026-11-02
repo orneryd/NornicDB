@@ -283,13 +283,13 @@ func TestMatchCreateRelationship_IDSeekFastPath(t *testing.T) {
 	ctx := context.Background()
 
 	// Create two nodes to link.
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:         "fp-node-a",
 		Labels:     []string{"Widget"},
 		Properties: map[string]interface{}{"name": "alpha"},
 	})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:         "fp-node-b",
 		Labels:     []string{"Widget"},
 		Properties: map[string]interface{}{"name": "beta"},

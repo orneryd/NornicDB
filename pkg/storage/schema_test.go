@@ -18,12 +18,12 @@ func TestMonster531TypedIndexPersistence(t *testing.T) {
 			t.Run(string(kind)+string(entity), func(t *testing.T) {
 				schema := NewSchemaManager()
 				require.NoError(t, schema.AddTypedIndexForEntity(kind, "typed", "T", []string{"value"}, entity))
-				encoded, err := json.Marshal(schema.ExportDefinition())
+				encoded, err := json.Marshal(schemaDefinitionForTest(t, schema))
 				require.NoError(t, err)
 				var definition SchemaDefinition
 				require.NoError(t, json.Unmarshal(encoded, &definition))
 				restored := NewSchemaManager()
-				require.NoError(t, restored.ReplaceFromDefinition(&definition))
+				require.NoError(t, restored.ReplaceFromDefinition(context.Background(), &definition))
 				index, exists := restored.GetRangeIndex("typed")
 				require.True(t, exists)
 				require.Equal(t, kind, index.Kind)
@@ -46,7 +46,7 @@ func TestMonster531TypedIndexPersistence(t *testing.T) {
 	_, exists := schema.GetRangeIndex("failed")
 	require.False(t, exists)
 	legacy := NewSchemaManager()
-	require.NoError(t, legacy.ReplaceFromDefinition(&SchemaDefinition{RangeIndexes: []SchemaRangeIndexDef{{Name: "legacy", Label: "T", Property: "value"}}}))
+	require.NoError(t, legacy.ReplaceFromDefinition(context.Background(), &SchemaDefinition{RangeIndexes: []SchemaRangeIndexDef{{Name: "legacy", Label: "T", Property: "value"}}}))
 	index, exists := legacy.GetRangeIndex("legacy")
 	require.True(t, exists)
 	require.Equal(t, IndexKindRange, index.effectiveKind())
@@ -509,7 +509,7 @@ func TestMemoryEngineConstraintIntegration(t *testing.T) {
 				"name":  "Alice",
 			},
 		}
-		_, err := store.CreateNode(node1)
+		_, err := store.CreateNode(t.Context(), node1)
 		if err != nil {
 			t.Fatalf("Failed to create first node: %v", err)
 		}
@@ -523,7 +523,7 @@ func TestMemoryEngineConstraintIntegration(t *testing.T) {
 				"name":  "Bob",
 			},
 		}
-		_, err = store.CreateNode(node2)
+		_, err = store.CreateNode(t.Context(), node2)
 		if err == nil {
 			t.Fatal("Expected constraint violation error")
 		}
@@ -537,7 +537,7 @@ func TestMemoryEngineConstraintIntegration(t *testing.T) {
 				"name":  "Charlie",
 			},
 		}
-		_, err = store.CreateNode(node3)
+		_, err = store.CreateNode(t.Context(), node3)
 		if err != nil {
 			t.Fatalf("Failed to create node with different email: %v", err)
 		}
@@ -556,7 +556,7 @@ func TestMemoryEngineConstraintIntegration(t *testing.T) {
 				"id": "unique-id-1",
 			},
 		}
-		_, err := store.CreateNode(node1)
+		_, err := store.CreateNode(t.Context(), node1)
 		if err != nil {
 			t.Fatalf("Failed to create first node: %v", err)
 		}
@@ -569,7 +569,7 @@ func TestMemoryEngineConstraintIntegration(t *testing.T) {
 				"id": "unique-id-1",
 			},
 		}
-		_, err = store.CreateNode(node2)
+		_, err = store.CreateNode(t.Context(), node2)
 		if err == nil {
 			t.Fatal("Expected constraint violation")
 		}
@@ -588,7 +588,7 @@ func TestMemoryEngineConstraintIntegration(t *testing.T) {
 				"email": "test@example.com",
 			},
 		}
-		store.CreateNode(user)
+		store.CreateNode(t.Context(), user)
 
 		// Post with same email property should succeed (different label)
 		post := &Node{
@@ -598,7 +598,7 @@ func TestMemoryEngineConstraintIntegration(t *testing.T) {
 				"email": "test@example.com",
 			},
 		}
-		_, err := store.CreateNode(post)
+		_, err := store.CreateNode(t.Context(), post)
 		if err != nil {
 			t.Errorf("Unexpected error for different label: %v", err)
 		}
@@ -1305,9 +1305,9 @@ func TestValidateConstraintOnCreation_UniqueViolation(t *testing.T) {
 	defer engine.Close()
 
 	// Create two nodes with the same property value
-	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"email": "dup@test.com"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"email": "dup@test.com"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:n2", Labels: []string{"Person"}, Properties: map[string]interface{}{"email": "dup@test.com"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:n2", Labels: []string{"Person"}, Properties: map[string]interface{}{"email": "dup@test.com"}})
 	require.NoError(t, err)
 
 	err = ValidateConstraintOnCreationForEngine(context.Background(), engine, Constraint{
@@ -1327,7 +1327,7 @@ func TestValidateConstraintOnCreation_ExistenceViolation(t *testing.T) {
 	defer engine.Close()
 
 	// Create a node missing the required property
-	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]interface{}{}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]interface{}{}})
 	require.NoError(t, err)
 
 	err = ValidateConstraintOnCreationForEngine(context.Background(), engine, Constraint{
@@ -1361,11 +1361,11 @@ func TestValidateExistenceRelationshipConstraint(t *testing.T) {
 	// Create nodes and an edge without the required property
 	n1 := testNode("rel-n1")
 	n2 := testNode("rel-n2")
-	_, err := engine.CreateNode(n1)
+	_, err := engine.CreateNode(t.Context(), n1)
 	require.NoError(t, err)
-	_, err = engine.CreateNode(n2)
+	_, err = engine.CreateNode(t.Context(), n2)
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: EdgeID(prefixTestID("rel-e1")), StartNode: n1.ID, EndNode: n2.ID,
 		Type: "WORKS_AT", Properties: map[string]interface{}{},
 	}))
@@ -1401,9 +1401,9 @@ func TestValidateConstraintOnCreation_NodeKeyViolation(t *testing.T) {
 	defer engine.Close()
 
 	// Create two nodes with the same composite key
-	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"first": "John", "last": "Doe"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"first": "John", "last": "Doe"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:n2", Labels: []string{"Person"}, Properties: map[string]interface{}{"first": "John", "last": "Doe"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:n2", Labels: []string{"Person"}, Properties: map[string]interface{}{"first": "John", "last": "Doe"}})
 	require.NoError(t, err)
 
 	err = ValidateConstraintOnCreationForEngine(context.Background(), engine, Constraint{
@@ -1422,7 +1422,7 @@ func TestValidateConstraintOnCreation_NodeKeyNullProperty(t *testing.T) {
 	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
-	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"first": "John"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"first": "John"}})
 	require.NoError(t, err)
 
 	err = ValidateConstraintOnCreationForEngine(context.Background(), engine, Constraint{
@@ -1443,7 +1443,7 @@ func TestValidateConstraintOnCreation_TemporalOverlap(t *testing.T) {
 	defer engine.Close()
 
 	// Create two nodes with overlapping temporal intervals for the same key
-	_, err := engine.CreateNode(&Node{
+	_, err := engine.CreateNode(t.Context(), &Node{
 		ID: "test:n1", Labels: []string{"Contract"},
 		Properties: map[string]interface{}{
 			"contract_id": "C1",
@@ -1453,7 +1453,7 @@ func TestValidateConstraintOnCreation_TemporalOverlap(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = engine.CreateNode(&Node{
+	_, err = engine.CreateNode(t.Context(), &Node{
 		ID: "test:n2", Labels: []string{"Contract"},
 		Properties: map[string]interface{}{
 			"contract_id": "C1",

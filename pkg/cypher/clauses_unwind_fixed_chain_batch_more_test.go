@@ -28,11 +28,11 @@ type createEdgeErrEngine struct {
 	err error
 }
 
-func (e *createEdgeErrEngine) CreateEdge(edge *storage.Edge) error {
+func (e *createEdgeErrEngine) CreateEdge(ctx context.Context, edge *storage.Edge) error {
 	if e.err != nil {
 		return e.err
 	}
-	return e.Engine.CreateEdge(edge)
+	return e.Engine.CreateEdge(ctx, edge)
 }
 
 func TestExecuteUnwindFixedChainLinkBatch_ErrorBranches(t *testing.T) {
@@ -58,7 +58,7 @@ RETURN count(o) AS linked
 
 	t.Run("hop_label_lookup_error", func(t *testing.T) {
 		base := storage.NewNamespacedEngine(newTestMemoryEngine(t), "fixed_chain_hop_err")
-		_, err := base.CreateNode(&storage.Node{ID: storage.NodeID("orig-a"), Labels: []string{"OriginalText"}, Properties: map[string]interface{}{"textKey": "a"}})
+		_, err := base.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID("orig-a"), Labels: []string{"OriginalText"}, Properties: map[string]interface{}{"textKey": "a"}})
 		require.NoError(t, err)
 		exec := NewStorageExecutor(&getNodesByLabelErrEngine{Engine: base, label: "Hop", err: errors.New("hop label boom")})
 		_, supported, err := exec.executeUnwindFixedChainLinkBatch(ctx, "row", items, rest)
@@ -69,10 +69,10 @@ RETURN count(o) AS linked
 
 	t.Run("merge_hop_create_edge_error", func(t *testing.T) {
 		base := storage.NewNamespacedEngine(newTestMemoryEngine(t), "fixed_chain_edge_err")
-		_, err := base.CreateNode(&storage.Node{ID: storage.NodeID("orig-a"), Labels: []string{"OriginalText"}, Properties: map[string]interface{}{"textKey": "a"}})
+		_, err := base.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID("orig-a"), Labels: []string{"OriginalText"}, Properties: map[string]interface{}{"textKey": "a"}})
 		require.NoError(t, err)
 		for depth := 1; depth <= 2; depth++ {
-			_, err = base.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("hop-a-%d", depth)), Labels: []string{"Hop"}, Properties: map[string]interface{}{"hopId": fmt.Sprintf("a:%d", depth)}})
+			_, err = base.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("hop-a-%d", depth)), Labels: []string{"Hop"}, Properties: map[string]interface{}{"hopId": fmt.Sprintf("a:%d", depth)}})
 			require.NoError(t, err)
 		}
 		exec := NewStorageExecutor(&createEdgeErrEngine{Engine: base, err: errors.New("edge create boom")})

@@ -17,14 +17,14 @@ import (
 
 func prepareContextRetry(t *testing.T, b *BadgerEngine, id NodeID, value string) {
 	t.Helper()
-	tx, err := b.BeginTransaction()
+	tx, err := b.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
-	node, err := tx.GetNode(id)
+	node, err := tx.GetNode(t.Context(), id)
 	require.NoError(t, err)
 	before := CopyNode(node)
 	node.Properties["payload"] = value
-	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{Before: before, After: node, Policy: ClientNodeEdits}))
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{Before: before, After: node, Policy: ClientNodeEdits}))
 	prepared, err := tx.PrepareEntityCommit(t.Context(), EntityCommitRequest{LogicalID: "healthy-" + value})
 	require.NoError(t, err)
 	t.Cleanup(prepared.Abort)
@@ -33,7 +33,7 @@ func prepareContextRetry(t *testing.T, b *BadgerEngine, id NodeID, value string)
 	outcome := receipt.WaitOutcome(t.Context())
 	require.Equal(t, CommitApplied, outcome.State)
 	require.NoError(t, outcome.Err)
-	node, err = b.GetNode(id)
+	node, err = b.GetNode(t.Context(), id)
 	require.NoError(t, err)
 	require.Equal(t, value, node.Properties["payload"])
 }
@@ -44,23 +44,23 @@ func TestPrepareEntityCommitStopsCanceledUniqueClassifierAdmission(t *testing.T)
 			b := newTestEngine(t)
 			schema := b.GetSchemaForNamespace("prep")
 			require.NoError(t, schema.AddUniqueConstraint("doc_key", "Doc", "key"))
-			id, err := b.CreateNode(&Node{ID: "prep:doc", Labels: []string{"Doc"}, Properties: map[string]interface{}{"key": "before", "payload": "before"}})
+			id, err := b.CreateNode(t.Context(), &Node{ID: "prep:doc", Labels: []string{"Doc"}, Properties: map[string]interface{}{"key": "before", "payload": "before"}})
 			require.NoError(t, err)
-			tx, err := b.BeginTransaction()
+			tx, err := b.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			require.NoError(t, tx.SetValidationSetting(DeferredConstraintValidation, true))
-			node, err := tx.GetNode(id)
+			node, err := tx.GetNode(t.Context(), id)
 			require.NoError(t, err)
 			before := CopyNode(node)
 			node.Properties["key"] = "claimed"
 			node.Properties["payload"] = "loser"
-			require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{Before: before, After: node, Policy: ClientNodeEdits}))
-			peer, err := b.GetNode(id)
+			require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{Before: before, After: node, Policy: ClientNodeEdits}))
+			peer, err := b.GetNode(t.Context(), id)
 			require.NoError(t, err)
 			peer.Properties["key"] = "claimed"
 			peer.Properties["payload"] = "peer"
-			require.NoError(t, b.UpdateNode(NodeUpdateRequest{After: peer, Policy: ClientNodeEdits}))
+			require.NoError(t, b.UpdateNode(t.Context(), NodeUpdateRequest{After: peer, Policy: ClientNodeEdits}))
 			constraint := schema.uniqueConstraints[nodePropertyKey{label: "Doc", property: "key"}]
 			require.NotNil(t, constraint)
 			ctx, cancel := context.WithCancel(t.Context())
@@ -140,11 +140,11 @@ func TestPrepareEntityCommitStopsCanceledUniqueClassifierAdmission(t *testing.T)
 			}
 			unlock()
 			assert.ErrorIs(t, result, context.Canceled)
-			actual, err := b.GetNode(id)
+			actual, err := b.GetNode(t.Context(), id)
 			require.NoError(t, err)
 			assert.Equal(t, "peer", actual.Properties["payload"])
 			assert.Equal(t, "claimed", actual.Properties["key"])
-			count, err := b.NodeCount()
+			count, err := b.NodeCount(t.Context())
 			require.NoError(t, err)
 			assert.Equal(t, int64(1), count)
 			prepareContextRetry(t, b, id, "retry-classifier")
@@ -156,7 +156,7 @@ func TestPrepareEntityCommitStopsChangeImageCaptureAfterCancellation(t *testing.
 	b := newTestEngine(t)
 	const population = 16
 	for i := 0; i < population; i++ {
-		_, err := b.CreateNode(&Node{ID: NodeID(fmt.Sprintf("capture:n%d", i)), Properties: map[string]interface{}{"payload": "before"}})
+		_, err := b.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("capture:n%d", i)), Properties: map[string]interface{}{"payload": "before"}})
 		require.NoError(t, err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
@@ -174,16 +174,16 @@ func TestPrepareEntityCommitStopsChangeImageCaptureAfterCancellation(t *testing.
 		}
 		return err
 	}}))
-	tx, err := b.BeginTransaction()
+	tx, err := b.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	for i := 0; i < population; i++ {
 		id := NodeID(fmt.Sprintf("capture:n%d", i))
-		node, err := tx.GetNode(id)
+		node, err := tx.GetNode(t.Context(), id)
 		require.NoError(t, err)
 		before := CopyNode(node)
 		node.Properties["payload"] = "unaccepted"
-		require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{Before: before, After: node, Policy: ClientNodeEdits}))
+		require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{Before: before, After: node, Policy: ClientNodeEdits}))
 	}
 	armed.Store(true)
 	prepared, err := tx.PrepareEntityCommit(ctx, EntityCommitRequest{LogicalID: "capture-canceled"})
@@ -196,7 +196,7 @@ func TestPrepareEntityCommitStopsChangeImageCaptureAfterCancellation(t *testing.
 	assert.Equal(t, int64(1), reads.Load(), "owned per-key capture must stop after first real native read cancels its request")
 	assert.Zero(t, publications.Load(), "canceled preparation must never publish")
 	for i := 0; i < population; i++ {
-		node, err := b.GetNode(NodeID(fmt.Sprintf("capture:n%d", i)))
+		node, err := b.GetNode(t.Context(), NodeID(fmt.Sprintf("capture:n%d", i)))
 		require.NoError(t, err)
 		assert.Equal(t, "before", node.Properties["payload"])
 	}
@@ -211,7 +211,7 @@ func TestCommitPreparationChangeCaptureLifetime(t *testing.T) {
 		t.Run(fmt.Sprintf("accepted=%t", accepted), func(t *testing.T) {
 			b := newTestEngine(t)
 			for i := range 8 {
-				_, err := b.CreateNode(&Node{ID: NodeID(fmt.Sprintf("lifetime:n%d", i)), Properties: map[string]any{"payload": "before"}})
+				_, err := b.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("lifetime:n%d", i)), Properties: map[string]any{"payload": "before"}})
 				require.NoError(t, err)
 			}
 			ctx, cancel := context.WithCancel(t.Context())
@@ -227,15 +227,15 @@ func TestCommitPreparationChangeCaptureLifetime(t *testing.T) {
 				}
 				return err
 			}}))
-			tx, err := b.BeginTransaction()
+			tx, err := b.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			for i := range 8 {
-				node, err := tx.GetNode(NodeID(fmt.Sprintf("lifetime:n%d", i)))
+				node, err := tx.GetNode(t.Context(), NodeID(fmt.Sprintf("lifetime:n%d", i)))
 				require.NoError(t, err)
 				before := CopyNode(node)
 				node.Properties["payload"] = "after"
-				require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{Before: before, After: node, Policy: ClientNodeEdits}))
+				require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{Before: before, After: node, Policy: ClientNodeEdits}))
 			}
 			if accepted {
 				prepared, err := tx.PrepareEntityCommit(ctx, EntityCommitRequest{LogicalID: "accepted-lifetime"})
@@ -261,7 +261,7 @@ func TestCommitPreparationChangeCaptureLifetime(t *testing.T) {
 			}
 			armed.Store(false)
 			for i := range 8 {
-				node, err := b.GetNode(NodeID(fmt.Sprintf("lifetime:n%d", i)))
+				node, err := b.GetNode(t.Context(), NodeID(fmt.Sprintf("lifetime:n%d", i)))
 				require.NoError(t, err)
 				want := "before"
 				if accepted {
@@ -293,7 +293,7 @@ func BenchmarkPublicEntityCommitPreparation(b *testing.B) {
 				b.Fatal(err)
 			}
 			for i := range size {
-				if _, err := engine.CreateNode(&Node{ID: NodeID(fmt.Sprintf("bench:n%d", i)), Labels: []string{"Doc"}, Properties: map[string]any{"key": i, "payload": "before"}}); err != nil {
+				if _, err := engine.CreateNode(b.Context(), &Node{ID: NodeID(fmt.Sprintf("bench:n%d", i)), Labels: []string{"Doc"}, Properties: map[string]any{"key": i, "payload": "before"}}); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -301,18 +301,18 @@ func BenchmarkPublicEntityCommitPreparation(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				b.StopTimer()
-				tx, err := engine.BeginTransaction()
+				tx, err := engine.BeginTransaction(b.Context())
 				if err != nil {
 					b.Fatal(err)
 				}
 				for j := range size {
-					node, err := tx.GetNode(NodeID(fmt.Sprintf("bench:n%d", j)))
+					node, err := tx.GetNode(b.Context(), NodeID(fmt.Sprintf("bench:n%d", j)))
 					if err != nil {
 						b.Fatal(err)
 					}
 					before := CopyNode(node)
 					node.Properties["payload"] = "after"
-					if err := tx.UpdateGraphNode(NodeUpdateRequest{Before: before, After: node, Policy: ClientNodeEdits}); err != nil {
+					if err := tx.UpdateGraphNode(b.Context(), NodeUpdateRequest{Before: before, After: node, Policy: ClientNodeEdits}); err != nil {
 						b.Fatal(err)
 					}
 				}
@@ -370,16 +370,16 @@ func TestCommitPreparationTemporalAndChangeKeyContext(t *testing.T) {
 				if phase == ".ofNode" {
 					b.SetChangeCapture("phase", ChangeCaptureFull)
 				}
-				_, err := b.CreateNode(&Node{ID: "phase:n", Labels: []string{"Span"}, Properties: map[string]any{"key": "n", "from": base, "to": base.Add(time.Hour), "payload": "before"}})
+				_, err := b.CreateNode(t.Context(), &Node{ID: "phase:n", Labels: []string{"Span"}, Properties: map[string]any{"key": "n", "from": base, "to": base.Add(time.Hour), "payload": "before"}})
 				require.NoError(t, err)
-				tx, err := b.BeginTransaction()
+				tx, err := b.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = tx.Rollback() })
-				node, err := tx.GetNode("phase:n")
+				node, err := tx.GetNode(t.Context(), "phase:n")
 				require.NoError(t, err)
 				before := CopyNode(node)
 				node.Properties["payload"] = "unaccepted"
-				require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{Before: before, After: node, Policy: ClientNodeEdits}))
+				require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{Before: before, After: node, Policy: ClientNodeEdits}))
 				real, cancel := context.WithCancel(t.Context())
 				defer cancel()
 				ctx := &commitPreparationPhaseContext{Context: real, cancel: cancel, phase: phase}
@@ -395,7 +395,7 @@ func TestCommitPreparationTemporalAndChangeKeyContext(t *testing.T) {
 				require.Positive(t, ctx.hits.Load(), "public preparation must reach actual owned phase with caller context")
 				require.ErrorIs(t, err, context.Canceled)
 				require.ErrorIs(t, real.Err(), context.Canceled)
-				actual, err := b.GetNode("phase:n")
+				actual, err := b.GetNode(t.Context(), "phase:n")
 				require.NoError(t, err)
 				require.Equal(t, "before", actual.Properties["payload"])
 				prepareContextRetry(t, b, "phase:n", "healthy-phase")
@@ -406,7 +406,7 @@ func TestCommitPreparationTemporalAndChangeKeyContext(t *testing.T) {
 
 func TestPrepareEntityCommitCaptureOverlayAdmissionCancellation(t *testing.T) {
 	b := newWriteBehindTestEngine(t, time.Hour)
-	_, err := b.CreateNode(&Node{ID: "overlay:n", Properties: map[string]any{"payload": "before"}})
+	_, err := b.CreateNode(t.Context(), &Node{ID: "overlay:n", Properties: map[string]any{"payload": "before"}})
 	require.NoError(t, err)
 	var arm atomic.Bool
 	held := make(chan struct{})
@@ -420,14 +420,14 @@ func TestPrepareEntityCommitCaptureOverlayAdmissionCancellation(t *testing.T) {
 		}
 		return read()
 	}}))
-	tx, err := b.BeginTransaction()
+	tx, err := b.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
-	node, err := tx.GetNode("overlay:n")
+	node, err := tx.GetNode(t.Context(), "overlay:n")
 	require.NoError(t, err)
 	before := CopyNode(node)
 	node.Properties["payload"] = "unaccepted"
-	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{Before: before, After: node, Policy: ClientNodeEdits}))
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{Before: before, After: node, Policy: ClientNodeEdits}))
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	joined := make(chan struct{})
@@ -485,7 +485,7 @@ func TestPrepareEntityCommitCaptureOverlayAdmissionCancellation(t *testing.T) {
 	}
 	arm.Store(false)
 	unlock()
-	actual, err := b.GetNode("overlay:n")
+	actual, err := b.GetNode(t.Context(), "overlay:n")
 	require.NoError(t, err)
 	require.Equal(t, "before", actual.Properties["payload"])
 	prepareContextRetry(t, b, "overlay:n", "healthy-overlay")

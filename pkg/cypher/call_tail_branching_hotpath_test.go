@@ -237,10 +237,10 @@ func createBranchingTree(t *testing.T, store storage.Engine, root *storage.Node,
 						"branchSlot": int64(childIdx),
 					},
 				}
-				_, err := store.CreateNode(child)
+				_, err := store.CreateNode(t.Context(), child)
 				require.NoError(t, err)
 				edgeType := edgeTypeFn(depth, childIdx)
-				require.NoError(t, store.CreateEdge(&storage.Edge{
+				require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{
 					ID:         storage.EdgeID(fmt.Sprintf("%s:%s:%02d:%04d", rootKey, edgeType, depth, nextOrdinal)),
 					Type:       edgeType,
 					StartNode:  parent.node.ID,

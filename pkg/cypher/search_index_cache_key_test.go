@@ -20,7 +20,7 @@ func TestCachedSearchProcedureSeesIndexChanges(t *testing.T) {
 	exec.SetSearchService(svc)
 	ctx := context.Background()
 	node := &storage.Node{ID: "source", Labels: []string{"Doc"}, Properties: map[string]any{"id": "source", "text": "source"}, ChunkEmbeddings: [][]float32{{1, 0}}}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	const query = "CALL db.rretrieve({query: 'source', embedding: $v, limit: 10, minSimilarity: 0.01}) YIELD node RETURN node.id AS id"
 	params := map[string]any{"v": []float32{1, 0}}

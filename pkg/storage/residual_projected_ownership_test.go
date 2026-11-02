@@ -14,18 +14,18 @@ func TestResidualProjectedReadOwnership(t *testing.T) {
 	b, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = b.Close() })
-	id, err := b.CreateNode(&storage.Node{ID: "test:projected-owned", Properties: map[string]any{"values": []int64{1, 2}, "omitted": "retained"}})
+	id, err := b.CreateNode(t.Context(), &storage.Node{ID: "test:projected-owned", Properties: map[string]any{"values": []int64{1, 2}, "omitted": "retained"}})
 	require.NoError(t, err)
-	_, err = b.GetStoredNode(id) // Warm the full image consumed by projection.
+	_, err = b.GetStoredNode(t.Context(), id) // Warm the full image consumed by projection.
 	require.NoError(t, err)
-	projected, err := b.GetNodeProjected(id, []string{"values"})
+	projected, err := b.GetNodeProjected(t.Context(), id, []string{"values"})
 	require.NoError(t, err)
 	require.NotContains(t, projected.Properties, "omitted")
 	projected.Properties["values"].([]int64)[0] = 99
-	stored, err := b.GetStoredNode(id)
+	stored, err := b.GetStoredNode(t.Context(), id)
 	require.NoError(t, err)
 	require.Equal(t, []int64{1, 2}, stored.Properties["values"])
-	projected, err = b.GetNodeProjected(id, []string{"values"})
+	projected, err = b.GetNodeProjected(t.Context(), id, []string{"values"})
 	require.NoError(t, err)
 	require.Equal(t, []int64{1, 2}, projected.Properties["values"])
 }

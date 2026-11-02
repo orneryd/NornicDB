@@ -21,9 +21,9 @@ func TestReviewSourcePreservingAcceptancePublication(t *testing.T) {
 	require.NoError(t, err)
 	defer disk.Close()
 	store := storage.NewNamespacedEngine(disk, "review")
-	_, err = store.CreateNode(&storage.Node{ID: "doc", Labels: []string{"Doc"}, Properties: map[string]any{"id": "same", "text": "antiquecobalt"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "doc", Labels: []string{"Doc"}, Properties: map[string]any{"id": "same", "text": "antiquecobalt"}})
 	require.NoError(t, err)
-	payload, err := store.GetNode("doc")
+	payload, err := store.GetNode(t.Context(), "doc")
 	require.NoError(t, err)
 	payload.ChunkEmbeddings = [][]float32{{1, 0}}
 	payload.EmbedMeta = map[string]any{"has_embedding": true, "chunk_count": 1, embeddingsource.MetaKey: (embeddingsource.Source{Properties: []string{"id"}}).Metadata()}
@@ -37,18 +37,18 @@ func TestReviewSourcePreservingAcceptancePublication(t *testing.T) {
 	})
 	// An ordinary body update lands after the provider snapshot but before
 	// final acceptance; the provider consumes only id, so the source-preserving sidecar is valid.
-	current, err := store.GetNode("doc")
+	current, err := store.GetNode(t.Context(), "doc")
 	require.NoError(t, err)
 	current.Properties["text"] = "novelquartz"
 	current.UpdatedAt = current.UpdatedAt.Add(time.Second)
-	require.NoError(t, store.UpdateNode(storage.NodeUpdateRequest{After: current}))
+	require.NoError(t, store.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: current}))
 	opts := search.DefaultSearchOptions()
 	opts.MinRRFScore = 0
 	before, err := service.Search(ctx, "novelquartz", nil, opts)
 	require.NoError(t, err)
 	require.Len(t, before.Results, 1, "new body must be indexed before embedding write")
-	require.NoError(t, store.UpdateNodeEmbeddingSidecar(payload))
-	saved, err := store.GetNode("doc")
+	require.NoError(t, store.UpdateNodeEmbeddingSidecar(t.Context(), payload))
+	saved, err := store.GetNode(t.Context(), "doc")
 	require.NoError(t, err)
 	require.Equal(t, "novelquartz", saved.Properties["text"])
 	require.NotEmpty(t, saved.ChunkEmbeddings, "source-preserving result should be accepted")
@@ -64,10 +64,10 @@ func TestReviewConsumedSourceCypherPaths(t *testing.T) {
 	for _, explicit := range []bool{false, true} {
 		t.Run(map[bool]string{false: "auto", true: "explicit"}[explicit], func(t *testing.T) {
 			worker, queue, provider := nodeSaveRetryFixture(t, "whole", 1, 1)
-			node, err := queue.GetNode("node-000")
+			node, err := queue.GetNode(t.Context(), "node-000")
 			require.NoError(t, err)
 			node.Properties["id"] = "old"
-			require.NoError(t, queue.UpdateNode(storage.NodeUpdateRequest{After: node}))
+			require.NoError(t, queue.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
 			worker.config.PropertiesInclude = []string{"text"}
 			worker.SetEmbedder(&retryMetadataPropertyEmbedder{mockEmbedder: provider, key: "id", declared: true})
 			require.True(t, worker.processNextBatch())
@@ -90,11 +90,11 @@ func TestReviewConsumedSourceCypherPaths(t *testing.T) {
 			require.True(t, worker.processNextBatch())
 			require.Equal(t, 2, provider.GetEmbedCount())
 			query("MATCH (n:Doc) SET n.ignored = 'two' RETURN n.id")
-			node, err = queue.GetNode("node-000")
+			node, err = queue.GetNode(t.Context(), "node-000")
 			require.NoError(t, err)
 			require.NotEmpty(t, node.ChunkEmbeddings)
 			query("MATCH (n:Doc) SET n.id = 'new' RETURN n.id")
-			node, err = queue.GetNode("node-000")
+			node, err = queue.GetNode(t.Context(), "node-000")
 			require.NoError(t, err)
 			require.Empty(t, node.ChunkEmbeddings, "both query transaction paths must invalidate consumed metadata")
 		})

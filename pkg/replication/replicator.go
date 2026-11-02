@@ -27,7 +27,7 @@ import (
 //	defer replicator.Shutdown()
 //
 //	// All writes go through replicator
-//	if err := replicator.Apply(cmd); err != nil {
+//	if err := replicator.Apply(context.Background(), cmd, 0); err != nil {
 //	    if errors.Is(err, replication.ErrNotLeader) {
 //	        // Forward to leader
 //	    }
@@ -41,13 +41,14 @@ type Replicator interface {
 	// It is available before Start; accepted work must not replace its parent.
 	LifetimeContext() context.Context
 
-	// Apply applies a write command to the cluster.
+	// Apply applies a write command to the cluster. ctx owns preparation and
+	// admission; already accepted native work completes independently.
 	// Returns ErrNotLeader if this node cannot accept writes.
 	// The command is replicated according to the replication mode.
-	Apply(cmd *Command, timeout time.Duration) error
+	Apply(ctx context.Context, cmd *Command, timeout time.Duration) error
 
 	// ApplyBatch applies multiple commands atomically.
-	ApplyBatch(cmds []*Command, timeout time.Duration) error
+	ApplyBatch(ctx context.Context, cmds []*Command, timeout time.Duration) error
 
 	// IsLeader returns true if this node can accept writes.
 	// For standalone mode, this always returns true.
@@ -238,12 +239,43 @@ type PeerStatus struct {
 	State string `json:"state,omitempty"`
 }
 
+// WALPublicationMode states whether a Storage.ApplyCommand call returns before
+// its own replication WAL record is published.
+//
+// The zero value is invalid: every caller states whether it needs this
+// command's own publication receipt or keeps the nonwaiting asynchronous
+// native result.
+type WALPublicationMode uint8
+
+const (
+	// WALQueued admits the record to the bounded replication WAL FIFO and
+	// returns the native command result without waiting for publication. The
+	// returned CommandPublication carries no position.
+	WALQueued WALPublicationMode = iota + 1
+
+	// WALPublished waits until the sole WAL writer has appended and published
+	// this exact record, then returns that record's physical sequence. A
+	// successful WALPublished result never reports position zero. This is
+	// publication completion, not an additional durability guarantee.
+	WALPublished
+)
+
+// CommandPublication is the publication receipt of one applied command.
+// Position is the exact physical WAL sequence of this command's own record.
+type CommandPublication struct {
+	Position uint64
+}
+
 // Storage is the interface that the storage engine must implement
 // to work with replication. This is a subset of the full storage.Engine
 // interface, containing only what replication needs.
 type Storage interface {
 	// ApplyCommand applies a replicated command to storage.
-	ApplyCommand(cmd *Command) error
+	//
+	// waitCtx bounds only this caller's publication wait; it never retracts
+	// accepted intent or application already performed. publication must be
+	// WALQueued or WALPublished and waitCtx must be non-nil before any effect.
+	ApplyCommand(waitCtx context.Context, cmd *Command, publication WALPublicationMode) (CommandPublication, error)
 
 	// GetWALPosition returns the current WAL position.
 	GetWALPosition() (uint64, error)
@@ -364,7 +396,7 @@ func (r *StandaloneReplicator) Start(ctx context.Context) error {
 }
 
 // Apply applies a command directly to storage.
-func (r *StandaloneReplicator) Apply(cmd *Command, timeout time.Duration) error {
+func (r *StandaloneReplicator) Apply(ctx context.Context, cmd *Command, timeout time.Duration) error {
 	// The application is accepted work: Shutdown waits for it to return.
 	_, release, accepted := r.work.Acquire(r.work.Context())
 	if !accepted {
@@ -377,19 +409,25 @@ func (r *StandaloneReplicator) Apply(cmd *Command, timeout time.Duration) error 
 		return err
 	}
 	r.mu.RUnlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	if cmd != nil {
-		if handled, err := routeLeaderEntityCommand(r.storage, r, cmd, timeout); handled || err != nil {
+		if handled, err := routeLeaderEntityCommand(ctx, r.storage, r, cmd, timeout); handled || err != nil {
 			return err
 		}
 	}
-	return r.storage.ApplyCommand(cmd)
+	// Standalone retains the nonwaiting asynchronous contract: the accepted
+	// application owner's context is passed and the receipt is discarded.
+	_, err := r.storage.ApplyCommand(r.work.Context(), cmd, WALQueued)
+	return err
 }
 
 // ApplyBatch applies multiple commands directly to storage.
-func (r *StandaloneReplicator) ApplyBatch(cmds []*Command, timeout time.Duration) error {
+func (r *StandaloneReplicator) ApplyBatch(ctx context.Context, cmds []*Command, timeout time.Duration) error {
 	for _, cmd := range cmds {
-		if err := r.Apply(cmd, timeout); err != nil {
+		if err := r.Apply(ctx, cmd, timeout); err != nil {
 			return err
 		}
 	}

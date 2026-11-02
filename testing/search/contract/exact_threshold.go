@@ -32,7 +32,7 @@ func RunExactThresholdPopulation(t *testing.T, factory func(*testing.T, int, Pol
 						v = opposite
 					}
 					node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("threshold-%02d", i)), ChunkEmbeddings: [][]float32{v}}
-					_, err := f.Engine.CreateNode(node)
+					_, err := f.Engine.CreateNode(t.Context(), node)
 					require.NoError(t, err)
 					require.NoError(t, f.Service.IndexNode(node))
 				}

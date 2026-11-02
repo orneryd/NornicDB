@@ -34,7 +34,7 @@ func TestClusterGenerationFirstPersistentBuildKeepsLexicalProfiles(t *testing.T)
 	for topic := 0; topic < 4; topic++ {
 		for i := 0; i < 20; i++ {
 			f.next++
-			_, err := f.engine.CreateNode(f.node(fmt.Sprintf("fresh-%02d", f.next), topic, cgTopics[topic]+" document"))
+			_, err := f.engine.CreateNode(t.Context(), f.node(fmt.Sprintf("fresh-%02d", f.next), topic, cgTopics[topic]+" document"))
 			require.NoError(t, err)
 		}
 	}
@@ -133,7 +133,7 @@ func TestClusterGenerationRestoreUsesLiveMembership(t *testing.T) {
 					emptyCID = 0
 					for _, id := range f.svc.clusterIndex.GetClusterMemberIDsForCluster(emptyCID) {
 						owner := storage.NodeID(vectorOwnerForTest(t, id))
-						require.NoError(t, f.engine.DeleteNode(owner))
+						require.NoError(t, f.engine.DeleteNode(t.Context(), owner))
 						require.NoError(t, f.svc.RemoveNode(owner))
 					}
 				}
@@ -308,10 +308,10 @@ func TestClusterGenerationBackfillUsesStoreAtAdmission(t *testing.T) {
 			f := newCGFixture(t, 20, fileBacked)
 			f.t = t
 			svc := f.svc
-			node, err := f.engine.GetNode("n-0001")
+			node, err := f.engine.GetNode(t.Context(), "n-0001")
 			require.NoError(t, err)
 			node.ChunkEmbeddings = [][]float32{{0, 0, 0, 1}}
-			require.NoError(t, f.engine.UpdateNode(storage.NodeUpdateRequest{After: node}))
+			require.NoError(t, f.engine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
 			done := parkReconcile(t, svc, svc.EmbeddingCount()+1)
 			err = svc.indexNodeLocked(node, false)
 			svc.removeNodeLocked("n-0002")

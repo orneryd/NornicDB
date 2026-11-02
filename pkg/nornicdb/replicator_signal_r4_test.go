@@ -35,7 +35,7 @@ func TestDBR4SignalsReplicatorBeforeJoiningItsConsumer(t *testing.T) {
 	provider, ok := native.(interface{ LifetimeContext() context.Context })
 	require.True(t, ok, "the native owner must expose its lifetime to its real consumers")
 	entered, waited := make(chan struct{}), make(chan error, 1)
-	require.True(t, db.RunBackgroundTask(func() {
+	require.True(t, db.RunBackgroundTask(func(context.Context) {
 		close(entered)
 		waited <- native.WaitForLeader(provider.LifetimeContext())
 	}))

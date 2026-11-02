@@ -62,7 +62,7 @@ func TestReplaceDefinitionDurableRejectsInvalidBindingBeforeWriting(t *testing.T
 
 	beforeTable := schema.GetBindingTable()
 	require.NotNil(t, beforeTable, "the seed must have published a compiled binding table")
-	beforeDefinition := schema.ExportDefinition()
+	beforeDefinition := schemaDefinitionForTest(t, schema)
 
 	var attempts atomic.Int64
 	schema.SetPersister(func(*SchemaDefinition) error {
@@ -82,7 +82,7 @@ func TestReplaceDefinitionDurableRejectsInvalidBindingBeforeWriting(t *testing.T
 	assert.Zero(t, attempts.Load(), "a rejected definition must be rejected before it is persisted")
 	assert.Same(t, beforeTable, schema.GetBindingTable(),
 		"a rejected definition must leave the compiled binding table serving")
-	assert.Equal(t, beforeDefinition, schema.ExportDefinition(),
+	assert.Equal(t, beforeDefinition, schemaDefinitionForTest(t, schema),
 		"a rejected definition must leave every published schema family unchanged")
 
 	bundles, bindings := schema.ShowDecayProfiles()
@@ -93,7 +93,7 @@ func TestReplaceDefinitionDurableRejectsInvalidBindingBeforeWriting(t *testing.T
 	// The loader is the compiler's other caller: a fresh manager reports the
 	// same compile failure and keeps no compiled table.
 	fresh := NewSchemaManager()
-	require.Error(t, fresh.ReplaceFromDefinition(invalid))
+	require.Error(t, fresh.ReplaceFromDefinition(context.Background(), invalid))
 	assert.Nil(t, fresh.GetBindingTable())
 }
 
@@ -196,7 +196,7 @@ func TestReplaceDefinitionDurableCanceledAdmissionPublishesNothing(t *testing.T)
 		target := NewNamespacedEngine(engine, "cancelwait")
 		schema := engine.GetSchemaForNamespace("cancelwait")
 		require.NoError(t, schema.AddUniqueConstraint("baseline_unique", "Person", "id"))
-		before := schema.ExportDefinition()
+		before := schemaDefinitionForTest(t, schema)
 		var attempts atomic.Int64
 		schema.SetPersister(func(*SchemaDefinition) error {
 			attempts.Add(1)
@@ -254,7 +254,7 @@ func TestReplaceDefinitionDurableCanceledAdmissionPublishesNothing(t *testing.T)
 		assert.Zero(t, attempts.Load(), "a canceled admission must not persist")
 		assert.False(t, bindingOwnerHasConstraint(schema, "probe_unique"),
 			"a canceled admission must not publish the replacement")
-		assert.Equal(t, before, schema.ExportDefinition())
+		assert.Equal(t, before, schemaDefinitionForTest(t, schema))
 		assert.Same(t, beforeTable, schema.GetBindingTable())
 	})
 
@@ -269,7 +269,7 @@ func TestReplaceDefinitionDurableCanceledAdmissionPublishesNothing(t *testing.T)
 
 		assert.Zero(t, attempts.Load(), "a canceled replacement must not persist")
 		assert.False(t, bindingOwnerHasConstraint(schema, "probe_unique"))
-		assert.Equal(t, before, schema.ExportDefinition())
+		assert.Equal(t, before, schemaDefinitionForTest(t, schema))
 		assert.Same(t, beforeTable, schema.GetBindingTable())
 	})
 }
@@ -279,7 +279,7 @@ func TestReplaceDefinitionDurableCanceledSchemaReaderWaitPublishesNothing(t *tes
 	target := NewNamespacedEngine(engine, "cancelreader")
 	schema := target.GetSchema()
 	require.NoError(t, schema.AddUniqueConstraint("before", "Person", "id"))
-	before := schema.ExportDefinition()
+	before := schemaDefinitionForTest(t, schema)
 	var attempts atomic.Int64
 	schema.SetPersister(func(*SchemaDefinition) error { attempts.Add(1); return nil })
 	ctx, cancel := context.WithCancel(context.Background())
@@ -330,7 +330,7 @@ func TestReplaceDefinitionDurableCanceledSchemaReaderWaitPublishesNothing(t *tes
 	release()
 	<-exited
 	require.Zero(t, attempts.Load())
-	require.Equal(t, before, schema.ExportDefinition())
+	require.Equal(t, before, schemaDefinitionForTest(t, schema))
 	require.NoError(t, schema.ReplaceDefinitionDurable(context.Background(), target, &SchemaDefinition{}))
 	require.Equal(t, int64(1), attempts.Load())
 }
@@ -339,10 +339,10 @@ func TestReplaceFromDefinitionCompileErrorPreservesPublishedDefinition(t *testin
 	schema := NewSchemaManager()
 	require.NoError(t, schema.CreateDecayProfileBundle(bindingOwnerBundle("old_bundle")))
 	require.NoError(t, schema.AddPropertyIndex("old_index", "Doc", []string{"id"}))
-	before := schema.ExportDefinition()
+	before := schemaDefinitionForTest(t, schema)
 	table := schema.GetBindingTable()
-	err := schema.ReplaceFromDefinition(&SchemaDefinition{DecayProfileBindings: []knowledgepolicy.DecayProfileBinding{{Name: "bad_binding", IsWildcard: true, ProfileRef: "missing"}}})
+	err := schema.ReplaceFromDefinition(context.Background(), &SchemaDefinition{DecayProfileBindings: []knowledgepolicy.DecayProfileBinding{{Name: "bad_binding", IsWildcard: true, ProfileRef: "missing"}}})
 	require.Error(t, err)
-	require.Equal(t, before, schema.ExportDefinition())
+	require.Equal(t, before, schemaDefinitionForTest(t, schema))
 	require.Same(t, table, schema.GetBindingTable())
 }

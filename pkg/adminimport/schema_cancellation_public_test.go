@@ -52,8 +52,8 @@ type cancelAfterFinalDataWriteEngine struct {
 	persisterAtCancel atomic.Int64
 }
 
-func (e *cancelAfterFinalDataWriteEngine) BulkCreateNodes(nodes []*storage.Node) error {
-	if err := e.Engine.BulkCreateNodes(nodes); err != nil {
+func (e *cancelAfterFinalDataWriteEngine) BulkCreateNodes(ctx context.Context, nodes []*storage.Node) error {
+	if err := e.Engine.BulkCreateNodes(ctx, nodes); err != nil {
 		return err
 	}
 	write := e.dataWrites.Add(1)
@@ -148,7 +148,7 @@ func requireCancellationPhase(t *testing.T, phase *cancelAfterFinalDataWriteEngi
 func assertAcceptedDataSurvives(t *testing.T, engine storage.Engine, report adminimport.Report) {
 	t.Helper()
 	namespaced := storage.NewNamespacedEngine(engine, schemaCancellationNamespace)
-	count, err := namespaced.NodeCount()
+	count, err := namespaced.NodeCount(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), report.NodesImported,
 		"both accepted rows must have been counted as imported")
@@ -261,7 +261,7 @@ func TestImportFullJSONSchemaCancellationDoesNotPublishSchema(t *testing.T) {
 			"the pre-import schema must remain the durable definition after cancellation")
 
 		namespaced := storage.NewNamespacedEngine(reopened, schemaCancellationNamespace)
-		count, err := namespaced.NodeCount()
+		count, err := namespaced.NodeCount(t.Context())
 		require.NoError(t, err)
 		assert.Equal(t, int64(2), count,
 			"accepted data writes need not be rolled back across a native reopen")

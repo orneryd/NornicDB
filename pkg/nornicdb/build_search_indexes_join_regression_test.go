@@ -74,7 +74,7 @@ func TestBuildSearchIndexesRebuildsAfterJoiningStaleInitialSnapshot(t *testing.T
 	case <-time.After(5 * time.Second):
 		t.Fatal("initial snapshot not captured")
 	}
-	_, err = gate.CreateNode(&storage.Node{ID: "late", Labels: []string{"Doc"}, Properties: map[string]any{"content": "late searchable document"}, ChunkEmbeddings: [][]float32{{1, 0, 0}}})
+	_, err = gate.CreateNode(t.Context(), &storage.Node{ID: "late", Labels: []string{"Doc"}, Properties: map[string]any{"content": "late searchable document"}, ChunkEmbeddings: [][]float32{{1, 0, 0}}})
 	require.NoError(t, err)
 	observer := &buildJoinContext{Context: ctx, waiting: make(chan struct{})}
 	launched = true

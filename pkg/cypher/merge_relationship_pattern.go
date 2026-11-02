@@ -130,7 +130,7 @@ func (e *StorageExecutor) parseMergeEndpointPattern(ctx context.Context, content
 	return info, err
 }
 
-func findParsedMergeRelationships(
+func findParsedMergeRelationships(ctx context.Context,
 	store storage.Engine,
 	cache *relationshipMergeIdentityCache,
 	pattern *mergeRelationshipPattern,
@@ -141,11 +141,11 @@ func findParsedMergeRelationships(
 	if pattern.direction == mergeRelationshipIncoming {
 		lookupStart, lookupEnd = endNode, startNode
 	}
-	matches, err := cache.relationships(store, lookupStart.ID, lookupEnd.ID, pattern.relType, pattern.properties)
+	matches, err := cache.relationships(ctx, store, lookupStart.ID, lookupEnd.ID, pattern.relType, pattern.properties)
 	if err != nil || pattern.direction != mergeRelationshipUndirected {
 		return matches, err
 	}
-	reverse, err := cache.relationships(store, lookupEnd.ID, lookupStart.ID, pattern.relType, pattern.properties)
+	reverse, err := cache.relationships(ctx, store, lookupEnd.ID, lookupStart.ID, pattern.relType, pattern.properties)
 	if err != nil {
 		return nil, err
 	}

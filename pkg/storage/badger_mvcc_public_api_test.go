@@ -23,7 +23,7 @@ func mvccPublicAPIFixture(t *testing.T) (*MemoryEngine, NodeID, NodeID, EdgeID) 
 	t.Helper()
 	engine := newTestMemoryEngine(t)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 
 	const aliceID = NodeID("test:mvcc-alice")
@@ -34,10 +34,10 @@ func mvccPublicAPIFixture(t *testing.T) (*MemoryEngine, NodeID, NodeID, EdgeID) 
 		{ID: aliceID, Labels: []string{"Person"}, Properties: map[string]any{"v": int64(1)}},
 		{ID: bobID, Labels: []string{"Person"}, Properties: map[string]any{"v": int64(1)}},
 	} {
-		_, err := tx.CreateNode(n)
+		_, err := tx.CreateNode(t.Context(), n)
 		require.NoError(t, err, "CreateNode(%q)", n.ID)
 	}
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: edgeID, StartNode: aliceID, EndNode: bobID, Type: "KNOWS",
 		Properties: map[string]any{"v": int64(1)},
 	}))
@@ -64,7 +64,7 @@ func TestMVCC_AppendNodeTombstone_FlipsHeadAndHidesAsOfRead(t *testing.T) {
 	}
 	require.NoError(t, engine.AppendNodeTombstone(aliceID, tombV))
 
-	head, err := engine.GetNodeCurrentHead(aliceID)
+	head, err := engine.GetNodeCurrentHead(context.Background(), aliceID)
 	require.NoError(t, err)
 	require.True(t, head.Tombstoned, "head must be tombstoned after AppendNodeTombstone")
 	require.Equal(t, 0, head.Version.Compare(tombV))
@@ -72,7 +72,7 @@ func TestMVCC_AppendNodeTombstone_FlipsHeadAndHidesAsOfRead(t *testing.T) {
 	// As-of read at the tombstone version: ErrNotFound, per
 	// GetNodeVisibleAt's "tombstoned head at or before requested
 	// version → ErrNotFound" branch.
-	got, err := engine.GetNodeVisibleAt(aliceID, tombV)
+	got, err := engine.GetNodeVisibleAt(t.Context(), aliceID, tombV)
 	require.ErrorIs(t, err, ErrNotFound)
 	require.Nil(t, got)
 
@@ -81,7 +81,7 @@ func TestMVCC_AppendNodeTombstone_FlipsHeadAndHidesAsOfRead(t *testing.T) {
 		CommitTimestamp: tombV.CommitTimestamp.Add(time.Minute),
 		CommitSequence:  tombV.CommitSequence + 1,
 	}
-	got, err = engine.GetNodeVisibleAt(aliceID, afterTomb)
+	got, err = engine.GetNodeVisibleAt(t.Context(), aliceID, afterTomb)
 	require.ErrorIs(t, err, ErrNotFound)
 	require.Nil(t, got)
 }
@@ -95,12 +95,12 @@ func TestMVCC_AppendEdgeTombstone_FlipsHeadAndHidesAsOfRead(t *testing.T) {
 	}
 	require.NoError(t, engine.AppendEdgeTombstone(edgeID, tombV))
 
-	head, err := engine.GetEdgeCurrentHead(edgeID)
+	head, err := engine.GetEdgeCurrentHead(context.Background(), edgeID)
 	require.NoError(t, err)
 	require.True(t, head.Tombstoned)
 	require.Equal(t, 0, head.Version.Compare(tombV))
 
-	got, err := engine.GetEdgeVisibleAt(edgeID, tombV)
+	got, err := engine.GetEdgeVisibleAt(t.Context(), edgeID, tombV)
 	require.ErrorIs(t, err, ErrNotFound)
 	require.Nil(t, got)
 }
@@ -108,7 +108,7 @@ func TestMVCC_AppendEdgeTombstone_FlipsHeadAndHidesAsOfRead(t *testing.T) {
 func TestMVCC_UpdateNodeCurrentHead_OverwritesVersion(t *testing.T) {
 	engine, aliceID, _, _ := mvccPublicAPIFixture(t)
 
-	original, err := engine.GetNodeCurrentHead(aliceID)
+	original, err := engine.GetNodeCurrentHead(context.Background(), aliceID)
 	require.NoError(t, err)
 	require.False(t, original.Tombstoned)
 
@@ -121,14 +121,14 @@ func TestMVCC_UpdateNodeCurrentHead_OverwritesVersion(t *testing.T) {
 	}
 	require.NoError(t, engine.UpdateNodeCurrentHead(aliceID, newV, false))
 
-	updated, err := engine.GetNodeCurrentHead(aliceID)
+	updated, err := engine.GetNodeCurrentHead(context.Background(), aliceID)
 	require.NoError(t, err)
 	require.Equal(t, 0, updated.Version.Compare(newV))
 	require.False(t, updated.Tombstoned)
 
 	// Flip tombstoned via the same method.
 	require.NoError(t, engine.UpdateNodeCurrentHead(aliceID, newV, true))
-	updated, err = engine.GetNodeCurrentHead(aliceID)
+	updated, err = engine.GetNodeCurrentHead(context.Background(), aliceID)
 	require.NoError(t, err)
 	require.True(t, updated.Tombstoned)
 }
@@ -136,7 +136,7 @@ func TestMVCC_UpdateNodeCurrentHead_OverwritesVersion(t *testing.T) {
 func TestMVCC_UpdateEdgeCurrentHead_OverwritesVersion(t *testing.T) {
 	engine, _, _, edgeID := mvccPublicAPIFixture(t)
 
-	original, err := engine.GetEdgeCurrentHead(edgeID)
+	original, err := engine.GetEdgeCurrentHead(context.Background(), edgeID)
 	require.NoError(t, err)
 
 	newV := MVCCVersion{
@@ -145,13 +145,13 @@ func TestMVCC_UpdateEdgeCurrentHead_OverwritesVersion(t *testing.T) {
 	}
 	require.NoError(t, engine.UpdateEdgeCurrentHead(edgeID, newV, false))
 
-	updated, err := engine.GetEdgeCurrentHead(edgeID)
+	updated, err := engine.GetEdgeCurrentHead(context.Background(), edgeID)
 	require.NoError(t, err)
 	require.Equal(t, 0, updated.Version.Compare(newV))
 	require.False(t, updated.Tombstoned)
 
 	require.NoError(t, engine.UpdateEdgeCurrentHead(edgeID, newV, true))
-	updated, err = engine.GetEdgeCurrentHead(edgeID)
+	updated, err = engine.GetEdgeCurrentHead(context.Background(), edgeID)
 	require.NoError(t, err)
 	require.True(t, updated.Tombstoned)
 }

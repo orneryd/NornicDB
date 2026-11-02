@@ -302,7 +302,7 @@ func setupHeimdallCoverageGlobals(t *testing.T) {
 		actions:    make(map[string]ActionFunc),
 		orderDirty: true,
 	}
-	globalManager.SetContext(SubsystemContext{
+	globalManager.SetContext(SubsystemHost{
 		Config:  DefaultConfig(),
 		Bifrost: &NoOpBifrost{},
 	})
@@ -355,7 +355,7 @@ func TestHeimdallCoverage_ReflectPluginAndInvokers(t *testing.T) {
 
 	mockPlugin := NewMockPlugin("reflective")
 	adapter := &reflectHeimdallPlugin{val: reflect.ValueOf(mockPlugin)}
-	ctx := SubsystemContext{Config: DefaultConfig(), Bifrost: &NoOpBifrost{}}
+	ctx := SubsystemContext{SubsystemHost: SubsystemHost{Config: DefaultConfig(), Bifrost: &NoOpBifrost{}}}
 
 	assert.Equal(t, "reflective", adapter.Name())
 	assert.Equal(t, "1.0.0", adapter.Version())
@@ -1502,7 +1502,7 @@ func TestHeimdallCoverage_PromptStreamingAndPluginLoading(t *testing.T) {
 	t.Run("plugin loading errors", func(t *testing.T) {
 		setupHeimdallCoverageGlobals(t)
 
-		ctx := SubsystemContext{Config: DefaultConfig(), Bifrost: &NoOpBifrost{}}
+		ctx := SubsystemHost{Config: DefaultConfig(), Bifrost: &NoOpBifrost{}}
 		require.NoError(t, LoadHeimdallPluginsFromDir("", ctx))
 
 		tmpDir := t.TempDir()
@@ -1614,7 +1614,7 @@ var Plugin = &pluginImpl{}
 		require.NoError(t, os.WriteFile(filepath.Join(pluginsDir, "iface.so"), interfaceBytes, 0o700))
 		require.NoError(t, os.WriteFile(filepath.Join(pluginsDir, "reflect.so"), reflectBytes, 0o700))
 
-		ctx := SubsystemContext{Config: DefaultConfig(), Bifrost: &NoOpBifrost{}}
+		ctx := SubsystemHost{Config: DefaultConfig(), Bifrost: &NoOpBifrost{}}
 		require.NoError(t, LoadHeimdallPluginsFromDir(pluginsDir, ctx))
 		assert.True(t, HeimdallPluginsInitialized())
 		assert.NotEmpty(t, ListHeimdallPlugins())

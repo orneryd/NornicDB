@@ -22,7 +22,7 @@ func TestDatabaseAccessFollowsStoredEntitlements(t *testing.T) {
 		if role != auth.RoleEditor {
 			require.NoError(t, server.roleStore.CreateRole(ctx, string(role)))
 		}
-		_, err := users.CreateUser(user, "password123", []auth.Role{role})
+		_, err := users.CreateUser(context.Background(), user, "password123", []auth.Role{role})
 		require.NoError(t, err)
 	}
 	ed := getAuthToken(t, users, "ed")

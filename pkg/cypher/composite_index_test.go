@@ -17,18 +17,18 @@ type updateErrorEngine struct {
 	edgeErr error
 }
 
-func (e *updateErrorEngine) UpdateNode(updateRequest storage.NodeUpdateRequest) error {
+func (e *updateErrorEngine) UpdateNode(ctx context.Context, updateRequest storage.NodeUpdateRequest) error {
 	if e.nodeErr != nil {
 		return e.nodeErr
 	}
-	return e.Engine.UpdateNode(updateRequest)
+	return e.Engine.UpdateNode(ctx, updateRequest)
 }
 
-func (e *updateErrorEngine) UpdateEdge(updateRequest storage.EdgeUpdateRequest) error {
+func (e *updateErrorEngine) UpdateEdge(ctx context.Context, updateRequest storage.EdgeUpdateRequest) error {
 	if e.edgeErr != nil {
 		return e.edgeErr
 	}
-	return e.Engine.UpdateEdge(updateRequest)
+	return e.Engine.UpdateEdge(ctx, updateRequest)
 }
 
 // TestCompositeIndex tests composite (multi-property) index creation
@@ -170,7 +170,7 @@ func TestVectorPropertyProcedureBranches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:         "n1",
 		Labels:     []string{"Node"},
 		Properties: map[string]interface{}{},
@@ -178,7 +178,7 @@ func TestVectorPropertyProcedureBranches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed node failed: %v", err)
 	}
-	err = store.CreateEdge(&storage.Edge{
+	err = store.CreateEdge(t.Context(), &storage.Edge{
 		ID:         "e1",
 		StartNode:  "n1",
 		EndNode:    "n1",

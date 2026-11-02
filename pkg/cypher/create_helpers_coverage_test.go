@@ -203,13 +203,13 @@ func TestCreateHelpers_ResolveOrCreateAndMultipleCreates(t *testing.T) {
 	assert.False(t, hasLeaf)
 
 	// Nothing is written until the plan is applied.
-	count, err := store.NodeCount()
+	count, err := store.NodeCount(t.Context())
 	require.NoError(t, err)
 	assert.Zero(t, count)
 	result := &ExecuteResult{Stats: &QueryStats{}}
 	require.NoError(t, exec.applyCreatePlan(ctx, &plan, result))
 	assert.Equal(t, 3, result.Stats.NodesCreated)
-	count, err = store.NodeCount()
+	count, err = store.NodeCount(t.Context())
 	require.NoError(t, err)
 	assert.EqualValues(t, 3, count)
 

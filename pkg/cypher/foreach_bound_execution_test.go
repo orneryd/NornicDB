@@ -36,8 +36,8 @@ func TestForeachRejectsMalformedBodyBeforeRows(t *testing.T) {
 	}
 }
 
-func (engine *cancelOnFirstCreateEngine) CreateNode(node *storage.Node) (storage.NodeID, error) {
-	id, err := engine.Engine.CreateNode(node)
+func (engine *cancelOnFirstCreateEngine) CreateNode(ctx context.Context, node *storage.Node) (storage.NodeID, error) {
+	id, err := engine.Engine.CreateNode(ctx, node)
 	if err == nil {
 		engine.creates++
 		if engine.creates == 1 {
@@ -50,10 +50,10 @@ func (engine *cancelOnFirstCreateEngine) CreateNode(node *storage.Node) (storage
 // BulkCreateNodes counts the batched rows and cancels the context, so a
 // UNWIND + CREATE batch (which plans all rows into one bulk call) observes
 // the cancellation only after its atomic apply.
-func (engine *cancelOnFirstCreateEngine) BulkCreateNodes(nodes []*storage.Node) error {
+func (engine *cancelOnFirstCreateEngine) BulkCreateNodes(ctx context.Context, nodes []*storage.Node) error {
 	engine.creates += len(nodes)
 	engine.cancel()
-	return engine.Engine.BulkCreateNodes(nodes)
+	return engine.Engine.BulkCreateNodes(ctx, nodes)
 }
 
 func TestForeach_MergeStopsAfterCancellation(t *testing.T) {

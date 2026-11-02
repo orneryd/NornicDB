@@ -10,8 +10,8 @@ import (
 
 // Commit-time constraint validation enumerates committed state through the
 // canonical bulk readers (GetStoredNodesByLabel, GetStoredEdgesByType,
-// GetStoredOutgoingEdges, GetStoredIncomingEdges). #1115 documents commitCtx as
-// the caller context while a commit runs, so a terminated statement stops
+// GetStoredOutgoingEdges, GetStoredIncomingEdges). #1115 requires the caller
+// context through commit preparation, so a terminated statement stops
 // inside such an enumeration instead of after it.
 //
 // Each test cancels the commit context at the documented constraint-scan seam,
@@ -32,19 +32,19 @@ func TestCommitCancellationStopsCommittedNodeUniqueScan(t *testing.T) {
 	// committed label scan.
 	require.NoError(t, schema.AddUniqueConstraint("unique_k", "Item", "k"))
 
-	staged, err := engine.BeginTransaction()
+	staged, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = staged.Rollback() })
 	stagedNode := &Node{ID: "test:staged", Labels: []string{"Item"}, Properties: map[string]any{"k": "shared"}}
-	_, err = staged.CreateNode(stagedNode)
+	_, err = staged.CreateNode(t.Context(), stagedNode)
 	require.NoError(t, err)
 
 	// A peer claims the same constrained value after the staged write, so the
 	// commit-time scan has a committed candidate to compare against.
-	peer, err := engine.BeginTransaction()
+	peer, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = peer.Rollback() })
-	_, err = peer.CreateNode(&Node{ID: "test:peer", Labels: []string{"Item"}, Properties: map[string]any{"k": "shared"}})
+	_, err = peer.CreateNode(t.Context(), &Node{ID: "test:peer", Labels: []string{"Item"}, Properties: map[string]any{"k": "shared"}})
 	require.NoError(t, err)
 	require.NoError(t, peer.Commit())
 
@@ -61,17 +61,17 @@ func TestCommitCancellationStopsCommittedNodeUniqueScan(t *testing.T) {
 	require.NotZero(t, scans, "test setup: the commit did not take the committed label scan")
 	require.ErrorIs(t, err, context.Canceled,
 		"the committed node UNIQUE enumeration must observe the commit context, got %v", err)
-	_, err = engine.GetNode("test:staged")
+	_, err = engine.GetNode(t.Context(), "test:staged")
 	require.ErrorIs(t, err, ErrNotFound, "a cancelled commit stored its node")
 
 	// The same write still commits with a live context once the client retries.
-	retry, err := engine.BeginTransaction()
+	retry, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = retry.Rollback() })
-	_, err = retry.CreateNode(&Node{ID: "test:staged", Labels: []string{"Item"}, Properties: map[string]any{"k": "retried"}})
+	_, err = retry.CreateNode(t.Context(), &Node{ID: "test:staged", Labels: []string{"Item"}, Properties: map[string]any{"k": "retried"}})
 	require.NoError(t, err)
 	require.NoError(t, retry.CommitContext(context.Background()))
-	stored, err := engine.GetNode("test:staged")
+	stored, err := engine.GetNode(t.Context(), "test:staged")
 	require.NoError(t, err)
 	require.Equal(t, "retried", stored.Properties["k"])
 }
@@ -95,17 +95,17 @@ func TestCommitCancellationStopsCommittedNodeTemporalScan(t *testing.T) {
 		}}
 	}
 
-	staged, err := engine.BeginTransaction()
+	staged, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = staged.Rollback() })
-	_, err = staged.CreateNode(span("test:span-staged", "a1", base.Add(time.Hour), base.Add(3*time.Hour)))
+	_, err = staged.CreateNode(t.Context(), span("test:span-staged", "a1", base.Add(time.Hour), base.Add(3*time.Hour)))
 	require.NoError(t, err)
 
 	// A peer opens an overlapping interval after the staged write.
-	peer, err := engine.BeginTransaction()
+	peer, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = peer.Rollback() })
-	_, err = peer.CreateNode(span("test:span-peer", "a1", base, base.Add(2*time.Hour)))
+	_, err = peer.CreateNode(t.Context(), span("test:span-peer", "a1", base, base.Add(2*time.Hour)))
 	require.NoError(t, err)
 	require.NoError(t, peer.Commit())
 
@@ -122,17 +122,17 @@ func TestCommitCancellationStopsCommittedNodeTemporalScan(t *testing.T) {
 	require.NotZero(t, scans, "test setup: the commit did not take the committed temporal scan")
 	require.ErrorIs(t, err, context.Canceled,
 		"the committed node TEMPORAL enumeration must observe the commit context, got %v", err)
-	_, err = engine.GetNode("test:span-staged")
+	_, err = engine.GetNode(t.Context(), "test:span-staged")
 	require.ErrorIs(t, err, ErrNotFound, "a cancelled commit stored its node")
 
 	// An unconstrained key does not overlap and commits with a live context.
-	retry, err := engine.BeginTransaction()
+	retry, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = retry.Rollback() })
-	_, err = retry.CreateNode(span("test:span-staged", "a2", base.Add(time.Hour), base.Add(3*time.Hour)))
+	_, err = retry.CreateNode(t.Context(), span("test:span-staged", "a2", base.Add(time.Hour), base.Add(3*time.Hour)))
 	require.NoError(t, err)
 	require.NoError(t, retry.CommitContext(context.Background()))
-	_, err = engine.GetNode("test:span-staged")
+	_, err = engine.GetNode(t.Context(), "test:span-staged")
 	require.NoError(t, err)
 }
 
@@ -152,7 +152,7 @@ func TestCommitCancellationStopsCommittedRelationshipUniqueScan(t *testing.T) {
 		Properties: []string{"tags"},
 	}))
 	for _, id := range []NodeID{"test:a", "test:b", "test:c"} {
-		_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"Endpoint"}, Properties: map[string]any{}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Endpoint"}, Properties: map[string]any{}})
 		require.NoError(t, err, "CreateNode(%q)", id)
 	}
 	owns := func(id, end string) *Edge {
@@ -160,16 +160,16 @@ func TestCommitCancellationStopsCommittedRelationshipUniqueScan(t *testing.T) {
 			Properties: map[string]any{"tags": []any{"x"}}}
 	}
 
-	staged, err := engine.BeginTransaction()
+	staged, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = staged.Rollback() })
-	require.NoError(t, staged.CreateEdge(owns("test:owns-staged", "test:b")))
+	require.NoError(t, staged.CreateEdge(t.Context(), owns("test:owns-staged", "test:b")))
 
 	// A peer claims the same constrained value after the staged write.
-	peer, err := engine.BeginTransaction()
+	peer, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = peer.Rollback() })
-	require.NoError(t, peer.CreateEdge(owns("test:owns-peer", "test:c")))
+	require.NoError(t, peer.CreateEdge(t.Context(), owns("test:owns-peer", "test:c")))
 	require.NoError(t, peer.Commit())
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -185,17 +185,17 @@ func TestCommitCancellationStopsCommittedRelationshipUniqueScan(t *testing.T) {
 	require.NotZero(t, scans, "test setup: the commit did not take the committed edge scan")
 	require.ErrorIs(t, err, context.Canceled,
 		"the committed relationship UNIQUE enumeration must observe the commit context, got %v", err)
-	_, err = engine.GetEdge("test:owns-staged")
+	_, err = engine.GetEdge(t.Context(), "test:owns-staged")
 	require.ErrorIs(t, err, ErrNotFound, "a cancelled commit stored its relationship")
 
 	// A different constrained value commits with a live context.
-	retry, err := engine.BeginTransaction()
+	retry, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = retry.Rollback() })
-	require.NoError(t, retry.CreateEdge(&Edge{ID: "test:owns-staged", StartNode: "test:a", EndNode: "test:b", Type: "OWNS",
+	require.NoError(t, retry.CreateEdge(t.Context(), &Edge{ID: "test:owns-staged", StartNode: "test:a", EndNode: "test:b", Type: "OWNS",
 		Properties: map[string]any{"tags": []any{"y"}}}))
 	require.NoError(t, retry.CommitContext(context.Background()))
-	_, err = engine.GetEdge("test:owns-staged")
+	_, err = engine.GetEdge(t.Context(), "test:owns-staged")
 	require.NoError(t, err)
 }
 
@@ -222,16 +222,16 @@ func TestCommittedRelationshipConstraintReadsCarryTheCommitContext(t *testing.T)
 			Properties: []string{"subject", "valid_from", "valid_to"}}
 		require.NoError(t, engine.GetSchemaForNamespace("test").AddConstraint(c))
 		for _, id := range []NodeID{"test:a", "test:b"} {
-			_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"Endpoint"}, Properties: map[string]any{}})
+			_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Endpoint"}, Properties: map[string]any{}})
 			require.NoError(t, err, "CreateNode(%q)", id)
 		}
 		interval := func(from, to int) map[string]any {
 			return map[string]any{"subject": "s", "valid_from": day(from), "valid_to": day(to)}
 		}
-		require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b",
+		require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b",
 			Type: "RECORDS", Properties: interval(1, 6)}))
 
-		tx, err := engine.BeginTransaction()
+		tx, err := engine.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -248,12 +248,12 @@ func TestCommittedRelationshipConstraintReadsCarryTheCommitContext(t *testing.T)
 			EntityType: ConstraintEntityRelationship, Label: "OWNS", Direction: "OUTGOING", MaxCount: 1}
 		require.NoError(t, engine.GetSchemaForNamespace("test").AddConstraint(c))
 		for _, id := range []NodeID{"test:a", "test:b", "test:c"} {
-			_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"Endpoint"}, Properties: map[string]any{}})
+			_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Endpoint"}, Properties: map[string]any{}})
 			require.NoError(t, err, "CreateNode(%q)", id)
 		}
-		require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "OWNS"}))
+		require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "OWNS"}))
 
-		tx, err := engine.BeginTransaction()
+		tx, err := engine.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -269,16 +269,16 @@ func TestCommittedRelationshipConstraintReadsCarryTheCommitContext(t *testing.T)
 		c := Constraint{Name: "no_secret_links", Type: ConstraintPolicy,
 			EntityType: ConstraintEntityRelationship, Label: "LINK",
 			PolicyMode: "DISALLOWED", SourceLabel: "User", TargetLabel: "Secret"}
-		_, err := engine.CreateNode(&Node{ID: "test:u", Labels: []string{"User"}, Properties: map[string]any{}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: "test:u", Labels: []string{"User"}, Properties: map[string]any{}})
 		require.NoError(t, err)
-		_, err = engine.CreateNode(&Node{ID: "test:s", Labels: []string{"Secret"}, Properties: map[string]any{}})
+		_, err = engine.CreateNode(t.Context(), &Node{ID: "test:s", Labels: []string{"Secret"}, Properties: map[string]any{}})
 		require.NoError(t, err)
 		// The relationship predates the policy: the check under test compares a label
 		// change against committed relationships, not the policy's own admission.
-		require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:u", EndNode: "test:s", Type: "LINK"}))
+		require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:u", EndNode: "test:s", Type: "LINK"}))
 		require.NoError(t, engine.GetSchemaForNamespace("test").AddConstraint(c))
 
-		tx, err := engine.BeginTransaction()
+		tx, err := engine.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		require.NoError(t, tx.SetNamespace("test"))
 		t.Cleanup(func() { _ = tx.Rollback() })

@@ -20,7 +20,7 @@ func TestIndexCatalog_PutAndGet(t *testing.T) {
 		},
 	}
 
-	if err := eng.PutIndexEntryCatalog("nornic:node1", cat); err != nil {
+	if err := eng.PutIndexEntryCatalog(context.Background(), "nornic:node1", cat); err != nil {
 		t.Fatal(err)
 	}
 
@@ -59,7 +59,7 @@ func TestIndexCatalog_Delete(t *testing.T) {
 		TargetScope: "NODE",
 		IndexKeys:   [][]byte{labelIndexKey("person", 1)},
 	}
-	if err := eng.PutIndexEntryCatalog("nornic:node1", cat); err != nil {
+	if err := eng.PutIndexEntryCatalog(context.Background(), "nornic:node1", cat); err != nil {
 		t.Fatal(err)
 	}
 	if err := eng.DeleteIndexEntryCatalog("nornic:node1"); err != nil {
@@ -83,7 +83,7 @@ func TestIndexCatalog_DeindexedFlag(t *testing.T) {
 		IndexKeys:   [][]byte{labelIndexKey("person", 1)},
 		Deindexed:   true,
 	}
-	if err := eng.PutIndexEntryCatalog("nornic:node1", cat); err != nil {
+	if err := eng.PutIndexEntryCatalog(context.Background(), "nornic:node1", cat); err != nil {
 		t.Fatal(err)
 	}
 
@@ -175,7 +175,7 @@ func TestIndexCatalog_WrittenOnCreateNode(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Alice"},
 	}
-	if _, err := eng.CreateNode(node); err != nil {
+	if _, err := eng.CreateNode(t.Context(), node); err != nil {
 		t.Fatal(err)
 	}
 
@@ -202,11 +202,11 @@ func TestIndexCatalog_DeletedOnDeleteNode(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Bob"},
 	}
-	if _, err := eng.CreateNode(node); err != nil {
+	if _, err := eng.CreateNode(t.Context(), node); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := eng.DeleteNode("nornic:del_cat"); err != nil {
+	if err := eng.DeleteNode(t.Context(), "nornic:del_cat"); err != nil {
 		t.Fatal(err)
 	}
 

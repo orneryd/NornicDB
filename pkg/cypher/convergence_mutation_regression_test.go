@@ -116,7 +116,7 @@ func sharedSetAssignmentForTest(t testing.TB, entity interface{}, assignment unw
 		copy := *original
 		copy.Properties = maps.Clone(original.Properties)
 		before = maps.Clone(original.Properties)
-		if _, err := store.CreateNode(&copy); err != nil {
+		if _, err := store.CreateNode(t.Context(), &copy); err != nil {
 			return 0, err
 		}
 		row["subject"] = &copy
@@ -130,15 +130,15 @@ func sharedSetAssignmentForTest(t testing.TB, entity interface{}, assignment unw
 		if copy.EndNode == "" {
 			copy.EndNode = "fixture-end"
 		}
-		if _, err := store.CreateNode(&storage.Node{ID: copy.StartNode}); err != nil {
+		if _, err := store.CreateNode(t.Context(), &storage.Node{ID: copy.StartNode}); err != nil {
 			return 0, err
 		}
 		if copy.EndNode != copy.StartNode {
-			if _, err := store.CreateNode(&storage.Node{ID: copy.EndNode}); err != nil {
+			if _, err := store.CreateNode(t.Context(), &storage.Node{ID: copy.EndNode}); err != nil {
 				return 0, err
 			}
 		}
-		if err := store.CreateEdge(&copy); err != nil {
+		if err := store.CreateEdge(t.Context(), &copy); err != nil {
 			return 0, err
 		}
 		row["subject"] = &copy
@@ -1463,7 +1463,7 @@ func BenchmarkSetExecutionPaths(b *testing.B) {
 	benchmark := func(b *testing.B, execute func(*StorageExecutor, context.Context) error) {
 		store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "set-benchmark")
 		for index := 0; index < 100; index++ {
-			_, err := store.CreateNode(&storage.Node{
+			_, err := store.CreateNode(b.Context(), &storage.Node{
 				ID:     storage.NodeID(fmt.Sprintf("set-benchmark-%d", index)),
 				Labels: []string{"SetBenchmark"},
 				Properties: map[string]interface{}{

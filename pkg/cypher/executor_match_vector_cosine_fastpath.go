@@ -606,12 +606,12 @@ func (e *StorageExecutor) tryFastPathMatchRelationshipVectorCosine(ctx context.C
 		edge := hit.edge
 		if edge == nil && hit.edgeID != "" {
 			var err error
-			edge, err = e.storage.GetEdge(hit.edgeID)
+			edge, err = e.storage.GetEdge(ctx, hit.edgeID)
 			if err != nil || edge == nil {
 				continue
 			}
 		}
-		if !e.buildRelationshipContextInto(pattern, edge, nodeCtx, edgeCtx) {
+		if !e.buildRelationshipContextInto(ctx, pattern, edge, nodeCtx, edgeCtx) {
 			continue
 		}
 		if preWhereClause != "" && !evaluateExpressionBoolWithContext(e, ctx, preWhereClause, nodeCtx, edgeCtx) {
@@ -763,12 +763,12 @@ func (e *StorageExecutor) tryFastPathMatchWithRelationshipVectorCosineProjection
 		edge := hit.edge
 		if edge == nil && hit.edgeID != "" {
 			var err error
-			edge, err = e.storage.GetEdge(hit.edgeID)
+			edge, err = e.storage.GetEdge(ctx, hit.edgeID)
 			if err != nil || edge == nil {
 				continue
 			}
 		}
-		if !e.buildRelationshipContextInto(pattern, edge, nodeCtx, edgeCtx) {
+		if !e.buildRelationshipContextInto(ctx, pattern, edge, nodeCtx, edgeCtx) {
 			continue
 		}
 		if preWhereClause != "" && !evaluateExpressionBoolWithContext(e, ctx, preWhereClause, nodeCtx, edgeCtx) {
@@ -892,7 +892,7 @@ func (e *StorageExecutor) fetchCosineNodeScores(ctx context.Context, indexName s
 
 	out := make([]vectorNodeScore, 0, len(hits))
 	for _, hit := range hits {
-		node, err := e.getNodeForVectorHit(storage.NodeID(hit.ID), projectedProps)
+		node, err := e.getNodeForVectorHit(ctx, storage.NodeID(hit.ID), projectedProps)
 		if err != nil || node == nil {
 			continue
 		}
@@ -907,13 +907,13 @@ func (e *StorageExecutor) fetchCosineNodeScores(ctx context.Context, indexName s
 	return out, true
 }
 
-func (e *StorageExecutor) getNodeForVectorHit(id storage.NodeID, projectedProps []string) (*storage.Node, error) {
+func (e *StorageExecutor) getNodeForVectorHit(ctx context.Context, id storage.NodeID, projectedProps []string) (*storage.Node, error) {
 	if projectedProps != nil {
 		if reader, ok := e.storage.(storage.ProjectedNodeReader); ok {
-			return reader.GetNodeProjected(id, projectedProps)
+			return reader.GetNodeProjected(ctx, id, projectedProps)
 		}
 	}
-	return e.storage.GetNode(id)
+	return e.storage.GetNode(ctx, id)
 }
 
 func nodeProjectionPropertiesForVectorFastPath(varName string, vectorProp string, returnItems []returnItem, scoreExprIsAlias []bool, preWhereClause string, preWhereNotNullProp string, matchProps map[string]interface{}) ([]string, bool) {
@@ -1495,16 +1495,16 @@ func parseSimpleEndpointRef(content string) (string, []string, bool) {
 	return strictNodeHeadLabels(content)
 }
 
-func (e *StorageExecutor) buildRelationshipContext(pattern parsedSimpleMatchRelationshipPattern, edge *storage.Edge) (map[string]*storage.Node, map[string]*storage.Edge, bool) {
+func (e *StorageExecutor) buildRelationshipContext(ctx context.Context, pattern parsedSimpleMatchRelationshipPattern, edge *storage.Edge) (map[string]*storage.Node, map[string]*storage.Edge, bool) {
 	nodeCtx := make(map[string]*storage.Node, 2)
 	edgeCtx := make(map[string]*storage.Edge, 1)
-	if !e.buildRelationshipContextInto(pattern, edge, nodeCtx, edgeCtx) {
+	if !e.buildRelationshipContextInto(ctx, pattern, edge, nodeCtx, edgeCtx) {
 		return nil, nil, false
 	}
 	return nodeCtx, edgeCtx, true
 }
 
-func (e *StorageExecutor) buildRelationshipContextInto(pattern parsedSimpleMatchRelationshipPattern, edge *storage.Edge, nodeCtx map[string]*storage.Node, edgeCtx map[string]*storage.Edge) bool {
+func (e *StorageExecutor) buildRelationshipContextInto(ctx context.Context, pattern parsedSimpleMatchRelationshipPattern, edge *storage.Edge, nodeCtx map[string]*storage.Node, edgeCtx map[string]*storage.Edge) bool {
 	if edge == nil {
 		return false
 	}
@@ -1517,11 +1517,11 @@ func (e *StorageExecutor) buildRelationshipContextInto(pattern parsedSimpleMatch
 	startID := storage.EnsureNodeIDDatabasePrefixForEngine(e.storage, edge.StartNode)
 	endID := storage.EnsureNodeIDDatabasePrefixForEngine(e.storage, edge.EndNode)
 
-	startNode, err := e.getQueryNode(e.storage, startID)
+	startNode, err := e.getQueryNode(ctx, e.storage, startID)
 	if err != nil || startNode == nil {
 		return false
 	}
-	endNode, err := e.getQueryNode(e.storage, endID)
+	endNode, err := e.getQueryNode(ctx, e.storage, endID)
 	if err != nil || endNode == nil {
 		return false
 	}

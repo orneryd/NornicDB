@@ -198,7 +198,7 @@ func TestStreamNodesByLabelProjected_ScoresBeforeStaleVisibility(t *testing.T) {
 		CreatedAt:  now,
 		UpdatedAt:  now,
 	}
-	_, err = eng.CreateNode(node)
+	_, err = eng.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	eng.cacheStoreNode(node, eng.db.oracle.published.Load())
 

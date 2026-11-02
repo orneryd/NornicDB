@@ -74,7 +74,7 @@ func TestHandleSearch_ReadinessChangesAfterInitialCheck(t *testing.T) {
 	require.NoError(t, err)
 	vector := make([]float32, 1024)
 	vector[0] = 1
-	_, err = engine.CreateNode(&storage.Node{ID: "seed", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "needle"}, ChunkEmbeddings: [][]float32{vector}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "seed", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "needle"}, ChunkEmbeddings: [][]float32{vector}})
 	require.NoError(t, err)
 	// Wait for the DB owner's initial build; starting a second BuildIndexes
 	// here would itself race the asynchronous initial build.

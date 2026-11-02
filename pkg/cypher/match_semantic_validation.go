@@ -312,7 +312,7 @@ func (e *StorageExecutor) semanticScopeWalk(ctx context.Context, clauses []pipel
 		// Every clause but RETURN and DELETE may change types.
 		stale = true
 		if clause.kind != pipelineClauseMatch && clause.kind != pipelineClauseOptionalMatch {
-			if err := validateShortestCallBindings(clause.text, scope); err != nil {
+			if err := validateShortestCallBindings(ctx, clause.text, scope); err != nil {
 				return types, false, err
 			}
 		}
@@ -448,7 +448,7 @@ func (e *StorageExecutor) semanticScopeWalk(ctx context.Context, clauses []pipel
 				return types, false, err
 			}
 		case pipelineClauseMatch, pipelineClauseOptionalMatch:
-			if err := e.validateMatchClauseBindings(scope, clause.text); err != nil {
+			if err := e.validateMatchClauseBindings(ctx, scope, clause.text); err != nil {
 				return types, false, err
 			}
 			// A quantified group's predicates see one iteration's node and
@@ -780,7 +780,7 @@ func undefinedExpressionVariable(scope matchSemanticScope, expression string) er
 	return nil
 }
 
-func (e *StorageExecutor) validateMatchClauseBindings(scope matchSemanticScope, clause string) error {
+func (e *StorageExecutor) validateMatchClauseBindings(ctx context.Context, scope matchSemanticScope, clause string) error {
 	pattern := strings.TrimSpace(clause)
 	for _, keyword := range []string{"OPTIONAL MATCH", "MATCH"} {
 		if startsWithKeywordFold(pattern, keyword) {
@@ -841,7 +841,7 @@ func (e *StorageExecutor) validateMatchClauseBindings(scope matchSemanticScope, 
 		}
 
 		if _, _, _, selected := splitPathSelectorTerm(whereClause); !selected {
-			if err := validateShortestCallBindings(entityPattern, scope); err != nil {
+			if err := validateShortestCallBindings(ctx, entityPattern, scope); err != nil {
 				return err
 			}
 		}

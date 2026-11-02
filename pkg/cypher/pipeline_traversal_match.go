@@ -116,8 +116,8 @@ func (e *StorageExecutor) pipelineApplySeededTraversalMatch(ctx context.Context,
 				return nil, true, err
 			}
 		}
-		e.normalizeSetMatchRowsToNodes(result, store)
-		e.normalizeSetMatchRowsToEdges(result, store)
+		e.normalizeSetMatchRowsToNodes(ctx, result, store)
+		e.normalizeSetMatchRowsToEdges(ctx, result, store)
 		var rowWhere *preparedRowPredicate
 		if residualWhere != "" {
 			rowWhere = prepareRowPredicate(residualWhere)

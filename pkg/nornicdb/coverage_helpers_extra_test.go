@@ -6,12 +6,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/embed"
@@ -104,9 +105,9 @@ func TestDBRetentionPoliciesPathBranches(t *testing.T) {
 func TestDBCollectSubjectRetentionRecords(t *testing.T) {
 	engine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = engine.Close() })
-	_, err := engine.CreateNode(&storage.Node{ID: "nornic:n1", Labels: []string{"Doc"}, Properties: map[string]interface{}{"owner_id": "alice", "category": "note"}})
+	_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "nornic:n1", Labels: []string{"Doc"}, Properties: map[string]interface{}{"owner_id": "alice", "category": "note"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "nornic:n2", Labels: []string{"Doc"}, Properties: map[string]interface{}{"owner_id": "bob"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "nornic:n2", Labels: []string{"Doc"}, Properties: map[string]interface{}{"owner_id": "bob"}})
 	require.NoError(t, err)
 
 	db := &DB{storage: engine, config: &nornicConfig.Config{}}

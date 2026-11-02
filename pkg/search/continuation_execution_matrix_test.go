@@ -4,8 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -24,7 +25,7 @@ func TestContinuationExecutionGeneratedDepthMatrix(t *testing.T) {
 			t.Cleanup(func() { require.NoError(t, service.Close()) })
 			for i := 0; i < population; i++ {
 				node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("doc-%02d", i)), Properties: map[string]any{"content": "matrix corpus"}}
-				_, err := engine.CreateNode(node)
+				_, err := engine.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 				require.NoError(t, service.IndexNode(node))
 			}

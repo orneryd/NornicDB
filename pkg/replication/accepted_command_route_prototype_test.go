@@ -22,26 +22,30 @@ type acceptedMirrorStorage struct {
 func (s *acceptedMirrorStorage) PrepareEntityCommand(ctx context.Context, cmd *Command) (*Command, func(storage.CommitOutcome), bool, error) {
 	return s.Storage.(*StorageAdapter).PrepareEntityCommand(ctx, cmd)
 }
-func (s *acceptedMirrorStorage) ApplyCommand(cmd *Command) error {
+func (s *acceptedMirrorStorage) ApplyCommand(waitCtx context.Context, cmd *Command, publication WALPublicationMode) (CommandPublication, error) {
 	s.calls.Add(1)
-	if err := s.Storage.ApplyCommand(cmd); err != nil {
-		return err
+	receipt, err := s.Storage.ApplyCommand(waitCtx, cmd, publication)
+	if err != nil {
+		return CommandPublication{}, err
 	}
 	if s.peer != nil {
 		// Exercise actual serialized ownership isolation, not shared command pointers.
 		bytes, err := storage.EncodeCommandPayload(cmd)
 		if err != nil {
-			return err
+			return CommandPublication{}, err
 		}
 		var peer Command
 		if err = storage.DecodeCommandPayload(bytes, &peer); err != nil {
-			return err
+			return CommandPublication{}, err
 		}
-		if err = s.peer.ApplyCommand(&peer); err != nil {
-			return err
+		if _, err = s.peer.ApplyCommand(waitCtx, &peer, WALQueued); err != nil {
+			return CommandPublication{}, err
 		}
 	}
-	return s.ackError
+	if s.ackError != nil {
+		return CommandPublication{}, s.ackError
+	}
+	return receipt, nil
 }
 
 // newAcceptedReplicationFixture owns the WAL adapters and running replicator.
@@ -71,12 +75,12 @@ func TestAcceptedStandaloneExplicitTransactionReplicatesOriginalSnapshot(t *test
 	require.NoError(t, err)
 	r, mirror := newAcceptedReplicationFixture(t, base, peer, &Config{})
 	engine := NewReplicatedEngine(base, r, time.Second)
-	tx, err := base.BeginTransaction()
+	tx, err := base.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer tx.Rollback()
 	node := &storage.Node{ID: "test:a", Labels: []string{"Doc"}, Properties: map[string]any{"value": "prepared"}, EmbedMeta: map[string]any{"embedding_model": "source"}}
 	node.SetRuntimeMetadata(storage.NodeRuntimeMetadata{VisibilitySuppressed: true})
-	_, err = tx.CreateNode(node)
+	_, err = tx.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	prepared, err := tx.PrepareEntityCommit(context.Background(), storage.EntityCommitRequest{LogicalID: "replicated-logical"})
 	require.NoError(t, err)
@@ -89,26 +93,26 @@ func TestAcceptedStandaloneExplicitTransactionReplicatesOriginalSnapshot(t *test
 	require.NoError(t, err)
 	require.NoError(t, receipt.Wait(context.Background()))
 	require.Equal(t, storage.CommitApplied, receipt.Outcome().State)
-	a, err := base.GetStoredNode("test:a")
+	a, err := base.GetStoredNode(t.Context(), "test:a")
 	require.NoError(t, err)
-	b, err := peer.GetStoredNode("test:a")
+	b, err := peer.GetStoredNode(t.Context(), "test:a")
 	require.NoError(t, err)
 	assertStoredNodeParity(t, a, b)
 	require.Equal(t, int32(1), mirror.calls.Load())
 	// The historical rejected-origin counterexample is rejected before any record.
-	stale, err := base.BeginTransaction()
+	stale, err := base.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer stale.Rollback()
-	require.NoError(t, stale.UpdateGraphNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "test:a", Properties: map[string]any{"value": "stale"}}, Policy: storage.ClientNodeEdits}))
-	require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "test:a", Properties: map[string]any{"value": "newer"}}}))
+	require.NoError(t, stale.UpdateGraphNode(t.Context(), storage.NodeUpdateRequest{After: &storage.Node{ID: "test:a", Properties: map[string]any{"value": "stale"}}, Policy: storage.ClientNodeEdits}))
+	require.NoError(t, engine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: &storage.Node{ID: "test:a", Properties: map[string]any{"value": "newer"}}}))
 	before := mirror.calls.Load()
 	rejected, err := stale.PrepareEntityCommit(context.Background(), storage.EntityCommitRequest{LogicalID: "must-not-record"})
 	require.ErrorIs(t, err, storage.ErrConflict)
 	require.Nil(t, rejected)
 	require.Equal(t, before, mirror.calls.Load())
-	a, err = base.GetStoredNode("test:a")
+	a, err = base.GetStoredNode(t.Context(), "test:a")
 	require.NoError(t, err)
-	b, err = peer.GetStoredNode("test:a")
+	b, err = peer.GetStoredNode(t.Context(), "test:a")
 	require.NoError(t, err)
 	require.Equal(t, "newer", a.Properties["value"])
 	require.Equal(t, "newer", b.Properties["value"])
@@ -135,7 +139,7 @@ func TestDatabaseDropPreservesAcceptedCatalogAcknowledgementError(t *testing.T) 
 	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "victim"}))
 	view, err := manager.GetStorage("victim")
 	require.NoError(t, err)
-	_, err = view.CreateNode(&storage.Node{ID: "keep", Properties: map[string]interface{}{"value": "before"}})
+	_, err = view.CreateNode(t.Context(), &storage.Node{ID: "keep", Properties: map[string]interface{}{"value": "before"}})
 	require.NoError(t, err)
 	sentinel := errors.New("catalog applied but acknowledgement failed")
 	mirror.ackError = sentinel
@@ -148,12 +152,12 @@ func TestDatabaseDropPreservesAcceptedCatalogAcknowledgementError(t *testing.T) 
 	require.True(t, manager.Exists("victim"))
 	_, err = manager.GetStorage("victim")
 	require.ErrorIs(t, err, multidb.ErrDatabaseOffline)
-	node, err := base.GetStoredNode("victim:keep")
+	node, err := base.GetStoredNode(t.Context(), "victim:keep")
 	require.NoError(t, err)
 	require.Equal(t, "before", node.Properties["value"])
 	mirror.ackError = nil
 	require.NoError(t, manager.DropDatabase(t.Context(), "victim"))
 	require.False(t, manager.Exists("victim"))
-	_, err = base.GetStoredNode("victim:keep")
+	_, err = base.GetStoredNode(t.Context(), "victim:keep")
 	require.ErrorIs(t, err, storage.ErrNotFound)
 }

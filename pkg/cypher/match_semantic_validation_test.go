@@ -88,9 +88,9 @@ func TestUndirectedMatchEmitsSelfRelationshipOnce(t *testing.T) {
 	exec, store := newCypherTestExecutor(t, "match_self_relationship")
 	ctx := context.Background()
 
-	nodeID, err := store.CreateNode(&storage.Node{ID: "node"})
+	nodeID, err := store.CreateNode(t.Context(), &storage.Node{ID: "node"})
 	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "relationship",
 		Type:      "LOOP",
 		StartNode: nodeID,
@@ -143,11 +143,11 @@ func TestUndirectedMatchFiltersUntypedRelationshipProperties(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	leftID, err := store.CreateNode(&storage.Node{ID: "left", Labels: []string{"Left"}})
+	leftID, err := store.CreateNode(t.Context(), &storage.Node{ID: "left", Labels: []string{"Left"}})
 	require.NoError(t, err)
-	rightID, err := store.CreateNode(&storage.Node{ID: "right", Labels: []string{"Right"}})
+	rightID, err := store.CreateNode(t.Context(), &storage.Node{ID: "right", Labels: []string{"Right"}})
 	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{
 		ID:         "relationship",
 		Type:       "LINK",
 		StartNode:  leftID,
@@ -165,14 +165,14 @@ func TestBidirectionalArrowMatchesRelationshipInEitherDirection(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	leftID, err := store.CreateNode(&storage.Node{ID: "left", Properties: map[string]interface{}{"name": "A"}})
+	leftID, err := store.CreateNode(t.Context(), &storage.Node{ID: "left", Properties: map[string]interface{}{"name": "A"}})
 	require.NoError(t, err)
-	middleID, err := store.CreateNode(&storage.Node{ID: "middle", Properties: map[string]interface{}{"name": "X"}})
+	middleID, err := store.CreateNode(t.Context(), &storage.Node{ID: "middle", Properties: map[string]interface{}{"name": "X"}})
 	require.NoError(t, err)
-	rightID, err := store.CreateNode(&storage.Node{ID: "right", Properties: map[string]interface{}{"name": "B"}})
+	rightID, err := store.CreateNode(t.Context(), &storage.Node{ID: "right", Properties: map[string]interface{}{"name": "B"}})
 	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "left-middle", Type: "LINK", StartNode: leftID, EndNode: middleID}))
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "right-middle", Type: "LINK", StartNode: rightID, EndNode: middleID}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "left-middle", Type: "LINK", StartNode: leftID, EndNode: middleID}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "right-middle", Type: "LINK", StartNode: rightID, EndNode: middleID}))
 
 	result, err := exec.Execute(ctx, "MATCH (a {name: 'A'}), (b {name: 'B'}) MATCH (a)-->(x)<-->(b) RETURN x", nil)
 	require.NoError(t, err)

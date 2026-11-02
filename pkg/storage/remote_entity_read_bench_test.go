@@ -18,7 +18,7 @@ func BenchmarkRemoteEntityReadAdmission(b *testing.B) {
 		b.Run(fmt.Sprintf("first/%d", count), func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
-				if node, err := engine.GetFirstNodeByLabel(""); err != nil || node.ID != "node:0" {
+				if node, err := engine.GetFirstNodeByLabel(b.Context(), ""); err != nil || node.ID != "node:0" {
 					b.Fatalf("first node: %v", err)
 				}
 			}

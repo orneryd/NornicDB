@@ -77,7 +77,7 @@ func TestWatcherPublicQueryUsesGrammarPolicy(t *testing.T) {
 				t.Cleanup(func() { require.NoError(t, store.Close()) })
 				router := &watcherPolicyRouter{executor: cypher.NewStorageExecutor(storage.NewNamespacedEngine(store, "default"))}
 				p := &WatcherPlugin{}
-				require.NoError(t, p.Initialize(heimdall.SubsystemContext{Config: heimdall.Config{Model: "test-model"}}))
+				require.NoError(t, p.Initialize(heimdall.SubsystemContext{SubsystemHost: heimdall.SubsystemHost{Config: heimdall.Config{Model: "test-model"}}}))
 				roles := []string{"watcher-reader"}
 				if writer {
 					roles = []string{"watcher-writer"}

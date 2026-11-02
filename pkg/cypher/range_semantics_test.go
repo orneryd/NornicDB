@@ -20,7 +20,7 @@ func TestRangeValidationDoesNotMaterializeValues(t *testing.T) {
 	executor := NewStorageExecutor(newTestMemoryEngine(t))
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
-	err := executor.validateRangeCalls("range(1, 200000)", pipelineRow{})
+	err := executor.validateRangeCalls(t.Context(), "range(1, 200000)", pipelineRow{})
 	runtime.ReadMemStats(&after)
 	require.NoError(t, err)
 	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(256*1024))
@@ -92,7 +92,7 @@ func TestUnwindRangeAggregationDoesNotRetainInputRows(t *testing.T) {
 				t.Logf("grammar setup allocated %d bytes outside row-retention measurement", parserAfter.TotalAlloc-parserBefore.TotalAlloc)
 				executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "stream_aggregate"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 				if explicit {
-					_, err := executor.handleBegin(nil)
+					_, err := executor.handleBegin(t.Context())
 					require.NoError(t, err)
 					t.Cleanup(func() { _, _ = executor.handleRollback(context.Background(), nil) })
 				}
@@ -116,7 +116,7 @@ func TestUnwindRangeAggregationDoesNotRetainInputRows(t *testing.T) {
 
 func TestUnwindRangeExplicitTransactionFiltersBeforeMaterializingRows(t *testing.T) {
 	executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "range_explicit"))
-	_, err := executor.handleBegin(nil)
+	_, err := executor.handleBegin(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _, _ = executor.handleRollback(context.Background(), nil) })
 	requireUnwindRangeFiltersBeforeMaterializingRows(t, func() (*ExecuteResult, error) {
@@ -145,7 +145,7 @@ func TestUnwindStreamingAggregateSemantics(t *testing.T) {
 				var result *ExecuteResult
 				var err error
 				if explicit {
-					_, err = executor.handleBegin(nil)
+					_, err = executor.handleBegin(t.Context())
 					require.NoError(t, err)
 					t.Cleanup(func() { _, _ = executor.handleRollback(context.Background(), nil) })
 					result, err = executor.executeInTransaction(context.Background(), test.query, test.query)
@@ -361,7 +361,7 @@ func TestUnwindRangeReportedWorkload(t *testing.T) {
 					var result *ExecuteResult
 					var err error
 					if explicit {
-						_, err = executor.handleBegin(nil)
+						_, err = executor.handleBegin(t.Context())
 						require.NoError(t, err)
 						t.Cleanup(func() { _, _ = executor.handleRollback(context.Background(), nil) })
 						result, err = executor.executeInTransaction(context.Background(), test.query, test.query)
@@ -444,7 +444,7 @@ func TestPipelineVectorWriteKeepsTypedValues(t *testing.T) {
 	require.Equal(t, 1, result.Stats.NodesCreated)
 
 	nodeID := storedNodeID(t, executor, ctx, "MATCH (n:TypedVector {key: 'typed'})", nil)
-	firstNode, err := store.GetNode(storage.NodeID(nodeID))
+	firstNode, err := store.GetNode(t.Context(), storage.NodeID(nodeID))
 	require.NoError(t, err)
 	require.Equal(t, vector, firstNode.Properties["embedding"], "storage must keep the precise typed vector")
 
@@ -459,7 +459,7 @@ func TestPipelineVectorWriteKeepsTypedValues(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{changed}}, changedResult.Rows)
 	require.Zero(t, changedResult.Stats.NodesCreated, "a changed vector must update, not create")
-	changedNode, err := store.GetNode(storage.NodeID(nodeID))
+	changedNode, err := store.GetNode(t.Context(), storage.NodeID(nodeID))
 	require.NoError(t, err)
 	require.Equal(t, changed, changedNode.Properties["embedding"], "a changed vector must replace the stored vector")
 }

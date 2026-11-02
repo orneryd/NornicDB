@@ -24,11 +24,11 @@ func TestRemoteConstituentEngineJoinsTheStatement(t *testing.T) {
 
 	unjoined := composite.remote("remote:far", inner)
 	require.Same(t, unjoined, composite.remote("remote:far", inner), "one engine per constituent")
-	_, err := unjoined.CreateNode(&storage.Node{ID: "n1", Labels: []string{"Far"}})
+	_, err := unjoined.CreateNode(t.Context(), &storage.Node{ID: "n1", Labels: []string{"Far"}})
 	require.ErrorContains(t, err, "storage engine has unexpected type for 'remote:far'")
-	_, err = unjoined.GetNode("n1")
+	_, err = unjoined.GetNode(t.Context(), "n1")
 	require.ErrorContains(t, err, "storage engine has unexpected type for 'remote:far'")
-	count, err := inner.NodeCount()
+	count, err := inner.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.Zero(t, count, "the engine is never reached")
 
@@ -152,12 +152,12 @@ func TestFabricValueFragmentRunsInTheStatement(t *testing.T) {
 
 type ownershipBeginCapture struct {
 	storage.Engine
-	begin   func() (*storage.BadgerTransaction, error)
+	begin   func(context.Context) (*storage.BadgerTransaction, error)
 	started *storage.BadgerTransaction
 }
 
-func (engine *ownershipBeginCapture) BeginTransaction() (*storage.BadgerTransaction, error) {
-	tx, err := engine.begin()
+func (engine *ownershipBeginCapture) BeginTransaction(ctx context.Context) (*storage.BadgerTransaction, error) {
+	tx, err := engine.begin(ctx)
 	engine.started = tx
 	return tx, err
 }

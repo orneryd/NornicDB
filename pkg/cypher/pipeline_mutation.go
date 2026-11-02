@@ -43,7 +43,7 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 		if len(references) > 0 {
 			continue
 		}
-		if value, evaluated, err := e.evaluateRowValue(strings.TrimSpace(expression), pipelineRow{}); err != nil {
+		if value, evaluated, err := e.evaluateRowValue(ctx, strings.TrimSpace(expression), pipelineRow{}); err != nil {
 			return nil, true, err
 		} else if evaluated && !isDeleteTargetValue(value) {
 			return nil, true, newSemanticError(
@@ -60,7 +60,7 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 		}
 		values := make([]interface{}, 0, len(targets))
 		for _, expression := range targets {
-			value, ok, err := e.evaluateRowValue(strings.TrimSpace(expression), row)
+			value, ok, err := e.evaluateRowValue(ctx, strings.TrimSpace(expression), row)
 			if err != nil {
 				return nil, true, err
 			}
@@ -100,7 +100,7 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 	// (storage.ErrNotFound) and counts once, as in Neo4j (#827).
 	deletedEdges := make(map[storage.EdgeID]struct{}, len(edgeIDs))
 	for _, edgeID := range edgeIDs {
-		if err := store.DeleteEdge(edgeID); err != nil {
+		if err := store.DeleteEdge(ctx, edgeID); err != nil {
 			if errors.Is(err, storage.ErrNotFound) {
 				continue
 			}
@@ -123,11 +123,11 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 	for _, nodeID := range nodeIDs {
 		deleteNode := store.DeleteNode
 		if _, stillConnected := connected[nodeID]; stillConnected {
-			deleteNode = func(id storage.NodeID) error {
-				return store.(storage.ConnectedNodeDeleter).DeleteGraphNode(id, storage.RejectConnected)
+			deleteNode = func(ctx context.Context, id storage.NodeID) error {
+				return store.(storage.ConnectedNodeDeleter).DeleteGraphNode(ctx, id, storage.RejectConnected)
 			}
 		}
-		if err := deleteNode(nodeID); err != nil {
+		if err := deleteNode(ctx, nodeID); err != nil {
 			if errors.Is(err, storage.ErrNotFound) {
 				continue
 			}
@@ -145,7 +145,7 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 		deleted = &deletedEntities{}
 	}
 	deleted.addFromStorage(store, nodeIDs, deletedEdges)
-	e.replaceDeletedEntityViews(rows, deleted)
+	e.replaceDeletedEntityViews(ctx, rows, deleted)
 	return stats, true, nil
 }
 
@@ -522,7 +522,7 @@ func (e *StorageExecutor) pipelinePlanCreateRow(ctx context.Context, row pipelin
 			newRow[name] = edge
 		}
 		for name, path := range paths {
-			newRow[name] = e.pathToMap(path)
+			newRow[name] = e.pathToMapContext(ctx, path)
 		}
 	}
 	return newRow, nil
@@ -606,12 +606,12 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 			return nil, nil, templateErr
 		}
 		if templated {
-			matches, findErr := findParsedMergeRelationships(e.getStorage(ctx), identities, pattern, startNode, endNode)
+			matches, findErr := findParsedMergeRelationships(ctx, e.getStorage(ctx), identities, pattern, startNode, endNode)
 			if findErr != nil {
 				return nil, nil, findErr
 			}
 			if len(matches) > 0 {
-				out = append(out, e.mergeRelationshipRows(row, nil, nil, pattern, startNode, endNode, matches)...)
+				out = append(out, e.mergeRelationshipRows(ctx, row, nil, nil, pattern, startNode, endNode, matches)...)
 				continue
 			}
 		}
@@ -718,7 +718,7 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 							}
 							if nodePathVariable != "" {
 								path := PathResult{Nodes: []*storage.Node{node}}
-								expanded[nodePathVariable] = e.pathToMap(path)
+								expanded[nodePathVariable] = e.pathToMapContext(ctx, path)
 							}
 							matchedRows = append(matchedRows, expanded)
 						}
@@ -744,12 +744,12 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 			startNode := nodeContext[relationshipPattern.startVariable]
 			endNode := nodeContext[relationshipPattern.endVariable]
 			if startNode != nil && endNode != nil {
-				matches, findErr := findParsedMergeRelationships(e.getStorage(ctx), identities, relationshipPattern, startNode, endNode)
+				matches, findErr := findParsedMergeRelationships(ctx, e.getStorage(ctx), identities, relationshipPattern, startNode, endNode)
 				if findErr != nil {
 					return nil, nil, findErr
 				}
 				if len(matches) > 0 {
-					matchedRows := e.mergeRelationshipRows(row, nodeContext, relContext, relationshipPattern, startNode, endNode, matches)
+					matchedRows := e.mergeRelationshipRows(ctx, row, nodeContext, relContext, relationshipPattern, startNode, endNode, matches)
 					if onMatchSet != "" {
 						// It can change identity values.
 						identities.reset()
@@ -808,7 +808,7 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 		if nodePathVariable != "" {
 			if node := nodeContext[nodePathBinding]; node != nil {
 				path := PathResult{Nodes: []*storage.Node{node}}
-				newRow[nodePathVariable] = e.pathToMap(path)
+				newRow[nodePathVariable] = e.pathToMapContext(ctx, path)
 			}
 		}
 		if relationshipPattern != nil {
@@ -832,14 +832,14 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 					}
 				} else {
 					identities.reset()
-					found, findErr := findParsedMergeRelationships(e.getStorage(ctx), identities, relationshipPattern, startNode, endNode)
+					found, findErr := findParsedMergeRelationships(ctx, e.getStorage(ctx), identities, relationshipPattern, startNode, endNode)
 					if findErr != nil {
 						return nil, nil, findErr
 					}
 					matches = found
 				}
 				if len(matches) > 0 {
-					produced = e.mergeRelationshipRows(newRow, nil, nil, relationshipPattern, startNode, endNode, matches)
+					produced = e.mergeRelationshipRows(ctx, newRow, nil, nil, relationshipPattern, startNode, endNode, matches)
 				}
 			}
 		}
@@ -861,7 +861,7 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 // mergeRelationshipRows returns one row per relationship a MERGE matched or
 // created: row with the MERGE's node and relationship bindings, the pattern's
 // relationship variable and its path variable.
-func (e *StorageExecutor) mergeRelationshipRows(row pipelineRow, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge, pattern *mergeRelationshipPattern, startNode, endNode *storage.Node, relationships []*storage.Edge) []pipelineRow {
+func (e *StorageExecutor) mergeRelationshipRows(ctx context.Context, row pipelineRow, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge, pattern *mergeRelationshipPattern, startNode, endNode *storage.Node, relationships []*storage.Edge) []pipelineRow {
 	rows := make([]pipelineRow, 0, len(relationships))
 	for _, relationship := range relationships {
 		expanded := make(pipelineRow, util.SafePreallocSum(len(row), len(nodeContext), len(relContext), 2))
@@ -879,7 +879,7 @@ func (e *StorageExecutor) mergeRelationshipRows(row pipelineRow, nodeContext map
 		}
 		if pattern.pathVariable != "" {
 			path := PathResult{Nodes: []*storage.Node{startNode, endNode}, Relationships: []*storage.Edge{relationship}, Length: 1}
-			expanded[pattern.pathVariable] = e.pathToMap(path)
+			expanded[pattern.pathVariable] = e.pathToMapContext(ctx, path)
 		}
 		rows = append(rows, expanded)
 	}

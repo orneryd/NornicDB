@@ -68,15 +68,23 @@ const schemaDefinitionVersion = 1
 
 // ExportDefinition returns a stable, persisted representation of the schema.
 // The returned object is safe to serialize and does not include runtime caches.
-func (sm *SchemaManager) ExportDefinition() *SchemaDefinition {
-	sm.mu.RLock()
+//
+// ctx owns admission, contract cloning and ordering. A canceled ctx returns its
+// own error and no partial definition; an exported definition is a detached
+// snapshot, so later live schema changes never reach it.
+func (sm *SchemaManager) ExportDefinition(ctx context.Context) (*SchemaDefinition, error) {
+	if err := sm.mu.RLockContext(ctx); err != nil {
+		return nil, err
+	}
 	defer sm.mu.RUnlock()
-	return sm.exportDefinitionLocked()
+	return sm.exportDefinitionLocked(ctx)
 }
 
 // exportDefinitionLocked builds a persisted schema definition from the current state.
 // REQUIRES: caller holds either sm.mu.RLock() or sm.mu.Lock().
-func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
+// ctx bounds cloning; only a native mutation with no caller context passes an
+// explicit own lifetime.
+func (sm *SchemaManager) exportDefinitionLocked(ctx context.Context) (*SchemaDefinition, error) {
 	def := &SchemaDefinition{Version: schemaDefinitionVersion}
 	def.LabelTokens = append([]string(nil), sm.tokenOrder.labels...)
 	def.RelationshipTypeTokens = append([]string(nil), sm.tokenOrder.relationships...)
@@ -99,7 +107,10 @@ func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
 	if len(sm.constraintContracts) > 0 {
 		def.ConstraintContracts = make([]ConstraintContract, 0, len(sm.constraintContracts))
 		for _, contract := range sm.constraintContracts {
-			cloned, _ := cloneConstraintContract(context.Background(), contract) // native schema export cannot cancel
+			cloned, err := cloneConstraintContract(ctx, contract)
+			if err != nil {
+				return nil, err
+			}
 			def.ConstraintContracts = append(def.ConstraintContracts, cloned)
 		}
 		sort.Slice(def.ConstraintContracts, func(i, j int) bool {
@@ -268,7 +279,10 @@ func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
 		})
 	}
 
-	return def
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return def, nil
 }
 
 // ReplaceFromDefinition replaces the in-memory schema contents with the given definition.
@@ -277,25 +291,51 @@ func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
 // (unique value maps, index maps, etc.). Those must be rebuilt from data.
 // Loading and binding compilation complete before publication; rejected
 // definitions leave every existing family and compiled binding table intact.
-func (sm *SchemaManager) ReplaceFromDefinition(def *SchemaDefinition) error {
-	defer sm.trackPendingPairs()
+// ctx owns detached candidate construction: loading, validation and binding
+// compilation, including the constraint-owned index discovery it runs, and
+// admission to the live schema. A canceled ctx installs nothing: preparation
+// returns before the replacement waits, and a caller canceled while it waits
+// for the schema lock returns that cancellation without installing anything.
+// Installation starts where admission succeeds, so an admitted candidate is
+// published atomically and leaves the previously compiled table intact.
+//
+// Only an accepted installation re-tracks the pairs the attached pending-write
+// source indexes. That completion belongs to the accepted schema change, so it
+// runs after the schema lock is released and ctx decides nothing there: a
+// canceled or rejected definition tracks nothing.
+//
+// A nil def remains a no-op that tracks pending pairs, as before.
+func (sm *SchemaManager) ReplaceFromDefinition(ctx context.Context, def *SchemaDefinition) error {
 	if def == nil {
+		sm.trackPendingPairs()
 		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
 	// Build and validate off to the side. A binding compile failure must not
 	// replace some live families while leaving the previously compiled table.
 	candidate := NewSchemaManager()
-	if err := candidate.replaceFromDefinitionLocked(def); err != nil {
+	if err := candidate.replaceFromDefinitionLocked(ctx, def); err != nil {
 		return err
 	}
-	sm.mu.Lock()
+	// Admission waits on the caller's own context, so a replacement canceled
+	// while another mutation holds the schema lock returns that cancellation
+	// without installing. Everything after a successful admission is the
+	// accepted installation, so both defers below are registered only then.
+	if err := sm.mu.LockContext(ctx); err != nil {
+		return err
+	}
+	// Deferred before the unlock so the accepted completion runs after the
+	// schema lock is released: pair tracking takes the same lock again.
+	defer sm.trackPendingPairs()
 	defer sm.mu.Unlock()
 	sm.installSchemaLocked(candidate, acceptedDefinitionInstallation)
 	return nil
 }
 
-func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) error {
+func (sm *SchemaManager) replaceFromDefinitionLocked(ctx context.Context, def *SchemaDefinition) error {
 	if def == nil {
 		return nil
 	}
@@ -333,7 +373,10 @@ func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) erro
 	}
 
 	for _, contract := range def.ConstraintContracts {
-		cloned, _ := cloneConstraintContract(context.Background(), contract) // native metadata mutation cannot cancel
+		cloned, err := cloneConstraintContract(ctx, contract)
+		if err != nil {
+			return err
+		}
 		sm.constraintContracts[contract.Name] = cloned
 	}
 
@@ -367,7 +410,9 @@ func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) erro
 	// A constraint's own equality index (#875), unless an index of its own
 	// already covers the property.
 	for _, c := range sm.constraints {
-		sm.addConstraintPropertyIndexLocked(c)
+		if err := sm.addConstraintPropertyIndexLocked(ctx, c); err != nil {
+			return err
+		}
 	}
 
 	for _, idx := range def.CompositeIndexes {

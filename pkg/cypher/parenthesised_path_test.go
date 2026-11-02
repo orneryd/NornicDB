@@ -46,11 +46,11 @@ func TestParenthesisedPaths(t *testing.T) {
 	require.False(t, mayUseParenthesisedPath("RETURN 1"))
 	rewrite := pathPrefixRewrite{}
 	text := "(a)-['x']->(b {k: [1]})"
-	require.NoError(t, (&labelExpressionRewriter{query: text}).plainParenthesisedPath(0, len(text), &rewrite))
+	require.NoError(t, (&labelExpressionRewriter{ctx: t.Context(), query: text}).plainParenthesisedPath(0, len(text), &rewrite))
 	text = "((a)-->(b)"
-	require.NoError(t, (&labelExpressionRewriter{query: text}).plainParenthesisedPath(0, len(text), &rewrite))
+	require.NoError(t, (&labelExpressionRewriter{ctx: t.Context(), query: text}).plainParenthesisedPath(0, len(text), &rewrite))
 	require.Empty(t, rewrite.pathWheres)
 	text = "')(' ((a)-->(b))"
-	require.ErrorContains(t, (&labelExpressionRewriter{query: text}).plainParenthesisedPath(0, len(text), &rewrite),
+	require.ErrorContains(t, (&labelExpressionRewriter{ctx: t.Context(), query: text}).plainParenthesisedPath(0, len(text), &rewrite),
 		"Juxtaposition", "a quote's parenthesis is text")
 }

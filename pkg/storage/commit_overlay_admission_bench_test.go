@@ -16,23 +16,23 @@ func BenchmarkBufferedConflictPreparationScan(b *testing.B) {
 		b.Run(fmt.Sprintf("nodes=%d", size), func(b *testing.B) {
 			engine := newWriteBehindTestEngine(b, time.Hour)
 			for i := range size {
-				if _, err := engine.CreateNode(&Node{ID: NodeID(fmt.Sprintf("test:n%d", i)), Properties: map[string]any{"payload": "before"}}); err != nil {
+				if _, err := engine.CreateNode(b.Context(), &Node{ID: NodeID(fmt.Sprintf("test:n%d", i)), Properties: map[string]any{"payload": "before"}}); err != nil {
 					b.Fatal(err)
 				}
 			}
-			tx, err := engine.BeginTransaction()
+			tx, err := engine.BeginTransaction(b.Context())
 			if err != nil {
 				b.Fatal(err)
 			}
 			b.Cleanup(func() { _ = tx.Rollback() })
 			for i := range size {
-				node, err := tx.GetNode(NodeID(fmt.Sprintf("test:n%d", i)))
+				node, err := tx.GetNode(b.Context(), NodeID(fmt.Sprintf("test:n%d", i)))
 				if err != nil {
 					b.Fatal(err)
 				}
 				before := CopyNode(node)
 				node.Properties["payload"] = "after"
-				if err := tx.UpdateGraphNode(NodeUpdateRequest{Before: before, After: node, Policy: ClientNodeEdits}); err != nil {
+				if err := tx.UpdateGraphNode(b.Context(), NodeUpdateRequest{Before: before, After: node, Policy: ClientNodeEdits}); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -56,7 +56,7 @@ func BenchmarkPublicBufferedEntityCommitPreparation(b *testing.B) {
 		b.Run(fmt.Sprintf("nodes=%d", size), func(b *testing.B) {
 			engine := newWriteBehindTestEngine(b, time.Hour)
 			for i := range size {
-				if _, err := engine.CreateNode(&Node{ID: NodeID(fmt.Sprintf("test:n%d", i)), Properties: map[string]any{"payload": "before"}}); err != nil {
+				if _, err := engine.CreateNode(b.Context(), &Node{ID: NodeID(fmt.Sprintf("test:n%d", i)), Properties: map[string]any{"payload": "before"}}); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -66,18 +66,18 @@ func BenchmarkPublicBufferedEntityCommitPreparation(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				b.StopTimer()
-				tx, err := engine.BeginTransaction()
+				tx, err := engine.BeginTransaction(b.Context())
 				if err != nil {
 					b.Fatal(err)
 				}
 				for j := range size {
-					node, err := tx.GetNode(NodeID(fmt.Sprintf("test:n%d", j)))
+					node, err := tx.GetNode(b.Context(), NodeID(fmt.Sprintf("test:n%d", j)))
 					if err != nil {
 						b.Fatal(err)
 					}
 					before := CopyNode(node)
 					node.Properties["payload"] = "after"
-					if err := tx.UpdateGraphNode(NodeUpdateRequest{Before: before, After: node, Policy: ClientNodeEdits}); err != nil {
+					if err := tx.UpdateGraphNode(b.Context(), NodeUpdateRequest{Before: before, After: node, Policy: ClientNodeEdits}); err != nil {
 						b.Fatal(err)
 					}
 				}
@@ -97,7 +97,7 @@ func BenchmarkPublicBufferedEntityCommitPreparation(b *testing.B) {
 				b.StartTimer()
 			}
 			b.StopTimer()
-			count, countErr := engine.NodeCount()
+			count, countErr := engine.NodeCount(b.Context())
 			if countErr != nil {
 				b.Fatal(countErr)
 			}

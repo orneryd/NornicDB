@@ -11,9 +11,12 @@ func TestRemoteEntityValuePreservesOrdinaryMapEncoding(t *testing.T) {
 	remote := storage.RemoteEntityValue{"elementId": "4:remote:n", "labels": []interface{}{"Doc"}, "properties": map[string]interface{}{"name": "Remote"}}
 	plain := map[string]interface{}(remote)
 	for _, utc := range []bool{false, true} {
-		wire := encodeRecordValueInto(nil, plain, utc, true, "local")
+		wire, encodeErr := encodeRecordValueInto(t.Context(), nil, plain, utc, true, "local")
+		require.NoError(t, encodeErr)
 		require.Equal(t, byte(0xa3), wire[0])
-		require.Equal(t, byte(0x4e), encodeRecordValueInto(nil, remote, utc, true, "local")[1])
+		remoteWire, encodeErr := encodeRecordValueInto(t.Context(), nil, remote, utc, true, "local")
+		require.NoError(t, encodeErr)
+		require.Equal(t, byte(0x4e), remoteWire[1])
 	}
 }
 

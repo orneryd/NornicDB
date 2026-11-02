@@ -36,7 +36,7 @@ func TestRefreshUniqueConstraintValuesForEngine_RebuildsCache(t *testing.T) {
 		{ID: "test:a", Labels: []string{"User"}, Properties: map[string]any{"email": "a@example.com"}},
 		{ID: "test:b", Labels: []string{"User"}, Properties: map[string]any{"email": "b@example.com"}},
 	} {
-		_, err := e.CreateNode(n)
+		_, err := e.CreateNode(t.Context(), n)
 		require.NoError(t, err)
 	}
 
@@ -47,10 +47,10 @@ func TestValidateRelationshipConstraintOnCreationForEngine_DispatchesByType(t *t
 	e := newTestMemoryEngine(t)
 
 	for _, n := range []NodeID{"test:a", "test:b"} {
-		_, err := e.CreateNode(&Node{ID: n, Labels: []string{"L"}, Properties: map[string]any{}})
+		_, err := e.CreateNode(t.Context(), &Node{ID: n, Labels: []string{"L"}, Properties: map[string]any{}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, e.CreateEdge(&Edge{
+	require.NoError(t, e.CreateEdge(t.Context(), &Edge{
 		ID: "test:e", StartNode: "test:a", EndNode: "test:b",
 		Type: "REL", Properties: map[string]any{"v": "x"},
 	}))
@@ -76,7 +76,7 @@ func TestValidateRelationshipConstraintOnCreationForEngine_DispatchesByType(t *t
 func TestValidateDomainConstraintOnCreationForEngine(t *testing.T) {
 	e := newTestMemoryEngine(t)
 
-	_, err := e.CreateNode(&Node{
+	_, err := e.CreateNode(t.Context(), &Node{
 		ID: "test:n", Labels: []string{"Order"},
 		Properties: map[string]any{"state": "active"},
 	})
@@ -89,7 +89,7 @@ func TestValidateDomainConstraintOnCreationForEngine(t *testing.T) {
 	}))
 
 	// Fail: value not in list.
-	_, err = e.CreateNode(&Node{
+	_, err = e.CreateNode(t.Context(), &Node{
 		ID: "test:bad", Labels: []string{"Order"},
 		Properties: map[string]any{"state": "deleted"},
 	})
@@ -154,11 +154,11 @@ func TestValidatePolicyOnCreationForEngine(t *testing.T) {
 		{ID: "test:secret", Labels: []string{"Secret"}, Properties: map[string]any{}},
 		{ID: "test:report", Labels: []string{"Report"}, Properties: map[string]any{}},
 	} {
-		_, err := e.CreateNode(node)
+		_, err := e.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
-	require.NoError(t, e.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:user", EndNode: "test:secret", Type: "READS"}))
-	require.NoError(t, e.CreateEdge(&Edge{ID: "test:e2", StartNode: "test:user", EndNode: "test:report", Type: "READS"}))
+	require.NoError(t, e.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:user", EndNode: "test:secret", Type: "READS"}))
+	require.NoError(t, e.CreateEdge(t.Context(), &Edge{ID: "test:e2", StartNode: "test:user", EndNode: "test:report", Type: "READS"}))
 
 	edges, err := e.AllEdges(context.Background())
 	require.NoError(t, err)
@@ -187,11 +187,11 @@ func TestValidateRelPropertyTypeOnCreationForEngine(t *testing.T) {
 	e := newTestMemoryEngine(t)
 
 	for _, n := range []NodeID{"test:a", "test:b"} {
-		_, err := e.CreateNode(&Node{ID: n, Labels: []string{"Endpoint"}, Properties: map[string]any{}})
+		_, err := e.CreateNode(t.Context(), &Node{ID: n, Labels: []string{"Endpoint"}, Properties: map[string]any{}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, e.CreateEdge(&Edge{ID: "test:ok", StartNode: "test:a", EndNode: "test:b", Type: "SCORED", Properties: map[string]any{"score": int64(10)}}))
-	require.NoError(t, e.CreateEdge(&Edge{ID: "test:ignored", StartNode: "test:a", EndNode: "test:b", Type: "OTHER", Properties: map[string]any{"score": "bad"}}))
+	require.NoError(t, e.CreateEdge(t.Context(), &Edge{ID: "test:ok", StartNode: "test:a", EndNode: "test:b", Type: "SCORED", Properties: map[string]any{"score": int64(10)}}))
+	require.NoError(t, e.CreateEdge(t.Context(), &Edge{ID: "test:ignored", StartNode: "test:a", EndNode: "test:b", Type: "OTHER", Properties: map[string]any{"score": "bad"}}))
 
 	require.NoError(t, validateRelPropertyTypeOnCreationForEngine(context.Background(), e, PropertyTypeConstraint{
 		EntityType:   ConstraintEntityRelationship,
@@ -200,7 +200,7 @@ func TestValidateRelPropertyTypeOnCreationForEngine(t *testing.T) {
 		ExpectedType: PropertyTypeInteger,
 	}))
 
-	require.NoError(t, e.CreateEdge(&Edge{ID: "test:bad", StartNode: "test:a", EndNode: "test:b", Type: "SCORED", Properties: map[string]any{"score": "bad"}}))
+	require.NoError(t, e.CreateEdge(t.Context(), &Edge{ID: "test:bad", StartNode: "test:a", EndNode: "test:b", Type: "SCORED", Properties: map[string]any{"score": "bad"}}))
 	err := validateRelPropertyTypeOnCreationForEngine(context.Background(), e, PropertyTypeConstraint{
 		EntityType:   ConstraintEntityRelationship,
 		Label:        "SCORED",

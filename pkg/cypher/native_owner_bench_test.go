@@ -11,7 +11,7 @@ func BenchmarkNativeStatementOwner(b *testing.B) {
 		b.Run(work.name, func(b *testing.B) {
 			root := newTestMemoryEngine(b)
 			store := storage.NewNamespacedEngine(root, "bench")
-			_, err := store.CreateNode(&storage.Node{ID: "bench", Labels: []string{"OwnerBench"}, Properties: map[string]any{"value": int64(1)}})
+			_, err := store.CreateNode(b.Context(), &storage.Node{ID: "bench", Labels: []string{"OwnerBench"}, Properties: map[string]any{"value": int64(1)}})
 			if err != nil {
 				b.Fatal(err)
 			}

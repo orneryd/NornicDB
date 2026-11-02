@@ -25,7 +25,7 @@ func TestRelationshipSnapshotUpgradeReusesVectorsOnRestart(t *testing.T) {
 	seed.EnableRelationshipSearch(nil)
 	want := relationshipVectorsFile{Format: relationshipVectorsFormat, Entries: make(map[string]*relationshipEntry)}
 	for index, id := range []string{"r1", "r2"} {
-		edge, err := engine.GetEdge(storage.EdgeID(id))
+		edge, err := engine.GetEdge(t.Context(), storage.EdgeID(id))
 		require.NoError(t, err)
 		want.Entries[id] = &relationshipEntry{
 			Source:  seed.relationshipSearch().source(edge),

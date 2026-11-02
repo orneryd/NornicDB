@@ -35,9 +35,9 @@ func TestEvaluateMatchClauseNodes_Branches(t *testing.T) {
 	_, _, err := exec.evaluateMatchClauseNodes(ctx, "(:Person)")
 	require.ErrorContains(t, err, "missing variable")
 
-	_, err = exec.storage.CreateNode(&storage.Node{ID: "a1", Labels: []string{"A"}, Properties: map[string]interface{}{"k": "x", "v": int64(1)}})
+	_, err = exec.storage.CreateNode(t.Context(), &storage.Node{ID: "a1", Labels: []string{"A"}, Properties: map[string]interface{}{"k": "x", "v": int64(1)}})
 	require.NoError(t, err)
-	_, err = exec.storage.CreateNode(&storage.Node{ID: "a2", Labels: []string{"A"}, Properties: map[string]interface{}{"k": "y", "v": int64(2)}})
+	_, err = exec.storage.CreateNode(t.Context(), &storage.Node{ID: "a2", Labels: []string{"A"}, Properties: map[string]interface{}{"k": "y", "v": int64(2)}})
 	require.NoError(t, err)
 
 	nodes, v, err := exec.evaluateMatchClauseNodes(ctx, "(n:A {k:'x'})")
@@ -68,7 +68,7 @@ func TestExecuteChainedMatchWithAggregations_Branches(t *testing.T) {
 		{ID: "b1", Labels: []string{"B"}, Properties: map[string]interface{}{"z": int64(1)}},
 		{ID: "b2", Labels: []string{"B"}, Properties: map[string]interface{}{"z": nil}},
 	} {
-		_, err = exec.storage.CreateNode(n)
+		_, err = exec.storage.CreateNode(t.Context(), n)
 		require.NoError(t, err)
 	}
 

@@ -7,6 +7,7 @@ package nornicdb
 
 import (
 	"context"
+	"errors"
 	"maps"
 	"slices"
 	"strconv"
@@ -27,22 +28,29 @@ func NewAPOCStorageAdapter(engine storage.Engine) *APOCStorageAdapter {
 }
 
 // GetNode retrieves a node by ID.
-func (a *APOCStorageAdapter) GetNode(id int64) (*apocstorage.Node, error) {
+//
+// The caller's context is the read lifetime: the engine read receives it, and a
+// caller that stopped receives its own error instead of the not-found error the
+// adapter reports for an ordinary miss.
+func (a *APOCStorageAdapter) GetNode(ctx context.Context, id int64) (*apocstorage.Node, error) {
 	nodeID := storage.NodeID(strconv.FormatInt(id, 10))
-	node, err := a.engine.GetNode(nodeID)
+	node, err := a.engine.GetNode(ctx, nodeID)
 	if err != nil {
-		return nil, apocstorage.ErrNodeNotFound
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil, apocstorage.ErrNodeNotFound
+		}
+		return nil, err
 	}
 	return a.convertNode(node), nil
 }
 
 // CreateNode creates a new node with the given labels and properties.
-func (a *APOCStorageAdapter) CreateNode(labels []string, properties map[string]interface{}) (*apocstorage.Node, error) {
+func (a *APOCStorageAdapter) CreateNode(ctx context.Context, labels []string, properties map[string]interface{}) (*apocstorage.Node, error) {
 	node := &storage.Node{
 		Labels:     labels,
 		Properties: properties,
 	}
-	_, err := a.engine.CreateNode(node)
+	_, err := a.engine.CreateNode(ctx, node)
 	if err != nil {
 		return nil, err
 	}
@@ -50,11 +58,14 @@ func (a *APOCStorageAdapter) CreateNode(labels []string, properties map[string]i
 }
 
 // UpdateNode updates the properties of an existing node.
-func (a *APOCStorageAdapter) UpdateNode(id int64, properties map[string]interface{}) error {
+func (a *APOCStorageAdapter) UpdateNode(ctx context.Context, id int64, properties map[string]interface{}) error {
 	nodeID := storage.NodeID(strconv.FormatInt(id, 10))
-	node, err := a.engine.GetNode(nodeID)
+	node, err := a.engine.GetNode(ctx, nodeID)
 	if err != nil {
-		return apocstorage.ErrNodeNotFound
+		if errors.Is(err, storage.ErrNotFound) {
+			return apocstorage.ErrNodeNotFound
+		}
+		return err
 	}
 	before := *node
 	before.Properties = maps.Clone(node.Properties)
@@ -62,21 +73,24 @@ func (a *APOCStorageAdapter) UpdateNode(id int64, properties map[string]interfac
 		node.Properties = make(map[string]interface{})
 	}
 	maps.Copy(node.Properties, properties)
-	return a.engine.UpdateNode(storage.NodeUpdateRequest{Before: &before, After: node})
+	return a.engine.UpdateNode(ctx, storage.NodeUpdateRequest{Before: &before, After: node})
 }
 
-// DeleteNode removes a node by ID.
-func (a *APOCStorageAdapter) DeleteNode(id int64) error {
+// DeleteNode removes a node and its incident relationships by ID.
+func (a *APOCStorageAdapter) DeleteNode(ctx context.Context, id int64) error {
 	nodeID := storage.NodeID(strconv.FormatInt(id, 10))
-	return a.engine.DeleteNode(nodeID)
+	return a.engine.DeleteNode(ctx, nodeID)
 }
 
 // AddLabels adds labels to a node.
-func (a *APOCStorageAdapter) AddLabels(id int64, labels []string) error {
+func (a *APOCStorageAdapter) AddLabels(ctx context.Context, id int64, labels []string) error {
 	nodeID := storage.NodeID(strconv.FormatInt(id, 10))
-	node, err := a.engine.GetNode(nodeID)
+	node, err := a.engine.GetNode(ctx, nodeID)
 	if err != nil {
-		return apocstorage.ErrNodeNotFound
+		if errors.Is(err, storage.ErrNotFound) {
+			return apocstorage.ErrNodeNotFound
+		}
+		return err
 	}
 	before := *node
 	before.Labels = slices.Clone(node.Labels)
@@ -89,15 +103,18 @@ func (a *APOCStorageAdapter) AddLabels(id int64, labels []string) error {
 			node.Labels = append(node.Labels, l)
 		}
 	}
-	return a.engine.UpdateNode(storage.NodeUpdateRequest{Before: &before, After: node})
+	return a.engine.UpdateNode(ctx, storage.NodeUpdateRequest{Before: &before, After: node})
 }
 
 // RemoveLabels removes labels from a node.
-func (a *APOCStorageAdapter) RemoveLabels(id int64, labels []string) error {
+func (a *APOCStorageAdapter) RemoveLabels(ctx context.Context, id int64, labels []string) error {
 	nodeID := storage.NodeID(strconv.FormatInt(id, 10))
-	node, err := a.engine.GetNode(nodeID)
+	node, err := a.engine.GetNode(ctx, nodeID)
 	if err != nil {
-		return apocstorage.ErrNodeNotFound
+		if errors.Is(err, storage.ErrNotFound) {
+			return apocstorage.ErrNodeNotFound
+		}
+		return err
 	}
 	before := *node
 	labelSet := make(map[string]bool)
@@ -111,28 +128,33 @@ func (a *APOCStorageAdapter) RemoveLabels(id int64, labels []string) error {
 		}
 	}
 	node.Labels = newLabels
-	return a.engine.UpdateNode(storage.NodeUpdateRequest{Before: &before, After: node})
+	return a.engine.UpdateNode(ctx, storage.NodeUpdateRequest{Before: &before, After: node})
 }
 
 // GetRelationship retrieves a relationship by ID.
-func (a *APOCStorageAdapter) GetRelationship(id int64) (*apocstorage.Relationship, error) {
+//
+// The caller's context is the read lifetime, as it is for GetNode.
+func (a *APOCStorageAdapter) GetRelationship(ctx context.Context, id int64) (*apocstorage.Relationship, error) {
 	edgeID := storage.EdgeID(strconv.FormatInt(id, 10))
-	edge, err := a.engine.GetEdge(edgeID)
+	edge, err := a.engine.GetEdge(ctx, edgeID)
 	if err != nil {
-		return nil, apocstorage.ErrRelationshipNotFound
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil, apocstorage.ErrRelationshipNotFound
+		}
+		return nil, err
 	}
 	return a.convertRelationship(edge), nil
 }
 
 // CreateRelationship creates a new relationship.
-func (a *APOCStorageAdapter) CreateRelationship(startID, endID int64, relType string, properties map[string]interface{}) (*apocstorage.Relationship, error) {
+func (a *APOCStorageAdapter) CreateRelationship(ctx context.Context, startID, endID int64, relType string, properties map[string]interface{}) (*apocstorage.Relationship, error) {
 	edge := &storage.Edge{
 		StartNode:  storage.NodeID(strconv.FormatInt(startID, 10)),
 		EndNode:    storage.NodeID(strconv.FormatInt(endID, 10)),
 		Type:       relType,
 		Properties: properties,
 	}
-	err := a.engine.CreateEdge(edge)
+	err := a.engine.CreateEdge(ctx, edge)
 	if err != nil {
 		return nil, err
 	}
@@ -140,11 +162,14 @@ func (a *APOCStorageAdapter) CreateRelationship(startID, endID int64, relType st
 }
 
 // UpdateRelationship updates the properties of an existing relationship.
-func (a *APOCStorageAdapter) UpdateRelationship(id int64, properties map[string]interface{}) error {
+func (a *APOCStorageAdapter) UpdateRelationship(ctx context.Context, id int64, properties map[string]interface{}) error {
 	edgeID := storage.EdgeID(strconv.FormatInt(id, 10))
-	edge, err := a.engine.GetEdge(edgeID)
+	edge, err := a.engine.GetEdge(ctx, edgeID)
 	if err != nil {
-		return apocstorage.ErrRelationshipNotFound
+		if errors.Is(err, storage.ErrNotFound) {
+			return apocstorage.ErrRelationshipNotFound
+		}
+		return err
 	}
 	before := *edge
 	before.Properties = maps.Clone(edge.Properties)
@@ -152,51 +177,57 @@ func (a *APOCStorageAdapter) UpdateRelationship(id int64, properties map[string]
 		edge.Properties = make(map[string]interface{})
 	}
 	maps.Copy(edge.Properties, properties)
-	return a.engine.UpdateEdge(storage.EdgeUpdateRequest{Before: &before, After: edge})
+	return a.engine.UpdateEdge(ctx, storage.EdgeUpdateRequest{Before: &before, After: edge})
 }
 
 // DeleteRelationship removes a relationship by ID.
-func (a *APOCStorageAdapter) DeleteRelationship(id int64) error {
+func (a *APOCStorageAdapter) DeleteRelationship(ctx context.Context, id int64) error {
 	edgeID := storage.EdgeID(strconv.FormatInt(id, 10))
-	return a.engine.DeleteEdge(edgeID)
+	return a.engine.DeleteEdge(ctx, edgeID)
 }
 
 // GetNodeRelationships gets relationships for a node filtered by type and direction.
-func (a *APOCStorageAdapter) GetNodeRelationships(nodeID int64, relType string, direction apocstorage.Direction) ([]*apocstorage.Relationship, error) {
+//
+// The caller's context is the read lifetime of both engine reads. A caller that
+// stopped receives its own error rather than the empty collection an ordinary
+// unreadable step produces.
+func (a *APOCStorageAdapter) GetNodeRelationships(ctx context.Context, nodeID int64, relType string, direction apocstorage.Direction) ([]*apocstorage.Relationship, error) {
 	nID := storage.NodeID(strconv.FormatInt(nodeID, 10))
 	var result []*apocstorage.Relationship
-	// The APOC storage contract carries no caller context, so these reads keep
-	// the lifetime they had before bulk reads became context-first.
-	readCtx := context.Background()
 
 	if direction == apocstorage.DirectionOutgoing || direction == apocstorage.DirectionBoth {
-		outgoing, err := a.engine.GetOutgoingEdges(readCtx, nID)
-		if err == nil {
-			for _, edge := range outgoing {
-				if relType == "" || edge.Type == relType {
-					result = append(result, a.convertRelationship(edge))
-				}
+		outgoing, err := a.engine.GetOutgoingEdges(ctx, nID)
+		if err != nil {
+			return nil, err
+		}
+		for _, edge := range outgoing {
+			if relType == "" || edge.Type == relType {
+				result = append(result, a.convertRelationship(edge))
 			}
 		}
 	}
 
 	if direction == apocstorage.DirectionIncoming || direction == apocstorage.DirectionBoth {
-		incoming, err := a.engine.GetIncomingEdges(readCtx, nID)
-		if err == nil {
-			for _, edge := range incoming {
-				if relType == "" || edge.Type == relType {
-					result = append(result, a.convertRelationship(edge))
-				}
+		incoming, err := a.engine.GetIncomingEdges(ctx, nID)
+		if err != nil {
+			return nil, err
+		}
+		for _, edge := range incoming {
+			if relType == "" || edge.Type == relType {
+				result = append(result, a.convertRelationship(edge))
 			}
 		}
 	}
 
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
 	return result, nil
 }
 
 // GetNodeNeighbors gets neighbor nodes for a node.
-func (a *APOCStorageAdapter) GetNodeNeighbors(nodeID int64, relType string, direction apocstorage.Direction) ([]*apocstorage.Node, error) {
-	rels, err := a.GetNodeRelationships(nodeID, relType, direction)
+func (a *APOCStorageAdapter) GetNodeNeighbors(ctx context.Context, nodeID int64, relType string, direction apocstorage.Direction) ([]*apocstorage.Node, error) {
+	rels, err := a.GetNodeRelationships(ctx, nodeID, relType, direction)
 	if err != nil {
 		return nil, err
 	}
@@ -214,19 +245,24 @@ func (a *APOCStorageAdapter) GetNodeNeighbors(nodeID int64, relType string, dire
 
 		if !seen[neighborID] {
 			seen[neighborID] = true
-			neighbor, err := a.GetNode(neighborID)
+			neighbor, err := a.GetNode(ctx, neighborID)
 			if err == nil {
 				result = append(result, neighbor)
+			} else if !errors.Is(err, apocstorage.ErrNodeNotFound) {
+				return nil, err
 			}
 		}
 	}
 
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
 	return result, nil
 }
 
 // GetNodeDegree returns the degree of a node.
-func (a *APOCStorageAdapter) GetNodeDegree(nodeID int64, relType string, direction apocstorage.Direction) (int, error) {
-	rels, err := a.GetNodeRelationships(nodeID, relType, direction)
+func (a *APOCStorageAdapter) GetNodeDegree(ctx context.Context, nodeID int64, relType string, direction apocstorage.Direction) (int, error) {
+	rels, err := a.GetNodeRelationships(ctx, nodeID, relType, direction)
 	if err != nil {
 		return 0, err
 	}
@@ -234,9 +270,12 @@ func (a *APOCStorageAdapter) GetNodeDegree(nodeID int64, relType string, directi
 }
 
 // FindShortestPath finds the shortest path between two nodes.
-func (a *APOCStorageAdapter) FindShortestPath(startID, endID int64, relType string, maxHops int) (*apocstorage.Path, error) {
+func (a *APOCStorageAdapter) FindShortestPath(ctx context.Context, startID, endID int64, relType string, maxHops int) (*apocstorage.Path, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if startID == endID {
-		node, err := a.GetNode(startID)
+		node, err := a.GetNode(ctx, startID)
 		if err != nil {
 			return nil, err
 		}
@@ -257,7 +296,7 @@ func (a *APOCStorageAdapter) FindShortestPath(startID, endID int64, relType stri
 	visited := make(map[int64]bool)
 	queue := []queueItem{{nodeID: startID, path: nil, rels: nil}}
 
-	startNode, err := a.GetNode(startID)
+	startNode, err := a.GetNode(ctx, startID)
 	if err != nil {
 		return nil, err
 	}
@@ -272,7 +311,10 @@ func (a *APOCStorageAdapter) FindShortestPath(startID, endID int64, relType stri
 			continue
 		}
 
-		rels, _ := a.GetNodeRelationships(current.nodeID, relType, apocstorage.DirectionBoth)
+		rels, err := a.GetNodeRelationships(ctx, current.nodeID, relType, apocstorage.DirectionBoth)
+		if err != nil {
+			return nil, err
+		}
 		for _, rel := range rels {
 			var neighborID int64
 			if rel.StartNode == current.nodeID {
@@ -284,8 +326,11 @@ func (a *APOCStorageAdapter) FindShortestPath(startID, endID int64, relType stri
 			if !visited[neighborID] {
 				visited[neighborID] = true
 
-				neighbor, err := a.GetNode(neighborID)
+				neighbor, err := a.GetNode(ctx, neighborID)
 				if err != nil {
+					if !errors.Is(err, apocstorage.ErrNodeNotFound) {
+						return nil, err
+					}
 					continue
 				}
 
@@ -315,12 +360,19 @@ func (a *APOCStorageAdapter) FindShortestPath(startID, endID int64, relType stri
 }
 
 // FindAllPaths finds all paths between two nodes up to maxHops.
-func (a *APOCStorageAdapter) FindAllPaths(startID, endID int64, relType string, maxHops int) ([]*apocstorage.Path, error) {
+func (a *APOCStorageAdapter) FindAllPaths(ctx context.Context, startID, endID int64, relType string, maxHops int) ([]*apocstorage.Path, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	var paths []*apocstorage.Path
 	visited := make(map[int64]bool)
+	var stopped error
 
 	var dfs func(currentID int64, path []*apocstorage.Node, rels []*apocstorage.Relationship)
 	dfs = func(currentID int64, path []*apocstorage.Node, rels []*apocstorage.Relationship) {
+		if stopped != nil {
+			return
+		}
 		if currentID == endID {
 			pathCopy := &apocstorage.Path{
 				Nodes:         append([]*apocstorage.Node{}, path...),
@@ -337,7 +389,11 @@ func (a *APOCStorageAdapter) FindAllPaths(startID, endID int64, relType string, 
 
 		visited[currentID] = true
 
-		nodeRels, _ := a.GetNodeRelationships(currentID, relType, apocstorage.DirectionBoth)
+		nodeRels, err := a.GetNodeRelationships(ctx, currentID, relType, apocstorage.DirectionBoth)
+		if err != nil {
+			stopped = err
+			return
+		}
 		for _, rel := range nodeRels {
 			var neighborID int64
 			if rel.StartNode == currentID {
@@ -347,8 +403,12 @@ func (a *APOCStorageAdapter) FindAllPaths(startID, endID int64, relType string, 
 			}
 
 			if !visited[neighborID] {
-				neighbor, err := a.GetNode(neighborID)
+				neighbor, err := a.GetNode(ctx, neighborID)
 				if err != nil {
+					if !errors.Is(err, apocstorage.ErrNodeNotFound) {
+						stopped = err
+						return
+					}
 					continue
 				}
 
@@ -359,17 +419,23 @@ func (a *APOCStorageAdapter) FindAllPaths(startID, endID int64, relType string, 
 		visited[currentID] = false
 	}
 
-	startNode, err := a.GetNode(startID)
+	startNode, err := a.GetNode(ctx, startID)
 	if err != nil {
 		return nil, err
 	}
 
 	dfs(startID, []*apocstorage.Node{startNode}, nil)
+	if stopped != nil {
+		return nil, stopped
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return paths, nil
 }
 
 // BFS performs breadth-first search from a node.
-func (a *APOCStorageAdapter) BFS(startID int64, relType string, maxDepth int, visitor func(*apocstorage.Node) bool) error {
+func (a *APOCStorageAdapter) BFS(ctx context.Context, startID int64, relType string, maxDepth int, visitor func(*apocstorage.Node) bool) error {
 	type queueItem struct {
 		nodeID int64
 		depth  int
@@ -383,12 +449,19 @@ func (a *APOCStorageAdapter) BFS(startID int64, relType string, maxDepth int, vi
 		current := queue[0]
 		queue = queue[1:]
 
-		node, err := a.GetNode(current.nodeID)
+		node, err := a.GetNode(ctx, current.nodeID)
 		if err != nil {
+			if !errors.Is(err, apocstorage.ErrNodeNotFound) {
+				return err
+			}
 			continue
 		}
 
-		if !visitor(node) {
+		keepGoing := visitor(node)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !keepGoing {
 			return nil
 		}
 
@@ -396,7 +469,10 @@ func (a *APOCStorageAdapter) BFS(startID int64, relType string, maxDepth int, vi
 			continue
 		}
 
-		neighbors, _ := a.GetNodeNeighbors(current.nodeID, relType, apocstorage.DirectionBoth)
+		neighbors, err := a.GetNodeNeighbors(ctx, current.nodeID, relType, apocstorage.DirectionBoth)
+		if err != nil {
+			return err
+		}
 		for _, neighbor := range neighbors {
 			if !visited[neighbor.ID] {
 				visited[neighbor.ID] = true
@@ -405,23 +481,37 @@ func (a *APOCStorageAdapter) BFS(startID int64, relType string, maxDepth int, vi
 		}
 	}
 
-	return nil
+	return ctx.Err()
 }
 
 // DFS performs depth-first search from a node.
-func (a *APOCStorageAdapter) DFS(startID int64, relType string, maxDepth int, visitor func(*apocstorage.Node) bool) error {
+func (a *APOCStorageAdapter) DFS(ctx context.Context, startID int64, relType string, maxDepth int, visitor func(*apocstorage.Node) bool) error {
 	visited := make(map[int64]bool)
+	var stopped error
 
 	var dfs func(nodeID int64, depth int) bool
 	dfs = func(nodeID int64, depth int) bool {
+		if err := ctx.Err(); err != nil {
+			stopped = err
+			return false
+		}
 		visited[nodeID] = true
 
-		node, err := a.GetNode(nodeID)
+		node, err := a.GetNode(ctx, nodeID)
 		if err != nil {
+			if !errors.Is(err, apocstorage.ErrNodeNotFound) {
+				stopped = err
+				return false
+			}
 			return true
 		}
 
-		if !visitor(node) {
+		keepGoing := visitor(node)
+		if err := ctx.Err(); err != nil {
+			stopped = err
+			return false
+		}
+		if !keepGoing {
 			return false
 		}
 
@@ -429,7 +519,11 @@ func (a *APOCStorageAdapter) DFS(startID int64, relType string, maxDepth int, vi
 			return true
 		}
 
-		neighbors, _ := a.GetNodeNeighbors(nodeID, relType, apocstorage.DirectionBoth)
+		neighbors, err := a.GetNodeNeighbors(ctx, nodeID, relType, apocstorage.DirectionBoth)
+		if err != nil {
+			stopped = err
+			return false
+		}
 		for _, neighbor := range neighbors {
 			if !visited[neighbor.ID] {
 				if !dfs(neighbor.ID, depth+1) {
@@ -442,7 +536,10 @@ func (a *APOCStorageAdapter) DFS(startID int64, relType string, maxDepth int, vi
 	}
 
 	dfs(startID, 0)
-	return nil
+	if stopped != nil {
+		return stopped
+	}
+	return ctx.Err()
 }
 
 // Helper functions

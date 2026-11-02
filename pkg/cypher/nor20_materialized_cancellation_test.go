@@ -72,7 +72,7 @@ func nor20Payload(index int) string {
 func nor20SeedItems(t *testing.T, store storage.Engine) {
 	t.Helper()
 	for index := 0; index < nor20Rows; index++ {
-		_, err := store.CreateNode(&storage.Node{
+		_, err := store.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("nor20-item-%06d", index)),
 			Labels: []string{"Item"},
 			Properties: map[string]interface{}{

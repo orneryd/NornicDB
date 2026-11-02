@@ -65,14 +65,14 @@ func (e *StorageExecutor) refreshRowEntities(ctx context.Context, rows []pipelin
 	}
 	store := e.getStorage(ctx)
 	for id := range staleNodes {
-		if current, err := e.getQueryNode(store, id); err == nil && current != nil {
+		if current, err := e.getQueryNode(ctx, store, id); err == nil && current != nil {
 			staleNodes[id] = current
 		} else {
 			delete(staleNodes, id)
 		}
 	}
 	for id := range staleEdges {
-		if current, err := store.GetEdge(id); err == nil && current != nil {
+		if current, err := store.GetEdge(ctx, id); err == nil && current != nil {
 			staleEdges[id] = current
 		} else {
 			delete(staleEdges, id)

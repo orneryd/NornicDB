@@ -666,7 +666,7 @@ func (r *HAStandbyReplicator) promote(ctx context.Context) error {
 }
 
 // Apply applies a command to storage.
-func (r *HAStandbyReplicator) Apply(cmd *Command, timeout time.Duration) error {
+func (r *HAStandbyReplicator) Apply(ctx context.Context, cmd *Command, timeout time.Duration) error {
 	if err := checkApplyReadiness(r.work.Closing(), r.started.Load()); err != nil {
 		return err
 	}
@@ -675,68 +675,63 @@ func (r *HAStandbyReplicator) Apply(cmd *Command, timeout time.Duration) error {
 		return ErrStandbyMode
 	}
 
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if cmd != nil {
-		if handled, err := routeLeaderEntityCommand(r.storage, r, cmd, timeout); handled || err != nil {
+		if handled, err := routeLeaderEntityCommand(ctx, r.storage, r, cmd, timeout); handled || err != nil {
 			return err
 		}
 	}
 	traceWrites := os.Getenv("NORNICDB_CLUSTER_TRACE_WRITES") != ""
 	start := time.Now()
-	if err := r.storage.ApplyCommand(cmd); err != nil {
+
+	// Quorum is the only write-ack mode that needs this command's own
+	// publication receipt. Every other mode keeps the nonwaiting asynchronous
+	// native result and acquires no publication wait or timer.
+	if r.config.HAStandby.SyncMode != SyncQuorum || r.walStreamer == nil {
+		_, err := r.storage.ApplyCommand(r.work.Context(), cmd, WALQueued)
 		return err
 	}
-	applyDur := time.Since(start)
 
-	// Honor write-ack mode: optionally wait for standby acknowledgement.
-	walPos, _ := r.storage.GetWALPosition()
+	// One deadline covers this command's publication and the standby
+	// acknowledgement of that exact record: publication delay consumes the ACK
+	// budget, and neither wait starts a second full timeout.
+	ctx, cancel := context.WithTimeout(ctx, r.quorumWaitTimeout(timeout))
+	defer cancel()
+
+	publication, err := r.storage.ApplyCommand(ctx, cmd, WALPublished)
+	applyDur := time.Since(start)
+	if err != nil {
+		return err
+	}
+	if publication.Position == 0 {
+		return fmt.Errorf("replication: WALPublished requires a positive WAL position")
+	}
 	ackStart := time.Now()
-	ackErr := r.waitForReplicationAck(walPos, timeout)
+	ackErr := r.waitForReplicationAck(ctx, publication.Position)
 	ackDur := time.Since(ackStart)
 	if traceWrites {
 		r.config.logPrintf(context.Background(), slog.LevelInfo, "[HA Primary] Apply type=%d apply=%s ack=%s total=%s mode=%s wal=%d err=%v",
-			cmd.Type, applyDur, ackDur, time.Since(start), r.config.HAStandby.SyncMode, walPos, ackErr)
+			cmd.Type, applyDur, ackDur, time.Since(start), r.config.HAStandby.SyncMode, publication.Position, ackErr)
 	}
 	return ackErr
 }
 
 // ApplyBatch applies multiple commands.
-func (r *HAStandbyReplicator) ApplyBatch(cmds []*Command, timeout time.Duration) error {
+func (r *HAStandbyReplicator) ApplyBatch(ctx context.Context, cmds []*Command, timeout time.Duration) error {
 	for _, cmd := range cmds {
-		if err := r.Apply(cmd, timeout); err != nil {
+		if err := r.Apply(ctx, cmd, timeout); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// waitForReplicationAck enforces the configured write-ack behavior after a local apply.
-// For async mode, it returns immediately. For quorum mode, it waits until the
-// standby has acknowledged WAL up to the target position or the timeout elapses.
-func (r *HAStandbyReplicator) waitForReplicationAck(target uint64, timeout time.Duration) error {
-	mode := r.config.HAStandby.SyncMode
-	if mode == SyncAsync || target == 0 || r.walStreamer == nil {
-		return nil
-	}
-	if mode != SyncQuorum {
-		// Config validation should prevent this, but keep async semantics as a safe default.
-		return nil
-	}
-
-	// Quorum: wait for ack up to timeout.
-	// Default timeout if caller did not supply one.
-	if timeout <= 0 {
-		// Use a conservative bound: 2x heartbeat interval or 500ms minimum.
-		timeout = r.config.HAStandby.HeartbeatInterval * 2
-		if timeout == 0 {
-			timeout = 500 * time.Millisecond
-		} else if timeout < 250*time.Millisecond {
-			timeout = 250 * time.Millisecond
-		}
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
+// waitForReplicationAck waits until the standby acknowledges the WAL position of
+// this command's own published record. ctx carries the single publication+ACK
+// budget constructed by Apply; this waiter never creates another timeout.
+func (r *HAStandbyReplicator) waitForReplicationAck(ctx context.Context, target uint64) error {
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -750,10 +745,27 @@ func (r *HAStandbyReplicator) waitForReplicationAck(target uint64, timeout time.
 
 		select {
 		case <-ctx.Done():
-			return localizedError(localization.ReplicationHAAckTimedOut(string(mode), target, ctx.Err()), ctx.Err())
+			return localizedError(localization.ReplicationHAAckTimedOut(string(r.config.HAStandby.SyncMode), target, ctx.Err()), ctx.Err())
 		case <-ticker.C:
 		}
 	}
+}
+
+// quorumWaitTimeout resolves the one wait budget a quorum write spends on its own
+// publication and on the standby ACK. Existing defaults are unchanged.
+func (r *HAStandbyReplicator) quorumWaitTimeout(timeout time.Duration) time.Duration {
+	if timeout > 0 {
+		return timeout
+	}
+	// Use a conservative bound: 2x heartbeat interval or 500ms minimum.
+	resolved := r.config.HAStandby.HeartbeatInterval * 2
+	if resolved == 0 {
+		return 500 * time.Millisecond
+	}
+	if resolved < 250*time.Millisecond {
+		return 250 * time.Millisecond
+	}
+	return resolved
 }
 
 // IsLeader returns true if this is the primary.
@@ -1037,7 +1049,9 @@ func (a *WALApplier) ApplyBatch(entries []*WALEntry) (uint64, error) {
 			continue // Already applied
 		}
 
-		if err := a.storage.ApplyCommand(entry.Command); err != nil {
+		// The applier owns no request-scoped lifetime: it keeps its existing
+		// unbounded completion policy and never waits for publication.
+		if _, err := a.storage.ApplyCommand(context.Background(), entry.Command, WALQueued); err != nil {
 			return lastApplied, err
 		}
 
@@ -1054,7 +1068,8 @@ func (a *WALApplier) Flush() error {
 	defer a.mu.Unlock()
 
 	for _, entry := range a.pendingBatch {
-		if err := a.storage.ApplyCommand(entry.Command); err != nil {
+		// Same accepted apply contract as ApplyBatch: unbounded, nonwaiting.
+		if _, err := a.storage.ApplyCommand(context.Background(), entry.Command, WALQueued); err != nil {
 			return err
 		}
 	}

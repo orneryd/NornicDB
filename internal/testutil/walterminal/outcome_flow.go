@@ -214,7 +214,10 @@ type PostCommitFault struct {
 }
 
 func (e *PostCommitFault) GetInnerEngine() storage.Engine { return e.Engine }
-func (e *PostCommitFault) SetManualSuppression(storage.StoredEntityKind, string, bool) error {
+
+var _ storage.ManualSuppressionEngine = (*PostCommitFault)(nil)
+
+func (e *PostCommitFault) SetManualSuppression(context.Context, storage.StoredEntityKind, string, bool) error {
 	return e.Cause
 }
 

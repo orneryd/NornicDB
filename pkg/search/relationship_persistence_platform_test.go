@@ -78,7 +78,7 @@ func TestRelationshipEmbeddingDirectorySyncUsesPlatformHelper(t *testing.T) {
 		}
 		return nil
 	}
-	edge, err := engine.GetEdge("r1")
+	edge, err := engine.GetEdge(t.Context(), "r1")
 	require.NoError(t, err)
 	svc.IndexRelationship(edge)
 	changed, failed := svc.embedPendingRelationships(context.Background(), rs)

@@ -10,16 +10,16 @@ import (
 // preserve that view instead of unwrapping to committed storage.
 var _ storage.StoredEntityReader = (*transactionStorageWrapper)(nil)
 
-func (w *transactionStorageWrapper) GetStoredNode(id storage.NodeID) (*storage.Node, error) {
-	node, err := w.tx.GetStoredNode(w.prefixNodeID(id))
+func (w *transactionStorageWrapper) GetStoredNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
+	node, err := w.tx.GetStoredNode(ctx, w.prefixNodeID(id))
 	if err != nil || w.namespace == "" {
 		return node, err
 	}
 	return w.toUserNode(node), nil
 }
 
-func (w *transactionStorageWrapper) GetStoredEdge(id storage.EdgeID) (*storage.Edge, error) {
-	edge, err := w.tx.GetStoredEdge(w.prefixEdgeID(id))
+func (w *transactionStorageWrapper) GetStoredEdge(ctx context.Context, id storage.EdgeID) (*storage.Edge, error) {
+	edge, err := w.tx.GetStoredEdge(ctx, w.prefixEdgeID(id))
 	if err != nil || w.namespace == "" {
 		return edge, err
 	}

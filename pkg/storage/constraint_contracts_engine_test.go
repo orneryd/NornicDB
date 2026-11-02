@@ -81,22 +81,22 @@ func TestEvaluateNodeConstraintContractExpressionEngine_PropertyComparison(t *te
 func TestEvaluateNodeConstraintContractExpressionEngine_CountPattern(t *testing.T) {
 	engine := constraintContractsEngineFixture(t)
 	// Set up alice with 3 outgoing OWNS edges.
-	_, err := engine.CreateNode(&Node{
+	_, err := engine.CreateNode(t.Context(), &Node{
 		ID: "test:alice", Labels: []string{"Person"},
 		Properties: map[string]any{},
 	})
 	require.NoError(t, err)
 	for i, ep := range []string{"test:b", "test:c", "test:d"} {
-		_, err := engine.CreateNode(&Node{ID: NodeID(ep), Labels: []string{"Item"}, Properties: map[string]any{}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: NodeID(ep), Labels: []string{"Item"}, Properties: map[string]any{}})
 		require.NoError(t, err)
-		require.NoError(t, engine.CreateEdge(&Edge{
+		require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 			ID:        EdgeID("test:e-" + string(rune('1'+i))),
 			StartNode: "test:alice", EndNode: NodeID(ep), Type: "OWNS",
 			Properties: map[string]any{},
 		}))
 	}
 
-	alice, err := engine.GetNode("test:alice")
+	alice, err := engine.GetNode(t.Context(), "test:alice")
 	require.NoError(t, err)
 
 	// COUNT { (n)-[:OWNS]->(:Item) } <= 5 → true.
@@ -112,12 +112,12 @@ func TestEvaluateNodeConstraintContractExpressionEngine_CountPattern(t *testing.
 
 func TestEvaluateNodeConstraintContractExpressionEngine_NotExistsPattern(t *testing.T) {
 	engine := constraintContractsEngineFixture(t)
-	_, err := engine.CreateNode(&Node{
+	_, err := engine.CreateNode(t.Context(), &Node{
 		ID: "test:lonely", Labels: []string{"Person"},
 		Properties: map[string]any{},
 	})
 	require.NoError(t, err)
-	lonely, err := engine.GetNode("test:lonely")
+	lonely, err := engine.GetNode(t.Context(), "test:lonely")
 	require.NoError(t, err)
 
 	// No outgoing OWNS edges → NOT EXISTS evaluates true.
@@ -165,11 +165,11 @@ func TestEvaluateRelationshipConstraintContractExpressionEngine_DistinctEndpoint
 
 func TestEvaluateRelationshipConstraintContractExpressionEngine_EndpointPropertyEquality(t *testing.T) {
 	engine := constraintContractsEngineFixture(t)
-	_, err := engine.CreateNode(&Node{ID: "test:a", Labels: []string{"L"}, Properties: map[string]any{"team": "core"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:a", Labels: []string{"L"}, Properties: map[string]any{"team": "core"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:b", Labels: []string{"L"}, Properties: map[string]any{"team": "core"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:b", Labels: []string{"L"}, Properties: map[string]any{"team": "core"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:c", Labels: []string{"L"}, Properties: map[string]any{"team": "platform"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:c", Labels: []string{"L"}, Properties: map[string]any{"team": "platform"}})
 	require.NoError(t, err)
 
 	matchEdge := &Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "REL"}
@@ -225,19 +225,19 @@ func TestIsDistinctEndpointsExpression_Variants(t *testing.T) {
 
 func TestCountMatchingPatternEdgesEngine_Outgoing(t *testing.T) {
 	engine := constraintContractsEngineFixture(t)
-	_, err := engine.CreateNode(&Node{ID: "test:src", Labels: []string{"L"}, Properties: map[string]any{}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:src", Labels: []string{"L"}, Properties: map[string]any{}})
 	require.NoError(t, err)
 	for _, lbl := range []string{"a", "b", "c"} {
-		_, err := engine.CreateNode(&Node{ID: NodeID("test:" + lbl), Labels: []string{"Doc"}, Properties: map[string]any{}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: NodeID("test:" + lbl), Labels: []string{"Doc"}, Properties: map[string]any{}})
 		require.NoError(t, err)
-		require.NoError(t, engine.CreateEdge(&Edge{
+		require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 			ID:        EdgeID("test:e-" + lbl),
 			StartNode: "test:src", EndNode: NodeID("test:" + lbl),
 			Type:       "READS",
 			Properties: map[string]any{},
 		}))
 	}
-	src, err := engine.GetNode("test:src")
+	src, err := engine.GetNode(t.Context(), "test:src")
 	require.NoError(t, err)
 
 	count, err := countMatchingPatternEdgesEngine(context.Background(), engine, src, contractPattern{
@@ -263,19 +263,19 @@ func TestCountMatchingPatternEdgesEngine_Outgoing(t *testing.T) {
 
 func TestCountMatchingPatternEdgesEngine_Incoming(t *testing.T) {
 	engine := constraintContractsEngineFixture(t)
-	_, err := engine.CreateNode(&Node{ID: "test:tgt", Labels: []string{"L"}, Properties: map[string]any{}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:tgt", Labels: []string{"L"}, Properties: map[string]any{}})
 	require.NoError(t, err)
 	for _, src := range []string{"a", "b"} {
-		_, err := engine.CreateNode(&Node{ID: NodeID("test:" + src), Labels: []string{"Person"}, Properties: map[string]any{}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: NodeID("test:" + src), Labels: []string{"Person"}, Properties: map[string]any{}})
 		require.NoError(t, err)
-		require.NoError(t, engine.CreateEdge(&Edge{
+		require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 			ID:        EdgeID("test:e-" + src),
 			StartNode: NodeID("test:" + src), EndNode: "test:tgt",
 			Type:       "FOLLOWS",
 			Properties: map[string]any{},
 		}))
 	}
-	tgt, err := engine.GetNode("test:tgt")
+	tgt, err := engine.GetNode(t.Context(), "test:tgt")
 	require.NoError(t, err)
 
 	count, err := countMatchingPatternEdgesEngine(context.Background(), engine, tgt, contractPattern{
@@ -287,7 +287,7 @@ func TestCountMatchingPatternEdgesEngine_Incoming(t *testing.T) {
 
 func TestValidateConstraintContractOnCreationForEngine_NodeContractPasses(t *testing.T) {
 	engine := constraintContractsEngineFixture(t)
-	_, err := engine.CreateNode(&Node{
+	_, err := engine.CreateNode(t.Context(), &Node{
 		ID: "test:n", Labels: []string{"Order"}, Properties: map[string]any{"state": "active"},
 	})
 	require.NoError(t, err)
@@ -305,7 +305,7 @@ func TestValidateConstraintContractOnCreationForEngine_NodeContractPasses(t *tes
 
 func TestValidateConstraintContractOnCreationForEngine_NodeContractViolates(t *testing.T) {
 	engine := constraintContractsEngineFixture(t)
-	_, err := engine.CreateNode(&Node{
+	_, err := engine.CreateNode(t.Context(), &Node{
 		ID: "test:bad", Labels: []string{"Order"}, Properties: map[string]any{"state": "deleted"},
 	})
 	require.NoError(t, err)
@@ -327,10 +327,10 @@ func TestValidateConstraintContractOnCreationForEngine_NodeContractViolates(t *t
 func TestValidateConstraintContractOnCreationForEngine_RelContractPasses(t *testing.T) {
 	engine := constraintContractsEngineFixture(t)
 	for _, n := range []NodeID{"test:a", "test:b"} {
-		_, err := engine.CreateNode(&Node{ID: n, Labels: []string{"L"}, Properties: map[string]any{}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: n, Labels: []string{"L"}, Properties: map[string]any{}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e", StartNode: "test:a", EndNode: "test:b",
 		Type: "REL", Properties: map[string]any{"v": int64(10)},
 	}))
@@ -349,10 +349,10 @@ func TestValidateConstraintContractOnCreationForEngine_RelContractPasses(t *test
 func TestValidateConstraintContractOnCreationForEngine_RelContractViolates(t *testing.T) {
 	engine := constraintContractsEngineFixture(t)
 	for _, n := range []NodeID{"test:a", "test:b"} {
-		_, err := engine.CreateNode(&Node{ID: n, Labels: []string{"L"}, Properties: map[string]any{}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: n, Labels: []string{"L"}, Properties: map[string]any{}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e", StartNode: "test:a", EndNode: "test:b",
 		Type: "REL", Properties: map[string]any{"v": int64(1)},
 	}))

@@ -211,7 +211,7 @@ func newProcedureScanFixture(t *testing.T) *procedureScanFixture {
 	fixture := &procedureScanFixture{store: store}
 	for index := 0; index < procedureScanNodes; index++ {
 		id := fmt.Sprintf("doc-%03d", index)
-		_, err := store.CreateNode(&storage.Node{
+		_, err := store.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID(id),
 			Labels: []string{"Doc"},
 			Properties: map[string]interface{}{
@@ -226,7 +226,7 @@ func newProcedureScanFixture(t *testing.T) *procedureScanFixture {
 	}
 	for index := 0; index < procedureScanRelationships; index++ {
 		id := fmt.Sprintf("rel-%03d", index)
-		err := store.CreateEdge(&storage.Edge{
+		err := store.CreateEdge(t.Context(), &storage.Edge{
 			ID:        storage.EdgeID(id),
 			StartNode: storage.NodeID(fixture.nodeIDs[index]),
 			EndNode:   storage.NodeID(fixture.nodeIDs[(index+1)%procedureScanNodes]),

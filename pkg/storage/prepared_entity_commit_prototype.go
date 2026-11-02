@@ -117,7 +117,13 @@ type EntityCommitRequest struct {
 // PrepareEntityCommit observes the logical receipt once, stages new entity work,
 // and runs the native commit pipeline up to its prephysical boundary. A staging
 // error leaves cleanup with the caller. Schema transactions use ordinary Commit.
+// A nil ctx selects the independent preparation lifetime once at this public
+// boundary. A nonnil ctx retains the caller lifetime until publication acceptance.
 func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request EntityCommitRequest) (*PreparedEntityCommit, error) {
+	// This public API preserves its documented optional nil preparation
+	// context. Select that lifetime once before any private required-context
+	// admission, while retaining every nonnil caller context unchanged.
+	ctx = commitPreparationLifetime(ctx)
 	logicalID := request.LogicalID
 	if logicalID == "" {
 		return nil, ErrInvalidID
@@ -138,7 +144,7 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 		// set, then the buffer generations and the physical marker under its
 		// retirement exclusion. An absent receipt is staged under the key the
 		// observation already built.
-		observation, err := tx.engine.observeBufferedCommitReceipt(commitPreparationLifetime(ctx), bufferedReceiptRead{
+		observation, err := tx.engine.observeBufferedCommitReceipt(ctx, bufferedReceiptRead{
 			namespace: tx.namespace,
 			logicalID: logicalID,
 			native:    tx.badgerTx,
@@ -170,15 +176,13 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 		return &PreparedEntityCommit{engine: engine, mode: mode, namespace: namespace, logicalID: logicalID, decide: make(chan bool, 1), finished: done, terminal: CommitOutcome{State: CommitApplied}}, nil
 	}
 	for _, op := range request.Operations {
-		if ctx != nil {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
-		if err := ApplyEntityChange(tx, op, func(updateRequest NodeUpdateRequest) error {
+		if err := ApplyEntityChange(ctx, tx, op, func(ctx context.Context, updateRequest NodeUpdateRequest) error {
 			updateRequest.Policy = StoredNodeImages
-			return tx.UpdateGraphNode(updateRequest)
-		}, func(id NodeID) error { return tx.DeleteGraphNode(id, CascadeEdges) }); err != nil {
+			return tx.UpdateGraphNode(ctx, updateRequest)
+		}, func(ctx context.Context, id NodeID) error { return tx.DeleteGraphNode(ctx, id, CascadeEdges) }); err != nil {
 			return nil, err
 		}
 	}
@@ -276,8 +280,8 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 			if !commit {
 				return errPreparedEntityDiscarded
 			}
-			// Accepted work belongs to its terminal owner, no longer the waiter.
-			tx.commitCtx = nil
+			// Success transfers the publication continuation to the accepted
+			// terminal owner; PublishCommit selects its detached completion scope.
 			return nil
 		}})
 		if prepared != nil {

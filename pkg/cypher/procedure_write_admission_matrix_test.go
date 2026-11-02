@@ -337,10 +337,10 @@ func TestRegisteredDynamicProcedureBodiesAndImportIDs(t *testing.T) {
 							afterCommit: func(t *testing.T, shard storage.Engine, reject bool) {
 								if procedure.Name == "apoc.import.json" && !reject {
 									for _, id := range []storage.NodeID{"imported1", "4:foreign:opaque"} {
-										_, err := shard.GetNode(id)
+										_, err := shard.GetNode(t.Context(), id)
 										require.NoError(t, err, "supplied node ID %s", id)
 									}
-									edge, err := shard.GetEdge("rel:1")
+									edge, err := shard.GetEdge(t.Context(), "rel:1")
 									require.NoError(t, err)
 									require.Equal(t, storage.NodeID("imported1"), edge.StartNode)
 									require.Equal(t, storage.NodeID("4:foreign:opaque"), edge.EndNode)

@@ -38,7 +38,7 @@ func TestSearchStreamLifecycleHTTP(t *testing.T) {
 	engine, err := s.dbManager.GetStorage(database)
 	require.NoError(t, err)
 	for _, id := range []storage.NodeID{"a", "b", "c"} {
-		_, err := engine.CreateNode(&storage.Node{ID: id, Properties: map[string]any{"content": "library transcript"}})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: id, Properties: map[string]any{"content": "library transcript"}})
 		require.NoError(t, err)
 	}
 	svc, err := s.db.GetOrCreateSearchService(database, engine)
@@ -81,7 +81,7 @@ func TestSearchStreamLifecycleHTTPEnds(t *testing.T) {
 			engine, err := s.dbManager.GetStorage(database)
 			require.NoError(t, err)
 			for _, id := range []storage.NodeID{"a", "b"} {
-				_, err := engine.CreateNode(&storage.Node{ID: id})
+				_, err := engine.CreateNode(t.Context(), &storage.Node{ID: id})
 				require.NoError(t, err)
 			}
 			var first searchLifecyclePage
@@ -100,13 +100,13 @@ func TestSearchStreamLifecycleHTTPEnds(t *testing.T) {
 			case "last_page":
 				requestSearchLifecycle(t, s, token, map[string]any{"qid": first.QID, "n": 1}, http.StatusOK, nil)
 			case "write":
-				_, err := engine.CreateNode(&storage.Node{ID: "c"})
+				_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "c"})
 				require.NoError(t, err)
 			case "backfill":
-				node, err := engine.GetNode("b")
+				node, err := engine.GetNode(t.Context(), "b")
 				require.NoError(t, err)
 				node.ChunkEmbeddings = [][]float32{{1, 0}}
-				require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: node}))
+				require.NoError(t, engine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
 			case "drop":
 				require.NoError(t, (&databaseManagerAdapter{IdentifiedExecutionCatalog: catalogadapter.ForIdentifiedExecution(s.dbManager), db: s.db, server: s}).DropDatabase(t.Context(), database))
 			}

@@ -29,7 +29,10 @@ func TestSchemaTransactionAdmissionCancellationPrecedesSnapshot(t *testing.T) {
 	})
 	defer restore()
 	began := false
-	tx, err := schema.BeginSchemaTransaction(ctx, func() (*BadgerTransaction, error) { began = true; return engine.BeginTransaction() })
+	tx, err := schema.BeginSchemaTransaction(ctx, func(beginCtx context.Context) (*BadgerTransaction, error) {
+		began = true
+		return engine.BeginTransaction(beginCtx)
+	})
 	require.ErrorIs(t, err, context.Canceled)
 	require.Nil(t, tx)
 	require.True(t, waited)
@@ -47,7 +50,7 @@ func TestSchemaTransactionAdmissionCancellationPrecedesSnapshot(t *testing.T) {
 func TestSchemaTransactionAdmissionBeginFailureReleases(t *testing.T) {
 	schema := NewSchemaManager()
 	failure := errors.New("begin rejected")
-	tx, err := schema.BeginSchemaTransaction(context.Background(), func() (*BadgerTransaction, error) { return nil, failure })
+	tx, err := schema.BeginSchemaTransaction(context.Background(), func(context.Context) (*BadgerTransaction, error) { return nil, failure })
 	require.ErrorIs(t, err, failure)
 	require.Nil(t, tx)
 	require.True(t, schema.schemaMutationMu.TryLock())
@@ -73,7 +76,7 @@ func TestSchemaTransactionAdmissionTerminalRelease(t *testing.T) {
 			case "rollback":
 				require.NoError(t, tx.Rollback())
 			case "conflict":
-				_, err = engine.CreateNode(&Node{ID: "admission:peer", Labels: []string{"Item"}})
+				_, err = engine.CreateNode(t.Context(), &Node{ID: "admission:peer", Labels: []string{"Item"}})
 				require.NoError(t, err)
 				require.ErrorIs(t, tx.Commit(), ErrConflict)
 			}
@@ -119,7 +122,7 @@ func TestSchemaTransactionAdmissionReleaseBeforeNativeCallbacks(t *testing.T) {
 				require.NoError(t, view.AddPropertyIndex("admitted", "Item", []string{"id"}))
 				require.NoError(t, tx.StageSchemaChanges())
 			} else {
-				_, err = tx.CreateNode(&Node{ID: "admission:listener"})
+				_, err = tx.CreateNode(t.Context(), &Node{ID: "admission:listener"})
 				require.NoError(t, err)
 			}
 			require.NoError(t, tx.Commit())
@@ -151,7 +154,7 @@ func BenchmarkSchemaAdmissionBeginRollback(b *testing.B) {
 				if admitted {
 					tx, err = schema.BeginSchemaTransaction(context.Background(), engine.BeginTransaction)
 				} else {
-					tx, err = engine.BeginTransaction()
+					tx, err = engine.BeginTransaction(b.Context())
 				}
 				if err != nil {
 					b.Fatal(err)

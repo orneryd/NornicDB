@@ -39,7 +39,7 @@ func TestBoltDropRoleUnsupportedChangesNothing(t *testing.T) {
 		require.True(t, executed)
 		require.Equal(t, expected, code, query)
 	}
-	_, err := system.GetNode("role:ops")
+	_, err := system.GetNode(t.Context(), "role:ops")
 	require.NoError(t, err)
 	allowed, err := grants.AllowsBoosted([]string{"ops"}, "db.a")
 	require.NoError(t, err)

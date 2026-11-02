@@ -282,8 +282,8 @@ func (s *Session) handleRun(data []byte) error {
 			s.server.logEvent(context.Background(), slog.LevelWarn, localization.BoltQueryErrorEvent())
 		}
 		if s.inTransaction {
-			s.recordExplicitTransactionWrite(query, params, isWrite)
-			if s.canRetryMergeCommitConflict(err) {
+			s.recordExplicitTransactionWrite(ctx, query, params, isWrite)
+			if s.canRetryMergeCommitConflict(ctx, err) {
 				err = nornicerrors.MarkMergeCommitTimeUniqueConflict(err)
 			}
 		}
@@ -338,7 +338,7 @@ func (s *Session) handleRun(data []byte) error {
 	}
 	s.lastQueryDatabase = resultDatabase
 	if s.inTransaction {
-		s.recordExplicitTransactionWrite(query, params, isWrite)
+		s.recordExplicitTransactionWrite(ctx, query, params, isWrite)
 	}
 
 	// Store result for PULL
@@ -779,7 +779,7 @@ func (s *Session) handlePull(data []byte) error {
 
 	// For large batches (>50 records), use batched writing to reduce syscalls
 	if remaining > 50 {
-		if err := s.sendRecordsBatched(stream.result.Rows[stream.index:stream.index+remaining], stream.database, stream.delivery); err != nil {
+		if err := s.sendRecordsBatched(s.withSessionIdentity(s.parentContext()), stream.result.Rows[stream.index:stream.index+remaining], stream.database, stream.delivery); err != nil {
 			return err
 		}
 		stream.index += remaining
@@ -792,7 +792,7 @@ func (s *Session) handlePull(data []byte) error {
 			}
 
 			row := stream.result.Rows[stream.index]
-			if err := s.writeRecordNoFlush(row, stream.database, stream.delivery); err != nil {
+			if err := s.writeRecordNoFlush(s.withSessionIdentity(s.parentContext()), row, stream.database, stream.delivery); err != nil {
 				return err
 			}
 
@@ -964,7 +964,9 @@ func (s *Session) handleDiscard(data []byte) error {
 			discardCount = options.limit - discarded
 		}
 		if options.limit > 0 && (stream.lazy != nil || discardCount < remaining) {
-			s.discardResultDelivery(stream, stream.result.Rows[stream.index:stream.index+discardCount])
+			if err := s.discardResultDelivery(s.withSessionIdentity(s.parentContext()), stream, stream.result.Rows[stream.index:stream.index+discardCount]); err != nil {
+				return err
+			}
 		}
 		stream.index += discardCount
 		discarded += discardCount
@@ -1142,7 +1144,7 @@ func (s *Session) handleCommit(data []byte) error {
 		commitCallErr = nornicerrors.TransactionControlFailure(nornicerrors.TerminalCommit, nornicerrors.NormalizeTerminalOutcome(txExec.CommitTransaction(ctx)))
 		commitCallReturned = true
 		if err := commitCallErr; err != nil {
-			if s.canRetryMergeCommitConflict(err) {
+			if s.canRetryMergeCommitConflict(ctx, err) {
 				err = nornicerrors.MarkMergeCommitTimeUniqueConflict(err)
 			}
 			s.txLifecycle.finishCommit(err)
@@ -1394,15 +1396,17 @@ func (s *Session) recordEntityDatabaseResolver(dbName string) boltEntityDatabase
 	if !ok {
 		return nil
 	}
-	return func(nodeID storage.NodeID, edgeID storage.EdgeID) string {
+	return func(ctx context.Context, nodeID storage.NodeID, edgeID storage.EdgeID) (string, error) {
 		if nodeID != "" {
-			return composite.ConstituentDatabaseForNode(nodeID)
+			return composite.ConstituentDatabaseForNode(ctx, nodeID)
 		}
-		return composite.ConstituentDatabaseForEdge(edgeID)
+		return composite.ConstituentDatabaseForEdge(ctx, edgeID)
 	}
 }
 
-func (s *Session) sendRecord(fields []any) error {
+func (s *Session) sendRecord(ctx context.Context, fields []any) error {
+	var encodeErr error
+
 	buf := s.recordBuf
 	if cap(buf) < 16*1024 {
 		buf = make([]byte, 0, 16*1024)
@@ -1411,7 +1415,11 @@ func (s *Session) sendRecord(fields []any) error {
 
 	// Format: <struct marker 0xB1> <signature 0x71> <list of fields>
 	buf = append(buf, recordHeader...)
-	buf = encodeRecordListInto(buf, fields, s.useUTCDateTimeStructs(), s.boltV5(), s.database, s.recordEntityDatabaseResolver(s.database))
+	buf, encodeErr = encodeRecordListInto(ctx, buf, fields, s.useUTCDateTimeStructs(), s.boltV5(), s.database, s.recordEntityDatabaseResolver(s.database))
+	if encodeErr != nil {
+		s.recordBuf = buf[:0]
+		return encodeErr
+	}
 
 	// sendChunk flushes immediately, so it's safe to reuse the buffer after.
 	err := s.sendChunk(buf)
@@ -1423,7 +1431,9 @@ func (s *Session) sendRecord(fields []any) error {
 // It is used by PULL streaming to batch many records into a single flush
 // (the final SUCCESS message flushes everything). dbName is the database the
 // active result stream ran on (its entities carry its element ids, #745).
-func (s *Session) writeRecordNoFlush(fields []any, dbName string, delivery ...*resultstream.Delivery) error {
+func (s *Session) writeRecordNoFlush(ctx context.Context, fields []any, dbName string, delivery ...*resultstream.Delivery) error {
+	var encodeErr error
+
 	buf := s.recordBuf
 	if cap(buf) < 16*1024 {
 		buf = make([]byte, 0, 16*1024)
@@ -1431,7 +1441,11 @@ func (s *Session) writeRecordNoFlush(fields []any, dbName string, delivery ...*r
 	buf = buf[:0]
 
 	buf = append(buf, recordHeader...)
-	buf = encodeRecordListInto(buf, fields, s.useUTCDateTimeStructs(), s.boltV5(), dbName, s.recordEntityDatabaseResolver(dbName))
+	buf, encodeErr = encodeRecordListInto(ctx, buf, fields, s.useUTCDateTimeStructs(), s.boltV5(), dbName, s.recordEntityDatabaseResolver(dbName))
+	if encodeErr != nil {
+		s.recordBuf = buf[:0]
+		return encodeErr
+	}
 
 	err := s.writeMessageNoFlush(buf)
 	if err == nil && len(delivery) > 0 && delivery[0] != nil {
@@ -1446,7 +1460,9 @@ func (s *Session) writeRecordNoFlush(fields []any, dbName string, delivery ...*r
 // For 500 records: ~500 syscalls → 1 syscall = ~8x faster
 // Uses buffer pooling to reduce allocations per record. dbName is the
 // database the active result stream ran on (#745 element ids).
-func (s *Session) sendRecordsBatched(rows [][]any, dbName string, delivery ...*resultstream.Delivery) error {
+func (s *Session) sendRecordsBatched(ctx context.Context, rows [][]any, dbName string, delivery ...*resultstream.Delivery) error {
+	var encodeErr error
+
 	if len(rows) == 0 {
 		return nil
 	}
@@ -1464,7 +1480,11 @@ func (s *Session) sendRecordsBatched(rows [][]any, dbName string, delivery ...*r
 
 		// Build record: struct marker + signature + list of fields
 		buf = append(buf, recordHeader...)
-		buf = encodeRecordListInto(buf, row, s.useUTCDateTimeStructs(), s.boltV5(), dbName, resolver)
+		buf, encodeErr = encodeRecordListInto(ctx, buf, row, s.useUTCDateTimeStructs(), s.boltV5(), dbName, resolver)
+		if encodeErr != nil {
+			s.recordBuf = buf[:0]
+			return encodeErr
+		}
 
 		// bufio.Writer does not retain the provided slice after Write returns,
 		// so it's safe to reuse the pooled buffer on the next iteration.
@@ -1848,23 +1868,30 @@ func isRetryableBoltStatus(code string) bool {
 	return strings.HasPrefix(code, "Neo.TransientError.")
 }
 
-func (s *Session) recordExplicitTransactionWrite(query string, params map[string]any, isWrite bool) {
+// Retry metadata cannot override the accepted RUN outcome. If its request
+// ends before classification completes, preserve that outcome but make the
+// transaction ineligible for automatic unique-conflict retry.
+func (s *Session) recordExplicitTransactionWrite(ctx context.Context, query string, params map[string]any, isWrite bool) {
 	if !isWrite {
 		return
 	}
-	info := boltTxWriteAnalyzer.Analyze(context.Background(), query)
-	if info != nil && info.HasMerge {
-		s.txHasMerge = true
-		s.txMergeStatements = append(s.txMergeStatements, cypher.CommitStatement{Query: query, Params: params})
-	}
-	if info == nil {
+	if ctx.Err() != nil {
 		s.txHasNonMergeWrite = true
 		return
+	}
+	info := boltTxWriteAnalyzer.Analyze(ctx, query)
+	if ctx.Err() != nil || info == nil {
+		s.txHasNonMergeWrite = true
+		return
+	}
+	if info.HasMerge {
+		s.txHasMerge = true
+		s.txMergeStatements = append(s.txMergeStatements, cypher.CommitStatement{Query: query, Params: params})
 	}
 	s.txWriteInfos = append(s.txWriteInfos, info)
 }
 
-func (s *Session) canRetryMergeCommitConflict(err error) bool {
+func (s *Session) canRetryMergeCommitConflict(ctx context.Context, err error) bool {
 	if nornicerrors.HasTerminalOutcome(err) {
 		return false
 	}
@@ -1872,9 +1899,9 @@ func (s *Session) canRetryMergeCommitConflict(err error) bool {
 		return false
 	}
 	for _, info := range s.txWriteInfos {
-		if !cypher.IsRetrySafeMergeCommitQuery(info) {
+		if !cypher.IsRetrySafeMergeCommitQuery(ctx, info) {
 			return false
 		}
 	}
-	return cypher.MergeUniqueConflictIsRetrySafe(s.txMergeStatements, err)
+	return cypher.MergeUniqueConflictIsRetrySafe(ctx, s.txMergeStatements, err)
 }

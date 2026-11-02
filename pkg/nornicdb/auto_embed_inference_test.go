@@ -102,15 +102,15 @@ func TestAutoTLP_ServerSideEmbeddingsTriggerInferenceOnEmbedded(t *testing.T) {
 func TestRunInferenceForEmbeddedNode_GuardBranches(t *testing.T) {
 	t.Run("nil receiver and nil node are no-ops", func(t *testing.T) {
 		var db *DB
-		db.runInferenceForEmbeddedNode(nil)
+		db.runInferenceForEmbeddedNode(t.Context(), nil)
 	})
 
 	t.Run("returns for nodes without embeddings or invalid ids", func(t *testing.T) {
 		db := &DB{}
-		db.runInferenceForEmbeddedNode(&storage.Node{ID: "n1"})
-		db.runInferenceForEmbeddedNode(&storage.Node{ID: "unqualified", ChunkEmbeddings: [][]float32{{1, 0, 0}}})
-		db.runInferenceForEmbeddedNode(&storage.Node{ID: "system:n1", ChunkEmbeddings: [][]float32{{1, 0, 0}}})
-		db.runInferenceForEmbeddedNode(&storage.Node{ID: "tenant:qdrant:pt-1", ChunkEmbeddings: [][]float32{{1, 0, 0}}})
+		db.runInferenceForEmbeddedNode(t.Context(), &storage.Node{ID: "n1"})
+		db.runInferenceForEmbeddedNode(t.Context(), &storage.Node{ID: "unqualified", ChunkEmbeddings: [][]float32{{1, 0, 0}}})
+		db.runInferenceForEmbeddedNode(t.Context(), &storage.Node{ID: "system:n1", ChunkEmbeddings: [][]float32{{1, 0, 0}}})
+		db.runInferenceForEmbeddedNode(t.Context(), &storage.Node{ID: "tenant:qdrant:pt-1", ChunkEmbeddings: [][]float32{{1, 0, 0}}})
 	})
 
 	t.Run("returns when suggestions exist but base storage is nil", func(t *testing.T) {
@@ -133,7 +133,7 @@ func TestRunInferenceForEmbeddedNode_GuardBranches(t *testing.T) {
 		})
 		db.inferenceServices["tenant"] = engine
 
-		db.runInferenceForEmbeddedNode(&storage.Node{
+		db.runInferenceForEmbeddedNode(t.Context(), &storage.Node{
 			ID:              "tenant:n1",
 			ChunkEmbeddings: [][]float32{{1, 0, 0}},
 		})
@@ -152,7 +152,7 @@ func TestRunInferenceForEmbeddedNode_GuardBranches(t *testing.T) {
 		})
 		db.inferenceServices["tenant"] = engine
 
-		db.runInferenceForEmbeddedNode(&storage.Node{ID: "tenant:n1", ChunkEmbeddings: [][]float32{{1, 0, 0}}})
+		db.runInferenceForEmbeddedNode(t.Context(), &storage.Node{ID: "tenant:n1", ChunkEmbeddings: [][]float32{{1, 0, 0}}})
 		require.True(t, searched)
 	})
 }

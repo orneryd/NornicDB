@@ -16,10 +16,10 @@ type blockingApplyStorage struct {
 	entered, release chan struct{}
 }
 
-func (s *blockingApplyStorage) ApplyCommand(cmd *Command) error {
+func (s *blockingApplyStorage) ApplyCommand(waitCtx context.Context, cmd *Command, publication WALPublicationMode) (CommandPublication, error) {
 	close(s.entered)
 	<-s.release
-	return s.MockStorage.ApplyCommand(cmd)
+	return s.MockStorage.ApplyCommand(waitCtx, cmd, publication)
 }
 
 // Shutdown matrix S1, StandaloneReplicator: Shutdown waits for an accepted
@@ -30,7 +30,7 @@ func TestOwnerMatrixStandaloneShutdownJoinsHeldApply(t *testing.T) {
 	require.NoError(t, r.Start(context.Background()))
 
 	applied := make(chan error, 1)
-	go func() { applied <- r.Apply(&Command{}, time.Second) }()
+	go func() { applied <- r.Apply(t.Context(), &Command{}, time.Second) }()
 	select {
 	case <-storage.entered:
 	case <-time.After(3 * time.Second):
@@ -45,7 +45,7 @@ func TestOwnerMatrixStandaloneShutdownJoinsHeldApply(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 	}
 	require.Eventually(t, r.work.Closing, time.Second, time.Millisecond)
-	require.True(t, errors.Is(r.Apply(&Command{}, time.Second), ErrClosed), "Apply after Shutdown began must be refused")
+	require.True(t, errors.Is(r.Apply(t.Context(), &Command{}, time.Second), ErrClosed), "Apply after Shutdown began must be refused")
 	close(storage.release)
 	require.NoError(t, <-applied)
 	require.NoError(t, <-stopped)

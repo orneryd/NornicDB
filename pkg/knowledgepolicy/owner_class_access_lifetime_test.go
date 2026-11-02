@@ -26,7 +26,7 @@ func (s *classAccessStore) ReadAccessMeta(r kp.AccessMetaReadRequest) (kp.Access
 	}
 	return kp.AccessMetaReadResult{}, nil
 }
-func (s *classAccessStore) WriteAccessMeta(kp.AccessMetaWriteRequest) (bool, error) {
+func (s *classAccessStore) WriteAccessMeta(context.Context, kp.AccessMetaWriteRequest) (bool, error) {
 	if s.entered != nil {
 		s.once.Do(func() { close(s.entered) })
 		<-s.release

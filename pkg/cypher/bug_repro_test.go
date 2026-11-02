@@ -223,7 +223,7 @@ func TestBug4_SetNodeVectorPropertySetsPropertyAndPreservesReturn(t *testing.T) 
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:     "v1",
 		Labels: []string{"Bug"},
 		Properties: map[string]interface{}{
@@ -261,7 +261,7 @@ func TestBug5_SetNodeVectorPropertyAcceptsNodeVariableArgument(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:     "v2",
 		Labels: []string{"Bug"},
 		Properties: map[string]interface{}{

@@ -320,9 +320,9 @@ func (b *BadgerEngine) orderCovering(ctx context.Context, h *orderHold, e writte
 // storedEdgeEndpoints reaches the endpoints of edge id's stored image, the
 // newest the write-behind buffer holds included; image, when set, receives
 // the image read last (nil when there is none).
-func (b *BadgerEngine) storedEdgeEndpoints(id EdgeID, image **Edge) func() ([]NodeID, error) {
+func (b *BadgerEngine) storedEdgeEndpoints(ctx context.Context, id EdgeID, image **Edge) func() ([]NodeID, error) {
 	return func() ([]NodeID, error) {
-		edge, err := b.GetStoredEdge(id)
+		edge, err := b.GetStoredEdge(ctx, id)
 		if errors.Is(err, ErrNotFound) {
 			edge, err = nil, nil
 		}
@@ -384,7 +384,6 @@ var allOrderStripes = func() (s orderStripeSet) {
 // lifecycleWrite is a write that replaces or removes stored state wholesale
 // (beginLifecycleWrite), kept on the writer's stack.
 type lifecycleWrite struct {
-	ctx     context.Context
 	b       *BadgerEngine
 	held    *commitNotification
 	dropped bool
@@ -415,7 +414,7 @@ func (b *BadgerEngine) beginLifecycleWrite(ctx context.Context, dropped string) 
 		b.writeBarrier.Unlock()
 		return lifecycleWrite{}, err
 	}
-	l := lifecycleWrite{ctx: ctx, b: b, held: b.queueCommitNotification(&commitNotification{})}
+	l := lifecycleWrite{b: b, held: b.queueCommitNotification(&commitNotification{})}
 	if w := b.writeBehind; w != nil {
 		if err := w.order.lockContext(ctx, &allOrderStripes, true); err != nil {
 			// lockContext already released any partial stripe acquisition.
@@ -677,7 +676,7 @@ func (tx *BadgerTransaction) revalidateEndpointsLocked(ctx context.Context) erro
 				checked = make(map[NodeID]struct{})
 			}
 			checked[id] = struct{}{}
-			if _, err := tx.engine.getNodeSnapshotForRead(id, false, storedRead, true); errors.Is(err, ErrNotFound) {
+			if _, err := tx.engine.getNodeSnapshotForRead(ctx, id, false, storedRead, true); errors.Is(err, ErrNotFound) {
 				return errEndpointChanged
 			} else if err != nil {
 				return err

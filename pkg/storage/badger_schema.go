@@ -60,7 +60,9 @@ func (b *BadgerEngine) loadPersistedSchemas() error {
 			}
 
 			sm := NewSchemaManager()
-			if err := sm.ReplaceFromDefinition(&def); err != nil {
+			// Opening a namespace schema is startup work that owns its own
+			// lifetime; it has no caller context to cancel.
+			if err := sm.ReplaceFromDefinition(context.Background(), &def); err != nil {
 				return fmt.Errorf("schema: apply %q: %w", namespace, err)
 			}
 			b.bindNamespaceSchema(namespace, sm)
@@ -137,7 +139,7 @@ func (b *BadgerEngine) persistSchemaDefinition(namespace string, def *SchemaDefi
 
 	return b.commitEngineWrite(context.Background(), func(cw *commitWriter) error {
 		cw.publishKeys = []any{namespaceWriteKey(namespace)}
-		return cw.writeOnce(func(txn *badger.Txn) error { return txn.Set(schemaKey(namespace), blob) })
+		return cw.txn.Set(schemaKey(namespace), blob)
 	})
 }
 

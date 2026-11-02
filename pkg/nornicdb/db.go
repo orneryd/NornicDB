@@ -446,7 +446,11 @@ type DatabaseAndStorage struct {
 //	go func() {
 //		ticker := time.NewTicker(1 * time.Hour)
 //		for range ticker.C {
-//			stats := db.Stats()
+//			stats, err := db.Stats(context.Background())
+//			if err != nil {
+//				log.Printf("Maintenance statistics unavailable: %v", err)
+//				continue
+//			}
 //			log.Printf("Nodes: %d, Edges: %d, Memory: %d MB",
 //				stats.NodeCount, stats.EdgeCount, stats.MemoryUsageMB)
 //		}
@@ -897,14 +901,14 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 				}
 			}
 
-			rm.SetDeleteCallback(func(record *retention.DataRecord) error {
-				if err := db.storage.DeleteNode(storage.NodeID(record.ID)); err != nil {
+			rm.SetDeleteCallback(func(ctx context.Context, record *retention.DataRecord) error {
+				if err := db.storage.DeleteNode(ctx, storage.NodeID(record.ID)); err != nil {
 					return err
 				}
 				return db.retentionAuditOutcome("RETENTION_DELETE", record.ID, string(record.Category))
 			})
-			rm.SetArchiveCallback(func(record *retention.DataRecord, archivePath string) error {
-				node, err := db.storage.GetNode(storage.NodeID(record.ID))
+			rm.SetArchiveCallback(func(ctx context.Context, record *retention.DataRecord, archivePath string) error {
+				node, err := db.storage.GetNode(ctx, storage.NodeID(record.ID))
 				if err != nil {
 					return err
 				}
@@ -1050,7 +1054,7 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 	// Load function plugins from configured directory
 	// Heimdall plugins will be loaded later by the server after Heimdall is initialized
 	if db.config.Server.PluginsDir != "" {
-		if err := LoadPluginsFromDir(db.config.Server.PluginsDir, nil); err != nil {
+		if err := LoadPluginsFromDir(context.Background(), db.config.Server.PluginsDir, nil); err != nil {
 			fmt.Printf("⚠️  Plugin loading warning: %v\n", err)
 		}
 	}
@@ -1162,8 +1166,10 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 				be,
 				func(entityID string) { be.AddToPendingEmbeddings(storage.NodeID(entityID)) },
 			)
-			db.accessFlusher.SetSuppressionRecheck(func(entityID string, meta knowledgepolicy.EntityMeta) {
-				becameSuppressed, err := be.EnqueueDeindexIfSuppressed(entityID, meta.Scope == knowledgepolicy.ScopeEdge)
+			db.accessFlusher.SetSuppressionRecheck(func(ctx context.Context, entityID string, meta knowledgepolicy.EntityMeta) {
+				// ctx is the flush cycle that observed the change: the write belongs to
+				// that accepted work, not to a request or run lifetime that has ended.
+				becameSuppressed, err := be.EnqueueDeindexIfSuppressed(ctx, entityID, meta.Scope == knowledgepolicy.ScopeEdge)
 				if err == nil && becameSuppressed {
 					// Emit deindex counter + on-access suppression record.
 					if kp := observability.GetKnowledgePolicyMetrics(); kp != nil {
@@ -1323,7 +1329,7 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 	db.derivedIndexesHealthy = prepareDerivedIndexes(bootstrapCtx, db.baseStorage)
 	bootstrapCancel()
 
-	_ = db.startBackgroundTask(func() {
+	_ = db.RunBackgroundTask(func(backgroundCtx context.Context) {
 		ctx, cancel := context.WithTimeout(db.buildCtx, 4*time.Hour)
 		defer cancel()
 
@@ -1444,7 +1450,7 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 	if db.memoryPolicy != nil {
 		_ = db.memoryPolicy.Refresh()
 		ticks := time.NewTicker(250 * time.Millisecond)
-		if !db.startBackgroundTask(func() {
+		if !db.RunBackgroundTask(func(backgroundCtx context.Context) {
 			defer ticks.Stop()
 			db.memoryPolicy.Run(db.buildCtx, ticks.C)
 		}) {
@@ -1635,7 +1641,7 @@ func (db *DB) SetEmbedder(embedder embed.Embedder) bool {
 	// Metadata is provider code too. Enroll before invoking it, then keep the
 	// same DB retention through publication so Close cannot dispose the model
 	// between an unlocked metadata call and installing the queue binding.
-	finish, retained := db.RetainBackground()
+	_, finish, retained := db.RetainBackground()
 	if !retained {
 		// Preserve the existing rejected-provider disposal contract.
 		_, _ = db.OwnEmbedder(embedder)
@@ -2000,31 +2006,24 @@ func (db *DB) StopEmbedQueue() {
 	}
 }
 
-// startBackgroundTask tracks DB-owned goroutines and prevents new tracked tasks
-// from being launched once shutdown has started.
-func (db *DB) startBackgroundTask(fn func()) bool {
-	release, accepted := db.RetainBackground()
+// RunBackgroundTask enrolls fn before launch and passes its actual owner ticket.
+// Close joins fn before disposing database resources. Ordinary jobs observe the
+// ticket's cancellation; accepted completion may explicitly retain its values
+// without cancellation while the same release credit remains held.
+func (db *DB) RunBackgroundTask(fn func(context.Context)) bool {
+	ctx, release, accepted := db.RetainBackground()
 	if !accepted {
 		return false
 	}
-	go func() { defer release(); fn() }()
+	go func() { defer release(); fn(ctx) }()
 	return true
 }
 
-// RetainBackground enrolls construction before it can run. The returned release
-// belongs to actual completion, never a caller deadline. RunBackgroundTask and
-// service construction share this same DB wait group and admission boundary.
-func (db *DB) RetainBackground() (release func(), accepted bool) {
-	_, release, accepted = db.work.Acquire(db.work.Context())
-	return release, accepted
-}
-
-// RunBackgroundTask runs fn in a goroutine that Close waits for, so work
-// started for the database can't outlive it. fn should return once
-// LifetimeContext ends. It returns false, without running fn, once the
-// database is closing.
-func (db *DB) RunBackgroundTask(fn func()) bool {
-	return db.startBackgroundTask(fn)
+// RetainBackground enrolls construction before it can run. The returned context
+// carries the admitted ticket; release belongs to actual completion, never a
+// caller deadline. Construction may discard an unused ticket context explicitly.
+func (db *DB) RetainBackground() (context.Context, func(), bool) {
+	return db.work.Acquire(db.work.Context())
 }
 
 // GetRetentionManager returns the retention manager or nil when retention is disabled.

@@ -60,14 +60,14 @@ func (e *heldIncidentReadEngine) GetIncomingEdges(ctx context.Context, id storag
 func TestPublicUndirectedTraversalCancellation(t *testing.T) {
 	forEachParser(t, func(t *testing.T) {
 		base := storage.NewNamespacedEngine(newTestMemoryEngine(t), "undirected_context")
-		_, err := base.CreateNode(&storage.Node{ID: "hub", Labels: []string{"UndirectedHub"}})
+		_, err := base.CreateNode(t.Context(), &storage.Node{ID: "hub", Labels: []string{"UndirectedHub"}})
 		require.NoError(t, err)
 		const leaves = 64
 		for i := 0; i < leaves; i++ {
 			id := storage.NodeID(fmt.Sprintf("leaf%d", i))
-			_, err = base.CreateNode(&storage.Node{ID: id, Labels: []string{"UndirectedLeaf"}})
+			_, err = base.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"UndirectedLeaf"}})
 			require.NoError(t, err)
-			require.NoError(t, base.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("r%d", i)), StartNode: "hub", EndNode: id, Type: "R"}))
+			require.NoError(t, base.CreateEdge(t.Context(), &storage.Edge{ID: storage.EdgeID(fmt.Sprintf("r%d", i)), StartNode: "hub", EndNode: id, Type: "R"}))
 		}
 
 		for _, route := range []struct {

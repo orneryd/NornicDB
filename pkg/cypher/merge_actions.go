@@ -268,7 +268,7 @@ func directedMergePath(pattern string) string {
 func (e *StorageExecutor) pipelineMergePath(ctx context.Context, row pipelineRow, pattern string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (rows []pipelineRow, stats *QueryStats, created bool, err error) {
 	// The match is the statement rewrite's MATCH: a property map reading
 	// the pattern's own variables (b {k: a.k}) is a WHERE predicate there.
-	match, _, err := desugarLabelExpressions("MATCH "+pattern, nil, cypherVersionFromContext(ctx) == "25")
+	match, _, err := desugarLabelExpressions(ctx, "MATCH "+pattern, nil, cypherVersionFromContext(ctx) == "25")
 	if err != nil {
 		return nil, nil, false, err
 	}

@@ -1498,7 +1498,7 @@ func (h *HNSWIndex) searchLayer(query []float32, entryID uint32, ef int, level i
 }
 
 func (h *HNSWIndex) searchLayerHeap(query []float32, entryID uint32, ef int, level int) []uint32 {
-	ids, _, _ := searchLayerHeapKernel[layerNoCtx](h, nil, query, entryID, nil, ef, level, true)
+	ids, _, _ := searchLayerHeapKernel[layerNoCtx](h, layerNoCtx{}, query, entryID, nil, ef, level, true)
 	return ids
 }
 
@@ -1515,28 +1515,40 @@ func (h *HNSWIndex) searchLayerHeapPooledFromEntriesWithContext(ctx context.Cont
 	if len(entryIDs) == 0 {
 		return nil, nil
 	}
-	_, items, err := searchLayerHeapKernel[layerWithCtx](h, ctx, query, entryIDs[0], entryIDs[1:], ef, level, false)
+	_, items, err := searchLayerHeapKernel[layerWithCtx](h, layerWithCtx{ctx: ctx}, query, entryIDs[0], entryIDs[1:], ef, level, false)
 	return items, err
 }
 
-// layerCtxMode selects the context-probe policy of searchLayerHeapKernel at
-// compile time: layerNoCtx compiles without any probe (the build hot path),
-// layerWithCtx probes once per candidate pop and once per 32 neighbors (the
-// query path).
+// layerCtxMode selects the context policy of searchLayerHeapKernel. The mode
+// value owns the only context the kernel can observe: layerNoCtx holds no
+// context at all (the build hot path), so its probes never poll it and it has
+// no context to read a quantized query from; layerWithCtx carries the
+// caller's query context and is the only mode that probes it or reads values
+// from it.
 type layerCtxMode interface {
-	popProbe(ctx context.Context) error
-	neighborProbe(ctx context.Context) error
+	popProbe() error
+	neighborProbe() error
+	quantizedQuery() *hnswQuantizedQuery
 }
 
+// layerNoCtx is the context-free mode: it holds nothing, so the build path
+// passes no context value at all and has nothing to probe.
 type layerNoCtx struct{}
 
-func (layerNoCtx) popProbe(ctx context.Context) error      { return nil }
-func (layerNoCtx) neighborProbe(ctx context.Context) error { return nil }
+func (layerNoCtx) popProbe() error                     { return nil }
+func (layerNoCtx) neighborProbe() error                { return nil }
+func (layerNoCtx) quantizedQuery() *hnswQuantizedQuery { return nil }
 
-type layerWithCtx struct{}
+// layerWithCtx is the query mode: it carries the query's own context, the
+// only context the kernel probes or reads values from.
+type layerWithCtx struct{ ctx context.Context }
 
-func (layerWithCtx) popProbe(ctx context.Context) error      { return ctx.Err() }
-func (layerWithCtx) neighborProbe(ctx context.Context) error { return ctx.Err() }
+func (c layerWithCtx) popProbe() error      { return c.ctx.Err() }
+func (c layerWithCtx) neighborProbe() error { return c.ctx.Err() }
+func (c layerWithCtx) quantizedQuery() *hnswQuantizedQuery {
+	scorer, _ := c.ctx.Value(hnswQuantizedQueryKey{}).(*hnswQuantizedQuery)
+	return scorer
+}
 
 // searchLayerHeapKernel expands one graph layer from the given entry points
 // with the shared visited-state and candidate/result heap machinery. It is the
@@ -1544,10 +1556,12 @@ func (layerWithCtx) neighborProbe(ctx context.Context) error { return ctx.Err() 
 // searchLayerHeapPooledFromEntriesWithContext (query path); a recall fix such
 // as #433 can no longer land in only one copy.
 //
-// The type argument M selects the context-probe policy at compile time (see
-// layerCtxMode): layerNoCtx has every probe dead-code-eliminated so the build
-// hot path stays branch-free, layerWithCtx probes once per candidate pop and
-// once per 32 neighbors. wantIDs selects the output shape once per call:
+// The mode value selects the context policy and supplies the only context the
+// kernel observes (see layerCtxMode): layerNoCtx carries no context, so its
+// probes return without polling and it has no quantized query to find, keeping
+// the build hot path free of context work; layerWithCtx carries the query's
+// context and probes it once per candidate pop and once per 32 neighbors.
+// wantIDs selects the output shape once per call:
 // caller IDs via idsPool, or distance items via itemsPool (both
 // closest-first; the returned slice belongs to its pool until the caller
 // releases it).
@@ -1557,12 +1571,8 @@ func (layerWithCtx) neighborProbe(ctx context.Context) error { return ctx.Err() 
 // there; on the query path they guard the caller-supplied entry IDs.
 // Tombstones, entries included, are routed through and never scored or
 // returned (see relaxLayerNeighbors).
-func searchLayerHeapKernel[M layerCtxMode](h *HNSWIndex, ctx context.Context, query []float32, entryID uint32, extraEntries []uint32, ef int, level int, wantIDs bool) (ids []uint32, items []hnswDistItem, err error) {
-	var mode M
-	var scorer *hnswQuantizedQuery
-	if ctx != nil {
-		scorer, _ = ctx.Value(hnswQuantizedQueryKey{}).(*hnswQuantizedQuery)
-	}
+func searchLayerHeapKernel[M layerCtxMode](h *HNSWIndex, mode M, query []float32, entryID uint32, extraEntries []uint32, ef int, level int, wantIDs bool) (ids []uint32, items []hnswDistItem, err error) {
+	scorer := mode.quantizedQuery()
 	visited := h.visitedPool.Get().(*visitedGenState)
 	defer h.visitedPool.Put(visited)
 	if len(visited.gen) < len(h.nodeLevel) {
@@ -1604,13 +1614,13 @@ func searchLayerHeapKernel[M layerCtxMode](h *HNSWIndex, ctx context.Context, qu
 		}
 	}
 	if len(bridges) > 0 {
-		if bridges, err = relaxLayerNeighbors[M](h, ctx, query, bridges, ef, level, candidates, results, visited, curGen, scorer); err != nil {
+		if bridges, err = relaxLayerNeighbors[M](h, mode, query, bridges, ef, level, candidates, results, visited, curGen, scorer); err != nil {
 			return nil, nil, err
 		}
 	}
 
 	for candidates.Len() > 0 {
-		if err := mode.popProbe(ctx); err != nil {
+		if err := mode.popProbe(); err != nil {
 			return nil, nil, err
 		}
 		closest := candidates.Pop()
@@ -1626,7 +1636,7 @@ func searchLayerHeapKernel[M layerCtxMode](h *HNSWIndex, ctx context.Context, qu
 		if !validHNSWIndex(nodeID, len(h.nodeLevel)) || h.deleted[nodeID] {
 			continue
 		}
-		if bridges, err = relaxLayerNeighbors[M](h, ctx, query, append(bridges[:0], nodeID), ef, level, candidates, results, visited, curGen, scorer); err != nil {
+		if bridges, err = relaxLayerNeighbors[M](h, mode, query, append(bridges[:0], nodeID), ef, level, candidates, results, visited, curGen, scorer); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -1667,8 +1677,7 @@ func searchLayerHeapKernel[M layerCtxMode](h *HNSWIndex, ctx context.Context, qu
 // but routed through: its own neighbours are relaxed as the current node's.
 // Otherwise a removal silently cuts those live nodes off. The stack is
 // returned for reuse.
-func relaxLayerNeighbors[M layerCtxMode](h *HNSWIndex, ctx context.Context, query []float32, stack []uint32, ef int, level int, candidates, results *distHeap, visited *visitedGenState, curGen uint16, scorer *hnswQuantizedQuery) ([]uint32, error) {
-	var mode M
+func relaxLayerNeighbors[M layerCtxMode](h *HNSWIndex, mode M, query []float32, stack []uint32, ef int, level int, candidates, results *distHeap, visited *visitedGenState, curGen uint16, scorer *hnswQuantizedQuery) ([]uint32, error) {
 	for len(stack) > 0 {
 		nodeID := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
@@ -1680,7 +1689,7 @@ func relaxLayerNeighbors[M layerCtxMode](h *HNSWIndex, ctx context.Context, quer
 		// Reverse iteration: order doesn't matter when checking all neighbors
 		for i := len(neighbors) - 1; i >= 0; i-- {
 			if i&31 == 0 {
-				if err := mode.neighborProbe(ctx); err != nil {
+				if err := mode.neighborProbe(); err != nil {
 					return stack, err
 				}
 			}

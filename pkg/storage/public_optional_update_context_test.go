@@ -15,7 +15,7 @@ func TestPublicMVCCUpdateKeepsOptionalDetachedContext(t *testing.T) {
 		t.Run(route, func(t *testing.T) {
 			engine := newTestMemoryEngine(t)
 			node := &Node{ID: "optional:n", Properties: map[string]any{"value": int64(1)}}
-			_, err := engine.CreateNode(node)
+			_, err := engine.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 			number, ok := engine.idDict.nodeForwardLookup(node.ID)
 			require.True(t, ok)

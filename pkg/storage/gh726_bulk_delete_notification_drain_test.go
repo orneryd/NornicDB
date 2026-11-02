@@ -28,14 +28,14 @@ func TestGh726_BulkDeleteNotificationsDrainedBeforeClose(t *testing.T) {
 	})
 
 	// Three nodes, deleted in one bulk call.
-	_, err = engine.CreateNode(&Node{ID: "nornic:n-1", Labels: []string{"T"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "nornic:n-1", Labels: []string{"T"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "nornic:n-2", Labels: []string{"T"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "nornic:n-2", Labels: []string{"T"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "nornic:n-3", Labels: []string{"T"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "nornic:n-3", Labels: []string{"T"}})
 	require.NoError(t, err)
 
-	require.NoError(t, engine.BulkDeleteNodes([]NodeID{"nornic:n-1", "nornic:n-2", "nornic:n-3"}))
+	require.NoError(t, engine.BulkDeleteNodes(t.Context(), []NodeID{"nornic:n-1", "nornic:n-2", "nornic:n-3"}))
 
 	// Close must wait for the in-flight notification goroutine: after it
 	// returns, every dispatch has run and the engine is closed.
@@ -54,13 +54,13 @@ func TestGh726_BulkDeleteNotificationsAfterCloseAreSkipped(t *testing.T) {
 	engine.OnNodeDeleted(func(id NodeID) {
 		notifications.Add(1)
 	})
-	_, err = engine.CreateNode(&Node{ID: "nornic:n-1", Labels: []string{"T"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "nornic:n-1", Labels: []string{"T"}})
 	require.NoError(t, err)
 
 	require.NoError(t, engine.Close())
 
 	// A bulk delete on a closed engine fails without dispatching.
-	err = engine.BulkDeleteNodes([]NodeID{"nornic:n-1"})
+	err = engine.BulkDeleteNodes(t.Context(), []NodeID{"nornic:n-1"})
 	require.Error(t, err)
 	require.Zero(t, notifications.Load())
 }
@@ -71,7 +71,7 @@ func TestGh726_CloseWaitsForInFlightBulkDeleteNotification(t *testing.T) {
 		fixtureowner.Own(t, engine)
 	}
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "nornic:n-1", Labels: []string{"T"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "nornic:n-1", Labels: []string{"T"}})
 	require.NoError(t, err)
 
 	started := make(chan struct{})
@@ -90,7 +90,7 @@ func TestGh726_CloseWaitsForInFlightBulkDeleteNotification(t *testing.T) {
 	deleteDone := make(chan struct{})
 	go func() {
 		defer close(deleteDone)
-		deleteErr = engine.BulkDeleteNodes([]NodeID{"nornic:n-1"})
+		deleteErr = engine.BulkDeleteNodes(t.Context(), []NodeID{"nornic:n-1"})
 	}()
 
 	// The notification dispatch is in flight (blocked on release).

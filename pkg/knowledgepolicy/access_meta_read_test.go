@@ -1,6 +1,7 @@
 package knowledgepolicy
 
 import (
+	"context"
 	"errors"
 	"sort"
 	"testing"
@@ -26,7 +27,7 @@ func (s *scriptedAccessMetaStore) ReadAccessMeta(request AccessMetaReadRequest) 
 	return AccessMetaReadResult{Entry: s.entry}, nil
 }
 
-func (s *scriptedAccessMetaStore) WriteAccessMeta(request AccessMetaWriteRequest) (bool, error) {
+func (s *scriptedAccessMetaStore) WriteAccessMeta(_ context.Context, request AccessMetaWriteRequest) (bool, error) {
 	entityID, entry := request.EntityID, request.Entry
 	if s.writeErr != nil {
 		return false, s.writeErr
@@ -45,7 +46,7 @@ func (s *scriptedAccessMetaStore) WriteAccessMeta(request AccessMetaWriteRequest
 func TestMockStoreReadAccessMetaPointCopiesEntry(t *testing.T) {
 	store := newMockStore()
 	stored := &AccessMetaEntry{TargetID: "n1", Fixed: AccessMetaFixedFields{AccessCount: 4}}
-	if _, err := store.WriteAccessMeta(AccessMetaWriteRequest{Mode: RecordState, EntityID: "n1", Entry: stored}); err != nil {
+	if _, err := store.WriteAccessMeta(context.Background(), AccessMetaWriteRequest{Mode: RecordState, EntityID: "n1", Entry: stored}); err != nil {
 		t.Fatal(err)
 	}
 	stored.Fixed.AccessCount = 9
@@ -80,7 +81,7 @@ func TestMockStoreReadAccessMetaPointCopiesEntry(t *testing.T) {
 func TestMockStoreReadAccessMetaAllIsDeterministic(t *testing.T) {
 	store := newMockStore()
 	for _, id := range []string{"c", "a", "b"} {
-		if _, err := store.WriteAccessMeta(AccessMetaWriteRequest{Mode: RecordState, EntityID: id, Entry: &AccessMetaEntry{TargetID: id}}); err != nil {
+		if _, err := store.WriteAccessMeta(context.Background(), AccessMetaWriteRequest{Mode: RecordState, EntityID: id, Entry: &AccessMetaEntry{TargetID: id}}); err != nil {
 			t.Fatal(err)
 		}
 	}

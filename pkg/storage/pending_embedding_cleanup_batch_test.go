@@ -44,10 +44,10 @@ func TestPendingCandidatesStaleMarkerCleanupSpansBatches(t *testing.T) {
 				for i := range nodes {
 					nodes[i] = &Node{ID: staleID(i), Labels: []string{"Old"}, Properties: map[string]any{"content": "old"}}
 				}
-				require.NoError(t, e.BulkCreateNodes(nodes))
+				require.NoError(t, e.BulkCreateNodes(t.Context(), nodes))
 			}
 			live := &Node{ID: "test:z-live", Labels: []string{"Doc"}, Properties: map[string]any{"content": "live"}}
-			_, err := e.CreateNode(live)
+			_, err := e.CreateNode(t.Context(), live)
 			require.NoError(t, err)
 			require.Equal(t, stale+1, e.PendingEmbeddingsCount())
 			if kind == "excluded" {
@@ -67,13 +67,13 @@ func TestPendingCandidatesStaleMarkerCleanupSpansBatches(t *testing.T) {
 			require.True(t, IsTransactionTooBig(err), "fixture must need more than one cleanup batch, got %v", err)
 			require.Equal(t, stale+1, e.PendingEmbeddingsCount())
 
-			node := e.FindNodeNeedingEmbedding()
+			node := requireEmbeddingCandidate(t, e.FindNodeNeedingEmbedding)
 			require.NotNil(t, node, "cleanup larger than one batch must still reach the live node")
 			require.Equal(t, live.ID, node.ID)
 			require.Equal(t, 1, e.PendingEmbeddingsCount(), "every stale marker is durably removed")
 
 			e.MarkNodeEmbedded(node.ID)
-			require.Nil(t, e.FindNodeNeedingEmbedding())
+			require.Nil(t, requireEmbeddingCandidate(t, e.FindNodeNeedingEmbedding))
 			require.Zero(t, e.PendingEmbeddingsCount())
 		})
 	}

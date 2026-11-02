@@ -14,7 +14,7 @@ import (
 
 func TestNodeReferenceUsesCapturedSnapshot(t *testing.T) {
 	b := newReadSnapshotTestEngine(t, false)
-	first, err := b.CreateNode(&Node{ID: "test:reference-first", Labels: []string{"Reference"}})
+	first, err := b.CreateNode(t.Context(), &Node{ID: "test:reference-first", Labels: []string{"Reference"}})
 	require.NoError(t, err)
 	view, err := b.captureReadView(t.Context(), nil, readViewOptions{scopeKind: readNodeIDsScope, nodeIDs: []NodeID{first}})
 	require.NoError(t, err)
@@ -28,7 +28,7 @@ func TestNodeReferenceUsesCapturedSnapshot(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, live, ref.num)
 
-	later, err := b.CreateNode(&Node{ID: "test:reference-later", Labels: []string{"Reference"}})
+	later, err := b.CreateNode(t.Context(), &Node{ID: "test:reference-later", Labels: []string{"Reference"}})
 	require.NoError(t, err)
 	_, liveFound := b.idDict.lookupNodeNumID(later)
 	require.True(t, liveFound)
@@ -47,7 +47,7 @@ func TestNodeReferenceUsesCapturedSnapshot(t *testing.T) {
 
 func TestNodeReferencePreservesScopedBookmarkDiagnostics(t *testing.T) {
 	b := newReadSnapshotTestEngine(t, false)
-	id, err := b.CreateNode(&Node{ID: "test:reference-body", Labels: []string{"Reference"}})
+	id, err := b.CreateNode(t.Context(), &Node{ID: "test:reference-body", Labels: []string{"Reference"}})
 	require.NoError(t, err)
 	for _, n := range []int{0, 1, 7, 8, 9} {
 		t.Run(strconv.Itoa(n)+"-bytes", func(t *testing.T) {

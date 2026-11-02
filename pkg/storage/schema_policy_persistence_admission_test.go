@@ -62,7 +62,7 @@ func TestPolicyMutationWaitsForNativePublicationBeforeReadingSchema(t *testing.T
 
 	nativeDone := make(chan error, 1)
 	go func() {
-		tx, err := engine.BeginTransaction()
+		tx, err := engine.BeginTransaction(t.Context())
 		if err != nil {
 			nativeDone <- err
 			return
@@ -314,7 +314,7 @@ func TestPolicyRejectedMutationDoesNotRideLaterWrite(t *testing.T) {
 			})
 			require.NoError(t, schema.CreatePromotionProfile(validPromoProfile("later")))
 			require.NotNil(t, written)
-			require.Equal(t, written, schema.ExportDefinition())
+			require.Equal(t, written, schemaDefinitionForTest(t, schema))
 
 			profileNames := map[string]bool{}
 			for _, profile := range written.PromotionProfiles {
@@ -354,7 +354,7 @@ func TestPolicyRejectedMutationKeepsDerivedSchemaState(t *testing.T) {
 	require.True(t, ok)
 	bindingTable := schema.GetBindingTable()
 	require.NotNil(t, bindingTable)
-	before := schema.ExportDefinition()
+	before := schemaDefinitionForTest(t, schema)
 
 	rejected := errors.New("policy persistence rejected")
 	changed := 0
@@ -362,7 +362,7 @@ func TestPolicyRejectedMutationKeepsDerivedSchemaState(t *testing.T) {
 	schema.SetKnowledgePolicyChangedHook(func() { changed++ })
 	require.ErrorIs(t, schema.CreatePromotionProfile(validPromoProfile("ghost")), rejected)
 
-	require.Equal(t, before, schema.ExportDefinition(), "a rejected change must not become the readable schema")
+	require.Equal(t, before, schemaDefinitionForTest(t, schema), "a rejected change must not become the readable schema")
 	require.Zero(t, changed)
 	require.True(t, schema.mu.TryLock(), "a rejected change must release the schema lock")
 	schema.mu.Unlock()
@@ -392,7 +392,7 @@ func TestPolicyRejectedMutationKeepsDerivedSchemaState(t *testing.T) {
 func TestPolicyRejectedMutationIsNeverReadableDuringPersistence(t *testing.T) {
 	schema := NewSchemaManager()
 	require.NoError(t, schema.CreatePromotionProfile(validPromoProfile("published")))
-	before := schema.ExportDefinition()
+	before := schemaDefinitionForTest(t, schema)
 
 	rejected := errors.New("policy persistence rejected")
 	entered := make(chan struct{})
@@ -417,7 +417,7 @@ func TestPolicyRejectedMutationIsNeverReadableDuringPersistence(t *testing.T) {
 	readDone := make(chan []knowledgepolicy.PromotionProfileDef, 1)
 	go func() {
 		profiles := schema.ShowPromotionProfiles()
-		_ = schema.ExportDefinition()
+		_ = schemaDefinitionForTest(t, schema)
 		readDone <- profiles
 	}()
 	sampled := false
@@ -448,7 +448,7 @@ func TestPolicyRejectedMutationIsNeverReadableDuringPersistence(t *testing.T) {
 			t.Fatal("the concurrent reader did not finish")
 		}
 	}
-	require.Equal(t, before, schema.ExportDefinition())
+	require.Equal(t, before, schemaDefinitionForTest(t, schema))
 	require.True(t, schema.mu.TryLock(), "a rejected change must release the schema lock")
 	schema.mu.Unlock()
 }
@@ -514,7 +514,7 @@ func newConstraintRuntimeCacheFixture(t *testing.T) *constraintRuntimeCacheFixtu
 func (f *constraintRuntimeCacheFixture) requireUnchanged(t *testing.T, before *SchemaDefinition) {
 	t.Helper()
 
-	require.Equal(t, before, f.schema.ExportDefinition(), "a rejected constraint must not become the readable schema")
+	require.Equal(t, before, schemaDefinitionForTest(t, f.schema), "a rejected constraint must not become the readable schema")
 	require.Same(t, f.unique, f.schema.uniqueConstraints[nodePropertyKey{label: "Doc", property: "id"}],
 		"a rejected constraint add must keep the live unique constraint and its value cache")
 	nodeID, valueFound, constrained, complete, uniqueLookupErr1 := f.schema.LookupUniqueConstraintValue(t.Context(), "Doc", "id", "kept")
@@ -614,7 +614,7 @@ func TestRejectedConstraintAddKeepsRuntimeCaches(t *testing.T) {
 			assertErr:    func(t *testing.T, err error) { require.ErrorIs(t, err, rejected) },
 			wantPersists: 1,
 			assertNotPublished: func(t *testing.T, schema *SchemaManager) {
-				require.Empty(t, schema.GetAllConstraintContracts())
+				require.Empty(t, constraintContractsForTest(t, schema))
 				require.NotContains(t, schema.constraints, compiledEmail.Name)
 				require.NotContains(t, schema.uniqueConstraints, "Person:email")
 				require.NotContains(t, schema.compositeIndexes, compiledEmail.Name)
@@ -633,7 +633,7 @@ func TestRejectedConstraintAddKeepsRuntimeCaches(t *testing.T) {
 			},
 			wantPersists: 0,
 			assertNotPublished: func(t *testing.T, schema *SchemaManager) {
-				require.Empty(t, schema.GetAllConstraintContracts())
+				require.Empty(t, constraintContractsForTest(t, schema))
 				require.NotContains(t, schema.constraints, compiledEmail.Name)
 				require.NotContains(t, schema.uniqueConstraints, "Person:email")
 				require.NotContains(t, schema.compositeIndexes, compiledEmail.Name)
@@ -653,7 +653,7 @@ func TestRejectedConstraintAddKeepsRuntimeCaches(t *testing.T) {
 			},
 			wantPersists: 0,
 			assertNotPublished: func(t *testing.T, schema *SchemaManager) {
-				require.Len(t, schema.GetAllConstraintContracts(), 1)
+				require.Len(t, constraintContractsForTest(t, schema), 1)
 				require.NotContains(t, schema.constraints, compiledEmail.Name)
 				require.NotContains(t, schema.uniqueConstraints, "Person:email")
 				require.Len(t, schema.constraints, 1, "a no-op must not apply the bundle's compiled entries")
@@ -667,7 +667,7 @@ func TestRejectedConstraintAddKeepsRuntimeCaches(t *testing.T) {
 			if tc.seed != nil {
 				tc.seed(t, fixture.schema)
 			}
-			before := fixture.schema.ExportDefinition()
+			before := schemaDefinitionForTest(t, fixture.schema)
 
 			persists := 0
 			if !tc.noPersister {

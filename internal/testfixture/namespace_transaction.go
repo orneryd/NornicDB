@@ -1,6 +1,9 @@
 package testfixture
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 // NamespaceTransaction opens a test transaction, binds its namespace when
 // provided, and owns rollback even when an assertion terminates its caller.
@@ -8,9 +11,9 @@ import "testing"
 func NamespaceTransaction[T interface {
 	SetNamespace(string) error
 	Rollback() error
-}](t testing.TB, begin func() (T, error), namespace string) T {
+}](t testing.TB, begin func(context.Context) (T, error), namespace string) T {
 	t.Helper()
-	transaction, err := begin()
+	transaction, err := begin(t.Context())
 	if err != nil {
 		t.Fatalf("begin fixture transaction: %v", err)
 	}

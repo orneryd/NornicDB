@@ -45,10 +45,10 @@ const guardIncidentCancellationPoll = 1000
 // relationships while the statement's match visits one node.
 func seedGuardedNode(t testing.TB, store storage.Engine, id storage.NodeID) {
 	t.Helper()
-	_, err := store.CreateNode(&storage.Node{ID: id, Labels: []string{"Guarded"}, Properties: map[string]interface{}{"id": string(id)}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"Guarded"}, Properties: map[string]interface{}{"id": string(id)}})
 	require.NoError(t, err)
 	for i := range guardIncidentPopulation {
-		require.NoError(t, store.CreateEdge(&storage.Edge{
+		require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{
 			ID:        storage.EdgeID(fmt.Sprintf("%s-e%d", id, i)),
 			StartNode: id,
 			EndNode:   id,
