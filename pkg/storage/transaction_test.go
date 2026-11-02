@@ -1015,7 +1015,7 @@ func TestTransaction_IncidentEdgesBuffered(t *testing.T) {
 		missingEdge := EdgeID(prefixTestID("missing-edge"))
 		badEdge := EdgeID(prefixTestID("bad-edge"))
 
-		if err := engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		if err := engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			missingOut, err := engine.outgoingIndexKeyString(txn, nodeID, missingEdge)
 			if err != nil {
 				return err
@@ -1102,7 +1102,7 @@ func TestTransaction_DeleteNodeBuffered(t *testing.T) {
 		if err := engine.CreateEdge(edge); err != nil {
 			t.Fatalf("CreateEdge failed: %v", err)
 		}
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			emb, err := encodeEmbedding([]float32{1, 2})
 			if err != nil {
 				return err
@@ -1689,7 +1689,7 @@ func TestTransaction_IncidentEdgesSkipNonEdgeKeys(t *testing.T) {
 	outPrefix := engine.outgoingIndexPrefixString(start)
 	require.NotNil(t, outPrefix)
 
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		return txn.Set(append(append([]byte{}, outPrefix...), 'x'), []byte{})
 	}))
 	tx, err := engine.BeginTransaction()

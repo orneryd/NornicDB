@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -37,7 +38,7 @@ func TestEndpointExistenceReadUsesStoredReadContract(t *testing.T) {
 
 	// A present but malformed record must still raise the decode error. A
 	// key-membership-only shortcut would incorrectly admit this endpoint.
-	err = engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return txn.Set(nodeKey("nornic:corrupt"), []byte{0xff}) })
+	err = engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error { return txn.Set(nodeKey("nornic:corrupt"), []byte{0xff}) })
 	require.NoError(t, err)
 	_, err = engine.GetStoredNode("nornic:corrupt")
 	require.Error(t, err)

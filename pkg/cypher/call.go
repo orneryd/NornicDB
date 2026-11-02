@@ -1253,7 +1253,13 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 
 	// Registry-first path: canonical procedure contract for built-ins and UDFs.
 	ensureBuiltInProceduresRegistered()
-	procName := extractProcedureName(ctx, callCypher)
+	// The statement's procedure name, or the error the CALL fragment's own
+	// parse produced: a context that ended after admission must keep its
+	// cancellation instead of looking up the empty name a failed parse leaves.
+	procName, err := extractProcedureName(ctx, callCypher)
+	if err != nil {
+		return nil, err
+	}
 	if proc, found := globalProcedureRegistry.Get(procName); found {
 		hasTail := strings.TrimSpace(tailCypher) != ""
 		if err := validateProcedureArgumentPassingMode(ctx, proc.Spec, callCypher, hasTail); err != nil {

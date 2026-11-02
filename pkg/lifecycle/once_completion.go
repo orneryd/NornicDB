@@ -26,9 +26,7 @@ func (c *OnceCompletion) doneChan() chan struct{} {
 // Go dispatches the winning operation without waiting and returns the channel
 // that closes on its actual completion. Later calls repeat no work.
 func (c *OnceCompletion) Go(operation func() error) <-chan struct{} {
-	done := c.doneChan()
-	c.once.Do(func() { go c.complete(operation) })
-	return done
+	return c.start(operation, true)
 }
 
 // Done closes when the operation has actually completed, including one not yet
@@ -48,7 +46,8 @@ func (c *OnceCompletion) Err() error {
 // Do executes the winning operation in its caller's retained frame and joins
 // that same completion for every later caller.
 func (c *OnceCompletion) Do(operation func() error) error {
-	return c.do(context.Background(), operation, false)
+	<-c.start(operation, false)
+	return c.err
 }
 
 // Run joins a void native callback through the same completion owner. The
@@ -66,10 +65,20 @@ func (c *OnceCompletion) Run(operation func()) {
 // context. Later calls observe the same eventual result, without repeating work.
 func (c *OnceCompletion) DoContext(ctx context.Context, operation func() error) error {
 	requireContext("OnceCompletion.DoContext", ctx)
-	return c.do(ctx, operation, true)
+	done := c.start(operation, true)
+	select {
+	case <-done:
+		return c.err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
-func (c *OnceCompletion) do(ctx context.Context, operation func() error, dispatch bool) error {
+// start owns exactly-once operation dispatch. It never holds the once fence
+// across user code: synchronous Do retains its caller frame, while Go and
+// DoContext retain the operation until its actual completion independently of
+// their callers' wait policies.
+func (c *OnceCompletion) start(operation func() error, dispatch bool) <-chan struct{} {
 	done := c.doneChan()
 	winner := false
 	c.once.Do(func() { winner = true })
@@ -80,12 +89,7 @@ func (c *OnceCompletion) do(ctx context.Context, operation func() error, dispatc
 			c.complete(operation)
 		}
 	}
-	select {
-	case <-done:
-		return c.err
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return done
 }
 
 func (c *OnceCompletion) complete(operation func() error) {

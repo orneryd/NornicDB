@@ -1513,7 +1513,7 @@ func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cy
 }
 
 func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Context, cypher string, upperQuery string, execute func(context.Context, *StorageExecutor) (*ExecuteResult, error)) (result *ExecuteResult, retErr error) {
-	defer func() { completeStatementTerminalOutcome(ctx, &result, &retErr, nil) }()
+	defer func() { completeStatementTerminalOutcome(ctx, true, &result, &retErr, nil) }()
 	parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(cypher)
 	if inlineEmbeddingEnabled {
 		cypher = parsedCypher

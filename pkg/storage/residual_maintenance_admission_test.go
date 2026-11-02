@@ -74,7 +74,7 @@ func TestResidualMaintenanceAdmissionCancellation(t *testing.T) {
 				}
 				edge := &Edge{ID: "test:repair", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}
 				require.NoError(t, b.CreateEdge(edge))
-				require.NoError(t, b.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+				require.NoError(t, b.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 					return b.deleteEdgeBetweenIndexesInTxn(txn, edge)
 				}))
 				run = func(ctx context.Context) error {
@@ -83,7 +83,7 @@ func TestResidualMaintenanceAdmissionCancellation(t *testing.T) {
 				}
 			case "label-scan-repair":
 				seedCancellationNodes(t, b, labelScanPointLookups+2)
-				require.NoError(t, b.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+				require.NoError(t, b.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 					return txn.Set(labelCountKey("test", "Doc"), []byte{1})
 				}))
 				run = func(ctx context.Context) error {

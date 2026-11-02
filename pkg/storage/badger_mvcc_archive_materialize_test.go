@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 // at v in one update transaction, the pair both archive tests exercise.
 func archiveNodeAndEdgePrimaryImagesInTxn(t *testing.T, engine *BadgerEngine, nodeID NodeID, edgeID EdgeID, v MVCCVersion) {
 	t.Helper()
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		require.NoError(t, engine.archiveNodePrimaryIntoMVCCVersionInTxn(txn, nodeID, v, nil, MVCCVersion{}))
 		require.NoError(t, engine.archiveEdgePrimaryIntoMVCCVersionInTxn(txn, edgeID, v, nil, MVCCVersion{}))
 		return nil
@@ -87,7 +88,7 @@ func TestMaterializeMVCCCommitInTxn_CoversOperationSwitch(t *testing.T) {
 		{Type: OpDeleteEdge, EdgeID: "tenant:ed", OldEdge: &Edge{ID: "tenant:ed", StartNode: "tenant:a", EndNode: "tenant:b", Type: "R", Properties: map[string]any{"p": "gone"}}},
 	}
 
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		return engine.materializeMVCCCommit(t.Context(), singleBatchWriter(txn), version, opList)
 	}))
 

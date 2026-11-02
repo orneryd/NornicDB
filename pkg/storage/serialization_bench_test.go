@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"testing"
@@ -28,7 +29,7 @@ func benchmarkEncodeInUpdate(b *testing.B, eng *BadgerEngine, encode func(*badge
 	b.Helper()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		if err := eng.withUpdate(updateRequest{}, encode); err != nil {
+		if err := eng.withUpdate(context.Background(), updateRequest{}, encode); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -39,7 +40,7 @@ func benchmarkEncodeInUpdate(b *testing.B, eng *BadgerEngine, encode func(*badge
 func benchmarkEncodedFixture(b *testing.B, eng *BadgerEngine, numericIDs bool, encode func(*badger.Txn) ([]byte, error)) []byte {
 	b.Helper()
 	var data []byte
-	if err := eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	if err := eng.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		var err error
 		data, err = encode(txn)
 		if err != nil {
@@ -87,7 +88,7 @@ func BenchmarkDecodeTokenizedPropertiesGraphitiVector(b *testing.B) {
 	eng := benchEngine(b)
 	props := benchmarkGraphitiProperties()
 	var data []byte
-	if err := eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	if err := eng.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		var encErr error
 		data, encErr = eng.encodeTokenizedProperties(txn, "test", props)
 		if encErr != nil {

@@ -32,7 +32,7 @@ func TestEdgesBetweenFallback_FindsEdgeFromEitherSide(t *testing.T) {
 	// hub -> leaf: the hub has 51 outgoing edges and the leaf 51 incoming ones.
 	edge := testEdge("fb-target", hub.ID, leaf.ID, "HAS")
 	require.NoError(t, engine.CreateEdge(edge))
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		if err := txn.Delete(engine.edgeBetweenHeadKeyFromStringIDs(hub.ID, leaf.ID, "HAS")); err != nil {
 			return err
 		}

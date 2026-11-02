@@ -24,7 +24,7 @@ var oversizedName = strings.Repeat("L", 70_000)
 
 func writeRawValue(t *testing.T, engine *BadgerEngine, key, value []byte) {
 	t.Helper()
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		return txn.Set(key, value)
 	}))
 }
@@ -329,7 +329,7 @@ func TestRebuildCaseSensitiveIndexesErrors(t *testing.T) {
 	})
 	t.Run("deindexed tombstone move", func(t *testing.T) {
 		engine := createTestBadgerEngine(t)
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			require.NoError(t, moveIndexTombstonesInTxn(txn, [][]byte{[]byte("old")}, [][]byte{[]byte("new")}))
 			return nil
 		}))

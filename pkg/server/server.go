@@ -1806,9 +1806,10 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (re
 				if info == nil {
 					continue
 				}
-				resolved := dbconfig.Resolve(globalConfig, dbConfigStore.GetOverrides(info.Name))
+				overrides := dbConfigStore.GetOverrides(info.Name)
+				resolved := dbconfig.Resolve(globalConfig, overrides)
 				if resolved != nil {
-					s.applyTransactionMemoryLimits(info.Name, resolved)
+					s.applyTransactionMemoryLimits(info.Name, overrides, resolved)
 					s.dbConfigActive[info.Name] = cloneStringMap(resolved.Effective)
 				}
 			}

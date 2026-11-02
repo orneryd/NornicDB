@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"context"
+
 	badger "github.com/dgraph-io/badger/v4"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 )
@@ -31,7 +33,9 @@ func (b *BadgerEngine) SetIndexTombstones(keys [][]byte, present bool) error {
 	if len(keys) == 0 {
 		return nil
 	}
-	return b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+	// Exported context-free entry: its own explicit unbounded lifetime, keeping
+	// the current public signature and its callers' semantics unchanged.
+	return b.withUpdate(context.Background(), updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		for _, key := range keys {
 			var err error
 			if present {

@@ -123,7 +123,7 @@ func TestBadgerMVCC_WithViewMVCCVersionsFromKey_NodeAndEdge(t *testing.T) {
 			version := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 1}
 			unknownKey := h.unknownKey(version)
 			unknownRec := h.unknownRecord(t)
-			require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+			require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 				return txn.Set(unknownKey, unknownRec)
 			}))
 
@@ -142,7 +142,7 @@ func TestBadgerMVCC_WithViewMVCCVersionsFromKey_NodeAndEdge(t *testing.T) {
 
 			h.createEntity(t, engine)
 			version := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 1}
-			require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+			require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 				return txn.Set(h.versionKey(t, engine, txn, version), []byte("corrupt-"+h.name+"-mvcc-record"))
 			}))
 
@@ -157,7 +157,7 @@ func TestBadgerMVCC_WithViewMVCCVersionsFromKey_NodeAndEdge(t *testing.T) {
 			h.createEntity(t, engine)
 			version := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 202}
 			record := h.validRecord(t)
-			require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+			require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 				return txn.Set(h.versionKey(t, engine, txn, version), record)
 			}))
 

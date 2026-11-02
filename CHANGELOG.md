@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Owned shutdowns join the existing completion channel with `WorkLifetime.JoinStopped`; bounded waits retain their caller budgets. See the [lifetime guide](docs/development/work-lifetime.md).
+
 - Composite index and node-key tuple hashes frame each property separately, so
   delimiter-shaped values cannot collide before hashing and reject valid bulk
   writes. These hashes are process-local; persisted temporal keys are unchanged.
@@ -138,6 +140,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve the caller's cancellation error when a `CALL` fragment is read
+  after its transaction opens; do not report an empty procedure name instead.
+- Keep acknowledged replay, token persistence and post-durable count updates on
+  one explicit completion lifetime, independent of client cancellation.
+- Preserve transaction-memory inheritance when process defaults change or a
+  database override is removed, including overrides equal to inherited values.
+  Go configuration callers use per-setting optional overrides described in the
+  [memory-limit guide](docs/operations/transaction-memory-limits.md).
 - `gds.graph.project` retains request cancellation through node and relationship
   streams and checks it before publishing the graph projection.
 - Transaction streams cancel lock reacquisition after a visitor returns, preserve

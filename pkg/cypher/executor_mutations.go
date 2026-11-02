@@ -2,7 +2,6 @@ package cypher
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"regexp"
@@ -41,19 +40,10 @@ const (
 	deleteProjectionRelationship
 )
 
-type deleteProjectionInfo struct {
-	ctx   context.Context
-	input *ExecuteResult
-}
-
 type deleteTargetValue struct {
 	kind   deleteProjectionKind
 	nodeID storage.NodeID
 	edgeID storage.EdgeID
-}
-
-func singleDeleteProjectionInfo(_ string, _ deleteProjectionKind) deleteProjectionInfo {
-	return deleteProjectionInfo{}
 }
 
 func classifyDeleteTargetValue(val interface{}) deleteTargetValue {
@@ -79,78 +69,6 @@ func classifyDeleteTargetValue(val interface{}) deleteTargetValue {
 		}
 	}
 	return deleteTargetValue{}
-}
-
-func (e *StorageExecutor) applyDeleteReturnProjection(result *ExecuteResult, cypher, deleteVars string, info deleteProjectionInfo) {
-	if result == nil {
-		return
-	}
-	returnIdx := topLevelKeywordIndex(cypher, "RETURN")
-	if returnIdx <= 0 {
-		return
-	}
-	ctx := info.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	rows := []pipelineRow{}
-	nodeIDs := []storage.NodeID{}
-	edgeIDs := make(map[storage.EdgeID]struct{})
-	if info.input != nil {
-		store := e.getStorage(ctx)
-		seenNodes, seenEdges := map[string]struct{}{}, map[string]struct{}{}
-		var targetEdges []storage.EdgeID
-		for _, values := range info.input.Rows {
-			row := pipelineRow(buildRowValueMap(info.input.Columns, values))
-			rows = append(rows, row)
-			// An entity the DELETE removed without naming it (a DETACH
-			// DELETE's relationships) is gone from storage.
-			for _, value := range row {
-				switch entity := value.(type) {
-				case *storage.Node:
-					if entity != nil {
-						id, valid := entity.Identity().NodeLookupID(store)
-						if _, err := e.getQueryNode(store, id); valid && errors.Is(err, storage.ErrNotFound) {
-							nodeIDs = append(nodeIDs, id)
-						}
-					}
-				case *storage.Edge:
-					if entity != nil {
-						id := deleteEdgeLookupID(store, entity)
-						if _, err := store.GetEdge(id); errors.Is(err, storage.ErrNotFound) {
-							edgeIDs[id] = struct{}{}
-						}
-					}
-				}
-			}
-			// The DELETE's targets, as the pipeline DELETE collects them (a
-			// path's nodes and relationships, a list's entities).
-			for _, target := range splitTopLevelComma(deleteVars) {
-				value, ok := e.evaluateRowExpressionWithContext(ctx, strings.TrimSpace(target), row)
-				if !ok {
-					pipelineItemUnevaluable(ctx, target)
-					return
-				}
-				collectDeleteTargetValue(store, value, seenNodes, seenEdges, &nodeIDs, &targetEdges)
-			}
-		}
-		for _, id := range targetEdges {
-			edgeIDs[id] = struct{}{}
-		}
-	}
-	deleted := &deletedEntities{}
-	deleted.addFromStorage(e.getStorage(ctx), nodeIDs, edgeIDs)
-	if err := validateDeletedEntityReads(rows, cypher[returnIdx:], deleted); err != nil {
-		recordExpressionFailure(ctx, err)
-		return
-	}
-	e.replaceDeletedEntityViews(rows, deleted)
-	projected, err := e.projectMergeReturn(ctx, rows, cypher[returnIdx:])
-	if err != nil {
-		return
-	}
-	result.Columns = projected.Columns
-	result.Rows = projected.Rows
 }
 
 func (e *StorageExecutor) isDeleteStreamingEligible(matchSegment, deleteVars string, detach bool) bool {

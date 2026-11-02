@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -63,7 +64,7 @@ func writeLegacyNodeBytes(t *testing.T, eng *BadgerEngine, id string, decayScore
 	if err != nil {
 		t.Fatal(err)
 	}
-	eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	eng.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		return txn.Set(nodeKey(NodeID(id)), data)
 	})
 }

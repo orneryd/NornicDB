@@ -237,7 +237,8 @@ func (b *BadgerEngine) Close() error {
 	if !b.work.Closing() {
 		b.sealAdmission()
 	}
-	return b.work.Shutdown(context.Background(), b.retire)
+	b.work.BeginStop(b.retire)
+	return b.work.JoinStopped()
 }
 
 // sealAdmission stops the engine's producers while admission is still open
@@ -265,7 +266,7 @@ func (b *BadgerEngine) sealAdmission() {
 	// Drain acknowledged write-behind commits before tearing down Badger so
 	// a shutdown never loses writes that were acknowledged to clients.
 	if b.writeBehind != nil {
-		drainErr := b.FlushWriteBehind(nil)
+		drainErr := b.FlushWriteBehind(commitPreparationLifetime(nil))
 		if drainErr != nil && b.log != nil {
 			b.log.Error("write-behind drain on close failed", "subsystem", "storage", "error", drainErr)
 		}
@@ -315,7 +316,7 @@ func (b *BadgerEngine) retire() error {
 	b.mu.RUnlock()
 	// Fold any derived-count deltas the last commits left behind so a clean
 	// reopen has no open-time write to perform (PR #1043 item #2).
-	countErr := b.foldRemainingCountDeltasOnClose(db)
+	countErr := b.foldRemainingCountDeltasOnClose(context.Background(), db)
 	b.releasePendingEmbeddingCandidates()
 	propertyErr := b.finishPropertyWALOnClose(db)
 
@@ -404,7 +405,10 @@ func (b *BadgerEngine) Size() (lsm, vlog int64) {
 // stale candidates are removed once. Each returned node is validated in the
 // engine write that cleans the markers before it; cleanup larger than one
 // Badger batch commits batch by batch, so it always makes progress. Claim
-// serialization remains with the worker.
+// serialization remains with the worker. This exported optional-interface
+// method carries no caller context (the worker's is erased by the interface),
+// so its own explicit unbounded lifetime is the claim's boundary; it does not
+// claim the worker's cancellation.
 func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 	if b.pendingNamespaceConflict("") != nil {
 		return nil
@@ -437,7 +441,7 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 		// prefix of stale markers larger than one batch must still make
 		// durable progress toward the live candidates behind it.
 		batchFull := false
-		err := b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+		err := b.withUpdate(context.Background(), updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 			for len(p.ids) > 0 && !batchFull {
 				nodeID := p.ids[0]
 				if _, err := txn.Get(pendingEmbedKey(nodeID)); err == badger.ErrKeyNotFound {
@@ -584,7 +588,9 @@ func (b *BadgerEngine) InvalidatePendingEmbeddingsIndex() {
 // RefreshPendingEmbeddingsIndex rebuilds the pending embeddings index.
 // This scans all nodes and adds any missing ones to the index.
 // It also removes stale entries for nodes that no longer exist or already have embeddings.
-// Use this on startup or after bulk imports.
+// Use this on startup or after bulk imports. Its caller context is erased by
+// the exported optional interface, so this entry passes its own explicit
+// unbounded lifetime for the index rebuild's writes.
 func (b *BadgerEngine) RefreshPendingEmbeddingsIndex() int {
 	b.InvalidatePendingEmbeddingsIndex()
 	added := 0
@@ -592,7 +598,7 @@ func (b *BadgerEngine) RefreshPendingEmbeddingsIndex() int {
 
 	// First pass: Clean up stale entries in the pending index
 	// Remove entries for nodes that don't exist or already have embeddings
-	cleanupErr := b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+	cleanupErr := b.withUpdate(context.Background(), updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		pendingPrefix := []byte{prefixPendingEmbed}
 		it := txn.NewIterator(badgerPrefixIteratorOptions(pendingPrefix))
 		defer it.Close()
@@ -676,7 +682,7 @@ func (b *BadgerEngine) RefreshPendingEmbeddingsIndex() int {
 	}
 
 	// Second pass: Add missing nodes to the index
-	_ = b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+	_ = b.withUpdate(context.Background(), updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		prefix := []byte{prefixNode}
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()

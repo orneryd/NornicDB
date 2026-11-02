@@ -437,7 +437,10 @@ func (b *BadgerEngine) scanForTemporalOverlapInTxn(ctx context.Context, txn *bad
 	interval := temporalInterval{start: start, end: end, hasEnd: hasEnd}
 	if fullLabel {
 		runTemporalConstraintScanHook()
-		it := b.newLabelIndexReader(ctx, txn, namespace+":", c.Label, "", storedRead, false)
+		it, err := b.newLabelIndexReader(ctx, txn, namespace+":", c.Label, "", storedRead, false)
+		if err != nil {
+			return err
+		}
 		defer it.Close()
 		for it.Next() {
 			id := it.NodeID()

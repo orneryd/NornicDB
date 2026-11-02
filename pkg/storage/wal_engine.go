@@ -1192,7 +1192,8 @@ func (w *WALEngine) Close() error {
 		}
 		w.work.Leave()
 	}
-	return w.work.Shutdown(context.Background(), w.engine.Close)
+	w.work.BeginStop(w.engine.Close)
+	return w.work.JoinStopped()
 }
 
 // signalStop seals the WAL and drains registered native frames. Registration

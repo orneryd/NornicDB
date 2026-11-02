@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/binary"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
@@ -113,7 +114,7 @@ func TestBadgerEngine_LabelCountMetadataRebuildsOnReopenWhenDriftDetected(t *tes
 	_, err = engine1.CreateNode(&Node{ID: "db1:n2", Labels: []string{"Person"}})
 	require.NoError(t, err)
 
-	require.NoError(t, engine1.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine1.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		wrong := make([]byte, 8)
 		binary.BigEndian.PutUint64(wrong, 99)
 		if err := txn.Set(labelCountKey("db1", "person"), wrong); err != nil {

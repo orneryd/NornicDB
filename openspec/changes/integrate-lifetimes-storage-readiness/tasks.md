@@ -5,7 +5,23 @@ The approved dependency order is current #1684 terminal-outcome prerequisite,
 label-index readiness and remaining preparation. Preserve each author's work;
 port into current owners rather than restoring obsolete implementations.
 
-Current gate (2026-11-01): resolve current-source findings from the unchanged duplicate checker before full `make verify BASE=origin/release/v1.4.4` on the integrated candidate. The 5bf14fceb run failed and was superseded; no full verification is currently running. Earlier deferred/test-only directions and running-job notes below are historical; the current-prerequisite integration section and external current-resume.json record the active state. All four remaining API decisions are explicitly approved. No final verification pass or published correction head is claimed.
+Current gate (maintainer override, 2026-11-01): **`make test` only** on the final integrated committed head; full `make verify` was canceled and broader qualification is deferred to CI. Exact clean checkpoint893 failed:137 packages passed,7 failed,0 cached. Corrections and independent review are in progress; no final pass, readiness or new push is claimed. Historical verification-policy notes below remain historical. Existing duplicate checker stays unchanged/advisory.
+
+## Current make-test regression corrections
+
+- [x] Preserve exact failed893 make-test receipt/source pins and all7 package failures.
+- [x] Integrate12 fixture ownership registrations and retire2 obsolete admin-route inventory entries; parent constructor guard passes.
+- [x] Integrate per-use same-invocation successful tuple proof with adversarial controls; no error-only zero object is blindly accepted.
+- [x] Integrate canonical immutable-cell writer-parameter proof and current storage census artifacts; independent full packagePASS960.043s/all37mutants/zero skips; parent focused generic checks pass. Final source artifact must be refreshed after remaining edits.
+- [ ] Independently review and integrate lexical/security manifest deltas for actual current source, never blanket-refresh findings.
+- [x] Qualify actual managed forwarding boundary and public both-parser follower implicit/explicit commit rejection; preserve veto/action identity/receipts/leader outcome. Parent integrated replication racePASS3.861s and credentialed empty-header Cypher racePASS3.746s; structural security racePASS18.534s.
+- [x] Reproduce inherited-memory default pinning through uncached public queries and actual second Open; integrate canonical per-setting override selection, removal/equal-value transitions and coherent config snapshots. Independent combined race remains running; full make-test gate stays open.
+- [x] Complete private update-request context propagation at40 production sites; independently correct accepted positional-count completion and preserve supported nil MVCC public boundaries. Parent focused race checks pass; final full gate remains pending.
+- [x] Replace rejected unsound local-inline proof with distinct whole-cell and strict nonescape facts. Parent exact closure negative and merged generic race controls pass; full integrated internal-model racePASS100.259s.
+- [x] Retire proven dead private DELETE subgraph and migrate meaningful semantic/fault/transaction cases to public execution on both parsers; parent focused race passes7.981s.
+- [ ] Resolve current context census findings and refresh all affected inventories on the integrated source.
+- [ ] Commit corrected candidate; run exact `make test`, fix any remaining failures, then publish protected PR head and current PR/Linear evidence.
+
 
 - [x] Preserve original #1636, #1693 and #1667 heads and the separate #1667 prototype.
 - [x] Rebase #1636 S1–S4 onto current #1684 (61d13cded), preserving release APOC I/O policy.
@@ -278,3 +294,18 @@ Current index and unique API migration builds; focused50K cancellation, pending/
 - [x] Parent reviewed/integrated canonical stable-field/TLS shared-join corrections; combined full internal/workcensus race PASS94.023s. Guard-return, loop-Phi, alias/mutation/escape and deferred recovery negatives remain. No census policy/duplicate checker change.
 - [x] Lexical discovery identifies exactly8 additional SSA metadata functions and no removed/changed member; review records data-grammar dispositions, retains3985 prior entries and names actual controls. Guard pass1.984s before final evidence-name metadata amendment.
 - [x] Parent took over remote native lifetime migration from DeepSeek0bb after implementation; no public nil contract removed or timeout duplicated. Rejected new AST mirror tests, retained actual fake/HTTP/Bolt lifetime/result/error controls; integrated focused race PASS2.682s. Worker extra diagnostic/canceled response is not a parent full-suite qualification.
+
+## Latest correction checkpoint (2026-11-01 Phoenix)
+
+- [x] Correct the analysis model's single-field whole-value projection through the canonical per-use constructor proof. Frozen baseline fails; integrated race controls pass3.986s. Unknown/error/escaped/cyclic/overwritten values remain reported. This is not a runtime nil normalization or a census exemption.
+- [x] Fix compiled-source attestation to hash exact parser inputs including overlays, rather than changed disk bytes. Parent full internal/workcensus race passes107.588s; same-width overlay counterexample is retained.
+- [x] Prove Backup includes acknowledged but unapplied buffered nodes, edges and updates; omitted-drain mutant fails and parent default-build race count3 passes2.997s. Backup cancellation remains a separate public-contract limitation.
+- [x] Complete source review of lexical3991-member manifest candidate; latest discovery has no further additions/removals/mechanism changes. Apply and qualify after the frozen context diagnostic.
+- [ ] Resolve remaining context audit findings without invented cancellation owners or blanket nil exceptions; fresh source-pinned round8 diagnostic is running.
+- [ ] Correct actual public CALL cancellation misreporting as empty-name ProcedureNotFound after native BEGIN; DeepSeek bounded public-path regression task is active. No publication occurs in the reproduced failure.
+- [ ] Finish corrected-source inventories, commit, run make test, and publish exact-head results. Broader make verify stays canceled for CI.
+
+- [x] Integrate explicit accepted replay/token completion owner: parent focused race3.073s; worker15-root normal32.079s/race287.049s and token-ctx omission mutantRED preserved. No storage-format or lifetime-policy change.
+- [x] Retire private parameter-binding nil fallback and ineffective map-comparison path; parent integrated race3.354s. Both-parser MERGE coverage establishes actual helper reach; same-map mutation/rebind refresh remains intact.
+- [x] Reproduce actual CALL cancellation error regression against old owner (parent real-CancelFunc baselineRED1.076s), propagate canonical parser errors, and qualify integrated race6.644s. Parent rejected manufactured deadline context and used a real expired deadline for reader/public-entry controls; no mid-BEGIN deadline claim.
+- [ ] Finish remaining optional journal representation and old whole-field projection consolidation, teardown owner proof and final inventories. Fresh round8 audit fails84nil/177other on unchanged source; those findings are not all runtime bugs and are not waived.

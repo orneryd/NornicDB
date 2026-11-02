@@ -111,6 +111,9 @@ func (l *telemetryListener) Name() string { return "telemetry" }
 // supervisor's errgroup unblocks. The shared owner keeps Start enrolled until
 // handlers and cleanup actually return, also after a Shutdown caller's deadline.
 //
+// A nil ctx means "no caller cancellation" and is normalized once by the
+// shared owner; the returned non-nil ctx bounds this entry only.
+//
 // Why initiate the drain here instead of relying on the supervisor's
 // reverse-iteration drain phase: lifecycle.Run only calls Shutdown
 // AFTER g.Wait() returns. g.Wait() blocks until every Component's
@@ -125,7 +128,7 @@ func (l *telemetryListener) Name() string { return "telemetry" }
 // http.ErrServerClosed is filtered to nil so the supervisor's errgroup
 // does not interpret a clean shutdown as a runtime failure (Pitfall 5).
 func (l *telemetryListener) Start(ctx context.Context) error {
-	l.retirement.init(l.srv, l.ln, l.prov.Shutdown)
+	ctx = l.retirement.init(ctx, l.srv, l.ln, l.prov.Shutdown)
 	return l.retirement.run(ctx)
 }
 
@@ -144,13 +147,17 @@ func (l *telemetryListener) Start(ctx context.Context) error {
 // components) AND ensuring the BSP gets flushed (OBS-11 / TRC-02
 // foundation). Reversing the order would cause kubelet to record a 503
 // scrape during drain.
+//
+// A nil ctx means "no caller budget" and is normalized once by the shared
+// owner; a caller's own context keeps its values, deadline and cancellation.
 func (l *telemetryListener) Shutdown(ctx context.Context) error {
-	l.retirement.init(l.srv, l.ln, l.prov.Shutdown)
+	ctx = l.retirement.init(ctx, l.srv, l.ln, l.prov.Shutdown)
 	return l.retirement.shutdown(ctx)
 }
 
 // WaitStopped observes actual component retirement without initiating it.
+// A nil ctx waits for retirement; a caller's own context bounds only that wait.
 func (l *telemetryListener) WaitStopped(ctx context.Context) error {
-	l.retirement.init(l.srv, l.ln, l.prov.Shutdown)
+	ctx = l.retirement.init(ctx, l.srv, l.ln, l.prov.Shutdown)
 	return l.retirement.wait(ctx)
 }

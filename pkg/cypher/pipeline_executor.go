@@ -609,8 +609,10 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			case pipelineClauseCreate, pipelineClauseMerge, pipelineClauseSet, pipelineClauseRemove, pipelineClauseDelete, pipelineClauseForeach:
 				writes = true
 			case pipelineClauseCall:
-				if procedure, found := globalProcedureRegistry.Get(extractProcedureName(ctx, clause.text)); found && procedure.Spec.writes() {
-					writes = true
+				if name, err := extractProcedureName(ctx, clause.text); err == nil {
+					if procedure, found := globalProcedureRegistry.Get(name); found && procedure.Spec.writes() {
+						writes = true
+					}
 				}
 			}
 			prefix++
@@ -994,8 +996,10 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			for _, name := range yielded {
 				scope[name] = struct{}{}
 			}
-			if procedure, found := globalProcedureRegistry.Get(extractProcedureName(ctx, clause.text)); found && procedure.Spec.writes() {
-				wrote = true
+			if name, err := extractProcedureName(ctx, clause.text); err == nil {
+				if procedure, found := globalProcedureRegistry.Get(name); found && procedure.Spec.writes() {
+					wrote = true
+				}
 			}
 		case pipelineClauseCallSubquery:
 			callMetadata := &pipelineCallMetadata{scope: scope, batch: callBatch}

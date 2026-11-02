@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"encoding/binary"
@@ -93,7 +94,7 @@ func TestTransactionRepairsMalformedDerivedLabelCountAfterCommit(t *testing.T) {
 	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		malformed := make([]byte, 4)
 		binary.BigEndian.PutUint32(malformed, 99)
 		return txn.Set(labelCountKey("db1", "Work"), malformed)

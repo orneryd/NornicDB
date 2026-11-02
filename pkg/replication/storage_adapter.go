@@ -412,7 +412,8 @@ func (a *StorageAdapter) stopWALWriterForTest() {
 func (a *StorageAdapter) Close() error {
 	// The owner's stop: the writer flushes and returns, then the WAL closes
 	// once. Every caller joins the same stop and outcome.
-	return a.work.Shutdown(context.Background(), a.closeWAL)
+	a.work.BeginStop(a.closeWAL)
+	return a.work.JoinStopped()
 }
 
 // closeWAL is the adapter owner's dispose, after the WAL writer returned.

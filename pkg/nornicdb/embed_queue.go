@@ -592,7 +592,8 @@ func (ew *EmbedWorker) Reset() {
 
 	// Join the previous generation's workers and timer callbacks before
 	// publishing the next one.
-	ew.work.RecordError("", old.Shutdown(context.Background(), nil))
+	old.BeginStop(nil)
+	ew.work.RecordError("", old.JoinStopped())
 	if ew.work.Closing() {
 		return
 	}
@@ -661,7 +662,8 @@ func (ew *EmbedWorker) Close() {
 	ew.lifecycleMu.Unlock()
 	// Do NOT close trigger channel: Trigger() can still race and send, which would panic.
 	// Context cancellation is enough to stop workers.
-	ew.work.RecordError("", gen.Shutdown(context.Background(), nil))
+	gen.BeginStop(nil)
+	ew.work.RecordError("", gen.JoinStopped())
 	<-ew.work.BeginStop(ew.clearRetries)
 }
 

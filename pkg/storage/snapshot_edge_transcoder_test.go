@@ -4,6 +4,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"math"
@@ -37,7 +38,7 @@ func snapshotTranscoderCorpus() []any {
 func snapshotTranscoderBody(t *testing.T, engine *BadgerEngine, edge *Edge) []byte {
 	t.Helper()
 	var body []byte
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		var err error
 		body, err = engine.encodeEdgeInTxn(txn, namespaceForEdgeID(edge.ID), edge)
 		return err

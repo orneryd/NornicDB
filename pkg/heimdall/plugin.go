@@ -862,7 +862,8 @@ func (m *SubsystemManager) setContext(ctx SubsystemContext, newHost bool) {
 		previous := m.registrations
 		m.mu.Unlock()
 		if previous != nil {
-			if err := previous.Shutdown(context.Background(), nil); err != nil {
+			previous.BeginStop(nil)
+			if err := previous.JoinStopped(); err != nil {
 				m.lifetime().RecordError("", m.redactOutcome(err))
 			}
 		}
@@ -1168,7 +1169,8 @@ func (m *SubsystemManager) ShutdownAll() error {
 	// callbacks are joined first, then plugins are disposed exactly once. The
 	// next epoch exists only after this one has actually completed.
 	owned := m.lifetime()
-	err := owned.Shutdown(context.Background(), m.disposeAll)
+	owned.BeginStop(m.disposeAll)
+	err := owned.JoinStopped()
 	m.mu.Lock()
 	if m.owned == owned {
 		m.owned = lifecycle.NewWorkLifetime(context.Background())

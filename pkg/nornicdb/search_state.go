@@ -1,7 +1,6 @@
 package nornicdb
 
 import (
-	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -242,7 +241,8 @@ func (db *DB) invalidateSearchState(match func(name string) bool, discard bool) 
 	// without the native fence, and the phase refuses later constructors.
 	db.searchServiceCreationMu.Unlock()
 	if epoch != nil {
-		db.recordBackgroundError(epoch.Shutdown(context.Background(), nil))
+		epoch.BeginStop(nil)
+		db.recordBackgroundError(epoch.JoinStopped())
 	}
 	db.searchServiceCreationMu.Lock()
 	var retired []*dbSearchService

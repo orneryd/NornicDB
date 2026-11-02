@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -88,7 +89,7 @@ func TestBadgerEngine_RebuildUniqueConstraintValues_PropertyCompositeAndErrors(t
 
 	t.Run("rebuild returns decode error for malformed node payload", func(t *testing.T) {
 		engine := newIsolatedBadgerEngine(t)
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			return txn.Set(nodeKey("broken:n1"), []byte("not-msgpack-node"))
 		}))
 

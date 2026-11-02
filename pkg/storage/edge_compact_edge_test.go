@@ -11,6 +11,7 @@ package storage
 // newer files."
 
 import (
+	"context"
 	"encoding/binary"
 	"math"
 	"testing"
@@ -77,7 +78,7 @@ func TestEdgeCompactV2_DecodeEdgeBodyWithoutExplicitID(t *testing.T) {
 	}
 	namespace := namespaceForEdgeID(edge.ID)
 	var body []byte
-	err := eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	err := eng.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		var encErr error
 		body, encErr = eng.encodeEdgeInTxn(txn, namespace, edge)
 		if encErr != nil {

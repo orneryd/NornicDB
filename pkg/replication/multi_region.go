@@ -370,7 +370,8 @@ func (r *MultiRegionReplicator) WaitForLeader(ctx context.Context) error {
 // Shutdown stops the replicator.
 func (r *MultiRegionReplicator) Shutdown() error {
 	r.config.logPrintf(context.Background(), slog.LevelInfo, "[MultiRegion %s] Shutting down", r.config.NodeID)
-	return r.work.Shutdown(context.Background(), r.retire)
+	r.work.BeginStop(r.retire)
+	return r.work.JoinStopped()
 }
 
 // retire runs once, after every accepted unit of work has returned: it closes

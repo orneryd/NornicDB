@@ -43,7 +43,7 @@ func TestBadgerNodeReadsRejectCorruption(t *testing.T) {
 					_, err := b.CreateNode(&Node{ID: id, Labels: []string{"L"}, Properties: map[string]any{"x": int64(2)}})
 					require.NoError(t, err)
 				}
-				require.NoError(t, b.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+				require.NoError(t, b.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 					if corrupt {
 						return txn.Set(nodeKey("test:a1"), []byte{0xff})
 					}
@@ -109,7 +109,7 @@ func TestBadgerEdgeReadsRejectCorruption(t *testing.T) {
 						_, err = b.GetIncomingEdges(context.Background(), "test:z")
 						require.NoError(t, err)
 					}
-					require.NoError(t, b.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+					require.NoError(t, b.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 						if corrupt {
 							return txn.Set(edgeKey("test:e"), []byte{0xff})
 						}

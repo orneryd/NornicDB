@@ -1165,11 +1165,19 @@ func (w *WriteBehindBuffer) Flush() error {
 // (orderAfterBufferedCommits) holds the stripes of the caller's entities, so
 // no commit of theirs enters a later generation.
 func (w *WriteBehindBuffer) flush(dispatch, frontier bool) error {
-	return w.flushContext(nil, dispatch, frontier)
+	// flush owns no request context, so it states the detached completion
+	// lifetime explicitly: the drain wait it starts cannot cancel.
+	return w.flushContext(commitPreparationLifetime(nil), dispatch, frontier)
 }
 
+// flushContext drains the generations this caller observes under its
+// completion lifetime. ctx is nonnil: a caller passes its own cancellable
+// context, or the detached completion lifetime the owners without a request
+// context select. A context whose Done is nil cannot cancel and waits for the
+// generations alone, without a timer and without allocating per wait.
+// A cancellable waiter never becomes the accepted replay owner.
 func (w *WriteBehindBuffer) flushContext(ctx context.Context, dispatch, frontier bool) error {
-	if _, err := w.rotate(commitPreparationLifetime(ctx)); err != nil {
+	if _, err := w.rotate(ctx); err != nil {
 		return err
 	}
 	w.signal()
@@ -1186,13 +1194,14 @@ func (w *WriteBehindBuffer) flushContext(ctx context.Context, dispatch, frontier
 			return nil
 		}
 	}
+	noncancellable := ctx.Done() == nil
 	lastPending := -1
 	stalls := 0
 	for {
-		if ctx != nil && ctx.Err() != nil {
-			return ctx.Err()
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-		if ctx == nil || ctx.Done() == nil {
+		if noncancellable {
 			w.drainOne(dispatch, last)
 		} else {
 			// A cancellable waiter never becomes the accepted replay
@@ -1210,11 +1219,9 @@ func (w *WriteBehindBuffer) flushContext(ctx context.Context, dispatch, frontier
 			found := false
 			var cancel bulkReadCancellation
 			for _, generation := range w.draining {
-				if ctx != nil {
-					if err := cancel.check(ctx); err != nil {
-						w.mu.RUnlock()
-						return err
-					}
+				if err := cancel.check(ctx); err != nil {
+					w.mu.RUnlock()
+					return err
 				}
 				if generation == last {
 					found = true
@@ -1242,16 +1249,16 @@ func (w *WriteBehindBuffer) flushContext(ctx context.Context, dispatch, frontier
 			stalls = 0
 		}
 		observeWriteAdmissionWait(w, ctx)
-		if ctx == nil || ctx.Done() == nil {
+		if noncancellable {
 			time.Sleep(time.Millisecond)
-		} else {
-			timer := time.NewTimer(time.Millisecond)
-			select {
-			case <-timer.C:
-			case <-ctx.Done():
-				timer.Stop()
-				return ctx.Err()
-			}
+			continue
+		}
+		timer := time.NewTimer(time.Millisecond)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
 		}
 	}
 }

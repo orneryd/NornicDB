@@ -838,7 +838,8 @@ func (r *HAStandbyReplicator) WaitForLeader(ctx context.Context) error {
 
 // Shutdown stops the replicator.
 func (r *HAStandbyReplicator) Shutdown() error {
-	return r.work.Shutdown(context.Background(), r.retire)
+	r.work.BeginStop(r.retire)
+	return r.work.JoinStopped()
 }
 
 // retire runs once, after every accepted unit of work has returned: it closes

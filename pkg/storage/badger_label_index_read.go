@@ -78,21 +78,21 @@ func (b *BadgerEngine) newLabelIndexReader(
 	after NodeID,
 	visibility readVisibility,
 	snapshot bool,
-) labelIndexReader {
+) (labelIndexReader, error) {
 	if err := ctx.Err(); err != nil {
-		return &nodeIndexReader{err: err}
+		return nil, err
 	}
 	ready, err := b.labelIndexReadyInTxn(txn)
 	if err != nil {
-		return &nodeIndexReader{err: err}
+		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
-		return &nodeIndexReader{err: err}
+		return nil, err
 	}
 	if ready {
 		// The same MVCC snapshot supplied the ready marker and stays with this
 		// stream, binding its index reads to that completed generation.
-		return b.newNodeIndexReader(ctx, txn, scope, labelIndexPrefix(label), after)
+		return b.newNodeIndexReader(ctx, txn, scope, labelIndexPrefix(label), after), nil
 	}
 
 	reader := &labelFallbackReader{
@@ -108,11 +108,11 @@ func (b *BadgerEngine) newLabelIndexReader(
 	if snapshot {
 		reader.forwardPrefix = nodeIDForwardKey(NodeID(scope))
 		reader.bodyPrefix = nodeKey(NodeID(scope))
-		return reader
+		return reader, nil
 	}
 	reader.bodyPrefix = nodeKey(NodeID(scope))
 	reader.bodyScan = txn.NewIterator(badgerPrefixIteratorOptions(reader.bodyPrefix))
-	return reader
+	return reader, nil
 }
 
 func (r *labelFallbackReader) nextLabelBody() bool {

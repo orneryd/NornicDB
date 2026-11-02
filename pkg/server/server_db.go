@@ -140,7 +140,7 @@ func (s *Server) newExecutorForDatabase(dbName string) (*cypher.StorageExecutor,
 func (s *Server) databaseScopedExecutorOptions(dbName, authToken string) cypher.DatabaseScopedExecutorOptions {
 	overrides := s.dbConfigStore.GetOverrides(dbName)
 	resolved := dbconfig.Resolve(s.processConfig, overrides)
-	s.applyTransactionMemoryLimits(dbName, resolved)
+	s.applyTransactionMemoryLimits(dbName, overrides, resolved)
 	base := s.db.GetCypherExecutor()
 	return cypher.DatabaseScopedExecutorOptions{
 		Name: dbName, Storage: s.dbManager,

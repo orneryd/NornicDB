@@ -112,7 +112,7 @@ func TestSuppressionTransactionRollbackDoesNotPublishCaches(t *testing.T) {
 	rollback := errors.New("injected rollback after suppression writes")
 	var changedNode *Node
 	var changedEdge *Edge
-	err = engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	err = engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		evaluation1, err := engine.evaluateSuppressionInTxn(txn, suppressionEvaluation{id: "test:n", isEdge: false})
 		changed, mutation := evaluation1.suppressed, evaluation1.node
 		require.False(t, changed)

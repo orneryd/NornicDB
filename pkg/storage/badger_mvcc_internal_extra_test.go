@@ -121,7 +121,7 @@ func TestBadgerEngine_CollectVisibleAdjacencyEdgeIDsInTxn_MalformedRecord(t *tes
 	head, err := engine.GetEdgeCurrentHead("test:adj-edge")
 	require.NoError(t, err)
 
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		key, keyErr := engine.mvccAdjacencyKeyString(mvccAdjacencyOutgoing, txn, "test:adj-a", "test:adj-edge", head.Version)
 		if keyErr != nil {
 			return keyErr
@@ -146,7 +146,7 @@ func TestBadgerEngine_VisibleAdjacencyReaders_PropagateEdgeLookupErrors(t *testi
 	head, err := engine.GetEdgeCurrentHead("test:ge")
 	require.NoError(t, err)
 
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		edgeNum, ok := engine.idDict.lookupEdgeNumID("test:ge")
 		require.True(t, ok)
 		return txn.Set(mvccEdgeHeadKey(edgeNum), []byte("bad-head"))
@@ -170,7 +170,7 @@ func TestWriteAndLoadMVCCHeadForLogicalKeyInTxn_NodeAndEdge(t *testing.T) {
 	version := MVCCVersion{CommitTimestamp: time.Unix(100, 0).UTC(), CommitSequence: 7}
 	floor := MVCCVersion{CommitTimestamp: time.Unix(10, 0).UTC(), CommitSequence: 2}
 
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		nodeLogical := mvccHeadLogicalKey(prefixMVCCNode, 1)
 		require.NoError(t, engine.writeMVCCHeadForLogicalKeyInTxn(txn, nodeLogical, version, false, floor))
 
@@ -200,7 +200,7 @@ func TestLoadAndWriteMVCCHeadForLogicalKeyInTxn_Errors(t *testing.T) {
 	engine := newTestEngine(t)
 	version := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 1}
 
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		badLen := []byte{prefixMVCCNode}
 		err := engine.writeMVCCHeadForLogicalKeyInTxn(txn, badLen, version, false, version)
 		require.ErrorIs(t, err, ErrInvalidData)

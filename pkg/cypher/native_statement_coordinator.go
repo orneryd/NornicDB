@@ -16,7 +16,7 @@ import (
 // Only the native root issued here may detach independently owned batches.
 func (e *StorageExecutor) executeNativeCoordinatedStatement(ctx context.Context, query, upper string) (result *ExecuteResult, resultErr error) {
 	defer func() {
-		completeStatementTerminalOutcome(ctx, &result, &resultErr, nil)
+		completeStatementTerminalOutcome(ctx, true, &result, &resultErr, nil)
 		// Staged callback rows are not a result when execution or commit fails,
 		// even if no WAL failure created a terminal journal entry.
 		if resultErr != nil {

@@ -99,7 +99,9 @@ func TestResidualFlushWaitCancellation(t *testing.T) {
 	// claim generation two; it remains blocked until its physical peer leaves.
 	select {
 	case workerCtx := <-workerWaiting:
-		require.Nil(t, workerCtx, "accepted replay retains its detached context")
+		require.NotNil(t, workerCtx, "accepted replay has an explicit completion owner")
+		require.Nil(t, workerCtx.Done(), "accepted replay remains detached after caller cancellation")
+		require.NoError(t, workerCtx.Err(), "cancelled flush must not cancel acknowledged replay")
 	case <-time.After(2 * time.Second):
 		t.Fatal("existing worker did not retain accepted replay")
 	}

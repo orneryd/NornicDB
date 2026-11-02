@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -38,7 +39,7 @@ func TestBadgerTransactionConstraintScanErrorsDoNotCommit(t *testing.T) {
 					require.NoError(t, engine.GetSchemaForNamespace("test").AddConstraint(c))
 					_, decodeErr := engine.decodeEdgeBodyWithID(nil, namespaceForEdgeID("test:original"), record.value, "test:original")
 					require.Error(t, decodeErr)
-					require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+					require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 						return txn.Set(edgeKey("test:original"), record.value)
 					}))
 					engine.cacheDeleteEdge("test:original")
@@ -98,7 +99,7 @@ func TestBadgerTransactionPolicyLabelChangeErrorsDoNotCommit(t *testing.T) {
 					}
 					require.Error(t, decodeErr)
 					if corruptEndpoint {
-						require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+						require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 							return txn.Set(key, []byte("corrupt-record"))
 						}))
 					}
@@ -110,7 +111,7 @@ func TestBadgerTransactionPolicyLabelChangeErrorsDoNotCommit(t *testing.T) {
 					require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: anchor, Labels: []string{"Forbidden"}}, Policy: ClientNodeEdits}))
 					if !corruptEndpoint {
 						// Relabeling also reads adjacency for counters, so inject corruption after staging.
-						require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+						require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 							return txn.Set(key, []byte("corrupt-record"))
 						}))
 						engine.cacheDeleteEdge("test:original")
@@ -141,7 +142,7 @@ func TestBadgerTransactionPolicyEndpointErrorsDoNotCommit(t *testing.T) {
 				Name: "policy", Type: ConstraintPolicy, EntityType: ConstraintEntityRelationship, Label: "REL",
 				SourceLabel: "Account", TargetLabel: "Account", PolicyMode: "ALLOWED",
 			}))
-			require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+			require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 				return txn.Set(nodeKey(endpoint), []byte("corrupt-record"))
 			}))
 			_, decodeErr := engine.decodeNodeProjected(nil, "test", []byte("corrupt-record"), nil)

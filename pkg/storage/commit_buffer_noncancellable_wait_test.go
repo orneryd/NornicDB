@@ -40,10 +40,12 @@ func TestFlushNoncancellableWaitAllocationParity(t *testing.T) {
 			require.Empty(t, w.draining)
 		})
 	}
-	base := allocations(nil)
+	// flushContext takes a nonnil completion lifetime, so the detached lifetime
+	// a request without a context selects is the non-cancellable control.
+	base := allocations(commitPreparationLifetime(nil))
 	for name, ctx := range map[string]context.Context{"background": context.Background(), "detached": detached} {
 		actual := allocations(ctx)
-		t.Logf("five blocked reclaim waits: nil=%.0f %s=%.0f allocations", base, name, actual)
+		t.Logf("five blocked reclaim waits: detached=%.0f %s=%.0f allocations", base, name, actual)
 		require.LessOrEqual(t, actual, base+1, "noncancellable context must not allocate a timer per wait")
 	}
 }

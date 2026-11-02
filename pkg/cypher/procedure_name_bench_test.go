@@ -22,7 +22,8 @@ func BenchmarkProcedureNameCanonicalReader(b *testing.B) {
 			b.Run("sharedComponentReader", func(b *testing.B) {
 				b.ReportAllocs()
 				for i := 0; i < b.N; i++ {
-					procedureNameBenchmarkResult = extractProcedureName(b.Context(), query)
+					name, _ := extractProcedureName(b.Context(), query)
+					procedureNameBenchmarkResult = name
 				}
 			})
 		})

@@ -184,7 +184,7 @@ func TestScopedLabelSnapshotCursorErrors(t *testing.T) {
 	}))
 	require.Equal(t, []NodeID{"b:z", "a:a", "a:m", "ab:foreign"}, resumed)
 	// A damaged cursor mapping is an error, not a different resume position.
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		return txn.Set(nodeIDForwardKey("a:z"), []byte{1})
 	}))
 	require.ErrorIs(t, engine.streamNodesByLabelFromPhysicalSnapshotAfterRead(context.Background(), "a:", "Person", engine.withView, nil, "a:z", visibleRead, func(*Node) error {
@@ -195,7 +195,7 @@ func TestScopedLabelSnapshotCursorErrors(t *testing.T) {
 
 func TestScopedLabelIgnoresMalformedAndUnresolvedMemberships(t *testing.T) {
 	engine := scopedLabelOrderFixture(t)
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		if err := txn.Set(labelIndexPrefix("Person"), nil); err != nil {
 			return err
 		}

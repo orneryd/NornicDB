@@ -84,8 +84,6 @@ github.com/orneryd/nornicdb/pkg/server.*Server.handleTransactionEndpoint -> gith
 github.com/orneryd/nornicdb/pkg/server.*Server.handleTransactionEndpoint -> github.com/orneryd/nornicdb/pkg/server.*Server.handleOpenTransaction calls=1
 github.com/orneryd/nornicdb/pkg/server.*Server.openRequestTransaction
 github.com/orneryd/nornicdb/pkg/server.*Server.openRequestTransaction -> github.com/orneryd/nornicdb/pkg/txsession.*Manager.OpenRequestForOwner calls=1
-github.com/orneryd/nornicdb/pkg/server.*Server.registerAdminRoutes
-github.com/orneryd/nornicdb/pkg/server.*Server.registerAdminRoutes -> github.com/orneryd/nornicdb/pkg/server.*Server.registerRouteTable calls=1
 github.com/orneryd/nornicdb/pkg/server.*Server.registerAuthRoutes
 github.com/orneryd/nornicdb/pkg/server.*Server.registerAuthRoutes -> github.com/orneryd/nornicdb/pkg/server.*Server.registerRouteTable calls=2
 github.com/orneryd/nornicdb/pkg/server.*Server.registerGraphQLRoutes

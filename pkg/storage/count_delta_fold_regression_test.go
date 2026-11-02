@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
@@ -21,7 +22,7 @@ func TestCountDeltaFoldLargeBacklogChunked(t *testing.T) {
 	t.Cleanup(func() { _ = engine.Close() })
 
 	const deltas = countDeltaFoldChunk*2 + 137 // spans three fold chunks
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		for i := 0; i < deltas; i++ {
 			if err := engine.adjustLabelCountInTxn(txn, "ns1", "BigFold", 1); err != nil {
 				return err
@@ -38,7 +39,7 @@ func TestCountDeltaFoldLargeBacklogChunked(t *testing.T) {
 
 	// The background fold path must collapse every delta into the base
 	// without ErrTxnTooBig, exactly as the read-triggered fold used to.
-	engine.foldCountDeltasInBackground()
+	engine.foldCountDeltasInBackground(context.Background())
 
 	var remaining int
 	require.NoError(t, engine.db.View(func(txn *badger.Txn) error {

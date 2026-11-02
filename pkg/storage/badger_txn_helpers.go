@@ -104,13 +104,20 @@ func (b *BadgerEngine) beginHelperTxn() (*managedBadgerDB, error) {
 	return b.db, nil
 }
 
+// errUpdateContextRequired rejects a private engine write handed no owning
+// context. withUpdate never substitutes one: the caller that knows its phase
+// passes it, and a missing context fails before order acquisition, admission
+// and the callback.
+var errUpdateContextRequired = errors.New("storage: withUpdate requires a non-nil owning context")
+
 // updateRequest carries what a withUpdate caller knows about its write before
-// the callback runs: the context it runs under, the cache scope its writes
-// belong to, and whether it writes metadata only. It never carries the written
-// entities; those stay the trailing variadic argument, so a literal entity
-// list at the call site remains the static proof that the write is ordered.
+// the callback runs: the cache scope its writes belong to and whether it
+// writes metadata only. The owning context is withUpdate's first argument, so
+// every call site states the phase its write runs in exactly once. It never
+// carries the written entities; those stay the trailing variadic argument, so
+// a literal entity list at the call site remains the static proof that the
+// write is ordered.
 type updateRequest struct {
-	ctx      context.Context
 	scope    cacheWriteScope
 	metadata bool
 }
@@ -120,13 +127,12 @@ type updateRequest struct {
 // transaction and cannot be repeated, so its writes must fit one Badger
 // batch (badger.ErrTxnTooBig otherwise); writes of any size go through
 // commitEngineWrite repeatable units. Optional entities acquire their write-behind order first;
-// their notifications are delivered only after that order is released. A
-// request without a context runs under the background context, as every
-// unrequested write did before the request existed.
-func (b *BadgerEngine) withUpdate(request updateRequest, fn func(txn *badger.Txn) error, entities ...writtenEntities) error {
-	ctx := request.ctx
+// their notifications are delivered only after that order is released. ctx is
+// the write's owning phase, required: a context-free caller establishes its
+// own explicit root at its entry instead of leaving this helper to guess one.
+func (b *BadgerEngine) withUpdate(ctx context.Context, request updateRequest, fn func(txn *badger.Txn) error, entities ...writtenEntities) error {
 	if ctx == nil {
-		ctx = context.Background()
+		return errUpdateContextRequired
 	}
 	if len(entities) > 0 && b.writeBehind != nil {
 		var order orderHold

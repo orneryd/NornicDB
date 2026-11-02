@@ -907,7 +907,8 @@ func (owner *clusterLifecycle[Resources]) closeResources() error {
 // Close is the owner's stop protocol: the first caller seals admission and
 // signals; every caller, first or repeated, joins the same actual completion.
 func (owner *clusterLifecycle[Resources]) Close() error {
-	err := owner.work.Shutdown(context.Background(), nil)
+	owner.work.BeginStop(nil)
+	err := owner.work.JoinStopped()
 	if transport, ok := any(&owner.resources).(*transportResources); ok {
 		logReplicationEvent(context.Background(), transport.logger, transport.localizer, slog.LevelInfo, localization.ReplicationOperatorEvent("[Cluster] Transport closed"))
 	}

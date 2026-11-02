@@ -59,21 +59,21 @@ func (b *BadgerEngine) startCountDeltaFoldWorker() {
 				return
 			case <-w.wake:
 			}
-			b.foldCountDeltasInBackground()
+			b.foldCountDeltasInBackground(ctx)
 		}
 	})
 }
 
 // foldCountDeltasInBackground folds every persisted label and edge-type delta
-// into its base key, chunked, in bounded transactions. Appends that land
-// while the fold runs are not in its snapshot; they remain and the next
-// threshold crossing folds them.
-func (b *BadgerEngine) foldCountDeltasInBackground() {
-	if err := b.foldAllLabelCountDeltas(); err != nil && b.log != nil {
+// into its base key, chunked, in bounded transactions, under the fold
+// worker's own context. Appends that land while the fold runs are not in its
+// snapshot; they remain and the next threshold crossing folds them.
+func (b *BadgerEngine) foldCountDeltasInBackground(ctx context.Context) {
+	if err := b.foldAllLabelCountDeltas(ctx); err != nil && b.log != nil {
 		b.log.Warn("background label-count delta fold failed",
 			"subsystem", "storage", "error", err)
 	}
-	if err := b.foldAllEdgeTypeCountDeltas(); err != nil && b.log != nil {
+	if err := b.foldAllEdgeTypeCountDeltas(ctx); err != nil && b.log != nil {
 		b.log.Warn("background edge-type-count delta fold failed",
 			"subsystem", "storage", "error", err)
 	}

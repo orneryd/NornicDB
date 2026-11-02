@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -278,7 +279,7 @@ func TestCommitPreparationChangeCaptureLifetime(t *testing.T) {
 func BenchmarkPublicEntityCommitPreparation(b *testing.B) {
 	for _, size := range []int{1, 64} {
 		b.Run(fmt.Sprintf("nodes=%d", size), func(b *testing.B) {
-			engine, err := NewBadgerEngine(b.TempDir())
+			engine, err := fixtureowner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngine(b.TempDir()))
 			if err != nil {
 				b.Fatal(err)
 			}

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"github.com/dgraph-io/badger/v4"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/stretchr/testify/require"
@@ -107,7 +108,7 @@ func TestNodeDeletionKernelSelfLoopAndStagedCatalog(t *testing.T) {
 				_, e = b.GetEdge("test:loop")
 				require.NoError(t, e)
 			} else {
-				require.NoError(t, b.withUpdate(updateRequest{}, func(raw *badger.Txn) error {
+				require.NoError(t, b.withUpdate(context.Background(), updateRequest{}, func(raw *badger.Txn) error {
 					result, err = b.executeNodeDeletion(t.Context(), raw, id, nil)
 					return err
 				}))

@@ -409,7 +409,7 @@ func TestStoredEntitySnapshotIdentityDefersVectorRead(t *testing.T) {
 	b := newTestEngine(t)
 	_, err := b.CreateNode(&Node{ID: "test:lazy", ChunkEmbeddings: [][]float32{make([]float32, 16384)}})
 	require.NoError(t, err)
-	require.NoError(t, b.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return txn.Set(embeddingKey("test:lazy", 0), []byte{0xff}) }))
+	require.NoError(t, b.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error { return txn.Set(embeddingKey("test:lazy", 0), []byte{0xff}) }))
 	require.NoError(t, b.InitializeStoredEntityObserver("test", func(snapshot StoredEntitySnapshot) (StoredEntityObserver, error) {
 		var entries []StoredEntitySnapshotEntry
 		require.NoError(t, snapshot.ForEach(func(entry StoredEntitySnapshotEntry) error { entries = append(entries, entry); return nil }))

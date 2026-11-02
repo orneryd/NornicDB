@@ -48,7 +48,10 @@ func (b *BadgerEngine) GetFirstNodeByLabelInScope(scope, label string) (*Node, e
 	}
 	nowNanos := DecayScoringTime()
 	err := b.withView(func(txn *badger.Txn) error {
-		it := b.newLabelIndexReader(ctx, txn, scope, label, "", visibleRead, false)
+		it, err := b.newLabelIndexReader(ctx, txn, scope, label, "", visibleRead, false)
+		if err != nil {
+			return err
+		}
 		defer it.Close()
 
 		for it.Next() {
@@ -153,7 +156,10 @@ func (b *BadgerEngine) ForEachNodeIDByLabelInScope(ctx context.Context, scope, l
 			}
 		}
 
-		it := b.newLabelIndexReader(ctx, txn, scope, label, "", visibleRead, false)
+		it, err := b.newLabelIndexReader(ctx, txn, scope, label, "", visibleRead, false)
+		if err != nil {
+			return err
+		}
 		defer it.Close()
 
 		checkTombstones := b.decayEnabled && !b.revealAll.Load()
@@ -233,7 +239,10 @@ func (b *BadgerEngine) getNodesByLabelInScope(ctx context.Context, scope, label 
 		sourceTs = txn.ReadTs()
 		nodes = nil
 		loaded = nil
-		it := b.newLabelIndexReader(ctx, txn, scope, label, "", v, false)
+		it, err := b.newLabelIndexReader(ctx, txn, scope, label, "", v, false)
+		if err != nil {
+			return err
+		}
 		defer it.Close()
 
 		for it.Next() {
@@ -423,7 +432,10 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 			err  error
 		}
 		var pending []pendingNode
-		it := b.newLabelIndexReader(ctx, txn, scope, label, "", v, false)
+		it, err := b.newLabelIndexReader(ctx, txn, scope, label, "", v, false)
+		if err != nil {
+			return err
+		}
 		defer it.Close()
 		lookups := 0
 		var cancel bulkReadCancellation
@@ -1922,7 +1934,7 @@ func (b *BadgerEngine) selfHealEdgeBetweenIndexes(ctx context.Context, edges []*
 	for _, edge := range edges {
 		e.edge(edge)
 	}
-	err := b.withUpdate(updateRequest{ctx: ctx, scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+	err := b.withUpdate(ctx, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		for _, edge := range edges {
 			if edge == nil {
 				continue

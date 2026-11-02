@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"go/token"
 	"go/types"
-	"os"
 	"sort"
 	"strings"
 
@@ -867,7 +866,7 @@ type sourceDigests struct {
 
 func newSourceDigests(p *workcensus.Program) *sourceDigests {
 	d := &sourceDigests{p: p, byName: map[string]string{}, files: map[string][]byte{}}
-	if data, err := os.ReadFile(p.Root + "/go.mod"); err == nil {
+	if data, err := p.ModuleConfig(); err == nil {
 		d.gomod = strings.ReplaceAll(string(data), "\r\n", "\n")
 	}
 	return d
@@ -889,7 +888,7 @@ func (d *sourceDigests) of(symbol string) string {
 		start, end := d.p.FileSet.PositionFor(node.Pos(), false), d.p.FileSet.PositionFor(node.End(), false)
 		data, ok := d.files[start.Filename]
 		if !ok {
-			data, _ = os.ReadFile(start.Filename)
+			data, _ = d.p.LoadedSource(start.Filename)
 			d.files[start.Filename] = data
 		}
 		if start.Offset < 0 || end.Offset > len(data) || start.Offset > end.Offset {

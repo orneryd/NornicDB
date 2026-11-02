@@ -160,13 +160,13 @@ func (b *BadgerEngine) RepairIDDictionary() (*IDDictionaryReport, error) {
 		// relationship whose endpoint didn't resolve isn't counted).
 		b.invalidateCachesAfterRestore()
 		b.labelCountWriteMu.Lock()
-		err := b.rebuildAuthoritativeLabelCountsLocked()
+		err := b.rebuildAuthoritativeLabelCountsLocked(lifecycle.ctx)
 		b.labelCountWriteMu.Unlock()
 		if err != nil {
 			return report, err
 		}
 		b.edgeTypeCountWriteMu.Lock()
-		err = b.rebuildAuthoritativeEdgeTypeCountsLocked()
+		err = b.rebuildAuthoritativeEdgeTypeCountsLocked(lifecycle.ctx)
 		b.edgeTypeCountWriteMu.Unlock()
 		if err != nil {
 			return report, err

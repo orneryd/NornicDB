@@ -49,7 +49,7 @@ func TestBadgerTransaction_GetCommittedEdgeLocked_PrimaryDecodeError(t *testing.
 	engine := newTestEngine(t)
 
 	badEdgeID := EdgeID("test:bad-edge")
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		return txn.Set(edgeKey(badEdgeID), []byte("not-a-valid-edge-encoding"))
 	}))
 
@@ -130,7 +130,7 @@ func TestBadgerTransaction_GetCommittedEdgeLocked_VisibleAtDecodeErrorPath(t *te
 
 	// Existing tests cover ErrNotVisibleAtSnapshot->ErrNotFound conversion.
 	// Corrupt the edge MVCC head so visible-at returns a different error.
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		headKey := engine.mvccEdgeHeadKeyStringLookup("test:e1")
 		if headKey == nil {
 			return ErrNotFound

@@ -130,7 +130,10 @@ func (b *BadgerEngine) runDeleteCleanup(ctx context.Context, counted int64) {
 // which drops delete markers with no older data below them. It writes the
 // throw-away marker key with an ordinary commit and drops it.
 func (b *BadgerEngine) compactDeletedEntries(ctx context.Context) error {
-	if err := b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+	// The clean-up worker's context is this write's real request: a canceled
+	// worker (engine stop) writes no marker and leaves the delete count for the
+	// next clean-up, instead of committing work the worker no longer owns.
+	if err := b.withUpdate(ctx, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		return txn.Set(deleteCleanupMarkerKey, []byte{1})
 	}); err != nil {
 		return err

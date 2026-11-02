@@ -84,9 +84,9 @@ func Extract(c Config) (Inventory, error) {
 	}
 	var loaded *Program
 	if c.SourceOnly {
-		pkgs, fset, loadErr := loadPackages(c, root)
+		pkgs, fset, sources, loadErr := loadPackages(c, root)
 		err = loadErr
-		loaded = &Program{Root: root, Packages: pkgs, FileSet: fset}
+		loaded = &Program{Root: root, Packages: pkgs, FileSet: fset, sources: sources}
 	} else {
 		loaded, err = LoadProgram(c)
 	}
@@ -142,7 +142,7 @@ func Extract(c Config) (Inventory, error) {
 	}
 	sort.Slice(out.InvisibleBodies, func(i, j int) bool { return out.InvisibleBodies[i].Symbol < out.InvisibleBodies[j].Symbol })
 	lengths := fixedLengths(pkgs)
-	e := sourceExtractor{config: c, out: &out, fset: loaded.FileSet, root: root, bySyntax: bySyntax, reachable: sourceReachable, lengths: lengths, seenFiles: map[string]bool{}, aliases: aliases(pkgs, graph)}
+	e := sourceExtractor{loaded: loaded, config: c, out: &out, fset: loaded.FileSet, root: root, bySyntax: bySyntax, reachable: sourceReachable, lengths: lengths, seenFiles: map[string]bool{}, aliases: aliases(pkgs, graph)}
 	e.packages = map[*types.Info]*types.Package{}
 	for _, p := range pkgs {
 		if p.Types != nil && p.TypesInfo != nil {
@@ -219,6 +219,7 @@ func fingerprint(raw []byte) string {
 }
 
 type sourceExtractor struct {
+	loaded    *Program
 	packages  map[*types.Info]*types.Package
 	config    Config
 	out       *Inventory
@@ -255,7 +256,13 @@ func (e *sourceExtractor) file(pkg string, f *ast.File, info *types.Info, state 
 		return nil
 	}
 	e.seenFiles[filename] = true
-	raw, err := readSource(e.config, filename)
+	var raw []byte
+	var err error
+	if state == "compiled" {
+		raw, err = e.loaded.LoadedSource(filename)
+	} else {
+		raw, err = readSource(e.config, filename)
+	}
 	if err != nil {
 		return err
 	}

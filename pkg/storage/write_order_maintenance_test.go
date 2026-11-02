@@ -73,7 +73,7 @@ func TestBetweenSelfHealWritesOnlyWhatIsStored(t *testing.T) {
 	// index still holds it.
 	edge, err := b.GetEdge("test:e")
 	require.NoError(t, err)
-	require.NoError(t, b.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return b.deleteEdgeBetweenIndexesInTxn(txn, edge) }))
+	require.NoError(t, b.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error { return b.deleteEdgeBetweenIndexesInTxn(txn, edge) }))
 	require.Zero(t, countKeysWithPrefix(t, b, prefixEdgeBetweenIndex))
 
 	var once sync.Once

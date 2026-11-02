@@ -244,7 +244,10 @@ func (b *BadgerEngine) streamNodesByLabelAtSnapshotWithView(
 	defer deregister()
 
 	return view(func(txn *badger.Txn) error {
-		it := b.newLabelIndexReader(ctx, txn, scope, label, "", v, true)
+		it, err := b.newLabelIndexReader(ctx, txn, scope, label, "", v, true)
+		if err != nil {
+			return err
+		}
 		defer it.Close()
 		var cancel bulkReadCancellation
 		for it.Next() {
@@ -340,7 +343,10 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 			return emit(node)
 		}
 
-		it := b.newLabelIndexReader(ctx, txn, scope, label, afterNodeID, v, false)
+		it, err := b.newLabelIndexReader(ctx, txn, scope, label, afterNodeID, v, false)
+		if err != nil {
+			return err
+		}
 		defer it.Close()
 		var pending []NodeID
 		lookups := 0

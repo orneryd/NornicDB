@@ -3,6 +3,7 @@ package storage
 // ID admission context: storage-format-owners lane (Codex), 1 November 2026.
 
 import (
+	"context"
 	"encoding/binary"
 	"strconv"
 	"testing"
@@ -54,7 +55,7 @@ func TestNodeReferencePreservesScopedBookmarkDiagnostics(t *testing.T) {
 			if n == 8 {
 				binary.BigEndian.PutUint64(value, 42)
 			}
-			require.NoError(t, b.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+			require.NoError(t, b.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 				return txn.Set(nodeIDForwardKey(id), value)
 			}))
 			require.NoError(t, b.withView(func(txn *badger.Txn) error {

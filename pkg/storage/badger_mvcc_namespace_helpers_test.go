@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/binary"
 	"testing"
 	"time"
@@ -51,7 +52,7 @@ func TestEnsureNamespaceMVCC_WarmsColdStateWithPersistedAndRecoveredFloors(t *te
 	state.highWaterNanos.Store(0)
 
 	// Persisted namespace sequence floor.
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		buf := make([]byte, 8)
 		binary.BigEndian.PutUint64(buf, 7)
 		return txn.Set(mvccNamespaceSequenceKey(ns), buf)

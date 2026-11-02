@@ -103,10 +103,10 @@ func (f *nilFlow) projectFieldAt(value ssa.Value, path []int, at ssa.Instruction
 				unknown("unknown caller " + name)
 			}
 		case *ssa.Call:
-			projectFieldReturns(p, x, 0, path, project, unknown)
+			f.projectFieldReturns(x, 0, path, use, project, unknown)
 		case *ssa.Extract:
 			if call, ok := x.Tuple.(*ssa.Call); ok {
-				projectFieldReturns(p, call, x.Index, path, project, unknown)
+				f.projectFieldReturns(call, x.Index, path, use, project, unknown)
 			} else {
 				unknown("unknown result " + name)
 			}
@@ -198,8 +198,12 @@ func (f *nilFlow) projectFieldAt(value ssa.Value, path []int, at ssa.Instruction
 	return out
 }
 
-func projectFieldReturns(p *Program, call *ssa.Call, result int, path []int, project func(ssa.Value, []int, ssa.Instruction), unknown func(string)) {
-	targets := p.CallTargets(call)
+func (f *nilFlow) projectFieldReturns(call *ssa.Call, result int, path []int, use ssa.Instruction, project func(ssa.Value, []int, ssa.Instruction), unknown func(string)) {
+	// Conditional tuple knowledge belongs only to this invocation's actual
+	// checked use, never the context-insensitive value/field memo. Blocks in
+	// different functions cannot establish a dominance relationship.
+	successOnly := use != nil && use.Block() != nil && use.Parent() == call.Parent() && errorChecked(call, use.Block())
+	targets := f.p.CallTargets(call)
 	if len(targets) == 0 {
 		unknown("unknown inline field factory")
 		return
@@ -209,6 +213,13 @@ func projectFieldReturns(p *Program, call *ssa.Call, result int, path []int, pro
 		for _, b := range target.Blocks {
 			for _, ins := range b.Instrs {
 				if ret, ok := ins.(*ssa.Return); ok && result < len(ret.Results) {
+					// Reuse the source error proof: external-result/non-nil
+					// conventions cannot exclude a possibly successful tuple.
+					last := len(ret.Results) - 1
+					if successOnly && result < last && isError(ret.Results[last].Type()) && newErrorProof(f).fact(ret.Results[last], ret).nonnil {
+						f.discharge("proof: inline field return with source-proven non-nil error excluded by same-call success check")
+						continue
+					}
 					found = true
 					project(ret.Results[result], path, ret)
 				}

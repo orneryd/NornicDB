@@ -133,9 +133,11 @@ func TestFlushWriteBehindCancellationAfterRotationKeepsReplayOwner(t *testing.T)
 		}
 	})
 	go func() { defer close(joined); done <- b.FlushWriteBehind(ctx) }()
+	var replayContext context.Context
 	select {
-	case seen := <-workerWaiting:
-		require.Nil(t, seen, "existing worker must retain detached accepted replay")
+	case replayContext = <-workerWaiting:
+		require.NotNil(t, replayContext, "accepted replay has an explicit completion owner")
+		require.Nil(t, replayContext.Done(), "accepted replay remains detached from caller and engine stop")
 	case <-time.After(5 * time.Second):
 		t.Fatal("accepted replay did not reach real physical gate")
 	}
@@ -145,6 +147,7 @@ func TestFlushWriteBehindCancellationAfterRotationKeepsReplayOwner(t *testing.T)
 	generation = b.writeBehind.draining[0]
 	require.False(t, generation.IsApplied())
 	cancel()
+	require.NoError(t, replayContext.Err(), "caller cancellation must not cancel accepted replay")
 	select {
 	case err := <-done:
 		require.ErrorIs(t, err, context.Canceled)

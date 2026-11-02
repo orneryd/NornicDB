@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
@@ -325,7 +326,7 @@ func TestAccessMetaReadSelectionAndErrors(t *testing.T) {
 			if tc.corrupt {
 				data = []byte{0xc1}
 			}
-			require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return txn.Set(accessMetaKey(tc.id), data) }))
+			require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error { return txn.Set(accessMetaKey(tc.id), data) }))
 			point, err := engine.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{EntityID: tc.id})
 			require.Nil(t, point.Entries)
 			if tc.corrupt {

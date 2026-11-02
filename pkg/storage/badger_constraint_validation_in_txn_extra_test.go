@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -21,7 +22,7 @@ func TestBadgerConstraintValidation_NodeBranchesInTxn(t *testing.T) {
 	_, err := engine.CreateNode(&Node{ID: "test:u1", Labels: []string{"User"}, Properties: map[string]any{"email": "a@x", "tenant": "t", "uid": "1", "name": "A", "k": "k1", "from": time.Now().UTC(), "to": nil, "state": "active", "age": int64(10)}})
 	require.NoError(t, err)
 
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		// nil guards
 		require.NoError(t, engine.validateNodeConstraintsInTxn(txn, nil, schema, "test", ""))
 		require.NoError(t, engine.validateNodeConstraintsInTxn(txn, &Node{ID: "test:nil", Labels: []string{"User"}}, nil, "test", ""))
@@ -72,7 +73,7 @@ func TestBadgerConstraintValidation_EdgeBranchesInTxn(t *testing.T) {
 	require.NoError(t, schema.AddConstraint(Constraint{Name: "rel_disallowed", Type: ConstraintPolicy, EntityType: ConstraintEntityRelationship, Label: "LINK", PolicyMode: "DISALLOWED", SourceLabel: "User", TargetLabel: "Secret"}))
 	require.NoError(t, schema.AddConstraint(Constraint{Name: "rel_allowed", Type: ConstraintPolicy, EntityType: ConstraintEntityRelationship, Label: "LINK", PolicyMode: "ALLOWED", SourceLabel: "User", TargetLabel: "Report"}))
 
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		// nil/empty type guard
 		require.NoError(t, engine.validateEdgeConstraintsInTxn(txn, nil, schema, "test", ""))
 		require.NoError(t, engine.validateEdgeConstraintsInTxn(txn, &Edge{ID: "test:empty", StartNode: "test:a", EndNode: "test:b", Type: ""}, schema, "test", ""))

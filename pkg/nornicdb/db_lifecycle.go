@@ -25,7 +25,8 @@ func (db *DB) Close() error {
 		}
 		db.work.Leave()
 	}
-	return db.work.Shutdown(context.Background(), db.retire)
+	db.work.BeginStop(db.retire)
+	return db.work.JoinStopped()
 }
 
 // LifetimeContext returns a context that is cancelled when the database

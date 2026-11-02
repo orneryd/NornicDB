@@ -813,8 +813,10 @@ func (f *nilFlow) embedded(x ssa.Value) []string {
 // projectField judges the value of field inside the struct value x (field is
 // x's own field or nested inline in it): zero in a zero constant; through
 // reaching definitions when x is loaded from a local composite literal, or
-// zero when that literal never sets it; otherwise the field's possible values
-// anywhere. Embedded interfaces and whole-value stores share this projection.
+// through the canonical inline projection of that object's whole-value stores
+// when the field itself was never addressed; otherwise the field's possible
+// values anywhere. Embedded interfaces and whole-value stores share this
+// projection.
 func (f *nilFlow) projectField(x ssa.Value, field *types.Var) []string {
 	name := "field " + field.Name()
 	// A by-value parameter is a snapshot of each actual argument, not every
@@ -861,7 +863,21 @@ func (f *nilFlow) projectField(x ssa.Value, field *types.Var) []string {
 				}
 			}
 			if addr == nil {
-				return []string{"zero " + name + " of " + x.Type().String()}
+				// A local object loaded whole holds this field from its
+				// whole-value stores (a checked constructor's success return or
+				// a caller's spilled copy), not from an automatic zero merely
+				// because the field was never addressed. Judge it by the
+				// canonical inline projection at this load: the object's own
+				// start is zero, and an escaped, unproven or unknown source
+				// stays possible nil.
+				projected := f.projectFieldAt(x, []int{index}, load)
+				if projected.Witness != nil {
+					return projected.Witness
+				}
+				if projected.Unknown {
+					return []string{"unknown " + name + " of " + x.Type().String()}
+				}
+				return nil
 			}
 			return f.definedRead(load, addr, name)
 		}
@@ -1029,42 +1045,94 @@ func freeVarClosure(free *ssa.FreeVar) (*ssa.MakeClosure, int) {
 	return nil, 0
 }
 
-// localCell reports a cell used only by direct loads and stores, in its own
-// function and in every closure that captures it (at any depth): its address
-// escapes to no call or other value anywhere, so its loads and stores are all
-// its reads and writes.
+// localReferenceFact names which of the two facts the one reference-use
+// traversal returns for an object's address.
+type localReferenceFact int
+
+const (
+	// wholeCellFact is the fact the census policy packages read a cell's value
+	// by: the value a whole load reads is one of the values the cell's own
+	// whole-value stores put there, or its zero value. A field address is
+	// refused, because a store through it changes part of that value; a capture
+	// is followed into the closure, whose whole-value uses are then checked the
+	// same way.
+	wholeCellFact localReferenceFact = iota
+	// inlineNonEscapeFact is the fact the nil model excludes calls by: no
+	// reference derived from the object's address leaves its frame's own
+	// memory, so no call the frame makes can write the object and the frame's
+	// own inline field stores are all its writes. Addressing an inline field
+	// stays inside the object and is followed; a capture is refused, because a
+	// function value holding a reference into the object can run at any time and
+	// its stores are then not the frame's visible stores.
+	inlineNonEscapeFact
+)
+
+// localCell reports an object used only by direct loads and stores of its whole
+// value, in its own function and in every closure that captures it (at any
+// depth): its address escapes to no call or other value anywhere, so its loads
+// and stores are all its reads and writes. It is the whole-cell fact, which
+// refuses an address-derived field reference; localInlineObject asks the strict
+// inline-address fact of the same traversal.
 func localCell(cell *ssa.Alloc) bool {
-	return localCellUses(cell, map[ssa.Value]bool{})
+	return localReferences(cell, wholeCellFact, map[ssa.Value]bool{})
 }
 
-// LocalCell is localCell for the census policy packages.
+// LocalCell is localCell for the census policy packages: every use of the cell
+// is a load, a store of its whole value, or a capture whose uses are the same,
+// so the value a load reads is one of the values its whole-cell stores put
+// there, or its zero value. A field address is refused: a store through one
+// changes part of a value those packages read whole, which is a different
+// question from whether a reference derived from the object leaves its
+// function. The stores a capturing closure makes are named by CapturedStores.
 func LocalCell(cell *ssa.Alloc) bool { return localCell(cell) }
 
-func localCellUses(cell ssa.Value, seen map[ssa.Value]bool) bool {
-	if seen[cell] {
+// localReferences is the one canonical traversal of every reference derived
+// from an object's address -- the cell itself and, under the strict inline
+// fact, the field addresses that name its inline fields -- reporting whether
+// every use of those references is one this owner models under that fact. It
+// returns both facts: wholeCellFact for the value a whole load reads,
+// inlineNonEscapeFact for whether a callee can reach the object at all.
+func localReferences(reference ssa.Value, fact localReferenceFact, seen map[ssa.Value]bool) bool {
+	if seen[reference] {
 		return true
 	}
-	seen[cell] = true
-	if cell.Referrers() == nil {
+	seen[reference] = true
+	if reference.Referrers() == nil {
 		return false
 	}
-	for _, ref := range *cell.Referrers() {
+	for _, ref := range *reference.Referrers() {
 		switch ref := ref.(type) {
 		case *ssa.Store:
-			if ref.Addr != cell || ref.Val == cell {
+			if ref.Addr != reference || ref.Val == reference {
 				return false
 			}
 		case *ssa.UnOp:
-			if ref.Op != token.MUL || ref.X != cell {
+			if ref.Op != token.MUL || ref.X != reference {
+				return false
+			}
+		case *ssa.FieldAddr:
+			// An address-derived reference to an inline field. The whole-cell
+			// fact refuses it; the strict inline fact follows it, so a store
+			// through the field address is still this object's own write.
+			if fact != inlineNonEscapeFact || ref.X != reference || !localReferences(ref, fact, seen) {
 				return false
 			}
 		case *ssa.MakeClosure:
+			// The whole-cell fact needs a known closure's whole-value uses: a
+			// captured cell is the variable the closure reads and writes, and
+			// CapturedStores names the stores it makes. The strict inline fact
+			// refuses every capture, a field address included: the function value
+			// can run at any time, so a store it makes is not one of the frame's
+			// visible stores.
+			if fact != wholeCellFact {
+				return false
+			}
 			fn, ok := ref.Fn.(*ssa.Function)
 			if !ok {
 				return false
 			}
 			for i, binding := range ref.Bindings {
-				if binding == cell && (i >= len(fn.FreeVars) || !localCellUses(fn.FreeVars[i], seen)) {
+				if binding == reference && (i >= len(fn.FreeVars) || !localReferences(fn.FreeVars[i], fact, seen)) {
 					return false
 				}
 			}
@@ -1074,6 +1142,40 @@ func localCellUses(cell ssa.Value, seen map[ssa.Value]bool) bool {
 		}
 	}
 	return true
+}
+
+// localInlineObject reports that addr names the object a local allocation
+// starts, or one of that object's inline fields, and that no reference derived
+// from the object's address leaves its frame's own memory (the strict
+// inline-address fact). Nothing outside the frame can then hold a pointer to
+// the object, so no call the frame makes can write it, and only its own visible
+// stores define its inline fields. A capture refuses the fact even when the
+// closure body only writes this object: a function value runs at any time, so
+// its write is invisible to the backwards walk that reads this location.
+func localInlineObject(addr ssa.Value) bool {
+	alloc, ok := addressRoot(addr).(*ssa.Alloc)
+	return ok && localReferences(alloc, inlineNonEscapeFact, map[ssa.Value]bool{})
+}
+
+// addressRoot returns the value an address operand starts from: the object
+// itself, behind any chain of inline struct projections and conversions that
+// name the same memory. A root this walk does not model (a pointer load, a
+// parameter, a global) is returned as it is, so only a local allocation's own
+// address is ever recognised.
+func addressRoot(addr ssa.Value) ssa.Value {
+	for depth := 0; depth < 8; depth++ {
+		switch x := addr.(type) {
+		case *ssa.FieldAddr:
+			addr = x.X
+		case *ssa.ChangeType:
+			addr = x.X
+		case *ssa.Convert:
+			addr = x.X
+		default:
+			return addr
+		}
+	}
+	return addr
 }
 
 // CapturedStores is capturedStores for the census policy packages.
@@ -1143,8 +1245,20 @@ func (f *nilFlow) definedRead(load *ssa.UnOp, addr ssa.Value, name string) []str
 				w = append(w[:len(w):len(w)], "-> stored in "+name)
 			}
 		case d.whole != nil:
-			if len(d.wholePath) > 1 {
-				projected := f.projectFieldAt(d.whole.Val, d.wholePath, load)
+			// An exact whole-value store defines this field through its own
+			// inline path, however many indices that path has: the stored value
+			// is judged by its own source (a checked constructor's success
+			// returns for a tuple), exactly as ProjectFieldAt judges it, never by
+			// the field's stores anywhere. Only a store that names no inline path
+			// from its target to this location keeps the whole-value projection.
+			path := d.wholePath
+			if len(path) == 0 {
+				if index := fieldIndex(d.whole.Val.Type(), field); index >= 0 {
+					path = []int{index}
+				}
+			}
+			if len(path) > 0 {
+				projected := f.projectFieldAt(d.whole.Val, path, load)
 				w = projected.Witness
 				f.trail = append(f.trail, projected.Why...)
 			} else {
@@ -1210,9 +1324,12 @@ func locationBase(addr ssa.Value) ssa.Value {
 // creation of its cell or base object, a store to the same location, or, for a
 // field, a write that may reach it through another reference (a store to the
 // same field of another base, a store of a whole struct that contains the
-// field, or a non-builtin call, which may do either). Concurrent writes are out
-// of scope: a read racing a write is a data race, and the census assumes the
-// race-free program the -race test runs check.
+// field, a store of the object's own address as a value, or a non-builtin call,
+// which may do either). A call is a writer only when a reference to the object
+// could reach it: a local object whose address-derived references never leave
+// its function (localInlineObject) is written by its visible stores alone.
+// Concurrent writes are out of scope: a read racing a write is a data race, and
+// the census assumes the race-free program the -race test runs check.
 func writesLocation(ins ssa.Instruction, addr ssa.Value, field *types.Var) (definition, bool) {
 	if v, ok := ins.(ssa.Value); ok && v == locationBase(addr) {
 		return definition{}, true
@@ -1228,6 +1345,13 @@ func writesLocation(ins ssa.Instruction, addr ssa.Value, field *types.Var) (defi
 		if field == nil {
 			return definition{}, false
 		}
+		// The object's own address, stored as a value into a package variable,
+		// another object or the object itself, puts a pointer to it where this
+		// walk does not follow it: a later write through that reference may reach
+		// the field, however its value was last set here.
+		if alloc, ok := addressRoot(addr).(*ssa.Alloc); ok && addressRoot(ins.Val) == alloc {
+			return definition{unknown: true}, true
+		}
 		if fa, ok := ins.Addr.(*ssa.FieldAddr); ok && structField(fa.X.Type(), fa.Field) == field {
 			return definition{unknown: true}, true
 		}
@@ -1240,7 +1364,11 @@ func writesLocation(ins ssa.Instruction, addr ssa.Value, field *types.Var) (defi
 			return definition{unknown: true}, true
 		}
 	case *ssa.Call:
-		if _, builtin := ins.Call.Value.(*ssa.Builtin); field != nil && !builtin {
+		// A call writes a field only through a reference to its object. No
+		// reference derived from a local object's address leaves its frame
+		// (localInlineObject), so nothing the call can reach names that object
+		// and the call is not a writer of its fields. Every other call is unknown.
+		if _, builtin := ins.Call.Value.(*ssa.Builtin); field != nil && !builtin && !localInlineObject(addr) {
 			return definition{unknown: true}, true
 		}
 	case *ssa.Go, *ssa.RunDefers:

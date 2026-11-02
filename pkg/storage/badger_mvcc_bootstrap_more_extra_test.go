@@ -63,7 +63,7 @@ func TestBadgerEngine_MVCCBootstrapHelpersAndTxnVariants(t *testing.T) {
 	// In-txn bootstrap variants.
 	require.NoError(t, engine.clearBadgerPrefix(context.Background(), prefixMVCCNodeHead))
 	require.NoError(t, engine.clearBadgerPrefix(context.Background(), prefixMVCCEdgeHead))
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		if err := bootstrapMVCCFromCurrentStateInTxn[*Node, NodeID, nodeMVCCBootstrapKind](engine, txn); err != nil {
 			return err
 		}

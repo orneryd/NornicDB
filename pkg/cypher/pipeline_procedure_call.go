@@ -16,7 +16,14 @@ func pipelineProcedureCallsAreClauses(ctx context.Context, cypher string) bool {
 	}
 	ensureBuiltInProceduresRegistered()
 	for _, position := range findAllTopLevelPipelineKeywordPositions(cypher, "CALL") {
-		procedure, found := globalProcedureRegistry.Get(extractProcedureName(ctx, cypher[position:]))
+		name, err := extractProcedureName(ctx, cypher[position:])
+		if err != nil {
+			// A clause whose own parse ended before its name was read is not
+			// established as a top-level procedure clause; the owner that runs
+			// it reports the error.
+			return false
+		}
+		procedure, found := globalProcedureRegistry.Get(name)
 		if found && procedure.Spec.Mode != ProcedureModeRead && !procedure.Spec.writes() && procedure.Spec.Mode != ProcedureModeDBMS && !(procedure.User && procedure.Spec.Mode == "") {
 			return false
 		}
@@ -51,9 +58,13 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 	if yieldIndex >= 0 {
 		invocation = strings.TrimSpace(clause[:yieldIndex])
 	}
-	procedure, found := globalProcedureRegistry.Get(extractProcedureName(ctx, invocation))
+	name, err := extractProcedureName(ctx, invocation)
+	if err != nil {
+		return nil, nil, true, err
+	}
+	procedure, found := globalProcedureRegistry.Get(name)
 	if !found {
-		return nil, nil, true, newSemanticError("Neo.ClientError.Procedure.ProcedureNotFound", "ProcedureNotFound", "There is no procedure with the name "+extractProcedureName(ctx, invocation)+" registered")
+		return nil, nil, true, newSemanticError("Neo.ClientError.Procedure.ProcedureNotFound", "ProcedureNotFound", "There is no procedure with the name "+name+" registered")
 	}
 	if yieldIndex < 0 && len(procedure.Spec.Returns) > 0 {
 		return nil, nil, true, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax", "procedure calls inside a query must name results explicitly using YIELD")

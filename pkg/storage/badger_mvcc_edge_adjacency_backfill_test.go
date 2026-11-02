@@ -230,7 +230,7 @@ func TestRepairArchivedEdgeAdjacencyToleratesLegacyVersionKeys(t *testing.T) {
 	}))
 
 	// The archived-adjacency repair must accept the legacy key.
-	require.NoError(t, engine.repairArchivedEdgeAdjacency())
+	require.NoError(t, engine.repairArchivedEdgeAdjacency(context.Background()))
 
 	// The runtime version scan must yield the legacy entry with its version.
 	found := false

@@ -62,7 +62,10 @@ func (w *WorkLifetime) Err() error { return w.outcomes.Err() }
 
 // Close seals admission, signals stop and joins actual completion. An active
 // worker must return its ticket before its caller joins this same lifetime.
-func (w *WorkLifetime) Close() error { return w.CloseContext(context.Background()) }
+func (w *WorkLifetime) Close() error {
+	w.BeginStop(nil)
+	return w.JoinStopped()
+}
 
 // CloseContext bounds only the caller's wait. Accepted work retains its ticket
 // and reports its outcome until actual completion, also after this returns.
@@ -117,6 +120,16 @@ func (w *WorkLifetime) OnStop(signal func() error) bool {
 
 // Stopped closes when Shutdown has disposed after quiescence.
 func (w *WorkLifetime) Stopped() <-chan struct{} { return w.stopped.Done() }
+
+// JoinStopped waits without a caller deadline for the owner's actual retirement
+// and returns its retained outcomes. It does not initiate shutdown: call
+// BeginStop first, or join a stop another owner has already initiated. Unlike
+// WaitStopped, no canceled work context can shorten this completion join.
+// A supervisor can BeginStop all siblings before JoinStopped on each of them.
+func (w *WorkLifetime) JoinStopped() error {
+	<-w.stopped.Done()
+	return w.Err()
+}
 
 // WaitStopped joins the stop without starting it. ctx bounds only the wait.
 func (w *WorkLifetime) WaitStopped(ctx context.Context) error {

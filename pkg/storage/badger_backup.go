@@ -20,8 +20,9 @@ import (
 // Uses BadgerDB's streaming backup which creates a consistent snapshot.
 // The backup file is a self-contained, portable copy of the database.
 func (b *BadgerEngine) Backup(path string) error {
-	// Every write acknowledged before the backup is in it.
-	if err := b.FlushWriteBehind(nil); err != nil {
+	// Every write acknowledged before the backup is in it. A backup owns no
+	// request context, so it hands the explicit detached completion lifetime.
+	if err := b.FlushWriteBehind(commitPreparationLifetime(nil)); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
 	b.mu.RLock()
@@ -121,7 +122,7 @@ func (b *BadgerEngine) Restore(path string) (restoreErr error) {
 	// The restored derived-count deltas are folded, as open folds them:
 	// the engine that took the backup numbered them, and a new delta
 	// reusing one's suffix would overwrite it.
-	if err := b.foldRestoredCountDeltas(db); err != nil {
+	if err := b.foldRestoredCountDeltas(lifecycle.ctx, db); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
 	loader := heldViewer{db: db}
@@ -479,22 +480,22 @@ func (b *BadgerEngine) deleteByPrefixHeld(prefix string, lifecycle *lifecycleWri
 		return 0, 0, nil, localizedError(localization.StorageClientCleanEdgeTypeIndexFailed(err), err)
 	}
 	if len(deletedLabelCounts) > 0 {
-		if err := b.decrementLabelCounts(deletedLabelCounts); err != nil {
+		if err := b.decrementLabelCounts(lifecycle.ctx, deletedLabelCounts); err != nil {
 			return 0, 0, nil, err
 		}
 	}
 	if len(deletedEdgeTypeCounts) > 0 {
-		if err := b.decrementEdgeTypeCounts(deletedEdgeTypeCounts); err != nil {
+		if err := b.decrementEdgeTypeCounts(lifecycle.ctx, deletedEdgeTypeCounts); err != nil {
 			return 0, 0, nil, err
 		}
 	}
 	if len(deletedStartLabelCounts) > 0 {
-		if err := b.decrementEdgeTypeLabelCounts(prefixMVCCMetaEdgeTypeStartLabelCount, deletedStartLabelCounts); err != nil {
+		if err := b.decrementEdgeTypeLabelCounts(lifecycle.ctx, prefixMVCCMetaEdgeTypeStartLabelCount, deletedStartLabelCounts); err != nil {
 			return 0, 0, nil, err
 		}
 	}
 	if len(deletedEndLabelCounts) > 0 {
-		if err := b.decrementEdgeTypeLabelCounts(prefixMVCCMetaEdgeTypeEndLabelCount, deletedEndLabelCounts); err != nil {
+		if err := b.decrementEdgeTypeLabelCounts(lifecycle.ctx, prefixMVCCMetaEdgeTypeEndLabelCount, deletedEndLabelCounts); err != nil {
 			return 0, 0, nil, err
 		}
 	}

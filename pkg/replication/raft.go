@@ -1675,7 +1675,8 @@ func (r *RaftReplicator) WaitForLeader(ctx context.Context) error {
 // Shutdown gracefully shuts down the replicator.
 func (r *RaftReplicator) Shutdown() error {
 	r.config.logPrintf(context.Background(), slog.LevelInfo, "[Raft %s] Shutting down", r.config.NodeID)
-	return r.work.Shutdown(context.Background(), r.retire)
+	r.work.BeginStop(r.retire)
+	return r.work.JoinStopped()
 }
 
 // closeTransports is the stop signal: closing the transport and peer

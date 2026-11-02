@@ -479,8 +479,11 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	// successful user commit into an apparent rollback — rebuild from the
 	// committed edge-type index immediately; startup verification remains
 	// the final recovery boundary.
-	if err := tx.engine.applyEdgeTypeLabelCountDeltasLocked(tx.pendingEdgeTypeLabelCountDeltas); err != nil {
-		if repairErr := tx.engine.rebuildAuthoritativeEdgeTypeCountsLocked(); repairErr != nil {
+	// Data is already durable. Retain the metadata tail's accepted lifetime:
+	// caller cancellation cannot veto counts or their repair after publication.
+	completionContext := commitPreparationLifetime(nil)
+	if err := tx.engine.applyEdgeTypeLabelCountDeltasLocked(completionContext, tx.pendingEdgeTypeLabelCountDeltas); err != nil {
+		if repairErr := tx.engine.rebuildAuthoritativeEdgeTypeCountsLocked(completionContext); repairErr != nil {
 			tx.engine.log.Error("failed to repair derived (label, type) counts after transaction commit",
 				"subsystem", "transaction",
 				"transaction_id", tx.ID,

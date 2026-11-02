@@ -5,6 +5,7 @@ import (
 	"math"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -81,7 +82,7 @@ func TestNativeBulkConstraintEqualityContract(t *testing.T) {
 func BenchmarkNativeBulkConstraintPreflight(b *testing.B) {
 	for _, count := range []int{1, 128, 4096} {
 		b.Run(fmt.Sprint(count), func(b *testing.B) {
-			e, err := NewBadgerEngineInMemory()
+			e, err := fixtureowner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 			if err != nil {
 				b.Fatal(err)
 			}

@@ -164,7 +164,8 @@ func (f *AccessFlusher) Stop() error {
 	run := f.active
 	f.mu.Unlock()
 	if run != nil {
-		f.outcomes.Record("", run.Shutdown(context.Background(), nil))
+		run.BeginStop(nil)
+		f.outcomes.Record("", run.JoinStopped())
 	}
 	return f.outcomes.Err()
 }

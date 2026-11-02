@@ -117,7 +117,7 @@ func (b *BadgerEngine) markIndexBackfillReady(ctx context.Context, kind startupI
 	if kind == startupEdgeBetweenIndex {
 		key, version = edgeBetweenIndexReadyKey, 1
 	}
-	err := b.withUpdate(updateRequest{ctx: ctx, scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+	err := b.withUpdate(ctx, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		return txn.Set(key, []byte{version})
 	})
 	if err == nil {
@@ -254,7 +254,7 @@ func (b *BadgerEngine) rebuildLabelIndex(ctx context.Context) (int, error) {
 	}
 	b.rememberIndexReadiness(startupLabelIndex, false)
 	// A forced rebuild cannot retain a marker for the index being cleared.
-	if err := b.withUpdate(updateRequest{ctx: ctx, scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error { return txn.Delete(labelIndexReadyKey) }); err != nil {
+	if err := b.withUpdate(ctx, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error { return txn.Delete(labelIndexReadyKey) }); err != nil {
 		return 0, fmt.Errorf("clear label index before rebuild (invalidate readiness): %w", err)
 	}
 	// The common deletion owner retains index versions for older snapshots.

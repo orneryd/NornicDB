@@ -241,13 +241,6 @@ func TestDeletedEntityViewsReplace(t *testing.T) {
 	require.Equal(t, storage.EdgeID("e"), parts.Relationships[0].ID)
 	require.Nil(t, parts.Relationships[0].Properties)
 
-	// A path target deletes its nodes and relationships, collected as the
-	// pipeline DELETE collects them.
-	res := &ExecuteResult{Stats: &QueryStats{}}
-	input := &ExecuteResult{Columns: []string{"p"}, Rows: [][]interface{}{{map[string]interface{}{
-		"nodes": []interface{}{gone, "x"}, "rels": []interface{}{edge, int64(1)}}}}}
-	exec.applyDeleteReturnProjection(res, "MATCH p = ()-->() DELETE p RETURN size(nodes(p)) AS n", "p", deleteProjectionInfo{ctx: context.Background(), input: input})
-	require.Equal(t, [][]interface{}{{int64(2)}}, res.Rows)
 }
 
 func TestDeletedEntityEdgeCases(t *testing.T) {

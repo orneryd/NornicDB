@@ -211,7 +211,7 @@ func adminImportImportIntoBadger(t *testing.T, dir, outDir, schemaFile, database
 // owned, so the reopened schema is the one a later process would serve.
 func adminImportReopenBadger(t *testing.T, dir string) *storage.BadgerEngine {
 	t.Helper()
-	reopened, err := storage.NewBadgerEngine(dir)
+	reopened, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reopened.Close() })
 	return reopened
@@ -239,7 +239,7 @@ func adminImportSeedDurableDestination(t *testing.T, dir, database string, impor
 	durable := schema.ExportDefinition()
 	require.NoError(t, engine.Close())
 
-	reopened, err := storage.NewBadgerEngine(dir)
+	reopened, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 	require.NoError(t, err)
 	served := reopened.GetSchemaForNamespace(database).ExportDefinition()
 	require.NoError(t, reopened.Close())

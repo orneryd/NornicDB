@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -41,7 +42,7 @@ func TestPendingCandidatesStaleMarkerDrain(t *testing.T) {
 			}
 			// Model a durable marker left by old data or interrupted cleanup.
 			// It sorts before the live node, so returning nil would strand work.
-			require.NoError(t, e.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+			require.NoError(t, e.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 				if kind == "corrupt" {
 					if err := txn.Set(nodeKey(staleID), []byte("invalid node body")); err != nil {
 						return err

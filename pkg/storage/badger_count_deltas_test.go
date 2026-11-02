@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/binary"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
@@ -49,7 +50,7 @@ func TestCountDeltaFoldCollapsesIntoBase(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(2), before)
 
-	require.NoError(t, engine.foldLabelCountDeltas(ns, "Fold"))
+	require.NoError(t, engine.foldLabelCountDeltas(context.Background(), ns, "Fold"))
 
 	var baseCount, remainingDeltas int64
 	require.NoError(t, engine.db.View(func(txn *badger.Txn) error {
@@ -110,7 +111,7 @@ func TestCountDeltaMalformedEdgeTypeBaseRepair(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		malformed := make([]byte, 4)
 		binary.BigEndian.PutUint32(malformed, 7)
 		return txn.Set(edgeTypeCountKey("ns1", "T"), malformed)

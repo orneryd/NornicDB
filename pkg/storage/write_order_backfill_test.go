@@ -180,7 +180,7 @@ func TestIndexBackfillKeepsWritesLandingMidChunk(t *testing.T) {
 					}
 					require.NoError(t, seed.CreateEdge(&Edge{ID: "test:ab", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}))
 					require.NoError(t, seed.CreateEdge(&Edge{ID: "test:bc", StartNode: "test:b", EndNode: "test:c", Type: "LINK"}))
-					require.NoError(t, seed.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return txn.Delete(index.marker) }))
+					require.NoError(t, seed.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error { return txn.Delete(index.marker) }))
 					require.NoError(t, seed.Close())
 
 					paused, resume := make(chan struct{}), make(chan struct{})

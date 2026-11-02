@@ -38,48 +38,6 @@ func TestDeleteProjectionCanonicalMultiplicityAndCounters(t *testing.T) {
 	}
 }
 
-func TestDeleteHelpers_ApplyDeleteReturnProjection(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "delete_helpers_cov")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	res := &ExecuteResult{Stats: &QueryStats{NodesDeleted: 2, RelationshipsDeleted: 3}}
-	// A retained native value carries the source of this fixture's store.
-	node := &storage.Node{ID: "n1"}
-	node.SetRuntimeMetadata(storage.NodeRuntimeMetadata{Database: "delete_helpers_cov"})
-	input := &ExecuteResult{Columns: []string{"n"}, Rows: [][]interface{}{{node}, {node}}}
-	exec.applyDeleteReturnProjection(res, "MATCH (n) DELETE n RETURN count(*), count(n), 42 AS literal", "n", deleteProjectionInfo{ctx: ctx, input: input})
-	require.Equal(t, []string{"count(*)", "count(n)", "literal"}, res.Columns)
-	require.Len(t, res.Rows, 1)
-	require.EqualValues(t, 2, res.Rows[0][0])
-	require.EqualValues(t, 2, res.Rows[0][1])
-	require.EqualValues(t, 42, res.Rows[0][2])
-	deletedCtx := withExpressionFailureSlot(ctx)
-	exec.applyDeleteReturnProjection(res, "MATCH (n) DELETE n RETURN n.name", "n", deleteProjectionInfo{ctx: deletedCtx, input: input})
-	requireDeletedEntityError(t, getExpressionFailure(deletedCtx))
-
-	res = &ExecuteResult{Stats: &QueryStats{RelationshipsDeleted: 3}}
-	edge := &storage.Edge{ID: "r1", Database: "delete_helpers_cov", Type: "R"}
-	input = &ExecuteResult{Columns: []string{"r"}, Rows: [][]interface{}{{edge}, {edge}, {edge}}}
-	exec.applyDeleteReturnProjection(res, "MATCH ()-[r]->() DELETE r RETURN count(r), r, type(r)", "r", deleteProjectionInfo{ctx: ctx, input: input})
-	require.Equal(t, []string{"count(r)", "r", "type(r)"}, res.Columns)
-	require.Len(t, res.Rows, 1)
-	require.EqualValues(t, 3, res.Rows[0][0])
-	// The deleted relationship reads as its empty view (#907).
-	require.Equal(t, &storage.Edge{ID: "r1", Database: "delete_helpers_cov", Type: "R"}, res.Rows[0][1])
-	require.Equal(t, "R", res.Rows[0][2])
-
-	res = &ExecuteResult{Stats: &QueryStats{NodesDeleted: 2, RelationshipsDeleted: 3}}
-	info := deleteProjectionInfo{ctx: ctx, input: &ExecuteResult{Columns: []string{"n", "r"}, Rows: [][]interface{}{{node, edge}}}}
-	exec.applyDeleteReturnProjection(res, "MATCH (n)-[r]->() DELETE n, r RETURN count(n), count(r), count(*)", "n, r", info)
-	require.Equal(t, []string{"count(n)", "count(r)", "count(*)"}, res.Columns)
-	require.Len(t, res.Rows, 1)
-	require.EqualValues(t, 1, res.Rows[0][0])
-	require.EqualValues(t, 1, res.Rows[0][1])
-	require.EqualValues(t, 1, res.Rows[0][2])
-}
-
 func TestDeleteHelpers_StreamEligibilityAndExecution(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "delete_stream_cov")

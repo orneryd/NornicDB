@@ -167,10 +167,10 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 	// entities without their counts.
 	// Completed batches remain durable if a later record fails. Repair their
 	// counts as well, while preserving the original recovery failure.
-	if countErr := b.ensureLabelCounts(); countErr != nil {
+	if countErr := b.ensureLabelCounts(context.Background()); countErr != nil {
 		err = errors.Join(err, fmt.Errorf("wal: rebuild label counts after buffered replay: %w", countErr))
 	}
-	if countErr := b.ensureEdgeTypeCounts(); countErr != nil {
+	if countErr := b.ensureEdgeTypeCounts(context.Background()); countErr != nil {
 		err = errors.Join(err, fmt.Errorf("wal: rebuild edge-type counts after buffered replay: %w", countErr))
 	}
 	return replayed, err

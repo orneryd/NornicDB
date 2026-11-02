@@ -37,7 +37,7 @@ func tlfWriteFormat3Indexes(t *testing.T, engine *BadgerEngine, c Constraint, pr
 	spec, ok := splitTemporalKeySpec(c.Properties)
 	require.True(t, ok)
 	var old [2]temporalIndexDescriptor
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		for i, id := range []NodeID{"test:first", "test:second"} {
 			keyValue, missing := spec.keyValue(properties[i])
 			require.Empty(t, missing)

@@ -154,12 +154,16 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		return nil, source.Err
 	}
 	// Retain the original credential context across admission and routing errors.
+	// journalCtx is the originating request context. A statement that panics
+	// before creation has no terminal journal, so its completion must not be
+	// recorded into an enclosing statement's journal.
+	journalCtx := ctx
 	defer func(original string) {
-		var owner context.Context
+		owner, journaled := journalCtx, false
 		if statement != nil {
-			owner = statement
+			owner, journaled = statement, true
 		}
-		completeStatementTerminalOutcome(owner, &result, &retErr, func() {
+		completeStatementTerminalOutcome(owner, journaled, &result, &retErr, func() {
 			redactAdminCommandErrorSource(source, original, &retErr, statementCredentials(ctx))
 			retErr = nornicerrors.ProjectTerminalOutcomeMessages(retErr, func(display error) error {
 				redactAdminCommandErrorSource(source, original, &display, statementCredentials(ctx))

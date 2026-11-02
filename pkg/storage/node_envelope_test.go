@@ -7,12 +7,14 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 	"github.com/vmihailenco/msgpack/v5"
 )
@@ -20,7 +22,7 @@ import (
 func labelMetadataBody(t *testing.T, b *BadgerEngine, size int, trap bool) []byte {
 	t.Helper()
 	var body []byte
-	require.NoError(t, b.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, b.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		props, err := b.encodeTokenizedProperties(txn, "test", map[string]any{"payload": strings.Repeat("p", size)})
 		if err != nil {
 			return err
@@ -57,7 +59,7 @@ func appendLabelMetadataUvarint(dst []byte, value uint64) []byte {
 }
 
 func TestNodeEnvelopeModes(t *testing.T) {
-	b, err := NewBadgerEngineInMemory()
+	b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer b.Close()
 	body := labelMetadataBody(t, b, 64, false)

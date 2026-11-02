@@ -292,7 +292,8 @@ func (it *prefetchRowIterator) Close() error {
 	if it == nil {
 		return nil
 	}
-	return it.work.Shutdown(context.Background(), nil)
+	it.work.BeginStop(nil)
+	return it.work.JoinStopped()
 }
 
 // NewConcatRowIterator owns each child close once. Concurrent stop may interrupt

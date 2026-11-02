@@ -52,7 +52,7 @@ func TestTemporalHelperFunctions(t *testing.T) {
 
 func TestTemporalClearBadgerPrefix_ContextCancel(t *testing.T) {
 	engine := newTestEngine(t)
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		return txn.Set([]byte{prefixTemporalIndex, 0x01}, []byte("x"))
 	}))
 
@@ -90,7 +90,7 @@ func TestRebuildTemporalNodeInTxn_Branches(t *testing.T) {
 	_, err = engine.CreateNode(newer)
 	require.NoError(t, err)
 
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		require.NoError(t, engine.rebuildTemporalNodeInTxn(txn, nil, now))
 		require.NoError(t, engine.rebuildTemporalNodeInTxn(txn, &Node{ID: "unprefixed", Labels: []string{"Role"}}, now))
 		require.NoError(t, engine.rebuildTemporalNodeInTxn(txn, older, now))

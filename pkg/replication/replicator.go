@@ -442,7 +442,8 @@ func (r *StandaloneReplicator) WaitForLeader(ctx context.Context) error {
 
 // Shutdown stops the standalone replicator.
 func (r *StandaloneReplicator) Shutdown() error {
-	return r.work.Shutdown(context.Background(), nil)
+	r.work.BeginStop(nil)
+	return r.work.JoinStopped()
 }
 
 // Mode returns the replication mode.

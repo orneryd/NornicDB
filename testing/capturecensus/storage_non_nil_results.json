@@ -18,8 +18,8 @@
       "(*github.com/orneryd/nornicdb/pkg/lifecycle.OnceCompletion).Go",
       "(*github.com/orneryd/nornicdb/pkg/lifecycle.OnceCompletion).Run",
       "(*github.com/orneryd/nornicdb/pkg/lifecycle.OnceCompletion).complete",
-      "(*github.com/orneryd/nornicdb/pkg/lifecycle.OnceCompletion).do",
       "(*github.com/orneryd/nornicdb/pkg/lifecycle.OnceCompletion).doneChan",
+      "(*github.com/orneryd/nornicdb/pkg/lifecycle.OnceCompletion).start",
       "(*github.com/orneryd/nornicdb/pkg/lifecycle.Outcomes).Err",
       "(*github.com/orneryd/nornicdb/pkg/lifecycle.Outcomes).Record",
       "(*github.com/orneryd/nornicdb/pkg/lifecycle.OwnedTimer).Stop",
@@ -36,6 +36,7 @@
       "(*github.com/orneryd/nornicdb/pkg/lifecycle.WorkLifetime).Enter",
       "(*github.com/orneryd/nornicdb/pkg/lifecycle.WorkLifetime).Err",
       "(*github.com/orneryd/nornicdb/pkg/lifecycle.WorkLifetime).Handler",
+      "(*github.com/orneryd/nornicdb/pkg/lifecycle.WorkLifetime).JoinStopped",
       "(*github.com/orneryd/nornicdb/pkg/lifecycle.WorkLifetime).Leave",
       "(*github.com/orneryd/nornicdb/pkg/lifecycle.WorkLifetime).OnRequestComplete",
       "(*github.com/orneryd/nornicdb/pkg/lifecycle.WorkLifetime).OnStop",
@@ -62,13 +63,13 @@
       "pkg/lifecycle/after_func.go [compiled]": "7461e996fb6e5f51d2a9f4c46a75cd72d8650f8d263e804ba3f5eafbbf34ab3b",
       "pkg/lifecycle/component.go [compiled]": "b265bc51a8205dba8b90300bf869defce5f5602d9f275a24c290622203056a18",
       "pkg/lifecycle/doc.go [compiled]": "57fa68a6dd97ea564f2a4139f35bd61ff5ab78df3a69cfce49931a9be37a27c5",
-      "pkg/lifecycle/once_completion.go [compiled]": "4580aa35ffadf75dc7f586d5e0604d76c98e7572d2c9cb5c3f8792072615e265",
+      "pkg/lifecycle/once_completion.go [compiled]": "0733a441ae5494287553a50346900f61f0e36ce2fe2674b42d1714e5c4939465",
       "pkg/lifecycle/outcomes.go [compiled]": "b8af8a676ab519e3b7657704b16cc18f8eb72aeec197b95d7f98f712279d8e8f",
       "pkg/lifecycle/owned_timer.go [compiled]": "620916510ab50afb326d328d616b2d0575e43eee37e4977a210f2cb986c308e9",
       "pkg/lifecycle/shutdown.go [compiled]": "40cff00f7a1e5dc2c049726df6f5d9374ae3857eeb0e10e7f021411f4776c15f",
       "pkg/lifecycle/supervisor.go [compiled]": "71f5a73aa7013a87a833b5897886f318233e8032b9653e7e05f6ea4c2291795e",
       "pkg/lifecycle/testenv.go [compiled]": "5351a788e0f66f65711405a76f4639276985b6670b3a1e5d6253545fe1b258af",
-      "pkg/lifecycle/work_lifetime.go [compiled]": "c8f5ea102f7eb45f33b632343c924e0346f53d08257f88b0758f8fc414de9648"
+      "pkg/lifecycle/work_lifetime.go [compiled]": "48219f2c6d8d84f7d3cee1183a09e13db62838d4a4b30f8198b306a7f4e04458"
     },
     "Review": {
       "EndsEdges": null,
@@ -85,15 +86,15 @@
         "(*github.com/orneryd/nornicdb/pkg/lifecycle.FakeComponent).StartCount": "68be3ad8f341827a3d25a888fe7317a5382f51d8bac250a5a6fc3997f48d3e40",
         "(*github.com/orneryd/nornicdb/pkg/lifecycle.FakeComponent).StartedAtNanos": "7407bf590859e60987826a699486c403c54fbb0605c9cd36ddfe8f262badd5b2",
         "(*github.com/orneryd/nornicdb/pkg/lifecycle.FakeComponent).StartedBefore": "572a3a581a53b5f074aa01b401c72e7bd2d044f2085f2106ca98e160c6247fee",
-        "(*github.com/orneryd/nornicdb/pkg/lifecycle.OnceCompletion).Do": "8fac159fda7d84f49c2f24f53fecf8c1aa2d643623ef44d63af7e93a483c4ffb",
-        "(*github.com/orneryd/nornicdb/pkg/lifecycle.OnceCompletion).DoContext": "03f9a3a1ddea8471040bcdfb09c14ce35737213a07291aea92eab963d26bac82",
+        "(*github.com/orneryd/nornicdb/pkg/lifecycle.OnceCompletion).Do": "f3541fd96392673773d5f3aa0d3504842a06785708df9c073bbbe9a60cc99cff",
+        "(*github.com/orneryd/nornicdb/pkg/lifecycle.OnceCompletion).DoContext": "6ee224aa82273008c8a5cd88c65ed0c842c8a42c3cf1fb03bedb81286c789d8b",
         "(*github.com/orneryd/nornicdb/pkg/lifecycle.OnceCompletion).Done": "2efa20f31446d8a243102d8a678ddf7ef924d8ebb0c61b5117a7bf7e50b81a7d",
         "(*github.com/orneryd/nornicdb/pkg/lifecycle.OnceCompletion).Err": "a98aabda3a579bc4605b54c0990471284f95fcfed77fb03debc7a73df447601a",
-        "(*github.com/orneryd/nornicdb/pkg/lifecycle.OnceCompletion).Go": "bb16ba44a94160aa12234da5d024ef5ea3e99e2167ac4f6021648c4e46e4cf08",
+        "(*github.com/orneryd/nornicdb/pkg/lifecycle.OnceCompletion).Go": "d90dc75be047d2f10f8f3c93ad47e94ff41a9b6f0f5ede8905bf7d13f33a98d4",
         "(*github.com/orneryd/nornicdb/pkg/lifecycle.OnceCompletion).Run": "c5fa0e9003a2bfec561c9823e0ab49c8b9ed4e5ce500ab04a6357a1fbe5f6332",
         "(*github.com/orneryd/nornicdb/pkg/lifecycle.OnceCompletion).complete": "10609e165e87ed263b923d470b6875d34fce830982ac67f8302dee953ea286a6",
-        "(*github.com/orneryd/nornicdb/pkg/lifecycle.OnceCompletion).do": "ffc3ee71e2bc3052be8d36738e8b64f23e2fa959a0674e932f29f9554332f00a",
         "(*github.com/orneryd/nornicdb/pkg/lifecycle.OnceCompletion).doneChan": "f30653af7dfe012d740becfaa8aff299650d12069ba223b5108da724d0146f29",
+        "(*github.com/orneryd/nornicdb/pkg/lifecycle.OnceCompletion).start": "4268c53c3fed008748333676528c1c87f0b73b7a5d39ab63faa8ea78346f9abd",
         "(*github.com/orneryd/nornicdb/pkg/lifecycle.Outcomes).Err": "d8c71b436acf960279a46f2dbdc99c7341dd2ce08e835abc1815c9bfc81b100f",
         "(*github.com/orneryd/nornicdb/pkg/lifecycle.Outcomes).Record": "ee7c01596c754c51e4bce37c69a0abbe22e23131cbf1e7b5a27d103b8dae92f1",
         "(*github.com/orneryd/nornicdb/pkg/lifecycle.OwnedTimer).Stop": "530283c95661448ff8b132c01c748fbae5fe54f7c995829dc3835c4ef926e17e",
@@ -102,7 +103,7 @@
         "(*github.com/orneryd/nornicdb/pkg/lifecycle.WorkLifetime).Active": "29583c1ce020479cec12f61714827eeb096323353b6d8dc34888673517493f5e",
         "(*github.com/orneryd/nornicdb/pkg/lifecycle.WorkLifetime).BeginStop": "e752d2e891f05c34167013cea2c91143d6657c5088a7839c3c56e6a53ff05042",
         "(*github.com/orneryd/nornicdb/pkg/lifecycle.WorkLifetime).Cancel": "02055cca57289d35cfa95e42b8352c22e91d3cfe7ddc51cc6cb34bc10bf9058f",
-        "(*github.com/orneryd/nornicdb/pkg/lifecycle.WorkLifetime).Close": "17ea604041ba2541acea65c722f1731a9e1abb1793f2197d2f62bd7640d48d7c",
+        "(*github.com/orneryd/nornicdb/pkg/lifecycle.WorkLifetime).Close": "6b4ef21432fc4d05732bf11a200d40e58312fd8edbce7ef5dfa1930d6880e026",
         "(*github.com/orneryd/nornicdb/pkg/lifecycle.WorkLifetime).CloseAdmission": "cf12549902faa8ba6c528459314ab0d30abf09111abff5f577955d77ec13809f",
         "(*github.com/orneryd/nornicdb/pkg/lifecycle.WorkLifetime).CloseContext": "494e8a585a670dc79e4ce1866bb2321f3abe57dca6dfe36b6da5c7dd938d5804",
         "(*github.com/orneryd/nornicdb/pkg/lifecycle.WorkLifetime).Closing": "757b3ce98c5e1caf7c66a6f19567ef099f16d55ba37c2245953ae53dd623d9ab",
@@ -110,6 +111,7 @@
         "(*github.com/orneryd/nornicdb/pkg/lifecycle.WorkLifetime).Enter": "162f342b167034d69a4e1bb6087814412c1c1c156b3f6ce1b0762ecdb94638f0",
         "(*github.com/orneryd/nornicdb/pkg/lifecycle.WorkLifetime).Err": "ac5a8ee8703d144e532db72b40ae5113a43fd92eba2b21c4bf0718206322516e",
         "(*github.com/orneryd/nornicdb/pkg/lifecycle.WorkLifetime).Handler": "a57839163278f64bdc054a47952b6ac6ef8b061aa69ca8dc0dffd1709c144654",
+        "(*github.com/orneryd/nornicdb/pkg/lifecycle.WorkLifetime).JoinStopped": "0443faaf4140430a2545cdeb72c7e3771640f43a87cab9bd8de8ce1c00d1d95f",
         "(*github.com/orneryd/nornicdb/pkg/lifecycle.WorkLifetime).Leave": "357f8d7e3a769edef2454c0ed6f8f4d61a2c8f0f91a7a759f65ded53299b20cd",
         "(*github.com/orneryd/nornicdb/pkg/lifecycle.WorkLifetime).OnRequestComplete": "c9e45481b18836c922d3007e54c995705b17ff3d7e769fd23584297b1ffca5fa",
         "(*github.com/orneryd/nornicdb/pkg/lifecycle.WorkLifetime).OnStop": "012dfbb3466feec7f7058e704134dcd3603069922fae81641ab59bbd03f3a47a",
@@ -132,7 +134,7 @@
         "github.com/orneryd/nornicdb/pkg/lifecycle.nextSeq": "43208e64ecaaf2b59c58d4f5a2e3b187eb0d3e7b5023edde8eddfb238216e9f3",
         "github.com/orneryd/nornicdb/pkg/lifecycle.requireContext": "3018b54bafeaba96cf337c916fb85ce12b87af997b22e5a9773e8e9d72dc6e81"
       },
-      "Closure": "f740e4125d07ee0c72751d964a655aef722c02275e496c83ac939d039153630c",
+      "Closure": "a98fbb43530f25eaf1adb2b0b815ba11b790f8ffe9341318a9a98fae9446e858",
       "Modules": null,
       "Callers": null,
       "FieldWriters": {
@@ -154,6 +156,7 @@
           "Enter declared",
           "Err declared",
           "Handler declared",
+          "JoinStopped declared",
           "Leave declared",
           "OnRequestComplete declared",
           "OnStop declared",
@@ -169,8 +172,8 @@
           "initContext declared"
         ]
       },
-      "Reason": "Reviewed normal-return contract only: Context calls init before reading private ctx; initContext's sync.Once.Do initializes it with context.WithCancel(non-nil parent). NewWorkLifetime rejects nil; zero value uses Background. Cancellation preserves a non-nil context. No request provenance or owner substitution is exempted; nullable wrapper results and direct ctx field loads are not covered. Provider package re-reviewed in full at HEAD 5bf14fcebcabe665f40d5df30abfb754ee006ca0 after the prerequisite rebase: only DrainReverse and Run changed (errors.Join replaces the compose.Outcomes call); neither writes WorkLifetime state nor supplies a context to its Context provider.",
-      "Approver": "DeepSeek bounded worker complete provider-package re-review at 5bf14fcebcabe665f40d5df30abfb754ee006ca0; final parent acceptance pending"
+      "Reason": "Reviewed normal-return contract only: Context calls init before reading private ctx; initContext's sync.Once.Do initializes it with context.WithCancel(non-nil parent). NewWorkLifetime rejects nil; zero value uses Background. Cancellation preserves a non-nil context. No request provenance or owner substitution is exempted; nullable wrapper results and direct ctx field loads are not covered. Current source revalidation retains that same result-slot-zero contract: OnceCompletion.do is retired in favor of start, Do/DoContext/Go dispatch are changed, WorkLifetime.Close joins via new JoinStopped; none changes Context/init/initContext or writes WorkLifetime.ctx. Complete compiled provider package, source closure, method set and sole initContext ctx writer are repinned from actual loaded parser bytes. No request provenance, nullable wrapper or direct-field exemption is added.",
+      "Approver": "Codex independent current-source revalidation after complete-program source, method, writer and overlay controls; existing normal-return contract retained"
     }
   }
 }

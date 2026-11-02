@@ -27,7 +27,7 @@ func BenchmarkLabelRebuildReadCosts(b *testing.B) {
 			for _, state := range []string{"ready", "building"} {
 				if state == "building" {
 					engine.labelIndexReadyAt.Store(0)
-					require.NoError(b, engine.withUpdate(updateRequest{ctx: b.Context(), scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error { return txn.Delete(labelIndexReadyKey) }))
+					require.NoError(b, engine.withUpdate(b.Context(), updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error { return txn.Delete(labelIndexReadyKey) }))
 					require.NoError(b, engine.db.DropPrefix(b.Context(), prefixDropOptions{engine: engine, metadata: true}, []byte{prefixLabelIndex}))
 				}
 				b.Run(state, func(b *testing.B) {

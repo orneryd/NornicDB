@@ -171,7 +171,7 @@ func MarkNewTemporalConstraintsForEngine(engine Engine, schema *SchemaManager, c
 				return err
 			}
 			if !empty {
-				if err := badgerEngine.backfillTemporalIndexForLabel(engine, c.Label); err != nil {
+				if err := badgerEngine.backfillTemporalIndexForLabel(lifecycle.ctx, engine, c.Label); err != nil {
 					return err
 				}
 			}
@@ -204,12 +204,12 @@ func engineScope(engine Engine) []string {
 // backfillTemporalIndexForLabel writes the temporal history entries (and
 // current pointers) of every stored node of label visible through engine (a
 // database-scoped wrapper of b), in chunks: the same per-node work as
-// RebuildTemporalIndexes, for one label instead of the whole store.
-func (b *BadgerEngine) backfillTemporalIndexForLabel(engine Engine, label string) error {
+// RebuildTemporalIndexes, for one label instead of the whole store. ctx is the
+// maintenance write's own lifetime, passed from the lease its caller holds
+// (MarkNewTemporalConstraintsForEngine), never a default chosen here.
+func (b *BadgerEngine) backfillTemporalIndexForLabel(ctx context.Context, engine Engine, label string) error {
 	var ids []NodeID
-	// The backfill is maintenance work without a caller context: its own
-	// lifetime (context.Background) is the boundary, not a forwarded default.
-	if err := StreamStoredNodesByLabelProjected(context.Background(), engine, label, []string{}, func(node *Node) error {
+	if err := StreamStoredNodesByLabelProjected(ctx, engine, label, []string{}, func(node *Node) error {
 		if node != nil {
 			ids = append(ids, EnsureNodeIDDatabasePrefixForEngine(engine, node.ID))
 		}
@@ -221,7 +221,7 @@ func (b *BadgerEngine) backfillTemporalIndexForLabel(engine Engine, label string
 	const chunk = 500
 	for start := 0; start < len(ids); start += chunk {
 		part := ids[start:min(start+chunk, len(ids))]
-		if err := b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+		if err := b.withUpdate(ctx, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 			for _, id := range part {
 				node, err := b.loadNodeForTemporalTxn(txn, id, false)
 				if err != nil {

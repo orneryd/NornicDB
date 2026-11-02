@@ -3,12 +3,17 @@ package workcensus
 // Context-owner convergence author: Claude (storage-format-owners lane), #1693, 30 October 2026.
 
 import (
+	"bytes"
 	"fmt"
+	"go/ast"
+	"go/parser"
 	"go/token"
 	"go/types"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"golang.org/x/tools/go/callgraph"
 	"golang.org/x/tools/go/callgraph/vta"
@@ -33,6 +38,7 @@ type Program struct {
 	nilFlow       *nilFlow                         // MayBeNil's memo; a Program is queried by one goroutine
 	// dynamicTargets is CallTargets' memo of DynamicCallTargets.
 	dynamicTargets map[ssa.CallInstruction][]*ssa.Function
+	sources        *loadedSources
 	load           packages.Config // the load settings, reused to read a dependency's bodies on demand
 }
 
@@ -50,7 +56,17 @@ func LoadProgram(c Config) (*Program, error) {
 	if len(c.Patterns) == 0 {
 		return nil, fmt.Errorf("Go program view requires package patterns")
 	}
-	pkgs, _, err := loadPackages(c, root)
+	c.BuildFlags = append([]string(nil), c.BuildFlags...)
+	c.Env = append([]string(nil), c.Env...)
+	// Keep the bytes used by the compiler independent of caller-owned maps and slices.
+	if c.Overlay != nil {
+		overlay := make(map[string][]byte, len(c.Overlay))
+		for path, raw := range c.Overlay {
+			overlay[path] = bytes.Clone(raw)
+		}
+		c.Overlay = overlay
+	}
+	pkgs, _, sources, err := loadPackages(c, root)
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +76,7 @@ func LoadProgram(c Config) (*Program, error) {
 	// VTA's nil initial graph constructs its CHA candidates from this exact
 	// function population. cha.CallGraph(prog) uses AllFunctions internally,
 	// which would again omit the otherwise-unreferenced source methods.
-	result := &Program{Root: root, FileSet: prog.Fset, Packages: pkgs, SSA: prog, CallGraph: vta.CallGraph(all, nil), load: packages.Config{Dir: root, BuildFlags: c.BuildFlags, Env: c.Env}}
+	result := &Program{Root: root, FileSet: prog.Fset, Packages: pkgs, SSA: prog, CallGraph: vta.CallGraph(all, nil), load: packages.Config{Dir: root, BuildFlags: c.BuildFlags, Env: c.Env, Overlay: c.Overlay, ParseFile: sources.parse}, sources: sources}
 	for fn := range all {
 		result.Functions = append(result.Functions, fn)
 	}
@@ -72,6 +88,54 @@ func LoadProgram(c Config) (*Program, error) {
 		return a.Pos() < b.Pos()
 	})
 	return result, nil
+}
+
+// ModuleConfig returns the separately captured root go.mod metadata from loading.
+// Module metadata is not a Go parser input. A missing module remains an error,
+// rather than an empty successful attestation.
+func (p *Program) ModuleConfig() ([]byte, error) {
+	if p.sources == nil {
+		return nil, fmt.Errorf("module config was not loaded")
+	}
+	return bytes.Clone(p.sources.module), p.sources.moduleErr
+}
+
+// LoadedSource returns an owned copy of the exact bytes passed to the parser
+// for a loaded file, including overlay and on-demand dependency source. It never
+// substitutes current disk bytes for a compiled body.
+func (p *Program) LoadedSource(path string) ([]byte, error) {
+	if p.sources != nil {
+		p.sources.mu.Lock()
+		raw, ok := p.sources.files[path]
+		p.sources.mu.Unlock()
+		if ok {
+			return bytes.Clone(raw), nil
+		}
+	}
+	return nil, &os.PathError{Op: "loaded source", Path: path, Err: os.ErrNotExist}
+}
+
+// loadedSources owns parser inputs. packages can invoke ParseFile concurrently.
+// Package variants may parse one file more than once; differing bytes must fail
+// instead of assigning one source digest to inconsistent compiled bodies.
+type loadedSources struct {
+	mu        sync.Mutex
+	files     map[string][]byte
+	module    []byte
+	moduleErr error
+}
+
+func (s *loadedSources) parse(fset *token.FileSet, path string, raw []byte) (*ast.File, error) {
+	owned := bytes.Clone(raw)
+	s.mu.Lock()
+	if prior, ok := s.files[path]; ok && !bytes.Equal(prior, owned) {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("source changed while loading %s", path)
+	}
+	s.files[path] = owned
+	s.mu.Unlock()
+	// Match go/packages' default parser flags, including object resolution.
+	return parser.ParseFile(fset, path, owned, parser.AllErrors|parser.ParseComments)
 }
 
 // sourceFunctions retains linker-style instances/wrappers AND every function
@@ -114,11 +178,13 @@ func sourceFunctions(prog *ssa.Program, pkgs []*packages.Package) map[*ssa.Funct
 }
 
 // loadPackages is the single typed loader for both extraction modes.
-func loadPackages(c Config, root string) ([]*packages.Package, *token.FileSet, error) {
+func loadPackages(c Config, root string) ([]*packages.Package, *token.FileSet, *loadedSources, error) {
+	sources := &loadedSources{files: map[string][]byte{}}
+	sources.module, sources.moduleErr = os.ReadFile(filepath.Join(root, "go.mod"))
 	fset := token.NewFileSet()
-	pkgs, err := packages.Load(&packages.Config{Fset: fset, Mode: packages.LoadSyntax | c.LoadMode, Dir: root, BuildFlags: c.BuildFlags, Tests: c.Tests, Env: c.Env, Overlay: c.Overlay}, c.Patterns...)
+	pkgs, err := packages.Load(&packages.Config{Fset: fset, Mode: packages.LoadSyntax | c.LoadMode, Dir: root, BuildFlags: c.BuildFlags, Tests: c.Tests, Env: c.Env, Overlay: c.Overlay, ParseFile: sources.parse}, c.Patterns...)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	var loadErrors []string
 	packages.Visit(pkgs, nil, func(p *packages.Package) {
@@ -128,7 +194,7 @@ func loadPackages(c Config, root string) ([]*packages.Package, *token.FileSet, e
 	})
 	if len(loadErrors) > 0 {
 		sort.Strings(loadErrors)
-		return nil, nil, fmt.Errorf("source does not type-check: %s", strings.Join(loadErrors, "\n"))
+		return nil, nil, nil, fmt.Errorf("source does not type-check: %s", strings.Join(loadErrors, "\n"))
 	}
-	return pkgs, fset, nil
+	return pkgs, fset, sources, nil
 }

@@ -64,7 +64,7 @@ func TestBadgerQueries_EdgeFromTxn_ErrorBranches(t *testing.T) {
 		return nil
 	}))
 
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		return txn.Set(edgeKey("test:bad"), []byte("not-a-valid-edge"))
 	}))
 	require.NoError(t, engine.withView(func(txn *badger.Txn) error {

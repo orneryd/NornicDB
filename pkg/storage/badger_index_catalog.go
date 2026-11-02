@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"context"
+
 	badger "github.com/dgraph-io/badger/v4"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 )
@@ -19,8 +21,11 @@ func indexEntryCatalogKey(entityID string) []byte {
 	return accessMetaKey(entityID)
 }
 
+// PutIndexEntryCatalog is an exported context-free catalog write: it is its
+// own entry, so it passes its own explicit unbounded lifetime. Its callers
+// remain context-free until a context-first public contract is approved.
 func (b *BadgerEngine) PutIndexEntryCatalog(entityID string, cat *IndexEntryCatalog) error {
-	return b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+	return b.withUpdate(context.Background(), updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		return putIndexEntryCatalogInTxn(txn, entityID, cat)
 	})
 }
@@ -60,8 +65,11 @@ func (b *BadgerEngine) GetIndexEntryCatalog(entityID string) (*IndexEntryCatalog
 	return &IndexEntryCatalog{TargetID: entry.TargetID, TargetScope: string(entry.TargetScope), IndexKeys: entry.IndexKeys, Deindexed: entry.Deindexed}, nil
 }
 
+// DeleteIndexEntryCatalog is the catalog write's exported context-free entry,
+// as PutIndexEntryCatalog is: its own unbounded lifetime, not a default for a
+// context a caller did supply.
 func (b *BadgerEngine) DeleteIndexEntryCatalog(entityID string) error {
-	return b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+	return b.withUpdate(context.Background(), updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		return deleteIndexEntryCatalogInTxn(txn, entityID)
 	})
 }

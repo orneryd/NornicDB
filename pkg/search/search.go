@@ -2258,7 +2258,8 @@ func (s *Service) Close() error {
 	if s == nil {
 		return nil
 	}
-	return s.lifetimeWork.Shutdown(context.Background(), s.closeResources)
+	s.lifetimeWork.BeginStop(s.closeResources)
+	return s.lifetimeWork.JoinStopped()
 }
 
 // signalStop is the service's stop signal, run when its owner is cancelled:

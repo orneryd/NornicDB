@@ -453,7 +453,8 @@ func (m *Manager) Stats() ManagerStats {
 // Close releases all resources once every admitted model call has returned.
 // Every caller joins the same close and receives its outcome.
 func (m *Manager) Close() error {
-	return m.work.Shutdown(context.Background(), m.closeGenerator)
+	m.work.BeginStop(m.closeGenerator)
+	return m.work.JoinStopped()
 }
 
 func (m *Manager) closeGenerator() error {

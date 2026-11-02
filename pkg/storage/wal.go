@@ -1039,7 +1039,8 @@ func (w *WAL) Close() error {
 	w.mu.Unlock()
 	// Every caller, first or repeated, joins the one stop: the sync loop
 	// returns, then the final sync and handle release run once.
-	return w.work.Shutdown(context.Background(), w.closeFile)
+	w.work.BeginStop(w.closeFile)
+	return w.work.JoinStopped()
 }
 
 // closeFile is the WAL owner's dispose, after the sync loop returned.

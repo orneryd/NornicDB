@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -24,7 +25,7 @@ func TestBadgerMVCC_MaterializeCommit_VariantBranches(t *testing.T) {
 
 	// Seed explicit tombstoned heads so update/delete branches take the
 	// "head exists but tombstoned" path (skip archive body).
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		if err := engine.writeNodeMVCCHeadWithFloorInTxn(txn, "test:tomb-node", v, true, v); err != nil {
 			return err
 		}
@@ -34,7 +35,7 @@ func TestBadgerMVCC_MaterializeCommit_VariantBranches(t *testing.T) {
 		return nil
 	}))
 
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		ops := []Operation{
 			// create path variants
 			{Type: OpCreateNode, Node: &Node{ID: "test:c-fresh", Labels: []string{"N"}}, FreshID: true},
@@ -77,7 +78,7 @@ func TestBadgerMVCC_MaterializeCommit_HeadDecodeErrorsOnDeletePaths(t *testing.T
 	require.NoError(t, err)
 	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e-bad", StartNode: "test:n-bad", EndNode: "test:n2-bad", Type: "R"}))
 
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		nh, err := engine.mvccNodeHeadKeyString(txn, "test:n-bad")
 		if err != nil {
 			return err
@@ -94,13 +95,13 @@ func TestBadgerMVCC_MaterializeCommit_HeadDecodeErrorsOnDeletePaths(t *testing.T
 
 	v := MVCCVersion{CommitTimestamp: time.Now().UTC().Add(3 * time.Second), CommitSequence: 6001}
 
-	err = engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	err = engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		ops := []Operation{{Type: OpDeleteNode, NodeID: "test:n-bad", OldNode: &Node{ID: "test:n-bad", Labels: []string{"N"}}}}
 		return engine.materializeMVCCCommit(t.Context(), singleBatchWriter(txn), v, ops)
 	})
 	require.Error(t, err)
 
-	err = engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	err = engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		ops := []Operation{{Type: OpDeleteEdge, EdgeID: "test:e-bad", OldEdge: &Edge{ID: "test:e-bad", StartNode: "test:n-bad", EndNode: "test:n2-bad", Type: "R"}}}
 		return engine.materializeMVCCCommit(t.Context(), singleBatchWriter(txn), v, ops)
 	})

@@ -759,7 +759,11 @@ func (b *BadgerEngine) PruneChangeEvents(namespace string, cutoff time.Time) (in
 	}
 	for start := 0; start < len(expired); start += 1000 {
 		end := min(start+1000, len(expired))
-		if err := b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+		// Exported context-free pruning entry: the batch writes under this
+		// entry's own explicit unbounded lifetime. Preserving worker
+		// cancellation here needs the context-first public contract that this
+		// method does not have yet.
+		if err := b.withUpdate(context.Background(), updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 			for _, key := range expired[start:end] {
 				if err := txn.Delete(key); err != nil {
 					return err

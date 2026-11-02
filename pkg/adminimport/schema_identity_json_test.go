@@ -266,14 +266,14 @@ func TestNeo4jCSVSchemaDefinitionPreservesEscapedIdentitiesAfterBadgerReopen(t *
 	low := adminImportEscapedUnit(t, "dc00")
 
 	sourceDir := t.TempDir()
-	sourceEngine, err := storage.NewBadgerEngine(sourceDir)
+	sourceEngine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(sourceDir))
 	require.NoError(t, err)
 	source := storage.NewNamespacedEngine(sourceEngine, "source")
 	adminImportSeedNode(t, source)
 	identities := adminImportSeedEscapedSchema(t, source.GetSchema(), high, low)
 	require.NoError(t, sourceEngine.Close())
 
-	reopened, err := storage.NewBadgerEngine(sourceDir)
+	reopened, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(sourceDir))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reopened.Close() })
 	stored := reopened.GetSchemaForNamespace("source")

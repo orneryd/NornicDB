@@ -119,9 +119,14 @@ func nativeTerminalOutcomeScope(ctx context.Context) bool {
 // Qualifiers such as commit classification, timeout ownership and source
 // projection belong to their existing return boundaries. Retain their complete
 // returned object before a callback can discard it, without reimplementing them.
-func completeStatementTerminalOutcome(ctx context.Context, result **ExecuteResult, retErr *error, project func()) {
+// journaled states whether ctx reaches this statement's terminal journal and
+// the coordinator markers that own it. A statement that never reached
+// creation owns neither: its originating request context still projects the
+// display value, but its outcome must not be recorded into an enclosing
+// statement's journal.
+func completeStatementTerminalOutcome(ctx context.Context, journaled bool, result **ExecuteResult, retErr *error, project func()) {
 	var owner *statementExecutionContext
-	if nativeTerminalOutcomeScope(ctx) {
+	if journaled && nativeTerminalOutcomeScope(ctx) {
 		if statement, ok := ctx.Value(queryEmbeddingStatementKey{}).(*statementExecutionContext); ok {
 			if statement.outcome.hasTerminalFailures() {
 				owner = statement
@@ -132,13 +137,16 @@ func completeStatementTerminalOutcome(ctx context.Context, result **ExecuteResul
 	}
 	// Compose first, then let the existing display owner project every child.
 	// Only the final display-safe value is promoted to enclosing statements.
+	// Every completion projects exactly once, with or without this statement's
+	// journal: an error or panic return before the journal exists still needs
+	// its display-safe value.
 	if project != nil {
 		project()
 	}
 	if owner != nil {
 		recordTerminalOutcome(ctx, *retErr)
 	}
-	if *retErr != nil && nativeTerminalOutcomeScope(ctx) {
+	if journaled && *retErr != nil && nativeTerminalOutcomeScope(ctx) {
 		nornicerrors.RecordTerminalOutcome(ctx, *retErr)
 	}
 }

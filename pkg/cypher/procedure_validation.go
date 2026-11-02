@@ -227,7 +227,13 @@ func validateAndCoerceProcedureArguments(spec ProcedureSpec, args []interface{},
 // LIST parameter also takes NornicDB's other forms (a node id, a label, a
 // request's short form).
 func staticProcedureArgumentTypeError(ctx context.Context, clause string, scope staticTypeScope, unwound map[string]struct{}) error {
-	procedure, found := globalProcedureRegistry.Get(extractProcedureName(ctx, clause))
+	name, err := extractProcedureName(ctx, clause)
+	if err != nil {
+		// A clause the reader could not parse gets no static type verdict; the
+		// owner that runs the CALL reports the parse error.
+		return nil
+	}
+	procedure, found := globalProcedureRegistry.Get(name)
 	if !found {
 		return nil
 	}

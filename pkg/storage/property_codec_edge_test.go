@@ -17,6 +17,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"math"
 	"testing"
 
@@ -32,7 +33,7 @@ import (
 func roundTripValueThroughCodec(t *testing.T, eng *BadgerEngine, key string, val any) any {
 	t.Helper()
 	var data []byte
-	require.NoError(t, eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		var err error
 		data, err = eng.encodeTokenizedProperties(txn, "ns", map[string]any{key: val})
 		if err != nil {
@@ -399,7 +400,7 @@ func TestDecodeTokenizedProperties_DuplicateKeyOverwrites(t *testing.T) {
 	eng := newTestEngine(t)
 	// Allocate "k" so the dict knows the id.
 	var keyID uint64
-	require.NoError(t, eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		id, err := eng.propKeyDict.resolveOrAllocateInTxn(txn, "ns", "k")
 		require.NoError(t, err)
 		keyID = id
@@ -436,7 +437,7 @@ func TestRoundTrip_LargePropertyMap(t *testing.T) {
 	}
 
 	var data []byte
-	require.NoError(t, eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		var err error
 		data, err = eng.encodeTokenizedProperties(txn, "ns", props)
 		if err != nil {

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -211,7 +212,7 @@ func TestPR1667IndexedStatementPreparationCancellation(t *testing.T) {
 	forEachParser(t, func(t *testing.T) {
 		for _, tc := range pr1667IndexedPreparationCases() {
 			t.Run(tc.name, func(t *testing.T) {
-				b, err := storage.NewBadgerEngine(t.TempDir())
+				b, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 				require.NoError(t, err)
 				t.Cleanup(func() { require.NoError(t, b.Close()) })
 				probe := &pr1667PreparationProbe{NamespacedEngine: storage.NewNamespacedEngine(b, "pr1667")}
@@ -299,7 +300,7 @@ func TestPR1667PendingIndexedPreparationCancellation(t *testing.T) {
 	forEachParser(t, func(t *testing.T) {
 		for _, tc := range pr1667PendingPreparationCases() {
 			t.Run(tc.name, func(t *testing.T) {
-				b, err := storage.NewBadgerEngine(t.TempDir())
+				b, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 				require.NoError(t, err)
 				t.Cleanup(func() { require.NoError(t, b.Close()) })
 				probe := &pr1667PreparationProbe{NamespacedEngine: storage.NewNamespacedEngine(b, "pr1667")}

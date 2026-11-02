@@ -27,7 +27,15 @@ type listenerLifetime struct {
 	forced     lifecycle.OnceCompletion // the caller deadline that forced the transport
 }
 
-func (c *listenerLifetime) init(server *http.Server, listener net.Listener, beforeStop func(context.Context) error) {
+// init binds the transport resources exactly once and returns the caller's
+// context made non-nil. The optional nil is normalized here, once, for every
+// component entry boundary; a caller's own context keeps its identity, values,
+// deadline and cancellation. Only the bound resources are once-owned — they
+// never derive from the caller's context, which bounds this entry alone.
+func (c *listenerLifetime) init(ctx context.Context, server *http.Server, listener net.Listener, beforeStop func(context.Context) error) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	c.initOnce.Do(func() {
 		c.server, c.beforeStop = server, beforeStop
 		c.listener = &retirementListener{Listener: listener, owner: c}
@@ -37,6 +45,7 @@ func (c *listenerLifetime) init(server *http.Server, listener net.Listener, befo
 		}
 		server.Handler = c.work.Handler(handler)
 	})
+	return ctx
 }
 
 func (c *listenerLifetime) record(operation string, err error) {
@@ -45,10 +54,9 @@ func (c *listenerLifetime) record(operation string, err error) {
 	}
 }
 
+// run, beginStop, shutdown and wait require a non-nil caller context. Every
+// public component entry obtains it from init above.
 func (c *listenerLifetime) run(ctx context.Context) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	serveCtx, release, accepted := c.work.Acquire(c.work.Context())
 	if !accepted {
 		return fmt.Errorf("observability listener is stopped")
@@ -89,9 +97,6 @@ func (c *listenerLifetime) run(ctx context.Context) error {
 }
 
 func (c *listenerLifetime) beginStop(ctx context.Context) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if !c.work.CloseAdmission() {
 		return
 	}
@@ -125,9 +130,6 @@ func (c *listenerLifetime) beginStop(ctx context.Context) {
 }
 
 func (c *listenerLifetime) shutdown(ctx context.Context) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	c.beginStop(ctx)
 	select {
 	case <-c.stopped.Done():
@@ -140,9 +142,6 @@ func (c *listenerLifetime) shutdown(ctx context.Context) error {
 }
 
 func (c *listenerLifetime) wait(ctx context.Context) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	select {
 	case <-c.stopped.Done():
 		return c.work.Err()

@@ -7,12 +7,13 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
 func TestPR1667LargeIndexedPreparationCancellation(t *testing.T) {
-	b, err := storage.NewBadgerEngine(t.TempDir())
+	b, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, b.Close()) })
 	probe := &pr1667PreparationProbe{NamespacedEngine: storage.NewNamespacedEngine(b, "pr1667")}

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -44,7 +45,7 @@ func (c *buildJoinContext) Done() <-chan struct{} {
 }
 
 func TestBuildSearchIndexesRebuildsAfterJoiningStaleInitialSnapshot(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	gate := &staleInitialSearchSnapshot{Engine: storage.NewNamespacedEngine(base, "nornic"), entered: make(chan struct{}), release: make(chan struct{})}
 	db := &DB{storage: gate.Engine, baseStorage: base, config: DefaultConfig(), searchServices: make(map[string]*dbSearchService), embeddingDims: 3, searchMinSimilarity: 0.1, buildCtx: context.Background()}
 	ctx, cancel := context.WithCancel(context.Background())
