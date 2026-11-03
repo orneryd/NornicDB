@@ -616,8 +616,8 @@
     "sha256": "c73a8cbaaa112250ddd2951a044de2d6d575a506872e7d72b6fc67a5e01967ee"
   },
   "internal/jsontext/codec.go:unmarshal": {
-    "reason": "Author: #1665 implementation lane (Codex). Retained typed/string binder: standard JSON validates syntax and locates type errors; the fork preserves projected strings. The added immutable numbers mode selects UseNumber before binding, then the numeric domain normalizes kinds.",
-    "sha256": "d3c9eb5c8c905bfcb4c54291273844584c267a1d9847345679695b8b728d71e8"
+    "reason": "Author: #1665 implementation lane (Codex). Retained typed/string binder: standard JSON validates syntax and locates type errors; the fork preserves projected strings. The added immutable numbers mode selects UseNumber before binding, then the numeric domain normalizes kinds. Re-reviewed after release df07c94fb: only error metadata now delegates to jsonRootName and JSON Pointer field projection to match Go 1.27; syntax validation, exact string projection and number binding/normalization are unchanged.",
+    "sha256": "c157704408ea7a3138f12ba6de8a4de124db22fbb4a1e89c4ec915af5ac64ff4"
   },
   "internal/testutil/remotegraph/remote_graph.go:New": {
     "reason": "Author: #1665 implementation lane (Codex). Internal remote-graph fixture server reads typed control requests and writes fixed test graph envelopes, not a production property admission path; unchanged TJ body.",

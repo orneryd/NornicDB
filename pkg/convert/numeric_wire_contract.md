@@ -112,3 +112,11 @@ restore the INTEGER token `1152921504606847000`; the original FLOAT value and ki
 cannot be recovered at that import boundary. New JSON backups carry version
 `2.0` and preserve FLOAT kind and negative zero. This import policy is distinct
 from versioned internal-state compatibility above.
+
+Go embedding callers use the canonical numeric text owner directly:
+`convert.FormatFloat(value, bits)` replaces `cypher.FormatFloat`; no forwarding
+wrapper remains. Existing Cypher, HTTP and Bolt names keep their public syntax.
+The decoder dependency binds typed FLOAT32 values directly at 32-bit precision,
+including valid maximum values and decimals close to rounding midpoints.
+Schema consumers call `storage.EncodeSchemaDefinition` rather than choosing an
+ordinary property writer for typed metadata or bypassing the versioned codec.

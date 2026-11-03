@@ -304,7 +304,7 @@
     "sha256": "eaa71c9ea3c495242bceaf8b30c39849b430fec787757f909ceb04c64840f04e"
   },
   "pkg/convert/json_encode.go:any": {
-    "reason": "Owner (output): the JSON writer's value dispatch (jsonWriterState.any); an encoder, not an input reader; every FLOAT is written through the one write decision appendJSONFloat.",
-    "sha256": "14f6af1d57089e73c5770b77eeeb1204380f93c2b887ca7d40971a1f8d746cee"
+    "reason": "Owner (output): the JSON writer's value dispatch (jsonWriterState.any); an encoder, not an input reader; every FLOAT is written through the one write decision appendJSONFloat. Typed persisted-state metadata spelling is temporarily disabled across dynamic interface values and restored for siblings; this state controls output spelling only, not number acceptance or input normalization. The added save/restore is the reviewed source delta.",
+    "sha256": "6340aeeab8ecf0a55fa13db61b20406691b1540fb8fbc8edbb744645567479db"
   }
 }

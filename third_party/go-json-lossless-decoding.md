@@ -43,11 +43,15 @@ wrapper decoder, storage format or migration arm is added.
 
 ## Qualification and upgrades
 
-Complete fork module tests and focused race checks pass on Go1.26.9, including
+The original lossless/cycle correction passed complete fork module tests and
+focused race checks on Go1.26.9, including
 upstream defaults, lossless map/string identities, long/streamed input, paths,
 concurrent isolation, grammar rejection and map cycles. First-party codec/public
 graph proof and the unchanged fixture are recorded in the PR1515 evidence
-receipts. The integrated uncached make test passed after dependency pinning (121 packages); see the release checkpoint task receipt.
+receipts. That original integrated uncached make test passed after dependency pinning
+(121 packages); see the historical release checkpoint task receipt. It does not
+qualify the current numeric correction: PR #1665 records its own current-head
+gate, including focused float32 race checks on Go 1.27.3.
 Benchmarking is deferred until this major refactor is pushed; no comparative
 performance pass is claimed.
 

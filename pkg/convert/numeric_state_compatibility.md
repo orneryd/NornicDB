@@ -2,7 +2,9 @@
 
 The original inventory compared the numeric layer with historical release base
 `b1b018d3f407eb7ec9d4b3038667be5dae58a09e`. The owner names and binary-replication
-rows below are updated for the rebase onto release `04571a481e8324139b46c82d99c76db71a951ab8`.
+rows below were updated for release `04571a481e8324139b46c82d99c76db71a951ab8`
+and retained while rebasing onto `df07c94fb7df5bb05a0c854cdaa0b8b6eae8182a`
+(Go 1.27.3 and dependency integration).
 Internal replay state and JSON document/backup imports have distinct contracts.
 
 Case **a** means the former internal format already preserved numeric types.

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"math"
+	"reflect"
 	"testing"
 	"time"
 
@@ -104,17 +105,44 @@ func TestNumericWireJSONCompatibility(t *testing.T) {
 		V      int
 		Choice int `json:"chosen"`
 	}
-	type C struct {
-		A
-		B
-		V int
+	// Build the deliberately ambiguous promotion fixtures at runtime so vet
+	// still checks ordinary source tags. Both colliding fields remain present
+	// and the standard encoder remains the visibility oracle below.
+	ambiguous := func(a interface{}, b B, root *int) interface{} {
+		fields := []reflect.StructField{
+			{Name: "A", Type: reflect.TypeOf(a), Anonymous: true},
+			{Name: "B", Type: reflect.TypeOf(b), Anonymous: true},
+		}
+		if root != nil {
+			fields = append(fields, reflect.StructField{Name: "V", Type: reflect.TypeOf(*root)})
+		}
+		value := reflect.New(reflect.StructOf(fields)).Elem()
+		value.Field(0).Set(reflect.ValueOf(a))
+		value.Field(1).Set(reflect.ValueOf(b))
+		if root != nil {
+			value.Field(2).SetInt(int64(*root))
+		}
+		return value.Interface()
+	}
+	root := 5
+	ambiguousValue := ambiguous(A{V: 1, Other: 2}, B{V: 3, Choice: 4}, &root)
+	pointerAmbiguous := ambiguous(&A{V: 1}, B{V: 2}, nil)
+	for _, fixture := range []struct {
+		value interface{}
+		want  string
+	}{
+		{ambiguousValue, `{"V":5}`}, {pointerAmbiguous, `{}`},
+	} {
+		raw, err := json.Marshal(fixture.value)
+		require.NoError(t, err)
+		require.JSONEq(t, fixture.want, string(raw), "preserve the original ambiguous-field fixture")
 	}
 	type Recursive struct {
 		*Recursive
 		V int
 	}
 	for _, value := range []interface{}{
-		C{A: A{V: 1, Other: 2}, B: B{V: 3, Choice: 4}, V: 5},
+		ambiguousValue,
 		struct {
 			A
 			Chosen int `json:"chosen"`
@@ -127,10 +155,7 @@ func TestNumericWireJSONCompatibility(t *testing.T) {
 		map[int]string{1: "a", 2: "b"}, json.Number("2.0"),
 		struct{ *A }{},
 		struct{ *A }{&A{V: 1}},
-		struct {
-			*A
-			B
-		}{A: &A{V: 1}, B: B{V: 2}},
+		pointerAmbiguous,
 		struct {
 			S      string    `json:",omitempty"`
 			Z      int       `json:",omitzero"`

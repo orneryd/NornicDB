@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/orneryd/nornicdb/internal/jsontext"
 	"io"
 	"math"
 	"reflect"
@@ -15,6 +14,9 @@ import (
 	"strings"
 	"sync"
 	"unicode"
+	"unicode/utf8"
+
+	"github.com/orneryd/nornicdb/internal/jsontext"
 )
 
 // JSONEncoder is constructed only by a domain entry point. FLOAT has a fractional
@@ -42,27 +44,21 @@ func (encoder *JSONEncoder) Encode(value interface{}) error {
 		return encoder.err
 	}
 	state := jsonWriterStates.Get().(*jsonWriterState)
-	defer jsonWriterStates.Put(state)
+	defer state.release()
 	state.reset(encoder.escapeHTML)
+	state.formatting = encoder.prefix != "" || encoder.indent != ""
+	state.prefix, state.indent = encoder.prefix, encoder.indent
 	if err := state.any(value); err != nil {
 		return err
 	}
-	data := state.data
-	if encoder.prefix != "" || encoder.indent != "" {
-		state.indented.Reset()
-		if err := json.Indent(&state.indented, data, encoder.prefix, encoder.indent); err != nil {
-			return err
-		}
-		data = state.indented.Bytes()
-	}
-	data = append(data, '\n')
+	data := append(state.data, '\n')
 	_, encoder.err = encoder.writer.Write(data)
 	return encoder.err
 }
 
 func marshalJSON(value interface{}, typedState bool) ([]byte, error) {
 	state := jsonWriterStates.Get().(*jsonWriterState)
-	defer jsonWriterStates.Put(state)
+	defer state.release()
 	state.reset(true)
 	state.typedState = typedState
 	var err error
@@ -77,26 +73,19 @@ func marshalJSON(value interface{}, typedState bool) ([]byte, error) {
 	return append([]byte(nil), state.data...), nil
 }
 
-// marshalJSONIndent avoids copying the compact working buffer before indenting.
-// The indented result belongs to the caller; only the compact working buffer
-// returns to the pool, matching the existing Marshal/Encoder retention policy.
-// Capacity accounting reserves the standard indenter's output once, avoiding
-// repeated growth and copies for deeply indented documents.
+// marshalJSONIndent formats while the domain writer traverses the borrowed
+// value, so indentation needs no compact document, second indenter or extra
+// pooled buffer. The returned document is a caller-owned copy of the single
+// formatted working buffer.
 func marshalJSONIndent(value interface{}, prefix, indent string) ([]byte, error) {
 	state := jsonWriterStates.Get().(*jsonWriterState)
-	defer jsonWriterStates.Put(state)
+	defer state.release()
 	state.reset(true)
+	state.formatting, state.prefix, state.indent = true, prefix, indent
 	if err := state.any(value); err != nil {
 		return nil, err
 	}
-	var output bytes.Buffer
-	if capacity, ok := indentedJSONCapacity(state.data, prefix, indent); ok {
-		output.Grow(capacity)
-	}
-	if err := json.Indent(&output, state.data, prefix, indent); err != nil {
-		return nil, err
-	}
-	return output.Bytes(), nil
+	return append([]byte(nil), state.data...), nil
 }
 
 // jsonFloat is Neo4j HTTP's FLOAT representation. Nonfinite values are text
@@ -129,20 +118,83 @@ type jsonEncodingVisit struct {
 // metadata only: no proxy envelope, converted slice or copied property map is
 // allocated. Opaque marshalers and ,string retain the standard library owner.
 type jsonWriterState struct {
-	data          []byte
-	raw, indented bytes.Buffer
-	opaque        *jsontext.Encoder
-	escapeHTML    bool
-	typedState    bool
-	depth         int
-	active        map[jsonEncodingVisit]bool
+	data           []byte
+	raw, fragment  bytes.Buffer
+	opaque         *jsontext.Encoder
+	escapeHTML     bool
+	typedState     bool
+	formatting     bool
+	prefix, indent string
+	depth          int // walk depth, cycle detection only
+	containerDepth int // open ordinary containers; pointers and interfaces are not containers
+	active         map[jsonEncodingVisit]bool
 }
 
 var jsonWriterStates = sync.Pool{New: func() interface{} { return new(jsonWriterState) }}
 
+// release drops borrowed formatting strings before returning the working
+// buffer. A one-shot prefix/indent must not extend its caller's lifetime.
+func (state *jsonWriterState) release() {
+	state.prefix, state.indent = "", ""
+	jsonWriterStates.Put(state)
+}
+
 func (state *jsonWriterState) reset(escape bool) {
 	state.data = state.data[:0]
 	state.escapeHTML, state.depth, state.typedState = escape, 0, false
+	state.formatting, state.prefix, state.indent, state.containerDepth = false, "", "", 0
+}
+
+// The container, separator and colon operations own both compact and formatted
+// tokens. Compact mode writes the release bytes; formatted mode writes the
+// standard encoder's line breaks, prefix and indentation.
+func (state *jsonWriterState) openContainer(token byte) {
+	state.data = append(state.data, token)
+	state.containerDepth++
+}
+
+func (state *jsonWriterState) elementSeparator(first bool) {
+	// Reserve scalar headroom in geometric size classes. Starting from a
+	// fixed class prevents a small append-selected capacity from setting an
+	// oversized doubling sequence retained by a later large export.
+	if cap(state.data)-len(state.data) < 64 {
+		capacity := 128
+		for capacity < len(state.data)+64 {
+			capacity *= 2
+		}
+		data := make([]byte, len(state.data), capacity)
+		copy(data, state.data)
+		state.data = data
+	}
+	if !first {
+		state.data = append(state.data, ',')
+	}
+	if state.formatting {
+		state.appendNewline(state.containerDepth)
+	}
+}
+
+func (state *jsonWriterState) closeContainer(token byte, empty bool) {
+	if state.formatting && !empty {
+		state.appendNewline(state.containerDepth - 1)
+	}
+	state.data = append(state.data, token)
+	state.containerDepth--
+}
+
+func (state *jsonWriterState) colon() {
+	state.data = append(state.data, ':')
+	if state.formatting {
+		state.data = append(state.data, ' ')
+	}
+}
+
+func (state *jsonWriterState) appendNewline(depth int) {
+	state.data = append(state.data, '\n')
+	state.data = append(state.data, state.prefix...)
+	for index := 0; index < depth; index++ {
+		state.data = append(state.data, state.indent...)
+	}
 }
 
 func (state *jsonWriterState) opaqueValue(value interface{}) error {
@@ -152,10 +204,39 @@ func (state *jsonWriterState) opaqueValue(value interface{}) error {
 	}
 	state.opaque.SetEscapeHTML(state.escapeHTML)
 	if err := state.opaque.Encode(value); err != nil {
+		// An unusable json.Number lexeme keeps the standard numeric owner's
+		// rejection, exactly as appendJSONFloat does for a nonfinite FLOAT: the
+		// opaque encoder's message is not the numeric error contract. Only this
+		// failure path consults it, so a usable lexeme costs nothing.
+		if _, numeric := value.(json.Number); numeric {
+			if _, canonical := json.Marshal(value); canonical != nil {
+				return canonical
+			}
+		}
 		return err
 	}
 	data := state.raw.Bytes()
-	state.data = append(state.data, data[:len(data)-1]...)
+	return state.writeFragment(data[:len(data)-1])
+}
+
+// writeFragment appends one compact standard JSON fragment produced by an
+// opaque marshaler. Only opaque fragments use the standard indenter, at the
+// parent container's prefix and depth; ordinary documents are formatted by the
+// domain writer itself.
+func (state *jsonWriterState) writeFragment(fragment []byte) error {
+	if !state.formatting || len(fragment) == 0 || fragment[0] != '{' && fragment[0] != '[' {
+		state.data = append(state.data, fragment...)
+		return nil
+	}
+	state.fragment.Reset()
+	prefix := state.prefix
+	if state.indent != "" {
+		prefix += strings.Repeat(state.indent, state.containerDepth)
+	}
+	if err := json.Indent(&state.fragment, fragment, prefix, state.indent); err != nil {
+		return err
+	}
+	state.data = append(state.data, state.fragment.Bytes()...)
 	return nil
 }
 
@@ -300,18 +381,16 @@ func (state *jsonWriterState) value(value reflect.Value) error {
 				keys = append(keys, key)
 			}
 			sort.Strings(keys)
-			state.data = append(state.data, '{')
-			for i, key := range keys {
-				if i != 0 {
-					state.data = append(state.data, ',')
-				}
+			state.openContainer('{')
+			for index, key := range keys {
+				state.elementSeparator(index == 0)
 				state.data = appendJSONString(state.data, key, state.escapeHTML)
-				state.data = append(state.data, ':')
+				state.colon()
 				if err := state.any(values[key]); err != nil {
 					return err
 				}
 			}
-			state.data = append(state.data, '}')
+			state.closeContainer('}', len(keys) == 0)
 			return nil
 		}
 		return state.mapValue(value)
@@ -330,22 +409,27 @@ func (state *jsonWriterState) value(value reflect.Value) error {
 		}
 		fallthrough
 	case reflect.Array:
-		state.data = append(state.data, '[')
+		state.openContainer('[')
 		writeElement := jsonValueWriterFor(typ.Elem())
-		for i := 0; i < value.Len(); i++ {
-			if i != 0 {
-				state.data = append(state.data, ',')
-			}
-			if err := writeElement(state, value.Index(i)); err != nil {
+		for index := 0; index < value.Len(); index++ {
+			state.elementSeparator(index == 0)
+			if err := writeElement(state, value.Index(index)); err != nil {
 				return err
 			}
 		}
-		state.data = append(state.data, ']')
+		state.closeContainer(']', value.Len() == 0)
 		return nil
 	case reflect.Struct:
-		state.data = append(state.data, '{')
+		plan := jsonEncodingStructPlan(typ)
+		if plan.unsupportedFormat != "" {
+			// The v1 options record a non-empty `format` value while compiling
+			// the struct and Marshal reports it before writing or serializing
+			// any member, so no field callback on this value may run.
+			return &json.UnsupportedValueError{Str: "Go struct field " + plan.unsupportedFormat + " has unsupported `format` tag option"}
+		}
+		state.openContainer('{')
 		first := true
-		for _, field := range jsonEncodingStructPlan(typ).fields {
+		for _, field := range plan.fields {
 			item := value
 			for _, index := range field.index {
 				if item.Kind() == reflect.Pointer {
@@ -360,15 +444,14 @@ func (state *jsonWriterState) value(value reflect.Value) error {
 			if !item.IsValid() || field.omitEmpty && jsonEncodingEmpty(item) || field.omitZero && jsonEncodingZero(item) {
 				continue
 			}
-			if !first {
-				state.data = append(state.data, ',')
-			}
+			state.elementSeparator(first)
 			first = false
 			if state.escapeHTML {
 				state.data = append(state.data, field.htmlName...)
 			} else {
 				state.data = append(state.data, field.jsonName...)
 			}
+			state.colon()
 			if field.quoted {
 				quoted := reflect.New(field.quoteProxy).Elem()
 				quoted.Field(0).Set(item)
@@ -381,12 +464,14 @@ func (state *jsonWriterState) value(value reflect.Value) error {
 					return err
 				}
 				raw := state.raw.Bytes()
-				state.data = append(state.data, raw[len(`{"v":`):len(raw)-2]...)
+				if err := state.writeFragment(raw[len(`{"v":`) : len(raw)-2]); err != nil {
+					return err
+				}
 			} else if err := field.write(state, item); err != nil {
 				return err
 			}
 		}
-		state.data = append(state.data, '}')
+		state.closeContainer('}', first)
 		return nil
 	default:
 		return state.opaqueValue(value.Interface())
@@ -430,18 +515,16 @@ func (state *jsonWriterState) mapValue(value reflect.Value) error {
 	if len(entries) > 1 {
 		sort.Slice(entries, func(i, j int) bool { return entries[i].key < entries[j].key })
 	}
-	state.data = append(state.data, '{')
-	for i, entry := range entries {
-		if i != 0 {
-			state.data = append(state.data, ',')
-		}
+	state.openContainer('{')
+	for index, entry := range entries {
+		state.elementSeparator(index == 0)
 		state.data = appendJSONString(state.data, entry.key, state.escapeHTML)
-		state.data = append(state.data, ':')
+		state.colon()
 		if err := state.value(entry.value); err != nil {
 			return err
 		}
 	}
-	state.data = append(state.data, '}')
+	state.closeContainer('}', len(entries) == 0)
 	return nil
 }
 
@@ -526,7 +609,8 @@ type jsonEncodingField struct {
 	write                               jsonValueWriter
 }
 type jsonEncodingPlan struct {
-	fields []jsonEncodingField
+	fields            []jsonEncodingField
+	unsupportedFormat string
 }
 
 // Resolve promoted fields once per envelope type. A shallow field dominates;
@@ -536,6 +620,8 @@ func jsonEncodingStructPlan(typ reflect.Type) *jsonEncodingPlan {
 		return cached.(*jsonEncodingPlan)
 	}
 	candidates := map[string][]jsonEncodingField{}
+	var unsupportedFormat string
+	var unsupportedDepth int
 	var collect func(reflect.Type, []int, map[reflect.Type]bool)
 	collect = func(current reflect.Type, path []int, parents map[reflect.Type]bool) {
 		if parents[current] {
@@ -552,38 +638,23 @@ func jsonEncodingStructPlan(typ reflect.Type) *jsonEncodingPlan {
 			if field.PkgPath != "" && (!field.Anonymous || base.Kind() != reflect.Struct) {
 				continue
 			}
-			tag := field.Tag.Get("json")
-			if tag == "-" {
+			metadata, ignored := jsonFieldTagMetadata(field)
+			if ignored {
 				continue
 			}
-			parts := strings.Split(tag, ",")
-			name := parts[0]
-			for _, char := range name {
-				if !unicode.IsLetter(char) && !unicode.IsDigit(char) && !strings.ContainsRune("!#$%&()*+-./:;<=>?@[]^_{|}~ ", char) {
-					name = ""
-					break
-				}
-			}
 			index := append(append([]int(nil), path...), i)
-			if field.Anonymous && name == "" && base.Kind() == reflect.Struct {
+			if field.Anonymous && !metadata.hasName && base.Kind() == reflect.Struct {
 				collect(base, index, parents)
 				continue
 			}
-			entry := jsonEncodingField{name: name, index: index, tagged: name != ""}
+			if metadata.format && (unsupportedFormat == "" || len(index) < unsupportedDepth) {
+				// Discovery recurses depth-first, but standard metadata errors
+				// select the first field in breadth-first declaration order.
+				unsupportedFormat, unsupportedDepth = field.Name, len(index)
+			}
+			entry := jsonEncodingField{name: metadata.name, index: index, tagged: metadata.hasName,
+				omitEmpty: metadata.omitEmpty, omitZero: metadata.omitZero, quoted: metadata.quoted}
 			entry.write = jsonValueWriterFor(field.Type)
-			if name == "" {
-				entry.name = field.Name
-			}
-			for _, option := range parts[1:] {
-				switch option {
-				case "omitempty":
-					entry.omitEmpty = true
-				case "omitzero":
-					entry.omitZero = true
-				case "string":
-					entry.quoted = true
-				}
-			}
 			if entry.quoted {
 				quotedType := field.Type
 				if quotedType.Name() == "" && quotedType.Kind() == reflect.Pointer {
@@ -602,7 +673,7 @@ func jsonEncodingStructPlan(typ reflect.Type) *jsonEncodingPlan {
 		}
 	}
 	collect(typ, nil, map[reflect.Type]bool{})
-	plan := &jsonEncodingPlan{}
+	plan := &jsonEncodingPlan{unsupportedFormat: unsupportedFormat}
 	for _, entries := range candidates {
 		sort.SliceStable(entries, func(i, j int) bool { return len(entries[i].index) < len(entries[j].index) })
 		shortest := len(entries[0].index)
@@ -636,11 +707,157 @@ func jsonEncodingStructPlan(typ reflect.Type) *jsonEncodingPlan {
 	})
 	for i := range plan.fields {
 		field := &plan.fields[i]
-		field.jsonName = append(appendJSONString(nil, field.name, false), ':')
-		field.htmlName = append(appendJSONString(nil, field.name, true), ':')
+		field.jsonName = appendJSONString(nil, field.name, false)
+		field.htmlName = appendJSONString(nil, field.name, true)
 	}
 	actual, _ := jsonEncodingPlans.LoadOrStore(typ, plan)
 	return actual.(*jsonEncodingPlan)
+}
+
+// jsonFieldTag is the `json` tag metadata of one planned field: the JSON object
+// name this writer emits, the options it implements, and whether the field
+// carries a non-empty `format` value, which the standard encoder accepts in the
+// tag and then rejects while marshaling the struct.
+type jsonFieldTag struct {
+	name                         string
+	hasName, omitEmpty, omitZero bool
+	quoted                       bool
+	format                       bool
+}
+
+// jsonTagReserved holds the characters encoding/json reserves inside a tag
+// instead of accepting them in the member name.
+const jsonTagReserved = ",\"'`\\"
+
+// jsonFieldTagMetadata reads field's `json` tag with encoding/json's own rule. The
+// standard field planner (parseFieldOptions and consumeTagOption, reached through
+// the package's default v1 options) owns the JSON object name and the omitempty,
+// omitzero, string, case and format options, so the compiled plan must accept,
+// recover from and ignore exactly the tag text the standard encoder does: a name
+// ends at a reserved character and, when the tag does not continue with a comma,
+// the whole tag is re-read as a tag option, which names the member when it starts
+// with a Go identifier. Tag errors are not reported: the v1 options discard them
+// and keep the recovered metadata. A `case` value and a `format` value are their
+// own spans, so the characters inside them never become field options, and only a
+// non-empty `format` value reaches the plan as a rejection.
+func jsonFieldTagMetadata(field reflect.StructField) (jsonFieldTag, bool) {
+	metadata := jsonFieldTag{name: field.Name}
+	tag := field.Tag.Get("json")
+	if tag == "-" {
+		return metadata, true
+	}
+	if len(tag) > 0 && tag[0] != ',' {
+		end := 0
+		for end < len(tag) {
+			r, size := utf8.DecodeRuneInString(tag[end:])
+			if strings.ContainsRune(jsonTagReserved, r) {
+				break
+			}
+			end += size
+		}
+		name, valid := tag[:end], true
+		if end != len(tag) && tag[end] != ',' {
+			name, end, valid = jsonTagOption(tag, false)
+		}
+		if !utf8.ValidString(name) {
+			name = string([]rune(name)) // the standard planner's RuneError repair
+		}
+		if valid {
+			metadata.name, metadata.hasName = name, true
+		}
+		tag = tag[end:]
+	}
+	for len(tag) > 0 {
+		if tag[0] == ',' {
+			tag = tag[1:]
+			if len(tag) == 0 {
+				break // a trailing comma ends the options
+			}
+		}
+		option, end, _ := jsonTagOption(tag, false)
+		tag = tag[end:]
+		switch option {
+		case "omitempty":
+			metadata.omitEmpty = true
+		case "omitzero":
+			metadata.omitZero = true
+		case "string":
+			metadata.quoted = true
+		case "case":
+			if strings.HasPrefix(tag, ":") {
+				tag = tag[1:]
+				_, width, _ := jsonTagOption(tag, false)
+				tag = tag[width:]
+			}
+		case "format":
+			if !strings.HasPrefix(tag, ":") {
+				break
+			}
+			tag = tag[1:]
+			value, width, ok := jsonTagOption(tag, true)
+			tag = tag[width:]
+			if ok && value != "" {
+				metadata.format = true
+			}
+		}
+	}
+	return metadata, false
+}
+
+// jsonTagOption consumes the next tag option and its width using encoding/json's
+// grammar: a Go identifier, or, for a `format` value, a single-quoted Go string
+// literal. The literal is converted to the equivalent double-quoted form and
+// strconv.Unquote validates its escapes and reports the decoded value, so there
+// is no second literal decoder. Anything else is skipped to the next comma with
+// the invalid flag the v1 options discard.
+func jsonTagOption(tag string, allowQuoted bool) (option string, width int, valid bool) {
+	if first, _ := utf8.DecodeRuneInString(tag); first == '_' || unicode.IsLetter(first) {
+		end := 0
+		for end < len(tag) {
+			r, size := utf8.DecodeRuneInString(tag[end:])
+			if r != '_' && !unicode.IsLetter(r) && !unicode.IsNumber(r) {
+				break
+			}
+			end += size
+		}
+		return tag[:end], end, true
+	}
+	if first, _ := utf8.DecodeRuneInString(tag); allowQuoted && first == '\'' {
+		end := strings.IndexByte(tag, ',')
+		if end < 0 {
+			end = len(tag)
+		}
+		literal := []byte{'"'}
+		cursor, escaped := len(`'`), false
+		for cursor < len(tag) {
+			r, size := utf8.DecodeRuneInString(tag[cursor:])
+			switch {
+			case escaped:
+				if r == '\'' {
+					literal = literal[:len(literal)-1]
+				}
+				escaped = false
+			case r == '\\':
+				escaped = true
+			case r == '"':
+				literal = append(literal, '\\')
+			case r == '\'':
+				literal = append(literal, '"')
+				value, err := strconv.Unquote(string(literal))
+				if err != nil {
+					return tag[:end], end, false
+				}
+				return value, cursor + size, true
+			}
+			literal = append(literal, tag[cursor:cursor+size]...)
+			cursor += size
+		}
+		return tag[:end], end, false
+	}
+	if end := strings.IndexByte(tag, ','); end >= 0 {
+		return tag[:end], end, false
+	}
+	return tag, len(tag), false
 }
 
 func jsonEncodingEmpty(value reflect.Value) bool {
