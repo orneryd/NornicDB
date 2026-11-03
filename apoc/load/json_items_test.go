@@ -1,3 +1,4 @@
+// Author: L6 / #1665 lane (Codex gpt-6.1-sol). Loader shape oracles retain the input domain's INTEGER kind.
 package load
 
 // The JSON row loader has one owner: JSONItems binds a row shape once and
@@ -60,8 +61,8 @@ func TestJSONItemsDocumentShapes(t *testing.T) {
 			name:     "array",
 			document: `[{"id":1},{"id":2}]`,
 			want: []interface{}{
-				map[string]interface{}{"id": float64(1)},
-				map[string]interface{}{"id": float64(2)},
+				map[string]interface{}{"id": int64(1)},
+				map[string]interface{}{"id": int64(2)},
 			},
 		},
 		{
@@ -72,13 +73,13 @@ func TestJSONItemsDocumentShapes(t *testing.T) {
 		{
 			name:         "object",
 			document:     `{"id":1}`,
-			want:         []interface{}{map[string]interface{}{"id": float64(1)}},
+			want:         []interface{}{map[string]interface{}{"id": int64(1)}},
 			requireArray: true,
 		},
 		{
 			name:         "scalar",
 			document:     `42`,
-			want:         []interface{}{float64(42)},
+			want:         []interface{}{int64(42)},
 			requireArray: true,
 		},
 		{

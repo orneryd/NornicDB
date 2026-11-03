@@ -6,8 +6,8 @@ package apocimport
 
 import (
 	"encoding/csv"
-	"encoding/json"
 	"fmt"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"io"
 	"strconv"
 	"strings"
@@ -63,7 +63,7 @@ func Json(filePath string) (*ImportResult, error) {
 //	apoc.import.json.data('{"nodes": [...]}') => import result
 func JsonData(jsonStr string) (*ImportResult, error) {
 	var data map[string]interface{}
-	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+	if err := valueconvert.PropertyJSON.Unmarshal([]byte(jsonStr), &data); err != nil {
 		return nil, err
 	}
 
@@ -337,7 +337,7 @@ func ParseCsvLine(line string, delimiter rune) []string {
 //	apoc.import.parseJsonLine('{"name":"Alice"}') => map
 func ParseJsonLine(line string) (map[string]interface{}, error) {
 	var data map[string]interface{}
-	if err := json.Unmarshal([]byte(line), &data); err != nil {
+	if err := valueconvert.PropertyJSON.Unmarshal([]byte(line), &data); err != nil {
 		return nil, err
 	}
 	return data, nil

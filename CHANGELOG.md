@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   errors across thirteen existing Cypher APIs. Fabric keyword-name and import
   readers are context-first stateless callbacks; canceled preparation is not
   cached. See [the migration guide](docs/development/cypher-preparation-context-api.md#use-and-clause-scanner-migration).
+
+### Fixed
+
+- Preserve exact JSON INTEGER values and whole-FLOAT kind through import, public results, remote parameters, export and supported backup/recovery boundaries. Numeric text and typed wire output retain accepted value and kind.
+- Match equal INTEGER/FLOAT CDC selectors without rounding adjacent large integers; preserve native unsigned event values and observable numeric-kind changes.
+- Decode float32 extrema and midpoint decimals at destination precision, avoiding rejected valid values and double rounding.
+
 - Go query metadata and permission readers now require an explicit raw or accepted source stage; see [the source-stage migration guide](docs/development/cypher-source-stage-api.md).
 - Require Go 1.27.3 (go.mod, CI, release and Docker builders). Go embedders and
   `.so` plugins must rebuild with Go 1.27.3. Roll up dependency updates: gqlgen
@@ -30,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Normalize duration seconds/nanoseconds and preserve TIME offset versus DATETIME region identity in canonical temporal equality. Use typed temporal keys for allocation-free collection lookup.
 
 ### Changed
+
+- Go callers of `cypher.FormatFloat` now call the canonical `convert.FormatFloat` owner directly. Numeric JSON callers select the property or external-input domain; see [the numeric JSON contract](pkg/convert/numeric_wire_contract.md).
 
 - Search candidate serving and local/LLM reranking require the supplied operation
   context instead of retaining test-only nil-to-background compatibility.

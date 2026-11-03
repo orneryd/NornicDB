@@ -1,3 +1,4 @@
+// Author: L6 / #1665 lane (Codex gpt-6.1-sol). Public loader checks preserve numeric kind, not just equivalent magnitude.
 package cypher
 
 import (
@@ -323,7 +324,7 @@ func TestApocLoadExportHelpers_CallApocLoadJson_Branches(t *testing.T) {
 	res, err = jsonLoadProcedure("apoc.load.json")(apocIOTestContext(exec), exec, "", []interface{}{scalarPath})
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
-	require.EqualValues(t, 42.0, res.Rows[0][0])
+	require.Equal(t, int64(42), res.Rows[0][0])
 }
 
 // TestApocLoadExportHelpers_NativeProceduresRequireCapability proves the native

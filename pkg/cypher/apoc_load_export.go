@@ -6,7 +6,6 @@ package cypher
 import (
 	"context"
 	"encoding/csv"
-	"encoding/json"
 	"fmt"
 	"slices"
 	"strconv"
@@ -14,6 +13,7 @@ import (
 
 	apocload "github.com/orneryd/nornicdb/apoc/load"
 	"github.com/orneryd/nornicdb/pkg/apocio"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	securitypkg "github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -362,7 +362,7 @@ func (e *StorageExecutor) encodeJSONGraph(ctx context.Context, filePath string, 
 		return exportPayload{}, err
 	}
 
-	content, err := json.MarshalIndent(map[string]interface{}{
+	content, err := valueconvert.PropertyJSON.MarshalIndent(map[string]interface{}{
 		"nodes":         nodes,
 		"relationships": relationships,
 	}, "", "  ")
@@ -382,7 +382,7 @@ func (e *StorageExecutor) encodeJSONQuery(ctx context.Context, filePath string, 
 	if err := ctx.Err(); err != nil {
 		return exportPayload{}, err
 	}
-	content, err := json.MarshalIndent(map[string]interface{}{
+	content, err := valueconvert.PropertyJSON.MarshalIndent(map[string]interface{}{
 		"columns": source.result.Columns,
 		"data":    source.result.Rows,
 	}, "", "  ")
@@ -412,7 +412,7 @@ func (e *StorageExecutor) encodeCSVGraph(ctx context.Context, filePath string, s
 	csvContent.WriteString("_id,_labels,properties\n")
 	if err := exportChunks(ctx, len(source.nodes), func(start, end int) error {
 		for _, node := range source.nodes[start:end] {
-			properties, err := json.Marshal(node.Properties)
+			properties, err := valueconvert.PropertyJSON.Marshal(node.Properties)
 			if err != nil {
 				return fmt.Errorf("failed to marshal properties of node %s: %w", node.ID, err)
 			}
@@ -432,7 +432,7 @@ func (e *StorageExecutor) encodeCSVGraph(ctx context.Context, filePath string, s
 	csvContent.WriteString("_id,_type,_start,_end,properties\n")
 	if err := exportChunks(ctx, len(source.edges), func(start, end int) error {
 		for _, edge := range source.edges[start:end] {
-			properties, err := json.Marshal(edge.Properties)
+			properties, err := valueconvert.PropertyJSON.Marshal(edge.Properties)
 			if err != nil {
 				return fmt.Errorf("failed to marshal properties of relationship %s: %w", edge.ID, err)
 			}
@@ -484,7 +484,7 @@ func (e *StorageExecutor) encodeCSVQuery(ctx context.Context, filePath string, s
 				case nil:
 					// A null value keeps its empty cell.
 				default:
-					jsonVal, err := json.Marshal(v)
+					jsonVal, err := valueconvert.PropertyJSON.Marshal(v)
 					if err != nil {
 						return fmt.Errorf("failed to marshal column %s: %w", exportColumnName(source.result.Columns, i), err)
 					}
@@ -634,7 +634,7 @@ func (e *StorageExecutor) callApocImportJson(ctx context.Context, args []interfa
 		return nil, fmt.Errorf("apoc.import.json requires a URL or file path")
 	}
 
-	data, err := apocload.Json(ctx, urlOrFile)
+	data, err := apocload.PropertyDocument(ctx, urlOrFile)
 	if err != nil {
 		return nil, err
 	}

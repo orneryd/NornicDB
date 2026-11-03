@@ -26,7 +26,7 @@ require (
 	github.com/neo4j/neo4j-go-driver/v4 v4.4.0
 	github.com/neo4j/neo4j-go-driver/v5 v5.28.5
 	github.com/nicksnyder/go-i18n/v2 v2.6.1
-	github.com/orneryd/go-json v0.11.3-0.20261030214440-fa0195dc9464
+	github.com/orneryd/go-json v0.11.3-0.20261103144209-3e94695582bd
 	github.com/prometheus/client_golang v1.24.1
 	github.com/prometheus/client_model v0.6.3
 	github.com/qdrant/go-client v1.20.1

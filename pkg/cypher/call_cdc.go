@@ -11,6 +11,7 @@ import (
 	"sort"
 	"time"
 
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -317,30 +318,19 @@ func nonNilStrings(values []string) []interface{} {
 // decodes integers into their smallest Go type and floats into float32 when
 // they fit; Cypher has INTEGER and FLOAT.
 func cdcValue(value interface{}) interface{} {
-	switch number := value.(type) {
-	case int8:
-		return int64(number)
-	case int16:
-		return int64(number)
-	case int32:
-		return int64(number)
-	case int:
-		return int64(number)
-	case uint8:
-		return int64(number)
-	case uint16:
-		return int64(number)
-	case uint32:
-		return int64(number)
-	case uint64:
-		if number <= math.MaxInt64 {
-			return int64(number)
+	if number, numeric := valueconvert.ReadNumber(value); numeric {
+		if signed, ok := number.Signed(); ok {
+			return signed
 		}
-		return float64(number)
-	case uint:
-		return int64(number)
-	case float32:
-		return float64(number)
+		if unsigned, ok := number.Unsigned(); ok {
+			if unsigned <= math.MaxInt64 {
+				return int64(unsigned)
+			}
+			return unsigned
+		}
+		return number.Float64()
+	}
+	switch number := value.(type) {
 	case []interface{}:
 		out := make([]interface{}, len(number))
 		for index, item := range number {
@@ -546,10 +536,8 @@ func (s *changeSelector) matches(database string, event *storage.ChangeEvent) bo
 	if len(s.key) > 0 && !keyMatches(event, s.key) {
 		return false
 	}
-	for key, want := range s.txMetadata {
-		if got, ok := event.TxMetadata[key]; !ok || !reflect.DeepEqual(cdcValue(got), want) {
-			return false
-		}
+	if !holdsValues(event.TxMetadata, s.txMetadata) {
+		return false
 	}
 	if s.start != nil && !s.start.matchesEndpoint(database, event.Start, event.StartLabels) {
 		return false
@@ -622,7 +610,19 @@ func keyMatches(event *storage.ChangeEvent, key map[string]interface{}) bool {
 // holdsValues reports whether properties hold every one of values.
 func holdsValues(properties map[string]any, values map[string]interface{}) bool {
 	for name, want := range values {
-		if got, ok := properties[name]; !ok || !reflect.DeepEqual(cdcValue(got), want) {
+		got, ok := properties[name]
+		if !ok {
+			return false
+		}
+		// Selector equality follows Cypher's exact numeric owner. Change
+		// detection deliberately retains its separate type-sensitive equality.
+		if equal, numeric := cypherNumericEquality(got, want); numeric {
+			if !equal {
+				return false
+			}
+			continue
+		}
+		if !reflect.DeepEqual(cdcValue(got), want) {
 			return false
 		}
 	}

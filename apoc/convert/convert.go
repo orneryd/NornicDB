@@ -2,14 +2,16 @@
 //
 // This package implements all apoc.convert.* functions for converting
 // between different data types in Cypher queries.
+// Author: L6 / #1665 lane (Codex gpt-6.1-sol). Public numeric string conversion selects the shared text owner.
 package convert
 
 import (
-	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
+	"github.com/orneryd/nornicdb/pkg/pool"
 )
 
 // ToBoolean converts a value to boolean.
@@ -74,7 +76,57 @@ func ToFloat(value interface{}) float64 {
 //	apoc.convert.toString(42) => '42'
 //	apoc.convert.toString(true) => 'true'
 func ToString(value interface{}) string {
-	return fmt.Sprintf("%v", value)
+	if text, numeric := valueconvert.NumericText(value); numeric {
+		return text
+	}
+	_, isMap := value.(map[string]interface{})
+	if _, isList := valueconvert.ReadList(value); isList || isMap {
+		out := pool.GetStringBuilder()
+		defer pool.PutStringBuilder(out)
+		appendDisplayText(out, value)
+		return out.String()
+	}
+	return fmt.Sprint(value)
+}
+
+// appendDisplayText retains APOC's display delimiters while visiting numeric
+// leaves through the same owner as scalar text. ReadList owns typed carriers.
+func appendDisplayText(out *pool.PooledStringBuilder, value interface{}) {
+	var number [40]byte
+	if text, numeric := valueconvert.AppendNumericText(number[:0], value); numeric {
+		out.Write(text)
+		return
+	}
+	if list, ok := valueconvert.ReadList(value); ok {
+		out.WriteByte('[')
+		for i := 0; i < list.Len(); i++ {
+			if i > 0 {
+				out.WriteByte(' ')
+			}
+			appendDisplayText(out, list.At(i))
+		}
+		out.WriteByte(']')
+		return
+	}
+	if entries, ok := value.(map[string]interface{}); ok {
+		keys := make([]string, 0, len(entries))
+		for key := range entries {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		out.WriteString("map[")
+		for i, key := range keys {
+			if i > 0 {
+				out.WriteByte(' ')
+			}
+			out.WriteString(key)
+			out.WriteByte(':')
+			appendDisplayText(out, entries[key])
+		}
+		out.WriteByte(']')
+		return
+	}
+	fmt.Fprint(out, value)
 }
 
 // ToList converts a value to a list.
@@ -105,16 +157,17 @@ func ToList(value interface{}) []interface{} {
 //
 //	apoc.convert.toMap('{"name":"Alice","age":30}')
 //	=> {name:'Alice', age:30}
-func ToMap(value interface{}) map[string]interface{} {
+//
+// JSON text is read with the external-number policy (convert.CypherInputJSON);
+// a rejected document is returned as the error, never as a partial map.
+func ToMap(value interface{}) (map[string]interface{}, error) {
 	switch v := value.(type) {
 	case map[string]interface{}:
-		return v
+		return v, nil
 	case string:
-		var result map[string]interface{}
-		json.Unmarshal([]byte(v), &result)
-		return result
+		return FromJsonMap(v)
 	}
-	return make(map[string]interface{})
+	return make(map[string]interface{}), nil
 }
 
 // ToJson converts a value to JSON string.
@@ -124,7 +177,7 @@ func ToMap(value interface{}) map[string]interface{} {
 //	apoc.convert.toJson({name:'Alice', age:30})
 //	=> '{"name":"Alice","age":30}'
 func ToJson(value interface{}) string {
-	bytes, err := json.Marshal(value)
+	bytes, err := valueconvert.PropertyJSON.Marshal(value)
 	if err != nil {
 		return "{}"
 	}
@@ -136,10 +189,12 @@ func ToJson(value interface{}) string {
 // Example:
 //
 //	apoc.convert.fromJsonList('[1,2,3]') => [1,2,3]
-func FromJsonList(jsonStr string) []interface{} {
+func FromJsonList(jsonStr string) ([]interface{}, error) {
 	var result []interface{}
-	json.Unmarshal([]byte(jsonStr), &result)
-	return result
+	if err := valueconvert.CypherInputJSON.Unmarshal([]byte(jsonStr), &result); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // FromJsonMap converts a JSON object string to a map.
@@ -147,10 +202,12 @@ func FromJsonList(jsonStr string) []interface{} {
 // Example:
 //
 //	apoc.convert.fromJsonMap('{"name":"Alice"}') => {name:'Alice'}
-func FromJsonMap(jsonStr string) map[string]interface{} {
+func FromJsonMap(jsonStr string) (map[string]interface{}, error) {
 	var result map[string]interface{}
-	json.Unmarshal([]byte(jsonStr), &result)
-	return result
+	if err := valueconvert.CypherInputJSON.Unmarshal([]byte(jsonStr), &result); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // ToSet converts a list to a set (removes duplicates).
@@ -198,7 +255,7 @@ func ToTree(path interface{}) map[string]interface{} {
 // Example:
 //
 //	apoc.convert.fromJsonNode('{"id":1,"labels":["Person"],"properties":{}}')
-func FromJsonNode(jsonStr string) map[string]interface{} {
+func FromJsonNode(jsonStr string) (map[string]interface{}, error) {
 	return FromJsonMap(jsonStr)
 }
 
@@ -225,9 +282,12 @@ func ToRelationship(m map[string]interface{}) map[string]interface{} {
 // Example:
 //
 //	apoc.convert.getJsonProperty('{"name":"Alice"}', 'name') => 'Alice'
-func GetJsonProperty(jsonStr, key string) interface{} {
-	m := FromJsonMap(jsonStr)
-	return m[key]
+func GetJsonProperty(jsonStr, key string) (interface{}, error) {
+	m, err := FromJsonMap(jsonStr)
+	if err != nil {
+		return nil, err
+	}
+	return m[key], nil
 }
 
 // GetJsonPropertyMap extracts a nested property from JSON.
@@ -236,8 +296,11 @@ func GetJsonProperty(jsonStr, key string) interface{} {
 //
 //	apoc.convert.getJsonPropertyMap('{"user":{"name":"Alice"}}', 'user.name')
 //	=> 'Alice'
-func GetJsonPropertyMap(jsonStr, path string) interface{} {
-	m := FromJsonMap(jsonStr)
+func GetJsonPropertyMap(jsonStr, path string) (interface{}, error) {
+	m, err := FromJsonMap(jsonStr)
+	if err != nil {
+		return nil, err
+	}
 	keys := strings.Split(path, ".")
 
 	var current interface{} = m
@@ -245,11 +308,11 @@ func GetJsonPropertyMap(jsonStr, path string) interface{} {
 		if currentMap, ok := current.(map[string]interface{}); ok {
 			current = currentMap[key]
 		} else {
-			return nil
+			return nil, nil
 		}
 	}
 
-	return current
+	return current, nil
 }
 
 // SetJsonProperty sets a property in a JSON string.
@@ -258,10 +321,16 @@ func GetJsonPropertyMap(jsonStr, path string) interface{} {
 //
 //	apoc.convert.setJsonProperty('{"name":"Alice"}', 'age', 30)
 //	=> '{"name":"Alice","age":30}'
-func SetJsonProperty(jsonStr, key string, value interface{}) string {
-	m := FromJsonMap(jsonStr)
+func SetJsonProperty(jsonStr, key string, value interface{}) (string, error) {
+	m, err := FromJsonMap(jsonStr)
+	if err != nil {
+		return "", err
+	}
+	if m == nil {
+		m = make(map[string]interface{})
+	}
 	m[key] = value
-	return ToJson(m)
+	return ToJson(m), nil
 }
 
 // ToIntList converts a list to integers.
