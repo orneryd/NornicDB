@@ -1046,8 +1046,16 @@ func (sm *SchemaManager) BackfillCompositeIndex(ctx context.Context, name string
 	return nil
 }
 
-// LookupFull finds nodes matching all property values exactly.
-// All properties in the composite index must be specified.
+// LookupFull returns the committed postings of nodes matching all property
+// values exactly. All properties in the composite index must be specified.
+//
+// The postings describe committed state: an acknowledged but unflushed write
+// is not listed until it reaches the engine. A reader that must see the final
+// acknowledged membership (an indexed MATCH/MERGE candidate set) uses
+// SchemaManager.CompositeIndexLookup, which merges the attached pending
+// writes. A consumer that already holds the pending view - constraint
+// validation's captured view - reads the postings here and merges the
+// candidates it captured itself.
 func (idx *CompositeIndex) LookupFull(ctx context.Context, values ...interface{}) ([]NodeID, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -1118,10 +1126,13 @@ func (idx *CompositeIndex) lookupFullHash(ctx context.Context, hash string) ([]N
 	return nil, ctx.Err()
 }
 
-// LookupPrefix finds nodes matching a prefix of property values.
+// LookupPrefix returns the committed postings of nodes matching a prefix of
+// property values.
 // Specify 1 to N-1 property values (where N is total properties in index).
 // Returns all nodes that match the prefix. For an arity-1 index a one-value
-// lookup is a full match.
+// lookup is a full match. Like LookupFull, these are committed postings;
+// SchemaManager.CompositeIndexLookup is the merged read that also sees
+// acknowledged but unflushed writes.
 //
 // Example: For index on (country, city, zipcode)
 //   - LookupPrefix(ctx, "US") returns all nodes in the US
@@ -1963,13 +1974,6 @@ func (sm *SchemaManager) PropertyIndexInsert(label, property string, nodeID Node
 		return localizedError(localization.StorageSchemaPropertyIndexNotFound(label, property), nil)
 	}
 
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
-
-	if idx.values == nil {
-		idx.values = make(map[interface{}][]NodeID)
-	}
-
 	// An insert files the value of a write the engine already accepted, so the
 	// key has that write's lifetime: it cannot cancel.
 	valueKey, ok, err := indexNonNilMembershipKey(context.Background(), value)
@@ -1980,11 +1984,9 @@ func (sm *SchemaManager) PropertyIndexInsert(label, property string, nodeID Node
 		// Null has no nonnull membership.
 		return nil
 	}
-
-	if _, exists := idx.values[valueKey]; !exists {
-		idx.keysDirty = true
-	}
-	idx.values[valueKey] = appendUnique(idx.values[valueKey], nodeID)
+	idx.mu.Lock()
+	idx.fileValueLocked(nodeID, valueKey)
+	idx.mu.Unlock()
 	return nil
 }
 
@@ -2038,9 +2040,6 @@ func (sm *SchemaManager) PropertyIndexDelete(label, property string, nodeID Node
 		return nil // Not indexed
 	}
 
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
-
 	// A delete follows the write that removed the node, so the key has that
 	// write's lifetime: it cannot cancel.
 	valueKey, ok, err := indexNonNilMembershipKey(context.Background(), value)
@@ -2050,21 +2049,9 @@ func (sm *SchemaManager) PropertyIndexDelete(label, property string, nodeID Node
 	if !ok {
 		return nil
 	}
-
-	if ids, ok := idx.values[valueKey]; ok {
-		newIDs := make([]NodeID, 0, len(ids)-1)
-		for _, id := range ids {
-			if id != nodeID {
-				newIDs = append(newIDs, id)
-			}
-		}
-		if len(newIDs) > 0 {
-			idx.values[valueKey] = newIDs
-		} else {
-			delete(idx.values, valueKey)
-			idx.keysDirty = true
-		}
-	}
+	idx.mu.Lock()
+	idx.unfileValueLocked(nodeID, valueKey)
+	idx.mu.Unlock()
 	return nil
 }
 

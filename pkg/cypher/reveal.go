@@ -7,13 +7,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-type revealScopeKey struct{}
-
-type revealScopeState struct {
-	engine *storage.BadgerEngine
-	reveal bool
-}
-
 // executionReadScope binds the live storage read lease to its issued executor
 // and transaction storage, just as composite membership and mode observation do.
 // A procedure's fresh context must not recursively acquire its owner's mutex.
@@ -39,12 +32,13 @@ func (e *StorageExecutor) executionReadScopeOf() *executionReadScope {
 }
 
 func (e *StorageExecutor) bindExecutionReadScope(ctx context.Context) (*StorageExecutor, func()) {
-	scope, _ := ctx.Value(revealScopeKey{}).(*revealScopeState)
-	if scope == nil {
+	scopes := storage.QueryRevealScopes(ctx)
+	reveal, owned := scopes.Mode(e.storage)
+	if !owned {
 		return e, func() {}
 	}
 	bound := e.cloneWithStorage(e.storage)
-	bound.readScope = &executionReadScope{scopes: storage.QueryRevealScopes(ctx), engine: scope.engine, reveal: scope.reveal}
+	bound.readScope = &executionReadScope{scopes: scopes, engine: unwrapBadgerEngine(e.storage), reveal: reveal}
 	if wrapper, ok := bound.storage.(*transactionStorageWrapper); ok {
 		previous := wrapper.readScope.Swap(bound.readScope)
 		return bound, func() { wrapper.readScope.Store(previous) }
@@ -93,7 +87,7 @@ func setRevealOnEngine(ctx context.Context, eng storage.Engine, reveal bool) (co
 	if be == nil {
 		return ctx, func() {}, nil
 	}
-	if scope, ok := ctx.Value(revealScopeKey{}).(*revealScopeState); ok && scope.engine == be {
+	if _, owned := storage.QueryRevealScopes(ctx).Mode(eng); owned {
 		return ctx, func() {}, nil
 	}
 	failure, hasFailure := ctx.Value(expressionFailureKey{}).(*expressionFailure)
@@ -107,7 +101,6 @@ func setRevealOnEngine(ctx context.Context, eng storage.Engine, reveal bool) (co
 		}
 	}
 	ctx, cleanup := storage.BeginQueryRevealScopeContext(ctx, eng, reveal)
-	ctx = context.WithValue(ctx, revealScopeKey{}, &revealScopeState{engine: be, reveal: reveal})
 	if hasFailure {
 		failure.mu.Lock()
 		activeEngine := failure.readScopeEngine

@@ -261,7 +261,7 @@ func checkSingleOperator(op byte, left, right staticOperand, cypher25 bool) (sta
 		if right.list() {
 			return concatenatedOperand(left, right), nil
 		}
-		if right.excludes(noStaticType) {
+		if right.excludes(isAddableToDuration) {
 			return staticOperand{}, operandMismatch(right, "Duration, Date, Time, LocalTime, LocalDateTime, DateTime or List<T>")
 		}
 	case left.numeric() || left.is("String"):

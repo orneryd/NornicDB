@@ -44,6 +44,14 @@ func TestOwnerClassCommandNativeWorkerOutcomes(t *testing.T) {
 	if err := stderr.Close(); err != nil {
 		t.Fatal(err)
 	}
+	// Closed-file Stat reports the platform's native cause (ErrClosed on
+	// Unix, an invalid-handle error on Windows). Require that actual cause
+	// to survive the command's completion projection alongside both labels.
+	_, closedErr := stdout.Stat()
+	var closedPath *os.PathError
+	if !errors.As(closedErr, &closedPath) {
+		t.Fatalf("closed-file stat did not return its native path error: %v", closedErr)
+	}
 	previousOut, previousErr := os.Stdout, os.Stderr
 	os.Stdout, os.Stderr = stdout, stderr
 	defer func() { os.Stdout, os.Stderr = previousOut, previousErr }()
@@ -52,7 +60,7 @@ func TestOwnerClassCommandNativeWorkerOutcomes(t *testing.T) {
 	if result == nil || !strings.Contains(result.Error(), "client auth") {
 		t.Fatalf("real post-construction setup failure not reached: %v", result)
 	}
-	if !errors.Is(result, os.ErrClosed) || !strings.Contains(result.Error(), "stdout") || !strings.Contains(result.Error(), "stderr") {
+	if !errors.Is(result, closedPath.Err) || !strings.Contains(result.Error(), "stdout") || !strings.Contains(result.Error(), "stderr") {
 		t.Errorf("command lost its native worker's sibling completion outcomes: %v", result)
 	}
 }
