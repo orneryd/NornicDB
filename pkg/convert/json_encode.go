@@ -158,13 +158,19 @@ func (state *jsonWriterState) elementSeparator(first bool) {
 	// fixed class prevents a small append-selected capacity from setting an
 	// oversized doubling sequence retained by a later large export.
 	if cap(state.data)-len(state.data) < 64 {
-		capacity := 128
-		for capacity < len(state.data)+64 {
-			capacity *= 2
+		if len(state.data) < 4096 {
+			buffer := bytes.NewBuffer(state.data)
+			buffer.Grow(64)
+			state.data = buffer.Bytes()
+		} else {
+			capacity := 128
+			for capacity < len(state.data)+64 {
+				capacity *= 2
+			}
+			data := make([]byte, len(state.data), capacity)
+			copy(data, state.data)
+			state.data = data
 		}
-		data := make([]byte, len(state.data), capacity)
-		copy(data, state.data)
-		state.data = data
 	}
 	if !first {
 		state.data = append(state.data, ',')
