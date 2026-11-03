@@ -26,7 +26,7 @@ func TestIndexedOrderExactIntegers(t *testing.T) {
 					}{
 						{"a-larger", larger}, {"z-smaller", smaller},
 					} {
-						_, err := store.CreateNode(&storage.Node{
+						_, err := store.CreateNode(t.Context(), &storage.Node{
 							ID: entry.id, Labels: []string{"ExactOrder"},
 							Properties: map[string]interface{}{"rank": entry.value, "secondary": -entry.value},
 						})
@@ -35,7 +35,10 @@ func TestIndexedOrderExactIntegers(t *testing.T) {
 					if indexed {
 						_, err := exec.Execute(ctx, "CREATE RANGE INDEX exact_rank FOR (n:ExactOrder) ON (n.rank)", nil)
 						require.NoError(t, err)
-						require.True(t, store.GetSchema().HasPropertyIndex("ExactOrder", "rank"))
+						hasRankIndex, indexErr := store.GetSchema().HasPropertyIndex(ctx, "ExactOrder", "rank")
+						require.NoError(t, indexErr)
+						require.True(t, hasRankIndex)
+
 					}
 					if transaction {
 						_, err := exec.Execute(ctx, "BEGIN", nil)
@@ -93,7 +96,7 @@ func TestIndexedOrderMixedNumericExact(t *testing.T) {
 			}{
 				{"a-integer", integer}, {"z-float", rounded},
 			} {
-				_, err := store.CreateNode(&storage.Node{
+				_, err := store.CreateNode(t.Context(), &storage.Node{
 					ID: entry.id, Labels: []string{"MixedOrder"},
 					Properties: map[string]interface{}{"rank": entry.value, "name": string(entry.id)},
 				})
@@ -129,7 +132,7 @@ func indexedOrderFixture(tb testing.TB, count int) *StorageExecutor {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(tb), "order-ties")
 	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	for i := 0; i < count; i++ {
-		_, err := store.CreateNode(&storage.Node{
+		_, err := store.CreateNode(tb.Context(), &storage.Node{
 			ID: storage.NodeID(fmt.Sprintf("node-%06d", i)), Labels: []string{"OrderedItem"},
 			Properties: map[string]interface{}{
 				"title": "same title", "rank": int64(count - i),
@@ -232,14 +235,14 @@ func TestIndexedOrderPartialIndexPreservesNullRows(t *testing.T) {
 	run("partial-index", func(t *testing.T, store *storage.NamespacedEngine, exec *StorageExecutor) {
 
 		for i := 0; i < 250; i++ {
-			_, err := store.CreateNode(&storage.Node{
+			_, err := store.CreateNode(t.Context(), &storage.Node{
 				ID: storage.NodeID(fmt.Sprintf("node-%03d", i)), Labels: []string{"OptionalTitle"},
 				Properties: map[string]interface{}{"title": "same", "rank": int64(i), "active": i == 0},
 			})
 			require.NoError(t, err)
 		}
 		for i := 0; i < 2; i++ {
-			_, err := store.CreateNode(&storage.Node{
+			_, err := store.CreateNode(t.Context(), &storage.Node{
 				ID: storage.NodeID(fmt.Sprintf("missing-%d", i)), Labels: []string{"OptionalTitle"},
 				Properties: map[string]interface{}{"rank": int64(500 + i), "active": true},
 			})
@@ -264,7 +267,7 @@ func TestIndexedOrderPartialIndexPreservesNullRows(t *testing.T) {
 
 		_, err := exec.Execute(context.Background(), "CREATE INDEX empty_title FOR (n:NullTitle) ON (n.title)", nil)
 		require.NoError(t, err)
-		_, err = store.CreateNode(&storage.Node{ID: "without-title", Labels: []string{"NullTitle"}, Properties: map[string]interface{}{"payload": "retained"}})
+		_, err = store.CreateNode(t.Context(), &storage.Node{ID: "without-title", Labels: []string{"NullTitle"}, Properties: map[string]interface{}{"payload": "retained"}})
 		require.NoError(t, err)
 		result, err := exec.Execute(context.Background(), "MATCH (n:NullTitle) RETURN n.payload ORDER BY n.title ASC LIMIT 3", nil)
 		require.NoError(t, err)
@@ -282,7 +285,7 @@ func TestIndexedOrderDescendingPreservesNullRows(t *testing.T) {
 		{ID: "missing", Labels: []string{"OptionalTitle"}, Properties: map[string]interface{}{"rank": int64(1), "active": true}},
 		{ID: "present", Labels: []string{"OptionalTitle"}, Properties: map[string]interface{}{"title": "a", "rank": int64(2), "active": true}},
 	} {
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 	_, err := exec.Execute(ctx, "CREATE INDEX optional_title FOR (n:OptionalTitle) ON (n.title)", nil)
@@ -296,10 +299,10 @@ func TestIndexedOrderDescendingPreservesNullRows(t *testing.T) {
 
 func TestIndexedOrderTraversalTiedLimit(t *testing.T) {
 	exec := indexedOrderFixture(t, 720)
-	_, err := exec.storage.CreateNode(&storage.Node{ID: "hub", Labels: []string{"Hub"}, Properties: map[string]interface{}{}})
+	_, err := exec.storage.CreateNode(t.Context(), &storage.Node{ID: "hub", Labels: []string{"Hub"}, Properties: map[string]interface{}{}})
 	require.NoError(t, err)
 	for i := 0; i < 720; i++ {
-		require.NoError(t, exec.storage.CreateEdge(&storage.Edge{
+		require.NoError(t, exec.storage.CreateEdge(t.Context(), &storage.Edge{
 			ID: storage.EdgeID(fmt.Sprintf("edge-%06d", i)), Type: "HAS",
 			StartNode: "hub", EndNode: storage.NodeID(fmt.Sprintf("node-%06d", i)),
 		}))
@@ -332,14 +335,14 @@ func TestIndexedOrderTraversalRejectsOtherVariableSortKeys(t *testing.T) {
 		{ID: "translated-0", Labels: []string{"Translated"}, Properties: map[string]interface{}{"createdAt": "same"}},
 		{ID: "translated-1", Labels: []string{"Translated"}, Properties: map[string]interface{}{"createdAt": "same"}},
 	} {
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 	for _, edge := range []*storage.Edge{
 		{ID: "edge-a", Type: "TRANSLATES_TO", StartNode: "original-a", EndNode: "translated-0"},
 		{ID: "edge-z", Type: "TRANSLATES_TO", StartNode: "original-z", EndNode: "translated-1"},
 	} {
-		require.NoError(t, store.CreateEdge(edge))
+		require.NoError(t, store.CreateEdge(t.Context(), edge))
 	}
 	_, err := exec.Execute(ctx, "CREATE INDEX translated_created FOR (n:Translated) ON (n.createdAt)", nil)
 	require.NoError(t, err)
@@ -357,7 +360,7 @@ LIMIT 1`, nil)
 
 func TestIndexedOrderUnlabelledMatchPreservesOtherLabels(t *testing.T) {
 	exec := indexedOrderFixture(t, 720)
-	_, err := exec.storage.CreateNode(&storage.Node{
+	_, err := exec.storage.CreateNode(t.Context(), &storage.Node{
 		ID: "unindexed", Labels: []string{"OtherItem"},
 		Properties: map[string]interface{}{"title": "first title", "payload": "unindexed"},
 	})

@@ -18,14 +18,14 @@ type staleEdgeEngine struct {
 	stale map[storage.EdgeID]*storage.Edge
 }
 
-func (e *staleEdgeEngine) GetEdge(id storage.EdgeID) (*storage.Edge, error) {
+func (e *staleEdgeEngine) GetEdge(ctx context.Context, id storage.EdgeID) (*storage.Edge, error) {
 	e.mu.Lock()
 	old := e.stale[id]
 	e.mu.Unlock()
 	if old != nil {
 		return storage.CopyEdge(old), nil
 	}
-	return e.Engine.GetEdge(id)
+	return e.Engine.GetEdge(ctx, id)
 }
 
 // A relationship edited after it was indexed is embedded from the version
@@ -46,16 +46,16 @@ func TestRelationshipEmbedsTheIndexedVersionOverAStaleRead(t *testing.T) {
 		return RelationshipEmbedding{Vectors: [][]float32{{1, 0, 0}}}, nil
 	}
 	svc := startRelationshipService(t, engine, embed, nil)
-	<-svc.relationshipSearch().ready
+	<-svc.relationshipSearch().loaded.Done()
 
-	original, err := engine.Engine.GetEdge("r1")
+	original, err := engine.Engine.GetEdge(t.Context(), "r1")
 	require.NoError(t, err)
 	engine.mu.Lock()
 	engine.stale["r1"] = storage.CopyEdge(original)
 	engine.mu.Unlock()
 	edited := storage.CopyEdge(original)
 	edited.Properties["search_text"] = "zephyrine bridge explanation"
-	require.NoError(t, engine.Engine.UpdateEdge(storage.EdgeUpdateRequest{After: edited}))
+	require.NoError(t, engine.Engine.UpdateEdge(t.Context(), storage.EdgeUpdateRequest{After: edited}))
 	svc.IndexRelationship(edited)
 
 	require.Eventually(t, func() bool {
@@ -87,9 +87,9 @@ func TestRelationshipEmbeddingSupersededByALaterWrite(t *testing.T) {
 	}
 	svc := startRelationshipService(t, engine, embed, nil)
 	rs := svc.relationshipSearch()
-	<-rs.ready
+	<-rs.loaded.Done()
 
-	edge, err := engine.GetEdge("r1")
+	edge, err := engine.GetEdge(t.Context(), "r1")
 	require.NoError(t, err)
 	edge.Properties["search_text"] = "first"
 	svc.IndexRelationship(storage.CopyEdge(edge))
@@ -128,7 +128,7 @@ func TestRelationshipEmbedsStorageWhenTheCopyIsOlder(t *testing.T) {
 	svc.EnableRelationshipSearch(embed)
 	rs := svc.relationshipSearch()
 
-	stored, err := engine.GetEdge("r1")
+	stored, err := engine.GetEdge(t.Context(), "r1")
 	require.NoError(t, err)
 	older := storage.CopyEdge(stored)
 	older.Properties["reason"] = "an older reason"

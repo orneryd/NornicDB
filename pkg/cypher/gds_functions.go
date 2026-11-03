@@ -388,14 +388,14 @@ func gdsNodeFunction(name string, many bool) cypherfn.Func {
 			return nil, err
 		}
 		if !many {
-			return gdsNodeByID(store, values[0], graphFunctionIdentityDomain(ctx, store)), nil
+			return gdsNodeByID(workCtx, store, values[0], graphFunctionIdentityDomain(ctx, store)), nil
 		}
 		nodes := make([]interface{}, 0, len(ids))
 		for _, id := range ids {
 			if err := workCtx.Err(); err != nil {
 				return nil, err
 			}
-			if node := gdsNodeByID(store, id, graphFunctionIdentityDomain(ctx, store)); node != nil {
+			if node := gdsNodeByID(workCtx, store, id, graphFunctionIdentityDomain(ctx, store)); node != nil {
 				nodes = append(nodes, node)
 			}
 		}
@@ -403,7 +403,7 @@ func gdsNodeFunction(name string, many bool) cypherfn.Func {
 	}
 }
 
-func gdsNodeByID(store storage.Engine, value interface{}, domains ...graphIdentityDomain) interface{} {
+func gdsNodeByID(ctx context.Context, store storage.Engine, value interface{}, domains ...graphIdentityDomain) interface{} {
 	if store == nil || value == nil {
 		return nil
 	}
@@ -413,7 +413,7 @@ func gdsNodeByID(store storage.Engine, value interface{}, domains ...graphIdenti
 	}
 	// Storage's transaction owner decides visibility; preserve getQueryNode.
 	var noExecutor *StorageExecutor
-	if node, err := noExecutor.getQueryNode(store, id); err == nil && node != nil {
+	if node, err := noExecutor.getQueryNode(ctx, store, id); err == nil && node != nil {
 		return node
 	}
 	return nil

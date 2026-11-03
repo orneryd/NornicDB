@@ -46,23 +46,23 @@ func TestTransactionCountsEqualScan(t *testing.T) {
 	requireCountsEqualScan := func(t *testing.T, w *transactionStorageWrapper, step string) {
 		t.Helper()
 		for _, label := range labels {
-			fast, err := w.NodeCountByLabel(label)
+			fast, err := w.NodeCountByLabel(t.Context(), label)
 			require.NoError(t, err)
-			scan, err := w.nodeCountByLabelScan(label)
+			scan, err := w.nodeCountByLabelScan(t.Context(), label)
 			require.NoError(t, err)
 			require.Equal(t, scan, fast, "%s: nodes :%s", step, label)
 		}
 		for _, edgeType := range types {
-			fast, err := w.EdgeCountByType(edgeType)
+			fast, err := w.EdgeCountByType(t.Context(), edgeType)
 			require.NoError(t, err)
-			scan, err := w.edgeCountByTypeScan(edgeType)
+			scan, err := w.edgeCountByTypeScan(t.Context(), edgeType)
 			require.NoError(t, err)
 			require.Equal(t, scan, fast, "%s: relationships :%s", step, edgeType)
 			for _, label := range labels {
 				for _, start := range []bool{true, false} {
-					fast, err := w.edgeCountByEndpointLabel(label, edgeType, start)
+					fast, err := w.edgeCountByEndpointLabel(t.Context(), label, edgeType, start)
 					require.NoError(t, err)
-					scan, err := w.edgeCountByEndpointLabelScan(label, edgeType, start)
+					scan, err := w.edgeCountByEndpointLabelScan(t.Context(), label, edgeType, start)
 					require.NoError(t, err)
 					require.Equal(t, scan, fast, "%s: relationships :%s with %s node :%s", step, edgeType, map[bool]string{true: "start", false: "end"}[start], label)
 				}
@@ -107,7 +107,7 @@ func TestTransactionCountsEqualScan(t *testing.T) {
 			before := map[string]int64{}
 			if end == "ROLLBACK" {
 				for _, label := range labels {
-					before[label], err = store.NodeCountByLabel(label)
+					before[label], err = store.NodeCountByLabel(t.Context(), label)
 					require.NoError(t, err)
 				}
 			}
@@ -116,7 +116,7 @@ func TestTransactionCountsEqualScan(t *testing.T) {
 
 			// Committed state: the counters equal a scan outside any transaction.
 			for _, label := range labels {
-				counted, err := store.NodeCountByLabel(label)
+				counted, err := store.NodeCountByLabel(t.Context(), label)
 				require.NoError(t, err)
 				nodes, err := store.GetNodesByLabel(ctx, label)
 				require.NoError(t, err)
@@ -126,7 +126,7 @@ func TestTransactionCountsEqualScan(t *testing.T) {
 				}
 			}
 			for _, edgeType := range types {
-				counted, err := store.EdgeCountByType(edgeType)
+				counted, err := store.EdgeCountByType(t.Context(), edgeType)
 				require.NoError(t, err)
 				edges, err := store.GetEdgesByType(ctx, edgeType)
 				require.NoError(t, err)
@@ -134,17 +134,17 @@ func TestTransactionCountsEqualScan(t *testing.T) {
 				for _, label := range labels {
 					var starts, ends int64
 					for _, edge := range edges {
-						if node, err := store.GetNode(edge.StartNode); err == nil && nodeHasLabelFold(node, label) {
+						if node, err := store.GetNode(t.Context(), edge.StartNode); err == nil && nodeHasLabelFold(node, label) {
 							starts++
 						}
-						if node, err := store.GetNode(edge.EndNode); err == nil && nodeHasLabelFold(node, label) {
+						if node, err := store.GetNode(t.Context(), edge.EndNode); err == nil && nodeHasLabelFold(node, label) {
 							ends++
 						}
 					}
-					counted, err := store.EdgeCountByStartLabel(label, edgeType)
+					counted, err := store.EdgeCountByStartLabel(t.Context(), label, edgeType)
 					require.NoError(t, err)
 					require.Equal(t, starts, counted, "committed relationships :%s with start node :%s", edgeType, label)
-					counted, err = store.EdgeCountByEndLabel(label, edgeType)
+					counted, err = store.EdgeCountByEndLabel(t.Context(), label, edgeType)
 					require.NoError(t, err)
 					require.Equal(t, ends, counted, "committed relationships :%s with end node :%s", edgeType, label)
 				}

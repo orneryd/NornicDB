@@ -11,10 +11,10 @@ func TestPreparedEntityCommitPreservesProducerMode(t *testing.T) {
 	for _, mode := range []EntityCommitMode{CommitModeExplicit, CommitModeImplicit, CommitModeDirect} {
 		t.Run(map[EntityCommitMode]string{CommitModeExplicit: "explicit", CommitModeImplicit: "implicit-single", CommitModeDirect: "direct"}[mode], func(t *testing.T) {
 			b := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{wal: true, manualDrain: true})
-			tx, err := BeginEntityTransaction(b, mode)
+			tx, err := BeginEntityTransaction(t.Context(), b, mode)
 			require.NoError(t, err)
 			require.NoError(t, tx.SetNamespace("test"))
-			_, err = tx.CreateNode(&Node{ID: "test:a"})
+			_, err = tx.CreateNode(t.Context(), &Node{ID: "test:a"})
 			require.NoError(t, err)
 			p, err := tx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: "producer-mode"})
 			require.NoError(t, err)

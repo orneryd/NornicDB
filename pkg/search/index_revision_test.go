@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"testing"
@@ -46,7 +47,7 @@ func TestSearchResultCacheKeyedByIndexRevision(t *testing.T) {
 	svc := NewService(store, DefaultVectorDimensions, nil)
 	ctx := context.Background()
 	for _, id := range []string{"nornic:a", "nornic:b"} {
-		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{"Doc"}, Properties: map[string]any{"content": "alpha"}})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(id), Labels: []string{"Doc"}, Properties: map[string]any{"content": "alpha"}})
 		require.NoError(t, err)
 	}
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: "nornic:a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "alpha"}}))

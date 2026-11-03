@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -23,19 +24,19 @@ func lazyEmbeddingCases() []lazyEmbeddingCase {
 	return []lazyEmbeddingCase{
 		{name: "body-overflow", chunks: 4, create: func(t *testing.T, b *BadgerEngine, id NodeID) [][]float32 {
 			chunks := makeLargeChunkEmbeddings()
-			_, err := b.CreateNode(&Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"title": "t"}, ChunkEmbeddings: chunks})
+			_, err := b.CreateNode(context.Background(), &Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"title": "t"}, ChunkEmbeddings: chunks})
 			require.NoError(t, err)
 			return chunks
 		}},
 		{name: "worker-sidecar", chunks: 1, create: func(t *testing.T, b *BadgerEngine, id NodeID) [][]float32 {
-			_, err := b.CreateNode(&Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"title": "t"}})
+			_, err := b.CreateNode(context.Background(), &Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"title": "t"}})
 			require.NoError(t, err)
 			vector := make([]float32, 2048)
 			for i := range vector {
 				vector[i] = float32(i%7) + 0.5
 			}
 			chunks := [][]float32{vector}
-			require.NoError(t, b.UpdateNodeEmbeddingSidecar(embeddingWriteback(t, b, id, chunks, map[string]any{"has_embedding": true, "chunk_count": 1}, time.Time{})))
+			require.NoError(t, b.UpdateNodeEmbeddingSidecar(context.Background(), embeddingWriteback(t, b, id, chunks, map[string]any{"has_embedding": true, "chunk_count": 1}, time.Time{})))
 			return chunks
 		}},
 	}
@@ -45,7 +46,7 @@ func lazyEmbeddingCases() []lazyEmbeddingCase {
 // value no reader can decode, so any read of it fails.
 func corruptFirstEmbeddingChunk(t *testing.T, b *BadgerEngine, id NodeID) {
 	t.Helper()
-	require.NoError(t, b.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, b.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		return txn.Set(embeddingKey(id, 0), []byte{0xc1})
 	}))
 }
@@ -61,19 +62,19 @@ func TestTransactionGetQueryNodeReadsNoChunk(t *testing.T) {
 			id := NodeID("test:lazy")
 			chunks := tc.create(t, b, id)
 
-			tx, err := b.BeginTransaction()
+			tx, err := b.BeginTransaction(t.Context())
 			require.NoError(t, err)
-			full, err := tx.GetNode(id)
+			full, err := tx.GetNode(t.Context(), id)
 			require.NoError(t, err)
 			require.Equal(t, chunks, full.ChunkEmbeddings)
 			require.NoError(t, tx.Rollback())
 
 			corruptFirstEmbeddingChunk(t, b, id)
-			tx, err = b.BeginTransaction()
+			tx, err = b.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			defer tx.Rollback()
 			for read := 0; read < 2; read++ {
-				node, err := tx.GetQueryNode(id)
+				node, err := tx.GetQueryNode(t.Context(), id)
 				require.NoError(t, err)
 				require.Empty(t, node.ChunkEmbeddings)
 				require.False(t, node.RuntimeMetadata().EmbeddingsStoredSeparately)
@@ -82,7 +83,7 @@ func TestTransactionGetQueryNodeReadsNoChunk(t *testing.T) {
 				require.Equal(t, "t", node.Properties["title"])
 				require.Equal(t, []string{"Doc"}, node.Labels)
 			}
-			_, err = tx.GetNode(id)
+			_, err = tx.GetNode(t.Context(), id)
 			require.ErrorContains(t, err, "embedding chunk 0")
 		})
 	}
@@ -101,28 +102,28 @@ func TestTransactionGetQueryNodeKeepsFullReads(t *testing.T) {
 			id := NodeID("test:lazy")
 			chunks := tc.create(t, b, id)
 
-			tx, err := b.BeginTransaction()
+			tx, err := b.BeginTransaction(t.Context())
 			require.NoError(t, err)
-			node, err := tx.GetQueryNode(id)
+			node, err := tx.GetQueryNode(t.Context(), id)
 			require.NoError(t, err)
 			require.Empty(t, node.ChunkEmbeddings)
-			full, err := tx.GetNode(id)
+			full, err := tx.GetNode(t.Context(), id)
 			require.NoError(t, err)
 			require.Equal(t, chunks, full.ChunkEmbeddings)
 
 			node.Properties["other"] = int64(1)
-			require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
+			require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 			require.NoError(t, tx.Commit())
 
-			stored, err := b.GetNode(id)
+			stored, err := b.GetNode(t.Context(), id)
 			require.NoError(t, err)
 			require.Equal(t, int64(1), stored.Properties["other"])
 			require.Equal(t, chunks, stored.ChunkEmbeddings)
 			require.Equal(t, tc.chunks, chunkCountFromMeta(stored.EmbedMeta))
 
-			tx, err = b.BeginTransaction()
+			tx, err = b.BeginTransaction(t.Context())
 			require.NoError(t, err)
-			reread, err := tx.GetNode(id)
+			reread, err := tx.GetNode(t.Context(), id)
 			require.NoError(t, err)
 			require.Equal(t, chunks, reread.ChunkEmbeddings)
 			require.NoError(t, tx.Rollback())
@@ -130,14 +131,14 @@ func TestTransactionGetQueryNodeKeepsFullReads(t *testing.T) {
 			if tc.name != "worker-sidecar" {
 				return // managed embeddings only
 			}
-			tx, err = b.BeginTransaction()
+			tx, err = b.BeginTransaction(t.Context())
 			require.NoError(t, err)
-			node, err = tx.GetQueryNode(id)
+			node, err = tx.GetQueryNode(t.Context(), id)
 			require.NoError(t, err)
 			node.Properties["title"] = "new text"
-			require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
+			require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 			require.NoError(t, tx.Commit())
-			stored, err = b.GetNode(id)
+			stored, err = b.GetNode(t.Context(), id)
 			require.NoError(t, err)
 			require.Empty(t, stored.ChunkEmbeddings)
 			require.False(t, stored.HasChunkEmbeddings())
@@ -150,26 +151,26 @@ func TestTransactionGetQueryNodeKeepsFullReads(t *testing.T) {
 // deletes), sharing in-memory vectors instead of copying them.
 func TestTransactionGetQueryNodeVisibility(t *testing.T) {
 	b := newSidecarTestBadger(t)
-	tx, err := b.BeginTransaction()
+	tx, err := b.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer tx.Rollback()
 
 	pending := &Node{ID: "test:pending", Labels: []string{"Doc"}, Properties: map[string]any{"title": "p"}, ChunkEmbeddings: [][]float32{{1, 2}}}
-	_, err = tx.CreateNode(pending)
+	_, err = tx.CreateNode(t.Context(), pending)
 	require.NoError(t, err)
-	got, err := tx.GetQueryNode(pending.ID)
+	got, err := tx.GetQueryNode(t.Context(), pending.ID)
 	require.NoError(t, err)
 	require.Equal(t, "p", got.Properties["title"])
 	require.True(t, got.HasChunkEmbeddings())
 	got.Properties["title"] = "changed"
-	again, err := tx.GetNode(pending.ID)
+	again, err := tx.GetNode(t.Context(), pending.ID)
 	require.NoError(t, err)
 	require.Equal(t, "p", again.Properties["title"])
 
-	require.NoError(t, tx.DeleteGraphNode(pending.ID, CascadeEdges))
-	_, err = tx.GetQueryNode(pending.ID)
+	require.NoError(t, tx.DeleteGraphNode(t.Context(), pending.ID, CascadeEdges))
+	_, err = tx.GetQueryNode(t.Context(), pending.ID)
 	require.ErrorIs(t, err, ErrNotFound)
-	_, err = tx.GetQueryNode("test:missing")
+	_, err = tx.GetQueryNode(t.Context(), "test:missing")
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
@@ -199,31 +200,31 @@ func TestTransactionGetQueryNodeKeepsEmbeddingKeyLifecycle(t *testing.T) {
 		tc.create(t, b, id)
 		read := func(tx *BadgerTransaction) (*Node, error) {
 			if vectorFree {
-				return tx.GetQueryNode(id)
+				return tx.GetQueryNode(t.Context(), id)
 			}
-			return tx.GetNode(id)
+			return tx.GetNode(t.Context(), id)
 		}
 		var out outcome
 		out.keysAfterCreate = countQueryReadEmbeddingKeys(t, b, id)
 
-		tx, err := b.BeginTransaction()
+		tx, err := b.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		node, err := read(tx)
 		require.NoError(t, err)
 		node.Properties["seen"] = true
-		require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
+		require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 		require.NoError(t, tx.Commit())
 		out.keysAfterUpdate = countQueryReadEmbeddingKeys(t, b, id)
 		b.invalidateCachesAfterRestore()
-		stored, err := b.GetNode(id)
+		stored, err := b.GetNode(t.Context(), id)
 		require.NoError(t, err)
 		out.chunksAfter = stored.ChunkEmbeddings
 
-		tx, err = b.BeginTransaction()
+		tx, err = b.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		_, err = read(tx)
 		require.NoError(t, err)
-		require.NoError(t, tx.DeleteGraphNode(id, CascadeEdges))
+		require.NoError(t, tx.DeleteGraphNode(t.Context(), id, CascadeEdges))
 		require.NoError(t, tx.Commit())
 		out.keysAfterDelete = countQueryReadEmbeddingKeys(t, b, id)
 		return out
@@ -249,7 +250,7 @@ func TestEngineGetQueryNodeReadsNoChunk(t *testing.T) {
 			b := newSidecarTestBadger(t)
 			id := NodeID("test:lazy")
 			chunks := tc.create(t, b, id)
-			full, err := b.GetNode(id)
+			full, err := b.GetNode(t.Context(), id)
 			require.NoError(t, err)
 			require.Equal(t, chunks, full.ChunkEmbeddings)
 
@@ -260,11 +261,11 @@ func TestEngineGetQueryNodeReadsNoChunk(t *testing.T) {
 
 			b.invalidateCachesAfterRestore()
 			corruptFirstEmbeddingChunk(t, b, id)
-			_, err = b.GetNode(id)
+			_, err = b.GetNode(t.Context(), id)
 			require.Error(t, err, "the full read reads the corrupted chunk")
 			for name, read := range map[string]func() (*Node, error){
-				"badger": func() (*Node, error) { return b.GetQueryNode(id) },
-				"stack":  func() (*Node, error) { return stack.GetQueryNode("lazy") },
+				"badger": func() (*Node, error) { return b.GetQueryNode(t.Context(), id) },
+				"stack":  func() (*Node, error) { return stack.GetQueryNode(t.Context(), "lazy") },
 			} {
 				node, err := read()
 				require.NoError(t, err, name)
@@ -274,10 +275,10 @@ func TestEngineGetQueryNodeReadsNoChunk(t *testing.T) {
 				require.True(t, node.HasChunkEmbeddings(), name)
 				require.Equal(t, "t", node.Properties["title"], name)
 			}
-			node, err := stack.GetQueryNode("lazy")
+			node, err := stack.GetQueryNode(t.Context(), "lazy")
 			require.NoError(t, err)
 			require.Equal(t, NodeID("lazy"), node.ID)
-			_, err = b.GetQueryNode("test:missing")
+			_, err = b.GetQueryNode(t.Context(), "test:missing")
 			require.ErrorIs(t, err, ErrNotFound)
 		})
 	}
@@ -298,7 +299,7 @@ func TestEngineGetQueryNodeMatchesGetNode(t *testing.T) {
 		b := newSidecarTestBadger(t)
 		id := NodeID("test:lazy")
 		chunks := lazyEmbeddingCases()[0].create(t, b, id)
-		full, err := b.GetNode(id) // fills the node cache
+		full, err := b.GetNode(t.Context(), id) // fills the node cache
 		require.NoError(t, err)
 		node := mustReadNode(t, b.GetQueryNode, id)
 		require.Equal(t, chunks, node.ChunkEmbeddings, "a cached node's vectors are shared")
@@ -308,21 +309,21 @@ func TestEngineGetQueryNodeMatchesGetNode(t *testing.T) {
 		b := newWriteBehindTestEngine(t, time.Hour)
 		id := NodeID("test:buffered")
 		bufferedCreate(t, b, &Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"title": "t"}, ChunkEmbeddings: [][]float32{{1, 2, 3}}})
-		full, err := b.GetNode(id)
+		full, err := b.GetNode(t.Context(), id)
 		require.NoError(t, err)
 		node := mustReadNode(t, b.GetQueryNode, id)
 		require.Equal(t, stripVectors(full), stripVectors(node))
 		require.True(t, node.HasChunkEmbeddings())
 
-		tx, err := b.BeginTransaction()
+		tx, err := b.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		require.NoError(t, tx.SetImplicit(true))
 		require.NoError(t, tx.SetNamespace("test"))
-		require.NoError(t, tx.DeleteGraphNode(id, CascadeEdges))
+		require.NoError(t, tx.DeleteGraphNode(t.Context(), id, CascadeEdges))
 		require.NoError(t, tx.Commit())
-		_, err = b.GetNode(id)
+		_, err = b.GetNode(t.Context(), id)
 		require.ErrorIs(t, err, ErrNotFound)
-		_, err = b.GetQueryNode(id)
+		_, err = b.GetQueryNode(t.Context(), id)
 		require.ErrorIs(t, err, ErrNotFound)
 	})
 }
@@ -348,7 +349,7 @@ func TestEngineGetQueryNodeCache(t *testing.T) {
 				require.Equal(t, "t", node.Properties["title"])
 				node.Properties["title"] = "caller's copy"
 			}
-			full, err := b.GetNode(id)
+			full, err := b.GetNode(t.Context(), id)
 			require.NoError(t, err)
 			require.Equal(t, chunks, full.ChunkEmbeddings, "a full read never takes the vector-free entry")
 			require.Equal(t, "t", full.Properties["title"])
@@ -357,7 +358,7 @@ func TestEngineGetQueryNodeCache(t *testing.T) {
 			mustReadNode(t, b.GetQueryNode, id)
 			updated := CopyNode(full)
 			updated.Properties["other"] = int64(2)
-			require.NoError(t, b.UpdateNode(NodeUpdateRequest{After: updated}))
+			require.NoError(t, b.UpdateNode(t.Context(), NodeUpdateRequest{After: updated}))
 			node := mustReadNode(t, b.GetQueryNode, id)
 			require.Equal(t, int64(2), node.Properties["other"])
 
@@ -366,12 +367,12 @@ func TestEngineGetQueryNodeCache(t *testing.T) {
 			writeback := embeddingWriteback(t, b, id, [][]float32{{1, 2}, {3, 4}, {5, 6}}, map[string]any{"has_embedding": true, "chunk_count": 3}, time.Time{})
 			b.invalidateCachesAfterRestore()
 			mustReadNode(t, b.GetQueryNode, id)
-			require.NoError(t, b.UpdateNodeEmbeddingSidecar(writeback))
+			require.NoError(t, b.UpdateNodeEmbeddingSidecar(context.Background(), writeback))
 			node = mustReadNode(t, b.GetQueryNode, id)
 			require.Equal(t, 3, chunkCountFromMeta(node.EmbedMeta), "a sidecar write is seen")
 
-			require.NoError(t, b.DeleteNode(id))
-			_, err = b.GetQueryNode(id)
+			require.NoError(t, b.DeleteNode(t.Context(), id))
+			_, err = b.GetQueryNode(t.Context(), id)
 			require.ErrorIs(t, err, ErrNotFound)
 		})
 	}
@@ -398,9 +399,9 @@ func TestEngineGetQueryNodeCacheConcurrentWrites(t *testing.T) {
 				}
 				var err error
 				if full {
-					_, err = b.GetNode(id)
+					_, err = b.GetNode(t.Context(), id)
 				} else {
-					_, err = b.GetQueryNode(id)
+					_, err = b.GetQueryNode(t.Context(), id)
 				}
 				if err != nil {
 					t.Error(err)
@@ -410,10 +411,10 @@ func TestEngineGetQueryNodeCacheConcurrentWrites(t *testing.T) {
 		}(r%2 == 0)
 	}
 	for v := int64(1); v <= 200; v++ {
-		node, err := b.GetNode(id)
+		node, err := b.GetNode(t.Context(), id)
 		require.NoError(t, err)
 		node.Properties["v"] = v
-		require.NoError(t, b.UpdateNode(NodeUpdateRequest{After: node}))
+		require.NoError(t, b.UpdateNode(t.Context(), NodeUpdateRequest{After: node}))
 		got := mustReadNode(t, b.GetQueryNode, id)
 		require.Equal(t, v, got.Properties["v"])
 	}

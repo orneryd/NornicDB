@@ -30,9 +30,9 @@ func TestSearchAndSimilarReadTheSelectedDatabase(t *testing.T) {
 		Properties:      map[string]interface{}{"content": "Alice builds graph search systems"},
 		ChunkEmbeddings: [][]float32{{1.0, 0.0, 0.0}},
 	}
-	defaultID, err := db.GetStorage().CreateNode(defaultNode)
+	defaultID, err := db.GetStorage().CreateNode(t.Context(), defaultNode)
 	require.NoError(t, err)
-	_, err = db.GetStorage().CreateNode(&storage.Node{
+	_, err = db.GetStorage().CreateNode(t.Context(), &storage.Node{
 		ID:              storage.NodeID(uuid.New().String()),
 		Labels:          []string{"Memory"},
 		Properties:      map[string]interface{}{"content": "Alice maintains graph pipelines"},
@@ -93,7 +93,7 @@ func TestSearchAndSimilarRefuseCompositeDatabase(t *testing.T) {
 	}))
 	closed, err := dbManager.GetStorage("closed_part")
 	require.NoError(t, err)
-	closedID, err := closed.CreateNode(&storage.Node{
+	closedID, err := closed.CreateNode(t.Context(), &storage.Node{
 		ID:              storage.NodeID(uuid.New().String()),
 		Labels:          []string{"Memory"},
 		Properties:      map[string]interface{}{"content": "Closed constituent graph notes"},

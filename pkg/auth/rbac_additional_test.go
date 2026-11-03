@@ -188,7 +188,7 @@ func TestRoleEntitlementsStore_LoadAndUpdatePaths(t *testing.T) {
 	eng := newSystemEngine(t)
 	ctx := context.Background()
 
-	_, err := eng.CreateNode(&storage.Node{
+	_, err := eng.CreateNode(context.Background(), &storage.Node{
 		ID:     storage.NodeID(roleEntitlementPrefix + "loaded"),
 		Labels: []string{roleEntitlementLabel, roleEntitlementSystems},
 		Properties: map[string]any{
@@ -198,7 +198,7 @@ func TestRoleEntitlementsStore_LoadAndUpdatePaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create entitlement node: %v", err)
 	}
-	_, err = eng.CreateNode(&storage.Node{
+	_, err = eng.CreateNode(context.Background(), &storage.Node{
 		ID:     storage.NodeID("system:bad-entitlement"),
 		Labels: []string{roleEntitlementLabel},
 	})
@@ -229,7 +229,7 @@ func TestRoleEntitlementsStore_LoadAndUpdatePaths(t *testing.T) {
 		t.Fatalf("expected updated entitlements, got %#v", store.Get("loaded"))
 	}
 
-	node, err := eng.GetNode(storage.NodeID(roleEntitlementPrefix + "loaded"))
+	node, err := eng.GetNode(context.Background(), storage.NodeID(roleEntitlementPrefix+"loaded"))
 	if err != nil {
 		t.Fatalf("get loaded entitlement node: %v", err)
 	}
@@ -237,7 +237,7 @@ func TestRoleEntitlementsStore_LoadAndUpdatePaths(t *testing.T) {
 	if err := store.Set(ctx, "loaded", []string{"read", "write"}); err != nil {
 		t.Fatalf("second entitlement update failed: %v", err)
 	}
-	node2, err := eng.GetNode(storage.NodeID(roleEntitlementPrefix + "loaded"))
+	node2, err := eng.GetNode(context.Background(), storage.NodeID(roleEntitlementPrefix+"loaded"))
 	if err != nil {
 		t.Fatalf("get updated entitlement node: %v", err)
 	}
@@ -328,7 +328,7 @@ func TestPrivilegesStore_LoadAndUpdatePaths(t *testing.T) {
 	eng := newSystemEngine(t)
 	ctx := context.Background()
 
-	_, err := eng.CreateNode(&storage.Node{
+	_, err := eng.CreateNode(context.Background(), &storage.Node{
 		ID:     storage.NodeID(dbPrivPrefix + "loaded:neo4j"),
 		Labels: []string{dbPrivLabel, dbPrivSystems},
 		Properties: map[string]any{
@@ -339,7 +339,7 @@ func TestPrivilegesStore_LoadAndUpdatePaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create privilege node: %v", err)
 	}
-	_, err = eng.CreateNode(&storage.Node{
+	_, err = eng.CreateNode(context.Background(), &storage.Node{
 		ID:     storage.NodeID("system:bad-privilege"),
 		Labels: []string{dbPrivLabel},
 	})
@@ -365,7 +365,7 @@ func TestPrivilegesStore_LoadAndUpdatePaths(t *testing.T) {
 		t.Fatalf("expected updated privilege resolution, got %#v", got)
 	}
 
-	node, err := eng.GetNode(storage.NodeID(dbPrivPrefix + "loaded:neo4j"))
+	node, err := eng.GetNode(context.Background(), storage.NodeID(dbPrivPrefix+"loaded:neo4j"))
 	if err != nil {
 		t.Fatalf("get loaded privilege node: %v", err)
 	}
@@ -373,7 +373,7 @@ func TestPrivilegesStore_LoadAndUpdatePaths(t *testing.T) {
 	if err := store.SavePrivilege(ctx, "loaded", "neo4j", false, true); err != nil {
 		t.Fatalf("second privilege update failed: %v", err)
 	}
-	node2, err := eng.GetNode(storage.NodeID(dbPrivPrefix + "loaded:neo4j"))
+	node2, err := eng.GetNode(context.Background(), storage.NodeID(dbPrivPrefix+"loaded:neo4j"))
 	if err != nil {
 		t.Fatalf("get updated privilege node: %v", err)
 	}

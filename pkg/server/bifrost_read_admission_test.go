@@ -36,7 +36,7 @@ func TestBifrostGlobalFeedRequiresAllDatabaseReads(t *testing.T) {
 		for _, database := range []string{"nornic", "feed_named", "system"} {
 			require.NoError(t, server.privilegesStore.SavePrivilege(ctx, spec.name, database, spec.read, true))
 		}
-		_, err := users.CreateUser(spec.name, "password123", []auth.Role{auth.Role(spec.name)})
+		_, err := users.CreateUser(context.Background(), spec.name, "password123", []auth.Role{auth.Role(spec.name)})
 		require.NoError(t, err)
 	}
 	server.config.Features.HeimdallEnabled = true

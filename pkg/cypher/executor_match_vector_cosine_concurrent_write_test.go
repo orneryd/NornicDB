@@ -27,7 +27,7 @@ func TestMatchVectorCosineFastPath_CandidateCountDuringConcurrentWrites(t *testi
 	// property; the query scans only Evidence, so the count dominates it and
 	// index writes land while it reads.
 	for index := 0; index < 20000; index++ {
-		_, err = ns.CreateNode(&storage.Node{
+		_, err = ns.CreateNode(t.Context(), &storage.Node{
 			ID:         storage.NodeID(fmt.Sprintf("archive-%05d", index)),
 			Labels:     []string{"Archive"},
 			Properties: map[string]any{"id": fmt.Sprintf("archive-%05d", index), "asset_id": "other", "embedding": []float32{1, 0, 0}},
@@ -45,7 +45,7 @@ func TestMatchVectorCosineFastPath_CandidateCountDuringConcurrentWrites(t *testi
 			Labels:     []string{"Evidence"},
 			Properties: map[string]any{"id": fmt.Sprintf("live-%02d", index), "asset_id": "live", "embedding": []float32{0, 1, 0}},
 		}
-		_, err = ns.CreateNode(live[index])
+		_, err = ns.CreateNode(t.Context(), live[index])
 		require.NoError(t, err)
 	}
 

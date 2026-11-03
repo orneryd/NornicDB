@@ -2,6 +2,7 @@
 package bolt
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -28,7 +29,20 @@ func encodePackStreamMapInto(dst []byte, m map[string]any) []byte {
 }
 
 func encodePackStreamMapIntoWithUTC(dst []byte, m map[string]any, useUTCDateTimeStructs bool) []byte {
-	return encodeRecordMapInto(dst, m, useUTCDateTimeStructs, false, "")
+	m = storage.PublicRemoteMap(m)
+	size := len(m)
+	if _, ok := m["_pathResult"]; ok {
+		size--
+	}
+	dst = appendPackStreamMapHeader(dst, size)
+	for key, value := range m {
+		if key == "_pathResult" {
+			continue
+		}
+		dst = encodePackStreamStringInto(dst, key)
+		dst = encodePackStreamValueIntoWithUTC(dst, value, useUTCDateTimeStructs)
+	}
+	return dst
 }
 
 func encodePackStreamMap(m map[string]any) []byte {
@@ -40,7 +54,11 @@ func encodePackStreamListInto(dst []byte, items []any) []byte {
 }
 
 func encodePackStreamListIntoWithUTC(dst []byte, items []any, useUTCDateTimeStructs bool) []byte {
-	return encodeRecordListInto(dst, items, useUTCDateTimeStructs, false, "")
+	dst = appendPackStreamListHeader(dst, len(items))
+	for _, item := range items {
+		dst = encodePackStreamValueIntoWithUTC(dst, item, useUTCDateTimeStructs)
+	}
+	return dst
 }
 
 func encodePackStreamList(items []any) []byte {
@@ -800,100 +818,134 @@ func encodePathInto(dst []byte, pathNodes []*storage.Node, pathRels []*storage.E
 // version. Bolt 5.0+ node/relationship structures carry their element id as
 // the final field (#745); Bolt 4.x structures keep the three/five-field
 // shapes those drivers parse.
-type boltEntityDatabaseResolver func(storage.NodeID, storage.EdgeID) string
+type boltEntityDatabaseResolver func(context.Context, storage.NodeID, storage.EdgeID) (string, error)
 
-func recordEntityDatabase(dbName string, nodeID storage.NodeID, edgeID storage.EdgeID, resolvers []boltEntityDatabaseResolver) string {
+func recordEntityDatabase(ctx context.Context, dbName string, nodeID storage.NodeID, edgeID storage.EdgeID, resolvers []boltEntityDatabaseResolver) (string, error) {
 	if len(resolvers) > 0 && resolvers[0] != nil {
-		if resolved := resolvers[0](nodeID, edgeID); resolved != "" {
-			return resolved
+		resolved, err := resolvers[0](ctx, nodeID, edgeID)
+		if err != nil {
+			return "", err
+		}
+		if resolved != "" {
+			return resolved, nil
 		}
 	}
-	return dbName
+	return dbName, nil
 }
 
-func encodeRecordListInto(dst []byte, items []any, useUTCDateTimeStructs, bolt5 bool, dbName string, resolvers ...boltEntityDatabaseResolver) []byte {
+func encodeRecordListInto(ctx context.Context, dst []byte, items []any, useUTCDateTimeStructs, bolt5 bool, dbName string, resolvers ...boltEntityDatabaseResolver) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	var err error
+
+	if !bolt5 {
+		return encodePackStreamListIntoWithUTC(dst, items, useUTCDateTimeStructs), nil
+	}
+
 	if len(items) == 0 {
-		return append(dst, 0x90)
+		return append(dst, 0x90), nil
 	}
 	size := len(items)
 	dst = appendPackStreamListHeader(dst, size)
 	for _, item := range items {
-		dst = encodeRecordValueInto(dst, item, useUTCDateTimeStructs, bolt5, dbName, resolvers...)
+		dst, err = encodeRecordValueInto(ctx, dst, item, useUTCDateTimeStructs, bolt5, dbName, resolvers...)
+		if err != nil {
+			return nil, err
+		}
 	}
-	return dst
+	return dst, nil
 }
 
 // encodeRecordValueInto encodes one record value. Under Bolt 5.0 entities
 // carry their element id; everything else uses the shared 4.x encoder.
-func encodeRecordValueInto(dst []byte, v any, useUTCDateTimeStructs, bolt5 bool, dbName string, resolvers ...boltEntityDatabaseResolver) []byte {
+func encodeRecordValueInto(ctx context.Context, dst []byte, v any, useUTCDateTimeStructs, bolt5 bool, dbName string, resolvers ...boltEntityDatabaseResolver) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	var err error
+
 	if !bolt5 {
-		return encodePackStreamValueIntoWithUTC(dst, v, useUTCDateTimeStructs)
+		return encodePackStreamValueIntoWithUTC(dst, v, useUTCDateTimeStructs), nil
 	}
 	switch val := v.(type) {
 	case *storage.Node:
 		if val == nil {
-			return append(dst, 0xC0)
+			return append(dst, 0xC0), nil
 		}
-		return encodeStorageNodeV5Into(dst, val, recordEntityDatabase(dbName, val.ID, "", resolvers))
+		database, err := recordEntityDatabase(ctx, dbName, val.ID, "", resolvers)
+		if err != nil {
+			return nil, err
+		}
+		return encodeStorageNodeV5Into(dst, val, database), nil
 	case storage.Node:
-		return encodeStorageNodeV5Into(dst, &val, recordEntityDatabase(dbName, val.ID, "", resolvers))
+		database, err := recordEntityDatabase(ctx, dbName, val.ID, "", resolvers)
+		if err != nil {
+			return nil, err
+		}
+		return encodeStorageNodeV5Into(dst, &val, database), nil
 	case *storage.Edge:
 		if val == nil {
-			return append(dst, 0xC0)
+			return append(dst, 0xC0), nil
 		}
-		return encodeStorageEdgeV5Into(dst, val, dbName, resolvers...)
+		return encodeStorageEdgeV5Into(ctx, dst, val, dbName, resolvers...)
 	case storage.Edge:
-		return encodeStorageEdgeV5Into(dst, &val, dbName, resolvers...)
+		return encodeStorageEdgeV5Into(ctx, dst, &val, dbName, resolvers...)
 	case []*storage.Node:
 		items := make([]any, len(val))
 		for i, node := range val {
 			items[i] = node
 		}
-		return encodeRecordListInto(dst, items, useUTCDateTimeStructs, true, dbName, resolvers...)
+		return encodeRecordListInto(ctx, dst, items, useUTCDateTimeStructs, true, dbName, resolvers...)
 	case []storage.Node:
 		items := make([]any, len(val))
 		for i := range val {
 			items[i] = &val[i]
 		}
-		return encodeRecordListInto(dst, items, useUTCDateTimeStructs, true, dbName, resolvers...)
+		return encodeRecordListInto(ctx, dst, items, useUTCDateTimeStructs, true, dbName, resolvers...)
 	case []*storage.Edge:
 		items := make([]any, len(val))
 		for i, edge := range val {
 			items[i] = edge
 		}
-		return encodeRecordListInto(dst, items, useUTCDateTimeStructs, true, dbName, resolvers...)
+		return encodeRecordListInto(ctx, dst, items, useUTCDateTimeStructs, true, dbName, resolvers...)
 	case []storage.Edge:
 		items := make([]any, len(val))
 		for i := range val {
 			items[i] = &val[i]
 		}
-		return encodeRecordListInto(dst, items, useUTCDateTimeStructs, true, dbName, resolvers...)
+		return encodeRecordListInto(ctx, dst, items, useUTCDateTimeStructs, true, dbName, resolvers...)
 	case []any:
-		return encodeRecordListInto(dst, val, useUTCDateTimeStructs, true, dbName, resolvers...)
+		return encodeRecordListInto(ctx, dst, val, useUTCDateTimeStructs, true, dbName, resolvers...)
 	case []map[string]any:
 		if len(val) == 0 {
-			return append(dst, 0x90)
+			return append(dst, 0x90), nil
 		}
 		size := len(val)
 		dst = appendPackStreamListHeader(dst, size)
 		for _, m := range val {
-			dst = encodeRecordValueInto(dst, m, useUTCDateTimeStructs, true, dbName, resolvers...)
+			dst, err = encodeRecordValueInto(ctx, dst, m, useUTCDateTimeStructs, true, dbName, resolvers...)
+			if err != nil {
+				return nil, err
+			}
 		}
-		return dst
+		return dst, nil
 	case storage.RemotePathValue:
-		return encodeRemotePathInto(dst, val, useUTCDateTimeStructs, true)
+		return encodeRemotePathInto(dst, val, useUTCDateTimeStructs, true), nil
 	case storage.RemoteEntityValue:
-		return encodeRemoteEntityInto(dst, val, useUTCDateTimeStructs, true)
+		return encodeRemoteEntityInto(dst, val, useUTCDateTimeStructs, true), nil
 	case map[string]any:
 
 		if path, ok := extractPathFromMap(val); ok {
-			return encodePathV5Into(dst, path.Nodes, path.Relationships, dbName, resolvers...)
+			return encodePathV5Into(ctx, dst, path.Nodes, path.Relationships, dbName, resolvers...)
 		}
 		// Ordinary maps recurse through the version-aware encoder so nested
 		// entities keep their Bolt 5.0 structures (#745: RETURN {n: n}).
-		return encodeRecordMapInto(dst, val, useUTCDateTimeStructs, true, dbName, resolvers...)
+		return encodeRecordMapInto(ctx, dst, val, useUTCDateTimeStructs, true, dbName, resolvers...)
 	}
-	return encodePackStreamValueIntoWithUTC(dst, v, useUTCDateTimeStructs)
+	return encodePackStreamValueIntoWithUTC(dst, v, useUTCDateTimeStructs), nil
 }
 
 // encodeRecordMapInto encodes a map for the negotiated Bolt version. Bolt 5.0
@@ -901,10 +953,16 @@ func encodeRecordValueInto(dst []byte, v any, useUTCDateTimeStructs, bolt5 bool,
 // map get their element-id structures; Bolt 4.x keeps the shared legacy
 // encoder. The _pathResult sentinel key is always dropped (the shared 4.x
 // behavior).
-func encodeRecordMapInto(dst []byte, m map[string]any, useUTCDateTimeStructs, bolt5 bool, dbName string, resolvers ...boltEntityDatabaseResolver) []byte {
+func encodeRecordMapInto(ctx context.Context, dst []byte, m map[string]any, useUTCDateTimeStructs, bolt5 bool, dbName string, resolvers ...boltEntityDatabaseResolver) ([]byte, error) {
+	if !bolt5 {
+		return encodePackStreamMapIntoWithUTC(dst, m, useUTCDateTimeStructs), nil
+	}
+
+	var err error
+
 	m = storage.PublicRemoteMap(m)
 	if len(m) == 0 {
-		return append(dst, 0xA0)
+		return append(dst, 0xA0), nil
 	}
 
 	// Some Cypher internals use helper sentinel keys that should not be
@@ -928,14 +986,13 @@ func encodeRecordMapInto(dst []byte, m map[string]any, useUTCDateTimeStructs, bo
 			continue
 		}
 		dst = encodePackStreamStringInto(dst, k)
-		if bolt5 {
-			dst = encodeRecordValueInto(dst, v, useUTCDateTimeStructs, true, dbName, resolvers...)
-		} else {
-			dst = encodePackStreamValueIntoWithUTC(dst, v, useUTCDateTimeStructs)
+		dst, err = encodeRecordValueInto(ctx, dst, v, useUTCDateTimeStructs, true, dbName, resolvers...)
+		if err != nil {
+			return nil, err
 		}
 	}
 
-	return dst
+	return dst, nil
 }
 
 // encodeStorageNodeV5Into encodes a node with the Bolt 5.0 four-field
@@ -954,16 +1011,28 @@ func encodeStorageNodeV5Into(dst []byte, node *storage.Node, dbName string) []by
 // structure (id, start, end, type, properties, element_id,
 // start_node_element_id, end_node_element_id). It reuses the 4.x field
 // encoding and upgrades the struct marker before appending the element ids.
-func encodeStorageEdgeV5Into(dst []byte, edge *storage.Edge, dbName string, resolvers ...boltEntityDatabaseResolver) []byte {
+func encodeStorageEdgeV5Into(ctx context.Context, dst []byte, edge *storage.Edge, dbName string, resolvers ...boltEntityDatabaseResolver) ([]byte, error) {
 	start := len(dst)
 	dst = encodeStorageEdgeIntoWithUTC(dst, edge, true)
 	if start+1 < len(dst) {
 		dst[start] = 0xB8 // B5 52 (5 fields) -> B8 52 (8 fields)
 	}
-	dst = encodePackStreamStringInto(dst, edge.ElementID(recordEntityDatabase(dbName, "", edge.ID, resolvers)))
-	dst = encodePackStreamStringInto(dst, edge.StartElementID(recordEntityDatabase(dbName, edge.StartNode, "", resolvers)))
-	dst = encodePackStreamStringInto(dst, edge.EndElementID(recordEntityDatabase(dbName, edge.EndNode, "", resolvers)))
-	return dst
+	database, err := recordEntityDatabase(ctx, dbName, "", edge.ID, resolvers)
+	if err != nil {
+		return nil, err
+	}
+	startDatabase, err := recordEntityDatabase(ctx, dbName, edge.StartNode, "", resolvers)
+	if err != nil {
+		return nil, err
+	}
+	endDatabase, err := recordEntityDatabase(ctx, dbName, edge.EndNode, "", resolvers)
+	if err != nil {
+		return nil, err
+	}
+	dst = encodePackStreamStringInto(dst, edge.ElementID(database))
+	dst = encodePackStreamStringInto(dst, edge.StartElementID(startDatabase))
+	dst = encodePackStreamStringInto(dst, edge.EndElementID(endDatabase))
+	return dst, nil
 }
 
 // encodeNodeV5Into encodes a map-backed node (id, labels, properties,
@@ -983,15 +1052,20 @@ func encodeNodeV5Into(dst []byte, nodeId any, labels any, nodeMap map[string]any
 
 // encodePathV5Into encodes a path whose nodes and unbound relationships carry
 // Bolt 5.0 element ids (B4 72 unbound relationships).
-func encodePathV5Into(dst []byte, pathNodes []*storage.Node, pathRels []*storage.Edge, dbName string, resolvers ...boltEntityDatabaseResolver) []byte {
+func encodePathV5Into(ctx context.Context, dst []byte, pathNodes []*storage.Node, pathRels []*storage.Edge, dbName string, resolvers ...boltEntityDatabaseResolver) ([]byte, error) {
+	var err error
+
 	dst = append(dst, 0xB3, 0x50)
 	if len(pathNodes) == 0 {
 		dst = append(dst, 0x90, 0x90, 0x90)
-		return dst
+		return dst, nil
 	}
 	if len(pathRels) == 0 {
-		dst = encodeRecordListInto(dst, []any{pathNodes[0]}, true, true, dbName, resolvers...)
-		return append(dst, 0x90, 0x90)
+		dst, err = encodeRecordListInto(ctx, dst, []any{pathNodes[0]}, true, true, dbName, resolvers...)
+		if err != nil {
+			return nil, err
+		}
+		return append(dst, 0x90, 0x90), nil
 	}
 	uniqueNodes, nodeIndex := uniquePathNodes(pathNodes)
 	uniqueRels, relIndex := uniquePathRels(pathRels)
@@ -1000,16 +1074,22 @@ func encodePathV5Into(dst []byte, pathNodes []*storage.Node, pathRels []*storage
 	for i, node := range uniqueNodes {
 		nodeItems[i] = node
 	}
-	dst = encodeRecordListInto(dst, nodeItems, true, true, dbName, resolvers...)
+	dst, err = encodeRecordListInto(ctx, dst, nodeItems, true, true, dbName, resolvers...)
+	if err != nil {
+		return nil, err
+	}
 
 	rels := make([]unboundRelationship, len(uniqueRels))
 	for i, rel := range uniqueRels {
 		rels[i] = unboundRelationship{id: rel.ID, database: rel.Database, relType: rel.Type, properties: rel.Properties}
 	}
-	dst = encodeUnboundRelationshipListV5Into(dst, rels, dbName, resolvers...)
+	dst, err = encodeUnboundRelationshipListV5Into(ctx, dst, rels, dbName, resolvers...)
+	if err != nil {
+		return nil, err
+	}
 
 	sequence := buildPathSequence(pathNodes, pathRels, nodeIndex, relIndex)
-	return encodePackStreamValueIntoWithUTC(dst, sequence, true)
+	return encodePackStreamValueIntoWithUTC(dst, sequence, true), nil
 }
 
 // encodeUnboundRelationshipV5Into encodes a Bolt 5.0 unbound relationship:
@@ -1033,16 +1113,20 @@ func encodeUnboundRelationshipV5Into(dst []byte, rel *unboundRelationship, dbNam
 
 // encodeUnboundRelationshipListV5Into encodes a list of Bolt 5.0 unbound
 // relationships (path field 2).
-func encodeUnboundRelationshipListV5Into(dst []byte, rels []unboundRelationship, dbName string, resolvers ...boltEntityDatabaseResolver) []byte {
+func encodeUnboundRelationshipListV5Into(ctx context.Context, dst []byte, rels []unboundRelationship, dbName string, resolvers ...boltEntityDatabaseResolver) ([]byte, error) {
 	if len(rels) == 0 {
-		return append(dst, 0x90)
+		return append(dst, 0x90), nil
 	}
 	size := len(rels)
 	dst = appendPackStreamListHeader(dst, size)
 	for i := range rels {
-		dst = encodeUnboundRelationshipV5Into(dst, &rels[i], recordEntityDatabase(dbName, "", rels[i].id, resolvers))
+		database, err := recordEntityDatabase(ctx, dbName, "", rels[i].id, resolvers)
+		if err != nil {
+			return nil, err
+		}
+		dst = encodeUnboundRelationshipV5Into(dst, &rels[i], database)
 	}
-	return dst
+	return dst, nil
 }
 
 func encodePathIntoWithUTC(dst []byte, pathNodes []*storage.Node, pathRels []*storage.Edge, useUTCDateTimeStructs bool) []byte {

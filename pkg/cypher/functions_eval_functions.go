@@ -317,8 +317,16 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 	if matchFuncStartAndSuffix(expr, "degree") {
 		inner := extractFuncArgs(expr, "degree")
 		if node, ok := nodes[inner]; ok {
-			inDegree := e.storage.GetInDegree(node.ID)
-			outDegree := e.storage.GetOutDegree(node.ID)
+			inDegree, err := e.storage.GetInDegree(ctx, node.ID)
+			if err != nil {
+				recordExpressionFailure(ctx, err)
+				return nil
+			}
+			outDegree, err := e.storage.GetOutDegree(ctx, node.ID)
+			if err != nil {
+				recordExpressionFailure(ctx, err)
+				return nil
+			}
 			return int64(inDegree + outDegree)
 		}
 		return int64(0)
@@ -328,7 +336,12 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 	if matchFuncStartAndSuffix(expr, "indegree") {
 		inner := extractFuncArgs(expr, "indegree")
 		if node, ok := nodes[inner]; ok {
-			return int64(e.storage.GetInDegree(node.ID))
+			degree, err := e.storage.GetInDegree(ctx, node.ID)
+			if err != nil {
+				recordExpressionFailure(ctx, err)
+				return nil
+			}
+			return int64(degree)
 		}
 		return int64(0)
 	}
@@ -337,7 +350,12 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 	if matchFuncStartAndSuffix(expr, "outdegree") {
 		inner := extractFuncArgs(expr, "outdegree")
 		if node, ok := nodes[inner]; ok {
-			return int64(e.storage.GetOutDegree(node.ID))
+			degree, err := e.storage.GetOutDegree(ctx, node.ID)
+			if err != nil {
+				recordExpressionFailure(ctx, err)
+				return nil
+			}
+			return int64(degree)
 		}
 		return int64(0)
 	}

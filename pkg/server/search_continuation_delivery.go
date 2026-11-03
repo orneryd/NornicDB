@@ -1,11 +1,11 @@
 package server
 
 import (
-	"context"
 	"errors"
 	"io"
 	"net/http"
 
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/resultstream"
 )
 
@@ -49,13 +49,11 @@ func (w *searchDeliveryWriter) Flush() { _ = w.FlushError() }
 func continuationDeliveryMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		delivery := &resultstream.Delivery{}
-		failed := make(chan struct{})
-		stop := context.AfterFunc(r.Context(), func() { defer close(failed); delivery.Fail() })
-		stopped := false
+		// A request cancellation fails the delivery; every exit settles that
+		// callback before the final Fail.
+		stopFail := lifecycle.AfterFuncJoined(r.Context(), delivery.Fail)
 		defer func() {
-			if !stopped && !stop() {
-				<-failed
-			}
+			stopFail()
 			delivery.Fail()
 		}()
 		r = r.WithContext(resultstream.WithDelivery(r.Context(), delivery))
@@ -64,11 +62,7 @@ func continuationDeliveryMiddleware(next http.Handler) http.Handler {
 		if writer.wrotePage && delivery.Pending() {
 			_ = writer.FlushError()
 		}
-		stopped = stop()
-		if !stopped {
-			<-failed
-			return
-		}
+		stopFail()
 		if r.Context().Err() == nil {
 			delivery.DeliveredWritten()
 		}

@@ -29,7 +29,7 @@ func TestCompositeConstituentReadAdmission(t *testing.T) {
 				require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: database}))
 				engine, err := server.dbManager.GetStorage(database)
 				require.NoError(t, err)
-				_, err = engine.CreateNode(&storage.Node{ID: "secret", Labels: []string{"CompositeRead"}})
+				_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "secret", Labels: []string{"CompositeRead"}})
 				require.NoError(t, err)
 			}
 			target := "read_closed"
@@ -50,7 +50,7 @@ func TestCompositeConstituentReadAdmission(t *testing.T) {
 				for _, database := range databases {
 					require.NoError(t, server.privilegesStore.SavePrivilege(ctx, role, database, role == "composite_reader" || database != "read_closed", true))
 				}
-				_, err := users.CreateUser(role, "password123", []auth.Role{auth.Role(role)})
+				_, err := users.CreateUser(context.Background(), role, "password123", []auth.Role{auth.Role(role)})
 				require.NoError(t, err)
 				for _, route := range []struct {
 					path string

@@ -19,7 +19,7 @@ func TestCloseCancelsLexicalSearchCompletion(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 	engine := db.GetStorage()
-	_, err = engine.CreateNode(&storage.Node{ID: "seed", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "needle"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "seed", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "needle"}})
 	require.NoError(t, err)
 	// An independently constructed real service prevents the DB registry's
 	// asynchronous first-use warmup from rebuilding the fixture mid-request.

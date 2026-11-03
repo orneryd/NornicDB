@@ -141,7 +141,7 @@ func createRelationshipForMerge(
 				return existing, false, nil
 			}
 		}
-		if err := store.CreateEdge(edge); err != nil {
+		if err := store.CreateEdge(ctx, edge); err != nil {
 			var hiddenConflict *storage.HiddenEdgeIdentityConflictError
 			if errors.As(err, &hiddenConflict) {
 				return nil, false, err
@@ -149,7 +149,7 @@ func createRelationshipForMerge(
 			if !errors.Is(err, storage.ErrAlreadyExists) {
 				return nil, false, err
 			}
-			existing, lookupErr := findRelationshipForMerge(
+			existing, lookupErr := findRelationshipForMerge(ctx,
 				store,
 				edge.StartNode,
 				edge.EndNode,
@@ -194,7 +194,7 @@ func selectRelationshipMergeCreateID(
 		return nil, nil
 	}
 
-	candidate, err := store.GetEdge(edge.ID)
+	candidate, err := store.GetEdge(ctx, edge.ID)
 	if err == nil {
 		if candidate.StartNode == edge.StartNode &&
 			candidate.EndNode == edge.EndNode &&
@@ -220,7 +220,7 @@ func selectRelationshipMergeCreateID(
 			matchProps,
 			firstOrdinal+offset,
 		)
-		candidate, err = store.GetEdge(edge.ID)
+		candidate, err = store.GetEdge(ctx, edge.ID)
 		switch {
 		case err == storage.ErrNotFound:
 			return nil, nil
@@ -305,14 +305,14 @@ func relationshipMergeScalarsEqual(got, want interface{}) (equal bool, decided b
 // findRelationshipForMerge returns the first relationship
 // findRelationshipsForMerge finds, or nil: for callers that bind one
 // relationship per row.
-func findRelationshipForMerge(
+func findRelationshipForMerge(ctx context.Context,
 	store storage.Engine,
 	startID storage.NodeID,
 	endID storage.NodeID,
 	relType string,
 	matchProps map[string]interface{},
 ) (*storage.Edge, error) {
-	matches, err := findRelationshipsForMerge(store, startID, endID, relType, matchProps)
+	matches, err := findRelationshipsForMerge(ctx, store, startID, endID, relType, matchProps)
 	if err != nil || len(matches) == 0 {
 		return nil, err
 	}
@@ -324,7 +324,7 @@ func findRelationshipForMerge(
 // endpoints matches them in Neo4j (Expand(Into) and a property filter). It
 // reads only the relationships of that type between the two nodes, and of
 // each only the identity properties; a match is read whole.
-func findRelationshipsForMerge(
+func findRelationshipsForMerge(ctx context.Context,
 	store storage.Engine,
 	startID storage.NodeID,
 	endID storage.NodeID,
@@ -338,7 +338,7 @@ func findRelationshipsForMerge(
 	for key := range matchProps {
 		keys = append(keys, key)
 	}
-	return storage.MatchEdgesBetween(store, startID, endID, relType, keys, func(edge *storage.Edge) bool {
+	return storage.MatchEdgesBetween(ctx, store, startID, endID, relType, keys, func(edge *storage.Edge) bool {
 		return relationshipMatchesMergePattern(edge, relType, matchProps)
 	})
 }

@@ -21,7 +21,7 @@ func TestBadgerStreamNodesPropertyFilter(t *testing.T) {
 		{ID: "ns:b", Labels: []string{"Code"}, Properties: map[string]interface{}{"id": "b", "body": "y"}},
 		{ID: "ns:c", Labels: []string{"Other"}, Properties: map[string]interface{}{"body": "z"}},
 	} {
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 
@@ -60,7 +60,7 @@ func TestDecodeNodeRejectsMalformedBodies(t *testing.T) {
 		"bad properties": {nodeFormatTokenizedV1, 0x02, 0xff, 0xff},
 		"bad body":       {nodeFormatTokenizedV1, 0x01, 0x00, 0xc1},
 	} {
-		node, err := engine.decodeNodeProjected("ns", data, nil)
+		node, err := engine.decodeNodeProjected(nil, "ns", data, nil)
 		require.Error(t, err, name)
 		require.Nil(t, node, name)
 		node, err = scan.decode([]byte("ns:n1"), data)

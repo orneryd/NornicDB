@@ -20,13 +20,13 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 		return nil, false, nil
 	}
 	for _, tail := range hint.readTail {
-		if topLevelKeywordIndex(tail, "ORDER BY") >= 0 {
+		if topLevelKeywordIndex(ctx, tail, "ORDER BY") >= 0 {
 			return nil, false, nil
 		}
 	}
 	pattern := pipelineClauseBody(clause, "MATCH")
 	where := ""
-	if index := topLevelKeywordIndex(pattern, "WHERE"); index >= 0 {
+	if index := topLevelKeywordIndex(ctx, pattern, "WHERE"); index >= 0 {
 		where = strings.TrimSpace(pattern[index+len("WHERE"):])
 		pattern = strings.TrimSpace(pattern[:index])
 	}
@@ -62,7 +62,7 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 		completed := input(func(row pipelineRow) bool {
 			// Validate the common MATCH contract before choosing either a scan
 			// or its runtime seeded continuation, as the materializing dispatcher does.
-			if err := validateBoundPatternNodes([]pipelineRow{row}, pattern); err != nil {
+			if err := validateBoundPatternNodes(ctx, []pipelineRow{row}, pattern); err != nil {
 				recordExpressionFailure(ctx, err)
 				valid = false
 				return false
@@ -99,7 +99,7 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 				if properties != nil && len(properties) == 0 && headers[id] != nil {
 					return headers[id], nil
 				}
-				node, err := endpoints.readRetained(id, properties)
+				node, err := endpoints.readRetained(ctx, id, properties)
 				if err == nil && node != nil && properties != nil && len(properties) == 0 {
 					if len(headers) == 1024 {
 						clear(headers)
@@ -149,7 +149,7 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 				}
 				if pathVariable != "" {
 					path := PathResult{Nodes: []*storage.Node{start, end}, Relationships: []*storage.Edge{edge}, Length: 1}
-					if !bind(pathVariable, e.pathContextRowValue(&path)) {
+					if !bind(pathVariable, e.pathContextRowValue(ctx, &path)) {
 						return nil
 					}
 				}

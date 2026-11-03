@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -24,7 +25,7 @@ var callClauseReads = newBoundedCache[string, cypherantlr.CallClause](4096, boun
 func readTransactionalStatement(ctx context.Context, query string) ([]cypherantlr.CallClause, error) {
 	// Only a cheap candidate filter: all classification and boundaries below
 	// come from the shared tokens/grammar, including nested expression calls.
-	if !containsFold(query, "CALL") || !containsFold(query, "TRANSACTIONS") || isNornicExtensionStatement(query) || isSchemaCommandStatement(query) {
+	if !containsFold(query, "CALL") || !containsFold(query, "TRANSACTIONS") || isNornicExtensionStatement(ctx, query) || isSchemaCommandStatement(query) {
 		return nil, nil
 	}
 	if calls, ok := transactionalStatementReads.get(query); ok {
@@ -121,7 +122,7 @@ func (e *StorageExecutor) resolveCallBatchSize(ctx context.Context, spec *transa
 		values = rowValuesInExpressionContext(ctx, values)
 		values[scalarExpressionSyntaxKey] = shape
 	}
-	value, resolved, err := e.evaluateRowValue(spec.Expression, values)
+	value, resolved, err := e.evaluateRowValue(ctx, spec.Expression, values)
 	if err != nil {
 		return 0, err
 	}
@@ -152,7 +153,7 @@ func (e *StorageExecutor) validateTransactionalCallInput(count int) error {
 			detail: "InvalidCallInTransactions",
 		}
 	}
-	return newSemanticError("Neo.DatabaseError.Transaction.TransactionStartFailed", "InvalidCallInTransactions",
+	return newSemanticError(nornicerrors.TransactionStartFailed, "InvalidCallInTransactions",
 		"CALL { ... } IN TRANSACTIONS is not allowed inside an explicit transaction")
 }
 

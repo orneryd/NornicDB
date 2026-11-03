@@ -88,8 +88,15 @@ func TestUnwindMatchRelationshipSetBatch_FallsBackForUnindexedAlternativeLabel(t
 	}
 
 	schema := store.GetSchema()
-	_, _, hasFunctionConstraint, _ := schema.LookupUniqueConstraintValue("SqlFunction", "uid", "function:active_users")
-	_, hasFunctionIndex := schema.GetPropertyIndex("SqlFunction", "uid")
+	_, _, hasFunctionConstraint, _, uniqueLookupErr1 := schema.LookupUniqueConstraintValue(t.Context(), "SqlFunction", "uid", "function:active_users")
+	if uniqueLookupErr1 != nil {
+		t.Errorf("unique index read failed: %v", uniqueLookupErr1)
+	}
+	_, hasFunctionIndex, functionIndexErr := schema.GetPropertyIndex(t.Context(), "SqlFunction", "uid")
+	if functionIndexErr != nil {
+		t.Errorf("property index read failed: %v", functionIndexErr)
+	}
+
 	require.False(t, hasFunctionConstraint)
 	require.False(t, hasFunctionIndex)
 
@@ -167,94 +174,24 @@ SET rel.evidence_source = row.evidence_source
 	require.Zero(t, notifications)
 }
 
-func TestUnwindMatchRelationshipSetBatch_RetriesCreateEdgeIDCollision(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-	store := &createEdgeCollisionEngine{
-		Engine:    storage.NewNamespacedEngine(baseStore, "test"),
-		remaining: 1,
-	}
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	for _, stmt := range []string{
-		"CREATE (:SqlView {uid: 'view:active_users'})",
-		"CREATE (:SqlTable {uid: 'table:users'})",
-	} {
-		_, err := exec.Execute(ctx, stmt, nil)
-		require.NoError(t, err)
-	}
-
-	_, err := exec.Execute(ctx, strings.TrimSpace(`
-UNWIND $rows AS row
-MATCH (source:SqlView {uid: row.source_entity_id})
-MATCH (target:SqlTable {uid: row.target_entity_id})
-MERGE (source)-[rel:REFERENCES_TABLE]->(target)
-SET rel.evidence_source = row.evidence_source
-`), map[string]interface{}{
-		"rows": []map[string]interface{}{
-			{
-				"source_entity_id": "view:active_users",
-				"target_entity_id": "table:users",
-				"evidence_source":  "parser-sql",
-			},
-		},
-	})
-	require.NoError(t, err)
-
-	res, err := exec.Execute(ctx, `
-MATCH (source)-[rel:REFERENCES_TABLE]->(target)
-RETURN source.uid, target.uid, rel.evidence_source
-`, nil)
-	require.NoError(t, err)
-	require.Equal(t, [][]interface{}{
-		{"view:active_users", "table:users", "parser-sql"},
-	}, res.Rows)
-}
-
-func TestUnwindMatchRelationshipSetBatch_UpdatesConcurrentRelationshipCreate(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-	store := &createEdgeCollisionEngine{
-		Engine:                   storage.NewNamespacedEngine(baseStore, "test"),
-		remaining:                1,
-		createConcurrentExisting: true,
-	}
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	for _, stmt := range []string{
-		"CREATE (:SqlView {uid: 'view:active_users'})",
-		"CREATE (:SqlTable {uid: 'table:users'})",
-	} {
-		_, err := exec.Execute(ctx, stmt, nil)
-		require.NoError(t, err)
-	}
-
-	_, err := exec.Execute(ctx, strings.TrimSpace(`
-UNWIND $rows AS row
-MATCH (source:SqlView {uid: row.source_entity_id})
-MATCH (target:SqlTable {uid: row.target_entity_id})
-MERGE (source)-[rel:REFERENCES_TABLE]->(target)
-SET rel.evidence_source = row.evidence_source
-`), map[string]interface{}{
-		"rows": []map[string]interface{}{
-			{
-				"source_entity_id": "view:active_users",
-				"target_entity_id": "table:users",
-				"evidence_source":  "parser-sql",
-			},
-		},
-	})
-	require.NoError(t, err)
-
-	res, err := exec.Execute(ctx, `
-MATCH (source)-[rel:REFERENCES_TABLE]->(target)
-RETURN source.uid, target.uid, rel.evidence_source
-`, nil)
-	require.NoError(t, err)
-	require.Equal(t, [][]interface{}{
-		{"view:active_users", "table:users", "parser-sql"},
-	}, res.Rows)
-}
+// The two collision records that used to live here - a MERGE relationship
+// create refused with storage.ErrAlreadyExists, retried, and adopted when a
+// concurrent statement stored the relationship first - injected the refusal
+// inside a fake engine. A local write statement now stages its writes in one
+// atomic owner and never calls that engine, so the refusal cannot be observed
+// through the statement and the records could only pass vacuously.
+//
+// The behaviour they proved is owned and covered at the component seam the
+// batch path calls: pkg/cypher/relationship_merge_identity_branches_test.go
+// (TestCreateRelationshipForMergeBareRetriesIDCollisions,
+// TestCreateRelationshipForMergeBareReturnsExistingAndErrors,
+// TestCreateRelationshipForMergePropertyRaceReturnsWinner,
+// TestCreateRelationshipForMergeHiddenIdentityConflictIsPermanent,
+// TestCreateRelationshipForMergePropertyPropagatesLookupErrors) drives
+// createRelationshipForMerge directly. The statement-level half - a second
+// identical MERGE adopts the committed relationship instead of creating one -
+// is covered by TestUnwindMatchRelationshipSetBatch_NoOpMergeDoesNotNotifyNodes
+// and TestUnwindMatchRelationshipSetBatch_PCGSQLRelationshipShape.
 
 func TestUnwindMatchReadDoesNotUseMutationBatchPath(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
@@ -278,30 +215,4 @@ RETURN count(n) AS matched
 	require.NoError(t, err)
 	require.False(t, exec.LastHotPathTrace().UnwindMergeChainBatch)
 	require.Equal(t, [][]interface{}{{int64(1)}}, res.Rows)
-}
-
-type createEdgeCollisionEngine struct {
-	storage.Engine
-	remaining                int
-	createConcurrentExisting bool
-}
-
-func (e *createEdgeCollisionEngine) CreateEdge(edge *storage.Edge) error {
-	if e.remaining > 0 {
-		e.remaining--
-		if e.createConcurrentExisting {
-			concurrentEdge := &storage.Edge{
-				ID:         storage.EdgeID("concurrent-" + string(edge.ID)),
-				Type:       edge.Type,
-				StartNode:  edge.StartNode,
-				EndNode:    edge.EndNode,
-				Properties: map[string]interface{}{},
-			}
-			if err := e.Engine.CreateEdge(concurrentEdge); err != nil {
-				return err
-			}
-		}
-		return storage.ErrAlreadyExists
-	}
-	return e.Engine.CreateEdge(edge)
 }

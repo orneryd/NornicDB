@@ -37,16 +37,16 @@ func TestPendingDropPublicReadIngress(t *testing.T) {
 				}
 				for _, engine := range []storage.Engine{tenant, peer} {
 					for _, id := range []storage.NodeID{"a", "b"} {
-						_, err := engine.CreateNode(&storage.Node{ID: id, Labels: []string{"ReadFence"}, Properties: map[string]any{"name": string(id)}})
+						_, err := engine.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"ReadFence"}, Properties: map[string]any{"name": string(id)}})
 						require.NoError(t, err)
 					}
-					require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "REL"}))
+					require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "REL"}))
 				}
-				require.NoError(t, b.FlushWriteBehind(nil))
+				require.NoError(t, b.FlushWriteBehind(context.Background()))
 				// Work IDs are opaque and deliberately name the opposite
 				// namespace. Only their stored graph target controls access.
-				require.NoError(t, b.PutDeindexWorkItem(&storage.DeindexWorkItem{WorkItemID: "tenant:opaque-peer", TargetID: "peer:a", Status: "pending"}))
-				require.NoError(t, b.PutDeindexWorkItem(&storage.DeindexWorkItem{WorkItemID: "peer:opaque-victim", TargetID: "tenant:a", Status: "pending"}))
+				require.NoError(t, b.PutDeindexWorkItem(t.Context(), &storage.DeindexWorkItem{WorkItemID: "tenant:opaque-peer", TargetID: "peer:a", Status: "pending"}))
+				require.NoError(t, b.PutDeindexWorkItem(t.Context(), &storage.DeindexWorkItem{WorkItemID: "peer:opaque-victim", TargetID: "tenant:a", Status: "pending"}))
 
 				// Warm actual materialized result caches; metrics prove a real public hit.
 				makeExecutor := func(engine storage.Engine) (*cypher.StorageExecutor, *observability.CacheMetrics) {
@@ -67,24 +67,24 @@ func TestPendingDropPublicReadIngress(t *testing.T) {
 				}
 				require.Equal(t, float64(1), testutil.ToFloat64(victimCache.Hits.WithLabelValues("query_result")))
 				require.Equal(t, float64(1), testutil.ToFloat64(peerCache.Hits.WithLabelValues("query_result")))
-				victimTx, err := b.BeginTransaction()
+				victimTx, err := b.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				defer victimTx.Rollback()
 				require.NoError(t, victimTx.SetNamespace("tenant"))
-				_, err = victimTx.GetNode("tenant:a")
+				_, err = victimTx.GetNode(t.Context(), "tenant:a")
 				require.NoError(t, err)
-				peerTx, err := b.BeginTransaction()
+				peerTx, err := b.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				defer peerTx.Rollback()
 				require.NoError(t, peerTx.SetNamespace("peer"))
-				_, err = peerTx.GetNode("peer:a")
+				_, err = peerTx.GetNode(t.Context(), "peer:a")
 				require.NoError(t, err)
 				oldSnapshot, err := storage.OpenReadSnapshot(context.Background(), tenant)
 				require.NoError(t, err)
 				defer oldSnapshot.Close()
-				_, err = tenant.GetNode("a")
+				_, err = tenant.GetNode(t.Context(), "a")
 				require.NoError(t, err)
-				_, err = tenant.NodeCount()
+				_, err = tenant.NodeCount(t.Context())
 				require.NoError(t, err)
 				failure := errors.New("read ingress intrinsic cleanup unavailable")
 				storage.ReviewSetDropTailFailure(b, func(string) error { return failure })
@@ -106,10 +106,10 @@ func TestPendingDropPublicReadIngress(t *testing.T) {
 					name string
 					run  func() error
 				}{
-					{"warm node", func() error { _, e := tenant.GetNode("a"); return e }},
-					{"warm graph count", func() error { _, e := tenant.NodeCount(); return e }},
-					{"global count", func() error { _, e := b.NodeCount(); return e }},
-					{"latest fallback", func() error { _, e := b.GetNodeLatestVisible("tenant:a"); return e }},
+					{"warm node", func() error { _, e := tenant.GetNode(t.Context(), "a"); return e }},
+					{"warm graph count", func() error { _, e := tenant.NodeCount(t.Context()); return e }},
+					{"global count", func() error { _, e := b.NodeCount(t.Context()); return e }},
+					{"latest fallback", func() error { _, e := b.GetNodeLatestVisible(t.Context(), "tenant:a"); return e }},
 					{"bounded latest", func() error {
 						_, e := b.BatchGetNodesLatestVisible(context.Background(), []storage.NodeID{"tenant:a"})
 						return e
@@ -135,7 +135,7 @@ func TestPendingDropPublicReadIngress(t *testing.T) {
 						}
 						return e
 					}},
-					{"warm transaction point", func() error { _, e := victimTx.GetNode("tenant:a"); return e }},
+					{"warm transaction point", func() error { _, e := victimTx.GetNode(t.Context(), "tenant:a"); return e }},
 					{"transaction label cache", func() error { _, e := victimTx.GetNodesByLabel(context.Background(), "ReadFence"); return e }},
 				} {
 					t.Run(read.name, func(t *testing.T) { require.ErrorIs(t, read.run(), storage.ErrConflict) })
@@ -148,9 +148,9 @@ func TestPendingDropPublicReadIngress(t *testing.T) {
 				require.NoError(t, err)
 				require.Len(t, result.Rows, 2)
 				require.Equal(t, float64(2), testutil.ToFloat64(peerCache.Hits.WithLabelValues("query_result")), "peer cached query remains available")
-				_, err = peer.GetNode("a")
+				_, err = peer.GetNode(t.Context(), "a")
 				require.NoError(t, err)
-				count, err := peer.NodeCount()
+				count, err := peer.NodeCount(t.Context())
 				require.NoError(t, err)
 				require.EqualValues(t, 2, count)
 				batch, err := b.BatchGetNodes(context.Background(), []storage.NodeID{"peer:a", "peer:b"})
@@ -159,7 +159,7 @@ func TestPendingDropPublicReadIngress(t *testing.T) {
 				batch, err = b.BatchGetNodesLatestVisible(context.Background(), []storage.NodeID{"peer:a"})
 				require.NoError(t, err)
 				require.Len(t, batch, 1)
-				count, err = b.NodeCountByLabelInNamespace("ten", "ReadFence")
+				count, err = b.NodeCountByLabelInNamespace(t.Context(), "ten", "ReadFence")
 				require.NoError(t, err)
 				require.Zero(t, count, "logical namespace ten does not mean raw prefix ten")
 				var ids []storage.NodeID
@@ -201,7 +201,7 @@ func TestPendingDropSnapshotUsesActualDecoratorAndNestedPrefix(t *testing.T) {
 	b, err := fixture.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	for _, id := range []storage.NodeID{"tenant:a", "peer:inner:child", "peer:outside", "foreign:other"} {
-		_, err = b.CreateNode(&storage.Node{ID: id})
+		_, err = b.CreateNode(t.Context(), &storage.Node{ID: id})
 		require.NoError(t, err)
 	}
 	storage.ReviewSetDropTailFailure(b, func(string) error { return errors.New("snapshot fixture tail failure") })
@@ -227,20 +227,20 @@ func TestPendingDropSnapshotUsesActualDecoratorAndNestedPrefix(t *testing.T) {
 func TestPendingDropClosedReadKeepsLifecycleError(t *testing.T) {
 	b, err := fixture.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
-	_, err = b.CreateNode(&storage.Node{ID: "tenant:a"})
+	_, err = b.CreateNode(t.Context(), &storage.Node{ID: "tenant:a"})
 	require.NoError(t, err)
 	storage.ReviewSetDropTailFailure(b, func(string) error { return errors.New("closed reader fixture tail failure") })
 	_, _, err = b.DeleteByPrefix("tenant:")
 	require.Error(t, err)
 	storage.ReviewSetDropTailFailure(b, nil)
 	require.NoError(t, b.Close())
-	_, err = b.NodeCount()
+	_, err = b.NodeCount(t.Context())
 	require.ErrorIs(t, err, storage.ErrStorageClosed)
-	_, err = b.NodeCountByPrefix("tenant:")
+	_, err = b.NodeCountByPrefix(t.Context(), "tenant:")
 	require.ErrorIs(t, err, storage.ErrStorageClosed)
-	_, err = b.GetNode("tenant:a")
+	_, err = b.GetNode(t.Context(), "tenant:a")
 	require.ErrorIs(t, err, storage.ErrStorageClosed)
-	_, err = b.GetNodeLatestVisible("tenant:a")
+	_, err = b.GetNodeLatestVisible(t.Context(), "tenant:a")
 	require.ErrorIs(t, err, storage.ErrStorageClosed)
 }
 
@@ -251,15 +251,15 @@ func TestPendingDropUnboundTransactionPrefixReadsRemainPeerScoped(t *testing.T) 
 				b, err := fixture.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: t.TempDir(), WriteBehind: buffered, WriteBehindInterval: time.Hour, LowMemory: true}))
 				require.NoError(t, err)
 				for _, id := range []storage.NodeID{"tenant:a", "peer:keep", "foreign:other"} {
-					_, err = b.CreateNode(&storage.Node{ID: id, Labels: []string{"ReadFence"}})
+					_, err = b.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"ReadFence"}})
 					require.NoError(t, err)
 				}
-				require.NoError(t, b.FlushWriteBehind(nil))
+				require.NoError(t, b.FlushWriteBehind(context.Background()))
 				storage.ReviewSetDropTailFailure(b, func(string) error { return errors.New("unbound prefix fixture tail failure") })
 				t.Cleanup(func() { storage.ReviewSetDropTailFailure(b, nil) })
 				_, _, err = b.DeleteByPrefix("tenant:")
 				require.Error(t, err)
-				tx, err := b.BeginTransaction()
+				tx, err := b.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				defer tx.Rollback()
 				opts := storage.StreamNodesOptions{Prefix: "peer:", WithEmbeddings: !query, QueryNodes: query}

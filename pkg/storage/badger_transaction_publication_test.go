@@ -13,9 +13,9 @@ import (
 // synchronous writes and the asynchronous commits used to observe listener
 // publication. Staging completes before the asynchronous commit starts.
 func runPublicationTransaction(engine interface {
-	BeginTransaction() (*BadgerTransaction, error)
+	BeginTransaction(context.Context) (*BadgerTransaction, error)
 }, implicit bool, write func(*BadgerTransaction) error, result chan<- error) error {
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(context.Background())
 	if err != nil {
 		return err
 	}
@@ -44,15 +44,15 @@ func TestBadgerTransaction_PublicationBeforeReentrantListener(t *testing.T) {
 			return
 		}
 		require.True(t, published, "accounting/admission callback precedes listener")
-		_, err := engine.CreateNode(&Node{ID: "review:child"})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: "review:child"})
 		require.NoError(t, err)
 	})
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	_, err = tx.CreateNode(&Node{ID: "review:outer"})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "review:outer"})
 	require.NoError(t, err)
 	require.NoError(t, tx.PublishCommit(context.Background(), CommitPublication{AfterPublication: func() { published = true }}))
-	count, err := engine.NodeCount()
+	count, err := engine.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.EqualValues(t, 2, count)
 }
@@ -79,7 +79,7 @@ func TestBadgerTransaction_ListenerOrderAndSnapshotUnderReentry(t *testing.T) {
 	})
 	done := make(chan error, 1)
 	require.NoError(t, runPublicationTransaction(engine, false, func(tx *BadgerTransaction) error {
-		_, err := tx.CreateNode(&Node{ID: "review:ordered", Properties: map[string]any{"value": "first"}})
+		_, err := tx.CreateNode(t.Context(), &Node{ID: "review:ordered", Properties: map[string]any{"value": "first"}})
 		return err
 	}, done))
 	select {
@@ -90,7 +90,7 @@ func TestBadgerTransaction_ListenerOrderAndSnapshotUnderReentry(t *testing.T) {
 	}
 	updated := make(chan error, 1)
 	require.NoError(t, runPublicationTransaction(engine, false, func(tx *BadgerTransaction) error {
-		return tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "review:ordered", Properties: map[string]any{"value": "second"}}, Policy: ClientNodeEdits})
+		return tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "review:ordered", Properties: map[string]any{"value": "second"}}, Policy: ClientNodeEdits})
 	}, updated))
 	select {
 	case err := <-updated:
@@ -116,19 +116,19 @@ func TestBadgerTransaction_CloseWaitsForListenerWithoutWriteBarrier(t *testing.T
 		}
 		close(entered)
 		<-release
-		_, err := engine.CreateNode(&Node{ID: "review:after-close"})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: "review:after-close"})
 		callbackResult <- err
 	})
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	_, err = tx.CreateNode(&Node{ID: "review:close"})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "review:close"})
 	require.NoError(t, err)
 	committed := make(chan error, 1)
 	go func() { committed <- tx.Commit() }()
 	<-entered
 	closed := make(chan error, 1)
 	go func() { closed <- engine.Close() }()
-	require.Eventually(t, func() bool { engine.mu.RLock(); defer engine.mu.RUnlock(); return engine.closed }, time.Second, time.Millisecond)
+	require.Eventually(t, func() bool { engine.mu.RLock(); defer engine.mu.RUnlock(); return engine.work.Closing() }, time.Second, time.Millisecond)
 	close(release)
 	select {
 	case err := <-callbackResult:
@@ -142,15 +142,15 @@ func TestBadgerTransaction_CloseWaitsForListenerWithoutWriteBarrier(t *testing.T
 
 func TestBadgerTransaction_RejectedCommitDoesNotPublish(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	_, err = tx.CreateNode(&Node{ID: "review:canceled"})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "review:canceled"})
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	require.ErrorIs(t, tx.PublishCommit(ctx, CommitPublication{AfterPublication: func() { t.Error("failed commit published") }}), context.Canceled)
 	require.NoError(t, tx.Rollback())
-	count, err := engine.NodeCount()
+	count, err := engine.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.Zero(t, count)
 }
@@ -162,20 +162,20 @@ func TestBadgerTransaction_ListenerPanicPreservesPublicationAndQueue(t *testing.
 			panic("listener failed")
 		}
 	})
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	_, err = tx.CreateNode(&Node{ID: "review:panic"})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "review:panic"})
 	require.NoError(t, err)
 	published := false
 	require.PanicsWithValue(t, "listener failed", func() {
 		_ = tx.PublishCommit(context.Background(), CommitPublication{AfterPublication: func() { published = true }})
 	})
 	require.True(t, published)
-	_, err = engine.GetNode("review:panic")
+	_, err = engine.GetNode(t.Context(), "review:panic")
 	require.NoError(t, err, "listener failure cannot erase committed data")
-	next, err := engine.BeginTransaction()
+	next, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	_, err = next.CreateNode(&Node{ID: "review:after-panic"})
+	_, err = next.CreateNode(t.Context(), &Node{ID: "review:after-panic"})
 	require.NoError(t, err)
 	require.NoError(t, next.Commit(), "the notification queue remains usable after a surfaced callback panic")
 }
@@ -195,7 +195,7 @@ func (c *publicationContextCheckpoint) Err() error {
 
 func TestPublishCommitRechecksDetachedOwnershipUnderLock(t *testing.T) {
 	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{synchronous: true})
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer func() {
 		// The accepted owner is simulated only at the lifecycle boundary. Restore
@@ -204,7 +204,7 @@ func TestPublishCommitRechecksDetachedOwnershipUnderLock(t *testing.T) {
 		_ = tx.Rollback()
 	}()
 	require.NoError(t, tx.SetNamespace("test"))
-	_, err = tx.CreateNode(&Node{ID: "test:detached-publication"})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:detached-publication"})
 	require.NoError(t, err)
 	ctx := &publicationContextCheckpoint{Context: context.Background(), handoff: func() {
 		tx.mu.Lock()
@@ -215,7 +215,7 @@ func TestPublishCommitRechecksDetachedOwnershipUnderLock(t *testing.T) {
 	err = tx.PublishCommit(ctx, CommitPublication{AfterPublication: func() { published = true }})
 	require.ErrorIs(t, err, ErrTransactionClosed)
 	require.False(t, published)
-	_, err = engine.GetNode("test:detached-publication")
+	_, err = engine.GetNode(t.Context(), "test:detached-publication")
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
@@ -225,7 +225,7 @@ func TestClientLifecycleRechecksDetachedOwnershipUnderLock(t *testing.T) {
 	for _, operation := range []string{"active", "rollback"} {
 		t.Run(operation, func(t *testing.T) {
 			engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{synchronous: true})
-			tx, err := engine.BeginTransaction()
+			tx, err := engine.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			t.Cleanup(func() {
 				tx.clientDetached.Store(false)

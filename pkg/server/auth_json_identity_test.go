@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,7 +15,7 @@ import (
 func TestHTTPLoginPreservesAdmittedJSONIdentity(t *testing.T) {
 	server, users := setupTestServer(t)
 	name := "http-user-" + string([]byte{0xed, 0xa0, 0x80})
-	_, err := users.CreateUser(name, "synthetic-password", []auth.Role{auth.RoleViewer})
+	_, err := users.CreateUser(context.Background(), name, "synthetic-password", []auth.Role{auth.RoleViewer})
 	require.NoError(t, err)
 	request := httptest.NewRequest(http.MethodPost, "/auth/token", strings.NewReader(`{"username":"http-user-\ud800","password":"synthetic-password","grant_type":"password"}`))
 	request.Header.Set("Content-Type", "application/json")

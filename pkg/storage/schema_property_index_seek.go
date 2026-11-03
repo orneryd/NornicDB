@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"reflect"
 	"sort"
@@ -15,14 +16,16 @@ import (
 // included. A string and a number, a boolean or NaN don't compare
 // consistently, and an index holding them is never narrowed.
 type propertyIndexKeyKinds struct {
-	strings bool // every key is a string
-	numbers bool // every key is a number other than NaN
-	hasKeys bool
+	strings   bool // every key is a string
+	numbers   bool // every key is a number other than NaN
+	hasKeys   bool
+	unordered bool // nonnull memberships the index cannot value-order
 }
 
 func newPropertyIndexKeyKinds(keys []interface{}) propertyIndexKeyKinds {
 	kinds := propertyIndexKeyKinds{strings: true, numbers: true, hasKeys: len(keys) > 0}
 	for _, key := range keys {
+		kinds.unordered = kinds.unordered || unorderedIndexMembership(key)
 		isString, isNumber := indexValueKinds(key)
 		kinds.strings = kinds.strings && isString
 		kinds.numbers = kinds.numbers && isNumber
@@ -63,8 +66,17 @@ func (kinds propertyIndexKeyKinds) seekable(bound interface{}) bool {
 // for it. Keys outside the returned range fail the bound; the caller still
 // tests the bound on the keys returned when narrowed is false.
 // Caller holds idx.mu as sortedKeysViewLocked requires.
-func (idx *PropertyIndex) sortedKeyRangeLocked(bounds PropertyIndexBounds) (keys []interface{}, narrowed bool) {
-	keys, kinds := idx.sortedKeysViewLocked()
+func (idx *PropertyIndex) sortedKeyRangeLocked(ctx context.Context, bounds PropertyIndexBounds) (keys []interface{}, narrowed bool, err error) {
+	keys, kinds, err := idx.sortedKeysViewLocked(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	return propertyIndexKeyRange(ctx, keys, kinds, bounds)
+}
+
+// propertyIndexKeyRange is shared by cached committed keys and a private
+// committed/pending key union. Only comparable homogeneous kinds can narrow.
+func propertyIndexKeyRange(ctx context.Context, keys []interface{}, kinds propertyIndexKeyKinds, bounds PropertyIndexBounds) ([]interface{}, bool, error) {
 	low, high := 0, len(keys)
 	lowerApplied, upperApplied := !bounds.HasLower, !bounds.HasUpper
 	if bounds.HasLower && kinds.seekable(bounds.Lower) {
@@ -84,5 +96,8 @@ func (idx *PropertyIndex) sortedKeyRangeLocked(bounds PropertyIndexBounds) (keys
 	if high < low {
 		high = low
 	}
-	return keys[low:high], lowerApplied && upperApplied
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	return keys[low:high], lowerApplied && upperApplied, nil
 }

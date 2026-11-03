@@ -42,18 +42,21 @@ func (e *mergeConflictEngine) createFailure() error {
 	return storage.ErrAlreadyExists
 }
 
-func (e *mergeConflictEngine) CreateNode(*storage.Node) (storage.NodeID, error) {
+func (e *mergeConflictEngine) CreateNode(ctx context.Context, _ *storage.Node) (storage.NodeID, error) {
 	return "", e.createFailure()
 }
 
-func (e *mergeConflictEngine) BulkCreateNodes([]*storage.Node) error {
+func (e *mergeConflictEngine) BulkCreateNodes(ctx context.Context, _ []*storage.Node) error {
 	return e.createFailure()
 }
 
+// Component proof: the native public transaction does not call the supplied
+// engine for individual writes. Drive the canonical pipeline to retain exact
+// injected collision/read/error assertions; public native reuse is checked below.
 // A MERGE whose create collides with a concurrent MERGE's write matches
 // what that MERGE wrote, or fails when nothing matches; any other create
 // failure fails the MERGE (#907).
-func TestMergeCreateConflictRecovery(t *testing.T) {
+func TestComponentMergeCreateConflictRecovery(t *testing.T) {
 	newConflict := func(t *testing.T, raceQuery string, failure error) *StorageExecutor {
 		inner := storage.NewNamespacedEngine(newTestMemoryEngine(t), "merge_conflict")
 		engine := &mergeConflictEngine{Engine: inner, failure: failure}
@@ -68,20 +71,20 @@ func TestMergeCreateConflictRecovery(t *testing.T) {
 	ctx := context.Background()
 
 	path := "MERGE p = (a:MA)-[:R]->(b:MB)-[:S]->(c:MC) RETURN length(p) AS l"
-	result, err := newConflict(t, "CREATE (:MA)-[:R]->(:MB)-[:S]->(:MC)", nil).Execute(ctx, path, nil)
+	result, err := newConflict(t, "CREATE (:MA)-[:R]->(:MB)-[:S]->(:MC)", nil).executeRequiredPipeline(ctx, path)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(2)}}, result.Rows)
-	_, err = newConflict(t, "", nil).Execute(ctx, path, nil)
+	_, err = newConflict(t, "", nil).executeRequiredPipeline(ctx, path)
 	require.ErrorIs(t, err, storage.ErrAlreadyExists)
 	failure := errors.New("disk full")
-	_, err = newConflict(t, "", failure).Execute(ctx, path, nil)
+	_, err = newConflict(t, "", failure).executeRequiredPipeline(ctx, path)
 	require.ErrorIs(t, err, failure)
 
 	node := "MERGE (n:MU {k: 1}) RETURN n.k AS k"
-	result, err = newConflict(t, "CREATE (:MU {k: 1})", nil).Execute(ctx, node, nil)
+	result, err = newConflict(t, "CREATE (:MU {k: 1})", nil).executeRequiredPipeline(ctx, node)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
-	_, err = newConflict(t, "", nil).Execute(ctx, node, nil)
+	_, err = newConflict(t, "", nil).executeRequiredPipeline(ctx, node)
 	require.ErrorIs(t, err, storage.ErrAlreadyExists)
 
 	// A failing read: while matching the path, or while finding the node a
@@ -93,9 +96,9 @@ func TestMergeCreateConflictRecovery(t *testing.T) {
 		require.NoError(t, err)
 		return NewStorageExecutor(&mergeConflictEngine{Engine: inner, lookupFailure: lookupFailure, lookupAfterCreate: afterCreate})
 	}
-	_, err = failingReads(false).Execute(ctx, path, nil)
+	_, err = failingReads(false).executeRequiredPipeline(ctx, path)
 	require.ErrorIs(t, err, lookupFailure)
-	_, err = failingReads(true).Execute(ctx, node, nil)
+	_, err = failingReads(true).executeRequiredPipeline(ctx, node)
 	require.ErrorIs(t, err, lookupFailure)
 }
 
@@ -133,4 +136,35 @@ func TestMergePathFailures(t *testing.T) {
 	cancel()
 	_, _, _, err = exec.pipelineMergePath(cancelled, pipelineRow{}, "(a:MA)-[:R]->(b:MB)-[:S]->(c:MC)", map[string]*storage.Node{}, map[string]*storage.Edge{})
 	require.Error(t, err)
+}
+
+// The public transaction path matches a peer's already committed pattern without
+// creating extra entities. The component test above separately proves the
+// injected create-collision recovery; this test does not claim to schedule that
+// collision below a native transaction.
+func TestPublicMergeReusesPeerCommittedPattern(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "merge_peer_public")
+	peer, writer := NewStorageExecutor(store), NewStorageExecutor(store)
+	_, err := peer.Execute(ctx, "CREATE (:MA)-[:R]->(:MB)-[:S]->(:MC), (:MU {k: 1})", nil)
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		query string
+		rows  [][]interface{}
+	}{
+		{"MERGE p = (a:MA)-[:R]->(b:MB)-[:S]->(c:MC) RETURN length(p) AS l", [][]interface{}{{int64(2)}}},
+		{"MERGE (n:MU {k: 1}) RETURN n.k AS k", [][]interface{}{{int64(1)}}},
+	} {
+		result, err := writer.Execute(ctx, tc.query, nil)
+		require.NoError(t, err)
+		require.Equal(t, tc.rows, result.Rows)
+		require.Zero(t, result.Stats.NodesCreated)
+		require.Zero(t, result.Stats.RelationshipsCreated)
+	}
+	nodes, err := store.AllNodes(ctx)
+	require.NoError(t, err)
+	require.Len(t, nodes, 4)
+	edges, err := store.AllEdges(ctx)
+	require.NoError(t, err)
+	require.Len(t, edges, 2)
 }

@@ -61,7 +61,7 @@ func TestReturnShapeItems(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, returnShapeItems(tt.query))
+			assert.Equal(t, tt.want, returnShapeItems(t.Context(), tt.query))
 		})
 	}
 }
@@ -171,7 +171,7 @@ func TestIsReturnNameCountShape(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, isReturnNameCountShape(tt.query, "p", "f"))
+			assert.Equal(t, tt.want, isReturnNameCountShape(t.Context(), tt.query, "p", "f"))
 		})
 	}
 }
@@ -244,7 +244,7 @@ func TestIsReturnEdgePropertyAggNameShape_ClearCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, isReturnEdgePropertyAggNameShape(tt.query, "r", "rating"))
+			assert.Equal(t, tt.want, isReturnEdgePropertyAggNameShape(t.Context(), tt.query, "r", "rating"))
 		})
 	}
 }
@@ -255,19 +255,23 @@ func TestIsReturnEdgePropertyAggNameShape_ClearCases(t *testing.T) {
 func TestDetectQueryPattern_ReturnShapeCanonicalized(t *testing.T) {
 	ctx := context.Background()
 
-	incoming := DetectQueryPattern(ctx, "MATCH (p:Person)<-[:FOLLOWS]-(f:Person) RETURN p.name, count(f) ORDER BY count(f) DESC SKIP 1 LIMIT 5")
+	incoming, err := DetectQueryPattern(ctx, "MATCH (p:Person)<-[:FOLLOWS]-(f:Person) RETURN p.name, count(f) ORDER BY count(f) DESC SKIP 1 LIMIT 5")
+	require.NoError(t, err)
 	require.Equal(t, PatternIncomingCountAgg, incoming.Pattern)
 	assert.Equal(t, "p", incoming.StartVar)
 	assert.Equal(t, "f", incoming.EndVar)
 
-	outgoing := DetectQueryPattern(ctx, "MATCH (p:Person)-[:FOLLOWS]->(f:Person) RETURN p.name, count(f) ORDER BY count(f) DESC LIMIT 5")
+	outgoing, err := DetectQueryPattern(ctx, "MATCH (p:Person)-[:FOLLOWS]->(f:Person) RETURN p.name, count(f) ORDER BY count(f) DESC LIMIT 5")
+	require.NoError(t, err)
 	require.Equal(t, PatternOutgoingCountAgg, outgoing.Pattern)
 
-	edgeAgg := DetectQueryPattern(ctx, "MATCH (c:Customer)-[r:REVIEWED]->(p:Product) RETURN p.name, avg(r.rating), count(r) ORDER BY avg(r.rating) DESC")
+	edgeAgg, err := DetectQueryPattern(ctx, "MATCH (c:Customer)-[r:REVIEWED]->(p:Product) RETURN p.name, avg(r.rating), count(r) ORDER BY avg(r.rating) DESC")
+	require.NoError(t, err)
 	require.Equal(t, PatternEdgePropertyAgg, edgeAgg.Pattern)
 	assert.Equal(t, "rating", edgeAgg.AggProperty)
 
 	// Non-matching shapes keep falling through to generic execution.
-	generic := DetectQueryPattern(ctx, "MATCH (p:Person)<-[:FOLLOWS]-(f:Person) RETURN p.name, count(p)")
+	generic, err := DetectQueryPattern(ctx, "MATCH (p:Person)<-[:FOLLOWS]-(f:Person) RETURN p.name, count(p)")
+	require.NoError(t, err)
 	assert.Equal(t, PatternGeneric, generic.Pattern)
 }

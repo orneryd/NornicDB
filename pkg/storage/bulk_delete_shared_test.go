@@ -12,9 +12,9 @@ func TestBulkDeleteSharedRoutingPolicy(t *testing.T) {
 			for _, empty := range []bool{false, true} {
 				t.Run(fmt.Sprintf("capture=%v/node=%v/empty=%v", capture, node, empty), func(t *testing.T) {
 					b := newTestEngine(t)
-					require.NoError(t, b.BulkCreateNodes([]*Node{{ID: "test:a"}, {ID: "test:b"}}))
+					require.NoError(t, b.BulkCreateNodes(t.Context(), []*Node{{ID: "test:a"}, {ID: "test:b"}}))
 					if !node {
-						require.NoError(t, b.CreateEdge(&Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "R"}))
+						require.NoError(t, b.CreateEdge(t.Context(), &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "R"}))
 					}
 					if capture {
 						b.SetChangeCapture("test", ChangeCaptureFull)
@@ -25,13 +25,13 @@ func TestBulkDeleteSharedRoutingPolicy(t *testing.T) {
 						if empty {
 							ids = append(ids, "")
 						}
-						err = b.BulkDeleteNodes(ids)
+						err = b.BulkDeleteNodes(t.Context(), ids)
 					} else {
 						ids := []EdgeID{"test:r", "test:r", "test:missing"}
 						if empty {
 							ids = append(ids, "")
 						}
-						err = b.BulkDeleteEdges(ids)
+						err = b.BulkDeleteEdges(t.Context(), ids)
 					}
 					rejected := capture && empty
 					if rejected {
@@ -40,9 +40,9 @@ func TestBulkDeleteSharedRoutingPolicy(t *testing.T) {
 						require.NoError(t, err)
 					}
 					if node {
-						_, err = b.GetNode("test:a")
+						_, err = b.GetNode(t.Context(), "test:a")
 					} else {
-						_, err = b.GetEdge("test:r")
+						_, err = b.GetEdge(t.Context(), "test:r")
 					}
 					if rejected {
 						require.NoError(t, err, "capture input validation rolls back the earlier staged deletion")

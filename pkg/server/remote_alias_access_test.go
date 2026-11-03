@@ -32,7 +32,7 @@ func checkRemoteAliasAccess(t *testing.T, noAuth bool) {
 	remoteWire := httptest.NewServer(remote.buildRouter())
 	t.Cleanup(remoteWire.Close)
 	coordinator, users := setupTestServer(t)
-	_, err := users.CreateUser("alias-editor", "password123", []auth.Role{auth.RoleEditor})
+	_, err := users.CreateUser(context.Background(), "alias-editor", "password123", []auth.Role{auth.RoleEditor})
 	require.NoError(t, err)
 	token := "Bearer " + getAuthToken(t, users, "alias-editor")
 	if noAuth {
@@ -45,7 +45,7 @@ func checkRemoteAliasAccess(t *testing.T, noAuth bool) {
 	require.NoError(t, coordinator.dbManager.CreateCompositeDatabase(t.Context(), "restricted", refs))
 	store, err := remote.dbManager.GetDefaultStorage()
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "readonly-remote-marker", Labels: []string{"AliasReadMarker"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "readonly-remote-marker", Labels: []string{"AliasReadMarker"}})
 	require.NoError(t, err)
 	// Establish successful remote authentication and coordinator read permission.
 	read := makeRequest(t, coordinator, http.MethodPost, "/db/nornic/tx/commit", map[string]any{"statements": []map[string]any{{"statement": "USE restricted.read MATCH (n:AliasReadMarker) RETURN count(n) AS n"}}}, token)

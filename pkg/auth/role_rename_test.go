@@ -23,7 +23,7 @@ func seedRoleRename(t *testing.T, engine storage.Engine) *RoleStore {
 	require.NoError(t, NewAllowlistStore(engine).SaveRoleDatabases(ctx, "ops", []string{"nornic"}))
 	require.NoError(t, NewRoleEntitlementsStore(engine).Set(ctx, "ops", []string{"read", "write"}))
 	users := &Authenticator{storage: engine}
-	require.NoError(t, users.saveUser(&User{Username: "worker", Roles: []Role{"ops", RoleViewer}}, nil))
+	require.NoError(t, users.saveUser(context.Background(), &User{Username: "worker", Roles: []Role{"ops", RoleViewer}}, nil))
 	return roles
 }
 
@@ -57,7 +57,7 @@ func TestRenamedRoleKeepsItsGrants(t *testing.T) {
 	require.NoError(t, entitlements.Load(ctx))
 	require.Equal(t, []string{"read", "write"}, entitlements.Get("renamed"))
 	require.Empty(t, entitlements.Get("ops"))
-	user, err := system.GetNode("user:worker")
+	user, err := system.GetNode(context.Background(), "user:worker")
 	require.NoError(t, err)
 	require.Equal(t, `["renamed","viewer"]`, user.Properties["roles"])
 }
@@ -182,13 +182,13 @@ func TestRoleRenamePreservesUnrelatedRecordsAndRejectsOccupiedKeys(t *testing.T)
 		{ID: "user:invalid", Labels: []string{"_User"}, Properties: map[string]any{"username": "different", "roles": `["ops"]`}},
 		{ID: "user:other", Labels: []string{"_User"}, Properties: map[string]any{"username": "other", "roles": `["viewer"]`}},
 	} {
-		_, err := system.CreateNode(node)
+		_, err := system.CreateNode(context.Background(), node)
 		require.NoError(t, err)
 	}
 	// An existing destination record (left by an earlier version, since
 	// role-record writes now require the role) is not silently replaced by
 	// a rename.
-	_, err := system.CreateNode(&storage.Node{ID: "role_entitlement:renamed", Labels: []string{roleEntitlementLabel, roleEntitlementSystems},
+	_, err := system.CreateNode(context.Background(), &storage.Node{ID: "role_entitlement:renamed", Labels: []string{roleEntitlementLabel, roleEntitlementSystems},
 		Properties: map[string]any{"role": "renamed", "entitlements": `["read"]`}})
 	require.NoError(t, err)
 	before, err := system.AllNodes(ctx)
@@ -197,12 +197,12 @@ func TestRoleRenamePreservesUnrelatedRecordsAndRejectsOccupiedKeys(t *testing.T)
 	after, err := system.AllNodes(ctx)
 	require.NoError(t, err)
 	require.ElementsMatch(t, before, after)
-	require.NoError(t, system.DeleteNode("role_entitlement:renamed"))
+	require.NoError(t, system.DeleteNode(context.Background(), "role_entitlement:renamed"))
 	stores := RoleMutationStores{Users: &Authenticator{storage: system, users: map[string]*User{}}}
 	require.NoError(t, roles.RenameRoleWithStores(ctx, "ops", "renamed", stores))
 	require.Equal(t, []Role{"renamed", RoleViewer}, stores.Users.users["worker"].Roles)
 	for _, id := range []storage.NodeID{"proc_priv:unrelated", "db_priv:other:nornic", "role_db_access:other", "role_entitlement:other", "user:invalid", "user:other"} {
-		_, err := system.GetNode(id)
+		_, err := system.GetNode(context.Background(), id)
 		require.NoError(t, err)
 	}
 }

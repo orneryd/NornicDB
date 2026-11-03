@@ -1,6 +1,7 @@
 package bolt
 
 import (
+	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"testing"
@@ -23,23 +24,23 @@ func TestAuthenticatorAdapter(t *testing.T) {
 	}
 
 	// Create test users
-	_, err = authenticator.CreateUser("admin", "admin-password", []auth.Role{auth.RoleAdmin})
+	_, err = authenticator.CreateUser(context.Background(), "admin", "admin-password", []auth.Role{auth.RoleAdmin})
 	if err != nil {
 		t.Fatalf("Failed to create admin user: %v", err)
 	}
 
-	_, err = authenticator.CreateUser("editor", "editor-password", []auth.Role{auth.RoleEditor})
+	_, err = authenticator.CreateUser(context.Background(), "editor", "editor-password", []auth.Role{auth.RoleEditor})
 	if err != nil {
 		t.Fatalf("Failed to create editor user: %v", err)
 	}
 
-	_, err = authenticator.CreateUser("viewer", "viewer-password", []auth.Role{auth.RoleViewer})
+	_, err = authenticator.CreateUser(context.Background(), "viewer", "viewer-password", []auth.Role{auth.RoleViewer})
 	if err != nil {
 		t.Fatalf("Failed to create viewer user: %v", err)
 	}
 
 	// Create service account for clustering
-	_, err = authenticator.CreateUser("cluster-node-1", "cluster-secret-123", []auth.Role{auth.RoleAdmin})
+	_, err = authenticator.CreateUser(context.Background(), "cluster-node-1", "cluster-secret-123", []auth.Role{auth.RoleAdmin})
 	if err != nil {
 		t.Fatalf("Failed to create cluster service account: %v", err)
 	}
@@ -222,7 +223,7 @@ func TestAuthenticatorAdapterIntegrationWithBoltConfig(t *testing.T) {
 		t.Fatalf("Failed to create authenticator: %v", err)
 	}
 
-	_, err = authenticator.CreateUser("testuser", "testpass", []auth.Role{auth.RoleEditor})
+	_, err = authenticator.CreateUser(context.Background(), "testuser", "testpass", []auth.Role{auth.RoleEditor})
 	if err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
@@ -836,7 +837,7 @@ func TestConcurrentAuthentication(t *testing.T) {
 
 	memoryStorage := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authenticator, _ := auth.NewAuthenticator(config, memoryStorage)
-	authenticator.CreateUser("testuser", "testpass", []auth.Role{auth.RoleEditor})
+	authenticator.CreateUser(context.Background(), "testuser", "testpass", []auth.Role{auth.RoleEditor})
 
 	adapter := NewAuthenticatorAdapter(authenticator)
 

@@ -12,13 +12,13 @@ import (
 func TestBadgerMVCC_BootstrapInTxn_HeadDecodeErrorBranches(t *testing.T) {
 	engine := createMVCCBadgerEngine(t)
 
-	_, err := engine.CreateNode(&Node{ID: "test:bn1", Labels: []string{"N"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:bn1", Labels: []string{"N"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:bn2", Labels: []string{"N"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:bn2", Labels: []string{"N"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:be1", StartNode: "test:bn1", EndNode: "test:bn2", Type: "R"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:be1", StartNode: "test:bn1", EndNode: "test:bn2", Type: "R"}))
 
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		// prefix-only garbage keys exercise len(key)<=1 skip branches.
 		if err := txn.Set([]byte{prefixNode}, []byte("x")); err != nil {
 			return err
@@ -40,13 +40,13 @@ func TestBadgerMVCC_BootstrapInTxn_HeadDecodeErrorBranches(t *testing.T) {
 		return txn.Set(eh, []byte{0x01})
 	}))
 
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		err := bootstrapMVCCFromCurrentStateInTxn[*Node, NodeID, nodeMVCCBootstrapKind](engine, txn)
 		require.Error(t, err)
 		return nil
 	}))
 
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		err := bootstrapMVCCFromCurrentStateInTxn[*Edge, EdgeID, edgeMVCCBootstrapKind](engine, txn)
 		require.Error(t, err)
 		return nil
@@ -58,7 +58,7 @@ func TestBadgerMVCC_PruneMVCCKeyspaceInTxn_TombstoneReclaim_NodeAndEdge(t *testi
 	v1 := MVCCVersion{CommitTimestamp: time.Now().UTC().Add(-2 * time.Minute), CommitSequence: 10}
 	v2 := MVCCVersion{CommitTimestamp: time.Now().UTC().Add(-time.Minute), CommitSequence: 11}
 
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		if err := engine.writeNodeMVCCVersionInTxn(txn, &Node{ID: "test:n-reclaim", Labels: []string{"N"}}, v1); err != nil {
 			return err
 		}
@@ -81,7 +81,7 @@ func TestBadgerMVCC_PruneMVCCKeyspaceInTxn_TombstoneReclaim_NodeAndEdge(t *testi
 		return nil
 	}))
 
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		nDeleted, err := engine.pruneMVCCKeyspaceInTxn(context.Background(), txn, []byte{prefixMVCCNode}, MVCCPruneOptions{MaxVersionsPerKey: 0}, false)
 		require.NoError(t, err)
 		require.GreaterOrEqual(t, nDeleted, int64(2))
@@ -92,8 +92,8 @@ func TestBadgerMVCC_PruneMVCCKeyspaceInTxn_TombstoneReclaim_NodeAndEdge(t *testi
 		return nil
 	}))
 
-	_, err := engine.GetNodeCurrentHead("test:n-reclaim")
+	_, err := engine.GetNodeCurrentHead(context.Background(), "test:n-reclaim")
 	require.ErrorIs(t, err, ErrNotFound)
-	_, err = engine.GetEdgeCurrentHead("test:e-reclaim")
+	_, err = engine.GetEdgeCurrentHead(context.Background(), "test:e-reclaim")
 	require.ErrorIs(t, err, ErrNotFound)
 }

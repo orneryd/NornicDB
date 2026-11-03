@@ -32,11 +32,11 @@ func TestEmbedWorkerConsumedSourceLifecycle(t *testing.T) {
 					disk.SetEmbeddingsEnabled(true)
 					store := storage.NewNamespacedEngine(disk, "contract")
 					for _, id := range ids {
-						n, e := queue.GetNode(id)
+						n, e := queue.GetNode(t.Context(), id)
 						require.NoError(t, e)
 						n.Properties["id"] = "old"
 						n.Properties["updatedAt"] = "old"
-						_, e = store.CreateNode(n)
+						_, e = store.CreateNode(t.Context(), n)
 						require.NoError(t, e)
 					}
 					queue.orderedEmbeddingQueue.Engine = store
@@ -63,14 +63,14 @@ func TestEmbedWorkerConsumedSourceLifecycle(t *testing.T) {
 					}
 					mutate := func(key, value string) {
 						for _, id := range ids {
-							tx, e := disk.BeginTransaction()
+							tx, e := disk.BeginTransaction(t.Context())
 							require.NoError(t, e)
 							require.NoError(t, tx.SetNamespace("contract"))
-							n, e := tx.GetNode(storage.NodeID("contract:" + string(id)))
+							n, e := tx.GetNode(t.Context(), storage.NodeID("contract:"+string(id)))
 							require.NoError(t, e)
 							n.Properties[key] = value
 							n.UpdatedAt = n.UpdatedAt.Add(time.Second)
-							require.NoError(t, tx.UpdateGraphNode(storage.NodeUpdateRequest{After: n, Policy: storage.ClientNodeEdits}))
+							require.NoError(t, tx.UpdateGraphNode(t.Context(), storage.NodeUpdateRequest{After: n, Policy: storage.ClientNodeEdits}))
 							require.NoError(t, tx.Commit())
 							if worker.ctx.Err() == nil {
 								worker.Enqueue(string(id))
@@ -86,7 +86,7 @@ func TestEmbedWorkerConsumedSourceLifecycle(t *testing.T) {
 					mutate("updatedAt", "after-save")
 					mutate("ignored", "after-save")
 					for _, id := range ids {
-						n, e := store.GetNode(id)
+						n, e := store.GetNode(t.Context(), id)
 						require.NoError(t, e)
 						require.NotEmpty(t, n.ChunkEmbeddings)
 						_, present, valid := embeddingsource.Read(n.EmbedMeta)
@@ -94,7 +94,7 @@ func TestEmbedWorkerConsumedSourceLifecycle(t *testing.T) {
 					}
 					mutate("id", "new")
 					for _, id := range ids {
-						n, e := store.GetNode(id)
+						n, e := store.GetNode(t.Context(), id)
 						require.NoError(t, e)
 						require.Empty(t, n.ChunkEmbeddings, "consumed metadata must invalidate after a successful retry")
 						queue.AddToPendingEmbeddings(id)
@@ -103,7 +103,7 @@ func TestEmbedWorkerConsumedSourceLifecycle(t *testing.T) {
 					require.Equal(t, 3*count, base.GetEmbedCount())
 					payloads := make([]*storage.Node, 0, count)
 					for _, id := range ids {
-						n, e := store.GetNode(id)
+						n, e := store.GetNode(t.Context(), id)
 						require.NoError(t, e)
 						require.Equal(t, float32(2), n.ChunkEmbeddings[0][0])
 						if chunked {
@@ -113,14 +113,14 @@ func TestEmbedWorkerConsumedSourceLifecycle(t *testing.T) {
 					}
 					mutate("updatedAt", "in-flight-unconsumed")
 					for _, payload := range payloads {
-						require.NoError(t, store.UpdateNodeEmbeddingSidecar(payload))
-						n, e := store.GetNode(payload.ID)
+						require.NoError(t, store.UpdateNodeEmbeddingSidecar(t.Context(), payload))
+						n, e := store.GetNode(t.Context(), payload.ID)
 						require.NoError(t, e)
 						require.NotEmpty(t, n.ChunkEmbeddings, "accepted unconsumed update must remain readable")
 					}
 					mutate("id", "old")
 					for _, payload := range payloads {
-						require.ErrorIs(t, store.UpdateNodeEmbeddingSidecar(payload), storage.ErrEmbeddingSourceChanged, "final storage guard must reject consumed metadata changes")
+						require.ErrorIs(t, store.UpdateNodeEmbeddingSidecar(t.Context(), payload), storage.ErrEmbeddingSourceChanged, "final storage guard must reject consumed metadata changes")
 					}
 					// Reopen exercises the serialized descriptor, not only the in-memory map.
 					for _, id := range ids {
@@ -136,13 +136,13 @@ func TestEmbedWorkerConsumedSourceLifecycle(t *testing.T) {
 					store = storage.NewNamespacedEngine(disk, "contract")
 					mutate("updatedAt", "after-reopen")
 					for _, id := range ids {
-						n, e := store.GetNode(id)
+						n, e := store.GetNode(t.Context(), id)
 						require.NoError(t, e)
 						require.NotEmpty(t, n.ChunkEmbeddings)
 					}
 					mutate("id", "new")
 					for _, id := range ids {
-						n, e := store.GetNode(id)
+						n, e := store.GetNode(t.Context(), id)
 						require.NoError(t, e)
 						require.Empty(t, n.ChunkEmbeddings)
 					}

@@ -28,13 +28,13 @@ func (e *StorageExecutor) validateStatementFraming(ctx context.Context, cypher s
 		return executionModeConflictError()
 	}
 	// Only a statement with the word UNION in it can have UNION branches.
-	if findKeywordIndex(cypher, "UNION") < 0 || findKeywordIndex(cypher, "FINISH") < 0 {
+	if findKeywordIndex(ctx, cypher, "UNION") < 0 || findKeywordIndex(ctx, cypher, "FINISH") < 0 {
 		return nil
 	}
 	if branches, _, _, ok := parseTopLevelUnionBranches(ctx, cypher); ok && len(branches) > 1 {
 		hasFinish, hasColumns := false, false
 		for _, branch := range branches {
-			_, finishes := readTrailingFinish(branch, stripPermittedFinish)
+			_, finishes := readTrailingFinish(ctx, branch, stripPermittedFinish)
 			if finishes {
 				hasFinish = true
 			} else if e.statementProducesColumns(ctx, branch) {
@@ -266,7 +266,7 @@ const (
 // readTrailingFinish recognizes one name-aware FINISH suffix. Validation can
 // detect every suffix; execution strips only those allowed after the preceding
 // top-level clause, leaving prohibited RETURN/FINISH forms for validation.
-func readTrailingFinish(cypher string, policy finishSuffixPolicy) (string, bool) {
+func readTrailingFinish(ctx context.Context, cypher string, policy finishSuffixPolicy) (string, bool) {
 	last := lastLiveByte(cypher, len(cypher))
 	if last < 0 || !cyphertext.NamePartAt(cypher, last) {
 		return cypher, false
@@ -281,10 +281,10 @@ func readTrailingFinish(cypher string, policy finishSuffixPolicy) (string, bool)
 	}
 	remainder := strings.TrimSpace(cypher[:start])
 	// A FINISH with nothing before it is the whole statement, the clause.
-	if remainder != "" && clauseKeywordUsedAsName(cypher, start, end, "FINISH") {
+	if remainder != "" && clauseKeywordUsedAsName(ctx, cypher, start, end, "FINISH") {
 		return cypher, false
 	}
-	if policy == stripPermittedFinish && finishProhibitedClauses[lastTopLevelClauseWord(remainder)] {
+	if policy == stripPermittedFinish && finishProhibitedClauses[lastTopLevelClauseWord(ctx, remainder)] {
 		return cypher, false
 	}
 	return remainder, true
@@ -345,7 +345,7 @@ func topLevelUnionCut(s string) int {
 func stripUnionBranchFinishes(ctx context.Context, cypher string) (string, bool) {
 	cut := topLevelUnionCut(cypher)
 	if cut < 0 {
-		return readTrailingFinish(cypher, stripPermittedFinish)
+		return readTrailingFinish(ctx, cypher, stripPermittedFinish)
 	}
 	before := strings.TrimSpace(cypher[:cut])
 	after := strings.TrimSpace(cypher[cut:])
@@ -361,7 +361,7 @@ func stripUnionBranchFinishes(ctx context.Context, cypher string) (string, bool)
 		tail = strings.TrimSpace(tail[len("ALL"):])
 	}
 	right, rightStripped := stripUnionBranchFinishes(ctx, tail)
-	left, leftStripped := readTrailingFinish(before, stripPermittedFinish)
+	left, leftStripped := readTrailingFinish(ctx, before, stripPermittedFinish)
 	if !leftStripped && !rightStripped {
 		return cypher, false
 	}

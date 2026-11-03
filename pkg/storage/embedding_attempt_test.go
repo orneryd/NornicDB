@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"bytes"
@@ -56,16 +57,16 @@ func TestEmbeddingAttemptCachedBodySnapshot(t *testing.T) {
 	defer disk.Close()
 	disk.SetEmbeddingsEnabled(false)
 	store := NewNamespacedEngine(disk, "snapshot")
-	_, err = store.CreateNode(&Node{ID: "doc", Properties: map[string]any{"text": "before"}})
+	_, err = store.CreateNode(t.Context(), &Node{ID: "doc", Properties: map[string]any{"text": "before"}})
 	require.NoError(t, err)
 	hits := atomic.LoadInt64(&disk.cacheHits)
-	cached, err := store.GetNode("doc")
+	cached, err := store.GetNode(t.Context(), "doc")
 	require.NoError(t, err)
 	require.Equal(t, hits+1, atomic.LoadInt64(&disk.cacheHits), "ordinary reads keep the written-node cache fast path")
 	updated := CopyNode(cached)
 	updated.Properties["text"] = "after"
-	require.NoError(t, store.UpdateNode(NodeUpdateRequest{After: updated}))
-	snapshot, err := SnapshotNodeForEmbedding(cached)
+	require.NoError(t, store.UpdateNode(t.Context(), NodeUpdateRequest{After: updated}))
+	snapshot, err := SnapshotNodeForEmbedding(t.Context(), cached)
 	require.NoError(t, err)
 	require.Equal(t, cached.ID, snapshot.ID, "namespace translation must survive the storage snapshot reader")
 	require.Equal(t, "before", cached.Properties["text"])
@@ -78,7 +79,7 @@ func TestEmbeddingAttemptBufferedBodyRevision(t *testing.T) {
 		t.Run(map[bool]string{false: "same_commit_after_flush", true: "idempotent_update"}[updated], func(t *testing.T) {
 			disk := newWriteBehindTestEngine(t, time.Hour)
 			bufferedCreate(t, disk, &Node{ID: "test:doc", Properties: map[string]any{"text": "same"}})
-			payload, err := disk.GetNode("test:doc")
+			payload, err := disk.GetNode(t.Context(), "test:doc")
 			require.NoError(t, err)
 			payload.EmbedMeta = map[string]any{"embedding_failed": true}
 			published := 0
@@ -86,17 +87,17 @@ func TestEmbeddingAttemptBufferedBodyRevision(t *testing.T) {
 			state.embeddingAttempt = NewEmbeddingAttempt(1, 1, state.embeddingRevision, func() (func(), bool) { return func() {}, true }, func(*Node) { published++ })
 			payload.setRuntimeState(state)
 			if updated {
-				current, err := disk.GetNode("test:doc")
+				current, err := disk.GetNode(t.Context(), "test:doc")
 				require.NoError(t, err)
-				tx, err := disk.BeginTransaction()
+				tx, err := disk.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				require.NoError(t, tx.SetImplicit(true))
 				require.NoError(t, tx.SetNamespace("test"))
-				require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: current, Policy: ClientNodeEdits}))
+				require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: current, Policy: ClientNodeEdits}))
 				require.NoError(t, tx.Commit())
 			}
-			require.NoError(t, disk.FlushWriteBehind(nil))
-			err = disk.UpdateNodeEmbeddingSidecar(payload)
+			require.NoError(t, disk.FlushWriteBehind(context.Background()))
+			err = disk.UpdateNodeEmbeddingSidecar(context.Background(), payload)
 			if updated {
 				require.ErrorIs(t, err, ErrEmbeddingSourceChanged)
 				require.Zero(t, published)
@@ -118,9 +119,9 @@ func TestEmbeddingAttemptAuthoritativeOutcome(t *testing.T) {
 			defer disk.Close()
 			disk.SetEmbeddingsEnabled(true)
 			store := NewNamespacedEngine(disk, "attempt")
-			_, err = store.CreateNode(&Node{ID: "doc", Properties: map[string]any{"id": "same", "text": "old"}})
+			_, err = store.CreateNode(t.Context(), &Node{ID: "doc", Properties: map[string]any{"id": "same", "text": "old"}})
 			require.NoError(t, err)
-			payload, err := store.GetNode("doc")
+			payload, err := store.GetNode(t.Context(), "doc")
 			require.NoError(t, err)
 			require.NotZero(t, payload.runtimeState().embeddingRevision)
 			payload.EmbedMeta = map[string]any{embeddingsource.MetaKey: (embeddingsource.Source{Properties: []string{"id"}}).Metadata()}
@@ -138,16 +139,16 @@ func TestEmbeddingAttemptAuthoritativeOutcome(t *testing.T) {
 				require.NotEmpty(t, node.ChunkEmbeddings)
 			})
 			payload.setRuntimeState(state)
-			current, err := store.GetNode("doc")
+			current, err := store.GetNode(t.Context(), "doc")
 			require.NoError(t, err)
 			stamp := current.UpdatedAt
 			current.Properties["text"] = "current"
-			require.NoError(t, store.UpdateNode(NodeUpdateRequest{After: current}))
-			current, err = store.GetNode("doc")
+			require.NoError(t, store.UpdateNode(t.Context(), NodeUpdateRequest{After: current}))
+			current, err = store.GetNode(t.Context(), "doc")
 			require.NoError(t, err)
 			require.True(t, stamp.Equal(current.UpdatedAt))
 			require.NotEqual(t, payload.runtimeState().embeddingRevision, current.runtimeState().embeddingRevision)
-			err = store.UpdateNodeEmbeddingSidecar(payload)
+			err = store.UpdateNodeEmbeddingSidecar(context.Background(), payload)
 			if terminal {
 				require.ErrorIs(t, err, ErrEmbeddingSourceChanged)
 				require.Zero(t, published)
@@ -155,7 +156,7 @@ func TestEmbeddingAttemptAuthoritativeOutcome(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, 1, published)
 			}
-			saved, err := store.GetNode("doc")
+			saved, err := store.GetNode(t.Context(), "doc")
 			require.NoError(t, err)
 			require.Equal(t, "current", saved.Properties["text"])
 			require.Nil(t, saved.runtimeState().embeddingAttempt, "attempt identity must never be encoded")
@@ -170,7 +171,7 @@ func TestEmbeddingPendingCounterNamespaceAndExclusion(t *testing.T) {
 	defer disk.Close()
 	disk.SetEmbeddingsEnabled(true)
 	for _, id := range []NodeID{"one:a", "one:b", "two:a"} {
-		_, err := disk.CreateNode(&Node{ID: id, Properties: map[string]any{"text": "pending"}})
+		_, err := disk.CreateNode(t.Context(), &Node{ID: id, Properties: map[string]any{"text": "pending"}})
 		require.NoError(t, err)
 	}
 	store := NewNamespacedEngine(disk, "one")
@@ -183,30 +184,30 @@ func TestEmbeddingPendingCounterNamespaceAndExclusion(t *testing.T) {
 func TestEmbeddingRevisionIdentityAcrossFlush(t *testing.T) {
 	disk := newWriteBehindTestEngine(t, time.Hour)
 	bufferedCreate(t, disk, &Node{ID: "test:doc", Properties: map[string]any{"text": "same"}})
-	acknowledged, err := disk.GetNode("test:doc")
+	acknowledged, err := disk.GetNode(t.Context(), "test:doc")
 	require.NoError(t, err)
 	revision := acknowledged.EmbeddingRevision()
-	same, err := disk.embeddingRevisionIsCurrent("test:doc", revision)
+	same, err := disk.embeddingRevisionIsCurrent(t.Context(), "test:doc", revision)
 	require.NoError(t, err)
 	require.True(t, same, "the acknowledged body is current before flush")
-	require.NoError(t, disk.FlushWriteBehind(nil))
-	materialized, err := disk.getNodeSnapshot("test:doc", true)
+	require.NoError(t, disk.FlushWriteBehind(context.Background()))
+	materialized, err := disk.getNodeSnapshot(t.Context(), "test:doc", true)
 	require.NoError(t, err)
-	same, err = revision.MatchesNode(materialized)
+	same, err = revision.MatchesNode(t.Context(), materialized)
 	require.NoError(t, err)
 	require.True(t, same, "flush is not a new body attempt")
-	same, err = disk.embeddingRevisionIsCurrent("test:doc", revision)
+	same, err = disk.embeddingRevisionIsCurrent(t.Context(), "test:doc", revision)
 	require.NoError(t, err)
 	require.True(t, same)
 	stamp := materialized.UpdatedAt
-	require.NoError(t, disk.UpdateNode(NodeUpdateRequest{After: materialized}))
-	updated, err := disk.getNodeSnapshot("test:doc", true)
+	require.NoError(t, disk.UpdateNode(t.Context(), NodeUpdateRequest{After: materialized}))
+	updated, err := disk.getNodeSnapshot(t.Context(), "test:doc", true)
 	require.NoError(t, err)
 	require.True(t, stamp.Equal(updated.UpdatedAt))
-	same, err = revision.MatchesNode(updated)
+	same, err = revision.MatchesNode(t.Context(), updated)
 	require.NoError(t, err)
 	require.False(t, same, "an idempotent update is a new body revision")
-	same, err = disk.embeddingRevisionIsCurrent("test:doc", revision)
+	same, err = disk.embeddingRevisionIsCurrent(t.Context(), "test:doc", revision)
 	require.NoError(t, err)
 	require.False(t, same)
 }

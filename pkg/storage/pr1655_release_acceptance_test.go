@@ -36,31 +36,31 @@ func TestPR1655StorageUniqueClaimConflict(t *testing.T) {
 			}))
 			// The engine is empty: this mirrors the complete cache published
 			// by CREATE CONSTRAINT, which the Execute/Bolt tests use.
-			constraint := schema.uniqueConstraints["Doc:id"]
+			constraint := schema.uniqueConstraints[nodePropertyKey{label: "Doc", property: "id"}]
 			constraint.mu.Lock()
 			constraint.valuesCacheComplete = true
 			constraint.mu.Unlock()
-			nodeID, err := engine.CreateNode(&Node{
+			nodeID, err := engine.CreateNode(t.Context(), &Node{
 				ID: "test:doc", Labels: []string{"Doc"},
 				Properties: map[string]interface{}{"id": tc.before, "summary_input": "before"},
 			})
 			require.NoError(t, err)
-			loser, err := engine.BeginTransaction()
+			loser, err := engine.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = loser.Rollback() })
-			peer, err := engine.BeginTransaction()
+			peer, err := engine.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = peer.Rollback() })
 			for i, tx := range []*BadgerTransaction{loser, peer} {
-				node, err := tx.GetNode(nodeID)
+				node, err := tx.GetNode(t.Context(), nodeID)
 				require.NoError(t, err)
 				if tc.intermediate != nil {
 					node.Properties["id"] = tc.intermediate
-					require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
+					require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 				}
 				node.Properties["id"] = tc.after
 				node.Properties["summary_input"] = []string{"loser", "peer"}[i]
-				require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
+				require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 			}
 			require.NoError(t, peer.Commit())
 			err = loser.Commit()
@@ -73,7 +73,7 @@ func TestPR1655StorageUniqueClaimConflict(t *testing.T) {
 			} else {
 				require.Contains(t, err.Error(), "changed after transaction start")
 			}
-			stored, err := engine.GetNode(nodeID)
+			stored, err := engine.GetNode(t.Context(), nodeID)
 			require.NoError(t, err)
 			require.Equal(t, "peer", stored.Properties["summary_input"])
 		})
@@ -95,17 +95,17 @@ func TestPR1655UncontendedUniqueClaimIdentity(t *testing.T) {
 			t.Cleanup(func() { require.NoError(t, engine.Close()) })
 			schema := engine.GetSchemaForNamespace("test")
 			require.NoError(t, schema.AddUniqueConstraint("doc_id", "Doc", "id"))
-			id, err := engine.CreateNode(&Node{ID: "test:doc", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": tc.key}})
+			id, err := engine.CreateNode(t.Context(), &Node{ID: "test:doc", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": tc.key}})
 			require.NoError(t, err)
-			tx, err := engine.BeginTransaction()
+			tx, err := engine.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
-			node, err := tx.GetNode(id)
+			node, err := tx.GetNode(t.Context(), id)
 			require.NoError(t, err)
 			node.Properties["note"] = "changed"
-			require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
+			require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 			require.NoError(t, tx.Commit(), "an unchanged claim without a peer must not conflict")
-			stored, err := engine.GetNode(id)
+			stored, err := engine.GetNode(t.Context(), id)
 			require.NoError(t, err)
 			require.Equal(t, "changed", stored.Properties["note"])
 		})

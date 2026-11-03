@@ -53,7 +53,7 @@ func TestSplitUnwindCompoundMutationStages_AdditionalRejections(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			stages, ok := splitUnwindCompoundMutationStages(tt.query, "rows", "row")
+			stages, ok := splitUnwindCompoundMutationStages(t.Context(), tt.query, "rows", "row")
 			require.False(t, ok)
 			require.Nil(t, stages)
 		})
@@ -72,21 +72,27 @@ func TestUnwindLookupSetHasUniqueAnchor_Branches(t *testing.T) {
 	schema := store.GetSchema()
 	require.NotNil(t, schema)
 
-	require.True(t, unwindLookupSetHasUniqueAnchor(schema, unwindMergeChainLookupPlan{
+	anchored, err := unwindLookupSetHasUniqueAnchor(ctx, schema, unwindMergeChainLookupPlan{
 		labels:           []string{"User"},
 		matchAssignments: []unwindSimpleSetAssignment{{prop: "id", expr: "row.id"}},
-	}))
+	})
+	require.NoError(t, err)
+	require.True(t, anchored)
 
-	require.False(t, unwindLookupSetHasUniqueAnchor(schema, unwindMergeChainLookupPlan{
+	anchored, err = unwindLookupSetHasUniqueAnchor(ctx, schema, unwindMergeChainLookupPlan{
 		labels:           []string{"User"},
 		matchAssignments: []unwindSimpleSetAssignment{{prop: "name", expr: "row.name"}},
-	}))
+	})
+	require.NoError(t, err)
+	require.False(t, anchored)
 
-	require.False(t, unwindLookupSetHasUniqueAnchor(schema, unwindMergeChainLookupPlan{
+	anchored, err = unwindLookupSetHasUniqueAnchor(ctx, schema, unwindMergeChainLookupPlan{
 		anyLabel:         true,
 		labels:           []string{"User", "Admin"},
 		matchAssignments: []unwindSimpleSetAssignment{{prop: "id", expr: "row.id"}},
-	}))
+	})
+	require.NoError(t, err)
+	require.False(t, anchored)
 }
 
 func TestParseUnwindMergeChainPattern_AdditionalRejections(t *testing.T) {

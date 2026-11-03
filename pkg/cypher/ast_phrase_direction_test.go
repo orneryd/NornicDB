@@ -24,7 +24,7 @@ func TestASTBuilderPhraseSourceAndTrivia(t *testing.T) {
 					expectedClause = "ORDER" + gap + "BY `a``b` DESC"
 					query = "MATCH (`a``b`) RETURN `a``b` " + expectedClause
 				}
-				ast, err := NewASTBuilder().Build(query)
+				ast, err := NewASTBuilder().Build(t.Context(), query)
 				require.NoError(t, err)
 				require.Equal(t, query, ast.RawQuery)
 				wantClauses := 2
@@ -79,7 +79,7 @@ func TestASTBuilderRelationshipDirectionSource(t *testing.T) {
 			t.Run(tc.name+fmt.Sprintf("/%q", gap), func(t *testing.T) {
 				pattern := "(`a``b`)" + tc.left + gap + "[`r``x`:`T``X`]" + gap + tc.right + "(b)"
 				query := "MATCH " + pattern + " RETURN `r``x`"
-				ast, err := NewASTBuilder().Build(query)
+				ast, err := NewASTBuilder().Build(t.Context(), query)
 				require.NoError(t, err)
 				require.Equal(t, query, ast.RawQuery)
 				require.Len(t, ast.Clauses, 2)
@@ -106,7 +106,7 @@ func TestASTBuilderRelationshipDirectionSource(t *testing.T) {
 func TestASTBuilderRelationshipShapeRemainsNarrow(t *testing.T) {
 	for _, pattern := range []string{"(a)-->(b)", "(a)-[r:T {p: 1}]->(b)", "(a)-[r:T*1..2]->(b)", "(a)-[r:T:U]->(b)"} {
 		t.Run(pattern, func(t *testing.T) {
-			ast, err := NewASTBuilder().Build("MATCH " + pattern + " RETURN a")
+			ast, err := NewASTBuilder().Build(t.Context(), "MATCH "+pattern+" RETURN a")
 			require.NoError(t, err)
 			require.Len(t, ast.Clauses, 2)
 			require.Len(t, ast.Clauses[0].Match.Patterns, 1)

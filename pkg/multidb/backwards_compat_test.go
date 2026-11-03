@@ -2,6 +2,7 @@ package multidb
 
 import (
 	"context"
+
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"testing"
@@ -36,7 +37,7 @@ func TestBackwardsCompatibility_ExistingCode(t *testing.T) {
 			"created_by": "old-code",
 		},
 	}
-	_, err = store.CreateNode(node)
+	_, err = store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	// Old code: query nodes
@@ -50,7 +51,7 @@ func TestBackwardsCompatibility_ExistingCode(t *testing.T) {
 		ID:     storage.NodeID("legacy-node-2"),
 		Labels: []string{"Legacy"},
 	}
-	_, err = store.CreateNode(node2)
+	_, err = store.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
 
 	edge := &storage.Edge{
@@ -59,11 +60,11 @@ func TestBackwardsCompatibility_ExistingCode(t *testing.T) {
 		EndNode:   storage.NodeID("legacy-node-2"),
 		Type:      "RELATES_TO",
 	}
-	err = store.CreateEdge(edge)
+	err = store.CreateEdge(t.Context(), edge)
 	require.NoError(t, err)
 
 	// Verify edge exists
-	retrieved, err := store.GetEdge(storage.EdgeID("legacy-edge-1"))
+	retrieved, err := store.GetEdge(t.Context(), storage.EdgeID("legacy-edge-1"))
 	require.NoError(t, err)
 	assert.Equal(t, "RELATES_TO", retrieved.Type)
 }
@@ -92,7 +93,7 @@ func TestBackwardsCompatibility_LegacyDatabaseName(t *testing.T) {
 		ID:     storage.NodeID("legacy"),
 		Labels: []string{"Test"},
 	}
-	_, err = store.CreateNode(node)
+	_, err = store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 }
 
@@ -115,11 +116,11 @@ func TestBackwardsCompatibility_NoBreakingChanges(t *testing.T) {
 	}
 
 	// CreateNode - should work
-	_, err := namespaced.CreateNode(node)
+	_, err := namespaced.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	// GetNode - should work
-	retrieved, err := namespaced.GetNode(storage.NodeID("test"))
+	retrieved, err := namespaced.GetNode(t.Context(), storage.NodeID("test"))
 	require.NoError(t, err)
 	assert.NotNil(t, retrieved)
 
@@ -129,19 +130,19 @@ func TestBackwardsCompatibility_NoBreakingChanges(t *testing.T) {
 	assert.Len(t, nodes, 1)
 
 	// NodeCount - should work
-	count, err := namespaced.NodeCount()
+	count, err := namespaced.NodeCount(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), count)
 
 	// DeleteByPrefix - namespace-scoped deletion now works through the engine.
-	_, err = namespaced.CreateNode(&storage.Node{ID: "del:temp", Labels: []string{"Test"}})
+	_, err = namespaced.CreateNode(t.Context(), &storage.Node{ID: "del:temp", Labels: []string{"Test"}})
 	require.NoError(t, err)
 	deletedNodes, _, err := namespaced.DeleteByPrefix("del:")
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), deletedNodes)
-	_, err = namespaced.GetNode("del:temp")
+	_, err = namespaced.GetNode(t.Context(), "del:temp")
 	assert.Error(t, err) // Scoped record is gone.
-	retrieved, err = namespaced.GetNode(storage.NodeID("test"))
+	retrieved, err = namespaced.GetNode(t.Context(), storage.NodeID("test"))
 	require.NoError(t, err)
 	assert.NotNil(t, retrieved) // Out-of-scope record survives.
 }

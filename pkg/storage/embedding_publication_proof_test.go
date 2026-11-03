@@ -13,11 +13,11 @@ import (
 
 func publicationProofPayload(t *testing.T, b *BadgerEngine) *Node {
 	t.Helper()
-	_, err := b.CreateNode(&Node{ID: "test:proof", Properties: map[string]any{"text": "same input"}})
+	_, err := b.CreateNode(t.Context(), &Node{ID: "test:proof", Properties: map[string]any{"text": "same input"}})
 	require.NoError(t, err)
-	node, err := b.GetNode("test:proof")
+	node, err := b.GetNode(t.Context(), "test:proof")
 	require.NoError(t, err)
-	node, err = SnapshotNodeForEmbedding(node)
+	node, err = SnapshotNodeForEmbedding(t.Context(), node)
 	require.NoError(t, err)
 	node.ChunkEmbeddings = [][]float32{{1, 2}}
 	node.EmbedMeta = map[string]any{"chunk_count": 1}
@@ -36,7 +36,7 @@ func TestEmbeddingPublicationProofPublicDelivery(t *testing.T) {
 				listeners++
 				require.True(t, accepted.runtimeState().embeddingPublication.matches(b, accepted.ID, accepted.runtimeState().embeddingRevision))
 				allocs := testing.AllocsPerRun(20, func() {
-					same, err := b.embeddingRevisionIsCurrent(accepted.ID, accepted.runtimeState().embeddingRevision, accepted.runtimeState().embeddingPublication)
+					same, err := b.embeddingRevisionIsCurrent(t.Context(), accepted.ID, accepted.runtimeState().embeddingRevision, accepted.runtimeState().embeddingPublication)
 					if err != nil || !same {
 						panic("current accepted outcome was rejected")
 					}
@@ -46,12 +46,12 @@ func TestEmbeddingPublicationProofPublicDelivery(t *testing.T) {
 			if bound {
 				node.SetEmbeddingAttempt(NewEmbeddingAttempt(1, 1, node.EmbeddingRevision(), func() (func(), bool) { return func() {}, true }, func(*Node) { workers++ }))
 			}
-			require.NoError(t, b.UpdateNodeEmbeddingSidecar(node))
+			require.NoError(t, b.UpdateNodeEmbeddingSidecar(context.Background(), node))
 			require.Equal(t, 1, listeners)
 			if bound {
 				require.Equal(t, 1, workers)
 			}
-			stored, err := b.GetNode(node.ID)
+			stored, err := b.GetNode(t.Context(), node.ID)
 			require.NoError(t, err)
 			require.Equal(t, node.ChunkEmbeddings, stored.ChunkEmbeddings)
 		})
@@ -81,11 +81,11 @@ func TestEmbeddingPublicationProofComesFromCommit(t *testing.T) {
 		delivered = true
 		require.Equal(t, committed, accepted.runtimeState().embeddingPublication, "never sample a replacement boundary after committing")
 		require.False(t, accepted.runtimeState().embeddingPublication.matches(b, accepted.ID, accepted.runtimeState().embeddingRevision))
-		same, err := b.embeddingRevisionIsCurrent(accepted.ID, accepted.runtimeState().embeddingRevision, accepted.runtimeState().embeddingPublication)
+		same, err := b.embeddingRevisionIsCurrent(t.Context(), accepted.ID, accepted.runtimeState().embeddingRevision, accepted.runtimeState().embeddingPublication)
 		require.NoError(t, err)
 		require.True(t, same, "an intervening unrelated commit requires fresh validation, not rejection")
 	})
-	require.NoError(t, b.UpdateNodeEmbeddingSidecar(node))
+	require.NoError(t, b.UpdateNodeEmbeddingSidecar(context.Background(), node))
 	require.True(t, delivered)
 }
 
@@ -94,18 +94,18 @@ func TestEmbeddingPublicationProofFallsBackAfterBodyChanges(t *testing.T) {
 		t.Run(map[bool]string{false: "update", true: "delete"}[remove], func(t *testing.T) {
 			b := newSidecarTestBadger(t)
 			node := publicationProofPayload(t, b)
-			require.NoError(t, b.UpdateNodeEmbeddingSidecar(node))
+			require.NoError(t, b.UpdateNodeEmbeddingSidecar(context.Background(), node))
 			proof, revision := node.runtimeState().embeddingPublication, node.runtimeState().embeddingRevision
 			if remove {
-				require.NoError(t, b.DeleteNode(node.ID))
+				require.NoError(t, b.DeleteNode(t.Context(), node.ID))
 			} else {
-				updated, err := b.GetNode(node.ID)
+				updated, err := b.GetNode(t.Context(), node.ID)
 				require.NoError(t, err)
 				updated.Properties["text"] = "new source"
-				require.NoError(t, b.UpdateNode(NodeUpdateRequest{After: updated}))
+				require.NoError(t, b.UpdateNode(t.Context(), NodeUpdateRequest{After: updated}))
 			}
 			require.False(t, proof.matches(b, node.ID, revision))
-			same, err := b.embeddingRevisionIsCurrent(node.ID, revision, proof)
+			same, err := b.embeddingRevisionIsCurrent(t.Context(), node.ID, revision, proof)
 			require.False(t, same)
 			if remove {
 				require.ErrorIs(t, err, ErrNotFound)
@@ -128,13 +128,13 @@ func TestEmbeddingPublicationProofRefreshesAfterReentrantWrite(t *testing.T) {
 		if len(proofs) != 1 {
 			return
 		}
-		_, err := b.CreateNode(&Node{ID: "test:reentrant"})
+		_, err := b.CreateNode(t.Context(), &Node{ID: "test:reentrant"})
 		require.NoError(t, err)
 		next := CopyNode(accepted)
 		next.ChunkEmbeddings = [][]float32{{3, 4}}
-		require.NoError(t, b.UpdateNodeEmbeddingSidecar(next))
+		require.NoError(t, b.UpdateNodeEmbeddingSidecar(context.Background(), next))
 	})
-	require.NoError(t, b.UpdateNodeEmbeddingSidecar(node))
+	require.NoError(t, b.UpdateNodeEmbeddingSidecar(context.Background(), node))
 	require.Len(t, proofs, 2)
 	require.Greater(t, proofs[1].commitTs, proofs[0].commitTs)
 	require.False(t, proofs[0].matches(b, node.ID, node.runtimeState().embeddingRevision))
@@ -156,12 +156,12 @@ func TestEmbeddingPublicationProofUnobservedPredecessor(t *testing.T) {
 	go func() {
 		done <- b.commitEngineWrite(context.Background(), func(cw *commitWriter) error {
 			cw.embeddingOutcome = node
-			return cw.writeOnce(func(txn *badger.Txn) error {
-				if err := b.checkEmbeddingSourceInTxn(txn, node); err != nil {
+			return (func(txn *badger.Txn) error {
+				if err := b.checkEmbeddingSourceInTxn(t.Context(), txn, node); err != nil {
 					return err
 				}
 				return txn.Set([]byte("publication-proof-outcome"), []byte("later writer"))
-			})
+			})(cw.txn)
 		})
 	}()
 	require.Eventually(t, func() bool {
@@ -173,7 +173,7 @@ func TestEmbeddingPublicationProofUnobservedPredecessor(t *testing.T) {
 	b.db.oracle.finish(prior)
 	require.NoError(t, <-done)
 	require.Zero(t, node.runtimeState().embeddingPublication.commitTs, "an unobserved predecessor prevents certification")
-	same, err := b.embeddingRevisionIsCurrent(node.ID, node.runtimeState().embeddingRevision, node.runtimeState().embeddingPublication)
+	same, err := b.embeddingRevisionIsCurrent(t.Context(), node.ID, node.runtimeState().embeddingRevision, node.runtimeState().embeddingPublication)
 	require.NoError(t, err)
 	require.True(t, same, "missing proof uses the fresh metadata path")
 }
@@ -188,7 +188,7 @@ func TestEmbeddingPublicationProofMaintenanceBoundary(t *testing.T) {
 				_, err := b.db.Backup(&backup, 0)
 				require.NoError(t, err)
 			}
-			require.NoError(t, b.UpdateNodeEmbeddingSidecar(node))
+			require.NoError(t, b.UpdateNodeEmbeddingSidecar(context.Background(), node))
 			proof := node.runtimeState().embeddingPublication
 			require.True(t, proof.matches(b, node.ID, node.runtimeState().embeddingRevision))
 			switch operation {
@@ -200,7 +200,7 @@ func TestEmbeddingPublicationProofMaintenanceBoundary(t *testing.T) {
 				require.NoError(t, b.db.Load(context.Background(), bytes.NewReader(backup.Bytes()), 1))
 			}
 			require.False(t, proof.matches(b, node.ID, node.runtimeState().embeddingRevision), "bulk mutation invalidates the publication interval")
-			same, err := b.embeddingRevisionIsCurrent(node.ID, node.runtimeState().embeddingRevision, proof)
+			same, err := b.embeddingRevisionIsCurrent(t.Context(), node.ID, node.runtimeState().embeddingRevision, proof)
 			if operation == "load_older_versions" {
 				require.NoError(t, err)
 				require.True(t, same)

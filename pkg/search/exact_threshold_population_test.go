@@ -3,9 +3,10 @@ package search
 import (
 	"context"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"path/filepath"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/gpu"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -65,7 +66,7 @@ func TestXhighExactThresholdPopulationBoundary(t *testing.T) {
 		service.SetIndexFlags(false, true)
 		for i := range 9 {
 			node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("eligible-%02d", i)), ChunkEmbeddings: [][]float32{vectorAt(i)}}
-			_, err := engine.CreateNode(node)
+			_, err := engine.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 			require.NoError(t, service.IndexNode(node))
 		}

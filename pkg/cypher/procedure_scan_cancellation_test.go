@@ -102,34 +102,50 @@ func (trigger *procedureScanTrigger) arrive() {
 // enumeration that ran to the end of the fixture. AllNodes/AllEdges are
 // counted too: a procedure that enumerates the whole population instead of
 // streaming it takes the bulk read, which these cases reject.
+// acceptedNodes and acceptedEdges count, per stream, the entities the boundary
+// accepted for delivery after the cancellation release point, so a case can
+// hold each stream to its own exact delivered prefix.
 type procedureScanStreamBoundary struct {
 	*storage.NamespacedEngine
-	trigger   *procedureScanTrigger
-	delivered atomic.Int64
-	bulkNodes atomic.Int64
-	bulkEdges atomic.Int64
+	trigger       *procedureScanTrigger
+	delivered     atomic.Int64
+	acceptedNodes atomic.Int64
+	acceptedEdges atomic.Int64
+	bulkNodes     atomic.Int64
+	bulkEdges     atomic.Int64
 }
 
 func (boundary *procedureScanStreamBoundary) StreamNodes(ctx context.Context, visit func(*storage.Node) error) error {
 	return boundary.NamespacedEngine.StreamNodes(ctx, func(node *storage.Node) error {
-		if err := ctx.Err(); err != nil {
+		if err := boundary.accept(ctx, &boundary.acceptedNodes); err != nil {
 			return err
 		}
-		boundary.delivered.Add(1)
-		boundary.trigger.arrive()
 		return visit(node)
 	})
 }
 
 func (boundary *procedureScanStreamBoundary) StreamEdges(ctx context.Context, visit func(*storage.Edge) error) error {
 	return boundary.NamespacedEngine.StreamEdges(ctx, func(edge *storage.Edge) error {
-		if err := ctx.Err(); err != nil {
+		if err := boundary.accept(ctx, &boundary.acceptedEdges); err != nil {
 			return err
 		}
-		boundary.delivered.Add(1)
-		boundary.trigger.arrive()
 		return visit(edge)
 	})
+}
+
+// accept is the one instrumentation owner of the node and edge boundary
+// streams. It answers the caller's own context error, counts one delivered
+// entity, releases the caller's cancellation at the configured arrival and
+// counts that delivery for the entity's own stream. StreamNodes and StreamEdges
+// keep their typed storage kernel and visitor call and reach this owner first.
+func (boundary *procedureScanStreamBoundary) accept(ctx context.Context, accepted *atomic.Int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	boundary.delivered.Add(1)
+	boundary.trigger.arrive()
+	accepted.Add(1)
+	return nil
 }
 
 func (boundary *procedureScanStreamBoundary) AllNodes(ctx context.Context) ([]*storage.Node, error) {
@@ -195,7 +211,7 @@ func newProcedureScanFixture(t *testing.T) *procedureScanFixture {
 	fixture := &procedureScanFixture{store: store}
 	for index := 0; index < procedureScanNodes; index++ {
 		id := fmt.Sprintf("doc-%03d", index)
-		_, err := store.CreateNode(&storage.Node{
+		_, err := store.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID(id),
 			Labels: []string{"Doc"},
 			Properties: map[string]interface{}{
@@ -210,7 +226,7 @@ func newProcedureScanFixture(t *testing.T) *procedureScanFixture {
 	}
 	for index := 0; index < procedureScanRelationships; index++ {
 		id := fmt.Sprintf("rel-%03d", index)
-		err := store.CreateEdge(&storage.Edge{
+		err := store.CreateEdge(t.Context(), &storage.Edge{
 			ID:        storage.EdgeID(id),
 			StartNode: storage.NodeID(fixture.nodeIDs[index]),
 			EndNode:   storage.NodeID(fixture.nodeIDs[(index+1)%procedureScanNodes]),

@@ -37,7 +37,7 @@ func servingTestEnv(t *testing.T) {
 func addServingNode(t *testing.T, engine storage.Engine, svc *Service, id string, vec []float32) {
 	t.Helper()
 	node := &storage.Node{ID: storage.NodeID(id), Labels: []string{"Doc"}, Properties: map[string]any{"text": "text"}, ChunkEmbeddings: [][]float32{vec}}
-	_, err := engine.CreateNode(node)
+	_, err := engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, svc.IndexNode(node))
 }

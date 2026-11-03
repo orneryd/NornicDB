@@ -16,7 +16,7 @@ type managedEntityOwner struct {
 	route storage.EntityCommitRoute
 	found bool
 	begin interface {
-		BeginTransaction() (*storage.BadgerTransaction, error)
+		BeginTransaction(context.Context) (*storage.BadgerTransaction, error)
 	}
 	observer        storedEntityObserverInitializer
 	registry        storage.ManagedEntityRuntimeRegistry
@@ -37,7 +37,7 @@ func managedEntityOwnerFor(engine storage.Engine) managedEntityOwner {
 		}
 		if owner.begin == nil {
 			owner.begin, _ = engine.(interface {
-				BeginTransaction() (*storage.BadgerTransaction, error)
+				BeginTransaction(context.Context) (*storage.BadgerTransaction, error)
 			})
 		}
 		if owner.registry == nil {
@@ -78,9 +78,6 @@ func (t *sizeTrackingEngine) managedCapabilityError() error {
 // command preparation. It returns native ownership and terminal settlement,
 // without submitting or waiting. Preaccept failures close the original snapshot.
 func (t *sizeTrackingEngine) admitPrepared(ctx context.Context, tx *storage.BadgerTransaction, owner managedEntityOwner) (prepared *storage.PreparedEntityCommit, settle func(storage.CommitOutcome), prepareErr error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	var info *DatabaseInfo
 	reserved := false
 	defer func() {
@@ -196,10 +193,8 @@ func (t *sizeTrackingEngine) admitPrepared(ctx context.Context, tx *storage.Badg
 
 // CommitTransaction keeps ordinary read-only/schema and untracked native paths,
 // while accepted entity work survives caller cancellation on its own receipt.
+// The caller must supply a nonnil operation context.
 func (t *sizeTrackingEngine) CommitTransaction(ctx context.Context, tx *storage.BadgerTransaction) (commitErr error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	accepted, ordinaryAttempted := false, false
 	defer func() {
 		if !accepted {

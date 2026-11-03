@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -54,10 +55,10 @@ func TestWALPropertyEpochMidBufferSnapshotAndCrashBoundaries(t *testing.T) {
 			source := reviewBindingEngine(t, t.TempDir())
 			baseline := &Snapshot{Nodes: []*Node{{ID: "epoch:a", Properties: map[string]any{"alpha": "before"}}, {ID: "other:boundary"}, {ID: "epoch:b"}}}
 			for _, node := range baseline.Nodes {
-				_, err := source.CreateNode(node)
+				_, err := source.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 			}
-			require.NoError(t, source.FlushWriteBehind(nil))
+			require.NoError(t, source.FlushWriteBehind(context.Background()))
 			baselinePath := filepath.Join(t.TempDir(), "before.snapshot")
 			require.NoError(t, SaveSnapshot(baseline, baselinePath))
 			cfg := DefaultWALConfig()
@@ -71,11 +72,11 @@ func TestWALPropertyEpochMidBufferSnapshotAndCrashBoundaries(t *testing.T) {
 			t.Cleanup(func() { _ = wal.Close() })
 			source.SetBufferedCommitWAL(wal)
 			update := func(id NodeID, properties map[string]any) {
-				tx, err := source.BeginTransaction()
+				tx, err := source.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				require.NoError(t, tx.SetNamespace("epoch"))
 				require.NoError(t, tx.SetImplicit(true))
-				require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: id, Properties: properties}, Policy: ClientNodeEdits}))
+				require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: id, Properties: properties}, Policy: ClientNodeEdits}))
 				require.NoError(t, tx.Commit())
 				require.True(t, tx.AcknowledgedBuffered())
 			}
@@ -113,14 +114,14 @@ func TestWALPropertyEpochMidBufferSnapshotAndCrashBoundaries(t *testing.T) {
 						require.NoError(t, err)
 						require.Zero(t, result.Failed)
 						require.Equal(t, want, result.Applied)
-						a, err := dest.GetNode("epoch:a")
+						a, err := dest.GetNode(t.Context(), "epoch:a")
 						require.NoError(t, err)
 						if want > 0 {
 							require.Equal(t, "a1", a.Properties["alpha"])
 						} else {
 							require.Equal(t, "before", a.Properties["alpha"])
 						}
-						b, err := dest.GetNode("epoch:b")
+						b, err := dest.GetNode(t.Context(), "epoch:b")
 						require.NoError(t, err)
 						if want > 1 {
 							require.Equal(t, "b1", b.Properties["beta"])
@@ -152,10 +153,10 @@ func TestWALPropertyEpochMidBufferSnapshotAndCrashBoundaries(t *testing.T) {
 				result, _, err := RecoverIntoEngine(dest, walDir, snapshotPath)
 				require.NoError(t, err)
 				require.Zero(t, result.Failed)
-				a, err := dest.GetNode("epoch:a")
+				a, err := dest.GetNode(t.Context(), "epoch:a")
 				require.NoError(t, err)
 				require.Equal(t, map[string]any{"alpha": alpha, "beta": beta}, a.Properties)
-				b, err := dest.GetNode("epoch:b")
+				b, err := dest.GetNode(t.Context(), "epoch:b")
 				require.NoError(t, err)
 				require.Equal(t, "b1", b.Properties["beta"])
 				assertPropertyDictionaryBijection(t, dest)
@@ -166,7 +167,7 @@ func TestWALPropertyEpochMidBufferSnapshotAndCrashBoundaries(t *testing.T) {
 			check("a2", "b2") // retained entries keep their original epoch
 			update("epoch:a", map[string]any{"alpha": "a3", "beta": "b3"})
 			check("a3", "b3") // first steady append after truncation
-			require.NoError(t, source.FlushWriteBehind(nil))
+			require.NoError(t, source.FlushWriteBehind(context.Background()))
 			assertPropertyDictionaryBijection(t, source)
 		})
 	}
@@ -185,10 +186,10 @@ func TestWALPropertyEpochTransportAndRawLegacyBoundary(t *testing.T) {
 	dest, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()}))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, dest.Close()) })
-	_, err = dest.CreateNode(&Node{ID: "perf:sentinel", Properties: map[string]any{"other": "keep"}})
+	_, err = dest.CreateNode(t.Context(), &Node{ID: "perf:sentinel", Properties: map[string]any{"other": "keep"}})
 	require.NoError(t, err)
 	require.NoError(t, ReplayWALEntry(dest, transported))
-	node, err := dest.GetNode("perf:a")
+	node, err := dest.GetNode(t.Context(), "perf:a")
 	require.NoError(t, err)
 	require.Len(t, node.Properties, 160)
 	for i := 0; i < 160; i++ {
@@ -250,11 +251,11 @@ func TestWALPropertyEpochChangesOnlyAtDictionaryBoundaries(t *testing.T) {
 		require.NoError(t, wal.AppendBufferedCommit(commit, source.propKeyDict))
 	}
 	require.Equal(t, 1, headers(), "steady records do not write binding metadata")
-	_, err := source.CreateNode(&Node{ID: "perf:new", Properties: map[string]any{"new_name": int64(1)}})
+	_, err := source.CreateNode(t.Context(), &Node{ID: "perf:new", Properties: map[string]any{"new_name": int64(1)}})
 	require.NoError(t, err)
 	require.NoError(t, wal.AppendBufferedCommit(commit, source.propKeyDict))
 	require.Equal(t, 2, headers())
-	require.NoError(t, source.UpdateNode(NodeUpdateRequest{After: &Node{ID: "perf:new", Properties: map[string]any{"new_name": int64(2)}}}))
+	require.NoError(t, source.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "perf:new", Properties: map[string]any{"new_name": int64(2)}}}))
 	require.NoError(t, wal.AppendBufferedCommit(commit, source.propKeyDict))
 	require.Equal(t, 2, headers(), "persisting/changing values does not allocate names")
 	require.NoError(t, wal.Checkpoint())
@@ -268,7 +269,7 @@ func TestWALPropertyEpochMatchingPrefixCannotAuthorizeLegacyAfterReopen(t *testi
 	entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
 	require.NoError(t, err)
 	first := entries[0]
-	_, err = source.CreateNode(&Node{ID: "perf:later", Properties: map[string]any{"beta": int64(2)}})
+	_, err = source.CreateNode(t.Context(), &Node{ID: "perf:later", Properties: map[string]any{"beta": int64(2)}})
 	require.NoError(t, err)
 	var body []byte
 	require.NoError(t, source.db.View(func(tx *badger.Txn) error {
@@ -294,16 +295,16 @@ func TestWALPropertyEpochMatchingPrefixCannotAuthorizeLegacyAfterReopen(t *testi
 	require.NoError(t, legacy.Close())
 	dir := t.TempDir()
 	dest := reviewBindingEngine(t, dir)
-	_, err = dest.CreateNode(&Node{ID: "perf:seed", Properties: map[string]any{"property_000": int64(0)}})
+	_, err = dest.CreateNode(t.Context(), &Node{ID: "perf:seed", Properties: map[string]any{"property_000": int64(0)}})
 	require.NoError(t, err)
-	_, err = dest.CreateNode(&Node{ID: "perf:later", Properties: map[string]any{"other": int64(0)}})
+	_, err = dest.CreateNode(t.Context(), &Node{ID: "perf:later", Properties: map[string]any{"other": int64(0)}})
 	require.NoError(t, err)
 	require.NoError(t, ReplayWALEntry(dest, first)) // every entry in this epoch matches
 	require.NoError(t, dest.Close())
 	dest = reviewBindingEngine(t, dir)
 	_, err = RecoverBufferedCommitsAtOpen(dest, legacy)
 	require.ErrorContains(t, err, "missing property name binding")
-	node, err := dest.GetNode("perf:later")
+	node, err := dest.GetNode(t.Context(), "perf:later")
 	require.NoError(t, err)
 	require.Equal(t, map[string]any{"other": int64(0)}, node.Properties)
 	assertPropertyDictionaryBijection(t, dest)

@@ -83,17 +83,36 @@ HTTP and Bolt syntax remains unchanged.
 ## UNIQUE claim retirement
 
 Claim publication has one method,
-`SchemaManager.ApplyUniqueValue(label, property, value, nodeID, action)`, which
+`SchemaManager.ApplyUniqueValue(ctx, label, property, value, nodeID, action) error`, which
 owns the constraint lookup, value-key projection and claim mutation under the
 constraint's mutex. The former `RegisterUniqueValue` and `UnregisterUniqueValue`
 methods and the `UniqueValueRegistrationPolicy` type are removed; forwarding
 wrappers are not provided. Update direct Go callers:
 
 - `RegisterUniqueValue(label, property, value, nodeID, policy)` maps directly to
-  `ApplyUniqueValue(label, property, value, nodeID, action)` with the same
+  `ApplyUniqueValue(ctx, label, property, value, nodeID, action) error` with the same
   arguments, using `ValidatedUniqueClaim` or `RecoveredUniqueClaim`.
 - `UnregisterUniqueValue(label, property, value, nodeID)` becomes
-  `ApplyUniqueValue(label, property, value, nodeID, RetiredUniqueClaim)`.
+  `ApplyUniqueValue(ctx, label, property, value, nodeID, RetiredUniqueClaim)`.
+
+Prepare callers pass their request context and handle the returned error;
+canceled key preparation or admission leaves the current claim unchanged.
+Accepted native publication and recovery explicitly use their completion
+lifetime, so a canceled statement cannot interrupt an accepted frame.
+
+Creation validation and UNIQUE cache rebuild APIs also take `ctx` first:
+`ValidateConstraintOnCreationForEngine`,
+`ValidatePropertyTypeConstraintOnCreationForEngine`,
+`ValidateConstraintContractOnCreationForEngine`,
+`RefreshUniqueConstraintValuesForEngine`,
+`RefreshUniqueConstraintValuesForConstraintsForEngine`,
+`SchemaManager.CheckUniqueConstraint`, and
+`BadgerEngine.ValidateRelationshipConstraint`. The two Badger convenience
+methods `ValidateConstraintOnCreation` and
+`ValidatePropertyTypeConstraintOnCreation` are retired; callers use the
+canonical engine validators with their context. A failed refresh preserves
+existing caches. Replacing a selected constraint while its scan runs returns
+`storage.ErrConflict`; retry against the current schema.
 
 `UniqueValueAction` has three values. `ValidatedUniqueClaim` assigns the value
 to the node unconditionally and is required for current validated mutations. The
@@ -114,15 +133,21 @@ persistent indexes, WAL formats or storage versions.
 ## Manual visibility
 
 The optional `storage.ManualSuppressionEngine` capability now requires one method:
-`SetManualSuppression(kind storage.StoredEntityKind, id string, suppressed bool) error`.
+`SetManualSuppression(ctx context.Context, kind storage.StoredEntityKind, id string, suppressed bool) error`.
 Replace node calls with `storage.StoredEntityNodeKind` and relationship calls with
 `storage.StoredEntityEdgeKind`, converting typed IDs to `string` explicitly.
 The separate `SetNodeManuallySuppressed` and `SetEdgeManuallySuppressed` methods
 are removed; custom capability implementations must migrate too.
 
 ```go
-err := visibility.SetManualSuppression(storage.StoredEntityNodeKind, string(nodeID), true)
+err := visibility.SetManualSuppression(ctx, storage.StoredEntityNodeKind, string(nodeID), true)
 ```
+
+`ctx` is the lifetime that executes the change: the `kp.suppress` statement for
+an autocommit call, or the transaction's admitted commit when the change is
+deferred to COMMIT. It owns admission, the buffered-order drain and the stored
+body read; an admitted suppression writes its flag and publication in the store,
+so a canceled context returns its own error and changes nothing.
 
 Namespace wrappers preserve their existing ID qualification rules. WAL wrappers
 forward the visibility change without adding a graph-write log entry. Persisted

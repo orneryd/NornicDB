@@ -31,17 +31,17 @@ func BenchmarkBadger_GetNode_CacheHit(b *testing.B) {
 	defer engine.Close()
 
 	node := testNode("n1")
-	if _, err := engine.CreateNode(node); err != nil {
+	if _, err := engine.CreateNode(b.Context(), node); err != nil {
 		b.Fatal(err)
 	}
-	if _, err := engine.GetNode(node.ID); err != nil {
+	if _, err := engine.GetNode(b.Context(), node.ID); err != nil {
 		b.Fatal(err)
 	}
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := engine.GetNode(node.ID); err != nil {
+		if _, err := engine.GetNode(b.Context(), node.ID); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -57,17 +57,17 @@ func BenchmarkBadger_GetEdgesByType_CacheHit(b *testing.B) {
 
 	n1 := testNode("n1")
 	n2 := testNode("n2")
-	if _, err := engine.CreateNode(n1); err != nil {
+	if _, err := engine.CreateNode(b.Context(), n1); err != nil {
 		b.Fatal(err)
 	}
-	if _, err := engine.CreateNode(n2); err != nil {
+	if _, err := engine.CreateNode(b.Context(), n2); err != nil {
 		b.Fatal(err)
 	}
 
 	const edgeType = "KNOWS"
 	for i := 0; i < 100; i++ {
 		e := testEdge("e"+itoaBench(i), n1.ID, n2.ID, edgeType)
-		if err := engine.CreateEdge(e); err != nil {
+		if err := engine.CreateEdge(b.Context(), e); err != nil {
 			b.Fatal(err)
 		}
 	}

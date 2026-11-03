@@ -127,7 +127,7 @@ func TestVectorFactorySnapshotRetiredByReset(t *testing.T) {
 				require.Nil(t, cached)
 				svc.ClearVectorIndex()
 				node := &storage.Node{ID: "replacement", ChunkEmbeddings: [][]float32{{0, 1, 0}}}
-				_, err := svc.engine.CreateNode(node)
+				_, err := svc.engine.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 				require.NoError(t, svc.IndexNode(node))
 				candidates, err := svc.VectorSearchCandidates(context.Background(), []float32{0, 1, 0}, &SearchOptions{Limit: 1, MaxCandidateLimit: 1})

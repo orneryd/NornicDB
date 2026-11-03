@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"log/slog"
@@ -19,7 +20,7 @@ import (
 func TestBuildReadinessPublishedAfterSuccessfulFinalReplay(t *testing.T) {
 	engine := &triageSnapshotEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
 	t.Cleanup(func() { _ = engine.Close() })
-	_, err := engine.CreateNode(triageNode("nornic:baseline"))
+	_, err := engine.CreateNode(t.Context(), triageNode("nornic:baseline"))
 	require.NoError(t, err)
 	svc := newSearchPersistenceTestService(t, engine, t.TempDir(), false)
 	reached, published := false, false
@@ -35,7 +36,7 @@ func TestBuildReadinessPublishedAfterSuccessfulFinalReplay(t *testing.T) {
 		}
 		svc.vectorFileStore.mu.Unlock()
 		tail := triageNode("nornic:tail")
-		_, err := engine.CreateNode(tail)
+		_, err := engine.CreateNode(t.Context(), tail)
 		require.NoError(t, err)
 		require.NoError(t, svc.IndexNode(tail))
 	}}))
@@ -66,7 +67,7 @@ func (e *readinessHandoffEngine) OpenReadSnapshot(ctx context.Context) (storage.
 func TestBuildReadinessWaitsForOverlappingFinalSequence(t *testing.T) {
 	engine := &readinessHandoffEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), entered: make(chan struct{}), release: make(chan struct{})}
 	t.Cleanup(func() { _ = engine.Close() })
-	_, err := engine.CreateNode(triageNode("nornic:baseline"))
+	_, err := engine.CreateNode(t.Context(), triageNode("nornic:baseline"))
 	require.NoError(t, err)
 	svc := newSearchPersistenceTestService(t, engine, t.TempDir(), false)
 	gate := &finalPersistGateLog{entered: make(chan struct{}), release: make(chan struct{})}
@@ -89,7 +90,7 @@ func TestBuildReadinessWaitsForOverlappingFinalSequence(t *testing.T) {
 		return svc.buildWrites.owners == 2
 	}, 5*time.Second, time.Millisecond)
 	tail := triageNode("nornic:tail")
-	_, err = engine.CreateNode(tail)
+	_, err = engine.CreateNode(t.Context(), tail)
 	require.NoError(t, err)
 	require.NoError(t, svc.IndexNode(tail))
 	openFirst()

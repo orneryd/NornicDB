@@ -3,9 +3,10 @@ package multidb
 import (
 	"context"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync/atomic"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -19,9 +20,9 @@ type leaderAwareEngine struct {
 
 func (e *leaderAwareEngine) IsLeader() bool { return e.leader }
 
-func (e *leaderAwareEngine) UpdateNode(updateRequest storage.NodeUpdateRequest) error {
+func (e *leaderAwareEngine) UpdateNode(ctx context.Context, updateRequest storage.NodeUpdateRequest) error {
 	e.updateCalls.Add(1)
-	return e.Engine.UpdateNode(updateRequest)
+	return e.Engine.UpdateNode(ctx, updateRequest)
 }
 
 func TestNewDatabaseManager_ReadOnlyEngine_SkipsMetadataWrites(t *testing.T) {
@@ -43,10 +44,10 @@ func TestNewDatabaseManager_ReadOnlyEngine_SkipsMetadataWrites(t *testing.T) {
 
 // This fixture exposes the required catalog receipt contract without exposing
 // opaque graph observation capabilities. Its existing leadership gate remains.
-func (e *leaderAwareEngine) BeginTransaction() (*storage.BadgerTransaction, error) {
+func (e *leaderAwareEngine) BeginTransaction(ctx context.Context) (*storage.BadgerTransaction, error) {
 	return e.Engine.(interface {
-		BeginTransaction() (*storage.BadgerTransaction, error)
-	}).BeginTransaction()
+		BeginTransaction(context.Context) (*storage.BadgerTransaction, error)
+	}).BeginTransaction(ctx)
 }
 func (e *leaderAwareEngine) CheckEntityCommitAdmission() error {
 	if !e.leader {

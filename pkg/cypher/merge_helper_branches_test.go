@@ -23,17 +23,17 @@ func TestMergeCacheAndIndexHelpers(t *testing.T) {
 
 	props := map[string]interface{}{"id": "p1", "email": "a@x"}
 	exec.cacheMergeNode([]string{"Person"}, props, n)
-	cached := exec.findMergeNodeInCache(store, []string{"Person"}, props)
+	cached := exec.findMergeNodeInCache(t.Context(), store, []string{"Person"}, props)
 	require.NotNil(t, cached)
 	require.Equal(t, n.ID, cached.ID)
 
 	exec.evictMergeNodeCacheEntries([]string{"Person"}, map[string]interface{}{"id": "p1"}, n.ID)
-	cached = exec.findMergeNodeInCache(store, []string{"Person"}, map[string]interface{}{"id": "p1"})
+	cached = exec.findMergeNodeInCache(t.Context(), store, []string{"Person"}, map[string]interface{}{"id": "p1"})
 	require.Nil(t, cached)
 
 	exec.cacheMergeNode([]string{"Person"}, props, n)
-	require.NoError(t, store.DeleteNode(n.ID))
-	cached = exec.findMergeNodeInCache(store, []string{"Person"}, props)
+	require.NoError(t, store.DeleteNode(t.Context(), n.ID))
+	cached = exec.findMergeNodeInCache(t.Context(), store, []string{"Person"}, props)
 	require.Nil(t, cached)
 
 	idx := &storage.CompositeIndex{Properties: []string{"id", "email"}}
@@ -47,6 +47,7 @@ func TestMergeCacheAndIndexHelpers(t *testing.T) {
 	all, err := store.GetNodesByLabel(ctx, "L")
 	require.NoError(t, err)
 	require.Len(t, all, 2)
-	loaded := exec.loadMergeCandidateNodes(store, []storage.NodeID{all[0].ID, all[1].ID, all[0].ID})
+	loaded, loadErr := exec.loadMergeCandidateNodes(ctx, store, []storage.NodeID{all[0].ID, all[1].ID, all[0].ID})
+	require.NoError(t, loadErr)
 	require.Len(t, loaded, 2)
 }

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"fmt"
@@ -17,7 +18,7 @@ func BenchmarkBadgerEngine_NodeCountByPrefix_Warm(b *testing.B) {
 	defer badger.Close()
 
 	for index := 0; index < 100; index++ {
-		_, err := badger.CreateNode(&Node{
+		_, err := badger.CreateNode(b.Context(), &Node{
 			ID:         NodeID(fmt.Sprintf("nornic:n-%03d", index)),
 			Labels:     []string{"Doc"},
 			Properties: map[string]any{"seq": int64(index)},
@@ -29,7 +30,7 @@ func BenchmarkBadgerEngine_NodeCountByPrefix_Warm(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		count, err := badger.NodeCountByPrefix("nornic:")
+		count, err := badger.NodeCountByPrefix(context.Background(), "nornic:")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -47,14 +48,14 @@ func BenchmarkBadgerEngine_EdgeCountByPrefix_Warm(b *testing.B) {
 	defer badger.Close()
 
 	for index := 0; index < 100; index++ {
-		_, err := badger.CreateNode(&Node{
+		_, err := badger.CreateNode(b.Context(), &Node{
 			ID:     NodeID(fmt.Sprintf("nornic:n-%03d", index)),
 			Labels: []string{"Doc"},
 		})
 		require.NoError(b, err)
 	}
 	for index := 0; index < 50; index++ {
-		err := badger.CreateEdge(&Edge{
+		err := badger.CreateEdge(b.Context(), &Edge{
 			ID:        EdgeID(fmt.Sprintf("nornic:e-%03d", index)),
 			Type:      "R",
 			StartNode: "nornic:n-000",
@@ -66,7 +67,7 @@ func BenchmarkBadgerEngine_EdgeCountByPrefix_Warm(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		count, err := badger.EdgeCountByPrefix("nornic:")
+		count, err := badger.EdgeCountByPrefix(context.Background(), "nornic:")
 		if err != nil {
 			b.Fatal(err)
 		}

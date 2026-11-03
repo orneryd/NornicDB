@@ -8,13 +8,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/orneryd/nornicdb/internal/jsontext"
 
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -117,7 +119,7 @@ func ImportFull(ctx context.Context, engine storage.Engine, opts Options) (Repor
 	}
 
 	target := storage.NewNamespacedEngine(engine, opts.DatabaseName)
-	if err := ensureEmpty(target); err != nil {
+	if err := ensureEmpty(ctx, target); err != nil {
 		return report, err
 	}
 
@@ -285,7 +287,7 @@ func importNodeSource(ctx context.Context, engine storage.Engine, opts Options, 
 		}
 		nodes = append(nodes, node)
 		if len(nodes) >= opts.ChunkSize {
-			if err := engine.BulkCreateNodes(nodes); err != nil {
+			if err := engine.BulkCreateNodes(ctx, nodes); err != nil {
 				return err
 			}
 			report.NodesImported += int64(len(nodes))
@@ -293,7 +295,7 @@ func importNodeSource(ctx context.Context, engine storage.Engine, opts Options, 
 		}
 	}
 	if len(nodes) > 0 {
-		if err := engine.BulkCreateNodes(nodes); err != nil {
+		if err := engine.BulkCreateNodes(ctx, nodes); err != nil {
 			return err
 		}
 		report.NodesImported += int64(len(nodes))
@@ -352,7 +354,7 @@ func importRelationshipSource(ctx context.Context, engine storage.Engine, opts O
 		}
 		edges = append(edges, edge)
 		if len(edges) >= opts.ChunkSize {
-			if err := engine.BulkCreateEdges(edges); err != nil {
+			if err := engine.BulkCreateEdges(ctx, edges); err != nil {
 				if errors.Is(err, storage.ErrAlreadyExists) {
 					return newImportError(ExitDuplicateID, localization.AdminImportDuplicateRelationshipID(), err)
 				}
@@ -363,7 +365,7 @@ func importRelationshipSource(ctx context.Context, engine storage.Engine, opts O
 		}
 	}
 	if len(edges) > 0 {
-		if err := engine.BulkCreateEdges(edges); err != nil {
+		if err := engine.BulkCreateEdges(ctx, edges); err != nil {
 			if errors.Is(err, storage.ErrAlreadyExists) {
 				return newImportError(ExitDuplicateID, localization.AdminImportDuplicateRelationshipID(), err)
 			}
@@ -950,7 +952,7 @@ func (c closers) Close() error {
 
 func applySchema(ctx context.Context, engine storage.Engine, path string) error {
 	if strings.EqualFold(filepath.Ext(path), ".json") {
-		return applySchemaDefinition(engine, path)
+		return applySchemaDefinition(ctx, engine, path)
 	}
 	contents, err := os.ReadFile(path)
 	if err != nil {
@@ -968,63 +970,16 @@ func applySchema(ctx context.Context, engine storage.Engine, path string) error 
 	return nil
 }
 
-func applySchemaDefinition(engine storage.Engine, path string) error {
+func applySchemaDefinition(ctx context.Context, engine storage.Engine, path string) error {
 	contents, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
 	var def storage.SchemaDefinition
-	if err := json.Unmarshal(contents, &def); err != nil {
+	if err := jsontext.Unmarshal(contents, &def); err != nil {
 		return err
 	}
-	schema := engine.GetSchema()
-	if err := schema.ReplaceFromDefinition(&def); err != nil {
-		return err
-	}
-	if err := rebuildSchemaDerivedState(engine, schema); err != nil {
-		return err
-	}
-	for _, constraint := range schema.GetAllConstraints() {
-		if err := storage.ValidateConstraintOnCreationForEngine(engine, constraint); err != nil {
-			return err
-		}
-	}
-	for _, typeConstraint := range schema.GetAllPropertyTypeConstraints() {
-		if err := storage.ValidatePropertyTypeConstraintOnCreationForEngine(engine, typeConstraint); err != nil {
-			return err
-		}
-	}
-	for _, contract := range schema.GetAllConstraintContracts() {
-		if err := storage.ValidateConstraintContractOnCreationForEngine(engine, contract); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func rebuildSchemaDerivedState(engine storage.Engine, schema *storage.SchemaManager) error {
-	if err := storage.RefreshUniqueConstraintValuesForEngine(engine, schema); err != nil {
-		return err
-	}
-	// Every stored node, those the visibility layer hides from reads
-	// included: the indexes are trusted to hold every matching node.
-	if err := storage.StreamStoredNodes(context.Background(), engine, storage.StreamNodesOptions{}, func(node *storage.Node) error {
-		for _, label := range node.Labels {
-			for _, idx := range schema.GetCompositeIndexesForLabel(label) {
-				if idx == nil {
-					continue
-				}
-				if err := idx.IndexNode(node.ID, node.Properties); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
-	schema.MarkPropertyIndexesFilled()
-	return nil
+	return engine.GetSchema().ReplaceDefinitionDurable(ctx, engine, &def)
 }
 
 func splitCypherStatements(source string) []string {
@@ -1068,12 +1023,12 @@ func splitCypherStatements(source string) []string {
 	return out
 }
 
-func ensureEmpty(engine storage.Engine) error {
-	nodes, err := engine.NodeCount()
+func ensureEmpty(ctx context.Context, engine storage.Engine) error {
+	nodes, err := engine.NodeCount(ctx)
 	if err != nil {
 		return err
 	}
-	edges, err := engine.EdgeCount()
+	edges, err := engine.EdgeCount(ctx)
 	if err != nil {
 		return err
 	}

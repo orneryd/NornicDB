@@ -105,7 +105,7 @@ func TestGraphRerankReadsCandidateTextFromStorage(t *testing.T) {
 func TestGraphRerankRelationshipTextReadsItsPropertyList(t *testing.T) {
 	ctx := context.Background()
 	engine := relationshipTestEngine(t)
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "opted", StartNode: "a", EndNode: "c", Type: "LINK", Properties: map[string]any{"search_text": "why they are linked", "text": "unopted metadata zephyrcensus"}}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "opted", StartNode: "a", EndNode: "c", Type: "LINK", Properties: map[string]any{"search_text": "why they are linked", "text": "unopted metadata zephyrcensus"}}))
 	svc := startRelationshipService(t, engine, nil, func(s *Service) {
 		s.SetFulltextProperties([]string{"text", "search_text"})
 		s.SetRelationshipFulltextProperties([]string{"search_text"})

@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
@@ -368,7 +369,7 @@ func staticArgumentMismatch(argument staticArgumentType, typeName string) error 
 // argument of a function in staticFunctionArguments. A DISTINCT before an aggregate's
 // argument is not part of it, and trim([LEADING | TRAILING | BOTH]
 // [characters] FROM source) checks its characters and source (trimFromArguments).
-func forEachStaticFunctionArgument(text string, check func(argument staticArgumentType, expression string, at int) error) error {
+func forEachStaticFunctionArgument(ctx context.Context, text string, check func(argument staticArgumentType, expression string, at int) error) error {
 	// A type after :: or TYPED is no call (x IS :: VECTOR(3)).
 	text = maskTypePredicateTypes(text)
 	for index := 0; index < len(text); {
@@ -431,7 +432,7 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 		argumentSource := cyphertext.ReadFunctionArgumentSource(inner, cyphertext.AllArgumentModifier|cyphertext.DistinctArgumentModifier, distinctFollowsAsName)
 		inner = inner[argumentSource.Arguments.Start:argumentSource.Arguments.End]
 		if strings.EqualFold(name.Value, "trim") {
-			if parameters, fromForm := trimFromArguments(inner); fromForm {
+			if parameters, fromForm := trimFromArguments(ctx, inner); fromForm {
 				for _, expression := range parameters {
 					if err := check(arguments[0], expression, open+1); err != nil {
 						return err
@@ -453,7 +454,7 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 			arguments = overload
 		}
 		if strings.EqualFold(name.Value, "format") {
-			arguments, typed = staticFormatArguments(expressions), true
+			arguments, typed = staticFormatArguments(ctx, expressions), true
 		}
 		if len(expressions) > 0 {
 			if err := checkStaticLiteralArguments(name.Value, expressions); err != nil {
@@ -506,8 +507,8 @@ func precededByTypeAnnotation(text string, index int) bool {
 // trimFromArguments reads trim's FROM form, trim([LEADING | TRAILING |
 // BOTH] [characters] FROM source), and returns its STRING arguments: the
 // characters when given, and the source. fromForm is false for trim(source).
-func trimFromArguments(inner string) (arguments []string, fromForm bool) {
-	from := topLevelKeywordIndex(inner, "FROM")
+func trimFromArguments(ctx context.Context, inner string) (arguments []string, fromForm bool) {
+	from := topLevelKeywordIndex(ctx, inner, "FROM")
 	if from < 0 {
 		return nil, false
 	}
@@ -529,10 +530,10 @@ func trimFromArguments(inner string) (arguments []string, fromForm bool) {
 // keys([1]), length(1 + 1), …) anywhere in the statement: projections, WHERE,
 // CASE, ORDER BY, SET values, pattern properties and subquery bodies.
 // Variables are checked clause by clause (validateStaticFunctionVariables).
-func validateStaticFunctionArguments(cypher string, cypher25 bool) error {
-	return forEachStaticFunctionArgument(cypher, func(argument staticArgumentType, expression string, _ int) error {
+func validateStaticFunctionArguments(ctx context.Context, cypher string, cypher25 bool) error {
+	return forEachStaticFunctionArgument(ctx, cypher, func(argument staticArgumentType, expression string, _ int) error {
 		argument = argument.inVersion(cypher25)
-		typeName := staticTextType(expression)
+		typeName := staticTextType(ctx, expression)
 		if !argument.accepts(typeName) {
 			return staticArgumentMismatch(argument, typeName)
 		}
@@ -549,11 +550,11 @@ const staticFormatTemporalTypes = "Duration, Date, Time, LocalTime, LocalDateTim
 // temporal the pattern is a string (format(1, 'yyyy') and
 // format(date(…), 1) are Neo4j's compile-time type mismatch). The printf
 // form's values aren't checked.
-func staticFormatArguments(expressions []string) []staticArgumentType {
+func staticFormatArguments(ctx context.Context, expressions []string) []staticArgumentType {
 	value := staticTypeChoices(staticFormatTemporalTypes + " or String")
 	arguments := []staticArgumentType{{expected: staticFormatTemporalTypes, options: value}}
 	if len(expressions) == 2 {
-		typeName := staticTextType(expressions[0])
+		typeName := staticTextType(ctx, expressions[0])
 		if typeName != "" && containsString(staticTypeChoices(staticFormatTemporalTypes), typeName) {
 			arguments = append(arguments, staticArgumentType{expected: "String", options: []string{"String"}})
 		}
@@ -570,15 +571,15 @@ func staticFormatArguments(expressions []string) []staticArgumentType {
 // the function's TypeError. It scans the statement only when a parameter
 // follows an opening parenthesis or a comma, so parameterized statements on
 // hot paths cost one byte scan.
-func validateStaticFunctionParameters(cypher string, params map[string]interface{}, cypher25 bool) error {
+func validateStaticFunctionParameters(ctx context.Context, cypher string, params map[string]interface{}, cypher25 bool) error {
 	if len(params) == 0 || !parameterMayBeFunctionArgument(cypher) {
 		return nil
 	}
 	var unwound map[string]string
 	if strings.IndexByte(cypher, '[') >= 0 {
-		unwound = unwindParameterBindings(cypher)
+		unwound = unwindParameterBindings(ctx, cypher)
 	}
-	return forEachStaticFunctionArgument(cypher, func(argument staticArgumentType, expression string, _ int) error {
+	return forEachStaticFunctionArgument(ctx, cypher, func(argument staticArgumentType, expression string, _ int) error {
 		// A Cypher 25 statement's arguments are checked as Neo4j 2026.09
 		// checks them (toString takes any value there).
 		argument = argument.inVersion(cypher25)
@@ -613,16 +614,16 @@ func validateStaticFunctionParameters(cypher string, params map[string]interface
 // list binds (UNWIND [$s] AS x) to the parameter's name, when the statement
 // binds that name nowhere else (no second AS x), so a later binding can't be
 // taken for it.
-func unwindParameterBindings(cypher string) map[string]string {
+func unwindParameterBindings(ctx context.Context, cypher string) map[string]string {
 	var bindings map[string]string
 	for start := 0; ; {
-		index := findKeywordIndexInContext(cypher[start:], "UNWIND")
+		index := findKeywordIndexInContext(ctx, cypher[start:], "UNWIND")
 		if index < 0 {
 			return bindings
 		}
 		body := cypher[start+index+len("UNWIND"):]
 		start += index + len("UNWIND")
-		as := findKeywordIndexInContext(body, "AS")
+		as := findKeywordIndexInContext(ctx, body, "AS")
 		if as < 0 {
 			continue
 		}
@@ -756,11 +757,11 @@ func staticMemberAccessBase(expression string) (string, bool) {
 // staticExpressionType is the static type of expression in scope, the
 // operator check's (operandOf); a parameter read with the run's values is
 // the parameter's (propertyAccessExpressionType).
-func (scope staticTypeScope) staticExpressionType(expression string) string {
+func (scope staticTypeScope) staticExpressionType(ctx context.Context, expression string) string {
 	if len(scope.params) > 0 && strings.HasPrefix(strings.TrimSpace(expression), "$") {
-		return propertyAccessExpressionType(expression, scope.values, scope.params)
+		return propertyAccessExpressionType(ctx, expression, scope.values, scope.params)
 	}
-	return scope.operandOf(expression).typeName()
+	return scope.operandOf(ctx, expression).typeName()
 }
 
 // validateStaticFunctionVariables rejects a function called with a variable
@@ -769,14 +770,16 @@ func (scope staticTypeScope) staticExpressionType(expression string) string {
 // one clause. A variable the clause binds itself (a list comprehension,
 // reduce, any / all / none / single) shadows the scope where it is bound
 // (localVariableShadowsAt) and is not checked there.
-func validateStaticFunctionVariables(text string, scope staticTypeScope) error {
-	return validateStaticFunctionVariablesIn(text, func() staticTypeScope { return scope })
+func validateStaticFunctionVariables(ctx context.Context, text string, scope staticTypeScope) error {
+	return validateStaticFunctionVariablesIn(ctx, text, func() staticTypeScope { return scope })
 }
 
 // validateStaticFunctionVariablesIn is validateStaticFunctionVariables with
 // the scope built only when a function has a variable argument.
-func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeScope) error {
-	return validateStaticFunctionVariablesTyped(text, scopeOf, staticTypeScope.staticExpressionType)
+func validateStaticFunctionVariablesIn(ctx context.Context, text string, scopeOf func() staticTypeScope) error {
+	return validateStaticFunctionVariablesTyped(ctx, text, scopeOf, func(scope staticTypeScope, expression string) string {
+		return scope.staticExpressionType(ctx, expression)
+	})
 }
 
 // validateStaticFunctionVariablesTyped is validateStaticFunctionVariablesIn
@@ -788,10 +791,10 @@ func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeSco
 // variable, and the construct's own check (checkScoped) types the argument
 // with it. Typing it here as well typed every nested construct once for each
 // enclosing scope, which grew exponentially with the nesting depth (NOR-150).
-func validateStaticFunctionVariablesTyped(text string, scopeOf func() staticTypeScope, typeOf func(staticTypeScope, string) string) error {
+func validateStaticFunctionVariablesTyped(ctx context.Context, text string, scopeOf func() staticTypeScope, typeOf func(staticTypeScope, string) string) error {
 	var scope *staticTypeScope
 	var locals map[string]struct{}
-	return forEachStaticFunctionArgument(text, func(argument staticArgumentType, expression string, at int) error {
+	return forEachStaticFunctionArgument(ctx, text, func(argument staticArgumentType, expression string, at int) error {
 		for {
 			// abs((d)) reads d (abs(( (d))) after checkedWithoutUnaryPlus
 			// blanks a unary plus).

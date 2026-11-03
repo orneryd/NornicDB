@@ -15,17 +15,17 @@ func TestEvaluateWhereForContext_Branches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	aID, err := store.CreateNode(&storage.Node{ID: storage.NodeID("a"), Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Ada", "age": int64(30)}})
+	aID, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID("a"), Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Ada", "age": int64(30)}})
 	require.NoError(t, err)
-	bID, err := store.CreateNode(&storage.Node{ID: storage.NodeID("b"), Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Bob", "age": int64(25)}})
+	bID, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID("b"), Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Bob", "age": int64(25)}})
 	require.NoError(t, err)
-	err = store.CreateEdge(&storage.Edge{ID: storage.EdgeID("e1"), Type: "KNOWS", StartNode: aID, EndNode: bID, Properties: map[string]interface{}{}})
+	err = store.CreateEdge(t.Context(), &storage.Edge{ID: storage.EdgeID("e1"), Type: "KNOWS", StartNode: aID, EndNode: bID, Properties: map[string]interface{}{}})
 	require.NoError(t, err)
 
 	nodes := map[string]*storage.Node{}
-	nA, err := store.GetNode(aID)
+	nA, err := store.GetNode(t.Context(), aID)
 	require.NoError(t, err)
-	nB, err := store.GetNode(bID)
+	nB, err := store.GetNode(t.Context(), bID)
 	require.NoError(t, err)
 	nodes["a"] = nA
 	nodes["b"] = nB
@@ -63,7 +63,7 @@ func BenchmarkExecuteMultiMatchCompiledWhere(b *testing.B) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "multi_match_where_bench")
 	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	for i := 0; i < 64; i++ {
-		_, err := store.CreateNode(&storage.Node{
+		_, err := store.CreateNode(b.Context(), &storage.Node{
 			ID:         storage.NodeID("where-" + strconv.Itoa(i)),
 			Labels:     []string{"MultiWhereBench"},
 			Properties: map[string]interface{}{"age": int64(i)},

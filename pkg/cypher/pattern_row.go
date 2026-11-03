@@ -36,7 +36,7 @@ func (e *StorageExecutor) bindPatternProperties(ctx context.Context, pattern str
 	if !strings.Contains(pattern, "{") || patternMapsAreConstant(pattern) {
 		return ctx, pattern, nil
 	}
-	plan := e.patternRowPlanFor(pattern, getParamsFromContext(ctx))
+	plan := e.patternRowPlanFor(ctx, pattern, getParamsFromContext(ctx))
 	if plan.err != nil {
 		return ctx, pattern, plan.err
 	}
@@ -46,12 +46,13 @@ func (e *StorageExecutor) bindPatternProperties(ctx context.Context, pattern str
 	return plan.bind(ctx, e, pattern, row)
 }
 
-// patternRowPlanFor owns cached syntax and caller parameter reservation.
+// patternRowPlanFor owns cached syntax and caller parameter reservation. ctx is
+// the caller's lifetime; the cache holds only syntax, never a read verdict.
 // Collision-specific plans are compiled afresh and never enter the syntax cache.
-func (e *StorageExecutor) patternRowPlanFor(pattern string, reserved map[string]interface{}) *patternRowPlan {
+func (e *StorageExecutor) patternRowPlanFor(ctx context.Context, pattern string, reserved map[string]interface{}) *patternRowPlan {
 	plan, cached := patternRowPlans.get(pattern)
 	if !cached {
-		plan = e.compilePatternRow(pattern, nil)
+		plan = e.compilePatternRow(ctx, pattern, nil)
 		patternRowPlans.put(pattern, plan)
 	}
 	// A caller may use our usual private names as real query parameters.
@@ -65,7 +66,7 @@ func (e *StorageExecutor) patternRowPlanFor(pattern string, reserved map[string]
 			}
 		}
 		if collision {
-			plan = e.compilePatternRow(pattern, reserved)
+			plan = e.compilePatternRow(ctx, pattern, reserved)
 			break
 		}
 	}
@@ -102,12 +103,13 @@ func (p *patternRowPlan) bind(ctx context.Context, e *StorageExecutor, pattern s
 }
 
 // compilePatternRow uses the canonical element walk and property-key reader.
-// No property expression, bound row or runtime parameter value is evaluated.
-func (e *StorageExecutor) compilePatternRow(pattern string, reserved map[string]interface{}) *patternRowPlan {
+// No property expression, bound row or runtime parameter value is evaluated;
+// ctx is threaded to that walk and no read verdict enters the plan.
+func (e *StorageExecutor) compilePatternRow(ctx context.Context, pattern string, reserved map[string]interface{}) *patternRowPlan {
 	plan := &patternRowPlan{pattern: pattern}
 	var edits []labelRewriteEdit
 	nextBinding := 0
-	walk := labelExpressionRewriter{query: pattern}
+	walk := labelExpressionRewriter{ctx: ctx, query: pattern}
 	walk.visitElement = func(open, close int, _ bool) error {
 		_, propertyText := splitNodePatternProperties("(" + pattern[open+1:close] + ")")
 		if propertyText == "" {

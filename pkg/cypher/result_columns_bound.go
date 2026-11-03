@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"slices"
 	"strings"
@@ -156,7 +157,7 @@ func variableSyntaxRead(node cypherantlr.SyntaxNode) bool {
 	}
 }
 
-func (compilation *boundCompilation) bindSymbol(clause *boundClause, node cypherantlr.SyntaxNode) {
+func (compilation *boundCompilation) bindSymbol(ctx context.Context, clause *boundClause, node cypherantlr.SyntaxNode) {
 	if clause.transparent || !variableSyntaxRead(node) {
 		return
 	}
@@ -174,7 +175,7 @@ func (compilation *boundCompilation) bindSymbol(clause *boundClause, node cypher
 			for variable := range scope {
 				semantic[variable] = matchBindingUnknown
 			}
-			if undefinedExpressionVariable(semantic, node.Text()) == nil {
+			if undefinedExpressionVariable(ctx, semantic, node.Text()) == nil {
 				return
 			}
 		}
@@ -187,7 +188,7 @@ func (compilation *boundCompilation) bindSymbol(clause *boundClause, node cypher
 	for variable := range scope {
 		semantic[variable] = matchBindingUnknown
 	}
-	if err := undefinedExpressionVariable(semantic, cyphertext.PrintIdentifier(name, nil, cyphertext.AcceptedSource)); err != nil {
+	if err := undefinedExpressionVariable(ctx, semantic, cyphertext.PrintIdentifier(name, nil, cyphertext.AcceptedSource)); err != nil {
 		compilation.failUndefined(start, name)
 		return
 	}

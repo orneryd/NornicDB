@@ -39,7 +39,7 @@ func TestGH460_ReduceAfterWithUsesLocalAndInheritedValues(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "gh460")
 			for index, name := range []string{"Ann", "Bob", "Cid", "Dee"} {
-				_, err := store.CreateNode(&storage.Node{
+				_, err := store.CreateNode(t.Context(), &storage.Node{
 					ID: storage.NodeID(name), Labels: []string{"P"},
 					Properties: map[string]interface{}{"name": name, "ordinal": index},
 				})

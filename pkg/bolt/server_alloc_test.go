@@ -12,17 +12,18 @@ var boltAllocSink error
 
 func TestWriteRecordNoFlush_Allocs_SmallRowIsZero(t *testing.T) {
 	session := &Session{
+		server: &Server{config: DefaultConfig()},
 		writer: bufio.NewWriterSize(io.Discard, 64*1024),
 	}
 	row := []any{int64(1), "Alice", int64(30)}
 
 	// Prime any one-time allocations (buffer growth) outside measurement.
-	if err := session.writeRecordNoFlush(row, "nornic"); err != nil {
+	if err := session.writeRecordNoFlush(t.Context(), row, "nornic"); err != nil {
 		t.Fatal(err)
 	}
 
 	allocs := testing.AllocsPerRun(1000, func() {
-		boltAllocSink = session.writeRecordNoFlush(row, "nornic")
+		boltAllocSink = session.writeRecordNoFlush(t.Context(), row, "nornic")
 	})
 
 	if allocs != 0 {
@@ -32,6 +33,7 @@ func TestWriteRecordNoFlush_Allocs_SmallRowIsZero(t *testing.T) {
 
 func TestWriteRecordNoFlush_Allocs_LargeRowIsZero(t *testing.T) {
 	session := &Session{
+		server: &Server{config: DefaultConfig()},
 		writer: bufio.NewWriterSize(io.Discard, 64*1024),
 	}
 
@@ -46,12 +48,12 @@ func TestWriteRecordNoFlush_Allocs_LargeRowIsZero(t *testing.T) {
 	}
 	row := []any{node, "ok", float64(3.14159)}
 
-	if err := session.writeRecordNoFlush(row, "nornic"); err != nil {
+	if err := session.writeRecordNoFlush(t.Context(), row, "nornic"); err != nil {
 		t.Fatal(err)
 	}
 
 	allocs := testing.AllocsPerRun(500, func() {
-		boltAllocSink = session.writeRecordNoFlush(row, "nornic")
+		boltAllocSink = session.writeRecordNoFlush(t.Context(), row, "nornic")
 	})
 
 	if allocs != 0 {
@@ -61,6 +63,7 @@ func TestWriteRecordNoFlush_Allocs_LargeRowIsZero(t *testing.T) {
 
 func TestWriteMessageNoFlush_Allocs_IsZero(t *testing.T) {
 	session := &Session{
+		server: &Server{config: DefaultConfig()},
 		writer: bufio.NewWriterSize(io.Discard, 64*1024),
 	}
 

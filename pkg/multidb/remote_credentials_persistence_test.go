@@ -51,7 +51,7 @@ func TestSolReview1513PersistedCredentials(t *testing.T) {
 				if err != nil {
 					t.Fatal("credential setup failed")
 				}
-				node, err := storage.NewNamespacedEngine(inner, "system").GetNode(storage.NodeID(metadataNodeID))
+				node, err := storage.NewNamespacedEngine(inner, "system").GetNode(t.Context(), storage.NodeID(metadataNodeID))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -105,12 +105,12 @@ func TestRemoteCredentialPersistenceMigration(t *testing.T) {
 					// Seed an actual legacy metadata node, bypassing the corrected writer.
 					manager.databases["legacy"] = &DatabaseInfo{Name: "legacy", Type: "composite", Status: "online", Constituents: []ConstituentRef{ref}}
 					system := storage.NewNamespacedEngine(inner, "system")
-					node, err := system.GetNode(storage.NodeID(metadataNodeID))
+					node, err := system.GetNode(t.Context(), storage.NodeID(metadataNodeID))
 					require.NoError(t, err)
 					legacy, err := json.Marshal(manager.databases)
 					require.NoError(t, err)
 					node.Properties["data"] = string(legacy)
-					require.NoError(t, system.UpdateNode(storage.NodeUpdateRequest{After: node}))
+					require.NoError(t, system.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
 					require.NoError(t, manager.Close())
 					markClosedASCIICatalogFixtureV3(t, dir)
 
@@ -172,7 +172,7 @@ func TestRemoteCredentialPersistenceMigration(t *testing.T) {
 						} else {
 							require.Equal(t, originalCiphertext, stored[0].ConnectionV1)
 						}
-						node, err = storage.NewNamespacedEngine(inner, "system").GetNode(storage.NodeID(metadataNodeID))
+						node, err = storage.NewNamespacedEngine(inner, "system").GetNode(t.Context(), storage.NodeID(metadataNodeID))
 						require.NoError(t, err)
 						require.NotContains(t, node.Properties["data"], password)
 						_, err = manager.GetStorage("legacy.r")
@@ -205,7 +205,7 @@ func TestRemoteCredentialPersistenceEveryWriter(t *testing.T) {
 	// An unrelated metadata write must never perform an implicit upgrade.
 	manager.databases["legacy"] = &DatabaseInfo{Name: "legacy", Type: "composite", Status: "online", Constituents: []ConstituentRef{{Alias: "r", Type: "remote", URI: "http://admin:" + password + "@127.0.0.1:1"}}}
 	require.NoError(t, manager.SetDatabaseStatus(t.Context(), "legacy", "offline"))
-	node, err := storage.NewNamespacedEngine(inner, "system").GetNode(storage.NodeID(metadataNodeID))
+	node, err := storage.NewNamespacedEngine(inner, "system").GetNode(t.Context(), storage.NodeID(metadataNodeID))
 	require.NoError(t, err)
 	require.Contains(t, node.Properties["data"], password)
 	require.Equal(t, "http://admin:"+password+"@127.0.0.1:1", manager.databases["legacy"].Constituents[0].URI)
@@ -246,12 +246,12 @@ func TestRemoteCredentialPersistenceUpgrade(t *testing.T) {
 			manager, err := NewDatabaseManager(t.Context(), inner, config)
 			require.NoError(t, err)
 			manager.databases["legacy"] = &DatabaseInfo{Name: "legacy", Type: "composite", Status: "online", Constituents: []ConstituentRef{{Alias: "r", DatabaseName: "nornic", Type: "remote", AccessMode: "read", URI: "http://admin:" + password + "@127.0.0.1:1"}}}
-			node, err := storage.NewNamespacedEngine(inner, "system").GetNode(storage.NodeID(metadataNodeID))
+			node, err := storage.NewNamespacedEngine(inner, "system").GetNode(t.Context(), storage.NodeID(metadataNodeID))
 			require.NoError(t, err)
 			data, err := json.Marshal(manager.databases)
 			require.NoError(t, err)
 			node.Properties["data"] = string(data)
-			require.NoError(t, storage.NewNamespacedEngine(inner, "system").UpdateNode(storage.NodeUpdateRequest{After: node}))
+			require.NoError(t, storage.NewNamespacedEngine(inner, "system").UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
 			require.NoError(t, manager.Close())
 			inner, err = fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 			require.NoError(t, err)
@@ -280,7 +280,7 @@ func TestRemoteCredentialPersistenceUpgrade(t *testing.T) {
 			if failure == "read-only" {
 				require.EqualValues(t, 0, base.updateCalls.Load())
 			}
-			node, err = storage.NewNamespacedEngine(inner, "system").GetNode(storage.NodeID(metadataNodeID))
+			node, err = storage.NewNamespacedEngine(inner, "system").GetNode(t.Context(), storage.NodeID(metadataNodeID))
 			require.NoError(t, err)
 			require.Contains(t, node.Properties["data"], password)
 			// Only an explicit native upgrade transforms this constructed V3 catalog.
@@ -305,7 +305,7 @@ func TestRemoteCredentialPersistenceUpgrade(t *testing.T) {
 			require.NoError(t, err)
 			_, err = manager.GetStorage("legacy.r")
 			require.NoError(t, err)
-			node, err = storage.NewNamespacedEngine(inner, "system").GetNode(storage.NodeID(metadataNodeID))
+			node, err = storage.NewNamespacedEngine(inner, "system").GetNode(t.Context(), storage.NodeID(metadataNodeID))
 			require.NoError(t, err)
 			require.NotContains(t, node.Properties["data"], password)
 			require.NotContains(t, logs.String(), "legacy remote credentials remain unencrypted")
@@ -341,7 +341,7 @@ func TestRemoteCredentialPersistenceNewInputRequiresKey(t *testing.T) {
 				} else {
 					require.Equal(t, explicitError, err.Error())
 				}
-				node, readErr := storage.NewNamespacedEngine(inner, "system").GetNode(storage.NodeID(metadataNodeID))
+				node, readErr := storage.NewNamespacedEngine(inner, "system").GetNode(t.Context(), storage.NodeID(metadataNodeID))
 				require.NoError(t, readErr)
 				require.NotContains(t, node.Properties["data"], "synthetic-new-password-813792")
 			})

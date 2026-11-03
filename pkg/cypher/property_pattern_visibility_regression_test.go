@@ -59,10 +59,10 @@ func TestInlinePatternsUseSuppressedPropertyView(t *testing.T) {
 			be.SetDecayEnabled(true)
 			old := time.Now().Add(-time.Hour)
 			for _, id := range []storage.NodeID{"view:a", "view:b"} {
-				_, err = be.CreateNode(&storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]interface{}{"body": "hidden", "title": string(id)}, CreatedAt: old, UpdatedAt: old})
+				_, err = be.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]interface{}{"body": "hidden", "title": string(id)}, CreatedAt: old, UpdatedAt: old})
 				require.NoError(t, err)
 			}
-			require.NoError(t, be.CreateEdge(&storage.Edge{ID: "view:e", StartNode: "view:a", EndNode: "view:b", Type: "LINK", Properties: map[string]interface{}{"summary": "hidden"}, CreatedAt: old, UpdatedAt: old}))
+			require.NoError(t, be.CreateEdge(t.Context(), &storage.Edge{ID: "view:e", StartNode: "view:a", EndNode: "view:b", Type: "LINK", Properties: map[string]interface{}{"summary": "hidden"}, CreatedAt: old, UpdatedAt: old}))
 			exec := NewStorageExecutor(storage.NewNamespacedEngine(be, "view"))
 			ctx := context.Background()
 			_, err = exec.Execute(ctx, "CREATE INDEX view_body FOR (d:Doc) ON (d.body)", nil)
@@ -91,7 +91,7 @@ func TestInlinePatternsUseSuppressedPropertyView(t *testing.T) {
 				_, err = exec.Execute(ctx, "COMMIT", nil)
 				require.NoError(t, err)
 			}
-			raw, err := be.GetNode("view:a")
+			raw, err := be.GetNode(t.Context(), "view:a")
 			require.NoError(t, err)
 			require.Equal(t, "hidden", raw.Properties["body"])
 			require.Equal(t, "updated", raw.Properties["title"], "writes must retain the raw stored hidden fields")

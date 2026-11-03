@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -43,15 +44,15 @@ func TestBufferedWALBindingsAcrossStores(t *testing.T) {
 						props[0], props[1] = props[1], props[0]
 					}
 					for i, p := range props {
-						_, err := b.CreateNode(&Node{ID: NodeID(fmt.Sprintf("%s:seed%d", ns, i)), Properties: p})
+						_, err := b.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("%s:seed%d", ns, i)), Properties: p})
 						require.NoError(t, err)
 					}
-					_, err := b.CreateNode(&Node{ID: NodeID(ns + ":a"), Properties: before})
+					_, err := b.CreateNode(t.Context(), &Node{ID: NodeID(ns + ":a"), Properties: before})
 					require.NoError(t, err)
-					_, err = b.CreateNode(&Node{ID: NodeID(ns + ":b")})
+					_, err = b.CreateNode(t.Context(), &Node{ID: NodeID(ns + ":b")})
 					require.NoError(t, err)
-					require.NoError(t, b.CreateEdge(&Edge{ID: EdgeID(ns + ":r"), StartNode: NodeID(ns + ":a"), EndNode: NodeID(ns + ":b"), Type: "R", Properties: before}))
-					require.NoError(t, b.FlushWriteBehind(nil))
+					require.NoError(t, b.CreateEdge(t.Context(), &Edge{ID: EdgeID(ns + ":r"), StartNode: NodeID(ns + ":a"), EndNode: NodeID(ns + ":b"), Type: "R", Properties: before}))
+					require.NoError(t, b.FlushWriteBehind(context.Background()))
 				}
 			}
 			wal, err := NewWAL(t.TempDir(), DefaultWALConfig())
@@ -61,21 +62,21 @@ func TestBufferedWALBindingsAcrossStores(t *testing.T) {
 			versions := make(map[string]MVCCVersion)
 			for stage, props := range []map[string]any{first, last} {
 				for _, ns := range []string{"binding", "second"} {
-					tx, err := source.BeginTransaction()
+					tx, err := source.BeginTransaction(t.Context())
 					require.NoError(t, err)
 					require.NoError(t, tx.SetNamespace(ns))
 					require.NoError(t, tx.SetImplicit(true))
-					node, err := tx.GetNode(NodeID(ns + ":a"))
+					node, err := tx.GetNode(t.Context(), NodeID(ns+":a"))
 					require.NoError(t, err)
 					node.Properties = props
-					require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
-					edge, err := tx.GetEdge(EdgeID(ns + ":r"))
+					require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
+					edge, err := tx.GetEdge(t.Context(), EdgeID(ns+":r"))
 					require.NoError(t, err)
 					edge.Properties = props
-					require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: edge}))
+					require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge}))
 					require.NoError(t, tx.Commit())
 					require.True(t, tx.AcknowledgedBuffered())
-					require.NoError(t, source.FlushWriteBehind(nil))
+					require.NoError(t, source.FlushWriteBehind(context.Background()))
 					if stage == 0 {
 						head, err := source.loadNodeMVCCHead(node.ID)
 						require.NoError(t, err)
@@ -95,21 +96,21 @@ func TestBufferedWALBindingsAcrossStores(t *testing.T) {
 			check := func() {
 				assertPropertyDictionaryBijection(t, destination)
 				for _, ns := range []string{"binding", "second"} {
-					n, err := destination.GetNode(NodeID(ns + ":a"))
+					n, err := destination.GetNode(t.Context(), NodeID(ns+":a"))
 					require.NoError(t, err)
 					assertRecoveredTypedProperties(t, last, n.Properties, "current node")
-					e, err := destination.GetEdge(EdgeID(ns + ":r"))
+					e, err := destination.GetEdge(t.Context(), EdgeID(ns+":r"))
 					require.NoError(t, err)
 					assertRecoveredTypedProperties(t, last, e.Properties, "current edge")
 					require.Equal(t, NodeID(ns+":a"), e.StartNode)
 					require.Equal(t, NodeID(ns+":b"), e.EndNode)
-					n, err = destination.GetNodeVisibleAt(NodeID(ns+":a"), versions[ns])
+					n, err = destination.GetNodeVisibleAt(t.Context(), NodeID(ns+":a"), versions[ns])
 					require.NoError(t, err)
 					assertRecoveredTypedProperties(t, first, n.Properties, "historical node")
-					e, err = destination.GetEdgeVisibleAt(EdgeID(ns+":r"), versions[ns])
+					e, err = destination.GetEdgeVisibleAt(t.Context(), EdgeID(ns+":r"), versions[ns])
 					require.NoError(t, err)
 					assertRecoveredTypedProperties(t, first, e.Properties, "historical edge")
-					n, err = destination.GetNode(NodeID(ns + ":seed0"))
+					n, err = destination.GetNode(t.Context(), NodeID(ns+":seed0"))
 					require.NoError(t, err)
 					require.Equal(t, map[string]any{"beta": "sentinel-beta"}, n.Properties)
 				}
@@ -149,7 +150,7 @@ func TestBufferedWALLegacyBindings(t *testing.T) {
 				source, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = source.Close() })
-				_, err = source.CreateNode(&Node{ID: "binding:a", Properties: map[string]any{"alpha": int64(17)}})
+				_, err = source.CreateNode(t.Context(), &Node{ID: "binding:a", Properties: map[string]any{"alpha": int64(17)}})
 				require.NoError(t, err)
 				var body []byte
 				require.NoError(t, source.db.View(func(txn *badger.Txn) error {
@@ -176,7 +177,7 @@ func TestBufferedWALLegacyBindings(t *testing.T) {
 				destination, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: true, WriteBehindInterval: time.Hour}))
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = destination.Close() })
-				_, err = destination.CreateNode(&Node{ID: "binding:sentinel", Properties: map[string]any{"beta": "keep"}})
+				_, err = destination.CreateNode(t.Context(), &Node{ID: "binding:sentinel", Properties: map[string]any{"beta": "keep"}})
 				require.NoError(t, err)
 				if startup {
 					require.NoError(t, wal.Append(OpBufferedCommit, json.RawMessage(payload)))
@@ -186,15 +187,15 @@ func TestBufferedWALLegacyBindings(t *testing.T) {
 				}
 				if bound {
 					require.NoError(t, err)
-					node, err := destination.GetNode("binding:a")
+					node, err := destination.GetNode(t.Context(), "binding:a")
 					require.NoError(t, err)
 					require.Equal(t, map[string]any{"alpha": int64(17)}, node.Properties)
 				} else {
 					require.ErrorContains(t, err, "missing property name binding")
-					_, err = destination.GetNode("binding:a")
+					_, err = destination.GetNode(t.Context(), "binding:a")
 					require.ErrorIs(t, err, ErrNotFound)
 				}
-				node, err := destination.GetNode("binding:sentinel")
+				node, err := destination.GetNode(t.Context(), "binding:sentinel")
 				require.NoError(t, err)
 				require.Equal(t, map[string]any{"beta": "keep"}, node.Properties)
 				assertPropertyDictionaryBijection(t, destination)
@@ -220,20 +221,20 @@ func TestBufferedWALNativeBackupBindings(t *testing.T) {
 	b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = b.Close() })
-	_, err = b.CreateNode(&Node{ID: "binding:a", Properties: map[string]any{"alpha": int64(1)}})
+	_, err = b.CreateNode(t.Context(), &Node{ID: "binding:a", Properties: map[string]any{"alpha": int64(1)}})
 	require.NoError(t, err)
-	_, err = b.CreateNode(&Node{ID: "binding:b", Properties: map[string]any{"beta": int64(2)}})
+	_, err = b.CreateNode(t.Context(), &Node{ID: "binding:b", Properties: map[string]any{"beta": int64(2)}})
 	require.NoError(t, err)
 	backup := filepath.Join(t.TempDir(), "native.backup")
 	require.NoError(t, b.Backup(backup))
 	fresh, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = fresh.Close() })
-	_, err = fresh.CreateNode(&Node{ID: "binding:old", Properties: map[string]any{"beta": "different dictionary"}})
+	_, err = fresh.CreateNode(t.Context(), &Node{ID: "binding:old", Properties: map[string]any{"beta": "different dictionary"}})
 	require.NoError(t, err)
 	require.NoError(t, fresh.Restore(backup))
 	for i, name := range []string{"alpha", "beta"} {
-		node, err := fresh.GetNode(NodeID(fmt.Sprintf("binding:%c", 'a'+i)))
+		node, err := fresh.GetNode(t.Context(), NodeID(fmt.Sprintf("binding:%c", 'a'+i)))
 		require.NoError(t, err)
 		require.Equal(t, map[string]any{name: int64(i + 1)}, node.Properties)
 	}

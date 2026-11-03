@@ -92,9 +92,6 @@ func (r *LLMReranker) Rerank(ctx context.Context, query string, candidates []Rer
 	if len(candidates) == 0 {
 		return []RerankResult{}, nil
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 
 	// Limit candidates defensively.
 	maxCandidates := r.cfg.MaxCandidates

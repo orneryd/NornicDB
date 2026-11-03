@@ -1,6 +1,7 @@
 package multidb
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -21,11 +22,11 @@ type legacyBulkCase struct {
 	invoke   func(*legacyTestEngine) error
 	ids      []string
 	wantErr  error
-	readback func(*legacyTestEngine, string) legacyBulkObserved
+	readback func(context.Context, *legacyTestEngine, string) legacyBulkObserved
 }
 
-func readLegacyBulkNode(engine *legacyTestEngine, id string) legacyBulkObserved {
-	got, err := engine.GetNode(storage.NodeID(id))
+func readLegacyBulkNode(ctx context.Context, engine *legacyTestEngine, id string) legacyBulkObserved {
+	got, err := engine.GetNode(ctx, storage.NodeID(id))
 	if err != nil {
 		return legacyBulkObserved{id: id, present: false, err: err}
 	}
@@ -35,8 +36,8 @@ func readLegacyBulkNode(engine *legacyTestEngine, id string) legacyBulkObserved 
 	return legacyBulkObserved{id: string(got.ID), present: true, err: nil}
 }
 
-func readLegacyBulkEdge(engine *legacyTestEngine, id string) legacyBulkObserved {
-	got, err := engine.GetEdge(storage.EdgeID(id))
+func readLegacyBulkEdge(ctx context.Context, engine *legacyTestEngine, id string) legacyBulkObserved {
+	got, err := engine.GetEdge(ctx, storage.EdgeID(id))
 	if err != nil {
 		return legacyBulkObserved{id: id, present: false, err: err}
 	}
@@ -55,7 +56,7 @@ func TestLegacyBulkCallbacksPreserveSeedPolicy(t *testing.T) {
 			invoke: func(engine *legacyTestEngine) error {
 				first := &storage.Node{ID: "node-first"}
 				later := &storage.Node{ID: "node-later"}
-				return engine.BulkCreateNodes([]*storage.Node{nil, first, first, later})
+				return engine.BulkCreateNodes(t.Context(), []*storage.Node{nil, first, first, later})
 			},
 			ids:      []string{"node-first", "node-later"},
 			wantErr:  nil,
@@ -66,7 +67,7 @@ func TestLegacyBulkCallbacksPreserveSeedPolicy(t *testing.T) {
 			readName: "GetEdge", entity: "edge",
 			prepare: func(t *testing.T, engine *legacyTestEngine) {
 				t.Helper()
-				if err := engine.BulkCreateNodes([]*storage.Node{
+				if err := engine.BulkCreateNodes(t.Context(), []*storage.Node{
 					{ID: "seed-a"},
 					{ID: "seed-b"},
 				}); err != nil {
@@ -76,7 +77,7 @@ func TestLegacyBulkCallbacksPreserveSeedPolicy(t *testing.T) {
 			invoke: func(engine *legacyTestEngine) error {
 				first := &storage.Edge{ID: "edge-first", StartNode: "seed-a", EndNode: "seed-b"}
 				later := &storage.Edge{ID: "edge-later", StartNode: "seed-b", EndNode: "seed-a"}
-				return engine.BulkCreateEdges([]*storage.Edge{nil, first, first, later})
+				return engine.BulkCreateEdges(t.Context(), []*storage.Edge{nil, first, first, later})
 			},
 			ids:      []string{"edge-first", "edge-later"},
 			wantErr:  nil,
@@ -87,7 +88,7 @@ func TestLegacyBulkCallbacksPreserveSeedPolicy(t *testing.T) {
 			readName: "GetNode", entity: "node",
 			prepare: func(t *testing.T, engine *legacyTestEngine) {
 				t.Helper()
-				if err := engine.BulkCreateNodes([]*storage.Node{
+				if err := engine.BulkCreateNodes(t.Context(), []*storage.Node{
 					{ID: "node-existing-first"},
 					{ID: "node-existing-later"},
 				}); err != nil {
@@ -99,7 +100,7 @@ func TestLegacyBulkCallbacksPreserveSeedPolicy(t *testing.T) {
 				later := storage.NodeID("node-existing-later")
 				missingFirst := storage.NodeID("node-missing-first")
 				missingMiddle := storage.NodeID("node-missing-middle")
-				return engine.BulkDeleteNodes([]storage.NodeID{missingFirst, first, missingMiddle, later})
+				return engine.BulkDeleteNodes(t.Context(), []storage.NodeID{missingFirst, first, missingMiddle, later})
 			},
 			ids:      []string{"node-existing-first", "node-existing-later"},
 			wantErr:  storage.ErrNotFound,
@@ -110,13 +111,13 @@ func TestLegacyBulkCallbacksPreserveSeedPolicy(t *testing.T) {
 			readName: "GetEdge", entity: "edge",
 			prepare: func(t *testing.T, engine *legacyTestEngine) {
 				t.Helper()
-				if err := engine.BulkCreateNodes([]*storage.Node{
+				if err := engine.BulkCreateNodes(t.Context(), []*storage.Node{
 					{ID: "seed-a"},
 					{ID: "seed-b"},
 				}); err != nil {
 					t.Fatalf("seeding nodes returned error: %v", err)
 				}
-				if err := engine.BulkCreateEdges([]*storage.Edge{
+				if err := engine.BulkCreateEdges(t.Context(), []*storage.Edge{
 					{ID: "edge-existing-first", StartNode: "seed-a", EndNode: "seed-b"},
 					{ID: "edge-existing-later", StartNode: "seed-b", EndNode: "seed-a"},
 				}); err != nil {
@@ -128,7 +129,7 @@ func TestLegacyBulkCallbacksPreserveSeedPolicy(t *testing.T) {
 				later := storage.EdgeID("edge-existing-later")
 				missingFirst := storage.EdgeID("edge-missing-first")
 				missingMiddle := storage.EdgeID("edge-missing-middle")
-				return engine.BulkDeleteEdges([]storage.EdgeID{missingFirst, first, missingMiddle, later})
+				return engine.BulkDeleteEdges(t.Context(), []storage.EdgeID{missingFirst, first, missingMiddle, later})
 			},
 			ids:      []string{"edge-existing-first", "edge-existing-later"},
 			wantErr:  storage.ErrNotFound,
@@ -149,7 +150,7 @@ func TestLegacyBulkCallbacksPreserveSeedPolicy(t *testing.T) {
 			}
 
 			for _, id := range tc.ids {
-				got := tc.readback(engine, id)
+				got := tc.readback(t.Context(), engine, id)
 				if tc.wantErr == nil {
 					if got.err != nil {
 						t.Fatalf("%s(%q) returned error: %v", tc.readName, id, got.err)
@@ -177,7 +178,7 @@ func TestLegacyCreatePolicyStopsWrappedDuplicateError(t *testing.T) {
 	input := []*int{nil, &first, &fail, &later}
 	wrappedErr := fmt.Errorf("wrapped: %w", storage.ErrAlreadyExists)
 	var visited []int
-	callback := func(item *int) error {
+	callback := func(ctx context.Context, item *int) error {
 		if item == nil {
 			t.Fatal("nil item reached create callback")
 		}
@@ -187,7 +188,7 @@ func TestLegacyCreatePolicyStopsWrappedDuplicateError(t *testing.T) {
 		}
 		return nil
 	}
-	err := applyLegacyCreates(input, callback)
+	err := applyLegacyCreates(t.Context(), input, callback)
 	if err != wrappedErr {
 		t.Fatalf("expected exact wrapped error identity, got %v", err)
 	}

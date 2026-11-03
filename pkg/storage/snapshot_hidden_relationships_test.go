@@ -34,7 +34,7 @@ func TestSnapshotRecoveryKeepsHiddenRelationships(t *testing.T) {
 	source.GetSchemaForNamespace("test").SetBindingTable(bindings)
 
 	for _, id := range []NodeID{"test:a", "test:b"} {
-		_, err := source.CreateNode(&Node{ID: id, Labels: []string{"Doc"}})
+		_, err := source.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Doc"}})
 		require.NoError(t, err)
 	}
 	old := time.Now().Add(-30 * 24 * time.Hour)
@@ -43,11 +43,11 @@ func TestSnapshotRecoveryKeepsHiddenRelationships(t *testing.T) {
 		{ID: "test:decayed", StartNode: "test:b", EndNode: "test:a", Type: "DECAYED", CreatedAt: old, UpdatedAt: old},
 		{ID: "test:visible", StartNode: "test:a", EndNode: "test:b", Type: "LINKS"},
 	} {
-		require.NoError(t, source.CreateEdge(edge))
+		require.NoError(t, source.CreateEdge(t.Context(), edge))
 	}
-	require.NoError(t, source.SetManualSuppression(StoredEntityEdgeKind, "test:suppressed", true))
+	require.NoError(t, source.SetManualSuppression(context.Background(), StoredEntityEdgeKind, "test:suppressed", true))
 	for _, id := range []EdgeID{"test:suppressed", "test:decayed"} {
-		_, err := source.GetEdge(id)
+		_, err := source.GetEdge(t.Context(), id)
 		require.ErrorIs(t, err, ErrNotFound, "%s is hidden from reads", id)
 	}
 
@@ -68,10 +68,10 @@ func TestSnapshotRecoveryKeepsHiddenRelationships(t *testing.T) {
 			_, _, err := RecoverIntoEngine(recovered, t.TempDir(), path)
 			require.NoError(t, err)
 			for _, id := range []EdgeID{"test:suppressed", "test:decayed", "test:visible"} {
-				_, err := recovered.GetEdge(id)
+				_, err := recovered.GetEdge(t.Context(), id)
 				require.NoError(t, err, "%s survives recovery from the snapshot", id)
 			}
-			count, err := recovered.EdgeCount()
+			count, err := recovered.EdgeCount(t.Context())
 			require.NoError(t, err)
 			require.EqualValues(t, 3, count)
 		})

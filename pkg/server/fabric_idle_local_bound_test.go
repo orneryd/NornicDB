@@ -71,7 +71,7 @@ func newFabricLocalSnapshotFixture(
 	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "idleblocked"}))
 	leaf, err := server.dbManager.GetStorage("idleblocked")
 	require.NoError(t, err)
-	_, err = leaf.CreateNode(&storage.Node{ID: "seed", Labels: []string{label}})
+	_, err = leaf.CreateNode(t.Context(), &storage.Node{ID: "seed", Labels: []string{label}})
 	require.NoError(t, err)
 	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), composite, []multidb.ConstituentRef{{Alias: "l", DatabaseName: "idleblocked", Type: "local", AccessMode: "read_write"}}))
 	setter, ok := unwrapInnerStorage(leaf).(interface {
@@ -92,8 +92,7 @@ func newFabricLocalSnapshotFixture(
 // router construction (once per fixture), then returns the original HTTP
 // request closure bound to the fixture server and token.
 func (f *fabricLocalSnapshotFixture) requestFor(ttl time.Duration) func(path, body string) *httptest.ResponseRecorder {
-	f.server.txSessions = txsession.NewManager(ttl, f.server.newExecutorForDatabase)
-	f.server.txSessions.SetLifetimeContext(f.server.requestsCtx)
+	f.server.txSessions = txsession.NewManager(ttl, f.server.newExecutorForDatabase, f.server.shutdown.work.Context())
 	router := f.server.buildRouter()
 	return func(path, body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))

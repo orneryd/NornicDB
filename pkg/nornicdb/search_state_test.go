@@ -46,18 +46,18 @@ func searchConsumerConfigs() []searchConsumerConfig {
 			switch cmd {
 			case replication.CmdCreateNode:
 				p := payload.(*storage.Node)
-				_, err := store.CreateNode(p)
+				_, err := store.CreateNode(t.Context(), p)
 				require.NoError(t, err)
 			case replication.CmdUpdateNode:
 				p := payload.(*storage.Node)
-				require.NoError(t, store.UpdateNode(storage.NodeUpdateRequest{After: p}))
+				require.NoError(t, store.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: p}))
 			case replication.CmdDeleteNode:
-				require.NoError(t, store.DeleteNode(storage.NodeID(payload.(string))))
+				require.NoError(t, store.DeleteNode(t.Context(), storage.NodeID(payload.(string))))
 			case replication.CmdCreateEdge:
 				p := payload.(*storage.Edge)
-				require.NoError(t, store.CreateEdge(p))
+				require.NoError(t, store.CreateEdge(t.Context(), p))
 			case replication.CmdDeleteEdge:
-				require.NoError(t, store.DeleteEdge(storage.EdgeID(payload.(string))))
+				require.NoError(t, store.DeleteEdge(t.Context(), storage.EdgeID(payload.(string))))
 			case replication.CmdDeleteByPrefix:
 				_, _, err := store.DeleteByPrefix(payload.(string))
 				require.NoError(t, err)
@@ -76,14 +76,15 @@ func searchConsumerConfigs() []searchConsumerConfig {
 			db, err := Open(config.Database.DataDir, config)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = db.Close() })
-			db.bgWg.Wait()
+			waitDBWorkIdle(t, db)
 			require.NotNil(t, db.replicationAdapter)
 			_, isReplicated := db.GetBaseStorageForManager().(*replication.ReplicatedEngine)
 			require.True(t, isReplicated, "the configuration under test has no ReplicatedEngine")
 			return db, func(t *testing.T, cmd replication.CommandType, payload any) {
 				t.Helper()
 				data := searchConsumerCommandData(t, cmd, payload)
-				require.NoError(t, db.replicationAdapter.ApplyCommand(&replication.Command{Type: cmd, Data: data}))
+				_, applyErr := db.replicationAdapter.ApplyCommand(t.Context(), &replication.Command{Type: cmd, Data: data}, replication.WALQueued)
+				require.NoError(t, applyErr)
 			}
 		}
 	}
@@ -93,7 +94,7 @@ func searchConsumerConfigs() []searchConsumerConfig {
 			db, err := Open(config.Database.DataDir, config)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = db.Close() })
-			db.bgWg.Wait()
+			waitDBWorkIdle(t, db)
 			return db, direct(t, db)
 		}},
 		{name: "in-memory", open: func(t *testing.T) (*DB, func(t *testing.T, cmd replication.CommandType, payload any)) {
@@ -101,7 +102,7 @@ func searchConsumerConfigs() []searchConsumerConfig {
 			db, err := Open("", config)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = db.Close() })
-			db.bgWg.Wait()
+			waitDBWorkIdle(t, db)
 			return db, direct(t, db)
 		}},
 		{name: "ha primary", open: replicated("primary")},
@@ -190,7 +191,7 @@ func openPersistedSearchDB(t *testing.T, dataDir string) *DB {
 	config.Database.PersistSearchIndexes = true
 	db, err := Open(dataDir, config)
 	require.NoError(t, err)
-	db.bgWg.Wait()
+	waitDBWorkIdle(t, db)
 	return db
 }
 
@@ -207,17 +208,17 @@ func TestColdPersistedSearchStateIsReset(t *testing.T) {
 			tenant := storage.NewNamespacedEngine(db.GetBaseStorageForManager(), "tenant")
 			vector := make([]float32, db.config.Memory.EmbeddingDimensions)
 			vector[0] = 1
-			_, err := tenant.CreateNode(&storage.Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "backupword"}, ChunkEmbeddings: [][]float32{vector}})
+			_, err := tenant.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "backupword"}, ChunkEmbeddings: [][]float32{vector}})
 			require.NoError(t, err)
 			svc, err := db.EnsureSearchIndexes(ctx, "tenant", tenant, SearchIndexBuildWait)
 			require.NoError(t, err)
 			requireIndexed(t, svc, 1, "seed")
 			backup := filepath.Join(t.TempDir(), "backup.bin")
 			require.NoError(t, db.Backup(ctx, backup))
-			node, err := tenant.GetNode("a")
+			node, err := tenant.GetNode(t.Context(), "a")
 			require.NoError(t, err)
 			node.Properties["content"] = "laterword"
-			require.NoError(t, tenant.UpdateNode(storage.NodeUpdateRequest{After: node}))
+			require.NoError(t, tenant.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
 			settleQueuedRefreshes()
 			require.NoError(t, db.Close())
 
@@ -236,7 +237,7 @@ func TestColdPersistedSearchStateIsReset(t *testing.T) {
 			} else {
 				_, _, err = db.GetBaseStorageForManager().DeleteByPrefix("tenant:")
 				require.NoError(t, err)
-				_, err = tenant.CreateNode(&storage.Node{ID: "b", Labels: []string{"Doc"}, Properties: map[string]any{"content": "freshword"}, ChunkEmbeddings: [][]float32{vector}})
+				_, err = tenant.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"Doc"}, Properties: map[string]any{"content": "freshword"}, ChunkEmbeddings: [][]float32{vector}})
 				require.NoError(t, err)
 			}
 			fresh, err := db.EnsureSearchIndexes(ctx, "tenant", tenant, SearchIndexBuildWait)
@@ -327,18 +328,18 @@ type failingReadEngine struct {
 
 var errTransientRead = errors.New("transient read failure")
 
-func (e *failingReadEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
+func (e *failingReadEngine) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	if id == e.node && e.fails.Add(-1) >= 0 {
 		return nil, errTransientRead
 	}
-	return e.Engine.GetNode(id)
+	return e.Engine.GetNode(ctx, id)
 }
 
-func (e *failingReadEngine) GetEdge(id storage.EdgeID) (*storage.Edge, error) {
+func (e *failingReadEngine) GetEdge(ctx context.Context, id storage.EdgeID) (*storage.Edge, error) {
 	if id == e.edge && e.fails.Add(-1) >= 0 {
 		return nil, errTransientRead
 	}
-	return e.Engine.GetEdge(id)
+	return e.Engine.GetEdge(ctx, id)
 }
 
 // A refresh whose storage read fails is retried, not lost: from the deferred
@@ -354,15 +355,15 @@ func TestRefreshAfterTransientReadFailureIsRetried(t *testing.T) {
 			svc, err := db.EnsureSearchIndexes(ctx, "tenant", failing, SearchIndexBuildWait)
 			require.NoError(t, err)
 			tenant := storage.NewNamespacedEngine(db.GetBaseStorageForManager(), "tenant")
-			_, err = tenant.CreateNode(&storage.Node{ID: "b", Labels: []string{"Doc"}})
+			_, err = tenant.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"Doc"}})
 			require.NoError(t, err)
 			dims := db.config.Memory.EmbeddingDimensions
 			vector := make([]float32, dims)
 			vector[0] = 1
 			failing.fails.Store(2)
-			_, err = tenant.CreateNode(&storage.Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "retryword"}})
+			_, err = tenant.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "retryword"}})
 			require.NoError(t, err)
-			require.NoError(t, tenant.CreateEdge(&storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "CITES", Properties: map[string]any{"vec": vector}}))
+			require.NoError(t, tenant.CreateEdge(t.Context(), &storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "CITES", Properties: map[string]any{"vec": vector}}))
 			if path == "synchronous" {
 				// Indexed by the drain once its retry succeeded; then made stale
 				// (payload API), so only the synchronous refresh's retry can
@@ -374,8 +375,8 @@ func TestRefreshAfterTransientReadFailureIsRetried(t *testing.T) {
 				require.NoError(t, svc.RemoveEdge("r"))
 				require.Zero(t, consumerDBHits(t, svc, "retryword"))
 				failing.fails.Store(2)
-				require.ErrorIs(t, svc.RefreshNode("a"), errTransientRead)
-				require.ErrorIs(t, svc.RefreshEdge("r"), errTransientRead)
+				require.ErrorIs(t, svc.RefreshNode(t.Context(), "a"), errTransientRead)
+				require.ErrorIs(t, svc.RefreshEdge(t.Context(), "r"), errTransientRead)
 			}
 			require.Eventually(t, func() bool {
 				return consumerDBHits(t, svc, "retryword") == 1 && svc.HasRelationshipVectorEntries("CITES", "vec")

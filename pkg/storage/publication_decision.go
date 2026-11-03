@@ -23,9 +23,6 @@ var publicationSequence atomic.Uint64
 // WithPublicationDecision carries a semantic decision on the exact commit
 // context. A nil decision clears an outer owner for preparation or replay.
 func WithPublicationDecision(ctx context.Context, decision PublicationDecision) context.Context {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	return context.WithValue(ctx, publicationDecisionKey{}, decision)
 }
 
@@ -33,14 +30,10 @@ func WithPublicationDecision(ctx context.Context, decision PublicationDecision) 
 // action cannot subsequently become a rollback because cancellation won later.
 func DecidePublication(ctx context.Context, action func() error) error {
 	var decision PublicationDecision
-	if ctx != nil {
-		decision, _ = ctx.Value(publicationDecisionKey{}).(PublicationDecision)
-	}
+	decision, _ = ctx.Value(publicationDecisionKey{}).(PublicationDecision)
 	if decision == nil {
-		if ctx != nil {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		return action()
 	}

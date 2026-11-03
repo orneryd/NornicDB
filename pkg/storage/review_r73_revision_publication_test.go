@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"sync"
@@ -22,11 +23,11 @@ func TestReviewR73OutcomePublicationCommitOrder(t *testing.T) {
 			defer disk.Close()
 			disk.SetEmbeddingsEnabled(true)
 			store := NewNamespacedEngine(disk, "order")
-			_, err = store.CreateNode(&Node{ID: "doc", Properties: map[string]any{"id": "same", "text": "antiquecobalt"}})
+			_, err = store.CreateNode(t.Context(), &Node{ID: "doc", Properties: map[string]any{"id": "same", "text": "antiquecobalt"}})
 			require.NoError(t, err)
-			payload, err := store.GetNode("doc")
+			payload, err := store.GetNode(t.Context(), "doc")
 			require.NoError(t, err)
-			payload, err = SnapshotNodeForEmbedding(payload)
+			payload, err = SnapshotNodeForEmbedding(t.Context(), payload)
 			require.NoError(t, err)
 			payload.ChunkEmbeddings = [][]float32{{1, 0}}
 			payload.EmbedMeta = map[string]any{"chunk_count": 1, embeddingsource.MetaKey: (embeddingsource.Source{Properties: []string{"id"}}).Metadata()}
@@ -52,7 +53,7 @@ func TestReviewR73OutcomePublicationCommitOrder(t *testing.T) {
 			var release sync.Once
 			defer release.Do(func() { close(resume) })
 			done := make(chan error, 1)
-			go func() { done <- store.UpdateNodeEmbeddingSidecar(payload) }()
+			go func() { done <- store.UpdateNodeEmbeddingSidecar(context.Background(), payload) }()
 			select {
 			case <-committed:
 			case <-time.After(3 * time.Second):
@@ -61,16 +62,16 @@ func TestReviewR73OutcomePublicationCommitOrder(t *testing.T) {
 			mutated := make(chan error, 1)
 			go func() {
 				if deletion {
-					mutated <- store.DeleteNode("doc")
+					mutated <- store.DeleteNode(t.Context(), "doc")
 					return
 				}
-				current, readErr := store.GetNode("doc")
+				current, readErr := store.GetNode(t.Context(), "doc")
 				if readErr != nil {
 					mutated <- readErr
 					return
 				}
 				current.Properties["text"] = "novelquartz"
-				mutated <- store.UpdateNode(NodeUpdateRequest{After: current})
+				mutated <- store.UpdateNode(t.Context(), NodeUpdateRequest{After: current})
 			}()
 			// A branch may correctly exclude body writers until publication.
 			// Give an unprotected writer the opportunity to finish, then release
@@ -112,11 +113,11 @@ func TestReviewR73OutcomePublicationCommitOrder(t *testing.T) {
 				require.Equal(t, "antiquecobalt", published)
 			}
 			if deletion {
-				_, err = store.GetNode("doc")
+				_, err = store.GetNode(t.Context(), "doc")
 				require.ErrorIs(t, err, ErrNotFound)
 				require.Equal(t, "deleted", observed[len(observed)-1], "an earlier embedding commit must not resurrect a deleted search entry")
 			} else {
-				current, err := store.GetNode("doc")
+				current, err := store.GetNode(t.Context(), "doc")
 				require.NoError(t, err)
 				require.Equal(t, "novelquartz", current.Properties["text"])
 				require.Equal(t, "novelquartz", observed[len(observed)-1], "an earlier embedding commit must not roll back a newer full-text event")

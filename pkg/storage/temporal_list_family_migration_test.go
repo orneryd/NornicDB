@@ -37,7 +37,7 @@ func tlfWriteFormat3Indexes(t *testing.T, engine *BadgerEngine, c Constraint, pr
 	spec, ok := splitTemporalKeySpec(c.Properties)
 	require.True(t, ok)
 	var old [2]temporalIndexDescriptor
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		for i, id := range []NodeID{"test:first", "test:second"} {
 			keyValue, missing := spec.keyValue(properties[i])
 			require.Empty(t, missing)
@@ -107,36 +107,36 @@ func TestTemporalListFamilyTemporalFormat4Migration(t *testing.T) {
 				require.Equal(t, 1, divergent, "exactly one obsolete format-3 descriptor diverges from format 4")
 				require.Equal(t, 1, canonical, "exactly one format-3 descriptor is reused by format 4")
 
-				first, err := reopened.GetNode("test:first")
+				first, err := reopened.GetNode(t.Context(), "test:first")
 				require.NoError(t, err)
-				second, err := reopened.GetNode("test:second")
+				second, err := reopened.GetNode(t.Context(), "test:second")
 				require.NoError(t, err)
 				history, complete, err := reopened.temporalKeyHistoryNodesLatest(context.Background(), "test", c, first)
 				require.NoError(t, err)
 				require.True(t, complete)
 				require.Len(t, history, 2, "both retained holders share the rebuilt history")
 				asOf := base.Add(3 * time.Hour)
-				currentFirst, err := reopened.IsCurrentTemporalNodeInNamespace("test", first, asOf)
+				currentFirst, err := reopened.IsCurrentTemporalNodeInNamespace(context.Background(), "test", first, asOf)
 				require.NoError(t, err)
 				require.True(t, currentFirst, "descending history finds the earlier covering holder")
-				currentSecond, err := reopened.IsCurrentTemporalNodeInNamespace("test", second, asOf)
+				currentSecond, err := reopened.IsCurrentTemporalNodeInNamespace(context.Background(), "test", second, asOf)
 				require.NoError(t, err)
 				require.False(t, currentSecond)
 
 				probe := map[string]interface{}{"scalar": pair[1]["scalar"], "list": pair[1]["list"], "from": base.Add(3 * time.Hour), "to": base.Add(4 * time.Hour)}
 				reopenedNS := NewNamespacedEngine(reopened, "test")
-				_, err = reopenedNS.CreateNode(&Node{ID: "direct", Labels: []string{c.Label}, Properties: probe})
+				_, err = reopenedNS.CreateNode(t.Context(), &Node{ID: "direct", Labels: []string{c.Label}, Properties: probe})
 				require.Error(t, err, "full retained history rejects an overlap hidden behind a later closed holder")
-				tx, err := reopened.BeginTransaction()
+				tx, err := reopened.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				require.NoError(t, tx.SetNamespace("test"))
 				require.NoError(t, tx.SetValidationSetting(DeferredConstraintValidation, true))
-				_, err = tx.CreateNode(&Node{ID: "test:transaction", Labels: []string{c.Label}, Properties: probe})
+				_, err = tx.CreateNode(t.Context(), &Node{ID: "test:transaction", Labels: []string{c.Label}, Properties: probe})
 				require.NoError(t, err)
 				require.Error(t, tx.Commit())
 
 				tlfForceScan(t, reopened, reopenedNS, c)
-				_, err = reopenedNS.CreateNode(&Node{ID: "scan", Labels: []string{c.Label}, Properties: probe})
+				_, err = reopenedNS.CreateNode(t.Context(), &Node{ID: "scan", Labels: []string{c.Label}, Properties: probe})
 				require.Error(t, err, "untrusted fallback scan preserves the same result")
 				t.Log("TLF_FORMAT4 format3-rebuilt history=2 direct=reject tx=reject scan=reject current=first")
 			})
@@ -203,7 +203,7 @@ func TestTemporalListFamilyTemporalFormat4Trust(t *testing.T) {
 			// from the key history, the revoked one from the label scan.
 			var scans atomic.Int64
 			restoreScan := setTemporalConstraintScanHook(func() { scans.Add(1) })
-			_, err = engine.CreateNode(&Node{ID: "overlap", Labels: []string{c.Label}, Properties: pair[1]})
+			_, err = engine.CreateNode(t.Context(), &Node{ID: "overlap", Labels: []string{c.Label}, Properties: pair[1]})
 			restoreScan()
 			require.Error(t, err)
 			if interrupted {
@@ -219,7 +219,7 @@ func TestTemporalListFamilyTemporalFormat4Trust(t *testing.T) {
 			require.True(t, inner.temporalIndexReady.Load())
 			var retryScans atomic.Int64
 			restoreRetryScan := setTemporalConstraintScanHook(func() { retryScans.Add(1) })
-			_, err = engine.CreateNode(&Node{ID: "overlap", Labels: []string{c.Label}, Properties: pair[1]})
+			_, err = engine.CreateNode(t.Context(), &Node{ID: "overlap", Labels: []string{c.Label}, Properties: pair[1]})
 			restoreRetryScan()
 			require.Error(t, err)
 			require.Zero(t, retryScans.Load(), "the retried rebuild restores the trusted key history")
@@ -230,11 +230,11 @@ func TestTemporalListFamilyTemporalFormat4Trust(t *testing.T) {
 
 func tlfStageMixedTx(t *testing.T, inner *BadgerEngine, c Constraint, id string, properties map[string]interface{}) *BadgerTransaction {
 	t.Helper()
-	tx, err := inner.BeginTransaction()
+	tx, err := inner.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	require.NoError(t, tx.SetValidationSetting(DeferredConstraintValidation, true))
-	_, err = tx.CreateNode(&Node{ID: NodeID("test:" + id), Labels: []string{c.Label}, Properties: properties})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: NodeID("test:" + id), Labels: []string{c.Label}, Properties: properties})
 	require.NoError(t, err)
 	return tx
 }
@@ -311,7 +311,7 @@ func TestTemporalListFamilyTemporalCompositeListCommitLocks(t *testing.T) {
 						startWorker(func() { contenderDone <- tx.Commit() })
 					} else {
 						startWorker(func() {
-							_, err := engine.CreateNode(&Node{ID: "second", Labels: []string{c.Label}, Properties: pair[1]})
+							_, err := engine.CreateNode(t.Context(), &Node{ID: "second", Labels: []string{c.Label}, Properties: pair[1]})
 							contenderDone <- err
 						})
 					}

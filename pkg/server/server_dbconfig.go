@@ -243,6 +243,12 @@ func (s *Server) handleDbConfig(w http.ResponseWriter, r *http.Request, dbName s
 	}
 	changedDefinitions := make([]dbconfig.SettingDefinition, 0)
 	for _, definition := range dbconfig.Settings() {
+		if definition.HotReload == dbconfig.HotReloadTransactionMemory {
+			previous, previouslySet := previousOverrides[definition.Name]
+			next, nextSet := body.Overrides[definition.Name]
+			// Equal effective values can still add or remove inheritance.
+			hasTransactionMemoryChange = hasTransactionMemoryChange || previouslySet != nextSet || previous != next
+		}
 		if previousResolved.Effective[definition.Name] == nextResolved.Effective[definition.Name] {
 			continue
 		}
@@ -268,7 +274,7 @@ func (s *Server) handleDbConfig(w http.ResponseWriter, r *http.Request, dbName s
 	// Per-db overrides must apply via fresh search service initialization,
 	// not runtime in-place strategy transitions.
 	if hasTransactionMemoryChange {
-		s.applyTransactionMemoryLimits(dbName, nextResolved)
+		s.applyTransactionMemoryLimits(dbName, body.Overrides, nextResolved)
 	}
 	if hasSearchCacheChange {
 		s.db.SetSearchResultCachePolicy(dbName, nextResolved.SearchResultCacheMaxEntries, nextResolved.SearchResultCacheTTL)
@@ -277,7 +283,7 @@ func (s *Server) handleDbConfig(w http.ResponseWriter, r *http.Request, dbName s
 		s.db.ResetSearchService(dbName)
 		if storageEngine, err := s.dbManager.GetStorage(dbName); err != nil {
 			s.logEvent(r.Context(), slog.LevelWarn, localization.ServerDBConfigRebuildStorageResolveFailedEvent(dbName, err))
-		} else if _, err := s.db.EnsureSearchIndexes(nil, dbName, storageEngine, nornicdb.SearchIndexBuildStart); err != nil {
+		} else if _, err := s.db.EnsureSearchIndexes(s.shutdown.work.Context(), dbName, storageEngine, nornicdb.SearchIndexBuildStart); err != nil {
 			s.logEvent(r.Context(), slog.LevelWarn, localization.ServerDBConfigRebuildStartFailedEvent(dbName, err))
 		} else {
 			rebuildTriggered = true
@@ -389,12 +395,17 @@ func (s *Server) updateDatabaseConfigRuntimeState(dbName string, previous, next 
 	return cloneStringMap(active), len(pending) > 0
 }
 
-// applyTransactionMemoryLimits applies a database's resolved transaction
-// memory limits (db.memory.transaction.max, db.memory.transaction.total.max)
-// to the statements that start from now on (#1343).
-func (s *Server) applyTransactionMemoryLimits(dbName string, resolved *dbconfig.ResolvedDbConfig) {
-	cypher.SetDatabaseTransactionMemoryLimits(dbName, cypher.TransactionMemoryLimits{
-		TransactionMax:   resolved.TransactionMemoryMaxBytes,
-		DatabaseTotalMax: resolved.TransactionMemoryTotalMaxBytes,
-	})
+// applyTransactionMemoryLimits publishes only the database's explicit setting
+// selections. Absent keys restore independent inheritance from the current
+// process defaults, including after an operator removes an override. The
+// caller supplies the same override snapshot used to resolve numeric values.
+func (s *Server) applyTransactionMemoryLimits(dbName string, overrides map[string]string, resolved *dbconfig.ResolvedDbConfig) {
+	var limits cypher.DatabaseTransactionMemoryLimits
+	if _, configured := overrides["db.memory.transaction.max"]; configured {
+		limits.TransactionMax = &resolved.TransactionMemoryMaxBytes
+	}
+	if _, configured := overrides["db.memory.transaction.total.max"]; configured {
+		limits.DatabaseTotalMax = &resolved.TransactionMemoryTotalMaxBytes
+	}
+	cypher.SetDatabaseTransactionMemoryLimits(dbName, limits)
 }

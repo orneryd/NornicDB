@@ -15,14 +15,14 @@ import (
 func TestIndependentEdgeCommitsShareEndpointAuthority(t *testing.T) {
 	b := newTestEngine(t)
 	for _, id := range []NodeID{"test:hub", "test:a", "test:b"} {
-		_, err := b.CreateNode(&Node{ID: id, Labels: []string{"Endpoint"}})
+		_, err := b.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Endpoint"}})
 		require.NoError(t, err)
 	}
 	makeTxn := func(id EdgeID, end NodeID) *BadgerTransaction {
-		tx, err := b.BeginTransaction()
+		tx, err := b.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		require.NoError(t, tx.SetNamespace("test"))
-		require.NoError(t, tx.CreateEdge(&Edge{ID: id, StartNode: "test:hub", EndNode: end, Type: "CONNECTS"}))
+		require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: id, StartNode: "test:hub", EndNode: end, Type: "CONNECTS"}))
 		return tx
 	}
 	first := makeTxn("test:first", "test:a")
@@ -49,9 +49,9 @@ func TestIndependentEdgeCommitsShareEndpointAuthority(t *testing.T) {
 	defer got.p.Abort()
 	require.NoError(t, p1.Commit(nil))
 	require.NoError(t, got.p.Commit(nil))
-	_, err = b.GetEdge("test:first")
+	_, err = b.GetEdge(t.Context(), "test:first")
 	require.NoError(t, err)
-	_, err = b.GetEdge("test:second")
+	_, err = b.GetEdge(t.Context(), "test:second")
 	require.NoError(t, err)
 }
 
@@ -255,25 +255,25 @@ func TestSharedEndpointExcludesNodeMutations(t *testing.T) {
 		t.Run(fmt.Sprintf("delete=%v", deletion), func(t *testing.T) {
 			b := newTestEngine(t)
 			for _, id := range []NodeID{"test:hub", "test:end"} {
-				_, err := b.CreateNode(&Node{ID: id, Labels: []string{"Before"}})
+				_, err := b.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Before"}})
 				require.NoError(t, err)
 			}
-			edgeTx, err := b.BeginTransaction()
+			edgeTx, err := b.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			require.NoError(t, edgeTx.SetNamespace("test"))
-			require.NoError(t, edgeTx.CreateEdge(&Edge{ID: "test:e", StartNode: "test:hub", EndNode: "test:end", Type: "LINK"}))
-			nodeTx, err := b.BeginTransaction()
+			require.NoError(t, edgeTx.CreateEdge(t.Context(), &Edge{ID: "test:e", StartNode: "test:hub", EndNode: "test:end", Type: "LINK"}))
+			nodeTx, err := b.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			require.NoError(t, nodeTx.SetNamespace("test"))
 			if deletion {
-				require.NoError(t, nodeTx.DeleteGraphNode("test:hub", CascadeEdges))
+				require.NoError(t, nodeTx.DeleteGraphNode(t.Context(), "test:hub", CascadeEdges))
 			} else {
-				require.NoError(t, nodeTx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:hub", Labels: []string{"After"}}, Policy: ClientNodeEdits}))
+				require.NoError(t, nodeTx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:hub", Labels: []string{"After"}}, Policy: ClientNodeEdits}))
 			}
 			prepared, err := edgeTx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: "edge-held"})
 			require.NoError(t, err)
 			defer prepared.Abort()
-			retain, err := prepared.RetainAcceptedAuthority(nil)
+			retain, err := prepared.RetainAcceptedAuthority(context.Background())
 			require.NoError(t, err)
 			defer retain()
 			ctx, cancel := context.WithCancel(context.Background())
@@ -296,15 +296,15 @@ func TestSharedEndpointExcludesNodeMutations(t *testing.T) {
 			require.ErrorIs(t, <-done, context.Canceled)
 			require.NoError(t, prepared.Commit(nil))
 			if deletion {
-				require.NoError(t, b.DeleteNode("test:hub"))
-				_, err = b.GetEdge("test:e")
+				require.NoError(t, b.DeleteNode(t.Context(), "test:hub"))
+				_, err = b.GetEdge(t.Context(), "test:e")
 				require.ErrorIs(t, err, ErrNotFound)
 			} else {
-				require.NoError(t, b.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:hub", Labels: []string{"After"}}}))
-				n, err := b.EdgeCountByStartLabelInNamespace("test", "Before", "LINK")
+				require.NoError(t, b.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:hub", Labels: []string{"After"}}}))
+				n, err := b.EdgeCountByStartLabelInNamespace(context.Background(), "test", "Before", "LINK")
 				require.NoError(t, err)
 				require.Equal(t, int64(0), n)
-				n, err = b.EdgeCountByStartLabelInNamespace("test", "After", "LINK")
+				n, err = b.EdgeCountByStartLabelInNamespace(context.Background(), "test", "After", "LINK")
 				require.NoError(t, err)
 				require.Equal(t, int64(1), n)
 			}
@@ -315,18 +315,18 @@ func TestSharedEndpointExcludesNodeMutations(t *testing.T) {
 func TestSharedEndpointConcurrentBufferedCommitCounts(t *testing.T) {
 	b := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{wal: true, manualDrain: true})
 	for _, id := range []NodeID{"test:hub", "test:left", "test:right"} {
-		_, err := b.CreateNode(&Node{ID: id, Labels: []string{"Endpoint"}})
+		_, err := b.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Endpoint"}})
 		require.NoError(t, err)
 	}
 	for i := 0; i < 8; i++ {
 		prepared := make([]*PreparedEntityCommit, 0, 2)
 		for j, end := range []NodeID{"test:left", "test:right"} {
-			tx, err := b.BeginTransaction()
+			tx, err := b.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			require.NoError(t, tx.SetNamespace("test"))
 			require.NoError(t, tx.SetImplicit(true))
 			edgeID := EdgeID(fmt.Sprintf("test:e-%d-%d", i, j))
-			require.NoError(t, tx.CreateEdge(&Edge{ID: edgeID, StartNode: "test:hub", EndNode: end, Type: "LINK"}))
+			require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: edgeID, StartNode: "test:hub", EndNode: end, Type: "LINK"}))
 			p, err := tx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: fmt.Sprintf("shared-commit-%d-%d", i, j)})
 			require.NoError(t, err)
 			prepared = append(prepared, p)
@@ -340,20 +340,20 @@ func TestSharedEndpointConcurrentBufferedCommitCounts(t *testing.T) {
 		require.NoError(t, <-done)
 		require.NoError(t, <-done)
 	}
-	require.NoError(t, b.FlushWriteBehind(nil))
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
 	for i := 0; i < 8; i++ {
 		for j := 0; j < 2; j++ {
-			_, err := b.GetEdge(EdgeID(fmt.Sprintf("test:e-%d-%d", i, j)))
+			_, err := b.GetEdge(t.Context(), EdgeID(fmt.Sprintf("test:e-%d-%d", i, j)))
 			require.NoError(t, err)
 		}
 	}
-	total, err := b.EdgeCountByTypeInNamespace("test", "LINK")
+	total, err := b.EdgeCountByTypeInNamespace(context.Background(), "test", "LINK")
 	require.NoError(t, err)
 	require.Equal(t, int64(16), total)
-	startCount, err := b.EdgeCountByStartLabelInNamespace("test", "Endpoint", "LINK")
+	startCount, err := b.EdgeCountByStartLabelInNamespace(context.Background(), "test", "Endpoint", "LINK")
 	require.NoError(t, err)
 	require.Equal(t, int64(16), startCount)
-	endCount, err := b.EdgeCountByEndLabelInNamespace("test", "Endpoint", "LINK")
+	endCount, err := b.EdgeCountByEndLabelInNamespace(context.Background(), "test", "Endpoint", "LINK")
 	require.NoError(t, err)
 	require.Equal(t, int64(16), endCount)
 }

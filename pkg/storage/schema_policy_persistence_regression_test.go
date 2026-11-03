@@ -43,7 +43,7 @@ func policyPersistenceTableContent(table *knowledgepolicy.BindingTable) string {
 // leave exactly as they were.
 func policyPersistenceSnapshot(t *testing.T, sm *SchemaManager) policyPersistenceState {
 	t.Helper()
-	blob, err := json.Marshal(sm.ExportDefinition())
+	blob, err := json.Marshal(schemaDefinitionForTest(t, sm))
 	require.NoError(t, err)
 	bundles, bindings := sm.ShowDecayProfiles()
 	return policyPersistenceState{
@@ -342,7 +342,7 @@ func TestKnowledgePolicyRejectedPersistenceKeepsPublishedSchema(t *testing.T) {
 				// ghost edit retained from the rejected mutation cannot match it.
 				witness := newPolicyPersistenceSeeded(t, c)
 				require.NoError(t, witness.CreatePromotionPolicy(accepted))
-				witnessBlob, err := json.Marshal(witness.ExportDefinition())
+				witnessBlob, err := json.Marshal(schemaDefinitionForTest(t, witness))
 				require.NoError(t, err)
 
 				require.Equal(t, string(witnessBlob), durable[0], "the accepted persist must contain no ghost edit from the rejected mutation")

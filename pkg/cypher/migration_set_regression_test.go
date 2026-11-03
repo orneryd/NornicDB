@@ -78,7 +78,7 @@ func TestBug_MigratedBadgerNode_MatchSetUpdatesExistingNode(t *testing.T) {
 	require.NoError(t, err)
 
 	namespaced := storage.NewNamespacedEngine(base, testNamespacedMigrationDB)
-	_, err = namespaced.CreateNode(&storage.Node{
+	_, err = namespaced.CreateNode(t.Context(), &storage.Node{
 		ID:     "session-1",
 		Labels: []string{"Session"},
 		Properties: map[string]interface{}{
@@ -138,7 +138,7 @@ func TestBug_MigratedBadgerNode_MatchSetUpdatesExistingNode(t *testing.T) {
 	require.Len(t, setRes.Rows, 1)
 	require.Equal(t, "my-session-id", setRes.Rows[0][0])
 
-	node, err := store.GetNode("session-1")
+	node, err := store.GetNode(t.Context(), "session-1")
 	require.NoError(t, err)
 	require.Equal(t, "2026-06-02T01:00:00Z", node.Properties["finalized_at"])
 }

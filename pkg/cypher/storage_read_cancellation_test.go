@@ -44,14 +44,14 @@ func (e *d09CancelAtAdjacency) GetNodesByLabel(ctx context.Context, label string
 func TestStorageBackedPublicReadCancellation(t *testing.T) {
 	forEachParser(t, func(t *testing.T) {
 		base := storage.NewNamespacedEngine(newTestMemoryEngine(t), "d09")
-		_, err := base.CreateNode(&storage.Node{ID: "hub", Labels: []string{"D09Hub"}})
+		_, err := base.CreateNode(t.Context(), &storage.Node{ID: "hub", Labels: []string{"D09Hub"}})
 		require.NoError(t, err)
 		const size = 1024
 		for i := 0; i < size; i++ {
 			id := storage.NodeID(fmt.Sprintf("n%d", i))
-			_, err = base.CreateNode(&storage.Node{ID: id, Labels: []string{"D09Leaf"}})
+			_, err = base.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"D09Leaf"}})
 			require.NoError(t, err)
-			require.NoError(t, base.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("r%d", i)), StartNode: "hub", EndNode: id, Type: "R"}))
+			require.NoError(t, base.CreateEdge(t.Context(), &storage.Edge{ID: storage.EdgeID(fmt.Sprintf("r%d", i)), StartNode: "hub", EndNode: id, Type: "R"}))
 		}
 		for _, label := range []bool{false, true} {
 			t.Run(fmt.Sprintf("label=%v", label), func(t *testing.T) {

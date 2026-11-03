@@ -460,12 +460,15 @@ CREATE (:Service {key:'svc-1'}), (:Service {key:'svc-2'}),
 
 	schema := store.GetSchema()
 	require.NotNil(t, schema)
-	ids := schema.PropertyIndexLookup("Topic", "key", "topic-1")
+	ids, lookupErr := schema.PropertyIndexLookup(ctx, "Topic", "key", "topic-1")
+	require.NoError(t, lookupErr)
 	require.NotEmpty(t, ids)
 	for _, id := range ids {
 		require.NoError(t, schema.PropertyIndexDelete("Topic", "key", id, "topic-1"))
 	}
-	require.Empty(t, schema.PropertyIndexLookup("Topic", "key", "topic-1"))
+	missingIDs, lookupErr := schema.PropertyIndexLookup(ctx, "Topic", "key", "topic-1")
+	require.NoError(t, lookupErr)
+	require.Empty(t, missingIDs)
 
 	query := `UNWIND $rows AS row
 MATCH (source:Service {key: row.source_key})

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"testing"
@@ -11,21 +12,21 @@ import (
 
 func TestKnownSchemaTokenDoesNotWaitForUnrelatedTokenPersistence(t *testing.T) {
 	schema := NewSchemaManager()
-	require.NoError(t, schema.RegisterTokens([]string{"Existing"}, nil))
+	require.NoError(t, schema.RegisterTokens(t.Context(), []string{"Existing"}, nil))
 	entered, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
 	finish := func() { once.Do(func() { close(release) }) }
 	defer finish()
 	schema.SetPersister(func(*SchemaDefinition) error { close(entered); <-release; return nil })
 	newDone := make(chan error, 1)
-	go func() { newDone <- schema.RegisterTokens(nil, []string{"NEW"}) }()
+	go func() { newDone <- schema.RegisterTokens(t.Context(), nil, []string{"NEW"}) }()
 	<-entered
 	knownDone := make(chan error, 1)
-	go func() { knownDone <- schema.RegisterTokens([]string{"Existing"}, nil) }()
+	go func() { knownDone <- schema.RegisterTokens(t.Context(), []string{"Existing"}, nil) }()
 	newStarted, sameNewDone := make(chan struct{}), make(chan error, 1)
 	go func() {
 		close(newStarted)
-		sameNewDone <- schema.RegisterTokens(nil, []string{"NEW"})
+		sameNewDone <- schema.RegisterTokens(t.Context(), nil, []string{"NEW"})
 	}()
 	<-newStarted
 	select {
@@ -44,40 +45,40 @@ func TestKnownSchemaTokenDoesNotWaitForUnrelatedTokenPersistence(t *testing.T) {
 	finish()
 	require.NoError(t, <-newDone)
 	require.NoError(t, <-sameNewDone)
-	require.Equal(t, []string{"Existing"}, schema.ExportDefinition().LabelTokens)
-	require.Equal(t, []string{"NEW"}, schema.ExportDefinition().RelationshipTypeTokens)
+	require.Equal(t, []string{"Existing"}, schemaDefinitionForTest(t, schema).LabelTokens)
+	require.Equal(t, []string{"NEW"}, schemaDefinitionForTest(t, schema).RelationshipTypeTokens)
 }
 
 func TestKnownSchemaTokenSnapshotFollowsReplacementAndFailure(t *testing.T) {
 	schema := NewSchemaManager()
-	require.NoError(t, schema.RegisterTokens([]string{"Old"}, nil))
-	require.NoError(t, schema.ReplaceFromDefinition(&SchemaDefinition{LabelTokens: []string{"Replacement"}}))
+	require.NoError(t, schema.RegisterTokens(t.Context(), []string{"Old"}, nil))
+	require.NoError(t, schema.ReplaceFromDefinition(context.Background(), &SchemaDefinition{LabelTokens: []string{"Replacement"}}))
 	sentinel := errors.New("token write rejected")
 	schema.SetPersister(func(*SchemaDefinition) error { return sentinel })
-	require.NoError(t, schema.RegisterTokens([]string{"Replacement"}, nil))
-	require.ErrorIs(t, schema.RegisterTokens([]string{"Old"}, nil), sentinel)
-	require.Equal(t, []string{"Replacement"}, schema.ExportDefinition().LabelTokens)
+	require.NoError(t, schema.RegisterTokens(t.Context(), []string{"Replacement"}, nil))
+	require.ErrorIs(t, schema.RegisterTokens(t.Context(), []string{"Old"}, nil), sentinel)
+	require.Equal(t, []string{"Replacement"}, schemaDefinitionForTest(t, schema).LabelTokens)
 }
 
 func TestKnownSchemaTokenSnapshotFollowsTransactionSchemaInstall(t *testing.T) {
 	schema := NewSchemaManager()
-	require.NoError(t, schema.RegisterTokens([]string{"Old"}, nil))
+	require.NoError(t, schema.RegisterTokens(t.Context(), []string{"Old"}, nil))
 	transactionSchema := NewSchemaManager()
-	require.NoError(t, transactionSchema.ReplaceFromDefinition(&SchemaDefinition{LabelTokens: []string{"Replacement"}}))
+	require.NoError(t, transactionSchema.ReplaceFromDefinition(context.Background(), &SchemaDefinition{LabelTokens: []string{"Replacement"}}))
 	schema.mu.Lock()
-	schema.installTransactionSchemaLocked(transactionSchema)
+	schema.installSchemaLocked(transactionSchema, transactionSchemaInstallation)
 	schema.mu.Unlock()
 
 	sentinel := errors.New("token write rejected")
 	schema.SetPersister(func(*SchemaDefinition) error { return sentinel })
-	require.NoError(t, schema.RegisterTokens([]string{"Replacement"}, nil))
-	require.ErrorIs(t, schema.RegisterTokens([]string{"Old"}, nil), sentinel)
-	require.Equal(t, []string{"Replacement"}, schema.ExportDefinition().LabelTokens)
+	require.NoError(t, schema.RegisterTokens(t.Context(), []string{"Replacement"}, nil))
+	require.ErrorIs(t, schema.RegisterTokens(t.Context(), []string{"Old"}, nil), sentinel)
+	require.Equal(t, []string{"Replacement"}, schemaDefinitionForTest(t, schema).LabelTokens)
 }
 
 func BenchmarkRegisterKnownLabelParallel(b *testing.B) {
 	schema := NewSchemaManager()
-	if err := schema.RegisterTokens([]string{"Existing"}, nil); err != nil {
+	if err := schema.RegisterTokens(b.Context(), []string{"Existing"}, nil); err != nil {
 		b.Fatal(err)
 	}
 	labels := []string{"Existing"}
@@ -85,7 +86,7 @@ func BenchmarkRegisterKnownLabelParallel(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			if err := schema.RegisterTokens(labels, nil); err != nil {
+			if err := schema.RegisterTokens(b.Context(), labels, nil); err != nil {
 				b.Error(err)
 				return
 			}

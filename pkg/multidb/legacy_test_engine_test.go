@@ -16,46 +16,47 @@ import (
 // migration fixture exercises the current storage contract without simulating it.
 type legacyTestEngine struct {
 	*storage.MemoryEngine
+	owner testing.TB
 	mu    sync.RWMutex
 	nodes map[storage.NodeID]*storage.Node
 	edges map[storage.EdgeID]*storage.Edge
 }
 
 func newLegacyTestEngine(t testing.TB) *legacyTestEngine {
-	return &legacyTestEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nodes: map[storage.NodeID]*storage.Node{}, edges: map[storage.EdgeID]*storage.Edge{}}
+	return &legacyTestEngine{owner: t, MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nodes: map[storage.NodeID]*storage.Node{}, edges: map[storage.EdgeID]*storage.Edge{}}
 }
 func (e *legacyTestEngine) GetInnerEngine() storage.Engine { return e.MemoryEngine }
-func (e *legacyTestEngine) CreateNode(node *storage.Node) (storage.NodeID, error) {
+func (e *legacyTestEngine) CreateNode(ctx context.Context, node *storage.Node) (storage.NodeID, error) {
 	if node == nil || node.ID == "" {
 		return "", storage.ErrInvalidID
 	}
 	if strings.Contains(string(node.ID), ":") {
-		return e.MemoryEngine.CreateNode(node)
+		return e.MemoryEngine.CreateNode(ctx, node)
 	}
 	if err := writeLegacySeed(e, e.nodes, node.ID, node, legacyInsert, storage.CopyNode); err != nil {
 		return "", err
 	}
 	return node.ID, nil
 }
-func (e *legacyTestEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
+func (e *legacyTestEngine) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	if strings.Contains(string(id), ":") {
-		return e.MemoryEngine.GetNode(id)
+		return e.MemoryEngine.GetNode(ctx, id)
 	}
 	return readLegacySeed(e, e.nodes, id, storage.CopyNode)
 }
-func (e *legacyTestEngine) UpdateNode(updateRequest storage.NodeUpdateRequest) error {
+func (e *legacyTestEngine) UpdateNode(ctx context.Context, updateRequest storage.NodeUpdateRequest) error {
 	node := updateRequest.After
 	if node == nil || node.ID == "" {
 		return storage.ErrInvalidID
 	}
 	if strings.Contains(string(node.ID), ":") {
-		return e.MemoryEngine.UpdateNode(updateRequest)
+		return e.MemoryEngine.UpdateNode(ctx, updateRequest)
 	}
 	return writeLegacySeed(e, e.nodes, node.ID, node, legacyReplace, storage.CopyNode)
 }
-func (e *legacyTestEngine) DeleteNode(id storage.NodeID) error {
+func (e *legacyTestEngine) DeleteNode(ctx context.Context, id storage.NodeID) error {
 	if strings.Contains(string(id), ":") {
-		return e.MemoryEngine.DeleteNode(id)
+		return e.MemoryEngine.DeleteNode(ctx, id)
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -70,34 +71,34 @@ func (e *legacyTestEngine) DeleteNode(id storage.NodeID) error {
 	}
 	return nil
 }
-func (e *legacyTestEngine) CreateEdge(edge *storage.Edge) error {
+func (e *legacyTestEngine) CreateEdge(ctx context.Context, edge *storage.Edge) error {
 	if edge == nil || edge.ID == "" {
 		return storage.ErrInvalidID
 	}
 	if strings.Contains(string(edge.ID), ":") {
-		return e.MemoryEngine.CreateEdge(edge)
+		return e.MemoryEngine.CreateEdge(ctx, edge)
 	}
 	return writeLegacySeed(e, e.edges, edge.ID, edge, legacyInsert, storage.CopyEdge)
 }
-func (e *legacyTestEngine) GetEdge(id storage.EdgeID) (*storage.Edge, error) {
+func (e *legacyTestEngine) GetEdge(ctx context.Context, id storage.EdgeID) (*storage.Edge, error) {
 	if strings.Contains(string(id), ":") {
-		return e.MemoryEngine.GetEdge(id)
+		return e.MemoryEngine.GetEdge(ctx, id)
 	}
 	return readLegacySeed(e, e.edges, id, storage.CopyEdge)
 }
-func (e *legacyTestEngine) UpdateEdge(updateRequest storage.EdgeUpdateRequest) error {
+func (e *legacyTestEngine) UpdateEdge(ctx context.Context, updateRequest storage.EdgeUpdateRequest) error {
 	edge := updateRequest.After
 	if edge == nil || edge.ID == "" {
 		return storage.ErrInvalidID
 	}
 	if strings.Contains(string(edge.ID), ":") {
-		return e.MemoryEngine.UpdateEdge(updateRequest)
+		return e.MemoryEngine.UpdateEdge(ctx, updateRequest)
 	}
 	return writeLegacySeed(e, e.edges, edge.ID, edge, legacyReplace, storage.CopyEdge)
 }
-func (e *legacyTestEngine) DeleteEdge(id storage.EdgeID) error {
+func (e *legacyTestEngine) DeleteEdge(ctx context.Context, id storage.EdgeID) error {
 	if strings.Contains(string(id), ":") {
-		return e.MemoryEngine.DeleteEdge(id)
+		return e.MemoryEngine.DeleteEdge(ctx, id)
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -172,8 +173,8 @@ func (e *legacyTestEngine) GetNodesByLabel(ctx context.Context, label string) ([
 	}
 	return result, nil
 }
-func (e *legacyTestEngine) GetFirstNodeByLabel(label string) (*storage.Node, error) {
-	nodes, err := e.GetNodesByLabel(context.Background(), label)
+func (e *legacyTestEngine) GetFirstNodeByLabel(ctx context.Context, label string) (*storage.Node, error) {
+	nodes, err := e.GetNodesByLabel(ctx, label)
 	if err != nil {
 		return nil, err
 	}
@@ -183,10 +184,10 @@ func (e *legacyTestEngine) GetFirstNodeByLabel(label string) (*storage.Node, err
 	return nodes[0], nil
 }
 func (e *legacyTestEngine) GetOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
-	return e.edgesForEndpoint(id, true)
+	return e.edgesForEndpoint(ctx, id, true)
 }
 func (e *legacyTestEngine) GetIncomingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
-	return e.edgesForEndpoint(id, false)
+	return e.edgesForEndpoint(ctx, id, false)
 }
 func (e *legacyTestEngine) GetEdgesBetween(ctx context.Context, start, end storage.NodeID) ([]*storage.Edge, error) {
 	edges, err := e.GetOutgoingEdges(ctx, start)
@@ -201,14 +202,17 @@ func (e *legacyTestEngine) GetEdgesBetween(ctx context.Context, start, end stora
 	}
 	return result, nil
 }
-func (e *legacyTestEngine) GetEdgeBetween(start, end storage.NodeID, kind string) *storage.Edge {
-	edges, _ := e.GetEdgesBetween(context.Background(), start, end)
+func (e *legacyTestEngine) GetEdgeBetween(ctx context.Context, start, end storage.NodeID, kind string) (*storage.Edge, error) {
+	edges, err := e.GetEdgesBetween(ctx, start, end)
+	if err != nil {
+		return nil, err
+	}
 	for _, edge := range edges {
 		if edge.Type == kind {
-			return edge
+			return edge, nil
 		}
 	}
-	return nil
+	return nil, nil
 }
 func (e *legacyTestEngine) GetEdgesByType(ctx context.Context, kind string) ([]*storage.Edge, error) {
 	edges, err := e.AllEdges(ctx)
@@ -223,52 +227,52 @@ func (e *legacyTestEngine) GetEdgesByType(ctx context.Context, kind string) ([]*
 	}
 	return result, nil
 }
-func (e *legacyTestEngine) GetInDegree(id storage.NodeID) int {
-	edges, _ := e.GetIncomingEdges(context.Background(), id)
-	return len(edges)
+func (e *legacyTestEngine) GetInDegree(ctx context.Context, id storage.NodeID) (int, error) {
+	edges, err := e.GetIncomingEdges(ctx, id)
+	return len(edges), err
 }
-func (e *legacyTestEngine) GetOutDegree(id storage.NodeID) int {
-	edges, _ := e.GetOutgoingEdges(context.Background(), id)
-	return len(edges)
+func (e *legacyTestEngine) GetOutDegree(ctx context.Context, id storage.NodeID) (int, error) {
+	edges, err := e.GetOutgoingEdges(ctx, id)
+	return len(edges), err
 }
-func applyLegacyCreates[T any](items []*T, create func(*T) error) error {
+func applyLegacyCreates[T any](ctx context.Context, items []*T, create func(context.Context, *T) error) error {
 	return collection.ApplyInOrder(items, func(item *T) error {
 		if item == nil {
 			return nil
 		}
-		if err := create(item); err != nil && err != storage.ErrAlreadyExists {
+		if err := create(ctx, item); err != nil && err != storage.ErrAlreadyExists {
 			return err
 		}
 		return nil
 	})
 }
 
-func applyLegacyDeletes[T any](ids []T, remove func(T) error) error {
+func applyLegacyDeletes[T any](ctx context.Context, ids []T, remove func(context.Context, T) error) error {
 	return collection.ApplyInOrder(ids, func(id T) error {
-		_ = remove(id)
+		_ = remove(ctx, id)
 		return nil
 	})
 }
 
-func (e *legacyTestEngine) BulkCreateNodes(nodes []*storage.Node) error {
-	return applyLegacyCreates(nodes, func(node *storage.Node) error {
-		_, err := e.CreateNode(node)
+func (e *legacyTestEngine) BulkCreateNodes(ctx context.Context, nodes []*storage.Node) error {
+	return applyLegacyCreates(ctx, nodes, func(ctx context.Context, node *storage.Node) error {
+		_, err := e.CreateNode(ctx, node)
 		return err
 	})
 }
-func (e *legacyTestEngine) BulkCreateEdges(edges []*storage.Edge) error {
-	return applyLegacyCreates(edges, e.CreateEdge)
+func (e *legacyTestEngine) BulkCreateEdges(ctx context.Context, edges []*storage.Edge) error {
+	return applyLegacyCreates(ctx, edges, e.CreateEdge)
 }
-func (e *legacyTestEngine) BulkDeleteNodes(ids []storage.NodeID) error {
-	return applyLegacyDeletes(ids, e.DeleteNode)
+func (e *legacyTestEngine) BulkDeleteNodes(ctx context.Context, ids []storage.NodeID) error {
+	return applyLegacyDeletes(ctx, ids, e.DeleteNode)
 }
-func (e *legacyTestEngine) BulkDeleteEdges(ids []storage.EdgeID) error {
-	return applyLegacyDeletes(ids, e.DeleteEdge)
+func (e *legacyTestEngine) BulkDeleteEdges(ctx context.Context, ids []storage.EdgeID) error {
+	return applyLegacyDeletes(ctx, ids, e.DeleteEdge)
 }
 func (e *legacyTestEngine) BatchGetNodes(ctx context.Context, ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
 	result := map[storage.NodeID]*storage.Node{}
 	for _, id := range ids {
-		node, err := e.GetNode(id)
+		node, err := e.GetNode(ctx, id)
 		if err == storage.ErrNotFound {
 			continue
 		}
@@ -279,20 +283,20 @@ func (e *legacyTestEngine) BatchGetNodes(ctx context.Context, ids []storage.Node
 	}
 	return result, nil
 }
-func (e *legacyTestEngine) NodeCount() (int64, error) {
-	nodes, err := e.AllNodes(context.Background())
+func (e *legacyTestEngine) NodeCount(ctx context.Context) (int64, error) {
+	nodes, err := e.AllNodes(ctx)
 	return int64(len(nodes)), err
 }
-func (e *legacyTestEngine) EdgeCount() (int64, error) {
-	edges, err := e.AllEdges(context.Background())
+func (e *legacyTestEngine) EdgeCount(ctx context.Context) (int64, error) {
+	edges, err := e.AllEdges(ctx)
 	return int64(len(edges)), err
 }
-func (e *legacyTestEngine) EdgeCountByType(kind string) (int64, error) {
-	edges, err := e.GetEdgesByType(context.Background(), kind)
+func (e *legacyTestEngine) EdgeCountByType(ctx context.Context, kind string) (int64, error) {
+	edges, err := e.GetEdgesByType(ctx, kind)
 	return int64(len(edges)), err
 }
-func (e *legacyTestEngine) edgeCountByEndpointLabel(label, kind string, start bool) (int64, error) {
-	edges, err := e.GetEdgesByType(context.Background(), kind)
+func (e *legacyTestEngine) edgeCountByEndpointLabel(ctx context.Context, label, kind string, start bool) (int64, error) {
+	edges, err := e.GetEdgesByType(ctx, kind)
 	if err != nil {
 		return 0, err
 	}
@@ -302,7 +306,7 @@ func (e *legacyTestEngine) edgeCountByEndpointLabel(label, kind string, start bo
 		if start {
 			id = edge.StartNode
 		}
-		node, err := e.GetNode(id)
+		node, err := e.GetNode(ctx, id)
 		if err != nil {
 			continue
 		}
@@ -315,32 +319,32 @@ func (e *legacyTestEngine) edgeCountByEndpointLabel(label, kind string, start bo
 	}
 	return count, nil
 }
-func (e *legacyTestEngine) EdgeCountByStartLabel(label, kind string) (int64, error) {
-	return e.edgeCountByEndpointLabel(label, kind, true)
+func (e *legacyTestEngine) EdgeCountByStartLabel(ctx context.Context, label, kind string) (int64, error) {
+	return e.edgeCountByEndpointLabel(ctx, label, kind, true)
 }
-func (e *legacyTestEngine) EdgeCountByEndLabel(label, kind string) (int64, error) {
-	return e.edgeCountByEndpointLabel(label, kind, false)
+func (e *legacyTestEngine) EdgeCountByEndLabel(ctx context.Context, label, kind string) (int64, error) {
+	return e.edgeCountByEndpointLabel(ctx, label, kind, false)
 }
 func (e *legacyTestEngine) DeleteByPrefix(prefix string) (nodesDeleted, edgesDeleted int64, err error) {
-	edges, err := e.AllEdges(context.Background())
+	edges, err := e.AllEdges(e.owner.Context())
 	if err != nil {
 		return 0, 0, err
 	}
 	for _, edge := range edges {
 		if strings.HasPrefix(string(edge.ID), prefix) {
-			if err = e.DeleteEdge(edge.ID); err != nil {
+			if err = e.DeleteEdge(e.owner.Context(), edge.ID); err != nil {
 				return
 			}
 			edgesDeleted++
 		}
 	}
-	nodes, err := e.AllNodes(context.Background())
+	nodes, err := e.AllNodes(e.owner.Context())
 	if err != nil {
 		return
 	}
 	for _, node := range nodes {
 		if strings.HasPrefix(string(node.ID), prefix) {
-			if err = e.DeleteNode(node.ID); err != nil {
+			if err = e.DeleteNode(e.owner.Context(), node.ID); err != nil {
 				return
 			}
 			nodesDeleted++
@@ -395,12 +399,12 @@ func appendLegacySeeds[K comparable, T any](engine *legacyTestEngine, records ma
 	return nativeResult, nil
 }
 
-func (e *legacyTestEngine) edgesForEndpoint(id storage.NodeID, outgoing bool) ([]*storage.Edge, error) {
+func (e *legacyTestEngine) edgesForEndpoint(ctx context.Context, id storage.NodeID, outgoing bool) ([]*storage.Edge, error) {
 	if strings.Contains(string(id), ":") {
 		if outgoing {
-			return e.MemoryEngine.GetOutgoingEdges(context.Background(), id)
+			return e.MemoryEngine.GetOutgoingEdges(ctx, id)
 		}
-		return e.MemoryEngine.GetIncomingEdges(context.Background(), id)
+		return e.MemoryEngine.GetIncomingEdges(ctx, id)
 	}
 	e.mu.RLock()
 	defer e.mu.RUnlock()

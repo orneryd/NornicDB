@@ -160,21 +160,9 @@
     },
     {
       "path": "pkg/cypher/executor_mutations.go",
-      "function": "*StorageExecutor.parseRelationshipHops",
-      "class": "contextual-grammar",
-      "reason": "Consumes framed declarations and the existing relationshipDeclarationOf name/type owner; no raw Index/Split quote extent remains."
-    },
-    {
-      "path": "pkg/cypher/executor_mutations.go",
       "function": "*StorageExecutor.extractRelTypesFromPattern",
       "class": "contextual-grammar",
       "reason": "Consumes the same framed declaration and relationshipDeclarationOf, preserving decoded quoted type names."
-    },
-    {
-      "path": "pkg/cypher/executor_mutations.go",
-      "function": "*StorageExecutor.extractTargetVariable",
-      "class": "contextual-grammar",
-      "reason": "Uses framed relationship extents, shared balanced node extents and ScanIdentifier.Value for the target."
     },
     {
       "path": "pkg/cypher/ast_builder.go",
@@ -265,12 +253,6 @@
       "function": "*StorageExecutor.openAPOCJSONURL",
       "class": "non-query-grammar",
       "reason": "Parent #1665 factors the configured APOC HTTP request/error handoff; existing credential policy and endpoint sink manifest own its output."
-    },
-    {
-      "path": "pkg/cypher/executor_mutations.go",
-      "function": "*StorageExecutor.checkChainedPattern",
-      "class": "contextual-grammar",
-      "reason": "Relationship existence grammar consumes migrated parseRelationshipHops, then traverses stored values; not a competing primitive scanner."
     },
     {
       "path": "pkg/cypher/executor_mutations.go",

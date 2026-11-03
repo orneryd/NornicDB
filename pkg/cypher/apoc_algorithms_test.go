@@ -33,7 +33,7 @@ func createTestGraph(t *testing.T) *StorageExecutor {
 	}
 
 	for _, n := range nodes {
-		_, err := engine.CreateNode(&storage.Node{
+		_, err := engine.CreateNode(t.Context(), &storage.Node{
 			ID:         storage.NodeID(n.id),
 			Labels:     n.labels,
 			Properties: n.props,
@@ -54,7 +54,7 @@ func createTestGraph(t *testing.T) *StorageExecutor {
 	}
 
 	for i, e := range edges {
-		err := engine.CreateEdge(&storage.Edge{
+		err := engine.CreateEdge(t.Context(), &storage.Edge{
 			ID:         storage.EdgeID(e.from + "_" + e.to),
 			StartNode:  storage.NodeID(e.from),
 			EndNode:    storage.NodeID(e.to),
@@ -246,7 +246,7 @@ func TestDijkstraWithWeights(t *testing.T) {
 	//   \---10-----/
 	nodes := []string{"A", "B", "C"}
 	for _, n := range nodes {
-		_, err := engine.CreateNode(&storage.Node{
+		_, err := engine.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID(n),
 			Labels: []string{"Node"},
 		})
@@ -264,7 +264,7 @@ func TestDijkstraWithWeights(t *testing.T) {
 	}
 
 	for _, e := range edges {
-		err := engine.CreateEdge(&storage.Edge{
+		err := engine.CreateEdge(t.Context(), &storage.Edge{
 			ID:         storage.EdgeID(e.from + "_" + e.to),
 			StartNode:  storage.NodeID(e.from),
 			EndNode:    storage.NodeID(e.to),

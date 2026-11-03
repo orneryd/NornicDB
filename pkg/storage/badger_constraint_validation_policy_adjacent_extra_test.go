@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
@@ -12,20 +13,20 @@ func TestBadgerConstraintValidation_PolicyAdjacentEdgeBranches(t *testing.T) {
 		engine := newTestEngine(t)
 		schema := engine.GetSchemaForNamespace("test")
 		err := engine.withView(func(txn *badger.Txn) error {
-			return engine.validatePolicyForAdjacentEdgesInTxn(txn, &Node{ID: "test:missing", Labels: []string{"A"}}, schema, "test")
+			return engine.validatePolicyForAdjacentEdgesInTxn(t.Context(), txn, &Node{ID: "test:missing", Labels: []string{"A"}}, schema, "test")
 		})
 		require.NoError(t, err)
 	})
 
 	t.Run("edges_with_prefix_skip_malformed_lookup_and_reject_decode", func(t *testing.T) {
 		engine := newTestEngine(t)
-		_, err := engine.CreateNode(&Node{ID: "test:a", Labels: []string{"A"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: "test:a", Labels: []string{"A"}})
 		require.NoError(t, err)
-		_, err = engine.CreateNode(&Node{ID: "test:b", Labels: []string{"B"}})
+		_, err = engine.CreateNode(t.Context(), &Node{ID: "test:b", Labels: []string{"B"}})
 		require.NoError(t, err)
-		require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL"}))
+		require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL"}))
 
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			prefix := engine.outgoingIndexPrefixString("test:a")
 			require.NotNil(t, prefix)
 			// malformed key: extractEdgeNumIDFromOutgoingKey => !ok branch
@@ -46,20 +47,20 @@ func TestBadgerConstraintValidation_PolicyAdjacentEdgeBranches(t *testing.T) {
 		err = engine.withView(func(txn *badger.Txn) error {
 			prefix := engine.outgoingIndexPrefixString("test:a")
 			require.NotNil(t, prefix)
-			return engine.validatePolicyForEdgesWithPrefixInTxn(txn, prefix, &Node{ID: "test:a", Labels: []string{"A"}}, true, schema, "test")
+			return engine.validatePolicyForEdgesWithPrefixInTxn(t.Context(), txn, prefix, &Node{ID: "test:a", Labels: []string{"A"}}, true, schema, "test")
 		})
 		require.ErrorContains(t, err, "edge body has unexpected format byte")
 	})
 
 	t.Run("edges_with_prefix_missing_other_node_labels_continue", func(t *testing.T) {
 		engine := newTestEngine(t)
-		_, err := engine.CreateNode(&Node{ID: "test:a", Labels: []string{"A"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: "test:a", Labels: []string{"A"}})
 		require.NoError(t, err)
-		_, err = engine.CreateNode(&Node{ID: "test:b", Labels: []string{"B"}})
+		_, err = engine.CreateNode(t.Context(), &Node{ID: "test:b", Labels: []string{"B"}})
 		require.NoError(t, err)
-		require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL"}))
+		require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL"}))
 
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			// Missing target node => readNodeLabelsInTxn error => continue path.
 			return txn.Delete(nodeKey("test:b"))
 		}))
@@ -68,18 +69,18 @@ func TestBadgerConstraintValidation_PolicyAdjacentEdgeBranches(t *testing.T) {
 		err = engine.withView(func(txn *badger.Txn) error {
 			prefix := engine.outgoingIndexPrefixString("test:a")
 			require.NotNil(t, prefix)
-			return engine.validatePolicyForEdgesWithPrefixInTxn(txn, prefix, &Node{ID: "test:a", Labels: []string{"A"}}, true, schema, "test")
+			return engine.validatePolicyForEdgesWithPrefixInTxn(t.Context(), txn, prefix, &Node{ID: "test:a", Labels: []string{"A"}}, true, schema, "test")
 		})
 		require.NoError(t, err)
 	})
 
 	t.Run("disallowed_and_allowed_policy_violations", func(t *testing.T) {
 		engine := newTestEngine(t)
-		_, err := engine.CreateNode(&Node{ID: "test:a", Labels: []string{"A"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: "test:a", Labels: []string{"A"}})
 		require.NoError(t, err)
-		_, err = engine.CreateNode(&Node{ID: "test:b", Labels: []string{"B"}})
+		_, err = engine.CreateNode(t.Context(), &Node{ID: "test:b", Labels: []string{"B"}})
 		require.NoError(t, err)
-		require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL"}))
+		require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL"}))
 
 		schema := engine.GetSchemaForNamespace("test")
 		require.NoError(t, schema.AddConstraint(Constraint{
@@ -95,7 +96,7 @@ func TestBadgerConstraintValidation_PolicyAdjacentEdgeBranches(t *testing.T) {
 		err = engine.withView(func(txn *badger.Txn) error {
 			prefix := engine.outgoingIndexPrefixString("test:a")
 			require.NotNil(t, prefix)
-			return engine.validatePolicyForEdgesWithPrefixInTxn(txn, prefix, &Node{ID: "test:a", Labels: []string{"A"}}, true, schema, "test")
+			return engine.validatePolicyForEdgesWithPrefixInTxn(t.Context(), txn, prefix, &Node{ID: "test:a", Labels: []string{"A"}}, true, schema, "test")
 		})
 		require.Error(t, err)
 		require.ErrorContains(t, err, "DISALLOWED policy")
@@ -115,7 +116,7 @@ func TestBadgerConstraintValidation_PolicyAdjacentEdgeBranches(t *testing.T) {
 		err = engine.withView(func(txn *badger.Txn) error {
 			prefix := engine.outgoingIndexPrefixString("test:a")
 			require.NotNil(t, prefix)
-			return engine.validatePolicyForEdgesWithPrefixInTxn(txn, prefix, &Node{ID: "test:a", Labels: []string{"A"}}, true, schema, "test")
+			return engine.validatePolicyForEdgesWithPrefixInTxn(t.Context(), txn, prefix, &Node{ID: "test:a", Labels: []string{"A"}}, true, schema, "test")
 		})
 		require.Error(t, err)
 		require.ErrorContains(t, err, "ALLOWED policy")

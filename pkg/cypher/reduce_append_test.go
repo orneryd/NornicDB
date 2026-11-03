@@ -119,7 +119,7 @@ func TestReduceAppendPlanShapes(t *testing.T) {
 		"acc + [x.acc]":                                {"[x.acc]"},
 	} {
 		form := reduceForm{accumulator: "acc", variable: "x", step: step}
-		plan := form.appendPlan()
+		plan := form.appendPlan(t.Context())
 		if want == nil {
 			require.Nil(t, plan, step)
 			continue
@@ -129,8 +129,8 @@ func TestReduceAppendPlanShapes(t *testing.T) {
 	}
 	// A step's sum bound as a row name is answered by that binding.
 	form := reduceForm{accumulator: "acc", variable: "x", step: "acc + [x]"}
-	require.False(t, form.appendPlan().usable(map[string]interface{}{"acc + [x]": 1}))
-	require.True(t, form.appendPlan().usable(map[string]interface{}{"acc": 1}))
+	require.False(t, form.appendPlan(t.Context()).usable(map[string]interface{}{"acc + [x]": 1}))
+	require.True(t, form.appendPlan(t.Context()).usable(map[string]interface{}{"acc": 1}))
 }
 
 // TestReduceAppendFoldSharesNothing: the list a fold appends to is shared
@@ -216,7 +216,7 @@ func TestReduceAppendResultHandoff(t *testing.T) {
 	var folding []interface{}
 	result, err := runReduceForm(form, base, []interface{}{int64(1), int64(2)},
 		func(a, x interface{}) (interface{}, error) { return nil, nil }, nil,
-		&reduceAppender{plan: form.appendPlan(), term: func(_ int, a, x interface{}) (interface{}, error) {
+		&reduceAppender{plan: form.appendPlan(t.Context()), term: func(_ int, a, x interface{}) (interface{}, error) {
 			folding = a.([]interface{})
 			return x, nil
 		}})

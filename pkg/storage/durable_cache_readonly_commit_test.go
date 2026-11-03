@@ -62,16 +62,16 @@ func warmCacheFixture(t *testing.T) *BadgerEngine {
 	}
 	require.NoError(t, err)
 	require.True(t, waitForLabelIndexReady(t, engine, 5*time.Second), "label index backfill did not finish")
-	_, err = engine.CreateNode(&Node{ID: "caches:a", Labels: []string{"Keep"}, Properties: map[string]any{"v": int64(1)}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "caches:a", Labels: []string{"Keep"}, Properties: map[string]any{"v": int64(1)}})
 	require.NoError(t, err)
 	require.True(t, waitForLabelIndexReady(t, engine, 5*time.Second), "label-index backfill must finish before cache generation assertions")
-	_, err = engine.CreateNode(&Node{ID: "caches:b"})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "caches:b"})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "caches:r", StartNode: "caches:a", EndNode: "caches:b", Type: "KEEP"}))
-	node, err := engine.GetNode("caches:a")
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "caches:r", StartNode: "caches:a", EndNode: "caches:b", Type: "KEEP"}))
+	node, err := engine.GetNode(t.Context(), "caches:a")
 	require.NoError(t, err)
 	require.NotNil(t, node)
-	first, err := engine.GetFirstNodeByLabel("Keep")
+	first, err := engine.GetFirstNodeByLabel(t.Context(), "Keep")
 	require.NoError(t, err)
 	require.NotNil(t, first)
 	edges, err := engine.GetEdgesByType(context.Background(), "KEEP")
@@ -83,7 +83,7 @@ func warmCacheFixture(t *testing.T) *BadgerEngine {
 		return false
 	}))
 	require.Equal(t, NodeID("caches:a"), streamedFirst)
-	_, err = engine.GetEdge("caches:r")
+	_, err = engine.GetEdge(t.Context(), "caches:r")
 	require.NoError(t, err)
 	_, err = engine.GetOutgoingEdges(context.Background(), "caches:a")
 	require.NoError(t, err)
@@ -102,10 +102,10 @@ func warmCacheFixture(t *testing.T) *BadgerEngine {
 // readOnlyTransaction reads one stored node and commits without writing.
 func readOnlyTransaction(t *testing.T, engine *BadgerEngine, id NodeID) {
 	t.Helper()
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
-	_, getErr := tx.GetNode(id)
+	_, getErr := tx.GetNode(t.Context(), id)
 	require.NoError(t, getErr)
 	require.NoError(t, tx.Commit())
 }
@@ -143,16 +143,16 @@ func TestReadOnlyTransactionCommitKeepsLaterInvalidation(t *testing.T) {
 
 	readOnlyTransaction(t, engine, "caches:a")
 
-	require.NoError(t, engine.UpdateNode(NodeUpdateRequest{
+	require.NoError(t, engine.UpdateNode(t.Context(), NodeUpdateRequest{
 		After:  &Node{ID: "caches:a", Labels: []string{"Keep"}, Properties: map[string]any{"v": int64(2)}},
 		Policy: ClientNodeEdits,
 	}))
-	node, err := engine.GetNode("caches:a")
+	node, err := engine.GetNode(t.Context(), "caches:a")
 	require.NoError(t, err)
 	require.Equal(t, int64(2), node.Properties["v"], "read after write returned a superseded image")
 
-	require.NoError(t, engine.DeleteNode("caches:a"))
-	_, err = engine.GetNode("caches:a")
+	require.NoError(t, engine.DeleteNode(t.Context(), "caches:a"))
+	_, err = engine.GetNode(t.Context(), "caches:a")
 	require.ErrorIs(t, err, ErrNotFound, "read after delete returned a superseded image")
 }
 
@@ -163,7 +163,7 @@ func TestUnknownRawTransactionWriteInvalidatesCaches(t *testing.T) {
 	engine := warmCacheFixture(t)
 	before := snapshotWarmCaches(engine)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.SetNamespace("caches"))
@@ -183,10 +183,10 @@ func TestReadOnlyCommitPreservesPublicationDecision(t *testing.T) {
 		t.Run(map[bool]string{false: "accept", true: "reject"}[veto], func(t *testing.T) {
 			engine := warmCacheFixture(t)
 			before := snapshotWarmCaches(engine)
-			tx, err := engine.BeginTransaction()
+			tx, err := engine.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
-			_, err = tx.GetNode("caches:a")
+			_, err = tx.GetNode(t.Context(), "caches:a")
 			require.NoError(t, err)
 			rejected := errors.New("read-only publication rejected")
 			calls := 0

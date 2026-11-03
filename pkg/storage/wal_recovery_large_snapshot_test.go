@@ -56,7 +56,7 @@ func TestRecoverFromWALWithResult_RestoresLargeEdgeSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, recoveredEdges, edgeCount)
 
-	edge, err := recovered.GetEdge(EdgeID("test:edge-00047"))
+	edge, err := recovered.GetEdge(t.Context(), EdgeID("test:edge-00047"))
 	require.NoError(t, err)
 	require.Equal(t, NodeID("test:start"), edge.StartNode)
 	require.Equal(t, NodeID("test:end"), edge.EndNode)

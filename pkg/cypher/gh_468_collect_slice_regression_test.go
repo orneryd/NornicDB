@@ -39,7 +39,7 @@ func TestGH468_CollectedListSubscriptAndSlice(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "gh468")
 			for index, sku := range []string{"a1", "b2", "c3"} {
-				_, err := store.CreateNode(&storage.Node{
+				_, err := store.CreateNode(t.Context(), &storage.Node{
 					ID: storage.NodeID(sku), Labels: []string{"I"},
 					Properties: map[string]interface{}{"sku": sku, "price": float64(index) + 1.25, "qty": int64(index)},
 				})

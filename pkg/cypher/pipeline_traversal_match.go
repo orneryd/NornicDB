@@ -30,7 +30,7 @@ func (e *StorageExecutor) pipelineApplySeededTraversalMatch(ctx context.Context,
 	}
 	pattern := strings.TrimSpace(clause[len("MATCH"):])
 	whereClause := ""
-	if whereIndex := topLevelKeywordIndex(pattern, "WHERE"); whereIndex >= 0 {
+	if whereIndex := topLevelKeywordIndex(ctx, pattern, "WHERE"); whereIndex >= 0 {
 		whereClause = normalizePipelineWhitespace(pattern[whereIndex+len("WHERE"):])
 		pattern = strings.TrimSpace(pattern[:whereIndex])
 	}
@@ -46,10 +46,10 @@ func (e *StorageExecutor) pipelineApplySeededTraversalMatch(ctx context.Context,
 	}
 
 	variables := make([]string, 0)
-	for _, variable := range extractNodeVariables(matchPatternStructure(pattern)) {
+	for _, variable := range extractNodeVariables(matchPatternStructure(ctx, pattern)) {
 		variables = appendUniquePipelineBinding(variables, variable)
 	}
-	for _, variable := range extractRelationshipVariables(matchPatternStructure(pattern)) {
+	for _, variable := range extractRelationshipVariables(matchPatternStructure(ctx, pattern)) {
 		variables = appendUniquePipelineBinding(variables, variable)
 	}
 	pathVariable := extractPathAssignmentVariable(pattern)
@@ -73,7 +73,7 @@ func (e *StorageExecutor) pipelineApplySeededTraversalMatch(ctx context.Context,
 			return nil, true, prepareErr
 		}
 		materializedWhere := whereClause
-		physicalWhere, residualWhere := pipelineTraversalPredicates(materializedWhere, row, variables)
+		physicalWhere, residualWhere := pipelineTraversalPredicates(ctx, materializedWhere, row, variables)
 		rowHint := hint
 		if physicalWhere != materializedWhere || pipelinePatternJoinsOuterBinding(row, variables) {
 			rowHint = pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1}
@@ -116,8 +116,8 @@ func (e *StorageExecutor) pipelineApplySeededTraversalMatch(ctx context.Context,
 				return nil, true, err
 			}
 		}
-		e.normalizeSetMatchRowsToNodes(result, store)
-		e.normalizeSetMatchRowsToEdges(result, store)
+		e.normalizeSetMatchRowsToNodes(ctx, result, store)
+		e.normalizeSetMatchRowsToEdges(ctx, result, store)
 		var rowWhere *preparedRowPredicate
 		if residualWhere != "" {
 			rowWhere = prepareRowPredicate(residualWhere)
@@ -147,13 +147,13 @@ func (e *StorageExecutor) pipelineApplySeededTraversalMatch(ctx context.Context,
 	return out, true, nil
 }
 
-func pipelineTraversalPushdownPredicate(whereClause string, row pipelineRow, localVariables []string) string {
-	pushdown, _ := pipelineTraversalPredicates(whereClause, row, localVariables)
+func pipelineTraversalPushdownPredicate(ctx context.Context, whereClause string, row pipelineRow, localVariables []string) string {
+	pushdown, _ := pipelineTraversalPredicates(ctx, whereClause, row, localVariables)
 	return pushdown
 }
 
 // Each WHERE conjunct runs once: at traversal or after the outer-row join.
-func pipelineTraversalPredicates(whereClause string, row pipelineRow, localVariables []string) (string, string) {
+func pipelineTraversalPredicates(ctx context.Context, whereClause string, row pipelineRow, localVariables []string) (string, string) {
 	if strings.TrimSpace(whereClause) == "" {
 		return "", ""
 	}
@@ -161,7 +161,7 @@ func pipelineTraversalPredicates(whereClause string, row pipelineRow, localVaria
 	for _, variable := range localVariables {
 		local[variable] = struct{}{}
 	}
-	terms := splitTopLevelAndConjuncts(whereClause)
+	terms := splitTopLevelAndConjuncts(ctx, whereClause)
 	pushable := make([]string, 0, len(terms))
 	residual := make([]string, 0, len(terms))
 	for _, term := range terms {
@@ -266,12 +266,12 @@ func (e *StorageExecutor) pipelineMatchHint(ctx context.Context, remaining []pip
 	hint := pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1, readTail: pipelineReadOnlyTail(remaining)}
 	if len(remaining) > 0 && remaining[0].kind == pipelineClauseWith {
 		clause := remaining[0].text
-		if topLevelKeywordIndex(clause, "WHERE") >= 0 {
+		if topLevelKeywordIndex(ctx, clause, "WHERE") >= 0 {
 			return hint
 		}
 		end := len(clause)
 		for _, keyword := range []string{"SKIP", "LIMIT"} {
-			if index := topLevelKeywordIndex(clause, keyword); index >= 0 && index < end {
+			if index := topLevelKeywordIndex(ctx, clause, keyword); index >= 0 && index < end {
 				end = index
 			}
 		}
@@ -314,11 +314,11 @@ func (e *StorageExecutor) pipelineMatchHint(ctx context.Context, remaining []pip
 		return hint
 	}
 	hint.limit = limit
-	if orderIndex := topLevelKeywordIndex(body, "ORDER BY"); orderIndex >= 0 {
+	if orderIndex := topLevelKeywordIndex(ctx, body, "ORDER BY"); orderIndex >= 0 {
 		orderExpr := strings.TrimSpace(body[orderIndex+len("ORDER BY"):])
 		end := len(orderExpr)
 		for _, keyword := range []string{"SKIP", "LIMIT"} {
-			if index := topLevelKeywordIndex(orderExpr, keyword); index >= 0 && index < end {
+			if index := topLevelKeywordIndex(ctx, orderExpr, keyword); index >= 0 && index < end {
 				end = index
 			}
 		}

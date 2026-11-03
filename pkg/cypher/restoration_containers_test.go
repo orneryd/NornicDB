@@ -12,10 +12,10 @@ func TestResultRestorationWithoutRewriteKeepsResultAndError(t *testing.T) {
 	// retired nil receiver's identity contract belongs to the shared entry.
 	input := &ExecuteResult{Columns: []string{"value"}, Rows: [][]any{{int64(1)}}}
 	cause := errors.New("unchanged diagnostic")
-	result, err := (resultRestoration{}).restore(input, cause, nil)
+	result, err := (resultRestoration{}).restore(t.Context(), input, cause, nil)
 	require.Same(t, input, result)
 	require.Same(t, cause, err)
-	result, err = (resultRestoration{}).restore(nil, cause, nil)
+	result, err = (resultRestoration{}).restore(t.Context(), nil, cause, nil)
 	require.Nil(t, result)
 	require.Same(t, cause, err)
 }
@@ -31,7 +31,7 @@ func TestQuotedRestorationDetachesUnchangedContainers(t *testing.T) {
 		},
 		Rows: [][]any{{map[string]any{"number": int64(7)}, []any{int64(8)}}},
 	}
-	result, err := (resultRestoration{names: names}).restore(input, nil, nil)
+	result, err := (resultRestoration{names: names}).restore(t.Context(), input, nil, nil)
 	require.NoError(t, err)
 	require.NotSame(t, input, result)
 	// No text changes in this result. Detachment must still protect the cache
@@ -55,7 +55,7 @@ func TestQuotedRestorationDetachesUnchangedContainers(t *testing.T) {
 
 func TestRestoredResultContainerOwnership(t *testing.T) {
 	t.Run("source fragments keep keys and unchanged nil containers", func(t *testing.T) {
-		_, rewrite := canonicalizeQueryText("EXPLAIN MATCH (n) WHERE n.x IS  NULL RETURN n")
+		_, rewrite := canonicalizeQueryText(t.Context(), "EXPLAIN MATCH (n) WHERE n.x IS  NULL RETURN n")
 		require.NotNil(t, rewrite)
 		var nilMap map[string]any
 		var nilSlice []any
@@ -65,7 +65,7 @@ func TestRestoredResultContainerOwnership(t *testing.T) {
 			"rows":        [][]any{{"n.x IS NULL"}, nil},
 			"map":         nilMap, "slice": nilSlice, "nilRows": nilRows,
 		}}
-		result, err := (resultRestoration{source: rewrite}).restore(input, nil, nil)
+		result, err := (resultRestoration{source: rewrite}).restore(t.Context(), input, nil, nil)
 		require.NoError(t, err)
 		nested := result.Metadata["n.x IS NULL"].([]any)[0].(map[string]any)
 		require.Equal(t, "n.x IS  NULL", nested["fragment"])
@@ -93,7 +93,7 @@ func TestRestoredResultContainerOwnership(t *testing.T) {
 			"rows":   [][]any{{internal}, nil},
 			"map":    nilMap, "slice": nilSlice, "nilRows": nilRows,
 		}}
-		result, err := (resultRestoration{names: names}).restore(input, nil, nil)
+		result, err := (resultRestoration{names: names}).restore(t.Context(), input, nil, nil)
 		require.NoError(t, err)
 		// Metadata is rendered Cypher, so the restored spelling includes quotes.
 		nested := result.Metadata["`a b`"].([]any)[0].(map[string]any)
@@ -114,7 +114,7 @@ func TestRestoredResultContainerOwnership(t *testing.T) {
 var restorationBenchmarkResult *ExecuteResult
 
 func BenchmarkResultRestorationContainers(b *testing.B) {
-	_, rewrite := canonicalizeQueryText("EXPLAIN MATCH (n) WHERE n.x IS  NULL RETURN n")
+	_, rewrite := canonicalizeQueryText(b.Context(), "EXPLAIN MATCH (n) WHERE n.x IS  NULL RETURN n")
 	_, names := canonicalizeQuotedVariablesWithBindings(b.Context(), "EXPLAIN WITH 1 AS `a b` RETURN `a b`", nil)
 	var internal string
 	for identifier := range names.internal {
@@ -136,9 +136,9 @@ func BenchmarkResultRestorationContainers(b *testing.B) {
 			for range b.N {
 				var err error
 				if tc.quoted {
-					restorationBenchmarkResult, err = (resultRestoration{names: names}).restore(input, nil, nil)
+					restorationBenchmarkResult, err = (resultRestoration{names: names}).restore(b.Context(), input, nil, nil)
 				} else {
-					restorationBenchmarkResult, err = (resultRestoration{source: rewrite}).restore(input, nil, nil)
+					restorationBenchmarkResult, err = (resultRestoration{source: rewrite}).restore(b.Context(), input, nil, nil)
 				}
 				if err != nil {
 					b.Fatal(err)

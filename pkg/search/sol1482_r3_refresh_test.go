@@ -3,11 +3,12 @@ package search
 import (
 	"context"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -28,15 +29,15 @@ func (b *solR3ReadBarrier) pause() {
 	}
 }
 func (b *solR3ReadBarrier) open() { b.once.Do(func() { close(b.release) }) }
-func (b *solR3ReadBarrier) GetNode(id storage.NodeID) (*storage.Node, error) {
-	n, e := b.Engine.GetNode(id)
+func (b *solR3ReadBarrier) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
+	n, e := b.Engine.GetNode(ctx, id)
 	if id == "source" {
 		b.pause()
 	}
 	return n, e
 }
-func (b *solR3ReadBarrier) GetEdge(id storage.EdgeID) (*storage.Edge, error) {
-	n, e := b.Engine.GetEdge(id)
+func (b *solR3ReadBarrier) GetEdge(ctx context.Context, id storage.EdgeID) (*storage.Edge, error) {
+	n, e := b.Engine.GetEdge(ctx, id)
 	if id == "r" {
 		b.pause()
 	}
@@ -60,15 +61,15 @@ func TestSol1482R3RefreshReadMatrix(t *testing.T) {
 							t.Cleanup(func() { _ = base.Close() })
 							store := storage.NewNamespacedEngine(base, "test")
 							for _, id := range []storage.NodeID{"a", "b"} {
-								_, err := store.CreateNode(&storage.Node{ID: id})
+								_, err := store.CreateNode(t.Context(), &storage.Node{ID: id})
 								require.NoError(t, err)
 							}
 							node := &storage.Node{ID: "source", Properties: map[string]any{"content": "oldword"}, ChunkEmbeddings: [][]float32{{1, 0}}}
 							rel := &storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "CITES", Properties: map[string]any{"vec": []float32{1, 0}}}
 							if edge {
-								require.NoError(t, store.CreateEdge(rel))
+								require.NoError(t, store.CreateEdge(t.Context(), rel))
 							} else {
-								_, err := store.CreateNode(node)
+								_, err := store.CreateNode(t.Context(), node)
 								require.NoError(t, err)
 							}
 							b := &solR3ReadBarrier{Engine: store, entered: make(chan struct{}), release: make(chan struct{})}
@@ -80,18 +81,18 @@ func TestSol1482R3RefreshReadMatrix(t *testing.T) {
 							}
 							if missing {
 								if edge {
-									require.NoError(t, store.DeleteEdge("r"))
+									require.NoError(t, store.DeleteEdge(t.Context(), "r"))
 								} else {
-									require.NoError(t, store.DeleteNode("source"))
+									require.NoError(t, store.DeleteNode(t.Context(), "source"))
 								}
 							}
 							b.armed.Store(true)
 							done := make(chan error, 1)
 							go func() {
 								if edge {
-									done <- svc.RefreshEdge("r")
+									done <- svc.RefreshEdge(t.Context(), "r")
 								} else {
-									done <- svc.RefreshNode("source")
+									done <- svc.RefreshNode(t.Context(), "source")
 								}
 							}()
 							select {
@@ -102,36 +103,36 @@ func TestSol1482R3RefreshReadMatrix(t *testing.T) {
 							}
 							if remove {
 								if edge {
-									require.NoError(t, store.DeleteEdge("r"))
+									require.NoError(t, store.DeleteEdge(t.Context(), "r"))
 								} else {
-									require.NoError(t, store.DeleteNode("source"))
+									require.NoError(t, store.DeleteNode(t.Context(), "source"))
 								}
 							} else {
 								if edge {
 									rel.Properties["vec"] = []float32{0, 1}
 									if missing {
-										require.NoError(t, store.CreateEdge(rel))
+										require.NoError(t, store.CreateEdge(t.Context(), rel))
 									} else {
-										require.NoError(t, store.UpdateEdge(storage.EdgeUpdateRequest{After: rel}))
+										require.NoError(t, store.UpdateEdge(t.Context(), storage.EdgeUpdateRequest{After: rel}))
 									}
 								} else {
 									node.Properties["content"] = "newword"
 									node.ChunkEmbeddings = [][]float32{{0, 1}}
 									if missing {
-										_, err := store.CreateNode(node)
+										_, err := store.CreateNode(t.Context(), node)
 										require.NoError(t, err)
 									} else {
-										require.NoError(t, store.UpdateNode(storage.NodeUpdateRequest{After: node}))
+										require.NoError(t, store.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
 									}
 								}
 							}
 							var newer func() error
 							if edge {
 								m := svc.ReserveEdgeMutation("r")
-								newer = func() error { return svc.RefreshEdgeWithMutation(m) }
+								newer = func() error { return svc.RefreshEdgeWithMutation(t.Context(), m) }
 							} else {
 								m := svc.ReserveNodeMutation("source")
-								newer = func() error { return svc.RefreshNodeWithMutation(m) }
+								newer = func() error { return svc.RefreshNodeWithMutation(t.Context(), m) }
 							}
 							if !pending {
 								require.NoError(t, newer())
@@ -197,11 +198,11 @@ func TestSol1482R3RelationshipStartupCannotOverwriteRefresh(t *testing.T) {
 			t.Cleanup(func() { _ = base.Close() })
 			store := storage.NewNamespacedEngine(base, "test")
 			for _, id := range []storage.NodeID{"a", "b"} {
-				_, err := store.CreateNode(&storage.Node{ID: id})
+				_, err := store.CreateNode(t.Context(), &storage.Node{ID: id})
 				require.NoError(t, err)
 			}
 			edge := &storage.Edge{ID: "r", Type: "CITES", StartNode: "a", EndNode: "b", Properties: map[string]any{"reason": "oldword"}}
-			require.NoError(t, store.CreateEdge(edge))
+			require.NoError(t, store.CreateEdge(t.Context(), edge))
 			b := &solR3RelationshipSnapshot{Engine: store, entered: make(chan struct{}), release: make(chan struct{})}
 			t.Cleanup(b.open)
 			svc := NewService(b, 2, nil)
@@ -215,15 +216,15 @@ func TestSol1482R3RelationshipStartupCannotOverwriteRefresh(t *testing.T) {
 				t.Fatal("relationship startup did not take snapshot")
 			}
 			if remove {
-				require.NoError(t, store.DeleteEdge("r"))
+				require.NoError(t, store.DeleteEdge(t.Context(), "r"))
 			} else {
 				edge.Properties["reason"] = "newword"
-				require.NoError(t, store.UpdateEdge(storage.EdgeUpdateRequest{After: edge}))
+				require.NoError(t, store.UpdateEdge(t.Context(), storage.EdgeUpdateRequest{After: edge}))
 			}
-			require.NoError(t, svc.RefreshEdge("r"))
+			require.NoError(t, svc.RefreshEdge(t.Context(), "r"))
 			b.open()
 			select {
-			case <-svc.relationshipSearch().ready:
+			case <-svc.relationshipSearch().loaded.Done():
 			case <-time.After(5 * time.Second):
 				t.Fatal("relationship startup did not finish")
 			}

@@ -220,12 +220,21 @@ docker compose -f docker-compose.ha.yml logs -f
 
 ### Write Acknowledgment
 
-| Mode        | Description                 | Latency | Data Safety       |
-| ----------- | --------------------------- | ------- | ----------------- |
-| `async`     | Acknowledge immediately     | Lowest  | Risk of data loss |
-| `quorum`    | Wait for standby to apply   | Highest | Strongest         |
+| Mode        | Description                                                  | Latency | Data Safety       |
+| ----------- | ------------------------------------------------------------ | ------- | ----------------- |
+| `async`     | Acknowledge immediately, without waiting for the write's own replication WAL record to publish | Lowest  | Risk of data loss |
+| `quorum`    | Wait until the primary's own record is published, then until the standby acknowledges that exact record | Highest | Strongest         |
 
 `NORNICDB_CLUSTER_HA_SYNC_MODE` controls this behavior. Default is `async`.
+
+`quorum` spends one deadline on both steps: record publication and the standby
+acknowledgement share the write timeout, and publication delay reduces the time
+left for the acknowledgement instead of granting a second full timeout. The
+deadline ends your wait only. Accepted work is not retracted: the primary keeps
+applying and publishing the write and the standby may still receive it, so a
+timed-out `quorum` write can be present after the client saw an error. Retry
+writes with an application idempotency key rather than assuming the write was
+rejected. `async` never waits for publication and acquires no per-write timer.
 
 ### Local Dev (Two Processes)
 
@@ -727,6 +736,13 @@ Boolean settings accept `true`/`1`/`yes`/`on` and `false`/`0`/`no`/`off`. Any ot
 
 During a mixed-version window, peers cannot decode each other's cluster messages and close the connection. Heartbeats, WAL replication, fencing and promotion between old and upgraded nodes fail; standbys stop catching up, Raft peers can lose quorum, and forwarded writes across the version boundary fail. Resume normal cluster service only after every node has been upgraded.
 
+**Embedding applications.** The cluster wire format is unchanged, but the Go
+`replication.Storage` contract changed: `ApplyCommand` now takes a wait context
+and a `WALPublicationMode` and returns a `CommandPublication`. Rebuild any custom
+`Storage` implementation or caller against it; see
+[replication architecture](../architecture/replication.md#migrating-a-custom-storage-implementation).
+The built-in `StorageAdapter` and all shipped replicators are already migrated.
+
 ---
 
 ## Best Practices
@@ -868,10 +884,10 @@ Formula: heartbeat_timeout < election_timeout / 2
 
 #### Write Ack Mode (`NORNICDB_CLUSTER_HA_SYNC_MODE`)
 
-| Mode        | Acknowledgment    | Data Safety       | Latency |
-| ----------- | ----------------- | ----------------- | ------- |
-| `async`     | Primary only      | Risk of data loss | Lowest  |
-| `quorum`    | Standby applied   | Strongest         | Highest |
+| Mode        | Acknowledgment                                                 | Data Safety       | Latency |
+| ----------- | -------------------------------------------------------------- | ----------------- | ------- |
+| `async`     | Primary only                                                   | Risk of data loss | Lowest  |
+| `quorum`    | Primary record published and standby applied that same record   | Strongest         | Highest |
 
 Default is `async` for lowest write latency; opt into `quorum` only when you need replication-acknowledged writes.
 

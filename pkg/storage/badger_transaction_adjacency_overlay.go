@@ -1,30 +1,39 @@
 package storage
 
+import "context"
+
 // pendingAdjacencyLocked indexes the transaction's incident edges on first
 // adjacency use. Writes maintain it thereafter; unrelated edges never enter a
 // node's read/DELETE working set. All access is under tx.mu.
-func (tx *BadgerTransaction) pendingAdjacencyLocked(id NodeID) map[EdgeID]*Edge {
+func (tx *BadgerTransaction) pendingAdjacencyLocked(ctx context.Context, id NodeID) (map[EdgeID]*Edge, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if tx.pendingAdjacency == nil && len(tx.pendingEdges) == 0 {
-		return nil
+		return nil, nil
 	}
 	if tx.pendingAdjacency == nil {
-		tx.pendingAdjacency = make(map[NodeID]map[EdgeID]*Edge)
+		index := make(map[NodeID]map[EdgeID]*Edge)
 		for _, edge := range tx.pendingEdges {
-			tx.indexPendingEdgeLocked(edge)
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			indexPendingEdge(index, edge)
 		}
+		tx.pendingAdjacency = index
 	}
-	return tx.pendingAdjacency[id]
+	return tx.pendingAdjacency[id], nil
 }
 
-func (tx *BadgerTransaction) indexPendingEdgeLocked(edge *Edge) {
+func indexPendingEdge(index map[NodeID]map[EdgeID]*Edge, edge *Edge) {
 	if edge == nil {
 		return
 	}
 	for _, id := range [...]NodeID{edge.StartNode, edge.EndNode} {
-		edges := tx.pendingAdjacency[id]
+		edges := index[id]
 		if edges == nil {
 			edges = make(map[EdgeID]*Edge)
-			tx.pendingAdjacency[id] = edges
+			index[id] = edges
 		}
 		edges[edge.ID] = edge
 	}
@@ -46,7 +55,7 @@ func (tx *BadgerTransaction) unindexPendingEdgeLocked(edge *Edge) {
 func (tx *BadgerTransaction) setPendingEdgeLocked(edge *Edge) {
 	if tx.pendingAdjacency != nil {
 		tx.unindexPendingEdgeLocked(tx.pendingEdges[edge.ID])
-		tx.indexPendingEdgeLocked(edge)
+		indexPendingEdge(tx.pendingAdjacency, edge)
 	}
 	tx.pendingEdges[edge.ID] = edge
 }
@@ -58,15 +67,24 @@ func (tx *BadgerTransaction) removePendingEdgeLocked(id EdgeID) {
 	delete(tx.pendingEdges, id)
 }
 
-func (tx *BadgerTransaction) mergePendingAdjacentEdgesLocked(committed []*Edge, id NodeID, include func(*Edge) bool) []*Edge {
+func (tx *BadgerTransaction) mergePendingAdjacentEdgesLocked(ctx context.Context, committed []*Edge, id NodeID, include func(*Edge) bool) ([]*Edge, error) {
 	if len(tx.pendingEdges) == 0 && len(tx.deletedEdges) == 0 {
-		return committed
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return committed, nil
 	}
-	pending := tx.pendingAdjacencyLocked(id)
+	pending, err := tx.pendingAdjacencyLocked(ctx, id)
+	if err != nil {
+		return nil, err
+	}
 	// Committed adjacency is caller-owned. A rewrite shadows its former
 	// endpoints even when its new endpoints aren't in this node's index.
 	result := committed[:0]
 	for _, edge := range committed {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if edge == nil {
 			continue
 		}
@@ -81,9 +99,12 @@ func (tx *BadgerTransaction) mergePendingAdjacentEdgesLocked(committed []*Edge, 
 		}
 	}
 	for _, edge := range pending {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if _, gone := tx.deletedEdges[edge.ID]; !gone && include(edge) {
 			result = append(result, copyEdge(edge))
 		}
 	}
-	return result
+	return result, nil
 }

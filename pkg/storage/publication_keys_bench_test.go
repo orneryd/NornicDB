@@ -27,8 +27,15 @@ func BenchmarkPublicationKeys(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for range b.N {
-				constraints := capturePublicationConstraintView(schema)
-				if len(appendOperationPublicationKeys(nil, &constraints, ops)) == 0 {
+				constraints, viewErr := capturePublicationConstraintView(b.Context(), schema)
+				if viewErr != nil {
+					b.Fatal(viewErr)
+				}
+				keys, err := appendOperationPublicationKeys(b.Context(), nil, &constraints, ops)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if len(keys) == 0 {
 					b.Fatal("missing publication dependencies")
 				}
 			}
@@ -51,8 +58,9 @@ func BenchmarkConstraintLookup(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for range b.N {
-				if len(schema.GetConstraintsForLabels(labels)) != count {
-					b.Fatal("missing constraints")
+				constraints, err := schema.GetConstraintsForLabels(b.Context(), labels)
+				if err != nil || len(constraints) != count {
+					b.Fatalf("constraint lookup: %v, %d constraints", err, len(constraints))
 				}
 			}
 		})

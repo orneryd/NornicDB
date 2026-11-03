@@ -3,11 +3,12 @@ package main
 import (
 	"bytes"
 	"errors"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/adminimport"
 	"github.com/orneryd/nornicdb/pkg/cli"
@@ -237,7 +238,7 @@ func TestCheckIDsCommand(t *testing.T) {
 		fixtureowner.Own(t, engine)
 	}
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "nornic:a", Labels: []string{"Doc"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "nornic:a", Labels: []string{"Doc"}})
 	require.NoError(t, err)
 	require.NoError(t, engine.Close())
 

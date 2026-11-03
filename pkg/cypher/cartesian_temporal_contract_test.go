@@ -33,7 +33,7 @@ func testCartesianTemporalContractCases(t *testing.T) {
 			require.NoError(t, err)
 			for i, label := range []string{"TemporalLeft", "TemporalRight", "TemporalThird"} {
 				value := values.Rows[0][i%2]
-				_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(label), Labels: []string{label}, Properties: map[string]interface{}{"t": value}})
+				_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(label), Labels: []string{label}, Properties: map[string]interface{}{"t": value}})
 				require.NoError(t, err)
 			}
 			// A projection is the unoptimized predicate control. The hash join
@@ -64,9 +64,9 @@ func testCartesianTemporalContractCases(t *testing.T) {
 			// Exercise the legacy pushdown owner as well as the public
 			// pipeline's indexed join; both use cartesianValueKey.
 			if tc.Equality == true {
-				left, err := store.GetNode("TemporalLeft")
+				left, err := store.GetNode(t.Context(), "TemporalLeft")
 				require.NoError(t, err)
-				right, err := store.GetNode("TemporalRight")
+				right, err := store.GetNode(t.Context(), "TemporalRight")
 				require.NoError(t, err)
 				matches := []struct {
 					variable string

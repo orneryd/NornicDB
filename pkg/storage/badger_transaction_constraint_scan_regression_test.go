@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -27,26 +28,26 @@ func TestBadgerTransactionConstraintScanErrorsDoNotCommit(t *testing.T) {
 				t.Run(record.name, func(t *testing.T) {
 					engine := newTestEngine(t)
 					for _, id := range []NodeID{"test:source", "test:target"} {
-						_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"Account"}})
+						_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Account"}})
 						require.NoError(t, err)
 					}
 					properties := map[string]interface{}{"key": "duplicate", "from": start, "to": start.Add(time.Hour)}
-					require.NoError(t, engine.CreateEdge(&Edge{
+					require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 						ID: "test:original", StartNode: "test:source", EndNode: "test:target", Type: "REL", Properties: properties,
 					}))
 					c.Label, c.EntityType = "REL", ConstraintEntityRelationship
 					require.NoError(t, engine.GetSchemaForNamespace("test").AddConstraint(c))
-					_, decodeErr := engine.decodeEdgeBodyByID(record.value, "test:original")
+					_, decodeErr := engine.decodeEdgeBodyWithID(nil, namespaceForEdgeID("test:original"), record.value, "test:original")
 					require.Error(t, decodeErr)
-					require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+					require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 						return txn.Set(edgeKey("test:original"), record.value)
 					}))
 					engine.cacheDeleteEdge("test:original")
 
-					tx, err := engine.BeginTransaction()
+					tx, err := engine.BeginTransaction(t.Context())
 					require.NoError(t, err)
 					t.Cleanup(func() { _ = tx.Rollback() })
-					require.NoError(t, tx.CreateEdge(&Edge{
+					require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 						ID: "test:duplicate", StartNode: "test:source", EndNode: "test:target", Type: "REL", Properties: properties,
 					}))
 					require.ErrorContains(t, tx.Commit(), decodeErr.Error())
@@ -76,10 +77,10 @@ func TestBadgerTransactionPolicyLabelChangeErrorsDoNotCommit(t *testing.T) {
 				t.Run(name, func(t *testing.T) {
 					engine := newTestEngine(t)
 					for _, id := range []NodeID{"test:source", "test:target"} {
-						_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"Account"}})
+						_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Account"}})
 						require.NoError(t, err)
 					}
-					require.NoError(t, engine.CreateEdge(&Edge{
+					require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 						ID: "test:original", StartNode: "test:source", EndNode: "test:target", Type: "REL",
 					}))
 					require.NoError(t, engine.GetSchemaForNamespace("test").AddConstraint(Constraint{
@@ -91,32 +92,32 @@ func TestBadgerTransactionPolicyLabelChangeErrorsDoNotCommit(t *testing.T) {
 						anchor, other = "test:source", "test:target"
 					}
 					key := edgeKey("test:original")
-					_, decodeErr := engine.decodeEdgeBodyByID([]byte("corrupt-record"), "test:original")
+					_, decodeErr := engine.decodeEdgeBodyWithID(nil, namespaceForEdgeID("test:original"), []byte("corrupt-record"), "test:original")
 					if corruptEndpoint {
 						key = nodeKey(other)
-						_, decodeErr = engine.decodeNode("test", []byte("corrupt-record"))
+						_, decodeErr = engine.decodeNodeProjected(nil, "test", []byte("corrupt-record"), nil)
 					}
 					require.Error(t, decodeErr)
 					if corruptEndpoint {
-						require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+						require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 							return txn.Set(key, []byte("corrupt-record"))
 						}))
 					}
 
-					tx, err := engine.BeginTransaction()
+					tx, err := engine.BeginTransaction(t.Context())
 					require.NoError(t, err)
 					t.Cleanup(func() { _ = tx.Rollback() })
 					require.NoError(t, tx.SetValidationSetting(DeferredConstraintValidation, true))
-					require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: anchor, Labels: []string{"Forbidden"}}, Policy: ClientNodeEdits}))
+					require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: anchor, Labels: []string{"Forbidden"}}, Policy: ClientNodeEdits}))
 					if !corruptEndpoint {
 						// Relabeling also reads adjacency for counters, so inject corruption after staging.
-						require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+						require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 							return txn.Set(key, []byte("corrupt-record"))
 						}))
 						engine.cacheDeleteEdge("test:original")
 					}
 					require.ErrorContains(t, tx.Commit(), decodeErr.Error())
-					node, err := engine.GetNode(anchor)
+					node, err := engine.GetNode(t.Context(), anchor)
 					require.NoError(t, err)
 					require.Equal(t, []string{"Account"}, node.Labels, "failed commit must not publish violating labels")
 				})
@@ -130,10 +131,10 @@ func TestBadgerTransactionPolicyEndpointErrorsDoNotCommit(t *testing.T) {
 		t.Run(string(endpoint), func(t *testing.T) {
 			engine := newTestEngine(t)
 			for _, id := range []NodeID{"test:source", "test:target"} {
-				_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"Account"}})
+				_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Account"}})
 				require.NoError(t, err)
 			}
-			require.NoError(t, engine.CreateEdge(&Edge{
+			require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 				ID: "test:original", StartNode: "test:source", EndNode: "test:target", Type: "REL",
 				Properties: map[string]interface{}{"state": "original"},
 			}))
@@ -141,21 +142,21 @@ func TestBadgerTransactionPolicyEndpointErrorsDoNotCommit(t *testing.T) {
 				Name: "policy", Type: ConstraintPolicy, EntityType: ConstraintEntityRelationship, Label: "REL",
 				SourceLabel: "Account", TargetLabel: "Account", PolicyMode: "ALLOWED",
 			}))
-			require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+			require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 				return txn.Set(nodeKey(endpoint), []byte("corrupt-record"))
 			}))
-			_, decodeErr := engine.decodeNode("test", []byte("corrupt-record"))
+			_, decodeErr := engine.decodeNodeProjected(nil, "test", []byte("corrupt-record"), nil)
 			require.Error(t, decodeErr)
 
-			tx, err := engine.BeginTransaction()
+			tx, err := engine.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
-			require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: &Edge{
+			require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{
 				ID: "test:original", StartNode: "test:source", EndNode: "test:target", Type: "REL",
 				Properties: map[string]interface{}{"state": "changed"},
 			}}))
 			require.ErrorContains(t, tx.Commit(), decodeErr.Error())
-			edge, err := engine.GetEdge("test:original")
+			edge, err := engine.GetEdge(t.Context(), "test:original")
 			require.NoError(t, err)
 			require.Equal(t, "original", edge.Properties["state"], "failed commit must not publish the relationship update")
 		})
@@ -174,21 +175,21 @@ func TestBadgerTransactionDeferredPolicyLabelChanges(t *testing.T) {
 				t.Run(name, func(t *testing.T) {
 					engine := newTestEngine(t)
 					for _, id := range []NodeID{"test:source", "test:target"} {
-						_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"Account"}})
+						_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Account"}})
 						require.NoError(t, err)
 					}
-					require.NoError(t, engine.CreateEdge(&Edge{
+					require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 						ID: "test:original", StartNode: "test:source", EndNode: "test:target", Type: "REL",
 					}))
 					require.NoError(t, engine.GetSchemaForNamespace("test").AddConstraint(Constraint{
 						Name: "policy", Type: ConstraintPolicy, EntityType: ConstraintEntityRelationship, Label: "REL",
 						SourceLabel: "Account", TargetLabel: "Account", PolicyMode: "ALLOWED",
 					}))
-					tx, err := engine.BeginTransaction()
+					tx, err := engine.BeginTransaction(t.Context())
 					require.NoError(t, err)
 					t.Cleanup(func() { _ = tx.Rollback() })
 					require.NoError(t, tx.SetValidationSetting(DeferredConstraintValidation, true))
-					require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: anchor, Labels: labels}, Policy: ClientNodeEdits}))
+					require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: anchor, Labels: labels}, Policy: ClientNodeEdits}))
 					err = tx.Commit()
 					if allowed {
 						require.NoError(t, err)
@@ -196,7 +197,7 @@ func TestBadgerTransactionDeferredPolicyLabelChanges(t *testing.T) {
 						require.ErrorContains(t, err, "ALLOWED")
 						labels = []string{"Account"}
 					}
-					node, err := engine.GetNode(anchor)
+					node, err := engine.GetNode(t.Context(), anchor)
 					require.NoError(t, err)
 					require.Equal(t, labels, node.Labels)
 				})
@@ -207,11 +208,11 @@ func TestBadgerTransactionDeferredPolicyLabelChanges(t *testing.T) {
 
 func TestBadgerTransactionPolicyMissingNodeLabels(t *testing.T) {
 	engine := newTestEngine(t)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.SetNamespace("test"))
-	labels, err := tx.getNodeLabels("test:missing")
+	labels, err := tx.getNodeLabels(t.Context(), "test:missing")
 	require.NoError(t, err, "missing endpoints retain their existing validation semantics")
 	require.Nil(t, labels)
 }
@@ -231,13 +232,13 @@ func TestBadgerTransactionDeferredPolicyLabelChangeUsesFinalEdges(t *testing.T) 
 				t.Run(name, func(t *testing.T) {
 					engine := newTestEngine(t)
 					for _, id := range []NodeID{"test:source", "test:target", "test:spare"} {
-						_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"Account"}})
+						_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Account"}})
 						require.NoError(t, err)
 					}
 					edge := &Edge{
 						ID: "test:original", StartNode: "test:source", EndNode: "test:target", Type: "REL",
 					}
-					require.NoError(t, engine.CreateEdge(edge))
+					require.NoError(t, engine.CreateEdge(t.Context(), edge))
 					require.NoError(t, engine.GetSchemaForNamespace("test").AddConstraint(Constraint{
 						Name: "policy", Type: ConstraintPolicy, EntityType: ConstraintEntityRelationship, Label: "REL",
 						SourceLabel: "Account", TargetLabel: "Account", PolicyMode: "ALLOWED",
@@ -246,11 +247,11 @@ func TestBadgerTransactionDeferredPolicyLabelChangeUsesFinalEdges(t *testing.T) 
 					if outgoing {
 						anchor = "test:source"
 					}
-					tx, err := engine.BeginTransaction()
+					tx, err := engine.BeginTransaction(t.Context())
 					require.NoError(t, err)
 					t.Cleanup(func() { _ = tx.Rollback() })
 					require.NoError(t, tx.SetValidationSetting(DeferredConstraintValidation, true))
-					require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: anchor, Labels: []string{"Forbidden"}}, Policy: ClientNodeEdits}))
+					require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: anchor, Labels: []string{"Forbidden"}}, Policy: ClientNodeEdits}))
 					if moveEndpoint {
 						if outgoing {
 							edge.StartNode = "test:spare"
@@ -260,12 +261,12 @@ func TestBadgerTransactionDeferredPolicyLabelChangeUsesFinalEdges(t *testing.T) 
 					} else {
 						edge.Type = "UNCONSTRAINED"
 					}
-					require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: edge}))
+					require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge}))
 					require.NoError(t, tx.Commit(), "policy must use final edge type and endpoints, not the replaced committed edge")
-					node, err := engine.GetNode(anchor)
+					node, err := engine.GetNode(t.Context(), anchor)
 					require.NoError(t, err)
 					require.Equal(t, []string{"Forbidden"}, node.Labels)
-					committedEdge, err := engine.GetEdge(edge.ID)
+					committedEdge, err := engine.GetEdge(t.Context(), edge.ID)
 					require.NoError(t, err)
 					require.Equal(t, edge.Type, committedEdge.Type)
 					require.Equal(t, edge.StartNode, committedEdge.StartNode)

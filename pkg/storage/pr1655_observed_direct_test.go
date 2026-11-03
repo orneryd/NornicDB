@@ -19,21 +19,21 @@ func TestPR1655ObservedDirectDeletion(t *testing.T) {
 				nodeID = "pr1655-a"
 				edgeID = "pr1655-r"
 			}
-			before, err := target.GetNode(nodeID)
+			before, err := target.GetNode(t.Context(), nodeID)
 			require.NoError(t, err)
-			edgeBefore, err := target.GetEdge(edgeID)
+			edgeBefore, err := target.GetEdge(t.Context(), edgeID)
 			require.NoError(t, err)
-			require.NoError(t, target.DeleteEdge(edgeID))
-			require.NoError(t, target.DeleteNode(nodeID))
+			require.NoError(t, target.DeleteEdge(t.Context(), edgeID))
+			require.NoError(t, target.DeleteNode(t.Context(), nodeID))
 			after := *before
 			after.Properties = map[string]any{"note": "rejected"}
 			edgeAfter := *edgeBefore
 			edgeAfter.Properties = map[string]any{"note": "rejected"}
-			require.ErrorIs(t, target.UpdateNode(NodeUpdateRequest{Before: before, After: &after}), ErrConflict)
-			require.ErrorIs(t, target.UpdateEdge(EdgeUpdateRequest{Before: edgeBefore, After: &edgeAfter}), ErrConflict)
-			_, err = target.GetNode(nodeID)
+			require.ErrorIs(t, target.UpdateNode(t.Context(), NodeUpdateRequest{Before: before, After: &after}), ErrConflict)
+			require.ErrorIs(t, target.UpdateEdge(t.Context(), EdgeUpdateRequest{Before: edgeBefore, After: &edgeAfter}), ErrConflict)
+			_, err = target.GetNode(t.Context(), nodeID)
 			require.ErrorIs(t, err, ErrNotFound)
-			_, err = target.GetEdge(edgeID)
+			_, err = target.GetEdge(t.Context(), edgeID)
 			require.ErrorIs(t, err, ErrNotFound)
 		})
 	}

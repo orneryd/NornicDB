@@ -36,7 +36,7 @@ func boundNodeLookupGraph(t testing.TB) *StorageExecutor {
 		o["name"] = fmt.Sprintf("o%d", i)
 		nodes = append(nodes, &storage.Node{ID: storage.NodeID(fmt.Sprintf("o%d", i)), Labels: []string{"O"}, Properties: o})
 	}
-	require.NoError(t, store.BulkCreateNodes(nodes))
+	require.NoError(t, store.BulkCreateNodes(t.Context(), nodes))
 	return exec
 }
 
@@ -105,9 +105,9 @@ func TestBoundNodeLookupShape(t *testing.T) {
 		require.Equal(t, test.ok, parseBoundNodeShape(t.Context(), test.body).ok, test.body)
 	}
 	exec := boundNodeLookupGraph(t)
-	o, err := exec.storage.GetNode("o0")
+	o, err := exec.storage.GetNode(t.Context(), "o0")
 	require.NoError(t, err)
-	s, err := exec.storage.GetNode("s1")
+	s, err := exec.storage.GetNode(t.Context(), "s1")
 	require.NoError(t, err)
 	ctx := context.Background()
 	count, ok := exec.boundNodeLookupCount(ctx, "MATCH (s:S {id: o.ref})", map[string]interface{}{"o": o}, false)

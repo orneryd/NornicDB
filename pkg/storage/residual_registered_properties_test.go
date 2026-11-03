@@ -59,22 +59,22 @@ func TestResidualRegisteredPropertyImages(t *testing.T) {
 			other := &storage.Node{ID: "test:registered-b"}
 			edge := &storage.Edge{ID: "test:registered-e", StartNode: n.ID, EndNode: other.ID, Type: "REGISTERED", Properties: props}
 			if route == "direct" {
-				_, err = b.CreateNode(n)
+				_, err = b.CreateNode(t.Context(), n)
 				require.NoError(t, err)
-				_, err = b.CreateNode(other)
+				_, err = b.CreateNode(t.Context(), other)
 				require.NoError(t, err)
-				require.NoError(t, b.CreateEdge(edge))
+				require.NoError(t, b.CreateEdge(t.Context(), edge))
 			} else {
-				tx, err := b.BeginTransaction()
+				tx, err := b.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				defer tx.Rollback()
 				require.NoError(t, tx.SetNamespace("test"))
 				require.NoError(t, tx.SetImplicit(route == "buffered"))
-				_, err = tx.CreateNode(n)
+				_, err = tx.CreateNode(t.Context(), n)
 				require.NoError(t, err)
-				_, err = tx.CreateNode(other)
+				_, err = tx.CreateNode(t.Context(), other)
 				require.NoError(t, err)
-				require.NoError(t, tx.CreateEdge(edge))
+				require.NoError(t, tx.CreateEdge(t.Context(), edge))
 				if route == "wal" {
 					prepared, err := tx.PrepareEntityCommit(context.Background(), storage.EntityCommitRequest{LogicalID: "registered-wal"})
 					require.NoError(t, err)
@@ -89,14 +89,14 @@ func TestResidualRegisteredPropertyImages(t *testing.T) {
 			}
 			duration.Days, floats[0], ints[0] = 99, 99, 99
 			values["reused"] = true
-			warmNode, err := b.GetStoredNode(n.ID)
+			warmNode, err := b.GetStoredNode(t.Context(), n.ID)
 			require.NoError(t, err)
-			warmEdge, err := b.GetStoredEdge(edge.ID)
+			warmEdge, err := b.GetStoredEdge(t.Context(), edge.ID)
 			require.NoError(t, err)
 			require.Equal(t, int64(3), warmNode.Properties["duration"].(*cypher.CypherDuration).Days)
 			require.Equal(t, float64(1.5), warmEdge.Properties["vector-float"].(cypher.CypherVector).Floats[0])
 			// Returned scalars and containers also have independent ownership.
-			returned, err := b.GetStoredNode(n.ID)
+			returned, err := b.GetStoredNode(t.Context(), n.ID)
 			require.NoError(t, err)
 			returned.Properties["duration"].(*cypher.CypherDuration).Days = 88
 			returned.Properties["vector-int"].(cypher.CypherVector).Ints[0] = 88
@@ -132,19 +132,19 @@ func TestResidualRegisteredPropertyImages(t *testing.T) {
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = recovered.Close() })
 				require.Empty(t, result.Errors)
-				recoveredNode, err := recovered.GetStoredNode(n.ID)
+				recoveredNode, err := recovered.GetStoredNode(t.Context(), n.ID)
 				require.NoError(t, err)
-				recoveredEdge, err := recovered.GetStoredEdge(edge.ID)
+				recoveredEdge, err := recovered.GetStoredEdge(t.Context(), edge.ID)
 				require.NoError(t, err)
 				require.Equal(t, warmNode.Properties, recoveredNode.Properties)
 				require.Equal(t, warmEdge.Properties, recoveredEdge.Properties)
 			}
-			require.NoError(t, b.FlushWriteBehind(nil))
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
 			require.NoError(t, b.Close())
 			b = open()
-			coldNode, err := b.GetStoredNode(n.ID)
+			coldNode, err := b.GetStoredNode(t.Context(), n.ID)
 			require.NoError(t, err)
-			coldEdge, err := b.GetStoredEdge(edge.ID)
+			coldEdge, err := b.GetStoredEdge(t.Context(), edge.ID)
 			require.NoError(t, err)
 			require.Equal(t, coldNode.Properties, warmNode.Properties)
 			require.Equal(t, coldEdge.Properties, warmEdge.Properties)
@@ -162,9 +162,9 @@ func TestResidualPropertyImageKeepsCodecRejection(t *testing.T) {
 		b, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = b.Close() })
-		_, err = b.CreateNode(&storage.Node{ID: "test:invalid", Properties: map[string]any{"nested": []any{value}}})
+		_, err = b.CreateNode(t.Context(), &storage.Node{ID: "test:invalid", Properties: map[string]any{"nested": []any{value}}})
 		require.Error(t, err)
-		_, err = b.GetStoredNode("test:invalid")
+		_, err = b.GetStoredNode(t.Context(), "test:invalid")
 		require.ErrorIs(t, err, storage.ErrNotFound)
 	}
 }

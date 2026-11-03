@@ -44,18 +44,18 @@ func TestDeleteCleanupDropsDeleteMarkers(t *testing.T) {
 	c.threshold, c.quiet = 200, 500*time.Millisecond
 
 	for i := 0; i < 50; i++ {
-		_, err := eng.CreateNode(&Node{ID: NodeID(fmt.Sprintf("test:keep-%d", i)), Labels: []string{"Keep"}})
+		_, err := eng.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("test:keep-%d", i)), Labels: []string{"Keep"}})
 		require.NoError(t, err)
 	}
 	junk := make([]NodeID, 0, 300)
 	for i := 0; i < 300; i++ {
 		id := NodeID(fmt.Sprintf("test:junk-%d", i))
-		_, err := eng.CreateNode(&Node{ID: id, Labels: []string{"Junk"}})
+		_, err := eng.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Junk"}})
 		require.NoError(t, err)
 		junk = append(junk, id)
 	}
 	for i := 0; i+1 < len(junk); i += 2 {
-		require.NoError(t, eng.CreateEdge(&Edge{ID: EdgeID(fmt.Sprintf("test:e-%d", i)), StartNode: junk[i], EndNode: junk[i+1], Type: "R"}))
+		require.NoError(t, eng.CreateEdge(t.Context(), &Edge{ID: EdgeID(fmt.Sprintf("test:e-%d", i)), StartNode: junk[i], EndNode: junk[i+1], Type: "R"}))
 	}
 
 	var wg sync.WaitGroup
@@ -70,14 +70,14 @@ func TestDeleteCleanupDropsDeleteMarkers(t *testing.T) {
 				return
 			default:
 			}
-			if _, err := eng.CreateNode(&Node{ID: NodeID(fmt.Sprintf("test:w-%d", i)), Labels: []string{"W"}}); err != nil {
+			if _, err := eng.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("test:w-%d", i)), Labels: []string{"W"}}); err != nil {
 				writeErr <- err
 				return
 			}
 		}
 	}()
 
-	require.NoError(t, eng.BulkDeleteNodes(junk))
+	require.NoError(t, eng.BulkDeleteNodes(t.Context(), junk))
 	require.Positive(t, countDeleteMarkers(t, eng, prefixNode))
 	require.Eventually(t, func() bool { return c.deletes.Load() < c.threshold }, 10*time.Second, 10*time.Millisecond)
 	close(stop)
@@ -101,7 +101,7 @@ func TestManagedDropPrefixHoldsCommitGate(t *testing.T) {
 	eng, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	defer eng.Close()
-	require.NoError(t, eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		return txn.Set(deleteCleanupMarkerKey, []byte{1})
 	}))
 
@@ -134,9 +134,9 @@ func TestDeleteCleanupLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	c := eng.deleteCleanup
 	c.threshold, c.quiet = 1, time.Hour
-	_, err = eng.CreateNode(&Node{ID: "test:a", Labels: []string{"N"}})
+	_, err = eng.CreateNode(t.Context(), &Node{ID: "test:a", Labels: []string{"N"}})
 	require.NoError(t, err)
-	require.NoError(t, eng.DeleteNode("test:a"))
+	require.NoError(t, eng.DeleteNode(t.Context(), "test:a"))
 	closed := make(chan error, 1)
 	go func() { closed <- eng.Close() }()
 	select {
@@ -148,7 +148,7 @@ func TestDeleteCleanupLifecycle(t *testing.T) {
 	eng.stopDeleteCleanup()
 
 	c.deletes.Store(5)
-	eng.runDeleteCleanup(5)
+	eng.runDeleteCleanup(t.Context(), 5)
 	require.Equal(t, int64(5), c.deletes.Load())
 
 	mem, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
@@ -157,8 +157,8 @@ func TestDeleteCleanupLifecycle(t *testing.T) {
 	}
 	require.NoError(t, err)
 	require.Nil(t, mem.deleteCleanup)
-	_, err = mem.CreateNode(&Node{ID: "test:a", Labels: []string{"N"}})
+	_, err = mem.CreateNode(t.Context(), &Node{ID: "test:a", Labels: []string{"N"}})
 	require.NoError(t, err)
-	require.NoError(t, mem.DeleteNode("test:a"))
+	require.NoError(t, mem.DeleteNode(t.Context(), "test:a"))
 	require.NoError(t, mem.Close())
 }

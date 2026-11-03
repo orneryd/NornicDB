@@ -9,8 +9,8 @@ import (
 // Keep the optional bulk enumeration contract bound to its native implementation.
 var _ MVCCEnumerationEngine = (*BadgerEngine)(nil)
 
-func (b *BadgerEngine) GetNodeVisibleAt(id NodeID, version MVCCVersion) (*Node, error) {
-	return readEntityAtWithView(b, id, version, mvccEntityRead{vectors: true, visibility: visibleRead}, b.withView, (*BadgerEngine).getNodeAtInTxn)
+func (b *BadgerEngine) GetNodeVisibleAt(ctx context.Context, id NodeID, version MVCCVersion) (*Node, error) {
+	return readEntityAtWithView(ctx, b, id, version, mvccEntityRead{vectors: true, visibility: visibleRead}, b.withView, (*BadgerEngine).getNodeAtInTxn)
 }
 
 // getNodeAtInTxn resolves logical visibility and hydration against the supplied
@@ -100,7 +100,7 @@ func (b *BadgerEngine) getNodeProjectedVisibleAtInTxn(txn *badger.Txn, id NodeID
 			var node *Node
 			if err := item.Value(func(val []byte) error {
 				namespace := namespaceForNodeID(id)
-				decoded, decodeErr := b.decodeNodeProjected(namespace, val, include)
+				decoded, decodeErr := b.decodeNodeProjected(txn, namespace, val, include)
 				if decodeErr != nil {
 					return decodeErr
 				}
@@ -244,7 +244,10 @@ func (b *BadgerEngine) streamNodesByLabelAtSnapshotWithView(
 	defer deregister()
 
 	return view(func(txn *badger.Txn) error {
-		it := b.newNodeIndexReader(txn, scope, labelIndexPrefix(label), "")
+		it, err := b.newLabelIndexReader(ctx, txn, scope, label, "", v, true)
+		if err != nil {
+			return err
+		}
 		defer it.Close()
 		var cancel bulkReadCancellation
 		for it.Next() {
@@ -340,7 +343,10 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 			return emit(node)
 		}
 
-		it := b.newNodeIndexReader(txn, scope, labelIndexPrefix(label), afterNodeID)
+		it, err := b.newLabelIndexReader(ctx, txn, scope, label, afterNodeID, v, false)
+		if err != nil {
+			return err
+		}
 		defer it.Close()
 		var pending []NodeID
 		lookups := 0
@@ -352,13 +358,18 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 			if err := cancel.check(ctx); err != nil {
 				return err
 			}
-			indexKey := it.Item().Key()
+			indexKey := it.IndexKey()
 			nodeID := it.NodeID()
 			if b.checksIndexTombstones(v) && hasIndexTombstone(txn, indexKey) {
 				continue
 			}
 			if !coversDecided && lookups >= labelScanPointLookups {
-				covers = b.labelCoversScope(scope, label)
+				// Author: storage-format-owners lane (Codex), 1 November 2026.
+				var err error
+				covers, err = b.labelCoversScope(ctx, scope, label)
+				if err != nil {
+					return err
+				}
 				coversDecided = true
 			}
 			if pending != nil || (covers && lookups >= labelScanPointLookups) {
@@ -390,7 +401,7 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 		// in label-index order.
 		nodes := make(map[NodeID]*Node, len(pending))
 		readErrors := make(map[NodeID]error)
-		if err := readNodeRecordsInOnePass(txn, scope, pending, func(nodeID NodeID, item *badger.Item) error {
+		if err := readNodeRecordsInOnePass(ctx, txn, scope, pending, func(nodeID NodeID, item *badger.Item) error {
 			node, err := readItem(nodeID, item)
 			nodes[nodeID] = node
 			if err != nil {

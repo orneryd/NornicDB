@@ -79,13 +79,11 @@ func (o *annMutationOverlay) Search(ctx context.Context, query []float32, limit 
 	o.mu.RLock()
 	candidates := make([]Candidate, 0, min(limit, len(o.vectors)))
 	for id, value := range o.vectors {
-		if ctx != nil {
-			select {
-			case <-ctx.Done():
-				o.mu.RUnlock()
-				return nil
-			default:
-			}
+		select {
+		case <-ctx.Done():
+			o.mu.RUnlock()
+			return nil
+		default:
 		}
 		score := float64(vector.DotProduct(normalizedQuery, value))
 		if score >= minSimilarity {

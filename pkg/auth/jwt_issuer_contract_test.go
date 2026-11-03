@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -17,7 +18,7 @@ import (
 func TestJWTIssuerPurposeWireContract(t *testing.T) {
 	a := newTestAuthenticator(t)
 	a.config.TokenExpiry = 2500 * time.Millisecond
-	user, err := a.CreateUser("issuer-λ", "synthetic-password-issuer", []Role{RoleEditor, RoleViewer})
+	user, err := a.CreateUser(context.Background(), "issuer-λ", "synthetic-password-issuer", []Role{RoleEditor, RoleViewer})
 	require.NoError(t, err)
 	user.Email = "issuer@example.invalid"
 	check := func(token string, expected JWTClaims, expiry time.Duration, before int64) {
@@ -62,7 +63,7 @@ func TestJWTIssuerPurposeWireContract(t *testing.T) {
 	check(token, JWTClaims{Sub: clusterSubjectPrefix + "node-λ", Username: "node-λ", Roles: []string{"admin"}}, a.config.TokenExpiry, before)
 	// Authenticate reloads its persisted user, retaining its independently stored email.
 	before = time.Now().Unix()
-	response, authenticated, err := a.Authenticate(user.Username, "synthetic-password-issuer", "127.0.0.1", "issuer-contract")
+	response, authenticated, err := a.Authenticate(context.Background(), user.Username, "synthetic-password-issuer", "127.0.0.1", "issuer-contract")
 	require.NoError(t, err)
 	check(response.AccessToken, JWTClaims{Sub: authenticated.ID, Username: authenticated.Username, Email: authenticated.Email, Roles: []string{"editor", "viewer"}}, a.config.TokenExpiry, before)
 	a.config.JWTSecret = nil

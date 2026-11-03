@@ -43,13 +43,14 @@ func TestKnowledgePolicyUsesScopedAccessMetadata(t *testing.T) {
 							{ID: storage.NodeID(id), Labels: []string{"Doc"}, Properties: map[string]interface{}{"body": "visible"}, CreatedAt: old, UpdatedAt: old},
 							{ID: "end", Labels: []string{"Other"}, Properties: map[string]interface{}{}, CreatedAt: old, UpdatedAt: old},
 						} {
-							_, err := store.CreateNode(node)
+							_, err := store.CreateNode(t.Context(), node)
 							require.NoError(t, err)
 						}
-						require.NoError(t, store.CreateEdge(&storage.Edge{ID: "edge:1", StartNode: storage.NodeID(id), EndNode: "end", Type: "LINKS", Properties: map[string]interface{}{"summary": "visible"}, CreatedAt: old, UpdatedAt: old}))
+						require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "edge:1", StartNode: storage.NodeID(id), EndNode: "end", Type: "LINKS", Properties: map[string]interface{}{"summary": "visible"}, CreatedAt: old, UpdatedAt: old}))
 						for entity, scope := range map[string]knowledgepolicy.ScopeType{id: knowledgepolicy.ScopeNode, "edge:1": knowledgepolicy.ScopeEdge} {
 							storedID := database + ":" + entity
-							require.NoError(t, base.PutAccessMeta(storedID, &knowledgepolicy.AccessMetaEntry{TargetID: storedID, TargetScope: scope, Fixed: knowledgepolicy.AccessMetaFixedFields{AccessCount: 3, LastAccessedAt: now.UnixNano()}}))
+							_, accessWriteErr1 := base.WriteAccessMeta(context.Background(), knowledgepolicy.AccessMetaWriteRequest{Mode: knowledgepolicy.RecordState, EntityID: storedID, Entry: &knowledgepolicy.AccessMetaEntry{TargetID: storedID, TargetScope: scope, Fixed: knowledgepolicy.AccessMetaFixedFields{AccessCount: 3, LastAccessedAt: now.UnixNano()}}})
+							require.NoError(t, accessWriteErr1)
 						}
 						exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 						ctx := context.Background()
@@ -75,15 +76,15 @@ func TestKnowledgePolicyUsesScopedAccessMetadata(t *testing.T) {
 							}
 						}
 						for _, entity := range []string{id, "edge:1"} {
-							result, err := exec.callNornicDbKnowledgePolicyResolve([]interface{}{entity})
+							result, err := exec.callNornicDbKnowledgePolicyResolve(t.Context(), []interface{}{entity})
 							require.NoError(t, err)
 							require.InDelta(t, 1.0, result.Rows[0][12], 0.01)
 							require.Equal(t, false, result.Rows[0][14])
 						}
-						plain, err := store.GetNode(storage.NodeID(id))
+						plain, err := store.GetNode(t.Context(), storage.NodeID(id))
 						require.NoError(t, err)
 						require.Equal(t, "visible", exec.nodeToMap(plain)["body"], "property filter must use the same access record")
-						edge, err := store.GetEdge("edge:1")
+						edge, err := store.GetEdge(t.Context(), "edge:1")
 						require.NoError(t, err)
 						require.Equal(t, "visible", exec.decayVisibleEdgeProperties(edge)["summary"])
 					})

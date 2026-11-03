@@ -27,47 +27,47 @@ func TestTransactionStoredReaderKeepsOverlayAndHiddenBodies(t *testing.T) {
 			for _, db := range []string{"a", "b"} {
 				ns := storage.NewNamespacedEngine(base, db)
 				for _, id := range []storage.NodeID{"x", "y", "z", "removed"} {
-					_, err := ns.CreateNode(&storage.Node{ID: id, Labels: []string{"N"}, Properties: map[string]any{"k": string(id)}})
+					_, err := ns.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"N"}, Properties: map[string]any{"k": string(id)}})
 					require.NoError(t, err)
 				}
 				for _, edge := range []*storage.Edge{
 					{ID: "hidden", StartNode: "x", EndNode: "y", Type: "REL", Properties: map[string]any{"k": "dup"}},
 					{ID: "deleted", StartNode: "x", EndNode: "z", Type: "REL", Properties: map[string]any{"k": "deleted"}},
 				} {
-					require.NoError(t, ns.CreateEdge(edge))
+					require.NoError(t, ns.CreateEdge(t.Context(), edge))
 				}
 			}
-			require.NoError(t, base.FlushWriteBehind(nil))
-			require.NoError(t, base.SetManualSuppression(storage.StoredEntityNodeKind, "a:x", true))
-			require.NoError(t, base.SetManualSuppression(storage.StoredEntityEdgeKind, "a:hidden", true))
-			tx, err := base.BeginTransaction()
+			require.NoError(t, base.FlushWriteBehind(context.Background()))
+			require.NoError(t, base.SetManualSuppression(context.Background(), storage.StoredEntityNodeKind, "a:x", true))
+			require.NoError(t, base.SetManualSuppression(context.Background(), storage.StoredEntityEdgeKind, "a:hidden", true))
+			tx, err := base.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			require.NoError(t, tx.SetNamespace("a"))
-			_, err = tx.CreateNode(&storage.Node{ID: "a:pending", Labels: []string{"N"}, Properties: map[string]any{"k": "x"}})
+			_, err = tx.CreateNode(t.Context(), &storage.Node{ID: "a:pending", Labels: []string{"N"}, Properties: map[string]any{"k": "x"}})
 			require.NoError(t, err)
-			require.NoError(t, tx.DeleteGraphNode("a:removed", storage.CascadeEdges))
-			require.NoError(t, tx.DeleteEdge("a:deleted"))
-			require.NoError(t, tx.CreateEdge(&storage.Edge{ID: "a:pending", StartNode: "a:y", EndNode: "a:z", Type: "REL", Properties: map[string]any{"k": "dup"}}))
+			require.NoError(t, tx.DeleteGraphNode(t.Context(), "a:removed", storage.CascadeEdges))
+			require.NoError(t, tx.DeleteEdge(t.Context(), "a:deleted"))
+			require.NoError(t, tx.CreateEdge(t.Context(), &storage.Edge{ID: "a:pending", StartNode: "a:y", EndNode: "a:z", Type: "REL", Properties: map[string]any{"k": "dup"}}))
 			wrapper := &transactionStorageWrapper{tx: tx, underlying: storage.NewNamespacedEngine(base, "a"), namespace: "a", separator: ":"}
-			_, err = base.GetNode("a:x")
+			_, err = base.GetNode(t.Context(), "a:x")
 			require.ErrorIs(t, err, storage.ErrNotFound)
-			_, err = wrapper.GetEdge("hidden")
+			_, err = wrapper.GetEdge(t.Context(), "hidden")
 			require.ErrorIs(t, err, storage.ErrNotFound)
-			node, err := storage.GetStoredNode(wrapper, "pending")
+			node, err := storage.GetStoredNode(t.Context(), wrapper, "pending")
 			require.NoError(t, err)
 			require.Equal(t, storage.NodeID("pending"), node.ID)
-			node, err = storage.GetStoredNode(wrapper, "x")
+			node, err = storage.GetStoredNode(t.Context(), wrapper, "x")
 			require.NoError(t, err)
 			require.Equal(t, storage.NodeID("x"), node.ID)
-			_, err = storage.GetStoredNode(wrapper, "removed")
+			_, err = storage.GetStoredNode(t.Context(), wrapper, "removed")
 			require.ErrorIs(t, err, storage.ErrNotFound)
 			for _, id := range []storage.EdgeID{"hidden", "pending"} {
-				edge, err := storage.GetStoredEdge(wrapper, id)
+				edge, err := storage.GetStoredEdge(t.Context(), wrapper, id)
 				require.NoError(t, err)
 				require.Equal(t, id, edge.ID)
 			}
-			_, err = storage.GetStoredEdge(wrapper, "deleted")
+			_, err = storage.GetStoredEdge(t.Context(), wrapper, "deleted")
 			require.ErrorIs(t, err, storage.ErrNotFound)
 			outgoing, err := storage.GetStoredOutgoingEdges(context.Background(), wrapper, "x")
 			require.NoError(t, err)
@@ -118,7 +118,7 @@ func TestTransactionStoredReaderKeepsOverlayAndHiddenBodies(t *testing.T) {
 				if entity == storage.ConstraintEntityRelationship {
 					label = "REL"
 				}
-				err := storage.ValidateConstraintOnCreationForEngine(wrapper, storage.Constraint{
+				err := storage.ValidateConstraintOnCreationForEngine(context.Background(), wrapper, storage.Constraint{
 					Name: "u", Type: storage.ConstraintUnique, EntityType: entity, Label: label, Properties: []string{"k"},
 				})
 				require.Error(t, err, "hidden committed and pending values both occupy their unique keys")
@@ -132,28 +132,28 @@ func TestTransactionStoredReaderKeepsSnapshot(t *testing.T) {
 	t.Cleanup(func() { _ = base.Close() })
 	ns := storage.NewNamespacedEngine(base, "a")
 	for _, id := range []storage.NodeID{"x", "y"} {
-		_, err := ns.CreateNode(&storage.Node{ID: id, Labels: []string{"N"}, Properties: map[string]any{"k": "before"}})
+		_, err := ns.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"N"}, Properties: map[string]any{"k": "before"}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, ns.CreateEdge(&storage.Edge{ID: "hidden", StartNode: "x", EndNode: "y", Type: "REL", Properties: map[string]any{"k": "before"}}))
-	require.NoError(t, base.SetManualSuppression(storage.StoredEntityNodeKind, "a:x", true))
-	require.NoError(t, base.SetManualSuppression(storage.StoredEntityEdgeKind, "a:hidden", true))
-	tx, err := base.BeginTransaction()
+	require.NoError(t, ns.CreateEdge(t.Context(), &storage.Edge{ID: "hidden", StartNode: "x", EndNode: "y", Type: "REL", Properties: map[string]any{"k": "before"}}))
+	require.NoError(t, base.SetManualSuppression(context.Background(), storage.StoredEntityNodeKind, "a:x", true))
+	require.NoError(t, base.SetManualSuppression(context.Background(), storage.StoredEntityEdgeKind, "a:hidden", true))
+	tx, err := base.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.SetNamespace("a"))
 	wrapper := &transactionStorageWrapper{tx: tx, underlying: ns, namespace: "a", separator: ":"}
-	require.NoError(t, tx.CreateEdge(&storage.Edge{ID: "a:pending", StartNode: "a:y", EndNode: "a:y", Type: "REL"}))
+	require.NoError(t, tx.CreateEdge(t.Context(), &storage.Edge{ID: "a:pending", StartNode: "a:y", EndNode: "a:y", Type: "REL"}))
 	// A peer changes committed bodies and membership after this snapshot.
-	require.NoError(t, ns.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "x", Labels: []string{"N"}, Properties: map[string]any{"k": "after"}}}))
-	require.NoError(t, ns.UpdateEdge(storage.EdgeUpdateRequest{After: &storage.Edge{ID: "hidden", StartNode: "x", EndNode: "y", Type: "REL", Properties: map[string]any{"k": "after"}}}))
-	_, err = ns.CreateNode(&storage.Node{ID: "late", Labels: []string{"N"}})
+	require.NoError(t, ns.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: &storage.Node{ID: "x", Labels: []string{"N"}, Properties: map[string]any{"k": "after"}}}))
+	require.NoError(t, ns.UpdateEdge(t.Context(), storage.EdgeUpdateRequest{After: &storage.Edge{ID: "hidden", StartNode: "x", EndNode: "y", Type: "REL", Properties: map[string]any{"k": "after"}}}))
+	_, err = ns.CreateNode(t.Context(), &storage.Node{ID: "late", Labels: []string{"N"}})
 	require.NoError(t, err)
-	require.NoError(t, ns.CreateEdge(&storage.Edge{ID: "late", StartNode: "y", EndNode: "y", Type: "REL"}))
-	node, err := storage.GetStoredNode(wrapper, "x")
+	require.NoError(t, ns.CreateEdge(t.Context(), &storage.Edge{ID: "late", StartNode: "y", EndNode: "y", Type: "REL"}))
+	node, err := storage.GetStoredNode(t.Context(), wrapper, "x")
 	require.NoError(t, err)
 	require.Equal(t, "before", node.Properties["k"])
-	edge, err := storage.GetStoredEdge(wrapper, "hidden")
+	edge, err := storage.GetStoredEdge(t.Context(), wrapper, "hidden")
 	require.NoError(t, err)
 	require.Equal(t, "before", edge.Properties["k"])
 	nodes, err := storage.GetStoredNodesByLabel(context.Background(), wrapper, "N")

@@ -13,6 +13,11 @@ import (
 type semanticPropertyValues struct{ values map[string]any }
 
 func (p semanticPropertyValues) EncodeMsgpack(enc *msgpack.Encoder) error {
+	// Nil and empty maps already normalize to an empty MessagePack map. Let
+	// the standard encoder write it without materializing a transient Go map.
+	if len(p.values) == 0 {
+		return enc.EncodeMapLen(0)
+	}
 	isolated := false
 	for _, value := range p.values {
 		needsIsolation, err := inspectPropertyEncoding(value, 0, maxTransportPropertyDepth)
@@ -119,6 +124,57 @@ type EntityTransactionRequest struct {
 // Prepared input reads the accepted private snapshot without allocating the
 // detached public Operations view. Raw input retains its original validation.
 func EncodeEntityTransaction(request EntityTransactionRequest) ([]byte, error) {
+	encoder := getValueEncoder()
+	defer putValueEncoder(encoder)
+	payload, err := encoder.entityTransaction(request)
+	if err != nil {
+		return nil, err
+	}
+	return bytes.Clone(payload), nil
+}
+
+// semanticTransactionScratch belongs to the existing encoder lease. It holds
+// only transient wire images; release clears every graph reference before pool
+// reuse and drops unusually large backing arrays rather than retaining them.
+const maxRetainedSemanticChanges = 256
+
+type semanticTransactionScratch struct {
+	nodes   []semanticTransactionNode
+	edges   []semanticTransactionEdge
+	changes []semanticTransactionChange
+	wire    semanticTransactionWire
+}
+
+func (s *semanticTransactionScratch) clear() {
+	clear(s.nodes)
+	clear(s.edges)
+	clear(s.changes)
+	s.nodes = s.nodes[:0]
+	s.edges = s.edges[:0]
+	s.changes = s.changes[:0]
+	s.wire = semanticTransactionWire{}
+}
+
+func (s *semanticTransactionScratch) release() {
+	s.clear()
+	if cap(s.nodes) > maxRetainedSemanticChanges {
+		s.nodes = nil
+	}
+	if cap(s.edges) > maxRetainedSemanticChanges {
+		s.edges = nil
+	}
+	if cap(s.changes) > maxRetainedSemanticChanges {
+		s.changes = nil
+	}
+}
+
+// entityTransaction borrows its raw bytes until this encoder's next use. The
+// owned public API clones; synchronous native publication retains the encoder
+// through finish instead of copying an already-owned immutable image again.
+func (encoder *valueEncoder) entityTransaction(request EntityTransactionRequest) ([]byte, error) {
+	scratch := &encoder.semantic
+	scratch.clear()
+
 	namespace, logicalID, ops, mode := request.Namespace, request.LogicalID, request.Operations, request.Mode
 	if prepared := request.Prepared; prepared != nil {
 		if namespace != "" || logicalID != "" || ops != nil || mode != 0 {
@@ -141,9 +197,22 @@ func EncodeEntityTransaction(request EntityTransactionRequest) ([]byte, error) {
 			return nil, fmt.Errorf("not an entity operation: %s", op.Type)
 		}
 	}
-	nodes := make([]semanticTransactionNode, nodeCount)
-	edges := make([]semanticTransactionEdge, edgeCount)
-	changes := make([]semanticTransactionChange, len(ops))
+	if cap(scratch.nodes) < nodeCount {
+		scratch.nodes = make([]semanticTransactionNode, nodeCount)
+	} else {
+		scratch.nodes = scratch.nodes[:nodeCount]
+	}
+	if cap(scratch.edges) < edgeCount {
+		scratch.edges = make([]semanticTransactionEdge, edgeCount)
+	} else {
+		scratch.edges = scratch.edges[:edgeCount]
+	}
+	if cap(scratch.changes) < len(ops) {
+		scratch.changes = make([]semanticTransactionChange, len(ops))
+	} else {
+		scratch.changes = scratch.changes[:len(ops)]
+	}
+	nodes, edges, changes := scratch.nodes, scratch.edges, scratch.changes
 	nextNode, nextEdge := 0, 0
 	for i, op := range ops {
 		switch op.Type {
@@ -198,7 +267,8 @@ func EncodeEntityTransaction(request EntityTransactionRequest) ([]byte, error) {
 			changes[i] = semanticTransactionChange{Type: EntityDeleteEdge, EdgeID: string(op.EdgeID)}
 		}
 	}
-	return msgpack.Marshal(semanticTransactionWire{Mode: mode, Version: EntityTransactionVersion, Namespace: namespace, LogicalTxID: logicalID, Changes: changes})
+	scratch.wire = semanticTransactionWire{Mode: mode, Version: EntityTransactionVersion, Namespace: namespace, LogicalTxID: logicalID, Changes: changes}
+	return encoder.encode(&scratch.wire, rawMessagePackFraming)
 }
 
 // DecodeEntityTransaction validates and restores one semantic transaction.

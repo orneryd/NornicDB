@@ -18,7 +18,7 @@ func (e *liveAlgorithmReadFailureEngine) GetOutgoingEdges(ctx context.Context, i
 }
 func TestLiveLinkPredictionPropagatesGraphReadFailure(t *testing.T) {
 	store := newTestMemoryEngine(t)
-	_, err := store.CreateNode(&storage.Node{ID: "test:a"})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "test:a"})
 	require.NoError(t, err)
 	failure := errors.New("live relationships unavailable")
 	exec := NewStorageExecutor(&liveAlgorithmReadFailureEngine{Engine: store, failure: failure})

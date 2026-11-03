@@ -3,9 +3,10 @@ package search
 
 import (
 	"context"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/gpu"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -50,7 +51,7 @@ func TestRRFHybridSearch_UsesClusteringWhenEnabled(t *testing.T) {
 			{ID: "doc2", Labels: []string{"Node"}, ChunkEmbeddings: [][]float32{embedding}, Properties: map[string]any{"title": "Deep Learning", "content": "Neural networks"}},
 			{ID: "doc3", Labels: []string{"Node"}, ChunkEmbeddings: [][]float32{embedding}, Properties: map[string]any{"title": "Database Systems", "content": "SQL queries"}},
 		}
-		err := engine.BulkCreateNodes(nodes)
+		err := engine.BulkCreateNodes(t.Context(), nodes)
 		require.NoError(t, err)
 
 		// Index nodes
@@ -85,7 +86,7 @@ func TestRRFHybridSearch_UsesClusteringWhenEnabled(t *testing.T) {
 			{ID: "doc1", Labels: []string{"Node"}, ChunkEmbeddings: [][]float32{embedding}, Properties: map[string]any{"title": "Test Doc 1"}},
 			{ID: "doc2", Labels: []string{"Node"}, ChunkEmbeddings: [][]float32{embedding}, Properties: map[string]any{"title": "Test Doc 2"}},
 		}
-		err := engine.BulkCreateNodes(nodes)
+		err := engine.BulkCreateNodes(t.Context(), nodes)
 		require.NoError(t, err)
 
 		for _, node := range nodes {
@@ -208,7 +209,7 @@ func TestRRFHybridSearch_SearchMethodIndicatesClusteredSearch(t *testing.T) {
 					"content": "Test content for search",
 				},
 			}
-			_, err := engine.CreateNode(node)
+			_, err := engine.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 			err = svc.IndexNode(node)
 			require.NoError(t, err)
@@ -271,7 +272,7 @@ func TestRRFHybridSearch_WithClusterIndex(t *testing.T) {
 		}
 	}
 
-	err = engine.BulkCreateNodes(nodes)
+	err = engine.BulkCreateNodes(t.Context(), nodes)
 	require.NoError(t, err)
 
 	// Index all nodes
@@ -333,7 +334,7 @@ func TestVectorSearchOnly_UsesClusterWhenAvailable(t *testing.T) {
 			"title": "Test Document",
 		},
 	}
-	_, err := engine.CreateNode(node)
+	_, err := engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	err = svc.IndexNode(node)
 	require.NoError(t, err)
@@ -405,7 +406,7 @@ func TestRRFHybridSearch_MinEmbeddingsThreshold(t *testing.T) {
 				"content": "Test content for searching",
 			},
 		}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		err = svc.IndexNode(node)
 		require.NoError(t, err)
@@ -461,7 +462,7 @@ func TestBug_RRFHybridSearchUsedBruteForceOnly(t *testing.T) {
 				"content": "Search content",
 			},
 		}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		err = svc.IndexNode(node)
 		require.NoError(t, err)
@@ -513,7 +514,7 @@ func TestSearchPathIntegrity(t *testing.T) {
 			"content": "Content for testing search paths",
 		},
 	}
-	_, err := engine.CreateNode(node)
+	_, err := engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	err = svc.IndexNode(node)
 	require.NoError(t, err)

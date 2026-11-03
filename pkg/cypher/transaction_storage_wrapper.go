@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -18,29 +19,36 @@ import (
 // or changed are listed by their current values, nodes it changed or deleted
 // lose their committed entries (#809). The lookup stays an index lookup: a
 // transaction that reads by an indexed property doesn't scan the label.
-func propertyIndexLookup(engine storage.Engine, schema *storage.SchemaManager, label, property string, value interface{}) []storage.NodeID {
-	ids := schema.PropertyIndexLookup(label, property, value)
-	if wrapper, transactional := engine.(*transactionStorageWrapper); transactional {
-		return wrapper.tx.MergePendingPropertyMatches(ids, label, property, value)
+func propertyIndexLookup(ctx context.Context, engine storage.Engine, schema *storage.SchemaManager, label, property string, value interface{}) ([]storage.NodeID, error) {
+	ids, err := schema.PropertyIndexLookup(ctx, label, property, value)
+	if err != nil {
+		return nil, err
 	}
-	return ids
+	if wrapper, transactional := engine.(*transactionStorageWrapper); transactional {
+		return wrapper.tx.MergePendingPropertyMatches(ctx, ids, label, property, value)
+	}
+	return ids, nil
 }
 
 // compositeIndexLookup is the composite-index counterpart of
 // propertyIndexLookup: a full or prefix lookup against committed state, with
 // the transaction's own pending node writes merged in. full selects LookupFull
 // (all index properties equal) over LookupPrefix (leading properties equal).
-func compositeIndexLookup(engine storage.Engine, idx *storage.CompositeIndex, values []interface{}, full bool) []storage.NodeID {
+func compositeIndexLookup(ctx context.Context, engine storage.Engine, idx *storage.CompositeIndex, values []interface{}, full bool) ([]storage.NodeID, error) {
 	var ids []storage.NodeID
+	var err error
 	if full {
-		ids = idx.LookupFull(values...)
+		ids, err = idx.LookupFull(ctx, values...)
 	} else {
-		ids = idx.LookupPrefix(values...)
+		ids, err = idx.LookupPrefix(ctx, values...)
+	}
+	if err != nil {
+		return nil, err
 	}
 	if wrapper, transactional := engine.(*transactionStorageWrapper); transactional {
-		return wrapper.tx.MergePendingCompositeMatches(ids, idx.Label, idx.Properties, values)
+		return wrapper.tx.MergePendingCompositeMatches(ctx, ids, idx.Label, idx.Properties, values)
 	}
-	return ids
+	return ids, nil
 }
 
 // labellessPropertyIndexUsable reports whether a pattern without a label may
@@ -48,7 +56,10 @@ func compositeIndexLookup(engine storage.Engine, idx *storage.CompositeIndex, va
 // indexes are per label, so their union for a property lists only the nodes
 // that carry an indexed label. A committed lookup is complete only when an
 // indexed label covers the namespace; transaction reads use the merged scan.
-func labellessPropertyIndexUsable(engine storage.Engine, labels ...string) bool {
+func labellessPropertyIndexUsable(ctx context.Context, engine storage.Engine, labels ...string) bool {
+	if ctx.Err() != nil {
+		return false
+	}
 	if _, transactional := engine.(*transactionStorageWrapper); transactional {
 		return false
 	}
@@ -56,12 +67,12 @@ func labellessPropertyIndexUsable(engine storage.Engine, labels ...string) bool 
 	if !supported || len(labels) == 0 {
 		return false
 	}
-	total, err := engine.NodeCount()
+	total, err := engine.NodeCount(ctx)
 	if err != nil {
 		return false
 	}
 	for _, label := range labels {
-		count, err := stats.NodeCountByLabel(label)
+		count, err := stats.NodeCountByLabel(ctx, label)
 		if err == nil && count == total {
 			return true
 		}
@@ -93,7 +104,7 @@ type transactionStorageWrapper struct {
 	tx                  *storage.BadgerTransaction
 	underlying          storage.Engine // For read operations not supported by transaction
 	schema              *storage.SchemaManager
-	commitActions       []func() error
+	commitActions       []func(context.Context) error
 	namespace           string
 	separator           string
 	namespacePrefix     string
@@ -242,26 +253,26 @@ func (w *transactionStorageWrapper) clearMutatedNodeIDs(processed map[string]str
 }
 
 // Write operations - go through transaction for atomicity
-func (w *transactionStorageWrapper) CreateNode(node *storage.Node) (storage.NodeID, error) {
-	return w.createNodes([]*storage.Node{node}, false)
+func (w *transactionStorageWrapper) CreateNode(ctx context.Context, node *storage.Node) (storage.NodeID, error) {
+	return w.createNodes(ctx, []*storage.Node{node}, false)
 }
 
 // CreateMintedNode is CreateNode for a node whose ID the executor minted
 // (generateID); see storage.BadgerTransaction.CreateMintedNode.
-func (w *transactionStorageWrapper) CreateMintedNode(node *storage.Node) (storage.NodeID, error) {
-	return w.createNodes([]*storage.Node{node}, true)
+func (w *transactionStorageWrapper) CreateMintedNode(ctx context.Context, node *storage.Node) (storage.NodeID, error) {
+	return w.createNodes(ctx, []*storage.Node{node}, true)
 }
 
-func (w *transactionStorageWrapper) UpdateNode(updateRequest storage.NodeUpdateRequest) error {
+func (w *transactionStorageWrapper) UpdateNode(ctx context.Context, updateRequest storage.NodeUpdateRequest) error {
 	node := updateRequest.After
 	if node == nil {
 		return storage.ErrInvalidData
 	}
-	if err := w.GetSchema().RegisterTokens(node.Labels, nil); err != nil {
+	if err := w.GetSchema().RegisterTokens(ctx, node.Labels, nil); err != nil {
 		return err
 	}
 	if w.namespace == "" {
-		err := w.tx.UpdateGraphNode(updateRequest)
+		err := w.tx.UpdateGraphNode(ctx, updateRequest)
 		if err == nil {
 			w.markMutatedNodeID(node.ID)
 		}
@@ -270,38 +281,39 @@ func (w *transactionStorageWrapper) UpdateNode(updateRequest storage.NodeUpdateR
 	namespaced := storage.CopyNode(node)
 	namespaced.ID = w.prefixNodeID(node.ID)
 	updateRequest.After = namespaced
-	err := w.tx.UpdateGraphNode(updateRequest)
+	err := w.tx.UpdateGraphNode(ctx, updateRequest)
 	if err == nil {
 		w.markMutatedNodeID(node.ID)
 	}
 	return err
 }
 
-func (w *transactionStorageWrapper) DeleteNode(id storage.NodeID) error {
-	return w.tx.DeleteGraphNode(w.prefixNodeID(id), storage.CascadeEdges)
+func (w *transactionStorageWrapper) DeleteNode(ctx context.Context, id storage.NodeID) error {
+	return w.tx.DeleteGraphNode(ctx, w.prefixNodeID(id), storage.CascadeEdges)
 }
 
 // DeleteGraphNode applies a transactional deletion policy in this namespace.
-func (w *transactionStorageWrapper) DeleteGraphNode(id storage.NodeID, mode storage.NodeDeletionMode) error {
-	return w.tx.DeleteGraphNode(w.prefixNodeID(id), mode)
+func (w *transactionStorageWrapper) DeleteGraphNode(ctx context.Context, id storage.NodeID, mode storage.NodeDeletionMode) error {
+	return w.tx.DeleteGraphNode(ctx, w.prefixNodeID(id), mode)
 }
 
 // IncidentEdges is BadgerTransaction.IncidentEdges for this wrapper's
-// namespace (storage.IncidentEdgeLister). The read carries no caller context,
-// so its projection observes the wrapper's own lifetime.
-func (w *transactionStorageWrapper) IncidentEdges(nodeID storage.NodeID) ([]*storage.Edge, error) {
-	edges, err := w.tx.IncidentEdges(w.prefixNodeID(nodeID))
-	return projectTransactionRead(context.Background(), w, edges, err, readOwnAdjacency)
+// namespace (storage.IncidentEdgeLister). It is a bulk read, so ctx is the
+// caller's: it reaches the native incidence read and this wrapper's projection,
+// and a canceled request returns its own error with no partial list.
+func (w *transactionStorageWrapper) IncidentEdges(ctx context.Context, nodeID storage.NodeID) ([]*storage.Edge, error) {
+	edges, err := w.tx.IncidentEdges(ctx, w.prefixNodeID(nodeID))
+	return projectTransactionRead(ctx, w, edges, err, readOwnAdjacency)
 }
 
-func (w *transactionStorageWrapper) CreateEdge(edge *storage.Edge) error {
-	return w.createEdges([]*storage.Edge{edge}, false)
+func (w *transactionStorageWrapper) CreateEdge(ctx context.Context, edge *storage.Edge) error {
+	return w.createEdges(ctx, []*storage.Edge{edge}, false)
 }
 
 // CreateMintedEdge is CreateEdge for a relationship whose ID the executor
 // minted (generateID).
-func (w *transactionStorageWrapper) CreateMintedEdge(edge *storage.Edge) error {
-	return w.createEdges([]*storage.Edge{edge}, true)
+func (w *transactionStorageWrapper) CreateMintedEdge(ctx context.Context, edge *storage.Edge) error {
+	return w.createEdges(ctx, []*storage.Edge{edge}, true)
 }
 
 // EdgeCreateWasNoOp exposes the transaction's read-only hidden-ID candidate
@@ -314,13 +326,13 @@ func (w *transactionStorageWrapper) EdgeCreateWasNoOp(id storage.EdgeID) bool {
 	return w.tx.EdgeCreateWasNoOp(w.prefixEdgeID(id))
 }
 
-func (w *transactionStorageWrapper) DeleteEdge(id storage.EdgeID) error {
-	return w.tx.DeleteEdge(w.prefixEdgeID(id))
+func (w *transactionStorageWrapper) DeleteEdge(ctx context.Context, id storage.EdgeID) error {
+	return w.tx.DeleteEdge(ctx, w.prefixEdgeID(id))
 }
 
 // Read operations - transaction supports GetNode, forward others to underlying
-func (w *transactionStorageWrapper) GetNode(id storage.NodeID) (*storage.Node, error) {
-	node, err := w.tx.GetNode(w.prefixNodeID(id))
+func (w *transactionStorageWrapper) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
+	node, err := w.tx.GetNode(ctx, w.prefixNodeID(id))
 	if err != nil {
 		return nil, err
 	}
@@ -333,8 +345,8 @@ func (w *transactionStorageWrapper) GetNode(id storage.NodeID) (*storage.Node, e
 // GetQueryNode implements storage.QueryNodeReader in the wrapper's
 // namespace (BadgerTransaction.GetQueryNode): the node with its embedding
 // metadata, without separately stored vectors.
-func (w *transactionStorageWrapper) GetQueryNode(id storage.NodeID) (*storage.Node, error) {
-	node, err := w.tx.GetQueryNode(w.prefixNodeID(id))
+func (w *transactionStorageWrapper) GetQueryNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
+	node, err := w.tx.GetQueryNode(ctx, w.prefixNodeID(id))
 	if err != nil {
 		return nil, err
 	}
@@ -348,8 +360,8 @@ func (w *transactionStorageWrapper) GetQueryNode(id storage.NodeID) (*storage.No
 // namespace, decoding only the requested properties (see
 // BadgerTransaction.GetNodeProjected). Traversals use it with an empty
 // property list to read an endpoint's labels without its properties (#1110).
-func (w *transactionStorageWrapper) GetNodeProjected(id storage.NodeID, properties []string) (*storage.Node, error) {
-	node, err := w.tx.GetNodeProjected(w.prefixNodeID(id), properties)
+func (w *transactionStorageWrapper) GetNodeProjected(ctx context.Context, id storage.NodeID, properties []string) (*storage.Node, error) {
+	node, err := w.tx.GetNodeProjected(ctx, w.prefixNodeID(id), properties)
 	if err != nil {
 		return nil, err
 	}
@@ -364,34 +376,34 @@ func (w *transactionStorageWrapper) RelationshipEndpointVisible(id storage.NodeI
 	return w.tx.RelationshipEndpointVisible(w.prefixNodeID(id))
 }
 
-func (w *transactionStorageWrapper) GetEdge(id storage.EdgeID) (*storage.Edge, error) {
+func (w *transactionStorageWrapper) GetEdge(ctx context.Context, id storage.EdgeID) (*storage.Edge, error) {
 	if w.namespace == "" {
-		return w.tx.GetEdge(id)
+		return w.tx.GetEdge(ctx, id)
 	}
-	edge, err := w.tx.GetEdge(w.prefixEdgeID(id))
+	edge, err := w.tx.GetEdge(ctx, w.prefixEdgeID(id))
 	if err != nil {
 		return nil, err
 	}
 	return w.toUserEdge(edge), nil
 }
 
-func (w *transactionStorageWrapper) UpdateEdge(updateRequest storage.EdgeUpdateRequest) error {
+func (w *transactionStorageWrapper) UpdateEdge(ctx context.Context, updateRequest storage.EdgeUpdateRequest) error {
 	edge := updateRequest.After
 	if edge == nil {
 		return storage.ErrInvalidData
 	}
-	if err := w.GetSchema().RegisterTokens(nil, []string{edge.Type}); err != nil {
+	if err := w.GetSchema().RegisterTokens(ctx, nil, []string{edge.Type}); err != nil {
 		return err
 	}
 	if w.namespace == "" {
-		return w.tx.UpdateEdge(updateRequest)
+		return w.tx.UpdateEdge(ctx, updateRequest)
 	}
 	namespaced := storage.CopyEdge(edge)
 	namespaced.ID = w.prefixEdgeID(edge.ID)
 	namespaced.StartNode = w.prefixNodeID(edge.StartNode)
 	namespaced.EndNode = w.prefixNodeID(edge.EndNode)
 	updateRequest.After = namespaced
-	return w.tx.UpdateEdge(updateRequest)
+	return w.tx.UpdateEdge(ctx, updateRequest)
 }
 
 func (w *transactionStorageWrapper) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
@@ -529,8 +541,8 @@ func copyNodeWithoutEmbeddingVectors(node *storage.Node) *storage.Node {
 	return &out
 }
 
-func (w *transactionStorageWrapper) GetFirstNodeByLabel(label string) (*storage.Node, error) {
-	nodes, err := w.GetNodesByLabel(context.Background(), label)
+func (w *transactionStorageWrapper) GetFirstNodeByLabel(ctx context.Context, label string) (*storage.Node, error) {
+	nodes, err := w.GetNodesByLabel(ctx, label)
 	if err != nil {
 		return nil, err
 	}
@@ -571,24 +583,25 @@ func (w *transactionStorageWrapper) GetOutgoingEdges(ctx context.Context, nodeID
 
 // OutgoingEdgeHeaders lists the transaction's relationship headers in its
 // namespace.
-func (w *transactionStorageWrapper) OutgoingEdgeHeaders(nodeID storage.NodeID) ([]*storage.Edge, bool, error) {
-	return w.userEdgeHeaders(w.tx.OutgoingEdgeHeaders(w.prefixNodeID(nodeID)))
+func (w *transactionStorageWrapper) OutgoingEdgeHeaders(ctx context.Context, nodeID storage.NodeID) ([]*storage.Edge, bool, error) {
+	edges, answered, err := w.tx.OutgoingEdgeHeaders(ctx, w.prefixNodeID(nodeID))
+	return w.userEdgeHeaders(ctx, edges, answered, err)
 }
 
 // IncomingEdgeHeaders lists the transaction's relationship headers in its
 // namespace.
-func (w *transactionStorageWrapper) IncomingEdgeHeaders(nodeID storage.NodeID) ([]*storage.Edge, bool, error) {
-	return w.userEdgeHeaders(w.tx.IncomingEdgeHeaders(w.prefixNodeID(nodeID)))
+func (w *transactionStorageWrapper) IncomingEdgeHeaders(ctx context.Context, nodeID storage.NodeID) ([]*storage.Edge, bool, error) {
+	edges, answered, err := w.tx.IncomingEdgeHeaders(ctx, w.prefixNodeID(nodeID))
+	return w.userEdgeHeaders(ctx, edges, answered, err)
 }
 
 // userEdgeHeaders keeps the header read's answered/error contract around the
-// wrapper's read exit. Header reads carry no caller context, so their
-// projection observes the wrapper's own lifetime.
-func (w *transactionStorageWrapper) userEdgeHeaders(edges []*storage.Edge, answered bool, err error) ([]*storage.Edge, bool, error) {
+// wrapper's read exit under the same caller lifetime.
+func (w *transactionStorageWrapper) userEdgeHeaders(ctx context.Context, edges []*storage.Edge, answered bool, err error) ([]*storage.Edge, bool, error) {
 	if err != nil || !answered {
 		return edges, answered, err
 	}
-	projected, err := projectTransactionRead(context.Background(), w, edges, nil, readOwnAdjacency)
+	projected, err := projectTransactionRead(ctx, w, edges, nil, readOwnAdjacency)
 	if err != nil {
 		return nil, true, err
 	}
@@ -606,31 +619,30 @@ func (w *transactionStorageWrapper) GetEdgesBetween(ctx context.Context, startID
 // MatchEdgesBetween matches the transaction's edges of one type between two
 // nodes, reading only the listed properties to match
 // (storage.EdgesBetweenMatcher).
-func (w *transactionStorageWrapper) MatchEdgesBetween(startID, endID storage.NodeID, edgeType string, properties []string, match func(*storage.Edge) bool) ([]*storage.Edge, error) {
+func (w *transactionStorageWrapper) MatchEdgesBetween(ctx context.Context, startID, endID storage.NodeID, edgeType string, properties []string, match func(*storage.Edge) bool) ([]*storage.Edge, error) {
 	if w.namespace == "" {
-		return w.tx.MatchEdgesBetween(startID, endID, edgeType, properties, match)
+		return w.tx.MatchEdgesBetween(ctx, startID, endID, edgeType, properties, match)
 	}
 	var candidate storage.Edge
-	edges, err := w.tx.MatchEdgesBetween(w.prefixNodeID(startID), w.prefixNodeID(endID), edgeType, properties, func(edge *storage.Edge) bool {
+	edges, err := w.tx.MatchEdgesBetween(ctx, w.prefixNodeID(startID), w.prefixNodeID(endID), edgeType, properties, func(edge *storage.Edge) bool {
 		candidate = *edge
 		candidate.ID = w.unprefixEdgeID(edge.ID)
 		candidate.StartNode, candidate.EndNode = startID, endID
 		return match(&candidate)
 	})
-	// Matching edges carries no caller context: the projection observes the
-	// wrapper's own lifetime.
-	return projectTransactionRead(context.Background(), w, edges, err, readOwnAdjacency)
+	// Matching and projection share the caller lifetime.
+	return projectTransactionRead(ctx, w, edges, err, readOwnAdjacency)
 }
 
-func (w *transactionStorageWrapper) GetEdgeBetween(startID, endID storage.NodeID, edgeType string) *storage.Edge {
+func (w *transactionStorageWrapper) GetEdgeBetween(ctx context.Context, startID, endID storage.NodeID, edgeType string) (*storage.Edge, error) {
 	if w.namespace == "" {
-		return w.tx.GetEdgeBetween(startID, endID, edgeType)
+		return w.tx.GetEdgeBetween(ctx, startID, endID, edgeType)
 	}
-	edge := w.tx.GetEdgeBetween(w.prefixNodeID(startID), w.prefixNodeID(endID), edgeType)
-	if edge == nil {
-		return nil
+	edge, err := w.tx.GetEdgeBetween(ctx, w.prefixNodeID(startID), w.prefixNodeID(endID), edgeType)
+	if err != nil || edge == nil {
+		return nil, err
 	}
-	return w.toUserEdge(edge)
+	return w.toUserEdge(edge), nil
 }
 
 func (w *transactionStorageWrapper) GetEdgesByType(ctx context.Context, edgeType string) ([]*storage.Edge, error) {
@@ -664,12 +676,12 @@ func (w *transactionStorageWrapper) AllEdges(ctx context.Context) ([]*storage.Ed
 	return projectTransactionRead(ctx, w, edges, err, readScanned)
 }
 
-func (w *transactionStorageWrapper) GetInDegree(nodeID storage.NodeID) int {
-	return w.underlying.GetInDegree(nodeID)
+func (w *transactionStorageWrapper) GetInDegree(ctx context.Context, nodeID storage.NodeID) (int, error) {
+	return w.underlying.GetInDegree(ctx, nodeID)
 }
 
-func (w *transactionStorageWrapper) GetOutDegree(nodeID storage.NodeID) int {
-	return w.underlying.GetOutDegree(nodeID)
+func (w *transactionStorageWrapper) GetOutDegree(ctx context.Context, nodeID storage.NodeID) (int, error) {
+	return w.underlying.GetOutDegree(ctx, nodeID)
 }
 
 func (w *transactionStorageWrapper) GetSchema() *storage.SchemaManager {
@@ -681,19 +693,19 @@ func (w *transactionStorageWrapper) GetSchema() *storage.SchemaManager {
 
 // BulkCreateNodes shares node admission, namespace conversion and mutation
 // tracking with single creates.
-func (w *transactionStorageWrapper) BulkCreateNodes(nodes []*storage.Node) error {
-	_, err := w.createNodes(nodes, false)
+func (w *transactionStorageWrapper) BulkCreateNodes(ctx context.Context, nodes []*storage.Node) error {
+	_, err := w.createNodes(ctx, nodes, false)
 	return err
 }
 
 // BulkCreateMintedNodes is BulkCreateNodes for nodes whose IDs the executor
 // minted (CreateMintedNode).
-func (w *transactionStorageWrapper) BulkCreateMintedNodes(nodes []*storage.Node) error {
-	_, err := w.createNodes(nodes, true)
+func (w *transactionStorageWrapper) BulkCreateMintedNodes(ctx context.Context, nodes []*storage.Node) error {
+	_, err := w.createNodes(ctx, nodes, true)
 	return err
 }
 
-func (w *transactionStorageWrapper) createNodes(nodes []*storage.Node, minted bool) (storage.NodeID, error) {
+func (w *transactionStorageWrapper) createNodes(ctx context.Context, nodes []*storage.Node, minted bool) (storage.NodeID, error) {
 	var logicalID storage.NodeID
 	create := w.tx.CreateNode
 	if minted {
@@ -703,7 +715,7 @@ func (w *transactionStorageWrapper) createNodes(nodes []*storage.Node, minted bo
 		if node == nil {
 			return "", storage.ErrInvalidData
 		}
-		if err := w.GetSchema().RegisterTokens(node.Labels, nil); err != nil {
+		if err := w.GetSchema().RegisterTokens(ctx, node.Labels, nil); err != nil {
 			return "", err
 		}
 		body := node
@@ -711,7 +723,7 @@ func (w *transactionStorageWrapper) createNodes(nodes []*storage.Node, minted bo
 			body = storage.CopyNode(node)
 			body.ID = w.prefixNodeID(node.ID)
 		}
-		id, err := create(body)
+		id, err := create(ctx, body)
 		if err != nil {
 			return "", err
 		}
@@ -721,18 +733,18 @@ func (w *transactionStorageWrapper) createNodes(nodes []*storage.Node, minted bo
 	return logicalID, nil
 }
 
-func (w *transactionStorageWrapper) BulkCreateEdges(edges []*storage.Edge) error {
-	return w.createEdges(edges, false)
+func (w *transactionStorageWrapper) BulkCreateEdges(ctx context.Context, edges []*storage.Edge) error {
+	return w.createEdges(ctx, edges, false)
 }
 
 // BulkCreateMintedEdges is BulkCreateEdges for relationships whose IDs the
 // executor minted (CreateMintedEdge).
-func (w *transactionStorageWrapper) BulkCreateMintedEdges(edges []*storage.Edge) error {
-	return w.createEdges(edges, true)
+func (w *transactionStorageWrapper) BulkCreateMintedEdges(ctx context.Context, edges []*storage.Edge) error {
+	return w.createEdges(ctx, edges, true)
 }
 
-func (w *transactionStorageWrapper) createEdges(edges []*storage.Edge, minted bool) error {
-	if err := w.GetSchema().RegisterEdgeTokens(edges); err != nil {
+func (w *transactionStorageWrapper) createEdges(ctx context.Context, edges []*storage.Edge, minted bool) error {
+	if err := w.GetSchema().RegisterEdgeTokens(ctx, edges); err != nil {
 		return err
 	}
 	var singleEdge [1]*storage.Edge
@@ -755,19 +767,19 @@ func (w *transactionStorageWrapper) createEdges(edges []*storage.Edge, minted bo
 	}
 	if len(namespaced) == 1 {
 		if minted {
-			return w.tx.CreateMintedEdge(namespaced[0])
+			return w.tx.CreateMintedEdge(ctx, namespaced[0])
 		}
-		return w.tx.CreateEdge(namespaced[0])
+		return w.tx.CreateEdge(ctx, namespaced[0])
 	}
 	if minted {
-		return w.tx.BulkCreateMintedEdges(namespaced)
+		return w.tx.BulkCreateMintedEdges(ctx, namespaced)
 	}
-	return w.tx.BulkCreateEdges(namespaced)
+	return w.tx.BulkCreateEdges(ctx, namespaced)
 }
 
-func (w *transactionStorageWrapper) BulkDeleteNodes(ids []storage.NodeID) error {
+func (w *transactionStorageWrapper) BulkDeleteNodes(ctx context.Context, ids []storage.NodeID) error {
 	for _, id := range ids {
-		if err := w.tx.DeleteGraphNode(w.prefixNodeID(id), storage.CascadeEdges); err != nil {
+		if err := w.tx.DeleteGraphNode(ctx, w.prefixNodeID(id), storage.CascadeEdges); err != nil {
 			return err
 		}
 	}
@@ -777,9 +789,9 @@ func (w *transactionStorageWrapper) BulkDeleteNodes(ids []storage.NodeID) error 
 // BulkDeleteEdges deletes ids in the transaction. Like the engines'
 // BulkDeleteEdges, it skips IDs that do not exist, those the transaction
 // already deleted included (#827).
-func (w *transactionStorageWrapper) BulkDeleteEdges(ids []storage.EdgeID) error {
+func (w *transactionStorageWrapper) BulkDeleteEdges(ctx context.Context, ids []storage.EdgeID) error {
 	for _, id := range ids {
-		if err := w.tx.DeleteEdge(w.prefixEdgeID(id)); err != nil && !errors.Is(err, storage.ErrNotFound) {
+		if err := w.tx.DeleteEdge(ctx, w.prefixEdgeID(id)); err != nil && !errors.Is(err, storage.ErrNotFound) {
 			return err
 		}
 	}
@@ -880,11 +892,11 @@ func (w *transactionStorageWrapper) Close() error {
 // NodeCount is the transaction-visible number of nodes, as the derived
 // counters below are: the committed count while the transaction has staged
 // no node change, otherwise a count of the nodes it sees (#1076).
-func (w *transactionStorageWrapper) NodeCount() (int64, error) {
+func (w *transactionStorageWrapper) NodeCount(ctx context.Context) (int64, error) {
 	if w.countersDescribeTransaction() && !w.tx.HasPendingNodeMutations() {
-		return w.underlying.NodeCount()
+		return w.underlying.NodeCount(ctx)
 	}
-	return countOfRead(w.AllNodes(context.Background()))
+	return countOfRead(w.AllNodes(ctx))
 }
 
 // The derived counters (node label counts; relationship type and positional
@@ -904,49 +916,50 @@ func (w *transactionStorageWrapper) countersDescribeTransaction() bool {
 }
 
 // NodeCountByLabel is the transaction-visible count of nodes with label.
-func (w *transactionStorageWrapper) NodeCountByLabel(label string) (int64, error) {
+func (w *transactionStorageWrapper) NodeCountByLabel(ctx context.Context, label string) (int64, error) {
 	if w.countersDescribeTransaction() {
-		if counter, ok := w.underlying.(interface {
-			NodeCountByLabel(string) (int64, error)
-		}); ok {
+		if counter, ok := w.underlying.(storage.LabelStatsEngine); ok {
 			delta, tracked := w.tx.PendingNodeLabelCountDelta(w.namespace, label)
 			if tracked || !w.tx.HasPendingNodeMutations() {
-				count, err := counter.NodeCountByLabel(label)
-				return count + delta, err
+				count, err := counter.NodeCountByLabel(ctx, label)
+				if err != nil {
+					return 0, err
+				}
+				return count + delta, nil
 			}
 		}
 	}
-	return w.nodeCountByLabelScan(label)
+	return w.nodeCountByLabelScan(ctx, label)
 }
 
-func (w *transactionStorageWrapper) nodeCountByLabelScan(label string) (int64, error) {
-	return countOfRead(w.GetNodesByLabel(context.Background(), label))
+func (w *transactionStorageWrapper) nodeCountByLabelScan(ctx context.Context, label string) (int64, error) {
+	return countOfRead(w.GetNodesByLabel(ctx, label))
 }
 
 // EdgeCount is the transaction-visible number of relationships, as
 // NodeCount is (#1076).
-func (w *transactionStorageWrapper) EdgeCount() (int64, error) {
+func (w *transactionStorageWrapper) EdgeCount(ctx context.Context) (int64, error) {
 	if w.countersDescribeTransaction() && !w.tx.HasPendingEdgeMutations() {
-		return w.underlying.EdgeCount()
+		return w.underlying.EdgeCount(ctx)
 	}
-	return countOfRead(w.AllEdges(context.Background()))
+	return countOfRead(w.AllEdges(ctx))
 }
 
 // EdgeCountByType is the transaction-visible count of relationships of
 // edgeType.
-func (w *transactionStorageWrapper) EdgeCountByType(edgeType string) (int64, error) {
+func (w *transactionStorageWrapper) EdgeCountByType(ctx context.Context, edgeType string) (int64, error) {
 	if w.countersDescribeTransaction() {
 		delta, tracked := w.tx.PendingEdgeTypeCountDelta(w.namespace, edgeType)
 		if tracked || !w.tx.HasPendingEdgeMutations() {
-			count, err := w.underlying.EdgeCountByType(edgeType)
+			count, err := w.underlying.EdgeCountByType(ctx, edgeType)
 			return count + delta, err
 		}
 	}
-	return w.edgeCountByTypeScan(edgeType)
+	return w.edgeCountByTypeScan(ctx, edgeType)
 }
 
-func (w *transactionStorageWrapper) edgeCountByTypeScan(edgeType string) (int64, error) {
-	return countOfRead(w.GetEdgesByType(context.Background(), edgeType))
+func (w *transactionStorageWrapper) edgeCountByTypeScan(ctx context.Context, edgeType string) (int64, error) {
+	return countOfRead(w.GetEdgesByType(ctx, edgeType))
 }
 
 // EdgeCountByStartLabel / EdgeCountByEndLabel are the transaction-visible
@@ -954,28 +967,28 @@ func (w *transactionStorageWrapper) edgeCountByTypeScan(edgeType string) (int64,
 // one-labeled-endpoint count shapes). Relabelling a node changes them too,
 // so without the staged deltas they need a transaction with no staged node
 // or relationship changes.
-func (w *transactionStorageWrapper) EdgeCountByStartLabel(label, edgeType string) (int64, error) {
-	return w.edgeCountByEndpointLabel(label, edgeType, true)
+func (w *transactionStorageWrapper) EdgeCountByStartLabel(ctx context.Context, label, edgeType string) (int64, error) {
+	return w.edgeCountByEndpointLabel(ctx, label, edgeType, true)
 }
 
-func (w *transactionStorageWrapper) EdgeCountByEndLabel(label, edgeType string) (int64, error) {
-	return w.edgeCountByEndpointLabel(label, edgeType, false)
+func (w *transactionStorageWrapper) EdgeCountByEndLabel(ctx context.Context, label, edgeType string) (int64, error) {
+	return w.edgeCountByEndpointLabel(ctx, label, edgeType, false)
 }
 
-func (w *transactionStorageWrapper) edgeCountByEndpointLabel(label, edgeType string, start bool) (int64, error) {
+func (w *transactionStorageWrapper) edgeCountByEndpointLabel(ctx context.Context, label, edgeType string, start bool) (int64, error) {
 	// The staged positional deltas are not used: DETACH DELETE of a node whose
 	// relationship the same transaction created stages them wrong (#741).
 	if w.countersDescribeTransaction() && !w.tx.HasPendingEdgeMutations() && !w.tx.HasPendingNodeMutations() {
 		if start {
-			return w.underlying.EdgeCountByStartLabel(label, edgeType)
+			return w.underlying.EdgeCountByStartLabel(ctx, label, edgeType)
 		}
-		return w.underlying.EdgeCountByEndLabel(label, edgeType)
+		return w.underlying.EdgeCountByEndLabel(ctx, label, edgeType)
 	}
-	return w.edgeCountByEndpointLabelScan(label, edgeType, start)
+	return w.edgeCountByEndpointLabelScan(ctx, label, edgeType, start)
 }
 
-func (w *transactionStorageWrapper) edgeCountByEndpointLabelScan(label, edgeType string, start bool) (int64, error) {
-	edges, err := w.GetEdgesByType(context.Background(), edgeType)
+func (w *transactionStorageWrapper) edgeCountByEndpointLabelScan(ctx context.Context, label, edgeType string, start bool) (int64, error) {
+	edges, err := w.GetEdgesByType(ctx, edgeType)
 	if err != nil {
 		return 0, err
 	}
@@ -988,7 +1001,7 @@ func (w *transactionStorageWrapper) edgeCountByEndpointLabelScan(label, edgeType
 		if start {
 			nodeID = edge.StartNode
 		}
-		node, err := w.GetNode(nodeID)
+		node, err := w.GetNode(ctx, nodeID)
 		if err != nil || node == nil {
 			continue
 		}
@@ -1015,14 +1028,16 @@ func (w *transactionStorageWrapper) WithStoreTransaction(ctx context.Context, mu
 
 // completeCommitActions is the sole completion owner for work admitted with the
 // native transaction. Clear the queue first: a terminal path cannot replay it.
-func (w *transactionStorageWrapper) completeCommitActions() error {
+// ctx is the admitted commit's lifetime; it is the executing lifetime of every
+// queued side effect, never the statement that queued it.
+func (w *transactionStorageWrapper) completeCommitActions(ctx context.Context) error {
 	actions := w.commitActions
 	w.commitActions = nil
-	var result error
-	for _, action := range actions {
-		result = errors.Join(result, action())
+	failures := make([]error, len(actions))
+	for i, action := range actions {
+		failures[i] = action(ctx)
 	}
-	return result
+	return nornicerrors.CombineTerminalOutcomes(nil, failures...)
 }
 
 // completeInlineEmbedding consumes this native owner's recorded mutations once.
@@ -1042,4 +1057,12 @@ func (w *transactionStorageWrapper) RecordMaterializedAccess(entityID string) {
 	if recorder, ok := w.underlying.(materializedAccessRecorder); ok {
 		recorder.RecordMaterializedAccess(entityID)
 	}
+}
+
+// hasPendingCommitEffects retains the original four-way implicit decision:
+// entity operations, knowledge-policy schema changes, deferred validation, or
+// completion actions. Ordinary schema DDL registers its onSchemaCommit action;
+// no new schema heuristic changes when a transaction must commit.
+func (w *transactionStorageWrapper) hasPendingCommitEffects() bool {
+	return w.tx.OperationCount() != 0 || w.tx.HasKnowledgePolicyChanges() || w.tx.RequiresCommitValidation() || len(w.commitActions) != 0
 }

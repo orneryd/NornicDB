@@ -26,7 +26,10 @@ With no limits configured, admission and transaction tracking remain off.
   config API (`PUT /admin/databases/<db>/config` with
   `{"overrides": {"db.memory.transaction.max": "1g"}}`). A database's own
   `db.memory.transaction.max` replaces the process default for that
-  database.
+  database. Each of the two database settings inherits independently: an
+  omitted key follows subsequent process defaults, while an explicit `"0"`
+  remains unlimited. Removing a key restores inheritance, even when its value
+  previously matched the default.
 - **Running statements:** each statement snapshots its transaction and pool
   ceilings at start. A later reload does not revoke or relax those ceilings.
   Pool usage counters remain shared across statement generations, including
@@ -279,3 +282,26 @@ keep running and keep their results. A pool limit makes the statement that
 would overflow the pool fail, whichever it is; small statements that fit
 keep succeeding. When the failed statement ends, its memory goes back to the
 pool at once.
+
+
+### Go embedding configuration
+
+`ConfigureTransactionMemory(global, TransactionMemoryLimits)` publishes numeric
+process defaults. `SetDatabaseTransactionMemoryLimits` now accepts
+`DatabaseTransactionMemoryLimits`; each optional `*int64` field selects a database
+override. Nil means inherit, and a pointer to zero means explicitly unlimited.
+The setter copies values and does not retain caller pointers. Go callers and
+plugins must rebuild against this signature; no storage migration is required.
+
+```go
+cypher.SetDatabaseTransactionMemoryLimits("analytics", cypher.DatabaseTransactionMemoryLimits{
+    TransactionMax: new(int64(1 << 30)), // 1 GiB; database pool keeps inheriting
+})
+cypher.SetDatabaseTransactionMemoryLimits("analytics", cypher.DatabaseTransactionMemoryLimits{}) // inherit both
+cypher.SetDatabaseTransactionMemoryLimits("analytics", cypher.DatabaseTransactionMemoryLimits{
+    TransactionMax: new(int64(0)), // explicitly unlimited
+})
+```
+
+Changing override selection preserves shared pool usage and every running
+statement's admitted ceilings. Only subsequent statements take the new limits.

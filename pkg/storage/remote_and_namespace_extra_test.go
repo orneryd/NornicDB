@@ -152,15 +152,15 @@ func TestNamespacedExtraLifecycleLabelAndAccessBranches(t *testing.T) {
 	}
 	ns := NewNamespacedEngine(recorder, "tenant")
 
-	_, err := base.CreateNode(&Node{ID: "tenant:n1", Labels: []string{"Person", "User"}})
+	_, err := base.CreateNode(t.Context(), &Node{ID: "tenant:n1", Labels: []string{"Person", "User"}})
 	require.NoError(t, err)
-	_, err = base.CreateNode(&Node{ID: "tenant:n2", Labels: []string{"person"}})
+	_, err = base.CreateNode(t.Context(), &Node{ID: "tenant:n2", Labels: []string{"person"}})
 	require.NoError(t, err)
-	_, err = base.CreateNode(&Node{ID: "other:n3", Labels: []string{"Person"}})
+	_, err = base.CreateNode(t.Context(), &Node{ID: "other:n3", Labels: []string{"Person"}})
 	require.NoError(t, err)
 
 	// tenant:n2 is :person, another label (#862).
-	count, err := ns.NodeCountByLabel("Person")
+	count, err := ns.NodeCountByLabel(t.Context(), "Person")
 	require.NoError(t, err)
 	require.EqualValues(t, 1, count)
 

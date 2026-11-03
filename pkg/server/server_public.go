@@ -2,9 +2,10 @@ package server
 
 import (
 	"fmt"
-	"github.com/orneryd/nornicdb/internal/httpresponse"
 	"net/http"
 	"time"
+
+	"github.com/orneryd/nornicdb/internal/httpresponse"
 
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -297,10 +298,10 @@ func (s *Server) readableDatabaseCounts(r *http.Request, includeSystem bool, can
 				continue
 			}
 			databaseCount++
-			if nodes, err := engine.NodeCount(); err == nil {
+			if nodes, err := engine.NodeCount(r.Context()); err == nil {
 				totalNodeCount += nodes
 			}
-			if edges, err := engine.EdgeCount(); err == nil {
+			if edges, err := engine.EdgeCount(r.Context()); err == nil {
 				totalEdgeCount += edges
 			}
 		}

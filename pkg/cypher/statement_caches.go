@@ -175,7 +175,10 @@ func (e *StorageExecutor) routedStatementScope() *multidb.StatementCacheScope {
 
 // cacheDependencyScopes runs on misses, outside cache locks. Reuse the existing
 // USE parser/scanner for full texts; routed bodies carry their resolved token.
-func (e *StorageExecutor) cacheDependencyScopes(query string) ([]*multidb.StatementCacheScope, bool) {
+func (e *StorageExecutor) cacheDependencyScopes(ctx context.Context, query string) ([]*multidb.StatementCacheScope, bool) {
+	if ctx.Err() != nil {
+		return nil, false
+	}
 	if !e.statementCacheScope.Valid() {
 		return nil, false
 	}
@@ -192,16 +195,19 @@ func (e *StorageExecutor) cacheDependencyScopes(query string) ([]*multidb.Statem
 	sh.mu.RUnlock()
 	resolver, ok := e.dbManager.(statementCacheScopeResolver)
 	if !ok {
-		return scopes, statementScopesValid(scopes)
+		return scopes, ctx.Err() == nil && statementScopesValid(scopes)
 	}
 	opts := defaultKeywordScanOpts()
 	opts.SkipParens, opts.SkipBrackets = false, false
 	for from := 0; ; {
-		at := useKeywordIndexFrom(query, from, opts)
+		at := useKeywordIndexFrom(ctx, query, from, opts)
 		if at < 0 {
 			break
 		}
-		use, _, hasUse, err := fabric.ParseUseClause(context.Background(), query[at:], true, cyphertext.AcceptedSource)
+		use, _, hasUse, err := fabric.ParseUseClause(ctx, query[at:], true, cyphertext.AcceptedSource)
+		if ctx.Err() != nil {
+			return nil, false
+		}
 		if hasUse && err == nil && !use.IsDynamic() {
 			scope, err := resolver.StatementCacheScope(use.Name)
 			if err != nil {
@@ -211,7 +217,7 @@ func (e *StorageExecutor) cacheDependencyScopes(query string) ([]*multidb.Statem
 		}
 		from = at + len("USE")
 	}
-	return scopes, statementScopesValid(scopes)
+	return scopes, ctx.Err() == nil && statementScopesValid(scopes)
 }
 
 func (e *StorageExecutor) cachedSyntaxVerdict(query string) uint8 {
@@ -300,7 +306,7 @@ func (e *StorageExecutor) recordStatementReference(query, name string) error {
 	return nil
 }
 
-func (e *StorageExecutor) cachedUpperQuery(query string) string {
+func (e *StorageExecutor) cachedUpperQuery(ctx context.Context, query string) string {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return ""
@@ -331,7 +337,7 @@ func (e *StorageExecutor) cachedUpperQuery(query string) string {
 		c.mu.Unlock()
 	}
 	upper = upperASCII(query)
-	scopes, cacheable := e.cacheDependencyScopes(query)
+	scopes, cacheable := e.cacheDependencyScopes(ctx, query)
 	if !cacheable {
 		return upper
 	}

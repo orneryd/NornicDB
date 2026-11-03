@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -50,6 +51,11 @@ import (
 //	// Use storage (isolated to tenant_a)
 //	tenantStorage.CreateNode(&storage.Node{ID: "123"})
 type DatabaseManager struct {
+	// work is the manager's lifetime, rooted at the startup/process lifetime
+	// NewDatabaseManager receives: scans that serve every database request
+	// (storage sizes, leaked system nodes) run under it, and Close seals and
+	// cancels it. A manager built as a literal gets its own on first use.
+	work          atomic.Pointer[lifecycle.WorkLifetime]
 	mu            sync.RWMutex
 	catalogGate   chan struct{}
 	dropAdmission writeAdmission
@@ -170,9 +176,6 @@ func DefaultConfig() *Config {
 //   - System database (for metadata)
 //   - Default database ("nornic" by default, configurable)
 func NewDatabaseManager(ctx context.Context, inner storage.Engine, config *Config) (*DatabaseManager, error) {
-	if ctx == nil {
-		return nil, fmt.Errorf("database manager requires a startup context: %w", storage.ErrInvalidData)
-	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -207,6 +210,7 @@ func NewDatabaseManager(ctx context.Context, inner storage.Engine, config *Confi
 		limitCheckers:       make(map[string]*databaseLimitChecker),
 		remoteEngineFactory: config.RemoteEngineFactory,
 	}
+	m.work.Store(lifecycle.NewWorkLifetime(ctx))
 	m.catalogGate <- struct{}{}
 	if key := strings.TrimSpace(config.RemoteCredentialEncryptionKey); key != "" {
 		cipher, err := newRemoteCredentialCipher(key)
@@ -356,7 +360,7 @@ func (m *DatabaseManager) cleanupLeakedSystemNodes() {
 		candidateIDs := make(map[storage.NodeID]struct{})
 		scanFailed := false
 		for _, prefix := range candidatePrefixes {
-			err := engine.StreamNodesByPrefix(context.Background(), prefix, func(node *storage.Node) error {
+			err := engine.StreamNodesByPrefix(m.lifetime().Context(), prefix, func(node *storage.Node) error {
 				if isLeak(node) {
 					candidateIDs[node.ID] = struct{}{}
 				}
@@ -371,7 +375,7 @@ func (m *DatabaseManager) cleanupLeakedSystemNodes() {
 			continue
 		}
 		for id := range candidateIDs {
-			if err := engine.DeleteNode(id); err == nil {
+			if err := engine.DeleteNode(m.lifetime().Context(), id); err == nil {
 				removed++
 			}
 		}
@@ -483,9 +487,6 @@ func (m *DatabaseManager) CreateDatabase(ctx context.Context, request DatabaseCr
 // Returns ErrDatabaseNotFound if database doesn't exist.
 // Returns ErrCannotDropSystemDB for system/default databases.
 func (m *DatabaseManager) DropDatabase(ctx context.Context, name string) error {
-	if ctx == nil {
-		return fmt.Errorf("DROP requires an operation context: %w", storage.ErrInvalidData)
-	}
 	// A physical purge is a distinct synchronous owner. Serializing DROP
 	// invocations prevents a delayed old-generation purge from deleting a fresh
 	// same-name database; catalog receipts separately retain accepted authority.
@@ -883,6 +884,8 @@ func (m *DatabaseManager) SetDatabaseStatus(ctx context.Context, name, status st
 
 // Close releases resources.
 func (m *DatabaseManager) Close() error {
+	m.lifetime().CloseAdmission()
+	m.lifetime().Cancel()
 	m.mu.Lock()
 
 	// Clear all cached engines
@@ -1207,4 +1210,14 @@ func (m *DatabaseManager) readStorageSize(databaseName string, engine storage.En
 	info.sizeMu.RLock()
 	defer info.sizeMu.RUnlock()
 	return info.totalSize, info.nodeSize, info.edgeSize, err
+}
+
+// lifetime is the manager's lifetime; a manager built as a literal (catalog
+// candidates, tests) gets its own on first use.
+func (m *DatabaseManager) lifetime() *lifecycle.WorkLifetime {
+	if w := m.work.Load(); w != nil {
+		return w
+	}
+	m.work.CompareAndSwap(nil, &lifecycle.WorkLifetime{})
+	return m.work.Load()
 }

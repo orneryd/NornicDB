@@ -59,7 +59,7 @@ func malformedCallScopeError(ctx context.Context, source string) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		call := keywordIndexFrom(source, "CALL", from, opts)
+		call := keywordIndexFrom(ctx, source, "CALL", from, opts)
 		if call < 0 {
 			return nil
 		}

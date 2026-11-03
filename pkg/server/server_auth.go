@@ -50,6 +50,7 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 
 	// Authenticate
 	tokenResp, _, err := s.auth.Authenticate(
+		r.Context(),
 		req.Username,
 		req.Password,
 		getClientIP(r),
@@ -346,7 +347,7 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Handle callback using OAuth manager
-	_, token, _, err := s.oauthManager.HandleCallback(code, state)
+	_, token, _, err := s.oauthManager.HandleCallback(r.Context(), code, state)
 	if err != nil {
 		s.logEvent(r.Context(), slog.LevelWarn, localization.ServerOAuthCallbackFailedEvent())
 		s.writeBoundaryError(w, r, http.StatusBadRequest, err, ErrBadRequest)
@@ -460,7 +461,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Change password
-	if err := s.auth.ChangePassword(username, req.OldPassword, req.NewPassword); err != nil {
+	if err := s.auth.ChangePassword(r.Context(), username, req.OldPassword, req.NewPassword); err != nil {
 		if err == auth.ErrInvalidCredentials {
 			s.writeLocalizedError(w, r, http.StatusUnauthorized, localization.OldPasswordIncorrect(), ErrUnauthorized)
 			return
@@ -491,7 +492,7 @@ func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Update user profile
-	if err := s.auth.UpdateUser(username, req.Email, req.Metadata); err != nil {
+	if err := s.auth.UpdateUser(r.Context(), username, req.Email, req.Metadata); err != nil {
 		s.writeBoundaryError(w, r, http.StatusBadRequest, err, ErrBadRequest)
 		return
 	}
@@ -522,7 +523,7 @@ func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
 
 		roles := authRoleValues(req.Roles)
 
-		user, err := s.auth.CreateUser(req.Username, req.Password, roles)
+		user, err := s.auth.CreateUser(r.Context(), req.Username, req.Password, roles)
 		if err != nil {
 			s.writeBoundaryError(w, r, http.StatusBadRequest, err, ErrBadRequest)
 			return
@@ -575,7 +576,7 @@ func (s *Server) handleUserByID(w http.ResponseWriter, r *http.Request) {
 		httpresponse.WriteJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 
 	case http.MethodDelete:
-		if err := s.auth.DeleteUser(username); err != nil {
+		if err := s.auth.DeleteUser(r.Context(), username); err != nil {
 			s.writeUserNotFound(w, r)
 			return
 		}

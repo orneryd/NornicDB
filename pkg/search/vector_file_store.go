@@ -323,9 +323,6 @@ func (v *VectorFileStore) vectorLocked(id string) ([]float32, bool, bool) {
 // allocating a []float32 per candidate. This reduces query-path allocation pressure
 // for large rerank windows.
 func (v *VectorFileStore) scoreCandidatesDot(ctx context.Context, normalizedQuery []float32, candidates []Candidate) ([]ScoredCandidate, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	work := newSearchBatch(ctx)
 	if err := work.check(); err != nil {
 		return nil, err

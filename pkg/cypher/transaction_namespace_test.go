@@ -1,3 +1,4 @@
+// Author: Codex, NOR-180 private rollback context signature migration,29October2026.
 package cypher
 
 import (
@@ -194,7 +195,7 @@ func TestTransactionUnknownTypeBranches(t *testing.T) {
 
 	exec.txContext.active = true
 	exec.txContext.tx = 123
-	_, err = exec.handleRollback()
+	_, err = exec.handleRollback(context.Background(), nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unknown transaction type")
 }
@@ -205,7 +206,7 @@ func TestExecuteQueryAgainstStorage_DispatchCoverage(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:         "dispatch-node",
 		Labels:     []string{"Dispatch"},
 		Properties: map[string]interface{}{"name": "n1"},

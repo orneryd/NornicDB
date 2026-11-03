@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"runtime"
@@ -45,12 +46,12 @@ func storedValue(engine *BadgerEngine, kind string) string {
 	var err error
 	if kind == "node" {
 		var n *Node
-		if n, err = engine.GetNode("test:n"); err == nil {
+		if n, err = engine.GetNode(context.Background(), "test:n"); err == nil {
 			props = n.Properties
 		}
 	} else {
 		var e *Edge
-		if e, err = engine.GetEdge("test:r"); err == nil {
+		if e, err = engine.GetEdge(context.Background(), "test:r"); err == nil {
 			props = e.Properties
 		}
 	}
@@ -83,11 +84,16 @@ func TestListenerWriteBackAfterOrderedWrites(t *testing.T) {
 		"node/explicit-update-no-buffer/sync",
 	} {
 		t.Run(scenario, func(t *testing.T) {
-			engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{synchronous: strings.HasSuffix(scenario, "/sync"), manualDrain: true})
-			_, err := engine.CreateNode(listenerOrderNode("initial"))
+			engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{synchronous: strings.HasSuffix(scenario, "/sync")})
+			if engine.writeBehind != nil {
+				engine.writeBehind.SetDelayBounds(time.Hour, time.Hour)
+			}
+			_, err := engine.CreateNode(t.Context(), listenerOrderNode("initial"))
 			require.NoError(t, err)
-			require.NoError(t, engine.CreateEdge(listenerOrderEdge("initial")))
-			require.NoError(t, engine.FlushWriteBehind(nil))
+			require.NoError(t, engine.CreateEdge(t.Context(), listenerOrderEdge("initial")))
+			if engine.writeBehind != nil {
+				require.Zero(t, engine.writeBehind.PendingOps(), "native seed writes are durable; an empty worker wake must not consume the later ACK")
+			}
 
 			var called, writing, ranAfterWrite atomic.Bool
 			var listenerErr error
@@ -96,23 +102,23 @@ func TestListenerWriteBackAfterOrderedWrites(t *testing.T) {
 				if n.ID == "test:n" && called.CompareAndSwap(false, true) {
 					defer close(listenerDone)
 					ranAfterWrite.Store(writing.Load())
-					listenerErr = engine.UpdateNode(NodeUpdateRequest{After: listenerOrderNode("listener")})
+					listenerErr = engine.UpdateNode(t.Context(), NodeUpdateRequest{After: listenerOrderNode("listener")})
 				}
 			})
 			engine.OnEdgeUpdated(func(e *Edge) {
 				if e.ID == "test:r" && called.CompareAndSwap(false, true) {
 					defer close(listenerDone)
 					ranAfterWrite.Store(writing.Load())
-					listenerErr = engine.UpdateEdge(EdgeUpdateRequest{After: listenerOrderEdge("listener")})
+					listenerErr = engine.UpdateEdge(t.Context(), EdgeUpdateRequest{After: listenerOrderEdge("listener")})
 				}
 			})
 			kind, _, _ := strings.Cut(scenario, "/")
 			buffered := func() error {
 				return runPublicationTransaction(engine, true, func(tx *BadgerTransaction) error {
 					if kind == "node" {
-						return tx.UpdateGraphNode(NodeUpdateRequest{After: listenerOrderNode("buffered"), Policy: ClientNodeEdits})
+						return tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: listenerOrderNode("buffered"), Policy: ClientNodeEdits})
 					}
-					return tx.UpdateEdge(EdgeUpdateRequest{After: listenerOrderEdge("buffered")})
+					return tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: listenerOrderEdge("buffered")})
 				}, nil)
 			}
 			mark := lockHolds.mark()
@@ -122,39 +128,39 @@ func TestListenerWriteBackAfterOrderedWrites(t *testing.T) {
 				case "node/delete-after-buffered-update":
 					if writeErr = buffered(); writeErr == nil {
 						writing.Store(true)
-						writeErr = engine.DeleteNode("test:n")
+						writeErr = engine.DeleteNode(t.Context(), "test:n")
 					}
 				case "edge/delete-after-buffered-update":
 					if writeErr = buffered(); writeErr == nil {
 						writing.Store(true)
-						writeErr = engine.DeleteEdge("test:r")
+						writeErr = engine.DeleteEdge(t.Context(), "test:r")
 					}
 				case "node/direct-update-after-buffered-update":
 					if writeErr = buffered(); writeErr == nil {
 						writing.Store(true)
-						writeErr = engine.UpdateNode(NodeUpdateRequest{After: listenerOrderNode("direct")})
+						writeErr = engine.UpdateNode(t.Context(), NodeUpdateRequest{After: listenerOrderNode("direct")})
 					}
 				case "node/explicit-update-after-buffered-update":
 					if writeErr = buffered(); writeErr == nil {
 						writing.Store(true)
 						writeErr = runPublicationTransaction(engine, false, func(tx *BadgerTransaction) error {
-							return tx.UpdateGraphNode(NodeUpdateRequest{After: listenerOrderNode("explicit"), Policy: ClientNodeEdits})
+							return tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: listenerOrderNode("explicit"), Policy: ClientNodeEdits})
 						}, nil)
 					}
 				case "node/direct-update-no-buffer":
 					writing.Store(true)
-					writeErr = engine.UpdateNode(NodeUpdateRequest{After: listenerOrderNode("direct")})
+					writeErr = engine.UpdateNode(t.Context(), NodeUpdateRequest{After: listenerOrderNode("direct")})
 				case "edge/direct-update-no-buffer":
 					writing.Store(true)
-					writeErr = engine.UpdateEdge(EdgeUpdateRequest{After: listenerOrderEdge("direct")})
+					writeErr = engine.UpdateEdge(t.Context(), EdgeUpdateRequest{After: listenerOrderEdge("direct")})
 				case "node/explicit-update-no-buffer":
 					writing.Store(true)
 					writeErr = runPublicationTransaction(engine, false, func(tx *BadgerTransaction) error {
-						return tx.UpdateGraphNode(NodeUpdateRequest{After: listenerOrderNode("explicit"), Policy: ClientNodeEdits})
+						return tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: listenerOrderNode("explicit"), Policy: ClientNodeEdits})
 					}, nil)
 				}
 				if writeErr == nil {
-					writeErr = engine.FlushWriteBehind(nil)
+					writeErr = engine.FlushWriteBehind(context.Background())
 				}
 				if writeErr == nil {
 					<-listenerDone
@@ -193,9 +199,9 @@ func TestListenerWriteBackAfterOrderedWrites(t *testing.T) {
 // lands after it.
 func TestReplayListenerDoesNotHoldUpOrderedWrites(t *testing.T) {
 	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{manualDrain: true})
-	_, err := engine.CreateNode(listenerOrderNode("initial"))
+	_, err := engine.CreateNode(t.Context(), listenerOrderNode("initial"))
 	require.NoError(t, err)
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	entered := make(chan struct{})
 	written := make(chan struct{})
 	var called, waitedForListener atomic.Bool
@@ -212,19 +218,19 @@ func TestReplayListenerDoesNotHoldUpOrderedWrites(t *testing.T) {
 		case <-time.After(15 * time.Second):
 			waitedForListener.Store(true)
 		}
-		listenerErr = engine.UpdateNode(NodeUpdateRequest{After: listenerOrderNode("listener")})
+		listenerErr = engine.UpdateNode(t.Context(), NodeUpdateRequest{After: listenerOrderNode("listener")})
 	})
 	require.NoError(t, runPublicationTransaction(engine, true, func(tx *BadgerTransaction) error {
-		return tx.UpdateGraphNode(NodeUpdateRequest{After: listenerOrderNode("acknowledged"), Policy: ClientNodeEdits})
+		return tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: listenerOrderNode("acknowledged"), Policy: ClientNodeEdits})
 	}, nil))
 
 	mark := lockHolds.mark()
 	var writeErr, flushErr error
 	finished := finishesWithin(t, time.Minute, func() {
 		flushed := make(chan error, 1)
-		go func() { flushed <- engine.FlushWriteBehind(nil) }()
+		go func() { flushed <- engine.FlushWriteBehind(context.Background()) }()
 		<-entered
-		writeErr = engine.UpdateNode(NodeUpdateRequest{After: listenerOrderNode("direct")})
+		writeErr = engine.UpdateNode(t.Context(), NodeUpdateRequest{After: listenerOrderNode("direct")})
 		close(written)
 		flushErr = <-flushed
 		<-listenerDone
@@ -238,7 +244,7 @@ func TestReplayListenerDoesNotHoldUpOrderedWrites(t *testing.T) {
 	require.NoError(t, writeErr)
 	require.NoError(t, flushErr)
 	require.NoError(t, listenerErr)
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	require.Equal(t, "listener", storedValue(engine, "node"))
 }
 
@@ -259,29 +265,29 @@ func TestOrderedWriteWaitsForAnInFlightReplay(t *testing.T) {
 				}
 				return apply(buf)
 			}
-			_, err := engine.CreateNode(listenerOrderNode("initial"))
+			_, err := engine.CreateNode(t.Context(), listenerOrderNode("initial"))
 			require.NoError(t, err)
-			require.NoError(t, engine.FlushWriteBehind(nil))
+			require.NoError(t, engine.FlushWriteBehind(context.Background()))
 			require.NoError(t, runPublicationTransaction(engine, true, func(tx *BadgerTransaction) error {
-				return tx.UpdateGraphNode(NodeUpdateRequest{After: listenerOrderNode("acknowledged"), Policy: ClientNodeEdits})
+				return tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: listenerOrderNode("acknowledged"), Policy: ClientNodeEdits})
 			}, nil))
 			slow.Store(true)
 			flushed := make(chan error, 1)
-			go func() { flushed <- engine.FlushWriteBehind(nil) }()
+			go func() { flushed <- engine.FlushWriteBehind(context.Background()) }()
 			require.Eventually(t, func() bool { return !slow.Load() }, 10*time.Second, time.Millisecond, "the replay started")
 			switch route {
 			case "delete":
-				err = engine.DeleteNode("test:n")
+				err = engine.DeleteNode(t.Context(), "test:n")
 			case "direct-update":
-				err = engine.UpdateNode(NodeUpdateRequest{After: listenerOrderNode("synchronous")})
+				err = engine.UpdateNode(t.Context(), NodeUpdateRequest{After: listenerOrderNode("synchronous")})
 			case "explicit-update":
 				err = runPublicationTransaction(engine, false, func(tx *BadgerTransaction) error {
-					return tx.UpdateGraphNode(NodeUpdateRequest{After: listenerOrderNode("synchronous"), Policy: ClientNodeEdits})
+					return tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: listenerOrderNode("synchronous"), Policy: ClientNodeEdits})
 				}, nil)
 			}
 			require.NoError(t, err)
 			require.NoError(t, <-flushed)
-			require.NoError(t, engine.FlushWriteBehind(nil))
+			require.NoError(t, engine.FlushWriteBehind(context.Background()))
 			if route == "delete" {
 				require.Equal(t, "absent", storedValue(engine, "node"), "the acknowledged update replayed over the later delete")
 			} else {
@@ -300,27 +306,27 @@ func TestListenerWriteBackAfterSuppressionRewrite(t *testing.T) {
 		return &Node{ID: "test:n", Labels: labels, Properties: map[string]any{"v": v}, CreatedAt: old, UpdatedAt: old}
 	}
 	engine := newDecayWriteBehindEngine(t, t.TempDir())
-	_, err := engine.CreateNode(node([]string{"Untargeted"}, "initial"))
+	_, err := engine.CreateNode(t.Context(), node([]string{"Untargeted"}, "initial"))
 	require.NoError(t, err)
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	var called atomic.Bool
 	var listenerErr error
 	listenerDone := make(chan struct{})
 	engine.OnNodeUpdated(func(n *Node) {
 		if n.ID == "test:n" && called.CompareAndSwap(false, true) {
 			defer close(listenerDone)
-			listenerErr = engine.UpdateNode(NodeUpdateRequest{After: node([]string{"Doc"}, "listener")})
+			listenerErr = engine.UpdateNode(t.Context(), NodeUpdateRequest{After: node([]string{"Doc"}, "listener")})
 		}
 	})
 	require.NoError(t, runPublicationTransaction(engine, true, func(tx *BadgerTransaction) error {
-		return tx.UpdateGraphNode(NodeUpdateRequest{After: node([]string{"Doc"}, "relabelled"), Policy: ClientNodeEdits})
+		return tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node([]string{"Doc"}, "relabelled"), Policy: ClientNodeEdits})
 	}, nil))
 
 	mark := lockHolds.mark()
 	var rewriteErr error
 	finished := finishesWithin(t, time.Minute, func() {
-		if _, rewriteErr = engine.EnqueueDeindexIfSuppressed("test:n", false); rewriteErr == nil {
-			rewriteErr = engine.FlushWriteBehind(nil)
+		if _, rewriteErr = engine.EnqueueDeindexIfSuppressed(context.Background(), "test:n", false); rewriteErr == nil {
+			rewriteErr = engine.FlushWriteBehind(context.Background())
 		}
 		if rewriteErr == nil {
 			<-listenerDone
@@ -335,7 +341,7 @@ func TestListenerWriteBackAfterSuppressionRewrite(t *testing.T) {
 	require.True(t, called.Load())
 	require.NoError(t, listenerErr)
 	engine.invalidateCachesAfterRestore()
-	stored, err := engine.GetStoredNode("test:n")
+	stored, err := engine.GetStoredNode(t.Context(), "test:n")
 	require.NoError(t, err)
 	require.Equal(t, "listener", stored.Properties["v"])
 }

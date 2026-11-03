@@ -4,7 +4,10 @@
 // operations on multiple nodes.
 package nodes
 
+import "errors"
+
 import (
+	"context"
 	"fmt"
 	"sort"
 
@@ -36,14 +39,36 @@ func New(backend storage.Storage) *Functions {
 // Example:
 //
 //	apoc.nodes.get([1, 2, 3]) => [node1, node2, node3]
-func (f *Functions) Get(ids []int64) []*Node {
+func (f *Functions) Get(ctx context.Context, ids []int64) ([]*Node, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	nodes := make([]*Node, 0, len(ids))
 	for _, id := range ids {
-		if node, err := f.backend.GetNode(id); err == nil {
-			nodes = append(nodes, node)
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
+		{
+			node, err := f.backend.GetNode(ctx, id)
+			if err != nil && !errors.Is(err, storage.ErrNodeNotFound) {
+				return nil, err
+			}
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
+			if err == nil {
+				nodes = append(nodes, node)
+			}
 		}
 	}
-	return nodes
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	return nodes, nil
 }
 
 // Delete deletes multiple nodes.
@@ -51,21 +76,62 @@ func (f *Functions) Get(ids []int64) []*Node {
 // Example:
 //
 //	apoc.nodes.delete([node1, node2], true) => deleted count
-func (f *Functions) Delete(nodes []*Node, detachRelationships bool) int {
+func (f *Functions) Delete(ctx context.Context, nodes []*Node, detachRelationships bool) (int, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return 0, operationError
+	}
+
 	count := 0
 	for _, node := range nodes {
+		if operationError := ctx.Err(); operationError != nil {
+			return 0, operationError
+		}
+
 		if detachRelationships {
 			// Delete relationships first
-			rels, _ := f.backend.GetNodeRelationships(node.ID, "", storage.DirectionBoth)
+			rels, storageError2 := f.backend.GetNodeRelationships(ctx, node.ID, "", storage.DirectionBoth)
+			if storageError2 != nil && !errors.Is(storageError2, storage.ErrNodeNotFound) {
+				return 0, storageError2
+			}
+			if operationError := ctx.Err(); operationError != nil {
+				return 0, operationError
+			}
+
 			for _, rel := range rels {
-				f.backend.DeleteRelationship(rel.ID)
+				if operationError := ctx.Err(); operationError != nil {
+					return 0, operationError
+				}
+
+				{
+					storageError3 := f.backend.DeleteRelationship(ctx, rel.ID)
+					if storageError3 != nil && !errors.Is(storageError3, storage.ErrRelationshipNotFound) {
+						return 0, storageError3
+					}
+					if operationError := ctx.Err(); operationError != nil {
+						return 0, operationError
+					}
+
+				}
 			}
 		}
-		if err := f.backend.DeleteNode(node.ID); err == nil {
-			count++
+		{
+			err := f.backend.DeleteNode(ctx, node.ID)
+			if err != nil && !errors.Is(err, storage.ErrNodeNotFound) {
+				return 0, err
+			}
+			if operationError := ctx.Err(); operationError != nil {
+				return 0, operationError
+			}
+
+			if err == nil {
+				count++
+			}
 		}
 	}
-	return count
+	if operationError := ctx.Err(); operationError != nil {
+		return 0, operationError
+	}
+	return count, nil
 }
 
 // Link creates relationships between multiple nodes.
@@ -73,20 +139,41 @@ func (f *Functions) Delete(nodes []*Node, detachRelationships bool) int {
 // Example:
 //
 //	apoc.nodes.link([node1, node2, node3], 'NEXT') => relationships
-func (f *Functions) Link(nodes []*Node, relType string) []*Relationship {
+func (f *Functions) Link(ctx context.Context, nodes []*Node, relType string) ([]*Relationship, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	rels := make([]*Relationship, 0)
 	for i := 0; i < len(nodes)-1; i++ {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		rel := &Relationship{
 			Type:       relType,
 			StartNode:  nodes[i].ID,
 			EndNode:    nodes[i+1].ID,
 			Properties: make(map[string]interface{}),
 		}
-		if created, err := f.backend.CreateRelationship(rel.StartNode, rel.EndNode, rel.Type, rel.Properties); err == nil {
-			rels = append(rels, created)
+		{
+			created, err := f.backend.CreateRelationship(ctx, rel.StartNode, rel.EndNode, rel.Type, rel.Properties)
+			if err != nil && !errors.Is(err, storage.ErrNodeNotFound) {
+				return nil, err
+			}
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
+			if err == nil {
+				rels = append(rels, created)
+			}
 		}
 	}
-	return rels
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return rels, nil
 }
 
 // Collapse collapses a path of nodes into a single relationship.
@@ -94,9 +181,16 @@ func (f *Functions) Link(nodes []*Node, relType string) []*Relationship {
 // Example:
 //
 //	apoc.nodes.collapse([node1, node2, node3], 'CONNECTED') => relationship
-func (f *Functions) Collapse(nodes []*Node, relType string) *Relationship {
+func (f *Functions) Collapse(ctx context.Context, nodes []*Node, relType string) (*Relationship, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	if len(nodes) < 2 {
-		return nil
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return nil, nil
 	}
 
 	rel := &Relationship{
@@ -109,14 +203,25 @@ func (f *Functions) Collapse(nodes []*Node, relType string) *Relationship {
 	// Store intermediate nodes as property
 	intermediateIDs := make([]int64, 0)
 	for i := 1; i < len(nodes)-1; i++ {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		intermediateIDs = append(intermediateIDs, nodes[i].ID)
 	}
 	if len(intermediateIDs) > 0 {
 		rel.Properties["intermediateNodes"] = intermediateIDs
 	}
 
-	created, _ := f.backend.CreateRelationship(rel.StartNode, rel.EndNode, rel.Type, rel.Properties)
-	return created
+	created, storageError6 := f.backend.CreateRelationship(ctx, rel.StartNode, rel.EndNode, rel.Type, rel.Properties)
+	if storageError6 != nil && !errors.Is(storageError6, storage.ErrNodeNotFound) {
+		return nil, storageError6
+	}
+
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return created, nil
 }
 
 // Group groups nodes by a property value.
@@ -350,19 +455,43 @@ func Reduce(nodes []*Node, initial interface{}, reducer func(interface{}, *Node)
 // Example:
 //
 //	apoc.nodes.connected([node1, node2, node3]) => true/false
-func (f *Functions) Connected(nodes []*Node) bool {
+func (f *Functions) Connected(ctx context.Context, nodes []*Node) (bool, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return false, operationError
+	}
+
 	if len(nodes) <= 1 {
-		return true
+		if operationError := ctx.Err(); operationError != nil {
+			return false, operationError
+		}
+		return true, nil
 	}
 
 	for i := 0; i < len(nodes)-1; i++ {
-		path, err := f.backend.FindShortestPath(nodes[i].ID, nodes[i+1].ID, "", 10)
+		if operationError := ctx.Err(); operationError != nil {
+			return false, operationError
+		}
+
+		path, err := f.backend.FindShortestPath(ctx, nodes[i].ID, nodes[i+1].ID, "", 10)
+		if err != nil && !errors.Is(err, storage.ErrPathNotFound) {
+			return false, err
+		}
+		if operationError := ctx.Err(); operationError != nil {
+			return false, operationError
+		}
+
 		if err != nil || path == nil {
-			return false
+			if operationError := ctx.Err(); operationError != nil {
+				return false, operationError
+			}
+			return false, nil
 		}
 	}
 
-	return true
+	if operationError := ctx.Err(); operationError != nil {
+		return false, operationError
+	}
+	return true, nil
 }
 
 // IsDense checks if nodes are densely connected.
@@ -370,17 +499,39 @@ func (f *Functions) Connected(nodes []*Node) bool {
 // Example:
 //
 //	apoc.nodes.isDense(nodes, 0.5) => true/false
-func (f *Functions) IsDense(nodes []*Node, threshold float64) bool {
+func (f *Functions) IsDense(ctx context.Context, nodes []*Node, threshold float64) (bool, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return false, operationError
+	}
+
 	if len(nodes) <= 1 {
-		return false
+		if operationError := ctx.Err(); operationError != nil {
+			return false, operationError
+		}
+		return false, nil
 	}
 
 	totalPossible := len(nodes) * (len(nodes) - 1) / 2
 	actualConnections := 0
 
 	for i := 0; i < len(nodes); i++ {
+		if operationError := ctx.Err(); operationError != nil {
+			return false, operationError
+		}
+
 		for j := i + 1; j < len(nodes); j++ {
-			path, err := f.backend.FindShortestPath(nodes[i].ID, nodes[j].ID, "", 1)
+			if operationError := ctx.Err(); operationError != nil {
+				return false, operationError
+			}
+
+			path, err := f.backend.FindShortestPath(ctx, nodes[i].ID, nodes[j].ID, "", 1)
+			if err != nil && !errors.Is(err, storage.ErrPathNotFound) {
+				return false, err
+			}
+			if operationError := ctx.Err(); operationError != nil {
+				return false, operationError
+			}
+
 			if err == nil && path != nil {
 				actualConnections++
 			}
@@ -388,7 +539,10 @@ func (f *Functions) IsDense(nodes []*Node, threshold float64) bool {
 	}
 
 	density := float64(actualConnections) / float64(totalPossible)
-	return density >= threshold
+	if operationError := ctx.Err(); operationError != nil {
+		return false, operationError
+	}
+	return density >= threshold, nil
 }
 
 // Relationships returns all relationships between nodes.
@@ -396,17 +550,40 @@ func (f *Functions) IsDense(nodes []*Node, threshold float64) bool {
 // Example:
 //
 //	apoc.nodes.relationships(nodes, 'KNOWS') => relationships
-func (f *Functions) Relationships(nodes []*Node, relType string) []*Relationship {
+func (f *Functions) Relationships(ctx context.Context, nodes []*Node, relType string) ([]*Relationship, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	nodeSet := make(map[int64]bool)
 	for _, node := range nodes {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		nodeSet[node.ID] = true
 	}
 
 	rels := make([]*Relationship, 0)
 	for _, node := range nodes {
-		nodeRels, err := f.backend.GetNodeRelationships(node.ID, relType, storage.DirectionBoth)
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
+		nodeRels, err := f.backend.GetNodeRelationships(ctx, node.ID, relType, storage.DirectionBoth)
+		if err != nil && !errors.Is(err, storage.ErrNodeNotFound) {
+			return nil, err
+		}
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		if err == nil {
 			for _, rel := range nodeRels {
+				if operationError := ctx.Err(); operationError != nil {
+					return nil, operationError
+				}
+
 				// Only include if both nodes are in the set
 				if nodeSet[rel.StartNode] && nodeSet[rel.EndNode] {
 					rels = append(rels, rel)
@@ -415,7 +592,10 @@ func (f *Functions) Relationships(nodes []*Node, relType string) []*Relationship
 		}
 	}
 
-	return DistinctRels(rels)
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return DistinctRels(rels), nil
 }
 
 // DistinctRels returns distinct relationships.
@@ -455,22 +635,44 @@ func ToMap(nodes []*Node, keyProperty string) map[interface{}]*Node {
 // Example:
 //
 //	apoc.nodes.fromMap({1: {name: 'Alice'}, 2: {name: 'Bob'}}) => nodes
-func (f *Functions) FromMap(data map[string]interface{}, labels []string) []*Node {
+func (f *Functions) FromMap(ctx context.Context, data map[string]interface{}, labels []string) ([]*Node, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	nodes := make([]*Node, 0, len(data))
 
 	for _, value := range data {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		if props, ok := value.(map[string]interface{}); ok {
 			node := &Node{
 				Labels:     labels,
 				Properties: props,
 			}
-			if created, err := f.backend.CreateNode(node.Labels, node.Properties); err == nil {
-				nodes = append(nodes, created)
+			{
+				created, err := f.backend.CreateNode(ctx, node.Labels, node.Properties)
+				if err != nil {
+					return nil, err
+				}
+				if operationError := ctx.Err(); operationError != nil {
+					return nil, operationError
+				}
+
+				if err == nil {
+					nodes = append(nodes, created)
+				}
 			}
 		}
 	}
 
-	return nodes
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	return nodes, nil
 }
 
 // Batch processes nodes in batches.
@@ -500,10 +702,18 @@ func Batch(nodes []*Node, batchSize int, process func([]*Node) interface{}) []in
 // Example:
 //
 //	apoc.nodes.cycles(nodes) => cycles found
-func (f *Functions) Cycles(nodes []*Node) [][]int64 {
+func (f *Functions) Cycles(ctx context.Context, nodes []*Node) ([][]int64, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	cycles := make([][]int64, 0)
 
 	for _, node := range nodes {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		visited := make(map[int64]bool)
 		path := make([]int64, 0)
 
@@ -529,7 +739,7 @@ func (f *Functions) Cycles(nodes []*Node) [][]int64 {
 			visited[id] = true
 			path = append(path, id)
 
-			neighbors, err := f.backend.GetNodeNeighbors(id, "", storage.DirectionOutgoing)
+			neighbors, err := f.backend.GetNodeNeighbors(ctx, id, "", storage.DirectionOutgoing)
 			if err == nil {
 				for _, neighbor := range neighbors {
 					dfs(neighbor.ID)
@@ -543,5 +753,9 @@ func (f *Functions) Cycles(nodes []*Node) [][]int64 {
 		dfs(node.ID)
 	}
 
-	return cycles
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	return cycles, nil
 }

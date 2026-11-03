@@ -1,6 +1,7 @@
 package fabric
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -157,12 +158,12 @@ func TestFabricTransaction_CommitAll(t *testing.T) {
 	_, _ = tx.GetOrOpen("shard_b", true)
 
 	commitCount := 0
-	err := tx.Commit(
-		func(sub *SubTransaction) error {
+	err := tx.Commit(TerminalContexts{Commit: t.Context(), Cleanup: context.WithoutCancel(t.Context())},
+		func(_ context.Context, sub *SubTransaction) error {
 			commitCount++
 			return nil
 		},
-		func(sub *SubTransaction) error {
+		func(_ context.Context, sub *SubTransaction) error {
 			return nil
 		},
 	)
@@ -179,9 +180,9 @@ func TestFabricTransaction_CommitAll(t *testing.T) {
 
 func TestFabricTransaction_CommitAfterCommit(t *testing.T) {
 	tx := NewFabricTransaction("tx-009")
-	_ = tx.Commit(func(sub *SubTransaction) error { return nil }, nil)
+	_ = tx.Commit(TerminalContexts{Commit: t.Context(), Cleanup: context.WithoutCancel(t.Context())}, func(_ context.Context, sub *SubTransaction) error { return nil }, nil)
 
-	err := tx.Commit(func(sub *SubTransaction) error { return nil }, nil)
+	err := tx.Commit(TerminalContexts{Commit: t.Context(), Cleanup: context.WithoutCancel(t.Context())}, func(_ context.Context, sub *SubTransaction) error { return nil }, nil)
 	if err == nil {
 		t.Fatal("expected error for double commit")
 	}
@@ -194,7 +195,7 @@ func TestFabricTransaction_CommitUsesBoundParticipantCallbacks(t *testing.T) {
 	recorder := &participantRecorder{order: &[]string{}}
 	fixture := newParticipantCallbacksFixture(t, "tx-009b", []participantShard{{"shard_a", true}}, recorder.callback())
 
-	if err := fixture.tx.Commit(nil, nil); err != nil {
+	if err := fixture.tx.Commit(TerminalContexts{Commit: t.Context(), Cleanup: context.WithoutCancel(t.Context())}, nil, nil); err != nil {
 		t.Fatalf("Commit failed: %v", err)
 	}
 	if recorder.commits != 1 {
@@ -226,7 +227,7 @@ func TestFabricTransaction_BindParticipantCallbacks_NotFound(t *testing.T) {
 	if subs := tx.SubTransactions(); len(subs) != 0 {
 		t.Fatalf("a refused binding created participants: %v", subs)
 	}
-	if err := tx.Rollback(nil); err != nil {
+	if err := tx.Rollback(context.WithoutCancel(t.Context()), nil); err != nil {
 		t.Fatalf("rollback after a refused binding failed: %v", err)
 	}
 	if recorder.commits != 0 || recorder.rollbacks != 0 {
@@ -241,7 +242,7 @@ func TestFabricTransaction_RollbackAll(t *testing.T) {
 	_, _ = tx.GetOrOpen("shard_b", true)
 
 	rollbackCount := 0
-	err := tx.Rollback(func(sub *SubTransaction) error {
+	err := tx.Rollback(context.WithoutCancel(t.Context()), func(_ context.Context, sub *SubTransaction) error {
 		rollbackCount++
 		return nil
 	})
@@ -258,9 +259,9 @@ func TestFabricTransaction_RollbackAll(t *testing.T) {
 
 func TestFabricTransaction_RollbackAfterRollback(t *testing.T) {
 	tx := NewFabricTransaction("tx-011")
-	_ = tx.Rollback(nil)
+	_ = tx.Rollback(context.WithoutCancel(t.Context()), nil)
 
-	err := tx.Rollback(nil)
+	err := tx.Rollback(context.WithoutCancel(t.Context()), nil)
 	if err == nil {
 		t.Fatal("expected error for double rollback")
 	}
@@ -275,15 +276,15 @@ func TestFabricTransaction_CommitFailureRollsBackRemaining(t *testing.T) {
 	commitCount := 0
 	rollbackCount := 0
 
-	err := tx.Commit(
-		func(sub *SubTransaction) error {
+	err := tx.Commit(TerminalContexts{Commit: t.Context(), Cleanup: context.WithoutCancel(t.Context())},
+		func(_ context.Context, sub *SubTransaction) error {
 			commitCount++
 			if commitCount == 2 {
 				return fmt.Errorf("simulated commit failure on %s", sub.ShardName)
 			}
 			return nil
 		},
-		func(sub *SubTransaction) error {
+		func(_ context.Context, sub *SubTransaction) error {
 			rollbackCount++
 			return nil
 		},
@@ -307,15 +308,15 @@ func TestFabricTransaction_CommitFailureFinalizesUnfinishedShards(t *testing.T) 
 
 	committed := make([]string, 0, 2)
 	rolledBack := make([]string, 0, 2)
-	err := tx.Commit(
-		func(sub *SubTransaction) error {
+	err := tx.Commit(TerminalContexts{Commit: t.Context(), Cleanup: context.WithoutCancel(t.Context())},
+		func(_ context.Context, sub *SubTransaction) error {
 			committed = append(committed, sub.ShardName)
 			if sub.ShardName == "shard_b" {
 				return fmt.Errorf("commit failed")
 			}
 			return nil
 		},
-		func(sub *SubTransaction) error {
+		func(_ context.Context, sub *SubTransaction) error {
 			rolledBack = append(rolledBack, sub.ShardName)
 			return nil
 		},
@@ -372,7 +373,7 @@ func TestFabricTransaction_SubTransactions(t *testing.T) {
 
 func TestFabricTransaction_GetOrOpenOnClosedTx(t *testing.T) {
 	tx := NewFabricTransaction("tx-015")
-	_ = tx.Commit(func(sub *SubTransaction) error { return nil }, nil)
+	_ = tx.Commit(TerminalContexts{Commit: t.Context(), Cleanup: context.WithoutCancel(t.Context())}, func(_ context.Context, sub *SubTransaction) error { return nil }, nil)
 
 	_, err := tx.GetOrOpen("shard_a", false)
 	if err == nil {
@@ -386,12 +387,12 @@ func TestFabricTransaction_CommitWithBoundRollbackOnFailure(t *testing.T) {
 	_, _ = tx.GetOrOpen("shard_b", false)
 
 	boundRolledBack := false
-	_ = tx.BindParticipantCallbacks("shard_b", ParticipantCallbacks{Commit: func(_ *SubTransaction) error { return fmt.Errorf("shard_b commit fail") }, Rollback: func(_ *SubTransaction) error {
+	_ = tx.BindParticipantCallbacks("shard_b", ParticipantCallbacks{Commit: func(_ context.Context, _ *SubTransaction) error { return fmt.Errorf("shard_b commit fail") }, Rollback: func(_ context.Context, _ *SubTransaction) error {
 		boundRolledBack = true
 		return nil
 	}})
 
-	err := tx.Commit(nil, nil) // nil global callbacks → uses bound.
+	err := tx.Commit(TerminalContexts{Commit: t.Context(), Cleanup: context.WithoutCancel(t.Context())}, nil, nil) // nil global callbacks → uses bound.
 	if err == nil {
 		t.Fatal("expected commit error")
 	}
@@ -406,9 +407,9 @@ func TestFabricTransaction_CommitWithBoundRollbackOnFailure(t *testing.T) {
 
 func TestFabricTransaction_RollbackOnClosedTx(t *testing.T) {
 	tx := NewFabricTransaction("tx-017")
-	_ = tx.Commit(nil, nil) // Committed (no subs).
+	_ = tx.Commit(TerminalContexts{Commit: t.Context(), Cleanup: context.WithoutCancel(t.Context())}, nil, nil) // Committed (no subs).
 
-	err := tx.Rollback(nil)
+	err := tx.Rollback(context.WithoutCancel(t.Context()), nil)
 	if err == nil {
 		t.Fatal("expected error for rollback on committed tx")
 	}
@@ -432,7 +433,7 @@ func TestFabricTransaction_Commit_SkipsAlreadyCommitted(t *testing.T) {
 	sub.State = "committed" // Pre-mark as committed.
 
 	commitCount := 0
-	err := tx.Commit(func(_ *SubTransaction) error {
+	err := tx.Commit(TerminalContexts{Commit: t.Context(), Cleanup: context.WithoutCancel(t.Context())}, func(_ context.Context, _ *SubTransaction) error {
 		commitCount++
 		return nil
 	}, nil)
@@ -450,7 +451,7 @@ func TestFabricTransaction_Rollback_SkipsAlreadyRolledBack(t *testing.T) {
 	sub.State = "rolledback" // Pre-mark.
 
 	rollbackCount := 0
-	err := tx.Rollback(func(_ *SubTransaction) error {
+	err := tx.Rollback(context.WithoutCancel(t.Context()), func(_ context.Context, _ *SubTransaction) error {
 		rollbackCount++
 		return nil
 	})
@@ -466,11 +467,11 @@ func TestFabricTransaction_Commit_NilGlobalUseBoundRollbackOnFail(t *testing.T) 
 	tx := NewFabricTransaction("tx-021")
 	_, _ = tx.GetOrOpen("shard_a", false)
 
-	_ = tx.BindParticipantCallbacks("shard_a", ParticipantCallbacks{Commit: func(_ *SubTransaction) error { return nil }, Rollback: nil})
+	_ = tx.BindParticipantCallbacks("shard_a", ParticipantCallbacks{Commit: func(_ context.Context, _ *SubTransaction) error { return nil }, Rollback: nil})
 
 	// shard_a commits successfully with bound callback, then rolls back
 	// with nil rollback → no panic.
-	err := tx.Commit(nil, nil)
+	err := tx.Commit(TerminalContexts{Commit: t.Context(), Cleanup: context.WithoutCancel(t.Context())}, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

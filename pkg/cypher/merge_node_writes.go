@@ -84,7 +84,7 @@ func withMergeNodeWrites(ctx context.Context, clauses []pipelineClause) context.
 				writes.add(item.variable, renamed)
 			}
 		case pipelineClauseMerge:
-			actions := splitMergeClauseActions(pipelineClauseBody(clause.text, "MERGE"), nil)
+			actions := splitMergeClauseActions(ctx, pipelineClauseBody(clause.text, "MERGE"), nil)
 			bound := make(map[string]struct{})
 			eachPatternElement(actions.pattern, func(opener byte, element string) {
 				if opener == '(' {
@@ -103,13 +103,15 @@ func withMergeNodeWrites(ctx context.Context, clauses []pipelineClause) context.
 				writes.add(item, renamed)
 			}
 		case pipelineClauseWith:
-			renamed = renamed || containsKeywordOutsideStrings(clause.text, "AS")
+			renamed = renamed || containsKeywordOutsideStrings(ctx, clause.text, "AS")
 		case pipelineClauseLet:
 			renamed = true
 		case pipelineClauseForeach, pipelineClauseCallSubquery:
 			writes.all = true
 		case pipelineClauseCall:
-			if procedure, found := globalProcedureRegistry.Get(extractProcedureName(ctx, clause.text)); !found || procedure.Spec.writes() {
+			name, err := extractProcedureName(ctx, clause.text)
+			procedure, found := globalProcedureRegistry.Get(name)
+			if err != nil || !found || procedure.Spec.writes() {
 				writes.all = true
 			}
 		}

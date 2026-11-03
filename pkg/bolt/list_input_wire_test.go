@@ -48,7 +48,7 @@ func TestListInputBoltRepresentations(t *testing.T) {
 	store := storage.NewNamespacedEngine(engine, "list_inputs")
 	inputs := listinputs.TransportInputs()
 	for _, input := range inputs {
-		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(input.Name), Labels: []string{"TypedWireList"}, Properties: map[string]interface{}{"name": input.Name, "xs": input.PropertyValue()}})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(input.Name), Labels: []string{"TypedWireList"}, Properties: map[string]interface{}{"name": input.Name, "xs": input.PropertyValue()}})
 		require.NoError(t, err)
 	}
 	_, port := startBoltIntegrationServerWithExplicitTx(t, store)

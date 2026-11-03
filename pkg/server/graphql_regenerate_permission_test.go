@@ -19,7 +19,7 @@ func TestGraphQLRegenerateRequiresAdminBeforeClearing(t *testing.T) {
 	require.NoError(t, s.allowlistStore.SaveRoleDatabases(ctx, role, []string{"nornic", "system"}))
 	require.NoError(t, s.privilegesStore.SavePrivilege(ctx, role, "nornic", true, true))
 	require.NoError(t, s.privilegesStore.SavePrivilege(ctx, role, "system", true, true))
-	_, err := users.CreateUser(role, "password123", []auth.Role{auth.Role(role)})
+	_, err := users.CreateUser(context.Background(), role, "password123", []auth.Role{auth.Role(role)})
 	require.NoError(t, err)
 	token := "Bearer " + getAuthToken(t, users, role)
 	vectors := [][]float32{{1, 0, 0}}
@@ -29,7 +29,7 @@ func TestGraphQLRegenerateRequiresAdminBeforeClearing(t *testing.T) {
 			permissions = append(permissions, "admin")
 		}
 		require.NoError(t, s.roleEntitlementsStore.Set(ctx, role, permissions))
-		_, err = s.db.GetStorage().CreateNode(&storage.Node{ID: "regenerate-seed", Labels: []string{"Seed"}, ChunkEmbeddings: vectors})
+		_, err = s.db.GetStorage().CreateNode(t.Context(), &storage.Node{ID: "regenerate-seed", Labels: []string{"Seed"}, ChunkEmbeddings: vectors})
 		require.NoError(t, err)
 		for _, regenerate := range []bool{false, true} {
 			query := `mutation { triggerEmbedding(regenerate: false) { total } }`
@@ -44,7 +44,7 @@ func TestGraphQLRegenerateRequiresAdminBeforeClearing(t *testing.T) {
 				} `json:"errors"`
 			}
 			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &payload))
-			node, err := s.db.GetStorage().GetNode("regenerate-seed")
+			node, err := s.db.GetStorage().GetNode(t.Context(), "regenerate-seed")
 			require.NoError(t, err)
 			if regenerate && !admin {
 				require.NotEmpty(t, payload.Errors, response.Body.String())
@@ -59,6 +59,6 @@ func TestGraphQLRegenerateRequiresAdminBeforeClearing(t *testing.T) {
 				}
 			}
 		}
-		require.NoError(t, s.db.GetStorage().DeleteNode("regenerate-seed"))
+		require.NoError(t, s.db.GetStorage().DeleteNode(t.Context(), "regenerate-seed"))
 	}
 }

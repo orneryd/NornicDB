@@ -5,13 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -47,13 +48,13 @@ func TestRecoverBadgerFromSnapshotAndWAL_AllowsWALOnlyWhenNoSnapshots(t *testing
 	t.Cleanup(func() { _ = os.RemoveAll(backupDir) })
 
 	// Verify the recovered Badger store contains the node.
-	node, err := recovered.GetNode(storage.NodeID("test:node-1"))
+	node, err := recovered.GetNode(t.Context(), storage.NodeID("test:node-1"))
 	require.NoError(t, err)
 	require.NotNil(t, node)
 	require.Equal(t, "value", node.Properties["key"])
 
 	// Sanity: run a small transactional read as well (exercise Badger reads).
-	tx, err := recovered.BeginTransaction()
+	tx, err := recovered.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NotNil(t, tx)
 	require.NoError(t, tx.Rollback())
@@ -189,7 +190,7 @@ func TestRecoverBadgerFromSnapshotAndWAL_RejectsEmptyReplayOfExistingStore(t *te
 		fixtureowner.Own(t, store)
 	}
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID: storage.NodeID("nornic:preserved"), Labels: []string{"Doc"},
 		Properties: map[string]interface{}{"name": "preserved"},
 	})
@@ -220,7 +221,7 @@ func TestRecoverBadgerFromSnapshotAndWAL_SnapshotAndWALReplay(t *testing.T) {
 
 	mem := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	ns := storage.NewNamespacedEngine(mem, "test")
-	_, err = ns.CreateNode(&storage.Node{
+	_, err = ns.CreateNode(t.Context(), &storage.Node{
 		ID:     "seed-1",
 		Labels: []string{"Doc"},
 		Properties: map[string]any{
@@ -228,7 +229,7 @@ func TestRecoverBadgerFromSnapshotAndWAL_SnapshotAndWALReplay(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	_, err = ns.CreateNode(&storage.Node{
+	_, err = ns.CreateNode(t.Context(), &storage.Node{
 		ID:     "seed-2",
 		Labels: []string{"Doc"},
 		Properties: map[string]any{
@@ -236,7 +237,7 @@ func TestRecoverBadgerFromSnapshotAndWAL_SnapshotAndWALReplay(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	require.NoError(t, ns.CreateEdge(&storage.Edge{
+	require.NoError(t, ns.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "edge-1",
 		StartNode: "seed-1",
 		EndNode:   "seed-2",
@@ -269,15 +270,15 @@ func TestRecoverBadgerFromSnapshotAndWAL_SnapshotAndWALReplay(t *testing.T) {
 	t.Cleanup(func() { _ = recovered.Close() })
 	t.Cleanup(func() { _ = os.RemoveAll(backupDir) })
 
-	snapNode, err := recovered.GetNode(storage.NodeID("test:seed-1"))
+	snapNode, err := recovered.GetNode(t.Context(), storage.NodeID("test:seed-1"))
 	require.NoError(t, err)
 	require.Equal(t, "from-snapshot", snapNode.Properties["content"])
 
-	walNode, err := recovered.GetNode(storage.NodeID("test:after-1"))
+	walNode, err := recovered.GetNode(t.Context(), storage.NodeID("test:after-1"))
 	require.NoError(t, err)
 	require.Equal(t, "from-wal", walNode.Properties["content"])
 
-	edge, err := recovered.GetEdge(storage.EdgeID("test:edge-1"))
+	edge, err := recovered.GetEdge(t.Context(), storage.EdgeID("test:edge-1"))
 	require.NoError(t, err)
 	require.Equal(t, storage.NodeID("test:seed-1"), edge.StartNode)
 	require.Equal(t, storage.NodeID("test:seed-2"), edge.EndNode)
@@ -358,7 +359,7 @@ func TestRecoverBadgerFromSnapshotAndWAL_RestoresLargeSetsInChunks(t *testing.T)
 				require.NoError(t, err)
 				require.Len(t, recoveredNodes, 12000)
 
-				node, err := recovered.GetNode(storage.NodeID("test:node-047"))
+				node, err := recovered.GetNode(t.Context(), storage.NodeID("test:node-047"))
 				require.NoError(t, err)
 				require.Equal(t, strings.Repeat("x", 128), node.Properties["payload"])
 			},
@@ -396,7 +397,7 @@ func TestRecoverBadgerFromSnapshotAndWAL_RestoresLargeSetsInChunks(t *testing.T)
 				require.NoError(t, err)
 				require.Len(t, recoveredEdges, 12000)
 
-				edge, err := recovered.GetEdge(storage.EdgeID("test:edge-00047"))
+				edge, err := recovered.GetEdge(t.Context(), storage.EdgeID("test:edge-00047"))
 				require.NoError(t, err)
 				require.Equal(t, storage.NodeID("test:start"), edge.StartNode)
 				require.Equal(t, storage.NodeID("test:end"), edge.EndNode)

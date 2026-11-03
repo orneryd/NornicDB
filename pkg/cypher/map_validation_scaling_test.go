@@ -18,7 +18,7 @@ func coldMapListQuery(count int) string {
 // sample performs the work a first execution must do. Eight times the input
 // may take generous linear overhead, but must not approach 64 times the work.
 func TestStaticMapKeysColdScaling(t *testing.T) {
-	assertColdMapScaling(t, validateStaticMapKeys)
+	assertColdMapScaling(t, func(text string) error { return validateStaticMapKeys(t.Context(), text) })
 }
 
 func TestPatternDetectionColdMapScaling(t *testing.T) {
@@ -65,7 +65,7 @@ func BenchmarkStaticMapKeysColdLists(b *testing.B) {
 			b.SetBytes(int64(len(query)))
 			b.ResetTimer()
 			for range b.N {
-				if err := validateStaticMapKeys(query); err != nil {
+				if err := validateStaticMapKeys(b.Context(), query); err != nil {
 					b.Fatal(err)
 				}
 			}

@@ -62,7 +62,7 @@ func TestUniqueListDurableRoundTrip(t *testing.T) {
 				require.NoError(t, err)
 				defer func() { require.NoError(t, engine.Close()) }()
 				for _, id := range []NodeID{"test:a", "test:b"} {
-					_, err = engine.CreateNode(&Node{ID: id})
+					_, err = engine.CreateNode(t.Context(), &Node{ID: id})
 					require.NoError(t, err)
 				}
 				typ := ConstraintEntityNode
@@ -79,21 +79,21 @@ func TestUniqueListDurableRoundTrip(t *testing.T) {
 					if entity == "node" {
 						n := &Node{ID: NodeID("test:" + id), Labels: []string{"T"}, Properties: props}
 						if tx != nil {
-							_, err := tx.CreateNode(n)
+							_, err := tx.CreateNode(t.Context(), n)
 							return err
 						}
-						_, err := engine.CreateNode(n)
+						_, err := engine.CreateNode(t.Context(), n)
 						return err
 					}
 					e := &Edge{ID: EdgeID("test:" + id), Type: "T", StartNode: "test:a", EndNode: "test:b", Properties: props}
 					if tx != nil {
-						return tx.CreateEdge(e)
+						return tx.CreateEdge(t.Context(), e)
 					}
-					return engine.CreateEdge(e)
+					return engine.CreateEdge(t.Context(), e)
 				}
 				first := []interface{}{float64(200)}
 				if mode == "pending" {
-					tx, err := engine.BeginTransaction()
+					tx, err := engine.BeginTransaction(t.Context())
 					require.NoError(t, err)
 					defer tx.Rollback()
 					require.NoError(t, create(tx, "one", first))
@@ -117,7 +117,7 @@ func TestUniqueListDurableRoundTrip(t *testing.T) {
 					requireConstraintListViolation(t, create(nil, "two", first))
 					return
 				}
-				tx, err := engine.BeginTransaction()
+				tx, err := engine.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				defer tx.Rollback()
 				err = create(tx, "two", first)
@@ -139,7 +139,7 @@ func TestUniqueListPreservesLargeIntegerIdentityAfterRestart(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { engine.Close() }()
 	require.NoError(t, engine.GetSchemaForNamespace("test").AddConstraint(Constraint{Name: "large_list", Type: ConstraintUnique, Label: "LongList", Properties: []string{"id"}}))
-	_, err = engine.CreateNode(&Node{ID: "test:first", Labels: []string{"LongList"}, Properties: map[string]interface{}{"id": []int64{1 << 53}}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:first", Labels: []string{"LongList"}, Properties: map[string]interface{}{"id": []int64{1 << 53}}})
 	require.NoError(t, err)
 	require.NoError(t, engine.Close())
 	engine, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(path))
@@ -147,9 +147,9 @@ func TestUniqueListPreservesLargeIntegerIdentityAfterRestart(t *testing.T) {
 		fixtureowner.Own(t, engine)
 	}
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:distinct", Labels: []string{"LongList"}, Properties: map[string]interface{}{"id": []int64{1<<53 + 1}}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:distinct", Labels: []string{"LongList"}, Properties: map[string]interface{}{"id": []int64{1<<53 + 1}}})
 	require.NoError(t, err, "adjacent longs are different UNIQUE values, including after index rebuild")
-	_, err = engine.CreateNode(&Node{ID: "test:duplicate", Labels: []string{"LongList"}, Properties: map[string]interface{}{"id": []interface{}{int64(1 << 53)}}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:duplicate", Labels: []string{"LongList"}, Properties: map[string]interface{}{"id": []interface{}{int64(1 << 53)}}})
 	requireConstraintListViolation(t, err)
 }
 func TestConstraintListEqualityCyclesAndBoundaries(t *testing.T) {
@@ -181,9 +181,9 @@ func TestUniqueListConcurrentRelationshipCommits(t *testing.T) {
 	start := make(chan struct{})
 	results := make(chan error, 2)
 	for i := 0; i < 2; i++ {
-		tx, err := engine.BeginTransaction()
+		tx, err := engine.BeginTransaction(t.Context())
 		require.NoError(t, err)
-		require.NoError(t, tx.CreateEdge(&Edge{ID: EdgeID(fmt.Sprintf("test:list-peer%d", i)), Type: "T", StartNode: "test:a", EndNode: "test:b", Properties: map[string]interface{}{"id": []interface{}{float64(200)}}}))
+		require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: EdgeID(fmt.Sprintf("test:list-peer%d", i)), Type: "T", StartNode: "test:a", EndNode: "test:b", Properties: map[string]interface{}{"id": []interface{}{float64(200)}}}))
 		wg.Add(1)
 		go func() { defer wg.Done(); defer tx.Rollback(); <-start; results <- tx.Commit() }()
 	}
@@ -221,9 +221,11 @@ func TestConstraintListCanonicalKeysPreserveEquality(t *testing.T) {
 		{[]float32{.5}, []float64{.5}, true},
 		{[]float64{math.Copysign(0, -1)}, []float64{0}, true},
 	} {
-		a, ok := indexValueKey(pair.a)
+		a, ok, keyErr := indexValueKey(t.Context(), pair.a)
+		require.NoError(t, keyErr)
 		require.True(t, ok)
-		b, ok := indexValueKey(pair.b)
+		b, ok, keyErr := indexValueKey(t.Context(), pair.b)
+		require.NoError(t, keyErr)
 		require.True(t, ok)
 		require.Equal(t, pair.same, a == b)
 	}
@@ -234,15 +236,15 @@ func TestUniqueListRejectsDuplicateAfterBufferedRecovery(t *testing.T) {
 	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 	wal := engine.bufferedCommitWAL
 	for _, id := range []NodeID{"test:a", "test:b"} {
-		_, err := engine.CreateNode(&Node{ID: id})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: id})
 		require.NoError(t, err)
 	}
 	require.NoError(t, engine.GetSchemaForNamespace("test").AddConstraint(Constraint{Name: "recovered_list", Type: ConstraintUnique, EntityType: ConstraintEntityRelationship, Label: "T", Properties: []string{"id"}}))
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, tx.CreateEdge(&Edge{ID: "test:recovered", Type: "T", StartNode: "test:a", EndNode: "test:b", Properties: map[string]interface{}{"id": []interface{}{float64(200)}}}))
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:recovered", Type: "T", StartNode: "test:a", EndNode: "test:b", Properties: map[string]interface{}{"id": []interface{}{float64(200)}}}))
 	require.NoError(t, tx.Commit())
 	require.True(t, tx.AcknowledgedBuffered())
 	crashClose(t, engine, wal)
@@ -252,10 +254,10 @@ func TestUniqueListRejectsDuplicateAfterBufferedRecovery(t *testing.T) {
 	n, err := RecoverBufferedCommits(recovered, wal2)
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
-	next, err := recovered.BeginTransaction()
+	next, err := recovered.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer next.Rollback()
-	require.NoError(t, next.CreateEdge(&Edge{ID: "test:duplicate", Type: "T", StartNode: "test:a", EndNode: "test:b", Properties: map[string]interface{}{"id": []interface{}{float64(200)}}}))
+	require.NoError(t, next.CreateEdge(t.Context(), &Edge{ID: "test:duplicate", Type: "T", StartNode: "test:a", EndNode: "test:b", Properties: map[string]interface{}{"id": []interface{}{float64(200)}}}))
 	requireConstraintListViolation(t, next.Commit())
 }
 

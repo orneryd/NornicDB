@@ -36,26 +36,54 @@ type Node struct {
 // Example:
 //
 //	apoc.label.exists('Person') => true
-func (f *Functions) Exists(ctx context.Context, label string) bool {
+func (f *Functions) Exists(ctx context.Context, label string) (bool, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return false, operationError
+	}
+
 	s := f.backend
 
 	if s == nil {
-		return false
+		if operationError := ctx.Err(); operationError != nil {
+			return false, operationError
+		}
+		return false, nil
 	}
 
 	nodes, err := s.AllNodes(ctx)
 	if err != nil {
-		return false
+		return false, err
+	}
+
+	if err != nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return false, operationError
+		}
+		return false, nil
 	}
 
 	for _, node := range nodes {
+		if operationError := ctx.Err(); operationError != nil {
+			return false, operationError
+		}
+
 		for _, l := range node.Labels {
+			if operationError := ctx.Err(); operationError != nil {
+				return false, operationError
+			}
+
 			if l == label {
-				return true
+				if operationError := ctx.Err(); operationError != nil {
+					return false, operationError
+				}
+				return true, nil
 			}
 		}
 	}
-	return false
+	if operationError := ctx.Err(); operationError != nil {
+		return false, operationError
+	}
+	return false, nil
 }
 
 // List returns all labels in the database.
@@ -63,30 +91,59 @@ func (f *Functions) Exists(ctx context.Context, label string) bool {
 // Example:
 //
 //	apoc.label.list() => ['Person', 'Company', 'Product']
-func (f *Functions) List(ctx context.Context) []string {
+func (f *Functions) List(ctx context.Context) ([]string, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	s := f.backend
 
 	if s == nil {
-		return []string{}
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return []string{}, nil
 	}
 
 	nodes, err := s.AllNodes(ctx)
 	if err != nil {
-		return []string{}
+		return nil, err
+	}
+
+	if err != nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return []string{}, nil
 	}
 
 	labelSet := make(map[string]bool)
 	for _, node := range nodes {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		for _, label := range node.Labels {
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
 			labelSet[label] = true
 		}
 	}
 
 	labels := make([]string, 0, len(labelSet))
 	for label := range labelSet {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		labels = append(labels, label)
 	}
-	return labels
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return labels, nil
 }
 
 // Count returns the count of nodes with a specific label.
@@ -94,28 +151,53 @@ func (f *Functions) List(ctx context.Context) []string {
 // Example:
 //
 //	apoc.label.count('Person') => 42
-func (f *Functions) Count(ctx context.Context, label string) int {
+func (f *Functions) Count(ctx context.Context, label string) (int, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return 0, operationError
+	}
+
 	s := f.backend
 
 	if s == nil {
-		return 0
+		if operationError := ctx.Err(); operationError != nil {
+			return 0, operationError
+		}
+		return 0, nil
 	}
 
 	nodes, err := s.AllNodes(ctx)
 	if err != nil {
-		return 0
+		return 0, err
+	}
+
+	if err != nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return 0, operationError
+		}
+		return 0, nil
 	}
 
 	count := 0
 	for _, node := range nodes {
+		if operationError := ctx.Err(); operationError != nil {
+			return 0, operationError
+		}
+
 		for _, l := range node.Labels {
+			if operationError := ctx.Err(); operationError != nil {
+				return 0, operationError
+			}
+
 			if l == label {
 				count++
 				break
 			}
 		}
 	}
-	return count
+	if operationError := ctx.Err(); operationError != nil {
+		return 0, operationError
+	}
+	return count, nil
 }
 
 // Nodes returns all nodes with a specific label.
@@ -123,22 +205,44 @@ func (f *Functions) Count(ctx context.Context, label string) int {
 // Example:
 //
 //	apoc.label.nodes('Person') => [node1, node2, ...]
-func (f *Functions) Nodes(ctx context.Context, label string) []*Node {
+func (f *Functions) Nodes(ctx context.Context, label string) ([]*Node, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	s := f.backend
 
 	if s == nil {
-		return []*Node{}
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return []*Node{}, nil
 	}
 
 	storageNodes, err := s.AllNodes(ctx)
 	if err != nil {
-		return []*Node{}
+		return nil, err
+	}
+
+	if err != nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return []*Node{}, nil
 	}
 
 	result := make([]*Node, 0)
 	for _, sn := range storageNodes {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		hasLabel := false
 		for _, l := range sn.Labels {
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
 			if l == label {
 				hasLabel = true
 				break
@@ -152,7 +256,10 @@ func (f *Functions) Nodes(ctx context.Context, label string) []*Node {
 			})
 		}
 	}
-	return result
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return result, nil
 }
 
 // Add adds a label to a node.
@@ -442,35 +549,60 @@ func FromPattern(pattern string) []string {
 // Example:
 //
 //	apoc.label.stats() => {total: 5, counts: {...}}
-func (f *Functions) Stats(ctx context.Context) map[string]interface{} {
+func (f *Functions) Stats(ctx context.Context) (map[string]interface{}, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	s := f.backend
 
 	if s == nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
 		return map[string]interface{}{
 			"total":  0,
 			"counts": map[string]int{},
-		}
+		}, nil
 	}
 
 	nodes, err := s.AllNodes(ctx)
 	if err != nil {
+		return nil, err
+	}
+
+	if err != nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
 		return map[string]interface{}{
 			"total":  0,
 			"counts": map[string]int{},
-		}
+		}, nil
 	}
 
 	counts := make(map[string]int)
 	for _, node := range nodes {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		for _, label := range node.Labels {
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
 			counts[label]++
 		}
 	}
 
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
 	return map[string]interface{}{
 		"total":  len(counts),
 		"counts": counts,
-	}
+	}, nil
 }
 
 // Search searches for labels matching a pattern.
@@ -479,21 +611,43 @@ func (f *Functions) Stats(ctx context.Context) map[string]interface{} {
 // Example:
 //
 //	apoc.label.search('Per*') => ['Person', 'Permission']
-func (f *Functions) Search(ctx context.Context, pattern string) []string {
+func (f *Functions) Search(ctx context.Context, pattern string) ([]string, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	s := f.backend
 
 	if s == nil {
-		return []string{}
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return []string{}, nil
 	}
 
 	nodes, err := s.AllNodes(ctx)
 	if err != nil {
-		return []string{}
+		return nil, err
+	}
+
+	if err != nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return []string{}, nil
 	}
 
 	labelSet := make(map[string]bool)
 	for _, node := range nodes {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		for _, label := range node.Labels {
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
 			labelSet[label] = true
 		}
 	}
@@ -502,11 +656,18 @@ func (f *Functions) Search(ctx context.Context, pattern string) []string {
 	// * = any characters, ? = single character
 	result := make([]string, 0)
 	for label := range labelSet {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		if matchPattern(label, pattern) {
 			result = append(result, label)
 		}
 	}
-	return result
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return result, nil
 }
 
 // matchPattern matches a string against a pattern with wildcards.

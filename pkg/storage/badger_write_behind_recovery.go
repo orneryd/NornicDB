@@ -47,10 +47,11 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 	}
 	// The batch reader retains engine state through import, physical apply
 	// and count repair. Close rejects later admissions and waits for this lease.
-	if _, err := b.beginHelperTxn(); err != nil {
+	_, err := b.beginHelperTxn()
+	if err != nil {
 		return 0, err
 	}
-	defer b.txnWG.Done()
+	defer b.work.Leave()
 
 	// A kill -9 can leave a torn tail record at EOF. Truncate it back to
 	// the last good boundary before reading (the same conservative repair
@@ -75,7 +76,7 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 		pendingBytes = 0
 		return nil
 	}
-	err := VisitWALEntriesAfterFromDir(wal.config.Dir, 0, func(entry WALEntry) error {
+	err = VisitWALEntriesAfterFromDir(wal.config.Dir, 0, func(entry WALEntry) error {
 		if entry.Operation == OpEntityCommit {
 			// Keep the existing streaming replay owner: an earlier physical
 			// batch must finish before this semantic record can inspect its
@@ -93,7 +94,7 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 			}
 			// Both reads below are physical-only: the record's own marker,
 			// never the pending generations, which replay does not consult.
-			receipt, err := b.observeBufferedCommitReceipt(bufferedReceiptRead{namespace: envelope.Namespace, logicalID: envelope.LogicalTxID})
+			receipt, err := b.observeBufferedCommitReceipt(context.Background(), bufferedReceiptRead{namespace: envelope.Namespace, logicalID: envelope.LogicalTxID})
 			if err != nil {
 				return err
 			}
@@ -124,7 +125,7 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 		if data.TxID == "" {
 			return nil
 		}
-		marker, err := b.observeBufferedCommitReceipt(bufferedReceiptRead{namespace: data.Namespace, txID: data.TxID, logicalID: data.LogicalTxID})
+		marker, err := b.observeBufferedCommitReceipt(context.Background(), bufferedReceiptRead{namespace: data.Namespace, txID: data.TxID, logicalID: data.LogicalTxID})
 		if err != nil {
 			return fmt.Errorf("wal: failed to check flush marker for %q: %w", data.TxID, err)
 		}
@@ -166,10 +167,10 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 	// entities without their counts.
 	// Completed batches remain durable if a later record fails. Repair their
 	// counts as well, while preserving the original recovery failure.
-	if countErr := b.ensureLabelCounts(); countErr != nil {
+	if countErr := b.ensureLabelCounts(context.Background()); countErr != nil {
 		err = errors.Join(err, fmt.Errorf("wal: rebuild label counts after buffered replay: %w", countErr))
 	}
-	if countErr := b.ensureEdgeTypeCounts(); countErr != nil {
+	if countErr := b.ensureEdgeTypeCounts(context.Background()); countErr != nil {
 		err = errors.Join(err, fmt.Errorf("wal: rebuild edge-type counts after buffered replay: %w", countErr))
 	}
 	return replayed, err

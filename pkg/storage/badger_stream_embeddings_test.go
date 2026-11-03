@@ -18,7 +18,7 @@ func TestBadgerEngine_StreamNodes_LoadsSeparatelyStoredEmbeddings(t *testing.T) 
 
 	// Force separate embedding storage by exceeding the inline node size threshold.
 	large := strings.Repeat("x", 60*1024)
-	_, err = engine.CreateNode(&storage.Node{
+	_, err = engine.CreateNode(t.Context(), &storage.Node{
 		ID:     storage.NodeID("nornic:big"),
 		Labels: []string{"Doc"},
 		Properties: map[string]any{
@@ -32,7 +32,7 @@ func TestBadgerEngine_StreamNodes_LoadsSeparatelyStoredEmbeddings(t *testing.T) 
 	require.NoError(t, err)
 
 	// Sanity check: GetNode loads embeddings.
-	got, err := engine.GetNode(storage.NodeID("nornic:big"))
+	got, err := engine.GetNode(t.Context(), storage.NodeID("nornic:big"))
 	require.NoError(t, err)
 	require.Len(t, got.ChunkEmbeddings, 2)
 	require.Len(t, got.ChunkEmbeddings[0], 3)
@@ -58,7 +58,7 @@ func TestBadgerEngine_StreamNodeChunks_LoadsSeparatelyStoredEmbeddings(t *testin
 	t.Cleanup(func() { _ = engine.Close() })
 
 	large := strings.Repeat("x", 60*1024)
-	_, err = engine.CreateNode(&storage.Node{
+	_, err = engine.CreateNode(t.Context(), &storage.Node{
 		ID:     storage.NodeID("nornic:big"),
 		Labels: []string{"Doc"},
 		Properties: map[string]any{

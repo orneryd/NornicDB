@@ -110,6 +110,7 @@ type Operation struct {
 
 	// Runtime fields never enter WAL or persisted data. Pack their small flags
 	// beside the existing flags so observed intent does not grow each operation.
+	skipMissingDelete  bool
 	embeddingOutcome   bool
 	nodeImagePolicy    EntityImagePolicy
 	nodeObservedBefore *Node

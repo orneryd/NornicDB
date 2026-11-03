@@ -21,7 +21,7 @@ func TestMergeUniqueConstraintIncompleteCacheFallsBackToScan(t *testing.T) {
 		_ = baseStore.Close()
 	})
 	store := storage.NewNamespacedEngine(baseStore, "nornic")
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:     "existing",
 		Labels: []string{"TerraformResource"},
 		Properties: map[string]interface{}{
@@ -62,7 +62,7 @@ func TestUnwindMergeUniqueConstraintIncompleteCacheFallsBackToScan(t *testing.T)
 		_ = baseStore.Close()
 	})
 	store := storage.NewNamespacedEngine(baseStore, "nornic")
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:     "existing",
 		Labels: []string{"TerraformResource"},
 		Properties: map[string]interface{}{

@@ -130,7 +130,7 @@ func (a *QueryAnalyzer) Analyze(ctx context.Context, cypher string) *QueryInfo {
 	// The analysis and its cache key read the canonical text, so comments
 	// and spacing don't change it whatever the normalization setting
 	// (classificationText).
-	text := classificationText(cypher)
+	text := classificationText(ctx, cypher)
 	normalized := normalizeQuery(text)
 
 	// Check cache
@@ -192,32 +192,44 @@ func (a *QueryAnalyzer) CacheSize() int {
 // GetAST returns the structured AST for the query.
 // The AST is lazily built on first call and cached for subsequent calls.
 // This is useful for LLM features that need structured query representation.
-func (info *QueryInfo) GetAST() *AST {
+func (info *QueryInfo) GetAST(ctx context.Context) (*AST, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	// Fast path: already built
 	info.astMu.RLock()
 	if info.astBuilt {
 		ast := info.ast
 		info.astMu.RUnlock()
-		return ast
+		return ast, nil
 	}
 	info.astMu.RUnlock()
 
 	// Slow path: build AST
 	info.astMu.Lock()
 	defer info.astMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	// Double-check after acquiring write lock
 	if info.astBuilt {
-		return info.ast
+		return info.ast, nil
 	}
 
 	// Build AST
 	builder := NewASTBuilder()
-	ast, _ := builder.Build(info.rawQuery)
+	ast, err := builder.Build(ctx, info.rawQuery)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	info.ast = ast
 	info.astBuilt = true
 
-	return info.ast
+	return info.ast, nil
 }
 
 // HasAST returns true if the AST has already been built.
@@ -349,16 +361,17 @@ func analyzeQuery(cypher string) *QueryInfo {
 // The analyzer's keyword flags are conservative (CREATE in ON CREATE SET or
 // in a string sets HasCreate), so when one of them is set the statement's
 // clauses decide (#961): MERGE … ON CREATE SET … is MERGE work, not CREATE.
-func IsRetrySafeMergeCommitQuery(info *QueryInfo) bool {
-	if info == nil || !info.HasMerge {
+// A canceled classification is not retry-safe; it never replaces the commit error.
+func IsRetrySafeMergeCommitQuery(ctx context.Context, info *QueryInfo) bool {
+	if ctx.Err() != nil || info == nil || !info.HasMerge {
 		return false
 	}
 	if info.HasCreate || info.HasDelete || info.HasDetachDelete || info.HasRemove ||
 		info.HasForeach || info.HasLoadCSV || info.HasCall || info.HasSchema ||
 		info.HasShow || info.HasUnion {
-		return mergeOnlyClauses(context.Background(), info.rawQuery)
+		return mergeOnlyClauses(ctx, info.rawQuery) && ctx.Err() == nil
 	}
-	return true
+	return ctx.Err() == nil
 }
 
 // mergeOnlyClauses reports whether query is a single statement of MERGE
@@ -412,13 +425,20 @@ type CommitStatement struct {
 // SET o.id = 'sha256:' + $h can't clash on V.id. Every other write may reach a
 // node with more labels than its pattern names (a matched node), so it counts
 // whatever its pattern says.
-func MergeUniqueConflictIsRetrySafe(statements []CommitStatement, err error) bool {
+// A canceled classification returns false, retaining the caller's commit outcome.
+func MergeUniqueConflictIsRetrySafe(ctx context.Context, statements []CommitStatement, err error) bool {
 	var violation *storage.ConstraintViolationError
+	if ctx.Err() != nil {
+		return false
+	}
 	if !stderrors.As(err, &violation) || violation == nil {
 		return false
 	}
 	for _, statement := range statements {
-		items, mergeKeys, ok := mergeStatementSetItems(context.Background(), statement.Query, violation.Label)
+		if ctx.Err() != nil {
+			return false
+		}
+		items, mergeKeys, ok := mergeStatementSetItems(ctx, statement.Query, violation.Label)
 		if !ok {
 			return false
 		}
@@ -433,7 +453,7 @@ func MergeUniqueConflictIsRetrySafe(statements []CommitStatement, err error) boo
 			}
 		}
 	}
-	return true
+	return ctx.Err() == nil
 }
 
 // mergeSetItem is one SET item of a MERGE statement. exactLabels is set when
@@ -453,7 +473,7 @@ func mergeStatementSetItems(ctx context.Context, statement, label string) (items
 	if !ok {
 		return nil, nil, false
 	}
-	addedLabels, dynamicLabels := statementSetLabels(clauses)
+	addedLabels, dynamicLabels := statementSetLabels(ctx, clauses)
 	for index, clause := range clauses {
 		switch clause.kind {
 		case pipelineClauseSet:
@@ -461,7 +481,7 @@ func mergeStatementSetItems(ctx context.Context, statement, label string) (items
 				items = append(items, mergeSetItem{text: assignment})
 			}
 		case pipelineClauseMerge:
-			parts := splitMergeClauseActions(pipelineClauseBody(clause.text, "MERGE"), nil)
+			parts := splitMergeClauseActions(ctx, pipelineClauseBody(clause.text, "MERGE"), nil)
 			mergeKeys = appendPatternPropertyExpressions(mergeKeys, parts.pattern, label)
 			introduced := patternNodeLabels(parts.pattern)
 			for _, assignment := range mergeActionAssignments(parts.onCreate) {
@@ -484,7 +504,7 @@ func mergeStatementSetItems(ctx context.Context, statement, label string) (items
 // statementSetLabels returns the labels each variable gets from the
 // statement's SET x:Label items (SET clauses and ON CREATE / ON MATCH SET
 // lists), and the variables given a label that isn't static (SET x:$(expr)).
-func statementSetLabels(clauses []pipelineClause) (added map[string][]string, dynamic map[string]bool) {
+func statementSetLabels(ctx context.Context, clauses []pipelineClause) (added map[string][]string, dynamic map[string]bool) {
 	added, dynamic = map[string][]string{}, map[string]bool{}
 	note := func(assignments []string) {
 		for _, assignment := range assignments {
@@ -505,7 +525,7 @@ func statementSetLabels(clauses []pipelineClause) (added map[string][]string, dy
 		case pipelineClauseSet:
 			note(splitSetAssignments(strings.TrimSpace(clause.text[len("SET"):])))
 		case pipelineClauseMerge:
-			parts := splitMergeClauseActions(pipelineClauseBody(clause.text, "MERGE"), nil)
+			parts := splitMergeClauseActions(ctx, pipelineClauseBody(clause.text, "MERGE"), nil)
 			note(mergeActionAssignments(parts.onCreate))
 			note(mergeActionAssignments(parts.onMatch))
 		}

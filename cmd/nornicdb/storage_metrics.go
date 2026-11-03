@@ -15,6 +15,8 @@
 package main
 
 import (
+	"context"
+
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -36,7 +38,7 @@ type badgerStorageProbe struct {
 }
 
 func (p badgerStorageProbe) NodeCount() int64 {
-	n, err := p.be.NodeCount()
+	n, err := p.be.NodeCount(context.Background())
 	if err != nil {
 		return 0
 	}
@@ -44,7 +46,7 @@ func (p badgerStorageProbe) NodeCount() int64 {
 }
 
 func (p badgerStorageProbe) EdgeCount() int64 {
-	n, err := p.be.EdgeCount()
+	n, err := p.be.EdgeCount(context.Background())
 	if err != nil {
 		return 0
 	}

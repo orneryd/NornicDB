@@ -143,20 +143,30 @@ func (b *BadgerEngine) readBufferedEntities(ctx context.Context, w *WriteBehindB
 // commitsSince visits the operations of each commit the buffer acknowledged
 // after since and has not applied yet, newest first within a generation,
 // until visit returns false.
-func (w *WriteBehindBuffer) commitsSince(since MVCCVersion, visit func(MVCCVersion, []Operation) bool) {
-	w.mu.RLock()
+func (w *WriteBehindBuffer) commitsSince(ctx context.Context, since MVCCVersion, visit func(context.Context, MVCCVersion, []Operation) (bool, error)) error {
+	if err := w.mu.RLockContext(ctx); err != nil {
+		return err
+	}
 	defer w.mu.RUnlock()
 	for _, buf := range append([]*CommitBuffer{w.active}, w.draining...) {
 		for i := len(buf.commits) - 1; i >= 0; i-- {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			c := &buf.commits[i]
 			if c.version.Compare(since) <= 0 {
 				break
 			}
-			if !visit(c.version, c.ops) {
-				return
+			more, err := visit(ctx, c.version, c.ops)
+			if err != nil {
+				return err
+			}
+			if !more {
+				return nil
 			}
 		}
 	}
+	return nil
 }
 
 // readBufferedBeginPresence projects physical existence at an immutable BEGIN

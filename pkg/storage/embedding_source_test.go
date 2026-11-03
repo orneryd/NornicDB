@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -24,27 +25,27 @@ func TestManagedEmbeddingSourceTransaction(t *testing.T) {
 	b.SetEmbeddingTextPolicy(EmbeddingTextPolicy{Include: []string{"text"}})
 	node := sidecarTestNode(t, b, "source-contract", map[string]any{"text": "x", "id": "old", "updatedAt": "old"}, time.Now().UTC().Truncate(time.Millisecond))
 	meta := map[string]any{"has_embedding": true, "chunk_count": 1, embeddingsource.MetaKey: (embeddingsource.Source{Text: true, Include: []string{"text"}, Properties: []string{"id"}}).Metadata()}
-	require.NoError(t, b.UpdateNodeEmbeddingSidecar(embeddingWriteback(t, b, node.ID, [][]float32{{1, 2}}, meta, node.UpdatedAt)))
+	require.NoError(t, b.UpdateNodeEmbeddingSidecar(context.Background(), embeddingWriteback(t, b, node.ID, [][]float32{{1, 2}}, meta, node.UpdatedAt)))
 	update := func(key string) {
-		tx, err := b.BeginTransaction()
+		tx, err := b.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		require.NoError(t, tx.SetNamespace("test"))
-		n, err := tx.GetNode(node.ID)
+		n, err := tx.GetNode(t.Context(), node.ID)
 		require.NoError(t, err)
 		n.Properties[key] = "new"
 		n.UpdatedAt = n.UpdatedAt.Add(time.Second)
-		require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: n, Policy: ClientNodeEdits}))
+		require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: n, Policy: ClientNodeEdits}))
 		require.NoError(t, tx.Commit())
 	}
 	update("updatedAt")
-	n, err := b.GetNode(node.ID)
+	n, err := b.GetNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	require.NotEmpty(t, n.ChunkEmbeddings, "unconsumed metadata preserves readable managed vectors")
 	update("id")
-	n, err = b.GetNode(node.ID)
+	n, err = b.GetNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	require.Empty(t, n.ChunkEmbeddings, "consumed metadata invalidates managed vectors")
-	require.NotNil(t, b.FindNodeNeedingEmbedding())
+	require.NotNil(t, requireEmbeddingCandidate(t, b.FindNodeNeedingEmbedding))
 }
 
 func TestManagedEmbeddingSourceAcceptance(t *testing.T) {
@@ -55,18 +56,18 @@ func TestManagedEmbeddingSourceAcceptance(t *testing.T) {
 			n := sidecarTestNode(t, b, "accept", map[string]any{"text": "x", "id": "old", "updatedAt": "old"}, time.Now().UTC().Truncate(time.Millisecond))
 			meta := map[string]any{"has_embedding": true, "chunk_count": 1, embeddingsource.MetaKey: (embeddingsource.Source{Properties: []string{"id"}}).Metadata()}
 			payload := embeddingWriteback(t, b, n.ID, [][]float32{{1, 2}}, meta, n.UpdatedAt)
-			current, err := b.GetNode(n.ID)
+			current, err := b.GetNode(t.Context(), n.ID)
 			require.NoError(t, err)
 			current.Properties[key] = "new"
 			current.UpdatedAt = current.UpdatedAt.Add(time.Second)
-			require.NoError(t, b.UpdateNode(NodeUpdateRequest{After: current}))
-			err = b.UpdateNodeEmbeddingSidecar(payload)
+			require.NoError(t, b.UpdateNode(t.Context(), NodeUpdateRequest{After: current}))
+			err = b.UpdateNodeEmbeddingSidecar(context.Background(), payload)
 			if key == "id" {
 				require.ErrorIs(t, err, ErrEmbeddingSourceChanged)
 				return
 			}
 			require.NoError(t, err)
-			got, err := b.GetNode(n.ID)
+			got, err := b.GetNode(t.Context(), n.ID)
 			require.NoError(t, err)
 			require.NotEmpty(t, got.ChunkEmbeddings, "acceptance must stamp the validated current body")
 		})

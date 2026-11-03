@@ -1,6 +1,7 @@
 package storage_test
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -108,11 +109,11 @@ func walPublicCheck(b *testing.B, err error) {
 
 func walPublicCommit(b *testing.B, store *storage.BadgerEngine, nodes []*storage.Node) {
 	for _, node := range nodes {
-		tx, err := store.BeginTransaction()
+		tx, err := store.BeginTransaction(b.Context())
 		walPublicCheck(b, err)
 		walPublicCheck(b, tx.SetNamespace("walbench"))
 		walPublicCheck(b, tx.SetImplicit(true))
-		_, err = tx.CreateNode(node)
+		_, err = tx.CreateNode(b.Context(), node)
 		walPublicCheck(b, err)
 		walPublicCheck(b, tx.Commit())
 		if !tx.AcknowledgedBuffered() {
@@ -123,7 +124,7 @@ func walPublicCommit(b *testing.B, store *storage.BadgerEngine, nodes []*storage
 
 func walPublicValidate(b *testing.B, store *storage.BadgerEngine, nodes []*storage.Node, keys int) {
 	for _, node := range nodes {
-		got, err := store.GetNode(node.ID)
+		got, err := store.GetNode(b.Context(), node.ID)
 		walPublicCheck(b, err)
 		if len(got.Properties) != keys {
 			b.Fatalf("%s: got %d properties, want %d", node.ID, len(got.Properties), keys)
@@ -149,9 +150,9 @@ func walPublicSource(b *testing.B, root string, nodes []*storage.Node, keys int,
 	if persistedNames {
 		seed.Properties = nodes[0].Properties
 	}
-	_, err := store.CreateNode(seed)
+	_, err := store.CreateNode(b.Context(), seed)
 	walPublicCheck(b, err)
-	walPublicCheck(b, store.FlushWriteBehind(nil))
+	walPublicCheck(b, store.FlushWriteBehind(context.Background()))
 	backup := filepath.Join(root, "before-wal.backup")
 	if !timed {
 		walPublicCheck(b, store.Backup(backup))
@@ -168,7 +169,7 @@ func walPublicSource(b *testing.B, root string, nodes []*storage.Node, keys int,
 	if timed {
 		b.StopTimer()
 	}
-	walPublicCheck(b, store.FlushWriteBehind(nil))
+	walPublicCheck(b, store.FlushWriteBehind(context.Background()))
 	walPublicValidate(b, store, nodes, keys)
 	walPublicCheck(b, journal.Close())
 	store = nil

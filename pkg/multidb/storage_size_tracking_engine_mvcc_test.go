@@ -2,8 +2,9 @@ package multidb
 
 import (
 	"context"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -13,19 +14,19 @@ type mvccDelegatingEngine struct {
 	storage.Engine
 }
 
-func (m *mvccDelegatingEngine) GetNodeLatestVisible(id storage.NodeID) (*storage.Node, error) {
+func (m *mvccDelegatingEngine) GetNodeLatestVisible(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	return &storage.Node{ID: id}, nil
 }
 
-func (m *mvccDelegatingEngine) GetNodeVisibleAt(id storage.NodeID, version storage.MVCCVersion) (*storage.Node, error) {
+func (m *mvccDelegatingEngine) GetNodeVisibleAt(ctx context.Context, id storage.NodeID, version storage.MVCCVersion) (*storage.Node, error) {
 	return &storage.Node{ID: id, Properties: map[string]interface{}{"seq": version.CommitSequence}}, nil
 }
 
-func (m *mvccDelegatingEngine) GetEdgeLatestVisible(id storage.EdgeID) (*storage.Edge, error) {
+func (m *mvccDelegatingEngine) GetEdgeLatestVisible(ctx context.Context, id storage.EdgeID) (*storage.Edge, error) {
 	return &storage.Edge{ID: id}, nil
 }
 
-func (m *mvccDelegatingEngine) GetEdgeVisibleAt(id storage.EdgeID, version storage.MVCCVersion) (*storage.Edge, error) {
+func (m *mvccDelegatingEngine) GetEdgeVisibleAt(ctx context.Context, id storage.EdgeID, version storage.MVCCVersion) (*storage.Edge, error) {
 	return &storage.Edge{ID: id, Properties: map[string]interface{}{"seq": version.CommitSequence}}, nil
 }
 
@@ -49,12 +50,12 @@ func (m *mvccDelegatingEngine) GetEdgesBetweenVisibleAt(ctx context.Context, sta
 	return []*storage.Edge{{ID: storage.EdgeID(startID + "->" + endID), StartNode: startID, EndNode: endID}}, nil
 }
 
-func (m *mvccDelegatingEngine) GetNodeCurrentHead(id storage.NodeID) (storage.MVCCHead, error) {
+func (m *mvccDelegatingEngine) GetNodeCurrentHead(ctx context.Context, id storage.NodeID) (storage.MVCCHead, error) {
 	_ = id
 	return storage.MVCCHead{Version: storage.MVCCVersion{CommitSequence: 11}}, nil
 }
 
-func (m *mvccDelegatingEngine) GetEdgeCurrentHead(id storage.EdgeID) (storage.MVCCHead, error) {
+func (m *mvccDelegatingEngine) GetEdgeCurrentHead(ctx context.Context, id storage.EdgeID) (storage.MVCCHead, error) {
 	_ = id
 	return storage.MVCCHead{Version: storage.MVCCVersion{CommitSequence: 13}}, nil
 }
@@ -69,25 +70,25 @@ func TestSizeTrackingEngine_MVCCDelegation(t *testing.T) {
 		check func(*testing.T, *sizeTrackingEngine, storage.MVCCVersion, func(error) bool)
 	}{
 		{name: "GetNodeLatestVisible", check: func(t *testing.T, tracker *sizeTrackingEngine, version storage.MVCCVersion, accept func(error) bool) {
-			nodeLatest, err := tracker.GetNodeLatestVisible("n1")
+			nodeLatest, err := tracker.GetNodeLatestVisible(t.Context(), "n1")
 			if accept(err) {
 				require.Equal(t, storage.NodeID("n1"), nodeLatest.ID)
 			}
 		}},
 		{name: "GetNodeVisibleAt", check: func(t *testing.T, tracker *sizeTrackingEngine, version storage.MVCCVersion, accept func(error) bool) {
-			nodeAt, err := tracker.GetNodeVisibleAt("n1", version)
+			nodeAt, err := tracker.GetNodeVisibleAt(t.Context(), "n1", version)
 			if accept(err) {
 				require.Equal(t, uint64(9), nodeAt.Properties["seq"])
 			}
 		}},
 		{name: "GetEdgeLatestVisible", check: func(t *testing.T, tracker *sizeTrackingEngine, version storage.MVCCVersion, accept func(error) bool) {
-			edgeLatest, err := tracker.GetEdgeLatestVisible("e1")
+			edgeLatest, err := tracker.GetEdgeLatestVisible(t.Context(), "e1")
 			if accept(err) {
 				require.Equal(t, storage.EdgeID("e1"), edgeLatest.ID)
 			}
 		}},
 		{name: "GetEdgeVisibleAt", check: func(t *testing.T, tracker *sizeTrackingEngine, version storage.MVCCVersion, accept func(error) bool) {
-			edgeAt, err := tracker.GetEdgeVisibleAt("e1", version)
+			edgeAt, err := tracker.GetEdgeVisibleAt(t.Context(), "e1", version)
 			if accept(err) {
 				require.Equal(t, uint64(9), edgeAt.Properties["seq"])
 			}
@@ -132,13 +133,13 @@ func TestSizeTrackingEngine_MVCCDelegation(t *testing.T) {
 			}
 		}},
 		{name: "GetNodeCurrentHead", check: func(t *testing.T, tracker *sizeTrackingEngine, version storage.MVCCVersion, accept func(error) bool) {
-			nodeHead, err := tracker.GetNodeCurrentHead("n1")
+			nodeHead, err := tracker.GetNodeCurrentHead(t.Context(), "n1")
 			if accept(err) {
 				require.Equal(t, uint64(11), nodeHead.Version.CommitSequence)
 			}
 		}},
 		{name: "GetEdgeCurrentHead", check: func(t *testing.T, tracker *sizeTrackingEngine, version storage.MVCCVersion, accept func(error) bool) {
-			edgeHead, err := tracker.GetEdgeCurrentHead("e1")
+			edgeHead, err := tracker.GetEdgeCurrentHead(t.Context(), "e1")
 			if accept(err) {
 				require.Equal(t, uint64(13), edgeHead.Version.CommitSequence)
 			}

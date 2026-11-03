@@ -37,7 +37,7 @@ type CollectionStore interface {
 	GetMeta(ctx context.Context, name string) (*CollectionMeta, error)
 	List(ctx context.Context) ([]string, error)
 	Drop(ctx context.Context, name string) error
-	Exists(name string) bool
+	Exists(ctx context.Context, name string) (bool, error)
 	PointCount(ctx context.Context, name string) (int64, error)
 }
 
@@ -118,7 +118,7 @@ func (s *databaseCollectionStore) CreateWithQuantization(ctx context.Context, na
 	if len(encoded) > 0 {
 		properties["quantization_config"] = string(encoded)
 	}
-	_, err = engine.CreateNode(&storage.Node{
+	_, err = engine.CreateNode(ctx, &storage.Node{
 		ID:         collectionMetaNodeID,
 		Labels:     []string{collectionMetaNodeLabel},
 		Properties: properties,
@@ -133,7 +133,6 @@ func (s *databaseCollectionStore) CreateWithQuantization(ctx context.Context, na
 }
 
 func (s *databaseCollectionStore) Open(ctx context.Context, name string) (storage.Engine, *CollectionMeta, error) {
-	_ = ctx
 	if name == "" {
 		return nil, nil, ErrCollectionNotFound
 	}
@@ -141,7 +140,7 @@ func (s *databaseCollectionStore) Open(ctx context.Context, name string) (storag
 	if err != nil {
 		return nil, nil, ErrCollectionNotFound
 	}
-	meta, err := readCollectionMeta(engine)
+	meta, err := readCollectionMeta(ctx, engine)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) || errors.Is(err, ErrInvalidCollection) {
 			return nil, nil, ErrCollectionNotFound
@@ -158,7 +157,6 @@ func (s *databaseCollectionStore) GetMeta(ctx context.Context, name string) (*Co
 }
 
 func (s *databaseCollectionStore) List(ctx context.Context) ([]string, error) {
-	_ = ctx
 	infos := s.dbManager.ListDatabases()
 	out := make([]string, 0, len(infos))
 	for _, info := range infos {
@@ -169,8 +167,10 @@ func (s *databaseCollectionStore) List(ctx context.Context) ([]string, error) {
 		if err != nil {
 			continue
 		}
-		if _, err := readCollectionMeta(engine); err == nil {
+		if _, err := readCollectionMeta(ctx, engine); err == nil {
 			out = append(out, info.Name)
+		} else if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
 		}
 	}
 	return out, nil
@@ -185,23 +185,29 @@ func (s *databaseCollectionStore) Drop(ctx context.Context, name string) error {
 	if err != nil {
 		return ErrCollectionNotFound
 	}
-	if _, err := readCollectionMeta(engine); err != nil {
+	if _, err := readCollectionMeta(ctx, engine); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
 		return ErrCollectionNotFound
 	}
 
 	return s.dropDatabase(ctx, name)
 }
 
-func (s *databaseCollectionStore) Exists(name string) bool {
+func (s *databaseCollectionStore) Exists(ctx context.Context, name string) (bool, error) {
 	if name == "" {
-		return false
+		return false, nil
 	}
 	engine, err := s.dbManager.GetStorage(name)
 	if err != nil {
-		return false
+		return false, nil
 	}
-	_, err = readCollectionMeta(engine)
-	return err == nil
+	_, err = readCollectionMeta(ctx, engine)
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false, err
+	}
+	return err == nil, nil
 }
 
 func (s *databaseCollectionStore) PointCount(ctx context.Context, name string) (int64, error) {
@@ -241,8 +247,8 @@ func validateCollectionName(name string, reserved map[string]struct{}) error {
 	return nil
 }
 
-func readCollectionMeta(engine storage.Engine) (*CollectionMeta, error) {
-	node, err := engine.GetNode(collectionMetaNodeID)
+func readCollectionMeta(ctx context.Context, engine storage.Engine) (*CollectionMeta, error) {
+	node, err := engine.GetNode(ctx, collectionMetaNodeID)
 	if err != nil {
 		return nil, err
 	}

@@ -41,7 +41,7 @@ func TestRemoteRuntimeCredentials(t *testing.T) {
 			require.True(t, strings.HasPrefix(stored[0].ConnectionV1, remoteCredentialPrefix))
 			require.NotEqual(t, password, stored[0].ConnectionV1)
 			require.Empty(t, stored[0].Password)
-			node, readErr := storage.NewNamespacedEngine(manager.inner, "system").GetNode(metadataNodeID)
+			node, readErr := storage.NewNamespacedEngine(manager.inner, "system").GetNode(t.Context(), metadataNodeID)
 			require.NoError(t, readErr)
 			require.Contains(t, node.Properties["data"], stored[0].ConnectionV1)
 			require.NotContains(t, node.Properties["data"], password)

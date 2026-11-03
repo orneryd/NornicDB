@@ -21,17 +21,17 @@ type producerModeLeaderStorage struct {
 func (s *producerModeLeaderStorage) PrepareEntityCommand(ctx context.Context, c *Command) (*Command, func(storage.CommitOutcome), bool, error) {
 	return s.Storage.(*StorageAdapter).PrepareEntityCommand(ctx, c)
 }
-func (s *producerModeLeaderStorage) ApplyCommand(c *Command) error {
+func (s *producerModeLeaderStorage) ApplyCommand(waitCtx context.Context, c *Command, publication WALPublicationMode) (CommandPublication, error) {
 	if c.Type == CmdCommitTransaction {
 		e, _, err := storage.DecodeEntityTransaction(c.Data)
 		if err != nil {
-			return err
+			return CommandPublication{}, err
 		}
 		s.mu.Lock()
 		s.modes = append(s.modes, e.Mode)
 		s.mu.Unlock()
 	}
-	return s.Storage.ApplyCommand(c)
+	return s.Storage.ApplyCommand(waitCtx, c, publication)
 }
 
 type producerModeFollower struct {
@@ -40,8 +40,8 @@ type producerModeFollower struct {
 }
 
 func (r *producerModeFollower) IsLeader() bool { return false }
-func (r *producerModeFollower) Apply(c *Command, timeout time.Duration) error {
-	return r.leader.Apply(c, timeout)
+func (r *producerModeFollower) Apply(ctx context.Context, c *Command, timeout time.Duration) error {
+	return r.leader.Apply(ctx, c, timeout)
 }
 func TestManagedFollowerPreservesSingleItemBulkProducerMode(t *testing.T) {
 	for _, bulk := range []bool{false, true} {
@@ -71,16 +71,16 @@ func TestManagedFollowerPreservesSingleItemBulkProducerMode(t *testing.T) {
 			t.Cleanup(func() { _ = manager.Close() })
 			managed, err := manager.GetStorage("nornic")
 			require.NoError(t, err)
-			require.NoError(t, base.FlushWriteBehind(nil))
+			require.NoError(t, base.FlushWriteBehind(context.Background()))
 			before := wal.Sequence()
 			capture.mu.Lock()
 			capture.modes = nil
 			capture.mu.Unlock()
 			node := &storage.Node{ID: "mode", Properties: map[string]any{"value": int64(42)}}
 			if bulk {
-				err = managed.BulkCreateNodes([]*storage.Node{node})
+				err = managed.BulkCreateNodes(t.Context(), []*storage.Node{node})
 			} else {
-				_, err = managed.CreateNode(node)
+				_, err = managed.CreateNode(t.Context(), node)
 			}
 			require.NoError(t, err)
 			capture.mu.Lock()
@@ -104,10 +104,10 @@ func TestManagedFollowerPreservesSingleItemBulkProducerMode(t *testing.T) {
 				wantACK = 1
 			}
 			require.Equal(t, wantACK, acks, "successful receipt retains producer ACK policy")
-			got, err := base.GetStoredNode("nornic:mode")
+			got, err := base.GetStoredNode(t.Context(), "nornic:mode")
 			require.NoError(t, err)
 			require.Equal(t, int64(42), got.Properties["value"])
-			_, err = local.GetStoredNode("nornic:mode")
+			_, err = local.GetStoredNode(t.Context(), "nornic:mode")
 			require.ErrorIs(t, err, storage.ErrNotFound)
 			route, found := storage.EntityCommitSubmitterFor(follower)
 			require.True(t, found)

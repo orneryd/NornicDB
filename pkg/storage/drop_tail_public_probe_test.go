@@ -1,6 +1,7 @@
 package storage_test
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -29,14 +30,14 @@ func TestReview1406FailedDropTailRetainsNamespaceFence(t *testing.T) {
 			peer, err := manager.GetStorage("peer")
 			require.NoError(t, err)
 			require.NoError(t, tenant.GetSchema().AddUniqueConstraint("tenant_uid", "Person", "uid"))
-			_, err = tenant.CreateNode(&storage.Node{ID: "old-a", Labels: []string{"Person"}, Properties: map[string]any{"uid": "old-a"}})
+			_, err = tenant.CreateNode(t.Context(), &storage.Node{ID: "old-a", Labels: []string{"Person"}, Properties: map[string]any{"uid": "old-a"}})
 			require.NoError(t, err)
-			_, err = tenant.CreateNode(&storage.Node{ID: "old-b", Labels: []string{"Person"}, Properties: map[string]any{"uid": "old-b"}})
+			_, err = tenant.CreateNode(t.Context(), &storage.Node{ID: "old-b", Labels: []string{"Person"}, Properties: map[string]any{"uid": "old-b"}})
 			require.NoError(t, err)
-			require.NoError(t, tenant.CreateEdge(&storage.Edge{ID: "old-edge", StartNode: "old-a", EndNode: "old-b", Type: "REL"}))
-			_, err = peer.CreateNode(&storage.Node{ID: "keep"})
+			require.NoError(t, tenant.CreateEdge(t.Context(), &storage.Edge{ID: "old-edge", StartNode: "old-a", EndNode: "old-b", Type: "REL"}))
+			_, err = peer.CreateNode(t.Context(), &storage.Node{ID: "keep"})
 			require.NoError(t, err)
-			require.NoError(t, base.FlushWriteBehind(nil))
+			require.NoError(t, base.FlushWriteBehind(context.Background()))
 			injected := errors.New("intrinsic DROP cleanup unavailable")
 			calls := 0
 			storage.ReviewSetDropTailFailure(base, func(prefix string) error {
@@ -63,11 +64,11 @@ func TestReview1406FailedDropTailRetainsNamespaceFence(t *testing.T) {
 			require.NoError(t, err)
 			require.True(t, exists)
 			require.ErrorIs(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant"}), multidb.ErrDatabaseExists, "failed DROP retains original catalog entry")
-			_, err = peer.CreateNode(&storage.Node{ID: "after"})
+			_, err = peer.CreateNode(t.Context(), &storage.Node{ID: "after"})
 			require.NoError(t, err, "peer namespace must remain writable")
 			// These are NEW transactions after the failure, not stale open snapshots.
-			_, nativeErr := base.CreateNode(&storage.Node{ID: "tenant:new-native"})
-			_, managedErr := tenant.CreateNode(&storage.Node{ID: "new-managed"})
+			_, nativeErr := base.CreateNode(t.Context(), &storage.Node{ID: "tenant:new-native"})
+			_, managedErr := tenant.CreateNode(t.Context(), &storage.Node{ID: "new-managed"})
 			assert.Error(t, nativeErr, "postphysical cleanup failure must fence new native tenant writes")
 			assert.Error(t, managedErr, "postphysical cleanup failure must fence new managed tenant writes")
 		})

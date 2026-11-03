@@ -23,7 +23,7 @@ func TestGH475_StoredListSubscriptAndHeadInMatch(t *testing.T) {
 				if index%2 == 1 {
 					tag = "t1"
 				}
-				_, err := store.CreateNode(&storage.Node{
+				_, err := store.CreateNode(t.Context(), &storage.Node{
 					ID: storage.NodeID(string(rune('0' + index))), Labels: []string{"A"},
 					Properties: map[string]interface{}{"id": index, "name": "n" + string(rune('0'+index)), "tags": []string{tag, "all"}},
 				})
@@ -69,7 +69,7 @@ func TestGH475_StoredMixedListAcrossBadgerReopenAndSnapshot(t *testing.T) {
 		}
 	})
 	store := storage.NewNamespacedEngine(engine, "gh475_disk")
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID: "one", Labels: []string{"A"},
 		Properties: map[string]interface{}{"tags": []interface{}{int64(7), "t0", true}},
 	})
@@ -78,7 +78,7 @@ func TestGH475_StoredMixedListAcrossBadgerReopenAndSnapshot(t *testing.T) {
 
 	check := func(t *testing.T, explicit bool) {
 		view := storage.NewNamespacedEngine(engine, "gh475_disk")
-		projected, err := view.GetNodeProjected("one", []string{"tags"})
+		projected, err := view.GetNodeProjected(t.Context(), "one", []string{"tags"})
 		require.NoError(t, err)
 		require.Equal(t, []interface{}{int64(7), "t0", true}, projected.Properties["tags"])
 		exec := NewStorageExecutor(view)

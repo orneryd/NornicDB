@@ -4,6 +4,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"math"
@@ -37,7 +38,7 @@ func snapshotTranscoderCorpus() []any {
 func snapshotTranscoderBody(t *testing.T, engine *BadgerEngine, edge *Edge) []byte {
 	t.Helper()
 	var body []byte
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		var err error
 		body, err = engine.encodeEdgeInTxn(txn, namespaceForEdgeID(edge.ID), edge)
 		return err
@@ -48,7 +49,7 @@ func snapshotTranscoderBody(t *testing.T, engine *BadgerEngine, edge *Edge) []by
 func checkSnapshotTranscoder(t *testing.T, engine *BadgerEngine, edge *Edge, strip string) bool {
 	t.Helper()
 	body := snapshotTranscoderBody(t, engine, edge)
-	decoded, err := engine.decodeEdgeBodyByID(body, edge.ID)
+	decoded, err := engine.decodeEdgeBodyWithID(nil, namespaceForEdgeID(edge.ID), body, edge.ID)
 	require.NoError(t, err)
 	if strip != "" {
 		decoded.ID = EdgeID(strings.TrimPrefix(string(decoded.ID), strip))
@@ -92,7 +93,7 @@ func checkSnapshotTranscoder(t *testing.T, engine *BadgerEngine, edge *Edge, str
 func reflectedSnapshotEdgeFrame(t testing.TB, edge *Edge) []byte {
 	t.Helper()
 	var encoder valueEncoder
-	encoder.reset()
+	encoder.reset(storedValueFraming)
 	encoder.msgpack.SetSortMapKeys(true)
 	require.NoError(t, encoder.msgpack.Encode(prepareRecoveryEdge(edge)))
 	payload := encoder.buffer.Bytes()

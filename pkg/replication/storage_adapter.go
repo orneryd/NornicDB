@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -20,6 +21,12 @@ import (
 // StorageAdapter bridges the replication.Storage interface to storage.Engine.
 // It translates replication commands into storage operations and maintains WAL state.
 type StorageAdapter struct {
+	// calls seals WAL producer/barrier ingress before the writer stop. Close waits
+	// owned queue/I/O admissions, never foreign native application/listeners. The worker
+	// never takes this lock, so admitted barriers can finish before sealing.
+	calls  sync.RWMutex
+	sealed bool
+
 	engine storage.Engine
 
 	// Persistent WAL for replication commands
@@ -36,21 +43,42 @@ type StorageAdapter struct {
 	walQueue   chan *walWriteRequest
 	walBatch   []*walWriteRequest
 	walBatchMu sync.Mutex
-	walStopCh  chan struct{}
-	walWg      sync.WaitGroup
+	// work is the adapter's one owner: the async WAL writer is its accepted
+	// work, its cancellation is the writer's stop, and Close is its one stop.
+	work lifecycle.WorkLifetime
+}
+
+// walCompletion is the sole writer's typed outcome for one queued request.
+// position is the physical WAL sequence that request's own record received and
+// is zero when the record was not published; err is the append failure that
+// prevented publication.
+type walCompletion struct {
+	position uint64
+	err      error
 }
 
 // walWriteRequest represents a pending WAL write.
 type walWriteRequest struct {
 	record replicationWALRecord
-	posCh  chan uint64 // Barrier completion position
-	errCh  chan error  // Channel to receive any error
+	// done carries the writer's typed completion. Every request allocates one
+	// buffered outcome channel, replacing the former record error channel and
+	// barrier position/error channels; the writer sends exactly once.
+	done chan walCompletion
 
 	// barrier marks a sentinel request. flushWALBatch does not append a
-	// barrier to the WAL but does signal posCh once the surrounding batch
+	// barrier to the WAL but does signal done once the surrounding batch
 	// completes. Used by FlushWAL to deterministically wait for every
 	// previously-queued request to drain without sleeping.
 	barrier bool
+}
+
+// complete delivers this request's single typed outcome without blocking the
+// writer's batch loop.
+func (req *walWriteRequest) complete(outcome walCompletion) {
+	select {
+	case req.done <- outcome:
+	default:
+	}
 }
 
 type replicationWALRecord struct {
@@ -91,20 +119,20 @@ func NewStorageAdapterWithWAL(engine storage.Engine, walDir string) (*StorageAda
 	}
 
 	adapter := &StorageAdapter{
-		engine:    engine,
-		wal:       wal,
-		walDir:    walDir,
-		walQueue:  make(chan *walWriteRequest, 1000), // Buffered channel for async WAL writes
-		walBatch:  make([]*walWriteRequest, 0, 100),  // Pre-allocated batch buffer
-		walStopCh: make(chan struct{}),
+		engine:   engine,
+		wal:      wal,
+		walDir:   walDir,
+		walQueue: make(chan *walWriteRequest, 1000), // Buffered channel for async WAL writes
+		walBatch: make([]*walWriteRequest, 0, 100),  // Pre-allocated batch buffer
 	}
 
 	// Load existing WAL position
 	_ = adapter.loadWALPosition()
 
 	// Start async WAL writer
-	adapter.walWg.Add(1)
-	go adapter.walWriterLoop()
+	if adapter.work.Enter() {
+		go adapter.walWriterLoop()
+	}
 
 	return adapter, nil
 }
@@ -119,20 +147,32 @@ func (a *StorageAdapter) loadWALPosition() error {
 	return nil
 }
 
-func (a *StorageAdapter) ApplyCommand(cmd *Command) error {
+// ApplyCommand applies a replicated command and reports the publication of its
+// own replication WAL record.
+//
+// waitCtx, publication and cmd are validated before any queue or native side
+// effect. Valid intent is transferred to the bounded FIFO WAL writer before the
+// native command is applied, and the native result stays the primary contract.
+// waitCtx bounds only this caller's publication wait: it never retracts accepted
+// intent, suppresses native application, removes a queued record or implies a
+// rollback.
+func (a *StorageAdapter) ApplyCommand(waitCtx context.Context, cmd *Command, publication WALPublicationMode) (CommandPublication, error) {
 	if cmd == nil {
-		return localizedError(localization.ReplicationStorageCommandRequired(), nil)
+		return CommandPublication{}, localizedError(localization.ReplicationStorageCommandRequired(), nil)
+	}
+	if publication != WALQueued && publication != WALPublished {
+		return CommandPublication{}, fmt.Errorf("replication: unknown WAL publication mode %d", publication)
 	}
 
 	if err := retiredCommandError(cmd.Type); err != nil {
-		return err
+		return CommandPublication{}, err
 	}
 
 	// Observed client requests are admission input, never accepted state-machine
 	// records. Only the leader preparer may normalize them into a validated
 	// CmdCommitTransaction before any replication/WAL publication.
 	if cmd.Type == CmdUpdateNodeRequest || cmd.Type == CmdUpdateEdgeRequest {
-		return storage.ErrInvalidData
+		return CommandPublication{}, storage.ErrInvalidData
 	}
 
 	// Decode once before publishing to the replication WAL. An unreadable
@@ -152,10 +192,10 @@ func (a *StorageAdapter) ApplyCommand(cmd *Command) error {
 	case CmdDeleteByPrefix:
 		prefix, err = decodeDeleteByPrefix(cmd.Data)
 	default:
-		return localizedError(localization.ReplicationStorageUnknownCommandType(uint8(cmd.Type)), nil)
+		return CommandPublication{}, localizedError(localization.ReplicationStorageUnknownCommandType(uint8(cmd.Type)), nil)
 	}
 	if err != nil {
-		return err
+		return CommandPublication{}, err
 	}
 
 	// Record in persistent WAL (write-ahead logging)
@@ -164,29 +204,19 @@ func (a *StorageAdapter) ApplyCommand(cmd *Command) error {
 		Command:   cmd,
 	}
 
-	// Queue async WAL write (non-blocking)
+	// Transfer the replicated record to the bounded FIFO WAL writer.
 	req := &walWriteRequest{
 		record: record,
-		errCh:  make(chan error, 1),
+		done:   make(chan walCompletion, 1),
 	}
 
-	// Try to queue async write
-	select {
-	case a.walQueue <- req:
-		// Successfully queued, continue
-	default:
-		// Channel full - fall back to synchronous write to avoid blocking
-		// This should be rare with a 1000-item buffer
-		a.walMu.Lock()
-		if err := a.wal.Append(storage.OperationType("replication_command"), record); err != nil {
-			a.walMu.Unlock()
-			return localizedError(localization.ReplicationStorageWALAppendFailed(err), err)
-		}
-		pos := a.wal.Sequence()
-		a.walPosition.Store(pos)
-		a.walMu.Unlock()
-		a.appendToMemWAL(pos, record, cmd)
+	if err := a.enqueueWAL(req); err != nil {
+		return CommandPublication{}, err
 	}
+
+	// The replicated command is accepted. Native application and completion
+	// are independent of the publication waiter and engine shutdown signal.
+	completionCtx := context.Background()
 
 	// Execute the command immediately (don't wait for WAL write)
 	// This allows storage operations to proceed in parallel with WAL I/O
@@ -197,33 +227,90 @@ func (a *StorageAdapter) ApplyCommand(cmd *Command) error {
 			execErr = cmd.accepted.apply()
 			break
 		}
-		receipt, err := storage.SubmitAcceptedEntityTransaction(context.Background(), a.engine, envelope, operations, nil)
+		receipt, err := storage.SubmitAcceptedEntityTransaction(completionCtx, a.engine, envelope, operations, nil)
 		if err != nil {
 			execErr = err
 		} else {
-			execErr = receipt.WaitPhysicalOutcome(context.Background()).Err
+			execErr = receipt.WaitPhysicalOutcome(completionCtx).Err
 		}
 	case CmdCreateNode, CmdUpdateNode, CmdDeleteNode, CmdCreateEdge, CmdUpdateEdge,
 		CmdDeleteEdge, CmdBulkCreateNodes, CmdBulkCreateEdges, CmdBulkDeleteNodes, CmdBulkDeleteEdges:
-		execErr = applyDirectEntityCommand(a.engine, cmd.Type, operations)
+		execErr = applyDirectEntityCommand(completionCtx, a.engine, cmd.Type, operations)
 	case CmdDeleteByPrefix:
 		_, _, execErr = a.engine.DeleteByPrefix(prefix)
 	}
 
-	// The WAL writer owns queued position and memory publication exactly once.
-	// Preserve the existing best-effort asynchronous error observation here.
-	select {
-	case err := <-req.errCh:
-		if err != nil {
-			// Log error but don't fail the operation (WAL is for durability, not correctness)
-			// The command was already applied to storage
-			logReplicationPrintf(context.Background(), slog.LevelError, "[WAL] Async write error (non-fatal): %v", err)
+	if publication == WALQueued {
+		// WALQueued keeps the nonwaiting asynchronous native-result contract:
+		// the writer owns this record's publication and its error observation,
+		// so only an outcome that already arrived is logged here.
+		select {
+		case outcome := <-req.done:
+			if outcome.err != nil {
+				// Log error but don't fail the operation (WAL is for durability, not correctness)
+				// The command was already applied to storage
+				logReplicationPrintf(context.Background(), slog.LevelError, "[WAL] Async write error (non-fatal): %v", outcome.err)
+			}
+		default:
+			// The writer will finish publication or report its asynchronous error.
 		}
-	default:
-		// The writer will finish publication or report its asynchronous error.
+		return CommandPublication{}, execErr
 	}
 
-	return execErr
+	if execErr != nil {
+		// The native application outcome is the primary contract and is
+		// returned unchanged. The record already belongs to the writer, so its
+		// publication, or the writer's retained append failure, still completes.
+		return CommandPublication{}, execErr
+	}
+
+	outcome, waitErr := awaitWALCompletion(waitCtx, req.done)
+	if waitErr != nil {
+		// The wait expired; accepted intent and native application remain.
+		return CommandPublication{}, waitErr
+	}
+	if outcome.err != nil {
+		// Publication failed after native acceptance: report the publication
+		// failure without implying rejected or rolled-back native work.
+		return CommandPublication{}, outcome.err
+	}
+	if outcome.position == 0 {
+		// A published record always has its own physical sequence.
+		return CommandPublication{}, fmt.Errorf("replication: published record has no WAL position")
+	}
+	return CommandPublication{Position: outcome.position}, nil
+}
+
+// awaitWALCompletion waits for this request's own publication outcome under the
+// caller's wait context. The context bounds the wait only.
+func awaitWALCompletion(ctx context.Context, done <-chan walCompletion) (walCompletion, error) {
+	select {
+	case outcome := <-done:
+		return outcome, nil
+	case <-ctx.Done():
+		// The writer can complete as the deadline expires; an outcome that already
+		// arrived is the truthful result.
+		select {
+		case outcome := <-done:
+			return outcome, nil
+		default:
+			return walCompletion{}, fmt.Errorf("replication: WAL publication wait: %w", ctx.Err())
+		}
+	}
+}
+
+// enqueueWAL transfers this replicated record to the one FIFO writer. The
+// admission covers only queue ownership, never native storage or its listeners.
+// Close waits these producers before stopping/draining the writer. Full queues
+// exert backpressure; a later command cannot append ahead of their prefix.
+func (a *StorageAdapter) enqueueWAL(req *walWriteRequest) error {
+	a.calls.RLock()
+	defer a.calls.RUnlock()
+	if a.sealed {
+		return ErrClosed
+	}
+	a.walQueue <- req
+	return nil
 }
 
 // appendToMemWAL appends an entry to the in-memory WAL for fast streaming.
@@ -239,16 +326,17 @@ func (a *StorageAdapter) appendToMemWAL(pos uint64, record replicationWALRecord,
 
 // walWriterLoop processes WAL writes asynchronously in batches.
 func (a *StorageAdapter) walWriterLoop() {
-	defer a.walWg.Done()
+	defer a.work.Leave()
 
 	ticker := time.NewTicker(10 * time.Millisecond) // Batch interval
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-a.walStopCh:
-			// Flush remaining writes
-			a.flushWALBatch()
+		case <-a.work.Context().Done():
+			// Ingress is sealed and all admitted calls have returned. Drain the
+			// finite accepted queue through the same physical append owner.
+			a.flushWALBatch(true)
 			return
 		case req := <-a.walQueue:
 			// Add to batch
@@ -259,19 +347,30 @@ func (a *StorageAdapter) walWriterLoop() {
 
 			// Flush if batch is large enough (100 items)
 			if batchSize >= 100 {
-				a.flushWALBatch()
+				a.flushWALBatch(false)
 			}
 		case <-ticker.C:
 			// Periodic flush
-			a.flushWALBatch()
+			a.flushWALBatch(false)
 		}
 	}
 }
 
 // flushWALBatch writes all pending WAL entries.
 // Uses individual appends but processes them in a batch to reduce lock contention.
-func (a *StorageAdapter) flushWALBatch() {
+func (a *StorageAdapter) flushWALBatch(drain bool) {
 	a.walBatchMu.Lock()
+	if drain {
+	drainQueue:
+		for {
+			select {
+			case req := <-a.walQueue:
+				a.walBatch = append(a.walBatch, req)
+			default:
+				break drainQueue
+			}
+		}
+	}
 	if len(a.walBatch) == 0 {
 		a.walBatchMu.Unlock()
 		return
@@ -285,42 +384,23 @@ func (a *StorageAdapter) flushWALBatch() {
 	// Write each entry to WAL in a single lock to reduce contention
 	// The WAL's internal buffering will batch the actual file writes
 	a.walMu.Lock()
-	positions := make([]uint64, 0, len(batch))
 	for _, req := range batch {
 		if req.barrier {
-			// Sentinel for FlushWAL — no WAL append. The post position
-			// signal happens below so callers are blocked until every
-			// real append in this batch has completed.
-			positions = append(positions, 0)
 			continue
 		}
 		if err := a.wal.Append(storage.OperationType("replication_command"), req.record); err != nil {
-			// Send error to waiting request
-			select {
-			case req.errCh <- localizedError(localization.ReplicationStorageWALAppendFailed(err), err):
-			default:
-			}
-			positions = append(positions, 0) // Placeholder for failed entry
+			err = localizedError(localization.ReplicationStorageWALAppendFailed(err), err)
+			a.work.RecordError("replication WAL append", err)
+			req.complete(walCompletion{err: err})
 			continue
 		}
-		// Get position after append (sequence is incremented atomically by WAL)
-		pos := a.wal.Sequence()
-		positions = append(positions, pos)
-
-	}
-	// Update global position
-	if len(batch) > 0 {
-		a.walPosition.Store(a.wal.Sequence())
+		position := a.wal.Sequence()
+		a.appendToMemWAL(position, req.record, req.record.Command)
+		req.complete(walCompletion{position: position})
 	}
 	currentPos := a.wal.Sequence()
+	a.walPosition.Store(currentPos)
 	a.walMu.Unlock()
-
-	// Update in-memory WAL outside the lock to avoid deadlock
-	for i, req := range batch {
-		if positions[i] > 0 {
-			a.appendToMemWAL(positions[i], req.record, req.record.Command)
-		}
-	}
 
 	// Release any barrier waiters now that every real entry in the
 	// batch has been appended and walPosition has been updated.
@@ -328,9 +408,10 @@ func (a *StorageAdapter) flushWALBatch() {
 		if !req.barrier {
 			continue
 		}
-		select {
-		case req.posCh <- currentPos:
-		default:
+		if err := a.work.Err(); err != nil {
+			req.complete(walCompletion{err: err})
+		} else {
+			req.complete(walCompletion{position: currentPos})
 		}
 	}
 }
@@ -349,80 +430,60 @@ func decodeDeleteByPrefix(data []byte) (string, error) {
 }
 
 func (a *StorageAdapter) FlushWAL() error {
+	a.calls.RLock()
+	defer a.calls.RUnlock()
+	if a.sealed {
+		return ErrClosed
+	}
+
 	// Build a sentinel write request. barrier=true tells flushWALBatch
-	// to skip the WAL append for this entry but still ack posCh after
+	// to skip the WAL append for this entry but still complete after
 	// the surrounding batch completes — so the writer goroutine drives
 	// the synchronization without us touching its channels directly.
 	barrier := &walWriteRequest{
-		posCh:   make(chan uint64, 1),
-		errCh:   make(chan error, 1),
+		done:    make(chan walCompletion, 1),
 		barrier: true,
 	}
 
-	// Push the barrier behind everything already queued.
-	select {
-	case a.walQueue <- barrier:
-	case <-a.walStopCh:
-		// Writer is shutting down; fall through to a best-effort sync.
-		a.walMu.Lock()
-		defer a.walMu.Unlock()
-		if a.wal != nil {
-			return a.wal.Sync()
-		}
-		return nil
-	}
+	// The admission keeps the writer running until this barrier returns.
+	// Ingress cannot be sealed and the worker cannot stop while calls.RLock is held.
+	a.walQueue <- barrier
 
 	// Wait for the writer goroutine to flush the batch containing the
-	// barrier. posCh is signaled inside flushWALBatch after the WAL
-	// append completes, so by the time we read from it every prior
-	// request is also persisted.
-	select {
-	case <-barrier.posCh:
-	case err := <-barrier.errCh:
-		if err != nil {
-			return localizedError(localization.ReplicationStorageFlushWALFailed(err), err)
-		}
-	case <-a.walStopCh:
-		// Adapter closing; drop barrier wait.
+	// barrier. The outcome is signaled inside flushWALBatch after the WAL
+	// append completes, so by the time we read it every prior request is
+	// also persisted. FlushWAL keeps its existing unbounded barrier policy.
+	if outcome := <-barrier.done; outcome.err != nil {
+		return localizedError(localization.ReplicationStorageFlushWALFailed(outcome.err), outcome.err)
 	}
 
 	// Sync the WAL to ensure all writes are on disk.
 	a.walMu.Lock()
 	defer a.walMu.Unlock()
 	if a.wal != nil {
-		return a.wal.Sync()
+		err := a.wal.Sync()
+		if err != nil {
+			a.work.RecordError("replication WAL sync", err)
+		}
+		return err
 	}
 	return nil
 }
 
-// stopWALWriterForTest halts the async WAL writer goroutine without closing
-// the WAL itself. Tests that want to mutate walQueue (to force the
-// "channel full" sync-fallback branch in ApplyCommand) call this first so
-// the swap doesn't race with walWriterLoop's channel read. Idempotent.
-//
-// Production callers should use Close instead — this helper exists only
-// for tests that need to swap the queue mid-life.
-func (a *StorageAdapter) stopWALWriterForTest() {
-	select {
-	case <-a.walStopCh:
-		// Already stopped.
-	default:
-		close(a.walStopCh)
-	}
-	a.walWg.Wait()
-}
-
 // Close releases replication resources (WAL file handles/background goroutines).
 func (a *StorageAdapter) Close() error {
-	// Stop async WAL writer (only once)
-	select {
-	case <-a.walStopCh:
-		// Already closed
-	default:
-		close(a.walStopCh)
-	}
-	a.walWg.Wait()
+	a.calls.Lock()
+	a.sealed = true
+	a.calls.Unlock()
 
+	// The owner's stop: the writer flushes and returns, then the WAL closes
+	// once. Every caller joins the same stop and outcome.
+	a.work.BeginStop(a.closeWAL)
+	return a.work.JoinStopped()
+}
+
+// closeWAL is the adapter owner's dispose, after the WAL writer returned.
+func (a *StorageAdapter) closeWAL() error {
 	a.walMu.Lock()
 	defer a.walMu.Unlock()
 	if a.wal != nil {
@@ -589,6 +650,8 @@ func (a *StorageAdapter) WriteSnapshot(w SnapshotWriter) error {
 
 // RestoreSnapshot restores state from a snapshot.
 func (a *StorageAdapter) RestoreSnapshot(r SnapshotReader) error {
+	// Snapshot restore is an existing context-free completion boundary.
+	completionCtx := context.Background()
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return localizedError(localization.ReplicationStorageReadSnapshotFailed(err), err)
@@ -602,14 +665,14 @@ func (a *StorageAdapter) RestoreSnapshot(r SnapshotReader) error {
 
 	// Restore nodes
 	for _, node := range snapshot.Nodes {
-		if _, err := a.engine.CreateNode(node); err != nil {
+		if _, err := a.engine.CreateNode(completionCtx, node); err != nil {
 			return localizedError(localization.ReplicationStorageRestoreNodeFailed(err), err)
 		}
 	}
 
 	// Restore edges
 	for _, edge := range snapshot.Edges {
-		if err := a.engine.CreateEdge(edge); err != nil {
+		if err := a.engine.CreateEdge(completionCtx, edge); err != nil {
 			return localizedError(localization.ReplicationStorageRestoreEdgeFailed(err), err)
 		}
 	}

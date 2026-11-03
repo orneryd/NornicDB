@@ -3,8 +3,9 @@ package multidb
 
 import (
 	"context"
-	"github.com/orneryd/nornicdb/internal/jsontext"
 	"time"
+
+	"github.com/orneryd/nornicdb/internal/jsontext"
 
 	"github.com/google/uuid"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -20,7 +21,7 @@ func (m *DatabaseManager) loadMetadata(ctx context.Context) (bool, error) {
 	// Use system namespace to load metadata
 	systemEngine := storage.NewNamespacedEngine(m.inner, m.config.SystemDatabase)
 
-	node, err := systemEngine.GetNode(storage.NodeID(metadataNodeID))
+	node, err := systemEngine.GetNode(ctx, storage.NodeID(metadataNodeID))
 	if err == storage.ErrNotFound {
 		// No existing metadata - start fresh
 		return false, nil

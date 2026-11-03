@@ -49,16 +49,17 @@ func (e *controlledAdjacencyEngine) GetIncomingEdges(context.Context, storage.No
 
 func newStorageTestEngine(t *testing.T) storage.Engine {
 	t.Helper()
+	ctx := t.Context()
 	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	engine := storage.NewNamespacedEngine(base, "walk")
 	for _, id := range []storage.NodeID{"root", "a", "c"} {
-		_, err := engine.CreateNode(&storage.Node{ID: id, Labels: []string{"Doc"}})
+		_, err := engine.CreateNode(ctx, &storage.Node{ID: id, Labels: []string{"Doc"}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "e1", StartNode: "root", EndNode: "a", Type: "OUT"}))
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "e2", StartNode: "c", EndNode: "root", Type: "IN"}))
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "e3", StartNode: "root", EndNode: "root", Type: "SELF"}))
+	require.NoError(t, engine.CreateEdge(ctx, &storage.Edge{ID: "e1", StartNode: "root", EndNode: "a", Type: "OUT"}))
+	require.NoError(t, engine.CreateEdge(ctx, &storage.Edge{ID: "e2", StartNode: "c", EndNode: "root", Type: "IN"}))
+	require.NoError(t, engine.CreateEdge(ctx, &storage.Edge{ID: "e3", StartNode: "root", EndNode: "root", Type: "SELF"}))
 	return engine
 }
 
@@ -177,7 +178,7 @@ func TestWalkOverStorageSourceDoesNotPublishRowsOfACanceledRead(t *testing.T) {
 // adapter, including cycle and self-loop handling.
 func TestWalkOverStorageEngine(t *testing.T) {
 	engine := newStorageTestEngine(t)
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "e4", StartNode: "a", EndNode: "root", Type: "BACK"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "e4", StartNode: "a", EndNode: "root", Type: "BACK"}))
 
 	accept := &recordingAcceptor{}
 	records, err := Walk[testRecord](context.Background(), StorageSource{Engine: engine}, accept, "root",

@@ -25,14 +25,14 @@ func TestCacheProjectionNestedOwnership(t *testing.T) {
 				"right":   map[string]any{"values": []int64{3, 4}},
 				"omitted": "retained",
 			}}
-			tx, err := b.BeginTransaction()
+			tx, err := b.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			require.NoError(t, tx.SetImplicit(buffered))
-			_, err = tx.CreateNode(node)
+			_, err = tx.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 			require.NoError(t, tx.CommitContext(context.Background()))
-			_, err = b.GetStoredNode(node.ID)
+			_, err = b.GetStoredNode(t.Context(), node.ID)
 			require.NoError(t, err)
 			selected := []string{"left", "right"}
 			readers := []struct {
@@ -40,10 +40,10 @@ func TestCacheProjectionNestedOwnership(t *testing.T) {
 				read      func() (*Node, error)
 				projected bool
 			}{
-				{"stored", func() (*Node, error) { return b.GetStoredNode(node.ID) }, false},
-				{"query", func() (*Node, error) { return b.GetQueryNode(node.ID) }, false},
-				{"without-embeddings", func() (*Node, error) { return b.GetNodeWithoutEmbeddings(node.ID) }, false},
-				{"projected", func() (*Node, error) { return b.GetNodeProjected(node.ID, selected) }, true},
+				{"stored", func() (*Node, error) { return b.GetStoredNode(t.Context(), node.ID) }, false},
+				{"query", func() (*Node, error) { return b.GetQueryNode(t.Context(), node.ID) }, false},
+				{"without-embeddings", func() (*Node, error) { return b.GetNodeWithoutEmbeddings(t.Context(), node.ID) }, false},
+				{"projected", func() (*Node, error) { return b.GetNodeProjected(t.Context(), node.ID, selected) }, true},
 				{"all-nodes", func() (*Node, error) {
 					nodes, err := b.AllNodes(context.Background())
 					if err != nil {
@@ -71,11 +71,11 @@ func TestCacheProjectionNestedOwnership(t *testing.T) {
 					require.Equal(t, []int64{3, 4}, again.Properties["right"].(map[string]any)["values"])
 				})
 			}
-			require.NoError(t, b.FlushWriteBehind(nil))
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
 			require.NoError(t, b.Close())
 			b, err = fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 			require.NoError(t, err)
-			cold, err := b.GetStoredNode(node.ID)
+			cold, err := b.GetStoredNode(t.Context(), node.ID)
 			require.NoError(t, err)
 			require.Equal(t, node.Properties, cold.Properties)
 		})

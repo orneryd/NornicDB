@@ -27,7 +27,7 @@ func TestIdentityManagerRuntimeTargetsPreserveCodeUnits(t *testing.T) {
 	for _, name := range []string{"identity_one", "identity_two"} {
 		engine, err := manager.GetStorage(name)
 		require.NoError(t, err)
-		_, err = engine.CreateNode(&storage.Node{ID: "marker", Labels: []string{"IdentityMarker"}, Properties: map[string]any{"target": name}})
+		_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "marker", Labels: []string{"IdentityMarker"}, Properties: map[string]any{"target": name}})
 		require.NoError(t, err)
 	}
 	for _, tc := range []struct{ name, target string }{{high, "identity_one"}, {low, "identity_two"}, {literal, "identity_one"}, {"ROUTE_\xed\xa0\x80", "identity_one"}, {"ROUTE_\xed\xb0\x80", "identity_two"}} {
@@ -38,7 +38,7 @@ func TestIdentityManagerRuntimeTargetsPreserveCodeUnits(t *testing.T) {
 			require.Equal(t, tc.target, resolved)
 			engine, err := manager.GetStorage(graph)
 			require.NoError(t, err)
-			marker, err := engine.GetNode("marker")
+			marker, err := engine.GetNode(t.Context(), "marker")
 			require.NoError(t, err)
 			require.Equal(t, tc.target, marker.Properties["target"])
 		})

@@ -71,7 +71,7 @@ func TestGraphBuilderCanceledCallerDoesNotPublishCacheHit(t *testing.T) {
 func TestGraphBuilderFinalProgressCancellationPublishesNothing(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	for i := range 10 {
-		_, err := base.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("test:n%d", i))})
+		_, err := base.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("test:n%d", i))})
 		require.NoError(t, err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())

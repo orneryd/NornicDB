@@ -1,3 +1,4 @@
+// Author: Codex, NOR-180 terminal-outcome response propagation, 2026-10-27.
 package server
 
 import (
@@ -5,10 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/orneryd/nornicdb/internal/cyphertext"
-	"github.com/orneryd/nornicdb/internal/httpresponse"
-	"github.com/orneryd/nornicdb/internal/jsontext"
-	"github.com/orneryd/nornicdb/internal/localizationboundary"
 	"io"
 	"net/http"
 	"reflect"
@@ -16,6 +13,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/orneryd/nornicdb/internal/httpresponse"
+	"github.com/orneryd/nornicdb/internal/jsontext"
+	"github.com/orneryd/nornicdb/internal/localizationboundary"
 
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 
@@ -139,7 +141,7 @@ func (s *Server) newExecutorForDatabase(dbName string) (*cypher.StorageExecutor,
 func (s *Server) databaseScopedExecutorOptions(dbName, authToken string) cypher.DatabaseScopedExecutorOptions {
 	overrides := s.dbConfigStore.GetOverrides(dbName)
 	resolved := dbconfig.Resolve(s.processConfig, overrides)
-	s.applyTransactionMemoryLimits(dbName, resolved)
+	s.applyTransactionMemoryLimits(dbName, overrides, resolved)
 	base := s.db.GetCypherExecutor()
 	return cypher.DatabaseScopedExecutorOptions{
 		Name: dbName, Storage: s.dbManager,
@@ -167,9 +169,6 @@ func (s *Server) databaseScopedExecutorOptions(dbName, authToken string) cypher.
 			// Copy query embedder from the base DB executor so string-input vector procedures work.
 			if base != nil {
 				executor.ShareQueryStatisticsFrom(base)
-				if inferMgr := base.GetInferenceManager(); inferMgr != nil {
-					executor.SetInferenceManager(inferMgr)
-				}
 				// NornicDB issue #563 defect 1: this is the executor behind every
 				// HTTP POST /db/{name}/tx/commit for a non-default database — the
 				// overwhelming majority of this HTTP traffic. Without inheriting
@@ -399,11 +398,11 @@ func (s *Server) handleDatabaseInfo(w http.ResponseWriter, r *http.Request, dbNa
 		return
 	}
 
-	nodeCount, err := storage.NodeCount()
+	nodeCount, err := storage.NodeCount(r.Context())
 	if err != nil {
 		nodeCount = 0
 	}
-	edgeCount, err := storage.EdgeCount()
+	edgeCount, err := storage.EdgeCount(r.Context())
 	if err != nil {
 		edgeCount = 0
 	}
@@ -475,8 +474,8 @@ func (s *Server) compositeConstituentStats(r *http.Request, compositeName string
 			stats = append(stats, row)
 			continue
 		}
-		nodeCount, nErr := engine.NodeCount()
-		edgeCount, eErr := engine.EdgeCount()
+		nodeCount, nErr := engine.NodeCount(r.Context())
+		edgeCount, eErr := engine.EdgeCount(r.Context())
 		if nErr != nil || eErr != nil {
 			partial = true
 			row["reachable"] = false
@@ -755,8 +754,10 @@ func queryStatsFromResult(result *cypher.ExecuteResult) *QueryStats {
 // Neo4j code the engine raised (or a transient transaction code), with the
 // message without that code prefix. Every transaction endpoint reports
 // statement errors through here.
-func statementError(err error) QueryError {
-	code, message := mapSessionExecError(err)
+// statementError is a failed statement's status and message, rendered in one
+// pass with the request's localization.
+func statementError(err error, localize func(localization.Message) string) QueryError {
+	code, message := nornicerrors.RenderStatus(err, localize)
 	return QueryError{Code: code, Message: message}
 }
 
@@ -765,8 +766,7 @@ func statementError(err error) QueryError {
 // is recorded in response first, as Neo4j's HTTP API reports it (#668); a
 // statement failing at compile time has no result.
 func statementFailure(ctx context.Context, response *TransactionResponse, executor *cypher.StorageExecutor, query string, err error, localize func(localization.Message) string) QueryError {
-	failure := statementError(err)
-	localizeStatementError(&failure, err, localize)
+	failure := statementError(err, localize)
 	if executor != nil && !nornicerrors.IsCompileTimeError(err) {
 		columns, columnErr := executor.StatementResultColumnsContext(ctx, query, cypher.RawSource)
 		if columnErr != nil {
@@ -780,13 +780,6 @@ func statementFailure(ctx context.Context, response *TransactionResponse, execut
 		}
 	}
 	return failure
-}
-
-func localizeStatementError(failure *QueryError, err error, localize func(localization.Message) string) {
-	var localized *localization.LocalizedError
-	if errors.As(err, &localized) && localized.Code == failure.Code && localize != nil {
-		failure.Message = localize(localized.Message)
-	}
 }
 
 // QueryError is an error from a query (Neo4j format).
@@ -857,16 +850,11 @@ func (s *Server) handleImplicitTransaction(w http.ResponseWriter, r *http.Reques
 			// Query syntax errors, security errors, etc. return 200 OK
 			// with errors in the response body (Neo4j standard behavior)
 		}
-	} else if s.db.IsAsyncWritesEnabled() {
-		// Only return 202 for mutations that actually completed through the
-		// eventual-consistency path.
-		for _, stmt := range req.Statements {
-			if isMutationQuery(stmt.Statement) && shouldUseAcceptedStatusForMutation(&response) {
-				status = http.StatusAccepted
-				w.Header().Set("X-NornicDB-Consistency", "eventual")
-				break
-			}
-		}
+	} else if s.db.IsAsyncWritesEnabled() && shouldUseAcceptedStatusForMutation(&response) {
+		// The publication owner's actual ACK is authoritative, including a
+		// dynamic procedure whose declared READ mode executes a writing child.
+		status = http.StatusAccepted
+		w.Header().Set("X-NornicDB-Consistency", "eventual")
 	}
 
 	s.applyMVCCPressureWarnings(w, dbName, &response)
@@ -929,22 +917,32 @@ func (s *Server) grantAccessToNewDatabase(ctx context.Context, dbName string, cl
 }
 
 // convertRowToNeo4jFormat returns transaction row values without entity envelopes.
-func (s *Server) convertRowToNeo4jFormat(row []interface{}, dbName string) []interface{} {
+func (s *Server) convertRowToNeo4jFormat(ctx context.Context, row []interface{}, dbName string) ([]interface{}, error) {
 	converted := make([]interface{}, len(row))
 	for i, val := range row {
-		converted[i] = s.convertValueToNeo4jFormat(val, dbName)
+		value, err := s.convertValueToNeo4jFormat(ctx, val, dbName)
+		if err != nil {
+			return nil, err
+		}
+		converted[i] = value
 	}
-	return converted
+	return converted, nil
 }
 
 // convertValueToNeo4jFormat converts a single value to Neo4j HTTP format.
 // Handles storage.Node, storage.Edge, maps, and slices recursively.
-func (s *Server) convertValueToNeo4jFormat(val interface{}, dbName string) interface{} {
-	value, _ := s.transactionHTTPValue(val, dbName)
-	return value
+func (s *Server) convertValueToNeo4jFormat(ctx context.Context, val interface{}, dbName string) (interface{}, error) {
+	value, _, err := s.transactionHTTPValue(ctx, val, dbName)
+	if err != nil {
+		return nil, err
+	}
+	return value, nil
 }
 
-func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ...*transactionHTTPValueState) (interface{}, []interface{}) {
+func (s *Server) transactionHTTPValue(ctx context.Context, value interface{}, dbName string, graph ...*transactionHTTPValueState) (interface{}, []interface{}, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
 	entityMeta := func(id, elementID, entityType string) []interface{} {
 		return []interface{}{map[string]interface{}{
 			"id": s.hashStringToInt64(id), "elementId": elementID,
@@ -958,32 +956,32 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 		for index, value := range typed {
 			bytes[index] = int8(value)
 		}
-		return bytes, []interface{}{nil}
+		return bytes, []interface{}{nil}, nil
 	case float32:
-		return transactionHTTPFloat(float64(typed), 32), []interface{}{nil}
+		return transactionHTTPFloat(float64(typed), 32), []interface{}{nil}, nil
 	case float64:
-		return transactionHTTPFloat(typed, 64), []interface{}{nil}
+		return transactionHTTPFloat(typed, 64), []interface{}{nil}, nil
 	case cypher.CypherDate, cypher.CypherLocalTime, cypher.CypherTime, cypher.CypherLocalDateTime, cypher.CypherDateTime:
-		return typed.(fmt.Stringer).String(), []interface{}{nil}
+		return typed.(fmt.Stringer).String(), []interface{}{nil}, nil
 	case *cypher.CypherDuration:
 		if typed == nil {
-			return nil, []interface{}{nil}
+			return nil, []interface{}{nil}, nil
 		}
-		return typed.String(), []interface{}{nil}
+		return typed.String(), []interface{}{nil}, nil
 	case cypher.CypherUUID:
-		return typed.String(), []interface{}{nil}
+		return typed.String(), []interface{}{nil}, nil
 	case cypher.CypherVector:
-		return transactionHTTPVector(typed), []interface{}{nil}
+		return transactionHTTPVector(typed), []interface{}{nil}, nil
 	case cypher.CypherPoint:
-		return transactionHTTPPoint(typed), []interface{}{map[string]interface{}{"type": "point"}}
+		return transactionHTTPPoint(typed), []interface{}{map[string]interface{}{"type": "point"}}, nil
 	case *cypher.CypherPoint:
 		if typed == nil {
-			return nil, []interface{}{nil}
+			return nil, []interface{}{nil}, nil
 		}
-		return transactionHTTPPoint(*typed), []interface{}{map[string]interface{}{"type": "point"}}
+		return transactionHTTPPoint(*typed), []interface{}{map[string]interface{}{"type": "point"}}, nil
 	case storage.RemoteEntityValue:
 		if typed == nil {
-			return nil, []interface{}{nil}
+			return nil, []interface{}{nil}, nil
 		}
 		id, startID, endID := typed.LegacyIDs()
 		elementID, _ := typed["elementId"].(string)
@@ -991,7 +989,10 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 		if props == nil {
 			props = map[string]interface{}{}
 		}
-		converted, _ := s.transactionHTTPValue(props, dbName)
+		converted, _, err := s.transactionHTTPValue(ctx, props, dbName)
+		if err != nil {
+			return nil, nil, err
+		}
 		properties := converted.(map[string]interface{})
 		kind := "node"
 		if relationshipType, relationship := typed["type"].(string); relationship {
@@ -1017,57 +1018,88 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 		}
 		meta := map[string]interface{}{"id": id, "elementId": elementID, "type": kind, "deleted": false}
 		if transactionHTTPWantsREST(graph) {
-			return transactionHTTPRESTEntity(kind, dbName, meta, properties, typed), []interface{}{meta}
+			return transactionHTTPRESTEntity(kind, dbName, meta, properties, typed), []interface{}{meta}, nil
 		}
-		return properties, []interface{}{meta}
+		return properties, []interface{}{meta}, nil
 	case storage.RemotePathValue:
 		if _, _, valid := typed.Parts(); !valid {
-			return nil, []interface{}{nil}
+			return nil, []interface{}{nil}, nil
 		}
 		entities := make([]interface{}, len(typed))
 		for i, entity := range typed {
 			entities[i] = entity
 		}
 		if transactionHTTPWantsREST(graph) {
-			return s.transactionHTTPRESTPath(entities, dbName, graph[0]), nil
+			rest, err := s.transactionHTTPRESTPath(ctx, entities, dbName, graph[0])
+			return rest, nil, err
 		}
-		row, metadata := s.transactionHTTPValue(entities, dbName, graph...)
-		return row, []interface{}{metadata}
+		row, metadata, err := s.transactionHTTPValue(ctx, entities, dbName, graph...)
+		if err != nil {
+			return nil, nil, err
+		}
+		return row, []interface{}{metadata}, nil
 	case *storage.Node:
 		if typed == nil {
-			return nil, []interface{}{nil}
+			return nil, []interface{}{nil}, nil
 		}
-		converted, _ := s.transactionHTTPValue(typed.Properties, dbName)
+		converted, _, err := s.transactionHTTPValue(ctx, typed.Properties, dbName)
+		if err != nil {
+			return nil, nil, err
+		}
 		properties := converted.(map[string]interface{})
-		elementID := typed.ElementID(s.entityDatabase(dbName, typed.ID, ""))
+		database, err := s.entityDatabase(ctx, dbName, typed.ID, "")
+		if err != nil {
+			return nil, nil, err
+		}
+		elementID := typed.ElementID(database)
 		if len(graph) > 0 && graph[0].graph != nil {
 			graph[0].addNode(GraphNode{ID: strconv.FormatInt(s.hashStringToInt64(string(typed.ID)), 10), ElementID: elementID, Labels: typed.Labels, Properties: properties})
 		}
 		meta := entityMeta(string(typed.ID), elementID, "node")
 		if transactionHTTPWantsREST(graph) {
-			return transactionHTTPRESTEntity("node", dbName, meta[0].(map[string]interface{}), properties, map[string]interface{}{"labels": typed.Labels}), meta
+			return transactionHTTPRESTEntity("node", dbName, meta[0].(map[string]interface{}), properties, map[string]interface{}{"labels": typed.Labels}), meta, nil
 		}
-		return properties, meta
+		return properties, meta, nil
 	case *storage.Edge:
 		if typed == nil {
-			return nil, []interface{}{nil}
+			return nil, []interface{}{nil}, nil
 		}
-		converted, _ := s.transactionHTTPValue(typed.Properties, dbName)
+		converted, _, err := s.transactionHTTPValue(ctx, typed.Properties, dbName)
+		if err != nil {
+			return nil, nil, err
+		}
 		properties := converted.(map[string]interface{})
-		elementID := typed.ElementID(s.entityDatabase(dbName, "", typed.ID))
+		database, err := s.entityDatabase(ctx, dbName, "", typed.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+		elementID := typed.ElementID(database)
+		var startElementID, endElementID string
+		if (len(graph) > 0 && graph[0].graph != nil) || transactionHTTPWantsREST(graph) {
+			startDatabase, err := s.entityDatabase(ctx, dbName, typed.StartNode, "")
+			if err != nil {
+				return nil, nil, err
+			}
+			endDatabase, err := s.entityDatabase(ctx, dbName, typed.EndNode, "")
+			if err != nil {
+				return nil, nil, err
+			}
+			startElementID = typed.StartElementID(startDatabase)
+			endElementID = typed.EndElementID(endDatabase)
+		}
 		if len(graph) > 0 && graph[0].graph != nil {
-			graph[0].addEdge(GraphRelationship{StartNodeID: strconv.FormatInt(s.hashStringToInt64(string(typed.StartNode)), 10), EndNodeID: strconv.FormatInt(s.hashStringToInt64(string(typed.EndNode)), 10), ID: strconv.FormatInt(s.hashStringToInt64(string(typed.ID)), 10), ElementID: elementID, Type: typed.Type, StartNode: typed.StartElementID(s.entityDatabase(dbName, typed.StartNode, "")), EndNode: typed.EndElementID(s.entityDatabase(dbName, typed.EndNode, "")), Properties: properties})
+			graph[0].addEdge(GraphRelationship{StartNodeID: strconv.FormatInt(s.hashStringToInt64(string(typed.StartNode)), 10), EndNodeID: strconv.FormatInt(s.hashStringToInt64(string(typed.EndNode)), 10), ID: strconv.FormatInt(s.hashStringToInt64(string(typed.ID)), 10), ElementID: elementID, Type: typed.Type, StartNode: startElementID, EndNode: endElementID, Properties: properties})
 		}
 		meta := entityMeta(string(typed.ID), elementID, "relationship")
 		if transactionHTTPWantsREST(graph) {
-			return transactionHTTPRESTEntity("relationship", dbName, meta[0].(map[string]interface{}), properties, map[string]interface{}{"type": typed.Type, "startNodeElementId": typed.StartElementID(s.entityDatabase(dbName, typed.StartNode, "")), "endNodeElementId": typed.EndElementID(s.entityDatabase(dbName, typed.EndNode, ""))}), meta
+			return transactionHTTPRESTEntity("relationship", dbName, meta[0].(map[string]interface{}), properties, map[string]interface{}{"type": typed.Type, "startNodeElementId": startElementID, "endNodeElementId": endElementID}), meta, nil
 		}
-		return properties, meta
+		return properties, meta, nil
 	case *cypher.PathResult:
 		if typed == nil {
-			return nil, []interface{}{nil}
+			return nil, []interface{}{nil}, nil
 		}
-		return s.transactionHTTPValue(*typed, dbName, graph...)
+		return s.transactionHTTPValue(ctx, *typed, dbName, graph...)
 	case cypher.PathResult:
 		entities := make([]interface{}, 0, len(typed.Nodes)+len(typed.Relationships))
 		for index, node := range typed.Nodes {
@@ -1077,17 +1109,21 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 			}
 		}
 		if transactionHTTPWantsREST(graph) {
-			return s.transactionHTTPRESTPath(entities, dbName, graph[0]), nil
+			rest, err := s.transactionHTTPRESTPath(ctx, entities, dbName, graph[0])
+			return rest, nil, err
 		}
-		row, metadata := s.transactionHTTPValue(entities, dbName, graph...)
-		return row, []interface{}{metadata}
+		row, metadata, err := s.transactionHTTPValue(ctx, entities, dbName, graph...)
+		if err != nil {
+			return nil, nil, err
+		}
+		return row, []interface{}{metadata}, nil
 	case map[string]interface{}:
 		typed = storage.PublicRemoteMap(typed)
 		switch path := typed["_pathResult"].(type) {
 		case cypher.PathResult:
-			return s.transactionHTTPValue(path, dbName, graph...)
+			return s.transactionHTTPValue(ctx, path, dbName, graph...)
 		case *cypher.PathResult:
-			return s.transactionHTTPValue(path, dbName, graph...)
+			return s.transactionHTTPValue(ctx, path, dbName, graph...)
 		}
 		result := make(map[string]interface{}, len(typed))
 		metadata := make([]interface{}, 0)
@@ -1103,14 +1139,17 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 			}
 		}
 		for _, key := range keys {
-			converted, nested := s.transactionHTTPValue(typed[key], dbName, graph...)
+			converted, nested, err := s.transactionHTTPValue(ctx, typed[key], dbName, graph...)
+			if err != nil {
+				return nil, nil, err
+			}
 			result[key] = converted
 			metadata = append(metadata, nested...)
 		}
 		if ordered {
-			return transactionHTTPOrderedMap{keys: keys, values: result}, metadata
+			return transactionHTTPOrderedMap{keys: keys, values: result}, metadata, nil
 		}
-		return result, metadata
+		return result, metadata, nil
 	default:
 		if value != nil {
 			sequence := reflect.ValueOf(value)
@@ -1118,14 +1157,17 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 				result := make([]interface{}, sequence.Len())
 				metadata := make([]interface{}, 0, sequence.Len())
 				for index := 0; index < sequence.Len(); index++ {
-					converted, nested := s.transactionHTTPValue(sequence.Index(index).Interface(), dbName, graph...)
+					converted, nested, err := s.transactionHTTPValue(ctx, sequence.Index(index).Interface(), dbName, graph...)
+					if err != nil {
+						return nil, nil, err
+					}
 					result[index] = converted
 					metadata = append(metadata, nested...)
 				}
-				return result, metadata
+				return result, metadata, nil
 			}
 		}
-		return value, []interface{}{nil}
+		return value, []interface{}{nil}, nil
 	}
 }
 
@@ -1143,31 +1185,39 @@ func transactionHTTPFloat(value float64, bits int) interface{} {
 // entityDatabase resolves the database an entity actually lives in for
 // element-id projection: for a composite execution database, the constituent
 // that holds the node or edge; otherwise dbName itself (#745 §3, HTTP row
-// and meta output). A miss (deleted entity, unavailable constituent) falls
-// back to dbName.
-func (s *Server) entityDatabase(dbName string, nodeID storage.NodeID, edgeID storage.EdgeID) string {
+// and meta output). A genuine entity miss falls back to dbName; a
+// constituent lookup failure propagates before the result is published.
+func (s *Server) entityDatabase(ctx context.Context, dbName string, nodeID storage.NodeID, edgeID storage.EdgeID) (string, error) {
 	if s.dbManager == nil || !s.dbManager.IsCompositeDatabase(dbName) {
-		return dbName
+		return dbName, nil
 	}
 	engine, err := s.dbManager.GetStorage(dbName)
 	if err != nil {
-		return dbName
+		return dbName, nil
 	}
 	composite, ok := engine.(*storage.CompositeEngine)
 	if !ok {
-		return dbName
+		return dbName, nil
 	}
 	if nodeID != "" {
-		if name := composite.ConstituentDatabaseForNode(nodeID); name != "" {
-			return name
+		name, err := composite.ConstituentDatabaseForNode(ctx, nodeID)
+		if err != nil {
+			return "", err
+		}
+		if name != "" {
+			return name, nil
 		}
 	}
 	if edgeID != "" {
-		if name := composite.ConstituentDatabaseForEdge(edgeID); name != "" {
-			return name
+		name, err := composite.ConstituentDatabaseForEdge(ctx, edgeID)
+		if err != nil {
+			return "", err
+		}
+		if name != "" {
+			return name, nil
 		}
 	}
-	return dbName
+	return dbName, nil
 }
 
 // hashStringToInt64 converts a string ID to an int64 for Neo4j compatibility.
@@ -1211,7 +1261,9 @@ func (s *Server) transactionCommitURL(r *http.Request, dbName, txID string) stri
 	return s.transactionURL(r, dbName, txID) + "/commit"
 }
 
-func (s *Server) appendStatementResult(response *TransactionResponse, result *cypher.ExecuteResult, dbName string, includeStats bool, contents ...[]string) {
+func (s *Server) appendStatementResult(ctx context.Context, response *TransactionResponse, result *cypher.ExecuteResult, dbName string, includeStats bool, contents ...[]string) error {
+	defer applyResultMetadata(response, result.Metadata)
+	ctx = txphase.ResultContext(ctx)
 	if selected, ok := result.Metadata["db"].(string); ok && selected != "" {
 		dbName = selected
 	}
@@ -1239,7 +1291,10 @@ func (s *Server) appendStatementResult(response *TransactionResponse, result *cy
 		convertedRow := make([]interface{}, len(row))
 		metadata := make([]interface{}, 0, len(row))
 		for column, value := range row {
-			converted, nested := s.transactionHTTPValue(value, dbName, graph...)
+			converted, nested, err := s.transactionHTTPValue(ctx, value, dbName, graph...)
+			if err != nil {
+				return err
+			}
 			convertedRow[column] = converted
 			metadata = append(metadata, nested...)
 		}
@@ -1250,7 +1305,11 @@ func (s *Server) appendStatementResult(response *TransactionResponse, result *cy
 					state := &transactionHTTPValueState{rest: true, mapKeyOrders: result.MapKeyOrders}
 					qr.Data[i].REST = make([]interface{}, len(row))
 					for column, value := range row {
-						qr.Data[i].REST[column], _ = s.transactionHTTPValue(value, dbName, state)
+						rest, _, err := s.transactionHTTPValue(ctx, value, dbName, state)
+						if err != nil {
+							return err
+						}
+						qr.Data[i].REST[column] = rest
 					}
 					break
 				}
@@ -1272,7 +1331,7 @@ func (s *Server) appendStatementResult(response *TransactionResponse, result *cy
 		}
 	}
 	response.Results = append(response.Results, qr)
-	applyResultMetadata(response, result.Metadata)
+	return nil
 }
 
 func shouldUseAcceptedStatusForMutation(resp *TransactionResponse) bool {
@@ -1296,15 +1355,12 @@ func (s *Server) executeTxStatements(
 	authToken string,
 	claims *auth.JWTClaims,
 	dbName string,
-	session *txsession.Session,
+	lease *txsession.Lease,
 	statements []StatementRequest,
 	response *TransactionResponse,
 ) (failed bool) {
-	localize := func(message localization.Message) string {
-		text, _ := localizationboundary.Render(ctx, s.localizer, message, localizationboundary.FallbackOrID, localizationboundary.SourceEnglish)
-		return text
-	}
-	return s.runRequestStatements(s.withRequestIdentity(ctx, nil, claims), authToken, claims, dbName, statements, s.sessionStatementRunner(session), localize, response)
+	localize := s.transactionMessageRenderer(ctx)
+	return s.runRequestStatements(s.withRequestIdentity(ctx, nil, claims), authToken, claims, dbName, statements, s.sessionStatementRunner(lease), localize, response)
 }
 
 // statementRunner executes one statement of an HTTP /tx request on a
@@ -1347,9 +1403,10 @@ func (s *Server) autoCommitStatementRunner(authToken string) statementRunner {
 
 // sessionStatementRunner runs the original statement in an open transaction.
 // The executor owns USE, :USE and the transaction's database selection rules.
-func (s *Server) sessionStatementRunner(session *txsession.Session) statementRunner {
+func (s *Server) sessionStatementRunner(lease *txsession.Lease) statementRunner {
+	session := lease.Session
 	return func(ctx context.Context, dbName, query string, params map[string]interface{}) (*cypher.ExecuteResult, *cypher.StorageExecutor, error) {
-		result, err := s.txSessions.ExecuteInSession(cypher.WithClientStatement(txphase.Statements(ctx)), session, query, params)
+		result, err := lease.ExecuteInSession(cypher.WithClientStatement(txphase.Statements(ctx)), query, params)
 		return result, session.Executor, err
 	}
 }
@@ -1410,8 +1467,7 @@ func (s *Server) runRequestStatements(
 		// An empty statement (or only a comment) is Neo4j's SyntaxError, so it
 		// fails its request like any other invalid statement.
 		if err := cypher.ValidateStatementText(queryStatement); err != nil {
-			failure := statementError(err)
-			localizeStatementError(&failure, err, localize)
+			failure := statementError(err, localize)
 			return &failure
 		}
 
@@ -1423,8 +1479,7 @@ func (s *Server) runRequestStatements(
 			if errors.As(err, &own) {
 				return &own.QueryError
 			}
-			failure := statementError(err)
-			localizeStatementError(&failure, err, localize)
+			failure := statementError(err, localize)
 			// Authorization failures never publish a statement result, even when
 			// the executor supplies column metadata alongside the denial. Keep
 			// runtime partial results for non-security statement failures below.
@@ -1432,7 +1487,9 @@ func (s *Server) runRequestStatements(
 				return &failure
 			}
 			if result != nil && len(result.Columns) > 0 && !nornicerrors.IsCompileTimeStatus(failure.Code) {
-				s.appendStatementResult(response, result, effectiveDB, stmt.IncludeStats, stmt.ResultDataContents)
+				if projectionErr := s.appendStatementResult(ctx, response, result, effectiveDB, stmt.IncludeStats, stmt.ResultDataContents); projectionErr != nil {
+					return &failure
+				}
 				return &failure
 			}
 			queryErr := statementFailure(ctx, response, executor, queryStatement, err, localize)
@@ -1459,7 +1516,10 @@ func (s *Server) runRequestStatements(
 			result.Rows = filtered
 		}
 
-		s.appendStatementResult(response, result, effectiveDB, stmt.IncludeStats, stmt.ResultDataContents)
+		if projectionErr := s.appendStatementResult(ctx, response, result, effectiveDB, stmt.IncludeStats, stmt.ResultDataContents); projectionErr != nil {
+			failure := statementError(projectionErr, localize)
+			return &failure
+		}
 		return nil
 	}
 	for _, stmt := range statements {
@@ -1490,33 +1550,38 @@ func (s *Server) runOneShotTransaction(
 		})
 		return
 	}
-	session, openErr := s.openRequestTransaction(r, claims, dbName, localize)
+	lease, openErr := s.openRequestTransaction(r, claims, dbName, localize)
 	if openErr != nil {
 		response.Errors = append(response.Errors, *openErr)
 		return
 	}
+	defer func() { lease.Release() }()
+	session := lease.Session
 	wrote := false
 	run := func(ctx context.Context, target, query string, params map[string]interface{}) (*cypher.ExecuteResult, *cypher.StorageExecutor, error) {
 		if session == nil {
 			var openErr *QueryError
-			session, openErr = s.openRequestTransaction(r, claims, dbName, localize)
+			lease, openErr = s.openRequestTransaction(r, claims, dbName, localize)
 			if openErr != nil {
 				return nil, nil, &requestStatementError{QueryError: *openErr}
 			}
+			session = lease.Session
 		}
-		result, executor, err := s.sessionStatementRunner(session)(ctx, target, query, params)
+		result, executor, err := s.sessionStatementRunner(lease)(ctx, target, query, params)
 		var detail interface{ BoltErrorDetail() string }
 		code, _ := mapSessionExecError(err)
-		if err != nil && code == "Neo.DatabaseError.Transaction.TransactionStartFailed" && errors.As(err, &detail) && detail.BoltErrorDetail() == "InvalidCallInTransactions" {
+		if err != nil && code == nornicerrors.TransactionStartFailed && errors.As(err, &detail) && detail.BoltErrorDetail() == "InvalidCallInTransactions" {
 			if wrote {
 				return nil, executor, &requestStatementError{QueryError{
 					Code:    "Neo.DatabaseError.Statement.ExecutionFailed",
 					Message: "Expected transaction state to be empty when calling transactional subquery. (Transactions committed: 0)",
 				}}
 			}
-			if rollbackErr := s.rollbackRequestTransaction(ctx, session, nil); rollbackErr != nil {
-				return nil, executor, rollbackErr
+			if rollbackErr := s.rollbackRequestTransaction(ctx, lease, nil); rollbackErr != nil {
+				return nil, executor, nornicerrors.CombineTerminalOutcomes(err, rollbackErr)
 			}
+			lease.Release()
+			lease = nil
 			session = nil
 			return s.autoCommitStatementRunner(r.Header.Get("Authorization"))(ctx, target, query, params)
 		}
@@ -1527,31 +1592,32 @@ func (s *Server) runOneShotTransaction(
 	}
 	if s.runRequestStatements(s.withRequestIdentity(r.Context(), r, claims), r.Header.Get("Authorization"), claims, dbName, statements, run, localize, response) {
 		if session != nil {
-			s.rollbackRequestTransaction(r.Context(), session, response)
+			s.rollbackRequestTransaction(r.Context(), lease, response)
 		}
 		return
 	}
 	if session != nil {
-		s.commitRequestTransaction(r.Context(), session, response)
+		s.commitRequestTransaction(r.Context(), lease, response)
 	}
 }
 
 // openRequestTransaction opens a transaction on dbName for an HTTP request.
 // A database with remote constituents gets an executor built with the
 // request's auth token, which it forwards to the remote engines.
-func (s *Server) openRequestTransaction(r *http.Request, claims *auth.JWTClaims, dbName string, localize func(localization.Message) string) (*txsession.Session, *QueryError) {
-	var session *txsession.Session
+func (s *Server) openRequestTransaction(r *http.Request, claims *auth.JWTClaims, dbName string, localize func(localization.Message) string) (*txsession.Lease, *QueryError) {
+	var lease *txsession.Lease
 	var err error
 	authToken := r.Header.Get("Authorization")
 	ownerKey := transactionOwnerKey(r, claims)
 	if authToken != "" && s.databaseHasRemoteConstituent(dbName) {
 		executor, execErr := cypher.NewDatabaseScopedExecutor(s.databaseScopedExecutorOptions(dbName, authToken))
 		if execErr != nil {
-			return nil, &QueryError{Code: "Neo.ClientError.Transaction.TransactionStartFailed", Message: execErr.Error()}
+			code, message := nornicerrors.RenderStatus(nornicerrors.TransactionControlFailure(nornicerrors.TerminalBegin, execErr), localize)
+			return nil, &QueryError{Code: code, Message: message}
 		}
-		session, err = s.txSessions.OpenWithExecutorForOwner(r.Context(), dbName, executor, ownerKey)
+		lease, err = s.txSessions.OpenRequestWithExecutorForOwner(r.Context(), dbName, executor, ownerKey)
 	} else {
-		session, err = s.txSessions.OpenForOwner(r.Context(), dbName, ownerKey)
+		lease, err = s.txSessions.OpenRequestForOwner(r.Context(), dbName, ownerKey)
 	}
 	if err != nil {
 		if errors.Is(err, multidb.ErrDatabaseNotFound) {
@@ -1560,18 +1626,19 @@ func (s *Server) openRequestTransaction(r *http.Request, claims *auth.JWTClaims,
 				Message: localize(localization.HTTPDatabaseNotFound(dbName)),
 			}
 		}
-		return nil, &QueryError{Code: "Neo.ClientError.Transaction.TransactionStartFailed", Message: err.Error()}
+		code, message := nornicerrors.RenderStatus(err, localize)
+		return nil, &QueryError{Code: code, Message: message}
 	}
-	return session, nil
+	s.retainTransactionResponse(r.Context(), lease)
+	return lease, nil
 }
 
 // commitRequestTransaction commits an HTTP request's transaction and records
 // the commit's error, or its receipt and optimistic metadata, on response.
-func (s *Server) commitRequestTransaction(ctx context.Context, session *txsession.Session, response *TransactionResponse) {
-	commitResult, err := s.txSessions.CommitAndDelete(ctx, session)
+func (s *Server) commitRequestTransaction(ctx context.Context, lease *txsession.Lease, response *TransactionResponse) {
+	commitResult, err := lease.CommitAndDelete(ctx)
 	if err != nil {
-		code, message := nornicerrors.Neo4jCommitStatus(err)
-		response.Errors = append(response.Errors, QueryError{Code: code, Message: message})
+		response.Errors = append(response.Errors, s.transactionResponseError(ctx, err))
 		return
 	}
 	if commitResult != nil {
@@ -1603,17 +1670,33 @@ func applyResultMetadata(response *TransactionResponse, metadata map[string]inte
 // Neo.ClientError.Transaction.TransactionNotFound. The response's receipt and
 // optimistic metadata described writes that are now discarded, so they are
 // dropped.
-func (s *Server) rollbackRequestTransaction(ctx context.Context, session *txsession.Session, response *TransactionResponse) error {
-	err := s.txSessions.RollbackAndDelete(ctx, session)
+func (s *Server) rollbackRequestTransaction(ctx context.Context, lease *txsession.Lease, response *TransactionResponse) error {
+	err := lease.RollbackAndDelete(ctx)
 	if response != nil {
 		if err != nil {
-			code, message := mapSessionExecError(err)
-			response.Errors = append(response.Errors, QueryError{Code: code, Message: message})
+			response.Errors = append(response.Errors, s.transactionResponseError(ctx, err))
 		}
 		response.Receipt = nil
 		response.Optimistic = nil
 	}
 	return err
+}
+
+// transactionResponseError renders completion failures with the same locale
+// owner as statement failures. Classification and committed truth are produced
+// by the transaction; this boundary only renders them for the request.
+func (s *Server) transactionResponseError(ctx context.Context, err error) QueryError {
+	code, message := nornicerrors.RenderStatus(err, s.transactionMessageRenderer(ctx))
+	return QueryError{Code: code, Message: message}
+}
+
+// transactionMessageRenderer binds the same request locale policy for statement
+// failures and explicit completion. The localization boundary owns rendering.
+func (s *Server) transactionMessageRenderer(ctx context.Context) func(localization.Message) string {
+	return func(message localization.Message) string {
+		text, _ := localizationboundary.Render(ctx, s.localizer, message, localizationboundary.FallbackOrID, localizationboundary.SourceEnglish)
+		return text
+	}
 }
 
 // transactionExpires formats an explicit transaction's expiry as an HTTP
@@ -1634,7 +1717,6 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
 		return
 	}
-
 	var req TransactionRequest
 	if err := decodeTransactionRequest((r).Body, &req, transactionRequestLimit{bounded: true, bytes: s.config.MaxRequestSize}); err != nil && err != io.EOF {
 		s.writeNeo4jInvalidRequestBody(w, r, "Neo.ClientError.Request.InvalidFormat")
@@ -1642,7 +1724,7 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 	}
 
 	r = r.WithContext(cypher.WithTransactionMetadata(r.Context(), req.TransactionMetadata))
-	txSession, openErr := s.openRequestTransaction(r, claims, dbName, func(message localization.Message) string { return s.localizedText(w, r, message) })
+	lease, openErr := s.openRequestTransaction(r, claims, dbName, func(message localization.Message) string { return s.localizedText(w, r, message) })
 	if openErr != nil {
 		status := http.StatusInternalServerError
 		if openErr.Code == "Neo.ClientError.Database.DatabaseNotFound" {
@@ -1651,21 +1733,23 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 		httpresponse.WriteJSON(w, status, TransactionResponse{Results: make([]QueryResult, 0), Errors: []QueryError{*openErr}})
 		return
 	}
+	defer lease.Release()
+	txSession := lease.Session
 
 	response := TransactionResponse{
 		Results: make([]QueryResult, 0),
 		Errors:  make([]QueryError, 0),
 		Commit:  s.transactionCommitURL(r, dbName, txSession.ID),
 		Transaction: &TransactionInfo{
-			Expires: transactionExpires(txSession.Expiration()),
+			Expires: transactionExpires(txSession.ExpiresAt()),
 		},
 	}
 
 	if len(req.Statements) > 0 {
-		if s.executeTxStatements(r.Context(), r.Header.Get("Authorization"), claims, dbName, txSession, req.Statements, &response) {
-			s.rollbackRequestTransaction(r.Context(), txSession, &response)
+		if s.executeTxStatements(r.Context(), r.Header.Get("Authorization"), claims, dbName, lease, req.Statements, &response) {
+			s.rollbackRequestTransaction(r.Context(), lease, &response)
 		}
-		response.Transaction.Expires = transactionExpires(txSession.Expiration())
+		response.Transaction.Expires = transactionExpires(txSession.ExpiresAt())
 	}
 
 	s.applyMVCCPressureWarnings(w, dbName, &response)
@@ -1679,33 +1763,48 @@ func (s *Server) handleExecuteInTransaction(w http.ResponseWriter, r *http.Reque
 		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
 		return
 	}
-
-	tx, ok := s.txSessions.GetForOwner(txID, transactionOwnerKey(r, claims))
-	if !ok || tx == nil || tx.Database != dbName {
+	// Keep the early not-found response for unknown IDs. This pointer is only
+	// used for the immutable database check; the request acquires a lease after
+	// body decoding and revalidates expiry before executing anything.
+	if tx, ok := s.txSessions.GetForOwner(txID, transactionOwnerKey(r, claims)); !ok || tx == nil || tx.Database != dbName {
 		s.writeNeo4jTransactionNotFound(w, r)
 		return
 	}
 
 	var req TransactionRequest
 	if err := decodeTransactionRequest((r).Body, &req, transactionRequestLimit{bounded: true, bytes: s.config.MaxRequestSize}); err != nil {
-		rollbackErr := s.rollbackRequestTransaction(r.Context(), tx, nil)
+		lease, ok := s.leaseTransactionOrNotFound(w, r, dbName, txID, transactionOwnerKey(r, claims))
+		if !ok {
+			return
+		}
+		rollbackErr := s.rollbackRequestTransaction(r.Context(), lease, nil)
+		lease.Release()
 		s.writeNeo4jInvalidTransactionBody(w, r, err, rollbackErr)
 		return
 	}
+	lease, ok := s.leaseTransactionOrNotFound(w, r, dbName, txID, transactionOwnerKey(r, claims))
+	if !ok {
+		return
+	}
+	defer lease.Release()
+	tx := lease.Session
 
 	response := TransactionResponse{
 		Results: make([]QueryResult, 0),
 		Errors:  make([]QueryError, 0),
 		Commit:  s.transactionCommitURL(r, dbName, txID),
 		Transaction: &TransactionInfo{
-			Expires: transactionExpires(tx.Expires),
+			Expires: transactionExpires(tx.ExpiresAt()),
 		},
 	}
 
-	if s.executeTxStatements(r.Context(), r.Header.Get("Authorization"), claims, dbName, tx, req.Statements, &response) {
-		s.rollbackRequestTransaction(r.Context(), tx, &response)
+	if s.executeTxStatements(r.Context(), r.Header.Get("Authorization"), claims, dbName, lease, req.Statements, &response) {
+		s.rollbackRequestTransaction(r.Context(), lease, &response)
 	}
-	response.Transaction.Expires = transactionExpires(tx.Expires)
+	if len(req.Statements) == 0 {
+		s.txSessions.Touch(tx)
+	}
+	response.Transaction.Expires = transactionExpires(tx.ExpiresAt())
 
 	s.applyMVCCPressureWarnings(w, dbName, &response)
 	httpresponse.WriteJSON(w, http.StatusOK, response)
@@ -1719,6 +1818,10 @@ func (s *Server) handleCommitTransaction(w http.ResponseWriter, r *http.Request,
 		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
 		return
 	}
+	if tx, ok := s.txSessions.GetForOwner(txID, transactionOwnerKey(r, claims)); !ok || tx == nil || tx.Database != dbName {
+		s.writeNeo4jTransactionNotFound(w, r)
+		return
+	}
 
 	response := TransactionResponse{
 		Results:       make([]QueryResult, 0),
@@ -1726,28 +1829,32 @@ func (s *Server) handleCommitTransaction(w http.ResponseWriter, r *http.Request,
 		LastBookmarks: []string{s.generateBookmark()},
 	}
 
-	tx, ok := s.txSessions.GetForOwner(txID, transactionOwnerKey(r, claims))
-	if !ok || tx == nil || tx.Database != dbName {
-		s.writeNeo4jTransactionNotFound(w, r)
-		return
-	}
-
 	var req TransactionRequest
 	if err := decodeTransactionRequest((r).Body, &req, transactionRequestLimit{bounded: true, bytes: s.config.MaxRequestSize}); err != nil && err != io.EOF {
-		rollbackErr := s.rollbackRequestTransaction(r.Context(), tx, nil)
+		lease, ok := s.leaseTransactionOrNotFound(w, r, dbName, txID, transactionOwnerKey(r, claims))
+		if !ok {
+			return
+		}
+		rollbackErr := s.rollbackRequestTransaction(r.Context(), lease, nil)
+		lease.Release()
 		s.writeNeo4jInvalidTransactionBody(w, r, err, rollbackErr)
 		return
 	}
+	lease, ok := s.leaseTransactionOrNotFound(w, r, dbName, txID, transactionOwnerKey(r, claims))
+	if !ok {
+		return
+	}
+	defer lease.Release()
 
 	// Execute optional final statements in transaction context first.
-	if s.executeTxStatements(r.Context(), r.Header.Get("Authorization"), claims, dbName, tx, req.Statements, &response) {
-		s.rollbackRequestTransaction(r.Context(), tx, &response)
+	if s.executeTxStatements(r.Context(), r.Header.Get("Authorization"), claims, dbName, lease, req.Statements, &response) {
+		s.rollbackRequestTransaction(r.Context(), lease, &response)
 		s.applyMVCCPressureWarnings(w, dbName, &response)
 		httpresponse.WriteJSON(w, http.StatusOK, response)
 		return
 	}
 
-	s.commitRequestTransaction(r.Context(), tx, &response)
+	s.commitRequestTransaction(r.Context(), lease, &response)
 	s.applyMVCCPressureWarnings(w, dbName, &response)
 	httpresponse.WriteJSON(w, http.StatusOK, response)
 }
@@ -1759,19 +1866,34 @@ func (s *Server) handleRollbackTransaction(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	tx, ok := s.txSessions.GetForOwner(txID, transactionOwnerKey(r, getClaims(r)))
-	if !ok || tx == nil || tx.Database != dbName {
-		s.writeNeo4jTransactionNotFound(w, r)
+	lease, ok := s.leaseTransactionOrNotFound(w, r, dbName, txID, transactionOwnerKey(r, getClaims(r)))
+	if !ok {
 		return
 	}
+	defer lease.Release()
 
 	response := TransactionResponse{
 		Results: make([]QueryResult, 0),
 		Errors:  make([]QueryError, 0),
 	}
-	s.rollbackRequestTransaction(r.Context(), tx, &response)
+	s.rollbackRequestTransaction(r.Context(), lease, &response)
 	s.applyMVCCPressureWarnings(w, dbName, &response)
 	httpresponse.WriteJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) leaseTransactionOrNotFound(w http.ResponseWriter, r *http.Request, dbName, txID, owner string) (*txsession.Lease, bool) {
+	lease, ok := s.txSessions.AcquireForOwner(txID, owner)
+	if !ok || lease == nil {
+		s.writeNeo4jTransactionNotFound(w, r)
+		return nil, false
+	}
+	if lease.Session.Database != dbName {
+		lease.Release()
+		s.writeNeo4jTransactionNotFound(w, r)
+		return nil, false
+	}
+	s.retainTransactionResponse(r.Context(), lease)
+	return lease, true
 }
 
 func (s *Server) bindStatementCacheIndex() {

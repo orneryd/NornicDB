@@ -22,7 +22,7 @@ func TestTokenLosesDeletedRoleOverHTTP(t *testing.T) {
 	server, users := setupTestServer(t)
 	admin := getAuthToken(t, users, "admin")
 	require.NoError(t, server.roleStore.CreateRole(ctx, "ops"))
-	_, err := users.CreateUser("bob", "password123", []auth.Role{"ops"})
+	_, err := users.CreateUser(context.Background(), "bob", "password123", []auth.Role{"ops"})
 	require.NoError(t, err)
 	bob := getAuthToken(t, users, "bob")
 
@@ -123,7 +123,7 @@ func TestRemovedAccountAuthorizesNothingOverHTTP(t *testing.T) {
 			t.Run(scheme+"/"+change, func(t *testing.T) {
 				server, users := setupTestServer(t)
 				admin := "Bearer " + getAuthToken(t, users, "admin")
-				_, err := users.CreateUser("carol", "password123", []auth.Role{auth.RoleAdmin})
+				_, err := users.CreateUser(context.Background(), "carol", "password123", []auth.Role{auth.RoleAdmin})
 				require.NoError(t, err)
 				carol := basicAuthorization("carol")
 				if scheme == "bearer" {
@@ -140,7 +140,7 @@ func TestRemovedAccountAuthorizesNothingOverHTTP(t *testing.T) {
 				require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 				refused := http.StatusUnauthorized
 				if change == "deleted and recreated" {
-					_, err = users.CreateUser("carol", "password123", []auth.Role{auth.RoleViewer})
+					_, err = users.CreateUser(context.Background(), "carol", "password123", []auth.Role{auth.RoleViewer})
 					require.NoError(t, err)
 					if scheme == "basic" {
 						refused = http.StatusForbidden
@@ -174,7 +174,7 @@ func TestBasicAuthenticationFollowsCurrentRoles(t *testing.T) {
 	t.Run("role taken away", func(t *testing.T) {
 		server, users := setupTestServer(t)
 		admin := "Bearer " + getAuthToken(t, users, "admin")
-		_, err := users.CreateUser("bob", "password123", []auth.Role{auth.RoleAdmin})
+		_, err := users.CreateUser(context.Background(), "bob", "password123", []auth.Role{auth.RoleAdmin})
 		require.NoError(t, err)
 		response := makeRequest(t, server, "GET", "/auth/users", nil, basicAuthorization("bob"))
 		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
@@ -193,7 +193,7 @@ func TestBasicAuthenticationFollowsCurrentRoles(t *testing.T) {
 		server, users := setupTestServer(t)
 		admin := "Bearer " + getAuthToken(t, users, "admin")
 		require.NoError(t, server.roleStore.CreateRole(ctx, "ops"))
-		_, err := users.CreateUser("bob", "password123", []auth.Role{"ops"})
+		_, err := users.CreateUser(context.Background(), "bob", "password123", []auth.Role{"ops"})
 		require.NoError(t, err)
 		response := makeRequest(t, server, "GET", "/auth/users", nil, basicAuthorization("bob"))
 		require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())

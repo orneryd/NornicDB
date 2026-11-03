@@ -27,13 +27,13 @@ func TestBadgerTransaction_DeleteNode_FiresEventsAndClearsVectorIndex(t *testing
 		Labels:          []string{"Doc"},
 		ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}},
 	}
-	_, err = engine.CreateNode(node)
+	_, err = engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.Equal(t, 1, svc.EmbeddingCount())
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	require.NoError(t, tx.DeleteGraphNode(node.ID, storage.CascadeEdges))
+	require.NoError(t, tx.DeleteGraphNode(t.Context(), node.ID, storage.CascadeEdges))
 	require.NoError(t, tx.Commit())
 
 	require.Equal(t, 0, svc.EmbeddingCount())

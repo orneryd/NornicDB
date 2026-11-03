@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"errors"
+
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"path/filepath"
@@ -76,7 +77,7 @@ func TestLiveVectorIndexSurvivesRestartWithoutStorageRebuild(t *testing.T) {
 			"embedding": []float32{1, 0},
 		},
 	}
-	_, err := engine.CreateNode(node)
+	_, err := engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	indexDir := t.TempDir()

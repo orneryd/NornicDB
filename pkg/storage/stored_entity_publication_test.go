@@ -17,16 +17,16 @@ import (
 
 func TestStoredEntityPublicationExactImages(t *testing.T) {
 	b := newTestEngine(t)
-	_, err := b.CreateNode(&Node{ID: "test:a", Labels: []string{"Doc"}, Properties: map[string]any{"text": "old"}})
+	_, err := b.CreateNode(t.Context(), &Node{ID: "test:a", Labels: []string{"Doc"}, Properties: map[string]any{"text": "old"}})
 	require.NoError(t, err)
-	_, err = b.CreateNode(&Node{ID: "test:b"})
+	_, err = b.CreateNode(t.Context(), &Node{ID: "test:b"})
 	require.NoError(t, err)
-	original, err := b.GetNode("test:a")
+	original, err := b.GetNode(t.Context(), "test:a")
 	require.NoError(t, err)
 	original.ChunkEmbeddings = [][]float32{{1, 2}, {3, 4}}
 	original.EmbedMeta = map[string]any{"chunk_count": 2}
-	require.NoError(t, b.UpdateNodeEmbeddingSidecar(original))
-	original, err = b.GetNode("test:a")
+	require.NoError(t, b.UpdateNodeEmbeddingSidecar(context.Background(), original))
+	original, err = b.GetNode(t.Context(), "test:a")
 	require.NoError(t, err)
 	var mu sync.Mutex
 	var events []StoredEntityPublication
@@ -54,8 +54,8 @@ func TestStoredEntityPublicationExactImages(t *testing.T) {
 	assertStoredNodeImage(t, original, hydrated, "initial snapshot includes full separate vectors")
 	replacement := CopyNode(original)
 	replacement.Properties["text"] = "new"
-	require.NoError(t, b.UpdateNode(NodeUpdateRequest{After: replacement}))
-	written, err := b.GetNode("test:a")
+	require.NoError(t, b.UpdateNode(t.Context(), NodeUpdateRequest{After: replacement}))
+	written, err := b.GetNode(t.Context(), "test:a")
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 	require.Len(t, events[0].Changes, 1)
@@ -64,11 +64,11 @@ func TestStoredEntityPublicationExactImages(t *testing.T) {
 	require.NotEmpty(t, events[0].LogicalID)
 	edge := testEdge("test:r", "test:a", "test:b", "R")
 	edge.Properties = map[string]any{"n": []any{int64(1), int64(2)}}
-	require.NoError(t, b.CreateEdge(edge))
-	storedEdge, err := b.GetEdge("test:r")
+	require.NoError(t, b.CreateEdge(t.Context(), edge))
+	storedEdge, err := b.GetEdge(t.Context(), "test:r")
 	require.NoError(t, err)
 	require.Equal(t, storedEdge, events[1].Changes[0].AfterEdge)
-	require.NoError(t, b.DeleteNode("test:a"))
+	require.NoError(t, b.DeleteNode(t.Context(), "test:a"))
 	require.Len(t, events, 3)
 	require.Len(t, events[2].Changes, 2, "cascade includes each stored edge image")
 	var nodeDeleted, edgeDeleted bool
@@ -94,9 +94,9 @@ func TestStoredEntityPublicationRejectedBeforePhysical(t *testing.T) {
 	require.NoError(t, b.InitializeStoredEntityObserver("test", func(StoredEntitySnapshot) (StoredEntityObserver, error) {
 		return func(StoredEntityPublication) (func(), error) { return nil, rejected }, nil
 	}, nil))
-	_, err := b.CreateNode(&Node{ID: "test:rejected"})
+	_, err := b.CreateNode(t.Context(), &Node{ID: "test:rejected"})
 	require.ErrorIs(t, err, rejected)
-	_, err = b.GetNode("test:rejected")
+	_, err = b.GetNode(t.Context(), "test:rejected")
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
@@ -109,27 +109,27 @@ func TestStoredEntityPublicationBufferedAckOnce(t *testing.T) {
 		}, nil
 	}, nil))
 	bufferedWrite(t, b, func(tx *BadgerTransaction) error {
-		_, err := tx.CreateNode(&Node{ID: "test:a", Labels: []string{"Doc"}, Properties: map[string]any{"v": "one"}})
+		_, err := tx.CreateNode(t.Context(), &Node{ID: "test:a", Labels: []string{"Doc"}, Properties: map[string]any{"v": "one"}})
 		return err
 	})
 	require.Len(t, events, 1)
-	first, err := b.GetNode("test:a")
+	first, err := b.GetNode(t.Context(), "test:a")
 	require.NoError(t, err)
 	assertStoredNodeImage(t, first, events[0].Changes[0].AfterNode)
 	bufferedWrite(t, b, func(tx *BadgerTransaction) error {
-		node, err := tx.GetNode("test:a")
+		node, err := tx.GetNode(t.Context(), "test:a")
 		if err != nil {
 			return err
 		}
 		node.Properties["v"] = "two"
-		return tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits})
+		return tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node, Policy: ClientNodeEdits})
 	})
 	require.Len(t, events, 2)
 	assertStoredNodeImage(t, first, events[1].Changes[0].BeforeNode, "prior is previous acknowledged overlay")
-	second, err := b.GetNode("test:a")
+	second, err := b.GetNode(t.Context(), "test:a")
 	require.NoError(t, err)
 	assertStoredNodeImage(t, second, events[1].Changes[0].AfterNode)
-	require.NoError(t, b.FlushWriteBehind(nil))
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
 	require.Len(t, events, 2, "physical replay does not charge acknowledged commits again")
 }
 
@@ -196,13 +196,13 @@ func TestStoredEntityInitializationDrainsEarlierPublication(t *testing.T) {
 
 func TestStoredEntityInitializationIncludesInflightSidecarOnce(t *testing.T) {
 	b := newTestEngine(t)
-	_, err := b.CreateNode(&Node{ID: "test:sidecar", Properties: map[string]any{"text": "source"}})
+	_, err := b.CreateNode(t.Context(), &Node{ID: "test:sidecar", Properties: map[string]any{"text": "source"}})
 	require.NoError(t, err)
-	node, err := b.GetNode("test:sidecar")
+	node, err := b.GetNode(t.Context(), "test:sidecar")
 	require.NoError(t, err)
 	node.ChunkEmbeddings = [][]float32{{1, 2}}
 	node.EmbedMeta = map[string]any{"chunk_count": 1}
-	require.NoError(t, b.UpdateNodeEmbeddingSidecar(node))
+	require.NoError(t, b.UpdateNodeEmbeddingSidecar(context.Background(), node))
 	var size atomic.Int64
 	length := func(node *Node) int64 {
 		var n int64
@@ -257,10 +257,10 @@ func TestStoredEntityInitializationIncludesInflightSidecarOnce(t *testing.T) {
 			t.Error("initializer worker did not stop")
 		}
 	})
-	node, err = b.GetNode("test:sidecar")
+	node, err = b.GetNode(t.Context(), "test:sidecar")
 	require.NoError(t, err)
 	node.ChunkEmbeddings = [][]float32{{3, 4, 5, 6}}
-	go func() { sidecarDone <- b.UpdateNodeEmbeddingSidecar(node) }()
+	go func() { sidecarDone <- b.UpdateNodeEmbeddingSidecar(context.Background(), node) }()
 	select {
 	case <-entered:
 	case <-time.After(5 * time.Second):
@@ -328,16 +328,16 @@ func TestStoredEntityReadBoundaryUsesActualNamespaceRead(t *testing.T) {
 	}, boundary))
 	require.Equal(t, []StoredEntityReadKind{StoredEntityNodeSnapshotScan, StoredEntityEdgeSnapshotScan}, calls)
 	fail = true
-	_, err := b.CreateNode(&Node{ID: "test:a"})
+	_, err := b.CreateNode(t.Context(), &Node{ID: "test:a"})
 	require.ErrorIs(t, err, injected)
-	_, err = b.GetNode("test:a")
+	_, err = b.GetNode(t.Context(), "test:a")
 	require.ErrorIs(t, err, ErrNotFound)
 	require.Equal(t, []StoredEntityReadKind{StoredEntityNodeSnapshotScan, StoredEntityEdgeSnapshotScan, StoredEntityNodePriorRead}, calls)
 	fail = false
-	_, err = b.CreateNode(&Node{ID: "test:a"})
+	_, err = b.CreateNode(t.Context(), &Node{ID: "test:a"})
 	require.NoError(t, err)
 	require.Len(t, calls, 4, "successful continuation runs its actual prior read once")
-	_, err = b.CreateNode(&Node{ID: "other:a"})
+	_, err = b.CreateNode(t.Context(), &Node{ID: "other:a"})
 	require.NoError(t, err)
 	require.Len(t, calls, 4, "namespace boundary never intercepts another namespace")
 }
@@ -346,14 +346,14 @@ func TestStoredEntityPublicationLargeSidecarAndPrecommitAbort(t *testing.T) {
 	for _, reject := range []bool{false, true} {
 		t.Run(fmt.Sprint("reject=", reject), func(t *testing.T) {
 			b := openLargeCommitTestEngine(t, t.TempDir())
-			_, err := b.CreateNode(&Node{ID: "test:large", Labels: []string{"Doc"}, Properties: map[string]any{"text": "source"}})
+			_, err := b.CreateNode(t.Context(), &Node{ID: "test:large", Labels: []string{"Doc"}, Properties: map[string]any{"text": "source"}})
 			require.NoError(t, err)
-			node, err := b.GetNode("test:large")
+			node, err := b.GetNode(t.Context(), "test:large")
 			require.NoError(t, err)
 			node.ChunkEmbeddings = [][]float32{{1, 2}}
 			node.EmbedMeta = map[string]any{"chunk_count": 1}
-			require.NoError(t, b.UpdateNodeEmbeddingSidecar(node))
-			original, err := b.GetNode(node.ID)
+			require.NoError(t, b.UpdateNodeEmbeddingSidecar(context.Background(), node))
+			original, err := b.GetNode(t.Context(), node.ID)
 			require.NoError(t, err)
 			failure := errors.New("prepared size rejected")
 			var prepared StoredEntityPublication
@@ -382,12 +382,12 @@ func TestStoredEntityPublicationLargeSidecarAndPrecommitAbort(t *testing.T) {
 				}
 			}
 			node.EmbedMeta = map[string]any{"chunk_count": 20000}
-			err = b.UpdateNodeEmbeddingSidecar(node)
+			err = b.UpdateNodeEmbeddingSidecar(context.Background(), node)
 			require.Positive(t, batches, "public sidecar spans physical batches")
 			require.Len(t, prepared.Changes, 1)
 			assertStoredNodeImage(t, original, prepared.Changes[0].BeforeNode)
 			require.Len(t, prepared.Changes[0].AfterNode.ChunkEmbeddings, 20000, "final capture reads all private earlier batches")
-			stored, readErr := b.GetNode(node.ID)
+			stored, readErr := b.GetNode(t.Context(), node.ID)
 			require.NoError(t, readErr)
 			if reject {
 				require.ErrorIs(t, err, failure)
@@ -407,9 +407,9 @@ func TestStoredEntityPublicationLargeSidecarAndPrecommitAbort(t *testing.T) {
 // must not invoke it, while an explicit complete-image Read must expose it.
 func TestStoredEntitySnapshotIdentityDefersVectorRead(t *testing.T) {
 	b := newTestEngine(t)
-	_, err := b.CreateNode(&Node{ID: "test:lazy", ChunkEmbeddings: [][]float32{make([]float32, 16384)}})
+	_, err := b.CreateNode(t.Context(), &Node{ID: "test:lazy", ChunkEmbeddings: [][]float32{make([]float32, 16384)}})
 	require.NoError(t, err)
-	require.NoError(t, b.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return txn.Set(embeddingKey("test:lazy", 0), []byte{0xff}) }))
+	require.NoError(t, b.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error { return txn.Set(embeddingKey("test:lazy", 0), []byte{0xff}) }))
 	require.NoError(t, b.InitializeStoredEntityObserver("test", func(snapshot StoredEntitySnapshot) (StoredEntityObserver, error) {
 		var entries []StoredEntitySnapshotEntry
 		require.NoError(t, snapshot.ForEach(func(entry StoredEntitySnapshotEntry) error { entries = append(entries, entry); return nil }))

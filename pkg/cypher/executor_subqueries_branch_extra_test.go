@@ -56,9 +56,9 @@ func TestExecuteChainedCallSubquery_ImplicitScalarCorrelationOptionalAggregate(t
 	exec := NewStorageExecutor(store)
 	ctx := withParams(context.Background(), map[string]interface{}{"min_amount": int64(100)})
 
-	_, err := store.CreateNode(&storage.Node{ID: "o1", Labels: []string{"Order"}, Properties: map[string]interface{}{"owner_id": "a1", "order_id": "ORD-001", "amount": int64(125)}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "o1", Labels: []string{"Order"}, Properties: map[string]interface{}{"owner_id": "a1", "order_id": "ORD-001", "amount": int64(125)}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "o2", Labels: []string{"Order"}, Properties: map[string]interface{}{"owner_id": "a2", "order_id": "ORD-002", "amount": int64(90)}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "o2", Labels: []string{"Order"}, Properties: map[string]interface{}{"owner_id": "a2", "order_id": "ORD-002", "amount": int64(90)}})
 	require.NoError(t, err)
 
 	seed := &ExecuteResult{
@@ -102,7 +102,7 @@ func TestSeedNodesFromOuterMatch_Branches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{ID: "s1", Labels: []string{"Seed"}, Properties: map[string]interface{}{"name": "A"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "s1", Labels: []string{"Seed"}, Properties: map[string]interface{}{"name": "A"}})
 	require.NoError(t, err)
 
 	nodes, err := exec.seedNodesFromOuterMatch(ctx, "MATCH (seed:Seed {name:'A'})", "seed")
@@ -153,7 +153,7 @@ func TestCallSubqueryScannerPopulations(t *testing.T) {
 				}
 			}
 			for _, test := range tc.keywords {
-				require.Equal(t, test.index, indexTopLevelKeywordCallSubquery(test.source, "RETURN"))
+				require.Equal(t, test.index, indexTopLevelKeywordCallSubquery(t.Context(), test.source, "RETURN"))
 			}
 			for _, test := range tc.identifiers {
 				found := cyphertext.FindIdentifier(test.source, "x", 0, cyphertext.IdentifierUnqualifiedFold) >= 0

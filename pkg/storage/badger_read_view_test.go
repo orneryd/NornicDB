@@ -12,20 +12,22 @@ import (
 func snapshotOverlayFixture(t *testing.T) *BadgerEngine {
 	t.Helper()
 	b := newWriteBehindTestEngine(t, time.Hour)
-	b.writeBehind.Close()
+	// Request-cancellable writes wait for the accepted replay owner. Keep it
+	// live, with the existing long delay retaining rows until an explicit flush.
+	b.writeBehind.SetDelayBounds(time.Hour, time.Hour)
 	for _, id := range []NodeID{"test:a", "test:b", "test:gone"} {
 		bufferedCreate(t, b, &Node{ID: id, Labels: []string{"Old"}, Properties: map[string]any{"v": int64(1)}})
 	}
-	require.NoError(t, b.FlushWriteBehind(nil))
-	tx, err := b.BeginTransaction()
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
+	tx, err := b.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:a", Labels: []string{"Live"}, Properties: map[string]any{"v": int64(2)}}, Policy: ClientNodeEdits}))
-	_, err = tx.CreateNode(&Node{ID: "test:new", Labels: []string{"Live"}, Properties: map[string]any{"v": int64(2)}})
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:a", Labels: []string{"Live"}, Properties: map[string]any{"v": int64(2)}}, Policy: ClientNodeEdits}))
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:new", Labels: []string{"Live"}, Properties: map[string]any{"v": int64(2)}})
 	require.NoError(t, err)
-	require.NoError(t, tx.DeleteGraphNode("test:gone", CascadeEdges))
-	require.NoError(t, tx.CreateEdge(&Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "REL", Properties: map[string]any{"v": int64(2)}}))
+	require.NoError(t, tx.DeleteGraphNode(t.Context(), "test:gone", CascadeEdges))
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "REL", Properties: map[string]any{"v": int64(2)}}))
 	require.NoError(t, tx.Commit())
 	return b
 }
@@ -42,7 +44,7 @@ func TestSnapshotOverlayCaptureClasses(t *testing.T) {
 			var deleted bool
 			var touchedNodes map[NodeID]bool
 			var touchedEdges map[EdgeID]bool
-			view, err := b.captureReadView(func(w *WriteBehindBuffer) {
+			view, err := b.captureReadView(t.Context(), func(w *WriteBehindBuffer) {
 				switch class {
 				case "point", "batch-projection":
 					point = w.entityStateLocked(bufferedNodeEntity, "test:a")
@@ -69,14 +71,14 @@ func TestSnapshotOverlayCaptureClasses(t *testing.T) {
 			require.NoError(t, err)
 			defer view.Close()
 			// Replay and remove the captured generation before consuming either side.
-			require.NoError(t, b.FlushWriteBehind(nil))
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
 			require.Empty(t, b.writeBehind.draining)
 			_, err = view.txn.Get(edgeKey("test:r"))
 			require.ErrorIs(t, err, badger.ErrKeyNotFound)
 			item, err := view.txn.Get(nodeKey("test:a"))
 			require.NoError(t, err)
 			require.NoError(t, item.Value(func(value []byte) error {
-				n, err := b.decodeNode("test", value)
+				n, err := b.decodeNodeProjected(view.txn, "test", value, nil)
 				require.NoError(t, err)
 				require.Equal(t, int64(1), n.Properties["v"])
 				return nil
@@ -105,7 +107,7 @@ func TestSnapshotOverlayPublicReaderClasses(t *testing.T) {
 	b := snapshotOverlayFixture(t)
 	ctx := context.Background()
 	check := func(t *testing.T) {
-		for _, read := range []func(NodeID) (*Node, error){b.GetNode, b.GetNodeWithoutEmbeddings, func(id NodeID) (*Node, error) { return b.GetNodeProjected(id, []string{"v"}) }} {
+		for _, read := range []func(NodeID) (*Node, error){func(id NodeID) (*Node, error) { return b.GetNode(t.Context(), id) }, func(id NodeID) (*Node, error) { return b.GetNodeWithoutEmbeddings(t.Context(), id) }, func(id NodeID) (*Node, error) { return b.GetNodeProjected(t.Context(), id, []string{"v"}) }} {
 			n, err := read("test:a")
 			require.NoError(t, err)
 			require.Equal(t, int64(2), n.Properties["v"])
@@ -136,22 +138,24 @@ func TestSnapshotOverlayPublicReaderClasses(t *testing.T) {
 			require.Len(t, edges, 1)
 			require.Equal(t, EdgeID("test:r"), edges[0].ID)
 		}
-		e, err := b.GetEdge("test:r")
+		e, err := b.GetEdge(t.Context(), "test:r")
 		require.NoError(t, err)
 		require.Equal(t, int64(2), e.Properties["v"])
-		require.NotNil(t, b.GetEdgeBetween("test:a", "test:b", "REL"))
-		edges, err := b.MatchEdgesBetween("test:a", "test:b", "REL", []string{"v"}, func(e *Edge) bool { return e.Properties["v"] == int64(2) })
+		edge, err := b.GetEdgeBetween(t.Context(), "test:a", "test:b", "REL")
+		require.NoError(t, err)
+		require.NotNil(t, edge)
+		edges, err := b.MatchEdgesBetween(context.Background(), "test:a", "test:b", "REL", []string{"v"}, func(e *Edge) bool { return e.Properties["v"] == int64(2) })
 		require.NoError(t, err)
 		require.Len(t, edges, 1)
 		out, in, err := b.GetAdjacentEdges(ctx, "test:a")
 		require.NoError(t, err)
 		require.Len(t, out, 1)
 		require.Empty(t, in)
-		h, answered, err := b.OutgoingEdgeHeaders("test:a")
+		h, answered, err := b.OutgoingEdgeHeaders(context.Background(), "test:a")
 		require.NoError(t, err)
 		require.True(t, answered)
 		require.Len(t, h, 1)
-		h, answered, err = b.IncomingEdgeHeaders("test:b")
+		h, answered, err = b.IncomingEdgeHeaders(context.Background(), "test:b")
 		require.NoError(t, err)
 		require.True(t, answered)
 		require.Len(t, h, 1)
@@ -173,21 +177,21 @@ func TestSnapshotOverlayPublicReaderClasses(t *testing.T) {
 			require.NoError(t, stream(func(*Edge) error { n++; return nil }))
 			require.Equal(t, 1, n)
 		}
-		count, err := b.NodeCount()
+		count, err := b.NodeCount(t.Context())
 		require.NoError(t, err)
 		require.Equal(t, int64(3), count)
-		count, err = b.NodeCountByLabelInNamespace("test", "Live")
+		count, err = b.NodeCountByLabelInNamespace(t.Context(), "test", "Live")
 		require.NoError(t, err)
 		require.Equal(t, int64(2), count)
-		count, err = b.EdgeCountByTypeInNamespace("test", "REL")
+		count, err = b.EdgeCountByTypeInNamespace(context.Background(), "test", "REL")
 		require.NoError(t, err)
 		require.Equal(t, int64(1), count)
-		count, err = b.EdgeCountByPrefix("test:")
+		count, err = b.EdgeCountByPrefix(context.Background(), "test:")
 		require.NoError(t, err)
 		require.Equal(t, int64(1), count)
 	}
 	t.Run("buffered", check)
-	require.NoError(t, b.FlushWriteBehind(nil))
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
 	t.Run("retired", check)
 }
 
@@ -197,17 +201,17 @@ func TestSnapshotOverlayStreamRetainsViewAcrossReplay(t *testing.T) {
 			b := snapshotOverlayFixture(t)
 			// A committed row guarantees a callback before pending rows are emitted.
 			if kind == "edges" || kind == "type" {
-				require.NoError(t, b.CreateEdge(&Edge{ID: "test:committed", StartNode: "test:a", EndNode: "test:b", Type: "REL"}))
+				require.NoError(t, b.CreateEdge(t.Context(), &Edge{ID: "test:committed", StartNode: "test:a", EndNode: "test:b", Type: "REL"}))
 			}
 			if kind == "label" {
-				_, err := b.CreateNode(&Node{ID: "test:marker", Labels: []string{"Live"}})
+				_, err := b.CreateNode(t.Context(), &Node{ID: "test:marker", Labels: []string{"Live"}})
 				require.NoError(t, err)
 			}
 			drained := false
 			visit := func() {
 				if !drained {
 					drained = true
-					require.NoError(t, b.FlushWriteBehind(nil))
+					require.NoError(t, b.FlushWriteBehind(context.Background()))
 					bufferedCreate(t, b, &Node{ID: "test:later", Labels: []string{"Live"}})
 				}
 			}
@@ -243,24 +247,24 @@ func TestSnapshotOverlayStreamRetainsViewAcrossReplay(t *testing.T) {
 
 func TestSnapshotOverlayTransactionOwnWrites(t *testing.T) {
 	b := snapshotOverlayFixture(t)
-	tx, err := b.BeginTransaction()
+	tx, err := b.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, b.FlushWriteBehind(nil))
-	n, err := tx.GetNode("test:a")
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
+	n, err := tx.GetNode(t.Context(), "test:a")
 	require.NoError(t, err)
 	require.Equal(t, int64(2), n.Properties["v"])
 	n.Properties["v"] = int64(3)
-	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: n, Policy: ClientNodeEdits}))
-	n, err = tx.GetNode("test:a")
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: n, Policy: ClientNodeEdits}))
+	n, err = tx.GetNode(t.Context(), "test:a")
 	require.NoError(t, err)
 	require.Equal(t, int64(3), n.Properties["v"])
-	require.NoError(t, tx.DeleteEdge("test:r"))
+	require.NoError(t, tx.DeleteEdge(t.Context(), "test:r"))
 	edges, err := tx.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "test:a"})
 	require.NoError(t, err)
 	require.Empty(t, edges)
-	_, err = tx.GetEdge("test:r")
+	_, err = tx.GetEdge(t.Context(), "test:r")
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
@@ -271,23 +275,25 @@ func TestSnapshotOverlaySchemaAndCounterRetirement(t *testing.T) {
 	schema := b.GetSchemaForNamespace("test")
 	require.NoError(t, schema.AddPropertyIndex("live_v", "Live", []string{"v"}))
 	check := func() {
-		require.ElementsMatch(t, []NodeID{"test:a", "test:new"}, schema.PropertyIndexLookup("Live", "v", int64(2)))
-		require.Empty(t, schema.PropertyIndexLookup("Live", "v", int64(1)))
-		n, err := b.NodeCount()
+		require.ElementsMatch(t, []NodeID{"test:a", "test:new"}, checkedIndexRead[[]NodeID](t)(schema.PropertyIndexLookup(t.Context(), "Live", "v", int64(2))))
+		require.Empty(t, checkedIndexRead[[]NodeID](t)(schema.PropertyIndexLookup(t.Context(), "Live", "v", int64(1))))
+		n, err := b.NodeCount(t.Context())
 		require.NoError(t, err)
 		require.Equal(t, int64(3), n)
-		n, err = b.EdgeCount()
+		n, err = b.EdgeCount(t.Context())
 		require.NoError(t, err)
 		require.Equal(t, int64(1), n)
-		n, err = b.NodeCountByLabelInNamespace("test", "Live")
+		n, err = b.NodeCountByLabelInNamespace(t.Context(), "test", "Live")
 		require.NoError(t, err)
 		require.Equal(t, int64(2), n)
-		n, err = b.EdgeCountByTypeInNamespace("test", "REL")
+		n, err = b.EdgeCountByTypeInNamespace(context.Background(), "test", "REL")
 		require.NoError(t, err)
 		require.Equal(t, int64(1), n)
 	}
 	check()
-	b.writeBehind.rotate()
+	if _, rotateErr := b.writeBehind.rotate(t.Context()); rotateErr != nil {
+		t.Fatal(rotateErr)
+	}
 	b.writeBehind.mu.RLock()
 	generation := b.writeBehind.draining[0]
 	b.writeBehind.mu.RUnlock()
@@ -302,7 +308,9 @@ func TestSnapshotOverlaySchemaAndCounterRetirement(t *testing.T) {
 
 func TestSnapshotOverlayLateSchemaTracking(t *testing.T) {
 	b := snapshotOverlayFixture(t)
-	b.writeBehind.rotate()
+	if _, rotateErr := b.writeBehind.rotate(t.Context()); rotateErr != nil {
+		t.Fatal(rotateErr)
+	}
 	b.writeBehind.mu.RLock()
 	generation := b.writeBehind.draining[0]
 	b.writeBehind.mu.RUnlock()
@@ -310,7 +318,7 @@ func TestSnapshotOverlayLateSchemaTracking(t *testing.T) {
 	// A newly tracked property must use the same retained entity population.
 	schema := b.GetSchemaForNamespace("test")
 	require.NoError(t, schema.AddPropertyIndex("late_v", "Live", []string{"v"}))
-	require.ElementsMatch(t, []NodeID{"test:a", "test:new"}, schema.PropertyIndexLookup("Live", "v", int64(2)))
+	require.ElementsMatch(t, []NodeID{"test:a", "test:new"}, checkedIndexRead[[]NodeID](t)(schema.PropertyIndexLookup(t.Context(), "Live", "v", int64(2))))
 	b.writeBehind.removeDrained(generation)
 }
 
@@ -318,8 +326,8 @@ func TestSnapshotOverlayTransactionLabelCache(t *testing.T) {
 	for _, stopEarly := range []bool{false, true} {
 		t.Run(map[bool]string{false: "complete", true: "prefix"}[stopEarly], func(t *testing.T) {
 			b := snapshotOverlayFixture(t)
-			require.NoError(t, b.FlushWriteBehind(nil))
-			tx, err := b.BeginTransaction()
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
+			tx, err := b.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			defer tx.Rollback()
 			require.NoError(t, tx.SetNamespace("test"))
@@ -334,13 +342,13 @@ func TestSnapshotOverlayTransactionLabelCache(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 			}
-			writer, err := b.BeginTransaction()
+			writer, err := b.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			require.NoError(t, writer.SetNamespace("test"))
 			require.NoError(t, writer.SetImplicit(true))
-			require.NoError(t, writer.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:a", Labels: []string{"Other"}, Properties: map[string]any{"v": int64(3)}}, Policy: ClientNodeEdits}))
-			require.NoError(t, writer.DeleteGraphNode("test:new", CascadeEdges))
-			_, err = writer.CreateNode(&Node{ID: "test:second", Labels: []string{"Live"}})
+			require.NoError(t, writer.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:a", Labels: []string{"Other"}, Properties: map[string]any{"v": int64(3)}}, Policy: ClientNodeEdits}))
+			require.NoError(t, writer.DeleteGraphNode(t.Context(), "test:new", CascadeEdges))
+			_, err = writer.CreateNode(t.Context(), &Node{ID: "test:second", Labels: []string{"Live"}})
 			require.NoError(t, err)
 			require.NoError(t, writer.Commit())
 			check := func() {
@@ -352,7 +360,7 @@ func TestSnapshotOverlayTransactionLabelCache(t *testing.T) {
 				require.Equal(t, []NodeID{"test:second"}, ids)
 			}
 			check()
-			require.NoError(t, b.FlushWriteBehind(nil))
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
 			check()
 		})
 	}

@@ -13,9 +13,9 @@ func TestResidualDurableNodeCache(t *testing.T) {
 	b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = b.Close() })
-	_, err = b.CreateNode(&Node{ID: "test:durable", Properties: map[string]any{"v": int64(1)}})
+	_, err = b.CreateNode(t.Context(), &Node{ID: "test:durable", Properties: map[string]any{"v": int64(1)}})
 	require.NoError(t, err)
-	_, err = b.GetStoredNode("test:durable")
+	_, err = b.GetStoredNode(t.Context(), "test:durable")
 	require.NoError(t, err)
 	entered, release := make(chan struct{}), make(chan struct{})
 	t.Cleanup(setPublicationStageHook(func(uint64) {
@@ -24,10 +24,10 @@ func TestResidualDurableNodeCache(t *testing.T) {
 	}))
 	done := make(chan error, 1)
 	go func() {
-		done <- b.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:durable", Properties: map[string]any{"v": int64(2)}}})
+		done <- b.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:durable", Properties: map[string]any{"v": int64(2)}}})
 	}()
 	<-entered
-	node, readErr := b.GetStoredNode("test:durable")
+	node, readErr := b.GetStoredNode(t.Context(), "test:durable")
 	close(release)
 	require.NoError(t, <-done)
 	require.NoError(t, readErr)

@@ -31,7 +31,7 @@ func BenchmarkBufferedRecovery(b *testing.B) {
 				b.StopTimer()
 				require.NoError(b, err)
 				require.Equal(b, count, replayed)
-				got, err := engine.NodeCountByLabelInNamespace("test", "L")
+				got, err := engine.NodeCountByLabelInNamespace(b.Context(), "test", "L")
 				require.NoError(b, err)
 				require.EqualValues(b, count, got)
 				require.NoError(b, engine.Close())

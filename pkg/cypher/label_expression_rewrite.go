@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	"context"
+
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"sort"
 	"strconv"
@@ -47,6 +49,9 @@ type labelRewriteEdit struct {
 }
 
 type labelExpressionRewriter struct {
+	// ctx is the caller's lifetime for the shortestPath calls a MATCH
+	// pattern may name: a canceled read returns the caller's own error.
+	ctx       context.Context
 	query     string
 	edits     []labelRewriteEdit
 	generated int
@@ -94,16 +99,17 @@ func (m labelPatternMode) clause() string {
 
 // desugarLabelExpressions returns query with its label expressions
 // rewritten (see above) and the rewrite that maps the result back, or query
-// and nil when nothing changes.
-func desugarLabelExpressions(query string, params map[string]interface{}, cypher25 bool) (string, *queryRewrite, error) {
-	if !mayUseLabelExpressions(query) && !mayUseRelationshipQuantifier(query) && !mayUsePatternPredicate(query) &&
+// and nil when nothing changes. ctx is the caller's lifetime; it is read by
+// the shortestPath binding check a MATCH pattern may reach.
+func desugarLabelExpressions(ctx context.Context, query string, params map[string]interface{}, cypher25 bool) (string, *queryRewrite, error) {
+	if !mayUseLabelExpressions(query) && !mayUseRelationshipQuantifier(query) && !mayUsePatternPredicate(ctx, query) &&
 		!mayAssignAnonymousNodePath(query) && !mayUsePathPatternPrefix(query) &&
 		!mayRepeatRelationshipVariable(query) && !mayUseQuantifiedGroup(query) &&
 		!mayUseParenthesisedPath(query) && !mayUseVectorCall(query) && !mayReadPatternInPropertyMap(query) &&
 		!mayTestExpressionLabels(query) {
 		return query, nil, nil
 	}
-	r := &labelExpressionRewriter{query: query, params: params, cypher25: cypher25}
+	r := &labelExpressionRewriter{ctx: ctx, query: query, params: params, cypher25: cypher25}
 	if err := r.statement(0, len(query)); err != nil {
 		return query, nil, err
 	}
@@ -195,7 +201,7 @@ func mayReadPatternInPropertyMap(query string) bool {
 	return false
 }
 
-func mayUsePatternPredicate(query string) bool {
+func mayUsePatternPredicate(ctx context.Context, query string) bool {
 	var openers []int
 	for i := 0; i < len(query); i++ {
 		switch c := query[i]; cypherLexicalByte(c) {
@@ -215,7 +221,7 @@ func mayUsePatternPredicate(query string) bool {
 			if query[open] == '{' || query[open] == '(' && open > 0 && cyphertext.NamePartAt(query, open-1) {
 				continue
 			}
-			if topLevelKeywordIndex(query[open+1:i], "IN") >= 0 {
+			if topLevelKeywordIndex(ctx, query[open+1:i], "IN") >= 0 {
 				continue
 			}
 			return true
@@ -446,7 +452,7 @@ func (r *labelExpressionRewriter) clauses(start, end int) []labelClause {
 			j++
 		}
 		word := strings.ToUpper(q[i:j])
-		if !labelClauseKeywords[word] || clauseKeywordUsedAsName(q[start:end], i-start, j-start, word) {
+		if !labelClauseKeywords[word] || clauseKeywordUsedAsName(r.ctx, q[start:end], i-start, j-start, word) {
 			i = j - 1
 			continue
 		}
@@ -635,7 +641,7 @@ func (r *labelExpressionRewriter) patternElements(start, end int, mode labelPatt
 				// pathPrefixes moves to the clause's).
 				stop := close
 				if inner < close && q[inner] == '(' {
-					if where := topLevelKeywordIndex(q[i+1:close], "WHERE"); where >= 0 {
+					if where := topLevelKeywordIndex(r.ctx, q[i+1:close], "WHERE"); where >= 0 {
 						stop = i + 1 + where
 					}
 				}
@@ -699,7 +705,7 @@ func (r *labelExpressionRewriter) element(open, close int, relationship, quantif
 		variable, variableEnd = written, end
 		i = skipASCIISpaces(q, end, close)
 	}
-	if where := elementWhereIndex(q, open, close); where >= 0 {
+	if where := elementWhereIndex(r.ctx, q, open, close); where >= 0 {
 		if err := r.elementWhere(open, where, close, variable, relationship, quantified, mode, predicates); err != nil {
 			return err
 		}
@@ -892,12 +898,12 @@ func declaredPatternVariables(pattern string) map[string]bool {
 // elementWhereIndex is the index of the WHERE that starts the pattern
 // element query[open:close+1]'s own predicate (#878), or -1. The element's
 // variable comes first, so a variable named where isn't the keyword.
-func elementWhereIndex(q string, open, close int) int {
+func elementWhereIndex(ctx context.Context, q string, open, close int) int {
 	i := skipASCIISpaces(q, open+1, close)
 	if _, end, ok := scanSymbolicName(q[:close], i); ok {
 		i = end
 	}
-	if where := topLevelKeywordIndex(q[i:close], "WHERE"); where >= 0 {
+	if where := topLevelKeywordIndex(ctx, q[i:close], "WHERE"); where >= 0 {
 		return i + where
 	}
 	return -1
@@ -941,7 +947,7 @@ func (r *labelExpressionRewriter) elementWhere(open, where, close int, variable 
 // moves out of its element: the moved text isn't read again (#1181). Its
 // generated variables continue the statement's.
 func (r *labelExpressionRewriter) rewrittenPredicate(predicate string) (string, error) {
-	sub := &labelExpressionRewriter{query: predicate, params: r.params, cypher25: r.cypher25, generated: r.generated, syntax: r.syntax, named: map[int]string{}}
+	sub := &labelExpressionRewriter{ctx: r.ctx, query: predicate, params: r.params, cypher25: r.cypher25, generated: r.generated, syntax: r.syntax, named: map[int]string{}}
 	if err := sub.expression(0, len(predicate)); err != nil {
 		return "", err
 	}
@@ -1053,7 +1059,7 @@ func (r *labelExpressionRewriter) resolveDynamicChain(chain labelChain, mode lab
 // SyntaxError, staticDynamicTokenError) or a supplied parameter.
 func (r *labelExpressionRewriter) resolveConstant(expression string) (interface{}, bool, error) {
 	expression = strings.TrimSpace(expression)
-	if err := staticDynamicTokenError(expression, staticTypeScope{}, dynamicTokenLabel); err != nil {
+	if err := staticDynamicTokenError(r.ctx, expression, staticTypeScope{}, dynamicTokenLabel); err != nil {
 		return nil, false, err
 	}
 	if strings.HasPrefix(expression, "$") {
@@ -1317,7 +1323,7 @@ func (r *labelExpressionRewriter) labelTest(wordStart, wordEnd, end int) error {
 	// label test (case IS Person), and CASE is WHEN … is a simple CASE over
 	// is.
 	if word := upperASCII(q[wordStart:wordEnd]); isExpressionBoundaryWord(word) {
-		skip := !wordIsName(q, wordStart)
+		skip := !wordIsName(r.ctx, q, wordStart)
 		switch word {
 		case "CASE":
 			skip = caseKeywordAt(q, wordStart, word) && equalFoldASCII(caseWordAt(q, skipSpaces(q, min(is+2, len(q)))), "when")

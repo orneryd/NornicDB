@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/memory"
 	"github.com/orneryd/nornicdb/pkg/observability"
 )
@@ -178,32 +179,33 @@ type BadgerEngine struct {
 
 	db      *managedBadgerDB
 	mu      sync.RWMutex // Protects lifecycle state (e.g., Close) and any coarse-grained engine invariants
-	closed  bool
-	closing bool // write admission is closed before the final buffered drain
+	closing bool         // write admission is closed before the final buffered drain
 	// prefixDrops records prefix deletes for the transactions open across
 	// them (prefixDroppedSince).
 	prefixDrops prefixDrops
+	// Positive proof for views at/after a durably completed label index.
+	labelIndexReadyAt atomic.Uint64
 	// pendingCandidates accelerates the durable pending-embedding index. Adds
 	// are published by the common commit writer only after a successful commit.
 	pendingCandidates           pendingEmbeddingCandidates
 	pendingEmbeddingAdds        sync.Map // *badger.Txn -> map[NodeID]struct{}
 	pendingCandidatesGeneration atomic.Uint64
 	// changes is the change data capture state (change_capture.go, #937).
-	changes changeCapture
-	// notifyWG tracks publication-registered listeners and bulk-delete events.
-	// Close rejects new writes, releases writeBarrier, then waits for listener
-	// re-entry before releasing engine state.
-	notifyWG                           sync.WaitGroup
+	changes                            changeCapture
 	notificationMu                     sync.Mutex
 	notificationHead, notificationTail *commitNotification
 	notificationDraining               bool
 	closeMu                            sync.Mutex
-	txnWG                              sync.WaitGroup
+	// work is the engine's one admission, completion and outcome owner.
+	// Helper transactions and reserved commit notifications are its accepted
+	// work; Close seals it after the last durable write published, and its
+	// Shutdown releases engine state only after every ticket returned.
+	work lifecycle.WorkLifetime
 	// writeBarrier orders Close against durable writes. Every public
 	// non-transactional mutator holds it for read for its whole duration,
 	// and an explicit transaction holds it for read from just before its
 	// Badger commit through the post-commit tail (derived counts, MVCC
-	// sequence, ID counters, caches). Listeners transfer to notifyWG. Close takes it for write
+	// sequence, ID counters, caches). Listeners hold their notification's work ticket. Close takes it for write
 	// before releasing engine state, so a write whose Badger commit has
 	// already returned always finishes publishing and reports success, and a
 	// write that arrives after Close fails cleanly with ErrStorageClosed.
@@ -319,7 +321,9 @@ type BadgerEngine struct {
 	// Eliminates expensive full table scans for node/edge counts
 	// totalCountWriteMu publishes cached totals and retires their buffered delta
 	// together. It is released before any storage callbacks.
-	totalCountWriteMu sync.RWMutex
+	// Request-owned count reads use the existing cancellable admission owner.
+	// Author: storage-format-owners lane (Codex), 1 November 2026.
+	totalCountWriteMu trackedRWMutex
 	nodeCount         atomic.Int64
 	edgeCount         atomic.Int64
 
@@ -364,16 +368,14 @@ type BadgerEngine struct {
 	namespaceNodeCounts map[string]int64
 	namespaceEdgeCounts map[string]int64
 
-	edgeBetweenIndexBackfillMu     sync.Mutex
-	edgeBetweenIndexBackfillCancel context.CancelFunc
-	edgeBetweenIndexBackfillDone   chan struct{}
+	edgeBetweenIndexBackfillMu sync.Mutex
+	edgeBetweenIndexBackfill   *engineWorker // the running backfill, engine work
 
 	// labelIndexBackfill* mirrors the edge-between backfill state for
 	// the (label, nodeNumID) index rebuild. See
 	// badger_label_index_backfill.go for the rebuild contract.
-	labelIndexBackfillMu     sync.Mutex
-	labelIndexBackfillCancel context.CancelFunc
-	labelIndexBackfillDone   chan struct{}
+	labelIndexBackfillMu sync.Mutex
+	labelIndexBackfill   *engineWorker // the running backfill, engine work
 
 	// idDict assigns compact 8-byte numeric IDs to string node/edge IDs
 	// so secondary indexes (edge-between, outgoing/incoming, edge-type,
@@ -433,7 +435,7 @@ type BadgerEngine struct {
 	// against each other and keeps backup's count snapshot exclusive. Commit
 	// paths do not take it: every commit appends a unique delta key instead
 	// of a read-modify-write on the shared base key (PR #1043 item #2).
-	labelCountWriteMu sync.RWMutex
+	labelCountWriteMu trackedRWMutex
 
 	// edgeTypeCountWriteMu is the edge-type analogue of labelCountWriteMu:
 	// it orders folds/rebuilds of the derived per-type counts (issue #638).
@@ -1091,7 +1093,7 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		return nil, fmt.Errorf("failed to initialize mvcc sequence: %w", err)
 	}
 
-	if err := engine.recoverNamespaceDrops(nil); err != nil {
+	if err := engine.recoverNamespaceDrops(context.Background(), nil); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("recover namespace DROP: %w", err)
 	}
@@ -1144,14 +1146,14 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		return nil, fmt.Errorf("failed to load persisted schema: %w", err)
 	}
 
-	if err := engine.ensureLabelCounts(); err != nil {
+	if err := engine.ensureLabelCounts(context.Background()); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to initialize label counts: %w", err)
 	}
 
 	// Per-type edge counts (issue #638): marker-gated verify/rebuild pass
 	// over the edge-type index, same shape as the label counts above.
-	if err := engine.ensureEdgeTypeCounts(); err != nil {
+	if err := engine.ensureEdgeTypeCounts(context.Background()); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to initialize edge-type counts: %w", err)
 	}

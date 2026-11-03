@@ -149,7 +149,7 @@ func TestExactShape_MatchWhereOrCreateCreateReturn_SingleMatchByTextKey128(t *te
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:     "orig-single",
 		Labels: []string{"OriginalText"},
 		Properties: map[string]interface{}{
@@ -161,7 +161,7 @@ func TestExactShape_MatchWhereOrCreateCreateReturn_SingleMatchByTextKey128(t *te
 
 	// Distractors should not match either arm.
 	for i := 0; i < 50; i++ {
-		_, err := store.CreateNode(&storage.Node{
+		_, err := store.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("orig-noise-%d", i)),
 			Labels: []string{"OriginalText"},
 			Properties: map[string]interface{}{
@@ -210,7 +210,7 @@ func TestExactShape_MatchWhereMatchSetReturn_UpdatesExistingTranslationRow(t *te
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:     "orig-upd-1",
 		Labels: []string{"OriginalText"},
 		Properties: map[string]interface{}{
@@ -220,7 +220,7 @@ func TestExactShape_MatchWhereMatchSetReturn_UpdatesExistingTranslationRow(t *te
 	})
 	require.NoError(t, err)
 
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "tr-upd-1",
 		Labels: []string{"TranslatedText"},
 		Properties: map[string]interface{}{
@@ -234,7 +234,7 @@ func TestExactShape_MatchWhereMatchSetReturn_UpdatesExistingTranslationRow(t *te
 	})
 	require.NoError(t, err)
 
-	err = store.CreateEdge(&storage.Edge{
+	err = store.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "edge-upd-1",
 		Type:      "TRANSLATES_TO",
 		StartNode: "orig-upd-1",
@@ -272,7 +272,7 @@ func TestExactShape_UpdateReviewByElementID_ReturnCountUpdated(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:     "tr-review-1",
 		Labels: []string{"TranslatedText"},
 		Properties: map[string]interface{}{
@@ -368,7 +368,7 @@ func seedTranslationJoinNodes(t *testing.T, store storage.Engine) {
 	}
 
 	for _, n := range nodes {
-		_, err := store.CreateNode(n)
+		_, err := store.CreateNode(t.Context(), n)
 		require.NoError(t, err)
 	}
 }
@@ -614,13 +614,13 @@ func TestExactShape_UnwindOptionalMatchCollectCaseMap_ReturnsPerKeyRows(t *testi
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{ID: "o-k1", Labels: []string{"OriginalText"}, Properties: map[string]interface{}{"textKey": "k1", "textKey128": "h1", "trackingId": "trk1", "page": "p1"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "o-k1", Labels: []string{"OriginalText"}, Properties: map[string]interface{}{"textKey": "k1", "textKey128": "h1", "trackingId": "trk1", "page": "p1"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "o-k2", Labels: []string{"OriginalText"}, Properties: map[string]interface{}{"textKey": "k2", "textKey128": "h2", "trackingId": "trk2", "page": "p2"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "o-k2", Labels: []string{"OriginalText"}, Properties: map[string]interface{}{"textKey": "k2", "textKey128": "h2", "trackingId": "trk2", "page": "p2"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "t-k1-es", Labels: []string{"TranslatedText"}, Properties: map[string]interface{}{"createdAt": "2026-03-23T00:00:00Z", "language": "es", "translatedText": "hola", "isReviewed": false}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "t-k1-es", Labels: []string{"TranslatedText"}, Properties: map[string]interface{}{"createdAt": "2026-03-23T00:00:00Z", "language": "es", "translatedText": "hola", "isReviewed": false}})
 	require.NoError(t, err)
-	err = store.CreateEdge(&storage.Edge{ID: "e-k1", Type: "TRANSLATES_TO", StartNode: "o-k1", EndNode: "t-k1-es"})
+	err = store.CreateEdge(t.Context(), &storage.Edge{ID: "e-k1", Type: "TRANSLATES_TO", StartNode: "o-k1", EndNode: "t-k1-es"})
 	require.NoError(t, err)
 
 	q := `
@@ -902,7 +902,7 @@ func TestExactShape_ListReviewTranslations_WithPagePathFilter_ReturnsExpectedRow
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:     "orig-list-1",
 		Labels: []string{"OriginalText"},
 		Properties: map[string]interface{}{
@@ -915,7 +915,7 @@ func TestExactShape_ListReviewTranslations_WithPagePathFilter_ReturnsExpectedRow
 	})
 	require.NoError(t, err)
 
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "tr-list-1",
 		Labels: []string{"TranslatedText"},
 		Properties: map[string]interface{}{
@@ -927,7 +927,7 @@ func TestExactShape_ListReviewTranslations_WithPagePathFilter_ReturnsExpectedRow
 	})
 	require.NoError(t, err)
 
-	err = store.CreateEdge(&storage.Edge{
+	err = store.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "edge-list-1",
 		Type:      "TRANSLATES_TO",
 		StartNode: "orig-list-1",
@@ -980,15 +980,15 @@ MATCH (o:OriginalText)-[:TRANSLATES_TO]->(t)
 WHERE o.pagePath STARTS WITH $pagePath
 RETURN count(t) AS c
 `, map[string]interface{}{"language": "es", "pagePath": "/benefits"})
-	t.Logf("normalized stageD: %s", normalizeMultiMatchWhereClauses(`
+	t.Logf("normalized stageD: %s", normalizeMultiMatchWhereClauses(ctx, `
 MATCH (t:TranslatedText)
 WHERE t.language = $language AND t.isReviewed = false
 MATCH (o:OriginalText)-[:TRANSLATES_TO]->(t)
 WHERE o.pagePath STARTS WITH $pagePath
 RETURN count(t) AS c
 `))
-	nodeO, _ := store.GetNode("orig-list-1")
-	nodeT, _ := store.GetNode("tr-list-1")
+	nodeO, _ := store.GetNode(t.Context(), "orig-list-1")
+	nodeT, _ := store.GetNode(t.Context(), "tr-list-1")
 	require.NotNil(t, nodeO)
 	require.NotNil(t, nodeT)
 	require.True(t, exec.evaluateBindingWhere(ctx, binding{
@@ -999,16 +999,16 @@ RETURN count(t) AS c
 		"o": nodeO,
 		"t": nodeT,
 	}, "t.language = 'es' AND t.isReviewed = false AND o.pagePath STARTS WITH '/benefits'", nil))
-	normalized := normalizeMultiMatchWhereClauses(`
+	normalized := normalizeMultiMatchWhereClauses(ctx, `
 MATCH (t:TranslatedText)
 WHERE t.language = $language AND t.isReviewed = false
 MATCH (o:OriginalText)-[:TRANSLATES_TO]->(t)
 WHERE o.pagePath STARTS WITH $pagePath
 RETURN count(t) AS c
 `)
-	returnIdx := findKeywordIndex(normalized, "RETURN")
-	whereIdx := lastKeywordIndexBefore(normalized, "WHERE", returnIdx)
-	matchClauses := splitMatchClauses(normalized, whereIdx, returnIdx)
+	returnIdx := findKeywordIndex(ctx, normalized, "RETURN")
+	whereIdx := lastKeywordIndexBefore(ctx, normalized, "WHERE", returnIdx)
+	matchClauses := splitMatchClauses(ctx, normalized, whereIdx, returnIdx)
 	require.Len(t, matchClauses, 2)
 	bindings, relBindings := exec.sharedFirstMatchForTest(context.Background(), matchClauses[0])
 	require.NotEmpty(t, bindings)
@@ -1073,12 +1073,12 @@ RETURN elementId(t) AS translationId,
        o.trackingId AS trackingId
 ORDER BY t.createdAt DESC
 LIMIT 30`
-	t.Logf("normalized full shape: %s", normalizeMultiMatchWhereClauses(shape))
+	t.Logf("normalized full shape: %s", normalizeMultiMatchWhereClauses(ctx, shape))
 	shapeDirectCtx := context.WithValue(ctx, paramsKey, map[string]interface{}{
 		"language": "es",
 		"pagePath": "/benefits",
 	})
-	shapeDirectRes, shapeDirectErr := exec.Execute(shapeDirectCtx, normalizeMultiMatchWhereClauses(shape), getParamsFromContext(shapeDirectCtx))
+	shapeDirectRes, shapeDirectErr := exec.Execute(shapeDirectCtx, normalizeMultiMatchWhereClauses(ctx, shape), getParamsFromContext(shapeDirectCtx))
 	require.NoError(t, shapeDirectErr)
 	require.NotNil(t, shapeDirectRes)
 	require.Len(t, shapeDirectRes.Rows, 1, "direct executeMultiMatch should return row for full shape")
@@ -1105,7 +1105,7 @@ func TestExactShape_CreateOrUpdateTranslation_MergeOptionalCallUnion_ReturnsRow(
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:     "orig-create-update-1",
 		Labels: []string{"OriginalText"},
 		Properties: map[string]interface{}{
@@ -1264,7 +1264,7 @@ func TestExactShape_ListReviewTranslations_PageFilter_CurrentShape_ReturnsExpect
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:     "orig-list-current-1",
 		Labels: []string{"OriginalText"},
 		Properties: map[string]interface{}{
@@ -1277,7 +1277,7 @@ func TestExactShape_ListReviewTranslations_PageFilter_CurrentShape_ReturnsExpect
 		},
 	})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "tr-list-current-1",
 		Labels: []string{"TranslatedText"},
 		Properties: map[string]interface{}{
@@ -1288,7 +1288,7 @@ func TestExactShape_ListReviewTranslations_PageFilter_CurrentShape_ReturnsExpect
 		},
 	})
 	require.NoError(t, err)
-	err = store.CreateEdge(&storage.Edge{
+	err = store.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "edge-list-current-1",
 		Type:      "TRANSLATES_TO",
 		StartNode: "orig-list-current-1",
@@ -1334,12 +1334,12 @@ func TestExactShape_FindTranslatedByOriginalElementID_RelTraversal(t *testing.T)
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:     "orig-find-1",
 		Labels: []string{"OriginalText"},
 	})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "tr-find-1",
 		Labels: []string{"TranslatedText"},
 		Properties: map[string]interface{}{
@@ -1350,7 +1350,7 @@ func TestExactShape_FindTranslatedByOriginalElementID_RelTraversal(t *testing.T)
 		},
 	})
 	require.NoError(t, err)
-	err = store.CreateEdge(&storage.Edge{
+	err = store.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "edge-find-1",
 		Type:      "TRANSLATES_TO",
 		StartNode: "orig-find-1",
@@ -1360,7 +1360,7 @@ func TestExactShape_FindTranslatedByOriginalElementID_RelTraversal(t *testing.T)
 
 	// Add noise to ensure start-node pruning path is exercised.
 	for i := 0; i < 300; i++ {
-		_, nerr := store.CreateNode(&storage.Node{
+		_, nerr := store.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("orig-find-noise-%d", i)),
 			Labels: []string{"OriginalText"},
 		})
@@ -1412,7 +1412,7 @@ func TestExactShape_CleanupBatchedDetachDelete_ByRunIDAndKeys(t *testing.T) {
 
 	runID := "run-cleanup-1"
 
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:     "t-clean-1",
 		Labels: []string{"TranslatedText"},
 		Properties: map[string]interface{}{
@@ -1420,7 +1420,7 @@ func TestExactShape_CleanupBatchedDetachDelete_ByRunIDAndKeys(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "t-clean-2",
 		Labels: []string{"TranslatedText"},
 		Properties: map[string]interface{}{
@@ -1429,7 +1429,7 @@ func TestExactShape_CleanupBatchedDetachDelete_ByRunIDAndKeys(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "o-clean-1",
 		Labels: []string{"OriginalText"},
 		Properties: map[string]interface{}{
@@ -1439,7 +1439,7 @@ func TestExactShape_CleanupBatchedDetachDelete_ByRunIDAndKeys(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "o-clean-2",
 		Labels: []string{"OriginalText"},
 		Properties: map[string]interface{}{
@@ -1449,7 +1449,7 @@ func TestExactShape_CleanupBatchedDetachDelete_ByRunIDAndKeys(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "o-clean-3",
 		Labels: []string{"OriginalText"},
 		Properties: map[string]interface{}{

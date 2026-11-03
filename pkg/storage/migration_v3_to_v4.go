@@ -11,9 +11,6 @@ import (
 // It does not acquire another lifecycle or call normal entity write methods.
 // The exact catalog body and schema marker commit in one native transaction.
 func (b *BadgerEngine) migrateV3ToV4(ctx context.Context, replayCurrent bool) error {
-	if ctx == nil {
-		return fmt.Errorf("catalog upgrade requires a context")
-	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -50,7 +47,7 @@ func (b *BadgerEngine) migrateV3ToV4(ctx context.Context, replayCurrent bool) er
 				if err != nil {
 					return err
 				}
-				node, err := b.decodeNode(namespaceForNodeID(plan.NodeID), raw)
+				node, err := b.decodeNodeProjected(txn, namespaceForNodeID(plan.NodeID), raw, nil)
 				if err != nil {
 					return fmt.Errorf("decode catalog V4 record: %w", err)
 				}

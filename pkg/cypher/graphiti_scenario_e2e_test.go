@@ -93,24 +93,24 @@ type graphitiCopyCountingEngine struct {
 	edgeGets    int64
 }
 
-func (e *graphitiCopyCountingEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
+func (e *graphitiCopyCountingEngine) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	atomic.AddInt64(&e.nodeGets, 1)
-	return e.Engine.GetNode(id)
+	return e.Engine.GetNode(ctx, id)
 }
 
-func (e *graphitiCopyCountingEngine) GetEdge(id storage.EdgeID) (*storage.Edge, error) {
+func (e *graphitiCopyCountingEngine) GetEdge(ctx context.Context, id storage.EdgeID) (*storage.Edge, error) {
 	atomic.AddInt64(&e.edgeGets, 1)
-	return e.Engine.GetEdge(id)
+	return e.Engine.GetEdge(ctx, id)
 }
 
-func (e *graphitiCopyCountingEngine) UpdateNode(updateRequest storage.NodeUpdateRequest) error {
+func (e *graphitiCopyCountingEngine) UpdateNode(ctx context.Context, updateRequest storage.NodeUpdateRequest) error {
 	atomic.AddInt64(&e.nodeUpdates, 1)
-	return e.Engine.UpdateNode(updateRequest)
+	return e.Engine.UpdateNode(ctx, updateRequest)
 }
 
-func (e *graphitiCopyCountingEngine) UpdateEdge(updateRequest storage.EdgeUpdateRequest) error {
+func (e *graphitiCopyCountingEngine) UpdateEdge(ctx context.Context, updateRequest storage.EdgeUpdateRequest) error {
 	atomic.AddInt64(&e.edgeUpdates, 1)
-	return e.Engine.UpdateEdge(updateRequest)
+	return e.Engine.UpdateEdge(ctx, updateRequest)
 }
 
 func (e *graphitiCopyCountingEngine) NodeUpdateCount() int64 {
@@ -222,35 +222,221 @@ func TestGraphitiScenarioE2E_LargePayloads(t *testing.T) {
 	require.LessOrEqual(t, len(res.Rows), 10)
 }
 
-func TestGraphitiScenarioE2E_VerbatimCopySkipsRedundantVectorPropertyUpdates(t *testing.T) {
+// executeComponentStatement asserts the canonical clause pipeline with real
+// parameter, expression-failure and plan scopes. Per-method doubles observe
+// this component; native public transaction behavior is tested separately.
+func executeComponentStatement(t testing.TB, exec *StorageExecutor, ctx context.Context, query string, params map[string]interface{}) *ExecuteResult {
+	t.Helper()
+	query = strings.TrimSpace(query)
+	ctx = withParams(ctx, params)
+	ctx = withExpressionFailureSlot(ctx)
+	ctx = withStatementClausePlans(ctx, query)
+	result, err := exec.executeRequiredPipeline(ctx, query)
+	require.NoError(t, err, "component statement: %s", query)
+	return result
+}
+
+// storedNodeID returns the storage identity of the node a MATCH selects, so a
+// test can read the stored entity image and its revision through
+// storage.Engine. matchClause must bind the node as n and must not contain
+// RETURN.
+func storedNodeID(t testing.TB, exec *StorageExecutor, ctx context.Context, matchClause string, params map[string]interface{}) string {
+	t.Helper()
+	res, err := exec.Execute(ctx, matchClause+" RETURN id(n)", params)
+	require.NoError(t, err)
+	require.Len(t, res.Rows, 1, "MATCH %q must select exactly one node", matchClause)
+	id, ok := res.Rows[0][0].(string)
+	require.True(t, ok, "id(n) must be a string, got %T", res.Rows[0][0])
+	return id
+}
+
+// cloneProperties copies the map; these tests change only top-level fields.
+func cloneProperties(properties map[string]interface{}) map[string]interface{} {
+	cloned := make(map[string]interface{}, len(properties))
+	for key, value := range properties {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+// TestGraphitiScenarioE2EComponent_VerbatimCopySkipsRedundantVectorPropertyUpdates
+// retains the original per-method update and read counts as an explicit
+// COMPONENT test.
+//
+// graphitiCopyCountingEngine wraps the namespace engine as an opaque storage
+// wrapper: it declares no EngineUnwrapper, so the atomic statement owner finds
+// no native transaction under it and rejects public write statements instead of
+// committing behind the wrapper (proven by
+// the native atomic-admission contract). The counts
+// below therefore come from the same statement pipeline the owner wraps
+// (executeComponentStatement), where every GetNode/GetEdge/UpdateNode/UpdateEdge
+// of the real graphiti copy statements actually reaches the double.
+//
+// What these counts pin, unchanged from the original test:
+//   - the node copy pays exactly one SET n = node update per entity and no
+//     second update from db.create.setNodeVectorProperty;
+//   - the CREATE and SET search notifications each index the entity (two reads
+//     per entity) while the vector setter reuses its typed entity without
+//     another read or update;
+//   - the relationship copy pays exactly one SET e = edge update per edge and
+//     still registers relationship vector entries.
+//
+// The identical re-run and the changed-value controls prove those counts are
+// not vacuous: an equal image adds no update and no indexed read, a changed
+// value adds exactly one update on the changed entity or edge.
+func TestGraphitiScenarioE2EComponent_VerbatimCopySkipsRedundantVectorPropertyUpdates(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	ns := storage.NewNamespacedEngine(base, "test")
-	counting := &graphitiCopyCountingEngine{Engine: ns}
-	exec := NewStorageExecutor(counting)
+	seed := NewStorageExecutor(ns)
 	ctx := context.Background()
 
 	const dim = 16
-	_, err := exec.Execute(ctx, "CREATE VECTOR INDEX ent_idx FOR (n:Entity) ON (n.name_embedding) OPTIONS {indexConfig: {`vector.dimensions`: 16, `vector.similarity_function`: 'cosine'}}", nil)
-	require.NoError(t, err)
-	_, err = exec.Execute(ctx, "CREATE VECTOR INDEX rel_idx FOR ()-[e:RELATES_TO]-() ON (e.fact_embedding) OPTIONS {indexConfig: {`vector.dimensions`: 16, `vector.similarity_function`: 'cosine'}}", nil)
-	require.NoError(t, err)
+	for _, q := range []string{
+		"CREATE VECTOR INDEX ent_idx FOR (n:Entity) ON (n.name_embedding) OPTIONS {indexConfig: {`vector.dimensions`: 16, `vector.similarity_function`: 'cosine'}}",
+		"CREATE VECTOR INDEX rel_idx FOR ()-[e:RELATES_TO]-() ON (e.fact_embedding) OPTIONS {indexConfig: {`vector.dimensions`: 16, `vector.similarity_function`: 'cosine'}}",
+	} {
+		_, err := seed.Execute(ctx, q, nil)
+		require.NoErrorf(t, err, "component index: %s", q)
+	}
 
+	counting := &graphitiCopyCountingEngine{Engine: ns}
+	exec := NewStorageExecutor(counting)
 	searchSvc := search.NewService(counting, dim, nil)
 	exec.SetSearchService(searchSvc)
 
 	payload := buildGraphitiScenarioPayload(12, 24, 0, dim)
-	res, err := exec.Execute(ctx, graphitiBulkNodeSaveQuery, map[string]interface{}{"nodes": payload.nodes})
-	require.NoError(t, err)
-	require.Len(t, res.Rows, len(payload.nodes))
+	executeComponentStatement(t, exec, ctx, graphitiBulkNodeSaveQuery, map[string]interface{}{"nodes": payload.nodes})
 	require.Equal(t, int64(len(payload.nodes)), counting.NodeUpdateCount(), "node copy should only pay the SET n = row update, not an extra vector setter update")
 	require.Equal(t, int64(2*len(payload.nodes)), counting.NodeGetCount(), "shared CREATE and SET notifications each index the node; the vector setter reuses its typed entity without another read or update")
 	require.Equal(t, len(payload.nodes), searchSvc.CountPropertyVectorEntries("name_embedding"))
 
+	executeComponentStatement(t, exec, ctx, graphitiBulkEdgeSaveQuery, map[string]interface{}{"entity_edges": payload.edges})
+	require.Equal(t, int64(len(payload.edges)), counting.EdgeUpdateCount(), "relationship copy should only pay the SET e = edge update, not an extra vector setter update")
+	require.True(t, searchSvc.HasRelationshipVectorEntries("RELATES_TO", "fact_embedding"))
+
+	// Baselines the identical re-runs below must not exceed.
+	edgeGetsAfterFirst := counting.EdgeGetCount()
+	nodeGetsBeforeReRun := counting.NodeGetCount()
+
+	// Equal images: the SET owner skips the write and the vector setter reuses
+	// its typed entity, so neither batch may add an update or an indexed read.
+	executeComponentStatement(t, exec, ctx, graphitiBulkNodeSaveQuery, map[string]interface{}{"nodes": payload.nodes})
+	require.Equal(t, int64(len(payload.nodes)), counting.NodeUpdateCount(), "re-running the identical node batch must not update any entity")
+	require.Equal(t, nodeGetsBeforeReRun, counting.NodeGetCount(), "re-running the identical node batch must not index-read any entity again")
+	executeComponentStatement(t, exec, ctx, graphitiBulkEdgeSaveQuery, map[string]interface{}{"entity_edges": payload.edges})
+	require.Equal(t, int64(len(payload.edges)), counting.EdgeUpdateCount(), "re-running the identical edge batch must not update any relationship")
+	require.Equal(t, edgeGetsAfterFirst, counting.EdgeGetCount(), "re-running the identical edge batch must not read any relationship again")
+
+	// Healthy changed-value controls.
+	changedNode := cloneProperties(payload.nodes[0])
+	changedNode["name"] = "renamed entity 000000"
+	executeComponentStatement(t, exec, ctx, graphitiBulkNodeSaveQuery, map[string]interface{}{"nodes": []map[string]interface{}{changedNode}})
+	require.Equal(t, int64(len(payload.nodes))+1, counting.NodeUpdateCount(), "a changed node value must produce exactly one entity update")
+
+	changedEdge := cloneProperties(payload.edges[0])
+	changedEdge["fact"] = "rewritten graphiti fact"
+	executeComponentStatement(t, exec, ctx, graphitiBulkEdgeSaveQuery, map[string]interface{}{"entity_edges": []map[string]interface{}{changedEdge}})
+	require.Equal(t, int64(len(payload.edges))+1, counting.EdgeUpdateCount(), "a changed edge value must produce exactly one relationship update")
+}
+
+// TestGraphitiScenarioE2E_VerbatimCopyIdempotentEntitiesAndTypedVectors is the
+// PUBLIC native-transaction counterpart of the component test above: it runs
+// the same graphiti bulk copy shapes through StorageExecutor.Execute, where the
+// atomic statement owner commits them in one native transaction.
+//
+// It proves the part of the copy contract that is observable from outside
+// storage internals by METHOD COUNT, and no more than that:
+//   - actual successful writes: the first copy creates every payload entity and
+//     relationship, and the stored entity carries the payload's exact
+//     float64 vector (typed vector values survive the copy and the
+//     setNodeVectorProperty procedure);
+//   - unchanged-payload idempotency: re-running the identical bulk copy
+//     creates no entity (NodesCreated = 0 for the batch), leaves the entity and
+//     relationship counts unchanged, and leaves every stored value unchanged;
+//   - healthy changed-value control: a changed name and vector replace the
+//     stored values without creating an entity.
+//
+// Current semantics do not support a stronger public claim: the re-run still
+// rewrites the entity image once per entity, because SET n = node compares the
+// row map's list values (labels, name_embedding) against the stored image and
+// sees a difference, so storage.Node.UpdatedAt advances. This test therefore
+// makes no zero-write assertion; the exact per-method update/read counts are
+// owned by TestGraphitiScenarioE2EComponent_VerbatimCopySkipsRedundantVectorPropertyUpdates.
+func TestGraphitiScenarioE2E_VerbatimCopyIdempotentEntitiesAndTypedVectors(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	ns := storage.NewNamespacedEngine(base, "test")
+	exec := NewStorageExecutor(ns)
+	ctx := context.Background()
+
+	const dim = 16
+	for _, q := range []string{
+		"CREATE VECTOR INDEX ent_idx FOR (n:Entity) ON (n.name_embedding) OPTIONS {indexConfig: {`vector.dimensions`: 16, `vector.similarity_function`: 'cosine'}}",
+		"CREATE VECTOR INDEX rel_idx FOR ()-[e:RELATES_TO]-() ON (e.fact_embedding) OPTIONS {indexConfig: {`vector.dimensions`: 16, `vector.similarity_function`: 'cosine'}}",
+	} {
+		_, err := exec.Execute(ctx, q, nil)
+		require.NoErrorf(t, err, "scenario index: %s", q)
+	}
+
+	payload := buildGraphitiScenarioPayload(12, 24, 0, dim)
+	wantVector := payload.nodes[0]["name_embedding"].([]float64)
+	countEntities := func() int64 {
+		return mustCountRows(t, exec, ctx, "MATCH (n:Entity {group_id: $g}) RETURN count(n)", map[string]interface{}{"g": graphitiGroupID})
+	}
+	countEdges := func() int64 {
+		return mustCountRows(t, exec, ctx, "MATCH (:Entity)-[e:RELATES_TO]->(:Entity) WHERE e.group_id = $g RETURN count(e)", map[string]interface{}{"g": graphitiGroupID})
+	}
+
+	// --- actual successful writes --------------------------------------------
+	res, err := exec.Execute(ctx, graphitiBulkNodeSaveQuery, map[string]interface{}{"nodes": payload.nodes})
+	require.NoError(t, err)
+	require.Len(t, res.Rows, len(payload.nodes))
+	require.Equal(t, len(payload.nodes), res.Stats.NodesCreated, "first bulk node copy must create every entity")
+
 	res, err = exec.Execute(ctx, graphitiBulkEdgeSaveQuery, map[string]interface{}{"entity_edges": payload.edges})
 	require.NoError(t, err)
 	require.Len(t, res.Rows, len(payload.edges))
-	require.Equal(t, int64(len(payload.edges)), counting.EdgeUpdateCount(), "relationship copy should only pay the SET e = row update, not an extra vector setter update")
-	require.True(t, searchSvc.HasRelationshipVectorEntries("RELATES_TO", "fact_embedding"))
+	require.Equal(t, int64(len(payload.edges)), countEdges(), "first bulk edge copy must create every relationship")
+
+	// --- typed vector values --------------------------------------------------
+	nodeID := storedNodeID(t, exec, ctx, "MATCH (n:Entity {uuid:'entity-000000'})", nil)
+	firstNode, err := ns.GetNode(t.Context(), storage.NodeID(nodeID))
+	require.NoError(t, err)
+	require.Equal(t, wantVector, firstNode.Properties["name_embedding"], "bulk copy must store the payload's exact float64 vector")
+	firstImage := cloneProperties(firstNode.Properties)
+	vectorRows, err := exec.Execute(ctx, "MATCH (n:Entity {uuid:'entity-000000'}) RETURN n.name_embedding AS embedding", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{wantVector}}, vectorRows.Rows, "the read side must return the typed vector, not a converted list")
+
+	// --- unchanged-payload idempotency ---------------------------------------
+	res, err = exec.Execute(ctx, graphitiBulkNodeSaveQuery, map[string]interface{}{"nodes": payload.nodes})
+	require.NoError(t, err)
+	require.Len(t, res.Rows, len(payload.nodes))
+	require.Zero(t, res.Stats.NodesCreated, "identical bulk node copy must not create an entity")
+	res, err = exec.Execute(ctx, graphitiBulkEdgeSaveQuery, map[string]interface{}{"entity_edges": payload.edges})
+	require.NoError(t, err)
+	require.Len(t, res.Rows, len(payload.edges))
+
+	secondNode, err := ns.GetNode(t.Context(), storage.NodeID(nodeID))
+	require.NoError(t, err)
+	require.Equal(t, firstImage, secondNode.Properties, "identical bulk copy must leave the stored image unchanged")
+	require.Equal(t, int64(len(payload.nodes)), countEntities(), "identical bulk copy must not duplicate entities")
+	require.Equal(t, int64(len(payload.edges)), countEdges(), "identical bulk copy must not duplicate relationships")
+
+	// --- healthy changed-value control --------------------------------------
+	changed := cloneProperties(payload.nodes[0])
+	changed["name"] = "renamed entity 000000"
+	changedVector := unitVectorF64(1, dim)
+	changed["name_embedding"] = changedVector
+	res, err = exec.Execute(ctx, graphitiBulkNodeSaveQuery, map[string]interface{}{"nodes": []map[string]interface{}{changed}})
+	require.NoError(t, err)
+	require.Len(t, res.Rows, 1)
+	require.Zero(t, res.Stats.NodesCreated, "changed bulk node copy must update, not create")
+	require.NotZero(t, res.Stats.PropertiesSet, "changed bulk node copy must write properties")
+	thirdNode, err := ns.GetNode(t.Context(), storage.NodeID(nodeID))
+	require.NoError(t, err)
+	require.Equal(t, "renamed entity 000000", thirdNode.Properties["name"], "a changed value must reach storage")
+	require.Equal(t, changedVector, thirdNode.Properties["name_embedding"], "a changed vector must replace the stored vector")
+	require.Equal(t, int64(len(payload.nodes)), countEntities(), "changed value must not create an entity")
 }
 
 func TestGraphitiScenarioE2E_RelationshipSetWithLimitBoundsMVCCCommitState(t *testing.T) {
@@ -385,7 +571,8 @@ func removeEntityUUIDIndexEntries(tb testing.TB, store *storage.NamespacedEngine
 		if !match(uuid) {
 			continue
 		}
-		ids := schema.PropertyIndexLookup("Entity", "uuid", uuid)
+		ids, lookupErr := schema.PropertyIndexLookup(ctx, "Entity", "uuid", uuid)
+		require.NoError(tb, lookupErr)
 		require.NotEmpty(tb, ids)
 		for _, id := range ids {
 			require.NoError(tb, schema.PropertyIndexDelete("Entity", "uuid", id, uuid))
@@ -417,7 +604,9 @@ func TestGraphitiScenarioE2E_BulkEdgeSaveIndexedEntityMatchesSurviveIncompleteIn
 		return uuid == "entity-000003" || uuid == "entity-000007" || uuid == "entity-000011" || uuid == "entity-000017"
 	})
 	require.Equal(t, 4, removed)
-	require.Empty(t, schema.PropertyIndexLookup("Entity", "uuid", "entity-000003"))
+	missingIDs, lookupErr := schema.PropertyIndexLookup(ctx, "Entity", "uuid", "entity-000003")
+	require.NoError(t, lookupErr)
+	require.Empty(t, missingIDs)
 
 	res, err = exec.Execute(ctx, graphitiBulkEdgeSaveQuery, map[string]interface{}{"entity_edges": payload.edges})
 	require.NoError(t, err)
@@ -429,6 +618,17 @@ func TestGraphitiScenarioE2E_BulkEdgeSaveIndexedEntityMatchesSurviveIncompleteIn
 	countEdges := mustCountRows(t, exec, ctx, "MATCH (:Entity)-[e:RELATES_TO]->(:Entity) WHERE e.group_id = $g RETURN count(e)", map[string]interface{}{"g": graphitiGroupID})
 	require.Equal(t, int64(len(payload.edges)), countEdges)
 }
+
+// ingestAndReadExecutors builds the two executors a read-path counting double
+// needs while ingest still commits through the native route.
+//
+// An opaque storage wrapper has no transaction under it, so the atomic
+// statement owner rejects every write statement (see
+// TestGraphifyScenarioE2E_PublicWriteRejectsOpaqueCountingDouble). Ingest
+// therefore runs on the namespace engine, while the statements whose
+// scan-fallback counters are asserted run on the double. Both share one search
+// service over the same store, so ingest still feeds the index the read
+// statements consult.
 
 func TestGraphitiScenarioE2E_ExternalVectorIngestDoesNotUseExactScanFallbackBeforeWarmup(t *testing.T) {
 	base := newTestMemoryEngine(t)
@@ -903,7 +1103,7 @@ func BenchmarkGraphitiRelationshipFulltextCallTail(b *testing.B) {
 	require.NoError(b, err)
 	_, err = exec.Execute(ctx, graphitiBulkEdgeSaveQuery, map[string]interface{}{"entity_edges": payload.edges})
 	require.NoError(b, err)
-	edgeTotal, err := ns.EdgeCount()
+	edgeTotal, err := ns.EdgeCount(b.Context())
 	require.NoError(b, err)
 	require.Equal(b, int64(edgeCount), edgeTotal)
 	rawFulltext, err := exec.Execute(ctx, `CALL db.index.fulltext.queryRelationships("rel_ft", "*", {limit: $limit}) YIELD relationship AS rel, score RETURN rel.uuid AS uuid, score`, map[string]interface{}{"limit": limit})

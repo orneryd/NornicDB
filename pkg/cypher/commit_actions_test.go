@@ -14,23 +14,23 @@ type rejectingSuppressionEngine struct {
 }
 
 func (e *rejectingSuppressionEngine) GetInnerEngine() storage.Engine { return e.Engine }
-func (e *rejectingSuppressionEngine) SetManualSuppression(storage.StoredEntityKind, string, bool) error {
+func (e *rejectingSuppressionEngine) SetManualSuppression(context.Context, storage.StoredEntityKind, string, bool) error {
 	return e.cause
 }
 
 func TestCommittedActionsPreserveEveryFailureAndRunOnce(t *testing.T) {
 	first, last := errors.New("first completion failure"), errors.New("last completion failure")
 	calls := []int{}
-	wrapper := &transactionStorageWrapper{commitActions: []func() error{
-		func() error { calls = append(calls, 1); return first },
-		func() error { calls = append(calls, 2); return nil },
-		func() error { calls = append(calls, 3); return last },
+	wrapper := &transactionStorageWrapper{commitActions: []func(context.Context) error{
+		func(context.Context) error { calls = append(calls, 1); return first },
+		func(context.Context) error { calls = append(calls, 2); return nil },
+		func(context.Context) error { calls = append(calls, 3); return last },
 	}}
-	err := wrapper.completeCommitActions()
+	err := wrapper.completeCommitActions(context.Background())
 	require.ErrorIs(t, err, first)
 	require.ErrorIs(t, err, last)
 	require.Equal(t, []int{1, 2, 3}, calls)
-	require.NoError(t, wrapper.completeCommitActions())
+	require.NoError(t, wrapper.completeCommitActions(context.Background()))
 	require.Equal(t, []int{1, 2, 3}, calls)
 	require.Empty(t, wrapper.commitActions)
 }
@@ -39,7 +39,7 @@ func TestSuppressionCompletionFailureReachesPublicCaller(t *testing.T) {
 	for _, explicit := range []bool{false, true} {
 		t.Run(map[bool]string{false: "implicit", true: "explicit"}[explicit], func(t *testing.T) {
 			inner := storage.NewNamespacedEngine(newTestMemoryEngine(t), "completion")
-			_, err := inner.CreateNode(&storage.Node{ID: "node", Labels: []string{"Completion"}})
+			_, err := inner.CreateNode(t.Context(), &storage.Node{ID: "node", Labels: []string{"Completion"}})
 			require.NoError(t, err)
 			cause := errors.New("suppression persistence rejected")
 			executor := NewStorageExecutor(&rejectingSuppressionEngine{Engine: inner, cause: cause})

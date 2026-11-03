@@ -61,20 +61,20 @@ func snapshotEdgeNotes(t *testing.T, snapshot ReadSnapshotView) map[EdgeID]strin
 func TestReadSnapshotSeesOnePoint(t *testing.T) {
 	engine := newReadSnapshotTestEngine(t, false)
 	for _, id := range []NodeID{"test:a", "test:b"} {
-		_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"text": "old"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"text": "old"}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "REL", Properties: map[string]any{"note": "old"}}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "REL", Properties: map[string]any{"note": "old"}}))
 
 	snapshot, err := engine.OpenReadSnapshot(context.Background())
 	require.NoError(t, err)
 	defer snapshot.Close()
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:a", Labels: []string{"Doc"}, Properties: map[string]any{"text": "new"}}, Policy: ClientNodeEdits}))
-	require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "REL", Properties: map[string]any{"note": "new"}}}))
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:a", Labels: []string{"Doc"}, Properties: map[string]any{"text": "new"}}, Policy: ClientNodeEdits}))
+	require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "REL", Properties: map[string]any{"note": "new"}}}))
 	require.NoError(t, tx.Commit())
 
 	require.Equal(t, "old", snapshotEdgeNotes(t, snapshot)["test:r"])
@@ -95,18 +95,18 @@ func TestReadSnapshotIncludesWriteBehind(t *testing.T) {
 	for _, id := range []NodeID{"test:a", "test:b"} {
 		bufferedCreate(t, engine, &Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"text": "buffered"}})
 	}
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, tx.CreateEdge(&Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "REL", Properties: map[string]any{"note": "buffered"}}))
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "REL", Properties: map[string]any{"note": "buffered"}}))
 	require.NoError(t, tx.Commit())
 	require.Greater(t, engine.writeBehind.PendingOps(), 0, "the writes must still be buffered")
 
 	snapshot, err := engine.OpenReadSnapshot(context.Background())
 	require.NoError(t, err)
 	defer snapshot.Close()
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 
 	require.Equal(t, map[NodeID]string{"test:a": "buffered", "test:b": "buffered"}, snapshotNodeText(t, snapshot))
 	require.Equal(t, map[EdgeID]string{"test:r": "buffered"}, snapshotEdgeNotes(t, snapshot))
@@ -118,7 +118,7 @@ func TestReadSnapshotIsScopedByNamespace(t *testing.T) {
 	base := newReadSnapshotTestEngine(t, false)
 	one, two := NewNamespacedEngine(base, "one"), NewNamespacedEngine(base, "two")
 	for _, engine := range []*NamespacedEngine{one, two} {
-		_, err := engine.CreateNode(&Node{ID: "n", Labels: []string{"Doc"}, Properties: map[string]any{"text": engine.Namespace()}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: "n", Labels: []string{"Doc"}, Properties: map[string]any{"text": engine.Namespace()}})
 		require.NoError(t, err)
 	}
 	snapshot, err := OpenReadSnapshot(context.Background(), one)
@@ -164,12 +164,12 @@ func BenchmarkReadSnapshotDiskRetention(b *testing.B) {
 		overwrite := func() {
 			for range rounds {
 				for i := range nodes {
-					require.NoError(b, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: NodeID(fmt.Sprintf("test:n%d", i)), Labels: []string{"Doc"}, Properties: map[string]any{"text": text()}}}))
+					require.NoError(b, engine.UpdateNode(b.Context(), NodeUpdateRequest{After: &Node{ID: NodeID(fmt.Sprintf("test:n%d", i)), Labels: []string{"Doc"}, Properties: map[string]any{"text": text()}}}))
 				}
 			}
 		}
 		for i := range nodes {
-			_, err := engine.CreateNode(&Node{ID: NodeID(fmt.Sprintf("test:n%d", i)), Labels: []string{"Doc"}, Properties: map[string]any{"text": text()}})
+			_, err := engine.CreateNode(b.Context(), &Node{ID: NodeID(fmt.Sprintf("test:n%d", i)), Labels: []string{"Doc"}, Properties: map[string]any{"text": text()}})
 			require.NoError(b, err)
 		}
 		dir := engine.db.DB.Opts().Dir
@@ -199,7 +199,7 @@ func BenchmarkReadSnapshotDiskRetention(b *testing.B) {
 		held := sstBytes()
 		snapshot.Close()
 		// The discard timestamp advances on a commit (managedBadgerDB).
-		require.NoError(b, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:n0", Labels: []string{"Doc"}, Properties: map[string]any{"text": text()}}}))
+		require.NoError(b, engine.UpdateNode(b.Context(), NodeUpdateRequest{After: &Node{ID: "test:n0", Labels: []string{"Doc"}, Properties: map[string]any{"text": text()}}}))
 		released := sstBytes()
 		// The levels are already flat: the retained versions go when later
 		// compactions rewrite their tables, as the write stream goes on.

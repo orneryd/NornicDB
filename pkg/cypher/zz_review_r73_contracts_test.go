@@ -34,9 +34,9 @@ func TestReviewR73SeedContracts(t *testing.T) {
 	t.Run("element_id_batch", func(t *testing.T) {
 		s := storage.NewNamespacedEngine(newTestMemoryEngine(t), "review_r73_ids")
 		e := NewStorageExecutor(s)
-		left, err := s.CreateNode(&storage.Node{ID: "left", Labels: []string{"ReviewEntity"}})
+		left, err := s.CreateNode(t.Context(), &storage.Node{ID: "left", Labels: []string{"ReviewEntity"}})
 		require.NoError(t, err)
-		right, err := s.CreateNode(&storage.Node{ID: "right", Labels: []string{"ReviewEntity"}})
+		right, err := s.CreateNode(t.Context(), &storage.Node{ID: "right", Labels: []string{"ReviewEntity"}})
 		require.NoError(t, err)
 		rows := []interface{}{map[string]interface{}{"src": string(left), "dst": string(right)}, map[string]interface{}{"src": string(right), "dst": string(left)}}
 		r, err := e.Execute(ctx, "UNWIND $rows AS row MATCH (a) WHERE elementId(a)=row.src MATCH (b) WHERE elementId(b)=row.dst CREATE (a)-[:REVIEW_LINK]->(b) RETURN count(a)", map[string]interface{}{"rows": rows})
@@ -55,7 +55,7 @@ func TestReviewR73FabricContinuation(t *testing.T) {
 	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "review_cmp", []multidb.ConstituentRef{{Alias: "source", DatabaseName: "review_shard", Type: "local", AccessMode: "read_write"}}))
 	s, err := mgr.GetStorage("review_shard")
 	require.NoError(t, err)
-	_, err = s.CreateNode(&storage.Node{ID: "r73", Labels: []string{"ReviewItem"}, Properties: map[string]interface{}{"k": int64(2)}})
+	_, err = s.CreateNode(t.Context(), &storage.Node{ID: "r73", Labels: []string{"ReviewItem"}, Properties: map[string]interface{}{"k": int64(2)}})
 	require.NoError(t, err)
 	ds, err := mgr.GetStorage(mgr.DefaultDatabaseName())
 	require.NoError(t, err)

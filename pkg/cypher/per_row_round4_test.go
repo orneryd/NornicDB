@@ -38,8 +38,8 @@ func TestPerRowRound4Values(t *testing.T) {
 
 func TestPerRowRound4CompiledChain(t *testing.T) {
 	exec, _ := perRowTestExecutor(t)
-	root, _ := (&rowValueCompiler{}).compile("1/x < x < -1")
-	value, ok, err := root.eval(exec, map[string]interface{}{"x": int64(0)}, nil)
+	root, _ := (&rowValueCompiler{}).compile(t.Context(), "1/x < x < -1")
+	value, ok, err := root.eval(t.Context(), exec, map[string]interface{}{"x": int64(0)}, nil)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, false, value)

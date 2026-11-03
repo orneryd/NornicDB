@@ -60,7 +60,7 @@ func TestTraversalEndSeedOrderLimit_IndexWindowDeclines(t *testing.T) {
 		exec := NewStorageExecutor(store)
 		ctx := context.Background()
 
-		_, err := store.CreateNode(&storage.Node{ID: "room-1", Labels: []string{"Room"}, Properties: map[string]interface{}{"name": "A"}})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: "room-1", Labels: []string{"Room"}, Properties: map[string]interface{}{"name": "A"}})
 		require.NoError(t, err)
 
 		_, err = exec.Execute(ctx, "CREATE INDEX idx_room_name_empty FOR (r:Room) ON (r.name)", nil)
@@ -89,7 +89,7 @@ func TestTraversalEndSeedOrderLimit_IndexWindowDeclines(t *testing.T) {
 
 		for i := 0; i < 200; i++ {
 			id := storage.NodeID(fmt.Sprintf("room-%03d", i))
-			_, err := store.CreateNode(&storage.Node{
+			_, err := store.CreateNode(t.Context(), &storage.Node{
 				ID:     id,
 				Labels: []string{"Room"},
 				Properties: map[string]interface{}{
@@ -134,7 +134,7 @@ func TestTraversalCollectStartSeedNodes_InputAndTruncateBranches(t *testing.T) {
 
 	for i := 0; i < 8; i++ {
 		id := storage.NodeID(fmt.Sprintf("d-%02d", i))
-		_, err := store.CreateNode(&storage.Node{ID: id, Labels: []string{"Drawer"}, Properties: map[string]interface{}{"rank": int64(i)}})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"Drawer"}, Properties: map[string]interface{}{"rank": int64(i)}})
 		require.NoError(t, err)
 	}
 	_, err = exec.Execute(ctx, "CREATE INDEX idx_drawer_rank_cov FOR (d:Drawer) ON (d.rank)", nil)

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"testing"
@@ -32,23 +33,23 @@ func TestPendingConstraintIndex_DuplicatesInTransaction(t *testing.T) {
 			check: func(t *testing.T, tx *BadgerTransaction) {
 				var err error
 				// A numeric value equal across types is a duplicate, as before.
-				_, err = tx.CreateNode(pendingNode("u-dup", "Item", map[string]interface{}{"k": float64(5)}))
+				_, err = tx.CreateNode(t.Context(), pendingNode("u-dup", "Item", map[string]interface{}{"k": float64(5)}))
 				require.Error(t, err, "duplicate of a pending value must be rejected")
 
 				// Rewriting a pending node frees its old value and takes the new one.
-				require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: pendingNode("u-3", "Item", map[string]interface{}{"k": int64(1000)}), Policy: ClientNodeEdits}))
-				_, err = tx.CreateNode(pendingNode("u-reuse", "Item", map[string]interface{}{"k": int64(3)}))
+				require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: pendingNode("u-3", "Item", map[string]interface{}{"k": int64(1000)}), Policy: ClientNodeEdits}))
+				_, err = tx.CreateNode(t.Context(), pendingNode("u-reuse", "Item", map[string]interface{}{"k": int64(3)}))
 				require.NoError(t, err, "the value a rewritten pending node gave up is free again")
-				_, err = tx.CreateNode(pendingNode("u-dup2", "Item", map[string]interface{}{"k": int64(1000)}))
+				_, err = tx.CreateNode(t.Context(), pendingNode("u-dup2", "Item", map[string]interface{}{"k": int64(1000)}))
 				require.Error(t, err, "the rewritten node's new value is taken")
 
 				// Deleting a pending node frees its value.
-				require.NoError(t, tx.DeleteGraphNode(NodeID(prefixTestID("u-7")), CascadeEdges))
-				_, err = tx.CreateNode(pendingNode("u-reuse7", "Item", map[string]interface{}{"k": int64(7)}))
+				require.NoError(t, tx.DeleteGraphNode(t.Context(), NodeID(prefixTestID("u-7")), CascadeEdges))
+				_, err = tx.CreateNode(t.Context(), pendingNode("u-reuse7", "Item", map[string]interface{}{"k": int64(7)}))
 				require.NoError(t, err, "the value of a deleted pending node is free again")
 
 				// Another label with the same value is not a duplicate.
-				_, err = tx.CreateNode(pendingNode("other-5", "Other", map[string]interface{}{"k": int64(5)}))
+				_, err = tx.CreateNode(t.Context(), pendingNode("other-5", "Other", map[string]interface{}{"k": int64(5)}))
 				require.NoError(t, err)
 
 			}},
@@ -61,9 +62,9 @@ func TestPendingConstraintIndex_DuplicatesInTransaction(t *testing.T) {
 			},
 			check: func(t *testing.T, tx *BadgerTransaction) {
 				var err error
-				_, err = tx.CreateNode(pendingNode("nk-other-tenant", "User", map[string]interface{}{"tenant": "t2", "name": "user4"}))
+				_, err = tx.CreateNode(t.Context(), pendingNode("nk-other-tenant", "User", map[string]interface{}{"tenant": "t2", "name": "user4"}))
 				require.NoError(t, err, "same name under another tenant is a different key")
-				_, err = tx.CreateNode(pendingNode("nk-dup", "User", map[string]interface{}{"tenant": "t1", "name": "user4"}))
+				_, err = tx.CreateNode(t.Context(), pendingNode("nk-dup", "User", map[string]interface{}{"tenant": "t1", "name": "user4"}))
 				require.Error(t, err, "the full composite key of a pending node must be rejected")
 			}},
 	} {
@@ -71,11 +72,11 @@ func TestPendingConstraintIndex_DuplicatesInTransaction(t *testing.T) {
 			engine, cleanup := setupTestBadgerEngine(t)
 			defer cleanup()
 			require.NoError(t, tc.addConstraint(engine.GetSchemaForNamespace("test")))
-			tx, err := engine.BeginTransaction()
+			tx, err := engine.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			defer tx.Rollback()
 			for i := 0; i < 3*pendingIndexMinNodes; i++ {
-				_, err := tx.CreateNode(pendingNode(fmt.Sprintf("%s-%d", tc.prefix, i), tc.label, tc.properties(i)))
+				_, err := tx.CreateNode(t.Context(), pendingNode(fmt.Sprintf("%s-%d", tc.prefix, i), tc.label, tc.properties(i)))
 				require.NoError(t, err)
 			}
 			tc.check(t, tx)
@@ -94,23 +95,23 @@ func TestPendingConstraintIndex_TemporalOverlapInTransaction(t *testing.T) {
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	day := 24 * time.Hour
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer tx.Rollback()
 	// Many records, each with two adjacent non-overlapping windows.
 	for r := 0; r < 2*pendingIndexMinNodes; r++ {
 		for w := 0; w < 2; w++ {
-			_, err := tx.CreateNode(pendingNode(fmt.Sprintf("f-%d-%d", r, w), "Fact", map[string]interface{}{
+			_, err := tx.CreateNode(t.Context(), pendingNode(fmt.Sprintf("f-%d-%d", r, w), "Fact", map[string]interface{}{
 				"record_id": int64(r), "valid_from": base.Add(time.Duration(w) * day), "valid_to": base.Add(time.Duration(w+1) * day),
 			}))
 			require.NoError(t, err)
 		}
 	}
-	_, err = tx.CreateNode(pendingNode("f-overlap", "Fact", map[string]interface{}{
+	_, err = tx.CreateNode(t.Context(), pendingNode("f-overlap", "Fact", map[string]interface{}{
 		"record_id": int64(3), "valid_from": base.Add(12 * time.Hour), "valid_to": base.Add(36 * time.Hour),
 	}))
 	require.Error(t, err, "a window overlapping a pending window of the same record must be rejected")
-	_, err = tx.CreateNode(pendingNode("f-other-record", "Fact", map[string]interface{}{
+	_, err = tx.CreateNode(t.Context(), pendingNode("f-other-record", "Fact", map[string]interface{}{
 		"record_id": int64(999), "valid_from": base.Add(12 * time.Hour), "valid_to": base.Add(36 * time.Hour),
 	}))
 	require.NoError(t, err, "the same window on another record does not overlap")
@@ -130,12 +131,12 @@ func TestPendingConstraintIndex_LargeTransactionScalesLinearly(t *testing.T) {
 		engine, cleanup := setupTestBadgerEngine(t)
 		defer cleanup()
 		require.NoError(t, engine.GetSchemaForNamespace("test").AddUniqueConstraint("u_k", "Item", "k"))
-		require.NoError(t, RefreshUniqueConstraintValuesForEngine(engine, engine.GetSchemaForNamespace("test")))
-		tx, err := engine.BeginTransaction()
+		require.NoError(t, RefreshUniqueConstraintValuesForEngine(context.Background(), engine, engine.GetSchemaForNamespace("test")))
+		tx, err := engine.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		start := time.Now()
 		for i := 0; i < n; i++ {
-			_, err := tx.CreateNode(pendingNode(fmt.Sprintf("s-%d", i), "Item", map[string]interface{}{"k": int64(i)}))
+			_, err := tx.CreateNode(t.Context(), pendingNode(fmt.Sprintf("s-%d", i), "Item", map[string]interface{}{"k": int64(i)}))
 			require.NoError(t, err)
 		}
 		indexed := tx.pendingIndex != nil
@@ -143,7 +144,7 @@ func TestPendingConstraintIndex_LargeTransactionScalesLinearly(t *testing.T) {
 		elapsed := time.Since(start)
 		require.True(t, indexed, "the public transaction path must activate the pending constraint index")
 		for _, i := range []int{0, n - 1} {
-			node, err := engine.GetNode(NodeID(prefixTestID(fmt.Sprintf("s-%d", i))))
+			node, err := engine.GetNode(t.Context(), NodeID(prefixTestID(fmt.Sprintf("s-%d", i))))
 			require.NoError(t, err)
 			require.Equal(t, int64(i), node.Properties["k"])
 		}

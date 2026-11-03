@@ -24,7 +24,7 @@ func TestResidualPublicationDecisionRoutes(t *testing.T) {
 				b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), LowMemory: route == "large", WriteBehind: route == "buffered", WriteBehindInterval: time.Hour}))
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = b.Close() })
-				tx, err := b.BeginTransaction()
+				tx, err := b.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = tx.Rollback() })
 				require.NoError(t, tx.SetNamespace("test"))
@@ -32,7 +32,7 @@ func TestResidualPublicationDecisionRoutes(t *testing.T) {
 				if route == "large" {
 					stageLargeCreate(t, tx, 6000)
 				}
-				_, err = tx.CreateNode(&Node{ID: "test:decision", Properties: map[string]any{"new-name": int64(1)}})
+				_, err = tx.CreateNode(t.Context(), &Node{ID: "test:decision", Properties: map[string]any{"new-name": int64(1)}})
 				require.NoError(t, err)
 				var calls atomic.Int32
 				var retained func() error
@@ -94,8 +94,8 @@ func TestResidualPublicationDecisionRoutes(t *testing.T) {
 				require.EqualValues(t, 1, calls.Load())
 				require.NotNil(t, retained)
 				require.ErrorIs(t, retained(), ErrInvalidData, "returned/rejected actions cannot run later")
-				require.NoError(t, b.FlushWriteBehind(nil))
-				_, readErr := b.GetStoredNode("test:decision")
+				require.NoError(t, b.FlushWriteBehind(context.Background()))
+				_, readErr := b.GetStoredNode(t.Context(), "test:decision")
 				if veto {
 					require.ErrorIs(t, readErr, ErrNotFound)
 				} else {

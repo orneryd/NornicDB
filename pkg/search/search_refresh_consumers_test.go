@@ -3,9 +3,10 @@ package search
 import (
 	"context"
 	"errors"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -20,8 +21,8 @@ type orphanReadBarrier struct {
 	missingOnly bool
 }
 
-func (b *orphanReadBarrier) GetNode(id storage.NodeID) (*storage.Node, error) {
-	node, err := b.Engine.GetNode(id)
+func (b *orphanReadBarrier) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
+	node, err := b.Engine.GetNode(ctx, id)
 	if !b.missingOnly || errors.Is(err, storage.ErrNotFound) {
 		b.Pause(b.Armed, b.Entered)
 	}
@@ -58,21 +59,21 @@ func runOrphanObservation(t *testing.T, scenario orphanObservationCase) {
 	svc := NewService(barrier, 2, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	t.Cleanup(barrier.ReleaseWrites)
-	_, err := store.CreateNode(scenario.old)
+	_, err := store.CreateNode(t.Context(), scenario.old)
 	require.NoError(t, err)
 	require.NoError(t, svc.IndexNode(scenario.old))
-	require.NoError(t, store.DeleteNode("source"))
+	require.NoError(t, store.DeleteNode(t.Context(), "source"))
 	barrier.Armed.Store(true)
 	done := make(chan error, 1)
 	go func() { done <- scenario.read(ctx, svc) }()
 	fixtureowner.WaitForBarrier(t, barrier.Entered, scenario.timeout, barrier.ReleaseWrites, scenario.timeoutMessage)
-	_, err = store.CreateNode(scenario.newer)
+	_, err = store.CreateNode(t.Context(), scenario.newer)
 	require.NoError(t, err)
 	require.NoError(t, svc.IndexNode(scenario.newer))
 	barrier.ReleaseWrites()
 	require.NoError(t, <-done)
 	if scenario.assertStored {
-		_, err = store.GetNode("source")
+		_, err = store.GetNode(t.Context(), "source")
 		require.NoError(t, err, "the recreated source is stored")
 	}
 	require.Equal(t, 1, svc.EmbeddingCount(), scenario.completionMessage)

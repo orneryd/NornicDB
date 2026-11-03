@@ -66,13 +66,13 @@ func catalogV4Run(b *BadgerEngine, ctx context.Context) error {
 func catalogV4Node(t *testing.T, b *BadgerEngine, id NodeID) *Node {
 	t.Helper()
 	raw := catalogV4Snapshot(t, b)[string(nodeKey(id))]
-	node, err := b.decodeNode(namespaceForNodeID(id), raw)
+	node, err := b.decodeNodeProjected(nil, namespaceForNodeID(id), raw, nil)
 	require.NoError(t, err)
 	return node
 }
 func catalogV4Seed(t *testing.T, b *BadgerEngine, id NodeID, data interface{}) {
 	t.Helper()
-	_, err := b.CreateNode(&Node{ID: id, Labels: []string{"_System", "_Metadata"}, Properties: map[string]interface{}{"data": data, "unknown_future": map[string]interface{}{"items": []interface{}{int64(17), "keep"}}, "server_id": "keep-id"}, CreatedAt: time.Unix(1700000000, 37).UTC(), UpdatedAt: time.Unix(1700000100, 41).UTC(), NamedEmbeddings: map[string][]float32{"named": {1, 2}}, ChunkEmbeddings: [][]float32{{3, 4}}, EmbedMeta: map[string]interface{}{"model": "keep"}})
+	_, err := b.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"_System", "_Metadata"}, Properties: map[string]interface{}{"data": data, "unknown_future": map[string]interface{}{"items": []interface{}{int64(17), "keep"}}, "server_id": "keep-id"}, CreatedAt: time.Unix(1700000000, 37).UTC(), UpdatedAt: time.Unix(1700000100, 41).UTC(), NamedEmbeddings: map[string][]float32{"named": {1, 2}}, ChunkEmbeddings: [][]float32{{3, 4}}, EmbedMeta: map[string]interface{}{"model": "keep"}})
 	require.NoError(t, err)
 }
 
@@ -105,7 +105,7 @@ func TestCatalogUpgradeV4AtomicPayloadAndVersion(t *testing.T) {
 	before := catalogV4Snapshot(t, b)
 	oldNode := catalogV4Node(t, b, id)
 	// Prime point/body caches: settlement must not return the old catalog image.
-	_, err = b.GetNode(id)
+	_, err = b.GetNode(t.Context(), id)
 	require.NoError(t, err)
 	require.NoError(t, catalogV4Run(b, ctx))
 	require.Equal(t, 1, calls)
@@ -125,7 +125,7 @@ func TestCatalogUpgradeV4AtomicPayloadAndVersion(t *testing.T) {
 			require.Equal(t, value, after[key], fmt.Sprintf("unrelated key %x changed", key))
 		}
 	}
-	current, err := b.GetNode(id)
+	current, err := b.GetNode(t.Context(), id)
 	require.NoError(t, err)
 	require.Equal(t, `{"secret":"encrypted"}`, current.Properties["data"])
 	require.NoError(t, catalogV4Run(b, t.Context()))
@@ -163,16 +163,16 @@ func TestCatalogUpgradeV4RejectsWithoutWrites(t *testing.T) {
 			b, _ := catalogV4Engine(t, plan)
 			catalogV4Seed(t, b, id, `{"old":1}`)
 			if kind == "wrong-data-type" {
-				node, err := b.GetNode(id)
+				node, err := b.GetNode(t.Context(), id)
 				require.NoError(t, err)
 				node.Properties["data"] = int64(1)
-				require.NoError(t, b.UpdateNode(NodeUpdateRequest{After: node}))
+				require.NoError(t, b.UpdateNode(t.Context(), NodeUpdateRequest{After: node}))
 			}
 			if kind == "missing-data" {
-				node, err := b.GetNode(id)
+				node, err := b.GetNode(t.Context(), id)
 				require.NoError(t, err)
 				delete(node.Properties, "data")
-				require.NoError(t, b.UpdateNode(NodeUpdateRequest{After: node}))
+				require.NoError(t, b.UpdateNode(t.Context(), NodeUpdateRequest{After: node}))
 			}
 			if kind == "corrupt-body" {
 				require.NoError(t, b.db.Update(func(tx *badger.Txn) error { return tx.Set(nodeKey(id), []byte("corrupt")) }))
@@ -268,7 +268,7 @@ func TestCatalogUpgradeV4GrowthAndUnsupportedVectorImage(t *testing.T) {
 			if vectors {
 				catalogV4Seed(t, b, id, "old")
 			} else {
-				_, err := b.CreateNode(&Node{ID: id, Properties: map[string]interface{}{"data": "old"}})
+				_, err := b.CreateNode(t.Context(), &Node{ID: id, Properties: map[string]interface{}{"data": "old"}})
 				require.NoError(t, err)
 			}
 			before := catalogV4Snapshot(t, b)

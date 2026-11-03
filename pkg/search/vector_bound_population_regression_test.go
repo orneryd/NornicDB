@@ -3,11 +3,12 @@ package search
 import (
 	"context"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"math"
 	"path/filepath"
 	"sync"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -78,7 +79,7 @@ func TestServiceSearchDoesNotPruneUnsurfacedBestMember(t *testing.T) {
 			vectors = [][]float32{{0.1, float32(math.Sqrt(0.99))}, {1, 0}}
 		}
 		node := &storage.Node{ID: storage.NodeID(id), Labels: []string{"Doc"}, ChunkEmbeddings: vectors}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, svc.IndexNode(node))
 		candidates = append(candidates, Candidate{ID: svc.nodeChunkVectors[id][0], Score: float64(vectors[0][0])})
@@ -117,7 +118,7 @@ func TestIVFPQOverflowCopiesDoNotInflateCappedPopulation(t *testing.T) {
 		v[n%dims] = 1
 		v[(n+1)%dims] = float32(n) / 1000
 		node := &storage.Node{ID: storage.NodeID(id), Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{v}}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, svc.IndexNode(node))
 		require.NoError(t, store.Add(svc.nodeChunkVectors[id][0], v))

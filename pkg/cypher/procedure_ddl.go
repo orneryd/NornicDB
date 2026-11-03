@@ -141,7 +141,7 @@ func (e *StorageExecutor) installPersistedProcedure(ctx context.Context, record 
 		before.Labels = slices.Clone(existing.Labels)
 		existing.Labels = ensureLabel(existing.Labels, procedureCatalogLabel)
 		existing.Properties = props
-		if err := store.UpdateNode(storage.NodeUpdateRequest{Before: &before, After: existing}); err != nil {
+		if err := store.UpdateNode(ctx, storage.NodeUpdateRequest{Before: &before, After: existing}); err != nil {
 			return localizedError(localization.CypherProceduresUpdateCatalogFailed(err), err)
 		}
 	} else {
@@ -150,7 +150,7 @@ func (e *StorageExecutor) installPersistedProcedure(ctx context.Context, record 
 			Labels:     []string{procedureCatalogLabel},
 			Properties: props,
 		}
-		if _, err := store.CreateNode(node); err != nil {
+		if _, err := store.CreateNode(ctx, node); err != nil {
 			return localizedError(localization.CypherProceduresPersistCatalogFailed(err), err)
 		}
 	}
@@ -186,7 +186,7 @@ func (e *StorageExecutor) dropPersistedProcedure(ctx context.Context, name strin
 	if existing == nil {
 		return localizedError(localization.CypherProceduresDropFailed(name, storage.ErrNotFound), storage.ErrNotFound)
 	}
-	if err := store.DeleteNode(existing.ID); err != nil {
+	if err := store.DeleteNode(ctx, existing.ID); err != nil {
 		return localizedError(localization.CypherProceduresDropFailed(name, err), err)
 	}
 	// Keep implementation simple and deterministic: refresh user registry from persisted catalog.

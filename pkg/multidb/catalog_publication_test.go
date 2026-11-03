@@ -232,7 +232,7 @@ func TestF25OtherCatalogPublicationPrototype(t *testing.T) {
 				beforeBytes, err := json.Marshal(before)
 				require.NoError(t, err)
 				durable := func() json.RawMessage {
-					node, err := base.GetNode("system:databases:metadata")
+					node, err := base.GetNode(t.Context(), "system:databases:metadata")
 					require.NoError(t, err)
 					var records map[string]json.RawMessage
 					require.NoError(t, json.Unmarshal([]byte(node.Properties["data"].(string)), &records))
@@ -343,7 +343,7 @@ func TestF25StandardDropCompletionPrototype(t *testing.T) {
 				require.NoError(t, manager.CreateDatabase(backing.ownerContext, DatabaseCreateRequest{Name: name}))
 				view, err := manager.GetStorage(name)
 				require.NoError(t, err)
-				_, err = view.CreateNode(&storage.Node{ID: "keep"})
+				_, err = view.CreateNode(t.Context(), &storage.Node{ID: "keep"})
 				require.NoError(t, err)
 			}
 			scope, err := manager.StatementCacheScope("target")
@@ -365,9 +365,9 @@ func TestF25StandardDropCompletionPrototype(t *testing.T) {
 				assert.False(t, scope.Valid(), label+" admitted DROP retires graph cache even if completion fails")
 				_, err := manager.GetStorage("target")
 				require.Error(t, err)
-				_, err = base.GetNode("target:keep")
+				_, err = base.GetNode(t.Context(), "target:keep")
 				assert.ErrorIs(t, err, storage.ErrNotFound, label+" completed physical removal cannot be rolled back")
-				_, err = base.GetNode("peer:keep")
+				_, err = base.GetNode(t.Context(), "peer:keep")
 				assert.NoError(t, err, label+" peer remains")
 			}
 			inspect("return")
@@ -390,7 +390,7 @@ func TestF25StandardDropCompletionPrototype(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = reloaded.Close() })
 			assert.False(t, reloaded.Exists("target"), "durable pending intent completes during writable reopen")
-			_, err = reopened.GetNode("peer:keep")
+			_, err = reopened.GetNode(t.Context(), "peer:keep")
 			assert.NoError(t, err)
 		})
 	}

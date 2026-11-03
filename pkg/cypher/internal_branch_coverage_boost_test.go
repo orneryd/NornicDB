@@ -16,17 +16,17 @@ func TestEvaluateWithWhere_Branches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "n2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Bob"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "n2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Bob"}})
 	require.NoError(t, err)
-	err = store.CreateEdge(&storage.Edge{ID: "r1", Type: "KNOWS", StartNode: "n1", EndNode: "n2"})
+	err = store.CreateEdge(t.Context(), &storage.Edge{ID: "r1", Type: "KNOWS", StartNode: "n1", EndNode: "n2"})
 	require.NoError(t, err)
 
-	node, err := store.GetNode("n1")
+	node, err := store.GetNode(t.Context(), "n1")
 	require.NoError(t, err)
 	require.NotNil(t, node)
-	edge, err := store.GetEdge("r1")
+	edge, err := store.GetEdge(t.Context(), "r1")
 	require.NoError(t, err)
 	require.NotNil(t, edge)
 
@@ -100,14 +100,14 @@ func TestExecuteDeleteStreaming_NodeAndRelationshipPaths(t *testing.T) {
 	ctx := context.Background()
 
 	for i := 0; i < 3; i++ {
-		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("v-%d", i)), Labels: []string{"Victim"}})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("v-%d", i)), Labels: []string{"Victim"}})
 		require.NoError(t, err)
 	}
-	_, err := store.CreateNode(&storage.Node{ID: "s", Labels: []string{"Start"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "s", Labels: []string{"Start"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "t", Labels: []string{"Target"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "t", Labels: []string{"Target"}})
 	require.NoError(t, err)
-	err = store.CreateEdge(&storage.Edge{ID: "r-del", Type: "REL", StartNode: "s", EndNode: "t"})
+	err = store.CreateEdge(t.Context(), &storage.Edge{ID: "r-del", Type: "REL", StartNode: "s", EndNode: "t"})
 	require.NoError(t, err)
 
 	res, err := exec.Execute(ctx, "MATCH (n:Victim)"+" DETACH DELETE "+"n", getParamsFromContext(ctx))
@@ -131,91 +131,15 @@ func TestExecuteDeleteStreaming_NodeAndRelationshipPaths(t *testing.T) {
 	require.EqualValues(t, 0, remainingRels.Rows[0][0])
 }
 
-func TestCollectDeleteWithLimitCandidates_Branches(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "cov_collect")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	for _, n := range []struct {
-		id   string
-		name string
-		tag  string
-	}{
-		{"a", "alice", "x"},
-		{"b", "bob", "y"},
-		{"c", "carol", "x"},
-	} {
-		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(n.id), Labels: []string{"Person"}, Properties: map[string]interface{}{"name": n.name, "tag": n.tag}})
-		require.NoError(t, err)
-	}
-
-	nodes, ok, err := exec.collectDeleteWithLimitCandidates(
-		ctx,
-		"MATCH (n:Person) WHERE n.name = $name",
-		"n",
-		10,
-		map[string]interface{}{"name": "alice"},
-	)
-	require.NoError(t, err)
-	require.True(t, ok)
-	require.Len(t, nodes, 1)
-	require.Equal(t, storage.NodeID("a"), nodes[0].ID)
-
-	nodes, ok, err = exec.collectDeleteWithLimitCandidates(
-		ctx,
-		"MATCH (n:Person) WHERE n.tag IN $tags",
-		"n",
-		10,
-		map[string]interface{}{"tags": []interface{}{"x"}},
-	)
-	require.NoError(t, err)
-	require.True(t, ok)
-	require.Len(t, nodes, 2)
-
-	nodes, ok, err = exec.collectDeleteWithLimitCandidates(
-		ctx,
-		"MATCH (n:Person) WHERE n.tag IN $tags",
-		"n",
-		10,
-		map[string]interface{}{},
-	)
-	require.NoError(t, err)
-	require.True(t, ok)
-	require.Empty(t, nodes)
-
-	nodes, ok, err = exec.collectDeleteWithLimitCandidates(
-		ctx,
-		"MATCH (n:Person) WHERE n.name <> 'alice'",
-		"n",
-		10,
-		nil,
-	)
-	require.NoError(t, err)
-	require.False(t, ok)
-	require.Nil(t, nodes)
-
-	nodes, ok, err = exec.collectDeleteWithLimitCandidates(
-		ctx,
-		"MATCH (:Person) WHERE n.name = 'alice'",
-		"n",
-		10,
-		nil,
-	)
-	require.NoError(t, err)
-	require.False(t, ok)
-	require.Nil(t, nodes)
-}
-
 func TestExecuteCorrelatedCallWithSeedRows_Branches(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "cov_subq")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{ID: "seed-1", Labels: []string{"Seed"}, Properties: map[string]interface{}{"name": "Alice"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "seed-1", Labels: []string{"Seed"}, Properties: map[string]interface{}{"name": "Alice"}})
 	require.NoError(t, err)
-	seedNode, err := store.GetNode("seed-1")
+	seedNode, err := store.GetNode(t.Context(), "seed-1")
 	require.NoError(t, err)
 	require.NotNil(t, seedNode)
 
@@ -272,26 +196,26 @@ func TestCallAndClauseHelpers_Branches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{ID: "a", Labels: []string{"N"}, Properties: map[string]interface{}{"name": "A"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"N"}, Properties: map[string]interface{}{"name": "A"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "b", Labels: []string{"N"}, Properties: map[string]interface{}{"name": "B"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"N"}, Properties: map[string]interface{}{"name": "B"}})
 	require.NoError(t, err)
-	err = store.CreateEdge(&storage.Edge{ID: "ab", Type: "REL", StartNode: "a", EndNode: "b", Properties: map[string]interface{}{"w": int64(5)}})
-	require.NoError(t, err)
-
-	aNode, err := store.GetNode("a")
-	require.NoError(t, err)
-	abEdge, err := store.GetEdge("ab")
+	err = store.CreateEdge(t.Context(), &storage.Edge{ID: "ab", Type: "REL", StartNode: "a", EndNode: "b", Properties: map[string]interface{}{"w": int64(5)}})
 	require.NoError(t, err)
 
-	require.Equal(t, "MATCH (n) RETURN n", buildCallTailPredicateInjection(" MATCH (n) RETURN n ", nil))
+	aNode, err := store.GetNode(t.Context(), "a")
+	require.NoError(t, err)
+	abEdge, err := store.GetEdge(t.Context(), "ab")
+	require.NoError(t, err)
+
+	require.Equal(t, "MATCH (n) RETURN n", buildCallTailPredicateInjection(ctx, " MATCH (n) RETURN n ", nil))
 	require.Equal(t,
 		"MATCH (n) WHERE n.id = '1' AND x = 1 RETURN n",
-		buildCallTailPredicateInjection("MATCH (n) WHERE n.id = '1' RETURN n", []string{"x = 1"}),
+		buildCallTailPredicateInjection(ctx, "MATCH (n) WHERE n.id = '1' RETURN n", []string{"x = 1"}),
 	)
 	require.Equal(t,
 		"MATCH (n) WHERE x = 1 RETURN n",
-		buildCallTailPredicateInjection("MATCH (n) RETURN n", []string{"x = 1"}),
+		buildCallTailPredicateInjection(ctx, "MATCH (n) RETURN n", []string{"x = 1"}),
 	)
 
 	varMap := map[string]interface{}{"s": aNode}
@@ -335,19 +259,14 @@ func TestMergeAndMutationHelpers_Branches(t *testing.T) {
 	require.Equal(t, []string{"x", "y"}, edge.Properties["tags"])
 	require.Equal(t, "Alice", edge.Properties["owner"])
 
-	withVar := wherePartNodePattern(nodePatternInfo{variable: ""}, "n")
-	require.Equal(t, "n", withVar.variable)
-	withExisting := wherePartNodePattern(nodePatternInfo{variable: "x"}, "n")
-	require.Equal(t, "x", withExisting.variable)
-
-	_, err = store.CreateNode(&storage.Node{ID: "na", Labels: []string{"N"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "na", Labels: []string{"N"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "nb", Labels: []string{"N"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "nb", Labels: []string{"N"}})
 	require.NoError(t, err)
-	err = store.CreateEdge(&storage.Edge{ID: "edge-1", Type: "REL", StartNode: "na", EndNode: "nb"})
+	err = store.CreateEdge(t.Context(), &storage.Edge{ID: "edge-1", Type: "REL", StartNode: "na", EndNode: "nb"})
 	require.NoError(t, err)
 	matchResult := &ExecuteResult{Rows: [][]interface{}{{map[string]interface{}{"_edgeId": "edge-1"}}}}
-	exec.normalizeSetMatchRowsToEdges(matchResult, store)
+	exec.normalizeSetMatchRowsToEdges(t.Context(), matchResult, store)
 	_, converted := matchResult.Rows[0][0].(*storage.Edge)
 	require.True(t, converted)
 }
@@ -366,7 +285,7 @@ func TestSubqueryHelperBranches(t *testing.T) {
 	_, _, ok = splitTopLevelEqualityCallSubquery("x")
 	require.False(t, ok)
 
-	idx := indexTopLevelKeywordCallSubquery(`x = "RETURN y" RETURN x`, "RETURN")
+	idx := indexTopLevelKeywordCallSubquery(ctx, `x = "RETURN y" RETURN x`, "RETURN")
 	require.Equal(t, 15, idx)
 
 	cache := map[string]map[string]interface{}{"s1": {"x": "cached"}}
@@ -375,7 +294,7 @@ func TestSubqueryHelperBranches(t *testing.T) {
 	require.True(t, found)
 	require.Equal(t, "cached", val)
 
-	_, err = store.CreateNode(&storage.Node{ID: "s1", Labels: []string{"Seed"}, Properties: map[string]interface{}{"v": "vv"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "s1", Labels: []string{"Seed"}, Properties: map[string]interface{}{"v": "vv"}})
 	require.NoError(t, err)
 
 	cache = map[string]map[string]interface{}{}
@@ -457,7 +376,7 @@ func TestExecuteDeleteStreaming_FallbackNoDeletes(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{ID: "n1", Labels: []string{"Victim"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "n1", Labels: []string{"Victim"}})
 	require.NoError(t, err)
 
 	// deleteVars references an unresolved symbol, so rows are returned but no deletes occur;
@@ -477,11 +396,11 @@ func TestResolveCorrelatedImportValue_OptionalFallbackBranch(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{ID: "seed-1", Labels: []string{"Seed"}, Properties: map[string]interface{}{"name": "keep"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "seed-1", Labels: []string{"Seed"}, Properties: map[string]interface{}{"name": "keep"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "t-1", Labels: []string{"Target"}, Properties: map[string]interface{}{"name": "T1"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "t-1", Labels: []string{"Target"}, Properties: map[string]interface{}{"name": "T1"}})
 	require.NoError(t, err)
-	err = store.CreateEdge(&storage.Edge{ID: "e-1", Type: "REL", StartNode: "seed-1", EndNode: "t-1"})
+	err = store.CreateEdge(t.Context(), &storage.Edge{ID: "e-1", Type: "REL", StartNode: "seed-1", EndNode: "t-1"})
 	require.NoError(t, err)
 
 	outerPart := "MATCH (seed:Seed) WHERE seed.name = 'none' OPTIONAL MATCH (seed)-[:REL]->(t:Target) WITH seed, t"
@@ -504,13 +423,13 @@ func TestResolveCorrelatedImportValue_DoesNotLeakSingleMismatchedRow(t *testing.
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{ID: "seed-a", Labels: []string{"Seed"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "seed-a", Labels: []string{"Seed"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "seed-b", Labels: []string{"Seed"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "seed-b", Labels: []string{"Seed"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "target-b", Labels: []string{"Target"}, Properties: map[string]interface{}{"name": "B"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "target-b", Labels: []string{"Target"}, Properties: map[string]interface{}{"name": "B"}})
 	require.NoError(t, err)
-	err = store.CreateEdge(&storage.Edge{ID: "edge-b", Type: "REL", StartNode: "seed-b", EndNode: "target-b"})
+	err = store.CreateEdge(t.Context(), &storage.Edge{ID: "edge-b", Type: "REL", StartNode: "seed-b", EndNode: "target-b"})
 	require.NoError(t, err)
 
 	// This outer query yields exactly one row for seed-b. Asking for seed-a must

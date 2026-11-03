@@ -93,9 +93,9 @@ func TestPipelineMatchCases(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "pipeline_match_cov")
 	n := &storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"id": "p1"}}
-	_, err := store.CreateNode(n)
+	_, err := store.CreateNode(t.Context(), n)
 	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "e1", Type: "R", StartNode: "n1", EndNode: "n1"}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "e1", Type: "R", StartNode: "n1", EndNode: "n1"}))
 	unusedCalls := 0
 	rows := []pipelineRow{{
 		"node":          n,

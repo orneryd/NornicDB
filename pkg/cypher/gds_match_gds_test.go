@@ -246,12 +246,12 @@ func TestLinkPredictionAsGDS(t *testing.T) {
 	exec := NewStorageExecutor(engine)
 	run := func(query string) (*ExecuteResult, error) { return exec.Execute(context.Background(), query, nil) }
 	for _, id := range []string{"a", "b", "c", "d", "iso"} {
-		_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{"P"}, Properties: map[string]interface{}{"name": id}})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(id), Labels: []string{"P"}, Properties: map[string]interface{}{"name": id}})
 		require.NoError(t, err)
 	}
 	// a→a, a→b twice, b→c, c→b, c→d: the issue's repeated relationships.
 	for i, edge := range [][3]string{{"a", "a", "K"}, {"a", "b", "K"}, {"a", "b", "K"}, {"b", "c", "K"}, {"c", "b", "K"}, {"c", "d", "L"}} {
-		require.NoError(t, engine.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("e%d", i)), StartNode: storage.NodeID(edge[0]), EndNode: storage.NodeID(edge[1]), Type: edge[2]}))
+		require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: storage.EdgeID(fmt.Sprintf("e%d", i)), StartNode: storage.NodeID(edge[0]), EndNode: storage.NodeID(edge[1]), Type: edge[2]}))
 	}
 	scores := func(query string) map[string]float64 {
 		t.Helper()
@@ -292,9 +292,9 @@ func TestLinkPredictionAsGDS(t *testing.T) {
 	require.NotContains(t, scores("CALL gds.linkPrediction.commonNeighbors.stream('gk', {sourceNode: 'b'})"), "d")
 	require.Contains(t, scores("CALL gds.linkPrediction.commonNeighbors.stream({sourceNode: 'b'})"), "d")
 	// Writes after projecting aren't in the graph.
-	_, err = engine.CreateNode(&storage.Node{ID: "late", Labels: []string{"P"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "late", Labels: []string{"P"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "late-a", StartNode: "late", EndNode: "a", Type: "K"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "late-a", StartNode: "late", EndNode: "a", Type: "K"}))
 	require.NotContains(t, scores("CALL gds.linkPrediction.commonNeighbors.stream('gk', {sourceNode: 'b'})"), "late")
 	require.Contains(t, scores("CALL gds.linkPrediction.commonNeighbors.stream({sourceNode: 'b'})"), "late")
 	// An undirected projection's relationship counts once in a degree.

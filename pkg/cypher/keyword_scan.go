@@ -6,6 +6,7 @@ package cypher
 // comments and bracket nesting tracked inline instead of by a lexer.
 
 import (
+	"context"
 	"hash/maphash"
 	"strings"
 	"sync/atomic"
@@ -202,8 +203,8 @@ func defaultKeywordScanOpts() keywordScanOpts {
 	}
 }
 
-func keywordIndex(s, keyword string) int {
-	return keywordIndexFrom(s, keyword, 0, defaultKeywordScanOpts())
+func keywordIndex(ctx context.Context, s, keyword string) int {
+	return keywordIndexFrom(ctx, s, keyword, 0, defaultKeywordScanOpts())
 }
 
 // topLevelKeywordIndex finds a keyword only at the "top level" of the query,
@@ -215,10 +216,10 @@ func keywordIndex(s, keyword string) int {
 // NOTE: General-purpose findKeywordIndex intentionally does NOT skip {} by default, because
 // braces are used for write operations (CREATE {...}) and CALL { ... } subqueries, and other
 // analyzers need to see keywords within those bodies.
-func topLevelKeywordIndex(s, keyword string) int {
+func topLevelKeywordIndex(ctx context.Context, s, keyword string) int {
 	opts := defaultKeywordScanOpts()
 	opts.SkipBraces = true
-	return keywordIndexFrom(s, keyword, 0, opts)
+	return keywordIndexFrom(ctx, s, keyword, 0, opts)
 }
 
 // isWithKeyword reports whether a keyword search is for the WITH clause.
@@ -301,11 +302,11 @@ func isOperatorWith(s string, pos int) bool {
 // another clause keyword (RETURN skip ORDER BY skip). Inside a CASE … END
 // block no clause can start, so a clause keyword there is a name wherever it
 // stands (CASE match WHEN 1 THEN match END; #1162).
-func clauseKeywordUsedAsName(s string, pos, end int, keyword string) bool {
+func clauseKeywordUsedAsName(ctx context.Context, s string, pos, end int, keyword string) bool {
 	if !isNameableClauseKeyword(keyword) {
 		return false
 	}
-	return useGraphNameAt(s, pos) || clauseKeywordNamedByContext(s, pos, end, keyword) || insideCaseBlock(s, pos)
+	return useGraphNameAt(ctx, s, pos) || clauseKeywordNamedByContext(ctx, s, pos, end, keyword) || insideCaseBlock(s, pos)
 }
 
 // rawWordBefore is the identifier that ends at the last non-space byte
@@ -324,7 +325,7 @@ func rawWordBefore(s string, pos int) string {
 
 // clauseKeywordNamedByContext is clauseKeywordUsedAsName's reading of the
 // keyword's neighbours.
-func clauseKeywordNamedByContext(s string, pos, end int, keyword string) bool {
+func clauseKeywordNamedByContext(ctx context.Context, s string, pos, end int, keyword string) bool {
 	i := lastLiveByte(s, pos)
 	if i >= 0 {
 		switch s[i] {
@@ -392,7 +393,7 @@ func clauseKeywordNamedByContext(s string, pos, end int, keyword string) bool {
 	}
 	// The word before is a keyword only when it isn't itself a name
 	// (WITH 1 AS set RETURN …: set is an alias, so RETURN is a clause).
-	if wordIsName(s, i+1) {
+	if wordIsName(ctx, s, i+1) {
 		return false
 	}
 	if strings.EqualFold(s[i+1:wordEnd], "DISTINCT") {
@@ -411,8 +412,8 @@ func isDigitByte(character byte) bool { return cyphertext.IsDigit(character) }
 // OR, XOR, NOT, IN), a word other than NOT, CASE and DISTINCT is a name too
 // (WITH x, where RETURN where, WITH where WHERE where = 3, RETURN by ORDER BY
 // by, WHERE x AND not RETURN â€¦; #894).
-func wordIsName(s string, wordStart int) bool {
-	if useGraphNameAt(s, wordStart) {
+func wordIsName(ctx context.Context, s string, wordStart int) bool {
+	if useGraphNameAt(ctx, s, wordStart) {
 		return true
 	}
 	i := lastLiveByte(s, wordStart)
@@ -433,9 +434,9 @@ func wordIsName(s string, wordStart int) bool {
 	// (WITH 3 AS as WITH as RETURN as, WITH 3 AS with WITH with WHERE â€¦).
 	switch word := s[i+1 : end]; {
 	case strings.EqualFold(word, "AS"):
-		return !wordIsName(s, i+1)
+		return !wordIsName(ctx, s, i+1)
 	case expressionFollowsKeyword(word):
-		return !wordStartsExpression(s[wordStart:]) && !wordIsName(s, i+1)
+		return !wordStartsExpression(s[wordStart:]) && !wordIsName(ctx, s, i+1)
 	}
 	return false
 }
@@ -596,9 +597,12 @@ func isExpressionBoundaryWord(word string) bool {
 // keywordIndexFrom finds keyword from `from` on. When the keyword is WITH, the
 // WITH of STARTS WITH / ENDS WITH is skipped (isOperatorWith, checked at each
 // match in both scan loops, so cached results already exclude it).
-func keywordIndexFrom(s, keyword string, from int, opts keywordScanOpts) int {
+func keywordIndexFrom(ctx context.Context, s, keyword string, from int, opts keywordScanOpts) int {
 	if isDefaultKeywordScanOpts(opts) {
-		return cachedKeywordIndexFromDefault(s, keyword, from)
+		return cachedKeywordIndexFromDefault(ctx, s, keyword, from)
+	}
+	if ctx.Err() != nil {
+		return -1
 	}
 
 	ks, ke := trimKeywordWSBounds(keyword)
@@ -621,6 +625,9 @@ func keywordIndexFrom(s, keyword string, from int, opts keywordScanOpts) int {
 	)
 
 	for i := from; i < len(s); i++ {
+		if i&1023 == 0 && ctx.Err() != nil {
+			return -1
+		}
 		c := s[i]
 		if opts.SkipComments {
 			if end := cyphertext.CommentEnd(s, i); end >= 0 {
@@ -679,8 +686,11 @@ func keywordIndexFrom(s, keyword string, from int, opts keywordScanOpts) int {
 		if ke-ks == len("WITH") && isWithKeyword(keyword) && isOperatorWith(s, i) {
 			continue
 		}
-		if clauseKeywordUsedAsName(s, i, endPos, keyword) {
+		if clauseKeywordUsedAsName(ctx, s, i, endPos, keyword) {
 			continue
+		}
+		if ctx.Err() != nil {
+			return -1
 		}
 		return i
 	}
@@ -688,18 +698,23 @@ func keywordIndexFrom(s, keyword string, from int, opts keywordScanOpts) int {
 	return -1
 }
 
-func cachedKeywordIndexFromDefault(s, keyword string, from int) int {
+func cachedKeywordIndexFromDefault(ctx context.Context, s, keyword string, from int) int {
+	if ctx.Err() != nil {
+		return -1
+	}
 	key := keywordIndexCacheKey{s: s, keyword: keyword, from: from}
 	if idx, ok := defaultKeywordIndexCache.get(key); ok {
 		return idx
 	}
-	idx := keywordIndexFromDefault(s, keyword, from)
-	defaultKeywordIndexCache.put(key, idx)
+	idx := keywordIndexFromDefault(ctx, s, keyword, from)
+	if ctx.Err() == nil {
+		defaultKeywordIndexCache.put(key, idx)
+	}
 	return idx
 }
 
-func keywordIndexFromDefault(s, keyword string, from int) int {
-	return firstKeywordIndexFromDefault(s, from, keyword)
+func keywordIndexFromDefault(ctx context.Context, s, keyword string, from int) int {
+	return firstKeywordIndexFromDefault(ctx, s, from, keyword)
 }
 
 // maxKeywordSet is the most keywords firstKeywordIndexFromDefault takes.
@@ -710,7 +725,10 @@ const maxKeywordSet = 16
 // same strings, comments, nesting and name rules), or -1. A set of clause
 // keywords is found in one scan rather than one scan per keyword. It takes
 // at most maxKeywordSet keywords.
-func firstKeywordIndexFromDefault(s string, from int, keywords ...string) int {
+func firstKeywordIndexFromDefault(ctx context.Context, s string, from int, keywords ...string) int {
+	if ctx.Err() != nil {
+		return -1
+	}
 	if len(keywords) > maxKeywordSet {
 		panic("firstKeywordIndexFromDefault: more than maxKeywordSet keywords")
 	}
@@ -739,6 +757,9 @@ func firstKeywordIndexFromDefault(s string, from int, keywords ...string) int {
 	)
 
 	for i := from; i < len(s); i++ {
+		if i&1023 == 0 && ctx.Err() != nil {
+			return -1
+		}
 		c := s[i]
 		if end, opaque := cyphertext.SkipToken(s, i); opaque {
 			i = end - 1
@@ -793,8 +814,11 @@ func firstKeywordIndexFromDefault(s string, from int, keywords ...string) int {
 			if b.ke-b.ks == len("WITH") && isWithKeyword(keyword) && isOperatorWith(s, i) {
 				continue
 			}
-			if clauseKeywordUsedAsName(s, i, endPos, keyword) {
+			if clauseKeywordUsedAsName(ctx, s, i, endPos, keyword) {
 				continue
+			}
+			if ctx.Err() != nil {
+				return -1
 			}
 			return i
 		}
@@ -1032,7 +1056,7 @@ func queryGapEnd(query string, index int) int {
 // settings and statements by lines; constraint contracts (CREATE CONSTRAINT
 // … REQUIRE { … }, one predicate per line); and CREATE [OR REPLACE]
 // PROCEDURE, which stores its body's text.
-func hasOwnStatementSyntax(query string) bool {
+func hasOwnStatementSyntax(ctx context.Context, query string) bool {
 	var words [3]string
 	count := 0
 	for index := queryGapEnd(query, 0); index < len(query) && count < len(words); index = queryGapEnd(query, index) {
@@ -1051,7 +1075,7 @@ func hasOwnStatementSyntax(query string) bool {
 		return true
 	case strings.EqualFold(words[0], "CREATE") && strings.EqualFold(words[1], "CONSTRAINT"):
 		// A constraint contract: REQUIRE { one predicate per line }.
-		if require := keywordIndex(query, "REQUIRE"); require >= 0 {
+		if require := keywordIndex(ctx, query, "REQUIRE"); require >= 0 {
 			if open := queryGapEnd(query, require+len("REQUIRE")); open < len(query) && query[open] == '{' {
 				return true
 			}
@@ -1121,8 +1145,8 @@ func (m *canonicalRewriteMemo) slot(query string) *atomic.Pointer[queryRewrite] 
 // detection): its canonical form, whatever NORNICDB_CYPHER_QUERY_NORMALIZATION
 // says, so a comment or unusual spacing never changes them. A statement that
 // is canonical already is returned as is, without allocating.
-func classificationText(query string) string {
-	canonical, _ := canonicalizeQueryText(query)
+func classificationText(ctx context.Context, query string) string {
+	canonical, _ := canonicalizeQueryText(ctx, query)
 	return canonical
 }
 
@@ -1185,21 +1209,21 @@ func aliasKeywordAt(query string, at int, position aliasKeywordPosition) bool {
 // the rewrite that maps it back, or query and nil when it is canonical
 // already; it doesn't allocate then, nor for a formatted statement whose
 // rewrite is memoized (canonicalRewrites).
-func canonicalizeQueryText(query string) (string, *queryRewrite) {
+func canonicalizeQueryText(ctx context.Context, query string) (string, *queryRewrite) {
 	if !queryMayNeedCanonicalRewrite(query) {
 		return query, nil
 	}
-	return scanCanonicalQueryText(query)
+	return scanCanonicalQueryText(ctx, query)
 }
 
 // scanCanonicalQueryText is canonicalizeQueryText's full scan, for a query
 // the quick check couldn't clear.
-func scanCanonicalQueryText(query string) (string, *queryRewrite) {
-	canonical, rewrite, _ := readCanonicalQueryText(query, false)
+func scanCanonicalQueryText(ctx context.Context, query string) (string, *queryRewrite) {
+	canonical, rewrite, _ := readCanonicalQueryText(ctx, query, false)
 	return canonical, rewrite
 }
 
-func readCanonicalQueryText(query string, admit bool) (string, *queryRewrite, error) {
+func readCanonicalQueryText(ctx context.Context, query string, admit bool) (string, *queryRewrite, error) {
 	var (
 		rewrite  *queryRewrite
 		memoized *queryRewrite
@@ -1227,7 +1251,7 @@ func readCanonicalQueryText(query string, admit bool) (string, *queryRewrite, er
 	// a statement with its own syntax, or the leading shell command lines
 	// (:USE db, :param …), which end at their line breaks.
 	verbatimEnd := leadingShellCommandsEnd(query)
-	if hasOwnStatementSyntax(query[verbatimEnd:]) {
+	if hasOwnStatementSyntax(ctx, query[verbatimEnd:]) {
 		verbatimEnd = len(query)
 	}
 	for index := 0; index < len(query); {

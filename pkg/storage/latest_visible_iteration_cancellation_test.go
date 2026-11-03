@@ -29,10 +29,10 @@ func latestVisibleFixtureEngine(t *testing.T) (*MemoryEngine, NodeID, NodeID) {
 	t.Helper()
 	engine, aliceID, bobID, _ := mvccPublicAPIFixture(t)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	for i := 0; i < latestVisibleBulkPopulation; i++ {
-		_, err := tx.CreateNode(&Node{
+		_, err := tx.CreateNode(t.Context(), &Node{
 			ID:         NodeID(fmt.Sprintf("test:bulk-node-%03d", i)),
 			Labels:     []string{"Bulk"},
 			Properties: map[string]any{"i": int64(i)},
@@ -146,10 +146,10 @@ func TestMVCCLatestVisibleNodesIterationCancellation(t *testing.T) {
 func TestMVCCLatestVisibleEdgesIterationLifetime(t *testing.T) {
 	engine, aliceID, bobID := latestVisibleFixtureEngine(t)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	for i := 0; i < latestVisibleBulkPopulation; i++ {
-		require.NoError(t, tx.CreateEdge(&Edge{
+		require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 			ID:         EdgeID(fmt.Sprintf("test:bulk-edge-%03d", i)),
 			StartNode:  aliceID,
 			EndNode:    bobID,
@@ -183,7 +183,7 @@ func TestMVCCLatestVisibleEdgesIterationLifetime(t *testing.T) {
 
 func TestMVCCLatestVisibleEnumerationNamespaceConflictPrecedence(t *testing.T) {
 	engine := newTestEngine(t)
-	_, err := engine.CreateNode(&Node{ID: "victim:n"})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "victim:n"})
 	require.NoError(t, err)
 
 	cleanupErr := errors.New("cleanup unavailable")
@@ -227,7 +227,7 @@ func TestMVCCLatestVisibleEnumerationNamespaceConflictPrecedence(t *testing.T) {
 
 func TestMVCCLatestVisibleNodesIterationReadErrorIdentity(t *testing.T) {
 	engine := newTestEngine(t)
-	_, err := engine.CreateNode(&Node{ID: "test:n"})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:n"})
 	require.NoError(t, err)
 	require.NoError(t, engine.Close())
 

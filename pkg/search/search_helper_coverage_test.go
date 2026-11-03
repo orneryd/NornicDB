@@ -18,14 +18,6 @@ func TestServiceWarmAndIntrospectionHelpers(t *testing.T) {
 	require.Equal(t, "unknown", svc.CurrentStrategy())
 	require.Equal(t, 0, svc.FulltextDocCount())
 
-	svc.MarkWarmDone()
-	svc.MarkWarmDone()
-	select {
-	case <-svc.warmDone:
-	default:
-		t.Fatal("MarkWarmDone should close warmDone")
-	}
-
 	svc.setFulltext(nil)
 	require.Equal(t, 0, svc.FulltextDocCount())
 
@@ -85,7 +77,7 @@ func TestPropertyVectorHelpers(t *testing.T) {
 }
 
 func TestScoreVectorIDDotBranches(t *testing.T) {
-	svc := &Service{}
+	svc := &Service{lifecycleCtx: t.Context()}
 	score, ok := svc.scoreVectorIDDot([]float32{1, 0}, "missing")
 	require.False(t, ok)
 	require.Equal(t, 0.0, score)
@@ -104,7 +96,7 @@ func TestScoreVectorIDDotBranches(t *testing.T) {
 }
 
 func TestIVFPQBackgroundPersistenceNoopBranches(t *testing.T) {
-	svc := &Service{}
+	svc := &Service{lifecycleCtx: t.Context()}
 	require.Empty(t, svc.ivfpqPersistenceBasePath("", ""))
 	require.Equal(t, "hnsw-path", svc.ivfpqPersistenceBasePath("vector-path", "hnsw-path"))
 	require.Equal(t, "vector-path", svc.ivfpqPersistenceBasePath("vector-path", ""))

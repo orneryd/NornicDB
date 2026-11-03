@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/config"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -109,7 +111,11 @@ func TestStatementExecutionContractReadsEveryUseSpelling(t *testing.T) {
 			query := use + body
 			got, err := readStatementExecutionContract(t.Context(), query)
 			require.NoError(t, err, query)
-			require.Equal(t, want, got, query)
+			expected := want
+			// Effects/permissions are graph-independent; the new private routing
+			// fact separately records a grammar USE for static atomic statements.
+			expected.selectsDatabase = expected.transaction && !expected.dynamic
+			require.Equal(t, expected, got, query)
 			require.Equal(t, want.writes, QueryPermissionRequirements(t.Context(), query, RawSource).Write, query)
 		}
 	}
@@ -277,7 +283,9 @@ func TestStatementExecutionAdmissionBoundary(t *testing.T) {
 			return true
 		})
 	}
-	for _, root := range []string{"readStatementExecutionContract", "statementNeedsTransaction", "StorageExecutor.admitResolvedStatementWrite", "StorageExecutor.observeResolvedStatementMode", "StorageExecutor.fabricProcedureWritePlan", "QueryPermissionRequirements"} {
+	require.NotContains(t, functions, "statementNeedsTransaction", "retired forwarding owner must not return")
+	require.True(t, implicitExecutionUsesCanonicalTransactionDecision(functions["StorageExecutor.executeImplicitAsync"]), "implicit admission must bind and branch on the canonical transaction contract")
+	for _, root := range []string{"readStatementExecutionContract", "StorageExecutor.admitResolvedStatementWrite", "StorageExecutor.observeResolvedStatementMode", "StorageExecutor.fabricProcedureWritePlan", "QueryPermissionRequirements"} {
 		require.Contains(t, functions, root)
 		seen := map[string]bool{}
 		var visit func(string, []string)
@@ -295,5 +303,123 @@ func TestStatementExecutionAdmissionBoundary(t *testing.T) {
 			}
 		}
 		visit(root, nil)
+	}
+}
+
+// Only the transaction decision is an admission root. Later read projection
+// legitimately consumes optimizer hints and is not part of this contract guard.
+func implicitExecutionUsesCanonicalTransactionDecision(fn *ast.FuncDecl) bool {
+	if fn == nil || fn.Body == nil {
+		return false
+	}
+	var binding *ast.Object
+	for _, statement := range fn.Body.List {
+		assignment, ok := statement.(*ast.AssignStmt)
+		if !ok || len(assignment.Lhs) < 1 || len(assignment.Rhs) != 1 {
+			continue
+		}
+		call, ok := assignment.Rhs[0].(*ast.CallExpr)
+		if !ok {
+			continue
+		}
+		owner, ok := call.Fun.(*ast.Ident)
+		if !ok || owner.Name != "readStatementExecutionContract" {
+			continue
+		}
+		name, ok := assignment.Lhs[0].(*ast.Ident)
+		if ok {
+			binding = name.Obj
+		}
+	}
+	if binding == nil {
+		return false
+	}
+	for _, statement := range fn.Body.List {
+		branch, ok := statement.(*ast.IfStmt)
+		if !ok {
+			continue
+		}
+		field, ok := branch.Cond.(*ast.SelectorExpr)
+		if !ok || field.Sel.Name != "transaction" {
+			continue
+		}
+		value, ok := field.X.(*ast.Ident)
+		if !ok || value.Obj != binding {
+			continue
+		}
+		native, ordinary := false, false
+		ast.Inspect(branch.Body, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			method, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			native = native || method.Sel.Name == "executeNativeCoordinatedStatement"
+			ordinary = ordinary || method.Sel.Name == "executeWithImplicitTransaction"
+			return true
+		})
+		return native && ordinary
+	}
+	return false
+}
+
+func TestStatementExecutionAdmissionGuardRejectsPoisonedDecision(t *testing.T) {
+	source, err := os.ReadFile("executor.go")
+	require.NoError(t, err)
+	for _, change := range []struct {
+		name, old, new string
+		want           bool
+	}{
+		{"actual", "", "", true},
+		{"cache write hint", "if contract.transaction {", "if info.IsWriteQuery {", false},
+		{"cache create hint", "if contract.transaction {", "if info.HasCreate {", false},
+		{"different producer", "contract, err := readStatementExecutionContract(ctx, cypher)", "contract, err := otherProducer(ctx, cypher)", false},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			text := string(source)
+			if change.old != "" {
+				require.Contains(t, text, change.old)
+				text = strings.Replace(text, change.old, change.new, 1)
+			}
+			tree, err := parser.ParseFile(token.NewFileSet(), "executor.go", text, 0)
+			require.NoError(t, err)
+			var target *ast.FuncDecl
+			for _, decl := range tree.Decls {
+				if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "executeImplicitAsync" {
+					target = fn
+				}
+			}
+			require.Equal(t, change.want, implicitExecutionUsesCanonicalTransactionDecision(target))
+		})
+	}
+}
+
+func TestStatementExecutionPoisonedCacheHintCannotBypassAtomicAdmission(t *testing.T) {
+	for _, setting := range []struct {
+		name  string
+		setup func() func()
+	}{{"nornic", config.WithNornicParser}, {"antlr", config.WithANTLRParser}} {
+		t.Run(setting.name, func(t *testing.T) {
+			t.Cleanup(setting.setup())
+			store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "admission_poison")
+			executor := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0})
+			query := "CREATE (:AdmissionPoison) WITH 1 AS x RETURN x / $zero AS value"
+			executor.analyzer.cacheMu.Lock()
+			poison := &QueryInfo{IsReadOnly: true, IsWriteQuery: false, HasReturn: true}
+			executor.analyzer.raw[query] = poison
+			executor.analyzer.cacheMu.Unlock()
+			require.Same(t, poison, executor.analyzer.Analyze(t.Context(), query), "exact query must hit the poisoned optimizer entry")
+			result, err := executor.Execute(t.Context(), query, map[string]interface{}{"zero": int64(0)})
+			require.ErrorContains(t, err, "zero")
+			if result != nil {
+				require.Empty(t, result.Rows, "error framing may retain columns, never successful staged rows")
+			}
+			nodes, err := store.GetNodesByLabel(t.Context(), "AdmissionPoison")
+			require.NoError(t, err)
+			require.Empty(t, nodes, "actual write must roll back despite poisoned optimizer hints")
+		})
 	}
 }

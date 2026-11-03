@@ -25,7 +25,7 @@ func TestSelectedAliasAdmissionLiveScope(t *testing.T) {
 	require.NoError(t, s.roleEntitlementsStore.Set(ctx, role, []string{"read"}))
 	require.NoError(t, s.allowlistStore.SaveRoleDatabases(ctx, role, []string{"nornic"}))
 	require.NoError(t, s.privilegesStore.SavePrivilege(ctx, role, "nornic", true, false))
-	_, err := users.CreateUser(role, "password123", []auth.Role{auth.Role(role)})
+	_, err := users.CreateUser(context.Background(), role, "password123", []auth.Role{auth.Role(role)})
 	require.NoError(t, err)
 	response := makeRequest(t, s, http.MethodGet, "/db/"+alias, nil, "Bearer "+getAuthToken(t, users, role))
 	require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())

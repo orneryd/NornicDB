@@ -15,12 +15,12 @@ func TestNamespacedBulkCreateEdgesPreservesTokenOrder(t *testing.T) {
 			t.Cleanup(func() { _ = base.Close() })
 			ns := NewNamespacedEngine(base, "tenant")
 			for _, id := range []NodeID{"from", "to"} {
-				_, err := ns.CreateNode(&Node{ID: id})
+				_, err := ns.CreateNode(t.Context(), &Node{ID: id})
 				require.NoError(t, err)
 			}
 			schema := ns.GetSchema()
-			require.ErrorIs(t, ns.BulkCreateEdges([]*Edge{{Type: "invalid-batch"}, nil}), ErrInvalidData)
-			require.Empty(t, schema.ExportDefinition().RelationshipTypeTokens)
+			require.ErrorIs(t, ns.BulkCreateEdges(t.Context(), []*Edge{{Type: "invalid-batch"}, nil}), ErrInvalidData)
+			require.Empty(t, schemaDefinitionForTest(t, schema).RelationshipTypeTokens)
 			var edges []*Edge
 			var want []string
 			for i := 0; i < distinct; i++ {
@@ -30,10 +30,10 @@ func TestNamespacedBulkCreateEdgesPreservesTokenOrder(t *testing.T) {
 					edges = append(edges, &Edge{ID: EdgeID(fmt.Sprintf("e-%d-%d", i, j)), StartNode: "from", EndNode: "to", Type: kind})
 				}
 			}
-			require.NoError(t, ns.BulkCreateEdges(edges))
-			require.Equal(t, want, schema.ExportDefinition().RelationshipTypeTokens)
+			require.NoError(t, ns.BulkCreateEdges(t.Context(), edges))
+			require.Equal(t, want, schemaDefinitionForTest(t, schema).RelationshipTypeTokens)
 			for _, edge := range edges {
-				got, err := ns.GetEdge(edge.ID)
+				got, err := ns.GetEdge(t.Context(), edge.ID)
 				require.NoError(t, err)
 				require.Equal(t, edge.ID, got.ID)
 				require.Equal(t, edge.StartNode, got.StartNode)

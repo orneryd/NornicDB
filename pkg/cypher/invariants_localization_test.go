@@ -17,11 +17,11 @@ type invariantCreateErrEngine struct {
 	err error
 }
 
-func (e *invariantCreateErrEngine) CreateNode(node *storage.Node) (storage.NodeID, error) {
+func (e *invariantCreateErrEngine) CreateNode(ctx context.Context, node *storage.Node) (storage.NodeID, error) {
 	return "", e.err
 }
 
-func (e *invariantCreateErrEngine) BulkCreateNodes(nodes []*storage.Node) error {
+func (e *invariantCreateErrEngine) BulkCreateNodes(ctx context.Context, nodes []*storage.Node) error {
 	return e.err
 }
 

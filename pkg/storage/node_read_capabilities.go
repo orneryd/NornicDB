@@ -33,19 +33,21 @@ func batchNodeWithoutEmbeddingsSupported(engine Engine) bool {
 
 // namespaceLabelCount is the shared namespace-aware capability dispatch.
 // Wrappers preserve their public method while sharing the provider and scan owner.
-func namespaceLabelCount(engine Engine, namespace, label string) (int64, error) {
+func namespaceLabelCount(ctx context.Context, engine Engine, namespace, label string) (int64, error) {
 	if provider, ok := engine.(NamespaceLabelStatsProvider); ok {
-		return provider.NodeCountByLabelInNamespace(namespace, label)
+		return provider.NodeCountByLabelInNamespace(ctx, namespace, label)
 	}
-	// Namespace label counts are a maintenance read without a caller context:
-	// context.Background is the true lifetime at that context-free boundary.
-	nodes, err := engine.GetNodesByLabel(context.Background(), label)
+	nodes, err := engine.GetNodesByLabel(ctx, label)
 	if err != nil {
 		return 0, err
 	}
 	prefix := namespace + ":"
 	var count int64
+	var cancel bulkReadCancellation
 	for _, node := range nodes {
+		if err := cancel.check(ctx); err != nil {
+			return 0, err
+		}
 		if node != nil && strings.HasPrefix(string(node.ID), prefix) {
 			count++
 		}

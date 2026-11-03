@@ -66,12 +66,16 @@ func withExpressionFailureSlot(ctx context.Context) context.Context {
 	return context.WithValue(ctx, expressionFailureKey{}, &expressionFailure{})
 }
 
+// expressionFailure carries the statement's first expression error, its map key
+// ordering, and the reveal lease owner it recorded. readScopes is the opaque
+// handle captured from the statement's actual context, not that context itself,
+// so reveal metadata does not retain the owning request context.
 type expressionFailure struct {
-	mu               sync.Mutex
-	err              error
-	readScopeEngine  *storage.BadgerEngine
-	readScopeContext context.Context
-	mapKeyOrders     map[uintptr][]string
+	mu              sync.Mutex
+	err             error
+	readScopeEngine *storage.BadgerEngine
+	readScopes      storage.RevealScopes
+	mapKeyOrders    map[uintptr][]string
 }
 
 func (failure *expressionFailure) recordMapKeyOrder(value map[string]interface{}, keys []string) {
@@ -140,9 +144,9 @@ func rowValuesInExpressionContext(ctx context.Context, values map[string]interfa
 
 // deferredRowOperand keeps a subquery operand's statement errors local until
 // the surrounding OR decides whether they count.
-func deferredRowOperand(values map[string]interface{}, evaluate func(map[string]interface{}) (interface{}, bool, error)) (interface{}, bool, error) {
-	return deferredExpressionResult(rowStatementContextOrBackground(values), func(ctx context.Context) (interface{}, bool, error) {
-		return evaluate(rowValuesInExpressionContext(ctx, values))
+func deferredRowOperand(ctx context.Context, values map[string]interface{}, evaluate func(context.Context, map[string]interface{}) (interface{}, bool, error)) (interface{}, bool, error) {
+	return deferredExpressionResult(ctx, func(ctx context.Context) (interface{}, bool, error) {
+		return evaluate(ctx, rowValuesInExpressionContext(ctx, values))
 	})
 }
 

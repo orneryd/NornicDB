@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"sync/atomic"
@@ -119,7 +120,7 @@ func TestVectorQueryNodes_PassiveWhenLiveIndexEmpty(t *testing.T) {
 		Labels:     []string{"Entity"},
 		Properties: map[string]interface{}{"embedding": []float32{1, 0, 0, 0}},
 	}
-	_, err := engine.CreateNode(node)
+	_, err := engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	svc := NewService(engine, 4, nil)

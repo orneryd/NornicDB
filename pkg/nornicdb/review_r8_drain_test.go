@@ -18,11 +18,11 @@ type reviewRejectFirstDisk struct {
 	first atomic.Bool
 }
 
-func (e *reviewRejectFirstDisk) UpdateNodeEmbeddingSidecar(node *storage.Node) error {
+func (e *reviewRejectFirstDisk) UpdateNodeEmbeddingSidecar(ctx context.Context, node *storage.Node) error {
 	if e.first.CompareAndSwap(false, true) {
 		return errors.New("review: reject the first sidecar commit")
 	}
-	return e.BadgerEngine.UpdateNodeEmbeddingSidecar(node)
+	return e.BadgerEngine.UpdateNodeEmbeddingSidecar(ctx, node)
 }
 
 func TestReviewPendingCountIncludesDLQ(t *testing.T) {
@@ -30,7 +30,7 @@ func TestReviewPendingCountIncludesDLQ(t *testing.T) {
 	require.NoError(t, err)
 	defer disk.Close()
 	disk.SetEmbeddingsEnabled(true)
-	_, err = disk.CreateNode(&storage.Node{ID: "review:doc", Labels: []string{"Doc"}, Properties: map[string]any{"text": "waiting for a durable vector"}})
+	_, err = disk.CreateNode(t.Context(), &storage.Node{ID: "review:doc", Labels: []string{"Doc"}, Properties: map[string]any{"text": "waiting for a durable vector"}})
 	require.NoError(t, err)
 	engine := &reviewRejectFirstDisk{BadgerEngine: disk}
 	worker := NewEmbedWorker(newMockEmbedder(), engine, &EmbedWorkerConfig{NumWorkers: 1, DeferWorkerStart: true, MaxRetries: 1, ChunkSize: 8192, EmbedBatchSize: 1, ScanInterval: time.Hour})
@@ -43,7 +43,7 @@ func TestReviewPendingCountIncludesDLQ(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	waitErr := db.WaitForEmbeddings(ctx)
-	node, err := disk.GetNode("review:doc")
+	node, err := disk.GetNode(t.Context(), "review:doc")
 	require.NoError(t, err)
 	t.Logf("durable pending=%d public pending=%d processed=%d stored vectors=%d wait error=%v", disk.PendingEmbeddingsCount(), db.PendingEmbeddingsCount(), worker.processed.Load(), len(node.ChunkEmbeddings), waitErr)
 	if waitErr == nil {

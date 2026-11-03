@@ -18,7 +18,7 @@ func TestMatchWhereIDEquality_UsesDirectLookupWithoutAllNodesScan(t *testing.T) 
 	})
 	ctx := context.Background()
 
-	_, err := ns.CreateNode(&storage.Node{
+	_, err := ns.CreateNode(t.Context(), &storage.Node{
 		ID:         "target-id",
 		Labels:     []string{"SystemPrompt"},
 		Properties: map[string]interface{}{"text": "prompt text"},
@@ -43,7 +43,7 @@ func TestMatchWhereIDEquality_AcceptsCanonicalElementIDString(t *testing.T) {
 	exec := NewStorageExecutor(ns)
 	ctx := context.Background()
 
-	_, err := ns.CreateNode(&storage.Node{
+	_, err := ns.CreateNode(t.Context(), &storage.Node{
 		ID:         "raw-id-1",
 		Labels:     []string{"SystemPrompt"},
 		Properties: map[string]interface{}{"text": "prompt text"},
@@ -71,7 +71,7 @@ func TestMatchWhereElementIDEquality_UsesDirectLookupWithoutAllNodesScan(t *test
 	})
 	ctx := context.Background()
 
-	_, err := ns.CreateNode(&storage.Node{
+	_, err := ns.CreateNode(t.Context(), &storage.Node{
 		ID:         "target-elem-id",
 		Labels:     []string{"SystemPrompt"},
 		Properties: map[string]interface{}{"text": "prompt text"},
@@ -99,13 +99,13 @@ func TestMatchWhereIDInParam_UsesDirectLookupWithoutAllNodesScan(t *testing.T) {
 	})
 	ctx := context.Background()
 
-	_, err := ns.CreateNode(&storage.Node{
+	_, err := ns.CreateNode(t.Context(), &storage.Node{
 		ID:         "id-in-1",
 		Labels:     []string{"SystemPrompt"},
 		Properties: map[string]interface{}{"text": "prompt text 1"},
 	})
 	require.NoError(t, err)
-	_, err = ns.CreateNode(&storage.Node{
+	_, err = ns.CreateNode(t.Context(), &storage.Node{
 		ID:         "id-in-2",
 		Labels:     []string{"SystemPrompt"},
 		Properties: map[string]interface{}{"text": "prompt text 2"},
@@ -136,13 +136,13 @@ func TestMatchWhereElementIDInParam_UsesDirectLookupWithoutAllNodesScan(t *testi
 	})
 	ctx := context.Background()
 
-	_, err := ns.CreateNode(&storage.Node{
+	_, err := ns.CreateNode(t.Context(), &storage.Node{
 		ID:         "el-in-1",
 		Labels:     []string{"SystemPrompt"},
 		Properties: map[string]interface{}{"text": "prompt text 1"},
 	})
 	require.NoError(t, err)
-	_, err = ns.CreateNode(&storage.Node{
+	_, err = ns.CreateNode(t.Context(), &storage.Node{
 		ID:         "el-in-2",
 		Labels:     []string{"SystemPrompt"},
 		Properties: map[string]interface{}{"text": "prompt text 2"},
@@ -173,7 +173,7 @@ func TestMatchWhereElementIDEqualityParam_UsesDirectLookupWithoutAllNodesScan(t 
 	})
 	ctx := context.Background()
 
-	_, err := ns.CreateNode(&storage.Node{
+	_, err := ns.CreateNode(t.Context(), &storage.Node{
 		ID:         "param-elem-id",
 		Labels:     []string{"SystemPrompt"},
 		Properties: map[string]interface{}{"text": "param prompt text"},
@@ -204,7 +204,7 @@ func TestMatchWhereIDEqualityParam_UsesDirectLookupWithoutAllNodesScan(t *testin
 	})
 	ctx := context.Background()
 
-	_, err := ns.CreateNode(&storage.Node{
+	_, err := ns.CreateNode(t.Context(), &storage.Node{
 		ID:         "param-raw-id",
 		Labels:     []string{"SystemPrompt"},
 		Properties: map[string]interface{}{"text": "raw param text"},
@@ -235,7 +235,7 @@ func TestMatchWhereElementIDEqualityParam_WithLabel_UsesDirectLookup(t *testing.
 	})
 	ctx := context.Background()
 
-	_, err := ns.CreateNode(&storage.Node{
+	_, err := ns.CreateNode(t.Context(), &storage.Node{
 		ID:         "labeled-param-id",
 		Labels:     []string{"Task"},
 		Properties: map[string]interface{}{"title": "my task"},

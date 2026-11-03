@@ -29,6 +29,37 @@ This section is the canonical source for protocol and endpoint definitions.
 
 - Practical usage guide: [../user-guides/graphql.md](../user-guides/graphql.md)
 
+### Embedded Go storage and atomic writes
+
+Local Cypher writes through `cypher.NewStorageExecutor(engine)` require a
+transaction-capable storage owner before any mutation or WRITE procedure callback
+runs. A custom `storage.Engine` exposing only the required interface can serve
+read-only statements that need no transaction; writes return the same “engine does not support transactions” error as
+`BEGIN`. There is no direct-write fallback. The existing transaction-storage
+requirement error for `WITH EMBEDDING` remains unchanged.
+
+Native `MemoryEngine` and `BadgerEngine` provide
+`BeginTransaction() (*storage.BadgerTransaction, error)`. A transparent adapter
+can retain the existing `storage.EngineUnwrapper` contract so capability and
+namespace discovery reach that owner. An adapter that changes mutation semantics
+must preserve those semantics in the transaction owner; exposing an inner engine
+is not a substitute for making its writes atomic. Custom independent backends
+without a compatible transaction owner must not accept local Cypher writes.
+
+For example, a namespaced native engine supports atomic statements directly:
+
+```go
+engine := storage.NewMemoryEngine()
+defer engine.Close()
+scoped := storage.NewNamespacedEngine(engine, "tenant")
+executor := cypher.NewStorageExecutor(scoped)
+_, err := executor.Execute(ctx, "CREATE (:Document {id: 'one'})", nil)
+```
+
+Resolved remote/Fabric statements retain their existing delegated coordinator.
+Nested procedure statements reuse their admitted statement transaction; this
+requirement does not add a second transaction around a delegated owner.
+
 ### Embedded Go query readers (v1.4.4 migration)
 
 The query reader APIs take the operation's context directly. Existing Go callers

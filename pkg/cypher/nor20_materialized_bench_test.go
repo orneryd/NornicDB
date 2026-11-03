@@ -25,7 +25,7 @@ import (
 // nor20OrderTerms is the ORDER BY of the profiled workload: three constant tie
 // terms and one unique rank term, so the owner sorts on the last key.
 func nor20OrderTerms() []orderByTerm {
-	return parseOrderByTerms("ORDER BY n.tie1, n.tie2, n.tie3, n.rank")
+	return parseOrderByTerms(context.Background(), "ORDER BY n.tie1, n.tie2, n.tie3, n.rank")
 }
 
 // nor20WorkloadRows builds one scan order per workload. payload records the
@@ -121,7 +121,7 @@ func BenchmarkNor20OrderPipelineRowsWorkloads(b *testing.B) {
 func BenchmarkNor20CandidateScanMaterialized(b *testing.B) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "nor20-bench")
 	for index := 0; index < 20000; index++ {
-		_, err := store.CreateNode(&storage.Node{
+		_, err := store.CreateNode(b.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("nor20-bench-%06d", index)),
 			Labels: []string{"Item"},
 			Properties: map[string]interface{}{

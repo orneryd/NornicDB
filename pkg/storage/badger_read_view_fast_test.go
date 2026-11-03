@@ -11,17 +11,17 @@ import (
 
 func TestSnapshotOverlayIdleEpochAndNamespace(t *testing.T) {
 	b := snapshotOverlayFixture(t)
-	require.NoError(t, b.FlushWriteBehind(nil))
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
 	w := b.writeBehind
 	before, idle := w.idleReadEpoch("test")
 	require.True(t, idle)
-	_, err := b.CreateNode(&Node{ID: "other:seed"})
+	_, err := b.CreateNode(t.Context(), &Node{ID: "other:seed"})
 	require.NoError(t, err)
-	tx, err := b.BeginTransaction()
+	tx, err := b.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("other"))
-	_, err = tx.CreateNode(&Node{ID: "other:pending"})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "other:pending"})
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 	_, idle = w.idleReadEpoch("test")
@@ -34,7 +34,7 @@ func TestSnapshotOverlayIdleEpochAndNamespace(t *testing.T) {
 	require.False(t, idle)
 	_, idle = w.idleReadEpoch("test:")
 	require.True(t, idle)
-	require.NoError(t, b.FlushWriteBehind(nil))
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
 	after, idle := w.idleReadEpoch("test")
 	require.True(t, idle)
 	require.NotEqual(t, before, after, "idle publication must detect ABA")
@@ -42,19 +42,19 @@ func TestSnapshotOverlayIdleEpochAndNamespace(t *testing.T) {
 
 func TestSnapshotOverlayCachedCaptureRetriesPublication(t *testing.T) {
 	b := snapshotOverlayFixture(t)
-	require.NoError(t, b.FlushWriteBehind(nil))
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
 	calls := 0
 	var value int64
-	view, err := b.captureReadView(nil, readViewOptions{scope: "test", cached: func(w *WriteBehindBuffer) (bool, error) {
+	view, err := b.captureReadView(t.Context(), nil, readViewOptions{scope: "test", cached: func(w *WriteBehindBuffer) (bool, error) {
 		calls++
 		if calls == 1 {
-			tx, err := b.BeginTransaction()
+			tx, err := b.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			require.NoError(t, tx.SetImplicit(true))
 			require.NoError(t, tx.SetNamespace("test"))
-			require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"v": int64(9)}}, Policy: ClientNodeEdits}))
+			require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"v": int64(9)}}, Policy: ClientNodeEdits}))
 			require.NoError(t, tx.Commit())
-			require.NoError(t, b.FlushWriteBehind(nil))
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
 			value = 2
 		} else {
 			require.NotNil(t, w)
@@ -72,13 +72,13 @@ func TestSnapshotOverlayCachedCaptureRetriesPublication(t *testing.T) {
 func TestSnapshotOverlayLongViewReopensAndDoesNotPinClose(t *testing.T) {
 	b := snapshotOverlayFixture(t)
 	var overlay []*Node
-	view, err := b.captureReadView(func(w *WriteBehindBuffer) { overlay, _, _ = w.allNodesOverlayLocked(context.Background()) }, readViewOptions{longLived: true})
+	view, err := b.captureReadView(t.Context(), func(w *WriteBehindBuffer) { overlay, _, _ = w.allNodesOverlayLocked(context.Background()) }, readViewOptions{longLived: true})
 	require.NoError(t, err)
 	require.Nil(t, view.txn)
 	require.Len(t, overlay, 2)
-	require.NoError(t, b.FlushWriteBehind(nil))
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
 	for i := 0; i < 2; i++ {
-		require.NoError(t, view.withView(func(txn *badger.Txn) error {
+		require.NoError(t, view.withView(t.Context(), func(txn *badger.Txn) error {
 			_, err := txn.Get(edgeKey("test:r"))
 			require.ErrorIs(t, err, badger.ErrKeyNotFound)
 			return nil
@@ -92,7 +92,7 @@ func TestSnapshotOverlayLongViewReopensAndDoesNotPinClose(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("long view pins engine Close")
 	}
-	require.ErrorIs(t, view.withView(func(*badger.Txn) error { return nil }), ErrStorageClosed)
+	require.ErrorIs(t, view.withView(t.Context(), func(*badger.Txn) error { return nil }), ErrStorageClosed)
 	view.Close()
 	view.Close()
 }
@@ -100,7 +100,7 @@ func TestSnapshotOverlayLongViewReopensAndDoesNotPinClose(t *testing.T) {
 func TestSnapshotOverlayBusyCachedBatchAndAdjacency(t *testing.T) {
 	b := snapshotOverlayFixture(t)
 	// The committed part has hot caches; pending rows must shadow just their IDs.
-	_, err := b.CreateNode(&Node{ID: "other:unrelated"})
+	_, err := b.CreateNode(t.Context(), &Node{ID: "other:unrelated"})
 	require.NoError(t, err)
 	for _, read := range []func([]NodeID) (map[NodeID]*Node, error){func(ids []NodeID) (map[NodeID]*Node, error) { return b.BatchGetNodes(context.Background(), ids) }, func(ids []NodeID) (map[NodeID]*Node, error) {
 		return b.BatchGetNodesWithoutEmbeddings(context.Background(), ids)

@@ -134,7 +134,7 @@ func (e *StorageExecutor) graphReadArguments(ctx context.Context, args []interfa
 		case *storage.Node:
 			input[i] = view.node(value)
 		case string:
-			if key, ok := view.inputKey(value); ok {
+			if key, ok := view.inputKey(ctx, value); ok {
 				input[i] = string(key)
 			}
 		}
@@ -184,12 +184,12 @@ func (v *graphIdentityStorage) edges(edges []*storage.Edge, err error) ([]*stora
 	return result, nil
 }
 
-func (v *graphIdentityStorage) GetNode(key storage.NodeID) (*storage.Node, error) {
+func (v *graphIdentityStorage) GetNode(ctx context.Context, key storage.NodeID) (*storage.Node, error) {
 	id, ok := storage.EntityIdentityFromKey(string(key)).NodeLookupID(v.Engine)
 	if !ok {
 		return nil, storage.ErrNotFound
 	}
-	node, err := v.Engine.GetNode(id)
+	node, err := v.Engine.GetNode(ctx, id)
 	return v.node(node), err
 }
 
@@ -226,8 +226,8 @@ func (v *graphIdentityStorage) AllEdges(ctx context.Context) ([]*storage.Edge, e
 func (v *graphIdentityStorage) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
 	return v.nodes(v.Engine.GetNodesByLabel(ctx, label))
 }
-func (v *graphIdentityStorage) GetFirstNodeByLabel(label string) (*storage.Node, error) {
-	node, err := v.Engine.GetFirstNodeByLabel(label)
+func (v *graphIdentityStorage) GetFirstNodeByLabel(ctx context.Context, label string) (*storage.Node, error) {
+	node, err := v.Engine.GetFirstNodeByLabel(ctx, label)
 	return v.node(node), err
 }
 func (v *graphIdentityStorage) GetOutgoingEdges(ctx context.Context, key storage.NodeID) ([]*storage.Edge, error) {
@@ -256,21 +256,22 @@ func (v *graphIdentityStorage) GetEdgesBetween(ctx context.Context, start, end s
 	}
 	return v.edges(v.Engine.GetEdgesBetween(ctx, left, right))
 }
-func (v *graphIdentityStorage) GetEdgeBetween(start, end storage.NodeID, kind string) *storage.Edge {
+func (v *graphIdentityStorage) GetEdgeBetween(ctx context.Context, start, end storage.NodeID, kind string) (*storage.Edge, error) {
 	left, leftOK := storage.EntityIdentityFromKey(string(start)).NodeLookupID(v.Engine)
 	right, rightOK := storage.EntityIdentityFromKey(string(end)).NodeLookupID(v.Engine)
 	if !leftOK || !rightOK {
-		return nil
+		return nil, nil
 	}
-	return v.edge(v.Engine.GetEdgeBetween(left, right, kind))
+	edge, err := v.Engine.GetEdgeBetween(ctx, left, right, kind)
+	return v.edge(edge), err
 }
-func (v *graphIdentityStorage) GetInDegree(key storage.NodeID) int {
-	edges, _ := v.GetIncomingEdges(context.Background(), key)
-	return len(edges)
+func (v *graphIdentityStorage) GetInDegree(ctx context.Context, key storage.NodeID) (int, error) {
+	edges, err := v.GetIncomingEdges(ctx, key)
+	return len(edges), err
 }
-func (v *graphIdentityStorage) GetOutDegree(key storage.NodeID) int {
-	edges, _ := v.GetOutgoingEdges(context.Background(), key)
-	return len(edges)
+func (v *graphIdentityStorage) GetOutDegree(ctx context.Context, key storage.NodeID) (int, error) {
+	edges, err := v.GetOutgoingEdges(ctx, key)
+	return len(edges), err
 }
 func (v *graphIdentityStorage) StreamNodesWithOptions(ctx context.Context, options storage.StreamNodesOptions, visit func(*storage.Node) error) error {
 	return v.Engine.StreamNodesWithOptions(ctx, options, func(node *storage.Node) error { return visit(v.node(node)) })
@@ -279,7 +280,7 @@ func (v *graphIdentityStorage) StreamEdgesByType(ctx context.Context, kind strin
 	return storage.StreamEdgesByType(ctx, v.Engine, kind, func(edge *storage.Edge) error { return visit(v.edge(edge)) })
 }
 
-func (v *graphIdentityStorage) inputKey(value interface{}) (storage.NodeID, bool) {
+func (v *graphIdentityStorage) inputKey(ctx context.Context, value interface{}) (storage.NodeID, bool) {
 	reference, ok := graphEntityReference(value)
 	if !ok {
 		return "", false
@@ -296,7 +297,7 @@ func (v *graphIdentityStorage) inputKey(value interface{}) (storage.NodeID, bool
 			reference.Database, reference.LocalID = database, local
 		} else if storage.CompositeDatabaseOf(v.Engine) == "" {
 			reference.Database = storage.DatabaseOf(v.Engine)
-		} else if node, err := v.Engine.GetNode(storage.NodeID(reference.LocalID)); err == nil && node != nil {
+		} else if node, err := v.Engine.GetNode(ctx, storage.NodeID(reference.LocalID)); err == nil && node != nil {
 			reference = node.Identity()
 		}
 	}
@@ -339,11 +340,11 @@ func graphAlgorithmRows[T any](nodes []*storage.Node, values map[storage.NodeID]
 // bindIdentity converts native/config references only after the graph's key
 // domain is known. Projection IDs retain their public catalog domain; stored
 // graphs use the same canonical read view as scalar and APOC algorithms.
-func (c *linkPredictionConfig) bindIdentity(engine storage.Engine, projection *GraphProjection) {
+func (c *linkPredictionConfig) bindIdentity(ctx context.Context, engine storage.Engine, projection *GraphProjection) {
 	c.identityStore = engine
-	var read func(interface{}) (storage.NodeID, bool)
+	var read func(context.Context, interface{}) (storage.NodeID, bool)
 	if projection != nil {
-		read = func(value interface{}) (storage.NodeID, bool) {
+		read = func(_ context.Context, value interface{}) (storage.NodeID, bool) {
 			id, ok := projection.nodeReference(value)
 			return storage.NodeID(id), ok
 		}
@@ -356,7 +357,7 @@ func (c *linkPredictionConfig) bindIdentity(engine storage.Engine, projection *G
 	if value == nil {
 		value = string(c.SourceNode)
 	}
-	c.SourceNode, _ = read(value)
+	c.SourceNode, _ = read(ctx, value)
 	if c.TargetNodes != nil {
 		values := c.targetValues
 		if values == nil {
@@ -366,7 +367,7 @@ func (c *linkPredictionConfig) bindIdentity(engine storage.Engine, projection *G
 		}
 		c.TargetNodes = make(map[storage.NodeID]bool, len(values))
 		for _, value := range values {
-			if id, ok := read(value); ok {
+			if id, ok := read(ctx, value); ok {
 				c.TargetNodes[id] = true
 			}
 		}

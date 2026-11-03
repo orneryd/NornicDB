@@ -29,7 +29,7 @@ func TestCatalogRegistrationSnapshotReopenConsistency(t *testing.T) {
 					require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: database}))
 					engine, err := manager.GetStorage(database)
 					require.NoError(t, err)
-					_, err = engine.CreateNode(&storage.Node{ID: "marker", Properties: map[string]interface{}{"owner": database}})
+					_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "marker", Properties: map[string]interface{}{"owner": database}})
 					require.NoError(t, err)
 				}
 				admitted := []ConstituentRef{{Alias: "Winner", Type: "local", AccessMode: "read_write", DatabaseName: "db1"}, {Alias: "winner", Type: "local", AccessMode: "read_write", DatabaseName: "db2"}}
@@ -37,7 +37,7 @@ func TestCatalogRegistrationSnapshotReopenConsistency(t *testing.T) {
 				stored := func() []ConstituentRef {
 					system, err := manager.GetStorage("system")
 					require.NoError(t, err)
-					node, err := system.GetNode(metadataNodeID)
+					node, err := system.GetNode(t.Context(), metadataNodeID)
 					require.NoError(t, err)
 					var catalog map[string]*DatabaseInfo
 					require.NoError(t, json.Unmarshal([]byte(node.Properties["data"].(string)), &catalog))
@@ -73,7 +73,7 @@ func TestCatalogRegistrationSnapshotReopenConsistency(t *testing.T) {
 				}
 				view, err := manager.GetStorage("cmp.winner")
 				require.NoError(t, err)
-				node, err := view.GetNode("marker")
+				node, err := view.GetNode(t.Context(), "marker")
 				require.NoError(t, err)
 				require.Equal(t, "db2", node.Properties["owner"])
 				require.NoError(t, manager.RemoveConstituent(t.Context(), "cmp", "winner"))
@@ -83,7 +83,7 @@ func TestCatalogRegistrationSnapshotReopenConsistency(t *testing.T) {
 				assert.Equal(t, admitted[:1], stored(), "ordinary removal persists exactly the remaining registration")
 				view, err = manager.GetStorage("cmp.Winner")
 				if assert.NoError(t, err) {
-					node, err = view.GetNode("marker")
+					node, err = view.GetNode(t.Context(), "marker")
 					require.NoError(t, err)
 					assert.Equal(t, "db1", node.Properties["owner"])
 				}

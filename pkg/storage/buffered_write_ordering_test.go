@@ -27,7 +27,7 @@ func TestSynchronousWritesOrderAfterBufferedCommits(t *testing.T) {
 	}
 	explicit := func(t *testing.T, b *BadgerEngine, apply func(*BadgerTransaction) error) error {
 		t.Helper()
-		tx, err := b.BeginTransaction()
+		tx, err := b.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		if err := apply(tx); err != nil {
 			_ = tx.Rollback()
@@ -37,55 +37,67 @@ func TestSynchronousWritesOrderAfterBufferedCommits(t *testing.T) {
 	}
 	routes := []route{
 		{
-			name:    "direct",
-			node:    func(_ *testing.T, b *BadgerEngine, n *Node) error { return b.UpdateNode(NodeUpdateRequest{After: n}) },
-			edge:    func(_ *testing.T, b *BadgerEngine, e *Edge) error { return b.UpdateEdge(EdgeUpdateRequest{After: e}) },
-			delNode: func(_ *testing.T, b *BadgerEngine, id NodeID) error { return b.DeleteNode(id) },
-			delEdge: func(_ *testing.T, b *BadgerEngine, id EdgeID) error { return b.DeleteEdge(id) },
+			name: "direct",
+			node: func(_ *testing.T, b *BadgerEngine, n *Node) error {
+				return b.UpdateNode(t.Context(), NodeUpdateRequest{After: n})
+			},
+			edge: func(_ *testing.T, b *BadgerEngine, e *Edge) error {
+				return b.UpdateEdge(t.Context(), EdgeUpdateRequest{After: e})
+			},
+			delNode: func(_ *testing.T, b *BadgerEngine, id NodeID) error { return b.DeleteNode(t.Context(), id) },
+			delEdge: func(_ *testing.T, b *BadgerEngine, id EdgeID) error { return b.DeleteEdge(t.Context(), id) },
 			create: func(_ *testing.T, b *BadgerEngine, n *Node, e *Edge) error {
 				if n != nil {
-					_, err := b.CreateNode(n)
+					_, err := b.CreateNode(t.Context(), n)
 					return err
 				}
-				return b.CreateEdge(e)
+				return b.CreateEdge(t.Context(), e)
 			},
 		},
 		{
-			name:    "bulk",
-			node:    func(_ *testing.T, b *BadgerEngine, n *Node) error { return b.UpdateNode(NodeUpdateRequest{After: n}) },
-			edge:    func(_ *testing.T, b *BadgerEngine, e *Edge) error { return b.UpdateEdge(EdgeUpdateRequest{After: e}) },
-			delNode: func(_ *testing.T, b *BadgerEngine, id NodeID) error { return b.BulkDeleteNodes([]NodeID{id}) },
-			delEdge: func(_ *testing.T, b *BadgerEngine, id EdgeID) error { return b.BulkDeleteEdges([]EdgeID{id}) },
+			name: "bulk",
+			node: func(_ *testing.T, b *BadgerEngine, n *Node) error {
+				return b.UpdateNode(t.Context(), NodeUpdateRequest{After: n})
+			},
+			edge: func(_ *testing.T, b *BadgerEngine, e *Edge) error {
+				return b.UpdateEdge(t.Context(), EdgeUpdateRequest{After: e})
+			},
+			delNode: func(_ *testing.T, b *BadgerEngine, id NodeID) error {
+				return b.BulkDeleteNodes(t.Context(), []NodeID{id})
+			},
+			delEdge: func(_ *testing.T, b *BadgerEngine, id EdgeID) error {
+				return b.BulkDeleteEdges(t.Context(), []EdgeID{id})
+			},
 			create: func(_ *testing.T, b *BadgerEngine, n *Node, e *Edge) error {
 				if n != nil {
-					return b.BulkCreateNodes([]*Node{n})
+					return b.BulkCreateNodes(t.Context(), []*Node{n})
 				}
-				return b.BulkCreateEdges([]*Edge{e})
+				return b.BulkCreateEdges(t.Context(), []*Edge{e})
 			},
 		},
 		{
 			name: "explicit transaction",
 			node: func(t *testing.T, b *BadgerEngine, n *Node) error {
 				return explicit(t, b, func(tx *BadgerTransaction) error {
-					return tx.UpdateGraphNode(NodeUpdateRequest{After: n, Policy: ClientNodeEdits})
+					return tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: n, Policy: ClientNodeEdits})
 				})
 			},
 			edge: func(t *testing.T, b *BadgerEngine, e *Edge) error {
-				return explicit(t, b, func(tx *BadgerTransaction) error { return tx.UpdateEdge(EdgeUpdateRequest{After: e}) })
+				return explicit(t, b, func(tx *BadgerTransaction) error { return tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: e}) })
 			},
 			delNode: func(t *testing.T, b *BadgerEngine, id NodeID) error {
-				return explicit(t, b, func(tx *BadgerTransaction) error { return tx.DeleteGraphNode(id, CascadeEdges) })
+				return explicit(t, b, func(tx *BadgerTransaction) error { return tx.DeleteGraphNode(t.Context(), id, CascadeEdges) })
 			},
 			delEdge: func(t *testing.T, b *BadgerEngine, id EdgeID) error {
-				return explicit(t, b, func(tx *BadgerTransaction) error { return tx.DeleteEdge(id) })
+				return explicit(t, b, func(tx *BadgerTransaction) error { return tx.DeleteEdge(t.Context(), id) })
 			},
 			create: func(t *testing.T, b *BadgerEngine, n *Node, e *Edge) error {
 				return explicit(t, b, func(tx *BadgerTransaction) error {
 					if n != nil {
-						_, err := tx.CreateNode(n)
+						_, err := tx.CreateNode(t.Context(), n)
 						return err
 					}
-					return tx.CreateEdge(e)
+					return tx.CreateEdge(t.Context(), e)
 				})
 			},
 		},
@@ -106,26 +118,26 @@ func TestSynchronousWritesOrderAfterBufferedCommits(t *testing.T) {
 							b.writeBehind.SetDelayBounds(time.Hour, time.Hour)
 						}
 						for _, id := range []NodeID{"test:a", "test:b", "test:n"} {
-							_, err := b.CreateNode(&Node{ID: id, Properties: map[string]any{"v": "initial"}})
+							_, err := b.CreateNode(t.Context(), &Node{ID: id, Properties: map[string]any{"v": "initial"}})
 							require.NoError(t, err)
 						}
-						require.NoError(t, b.CreateEdge(edge("initial")))
-						require.NoError(t, b.FlushWriteBehind(nil))
+						require.NoError(t, b.CreateEdge(t.Context(), edge("initial")))
+						require.NoError(t, b.FlushWriteBehind(context.Background()))
 						if op == "hidden delete" {
 							if kind == "node" {
-								require.NoError(t, b.SetManualSuppression(StoredEntityNodeKind, "test:n", true))
+								require.NoError(t, b.SetManualSuppression(context.Background(), StoredEntityNodeKind, "test:n", true))
 							} else {
-								require.NoError(t, b.SetManualSuppression(StoredEntityEdgeKind, "test:r", true))
+								require.NoError(t, b.SetManualSuppression(context.Background(), StoredEntityEdgeKind, "test:r", true))
 							}
 						}
 						// An acknowledged, unflushed commit of the entity.
-						tx, err := b.BeginTransaction()
+						tx, err := b.BeginTransaction(t.Context())
 						require.NoError(t, err)
 						require.NoError(t, tx.SetImplicit(true))
 						if kind == "node" {
-							require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:n", Properties: map[string]any{"v": "acknowledged"}}, Policy: ClientNodeEdits}))
+							require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:n", Properties: map[string]any{"v": "acknowledged"}}, Policy: ClientNodeEdits}))
 						} else {
-							require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: edge("acknowledged")}))
+							require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge("acknowledged")}))
 						}
 						require.NoError(t, tx.Commit())
 
@@ -139,10 +151,10 @@ func TestSynchronousWritesOrderAfterBufferedCommits(t *testing.T) {
 						} else {
 							if kind == "node" {
 								require.NoError(t, r.delNode(t, b, "test:n"))
-								_, err = b.GetStoredNode("test:n")
+								_, err = b.GetStoredNode(t.Context(), "test:n")
 							} else {
 								require.NoError(t, r.delEdge(t, b, "test:r"))
-								_, err = b.GetStoredEdge("test:r")
+								_, err = b.GetStoredEdge(t.Context(), "test:r")
 							}
 							require.ErrorIs(t, err, ErrNotFound, "a deleted entity is gone")
 							want = "replacement"
@@ -155,17 +167,17 @@ func TestSynchronousWritesOrderAfterBufferedCommits(t *testing.T) {
 						read := func(stage string) {
 							t.Helper()
 							if kind == "node" {
-								n, err := b.GetStoredNode("test:n")
+								n, err := b.GetStoredNode(t.Context(), "test:n")
 								require.NoError(t, err, stage)
 								require.Equal(t, want, n.Properties["v"], stage)
 							} else {
-								e, err := b.GetStoredEdge("test:r")
+								e, err := b.GetStoredEdge(t.Context(), "test:r")
 								require.NoError(t, err, stage)
 								require.Equal(t, want, e.Properties["v"], stage)
 							}
 						}
 						read("after the write")
-						require.NoError(t, b.FlushWriteBehind(nil))
+						require.NoError(t, b.FlushWriteBehind(context.Background()))
 						b.invalidateCachesAfterRestore()
 						read("after the flush")
 					})
@@ -185,39 +197,39 @@ func TestSynchronousDeleteRemovesBufferedRelationships(t *testing.T) {
 			t.Cleanup(func() { _ = b.Close() })
 			b.writeBehind.SetDelayBounds(time.Hour, time.Hour)
 			for _, id := range []NodeID{"test:a", "test:b"} {
-				_, err := b.CreateNode(&Node{ID: id})
+				_, err := b.CreateNode(t.Context(), &Node{ID: id})
 				require.NoError(t, err)
 			}
-			require.NoError(t, b.FlushWriteBehind(nil))
-			tx, err := b.BeginTransaction()
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
+			tx, err := b.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			require.NoError(t, tx.SetImplicit(true))
-			require.NoError(t, tx.CreateEdge(&Edge{ID: "test:s", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}))
+			require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:s", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}))
 			require.NoError(t, tx.Commit())
 			switch path {
 			case "direct":
-				require.NoError(t, b.DeleteNode("test:a"))
+				require.NoError(t, b.DeleteNode(t.Context(), "test:a"))
 			case "bulk":
-				require.NoError(t, b.BulkDeleteNodes([]NodeID{"test:a"}))
+				require.NoError(t, b.BulkDeleteNodes(t.Context(), []NodeID{"test:a"}))
 			default:
-				del, err := b.BeginTransaction()
+				del, err := b.BeginTransaction(t.Context())
 				require.NoError(t, err)
-				require.NoError(t, del.DeleteGraphNode("test:a", CascadeEdges))
+				require.NoError(t, del.DeleteGraphNode(t.Context(), "test:a", CascadeEdges))
 				require.NoError(t, del.Commit())
 			}
 			check := func(stage string) {
 				t.Helper()
-				_, err := b.GetStoredEdge("test:s")
+				_, err := b.GetStoredEdge(t.Context(), "test:s")
 				require.ErrorIs(t, err, ErrNotFound, stage)
 				incoming, err := b.GetStoredIncomingEdges(context.Background(), "test:b")
 				require.NoError(t, err, stage)
 				require.Empty(t, incoming, stage)
-				count, err := b.EdgeCount()
+				count, err := b.EdgeCount(t.Context())
 				require.NoError(t, err, stage)
 				require.Zero(t, count, stage)
 			}
 			check("after the delete")
-			require.NoError(t, b.FlushWriteBehind(nil))
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
 			b.invalidateCachesAfterRestore()
 			check("after the flush")
 		})

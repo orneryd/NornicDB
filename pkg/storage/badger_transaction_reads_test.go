@@ -39,14 +39,14 @@ func txReadFixture(t *testing.T) *MemoryEngine {
 	engine := newTestMemoryEngine(t)
 
 	commitNamespace := func(nodes []*Node, edges []*Edge) {
-		tx, err := engine.BeginTransaction()
+		tx, err := engine.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		for _, n := range nodes {
-			_, err := tx.CreateNode(n)
+			_, err := tx.CreateNode(t.Context(), n)
 			require.NoError(t, err, "CreateNode(%q)", n.ID)
 		}
 		for _, e := range edges {
-			require.NoError(t, tx.CreateEdge(e), "CreateEdge(%q)", e.ID)
+			require.NoError(t, tx.CreateEdge(t.Context(), e), "CreateEdge(%q)", e.ID)
 		}
 		require.NoError(t, tx.Commit())
 	}
@@ -96,17 +96,17 @@ func nodeIDs(nodes []*Node) []string {
 
 func TestTxReads_StreamNodesByLabelProjected_MergesSnapshotAndPendingWrites(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
-	bob, err := tx.GetNode("test:bob")
+	bob, err := tx.GetNode(t.Context(), "test:bob")
 	require.NoError(t, err)
 	bob.Properties["name"] = "Robert"
 	bob.Properties["secret"] = "not projected"
-	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: bob, Policy: ClientNodeEdits}))
-	require.NoError(t, tx.DeleteGraphNode("test:carol", CascadeEdges))
-	_, err = tx.CreateNode(&Node{
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: bob, Policy: ClientNodeEdits}))
+	require.NoError(t, tx.DeleteGraphNode(t.Context(), "test:carol", CascadeEdges))
+	_, err = tx.CreateNode(t.Context(), &Node{
 		ID: "test:erin", Labels: []string{"Person"},
 		Properties: map[string]any{"name": "Erin", "secret": "not projected"},
 	})
@@ -131,10 +131,10 @@ func TestTxReads_StreamNodesByLabelProjected_MergesSnapshotAndPendingWrites(t *t
 
 func TestTxReads_StreamNodesByLabelProjected_CallbackCanReadWithPendingWrites(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
-	_, err = tx.CreateNode(&Node{ID: "test:pending", Labels: []string{"Person"}})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:pending", Labels: []string{"Person"}})
 	require.NoError(t, err)
 
 	for _, pass := range []string{"initial", "cached"} {
@@ -148,7 +148,7 @@ func TestTxReads_StreamNodesByLabelProjected_CallbackCanReadWithPendingWrites(t 
 					return ErrIterationStopped
 				}
 				tx.mu.Unlock()
-				readBack, err := tx.GetNode(node.ID)
+				readBack, err := tx.GetNode(t.Context(), node.ID)
 				if err != nil {
 					return err
 				}
@@ -169,13 +169,13 @@ func BenchmarkTxReads_StreamNodesByLabelProjectedWithPendingWrites(b *testing.B)
 	require.NoError(b, err)
 	b.Cleanup(func() { _ = engine.Close() })
 	for _, name := range []string{"alice", "bob", "carol"} {
-		_, err := engine.CreateNode(&Node{ID: NodeID("bench:" + name), Labels: []string{"Person"}, Properties: map[string]any{"name": name}})
+		_, err := engine.CreateNode(b.Context(), &Node{ID: NodeID("bench:" + name), Labels: []string{"Person"}, Properties: map[string]any{"name": name}})
 		require.NoError(b, err)
 	}
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(b.Context())
 	require.NoError(b, err)
 	b.Cleanup(func() { _ = tx.Rollback() })
-	_, err = tx.CreateNode(&Node{ID: "bench:pending", Labels: []string{"Person"}})
+	_, err = tx.CreateNode(b.Context(), &Node{ID: "bench:pending", Labels: []string{"Person"}})
 	require.NoError(b, err)
 	properties := []string{"name"}
 	visited := 0
@@ -197,7 +197,7 @@ func BenchmarkTxReads_StreamNodesByLabelProjectedWithPendingWrites(b *testing.B)
 
 func TestTxReads_StreamNodesByLabelProjected_StopsWithoutMaterializingRemainder(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -213,7 +213,7 @@ func TestTxReads_StreamNodesByLabelProjected_StopsWithoutMaterializingRemainder(
 
 func TestTxReads_StreamNodesByLabelProjected_ReplaysBoundedPrefixAndResumes(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	t.Cleanup(func() { _ = tx.Rollback() })
@@ -228,12 +228,12 @@ func TestTxReads_StreamNodesByLabelProjected_ReplaysBoundedPrefixAndResumes(t *t
 	require.Len(t, tx.snapshotLabelPrefixNodes, 1, "an early stop should retain only its bounded prefix")
 	require.Empty(t, tx.snapshotProjectedLabelNodes, "an incomplete prefix must not be treated as a complete stream")
 
-	alice, err := tx.GetNode("test:alice")
+	alice, err := tx.GetNode(t.Context(), "test:alice")
 	require.NoError(t, err)
 	alice.Properties["name"] = "Alicia"
-	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: alice, Policy: ClientNodeEdits}))
-	require.NoError(t, tx.DeleteGraphNode("test:bob", CascadeEdges))
-	_, err = tx.CreateNode(&Node{ID: "test:erin", Labels: []string{"Person"}, Properties: map[string]any{"name": "Erin"}})
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: alice, Policy: ClientNodeEdits}))
+	require.NoError(t, tx.DeleteGraphNode(t.Context(), "test:bob", CascadeEdges))
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:erin", Labels: []string{"Person"}, Properties: map[string]any{"name": "Erin"}})
 	require.NoError(t, err)
 
 	var nodes []*Node
@@ -250,12 +250,12 @@ func TestTxReads_StreamNodesByLabelProjected_ReplaysBoundedPrefixAndResumes(t *t
 
 func TestTxReads_StreamNodesByLabel_UnprojectedPrefixAndLargePayloadGuard(t *testing.T) {
 	engine := txReadFixture(t)
-	alice, err := engine.GetNode("test:alice")
+	alice, err := engine.GetNode(t.Context(), "test:alice")
 	require.NoError(t, err)
 	alice.Properties["large"] = strings.Repeat("x", maxSnapshotLabelPrefixNodeBytes+1)
-	require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: alice}))
+	require.NoError(t, engine.UpdateNode(t.Context(), NodeUpdateRequest{After: alice}))
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	t.Cleanup(func() { _ = tx.Rollback() })
@@ -267,7 +267,7 @@ func TestTxReads_StreamNodesByLabel_UnprojectedPrefixAndLargePayloadGuard(t *tes
 	require.Empty(t, tx.snapshotLabelPrefixNodes, "large full-node results must not be retained as a partial prefix")
 
 	largeID := NodeID("test:large")
-	_, err = tx.CreateNode(&Node{ID: largeID, Labels: []string{"Person"}, Properties: map[string]any{"name": "Large"}})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: largeID, Labels: []string{"Person"}, Properties: map[string]any{"name": "Large"}})
 	require.NoError(t, err)
 	seen := make([]NodeID, 0, 5)
 	err = tx.StreamNodesByLabelProjected(context.Background(), "Person", nil, func(node *Node) error {
@@ -283,7 +283,7 @@ func TestTxReads_CommittedNodeCanUseCachedLabelPrefix(t *testing.T) {
 	cached := &Node{ID: "test:cached", Labels: []string{"Person"}, Properties: map[string]any{"name": "Alice"}}
 	tx := &BadgerTransaction{snapshotPrefixNodeByID: map[NodeID]*Node{cached.ID: cached}}
 
-	got, err := tx.getCommittedNodeLocked(cached.ID)
+	got, err := tx.getCommittedNodeLocked(t.Context(), cached.ID)
 	require.NoError(t, err)
 	require.Equal(t, cached, got)
 	require.NotSame(t, cached, got, "cached snapshot nodes must be copied before returning them to callers")
@@ -306,16 +306,16 @@ func TestTxReads_EndpointPrefixNodeCacheIsBounded(t *testing.T) {
 
 func TestTxReads_LabelCacheBoundPreservesSnapshotLabels(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	writer, err := engine.BeginTransaction()
+	writer, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	for index := 0; index < maxSnapshotNodeLabelCacheNodes+2; index++ {
-		_, err = writer.CreateNode(&Node{
+		_, err = writer.CreateNode(t.Context(), &Node{
 			ID: NodeID(fmt.Sprintf("test:bounded-%05d", index)), Labels: []string{"Person"},
 		})
 		require.NoError(t, err)
 	}
 	require.NoError(t, writer.Commit())
-	reader, err := engine.BeginTransaction()
+	reader, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, reader.SetNamespace("test"))
 	t.Cleanup(func() { _ = reader.Rollback() })
@@ -334,11 +334,11 @@ func TestTxReads_LabelCacheBoundPreservesSnapshotLabels(t *testing.T) {
 		require.Equal(t, maxSnapshotNodeLabelCacheNodes*len("Person"), reader.snapshotNodeLabelBytes)
 	}
 	require.NotEmpty(t, uncached)
-	node, err := engine.GetNode(uncached)
+	node, err := engine.GetNode(t.Context(), uncached)
 	require.NoError(t, err)
 	node.Labels = []string{"Changed"}
-	require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: node}))
-	labels, err := reader.committedNodeLabelsLocked(uncached)
+	require.NoError(t, engine.UpdateNode(t.Context(), NodeUpdateRequest{After: node}))
+	labels, err := reader.committedNodeLabelsLocked(t.Context(), uncached)
 	require.NoError(t, err)
 	require.Equal(t, []string{"Person"}, labels)
 	require.NotContains(t, reader.snapshotNodeLabels, uncached)
@@ -358,7 +358,7 @@ func TestTxReads_PrefixAdmissionReusesValidatedSizes(t *testing.T) {
 		require.True(t, ok)
 		total += bytes
 		require.Equal(t, bytes, transaction.snapshotPrefixNodeBytesByID[node.ID])
-		copy, err := transaction.getCommittedNodeLocked(node.ID)
+		copy, err := transaction.getCommittedNodeLocked(t.Context(), node.ID)
 		require.NoError(t, err)
 		require.Equal(t, node, copy)
 		require.NotSame(t, node, copy)
@@ -373,11 +373,11 @@ func TestTxReads_PrefixAdmissionReusesValidatedSizes(t *testing.T) {
 func TestTxReads_PrefixAdmissionExcludesEmbeddingSidecars(t *testing.T) {
 	engine := newTestEngine(t)
 	node := &Node{ID: "test:sidecar", Labels: []string{"Person"}}
-	_, err := engine.CreateNode(node)
+	_, err := engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	embeddings := [][]float32{{0.1, 0.2}}
-	require.NoError(t, engine.UpdateNodeEmbeddingSidecar(embeddingWriteback(t, engine, node.ID, embeddings, map[string]any{"has_embedding": true, "chunk_count": 1}, time.Time{})))
-	transaction, err := engine.BeginTransaction()
+	require.NoError(t, engine.UpdateNodeEmbeddingSidecar(context.Background(), embeddingWriteback(t, engine, node.ID, embeddings, map[string]any{"has_embedding": true, "chunk_count": 1}, time.Time{})))
+	transaction, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = transaction.Rollback() })
 	transaction.storeSnapshotLabelPrefixLocked(transaction.snapshotTx, snapshotLabelCacheKey{projectionKey: "Person"}, []*Node{node}, true)
@@ -385,14 +385,14 @@ func TestTxReads_PrefixAdmissionExcludesEmbeddingSidecars(t *testing.T) {
 	require.Empty(t, transaction.snapshotPrefixNodeByID)
 	transaction.cacheSnapshotPrefixNodeByIDLocked(transaction.snapshotTx, node)
 	require.Empty(t, transaction.snapshotPrefixNodeByID)
-	stored, err := transaction.getCommittedNodeLocked(node.ID)
+	stored, err := transaction.getCommittedNodeLocked(t.Context(), node.ID)
 	require.NoError(t, err)
 	require.Equal(t, embeddings, stored.ChunkEmbeddings)
 }
 
 func TestTxReads_GetNodeUsesUnprojectedSnapshotPrefix(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	t.Cleanup(func() { _ = tx.Rollback() })
@@ -404,39 +404,39 @@ func TestTxReads_GetNodeUsesUnprojectedSnapshotPrefix(t *testing.T) {
 	require.Len(t, tx.snapshotPrefixNodeByID, 1)
 
 	first := tx.snapshotLabelPrefixNodes[snapshotLabelCacheKey{projectionKey: "Person"}][0]
-	got, err := tx.GetNode(first.ID)
+	got, err := tx.GetNode(t.Context(), first.ID)
 	require.NoError(t, err)
 	require.Equal(t, first, got)
 	require.NotSame(t, first, got)
 	got.Properties["name"] = "caller mutation"
-	gotAgain, err := tx.GetNode(first.ID)
+	gotAgain, err := tx.GetNode(t.Context(), first.ID)
 	require.NoError(t, err)
 	require.Equal(t, first.Properties["name"], gotAgain.Properties["name"])
 
 	gotAgain.Properties["name"] = "pending update"
-	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: gotAgain, Policy: ClientNodeEdits}))
-	pending, err := tx.GetNode(first.ID)
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: gotAgain, Policy: ClientNodeEdits}))
+	pending, err := tx.GetNode(t.Context(), first.ID)
 	require.NoError(t, err)
 	require.Equal(t, "pending update", pending.Properties["name"], "pending state must take priority over the committed prefix cache")
-	require.NoError(t, tx.DeleteGraphNode(first.ID, CascadeEdges))
-	_, err = tx.GetNode(first.ID)
+	require.NoError(t, tx.DeleteGraphNode(t.Context(), first.ID, CascadeEdges))
+	_, err = tx.GetNode(t.Context(), first.ID)
 	require.ErrorIs(t, err, ErrNotFound, "deleted state must take priority over the committed prefix cache")
 }
 
 func TestTxReads_StreamNodesByLabelProjected_CachedReplayKeepsBeginSnapshot(t *testing.T) {
 	engine := txReadFixture(t)
-	reader, err := engine.BeginTransaction()
+	reader, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, reader.SetNamespace("test"))
 	t.Cleanup(func() { _ = reader.Rollback() })
 
-	writer, err := engine.BeginTransaction()
+	writer, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, writer.SetNamespace("test"))
-	bob, err := writer.GetNode("test:bob")
+	bob, err := writer.GetNode(t.Context(), "test:bob")
 	require.NoError(t, err)
 	bob.Properties["name"] = "Changed after reader began"
-	require.NoError(t, writer.UpdateGraphNode(NodeUpdateRequest{After: bob, Policy: ClientNodeEdits}))
+	require.NoError(t, writer.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: bob, Policy: ClientNodeEdits}))
 	require.NoError(t, writer.Commit())
 
 	readNames := func() map[NodeID]string {
@@ -457,11 +457,11 @@ func TestTxReads_StreamNodesByLabelProjected_CachedReplayKeepsBeginSnapshot(t *t
 
 func TestTxReads_GetEdge_Committed(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
-	got, err := tx.GetEdge("test:e-knows-1")
+	got, err := tx.GetEdge(t.Context(), "test:e-knows-1")
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	require.Equal(t, EdgeID("test:e-knows-1"), got.ID)
@@ -473,41 +473,41 @@ func TestTxReads_GetEdge_Committed(t *testing.T) {
 
 func TestTxReads_GetEdge_PendingWriteVisible(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
 	// Stage a brand-new edge inside the open tx; GetEdge must read it
 	// back via the pendingEdges fast path, not engine state.
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e-pending", StartNode: "test:alice", EndNode: "test:dave",
 		Type: "MENTIONS", Properties: map[string]any{"weight": 0.7},
 	}))
 
-	got, err := tx.GetEdge("test:e-pending")
+	got, err := tx.GetEdge(t.Context(), "test:e-pending")
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	require.Equal(t, "MENTIONS", got.Type)
 	require.Equal(t, 0.7, got.Properties["weight"])
 
 	// Engine must NOT see it yet — the tx hasn't committed.
-	_, err = engine.GetEdge("test:e-pending")
+	_, err = engine.GetEdge(t.Context(), "test:e-pending")
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
 func TestTxReads_GetEdge_DeletedReturnsNotFound(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
-	require.NoError(t, tx.DeleteEdge("test:e-knows-1"))
+	require.NoError(t, tx.DeleteEdge(t.Context(), "test:e-knows-1"))
 
-	_, err = tx.GetEdge("test:e-knows-1")
+	_, err = tx.GetEdge(t.Context(), "test:e-knows-1")
 	require.ErrorIs(t, err, ErrNotFound)
 
 	// Deleted edge is still visible to the engine until commit.
-	committed, err := engine.GetEdge("test:e-knows-1")
+	committed, err := engine.GetEdge(t.Context(), "test:e-knows-1")
 	require.NoError(t, err)
 	require.NotNil(t, committed)
 }
@@ -521,11 +521,11 @@ func TestTxReads_GetOutgoingEdges(t *testing.T) {
 	out = readDirectionalEdges(t, tx, TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "test:alice"})
 	require.Equal(t, "KNOWS", out[0].Type, "mutating returned edge data must not corrupt the transaction snapshot cache")
 
-	updated, err := tx.GetEdge("test:e-knows-2")
+	updated, err := tx.GetEdge(t.Context(), "test:e-knows-2")
 	require.NoError(t, err)
 	updated.EndNode = "test:dave"
 	updated.Type = "MENTIONS"
-	require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: updated}))
+	require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: updated}))
 	out = readDirectionalEdges(t, tx, TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "test:alice"})
 	foundUpdated := findEdgeByID(out, "test:e-knows-2")
 	require.NotNil(t, foundUpdated)
@@ -533,16 +533,16 @@ func TestTxReads_GetOutgoingEdges(t *testing.T) {
 	require.Equal(t, "MENTIONS", foundUpdated.Type)
 
 	// Layer a pending edge from alice — must merge in.
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e-new", StartNode: "test:alice", EndNode: "test:dave",
 		Type: "MENTIONS", Properties: map[string]any{},
 	}))
-	require.NoError(t, tx.DeleteEdge("test:e-knows-1"))
+	require.NoError(t, tx.DeleteEdge(t.Context(), "test:e-knows-1"))
 	out = readDirectionalEdges(t, tx, TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "test:alice"})
 	require.Equal(t, []string{"test:e-knows-2", "test:e-new"}, edgeIDs(out))
 
 	// Pending edge from a different node must NOT show up under alice.
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e-other", StartNode: "test:bob", EndNode: "test:dave",
 		Type: "REFERS",
 	}))
@@ -562,7 +562,7 @@ func TestTxReads_GetIncomingEdges(t *testing.T) {
 	require.Empty(t, in)
 
 	// Pending edge into alice — must show up in subsequent read.
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e-incoming", StartNode: "test:dave", EndNode: "test:alice",
 		Type: "MENTIONS",
 	}))
@@ -583,7 +583,7 @@ func TestTxReads_GetEdgesBetween(t *testing.T) {
 
 	// Add a second alice→bob edge as pending; the result must
 	// include the committed one + the pending one but no dupes.
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e-knows-3", StartNode: "test:alice", EndNode: "test:bob",
 		Type: "RIVALS",
 	}))
@@ -593,34 +593,42 @@ func TestTxReads_GetEdgesBetween(t *testing.T) {
 
 func TestTxReads_GetEdgeBetween(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
 	// Type-filtered single lookup hits the committed KNOWS edge.
-	got := tx.GetEdgeBetween("test:alice", "test:bob", "KNOWS")
+	got, err := tx.GetEdgeBetween(t.Context(), "test:alice", "test:bob", "KNOWS")
+	require.NoError(t, err)
 	require.NotNil(t, got)
 	require.Equal(t, EdgeID("test:e-knows-1"), got.ID)
 
 	// Empty type matches anything between the pair (first hit wins);
 	// we can only assert it returns SOME alice→bob edge.
-	got = tx.GetEdgeBetween("test:alice", "test:bob", "")
+	got, err = tx.GetEdgeBetween(t.Context(), "test:alice", "test:bob", "")
+	require.NoError(t, err)
 	require.NotNil(t, got)
 	require.Equal(t, NodeID("test:alice"), got.StartNode)
 	require.Equal(t, NodeID("test:bob"), got.EndNode)
 
 	// Wrong type → nil (not error).
-	got = tx.GetEdgeBetween("test:alice", "test:bob", "MENTIONS")
+	got, err = tx.GetEdgeBetween(t.Context(), "test:alice", "test:bob", "MENTIONS")
+	require.NoError(t, err)
 	require.Nil(t, got)
 
-	// Unconnected pair → nil.
-	got = tx.GetEdgeBetween("test:alice", "other:doc", "KNOWS")
+	// An unconnected pair in this transaction's namespace → nil.
+	got, err = tx.GetEdgeBetween(t.Context(), "test:alice", "test:dave", "KNOWS")
+	require.NoError(t, err)
+	require.Nil(t, got)
+	// Another namespace remains outside this transaction's read authority.
+	got, err = tx.GetEdgeBetween(t.Context(), "test:alice", "other:doc", "KNOWS")
+	require.ErrorIs(t, err, ErrCrossNamespaceTransaction)
 	require.Nil(t, got)
 }
 
 func TestTxReads_GetEdgesByType(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -635,7 +643,7 @@ func TestTxReads_GetEdgesByType(t *testing.T) {
 	require.Equal(t, []string{"test:e-follows"}, edgeIDs(follows))
 
 	// Layer a pending KNOWS edge — must merge in.
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e-knows-pending", StartNode: "test:bob", EndNode: "test:dave",
 		Type: "KNOWS",
 	}))
@@ -646,7 +654,7 @@ func TestTxReads_GetEdgesByType(t *testing.T) {
 	}, edgeIDs(knows))
 
 	// Pending edge of a DIFFERENT type must NOT contaminate.
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e-mentions", StartNode: "test:alice", EndNode: "test:dave",
 		Type: "MENTIONS",
 	}))
@@ -662,7 +670,7 @@ func TestTxReads_GetEdgesByType(t *testing.T) {
 
 func TestTxReads_GetNodesByLabel(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -681,11 +689,11 @@ func TestTxReads_GetNodesByLabel(t *testing.T) {
 // committed nodes must drop out, unknown labels return empty.
 func TestTxReads_GetNodesByLabel_PendingNodeMerges(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
-	_, err = tx.CreateNode(&Node{
+	_, err = tx.CreateNode(t.Context(), &Node{
 		ID: "test:eve", Labels: []string{"Person", "Designer"},
 		Properties: map[string]any{},
 	})
@@ -702,7 +710,7 @@ func TestTxReads_GetNodesByLabel_PendingNodeMerges(t *testing.T) {
 	require.Equal(t, []string{"test:eve"}, nodeIDs(designers))
 
 	// Deleted committed node must drop out.
-	require.NoError(t, tx.DeleteGraphNode("test:bob", CascadeEdges))
+	require.NoError(t, tx.DeleteGraphNode(t.Context(), "test:bob", CascadeEdges))
 	people, err = tx.GetNodesByLabel(context.Background(), "Person")
 	require.NoError(t, err)
 	require.NotContains(t, nodeIDs(people), "test:bob")
@@ -715,30 +723,30 @@ func TestTxReads_GetNodesByLabel_PendingNodeMerges(t *testing.T) {
 
 func TestTxReads_GetFirstNodeByLabel(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
-	got, err := tx.GetFirstNodeByLabel("Engineer")
+	got, err := tx.GetFirstNodeByLabel(t.Context(), "Engineer")
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	require.Equal(t, NodeID("test:alice"), got.ID)
 
 	// Multi-match: returns SOMETHING valid (first hit, not specified).
-	got, err = tx.GetFirstNodeByLabel("Person")
+	got, err = tx.GetFirstNodeByLabel(t.Context(), "Person")
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	require.Contains(t, got.Labels, "Person")
 
 	// No match → ErrNotFound, not silent nil.
-	got, err = tx.GetFirstNodeByLabel("NoSuchLabel")
+	got, err = tx.GetFirstNodeByLabel(t.Context(), "NoSuchLabel")
 	require.ErrorIs(t, err, ErrNotFound)
 	require.Nil(t, got)
 }
 
 func TestTxReads_AllNodes(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -749,11 +757,11 @@ func TestTxReads_AllNodes(t *testing.T) {
 	}, nodeIDs(all))
 
 	// Pending node added, deleted node removed, both reflected.
-	_, err = tx.CreateNode(&Node{
+	_, err = tx.CreateNode(t.Context(), &Node{
 		ID: "test:eve", Labels: []string{"Person"}, Properties: map[string]any{},
 	})
 	require.NoError(t, err)
-	require.NoError(t, tx.DeleteGraphNode("test:dave", CascadeEdges))
+	require.NoError(t, tx.DeleteGraphNode(t.Context(), "test:dave", CascadeEdges))
 
 	all, err = tx.AllNodes(context.Background())
 	require.NoError(t, err)
@@ -918,19 +926,19 @@ func BenchmarkTxReads_MergePendingEdgesLocked_WithOverlay(b *testing.B) {
 
 func TestTxReads_BulkCreateEdges_Success(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
 	// Mix: one committed-endpoint pair, one with a pending start node,
 	// one with a pending end node. The shared existence cache must
 	// handle all three.
-	_, err = tx.CreateNode(&Node{
+	_, err = tx.CreateNode(t.Context(), &Node{
 		ID: "test:eve", Labels: []string{"Person"}, Properties: map[string]any{},
 	})
 	require.NoError(t, err)
 
-	require.NoError(t, tx.BulkCreateEdges([]*Edge{
+	require.NoError(t, tx.BulkCreateEdges(t.Context(), []*Edge{
 		{ID: "test:e-bulk-1", StartNode: "test:alice", EndNode: "test:bob", Type: "BULK"},
 		{ID: "test:e-bulk-2", StartNode: "test:eve", EndNode: "test:bob", Type: "BULK"},
 		{ID: "test:e-bulk-3", StartNode: "test:alice", EndNode: "test:eve", Type: "BULK"},
@@ -944,30 +952,30 @@ func TestTxReads_BulkCreateEdges_Success(t *testing.T) {
 
 	// Each one round-trips.
 	for _, id := range []EdgeID{"test:e-bulk-1", "test:e-bulk-2", "test:e-bulk-3"} {
-		e, err := tx.GetEdge(id)
+		e, err := tx.GetEdge(t.Context(), id)
 		require.NoError(t, err)
 		require.Equal(t, "BULK", e.Type)
 	}
 
 	// Empty input is a no-op (not an error).
-	require.NoError(t, tx.BulkCreateEdges(nil))
-	require.NoError(t, tx.BulkCreateEdges([]*Edge{}))
+	require.NoError(t, tx.BulkCreateEdges(t.Context(), nil))
+	require.NoError(t, tx.BulkCreateEdges(t.Context(), []*Edge{}))
 }
 
 func TestTxReads_BulkCreateEdges_FailsOnMissingEndpoint(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
-	err = tx.BulkCreateEdges([]*Edge{
+	err = tx.BulkCreateEdges(t.Context(), []*Edge{
 		{ID: "test:e-bulk-bad", StartNode: "test:alice", EndNode: "test:nobody", Type: "BULK"},
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "test:nobody")
 	require.Contains(t, err.Error(), "does not exist")
 
-	err = tx.BulkCreateEdges([]*Edge{
+	err = tx.BulkCreateEdges(t.Context(), []*Edge{
 		{ID: "test:e-bulk-bad-2", StartNode: "test:nobody", EndNode: "test:alice", Type: "BULK"},
 	})
 	require.Error(t, err)
@@ -976,12 +984,12 @@ func TestTxReads_BulkCreateEdges_FailsOnMissingEndpoint(t *testing.T) {
 
 func TestTxReads_BulkCreateEdges_RejectsDuplicate(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
 	// Same ID staged twice in the same call.
-	err = tx.BulkCreateEdges([]*Edge{
+	err = tx.BulkCreateEdges(t.Context(), []*Edge{
 		{ID: "test:e-dup", StartNode: "test:alice", EndNode: "test:bob", Type: "DUP"},
 		{ID: "test:e-dup", StartNode: "test:alice", EndNode: "test:bob", Type: "DUP"},
 	})
@@ -990,23 +998,23 @@ func TestTxReads_BulkCreateEdges_RejectsDuplicate(t *testing.T) {
 
 func TestTxReads_BulkCreateEdges_RejectsInvalidInput(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
 	require.ErrorIs(t,
-		tx.BulkCreateEdges([]*Edge{nil}),
+		tx.BulkCreateEdges(t.Context(), []*Edge{nil}),
 		ErrInvalidData,
 	)
 	require.ErrorIs(t,
-		tx.BulkCreateEdges([]*Edge{{StartNode: "test:alice", EndNode: "test:bob", Type: "X"}}),
+		tx.BulkCreateEdges(t.Context(), []*Edge{{StartNode: "test:alice", EndNode: "test:bob", Type: "X"}}),
 		ErrInvalidID,
 	)
 }
 
 func TestTxReads_SetImplicit(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -1028,27 +1036,27 @@ func TestTxReads_SetImplicit(t *testing.T) {
 // batch, and a rejected edge leaves the batch's earlier edges unbuffered.
 func TestTxReads_CreateEdgeSingleAndBulkAgree(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
-	require.ErrorIs(t, tx.CreateEdge(nil), ErrInvalidData)
-	require.ErrorIs(t, tx.BulkCreateEdges([]*Edge{nil}), ErrInvalidData)
-	require.ErrorIs(t, tx.CreateEdge(&Edge{StartNode: "test:alice", EndNode: "test:bob", Type: "X"}), ErrInvalidID)
+	require.ErrorIs(t, tx.CreateEdge(t.Context(), nil), ErrInvalidData)
+	require.ErrorIs(t, tx.BulkCreateEdges(t.Context(), []*Edge{nil}), ErrInvalidData)
+	require.ErrorIs(t, tx.CreateEdge(t.Context(), &Edge{StartNode: "test:alice", EndNode: "test:bob", Type: "X"}), ErrInvalidID)
 
 	// The second edge's missing endpoint rejects the batch: the first edge
 	// is not buffered.
-	err = tx.BulkCreateEdges([]*Edge{
+	err = tx.BulkCreateEdges(t.Context(), []*Edge{
 		{ID: "test:e-ok", StartNode: "test:alice", EndNode: "test:bob", Type: "OK"},
 		{ID: "test:e-bad", StartNode: "test:alice", EndNode: "test:nobody", Type: "BAD"},
 	})
 	require.Error(t, err)
-	_, err = tx.GetEdge("test:e-ok")
+	_, err = tx.GetEdge(t.Context(), "test:e-ok")
 	require.ErrorIs(t, err, ErrNotFound)
 
 	// After the transaction ends, an empty batch reports it like any other.
 	require.NoError(t, tx.Rollback())
-	require.Error(t, tx.BulkCreateEdges(nil))
+	require.Error(t, tx.BulkCreateEdges(t.Context(), nil))
 }
 
 // readDirectionalEdges reads one transaction edge-read and returns its edges.
@@ -1064,7 +1072,7 @@ func readDirectionalEdges(t *testing.T, tx *BadgerTransaction, request Transacti
 func beginDirectionalReadFixture(t *testing.T) *BadgerTransaction {
 	t.Helper()
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	return tx

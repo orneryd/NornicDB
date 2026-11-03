@@ -233,7 +233,7 @@ func TestNodeRuntimeCacheFillFormsPreserveMetadataAndIdentity(t *testing.T) {
 	const staleID NodeID = "runtime:stale"
 	stale := &Node{runtime: &nodeRuntime{metadata: runtimeMetadataFull()}, ID: staleID, Labels: []string{"Doc"}}
 	staleGen := engine.nodeCacheGen.current()
-	require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: staleID, Labels: []string{"Doc"}}}))
+	require.NoError(t, engine.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: staleID, Labels: []string{"Doc"}}}))
 	engine.cacheFillNode(staleGen, stale, nodeReadCacheFull, engine.db.oracle.published.Load())
 	engine.nodeCacheMu.RLock()
 	cachedStale, ok := engine.nodeCache[staleID]
@@ -310,7 +310,7 @@ func TestNodeRuntimeStoredBodyExcludesProvenanceAndReadsIdentity(t *testing.T) {
 		Labels:     []string{"Doc"},
 		Properties: map[string]any{"text": "stored"},
 	}
-	_, err := engine.CreateNode(CopyNode(written))
+	_, err := engine.CreateNode(t.Context(), CopyNode(written))
 	require.NoError(t, err)
 
 	var body []byte
@@ -328,7 +328,7 @@ func TestNodeRuntimeStoredBodyExcludesProvenanceAndReadsIdentity(t *testing.T) {
 	}))
 	require.NotEmpty(t, body)
 	require.Equal(t, nodeFormatTokenizedV1, body[0], "the stored body is the unchanged V2 format")
-	decoded, err := engine.decodeNode("runtime", body)
+	decoded, err := engine.decodeNodeProjected(nil, "runtime", body, nil)
 	require.NoError(t, err)
 	requireRuntimeMetadata(t, "decoded store", decoded, NodeRuntimeMetadata{
 		Database:                   "",
@@ -345,10 +345,10 @@ func TestNodeRuntimeStoredBodyExcludesProvenanceAndReadsIdentity(t *testing.T) {
 	wantRevision := EmbeddingBodyRevision{physical: physical}
 	for name, read := range map[string]func() (*Node, error){
 		"readNodeMetadata/bodyOnly": func() (*Node, error) {
-			return engine.readNodeMetadata(id, storedRead, nodeItemBodyOnly)
+			return engine.readNodeMetadata(t.Context(), id, storedRead, nodeItemBodyOnly)
 		},
 		"readNodeMetadata/query": func() (*Node, error) {
-			return engine.readNodeMetadata(id, storedRead, nodeItemQueryMetadata)
+			return engine.readNodeMetadata(t.Context(), id, storedRead, nodeItemQueryMetadata)
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -370,7 +370,7 @@ func TestNodeRuntimeStoredBodyExcludesProvenanceAndReadsIdentity(t *testing.T) {
 
 	// A public read of the image the write cached keeps the original body's
 	// provenance, owner and flags; the cache never re-derives them.
-	stored, err := engine.GetStoredNode(id)
+	stored, err := engine.GetStoredNode(t.Context(), id)
 	require.NoError(t, err)
 	requireRuntimeMetadata(t, "GetStoredNode", stored, NodeRuntimeMetadata{
 		EmbeddingsStoredSeparately: true,
@@ -401,7 +401,7 @@ func TestNodeRuntimeNamespaceProjectionPreservesMetadataAndIdentity(t *testing.T
 		EmbedMeta:       map[string]any{"chunk_count": 1},
 	}
 	// NodeWriteInput copies the record; the namespace only rewrites provenance.
-	_, err := engine.CreateNode(copyNode(written))
+	_, err := engine.CreateNode(t.Context(), copyNode(written))
 	require.NoError(t, err)
 	store := NewNamespacedEngine(engine, namespace)
 
@@ -409,7 +409,7 @@ func TestNodeRuntimeNamespaceProjectionPreservesMetadataAndIdentity(t *testing.T
 	// observes, are taken from the same public read class rather than asserted
 	// from an encoded value: a read settles EmbeddingsStoredSeparately against
 	// the embedding state it hydrates (loadNodeEmbeddingState).
-	probe, err := store.GetNode(userID)
+	probe, err := store.GetNode(t.Context(), userID)
 	require.NoError(t, err)
 	probeState := probe.runtimeState()
 	require.Same(t, engine, probeState.embeddingOwner)
@@ -429,10 +429,10 @@ func TestNodeRuntimeNamespaceProjectionPreservesMetadataAndIdentity(t *testing.T
 		name string
 		read func(NodeID) (*Node, error)
 	}{
-		{"GetNode", store.GetNode},
-		{"GetQueryNode", store.GetQueryNode},
-		{"GetNodeWithoutEmbeddings", store.GetNodeWithoutEmbeddings},
-		{"GetNodeLatestVisible", store.GetNodeLatestVisible},
+		{"GetNode", func(id NodeID) (*Node, error) { return store.GetNode(t.Context(), id) }},
+		{"GetQueryNode", func(id NodeID) (*Node, error) { return store.GetQueryNode(t.Context(), id) }},
+		{"GetNodeWithoutEmbeddings", func(id NodeID) (*Node, error) { return store.GetNodeWithoutEmbeddings(t.Context(), id) }},
+		{"GetNodeLatestVisible", func(id NodeID) (*Node, error) { return store.GetNodeLatestVisible(t.Context(), id) }},
 	}
 	for _, tc := range named {
 		t.Run(tc.name, func(t *testing.T) {
@@ -446,13 +446,13 @@ func TestNodeRuntimeNamespaceProjectionPreservesMetadataAndIdentity(t *testing.T
 	}
 
 	// The stored image keeps no provenance; the namespace supplies it.
-	raw, err := engine.GetNode("runtime:doc")
+	raw, err := engine.GetNode(t.Context(), "runtime:doc")
 	require.NoError(t, err)
 	require.Empty(t, raw.RuntimeMetadata().Database, "the stored body carries no Database")
 	require.True(t, raw.RuntimeMetadata().VisibilitySuppressed)
 
 	// Projected and batch reads reach the same projection owner.
-	projected, err := store.GetNodeProjected(userID, []string{"text"})
+	projected, err := store.GetNodeProjected(t.Context(), userID, []string{"text"})
 	require.NoError(t, err)
 	require.Equal(t, map[string]any{"text": "namespace body"}, projected.Properties)
 	requireRuntimeMetadata(t, "GetNodeProjected", projected, wantMetadata)
@@ -476,7 +476,7 @@ func TestNodeRuntimeNamespaceProjectionPreservesMetadataAndIdentity(t *testing.T
 func TestNodeRuntimeCacheHitCopiesAreIndependent(t *testing.T) {
 	engine := runtimeNewEngine(t)
 	store := NewNamespacedEngine(engine, "hits")
-	_, err := store.CreateNode(&Node{
+	_, err := store.CreateNode(t.Context(), &Node{
 		ID:              "doc",
 		Labels:          []string{"Doc"},
 		Properties:      map[string]any{"text": "cached"},
@@ -484,10 +484,10 @@ func TestNodeRuntimeCacheHitCopiesAreIndependent(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	first, err := store.GetNode("doc")
+	first, err := store.GetNode(t.Context(), "doc")
 	require.NoError(t, err)
 	hitsBefore := atomic.LoadInt64(&engine.cacheHits)
-	second, err := store.GetNode("doc")
+	second, err := store.GetNode(t.Context(), "doc")
 	require.NoError(t, err)
 	require.Greater(t, atomic.LoadInt64(&engine.cacheHits), hitsBefore, "the second read is served from the node cache")
 	require.NotSame(t, first, second, "each cache hit is a caller-owned image")
@@ -507,7 +507,7 @@ func TestNodeRuntimeCacheHitCopiesAreIndependent(t *testing.T) {
 	requireRuntimeMetadata(t, "second read after caller write", second, base)
 	require.Equal(t, map[string]any{"text": "cached"}, second.Properties, "a caller cannot write the cached body")
 	require.Equal(t, []string{"Doc"}, second.Labels)
-	third, err := store.GetNode("doc")
+	third, err := store.GetNode(t.Context(), "doc")
 	require.NoError(t, err)
 	requireRuntimeMetadata(t, "third read", third, base)
 	require.Equal(t, map[string]any{"text": "cached"}, third.Properties)
@@ -533,11 +533,11 @@ func TestNodeRuntimeMetadataChangeKeepsPublicationAcknowledgement(t *testing.T) 
 	engine := runtimeNewEngine(t)
 	engine.SetEmbeddingsEnabled(true)
 	const id NodeID = "ack:doc"
-	_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"text": "accepted"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"text": "accepted"}})
 	require.NoError(t, err)
-	payload, err := engine.GetNode(id)
+	payload, err := engine.GetNode(t.Context(), id)
 	require.NoError(t, err)
-	payload, err = SnapshotNodeForEmbedding(payload)
+	payload, err = SnapshotNodeForEmbedding(t.Context(), payload)
 	require.NoError(t, err)
 	payload.ChunkEmbeddings = [][]float32{{1, 0}}
 	payload.EmbedMeta = map[string]any{"chunk_count": 1}
@@ -550,13 +550,13 @@ func TestNodeRuntimeMetadataChangeKeepsPublicationAcknowledgement(t *testing.T) 
 			accepted = node
 		}
 	})
-	require.NoError(t, engine.UpdateNodeEmbeddingSidecar(payload))
+	require.NoError(t, engine.UpdateNodeEmbeddingSidecar(context.Background(), payload))
 	require.NotNil(t, accepted, "the acknowledged body reaches the ordered listener")
 	proof := accepted.runtimeState().embeddingPublication
 	require.NotZero(t, proof.commitTs, "the ACK carries its own commit boundary")
 	require.True(t, proof.matches(engine, id, accepted.EmbeddingRevision()))
 	revision := accepted.EmbeddingRevision()
-	same, err := engine.embeddingRevisionIsCurrent(id, revision, proof)
+	same, err := engine.embeddingRevisionIsCurrent(t.Context(), id, revision, proof)
 	require.NoError(t, err)
 	require.True(t, same, "the accepted body is current at publication time")
 	acceptedMetadata := accepted.RuntimeMetadata()

@@ -21,7 +21,7 @@ func TestHTTPContinuationDoesNotLoseFilteredMatchesAfterShortBatch(t *testing.T)
 	for i := range nodes {
 		nodes[i] = &storage.Node{ID: storage.NodeID(fmt.Sprintf("exhaustion-%03d", i)), Properties: map[string]any{"content": "searchable library transcript"}}
 	}
-	require.NoError(t, engine.BulkCreateNodes(nodes))
+	require.NoError(t, engine.BulkCreateNodes(t.Context(), nodes))
 	rebuild := makeRequest(t, server, http.MethodPost, "/nornicdb/search/rebuild", map[string]any{"database": database}, token)
 	require.Equal(t, http.StatusOK, rebuild.Code, rebuild.Body.String())
 	require.Eventually(t, func() bool {
@@ -41,10 +41,10 @@ func TestHTTPContinuationDoesNotLoseFilteredMatchesAfterShortBatch(t *testing.T)
 	require.Len(t, all, 600)
 	want := []string{all[1].Node.ID, all[500].Node.ID}
 	for _, id := range want {
-		node, err := engine.GetNode(storage.NodeID(id))
+		node, err := engine.GetNode(t.Context(), storage.NodeID(id))
 		require.NoError(t, err)
 		node.Properties["eligible"] = "yes"
-		require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: node}))
+		require.NoError(t, engine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
 	}
 	type page struct {
 		Results []hit  `json:"results"`

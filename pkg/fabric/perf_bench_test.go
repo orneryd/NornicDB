@@ -28,7 +28,7 @@ func BenchmarkRewriteLeadingWithImports(b *testing.B) {
 	imports := []string{"textKey128"}
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_ = rewriteLeadingWithImports(query, imports)
+		_ = rewriteLeadingWithImports(b.Context(), query, imports)
 	}
 }
 

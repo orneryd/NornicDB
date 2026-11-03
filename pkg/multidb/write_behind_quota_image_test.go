@@ -42,7 +42,7 @@ func TestStorageSizeTracksAcknowledgedBodies(t *testing.T) {
 					// transaction committed by the tracker.
 					write := func(change func(tx *storage.BadgerTransaction) error) {
 						t.Helper()
-						tx, err := base.BeginTransaction()
+						tx, err := base.BeginTransaction(t.Context())
 						require.NoError(t, err)
 						require.NoError(t, tx.SetNamespace("nornic"))
 						require.NoError(t, tx.SetImplicit(true))
@@ -52,33 +52,33 @@ func TestStorageSizeTracksAcknowledgedBodies(t *testing.T) {
 					setPayload := func(payload []any) func(tx *storage.BadgerTransaction) error {
 						return func(tx *storage.BadgerTransaction) error {
 							if kind == "node" {
-								node, err := tx.GetStoredNode("nornic:n")
+								node, err := tx.GetStoredNode(t.Context(), "nornic:n")
 								if err != nil {
 									return err
 								}
 								node.Properties["payload"] = payload
-								return tx.UpdateGraphNode(storage.NodeUpdateRequest{After: node, Policy: storage.ClientNodeEdits})
+								return tx.UpdateGraphNode(t.Context(), storage.NodeUpdateRequest{After: node, Policy: storage.ClientNodeEdits})
 							}
-							edge, err := tx.GetStoredEdge("nornic:r")
+							edge, err := tx.GetStoredEdge(t.Context(), "nornic:r")
 							if err != nil {
 								return err
 							}
 							edge.Properties["payload"] = payload
-							return tx.UpdateEdge(storage.EdgeUpdateRequest{After: edge})
+							return tx.UpdateEdge(t.Context(), storage.EdgeUpdateRequest{After: edge})
 						}
 					}
 
 					for _, id := range []storage.NodeID{"a", "b"} {
-						_, err = engine.CreateNode(&storage.Node{ID: id})
+						_, err = engine.CreateNode(t.Context(), &storage.Node{ID: id})
 						require.NoError(t, err)
 					}
 					if kind == "node" {
-						_, err = engine.CreateNode(&storage.Node{ID: "n", Properties: map[string]any{"payload": []any{"stored"}}})
+						_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "n", Properties: map[string]any{"payload": []any{"stored"}}})
 					} else {
-						err = engine.CreateEdge(&storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "LINK", Properties: map[string]any{"payload": []any{"stored"}}})
+						err = engine.CreateEdge(t.Context(), &storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "LINK", Properties: map[string]any{"payload": []any{"stored"}}})
 					}
 					require.NoError(t, err)
-					require.NoError(t, base.FlushWriteBehind(nil))
+					require.NoError(t, base.FlushWriteBehind(context.Background()))
 					// An acknowledged rewrite: until a flush, stored reads, and so
 					// initialization, meet it in the write-behind overlay.
 					write(setPayload([]any{"stored"}))
@@ -91,19 +91,19 @@ func TestStorageSizeTracksAcknowledgedBodies(t *testing.T) {
 					requireRecount("update")
 					if hidden {
 						if kind == "node" {
-							require.NoError(t, base.SetManualSuppression(storage.StoredEntityNodeKind, "nornic:n", true))
+							require.NoError(t, base.SetManualSuppression(context.Background(), storage.StoredEntityNodeKind, "nornic:n", true))
 						} else {
-							require.NoError(t, base.SetManualSuppression(storage.StoredEntityEdgeKind, "nornic:r", true))
+							require.NoError(t, base.SetManualSuppression(context.Background(), storage.StoredEntityEdgeKind, "nornic:r", true))
 						}
 					}
 					write(func(tx *storage.BadgerTransaction) error {
 						if kind == "node" {
-							return tx.DeleteGraphNode("nornic:n", storage.CascadeEdges)
+							return tx.DeleteGraphNode(t.Context(), "nornic:n", storage.CascadeEdges)
 						}
-						return tx.DeleteEdge("nornic:r")
+						return tx.DeleteEdge(t.Context(), "nornic:r")
 					})
 					requireRecount("delete")
-					require.NoError(t, base.FlushWriteBehind(nil))
+					require.NoError(t, base.FlushWriteBehind(context.Background()))
 					requireRecount("flush")
 				})
 			}

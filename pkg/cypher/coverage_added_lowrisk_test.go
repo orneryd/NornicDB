@@ -27,7 +27,8 @@ func TestResolveRowPath_EmptyAndNoParams(t *testing.T) {
 }
 
 func TestExtractCreateVariableRefs_IgnoresEmptyPatternSegments(t *testing.T) {
-	vars := extractCreateVariableRefs("CREATE (a)-[:R]->(b), ")
+	vars, err := extractCreateVariableRefs(t.Context(), "CREATE (a)-[:R]->(b), ")
+	require.NoError(t, err)
 	require.ElementsMatch(t, []string{"a", "b"}, vars)
 }
 
@@ -46,7 +47,8 @@ func TestParseIndexHints_InvalidFormsRemainInQuery(t *testing.T) {
 	}
 
 	for _, q := range tests {
-		hints, clean := ParseIndexHints(q)
+		hints, clean, err := ParseIndexHints(t.Context(), q)
+		require.NoError(t, err)
 		require.Empty(t, hints)
 		require.Contains(t, clean, "USING")
 	}

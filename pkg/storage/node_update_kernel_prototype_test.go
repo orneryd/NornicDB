@@ -33,19 +33,21 @@ func TestPrototypeNodeUpdateChunkPersistence(t *testing.T) {
 					}
 					b := open()
 					original := &Node{ID: "test:chunks", Labels: []string{"Doc"}, Properties: map[string]any{"text": "same"}, CreatedAt: time.Unix(1700000000, 0).UTC(), UpdatedAt: time.Unix(1700000000, 1).UTC(), ChunkEmbeddings: [][]float32{vector(0.25), vector(0.5)}, EmbedMeta: map[string]any{"embedding_model": "original", "chunk_count": 2}}
-					_, err := b.CreateNode(original)
+					_, err := b.CreateNode(t.Context(), original)
 					require.NoError(t, err)
-					originalStored, err := b.GetStoredNode(original.ID)
+					originalStored, err := b.GetStoredNode(t.Context(), original.ID)
 					require.NoError(t, err)
 					images := ClientNodeEdits
 					if accepted {
 						images = StoredNodeImages
 					}
-					tx, err := BeginEntityTransaction(b, CommitModeExplicit)
+					tx, err := BeginEntityTransaction(t.Context(), b, CommitModeExplicit)
 					require.NoError(t, err)
 					defer tx.Rollback()
 					require.NoError(t, tx.SetNamespace("test"))
-					update := func(node *Node) error { return tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: images}) }
+					update := func(node *Node) error {
+						return tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node, Policy: images})
+					}
 					first := CopyNode(originalStored)
 					first.ChunkEmbeddings = [][]float32{vector(1), vector(2)}
 					first.EmbedMeta = map[string]any{"embedding_model": "first", "chunk_count": 2}
@@ -80,7 +82,7 @@ func TestPrototypeNodeUpdateChunkPersistence(t *testing.T) {
 					}
 					require.NoError(t, b.Close())
 					b = open()
-					got, err := b.GetStoredNode(original.ID)
+					got, err := b.GetStoredNode(t.Context(), original.ID)
 					require.NoError(t, err)
 					require.Equal(t, wantVectors, got.ChunkEmbeddings)
 					if wantModel == "" {
@@ -116,30 +118,30 @@ func TestPrototypeCommittedImageReplacesCommittedAndPendingSidecar(t *testing.T)
 			b.SetEmbeddingTextPolicy(EmbeddingTextPolicy{Include: []string{"text"}})
 			now := time.Unix(1700000000, 123).UTC()
 			node := sidecarTestNode(t, b, "authoritative-sidecar", map[string]any{"text": "same"}, now)
-			require.NoError(t, b.UpdateNodeEmbeddingSidecar(embeddingWriteback(t, b, node.ID, [][]float32{{1, 2}}, map[string]any{"embedding_model": "original", "chunk_count": 1, "has_embedding": true}, now)))
-			tx, err := BeginEntityTransaction(b, CommitModeExplicit)
+			require.NoError(t, b.UpdateNodeEmbeddingSidecar(context.Background(), embeddingWriteback(t, b, node.ID, [][]float32{{1, 2}}, map[string]any{"embedding_model": "original", "chunk_count": 1, "has_embedding": true}, now)))
+			tx, err := BeginEntityTransaction(t.Context(), b, CommitModeExplicit)
 			require.NoError(t, err)
 			defer tx.Rollback()
 			require.NoError(t, tx.SetNamespace("test"))
-			current, err := tx.GetNode(node.ID)
+			current, err := tx.GetNode(t.Context(), node.ID)
 			require.NoError(t, err)
 			current.Properties["unfed"] = "changed"
 			current.UpdatedAt = current.UpdatedAt.Add(time.Second)
-			require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: current, Policy: ClientNodeEdits}))
+			require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: current, Policy: ClientNodeEdits}))
 			require.Contains(t, tx.pendingWrites, string(embeddingMetaKey(node.ID)), "ordinary retained-sidecar update must have staged the old metadata refresh")
 			accepted := CopyNode(current)
 			accepted.EmbedMeta = map[string]any{"embedding_model": "authoritative", "chunk_count": int8(1), "has_embedding": true}
 			metadata := accepted.RuntimeMetadata()
 			metadata.VisibilitySuppressed = true
 			accepted.SetRuntimeMetadata(metadata)
-			require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: accepted, Policy: StoredNodeImages}))
+			require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: accepted, Policy: StoredNodeImages}))
 			if rollback {
 				require.NoError(t, tx.Rollback())
 			} else {
 				require.NoError(t, tx.Commit())
 			}
 			b.invalidateCachesAfterRestore()
-			got, err := b.GetStoredNode(node.ID)
+			got, err := b.GetStoredNode(t.Context(), node.ID)
 			require.NoError(t, err)
 			require.Equal(t, [][]float32{{1, 2}}, got.ChunkEmbeddings)
 			model := "authoritative"

@@ -2,6 +2,7 @@ package nornicdb
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,12 +15,26 @@ import (
 func installRunningInitialBuild(t *testing.T, db *DB) (finish func()) {
 	t.Helper()
 	dbName := db.defaultDatabaseName()
-	entry := &dbSearchService{dbName: dbName, buildDone: make(chan struct{})}
-	entry.buildOnce.Do(func() {})
+	entry := &dbSearchService{dbName: dbName}
+	finish = holdInitialBuild(entry)
 	db.searchServicesMu.Lock()
 	db.searchServices[dbName] = entry
 	db.searchServicesMu.Unlock()
-	return entry.closeBuildDone
+	return finish
+}
+
+// holdInitialBuild marks entry's initial build as running until finish is
+// called; finish returns once the build completion has published.
+func holdInitialBuild(entry *dbSearchService) (finish func()) {
+	release := make(chan struct{})
+	entry.build.Go(func() error { <-release; return nil })
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			close(release)
+			<-entry.build.Done()
+		})
+	}
 }
 
 // A search that finds the initial build running waits for it; a caller whose

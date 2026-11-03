@@ -13,7 +13,7 @@ func TestMVCC_WriteHelpers_InvalidIDBranches(t *testing.T) {
 	engine := newTestEngine(t)
 	v := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 9}
 
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		err := engine.writeNodeMVCCVersionInTxn(txn, &Node{ID: "bad", Labels: []string{"L"}}, v)
 		require.NoError(t, err)
 		err = engine.writeNodeMVCCTombstoneInTxn(txn, "bad", v)
@@ -34,14 +34,14 @@ func TestMVCC_MaterializeCommit_NilOpsAndHeadDecodeErrors(t *testing.T) {
 	engine := createMVCCBadgerEngine(t)
 	version := MVCCVersion{CommitTimestamp: time.Now().UTC().Add(time.Second), CommitSequence: 1010}
 
-	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"L"}, Properties: map[string]any{"p": "v"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:n1", Labels: []string{"L"}, Properties: map[string]any{"p": "v"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:n2", Labels: []string{"L"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:n2", Labels: []string{"L"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:n1", EndNode: "test:n2", Type: "R", Properties: map[string]any{"p": "v"}}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:n1", EndNode: "test:n2", Type: "R", Properties: map[string]any{"p": "v"}}))
 
 	// Hit nil-op continue branches and create branches.
-	err = engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	err = engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		ops := []Operation{
 			{Type: OpCreateNode, Node: nil},
 			{Type: OpUpdateNode, Node: nil},
@@ -50,12 +50,12 @@ func TestMVCC_MaterializeCommit_NilOpsAndHeadDecodeErrors(t *testing.T) {
 			{Type: OpCreateNode, Node: &Node{ID: "test:n-new", Labels: []string{"L"}}, FreshID: false},
 			{Type: OpCreateEdge, Edge: &Edge{ID: "test:e-new", StartNode: "test:n1", EndNode: "test:n2", Type: "R"}, FreshID: false},
 		}
-		return engine.materializeMVCCCommit(singleBatchWriter(txn), version, ops)
+		return engine.materializeMVCCCommit(t.Context(), singleBatchWriter(txn), version, ops)
 	})
 	require.NoError(t, err)
 
 	// Corrupt head records to force load*MVCCHead decode-error branches in materialize update/delete paths.
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		nh := engine.mvccNodeHeadKeyStringLookup("test:n1")
 		eh := engine.mvccEdgeHeadKeyStringLookup("test:e1")
 		if nh == nil || eh == nil {
@@ -67,26 +67,26 @@ func TestMVCC_MaterializeCommit_NilOpsAndHeadDecodeErrors(t *testing.T) {
 		return txn.Set(eh, []byte("bad-head"))
 	}))
 
-	err = engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	err = engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		ops := []Operation{
 			{Type: OpUpdateNode, Node: &Node{ID: "test:n1", Labels: []string{"L"}}, OldNode: &Node{ID: "test:n1", Labels: []string{"L"}}},
 		}
-		return engine.materializeMVCCCommit(singleBatchWriter(txn), version, ops)
+		return engine.materializeMVCCCommit(t.Context(), singleBatchWriter(txn), version, ops)
 	})
 	require.Error(t, err)
 
-	err = engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	err = engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		ops := []Operation{
 			{Type: OpUpdateEdge, Edge: &Edge{ID: "test:e1", StartNode: "test:n1", EndNode: "test:n2", Type: "R"}, OldEdge: &Edge{ID: "test:e1", StartNode: "test:n1", EndNode: "test:n2", Type: "R"}},
 		}
-		return engine.materializeMVCCCommit(singleBatchWriter(txn), version, ops)
+		return engine.materializeMVCCCommit(t.Context(), singleBatchWriter(txn), version, ops)
 	})
 	require.Error(t, err)
 }
 
 func TestMVCC_RebuildAndBootstrap_ContextAndSkipBranches(t *testing.T) {
 	engine := createMVCCBadgerEngine(t)
-	_, err := engine.CreateNode(&Node{ID: "test:b1", Labels: []string{"L"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:b1", Labels: []string{"L"}})
 	require.NoError(t, err)
 
 	// Existing head should trigger skip branch in applyMVCCBootstrapBatch.

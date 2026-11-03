@@ -33,7 +33,7 @@ func TestSnapshotOverlayProjectedCallbacksOwnPayload(t *testing.T) {
 			if reader == "label" {
 				require.NoError(t, b.StreamNodesByLabelProjectedInScope(context.Background(), "test", "Doc", opts.Projection, mutate))
 			} else if reader == "transaction-stream" {
-				tx, err := b.BeginTransaction()
+				tx, err := b.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				require.NoError(t, tx.StreamNodesWithOptions(context.Background(), opts, mutate))
 				require.NoError(t, tx.Rollback())
@@ -42,7 +42,7 @@ func TestSnapshotOverlayProjectedCallbacksOwnPayload(t *testing.T) {
 			}
 			require.Equal(t, 1, calls)
 			check := func() {
-				node, err := b.GetNode("test:owned")
+				node, err := b.GetNode(t.Context(), "test:owned")
 				require.NoError(t, err)
 				require.Equal(t, []string{"Doc"}, node.Labels)
 				require.Equal(t, map[string]any{"keep": "ack", "drop": "retained"}, node.Properties)
@@ -50,7 +50,7 @@ func TestSnapshotOverlayProjectedCallbacksOwnPayload(t *testing.T) {
 				require.Equal(t, [][]float32{{1, 2}}, node.ChunkEmbeddings)
 			}
 			check()
-			require.NoError(t, b.FlushWriteBehind(nil))
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
 			b.invalidateCachesAfterRestore()
 			check()
 		})
@@ -62,16 +62,16 @@ func TestSnapshotOverlayQueryCacheWithWriteBehind(t *testing.T) {
 		t.Run(phase, func(t *testing.T) {
 			b := newWriteBehindTestEngine(t, time.Hour)
 			b.writeBehind.Close()
-			_, err := b.CreateNode(&Node{ID: "test:cached", Labels: []string{"Doc"}, Properties: map[string]any{"v": int64(1)}})
+			_, err := b.CreateNode(t.Context(), &Node{ID: "test:cached", Labels: []string{"Doc"}, Properties: map[string]any{"v": int64(1)}})
 			require.NoError(t, err)
 			if phase != "idle" {
 				bufferedCreate(t, b, &Node{ID: "test:other"})
 				if phase == "retired" {
-					require.NoError(t, b.FlushWriteBehind(nil))
+					require.NoError(t, b.FlushWriteBehind(context.Background()))
 				}
 			}
 			b.invalidateCachesAfterRestore()
-			_, err = b.GetQueryNode("test:cached")
+			_, err = b.GetQueryNode(t.Context(), "test:cached")
 			require.NoError(t, err)
 			b.nodeCacheMu.RLock()
 			_, fullCached := b.nodeCache["test:cached"]
@@ -80,26 +80,26 @@ func TestSnapshotOverlayQueryCacheWithWriteBehind(t *testing.T) {
 			require.False(t, fullCached)
 			require.True(t, queryCached)
 			misses, hits := atomic.LoadInt64(&b.cacheMisses), atomic.LoadInt64(&b.cacheHits)
-			node, err := b.GetQueryNode("test:cached")
+			node, err := b.GetQueryNode(t.Context(), "test:cached")
 			require.NoError(t, err)
 			require.Equal(t, misses, atomic.LoadInt64(&b.cacheMisses), "a warm query cache must avoid another physical read")
 			require.Equal(t, hits+1, atomic.LoadInt64(&b.cacheHits))
 			node.Properties["v"] = int64(2)
-			tx, err := b.BeginTransaction()
+			tx, err := b.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			require.NoError(t, tx.SetImplicit(true))
 			require.NoError(t, tx.SetNamespace("test"))
-			require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
+			require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 			require.NoError(t, tx.Commit())
-			node, err = b.GetQueryNode("test:cached")
+			node, err = b.GetQueryNode(t.Context(), "test:cached")
 			require.NoError(t, err)
 			require.Equal(t, int64(2), node.Properties["v"], "pending update shadows the cache")
-			require.NoError(t, b.FlushWriteBehind(nil))
-			node, err = b.GetQueryNode("test:cached")
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
+			node, err = b.GetQueryNode(t.Context(), "test:cached")
 			require.NoError(t, err)
 			require.Equal(t, int64(2), node.Properties["v"])
-			bufferedWrite(t, b, func(tx *BadgerTransaction) error { return tx.DeleteGraphNode("test:cached", CascadeEdges) })
-			_, err = b.GetQueryNode("test:cached")
+			bufferedWrite(t, b, func(tx *BadgerTransaction) error { return tx.DeleteGraphNode(t.Context(), "test:cached", CascadeEdges) })
+			_, err = b.GetQueryNode(t.Context(), "test:cached")
 			require.ErrorIs(t, err, ErrNotFound, "pending tombstone shadows the cache")
 		})
 	}
@@ -111,25 +111,25 @@ func TestSnapshotOverlayCascadeInvalidatesAdjacency(t *testing.T) {
 			b := newWriteBehindTestEngine(t, time.Hour)
 			b.writeBehind.Close()
 			for _, id := range []NodeID{"test:hub", "test:peer"} {
-				_, err := b.CreateNode(&Node{ID: id, Labels: []string{"Doc"}})
+				_, err := b.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Doc"}})
 				require.NoError(t, err)
 			}
-			require.NoError(t, b.CreateEdge(&Edge{ID: "test:edge", StartNode: "test:hub", EndNode: "test:peer", Type: "R"}))
+			require.NoError(t, b.CreateEdge(t.Context(), &Edge{ID: "test:edge", StartNode: "test:hub", EndNode: "test:peer", Type: "R"}))
 			edges, err := b.GetIncomingEdges(context.Background(), "test:peer")
 			require.NoError(t, err)
 			require.Len(t, edges, 1, "warm both the adjacency IDs and edge body")
 			if writer == "engine" {
-				require.NoError(t, b.DeleteNode("test:hub"))
+				require.NoError(t, b.DeleteNode(t.Context(), "test:hub"))
 			} else if writer == "buffered" {
-				bufferedWrite(t, b, func(tx *BadgerTransaction) error { return tx.DeleteGraphNode("test:hub", CascadeEdges) })
+				bufferedWrite(t, b, func(tx *BadgerTransaction) error { return tx.DeleteGraphNode(t.Context(), "test:hub", CascadeEdges) })
 			} else {
-				tx, err := b.BeginTransaction()
+				tx, err := b.BeginTransaction(t.Context())
 				require.NoError(t, err)
-				require.NoError(t, tx.DeleteGraphNode("test:hub", CascadeEdges))
+				require.NoError(t, tx.DeleteGraphNode(t.Context(), "test:hub", CascadeEdges))
 				require.NoError(t, tx.Commit())
 			}
-			require.NoError(t, b.FlushWriteBehind(nil))
-			_, err = b.GetEdge("test:edge")
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
+			_, err = b.GetEdge(t.Context(), "test:edge")
 			require.ErrorIs(t, err, ErrNotFound, "the record was physically deleted")
 			edges, err = b.GetIncomingEdges(context.Background(), "test:peer")
 			require.NoError(t, err)

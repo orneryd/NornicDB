@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
@@ -26,42 +27,42 @@ func TestPR1655StaleCachedBodyIsReadAgainAtCommit(t *testing.T) {
 				}
 				return node
 			}
-			seed, err := b.BeginTransaction()
+			seed, err := b.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			require.NoError(t, seed.SetNamespace("test"))
-			_, err = seed.CreateNode(doc("a"))
+			_, err = seed.CreateNode(t.Context(), doc("a"))
 			require.NoError(t, err)
 			require.NoError(t, seed.Commit())
-			require.NoError(t, b.FlushWriteBehind(nil))
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
 
-			rename, err := b.BeginTransaction()
+			rename, err := b.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			require.NoError(t, rename.SetNamespace("test"))
-			require.NoError(t, rename.UpdateGraphNode(NodeUpdateRequest{After: doc("b"), Policy: ClientNodeEdits}))
+			require.NoError(t, rename.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: doc("b"), Policy: ClientNodeEdits}))
 			require.NoError(t, rename.Commit())
-			require.NoError(t, b.FlushWriteBehind(nil))
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
 			// The cache still holds the body from before the rename, as between
 			// the rename's publication and its cache update.
 			b.nodeCacheMu.Lock()
 			b.nodeCache["test:x"] = doc("a")
 			b.nodeCacheMu.Unlock()
 
-			blind, err := b.BeginTransaction()
+			blind, err := b.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			defer blind.Rollback()
 			require.NoError(t, blind.SetImplicit(implicit))
 			require.NoError(t, blind.SetNamespace("test"))
-			if err := blind.UpdateGraphNode(NodeUpdateRequest{After: doc("a", "x"), Policy: ClientNodeEdits}); err != nil {
+			if err := blind.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: doc("a", "x"), Policy: ClientNodeEdits}); err != nil {
 				require.ErrorIs(t, err, ErrConflict, "a staging read that sees the rename refuses the write")
 			} else {
 				require.ErrorIs(t, blind.Commit(), ErrConflict, "the rename was published before the blind write")
 			}
-			require.NoError(t, b.FlushWriteBehind(nil))
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
 			// Drop the planted entry so the check reads what storage holds.
 			b.nodeCacheMu.Lock()
 			delete(b.nodeCache, "test:x")
 			b.nodeCacheMu.Unlock()
-			current, err := b.GetNode("test:x")
+			current, err := b.GetNode(t.Context(), "test:x")
 			require.NoError(t, err)
 			require.Equal(t, "b", current.Properties["id"], "the acknowledged rename is kept")
 		})

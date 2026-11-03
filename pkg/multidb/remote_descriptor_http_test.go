@@ -63,7 +63,7 @@ func TestDescriptorPersistedCatalogReopenAuthenticatesHTTPExactly(t *testing.T) 
 				t.Cleanup(func() { _ = inner.Close() })
 				system := storage.NewNamespacedEngine(inner, "system")
 				if attempt == 0 {
-					_, err = system.CreateNode(&storage.Node{ID: metadataNodeID, Labels: []string{"_System", "_Metadata"}, Properties: map[string]any{"type": "databases", "data": secured}})
+					_, err = system.CreateNode(t.Context(), &storage.Node{ID: metadataNodeID, Labels: []string{"_System", "_Metadata"}, Properties: map[string]any{"type": "databases", "data": secured}})
 					require.NoError(t, err)
 				}
 				cfg := DefaultConfig()
@@ -96,7 +96,7 @@ func TestDescriptorPersistedCatalogReopenAuthenticatesHTTPExactly(t *testing.T) 
 				}
 				require.Equal(t, []string{"marker"}, columns)
 				require.Equal(t, [][]interface{}{{"ordinary-marker"}}, rows)
-				stored, err := system.GetNode(metadataNodeID)
+				stored, err := system.GetNode(t.Context(), metadataNodeID)
 				require.NoError(t, err)
 				data, ok := stored.Properties["data"].(string)
 				require.True(t, ok)

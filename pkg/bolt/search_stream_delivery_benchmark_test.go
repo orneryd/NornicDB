@@ -22,7 +22,7 @@ func BenchmarkBoltContinuationDelivery(b *testing.B) {
 			b.Cleanup(func() { _ = base.Close() })
 			store := storage.NewNamespacedEngine(base, "nornic")
 			for _, id := range []storage.NodeID{"a", "b", "c"} {
-				if _, err := store.CreateNode(&storage.Node{ID: id}); err != nil {
+				if _, err := store.CreateNode(b.Context(), &storage.Node{ID: id}); err != nil {
 					b.Fatal(err)
 				}
 			}

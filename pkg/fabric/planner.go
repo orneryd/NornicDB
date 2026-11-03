@@ -32,7 +32,7 @@ type FabricPlanner struct {
 //
 // An error, such as a scope clause item that is not a variable, fails the
 // plan.
-type CallImportReader func(scope string, scoped bool, body string) ([]string, error)
+type CallImportReader func(ctx context.Context, scope string, scoped bool, body string) ([]string, error)
 
 // SetCallImportReader installs the Cypher executor's CALL subquery import
 // reader, so Fabric imports exactly the variables a single-database CALL
@@ -42,17 +42,27 @@ func (p *FabricPlanner) SetCallImportReader(read CallImportReader) {
 }
 
 // readCallImports applies the installed CallImportReader.
-func (p *FabricPlanner) readCallImports(scope string, scoped bool, body string) ([]string, error) {
+func (p *FabricPlanner) readCallImports(ctx context.Context, scope string, scoped bool, body string) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if p.callImports == nil {
 		return nil, nil
 	}
-	return p.callImports(scope, scoped, body)
+	imports, err := p.callImports(ctx, scope, scoped, body)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return imports, nil
 }
 
 // ClauseKeywordNameReader reports whether the clause keyword at text[pos:end]
 // is a name there: a variable, parameter, property key or label spelled like
 // the keyword (WITH 1 AS union, $union, n.optional).
-type ClauseKeywordNameReader func(text string, pos, end int, keyword string) bool
+type ClauseKeywordNameReader func(ctx context.Context, text string, pos, end int, keyword string) bool
 
 // SetClauseKeywordNameReader installs the reader the Cypher executor uses for
 // its own statements, so Fabric reads UNION and OPTIONAL CALL where they do.
@@ -61,11 +71,17 @@ func (p *FabricPlanner) SetClauseKeywordNameReader(read ClauseKeywordNameReader)
 }
 
 // clauseKeywordAt reports whether keyword starts a clause at text[idx].
-func clauseKeywordAt(text string, idx int, keyword string, isName ClauseKeywordNameReader) bool {
-	return keywordAt(text, idx, keyword) && (isName == nil || !isName(text, idx, idx+len(keyword), keyword))
+func clauseKeywordAt(ctx context.Context, text string, idx int, keyword string, isName ClauseKeywordNameReader) bool {
+	if !keywordAt(text, idx, keyword) {
+		return false
+	}
+	if ctx.Err() != nil {
+		return false
+	}
+	return isName == nil || !isName(ctx, text, idx, idx+len(keyword), keyword)
 }
 
-func splitTopLevelUnion(query string, isName ClauseKeywordNameReader) ([]string, []bool, bool, error) {
+func splitTopLevelUnion(ctx context.Context, query string, isName ClauseKeywordNameReader) ([]string, []bool, bool, error) {
 	var parts []string
 	var ops []bool
 	start := 0
@@ -74,6 +90,11 @@ func splitTopLevelUnion(query string, isName ClauseKeywordNameReader) ([]string,
 	bracketDepth := 0
 
 	for i := 0; i < len(query); i++ {
+		if i&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, nil, false, err
+			}
+		}
 		if next, quoted := cyphertext.SkipToken(query, i); quoted {
 			i = next - 1
 			continue
@@ -104,8 +125,11 @@ func splitTopLevelUnion(query string, isName ClauseKeywordNameReader) ([]string,
 			continue
 		}
 
-		if !clauseKeywordAt(query, i, "UNION", isName) {
+		if !clauseKeywordAt(ctx, query, i, "UNION", isName) {
 			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, nil, false, err
 		}
 
 		part := strings.TrimSpace(query[start:i])
@@ -126,6 +150,9 @@ func splitTopLevelUnion(query string, isName ClauseKeywordNameReader) ([]string,
 		i--
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, nil, false, err
+	}
 	if len(parts) == 0 {
 		return nil, nil, false, nil
 	}
@@ -178,7 +205,12 @@ func NewFabricPlanner(catalog *Catalog) *FabricPlanner {
 //
 // Returns a Fragment tree of accepted source ready for FabricExecutor.
 // RawSource input is projected once before clause and UNION decomposition.
-func (p *FabricPlanner) Plan(ctx context.Context, query string, sessionDB string, stage SourceStage) (Fragment, error) {
+func (p *FabricPlanner) Plan(ctx context.Context, query string, sessionDB string, stage SourceStage) (fragment Fragment, err error) {
+	defer func() {
+		if err == nil && ctx.Err() != nil {
+			fragment, err = nil, ctx.Err()
+		}
+	}()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -203,7 +235,7 @@ func (p *FabricPlanner) planQuery(ctx context.Context, trimmed string, current p
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	parts, ops, hasUnion, err := splitTopLevelUnion(trimmed, p.keywordIsName)
+	parts, ops, hasUnion, err := splitTopLevelUnion(ctx, trimmed, p.keywordIsName)
 	if err != nil {
 		return nil, err
 	}
@@ -259,7 +291,7 @@ func (p *FabricPlanner) planSingleQuery(ctx context.Context, trimmed string, cur
 	}
 
 	// Check whether the remaining query contains top-level CALL {} subqueries.
-	callBlocks, err := extractTopLevelCallBlocks(remaining, p.keywordIsName)
+	callBlocks, err := extractTopLevelCallBlocks(ctx, remaining, p.keywordIsName)
 	if err != nil {
 		return nil, err
 	}
@@ -277,7 +309,7 @@ func (p *FabricPlanner) planSingleQuery(ctx context.Context, trimmed string, cur
 	if len(fabricBlocks) == 0 {
 		// Support top-level mid-query USE routing (e.g. "WITH ... USE db MATCH ...").
 		// This keeps prefixes in the current graph and routes the remainder to the USE target.
-		if prefix, rest, ok := splitAtTopLevelUse(remaining, p.keywordIsName); ok {
+		if prefix, rest, ok := splitAtTopLevelUse(ctx, remaining, p.keywordIsName); ok {
 			subUse, subRest, hasUse, err := parseLeadingUse(ctx, rest, true)
 			if err != nil {
 				return nil, err
@@ -293,11 +325,11 @@ func (p *FabricPlanner) planSingleQuery(ctx context.Context, trimmed string, cur
 			if err != nil {
 				return nil, err
 			}
-			prefix = strings.TrimSpace(prefix)
+			prefix = fragmentStatementText(prefix)
 			if prefix == "" {
 				return inner, nil
 			}
-			prefixExec := newExec(ensureRowProducingPrefix(prefix, p.keywordIsName), top, scope)
+			prefixExec := newExec(ensureRowProducingPrefix(ctx, prefix, p.keywordIsName), top, scope)
 			return &FragmentApply{
 				Input: &FragmentApply{
 					Input:   &FragmentInit{Columns: nil},
@@ -324,7 +356,12 @@ func (p *FabricPlanner) planSingleQuery(ctx context.Context, trimmed string, cur
 // statement, and a CALL body's leading USE, after the body's importing WITH
 // too. It is the statement as one graph runs it, which is how Neo4j checks a
 // composite statement's variable scopes, whichever graphs its parts run on.
-func (p *FabricPlanner) SingleGraphStatement(ctx context.Context, query string, stage SourceStage) (string, error) {
+func (p *FabricPlanner) SingleGraphStatement(ctx context.Context, query string, stage SourceStage) (statement string, err error) {
+	defer func() {
+		if err == nil && ctx.Err() != nil {
+			statement, err = "", ctx.Err()
+		}
+	}()
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -337,7 +374,7 @@ func (p *FabricPlanner) SingleGraphStatement(ctx context.Context, query string, 
 }
 
 func (p *FabricPlanner) singleGraphStatement(ctx context.Context, query string, inSubquery bool) (string, error) {
-	parts, ops, hasUnion, err := splitTopLevelUnion(query, p.keywordIsName)
+	parts, ops, hasUnion, err := splitTopLevelUnion(ctx, query, p.keywordIsName)
 	if err != nil {
 		return "", err
 	}
@@ -369,7 +406,7 @@ func (p *FabricPlanner) singleGraphStatement(ctx context.Context, query string, 
 	if hasUse {
 		query = strings.TrimSpace(rest)
 	}
-	if prefix, after, ok := splitAtTopLevelUse(query, p.keywordIsName); ok {
+	if prefix, after, ok := splitAtTopLevelUse(ctx, query, p.keywordIsName); ok {
 		_, rest, hasUse, err := parseLeadingUse(ctx, after, true)
 		if err != nil {
 			return "", err
@@ -382,7 +419,7 @@ func (p *FabricPlanner) singleGraphStatement(ctx context.Context, query string, 
 			query = strings.TrimSpace(prefix) + " " + tail
 		}
 	}
-	blocks, err := extractTopLevelCallBlocks(query, p.keywordIsName)
+	blocks, err := extractTopLevelCallBlocks(ctx, query, p.keywordIsName)
 	if err != nil || len(blocks) == 0 {
 		return query, err
 	}
@@ -412,28 +449,48 @@ func (p *FabricPlanner) validatePlanTarget(scope string, target planTarget) erro
 	return p.validateUseTarget(scope, target.name)
 }
 
-func ensureRowProducingPrefix(query string, isName ClauseKeywordNameReader) string {
+// fragmentStatementText is the executable statement text of a planner
+// fragment: the text a graph runs, without the leading whitespace and comments
+// that belong to no clause. A fragment that is only trivia is empty, so it is
+// no statement to run there at all. cyphertext.GapEnd is the shared trivia
+// owner, so a comment ahead of a fragment's first clause is never read as that
+// clause, whether or not the query text was normalized. A comment GapEnd
+// reports unfinished keeps the fragment as written, so the fragment's own
+// syntax error stays visible.
+func fragmentStatementText(fragment string) string {
+	fragment = strings.TrimSpace(fragment)
+	start, unfinished := cyphertext.GapEnd(fragment, 0)
+	if unfinished >= 0 {
+		return fragment
+	}
+	return fragment[start:]
+}
+
+func ensureRowProducingPrefix(ctx context.Context, query string, isName ClauseKeywordNameReader) string {
 	trimmed := strings.TrimSpace(query)
 	if trimmed == "" {
 		return trimmed
 	}
-	if hasTopLevelReturnClause(trimmed, isName) {
+	if hasTopLevelReturnClause(ctx, trimmed, isName) {
 		return trimmed
 	}
 	if startsWithFold(trimmed, "WITH ") {
-		if aliases := trailingWithAliases(trimmed, isName); len(aliases) > 0 {
+		if aliases := trailingWithAliases(ctx, trimmed, isName); len(aliases) > 0 {
 			return trimmed + " RETURN " + strings.Join(aliases, ", ")
 		}
 	}
 	return trimmed + " RETURN *"
 }
 
-func hasTopLevelReturnClause(query string, isName ClauseKeywordNameReader) bool {
+func hasTopLevelReturnClause(ctx context.Context, query string, isName ClauseKeywordNameReader) bool {
 	parenDepth := 0
 	braceDepth := 0
 	bracketDepth := 0
 
 	for i := 0; i < len(query); i++ {
+		if i&1023 == 0 && ctx.Err() != nil {
+			return false
+		}
 		if next, quoted := cyphertext.SkipToken(query, i); quoted {
 			i = next - 1
 			continue
@@ -468,20 +525,23 @@ func hasTopLevelReturnClause(query string, isName ClauseKeywordNameReader) bool 
 		if parenDepth != 0 || braceDepth != 0 || bracketDepth != 0 {
 			continue
 		}
-		if clauseKeywordAt(query, i, "RETURN", isName) {
+		if clauseKeywordAt(ctx, query, i, "RETURN", isName) {
 			return true
 		}
 	}
 	return false
 }
 
-func trailingWithAliases(query string, isName ClauseKeywordNameReader) []string {
+func trailingWithAliases(ctx context.Context, query string, isName ClauseKeywordNameReader) []string {
 	lastWith := -1
 	parenDepth := 0
 	braceDepth := 0
 	bracketDepth := 0
 
 	for i := 0; i < len(query); i++ {
+		if i&1023 == 0 && ctx.Err() != nil {
+			return nil
+		}
 		if next, quoted := cyphertext.SkipToken(query, i); quoted {
 			i = next - 1
 			continue
@@ -516,7 +576,7 @@ func trailingWithAliases(query string, isName ClauseKeywordNameReader) []string 
 		if parenDepth != 0 || braceDepth != 0 || bracketDepth != 0 {
 			continue
 		}
-		if clauseKeywordAt(query, i, "WITH", isName) {
+		if clauseKeywordAt(ctx, query, i, "WITH", isName) {
 			lastWith = i
 		}
 	}
@@ -526,8 +586,8 @@ func trailingWithAliases(query string, isName ClauseKeywordNameReader) []string 
 	// The WITH's aliases are the prefix's columns only when it is the
 	// prefix's last clause, its WHERE, ORDER BY, SKIP and LIMIT aside; a
 	// later clause (UNWIND, MATCH, ...) keeps them and adds its own.
-	withEnd := nextTopLevelClause(query, lastWith+len("WITH"), isName)
-	for end := withEnd; end < len(query); end = nextTopLevelClause(query, end+1, isName) {
+	withEnd := nextTopLevelClause(ctx, query, lastWith+len("WITH"), isName)
+	for end := withEnd; end < len(query); end = nextTopLevelClause(ctx, query, end+1, isName) {
 		if !projectionModifierAt(query, end) {
 			return nil
 		}
@@ -567,9 +627,9 @@ func (p *FabricPlanner) planMultiGraph(ctx context.Context, top planTarget, scop
 
 	for _, block := range blocks {
 		// Preserve outer query segments before each CALL block.
-		prefix := strings.TrimSpace(fullQuery[lastPos:block.startPos])
+		prefix := fragmentStatementText(fullQuery[lastPos:block.startPos])
 		if prefix != "" {
-			currentInput = &FragmentApply{Input: currentInput, Inner: newExec(ensureRowProducingPrefix(prefix, p.keywordIsName), top, scope), Projection: true, Columns: nil}
+			currentInput = &FragmentApply{Input: currentInput, Inner: newExec(ensureRowProducingPrefix(ctx, prefix, p.keywordIsName), top, scope), Projection: true, Columns: nil}
 		}
 
 		subqueryFragment, err := p.planQuery(ctx, block.body, top, scope, true)
@@ -581,7 +641,7 @@ func (p *FabricPlanner) planMultiGraph(ctx context.Context, top planTarget, scop
 		if block.scoped {
 			// The scope clause, not a leading WITH, imports the body's variables,
 			// and they stay visible throughout the body.
-			imports, err := p.readCallImports(block.scope, true, block.body)
+			imports, err := p.readCallImports(ctx, block.scope, true, block.body)
 			if err != nil {
 				return nil, err
 			}
@@ -594,7 +654,7 @@ func (p *FabricPlanner) planMultiGraph(ctx context.Context, top planTarget, scop
 			Optional: block.optional,
 			Scoped:   block.scoped,
 			Scope:    scope,
-			Unit:     !callBodyReturns(block.body, p.keywordIsName),
+			Unit:     !callBodyReturns(ctx, block.body, p.keywordIsName),
 			Columns:  nil, // determined at execution time
 		}
 		lastPos = block.endPos
@@ -633,7 +693,7 @@ func (p *FabricPlanner) planCallBranch(ctx context.Context, body string, top pla
 		if err != nil {
 			return nil, err
 		}
-		imports, err := p.readCallImports("", false, subBody)
+		imports, err := p.readCallImports(ctx, "", false, subBody)
 		if err != nil {
 			return nil, err
 		}
@@ -643,7 +703,7 @@ func (p *FabricPlanner) planCallBranch(ctx context.Context, body string, top pla
 	if err != nil {
 		return nil, err
 	}
-	imports, err := p.readCallImports("", false, body)
+	imports, err := p.readCallImports(ctx, "", false, body)
 	if err != nil {
 		return nil, err
 	}
@@ -659,7 +719,7 @@ func parseLeadingWithUse(ctx context.Context, body string, isName ClauseKeywordN
 		return UseClause{}, body, false, nil
 	}
 
-	withEnd, found := findLeadingWithClauseEnd(trimmed, isName)
+	withEnd, found := findLeadingWithClauseEnd(ctx, trimmed, isName)
 	if !found || withEnd <= 0 || withEnd >= len(trimmed) {
 		return UseClause{}, body, false, nil
 	}
@@ -837,12 +897,17 @@ func newExec(query string, target planTarget, scope string) *FragmentExec {
 
 // extractTopLevelCallBlocks finds CALL { ... } and OPTIONAL CALL { ... }
 // blocks in the current query scope.
-func extractTopLevelCallBlocks(query string, isName ClauseKeywordNameReader) ([]callSubqueryBlock, error) {
+func extractTopLevelCallBlocks(ctx context.Context, query string, isName ClauseKeywordNameReader) ([]callSubqueryBlock, error) {
 	var blocks []callSubqueryBlock
 	braceDepth := 0
 	parenDepth := 0
 
 	for i := 0; i < len(query); i++ {
+		if i&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		if next, quoted := cyphertext.SkipToken(query, i); quoted {
 			i = next - 1
 			continue
@@ -867,7 +932,7 @@ func extractTopLevelCallBlocks(query string, isName ClauseKeywordNameReader) ([]
 			continue
 		}
 		start, optional := i, false
-		if clauseKeywordAt(query, i, "OPTIONAL", isName) {
+		if clauseKeywordAt(ctx, query, i, "OPTIONAL", isName) {
 			i = skipSpacesAndComments(query, i+len("OPTIONAL"))
 			optional = true
 		}
@@ -909,14 +974,20 @@ func extractTopLevelCallBlocks(query string, isName ClauseKeywordNameReader) ([]
 		i = closePos
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return blocks, nil
 }
 
 // callBodyReturns reports whether a CALL body has a top-level RETURN; one
 // without is a unit subquery (it ends in an update or FINISH).
-func callBodyReturns(body string, isName ClauseKeywordNameReader) bool {
+func callBodyReturns(ctx context.Context, body string, isName ClauseKeywordNameReader) bool {
 	depth := 0
 	for i := 0; i < len(body); i++ {
+		if i&1023 == 0 && ctx.Err() != nil {
+			return false
+		}
 		if next, quoted := cyphertext.SkipToken(body, i); quoted {
 			i = next - 1
 			continue
@@ -929,7 +1000,7 @@ func callBodyReturns(body string, isName ClauseKeywordNameReader) bool {
 				depth--
 			}
 		default:
-			if depth == 0 && clauseKeywordAt(body, i, "RETURN", isName) {
+			if depth == 0 && clauseKeywordAt(ctx, body, i, "RETURN", isName) {
 				return true
 			}
 		}
@@ -952,11 +1023,11 @@ func callBlockContainsFabricUse(ctx context.Context, body string, isName ClauseK
 	if hasWithUse {
 		return true, nil
 	}
-	if _, _, ok := splitAtTopLevelUse(body, isName); ok {
+	if _, _, ok := splitAtTopLevelUse(ctx, body, isName); ok {
 		return true, nil
 	}
 
-	nested, err := extractTopLevelCallBlocks(body, isName)
+	nested, err := extractTopLevelCallBlocks(ctx, body, isName)
 	if err != nil {
 		return false, err
 	}

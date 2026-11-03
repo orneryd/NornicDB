@@ -14,11 +14,11 @@ func TestPendingCandidatesBufferedFixtureOwnsWALState(t *testing.T) {
 	wal := e.bufferedCommitWAL
 	t.Cleanup(func() { _ = e.Close(); _ = wal.Close() })
 	require.True(t, config.IsWALEnabled(), "the shared WAL fixture must enable its required feature independently of prior tests")
-	tx, err := e.BeginTransaction()
+	tx, err := e.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
-	_, err = tx.CreateNode(&Node{ID: "test:fixture", Labels: []string{"Doc"}, Properties: map[string]any{"content": "WAL fixture"}})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:fixture", Labels: []string{"Doc"}, Properties: map[string]any{"content": "WAL fixture"}})
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 	entries, err := ReadWALEntriesFromDir(wal.Config().Dir)

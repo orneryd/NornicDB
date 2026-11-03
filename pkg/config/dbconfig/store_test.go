@@ -2,8 +2,9 @@ package dbconfig
 
 import (
 	"context"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
@@ -74,7 +75,7 @@ func TestStore_LoadFiltersAndParsesConfigNodes(t *testing.T) {
 	eng := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer eng.Close()
 
-	_, err := eng.CreateNode(&storage.Node{
+	_, err := eng.CreateNode(t.Context(), &storage.Node{
 		ID:     "db_config:alpha",
 		Labels: []string{"_DbConfig", "_System"},
 		Properties: map[string]any{
@@ -83,7 +84,7 @@ func TestStore_LoadFiltersAndParsesConfigNodes(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = eng.CreateNode(&storage.Node{
+	_, err = eng.CreateNode(t.Context(), &storage.Node{
 		ID:     "db_config:broken",
 		Labels: []string{"_DbConfig"},
 		Properties: map[string]any{
@@ -92,7 +93,7 @@ func TestStore_LoadFiltersAndParsesConfigNodes(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = eng.CreateNode(&storage.Node{
+	_, err = eng.CreateNode(t.Context(), &storage.Node{
 		ID:     "db_config:no-label",
 		Labels: []string{"Other"},
 		Properties: map[string]any{
@@ -115,11 +116,11 @@ func TestStore_SetOverrides_UpdateAndTrimmedDbName(t *testing.T) {
 	store := NewStore(eng)
 
 	require.NoError(t, store.SetOverrides(ctx, "  mydb  ", map[string]string{"K": "v1"}))
-	first, err := eng.GetNode(storage.NodeID("db_config:mydb"))
+	first, err := eng.GetNode(t.Context(), storage.NodeID("db_config:mydb"))
 	require.NoError(t, err)
 
 	require.NoError(t, store.SetOverrides(ctx, "mydb", map[string]string{"K": "v2"}))
-	second, err := eng.GetNode(storage.NodeID("db_config:mydb"))
+	second, err := eng.GetNode(t.Context(), storage.NodeID("db_config:mydb"))
 	require.NoError(t, err)
 
 	assert.Equal(t, first.CreatedAt, second.CreatedAt)

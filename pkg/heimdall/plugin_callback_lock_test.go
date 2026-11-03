@@ -1,6 +1,9 @@
 package heimdall
 
 import (
+	"context"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
+	"github.com/stretchr/testify/require"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -81,7 +84,7 @@ func TestSubsystemManagerCallbacksReenter(t *testing.T) {
 						t.Errorf("%s could not consult installed peers", method)
 					}
 					// A write also proves callbacks are outside read locks.
-					manager.SetContext(SubsystemContext{})
+					manager.SetContext(SubsystemHost{})
 					seen[method] = true
 				},
 			}
@@ -171,30 +174,58 @@ func TestSubsystemManagerOrderCacheGeneration(t *testing.T) {
 }
 
 func TestSubsystemManagerShutdownCallbackRegistersPlugin(t *testing.T) {
-	manager := &SubsystemManager{
-		plugins: make(map[string]*LoadedHeimdallPlugin),
-		actions: make(map[string]ActionFunc),
-	}
-	plugin := &managerCallbackPlugin{
-		MockHeimdallPlugin: NewMockPlugin("original"),
-		callback: func(method string) {
-			if method == "Shutdown" {
-				if err := manager.RegisterPlugin(NewMockPlugin("replacement"), "", true); err != nil {
-					t.Error(err)
-				}
+	for _, hosted := range []bool{false, true} {
+		name := "owned shutdown seals admission"
+		if hosted {
+			name = "live host permits manual registry replacement"
+		}
+		t.Run(name, func(t *testing.T) {
+			manager := newMatrixSubsystemManager()
+			if hosted {
+				owner := lifecycle.NewWorkLifetime(t.Context())
+				manager.SetHostContext(SubsystemHost{Lifetime: owner})
+				t.Cleanup(func() {
+					manager.CloseAdmission()
+					require.NoError(t, manager.StopAll())
+					require.NoError(t, owner.Shutdown(context.Background(), manager.ShutdownAll))
+				})
+			} else {
+				t.Cleanup(func() { require.NoError(t, manager.ShutdownAll()) })
 			}
-		},
-	}
-	if err := manager.RegisterPlugin(plugin, "", true); err != nil {
-		t.Fatal(err)
-	}
-	waitManagerOperation(t, manager.ShutdownAll)
-	plugins := manager.listOrderedPlugins()
-	if len(plugins) != 1 || plugins[0].Plugin.Name() != "replacement" {
-		t.Fatalf("shutdown removed a plugin registered by its callback: %#v", plugins)
-	}
-	if _, ok := manager.GetAction("heimdall_replacement_test_action"); !ok {
-		t.Fatal("shutdown removed the replacement plugin's action")
+			callbackResult := make(chan error, 1)
+			plugin := &managerCallbackPlugin{
+				MockHeimdallPlugin: NewMockPlugin("original"),
+				callback: func(method string) {
+					if method == "Shutdown" {
+						callbackResult <- manager.RegisterPlugin(NewMockPlugin("replacement"), "", true)
+					}
+				},
+			}
+			require.NoError(t, manager.RegisterPlugin(plugin, "", true))
+			waitManagerOperation(t, manager.ShutdownAll)
+			var callbackErr error
+			select {
+			case callbackErr = <-callbackResult:
+			default:
+				t.Fatal("Shutdown returned without completing its reentrant callback")
+			}
+			if hosted {
+				// Manual disposal does not stop the live host. Preserve the original
+				// reentrant registration and registry-generation assertions.
+				require.NoError(t, callbackErr)
+			} else {
+				// Owned shutdown seals work admission before disposal. Its callback must
+				// return promptly with refusal; the new epoch starts only after completion.
+				require.ErrorContains(t, callbackErr, "plugin subsystem is stopping")
+				require.Empty(t, manager.listOrderedPlugins())
+				require.NoError(t, manager.RegisterPlugin(NewMockPlugin("replacement"), "", true))
+			}
+			plugins := manager.listOrderedPlugins()
+			require.Len(t, plugins, 1)
+			require.Equal(t, "replacement", plugins[0].Plugin.Name())
+			_, exists := manager.GetAction("heimdall_replacement_test_action")
+			require.True(t, exists, "replacement plugin action must survive the completed transition")
+		})
 	}
 }
 

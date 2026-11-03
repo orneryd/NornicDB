@@ -45,21 +45,21 @@ func (e *StorageExecutor) tryFastPathMatchVectorCosine(ctx context.Context, cyph
 		"SKIP", "WITH", "UNWIND", "OPTIONAL MATCH", "CALL",
 		"CREATE", "MERGE", "DELETE", "DETACH DELETE", "SET", "REMOVE", "UNION",
 	} {
-		if topLevelKeywordIndex(trimmed, kw) > 0 {
+		if topLevelKeywordIndex(ctx, trimmed, kw) > 0 {
 			return nil, false
 		}
 	}
 
-	returnIdx := topLevelKeywordIndex(trimmed, "RETURN")
-	orderIdx := topLevelKeywordIndex(trimmed, "ORDER BY")
-	limitIdx := topLevelKeywordIndex(trimmed, "LIMIT")
+	returnIdx := topLevelKeywordIndex(ctx, trimmed, "RETURN")
+	orderIdx := topLevelKeywordIndex(ctx, trimmed, "ORDER BY")
+	limitIdx := topLevelKeywordIndex(ctx, trimmed, "LIMIT")
 	if returnIdx <= 0 || orderIdx <= returnIdx || limitIdx <= orderIdx {
 		return nil, false
 	}
 
 	matchPart := strings.TrimSpace(trimmed[len("MATCH"):returnIdx])
 	preWhereClause := ""
-	if preWhereIdx := topLevelKeywordIndex(matchPart, "WHERE"); preWhereIdx > 0 {
+	if preWhereIdx := topLevelKeywordIndex(ctx, matchPart, "WHERE"); preWhereIdx > 0 {
 		preWhereClause = strings.TrimSpace(matchPart[preWhereIdx+len("WHERE"):])
 		matchPart = strings.TrimSpace(matchPart[:preWhereIdx])
 		if preWhereClause == "" {
@@ -227,15 +227,15 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 		"SKIP", "UNWIND", "OPTIONAL MATCH", "CALL",
 		"CREATE", "MERGE", "DELETE", "DETACH DELETE", "SET", "REMOVE", "UNION",
 	} {
-		if topLevelKeywordIndex(trimmed, kw) > 0 {
+		if topLevelKeywordIndex(ctx, trimmed, kw) > 0 {
 			return nil, false
 		}
 	}
 
-	withIdx := topLevelKeywordIndex(trimmed, "WITH")
-	returnIdx := topLevelKeywordIndex(trimmed, "RETURN")
-	orderIdx := topLevelKeywordIndex(trimmed, "ORDER BY")
-	limitIdx := topLevelKeywordIndex(trimmed, "LIMIT")
+	withIdx := topLevelKeywordIndex(ctx, trimmed, "WITH")
+	returnIdx := topLevelKeywordIndex(ctx, trimmed, "RETURN")
+	orderIdx := topLevelKeywordIndex(ctx, trimmed, "ORDER BY")
+	limitIdx := topLevelKeywordIndex(ctx, trimmed, "LIMIT")
 	if withIdx <= 0 || returnIdx <= withIdx || orderIdx <= withIdx || limitIdx <= orderIdx {
 		return nil, false
 	}
@@ -245,7 +245,7 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 	}
 	preWithSegment := strings.TrimSpace(trimmed[len("MATCH"):withIdx])
 	preWhereClause := ""
-	if preWhereIdx := topLevelKeywordIndex(preWithSegment, "WHERE"); preWhereIdx > 0 {
+	if preWhereIdx := topLevelKeywordIndex(ctx, preWithSegment, "WHERE"); preWhereIdx > 0 {
 		preWhereClause = strings.TrimSpace(preWithSegment[preWhereIdx+len("WHERE"):])
 		preWithSegment = strings.TrimSpace(preWithSegment[:preWhereIdx])
 		if preWhereClause == "" {
@@ -293,7 +293,7 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 	withToReturn := strings.TrimSpace(trimmed[withIdx+len("WITH") : withEndIdx])
 	postWhereClause := ""
 	withProjectionRaw := withToReturn
-	if postWhereIdx := topLevelKeywordIndex(withToReturn, "WHERE"); postWhereIdx > 0 {
+	if postWhereIdx := topLevelKeywordIndex(ctx, withToReturn, "WHERE"); postWhereIdx > 0 {
 		postWhereClause = strings.TrimSpace(withToReturn[postWhereIdx+len("WHERE"):])
 		withProjectionRaw = strings.TrimSpace(withToReturn[:postWhereIdx])
 		if postWhereClause == "" {
@@ -529,21 +529,21 @@ func (e *StorageExecutor) tryFastPathMatchRelationshipVectorCosine(ctx context.C
 		"SKIP", "WITH", "UNWIND", "OPTIONAL MATCH", "CALL",
 		"CREATE", "MERGE", "DELETE", "DETACH DELETE", "SET", "REMOVE", "UNION",
 	} {
-		if findKeywordIndex(trimmed, kw) > 0 {
+		if findKeywordIndex(ctx, trimmed, kw) > 0 {
 			return nil, false
 		}
 	}
 
-	returnIdx := findKeywordIndex(trimmed, "RETURN")
-	orderIdx := findKeywordIndex(trimmed, "ORDER BY")
-	limitIdx := findKeywordIndex(trimmed, "LIMIT")
+	returnIdx := findKeywordIndex(ctx, trimmed, "RETURN")
+	orderIdx := findKeywordIndex(ctx, trimmed, "ORDER BY")
+	limitIdx := findKeywordIndex(ctx, trimmed, "LIMIT")
 	if returnIdx <= 0 || orderIdx <= returnIdx || limitIdx <= orderIdx {
 		return nil, false
 	}
 
 	matchSegment := strings.TrimSpace(trimmed[len("MATCH"):returnIdx])
 	preWhereClause := ""
-	if preWhereIdx := findKeywordIndex(matchSegment, "WHERE"); preWhereIdx > 0 {
+	if preWhereIdx := findKeywordIndex(ctx, matchSegment, "WHERE"); preWhereIdx > 0 {
 		preWhereClause = strings.TrimSpace(matchSegment[preWhereIdx+len("WHERE"):])
 		matchSegment = strings.TrimSpace(matchSegment[:preWhereIdx])
 		if preWhereClause == "" {
@@ -606,12 +606,12 @@ func (e *StorageExecutor) tryFastPathMatchRelationshipVectorCosine(ctx context.C
 		edge := hit.edge
 		if edge == nil && hit.edgeID != "" {
 			var err error
-			edge, err = e.storage.GetEdge(hit.edgeID)
+			edge, err = e.storage.GetEdge(ctx, hit.edgeID)
 			if err != nil || edge == nil {
 				continue
 			}
 		}
-		if !e.buildRelationshipContextInto(pattern, edge, nodeCtx, edgeCtx) {
+		if !e.buildRelationshipContextInto(ctx, pattern, edge, nodeCtx, edgeCtx) {
 			continue
 		}
 		if preWhereClause != "" && !evaluateExpressionBoolWithContext(e, ctx, preWhereClause, nodeCtx, edgeCtx) {
@@ -653,22 +653,22 @@ func (e *StorageExecutor) tryFastPathMatchWithRelationshipVectorCosineProjection
 		"SKIP", "UNWIND", "OPTIONAL MATCH", "CALL",
 		"CREATE", "MERGE", "DELETE", "DETACH DELETE", "SET", "REMOVE", "UNION",
 	} {
-		if findKeywordIndex(trimmed, kw) > 0 {
+		if findKeywordIndex(ctx, trimmed, kw) > 0 {
 			return nil, false
 		}
 	}
 
-	withIdx := findKeywordIndex(trimmed, "WITH")
-	returnIdx := findKeywordIndex(trimmed, "RETURN")
-	orderIdx := findKeywordIndex(trimmed, "ORDER BY")
-	limitIdx := findKeywordIndex(trimmed, "LIMIT")
+	withIdx := findKeywordIndex(ctx, trimmed, "WITH")
+	returnIdx := findKeywordIndex(ctx, trimmed, "RETURN")
+	orderIdx := findKeywordIndex(ctx, trimmed, "ORDER BY")
+	limitIdx := findKeywordIndex(ctx, trimmed, "LIMIT")
 	if withIdx <= 0 || returnIdx <= withIdx || orderIdx <= returnIdx || limitIdx <= orderIdx {
 		return nil, false
 	}
 
 	preWithSegment := strings.TrimSpace(trimmed[len("MATCH"):withIdx])
 	preWhereClause := ""
-	if preWhereIdx := findKeywordIndex(preWithSegment, "WHERE"); preWhereIdx > 0 {
+	if preWhereIdx := findKeywordIndex(ctx, preWithSegment, "WHERE"); preWhereIdx > 0 {
 		preWhereClause = strings.TrimSpace(preWithSegment[preWhereIdx+len("WHERE"):])
 		preWithSegment = strings.TrimSpace(preWithSegment[:preWhereIdx])
 		if preWhereClause == "" {
@@ -684,7 +684,7 @@ func (e *StorageExecutor) tryFastPathMatchWithRelationshipVectorCosineProjection
 	withToReturn := strings.TrimSpace(trimmed[withIdx+len("WITH") : returnIdx])
 	postWhereClause := ""
 	withProjectionRaw := withToReturn
-	if postWhereIdx := findKeywordIndex(withToReturn, "WHERE"); postWhereIdx > 0 {
+	if postWhereIdx := findKeywordIndex(ctx, withToReturn, "WHERE"); postWhereIdx > 0 {
 		postWhereClause = strings.TrimSpace(withToReturn[postWhereIdx+len("WHERE"):])
 		withProjectionRaw = strings.TrimSpace(withToReturn[:postWhereIdx])
 		if postWhereClause == "" {
@@ -763,12 +763,12 @@ func (e *StorageExecutor) tryFastPathMatchWithRelationshipVectorCosineProjection
 		edge := hit.edge
 		if edge == nil && hit.edgeID != "" {
 			var err error
-			edge, err = e.storage.GetEdge(hit.edgeID)
+			edge, err = e.storage.GetEdge(ctx, hit.edgeID)
 			if err != nil || edge == nil {
 				continue
 			}
 		}
-		if !e.buildRelationshipContextInto(pattern, edge, nodeCtx, edgeCtx) {
+		if !e.buildRelationshipContextInto(ctx, pattern, edge, nodeCtx, edgeCtx) {
 			continue
 		}
 		if preWhereClause != "" && !evaluateExpressionBoolWithContext(e, ctx, preWhereClause, nodeCtx, edgeCtx) {
@@ -892,7 +892,7 @@ func (e *StorageExecutor) fetchCosineNodeScores(ctx context.Context, indexName s
 
 	out := make([]vectorNodeScore, 0, len(hits))
 	for _, hit := range hits {
-		node, err := e.getNodeForVectorHit(storage.NodeID(hit.ID), projectedProps)
+		node, err := e.getNodeForVectorHit(ctx, storage.NodeID(hit.ID), projectedProps)
 		if err != nil || node == nil {
 			continue
 		}
@@ -907,13 +907,13 @@ func (e *StorageExecutor) fetchCosineNodeScores(ctx context.Context, indexName s
 	return out, true
 }
 
-func (e *StorageExecutor) getNodeForVectorHit(id storage.NodeID, projectedProps []string) (*storage.Node, error) {
+func (e *StorageExecutor) getNodeForVectorHit(ctx context.Context, id storage.NodeID, projectedProps []string) (*storage.Node, error) {
 	if projectedProps != nil {
 		if reader, ok := e.storage.(storage.ProjectedNodeReader); ok {
-			return reader.GetNodeProjected(id, projectedProps)
+			return reader.GetNodeProjected(ctx, id, projectedProps)
 		}
 	}
-	return e.storage.GetNode(id)
+	return e.storage.GetNode(ctx, id)
 }
 
 func nodeProjectionPropertiesForVectorFastPath(varName string, vectorProp string, returnItems []returnItem, scoreExprIsAlias []bool, preWhereClause string, preWhereNotNullProp string, matchProps map[string]interface{}) ([]string, bool) {
@@ -1495,16 +1495,16 @@ func parseSimpleEndpointRef(content string) (string, []string, bool) {
 	return strictNodeHeadLabels(content)
 }
 
-func (e *StorageExecutor) buildRelationshipContext(pattern parsedSimpleMatchRelationshipPattern, edge *storage.Edge) (map[string]*storage.Node, map[string]*storage.Edge, bool) {
+func (e *StorageExecutor) buildRelationshipContext(ctx context.Context, pattern parsedSimpleMatchRelationshipPattern, edge *storage.Edge) (map[string]*storage.Node, map[string]*storage.Edge, bool) {
 	nodeCtx := make(map[string]*storage.Node, 2)
 	edgeCtx := make(map[string]*storage.Edge, 1)
-	if !e.buildRelationshipContextInto(pattern, edge, nodeCtx, edgeCtx) {
+	if !e.buildRelationshipContextInto(ctx, pattern, edge, nodeCtx, edgeCtx) {
 		return nil, nil, false
 	}
 	return nodeCtx, edgeCtx, true
 }
 
-func (e *StorageExecutor) buildRelationshipContextInto(pattern parsedSimpleMatchRelationshipPattern, edge *storage.Edge, nodeCtx map[string]*storage.Node, edgeCtx map[string]*storage.Edge) bool {
+func (e *StorageExecutor) buildRelationshipContextInto(ctx context.Context, pattern parsedSimpleMatchRelationshipPattern, edge *storage.Edge, nodeCtx map[string]*storage.Node, edgeCtx map[string]*storage.Edge) bool {
 	if edge == nil {
 		return false
 	}
@@ -1517,11 +1517,11 @@ func (e *StorageExecutor) buildRelationshipContextInto(pattern parsedSimpleMatch
 	startID := storage.EnsureNodeIDDatabasePrefixForEngine(e.storage, edge.StartNode)
 	endID := storage.EnsureNodeIDDatabasePrefixForEngine(e.storage, edge.EndNode)
 
-	startNode, err := e.getQueryNode(e.storage, startID)
+	startNode, err := e.getQueryNode(ctx, e.storage, startID)
 	if err != nil || startNode == nil {
 		return false
 	}
-	endNode, err := e.getQueryNode(e.storage, endID)
+	endNode, err := e.getQueryNode(ctx, e.storage, endID)
 	if err != nil || endNode == nil {
 		return false
 	}
@@ -1593,7 +1593,7 @@ func (e *StorageExecutor) parseScoreComparisonPredicate(ctx context.Context, whe
 	if clause == "" {
 		return "", 0, false
 	}
-	if hasTopLevelLogicalOperator(clause) || topLevelKeywordIndex(clause, " NOT ") >= 0 {
+	if hasTopLevelLogicalOperator(clause) || topLevelKeywordIndex(ctx, clause, " NOT ") >= 0 {
 		return "", 0, false
 	}
 

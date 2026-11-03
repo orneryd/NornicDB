@@ -3,11 +3,12 @@ package inference
 import (
 	"context"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"math"
 	"math/rand"
 	"sync"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -83,13 +84,13 @@ func TestTopologyChaosStarTopology(t *testing.T) {
 	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test")
 
 	// Create hub
-	engine.CreateNode(&storage.Node{ID: "hub", Labels: []string{"Hub"}})
+	engine.CreateNode(t.Context(), &storage.Node{ID: "hub", Labels: []string{"Hub"}})
 
 	// Create 100 spokes
 	for i := 0; i < 100; i++ {
 		nodeID := storage.NodeID(fmt.Sprintf("spoke-%d", i))
-		engine.CreateNode(&storage.Node{ID: nodeID, Labels: []string{"Spoke"}})
-		engine.CreateEdge(&storage.Edge{
+		engine.CreateNode(t.Context(), &storage.Node{ID: nodeID, Labels: []string{"Spoke"}})
+		engine.CreateEdge(t.Context(), &storage.Edge{
 			ID:        storage.EdgeID(fmt.Sprintf("e-%d", i)),
 			StartNode: "hub",
 			EndNode:   nodeID,
@@ -137,14 +138,14 @@ func TestTopologyChaosCliqueTopology(t *testing.T) {
 
 	// Create clique of 10 nodes
 	for i := 0; i < 10; i++ {
-		engine.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("n%d", i))})
+		engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("n%d", i))})
 	}
 
 	// Connect everyone to everyone
 	edgeCount := 0
 	for i := 0; i < 10; i++ {
 		for j := i + 1; j < 10; j++ {
-			engine.CreateEdge(&storage.Edge{
+			engine.CreateEdge(t.Context(), &storage.Edge{
 				ID:        storage.EdgeID(fmt.Sprintf("e-%d", edgeCount)),
 				StartNode: storage.NodeID(fmt.Sprintf("n%d", i)),
 				EndNode:   storage.NodeID(fmt.Sprintf("n%d", j)),
@@ -279,7 +280,7 @@ func TestTopologyComplexMultiLayerNetwork(t *testing.T) {
 	// Create users
 	users := []string{"alice", "bob", "charlie", "diana", "eve", "frank"}
 	for _, u := range users {
-		engine.CreateNode(&storage.Node{ID: storage.NodeID(u), Labels: []string{"Person"}})
+		engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(u), Labels: []string{"Person"}})
 	}
 
 	// Multiple relationship types
@@ -300,7 +301,7 @@ func TestTopologyComplexMultiLayerNetwork(t *testing.T) {
 	}
 
 	for i, rel := range relationships {
-		engine.CreateEdge(&storage.Edge{
+		engine.CreateEdge(t.Context(), &storage.Edge{
 			ID:        storage.EdgeID(fmt.Sprintf("e%d", i)),
 			StartNode: storage.NodeID(rel.from),
 			EndNode:   storage.NodeID(rel.to),
@@ -657,7 +658,7 @@ func buildRandomStorageGraph(t testing.TB, nodes int, density float64, seed int6
 
 	// Create nodes
 	for i := 0; i < nodes; i++ {
-		engine.CreateNode(&storage.Node{
+		engine.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("node-%d", i)),
 			Labels: []string{"Test"},
 		})
@@ -668,7 +669,7 @@ func buildRandomStorageGraph(t testing.TB, nodes int, density float64, seed int6
 	for i := 0; i < nodes; i++ {
 		for j := i + 1; j < nodes; j++ {
 			if r.Float64() < density {
-				engine.CreateEdge(&storage.Edge{
+				engine.CreateEdge(t.Context(), &storage.Edge{
 					ID:        storage.EdgeID(fmt.Sprintf("e-%d", edgeCount)),
 					StartNode: storage.NodeID(fmt.Sprintf("node-%d", i)),
 					EndNode:   storage.NodeID(fmt.Sprintf("node-%d", j)),

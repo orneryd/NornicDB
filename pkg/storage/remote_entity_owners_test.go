@@ -18,13 +18,13 @@ func TestRemotePublicMutationBindingsAndAdmission(t *testing.T) {
 		run                 func(*RemoteEngine) error
 	}{
 		{"update node", "MATCH (n) WHERE n.id = $id SET n += $props RETURN count(n)", "node:one", true, func(e *RemoteEngine) error {
-			return e.UpdateNode(NodeUpdateRequest{After: &Node{ID: "node:one", Properties: props}})
+			return e.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "node:one", Properties: props}})
 		}},
 		{"update edge", "MATCH ()-[r]->() WHERE r.id = $id SET r += $props RETURN count(r)", "edge:one", true, func(e *RemoteEngine) error {
-			return e.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "edge:one", Properties: props}})
+			return e.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "edge:one", Properties: props}})
 		}},
-		{"delete node", "MATCH (n) WHERE n.id = $id DETACH DELETE n", "node:one", false, func(e *RemoteEngine) error { return e.DeleteNode("node:one") }},
-		{"delete edge", "MATCH ()-[r]->() WHERE r.id = $id DELETE r", "edge:one", false, func(e *RemoteEngine) error { return e.DeleteEdge("edge:one") }},
+		{"delete node", "MATCH (n) WHERE n.id = $id DETACH DELETE n", "node:one", false, func(e *RemoteEngine) error { return e.DeleteNode(t.Context(), "node:one") }},
+		{"delete edge", "MATCH ()-[r]->() WHERE r.id = $id DELETE r", "edge:one", false, func(e *RemoteEngine) error { return e.DeleteEdge(t.Context(), "edge:one") }},
 	} {
 		t.Run(operation.name, func(t *testing.T) {
 			for _, response := range []struct {
@@ -122,13 +122,23 @@ func TestRemotePublicCountAndDegreeBoundaries(t *testing.T) {
 		suppressesError bool
 		run             func(*RemoteEngine) (int64, error)
 	}{
-		{"nodes", "MATCH (n) RETURN count(n)", nil, false, (*RemoteEngine).NodeCount},
-		{"edges", "MATCH ()-[r]->() RETURN count(r)", nil, false, (*RemoteEngine).EdgeCount},
-		{"edge type", "MATCH ()-[r:`T``ype`]->() RETURN count(r)", nil, false, func(e *RemoteEngine) (int64, error) { return e.EdgeCountByType("T`ype") }},
-		{"start label", "MATCH (s:`L``abel`)-[r:`T``ype`]->() RETURN count(r)", nil, false, func(e *RemoteEngine) (int64, error) { return e.EdgeCountByStartLabel("L`abel", "T`ype") }},
-		{"end label", "MATCH ()-[r:`T``ype`]->(e:`L``abel`) RETURN count(r)", nil, false, func(e *RemoteEngine) (int64, error) { return e.EdgeCountByEndLabel("L`abel", "T`ype") }},
-		{"in degree", "MATCH ()-[r]->(n) WHERE n.id = $id RETURN count(r)", map[string]interface{}{"id": "node:one"}, true, func(e *RemoteEngine) (int64, error) { return int64(e.GetInDegree("node:one")), nil }},
-		{"out degree", "MATCH (n)-[r]->() WHERE n.id = $id RETURN count(r)", map[string]interface{}{"id": "node:one"}, true, func(e *RemoteEngine) (int64, error) { return int64(e.GetOutDegree("node:one")), nil }},
+		{"nodes", "MATCH (n) RETURN count(n)", nil, false, func(e *RemoteEngine) (int64, error) { return e.NodeCount(t.Context()) }},
+		{"edges", "MATCH ()-[r]->() RETURN count(r)", nil, false, func(e *RemoteEngine) (int64, error) { return e.EdgeCount(t.Context()) }},
+		{"edge type", "MATCH ()-[r:`T``ype`]->() RETURN count(r)", nil, false, func(e *RemoteEngine) (int64, error) { return e.EdgeCountByType(context.Background(), "T`ype") }},
+		{"start label", "MATCH (s:`L``abel`)-[r:`T``ype`]->() RETURN count(r)", nil, false, func(e *RemoteEngine) (int64, error) {
+			return e.EdgeCountByStartLabel(context.Background(), "L`abel", "T`ype")
+		}},
+		{"end label", "MATCH ()-[r:`T``ype`]->(e:`L``abel`) RETURN count(r)", nil, false, func(e *RemoteEngine) (int64, error) {
+			return e.EdgeCountByEndLabel(context.Background(), "L`abel", "T`ype")
+		}},
+		{"in degree", "MATCH ()-[r]->(n) WHERE n.id = $id RETURN count(r)", map[string]interface{}{"id": "node:one"}, true, func(e *RemoteEngine) (int64, error) {
+			count, err := e.GetInDegree(t.Context(), "node:one")
+			return int64(count), err
+		}},
+		{"out degree", "MATCH (n)-[r]->() WHERE n.id = $id RETURN count(r)", map[string]interface{}{"id": "node:one"}, true, func(e *RemoteEngine) (int64, error) {
+			count, err := e.GetOutDegree(t.Context(), "node:one")
+			return int64(count), err
+		}},
 	} {
 		t.Run(operation.name, func(t *testing.T) {
 			for _, response := range []struct {
@@ -219,10 +229,10 @@ func TestRemotePublicReadCardinality(t *testing.T) {
 		id   string
 		run  func(*RemoteEngine) ([]string, error)
 	}{
-		{"node", true, node, "node:one", firstNode(func(engine *RemoteEngine) (*Node, error) { return engine.GetNode("node:one") })},
-		{"first label", true, node, "node:one", firstNode(func(engine *RemoteEngine) (*Node, error) { return engine.GetFirstNodeByLabel("Entity") })},
+		{"node", true, node, "node:one", firstNode(func(engine *RemoteEngine) (*Node, error) { return engine.GetNode(t.Context(), "node:one") })},
+		{"first label", true, node, "node:one", firstNode(func(engine *RemoteEngine) (*Node, error) { return engine.GetFirstNodeByLabel(t.Context(), "Entity") })},
 		{"edge", true, edge, "edge:one", func(engine *RemoteEngine) ([]string, error) {
-			value, err := engine.GetEdge("edge:one")
+			value, err := engine.GetEdge(t.Context(), "edge:one")
 			if err != nil {
 				return nil, err
 			}

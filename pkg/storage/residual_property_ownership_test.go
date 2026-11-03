@@ -30,20 +30,20 @@ func TestResidualPropertyOwnership(t *testing.T) {
 			metadata := map[string]any{"nested": []any{int64(1), "original"}}
 			node := &storage.Node{ID: "test:owned", Properties: props, EmbedMeta: metadata}
 			if route == "direct" {
-				_, err := b.CreateNode(node)
+				_, err := b.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 			} else {
-				tx, err := b.BeginTransaction()
+				tx, err := b.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				require.NoError(t, tx.SetImplicit(route == "buffered"))
-				_, err = tx.CreateNode(node)
+				_, err = tx.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 				require.NoError(t, tx.CommitContext(context.Background()))
 			}
 			duration.Days = 9
 			props["nested"].(map[string]any)["list"].([]any)[1] = "caller reused"
 			metadata["nested"].([]any)[1] = "caller reused"
-			first, err := b.GetStoredNode(node.ID)
+			first, err := b.GetStoredNode(t.Context(), node.ID)
 			require.NoError(t, err)
 			list := first.Properties["nested"].(map[string]any)["list"].([]any)
 			require.Equal(t, int64(1), list[0].(*cypher.CypherDuration).Days)
@@ -53,14 +53,14 @@ func TestResidualPropertyOwnership(t *testing.T) {
 			list[0].(*cypher.CypherDuration).Days = 7
 			list[1] = "reader reused"
 			first.EmbedMeta["nested"].([]any)[1] = "reader reused"
-			second, err := b.GetStoredNode(node.ID)
+			second, err := b.GetStoredNode(t.Context(), node.ID)
 			require.NoError(t, err)
 			require.Equal(t, "original", second.Properties["nested"].(map[string]any)["list"].([]any)[1])
 			require.Equal(t, "original", second.EmbedMeta["nested"].([]any)[1])
-			require.NoError(t, b.FlushWriteBehind(nil))
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
 			require.NoError(t, b.Close())
 			b = open()
-			cold, err := b.GetStoredNode(node.ID)
+			cold, err := b.GetStoredNode(t.Context(), node.ID)
 			require.NoError(t, err)
 			require.Equal(t, cold.Properties, second.Properties)
 			require.Equal(t, cold.EmbedMeta, second.EmbedMeta)
@@ -72,9 +72,9 @@ func TestResidualUint64PropertyList(t *testing.T) {
 	b, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = b.Close() })
-	_, err = b.CreateNode(&storage.Node{ID: "test:uints", Properties: map[string]any{"xs": []uint64{1, math.MaxUint64}}})
+	_, err = b.CreateNode(t.Context(), &storage.Node{ID: "test:uints", Properties: map[string]any{"xs": []uint64{1, math.MaxUint64}}})
 	require.NoError(t, err)
-	n, err := b.GetStoredNode("test:uints")
+	n, err := b.GetStoredNode(t.Context(), "test:uints")
 	require.NoError(t, err)
 	require.Equal(t, []any{int64(1), uint64(math.MaxUint64)}, n.Properties["xs"])
 }

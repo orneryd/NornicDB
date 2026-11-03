@@ -15,11 +15,11 @@ import (
 
 func bufferedTry(t *testing.T, engine *BadgerEngine, node *Node) error {
 	t.Helper()
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
-	if _, err := tx.CreateNode(node); err != nil {
+	if _, err := tx.CreateNode(t.Context(), node); err != nil {
 		_ = tx.Rollback()
 		return err
 	}
@@ -32,7 +32,7 @@ func TestWriteBehind_NodeKeySeesBufferedKeys(t *testing.T) {
 	require.NoError(t, sm.AddConstraint(factKey))
 	idx, owned := sm.ConstraintPropertyIndex(factKey.Name)
 	require.True(t, owned)
-	require.NoError(t, sm.BackfillCompositeIndex(idx.Name, nil))
+	require.NoError(t, sm.BackfillCompositeIndex(t.Context(), idx.Name, nil))
 
 	require.NoError(t, bufferedTry(t, engine, factNode("a", 1, "name", 1)))
 	require.Greater(t, engine.writeBehind.PendingOps(), 0, "the first write must still be buffered")
@@ -65,7 +65,7 @@ func TestWriteBehind_NodeKeyBulkLoadScalesLinearly(t *testing.T) {
 			sm := engine.GetSchemaForNamespace("test")
 			require.NoError(t, sm.AddConstraint(factKey))
 			idx, _ := sm.ConstraintPropertyIndex(factKey.Name)
-			require.NoError(t, sm.BackfillCompositeIndex(idx.Name, nil))
+			require.NoError(t, sm.BackfillCompositeIndex(t.Context(), idx.Name, nil))
 			start := time.Now()
 			for i := 0; i < n; i++ {
 				require.NoError(t, bufferedTry(t, engine, factNode(fmt.Sprintf("n-%d", i), int64(i), "name", 1)))

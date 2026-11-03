@@ -16,7 +16,7 @@ func TestDbRetrieveContinuationIssuedDepthCompletion(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	for i := 0; i < 1000; i++ {
 		node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("doc-%04d", i)), Properties: map[string]any{"content": "library transcript"}}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, service.IndexNode(node))
 	}

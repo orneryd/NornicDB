@@ -28,9 +28,25 @@ type mutant struct {
 const storageHeader = "package storage\n\nimport (\n\t\"context\"\n\n\tbadger \"github.com/dgraph-io/badger/v4\"\n)\n\nvar _ = badger.NewEntry\nvar _ context.Context\n\n"
 
 const commitCountLockBinding = "\tcw.beforeLarge = tx.acquireCommitPublicationLocked\n"
-const commitCountLockInline = "\tif err := tx.acquireCommitPublicationLocked(); err != nil {\n\t\treturn tx.abortCommitLocked(err)\n\t}\n"
+const commitCountLockInline = "\tif err := tx.acquireCommitPublicationLocked(ctx); err != nil {\n\t\treturn tx.abortCommitLocked(err)\n\t}\n"
 
 var mutants = []mutant{
+	{
+		name: "unreviewed prepared prefix field stays unclassified", file: "pkg/storage/schema_composite_index_entries.go",
+		edits: [][2]string{
+			{"\tprefixCount    int\n", "\tprefixCount    int\n\tcensusUnknownPrefixProgress int\n"},
+			{"\tkeys.prefixCount++\n", "\tkeys.prefixCount++\n\tkeys.censusUnknownPrefixProgress++\n"},
+		},
+		want: []string{"unclassified field: pkg/storage.preparedCompositeNodeKeys.censusUnknownPrefixProgress"},
+	},
+	{
+		name: "unreviewed snapshot boundary field stays unclassified", file: "pkg/storage/schema_property_index_snapshot.go",
+		edits: [][2]string{
+			{"\tgroupEnds []int\n", "\tgroupEnds []int\n\tcensusUnknownBoundaryEnds []int\n"},
+			{"\t\t\tsnapshot.groupEnds = append(snapshot.groupEnds, len(snapshot.ids))\n", "\t\t\tsnapshot.groupEnds = append(snapshot.groupEnds, len(snapshot.ids))\n\t\t\tsnapshot.censusUnknownBoundaryEnds = append(snapshot.censusUnknownBoundaryEnds, len(snapshot.ids))\n"},
+		},
+		want: []string{"unclassified field: pkg/storage.propertyIndexSnapshot.censusUnknownBoundaryEnds"},
+	},
 	{
 		name: "selected count mutex uses wrong selector", file: "pkg/storage/badger_label_count.go",
 		edits: [][2]string{{"mu := b.namedCountMutex(kind)\n\tmu.Lock()", "mu := b.namedCountMutex(countDeltaKindLabel)\n\tmu.Lock()"}},
@@ -49,7 +65,7 @@ var mutants = []mutant{
 	{
 		name: "explicit empty entities do not acquire order", file: "pkg/storage/zz_census_mutant.go",
 		src: storageHeader + `func (b *BadgerEngine) CensusMutantEmptyEntities() error {
-	return b.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return txn.Set(nodeKey("census-mutant"), nil) }, []writtenEntities{}...)
+	return b.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error { return txn.Set(nodeKey("census-mutant"), nil) }, []writtenEntities{}...)
 }
 `,
 		entry: "pkg/storage.BadgerEngine.CensusMutantEmptyEntities", want: []string{"unordered write:", "prefixNode"},
@@ -59,8 +75,8 @@ var mutants = []mutant{
 		src: storageHeader + `func (b *BadgerEngine) CensusMutantCallbackAlias() error {
 	callback := func(txn *badger.Txn) error { return txn.Set(nodeKey("census-mutant"), nil) }
 	alias := callback
-	if err := b.withUpdate(updateRequest{}, alias, writtenEntities{nodes: []NodeID{"census-mutant"}}); err != nil { return err }
-	return b.withUpdate(updateRequest{}, callback)
+	if err := b.withUpdate(context.Background(), updateRequest{}, alias, writtenEntities{nodes: []NodeID{"census-mutant"}}); err != nil { return err }
+	return b.withUpdate(context.Background(), updateRequest{}, callback)
 }
 `,
 		entry: "pkg/storage.BadgerEngine.CensusMutantCallbackAlias", want: []string{"unordered write:", "prefixNode"},
@@ -72,7 +88,7 @@ func (*censusMutantLockReceiver) acquireCommitPublicationLocked() {}
 func (b *BadgerEngine) CensusMutantWrongBoundReceiver() error {
 	take := (&censusMutantLockReceiver{}).acquireCommitPublicationLocked
 	take()
-	return b.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return txn.Set(edgeTypeLabelCountKey(prefixMVCCMetaEdgeTypeStartLabelCount, "test", "Census", "LINK"), nil) })
+	return b.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error { return txn.Set(edgeTypeLabelCountKey(prefixMVCCMetaEdgeTypeStartLabelCount, "test", "Census", "LINK"), nil) })
 }
 `,
 		entry: "pkg/storage.BadgerEngine.CensusMutantWrongBoundReceiver", want: []string{"unordered write:", "prefixMVCCMetaEdgeTypeStartLabelCount"},
@@ -82,7 +98,7 @@ func (b *BadgerEngine) CensusMutantWrongBoundReceiver() error {
 		// wrapper holds the order where it runs the closure.
 		name: "closure handed to a wrapper that takes no order", file: "pkg/storage/zz_census_mutant.go",
 		src: storageHeader + `func (b *BadgerEngine) censusMutantRunner(fn func(txn *badger.Txn) error) error {
-	return b.withUpdate(updateRequest{}, fn)
+	return b.withUpdate(context.Background(), updateRequest{}, fn)
 }
 
 func (b *BadgerEngine) CensusMutantWrapped() error {
@@ -114,7 +130,7 @@ func (b *BadgerEngine) CensusMutantRunnerKeeps(id NodeID) { b.censusMutantRunWit
 		src: storageHeader + `func (b *BadgerEngine) CensusMutantCountUnderRLock() error {
 	b.labelCountWriteMu.RLock()
 	defer b.labelCountWriteMu.RUnlock()
-	return b.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return txn.Set(labelCountKey("census", "Mutant"), nil) })
+	return b.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error { return txn.Set(labelCountKey("census", "Mutant"), nil) })
 }
 `,
 		want: []string{"unordered write: pkg/storage.BadgerEngine.CensusMutantCountUnderRLock", "prefixMVCCMetaLabelCount (derived-count)"},
@@ -151,7 +167,7 @@ func (b *BadgerEngine) CensusMutantRunnerKeeps(id NodeID) { b.censusMutantRunWit
 		src: storageHeader + `func (b *BadgerEngine) CensusMutantWrongCountLock() error {
 	b.labelCountWriteMu.Lock()
 	defer b.labelCountWriteMu.Unlock()
-	return b.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return txn.Set(edgeTypeCountKey("census", "MUTANT"), nil) })
+	return b.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error { return txn.Set(edgeTypeCountKey("census", "MUTANT"), nil) })
 }
 `,
 		want: []string{"unordered write: pkg/storage.BadgerEngine.CensusMutantWrongCountLock", "prefixMVCCMetaEdgeTypeCount (derived-count)"},
@@ -173,13 +189,13 @@ func (b *BadgerEngine) CensusMutantRunnerKeeps(id NodeID) { b.censusMutantRunWit
 	{
 		name: "hidden decision split into a helper", file: "pkg/storage/zz_census_mutant.go",
 		src: storageHeader + `func (b *BadgerEngine) censusMutantHidden(id NodeID) bool {
-	_, err := b.GetStoredNode(id)
+	_, err := b.GetStoredNode(context.Background(), id)
 	return err == nil
 }
 
 func (b *BadgerEngine) CensusMutantHiddenReplace(n *Node) error {
 	if b.censusMutantHidden(n.ID) {
-		return b.UpdateNode(NodeUpdateRequest{After: n})
+		return b.UpdateNode(context.Background(), NodeUpdateRequest{After: n})
 	}
 	return nil
 }
@@ -189,7 +205,7 @@ func (b *BadgerEngine) CensusMutantHiddenReplace(n *Node) error {
 	{
 		name: "acquisition after the write", file: "pkg/storage/zz_census_mutant.go",
 		src: storageHeader + `func (b *BadgerEngine) CensusMutantLateOwner() error {
-	err := b.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return txn.Set(nodeKey("census-mutant"), nil) })
+	err := b.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error { return txn.Set(nodeKey("census-mutant"), nil) })
 	var order orderHold
 	if _, oerr := b.orderAfterBufferedCommits(context.Background(), &order, writtenEntities{}); oerr != nil {
 		return oerr
@@ -204,7 +220,7 @@ func (b *BadgerEngine) CensusMutantHiddenReplace(n *Node) error {
 		name: "acquisition referenced, never called", file: "pkg/storage/zz_census_mutant.go",
 		src: storageHeader + `func (b *BadgerEngine) CensusMutantUnusedOwner() error {
 	_ = b.beginLifecycleWrite
-	return b.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return txn.Set(edgeKey("census-mutant"), nil) })
+	return b.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error { return txn.Set(edgeKey("census-mutant"), nil) })
 }
 `,
 		entry: "pkg/storage.BadgerEngine.CensusMutantUnusedOwner", want: []string{"unordered write:", "prefixEdge"},
@@ -214,7 +230,7 @@ func (b *BadgerEngine) CensusMutantHiddenReplace(n *Node) error {
 		src: storageHeader + `func (b *BadgerEngine) CensusMutantIgnoredOwner() error {
 	l, _ := b.beginLifecycleWrite(context.Background(), "")
 	defer l.finish()
-	return b.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return txn.Set(nodeKey("census-mutant"), nil) })
+	return b.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error { return txn.Set(nodeKey("census-mutant"), nil) })
 }
 `,
 		entry: "pkg/storage.BadgerEngine.CensusMutantIgnoredOwner", want: []string{"unordered write:", "prefixNode"},
@@ -226,7 +242,7 @@ func (b *BadgerEngine) CensusMutantHiddenReplace(n *Node) error {
 	},
 	{
 		name: "extra count inside an existing writer", file: "pkg/storage/badger_nodes.go",
-		edits: [][2]string{{"func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {", "func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {\n\tb.nodeCount.Add(1)"}},
+		edits: [][2]string{{"func (b *BadgerEngine) CreateNode(ctx context.Context, node *Node) (NodeID, error) {", "func (b *BadgerEngine) CreateNode(ctx context.Context, node *Node) (NodeID, error) {\n\tb.nodeCount.Add(1)"}},
 		want:  []string{"unowned entity-count change: pkg/storage.BadgerEngine.nodeCount", "in pkg/storage.BadgerEngine.CreateNode"},
 	},
 	{
@@ -260,7 +276,7 @@ func (b *BadgerEngine) CensusMutantHiddenReplace(n *Node) error {
 	return txn.Set(labelIndexKey("Census", 1), nil)
 }
 
-func (b *BadgerEngine) CensusMutantHelper() error { return b.withUpdate(updateRequest{}, b.censusMutantWrite) }
+func (b *BadgerEngine) CensusMutantHelper() error { return b.withUpdate(context.Background(), updateRequest{}, b.censusMutantWrite) }
 `,
 		entry: "pkg/storage.BadgerEngine.CensusMutantHelper", want: []string{"unordered write:", "prefixLabelIndex"},
 	},
@@ -276,7 +292,7 @@ func (b *BadgerEngine) CensusMutantHelper() error { return b.withUpdate(updateRe
 	},
 	{
 		name: "unscoped total read for a quota", file: "pkg/multidb/zz_census_mutant.go",
-		src:  "package multidb\n\nfunc (m *DatabaseManager) CensusMutantQuota() int64 {\n\tn, _ := m.inner.NodeCount()\n\treturn n\n}\n",
+		src:  "package multidb\n\nimport \"context\"\n\nfunc (m *DatabaseManager) CensusMutantQuota() int64 {\n\tn, _ := m.inner.NodeCount(context.Background())\n\treturn n\n}\n",
 		want: []string{"unscoped total: pkg/multidb.DatabaseManager.CensusMutantQuota"},
 	},
 	{
@@ -294,10 +310,13 @@ func (b *BadgerEngine) CensusMutantHelper() error { return b.withUpdate(updateRe
 	{
 		name: "static visible read in quota accounting", file: "pkg/multidb/zz_census_mutant.go",
 		src: `package multidb
-import "github.com/orneryd/nornicdb/pkg/storage"
+import (
+    "context"
+    "github.com/orneryd/nornicdb/pkg/storage"
+)
 func (m *DatabaseManager) CensusMutantStaticVisible() error {
  engine := storage.NewNamespacedEngine(m.inner,m.config.DefaultDatabase)
- _,err := engine.GetNode(storage.NodeID("census-mutant"))
+ _,err := engine.GetNode(context.Background(), storage.NodeID("census-mutant"))
  return err
 }
 `,
@@ -305,7 +324,7 @@ func (m *DatabaseManager) CensusMutantStaticVisible() error {
 	},
 	{
 		name: "visible prior sized for quota", file: "pkg/multidb/storage_transaction.go",
-		edits: [][2]string{{"if trackBytes {\n\t\tchanges = prepared.Changes()", "if trackBytes {\n\t\tchanges = prepared.Changes()\nfor i := range changes { if changes[i].BeforeNode != nil { changes[i].BeforeNode, _ = t.Engine.GetNode(changes[i].BeforeNode.ID) } }"}},
+		edits: [][2]string{{"if trackBytes {\n\t\tchanges = prepared.Changes()", "if trackBytes {\n\t\tchanges = prepared.Changes()\nfor i := range changes { if changes[i].BeforeNode != nil { changes[i].BeforeNode, _ = t.Engine.GetNode(context.Background(), changes[i].BeforeNode.ID) } }"}},
 		want:  []string{"visible read in quota accounting: pkg/multidb.sizeTrackingEngine.admitPrepared"},
 	},
 	{
@@ -315,7 +334,7 @@ func (m *DatabaseManager) CensusMutantStaticVisible() error {
 type censusMutantImpl struct{}
 
 func (censusMutantImpl) write(b *BadgerEngine) error {
-	return b.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return txn.Set(nodeKey("census-mutant"), nil) })
+	return b.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error { return txn.Set(nodeKey("census-mutant"), nil) })
 }
 
 func (b *BadgerEngine) CensusMutantInterface() error {
@@ -332,7 +351,7 @@ func (b *BadgerEngine) CensusMutantInterface() error {
 var censusMutantHooks censusMutantHook
 
 func (b *BadgerEngine) CensusMutantUnresolved() error {
-	return b.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return censusMutantHooks.fn(txn) })
+	return b.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error { return censusMutantHooks.fn(txn) })
 }
 `,
 		want: []string{"unresolved write callback: pkg/storage.BadgerEngine.CensusMutantUnresolved$1"},

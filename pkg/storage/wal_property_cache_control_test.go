@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"time"
@@ -22,9 +23,9 @@ func TestBufferedWALConflictingDrainCacheControl(t *testing.T) {
 	}
 	source, destination := open(), open()
 	seed := func(b *BadgerEngine, name string) {
-		_, err := b.CreateNode(&Node{ID: NodeID("binding:seed-" + name), Properties: map[string]any{name: "keep-" + name}})
+		_, err := b.CreateNode(t.Context(), &Node{ID: NodeID("binding:seed-" + name), Properties: map[string]any{name: "keep-" + name}})
 		require.NoError(t, err)
-		require.NoError(t, b.FlushWriteBehind(nil))
+		require.NoError(t, b.FlushWriteBehind(context.Background()))
 	}
 	seed(source, "alpha")
 	seed(source, "beta")
@@ -50,9 +51,9 @@ func TestBufferedWALConflictingDrainCacheControl(t *testing.T) {
 	require.Equal(t, uint64(1), source.propKeyDict.forward["binding"]["alpha"])
 	require.Equal(t, uint64(1), destination.propKeyDict.forward["binding"]["beta"])
 	node := &Node{ID: "binding:imported", Properties: map[string]any{"alpha": "after-alpha", "beta": "after-beta"}}
-	_, err := source.CreateNode(node)
+	_, err := source.CreateNode(t.Context(), node)
 	require.NoError(t, err)
-	require.NoError(t, source.FlushWriteBehind(nil))
+	require.NoError(t, source.FlushWriteBehind(context.Background()))
 	var body []byte
 	require.NoError(t, source.db.View(func(tx *badger.Txn) error {
 		item, err := tx.Get(nodeKey(node.ID))
@@ -77,11 +78,11 @@ func TestBufferedWALConflictingDrainCacheControl(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, ReplayWALEntry(destination, WALEntry{Operation: OpBufferedCommit, Data: payload}))
 	assertInverse(destination)
-	got, err := destination.GetNode(node.ID)
+	got, err := destination.GetNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	require.Equal(t, node.Properties, got.Properties)
 	for _, name := range []string{"alpha", "beta"} {
-		got, err := destination.GetNode(NodeID("binding:seed-" + name))
+		got, err := destination.GetNode(t.Context(), NodeID("binding:seed-"+name))
 		require.NoError(t, err)
 		require.Equal(t, map[string]any{name: "keep-" + name}, got.Properties)
 	}

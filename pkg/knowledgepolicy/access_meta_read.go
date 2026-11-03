@@ -1,5 +1,7 @@
 package knowledgepolicy
 
+import "context"
+
 // AccessMetaReadMode selects what AccessMetaReadRequest reads from the access
 // metadata namespace.
 type AccessMetaReadMode int
@@ -28,8 +30,15 @@ type AccessMetaReadResult struct {
 }
 
 // AccessMetaStore is the persistence interface for AccessMetaEntry. ReadAccessMeta
-// is the only read entry point; PutAccessMeta writes one entity's entry.
+// is the only read entry point; ctx-first WriteAccessMeta writes one entity's
+// entry under an explicit policy.
+//
+// ctx belongs to the operation that owns the write: an access flush passes its
+// own flush lifetime, never an expired initiating request. ctx owns admission
+// and preparation only; once a write is accepted its publication completes in
+// the store, so a canceled ctx returns its own error and leaves no published
+// entry.
 type AccessMetaStore interface {
 	ReadAccessMeta(request AccessMetaReadRequest) (AccessMetaReadResult, error)
-	PutAccessMeta(entityID string, entry *AccessMetaEntry) error
+	WriteAccessMeta(ctx context.Context, request AccessMetaWriteRequest) (written bool, err error)
 }

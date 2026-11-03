@@ -48,7 +48,7 @@ func TestOpenUpgradesRelationshipSnapshotsOnExistingV4Store(t *testing.T) {
 			require.NoError(t, err)
 			initial := db
 			t.Cleanup(func() { _ = initial.Close() })
-			_, err = db.GetStorage().CreateNode(&storage.Node{ID: "preserved", Labels: []string{"Preserved"}, Properties: map[string]any{"value": "original"}})
+			_, err = db.GetStorage().CreateNode(t.Context(), &storage.Node{ID: "preserved", Labels: []string{"Preserved"}, Properties: map[string]any{"value": "original"}})
 			require.NoError(t, err)
 			require.NoError(t, db.Close())
 			readStoredNode := func() []byte {
@@ -120,7 +120,7 @@ func TestOpenUpgradesRelationshipSnapshotsOnExistingV4Store(t *testing.T) {
 			require.Len(t, got.Entries["r1"].Vectors[0], 8)
 			require.Equal(t, math.Float32bits(want.Entries["r1"].Vectors[0][0]), binary.LittleEndian.Uint32(got.Entries["r1"].Vectors[0][:4]))
 			require.Equal(t, math.Float32bits(want.Entries["r1"].Vectors[0][1]), binary.LittleEndian.Uint32(got.Entries["r1"].Vectors[0][4:]))
-			node, err := db.GetStorage().GetNode("preserved")
+			node, err := db.GetStorage().GetNode(t.Context(), "preserved")
 			require.NoError(t, err)
 			require.Equal(t, "original", node.Properties["value"])
 			require.NoError(t, db.Close())
@@ -165,7 +165,7 @@ func TestV4OpenUpgradesRelationshipSnapshotWithHistoricalWAL(t *testing.T) {
 	require.NoError(t, err)
 	first := db
 	t.Cleanup(func() { _ = first.Close() })
-	node, err := db.GetBaseStorageForManager().GetNode("upgrade:a")
+	node, err := db.GetBaseStorageForManager().GetNode(t.Context(), "upgrade:a")
 	require.NoError(t, err)
 	require.Equal(t, int64(20), node.Properties["value"])
 	converted, err := os.ReadFile(path)
@@ -190,7 +190,7 @@ func TestV4OpenUpgradesRelationshipSnapshotWithHistoricalWAL(t *testing.T) {
 	require.NoError(t, err)
 	second := db
 	t.Cleanup(func() { _ = second.Close() })
-	node, err = db.GetBaseStorageForManager().GetNode("upgrade:a")
+	node, err = db.GetBaseStorageForManager().GetNode(t.Context(), "upgrade:a")
 	require.NoError(t, err)
 	require.Equal(t, int64(20), node.Properties["value"])
 	require.NoError(t, db.Close())

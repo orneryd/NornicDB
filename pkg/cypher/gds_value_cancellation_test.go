@@ -21,7 +21,7 @@ func gdsCancellationNodes(t *testing.T, count int) (storage.Engine, []interface{
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "gds_value_cancellation")
 	ids := make([]interface{}, count)
 	for index := 0; index < count; index++ {
-		id, err := store.CreateNode(&storage.Node{
+		id, err := store.CreateNode(t.Context(), &storage.Node{
 			ID:         storage.NodeID(fmt.Sprintf("gds-cancel-%03d", index)),
 			Properties: map[string]interface{}{"index": int64(index)},
 		})
@@ -64,8 +64,8 @@ type gdsCancelingNodeEngine struct {
 	reads  int
 }
 
-func (e *gdsCancelingNodeEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
-	node, err := e.Engine.GetNode(id)
+func (e *gdsCancelingNodeEngine) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
+	node, err := e.Engine.GetNode(ctx, id)
 	e.reads++
 	if e.reads == 1 {
 		e.cancel()

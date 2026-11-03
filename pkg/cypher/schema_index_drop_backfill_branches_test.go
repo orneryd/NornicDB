@@ -133,7 +133,7 @@ func TestSchema_BackfillCompositeIndex_ErrorBranches(t *testing.T) {
 	errStore := storage.NewNamespacedEngine(errEng, "schema_backfill_err")
 	errExec := NewStorageExecutor(errStore)
 
-	_, err := errStore.CreateNode(&storage.Node{ID: storage.NodeID("e1"), Labels: []string{"ErrLabel"}, Properties: map[string]interface{}{"p": "v"}})
+	_, err := errStore.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID("e1"), Labels: []string{"ErrLabel"}, Properties: map[string]interface{}{"p": "v"}})
 	require.NoError(t, err)
 	require.NoError(t, errStore.GetSchema().AddPropertyIndex("idx_err_label", "ErrLabel", []string{"p"}))
 
@@ -146,7 +146,7 @@ func TestSchema_BackfillCompositeIndex_ErrorBranches(t *testing.T) {
 	missingStore := storage.NewNamespacedEngine(baseMissing, "schema_backfill_missing_idx")
 	missingExec := NewStorageExecutor(missingStore)
 
-	_, err = missingStore.CreateNode(&storage.Node{ID: storage.NodeID("m1"), Labels: []string{"Doc"}, Properties: map[string]interface{}{"p": "v"}})
+	_, err = missingStore.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID("m1"), Labels: []string{"Doc"}, Properties: map[string]interface{}{"p": "v"}})
 	require.NoError(t, err)
 	err = missingExec.backfillCompositeIndex(ctx, "missing_idx", "Doc", []string{"p"})
 	require.Error(t, err)

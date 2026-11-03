@@ -266,20 +266,20 @@ type orderSpec struct {
 
 // orderResultRows sorts result rows by the specified ORDER BY expression.
 // Supports multiple columns: "col1 ASC, col2 DESC"
-func (e *StorageExecutor) orderResultRows(rows [][]interface{}, columns []string, orderExpr string) [][]interface{} {
+func (e *StorageExecutor) orderResultRows(ctx context.Context, rows [][]interface{}, columns []string, orderExpr string) [][]interface{} {
 	if len(rows) <= 1 {
 		return rows
 	}
 
-	return e.orderRowsBySpecs(rows, e.parseOrderBySpecs(orderExpr, columns))
+	return e.orderRowsBySpecs(rows, e.parseOrderBySpecs(ctx, orderExpr, columns))
 }
 
-func (e *StorageExecutor) orderResultRowsForReturnItems(rows [][]interface{}, columns []string, returnItems []returnItem, orderExpr string) [][]interface{} {
+func (e *StorageExecutor) orderResultRowsForReturnItems(ctx context.Context, rows [][]interface{}, columns []string, returnItems []returnItem, orderExpr string) [][]interface{} {
 	if len(rows) <= 1 {
 		return rows
 	}
 
-	return e.orderRowsBySpecs(rows, e.parseOrderBySpecsWithResolver(orderExpr, columns, func(colName string) int {
+	return e.orderRowsBySpecs(rows, e.parseOrderBySpecsWithResolver(ctx, orderExpr, columns, func(colName string) int {
 		for _, item := range returnItems {
 			if item.alias == "" || !strings.EqualFold(strings.TrimSpace(item.expr), colName) {
 				continue
@@ -318,14 +318,14 @@ func (e *StorageExecutor) orderRowsBySpecs(rows [][]interface{}, orderSpecs []or
 }
 
 // parseOrderBySpecs parses "col1 ASC, col2 DESC" into orderSpec slice
-func (e *StorageExecutor) parseOrderBySpecs(orderExpr string, columns []string) []orderSpec {
-	return e.parseOrderBySpecsWithResolver(orderExpr, columns, nil)
+func (e *StorageExecutor) parseOrderBySpecs(ctx context.Context, orderExpr string, columns []string) []orderSpec {
+	return e.parseOrderBySpecsWithResolver(ctx, orderExpr, columns, nil)
 }
 
-func (e *StorageExecutor) parseOrderBySpecsWithResolver(orderExpr string, columns []string, resolveExpression func(colName string) int) []orderSpec {
+func (e *StorageExecutor) parseOrderBySpecsWithResolver(ctx context.Context, orderExpr string, columns []string, resolveExpression func(colName string) int) []orderSpec {
 	var specs []orderSpec
 
-	for _, term := range parseOrderByClause(orderExpr) {
+	for _, term := range parseOrderByClause(ctx, orderExpr) {
 		colName, descending := term.column, term.descending
 
 		colIdx := findOrderByColumnIndex(columns, colName)

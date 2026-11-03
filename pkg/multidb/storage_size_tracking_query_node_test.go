@@ -27,20 +27,20 @@ func TestSizeTrackingEngine_GetQueryNode(t *testing.T) {
 		chunks[c] = make([]float32, 4000) // stored apart from the body
 		chunks[c][c] = 1
 	}
-	id, err := store.CreateNode(&storage.Node{ID: "doc", Labels: []string{"Doc"}, Properties: map[string]interface{}{"title": "t"}, ChunkEmbeddings: chunks})
+	id, err := store.CreateNode(t.Context(), &storage.Node{ID: "doc", Labels: []string{"Doc"}, Properties: map[string]interface{}{"title": "t"}, ChunkEmbeddings: chunks})
 	require.NoError(t, err)
-	full, err := store.GetNode(id)
+	full, err := store.GetNode(t.Context(), id)
 	require.NoError(t, err)
 	require.Equal(t, chunks, full.ChunkEmbeddings)
 
-	node, err := reader.GetQueryNode(id)
+	node, err := reader.GetQueryNode(t.Context(), id)
 	require.NoError(t, err)
 	require.Equal(t, id, node.ID)
 	require.Equal(t, "t", node.Properties["title"])
 	require.True(t, node.HasChunkEmbeddings())
 
 	wrapped := &sizeTrackingEngine{Engine: &fullReadOnlyEngine{Engine: store}}
-	node, err = wrapped.GetQueryNode(id)
+	node, err = wrapped.GetQueryNode(t.Context(), id)
 	require.NoError(t, err)
 	require.Equal(t, chunks, node.ChunkEmbeddings)
 }

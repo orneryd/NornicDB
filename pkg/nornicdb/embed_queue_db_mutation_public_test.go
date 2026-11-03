@@ -62,13 +62,13 @@ type mutationWakeStore struct {
 	idle      chan struct{}
 }
 
-func (s *mutationWakeStore) FindNodeNeedingEmbedding() *storage.Node {
-	n := s.BadgerEngine.FindNodeNeedingEmbedding()
+func (s *mutationWakeStore) FindNodeNeedingEmbedding(ctx context.Context) (*storage.Node, error) {
+	n, err := s.BadgerEngine.FindNodeNeedingEmbedding(ctx)
 	s.findNil.Store(n == nil)
 	if n == nil {
 		s.emptySearch()
 	}
-	return n
+	return n, err
 }
 
 func (s *mutationWakeStore) emptySearch() {
@@ -117,15 +117,13 @@ func TestEmbedWorkerDLQPublicDBMutationWakesAndDrains(t *testing.T) {
 			config.Compliance.SubjectIdentifierProperties = []string{"user_id"}
 			config.Compliance.SubjectPseudonymizeProperties = []string{"user_id"}
 			svc := search.NewService(ns, 2, nil)
-			done := make(chan struct{})
-			close(done)
-			entry := &dbSearchService{dbName: "nornic", engine: ns, svc: svc, buildDone: done}
-			entry.buildOnce.Do(func() {})
+			entry := &dbSearchService{dbName: "nornic", engine: ns, svc: svc}
+			entry.build.Do(func() error { return nil }) // the initial build has completed
 			db := &DB{storage: ns, baseStorage: store, config: config, embedQueue: worker,
 				searchServices: map[string]*dbSearchService{"nornic": entry}}
 			t.Cleanup(func() { release(); worker.Close(); _ = svc.Close(); _ = disk.Close() })
 			require.NoError(t, svc.BuildIndexes(context.Background()))
-			_, err = ns.CreateNode(&storage.Node{ID: "doc", Properties: map[string]any{"text": "same source", "annotation": "before", "user_id": "subject"}})
+			_, err = ns.CreateNode(t.Context(), &storage.Node{ID: "doc", Properties: map[string]any{"text": "same source", "annotation": "before", "user_id": "subject"}})
 			require.NoError(t, err)
 			worker.StartWorkers()
 			select {
@@ -143,7 +141,7 @@ func TestEmbedWorkerDLQPublicDBMutationWakesAndDrains(t *testing.T) {
 				} else {
 					require.NoError(t, db.DeleteNode(context.Background(), "doc"))
 				}
-				_, err := ns.GetNode("doc")
+				_, err := ns.GetNode(t.Context(), "doc")
 				require.ErrorIs(t, err, storage.ErrNotFound)
 				assert.Zero(t, db.PendingEmbeddingsCount(), "a deleted DLQ node must stop counting immediately")
 				ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
@@ -152,7 +150,7 @@ func TestEmbedWorkerDLQPublicDBMutationWakesAndDrains(t *testing.T) {
 				return
 			}
 
-			before, err := ns.GetNode("doc")
+			before, err := ns.GetNode(t.Context(), "doc")
 			require.NoError(t, err)
 			properties := map[string]any{"text": "same source"}
 			if action == "source_preserving_update" {
@@ -167,13 +165,13 @@ func TestEmbedWorkerDLQPublicDBMutationWakesAndDrains(t *testing.T) {
 				_, err = db.UpdateNode(context.Background(), "doc", properties)
 			}
 			require.NoError(t, err)
-			after, err := ns.GetNode("doc")
+			after, err := ns.GetNode(t.Context(), "doc")
 			require.NoError(t, err)
 			if action == "anonymize_user_data" {
 				require.NotEqual(t, "subject", after.Properties["user_id"])
 			}
 			require.True(t, storage.EmbeddingSourceMatches(before, after, embeddingutil.TextPolicy(embeddingutil.EmbedTextOptionsFromConfig(config))))
-			same, err := before.EmbeddingRevision().MatchesNode(after)
+			same, err := before.EmbeddingRevision().MatchesNode(t.Context(), after)
 			require.NoError(t, err)
 			require.False(t, same, "even the idempotent public update creates a new body attempt")
 			if action == "delete_after_update_claim" {
@@ -198,7 +196,7 @@ func TestEmbedWorkerDLQPublicDBMutationWakesAndDrains(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
 			require.NoError(t, db.WaitForEmbeddings(ctx))
-			stored, err := ns.GetNode("doc")
+			stored, err := ns.GetNode(t.Context(), "doc")
 			require.NoError(t, err)
 			require.NotEmpty(t, stored.ChunkEmbeddings)
 		})

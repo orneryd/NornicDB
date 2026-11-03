@@ -26,7 +26,7 @@ func openBackfillTestEngine(t *testing.T, dir string, writeBehind bool) *BadgerE
 // the path a query's write takes: with write-behind on it is acknowledged
 // buffered, and applied later. It reports whether it was.
 func implicitWrite(b *BadgerEngine, write func(tx *BadgerTransaction) error) (buffered bool, err error) {
-	tx, err := b.BeginTransaction()
+	tx, err := b.BeginTransaction(context.Background())
 	if err != nil {
 		return false, err
 	}
@@ -107,33 +107,33 @@ func TestIndexBackfillKeepsWritesLandingMidChunk(t *testing.T) {
 	}
 	labelMutations := []mutation{
 		{"create", func(tx *BadgerTransaction) error {
-			_, err := tx.CreateNode(&Node{ID: "test:n", Labels: []string{"Doc"}})
+			_, err := tx.CreateNode(t.Context(), &Node{ID: "test:n", Labels: []string{"Doc"}})
 			return err
 		}, func(t *testing.T, b *BadgerEngine) {
 			require.True(t, labelled(t, b, "Doc", "test:n"), "a node created mid-backfill isn't found by its label")
 		}},
 		{"update", func(tx *BadgerTransaction) error {
-			return tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:a", Labels: []string{"Topic"}}, Policy: ClientNodeEdits})
+			return tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:a", Labels: []string{"Topic"}}, Policy: ClientNodeEdits})
 		}, func(t *testing.T, b *BadgerEngine) {
 			require.False(t, labelled(t, b, "Doc", "test:a"), "a label removed mid-backfill keeps its entry")
 			require.True(t, labelled(t, b, "Topic", "test:a"), "a label added mid-backfill has no entry")
 		}},
 		{"delete", func(tx *BadgerTransaction) error {
-			return tx.DeleteGraphNode("test:d", CascadeEdges)
+			return tx.DeleteGraphNode(t.Context(), "test:d", CascadeEdges)
 		}, func(t *testing.T, b *BadgerEngine) {
 			require.False(t, labelled(t, b, "Doc", "test:d"), "a node deleted mid-backfill keeps its label entry")
 		}},
 	}
 	betweenMutations := []mutation{
 		{"create", func(tx *BadgerTransaction) error {
-			return tx.CreateEdge(&Edge{ID: "test:ca", StartNode: "test:c", EndNode: "test:a", Type: "LINK"})
+			return tx.CreateEdge(t.Context(), &Edge{ID: "test:ca", StartNode: "test:c", EndNode: "test:a", Type: "LINK"})
 		}, func(t *testing.T, b *BadgerEngine) {
 			edges, err := b.GetEdgesBetween(context.Background(), "test:c", "test:a")
 			require.NoError(t, err)
 			require.Len(t, edges, 1)
 		}},
 		{"delete", func(tx *BadgerTransaction) error {
-			return tx.DeleteEdge("test:ab")
+			return tx.DeleteEdge(t.Context(), "test:ab")
 		}, func(t *testing.T, b *BadgerEngine) {
 			edges, err := b.GetEdgesBetween(context.Background(), "test:a", "test:b")
 			require.NoError(t, err)
@@ -175,12 +175,12 @@ func TestIndexBackfillKeepsWritesLandingMidChunk(t *testing.T) {
 					dir := t.TempDir()
 					seed := openBackfillTestEngine(t, dir, false)
 					for _, id := range []NodeID{"test:a", "test:b", "test:c", "test:d"} {
-						_, err := seed.CreateNode(&Node{ID: id, Labels: []string{"Doc"}})
+						_, err := seed.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Doc"}})
 						require.NoError(t, err)
 					}
-					require.NoError(t, seed.CreateEdge(&Edge{ID: "test:ab", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}))
-					require.NoError(t, seed.CreateEdge(&Edge{ID: "test:bc", StartNode: "test:b", EndNode: "test:c", Type: "LINK"}))
-					require.NoError(t, seed.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return txn.Delete(index.marker) }))
+					require.NoError(t, seed.CreateEdge(t.Context(), &Edge{ID: "test:ab", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}))
+					require.NoError(t, seed.CreateEdge(t.Context(), &Edge{ID: "test:bc", StartNode: "test:b", EndNode: "test:c", Type: "LINK"}))
+					require.NoError(t, seed.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error { return txn.Delete(index.marker) }))
 					require.NoError(t, seed.Close())
 
 					paused, resume := make(chan struct{}), make(chan struct{})
@@ -204,7 +204,7 @@ func TestIndexBackfillKeepsWritesLandingMidChunk(t *testing.T) {
 					require.NoError(t, err)
 					require.Equal(t, mode.writeBehind, buffered, "the write is acknowledged buffered exactly when write-behind is on")
 					if mode.flushInside {
-						require.NoError(t, b.FlushWriteBehind(nil))
+						require.NoError(t, b.FlushWriteBehind(context.Background()))
 					}
 					close(resume)
 					require.Eventually(t, func() bool {
@@ -213,7 +213,7 @@ func TestIndexBackfillKeepsWritesLandingMidChunk(t *testing.T) {
 					}, 30*time.Second, 10*time.Millisecond, "the backfill never published the index ready")
 					restore()
 					if mode.writeBehind {
-						require.NoError(t, b.FlushWriteBehind(nil))
+						require.NoError(t, b.FlushWriteBehind(context.Background()))
 					}
 					m.check(t, b)
 					requireIndexMatchesStorage(t, b, index.rebuild(b), index.prefixes...)

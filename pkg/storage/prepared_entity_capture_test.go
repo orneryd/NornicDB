@@ -11,7 +11,7 @@ import (
 
 func TestPreparedBufferedCommitCapturesStoredImagesOnce(t *testing.T) {
 	b := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{wal: true, manualDrain: true})
-	_, err := b.CreateNode(&Node{ID: "test:a", Properties: map[string]any{"v": int64(1)}})
+	_, err := b.CreateNode(t.Context(), &Node{ID: "test:a", Properties: map[string]any{"v": int64(1)}})
 	require.NoError(t, err)
 	var reads atomic.Int64
 	var observed []StoredEntityChange
@@ -26,12 +26,12 @@ func TestPreparedBufferedCommitCapturesStoredImagesOnce(t *testing.T) {
 		}
 		return read()
 	}}))
-	tx, err := b.BeginTransaction()
+	tx, err := b.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("test"))
 	require.NoError(t, tx.SetImplicit(true))
-	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"v": int64(2)}}, Policy: ClientNodeEdits}))
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"v": int64(2)}}, Policy: ClientNodeEdits}))
 	p, err := tx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: "capture-once"})
 	require.NoError(t, err)
 	defer p.Abort()
@@ -45,7 +45,7 @@ func TestPreparedBufferedCommitCapturesStoredImagesOnce(t *testing.T) {
 	require.Len(t, observed, 1)
 	require.Equal(t, int64(1), observed[0].BeforeNode.Properties["v"])
 	require.Equal(t, int64(2), observed[0].AfterNode.Properties["v"])
-	actual, err := b.GetNode("test:a")
+	actual, err := b.GetNode(t.Context(), "test:a")
 	require.NoError(t, err)
 	require.Equal(t, int64(2), actual.Properties["v"])
 }

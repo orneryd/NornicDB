@@ -33,7 +33,7 @@ func openPersistentDBConfigTestServer(t *testing.T, dataDir string) (*Server, *a
 		JWTSecret:       []byte("test-secret-key-for-testing-only-32b"),
 	}, authStorage)
 	require.NoError(t, err)
-	_, err = authenticator.CreateUser("admin", "password123", []auth.Role{auth.RoleAdmin})
+	_, err = authenticator.CreateUser(context.Background(), "admin", "password123", []auth.Role{auth.RoleAdmin})
 	require.NoError(t, err)
 
 	serverConfig := DefaultConfig()
@@ -134,7 +134,7 @@ func TestAdminEmbeddingLabelPoliciesApplyPerDatabaseAfterRestart(t *testing.T) {
 	} {
 		engineForDB, err := after.dbManager.GetStorage(testCase.database)
 		require.NoError(t, err)
-		_, err = engineForDB.CreateNode(&storage.Node{ID: storage.NodeID(testCase.id), Labels: testCase.labels, Properties: map[string]any{"text": "value"}})
+		_, err = engineForDB.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(testCase.id), Labels: testCase.labels, Properties: map[string]any{"text": "value"}})
 		require.NoError(t, err)
 	}
 	require.Equal(t, 2, engine.PendingEmbeddingsCount())

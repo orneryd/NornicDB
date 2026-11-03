@@ -958,7 +958,7 @@ func TestClusterIndex_SearchCandidates(t *testing.T) {
 
 		// Search only first 5 candidates
 		candidates := []int{0, 1, 2, 3, 4}
-		results, err := ci.SearchCandidates(nil, query, candidates, 3)
+		results, err := ci.SearchCandidates(t.Context(), query, candidates, 3)
 		if err != nil {
 			t.Fatalf("SearchCandidates() error = %v", err)
 		}
@@ -969,7 +969,7 @@ func TestClusterIndex_SearchCandidates(t *testing.T) {
 
 	t.Run("empty candidates", func(t *testing.T) {
 		query := make([]float32, testDims)
-		results, err := ci.SearchCandidates(nil, query, []int{}, 3)
+		results, err := ci.SearchCandidates(t.Context(), query, []int{}, 3)
 		if err != nil {
 			t.Fatalf("SearchCandidates() error = %v", err)
 		}
@@ -980,7 +980,7 @@ func TestClusterIndex_SearchCandidates(t *testing.T) {
 
 	t.Run("wrong dimensions", func(t *testing.T) {
 		query := make([]float32, testDims+1) // Wrong dimensions
-		_, err := ci.SearchCandidates(nil, query, []int{0, 1}, 1)
+		_, err := ci.SearchCandidates(t.Context(), query, []int{0, 1}, 1)
 		if err != ErrInvalidDimensions {
 			t.Errorf("expected ErrInvalidDimensions, got %v", err)
 		}
@@ -988,7 +988,7 @@ func TestClusterIndex_SearchCandidates(t *testing.T) {
 
 	t.Run("topK larger than candidates", func(t *testing.T) {
 		query := make([]float32, testDims)
-		results, err := ci.SearchCandidates(nil, query, []int{0, 1, 2}, 100)
+		results, err := ci.SearchCandidates(t.Context(), query, []int{0, 1, 2}, 100)
 		if err != nil {
 			t.Fatalf("SearchCandidates() error = %v", err)
 		}

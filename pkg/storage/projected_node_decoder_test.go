@@ -33,7 +33,7 @@ func TestProjectedNodeDecoderAcrossDatabases(t *testing.T) {
 		{ID: "b:1", Labels: []string{"P"}, Properties: map[string]interface{}{"id": "k1", "name": "z"}},
 		{ID: "c:1", Labels: []string{"P"}, Properties: map[string]interface{}{"name": "k1"}},
 	} {
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 	stream := func(opts StreamNodesOptions) map[NodeID]map[string]interface{} {
@@ -67,7 +67,7 @@ func TestProjectedNodeDecoderRejectedNodeAllocations(t *testing.T) {
 	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
-	_, err = engine.CreateNode(&Node{ID: "a:1", Labels: []string{"P"}, Properties: map[string]interface{}{"id": 7, "name": "x", "body": "some body text"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "a:1", Labels: []string{"P"}, Properties: map[string]interface{}{"id": 7, "name": "x", "body": "some body text"}})
 	require.NoError(t, err)
 	var key, body []byte
 	require.NoError(t, engine.withView(func(txn *badger.Txn) error {
@@ -160,7 +160,7 @@ func TestProjectedNodeDecoderPropertyStringEquals(t *testing.T) {
 		"b:hit":   {"id": "k1"},
 		"b:other": {"id": "k2"},
 	} {
-		_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"P"}, Properties: props})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"P"}, Properties: props})
 		require.NoError(t, err)
 	}
 	stream := func(opts StreamNodesOptions) []string {

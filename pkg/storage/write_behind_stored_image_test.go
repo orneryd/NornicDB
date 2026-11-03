@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"math"
@@ -39,7 +40,7 @@ func TestWriteBehindOverlayServesStoredImage(t *testing.T) {
 			vectors[c][i] = float32((c + i) % 7)
 		}
 	}
-	created, err := engine.BeginTransaction()
+	created, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, created.SetImplicit(true))
 	// Bodies whose values the codec keeps as given are served without a decode.
@@ -51,18 +52,18 @@ func TestWriteBehindOverlayServesStoredImage(t *testing.T) {
 		{ID: "test:big", Labels: []string{"A"}, Properties: properties(), ChunkEmbeddings: vectors},
 		{ID: "test:plain", Labels: []string{"A"}, Properties: plain()},
 	} {
-		_, err = created.CreateNode(node)
+		_, err = created.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
-	require.NoError(t, created.CreateEdge(&Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:big", Type: "LINK", Properties: properties()}))
-	require.NoError(t, created.CreateEdge(&Edge{ID: "test:plain-r", StartNode: "test:plain", EndNode: "test:a", Type: "LINK"}))
+	require.NoError(t, created.CreateEdge(t.Context(), &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:big", Type: "LINK", Properties: properties()}))
+	require.NoError(t, created.CreateEdge(t.Context(), &Edge{ID: "test:plain-r", StartNode: "test:plain", EndNode: "test:a", Type: "LINK"}))
 	require.NoError(t, created.Commit())
-	rewrite, err := engine.BeginTransaction()
+	rewrite, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, rewrite.SetImplicit(true))
-	require.NoError(t, rewrite.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:a", Labels: []string{"A"}, Properties: properties()}, Policy: ClientNodeEdits}))
-	require.NoError(t, rewrite.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:big", Type: "LINK", Properties: properties()}}))
-	require.NoError(t, rewrite.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:plain", Labels: []string{"A"}, Properties: plain()}, Policy: ClientNodeEdits}))
+	require.NoError(t, rewrite.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:a", Labels: []string{"A"}, Properties: properties()}, Policy: ClientNodeEdits}))
+	require.NoError(t, rewrite.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:big", Type: "LINK", Properties: properties()}}))
+	require.NoError(t, rewrite.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:plain", Labels: []string{"A"}, Properties: plain()}, Policy: ClientNodeEdits}))
 	require.NoError(t, rewrite.Commit())
 
 	type image struct {
@@ -72,23 +73,23 @@ func TestWriteBehindOverlayServesStoredImage(t *testing.T) {
 	read := func() image {
 		var out image
 		for _, id := range []NodeID{"test:a", "test:big", "test:plain"} {
-			stored, err := engine.GetStoredNode(id)
+			stored, err := engine.GetStoredNode(t.Context(), id)
 			require.NoError(t, err)
-			visible, err := engine.GetNode(id)
+			visible, err := engine.GetNode(t.Context(), id)
 			require.NoError(t, err)
 			out.nodes = append(out.nodes, publicNodeImage(stored), publicNodeImage(visible))
 		}
 		for _, id := range []EdgeID{"test:r", "test:plain-r"} {
-			stored, err := engine.GetStoredEdge(id)
+			stored, err := engine.GetStoredEdge(t.Context(), id)
 			require.NoError(t, err)
-			visible, err := engine.GetEdge(id)
+			visible, err := engine.GetEdge(t.Context(), id)
 			require.NoError(t, err)
 			out.edges = append(out.edges, comparableStoredEdge(stored), comparableStoredEdge(visible))
 		}
 		return out
 	}
 	overlay := read()
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	// Drop the caches the flush filled, so the second read decodes storage.
 	engine.invalidateCachesAfterRestore()
 	physical := read()
@@ -284,24 +285,24 @@ func TestWriteBehindOverlayKeepsSidecarEmbedding(t *testing.T) {
 	engine.SetEmbeddingTextPolicy(EmbeddingTextPolicy{Include: []string{"text"}})
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	node := sidecarTestNode(t, engine, "keep", map[string]any{"text": "boiler invoice", "tags": []any{"a"}}, now)
-	require.NoError(t, engine.FlushWriteBehind(nil))
-	require.NoError(t, engine.UpdateNodeEmbeddingSidecar(embeddingWriteback(t, engine, node.ID, [][]float32{{0.1, 0.2}}, map[string]any{"has_embedding": true, "chunk_count": 1}, now)))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
+	require.NoError(t, engine.UpdateNodeEmbeddingSidecar(context.Background(), embeddingWriteback(t, engine, node.ID, [][]float32{{0.1, 0.2}}, map[string]any{"has_embedding": true, "chunk_count": 1}, now)))
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	require.NoError(t, tx.SetImplicit(true))
-	current, err := tx.GetNode(node.ID)
+	current, err := tx.GetNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	current.Properties["tags"] = []any{"a", "b"}
-	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: current, Policy: ClientNodeEdits}))
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: current, Policy: ClientNodeEdits}))
 	require.NoError(t, tx.Commit())
 
-	overlay, err := engine.GetNode(node.ID)
+	overlay, err := engine.GetNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	require.Equal(t, [][]float32{{0.1, 0.2}}, overlay.ChunkEmbeddings)
-	require.NoError(t, engine.FlushWriteBehind(nil))
-	physical, err := engine.GetNode(node.ID)
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
+	physical, err := engine.GetNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	require.Equal(t, physical.ChunkEmbeddings, overlay.ChunkEmbeddings)
 	require.Equal(t, physical.EmbedMeta, overlay.EmbedMeta)

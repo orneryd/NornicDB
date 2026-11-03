@@ -31,6 +31,14 @@
     "reason": "Exact built-in primitive SHAPE predicate shared by safe equality and authoritative index absence. It neither converts nor narrows values. ReadNumber admits named types via reflection, while this predicate must reject them; tests pin that distinction and the caller-specific nil rule.",
     "sha256": "f6d1858693a76f08289e31b505a662f69eb16acae3a164b39e764e8ff7a2b0eb"
   },
+  "pkg/cypher/apoc_load_export.go:callApocLoadJson": {
+    "reason": "Serialization/decoding owns a fixed wire or internal key representation; it does not narrow runtime list coordinates.",
+    "sha256": "e0a922007802a30d2220633e83ee7e93ec8208ae25e963998894408a995e122c"
+  },
+  "pkg/cypher/apoc_load_export.go:callApocLoadJsonArray": {
+    "reason": "Serialization/decoding owns a fixed wire or internal key representation; it does not narrow runtime list coordinates.",
+    "sha256": "a9f668d263335654b9d25dfc23a764e3d1fe1a483284d34c096ba96bda448e1a"
+  },
   "pkg/cypher/apoc_load_export.go:jsonLoadProcedure": {
     "reason": "Canonical decoded-JSON-to-row shape adapter for both native loader names; it does not narrow runtime numeric/list inputs.",
     "sha256": "408f627bc9077e3fe74b0388f61aa208c763a8545eff263ffb421a5e354c9db4"
@@ -40,8 +48,8 @@
     "sha256": "3f691ff05957d6f3f03856567c624ebc04d2992c91ef0c7c7a6d01eb023be13f"
   },
   "pkg/cypher/call_apoc_path.go:apocNodes": {
-    "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets.",
-    "sha256": "97eea6b8125d733d486c7ecdfebcc5829d8f372837c61b307e73cd8eea4386da"
+    "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets. Reviewed context-first migration adds the caller context to this declaration, recursive traversal, identity lookup and GetNode only; accepted node/list/string/null carriers and numeric rejection are unchanged. TestApocPathRowsMatchAPOC, TestApocPathFailuresMatchAPOC and TestApocPathEdgeCases retain the public argument contract.",
+    "sha256": "36c86cad013d4b12e9eea5530c2c0536acc2cc5ea2bbe7e4e8a8ae351b29cbd1"
   },
   "pkg/cypher/call_cdc.go:cdcValue": {
     "reason": "Serialization/decoding owns a fixed wire or internal key representation; it does not narrow runtime list coordinates.",
@@ -69,7 +77,7 @@
   },
   "pkg/cypher/deleted_entity_projection.go:replace": {
     "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets.",
-    "sha256": "16b048e61e7619c3803b7628a8c1db2914025c8f9af783e02b487bc5e7b11da8"
+    "sha256": "ab76f090ca3a4f2a502f752ccbbe6c89623ae446b35100e8385e0bfbb3edf352"
   },
   "pkg/cypher/dynamic_tokens.go:dynamicLabelNames": {
     "reason": "String/token or type/format rendering policy; it does not convert numeric elements. Length dispatch already has a reflection fallback for every list width.",
@@ -78,10 +86,6 @@
   "pkg/cypher/executor_fabric.go:lookupColumnBySourceIDInRows": {
     "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets.",
     "sha256": "400b56ff355412fb8666d1165eb51d57a5baa17dd692e50c7637cf1fae32ed16"
-  },
-  "pkg/cypher/executor_mutations.go:collectDeleteWithLimitCandidates": {
-    "reason": "DELETE fast-route admission accepts its fixed native list shapes and otherwise declines to the shared pipeline. #1594 adds structural property inspection before row evaluation; no numeric/list conversion is implemented here.",
-    "sha256": "456d33968fe3712556552fdc525954e70ab29ad2ccc1d534fc506621fd4846a9"
   },
   "pkg/cypher/executor_mutations.go:normalizedCypherValue": {
     "reason": "Runtime/property admission shares temporal/null/container traversal; numeric classification and checked property coercion use ReadNumber/Number.Int64, while runtime numeric carriers stay exact.",
@@ -104,8 +108,8 @@
     "sha256": "64e92d0a0e50b1dc5ad1128d903f7a6babfbae8a95e50d5abad21bdc6e0aa828"
   },
   "pkg/cypher/executor_subqueries.go:extractSeedNodesFromResult": {
-    "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets.",
-    "sha256": "ba94bb21481ba8242327cb15c104978fa38ebf4c813f2e78a3b5cd07511f9324"
+    "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets. Reviewed context-first migration changes only the declaration and context forwarded to map/string node lookup in direct and single-wrapper cases. TestExtractSeedNodesFromResult_Branches preserves map, string, wrapped value, ignored type, missing projection and empty result behavior.",
+    "sha256": "1856350e48ff0cdf53a794b9058282cf10afc48cc9515d5225b2bee3ab9170d7"
   },
   "pkg/cypher/fabric_value_codec.go:decodeFabricRemote": {
     "reason": "Decodes a remote participant's results: the typed values Bolt and HTTP deliver inside the transport's lists and maps are read as Cypher values; it does not read or narrow numeric or list input.",
@@ -225,7 +229,7 @@
   },
   "pkg/cypher/row_value_program.go:compileValue": {
     "reason": "Compiler specialization handles fixed native shapes and falls back to the generic owner for other representations. #1618 (349a6668e) adds invariant endpoint-property hoisting. #1651 ports subquery dispatch to the shared rowSubqueryNode; the native literal type switch and numeric/list input boundary are unchanged. NOR-15 uses the source-width-aware null predicate reader; review confirms the native literal cases and generic input boundary remain unchanged. Current map-projection admission calls mapProjectionSplit(expr,mapProjectionRuntime); source review confirms the existing post-parse native literal switch and runtime numeric/list boundary remain unchanged. TestMapProjectionBoundaryPolicies and public row expression tests preserve the boundary. Qualified function admission now calls inspectFunctionCall(...,qualifiedFunctionCall) and reads its same name/inner product; reviewed source diff changes only that call/product, leaving every native literal kind and generic numeric/list boundary unchanged. TestStandaloneFunctionCallPurposes and TestStandaloneFunctionCallPublicConsumers retain call-shape policy controls alongside TestRowOperandPolicyPopulations and TestRowValueProgramAdapterConsistency. Reviewed static-scope signature migration adds nil to mapProjectionSplit(expr,mapProjectionRuntime,nil); runtime policy never reads the static-only scope parameter. Exact declaration diff changes only this argument; existing post-parse literal type specialization and generic numeric/list reader boundary remain unchanged. TestMapProjectionBoundaryPolicies, TestRowOperandPolicyPopulations, TestRowValueProgramAdapterConsistency and canonical numeric conversion/literal cases retain the affected contracts.",
-    "sha256": "d4267ff476a0a63cd85fc07da4597043d3f087fd075417f8a51cfc344575feeb"
+    "sha256": "c16e8740f6543ed40c535765c889f06859cdad43ce1915531c3b088d625246ec"
   },
   "pkg/cypher/runtime_type_errors.go:cypherPredicateTruth": {
     "reason": "String/token or type/format rendering policy; it does not convert numeric elements. Length dispatch already has a reflection fallback for every list width.",

@@ -11,6 +11,6 @@ func TestFulltextIndexRejectsUnknownEntityKindWithoutPublication(t *testing.T) {
 	persisted := 0
 	schema.SetPersister(func(*SchemaDefinition) error { persisted++; return nil })
 	require.ErrorIs(t, schema.AddFulltextIndex("invalid", []string{"Label"}, []string{"name"}, ConstraintEntityType("invalid")), ErrInvalidData)
-	require.Empty(t, schema.ExportDefinition().FulltextIndexes)
+	require.Empty(t, schemaDefinitionForTest(t, schema).FulltextIndexes)
 	require.Zero(t, persisted)
 }

@@ -13,13 +13,13 @@ func BenchmarkNativeTransactionPointRead(b *testing.B) {
 		b.Fatal(err)
 	}
 	b.Cleanup(func() { _ = engine.Close() })
-	if _, err = engine.CreateNode(&Node{ID: "point:a", Labels: []string{"A"}, Properties: map[string]interface{}{"name": "point"}}); err != nil {
+	if _, err = engine.CreateNode(b.Context(), &Node{ID: "point:a", Labels: []string{"A"}, Properties: map[string]interface{}{"name": "point"}}); err != nil {
 		b.Fatal(err)
 	}
-	if err = engine.CreateEdge(&Edge{ID: "point:e", StartNode: "point:a", EndNode: "point:a", Type: "R"}); err != nil {
+	if err = engine.CreateEdge(b.Context(), &Edge{ID: "point:e", StartNode: "point:a", EndNode: "point:a", Type: "R"}); err != nil {
 		b.Fatal(err)
 	}
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(b.Context())
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func BenchmarkNativeTransactionPointRead(b *testing.B) {
 		b.Run(kind, func(b *testing.B) {
 			read := func() error {
 				if kind == "edge" {
-					entity, err := tx.GetEdge("point:e")
+					entity, err := tx.GetEdge(b.Context(), "point:e")
 					if err == nil && entity == nil {
 						b.Fatal("missing edge")
 					}
@@ -42,11 +42,11 @@ func BenchmarkNativeTransactionPointRead(b *testing.B) {
 				var err error
 				switch kind {
 				case "node":
-					entity, err = tx.GetNode("point:a")
+					entity, err = tx.GetNode(b.Context(), "point:a")
 				case "query-node":
-					entity, err = tx.GetQueryNode("point:a")
+					entity, err = tx.GetQueryNode(b.Context(), "point:a")
 				case "projected-node":
-					entity, err = tx.GetNodeProjected("point:a", properties)
+					entity, err = tx.GetNodeProjected(b.Context(), "point:a", properties)
 				}
 				if err == nil && entity == nil {
 					b.Fatal("missing node")

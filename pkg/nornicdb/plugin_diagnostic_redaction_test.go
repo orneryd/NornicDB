@@ -12,7 +12,7 @@ import (
 
 func TestLoadPluginsFromDirRedactsConfiguredCredentialsFromOutput(t *testing.T) {
 	apiKey := "synthetic-api-key"
-	ctx := &heimdall.SubsystemContext{Config: heimdall.Config{
+	host := &heimdall.SubsystemHost{Config: heimdall.Config{
 		APIURL: "https://synthetic-user:synthetic-pass@example.invalid/v1",
 		APIKey: apiKey,
 	}}
@@ -25,7 +25,7 @@ func TestLoadPluginsFromDirRedactsConfiguredCredentialsFromOutput(t *testing.T) 
 	previousStdout := os.Stdout
 	os.Stdout = writer
 	t.Cleanup(func() { os.Stdout = previousStdout })
-	loadErr := LoadPluginsFromDir(dir, ctx)
+	loadErr := LoadPluginsFromDir(t.Context(), dir, host)
 	_ = writer.Close()
 	os.Stdout = previousStdout
 	output, readErr := io.ReadAll(reader)

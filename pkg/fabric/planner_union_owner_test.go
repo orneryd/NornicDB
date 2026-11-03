@@ -40,7 +40,7 @@ func TestPlan_UnionPlanningEntries(t *testing.T) {
 				var fragment Fragment
 				var err error
 				if entry.multi {
-					blocks, extractErr := extractTopLevelCallBlocks(entry.query, nil)
+					blocks, extractErr := extractTopLevelCallBlocks(t.Context(), entry.query, nil)
 					require.NoError(t, extractErr)
 					fragment, err = p.planMultiGraph(t.Context(), planTarget{name: "cmp"}, "cmp", entry.query, blocks)
 				} else if entry.shared {

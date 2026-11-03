@@ -15,14 +15,14 @@ func validateReturnOrderBySemanticScope(ctx context.Context, clause string) erro
 // or aggregating horizon's ORDER BY. They remain outside its projection key.
 func validateReturnOrderBySemanticScopeIn(ctx context.Context, clause string, retained typeScope) error {
 	body := strings.TrimSpace(clause[len("RETURN"):])
-	orderIndex := topLevelKeywordIndex(body, "ORDER BY")
+	orderIndex := topLevelKeywordIndex(ctx, body, "ORDER BY")
 	if orderIndex < 0 {
 		return nil
 	}
 	projectionBody := strings.TrimSpace(body[:orderIndex])
 	orderBody := strings.TrimSpace(body[keywordEndAt(body, orderIndex, "ORDER BY"):])
 	for _, keyword := range []string{"SKIP", "LIMIT"} {
-		if index := topLevelKeywordIndex(orderBody, keyword); index >= 0 {
+		if index := topLevelKeywordIndex(ctx, orderBody, keyword); index >= 0 {
 			orderBody = strings.TrimSpace(orderBody[:index])
 		}
 	}
@@ -62,7 +62,7 @@ func validateReturnOrderBySemanticScopeIn(ctx context.Context, clause string, re
 		}
 	}
 
-	for _, term := range parseOrderByClause(orderBody) {
+	for _, term := range parseOrderByClause(ctx, orderBody) {
 		expression := term.column
 		hasOrderAggregate := containsAggregateFunc(expression)
 		if hasOrderAggregate && !hasProjectionAggregate {
@@ -166,7 +166,7 @@ func validateReturnAggregationSemantics(ctx context.Context, body string) error 
 func validateReturnAggregationSemanticsIn(ctx context.Context, body string, outer typeScope) error {
 	end := len(body)
 	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if index := topLevelKeywordIndex(body, keyword); index >= 0 && index < end {
+		if index := topLevelKeywordIndex(ctx, body, keyword); index >= 0 && index < end {
 			end = index
 		}
 	}

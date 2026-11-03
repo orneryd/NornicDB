@@ -41,21 +41,21 @@ func overwriteRaw(t *testing.T, engine *BadgerEngine, key []byte) {
 func TestCommit_BadgerConflictAfterValidation(t *testing.T) {
 	for _, large := range []bool{false, true} {
 		engine := openLargeCommitTestEngine(t, t.TempDir())
-		_, err := engine.CreateNode(&Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(1)}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(1)}})
 		require.NoError(t, err)
-		tx, err := engine.BeginTransaction()
+		tx, err := engine.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		if large {
 			stageLargeCreate(t, tx, 6000)
 		}
-		require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(2)}}, Policy: ClientNodeEdits}))
+		require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(2)}}, Policy: ClientNodeEdits}))
 		overwriteRaw(t, engine, nodeKey("test:base"))
 
 		err = tx.Commit()
 		require.ErrorIs(t, err, ErrConflict, "large=%v", large)
 		require.ErrorIs(t, err, badger.ErrConflict, "large=%v", large)
 		require.Zero(t, countBigNodes(t, engine))
-		base, err := engine.GetNode("test:base")
+		base, err := engine.GetNode(t.Context(), "test:base")
 		require.NoError(t, err)
 		require.Equal(t, int64(1), base.Properties["v"])
 		requireNoLargeCommitIntent(t, engine)
@@ -77,24 +77,25 @@ func TestLargeCommit_UnrecoverableRollbackRefusesWritesUntilReopen(t *testing.T)
 func requireUnrecoverableRollback(t *testing.T, batchFails bool) {
 	dir := t.TempDir()
 	engine := openLargeCommitTestEngine(t, dir)
-	_, err := engine.CreateNode(&Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(1)}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(1)}})
 	require.NoError(t, err)
 
 	injected := errors.New("injected batch failure")
+	diskFailure := errors.New("disk gone")
 	restore := setLargeCommitBatchHook(func(batch int) error {
 		if batch == 2 {
 			// The store stops writes: the rollback cannot get a timestamp
 			// either, and neither can a further batch.
-			engine.db.oracle.fail(errors.New("disk gone"))
+			engine.db.oracle.fail(diskFailure)
 			if batchFails {
 				return injected
 			}
 		}
 		return nil
 	})
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(2)}}, Policy: ClientNodeEdits}))
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(2)}}, Policy: ClientNodeEdits}))
 	stageLargeCreate(t, tx, 6000)
 	err = tx.Commit()
 	restore()
@@ -105,33 +106,39 @@ func requireUnrecoverableRollback(t *testing.T, batchFails bool) {
 
 	// Reads continue at the last published state.
 	require.Zero(t, countBigNodes(t, engine))
-	base, err := engine.GetNode("test:base")
+	base, err := engine.GetNode(t.Context(), "test:base")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), base.Properties["v"])
 
 	// Every kind of write is refused: engine writes, ordinary transaction
 	// commits (their new property names included) and large commits.
-	_, err = engine.CreateNode(&Node{ID: "test:refused", Labels: []string{"Base"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:refused", Labels: []string{"Base"}})
 	require.ErrorContains(t, err, "refuses writes until restart")
-	small, err := engine.BeginTransaction()
+	small, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	_, err = small.CreateNode(&Node{ID: "test:refused-tx", Labels: []string{"Base"}, Properties: map[string]any{"never_seen_before": int64(1)}})
+	_, err = small.CreateNode(t.Context(), &Node{ID: "test:refused-tx", Labels: []string{"Base"}, Properties: map[string]any{"never_seen_before": int64(1)}})
 	require.NoError(t, err)
 	require.ErrorContains(t, small.Commit(), "refuses writes until restart")
-	big, err := engine.BeginTransaction()
+	big, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	stageLargeCreate(t, big, 6000)
 	require.ErrorContains(t, big.Commit(), "refuses writes until restart")
-	require.NoError(t, engine.Close())
+	finalOutcome := engine.Close()
+	require.ErrorIs(t, finalOutcome, diskFailure)
+	require.ErrorContains(t, finalOutcome, "label-count final fold")
+	require.ErrorContains(t, finalOutcome, "refuses writes until restart")
+	require.ErrorIs(t, engine.Close(), finalOutcome, "repeated Close must preserve the failed count-fold outcome")
 
 	engine = openLargeCommitTestEngine(t, dir)
-	defer engine.Close()
+	t.Cleanup(func() {
+		require.NoError(t, engine.Close(), "reopened engine must retire cleanly after rollback recovery")
+	})
 	requireNoLargeCommitIntent(t, engine)
 	require.Zero(t, countBigNodes(t, engine))
-	base, err = engine.GetNode("test:base")
+	base, err = engine.GetNode(t.Context(), "test:base")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), base.Properties["v"])
-	_, err = engine.CreateNode(&Node{ID: "test:after", Labels: []string{"Base"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:after", Labels: []string{"Base"}})
 	require.NoError(t, err)
 }
 
@@ -139,10 +146,10 @@ func requireUnrecoverableRollback(t *testing.T, batchFails bool) {
 // property name of its own.
 func largeCommitWithLateName(t *testing.T, engine *BadgerEngine) *BadgerTransaction {
 	t.Helper()
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	stageLargeCreate(t, tx, 6000)
-	_, err = tx.CreateNode(&Node{ID: "test:late", Labels: []string{"Late"}, Properties: map[string]any{"late_name": int64(1)}})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:late", Labels: []string{"Late"}, Properties: map[string]any{"late_name": int64(1)}})
 	require.NoError(t, err)
 	return tx
 }
@@ -175,13 +182,13 @@ func TestLargeCommit_FailureAtAnyBatchRollsBack(t *testing.T) {
 			require.ErrorIs(t, err, errPersistingTokens, "the first batch writes the statement's new property names")
 		}
 		require.Zero(t, countBigNodes(t, engine))
-		_, err = engine.GetNode("test:late")
+		_, err = engine.GetNode(t.Context(), "test:late")
 		require.ErrorIs(t, err, ErrNotFound)
 		requireNoLargeCommitIntent(t, engine)
 
 		require.NoError(t, largeCommitWithLateName(t, engine).Commit())
 		require.Equal(t, 6000, countBigNodes(t, engine))
-		late, err := engine.GetNode("test:late")
+		late, err := engine.GetNode(t.Context(), "test:late")
 		require.NoError(t, err)
 		require.Equal(t, int64(1), late.Properties["late_name"])
 		require.NoError(t, engine.Close())
@@ -203,7 +210,7 @@ func TestPropertyKeyDict_ManyNamesRefusedStayUnpersisted(t *testing.T) {
 	}
 	drain := engine.propKeyDict.flushTxnCounters(txn)
 	engine.db.oracle.fail(errors.New("disk gone"))
-	require.ErrorContains(t, engine.propKeyDict.persistTxnCounters(metadataBatches{db: engine.db, ctx: context.Background()}, drain), "refuses writes until restart")
+	require.ErrorContains(t, engine.propKeyDict.persistTxnCounters(context.Background(), engine.db, drain), "refuses writes until restart")
 	again := engine.db.DB.NewTransactionAt(engine.db.oracle.published.Load(), true)
 	defer again.Discard()
 	_, err = engine.propKeyDict.resolveOrAllocateInTxn(again, "test", "refused_0")
@@ -221,7 +228,7 @@ func TestCommitOracle_FailureReleasesWaiters(t *testing.T) {
 	o.fail(cause)
 	_, err = o.assign()
 	require.ErrorIs(t, err, cause)
-	require.ErrorIs(t, o.waitPublished(nil, ts), cause)
+	require.ErrorIs(t, o.waitPublished(context.Background(), ts), cause)
 	require.ErrorIs(t, o.failure(), cause)
 }
 
@@ -250,7 +257,7 @@ func TestManagedBadger_OpenFailsWhenRecoveryCannotWrite(t *testing.T) {
 	require.NoError(t, err)
 	batch := lc.openBatch()
 	require.NoError(t, batch.Set([]byte("k"), []byte("x")))
-	require.NoError(t, lc.commitBatch(batch))
+	require.NoError(t, lc.commitBatch(lc.ctx, batch))
 	require.NoError(t, m.DB.Close())
 
 	_, err = fixtureowner.OwnResult[*managedBadgerDB](t, nil)(openManagedBadger(opts.WithReadOnly(true)))
@@ -328,7 +335,7 @@ func TestManagedWriteBatch_FlushKeepsWriterUsable(t *testing.T) {
 func TestManagedBadger_LoadRejectsInvalidBackup(t *testing.T) {
 	engine := newTestEngine(t)
 	require.Error(t, engine.db.Load(context.Background(), iotest.ErrReader(errors.New("read failed")), 1))
-	_, err := engine.CreateNode(&Node{ID: "test:after-load", Labels: []string{"X"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:after-load", Labels: []string{"X"}})
 	require.NoError(t, err, "a failed load releases the commit gate")
 }
 
@@ -344,11 +351,11 @@ func TestCommitWriter_BeforeLargeRunsOnceWhenTheCommitTurnsLarge(t *testing.T) {
 		cw := engine.newCommitWriter(context.Background(), engine.db, txn)
 		defer cw.discard()
 		calls := 0
-		cw.beforeLarge = func() error { calls++; return nil }
+		cw.beforeLarge = func(context.Context) error { calls++; return nil }
 		value := []byte(strings.Repeat("x", 100))
 		for i := 0; i < n; i++ {
 			key := []byte(fmt.Sprintf("%s-%06d", prefix, i))
-			require.NoError(t, cw.write(func(txn *badger.Txn) error { return txn.Set(key, value) }))
+			require.NoError(t, cw.write(cw.ctx, func(txn *badger.Txn) error { return txn.Set(key, value) }))
 		}
 		require.NoError(t, cw.finish())
 		return calls

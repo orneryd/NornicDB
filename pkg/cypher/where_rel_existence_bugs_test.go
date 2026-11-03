@@ -266,25 +266,30 @@ func TestBareRelDirection(t *testing.T) {
 	}
 }
 
-func TestEvaluateRelationshipPatternInWhere_BareDirected(t *testing.T) {
-	exec, base := setupRelExistenceFixture(t)
-	_ = base
-	ctx := context.Background()
-
-	connected := relExistenceNodeByName(t, ctx, exec, "connected")
-	orphan := relExistenceNodeByName(t, ctx, exec, "orphan")
-	peer := relExistenceNodeByName(t, ctx, exec, "peer")
-
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(ctx, connected, "n", "(n)-->()"))
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(ctx, orphan, "n", "(n)-->()"))
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(ctx, peer, "n", "(n)-->()"))
-
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(ctx, peer, "n", "(n)<--()"))
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(ctx, connected, "n", "(n)<--()"))
-
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(ctx, connected, "n", "(n)--()"))
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(ctx, peer, "n", "(n)--()"))
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(ctx, orphan, "n", "(n)--()"))
+func TestRelationshipPatternWherePublicBareDirected(t *testing.T) {
+	for _, parser := range apocAlgorithmParsers() {
+		t.Run(parser.name, func(t *testing.T) {
+			t.Cleanup(parser.setup())
+			exec, _ := setupRelExistenceFixture(t)
+			for _, tc := range []struct {
+				pattern, name string
+				want          int64
+			}{
+				{"(n)-->()", "connected", 1},
+				{"(n)-->()", "orphan", 0},
+				{"(n)-->()", "peer", 0},
+				{"(n)<--()", "peer", 1},
+				{"(n)<--()", "connected", 0},
+				{"(n)--()", "connected", 1},
+				{"(n)--()", "peer", 1},
+				{"(n)--()", "orphan", 0},
+			} {
+				result, err := exec.Execute(t.Context(), "MATCH (n:Item) WHERE n.name = $name AND "+tc.pattern+" RETURN count(n) AS c", map[string]interface{}{"name": tc.name})
+				require.NoError(t, err, tc.pattern)
+				require.Equal(t, [][]interface{}{{tc.want}}, result.Rows, "%s on %s", tc.pattern, tc.name)
+			}
+		})
+	}
 }
 
 func TestCheckSubqueryMatch_BareBody(t *testing.T) {

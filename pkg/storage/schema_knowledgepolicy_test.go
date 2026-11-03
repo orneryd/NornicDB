@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"fmt"
@@ -758,7 +759,7 @@ func TestKnowledgePolicySchemaPublishesPersistedSnapshot(t *testing.T) {
 	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
-	transaction, err := engine.BeginTransaction()
+	transaction, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = transaction.Rollback() })
 	require.NoError(t, transaction.SetNamespace("native"))
@@ -784,7 +785,7 @@ func TestKnowledgePolicySchemaTransactionLifecycle(t *testing.T) {
 	committed := engine.GetSchemaForNamespace("native")
 	require.NoError(t, committed.CreatePromotionProfile(validPromoProfile("boost")))
 	begin := func(namespace string) *BadgerTransaction {
-		transaction, err := engine.BeginTransaction()
+		transaction, err := engine.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		require.NoError(t, transaction.SetNamespace(namespace))
 		t.Cleanup(func() { _ = transaction.Rollback() })
@@ -1135,12 +1136,12 @@ func TestSchemaPersistenceRoundTrip(t *testing.T) {
 	require.NoError(t, sm.CreatePromotionPolicy(policy))
 
 	// Export.
-	def := sm.ExportDefinition()
+	def := schemaDefinitionForTest(t, sm)
 	require.NotNil(t, def)
 
 	// Restore into a fresh SchemaManager.
 	sm2 := NewSchemaManager()
-	require.NoError(t, sm2.ReplaceFromDefinition(def))
+	require.NoError(t, sm2.ReplaceFromDefinition(context.Background(), def))
 
 	// Verify bundles.
 	bundles2, bindings2 := sm2.ShowDecayProfiles()

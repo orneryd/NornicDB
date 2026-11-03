@@ -66,11 +66,11 @@ func (command *preparedCompositeCommand) execute(ctx context.Context, e *Storage
 
 func (e *StorageExecutor) prepareCompositeCommand(ctx context.Context, query string) (*preparedCompositeCommand, bool, error) {
 	_, body := parseExecutionMode(query)
-	if startsWithKeywords(body, "CREATE", "COMPOSITE DATABASE") {
+	if startsWithKeywords(ctx, body, "CREATE", "COMPOSITE DATABASE") {
 		command, err := e.prepareCreateCompositeDatabase(ctx, body)
 		return command, true, err
 	}
-	if startsWithKeywords(body, "ALTER", "COMPOSITE DATABASE") {
+	if startsWithKeywords(ctx, body, "ALTER", "COMPOSITE DATABASE") {
 		command, err := e.prepareAlterCompositeDatabase(ctx, body)
 		return command, true, err
 	}
@@ -83,7 +83,7 @@ func (e *StorageExecutor) prepareCreateCompositeDatabase(ctx context.Context, cy
 	cypher = cyphertext.SourceFor(ctx, cypher).Text
 
 	// Find "CREATE COMPOSITE DATABASE" keyword position
-	createIdx := findMultiWordKeywordIndex(cypher, "CREATE", "COMPOSITE DATABASE")
+	createIdx := findMultiWordKeywordIndex(ctx, cypher, "CREATE", "COMPOSITE DATABASE")
 	if createIdx == -1 {
 		return nil, localizedError(localization.CypherCompositeCreateInvalidSyntax(), nil)
 	}
@@ -149,7 +149,7 @@ func (e *StorageExecutor) prepareCreateCompositeDatabase(ctx context.Context, cy
 	// Parse constituents (ALIAS ... FOR DATABASE ... [AT ...] [SECRET REF ...])
 	constituents := []interface{}{}
 	if remaining != "" {
-		tokens, spans, err := tokenizeSource(remaining)
+		tokens, spans, err := tokenizeSource(ctx, remaining)
 		if err != nil {
 			return nil, localizedError(localization.CypherCompositeCreateTokenizeFailed(err), err)
 		}
@@ -188,7 +188,7 @@ func (e *StorageExecutor) prepareAlterCompositeDatabase(ctx context.Context, cyp
 
 	// Find "ALTER COMPOSITE DATABASE" keyword position
 	// First find "ALTER COMPOSITE", then check for "DATABASE"
-	alterIdx := findMultiWordKeywordIndex(cypher, "ALTER", "COMPOSITE")
+	alterIdx := findMultiWordKeywordIndex(ctx, cypher, "ALTER", "COMPOSITE")
 	if alterIdx == -1 {
 		return nil, localizedError(localization.CypherCompositeAlterInvalidSyntax(), nil)
 	}
@@ -259,7 +259,7 @@ func (e *StorageExecutor) prepareAlterCompositeDatabase(ctx context.Context, cyp
 	// Check for ADD or DROP
 	remainingStart := dbNameEnd + len(cypher[dbNameEnd:]) - len(strings.TrimLeftFunc(cypher[dbNameEnd:], cyphertext.IsWhitespace))
 	remaining := strings.TrimSpace(cypher[remainingStart:])
-	tokens, spans, err := tokenizeSource(remaining)
+	tokens, spans, err := tokenizeSource(ctx, remaining)
 	if err != nil {
 		return nil, localizedError(localization.CypherCompositeAlterTokenizeFailed(err), err)
 	}

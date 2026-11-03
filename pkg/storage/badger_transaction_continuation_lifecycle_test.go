@@ -40,26 +40,26 @@ func TestIndependentContinuationPreservesLifecycleConflict(t *testing.T) {
 				} else {
 					b = createTestBadgerEngine(t)
 				}
-				_, err := b.CreateNode(&Node{ID: "test:retained", Labels: []string{"Doc"}, Properties: map[string]any{"v": int64(1)}})
+				_, err := b.CreateNode(t.Context(), &Node{ID: "test:retained", Labels: []string{"Doc"}, Properties: map[string]any{"v": int64(1)}})
 				require.NoError(t, err)
-				tx, err := b.BeginTransaction()
+				tx, err := b.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				defer tx.Rollback()
 				require.NoError(t, tx.SetNamespace("test"))
 				require.NoError(t, tx.SetImplicit(true))
-				node, err := tx.GetNode("test:retained")
+				node, err := tx.GetNode(t.Context(), "test:retained")
 				require.NoError(t, err)
 				node.Properties["v"] = int64(2)
-				require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
+				require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 				if tc.apply != nil {
 					require.NoError(t, tc.apply(b))
 				}
 
-				err = tx.ResumeAfterIndependentCommit()
+				err = tx.ResumeAfterIndependentCommit(t.Context())
 				want := int64(2)
 				if tc.conflict {
 					require.ErrorIs(t, err, ErrConflict, "continuation cannot erase lifecycle invalidation of pending writes")
-					pending, readErr := tx.GetNode("test:retained")
+					pending, readErr := tx.GetNode(t.Context(), "test:retained")
 					require.NoError(t, readErr)
 					require.Equal(t, int64(2), pending.Properties["v"], "refused continuation keeps the original pending state")
 					require.NoError(t, tx.Rollback())
@@ -68,8 +68,8 @@ func TestIndependentContinuationPreservesLifecycleConflict(t *testing.T) {
 					require.NoError(t, err)
 					require.NoError(t, tx.Commit())
 				}
-				require.NoError(t, b.FlushWriteBehind(nil))
-				stored, err := b.GetStoredNode("test:retained")
+				require.NoError(t, b.FlushWriteBehind(context.Background()))
+				stored, err := b.GetStoredNode(t.Context(), "test:retained")
 				require.NoError(t, err)
 				require.Equal(t, want, stored.Properties["v"], "a refused continuation must not publish the pending mutation")
 			})

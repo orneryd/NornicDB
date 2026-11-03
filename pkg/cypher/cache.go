@@ -913,7 +913,9 @@ func resultCacheEntryKey(ctx context.Context, cypher string, params map[string]i
 //	// First execution parses and caches
 //	plan, found := planCache.Get("MATCH (n:User) RETURN n")
 //	if !found {
-//	    plan = parser.Parse("MATCH (n:User) RETURN n")
+//	    var err error
+//	    plan, err = parser.Parse(ctx, "MATCH (n:User) RETURN n")
+//	    if err != nil { return err }
 //	    planCache.Put("MATCH (n:User) RETURN n", plan)
 //	}
 //

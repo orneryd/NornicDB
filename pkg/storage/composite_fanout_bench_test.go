@@ -128,10 +128,10 @@ func newCompositeFanOutBenchmark(b *testing.B, constituentCount, nodesPerConstit
 		engine := fixtureowner.Track(b, NewMemoryEngine(), ErrStorageClosed)
 		for index := 0; index < nodesPerConstituent; index++ {
 			id := NodeID(compositeFanOutBenchmarkID(index))
-			if _, err := engine.CreateNode(&Node{ID: id, Labels: []string{compositeFanOutBenchmarkLabel}, Properties: map[string]any{"n": int64(index)}}); err != nil {
+			if _, err := engine.CreateNode(b.Context(), &Node{ID: id, Labels: []string{compositeFanOutBenchmarkLabel}, Properties: map[string]any{"n": int64(index)}}); err != nil {
 				b.Fatal(err)
 			}
-			if err := engine.CreateEdge(&Edge{ID: EdgeID(fmt.Sprintf("bench:edge-%d", index)), StartNode: id, EndNode: id, Type: "LOOP"}); err != nil {
+			if err := engine.CreateEdge(b.Context(), &Edge{ID: EdgeID(fmt.Sprintf("bench:edge-%d", index)), StartNode: id, EndNode: id, Type: "LOOP"}); err != nil {
 				b.Fatal(err)
 			}
 		}

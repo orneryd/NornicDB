@@ -34,12 +34,12 @@ func TestReconcileDecaySuppression_WithEntities(t *testing.T) {
 
 	// Stage two nodes and one edge in namespace "test".
 	for _, id := range []NodeID{"test:a", "test:b"} {
-		_, err := e.CreateNode(&Node{
+		_, err := e.CreateNode(t.Context(), &Node{
 			ID: id, Labels: []string{"L"}, Properties: map[string]any{},
 		})
 		require.NoError(t, err)
 	}
-	require.NoError(t, e.CreateEdge(&Edge{
+	require.NoError(t, e.CreateEdge(t.Context(), &Edge{
 		ID: "test:e", StartNode: "test:a", EndNode: "test:b",
 		Type: "REL", Properties: map[string]any{},
 	}))
@@ -56,7 +56,7 @@ func TestReconcileDecaySuppression_WithEntities(t *testing.T) {
 func TestReadNodeSuppressionState_RoundTrip(t *testing.T) {
 	e := newTestMemoryEngine(t)
 
-	_, err := e.CreateNode(&Node{
+	_, err := e.CreateNode(t.Context(), &Node{
 		ID: "test:n", Labels: []string{"L1", "L2"}, Properties: map[string]any{},
 	})
 	require.NoError(t, err)
@@ -75,10 +75,10 @@ func TestReadEdgeSuppressionState_RoundTrip(t *testing.T) {
 	e := newTestMemoryEngine(t)
 
 	for _, id := range []NodeID{"test:a", "test:b"} {
-		_, err := e.CreateNode(&Node{ID: id, Labels: []string{"L"}, Properties: map[string]any{}})
+		_, err := e.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"L"}, Properties: map[string]any{}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, e.CreateEdge(&Edge{
+	require.NoError(t, e.CreateEdge(t.Context(), &Edge{
 		ID: "test:e", StartNode: "test:a", EndNode: "test:b",
 		Type: "REL_TYPE", Properties: map[string]any{},
 	}))
@@ -96,13 +96,13 @@ func TestCollectNamespaceNodeAndEdgeIDs(t *testing.T) {
 	e := newTestMemoryEngine(t)
 
 	for _, id := range []NodeID{"test:a", "test:b", "other:c"} {
-		_, err := e.CreateNode(&Node{ID: id, Labels: []string{"L"}, Properties: map[string]any{}})
+		_, err := e.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"L"}, Properties: map[string]any{}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, e.CreateEdge(&Edge{
+	require.NoError(t, e.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "R", Properties: map[string]any{},
 	}))
-	require.NoError(t, e.CreateEdge(&Edge{
+	require.NoError(t, e.CreateEdge(t.Context(), &Edge{
 		ID: "other:e2", StartNode: "other:c", EndNode: "test:a", Type: "R", Properties: map[string]any{},
 	}))
 

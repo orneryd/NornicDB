@@ -13,6 +13,9 @@ import (
 // Native explicit transactions retain v1.4.3's accepted, folded semantics.
 func (e *StorageExecutor) checkPeriodicTransactionScope(ctx context.Context, procedure string) error {
 	member := e.membership(ctx)
+	if member.statement != nil && member.statement.nativeRoot != nil && member.storage == member.statement.nativeRoot.storage {
+		return nil
+	}
 	_, distributed := fabric.FabricTransactionFromContext(ctx)
 	distributed = distributed || member.statement != nil
 	if member.transaction != nil {
@@ -61,6 +64,20 @@ func (e *StorageExecutor) executePeriodicBatch(ctx context.Context, procedure st
 	ctx = periodicBatchContext{Context: ctx}
 	ctx = context.WithValue(ctx, expressionFailureKey{}, &expressionFailure{})
 	ctx = context.WithValue(ctx, expressionOperandFailureKey{}, &expressionFailure{})
+	member := e.membership(callerContext)
+	if member.statement != nil && member.statement.nativeRoot != nil && member.storage == member.statement.nativeRoot.storage {
+		owner := member.statement
+		ctx = fabric.WithFabricTransaction(ctx, nil)
+		action := run
+		run = func(batchCtx context.Context, executor *StorageExecutor) (*ExecuteResult, error) {
+			wrapper := membershipOfStorage(executor.storage).storage
+			name, _ := owner.locate(owner.nativeRoot.source.databaseName())
+			wrapper.tx.SetWriteAdmission(func() error {
+				return owner.executor.admitNativeWrite(owner.begin, name, owner.nativeRoot.source.databaseName())
+			})
+			return action(batchCtx, executor)
+		}
+	}
 	result, err := batch.executeWithImplicitTransactionCallback(ctx, "CALL "+procedure, "CALL "+procedure, run)
 	if err != nil {
 		// A fatal expression error belongs to the enclosing statement too.
@@ -74,7 +91,7 @@ func (e *StorageExecutor) executePeriodicBatch(ctx context.Context, procedure st
 	// The implicit wrapper is still the same rollback owner. Its staged outer
 	// writes stay pending while the next clause reads the committed batch too.
 	if wrapper, ok := e.storage.(*transactionStorageWrapper); ok {
-		if err := wrapper.tx.ResumeAfterIndependentCommit(); err != nil {
+		if err := wrapper.tx.ResumeAfterIndependentCommit(ctx); err != nil {
 			recordExpressionFailure(callerContext, err)
 			return nil, err
 		}
@@ -92,7 +109,7 @@ type periodicBatchContext struct{ context.Context }
 func (ctx periodicBatchContext) Value(key interface{}) interface{} {
 	// A batch commits only itself. It neither completes the enclosing HTTP
 	// phase nor marks the enclosing running statement as already committed.
-	if key == ctxKeyTxStorage || key == (ctxKeyRunningTransaction{}) {
+	if key == ctxKeyTxStorage || key == (ctxKeyRunningTransaction{}) || key == (compositeStatementKey{}) {
 		return nil
 	}
 	return ctx.Context.Value(key)

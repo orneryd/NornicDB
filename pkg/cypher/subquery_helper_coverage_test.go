@@ -13,25 +13,25 @@ func TestCallSubqueryHelpers_SeedLookupAndRowMatching(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(baseStore, "test")
 
-	_, err := store.CreateNode(&storage.Node{ID: "n1", Labels: []string{"Seed"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "n1", Labels: []string{"Seed"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "tail", Labels: []string{"Seed"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "tail", Labels: []string{"Seed"}})
 	require.NoError(t, err)
 
 	exec := NewStorageExecutor(store)
 
-	seed := exec.seedNodeFromIDString(" n1 ")
+	seed := exec.seedNodeFromIDString(t.Context(), " n1 ")
 	require.NotNil(t, seed)
 	require.Equal(t, storage.NodeID("n1"), seed.ID)
 
-	seed = exec.seedNodeFromIDString("bolt:db:tail")
+	seed = exec.seedNodeFromIDString(t.Context(), "bolt:db:tail")
 	require.NotNil(t, seed)
 	require.Equal(t, storage.NodeID("tail"), seed.ID)
 
-	require.Nil(t, exec.seedNodeFromIDString("   "))
-	require.Nil(t, exec.seedNodeFromMap(map[string]interface{}{"id": "missing"}))
+	require.Nil(t, exec.seedNodeFromIDString(t.Context(), "   "))
+	require.Nil(t, exec.seedNodeFromMap(t.Context(), map[string]interface{}{"id": "missing"}))
 
-	seed = exec.seedNodeFromMap(map[string]interface{}{"_nodeId": "n1"})
+	seed = exec.seedNodeFromMap(t.Context(), map[string]interface{}{"_nodeId": "n1"})
 	require.NotNil(t, seed)
 	require.Equal(t, storage.NodeID("n1"), seed.ID)
 
@@ -45,40 +45,40 @@ func TestCallSubqueryHelpers_SeedLookupAndRowMatching(t *testing.T) {
 }
 
 func TestCallSubqueryHelpers_WithParsingAndNullGuards(t *testing.T) {
-	vars, inner, hasWith, err := parseLeadingWithImports(" RETURN 1 AS one ")
+	vars, inner, hasWith, err := parseLeadingWithImports(t.Context(), " RETURN 1 AS one ")
 	require.NoError(t, err)
 	require.False(t, hasWith)
 	require.Nil(t, vars)
 	require.Equal(t, "RETURN 1 AS one", inner)
 
-	vars, inner, hasWith, err = parseLeadingWithImports("WITH a, b AS bee RETURN a, bee")
+	vars, inner, hasWith, err = parseLeadingWithImports(t.Context(), "WITH a, b AS bee RETURN a, bee")
 	require.NoError(t, err)
 	require.True(t, hasWith)
 	require.Equal(t, []string{"a", "bee"}, vars)
 	require.Equal(t, "RETURN a, bee", inner)
 
-	vars, inner, hasWith, err = parseLeadingWithImports("WITH a WHERE a IS NOT NULL CREATE (n)")
+	vars, inner, hasWith, err = parseLeadingWithImports(t.Context(), "WITH a WHERE a IS NOT NULL CREATE (n)")
 	require.NoError(t, err)
 	require.True(t, hasWith)
 	require.Equal(t, []string{"a"}, vars)
 	require.Equal(t, "WITH a WHERE a IS NOT NULL CREATE (n)", inner)
 
-	_, _, hasWith, err = parseLeadingWithImports("WITH a")
+	_, _, hasWith, err = parseLeadingWithImports(t.Context(), "WITH a")
 	require.True(t, hasWith)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "must be followed by a query clause")
 
-	whereExpr, rest, ok := splitLeadingWhereNullGuard("WITH a WHERE a IS NOT NULL CREATE (n)")
+	whereExpr, rest, ok := splitLeadingWhereNullGuard(t.Context(), "WITH a WHERE a IS NOT NULL CREATE (n)")
 	require.True(t, ok)
 	require.Equal(t, "a IS NOT NULL", whereExpr)
 	require.Equal(t, "CREATE (n)", rest)
 
-	whereExpr, rest, ok = splitLeadingWhereNullGuard("WHERE a IS NULL RETURN a")
+	whereExpr, rest, ok = splitLeadingWhereNullGuard(t.Context(), "WHERE a IS NULL RETURN a")
 	require.True(t, ok)
 	require.Equal(t, "a IS NULL", whereExpr)
 	require.Equal(t, "RETURN a", rest)
 
-	_, _, ok = splitLeadingWhereNullGuard("WHERE a IS NULL")
+	_, _, ok = splitLeadingWhereNullGuard(t.Context(), "WHERE a IS NULL")
 	require.False(t, ok)
 
 	pass, handled := evalWhereNullGuard("((a IS NULL))", map[string]interface{}{})
@@ -94,6 +94,7 @@ func TestCallSubqueryHelpers_WithParsingAndNullGuards(t *testing.T) {
 }
 
 func TestCallSubqueryHelpers_CorrelationAndTopLevelSplits(t *testing.T) {
+	splitTopLevelAndConjuncts := func(text string) []string { return splitTopLevelAndConjuncts(t.Context(), text) }
 	parts := splitTopLevelAndConjuncts("n.id = outer AND size([x IN [1,2] WHERE x = 1]) > 0 AND 'A AND B' = 'A AND B'")
 	require.Equal(t, []string{
 		"n.id = outer",
@@ -156,14 +157,14 @@ func TestCallSubqueryHelpers_ModifiersJoinAndLookupKeys(t *testing.T) {
 	require.False(t, unionAll)
 	require.Equal(t, 2, len(branches))
 
-	projection, modifiers := splitTopLevelResultModifiersCallSubquery("n.name, 'ORDER BY literal' ORDER BY n.age DESC SKIP 1 LIMIT 2")
+	projection, modifiers := splitTopLevelResultModifiersCallSubquery(t.Context(), "n.name, 'ORDER BY literal' ORDER BY n.age DESC SKIP 1 LIMIT 2")
 	require.Equal(t, "n.name, 'ORDER BY literal'", projection)
 	require.Equal(t, "ORDER BY n.age DESC SKIP 1 LIMIT 2", modifiers)
 
-	idx := indexTopLevelKeywordCallSubquery("'ORDER BY' ORDER BY n.age", "ORDER BY")
+	idx := indexTopLevelKeywordCallSubquery(t.Context(), "'ORDER BY' ORDER BY n.age", "ORDER BY")
 	require.Equal(t, len("'ORDER BY' "), idx)
 
-	col, desc, ok := parseOrderByModifier("ORDER BY n.age DESC SKIP 1 LIMIT 2")
+	col, desc, ok := parseOrderByModifier(t.Context(), "ORDER BY n.age DESC SKIP 1 LIMIT 2")
 	require.True(t, ok)
 	require.Equal(t, "n.age", col)
 	require.True(t, desc)
@@ -204,8 +205,8 @@ func TestCallSubqueryHelpers_ModifiersJoinAndLookupKeys(t *testing.T) {
 	require.Same(t, joined, crossJoinCallResults(joined, nil))
 	require.Same(t, joined, crossJoinCallResults(nil, joined))
 
-	require.True(t, callSubqueryQueryIsWrite("MATCH (n) CREATE (m)"))
-	require.False(t, callSubqueryQueryIsWrite("MATCH (n) RETURN n"))
+	require.True(t, callSubqueryQueryIsWrite(t.Context(), "MATCH (n) CREATE (m)"))
+	require.False(t, callSubqueryQueryIsWrite(t.Context(), "MATCH (n) RETURN n"))
 }
 
 func TestCallSubqueryHelpers_PropertyExtractionAndOrdering(t *testing.T) {

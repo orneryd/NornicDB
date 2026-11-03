@@ -21,9 +21,6 @@ func withHNSWEf(ctx context.Context, ef int) context.Context {
 // hnswEfFromContext returns the search's own HNSW beam width, or 0 when the
 // configured preset applies.
 func hnswEfFromContext(ctx context.Context) int {
-	if ctx == nil {
-		return 0
-	}
 	ef, _ := ctx.Value(hnswEfKey{}).(int)
 	return ef
 }

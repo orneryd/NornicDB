@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"testing"
+
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
-	"net/http"
-	"testing"
 )
 
 func TestHTTPContinuationIssuedDepthCompletion(t *testing.T) {
@@ -24,7 +25,7 @@ func TestHTTPContinuationIssuedDepthCompletion(t *testing.T) {
 	require.NoError(t, err)
 	for i := 0; i < 1000; i++ {
 		node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("doc-%04d", i)), Properties: map[string]any{"content": "library transcript"}}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, service.IndexNode(node))
 	}

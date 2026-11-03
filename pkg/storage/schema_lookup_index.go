@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"sort"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -55,7 +56,10 @@ func (sm *SchemaManager) AddLookupIndex(name string, entityType ConstraintEntity
 	if name == "" {
 		name = defaultLookupIndexes()[entityType]
 	}
-	lease := sm.beginSchemaMutation()
+	lease, admitErr := sm.beginSchemaMutation(context.Background())
+	if admitErr != nil {
+		return admitErr
+	}
 	defer lease.release()
 	if _, ok := sm.constraints[name]; ok {
 		return newSchemaAdmissionError("ConstraintWithNameAlreadyExists", localization.StorageSchemaConstraintAlreadyExists(name))
@@ -72,7 +76,11 @@ func (sm *SchemaManager) AddLookupIndex(name string, entityType ConstraintEntity
 	}
 	sm.lookupIndexes[entityType] = name
 	if sm.persist != nil {
-		if err := sm.persist(sm.exportDefinitionLocked()); err != nil {
+		def, err := sm.exportDefinitionLocked(context.Background()) // accepted mutation owns its completion
+		if err == nil {
+			err = sm.persist(def)
+		}
+		if err != nil {
 			delete(sm.lookupIndexes, entityType)
 			return err
 		}

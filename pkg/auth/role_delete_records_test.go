@@ -17,7 +17,7 @@ func TestDeletedRoleStartsEmptyAfterRecreation(t *testing.T) {
 	t.Cleanup(func() { _ = base.Close() })
 	system := storage.NewNamespacedEngine(base, "system")
 	roles := seedRoleRename(t, system)
-	require.NoError(t, (&Authenticator{storage: system}).saveUser(&User{Username: "solo", Roles: []Role{"ops"}}, nil))
+	require.NoError(t, (&Authenticator{storage: system}).saveUser(context.Background(), &User{Username: "solo", Roles: []Role{"ops"}}, nil))
 	require.NoError(t, roles.DeleteRole(ctx, "ops"))
 	require.NoError(t, roles.CreateRole(ctx, "ops"))
 	grants, err := NewProcedurePrivilegeStore(system).List(ctx)
@@ -33,10 +33,10 @@ func TestDeletedRoleStartsEmptyAfterRecreation(t *testing.T) {
 	entitlements := NewRoleEntitlementsStore(system)
 	require.NoError(t, entitlements.Load(ctx))
 	require.Empty(t, ReadRoleCatalog(nil, entitlements).EntitlementOverrides)
-	user, err := system.GetNode("user:worker")
+	user, err := system.GetNode(context.Background(), "user:worker")
 	require.NoError(t, err)
 	require.Equal(t, `["viewer"]`, user.Properties["roles"])
-	solo, err := system.GetNode("user:solo")
+	solo, err := system.GetNode(context.Background(), "user:solo")
 	require.NoError(t, err)
 	require.Equal(t, `[]`, solo.Properties["roles"])
 }
@@ -158,10 +158,10 @@ func TestRoleChangesPreserveOtherRoles(t *testing.T) {
 			require.NoError(t, NewPrivilegesStore(system).SavePrivilege(ctx, "other", "nornic", true, false))
 			require.NoError(t, NewAllowlistStore(system).SaveRoleDatabases(ctx, "other", []string{"nornic"}))
 			require.NoError(t, NewRoleEntitlementsStore(system).Set(ctx, "other", []string{"read"}))
-			require.NoError(t, (&Authenticator{storage: system}).saveUser(&User{Username: "other", Roles: []Role{"other"}}, nil))
+			require.NoError(t, (&Authenticator{storage: system}).saveUser(context.Background(), &User{Username: "other", Roles: []Role{"other"}}, nil))
 			var before []*storage.Node
 			for _, id := range []storage.NodeID{"role:other", "proc_priv:boosted:other:db.other", "db_priv:other:nornic", "role_db_access:other", "role_entitlement:other", "user:other"} {
-				node, err := system.GetNode(id)
+				node, err := system.GetNode(context.Background(), id)
 				require.NoError(t, err)
 				before = append(before, node)
 			}
@@ -172,7 +172,7 @@ func TestRoleChangesPreserveOtherRoles(t *testing.T) {
 			}
 			require.True(t, roles.Exists("other"))
 			for _, original := range before {
-				node, err := system.GetNode(original.ID)
+				node, err := system.GetNode(context.Background(), original.ID)
 				require.NoError(t, err)
 				require.Equal(t, original, node)
 			}

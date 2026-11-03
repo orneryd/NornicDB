@@ -2,10 +2,11 @@ package search
 
 import (
 	"context"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"math"
 	"path/filepath"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -87,7 +88,7 @@ func TestIVFPQMainKeyEvidenceDoesNotHideMembers(t *testing.T) {
 				node.NamedEmbeddings = map[string][]float32{"best": {1, 0}}
 				candidateID = "winner"
 			}
-			_, err := engine.CreateNode(node)
+			_, err := engine.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 			require.NoError(t, svc.IndexNode(node))
 			idx := mainKeyEvidenceIndex(candidateID)

@@ -79,9 +79,9 @@ func TestKernelWriterContextsRemainFailClosed(t *testing.T) {
 	base, err := Census(root, baseOverlay)
 	require.NoError(t, err)
 	require.Empty(t, base.Violations)
-	for _, tc := range []struct{ name, source, entry string }{{"native", `func(b *BadgerEngine) CensusNativeDelete(tx *BadgerTransaction,id NodeID)error{_,err:=b.executeNodeDeletion(tx.badgerTx,id,nil);return err}`, "pkg/storage.BadgerEngine.CensusNativeDelete"}, {"unknown", `func(b *BadgerEngine) CensusUnknownDelete(w kvWriter,id NodeID)error{_,err:=b.executeNodeDeletion(w,id,nil);return err}`, "pkg/storage.BadgerEngine.CensusUnknownDelete"}, {"mixed", `func(b *BadgerEngine) CensusMixedDelete(tx *BadgerTransaction,id NodeID,native bool)error{var w kvWriter=tx.staged();if native{w=tx.badgerTx};_,err:=b.executeNodeDeletion(w,id,nil);return err}`, "pkg/storage.BadgerEngine.CensusMixedDelete"}} {
+	for _, tc := range []struct{ name, source, entry string }{{"native", `func(b *BadgerEngine) CensusNativeDelete(tx *BadgerTransaction,id NodeID)error{_,err:=b.executeNodeDeletion(context.Background(),tx.badgerTx,id,nil);return err}`, "pkg/storage.BadgerEngine.CensusNativeDelete"}, {"unknown", `func(b *BadgerEngine) CensusUnknownDelete(w kvWriter,id NodeID)error{_,err:=b.executeNodeDeletion(context.Background(),w,id,nil);return err}`, "pkg/storage.BadgerEngine.CensusUnknownDelete"}, {"mixed", `func(b *BadgerEngine) CensusMixedDelete(tx *BadgerTransaction,id NodeID,native bool)error{var w kvWriter=tx.staged();if native{w=tx.badgerTx};_,err:=b.executeNodeDeletion(context.Background(),w,id,nil);return err}`, "pkg/storage.BadgerEngine.CensusMixedDelete"}} {
 		t.Run(tc.name, func(t *testing.T) {
-			overlay := map[string][]byte{kernelPath: kernel, filepath.Join(abs, "pkg/storage/zz_census_type_context.go"): []byte("package storage\n" + tc.source)}
+			overlay := map[string][]byte{kernelPath: kernel, filepath.Join(abs, "pkg/storage/zz_census_type_context.go"): []byte("package storage\nimport \"context\"\n" + tc.source)}
 			report, err := Census(root, overlay)
 			require.NoError(t, err)
 			found := false
@@ -100,9 +100,9 @@ func TestKernelWriterContextsRemainFailClosed(t *testing.T) {
 	txPath := filepath.Join(abs, "pkg/storage/badger_transaction.go")
 	txSource, err := os.ReadFile(txPath)
 	require.NoError(t, err)
-	anchor := "tx.engine.executeNodeDeletion(tx.staged(), nodeID, oldNode)"
+	anchor := "tx.engine.executeNodeDeletion(ctx, tx.staged(), nodeID, oldNode)"
 	require.Equal(t, 1, strings.Count(string(txSource), anchor))
-	mutant := strings.Replace(string(txSource), anchor, "tx.engine.executeNodeDeletion(tx.badgerTx, nodeID, oldNode)", 1)
+	mutant := strings.Replace(string(txSource), anchor, "tx.engine.executeNodeDeletion(ctx, tx.badgerTx, nodeID, oldNode)", 1)
 	report, err := Census(root, map[string][]byte{kernelPath: kernel, txPath: []byte(mutant)})
 	require.NoError(t, err)
 	require.Contains(t, strings.Join(report.Violations, "\n"), "unordered write: pkg/storage.BadgerTransaction.DeleteGraphNode")
@@ -112,6 +112,20 @@ func TestTypeGuardRequiresActualBranchDependence(t *testing.T) {
 	_, pkg := ssaFixture(t, `package storage
  type writer interface{write()};type stagedKV struct{};func(*stagedKV)write(){}
  func rawWrite(){}
+ var escaped *writer
+ func pointer(*writer){}
+ func capture(f func()){f()}
+ func mutable(w writer){capture(func(){w=&stagedKV{}});if _,s:=w.(*stagedKV);!s{rawWrite()}}
+ func opaque(w writer){pointer(&w);if _,s:=w.(*stagedKV);!s{rawWrite()}}
+ func global(w writer){escaped=&w;if _,s:=w.(*stagedKV);!s{rawWrite()}}
+ func beforeStore(w writer){var local writer;capture(func(){local.write()});if _,s:=local.(*stagedKV);!s{rawWrite()};local=w}
+ func joinedValue(w writer,choose bool){other:=w;if choose{other=&stagedKV{}};capture(func(){other.write()});if _,s:=other.(*stagedKV);!s{rawWrite()}}
+ func otherParameter(w,other writer){capture(func(){other.write()});if _,s:=other.(*stagedKV);!s{rawWrite()}}
+
+ func captured(w writer){capture(func(){w.write()});if _,s:=w.(*stagedKV);!s{rawWrite()}}
+ func side(){}
+ func more()bool{return true}
+ func iteration(w writer){for more(){if _,s:=w.(*stagedKV);s{side()}else{rawWrite()};side()}}
  func before(w writer){rawWrite();if _,s:=w.(*stagedKV);s{return}}
  func joined(w writer){if _,s:=w.(*stagedKV);!s{_ = 7};rawWrite()}
  func loop(w writer,again bool){for again{if _,s:=w.(*stagedKV);s{continue};rawWrite();break}}
@@ -119,12 +133,16 @@ func TestTypeGuardRequiresActualBranchDependence(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		want int
-	}{{"before", 0}, {"joined", 0}, {"loop", 1}} {
+	}{{"before", 0}, {"joined", 0}, {"loop", 1}, {"iteration", 1}, {"captured", 1}, {"mutable", 0}, {"opaque", 0}, {"global", 0}, {"beforeStore", 0}, {"joinedValue", 0}, {"otherParameter", 1}} {
 		fn := pkg.Func(tc.name)
 		for _, b := range fn.Blocks {
 			for _, ins := range b.Instrs {
 				if call, ok := ins.(*ssa.Call); ok && call.Common().StaticCallee() == pkg.Func("rawWrite") {
-					require.Len(t, typeGuardsAt(fn, ins), tc.want, tc.name)
+					guards := typeGuardsAt(fn, ins)
+					require.Len(t, guards, tc.want, tc.name)
+					if tc.name == "otherParameter" && len(guards) == 1 {
+						require.Equal(t, 1, guards[0].parameter, "never substitute the other argument's type")
+					}
 				}
 			}
 		}

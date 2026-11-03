@@ -52,17 +52,17 @@ func (c nodeCountCycle) run(t *testing.T, engine Engine) {
 	want := c.wantCounts
 
 	for index, id := range c.createIDs {
-		_, err := engine.CreateNode(c.seedNode(id, "Test", index, false))
+		_, err := engine.CreateNode(t.Context(), c.seedNode(id, "Test", index, false))
 		require.NoError(t, err, "create node %s", id)
 	}
-	count, err := engine.NodeCount()
+	count, err := engine.NodeCount(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, want[0], count, "count after initial creation")
 
 	for _, id := range c.createIDs {
-		require.NoError(t, engine.DeleteNode(NodeID(prefixTestID(id))), "delete node %s", id)
+		require.NoError(t, engine.DeleteNode(t.Context(), NodeID(prefixTestID(id))), "delete node %s", id)
 	}
-	count, err = engine.NodeCount()
+	count, err = engine.NodeCount(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, want[1], count, "count after deleting the entire population")
 
@@ -72,13 +72,13 @@ func (c nodeCountCycle) run(t *testing.T, engine Engine) {
 	}
 	for index, id := range c.recreateIDs {
 		if c.recreateIsUpdate {
-			require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: c.seedNode(id, label, index, true)}), "update node %s", id)
+			require.NoError(t, engine.UpdateNode(t.Context(), NodeUpdateRequest{After: c.seedNode(id, label, index, true)}), "update node %s", id)
 			continue
 		}
-		_, err := engine.CreateNode(c.seedNode(id, label, index, true))
+		_, err := engine.CreateNode(t.Context(), c.seedNode(id, label, index, true))
 		require.NoError(t, err, "create node %s", id)
 	}
-	count, err = engine.NodeCount()
+	count, err = engine.NodeCount(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, want[2], count, "count after recreating the population")
 }

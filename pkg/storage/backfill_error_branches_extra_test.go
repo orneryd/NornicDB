@@ -38,9 +38,9 @@ func TestIndexBackfill_AdditionalBranches(t *testing.T) {
 				// A ready marker must short-circuit initialization without
 				// registering a job; explicit force mode must still register one.
 				require.NoError(t, engine.startIndexBackfill(tc.kind, initializeIndexBackfill))
-				mu, doneSlot := &engine.labelIndexBackfillMu, &engine.labelIndexBackfillDone
+				mu, doneSlot := &engine.labelIndexBackfillMu, &engine.labelIndexBackfill
 				if tc.kind == startupEdgeBetweenIndex {
-					mu, doneSlot = &engine.edgeBetweenIndexBackfillMu, &engine.edgeBetweenIndexBackfillDone
+					mu, doneSlot = &engine.edgeBetweenIndexBackfillMu, &engine.edgeBetweenIndexBackfill
 				}
 				mu.Lock()
 				dormant := *doneSlot == nil
@@ -65,7 +65,7 @@ func TestIndexBackfill_AdditionalBranches(t *testing.T) {
 			})
 			t.Run("rebuild decode error branch", func(t *testing.T) {
 				engine := createTestBadgerEngine(t)
-				require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return txn.Set(tc.badKey, []byte{0xFF, 0x00}) }))
+				require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error { return txn.Set(tc.badKey, []byte{0xFF, 0x00}) }))
 				_, err := tc.rebuild(engine, context.Background())
 				require.Error(t, err)
 				require.Contains(t, err.Error(), tc.decodeError)

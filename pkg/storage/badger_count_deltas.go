@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -89,13 +90,18 @@ func decodeCountDelta(val []byte) (int64, error) {
 
 // sumCountDeltasInTxn sums the persisted deltas of one namespace/name pair
 // visible in txn.
-func sumCountDeltasInTxn(txn *badger.Txn, kind byte, namespace, name string) (int64, int, error) {
+// Author: storage-format-owners lane (Codex), 1 November 2026.
+func sumCountDeltasInTxn(ctx context.Context, txn *badger.Txn, kind byte, namespace, name string) (int64, int, error) {
 	prefix := countDeltaPrefixFor(kind, namespace, name)
 	var total int64
 	var seen int
 	it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	defer it.Close()
+	var cancel bulkReadCancellation
 	for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
+		if err := cancel.check(ctx); err != nil {
+			return 0, seen, err
+		}
 		seen++
 		if err := it.Item().Value(func(val []byte) error {
 			delta, decodeErr := decodeCountDelta(val)
@@ -113,13 +119,17 @@ func sumCountDeltasInTxn(txn *badger.Txn, kind byte, namespace, name string) (in
 
 // sumCountDeltasByNameInTxn sums the persisted deltas of one kind for one
 // name (a label or an edge type) across all namespaces visible in txn.
-func sumCountDeltasByNameInTxn(txn *badger.Txn, kind byte, name string) (int64, error) {
+func sumCountDeltasByNameInTxn(ctx context.Context, txn *badger.Txn, kind byte, name string) (int64, error) {
 	var total int64
 	prefix := countDeltaAllPrefix(kind)
 	needle := []byte(name)
 	it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	defer it.Close()
+	var cancel bulkReadCancellation
 	for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
+		if err := cancel.check(ctx); err != nil {
+			return 0, err
+		}
 		key := it.Item().KeyCopy(nil)
 		sep := bytesIndexByte(key[2:], 0)
 		if sep < 0 {
@@ -202,7 +212,11 @@ type countFoldSource struct {
 // next open (or the next read past the fold threshold). Keys are collected
 // up front, so a delta appended by a concurrent commit after collection is
 // never deleted without being summed.
-func (b *BadgerEngine) foldCountDeltaKeys(source countFoldSource, baseKey func(string, string) []byte, keys [][]byte) error {
+//
+// ctx is the fold phase that owns this fold and is handed to whichever
+// admission owner source selects, so a fold that stops at admission writes
+// nothing and leaves every delta key to the next fold.
+func (b *BadgerEngine) foldCountDeltaKeys(ctx context.Context, source countFoldSource, baseKey func(string, string) []byte, keys [][]byte) error {
 	sums := make(map[namespaceLabel]int64)
 	write := func(txn *badger.Txn) error {
 		for _, key := range keys {
@@ -253,22 +267,22 @@ func (b *BadgerEngine) foldCountDeltaKeys(source countFoldSource, baseKey func(s
 		return nil
 	}
 	if source.db == nil {
-		return b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, write)
+		return b.withUpdate(ctx, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, write)
 	}
 	if source.held {
-		return source.db.updateHeld(write)
+		return source.db.updateHeld(ctx, write)
 	}
-	return source.db.Update(write)
+	return source.db.update(ctx, write, nil)
 }
 
 // foldCountDeltaKeysChunked folds keys in bounded transactions.
-func (b *BadgerEngine) foldCountDeltaKeysChunked(source countFoldSource, baseKey func(string, string) []byte, keys [][]byte) error {
+func (b *BadgerEngine) foldCountDeltaKeysChunked(ctx context.Context, source countFoldSource, baseKey func(string, string) []byte, keys [][]byte) error {
 	for start := 0; start < len(keys); start += countDeltaFoldChunk {
 		end := start + countDeltaFoldChunk
 		if end > len(keys) {
 			end = len(keys)
 		}
-		if err := b.foldCountDeltaKeys(source, baseKey, keys[start:end]); err != nil {
+		if err := b.foldCountDeltaKeys(ctx, source, baseKey, keys[start:end]); err != nil {
 			return err
 		}
 	}
@@ -279,7 +293,7 @@ func (b *BadgerEngine) foldCountDeltaKeysChunked(source countFoldSource, baseKey
 // (or every delta of one kind when namespace is empty) in bounded
 // transactions. The same kernel selects normal engine admission, Restore
 // ownership or the post-close database handle from source.
-func (b *BadgerEngine) foldCountDeltasOn(source countFoldSource, kind byte, baseKey func(string, string) []byte, namespace, name string) error {
+func (b *BadgerEngine) foldCountDeltasOn(ctx context.Context, source countFoldSource, kind byte, baseKey func(string, string) []byte, namespace, name string) error {
 	var keys [][]byte
 	view := b.withView
 	if source.db != nil {
@@ -307,29 +321,29 @@ func (b *BadgerEngine) foldCountDeltasOn(source countFoldSource, kind byte, base
 	if len(keys) == 0 {
 		return nil
 	}
-	return b.foldCountDeltaKeysChunked(source, baseKey, keys)
+	return b.foldCountDeltaKeysChunked(ctx, source, baseKey, keys)
 }
 
 // foldCountDeltasChunked collapses the persisted deltas of one
 // namespace/name pair in bounded transactions. It replaces the single-
 // transaction fold for reads past the fold threshold, where a single pair
 // may hold hundreds of thousands of deltas.
-func (b *BadgerEngine) foldCountDeltasChunked(kind byte, baseKey func(string, string) []byte, namespace, name string) error {
-	return b.foldCountDeltasOn(countFoldSource{}, kind, baseKey, namespace, name)
+func (b *BadgerEngine) foldCountDeltasChunked(ctx context.Context, kind byte, baseKey func(string, string) []byte, namespace, name string) error {
+	return b.foldCountDeltasOn(ctx, countFoldSource{}, kind, baseKey, namespace, name)
 }
 
 // foldRestoredCountDeltas folds every derived-count delta a restore loaded,
 // past the restore's read hold.
-func (b *BadgerEngine) foldRestoredCountDeltas(db *managedBadgerDB) error {
+func (b *BadgerEngine) foldRestoredCountDeltas(ctx context.Context, db *managedBadgerDB) error {
 	b.labelCountWriteMu.Lock()
-	err := b.foldCountDeltasOn(countFoldSource{db: db, held: true}, countDeltaKindLabel, labelCountKey, "", "")
+	err := b.foldCountDeltasOn(ctx, countFoldSource{db: db, held: true}, countDeltaKindLabel, labelCountKey, "", "")
 	b.labelCountWriteMu.Unlock()
 	if err != nil {
 		return err
 	}
 	b.edgeTypeCountWriteMu.Lock()
 	defer b.edgeTypeCountWriteMu.Unlock()
-	return b.foldCountDeltasOn(countFoldSource{db: db, held: true}, countDeltaKindEdgeType, edgeTypeCountKey, "", "")
+	return b.foldCountDeltasOn(ctx, countFoldSource{db: db, held: true}, countDeltaKindEdgeType, edgeTypeCountKey, "", "")
 }
 
 // readDerivedCountInTxn reads one persisted base count (0 when absent).

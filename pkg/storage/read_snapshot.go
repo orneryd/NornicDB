@@ -54,7 +54,7 @@ func (b *BadgerEngine) OpenReadSnapshot(ctx context.Context) (ReadSnapshotView, 
 	prefix, _ := ctx.Value(readSnapshotPrefixKey{}).(string)
 	snap := &badgerReadSnapshot{b: b, prefix: prefix}
 	var captureErr error
-	view, err := b.captureReadView(func(w *WriteBehindBuffer) {
+	view, err := b.captureReadView(ctx, func(w *WriteBehindBuffer) {
 		// Nodes are read whatever their visibility, relationships as visible
 		// reads see them, as their stored rows below.
 		pendingNodes, err := b.readBufferedEntities(ctx, w, storedRead, bufferedEntityRead{kind: bufferedNodes, prefix: prefix})
@@ -85,8 +85,11 @@ func (b *BadgerEngine) OpenReadSnapshot(ctx context.Context) (ReadSnapshotView, 
 // write-behind overlay merged as StreamEdges merges it: a buffered node
 // shadows its committed row and is visited after the scan.
 func (s *badgerReadSnapshot) IterateNodes(fn func(*Node) bool) error {
+	// IterateNodes has no caller context; this synchronous public boundary
+	// owns the scan's non-cancellable completion lifetime.
+	ctx := context.Background()
 	stopped := false
-	err := s.view.withView(func(txn *badger.Txn) error {
+	err := s.view.withView(ctx, func(txn *badger.Txn) error {
 		prefix := append([]byte{prefixNode}, s.prefix...)
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
@@ -129,7 +132,7 @@ func (s *badgerReadSnapshot) IterateNodes(fn func(*Node) bool) error {
 // write-behind overlay captured when the snapshot was opened.
 func (s *badgerReadSnapshot) StreamEdges(ctx context.Context, fn func(*Edge) error) error {
 	nowNanos := DecayScoringTime()
-	err := s.view.withView(func(txn *badger.Txn) error {
+	err := s.view.withView(ctx, func(txn *badger.Txn) error {
 		prefix := append([]byte{prefixEdge}, s.prefix...)
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
@@ -148,7 +151,7 @@ func (s *badgerReadSnapshot) StreamEdges(ctx context.Context, fn func(*Edge) err
 			var edge *Edge
 			if err := it.Item().Value(func(val []byte) error {
 				var decErr error
-				edge, decErr = s.b.decodeEdgeBodyByID(val, edgeID)
+				edge, decErr = s.b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), val, edgeID)
 				return decErr
 			}); err != nil {
 				continue // Skip invalid edges, as StreamEdges does

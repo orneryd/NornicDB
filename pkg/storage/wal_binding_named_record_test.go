@@ -30,7 +30,7 @@ func typedPropertyRecordFixture(t *testing.T, data WALBufferedCommitData, proper
 func TestWALUnstampedForeignCannotBorrowPriorRecord(t *testing.T) {
 	_, data := r2BindingData(t, 1)
 	dest := reviewBindingEngine(t, t.TempDir())
-	_, err := dest.CreateNode(&Node{ID: "perf:sentinel", Properties: map[string]any{"other": int64(0)}})
+	_, err := dest.CreateNode(t.Context(), &Node{ID: "perf:sentinel", Properties: map[string]any{"other": int64(0)}})
 	require.NoError(t, err)
 	payload, err := json.Marshal(data)
 	require.NoError(t, err)
@@ -40,7 +40,7 @@ func TestWALUnstampedForeignCannotBorrowPriorRecord(t *testing.T) {
 	payload, err = json.Marshal(data)
 	require.NoError(t, err)
 	require.ErrorContains(t, ReplayWALEntry(dest, WALEntry{Operation: OpBufferedCommit, Data: payload}), "missing property name binding")
-	node, err := dest.GetNode("perf:a")
+	node, err := dest.GetNode(t.Context(), "perf:a")
 	require.NoError(t, err)
 	require.Equal(t, map[string]any{"property_000": int64(0)}, node.Properties)
 	assertPropertyDictionaryBijection(t, dest)

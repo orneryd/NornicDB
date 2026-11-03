@@ -33,7 +33,8 @@ func TestCreateUniqueConstraint(t *testing.T) {
 	}
 
 	// Verify constraint exists
-	constraints := store.GetSchema().GetConstraints()
+	constraints, discoveryErr := store.GetSchema().GetConstraints(t.Context())
+	require.NoError(t, discoveryErr)
 	if len(constraints) != 1 {
 		t.Fatalf("Expected 1 constraint, got %d", len(constraints))
 	}
@@ -159,7 +160,8 @@ func TestSchemaInitialization(t *testing.T) {
 	}
 
 	// Verify all schemas created
-	constraints := store.GetSchema().GetConstraints()
+	constraints, discoveryErr := store.GetSchema().GetConstraints(t.Context())
+	require.NoError(t, discoveryErr)
 	if len(constraints) != 1 {
 		t.Errorf("Expected 1 constraint, got %d", len(constraints))
 	}
@@ -209,7 +211,8 @@ func TestConstraintWithoutName(t *testing.T) {
 	}
 
 	// Verify constraint exists with generated name
-	constraints := store.GetSchema().GetConstraints()
+	constraints, discoveryErr := store.GetSchema().GetConstraints(t.Context())
+	require.NoError(t, discoveryErr)
 	if len(constraints) != 1 {
 		t.Fatalf("Expected 1 constraint, got %d", len(constraints))
 	}
@@ -256,7 +259,8 @@ func TestIdempotentSchemaCreation(t *testing.T) {
 	}
 
 	// Should still have only one constraint
-	constraints := store.GetSchema().GetConstraints()
+	constraints, discoveryErr := store.GetSchema().GetConstraints(t.Context())
+	require.NoError(t, discoveryErr)
 	if len(constraints) != 1 {
 		t.Errorf("Expected 1 constraint, got %d", len(constraints))
 	}
@@ -1081,7 +1085,8 @@ func TestCreateIndex_RebuildsUsableEntriesAfterRestart(t *testing.T) {
 	_, err = exec1.Execute(ctx, "CREATE INDEX idx_source_id IF NOT EXISTS FOR (n:MongoDocument) ON (n.sourceId)", nil)
 	require.NoError(t, err)
 
-	pre := store1.GetSchema().PropertyIndexLookup("MongoDocument", "sourceId", "src-002")
+	pre, lookupErr := store1.GetSchema().PropertyIndexLookup(ctx, "MongoDocument", "sourceId", "src-002")
+	require.NoError(t, lookupErr)
 	require.Len(t, pre, 1)
 
 	require.NoError(t, base1.Close())
@@ -1096,7 +1101,8 @@ func TestCreateIndex_RebuildsUsableEntriesAfterRestart(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, showRes.Rows)
 
-	post := store2.GetSchema().PropertyIndexLookup("MongoDocument", "sourceId", "src-002")
+	post, lookupErr := store2.GetSchema().PropertyIndexLookup(ctx, "MongoDocument", "sourceId", "src-002")
+	require.NoError(t, lookupErr)
 	require.Len(t, post, 1, "property index entries should remain usable after restart")
 }
 

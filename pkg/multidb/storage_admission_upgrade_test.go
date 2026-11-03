@@ -23,10 +23,10 @@ func TestManagedCommitByteUpgradeAfterPreparationIsKnownConflict(t *testing.T) {
 			tracker := engine.(*sizeTrackingEngine)
 			require.NoError(t, manager.SetDatabaseLimits(t.Context(), db, &Limits{Storage: StorageLimits{MaxNodes: 10}}))
 			begin := func() *storage.BadgerTransaction {
-				tx, err := manager.inner.(*storage.MemoryEngine).BeginTransaction()
+				tx, err := manager.inner.(*storage.MemoryEngine).BeginTransaction(t.Context())
 				require.NoError(t, err)
 				require.NoError(t, tx.SetNamespace(db))
-				_, err = tx.CreateNode(&storage.Node{ID: storage.NodeID(db + ":pending"), Properties: map[string]any{"value": "pending"}})
+				_, err = tx.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(db + ":pending"), Properties: map[string]any{"value": "pending"}})
 				require.NoError(t, err)
 				return tx
 			}
@@ -59,7 +59,7 @@ func TestManagedCommitByteUpgradeAfterPreparationIsKnownConflict(t *testing.T) {
 			require.ErrorIs(t, err, storage.ErrConflict)
 			require.True(t, nornicerrors.IsCommitRolledBack(err))
 			require.False(t, tx.IsActive())
-			nodes, err := engine.NodeCount()
+			nodes, err := engine.NodeCount(t.Context())
 			require.NoError(t, err)
 			require.Zero(t, nodes)
 			manager.mu.RLock()
@@ -78,7 +78,7 @@ func TestManagedCommitByteUpgradeAfterPreparationIsKnownConflict(t *testing.T) {
 				require.ErrorIs(t, err, ErrStorageLimitExceeded)
 				require.True(t, nornicerrors.IsCommitRolledBack(err))
 			}
-			nodes, err = engine.NodeCount()
+			nodes, err = engine.NodeCount(t.Context())
 			require.NoError(t, err)
 			if fits {
 				require.EqualValues(t, 1, nodes)

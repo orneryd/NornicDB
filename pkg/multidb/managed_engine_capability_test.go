@@ -19,9 +19,9 @@ type opaqueEntityEngine struct {
 	createCalls atomic.Int32
 }
 
-func (e *opaqueEntityEngine) CreateNode(node *storage.Node) (storage.NodeID, error) {
+func (e *opaqueEntityEngine) CreateNode(ctx context.Context, node *storage.Node) (storage.NodeID, error) {
 	e.createCalls.Add(1)
-	return e.Engine.CreateNode(node)
+	return e.Engine.CreateNode(ctx, node)
 }
 
 func TestManagedEngineCapabilityFailurePrecedesEveryWrite(t *testing.T) {
@@ -41,30 +41,30 @@ func TestManagedEngineCapabilityFailurePrecedesEveryWrite(t *testing.T) {
 	// managed graph capabilities to preserve the original write-boundary test.
 	tracker := newSizeTrackingEngine(storage.NewNamespacedEngine(opaque, db), manager, db).(*sizeTrackingEngine)
 	first := storage.NodeID("unlimited")
-	id, err := tracker.CreateNode(&storage.Node{ID: first})
+	id, err := tracker.CreateNode(t.Context(), &storage.Node{ID: first})
 	require.NoError(t, err)
 	require.Equal(t, first, id)
 	require.EqualValues(t, 1, opaque.createCalls.Load())
 	require.NoError(t, manager.SetDatabaseLimits(t.Context(), db, &Limits{Storage: StorageLimits{MaxNodes: 10}}))
-	_, err = tracker.CreateNode(&storage.Node{ID: storage.NodeID(db + ":limited")})
+	_, err = tracker.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(db + ":limited")})
 	require.ErrorIs(t, err, storage.ErrInvalidData)
 	require.ErrorContains(t, err, "ManagedEntityEngine")
-	require.ErrorIs(t, tracker.BulkCreateNodes([]*storage.Node{{ID: storage.NodeID(db + ":bulk-a")}, {ID: storage.NodeID(db + ":bulk-b")}}), storage.ErrInvalidData)
+	require.ErrorIs(t, tracker.BulkCreateNodes(t.Context(), []*storage.Node{{ID: storage.NodeID(db + ":bulk-a")}, {ID: storage.NodeID(db + ":bulk-b")}}), storage.ErrInvalidData)
 	require.EqualValues(t, 1, opaque.createCalls.Load(), "capability validation must not probe a different store or invoke a write")
-	tx, err := base.BeginTransaction()
+	tx, err := base.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace(db))
-	_, err = tx.CreateNode(&storage.Node{ID: storage.NodeID(db + ":explicit")})
+	_, err = tx.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(db + ":explicit")})
 	require.NoError(t, err)
 	err = tracker.CommitTransaction(context.Background(), tx)
 	require.ErrorIs(t, err, storage.ErrInvalidData)
 	require.True(t, nornicerrors.IsCommitRolledBack(err))
 	require.False(t, tx.IsActive())
-	nodes, err := storage.NewNamespacedEngine(base, db).NodeCount()
+	nodes, err := storage.NewNamespacedEngine(base, db).NodeCount(t.Context())
 	require.NoError(t, err)
 	require.EqualValues(t, 1, nodes)
-	stored, err := base.GetStoredNode(storage.NodeID(db + ":" + string(first)))
+	stored, err := base.GetStoredNode(t.Context(), storage.NodeID(db+":"+string(first)))
 	require.NoError(t, err)
 	require.Equal(t, storage.NodeID(db+":"+string(first)), stored.ID)
 }

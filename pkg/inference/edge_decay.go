@@ -286,7 +286,7 @@ func (ed *EdgeDecay) scanAndDecay(ctx context.Context) (scanned, decayed, delete
 			if !ed.config.DryRun {
 				before := *edge
 				edge.Confidence = decayedConfidence
-				if err := ed.storage.UpdateEdge(storage.EdgeUpdateRequest{Before: &before, After: edge}); err != nil {
+				if err := ed.storage.UpdateEdge(ctx, storage.EdgeUpdateRequest{Before: &before, After: edge}); err != nil {
 					ed.logPrintf(ctx, slog.LevelError, "[EDGE-DECAY] Failed to update decayed edge")
 				}
 			}
@@ -297,7 +297,7 @@ func (ed *EdgeDecay) scanAndDecay(ctx context.Context) (scanned, decayed, delete
 	// Delete edges below threshold
 	if !ed.config.DryRun {
 		for _, edgeID := range toDelete {
-			if err := ed.storage.DeleteEdge(edgeID); err != nil {
+			if err := ed.storage.DeleteEdge(ctx, edgeID); err != nil {
 				ed.logPrintf(ctx, slog.LevelError, "[EDGE-DECAY] Failed to delete decayed edge")
 			} else {
 				// Clean up reinforcement tracking

@@ -14,7 +14,9 @@ func (b *BadgerEngine) GapProbeStopWorker() { b.writeBehind.Close() }
 
 func (b *BadgerEngine) GapProbeAcrossReplay(t *testing.T, run func() (int64, error)) int64 {
 	t.Helper()
-	b.writeBehind.rotate()
+	if _, rotateErr := b.writeBehind.rotate(t.Context()); rotateErr != nil {
+		t.Fatal(rotateErr)
+	}
 	var frontier *CommitBuffer
 	b.writeBehind.mu.RLock()
 	if len(b.writeBehind.draining) > 0 {

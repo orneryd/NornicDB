@@ -22,13 +22,13 @@ func TestCompoundKeywordTriviaSpans(t *testing.T) {
 	for _, text := range []string{"OPTIONALMATCH", "OPTIONAL/* unfinished", "OPTIONAL // MATCH"} {
 		_, ok := keywordMatchAt(text, 0, "OPTIONAL MATCH", 0, len("OPTIONAL MATCH"))
 		require.False(t, ok, text)
-		require.False(t, startsWithKeywords(text, "OPTIONAL", "MATCH"), text)
-		require.Equal(t, -1, findMultiWordKeywordIndex(text, "OPTIONAL", "MATCH"), text)
+		require.False(t, startsWithKeywords(t.Context(), text, "OPTIONAL", "MATCH"), text)
+		require.Equal(t, -1, findMultiWordKeywordIndex(t.Context(), text, "OPTIONAL", "MATCH"), text)
 	}
 	for _, text := range []string{"OPTIONAL/*c*/MATCH (n)", "OPTIONAL //c\nMATCH (n)"} {
-		require.True(t, startsWithKeywords(text, "OPTIONAL", "MATCH"), text)
+		require.True(t, startsWithKeywords(t.Context(), text, "OPTIONAL", "MATCH"), text)
 		require.Equal(t, "(n)", pipelineClauseBody(text, "OPTIONAL MATCH"), text)
-		require.Equal(t, 0, findMultiWordKeywordIndex(text, "OPTIONAL", "MATCH"), text)
+		require.Equal(t, 0, findMultiWordKeywordIndex(t.Context(), text, "OPTIONAL", "MATCH"), text)
 	}
 	const text = "ON/*c*/CREATE //c\nSET n.x=1"
 	allocs := testing.AllocsPerRun(100, func() {
@@ -112,11 +112,11 @@ func TestCorrelatedOptionalImportTrivia(t *testing.T) {
 	for _, gap := range []string{" ", "/*c*/", " //c\n"} {
 		store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "optional_import_trivia")
 		exec := NewStorageExecutor(store)
-		_, err := store.CreateNode(&storage.Node{ID: "seed-1", Labels: []string{"Seed"}, Properties: map[string]interface{}{"name": "keep"}})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: "seed-1", Labels: []string{"Seed"}, Properties: map[string]interface{}{"name": "keep"}})
 		require.NoError(t, err)
-		_, err = store.CreateNode(&storage.Node{ID: "t-1", Labels: []string{"Target"}, Properties: map[string]interface{}{"name": "T1"}})
+		_, err = store.CreateNode(t.Context(), &storage.Node{ID: "t-1", Labels: []string{"Target"}, Properties: map[string]interface{}{"name": "T1"}})
 		require.NoError(t, err)
-		require.NoError(t, store.CreateEdge(&storage.Edge{ID: "e-1", Type: "REL", StartNode: "seed-1", EndNode: "t-1"}))
+		require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "e-1", Type: "REL", StartNode: "seed-1", EndNode: "t-1"}))
 		outer := "MATCH (seed:Seed) WHERE seed.name = 'none' OPTIONAL" + gap + "MATCH (seed)-[:REL]->(t:Target) WITH seed, t"
 		value, found, err := exec.resolveCorrelatedImportValue(t.Context(), outer, "seed", "seed-1", "t", map[string]map[string]interface{}{})
 		require.NoError(t, err, gap)

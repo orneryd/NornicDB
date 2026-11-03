@@ -3,6 +3,7 @@
 package cyphertext
 
 import (
+	"context"
 	"strings"
 	"unicode/utf8"
 )
@@ -63,46 +64,117 @@ func ScanStringToken(text string, start int) (int, bool, bool) {
 	if start < 0 || start >= len(text) || !IsStringQuote(text[start]) {
 		return start, false, false
 	}
-	return scanQuotedText(text, start, false, nil)
+	end, escaped, closed := scanQuotedText(text, start, false, nil)
+	return end, escaped, closed
 }
 
 // ScanInterpolatedText skips expression bodies before looking for the outer
 // string terminator. expressionEnd owns the expression's structural grammar.
 func ScanInterpolatedText(text string, start int, expressionEnd func(int) int) (int, bool) {
-	end, _, closed := scanQuotedText(text, start, false, expressionEnd)
+	controls := quotedScanControls{expressionEnd: expressionEnd}
+	end, _, closed := scanQuotedText(text, start, false, &controls)
 	return end, closed
 }
 
-func scanQuotedText(text string, start int, doubled bool, expressionEnd func(int) int) (int, bool, bool) {
+// ScanQuotedTextContext reads the same quoted-token grammar while retaining
+// the caller's cancellation. It does not parse interpolated expression bodies.
+func ScanQuotedTextContext(ctx context.Context, text string, start int) (int, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return start, false, err
+	}
+	var scanErr error
+	probe := func() error {
+		scanErr = ctx.Err()
+		return scanErr
+	}
+	limit := len(text)
+	if start >= 0 && start < len(text) && len(text)-start > 257 {
+		limit = start + 257
+	}
+	controls := quotedScanControls{fullText: text, probe: probe}
+	end, _, closed := scanQuotedText(text[:limit], start, true, &controls)
+	return end, closed, scanErr
+}
+
+// quotedScanControls binds either interpolation grammar or a bounded source
+// window to one scan operation. Context-free scans need neither policy.
+type quotedScanControls struct {
+	expressionEnd func(int) int
+	fullText      string
+	probe         func() error
+}
+
+// extend exposes another bounded window only when a scan or its one-byte
+// escape lookahead exhausts the current view. It never rescans consumed text.
+func (c *quotedScanControls) extend(text string) string {
+	if c == nil || len(text) >= len(c.fullText) {
+		return text
+	}
+	if c.probe() != nil {
+		return text
+	}
+	limit := min(len(text)+256, len(c.fullText))
+	return c.fullText[:limit]
+}
+
+// scanQuotedText owns the quoted grammar. Context-free calls retain the
+// original byte loop; context-owned calls expand their source only on demand.
+func scanQuotedText(text string, start int, doubled bool, controls *quotedScanControls) (int, bool, bool) {
 	if start < 0 || start >= len(text) || !IsQuote(text[start]) {
 		return start, false, false
 	}
 	quote := text[start]
 	hasEscape := false
-	for index := start + 1; index < len(text); index++ {
-		if text[index] == '\\' && quote != '`' && index+1 < len(text) {
+	index := start + 1
+	for {
+		for ; index < len(text); index++ {
+			if text[index] == '\\' && quote != '`' {
+				if index+1 < len(text) {
+					goto escapedByte
+				}
+				text = controls.extend(text)
+				if index+1 < len(text) {
+					goto escapedByte
+				}
+			}
+			if text[index] == '{' && controls != nil && controls.expressionEnd != nil {
+				end := controls.expressionEnd(index)
+				if end < index {
+					return len(text), hasEscape, false
+				}
+				index = end
+				continue
+			}
+			if text[index] != quote {
+				continue
+			}
+			if doubled && quote == '`' {
+				if index+1 < len(text) {
+					if text[index+1] == quote {
+						goto doubledBacktick
+					}
+				} else {
+					text = controls.extend(text)
+					if index+1 < len(text) && text[index+1] == quote {
+						goto doubledBacktick
+					}
+				}
+			}
+			return index + 1, hasEscape, true
+		escapedByte:
 			hasEscape = true
 			index++
 			continue
-		}
-		if expressionEnd != nil && text[index] == '{' {
-			end := expressionEnd(index)
-			if end < index {
-				return len(text), hasEscape, false
-			}
-			index = end
-			continue
-		}
-		if text[index] != quote {
-			continue
-		}
-		if doubled && quote == '`' && index+1 < len(text) && text[index+1] == quote {
+		doubledBacktick:
 			index++
 			continue
 		}
-		return index + 1, hasEscape, true
+		expanded := controls.extend(text)
+		if len(expanded) <= len(text) {
+			return len(text), hasEscape, false
+		}
+		text = expanded
 	}
-	return len(text), hasEscape, false
 }
 
 // HasAdjacentStringLiterals reports two string tokens separated only by

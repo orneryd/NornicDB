@@ -1,6 +1,7 @@
 package multidb
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -15,14 +16,14 @@ type migrationMarkerRejector struct {
 	hits   int
 }
 
-func (e *migrationMarkerRejector) CreateNode(node *storage.Node) (storage.NodeID, error) {
+func (e *migrationMarkerRejector) CreateNode(ctx context.Context, node *storage.Node) (storage.NodeID, error) {
 	if e.create && node.ID == storage.NodeID("system:"+migrationStatusKey) {
 		e.hits++
 		return "", e.reject
 	}
-	return e.Engine.CreateNode(node)
+	return e.Engine.CreateNode(ctx, node)
 }
-func (e *migrationMarkerRejector) UpdateNode(request storage.NodeUpdateRequest) error {
+func (e *migrationMarkerRejector) UpdateNode(ctx context.Context, request storage.NodeUpdateRequest) error {
 	if request.After.ID == storage.NodeID("system:"+migrationStatusKey) {
 		// Native blind writes upsert. Explicitly exercise the existing engine
 		// ErrNotFound contract too, so its subsequent Create failure cannot
@@ -33,7 +34,7 @@ func (e *migrationMarkerRejector) UpdateNode(request storage.NodeUpdateRequest) 
 		e.hits++
 		return e.reject
 	}
-	return e.Engine.UpdateNode(request)
+	return e.Engine.UpdateNode(ctx, request)
 }
 
 func TestPR1655MigrationCompletionRejectsFailedMarker(t *testing.T) {
@@ -51,11 +52,11 @@ func TestPR1655MigrationCompletionRejectsFailedMarker(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				inner := newLegacyTestEngine(t)
 				if legacy {
-					_, err := inner.CreateNode(&storage.Node{ID: "old-node", Labels: []string{"Legacy"}, Properties: map[string]any{"value": "preserved"}})
+					_, err := inner.CreateNode(t.Context(), &storage.Node{ID: "old-node", Labels: []string{"Legacy"}, Properties: map[string]any{"value": "preserved"}})
 					require.NoError(t, err)
 				}
 				if !create {
-					_, err := inner.CreateNode(&storage.Node{ID: storage.NodeID("system:" + migrationStatusKey), Properties: map[string]any{"status": "pending"}})
+					_, err := inner.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID("system:" + migrationStatusKey), Properties: map[string]any{"status": "pending"}})
 					require.NoError(t, err)
 				}
 				rejected := errors.New("migration marker rejected")
@@ -63,9 +64,9 @@ func TestPR1655MigrationCompletionRejectsFailedMarker(t *testing.T) {
 				manager := &DatabaseManager{inner: fault, config: DefaultConfig()}
 				require.ErrorIs(t, manager.migrateLegacyData(), rejected)
 				require.Equal(t, 1, fault.hits)
-				require.False(t, manager.isMigrationComplete())
+				require.False(t, manager.isMigrationComplete(t.Context()))
 				if legacy {
-					node, err := inner.GetNode("nornic:old-node")
+					node, err := inner.GetNode(t.Context(), "nornic:old-node")
 					require.NoError(t, err)
 					require.Equal(t, "preserved", node.Properties["value"])
 				}

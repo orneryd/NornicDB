@@ -21,9 +21,6 @@ func WithHotPathTrace(ctx context.Context, trace *HotPathTrace) context.Context 
 }
 
 func hotPathTraceFromContext(ctx context.Context) *HotPathTrace {
-	if ctx == nil {
-		return nil
-	}
 	v := ctx.Value(hotPathTraceKey{})
 	if v == nil {
 		return nil

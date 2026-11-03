@@ -88,7 +88,7 @@ func TestStorageValidationLocalizedConfigurationAndPropertyErrors(t *testing.T) 
 }
 
 func TestStorageValidationLocalizedConstraintViolation(t *testing.T) {
-	err := validateRelExistenceOnEdges([]*Edge{{ID: "tenant:edge-1", Type: "OWNS"}}, Constraint{
+	err := validateRelExistenceOnEdges(context.Background(), []*Edge{{ID: "tenant:edge-1", Type: "OWNS"}}, Constraint{
 		Type:       ConstraintExists,
 		Label:      "OWNS",
 		Properties: []string{"since"},
@@ -104,8 +104,9 @@ func TestStorageValidationLocalizedConstraintViolation(t *testing.T) {
 
 func TestStorageValidationLocalizedTransactionErrorsPreserveSentinels(t *testing.T) {
 	t.Run("closed engine", func(t *testing.T) {
-		engine := &BadgerEngine{closed: true}
-		_, err := engine.BeginTransaction()
+		engine := &BadgerEngine{}
+		engine.work.CloseAdmission()
+		_, err := engine.BeginTransaction(t.Context())
 		requireStorageValidationLocalizedError(t, err, localization.MessageStorageTransactionEngineClosed, "engine is closed")
 		require.ErrorIs(t, err, ErrStorageClosed)
 	})

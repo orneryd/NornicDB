@@ -35,7 +35,7 @@ func TestUnifiedPluginLoading(t *testing.T) {
 
 		// Load APOC plugin
 		apocDir := filepath.Dir(apocPlugin)
-		err := LoadPluginsFromDir(apocDir, nil)
+		err := LoadPluginsFromDir(t.Context(), apocDir, nil)
 		require.NoError(t, err)
 
 		// Verify plugin loaded
@@ -74,7 +74,8 @@ func TestUnifiedPluginLoading(t *testing.T) {
 		pluginsMu.Unlock()
 
 		// Create minimal Heimdall context
-		ctx := &heimdall.SubsystemContext{
+		// Create minimal host metadata
+		host := &heimdall.SubsystemHost{
 			Config: heimdall.Config{
 				Model:       "test-model",
 				ModelsDir:   "models",
@@ -85,7 +86,7 @@ func TestUnifiedPluginLoading(t *testing.T) {
 
 		// Load Heimdall plugin
 		heimdallDir := filepath.Dir(heimdallPlugin)
-		err := LoadPluginsFromDir(heimdallDir, ctx)
+		err := LoadPluginsFromDir(t.Context(), heimdallDir, host)
 		require.NoError(t, err)
 
 		// Verify plugin loaded
@@ -144,7 +145,8 @@ func TestUnifiedPluginLoading(t *testing.T) {
 		pluginsMu.Unlock()
 
 		// Create Heimdall context
-		ctx := &heimdall.SubsystemContext{
+		// Create minimal host metadata
+		host := &heimdall.SubsystemHost{
 			Config: heimdall.Config{
 				Model:       "test-model",
 				ModelsDir:   "models",
@@ -154,7 +156,7 @@ func TestUnifiedPluginLoading(t *testing.T) {
 		}
 
 		// Load all plugins from the mixed directory
-		err = LoadPluginsFromDir(tmpDir, ctx)
+		err = LoadPluginsFromDir(t.Context(), tmpDir, host)
 		require.NoError(t, err)
 
 		// Verify both plugins loaded
@@ -201,7 +203,7 @@ func TestPluginAutoDetection(t *testing.T) {
 		pluginsMu.Unlock()
 
 		apocDir := filepath.Dir(apocPlugin)
-		err := LoadPluginsFromDir(apocDir, nil)
+		err := LoadPluginsFromDir(t.Context(), apocDir, nil)
 		require.NoError(t, err)
 
 		plugins := ListLoadedPlugins()
@@ -221,7 +223,8 @@ func TestPluginAutoDetection(t *testing.T) {
 		pluginsInitialized = false
 		pluginsMu.Unlock()
 
-		ctx := &heimdall.SubsystemContext{
+		// Create minimal host metadata
+		host := &heimdall.SubsystemHost{
 			Config: heimdall.Config{
 				Model:       "test-model",
 				ModelsDir:   "models",
@@ -231,7 +234,7 @@ func TestPluginAutoDetection(t *testing.T) {
 		}
 
 		heimdallDir := filepath.Dir(heimdallPlugin)
-		err := LoadPluginsFromDir(heimdallDir, ctx)
+		err := LoadPluginsFromDir(t.Context(), heimdallDir, host)
 		require.NoError(t, err)
 
 		plugins := ListLoadedPlugins()
@@ -264,7 +267,7 @@ func TestPluginFunctionsStillWork(t *testing.T) {
 
 		// Load APOC plugin
 		apocDir := filepath.Dir(apocPlugin)
-		err := LoadPluginsFromDir(apocDir, nil)
+		err := LoadPluginsFromDir(t.Context(), apocDir, nil)
 		require.NoError(t, err)
 
 		// Test specific functions still work
@@ -309,7 +312,8 @@ func TestHeimdallPluginLifecycle(t *testing.T) {
 		pluginsMu.Unlock()
 
 		// Create Heimdall context
-		ctx := &heimdall.SubsystemContext{
+		// Create minimal host metadata
+		host := &heimdall.SubsystemHost{
 			Config: heimdall.Config{
 				Model:       "test-model",
 				ModelsDir:   "models",
@@ -320,7 +324,7 @@ func TestHeimdallPluginLifecycle(t *testing.T) {
 
 		// Load plugin
 		heimdallDir := filepath.Dir(heimdallPlugin)
-		err := LoadPluginsFromDir(heimdallDir, ctx)
+		err := LoadPluginsFromDir(t.Context(), heimdallDir, host)
 		require.NoError(t, err)
 
 		// Get plugin from SubsystemManager
@@ -381,7 +385,7 @@ func TestPluginLoadingSequence(t *testing.T) {
 
 		// Load APOC without Heimdall context (simulates DB init)
 		apocDir := filepath.Dir(apocPlugin)
-		err := LoadPluginsFromDir(apocDir, nil)
+		err := LoadPluginsFromDir(t.Context(), apocDir, nil)
 		require.NoError(t, err)
 
 		plugins := ListLoadedPlugins()
@@ -403,7 +407,8 @@ func TestPluginLoadingSequence(t *testing.T) {
 		loadedPlugins = newLoaded
 		pluginsMu.Unlock()
 
-		ctx := &heimdall.SubsystemContext{
+		// Create minimal host metadata
+		host := &heimdall.SubsystemHost{
 			Config: heimdall.Config{
 				Model:       "test-model",
 				ModelsDir:   "models",
@@ -413,7 +418,7 @@ func TestPluginLoadingSequence(t *testing.T) {
 		}
 
 		heimdallDir := filepath.Dir(heimdallPlugin)
-		err := LoadPluginsFromDir(heimdallDir, ctx)
+		err := LoadPluginsFromDir(t.Context(), heimdallDir, host)
 		require.NoError(t, err)
 
 		// Now should have both types
@@ -458,7 +463,7 @@ func TestPluginIsolation(t *testing.T) {
 
 		// Load APOC first
 		apocDir := filepath.Dir(apocPlugin)
-		err := LoadPluginsFromDir(apocDir, nil)
+		err := LoadPluginsFromDir(t.Context(), apocDir, nil)
 		require.NoError(t, err)
 
 		// Heimdall subsystem should be clean
@@ -474,7 +479,8 @@ func TestPluginIsolation(t *testing.T) {
 		pluginsInitialized = false
 		pluginsMu.Unlock()
 
-		ctx := &heimdall.SubsystemContext{
+		// Create minimal host metadata
+		host := &heimdall.SubsystemHost{
 			Config: heimdall.Config{
 				Model:       "test-model",
 				ModelsDir:   "models",
@@ -485,7 +491,7 @@ func TestPluginIsolation(t *testing.T) {
 
 		// Load only Heimdall plugin
 		heimdallDir := filepath.Dir(heimdallPlugin)
-		err := LoadPluginsFromDir(heimdallDir, ctx)
+		err := LoadPluginsFromDir(t.Context(), heimdallDir, host)
 		require.NoError(t, err)
 
 		// Should have no Cypher functions

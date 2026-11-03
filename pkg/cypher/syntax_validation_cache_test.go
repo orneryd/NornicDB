@@ -45,7 +45,7 @@ func TestSyntaxValidationCachePerValidator(t *testing.T) {
 	require.NoError(t, exec.validateSyntax(context.Background(), valid, false, syntaxStatement))
 	require.True(t, exec.hasCachedValidSyntax(valid, syntaxValidNornic|syntaxValidANTLR))
 	require.False(t, exec.hasCachedValidSyntax("", syntaxValidNornic))
-	exec.markCachedValidSyntax("", syntaxValidNornic)
+	exec.markCachedValidSyntax(t.Context(), "", syntaxValidNornic)
 
 	// Each shard keeps at most its share of the limit, and marking a known
 	// text for another validator adds no entry.
@@ -60,10 +60,10 @@ func TestSyntaxValidationCachePerValidator(t *testing.T) {
 		return total
 	}
 	for i := range 3 {
-		exec.markCachedValidSyntax(fmt.Sprintf("RETURN %d", i), syntaxValidNornic)
+		exec.markCachedValidSyntax(t.Context(), fmt.Sprintf("RETURN %d", i), syntaxValidNornic)
 	}
 	before := entries()
-	exec.markCachedValidSyntax("RETURN 2", syntaxValidANTLR)
+	exec.markCachedValidSyntax(t.Context(), "RETURN 2", syntaxValidANTLR)
 	require.Equal(t, before, entries())
 	require.True(t, exec.hasCachedValidSyntax("RETURN 7", syntaxValidNornic), "a literal variant, through the canonical form")
 	require.True(t, exec.hasCachedValidSyntax("RETURN 7", syntaxValidANTLR), "RETURN 2 was marked for ANTLR, canonical form included")
@@ -77,7 +77,7 @@ func TestSyntaxValidationCacheRejectedExtension(t *testing.T) {
 	config.SetParserType(config.ParserTypeANTLR)
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	rejected := "SHOW LIMITS YIELD name WHERE name IN ['a',]"
-	require.True(t, isNornicExtensionStatement(rejected))
+	require.True(t, isNornicExtensionStatement(t.Context(), rejected))
 	require.Error(t, exec.validateSyntax(context.Background(), rejected, false, syntaxStatement))
 	require.False(t, exec.hasCachedValidSyntax(rejected, syntaxValidANTLR))
 }

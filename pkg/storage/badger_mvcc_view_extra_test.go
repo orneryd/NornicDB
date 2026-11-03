@@ -46,7 +46,7 @@ var mvccViewVersionsHarnesses = []mvccViewVersionsHarness{
 			return record
 		},
 		createEntity: func(t *testing.T, engine *BadgerEngine) {
-			_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"N"}})
+			_, err := engine.CreateNode(context.Background(), &Node{ID: "test:n1", Labels: []string{"N"}})
 			require.NoError(t, err)
 		},
 		versionKey: func(t *testing.T, engine *BadgerEngine, txn *badger.Txn, version MVCCVersion) []byte {
@@ -83,11 +83,11 @@ var mvccViewVersionsHarnesses = []mvccViewVersionsHarness{
 			return record
 		},
 		createEntity: func(t *testing.T, engine *BadgerEngine) {
-			_, err := engine.CreateNode(&Node{ID: "test:a", Labels: []string{"N"}})
+			_, err := engine.CreateNode(context.Background(), &Node{ID: "test:a", Labels: []string{"N"}})
 			require.NoError(t, err)
-			_, err = engine.CreateNode(&Node{ID: "test:b", Labels: []string{"N"}})
+			_, err = engine.CreateNode(context.Background(), &Node{ID: "test:b", Labels: []string{"N"}})
 			require.NoError(t, err)
-			require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL"}))
+			require.NoError(t, engine.CreateEdge(context.Background(), &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL"}))
 		},
 		versionKey: func(t *testing.T, engine *BadgerEngine, txn *badger.Txn, version MVCCVersion) []byte {
 			key, err := engine.mvccEdgeVersionKeyString(txn, "test:e1", version)
@@ -123,7 +123,7 @@ func TestBadgerMVCC_WithViewMVCCVersionsFromKey_NodeAndEdge(t *testing.T) {
 			version := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 1}
 			unknownKey := h.unknownKey(version)
 			unknownRec := h.unknownRecord(t)
-			require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+			require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 				return txn.Set(unknownKey, unknownRec)
 			}))
 
@@ -142,7 +142,7 @@ func TestBadgerMVCC_WithViewMVCCVersionsFromKey_NodeAndEdge(t *testing.T) {
 
 			h.createEntity(t, engine)
 			version := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 1}
-			require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+			require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 				return txn.Set(h.versionKey(t, engine, txn, version), []byte("corrupt-"+h.name+"-mvcc-record"))
 			}))
 
@@ -157,7 +157,7 @@ func TestBadgerMVCC_WithViewMVCCVersionsFromKey_NodeAndEdge(t *testing.T) {
 			h.createEntity(t, engine)
 			version := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 202}
 			record := h.validRecord(t)
-			require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+			require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 				return txn.Set(h.versionKey(t, engine, txn, version), record)
 			}))
 
@@ -180,13 +180,13 @@ func TestBadgerMVCC_WithViewMVCCVersionsFromKey_NodeAndEdge(t *testing.T) {
 func TestBadgerEngine_RebuildMVCCHeads_NilContext(t *testing.T) {
 	engine := newRebuildHeadsFixture(t, 100)
 
-	_, err := engine.CreateNode(&Node{ID: "test:nx", Labels: []string{"Doc"}, Properties: map[string]any{"v": 1}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:nx", Labels: []string{"Doc"}, Properties: map[string]any{"v": 1}})
 	require.NoError(t, err)
-	require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:nx", Labels: []string{"Doc"}, Properties: map[string]any{"v": 2}}}))
+	require.NoError(t, engine.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:nx", Labels: []string{"Doc"}, Properties: map[string]any{"v": 2}}}))
 
 	// nil context branch should default to Background and succeed.
-	require.NoError(t, engine.RebuildMVCCHeads(nil))
-	_, err = engine.GetNodeCurrentHead("test:nx")
+	require.NoError(t, engine.RebuildMVCCHeads(context.Background()))
+	_, err = engine.GetNodeCurrentHead(context.Background(), "test:nx")
 	require.NoError(t, err)
 
 	// Also keep a direct context path active for the same test flow.

@@ -67,17 +67,17 @@ func TestStoredReaderSurfaceIncludesHiddenEntities(t *testing.T) {
 		{ID: "other:z", Labels: []string{"A"}},
 		{ID: "ns:iso", Labels: []string{"C"}},
 	} {
-		_, err := base.CreateNode(node)
+		_, err := base.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 	for _, edge := range []*Edge{
 		{ID: "ns:r", StartNode: "ns:a", EndNode: "ns:b", Type: "LINK"},
 		{ID: "ns:x", StartNode: "ns:a", EndNode: "ns:b", Type: "LINK"},
 	} {
-		require.NoError(t, base.CreateEdge(edge))
+		require.NoError(t, base.CreateEdge(t.Context(), edge))
 	}
-	require.NoError(t, base.SetManualSuppression(StoredEntityNodeKind, "ns:h", true))
-	require.NoError(t, base.SetManualSuppression(StoredEntityEdgeKind, "ns:x", true))
+	require.NoError(t, base.SetManualSuppression(context.Background(), StoredEntityNodeKind, "ns:h", true))
+	require.NoError(t, base.SetManualSuppression(context.Background(), StoredEntityEdgeKind, "ns:x", true))
 	ctx := context.Background()
 
 	t.Run("physical readers", func(t *testing.T) {
@@ -87,10 +87,10 @@ func TestStoredReaderSurfaceIncludesHiddenEntities(t *testing.T) {
 			"unwrapped": unwrappingEngine{Engine: visibleOnlyEngine{base}, inner: base},
 		} {
 			t.Run(name, func(t *testing.T) {
-				node, err := GetStoredNode(engine, "ns:h")
+				node, err := GetStoredNode(t.Context(), engine, "ns:h")
 				require.NoError(t, err)
 				require.Equal(t, NodeID("ns:h"), node.ID)
-				edge, err := GetStoredEdge(engine, "ns:x")
+				edge, err := GetStoredEdge(t.Context(), engine, "ns:x")
 				require.NoError(t, err)
 				require.Equal(t, EdgeID("ns:x"), edge.ID)
 				require.Equal(t, []string{"ns:r", "ns:x"}, idsOf(t).edges(GetStoredOutgoingEdges(ctx, engine, "ns:a")))
@@ -103,7 +103,7 @@ func TestStoredReaderSurfaceIncludesHiddenEntities(t *testing.T) {
 				}))
 				require.Equal(t, []string{"ns:a", "ns:h", "other:z"}, idsOf(t).nodes(streamed, nil))
 				var edges []*Edge
-				require.NoError(t, StreamStoredEdgesByType(nil, engine, "LINK", func(edge *Edge) error {
+				require.NoError(t, StreamStoredEdgesByType(ctx, engine, "LINK", func(edge *Edge) error {
 					edges = append(edges, edge)
 					return nil
 				}))
@@ -136,10 +136,10 @@ func TestStoredReaderSurfaceIncludesHiddenEntities(t *testing.T) {
 		for name, inner := range map[string]Engine{"badger": base, "wal": walEngine} {
 			t.Run(name, func(t *testing.T) {
 				ns := NewNamespacedEngine(inner, "ns")
-				node, err := ns.GetStoredNode("h")
+				node, err := ns.GetStoredNode(t.Context(), "h")
 				require.NoError(t, err)
 				require.Equal(t, NodeID("h"), node.ID)
-				edge, err := ns.GetStoredEdge("x")
+				edge, err := ns.GetStoredEdge(t.Context(), "x")
 				require.NoError(t, err)
 				require.Equal(t, EdgeID("x"), edge.ID)
 				require.Equal(t, []string{"r", "x"}, idsOf(t).edges(ns.GetStoredOutgoingEdges(ctx, "a")))
@@ -167,9 +167,9 @@ func TestStoredReaderSurfaceIncludesHiddenEntities(t *testing.T) {
 		engine := visibleOnlyEngine{base}
 		_, ok := StoredReader(engine)
 		require.False(t, ok)
-		_, err := GetStoredNode(engine, "ns:h")
+		_, err := GetStoredNode(t.Context(), engine, "ns:h")
 		require.ErrorIs(t, err, ErrNotFound)
-		_, err = GetStoredEdge(engine, "ns:x")
+		_, err = GetStoredEdge(t.Context(), engine, "ns:x")
 		require.ErrorIs(t, err, ErrNotFound)
 		require.Equal(t, []string{"ns:r"}, idsOf(t).edges(GetStoredOutgoingEdges(ctx, engine, "ns:a")))
 		require.Equal(t, []string{"ns:r"}, idsOf(t).edges(GetStoredIncomingEdges(ctx, engine, "ns:b")))
@@ -180,20 +180,20 @@ func TestStoredReaderSurfaceIncludesHiddenEntities(t *testing.T) {
 			return nil
 		}))
 		require.Equal(t, []string{"ns:r"}, idsOf(t).edges(edges, nil))
-		count, err := NewNamespacedEngine(engine, "ns").NodeCountByLabelInNamespace("ns", "A")
+		count, err := NewNamespacedEngine(engine, "ns").NodeCountByLabelInNamespace(t.Context(), "ns", "A")
 		require.NoError(t, err)
 		require.EqualValues(t, 1, count, "the fallback count keeps its namespace and visibility")
 	})
 
 	t.Run("transaction", func(t *testing.T) {
-		tx, err := base.BeginTransaction()
+		tx, err := base.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = tx.Rollback() })
 		require.NoError(t, tx.SetNamespace("ns"))
-		node, err := tx.GetStoredNode("ns:h")
+		node, err := tx.GetStoredNode(t.Context(), "ns:h")
 		require.NoError(t, err)
 		require.Equal(t, NodeID("ns:h"), node.ID)
-		edge, err := tx.GetStoredEdge("ns:x")
+		edge, err := tx.GetStoredEdge(t.Context(), "ns:x")
 		require.NoError(t, err)
 		require.Equal(t, EdgeID("ns:x"), edge.ID)
 		require.Equal(t, []string{"ns:r", "ns:x"}, idsOf(t).edges(tx.GetStoredOutgoingEdges(ctx, "ns:a")))
@@ -206,11 +206,11 @@ func TestStoredReaderSurfaceIncludesHiddenEntities(t *testing.T) {
 		}))
 		require.Equal(t, []string{"ns:r", "ns:x"}, idsOf(t).edges(edges, nil))
 
-		_, err = tx.CreateNode(&Node{ID: "ns:n", Labels: []string{"A"}, Properties: map[string]any{"id": "n"}})
+		_, err = tx.CreateNode(t.Context(), &Node{ID: "ns:n", Labels: []string{"A"}, Properties: map[string]any{"id": "n"}})
 		require.NoError(t, err)
-		require.NoError(t, tx.DeleteEdge("ns:r"))
-		require.NoError(t, tx.CreateEdge(&Edge{ID: "ns:y", StartNode: "ns:a", EndNode: "ns:b", Type: "LINK"}))
-		require.NoError(t, tx.DeleteGraphNode("ns:iso", CascadeEdges))
+		require.NoError(t, tx.DeleteEdge(t.Context(), "ns:r"))
+		require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "ns:y", StartNode: "ns:a", EndNode: "ns:b", Type: "LINK"}))
+		require.NoError(t, tx.DeleteGraphNode(t.Context(), "ns:iso", CascadeEdges))
 		summary := tx.PendingChanges(false)
 		require.Equal(t, "ns", summary.Namespace)
 		require.Positive(t, summary.Operations)

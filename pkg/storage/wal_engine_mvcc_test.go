@@ -24,16 +24,16 @@ func TestWALEngine_MVCCDelegationAndFallback(t *testing.T) {
 		wal := newLoggedMVCCDelegationWAL(t, engine)
 
 		nodeID := NodeID(prefixTestID("wal-mvcc-node"))
-		_, err := wal.CreateNode(&Node{ID: nodeID, Labels: []string{"Doc"}, Properties: map[string]any{"version": 1}})
+		_, err := wal.CreateNode(t.Context(), &Node{ID: nodeID, Labels: []string{"Doc"}, Properties: map[string]any{"version": 1}})
 		require.NoError(t, err)
-		require.NoError(t, wal.UpdateNode(NodeUpdateRequest{After: &Node{ID: nodeID, Labels: []string{"Doc"}, Properties: map[string]any{"version": 2}}}))
-		require.NoError(t, wal.UpdateNode(NodeUpdateRequest{After: &Node{ID: nodeID, Labels: []string{"Doc"}, Properties: map[string]any{"version": 3}}}))
+		require.NoError(t, wal.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: nodeID, Labels: []string{"Doc"}, Properties: map[string]any{"version": 2}}}))
+		require.NoError(t, wal.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: nodeID, Labels: []string{"Doc"}, Properties: map[string]any{"version": 3}}}))
 
-		head, err := wal.GetNodeCurrentHead(nodeID)
+		head, err := wal.GetNodeCurrentHead(context.Background(), nodeID)
 		require.NoError(t, err)
 		require.False(t, head.Version.IsZero())
 
-		nodeAt, err := wal.GetNodeVisibleAt(nodeID, head.Version)
+		nodeAt, err := wal.GetNodeVisibleAt(t.Context(), nodeID, head.Version)
 		require.NoError(t, err)
 		require.EqualValues(t, 3, nodeAt.Properties["version"])
 
@@ -44,18 +44,18 @@ func TestWALEngine_MVCCDelegationAndFallback(t *testing.T) {
 
 		start := NodeID(prefixTestID("wal-mvcc-start"))
 		end := NodeID(prefixTestID("wal-mvcc-end"))
-		_, err = wal.CreateNode(&Node{ID: start, Labels: []string{"Node"}})
+		_, err = wal.CreateNode(t.Context(), &Node{ID: start, Labels: []string{"Node"}})
 		require.NoError(t, err)
-		_, err = wal.CreateNode(&Node{ID: end, Labels: []string{"Node"}})
+		_, err = wal.CreateNode(t.Context(), &Node{ID: end, Labels: []string{"Node"}})
 		require.NoError(t, err)
 		edgeID := EdgeID(prefixTestID("wal-mvcc-edge"))
-		require.NoError(t, wal.CreateEdge(&Edge{ID: edgeID, StartNode: start, EndNode: end, Type: "LINKS"}))
+		require.NoError(t, wal.CreateEdge(t.Context(), &Edge{ID: edgeID, StartNode: start, EndNode: end, Type: "LINKS"}))
 
-		edgeHead, err := wal.GetEdgeCurrentHead(edgeID)
+		edgeHead, err := wal.GetEdgeCurrentHead(context.Background(), edgeID)
 		require.NoError(t, err)
 		require.False(t, edgeHead.Version.IsZero())
 
-		edgeAt, err := wal.GetEdgeVisibleAt(edgeID, edgeHead.Version)
+		edgeAt, err := wal.GetEdgeVisibleAt(t.Context(), edgeID, edgeHead.Version)
 		require.NoError(t, err)
 		require.Equal(t, edgeID, edgeAt.ID)
 
@@ -75,16 +75,16 @@ func TestWALEngine_MVCCDelegationAndFallback(t *testing.T) {
 		wal := newLoggedMVCCDelegationWAL(t, &nonMVCCEngine{Engine: baseInner})
 
 		version := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 1}
-		_, err := wal.GetNodeCurrentHead(NodeID("nornic:wal-head-node"))
+		_, err := wal.GetNodeCurrentHead(context.Background(), NodeID("nornic:wal-head-node"))
 		require.ErrorIs(t, err, ErrNotImplemented)
-		_, err = wal.GetEdgeCurrentHead(EdgeID("nornic:wal-head-edge"))
+		_, err = wal.GetEdgeCurrentHead(context.Background(), EdgeID("nornic:wal-head-edge"))
 		require.ErrorIs(t, err, ErrNotImplemented)
 		require.ErrorIs(t, wal.RebuildMVCCHeads(context.Background()), ErrNotImplemented)
 		_, err = wal.PruneMVCCVersions(context.Background(), MVCCPruneOptions{MaxVersionsPerKey: 1})
 		require.ErrorIs(t, err, ErrNotImplemented)
-		_, err = wal.GetNodeVisibleAt(NodeID("nornic:wal-head-node"), version)
+		_, err = wal.GetNodeVisibleAt(t.Context(), NodeID("nornic:wal-head-node"), version)
 		require.ErrorIs(t, err, ErrNotImplemented)
-		_, err = wal.GetEdgeVisibleAt(EdgeID("nornic:wal-head-edge"), version)
+		_, err = wal.GetEdgeVisibleAt(t.Context(), EdgeID("nornic:wal-head-edge"), version)
 		require.ErrorIs(t, err, ErrNotImplemented)
 	})
 }

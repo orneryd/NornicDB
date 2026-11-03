@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -49,7 +50,7 @@ func TestWALBindingContextValidation(t *testing.T) {
 func TestWALBindingContextDoesNotGuessFromReopenedDestination(t *testing.T) {
 	dir := t.TempDir()
 	b := reviewBindingEngine(t, dir)
-	_, err := b.CreateNode(&Node{ID: "foreign:a", Properties: map[string]any{"unrelated": "keep"}})
+	_, err := b.CreateNode(t.Context(), &Node{ID: "foreign:a", Properties: map[string]any{"unrelated": "keep"}})
 	require.NoError(t, err)
 	require.NoError(t, b.Close())
 	b = reviewBindingEngine(t, dir)
@@ -81,19 +82,19 @@ func TestWALBindingContextMixedPrefixAndRestart(t *testing.T) {
 			t.Cleanup(func() { _ = capture.Close() })
 			source.SetBufferedCommitWAL(capture)
 			for i := 0; i < 4; i++ {
-				tx, err := source.BeginTransaction()
+				tx, err := source.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				require.NoError(t, tx.SetNamespace("mixed"))
 				require.NoError(t, tx.SetImplicit(true))
 				node := &Node{ID: "mixed:a", Properties: map[string]any{"value": int64(i)}}
 				if i == 0 {
-					_, err = tx.CreateNode(node)
+					_, err = tx.CreateNode(t.Context(), node)
 				} else {
-					err = tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits})
+					err = tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node, Policy: ClientNodeEdits})
 				}
 				require.NoError(t, err)
 				require.NoError(t, tx.Commit())
-				require.NoError(t, source.FlushWriteBehind(nil))
+				require.NoError(t, source.FlushWriteBehind(context.Background()))
 			}
 			entries, err := ReadWALEntriesFromDir(capture.Config().Dir)
 			require.NoError(t, err)
@@ -124,7 +125,7 @@ func TestWALBindingContextMixedPrefixAndRestart(t *testing.T) {
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = dest.Close() })
 			}
-			_, err = dest.CreateNode(&Node{ID: "mixed:sentinel", Properties: map[string]any{"other": "keep"}})
+			_, err = dest.CreateNode(t.Context(), &Node{ID: "mixed:sentinel", Properties: map[string]any{"other": "keep"}})
 			require.NoError(t, err)
 			if snapshot {
 				path := filepath.Join(t.TempDir(), "snapshot.bin")
@@ -142,10 +143,10 @@ func TestWALBindingContextMixedPrefixAndRestart(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, 3, n)
 			}
-			node, err := dest.GetNode("mixed:a")
+			node, err := dest.GetNode(t.Context(), "mixed:a")
 			require.NoError(t, err)
 			require.Equal(t, map[string]any{"value": int64(3)}, node.Properties)
-			node, err = dest.GetNode("mixed:sentinel")
+			node, err = dest.GetNode(t.Context(), "mixed:sentinel")
 			require.NoError(t, err)
 			require.Equal(t, map[string]any{"other": "keep"}, node.Properties)
 			assertPropertyDictionaryBijection(t, dest)
@@ -156,17 +157,17 @@ func TestWALBindingContextMixedPrefixAndRestart(t *testing.T) {
 func TestWALBindingContextRejectsUnknownSnapshotTokensAfterReopen(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
 	source := reviewBindingEngine(t, t.TempDir())
-	_, err := source.CreateNode(&Node{ID: "unknown:a", Properties: map[string]any{"value": int64(0)}})
+	_, err := source.CreateNode(t.Context(), &Node{ID: "unknown:a", Properties: map[string]any{"value": int64(0)}})
 	require.NoError(t, err)
 	capture, err := NewWAL(t.TempDir(), DefaultWALConfig())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = capture.Close() })
 	source.SetBufferedCommitWAL(capture)
-	tx, err := source.BeginTransaction()
+	tx, err := source.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("unknown"))
 	require.NoError(t, tx.SetImplicit(true))
-	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "unknown:a", Properties: map[string]any{"value": int64(1)}}, Policy: ClientNodeEdits}))
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "unknown:a", Properties: map[string]any{"value": int64(1)}}, Policy: ClientNodeEdits}))
 	require.NoError(t, tx.Commit())
 	entries, err := ReadWALEntriesFromDir(capture.Config().Dir)
 	require.NoError(t, err)
@@ -193,7 +194,7 @@ func TestWALBindingContextRejectsUnknownSnapshotTokensAfterReopen(t *testing.T) 
 	n, err := RecoverBufferedCommitsAtOpen(dest, legacy)
 	require.ErrorContains(t, err, "missing property name binding")
 	require.Zero(t, n)
-	node, err := dest.GetNode("unknown:a")
+	node, err := dest.GetNode(t.Context(), "unknown:a")
 	require.NoError(t, err)
 	require.Equal(t, map[string]any{"value": int64(0)}, node.Properties)
 }

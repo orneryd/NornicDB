@@ -97,7 +97,7 @@ func TestGh657_StaticPropertySubscripts(t *testing.T) {
 		{"[]", false},
 	} {
 		t.Run(testCase.expression, func(t *testing.T) {
-			err := validateStaticPropertySubscripts(testCase.expression, scope)
+			err := validateStaticPropertySubscripts(t.Context(), testCase.expression, scope)
 			if testCase.invalid {
 				require.Error(t, err)
 			} else {

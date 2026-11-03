@@ -129,12 +129,12 @@ func quantifiedGroupFrom(pattern string, from int, nested bool) (int, int, relat
 
 // parseQuantifiedPathMatch reads a MATCH body (pattern [WHERE …]) of one
 // pattern part with quantified groups. ok is false for any other body.
-func parseQuantifiedPathMatch(body string) (*quantifiedPathMatch, bool, error) {
+func parseQuantifiedPathMatch(ctx context.Context, body string) (*quantifiedPathMatch, bool, error) {
 	if !hasQuantifiedGroup(body) {
 		return nil, false, nil
 	}
 	pattern, where := body, ""
-	if index := topLevelKeywordIndex(body, "WHERE"); index >= 0 {
+	if index := topLevelKeywordIndex(ctx, body, "WHERE"); index >= 0 {
 		pattern, where = strings.TrimSpace(body[:index]), strings.TrimSpace(body[index+len("WHERE"):])
 	}
 	if len(splitTopLevelComma(pattern)) != 1 || !hasQuantifiedGroup(pattern) {
@@ -156,11 +156,11 @@ func parseQuantifiedPathMatch(body string) (*quantifiedPathMatch, bool, error) {
 		if grouped && open == at {
 			inner := strings.TrimSpace(pattern[open+1 : close])
 			piece := quantifiedPathPiece{group: true, min: quantifier.min, max: quantifier.max}
-			if index := topLevelKeywordIndex(inner, "WHERE"); index >= 0 {
+			if index := topLevelKeywordIndex(ctx, inner, "WHERE"); index >= 0 {
 				inner, piece.where = strings.TrimSpace(inner[:index]), strings.TrimSpace(inner[index+len("WHERE"):])
 			}
 			piece.chain, piece.first, piece.last = nameChainEnds(inner, name)
-			structure := matchPatternStructure(piece.chain)
+			structure := matchPatternStructure(ctx, piece.chain)
 			piece.variables = append(extractNodeVariables(structure), extractRelationshipVariables(structure)...)
 			m.pieces = append(m.pieces, piece)
 			at = quantifier.end
@@ -176,7 +176,7 @@ func parseQuantifiedPathMatch(body string) (*quantifiedPathMatch, bool, error) {
 		}
 		piece := quantifiedPathPiece{}
 		piece.chain, piece.first, piece.last = nameChainEnds(chain, name)
-		structure := matchPatternStructure(chain)
+		structure := matchPatternStructure(ctx, chain)
 		for _, variable := range append(extractNodeVariables(structure), extractRelationshipVariables(structure)...) {
 			outside[variable] = true
 		}
@@ -191,26 +191,26 @@ func parseQuantifiedPathMatch(body string) (*quantifiedPathMatch, bool, error) {
 		}
 	}
 	for index := range m.pieces {
-		splitDeferredGroupWhere(m.pieces, index)
+		splitDeferredGroupWhere(ctx, m.pieces, index)
 	}
 	return m, true, nil
 }
 
 // splitDeferredGroupWhere moves the conjuncts of the group pieces[index]'s
 // WHERE that read a variable a later piece binds to its deferred check.
-func splitDeferredGroupWhere(pieces []quantifiedPathPiece, index int) {
+func splitDeferredGroupWhere(ctx context.Context, pieces []quantifiedPathPiece, index int) {
 	piece := &pieces[index]
 	if !piece.group || piece.where == "" {
 		return
 	}
 	var later []string
 	for _, next := range pieces[index+1:] {
-		structure := matchPatternStructure(next.chain)
+		structure := matchPatternStructure(ctx, next.chain)
 		later = append(later, extractNodeVariables(structure)...)
 		later = append(later, extractRelationshipVariables(structure)...)
 	}
 	var now, deferred []string
-	for _, term := range splitTopLevelAndConjuncts(piece.where) {
+	for _, term := range splitTopLevelAndConjuncts(ctx, piece.where) {
 		readsLater := false
 		for _, variable := range later {
 			readsLater = readsLater || referencesVariable(term, variable)
@@ -299,7 +299,7 @@ func (e *StorageExecutor) pipelineApplyQuantifiedPathMatch(ctx context.Context, 
 		err := e.matchQuantifiedPieces(ctx, m, 0, state, func(done quantifiedPathState) error {
 			bound := done.row
 			if m.pathVariable != "" {
-				bound[m.pathVariable] = e.pathToMap(PathResult{Nodes: done.nodes, Relationships: done.relationships, Length: len(done.relationships)})
+				bound[m.pathVariable] = e.pathToMapContext(ctx, PathResult{Nodes: done.nodes, Relationships: done.relationships, Length: len(done.relationships)})
 			}
 			for name := range bound {
 				if strings.HasPrefix(name, generatedVariablePrefix+"qpp") {
@@ -487,7 +487,7 @@ type quantifiedGroupSpan struct {
 // quantifiedGroups lists pattern's quantified groups in order, including
 // those inside another parenthesis (shortestPath((a)((x)-[r]-(y))+(b)), the
 // form SHORTEST k is read as).
-func quantifiedGroups(pattern string) []quantifiedGroupSpan {
+func quantifiedGroups(ctx context.Context, pattern string) []quantifiedGroupSpan {
 	var groups []quantifiedGroupSpan
 	for index := 0; index < len(pattern); index++ {
 		open, close, _, found := quantifiedGroupFrom(pattern, index, true)
@@ -496,11 +496,11 @@ func quantifiedGroups(pattern string) []quantifiedGroupSpan {
 		}
 		group := quantifiedGroupSpan{open: open, close: close}
 		elementsEnd := close
-		if where := topLevelKeywordIndex(pattern[open+1:close], "WHERE"); where >= 0 {
+		if where := topLevelKeywordIndex(ctx, pattern[open+1:close], "WHERE"); where >= 0 {
 			elementsEnd = open + 1 + where
 			group.predicates = append(group.predicates, [2]int{elementsEnd, close})
 		}
-		group.predicates = append(group.predicates, elementPredicateSpans(pattern, open+1, elementsEnd)...)
+		group.predicates = append(group.predicates, elementPredicateSpans(ctx, pattern, open+1, elementsEnd)...)
 		structure := []byte(pattern[open+1 : elementsEnd])
 		for _, span := range group.predicates {
 			for index := max(span[0], open+1); index < min(span[1], elementsEnd); index++ {
@@ -519,7 +519,7 @@ func quantifiedGroups(pattern string) []quantifiedGroupSpan {
 // elementPredicateSpans lists the inline WHERE of each node and relationship
 // element in pattern[from:to] ((n WHERE …), [r WHERE …]) as the [start, end)
 // of its WHERE keyword through its body.
-func elementPredicateSpans(pattern string, from, to int) [][2]int {
+func elementPredicateSpans(ctx context.Context, pattern string, from, to int) [][2]int {
 	var spans [][2]int
 	for index := from; index < to; index++ {
 		switch c := pattern[index]; cypherLexicalByte(c) {
@@ -531,7 +531,7 @@ func elementPredicateSpans(pattern string, from, to int) [][2]int {
 			if close < 0 || close > to {
 				return spans
 			}
-			if where := elementWhereIndex(pattern, index, close); where >= 0 {
+			if where := elementWhereIndex(ctx, pattern, index, close); where >= 0 {
 				spans = append(spans, [2]int{where, close})
 			}
 			index = close
@@ -557,9 +557,9 @@ func (group quantifiedGroupSpan) predicateTexts(pattern string) []string {
 // ((a)-[r]-(b) WHERE size(kinds) = 0)+ neither (kinds) nor a $param map is
 // a pattern element, and r there is one relationship, not the list the
 // group binds outside it.
-func maskQuantifiedGroupPredicates(pattern string) string {
+func maskQuantifiedGroupPredicates(ctx context.Context, pattern string) string {
 	var masked []byte
-	for _, group := range quantifiedGroups(pattern) {
+	for _, group := range quantifiedGroups(ctx, pattern) {
 		for _, span := range group.predicates {
 			if masked == nil {
 				masked = []byte(pattern)
@@ -582,14 +582,14 @@ func maskQuantifiedGroupPredicates(pattern string) string {
 // from: in ((x WHERE x.k IN (l))-->(y))+ or the (x WHERE
 // __nornic_haslabels(x, (l), false)) a dynamic label $(l) becomes, (l) is
 // not a node.
-func matchPatternStructure(body string) string {
-	if where := topLevelKeywordIndex(body, "WHERE"); where >= 0 {
+func matchPatternStructure(ctx context.Context, body string) string {
+	if where := topLevelKeywordIndex(ctx, body, "WHERE"); where >= 0 {
 		body = body[:where]
 	}
-	body = maskQuantifiedGroupPredicates(body)
+	body = maskQuantifiedGroupPredicates(ctx, body)
 	// An element's inline WHERE outside a group ((n WHERE n.k IN (l))) is
 	// an expression too.
-	spans := elementPredicateSpans(body, 0, len(body))
+	spans := elementPredicateSpans(ctx, body, 0, len(body))
 	if len(spans) == 0 {
 		return body
 	}
@@ -604,9 +604,9 @@ func matchPatternStructure(body string) string {
 
 // quantifiedGroupVariables returns the node and relationship variables
 // inside pattern's quantified groups: each binds a list of its values.
-func quantifiedGroupVariables(pattern string) (map[string]struct{}, map[string]struct{}) {
+func quantifiedGroupVariables(ctx context.Context, pattern string) (map[string]struct{}, map[string]struct{}) {
 	var nodes, relationships map[string]struct{}
-	for _, group := range quantifiedGroups(pattern) {
+	for _, group := range quantifiedGroups(ctx, pattern) {
 		if nodes == nil {
 			nodes, relationships = map[string]struct{}{}, map[string]struct{}{}
 		}
@@ -633,11 +633,11 @@ func quantifiedGroupAt(query string, close, end int) bool {
 func (r *labelExpressionRewriter) quantifiedGroup(open, close int) error {
 	q := r.query
 	patternEnd, whereBody := close, -1
-	if where := topLevelKeywordIndex(q[open+1:close], "WHERE"); where >= 0 {
+	if where := topLevelKeywordIndex(r.ctx, q[open+1:close], "WHERE"); where >= 0 {
 		patternEnd = open + 1 + where
 		whereBody = skipASCIISpaces(q, patternEnd+len("WHERE"), close)
 	}
-	if err := quantifiedGroupError(q, open, close, patternEnd); err != nil {
+	if err := quantifiedGroupError(r.ctx, q, open, close, patternEnd); err != nil {
 		return err
 	}
 	var predicates []string
@@ -701,12 +701,12 @@ func parenthesisedPathAt(s string, open, close int) bool {
 // query[open:close+1] (its path ending at patternEnd), or nil: a group or
 // quantifier inside it, a variable-length relationship in it, no
 // relationship in it, or bounds that exclude every repetition count.
-func quantifiedGroupError(q string, open, close, patternEnd int) error {
+func quantifiedGroupError(ctx context.Context, q string, open, close, patternEnd int) error {
 	inner := q[open+1 : patternEnd]
 	if _, _, _, nested := nextQuantifiedGroup(inner, 0); nested || mayUseRelationshipQuantifier(inner) {
 		return labelExpressionSyntaxError(localization.CypherMatchingQuantifiedPathNested())
 	}
-	if hasVariableLengthRelationship(q, open+1, patternEnd) {
+	if hasVariableLengthRelationship(ctx, q, open+1, patternEnd) {
 		return labelExpressionSyntaxError(localization.CypherMatchingVariableLengthInQuantifiedPath())
 	}
 	if !patternHasRelationship(inner) && !strings.Contains(blankQuotedText(inner), "--") {

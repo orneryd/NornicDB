@@ -18,7 +18,7 @@ func TestUpdateNode_InvalidatesManagedEmbeddings(t *testing.T) {
 	defer db.Close()
 
 	nodeID := "invalidate-1"
-	_, err = db.storage.CreateNode(&storage.Node{
+	_, err = db.storage.CreateNode(t.Context(), &storage.Node{
 		ID:     storage.NodeID(nodeID),
 		Labels: []string{"Test"},
 		Properties: map[string]any{
@@ -36,7 +36,7 @@ func TestUpdateNode_InvalidatesManagedEmbeddings(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	before, err := db.storage.GetNode(storage.NodeID(nodeID))
+	before, err := db.storage.GetNode(t.Context(), storage.NodeID(nodeID))
 	require.NoError(t, err)
 	require.NotEmpty(t, before.ChunkEmbeddings, "sanity: node should start with embeddings")
 
@@ -44,7 +44,7 @@ func TestUpdateNode_InvalidatesManagedEmbeddings(t *testing.T) {
 	_, err = db.UpdateNode(ctx, nodeID, map[string]interface{}{"name": "Bob"})
 	require.NoError(t, err)
 
-	after, err := db.storage.GetNode(storage.NodeID(nodeID))
+	after, err := db.storage.GetNode(t.Context(), storage.NodeID(nodeID))
 	require.NoError(t, err)
 	require.Empty(t, after.ChunkEmbeddings, "managed embeddings should be cleared on mutation")
 	require.Empty(t, after.EmbedMeta, "managed embedding metadata should be cleared on mutation")
@@ -58,7 +58,7 @@ func TestExecuteCypher_SetInvalidatesManagedEmbeddings(t *testing.T) {
 	defer db.Close()
 
 	nodeID := "invalidate-cypher-1"
-	_, err = db.storage.CreateNode(&storage.Node{
+	_, err = db.storage.CreateNode(t.Context(), &storage.Node{
 		ID:     storage.NodeID(nodeID),
 		Labels: []string{"Test"},
 		Properties: map[string]any{
@@ -73,7 +73,7 @@ func TestExecuteCypher_SetInvalidatesManagedEmbeddings(t *testing.T) {
 	_, err = db.ExecuteCypher(ctx, "MATCH (n {id: 'invalidate-cypher-1'}) SET n.name = 'Bob' RETURN n", nil)
 	require.NoError(t, err)
 
-	after, err := db.storage.GetNode(storage.NodeID(nodeID))
+	after, err := db.storage.GetNode(t.Context(), storage.NodeID(nodeID))
 	require.NoError(t, err)
 	require.Empty(t, after.ChunkEmbeddings, "managed embeddings should be cleared on Cypher SET mutation")
 }
@@ -87,7 +87,7 @@ func TestUpdateNode_MetadataOnlyUpdate_PreservesManagedEmbeddings(t *testing.T) 
 
 	nodeID := "invalidate-meta-only-1"
 	origEmb := []float32{0.1, 0.2, 0.3}
-	_, err = db.storage.CreateNode(&storage.Node{
+	_, err = db.storage.CreateNode(t.Context(), &storage.Node{
 		ID:     storage.NodeID(nodeID),
 		Labels: []string{"Test"},
 		Properties: map[string]any{
@@ -110,7 +110,7 @@ func TestUpdateNode_MetadataOnlyUpdate_PreservesManagedEmbeddings(t *testing.T) 
 	})
 	require.NoError(t, err)
 
-	after, err := db.storage.GetNode(storage.NodeID(nodeID))
+	after, err := db.storage.GetNode(t.Context(), storage.NodeID(nodeID))
 	require.NoError(t, err)
 	require.Len(t, after.ChunkEmbeddings, 1, "metadata-only update should not invalidate embeddings")
 	require.Equal(t, origEmb, after.ChunkEmbeddings[0], "embedding content should be preserved")
@@ -167,7 +167,7 @@ func TestUpdateKeepsManagedEmbeddingsForUnembeddedProperties(t *testing.T) {
 	defer db.Close()
 
 	for _, id := range []string{"keep-admin", "keep-cypher"} {
-		_, err = db.storage.CreateNode(&storage.Node{
+		_, err = db.storage.CreateNode(t.Context(), &storage.Node{
 			ID:              storage.NodeID(id),
 			Labels:          []string{"Src"},
 			Properties:      map[string]any{"id": id, "text": "boiler invoice", "tags": []any{"a"}},
@@ -182,7 +182,7 @@ func TestUpdateKeepsManagedEmbeddingsForUnembeddedProperties(t *testing.T) {
 	_, err = db.ExecuteCypher(ctx, "MATCH (n:Src {id: 'keep-cypher'}) SET n.tags = ['a', 'b'] RETURN n", nil)
 	require.NoError(t, err)
 	for _, id := range []string{"keep-admin", "keep-cypher"} {
-		got, err := db.storage.GetNode(storage.NodeID(id))
+		got, err := db.storage.GetNode(t.Context(), storage.NodeID(id))
 		require.NoError(t, err)
 		require.Equal(t, [][]float32{{0.1, 0.2, 0.3}}, got.ChunkEmbeddings, id)
 	}
@@ -192,7 +192,7 @@ func TestUpdateKeepsManagedEmbeddingsForUnembeddedProperties(t *testing.T) {
 	_, err = db.ExecuteCypher(ctx, "MATCH (n:Src {id: 'keep-cypher'}) SET n.text = 'boiler receipt' RETURN n", nil)
 	require.NoError(t, err)
 	for _, id := range []string{"keep-admin", "keep-cypher"} {
-		got, err := db.storage.GetNode(storage.NodeID(id))
+		got, err := db.storage.GetNode(t.Context(), storage.NodeID(id))
 		require.NoError(t, err)
 		require.Empty(t, got.ChunkEmbeddings, id)
 	}

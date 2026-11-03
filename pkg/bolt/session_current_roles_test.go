@@ -30,7 +30,7 @@ func TestBoltSessionLosesDeletedRole(t *testing.T) {
 	require.NoError(t, roles.CreateRole(ctx, "ops"))
 	entitlements := auth.NewRoleEntitlementsStore(engine)
 	require.NoError(t, entitlements.Set(ctx, "ops", []string{string(auth.PermRead), string(auth.PermAdmin)}))
-	_, err = authenticator.CreateUser("bob", "password123", []auth.Role{"ops"})
+	_, err = authenticator.CreateUser(context.Background(), "bob", "password123", []auth.Role{"ops"})
 	require.NoError(t, err)
 
 	adapter := NewAuthenticatorAdapter(authenticator)
@@ -131,7 +131,7 @@ func TestBoltSessionOfRemovedAccountRunsNothing(t *testing.T) {
 	for _, change := range []string{"deleted", "disabled", "deleted and recreated"} {
 		t.Run(change, func(t *testing.T) {
 			authenticator, adapter, server := boltAccountFixture(t)
-			_, err := authenticator.CreateUser("bob", "password123", []auth.Role{auth.RoleAdmin})
+			_, err := authenticator.CreateUser(context.Background(), "bob", "password123", []auth.Role{auth.RoleAdmin})
 			require.NoError(t, err)
 			result, err := adapter.Authenticate("basic", "bob", "password123")
 			require.NoError(t, err)
@@ -143,12 +143,12 @@ func TestBoltSessionOfRemovedAccountRunsNothing(t *testing.T) {
 
 			switch change {
 			case "deleted":
-				require.NoError(t, authenticator.DeleteUser("bob"))
+				require.NoError(t, authenticator.DeleteUser(context.Background(), "bob"))
 			case "disabled":
-				require.NoError(t, authenticator.ChangeUserState("bob", auth.UserDisable))
+				require.NoError(t, authenticator.ChangeUserState(context.Background(), "bob", auth.UserDisable))
 			case "deleted and recreated":
-				require.NoError(t, authenticator.DeleteUser("bob"))
-				_, err = authenticator.CreateUser("bob", "password123", []auth.Role{auth.RoleAdmin})
+				require.NoError(t, authenticator.DeleteUser(context.Background(), "bob"))
+				_, err = authenticator.CreateUser(context.Background(), "bob", "password123", []auth.Role{auth.RoleAdmin})
 				require.NoError(t, err)
 			}
 			executed, code = run()

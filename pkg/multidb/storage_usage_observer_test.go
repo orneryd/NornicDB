@@ -1,15 +1,17 @@
 package multidb
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"sync"
+	"testing"
+	"time"
+
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/internal/testfixture/storagefault"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
-	"sync"
-	"testing"
-	"time"
 )
 
 func TestManagedUsageObserverPreparesImmutableDelta(t *testing.T) {
@@ -72,7 +74,7 @@ func TestManagedUsageSnapshotUpgradeAndNativePublication(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	for _, id := range []storage.NodeID{"test:n", "test:m"} {
-		_, err := engine.CreateNode(&storage.Node{ID: id, Properties: map[string]any{"value": "initial"}})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: id, Properties: map[string]any{"value": "initial"}})
 		require.NoError(t, err)
 	}
 	info := &DatabaseInfo{}
@@ -82,7 +84,7 @@ func TestManagedUsageSnapshotUpgradeAndNativePublication(t *testing.T) {
 	require.False(t, info.sizeInitialized)
 	require.Equal(t, int64(2), info.usageNodes)
 	require.Zero(t, info.totalSize)
-	require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "test:n", Properties: map[string]any{"value": "larger value before bytes are requested"}}}))
+	require.NoError(t, engine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: &storage.Node{ID: "test:n", Properties: map[string]any{"value": "larger value before bytes are requested"}}}))
 	require.Equal(t, int64(2), info.usageNodes)
 	require.False(t, info.sizeInitialized)
 	require.Zero(t, info.totalSize)
@@ -107,21 +109,21 @@ func TestManagedUsageSnapshotUpgradeAndNativePublication(t *testing.T) {
 	check(2, 0)
 	// Native/peer-origin publication is accounted without local reservation or
 	// post-consensus quota rejection, even though the local quota is now full.
-	_, err = engine.CreateNode(&storage.Node{ID: "test:peer", Properties: map[string]any{"value": "peer"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "test:peer", Properties: map[string]any{"value": "peer"}})
 	require.NoError(t, err)
 	check(3, 0)
 	require.ErrorIs(t, info.reserveStorageUsage("test", "competitor", storageUsage{nodes: 1}, StorageLimits{MaxNodes: 3}), ErrStorageLimitExceeded)
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "test:e", StartNode: "test:n", EndNode: "test:m", Type: "LINK", Properties: map[string]any{"value": "first"}}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "test:e", StartNode: "test:n", EndNode: "test:m", Type: "LINK", Properties: map[string]any{"value": "first"}}))
 	check(3, 1)
-	require.NoError(t, engine.UpdateEdge(storage.EdgeUpdateRequest{After: &storage.Edge{ID: "test:e", StartNode: "test:n", EndNode: "test:m", Type: "LINK", Properties: map[string]any{"value": "larger stored edge"}}}))
+	require.NoError(t, engine.UpdateEdge(t.Context(), storage.EdgeUpdateRequest{After: &storage.Edge{ID: "test:e", StartNode: "test:n", EndNode: "test:m", Type: "LINK", Properties: map[string]any{"value": "larger stored edge"}}}))
 	check(3, 1)
-	require.NoError(t, engine.DeleteNode("test:n"))
+	require.NoError(t, engine.DeleteNode(t.Context(), "test:n"))
 	check(2, 0)
 	info.discardStorageUsage("still-pending")
 	require.Empty(t, info.pending)
 	// A later count-only request cannot downgrade the installed byte observer.
 	require.NoError(t, manager.initializeStorageUsage("test", engine, false, nil))
-	require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "test:m", Properties: map[string]any{"value": "updated after byte initialization"}}}))
+	require.NoError(t, engine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: &storage.Node{ID: "test:m", Properties: map[string]any{"value": "updated after byte initialization"}}}))
 	check(2, 0)
 }
 
@@ -129,7 +131,7 @@ func TestManagedUsageConcurrentInitializationAndPublication(t *testing.T) {
 	engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
-	_, err = engine.CreateNode(&storage.Node{ID: "test:seed", Properties: map[string]any{"value": "seed"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "test:seed", Properties: map[string]any{"value": "seed"}})
 	require.NoError(t, err)
 	info := &DatabaseInfo{}
 	manager := &DatabaseManager{inner: engine, databases: map[string]*DatabaseInfo{"test": info}}
@@ -146,7 +148,7 @@ func TestManagedUsageConcurrentInitializationAndPublication(t *testing.T) {
 				results <- err
 				return
 			}
-			_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("test:n%d", i)), Properties: map[string]any{"value": fmt.Sprintf("value-%d", i)}})
+			_, err := engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("test:n%d", i)), Properties: map[string]any{"value": fmt.Sprintf("value-%d", i)}})
 			results <- err
 		}()
 	}
@@ -175,20 +177,20 @@ func TestManagedUsageBufferedPublicationRetiresReservationOnce(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	for _, id := range []storage.NodeID{"test:a", "test:b"} {
-		_, err := engine.CreateNode(&storage.Node{ID: id})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: id})
 		require.NoError(t, err)
 	}
 	info := &DatabaseInfo{}
 	manager := &DatabaseManager{inner: engine, databases: map[string]*DatabaseInfo{"test": info}}
 	require.NoError(t, manager.initializeStorageUsage("test", engine, true, nil))
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("test"))
 	require.NoError(t, tx.SetImplicit(true))
-	_, err = tx.CreateNode(&storage.Node{ID: "test:c", Properties: map[string]any{"value": "buffered"}})
+	_, err = tx.CreateNode(t.Context(), &storage.Node{ID: "test:c", Properties: map[string]any{"value": "buffered"}})
 	require.NoError(t, err)
-	require.NoError(t, tx.CreateEdge(&storage.Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:c", Type: "LINK"}))
+	require.NoError(t, tx.CreateEdge(t.Context(), &storage.Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:c", Type: "LINK"}))
 	require.NoError(t, info.reserveStorageUsage("test", tx.ID, storageUsage{nodes: 1, edges: 1}, StorageLimits{MaxNodes: 3, MaxEdges: 1}))
 	require.NoError(t, tx.Commit())
 	require.Empty(t, info.pending, "ACK publication retires the same logical reservation")
@@ -201,7 +203,7 @@ func TestManagedUsageBufferedPublicationRetiresReservationOnce(t *testing.T) {
 	require.Equal(t, wantNodes, nodeBytes)
 	require.Equal(t, wantEdges, edgeBytes)
 	require.Equal(t, wantNodes+wantEdges, total)
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	afterTotal, afterNodes, afterEdges := manager.GetStorageSize("test")
 	require.Equal(t, total, afterTotal)
 	require.Equal(t, nodeBytes, afterNodes)
@@ -221,7 +223,7 @@ func TestManagedUsageActualReadBoundaryFailures(t *testing.T) {
 			edgeCase := mode == storagefault.EdgeRead || mode == storagefault.EdgeCountRead
 			if edgeCase {
 				for _, id := range []storage.NodeID{"test:a", "test:b"} {
-					_, err := engine.CreateNode(&storage.Node{ID: id})
+					_, err := engine.CreateNode(t.Context(), &storage.Node{ID: id})
 					require.NoError(t, err)
 				}
 			}
@@ -233,14 +235,14 @@ func TestManagedUsageActualReadBoundaryFailures(t *testing.T) {
 			if pointRead {
 				require.NoError(t, manager.initializeStorageUsage("test", engine, false, faults))
 			}
-			tx, err := engine.BeginTransaction()
+			tx, err := engine.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			defer tx.Rollback()
 			require.NoError(t, tx.SetNamespace("test"))
 			if edgeCase {
-				require.NoError(t, tx.CreateEdge(&storage.Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}))
+				require.NoError(t, tx.CreateEdge(t.Context(), &storage.Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}))
 			} else {
-				_, err = tx.CreateNode(&storage.Node{ID: "test:rejected"})
+				_, err = tx.CreateNode(t.Context(), &storage.Node{ID: "test:rejected"})
 				require.NoError(t, err)
 			}
 			faults.SetFailure(mode)
@@ -253,14 +255,14 @@ func TestManagedUsageActualReadBoundaryFailures(t *testing.T) {
 			require.ErrorIs(t, err, injected)
 			require.False(t, tx.IsActive())
 			faults.SetFailure("")
-			nodes, err := engine.NodeCount()
+			nodes, err := engine.NodeCount(t.Context())
 			require.NoError(t, err)
 			if edgeCase {
 				require.EqualValues(t, 2, nodes)
 			} else {
 				require.Zero(t, nodes)
 			}
-			edges, err := engine.EdgeCount()
+			edges, err := engine.EdgeCount(t.Context())
 			require.NoError(t, err)
 			require.Zero(t, edges)
 			require.Empty(t, info.pending)
@@ -280,10 +282,10 @@ func TestManagedUsageLazyCountThenByteUpgradeIncludesStoredVectorsAndHiddenEntit
 	for _, id := range []storage.NodeID{"test:a", "test:b", "test:hidden"} {
 		node := &storage.Node{ID: id, ChunkEmbeddings: [][]float32{vector}}
 		node.SetRuntimeMetadata(storage.NodeRuntimeMetadata{VisibilitySuppressed: id == "test:hidden"})
-		_, err = engine.CreateNode(node)
+		_, err = engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "test:hidden-edge", StartNode: "test:a", EndNode: "test:b", Type: "LINK", VisibilitySuppressed: true}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "test:hidden-edge", StartNode: "test:a", EndNode: "test:b", Type: "LINK", VisibilitySuppressed: true}))
 	info := &DatabaseInfo{}
 	manager := &DatabaseManager{inner: engine, databases: map[string]*DatabaseInfo{"test": info}}
 	require.NoError(t, manager.initializeStorageUsage("test", engine, false, nil))
@@ -303,7 +305,7 @@ func TestManagedUsageLazyCountThenByteUpgradeIncludesStoredVectorsAndHiddenEntit
 	require.Equal(t, wantEdges, info.edgeSize)
 	require.Equal(t, wantNodes+wantEdges, info.totalSize)
 	require.Greater(t, info.nodeSize, int64(3*len(vector)*4))
-	hidden, err := engine.GetStoredNode("test:hidden")
+	hidden, err := engine.GetStoredNode(t.Context(), "test:hidden")
 	require.NoError(t, err)
 	require.True(t, hidden.RuntimeMetadata().VisibilitySuppressed)
 	require.Equal(t, vector, hidden.ChunkEmbeddings[0])

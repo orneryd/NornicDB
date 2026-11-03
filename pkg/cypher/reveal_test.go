@@ -78,7 +78,7 @@ func TestRevealExpressionBypassesDecayDuringQuery(t *testing.T) {
 			}
 			engine.SetDecayEnabled(true)
 			createdAt := time.Now().Add(-720 * time.Hour)
-			if _, err := engine.CreateNode(&storage.Node{
+			if _, err := engine.CreateNode(t.Context(), &storage.Node{
 				ID: "testns:old_episode", Labels: []string{"MemoryEpisode"},
 				Properties: map[string]interface{}{"name": "old"},
 				CreatedAt:  createdAt, UpdatedAt: createdAt,
@@ -137,7 +137,7 @@ func TestRevealExpressionBypassesDecayDuringQuery(t *testing.T) {
 						t.Fatalf("alternating query %q returned %d rows, want %d", query, len(result.Rows), want)
 					}
 				}
-				if _, err := executor.txContext.storageWrapper.CreateNode(&storage.Node{ID: "testns:pending", Labels: []string{"MemoryEpisode"}, Properties: map[string]interface{}{"name": "pending"}, CreatedAt: time.Now(), UpdatedAt: time.Now()}); err != nil {
+				if _, err := executor.txContext.storageWrapper.CreateNode(t.Context(), &storage.Node{ID: "testns:pending", Labels: []string{"MemoryEpisode"}, Properties: map[string]interface{}{"name": "pending"}, CreatedAt: time.Now(), UpdatedAt: time.Now()}); err != nil {
 					t.Fatal(err)
 				}
 				for _, tc := range []struct {
@@ -288,4 +288,80 @@ func TestSetRevealOnEngine_ExecutionStateBlocksConcurrentRead(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("ordinary read scope did not resume after reveal scope ended")
 	}
+}
+
+// TestSetRevealOnEngine_InheritsRecordedLeaseHandle proves the migrated consumer
+// records the owning statement's opaque lease handle on the expression-failure
+// slot, and that a nested statement on the same physical engine inherits that
+// lease instead of acquiring the reveal scope again. clearRevealScope drops the
+// recorded handle with the engine.
+func TestSetRevealOnEngine_InheritsRecordedLeaseHandle(t *testing.T) {
+	eng, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
+	if eng != nil {
+		fixtureowner.Own(t, eng)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+
+	outer := context.WithValue(context.Background(), expressionFailureKey{}, &expressionFailure{})
+	outer, releaseOuter, ownerEngine := setRevealOnEngine(outer, eng, true)
+	if ownerEngine != eng {
+		t.Fatal("expected the outer statement to own the reveal scope")
+	}
+	released := false
+	defer func() {
+		if !released {
+			clearRevealScope(outer, ownerEngine)
+			releaseOuter()
+		}
+	}()
+
+	failure := outer.Value(expressionFailureKey{}).(*expressionFailure)
+	failure.mu.Lock()
+	recordedEngine := failure.readScopeEngine
+	recordedScopes := failure.readScopes
+	failure.mu.Unlock()
+	if recordedEngine != eng {
+		t.Fatal("the expression-failure slot did not record the owning engine")
+	}
+	if recordedScopes == (storage.RevealScopes{}) {
+		t.Fatal("the expression-failure slot did not record the owning statement's lease handle")
+	}
+
+	type nestedResult struct {
+		ctx     context.Context
+		engine  *storage.BadgerEngine
+		release func()
+	}
+	results := make(chan nestedResult, 1)
+	go func() {
+		ctx, release, inherited := setRevealOnEngine(
+			context.WithValue(context.Background(), expressionFailureKey{}, failure), eng, false)
+		results <- nestedResult{ctx: ctx, engine: inherited, release: release}
+	}()
+	var nested nestedResult
+	select {
+	case nested = <-results:
+	case <-time.After(2 * time.Second):
+		t.Fatal("nested statement reacquired the reveal scope instead of inheriting the recorded lease")
+	}
+	nested.release()
+	if nested.engine != nil {
+		t.Fatal("nested statement must inherit the recorded lease instead of owning a new scope")
+	}
+	if storage.QueryRevealScopes(nested.ctx) == (storage.RevealScopes{}) {
+		t.Fatal("the nested statement context did not inherit a live lease handle")
+	}
+
+	clearRevealScope(outer, ownerEngine)
+	failure.mu.Lock()
+	clearedScopes := failure.readScopes
+	failure.mu.Unlock()
+	if clearedScopes != (storage.RevealScopes{}) {
+		t.Fatal("clearing the reveal scope must drop the recorded lease handle")
+	}
+	releaseOuter()
+	released = true
 }

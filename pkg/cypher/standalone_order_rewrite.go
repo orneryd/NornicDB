@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 )
@@ -15,13 +16,19 @@ import (
 // RETURN before it while it keeps that clause's ORDER BY → SKIP → LIMIT order;
 // any other one starts its own WITH * (#907). Without this the text after a
 // pattern was read as part of the MATCH and the statement matched nothing.
-func desugarStandaloneOrderClauses(query string) (string, *queryRewrite) {
+func desugarStandaloneOrderClauses(ctx context.Context, query string) (string, *queryRewrite) {
+	if ctx.Err() != nil {
+		return query, nil
+	}
 	if indexASCIIFold(query, "order") < 0 && indexASCIIFold(query, "skip") < 0 &&
 		indexASCIIFold(query, "offset") < 0 && indexASCIIFold(query, "limit") < 0 {
 		return query, nil
 	}
 	var edits []labelRewriteEdit
-	scanStandaloneOrderClauses(query, 0, len(query), &edits)
+	scanStandaloneOrderClauses(ctx, query, 0, len(query), &edits)
+	if ctx.Err() != nil {
+		return query, nil
+	}
 	if len(edits) == 0 {
 		return query, nil
 	}
@@ -52,7 +59,7 @@ const (
 
 // scanStandaloneOrderClauses scans the statement or subquery body
 // query[start:end], appending its edits in order.
-func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewriteEdit) {
+func scanStandaloneOrderClauses(ctx context.Context, query string, start, end int, edits *[]labelRewriteEdit) {
 	braces := newSubqueryBraceScanner(query, start)
 	inProjection, stage := false, standaloneStageItems
 	// previousWord is the last word read, "" after any other token; last is
@@ -60,6 +67,9 @@ func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewr
 	// at the start of the block).
 	previousWord, last := "", rune(0)
 	for index := start; index < end; {
+		if index&1023 == 0 && ctx.Err() != nil {
+			return
+		}
 		character := query[index]
 		switch {
 		case isCypherQuoteByte(character):
@@ -80,7 +90,7 @@ func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewr
 			if close < 0 {
 				return
 			}
-			scanStandaloneOrderContainers(query, index+1, close, edits)
+			scanStandaloneOrderContainers(ctx, query, index+1, close, edits)
 			index = close + 1
 			previousWord, last = "", rune(closer)
 			continue
@@ -90,9 +100,9 @@ func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewr
 				return
 			}
 			if braces.at(index) {
-				scanStandaloneOrderClauses(query, index+1, close, edits)
+				scanStandaloneOrderClauses(ctx, query, index+1, close, edits)
 			} else {
-				scanStandaloneOrderContainers(query, index+1, close, edits)
+				scanStandaloneOrderContainers(ctx, query, index+1, close, edits)
 			}
 			index = close + 1
 			previousWord, last = "", '}'
@@ -135,7 +145,7 @@ func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewr
 		if upper == "USE" {
 			// The USE grammar owns its graph reference, which may be spelled
 			// like a clause keyword: USE GRAPH limit CALL { … }.
-			if referenceEnd := useClauseReferenceEnd(query[:end], index, start > 0); referenceEnd > name.End {
+			if referenceEnd := useClauseReferenceEnd(ctx, query[:end], index, start > 0); referenceEnd > name.End {
 				reference := strings.TrimRightFunc(query[index:referenceEnd], cyphertext.IsWhitespace)
 				inProjection = false
 				previousWord, last = "", cyphertext.RuneAt(reference, len(reference)-1)
@@ -270,9 +280,12 @@ func standaloneClausePosition(previousWord string, last rune) bool {
 // scanStandaloneOrderContainers visits expression containers without treating
 // their identifiers as statement clauses. Only classified subquery bodies have
 // an independent projection/order state; offsets stay in the original query.
-func scanStandaloneOrderContainers(query string, start, end int, edits *[]labelRewriteEdit) {
+func scanStandaloneOrderContainers(ctx context.Context, query string, start, end int, edits *[]labelRewriteEdit) {
 	braces := newSubqueryBraceScanner(query, start)
 	for index := start; index < end; index++ {
+		if index&1023 == 0 && ctx.Err() != nil {
+			return
+		}
 		switch cypherLexicalByte(query[index]) {
 		case cypherQuoteClass:
 			index = skipCypherQuotedText(query, index, query[index]) - 1
@@ -288,7 +301,7 @@ func scanStandaloneOrderContainers(query string, start, end int, edits *[]labelR
 			if close < 0 {
 				return
 			}
-			scanStandaloneOrderClauses(query, index+1, close, edits)
+			scanStandaloneOrderClauses(ctx, query, index+1, close, edits)
 			index = close
 		}
 	}

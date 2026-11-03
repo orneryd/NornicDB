@@ -12,7 +12,7 @@ import (
 // ensureOpen rejects a closed engine; write admission also rejects Close in progress.
 func (b *BadgerEngine) ensureOpen(writing bool) error {
 	b.mu.RLock()
-	closed := b.closed || (writing && b.closing)
+	closed := b.work.Closing() || (writing && b.closing)
 	b.mu.RUnlock()
 	if closed {
 		return ErrStorageClosed
@@ -86,29 +86,32 @@ func (b *BadgerEngine) withView(fn func(txn *badger.Txn) error) error {
 	if err != nil {
 		return err
 	}
-	defer b.txnWG.Done()
+	defer b.work.Leave()
 	return recoverBadgerClosedPanic(func() error {
 		return db.View(fn)
 	})
 }
 
+// beginHelperTxn admits one helper as the engine owner's accepted work, without
+// allocating. The helper calls b.work.Leave on its actual return; Close's
+// retirement waits for it.
 func (b *BadgerEngine) beginHelperTxn() (*managedBadgerDB, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	if b.closed {
+	if !b.work.Enter() {
 		return nil, ErrStorageClosed
 	}
-	b.txnWG.Add(1)
 	return b.db, nil
 }
 
 // updateRequest carries what a withUpdate caller knows about its write before
-// the callback runs: the context it runs under, the cache scope its writes
-// belong to, and whether it writes metadata only. It never carries the written
-// entities; those stay the trailing variadic argument, so a literal entity
-// list at the call site remains the static proof that the write is ordered.
+// the callback runs: the cache scope its writes belong to and whether it
+// writes metadata only. The owning context is withUpdate's first argument, so
+// every call site states the phase its write runs in exactly once. It never
+// carries the written entities; those stay the trailing variadic argument, so
+// a literal entity list at the call site remains the static proof that the
+// write is ordered.
 type updateRequest struct {
-	ctx      context.Context
 	scope    cacheWriteScope
 	metadata bool
 }
@@ -118,14 +121,10 @@ type updateRequest struct {
 // transaction and cannot be repeated, so its writes must fit one Badger
 // batch (badger.ErrTxnTooBig otherwise); writes of any size go through
 // commitEngineWrite repeatable units. Optional entities acquire their write-behind order first;
-// their notifications are delivered only after that order is released. A
-// request without a context runs under the background context, as every
-// unrequested write did before the request existed.
-func (b *BadgerEngine) withUpdate(request updateRequest, fn func(txn *badger.Txn) error, entities ...writtenEntities) error {
-	ctx := request.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+// their notifications are delivered only after that order is released. ctx is
+// the write's owning phase, required: a context-free caller establishes its
+// own explicit root at its entry instead of leaving this helper to guess one.
+func (b *BadgerEngine) withUpdate(ctx context.Context, request updateRequest, fn func(txn *badger.Txn) error, entities ...writtenEntities) error {
 	if len(entities) > 0 && b.writeBehind != nil {
 		var order orderHold
 		if _, err := b.orderAfterBufferedCommits(ctx, &order, entities[0]); err != nil {
@@ -137,21 +136,28 @@ func (b *BadgerEngine) withUpdate(request updateRequest, fn func(txn *badger.Txn
 	scope, metadata := request.scope, request.metadata
 	return b.commitEngineWrite(ctx, func(cw *commitWriter) error {
 		cw.declaredCache, cw.metadata = &scope, metadata
-		return cw.writeOnce(fn)
+		return fn(cw.txn)
 	})
 }
 
 // withPublishingUpdate binds a memory-only delta to the existing atomic writer.
 // keys reads the prior/written images captured by fn, after fn succeeds.
-func (b *BadgerEngine) withPublishingUpdate(ctx context.Context, fn func(*badger.Txn) error, publish func(*commitCacheImages), keys func() []any, notification *commitNotification, stages ...func(*commitWriter) error) error {
+func (b *BadgerEngine) withPublishingUpdate(ctx context.Context, fn func(*badger.Txn) error, publish func(*commitCacheImages), keys func(context.Context) ([]any, error), notification *commitNotification, operations *[]Operation, stages ...func(*commitWriter) error) error {
 	return b.commitEngineWrite(ctx, func(cw *commitWriter) error {
 		cw.notification = notification
-		if err := cw.writeOnce(fn); err != nil {
+		if err := fn(cw.txn); err != nil {
 			return err
 		}
 		cw.publish = publish
 		if keys != nil {
-			cw.publishKeys = keys()
+			var err error
+			cw.publishKeys, err = keys(ctx)
+			if err != nil {
+				return err
+			}
+		}
+		if operations != nil {
+			cw.entityOperations = *operations
 		}
 		for _, stage := range stages {
 			if err := stage(cw); err != nil {
@@ -187,7 +193,7 @@ func (b *BadgerEngine) commitEngineWrite(ctx context.Context, write func(cw *com
 	if err != nil {
 		return err
 	}
-	defer b.txnWG.Done()
+	defer b.work.Leave()
 	var nodeMax, edgeMax uint64
 	err = recoverBadgerClosedPanic(func() error {
 		var txn *badger.Txn
@@ -215,7 +221,7 @@ func (b *BadgerEngine) commitEngineWrite(ctx context.Context, write func(cw *com
 		var writeErr error
 		if option.units != nil {
 			for _, unit := range option.units {
-				if writeErr = cw.write(unit); writeErr != nil {
+				if writeErr = cw.write(cw.ctx, unit); writeErr != nil {
 					break
 				}
 			}

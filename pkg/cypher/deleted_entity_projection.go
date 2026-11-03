@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
@@ -58,14 +59,14 @@ func (d *deletedEntities) empty() bool {
 // and endpoints (type(r) still answers). Paths and lists holding a deleted
 // entity are rebuilt with its view (#907). Reading a deleted entity's
 // property or labels is an error instead (validateDeletedEntityReads).
-func (e *StorageExecutor) replaceDeletedEntityViews(rows []pipelineRow, deleted *deletedEntities) {
+func (e *StorageExecutor) replaceDeletedEntityViews(ctx context.Context, rows []pipelineRow, deleted *deletedEntities) {
 	if deleted.empty() {
 		return
 	}
 	views := deletedEntityViews{executor: e, nodes: deleted.nodes, edges: deleted.edges}
 	for _, row := range rows {
 		for name, value := range row {
-			if replaced, changed := views.replace(value); changed {
+			if replaced, changed := views.replace(ctx, value); changed {
 				row[name] = replaced
 			}
 		}
@@ -83,7 +84,7 @@ type deletedEntityViews struct {
 
 // replace returns value with its deleted entities replaced by their views,
 // and whether anything was replaced.
-func (v *deletedEntityViews) replace(value interface{}) (interface{}, bool) {
+func (v *deletedEntityViews) replace(ctx context.Context, value interface{}) (interface{}, bool) {
 	switch typed := value.(type) {
 	case *storage.Node:
 		if typed == nil {
@@ -102,7 +103,7 @@ func (v *deletedEntityViews) replace(value interface{}) (interface{}, bool) {
 	case []interface{}:
 		var replaced []interface{}
 		for index, item := range typed {
-			if view, changed := v.replace(item); changed {
+			if view, changed := v.replace(ctx, item); changed {
 				if replaced == nil {
 					replaced = append([]interface{}(nil), typed...)
 				}
@@ -129,20 +130,20 @@ func (v *deletedEntityViews) replace(value interface{}) (interface{}, bool) {
 		nodes := make([]*storage.Node, len(path.Nodes))
 		for index, node := range path.Nodes {
 			nodes[index] = node
-			if view, replaced := v.replace(node); replaced {
+			if view, replaced := v.replace(ctx, node); replaced {
 				nodes[index], changed = view.(*storage.Node), true
 			}
 		}
 		relationships := make([]*storage.Edge, len(path.Relationships))
 		for index, relationship := range path.Relationships {
 			relationships[index] = relationship
-			if view, replaced := v.replace(relationship); replaced {
+			if view, replaced := v.replace(ctx, relationship); replaced {
 				relationships[index], changed = view.(*storage.Edge), true
 			}
 		}
 		if changed {
 			path.Nodes, path.Relationships = nodes, relationships
-			return v.executor.pathToMap(path), true
+			return v.executor.pathToMapContext(ctx, path), true
 		}
 	}
 	return value, false

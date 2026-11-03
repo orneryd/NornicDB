@@ -136,10 +136,10 @@ func (e *StorageExecutor) evaluateBoundPatternRows(ctx context.Context, pattern 
 func (e *StorageExecutor) boundPatternRows(ctx context.Context, pattern string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, values map[string]interface{}) ([]traversalOptRow, bool) {
 	pattern = strings.TrimSpace(pattern)
 	if end := keywordEndAt(pattern, 0, "MATCH"); end > 0 &&
-		keywordBoundaryOK(pattern, end, keywordBoundaryWord, keywordAfter) && !clauseKeywordUsedAsName(pattern, 0, end, "MATCH") {
+		keywordBoundaryOK(pattern, end, keywordBoundaryWord, keywordAfter) && !clauseKeywordUsedAsName(ctx, pattern, 0, end, "MATCH") {
 		pattern = strings.TrimSpace(pattern[queryGapEnd(pattern, end):])
 	}
-	clauses := splitOptionalMatchClauses(pattern)
+	clauses := splitOptionalMatchClauses(ctx, pattern)
 	if len(clauses) != 1 {
 		return nil, false
 	}
@@ -197,7 +197,7 @@ func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Contex
 	// Static scopes cannot know a heterogeneous iterator's current element.
 	// Validate the actual correlated row before matching instead of treating a
 	// non-node binding as an absent match.
-	if err := validateBoundPatternNodes([]pipelineRow{outer}, pattern); err != nil {
+	if err := validateBoundPatternNodes(ctx, []pipelineRow{outer}, pattern); err != nil {
 		recordExpressionFailure(ctx, err)
 		return nil
 	}
@@ -245,7 +245,7 @@ func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Contex
 		for variable, value := range row.values {
 			scope[variable] = value
 		}
-		value, evaluated, err := e.evaluateRowValue(projection, scope)
+		value, evaluated, err := e.evaluateRowValue(ctx, projection, scope)
 		if err != nil {
 			recordExpressionFailure(ctx, err)
 			return nil
@@ -297,13 +297,13 @@ type rowContextShape struct {
 
 var rowContextShapes = newBoundedCache[string, *rowContextShape](8192, boundedCacheStringShardIndex)
 
-func rowContextShapeOf(expr string) *rowContextShape {
+func rowContextShapeOf(ctx context.Context, expr string) *rowContextShape {
 	if shape, cached := rowContextShapes.get(expr); cached {
 		return shape
 	}
 	shape := &rowContextShape{
 		pattern:          containsRelationshipPattern(expr),
-		statementContext: needsRowStatementContext(expr),
+		statementContext: needsRowStatementContext(ctx, expr),
 		trimmed:          strings.TrimSpace(expr),
 		brace:            strings.Contains(expr, "{"),
 	}
@@ -316,7 +316,11 @@ func rowContextShapeOf(expr string) *rowContextShape {
 		shape.function, shape.argument = function, argument
 	}
 	shape.pattern2, shape.projection, shape.comprehension = splitPatternComprehension(expr)
-	rowContextShapes.put(expr, shape)
+	// A canceled scan reads only part of the expression, so its verdict is not
+	// published: the entry must come from a completed read.
+	if ctx.Err() == nil {
+		rowContextShapes.put(expr, shape)
+	}
 	return shape
 }
 
@@ -334,7 +338,7 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 			return cypherfn.RuntimeValue(value), true
 		}
 	}
-	shape := rowContextShapeOf(expr)
+	shape := rowContextShapeOf(ctx, expr)
 	// A legacy fallback can reenter through an ordinary literal reader too.
 	// Its dispatch/depth context must survive independently of the expression's
 	// compile-time need for a clock, plugin or graph context.
@@ -407,7 +411,7 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 			values = scope
 		}
 	}
-	value, resolved, err := e.evaluateRowValue(expr, values)
+	value, resolved, err := e.evaluateRowValue(ctx, expr, values)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return nil, false
@@ -444,24 +448,28 @@ func (e *StorageExecutor) evaluateRowEntityIdentity(ctx context.Context, functio
 	if value, bound := values[inner]; bound {
 		node, _ = value.(*storage.Node)
 		edge, _ = value.(*storage.Edge)
-	} else if value, resolved, err := e.evaluateRowValue(inner, values); err == nil && resolved {
+	} else if value, resolved, err := e.evaluateRowValue(ctx, inner, values); err == nil && resolved {
 		node, _ = value.(*storage.Node)
 		edge, _ = value.(*storage.Edge)
 	} else {
 		return nil, false
+	}
+	metadataCtx := ctx
+	if inherited := rowStatementContext(values); inherited != nil {
+		metadataCtx = inherited
 	}
 	switch {
 	case node != nil:
 		if strings.EqualFold(function, "id") {
 			return string(node.ID), true
 		}
-		value, _ := cypherfn.EntityElementID(e.registryFunctionContext(ctx, nil), node)
+		value, _ := cypherfn.EntityElementID(e.registryFunctionContext(metadataCtx, nil), node)
 		return value, true
 	case edge != nil:
 		if strings.EqualFold(function, "id") {
 			return string(edge.ID), true
 		}
-		value, _ := cypherfn.EntityElementID(e.registryFunctionContext(ctx, nil), edge)
+		value, _ := cypherfn.EntityElementID(e.registryFunctionContext(metadataCtx, nil), edge)
 		return value, true
 	}
 	return nil, false

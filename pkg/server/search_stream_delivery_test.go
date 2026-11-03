@@ -25,14 +25,14 @@ type pageDeliveryFaultWriter struct {
 func TestSearchStreamDeliveryGraphQLOwner(t *testing.T) {
 	s, users := setupTestServer(t)
 	alice := "Bearer " + getAuthToken(t, users, "admin")
-	_, err := users.CreateUser("delivery-other", "password123", []auth.Role{auth.RoleAdmin})
+	_, err := users.CreateUser(context.Background(), "delivery-other", "password123", []auth.Role{auth.RoleAdmin})
 	require.NoError(t, err)
 	bob := "Bearer " + getAuthToken(t, users, "delivery-other")
 	database := s.dbManager.DefaultDatabaseName()
 	store, err := s.dbManager.GetStorage(database)
 	require.NoError(t, err)
 	for _, id := range []storage.NodeID{"a", "b", "c"} {
-		_, err = store.CreateNode(&storage.Node{ID: id})
+		_, err = store.CreateNode(t.Context(), &storage.Node{ID: id})
 		require.NoError(t, err)
 	}
 	run := func(token, statement string) map[string]any {
@@ -96,7 +96,7 @@ func TestSearchStreamDeliveryHTTPRoutes(t *testing.T) {
 			store, err := s.dbManager.GetStorage(database)
 			require.NoError(t, err)
 			for _, id := range []storage.NodeID{"delivery-a", "delivery-b", "delivery-c"} {
-				_, err = store.CreateNode(&storage.Node{ID: id})
+				_, err = store.CreateNode(t.Context(), &storage.Node{ID: id})
 				require.NoError(t, err)
 			}
 			router := s.buildRouter()

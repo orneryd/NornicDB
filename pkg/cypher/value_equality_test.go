@@ -29,7 +29,7 @@ func TestListOperandsRejectLiteralNonLists(t *testing.T) {
 		"RETURN reduce(a = 0, x IN 5 | a + x)": "Integer",
 		`RETURN all(x IN "a\"b" WHERE true)`:   "String",
 	} {
-		err := validateListOperands(expression, nil)
+		err := validateListOperands(t.Context(), expression, nil)
 		require.Error(t, err, expression)
 		require.Contains(t, err.Error(), "Type mismatch: expected List<T> but was "+typeName, expression)
 	}
@@ -46,6 +46,6 @@ func TestListOperandsRejectLiteralNonLists(t *testing.T) {
 		"RETURN 1 IN {",
 		"RETURN 1 IN  ",
 	} {
-		require.NoError(t, validateListOperands(expression, nil), expression)
+		require.NoError(t, validateListOperands(t.Context(), expression, nil), expression)
 	}
 }

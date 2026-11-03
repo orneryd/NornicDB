@@ -17,10 +17,10 @@ func TestResidualCleanupKeepsUnrelatedCacheWarm(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = b.Close() })
 	for _, id := range []NodeID{"test:keep-cleanup", "test:delete-cleanup"} {
-		_, err := b.CreateNode(&Node{ID: id})
+		_, err := b.CreateNode(t.Context(), &Node{ID: id})
 		require.NoError(t, err)
 	}
-	_, err = b.GetStoredNode("test:keep-cleanup")
+	_, err = b.GetStoredNode(t.Context(), "test:keep-cleanup")
 	require.NoError(t, err)
 	b.nodeCacheMu.RLock()
 	before := b.nodeCache["test:keep-cleanup"]
@@ -42,7 +42,7 @@ func TestResidualCleanupKeepsUnrelatedCacheWarm(t *testing.T) {
 			once.Do(func() { close(dropped) })
 		}
 	}))
-	require.NoError(t, b.DeleteNode("test:delete-cleanup"))
+	require.NoError(t, b.DeleteNode(t.Context(), "test:delete-cleanup"))
 	select {
 	case <-dropped:
 	case <-time.After(3 * time.Second):

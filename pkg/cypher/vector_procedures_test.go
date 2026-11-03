@@ -127,9 +127,9 @@ func TestVectorIndexRegistryAndNamedEmbeddings(t *testing.T) {
 		Labels:          []string{"Doc"},
 		NamedEmbeddings: map[string][]float32{"title": {1, 0, 0}},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
-	storedNode, _ := store.GetNode(node.ID)
+	storedNode, _ := store.GetNode(t.Context(), node.ID)
 	require.NotNil(t, storedNode)
 	require.NotNil(t, storedNode.NamedEmbeddings)
 
@@ -185,7 +185,7 @@ func TestVectorIndexQueryNodesEmbeddingSourcePrecedence(t *testing.T) {
 				return storage.NodeID(storage.EnsureDatabasePrefix("nornic", raw))
 			}
 			mustCreate := func(n *storage.Node) {
-				_, err := store.CreateNode(n)
+				_, err := store.CreateNode(t.Context(), n)
 				require.NoError(t, err)
 			}
 
@@ -262,7 +262,7 @@ func TestCallDbCreateSetNodeVectorProperty(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a node first
-	_, err := engine.CreateNode(&storage.Node{
+	_, err := engine.CreateNode(t.Context(), &storage.Node{
 		ID:         "node1",
 		Labels:     []string{"Document"},
 		Properties: map[string]interface{}{"title": "Test"},
@@ -276,7 +276,7 @@ func TestCallDbCreateSetNodeVectorProperty(t *testing.T) {
 		require.Empty(t, result.Rows)
 
 		// Verify the vector was set
-		node, err := engine.GetNode("node1")
+		node, err := engine.GetNode(t.Context(), "node1")
 		require.NoError(t, err)
 
 		embedding, ok := node.Properties["embedding"].([]float64)
@@ -291,7 +291,7 @@ func TestCallDbCreateSetNodeVectorProperty(t *testing.T) {
 		require.Empty(t, result.Rows)
 
 		// Verify the vector was updated
-		node, err := engine.GetNode("node1")
+		node, err := engine.GetNode(t.Context(), "node1")
 		require.NoError(t, err)
 
 		embedding, ok := node.Properties["embedding"].([]float64)
@@ -314,11 +314,11 @@ func TestCallDbCreateSetRelationshipVectorProperty(t *testing.T) {
 	ctx := context.Background()
 
 	// Create nodes and relationship first
-	_, err := engine.CreateNode(&storage.Node{ID: "a", Labels: []string{"Node"}})
+	_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"Node"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "b", Labels: []string{"Node"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"Node"}})
 	require.NoError(t, err)
-	err = engine.CreateEdge(&storage.Edge{
+	err = engine.CreateEdge(t.Context(), &storage.Edge{
 		ID:         "rel1",
 		StartNode:  "a",
 		EndNode:    "b",
@@ -334,7 +334,7 @@ func TestCallDbCreateSetRelationshipVectorProperty(t *testing.T) {
 		require.Empty(t, result.Rows)
 
 		// Verify the vector was set
-		rel, err := engine.GetEdge("rel1")
+		rel, err := engine.GetEdge(t.Context(), "rel1")
 		require.NoError(t, err)
 
 		// Handle both []float64 and []interface{} (msgpack may convert types)
@@ -826,7 +826,7 @@ func TestVectorQueryNodes_StringInput_EmbeddingCacheCanonicalizesCase(t *testing
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:              storage.NodeID(storage.EnsureDatabasePrefix("nornic", "doc-1")),
 		Labels:          []string{"OriginalText"},
 		NamedEmbeddings: map[string][]float32{"embedding": {1, 0, 0}},
@@ -1083,13 +1083,13 @@ func TestCallLeadingVectorYieldMatchPipeline(t *testing.T) {
 	t2Node, ok := t2.Rows[0][0].(*storage.Node)
 	require.True(t, ok)
 
-	require.NoError(t, engine.CreateEdge(&storage.Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "edge-o1-t1",
 		Type:      "TRANSLATES_TO",
 		StartNode: o1Node.ID,
 		EndNode:   t1Node.ID,
 	}))
-	require.NoError(t, engine.CreateEdge(&storage.Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "edge-o2-t2",
 		Type:      "TRANSLATES_TO",
 		StartNode: o2Node.ID,
@@ -1359,11 +1359,11 @@ func TestCallDbIndexVectorQueryRelationships(t *testing.T) {
 		require.NoError(t, err)
 
 		// Create nodes and relationship
-		_, err = engine.CreateNode(&storage.Node{ID: "n1", Labels: []string{"Node"}})
+		_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "n1", Labels: []string{"Node"}})
 		require.NoError(t, err)
-		_, err = engine.CreateNode(&storage.Node{ID: "n2", Labels: []string{"Node"}})
+		_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "n2", Labels: []string{"Node"}})
 		require.NoError(t, err)
-		err = engine.CreateEdge(&storage.Edge{
+		err = engine.CreateEdge(t.Context(), &storage.Edge{
 			ID:         "rel1",
 			Type:       "SIMILAR_TO",
 			StartNode:  "n1",
@@ -1390,11 +1390,11 @@ func TestCallDbIndexVectorQueryRelationships(t *testing.T) {
 		require.NoError(t, err)
 
 		// Create nodes and relationship with embedding
-		_, err = engine.CreateNode(&storage.Node{ID: "n3", Labels: []string{"Node"}})
+		_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "n3", Labels: []string{"Node"}})
 		require.NoError(t, err)
-		_, err = engine.CreateNode(&storage.Node{ID: "n4", Labels: []string{"Node"}})
+		_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "n4", Labels: []string{"Node"}})
 		require.NoError(t, err)
-		err = engine.CreateEdge(&storage.Edge{
+		err = engine.CreateEdge(t.Context(), &storage.Edge{
 			ID:         "rel2",
 			Type:       "CONTAINS",
 			StartNode:  "n3",
@@ -1424,11 +1424,11 @@ func TestCallDbIndexVectorQueryRelationships(t *testing.T) {
 		require.NoError(t, err)
 
 		// Create nodes and relationship with embedding.
-		_, err = engine.CreateNode(&storage.Node{ID: "nl1", Labels: []string{"Node"}})
+		_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "nl1", Labels: []string{"Node"}})
 		require.NoError(t, err)
-		_, err = engine.CreateNode(&storage.Node{ID: "nl2", Labels: []string{"Node"}})
+		_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "nl2", Labels: []string{"Node"}})
 		require.NoError(t, err)
-		err = engine.CreateEdge(&storage.Edge{
+		err = engine.CreateEdge(t.Context(), &storage.Edge{
 			ID:         "rel_long",
 			Type:       "CONTAINS_LONG",
 			StartNode:  "nl1",
@@ -1467,15 +1467,15 @@ func TestCallDbIndexVectorQueryRelationships(t *testing.T) {
 		require.NoError(t, err)
 
 		// Create nodes but no relationships (or relationships without matching vectors)
-		_, err = engine.CreateNode(&storage.Node{ID: "n5", Labels: []string{"Node"}})
+		_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "n5", Labels: []string{"Node"}})
 		require.NoError(t, err)
-		_, err = engine.CreateNode(&storage.Node{ID: "n6", Labels: []string{"Node"}})
+		_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "n6", Labels: []string{"Node"}})
 		require.NoError(t, err)
 
 		// Create a relationship but with an orthogonal vector (perpendicular to query vector)
 		// Query vector: [0.1, 0.2] - normalized direction
 		// Orthogonal vector: [-0.2, 0.1] - perpendicular, should have cosine similarity near 0
-		err = engine.CreateEdge(&storage.Edge{
+		err = engine.CreateEdge(t.Context(), &storage.Edge{
 			ID:         "rel3",
 			Type:       "HAS",
 			StartNode:  "n5",
@@ -1525,13 +1525,13 @@ func TestCallDbIndexVectorQueryRelationships_UsesSearchServiceRelationshipVector
 	_, err := exec.Execute(ctx, "CALL db.index.vector.createRelationshipIndex('rel_idx_search', 'RELATES_TO', 'fact_embedding', 3, 'cosine')", nil)
 	require.NoError(t, err)
 
-	_, err = engine.CreateNode(&storage.Node{ID: "a", Labels: []string{"Entity"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"Entity"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "b", Labels: []string{"Entity"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"Entity"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "c", Labels: []string{"Entity"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "c", Labels: []string{"Entity"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&storage.Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "rel-best",
 		Type:      "RELATES_TO",
 		StartNode: "a",
@@ -1540,7 +1540,7 @@ func TestCallDbIndexVectorQueryRelationships_UsesSearchServiceRelationshipVector
 			"fact_embedding": []float32{1, 0, 0},
 		},
 	}))
-	require.NoError(t, engine.CreateEdge(&storage.Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "rel-other",
 		Type:      "RELATES_TO",
 		StartNode: "a",
@@ -1571,11 +1571,11 @@ func TestCallDbIndexFulltextQueryRelationships(t *testing.T) {
 	ctx := context.Background()
 
 	// Create nodes and relationship with text property
-	_, err := engine.CreateNode(&storage.Node{ID: "x", Labels: []string{"Node"}})
+	_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "x", Labels: []string{"Node"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "y", Labels: []string{"Node"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "y", Labels: []string{"Node"}})
 	require.NoError(t, err)
-	err = engine.CreateEdge(&storage.Edge{
+	err = engine.CreateEdge(t.Context(), &storage.Edge{
 		ID:         "rel_text",
 		StartNode:  "x",
 		EndNode:    "y",
@@ -1762,10 +1762,7 @@ func TestCallDbIndexFulltextCreateRelationshipIndex(t *testing.T) {
 }
 
 func TestCallDbIndexFulltextDrop(t *testing.T) {
-	baseEngine := newTestMemoryEngine(t)
-
-	engine := storage.NewNamespacedEngine(baseEngine, "test")
-	exec := NewStorageExecutor(engine)
+	exec, _ := newCypherTestExecutor(t, "test")
 	ctx := context.Background()
 
 	t.Run("drop_existing_index", func(t *testing.T) {
@@ -1916,7 +1913,7 @@ func TestVectorIndexWorkflow(t *testing.T) {
 		assert.Equal(t, "edge_similarity", result.Rows[0][0])
 
 		// 3. Create a memory node directly in storage with known ID
-		_, err = engine.CreateNode(&storage.Node{
+		_, err = engine.CreateNode(t.Context(), &storage.Node{
 			ID:         "mem1",
 			Labels:     []string{"Memory"},
 			Properties: map[string]interface{}{"content": "Test memory"},
@@ -2015,13 +2012,13 @@ func TestCallDbIndexVectorQueryNodes_AdditionalParameterBranches(t *testing.T) {
 	exec := NewStorageExecutor(engine)
 	ctx := context.Background()
 
-	_, err := engine.CreateNode(&storage.Node{
+	_, err := engine.CreateNode(t.Context(), &storage.Node{
 		ID:         "doc-1",
 		Labels:     []string{"Doc"},
 		Properties: map[string]interface{}{"embedding": []float64{0.1, 0.2, 0.3}},
 	})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{
+	_, err = engine.CreateNode(t.Context(), &storage.Node{
 		ID:         "doc-2",
 		Labels:     []string{"Doc"},
 		Properties: map[string]interface{}{"embedding": []float64{0.1, 0.1, 0.1}},
@@ -2055,7 +2052,7 @@ func TestCallDbIndexVectorQueryNodes_AdditionalParameterBranches(t *testing.T) {
 	// Build index state, then delete node and query again (covers stale/orphan-safe flow).
 	_, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('idx_doc', 5, [0.1,0.2,0.3])", nil)
 	require.NoError(t, err)
-	require.NoError(t, engine.DeleteNode("doc-1"))
+	require.NoError(t, engine.DeleteNode(t.Context(), "doc-1"))
 	res, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('idx_doc', 5, [0.1,0.2,0.3])", nil)
 	require.NoError(t, err)
 	require.NotNil(t, res)

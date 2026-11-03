@@ -30,7 +30,7 @@ func (b *BadgerEngine) getStoredBody(id NodeID) (*Node, error) {
 		}
 		return item.Value(func(value []byte) error {
 			var decodeErr error
-			decoded, decodeErr = b.decodeNode(namespaceForNodeID(id), value)
+			decoded, decodeErr = b.decodeNodeProjected(txn, namespaceForNodeID(id), value, nil)
 			return decodeErr
 		})
 	})
@@ -78,7 +78,7 @@ func TestNodeCacheFillFromStorageReadRejectsStaleBodyAfterWrite(t *testing.T) {
 			defer engine.Close()
 
 			const id NodeID = "fill:race"
-			_, err = engine.CreateNode(&Node{ID: id, Labels: []string{"L"}, Properties: map[string]any{"v": int64(1)}})
+			_, err = engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"L"}, Properties: map[string]any{"v": int64(1)}})
 			require.NoError(t, err)
 
 			// A read captures gen, then decodes v=1 from storage.
@@ -88,14 +88,14 @@ func TestNodeCacheFillFromStorageReadRejectsStaleBodyAfterWrite(t *testing.T) {
 			require.NoError(t, err)
 
 			// The write lands before the fill reaches the lock.
-			err = engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: id, Labels: []string{"L"}, Properties: map[string]any{"v": int64(2)}}})
+			err = engine.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: id, Labels: []string{"L"}, Properties: map[string]any{"v": int64(2)}}})
 			require.NoError(t, err)
 
 			engine.cacheFillNode(gen, decoded, tc.mode, source)
 			if value, ok := tc.valueOf(engine, id); ok {
 				require.EqualValues(t, 2, value, "a stale fill must be dropped")
 			}
-			got, err := engine.GetNode(id)
+			got, err := engine.GetNode(t.Context(), id)
 			require.NoError(t, err)
 			require.EqualValues(t, 2, got.Properties["v"])
 		})
@@ -111,7 +111,7 @@ func TestNodeCacheFillIsolatesReadImageAndCallerCopy(t *testing.T) {
 	defer engine.Close()
 
 	const id NodeID = "fill:isolated"
-	_, err = engine.CreateNode(&Node{ID: id, Labels: []string{"L"}, Properties: map[string]any{"v": int64(1), "keep": "yes"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"L"}, Properties: map[string]any{"v": int64(1), "keep": "yes"}})
 	require.NoError(t, err)
 	engine.cacheDeleteNode(id, nodeCacheAllForms) // force the next reads to fill from storage
 
@@ -154,12 +154,12 @@ func TestNodeCacheFillIsolatesReadImageAndCallerCopy(t *testing.T) {
 	require.Equal(t, []string{"L"}, engine.queryNodeCache[id].Labels)
 
 	// A full hit through GetNode is a copy too.
-	first, err := engine.GetNode(id)
+	first, err := engine.GetNode(t.Context(), id)
 	require.NoError(t, err)
 	first.Properties["v"] = int64(42)
 	first.Properties["caller"] = true
 	first.Labels[0] = "Caller"
-	second, err := engine.GetNode(id)
+	second, err := engine.GetNode(t.Context(), id)
 	require.NoError(t, err)
 	require.Equal(t, map[string]any{"v": int64(1), "keep": "yes"}, second.Properties,
 		"a caller cannot write the cached body")
@@ -182,7 +182,7 @@ func TestNodeCacheFillOutsideLockKeepsGenerationOrdering(t *testing.T) {
 	const readers = 8
 	const rounds = 50
 	value := int64(0)
-	_, err = engine.CreateNode(&Node{ID: id, Labels: []string{"L"}, Properties: map[string]any{"v": value}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"L"}, Properties: map[string]any{"v": value}})
 	require.NoError(t, err)
 	for round := 0; round < rounds; round++ {
 		// Each reader decodes the pre-write body from storage.
@@ -197,7 +197,7 @@ func TestNodeCacheFillOutsideLockKeepsGenerationOrdering(t *testing.T) {
 
 		// Then a write lands, before any fill.
 		value++
-		require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: id, Labels: []string{"L"}, Properties: map[string]any{"v": value}}}))
+		require.NoError(t, engine.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: id, Labels: []string{"L"}, Properties: map[string]any{"v": value}}}))
 
 		var start sync.WaitGroup
 		var filled sync.WaitGroup
@@ -217,7 +217,7 @@ func TestNodeCacheFillOutsideLockKeepsGenerationOrdering(t *testing.T) {
 		start.Done()
 		filled.Wait()
 
-		got, err := engine.GetNode(id)
+		got, err := engine.GetNode(t.Context(), id)
 		require.NoError(t, err)
 		require.EqualValues(t, value, got.Properties["v"], "round %d: a stale fill was published", round)
 		if cached, ok := engine.queryNodeCache[id]; ok {
@@ -235,7 +235,7 @@ func TestNodeCacheConcurrentFillNeverPublishesStaleBody(t *testing.T) {
 	engine.nodeCacheMaxEntries = 0 // no eviction: a stale fill would stay visible
 
 	const id NodeID = "fill:hammer"
-	_, err = engine.CreateNode(&Node{ID: id, Labels: []string{"L"}, Properties: map[string]any{"v": int64(0)}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"L"}, Properties: map[string]any{"v": int64(0)}})
 	require.NoError(t, err)
 
 	var stop atomic.Bool
@@ -259,12 +259,12 @@ func TestNodeCacheConcurrentFillNeverPublishesStaleBody(t *testing.T) {
 	var wrote int64
 	for wrote < 200 {
 		wrote++
-		engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: id, Labels: []string{"L"}, Properties: map[string]any{"v": wrote}}})
+		engine.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: id, Labels: []string{"L"}, Properties: map[string]any{"v": wrote}}})
 	}
 	stop.Store(true)
 	wg.Wait()
 
-	got, err := engine.GetNode(id)
+	got, err := engine.GetNode(t.Context(), id)
 	require.NoError(t, err)
 	require.EqualValues(t, wrote, got.Properties["v"])
 	if cached, ok := engine.queryNodeCache[id]; ok {

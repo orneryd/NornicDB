@@ -13,7 +13,7 @@ import (
 // validateStaticPropertySubscripts type-checks every subscript in text
 // (receiver[key], receiver[from..to]), wherever it appears, with scope's
 // static types. The rules are staticOperatorChecker.checkPostfix's.
-func validateStaticPropertySubscripts(text string, scope staticTypeScope) error {
+func validateStaticPropertySubscripts(ctx context.Context, text string, scope staticTypeScope) error {
 	// The scan reads raw text, local variables included ([x IN l | x[0]]),
 	// so it can't tell an undefined variable.
 	scope.complete = false
@@ -40,14 +40,14 @@ func validateStaticPropertySubscripts(text string, scope staticTypeScope) error 
 		if !expressionTextAccepted(receiver, expressionTextOperand) || (isCypherKeyword(receiver) && !isLiteralKeyword(receiver)) {
 			continue
 		}
-		if _, err := checker.checkPostfix(receiver, text[index+1:end], true); err != nil {
+		if _, err := checker.checkPostfix(ctx, receiver, text[index+1:end], true); err != nil {
 			// The subscript may read a variable an enclosing expression
 			// binds itself ([r IN l | r[0]]), not the clause's.
 			local, shadowed := withoutLocalVariables(scope, text, index)
 			if !shadowed {
 				return err
 			}
-			if _, err := (staticOperatorChecker{scope: local, params: scope.params}).checkPostfix(receiver, text[index+1:end], true); err != nil {
+			if _, err := (staticOperatorChecker{scope: local, params: scope.params}).checkPostfix(ctx, receiver, text[index+1:end], true); err != nil {
 				return err
 			}
 		}
@@ -55,7 +55,7 @@ func validateStaticPropertySubscripts(text string, scope staticTypeScope) error 
 	return nil
 }
 
-func (e *StorageExecutor) validateRowSubscriptTypes(expression string, row pipelineRow) error {
+func (e *StorageExecutor) validateRowSubscriptTypes(ctx context.Context, expression string, row pipelineRow) error {
 	expression = strings.TrimSpace(expression)
 	if !strings.HasSuffix(expression, "]") {
 		return nil
@@ -78,10 +78,10 @@ func (e *StorageExecutor) validateRowSubscriptTypes(expression string, row pipel
 		return nil
 	}
 	indexExpression := strings.TrimSpace(expression[open+1 : len(expression)-1])
-	if err := e.validateRowSubscriptTypes(baseExpression, row); err != nil {
+	if err := e.validateRowSubscriptTypes(ctx, baseExpression, row); err != nil {
 		return err
 	}
-	base, baseOK, err := e.evaluateRowValue(baseExpression, row)
+	base, baseOK, err := e.evaluateRowValue(ctx, baseExpression, row)
 	if err != nil {
 		return err
 	}
@@ -99,7 +99,7 @@ func (e *StorageExecutor) validateRowSubscriptTypes(expression string, row pipel
 			if boundExpression == "" {
 				continue
 			}
-			bound, ok, err := e.evaluateRowValue(boundExpression, row)
+			bound, ok, err := e.evaluateRowValue(ctx, boundExpression, row)
 			if err != nil {
 				return err
 			}
@@ -109,7 +109,7 @@ func (e *StorageExecutor) validateRowSubscriptTypes(expression string, row pipel
 		}
 		return nil
 	}
-	index, indexOK, err := e.evaluateRowValue(indexExpression, row)
+	index, indexOK, err := e.evaluateRowValue(ctx, indexExpression, row)
 	if err != nil {
 		return err
 	}
@@ -319,11 +319,11 @@ func (e *StorageExecutor) validatePipelineSizeArguments(ctx context.Context, row
 		}
 		// Aggregates have no value in an input row. Their argument is checked
 		// by the aggregate projection after its group has been evaluated.
-		if containsAggregateFunc(argument) || needsRowStatementContext(argument) {
+		if containsAggregateFunc(argument) || needsRowStatementContext(ctx, argument) {
 			continue
 		}
 		for _, row := range rows {
-			value, ok, err := e.evaluateRowValue(argument, row)
+			value, ok, err := e.evaluateRowValue(ctx, argument, row)
 			if err != nil {
 				return err
 			}

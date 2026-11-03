@@ -97,12 +97,9 @@ func newFabricAtomicityFixture(t *testing.T) *fabricAtomicityFixture {
 		fixture.failures = append(fixture.failures, "comp.http")
 	}
 	require.NoError(t, mgr.CreateCompositeDatabase(ctx, "comp", constituents))
-	store, err := mgr.GetStorage(mgr.DefaultDatabaseName())
-	require.NoError(t, err)
-	fixture.exec = NewStorageExecutor(store)
-	fixture.exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: mgr})
+	fixture.exec = newCompositeTestExecutor(t, mgr, mgr.DefaultDatabaseName(), &testDatabaseManagerAdapter{manager: mgr})
 	fixture.exec.cache = nil
-	_, err = fixture.exec.Execute(ctx, fabricAtomicityProcedure, nil)
+	_, err := fixture.exec.Execute(ctx, fabricAtomicityProcedure, nil)
 	require.NoError(t, err)
 	_, err = fixture.exec.Execute(ctx, fabricAtomicityRunnerProcedure, nil)
 	require.NoError(t, err)
@@ -111,17 +108,6 @@ func newFabricAtomicityFixture(t *testing.T) *fabricAtomicityFixture {
 		_, _ = fixture.exec.Execute(ctx, "DROP PROCEDURE acatom.runner", nil)
 	})
 	return fixture
-}
-
-// compositeSession is an executor whose session database is comp, for an
-// explicit transaction on it.
-func (f *fabricAtomicityFixture) compositeSession(t *testing.T) *StorageExecutor {
-	t.Helper()
-	store, err := f.mgr.GetStorage("comp")
-	require.NoError(t, err)
-	session := NewStorageExecutor(store)
-	session.SetDatabaseManager(f.exec.dbManager)
-	return session
 }
 
 func (f *fabricAtomicityFixture) writes(t *testing.T, constituent, run string) int64 {
@@ -149,11 +135,12 @@ func (f *fabricAtomicityFixture) referenceWrites(t *testing.T, query string, par
 	return err, count.Records[0].Values[0].(int64)
 }
 
-// assertReference checks that Neo4j fails the statement exactly when failed is
-// set and leaves writes nodes. Every USE selector is omitted unless reference
-// gives the statement.
-func (f *fabricAtomicityFixture) assertReference(t *testing.T, query, reference string, params map[string]interface{}, failed bool, writes int64) {
+// assertStatementWriteOutcome checks local published writes and, if configured,
+// Neo4j's error/count outcome. USE selectors are omitted unless reference
+// supplies an explicit statement.
+func (f *fabricAtomicityFixture) assertStatementWriteOutcome(t *testing.T, run, query, reference string, params map[string]interface{}, failed bool, writes int64) {
 	t.Helper()
+	require.Equal(t, writes, f.writes(t, "comp.one", run), "AcAtom nodes left on comp.one")
 	if f.reference == nil {
 		return
 	}
@@ -191,7 +178,7 @@ func TestFabricAutocommitStatementWritesAreAtomic(t *testing.T) {
 						params := map[string]interface{}{"run": run, "d": d, "body": fabricAtomicityBody}
 						runExec := fixture.exec
 						if mode == "explicit" {
-							runExec = fixture.compositeSession(t)
+							runExec = newCompositeTestExecutor(t, fixture.mgr, "comp", fixture.exec.dbManager)
 							_, err := runExec.Execute(ctx, "BEGIN", nil)
 							require.NoError(t, err)
 						}
@@ -211,8 +198,7 @@ func TestFabricAutocommitStatementWritesAreAtomic(t *testing.T) {
 						} else {
 							require.NoError(t, err)
 						}
-						require.Equal(t, want, fixture.writes(t, "comp.one", run), "AcAtom nodes left on comp.one")
-						fixture.assertReference(t, shape.query, shape.reference, params, d == 0, want)
+						fixture.assertStatementWriteOutcome(t, run, shape.query, shape.reference, params, d == 0, want)
 					})
 				}
 			}
@@ -254,7 +240,7 @@ func (f *fabricAtomicityFixture) assertSecondWriteRefused(t *testing.T, query, m
 	run := fmt.Sprintf("procedure-shard-%s-%d", mode, time.Now().UnixNano())
 	runExec := f.exec
 	if mode == "explicit" {
-		runExec = f.compositeSession(t)
+		runExec = newCompositeTestExecutor(t, f.mgr, "comp", f.exec.dbManager)
 		_, err := runExec.Execute(ctx, "BEGIN", nil)
 		require.NoError(t, err)
 	}
@@ -309,7 +295,7 @@ func TestFabricExplicitTransactionWritesToOneDatabase(t *testing.T) {
 		{"composite_runner_then_write_other", []string{"USE comp CALL { USE comp.one CALL acatom.runner($run) YIELD w RETURN w } RETURN w", "USE comp CALL { USE comp.two CREATE (:AcAtom {run: $run}) RETURN 1 AS z } RETURN z"}, true, 0, 0},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			session := fixture.compositeSession(t)
+			session := newCompositeTestExecutor(t, fixture.mgr, "comp", fixture.exec.dbManager)
 			run := fmt.Sprintf("explicit-%s-%d", tt.name, time.Now().UnixNano())
 			params := fabricEffectParams(run)
 			_, err := session.Execute(ctx, "BEGIN", nil)
@@ -354,8 +340,7 @@ func TestFabricAutocommitStatementReadsItsOwnWrites(t *testing.T) {
 			rows, err := json.Marshal(result.Rows)
 			require.NoError(t, err)
 			require.JSONEq(t, shape.want, string(rows))
-			require.Equal(t, shape.writes, fixture.writes(t, "comp.one", run))
-			fixture.assertReference(t, shape.query, "", params, false, shape.writes)
+			fixture.assertStatementWriteOutcome(t, run, shape.query, "", params, false, shape.writes)
 		})
 	}
 }

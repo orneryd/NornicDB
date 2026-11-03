@@ -40,8 +40,12 @@ func (e *writtenEntities) edge(edge *Edge) {
 }
 
 // operationEntities are the entities a transaction's operations write.
-func operationEntities(ops []Operation) writtenEntities {
-	return affectedEntities(publicationKeys(appendOperationPublicationKeys(nil, nil, ops)))
+func operationEntities(ctx context.Context, ops []Operation) (writtenEntities, error) {
+	keys, err := appendOperationPublicationKeys(ctx, nil, nil, ops)
+	if err != nil {
+		return writtenEntities{}, err
+	}
+	return affectedEntities(publicationKeys(keys)), nil
 }
 
 // writeOrderStripes partitions the write-behind order by entity, so writes of
@@ -67,19 +71,6 @@ func (s *orderStripeSet) entities(e writtenEntities) {
 		}
 	}
 	for _, id := range e.edges {
-		s.add(string(id))
-	}
-}
-
-// operations adds the stripes of the entities ops write, as entities would
-// for operationEntities(ops), without collecting them.
-func (s *orderStripeSet) operations(ops []Operation) {
-	s.entities(operationEntities(ops))
-}
-
-// deletions adds the stripes of the nodes ops delete.
-func (s *orderStripeSet) deletions(ops []Operation) {
-	for _, id := range operationEntities(ops).deletedNodes {
 		s.add(string(id))
 	}
 }
@@ -184,38 +175,42 @@ func deliveringToListeners() {
 
 // holdsEntities reports whether a generation not yet applied holds a body or
 // deletion of one of e's entities, or a relationship of a node e deletes.
-func (w *WriteBehindBuffer) holdsEntities(e writtenEntities) bool {
+func (w *WriteBehindBuffer) holdsEntities(ctx context.Context, e writtenEntities) (bool, error) {
 	// The read epoch is odd while any generation is unapplied. Under the
 	// caller's exclusive stripes no commit of e's entities is appended in
 	// the meantime, so an even epoch means none holds them.
 	if w.readEpoch.Load()&1 == 0 {
-		return false
+		return false, nil
 	}
-	w.mu.RLock()
+	if err := w.mu.RLockContext(ctx); err != nil {
+		return false, err
+	}
 	defer w.mu.RUnlock()
 	for _, id := range e.edges {
 		if w.entityStateLocked(bufferedEdgeEntity, string(id)).found {
-			return true
+			return true, nil
 		}
 	}
 	for _, ids := range [...][]NodeID{e.nodes, e.deletedNodes} {
 		for _, id := range ids {
 			if w.entityStateLocked(bufferedNodeEntity, string(id)).found {
-				return true
+				return true, nil
 			}
 		}
 	}
 	for _, id := range e.deletedNodes {
 		for _, outgoing := range [...]bool{true, false} {
-			// The hold check is the write path's own copy with no caller context to
-			// cancel it: context.Background is its lifetime.
-			live, touched, _, _ := w.edgeAdjacencyOverlayLocked(context.Background(), id, outgoing)
+			// Hold preparation uses the ordering phase lifetime.
+			live, touched, _, err := w.edgeAdjacencyOverlayLocked(ctx, id, outgoing)
+			if err != nil {
+				return false, err
+			}
 			if len(live) > 0 || len(touched) > 0 {
-				return true
+				return true, nil
 			}
 		}
 	}
-	return false
+	return false, nil
 }
 
 // orderHold is the write-order stripes a write holds exclusively
@@ -274,7 +269,12 @@ func (b *BadgerEngine) orderAfterBufferedCommits(ctx context.Context, h *orderHo
 	if err := w.order.lockContext(ctx, &h.resources.stripes, true); err != nil {
 		return false, err
 	}
-	if w.holdsEntities(e) {
+	held, err := w.holdsEntities(ctx, e)
+	if err != nil {
+		w.order.unlock(&h.resources.stripes, true)
+		return false, err
+	}
+	if held {
 		if err := w.flushContext(ctx, false, true); err != nil {
 			w.order.unlock(&h.resources.stripes, true)
 			return false, err
@@ -319,9 +319,9 @@ func (b *BadgerEngine) orderCovering(ctx context.Context, h *orderHold, e writte
 // storedEdgeEndpoints reaches the endpoints of edge id's stored image, the
 // newest the write-behind buffer holds included; image, when set, receives
 // the image read last (nil when there is none).
-func (b *BadgerEngine) storedEdgeEndpoints(id EdgeID, image **Edge) func() ([]NodeID, error) {
+func (b *BadgerEngine) storedEdgeEndpoints(ctx context.Context, id EdgeID, image **Edge) func() ([]NodeID, error) {
 	return func() ([]NodeID, error) {
-		edge, err := b.GetStoredEdge(id)
+		edge, err := b.GetStoredEdge(ctx, id)
 		if errors.Is(err, ErrNotFound) {
 			edge, err = nil, nil
 		}
@@ -383,13 +383,16 @@ var allOrderStripes = func() (s orderStripeSet) {
 // lifecycleWrite is a write that replaces or removes stored state wholesale
 // (beginLifecycleWrite), kept on the writer's stack.
 type lifecycleWrite struct {
-	ctx     context.Context
 	b       *BadgerEngine
 	held    *commitNotification
 	dropped bool
 	// suppressions: it holds suppressionWriteMu, so the end of a deleted
 	// entity's stored suppression does not run across it.
 	suppressions bool
+	// bindingDomain is the property-key binding domain the write admitted
+	// with; a change by the time it finishes means stored token meanings were
+	// replaced and the identity cut must advance.
+	bindingDomain uint64
 }
 
 // beginLifecycleWrite admits a write that replaces or removes stored state
@@ -410,7 +413,7 @@ func (b *BadgerEngine) beginLifecycleWrite(ctx context.Context, dropped string) 
 		b.writeBarrier.Unlock()
 		return lifecycleWrite{}, err
 	}
-	l := lifecycleWrite{ctx: ctx, b: b, held: b.queueCommitNotification(&commitNotification{})}
+	l := lifecycleWrite{b: b, held: b.queueCommitNotification(&commitNotification{})}
 	if w := b.writeBehind; w != nil {
 		if err := w.order.lockContext(ctx, &allOrderStripes, true); err != nil {
 			// lockContext already released any partial stripe acquisition.
@@ -428,6 +431,7 @@ func (b *BadgerEngine) beginLifecycleWrite(ctx context.Context, dropped string) 
 		return lifecycleWrite{}, err
 	}
 	l.suppressions = true
+	_, l.bindingDomain = b.propKeyDict.walBindingState()
 	if dropped != "" {
 		b.startPrefixDrop(dropped)
 		l.dropped = true
@@ -477,6 +481,15 @@ func (l lifecycleWrite) finish() {
 		return
 	}
 	if l.dropped {
+		// Finish the dictionary-retirement cut before making the sequence
+		// stable: older snapshots must resolve persisted identities, newer views
+		// may reuse the current immutable string bindings. Only a write that
+		// changed existing token meanings retires anything; a maintenance pass
+		// that rewrites indexes or derived state leaves every stored body's
+		// bindings in force, so it must not invalidate those views.
+		if _, domain := l.b.propKeyDict.walBindingState(); domain != l.bindingDomain {
+			l.b.prefixDrops.identityCut.Store(l.b.db.oracle.published.Load() + 1)
+		}
 		l.b.prefixDrops.seq.Add(1)
 	}
 	if l.suppressions {
@@ -497,6 +510,7 @@ type prefixDrops struct {
 	pending      map[string]*namespaceDropIntent
 	mu           sync.Mutex
 	seq          atomic.Uint64
+	identityCut  atomic.Uint64
 	start        map[string]uint64
 }
 
@@ -536,21 +550,31 @@ func (b *BadgerEngine) prefixDroppedSince(begin uint64, namespace string) bool {
 // still holds that delete: the stored head shows it only once it is applied.
 // Committing over it would bring the entity back without counting it, or
 // delete it, and count it, a second time.
-func (tx *BadgerTransaction) bufferedDeleteConflictLocked() error {
+func (tx *BadgerTransaction) bufferedDeleteConflictLocked(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	w := tx.engine.writeBehind
 	if w == nil || len(tx.operations) == 0 || w.readEpoch.Load()&1 == 0 {
-		return nil
+		return ctx.Err()
 	}
 	var nodes map[NodeID]struct{}
 	var edges map[EdgeID]struct{}
-	written := func() {
+	written := func(ctx context.Context) error {
+		var cancel bulkReadCancellation
 		nodes, edges = make(map[NodeID]struct{}), make(map[EdgeID]struct{})
 		for i := range tx.operations {
+			if err := cancel.check(ctx); err != nil {
+				return err
+			}
 			op := &tx.operations[i]
 			switch op.Type {
 			case OpUpdateNode, OpDeleteNode, OpUpdateEmbedding:
 				nodes[op.NodeID] = struct{}{}
 				for _, id := range op.DeletedEdgeIDs {
+					if err := cancel.check(ctx); err != nil {
+						return err
+					}
 					edges[id] = struct{}{}
 				}
 			case OpUpdateEdge:
@@ -561,44 +585,57 @@ func (tx *BadgerTransaction) bufferedDeleteConflictLocked() error {
 				edges[op.EdgeID] = struct{}{}
 			}
 		}
+		return ctx.Err()
 	}
 	var node NodeID
 	var edge EdgeID
 	var version MVCCVersion
-	w.commitsSince(tx.readTS, func(v MVCCVersion, ops []Operation) bool {
+	err := w.commitsSince(ctx, tx.readTS, func(ctx context.Context, v MVCCVersion, ops []Operation) (bool, error) {
 		if nodes == nil {
-			written()
+			if err := written(ctx); err != nil {
+				return false, err
+			}
 		}
+		var cancel bulkReadCancellation
 		for j := range ops {
+			if err := cancel.check(ctx); err != nil {
+				return false, err
+			}
 			op := &ops[j]
 			switch op.Type {
 			case OpDeleteNode:
 				if _, ok := nodes[op.NodeID]; ok {
 					node, version = op.NodeID, v
-					return false
+					return false, nil
 				}
 				for _, id := range op.DeletedEdgeIDs {
+					if err := cancel.check(ctx); err != nil {
+						return false, err
+					}
 					if _, ok := edges[id]; ok {
 						edge, version = id, v
-						return false
+						return false, nil
 					}
 				}
 			case OpDeleteEdge:
 				if _, ok := edges[op.EdgeID]; ok {
 					edge, version = op.EdgeID, v
-					return false
+					return false, nil
 				}
 			}
 		}
-		return true
+		return true, ctx.Err()
 	})
+	if err != nil {
+		return err
+	}
 	switch {
 	case node != "":
 		return localizedError(localization.StorageTransactionNodeChangedDetailed(string(node), version.String(), tx.readTS.String()), ErrConflict)
 	case edge != "":
 		return localizedError(localization.StorageTransactionEdgeChanged(string(edge)), ErrConflict)
 	}
-	return nil
+	return ctx.Err()
 }
 
 // errEndpointChanged fails a commit validated before a commit of a
@@ -615,12 +652,15 @@ var errEndpointChanged = fmt.Errorf("%w: a relationship endpoint changed before 
 // replaced, or a relationship it moved away from a node it deletes, is not
 // checked. The caller holds the stripes of tx's entities, a deleted node's
 // exclusively, so neither side changes meanwhile.
-func (tx *BadgerTransaction) revalidateEndpointsLocked() error {
+func (tx *BadgerTransaction) revalidateEndpointsLocked(ctx context.Context) error {
 	if len(tx.pendingEdges) == 0 && len(tx.deletedNodes) == 0 {
 		return nil
 	}
 	var checked map[NodeID]struct{}
 	for _, edge := range tx.pendingEdges {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		for _, id := range [...]NodeID{edge.StartNode, edge.EndNode} {
 			if _, deleted := tx.deletedNodes[id]; deleted {
 				return errEndpointChanged
@@ -635,21 +675,23 @@ func (tx *BadgerTransaction) revalidateEndpointsLocked() error {
 				checked = make(map[NodeID]struct{})
 			}
 			checked[id] = struct{}{}
-			if _, err := tx.engine.getNodeSnapshotForRead(id, false, storedRead, true); errors.Is(err, ErrNotFound) {
+			if _, err := tx.engine.getNodeSnapshotForRead(ctx, id, false, storedRead, true); errors.Is(err, ErrNotFound) {
 				return errEndpointChanged
 			} else if err != nil {
 				return err
 			}
 		}
 	}
-	// Serving a buffered delete reads the deleted node's committed adjacency on
-	// the write's own lifetime (context.Background), not a statement read's.
+	// Endpoint preparation retains its phase lifetime for committed adjacency.
 	for id := range tx.deletedNodes {
-		out, err := tx.engine.GetStoredOutgoingEdges(context.Background(), id)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		out, err := tx.engine.GetStoredOutgoingEdges(ctx, id)
 		if err != nil {
 			return err
 		}
-		in, err := tx.engine.GetStoredIncomingEdges(context.Background(), id)
+		in, err := tx.engine.GetStoredIncomingEdges(ctx, id)
 		if err != nil {
 			return err
 		}

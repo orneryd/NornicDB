@@ -28,6 +28,10 @@ import (
 const migrationV1ToV2BatchSize = 500
 
 func (b *BadgerEngine) migrateV1ToV2() error {
+	// The startup migration is a context-free entry: it establishes its own
+	// unbounded lifetime once here and hands it to every private helper below,
+	// so no helper needs to choose one.
+	ctx := context.Background()
 	overallStart := time.Now()
 	if b.log != nil {
 		b.log.Info("starting v1→v2 storage upgrade",
@@ -36,7 +40,7 @@ func (b *BadgerEngine) migrateV1ToV2() error {
 	}
 
 	nodesStart := time.Now()
-	nodeStats, err := migrateV1ToV2Bodies[nodeV1ToV2Body](b, "nodes")
+	nodeStats, err := migrateV1ToV2Bodies[nodeV1ToV2Body](ctx, b, "nodes")
 	if err != nil {
 		return fmt.Errorf("rewriting nodes: %w", err)
 	}
@@ -49,7 +53,7 @@ func (b *BadgerEngine) migrateV1ToV2() error {
 	}
 
 	edgesStart := time.Now()
-	edgeStats, err := migrateV1ToV2Bodies[edgeV1ToV2Body](b, "edges")
+	edgeStats, err := migrateV1ToV2Bodies[edgeV1ToV2Body](ctx, b, "edges")
 	if err != nil {
 		return fmt.Errorf("rewriting edges: %w", err)
 	}
@@ -74,7 +78,7 @@ func (b *BadgerEngine) migrateV1ToV2() error {
 	// leaves the store at v1; the migration restarts from scratch on
 	// the next open and re-rebuilds.
 	idxStart := time.Now()
-	idxStats, err := b.rebuildSecondaryIndexesForV2()
+	idxStats, err := b.rebuildSecondaryIndexesForV2(ctx)
 	if err != nil {
 		return fmt.Errorf("rebuilding secondary indexes: %w", err)
 	}
@@ -141,7 +145,7 @@ type v1ToV2IndexStats struct {
 // including this step from scratch. The intermediate state is
 // "indexes wiped, bodies already at v2"; readers fall through the
 // edge-between repair self-heal path until the rebuild completes.
-func (b *BadgerEngine) rebuildSecondaryIndexesForV2() (v1ToV2IndexStats, error) {
+func (b *BadgerEngine) rebuildSecondaryIndexesForV2(ctx context.Context) (v1ToV2IndexStats, error) {
 	stats := v1ToV2IndexStats{}
 
 	for _, p := range []byte{
@@ -153,15 +157,15 @@ func (b *BadgerEngine) rebuildSecondaryIndexesForV2() (v1ToV2IndexStats, error) 
 		if err := b.ensureOpen(false); err != nil {
 			return stats, fmt.Errorf("drop legacy prefix 0x%02x: %w", p, err)
 		}
-		if err := b.db.DropPrefix(context.Background(), prefixDropOptions{}, []byte{p}); err != nil {
+		if err := b.db.DropPrefix(ctx, prefixDropOptions{mode: purgePrefixVersions}, []byte{p}); err != nil {
 			return stats, fmt.Errorf("drop legacy prefix 0x%02x: %w", p, err)
 		}
 	}
 
-	if err := b.rebuildLabelIndexForV2(&stats); err != nil {
+	if err := b.rebuildLabelIndexForV2(ctx, &stats); err != nil {
 		return stats, err
 	}
-	if err := b.rebuildEdgeIndexesForV2(&stats); err != nil {
+	if err := b.rebuildEdgeIndexesForV2(ctx, &stats); err != nil {
 		return stats, err
 	}
 	return stats, nil
@@ -171,7 +175,7 @@ func (b *BadgerEngine) rebuildSecondaryIndexesForV2() (v1ToV2IndexStats, error) 
 // labelIndexKey per (node, label) pair. Uses cursor-based pagination
 // (not the body-format-byte skip used by the body-rewrite pass) since
 // nodes are already at v2 and we'd loop forever otherwise.
-func (b *BadgerEngine) rebuildLabelIndexForV2(stats *v1ToV2IndexStats) error {
+func (b *BadgerEngine) rebuildLabelIndexForV2(ctx context.Context, stats *v1ToV2IndexStats) error {
 	const progressEvery = 25_000
 	const batchSize = migrationV1ToV2BatchSize
 	lastLogged := 0
@@ -209,14 +213,14 @@ func (b *BadgerEngine) rebuildLabelIndexForV2(stats *v1ToV2IndexStats) error {
 		if len(batch) == 0 {
 			return nil
 		}
-		err = b.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		err = b.withUpdate(ctx, updateRequest{}, func(txn *badger.Txn) error {
 			for _, item := range batch {
 				nodeID := NodeID(string(item.key[1:]))
 				namespace, _, ok := ParseDatabasePrefix(string(nodeID))
 				if !ok {
 					return fmt.Errorf("v1→v2 index rebuild: node %q lacks namespace prefix", nodeID)
 				}
-				node, err := b.decodeNode(namespace, item.value)
+				node, err := b.decodeNodeProjected(txn, namespace, item.value, nil)
 				if err != nil {
 					return fmt.Errorf("decode v2 node %q: %w", nodeID, err)
 				}
@@ -256,7 +260,7 @@ func (b *BadgerEngine) rebuildLabelIndexForV2(stats *v1ToV2IndexStats) error {
 // rebuildEdgeIndexesForV2 walks every edge body and emits outgoing,
 // incoming, and edge-type entries. Cursor-based for the same reason
 // as the label pass.
-func (b *BadgerEngine) rebuildEdgeIndexesForV2(stats *v1ToV2IndexStats) error {
+func (b *BadgerEngine) rebuildEdgeIndexesForV2(ctx context.Context, stats *v1ToV2IndexStats) error {
 	const progressEvery = 25_000
 	const batchSize = migrationV1ToV2BatchSize
 	lastLogged := 0
@@ -297,10 +301,10 @@ func (b *BadgerEngine) rebuildEdgeIndexesForV2(stats *v1ToV2IndexStats) error {
 		if len(batch) == 0 {
 			return nil
 		}
-		err = b.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		err = b.withUpdate(ctx, updateRequest{}, func(txn *badger.Txn) error {
 			for _, item := range batch {
 				edgeID := EdgeID(string(item.key[1:]))
-				edge, err := b.decodeEdgeBodyByID(item.value, edgeID)
+				edge, err := b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), item.value, edgeID)
 				if err != nil {
 					return fmt.Errorf("decode v2 edge %q: %w", edgeID, err)
 				}
@@ -482,7 +486,7 @@ func (edgeV1ToV2Body) rewrite(b *BadgerEngine, txn *badger.Txn, key, value []byt
 // migrateV1ToV2Bodies walks one entity kind's primary keyspace in batches.
 // Each batch opens its own *badger.Txn so it commits atomically and the
 // property-key dictionary's per-txn counter flush runs at the right time.
-func migrateV1ToV2Bodies[M v1ToV2BodyKind](b *BadgerEngine, label string) (v1ToV2PassStats, error) {
+func migrateV1ToV2Bodies[M v1ToV2BodyKind](ctx context.Context, b *BadgerEngine, label string) (v1ToV2PassStats, error) {
 	var kind M
 	stats := v1ToV2PassStats{}
 	const progressEvery = 25_000
@@ -496,7 +500,7 @@ func migrateV1ToV2Bodies[M v1ToV2BodyKind](b *BadgerEngine, label string) (v1ToV
 		if len(batch) == 0 {
 			break
 		}
-		err = b.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		err = b.withUpdate(ctx, updateRequest{}, func(txn *badger.Txn) error {
 			for _, item := range batch {
 				stats.scanned++
 				if err := kind.rewrite(b, txn, item.key, item.value); err != nil {

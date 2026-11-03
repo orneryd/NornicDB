@@ -40,12 +40,12 @@ func invokeTypedPlugin(ctx context.Context, handler *PluginFunctionHandler, args
 // Context-taking plugin calls need the row evaluator to retain the statement's
 // context, just as clocks and subqueries do. This is checked while preparing
 // an expression; ordinary handlers do not force a context-bearing row copy.
-func containsContextPluginCall(expression string) bool {
+func containsContextPluginCall(ctx context.Context, expression string) bool {
 	if PluginFunctionLookup == nil || !strings.Contains(expression, ".") || !strings.Contains(expression, "(") {
 		return false
 	}
 	found := false
-	_ = forEachFunctionCall(expression, func(name, _ string) error {
+	_ = forEachFunctionCall(ctx, expression, func(name, _ string) error {
 		if handler, ok := pluginFunctionHandler(name); ok && handler != nil {
 			typ := handler.Signature()
 			if typ != nil && typ.Kind() == reflect.Func && typ.NumIn() > 0 && typ.In(0) == pluginContextType {

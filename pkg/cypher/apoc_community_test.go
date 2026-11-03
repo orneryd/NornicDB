@@ -16,43 +16,43 @@ func createCommunityTestGraph(t *testing.T, engine storage.Engine) {
 	// Community 1: A-B-C (triangle)
 	// When using NamespacedEngine, pass unprefixed IDs - the engine handles prefixing
 	aNode := &storage.Node{ID: storage.NodeID("a"), Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "A"}}
-	actualA, err := engine.CreateNode(aNode)
+	actualA, err := engine.CreateNode(t.Context(), aNode)
 	require.NoError(t, err)
 
 	bNode := &storage.Node{ID: storage.NodeID("b"), Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "B"}}
-	actualB, err := engine.CreateNode(bNode)
+	actualB, err := engine.CreateNode(t.Context(), bNode)
 	require.NoError(t, err)
 
 	cNode := &storage.Node{ID: storage.NodeID("c"), Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "C"}}
-	actualC, err := engine.CreateNode(cNode)
+	actualC, err := engine.CreateNode(t.Context(), cNode)
 	require.NoError(t, err)
 
 	// Community 2: D-E-F (triangle)
 	dNode := &storage.Node{ID: storage.NodeID("d"), Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "D"}}
-	actualD, err := engine.CreateNode(dNode)
+	actualD, err := engine.CreateNode(t.Context(), dNode)
 	require.NoError(t, err)
 
 	eNode := &storage.Node{ID: storage.NodeID("e"), Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "E"}}
-	actualE, err := engine.CreateNode(eNode)
+	actualE, err := engine.CreateNode(t.Context(), eNode)
 	require.NoError(t, err)
 
 	fNode := &storage.Node{ID: storage.NodeID("f"), Labels: []string{"Node"}, Properties: map[string]interface{}{"name": "F"}}
-	actualF, err := engine.CreateNode(fNode)
+	actualF, err := engine.CreateNode(t.Context(), fNode)
 	require.NoError(t, err)
 
 	// Dense connections within community 1
 	// Use the actual IDs returned from CreateNode (which are unprefixed for NamespacedEngine)
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: storage.EdgeID("e1"), StartNode: actualA, EndNode: actualB, Type: "CONNECTS"}))
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: storage.EdgeID("e2"), StartNode: actualB, EndNode: actualC, Type: "CONNECTS"}))
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: storage.EdgeID("e3"), StartNode: actualC, EndNode: actualA, Type: "CONNECTS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: storage.EdgeID("e1"), StartNode: actualA, EndNode: actualB, Type: "CONNECTS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: storage.EdgeID("e2"), StartNode: actualB, EndNode: actualC, Type: "CONNECTS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: storage.EdgeID("e3"), StartNode: actualC, EndNode: actualA, Type: "CONNECTS"}))
 
 	// Dense connections within community 2
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: storage.EdgeID("e4"), StartNode: actualD, EndNode: actualE, Type: "CONNECTS"}))
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: storage.EdgeID("e5"), StartNode: actualE, EndNode: actualF, Type: "CONNECTS"}))
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: storage.EdgeID("e6"), StartNode: actualF, EndNode: actualD, Type: "CONNECTS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: storage.EdgeID("e4"), StartNode: actualD, EndNode: actualE, Type: "CONNECTS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: storage.EdgeID("e5"), StartNode: actualE, EndNode: actualF, Type: "CONNECTS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: storage.EdgeID("e6"), StartNode: actualF, EndNode: actualD, Type: "CONNECTS"}))
 
 	// Weak link between communities
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: storage.EdgeID("e7"), StartNode: actualC, EndNode: actualD, Type: "CONNECTS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: storage.EdgeID("e7"), StartNode: actualC, EndNode: actualD, Type: "CONNECTS"}))
 }
 
 func TestApocAlgoLouvain(t *testing.T) {
@@ -126,13 +126,13 @@ func TestApocAlgoWCC(t *testing.T) {
 	ctx := context.Background()
 
 	// Create disconnected components
-	_, err := engine.CreateNode(&storage.Node{ID: "x", Labels: []string{"Node"}})
+	_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "x", Labels: []string{"Node"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "y", Labels: []string{"Node"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "y", Labels: []string{"Node"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "z", Labels: []string{"Node"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "z", Labels: []string{"Node"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "xy", StartNode: "x", EndNode: "y", Type: "CONNECTS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "xy", StartNode: "x", EndNode: "y", Type: "CONNECTS"}))
 	// z is isolated
 
 	t.Run("basic_wcc", func(t *testing.T) {

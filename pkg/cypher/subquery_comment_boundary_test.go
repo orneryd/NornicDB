@@ -25,7 +25,7 @@ func TestSubqueryCommentBoundaryWithNormalizationSetting(t *testing.T) {
 						base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 						require.NoError(t, err)
 						t.Cleanup(func() { require.NoError(t, base.Close()) })
-						tx, err := base.BeginTransaction()
+						tx, err := base.BeginTransaction(t.Context())
 						require.NoError(t, err)
 						t.Cleanup(func() { _ = tx.Rollback() })
 						exec = NewStorageExecutor(&transactionStorageWrapper{

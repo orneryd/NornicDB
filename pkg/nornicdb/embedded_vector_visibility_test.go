@@ -35,7 +35,7 @@ func TestEmbeddedNodeIsSearchableWhenEmbedCallbackReturns(t *testing.T) {
 	svc, err := db.EnsureSearchIndexes(ctx, db.defaultDatabaseName(), nil, SearchIndexBuildWait)
 	require.NoError(t, err)
 	require.True(t, svc.IsReady())
-	_, err = db.storage.CreateNode(&storage.Node{ID: "source", Labels: []string{"SearchSource"}, Properties: map[string]any{"content": "bravo filler"}})
+	_, err = db.storage.CreateNode(t.Context(), &storage.Node{ID: "source", Labels: []string{"SearchSource"}, Properties: map[string]any{"content": "bravo filler"}})
 	require.NoError(t, err)
 	vector := unitVector(config.Memory.EmbeddingDimensions)
 	worker := NewEmbedWorker(&unitVectorEmbedder{dims: config.Memory.EmbeddingDimensions}, db.baseStorage, &EmbedWorkerConfig{NumWorkers: 1, DeferWorkerStart: true, EmbedBatchSize: 1, ChunkSize: 512})
@@ -62,7 +62,7 @@ func TestEmbeddedNodeIsSearchableWhenEmbedCallbackReturns(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the public worker did not publish its accepted outcome")
 	}
-	stored, err := db.storage.GetNode("source")
+	stored, err := db.storage.GetNode(t.Context(), "source")
 	require.NoError(t, err)
 	require.Len(t, stored.ChunkEmbeddings, 1, "the searchable vector is persisted")
 }

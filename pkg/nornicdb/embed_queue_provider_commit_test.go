@@ -1,6 +1,7 @@
 package nornicdb
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -14,10 +15,10 @@ type providerCommitQueue struct {
 	started, release chan struct{}
 }
 
-func (q *providerCommitQueue) UpdateNodeEmbeddingSidecar(node *storage.Node) error {
+func (q *providerCommitQueue) UpdateNodeEmbeddingSidecar(ctx context.Context, node *storage.Node) error {
 	close(q.started)
 	<-q.release
-	return q.rejectingSidecarQueue.UpdateNodeEmbeddingSidecar(node)
+	return q.rejectingSidecarQueue.UpdateNodeEmbeddingSidecar(ctx, node)
 }
 
 func TestEmbedWorkerProviderChangeSerializesCommit(t *testing.T) {
@@ -76,7 +77,8 @@ func TestEmbedWorkerProviderChangeRejectsObsoleteRetry(t *testing.T) {
 	worker, queue, old := nodeSaveRetryFixture(t, "whole", 1, 1)
 	require.True(t, worker.processNextBatch())
 	makeNodeSaveRetriesReady(worker)
-	node, _ := worker.claimNextNodeResult()
+	node, _, claimErr := worker.claimNextNodeResult()
+	require.NoError(t, claimErr)
 	require.NotNil(t, node)
 	worker.SetEmbedder(newMockEmbedder())
 	node.ChunkEmbeddings, node.EmbedMeta = [][]float32{{1, 0}}, map[string]any{"embedding_model": old.Model()}

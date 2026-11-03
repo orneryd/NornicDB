@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -973,7 +974,7 @@ func TestApplySchemaDefinition_ErrorsOnMissingAndInvalidJSON(t *testing.T) {
 	dir := t.TempDir()
 
 	t.Run("missing file returns os error", func(t *testing.T) {
-		err := applySchemaDefinition(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)),
+		err := applySchemaDefinition(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)),
 			filepath.Join(dir, "missing.json"))
 		require.Error(t, err)
 		require.True(t, os.IsNotExist(err) || errors.Is(err, os.ErrNotExist))
@@ -982,7 +983,7 @@ func TestApplySchemaDefinition_ErrorsOnMissingAndInvalidJSON(t *testing.T) {
 	t.Run("malformed JSON returns decode error", func(t *testing.T) {
 		path := filepath.Join(dir, "bad.json")
 		require.NoError(t, os.WriteFile(path, []byte("{not json"), 0o600))
-		err := applySchemaDefinition(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), path)
+		err := applySchemaDefinition(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), path)
 		require.Error(t, err)
 	})
 }
@@ -1012,7 +1013,8 @@ func TestApplySchema_DispatchesByExtension(t *testing.T) {
 		target := storage.NewNamespacedEngine(base, "appdb")
 		require.NoError(t, applySchema(ctx, target, path))
 
-		constraints := target.GetSchema().GetConstraintsForLabels([]string{"Person"})
+		constraints, err := target.GetSchema().GetConstraintsForLabels(ctx, []string{"Person"})
+		require.NoError(t, err)
 		require.Len(t, constraints, 1)
 		require.Equal(t, "person_email_unique", constraints[0].Name)
 	})
@@ -1032,7 +1034,9 @@ func TestApplySchema_DispatchesByExtension(t *testing.T) {
 		require.NoError(t, applySchema(ctx, target, path))
 
 		names := make([]string, 0)
-		for _, c := range target.GetSchema().GetConstraintsForLabels([]string{"Person"}) {
+		constraints, err := target.GetSchema().GetConstraintsForLabels(ctx, []string{"Person"})
+		require.NoError(t, err)
+		for _, c := range constraints {
 			names = append(names, c.Name)
 		}
 		require.ElementsMatch(t, []string{"person_name_unique", "person_email_unique"}, names)
@@ -1214,12 +1218,12 @@ func TestCSVSourceReader_ReadHeaderTwiceReturnsEOF(t *testing.T) {
 func TestEnsureEmpty_RejectsNonEmptyEngine(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	ns := storage.NewNamespacedEngine(base, "occupied")
-	_, err := ns.CreateNode(&storage.Node{ID: "n1", Labels: []string{"X"}})
+	_, err := ns.CreateNode(t.Context(), &storage.Node{ID: "n1", Labels: []string{"X"}})
 	require.NoError(t, err)
-	require.Error(t, ensureEmpty(ns))
+	require.Error(t, ensureEmpty(t.Context(), ns))
 
 	empty := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "empty")
-	require.NoError(t, ensureEmpty(empty))
+	require.NoError(t, ensureEmpty(t.Context(), empty))
 }
 
 // ============================================================================
@@ -1227,30 +1231,37 @@ func TestEnsureEmpty_RejectsNonEmptyEngine(t *testing.T) {
 // destination engine already has nodes that should be indexed.
 // ============================================================================
 
-func TestRebuildSchemaDerivedState_IndexesExistingNodes(t *testing.T) {
+func TestReplaceDefinitionDurable_IndexesExistingNodes(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	ns := storage.NewNamespacedEngine(base, "rebuild-db")
 
 	// Seed two Person nodes BEFORE the schema knows about indexes.
-	_, err := ns.CreateNode(&storage.Node{
+	_, err := ns.CreateNode(t.Context(), &storage.Node{
 		ID: "u1", Labels: []string{"Person"},
 		Properties: map[string]any{"email": "alice@example.com", "country": "US", "city": "NYC"},
 	})
 	require.NoError(t, err)
-	_, err = ns.CreateNode(&storage.Node{
+	_, err = ns.CreateNode(t.Context(), &storage.Node{
 		ID: "u2", Labels: []string{"Person"},
 		Properties: map[string]any{"email": "bob@example.com", "country": "US", "city": "LA"},
 	})
 	require.NoError(t, err)
 
-	schema := ns.GetSchema()
-	require.NoError(t, schema.AddPropertyIndex("person_email_idx", "Person", []string{"email"}))
-	require.NoError(t, schema.AddCompositeIndex("person_location_idx", "Person", []string{"country", "city"}))
+	// The accepted replacement rebuilds its derived state from the stored
+	// nodes, so the indexes it publishes resolve entities that existed before
+	// the replacement was applied.
+	require.NoError(t, ns.GetSchema().ReplaceDefinitionDurable(t.Context(), ns, &storage.SchemaDefinition{
+		PropertyIndexes: []storage.SchemaPropertyIndexDef{{
+			Name: "person_email_idx", Label: "Person", Properties: []string{"email"},
+		}},
+		CompositeIndexes: []storage.SchemaCompositeIndexDef{{
+			Name: "person_location_idx", Label: "Person", Properties: []string{"country", "city"},
+		}},
+	}))
 
-	require.NoError(t, rebuildSchemaDerivedState(ns, schema))
-
-	// After rebuild the property index should resolve both seeded nodes.
-	got := ns.GetSchema().PropertyIndexLookup("Person", "email", "alice@example.com")
+	// After the replacement the property index should resolve both seeded nodes.
+	got, err := ns.GetSchema().PropertyIndexLookup(t.Context(), "Person", "email", "alice@example.com")
+	require.NoError(t, err)
 	require.Contains(t, got, storage.NodeID("u1"))
 }
 
@@ -1706,7 +1717,7 @@ func TestImportFull_ValidatesInputsBeforeAnyWrite(t *testing.T) {
 		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		// Pre-seed a node under the target namespace.
 		ns := storage.NewNamespacedEngine(base, "occupied")
-		_, err := ns.CreateNode(&storage.Node{ID: "n1", Labels: []string{"X"}})
+		_, err := ns.CreateNode(t.Context(), &storage.Node{ID: "n1", Labels: []string{"X"}})
 		require.NoError(t, err)
 
 		report, err := ImportFull(ctx, base, Options{

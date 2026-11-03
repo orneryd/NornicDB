@@ -19,11 +19,11 @@ type relationshipLookupErrorEngine struct {
 
 // MatchEdgesBetween keeps the typed candidate read (storage.EdgesBetweenMatcher)
 // while an untyped scan of the pair fails.
-func (e *relationshipLookupErrorEngine) MatchEdgesBetween(startID, endID storage.NodeID, relType string, properties []string, match func(*storage.Edge) bool) ([]*storage.Edge, error) {
+func (e *relationshipLookupErrorEngine) MatchEdgesBetween(ctx context.Context, startID, endID storage.NodeID, relType string, properties []string, match func(*storage.Edge) bool) ([]*storage.Edge, error) {
 	if e.failMatch {
 		return nil, e.err
 	}
-	return storage.MatchEdgesBetween(e.Engine, startID, endID, relType, properties, match)
+	return storage.MatchEdgesBetween(ctx, e.Engine, startID, endID, relType, properties, match)
 }
 
 func (e *relationshipLookupErrorEngine) GetEdgesBetween(ctx context.Context,
@@ -148,25 +148,25 @@ func TestRelationshipMatchesMergePatternRequiresTypeAndEveryProperty(t *testing.
 func TestFindRelationshipForMergeSupportsBareLookupAndPropagatesScanError(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(baseStore, "test")
-	_, err := store.CreateNode(&storage.Node{ID: "source", Labels: []string{"Source"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "source", Labels: []string{"Source"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "target", Labels: []string{"Target"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "target", Labels: []string{"Target"}})
 	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "edge",
 		Type:      "ASSERTS",
 		StartNode: "source",
 		EndNode:   "target",
 	}))
 
-	found, err := findRelationshipForMerge(store, "source", "target", "ASSERTS", nil)
+	found, err := findRelationshipForMerge(t.Context(), store, "source", "target", "ASSERTS", nil)
 	require.NoError(t, err)
 	require.NotNil(t, found)
 	require.Equal(t, storage.EdgeID("edge"), found.ID)
 
 	wantErr := errors.New("relationship scan failed")
 	errorStore := &relationshipLookupErrorEngine{Engine: store, err: wantErr, failMatch: true}
-	found, err = findRelationshipForMerge(
+	found, err = findRelationshipForMerge(t.Context(),
 		errorStore,
 		"source",
 		"target",
@@ -184,9 +184,9 @@ func TestFindRelationshipForMergeSupportsBareLookupAndPropagatesScanError(t *tes
 func TestFindRelationshipsForMergeReadsTypedCandidates(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(baseStore, "test")
-	_, err := store.CreateNode(&storage.Node{ID: "source", Labels: []string{"Source"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "source", Labels: []string{"Source"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "target", Labels: []string{"Target"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "target", Labels: []string{"Target"}})
 	require.NoError(t, err)
 	matchProps := map[string]interface{}{"scope_id": "scope-a"}
 	for _, edge := range []*storage.Edge{
@@ -195,11 +195,11 @@ func TestFindRelationshipsForMergeReadsTypedCandidates(t *testing.T) {
 		{ID: "other-identity", Type: "ASSERTS", StartNode: "source", EndNode: "target", Properties: map[string]interface{}{"scope_id": "scope-b"}},
 		{ID: "other-type", Type: "OTHER", StartNode: "source", EndNode: "target", Properties: map[string]interface{}{"scope_id": "scope-a"}},
 	} {
-		require.NoError(t, store.CreateEdge(edge))
+		require.NoError(t, store.CreateEdge(t.Context(), edge))
 	}
 
 	noScanStore := &relationshipLookupErrorEngine{Engine: store, err: errors.New("untyped pair scan must not run")}
-	found, err := findRelationshipsForMerge(noScanStore, "source", "target", "ASSERTS", matchProps)
+	found, err := findRelationshipsForMerge(t.Context(), noScanStore, "source", "target", "ASSERTS", matchProps)
 	require.NoError(t, err)
 	ids := make([]storage.EdgeID, 0, len(found))
 	for _, edge := range found {

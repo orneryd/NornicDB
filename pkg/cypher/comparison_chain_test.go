@@ -106,7 +106,7 @@ func TestConvergedMatchFiltersArbitraryLengthComparisonChains(t *testing.T) {
 		{"number": int64(2), "text": "b"},
 		{"number": int64(3), "text": "c"},
 	} {
-		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(string(rune('a' + index))), Properties: properties})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(string(rune('a' + index))), Properties: properties})
 		if err != nil {
 			t.Fatalf("create node: %v", err)
 		}

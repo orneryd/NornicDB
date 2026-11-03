@@ -13,11 +13,11 @@ func TestReservationOwnerOutstandingWorkIsBounded(t *testing.T) {
 	for _, kind := range []string{"node", "relationship"} {
 		t.Run(kind, func(t *testing.T) {
 			engine, svc, fault := xhighNestedService(t)
-			_, err := engine.CreateNode(&storage.Node{ID: "a", ChunkEmbeddings: [][]float32{{1, 0}}})
+			_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "a", ChunkEmbeddings: [][]float32{{1, 0}}})
 			require.NoError(t, err)
-			_, err = engine.CreateNode(&storage.Node{ID: "b"})
+			_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "b"})
 			require.NoError(t, err)
-			require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "AFTER", Properties: map[string]any{"vec": []float32{1, 0}}}))
+			require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "AFTER", Properties: map[string]any{"vec": []float32{1, 0}}}))
 			reserve := func() RefreshRetry {
 				if kind == "node" {
 					return RefreshRetry{Node: svc.ReserveNodeMutation("a")}
@@ -26,9 +26,9 @@ func TestReservationOwnerOutstandingWorkIsBounded(t *testing.T) {
 			}
 			refresh := func(work RefreshRetry) error {
 				if kind == "node" {
-					return svc.RefreshNodeWithMutation(work.Node)
+					return svc.RefreshNodeWithMutation(t.Context(), work.Node)
 				}
-				return svc.RefreshEdgeWithMutation(work.Edge)
+				return svc.RefreshEdgeWithMutation(t.Context(), work.Edge)
 			}
 			linkCount := func() int {
 				svc.nodeMutationMu.Lock()
@@ -73,11 +73,11 @@ func TestReservationOwnerLegacyRetryNotification(t *testing.T) {
 	for _, kind := range []string{"node", "relationship"} {
 		t.Run(kind, func(t *testing.T) {
 			engine, svc, fault := xhighNestedService(t)
-			_, err := engine.CreateNode(&storage.Node{ID: "a", ChunkEmbeddings: [][]float32{{1, 0}}})
+			_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "a", ChunkEmbeddings: [][]float32{{1, 0}}})
 			require.NoError(t, err)
-			_, err = engine.CreateNode(&storage.Node{ID: "b"})
+			_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "b"})
 			require.NoError(t, err)
-			require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "AFTER", Properties: map[string]any{"vec": []float32{1, 0}}}))
+			require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "AFTER", Properties: map[string]any{"vec": []float32{1, 0}}}))
 			var older RefreshRetry
 			if kind == "node" {
 				older = RefreshRetry{Node: svc.ReserveNodeMutation("a")}
@@ -99,19 +99,19 @@ func TestReservationOwnerLegacyRetryNotification(t *testing.T) {
 			fault.nodes.Store(kind == "node")
 			fault.edges.Store(kind == "relationship")
 			if kind == "node" {
-				require.ErrorIs(t, svc.RefreshNode("a"), xhighNestedReadFailure)
+				require.ErrorIs(t, svc.RefreshNode(t.Context(), "a"), xhighNestedReadFailure)
 			} else {
-				require.ErrorIs(t, svc.RefreshEdge("r"), xhighNestedReadFailure)
+				require.ErrorIs(t, svc.RefreshEdge(t.Context(), "r"), xhighNestedReadFailure)
 			}
 			require.Equal(t, 1, calls)
 			require.True(t, older.Current(), "notification changed the original discard contract")
 			fault.nodes.Store(false)
 			fault.edges.Store(false)
 			if kind == "node" {
-				require.NoError(t, svc.RefreshNodeWithMutation(older.Node))
+				require.NoError(t, svc.RefreshNodeWithMutation(t.Context(), older.Node))
 				require.Equal(t, 1, svc.EmbeddingCount())
 			} else {
-				require.NoError(t, svc.RefreshEdgeWithMutation(older.Edge))
+				require.NoError(t, svc.RefreshEdgeWithMutation(t.Context(), older.Edge))
 				require.True(t, svc.HasRelationshipVectorEntries("AFTER", "vec"))
 			}
 		})
@@ -129,8 +129,8 @@ func TestReservationRegistryDomainsAndComparableTokens(t *testing.T) {
 	require.True(t, (RefreshRetry{}).Retired())
 	(RefreshRetry{}).Discard()
 
-	svc := &Service{}
-	other := &Service{}
+	svc := &Service{lifecycleCtx: t.Context()}
+	other := &Service{lifecycleCtx: t.Context()}
 	node := svc.ReserveNodeMutation("same")
 	edge := svc.ReserveEdgeMutation("same")
 	foreign := other.ReserveNodeMutation("same")
@@ -140,8 +140,8 @@ func TestReservationRegistryDomainsAndComparableTokens(t *testing.T) {
 	require.True(t, (RefreshRetry{Node: node}).Current())
 	require.True(t, (RefreshRetry{Edge: edge}).Current())
 	require.False(t, (RefreshRetry{Node: node}).NewerThan(RefreshRetry{Node: foreign}))
-	require.NoError(t, other.RefreshNodeWithMutation(node))
-	require.NoError(t, other.RefreshEdgeWithMutation(edge))
+	require.NoError(t, other.RefreshNodeWithMutation(t.Context(), node))
+	require.NoError(t, other.RefreshEdgeWithMutation(t.Context(), edge))
 
 	svc.DiscardNodeMutation(node)
 	require.True(t, (RefreshRetry{Node: node}).Retired())

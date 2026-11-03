@@ -30,11 +30,13 @@ func TestKeywordSplitPublicPolicies(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var got []string
+			var err error
 			if tc.create {
-				got = SplitByCreate(tc.source)
+				got, err = SplitByCreate(t.Context(), tc.source)
 			} else {
-				got = SplitByKeyword(tc.source, tc.keyword)
+				got, err = SplitByKeyword(t.Context(), tc.source, tc.keyword)
 			}
+			require.NoError(t, err)
 			require.Equal(t, tc.want, got)
 		})
 	}

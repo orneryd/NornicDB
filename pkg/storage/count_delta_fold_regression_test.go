@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
@@ -21,7 +22,7 @@ func TestCountDeltaFoldLargeBacklogChunked(t *testing.T) {
 	t.Cleanup(func() { _ = engine.Close() })
 
 	const deltas = countDeltaFoldChunk*2 + 137 // spans three fold chunks
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		for i := 0; i < deltas; i++ {
 			if err := engine.adjustLabelCountInTxn(txn, "ns1", "BigFold", 1); err != nil {
 				return err
@@ -32,13 +33,13 @@ func TestCountDeltaFoldLargeBacklogChunked(t *testing.T) {
 
 	// The read sums the deltas in place and returns the correct count
 	// without paying a synchronous fold.
-	count, err := engine.NodeCountByLabelInNamespace("ns1", "BigFold")
+	count, err := engine.NodeCountByLabelInNamespace(t.Context(), "ns1", "BigFold")
 	require.NoError(t, err)
 	require.Equal(t, int64(deltas), count)
 
 	// The background fold path must collapse every delta into the base
 	// without ErrTxnTooBig, exactly as the read-triggered fold used to.
-	engine.foldCountDeltasInBackground()
+	engine.foldCountDeltasInBackground(context.Background())
 
 	var remaining int
 	require.NoError(t, engine.db.View(func(txn *badger.Txn) error {
@@ -53,7 +54,7 @@ func TestCountDeltaFoldLargeBacklogChunked(t *testing.T) {
 	require.Zero(t, remaining, "background fold must consume the whole backlog")
 
 	// The folded base answers the same count.
-	count, err = engine.NodeCountByLabelInNamespace("ns1", "BigFold")
+	count, err = engine.NodeCountByLabelInNamespace(t.Context(), "ns1", "BigFold")
 	require.NoError(t, err)
 	require.Equal(t, int64(deltas), count)
 }
@@ -72,7 +73,7 @@ func TestCountDeltaLargeBacklogReopen(t *testing.T) {
 
 	const nodes = countDeltaFoldChunk + 1000 // > one chunk of deltas
 	for i := 0; i < nodes; i++ {
-		_, err := engine.CreateNode(&Node{ID: NodeID(fmt.Sprintf("ns1:rb%05d", i)), Labels: []string{"ReopenBig"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("ns1:rb%05d", i)), Labels: []string{"ReopenBig"}})
 		require.NoError(t, err)
 	}
 
@@ -83,7 +84,7 @@ func TestCountDeltaLargeBacklogReopen(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reopened.Close() })
 
-	count, err := reopened.NodeCountByLabelInNamespace("ns1", "ReopenBig")
+	count, err := reopened.NodeCountByLabelInNamespace(t.Context(), "ns1", "ReopenBig")
 	require.NoError(t, err)
 	require.Equal(t, int64(nodes), count)
 
@@ -93,7 +94,7 @@ func TestCountDeltaLargeBacklogReopen(t *testing.T) {
 	reopened2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reopened2.Close() })
-	count, err = reopened2.NodeCountByLabelInNamespace("ns1", "ReopenBig")
+	count, err = reopened2.NodeCountByLabelInNamespace(t.Context(), "ns1", "ReopenBig")
 	require.NoError(t, err)
 	require.Equal(t, int64(nodes), count)
 }
@@ -110,7 +111,7 @@ func TestConcurrentRelationshipCreateCountsExact(t *testing.T) {
 	ns := "ns1"
 	const nodeCount = 100
 	for i := 0; i < nodeCount; i++ {
-		_, err := engine.CreateNode(&Node{ID: NodeID(fmt.Sprintf("%s:p%03d", ns, i)), Labels: []string{"P"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("%s:p%03d", ns, i)), Labels: []string{"P"}})
 		require.NoError(t, err)
 	}
 
@@ -126,7 +127,7 @@ func TestConcurrentRelationshipCreateCountsExact(t *testing.T) {
 			for i := worker; i < total; i += workers {
 				a := i % nodeCount
 				b := (i + 1) % nodeCount
-				tx, err := engine.BeginTransaction()
+				tx, err := engine.BeginTransaction(t.Context())
 				if err != nil {
 					mu.Lock()
 					errs = append(errs, err)
@@ -146,7 +147,7 @@ func TestConcurrentRelationshipCreateCountsExact(t *testing.T) {
 					StartNode: NodeID(fmt.Sprintf("%s:p%03d", ns, a)),
 					EndNode:   NodeID(fmt.Sprintf("%s:p%03d", ns, b)),
 				}
-				if err := tx.CreateEdge(edge); err != nil {
+				if err := tx.CreateEdge(t.Context(), edge); err != nil {
 					_ = tx.Rollback()
 					mu.Lock()
 					errs = append(errs, err)
@@ -165,15 +166,15 @@ func TestConcurrentRelationshipCreateCountsExact(t *testing.T) {
 	wg.Wait()
 	require.Empty(t, errs)
 
-	count, err := engine.EdgeCountByTypeInNamespace(ns, "K")
+	count, err := engine.EdgeCountByTypeInNamespace(context.Background(), ns, "K")
 	require.NoError(t, err)
 	require.Equal(t, int64(total), count, "per-type count must be exact")
 
-	startCount, err := engine.EdgeCountByStartLabelInNamespace(ns, "P", "K")
+	startCount, err := engine.EdgeCountByStartLabelInNamespace(context.Background(), ns, "P", "K")
 	require.NoError(t, err)
 	require.Equal(t, int64(total), startCount, "start-label positional count must be exact")
 
-	endCount, err := engine.EdgeCountByEndLabelInNamespace(ns, "P", "K")
+	endCount, err := engine.EdgeCountByEndLabelInNamespace(context.Background(), ns, "P", "K")
 	require.NoError(t, err)
 	require.Equal(t, int64(total), endCount, "end-label positional count must be exact")
 }

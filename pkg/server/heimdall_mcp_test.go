@@ -58,7 +58,7 @@ func TestHeimdallMCPExposureAndInference(t *testing.T) {
 	manager := heimdall.GetSubsystemManager()
 	generator := &mcpInferenceGenerator{}
 	invoker := heimdall.NewLiveHeimdallInvoker(manager, generator, nil, nil, nil)
-	manager.SetContext(heimdall.SubsystemContext{Heimdall: invoker})
+	manager.SetContext(heimdall.SubsystemHost{Heimdall: invoker})
 	plugin := &mcpInferencePlugin{}
 	require.NoError(t, manager.RegisterPlugin(plugin, "", true))
 	server := mcp.NewServer(nil, nil)

@@ -441,12 +441,12 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 	}
 	if opts.Graph {
 		if graphPage {
-			return e.graphSearchPage(response), nil
+			return e.graphSearchPage(ctx, response), nil
 		}
-		return e.graphSearchResult(response), nil
+		return e.graphSearchResult(ctx, response), nil
 	}
 	if opts.Relationships {
-		return e.relationshipSearchResult(response), nil
+		return e.relationshipSearchResult(ctx, response), nil
 	}
 
 	result := &ExecuteResult{
@@ -874,7 +874,7 @@ func continuationResultMetadata(value any) map[string]any {
 func desugarRetrievalWhere(ctx context.Context, where string) (string, error) {
 	where, _ = canonicalizeFunctionAliases(where)
 	const prefix, suffix = "RETURN ", " AS __nornic_where"
-	rewritten, rewrite, err := desugarLabelExpressions(prefix+where+suffix, getParamsFromContext(ctx), cypherVersionFromContext(ctx) == "25")
+	rewritten, rewrite, err := desugarLabelExpressions(ctx, prefix+where+suffix, getParamsFromContext(ctx), cypherVersionFromContext(ctx) == "25")
 	if err != nil {
 		return "", err
 	}

@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"sort"
 )
@@ -16,7 +17,7 @@ type mapDelimiter struct {
 	existsCall     bool
 }
 
-func (context *mapPatternContext) insidePatternDelimiter(query string, end int) bool {
+func (context *mapPatternContext) insidePatternDelimiter(ctx context.Context, query string, end int) bool {
 	var stack []mapDelimiter
 	previous, prior := -1, -1
 	for index := 0; index < end; index++ {
@@ -46,7 +47,7 @@ func (context *mapPatternContext) insidePatternDelimiter(query string, end int) 
 		}
 		switch c {
 		case '(':
-			pattern := mapNodeDelimiter(query, index, previous, prior, stack, context)
+			pattern := mapNodeDelimiter(ctx, query, index, previous, prior, stack, context)
 			existsCall := context.existsCall(query, previous+1)
 			existsArgument := existsCall || len(stack) > 0 && stack[len(stack)-1].existsArgument
 			stack = append(stack, mapDelimiter{open: index, kind: c, pattern: pattern, existsArgument: existsArgument, existsCall: existsCall})
@@ -65,7 +66,7 @@ func (context *mapPatternContext) insidePatternDelimiter(query string, end int) 
 	return len(stack) > 0 && stack[len(stack)-1].pattern
 }
 
-func mapNodeDelimiter(query string, open, previous, prior int, stack []mapDelimiter, context *mapPatternContext) bool {
+func mapNodeDelimiter(ctx context.Context, query string, open, previous, prior int, stack []mapDelimiter, context *mapPatternContext) bool {
 	word := ""
 	if previous >= 0 {
 		word = rawWordBefore(query, previous+1)
@@ -75,7 +76,7 @@ func mapNodeDelimiter(query string, open, previous, prior int, stack []mapDelimi
 	if word != "" && context.qualified[previous+1-len(word)] {
 		return false
 	}
-	if isPatternClauseKeyword(word) || equalFoldASCII(word, "shortestPath") || equalFoldASCII(word, "allShortestPaths") || context.selected(query, open, stack) {
+	if isPatternClauseKeyword(word) || equalFoldASCII(word, "shortestPath") || equalFoldASCII(word, "allShortestPaths") || context.selected(ctx, query, open, stack) {
 		return true
 	}
 	if word != "" {
@@ -94,7 +95,7 @@ func mapNodeDelimiter(query string, open, previous, prior int, stack []mapDelimi
 			if len(stack) > 0 && stack[len(stack)-1].existsArgument {
 				return false
 			}
-			return mapPatternScope(query, open, stack, context)
+			return mapPatternScope(ctx, query, open, stack, context)
 		}
 
 		if next < len(query) && query[next] == '<' && next+1 < len(query) && query[next+1] == '-' {
@@ -123,17 +124,17 @@ func mapNodeDelimiter(query string, open, previous, prior int, stack []mapDelimi
 	if previous >= 0 && query[previous] != '(' && query[previous] != ',' && query[previous] != ')' && query[previous] != '=' {
 		return false
 	}
-	return mapPatternScope(query, open, stack, context)
+	return mapPatternScope(ctx, query, open, stack, context)
 }
 
-func mapPatternClause(query string) bool {
-	return isPatternClauseKeyword(mapClauseBefore(query))
+func mapPatternClause(ctx context.Context, query string) bool {
+	return isPatternClauseKeyword(mapClauseBefore(ctx, query))
 }
 
-func mapClauseBefore(query string) string {
+func mapClauseBefore(ctx context.Context, query string) string {
 	last, clause := -1, ""
 	for _, keyword := range []string{"MATCH", "CREATE", "MERGE", "WHERE", "RETURN", "WITH", "UNWIND", "SET", "DELETE", "REMOVE", "CALL", "FILTER", "LET", "YIELD"} {
-		positions := findAllTopLevelPipelineKeywordPositions(query, keyword)
+		positions := findAllTopLevelPipelineKeywordPositions(ctx, query, keyword)
 		if len(positions) > 0 && positions[len(positions)-1] > last {
 			last = positions[len(positions)-1]
 			clause = keyword
@@ -161,15 +162,15 @@ func mapRelationshipDelimiter(query string, open, previous int, context *mapPatt
 	return next < len(query) && query[next] == '('
 }
 
-func mapPatternScope(query string, open int, stack []mapDelimiter, context *mapPatternContext) bool {
+func mapPatternScope(ctx context.Context, query string, open int, stack []mapDelimiter, context *mapPatternContext) bool {
 	if len(stack) == 0 {
-		return context.scope(query, 0).pattern(open)
+		return context.scope(ctx, query, 0).pattern(open)
 	}
 	parent := stack[len(stack)-1]
 	if parent.kind != '{' {
 		return parent.pattern
 	}
-	return context.subqueries[parent.open] && context.scope(query, parent.open+1).pattern(open)
+	return context.subqueries[parent.open] && context.scope(ctx, query, parent.open+1).pattern(open)
 }
 
 // Matching delimiters and clause/selector positions are indexed once per
@@ -243,7 +244,7 @@ func (context *mapPatternContext) close(open int) int {
 	}
 	return -1
 }
-func (context *mapPatternContext) scope(query string, start int) *mapPatternClauseIndex {
+func (context *mapPatternContext) scope(ctx context.Context, query string, start int) *mapPatternClauseIndex {
 	if scope := context.scopes[start]; scope != nil {
 		return scope
 	}
@@ -257,7 +258,7 @@ func (context *mapPatternContext) scope(query string, start int) *mapPatternClau
 	}
 	text := query[start:end]
 	for _, keyword := range []string{"MATCH", "CREATE", "MERGE", "WHERE", "RETURN", "WITH", "UNWIND", "SET", "DELETE", "REMOVE", "CALL", "FILTER", "LET", "YIELD"} {
-		for _, position := range findAllTopLevelPipelineKeywordPositions(text, keyword) {
+		for _, position := range findAllTopLevelPipelineKeywordPositions(ctx, text, keyword) {
 			scope.clauses = append(scope.clauses, mapPatternClausePosition{start + position, isPatternClauseKeyword(keyword)})
 		}
 	}
@@ -289,7 +290,7 @@ func (scope *mapPatternClauseIndex) pattern(position int) bool {
 	index := sort.Search(len(scope.clauses), func(i int) bool { return scope.clauses[i].position >= position })
 	return index > 0 && scope.clauses[index-1].pattern
 }
-func (context *mapPatternContext) selected(query string, open int, stack []mapDelimiter) bool {
+func (context *mapPatternContext) selected(ctx context.Context, query string, open int, stack []mapDelimiter) bool {
 	start := 0
 	if len(stack) > 0 {
 		parent := stack[len(stack)-1]
@@ -298,7 +299,7 @@ func (context *mapPatternContext) selected(query string, open int, stack []mapDe
 		}
 		start = parent.open + 1
 	}
-	return context.scope(query, start).selected[open]
+	return context.scope(ctx, query, start).selected[open]
 }
 
 func (context *mapPatternContext) existsCall(query string, end int) bool {

@@ -717,17 +717,22 @@ func (a *Authenticator) loadUsers() error {
 
 // saveUser saves a user to the system database.
 // Users are stored as nodes with labels ["_User", "_System"].
-func (a *Authenticator) saveUser(user *User, transaction storage.Engine) error {
+//
+// ctx is the lifetime of the operation that asked for the write: a login's
+// best-effort bookkeeping passes the login's own context, a user mutation passes
+// its caller's. A non-nil transaction is an already admitted staged view; nil
+// asks this operation to own admission.
+func (a *Authenticator) saveUser(ctx context.Context, user *User, transaction storage.Engine) error {
 	mutate := func(view storage.Engine) error {
 		node := mapUserRecord(storeUserRecord, user, nil).Node
 
 		// Check if node exists
 		nodeID := storage.NodeID("user:" + user.Username)
-		existing, err := view.GetNode(nodeID)
+		existing, err := view.GetNode(ctx, nodeID)
 		if err == storage.ErrNotFound {
 			// Create new user node
 			node.ID = nodeID
-			_, err = view.CreateNode(node)
+			_, err = view.CreateNode(ctx, node)
 			return err
 		}
 		if err != nil {
@@ -737,18 +742,19 @@ func (a *Authenticator) saveUser(user *User, transaction storage.Engine) error {
 		// Update existing user node
 		node.ID = nodeID
 		node.CreatedAt = existing.CreatedAt // Preserve original creation time
-		return view.UpdateNode(storage.NodeUpdateRequest{Before: existing, After: node})
+		return view.UpdateNode(ctx, storage.NodeUpdateRequest{Before: existing, After: node})
 	}
 	if transaction != nil {
 		return mutate(transaction)
 	}
-	return WithStoreTransaction(context.Background(), a.storage, mutate)
+	return WithStoreTransaction(ctx, a.storage, mutate)
 }
 
-func (a *Authenticator) deleteUserNode(username string) error {
+// deleteUserNode removes the stored user record under the caller's lifetime.
+func (a *Authenticator) deleteUserNode(ctx context.Context, username string) error {
 	nodeID := storage.NodeID("user:" + username)
-	return WithStoreTransaction(context.Background(), a.storage, func(view storage.Engine) error {
-		return view.DeleteNode(nodeID)
+	return WithStoreTransaction(ctx, a.storage, func(view storage.Engine) error {
+		return view.DeleteNode(ctx, nodeID)
 	})
 }
 
@@ -770,23 +776,30 @@ func (a *Authenticator) deleteUserNode(username string) error {
 // Example:
 //
 //	// Create admin user
-//	admin, err := auth.CreateUser("admin", "SecurePassword123!",
+//	admin, err := auth.CreateUser(ctx, "admin", "SecurePassword123!",
 //		[]auth.Role{auth.RoleAdmin})
 //	if err != nil {
 //		return err
 //	}
 //
 //	// Create regular user (defaults to viewer)
-//	user, err := auth.CreateUser("alice", "AlicePass456!", nil)
+//	user, err := auth.CreateUser(ctx, "alice", "AlicePass456!", nil)
 //
 //	// Create user with multiple roles
-//	editor, err := auth.CreateUser("bob", "BobPass789!",
+//	editor, err := auth.CreateUser(ctx, "bob", "BobPass789!",
 //		[]auth.Role{auth.RoleEditor, auth.RoleViewer})
 //
 // Audit event: Logs "user_create" with success/failure.
 //
 // Compliance: HIPAA §164.308(a)(3)(ii)(A) - Unique user IDs
-func (a *Authenticator) CreateUser(username, password string, roles []Role) (*User, error) {
+//
+// ctx owns admission and the durable user write. A canceled ctx reports its own
+// error: nothing is persisted, no live user is published and no audit event is
+// recorded.
+func (a *Authenticator) CreateUser(ctx context.Context, username, password string, roles []Role) (*User, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -831,7 +844,7 @@ func (a *Authenticator) CreateUser(username, password string, roles []Role) (*Us
 	}
 
 	// Save to storage
-	if err := a.saveUser(user, nil); err != nil {
+	if err := a.saveUser(ctx, user, nil); err != nil {
 		return nil, fmt.Errorf("failed to persist user: %w", err)
 	}
 
@@ -913,7 +926,18 @@ func (a *Authenticator) CreateUser(username, password string, roles []Role) (*Us
 //   - HIPAA §164.312(d): Person or Entity Authentication
 //   - GDPR Art.32: Technical measures to ensure security
 //   - FISMA AC-7: Unsuccessful Login Attempts
-func (a *Authenticator) Authenticate(username, password, ipAddress, userAgent string) (*TokenResponse, *User, error) {
+//
+// ctx owns admission only. Credential acceptance and the best-effort login
+// bookkeeping keep their existing distinction: a rejected credential still
+// records its failed-login state and audit event, and a storage refusal of that
+// bookkeeping never turns an accepted credential into a failed login. A canceled
+// caller is refused before any state is read or written, so it reports its own
+// error rather than an uncommitted login outcome, and no credential material is
+// ever included in an error or audit detail.
+func (a *Authenticator) Authenticate(ctx context.Context, username, password, ipAddress, userAgent string) (*TokenResponse, *User, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -971,7 +995,7 @@ func (a *Authenticator) Authenticate(username, password, ipAddress, userAgent st
 			user.UpdatedAt = time.Now()
 
 			// Persist failed login state
-			a.saveUser(user, nil) // Ignore error - don't fail on storage issues
+			a.saveUser(ctx, user, nil) // Ignore error - don't fail on storage issues
 
 			a.logAudit(AuditEvent{
 				EventType: "login",
@@ -1004,7 +1028,7 @@ func (a *Authenticator) Authenticate(username, password, ipAddress, userAgent st
 	user.UpdatedAt = time.Now()
 
 	// Persist login state changes
-	a.saveUser(user, nil) // Ignore error - don't fail authentication on storage issues
+	a.saveUser(ctx, user, nil) // Ignore error - don't fail authentication on storage issues
 
 	// Generate JWT token
 	token, err := a.issueUserJWT(user, a.config.TokenExpiry)
@@ -1226,7 +1250,15 @@ func (a *Authenticator) OnPasswordChange(fn func(username string)) {
 // mutateStoredUser owns the locked clone/persist/cache/audit boundary. The
 // operation supplies only its actual field transition and audit details. The
 // optional completion runs after durable success and audit, still under mu.
-func (a *Authenticator) mutateStoredUser(username, operation string, apply func(*User) (AuditEvent, error), complete func()) error {
+//
+// ctx is the caller's lifetime and orders the boundary: the clone is published
+// into the live cache, and its success audit and completion run, only after the
+// durable write is accepted. A canceled ctx reports its own error and leaves both
+// the live cache and the stored record unchanged.
+func (a *Authenticator) mutateStoredUser(ctx context.Context, username, operation string, apply func(*User) (AuditEvent, error), complete func()) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	user, exists := a.users[username]
@@ -1239,7 +1271,7 @@ func (a *Authenticator) mutateStoredUser(username, operation string, apply func(
 		return err
 	}
 	user.UpdatedAt = time.Now()
-	if err := a.saveUser(user, nil); err != nil {
+	if err := a.saveUser(ctx, user, nil); err != nil {
 		return fmt.Errorf("failed to persist %s: %w", operation, err)
 	}
 	a.users[username] = user
@@ -1253,8 +1285,8 @@ func (a *Authenticator) mutateStoredUser(username, operation string, apply func(
 
 // ChangePassword updates a user's password and invalidates credential caches
 // only after successful persistence. Failure audit and listeners run under mu.
-func (a *Authenticator) ChangePassword(username, oldPassword, newPassword string) error {
-	return a.mutateStoredUser(username, "password change", func(user *User) (AuditEvent, error) {
+func (a *Authenticator) ChangePassword(ctx context.Context, username, oldPassword, newPassword string) error {
+	return a.mutateStoredUser(ctx, username, "password change", func(user *User) (AuditEvent, error) {
 		if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(oldPassword)); err != nil {
 			a.logAudit(AuditEvent{EventType: "password_change", Username: username, UserID: user.ID, Success: false, Details: "old password incorrect"})
 			return AuditEvent{}, ErrInvalidCredentials
@@ -1276,8 +1308,8 @@ func (a *Authenticator) ChangePassword(username, oldPassword, newPassword string
 }
 
 // UpdateRoles changes a user's roles, persisting before live publication.
-func (a *Authenticator) UpdateRoles(username string, newRoles []Role) error {
-	return a.mutateStoredUser(username, "role change", func(user *User) (AuditEvent, error) {
+func (a *Authenticator) UpdateRoles(ctx context.Context, username string, newRoles []Role) error {
+	return a.mutateStoredUser(ctx, username, "role change", func(user *User) (AuditEvent, error) {
 		oldRoles := user.Roles
 		user.Roles = append([]Role(nil), newRoles...)
 		return AuditEvent{EventType: "role_change", Details: fmt.Sprintf("roles changed from %v to %v", oldRoles, newRoles)}, nil
@@ -1304,7 +1336,7 @@ const (
 // Example:
 //
 //	err := authenticator.ChangeUserState("alice", auth.UserUnlock)
-func (a *Authenticator) ChangeUserState(username string, change UserStateChange) error {
+func (a *Authenticator) ChangeUserState(ctx context.Context, username string, change UserStateChange) error {
 	var operation, eventType string
 	switch change {
 	case UserEnable:
@@ -1316,7 +1348,7 @@ func (a *Authenticator) ChangeUserState(username string, change UserStateChange)
 	default:
 		return fmt.Errorf("invalid user state change %d", change)
 	}
-	return a.mutateStoredUser(username, operation, func(user *User) (AuditEvent, error) {
+	return a.mutateStoredUser(ctx, username, operation, func(user *User) (AuditEvent, error) {
 		if change == UserDisable {
 			user.Disabled = true
 		} else {
@@ -1331,8 +1363,8 @@ func (a *Authenticator) ChangeUserState(username string, change UserStateChange)
 
 // UpdateUser updates profile information. Empty email preserves the current
 // value; a nonnil metadata map merges its entries into the existing metadata.
-func (a *Authenticator) UpdateUser(username string, email string, metadata map[string]string) error {
-	return a.mutateStoredUser(username, "user update", func(user *User) (AuditEvent, error) {
+func (a *Authenticator) UpdateUser(ctx context.Context, username string, email string, metadata map[string]string) error {
+	return a.mutateStoredUser(ctx, username, "user update", func(user *User) (AuditEvent, error) {
 		if email != "" {
 			user.Email = email
 		}
@@ -1348,8 +1380,13 @@ func (a *Authenticator) UpdateUser(username string, email string, metadata map[s
 	}, nil)
 }
 
-// DeleteUser removes a user.
-func (a *Authenticator) DeleteUser(username string) error {
+// DeleteUser removes a user under the caller's lifetime. The live user is
+// forgotten, and its success audit recorded, only after the stored delete is
+// accepted; a canceled ctx reports its own error and leaves the user intact.
+func (a *Authenticator) DeleteUser(ctx context.Context, username string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -1361,7 +1398,7 @@ func (a *Authenticator) DeleteUser(username string) error {
 	userID := user.ID
 
 	// Delete from storage
-	if err := a.deleteUserNode(username); err != nil {
+	if err := a.deleteUserNode(ctx, username); err != nil {
 		return fmt.Errorf("failed to delete user from storage: %w", err)
 	}
 

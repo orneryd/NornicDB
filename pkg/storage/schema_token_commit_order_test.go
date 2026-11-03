@@ -17,7 +17,7 @@ import (
 func TestBufferedReplayDoesNotHoldCommitGateWhileReadingSchema(t *testing.T) {
 	b := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{manualDrain: true, lowMemory: true, wal: true})
 	schema := b.GetSchemaForNamespace("test")
-	require.NoError(t, schema.RegisterTokens([]string{"Ingest"}, []string{"BEFORE"}))
+	require.NoError(t, schema.RegisterTokens(t.Context(), []string{"Ingest"}, []string{"BEFORE"}))
 	const nodes = 6000
 	rng := rand.New(rand.NewPCG(1, 2))
 	pad := make([]byte, 128)
@@ -28,7 +28,7 @@ func TestBufferedReplayDoesNotHoldCommitGateWhileReadingSchema(t *testing.T) {
 			for j := range pad {
 				pad[j] = byte('a' + rng.IntN(26))
 			}
-			if _, err := tx.CreateNode(&Node{ID: NodeID(fmt.Sprintf("test:ingest-%d", i)), Labels: []string{"Ingest"}, Properties: map[string]any{"pad": string(pad)}}); err != nil {
+			if _, err := tx.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("test:ingest-%d", i)), Labels: []string{"Ingest"}, Properties: map[string]any{"pad": string(pad)}}); err != nil {
 				return err
 			}
 		}
@@ -65,7 +65,7 @@ func TestBufferedReplayDoesNotHoldCommitGateWhileReadingSchema(t *testing.T) {
 	flushed, registered := make(chan struct{}), make(chan struct{})
 	var flushErr, registerErr error
 	registrationStarted := false
-	go func() { defer close(flushed); flushErr = b.FlushWriteBehind(nil) }()
+	go func() { defer close(flushed); flushErr = b.FlushWriteBehind(context.Background()) }()
 	defer func() {
 		abortOnce.Do(func() { close(abort) })
 		<-flushed
@@ -86,7 +86,10 @@ func TestBufferedReplayDoesNotHoldCommitGateWhileReadingSchema(t *testing.T) {
 		t.Fatal("large commit hook was not reached")
 	}
 	registrationStarted = true
-	go func() { defer close(registered); registerErr = schema.RegisterTokens(nil, []string{"AFTER"}) }()
+	go func() {
+		defer close(registered)
+		registerErr = schema.RegisterTokens(t.Context(), nil, []string{"AFTER"})
+	}()
 	select {
 	case <-allow:
 	case <-timer.C:
@@ -96,7 +99,7 @@ func TestBufferedReplayDoesNotHoldCommitGateWhileReadingSchema(t *testing.T) {
 	<-flushed
 	require.NoError(t, flushErr)
 	require.NoError(t, registerErr)
-	require.Equal(t, []string{"BEFORE", "AFTER"}, schema.ExportDefinition().RelationshipTypeTokens)
+	require.Equal(t, []string{"BEFORE", "AFTER"}, schemaDefinitionForTest(t, schema).RelationshipTypeTokens)
 	requireNoLargeCommitIntent(t, b)
 	require.Zero(t, b.db.oracle.stage.pendingCount())
 	got, err := b.GetNodesByLabel(context.Background(), "Ingest")

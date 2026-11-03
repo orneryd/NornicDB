@@ -258,7 +258,7 @@ func TestBoltDuplicateBeginPreservesOriginalTransactionExecutor(t *testing.T) {
 	require.NoError(t, SendBegin(t, conn, map[string]any{"db": "other"}))
 	code, _, err := AssertFailure(t, conn)
 	require.NoError(t, err)
-	require.Equal(t, "Neo.ClientError.Transaction.TransactionStartFailed", code)
+	require.Equal(t, "Neo.DatabaseError.Transaction.TransactionStartFailed", code)
 	require.Equal(t, int64(1), original.begins.Load(),
 		"duplicate BEGIN must not replace or reallocate the original executor")
 	require.Zero(t, other.begins.Load(),

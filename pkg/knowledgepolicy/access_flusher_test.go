@@ -45,12 +45,14 @@ func (m *mockStore) ReadAccessMeta(request AccessMetaReadRequest) (AccessMetaRea
 	return AccessMetaReadResult{}, fmt.Errorf("unsupported access meta read mode %d", request.Mode)
 }
 
-func (m *mockStore) PutAccessMeta(entityID string, entry *AccessMetaEntry) error {
+func (m *mockStore) WriteAccessMeta(_ context.Context, request AccessMetaWriteRequest) (bool, error) {
+	entityID, entry := request.EntityID, request.Entry
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	copy := *entry
 	m.entries[entityID] = &copy
-	return nil
+	return true, nil
 }
 
 func (m *mockStore) get(entityID string) *AccessMetaEntry {

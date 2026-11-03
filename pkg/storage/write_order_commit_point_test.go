@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"testing"
@@ -21,12 +22,12 @@ func TestBufferedCommitAfterSynchronousCommitPointIsOrderedAfterIt(t *testing.T)
 	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 	wal := engine.bufferedCommitWAL
 	engine.writeBehind.SetDelayBounds(time.Hour, time.Hour)
-	_, err := engine.CreateNode(&Node{ID: "test:n", Properties: map[string]any{"v": "initial"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:n", Properties: map[string]any{"v": "initial"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 
 	update := func(implicit bool, v string) error {
-		tx, err := engine.BeginTransaction()
+		tx, err := engine.BeginTransaction(t.Context())
 		if err != nil {
 			return err
 		}
@@ -35,7 +36,7 @@ func TestBufferedCommitAfterSynchronousCommitPointIsOrderedAfterIt(t *testing.T)
 				return err
 			}
 		}
-		if err := tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:n", Properties: map[string]any{"v": v}}, Policy: ClientNodeEdits}); err != nil {
+		if err := tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:n", Properties: map[string]any{"v": v}}, Policy: ClientNodeEdits}); err != nil {
 			_ = tx.Rollback()
 			return err
 		}
@@ -63,7 +64,7 @@ func TestBufferedCommitAfterSynchronousCommitPointIsOrderedAfterIt(t *testing.T)
 	// Read past the node cache: its tail publication is a separate,
 	// inherited issue (bug queue: stale node cache after a commit tail).
 	engine.invalidateCachesAfterRestore()
-	stored, err := engine.GetStoredNode("test:n")
+	stored, err := engine.GetStoredNode(t.Context(), "test:n")
 	require.NoError(t, err)
 	require.Equal(t, "buffered", stored.Properties["v"], "the later acknowledged commit is the newest body")
 
@@ -76,7 +77,7 @@ func TestBufferedCommitAfterSynchronousCommitPointIsOrderedAfterIt(t *testing.T)
 	_, err = RecoverBufferedCommits(recovered, wal2)
 	require.NoError(t, err)
 	recovered.invalidateCachesAfterRestore()
-	stored, err = recovered.GetStoredNode("test:n")
+	stored, err = recovered.GetStoredNode(t.Context(), "test:n")
 	require.NoError(t, err)
 	require.Equal(t, "buffered", stored.Properties["v"], "replay keeps the acknowledged order")
 }

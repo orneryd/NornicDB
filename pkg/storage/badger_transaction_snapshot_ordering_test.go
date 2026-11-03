@@ -13,7 +13,7 @@ import (
 func TestTransactionSnapshotPhysicalStateDoesNotAdvancePastLogicalBoundary(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 	nodeID := NodeID("test:snapshot-ordering")
-	_, err := engine.CreateNode(&Node{ID: nodeID, Properties: map[string]interface{}{"revision": 0}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: nodeID, Properties: map[string]interface{}{"revision": 0}})
 	require.NoError(t, err)
 
 	engine.mvccByNamespaceMu.Lock()
@@ -35,7 +35,7 @@ func TestTransactionSnapshotPhysicalStateDoesNotAdvancePastLogicalBoundary(t *te
 				return
 			default:
 			}
-			if err := engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: nodeID, Properties: map[string]interface{}{"revision": revision}}}); err != nil {
+			if err := engine.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: nodeID, Properties: map[string]interface{}{"revision": revision}}}); err != nil {
 				writerErr <- err
 				return
 			}
@@ -45,7 +45,7 @@ func TestTransactionSnapshotPhysicalStateDoesNotAdvancePastLogicalBoundary(t *te
 
 	physicalAdvancedPastLogical := false
 	for attempt := 0; attempt < 256 && !physicalAdvancedPastLogical; attempt++ {
-		tx, beginErr := engine.BeginTransaction()
+		tx, beginErr := engine.BeginTransaction(t.Context())
 		require.NoError(t, beginErr)
 		require.NoError(t, tx.SetNamespace("test"))
 

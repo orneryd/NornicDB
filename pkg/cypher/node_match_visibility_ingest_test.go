@@ -12,7 +12,7 @@ var nodeMatchVisibilitySink bool
 
 func TestNodePatternChecksOnlyRequestedVisibleProperties(t *testing.T) {
 	e, be := reviewPropertyExecutor(t)
-	node, err := be.GetNode("review:a")
+	node, err := be.GetNode(t.Context(), "review:a")
 	require.NoError(t, err)
 	short := *node
 	short.Properties = map[string]interface{}{"title": "a", "body": "hidden"}
@@ -41,7 +41,7 @@ func TestNodePatternChecksOnlyRequestedVisibleProperties(t *testing.T) {
 
 func BenchmarkNodePatternVisibility(b *testing.B) {
 	e, be := reviewPropertyExecutor(b)
-	node, err := be.GetNode("review:a")
+	node, err := be.GetNode(b.Context(), "review:a")
 	require.NoError(b, err)
 	for i := 0; i < 8; i++ {
 		node.Properties[fmt.Sprintf("unselected%d", i)] = i

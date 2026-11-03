@@ -23,7 +23,7 @@ func TestGH457_CorrelatedCallPreservesOuterCompany(t *testing.T) {
 				{ID: "lin", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Lin"}},
 				{ID: "max", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Max"}},
 			} {
-				_, err := store.CreateNode(node)
+				_, err := store.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 			}
 			for _, edge := range []*storage.Edge{
@@ -31,7 +31,7 @@ func TestGH457_CorrelatedCallPreservesOuterCompany(t *testing.T) {
 				{ID: "lin-acme", StartNode: "lin", EndNode: "acme", Type: "WORKS_AT"},
 				{ID: "max-bolt", StartNode: "max", EndNode: "bolt", Type: "WORKS_AT"},
 			} {
-				require.NoError(t, store.CreateEdge(edge))
+				require.NoError(t, store.CreateEdge(t.Context(), edge))
 			}
 			exec := NewStorageExecutor(store)
 			ctx := context.Background()

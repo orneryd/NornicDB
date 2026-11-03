@@ -212,7 +212,7 @@ func (c *QueryCache) Key(query string, params map[string]interface{}) uint64 {
 //
 // Example 2 - Query Executor Pattern:
 //
-//	func (e *Executor) Execute(query string, params map[string]interface{}) (*Result, error) {
+//	func (e *Executor) Execute(ctx context.Context, query string, params map[string]interface{}) (*Result, error) {
 //		key := e.cache.Key(query, params)
 //
 //		// Fast path: cached plan
@@ -222,7 +222,7 @@ func (c *QueryCache) Key(query string, params map[string]interface{}) uint64 {
 //		}
 //
 //		// Slow path: parse and cache
-//		plan, err := e.parser.Parse(query)
+//		plan, err := e.parser.Parse(ctx, query)
 //		if err != nil {
 //			return nil, err
 //		}
@@ -347,7 +347,7 @@ func (c *QueryCache) Get(key uint64) (interface{}, bool) {
 //
 // Example 2 - Parse-Once Pattern:
 //
-//	func getOrParsePlan(query string, params map[string]interface{}) (*ParsedPlan, error) {
+//	func getOrParsePlan(ctx context.Context, query string, params map[string]interface{}) (*ParsedPlan, error) {
 //		cache := cache.GlobalQueryCache()
 //		key := cache.Key(query, params)
 //
@@ -357,7 +357,7 @@ func (c *QueryCache) Get(key uint64) (interface{}, bool) {
 //		}
 //
 //		// Parse (expensive operation)
-//		plan, err := parser.Parse(query)
+//		plan, err := parser.Parse(ctx, query)
 //		if err != nil {
 //			return nil, err
 //		}

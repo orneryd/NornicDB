@@ -20,7 +20,11 @@ func withStatementCredentials(ctx context.Context, query string) context.Context
 	statementCredentials(ctx).Source = source
 	// The canonical native DDL tokenizer retains decoded URL values before
 	// legacy name compaction can erase their delimiters. No value is inferred.
-	_, _, _ = tokenizeSource(source.Text, statementCredentials(ctx))
+	credentialContext := ctx
+	if ctx.Done() != nil {
+		credentialContext = context.WithoutCancel(ctx)
+	}
+	_, _, _ = tokenizeSource(credentialContext, source.Text, statementCredentials(ctx))
 	return ctx
 }
 
@@ -54,7 +58,9 @@ func (reader *adminCredentialReader) record(index int, value string, password bo
 // This also covers errors before consumption and malformed/duplicate clauses.
 // RedactError retains localized identity, causes and transport classification.
 func redactAdminCommandError(query string, retErr *error, sets ...*cyphertext.CredentialSet) {
-	if *retErr == nil {
+	// These exact immutable errors contain no statement-derived text. Wrapped
+	// errors still go through credential capture and redaction below.
+	if *retErr == nil || *retErr == context.Canceled || *retErr == context.DeadlineExceeded {
 		return
 	}
 	var source *cyphertext.Source
@@ -71,7 +77,7 @@ func redactAdminCommandError(query string, retErr *error, sets ...*cyphertext.Cr
 }
 
 func redactAdminCommandErrorSource(source *cyphertext.Source, query string, retErr *error, sets ...*cyphertext.CredentialSet) {
-	if *retErr == nil {
+	if *retErr == nil || *retErr == context.Canceled || *retErr == context.DeadlineExceeded {
 		return
 	}
 	values := statementCredentialValues(query, sets...)

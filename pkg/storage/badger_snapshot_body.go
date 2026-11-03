@@ -27,7 +27,7 @@ func (b *BadgerEngine) readNodeItemInTxn(txn *badger.Txn, item *badger.Item, id 
 	if !hit {
 		err := item.Value(func(value []byte) error {
 			var err error
-			node, err = b.decodeNode(namespaceForNodeID(id), value)
+			node, err = b.decodeNodeProjected(txn, namespaceForNodeID(id), value, nil)
 			return err
 		})
 		if err != nil {
@@ -69,7 +69,7 @@ func (b *BadgerEngine) readProjectedNodeItemInTxn(txn *badger.Txn, item *badger.
 	var node *Node
 	err := item.Value(func(value []byte) error {
 		var err error
-		node, err = b.decodeNodeProjected(namespaceForNodeID(id), value, include)
+		node, err = b.decodeNodeProjected(txn, namespaceForNodeID(id), value, include)
 		return err
 	})
 	return node, err

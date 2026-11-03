@@ -2,11 +2,13 @@ package nornicdb
 
 import (
 	"context"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -18,16 +20,22 @@ type delayedPendingVisibilityEngine struct {
 	nodeID storage.NodeID
 }
 
-func (e *delayedPendingVisibilityEngine) FindNodeNeedingEmbedding() *storage.Node {
-	node, err := e.Engine.GetNode(e.nodeID)
-	if err != nil || len(node.ChunkEmbeddings) > 0 {
-		return nil
+func (e *delayedPendingVisibilityEngine) FindNodeNeedingEmbedding(ctx context.Context) (*storage.Node, error) {
+	node, err := e.Engine.GetNode(ctx, e.nodeID)
+	if errors.Is(err, storage.ErrNotFound) {
+		return nil, nil
 	}
-	return node
+	if err != nil {
+		return nil, err
+	}
+	if len(node.ChunkEmbeddings) > 0 {
+		return nil, nil
+	}
+	return node, nil
 }
 
-func (e *delayedPendingVisibilityEngine) UpdateNodeEmbeddingSidecar(node *storage.Node) error {
-	return e.Engine.(storage.EmbeddingSidecarUpdater).UpdateNodeEmbeddingSidecar(node)
+func (e *delayedPendingVisibilityEngine) UpdateNodeEmbeddingSidecar(ctx context.Context, node *storage.Node) error {
+	return e.Engine.(storage.EmbeddingSidecarUpdater).UpdateNodeEmbeddingSidecar(ctx, node)
 }
 func (*delayedPendingVisibilityEngine) MarkNodeEmbedded(storage.NodeID) {}
 func (*delayedPendingVisibilityEngine) PendingEmbeddingsCount() int     { return 0 }
@@ -95,7 +103,7 @@ func (e *blockingStructuredEmbedder) EmbedDocumentPropertyChunks(context.Context
 func TestEmbedWorkerClaimsStructuredNodeOnceAcrossConcurrentWorkers(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	node := &storage.Node{ID: "test:visual", Properties: map[string]any{"title": "diagram"}}
-	_, err := base.CreateNode(node)
+	_, err := base.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	engine := &delayedPendingVisibilityEngine{Engine: base, nodeID: node.ID}
@@ -164,7 +172,7 @@ func TestEmbedWorkerBatchesStructuredNodesForTheSameProvider(t *testing.T) {
 		{ID: "test:second", Properties: map[string]any{"title": "second"}},
 	}
 	for _, node := range nodes {
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 	queue := &sequenceEmbeddingEngine{Engine: engine, nodes: nodes}

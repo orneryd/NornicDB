@@ -17,11 +17,6 @@ package storage
 
 import "context"
 
-// NodeProjectionReader reports nodes carrying only the requested properties.
-type NodeProjectionReader interface {
-	GetNodeProjected(id NodeID, properties []string) (*Node, error)
-}
-
 // NodeIterator streams every node in the engine view.
 type NodeIterator interface {
 	IterateNodes(fn func(*Node) bool) error
@@ -40,10 +35,10 @@ type EmbeddingCountProvider interface {
 // same optional capabilities as the inner engine. MemoryEngine satisfies these
 // through its embedded *BadgerEngine, which is intentional.
 var (
-	_ NodeProjectionReader           = (*BadgerEngine)(nil)
-	_ NodeProjectionReader           = (*WALEngine)(nil)
-	_ NodeProjectionReader           = (*NamespacedEngine)(nil)
-	_ NodeProjectionReader           = (*MemoryEngine)(nil)
+	_ ProjectedNodeReader            = (*BadgerEngine)(nil)
+	_ ProjectedNodeReader            = (*WALEngine)(nil)
+	_ ProjectedNodeReader            = (*NamespacedEngine)(nil)
+	_ ProjectedNodeReader            = (*MemoryEngine)(nil)
 	_ RelationshipEndpointChecker    = (*BadgerEngine)(nil)
 	_ RelationshipEndpointChecker    = (*WALEngine)(nil)
 	_ RelationshipEndpointChecker    = (*NamespacedEngine)(nil)
@@ -126,7 +121,7 @@ var (
 	_ EventSubscriber                = (*NamespacedEngine)(nil)
 	_ EventSubscriber                = (*MemoryEngine)(nil)
 	_ EventSubscriber                = (*TracedEngine)(nil)
-	_ NodeProjectionReader           = (*CompositeEngine)(nil)
+	_ ProjectedNodeReader            = (*CompositeEngine)(nil)
 	_ NodeIterator                   = (*CompositeEngine)(nil)
 	_ EmbeddingCountProvider         = (*CompositeEngine)(nil)
 	_ EmbeddingSidecarUpdater        = (*CompositeEngine)(nil)
@@ -172,25 +167,25 @@ func (w *WALEngine) RelationshipEndpointVisible(id NodeID) (visible, answered bo
 }
 
 // OutgoingEdgeHeaders forwards to the underlying engine; WAL adds no overlay.
-func (w *WALEngine) OutgoingEdgeHeaders(nodeID NodeID) ([]*Edge, bool, error) {
+func (w *WALEngine) OutgoingEdgeHeaders(ctx context.Context, nodeID NodeID) ([]*Edge, bool, error) {
 	if reader, ok := w.engine.(EdgeHeaderReader); ok {
-		return reader.OutgoingEdgeHeaders(nodeID)
+		return reader.OutgoingEdgeHeaders(ctx, nodeID)
 	}
 	return nil, false, nil
 }
 
 // IncomingEdgeHeaders forwards to the underlying engine; WAL adds no overlay.
-func (w *WALEngine) IncomingEdgeHeaders(nodeID NodeID) ([]*Edge, bool, error) {
+func (w *WALEngine) IncomingEdgeHeaders(ctx context.Context, nodeID NodeID) ([]*Edge, bool, error) {
 	if reader, ok := w.engine.(EdgeHeaderReader); ok {
-		return reader.IncomingEdgeHeaders(nodeID)
+		return reader.IncomingEdgeHeaders(ctx, nodeID)
 	}
 	return nil, false, nil
 }
 
 // GetNodeProjected forwards the projected read to the underlying engine. WAL
 // adds no overlay, so a plain forward preserves parity with GetNode.
-func (w *WALEngine) GetNodeProjected(id NodeID, properties []string) (*Node, error) {
-	return getNodeProjectedThrough(w.engine, id, properties)
+func (w *WALEngine) GetNodeProjected(ctx context.Context, id NodeID, properties []string) (*Node, error) {
+	return getNodeProjectedThrough(ctx, w.engine, id, properties)
 }
 
 // getNodeProjectedThrough reads a projected node through a single engine: a
@@ -198,11 +193,11 @@ func (w *WALEngine) GetNodeProjected(id NodeID, properties []string) (*Node, err
 // serves a full read that is projected on the way out. Async, WAL and the
 // composite constituent scan share this tail, so reader preference and error
 // propagation cannot drift between wrappers.
-func getNodeProjectedThrough(engine Engine, id NodeID, properties []string) (*Node, error) {
-	if reader, ok := engine.(NodeProjectionReader); ok {
-		return reader.GetNodeProjected(id, properties)
+func getNodeProjectedThrough(ctx context.Context, engine Engine, id NodeID, properties []string) (*Node, error) {
+	if reader, ok := engine.(ProjectedNodeReader); ok {
+		return reader.GetNodeProjected(ctx, id, properties)
 	}
-	node, err := engine.GetNode(id)
+	node, err := engine.GetNode(ctx, id)
 	if err != nil {
 		return nil, err
 	}

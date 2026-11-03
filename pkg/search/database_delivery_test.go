@@ -2,11 +2,12 @@ package search
 
 import (
 	"context"
+	"testing"
+
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestSearchStreamDeliveryDatabaseDiscardDuringPreparation(t *testing.T) {
@@ -14,7 +15,7 @@ func TestSearchStreamDeliveryDatabaseDiscardDuringPreparation(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	store := storage.NewNamespacedEngine(base, "one")
 	for _, id := range []storage.NodeID{"a", "b", "c"} {
-		_, err := store.CreateNode(&storage.Node{ID: id})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: id})
 		require.NoError(t, err)
 	}
 	options := DefaultServiceOptions("one")

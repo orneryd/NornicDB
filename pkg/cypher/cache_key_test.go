@@ -117,7 +117,7 @@ func TestFabricResultCacheServesOnlyAuthorizedCallers(t *testing.T) {
 	}))
 	trStore, err := mgr.GetStorage("nornic_tr")
 	require.NoError(t, err)
-	_, err = trStore.CreateNode(&storage.Node{ID: "t-1", Labels: []string{"Translation"}, Properties: map[string]interface{}{"id": "t-1"}})
+	_, err = trStore.CreateNode(t.Context(), &storage.Node{ID: "t-1", Labels: []string{"Translation"}, Properties: map[string]interface{}{"id": "t-1"}})
 	require.NoError(t, err)
 	defaultStore, err := mgr.GetStorage(mgr.DefaultDatabaseName())
 	require.NoError(t, err)

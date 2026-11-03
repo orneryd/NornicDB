@@ -17,11 +17,11 @@ func TestRelationshipListPropertyMembership(t *testing.T) {
 
 	principal := &storage.Node{ID: "principal-1", Labels: []string{"Principal"}, Properties: map[string]interface{}{"actions": []string{"s3:GetObject"}}}
 	sink := &storage.Node{ID: "sink-1", Labels: []string{"Sink"}, Properties: map[string]interface{}{"id": "sink"}}
-	_, err := store.CreateNode(principal)
+	_, err := store.CreateNode(t.Context(), principal)
 	require.NoError(t, err)
-	_, err = store.CreateNode(sink)
+	_, err = store.CreateNode(t.Context(), sink)
 	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{
 		ID:         "principal-can-perform-sink",
 		Type:       "CAN_PERFORM",
 		StartNode:  principal.ID,

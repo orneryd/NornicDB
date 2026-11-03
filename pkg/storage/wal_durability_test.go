@@ -375,7 +375,7 @@ func TestWALFullDurabilityPath(t *testing.T) {
 
 	// Verify data recovered
 	for _, node := range nodes {
-		recovered, err := engine.GetNode(node.ID)
+		recovered, err := engine.GetNode(t.Context(), node.ID)
 		if err != nil {
 			t.Errorf("Failed to get node %s: %v", node.ID, err)
 			continue

@@ -12,14 +12,14 @@ func TestStagedMemoryBytesCountsDeletedOldBodies(t *testing.T) {
 	const count = 32
 	for i := 0; i < count; i++ {
 		id := NodeID("test:old-" + string(rune('a'+i)))
-		_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"Old"}, Properties: map[string]any{"body": strings.Repeat("x", 32<<10)}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Old"}, Properties: map[string]any{"body": strings.Repeat("x", 32<<10)}})
 		require.NoError(t, err)
 	}
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	for i := 0; i < count; i++ {
 		id := NodeID("test:old-" + string(rune('a'+i)))
-		require.NoError(t, tx.DeleteGraphNode(id, CascadeEdges))
+		require.NoError(t, tx.DeleteGraphNode(t.Context(), id, CascadeEdges))
 	}
 	require.Greater(t, tx.StagedMemoryBytes(), int64(1<<20), "deleted old bodies remain owned until rollback")
 	require.NoError(t, tx.Rollback())

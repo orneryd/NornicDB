@@ -1,6 +1,10 @@
 package storage
 
-import "strings"
+// Author: storage-format-owners lane (Codex), 1 November 2026.
+import (
+	"context"
+	"strings"
+)
 
 // visitOperationTotalCounts describes only cardinality-changing operations.
 // An update's entity overlay is not a newly created entity. The same deltas
@@ -75,34 +79,47 @@ func (d *bufferedCardinalityDeltas) add(id string, edge bool, change int64) {
 	}
 }
 
-func (d *bufferedCardinalityDeltas) count(prefix string, edge bool) int64 {
+func (d *bufferedCardinalityDeltas) count(ctx context.Context, prefix string, edge bool) (int64, error) {
 	if prefix == "" {
 		if edge {
-			return d.edgeTotal
+			return d.edgeTotal, nil
 		}
-		return d.nodeTotal
+		return d.nodeTotal, nil
 	}
 	values := d.nodes
 	if edge {
 		values = d.edges
 	}
 	var count int64
+	var cancel bulkReadCancellation
 	for id, delta := range values {
+		if err := cancel.check(ctx); err != nil {
+			return 0, err
+		}
 		if strings.HasPrefix(id, prefix) {
 			count += delta
 		}
 	}
-	return count
+	return count, nil
 }
 
-func (w *WriteBehindBuffer) totalCountDeltaForPrefix(prefix string, edge bool) int64 {
-	w.mu.RLock()
+func (w *WriteBehindBuffer) totalCountDeltaForPrefix(ctx context.Context, prefix string, edge bool) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	if err := w.mu.RLockContext(ctx); err != nil {
+		return 0, err
+	}
 	defer w.mu.RUnlock()
 	var delta int64
 	for _, buf := range w.liveBuffers() {
 		if !buf.countsApplied.Load() {
-			delta += buf.totalCounts.count(prefix, edge)
+			count, err := buf.totalCounts.count(ctx, prefix, edge)
+			if err != nil {
+				return 0, err
+			}
+			delta += count
 		}
 	}
-	return delta
+	return delta, ctx.Err()
 }

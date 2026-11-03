@@ -43,7 +43,7 @@ func stressWriteOrder(t *testing.T, countsChecked bool) {
 					EndNode: NodeID(fmt.Sprintf("test:n%d", (i+1)%6)), Type: "LINK", Properties: map[string]any{"v": int64(r.Intn(100))}}
 			}
 			inTx := func(implicit bool, apply func(*BadgerTransaction) error) error {
-				tx, err := engine.BeginTransaction()
+				tx, err := engine.BeginTransaction(t.Context())
 				if err != nil {
 					return err
 				}
@@ -60,35 +60,35 @@ func stressWriteOrder(t *testing.T, countsChecked bool) {
 			}
 			ops := []func(*rand.Rand) error{
 				func(r *rand.Rand) error {
-					_, err := engine.CreateNode(&Node{ID: node(r), Properties: map[string]any{"v": int64(r.Intn(100))}})
+					_, err := engine.CreateNode(t.Context(), &Node{ID: node(r), Properties: map[string]any{"v": int64(r.Intn(100))}})
 					return err
 				},
 				func(r *rand.Rand) error {
-					return engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: node(r), Properties: map[string]any{"v": int64(r.Intn(100))}}})
+					return engine.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: node(r), Properties: map[string]any{"v": int64(r.Intn(100))}}})
 				},
-				func(r *rand.Rand) error { return engine.DeleteNode(node(r)) },
-				func(r *rand.Rand) error { return engine.CreateEdge(edge(r)) },
-				func(r *rand.Rand) error { return engine.UpdateEdge(EdgeUpdateRequest{After: edge(r)}) },
-				func(r *rand.Rand) error { return engine.DeleteEdge(edge(r).ID) },
-				func(r *rand.Rand) error { return engine.BulkDeleteNodes([]NodeID{node(r), node(r)}) },
-				func(r *rand.Rand) error { return engine.BulkCreateEdges([]*Edge{edge(r)}) },
+				func(r *rand.Rand) error { return engine.DeleteNode(t.Context(), node(r)) },
+				func(r *rand.Rand) error { return engine.CreateEdge(t.Context(), edge(r)) },
+				func(r *rand.Rand) error { return engine.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge(r)}) },
+				func(r *rand.Rand) error { return engine.DeleteEdge(t.Context(), edge(r).ID) },
+				func(r *rand.Rand) error { return engine.BulkDeleteNodes(t.Context(), []NodeID{node(r), node(r)}) },
+				func(r *rand.Rand) error { return engine.BulkCreateEdges(t.Context(), []*Edge{edge(r)}) },
 				func(r *rand.Rand) error {
 					return inTx(true, func(tx *BadgerTransaction) error {
-						return ApplyNodeUpdate(tx, NodeUpdateRequest{After: &Node{ID: node(r), Properties: map[string]any{"v": int64(r.Intn(100))}}})
+						return ApplyNodeUpdate(context.Background(), tx, NodeUpdateRequest{After: &Node{ID: node(r), Properties: map[string]any{"v": int64(r.Intn(100))}}})
 					})
 				},
 				func(r *rand.Rand) error {
-					return inTx(true, func(tx *BadgerTransaction) error { return tx.CreateEdge(edge(r)) })
+					return inTx(true, func(tx *BadgerTransaction) error { return tx.CreateEdge(t.Context(), edge(r)) })
 				},
 				func(r *rand.Rand) error {
 					return inTx(false, func(tx *BadgerTransaction) error {
-						return ApplyNodeUpdate(tx, NodeUpdateRequest{After: &Node{ID: node(r), Properties: map[string]any{"v": int64(r.Intn(100))}}})
+						return ApplyNodeUpdate(context.Background(), tx, NodeUpdateRequest{After: &Node{ID: node(r), Properties: map[string]any{"v": int64(r.Intn(100))}}})
 					})
 				},
 				func(r *rand.Rand) error {
-					return inTx(false, func(tx *BadgerTransaction) error { return tx.DeleteGraphNode(node(r), CascadeEdges) })
+					return inTx(false, func(tx *BadgerTransaction) error { return tx.DeleteGraphNode(t.Context(), node(r), CascadeEdges) })
 				},
-				func(r *rand.Rand) error { return engine.FlushWriteBehind(nil) },
+				func(r *rand.Rand) error { return engine.FlushWriteBehind(context.Background()) },
 			}
 			expected := func(err error) bool {
 				// A direct write reports a Badger conflict with a concurrent writer
@@ -136,7 +136,7 @@ func stressWriteOrder(t *testing.T, countsChecked bool) {
 				t.Fatalf("unexpected write error: %v", err)
 			}
 
-			require.NoError(t, engine.FlushWriteBehind(nil))
+			require.NoError(t, engine.FlushWriteBehind(context.Background()))
 			engine.invalidateCachesAfterRestore()
 			nodes, err := engine.AllNodes(context.Background())
 			require.NoError(t, err)
@@ -151,19 +151,19 @@ func stressWriteOrder(t *testing.T, countsChecked bool) {
 					break
 				}
 				for _, id := range []NodeID{e.StartNode, e.EndNode} {
-					_, err := engine.GetNode(id)
+					_, err := engine.GetNode(t.Context(), id)
 					require.NoError(t, err, "relationship %s keeps its endpoint %s", e.ID, id)
 				}
 			}
 			for _, n := range nodes {
-				_, err := engine.GetNode(n.ID)
+				_, err := engine.GetNode(t.Context(), n.ID)
 				require.NoError(t, err, "listed node %s is stored", n.ID)
 			}
 			if countsChecked {
-				nodeCount, err := engine.NodeCount()
+				nodeCount, err := engine.NodeCount(t.Context())
 				require.NoError(t, err)
 				require.EqualValues(t, len(nodes), nodeCount, "node count")
-				edgeCount, err := engine.EdgeCount()
+				edgeCount, err := engine.EdgeCount(t.Context())
 				require.NoError(t, err)
 				require.EqualValues(t, len(edges), edgeCount, "relationship count")
 			}

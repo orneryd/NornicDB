@@ -6,6 +6,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"io/fs"
+	"log"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"testing/fstest"
+	"time"
+
 	"github.com/orneryd/nornicdb/internal/catalogadapter"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/audit"
@@ -19,18 +32,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/txsession"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"io"
-	"io/fs"
-	"log"
-	"net/http"
-	"net/http/httptest"
-	"os"
-	"path/filepath"
-	"strings"
-	"sync/atomic"
-	"testing"
-	"testing/fstest"
-	"time"
 )
 
 func testUIAssetsFS() fs.FS {
@@ -815,7 +816,7 @@ func TestHeimdallRouterAndHelpers(t *testing.T) {
 	engine, engineErr := server.dbManager.GetStorage(dbName)
 	assert.NoError(t, engineErr)
 	if engineErr == nil {
-		_, _ = engine.CreateNode(&storage.Node{
+		_, _ = engine.CreateNode(t.Context(), &storage.Node{
 			ID:         "nornic:doc1",
 			Labels:     []string{"Document"},
 			Properties: map[string]interface{}{"title": "hello", "content": "world"},
@@ -829,11 +830,11 @@ func TestHeimdallRouterAndHelpers(t *testing.T) {
 	// related nodes traversal
 	mem := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = mem.Close() })
-	_, err = mem.CreateNode(&storage.Node{ID: "nornic:n1", Labels: []string{"A"}})
+	_, err = mem.CreateNode(t.Context(), &storage.Node{ID: "nornic:n1", Labels: []string{"A"}})
 	assert.NoError(t, err)
-	_, err = mem.CreateNode(&storage.Node{ID: "nornic:n2", Labels: []string{"B"}})
+	_, err = mem.CreateNode(t.Context(), &storage.Node{ID: "nornic:n2", Labels: []string{"B"}})
 	assert.NoError(t, err)
-	err = mem.CreateEdge(&storage.Edge{ID: "nornic:e1", StartNode: "nornic:n1", EndNode: "nornic:n2", Type: "REL"})
+	err = mem.CreateEdge(t.Context(), &storage.Edge{ID: "nornic:e1", StartNode: "nornic:n1", EndNode: "nornic:n2", Type: "REL"})
 	assert.NoError(t, err)
 	related := router.getRelatedNodes(context.Background(), mem, "nornic:n1", 1)
 	assert.Len(t, related, 1)
@@ -1022,7 +1023,7 @@ func TestDatabaseAdapterAndConversionHelpers(t *testing.T) {
 	assert.Equal(t, "svc-user", secondView.User)
 	system, err := server.dbManager.GetStorage("system")
 	require.NoError(t, err)
-	catalogNode, err := system.GetNode("databases:metadata")
+	catalogNode, err := system.GetNode(t.Context(), "databases:metadata")
 	require.NoError(t, err)
 	require.Contains(t, catalogNode.Properties["data"], second.ConnectionV1)
 	require.NotContains(t, catalogNode.Properties["data"], "svc-pass")
@@ -1074,13 +1075,14 @@ func TestDatabaseAdapterAndConversionHelpers(t *testing.T) {
 	assert.False(t, dbInfos[0].CreatedAt().IsZero())
 
 	// Map-node conversion and recursive conversion helpers.
-	converted := server.convertValueToNeo4jFormat(map[string]interface{}{
+	converted, projectionErr1 := server.convertValueToNeo4jFormat(t.Context(), map[string]interface{}{
 		"labels": []interface{}{"Doc"},
 		"title":  "T",
 	}, "nornicdb")
+	require.NoError(t, projectionErr1)
 	assert.Equal(t, map[string]interface{}{"labels": []interface{}{"Doc"}, "title": "T"}, converted)
 
-	v := server.convertValueToNeo4jFormat(map[string]interface{}{
+	v, projectionErr2 := server.convertValueToNeo4jFormat(t.Context(), map[string]interface{}{
 		"_nodeId":     "n2",
 		"labels":      []interface{}{"L"},
 		"name":        "A",
@@ -1089,6 +1091,7 @@ func TestDatabaseAdapterAndConversionHelpers(t *testing.T) {
 			map[string]interface{}{"id": "n3", "labels": []interface{}{"M"}, "k": "v"},
 		},
 	}, "nornicdb")
+	require.NoError(t, projectionErr2)
 	vm, ok := v.(map[string]interface{})
 	assert.True(t, ok)
 	assert.Equal(t, "drop-me", vm["_pathResult"])
@@ -1685,7 +1688,9 @@ func TestRouteRegistrationAdvancedBranches(t *testing.T) {
 func TestValueConversionAdditionalBranches(t *testing.T) {
 	server, _ := setupTestServer(t)
 
-	assert.Nil(t, server.convertValueToNeo4jFormat(nil, "nornicdb"))
+	projectedValue3, projectionErr3 := server.convertValueToNeo4jFormat(t.Context(), nil, "nornicdb")
+	require.NoError(t, projectionErr3)
+	assert.Nil(t, projectedValue3)
 
 	node := &storage.Node{
 		ID:         "node-x",
@@ -1700,8 +1705,10 @@ func TestValueConversionAdditionalBranches(t *testing.T) {
 		Properties: map[string]interface{}{"weight": 1},
 	}
 
-	nv := server.convertValueToNeo4jFormat(node, "nornicdb")
-	ev := server.convertValueToNeo4jFormat(edge, "nornicdb")
+	nv, projectionErr4 := server.convertValueToNeo4jFormat(t.Context(), node, "nornicdb")
+	require.NoError(t, projectionErr4)
+	ev, projectionErr5 := server.convertValueToNeo4jFormat(t.Context(), edge, "nornicdb")
+	require.NoError(t, projectionErr5)
 	nm, ok := nv.(map[string]interface{})
 	assert.True(t, ok)
 	assert.Equal(t, node.Properties, nm)
@@ -1710,23 +1717,27 @@ func TestValueConversionAdditionalBranches(t *testing.T) {
 	assert.Equal(t, edge.Properties, em)
 
 	already := map[string]interface{}{"elementId": "4:nornicdb:keep"}
-	assert.Equal(t, already, server.convertValueToNeo4jFormat(already, "nornicdb"))
+	projectedValue6, projectionErr6 := server.convertValueToNeo4jFormat(t.Context(), already, "nornicdb")
+	require.NoError(t, projectionErr6)
+	assert.Equal(t, already, projectedValue6)
 
-	v := server.convertValueToNeo4jFormat(map[string]interface{}{
+	v, projectionErr7 := server.convertValueToNeo4jFormat(t.Context(), map[string]interface{}{
 		"id":     "map-node",
 		"labels": []string{"Mapped"},
 		"name":   "alice",
 		"nested": []interface{}{map[string]interface{}{"x": "y"}},
 	}, "nornicdb")
+	require.NoError(t, projectionErr7)
 	vm, ok := v.(map[string]interface{})
 	assert.True(t, ok)
 	assert.Equal(t, "map-node", vm["id"])
 	assert.Equal(t, []interface{}{"Mapped"}, vm["labels"])
 
-	sliceVal := server.convertValueToNeo4jFormat([]interface{}{
+	sliceVal, projectionErr8 := server.convertValueToNeo4jFormat(t.Context(), []interface{}{
 		map[string]interface{}{"id": "n100", "labels": []string{"L"}},
 		"text",
 	}, "nornicdb")
+	require.NoError(t, projectionErr8)
 	sliceOut, ok := sliceVal.([]interface{})
 	assert.True(t, ok)
 	assert.Len(t, sliceOut, 2)
@@ -1961,17 +1972,17 @@ func TestHeimdallRouterStatsAndDiscoverDeeperBranches(t *testing.T) {
 		return
 	}
 
-	_, _ = engine.CreateNode(&storage.Node{
+	_, _ = engine.CreateNode(t.Context(), &storage.Node{
 		ID:         "nornic:doc_a",
 		Labels:     []string{"Document"},
 		Properties: map[string]interface{}{"title": "alpha title", "content": strings.Repeat("alpha ", 80)},
 	})
-	_, _ = engine.CreateNode(&storage.Node{
+	_, _ = engine.CreateNode(t.Context(), &storage.Node{
 		ID:         "nornic:doc_b",
 		Labels:     []string{"Document"},
 		Properties: map[string]interface{}{"title": "beta title", "content": "beta"},
 	})
-	_ = engine.CreateEdge(&storage.Edge{
+	_ = engine.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "nornic:edge_ab",
 		StartNode: "nornic:doc_a",
 		EndNode:   "nornic:doc_b",
@@ -2055,12 +2066,12 @@ func TestExecuteTxStatementsAdditionalBranches(t *testing.T) {
 	server, _ := setupTestServer(t)
 	dbName := server.dbManager.DefaultDatabaseName()
 
-	tx, err := server.txSessions.Open(context.Background(), dbName)
+	tx, err := server.txSessions.OpenRequestForOwner(context.Background(), dbName, "")
 	assert.NoError(t, err)
 	if err != nil {
 		return
 	}
-	defer server.txSessions.RollbackAndDelete(context.Background(), tx)
+	defer func() { _ = tx.RollbackAndDelete(context.Background()); tx.Release() }()
 
 	// 1) Mutation without claims => forbidden.
 	resp := &TransactionResponse{Results: make([]QueryResult, 0), Errors: make([]QueryError, 0)}
@@ -2092,12 +2103,12 @@ func TestExecuteTxStatementsAdditionalBranches(t *testing.T) {
 	assert.NotEmpty(t, resp.Errors)
 
 	// 5) Read statement success path appends result.
-	fresh, err := server.txSessions.Open(context.Background(), dbName)
+	fresh, err := server.txSessions.OpenRequestForOwner(context.Background(), dbName, "")
 	assert.NoError(t, err)
 	if err != nil {
 		return
 	}
-	defer server.txSessions.RollbackAndDelete(context.Background(), fresh)
+	defer func() { _ = fresh.RollbackAndDelete(context.Background()); fresh.Release() }()
 	resp = &TransactionResponse{Results: make([]QueryResult, 0), Errors: make([]QueryError, 0)}
 	server.executeTxStatements(context.Background(), "", &auth.JWTClaims{Roles: []string{"viewer"}}, dbName, fresh, []StatementRequest{
 		{Statement: "RETURN 1 AS n"},

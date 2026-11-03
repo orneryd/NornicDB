@@ -777,9 +777,9 @@ func TestSystemCommands_ShowDatabase_BranchCoverage(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{ID: "n1", Labels: []string{"T"}, Properties: map[string]interface{}{"name": "x"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "n1", Labels: []string{"T"}, Properties: map[string]interface{}{"name": "x"}})
 	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "e1", StartNode: "n1", EndNode: "n1", Type: "SELF"}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "e1", StartNode: "n1", EndNode: "n1", Type: "SELF"}))
 
 	// Default/fallback branch (dbManager nil): deterministic row.
 	res, err := exec.executeShowDatabase(ctx, "SHOW DATABASE")

@@ -29,8 +29,14 @@ type hiddenNoOpFanoutStorage struct {
 	fanout *hiddenNoOpFanout
 }
 
-func (s *hiddenNoOpFanoutStorage) ApplyCommand(cmd *replication.Command) error {
-	return s.fanout.Apply(cmd, 0)
+func (s *hiddenNoOpFanoutStorage) ApplyCommand(waitCtx context.Context, cmd *replication.Command, publication replication.WALPublicationMode) (replication.CommandPublication, error) {
+	if err := s.fanout.Apply(context.Background(), cmd, 0); err != nil {
+		return replication.CommandPublication{}, err
+	}
+	if publication == replication.WALQueued {
+		return replication.CommandPublication{}, nil
+	}
+	return s.Storage.ApplyCommand(waitCtx, cmd, publication)
 }
 func (r *hiddenNoOpFanout) SubmitAcceptedCommand(ctx context.Context, cmd *replication.Command, settle func(storage.CommitOutcome)) (*storage.CommitReceipt, error) {
 	r.mu.Lock()
@@ -47,19 +53,19 @@ func (r *hiddenNoOpFanout) SubmitAcceptedCommand(ctx context.Context, cmd *repli
 }
 
 func (r *hiddenNoOpFanout) Start(context.Context) error { return nil }
-func (r *hiddenNoOpFanout) Apply(command *replication.Command, _ time.Duration) error {
+func (r *hiddenNoOpFanout) Apply(ctx context.Context, command *replication.Command, _ time.Duration) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, target := range r.targets {
-		if err := target.ApplyCommand(command); err != nil {
+		if _, err := target.ApplyCommand(context.Background(), command, replication.WALQueued); err != nil {
 			return err
 		}
 	}
 	return nil
 }
-func (r *hiddenNoOpFanout) ApplyBatch(commands []*replication.Command, timeout time.Duration) error {
+func (r *hiddenNoOpFanout) ApplyBatch(ctx context.Context, commands []*replication.Command, timeout time.Duration) error {
 	for _, command := range commands {
-		if err := r.Apply(command, timeout); err != nil {
+		if err := r.Apply(ctx, command, timeout); err != nil {
 			return err
 		}
 	}
@@ -72,6 +78,7 @@ func (r *hiddenNoOpFanout) Health() *replication.HealthStatus {
 	return &replication.HealthStatus{IsLeader: true}
 }
 func (r *hiddenNoOpFanout) WaitForLeader(context.Context) error { return nil }
+func (r *hiddenNoOpFanout) LifetimeContext() context.Context    { return context.Background() }
 func (r *hiddenNoOpFanout) Shutdown() error                     { return nil }
 func (r *hiddenNoOpFanout) Mode() replication.ReplicationMode   { return replication.ModeStandalone }
 func (r *hiddenNoOpFanout) NodeID() string                      { return "leader" }
@@ -105,18 +112,18 @@ func TestRepeatedHiddenRelationshipMergeKeepsFollowerConverged(t *testing.T) {
 				require.NoError(t, err)
 				exec := cypher.NewStorageExecutor(managed)
 				ctx := context.Background()
-				_, err = managed.CreateNode(&storage.Node{
+				_, err = managed.CreateNode(t.Context(), &storage.Node{
 					ID: "a", Labels: []string{"A"}, Properties: map[string]any{"id": "a"},
 				})
 				require.NoError(t, err)
-				_, err = managed.CreateNode(&storage.Node{
+				_, err = managed.CreateNode(t.Context(), &storage.Node{
 					ID: "b", Labels: []string{"B"}, Properties: map[string]any{"id": "b"},
 				})
 				require.NoError(t, err)
 				const merge = "MATCH (a:A), (b:B) MERGE (a)-[r:LINK {key:'same'}]->(b)"
 				_, err = exec.Execute(ctx, merge+" ON CREATE SET r.payload='stored'", nil)
 				require.NoError(t, err)
-				require.NoError(t, bases[0].FlushWriteBehind(nil))
+				require.NoError(t, bases[0].FlushWriteBehind(context.Background()))
 				leaderEdges, err := storage.CollectStoredEdges(ctx, bases[0])
 				require.NoError(t, err)
 				require.Len(t, leaderEdges, 1)
@@ -124,13 +131,13 @@ func TestRepeatedHiddenRelationshipMergeKeepsFollowerConverged(t *testing.T) {
 				followerEdges, err := storage.CollectStoredEdges(ctx, bases[1])
 				require.NoError(t, err)
 				if len(followerEdges) == 0 {
-					require.NoError(t, bases[1].CreateEdge(storage.CopyEdge(leaderEdges[0])))
+					require.NoError(t, bases[1].CreateEdge(ctx, storage.CopyEdge(leaderEdges[0])))
 				}
 				for _, base := range bases {
-					require.NoError(t, base.FlushWriteBehind(nil))
-					_, err = base.GetStoredEdge(fullID)
+					require.NoError(t, base.FlushWriteBehind(context.Background()))
+					_, err = base.GetStoredEdge(ctx, fullID)
 					require.NoError(t, err)
-					require.NoError(t, base.SetManualSuppression(storage.StoredEntityEdgeKind, string(fullID), true))
+					require.NoError(t, base.SetManualSuppression(t.Context(), storage.StoredEntityEdgeKind, string(fullID), true))
 				}
 
 				result, err := exec.Execute(ctx, "UNWIND [1,2] AS i "+merge+
@@ -140,13 +147,13 @@ func TestRepeatedHiddenRelationshipMergeKeepsFollowerConverged(t *testing.T) {
 				require.Zero(t, result.Stats.PropertiesSet)
 
 				for _, base := range bases {
-					require.NoError(t, base.FlushWriteBehind(nil))
-					edge, err := base.GetStoredEdge(fullID)
+					require.NoError(t, base.FlushWriteBehind(context.Background()))
+					edge, err := base.GetStoredEdge(ctx, fullID)
 					require.NoError(t, err)
 					require.Equal(t, map[string]any{"key": "same", "payload": "stored"}, edge.Properties)
-					_, err = base.GetEdge(fullID)
+					_, err = base.GetEdge(ctx, fullID)
 					require.ErrorIs(t, err, storage.ErrNotFound)
-					count, err := storage.NewNamespacedEngine(base, "nornic").EdgeCount()
+					count, err := storage.NewNamespacedEngine(base, "nornic").EdgeCount(ctx)
 					require.NoError(t, err)
 					require.EqualValues(t, 1, count)
 				}

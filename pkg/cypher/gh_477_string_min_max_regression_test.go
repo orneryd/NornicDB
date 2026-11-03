@@ -17,7 +17,7 @@ func TestGH477_MinMaxAggregateStrings(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "gh477")
 			for index, name := range []string{"n1", "n2", "n3", "n4"} {
-				_, err := store.CreateNode(&storage.Node{
+				_, err := store.CreateNode(t.Context(), &storage.Node{
 					ID: storage.NodeID(name), Labels: []string{"A"},
 					Properties: map[string]interface{}{"id": int64(index + 1), "name": name, "tags": []string{"t", "all"}},
 				})

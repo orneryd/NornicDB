@@ -174,7 +174,7 @@ func TestEmbedWorkerResultAcceptance(t *testing.T) {
 					published := 0
 					worker.SetOnEmbedded(func(*storage.Node) { published++ })
 					require.Equal(t, embedBatchWorked, worker.processNextBatchResult())
-					saved, err := queue.GetNode("node-000")
+					saved, err := queue.GetNode(t.Context(), "node-000")
 					require.NoError(t, err)
 					if shape == "valid" || shape == "image_only" {
 						require.Equal(t, int64(1), worker.processed.Load())
@@ -207,7 +207,7 @@ func TestEmbedWorkerResultAcceptance(t *testing.T) {
 					}
 					require.Empty(t, worker.nodeRetries)
 					require.Equal(t, 1, worker.Stats().Parked)
-					saved, err = queue.GetNode("node-000")
+					saved, err = queue.GetNode(t.Context(), "node-000")
 					require.NoError(t, err)
 					require.Empty(t, saved.ChunkEmbeddings)
 					require.Equal(t, true, saved.EmbedMeta["embedding_failed"])
@@ -223,10 +223,10 @@ func TestEmbedWorkerResultAcceptanceHealthySibling(t *testing.T) {
 	for _, mode := range []string{"document_batch", "resolved_batch", "grouped_structured", "cached_resolved_batch"} {
 		t.Run(mode, func(t *testing.T) {
 			worker, queue, provider := acceptanceWorker(t, mode, "nil_later", 2, 0)
-			healthy, err := queue.GetNode("node-001")
+			healthy, err := queue.GetNode(t.Context(), "node-001")
 			require.NoError(t, err)
 			healthy.Properties["text"] = "healthy sibling document"
-			require.NoError(t, queue.UpdateNode(storage.NodeUpdateRequest{After: healthy}))
+			require.NoError(t, queue.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: healthy}))
 			published := make(map[storage.NodeID]int)
 			worker.SetOnEmbedded(func(node *storage.Node) { published[node.ID]++ })
 			require.Equal(t, embedBatchWorked, worker.processNextBatchResult())

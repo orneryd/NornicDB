@@ -42,7 +42,7 @@ func countKeywordOccurrences(upper, keyword string) int {
 
 // lastKeywordIndexBefore returns the last occurrence of keyword before endIdx.
 // It uses keyword-aware scanning and returns -1 when not found.
-func lastKeywordIndexBefore(query, keyword string, endIdx int) int {
+func lastKeywordIndexBefore(ctx context.Context, query, keyword string, endIdx int) int {
 	if endIdx <= 0 {
 		return -1
 	}
@@ -53,7 +53,7 @@ func lastKeywordIndexBefore(query, keyword string, endIdx int) int {
 	pos := -1
 	search := 0
 	for {
-		rel := findKeywordIndex(segment[search:], keyword)
+		rel := findKeywordIndex(ctx, segment[search:], keyword)
 		if rel < 0 {
 			break
 		}
@@ -68,7 +68,7 @@ func lastKeywordIndexBefore(query, keyword string, endIdx int) int {
 }
 
 // splitMatchClauses splits the query into individual MATCH clause patterns
-func splitMatchClauses(cypher string, whereIdx, returnIdx int) []string {
+func splitMatchClauses(ctx context.Context, cypher string, whereIdx, returnIdx int) []string {
 	var clauses []string
 
 	// Find the end of MATCH patterns (before WHERE or RETURN)
@@ -101,7 +101,7 @@ func splitMatchClauses(cypher string, whereIdx, returnIdx int) []string {
 	start := 5 // After first MATCH
 	searchStart := start
 	for {
-		nextMatch := findKeywordIndex(cypher[searchStart:], "MATCH")
+		nextMatch := findKeywordIndex(ctx, cypher[searchStart:], "MATCH")
 		if nextMatch == -1 || searchStart+nextMatch >= endIdx {
 			// No more MATCH - take everything to end
 			clauses = append(clauses, strings.TrimSpace(cypher[start:endIdx]))
@@ -726,7 +726,7 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 		}
 		filtered := make([]*storage.Node, 0, util.SafePreallocCap(len(ids)))
 		for _, id := range ids {
-			node, getErr := e.getQueryNode(store, id)
+			node, getErr := e.getQueryNode(ctx, store, id)
 			if getErr != nil {
 				return getErr
 			}
@@ -787,7 +787,7 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 			if projected == nil || !matches(projected.Properties) {
 				return nil
 			}
-			node, err := e.getQueryNode(store, projected.ID)
+			node, err := e.getQueryNode(ctx, store, projected.ID)
 			if errors.Is(err, storage.ErrNotFound) {
 				return nil
 			}
@@ -901,7 +901,7 @@ func (e *StorageExecutor) labellessScanRequiredProperties(ctx context.Context, p
 	for key, value := range properties {
 		required[key] = value
 	}
-	for _, conjunct := range splitTopLevelAndConjuncts(clause) {
+	for _, conjunct := range splitTopLevelAndConjuncts(ctx, clause) {
 		property, value, ok := e.parseSimpleIndexedEquality(ctx, variable, unwrapOuterParens(strings.TrimSpace(conjunct)))
 		if !ok {
 			continue
@@ -977,7 +977,7 @@ func (e *StorageExecutor) applyCartesianWherePushdown(
 	inConstraints := map[string]cartesianInConstraint{}
 	nullConstraints := map[string]cartesianNullConstraint{}
 	eqConstraints := make([]cartesianEqConstraint, 0, 2)
-	for _, term := range splitTopLevelAndConjuncts(whereClause) {
+	for _, term := range splitTopLevelAndConjuncts(ctx, whereClause) {
 		term = strings.TrimSpace(term)
 		if term == "" {
 			continue

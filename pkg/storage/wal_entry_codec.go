@@ -8,6 +8,13 @@ import (
 	"github.com/orneryd/nornicdb/internal/jsontext"
 )
 
+// walRecordRejection proves this logical record failed pure encoding before
+// its physical bytes were attempted. Other control records may already exist.
+type walRecordRejection struct{ cause error }
+
+func (e *walRecordRejection) Error() string { return e.cause.Error() }
+func (e *walRecordRejection) Unwrap() error { return e.cause }
+
 // WAL entry payloads use a JSON metadata header followed by raw Data bytes:
 // [jsonLen:4 LE][json header][dataLen:4 LE][data]. The outer framing identifies
 // the current format. The V4 startup migration converts supported historical
@@ -35,11 +42,11 @@ func processWALEntryPayload(mode walPayloadMode, buf *bytes.Buffer, entry *WALEn
 		}
 		jsonBytes, err := marshalJSONCompact(buf, &header)
 		if err != nil {
-			return nil, fmt.Errorf("wal: failed to serialize entry header: %w", err)
+			return nil, &walRecordRejection{cause: fmt.Errorf("wal: failed to serialize entry header: %w", err)}
 		}
 		// Never acknowledge a record recovery would be unable to read.
 		if len(jsonBytes) > int(walMaxEntrySize)-8 || len(entry.Data) > int(walMaxEntrySize)-8-len(jsonBytes) {
-			return nil, fmt.Errorf("wal: entry exceeds maximum WAL frame size of %d bytes", walMaxEntrySize)
+			return nil, &walRecordRejection{cause: fmt.Errorf("wal: entry exceeds maximum WAL frame size of %d bytes", walMaxEntrySize)}
 		}
 		encoded := make([]byte, 4+len(jsonBytes)+4+len(entry.Data))
 		binary.LittleEndian.PutUint32(encoded[0:4], uint32(len(jsonBytes)))

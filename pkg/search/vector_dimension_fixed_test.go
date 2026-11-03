@@ -3,10 +3,11 @@ package search
 import (
 	"context"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"path/filepath"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -75,9 +76,9 @@ func TestBuildIndexesUnfixedDimensionsFollowFirstStoredVector(t *testing.T) {
 	t.Cleanup(func() { _ = badger.Close() })
 	engine := storage.NewNamespacedEngine(badger, "points")
 	// Badger iterates in key order: the vector-less node comes first.
-	_, err = engine.CreateNode(&storage.Node{ID: "a-meta", Labels: []string{"Meta"}, Properties: map[string]interface{}{"dimensions": int64(2)}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "a-meta", Labels: []string{"Meta"}, Properties: map[string]interface{}{"dimensions": int64(2)}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "z-point", Labels: []string{"Point"}, NamedEmbeddings: map[string][]float32{"default": {1, 0}}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "z-point", Labels: []string{"Point"}, NamedEmbeddings: map[string][]float32{"default": {1, 0}}})
 	require.NoError(t, err)
 
 	svc := NewService(engine, 4, nil)

@@ -67,7 +67,7 @@ func TestSearchReportsAPageCutShortByMinRRFScore(t *testing.T) {
 				"embedding": []float32{1, float32(index) * 0.001},
 			},
 		}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, service.IndexNode(node))
 	}

@@ -100,7 +100,7 @@ func decodeStoredTime(decoder *msgpack.Decoder, value reflect.Value, length int)
 func encodeValue(value any) ([]byte, error) {
 	encoder := getValueEncoder()
 	defer putValueEncoder(encoder)
-	payload, err := encoder.encode(value)
+	payload, err := encoder.encode(value, storedValueFraming)
 	if err != nil {
 		return nil, err
 	}
@@ -110,8 +110,9 @@ func encodeValue(value any) ([]byte, error) {
 // valueEncoder owns its output until the next encode. Streams retain one;
 // callers that need owned bytes clone the result before returning it to the pool.
 type valueEncoder struct {
-	buffer  bytes.Buffer
-	msgpack *msgpack.Encoder
+	buffer   bytes.Buffer
+	msgpack  *msgpack.Encoder
+	semantic semanticTransactionScratch
 }
 
 var valueEncoders = sync.Pool{New: func() any { return new(valueEncoder) }}
@@ -119,6 +120,7 @@ var valueEncoders = sync.Pool{New: func() any { return new(valueEncoder) }}
 func getValueEncoder() *valueEncoder { return valueEncoders.Get().(*valueEncoder) }
 
 func putValueEncoder(encoder *valueEncoder) {
+	encoder.semantic.release()
 	// Do not retain unusually large materialized records between requests.
 	if encoder.buffer.Cap() > defaultSnapshotRecordSize {
 		return
@@ -126,19 +128,28 @@ func putValueEncoder(encoder *valueEncoder) {
 	valueEncoders.Put(encoder)
 }
 
-func (e *valueEncoder) encode(value any) ([]byte, error) {
-	e.reset()
+type valueFraming bool
+
+const (
+	storedValueFraming    valueFraming = true
+	rawMessagePackFraming valueFraming = false
+)
+
+func (e *valueEncoder) encode(value any, framing valueFraming) ([]byte, error) {
+	e.reset(framing)
 	if err := e.msgpack.Encode(value); err != nil {
 		return nil, err
 	}
 	return e.buffer.Bytes(), nil
 }
 
-func (e *valueEncoder) reset() {
+func (e *valueEncoder) reset(framing valueFraming) {
 	e.buffer.Reset()
-	e.buffer.WriteString(serializationMagic)
-	e.buffer.WriteByte(serializationVersion)
-	e.buffer.WriteByte(serializerIDMsgpack)
+	if framing == storedValueFraming {
+		e.buffer.WriteString(serializationMagic)
+		e.buffer.WriteByte(serializationVersion)
+		e.buffer.WriteByte(serializerIDMsgpack)
+	}
 	if e.msgpack == nil {
 		e.msgpack = msgpack.NewEncoder(&e.buffer)
 	} else {

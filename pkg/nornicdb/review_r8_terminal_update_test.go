@@ -29,13 +29,13 @@ func TestReviewDLQTerminalWriteCannotOverrideUpdate(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("terminal commit did not start")
 	}
-	n, err := s.GetNode("poison")
+	n, err := s.GetNode(t.Context(), "poison")
 	require.NoError(t, err)
 	stamp := n.UpdatedAt
 	// A supported idempotent upsert is still a new attempt, even with the
 	// caller's unchanged body timestamp. Enqueue is the public notification.
-	require.NoError(t, s.UpdateNode(storage.NodeUpdateRequest{After: n}))
-	current, err := s.GetNode("poison")
+	require.NoError(t, s.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: n}))
+	current, err := s.GetNode(t.Context(), "poison")
 	require.NoError(t, err)
 	require.True(t, stamp.Equal(current.UpdatedAt), "exercise idempotent same-version update")
 	w.Enqueue("poison")
@@ -45,7 +45,7 @@ func TestReviewDLQTerminalWriteCannotOverrideUpdate(t *testing.T) {
 	release.Do(func() { close(resume) })
 	require.Eventually(t, func() bool { return w.Stats().Processed == 1 || w.Stats().Parked == 1 }, 3*time.Second, time.Millisecond)
 	w.Close()
-	current, err = s.GetNode("poison")
+	current, err = s.GetNode(t.Context(), "poison")
 	require.NoError(t, err)
 	failures, err := w.ParkedEmbeddingFailures(context.Background(), 10)
 	require.NoError(t, err)

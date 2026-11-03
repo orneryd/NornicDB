@@ -62,15 +62,16 @@ func TestReplicationRPCReturnedErrorsAreLocalized(t *testing.T) {
 		cause := errors.New("forced write failure")
 		netConn := &replicationRPCFailingConn{writeErr: cause}
 		connection := &ClusterConnection{
-			clusterLifecycle: clusterLifecycle[connectionResources]{closeCh: make(chan struct{}), resources: connectionResources{conn: netConn}},
+			clusterLifecycle: clusterLifecycle[connectionResources]{resources: connectionResources{conn: netConn}},
 			writer:           bufio.NewWriter(netConn),
-			pendingRPCs:      make(map[uint64]chan *ClusterMessage),
+			rpcGate:          make(chan struct{}, 1),
 		}
 		connection.connected.Store(true)
 
 		_, err := connection.sendRPC(context.Background(), &ClusterMessage{})
 		requireReplicationRPCError(t, err, "replication.rpc.write_failed", "write: forced write failure")
 		require.ErrorIs(t, err, cause)
+		require.False(t, connection.IsConnected(), "a failed write cannot leave a partial frame reusable")
 	})
 
 	t.Run("authentication", func(t *testing.T) {

@@ -12,7 +12,7 @@ import (
 // retirement check the refresh makes before reading storage, and release.
 // Both identity kinds are measured, since they now share one implementation.
 func BenchmarkSearchMutationReservation(b *testing.B) {
-	svc := &Service{}
+	svc := &Service{lifecycleCtx: b.Context()}
 	for _, kind := range []string{"node", "relationship"} {
 		b.Run(kind, func(b *testing.B) {
 			var counter atomic.Uint64

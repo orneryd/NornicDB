@@ -46,7 +46,7 @@ func TestCredentialSettingsURLHTTPPublic(t *testing.T) {
 	}
 	engine, err := server.dbManager.GetStorage("system")
 	require.NoError(t, err)
-	node, err := engine.GetNode(storage.NodeID("db_config:nornic"))
+	node, err := engine.GetNode(t.Context(), storage.NodeID("db_config:nornic"))
 	require.NoError(t, err)
 	var stored map[string]string
 	require.NoError(t, json.Unmarshal([]byte(node.Properties["overrides"].(string)), &stored))

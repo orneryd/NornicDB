@@ -26,14 +26,14 @@ func TestDropConstraint_ContractRemovesCompiledEntries(t *testing.T) {
 	contract, compiled, types := gapContract()
 	require.NoError(t, sm.AddConstraintContractBundle(contract, compiled, types, false))
 	require.Len(t, sm.GetAllPropertyTypeConstraints(), 1)
-	_, hasUnique := sm.uniqueConstraints["Person:id"]
+	_, hasUnique := sm.uniqueConstraints[nodePropertyKey{label: "Person", property: "id"}]
 	require.True(t, hasUnique)
 
 	require.NoError(t, sm.DropConstraint("person_contract"))
-	require.Empty(t, sm.GetAllConstraintContracts())
+	require.Empty(t, constraintContractsForTest(t, sm))
 	require.Empty(t, sm.constraints)
 	require.Empty(t, sm.GetAllPropertyTypeConstraints())
-	_, hasUnique = sm.uniqueConstraints["Person:id"]
+	_, hasUnique = sm.uniqueConstraints[nodePropertyKey{label: "Person", property: "id"}]
 	require.False(t, hasUnique, "the unique lookup owned by the compiled entry is released")
 
 	err := sm.DropConstraint("person_contract")
@@ -47,7 +47,7 @@ func TestDropConstraint_ContractToleratesEntryDroppedIndividually(t *testing.T) 
 	require.NoError(t, sm.DropConstraint(ConstraintContractEntryName("person_contract", 0)))
 
 	require.NoError(t, sm.DropConstraint("person_contract"))
-	require.Empty(t, sm.GetAllConstraintContracts())
+	require.Empty(t, constraintContractsForTest(t, sm))
 	require.Empty(t, sm.GetAllPropertyTypeConstraints())
 }
 
@@ -59,10 +59,10 @@ func TestDropConstraint_ContractPersistFailureRestoresEverything(t *testing.T) {
 	sm.persist = func(*SchemaDefinition) error { return errors.New("persist failed") }
 	require.ErrorContains(t, sm.DropConstraint("person_contract"), "persist failed")
 
-	require.Len(t, sm.GetAllConstraintContracts(), 1)
+	require.Len(t, constraintContractsForTest(t, sm), 1)
 	require.Contains(t, sm.constraints, ConstraintContractEntryName("person_contract", 0))
 	require.Len(t, sm.GetAllPropertyTypeConstraints(), 1)
-	_, hasUnique := sm.uniqueConstraints["Person:id"]
+	_, hasUnique := sm.uniqueConstraints[nodePropertyKey{label: "Person", property: "id"}]
 	require.True(t, hasUnique)
 }
 

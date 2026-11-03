@@ -26,22 +26,22 @@ func TestTransactionQuotaHiddenPriorEntities(t *testing.T) {
 						tracker := engine.(*sizeTrackingEngine)
 						base := manager.inner.(*storage.MemoryEngine)
 						for _, id := range []storage.NodeID{"a", "b"} {
-							_, err := engine.CreateNode(&storage.Node{ID: id})
+							_, err := engine.CreateNode(t.Context(), &storage.Node{ID: id})
 							require.NoError(t, err)
 						}
 						old := time.Now().Add(-72 * time.Hour)
 						properties := map[string]interface{}{"payload": strings.Repeat("x", 2048)}
 						if entity == "node" {
-							_, err = engine.CreateNode(&storage.Node{ID: "n", Labels: []string{"Doc"}, Properties: properties, CreatedAt: old, UpdatedAt: old})
+							_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "n", Labels: []string{"Doc"}, Properties: properties, CreatedAt: old, UpdatedAt: old})
 							require.NoError(t, err)
 						} else {
-							require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "LINK", Properties: properties, CreatedAt: old, UpdatedAt: old}))
+							require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "LINK", Properties: properties, CreatedAt: old, UpdatedAt: old}))
 						}
 						if hidden == "manual" {
 							if entity == "node" {
-								require.NoError(t, base.SetManualSuppression(storage.StoredEntityNodeKind, string(db+":n"), true))
+								require.NoError(t, base.SetManualSuppression(context.Background(), storage.StoredEntityNodeKind, string(db+":n"), true))
 							} else {
-								require.NoError(t, base.SetManualSuppression(storage.StoredEntityEdgeKind, string(db+":e"), true))
+								require.NoError(t, base.SetManualSuppression(context.Background(), storage.StoredEntityEdgeKind, string(db+":e"), true))
 							}
 						} else {
 							base.SetDecayEnabled(true)
@@ -56,41 +56,41 @@ func TestTransactionQuotaHiddenPriorEntities(t *testing.T) {
 							require.NoError(t, schema.CreateDecayProfileBinding(binding))
 						}
 						if entity == "node" {
-							_, err = engine.GetNode("n")
+							_, err = engine.GetNode(t.Context(), "n")
 						} else {
-							_, err = engine.GetEdge("e")
+							_, err = engine.GetEdge(t.Context(), "e")
 						}
 						require.ErrorIs(t, err, storage.ErrNotFound, "the prior entity must really be hidden")
 						total, _, _ := manager.GetStorageSize(db)
-						nodes, err := engine.NodeCount()
+						nodes, err := engine.NodeCount(t.Context())
 						require.NoError(t, err)
-						edges, err := engine.EdgeCount()
+						edges, err := engine.EdgeCount(t.Context())
 						require.NoError(t, err)
 						limits := &Limits{Storage: StorageLimits{MaxNodes: nodes, MaxEdges: edges}}
 						if quota == "bytes" {
 							limits = &Limits{Storage: StorageLimits{MaxBytes: total}}
 						}
 						require.NoError(t, manager.SetDatabaseLimits(t.Context(), db, limits))
-						tx, err := base.BeginTransaction()
+						tx, err := base.BeginTransaction(t.Context())
 						require.NoError(t, err)
 						t.Cleanup(func() { _ = tx.Rollback() })
 						require.NoError(t, tx.SetNamespace(db))
 						if entity == "node" {
 							if operation == "delete" {
-								err = tx.DeleteGraphNode(storage.NodeID(db+":n"), storage.CascadeEdges)
+								err = tx.DeleteGraphNode(t.Context(), storage.NodeID(db+":n"), storage.CascadeEdges)
 							} else {
-								prior, getErr := tx.GetStoredNode(storage.NodeID(db + ":n"))
+								prior, getErr := tx.GetStoredNode(t.Context(), storage.NodeID(db+":n"))
 								require.NoError(t, getErr)
 								prior.Properties = map[string]interface{}{"payload": "small"}
-								err = tx.UpdateGraphNode(storage.NodeUpdateRequest{After: prior, Policy: storage.ClientNodeEdits})
+								err = tx.UpdateGraphNode(t.Context(), storage.NodeUpdateRequest{After: prior, Policy: storage.ClientNodeEdits})
 							}
 						} else if operation == "delete" {
-							err = tx.DeleteEdge(storage.EdgeID(db + ":e"))
+							err = tx.DeleteEdge(t.Context(), storage.EdgeID(db+":e"))
 						} else {
-							prior, getErr := tx.GetStoredEdge(storage.EdgeID(db + ":e"))
+							prior, getErr := tx.GetStoredEdge(t.Context(), storage.EdgeID(db+":e"))
 							require.NoError(t, getErr)
 							prior.Properties = map[string]interface{}{"payload": "small"}
-							err = tx.UpdateEdge(storage.EdgeUpdateRequest{After: prior})
+							err = tx.UpdateEdge(t.Context(), storage.EdgeUpdateRequest{After: prior})
 						}
 						require.NoError(t, err)
 						require.NoError(t, tracker.CommitTransaction(context.Background(), tx), "update or deletion does not insert the hidden entity")

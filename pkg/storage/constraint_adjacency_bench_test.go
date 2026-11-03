@@ -21,14 +21,14 @@ func BenchmarkConstraintCurrentAdjacency(b *testing.B) {
 				b.Fatal(err)
 			}
 			for _, id := range []NodeID{"test:hub", "test:leaf"} {
-				if _, err := engine.CreateNode(&Node{ID: id}); err != nil {
+				if _, err := engine.CreateNode(b.Context(), &Node{ID: id}); err != nil {
 					b.Fatal(err)
 				}
 			}
 			tx := &BadgerTransaction{engine: engine, pendingEdges: make(map[EdgeID]*Edge), deletedEdges: make(map[EdgeID]struct{})}
 			for i := 0; i < size; i++ {
 				edge := &Edge{ID: EdgeID(fmt.Sprintf("test:e%d", i)), StartNode: "test:hub", EndNode: "test:leaf", Type: "R"}
-				if err := engine.CreateEdge(edge); err != nil {
+				if err := engine.CreateEdge(b.Context(), edge); err != nil {
 					b.Fatal(err)
 				}
 				if i%2 == 0 {
@@ -38,7 +38,7 @@ func BenchmarkConstraintCurrentAdjacency(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				edges, err := tx.currentDirectedEdgesLocked("test:hub", adjacencyOutgoing)
+				edges, err := tx.currentDirectedEdgesLocked(b.Context(), "test:hub", adjacencyOutgoing)
 				if err != nil || len(edges) != size {
 					b.Fatalf("edges=%d err=%v", len(edges), err)
 				}

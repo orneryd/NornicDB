@@ -58,7 +58,7 @@ NornicDB uses a **stream parse-execute** architecture where queries are parsed a
 
 ```go
 // Traditional: Parse everything, then execute
-ast := parser.Parse(query)      // Allocate full AST
+ast, err := parser.Parse(ctx, query)      // Allocate full AST
 optimized := optimizer.Optimize(ast)  // Another pass
 result := executor.Execute(optimized) // Finally execute
 

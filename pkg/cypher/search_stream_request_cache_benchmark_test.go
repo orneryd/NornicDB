@@ -13,7 +13,7 @@ import (
 func BenchmarkRRetrieveOneShotCache(b *testing.B) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "bench")
 	for _, id := range []storage.NodeID{"a", "b"} {
-		_, err := store.CreateNode(&storage.Node{ID: id, Properties: map[string]any{"content": "library transcript"}})
+		_, err := store.CreateNode(b.Context(), &storage.Node{ID: id, Properties: map[string]any{"content": "library transcript"}})
 		require.NoError(b, err)
 	}
 	svc := search.NewService(store, search.DefaultVectorDimensions, nil)

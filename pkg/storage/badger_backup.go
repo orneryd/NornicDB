@@ -20,14 +20,15 @@ import (
 // Uses BadgerDB's streaming backup which creates a consistent snapshot.
 // The backup file is a self-contained, portable copy of the database.
 func (b *BadgerEngine) Backup(path string) error {
-	// Every write acknowledged before the backup is in it.
-	if err := b.FlushWriteBehind(nil); err != nil {
+	// Every write acknowledged before the backup is in it. A backup owns no
+	// request context, so it hands the explicit detached completion lifetime.
+	if err := b.FlushWriteBehind(context.Background()); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
-	if b.closed {
+	if b.work.Closing() {
 		return localizedError(localization.StorageClientStorageClosed(), ErrStorageClosed)
 	}
 
@@ -83,7 +84,8 @@ func (b *BadgerEngine) Restore(path string) (restoreErr error) {
 	b.stopIndexBackfill(startupLabelIndex)
 	defer func() { restoreErr = errors.Join(restoreErr, b.restartIndexBackfills()) }()
 
-	lifecycle, err := b.beginLifecycleWrite(context.Background(), "")
+	ctx := context.Background()
+	lifecycle, err := b.beginLifecycleWrite(ctx, "")
 	if err != nil {
 		if errors.Is(err, ErrStorageClosed) {
 			return localizedError(localization.StorageClientStorageClosed(), ErrStorageClosed)
@@ -110,6 +112,7 @@ func (b *BadgerEngine) Restore(path string) (restoreErr error) {
 	}
 	defer db.oracle.releaseReads()
 
+	b.rememberIndexReadiness(startupLabelIndex, false)
 	if err := db.DropAll(context.Background()); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
@@ -120,7 +123,7 @@ func (b *BadgerEngine) Restore(path string) (restoreErr error) {
 	// The restored derived-count deltas are folded, as open folds them:
 	// the engine that took the backup numbered them, and a new delta
 	// reusing one's suffix would overwrite it.
-	if err := b.foldRestoredCountDeltas(db); err != nil {
+	if err := b.foldRestoredCountDeltas(ctx, db); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
 	loader := heldViewer{db: db}
@@ -145,7 +148,7 @@ func (b *BadgerEngine) Restore(path string) (restoreErr error) {
 	if err := b.initializeMVCCSequence(); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
-	if err := b.recoverNamespaceDrops(&lifecycle); err != nil {
+	if err := b.recoverNamespaceDrops(ctx, &lifecycle); err != nil {
 		return err
 	}
 	if err := b.loadMVCCFloorKeys(loader); err != nil {
@@ -241,7 +244,8 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 	// Every write acknowledged before the delete is applied first, no write
 	// runs during it, and a transaction open across it that writes under the
 	// prefix fails its commit (beginLifecycleWrite).
-	lifecycle, err := b.beginLifecycleWrite(context.Background(), prefix)
+	ctx := context.Background()
+	lifecycle, err := b.beginLifecycleWrite(ctx, prefix)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -255,11 +259,11 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 	b.labelCountWriteMu.Lock()
 	defer b.labelCountWriteMu.Unlock()
 
-	nodesDeleted, edgesDeleted, reset, err = b.deleteByPrefixHeld(prefix, &lifecycle, false)
+	nodesDeleted, edgesDeleted, reset, err = b.deleteByPrefixHeld(ctx, prefix, &lifecycle, false)
 	return nodesDeleted, edgesDeleted, err
 }
 
-func (b *BadgerEngine) deleteByPrefixHeld(prefix string, lifecycle *lifecycleWrite, recovery bool) (nodesDeleted int64, edgesDeleted int64, reset *commitNotification, err error) {
+func (b *BadgerEngine) deleteByPrefixHeld(ctx context.Context, prefix string, lifecycle *lifecycleWrite, recovery bool) (nodesDeleted int64, edgesDeleted int64, reset *commitNotification, err error) {
 	prefixBytes := []byte(prefix)
 	namespace, wholeNamespace := wholeNamespaceFromPrefix(prefix)
 
@@ -340,7 +344,7 @@ func (b *BadgerEngine) deleteByPrefixHeld(prefix string, lifecycle *lifecycleWri
 
 		if wholeNamespace {
 			intent = &namespaceDropIntent{namespace: namespace, nodesDeleted: nodesDeleted, edgesDeleted: edgesDeleted, nodes: nodeNums, edges: edgeNums}
-			if err := b.writeNamespaceDropIntent(intent, lifecycle); err != nil {
+			if err := b.writeNamespaceDropIntent(ctx, intent, lifecycle); err != nil {
 				return 0, 0, nil, err
 			}
 		}
@@ -348,7 +352,7 @@ func (b *BadgerEngine) deleteByPrefixHeld(prefix string, lifecycle *lifecycleWri
 
 	var publishUsage func()
 	if !wholeNamespace {
-		publishUsage, err = b.prepareDeletedEntityPublication(nodeNums, edgeNums)
+		publishUsage, err = b.prepareDeletedEntityPublication(ctx, nodeNums, edgeNums)
 		if err != nil {
 			return 0, 0, nil, err
 		}
@@ -378,7 +382,13 @@ func (b *BadgerEngine) deleteByPrefixHeld(prefix string, lifecycle *lifecycleWri
 	// Bulk deletion bypasses per-node marker writes. Invalidate even on a
 	// partial drop failure so future claims rebuild from the durable index.
 	defer b.InvalidatePendingEmbeddingsIndex()
-	if err := b.db.DropPrefix(context.Background(), prefixDropOptions{}, dropPrefixes...); err != nil {
+	mode := retainPrefixSnapshots
+	if recovery {
+		// Recovery runs before exposure or while Restore excludes/drains reads.
+		// Its held-read capability must not open an ordinary commit read.
+		mode = purgePrefixVersions
+	}
+	if err := b.db.DropPrefix(context.Background(), prefixDropOptions{mode: mode}, dropPrefixes...); err != nil {
 		return 0, 0, nil, localizedError(localization.StorageClientDropPrefixFailed(prefixNode, err), err)
 	}
 	// A whole-namespace drop keeps admission fenced until its schema owner
@@ -415,7 +425,7 @@ func (b *BadgerEngine) deleteByPrefixHeld(prefix string, lifecycle *lifecycleWri
 
 	deleteIndexEntriesBySuffixPrefix := func(indexPrefix byte) error {
 		indexKeyPrefix := []byte{indexPrefix}
-		wb := b.db.NewWriteBatch(context.Background())
+		wb := b.db.NewWriteBatch(context.WithoutCancel(ctx))
 		defer wb.Cancel()
 
 		const flushEvery = 50_000
@@ -472,28 +482,28 @@ func (b *BadgerEngine) deleteByPrefixHeld(prefix string, lifecycle *lifecycleWri
 		return 0, 0, nil, localizedError(localization.StorageClientCleanEdgeTypeIndexFailed(err), err)
 	}
 	if len(deletedLabelCounts) > 0 {
-		if err := b.decrementLabelCounts(deletedLabelCounts); err != nil {
+		if err := b.decrementLabelCounts(ctx, deletedLabelCounts); err != nil {
 			return 0, 0, nil, err
 		}
 	}
 	if len(deletedEdgeTypeCounts) > 0 {
-		if err := b.decrementEdgeTypeCounts(deletedEdgeTypeCounts); err != nil {
+		if err := b.decrementEdgeTypeCounts(ctx, deletedEdgeTypeCounts); err != nil {
 			return 0, 0, nil, err
 		}
 	}
 	if len(deletedStartLabelCounts) > 0 {
-		if err := b.decrementEdgeTypeLabelCounts(prefixMVCCMetaEdgeTypeStartLabelCount, deletedStartLabelCounts); err != nil {
+		if err := b.decrementEdgeTypeLabelCounts(ctx, prefixMVCCMetaEdgeTypeStartLabelCount, deletedStartLabelCounts); err != nil {
 			return 0, 0, nil, err
 		}
 	}
 	if len(deletedEndLabelCounts) > 0 {
-		if err := b.decrementEdgeTypeLabelCounts(prefixMVCCMetaEdgeTypeEndLabelCount, deletedEndLabelCounts); err != nil {
+		if err := b.decrementEdgeTypeLabelCounts(ctx, prefixMVCCMetaEdgeTypeEndLabelCount, deletedEndLabelCounts); err != nil {
 			return 0, 0, nil, err
 		}
 	}
 
 	if wholeNamespace {
-		if err := b.completeNamespaceDrop(intent, lifecycle); err != nil {
+		if err := b.completeNamespaceDrop(ctx, intent, lifecycle); err != nil {
 			return 0, 0, nil, err
 		}
 	}

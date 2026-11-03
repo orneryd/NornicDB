@@ -38,7 +38,7 @@ func TestGH466_MapProjectionSelectorsAndComputedFields(t *testing.T) {
 		}
 		t.Run(mode, func(t *testing.T) {
 			store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "gh466")
-			_, err := store.CreateNode(&storage.Node{
+			_, err := store.CreateNode(t.Context(), &storage.Node{
 				ID: "item-a1", Labels: []string{"I"},
 				Properties: map[string]interface{}{"sku": "a1", "price": float64(10.5), "qty": int64(3)},
 			})

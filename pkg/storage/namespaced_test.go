@@ -141,13 +141,16 @@ func (e *namespacedHelperEngine) StreamNodeChunks(ctx context.Context, chunkSize
 	return nil
 }
 
-func (e *namespacedHelperEngine) FindNodeNeedingEmbedding() *Node {
+func (e *namespacedHelperEngine) FindNodeNeedingEmbedding(ctx context.Context) (*Node, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if len(e.findQueue) == 0 {
-		return nil
+		return nil, nil
 	}
 	node := CopyNode(e.findQueue[0])
 	e.findQueue = e.findQueue[1:]
-	return node
+	return node, nil
 }
 
 func (e *namespacedHelperEngine) RefreshPendingEmbeddingsIndex() int {
@@ -162,28 +165,28 @@ func (e *namespacedHelperEngine) MarkNodeEmbedded(nodeID NodeID) {
 	e.markedIDs = append(e.markedIDs, nodeID)
 }
 
-func (e *namespacedHelperEngine) GetNode(nodeID NodeID) (*Node, error) {
+func (e *namespacedHelperEngine) GetNode(ctx context.Context, nodeID NodeID) (*Node, error) {
 	if e.missingIDs != nil && e.missingIDs[nodeID] {
 		return nil, ErrNotFound
 	}
-	return e.MemoryEngine.GetNode(nodeID)
+	return e.MemoryEngine.GetNode(ctx, nodeID)
 }
 
-func (e *namespacedPrefixStatsEngine) NodeCountByPrefix(prefix string) (int64, error) {
+func (e *namespacedPrefixStatsEngine) NodeCountByPrefix(ctx context.Context, prefix string) (int64, error) {
 	if e.nodeErr != nil {
 		return 0, e.nodeErr
 	}
 	return e.nodeCount, nil
 }
 
-func (e *namespacedPrefixStatsEngine) EdgeCountByPrefix(prefix string) (int64, error) {
+func (e *namespacedPrefixStatsEngine) EdgeCountByPrefix(ctx context.Context, prefix string) (int64, error) {
 	if e.edgeErr != nil {
 		return 0, e.edgeErr
 	}
 	return e.edgeCount, nil
 }
 
-func (e *namespacedLabelStatsEngine) NodeCountByLabelInNamespace(namespace, label string) (int64, error) {
+func (e *namespacedLabelStatsEngine) NodeCountByLabelInNamespace(ctx context.Context, namespace, label string) (int64, error) {
 	e.namespace = namespace
 	e.label = label
 	if e.err != nil {
@@ -332,17 +335,17 @@ func TestNamespacedEngine_BasicOperations(t *testing.T) {
 			"name": "Alice",
 		},
 	}
-	_, err := tenantA.CreateNode(node)
+	_, err := tenantA.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	// Get the node back (NamespacedEngine receives unprefixed IDs)
-	retrieved, err := tenantA.GetNode(NodeID("node-1"))
+	retrieved, err := tenantA.GetNode(t.Context(), NodeID("node-1"))
 	require.NoError(t, err)
 	assert.Equal(t, "node-1", string(retrieved.ID))
 	assert.Equal(t, "Alice", retrieved.Properties["name"])
 
 	// Verify the underlying storage has the prefixed ID
-	prefixedNode, err := inner.GetNode(NodeID("tenant_a:node-1"))
+	prefixedNode, err := inner.GetNode(t.Context(), NodeID("tenant_a:node-1"))
 	require.NoError(t, err)
 	assert.Equal(t, "tenant_a:node-1", string(prefixedNode.ID))
 }
@@ -351,11 +354,11 @@ func TestNamespacedEngine_StreamNodes_UsesPrefixStreamingWhenAvailable(t *testin
 	base := newTestMemoryEngine(t)
 	defer base.Close()
 
-	_, err := base.CreateNode(&Node{ID: NodeID("tenant_a:n1"), Labels: []string{"L"}, Properties: map[string]any{"name": "a1"}})
+	_, err := base.CreateNode(t.Context(), &Node{ID: NodeID("tenant_a:n1"), Labels: []string{"L"}, Properties: map[string]any{"name": "a1"}})
 	require.NoError(t, err)
-	_, err = base.CreateNode(&Node{ID: NodeID("tenant_b:n2"), Labels: []string{"L"}, Properties: map[string]any{"name": "b1"}})
+	_, err = base.CreateNode(t.Context(), &Node{ID: NodeID("tenant_b:n2"), Labels: []string{"L"}, Properties: map[string]any{"name": "b1"}})
 	require.NoError(t, err)
-	_, err = base.CreateNode(&Node{ID: NodeID("tenant_a:n3"), Labels: []string{"L"}, Properties: map[string]any{"name": "a2"}})
+	_, err = base.CreateNode(t.Context(), &Node{ID: NodeID("tenant_a:n3"), Labels: []string{"L"}, Properties: map[string]any{"name": "a2"}})
 	require.NoError(t, err)
 
 	prefixInner := &namespacedPrefixStreamingEngine{Engine: base}
@@ -386,7 +389,7 @@ func TestNamespacedEngine_Isolation(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]any{"tenant": "a"},
 	}
-	_, err := tenantA.CreateNode(nodeA)
+	_, err := tenantA.CreateNode(t.Context(), nodeA)
 	require.NoError(t, err)
 
 	nodeB := &Node{
@@ -394,7 +397,7 @@ func TestNamespacedEngine_Isolation(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]any{"tenant": "b"},
 	}
-	_, err = tenantB.CreateNode(nodeB)
+	_, err = tenantB.CreateNode(t.Context(), nodeB)
 	require.NoError(t, err)
 
 	// Each tenant should only see their own nodes
@@ -418,9 +421,9 @@ func TestNamespacedEngine_Edges(t *testing.T) {
 	// Create two nodes (NamespacedEngine receives unprefixed IDs)
 	node1 := &Node{ID: NodeID("n1"), Labels: []string{"Person"}}
 	node2 := &Node{ID: NodeID("n2"), Labels: []string{"Person"}}
-	_, err := tenantA.CreateNode(node1)
+	_, err := tenantA.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
-	_, err = tenantA.CreateNode(node2)
+	_, err = tenantA.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
 
 	// Create edge (NamespacedEngine receives unprefixed IDs)
@@ -433,11 +436,11 @@ func TestNamespacedEngine_Edges(t *testing.T) {
 			"since": "2020",
 		},
 	}
-	err = tenantA.CreateEdge(edge)
+	err = tenantA.CreateEdge(t.Context(), edge)
 	require.NoError(t, err)
 
 	// Get edge back (NamespacedEngine receives unprefixed IDs)
-	retrieved, err := tenantA.GetEdge(EdgeID("e1"))
+	retrieved, err := tenantA.GetEdge(t.Context(), EdgeID("e1"))
 	require.NoError(t, err)
 	assert.Equal(t, "n1", string(retrieved.StartNode))
 	assert.Equal(t, "n2", string(retrieved.EndNode))
@@ -464,7 +467,7 @@ func TestNamespacedEngine_QueryOperations(t *testing.T) {
 			Labels:     []string{"Person"},
 			Properties: map[string]any{"id": i},
 		}
-		_, err := tenantA.CreateNode(node)
+		_, err := tenantA.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 
@@ -474,7 +477,7 @@ func TestNamespacedEngine_QueryOperations(t *testing.T) {
 			Labels:     []string{"Person"},
 			Properties: map[string]any{"id": i},
 		}
-		_, err := tenantB.CreateNode(node)
+		_, err := tenantB.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 
@@ -500,12 +503,12 @@ func TestNamespacedEngine_DeleteByPrefix(t *testing.T) {
 			ID:     NodeID("del:node-" + string(rune('0'+i))),
 			Labels: []string{"Test"},
 		}
-		_, err := tenantA.CreateNode(node)
+		_, err := tenantA.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
-	_, err := tenantA.CreateNode(&Node{ID: "keep:node", Labels: []string{"Test"}})
+	_, err := tenantA.CreateNode(t.Context(), &Node{ID: "keep:node", Labels: []string{"Test"}})
 	require.NoError(t, err)
-	require.NoError(t, tenantA.CreateEdge(&Edge{ID: "del:e", StartNode: "del:node-0", EndNode: "keep:node", Type: "REL"}))
+	require.NoError(t, tenantA.CreateEdge(t.Context(), &Edge{ID: "del:e", StartNode: "del:node-0", EndNode: "keep:node", Type: "REL"}))
 
 	// DeleteByPrefix is namespace-scoped and deletes the matching records.
 	nodesDeleted, edgesDeleted, err := tenantA.DeleteByPrefix("del:")
@@ -514,7 +517,7 @@ func TestNamespacedEngine_DeleteByPrefix(t *testing.T) {
 	assert.Equal(t, int64(1), edgesDeleted)
 
 	// Out-of-scope records survive.
-	got, err := tenantA.GetNode("keep:node")
+	got, err := tenantA.GetNode(t.Context(), "keep:node")
 	require.NoError(t, err)
 	require.NotNil(t, got)
 }
@@ -528,9 +531,9 @@ func TestNamespacedEngine_Stats(t *testing.T) {
 	// Create nodes and edges (NamespacedEngine receives unprefixed IDs)
 	node1 := &Node{ID: NodeID("n1"), Labels: []string{"Person"}}
 	node2 := &Node{ID: NodeID("n2"), Labels: []string{"Person"}}
-	_, err := tenantA.CreateNode(node1)
+	_, err := tenantA.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
-	_, err = tenantA.CreateNode(node2)
+	_, err = tenantA.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
 
 	edge := &Edge{
@@ -539,15 +542,15 @@ func TestNamespacedEngine_Stats(t *testing.T) {
 		EndNode:   NodeID("n2"),
 		Type:      "KNOWS",
 	}
-	err = tenantA.CreateEdge(edge)
+	err = tenantA.CreateEdge(t.Context(), edge)
 	require.NoError(t, err)
 
 	// Check counts
-	nodeCount, err := tenantA.NodeCount()
+	nodeCount, err := tenantA.NodeCount(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), nodeCount)
 
-	edgeCount, err := tenantA.EdgeCount()
+	edgeCount, err := tenantA.EdgeCount(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), edgeCount)
 }
@@ -564,7 +567,7 @@ func TestNamespacedEngine_BulkOperations(t *testing.T) {
 		{ID: NodeID("n2"), Labels: []string{"Person"}},
 		{ID: NodeID("n3"), Labels: []string{"Person"}},
 	}
-	err := tenantA.BulkCreateNodes(nodes)
+	err := tenantA.BulkCreateNodes(t.Context(), nodes)
 	require.NoError(t, err)
 
 	// Verify all created
@@ -573,7 +576,7 @@ func TestNamespacedEngine_BulkOperations(t *testing.T) {
 	assert.Len(t, allNodes, 3)
 
 	// Bulk delete (NamespacedEngine receives unprefixed IDs)
-	err = tenantA.BulkDeleteNodes([]NodeID{NodeID("n1"), NodeID("n2")})
+	err = tenantA.BulkDeleteNodes(t.Context(), []NodeID{NodeID("n1"), NodeID("n2")})
 	require.NoError(t, err)
 
 	// Verify deleted
@@ -583,10 +586,10 @@ func TestNamespacedEngine_BulkOperations(t *testing.T) {
 	assert.Equal(t, "n3", string(allNodes[0].ID))
 
 	t.Run("bulk create rejects nil node and edge entries", func(t *testing.T) {
-		err := tenantA.BulkCreateNodes([]*Node{nil})
+		err := tenantA.BulkCreateNodes(t.Context(), []*Node{nil})
 		require.ErrorIs(t, err, ErrInvalidData)
 
-		err = tenantA.BulkCreateEdges([]*Edge{nil})
+		err = tenantA.BulkCreateEdges(t.Context(), []*Edge{nil})
 		require.ErrorIs(t, err, ErrInvalidData)
 	})
 }
@@ -603,7 +606,7 @@ func TestNamespacedEngine_Close(t *testing.T) {
 
 	// Underlying engine should still work (direct access to inner engine needs prefixed IDs)
 	node := &Node{ID: NodeID("test:test"), Labels: []string{"Test"}}
-	_, err = inner.CreateNode(node)
+	_, err = inner.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 }
 
@@ -614,16 +617,16 @@ func TestNamespacedEngine_StreamingAPIs(t *testing.T) {
 	tenantA := NewNamespacedEngine(inner, "tenant_a")
 	tenantB := NewNamespacedEngine(inner, "tenant_b")
 
-	_, err := tenantA.CreateNode(&Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]any{"name": "a1"}})
+	_, err := tenantA.CreateNode(t.Context(), &Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]any{"name": "a1"}})
 	require.NoError(t, err)
-	_, err = tenantA.CreateNode(&Node{ID: "n2", Labels: []string{"Person"}, Properties: map[string]any{"name": "a2"}})
+	_, err = tenantA.CreateNode(t.Context(), &Node{ID: "n2", Labels: []string{"Person"}, Properties: map[string]any{"name": "a2"}})
 	require.NoError(t, err)
-	_, err = tenantB.CreateNode(&Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]any{"name": "b1"}})
+	_, err = tenantB.CreateNode(t.Context(), &Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]any{"name": "b1"}})
 	require.NoError(t, err)
 
-	err = tenantA.CreateEdge(&Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS"})
+	err = tenantA.CreateEdge(t.Context(), &Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS"})
 	require.NoError(t, err)
-	err = tenantB.CreateEdge(&Edge{ID: "e1", StartNode: "n1", EndNode: "n1", Type: "KNOWS"})
+	err = tenantB.CreateEdge(t.Context(), &Edge{ID: "e1", StartNode: "n1", EndNode: "n1", Type: "KNOWS"})
 	require.NoError(t, err)
 
 	var nodeIDs []NodeID
@@ -663,7 +666,7 @@ func TestNamespacedEngine_EmbeddingWrappersAndLastWriteTime(t *testing.T) {
 	removed := tenantA.RefreshPendingEmbeddingsIndex()
 	assert.GreaterOrEqual(t, removed, 0)
 
-	_ = tenantA.FindNodeNeedingEmbedding()
+	_ = requireEmbeddingCandidate(t, tenantA.FindNodeNeedingEmbedding)
 
 	// Namespaced LastWriteTime intentionally returns zero to avoid cross-db false positives.
 	assert.Equal(t, time.Time{}, tenantA.LastWriteTime())
@@ -676,7 +679,7 @@ func TestNamespacedEngine_RefreshPendingEmbeddingsIndexNoOpReturnsZero(t *testin
 	engine.SetEmbeddingsEnabled(true)
 
 	tenant := NewNamespacedEngine(engine, "tenant")
-	_, err = tenant.CreateNode(&Node{
+	_, err = tenant.CreateNode(t.Context(), &Node{
 		ID: "already-embedded", Labels: []string{"Doc"},
 		Properties:      map[string]any{"text": "complete"},
 		ChunkEmbeddings: [][]float32{{1, 2}},
@@ -695,7 +698,7 @@ func TestNamespacedEngine_RefreshPendingEmbeddingsIndexAlreadyPendingReturnsZero
 	engine.SetEmbeddingsEnabled(true)
 
 	tenant := NewNamespacedEngine(engine, "tenant")
-	_, err = tenant.CreateNode(&Node{
+	_, err = tenant.CreateNode(t.Context(), &Node{
 		ID: "needs-embedding", Labels: []string{"Doc"},
 		Properties: map[string]any{"text": "embed this"},
 	})
@@ -722,7 +725,7 @@ func TestNamespacedEngine_RefreshPendingEmbeddingsIndexThroughWALReturnsZero(t *
 	t.Cleanup(func() { _ = wal.Close() })
 
 	tenant := NewNamespacedEngine(wal, "tenant")
-	_, err = tenant.CreateNode(&Node{
+	_, err = tenant.CreateNode(t.Context(), &Node{
 		ID: "needs-embedding", Labels: []string{"Doc"},
 		Properties: map[string]any{"text": "embed this"},
 	})
@@ -745,7 +748,7 @@ func BenchmarkNamespacedRefreshPendingEmbeddingsIndex(b *testing.B) {
 	engine.SetEmbeddingsEnabled(true)
 	tenant := NewNamespacedEngine(engine, "tenant")
 	for index := range 16 {
-		if _, err := tenant.CreateNode(&Node{
+		if _, err := tenant.CreateNode(b.Context(), &Node{
 			ID: NodeID(fmt.Sprintf("node-%d", index)), Labels: []string{"Doc"},
 			Properties: map[string]any{"text": "embed this"},
 		}); err != nil {
@@ -776,14 +779,14 @@ func TestNamespacedEngine_QueryDelegateMethods(t *testing.T) {
 	defer inner.Close()
 	tenantA := NewNamespacedEngine(inner, "tenant_a")
 
-	_, err := tenantA.CreateNode(&Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]any{"name": "A"}})
+	_, err := tenantA.CreateNode(t.Context(), &Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]any{"name": "A"}})
 	require.NoError(t, err)
-	_, err = tenantA.CreateNode(&Node{ID: "n2", Labels: []string{"Person"}, Properties: map[string]any{"name": "B"}})
+	_, err = tenantA.CreateNode(t.Context(), &Node{ID: "n2", Labels: []string{"Person"}, Properties: map[string]any{"name": "B"}})
 	require.NoError(t, err)
-	err = tenantA.CreateEdge(&Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS", Properties: map[string]any{}})
+	err = tenantA.CreateEdge(t.Context(), &Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS", Properties: map[string]any{}})
 	require.NoError(t, err)
 
-	first, err := tenantA.GetFirstNodeByLabel("Person")
+	first, err := tenantA.GetFirstNodeByLabel(t.Context(), "Person")
 	require.NoError(t, err)
 	assert.NotNil(t, first)
 
@@ -795,14 +798,19 @@ func TestNamespacedEngine_QueryDelegateMethods(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, byType, 1)
 
-	edge := tenantA.GetEdgeBetween("n1", "n2", "KNOWS")
+	edge, err := tenantA.GetEdgeBetween(t.Context(), "n1", "n2", "KNOWS")
+	require.NoError(t, err)
 	assert.NotNil(t, edge)
 
 	all, err := tenantA.AllNodes(context.Background())
 	require.NoError(t, err)
 	assert.Len(t, all, 2)
-	assert.GreaterOrEqual(t, tenantA.GetOutDegree("n1"), 1)
-	assert.GreaterOrEqual(t, tenantA.GetInDegree("n2"), 1)
+	outDegree, err := tenantA.GetOutDegree(t.Context(), "n1")
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, outDegree, 1)
+	inDegree, err := tenantA.GetInDegree(t.Context(), "n2")
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, inDegree, 1)
 
 	batch, err := tenantA.BatchGetNodes(context.Background(), []NodeID{"n1", "n2"})
 	require.NoError(t, err)
@@ -816,14 +824,14 @@ func TestNamespacedEngine_DirectStreamingAndEmbeddingHelpers(t *testing.T) {
 		tenantA := NewNamespacedEngine(inner, "tenant_a")
 		tenantB := NewNamespacedEngine(inner, "tenant_b")
 
-		_, err := tenantA.CreateNode(&Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]any{"name": "a1"}})
+		_, err := tenantA.CreateNode(t.Context(), &Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]any{"name": "a1"}})
 		require.NoError(t, err)
-		_, err = tenantA.CreateNode(&Node{ID: "n2", Labels: []string{"Person"}, Properties: map[string]any{"name": "a2"}})
+		_, err = tenantA.CreateNode(t.Context(), &Node{ID: "n2", Labels: []string{"Person"}, Properties: map[string]any{"name": "a2"}})
 		require.NoError(t, err)
-		_, err = tenantB.CreateNode(&Node{ID: "n9", Labels: []string{"Person"}, Properties: map[string]any{"name": "b1"}})
+		_, err = tenantB.CreateNode(t.Context(), &Node{ID: "n9", Labels: []string{"Person"}, Properties: map[string]any{"name": "b1"}})
 		require.NoError(t, err)
-		require.NoError(t, tenantA.CreateEdge(&Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS"}))
-		require.NoError(t, tenantB.CreateEdge(&Edge{ID: "e9", StartNode: "n9", EndNode: "n9", Type: "KNOWS"}))
+		require.NoError(t, tenantA.CreateEdge(t.Context(), &Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS"}))
+		require.NoError(t, tenantB.CreateEdge(t.Context(), &Edge{ID: "e9", StartNode: "n9", EndNode: "n9", Type: "KNOWS"}))
 
 		var nodeIDs []NodeID
 		err = tenantA.StreamNodes(context.Background(), func(node *Node) error {
@@ -894,10 +902,10 @@ func TestNamespacedEngine_DirectStreamingAndEmbeddingHelpers(t *testing.T) {
 		t.Cleanup(func() { _ = inner.Close() })
 		tenantA := NewNamespacedEngine(inner, "tenant_a")
 
-		_, err := inner.CreateNode(&Node{ID: "tenant_a:valid", Labels: []string{"Doc"}, Properties: map[string]any{"text": "keep"}})
+		_, err := inner.CreateNode(t.Context(), &Node{ID: "tenant_a:valid", Labels: []string{"Doc"}, Properties: map[string]any{"text": "keep"}})
 		require.NoError(t, err)
 
-		found := tenantA.FindNodeNeedingEmbedding()
+		found := requireEmbeddingCandidate(t, tenantA.FindNodeNeedingEmbedding)
 		require.NotNil(t, found)
 		assert.Equal(t, NodeID("valid"), found.ID)
 		assert.Equal(t, []NodeID{"tenant_a:stale"}, inner.markedIDs)
@@ -911,16 +919,16 @@ func TestNamespacedEngine_DirectStreamingAndEmbeddingHelpers(t *testing.T) {
 		t.Cleanup(func() { _ = inner.Close() })
 		tenantA := NewNamespacedEngine(inner, "tenant_a")
 
-		_, err := tenantA.CreateNode(&Node{ID: "needs", Labels: []string{"Doc"}, Properties: map[string]any{"text": "embed me"}})
+		_, err := tenantA.CreateNode(t.Context(), &Node{ID: "needs", Labels: []string{"Doc"}, Properties: map[string]any{"text": "embed me"}})
 		require.NoError(t, err)
-		_, err = tenantA.CreateNode(&Node{
+		_, err = tenantA.CreateNode(t.Context(), &Node{
 			ID:              "done",
 			Labels:          []string{"Doc"},
 			Properties:      map[string]any{"text": "embedded"},
 			ChunkEmbeddings: [][]float32{{1, 2}},
 		})
 		require.NoError(t, err)
-		_, err = tenantA.CreateNode(&Node{ID: "internal", Labels: []string{"_Meta"}, Properties: map[string]any{"text": "skip"}})
+		_, err = tenantA.CreateNode(t.Context(), &Node{ID: "internal", Labels: []string{"_Meta"}, Properties: map[string]any{"text": "skip"}})
 		require.NoError(t, err)
 
 		removed := tenantA.RefreshPendingEmbeddingsIndex()
@@ -935,14 +943,14 @@ func TestNamespacedEngine_DirectStreamingAndEmbeddingHelpers(t *testing.T) {
 		tenantA := NewNamespacedEngine(inner, "tenant_a")
 		tenantB := NewNamespacedEngine(inner, "tenant_b")
 
-		_, err := tenantA.CreateNode(&Node{ID: "n1", Labels: []string{"Person"}})
+		_, err := tenantA.CreateNode(t.Context(), &Node{ID: "n1", Labels: []string{"Person"}})
 		require.NoError(t, err)
-		_, err = tenantA.CreateNode(&Node{ID: "n2", Labels: []string{"Person"}})
+		_, err = tenantA.CreateNode(t.Context(), &Node{ID: "n2", Labels: []string{"Person"}})
 		require.NoError(t, err)
-		_, err = tenantB.CreateNode(&Node{ID: "n9", Labels: []string{"Person"}})
+		_, err = tenantB.CreateNode(t.Context(), &Node{ID: "n9", Labels: []string{"Person"}})
 		require.NoError(t, err)
-		require.NoError(t, tenantA.CreateEdge(&Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS"}))
-		require.NoError(t, tenantB.CreateEdge(&Edge{ID: "e9", StartNode: "n9", EndNode: "n9", Type: "KNOWS"}))
+		require.NoError(t, tenantA.CreateEdge(t.Context(), &Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS"}))
+		require.NoError(t, tenantB.CreateEdge(t.Context(), &Edge{ID: "e9", StartNode: "n9", EndNode: "n9", Type: "KNOWS"}))
 
 		// The Engine contract carries the streaming kernel, so a minimal inner
 		// still streams this namespace's nodes correctly (promotion through
@@ -988,7 +996,7 @@ func TestNamespacedEngine_DirectStreamingAndEmbeddingHelpers(t *testing.T) {
 		statsInner := &namespacedLabelStatsEngine{Engine: newTestMemoryEngine(t), count: 9}
 		t.Cleanup(func() { _ = statsInner.Close() })
 		statsTenant := NewNamespacedEngine(statsInner, "tenant_a")
-		count, err := statsTenant.NodeCountByLabel("Person")
+		count, err := statsTenant.NodeCountByLabel(t.Context(), "Person")
 		require.NoError(t, err)
 		assert.EqualValues(t, 9, count)
 		assert.Equal(t, "tenant_a", statsInner.namespace)
@@ -996,47 +1004,47 @@ func TestNamespacedEngine_DirectStreamingAndEmbeddingHelpers(t *testing.T) {
 
 		wantStatsErr := errors.New("stats count failed")
 		statsInner.err = wantStatsErr
-		_, err = statsTenant.NodeCountByLabel("Person")
+		_, err = statsTenant.NodeCountByLabel(t.Context(), "Person")
 		require.ErrorIs(t, err, wantStatsErr)
 
 		streamBase := newTestMemoryEngine(t)
 		streamInner := &namespacedStreamingOnlyEngine{Engine: streamBase}
 		streamTenantA := NewNamespacedEngine(streamInner, "tenant_a")
 		streamTenantB := NewNamespacedEngine(streamInner, "tenant_b")
-		_, err = streamTenantA.CreateNode(&Node{ID: "one", Labels: []string{"Person"}})
+		_, err = streamTenantA.CreateNode(t.Context(), &Node{ID: "one", Labels: []string{"Person"}})
 		require.NoError(t, err)
-		_, err = streamTenantA.CreateNode(&Node{ID: "two", Labels: []string{"person"}})
+		_, err = streamTenantA.CreateNode(t.Context(), &Node{ID: "two", Labels: []string{"person"}})
 		require.NoError(t, err)
-		_, err = streamTenantB.CreateNode(&Node{ID: "three", Labels: []string{"Person"}})
+		_, err = streamTenantB.CreateNode(t.Context(), &Node{ID: "three", Labels: []string{"Person"}})
 		require.NoError(t, err)
 		// :Person and :person are two labels (#862).
-		count, err = streamTenantA.NodeCountByLabel("Person")
+		count, err = streamTenantA.NodeCountByLabel(t.Context(), "Person")
 		require.NoError(t, err)
 		assert.EqualValues(t, 1, count)
-		count, err = streamTenantA.NodeCountByLabel("PERSON")
+		count, err = streamTenantA.NodeCountByLabel(t.Context(), "PERSON")
 		require.NoError(t, err)
 		assert.EqualValues(t, 0, count)
 
 		wantStreamErr := errors.New("stream count failed")
 		streamInner.streamNodeErr = wantStreamErr
-		_, err = streamTenantA.NodeCountByLabel("Person")
+		_, err = streamTenantA.NodeCountByLabel(t.Context(), "Person")
 		require.ErrorIs(t, err, wantStreamErr)
 
 		allNodesBase := newTestMemoryEngine(t)
 		allNodesInner := &nonStreamingCountEngine{Engine: allNodesBase}
 		allNodesTenantA := NewNamespacedEngine(allNodesInner, "tenant_a")
 		allNodesTenantB := NewNamespacedEngine(allNodesInner, "tenant_b")
-		_, err = allNodesTenantA.CreateNode(&Node{ID: "one", Labels: []string{"Person"}})
+		_, err = allNodesTenantA.CreateNode(t.Context(), &Node{ID: "one", Labels: []string{"Person"}})
 		require.NoError(t, err)
-		_, err = allNodesTenantB.CreateNode(&Node{ID: "two", Labels: []string{"Person"}})
+		_, err = allNodesTenantB.CreateNode(t.Context(), &Node{ID: "two", Labels: []string{"Person"}})
 		require.NoError(t, err)
-		count, err = allNodesTenantA.NodeCountByLabel("Person")
+		count, err = allNodesTenantA.NodeCountByLabel(t.Context(), "Person")
 		require.NoError(t, err)
 		assert.EqualValues(t, 1, count)
 
 		wantAllNodesErr := errors.New("all nodes failed")
 		allNodesInner.allNodesErr = wantAllNodesErr
-		_, err = allNodesTenantA.NodeCountByLabel("Person")
+		_, err = allNodesTenantA.NodeCountByLabel(t.Context(), "Person")
 		require.ErrorIs(t, err, wantAllNodesErr)
 	})
 
@@ -1056,14 +1064,14 @@ func TestNamespacedEngine_DirectStreamingAndEmbeddingHelpers(t *testing.T) {
 		t.Cleanup(func() { _ = inner.Close() })
 		tenantA := NewNamespacedEngine(inner, "tenant_a")
 
-		_, err := tenantA.CreateNode(&Node{
+		_, err := tenantA.CreateNode(t.Context(), &Node{
 			ID:         "scan-me",
 			Labels:     []string{"Doc"},
 			Properties: map[string]any{"text": "embed me"},
 		})
 		require.NoError(t, err)
 
-		found := tenantA.FindNodeNeedingEmbedding()
+		found := requireEmbeddingCandidate(t, tenantA.FindNodeNeedingEmbedding)
 		require.NotNil(t, found)
 		assert.Equal(t, NodeID("scan-me"), found.ID)
 		assert.Equal(t, []NodeID{"tenant_a:scan-me"}, inner.addedIDs)
@@ -1080,20 +1088,20 @@ func TestNamespacedEngine_CountAndLookupHelpers(t *testing.T) {
 		}
 		tenantA := NewNamespacedEngine(engine, "tenant_a")
 
-		nodeCount, err := tenantA.NodeCount()
+		nodeCount, err := tenantA.NodeCount(t.Context())
 		require.NoError(t, err)
 		assert.Equal(t, int64(7), nodeCount)
 
-		edgeCount, err := tenantA.EdgeCount()
+		edgeCount, err := tenantA.EdgeCount(t.Context())
 		require.NoError(t, err)
 		assert.Equal(t, int64(3), edgeCount)
 
 		engine.nodeErr = errors.New("node count failed")
-		_, err = tenantA.NodeCount()
+		_, err = tenantA.NodeCount(t.Context())
 		require.ErrorContains(t, err, "node count failed")
 
 		engine.edgeErr = errors.New("edge count failed")
-		_, err = tenantA.EdgeCount()
+		_, err = tenantA.EdgeCount(t.Context())
 		require.ErrorContains(t, err, "edge count failed")
 	})
 
@@ -1103,66 +1111,66 @@ func TestNamespacedEngine_CountAndLookupHelpers(t *testing.T) {
 		tenantA := NewNamespacedEngine(streamingInner, "tenant_a")
 		tenantB := NewNamespacedEngine(streamingInner, "tenant_b")
 
-		_, err := tenantA.CreateNode(&Node{ID: "n1", Labels: []string{"Person"}})
+		_, err := tenantA.CreateNode(t.Context(), &Node{ID: "n1", Labels: []string{"Person"}})
 		require.NoError(t, err)
-		_, err = tenantA.CreateNode(&Node{ID: "n2", Labels: []string{"Person"}})
+		_, err = tenantA.CreateNode(t.Context(), &Node{ID: "n2", Labels: []string{"Person"}})
 		require.NoError(t, err)
-		_, err = tenantB.CreateNode(&Node{ID: "n9", Labels: []string{"Person"}})
+		_, err = tenantB.CreateNode(t.Context(), &Node{ID: "n9", Labels: []string{"Person"}})
 		require.NoError(t, err)
-		require.NoError(t, tenantA.CreateEdge(&Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS"}))
-		require.NoError(t, tenantB.CreateEdge(&Edge{ID: "e9", StartNode: "n9", EndNode: "n9", Type: "KNOWS"}))
+		require.NoError(t, tenantA.CreateEdge(t.Context(), &Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS"}))
+		require.NoError(t, tenantB.CreateEdge(t.Context(), &Edge{ID: "e9", StartNode: "n9", EndNode: "n9", Type: "KNOWS"}))
 
-		nodeCount, err := tenantA.NodeCount()
+		nodeCount, err := tenantA.NodeCount(t.Context())
 		require.NoError(t, err)
 		assert.Equal(t, int64(2), nodeCount)
 
-		edgeCount, err := tenantA.EdgeCount()
+		edgeCount, err := tenantA.EdgeCount(t.Context())
 		require.NoError(t, err)
 		assert.Equal(t, int64(1), edgeCount)
 
 		streamingInner.streamNodeErr = errors.New("stream nodes failed")
-		_, err = tenantA.NodeCount()
+		_, err = tenantA.NodeCount(t.Context())
 		require.ErrorContains(t, err, "stream nodes failed")
 
 		streamingInner.streamNodeErr = nil
 		streamingInner.streamEdgeErr = errors.New("stream edges failed")
-		_, err = tenantA.EdgeCount()
+		_, err = tenantA.EdgeCount(t.Context())
 		require.ErrorContains(t, err, "stream edges failed")
 
 		base := newTestMemoryEngine(t)
 		fallbackInner := &nonStreamingCountEngine{Engine: base}
 		tenantAFallback := NewNamespacedEngine(fallbackInner, "tenant_a")
 		tenantBFallback := NewNamespacedEngine(fallbackInner, "tenant_b")
-		_, err = tenantAFallback.CreateNode(&Node{ID: "n1", Labels: []string{"Person"}})
+		_, err = tenantAFallback.CreateNode(t.Context(), &Node{ID: "n1", Labels: []string{"Person"}})
 		require.NoError(t, err)
-		_, err = tenantBFallback.CreateNode(&Node{ID: "n9", Labels: []string{"Person"}})
+		_, err = tenantBFallback.CreateNode(t.Context(), &Node{ID: "n9", Labels: []string{"Person"}})
 		require.NoError(t, err)
-		require.NoError(t, tenantAFallback.CreateEdge(&Edge{ID: "e1", StartNode: "n1", EndNode: "n1", Type: "KNOWS"}))
-		require.NoError(t, tenantBFallback.CreateEdge(&Edge{ID: "e9", StartNode: "n9", EndNode: "n9", Type: "KNOWS"}))
+		require.NoError(t, tenantAFallback.CreateEdge(t.Context(), &Edge{ID: "e1", StartNode: "n1", EndNode: "n1", Type: "KNOWS"}))
+		require.NoError(t, tenantBFallback.CreateEdge(t.Context(), &Edge{ID: "e9", StartNode: "n9", EndNode: "n9", Type: "KNOWS"}))
 
-		nodeCount, err = tenantAFallback.NodeCount()
+		nodeCount, err = tenantAFallback.NodeCount(t.Context())
 		require.NoError(t, err)
 		assert.Equal(t, int64(1), nodeCount)
 
-		edgeCount, err = tenantAFallback.EdgeCount()
+		edgeCount, err = tenantAFallback.EdgeCount(t.Context())
 		require.NoError(t, err)
 		assert.Equal(t, int64(1), edgeCount)
 
 		fallbackInner.allNodesErr = errors.New("all nodes failed")
-		_, err = tenantAFallback.NodeCount()
+		_, err = tenantAFallback.NodeCount(t.Context())
 		require.ErrorContains(t, err, "all nodes failed")
 
 		fallbackInner.allNodesErr = nil
 		fallbackInner.allEdgesErr = errors.New("all edges failed")
-		_, err = tenantAFallback.EdgeCount()
+		_, err = tenantAFallback.EdgeCount(t.Context())
 		require.ErrorContains(t, err, "all edges failed")
 	})
 
 	t.Run("get first falls back when inner first node is foreign", func(t *testing.T) {
 		base := newTestMemoryEngine(t)
-		_, err := base.CreateNode(&Node{ID: "tenant_a:first", Labels: []string{"Person"}, Properties: map[string]any{"name": "tenant-a"}})
+		_, err := base.CreateNode(t.Context(), &Node{ID: "tenant_a:first", Labels: []string{"Person"}, Properties: map[string]any{"name": "tenant-a"}})
 		require.NoError(t, err)
-		_, err = base.CreateNode(&Node{ID: "tenant_b:first", Labels: []string{"Person"}, Properties: map[string]any{"name": "tenant-b"}})
+		_, err = base.CreateNode(t.Context(), &Node{ID: "tenant_b:first", Labels: []string{"Person"}, Properties: map[string]any{"name": "tenant-b"}})
 		require.NoError(t, err)
 
 		engine := &firstLabelEngine{
@@ -1171,13 +1179,13 @@ func TestNamespacedEngine_CountAndLookupHelpers(t *testing.T) {
 		}
 		tenantA := NewNamespacedEngine(engine, "tenant_a")
 
-		first, err := tenantA.GetFirstNodeByLabel("Person")
+		first, err := tenantA.GetFirstNodeByLabel(t.Context(), "Person")
 		require.NoError(t, err)
 		require.NotNil(t, first)
 		assert.Equal(t, NodeID("first"), first.ID)
 
 		engine.err = errors.New("first label failed")
-		first, err = tenantA.GetFirstNodeByLabel("Person")
+		first, err = tenantA.GetFirstNodeByLabel(t.Context(), "Person")
 		require.NoError(t, err)
 		require.NotNil(t, first)
 		assert.Equal(t, NodeID("first"), first.ID)
@@ -1192,7 +1200,7 @@ func TestNamespacedEngine_CountAndLookupHelpers(t *testing.T) {
 		}
 		tenantA := NewNamespacedEngine(engine, "tenant_a")
 
-		first, err := tenantA.GetFirstNodeByLabel("Person")
+		first, err := tenantA.GetFirstNodeByLabel(t.Context(), "Person")
 		require.ErrorIs(t, err, ErrNotFound)
 		assert.Nil(t, first)
 	})
@@ -1220,9 +1228,9 @@ func TestNamespacedEngine_CountAndLookupHelpers(t *testing.T) {
 		base := newTestMemoryEngine(t)
 		fallback := NewNamespacedEngine(&nonStreamingCountEngine{Engine: base}, "tenant_a")
 		other := NewNamespacedEngine(&nonStreamingCountEngine{Engine: base}, "tenant_b")
-		_, err = fallback.CreateNode(&Node{ID: "one", Labels: []string{"Person"}})
+		_, err = fallback.CreateNode(t.Context(), &Node{ID: "one", Labels: []string{"Person"}})
 		require.NoError(t, err)
-		_, err = other.CreateNode(&Node{ID: "two", Labels: []string{"Person"}})
+		_, err = other.CreateNode(t.Context(), &Node{ID: "two", Labels: []string{"Person"}})
 		require.NoError(t, err)
 
 		seen = nil
@@ -1241,20 +1249,23 @@ func TestNamespacedEngine_CountAndLookupHelpers(t *testing.T) {
 		tenantA := NewNamespacedEngine(base, "tenant_a")
 		tenantB := NewNamespacedEngine(base, "tenant_b")
 
-		_, err := tenantA.CreateNode(&Node{ID: "n1", Labels: []string{"Person"}})
+		_, err := tenantA.CreateNode(t.Context(), &Node{ID: "n1", Labels: []string{"Person"}})
 		require.NoError(t, err)
-		_, err = tenantA.CreateNode(&Node{ID: "n2", Labels: []string{"Person"}})
+		_, err = tenantA.CreateNode(t.Context(), &Node{ID: "n2", Labels: []string{"Person"}})
 		require.NoError(t, err)
-		_, err = tenantB.CreateNode(&Node{ID: "n1", Labels: []string{"Person"}})
+		_, err = tenantB.CreateNode(t.Context(), &Node{ID: "n1", Labels: []string{"Person"}})
 		require.NoError(t, err)
-		require.NoError(t, tenantA.CreateEdge(&Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS"}))
-		require.NoError(t, tenantB.CreateEdge(&Edge{ID: "e1", StartNode: "n1", EndNode: "n1", Type: "KNOWS"}))
+		require.NoError(t, tenantA.CreateEdge(t.Context(), &Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS"}))
+		require.NoError(t, tenantB.CreateEdge(t.Context(), &Edge{ID: "e1", StartNode: "n1", EndNode: "n1", Type: "KNOWS"}))
 
-		edge := tenantA.GetEdgeBetween("n1", "n2", "KNOWS")
+		edge, err := tenantA.GetEdgeBetween(t.Context(), "n1", "n2", "KNOWS")
+		require.NoError(t, err)
 		require.NotNil(t, edge)
 		assert.Equal(t, EdgeID("e1"), edge.ID)
 
-		assert.Nil(t, tenantA.GetEdgeBetween("n1", "n1", "KNOWS"))
+		edge, err = tenantA.GetEdgeBetween(t.Context(), "n1", "n1", "KNOWS")
+		require.NoError(t, err)
+		assert.Nil(t, edge)
 
 		provider := &namespacedSchemaProviderEngine{Engine: base, schema: NewSchemaManager()}
 		assert.Same(t, provider.schema, NewNamespacedEngine(provider, "tenant_a").GetSchema())
@@ -1273,17 +1284,17 @@ func TestNamespacedEngine_OptionalDelegateFallbackBranches(t *testing.T) {
 	require.NotNil(t, logger)
 	require.Same(t, logger, ns.namespaceLog())
 
-	node, err := ns.GetTemporalNodeAsOf("Doc", "id", "n1", "from", "to", time.Now())
+	node, err := ns.GetTemporalNodeAsOf(context.Background(), "Doc", "id", "n1", "from", "to", time.Now())
 	require.NoError(t, err)
 	require.Nil(t, node)
 
-	current, err := ns.IsCurrentTemporalNode(&Node{ID: "n1", Labels: []string{"Doc"}}, time.Now())
+	current, err := ns.IsCurrentTemporalNode(context.Background(), &Node{ID: "n1", Labels: []string{"Doc"}}, time.Now())
 	require.NoError(t, err)
 	require.True(t, current)
 
-	_, err = ns.GetNodeVisibleAt("n1", MVCCVersion{})
+	_, err = ns.GetNodeVisibleAt(t.Context(), "n1", MVCCVersion{})
 	require.ErrorIs(t, err, ErrNotImplemented)
-	_, err = ns.GetEdgeVisibleAt("e1", MVCCVersion{})
+	_, err = ns.GetEdgeVisibleAt(t.Context(), "e1", MVCCVersion{})
 	require.ErrorIs(t, err, ErrNotImplemented)
 	_, err = ns.GetNodesByLabelVisibleAt(context.Background(), "Doc", MVCCVersion{})
 	require.ErrorIs(t, err, ErrNotImplemented)
@@ -1295,9 +1306,9 @@ func TestNamespacedEngine_OptionalDelegateFallbackBranches(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotImplemented)
 	_, err = ns.GetEdgesBetweenVisibleAt(context.Background(), "n1", "n2", MVCCVersion{})
 	require.ErrorIs(t, err, ErrNotImplemented)
-	_, err = ns.GetNodeCurrentHead("n1")
+	_, err = ns.GetNodeCurrentHead(context.Background(), "n1")
 	require.ErrorIs(t, err, ErrNotImplemented)
-	_, err = ns.GetEdgeCurrentHead("e1")
+	_, err = ns.GetEdgeCurrentHead(context.Background(), "e1")
 	require.ErrorIs(t, err, ErrNotImplemented)
 
 	release := ns.RegisterSnapshotReader(SnapshotReaderInfo{ReaderID: "reader"})
@@ -1310,10 +1321,10 @@ func TestNamespacedEngine_OptionalDelegateFallbackBranches(t *testing.T) {
 	require.NoError(t, ns.SetLifecycleSchedule(time.Second))
 	require.Nil(t, ns.TopLifecycleDebtKeys(5))
 
-	latestNode, err := ns.GetNodeLatestVisible("missing")
+	latestNode, err := ns.GetNodeLatestVisible(t.Context(), "missing")
 	require.ErrorIs(t, err, ErrNotFound)
 	require.Nil(t, latestNode)
-	latestEdge, err := ns.GetEdgeLatestVisible("missing")
+	latestEdge, err := ns.GetEdgeLatestVisible(t.Context(), "missing")
 	require.ErrorIs(t, err, ErrNotFound)
 	require.Nil(t, latestEdge)
 }
@@ -1438,7 +1449,8 @@ func TestNamespacedEngine_GetEdgeBetween_NotFound(t *testing.T) {
 	ns := NewNamespacedEngine(inner, "mydb")
 
 	// No edge exists between non-existent nodes
-	edge := ns.GetEdgeBetween("n1", "n2", "KNOWS")
+	edge, err := ns.GetEdgeBetween(t.Context(), "n1", "n2", "KNOWS")
+	require.NoError(t, err)
 	assert.Nil(t, edge)
 }
 
@@ -1455,7 +1467,7 @@ func TestNamespacedEngine_ForEachNodeIDByLabel_EarlyStop(t *testing.T) {
 			Labels:     []string{"Item"},
 			Properties: map[string]interface{}{},
 		}
-	}, ns.CreateNode, ns.ForEachNodeIDByLabel)
+	}, func(node *Node) (NodeID, error) { return ns.CreateNode(t.Context(), node) }, ns.ForEachNodeIDByLabel)
 }
 
 func TestNamespacedEngine_GetEdgesByType(t *testing.T) {
@@ -1467,11 +1479,11 @@ func TestNamespacedEngine_GetEdgesByType(t *testing.T) {
 
 	n1 := &Node{ID: "n1", Labels: []string{"A"}, Properties: map[string]interface{}{}}
 	n2 := &Node{ID: "n2", Labels: []string{"B"}, Properties: map[string]interface{}{}}
-	_, err = ns.CreateNode(n1)
+	_, err = ns.CreateNode(t.Context(), n1)
 	require.NoError(t, err)
-	_, err = ns.CreateNode(n2)
+	_, err = ns.CreateNode(t.Context(), n2)
 	require.NoError(t, err)
-	require.NoError(t, ns.CreateEdge(&Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS", Properties: map[string]interface{}{}}))
+	require.NoError(t, ns.CreateEdge(t.Context(), &Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS", Properties: map[string]interface{}{}}))
 
 	edges, err := ns.GetEdgesByType(context.Background(), "KNOWS")
 	require.NoError(t, err)

@@ -34,7 +34,7 @@ func (c snapshotEdgeWriteCase) run(t *testing.T) error {
 
 	c.peer(t, engine)
 
-	return tx.UpdateEdge(EdgeUpdateRequest{After: &Edge{
+	return tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{
 		ID: EdgeID(c.edgeID), StartNode: "test:a", EndNode: "test:b", Type: "REL",
 		Properties: map[string]interface{}{"x": "tx1"},
 	}})

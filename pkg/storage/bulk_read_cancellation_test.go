@@ -42,7 +42,7 @@ func seedCancellationNodes(t *testing.T, b *BadgerEngine, count int, buffered ..
 		if len(buffered) > 0 && buffered[0] {
 			bufferedCreate(t, b, node)
 		} else {
-			_, err := b.CreateNode(node)
+			_, err := b.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 		}
 		ids = append(ids, id)
@@ -55,15 +55,15 @@ func seedCancellationNodes(t *testing.T, b *BadgerEngine, count int, buffered ..
 func seedCancellationHub(t *testing.T, b *BadgerEngine) (outgoing, incoming []EdgeID) {
 	t.Helper()
 	for _, id := range []NodeID{"test:hub", "test:a", "test:b", "test:c"} {
-		_, err := b.CreateNode(&Node{ID: id})
+		_, err := b.CreateNode(t.Context(), &Node{ID: id})
 		require.NoError(t, err)
 	}
 	for index, end := range []NodeID{"test:a", "test:b", "test:c"} {
 		id := EdgeID(fmt.Sprintf("test:out-%d", index))
-		require.NoError(t, b.CreateEdge(&Edge{ID: id, StartNode: "test:hub", EndNode: end, Type: "R"}))
+		require.NoError(t, b.CreateEdge(t.Context(), &Edge{ID: id, StartNode: "test:hub", EndNode: end, Type: "R"}))
 		outgoing = append(outgoing, id)
 	}
-	require.NoError(t, b.CreateEdge(&Edge{ID: "test:in-0", StartNode: "test:a", EndNode: "test:hub", Type: "R"}))
+	require.NoError(t, b.CreateEdge(t.Context(), &Edge{ID: "test:in-0", StartNode: "test:a", EndNode: "test:hub", Type: "R"}))
 	return outgoing, []EdgeID{"test:in-0"}
 }
 
@@ -216,20 +216,20 @@ func TestBulkReadCancellationLabelStreamRetires(t *testing.T) {
 func TestBulkReadCancellationTransactionPendingOverlayRetires(t *testing.T) {
 	b := createTestBadgerEngine(t)
 	committed := seedCancellationNodes(t, b, 4)
-	tx, err := b.BeginTransaction()
+	tx, err := b.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
 	pendingNodes := make([]NodeID, 0, cancellationRouteRecords)
 	for i := 0; i < cancellationRouteRecords; i++ {
 		id := NodeID(fmt.Sprintf("test:pending-n-%04d", i))
-		_, err := tx.CreateNode(&Node{ID: id, Labels: []string{"Doc"}})
+		_, err := tx.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Doc"}})
 		require.NoError(t, err)
 		pendingNodes = append(pendingNodes, id)
 	}
 	for _, end := range committed {
 		edgeID := EdgeID(fmt.Sprintf("test:pending-e-%s", end))
-		require.NoError(t, tx.CreateEdge(&Edge{ID: edgeID, StartNode: "test:pending-n-0000", EndNode: end, Type: "R"}))
+		require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: edgeID, StartNode: "test:pending-n-0000", EndNode: end, Type: "R"}))
 	}
 	expectedNodes := append(append([]NodeID{}, committed...), pendingNodes...)
 	ctx := context.Background()
@@ -281,7 +281,7 @@ func TestBulkReadCancellationTransactionPendingOverlayRetires(t *testing.T) {
 func TestBulkReadCancellationSnapshotScopedAndProjectedRoutesRetire(t *testing.T) {
 	b := createTestBadgerEngine(t)
 	expected := seedCancellationNodes(t, b, cancellationRouteRecords)
-	tx, err := b.BeginTransaction()
+	tx, err := b.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	ctx := context.Background()

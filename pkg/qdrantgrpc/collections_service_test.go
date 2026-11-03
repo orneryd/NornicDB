@@ -3,9 +3,10 @@ package qdrantgrpc
 import (
 	"context"
 	"errors"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -324,12 +325,12 @@ func TestCollectionStore_PointCountAndNameValidation(t *testing.T) {
 	require.NoError(t, err)
 
 	// Count only Qdrant point nodes.
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "qdrant:point:1",
 		Labels: []string{QdrantPointLabel},
 	})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "qdrant:point:2",
 		Labels: []string{"Other"},
 	})
@@ -404,10 +405,10 @@ func TestCollectionMetadataAdmission(t *testing.T) {
 	require.NotNil(t, engine)
 
 	// Corrupt metadata label to exercise invalid contract branch.
-	node, err := engine.GetNode(collectionMetaNodeID)
+	node, err := engine.GetNode(t.Context(), collectionMetaNodeID)
 	require.NoError(t, err)
 	node.Labels = []string{"WrongLabel"}
-	require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: node}))
+	require.NoError(t, engine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
 	_, _, err = store.Open(ctx, "meta_db")
 	require.ErrorIs(t, err, ErrCollectionNotFound)
 
@@ -456,7 +457,7 @@ func TestCollectionMetadataAdmission(t *testing.T) {
 			step.properties["created_at"] = time.Now().Unix()
 		}
 		if step.properties != nil {
-			_, err = mem.CreateNode(&storage.Node{
+			_, err = mem.CreateNode(t.Context(), &storage.Node{
 				ID:         collectionMetaNodeID,
 				Labels:     []string{collectionMetaNodeLabel},
 				Properties: step.properties,
@@ -464,7 +465,7 @@ func TestCollectionMetadataAdmission(t *testing.T) {
 			require.NoError(t, err)
 		}
 
-		metaResult, err := readCollectionMeta(mem)
+		metaResult, err := readCollectionMeta(t.Context(), mem)
 		if step.expectAnyError {
 			require.Error(t, err)
 			continue
@@ -535,12 +536,16 @@ func TestCollectionStore_DropExistsPointCountBranches(t *testing.T) {
 	require.NoError(t, collections.Create(ctx, "drop_invalid_meta", 4, qpb.Distance_Cosine))
 	engine, _, err := collections.Open(ctx, "drop_invalid_meta")
 	require.NoError(t, err)
-	metaNode, err := engine.GetNode(collectionMetaNodeID)
+	metaNode, err := engine.GetNode(t.Context(), collectionMetaNodeID)
 	require.NoError(t, err)
 	metaNode.Labels = []string{"bad"}
-	require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: metaNode}))
+	require.NoError(t, engine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: metaNode}))
 	require.Error(t, collections.Drop(ctx, "drop_invalid_meta"))
-	require.False(t, collections.Exists("drop_invalid_meta"))
+	{
+		exists, existsErr := collections.Exists(t.Context(), "drop_invalid_meta")
+		require.NoError(t, existsErr)
+		require.False(t, exists)
+	}
 
 	require.NoError(t, collections.Create(ctx, "count_empty", 4, qpb.Distance_Cosine))
 	count, err := collections.PointCount(ctx, "count_empty")

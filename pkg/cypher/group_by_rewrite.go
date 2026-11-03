@@ -29,7 +29,7 @@ func groupByVariable(kind string, index int) string {
 }
 
 // groupByEdits rewrites each RETURN / WITH … GROUP BY ….
-func groupByEdits(query string) ([]labelRewriteEdit, error) {
+func groupByEdits(ctx context.Context, query string) ([]labelRewriteEdit, error) {
 	if indexASCIIFold(query, "group") < 0 {
 		return nil, nil
 	}
@@ -63,7 +63,7 @@ func groupByEdits(query string) ([]labelRewriteEdit, error) {
 		if closing := enclosingClose(query, word.start); closing >= 0 && closing < keysEnd {
 			keysEnd = closing
 		}
-		edit, err := groupByEdit(query, words[projection], word.start, keysStart, keysEnd)
+		edit, err := groupByEdit(ctx, query, words[projection], word.start, keysStart, keysEnd)
 		if err != nil {
 			return nil, err
 		}
@@ -149,7 +149,10 @@ type groupByItem struct {
 
 // groupByEdit rewrites the projection whose keyword is clause, with GROUP
 // at groupStart and its keys at query[keysStart:keysEnd].
-func groupByEdit(query string, clause projectionWord, groupStart, keysStart, keysEnd int) (labelRewriteEdit, error) {
+func groupByEdit(ctx context.Context, query string, clause projectionWord, groupStart, keysStart, keysEnd int) (labelRewriteEdit, error) {
+	if err := ctx.Err(); err != nil {
+		return labelRewriteEdit{}, err
+	}
 	itemsStart := skipASCIISpaces(query, clause.end, groupStart)
 	distinct := matchKeywordAt(query[:groupStart], itemsStart, "DISTINCT")
 	if distinct {
@@ -157,7 +160,10 @@ func groupByEdit(query string, clause projectionWord, groupStart, keysStart, key
 	}
 	var items []groupByItem
 	for _, text := range splitTopLevelComma(query[itemsStart:groupStart]) {
-		itemSource := readProjectionItemSource(context.Background(), text, projectionBeforeRewrite)
+		itemSource := readProjectionItemSource(ctx, text, projectionBeforeRewrite)
+		if err := ctx.Err(); err != nil {
+			return labelRewriteEdit{}, err
+		}
 		expression, alias := itemSource.expression, itemSource.alias
 		items = append(items, groupByItem{expression: expression, alias: alias, aggregates: containsAggregateFunc(expression)})
 	}

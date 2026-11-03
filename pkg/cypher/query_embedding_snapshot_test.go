@@ -91,7 +91,7 @@ func (e *statementSnapshotVersionEngine) GraphMutationVersion() (uint64, bool) {
 
 func TestQueryEmbeddingNilSnapshotFinishesAfterReadiness(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "snapshot")
-	_, err := store.CreateNode(&storage.Node{ID: "doc", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "alpha"}, ChunkEmbeddings: [][]float32{{1, 0}}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "doc", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "alpha"}, ChunkEmbeddings: [][]float32{{1, 0}}})
 	require.NoError(t, err)
 	svc := search.NewService(store, 2, nil)
 	t.Cleanup(func() { _ = svc.Close() })

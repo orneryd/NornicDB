@@ -93,11 +93,11 @@ func setupTestServerWithConfig(t testing.TB, configure func(*Config)) (*Server, 
 	}
 
 	// Create a test user
-	_, err = authenticator.CreateUser("admin", "password123", []auth.Role{auth.RoleAdmin})
+	_, err = authenticator.CreateUser(context.Background(), "admin", "password123", []auth.Role{auth.RoleAdmin})
 	if err != nil {
 		t.Fatalf("failed to create test user: %v", err)
 	}
-	_, err = authenticator.CreateUser("reader", "password123", []auth.Role{auth.RoleViewer})
+	_, err = authenticator.CreateUser(context.Background(), "reader", "password123", []auth.Role{auth.RoleViewer})
 	if err != nil {
 		t.Fatalf("failed to create reader user: %v", err)
 	}
@@ -127,7 +127,7 @@ func setupTestServerWithConfig(t testing.TB, configure func(*Config)) (*Server, 
 
 func getAuthToken(t testing.TB, authenticator *auth.Authenticator, username string) string {
 	t.Helper()
-	tokenResp, _, err := authenticator.Authenticate(username, "password123", "127.0.0.1", "TestAgent")
+	tokenResp, _, err := authenticator.Authenticate(context.Background(), username, "password123", "127.0.0.1", "TestAgent")
 	if err != nil {
 		t.Fatalf("failed to get auth token: %v", err)
 	}
@@ -564,31 +564,13 @@ func TestServerStop_DeadlineExceededForcesClose(t *testing.T) {
 	s, err := New(db, nil, cfg)
 	require.NoError(t, err)
 
-	// Override the router with a handler that blocks past shutdown deadline.
-	started := make(chan struct{})
-	mux := http.NewServeMux()
-	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
-		select {
-		case <-started:
-		default:
-			close(started)
-		}
-		time.Sleep(200 * time.Millisecond)
-		w.WriteHeader(http.StatusOK)
-	})
-	s.httpServer = &http.Server{Handler: mux}
+	// Keep a real leased handler alive until explicitly released; a caller's
+	// deadline must force the transport closed without retiring that work.
+	gate := newStopR2Gate(t)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	s.listener = ln
-	go func() { _ = s.httpServer.Serve(ln) }()
-
-	// Issue a request that will be in-flight during shutdown.
-	go func() {
-		req, _ := http.NewRequest("GET", "http://"+ln.Addr().String()+"/status", nil)
-		// no auth wrapper; direct handler
-		_, _ = http.DefaultClient.Do(req)
-	}()
-	<-started
+	httpWork := startOwnedStopHTTP(t, s, ln, ln.Close, gate, "/status")
+	stopR2Await(t, gate.entered)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
@@ -596,9 +578,26 @@ func TestServerStop_DeadlineExceededForcesClose(t *testing.T) {
 	require.Error(t, err)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 
-	// Ensure Stop returns promptly and listener is closed.
-	_, dialErr := net.DialTimeout("tcp", ln.Addr().String(), 50*time.Millisecond)
+	// The forced transport closure completes the client and Serve, while the
+	// actual handler still owns its service resources until the gate opens.
+	stopR2Await(t, httpWork.requestDone)
+	stopR2Await(t, httpWork.serveDone)
+	select {
+	case <-httpWork.handlerDone:
+		t.Fatal("shutdown retired the held handler before actual completion")
+	default:
+	}
+	conn, dialErr := net.DialTimeout("tcp", ln.Addr().String(), 50*time.Millisecond)
+	if conn != nil {
+		_ = conn.Close()
+	}
 	require.Error(t, dialErr)
+	gate.open()
+	stopR2Await(t, httpWork.handlerDone)
+	final, cancelFinal := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancelFinal()
+	require.ErrorIs(t, s.WaitStopped(final), context.DeadlineExceeded, "eventual completion retains the forced shutdown outcome")
+
 }
 
 // TestMetaField_NodeMetadata verifies that the meta field is properly populated
@@ -936,7 +935,7 @@ func TestNornicDBHandlers_AdditionalCoverage(t *testing.T) {
 		// target node without embedding
 		st, err := server.dbManager.GetStorage(dbName)
 		require.NoError(t, err)
-		_, _ = st.CreateNode(&storage.Node{ID: "no-emb-node", Labels: []string{"Doc"}, Properties: map[string]interface{}{"name": "x"}})
+		_, _ = st.CreateNode(t.Context(), &storage.Node{ID: "no-emb-node", Labels: []string{"Doc"}, Properties: map[string]interface{}{"name": "x"}})
 		req = httptest.NewRequest(http.MethodPost, "/nornicdb/similar", strings.NewReader(`{"database":"`+dbName+`","node_id":"no-emb-node"}`)).WithContext(adminCtx)
 		rec = httptest.NewRecorder()
 		server.handleSimilar(rec, req)
@@ -947,8 +946,8 @@ func TestNornicDBHandlers_AdditionalCoverage(t *testing.T) {
 		embA[0] = 1
 		embB := make([]float32, 16)
 		embB[0] = 0.9
-		_, _ = st.CreateNode(&storage.Node{ID: "target-emb-node", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{embA}})
-		_, _ = st.CreateNode(&storage.Node{ID: "other-emb-node", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{embB}})
+		_, _ = st.CreateNode(t.Context(), &storage.Node{ID: "target-emb-node", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{embA}})
+		_, _ = st.CreateNode(t.Context(), &storage.Node{ID: "other-emb-node", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{embB}})
 		req = httptest.NewRequest(http.MethodPost, "/nornicdb/similar", strings.NewReader(`{"database":"`+dbName+`","node_id":"target-emb-node","limit":1}`)).WithContext(adminCtx)
 		rec = httptest.NewRecorder()
 		server.handleSimilar(rec, req)
@@ -972,8 +971,8 @@ func TestGPUHandlers_SuccessPathsWithManager(t *testing.T) {
 	vecA[0] = 1
 	vecB := make([]float32, 8)
 	vecB[0] = 0.95
-	_, _ = st.CreateNode(&storage.Node{ID: "gpu_target", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{vecA}})
-	_, _ = st.CreateNode(&storage.Node{ID: "gpu_other", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{vecB}})
+	_, _ = st.CreateNode(t.Context(), &storage.Node{ID: "gpu_target", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{vecA}})
+	_, _ = st.CreateNode(t.Context(), &storage.Node{ID: "gpu_other", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{vecB}})
 
 	// status happy path with manager set
 	req := httptest.NewRequest(http.MethodGet, "/admin/gpu/status", nil)
@@ -1107,6 +1106,109 @@ func TestServerStartStop(t *testing.T) {
 	}
 }
 
+func TestServerStartStopConcurrentRequests(t *testing.T) {
+	server, auth := setupTestServer(t)
+	stopWithTimeout := func(server *Server) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return server.Stop(ctx)
+	}
+
+	// Stop before Start closes the lifecycle permanently and a later Start
+	// must not publish a request context that no Stop call will consume.
+	require.NoError(t, stopWithTimeout(server))
+	require.ErrorIs(t, server.Start(), ErrServerClosed)
+
+	newServer := func(port int) *Server {
+		config := *server.config
+		config.Address = "127.0.0.1"
+		config.Port = port
+		startedServer, err := New(server.db, auth, &config)
+		require.NoError(t, err)
+		t.Cleanup(func() { stopTestServer(t, startedServer) })
+		return startedServer
+	}
+	requestLoop := func(target string, gate <-chan struct{}, stop <-chan struct{}, first chan<- struct{}) func() {
+		var requests sync.WaitGroup
+		requests.Add(1)
+		go func() {
+			defer requests.Done()
+			<-gate
+			client := &http.Client{Timeout: time.Second}
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				response, err := client.Get(target)
+				if err == nil {
+					_, _ = io.Copy(io.Discard, response.Body)
+					_ = response.Body.Close()
+					select {
+					case first <- struct{}{}:
+					default:
+					}
+				} else {
+					select {
+					case <-stop:
+						return
+					case <-time.After(time.Millisecond):
+					}
+				}
+			}
+		}()
+		return requests.Wait
+	}
+
+	// Race Start and Stop while clients are attempting requests against the
+	// listener. Either operation may win, but the lifecycle must remain safe.
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := probe.Addr().(*net.TCPAddr).Port
+	require.NoError(t, probe.Close())
+	racingServer := newServer(port)
+	gate := make(chan struct{})
+	stopRequests := make(chan struct{})
+	firstRequest := make(chan struct{}, 1)
+	waitRequests := requestLoop(fmt.Sprintf("http://127.0.0.1:%d/not-found", port), gate, stopRequests, firstRequest)
+	startResult := make(chan error, 1)
+	stopResult := make(chan error, 1)
+	go func() {
+		<-gate
+		startResult <- racingServer.Start()
+	}()
+	go func() {
+		<-gate
+		stopResult <- stopWithTimeout(racingServer)
+	}()
+	close(gate)
+	startErr := <-startResult
+	if startErr != nil {
+		require.ErrorIs(t, startErr, ErrServerClosed)
+	}
+	require.NoError(t, <-stopResult)
+	close(stopRequests)
+	waitRequests()
+
+	// Also stop after Start has returned while requests are actively arriving.
+	servingServer := newServer(0)
+	require.NoError(t, servingServer.Start())
+	servingGate := make(chan struct{})
+	servingStop := make(chan struct{})
+	servingRequest := make(chan struct{}, 1)
+	waitServingRequests := requestLoop("http://"+servingServer.Addr()+"/not-found", servingGate, servingStop, servingRequest)
+	close(servingGate)
+	select {
+	case <-servingRequest:
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not accept a concurrent request")
+	}
+	require.NoError(t, stopWithTimeout(servingServer))
+	close(servingStop)
+	waitServingRequests()
+}
+
 func TestServerStatsConcurrentWithStart(t *testing.T) {
 	server, _ := setupTestServer(t)
 	server.config.Port = 0
@@ -1173,32 +1275,6 @@ func TestSetAuditLogger(t *testing.T) {
 // =============================================================================
 // Helper Function Tests
 // =============================================================================
-
-func TestIsMutationQuery(t *testing.T) {
-	tests := []struct {
-		query    string
-		expected bool
-	}{
-		{"MATCH (n) RETURN n", false},
-		{"CREATE (n:Test)", true},
-		{"MERGE (n:Test)", true},
-		{"DELETE n", true},
-		{"SET n.prop = 1", true},
-		{"REMOVE n.prop", true},
-		{"DROP INDEX", true},
-		{"  CREATE (n)", true},
-		{"match (n) return n", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.query, func(t *testing.T) {
-			result := isMutationQuery(tt.query)
-			if result != tt.expected {
-				t.Errorf("isMutationQuery(%q) = %v, want %v", tt.query, result, tt.expected)
-			}
-		})
-	}
-}
 
 func TestParseIntQuery(t *testing.T) {
 	tests := []struct {
@@ -1477,12 +1553,12 @@ func TestIPRateLimiter_ResetAndCleanupLoopBranches(t *testing.T) {
 		perHour:         10,
 		burst:           1,
 		cleanupInterval: 5 * time.Millisecond,
-		stopCleanup:     make(chan struct{}),
 	}
 	manual.counters["stale"] = &ipRateLimitCounter{
 		hourReset:   time.Now().Add(-time.Second),
 		minuteReset: time.Now().Add(time.Minute),
 	}
+	require.True(t, manual.work.Enter()) // the loop is the limiter's accepted work
 	go manual.cleanupLoop()
 	require.Eventually(t, func() bool {
 		manual.mu.RLock()

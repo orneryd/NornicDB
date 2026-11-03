@@ -12,7 +12,7 @@ import (
 func TestModelSpaceExclusionPrecedesDimensionValidation(t *testing.T) {
 	engine := newNamespacedEngine(t)
 	old := &storage.Node{ID: "old", Properties: map[string]any{"content": "obsoleteword"}, ChunkEmbeddings: [][]float32{{1, 0}}, EmbedMeta: map[string]any{"embedding_space": "old:2"}, NamedEmbeddings: map[string][]float32{"default": {0, 1, 0, 0}}}
-	_, err := engine.CreateNode(old)
+	_, err := engine.CreateNode(t.Context(), old)
 	require.NoError(t, err)
 	svc := NewService(engine, 4, nil)
 	defer svc.Close()
@@ -33,7 +33,7 @@ func TestPersistedExactQueriesRespectAdmittedModelSpace(t *testing.T) {
 				{ID: "current", ChunkEmbeddings: [][]float32{{1, 0, 0, 0}}, EmbedMeta: map[string]any{"embedding_space": "new:4"}},
 				{ID: "excluded", ChunkEmbeddings: [][]float32{{0, 1, 0, 0}}, EmbedMeta: map[string]any{"embedding_space": "old:4"}},
 			} {
-				_, err := engine.CreateNode(node)
+				_, err := engine.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 			}
 			svc := NewService(engine, 4, nil)

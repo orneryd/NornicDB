@@ -3,6 +3,7 @@ package storage
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -85,17 +86,17 @@ func testWALPropertyEpochCleanStop(t *testing.T, walFirst bool) {
 	t.Cleanup(config.WithWALEnabled())
 	dir, logDir := t.TempDir(), t.TempDir()
 	source := reviewBindingEngine(t, dir)
-	_, err := source.CreateNode(&Node{ID: "close:a", Properties: map[string]any{"alpha": int64(1)}})
+	_, err := source.CreateNode(t.Context(), &Node{ID: "close:a", Properties: map[string]any{"alpha": int64(1)}})
 	require.NoError(t, err)
-	require.NoError(t, source.FlushWriteBehind(nil))
+	require.NoError(t, source.FlushWriteBehind(context.Background()))
 	w, err := NewWAL(logDir, DefaultWALConfig())
 	require.NoError(t, err)
 	source.SetBufferedCommitWAL(w)
-	tx, err := source.BeginTransaction()
+	tx, err := source.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("close"))
 	require.NoError(t, tx.SetImplicit(true))
-	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "close:a", Properties: map[string]any{"alpha": int64(2)}}, Policy: ClientNodeEdits}))
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "close:a", Properties: map[string]any{"alpha": int64(2)}}, Policy: ClientNodeEdits}))
 	require.NoError(t, tx.Commit())
 	require.True(t, tx.AcknowledgedBuffered())
 	path := filepath.Join(logDir, "wal.log")
@@ -192,7 +193,7 @@ func TestWALPropertyEpochOldFramingRefusedWithoutMutation(t *testing.T) {
 			destination := newTestMemoryEngine(t)
 			_, _, err = RecoverIntoEngine(destination, dir, "")
 			require.ErrorIs(t, err, ErrWALUnsupportedVersion)
-			count, err := destination.NodeCount()
+			count, err := destination.NodeCount(t.Context())
 			require.NoError(t, err)
 			require.Zero(t, count)
 		})
@@ -422,7 +423,7 @@ func TestWALPropertyEpochOrdinarySynchronousCloseSkipsLog(t *testing.T) {
 	w, err := NewWAL(filepath.Join(dir, "wal"), DefaultWALConfig())
 	require.NoError(t, err)
 	journal := NewWALEngine(b, w)
-	_, err = journal.CreateNode(&Node{ID: "plain:a", Properties: map[string]any{"alpha": int64(1)}})
+	_, err = journal.CreateNode(t.Context(), &Node{ID: "plain:a", Properties: map[string]any{"alpha": int64(1)}})
 	require.NoError(t, err)
 	require.NoFileExists(t, walPropertyEpochUnsealedPath(w.Config().Dir))
 	require.NoError(t, os.RemoveAll(walSegmentsDir(w.Config().Dir)))

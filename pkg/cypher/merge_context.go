@@ -34,13 +34,16 @@ import (
 // attempt to short-circuit when the residual filter is empty; the caller's
 // uniform `nodeMatchesProps` step keeps the post-condition trivially
 // correct even when the index narrows partially.
-func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nodePatternInfo, store storage.Engine) ([]*storage.Node, bool) {
+func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(ctx context.Context, nodeInfo nodePatternInfo, store storage.Engine) ([]*storage.Node, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
 	if len(nodeInfo.properties) == 0 {
-		return nil, false
+		return nil, false, nil
 	}
 	schema := store.GetSchema()
 	if schema == nil {
-		return nil, false
+		return nil, false, nil
 	}
 
 	// Collect per-property candidate ID sets, one per inline equality that an
@@ -54,7 +57,11 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 	// the leading k properties → LookupPrefix. The residual nodeMatchesProps
 	// step still enforces every non-indexed predicate.
 	if len(nodeInfo.labels) > 0 {
-		for _, idx := range schema.SeekableCompositeIndexesForLabel(nodeInfo.labels[0]) {
+		indexes, err := schema.SeekableCompositeIndexesForLabel(ctx, nodeInfo.labels[0])
+		if err != nil {
+			return nil, false, err
+		}
+		for _, idx := range indexes {
 			if idx == nil || len(idx.Properties) < 2 {
 				// Arity-1 indexes are served by the per-property loop below,
 				// whose authoritative-miss logic handles values an index can't
@@ -88,10 +95,16 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 			for i := 0; i < covered; i++ {
 				values[i] = nodeInfo.properties[idx.Properties[i]]
 			}
-			ids := compositeIndexLookup(store, idx, values, covered == len(idx.Properties))
+			ids, err := compositeIndexLookup(ctx, store, idx, values, covered == len(idx.Properties))
+			if err != nil {
+				return nil, false, err
+			}
 			usedAnyIndex = true
 			set := make(map[storage.NodeID]struct{}, len(ids))
 			for _, id := range ids {
+				if err := ctx.Err(); err != nil {
+					return nil, false, err
+				}
 				set[id] = struct{}{}
 			}
 			idSets = append(idSets, set)
@@ -100,19 +113,30 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 
 	for prop, val := range nodeInfo.properties {
 		var ids []storage.NodeID
+		var err error
 		probed := false
 		if len(nodeInfo.labels) > 0 {
 			// Labelled: probe the (label, prop) index when one exists.
-			if _, ok := schema.GetPropertyIndex(nodeInfo.labels[0], prop); ok {
-				ids = propertyIndexLookup(store, schema, nodeInfo.labels[0], prop, val)
+			indexed, indexErr := schema.HasPropertyIndex(ctx, nodeInfo.labels[0], prop)
+			if indexErr != nil {
+				return nil, false, indexErr
+			}
+			if indexed {
+				ids, err = propertyIndexLookup(ctx, store, schema, nodeInfo.labels[0], prop, val)
 				probed = true
 			}
 		} else {
-			labels := e.indexCandidateLabels(schema, nil, prop)
-			if labellessPropertyIndexUsable(store, labels...) {
-				ids = schema.PropertyIndexLookupAnyLabel(prop, val)
+			labels, labelErr := e.indexCandidateLabels(ctx, schema, nil, prop)
+			if labelErr != nil {
+				return nil, false, labelErr
+			}
+			if labellessPropertyIndexUsable(ctx, store, labels...) {
+				ids, err = schema.PropertyIndexLookupAnyLabel(ctx, prop, val)
 				probed = true
 			}
+		}
+		if err != nil {
+			return nil, false, err
 		}
 		// Property has no covering index — record nothing for this prop.
 		// The residual `nodeMatchesProps` step still enforces it. A probe
@@ -124,13 +148,16 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 		usedAnyIndex = true
 		set := make(map[storage.NodeID]struct{}, len(ids))
 		for _, id := range ids {
+			if err := ctx.Err(); err != nil {
+				return nil, false, err
+			}
 			set[id] = struct{}{}
 		}
 		idSets = append(idSets, set)
 	}
 
 	if !usedAnyIndex || len(idSets) == 0 {
-		return nil, false
+		return nil, false, nil
 	}
 
 	// Intersect across all indexed-prop sets.
@@ -142,6 +169,9 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 	}
 	out := make([]*storage.Node, 0, len(idSets[smallest]))
 	for id := range idSets[smallest] {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		hit := true
 		for i, s := range idSets {
 			if i == smallest {
@@ -155,13 +185,16 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 		if !hit {
 			continue
 		}
-		n, err := e.getQueryNode(store, id)
+		n, err := e.getQueryNode(ctx, store, id)
 		if err != nil || n == nil {
 			continue
 		}
 		out = append(out, n)
 	}
-	return out, true
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	return out, true, nil
 }
 
 // propertyIndexMissIsAuthoritative reports whether a property index lookup
@@ -271,12 +304,12 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 		// fields. Scan the bounded endpoint pair so same-type relationships with
 		// different property identities remain distinct.
 		if existingEdge == nil {
-			existingEdge, err = findRelationshipForMerge(store, mergeStartNode.ID, mergeEndNode.ID, parsedPattern.relType, parsedPattern.properties)
+			existingEdge, err = findRelationshipForMerge(ctx, store, mergeStartNode.ID, mergeEndNode.ID, parsedPattern.relType, parsedPattern.properties)
 			if err != nil {
 				return nil, localizedError(localization.CypherMergeFindRelationshipFailed(err), err)
 			}
 			if existingEdge == nil && parsedPattern.direction == mergeRelationshipUndirected {
-				existingEdge, err = findRelationshipForMerge(store, mergeEndNode.ID, mergeStartNode.ID, parsedPattern.relType, parsedPattern.properties)
+				existingEdge, err = findRelationshipForMerge(ctx, store, mergeEndNode.ID, mergeStartNode.ID, parsedPattern.relType, parsedPattern.properties)
 				if err != nil {
 					return nil, localizedError(localization.CypherMergeFindRelationshipFailed(err), err)
 				}
@@ -371,7 +404,7 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 		if err := validatePropertyValues(node.Properties); err != nil {
 			return nil, err
 		}
-		actualID, err := createMintedNode(store, node)
+		actualID, err := createMintedNode(ctx, store, node)
 		if err != nil {
 			if !mergeCreateConflict(err) {
 				return nil, localizedError(localization.CypherMergeCreateNodeFailed(err), err)
@@ -447,7 +480,7 @@ func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context,
 
 	writes := setWrites{known: propertyKeyLookup(e.getStorage(ctx))}
 	var run setPropertyRun
-	for segment, next, ok := nextChainedSetClause(setClause, 0); ok; segment, next, ok = nextChainedSetClause(setClause, next) {
+	for segment, next, ok := nextChainedSetClause(ctx, setClause, 0); ok; segment, next, ok = nextChainedSetClause(ctx, setClause, next) {
 		run.applyToRelationship(edge, &writes)
 		writes.endRun()
 		for _, assignment := range splitSetAssignments(segment) {
@@ -531,7 +564,7 @@ func (e *StorageExecutor) applySetToNodeWithContext(ctx context.Context, node *s
 
 	writes := setWrites{known: propertyKeyLookup(e.getStorage(ctx))}
 	var run setPropertyRun
-	for segment, next, ok := nextChainedSetClause(setClause, 0); ok; segment, next, ok = nextChainedSetClause(setClause, next) {
+	for segment, next, ok := nextChainedSetClause(ctx, setClause, 0); ok; segment, next, ok = nextChainedSetClause(ctx, setClause, next) {
 		writes.endRun()
 		if err := e.applyNodeSetClause(ctx, node, varName, segment, fullContext, relContext, &writes, &run); err != nil {
 			return writes.count, err
@@ -817,6 +850,9 @@ func (e *StorageExecutor) projectMergeReturnPlan(ctx context.Context, rows []pip
 	result, handled := e.pipelineApplyReturnPlan(ctx, rows, plan, source, false, preparedGroups...)
 	if failure := getExpressionFailure(ctx); failure != nil && (!handled || priorFailure == nil) {
 		return nil, failure
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	if handled {
 		return result, nil

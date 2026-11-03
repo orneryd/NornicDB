@@ -1,10 +1,11 @@
 package bolt
 
 import (
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sort"
 	"sync"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -41,11 +42,11 @@ func TestMaterializedPathAccessBolt(t *testing.T) {
 			inner := &materializedPathAccessEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
 			t.Cleanup(func() { _ = inner.Close() })
 			store := storage.NewNamespacedEngine(inner, "materialized")
-			_, err := store.CreateNode(&storage.Node{ID: "a", Labels: []string{"MaterializedPathAccess"}, Properties: map[string]interface{}{"id": "a"}})
+			_, err := store.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"MaterializedPathAccess"}, Properties: map[string]interface{}{"id": "a"}})
 			require.NoError(t, err)
-			_, err = store.CreateNode(&storage.Node{ID: "b", Labels: []string{"MaterializedPathAccess"}, Properties: map[string]interface{}{"id": "b"}})
+			_, err = store.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"MaterializedPathAccess"}, Properties: map[string]interface{}{"id": "b"}})
 			require.NoError(t, err)
-			require.NoError(t, store.CreateEdge(&storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "MATERIALIZED_PATH_ACCESS"}))
+			require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "MATERIALIZED_PATH_ACCESS"}))
 
 			_, port := startBoltIntegrationServerWithExplicitTx(t, store)
 			conn := openBoltTestConn(t, port)

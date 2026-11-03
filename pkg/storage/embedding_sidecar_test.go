@@ -26,7 +26,7 @@ func sidecarTestNode(t *testing.T, b *BadgerEngine, id string, props map[string]
 		CreatedAt:  at,
 		UpdatedAt:  at,
 	}
-	_, err := b.CreateNode(node)
+	_, err := b.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	return node
 }
@@ -36,10 +36,10 @@ func sidecarTestNode(t *testing.T, b *BadgerEngine, id string, props map[string]
 // the stored node (#889), with the embedding state set. A zero updatedAt
 // keeps the stored node's.
 func embeddingWriteback(t testing.TB, engine interface {
-	GetNode(NodeID) (*Node, error)
+	GetNode(context.Context, NodeID) (*Node, error)
 }, id NodeID, chunks [][]float32, meta map[string]any, updatedAt time.Time) *Node {
 	t.Helper()
-	stored, err := engine.GetNode(id)
+	stored, err := engine.GetNode(context.Background(), id)
 	require.NoError(t, err)
 	payload := CopyNode(stored)
 	payload.ChunkEmbeddings = chunks
@@ -63,10 +63,10 @@ func TestEmbeddingSidecar_WritebackDoesNotTouchNodeRecord(t *testing.T) {
 	require.NoError(t, err)
 
 	payload := embeddingWriteback(t, b, node.ID, [][]float32{{0.1, 0.2, 0.3}}, map[string]any{"has_embedding": true, "chunk_count": 1}, now)
-	require.NoError(t, b.UpdateNodeEmbeddingSidecar(payload))
+	require.NoError(t, b.UpdateNodeEmbeddingSidecar(context.Background(), payload))
 
 	// Read-back merges the sidecar.
-	got, err := b.GetNode(node.ID)
+	got, err := b.GetNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	require.Equal(t, [][]float32{{0.1, 0.2, 0.3}}, got.ChunkEmbeddings)
 	require.Equal(t, true, got.EmbedMeta["has_embedding"])
@@ -90,8 +90,8 @@ func TestEmbeddingSidecar_BusinessWriteIsAuthoritative(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	node := sidecarTestNode(t, b, "sidecar-authoritative", map[string]any{"title": "v1"}, now)
 
-	require.NoError(t, b.UpdateNodeEmbeddingSidecar(embeddingWriteback(t, b, node.ID, [][]float32{{0.1, 0.2}}, map[string]any{"has_embedding": true, "chunk_count": 1}, now)))
-	got, err := b.GetNode(node.ID)
+	require.NoError(t, b.UpdateNodeEmbeddingSidecar(context.Background(), embeddingWriteback(t, b, node.ID, [][]float32{{0.1, 0.2}}, map[string]any{"has_embedding": true, "chunk_count": 1}, now)))
+	got, err := b.GetNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	require.Len(t, got.ChunkEmbeddings, 1)
 
@@ -100,9 +100,9 @@ func TestEmbeddingSidecar_BusinessWriteIsAuthoritative(t *testing.T) {
 	updated.Properties = map[string]any{"title": "v2"}
 	updated.ChunkEmbeddings = nil
 	updated.EmbedMeta = nil
-	require.NoError(t, b.UpdateNode(NodeUpdateRequest{After: &updated}))
+	require.NoError(t, b.UpdateNode(t.Context(), NodeUpdateRequest{After: &updated}))
 
-	got, err = b.GetNode(node.ID)
+	got, err = b.GetNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	require.Empty(t, got.ChunkEmbeddings)
 	require.Empty(t, got.EmbedMeta)
@@ -128,13 +128,13 @@ func TestEmbeddingSidecar_StaleSidecarIgnored(t *testing.T) {
 
 	// Inject an old persisted stamp directly: source-checked writes now repair
 	// a source-preserving body-version change at acceptance.
-	require.NoError(t, b.UpdateNodeEmbeddingSidecar(embeddingWriteback(t, b, node.ID, [][]float32{{0.1, 0.2}}, map[string]any{"has_embedding": true, "chunk_count": 1}, now)))
+	require.NoError(t, b.UpdateNodeEmbeddingSidecar(context.Background(), embeddingWriteback(t, b, node.ID, [][]float32{{0.1, 0.2}}, map[string]any{"has_embedding": true, "chunk_count": 1}, now)))
 	stale, err := encodeValue(map[string]any{"has_embedding": true, "chunk_count": 1, embeddingContentUpdatedAtKey: now.Add(-time.Hour).UTC().Format(time.RFC3339Nano)})
 	require.NoError(t, err)
-	require.NoError(t, b.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return txn.Set(embeddingMetaKey(node.ID), stale) }))
+	require.NoError(t, b.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error { return txn.Set(embeddingMetaKey(node.ID), stale) }))
 	b.cacheDeleteNode(node.ID, nodeCacheAllForms)
 
-	got, err := b.GetNode(node.ID)
+	got, err := b.GetNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	require.Empty(t, got.ChunkEmbeddings, "stale sidecar must not be served")
 	require.Empty(t, got.EmbedMeta, "stale sidecar metadata must not be served")
@@ -150,8 +150,8 @@ func TestEmbeddingSidecar_DeleteThenRecreateIgnoresStaleMeta(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	node := sidecarTestNode(t, b, "sidecar-delete", map[string]any{"title": "v1"}, now)
 
-	require.NoError(t, b.UpdateNodeEmbeddingSidecar(embeddingWriteback(t, b, node.ID, [][]float32{{0.1, 0.2}, {0.3, 0.4}}, map[string]any{"has_embedding": true, "chunk_count": 2}, now)))
-	require.NoError(t, b.DeleteNode(node.ID))
+	require.NoError(t, b.UpdateNodeEmbeddingSidecar(context.Background(), embeddingWriteback(t, b, node.ID, [][]float32{{0.1, 0.2}, {0.3, 0.4}}, map[string]any{"has_embedding": true, "chunk_count": 2}, now)))
+	require.NoError(t, b.DeleteNode(t.Context(), node.ID))
 
 	// Recreate a node with the same ID but a new UpdatedAt.
 	later := now.Add(time.Hour)
@@ -162,10 +162,10 @@ func TestEmbeddingSidecar_DeleteThenRecreateIgnoresStaleMeta(t *testing.T) {
 		CreatedAt:  later,
 		UpdatedAt:  later,
 	}
-	_, err := b.CreateNode(recreated)
+	_, err := b.CreateNode(t.Context(), recreated)
 	require.NoError(t, err)
 
-	got, err := b.GetNode(node.ID)
+	got, err := b.GetNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	require.Empty(t, got.ChunkEmbeddings, "stale metadata from the deleted node must not be served")
 	require.Empty(t, got.EmbedMeta, "stale metadata from the deleted node must not be served")
@@ -179,7 +179,7 @@ func TestEmbeddingSidecar_FailureMarkersAndStreaming(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	node := sidecarTestNode(t, b, "sidecar-failed", map[string]any{"title": "v1"}, now)
 
-	require.NoError(t, b.UpdateNodeEmbeddingSidecar(embeddingWriteback(t, b, node.ID, nil, map[string]any{"embedding_failed": true, "embedding_error": "boom", "embedding_failed_at": "2026-10-04T00:00:00Z"}, now)))
+	require.NoError(t, b.UpdateNodeEmbeddingSidecar(context.Background(), embeddingWriteback(t, b, node.ID, nil, map[string]any{"embedding_failed": true, "embedding_error": "boom", "embedding_failed_at": "2026-10-04T00:00:00Z"}, now)))
 
 	var visited []EmbeddingFailureLike
 	count, err := b.StreamParkedEmbeddingFailures(context.Background(), func(nodeID NodeID, meta map[string]any) error {
@@ -193,7 +193,7 @@ func TestEmbeddingSidecar_FailureMarkersAndStreaming(t *testing.T) {
 	require.Equal(t, "boom", visited[0].Error)
 
 	// Clearing embedding state removes the marker.
-	require.NoError(t, b.UpdateNodeEmbeddingSidecar(embeddingWriteback(t, b, node.ID, nil, nil, now)))
+	require.NoError(t, b.UpdateNodeEmbeddingSidecar(context.Background(), embeddingWriteback(t, b, node.ID, nil, nil, now)))
 	count, err = b.StreamParkedEmbeddingFailures(context.Background(), func(nodeID NodeID, meta map[string]any) error { return nil })
 	require.NoError(t, err)
 	require.Equal(t, 0, count)
@@ -203,14 +203,14 @@ func TestEmbeddingSidecar_FailureMarkersAndStreaming(t *testing.T) {
 // deleted node returns ErrNotFound and writes nothing.
 func TestEmbeddingSidecar_NotFoundDoesNotCreate(t *testing.T) {
 	b := newSidecarTestBadger(t)
-	err := b.UpdateNodeEmbeddingSidecar(&Node{
+	err := b.UpdateNodeEmbeddingSidecar(context.Background(), &Node{
 		ID:              NodeID("test:sidecar-missing"),
 		ChunkEmbeddings: [][]float32{{0.1}},
 		EmbedMeta:       map[string]any{"has_embedding": true},
 		UpdatedAt:       time.Now(),
 	})
 	require.ErrorIs(t, err, ErrNotFound)
-	_, err = b.GetNode(NodeID("test:sidecar-missing"))
+	_, err = b.GetNode(t.Context(), NodeID("test:sidecar-missing"))
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
@@ -236,7 +236,7 @@ func BenchmarkUpdateNodeEmbeddingSidecar(b *testing.B) {
 			CreatedAt:  now,
 			UpdatedAt:  now,
 		}
-		if _, err := engine.CreateNode(node); err != nil {
+		if _, err := engine.CreateNode(b.Context(), node); err != nil {
 			b.Fatal(err)
 		}
 		nodes[i] = node
@@ -247,7 +247,7 @@ func BenchmarkUpdateNodeEmbeddingSidecar(b *testing.B) {
 		payload := CopyNode(nodes[i%pool])
 		payload.ChunkEmbeddings = [][]float32{{0.1, 0.2, 0.3}}
 		payload.EmbedMeta = map[string]any{"has_embedding": true, "chunk_count": 1}
-		if err := engine.UpdateNodeEmbeddingSidecar(payload); err != nil {
+		if err := engine.UpdateNodeEmbeddingSidecar(context.Background(), payload); err != nil {
 			b.Fatal(err)
 		}
 	}

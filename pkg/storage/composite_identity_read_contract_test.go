@@ -36,12 +36,12 @@ func TestCompositeIdentityReadContract(t *testing.T) {
 				}
 				engines[database] = engine
 				for _, id := range []NodeID{same, localTarget} {
-					_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"P"}, Properties: map[string]interface{}{"db": database}})
+					_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"P"}, Properties: map[string]interface{}{"db": database}})
 					require.NoError(t, err)
 				}
-				require.NoError(t, engine.CreateEdge(&Edge{ID: relation, StartNode: same, EndNode: localTarget, Type: "R"}))
+				require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: relation, StartNode: same, EndNode: localTarget, Type: "R"}))
 				if provider, ok := engine.(MVCCHeadEngine); ok {
-					head, err := provider.GetEdgeCurrentHead(relation)
+					head, err := provider.GetEdgeCurrentHead(context.Background(), relation)
 					require.NoError(t, err)
 					if head.Version.Compare(version) > 0 {
 						version = head.Version
@@ -51,25 +51,29 @@ func TestCompositeIdentityReadContract(t *testing.T) {
 			engines["one_alias"] = engines["one"]
 			composite := NewCompositeEngine(engines, names, modes)
 			composite.SetCompositeName("comp")
-			readers := map[string]func(NodeID) (*Node, error){
-				"node":      composite.GetNode,
-				"projected": func(id NodeID) (*Node, error) { return composite.GetNodeProjected(id, []string{"db"}) },
+			readers := map[string]func(context.Context, NodeID) (*Node, error){
+				"node": func(ctx context.Context, id NodeID) (*Node, error) { return composite.GetNode(ctx, id) },
+				"projected": func(ctx context.Context, id NodeID) (*Node, error) {
+					return composite.GetNodeProjected(ctx, id, []string{"db"})
+				},
 				"effective": composite.GetNodeLatestEffective,
-				"latest":    composite.GetNodeLatestVisible,
-				"snapshot":  func(id NodeID) (*Node, error) { return composite.GetNodeVisibleAt(id, version) },
+				"latest":    func(ctx context.Context, id NodeID) (*Node, error) { return composite.GetNodeLatestVisible(ctx, id) },
+				"snapshot": func(ctx context.Context, id NodeID) (*Node, error) {
+					return composite.GetNodeVisibleAt(ctx, id, version)
+				},
 			}
 			for label, read := range readers {
 				t.Run(label, func(t *testing.T) {
 					for _, database := range []string{"one", "two"} {
-						node, err := read(NodeID("4:" + database + ":" + string(same)))
+						node, err := read(context.Background(), NodeID("4:"+database+":"+string(same)))
 						require.NoError(t, err)
 						require.Equal(t, same, node.ID)
 						require.Equal(t, database, node.RuntimeMetadata().Database)
 						require.Equal(t, database, node.Properties["db"])
 					}
-					_, err := read(NodeID("4:missing:" + string(same)))
+					_, err := read(context.Background(), NodeID("4:missing:"+string(same)))
 					require.ErrorIs(t, err, ErrNotFound)
-					_, err = read(NodeID("5:one:" + string(same)))
+					_, err = read(context.Background(), NodeID("5:one:"+string(same)))
 					require.ErrorIs(t, err, ErrNotFound)
 				})
 			}
@@ -95,15 +99,21 @@ func TestCompositeIdentityReadContract(t *testing.T) {
 					require.Len(t, edges, 1)
 					require.Equal(t, database, edges[0].Database)
 				}
-				require.Equal(t, database, composite.GetEdgeBetween(source, target, "R").Database)
-				require.Equal(t, 1, composite.GetOutDegree(source))
-				require.Equal(t, 1, composite.GetInDegree(target))
+				edge, err := composite.GetEdgeBetween(t.Context(), source, target, "R")
+				require.NoError(t, err)
+				require.Equal(t, database, edge.Database)
+				degree, err := composite.GetOutDegree(t.Context(), source)
+				require.NoError(t, err)
+				require.Equal(t, 1, degree)
+				degree, err = composite.GetInDegree(t.Context(), target)
+				require.NoError(t, err)
+				require.Equal(t, 1, degree)
 				if namespaced {
-					_, err := composite.GetNodeCurrentHead(source)
+					_, err := composite.GetNodeCurrentHead(context.Background(), source)
 					require.NoError(t, err)
 				}
-				for _, read := range []func(EdgeID) (*Edge, error){composite.GetEdge, composite.GetEdgeLatestEffective, composite.GetEdgeLatestVisible} {
-					edge, err := read(EdgeID("5:" + database + ":" + string(relation)))
+				for _, read := range []func(context.Context, EdgeID) (*Edge, error){func(ctx context.Context, id EdgeID) (*Edge, error) { return composite.GetEdge(ctx, id) }, composite.GetEdgeLatestEffective, func(ctx context.Context, id EdgeID) (*Edge, error) { return composite.GetEdgeLatestVisible(ctx, id) }} {
+					edge, err := read(context.Background(), EdgeID("5:"+database+":"+string(relation)))
 					require.NoError(t, err)
 					require.Equal(t, database, edge.Database)
 				}
@@ -130,7 +140,7 @@ func TestCompositeIdentityReadContract(t *testing.T) {
 			}))
 			require.Len(t, seen, 2)
 			if !namespaced {
-				node, err := engines["one"].GetNode(same)
+				node, err := engines["one"].GetNode(t.Context(), same)
 				require.NoError(t, err)
 				require.Empty(t, node.RuntimeMetadata().Database, "composite provenance must not mutate constituent records")
 			}

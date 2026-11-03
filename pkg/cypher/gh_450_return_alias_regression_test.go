@@ -46,7 +46,7 @@ func TestGH450_ReturnPropertyAliasedToVariableAfterWith(t *testing.T) {
 				{ID: "acme", Labels: []string{"C"}, Properties: map[string]interface{}{"name": "Acme"}},
 				{ID: "bolt", Labels: []string{"C"}, Properties: map[string]interface{}{"name": "Bolt"}},
 			} {
-				_, err := store.CreateNode(node)
+				_, err := store.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 			}
 			for _, edge := range []*storage.Edge{
@@ -54,7 +54,7 @@ func TestGH450_ReturnPropertyAliasedToVariableAfterWith(t *testing.T) {
 				{ID: "bob-acme", StartNode: "bob", EndNode: "acme", Type: "WORKS_AT"},
 				{ID: "cid-bolt", StartNode: "cid", EndNode: "bolt", Type: "WORKS_AT"},
 			} {
-				require.NoError(t, store.CreateEdge(edge))
+				require.NoError(t, store.CreateEdge(t.Context(), edge))
 			}
 			exec := NewStorageExecutor(store)
 			ctx := context.Background()

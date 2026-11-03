@@ -20,7 +20,7 @@ func TestTypedNumericHTTPBoundaries(t *testing.T) {
 	store, err := srv.dbManager.GetStorage(srv.dbManager.DefaultDatabaseName())
 	require.NoError(t, err)
 	for _, input := range listinputs.NumericHTTPInputs() {
-		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(input.Name), Labels: []string{"NumericWireProperty"}, Properties: map[string]interface{}{"name": input.Name, "xs": input.Property}})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(input.Name), Labels: []string{"NumericWireProperty"}, Properties: map[string]interface{}{"name": input.Name, "xs": input.Property}})
 		require.NoError(t, err)
 	}
 	request := func(t *testing.T, explicit bool, query string, params map[string]interface{}) TransactionResponse {

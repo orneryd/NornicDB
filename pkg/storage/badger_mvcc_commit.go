@@ -1,6 +1,9 @@
 package storage
 
-import "github.com/dgraph-io/badger/v4"
+import (
+	"context"
+	"github.com/dgraph-io/badger/v4"
+)
 
 // writeMVCCHeadInTxn writes one entity kind's head, carrying an existing
 // FloorVersion forward via a fresh read transaction so the lookup stays out
@@ -65,13 +68,16 @@ func archiveMVCCBodyInTxn[R any, K mvccVersionKeyer](b *BadgerEngine, txn kvWrit
 // node deletion's relationships are units of their own, so deleting a node
 // with any number of relationships fits. A unit repeated in a new batch
 // after it did not fit writes the same keys and values again.
-func (b *BadgerEngine) materializeMVCCCommit(w *batchWriter, version MVCCVersion, operations []Operation) error {
-	return b.materializeMVCCCommitWithHeads(w, version, operations, false)
+func (b *BadgerEngine) materializeMVCCCommit(ctx context.Context, w *batchWriter, version MVCCVersion, operations []Operation) error {
+	return b.materializeMVCCCommitWithHeads(ctx, w, version, operations, false)
 }
 
-func (b *BadgerEngine) materializeMVCCCommitWithHeads(w *batchWriter, version MVCCVersion, operations []Operation, staged bool) error {
+func (b *BadgerEngine) materializeMVCCCommitWithHeads(ctx context.Context, w *batchWriter, version MVCCVersion, operations []Operation, staged bool) error {
 	heads := commitMVCCHeads{b: b, staged: staged}
-	states := newCommitStates(operations)
+	states, err := newCommitStates(ctx, operations)
+	if err != nil {
+		return err
+	}
 	// Bodies of edges created in this commit are already known. Reading their
 	// nonexistent committed body during a cascade opens a Badger history
 	// iterator per edge and repeatedly sorts the growing pending-write set.
@@ -80,6 +86,9 @@ func (b *BadgerEngine) materializeMVCCCommitWithHeads(w *batchWriter, version MV
 	var createdEdgeBodies map[EdgeID]*Edge
 	hasCascade := false
 	for _, op := range operations {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if len(op.DeletedEdgeIDs) > 0 {
 			hasCascade = true
 			break
@@ -105,6 +114,9 @@ func (b *BadgerEngine) materializeMVCCCommitWithHeads(w *batchWriter, version MV
 			}
 		}
 		for _, op := range operations {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			for _, id := range op.DeletedEdgeIDs {
 				if _, err := heads.edge(w.txn, id); err != nil && err != ErrNotFound {
 					return err
@@ -120,7 +132,7 @@ func (b *BadgerEngine) materializeMVCCCommitWithHeads(w *batchWriter, version MV
 			if op.Node == nil {
 				continue
 			}
-			err = w.write(func(txn *badger.Txn) error {
+			err = w.write(ctx, func(txn *badger.Txn) error {
 				// FreshID is set only when the ID was asserted new at
 				// CreateNode time (UUID-shape). For explicit user-supplied
 				// IDs we fall back to the load-existing-floor path to keep
@@ -134,7 +146,7 @@ func (b *BadgerEngine) materializeMVCCCommitWithHeads(w *batchWriter, version MV
 			if op.Node == nil {
 				continue
 			}
-			err = w.write(func(txn *badger.Txn) error {
+			err = w.write(ctx, func(txn *badger.Txn) error {
 				var err error
 				if old := states.committedNodes[op.Node.ID]; retainsHistory && old != nil {
 					err = heads.archiveNodeUpdate(txn, op.Node.ID, old, states.finalNodes[op.Node.ID], version)
@@ -145,7 +157,7 @@ func (b *BadgerEngine) materializeMVCCCommitWithHeads(w *batchWriter, version MV
 				return err
 			})
 		case OpDeleteNode:
-			err = w.write(func(txn *badger.Txn) error {
+			err = w.write(ctx, func(txn *badger.Txn) error {
 				var err error
 				if old := states.committedNodes[op.NodeID]; retainsHistory && old != nil {
 					err = heads.archiveNode(txn, op.NodeID, old)
@@ -163,7 +175,7 @@ func (b *BadgerEngine) materializeMVCCCommitWithHeads(w *batchWriter, version MV
 				if err != nil {
 					break
 				}
-				err = w.write(func(txn *badger.Txn) error {
+				err = w.write(ctx, func(txn *badger.Txn) error {
 					edge, fresh := createdEdgeBodies[edgeID]
 					var err error
 					if !fresh {
@@ -199,7 +211,7 @@ func (b *BadgerEngine) materializeMVCCCommitWithHeads(w *batchWriter, version MV
 				}
 				createdEdgeBodies[op.Edge.ID] = op.Edge
 			}
-			err = w.write(func(txn *badger.Txn) error {
+			err = w.write(ctx, func(txn *badger.Txn) error {
 				if err := b.writeEdgeAdjacencyDeltaInTxn(txn, nil, op.Edge, version); err != nil {
 					return err
 				}
@@ -215,7 +227,7 @@ func (b *BadgerEngine) materializeMVCCCommitWithHeads(w *batchWriter, version MV
 			if _, fresh := createdEdgeBodies[op.Edge.ID]; fresh {
 				createdEdgeBodies[op.Edge.ID] = op.Edge
 			}
-			err = w.write(func(txn *badger.Txn) error {
+			err = w.write(ctx, func(txn *badger.Txn) error {
 				var err error
 				if op.OldEdge != nil && (op.OldEdge.StartNode != op.Edge.StartNode || op.OldEdge.EndNode != op.Edge.EndNode) {
 					err = b.writeEdgeAdjacencyDeltaInTxn(txn, op.OldEdge, op.Edge, version)
@@ -230,7 +242,7 @@ func (b *BadgerEngine) materializeMVCCCommitWithHeads(w *batchWriter, version MV
 			})
 		case OpDeleteEdge:
 			delete(createdEdgeBodies, op.EdgeID)
-			err = w.write(func(txn *badger.Txn) error {
+			err = w.write(ctx, func(txn *badger.Txn) error {
 				var err error
 				if op.OldEdge != nil {
 					err = b.writeEdgeAdjacencyDeltaInTxn(txn, op.OldEdge, nil, version)
@@ -317,7 +329,7 @@ type commitStates struct {
 	finalEdges map[EdgeID]*Edge
 }
 
-func newCommitStates(operations []Operation) commitStates {
+func newCommitStates(ctx context.Context, operations []Operation) (commitStates, error) {
 	states := commitStates{
 		committedNodes: make(map[NodeID]*Node),
 		committedEdges: make(map[EdgeID]*Edge),
@@ -335,6 +347,9 @@ func newCommitStates(operations []Operation) commitStates {
 		}
 	}
 	for _, op := range operations {
+		if err := ctx.Err(); err != nil {
+			return commitStates{}, err
+		}
 		switch {
 		case op.Type == OpCreateNode && op.Node != nil:
 			committedNode(op.Node.ID, nil)
@@ -356,7 +371,7 @@ func newCommitStates(operations []Operation) commitStates {
 			states.finalEdges[op.EdgeID] = nil
 		}
 	}
-	return states
+	return states, nil
 }
 
 // archiveEdgeAtCommittedHeadInTxn is the edge analogue of

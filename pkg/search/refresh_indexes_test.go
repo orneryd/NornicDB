@@ -3,9 +3,10 @@ package search
 import (
 	"context"
 	"errors"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -35,11 +36,11 @@ type refreshIndexesPartialNodeRead struct {
 	nodeErr error
 }
 
-func (e *refreshIndexesPartialNodeRead) GetNode(id storage.NodeID) (*storage.Node, error) {
+func (e *refreshIndexesPartialNodeRead) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	if id == "gone" {
 		return nil, e.nodeErr
 	}
-	return e.Engine.GetNode(id)
+	return e.Engine.GetNode(ctx, id)
 }
 
 // refreshIndexesPartialEdgeRead fails the read of relationship "r".
@@ -48,11 +49,11 @@ type refreshIndexesPartialEdgeRead struct {
 	edgeErr error
 }
 
-func (e *refreshIndexesPartialEdgeRead) GetEdge(id storage.EdgeID) (*storage.Edge, error) {
+func (e *refreshIndexesPartialEdgeRead) GetEdge(ctx context.Context, id storage.EdgeID) (*storage.Edge, error) {
 	if id == "r" {
 		return nil, e.edgeErr
 	}
-	return e.Engine.GetEdge(id)
+	return e.Engine.GetEdge(ctx, id)
 }
 
 func newRefreshIndexesStore(t *testing.T) storage.Engine {
@@ -72,9 +73,9 @@ func TestRefreshIndexes_EmptyRequestResolvesNoService(t *testing.T) {
 func TestRefreshIndexes_PropagatesPrepareErrorWithoutRefreshing(t *testing.T) {
 	ctx := context.Background()
 	store := newRefreshIndexesStore(t)
-	_, err := store.CreateNode(&storage.Node{ID: "b", Labels: []string{"Doc"}, Properties: map[string]any{"content": "refreshword"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"Doc"}, Properties: map[string]any{"content": "refreshword"}})
 	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "r", Type: "CITES", StartNode: "b", EndNode: "b", Properties: map[string]any{"vec": []float64{1, 0}}}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "r", Type: "CITES", StartNode: "b", EndNode: "b", Properties: map[string]any{"vec": []float64{1, 0}}}))
 	svc := NewService(store, 2, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 
@@ -89,9 +90,9 @@ func TestRefreshIndexes_PropagatesPrepareErrorWithoutRefreshing(t *testing.T) {
 func TestRefreshIndexes_DeferredRequestRefreshesNothing(t *testing.T) {
 	ctx := context.Background()
 	store := newRefreshIndexesStore(t)
-	_, err := store.CreateNode(&storage.Node{ID: "b", Labels: []string{"Doc"}, Properties: map[string]any{"content": "refreshword"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"Doc"}, Properties: map[string]any{"content": "refreshword"}})
 	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "r", Type: "CITES", StartNode: "b", EndNode: "b", Properties: map[string]any{"vec": []float64{1, 0}}}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "r", Type: "CITES", StartNode: "b", EndNode: "b", Properties: map[string]any{"vec": []float64{1, 0}}}))
 	svc := NewService(store, 2, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 
@@ -112,9 +113,9 @@ func TestRefreshIndexes_DeferredRequestRefreshesNothing(t *testing.T) {
 func TestRefreshIndexes_FailedNodeStillRefreshesEdgeAndReturnsNodeError(t *testing.T) {
 	ctx := context.Background()
 	store := newRefreshIndexesStore(t)
-	_, err := store.CreateNode(&storage.Node{ID: "b", Labels: []string{"Doc"}, Properties: map[string]any{"content": "refreshword"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"Doc"}, Properties: map[string]any{"content": "refreshword"}})
 	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "r", Type: "CITES", StartNode: "b", EndNode: "b", Properties: map[string]any{"vec": []float64{1, 0}}}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "r", Type: "CITES", StartNode: "b", EndNode: "b", Properties: map[string]any{"vec": []float64{1, 0}}}))
 
 	nodeErr := errors.New("node read failed")
 	svc := NewService(&refreshIndexesPartialNodeRead{Engine: store, nodeErr: nodeErr}, 2, nil)
@@ -127,9 +128,9 @@ func TestRefreshIndexes_FailedNodeStillRefreshesEdgeAndReturnsNodeError(t *testi
 func TestRefreshIndexes_FailedEdgeReportedWhenNodeSucceeds(t *testing.T) {
 	ctx := context.Background()
 	store := newRefreshIndexesStore(t)
-	_, err := store.CreateNode(&storage.Node{ID: "b", Labels: []string{"Doc"}, Properties: map[string]any{"content": "refreshword"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"Doc"}, Properties: map[string]any{"content": "refreshword"}})
 	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "r", Type: "CITES", StartNode: "b", EndNode: "b", Properties: map[string]any{"vec": []float64{1, 0}}}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "r", Type: "CITES", StartNode: "b", EndNode: "b", Properties: map[string]any{"vec": []float64{1, 0}}}))
 
 	edgeErr := errors.New("edge read failed")
 	svc := NewService(&refreshIndexesPartialEdgeRead{Engine: store, edgeErr: edgeErr}, 2, nil)
@@ -143,7 +144,7 @@ func TestRefreshIndexes_FailedEdgeReportedWhenNodeSucceeds(t *testing.T) {
 func TestRefreshIndexes_SuccessfulNodeIsKept(t *testing.T) {
 	ctx := context.Background()
 	store := newRefreshIndexesStore(t)
-	_, err := store.CreateNode(&storage.Node{ID: "b", Labels: []string{"Doc"}, Properties: map[string]any{"content": "refreshword"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"Doc"}, Properties: map[string]any{"content": "refreshword"}})
 	require.NoError(t, err)
 
 	svc := NewService(store, 2, nil)

@@ -81,22 +81,22 @@ func (e *StorageExecutor) traversalOptionalWhereMatches(ctx context.Context, pre
 // individual clauses. Each clause's own WHERE predicate is separated from its
 // pattern. The first clause has no leading "OPTIONAL MATCH" keyword because
 // the caller consumed it.
-func splitOptionalMatchClauses(section string) []optionalMatchClause {
+func splitOptionalMatchClauses(ctx context.Context, section string) []optionalMatchClause {
 	var clauses []optionalMatchClause
 	rest := strings.TrimSpace(section)
 	for rest != "" {
 		clauseText := rest
-		next := findMultiWordKeywordIndex(rest, "OPTIONAL", "MATCH")
+		next := findMultiWordKeywordIndex(ctx, rest, "OPTIONAL", "MATCH")
 		if next > 0 {
 			clauseText = strings.TrimSpace(rest[:next])
 			after := rest[next:]
-			mIdx := findKeywordIndex(after, "MATCH")
+			mIdx := findKeywordIndex(ctx, after, "MATCH")
 			rest = strings.TrimSpace(after[mIdx+len("MATCH"):])
 		} else {
 			rest = ""
 		}
 		clause := optionalMatchClause{pattern: clauseText}
-		if wIdx := findKeywordIndex(clauseText, "WHERE"); wIdx > 0 {
+		if wIdx := findKeywordIndex(ctx, clauseText, "WHERE"); wIdx > 0 {
 			clause.where = strings.TrimSpace(clauseText[wIdx+len("WHERE"):])
 			clause.pattern = strings.TrimSpace(clauseText[:wIdx])
 		}

@@ -51,7 +51,7 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 	if cached && names == nil && !normalized {
 		return nil
 	}
-	if err := validateExpressionLexicalTokens(cypher); err != nil {
+	if err := validateExpressionLexicalTokens(ctx, cypher); err != nil {
 		return err
 	}
 	if cached {
@@ -68,11 +68,11 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 	if err := validateListComprehensionVariables(cypher); err != nil {
 		return err
 	}
-	if err := validateStaticQuantifierTypes(cypher); err != nil {
+	if err := validateStaticQuantifierTypes(ctx, cypher); err != nil {
 		return err
 	}
 	if err := checkedWithoutUnaryPlus(cypher, cypher25, func(text string) error {
-		return validateStaticFunctionArguments(text, cypher25)
+		return validateStaticFunctionArguments(ctx, text, cypher25)
 	}); err != nil {
 		return err
 	}
@@ -116,11 +116,11 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 				pendingUpdate = true
 			}
 			// Subquery bodies are checked as their own statements.
-			if whereIndex := topLevelKeywordIndex(clause.text, "WHERE"); whereIndex >= 0 &&
+			if whereIndex := topLevelKeywordIndex(ctx, clause.text, "WHERE"); whereIndex >= 0 &&
 				hasUnexpectedIdentifierAfterNumber(maskSubqueryBodies(clause.text[whereIndex+len("WHERE"):])) {
 				return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: unexpected identifier in WHERE")
 			}
-			if clause.kind == pipelineClauseWith && withProjectionHasEmptyItem(clause.text) {
+			if clause.kind == pipelineClauseWith && withProjectionHasEmptyItem(ctx, clause.text) {
 				return emptyProjectionItemError("WITH")
 			}
 			if clause.kind == pipelineClauseReturn {
@@ -133,7 +133,7 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 				clauseText := strings.TrimSpace(clause.text)
 				end := len(clauseText)
 				for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT", "UNION"} {
-					if index := topLevelKeywordIndex(clauseText, keyword); index >= len("RETURN") && index < end {
+					if index := topLevelKeywordIndex(ctx, clauseText, keyword); index >= len("RETURN") && index < end {
 						end = index
 					}
 				}
@@ -172,7 +172,7 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 	}
 	// Every function a statement calls, in any clause, is known (#1166).
 	// Neo4j reports the statement's other semantic errors first.
-	if err := validateKnownFunctions(cypher); err != nil {
+	if err := validateKnownFunctions(ctx, cypher); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
@@ -199,8 +199,8 @@ func emptyProjectionItemError(clause string) error {
 
 // withProjectionHasEmptyItem reports whether a WITH clause's item list,
 // before its WHERE / ORDER BY / SKIP / LIMIT, has an empty item.
-func withProjectionHasEmptyItem(clause string) bool {
-	body, _ := projectionSemanticBodyAndTail(clause, "WITH")
+func withProjectionHasEmptyItem(ctx context.Context, clause string) bool {
+	body, _ := projectionSemanticBodyAndTail(ctx, clause, "WITH")
 	return projectionHasEmptyItem(body)
 }
 
@@ -231,7 +231,7 @@ func (e *StorageExecutor) validateCallSubqueryScopes(ctx context.Context, cypher
 	if !containsFold(cypher, "CALL") {
 		return nil
 	}
-	for _, position := range findAllTopLevelPipelineKeywordPositions(cypher, "CALL") {
+	for _, position := range findAllTopLevelPipelineKeywordPositions(ctx, cypher, "CALL") {
 		scope := readCallSubqueryScope(ctx, cypher[position:])
 		if scope.invalid {
 			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport",
@@ -274,10 +274,10 @@ func (e *StorageExecutor) validateCallSubqueryScopes(ctx context.Context, cypher
 					branch = strings.TrimSpace(branch)
 					if startsWithKeywordFold(branch, "WITH") {
 						clause, _ := leadingWithClause(branch)
-						projection, _ := projectionSemanticBodyAndTail(clause, "WITH")
+						projection, _ := projectionSemanticBodyAndTail(ctx, clause, "WITH")
 						for _, item := range splitTopLevelComma(projection) {
 							expression := readProjectionItemSource(ctx, strings.TrimSpace(item), projectionAdmitted).expression
-							for _, variable := range expressionFreeVariables(expression) {
+							for _, variable := range expressionFreeVariables(ctx, expression) {
 								if !isSemanticLiteralWord(variable) {
 									return createUndefinedVariableError(variable)
 								}
@@ -295,8 +295,8 @@ func (e *StorageExecutor) validateCallSubqueryScopes(ctx context.Context, cypher
 					continue
 				}
 				if clauses, ok := splitPipelineClauses(ctx, branch); ok && len(clauses) > 0 {
-					projection, tail := projectionSemanticBodyAndTail(clauses[0].text, "WITH")
-					if strings.TrimSpace(tail) != "" || topLevelKeywordIndex(projection, "AS") >= 0 {
+					projection, tail := projectionSemanticBodyAndTail(ctx, clauses[0].text, "WITH")
+					if strings.TrimSpace(tail) != "" || topLevelKeywordIndex(ctx, projection, "AS") >= 0 {
 						return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport",
 							"Importing WITH must contain only simple references to outside variables")
 					}
@@ -389,7 +389,7 @@ func validatePatternExpressionPlacement(ctx context.Context, cypher string) erro
 			if clause.kind == pipelineClauseWith {
 				keyword = "WITH"
 			}
-			for _, item := range splitTopLevelComma(projectionSemanticBody(clause.text, keyword)) {
+			for _, item := range splitTopLevelComma(projectionSemanticBody(ctx, clause.text, keyword)) {
 				expression := readProjectionItemSource(ctx, strings.TrimSpace(item), projectionAdmitted).expression
 				if containsIllegalProjectedPatternExpression(maskPredicatePatterns(expression)) {
 					return invalidPatternExpressionPlacementError()
@@ -587,10 +587,10 @@ func invalidPatternExpressionPlacementError() error {
 }
 
 func (e *StorageExecutor) validateDuplicateReturnColumnName(ctx context.Context, cypher string, names *quotedVariableNames) error {
-	returnPositions := findAllTopLevelPipelineKeywordPositions(cypher, "RETURN")
+	returnPositions := findAllTopLevelPipelineKeywordPositions(ctx, cypher, "RETURN")
 	unionPositions := append(
-		findAllTopLevelPipelineKeywordPositions(cypher, "UNION"),
-		findAllTopLevelPipelineKeywordPositions(cypher, "UNION ALL")...,
+		findAllTopLevelPipelineKeywordPositions(ctx, cypher, "UNION"),
+		findAllTopLevelPipelineKeywordPositions(ctx, cypher, "UNION ALL")...,
 	)
 	for returnIndex, position := range returnPositions {
 		end := len(cypher)

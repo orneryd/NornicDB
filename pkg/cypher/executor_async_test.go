@@ -632,7 +632,7 @@ func BenchmarkPipelineLimitedCartesianCreateDelete(b *testing.B) {
 		if index >= 100 {
 			label = "Movie"
 		}
-		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("limited-%d", index)), Labels: []string{label}})
+		_, err := store.CreateNode(b.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("limited-%d", index)), Labels: []string{label}})
 		require.NoError(b, err)
 	}
 	executor := NewStorageExecutor(store)

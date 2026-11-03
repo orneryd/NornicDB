@@ -5,6 +5,7 @@
 package storagefault
 
 import (
+	"context"
 	"sync/atomic"
 
 	"github.com/orneryd/nornicdb/internal/testfixture"
@@ -34,8 +35,8 @@ type barrierUpdateEngine struct {
 	barrier *PostUpdateBarrier
 }
 
-func (e *barrierUpdateEngine) UpdateNode(updateRequest storage.NodeUpdateRequest) error {
-	err := e.Engine.UpdateNode(updateRequest)
+func (e *barrierUpdateEngine) UpdateNode(ctx context.Context, updateRequest storage.NodeUpdateRequest) error {
+	err := e.Engine.UpdateNode(ctx, updateRequest)
 	if err == nil {
 		e.barrier.Pause(e.barrier.Armed, e.barrier.Entered)
 	}
@@ -60,7 +61,7 @@ func NewConsumerBarrier(engine storage.Engine) *ConsumerBarrier {
 	}
 }
 
-func (b *ConsumerBarrier) DeleteNode(id storage.NodeID) error {
+func (b *ConsumerBarrier) DeleteNode(ctx context.Context, id storage.NodeID) error {
 	b.Pause(&b.DeleteArm, b.DeleteEntered)
-	return b.Engine.DeleteNode(id)
+	return b.Engine.DeleteNode(ctx, id)
 }

@@ -29,7 +29,7 @@ func validateProjectionSemantics(ctx context.Context, cypher string) error {
 		if clause.kind != pipelineClauseWith {
 			continue
 		}
-		body := projectionSemanticBody(clause.text, "WITH")
+		body := projectionSemanticBody(ctx, clause.text, "WITH")
 		if err := validateReturnAggregationSemantics(ctx, body); err != nil {
 			return err
 		}
@@ -91,7 +91,7 @@ func validateProjectionSemantics(ctx context.Context, cypher string) error {
 // aggregatingProjectionScopeError checks one WITH or RETURN clause
 // (validateProjectionSemantics).
 func aggregatingProjectionScopeError(ctx context.Context, clause, keyword string) error {
-	body, tail := projectionSemanticBodyAndTail(clause, keyword)
+	body, tail := projectionSemanticBodyAndTail(ctx, clause, keyword)
 	_, distinct := cutDistinct(clause[len(keyword):])
 	tail = strings.TrimSpace(tail)
 	if tail == "" {
@@ -123,7 +123,7 @@ func aggregatingProjectionScopeError(ctx context.Context, clause, keyword string
 	// projected count(DISTINCT n)) is the projected one.
 	var spellings map[string]string
 	spelled := false
-	for _, part := range aggregatingProjectionTailExpressions(tail) {
+	for _, part := range aggregatingProjectionTailExpressions(ctx, tail) {
 		masked := strings.Join(strings.Fields(part), " ")
 		if containsAggregateFunc(masked) {
 			if !spelled {
@@ -149,11 +149,11 @@ func aggregatingProjectionScopeError(ctx context.Context, clause, keyword string
 // aggregatingProjectionTailExpressions are the expressions of a projection's
 // WHERE and ORDER BY terms, in whichever order the clause has them (WITH x
 // ORDER BY x LIMIT 1 WHERE x > 0); SKIP and LIMIT read no variables.
-func aggregatingProjectionTailExpressions(tail string) []string {
+func aggregatingProjectionTailExpressions(ctx context.Context, tail string) []string {
 	keywords := []string{"WHERE", "ORDER BY", "SKIP", "LIMIT"}
 	starts := make([]int, len(keywords))
 	for i, keyword := range keywords {
-		starts[i] = topLevelKeywordIndex(tail, keyword)
+		starts[i] = topLevelKeywordIndex(ctx, tail, keyword)
 	}
 	segment := func(i int) string {
 		if starts[i] < 0 {
@@ -172,7 +172,7 @@ func aggregatingProjectionTailExpressions(tail string) []string {
 	if where := segment(0); strings.TrimSpace(where) != "" {
 		parts = append(parts, where)
 	}
-	for _, term := range parseOrderByClause(segment(1)) {
+	for _, term := range parseOrderByClause(ctx, segment(1)) {
 		parts = append(parts, term.column)
 	}
 	return parts

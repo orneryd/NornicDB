@@ -20,10 +20,11 @@
 //			"name": "Alice",
 //		},
 //	}
-//	engine.CreateNode(node)
+//	engine.CreateNode(ctx, node)
 package storage
 
 import (
+	"context"
 	"fmt"
 )
 
@@ -43,6 +44,12 @@ import (
 type MemoryEngine struct {
 	*BadgerEngine
 }
+
+// GetInnerEngine exposes the actual storage owner to canonical capability
+// discovery, including query reveal scopes through namespaced decorators.
+func (m *MemoryEngine) GetInnerEngine() Engine { return m.BadgerEngine }
+
+var _ EngineUnwrapper = (*MemoryEngine)(nil)
 
 // NewMemoryEngine creates a new in-memory storage engine for testing.
 // It uses BadgerDB's in-memory mode internally.
@@ -64,8 +71,8 @@ func NewMemoryEngine() *MemoryEngine {
 
 // BeginTransaction starts a new transaction.
 // Returns *BadgerTransaction for compatibility with the executor.
-func (m *MemoryEngine) BeginTransaction() (*BadgerTransaction, error) {
-	return m.BadgerEngine.BeginTransaction()
+func (m *MemoryEngine) BeginTransaction(ctx context.Context) (*BadgerTransaction, error) {
+	return m.BadgerEngine.BeginTransaction(ctx)
 }
 
 // DeleteByPrefix delegates to the underlying BadgerEngine.

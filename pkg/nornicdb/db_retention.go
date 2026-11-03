@@ -22,8 +22,6 @@ func (db *DB) startRetentionSweep(ctx context.Context) {
 	if db.retentionManager == nil {
 		return
 	}
-	ctx = db.retentionContext(ctx)
-
 	interval := defaultRetentionSweepInterval
 	if db.config != nil {
 		if seconds := db.config.Retention.SweepIntervalSeconds; seconds > 0 {
@@ -31,7 +29,7 @@ func (db *DB) startRetentionSweep(ctx context.Context) {
 		}
 	}
 
-	started := db.startBackgroundTask(func() {
+	started := db.RunBackgroundTask(func(backgroundCtx context.Context) {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 
@@ -52,7 +50,6 @@ func (db *DB) startRetentionSweep(ctx context.Context) {
 }
 
 func (db *DB) runRetentionSweep(ctx context.Context) {
-	ctx = db.retentionContext(ctx)
 	rm := db.retentionManager
 	if rm == nil {
 		return
@@ -112,17 +109,6 @@ func (db *DB) runRetentionSweep(ctx context.Context) {
 // RunRetentionSweep triggers a single retention sweep immediately.
 func (db *DB) RunRetentionSweep(ctx context.Context) {
 	db.runRetentionSweep(ctx)
-}
-
-func (db *DB) retentionContext(ctx context.Context) context.Context {
-	if ctx != nil {
-		return ctx
-	}
-	if db != nil && db.buildCtx != nil {
-		return db.buildCtx
-	}
-	log.Printf("⚠️  Retention: no lifecycle context available, using background context")
-	return context.Background()
 }
 
 // CollectSubjectRetentionRecords returns retention records for all nodes owned by a subject.

@@ -55,7 +55,7 @@ func TestListInputPluginRepresentations(t *testing.T) {
 		for _, input := range listinputs.Inputs() {
 			t.Run(fmt.Sprintf("programsDisabled=%t/%s", disabled, input.Name), func(t *testing.T) {
 				if !disabled {
-					_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(input.Name), Labels: []string{"PluginList"}, Properties: map[string]interface{}{"name": input.Name, "xs": input.PropertyValue()}})
+					_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(input.Name), Labels: []string{"PluginList"}, Properties: map[string]interface{}{"name": input.Name, "xs": input.PropertyValue()}})
 					require.NoError(t, err)
 				}
 				params := map[string]interface{}{"xs": input.Value, "name": input.Name}

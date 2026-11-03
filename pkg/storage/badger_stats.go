@@ -77,12 +77,20 @@ func (b *BadgerEngine) initializeCounts() error {
 	return nil
 }
 
-func (b *BadgerEngine) NodeCount() (int64, error) {
+func (b *BadgerEngine) NodeCount(ctx context.Context) (int64, error) {
+	// A counter read has no materialization step to cancel, but a canceled
+	// request must not be answered with a successful count: it already owns no
+	// result, and reporting one would let a canceled statement publish a total.
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	if err := b.pendingNamespaceConflict(""); err != nil {
 		return 0, err
 	}
 
-	b.totalCountWriteMu.RLock()
+	if err := b.totalCountWriteMu.RLockContext(ctx); err != nil {
+		return 0, err
+	}
 	defer b.totalCountWriteMu.RUnlock()
 	if err := b.ensureOpen(false); err != nil {
 		return 0, err
@@ -93,7 +101,11 @@ func (b *BadgerEngine) NodeCount() (int64, error) {
 	// at ACK: fold in the buffered delta so the count is read-your-writes
 	// (PR #1043 read-overlay parity).
 	if b.writeBehind != nil {
-		count += b.writeBehind.NodeCountDeltaForPrefix("")
+		delta, err := b.writeBehind.totalCountDeltaForPrefix(ctx, "", false)
+		if err != nil {
+			return 0, err
+		}
+		count += delta
 	}
 	return count, nil
 }
@@ -112,7 +124,11 @@ type adjacencyCountRequest struct {
 // it neither consults namespace caches nor changes
 // the degree API convention of returning the count while discarding view errors
 // (HARD_CONVERGENCE.md item 5: node/edge twin consolidation).
-func (b *BadgerEngine) countByPrefix(prefix string, keyType byte, cache map[string]int64, adjacency ...adjacencyCountRequest) (int64, error) {
+// Author: storage-format-owners lane (Codex), 1 November 2026.
+func (b *BadgerEngine) countByPrefix(ctx context.Context, prefix string, keyType byte, cache map[string]int64, adjacency ...adjacencyCountRequest) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	readPrefix := prefix
 	if len(adjacency) > 0 {
 		readPrefix = string(adjacency[0].nodeID)
@@ -161,7 +177,11 @@ func (b *BadgerEngine) countByPrefix(prefix string, keyType byte, cache map[stri
 
 		it := txn.NewIterator(badgerPrefixIteratorOptions(keyPrefix))
 		defer it.Close()
+		var cancel bulkReadCancellation
 		for it.Rewind(); it.Valid(); it.Next() {
+			if err := cancel.check(ctx); err != nil {
+				return err
+			}
 			count++
 		}
 		return nil
@@ -180,18 +200,26 @@ func (b *BadgerEngine) countByPrefix(prefix string, keyType byte, cache map[stri
 //
 // This is an optional fast-path used by NamespacedEngine to provide accurate
 // per-database counts without decoding values.
-func (b *BadgerEngine) NodeCountByPrefix(prefix string) (int64, error) {
-	return b.entityCountByPrefix(prefix, prefixNode)
+func (b *BadgerEngine) NodeCountByPrefix(ctx context.Context, prefix string) (int64, error) {
+	return b.entityCountByPrefix(ctx, prefix, prefixNode)
 }
 
 // EdgeCount returns the total number of valid, decodable edges.
 // This is consistent with AllEdges() - only counts edges that can be successfully decoded.
-func (b *BadgerEngine) EdgeCount() (int64, error) {
+func (b *BadgerEngine) EdgeCount(ctx context.Context) (int64, error) {
+	// A counter read has no materialization step to cancel, but a canceled
+	// request must not be answered with a successful count: it already owns no
+	// result, and reporting one would let a canceled statement publish a total.
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	if err := b.pendingNamespaceConflict(""); err != nil {
 		return 0, err
 	}
 
-	b.totalCountWriteMu.RLock()
+	if err := b.totalCountWriteMu.RLockContext(ctx); err != nil {
+		return 0, err
+	}
 	defer b.totalCountWriteMu.RUnlock()
 	if err := b.ensureOpen(false); err != nil {
 		return 0, err
@@ -202,15 +230,19 @@ func (b *BadgerEngine) EdgeCount() (int64, error) {
 	// at ACK: fold in the buffered delta so the count is read-your-writes
 	// (PR #1043 read-overlay parity).
 	if b.writeBehind != nil {
-		count += b.writeBehind.EdgeCountDelta()
+		delta, err := b.writeBehind.totalCountDeltaForPrefix(ctx, "", true)
+		if err != nil {
+			return 0, err
+		}
+		count += delta
 	}
 	return count, nil
 }
 
 // EdgeCountByPrefix counts edges whose EdgeID begins with the provided prefix.
 // The prefix refers to the EdgeID string prefix (e.g., database namespace "nornic:").
-func (b *BadgerEngine) EdgeCountByPrefix(prefix string) (int64, error) {
-	return b.entityCountByPrefix(prefix, prefixEdge)
+func (b *BadgerEngine) EdgeCountByPrefix(ctx context.Context, prefix string) (int64, error) {
+	return b.entityCountByPrefix(ctx, prefix, prefixEdge)
 }
 
 // GetSchema returns the schema manager.
@@ -220,19 +252,28 @@ func (b *BadgerEngine) GetSchema() *SchemaManager {
 	return b.GetSchemaForNamespace("nornic")
 }
 
-// Close closes the BadgerDB database.
+// Close closes the BadgerDB database. It is the engine owner's one stop: the
+// first caller stops the producers and seals admission, and every caller,
+// first or repeated, joins the same retirement and receives the same outcome.
 func (b *BadgerEngine) Close() error {
 	b.closeMu.Lock()
 	defer b.closeMu.Unlock()
+	if !b.work.Closing() {
+		b.sealAdmission()
+	}
+	b.work.BeginStop(b.retire)
+	return b.work.JoinStopped()
+}
+
+// sealAdmission stops the engine's producers while admission is still open
+// (their final writes are admitted work), then seals admission once every
+// durable write published. Outcomes go to the owner for every Close caller.
+func (b *BadgerEngine) sealAdmission() {
 	// Reject new writers first, then wait for every admitted one to finish,
 	// so the final drain below meets every acknowledged commit: a listener
 	// it delivers that writes again observes ErrStorageClosed instead of
 	// being acknowledged into a generation nothing drains.
 	b.mu.Lock()
-	if b.closed {
-		b.mu.Unlock()
-		return nil
-	}
 	b.closing = true
 	b.mu.Unlock()
 	b.writeBarrier.Lock()
@@ -249,22 +290,24 @@ func (b *BadgerEngine) Close() error {
 	// Drain acknowledged write-behind commits before tearing down Badger so
 	// a shutdown never loses writes that were acknowledged to clients.
 	if b.writeBehind != nil {
-		if err := b.FlushWriteBehind(nil); err != nil && b.log != nil {
-			b.log.Error("write-behind drain on close failed", "subsystem", "storage", "error", err)
+		drainErr := b.FlushWriteBehind(context.Background())
+		if drainErr != nil && b.log != nil {
+			b.log.Error("write-behind drain on close failed", "subsystem", "storage", "error", drainErr)
 		}
+		b.work.RecordError("", drainErr)
 		b.writeBehind.Close()
 		b.writeBehind.releaseTransactionBegins()
 	}
 	// The suppressions the deletes so far ended are deleted before the store
 	// closes (forgetManualSuppression).
 	b.writeBarrier.RLock()
-	b.endSuppressions(&entityWriteContext{ctx: context.Background(), engine: b, owner: newEngineWriteLockOwner()})
+	b.work.RecordError("", b.endSuppressions(&entityWriteContext{ctx: context.Background(), engine: b, owner: newEngineWriteLockOwner()}))
 	b.writeBarrier.RUnlock()
 	// The MVCC lifecycle worker is stopped here for the same reason:
 	// StopLifecycle waits for the worker to exit, and the worker must not
 	// be parked behind a barrier this goroutine is about to hold. The call
-	// is idempotent, so the lifecycle stop under b.mu below stays as the
-	// guard for a controller installed after this point.
+	// Controller injection is part of the unpublished DB construction frame;
+	// invoke its one stop outside the engine publication lock.
 	b.mu.RLock()
 	lifecycle := b.lifecycleController
 	b.mu.RUnlock()
@@ -274,40 +317,30 @@ func (b *BadgerEngine) Close() error {
 
 	// Wait for every in-flight durable write (see writeBarrier) so no
 	// commit that already reached Badger has its publication tail torn by
-	// the release below. Mark closed before releasing the barrier; later
-	// writers fail before reaching Badger, while listeners can re-enter.
+	// the release below. Seal before releasing the barrier; later helpers
+	// and writers fail before reaching Badger, while listeners can re-enter.
 	b.writeBarrier.Lock()
-
 	b.mu.Lock()
-	if b.closed {
-		b.mu.Unlock()
-		b.writeBarrier.Unlock()
-		return nil
-	}
-	if b.lifecycleController != nil {
-		b.lifecycleController.StopLifecycle()
-	}
-
-	b.closed = true
-	db := b.db
+	b.work.CloseAdmission()
 	b.mu.Unlock()
-	// Publication has finished and new writes observe closed. Do not retain
-	// the barrier while listeners re-enter storage; keep state until they finish.
+	// Do not retain the barrier while listeners re-enter storage; the owner
+	// keeps state until their notifications' tickets return.
 	b.writeBarrier.Unlock()
-
-	// Drain in-flight node-deleted notifications before releasing the
-	// callback fields and other engine state they run against (#726). No
-	// new notifications can start: BulkDeleteNodes adds them under mu only
-	// when the engine is not closed.
-	b.txnWG.Wait()
 	// Deliver what is ready but undelivered (a replay queues its events for
-	// whoever retired it) before waiting for every reserved notification.
+	// whoever retired it); each delivery returns its notification's ticket.
 	b.drainCommitNotifications()
-	b.notifyWG.Wait()
+}
 
+// retire is the owner's dispose: it runs once, after every admitted helper
+// and reserved notification returned, so nothing runs against the state it
+// releases (#726).
+func (b *BadgerEngine) retire() error {
+	b.mu.RLock()
+	db := b.db
+	b.mu.RUnlock()
 	// Fold any derived-count deltas the last commits left behind so a clean
 	// reopen has no open-time write to perform (PR #1043 item #2).
-	b.foldRemainingCountDeltasOnClose(db)
+	countErr := b.foldRemainingCountDeltasOnClose(context.Background(), db)
 	b.releasePendingEmbeddingCandidates()
 	propertyErr := b.finishPropertyWALOnClose(db)
 
@@ -316,9 +349,9 @@ func (b *BadgerEngine) Close() error {
 	b.mu.Unlock()
 
 	if db == nil {
-		return nil
+		return errors.Join(countErr, propertyErr)
 	}
-	return errors.Join(propertyErr, db.Close())
+	return errors.Join(countErr, propertyErr, db.Close())
 }
 
 // releaseClosedStateLocked drops large heap graphs that are not needed after
@@ -326,7 +359,7 @@ func (b *BadgerEngine) Close() error {
 // process exit; retaining the closed Badger handle behind those shells pins
 // in-memory memtable arenas and caches long after the engine is unusable.
 //
-// b.mu must be held and b.closed must already be true.
+// b.mu must be held and the engine owner must have sealed admission.
 func (b *BadgerEngine) releaseClosedStateLocked() {
 	b.transitionPending(namespaceDropRelease, "", nil)
 	b.db = nil
@@ -396,28 +429,36 @@ func (b *BadgerEngine) Size() (lsm, vlog int64) {
 // stale candidates are removed once. Each returned node is validated in the
 // engine write that cleans the markers before it; cleanup larger than one
 // Badger batch commits batch by batch, so it always makes progress. Claim
-// serialization remains with the worker.
-func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
-	if b.pendingNamespaceConflict("") != nil {
-		return nil
+// serialization remains with the worker. This exported optional-interface
+// method carries the worker job context through catalog admission, iteration
+// and cleanup preparation. An actual storage error is returned, while no
+// eligible candidate is (nil, nil).
+func (b *BadgerEngine) FindNodeNeedingEmbedding(ctx context.Context) (*Node, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := b.pendingNamespaceConflict(""); err != nil {
+		return nil, err
 	}
 
-	if b.ensureOpen(false) != nil {
-		return nil
+	if err := b.ensureOpen(false); err != nil {
+		return nil, err
 	}
 	p := &b.pendingCandidates
-	p.mu.Lock()
+	if err := p.mu.LockContext(ctx); err != nil {
+		return nil, err
+	}
 	defer p.mu.Unlock()
 	// Hints can be lost: an empty catalog cannot prove an empty durable
 	// index. Reconcile at the empty boundary; a previously verified empty
 	// snapshot is reusable until storage publishes another commit. Live
 	// claims keep their point-read path; worker scheduling owns idle backoff.
 	reconciled := len(p.ids) == 0 || !p.loaded || p.generation != b.pendingCandidatesGeneration.Load()
-	if p.load(b) != nil {
-		return nil
+	if err := p.load(ctx, b); err != nil {
+		return nil, err
 	}
 	if len(p.ids) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	var found *Node
@@ -429,8 +470,11 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 		// prefix of stale markers larger than one batch must still make
 		// durable progress toward the live candidates behind it.
 		batchFull := false
-		err := b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+		err := b.withUpdate(ctx, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 			for len(p.ids) > 0 && !batchFull {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
 				nodeID := p.ids[0]
 				if _, err := txn.Get(pendingEmbedKey(nodeID)); err == badger.ErrKeyNotFound {
 					p.removeFirst()
@@ -501,7 +545,7 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 		if err != nil {
 			// A failed cleanup commit must not discard still-durable candidates.
 			b.InvalidatePendingEmbeddingsIndex()
-			return nil
+			return nil, err
 		}
 		if batchFull {
 			continue
@@ -512,8 +556,8 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 		// The last cached hints were stale. A committed marker whose hint was
 		// lost may still exist, so check the durable index before returning nil.
 		reconciled = true
-		if p.load(b) != nil {
-			return nil
+		if err := p.load(ctx, b); err != nil {
+			return nil, err
 		}
 	}
 	// Log at most once per call (avoid per-entry spam on large stale indexes).
@@ -525,7 +569,7 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 		)
 	}
 
-	return found
+	return found, nil
 }
 
 // MarkNodeEmbedded removes a node from the pending embeddings index.
@@ -533,7 +577,7 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 func (b *BadgerEngine) MarkNodeEmbedded(nodeID NodeID) {
 	_ = b.withPublishingUpdate(context.Background(), func(txn *badger.Txn) error {
 		return txn.Delete(pendingEmbedKey(nodeID))
-	}, nil, func() []any { return []any{namespaceWriteKey(namespaceForNodeID(nodeID))} }, nil)
+	}, nil, func(context.Context) ([]any, error) { return []any{namespaceWriteKey(namespaceForNodeID(nodeID))}, nil }, nil, nil)
 }
 
 // AddToPendingEmbeddings adds a node to the pending embeddings index.
@@ -545,7 +589,7 @@ func (b *BadgerEngine) AddToPendingEmbeddings(nodeID NodeID) {
 			var node *Node
 			if err = item.Value(func(value []byte) error {
 				var decodeErr error
-				node, decodeErr = b.decodeNode(namespaceForNodeID(nodeID), value)
+				node, decodeErr = b.decodeNodeProjected(txn, namespaceForNodeID(nodeID), value, nil)
 				return decodeErr
 			}); err != nil {
 				return err
@@ -557,7 +601,7 @@ func (b *BadgerEngine) AddToPendingEmbeddings(nodeID NodeID) {
 			return err
 		}
 		return b.setPendingEmbeddingInTxn(txn, nodeID)
-	}, nil, func() []any { return []any{namespaceWriteKey(namespaceForNodeID(nodeID))} }, nil)
+	}, nil, func(context.Context) ([]any, error) { return []any{namespaceWriteKey(namespaceForNodeID(nodeID))}, nil }, nil, nil)
 }
 
 // PendingEmbeddingsCount returns the number of nodes waiting for embedding.
@@ -576,7 +620,9 @@ func (b *BadgerEngine) InvalidatePendingEmbeddingsIndex() {
 // RefreshPendingEmbeddingsIndex rebuilds the pending embeddings index.
 // This scans all nodes and adds any missing ones to the index.
 // It also removes stale entries for nodes that no longer exist or already have embeddings.
-// Use this on startup or after bulk imports.
+// Use this on startup or after bulk imports. Its caller context is erased by
+// the exported optional interface, so this entry passes its own explicit
+// unbounded lifetime for the index rebuild's writes.
 func (b *BadgerEngine) RefreshPendingEmbeddingsIndex() int {
 	b.InvalidatePendingEmbeddingsIndex()
 	added := 0
@@ -584,7 +630,7 @@ func (b *BadgerEngine) RefreshPendingEmbeddingsIndex() int {
 
 	// First pass: Clean up stale entries in the pending index
 	// Remove entries for nodes that don't exist or already have embeddings
-	cleanupErr := b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+	cleanupErr := b.withUpdate(context.Background(), updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		pendingPrefix := []byte{prefixPendingEmbed}
 		it := txn.NewIterator(badgerPrefixIteratorOptions(pendingPrefix))
 		defer it.Close()
@@ -668,7 +714,7 @@ func (b *BadgerEngine) RefreshPendingEmbeddingsIndex() int {
 	}
 
 	// Second pass: Add missing nodes to the index
-	_ = b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+	_ = b.withUpdate(context.Background(), updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		prefix := []byte{prefixNode}
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
@@ -835,7 +881,7 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 		}
 		return err
 	}
-	err := b.withReadView(capture, func(txn *badger.Txn) error {
+	err := b.withReadView(ctx, capture, func(txn *badger.Txn) error {
 		if captureErr != nil {
 			return captureErr // the canceled capture retires the scan
 		}
@@ -900,7 +946,7 @@ func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *bad
 				if opts.WithEmbeddings {
 					node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
 				} else {
-					node, decodeErr = b.decodeNode(namespaceForNodeID(nodeID), val)
+					node, decodeErr = b.decodeNodeProjected(txn, namespaceForNodeID(nodeID), val, nil)
 				}
 				return decodeErr
 			})
@@ -1023,7 +1069,7 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 		}
 		return err
 	}
-	err := b.withReadView(capture, func(txn *badger.Txn) error {
+	err := b.withReadView(ctx, capture, func(txn *badger.Txn) error {
 		if captureErr != nil {
 			return captureErr // the canceled capture retires the scan
 		}
@@ -1048,7 +1094,7 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 			var edge *Edge
 			err := item.Value(func(val []byte) error {
 				var decErr error
-				edge, decErr = b.decodeEdgeBodyByID(val, edgeID)
+				edge, decErr = b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), val, edgeID)
 				return decErr
 			})
 			if err != nil {
@@ -1177,13 +1223,13 @@ func (b *BadgerEngine) ClearAllEmbeddingsForPrefix(idPrefix string) (int, error)
 	// Now update each node to clear its embedding, hidden ones included: they
 	// must not keep an embedding of the model being replaced.
 	for _, id := range nodeIDs {
-		node, err := b.GetStoredNode(id)
+		node, err := b.GetStoredNode(context.Background(), id)
 		if err != nil {
 			continue // Skip if node no longer exists
 		}
 		before := *node
 		node.ChunkEmbeddings = nil
-		if err := b.UpdateNode(NodeUpdateRequest{Before: &before, After: node, Policy: StoredNodeImages}); err != nil {
+		if err := b.UpdateNode(context.Background(), NodeUpdateRequest{Before: &before, After: node, Policy: StoredNodeImages}); err != nil {
 			b.log.Warn("failed to clear embedding for node",
 				"subsystem", "embeddings_index",
 				"node_id", string(id),
@@ -1213,8 +1259,10 @@ func (b *BadgerEngine) ClearAllEmbeddingsForPrefix(idPrefix string) (int, error)
 
 // entityCountByPrefix keeps namespace-cache and committed-buffer visibility in
 // one owner; total-count synchronization precedes lifecycle admission as before.
-func (b *BadgerEngine) entityCountByPrefix(prefix string, keyType byte) (int64, error) {
-	b.totalCountWriteMu.RLock()
+func (b *BadgerEngine) entityCountByPrefix(ctx context.Context, prefix string, keyType byte) (int64, error) {
+	if err := b.totalCountWriteMu.RLockContext(ctx); err != nil {
+		return 0, err
+	}
 	defer b.totalCountWriteMu.RUnlock()
 	if err := b.ensureOpen(false); err != nil {
 		return 0, err
@@ -1223,16 +1271,16 @@ func (b *BadgerEngine) entityCountByPrefix(prefix string, keyType byte) (int64, 
 	if keyType == prefixEdge {
 		cache = b.namespaceEdgeCounts
 	}
-	count, err := b.countByPrefix(prefix, keyType, cache)
+	count, err := b.countByPrefix(ctx, prefix, keyType, cache)
 	if err != nil {
 		return 0, err
 	}
 	if b.writeBehind != nil {
-		if keyType == prefixEdge {
-			count += b.writeBehind.EdgeCountDeltaForPrefix(prefix)
-		} else {
-			count += b.writeBehind.NodeCountDeltaForPrefix(prefix)
+		delta, err := b.writeBehind.totalCountDeltaForPrefix(ctx, prefix, keyType == prefixEdge)
+		if err != nil {
+			return 0, err
 		}
+		count += delta
 	}
 	return count, nil
 }

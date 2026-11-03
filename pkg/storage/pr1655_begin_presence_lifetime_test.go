@@ -27,18 +27,18 @@ func pr1655PresenceLifetimeEngine(t *testing.T) (*BadgerEngine, *memory.Policy) 
 
 func pr1655PresenceLifetimeCreate(t *testing.T, engine *BadgerEngine, id NodeID) {
 	t.Helper()
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetImplicit(true))
-	_, err = tx.CreateNode(&Node{ID: id, Properties: map[string]interface{}{"body": "buffered presence"}})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: id, Properties: map[string]interface{}{"body": "buffered presence"}})
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 }
 
 func pr1655PresenceLifetimeReader(t *testing.T, engine *BadgerEngine) *BadgerTransaction {
 	t.Helper()
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if tx.IsActive() {
@@ -82,7 +82,7 @@ func TestPR1655BeginPresenceSharedGenerationLastPin(t *testing.T) {
 			require.Equal(t, int64(2), generation.beginPins.Load())
 			reserved := policy.Reserved()
 			require.Positive(t, reserved)
-			require.NoError(t, engine.FlushWriteBehind(nil))
+			require.NoError(t, engine.FlushWriteBehind(context.Background()))
 			require.True(t, generation.queueRetired.Load())
 			require.False(t, generation.leasesReleased.Load())
 			require.Equal(t, reserved, policy.Reserved())
@@ -120,7 +120,7 @@ func TestPR1655BeginPresenceCloseOpenAndAbandoned(t *testing.T) {
 		t.Run(fmt.Sprintf("abandoned=%t", abandoned), func(t *testing.T) {
 			engine, policy := pr1655PresenceLifetimeEngine(t)
 			pr1655PresenceLifetimeCreate(t, engine, "test:close")
-			reader, err := engine.BeginTransaction()
+			reader, err := engine.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			presence := reader.beginPresence
 			require.NotNil(t, presence)
@@ -158,13 +158,13 @@ func TestPR1655BeginPresenceImplicitAdvanceReplacesPins(t *testing.T) {
 	require.NoError(t, reader.SetImplicit(true))
 	oldPresence := reader.beginPresence
 	oldGeneration := oldPresence.active
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	pr1655PresenceLifetimeCreate(t, engine, "test:next")
 	engine.writeBehind.mu.RLock()
 	newGeneration := engine.writeBehind.active
 	engine.writeBehind.mu.RUnlock()
 	require.NotSame(t, oldGeneration, newGeneration)
-	require.NoError(t, reader.ResumeAfterIndependentCommit())
+	require.NoError(t, reader.ResumeAfterIndependentCommit(t.Context()))
 	requirePR1655PresenceReleased(t, oldPresence)
 	require.Zero(t, oldGeneration.beginPins.Load())
 	require.True(t, oldGeneration.leasesReleased.Load())
@@ -172,7 +172,7 @@ func TestPR1655BeginPresenceImplicitAdvanceReplacesPins(t *testing.T) {
 	require.NotSame(t, oldPresence, reader.beginPresence)
 	require.Same(t, newGeneration, reader.beginPresence.active)
 	require.Equal(t, int64(1), newGeneration.beginPins.Load())
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	require.False(t, newGeneration.leasesReleased.Load())
 	require.Positive(t, policy.Reserved())
 	require.NoError(t, reader.Rollback())
@@ -189,7 +189,7 @@ func TestPR1655BeginPresenceDoesNotRetainFutureGenerations(t *testing.T) {
 	initial := presence.active
 	initialPrefix := len(presence.commits)
 	require.Positive(t, initialPrefix)
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	reserved := policy.Reserved()
 	require.Positive(t, reserved)
 	for i := 0; i < 16; i++ {
@@ -199,7 +199,7 @@ func TestPR1655BeginPresenceDoesNotRetainFutureGenerations(t *testing.T) {
 		engine.writeBehind.mu.RUnlock()
 		require.NotSame(t, initial, future)
 		require.Zero(t, future.beginPins.Load(), "an old frame never pins a future generation")
-		require.NoError(t, engine.FlushWriteBehind(nil))
+		require.NoError(t, engine.FlushWriteBehind(context.Background()))
 		require.True(t, future.queueRetired.Load())
 		require.True(t, future.leasesReleased.Load())
 		require.Equal(t, reserved, policy.Reserved(), "only the initial generation remains charged")
@@ -221,7 +221,7 @@ func TestPR1655BeginPresenceCanceledCommitKeepsPinsUntilRollback(t *testing.T) {
 	reader := pr1655PresenceLifetimeReader(t, engine)
 	presence := reader.beginPresence
 	generation := presence.active
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	require.ErrorIs(t, reader.CommitContext(ctx), context.Canceled)

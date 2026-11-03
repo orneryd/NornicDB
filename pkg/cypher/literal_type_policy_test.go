@@ -22,8 +22,8 @@ func TestStaticLiteralPolicies(t *testing.T) {
 	require.Len(t, rows, 41)
 	for _, row := range rows {
 		t.Run(row.Input, func(t *testing.T) {
-			require.Equal(t, row.Scalar, staticLiteralType(row.Input, scalarLiteralOnly), "scalar leaf")
-			require.Equal(t, row.Led, staticLiteralType(row.Input, literalLedExpression), "literal-led source")
+			require.Equal(t, row.Scalar, staticLiteralType(t.Context(), row.Input, scalarLiteralOnly), "scalar leaf")
+			require.Equal(t, row.Led, staticLiteralType(t.Context(), row.Input, literalLedExpression), "literal-led source")
 		})
 	}
 }
@@ -41,9 +41,9 @@ func BenchmarkStaticLiteralPolicies(b *testing.B) {
 				b.ReportAllocs()
 				for range b.N {
 					if scalar {
-						literalTypeBenchmarkResult = staticLiteralType(input, scalarLiteralOnly)
+						literalTypeBenchmarkResult = staticLiteralType(b.Context(), input, scalarLiteralOnly)
 					} else {
-						literalTypeBenchmarkResult = staticLiteralType(input, literalLedExpression)
+						literalTypeBenchmarkResult = staticLiteralType(b.Context(), input, literalLedExpression)
 					}
 				}
 			})

@@ -60,7 +60,7 @@ func TestStaticAlternativesNeverCollapse(t *testing.T) {
 		scope := typeScope{"v": input}.static(false)
 		checker := staticOperatorChecker{scope: scope}
 		for _, expression := range staticValueConstructors {
-			result, err := checker.check(expression)
+			result, err := checker.check(t.Context(), expression)
 			require.NoError(t, err, "%s for v of %s", expression, name)
 			got := staticAlternativesOf(result)
 			for _, choice := range staticTypeChoices(input.typeName()) {
@@ -68,7 +68,7 @@ func TestStaticAlternativesNeverCollapse(t *testing.T) {
 			}
 		}
 		for _, expression := range staticListConstructors {
-			result, err := checker.check(expression)
+			result, err := checker.check(t.Context(), expression)
 			require.NoError(t, err, "%s for v of %s", expression, name)
 			got := staticAlternativesOf(result)
 			for _, choice := range staticTypeChoices(input.typeName()) {
@@ -77,7 +77,7 @@ func TestStaticAlternativesNeverCollapse(t *testing.T) {
 		}
 	}
 	for expression := range staticCollapsingConstructors {
-		result, err := (staticOperatorChecker{scope: typeScope{"v": staticAlternativeInputs()["Integer or String"]}.static(false)}).check(expression)
+		result, err := (staticOperatorChecker{scope: typeScope{"v": staticAlternativeInputs()["Integer or String"]}.static(false)}).check(t.Context(), expression)
 		require.NoError(t, err, expression)
 		require.Equal(t, "List<T>", result.typeName(), "%s is a documented collapse", expression)
 	}
@@ -101,7 +101,7 @@ func TestStaticCaseTemporalListWidening(t *testing.T) {
 		"CASE WHEN true THEN [duration('PT1S')] ELSE [date()] END": "List<Duration> or List<Date>",
 		"[CASE WHEN true THEN 1.5 ELSE duration('PT1S') END]":      "List<Float> or List<Duration>",
 	} {
-		result, err := checker.check(expression)
+		result, err := checker.check(t.Context(), expression)
 		require.NoError(t, err, expression)
 		require.Equal(t, want, result.typeName(), expression)
 	}

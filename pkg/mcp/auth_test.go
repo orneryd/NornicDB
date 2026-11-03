@@ -520,8 +520,8 @@ func TestAuthMiddlewareValidToken(t *testing.T) {
 	authenticator, _ := auth.NewAuthenticator(authConfig, memoryStorage)
 
 	// Create a user and get a token
-	_, _ = authenticator.CreateUser("testuser", "TestPassword123!", []auth.Role{auth.RoleEditor})
-	tokenResp, _, _ := authenticator.Authenticate("testuser", "TestPassword123!", "", "")
+	_, _ = authenticator.CreateUser(context.Background(), "testuser", "TestPassword123!", []auth.Role{auth.RoleEditor})
+	tokenResp, _, _ := authenticator.Authenticate(context.Background(), "testuser", "TestPassword123!", "", "")
 
 	config := DefaultAuthConfig()
 	config.RateLimitEnabled = false // Disable for this test
@@ -625,8 +625,8 @@ func TestAuthMiddlewareXAPIKeyHeader(t *testing.T) {
 	memoryStorage := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authenticator, _ := auth.NewAuthenticator(authConfig, memoryStorage)
 
-	_, _ = authenticator.CreateUser("apiuser", "ApiPassword123!", []auth.Role{auth.RoleAdmin})
-	tokenResp, _, _ := authenticator.Authenticate("apiuser", "ApiPassword123!", "", "")
+	_, _ = authenticator.CreateUser(context.Background(), "apiuser", "ApiPassword123!", []auth.Role{auth.RoleAdmin})
+	tokenResp, _, _ := authenticator.Authenticate(context.Background(), "apiuser", "ApiPassword123!", "", "")
 
 	config := DefaultAuthConfig()
 	config.RateLimitEnabled = false
@@ -658,8 +658,8 @@ func TestAuthMiddlewareQueryToken(t *testing.T) {
 	memoryStorage := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authenticator, _ := auth.NewAuthenticator(authConfig, memoryStorage)
 
-	_, _ = authenticator.CreateUser("queryuser", "QueryPassword123!", []auth.Role{auth.RoleViewer})
-	tokenResp, _, _ := authenticator.Authenticate("queryuser", "QueryPassword123!", "", "")
+	_, _ = authenticator.CreateUser(context.Background(), "queryuser", "QueryPassword123!", []auth.Role{auth.RoleViewer})
+	tokenResp, _, _ := authenticator.Authenticate(context.Background(), "queryuser", "QueryPassword123!", "", "")
 
 	config := DefaultAuthConfig()
 	config.RateLimitEnabled = false

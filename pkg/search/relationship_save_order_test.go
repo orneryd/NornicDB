@@ -95,7 +95,7 @@ func TestRelationshipEmbeddingCloseJoinsSave(t *testing.T) {
 	unblock()
 	require.NoError(t, <-closed)
 	select {
-	case <-svc.relationshipSearch().done:
+	case <-svc.relationshipSearch().worker.Done():
 	default:
 		t.Fatal("Close did not join the worker")
 	}
@@ -115,7 +115,7 @@ func TestRelationshipEmbeddingSaveRetryKeepsGeneratedVectors(t *testing.T) {
 	svc.SetPersistenceEnabled(true)
 	svc.SetFulltextIndexPath(filepath.Join(dir, "bm25"))
 	svc.EnableRelationshipSearch(embed.embed)
-	edge, err := engine.GetEdge("r1")
+	edge, err := engine.GetEdge(t.Context(), "r1")
 	require.NoError(t, err)
 	svc.IndexRelationship(edge)
 	changed, failed := svc.embedPendingRelationships(context.Background(), svc.relationshipSearch())
@@ -144,7 +144,7 @@ func TestRelationshipEmbeddingSaveDoesNotPublishSupersededVectors(t *testing.T) 
 			svc.SetPersistenceEnabled(true)
 			svc.SetFulltextIndexPath(filepath.Join(t.TempDir(), "bm25"))
 			svc.EnableRelationshipSearch(embed.embed)
-			edge, err := engine.GetEdge("r1")
+			edge, err := engine.GetEdge(t.Context(), "r1")
 			require.NoError(t, err)
 			svc.IndexRelationship(edge)
 			svc.relationshipSearch().beforeSave = func() {
@@ -177,7 +177,7 @@ func TestRelationshipEmbeddingSavesWhileWritesContinue(t *testing.T) {
 		}
 		return RelationshipEmbedding{Vectors: [][]float32{{1, 0, 0}}}, nil
 	})
-	edge, err := engine.GetEdge("r1")
+	edge, err := engine.GetEdge(t.Context(), "r1")
 	require.NoError(t, err)
 	svc.IndexRelationship(edge)
 	changed, failed := svc.embedPendingRelationships(context.Background(), svc.relationshipSearch())

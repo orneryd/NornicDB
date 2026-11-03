@@ -15,11 +15,11 @@ func seedUpdateEdgeMutation(t *testing.T, nodeIDs []string, edgeID string) *Badg
 	require.GreaterOrEqual(t, len(nodeIDs), 2)
 	engine := createTestBadgerEngine(t)
 	for _, id := range nodeIDs {
-		_, err := engine.CreateNode(testNode(id))
+		_, err := engine.CreateNode(t.Context(), testNode(id))
 		require.NoError(t, err, "create node %s", id)
 	}
-	require.NoError(t, engine.CreateEdge(testEdge(edgeID, nodeIDs[0], nodeIDs[1], "KNOWS")))
-	stored, err := engine.GetEdge(EdgeID(prefixTestID(edgeID)))
+	require.NoError(t, engine.CreateEdge(t.Context(), testEdge(edgeID, nodeIDs[0], nodeIDs[1], "KNOWS")))
+	stored, err := engine.GetEdge(t.Context(), EdgeID(prefixTestID(edgeID)))
 	require.NoError(t, err)
 	assert.Equal(t, NodeID(prefixTestID(nodeIDs[0])), stored.StartNode)
 	assert.Equal(t, NodeID(prefixTestID(nodeIDs[1])), stored.EndNode)
@@ -55,14 +55,14 @@ func runUpdateEdgeMutation(t *testing.T, nodeIDs []string, edgeID string, mutati
 // apply performs the declared mutation against engine.
 func (m updateEdgeMutation) apply(engine *BadgerEngine) error {
 	if !m.throughTransaction {
-		return engine.UpdateEdge(EdgeUpdateRequest{After: m.after})
+		return engine.UpdateEdge(context.Background(), EdgeUpdateRequest{After: m.after})
 	}
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(context.Background())
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if err := tx.UpdateEdge(EdgeUpdateRequest{After: m.after}); err != nil {
+	if err := tx.UpdateEdge(context.Background(), EdgeUpdateRequest{After: m.after}); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -90,7 +90,7 @@ const (
 // transaction writes. Key keeps the original NodeID versus string assertion type.
 func assertUpdatedEdgeIndex[Key ~string](t *testing.T, engine *BadgerEngine, kind updatedEdgeIndex, edgeID EdgeID, before, after Key) {
 	t.Helper()
-	stored, err := engine.GetEdge(edgeID)
+	stored, err := engine.GetEdge(t.Context(), edgeID)
 	require.NoError(t, err)
 	value := Key(stored.Type)
 	messages := [3]string{"stored edge must carry the new type", "new type index must contain the edge", "old type index must be emptied"}

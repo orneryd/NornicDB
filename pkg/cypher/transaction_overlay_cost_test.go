@@ -17,11 +17,11 @@ import (
 // must not allocate a shadow map containing every unrelated relationship.
 func TestTransactionOverlayOutgoingCostIsLocal(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	tx, err := base.BeginTransaction()
+	tx, err := base.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	for _, id := range []storage.NodeID{"test:isolated", "test:a", "test:b"} {
-		_, err := tx.CreateNode(&storage.Node{ID: id, Labels: []string{"Link"}})
+		_, err := tx.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"Link"}})
 		require.NoError(t, err)
 	}
 	read := func() {
@@ -32,7 +32,7 @@ func TestTransactionOverlayOutgoingCostIsLocal(t *testing.T) {
 	}
 	before := testing.AllocsPerRun(5, read)
 	for i := 0; i < 5000; i++ {
-		require.NoError(t, tx.CreateEdge(&storage.Edge{
+		require.NoError(t, tx.CreateEdge(t.Context(), &storage.Edge{
 			ID: storage.EdgeID(fmt.Sprintf("test:e%d", i)), StartNode: "test:a", EndNode: "test:b",
 			Type: "LINK", Properties: map[string]interface{}{"weight": float64(i + 1)},
 		}))
@@ -54,7 +54,7 @@ func TestTransactionOverlayCommittedMergeCostIsLocal(t *testing.T) {
 	peer := NewStorageExecutor(storage.NewNamespacedEngine(base, "other"))
 	_, err = peer.Execute(context.Background(), `CREATE (:Probe {id:'42'})`, nil)
 	require.NoError(t, err)
-	tx, err := base.BeginTransaction()
+	tx, err := base.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	wrapper := &transactionStorageWrapper{tx: tx, underlying: store, namespace: "test", separator: ":", mutatedNodeIDs: make(map[string]struct{})}
@@ -206,7 +206,7 @@ func TestTransactionOverlayTemporalEqualityIsNotPruned(t *testing.T) {
 	value := CypherDateTime{Time: time.Date(2026, 1, 2, 3, 4, 5, 42, time.FixedZone("offset", 4500))}
 	_, err := exec.Execute(context.Background(), "CREATE (:TemporalOverlay {at:$at, id:1})", map[string]interface{}{"at": value})
 	require.NoError(t, err)
-	tx, err := base.BeginTransaction()
+	tx, err := base.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer tx.Rollback()
 	wrapper := &transactionStorageWrapper{tx: tx, underlying: store, namespace: "test", separator: ":", mutatedNodeIDs: make(map[string]struct{})}

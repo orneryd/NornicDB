@@ -28,7 +28,7 @@ func combinedUserFixture(t *testing.T) (*Authenticator, *storagefault.MutationFa
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	fault := storagefault.NewMutationFailureEngine(storage.NewNamespacedEngine(base, "system"), "", errRoleMutation, 0, WithStoreTransaction)
 	users := newMutationTestAuthenticator(t, fault)
-	_, err := users.CreateUser("worker", "password123", []Role{RoleViewer})
+	_, err := users.CreateUser(context.Background(), "worker", "password123", []Role{RoleViewer})
 	require.NoError(t, err)
 	return users, fault
 }
@@ -39,10 +39,10 @@ func TestCombinedUserChangeFailureChangesNothing(t *testing.T) {
 			users, fault := combinedUserFixture(t)
 			disabled := kind != "enable"
 			if kind == "enable" {
-				require.NoError(t, users.ChangeUserState("worker", UserDisable))
+				require.NoError(t, users.ChangeUserState(context.Background(), "worker", UserDisable))
 			}
 			before := cloneStoredUser(users.users["worker"])
-			beforeNode, err := fault.Engine.GetNode("user:worker")
+			beforeNode, err := fault.Engine.GetNode(context.Background(), "user:worker")
 			require.NoError(t, err)
 			events := recordAuditEvents(users)
 			ctx := context.Background()
@@ -62,7 +62,7 @@ func TestCombinedUserChangeFailureChangesNothing(t *testing.T) {
 				require.ErrorIs(t, err, errRoleMutation)
 			}
 			require.Equal(t, before, users.users["worker"])
-			node, err := fault.Engine.GetNode("user:worker")
+			node, err := fault.Engine.GetNode(context.Background(), "user:worker")
 			require.NoError(t, err)
 			require.Equal(t, beforeNode, node)
 			require.Empty(t, *events)
@@ -75,7 +75,7 @@ func TestCombinedUserChangePublishesAfterCommit(t *testing.T) {
 	user := users.users["worker"]
 	user.Disabled, user.FailedLogins = true, 3
 	user.LockedUntil = time.Now().Add(time.Hour)
-	require.NoError(t, users.saveUser(user, nil))
+	require.NoError(t, users.saveUser(context.Background(), user, nil))
 	var events []AuditEvent
 	observeStoredUserAudit(t, users, fault.Engine, func(event AuditEvent, node *storage.Node) {
 		require.Equal(t, `["admin"]`, node.Properties["roles"])
@@ -108,7 +108,7 @@ func TestCombinedUserChangeOptionalFields(t *testing.T) {
 func observeStoredUserAudit(t *testing.T, users *Authenticator, engine storage.Engine, observe func(AuditEvent, *storage.Node)) {
 	t.Helper()
 	users.auditLog = func(event AuditEvent) {
-		node, err := engine.GetNode("user:worker")
+		node, err := engine.GetNode(context.Background(), "user:worker")
 		require.NoError(t, err, "audit observes a durably committed record")
 		observe(event, node)
 	}

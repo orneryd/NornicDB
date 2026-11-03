@@ -102,7 +102,7 @@ func ensureBuiltInProceduresRegistered() {
 			})
 		registerBuiltInProcedure("db.index.fulltext.drop", "db.index.fulltext.drop(indexName :: STRING)", localization.CypherProcedureMetadata("db.index.fulltext.drop"), ProcedureModeWrite, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbIndexFulltextDrop(args)
+				return e.callDbIndexFulltextDrop(ctx, args)
 			})
 		registerProcedure(fulltextAnalyzerProcedureSpec(),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
@@ -131,7 +131,7 @@ func ensureBuiltInProceduresRegistered() {
 			})
 		registerBuiltInProcedure("db.index.vector.drop", "db.index.vector.drop(indexName :: STRING)", localization.CypherProcedureMetadata("db.index.vector.drop"), ProcedureModeWrite, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbIndexVectorDrop(args)
+				return e.callDbIndexVectorDrop(ctx, args)
 			})
 
 		registerProcedure(vectorSetterProcedureSpec("db.create.setNodeVectorProperty", "node", "NODE"),
@@ -289,7 +289,7 @@ func ensureBuiltInProceduresRegistered() {
 			})
 		registerBuiltInProcedure("kp.resolve", procedureReturnSignature("kp.resolve(entityId :: STRING = '', labelsCsv :: STRING = '', edgeType :: STRING = '')", kpResolveColumns), localization.CypherProcedureMetadata("kp.resolve"), ProcedureModeRead, 0, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callNornicDbKnowledgePolicyResolve(args)
+				return e.callNornicDbKnowledgePolicyResolve(ctx, args)
 			})
 		registerBuiltInProcedure("kp.deindexStatus", procedureReturnSignature("kp.deindexStatus()", kpDeindexStatusColumns), localization.CypherProcedureMetadata("kp.deindexStatus"), ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
@@ -476,7 +476,7 @@ func ensureBuiltInProceduresRegistered() {
 			})
 		registerBuiltInProcedure("gds.graph.project", procedureReturnSignature("gds.graph.project(graphName :: STRING, nodeProjection :: ANY, relationshipProjection :: ANY, configuration = {} :: MAP)", gdsGraphProjectColumns), localization.CypherProcedureMetadata("gds.graph.project"), ProcedureModeWrite, 3, 4, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callGdsGraphProject(args)
+				return e.callGdsGraphProject(ctx, args)
 			})
 		registerBuiltInProcedure("gds.fastRP.stream", procedureReturnSignature("gds.fastRP.stream(graphName :: STRING, configuration = {} :: MAP)", gdsFastRPStreamColumns), localization.CypherProcedureMetadata("gds.fastRP.stream"), ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {

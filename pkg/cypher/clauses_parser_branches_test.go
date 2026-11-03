@@ -77,10 +77,10 @@ func TestParseUnwindSimpleAssignments_Branches(t *testing.T) {
 	_, ok = parseUnwindWhereClause("WHERE   ")
 	require.False(t, ok)
 
-	clauses, ok := splitUnwindMergeChainClauses("MERGE (n:Node {id: row.id}) SET n.k = row.k")
+	clauses, ok := splitUnwindMergeChainClauses(t.Context(), "MERGE (n:Node {id: row.id}) SET n.k = row.k")
 	require.True(t, ok)
 	require.Len(t, clauses, 2)
-	_, ok = splitUnwindMergeChainClauses("BAD (n)")
+	_, ok = splitUnwindMergeChainClauses(t.Context(), "BAD (n)")
 	require.False(t, ok)
 
 	rel, ok := parseUnwindMergeRelationshipClause("MERGE (a)-[r:REL]->(b)")
@@ -93,7 +93,7 @@ func TestParseUnwindSimpleAssignments_Branches(t *testing.T) {
 	_, ok = parseUnwindMergeRelationshipClause("MERGE (a)-[:REL]->(b)-[:X]->(c)")
 	require.False(t, ok)
 
-	stages, ok := splitUnwindCompoundMutationStages(
+	stages, ok := splitUnwindCompoundMutationStages(t.Context(),
 		"MERGE (a:Node {id: row.id}) WITH $rows AS rows UNWIND rows AS row MERGE (b:Node {id: row.id})",
 		"rows",
 		"row",
@@ -101,7 +101,7 @@ func TestParseUnwindSimpleAssignments_Branches(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, stages, 2)
 
-	_, ok = splitUnwindCompoundMutationStages("MERGE (a:Node {id: row.id})", "rows", "")
+	_, ok = splitUnwindCompoundMutationStages(t.Context(), "MERGE (a:Node {id: row.id})", "rows", "")
 	require.False(t, ok)
 }
 

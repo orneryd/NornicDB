@@ -2,8 +2,9 @@ package resolvers
 
 import (
 	"context"
-	"github.com/orneryd/nornicdb/internal/testutil"
 	"testing"
+
+	"github.com/orneryd/nornicdb/internal/testutil"
 
 	"github.com/orneryd/nornicdb/pkg/graphql/models"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -135,7 +136,7 @@ func TestGraphQLPathOwnerControls(t *testing.T) {
 		engine, err := manager.GetDefaultStorage()
 		require.NoError(t, err)
 		typ := "R`|other"
-		require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "quoted-type-edge", StartNode: storage.NodeID(a.ID), EndNode: storage.NodeID(c.ID), Type: typ}))
+		require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "quoted-type-edge", StartNode: storage.NodeID(a.ID), EndNode: storage.NodeID(c.ID), Type: typ}))
 		p, err := qr.queryShortestPath(ctx, a.ID, c.ID, &one, []string{typ})
 		require.NoError(t, err)
 		require.Len(t, p, 2)

@@ -24,7 +24,7 @@ func requireCypherCoreLocalizedError(t *testing.T, err error, id localization.Me
 
 func TestCypherCoreRepresentativeErrorsHaveTypedIdentityAndExactEnglish(t *testing.T) {
 	t.Run("parser", func(t *testing.T) {
-		_, err := NewParser().Parse("")
+		_, err := NewParser().Parse(t.Context(), "")
 		requireCypherCoreLocalizedError(t, err, "cyphercore.empty_query", "empty query")
 	})
 

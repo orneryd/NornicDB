@@ -15,12 +15,18 @@ import (
 // suppressed, it clears the suppression and deletes any tombstones.
 // The returned bool is true only when the entity transitioned into the
 // suppressed state during this call.
-func (b *BadgerEngine) EnqueueDeindexIfSuppressed(entityID string, isEdge bool) (bool, error) {
+//
+// ctx belongs to the callback that owns the rescore: an accepted access write
+// or decay job passes its own admitted lifetime. ctx owns admission, the
+// buffered-order drain and the score/rewrite preparation; once the publishing
+// update is admitted, the transition, its work item and its publication
+// complete in the store, so a canceled ctx reports no transition.
+func (b *BadgerEngine) EnqueueDeindexIfSuppressed(ctx context.Context, entityID string, isEdge bool) (bool, error) {
 	if !b.decayEnabled {
 		return false, nil
 	}
 
-	write, releaseWrite, err := b.beginEntityWrite(context.Background(), entityID, isEdge, nil)
+	write, releaseWrite, err := b.beginEntityWrite(ctx, entityID, isEdge, nil)
 	if err != nil {
 		return false, err
 	}
@@ -55,7 +61,7 @@ func (b *BadgerEngine) EnqueueDeindexIfSuppressed(entityID string, isEdge bool) 
 		}
 		b.prepareCommitOperations(ops, false)
 	}
-	keys := func() []any {
+	keys := func(preparationContext context.Context) ([]any, error) {
 		if nodeChanged != nil {
 			ops = []Operation{{Type: OpUpdateNode, Node: nodeChanged}}
 		}
@@ -63,7 +69,7 @@ func (b *BadgerEngine) EnqueueDeindexIfSuppressed(entityID string, isEdge bool) 
 			ops = []Operation{{Type: OpUpdateEdge, Edge: edgeChanged}}
 		}
 		capturePublicationOperations(notification, ops)
-		return appendOperationPublicationKeys(nil, nil, ops)
+		return appendOperationPublicationKeys(preparationContext, nil, nil, ops)
 	}
 	err = b.withPublishingUpdate(write.ctx, func(txn *badger.Txn) error {
 		mutation, err := b.evaluateSuppressionInTxn(txn, suppressionEvaluation{id: entityID, isEdge: isEdge})
@@ -72,7 +78,7 @@ func (b *BadgerEngine) EnqueueDeindexIfSuppressed(entityID string, isEdge bool) 
 			becameSuppressed = true
 		}
 		return err
-	}, publish, keys, notification, write.stagePublication)
+	}, publish, keys, notification, nil, write.stagePublication)
 	return becameSuppressed, err
 }
 
@@ -119,7 +125,7 @@ func (b *BadgerEngine) evaluateSuppressionInTxn(txn *badger.Txn, input suppressi
 		err = item.Value(func(val []byte) error {
 			var err error
 			if isEdge {
-				edge, err = b.decodeEdgeBodyByID(val, EdgeID(id))
+				edge, err = b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(EdgeID(id)), val, EdgeID(id))
 			} else {
 				node, err = b.decodeNodeWithEmbeddings(txn, val, NodeID(id))
 			}

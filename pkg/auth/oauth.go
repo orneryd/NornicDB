@@ -36,10 +36,11 @@
 //	state, authURL, err := oauthMgr.GenerateAuthURL("http://localhost:7474")
 //
 //	// Handle callback
-//	user, token, err := oauthMgr.HandleCallback(code, state)
+//	user, token, expiry, err := oauthMgr.HandleCallback(r.Context(), code, state)
 package auth
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -274,7 +275,12 @@ func (m *OAuthManager) GetUserInfo(accessToken string) (_ *OAuthUserInfo, err er
 // HandleCallback handles the OAuth callback, exchanges code for token, gets user info,
 // and creates/updates the NornicDB user account.
 // Returns the user, NornicDB JWT token, and OAuth token expiry time.
-func (m *OAuthManager) HandleCallback(code, state string) (*User, string, time.Time, error) {
+//
+// ctx is the callback request's lifetime and reaches the account write it owns:
+// a canceled callback does not create an account or persist OAuth token
+// metadata. The metadata refresh after a successful account create stays
+// best-effort; the callback reports the account outcome, not that refresh.
+func (m *OAuthManager) HandleCallback(ctx context.Context, code, state string) (*User, string, time.Time, error) {
 	// Validate state
 	if err := m.ValidateState(state); err != nil {
 		return nil, "", time.Time{}, fmt.Errorf("invalid state: %w", err)
@@ -319,7 +325,7 @@ func (m *OAuthManager) HandleCallback(code, state string) (*User, string, time.T
 		// User doesn't exist - create them
 		// Use a random password since OAuth users don't need passwords
 		randomPassword := base64.URLEncoding.EncodeToString([]byte(fmt.Sprintf("%d", time.Now().UnixNano())))
-		user, err = m.authenticator.CreateUser(username, randomPassword, ConvertOAuthRoles(userInfo.Roles))
+		user, err = m.authenticator.CreateUser(ctx, username, randomPassword, ConvertOAuthRoles(userInfo.Roles))
 		if err != nil {
 			return nil, "", time.Time{}, fmt.Errorf("failed to create user: %w", err)
 		}
@@ -343,7 +349,7 @@ func (m *OAuthManager) HandleCallback(code, state string) (*User, string, time.T
 	}
 
 	// Persist OAuth token information to system database
-	if err := m.authenticator.UpdateUser(username, user.Email, oauthMetadata); err != nil {
+	if err := m.authenticator.UpdateUser(ctx, username, user.Email, oauthMetadata); err != nil {
 		// Log error but don't fail - user can still authenticate
 		// Token validation will work from the in-memory cache
 	}

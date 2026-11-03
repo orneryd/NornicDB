@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/envutil"
@@ -39,19 +40,24 @@ type DBStats struct {
 }
 
 // Stats returns current database statistics.
-func (db *DB) Stats() DBStats {
+func (db *DB) Stats(ctx context.Context) (DBStats, error) {
 	stats := DBStats{}
 	db.mu.RLock()
 	st := db.storage
 	db.mu.RUnlock()
-
-	if st != nil {
-		nodeCount, _ := st.NodeCount()
-		edgeCount, _ := st.EdgeCount()
-		stats.NodeCount = nodeCount
-		stats.EdgeCount = edgeCount
+	if st == nil {
+		return stats, nil
 	}
-	return stats
+	nodeCount, err := st.NodeCount(ctx)
+	if err != nil {
+		return DBStats{}, err
+	}
+	edgeCount, err := st.EdgeCount(ctx)
+	if err != nil {
+		return DBStats{}, err
+	}
+	stats.NodeCount, stats.EdgeCount = nodeCount, edgeCount
+	return stats, nil
 }
 
 // SetGPUManager sets the GPU manager for vector search acceleration.
@@ -96,7 +102,7 @@ func (db *DB) GetGPUManager() interface{} {
 // Returns nil if clustering is not enabled or there are too few embeddings.
 func (db *DB) TriggerSearchClustering() error {
 	db.mu.RLock()
-	closed := db.closed
+	closed := db.work.Closing()
 	db.mu.RUnlock()
 	if closed {
 		return ErrClosed
@@ -106,10 +112,7 @@ func (db *DB) TriggerSearchClustering() error {
 		return nil
 	}
 
-	ctx := db.buildCtx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := db.LifetimeContext()
 	db.runClusteringOnceAllDatabases(ctx)
 	return nil
 }
@@ -126,26 +129,20 @@ func (db *DB) TriggerSearchClustering() error {
 // finishes rather than up to an interval later.
 func (db *DB) startClusteringTimer(interval time.Duration) {
 	db.mu.Lock()
-	if db.clusterTicker != nil || db.closed {
+	if db.clusterTicker != nil || !db.work.Enter() {
 		db.mu.Unlock()
 		return
 	}
 	ticker := time.NewTicker(interval)
-	stopCh := make(chan struct{})
 	db.clusterTicker = ticker
-	db.clusterTickerStop = stopCh
-	db.bgWg.Add(1)
 	db.mu.Unlock()
 
-	go func(t *time.Ticker, stop <-chan struct{}) {
-		defer db.bgWg.Done()
+	go func(t *time.Ticker) {
+		defer db.work.Leave()
 		log.Printf("🔬 K-means clustering timer started (interval: %v)", interval)
 
 		// Use buildCtx so clustering stops when DB is closed (e.g. SIGINT/SIGTERM).
-		ctx := db.buildCtx
-		if ctx == nil {
-			ctx = context.Background()
-		}
+		ctx := db.LifetimeContext()
 
 		// Run immediately on startup
 		db.runClusteringOnceAllDatabases(ctx)
@@ -165,7 +162,7 @@ func (db *DB) startClusteringTimer(interval time.Duration) {
 		// Then run on timer
 		for {
 			select {
-			case <-stop:
+			case <-db.work.Context().Done():
 				log.Printf("🔬 K-means clustering timer stopped")
 				return
 			case <-t.C:
@@ -174,25 +171,18 @@ func (db *DB) startClusteringTimer(interval time.Duration) {
 				db.runClusteringAllDatabases(ctx, clusteringGrowthDue(growthRatio), false)
 			}
 		}
-	}(ticker, stopCh)
+	}(ticker)
 }
 
 // stopClusteringTimer stops the k-means clustering timer if running.
 func (db *DB) stopClusteringTimer() {
 	db.mu.Lock()
 	ticker := db.clusterTicker
-	stopCh := db.clusterTickerStop
-	if ticker == nil {
-		db.mu.Unlock()
-		return
-	}
 	db.clusterTicker = nil
-	db.clusterTickerStop = nil
 	db.mu.Unlock()
-
-	ticker.Stop()
-	if stopCh != nil {
-		close(stopCh)
+	// The loop exits on the DB owner's cancellation; Close joins it.
+	if ticker != nil {
+		ticker.Stop()
 	}
 }
 
@@ -248,7 +238,7 @@ type CypherResult struct {
 // ExecuteCypher runs a Cypher query and returns structured results.
 func (db *DB) ExecuteCypher(ctx context.Context, query string, params map[string]interface{}) (*CypherResult, error) {
 	db.mu.RLock()
-	if db.closed {
+	if db.work.Closing() {
 		db.mu.RUnlock()
 		return nil, ErrClosed
 	}
@@ -469,7 +459,7 @@ func (db *DB) ListNodes(ctx context.Context, label string, limit, offset int) ([
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return nil, ErrClosed
 	}
 
@@ -527,11 +517,11 @@ func (db *DB) GetNode(ctx context.Context, id string) (*Node, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return nil, ErrClosed
 	}
 
-	n, err := db.storage.GetNode(storage.NodeID(id))
+	n, err := db.storage.GetNode(ctx, storage.NodeID(id))
 	if err != nil {
 		return nil, ErrNotFound
 	}
@@ -564,7 +554,7 @@ func (db *DB) CreateNodeWithID(ctx context.Context, id string, labels []string, 
 
 func (db *DB) createNode(ctx context.Context, id string, labels []string, properties map[string]interface{}, rejectExisting bool) (*Node, error) {
 	db.mu.RLock()
-	if db.closed {
+	if db.work.Closing() {
 		db.mu.RUnlock()
 		return nil, ErrClosed
 	}
@@ -572,7 +562,7 @@ func (db *DB) createNode(ctx context.Context, id string, labels []string, proper
 	embedQueue := db.embedQueue
 	db.mu.RUnlock()
 	if rejectExisting {
-		if _, err := storageEngine.GetNode(storage.NodeID(id)); err == nil {
+		if _, err := storageEngine.GetNode(ctx, storage.NodeID(id)); err == nil {
 			return nil, localizedError(localization.NornicDBCoreNodeAlreadyExists(id), nil)
 		} else if !errors.Is(err, storage.ErrNotFound) {
 			return nil, err
@@ -591,7 +581,7 @@ func (db *DB) createNode(ctx context.Context, id string, labels []string, proper
 		CreatedAt:  now,
 	}
 
-	actualID, err := storageEngine.CreateNode(node)
+	actualID, err := storageEngine.CreateNode(ctx, node)
 	if err != nil {
 		return nil, err
 	}
@@ -605,7 +595,7 @@ func (db *DB) createNode(ctx context.Context, id string, labels []string, proper
 	// Storage event callbacks still provide eventual consistency for external writers.
 	svc, svcErr := db.GetOrCreateSearchService(db.defaultDatabaseName(), storageEngine)
 	if svcErr == nil && svc != nil {
-		if indexErr := svc.RefreshNode(actualID); indexErr != nil && !db.shouldIgnoreSearchIndexingError(indexErr) {
+		if indexErr := svc.RefreshNode(context.WithoutCancel(ctx), actualID); indexErr != nil && !db.shouldIgnoreSearchIndexingError(indexErr) {
 			return nil, indexErr
 		}
 	}
@@ -621,7 +611,7 @@ func (db *DB) createNode(ctx context.Context, id string, labels []string, proper
 // UpdateNode updates a node's properties.
 func (db *DB) UpdateNode(ctx context.Context, id string, properties map[string]interface{}) (*Node, error) {
 	db.mu.RLock()
-	if db.closed {
+	if db.work.Closing() {
 		db.mu.RUnlock()
 		return nil, ErrClosed
 	}
@@ -629,7 +619,7 @@ func (db *DB) UpdateNode(ctx context.Context, id string, properties map[string]i
 	embedQueue := db.embedQueue
 	db.mu.RUnlock()
 
-	n, err := storageEngine.GetNode(storage.NodeID(id))
+	n, err := storageEngine.GetNode(ctx, storage.NodeID(id))
 	if err != nil {
 		return nil, ErrNotFound
 	}
@@ -658,7 +648,7 @@ func (db *DB) UpdateNode(ctx context.Context, id string, properties map[string]i
 		embeddingutil.InvalidateManagedEmbeddings(n)
 	}
 
-	if err := storageEngine.UpdateNode(storage.NodeUpdateRequest{Before: &before, After: n}); err != nil {
+	if err := storageEngine.UpdateNode(ctx, storage.NodeUpdateRequest{Before: &before, After: n}); err != nil {
 		return nil, err
 	}
 
@@ -671,7 +661,7 @@ func (db *DB) UpdateNode(ctx context.Context, id string, properties map[string]i
 	// Keep search results immediately consistent after updates.
 	svc, svcErr := db.GetOrCreateSearchService(db.defaultDatabaseName(), storageEngine)
 	if svcErr == nil && svc != nil {
-		if indexErr := svc.RefreshNode(n.ID); indexErr != nil && !db.shouldIgnoreSearchIndexingError(indexErr) {
+		if indexErr := svc.RefreshNode(context.WithoutCancel(ctx), n.ID); indexErr != nil && !db.shouldIgnoreSearchIndexingError(indexErr) {
 			return nil, indexErr
 		}
 	}
@@ -690,7 +680,7 @@ func (db *DB) UpdateNode(ctx context.Context, id string, properties map[string]i
 // DeleteNode deletes a node.
 func (db *DB) DeleteNode(ctx context.Context, id string) error {
 	db.mu.RLock()
-	if db.closed {
+	if db.work.Closing() {
 		db.mu.RUnlock()
 		return ErrClosed
 	}
@@ -699,7 +689,7 @@ func (db *DB) DeleteNode(ctx context.Context, id string) error {
 	defaultDB := db.defaultDatabaseName()
 	db.mu.RUnlock()
 
-	if err := storageEngine.DeleteNode(storage.NodeID(id)); err != nil {
+	if err := storageEngine.DeleteNode(ctx, storage.NodeID(id)); err != nil {
 		return err
 	}
 	if embedQueue != nil {
@@ -728,7 +718,7 @@ func (db *DB) ListEdges(ctx context.Context, relType string, limit, offset int) 
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return nil, ErrClosed
 	}
 
@@ -775,11 +765,11 @@ func (db *DB) GetEdge(ctx context.Context, id string) (*GraphEdge, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return nil, ErrClosed
 	}
 
-	e, err := db.storage.GetEdge(storage.EdgeID(id))
+	e, err := db.storage.GetEdge(ctx, storage.EdgeID(id))
 	if err != nil {
 		return nil, ErrNotFound
 	}
@@ -800,7 +790,7 @@ func (db *DB) GetEdgesForNode(ctx context.Context, nodeID string) ([]*GraphEdge,
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return nil, ErrClosed
 	}
 
@@ -847,7 +837,7 @@ func (db *DB) GetEdgesForNode(ctx context.Context, nodeID string) ([]*GraphEdge,
 // CreateEdge creates a new edge.
 func (db *DB) CreateEdge(ctx context.Context, source, target, edgeType string, properties map[string]interface{}) (*GraphEdge, error) {
 	db.mu.RLock()
-	if db.closed {
+	if db.work.Closing() {
 		db.mu.RUnlock()
 		return nil, ErrClosed
 	}
@@ -855,10 +845,10 @@ func (db *DB) CreateEdge(ctx context.Context, source, target, edgeType string, p
 	db.mu.RUnlock()
 
 	// Verify nodes exist
-	if _, err := storageEngine.GetNode(storage.NodeID(source)); err != nil {
+	if _, err := storageEngine.GetNode(ctx, storage.NodeID(source)); err != nil {
 		return nil, localizedError(localization.NornicDBCoreSourceNodeNotFound(), nil)
 	}
-	if _, err := storageEngine.GetNode(storage.NodeID(target)); err != nil {
+	if _, err := storageEngine.GetNode(ctx, storage.NodeID(target)); err != nil {
 		return nil, localizedError(localization.NornicDBCoreTargetNodeNotFound(), nil)
 	}
 
@@ -874,7 +864,7 @@ func (db *DB) CreateEdge(ctx context.Context, source, target, edgeType string, p
 		CreatedAt:  now,
 	}
 
-	if err := storageEngine.CreateEdge(edge); err != nil {
+	if err := storageEngine.CreateEdge(ctx, edge); err != nil {
 		return nil, err
 	}
 
@@ -891,14 +881,14 @@ func (db *DB) CreateEdge(ctx context.Context, source, target, edgeType string, p
 // DeleteEdge deletes an edge.
 func (db *DB) DeleteEdge(ctx context.Context, id string) error {
 	db.mu.RLock()
-	if db.closed {
+	if db.work.Closing() {
 		db.mu.RUnlock()
 		return ErrClosed
 	}
 	storageEngine := db.storage
 	db.mu.RUnlock()
 
-	return storageEngine.DeleteEdge(storage.EdgeID(id))
+	return storageEngine.DeleteEdge(ctx, storage.EdgeID(id))
 }
 
 // SearchResult holds a search result with score.
@@ -995,12 +985,11 @@ func (db *DB) Search(ctx context.Context, query string, labels []string, limit i
 // SearchDatabase is Search over one database: database names it and engine
 // is its storage (the caller has resolved and authorized both).
 func (db *DB) SearchDatabase(ctx context.Context, database string, engine storage.Engine, query string, labels []string, limit int) ([]*SearchResult, error) {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-
-	if db.closed {
-		return nil, ErrClosed
+	ctx, finish, err := db.beginProviderUse(ctx)
+	if err != nil {
+		return nil, err
 	}
+	defer finish()
 
 	svc, err := db.GetOrCreateSearchService(database, engine)
 	if err != nil || svc == nil {
@@ -1042,12 +1031,11 @@ func (db *DB) HybridSearch(ctx context.Context, query string, queryEmbedding []f
 // It is intended for callers that need reproducible retrieval settings, such as
 // offline benchmark runners.
 func (db *DB) HybridSearchWithOptions(ctx context.Context, query string, queryEmbedding []float32, opts *search.SearchOptions) ([]*SearchResult, error) {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-
-	if db.closed {
-		return nil, ErrClosed
+	ctx, finish, err := db.beginProviderUse(ctx)
+	if err != nil {
+		return nil, err
 	}
+	defer finish()
 
 	svc, err := db.GetOrCreateSearchService(db.defaultDatabaseName(), db.storage)
 	if err != nil || svc == nil {
@@ -1077,12 +1065,11 @@ func (db *DB) FindSimilar(ctx context.Context, nodeID string, limit int) ([]*Sea
 // FindSimilarInDatabase is FindSimilar over one database's storage, engine
 // (the caller has resolved and authorized it).
 func (db *DB) FindSimilarInDatabase(ctx context.Context, engine storage.Engine, nodeID string, limit int) ([]*SearchResult, error) {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-
-	if db.closed {
-		return nil, ErrClosed
+	ctx, finish, err := db.beginProviderUse(ctx)
+	if err != nil {
+		return nil, err
 	}
+	defer finish()
 	if limit <= 0 {
 		return nil, localizedError(localization.NornicDBCoreFindSimilarLimitInvalid(), nil)
 	}
@@ -1091,7 +1078,7 @@ func (db *DB) FindSimilarInDatabase(ctx context.Context, engine storage.Engine, 
 	defer releaseProjection()
 
 	// Get target node
-	target, err := engine.GetNode(storage.NodeID(nodeID))
+	target, err := engine.GetNode(ctx, storage.NodeID(nodeID))
 	if err != nil {
 		return nil, ErrNotFound
 	}
@@ -1164,7 +1151,7 @@ func (db *DB) GetLabels(ctx context.Context) ([]string, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return nil, ErrClosed
 	}
 
@@ -1184,7 +1171,7 @@ func (db *DB) GetRelationshipTypes(ctx context.Context) ([]string, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return nil, ErrClosed
 	}
 
@@ -1223,7 +1210,7 @@ func (db *DB) GetIndexes(ctx context.Context) ([]*IndexInfo, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return nil, ErrClosed
 	}
 
@@ -1257,10 +1244,24 @@ func (db *DB) GetIndexes(ctx context.Context) ([]*IndexInfo, error) {
 }
 
 // CreateIndex creates a new index on a label/property combination.
-// Supported types: "property", "fulltext", "vector", "range"
+// Supported types: "property", "btree", "fulltext", "vector", "range"
+//
+// The property and btree types declare the index through the canonical Cypher
+// DDL owner (CREATE INDEX), the same statement a client writes. The
+// declaration and its fill from the stored nodes are staged in one schema
+// transaction and published together at commit, so an equality read that
+// overlaps CreateIndex, and every read after it returns, sees the complete
+// population: the index is either absent (the read scans the label) or filled.
+// Every name is emitted with cyphertext.PrintIdentifier, so a label or
+// property that is not a plain identifier (a dot, comma, backtick or Unicode)
+// keeps its identity.
+//
+// The statement is CREATE INDEX ... IF NOT EXISTS, the canonical duplicate
+// rule: an index that already has this name, or an equivalent index under
+// another name, is left as it is and the call succeeds.
 func (db *DB) CreateIndex(ctx context.Context, label, property, indexType string) error {
 	db.mu.RLock()
-	if db.closed {
+	if db.work.Closing() {
 		db.mu.RUnlock()
 		return ErrClosed
 	}
@@ -1277,7 +1278,11 @@ func (db *DB) CreateIndex(ctx context.Context, label, property, indexType string
 
 	switch strings.ToLower(indexType) {
 	case "property", "btree":
-		return schema.AddPropertyIndex(indexName, label, []string{property})
+		statement := "CREATE INDEX " + cyphertext.PrintIdentifier(indexName, nil, cyphertext.RawSource) +
+			" IF NOT EXISTS FOR (n:" + cyphertext.PrintIdentifier(label, nil, cyphertext.RawSource) +
+			") ON (n." + cyphertext.PrintIdentifier(property, nil, cyphertext.RawSource) + ")"
+		_, err := db.ExecuteCypher(ctx, statement, nil)
+		return err
 	case "fulltext":
 		return schema.AddFulltextIndex(indexName, []string{label}, []string{property}, storage.ConstraintEntityNode)
 	case "vector":
@@ -1317,7 +1322,7 @@ func (db *DB) RebuildTemporalIndexes(ctx context.Context) error {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return ErrClosed
 	}
 	return db.rebuildTemporalIndexesNoLock(ctx)
@@ -1328,7 +1333,7 @@ func (db *DB) PruneTemporalHistory(ctx context.Context, opts storage.TemporalPru
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return 0, ErrClosed
 	}
 	if maint, ok := db.baseStorage.(storage.TemporalMaintenanceEngine); ok {
@@ -1342,7 +1347,7 @@ func (db *DB) RebuildMVCCHeads(ctx context.Context) error {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return ErrClosed
 	}
 	if maint, ok := db.baseStorage.(storage.MVCCMaintenanceEngine); ok {
@@ -1356,7 +1361,7 @@ func (db *DB) PruneMVCCVersions(ctx context.Context, opts storage.MVCCPruneOptio
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return 0, ErrClosed
 	}
 	if maint, ok := db.baseStorage.(storage.MVCCMaintenanceEngine); ok {
@@ -1370,7 +1375,7 @@ func (db *DB) LifecycleStatus() (map[string]interface{}, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return nil, ErrClosed
 	}
 	if lce, ok := db.baseStorage.(storage.MVCCLifecycleEngine); ok {
@@ -1384,7 +1389,7 @@ func (db *DB) TriggerLifecyclePrune(ctx context.Context) error {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return ErrClosed
 	}
 	if lce, ok := db.baseStorage.(storage.MVCCLifecycleEngine); ok {
@@ -1398,7 +1403,7 @@ func (db *DB) PauseLifecycle() error {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return ErrClosed
 	}
 	if lce, ok := db.baseStorage.(storage.MVCCLifecycleEngine); ok {
@@ -1412,7 +1417,7 @@ func (db *DB) ResumeLifecycle() error {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return ErrClosed
 	}
 	if lce, ok := db.baseStorage.(storage.MVCCLifecycleEngine); ok {
@@ -1428,7 +1433,7 @@ func (db *DB) Backup(ctx context.Context, path string) error {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return ErrClosed
 	}
 
@@ -1486,7 +1491,7 @@ const restoreEmbeddingDrainTimeout = 30 * time.Second
 //	err := db.Restore(ctx, "backup-20241201.json")
 func (db *DB) Restore(ctx context.Context, path string) error {
 	db.mu.RLock()
-	if db.closed {
+	if db.work.Closing() {
 		db.mu.RUnlock()
 		return ErrClosed
 	}
@@ -1508,7 +1513,7 @@ func (db *DB) Restore(ctx context.Context, path string) error {
 		}
 		if !isJSON {
 			db.mu.Lock()
-			if db.closed {
+			if db.work.Closing() {
 				db.mu.Unlock()
 				return ErrClosed
 			}
@@ -1563,17 +1568,17 @@ legacyJSONRestore:
 	}
 
 	db.mu.Lock()
-	if db.closed {
+	if db.work.Closing() {
 		db.mu.Unlock()
 		return ErrClosed
 	}
 
 	// Restore nodes
 	for _, node := range backup.Nodes {
-		_, err := db.storage.CreateNode(node)
+		_, err := db.storage.CreateNode(ctx, node)
 		if err != nil {
 			// Try update if node exists
-			if updateErr := db.storage.UpdateNode(storage.NodeUpdateRequest{After: node}); updateErr != nil {
+			if updateErr := db.storage.UpdateNode(ctx, storage.NodeUpdateRequest{After: node}); updateErr != nil {
 				db.mu.Unlock()
 				return localizedError(localization.NornicDBCoreRestoreNodeFailed(string(node.ID), err), err)
 			}
@@ -1582,9 +1587,9 @@ legacyJSONRestore:
 
 	// Restore edges
 	for _, edge := range backup.Edges {
-		if err := db.storage.CreateEdge(edge); err != nil {
+		if err := db.storage.CreateEdge(ctx, edge); err != nil {
 			// Try update if edge exists
-			if updateErr := db.storage.UpdateEdge(storage.EdgeUpdateRequest{After: edge}); updateErr != nil {
+			if updateErr := db.storage.UpdateEdge(ctx, storage.EdgeUpdateRequest{After: edge}); updateErr != nil {
 				db.mu.Unlock()
 				return localizedError(localization.NornicDBCoreRestoreEdgeFailed(string(edge.ID), err), err)
 			}
@@ -1638,10 +1643,7 @@ func (db *DB) restartSearchAfterRestore() {
 		entry := db.searchServices[dbName]
 		db.searchServicesMu.RUnlock()
 		if entry != nil {
-			ctx := db.buildCtx
-			if ctx == nil {
-				ctx = context.Background()
-			}
+			ctx := db.LifetimeContext()
 			db.startSearchIndexBuild(entry, ctx)
 		}
 	} else if err != nil {
@@ -1656,7 +1658,7 @@ func (db *DB) ExportUserData(ctx context.Context, userID, format string) ([]byte
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return nil, ErrClosed
 	}
 
@@ -1771,7 +1773,7 @@ func escapeCSV(s string) string {
 // Uses streaming iteration to avoid loading all nodes into memory.
 func (db *DB) DeleteUserData(ctx context.Context, userID string) error {
 	db.mu.RLock()
-	if db.closed {
+	if db.work.Closing() {
 		db.mu.RUnlock()
 		return ErrClosed
 	}
@@ -1804,7 +1806,7 @@ func (db *DB) DeleteUserData(ctx context.Context, userID string) error {
 // Uses streaming iteration to avoid loading all nodes into memory.
 func (db *DB) AnonymizeUserData(ctx context.Context, userID string) error {
 	db.mu.RLock()
-	if db.closed {
+	if db.work.Closing() {
 		db.mu.RUnlock()
 		return ErrClosed
 	}
@@ -1829,7 +1831,7 @@ func (db *DB) AnonymizeUserData(ctx context.Context, userID string) error {
 
 	// Now update the collected nodes
 	for _, request := range toUpdate {
-		if err := storageEngine.UpdateNode(request); err != nil {
+		if err := storageEngine.UpdateNode(ctx, request); err != nil {
 			return err
 		}
 		if embedQueue != nil {
@@ -1915,7 +1917,7 @@ func (db *DB) searchAfterInitialBuild(ctx context.Context, run func() (*search.S
 		// Both signals can be ready; the wait may report a successful build
 		// even though the caller's context has already ended.
 		switch {
-		case ctx != nil && ctx.Err() != nil:
+		case ctx.Err() != nil:
 			return nil, ctx.Err()
 		case waitErr == nil:
 			response, err = run()

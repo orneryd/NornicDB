@@ -177,7 +177,7 @@ func TestProcedurePrivilegeStoreReadsOnlyItsOwnNodes(t *testing.T) {
 	engine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = engine.Close() })
 	system := storage.NewNamespacedEngine(engine, "system")
-	_, err := system.CreateNode(&storage.Node{
+	_, err := system.CreateNode(context.Background(), &storage.Node{
 		ID:         "4c1e0c2a-generated",
 		Labels:     []string{procedurePrivilegeLabel},
 		Properties: map[string]any{"role": "editor", "procedure": "*", "boosted": true},
@@ -185,10 +185,10 @@ func TestProcedurePrivilegeStoreReadsOnlyItsOwnNodes(t *testing.T) {
 	require.NoError(t, err)
 	store := NewProcedurePrivilegeStore(system)
 	require.NoError(t, store.Grant(ctx, "editor", "db.ping", false, false))
-	granted, err := system.GetNode(procedurePrivilegeNodeID(ProcedurePrivilege{Role: "editor", Procedure: "db.ping"}))
+	granted, err := system.GetNode(context.Background(), procedurePrivilegeNodeID(ProcedurePrivilege{Role: "editor", Procedure: "db.ping"}))
 	require.NoError(t, err)
 	granted.Properties["procedure"], granted.Properties["boosted"] = "*", true
-	require.NoError(t, system.UpdateNode(storage.NodeUpdateRequest{After: granted}))
+	require.NoError(t, system.UpdateNode(context.Background(), storage.NodeUpdateRequest{After: granted}))
 
 	grants, err := store.List(ctx)
 	require.NoError(t, err)

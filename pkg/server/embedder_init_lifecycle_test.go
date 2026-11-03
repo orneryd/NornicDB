@@ -57,14 +57,14 @@ func TestEmbedderInitEndsWithoutInstallingWhenClosed(t *testing.T) {
 				if closer == "server stop" {
 					require.NoError(t, s.Stop(context.Background()))
 					select {
-					case <-s.embedderInitDone:
+					case <-s.embedderInit.Done():
 					default:
 						t.Fatal("embedder initialisation still running after Stop returned")
 					}
 				} else {
 					require.NoError(t, s.db.Close())
 					select {
-					case <-s.embedderInitDone:
+					case <-s.embedderInit.Done():
 					default:
 						t.Fatal("embedder initialisation still running after the database closed")
 					}
@@ -142,7 +142,7 @@ func TestDBCloseJoinsEmbedderInit(t *testing.T) {
 	}
 	require.True(t, constructorReturned.Load())
 	select {
-	case <-s.embedderInitDone:
+	case <-s.embedderInit.Done():
 	default:
 		t.Fatal("embedder initialisation still running after DB.Close returned")
 	}

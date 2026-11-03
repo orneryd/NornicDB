@@ -13,21 +13,21 @@ func BenchmarkResidualCosts(b *testing.B) {
 	b.Run("relationship-body", func(b *testing.B) {
 		engine := benchEngine(b)
 		for _, id := range []NodeID{"test:cost-a", "test:cost-b"} {
-			if _, err := engine.CreateNode(&Node{ID: id}); err != nil {
+			if _, err := engine.CreateNode(b.Context(), &Node{ID: id}); err != nil {
 				b.Fatal(err)
 			}
 		}
 		id := EdgeID("test:cost-edge")
-		if err := engine.CreateEdge(&Edge{ID: id, StartNode: "test:cost-a", EndNode: "test:cost-b", Type: "COST", Properties: map[string]any{"weight": int64(7)}}); err != nil {
+		if err := engine.CreateEdge(b.Context(), &Edge{ID: id, StartNode: "test:cost-a", EndNode: "test:cost-b", Type: "COST", Properties: map[string]any{"weight": int64(7)}}); err != nil {
 			b.Fatal(err)
 		}
-		if _, err := engine.GetStoredEdge(id); err != nil {
+		if _, err := engine.GetStoredEdge(b.Context(), id); err != nil {
 			b.Fatal(err)
 		}
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			edge, err := engine.GetStoredEdge(id)
+			edge, err := engine.GetStoredEdge(b.Context(), id)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -57,7 +57,7 @@ func BenchmarkResidualCosts(b *testing.B) {
 	})
 	b.Run("transaction-metadata", func(b *testing.B) {
 		engine := benchEngine(b)
-		tx, err := engine.BeginTransaction()
+		tx, err := engine.BeginTransaction(b.Context())
 		if err != nil {
 			b.Fatal(err)
 		}

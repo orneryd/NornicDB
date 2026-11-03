@@ -224,16 +224,16 @@ func TestDeletedEntityViewsReplace(t *testing.T) {
 	for _, value := range []interface{}{nilNode, nilEdge, kept, []interface{}{kept, int64(1)},
 		map[string]interface{}{"a": gone}, map[string]interface{}{"_pathResult": nilPath},
 		map[string]interface{}{"_pathResult": PathResult{Nodes: []*storage.Node{kept}}}} {
-		replaced, changed := views.replace(value)
+		replaced, changed := views.replace(t.Context(), value)
 		require.False(t, changed)
 		require.Equal(t, value, replaced)
 	}
-	view, changed := views.replace(edge)
+	view, changed := views.replace(t.Context(), edge)
 	require.True(t, changed)
 	require.Equal(t, &storage.Edge{ID: "e", Type: "R", StartNode: "gone", EndNode: "kept"}, view)
 
 	path := &PathResult{Nodes: []*storage.Node{gone, kept}, Relationships: []*storage.Edge{edge}, Length: 1}
-	replaced, changed := views.replace(map[string]interface{}{"_pathResult": path})
+	replaced, changed := views.replace(t.Context(), map[string]interface{}{"_pathResult": path})
 	require.True(t, changed)
 	parts := replaced.(map[string]interface{})["_pathResult"].(PathResult)
 	require.Equal(t, &storage.Node{ID: "gone"}, parts.Nodes[0])
@@ -241,13 +241,6 @@ func TestDeletedEntityViewsReplace(t *testing.T) {
 	require.Equal(t, storage.EdgeID("e"), parts.Relationships[0].ID)
 	require.Nil(t, parts.Relationships[0].Properties)
 
-	// A path target deletes its nodes and relationships, collected as the
-	// pipeline DELETE collects them.
-	res := &ExecuteResult{Stats: &QueryStats{}}
-	input := &ExecuteResult{Columns: []string{"p"}, Rows: [][]interface{}{{map[string]interface{}{
-		"nodes": []interface{}{gone, "x"}, "rels": []interface{}{edge, int64(1)}}}}}
-	exec.applyDeleteReturnProjection(res, "MATCH p = ()-->() DELETE p RETURN size(nodes(p)) AS n", "p", deleteProjectionInfo{ctx: context.Background(), input: input})
-	require.Equal(t, [][]interface{}{{int64(2)}}, res.Rows)
 }
 
 func TestDeletedEntityEdgeCases(t *testing.T) {

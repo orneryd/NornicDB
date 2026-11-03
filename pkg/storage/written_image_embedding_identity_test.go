@@ -23,22 +23,22 @@ func TestWrittenImageKeepsRuntimeEmbeddingIdentity(t *testing.T) {
 					engine, err := runtimeFixtureOwner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: buffered, WriteBehindInterval: time.Hour}))
 					require.NoError(t, err)
 					t.Cleanup(func() { _ = engine.Close() })
-					_, err = engine.CreateNode(&Node{ID: "test:n", Labels: []string{"N"}, Properties: map[string]any{"v": "old"}})
+					_, err = engine.CreateNode(t.Context(), &Node{ID: "test:n", Labels: []string{"N"}, Properties: map[string]any{"v": "old"}})
 					require.NoError(t, err)
 					updated := make(chan *Node, 4)
 					engine.OnNodeUpdated(func(node *Node) { updated <- node })
-					writer, err := engine.GetNode("test:n")
+					writer, err := engine.GetNode(t.Context(), "test:n")
 					require.NoError(t, err)
 					attempt := NewEmbeddingAttempt(1, 1, writer.EmbeddingRevision(), func() (func(), bool) { return func() {}, true }, func(*Node) {})
 					writer.SetEmbeddingAttempt(attempt)
 					writer.Properties = map[string]any{"v": value}
 					if explicit {
-						tx, err := engine.BeginTransaction()
+						tx, err := engine.BeginTransaction(t.Context())
 						require.NoError(t, err)
-						require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: writer, Policy: ClientNodeEdits}))
+						require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: writer, Policy: ClientNodeEdits}))
 						require.NoError(t, tx.Commit())
 					} else {
-						require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: writer}))
+						require.NoError(t, engine.UpdateNode(t.Context(), NodeUpdateRequest{After: writer}))
 					}
 					select {
 					case node := <-updated:

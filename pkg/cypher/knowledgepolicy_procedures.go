@@ -3,6 +3,7 @@ package cypher
 // Author: declared-list-owners lane (Claude), 2026-10-30: procedure headers are read from their registration.
 
 import (
+	"context"
 	"strconv"
 	"strings"
 
@@ -261,7 +262,7 @@ func parseKnowledgePolicyEntityID(entityID string) (string, knowledgePolicyEntit
 	}
 }
 
-func (e *StorageExecutor) callNornicDbKnowledgePolicyResolve(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callNornicDbKnowledgePolicyResolve(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	entityID, err := optionalStringArg(args, 0)
 	if err != nil {
 		return nil, err
@@ -309,14 +310,14 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyResolve(args []interface{})
 				return nil, localizedError(localization.CypherKnowledgePolicyEntityNotFound(entityID), nil)
 			}
 		}
-		if node, nodeErr := e.storage.GetNode(storage.NodeID(lookupID)); entityKind != knowledgePolicyEntityEdge && nodeErr == nil && node != nil {
+		if node, nodeErr := e.storage.GetNode(ctx, storage.NodeID(lookupID)); entityKind != knowledgePolicyEntityEdge && nodeErr == nil && node != nil {
 			createdNanos := node.CreatedAt.UnixNano()
 			versionNanos := createdNanos
 			if !node.UpdatedAt.IsZero() {
 				versionNanos = node.UpdatedAt.UnixNano()
 			}
 			resolution = scorer.ScoreNode(entityID, node.Labels, loadAccessMeta(e.storage, lookupID), createdNanos, versionNanos, nowNanos)
-		} else if edge, edgeErr := e.storage.GetEdge(storage.EdgeID(lookupID)); entityKind != knowledgePolicyEntityNode && edgeErr == nil && edge != nil {
+		} else if edge, edgeErr := e.storage.GetEdge(ctx, storage.EdgeID(lookupID)); entityKind != knowledgePolicyEntityNode && edgeErr == nil && edge != nil {
 			createdNanos := edge.CreatedAt.UnixNano()
 			versionNanos := createdNanos
 			if !edge.UpdatedAt.IsZero() {

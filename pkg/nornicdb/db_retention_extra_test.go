@@ -107,23 +107,6 @@ func TestInferCategory_DefaultsToUserCategory(t *testing.T) {
 	require.Equal(t, retention.CategoryUser, got)
 }
 
-func TestRetentionContext_FallbackChain(t *testing.T) {
-	// Explicit context wins.
-	type contextKey struct{}
-	want := context.WithValue(context.Background(), contextKey{}, "x")
-	db := &DB{}
-	require.Equal(t, want, db.retentionContext(want))
-
-	// A background context remains unchanged when no build context exists.
-	got := db.retentionContext(context.Background())
-	require.Equal(t, context.Background(), got)
-
-	// An explicit context takes precedence over buildCtx.
-	build := context.WithValue(context.Background(), contextKey{}, "build")
-	db.buildCtx = build
-	require.Equal(t, want, db.retentionContext(want))
-}
-
 func TestRetentionExcludedLabels_TrimWhitespaceAndDropEmpty(t *testing.T) {
 	require.Nil(t, (*DB)(nil).retentionExcludedLabels())
 
@@ -163,11 +146,11 @@ func TestRetentionSweep_ProcessesExpiredAndSkipsExcluded(t *testing.T) {
 	t.Cleanup(func() { _ = engine.Close() })
 	namespaced := storage.NewNamespacedEngine(engine, "nornic")
 	now := time.Now().UTC()
-	_, err := namespaced.CreateNode(&storage.Node{ID: "old", Labels: []string{"User"}, CreatedAt: now.Add(-2 * time.Hour), Properties: map[string]any{"owner_id": "alice"}})
+	_, err := namespaced.CreateNode(t.Context(), &storage.Node{ID: "old", Labels: []string{"User"}, CreatedAt: now.Add(-2 * time.Hour), Properties: map[string]any{"owner_id": "alice"}})
 	require.NoError(t, err)
-	_, err = namespaced.CreateNode(&storage.Node{ID: "recent", Labels: []string{"User"}, CreatedAt: now, Properties: map[string]any{"owner_id": "bob"}})
+	_, err = namespaced.CreateNode(t.Context(), &storage.Node{ID: "recent", Labels: []string{"User"}, CreatedAt: now, Properties: map[string]any{"owner_id": "bob"}})
 	require.NoError(t, err)
-	_, err = namespaced.CreateNode(&storage.Node{ID: "audit", Labels: []string{"AuditLog"}, CreatedAt: now.Add(-2 * time.Hour), Properties: map[string]any{"owner_id": "carol"}})
+	_, err = namespaced.CreateNode(t.Context(), &storage.Node{ID: "audit", Labels: []string{"AuditLog"}, CreatedAt: now.Add(-2 * time.Hour), Properties: map[string]any{"owner_id": "carol"}})
 	require.NoError(t, err)
 
 	manager := retention.NewManager()
@@ -180,9 +163,9 @@ func TestRetentionSweep_ProcessesExpiredAndSkipsExcluded(t *testing.T) {
 		Active: true,
 	}))
 	var deleted []string
-	manager.SetDeleteCallback(func(record *retention.DataRecord) error {
+	manager.SetDeleteCallback(func(ctx context.Context, record *retention.DataRecord) error {
 		deleted = append(deleted, record.ID)
-		return namespaced.DeleteNode(storage.NodeID(record.ID))
+		return namespaced.DeleteNode(t.Context(), storage.NodeID(record.ID))
 	})
 
 	db := &DB{storage: namespaced, baseStorage: engine, config: &Config{}, retentionManager: manager, searchServices: make(map[string]*dbSearchService)}
@@ -191,11 +174,11 @@ func TestRetentionSweep_ProcessesExpiredAndSkipsExcluded(t *testing.T) {
 	db.runRetentionSweep(context.Background())
 
 	require.Equal(t, []string{"old"}, deleted)
-	_, err = namespaced.GetNode("old")
+	_, err = namespaced.GetNode(t.Context(), "old")
 	require.Error(t, err)
-	_, err = namespaced.GetNode("recent")
+	_, err = namespaced.GetNode(t.Context(), "recent")
 	require.NoError(t, err)
-	_, err = namespaced.GetNode("audit")
+	_, err = namespaced.GetNode(t.Context(), "audit")
 	require.NoError(t, err)
 }
 
@@ -203,9 +186,9 @@ func TestRetentionSweep_BudgetAndStartBranches(t *testing.T) {
 	engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = engine.Close() })
 	namespaced := storage.NewNamespacedEngine(engine, "nornic")
-	_, err := namespaced.CreateNode(&storage.Node{ID: "first", Labels: []string{"User"}, CreatedAt: time.Now().Add(-2 * time.Hour), Properties: map[string]any{"owner_id": "alice"}})
+	_, err := namespaced.CreateNode(t.Context(), &storage.Node{ID: "first", Labels: []string{"User"}, CreatedAt: time.Now().Add(-2 * time.Hour), Properties: map[string]any{"owner_id": "alice"}})
 	require.NoError(t, err)
-	_, err = namespaced.CreateNode(&storage.Node{ID: "second", Labels: []string{"User"}, CreatedAt: time.Now().Add(-2 * time.Hour), Properties: map[string]any{"owner_id": "bob"}})
+	_, err = namespaced.CreateNode(t.Context(), &storage.Node{ID: "second", Labels: []string{"User"}, CreatedAt: time.Now().Add(-2 * time.Hour), Properties: map[string]any{"owner_id": "bob"}})
 	require.NoError(t, err)
 
 	manager := retention.NewManager()
@@ -219,8 +202,8 @@ func TestRetentionSweep_BudgetAndStartBranches(t *testing.T) {
 	cancel()
 	db.config.Retention.SweepIntervalSeconds = 1
 	db.startRetentionSweep(canceled)
-	db.bgWg.Wait()
+	waitDBWorkIdle(t, db)
 
-	db.closed = true
+	db.work.CloseAdmission()
 	db.startRetentionSweep(context.Background())
 }

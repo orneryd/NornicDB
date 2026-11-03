@@ -2,7 +2,9 @@ package adminimport
 
 import (
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/orneryd/nornicdb/internal/jsontext"
 
+	"bytes"
 	"context"
 	"encoding/csv"
 	"encoding/json"
@@ -501,14 +503,26 @@ func exportNornicSchemaDefinition(path string, schema *storage.SchemaManager) er
 	if schema == nil {
 		return nil
 	}
-	def := schema.ExportDefinition()
-	if !hasSchemaDefinitionContent(def) {
-		return nil
-	}
-	data, err := json.MarshalIndent(def, "", "  ")
+	// Admin export is an offline operation that owns its own lifetime, so the
+	// definition snapshot runs under it rather than a caller request.
+	def, err := schema.ExportDefinition(context.Background())
 	if err != nil {
 		return err
 	}
+	if !hasSchemaDefinitionContent(def) {
+		return nil
+	}
+	// jsontext.Marshal owns exact string identity; encoding/json.Indent reformats
+	// those valid bytes without decoding, so escaped lone UTF16 units survive.
+	data, err := jsontext.Marshal(def)
+	if err != nil {
+		return err
+	}
+	var indented bytes.Buffer
+	if err := json.Indent(&indented, data, "", "  "); err != nil {
+		return err
+	}
+	data = indented.Bytes()
 	data = append(data, '\n')
 	return os.WriteFile(path, data, 0o600)
 }

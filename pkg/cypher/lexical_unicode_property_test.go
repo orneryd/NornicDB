@@ -32,14 +32,14 @@ func TestLexicalUnicodeBoundaryScanners(t *testing.T) {
 			functions, err := usePropertyFunctions(query)
 			require.NoError(t, err)
 			require.Equal(t, []string{"abs"}, functions)
-			tokens, _, err := tokenizeSource(query, nil)
+			tokens, _, err := tokenizeSource(t.Context(), query, nil)
 			require.NoError(t, err)
 			require.Equal(t, []string{"RETURN", "abs", "(", "-", "1", ")", "AS", "café"}, tokens)
 			for _, keyword := range []string{"RETURN", "ORDER BY", "IS NOT NULL"} {
 				spelling := strings.ReplaceAll(keyword, " ", space)
 				text := "café" + space + spelling + space + "x"
-				require.Equal(t, len("café"+space), keywordIndexFrom(text, keyword, 0, defaultKeywordScanOpts()))
-				require.Negative(t, keywordIndexFrom("café"+spelling+"界", keyword, 0, defaultKeywordScanOpts()))
+				require.Equal(t, len("café"+space), keywordIndexFrom(t.Context(), text, keyword, 0, defaultKeywordScanOpts()))
+				require.Negative(t, keywordIndexFrom(t.Context(), "café"+spelling+"界", keyword, 0, defaultKeywordScanOpts()))
 			}
 			var names []string
 			cyphertext.ParameterReferences("a$b"+space+"$café"+space+"$0", func(name string, _, _ int) { names = append(names, name) })
@@ -152,11 +152,11 @@ func TestUseOwnerGeneratedCacheDependencies(t *testing.T) {
 						}
 						scope, err := manager.StatementCacheScope(selection)
 						require.NoError(t, err)
-						scopes, valid := exec.cacheDependencyScopes(query)
+						scopes, valid := exec.cacheDependencyScopes(t.Context(), query)
 						require.True(t, valid)
 						require.True(t, containsStatementScope(scopes, scope), "selection identity absent for U%04X", gap)
 						require.NoError(t, exec.validateSyntax(t.Context(), query, false, syntaxStatement))
-						exec.cachedUpperQuery(query)
+						exec.cachedUpperQuery(t.Context(), query)
 						require.NotZero(t, exec.cachedSyntaxVerdict(query))
 						exec.ensureUpperQueryCache().mu.RLock()
 						_, warm := exec.ensureUpperQueryCache().cache[query]
@@ -193,7 +193,7 @@ func TestUseOwnerGeneratedCacheDependencies(t *testing.T) {
 						require.NotSame(t, scope, fresh)
 						require.Zero(t, exec.cachedSyntaxVerdict(query))
 						require.NoError(t, exec.validateSyntax(t.Context(), query, false, syntaxStatement))
-						scopes, valid = exec.cacheDependencyScopes(query)
+						scopes, valid = exec.cacheDependencyScopes(t.Context(), query)
 						require.True(t, valid)
 						require.True(t, containsStatementScope(scopes, fresh))
 					}

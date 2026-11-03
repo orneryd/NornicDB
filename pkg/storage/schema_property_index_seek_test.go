@@ -50,7 +50,8 @@ func TestPropertyIndexKeyRangeNarrowsOnlyOneKind(t *testing.T) {
 		{"crossed bounds", index(int64(1), int64(2), int64(3)), PropertyIndexBounds{Lower: int64(3), HasLower: true, LowerInclusive: true, Upper: int64(1), HasUpper: true, UpperInclusive: true}, []interface{}{}, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			keys, narrowed := test.idx.sortedKeyRangeLocked(test.bounds)
+			keys, narrowed, err := test.idx.sortedKeyRangeLocked(t.Context(), test.bounds)
+			require.NoError(t, err)
 			require.Equal(t, test.narrowed, narrowed)
 			if test.keys != nil {
 				require.Equal(t, test.keys, append([]interface{}{}, keys...))
@@ -65,7 +66,7 @@ func TestVisitPropertyIndexGroupsInRange(t *testing.T) {
 	schema := engine.GetSchema()
 	require.NoError(t, schema.AddPropertyIndex("idx_item_t", "Item", []string{"t"}))
 	for i := 0; i < 10; i++ {
-		_, err := engine.CreateNode(&Node{ID: NodeID("nornic:" + string(rune('a'+i))), Labels: []string{"Item"}, Properties: map[string]interface{}{"t": int64(i / 2)}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: NodeID("nornic:" + string(rune('a'+i))), Labels: []string{"Item"}, Properties: map[string]interface{}{"t": int64(i / 2)}})
 		require.NoError(t, err)
 	}
 	bare := func(ids []NodeID) []NodeID {
@@ -77,10 +78,10 @@ func TestVisitPropertyIndexGroupsInRange(t *testing.T) {
 	}
 	groups := func(descending bool, bounds PropertyIndexBounds) [][]NodeID {
 		var out [][]NodeID
-		require.True(t, schema.VisitPropertyIndexGroupsInRange("Item", "t", descending, bounds, func(ids []NodeID) bool {
+		require.True(t, checkedIndexRead[bool](t)(schema.VisitPropertyIndexGroupsInRange(t.Context(), "Item", "t", descending, bounds, func(ids []NodeID) bool {
 			out = append(out, bare(ids))
 			return true
-		}))
+		})))
 		return out
 	}
 	all := groups(false, PropertyIndexBounds{})
@@ -89,14 +90,14 @@ func TestVisitPropertyIndexGroupsInRange(t *testing.T) {
 	require.Equal(t, [][]NodeID{{"g", "h"}, {"e", "f"}}, groups(true, PropertyIndexBounds{Lower: int64(1), HasLower: true, Upper: int64(3), HasUpper: true, UpperInclusive: true}))
 	require.Equal(t, [][]NodeID{{"i", "j"}, {"g", "h"}, {"e", "f"}, {"c", "d"}, {"a", "b"}}, groups(true, PropertyIndexBounds{}))
 	var visited [][]NodeID
-	schema.VisitPropertyIndexGroups("Item", "t", false, func(ids []NodeID) bool {
+	checkedIndexRead[bool](t)(schema.VisitPropertyIndexGroups(t.Context(), "Item", "t", false, func(ids []NodeID) bool {
 		visited = append(visited, bare(ids))
 		return len(visited) < 2
-	})
+	}))
 	require.Equal(t, all[:2], visited)
-	require.False(t, schema.VisitPropertyIndexGroupsInRange("Missing", "t", false, PropertyIndexBounds{}, func([]NodeID) bool { return true }))
+	require.False(t, checkedIndexRead[bool](t)(schema.VisitPropertyIndexGroupsInRange(t.Context(), "Missing", "t", false, PropertyIndexBounds{}, func([]NodeID) bool { return true })))
 
-	ids, ok := schema.PropertyIndexRange("Item", "t", PropertyIndexBounds{Lower: int64(3), HasLower: true, LowerInclusive: true})
+	ids, ok := checkedIndexRange[[]NodeID](t)(schema.PropertyIndexRange(t.Context(), "Item", "t", PropertyIndexBounds{Lower: int64(3), HasLower: true, LowerInclusive: true}))
 	require.True(t, ok)
 	require.Equal(t, []NodeID{"g", "h", "i", "j"}, bare(ids))
 }
@@ -110,7 +111,7 @@ func TestPropertyIndexRangeConcurrentReaders(t *testing.T) {
 	schema := engine.GetSchema()
 	require.NoError(t, schema.AddPropertyIndex("idx_item_t", "Item", []string{"t"}))
 	create := func(i int) error {
-		_, err := engine.CreateNode(&Node{ID: NodeID(fmt.Sprintf("nornic:n%d", i)), Labels: []string{"Item"}, Properties: map[string]interface{}{"t": int64(i)}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("nornic:n%d", i)), Labels: []string{"Item"}, Properties: map[string]interface{}{"t": int64(i)}})
 		return err
 	}
 	for i := 0; i < 200; i++ {
@@ -136,12 +137,12 @@ func TestPropertyIndexRangeConcurrentReaders(t *testing.T) {
 		go func() {
 			defer readers.Done()
 			for i := 0; i < 300; i++ {
-				ids, ok := schema.PropertyIndexRange("Item", "t", PropertyIndexBounds{Lower: int64(10), HasLower: true})
+				ids, ok := checkedIndexRange[[]NodeID](t)(schema.PropertyIndexRange(t.Context(), "Item", "t", PropertyIndexBounds{Lower: int64(10), HasLower: true}))
 				if !ok || len(ids) < 189 {
 					t.Errorf("range read %d ids, ok %v", len(ids), ok)
 					return
 				}
-				schema.PropertyIndexTopK("Item", "t", 5, true)
+				checkedIndexRead[[]NodeID](t)(schema.PropertyIndexTopK(t.Context(), "Item", "t", 5, true))
 			}
 		}()
 	}
@@ -160,15 +161,15 @@ func TestVisitPropertyIndexGroupsInRangeEqualKeysOfTwoTypes(t *testing.T) {
 	schema := engine.GetSchema()
 	require.NoError(t, schema.AddPropertyIndex("idx_item_t", "Item", []string{"t"}))
 	for id, value := range map[string]interface{}{"nornic:a": int64(1), "nornic:b": int64(2), "nornic:c": "2", "nornic:d": int64(3)} {
-		_, err := engine.CreateNode(&Node{ID: NodeID(id), Labels: []string{"Item"}, Properties: map[string]interface{}{"t": value}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: NodeID(id), Labels: []string{"Item"}, Properties: map[string]interface{}{"t": value}})
 		require.NoError(t, err)
 	}
 	for _, descending := range []bool{false, true} {
 		var groups [][]NodeID
-		schema.VisitPropertyIndexGroupsInRange("Item", "t", descending, PropertyIndexBounds{}, func(ids []NodeID) bool {
+		checkedIndexRead[bool](t)(schema.VisitPropertyIndexGroupsInRange(t.Context(), "Item", "t", descending, PropertyIndexBounds{}, func(ids []NodeID) bool {
 			groups = append(groups, append([]NodeID(nil), ids...))
 			return true
-		})
+		}))
 		want := [][]NodeID{{"nornic:a"}, {"nornic:b", "nornic:c"}, {"nornic:d"}}
 		if descending {
 			want = [][]NodeID{{"nornic:d"}, {"nornic:b", "nornic:c"}, {"nornic:a"}}

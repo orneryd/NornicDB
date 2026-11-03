@@ -1,6 +1,9 @@
 package storage
 
-import "reflect"
+import (
+	"context"
+	"reflect"
+)
 
 // constraintCreationValues is the shared duplicate owner for node and
 // relationship constraint backfills. Canonical keys select candidates; actual
@@ -13,20 +16,34 @@ type constraintCreationValue struct {
 	values []interface{}
 }
 
-func (seen constraintCreationValues) add(id string, values []interface{}) (string, bool) {
+func (seen constraintCreationValues) add(ctx context.Context, id string, values []interface{}) (string, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return "", false, err
+	}
 	bucketValues, _ := constraintCreationBucketList(values)
-	key, ok := compositeIndexKeyOf(bucketValues)
+	key, ok, err := compositeIndexKeyOf(ctx, bucketValues)
+	if err != nil {
+		return "", false, err
+	}
 	if !ok {
 		// Keep a bounded candidate bucket for other comparable property values
 		// (e.g. timestamps), rather than turning a large temporal backfill into
 		// an all-pairs scan. Unindexable forms conservatively share one bucket.
 		canonical := make([]interface{}, len(values))
 		for i, value := range bucketValues.([]interface{}) {
-			if part, valid := compositeIndexKeyOf(value); valid {
+			if err := ctx.Err(); err != nil {
+				return "", false, err
+			}
+			if part, valid, err := compositeIndexKeyOf(ctx, value); err != nil {
+				return "", false, err
+			} else if valid {
 				canonical[i] = part
 				continue
 			}
-			part, valid := indexValueKey(value)
+			part, valid, err := indexValueKey(ctx, value)
+			if err != nil {
+				return "", false, err
+			}
 			if !valid {
 				canonical = nil
 				break
@@ -35,26 +52,57 @@ func (seen constraintCreationValues) add(id string, values []interface{}) (strin
 		}
 		key = ""
 		if canonical != nil {
-			key = compositeIndexKey(constraintCompositeKey(canonical))
+			composite, err := NewCompositeKey(ctx, canonical...)
+			if err != nil {
+				return "", false, err
+			}
+			key = compositeIndexKey(composite.Hash)
 		}
 	}
-	for _, prior := range seen[key] {
+	priorValues := seen[key]
+	if len(priorValues) > 0 {
+		// A tuple with a value unequal to itself cannot match any candidate
+		// under the same constraint equality. Keep at most the first such
+		// tuple in its bucket instead of growing a quadratic collision scan.
+		// Distinct ordinary buckets need no extra value traversal.
+		for _, value := range values {
+			if err := ctx.Err(); err != nil {
+				return "", false, err
+			}
+			if !compareValues(value, value) {
+				return "", false, ctx.Err()
+			}
+		}
+	}
+	for _, prior := range priorValues {
+		if err := ctx.Err(); err != nil {
+			return "", false, err
+		}
 		if len(prior.values) != len(values) {
 			continue
 		}
 		equal := true
 		for i, value := range values {
+			if err := ctx.Err(); err != nil {
+				return "", false, err
+			}
 			if !compareValues(prior.values[i], value) {
 				equal = false
 				break
 			}
 		}
 		if equal {
-			return prior.id, true
+			if err := ctx.Err(); err != nil {
+				return "", false, err
+			}
+			return prior.id, true, nil
 		}
 	}
-	seen[key] = append(seen[key], constraintCreationValue{id: id, values: values})
-	return "", false
+	if err := ctx.Err(); err != nil {
+		return "", false, err
+	}
+	seen[key] = append(priorValues, constraintCreationValue{id: id, values: values})
+	return "", false, nil
 }
 
 // Property indexes deliberately do not index byte arrays. DDL uniqueness,

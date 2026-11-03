@@ -17,7 +17,10 @@ func BenchmarkEntityAuthorityFootprint(b *testing.B) {
 				endpoints = append(endpoints, NodeID(fmt.Sprintf("test:s%d", i)), NodeID(fmt.Sprintf("test:t%d", i)))
 				edges = append(edges, EdgeID(fmt.Sprintf("test:e%d", i)))
 			}
-			keys := entityCommitKeys(nil, edges, endpoints)
+			keys, keyErr := entityCommitKeys(b.Context(), nil, edges, endpoints)
+			if keyErr != nil {
+				b.Fatal(keyErr)
+			}
 			sm := NewSchemaManager()
 			b.ReportAllocs()
 			b.ResetTimer()

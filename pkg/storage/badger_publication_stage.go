@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"sync"
 )
 
@@ -231,23 +232,32 @@ type publicationUniqueKey struct {
 // view is the commit's captured constraint metadata. It supplies every rule
 // this reads and takes no lock, so late derivation from a restored operation
 // never waits on the schema while the caller may hold the commit gate.
-func appendNodePublicationKeys(keys []any, view *publicationConstraintView, id NodeID, old, written *Node) []any {
+func appendNodePublicationKeys(ctx context.Context, keys []any, view *publicationConstraintView, id NodeID, old, written *Node) ([]any, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	keys = append(keys, id)
 	keys = append(keys, AffectedFact{NodeID: id, Deleted: written == nil})
 	for _, image := range []*Node{old, written} {
 		if image != nil {
 			for _, label := range image.Labels {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
 				keys = append(keys, AffectedFact{NodeID: id, Label: label, Before: image == old, Deleted: written == nil})
 			}
 		}
 	}
 	if view == nil || view.nodeRules == 0 {
-		return keys
+		return keys, nil
 	}
 	namespace := namespaceForNodeID(id)
 	// The rules are walked here, not in a callback: a rule is then addressed
 	// through its index and its strings are never copied into a closure.
 	for i := -1; i < len(view.rest); i++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		rule := view.ruleAt(i)
 		if rule.empty() || rule.kind != ConstraintEntityNode {
 			continue
@@ -263,7 +273,12 @@ func appendNodePublicationKeys(keys []any, view *publicationConstraintView, id N
 			if !ok {
 				continue
 			}
-			key, keyed := indexValueKey(value)
+			// Dependency preparation follows the caller-selected publication phase:
+			// a plain request may cancel; accepted completion is detached.
+			key, keyed, err := indexValueKey(ctx, value)
+			if err != nil {
+				return nil, err
+			}
 			if !keyed {
 				continue
 			}
@@ -274,13 +289,16 @@ func appendNodePublicationKeys(keys []any, view *publicationConstraintView, id N
 			previous, havePrevious = dependency, true
 		}
 	}
-	return keys
+	return keys, nil
 }
 
 // appendEdgePublicationKeys appends the keys a publication of an edge write
 // is ordered on: the edge, and the relationship-uniqueness values old and
 // written hold. view supplies every rule, as for nodes.
-func appendEdgePublicationKeys(keys []any, view *publicationConstraintView, id EdgeID, old, written *Edge) []any {
+func appendEdgePublicationKeys(ctx context.Context, keys []any, view *publicationConstraintView, id EdgeID, old, written *Edge) ([]any, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	keys = append(keys, id)
 	keys = append(keys, AffectedFact{EdgeID: id, Deleted: written == nil})
 	for _, image := range []*Edge{old, written} {
@@ -289,10 +307,13 @@ func appendEdgePublicationKeys(keys []any, view *publicationConstraintView, id E
 		}
 	}
 	if view == nil {
-		return keys
+		return keys, nil
 	}
 	namespace := namespaceForEdgeID(id)
 	for i := -1; i < len(view.rest); i++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		rule := view.ruleAt(i)
 		if rule.empty() || rule.kind != ConstraintEntityRelationship {
 			continue
@@ -307,48 +328,70 @@ func appendEdgePublicationKeys(keys []any, view *publicationConstraintView, id E
 				single := [1]string{rule.property}
 				properties = single[:]
 			}
-			values, ok := relationshipConstraintValueKeys(properties, edge.Properties, true)
+			values, ok, err := relationshipConstraintValueKeys(ctx, properties, edge.Properties, true)
+			if err != nil {
+				return nil, err
+			}
 			if !ok || len(values) == 0 {
 				continue
 			}
 			var key interface{} = values[0]
 			if len(values) > 1 {
-				key = NewCompositeKey(values...).Hash
+				// Digest preparation uses the same phase lifetime. A canceled plain
+				// request returns an error and publishes no partial dependency set.
+				composite, err := NewCompositeKey(ctx, values...)
+				if err != nil {
+					return nil, err
+				}
+				key = composite.Hash
 			}
 			keys = append(keys, publicationUniqueKey{namespace, uniqueConstraintLockKey{label: label, property: rule.propertyKey, value: key}})
 		}
 	}
-	return keys
+	return keys, nil
 }
 
 // appendOperationPublicationKeys appends the keys of a commit's operations:
 // every node and edge they write, edges a node delete removed, and the unique
 // values they free and take.
-func appendOperationPublicationKeys(keys []any, view *publicationConstraintView, ops []Operation) []any {
+func appendOperationPublicationKeys(ctx context.Context, keys []any, view *publicationConstraintView, ops []Operation) ([]any, error) {
+	var err error
 	for _, op := range ops {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		switch op.Type {
 		case OpCreateNode, OpUpdateNode:
 			if op.Node != nil {
-				keys = appendNodePublicationKeys(keys, view, op.Node.ID, op.OldNode, op.Node)
+				keys, err = appendNodePublicationKeys(ctx, keys, view, op.Node.ID, op.OldNode, op.Node)
 			}
 		case OpDeleteNode:
-			keys = appendNodePublicationKeys(keys, view, op.NodeID, op.OldNode, nil)
+			keys, err = appendNodePublicationKeys(ctx, keys, view, op.NodeID, op.OldNode, nil)
 			for _, edgeID := range op.DeletedEdgeIDs {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
 				keys = append(keys, edgeID)
 				keys = append(keys, AffectedFact{EdgeID: edgeID, Deleted: true})
 			}
 			for _, fact := range op.DeletedEdgeFacts {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
 				keys = append(keys, fact)
 			}
 		case OpCreateEdge, OpUpdateEdge:
 			if op.Edge != nil {
-				keys = appendEdgePublicationKeys(keys, view, op.Edge.ID, op.OldEdge, op.Edge)
+				keys, err = appendEdgePublicationKeys(ctx, keys, view, op.Edge.ID, op.OldEdge, op.Edge)
 			}
 		case OpDeleteEdge:
-			keys = appendEdgePublicationKeys(keys, view, op.EdgeID, op.OldEdge, nil)
+			keys, err = appendEdgePublicationKeys(ctx, keys, view, op.EdgeID, op.OldEdge, nil)
+		}
+		if err != nil {
+			return nil, err
 		}
 	}
-	return keys
+	return keys, nil
 }
 
 var (

@@ -18,13 +18,13 @@ const edgeBetweenSelfHealMaxEdges = 64
 
 // GetFirstNodeByLabel returns the first node with the specified label.
 // This is optimized for MATCH...LIMIT 1 patterns - stops after first match.
-func (b *BadgerEngine) GetFirstNodeByLabel(label string) (*Node, error) {
-	return b.GetFirstNodeByLabelInScope("", label)
+func (b *BadgerEngine) GetFirstNodeByLabel(ctx context.Context, label string) (*Node, error) {
+	return b.GetFirstNodeByLabelInScope(ctx, "", label)
 }
 
 // GetFirstNodeByLabelInScope is GetFirstNodeByLabel within one database
 // (ScopedLabelNodeReader).
-func (b *BadgerEngine) GetFirstNodeByLabelInScope(scope, label string) (*Node, error) {
+func (b *BadgerEngine) GetFirstNodeByLabelInScope(ctx context.Context, scope, label string) (*Node, error) {
 	if err := b.pendingPrefixConflict(scope); err != nil {
 		return nil, err
 	}
@@ -32,11 +32,10 @@ func (b *BadgerEngine) GetFirstNodeByLabelInScope(scope, label string) (*Node, e
 	var node *Node
 	if b.writeBehind != nil {
 		// Share the overlay's shadowing and current-label decisions with the
-		// ordinary stream, while stopping after its first visible node. This
-		// unchanged first-row read has no caller context: context.Background is
-		// the true lifetime at that context-free entry point, not a forwarded
-		// default, and the stream stops on its first row anyway.
-		err := b.StreamNodesByLabelProjectedInScope(context.Background(), scope, label, nil, func(first *Node) error {
+		// ordinary stream, while stopping after its first visible node. The
+		// caller's context ends the first-row wait; the stream stops on its
+		// first row anyway.
+		err := b.StreamNodesByLabelProjectedInScope(ctx, scope, label, nil, func(first *Node) error {
 			node = first
 			return ErrIterationStopped
 		})
@@ -47,11 +46,14 @@ func (b *BadgerEngine) GetFirstNodeByLabelInScope(scope, label string) (*Node, e
 	}
 	nowNanos := DecayScoringTime()
 	err := b.withView(func(txn *badger.Txn) error {
-		it := b.newNodeIndexReader(txn, scope, labelIndexPrefix(label), "")
+		it, err := b.newLabelIndexReader(ctx, txn, scope, label, "", visibleRead, false)
+		if err != nil {
+			return err
+		}
 		defer it.Close()
 
 		for it.Next() {
-			indexKey := it.Item().KeyCopy(nil)
+			indexKey := it.IndexKey()
 			nodeID := it.NodeID()
 
 			if b.decayEnabled && !b.revealAll.Load() && hasIndexTombstone(txn, indexKey) {
@@ -128,7 +130,11 @@ func (b *BadgerEngine) ForEachNodeIDByLabelInScope(ctx context.Context, scope, l
 
 	labelGen := b.labelFirstCacheGen.current()
 	err := b.withView(func(txn *badger.Txn) error {
-		if cachedOK && cachedID != "" {
+		ready, err := b.labelIndexReadyInTxn(txn)
+		if err != nil {
+			return err
+		}
+		if ready && cachedOK && cachedID != "" {
 			cachedKey := b.labelIndexKeyStringLookup(label, cachedID)
 			if cachedKey == nil {
 				labelGen = b.labelCacheDropStaleFirst(labelGen, label, cachedID)
@@ -148,12 +154,15 @@ func (b *BadgerEngine) ForEachNodeIDByLabelInScope(ctx context.Context, scope, l
 			}
 		}
 
-		it := b.newNodeIndexReader(txn, scope, labelIndexPrefix(label), "")
+		it, err := b.newLabelIndexReader(ctx, txn, scope, label, "", visibleRead, false)
+		if err != nil {
+			return err
+		}
 		defer it.Close()
 
 		checkTombstones := b.decayEnabled && !b.revealAll.Load()
 		for it.Next() {
-			indexKey := it.Item().KeyCopy(nil)
+			indexKey := it.IndexKey()
 			nodeID := it.NodeID()
 			if cachedValid && nodeID == cachedID {
 				continue
@@ -214,7 +223,7 @@ func (b *BadgerEngine) getNodesByLabelInScope(ctx context.Context, scope, label 
 	checkTombstones := b.checksIndexTombstones(v)
 	var cancel bulkReadCancellation
 	var captureErr error
-	err := b.withReadView(func(w *WriteBehindBuffer) {
+	err := b.withReadView(ctx, func(w *WriteBehindBuffer) {
 		pendingNodes, err := b.readBufferedEntities(ctx, w, v, bufferedEntityRead{kind: bufferedLabel, label: label, prefix: scope})
 		if err != nil {
 			captureErr = err
@@ -228,14 +237,17 @@ func (b *BadgerEngine) getNodesByLabelInScope(ctx context.Context, scope, label 
 		sourceTs = txn.ReadTs()
 		nodes = nil
 		loaded = nil
-		it := b.newNodeIndexReader(txn, scope, labelIndexPrefix(label), "")
+		it, err := b.newLabelIndexReader(ctx, txn, scope, label, "", v, false)
+		if err != nil {
+			return err
+		}
 		defer it.Close()
 
 		for it.Next() {
 			if err := cancel.check(ctx); err != nil {
 				return err
 			}
-			indexKey := it.Item().KeyCopy(nil)
+			indexKey := it.IndexKey()
 			nodeID := it.NodeID()
 
 			if checkTombstones && hasIndexTombstone(txn, indexKey) {
@@ -367,7 +379,7 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 	// LIMIT-stopped scan.
 	var covers bool
 	coversDecided := false
-	err := b.withReadView(capture, func(txn *badger.Txn) error {
+	err := b.withReadView(ctx, capture, func(txn *badger.Txn) error {
 		if captureErr != nil {
 			return captureErr // the canceled capture retires the scan
 		}
@@ -418,7 +430,10 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 			err  error
 		}
 		var pending []pendingNode
-		it := b.newNodeIndexReader(txn, scope, labelIndexPrefix(label), "")
+		it, err := b.newLabelIndexReader(ctx, txn, scope, label, "", v, false)
+		if err != nil {
+			return err
+		}
 		defer it.Close()
 		lookups := 0
 		var cancel bulkReadCancellation
@@ -426,14 +441,18 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 			if err := cancel.check(ctx); err != nil {
 				return err
 			}
-			indexKey := it.Item().KeyCopy(nil)
+			indexKey := it.IndexKey()
 			nodeID := it.NodeID()
 			if checkTombstones && hasIndexTombstone(txn, indexKey) {
 				continue
 			}
 
 			if !coversDecided && lookups >= labelScanPointLookups {
-				covers = b.labelCoversScope(scope, label)
+				var err error
+				covers, err = b.labelCoversScope(ctx, scope, label)
+				if err != nil {
+					return err
+				}
 				coversDecided = true
 			}
 			if pending != nil || (covers && lookups >= labelScanPointLookups) {
@@ -471,7 +490,7 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 			ids = append(ids, entry.id)
 			positions[entry.id] = index
 		}
-		if err := readNodeRecordsInOnePass(txn, scope, ids, func(nodeID NodeID, item *badger.Item) error {
+		if err := readNodeRecordsInOnePass(ctx, txn, scope, ids, func(nodeID NodeID, item *badger.Item) error {
 			index := positions[nodeID]
 			pending[index].node, pending[index].err = readItem(nodeID, item)
 			// Report record errors in visit order, so an early stop does not
@@ -589,7 +608,7 @@ func (b *BadgerEngine) AllNodes(ctx context.Context) ([]*Node, error) {
 	}
 	nowNanos := DecayScoringTime()
 	gen := b.nodeCacheGen.current()
-	err := b.withReadView(capture, func(txn *badger.Txn) error {
+	err := b.withReadView(ctx, capture, func(txn *badger.Txn) error {
 		if captureErr != nil {
 			return captureErr // the canceled capture retires the scan and its caches
 		}
@@ -683,7 +702,7 @@ func (b *BadgerEngine) allEdges(ctx context.Context, v readVisibility) ([]*Edge,
 		overlay, touched = pendingEdges.edges, pendingEdges.edgesTouched
 	}
 	nowNanos := DecayScoringTime()
-	err := b.withReadView(capture, func(txn *badger.Txn) error {
+	err := b.withReadView(ctx, capture, func(txn *badger.Txn) error {
 		if captureErr != nil {
 			return captureErr // the canceled capture retires the scan
 		}
@@ -707,7 +726,7 @@ func (b *BadgerEngine) allEdges(ctx context.Context, v readVisibility) ([]*Edge,
 			var edge *Edge
 			if err := it.Item().Value(func(val []byte) error {
 				var decodeErr error
-				edge, decodeErr = b.decodeEdgeBodyByID(val, edgeID)
+				edge, decodeErr = b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), val, edgeID)
 				return decodeErr
 			}); err != nil {
 				return err
@@ -778,7 +797,7 @@ func (b *BadgerEngine) getEdgesByType(ctx context.Context, edgeType string, v re
 	nowNanos := DecayScoringTime()
 	gen := b.edgeTypeCacheGen.current()
 	var captureErr error
-	err := b.withReadView(func(w *WriteBehindBuffer) {
+	err := b.withReadView(ctx, func(w *WriteBehindBuffer) {
 		pendingEdges, err := b.readBufferedEntities(ctx, w, v, bufferedEntityRead{kind: bufferedType, edgeType: edgeType})
 		if err != nil {
 			captureErr = err
@@ -828,7 +847,7 @@ func (b *BadgerEngine) getEdgesByType(ctx context.Context, edgeType string, v re
 			var edge *Edge
 			if err := item.Value(func(val []byte) error {
 				var decodeErr error
-				edge, decodeErr = b.decodeEdgeBodyByID(val, edgeID)
+				edge, decodeErr = b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), val, edgeID)
 				return decodeErr
 			}); err != nil {
 				return err
@@ -935,11 +954,17 @@ func (b *BadgerEngine) readNodeBatch(ctx context.Context, ids []NodeID, embeddin
 		copyForRead = copyNode
 	}
 	now := DecayScoringTime()
+	// Author: storage-format-owners lane (Codex), 1 November 2026.
+	// One bounded poll follows the batch through selection and caller copying.
+	var cancel bulkReadCancellation
 	cached := func(w *WriteBehindBuffer) (bool, error) {
 		clear(result)
 		b.nodeCacheMu.RLock()
 		defer b.nodeCacheMu.RUnlock()
 		for _, id := range ids {
+			if err := cancel.check(ctx); err != nil {
+				return false, err
+			}
 			if id == "" {
 				continue
 			}
@@ -967,8 +992,13 @@ func (b *BadgerEngine) readNodeBatch(ctx context.Context, ids []NodeID, embeddin
 	gen := b.nodeCacheGen.current()
 	var loaded []*Node
 	var current bool
-	err := b.withReadView(func(w *WriteBehindBuffer) {
+	var captureErr error
+	err := b.withReadView(ctx, func(w *WriteBehindBuffer) {
 		for _, id := range ids {
+			if err := cancel.check(ctx); err != nil {
+				captureErr = err
+				return
+			}
 			if state := w.entityStateLocked(bufferedNodeEntity, string(id), bufferedReadVisibility{engine: b, visibility: visibleRead}); state.found {
 				if states == nil {
 					states = make(map[NodeID]bufferedEntityState)
@@ -977,10 +1007,16 @@ func (b *BadgerEngine) readNodeBatch(ctx context.Context, ids []NodeID, embeddin
 			}
 		}
 	}, func(txn *badger.Txn) error {
+		if captureErr != nil {
+			return captureErr
+		}
 		sourceTs = txn.ReadTs()
 		clear(result)
 		loaded = nil
 		for _, id := range ids {
+			if err := cancel.check(ctx); err != nil {
+				return err
+			}
 			if id == "" {
 				continue
 			}
@@ -1026,7 +1062,13 @@ func (b *BadgerEngine) readNodeBatch(ctx context.Context, ids []NodeID, embeddin
 	// Selection completes at the captured view. Copy its immutable bodies
 	// afterwards, once, outside the buffer and cache locks.
 	for id, node := range result {
+		if err := cancel.check(ctx); err != nil {
+			return nil, err
+		}
 		result[id] = copyForRead(node)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	for _, node := range loaded {
 		b.cacheFillNode(gen, node, nodeReadCacheFull, sourceTs)
@@ -1037,13 +1079,16 @@ func (b *BadgerEngine) readNodeBatch(ctx context.Context, ids []NodeID, embeddin
 // HasLabelBatch checks label membership for a batch of node IDs using the label index.
 // This avoids decoding node records and is significantly faster for large batches.
 func (b *BadgerEngine) HasLabelBatch(ids []NodeID, label string) (map[NodeID]bool, error) {
+	// This context-free owner has no request cancellation; its read capture
+	// shares the synchronous operation's lifetime.
+
 	if len(ids) == 0 {
 		return make(map[NodeID]bool), nil
 	}
 
 	var states map[NodeID]bufferedEntityState
 	result := make(map[NodeID]bool, len(ids))
-	err := b.withReadView(func(w *WriteBehindBuffer) {
+	err := b.withReadView(context.Background(), func(w *WriteBehindBuffer) {
 		for _, id := range ids {
 			if state := w.entityStateLocked(bufferedNodeEntity, string(id), bufferedReadVisibility{engine: b, visibility: storedRead}); state.found {
 				if states == nil {
@@ -1154,7 +1199,7 @@ func (b *BadgerEngine) materializeAdjEdges(ctx context.Context, ids []EdgeID, v 
 			var edge *Edge
 			if err := item.Value(func(val []byte) error {
 				var decodeErr error
-				edge, decodeErr = b.decodeEdgeBodyByID(val, id)
+				edge, decodeErr = b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(id), val, id)
 				return decodeErr
 			}); err != nil {
 				return err
@@ -1217,16 +1262,21 @@ func (b *BadgerEngine) collectEdgesByIndexPrefix(txn *badger.Txn, prefix []byte,
 // entries' values, each a copy of the relationship record's compact header
 // (adjacencyValueFromRecord). An entry without one, such as one written
 // before the values existed, is answered from the relationship record.
-func (b *BadgerEngine) OutgoingEdgeHeaders(nodeID NodeID) ([]*Edge, bool, error) {
-	return b.edgeHeaders(nodeID, true)
+func (b *BadgerEngine) OutgoingEdgeHeaders(ctx context.Context, nodeID NodeID) ([]*Edge, bool, error) {
+	return b.edgeHeaders(ctx, nodeID, true)
 }
 
 // IncomingEdgeHeaders is the incoming-side OutgoingEdgeHeaders.
-func (b *BadgerEngine) IncomingEdgeHeaders(nodeID NodeID) ([]*Edge, bool, error) {
-	return b.edgeHeaders(nodeID, false)
+func (b *BadgerEngine) IncomingEdgeHeaders(ctx context.Context, nodeID NodeID) ([]*Edge, bool, error) {
+	return b.edgeHeaders(ctx, nodeID, false)
 }
 
-func (b *BadgerEngine) edgeHeaders(nodeID NodeID, outgoing bool) ([]*Edge, bool, error) {
+func (b *BadgerEngine) edgeHeaders(ctx context.Context, nodeID NodeID, outgoing bool) ([]*Edge, bool, error) {
+	// ctx is the caller's read context: it owns admission and the read capture,
+	// so a canceled traversal never answers with a header set.
+	if err := ctx.Err(); err != nil {
+		return nil, true, err
+	}
 	if err := b.pendingNamespaceConflict(namespaceForNodeID(nodeID)); err != nil {
 		return nil, true, err
 	}
@@ -1245,11 +1295,11 @@ func (b *BadgerEngine) edgeHeaders(nodeID NodeID, outgoing bool) ([]*Edge, bool,
 		var suppressed map[EdgeID]struct{}
 		var nodeDeleted bool
 		var captureErr error
-		view, err := b.captureReadView(func(w *WriteBehindBuffer) {
+		view, err := b.captureReadView(ctx, func(w *WriteBehindBuffer) {
 			// Header reads keep their existing public API (no caller context):
 			// context.Background is the true lifetime at this context-free
 			// boundary.
-			pendingAdjacency, err := b.readBufferedEntities(context.Background(), w, visibleRead, bufferedEntityRead{kind: bufferedAdjacency, source: nodeID, outgoing: outgoing})
+			pendingAdjacency, err := b.readBufferedEntities(ctx, w, visibleRead, bufferedEntityRead{kind: bufferedAdjacency, source: nodeID, outgoing: outgoing})
 			if err != nil {
 				captureErr = err
 				return
@@ -1267,7 +1317,7 @@ func (b *BadgerEngine) edgeHeaders(nodeID NodeID, outgoing bool) ([]*Edge, bool,
 		if nodeDeleted {
 			return nil, true, nil
 		}
-		committed, answered, err := b.edgeHeadersCommitted(nodeID, outgoing, view.withView)
+		committed, answered, err := b.edgeHeadersCommitted(ctx, nodeID, outgoing, view.withView)
 		if err != nil || !answered {
 			return committed, answered, err
 		}
@@ -1287,14 +1337,10 @@ func (b *BadgerEngine) edgeHeaders(nodeID NodeID, outgoing bool) ([]*Edge, bool,
 		}
 		return committed, true, nil
 	}
-	return b.edgeHeadersCommitted(nodeID, outgoing)
+	return b.edgeHeadersCommitted(ctx, nodeID, outgoing)
 }
 
-func (b *BadgerEngine) edgeHeadersCommitted(nodeID NodeID, outgoing bool, views ...func(func(*badger.Txn) error) error) ([]*Edge, bool, error) {
-	withView := b.withView
-	if len(views) > 0 {
-		withView = views[0]
-	}
+func (b *BadgerEngine) edgeHeadersCommitted(ctx context.Context, nodeID NodeID, outgoing bool, views ...func(context.Context, func(*badger.Txn) error) error) ([]*Edge, bool, error) {
 	if nodeID == "" {
 		return nil, true, ErrInvalidID
 	}
@@ -1308,7 +1354,7 @@ func (b *BadgerEngine) edgeHeadersCommitted(nodeID NodeID, outgoing bool, views 
 	}
 	var edges []*Edge
 	edgeGen := b.edgeCacheGen.current()
-	err := withView(func(txn *badger.Txn) error {
+	read := func(txn *badger.Txn) error {
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
 		for it.Rewind(); it.Valid(); it.Next() {
@@ -1341,7 +1387,13 @@ func (b *BadgerEngine) edgeHeadersCommitted(nodeID NodeID, outgoing bool, views 
 			}
 		}
 		return nil
-	})
+	}
+	var err error
+	if len(views) > 0 {
+		err = views[0](ctx, read)
+	} else {
+		err = b.withView(read)
+	}
 	return edges, true, err
 }
 
@@ -1424,7 +1476,7 @@ func (b *BadgerEngine) readIndexedEdgeInTxn(txn *badger.Txn, edgeID EdgeID, gen 
 	var edge *Edge
 	if err := item.Value(func(val []byte) error {
 		var decodeErr error
-		edge, decodeErr = b.decodeEdgeBodyByID(val, edgeID)
+		edge, decodeErr = b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), val, edgeID)
 		return decodeErr
 	}); err != nil {
 		return nil, err
@@ -1472,7 +1524,7 @@ func (b *BadgerEngine) GetEdgesBetween(ctx context.Context, startID, endID NodeI
 		var suppressed map[EdgeID]struct{}
 		var sourceDeleted, targetDeleted bool
 		var captureErr error
-		view, err := b.captureReadView(func(w *WriteBehindBuffer) {
+		view, err := b.captureReadView(ctx, func(w *WriteBehindBuffer) {
 			pendingBetween, err := b.readBufferedEntities(ctx, w, visibleRead, bufferedEntityRead{kind: bufferedBetween, source: startID, target: endID})
 			if err != nil {
 				captureErr = err
@@ -1523,12 +1575,8 @@ func (b *BadgerEngine) GetEdgesBetween(ctx context.Context, startID, endID NodeI
 
 // committedEdgesBetween is the committed between-index read, set index first
 // with the legacy outgoing fallback and self-heal.
-func (b *BadgerEngine) committedEdgesBetween(ctx context.Context, startID, endID NodeID, edgeType string, views ...func(func(*badger.Txn) error) error) ([]*Edge, error) {
-	withView := b.withView
-	if len(views) > 0 {
-		withView = views[0]
-	}
-	result, err := b.edgesBetweenFromSetIndex(ctx, startID, endID, edgeType, withView)
+func (b *BadgerEngine) committedEdgesBetween(ctx context.Context, startID, endID NodeID, edgeType string, views ...func(context.Context, func(*badger.Txn) error) error) ([]*Edge, error) {
+	result, err := b.edgesBetweenFromSetIndex(ctx, startID, endID, edgeType, views...)
 	if err != nil {
 		return nil, err
 	}
@@ -1536,32 +1584,42 @@ func (b *BadgerEngine) committedEdgesBetween(ctx context.Context, startID, endID
 		return result, nil
 	}
 
-	result, err = b.edgesBetweenFromLegacyOutgoingIndex(ctx, startID, endID, edgeType, withView)
+	result, err = b.edgesBetweenFromLegacyOutgoingIndex(ctx, startID, endID, edgeType, views...)
 	if err != nil {
 		return nil, err
 	}
 	if len(result) > 0 {
-		_ = b.selfHealEdgeBetweenIndexes(result)
+		_ = b.selfHealEdgeBetweenIndexes(ctx, result)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 	}
 
 	return result, nil
 }
 
-// GetEdgeBetween returns an edge between two nodes with the given type.
-func (b *BadgerEngine) GetEdgeBetween(source, target NodeID, edgeType string) *Edge {
+// GetEdgeBetween returns an edge between two nodes with the given type. A
+// missing relationship is (nil, nil); the caller's context owns admission and
+// the point read's materialization.
+func (b *BadgerEngine) GetEdgeBetween(ctx context.Context, source, target NodeID, edgeType string) (*Edge, error) {
+	// The caller's request owns this read: a cancelled or expired request
+	// resolves no relationship, whichever index answers it.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := b.pendingNamespaceConflict(namespaceForNodeID(source)); err != nil {
-		return nil
+		return nil, err
 	}
 
 	if err := b.pendingNamespaceConflict(namespaceForNodeID(target)); err != nil {
-		return nil
+		return nil, err
 	}
 
 	if source == "" || target == "" {
-		return nil
+		return nil, nil
 	}
 	if b.writeBehind == nil {
-		return b.committedEdgeBetween(source, target, edgeType)
+		return b.committedEdgeBetween(ctx, source, target, edgeType)
 	}
 	// A buffered endpoint delete hides the committed row; a buffered delete
 	// of the edge hides it; a buffered live edge of the type wins.
@@ -1569,10 +1627,8 @@ func (b *BadgerEngine) GetEdgeBetween(source, target NodeID, edgeType string) *E
 	var suppressed map[EdgeID]struct{}
 	var sourceDeleted, targetDeleted bool
 	var captureErr error
-	view, err := b.captureReadView(func(w *WriteBehindBuffer) {
-		// A point read has no caller context of its own: context.Background is
-		// the true lifetime at this context-free boundary.
-		pendingBetween, err := b.readBufferedEntities(context.Background(), w, visibleRead, bufferedEntityRead{kind: bufferedBetween, source: source, target: target})
+	view, err := b.captureReadView(ctx, func(w *WriteBehindBuffer) {
+		pendingBetween, err := b.readBufferedEntities(ctx, w, visibleRead, bufferedEntityRead{kind: bufferedBetween, source: source, target: target})
 		if err != nil {
 			captureErr = err
 			return
@@ -1580,20 +1636,23 @@ func (b *BadgerEngine) GetEdgeBetween(source, target NodeID, edgeType string) *E
 		live, suppressed, sourceDeleted, targetDeleted = pendingBetween.edges, pendingBetween.suppressed, pendingBetween.sourceDeleted, pendingBetween.targetDeleted
 	}, readViewOptions{scope: namespaceForNodeID(source)})
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	if captureErr != nil {
 		view.Close()
-		return nil
+		return nil, captureErr
 	}
 	defer view.Close()
 	if sourceDeleted || targetDeleted {
-		return nil
+		return nil, nil
 	}
-	committed := b.committedEdgeBetween(source, target, edgeType, view.withView)
+	committed, err := b.committedEdgeBetween(ctx, source, target, edgeType, view.withView)
+	if err != nil {
+		return nil, err
+	}
 	if committed != nil {
 		if _, dead := suppressed[committed.ID]; !dead {
-			return committed
+			return committed, nil
 		}
 	}
 	for _, e := range live {
@@ -1601,59 +1660,60 @@ func (b *BadgerEngine) GetEdgeBetween(source, target NodeID, edgeType string) *E
 			continue
 		}
 		copyEdge := *e
-		return &copyEdge
+		return &copyEdge, nil
 	}
-	return nil
+	return nil, nil
 }
 
-// committedEdgeBetween is the committed between-index read for one edge.
-func (b *BadgerEngine) committedEdgeBetween(source, target NodeID, edgeType string, views ...func(func(*badger.Txn) error) error) *Edge {
-	withView := b.withView
-	if len(views) > 0 {
-		withView = views[0]
-	}
+// committedEdgeBetween is the committed between-index read for one edge. The
+// fallback scans keep their existing order; a lookup failure is reported only
+// when no lookup answers, so a canceled or closed read is never mistaken for a
+// missing relationship.
+func (b *BadgerEngine) committedEdgeBetween(ctx context.Context, source, target NodeID, edgeType string, views ...func(context.Context, func(*badger.Txn) error) error) (*Edge, error) {
+	var firstErr error
 	if edgeType != "" {
-		edge, err := b.edgeBetweenFromHeadIndex(source, target, edgeType, withView)
+		edge, err := b.edgeBetweenFromHeadIndex(ctx, source, target, edgeType, views...)
 		if err != nil {
 			b.log.Warn("edge-between head lookup failed; falling back to set/legacy scan",
 				"subsystem", "edge_between_index",
 			)
+			firstErr = err
 		}
 		if edge != nil {
-			return edge
+			return edge, nil
 		}
 	}
 
-	// A point between-read has no caller context of its own: context.Background
-	// is the true lifetime at this context-free entry point.
-	indexed, err := b.edgesBetweenFromSetIndex(context.Background(), source, target, edgeType, withView)
+	indexed, err := b.edgesBetweenFromSetIndex(ctx, source, target, edgeType, views...)
 	if err == nil && len(indexed) > 0 {
-		_ = b.selfHealEdgeBetweenIndexes(indexed[:1])
-		return indexed[0]
+		_ = b.selfHealEdgeBetweenIndexes(ctx, indexed[:1])
+		return indexed[0], nil
+	}
+	if err != nil && firstErr == nil {
+		firstErr = err
 	}
 
-	legacy, err := b.edgesBetweenFromLegacyOutgoingIndex(context.Background(), source, target, edgeType, withView)
+	legacy, err := b.edgesBetweenFromLegacyOutgoingIndex(ctx, source, target, edgeType, views...)
 	if err == nil && len(legacy) > 0 {
-		_ = b.selfHealEdgeBetweenIndexes(legacy)
-		return legacy[0]
+		_ = b.selfHealEdgeBetweenIndexes(ctx, legacy)
+		return legacy[0], nil
+	}
+	if err != nil && firstErr == nil {
+		firstErr = err
 	}
 
-	return nil
+	return nil, firstErr
 }
 
 // edgeBetweenFromHeadIndex loads the typed common-case lookup without scanning.
-func (b *BadgerEngine) edgeBetweenFromHeadIndex(source, target NodeID, edgeType string, views ...func(func(*badger.Txn) error) error) (*Edge, error) {
-	withView := b.withView
-	if len(views) > 0 {
-		withView = views[0]
-	}
+func (b *BadgerEngine) edgeBetweenFromHeadIndex(ctx context.Context, source, target NodeID, edgeType string, views ...func(context.Context, func(*badger.Txn) error) error) (*Edge, error) {
 	sourceNum, sourceOK := b.idDict.lookupNodeNumID(source)
 	targetNum, targetOK := b.idDict.lookupNodeNumID(target)
 	if !sourceOK || !targetOK {
 		return nil, nil // no numID ever allocated — no index entry can exist
 	}
 	var result *Edge
-	err := withView(func(txn *badger.Txn) error {
+	read := func(txn *badger.Txn) error {
 		headKey := edgeBetweenHeadKey(sourceNum, targetNum, edgeType)
 		checkTombstones := b.decayEnabled && !b.revealAll.Load()
 		if checkTombstones && hasIndexTombstone(txn, headKey) {
@@ -1688,7 +1748,13 @@ func (b *BadgerEngine) edgeBetweenFromHeadIndex(source, target NodeID, edgeType 
 			result = edge
 		}
 		return nil
-	})
+	}
+	var err error
+	if len(views) > 0 {
+		err = views[0](ctx, read)
+	} else {
+		err = b.withView(read)
+	}
 	return result, err
 }
 
@@ -1696,18 +1762,14 @@ func (b *BadgerEngine) edgeBetweenFromHeadIndex(source, target NodeID, edgeType 
 // Keys use 8-byte numeric IDs so we resolve start/end via the id dict
 // before scanning. Each entry's VALUE carries the string edge ID, which
 // saves a reverse-dict lookup for the scan payload.
-func (b *BadgerEngine) edgesBetweenFromSetIndex(ctx context.Context, startID, endID NodeID, edgeType string, views ...func(func(*badger.Txn) error) error) ([]*Edge, error) {
-	withView := b.withView
-	if len(views) > 0 {
-		withView = views[0]
-	}
+func (b *BadgerEngine) edgesBetweenFromSetIndex(ctx context.Context, startID, endID NodeID, edgeType string, views ...func(context.Context, func(*badger.Txn) error) error) ([]*Edge, error) {
 	startNum, sOK := b.idDict.lookupNodeNumID(startID)
 	endNum, eOK := b.idDict.lookupNodeNumID(endID)
 	if !sOK || !eOK {
 		return nil, nil
 	}
 	var result []*Edge
-	err := withView(func(txn *badger.Txn) error {
+	read := func(txn *badger.Txn) error {
 		prefix := edgeBetweenIndexPrefix(startNum, endNum)
 		if edgeType != "" {
 			prefix = typedEdgeBetweenIndexPrefix(startNum, endNum, edgeType)
@@ -1751,7 +1813,13 @@ func (b *BadgerEngine) edgesBetweenFromSetIndex(ctx context.Context, startID, en
 			result = append(result, edge)
 		}
 		return nil
-	})
+	}
+	var err error
+	if len(views) > 0 {
+		err = views[0](ctx, read)
+	} else {
+		err = b.withView(read)
+	}
 	return result, err
 }
 
@@ -1764,18 +1832,14 @@ func (b *BadgerEngine) edgesBetweenFromSetIndex(ctx context.Context, startID, en
 // new relationship from a hub with thousands of edges to a fresh node misses
 // the between index every time, and walking the hub's outgoing edges made a
 // bulk load quadratic in the hub's degree.
-func (b *BadgerEngine) edgesBetweenFromLegacyOutgoingIndex(ctx context.Context, startID, endID NodeID, edgeType string, views ...func(func(*badger.Txn) error) error) ([]*Edge, error) {
-	withView := b.withView
-	if len(views) > 0 {
-		withView = views[0]
-	}
+func (b *BadgerEngine) edgesBetweenFromLegacyOutgoingIndex(ctx context.Context, startID, endID NodeID, edgeType string, views ...func(context.Context, func(*badger.Txn) error) error) ([]*Edge, error) {
 	outPrefix := b.outgoingIndexPrefixString(startID)
 	inPrefix := b.incomingIndexPrefixString(endID)
 	if outPrefix == nil || inPrefix == nil {
 		return nil, nil
 	}
 	var result []*Edge
-	err := withView(func(txn *badger.Txn) error {
+	read := func(txn *badger.Txn) error {
 		checkTombstones := b.decayEnabled && !b.revealAll.Load()
 		nowNanos := DecayScoringTime()
 		outIt := txn.NewIterator(badgerPrefixIteratorOptions(outPrefix))
@@ -1833,7 +1897,13 @@ func (b *BadgerEngine) edgesBetweenFromLegacyOutgoingIndex(ctx context.Context, 
 			result = append(result, edge)
 		}
 		return nil
-	})
+	}
+	var err error
+	if len(views) > 0 {
+		err = views[0](ctx, read)
+	} else {
+		err = b.withView(read)
+	}
 	return result, err
 }
 
@@ -1858,7 +1928,9 @@ func setBetweenSelfHealHook(hook func()) (restore func()) {
 	}
 }
 
-func (b *BadgerEngine) selfHealEdgeBetweenIndexes(edges []*Edge) error {
+// Author: storage-format-owners lane (Codex), 1 November 2026.
+// The synchronous repair belongs to its discovering read, through write admission.
+func (b *BadgerEngine) selfHealEdgeBetweenIndexes(ctx context.Context, edges []*Edge) error {
 	if len(edges) > edgeBetweenSelfHealMaxEdges {
 		edges = edges[:edgeBetweenSelfHealMaxEdges]
 	}
@@ -1876,7 +1948,7 @@ func (b *BadgerEngine) selfHealEdgeBetweenIndexes(edges []*Edge) error {
 	for _, edge := range edges {
 		e.edge(edge)
 	}
-	err := b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+	err := b.withUpdate(ctx, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		for _, edge := range edges {
 			if edge == nil {
 				continue
@@ -1923,7 +1995,7 @@ func (b *BadgerEngine) edgeFromTxn(txn *badger.Txn, edgeID EdgeID) (*Edge, error
 	var edge *Edge
 	if err := item.Value(func(val []byte) error {
 		var decodeErr error
-		edge, decodeErr = b.decodeEdgeBodyByID(val, edgeID)
+		edge, decodeErr = b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), val, edgeID)
 		return decodeErr
 	}); err != nil {
 		return nil, err

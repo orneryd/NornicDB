@@ -57,9 +57,9 @@ func TestDatabaseReadAdmissionThroughEveryGRPCReadMethod(t *testing.T) {
 	require.NoError(t, err)
 	tokens := map[string]string{}
 	for name := range profiles {
-		_, err := users.CreateUser(name, "Password123!", []auth.Role{auth.RoleAdmin, auth.Role(name)})
+		_, err := users.CreateUser(context.Background(), name, "Password123!", []auth.Role{auth.RoleAdmin, auth.Role(name)})
 		require.NoError(t, err)
-		token, _, err := users.Authenticate(name, "Password123!", "127.0.0.1", "test")
+		token, _, err := users.Authenticate(context.Background(), name, "Password123!", "127.0.0.1", "test")
 		require.NoError(t, err)
 		tokens[name] = token.AccessToken
 	}

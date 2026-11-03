@@ -21,9 +21,9 @@ type countingEdgeLookupEngine struct {
 
 // GetEdgeBetween counts committed relationship lookups so hot-path tests can
 // distinguish true batch-local reuse from storage-level fanout scans.
-func (e *countingEdgeLookupEngine) GetEdgeBetween(startID, endID storage.NodeID, edgeType string) *storage.Edge {
+func (e *countingEdgeLookupEngine) GetEdgeBetween(ctx context.Context, startID, endID storage.NodeID, edgeType string) (*storage.Edge, error) {
 	atomic.AddInt64(&e.edgeBetweenCalls, 1)
-	return e.Engine.GetEdgeBetween(startID, endID, edgeType)
+	return e.Engine.GetEdgeBetween(ctx, startID, endID, edgeType)
 }
 
 func TestUnwindCollectDistinctProjection_UsesSharedPipeline(t *testing.T) {
@@ -218,33 +218,40 @@ ORDER BY n.uid
 // verifies that a batch-created relationship target avoids committed-store
 // existence probes while duplicate rows still reuse the batch-created edges.
 func TestUnwindMergeBatch_SkipsRelationshipExistenceLookupForBatchCreatedEndpoint(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	namespaced := storage.NewNamespacedEngine(base, "test")
-	store := &countingEdgeLookupEngine{Engine: namespaced}
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
+	for _, component := range []bool{true, false} {
+		name := "native"
+		if component {
+			name = "component"
+		}
+		t.Run(name, func(t *testing.T) {
 
-	for _, query := range []string{
-		`CREATE CONSTRAINT repo_id_unique IF NOT EXISTS FOR (r:Repository) REQUIRE r.id IS UNIQUE`,
-		`CREATE CONSTRAINT dir_path_unique IF NOT EXISTS FOR (d:Directory) REQUIRE d.path IS UNIQUE`,
-		`CREATE CONSTRAINT file_path_unique IF NOT EXISTS FOR (f:File) REQUIRE f.path IS UNIQUE`,
-	} {
-		_, err := exec.Execute(ctx, query, nil)
-		require.NoError(t, err)
-	}
-	_, err := exec.Execute(ctx, `
+			base := newTestMemoryEngine(t)
+			namespaced := storage.NewNamespacedEngine(base, "test")
+			store := &countingEdgeLookupEngine{Engine: namespaced}
+			exec := NewStorageExecutor(namespaced)
+			ctx := context.Background()
+
+			for _, query := range []string{
+				`CREATE CONSTRAINT repo_id_unique IF NOT EXISTS FOR (r:Repository) REQUIRE r.id IS UNIQUE`,
+				`CREATE CONSTRAINT dir_path_unique IF NOT EXISTS FOR (d:Directory) REQUIRE d.path IS UNIQUE`,
+				`CREATE CONSTRAINT file_path_unique IF NOT EXISTS FOR (f:File) REQUIRE f.path IS UNIQUE`,
+			} {
+				_, err := exec.Execute(ctx, query, nil)
+				require.NoError(t, err)
+			}
+			_, err := exec.Execute(ctx, `
 MERGE (r:Repository {id: $repo_id})
 MERGE (d:Directory {path: $dir_path})
 `, map[string]interface{}{"repo_id": "repo-1", "dir_path": "src"})
-	require.NoError(t, err)
+			require.NoError(t, err)
 
-	rows := []map[string]interface{}{
-		{"path": "src/a.go", "name": "a.go", "relative_path": "src/a.go", "language": "go", "repo_id": "repo-1", "scope_id": "scope-1", "generation_id": "gen-1", "dir_path": "src"},
-		{"path": "src/b.go", "name": "b.go", "relative_path": "src/b.go", "language": "go", "repo_id": "repo-1", "scope_id": "scope-1", "generation_id": "gen-1", "dir_path": "src"},
-		{"path": "src/a.go", "name": "a.go", "relative_path": "src/a.go", "language": "go", "repo_id": "repo-1", "scope_id": "scope-1", "generation_id": "gen-1", "dir_path": "src"},
-	}
+			rows := []map[string]interface{}{
+				{"path": "src/a.go", "name": "a.go", "relative_path": "src/a.go", "language": "go", "repo_id": "repo-1", "scope_id": "scope-1", "generation_id": "gen-1", "dir_path": "src"},
+				{"path": "src/b.go", "name": "b.go", "relative_path": "src/b.go", "language": "go", "repo_id": "repo-1", "scope_id": "scope-1", "generation_id": "gen-1", "dir_path": "src"},
+				{"path": "src/a.go", "name": "a.go", "relative_path": "src/a.go", "language": "go", "repo_id": "repo-1", "scope_id": "scope-1", "generation_id": "gen-1", "dir_path": "src"},
+			}
 
-	res, err := exec.Execute(ctx, `
+			query := `
 UNWIND $rows AS row
 MERGE (f:File {path: row.path})
 SET f.name = row.name, f.relative_path = row.relative_path,
@@ -263,15 +270,32 @@ MERGE (d)-[dirRel:CONTAINS]->(f)
 SET dirRel.evidence_source = 'projector/canonical',
     dirRel.generation_id = row.generation_id
 RETURN count(f) AS prepared
-`, map[string]interface{}{"rows": rows})
-	require.NoError(t, err)
-	require.Equal(t, int64(3), toInt64ForTest(t, res.Rows[0][0]))
-	require.True(t, exec.LastHotPathTrace().UnwindMergeChainBatch, "expected generalized unwind merge chain hot path")
-	require.Zero(t, atomic.LoadInt64(&store.edgeBetweenCalls), "batch-created File endpoints should not scan existing relationship fanout")
+`
+			params := map[string]interface{}{"rows": rows}
+			var res *ExecuteResult
+			if component {
+				exec = NewStorageExecutor(store)
+				// Demonstrate the counter observes this supplied owner before measuring.
+				store.GetEdgeBetween(t.Context(), "missing-start", "missing-end", "MISSING")
+				require.EqualValues(t, 1, atomic.LoadInt64(&store.edgeBetweenCalls))
+				atomic.StoreInt64(&store.edgeBetweenCalls, 0)
+				res, err = exec.executeRequiredPipeline(withParams(ctx, params), query)
+			} else {
+				res, err = exec.Execute(ctx, query, params)
+			}
+			require.NoError(t, err)
+			require.Equal(t, int64(3), toInt64ForTest(t, res.Rows[0][0]))
+			require.True(t, exec.LastHotPathTrace().UnwindMergeChainBatch, "expected generalized unwind merge chain hot path")
+			if component {
+				require.Zero(t, atomic.LoadInt64(&store.edgeBetweenCalls), "batch-created File endpoints should not scan existing relationship fanout")
+			}
 
-	edges, err := store.AllEdges(ctx)
-	require.NoError(t, err)
-	require.Len(t, edges, 4, "duplicate file row must reuse batch-created relationships")
+			edges, err := store.AllEdges(ctx)
+			require.NoError(t, err)
+			require.Len(t, edges, 4, "duplicate file row must reuse batch-created relationships")
+
+		})
+	}
 }
 
 func TestUnwindMergeBatch_MatchMergeCountReflectsFilteredRows(t *testing.T) {
@@ -643,7 +667,7 @@ func TestGenericMerge_MultiPropertyLookup_UsesCompositeSchemaPath(t *testing.T) 
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &allNodesForbiddenEngine{MemoryEngine: base}
 
-	_, err := eng.CreateNode(&storage.Node{
+	_, err := eng.CreateNode(t.Context(), &storage.Node{
 		ID:     "nornic:translated-1",
 		Labels: []string{"TranslatedText"},
 		Properties: map[string]interface{}{

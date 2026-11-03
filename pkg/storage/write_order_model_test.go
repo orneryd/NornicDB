@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"errors"
@@ -90,18 +91,18 @@ func stageOp(tx *BadgerTransaction, op writeordertest.Op, v int64) error {
 	props := map[string]any{"v": v}
 	switch op.Kind {
 	case writeordertest.CreateNode:
-		_, err := tx.CreateNode(&Node{ID: modelNodeID(op.Node), Properties: props})
+		_, err := tx.CreateNode(context.Background(), &Node{ID: modelNodeID(op.Node), Properties: props})
 		return err
 	case writeordertest.UpdateNode:
-		return tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: modelNodeID(op.Node), Properties: props}, Policy: ClientNodeEdits})
+		return tx.UpdateGraphNode(context.Background(), NodeUpdateRequest{After: &Node{ID: modelNodeID(op.Node), Properties: props}, Policy: ClientNodeEdits})
 	case writeordertest.DeleteNode:
-		return tx.DeleteGraphNode(modelNodeID(op.Node), CascadeEdges)
+		return tx.DeleteGraphNode(context.Background(), modelNodeID(op.Node), CascadeEdges)
 	case writeordertest.CreateEdge:
-		return tx.CreateEdge(&Edge{ID: modelEdgeID(op.Edge), StartNode: modelNodeID(op.Start), EndNode: modelNodeID(op.End), Type: "LINK", Properties: props})
+		return tx.CreateEdge(context.Background(), &Edge{ID: modelEdgeID(op.Edge), StartNode: modelNodeID(op.Start), EndNode: modelNodeID(op.End), Type: "LINK", Properties: props})
 	case writeordertest.UpdateEdge:
-		return tx.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: modelEdgeID(op.Edge), StartNode: modelNodeID(op.Start), EndNode: modelNodeID(op.End), Type: "LINK", Properties: props}})
+		return tx.UpdateEdge(context.Background(), EdgeUpdateRequest{After: &Edge{ID: modelEdgeID(op.Edge), StartNode: modelNodeID(op.Start), EndNode: modelNodeID(op.End), Type: "LINK", Properties: props}})
 	case writeordertest.DeleteEdge:
-		return tx.DeleteEdge(modelEdgeID(op.Edge))
+		return tx.DeleteEdge(context.Background(), modelEdgeID(op.Edge))
 	}
 	return fmt.Errorf("unknown op %s", op.Kind)
 }
@@ -122,7 +123,7 @@ func (d *engineDriver) Write(op writeordertest.Op, v int64, implicit bool) (writ
 
 func (d *engineDriver) writeOnce(op writeordertest.Op, v int64, implicit bool) (writeordertest.Outcome, error) {
 	if implicit {
-		tx, err := d.e.BeginTransaction()
+		tx, err := d.e.BeginTransaction(context.Background())
 		if err != nil {
 			return outcomeOf(err)
 		}
@@ -140,23 +141,23 @@ func (d *engineDriver) writeOnce(op writeordertest.Op, v int64, implicit bool) (
 	var err error
 	switch op.Kind {
 	case writeordertest.CreateNode:
-		_, err = d.e.CreateNode(&Node{ID: modelNodeID(op.Node), Properties: props})
+		_, err = d.e.CreateNode(context.Background(), &Node{ID: modelNodeID(op.Node), Properties: props})
 	case writeordertest.UpdateNode:
-		err = d.e.UpdateNode(NodeUpdateRequest{After: &Node{ID: modelNodeID(op.Node), Properties: props}})
+		err = d.e.UpdateNode(context.Background(), NodeUpdateRequest{After: &Node{ID: modelNodeID(op.Node), Properties: props}})
 	case writeordertest.DeleteNode:
-		err = d.e.DeleteNode(modelNodeID(op.Node))
+		err = d.e.DeleteNode(context.Background(), modelNodeID(op.Node))
 	case writeordertest.CreateEdge:
-		err = d.e.CreateEdge(&Edge{ID: modelEdgeID(op.Edge), StartNode: modelNodeID(op.Start), EndNode: modelNodeID(op.End), Type: "LINK", Properties: props})
+		err = d.e.CreateEdge(context.Background(), &Edge{ID: modelEdgeID(op.Edge), StartNode: modelNodeID(op.Start), EndNode: modelNodeID(op.End), Type: "LINK", Properties: props})
 	case writeordertest.UpdateEdge:
-		err = d.e.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: modelEdgeID(op.Edge), StartNode: modelNodeID(op.Start), EndNode: modelNodeID(op.End), Type: "LINK", Properties: props}})
+		err = d.e.UpdateEdge(context.Background(), EdgeUpdateRequest{After: &Edge{ID: modelEdgeID(op.Edge), StartNode: modelNodeID(op.Start), EndNode: modelNodeID(op.End), Type: "LINK", Properties: props}})
 	case writeordertest.DeleteEdge:
-		err = d.e.DeleteEdge(modelEdgeID(op.Edge))
+		err = d.e.DeleteEdge(context.Background(), modelEdgeID(op.Edge))
 	}
 	return outcomeOf(err)
 }
 
 func (d *engineDriver) Begin(slot int, implicit bool) error {
-	tx, err := d.e.BeginTransaction()
+	tx, err := d.e.BeginTransaction(context.Background())
 	if err != nil {
 		return err
 	}
@@ -188,7 +189,7 @@ func (d *engineDriver) Rollback(slot int) {
 }
 
 func (d *engineDriver) Flush() error {
-	if err := d.e.FlushWriteBehind(nil); err != nil {
+	if err := d.e.FlushWriteBehind(context.Background()); err != nil {
 		return err
 	}
 	// FlushWriteBehind joins buffered generations. A direct write can queue
@@ -226,13 +227,13 @@ func (d *engineDriver) Restore(slot int) (writeordertest.Outcome, error) {
 
 func (d *engineDriver) Suppress(id string, edge, flag bool) (writeordertest.Outcome, error) {
 	if edge {
-		return outcomeOf(d.e.SetManualSuppression(StoredEntityEdgeKind, string(modelEdgeID(id)), flag))
+		return outcomeOf(d.e.SetManualSuppression(context.Background(), StoredEntityEdgeKind, string(modelEdgeID(id)), flag))
 	}
-	return outcomeOf(d.e.SetManualSuppression(StoredEntityNodeKind, string(modelNodeID(id)), flag))
+	return outcomeOf(d.e.SetManualSuppression(context.Background(), StoredEntityNodeKind, string(modelNodeID(id)), flag))
 }
 
 func (d *engineDriver) Sidecar(node string, v int64) (writeordertest.Outcome, error) {
-	return outcomeOf(d.e.UpdateNodeEmbeddingSidecar(&Node{ID: modelNodeID(node), Properties: map[string]any{"v": v},
+	return outcomeOf(d.e.UpdateNodeEmbeddingSidecar(context.Background(), &Node{ID: modelNodeID(node), Properties: map[string]any{"v": v},
 		ChunkEmbeddings: [][]float32{{1, 2, 3}}, EmbedMeta: map[string]any{"has_embedding": true, "chunk_count": 1}}))
 }
 
@@ -240,7 +241,7 @@ func (d *engineDriver) Observe(nodes, edges []string) (writeordertest.Observed, 
 	d.e.invalidateCachesAfterRestore()
 	obs := writeordertest.Observed{State: writeordertest.NewState()}
 	for _, name := range nodes {
-		n, err := d.e.GetStoredNode(modelNodeID(name))
+		n, err := d.e.GetStoredNode(context.Background(), modelNodeID(name))
 		switch {
 		case errors.Is(err, ErrNotFound):
 		case err != nil:
@@ -250,7 +251,7 @@ func (d *engineDriver) Observe(nodes, edges []string) (writeordertest.Observed, 
 		}
 	}
 	for _, name := range edges {
-		e, err := d.e.GetStoredEdge(modelEdgeID(name))
+		e, err := d.e.GetStoredEdge(context.Background(), modelEdgeID(name))
 		switch {
 		case errors.Is(err, ErrNotFound):
 		case err != nil:
@@ -267,10 +268,10 @@ func (d *engineDriver) Observe(nodes, edges []string) (writeordertest.Observed, 
 		obs.HiddenEdges[name] = d.e.manuallySuppressed(manualSuppressionEdge, string(modelEdgeID(name)))
 	}
 	var err error
-	if obs.NodeCount, err = d.e.NodeCount(); err != nil {
+	if obs.NodeCount, err = d.e.NodeCount(context.Background()); err != nil {
 		return obs, err
 	}
-	obs.EdgeCount, err = d.e.EdgeCount()
+	obs.EdgeCount, err = d.e.EdgeCount(context.Background())
 	return obs, err
 }
 

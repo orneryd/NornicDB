@@ -1,6 +1,7 @@
 package nornicdb
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -50,7 +51,7 @@ func TestDB_SetEmbedder_ConcurrentWithClose(t *testing.T) {
 	wg.Wait()
 
 	if queue := db.GetEmbedQueue(); queue != nil {
-		require.True(t, queue.closed.Load())
+		require.True(t, queue.work.Closing())
 	}
 }
 
@@ -61,13 +62,13 @@ func TestDB_RunBackgroundTask_JoinedByClose(t *testing.T) {
 	require.NoError(t, err)
 
 	var finished atomic.Bool
-	require.True(t, db.RunBackgroundTask(func() {
+	require.True(t, db.RunBackgroundTask(func(context.Context) {
 		<-db.LifetimeContext().Done()
 		finished.Store(true)
 	}))
 	require.NoError(t, db.Close())
 	require.True(t, finished.Load(), "Close returned before the background task did")
-	require.False(t, db.RunBackgroundTask(func() { t.Error("task ran after Close") }))
+	require.False(t, db.RunBackgroundTask(func(context.Context) { t.Error("task ran after Close") }))
 }
 
 // closingTestEmbedder counts Close calls.

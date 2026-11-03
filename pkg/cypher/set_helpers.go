@@ -299,7 +299,7 @@ func (e *StorageExecutor) persistSetEntities(ctx context.Context, store storage.
 			if stats != nil {
 				stats.LabelsAdded += labelsAdded
 			}
-			if err := mutateNodeWithObservation(store, state.before, node); err != nil {
+			if err := mutateNodeWithObservation(ctx, store, state.before, node); err != nil {
 				restore()
 				return wrap(*state, err)
 			}
@@ -312,7 +312,7 @@ func (e *StorageExecutor) persistSetEntities(ctx context.Context, store storage.
 		}
 		state.beforeEdge = observeEdge(relationship)
 		state.beforeEdge.Properties = state.properties
-		if err := mutateEdgeWithObservation(store, state.beforeEdge, relationship); err != nil {
+		if err := mutateEdgeWithObservation(ctx, store, state.beforeEdge, relationship); err != nil {
 			relationship.Properties = state.properties
 			return wrap(*state, err)
 		}
@@ -336,8 +336,8 @@ type setRun struct {
 // reads the old one (#907). A chained SET clause (SET a SET b) starts new
 // stretches. A stretch's text is a slice of the body. assignments, when not nil, are body's assignments already split
 // (splitSetAssignments): they are used when body is one SET clause.
-func appendSetClauseRuns(runs []setRun, body string, assignments []string) []setRun {
-	for segment, next, ok := nextChainedSetClause(body, 0); ok; segment, next, ok = nextChainedSetClause(body, next) {
+func appendSetClauseRuns(ctx context.Context, runs []setRun, body string, assignments []string) []setRun {
+	for segment, next, ok := nextChainedSetClause(ctx, body, 0); ok; segment, next, ok = nextChainedSetClause(ctx, body, next) {
 		open := false
 		start, searchFrom := 0, 0
 		items := assignments

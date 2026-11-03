@@ -18,34 +18,37 @@ func TestNativeEntityHelpersRespectPreparedAuthority(t *testing.T) {
 		edge   bool
 		mutate func(*BadgerEngine, string) error
 	}{
-		{name: "delete_node", mutate: func(b *BadgerEngine, id string) error { return b.DeleteNode(NodeID(id)) }},
-		{name: "delete_edge", edge: true, mutate: func(b *BadgerEngine, id string) error { return b.DeleteEdge(EdgeID(id)) }},
+		{name: "delete_node", mutate: func(b *BadgerEngine, id string) error { return b.DeleteNode(t.Context(), NodeID(id)) }},
+		{name: "delete_edge", edge: true, mutate: func(b *BadgerEngine, id string) error { return b.DeleteEdge(t.Context(), EdgeID(id)) }},
 		{name: "sidecar", mutate: func(b *BadgerEngine, id string) error {
-			node, err := b.GetNode(NodeID(id))
+			node, err := b.GetNode(t.Context(), NodeID(id))
 			if err != nil {
 				return err
 			}
 			node.ChunkEmbeddings = [][]float32{{7, 8}}
 			node.EmbedMeta = map[string]any{"chunk_count": 1}
-			return b.UpdateNodeEmbeddingSidecar(node)
-		}},
-		{name: "range", mutate: func(b *BadgerEngine, id string) error {
-			return b.replaceSeparateEmbeddingChunks(NodeID(id), [][]float32{{7, 8}}, nil)
+			return b.UpdateNodeEmbeddingSidecar(context.Background(), node)
 		}},
 		{name: "manual_node", mutate: func(b *BadgerEngine, id string) error {
-			return b.SetManualSuppression(StoredEntityNodeKind, string(id), true)
+			return b.SetManualSuppression(context.Background(), StoredEntityNodeKind, string(id), true)
 		}},
 		{name: "manual_edge", edge: true, mutate: func(b *BadgerEngine, id string) error {
-			return b.SetManualSuppression(StoredEntityEdgeKind, string(id), true)
+			return b.SetManualSuppression(context.Background(), StoredEntityEdgeKind, string(id), true)
 		}},
-		{name: "deindex_node", mutate: func(b *BadgerEngine, id string) error { _, err := b.EnqueueDeindexIfSuppressed(id, false); return err }},
-		{name: "deindex_edge", edge: true, mutate: func(b *BadgerEngine, id string) error { _, err := b.EnqueueDeindexIfSuppressed(id, true); return err }},
+		{name: "deindex_node", mutate: func(b *BadgerEngine, id string) error {
+			_, err := b.EnqueueDeindexIfSuppressed(context.Background(), id, false)
+			return err
+		}},
+		{name: "deindex_edge", edge: true, mutate: func(b *BadgerEngine, id string) error {
+			_, err := b.EnqueueDeindexIfSuppressed(context.Background(), id, true)
+			return err
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			b := newTestEngine(t)
-			require.NoError(t, b.BulkCreateNodes([]*Node{{ID: "test:a", Labels: []string{"Doc"}, Properties: map[string]any{"text": "same"}}, {ID: "test:b"}, {ID: "test:c", Labels: []string{"Doc"}, Properties: map[string]any{"text": "same"}}, {ID: "test:d"}}))
-			require.NoError(t, b.BulkCreateEdges([]*Edge{{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "R"}, {ID: "test:s", StartNode: "test:c", EndNode: "test:d", Type: "R"}}))
+			require.NoError(t, b.BulkCreateNodes(t.Context(), []*Node{{ID: "test:a", Labels: []string{"Doc"}, Properties: map[string]any{"text": "same"}}, {ID: "test:b"}, {ID: "test:c", Labels: []string{"Doc"}, Properties: map[string]any{"text": "same"}}, {ID: "test:d"}}))
+			require.NoError(t, b.BulkCreateEdges(t.Context(), []*Edge{{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "R"}, {ID: "test:s", StartNode: "test:c", EndNode: "test:d", Type: "R"}}))
 			if tc.name == "deindex_node" || tc.name == "deindex_edge" {
 				b.SetDecayEnabled(true)
 			}
@@ -53,18 +56,18 @@ func TestNativeEntityHelpersRespectPreparedAuthority(t *testing.T) {
 			if tc.edge {
 				target, disjoint = "test:r", "test:s"
 			}
-			tx, err := b.BeginTransaction()
+			tx, err := b.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			if tc.edge {
-				edge, err := tx.GetStoredEdge(EdgeID(target))
+				edge, err := tx.GetStoredEdge(t.Context(), EdgeID(target))
 				require.NoError(t, err)
 				edge.Properties = map[string]any{"prepared": true}
-				require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: edge}))
+				require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge}))
 			} else {
-				node, err := tx.GetStoredNode(NodeID(target))
+				node, err := tx.GetStoredNode(t.Context(), NodeID(target))
 				require.NoError(t, err)
 				node.Properties["prepared"] = true
-				require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
+				require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 			}
 			prepared, err := tx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: "helper-guard"})
 			require.NoError(t, err)
@@ -94,12 +97,12 @@ func TestNativeEntityHelpersRespectPreparedAuthority(t *testing.T) {
 			}
 			require.NoError(t, tc.mutate(b, disjoint), "disjoint entity proceeds while prepared target is held")
 			if tc.edge {
-				edge, err := b.GetStoredEdge(EdgeID(target))
+				edge, err := b.GetStoredEdge(t.Context(), EdgeID(target))
 				require.NoError(t, err)
 				require.NotContains(t, edge.Properties, "prepared")
 				require.False(t, b.manuallySuppressed(manualSuppressionEdge, target))
 			} else {
-				node, err := b.GetStoredNode(NodeID(target))
+				node, err := b.GetStoredNode(t.Context(), NodeID(target))
 				require.NoError(t, err)
 				require.NotContains(t, node.Properties, "prepared")
 				require.Empty(t, node.ChunkEmbeddings)
@@ -119,7 +122,7 @@ func TestNativeEntityHelpersRespectPreparedAuthority(t *testing.T) {
 
 func TestAcceptedPhysicalFailureLetsAuthorityWaiterYieldRepairCut(t *testing.T) {
 	b := newTestEngine(t)
-	_, err := b.CreateNode(&Node{ID: "test:a", Properties: map[string]any{"value": "before"}})
+	_, err := b.CreateNode(t.Context(), &Node{ID: "test:a", Properties: map[string]any{"value": "before"}})
 	require.NoError(t, err)
 	failure := errors.New("accepted physical preparation failed")
 	var reject atomic.Bool
@@ -131,15 +134,15 @@ func TestAcceptedPhysicalFailureLetsAuthorityWaiterYieldRepairCut(t *testing.T) 
 			return func() {}, nil
 		}, nil
 	}, nil))
-	tx, err := b.BeginTransaction()
+	tx, err := b.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	node, err := tx.GetStoredNode("test:a")
+	node, err := tx.GetStoredNode(t.Context(), "test:a")
 	require.NoError(t, err)
 	node.Properties["value"] = "prepared"
-	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 	prepared, err := tx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: "accepted-repair"})
 	require.NoError(t, err)
-	releaseAccepted, err := prepared.RetainAcceptedAuthority(nil)
+	releaseAccepted, err := prepared.RetainAcceptedAuthority(context.Background())
 	require.NoError(t, err)
 	enrolled := make(chan struct{})
 	var once sync.Once
@@ -164,7 +167,7 @@ func TestAcceptedPhysicalFailureLetsAuthorityWaiterYieldRepairCut(t *testing.T) 
 			}
 		}
 	})
-	go func() { writerDone <- b.DeleteNode("test:a") }()
+	go func() { writerDone <- b.DeleteNode(t.Context(), "test:a") }()
 	select {
 	case <-enrolled:
 	case <-time.After(5 * time.Second):
@@ -215,9 +218,9 @@ func TestAcceptedPhysicalFailureLetsAuthorityWaiterYieldRepairCut(t *testing.T) 
 		t.Fatal("repair cut remained behind failed command's waiter")
 	}
 	require.Equal(t, "before", snapshotValue, "failed native attempt made no stored change")
-	_, err = b.CreateNode(&Node{ID: "test:disjoint"})
+	_, err = b.CreateNode(t.Context(), &Node{ID: "test:disjoint"})
 	require.NoError(t, err)
-	require.ErrorIs(t, b.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"value": "blocked"}}}), ErrConflict, "pending accepted authority still protects target")
+	require.ErrorIs(t, b.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"value": "blocked"}}}), ErrConflict, "pending accepted authority still protects target")
 	releaseAccepted()
-	require.NoError(t, b.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"value": "after-discard"}}}))
+	require.NoError(t, b.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"value": "after-discard"}}}))
 }

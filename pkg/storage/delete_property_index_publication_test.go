@@ -20,26 +20,26 @@ func TestBadgerDeleteRemovesPropertyIndexPostings(t *testing.T) {
 					require.NoError(t, sm.AddPropertyIndex("idx", "L", []string{"p"}))
 					sm.MarkPropertyIndexesFilled() // DDL backfill is complete on this empty database.
 					n := &Node{ID: "tenant:x", Labels: []string{"L"}, Properties: map[string]any{"p": "v"}}
-					_, err := b.CreateNode(n)
+					_, err := b.CreateNode(t.Context(), n)
 					require.NoError(t, err)
-					require.Equal(t, []NodeID{n.ID}, sm.PropertyIndexLookup("L", "p", "v"))
-					_, err = b.GetNode(n.ID)
+					require.Equal(t, []NodeID{n.ID}, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "L", "p", "v")))
+					_, err = b.GetNode(t.Context(), n.ID)
 					require.NoError(t, err)
 					if evicted {
 						b.cacheDeleteNode(n.ID, nodeCacheAllForms)
 					}
 					if explicit {
-						tx, e := b.BeginTransaction()
+						tx, e := b.BeginTransaction(t.Context())
 						require.NoError(t, e)
 						require.NoError(t, tx.SetNamespace("tenant"))
-						require.NoError(t, tx.DeleteGraphNode(n.ID, CascadeEdges))
+						require.NoError(t, tx.DeleteGraphNode(t.Context(), n.ID, CascadeEdges))
 						require.NoError(t, tx.Commit())
 					} else {
-						require.NoError(t, b.DeleteNode(n.ID))
+						require.NoError(t, b.DeleteNode(t.Context(), n.ID))
 					}
-					_, err = b.GetNode(n.ID)
+					_, err = b.GetNode(t.Context(), n.ID)
 					require.ErrorIs(t, err, ErrNotFound)
-					ids := sm.PropertyIndexLookup("L", "p", "v")
+					ids := checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "L", "p", "v"))
 					t.Logf("public PropertyIndexLookup after delete: %v", ids)
 					require.Empty(t, ids, "public property index must remove committed deleted identity")
 				})

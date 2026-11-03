@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -36,11 +37,11 @@ func TestAuthJSONAdmittedIdentityReopenAndTokens(t *testing.T) {
 			password := "synthetic-password-" + tc.unit
 			email := "mail-" + tc.unit + "@example.invalid"
 			roles := []Role{RoleViewer, Role("role-" + tc.unit)}
-			created, err := users.CreateUser(name, password, roles)
+			created, err := users.CreateUser(context.Background(), name, password, roles)
 			require.NoError(t, err)
 			require.Equal(t, name, created.Username)
 			metadata := map[string]string{"key-" + tc.unit: "value-" + tc.unit, "literal": `\ud800`}
-			require.NoError(t, users.UpdateUser(name, email, metadata))
+			require.NoError(t, users.UpdateUser(context.Background(), name, email, metadata))
 			require.NoError(t, engine.Close())
 			engine, err = fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 			require.NoError(t, err)
@@ -52,7 +53,7 @@ func TestAuthJSONAdmittedIdentityReopenAndTokens(t *testing.T) {
 			require.Equal(t, email, stored.Email)
 			require.Equal(t, roles, stored.Roles)
 			require.Equal(t, metadata, stored.Metadata)
-			token, user, err := users.Authenticate(name, password, "127.0.0.1", "identity-test")
+			token, user, err := users.Authenticate(context.Background(), name, password, "127.0.0.1", "identity-test")
 			require.NoError(t, err)
 			require.Equal(t, name, user.Username)
 			check := func(token string) {
@@ -92,7 +93,7 @@ func TestAuthJSONAcceptsExistingStandardSignedTokens(t *testing.T) {
 	users, err := NewAuthenticator(cfg, engine)
 	require.NoError(t, err)
 	for _, name := range []string{"old-ascii", "old-é-😀", `old-literal-\ud800`} {
-		user, err := users.CreateUser(name, "synthetic-password", []Role{RoleEditor})
+		user, err := users.CreateUser(context.Background(), name, "synthetic-password", []Role{RoleEditor})
 		require.NoError(t, err)
 		header, err := json.Marshal(map[string]string{"alg": "HS256", "typ": "JWT"})
 		require.NoError(t, err)

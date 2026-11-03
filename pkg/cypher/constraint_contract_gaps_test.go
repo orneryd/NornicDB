@@ -136,7 +136,7 @@ func TestBug_ContractUnsupportedPredicateRejectedAtCreate(t *testing.T) {
 			}`, nil)
 		require.ErrorContains(t, err, "unsupported node predicate")
 
-		require.Empty(t, store.GetSchema().GetAllConstraintContracts())
+		require.Empty(t, constraintContractsForTest(t, store.GetSchema()))
 		show, err := exec.Execute(ctx, `SHOW CONSTRAINTS`, nil)
 		require.NoError(t, err)
 		require.Empty(t, show.Rows, "compiled entries must not be left behind")
@@ -152,7 +152,7 @@ func TestBug_ContractUnsupportedPredicateRejectedAtCreate(t *testing.T) {
 			  r.weight IS NULL OR r.weight > 0
 			}`, nil)
 		require.ErrorContains(t, err, "unsupported relationship predicate")
-		require.Empty(t, store.GetSchema().GetAllConstraintContracts())
+		require.Empty(t, constraintContractsForTest(t, store.GetSchema()))
 	})
 }
 
@@ -178,7 +178,7 @@ func TestBug_DropConstraintContract(t *testing.T) {
 	_, err = exec.Execute(ctx, `DROP CONSTRAINT person_contract`, nil)
 	require.NoError(t, err)
 
-	require.Empty(t, store.GetSchema().GetAllConstraintContracts())
+	require.Empty(t, constraintContractsForTest(t, store.GetSchema()))
 	contracts, err := exec.Execute(ctx, `SHOW CONSTRAINT CONTRACTS`, nil)
 	require.NoError(t, err)
 	require.Empty(t, contracts.Rows)
@@ -221,7 +221,7 @@ func TestBug_TypeAnnotationNotReadAsFunctionCall(t *testing.T) {
 			}`, nil)
 		require.NoError(t, err, typ)
 	}
-	require.Len(t, store.GetSchema().GetAllConstraintContracts(), 4)
+	require.Len(t, constraintContractsForTest(t, store.GetSchema()), 4)
 
 	_, err := exec.Execute(ctx, `CREATE (:Ev {d: date('2026-01-01'), n: 2})`, nil)
 	require.NoError(t, err)

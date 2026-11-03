@@ -16,7 +16,7 @@ func TestSelectedAliasScopeDirectReads(t *testing.T) {
 	db := testDB(t)
 	manager := testutil.DatabaseManager(t, db)
 	require.NoError(t, manager.CreateAlias(t.Context(), "selected_alias", "nornic"))
-	_, err := db.GetStorage().CreateNode(&storage.Node{ID: "alias-seed", Labels: []string{"Seed"}, ChunkEmbeddings: [][]float32{{1, 0, 0}}})
+	_, err := db.GetStorage().CreateNode(t.Context(), &storage.Node{ID: "alias-seed", Labels: []string{"Seed"}, ChunkEmbeddings: [][]float32{{1, 0, 0}}})
 	require.NoError(t, err)
 	resolver := NewResolver(db, manager)
 	query := resolver.Query()

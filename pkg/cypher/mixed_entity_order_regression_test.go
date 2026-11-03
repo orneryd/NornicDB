@@ -39,13 +39,13 @@ func TestMixedEntityOrderAllPublicPermutations(t *testing.T) {
 	exec, store := newTestExecutor(t)
 	a := &storage.Node{ID: "a", Properties: map[string]interface{}{"name": "a"}}
 	c := &storage.Node{ID: "c", Properties: map[string]interface{}{"name": "c"}}
-	_, err := store.CreateNode(a)
+	_, err := store.CreateNode(t.Context(), a)
 	require.NoError(t, err)
-	_, err = store.CreateNode(c)
+	_, err = store.CreateNode(t.Context(), c)
 	require.NoError(t, err)
-	a, err = store.GetNode("a")
+	a, err = store.GetNode(t.Context(), "a")
 	require.NoError(t, err)
-	c, err = store.GetNode("c")
+	c, err = store.GetNode(t.Context(), "c")
 	require.NoError(t, err)
 	remote := mixedEntityOrderRemote(t)
 	for _, values := range [][]interface{}{{c, remote, a}, {c, a, remote}, {remote, c, a}, {remote, a, c}, {a, c, remote}, {a, remote, c}} {

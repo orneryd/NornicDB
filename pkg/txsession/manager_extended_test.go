@@ -14,7 +14,7 @@ import (
 )
 
 func TestSetTerminalErrorObserver(t *testing.T) {
-	mgr := NewManager(time.Hour, newExecutorFactory(t))
+	mgr := NewManager(time.Hour, newExecutorFactory(t), t.Context())
 
 	var observed struct {
 		mu      sync.Mutex
@@ -100,7 +100,7 @@ func TestManagerTerminalLifecycleScenarios(t *testing.T) {
 			controller := &lifecycleControllerStub{}
 			engine.SetLifecycleController(controller)
 			exec := cypher.NewStorageExecutor(engine)
-			mgr := NewManager(time.Second, nil)
+			mgr := NewManager(time.Second, nil, t.Context())
 			session, err := mgr.OpenWithExecutorForOwner(context.Background(), "neo4j", exec, "")
 			if err != nil {
 				t.Fatalf("open with executor failed: %v", err)
@@ -160,27 +160,27 @@ func TestIsTerminalLifecycleError(t *testing.T) {
 }
 
 func TestRememberTerminalErrorLocked_NilSession(t *testing.T) {
-	mgr := NewManager(time.Second, nil)
-	err, notify := mgr.rememberTerminalErrorLocked(nil, fmt.Errorf("some error"))
+	mgr := NewManager(time.Second, nil, t.Context())
+	err, notify := mgr.rememberTerminalErrorLocked(nil, fmt.Errorf("some error"), false)
 	if err == nil || notify {
 		t.Fatalf("nil session should return error without notification, got err=%v notify=%v", err, notify)
 	}
 }
 
 func TestRememberTerminalErrorLocked_NilError(t *testing.T) {
-	mgr := NewManager(time.Second, nil)
+	mgr := NewManager(time.Second, nil, t.Context())
 	session := &Session{ID: "test"}
-	err, notify := mgr.rememberTerminalErrorLocked(session, nil)
+	err, notify := mgr.rememberTerminalErrorLocked(session, nil, false)
 	if err != nil || notify {
 		t.Fatalf("nil error should return nil without notification, got err=%v notify=%v", err, notify)
 	}
 }
 
 func TestRememberTerminalErrorLocked_NonTerminal(t *testing.T) {
-	mgr := NewManager(time.Second, nil)
+	mgr := NewManager(time.Second, nil, t.Context())
 	session := &Session{ID: "test"}
 	regularErr := fmt.Errorf("syntax error")
-	err, notify := mgr.rememberTerminalErrorLocked(session, regularErr)
+	err, notify := mgr.rememberTerminalErrorLocked(session, regularErr, false)
 	if err != regularErr || notify {
 		t.Fatalf("non-terminal error should pass through without notification, got err=%v notify=%v", err, notify)
 	}
@@ -191,25 +191,25 @@ func TestRememberTerminalErrorLocked_NonTerminal(t *testing.T) {
 }
 
 func TestRememberTerminalErrorLocked_AlreadyTerminal(t *testing.T) {
-	mgr := NewManager(time.Second, nil)
+	mgr := NewManager(time.Second, nil, t.Context())
 	firstErr := storage.ErrMVCCSnapshotGracefulCancel
 	session := &Session{ID: "test", terminalErr: firstErr}
 	secondErr := storage.ErrMVCCSnapshotHardExpired
-	err, notify := mgr.rememberTerminalErrorLocked(session, secondErr)
+	err, notify := mgr.rememberTerminalErrorLocked(session, secondErr, true)
 	if err != firstErr || notify {
 		t.Fatalf("already-terminal session should return first error without re-notification, got err=%v notify=%v", err, notify)
 	}
 }
 
 func TestNotifyTerminalError_NoObserver(t *testing.T) {
-	mgr := NewManager(time.Second, nil)
+	mgr := NewManager(time.Second, nil, t.Context())
 	session := &Session{ID: "test"}
 	// Should not panic with no observer set
 	mgr.notifyTerminalError(session, fmt.Errorf("error"), true)
 }
 
 func TestNotifyTerminalError_NotifyFalse(t *testing.T) {
-	mgr := NewManager(time.Second, nil)
+	mgr := NewManager(time.Second, nil, t.Context())
 	called := false
 	mgr.SetTerminalErrorObserver(func(s *Session, err error) {
 		called = true
@@ -222,7 +222,7 @@ func TestNotifyTerminalError_NotifyFalse(t *testing.T) {
 }
 
 func TestOpenWithExecutorForOwner_OwnerTrimmed(t *testing.T) {
-	mgr := NewManager(time.Second, newExecutorFactory(t))
+	mgr := NewManager(time.Second, newExecutorFactory(t), t.Context())
 
 	store := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = store.Close() })

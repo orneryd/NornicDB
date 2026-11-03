@@ -20,9 +20,6 @@ import (
 // An empty Mode restores original-coordinate scoring. Mutations update codes
 // under the same lock as graph/vector mutations. Changing mode rebuilds codes.
 func (h *HNSWIndex) SetQuantization(ctx context.Context, cfg HNSWQuantizationConfig) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.setQuantizationLocked(ctx, cfg)

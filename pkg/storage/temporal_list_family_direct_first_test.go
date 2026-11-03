@@ -109,7 +109,7 @@ func TestTemporalListFamilyTemporalCompositeListCommitLocksDirectFirst(t *testin
 
 					firstDone := make(chan error, 1)
 					startWorker(func() {
-						_, err := engine.CreateNode(&Node{ID: "first", Labels: []string{c.Label}, Properties: pair[0]})
+						_, err := engine.CreateNode(t.Context(), &Node{ID: "first", Labels: []string{c.Label}, Properties: pair[0]})
 						firstDone <- err
 					})
 					select {
@@ -130,7 +130,7 @@ func TestTemporalListFamilyTemporalCompositeListCommitLocksDirectFirst(t *testin
 						startWorker(func() { contenderDone <- contenderTx.CommitContext(waitCtx) })
 					} else {
 						startWorker(func() {
-							_, err := engine.CreateNode(&Node{ID: "second", Labels: []string{c.Label}, Properties: pair[1]})
+							_, err := engine.CreateNode(t.Context(), &Node{ID: "second", Labels: []string{c.Label}, Properties: pair[1]})
 							contenderDone <- err
 						})
 					}
@@ -161,11 +161,11 @@ func TestTemporalListFamilyTemporalCompositeListCommitLocksDirectFirst(t *testin
 					var violation *ConstraintViolationError
 					require.True(t, errors.As(contenderErr, &violation), contenderErr)
 					require.Equal(t, ConstraintTemporal, violation.Type)
-					_, err := engine.GetNode("second")
+					_, err := engine.GetNode(t.Context(), "second")
 					require.ErrorIs(t, err, ErrNotFound)
 
 					adjacent := tlfMixedPair(order, "adjacent")[1]
-					_, err = engine.CreateNode(&Node{ID: "adjacent", Labels: []string{c.Label}, Properties: adjacent})
+					_, err = engine.CreateNode(t.Context(), &Node{ID: "adjacent", Labels: []string{c.Label}, Properties: adjacent})
 					require.NoError(t, err, "an equal but non-overlapping interval remains valid")
 
 					cleanup()

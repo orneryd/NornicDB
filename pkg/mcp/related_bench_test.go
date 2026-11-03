@@ -9,7 +9,7 @@ import (
 )
 
 func benchmarkMCPRelatedNodes(b *testing.B, branches, leaves, want int) {
-	engine := relatedgraph.Fanout(b, branches, leaves)
+	engine := relatedgraph.Fanout(b.Context(), b, branches, leaves)
 	server := NewServer(nil, nil)
 	server.SetDatabaseScopedStorage(func(string) (storage.Engine, error) { return engine, nil })
 	ctx := ContextWithDatabase(context.Background(), "bench")
@@ -38,7 +38,7 @@ func BenchmarkMCPRelatedNodesLarge(b *testing.B) {
 // with a cancelable context, so the amortized cancellation poll is included while
 // nothing cancels. A background context takes the nil-Done fastpath.
 func BenchmarkMCPRelatedNodesLargeCancelableContext(b *testing.B) {
-	engine := relatedgraph.Fanout(b, 5, 9)
+	engine := relatedgraph.Fanout(b.Context(), b, 5, 9)
 	server := NewServer(nil, nil)
 	server.SetDatabaseScopedStorage(func(string) (storage.Engine, error) { return engine, nil })
 	ctx, cancel := context.WithCancel(ContextWithDatabase(context.Background(), "bench"))

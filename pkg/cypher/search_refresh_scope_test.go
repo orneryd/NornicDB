@@ -43,7 +43,7 @@ func TestCypherRefreshAfterCommitResolvesServiceOnce(t *testing.T) {
 func TestCypherRefreshDefersTransactionMutations(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "test")
-	transaction, err := base.BeginTransaction()
+	transaction, err := base.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = transaction.Rollback() })
 	tx := transactionStorageWrapper{tx: transaction, underlying: store, namespace: "test", separator: ":"}
@@ -71,13 +71,13 @@ func TestCypherTransactionRefreshFollowsCommitOrRollback(t *testing.T) {
 			ctx := context.Background()
 			base := newTestMemoryEngine(t)
 			store := storage.NewNamespacedEngine(base, "test")
-			_, err := store.CreateNode(&storage.Node{ID: "node", Labels: []string{"Doc"}, Properties: map[string]any{"content": "beforeword"}})
+			_, err := store.CreateNode(t.Context(), &storage.Node{ID: "node", Labels: []string{"Doc"}, Properties: map[string]any{"content": "beforeword"}})
 			require.NoError(t, err)
 			service := search.NewService(store, 2, nil)
 			t.Cleanup(func() { _ = service.Close() })
 			require.NoError(t, service.BuildIndexes(ctx))
 
-			transaction, err := base.BeginTransaction()
+			transaction, err := base.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = transaction.Rollback() })
 			wrapped := &transactionStorageWrapper{tx: transaction, underlying: store, namespace: "test", separator: ":"}

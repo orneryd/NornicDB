@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
@@ -9,14 +10,14 @@ import (
 // validateStaticQuantifierTypes rejects predicates that apply numeric
 // operators to statically non-numeric list elements. This is a compile-time
 // Cypher type error rather than a null-producing runtime expression.
-func validateStaticQuantifierTypes(cypher string) error {
+func validateStaticQuantifierTypes(ctx context.Context, cypher string) error {
 	options := defaultKeywordScanOpts()
 	options.SkipParens = false
 	options.SkipBrackets = false
 	options.SkipBraces = false
 	for _, name := range []string{"all", "any", "none", "single"} {
 		for from := 0; from < len(cypher); {
-			index := keywordIndexFrom(cypher, name, from, options)
+			index := keywordIndexFrom(ctx, cypher, name, from, options)
 			if index < 0 {
 				break
 			}
@@ -29,7 +30,7 @@ func validateStaticQuantifierTypes(cypher string) error {
 			if close < 0 {
 				continue
 			}
-			if err := validateStaticQuantifierCall(cypher[open+1 : close]); err != nil {
+			if err := validateStaticQuantifierCall(ctx, cypher[open+1:close]); err != nil {
 				return err
 			}
 		}
@@ -37,14 +38,14 @@ func validateStaticQuantifierTypes(cypher string) error {
 	return nil
 }
 
-func validateStaticQuantifierCall(inner string) error {
+func validateStaticQuantifierCall(ctx context.Context, inner string) error {
 	inner = StripComments(inner)
-	inIndex := findKeywordIndexInContext(inner, "IN")
+	inIndex := findKeywordIndexInContext(ctx, inner, "IN")
 	if inIndex <= 0 {
 		return nil
 	}
 	rest := inner[inIndex+len("IN"):]
-	whereIndex := findKeywordIndexInContext(rest, "WHERE")
+	whereIndex := findKeywordIndexInContext(ctx, rest, "WHERE")
 	if whereIndex < 0 {
 		return nil
 	}

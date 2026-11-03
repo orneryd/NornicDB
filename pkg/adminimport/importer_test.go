@@ -3,12 +3,13 @@ package adminimport
 import (
 	"context"
 	"errors"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -50,7 +51,7 @@ u1,u2,KNOWS,2024
 	require.Equal(t, int64(1), report.RelationshipsImported)
 
 	engine := storage.NewNamespacedEngine(base, "mydb")
-	alice, err := engine.GetNode("u1")
+	alice, err := engine.GetNode(t.Context(), "u1")
 	require.NoError(t, err)
 	require.ElementsMatch(t, []string{"Imported", "Person", "User"}, alice.Labels)
 	require.Equal(t, "Alice", alice.Properties["name"])
@@ -72,7 +73,8 @@ u1,u2,KNOWS,2024
 	_, err = os.Stat(filepath.Join(dir, "search", "mydb", "hnsw"))
 	require.NoError(t, err)
 
-	constraints := engine.GetSchema().GetConstraintsForLabels([]string{"Person"})
+	constraints, err := engine.GetSchema().GetConstraintsForLabels(context.Background(), []string{"Person"})
+	require.NoError(t, err)
 	require.Len(t, constraints, 1)
 	require.Equal(t, "person_name_unique", constraints[0].Name)
 	require.Equal(t, storage.ConstraintUnique, constraints[0].Type)
@@ -103,7 +105,7 @@ n1,Bob
 	require.Equal(t, int64(1), report.DuplicateNodesSkipped)
 
 	engine := storage.NewNamespacedEngine(base, "mydb")
-	node, err := engine.GetNode("n1")
+	node, err := engine.GetNode(t.Context(), "n1")
 	require.NoError(t, err)
 	require.NotNil(t, node)
 	require.Equal(t, "Alice", node.Properties["name"])
@@ -129,7 +131,7 @@ n1,n2,KNOWS,2024
 func TestNeo4jCSVExportRoundTripsThroughImporter(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	source := storage.NewNamespacedEngine(base, "source")
-	_, err := source.CreateNode(&storage.Node{
+	_, err := source.CreateNode(t.Context(), &storage.Node{
 		ID:     "u1",
 		Labels: []string{"Person", "User"},
 		Properties: map[string]any{
@@ -141,7 +143,7 @@ func TestNeo4jCSVExportRoundTripsThroughImporter(t *testing.T) {
 		NamedEmbeddings: map[string][]float32{"default": {0.4, 0.5, 0.6}},
 	})
 	require.NoError(t, err)
-	_, err = source.CreateNode(&storage.Node{
+	_, err = source.CreateNode(t.Context(), &storage.Node{
 		ID:     "u2",
 		Labels: []string{"Person"},
 		Properties: map[string]any{
@@ -150,7 +152,7 @@ func TestNeo4jCSVExportRoundTripsThroughImporter(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	require.NoError(t, source.CreateEdge(&storage.Edge{
+	require.NoError(t, source.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "r1",
 		StartNode: "u1",
 		EndNode:   "u2",
@@ -188,7 +190,7 @@ func TestNeo4jCSVExportRoundTripsThroughImporter(t *testing.T) {
 	require.Equal(t, int64(1), report.RelationshipsImported)
 
 	dest := storage.NewNamespacedEngine(destBase, "dest")
-	alice, err := dest.GetNode("u1")
+	alice, err := dest.GetNode(t.Context(), "u1")
 	require.NoError(t, err)
 	require.Equal(t, "Alice", alice.Properties["name"])
 	require.Equal(t, int64(34), alice.Properties["age"])
@@ -202,7 +204,8 @@ func TestNeo4jCSVExportRoundTripsThroughImporter(t *testing.T) {
 	require.Len(t, edges, 1)
 	require.Equal(t, "KNOWS", edges[0].Type)
 	require.Equal(t, int64(2024), edges[0].Properties["since"])
-	constraints := dest.GetSchema().GetConstraintsForLabels([]string{"Person"})
+	constraints, err := dest.GetSchema().GetConstraintsForLabels(context.Background(), []string{"Person"})
+	require.NoError(t, err)
 	require.Len(t, constraints, 1)
 	require.Equal(t, "person_name_unique", constraints[0].Name)
 	indexes := dest.GetSchema().GetIndexes()
@@ -212,7 +215,7 @@ func TestNeo4jCSVExportRoundTripsThroughImporter(t *testing.T) {
 func TestNeo4jCSVExportRoundTripsFullSchemaDefinition(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	source := storage.NewNamespacedEngine(base, "source")
-	_, err := source.CreateNode(&storage.Node{
+	_, err := source.CreateNode(t.Context(), &storage.Node{
 		ID:     "u1",
 		Labels: []string{"Person"},
 		Properties: map[string]any{
@@ -226,7 +229,7 @@ func TestNeo4jCSVExportRoundTripsFullSchemaDefinition(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	_, err = source.CreateNode(&storage.Node{
+	_, err = source.CreateNode(t.Context(), &storage.Node{
 		ID:     "u2",
 		Labels: []string{"Person"},
 		Properties: map[string]any{
@@ -239,7 +242,7 @@ func TestNeo4jCSVExportRoundTripsFullSchemaDefinition(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	require.NoError(t, source.CreateEdge(&storage.Edge{
+	require.NoError(t, source.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "r1",
 		StartNode: "u1",
 		EndNode:   "u2",
@@ -329,7 +332,7 @@ func TestNeo4jCSVExportRoundTripsFullSchemaDefinition(t *testing.T) {
 	require.NoError(t, err)
 
 	dest := storage.NewNamespacedEngine(destBase, "dest")
-	require.Equal(t, source.GetSchema().ExportDefinition(), dest.GetSchema().ExportDefinition())
+	require.Equal(t, schemaDefinitionForTest(t, source.GetSchema()), schemaDefinitionForTest(t, dest.GetSchema()))
 }
 
 func TestImporterReportsDuplicateIDs(t *testing.T) {
@@ -461,7 +464,7 @@ func TestImporterScenario_MissingLaterSourceFailsBeforeWrites(t *testing.T) {
 	require.ErrorIs(t, importErr.Err, os.ErrNotExist)
 
 	engine := storage.NewNamespacedEngine(base, "missingdb")
-	count, countErr := engine.NodeCount()
+	count, countErr := engine.NodeCount(t.Context())
 	require.NoError(t, countErr)
 	require.Equal(t, int64(0), count)
 }
@@ -486,7 +489,7 @@ func TestImporterPreservesEmptyStringPropertiesUnlessIgnored(t *testing.T) {
 	require.NoError(t, err)
 
 	keep := storage.NewNamespacedEngine(base, "keepempty")
-	node, err := keep.GetNode("n1")
+	node, err := keep.GetNode(t.Context(), "n1")
 	require.NoError(t, err)
 	require.Equal(t, "", node.Properties["nickname"])
 	edges, err := keep.GetOutgoingEdges(context.Background(), "n1")
@@ -505,7 +508,7 @@ func TestImporterPreservesEmptyStringPropertiesUnlessIgnored(t *testing.T) {
 	require.NoError(t, err)
 
 	drop := storage.NewNamespacedEngine(base, "dropempty")
-	node, err = drop.GetNode("n1")
+	node, err = drop.GetNode(t.Context(), "n1")
 	require.NoError(t, err)
 	_, exists := node.Properties["nickname"]
 	require.False(t, exists)
@@ -536,10 +539,10 @@ func TestImporterMultiFileAnonymousNodeIDsRemainUnique(t *testing.T) {
 	require.Equal(t, int64(2), report.NodesImported)
 
 	engine := storage.NewNamespacedEngine(base, "anon")
-	alice, err := engine.GetNode("_anon_0")
+	alice, err := engine.GetNode(t.Context(), "_anon_0")
 	require.NoError(t, err)
 	require.Equal(t, "Alice", alice.Properties["name"])
-	bob, err := engine.GetNode("_anon_1")
+	bob, err := engine.GetNode(t.Context(), "_anon_1")
 	require.NoError(t, err)
 	require.Equal(t, "Bob", bob.Properties["name"])
 }
@@ -590,10 +593,10 @@ func TestImporterBooleanParsingIsCaseInsensitiveAndRejectsInvalidValues(t *testi
 	require.NoError(t, err)
 
 	engine := storage.NewNamespacedEngine(base, "bools")
-	n1, err := engine.GetNode("n1")
+	n1, err := engine.GetNode(t.Context(), "n1")
 	require.NoError(t, err)
 	require.Equal(t, true, n1.Properties["active"])
-	n2, err := engine.GetNode("n2")
+	n2, err := engine.GetNode(t.Context(), "n2")
 	require.NoError(t, err)
 	require.Equal(t, false, n2.Properties["active"])
 
@@ -751,7 +754,7 @@ u1,u2,WORKS_WITH,2025
 	require.Equal(t, int64(1), alphaReport.RelationshipsImported)
 
 	alpha := storage.NewNamespacedEngine(base, "alpha")
-	alphaAlice, err := alpha.GetNode("u1")
+	alphaAlice, err := alpha.GetNode(t.Context(), "u1")
 	require.NoError(t, err)
 	require.Equal(t, "Alice", alphaAlice.Properties["name"])
 	require.Equal(t, "admin", alphaAlice.Properties["role"])
@@ -792,7 +795,7 @@ u1,u2,WORKS_WITH,2025
 	require.Equal(t, int64(1), betaReport.RelationshipsImported)
 
 	beta := storage.NewNamespacedEngine(base, "beta")
-	betaCarol, err := beta.GetNode("u1")
+	betaCarol, err := beta.GetNode(t.Context(), "u1")
 	require.NoError(t, err)
 	require.Equal(t, "Carol", betaCarol.Properties["name"])
 	require.Equal(t, "owner", betaCarol.Properties["role"])
@@ -806,19 +809,19 @@ u1,u2,WORKS_WITH,2025
 	require.Equal(t, "WORKS_WITH", betaEdges[0].Type)
 	require.Equal(t, int64(2025), betaEdges[0].Properties["since"])
 
-	alphaAlice, err = alpha.GetNode("u1")
+	alphaAlice, err = alpha.GetNode(t.Context(), "u1")
 	require.NoError(t, err)
 	require.Equal(t, "Alice", alphaAlice.Properties["name"])
 	require.Equal(t, "admin", alphaAlice.Properties["role"])
 
-	alphaCount, err := alpha.NodeCount()
+	alphaCount, err := alpha.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, int64(2), alphaCount)
-	betaCount, err := beta.NodeCount()
+	betaCount, err := beta.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, int64(2), betaCount)
 
-	_, err = beta.GetNode("missing")
+	_, err = beta.GetNode(t.Context(), "missing")
 	require.Error(t, err)
 	require.True(t, errors.Is(err, storage.ErrNotFound))
 }
@@ -846,7 +849,7 @@ func TestImporterScenario_MissingSecondSourceAcrossFlagsFailsBeforeWrites(t *tes
 	require.ErrorIs(t, importErr.Err, os.ErrNotExist)
 
 	engine := storage.NewNamespacedEngine(base, "missingdb")
-	count, countErr := engine.NodeCount()
+	count, countErr := engine.NodeCount(t.Context())
 	require.NoError(t, countErr)
 	require.Equal(t, int64(0), count)
 }
@@ -949,11 +952,11 @@ func TestImporterReportsDuplicateRelationshipIDsAcrossChunks(t *testing.T) {
 func TestNeo4jCSVExportSchemaCypher_IncludesRelationshipFulltextAndVectorIndexes(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	source := storage.NewNamespacedEngine(base, "source")
-	_, err := source.CreateNode(&storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]any{"name": "Alice"}})
+	_, err := source.CreateNode(t.Context(), &storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]any{"name": "Alice"}})
 	require.NoError(t, err)
-	_, err = source.CreateNode(&storage.Node{ID: "n2", Labels: []string{"Person"}, Properties: map[string]any{"name": "Bob"}})
+	_, err = source.CreateNode(t.Context(), &storage.Node{ID: "n2", Labels: []string{"Person"}, Properties: map[string]any{"name": "Bob"}})
 	require.NoError(t, err)
-	require.NoError(t, source.CreateEdge(&storage.Edge{
+	require.NoError(t, source.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "e1",
 		StartNode: "n1",
 		EndNode:   "n2",

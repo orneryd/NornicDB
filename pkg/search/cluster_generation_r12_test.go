@@ -49,7 +49,7 @@ func moveClusterMember(t *testing.T, f *cgFixture, from, to int) (string, []floa
 	}
 	require.NotEmpty(t, vec)
 	require.Equal(t, to, routing.NearestClusters(vec, 1)[0])
-	node, err := f.engine.GetNode(storage.NodeID(vectorOwnerForTest(t, id)))
+	node, err := f.engine.GetNode(t.Context(), storage.NodeID(vectorOwnerForTest(t, id)))
 	require.NoError(t, err)
 	node.ChunkEmbeddings = [][]float32{vec}
 	require.NoError(t, f.write(node))
@@ -176,7 +176,12 @@ func TestClusterGenerationRoutingPanicReleasesLock(t *testing.T) {
 			}
 			require.False(t, locked, "a recovered routing panic leaves clusterStateMu unlocked")
 			released := make(chan struct{})
-			go func() { f.svc.clusterGen.holders.Wait(); close(released) }()
+			go func() {
+				for f.svc.clusterGen.holders.Active() != 0 {
+					time.Sleep(time.Millisecond)
+				}
+				close(released)
+			}()
 			select {
 			case <-released:
 			case <-time.After(10 * time.Second):
@@ -196,7 +201,12 @@ func TestClusterGenerationCancelledQueryReleasesHolder(t *testing.T) {
 	_, err := f.svc.vectorSearchOnly(ctx, vec, DefaultSearchOptions())
 	require.ErrorIs(t, err, context.Canceled)
 	released := make(chan struct{})
-	go func() { f.svc.clusterGen.holders.Wait(); close(released) }()
+	go func() {
+		for f.svc.clusterGen.holders.Active() != 0 {
+			time.Sleep(time.Millisecond)
+		}
+		close(released)
+	}()
 	select {
 	case <-released:
 	case <-time.After(10 * time.Second):

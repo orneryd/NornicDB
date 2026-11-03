@@ -16,17 +16,17 @@ func TestCachedNestedValuesAcrossPopulationReaders(t *testing.T) {
 			t.Run(fmt.Sprintf("buffered=%v/%s", buffered, route), func(t *testing.T) {
 				b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: buffered, WriteBehindInterval: time.Hour}))
 				require.NoError(t, err)
-				tx, err := b.BeginTransaction()
+				tx, err := b.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = tx.Rollback() })
 				require.NoError(t, tx.SetNamespace("test"))
 				require.NoError(t, tx.SetImplicit(buffered))
-				id, err := tx.CreateNode(&Node{ID: "test:population-owner", Labels: []string{"PopulationOwner"}, Properties: map[string]any{"nested": map[string]any{"values": []int64{1, 2}}, "omitted": "retained"}})
+				id, err := tx.CreateNode(t.Context(), &Node{ID: "test:population-owner", Labels: []string{"PopulationOwner"}, Properties: map[string]any{"nested": map[string]any{"values": []int64{1, 2}}, "omitted": "retained"}})
 				require.NoError(t, err)
 				require.NoError(t, tx.CommitContext(context.Background()))
 				var reader *BadgerTransaction
 				if route == "transaction-point" {
-					reader, err = b.BeginTransaction()
+					reader, err = b.BeginTransaction(t.Context())
 					require.NoError(t, err)
 					t.Cleanup(func() { _ = reader.Rollback() })
 					require.NoError(t, reader.SetNamespace("test"))
@@ -34,11 +34,11 @@ func TestCachedNestedValuesAcrossPopulationReaders(t *testing.T) {
 				read := func() (*Node, error) {
 					switch route {
 					case "visible":
-						return b.GetNode(id)
+						return b.GetNode(t.Context(), id)
 					case "first-label":
-						return b.GetFirstNodeByLabel("PopulationOwner")
+						return b.GetFirstNodeByLabel(t.Context(), "PopulationOwner")
 					case "transaction-point":
-						return reader.GetNodeProjected(id, []string{"nested"})
+						return reader.GetNodeProjected(t.Context(), id, []string{"nested"})
 					default:
 						nodes, err := b.AllNodes(context.Background())
 						if err != nil {
@@ -63,8 +63,8 @@ func TestCachedNestedValuesAcrossPopulationReaders(t *testing.T) {
 				if reader != nil {
 					require.NotContains(t, second.Properties, "omitted")
 				}
-				require.NoError(t, b.FlushWriteBehind(nil))
-				stored, err := b.GetStoredNode(id)
+				require.NoError(t, b.FlushWriteBehind(context.Background()))
+				stored, err := b.GetStoredNode(t.Context(), id)
 				require.NoError(t, err)
 				require.Equal(t, []int64{1, 2}, stored.Properties["nested"].(map[string]any)["values"])
 			})

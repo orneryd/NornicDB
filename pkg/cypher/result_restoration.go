@@ -1,9 +1,11 @@
 package cypher
 
 import (
+	"context"
 	"strconv"
 	"strings"
 
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -18,7 +20,7 @@ type resultRestoration struct {
 // restore owns result copying, metadata and EXPLAIN row presentation for both
 // policies. Ordinary rows remain data; quoted RETURN columns use the projection
 // owner, and each error policy keeps its original classification and cause.
-func (restoration resultRestoration) restore(result *ExecuteResult, err error, parseItems func(string) []returnItem) (*ExecuteResult, error) {
+func (restoration resultRestoration) restore(ctx context.Context, result *ExecuteResult, err error, parseItems func(string) []returnItem) (*ExecuteResult, error) {
 	if restoration.source == nil && restoration.names == nil {
 		return result, err
 	}
@@ -80,20 +82,27 @@ func (restoration resultRestoration) restore(result *ExecuteResult, err error, p
 					}
 				}
 				if !restoreRows && len(restored.Columns) > 0 {
-					restoration.names.restoreResultColumns(&restored, parseItems)
+					restoration.names.restoreResultColumns(ctx, &restored, parseItems)
 				}
 			}
 			result = &restored
 		}
 	}
 	if err != nil {
-		if restoration.names == nil {
-			err, _ = restoration.source.restoreSourceError(err)
-		} else if len(restoration.names.internal) > 0 {
-			if message := err.Error(); restoration.names.restoreSourceText(message, quotedNamesOnly) != message {
-				err = &quotedVariableError{cause: err, message: restoration.names.restoreSourceText(message, quotedNamesOnly)}
+		// Author: Codex,NOR-180. Project each frozen child through this same
+		// source owner;rendering must not recover its un-restored cause text.
+		project := func(cause error) error {
+			if restoration.names == nil {
+				cause, _ = restoration.source.restoreSourceError(cause)
+			} else if len(restoration.names.internal) > 0 {
+				if message := cause.Error(); restoration.names.restoreSourceText(message, quotedNamesOnly) != message {
+					cause = &quotedVariableError{cause: cause, message: restoration.names.restoreSourceText(message, quotedNamesOnly)}
+				}
 			}
+			return cause
 		}
+		err = project(err)
+		err = nornicerrors.ProjectTerminalOutcomeMessages(err, project)
 	}
 	return result, err
 }

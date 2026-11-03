@@ -14,7 +14,7 @@ import (
 
 func TestHTTPTransactionQuotas(t *testing.T) {
 	server, users := setupTestServer(t)
-	_, err := users.CreateUser("quota_writer", "password123", []auth.Role{auth.RoleEditor})
+	_, err := users.CreateUser(context.Background(), "quota_writer", "password123", []auth.Role{auth.RoleEditor})
 	require.NoError(t, err)
 	token := "Bearer " + getAuthToken(t, users, "quota_writer")
 	request := func(endpoint string, queries ...string) TransactionResponse {
@@ -80,7 +80,7 @@ func TestHTTPTransactionQuotas(t *testing.T) {
 				require.EqualValues(t, tc.nodes, read.Results[0].Data[0].Row[0])
 				engine, err := server.dbManager.GetStorage(db)
 				require.NoError(t, err)
-				edges, err := engine.EdgeCount()
+				edges, err := engine.EdgeCount(t.Context())
 				require.NoError(t, err)
 				require.Equal(t, tc.edges, edges)
 			})

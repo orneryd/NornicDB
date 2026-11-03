@@ -47,27 +47,27 @@ func TestGoAPIReadAfterWriteMatchesReadAfterRestart(t *testing.T) {
 					return out
 				}
 				for _, id := range []NodeID{"test:a", "test:b"} {
-					_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"E"}})
+					_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"E"}})
 					require.NoError(t, err)
 				}
-				_, err := engine.CreateNode(&Node{ID: "test:n", Labels: []string{"K"}, Properties: properties()})
+				_, err := engine.CreateNode(t.Context(), &Node{ID: "test:n", Labels: []string{"K"}, Properties: properties()})
 				require.NoError(t, err)
-				require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: properties()}))
+				require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: properties()}))
 				if update {
-					require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:n", Labels: []string{"K"}, Properties: properties()}}))
-					require.NoError(t, engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: properties()}}))
+					require.NoError(t, engine.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:n", Labels: []string{"K"}, Properties: properties()}}))
+					require.NoError(t, engine.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: properties()}}))
 				}
-				afterWrite, err := engine.GetNode("test:n")
+				afterWrite, err := engine.GetNode(t.Context(), "test:n")
 				require.NoError(t, err)
-				afterWriteEdge, err := engine.GetEdge("test:e")
+				afterWriteEdge, err := engine.GetEdge(t.Context(), "test:e")
 				require.NoError(t, err)
 				require.NoError(t, engine.Close())
 
 				engine = open()
 				t.Cleanup(func() { _ = engine.Close() })
-				afterRestart, err := engine.GetNode("test:n")
+				afterRestart, err := engine.GetNode(t.Context(), "test:n")
 				require.NoError(t, err)
-				afterRestartEdge, err := engine.GetEdge("test:e")
+				afterRestartEdge, err := engine.GetEdge(t.Context(), "test:e")
 				require.NoError(t, err)
 				for name := range kinds {
 					require.Equal(t, afterRestart.Properties[name], afterWrite.Properties[name], "node %s", name)
@@ -110,13 +110,13 @@ func TestStoredIntegersReadAsInt64(t *testing.T) {
 			return engine
 		}
 		engine := open()
-		_, err := engine.CreateNode(&Node{ID: "test:n", Labels: []string{"K"}, Properties: written})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: "test:n", Labels: []string{"K"}, Properties: written})
 		require.NoError(t, err)
-		afterWrite, err := engine.GetNode("test:n")
+		afterWrite, err := engine.GetNode(t.Context(), "test:n")
 		require.NoError(t, err)
 		require.NoError(t, engine.Close())
 		engine = open()
-		afterRestart, err := engine.GetNode("test:n")
+		afterRestart, err := engine.GetNode(t.Context(), "test:n")
 		require.NoError(t, err)
 		require.NoError(t, engine.Close())
 		for name, expected := range want {

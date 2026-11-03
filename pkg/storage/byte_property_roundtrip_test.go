@@ -18,15 +18,15 @@ func TestBytePropertyRoundTrip(t *testing.T) {
 		store := NewNamespacedEngine(engine, "bytes")
 		for index, value := range values {
 			id := NodeID(string(rune('a' + index)))
-			_, err := store.CreateNode(&Node{ID: id, Labels: []string{"ByteProperty"}, Properties: map[string]any{"v": value}})
+			_, err := store.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"ByteProperty"}, Properties: map[string]any{"v": value}})
 			require.NoError(t, err)
 		}
-		require.NoError(t, store.CreateEdge(&Edge{ID: "edge", StartNode: "a", EndNode: "b", Type: "BYTES", Properties: map[string]any{"v": values[0]}}))
+		require.NoError(t, store.CreateEdge(t.Context(), &Edge{ID: "edge", StartNode: "a", EndNode: "b", Type: "BYTES", Properties: map[string]any{"v": values[0]}}))
 	}
 	read := func(engine Engine) {
 		store := NewNamespacedEngine(engine, "bytes")
 		for index, want := range values {
-			n, err := store.GetNode(NodeID(string(rune('a' + index))))
+			n, err := store.GetNode(t.Context(), NodeID(string(rune('a'+index))))
 			require.NoError(t, err)
 			// A nil byte slice has the same empty array content on the wire.
 			require.IsType(t, []byte{}, n.Properties["v"])
@@ -35,7 +35,7 @@ func TestBytePropertyRoundTrip(t *testing.T) {
 				require.Equal(t, want, n.Properties["v"])
 			}
 		}
-		e, err := store.GetEdge("edge")
+		e, err := store.GetEdge(t.Context(), "edge")
 		require.NoError(t, err)
 		require.Equal(t, values[0], e.Properties["v"])
 	}

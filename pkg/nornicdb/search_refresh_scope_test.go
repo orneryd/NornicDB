@@ -36,7 +36,7 @@ func dbRefreshScopeTestDB(t *testing.T) (*DB, storage.Engine) {
 func TestDBRefreshScopePropagatesResolverError(t *testing.T) {
 	ctx := context.Background()
 	db, ns := dbRefreshScopeTestDB(t)
-	_, err := ns.CreateNode(&storage.Node{ID: "node", Labels: []string{"Doc"}, Properties: map[string]any{"content": "kept"}})
+	_, err := ns.CreateNode(t.Context(), &storage.Node{ID: "node", Labels: []string{"Doc"}, Properties: map[string]any{"content": "kept"}})
 	require.NoError(t, err)
 
 	// No service entry and no base storage: the DB reports the error its own
@@ -64,7 +64,7 @@ func TestDBRefreshScopeSystemDatabaseErrorReachesOperation(t *testing.T) {
 func TestDBRefreshScopeClosedDBError(t *testing.T) {
 	ctx := context.Background()
 	db, ns := dbRefreshScopeTestDB(t)
-	db.closed = true
+	db.work.CloseAdmission()
 	scope := dbRefreshScope{db: db, dbName: "nornic", storage: ns}
 	require.ErrorIs(t, search.RefreshIndexes(ctx, scope, search.RefreshRequest{Node: "node"}), ErrClosed)
 }
@@ -75,8 +75,8 @@ func TestDBRefreshScopeContextCancellationReachesOperation(t *testing.T) {
 	t.Cleanup(func() { _ = engine.Close() })
 	ns := storage.NewNamespacedEngine(engine, "nornic")
 	svc := search.NewService(ns, 3, nil)
-	entry := &dbSearchService{dbName: "nornic", engine: ns, svc: svc, buildDone: make(chan struct{})}
-	entry.buildOnce.Do(func() {})
+	entry := &dbSearchService{dbName: "nornic", engine: ns, svc: svc}
+	finishBuild := holdInitialBuild(entry)
 	db := &DB{
 		config:            DefaultConfig(),
 		storage:           ns,
@@ -86,7 +86,7 @@ func TestDBRefreshScopeContextCancellationReachesOperation(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	defer close(entry.buildDone)
+	defer finishBuild()
 
 	scope := dbRefreshScope{db: db, dbName: "nornic", storage: ns}
 	require.ErrorIs(t, search.RefreshIndexes(ctx, scope, search.RefreshRequest{Node: "node"}), context.Canceled)
@@ -99,11 +99,11 @@ func TestDBRefreshScopeNeverDefers(t *testing.T) {
 	svc, err := db.EnsureSearchIndexes(ctx, "nornic", ns, SearchIndexBuildWait)
 	require.NoError(t, err)
 	require.NotNil(t, svc)
-	_, err = ns.CreateNode(&storage.Node{ID: "node", Labels: []string{"Doc"}, Properties: map[string]any{"content": "deleteword"}})
+	_, err = ns.CreateNode(t.Context(), &storage.Node{ID: "node", Labels: []string{"Doc"}, Properties: map[string]any{"content": "deleteword"}})
 	require.NoError(t, err)
-	require.NoError(t, svc.RefreshNode("node"))
+	require.NoError(t, svc.RefreshNode(t.Context(), "node"))
 	require.Equal(t, 1, svc.FulltextDocCount())
-	require.NoError(t, ns.DeleteNode("node"))
+	require.NoError(t, ns.DeleteNode(t.Context(), "node"))
 	require.NoError(t, search.RefreshIndexes(ctx, dbRefreshScope{db: db, dbName: "nornic", storage: ns}, search.RefreshRequest{Node: "node"}))
 	require.Zero(t, svc.FulltextDocCount(), "the DB scope deferred its refresh")
 }
@@ -116,7 +116,7 @@ func TestDBRefreshScopeConcurrentRefreshesApplyEachRequest(t *testing.T) {
 	svc, err := db.EnsureSearchIndexes(ctx, "nornic", ns, SearchIndexBuildWait)
 	require.NoError(t, err)
 	for _, id := range []storage.NodeID{"one", "two"} {
-		_, err := ns.CreateNode(&storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"content": string(id) + "word"}})
+		_, err := ns.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"content": string(id) + "word"}})
 		require.NoError(t, err)
 	}
 

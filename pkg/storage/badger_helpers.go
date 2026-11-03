@@ -1112,46 +1112,24 @@ func (b *BadgerEngine) encodeNode(txn *badger.Txn, node *Node) ([]byte, bool, er
 	return b.encodeNodeInTxn(txn, namespace, node)
 }
 
-// decodeEdgeBodyByID is the engine-attached convenience wrapper that
-// derives the namespace from the edge ID. Replaces the old
-// decodeEdgeBodyWithID(data, id) signature at call sites.
-func (b *BadgerEngine) decodeEdgeBodyByID(data []byte, id EdgeID) (*Edge, error) {
-	return b.decodeEdgeBodyWithID(namespaceForEdgeID(id), data, id)
-}
-
-// decodeNode is the V2 hot-path decoder. Rejects any body that does
-// not start with the V2 format byte — V2 stores have been fully
-// rewritten by the V1→V2 migration, so a non-V2 body indicates
-// corruption or a forgotten upgrade.
-func (b *BadgerEngine) decodeNode(namespace string, data []byte) (*Node, error) {
-	return b.decodeNodeProjected(namespace, data, nil)
-}
-
-// decodeNodeProjected decodes a V2 node body with only the included
-// properties (all of them when include is nil). A scan that tests properties
-// before keeping a node uses projectedNodeDecoder instead (#857).
-func (b *BadgerEngine) decodeNodeProjected(namespace string, data []byte, include map[string]struct{}) (*Node, error) {
-	if len(data) < 1 {
-		return nil, fmt.Errorf("node body empty")
+// decodeNodeProjected is the V2 hot-path node decoder. It decodes only the
+// included properties (all of them when include is nil) and rejects every
+// envelope frame it does not own (#1693). txn is the Badger transaction whose
+// snapshot the body was read from and owns the names of the body's stored
+// property tokens; nil is the context-free standalone boundary
+// (decodeTokenizedPropertiesProjected). A scan that tests properties before
+// keeping a node uses projectedNodeDecoder instead (#857).
+func (b *BadgerEngine) decodeNodeProjected(txn *badger.Txn, namespace string, data []byte, include map[string]struct{}) (*Node, error) {
+	envelope, err := SplitNodeEnvelope(data)
+	if err != nil {
+		return nil, err
 	}
-	if data[0] != nodeFormatTokenizedV1 {
-		return nil, fmt.Errorf("node body has unexpected format byte 0x%02x; expected V2 (0x%02x)", data[0], nodeFormatTokenizedV1)
-	}
-	rest := data[1:]
-	propsLen, n := binary.Uvarint(rest)
-	if n <= 0 {
-		return nil, fmt.Errorf("node body: malformed properties length varint")
-	}
-	rest = rest[n:]
-	if uint64(len(rest)) < propsLen {
-		return nil, fmt.Errorf("node body: properties payload truncated")
-	}
-	props, err := b.decodeTokenizedPropertiesProjected(namespace, rest[:propsLen], include)
+	props, err := b.decodeTokenizedPropertiesProjected(txn, namespace, envelope.properties, include)
 	if err != nil {
 		return nil, err
 	}
 	node := &Node{}
-	if err := decodeValue(rest[propsLen:], node); err != nil {
+	if err := decodeValue(envelope.metadata, node); err != nil {
 		return nil, err
 	}
 	node.Properties = props
@@ -1169,7 +1147,7 @@ func (b *BadgerEngine) decodeNodeWithEmbeddings(txn *badger.Txn, data []byte, no
 // (loadNodeEmbeddingState).
 func (b *BadgerEngine) decodeNodeEmbeddingState(txn *badger.Txn, data []byte, nodeID NodeID, vectors bool) (*Node, error) {
 	namespace, _, _ := ParseDatabasePrefix(string(nodeID))
-	node, err := b.decodeNode(namespace, data)
+	node, err := b.decodeNodeProjected(txn, namespace, data, nil)
 	if err != nil {
 		return nil, err
 	}

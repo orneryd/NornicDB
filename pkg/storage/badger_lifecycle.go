@@ -222,6 +222,7 @@ func (b *BadgerEngine) IterateMVCCVersions(ctx context.Context, logicalKey []byt
 }
 
 // DeleteMVCCVersion deletes a single MVCC version for a logical key.
+// ctx keeps its values and cancellation while waiting for write admission.
 func (b *BadgerEngine) DeleteMVCCVersion(ctx context.Context, logicalKey []byte, version MVCCVersion) error {
 	fullKey, err := mvccVersionKeyForLogicalKey(logicalKey, version)
 	if err != nil {
@@ -230,7 +231,7 @@ func (b *BadgerEngine) DeleteMVCCVersion(ctx context.Context, logicalKey []byte,
 	// Ordered after the entity's acknowledged write-behind commits, as
 	// WriteMVCCHead is; the version the entity's head names is never deleted
 	// (a commit landed after the caller read its fence).
-	return b.withUpdate(updateRequest{ctx: ctx, scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+	return b.withUpdate(ctx, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		if len(logicalKey) == 1+8 {
 			head, err := b.loadMVCCHeadForLogicalKeyInTxn(txn, logicalKey)
 			if err != nil && !errors.Is(err, ErrNotFound) {
@@ -251,7 +252,7 @@ func (b *BadgerEngine) DeleteMVCCVersion(ctx context.Context, logicalKey []byte,
 // after the entity's acknowledged write-behind commits
 // (orderAfterBufferedCommits), so none of them lands over it afterwards.
 func (b *BadgerEngine) WriteMVCCHead(ctx context.Context, logicalKey []byte, head MVCCHead) error {
-	return b.withUpdate(updateRequest{ctx: ctx, scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+	return b.withUpdate(ctx, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		current, err := b.loadMVCCHeadForLogicalKeyInTxn(txn, logicalKey)
 		if err != nil && !errors.Is(err, ErrNotFound) {
 			return err

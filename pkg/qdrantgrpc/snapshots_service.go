@@ -3,12 +3,13 @@ package qdrantgrpc
 import (
 	"context"
 	"fmt"
-	"github.com/orneryd/nornicdb/internal/grpcresponse"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/orneryd/nornicdb/internal/grpcresponse"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	qpb "github.com/qdrant/go-client/qdrant"
@@ -77,7 +78,15 @@ func (s *SnapshotsService) Create(ctx context.Context, req *qpb.CreateSnapshotRe
 	}
 
 	// Verify collection exists
-	if s.collections == nil || !s.collections.Exists(req.CollectionName) {
+	exists := false
+	if s.collections != nil {
+		var err error
+		exists, err = s.collections.Exists(ctx, req.CollectionName)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if !exists {
 		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.NotFound, localization.QdrantCollectionNotFound(req.CollectionName), grpcresponse.QdrantSourceFallback)
 	}
 
@@ -154,7 +163,15 @@ func (s *SnapshotsService) List(ctx context.Context, req *qpb.ListSnapshotsReque
 	}
 
 	// Verify collection exists
-	if s.collections == nil || !s.collections.Exists(req.CollectionName) {
+	exists := false
+	if s.collections != nil {
+		var err error
+		exists, err = s.collections.Exists(ctx, req.CollectionName)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if !exists {
 		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.NotFound, localization.QdrantCollectionNotFound(req.CollectionName), grpcresponse.QdrantSourceFallback)
 	}
 
@@ -224,7 +241,15 @@ func (s *SnapshotsService) Delete(ctx context.Context, req *qpb.DeleteSnapshotRe
 	}
 
 	// Verify collection exists
-	if s.collections == nil || !s.collections.Exists(req.CollectionName) {
+	exists := false
+	if s.collections != nil {
+		var err error
+		exists, err = s.collections.Exists(ctx, req.CollectionName)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if !exists {
 		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.NotFound, localization.QdrantCollectionNotFound(req.CollectionName), grpcresponse.QdrantSourceFallback)
 	}
 

@@ -9,6 +9,7 @@ package search
 import (
 	"context"
 	"fmt"
+
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"log/slog"
@@ -44,7 +45,7 @@ type temporalWindowEngine struct {
 	expired atomic.Bool
 }
 
-func (e *temporalWindowEngine) IsCurrentTemporalNode(node *storage.Node, _ time.Time) (bool, error) {
+func (e *temporalWindowEngine) IsCurrentTemporalNode(_ context.Context, node *storage.Node, _ time.Time) (bool, error) {
 	if node.Properties["window"] == "closing" && e.expired.Load() {
 		return false, nil
 	}
@@ -62,7 +63,7 @@ func TestBuildTemporalCurrencyIsDecidedAtTheCall(t *testing.T) {
 	t.Cleanup(gate.open)
 	built := startGatedBuild(t, gate, svc)
 	node := &storage.Node{ID: "nornic:w", Labels: []string{"Doc"}, Properties: map[string]any{"text": "windowterm", "window": "closing"}}
-	_, err := gate.CreateNode(storage.CopyNode(node))
+	_, err := gate.CreateNode(t.Context(), storage.CopyNode(node))
 	require.NoError(t, err)
 	requireReturnsDuringBuild(t, "a write while current", func() error { return svc.IndexNode(node) })
 	engine.expired.Store(true)
@@ -74,7 +75,7 @@ func TestBuildTemporalCurrencyIsDecidedAtTheCall(t *testing.T) {
 func buildWriteEdgeEndpoints(t *testing.T, engine storage.Engine) {
 	t.Helper()
 	for _, id := range []storage.NodeID{"nornic:s", "nornic:e"} {
-		_, err := engine.CreateNode(&storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"text": "node"}})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"text": "node"}})
 		require.NoError(t, err)
 	}
 }
@@ -110,7 +111,7 @@ func TestBuildChoosesTheDimensionInTheSerialOrder(t *testing.T) {
 					t.Cleanup(engine.open)
 					buildWriteEdgeEndpoints(t, engine)
 					stored := &storage.Edge{ID: "nornic:stored", StartNode: "nornic:s", EndNode: "nornic:e", Type: "REL", Properties: map[string]any{"v": []float32{1, 0, 0}}}
-					require.NoError(t, engine.CreateEdge(stored))
+					require.NoError(t, engine.CreateEdge(t.Context(), stored))
 					var built chan error
 					if gated {
 						built = startGatedBuild(t, engine, svc)
@@ -121,11 +122,11 @@ func TestBuildChoosesTheDimensionInTheSerialOrder(t *testing.T) {
 					done := make(chan error, 1)
 					if kind == "edge" {
 						live := &storage.Edge{ID: "nornic:live", StartNode: "nornic:s", EndNode: "nornic:e", Type: "REL", Properties: map[string]any{"v": []float32{0, 1}}}
-						require.NoError(t, engine.CreateEdge(storage.CopyEdge(live)))
+						require.NoError(t, engine.CreateEdge(t.Context(), storage.CopyEdge(live)))
 						go func() { done <- svc.IndexEdge(live) }()
 					} else {
 						node := &storage.Node{ID: "nornic:pv", Labels: []string{"Doc"}, Properties: map[string]any{"text": "pvterm", "p": []float32{0, 1}}}
-						_, err := engine.CreateNode(storage.CopyNode(node))
+						_, err := engine.CreateNode(t.Context(), storage.CopyNode(node))
 						require.NoError(t, err)
 						go func() { done <- svc.IndexNode(node) }()
 					}
@@ -152,7 +153,7 @@ func TestBuildChoosesTheDimensionInTheSerialOrder(t *testing.T) {
 		svc := NewService(engine, 3, nil)
 		t.Cleanup(func() { _ = svc.Close() })
 		t.Cleanup(engine.open)
-		_, err := engine.CreateNode(buildWriteNode("nornic:stored", "storedterm", []float32{1, 0, 0, 0}))
+		_, err := engine.CreateNode(t.Context(), buildWriteNode("nornic:stored", "storedterm", []float32{1, 0, 0, 0}))
 		require.NoError(t, err)
 		built := make(chan error, 1)
 		go func() { built <- svc.BuildIndexes(context.Background()) }()
@@ -184,7 +185,7 @@ func TestBuildChoosesTheDimensionInTheSerialOrder(t *testing.T) {
 		t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "1000")
 		run := func(gated bool) ([]error, string) {
 			engine := newNodeSnapshotGateEngine(t)
-			_, err := engine.CreateNode(buildWriteNode("nornic:keep", "keepterm", []float32{1, 0, 0}))
+			_, err := engine.CreateNode(t.Context(), buildWriteNode("nornic:keep", "keepterm", []float32{1, 0, 0}))
 			require.NoError(t, err)
 			svc := NewService(engine, 3, nil)
 			t.Cleanup(func() { _ = svc.Close() })
@@ -226,12 +227,12 @@ func TestBuildRemovalThenRecreationDuringABuild(t *testing.T) {
 	svc := buildWriteService(t, engine, "", "v2", nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	t.Cleanup(engine.open)
-	_, err := engine.CreateNode(buildWriteNode("nornic:o", "oterm", []float32{1, 0, 0}))
+	_, err := engine.CreateNode(t.Context(), buildWriteNode("nornic:o", "oterm", []float32{1, 0, 0}))
 	require.NoError(t, err)
 	built := startGatedBuild(t, engine, svc)
 	requireReturnsDuringBuild(t, "a removal", func() error { return svc.RemoveNode("nornic:o") })
 	again := buildWriteNode("nornic:o", "againterm", []float32{0, 1, 0})
-	require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: again}))
+	require.NoError(t, engine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: again}))
 	requireReturnsDuringBuild(t, "a re-creation", func() error { return svc.IndexNode(again) })
 	engine.open()
 	require.NoError(t, <-built)
@@ -262,7 +263,7 @@ func TestBuildOverlappingPersistedBuildsKeepTheTail(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "1000")
 	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { _ = engine.Close() })
-	_, err := engine.CreateNode(buildWriteNode("nornic:a", "oldterm", []float32{1, 0, 0}))
+	_, err := engine.CreateNode(t.Context(), buildWriteNode("nornic:a", "oldterm", []float32{1, 0, 0}))
 	require.NoError(t, err)
 	svc := buildWriteService(t, engine, t.TempDir(), "v2", nil)
 	gate := &finalPersistGateLog{entered: make(chan struct{}), release: make(chan struct{})}
@@ -283,7 +284,7 @@ func TestBuildOverlappingPersistedBuildsKeepTheTail(t *testing.T) {
 		return svc.buildWrites.owners == 2
 	}, 5*time.Second, time.Millisecond)
 	updated := buildWriteNode("nornic:a", "newterm", []float32{0, 1, 0})
-	require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: updated}))
+	require.NoError(t, engine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: updated}))
 	requireReturnsDuringBuild(t, "a tail write", func() error { return svc.IndexNode(updated) })
 	release()
 	require.NoError(t, <-built)
@@ -302,7 +303,7 @@ func TestBuildPropertyIndexRemovalCoversTheBuildsStoredNodes(t *testing.T) {
 	svc := buildWriteService(t, engine, "", "v2", nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	t.Cleanup(engine.open)
-	_, err := engine.CreateNode(&storage.Node{ID: "nornic:stored", Labels: []string{"Doc"}, Properties: map[string]any{"text": "storedterm", "p": []float32{1, 0, 0}}})
+	_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "nornic:stored", Labels: []string{"Doc"}, Properties: map[string]any{"text": "storedterm", "p": []float32{1, 0, 0}}})
 	require.NoError(t, err)
 	built := startGatedBuild(t, engine, svc)
 	svc.RemovePropertyVectorIndex("p")
@@ -322,7 +323,7 @@ func TestBuildIndexingSettingAppliesAfterTheBuild(t *testing.T) {
 	svc := buildWriteService(t, engine, "", "v2", nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	t.Cleanup(engine.open)
-	_, err := engine.CreateNode(&storage.Node{ID: "nornic:stored", Labels: []string{"Doc"}, Properties: map[string]any{"title": "titleterm", "other": "otherterm"}})
+	_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "nornic:stored", Labels: []string{"Doc"}, Properties: map[string]any{"title": "titleterm", "other": "otherterm"}})
 	require.NoError(t, err)
 	built := startGatedBuild(t, engine, svc)
 	svc.SetFulltextProperties([]string{"other"})
@@ -341,7 +342,7 @@ func startGatedBuildWithWrite(t *testing.T, dir string) (*nodeSnapshotGateEngine
 	svc := buildWriteService(t, engine, dir, "v2", nil)
 	built := startGatedBuild(t, engine, svc)
 	node := buildWriteNode("nornic:a", "aterm", []float32{1, 0, 0})
-	_, err := engine.CreateNode(storage.CopyNode(node))
+	_, err := engine.CreateNode(t.Context(), storage.CopyNode(node))
 	require.NoError(t, err)
 	requireReturnsDuringBuild(t, "a write", func() error { return svc.IndexNode(node) })
 	return engine, svc, built
@@ -398,7 +399,7 @@ func TestBuildWriteIsVisibleWhenTheBuildInstallsIt(t *testing.T) {
 	t.Cleanup(engine.open)
 	built := startGatedBuild(t, engine, svc)
 	a := buildWriteNode("nornic:a", "aterm", []float32{1, 0, 0})
-	_, err := engine.CreateNode(storage.CopyNode(a))
+	_, err := engine.CreateNode(t.Context(), storage.CopyNode(a))
 	require.NoError(t, err)
 	requireReturnsDuringBuild(t, "a write", func() error { return svc.IndexNode(a) })
 	_, visibleDuring := svc.getVectorLookup()(nodeNamedVectorKey("nornic:a", "v"))
@@ -459,20 +460,20 @@ func buildReplayOps(r *rand.Rand, n int) []buildReplayOp {
 func buildReplaySeed(t *testing.T, engine storage.Engine) {
 	t.Helper()
 	for i := range 5 {
-		_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("nornic:n%d", i)), Labels: []string{"Doc"},
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("nornic:n%d", i)), Labels: []string{"Doc"},
 			Properties:      map[string]any{"text": fmt.Sprintf("seed%dterm", i), "title": fmt.Sprintf("title%dterm", i), "p": []float32{0, 0, 1}},
 			NamedEmbeddings: map[string][]float32{"v": {1, 0, 0}}})
 		require.NoError(t, err)
 	}
 	for i := range 3 {
-		require.NoError(t, engine.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("nornic:e%d", i)), StartNode: "nornic:n0", EndNode: "nornic:n1", Type: "REL",
+		require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: storage.EdgeID(fmt.Sprintf("nornic:e%d", i)), StartNode: "nornic:n0", EndNode: "nornic:n1", Type: "REL",
 			Properties: map[string]any{"v": []float32{1, 0, 0}, "note": fmt.Sprintf("seedrel%dterm", i)}}))
 	}
 }
 
 // applyBuildReplayOp makes the storage change, then the public call, then
 // reuses the caller's buffers, and returns the call's outcome.
-func applyBuildReplayOp(engine storage.Engine, svc *Service, op buildReplayOp) string {
+func applyBuildReplayOp(ctx context.Context, engine storage.Engine, svc *Service, op buildReplayOp) string {
 	switch op.kind {
 	case "node":
 		vec := slicesClone32(op.vec)
@@ -481,25 +482,25 @@ func applyBuildReplayOp(engine storage.Engine, svc *Service, op buildReplayOp) s
 			props["p"] = slicesClone32(op.prop)
 		}
 		node := &storage.Node{ID: storage.NodeID(op.id), Labels: []string{"Doc"}, Properties: props, NamedEmbeddings: map[string][]float32{"v": vec}}
-		if _, err := engine.GetNode(node.ID); err != nil {
-			_, _ = engine.CreateNode(storage.CopyNode(node))
+		if _, err := engine.GetNode(ctx, node.ID); err != nil {
+			_, _ = engine.CreateNode(ctx, storage.CopyNode(node))
 		} else {
-			_ = engine.UpdateNode(storage.NodeUpdateRequest{After: storage.CopyNode(node)})
+			_ = engine.UpdateNode(ctx, storage.NodeUpdateRequest{After: storage.CopyNode(node)})
 		}
 		err := svc.IndexNode(node)
 		vec[0], vec[1], vec[2] = 0.5, 0.5, 0.5
 		props["text"] = "reused"
 		return fmt.Sprint(err)
 	case "remove":
-		_ = engine.DeleteNode(storage.NodeID(op.id))
+		_ = engine.DeleteNode(ctx, storage.NodeID(op.id))
 		return fmt.Sprint(svc.RemoveNode(storage.NodeID(op.id)))
 	case "edge":
 		vec := slicesClone32(op.vec)
 		edge := &storage.Edge{ID: storage.EdgeID(op.id), StartNode: "nornic:n0", EndNode: "nornic:n1", Type: "REL", Properties: map[string]any{"v": vec, "note": op.text}}
-		if _, err := engine.GetEdge(edge.ID); err != nil {
-			_ = engine.CreateEdge(storage.CopyEdge(edge))
+		if _, err := engine.GetEdge(ctx, edge.ID); err != nil {
+			_ = engine.CreateEdge(ctx, storage.CopyEdge(edge))
 		} else {
-			_ = engine.UpdateEdge(storage.EdgeUpdateRequest{After: storage.CopyEdge(edge)})
+			_ = engine.UpdateEdge(ctx, storage.EdgeUpdateRequest{After: storage.CopyEdge(edge)})
 		}
 		err := svc.IndexEdge(edge)
 		vec[0], vec[1], vec[2] = 0.5, 0.5, 0.5
@@ -615,7 +616,7 @@ func TestBuildSequenceReplaysAsTheSerialOrder(t *testing.T) {
 				go func() {
 					defer close(finished)
 					for _, op := range ops {
-						outcomes = append(outcomes, applyBuildReplayOp(engine, svc, op))
+						outcomes = append(outcomes, applyBuildReplayOp(t.Context(), engine, svc, op))
 						progress <- struct{}{}
 					}
 				}()
@@ -682,13 +683,13 @@ func TestRelationshipLoaderLeavesLiveUpdatesInPlace(t *testing.T) {
 	engine := &relationshipLoaderGateEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), entered: make(chan struct{}), release: make(chan struct{})}
 	t.Cleanup(func() { engine.open(); _ = engine.MemoryEngine.Close() })
 	for _, id := range []storage.NodeID{"nornic:s", "nornic:e"} {
-		_, err := engine.CreateNode(&storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"text": "node"}})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"text": "node"}})
 		require.NoError(t, err)
 	}
 	updated := &storage.Edge{ID: "nornic:upd", StartNode: "nornic:s", EndNode: "nornic:e", Type: "REL", Properties: map[string]any{"note": "oldrelterm"}}
 	removed := &storage.Edge{ID: "nornic:del", StartNode: "nornic:s", EndNode: "nornic:e", Type: "REL", Properties: map[string]any{"note": "gonerelterm"}}
-	require.NoError(t, engine.CreateEdge(storage.CopyEdge(updated)))
-	require.NoError(t, engine.CreateEdge(storage.CopyEdge(removed)))
+	require.NoError(t, engine.CreateEdge(t.Context(), storage.CopyEdge(updated)))
+	require.NoError(t, engine.CreateEdge(t.Context(), storage.CopyEdge(removed)))
 	svc := NewService(engine, 3, nil)
 	t.Cleanup(func() { engine.open(); _ = svc.Close() })
 	svc.EnableRelationshipSearch(nil)
@@ -699,14 +700,14 @@ func TestRelationshipLoaderLeavesLiveUpdatesInPlace(t *testing.T) {
 		t.Fatal("the relationship loader did not read its snapshot")
 	}
 	newer := &storage.Edge{ID: updated.ID, StartNode: updated.StartNode, EndNode: updated.EndNode, Type: "REL", Properties: map[string]any{"note": "newrelterm"}}
-	require.NoError(t, engine.UpdateEdge(storage.EdgeUpdateRequest{After: storage.CopyEdge(newer)}))
+	require.NoError(t, engine.UpdateEdge(t.Context(), storage.EdgeUpdateRequest{After: storage.CopyEdge(newer)}))
 	svc.IndexRelationship(newer)
-	require.NoError(t, engine.DeleteEdge(removed.ID))
+	require.NoError(t, engine.DeleteEdge(t.Context(), removed.ID))
 	svc.RemoveRelationship(removed.ID)
 	engine.open()
 	rs := svc.relationshipSearch()
 	select {
-	case <-rs.ready:
+	case <-rs.loaded.Done():
 	case <-time.After(10 * time.Second):
 		t.Fatal("the relationship loader did not finish")
 	}
@@ -732,7 +733,7 @@ func TestBuildRelationshipUpdateFollowsAQueuedSetting(t *testing.T) {
 	built := startGatedBuild(t, engine, svc)
 	svc.SetFulltextProperties([]string{"title"})
 	edge := &storage.Edge{ID: "nornic:r", StartNode: "nornic:s", EndNode: "nornic:e", Type: "REL", Properties: map[string]any{"title": "reltitleterm", "note": "relnoteterm"}}
-	require.NoError(t, engine.CreateEdge(storage.CopyEdge(edge)))
+	require.NoError(t, engine.CreateEdge(t.Context(), storage.CopyEdge(edge)))
 	svc.IndexRelationship(edge)
 	engine.open()
 	require.NoError(t, <-built)

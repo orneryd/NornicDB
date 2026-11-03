@@ -16,7 +16,7 @@ func TestTransactionMemoryPoolReloadSnapshotsRunningStatement(t *testing.T) {
 	require.NotNil(t, tracker)
 	defer tracker.end()
 	require.NoError(t, tracker.root.grow(2<<20))
-	SetDatabaseTransactionMemoryLimits("nornic", TransactionMemoryLimits{DatabaseTotalMax: 1 << 20})
+	SetDatabaseTransactionMemoryLimits("nornic", DatabaseTransactionMemoryLimits{DatabaseTotalMax: new(int64(1 << 20))})
 	require.NoError(t, tracker.root.grow(2<<20), "a running statement must retain its original database pool ceiling")
 	ConfigureTransactionMemory(1<<20, TransactionMemoryLimits{})
 	require.NoError(t, tracker.root.grow(2<<20), "a running statement must retain its original process pool ceiling")

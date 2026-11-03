@@ -18,19 +18,19 @@ func TestResidualCommitAdmissionCancellation(t *testing.T) {
 			t.Cleanup(func() { _ = b.Close() })
 			if route == "count" {
 				for _, id := range []NodeID{"test:a", "test:b"} {
-					_, err := b.CreateNode(&Node{ID: id, Labels: []string{"L"}})
+					_, err := b.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"L"}})
 					require.NoError(t, err)
 				}
 			}
 			if route == "change-log" {
 				b.SetChangeCapture("test", ChangeCaptureDiff)
 			}
-			tx, err := b.BeginTransaction()
+			tx, err := b.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			var target sync.Locker
 			if route == "count" {
-				require.NoError(t, tx.CreateEdge(&Edge{ID: "test:wait-e", StartNode: "test:a", EndNode: "test:b", Type: "WAIT"}))
+				require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:wait-e", StartNode: "test:a", EndNode: "test:b", Type: "WAIT"}))
 				require.NotEmpty(t, tx.pendingEdgeTypeLabelCountDeltas)
 				target = &b.edgeTypeCountWriteMu
 			} else {
@@ -38,7 +38,7 @@ func TestResidualCommitAdmissionCancellation(t *testing.T) {
 				if route == "fresh-property-gate" {
 					properties = map[string]any{"never-persisted-token": int64(1)}
 				}
-				_, err = tx.CreateNode(&Node{ID: "test:wait-n", Properties: properties})
+				_, err = tx.CreateNode(t.Context(), &Node{ID: "test:wait-n", Properties: properties})
 				require.NoError(t, err)
 				switch route {
 				case "transaction", "merge-preparation":
@@ -109,9 +109,9 @@ func TestResidualCommitAdmissionCancellation(t *testing.T) {
 			require.Same(t, marker, admittedContext.Value(key))
 			require.Equal(t, ctx.Done(), admittedContext.Done())
 			if route == "count" {
-				_, err = b.GetStoredEdge("test:wait-e")
+				_, err = b.GetStoredEdge(t.Context(), "test:wait-e")
 			} else {
-				_, err = b.GetStoredNode("test:wait-n")
+				_, err = b.GetStoredNode(t.Context(), "test:wait-n")
 			}
 			require.ErrorIs(t, err, ErrNotFound)
 		})

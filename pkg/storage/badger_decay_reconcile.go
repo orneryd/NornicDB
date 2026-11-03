@@ -1,6 +1,10 @@
 package storage
 
-import badger "github.com/dgraph-io/badger/v4"
+import (
+	"context"
+
+	badger "github.com/dgraph-io/badger/v4"
+)
 
 type SuppressionStateChange struct {
 	EntityID string
@@ -10,17 +14,23 @@ type SuppressionStateChange struct {
 
 // ReconcileDecaySuppression re-evaluates current suppression state for all
 // entities in a namespace after knowledge-policy changes.
+//
+// The reconciliation is accepted engine work triggered by an accepted schema
+// change, not a request: it runs under its own explicit unbounded lifetime so a
+// finished caller cannot abandon half of the namespace. Making it cancelable
+// needs its own context-first contract decision.
 func (b *BadgerEngine) ReconcileDecaySuppression(namespace string) error {
 	if !b.decayEnabled || namespace == "" {
 		return nil
 	}
+	ctx := context.Background()
 
 	nodeIDs, err := b.collectNamespaceNodeIDs(namespace)
 	if err != nil {
 		return err
 	}
 	for _, nodeID := range nodeIDs {
-		if _, err := b.EnqueueDeindexIfSuppressed(string(nodeID), false); err != nil {
+		if _, err := b.EnqueueDeindexIfSuppressed(ctx, string(nodeID), false); err != nil {
 			return err
 		}
 	}
@@ -30,7 +40,7 @@ func (b *BadgerEngine) ReconcileDecaySuppression(namespace string) error {
 		return err
 	}
 	for _, edgeID := range edgeIDs {
-		if _, err := b.EnqueueDeindexIfSuppressed(string(edgeID), true); err != nil {
+		if _, err := b.EnqueueDeindexIfSuppressed(ctx, string(edgeID), true); err != nil {
 			return err
 		}
 	}
@@ -40,10 +50,14 @@ func (b *BadgerEngine) ReconcileDecaySuppression(namespace string) error {
 
 // ReconcileDecaySuppressionWithChanges re-evaluates suppression state and returns
 // the entities whose visibility-suppressed state changed.
+//
+// Like ReconcileDecaySuppression it is accepted engine work under its own
+// explicit unbounded lifetime.
 func (b *BadgerEngine) ReconcileDecaySuppressionWithChanges(namespace string) ([]SuppressionStateChange, error) {
 	if !b.decayEnabled || namespace == "" {
 		return nil, nil
 	}
+	ctx := context.Background()
 
 	changes := make([]SuppressionStateChange, 0)
 	nodeIDs, err := b.collectNamespaceNodeIDs(namespace)
@@ -55,7 +69,7 @@ func (b *BadgerEngine) ReconcileDecaySuppressionWithChanges(namespace string) ([
 		if err != nil {
 			return nil, err
 		}
-		if _, err := b.EnqueueDeindexIfSuppressed(string(nodeID), false); err != nil {
+		if _, err := b.EnqueueDeindexIfSuppressed(ctx, string(nodeID), false); err != nil {
 			return nil, err
 		}
 		after, _, err := b.readNodeSuppressionState(nodeID)
@@ -76,7 +90,7 @@ func (b *BadgerEngine) ReconcileDecaySuppressionWithChanges(namespace string) ([
 		if err != nil {
 			return nil, err
 		}
-		if _, err := b.EnqueueDeindexIfSuppressed(string(edgeID), true); err != nil {
+		if _, err := b.EnqueueDeindexIfSuppressed(ctx, string(edgeID), true); err != nil {
 			return nil, err
 		}
 		after, _, err := b.readEdgeSuppressionState(edgeID)
@@ -153,7 +167,7 @@ func (b *BadgerEngine) readEdgeSuppressionState(edgeID EdgeID) (bool, string, er
 			return err
 		}
 		return item.Value(func(val []byte) error {
-			edge, err := b.decodeEdgeBodyByID(val, edgeID)
+			edge, err := b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), val, edgeID)
 			if err != nil {
 				return err
 			}

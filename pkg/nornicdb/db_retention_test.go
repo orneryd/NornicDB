@@ -1,7 +1,6 @@
 package nornicdb
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -57,31 +56,6 @@ func TestRetentionExcludedLabelsConfig(t *testing.T) {
 	_, hasSystem := labels["System"]
 	assert.True(t, hasAudit)
 	assert.True(t, hasSystem)
-}
-
-func TestRetentionContextPrefersExplicitContext(t *testing.T) {
-	db := &DB{}
-	explicit := context.WithValue(context.Background(), struct{}{}, "explicit")
-	resolved := db.retentionContext(explicit)
-	assert.Same(t, explicit, resolved)
-}
-
-func TestRetentionContextFallsBackToBuildContext(t *testing.T) {
-	buildCtx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	db := &DB{buildCtx: buildCtx}
-	resolved := db.retentionContext(nilTestContext())
-	assert.Same(t, buildCtx, resolved)
-	cancel()
-	select {
-	case <-resolved.Done():
-	default:
-		t.Fatal("expected resolved retention context to be cancelled with build context")
-	}
-}
-
-func nilTestContext() context.Context {
-	return nil
 }
 
 func TestRetentionDisabledByDefaultLeavesManagerAndPolicyFileAbsent(t *testing.T) {
