@@ -10,10 +10,38 @@ type queryProjectionScopeKey struct{}
 type queryProjectionScope struct {
 	engine *BadgerEngine
 	active atomic.Bool
+	reveal bool
 }
 type queryProjectionScopeLink struct {
 	scope *queryProjectionScope
 	next  *queryProjectionScopeLink
+}
+
+// Borrowed handles retain the lease and its release guard, never the owning
+// request context. Keep the context in a separate allocation for that boundary.
+type queryProjectionLease struct {
+	scope queryProjectionScope
+	link  queryProjectionScopeLink
+	once  sync.Once
+}
+
+type queryProjectionContext struct {
+	context.Context
+	link *queryProjectionScopeLink
+}
+
+func (ctx *queryProjectionContext) Value(key any) any {
+	if _, ok := key.(queryProjectionScopeKey); ok {
+		return ctx.link
+	}
+	return ctx.Context.Value(key)
+}
+
+func (lease *queryProjectionLease) release() {
+	lease.once.Do(func() {
+		lease.scope.active.Store(false)
+		lease.scope.engine.endQueryRevealScope(lease.scope.reveal)
+	})
 }
 
 // BeginQueryRevealScopeContext owns the existing physical-store reveal mutex,
@@ -34,12 +62,12 @@ func BeginQueryRevealScopeContext(ctx context.Context, engine Engine, reveal boo
 			return ctx, func() {}
 		}
 	}
-	release := be.BeginQueryRevealScope(reveal)
-	scope := &queryProjectionScope{engine: be}
-	scope.active.Store(true)
-	ctx = context.WithValue(ctx, queryProjectionScopeKey{}, &queryProjectionScopeLink{scope: scope, next: scopes})
-	var once sync.Once
-	return ctx, func() { once.Do(func() { scope.active.Store(false); release() }) }
+	be.beginQueryRevealScope(reveal)
+	lease := &queryProjectionLease{}
+	lease.scope.engine, lease.scope.reveal = be, reveal
+	lease.scope.active.Store(true)
+	lease.link.scope, lease.link.next = &lease.scope, scopes
+	return &queryProjectionContext{Context: ctx, link: &lease.link}, lease.release
 }
 
 // RevealScopes is an opaque, copyable handle to the genuine query reveal leases
@@ -50,6 +78,22 @@ func BeginQueryRevealScopeContext(ctx context.Context, engine Engine, reveal boo
 // lease links, so capturing metadata allocates nothing.
 type RevealScopes struct {
 	link *queryProjectionScopeLink
+}
+
+// Mode reports the reveal mode of a live lease for engine's physical store.
+// A missing or released lease returns owned=false; a handle cannot create one.
+// For example: reveal, owned := QueryRevealScopes(ctx).Mode(engine).
+func (scopes RevealScopes) Mode(engine Engine) (reveal, owned bool) {
+	be, _ := UnwrapEngine(engine).(*BadgerEngine)
+	if be == nil {
+		return false, false
+	}
+	for link := scopes.link; link != nil; link = link.next {
+		if link.scope.engine == be && link.scope.active.Load() {
+			return link.scope.reveal, true
+		}
+	}
+	return false, false
 }
 
 // QueryRevealScopes captures the query reveal leases currently recorded on ctx.

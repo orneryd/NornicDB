@@ -17,7 +17,7 @@ func TestR3ShellResultValues(t *testing.T) {
 	cmd.Stdin = strings.NewReader("RETURN '" + homepage + "' AS homepage;\nRETURN '" + document + "' AS document;\nRETURN '" + value + "' AS password;\nexit\n")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatal("shell failed; capture withheld")
+		t.Fatalf("shell failed: %v; capture withheld", err)
 	}
 	for _, expected := range []string{homepage, document, value} {
 		if !bytes.Contains(output, []byte(expected)) {

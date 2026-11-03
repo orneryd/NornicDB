@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve runtime type errors for duration-plus-property expressions, avoid
+  redundant reveal-lease and non-recording trace allocations, and honor optional
+  Bolt peer-probe cleanup callbacks in the cross-platform regression test.
+
 - Preserve exact JSON INTEGER values and whole-FLOAT kind through import, public results, remote parameters, export and supported backup/recovery boundaries. Numeric text and typed wire output retain accepted value and kind.
 - Match equal INTEGER/FLOAT CDC selectors without rounding adjacent large integers; preserve native unsigned event values and observable numeric-kind changes.
 - Decode float32 extrema and midpoint decimals at destination precision, avoiding rejected valid values and double rounding.

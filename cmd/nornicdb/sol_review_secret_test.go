@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -20,13 +21,20 @@ const solSecret = "synthetic-sol-review-credential-62487319"
 
 var solRealBinary string
 
+func cliTestExecutablePath(dir, name string) string {
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	return filepath.Join(dir, name)
+}
+
 func solBuild(t *testing.T, target string) string {
 	t.Helper()
 	root, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
 	}
-	binary := filepath.Join(t.TempDir(), filepath.Base(target))
+	binary := cliTestExecutablePath(t.TempDir(), filepath.Base(target))
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "go", "build", "-tags=noui,nolocalllm", "-o", binary, target)

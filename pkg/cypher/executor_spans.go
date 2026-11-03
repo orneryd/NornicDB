@@ -32,15 +32,15 @@ func (e *StorageExecutor) startExecuteSpan(ctx context.Context, opType string, q
 		return ctx, trace.SpanFromContext(ctx)
 	}
 	ctx, span := otel.Tracer("nornicdb/cypher").Start(ctx, "nornicdb.cypher.execute",
-		internalSpanStartOptions[0],
-		trace.WithAttributes(
-			attribute.String("cypher.op_type", opType),
-		),
+		internalSpanStartOptions...,
 	)
 	// Query projection validates syntax and can allocate substantially on a
 	// cold grammar. A span that does not record has no query to export.
 	if span.IsRecording() {
-		span.SetAttributes(attribute.String("cypher.query", truncateQuery(e.redactForLog(ctx, query), 512)))
+		span.SetAttributes(
+			attribute.String("cypher.op_type", opType),
+			attribute.String("cypher.query", truncateQuery(e.redactForLog(ctx, query), 512)),
+		)
 	}
 	return ctx, span
 }
