@@ -170,6 +170,47 @@ func TestJSONOpaqueRawAndSingleMarshalerInvocation(t *testing.T) {
 	}
 }
 
+func TestJSONTypeErrorPathMatchesStandardLibrary(t *testing.T) {
+	type inner struct {
+		N int `json:"number"`
+	}
+	type outer struct {
+		Items []inner            `json:"items"`
+		Grid  [][]inner          `json:"grid"`
+		Map   map[string]inner   `json:"m"`
+		Lists map[string][]inner `json:"ml"`
+		Fixed [2]inner           `json:"fixed"`
+		Ptr   *inner             `json:"p"`
+	}
+	for _, tc := range []struct {
+		raw string
+		out func() any
+	}{
+		{`{"items":[{"number":1},{"number":true}]}`, func() any { return &outer{} }},
+		{`{"grid":[[],[{"number":"x"}]]}`, func() any { return &outer{} }},
+		{`{"m":{"a/b~c":{"number":"x"}}}`, func() any { return &outer{} }},
+		{`{"ml":{"k":[{"number":"x"}]}}`, func() any { return &outer{} }},
+		{`{"fixed":[{},{"number":"x"}]}`, func() any { return &outer{} }},
+		{`{"ITEMS":[{"NUMBER":"x"}]}`, func() any { return &outer{} }},
+		{`{"items":["x"]}`, func() any { return &outer{} }},
+		{`{"p":{"number":"x"}}`, func() any { return &outer{} }},
+		{`"x"`, func() any { return &outer{} }},
+		{`[{"number":"x"}]`, func() any { return &[]inner{} }},
+		{`{"k":{"number":"x"}}`, func() any { return &map[string]inner{} }},
+		{`{"items":[{"number":"x"}]}`, func() any { var root *outer; return &root }},
+	} {
+		oldErr := std.Unmarshal([]byte(tc.raw), tc.out())
+		newErr := Unmarshal([]byte(tc.raw), tc.out())
+		var oldType, newType *std.UnmarshalTypeError
+		require.ErrorAs(t, oldErr, &oldType, tc.raw)
+		require.ErrorAs(t, newErr, &newType, tc.raw)
+		require.Equal(t, oldType.Field, newType.Field, tc.raw)
+		require.Equal(t, oldType.Struct, newType.Struct, tc.raw)
+		require.Equal(t, oldType.Offset, newType.Offset, tc.raw)
+		require.Equal(t, oldType.Type, newType.Type, tc.raw)
+	}
+}
+
 func TestJSONTypeErrorContractMatrix(t *testing.T) {
 	type inner struct {
 		N int `json:"number"`
