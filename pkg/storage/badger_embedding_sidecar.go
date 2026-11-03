@@ -100,7 +100,7 @@ func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(ctx context.Context, node *Nod
 	}
 	defer release()
 	notification := b.queueCommitOperations(nil, &Operation{embeddingOutcome: true}, notificationAtCommit)
-	err := commitEmbeddingOutcome(node, func() error {
+	err := commitEmbeddingOutcome(ctx, node, func() error {
 		if node.ID == "" {
 			return ErrInvalidID
 		}
