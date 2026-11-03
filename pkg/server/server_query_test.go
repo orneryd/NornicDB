@@ -143,7 +143,7 @@ func TestHandleOpenTransaction_CompositeRemoteOpenSucceeds(t *testing.T) {
 	}))
 
 	server.dbManager = dbManager
-	server.txSessions = txsession.NewManager(30*time.Second, server.newExecutorForDatabase)
+	server.txSessions = txsession.NewManager(30*time.Second, server.newExecutorForDatabase, t.Context())
 
 	resp := makeRequest(t, server, "POST", "/db/comp_remote/tx", map[string]interface{}{
 		"statements": []map[string]interface{}{},
@@ -173,7 +173,7 @@ func TestCompositeExplicitTx_SecondWriteShardErrorCode(t *testing.T) {
 		{Alias: "b", DatabaseName: "shard_b", Type: "local", AccessMode: "read_write"},
 	}))
 	server.dbManager = dbManager
-	server.txSessions = txsession.NewManager(30*time.Second, server.newExecutorForDatabase)
+	server.txSessions = txsession.NewManager(30*time.Second, server.newExecutorForDatabase, t.Context())
 
 	// Open explicit transaction.
 	openResp := makeRequest(t, server, "POST", "/db/cmp_tx_code/tx", map[string]interface{}{"statements": []map[string]interface{}{}}, "Bearer "+token)
@@ -679,7 +679,7 @@ func TestHandleSearchContinuationBeyondInitialLimit(t *testing.T) {
 			},
 		}
 	}
-	require.NoError(t, engine.BulkCreateNodes(nodes))
+	require.NoError(t, engine.BulkCreateNodes(t.Context(), nodes))
 
 	rebuild := makeRequest(t, server, http.MethodPost, "/nornicdb/search/rebuild", map[string]any{"database": database}, "Bearer "+token)
 	require.Equal(t, http.StatusOK, rebuild.Code, rebuild.Body.String())
@@ -780,7 +780,7 @@ func TestHandleSearchIDContinuationGroupsAllPassages(t *testing.T) {
 		{ID: "frame-a", Labels: []string{"Frame"}, Properties: map[string]any{"collection": "summer", "asset_id": "asset-a"}},
 		{ID: "winter", Labels: []string{"Frame"}, Properties: map[string]any{"collection": "winter", "asset_id": "asset-c"}},
 	} {
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 
@@ -857,7 +857,7 @@ func TestSearchContinuationQIDIsSharedFromHTTPToCypher(t *testing.T) {
 	engine, err := server.dbManager.GetStorage(database)
 	require.NoError(t, err)
 	for _, id := range []string{"cross-a", "cross-b"} {
-		_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{"Document"}})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(id), Labels: []string{"Document"}})
 		require.NoError(t, err)
 	}
 
@@ -913,7 +913,7 @@ func TestSearchContinuationQIDIsSharedAcrossDefaultHTTPAndCypherRequestsWithoutA
 	engine, err := server.dbManager.GetStorage(database)
 	require.NoError(t, err)
 	for _, id := range []string{"anonymous-cross-a", "anonymous-cross-b", "anonymous-cross-c"} {
-		_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{"Document"}})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(id), Labels: []string{"Document"}})
 		require.NoError(t, err)
 	}
 
@@ -992,7 +992,7 @@ func TestHandleSearch_FiltersParameter(t *testing.T) {
 			},
 		},
 	}
-	require.NoError(t, eng.BulkCreateNodes(nodes))
+	require.NoError(t, eng.BulkCreateNodes(t.Context(), nodes))
 
 	// Trigger search index rebuild so the new nodes are indexed.
 	rebuildResp := makeRequest(t, server, http.MethodPost, "/nornicdb/search/rebuild",
@@ -1326,7 +1326,7 @@ func TestHandleSearch_LongChunkedBranches(t *testing.T) {
 	// Seed vectors so vectorSearchUsable=true.
 	seed := make([]float32, 1024)
 	seed[0] = 1
-	_, _ = st.CreateNode(&storage.Node{
+	_, _ = st.CreateNode(t.Context(), &storage.Node{
 		ID:              "t_seed",
 		Labels:          []string{"Doc"},
 		Properties:      map[string]interface{}{"title": "seed"},
@@ -1442,45 +1442,96 @@ func TestHandleImplicitTransaction_BranchMatrix(t *testing.T) {
 }
 
 func TestHandleImplicitTransaction_AsyncWriteAccepted(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbCfg := nornicdb.DefaultConfig()
-	dbCfg.Memory.DecayEnabled = false
-	dbCfg.Database.AsyncWritesEnabled = true
-	db, err := nornicdb.Open(tmpDir, dbCfg)
-	require.NoError(t, err)
-	defer db.Close()
+	for _, buffered := range []bool{false, true} {
+		t.Run(fmt.Sprintf("buffered=%t", buffered), func(t *testing.T) {
+			tmpDir := t.TempDir()
+			dbCfg := nornicdb.DefaultConfig()
+			dbCfg.Memory.DecayEnabled = false
+			dbCfg.Database.AsyncWritesEnabled = buffered
+			db, err := nornicdb.Open(tmpDir, dbCfg)
+			require.NoError(t, err)
+			defer db.Close()
 
-	authStorage := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() { _ = authStorage.Close() })
-	authn, err := auth.NewAuthenticator(auth.AuthConfig{
-		SecurityEnabled: true,
-		JWTSecret:       []byte("test-secret-key-for-testing-only-32b"),
-	}, authStorage)
-	require.NoError(t, err)
-	_, _ = authn.CreateUser("admin", "password123", []auth.Role{auth.RoleAdmin})
+			authStorage := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
+			t.Cleanup(func() { _ = authStorage.Close() })
+			authn, err := auth.NewAuthenticator(auth.AuthConfig{
+				SecurityEnabled: true,
+				JWTSecret:       []byte("test-secret-key-for-testing-only-32b"),
+			}, authStorage)
+			require.NoError(t, err)
+			_, _ = authn.CreateUser(context.Background(), "admin", "password123", []auth.Role{auth.RoleAdmin})
 
-	cfg := DefaultConfig()
-	cfg.Port = 0
-	srv, err := New(db, authn, cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() { stopTestServer(t, srv) })
+			cfg := DefaultConfig()
+			cfg.Port = 0
+			srv, err := New(db, authn, cfg)
+			require.NoError(t, err)
+			t.Cleanup(func() { stopTestServer(t, srv) })
 
-	req := httptest.NewRequest(http.MethodPost, "/db/nornic/tx/commit", strings.NewReader(`{"statements":[{"statement":"CREATE (n:Doc {name:'async'})"}]}`))
-	req = req.WithContext(context.WithValue(context.Background(), contextKeyClaims, &auth.JWTClaims{
-		Username: "admin",
-		Roles:    []string{"admin"},
-	}))
-	rec := httptest.NewRecorder()
-	srv.handleImplicitTransaction(rec, req, "nornic")
-	require.Equal(t, http.StatusAccepted, rec.Code)
-	require.Equal(t, "eventual", rec.Header().Get("X-NornicDB-Consistency"))
-	var payload map[string]interface{}
-	require.NoError(t, json.NewDecoder(rec.Body).Decode(&payload))
-	optimisticRaw, ok := payload["optimistic"].(map[string]interface{})
-	require.True(t, ok, "expected optimistic metadata in async response")
-	createdIDs, ok := optimisticRaw["createdNodeIds"].([]interface{})
-	require.True(t, ok)
-	require.NotEmpty(t, createdIDs)
+			for _, tc := range []struct {
+				name, query    string
+				writes, failed bool
+				params         map[string]interface{}
+			}{
+				{name: "ordinary", query: "CREATE (n:Doc {name:'async'})", writes: true},
+				{name: "dynamic", query: "CALL apoc.cypher.run(\"CREATE (n:Doc {name:'async-dynamic'}) RETURN n\",{}) YIELD value RETURN value.n AS n", writes: true},
+				{name: "read", query: "MATCH (n:Doc) RETURN count(n) AS count"},
+				{name: "no-op", query: "MATCH (n:NoAckTarget) SET n.value=1 RETURN count(n) AS count"},
+				{name: "dynamic-no-op", query: "CALL apoc.cypher.run('MATCH (n:NoAckTarget) SET n.value=1 RETURN count(n) AS count',{}) YIELD value RETURN value.count AS count"},
+				{name: "error", query: "CREATE (:NoAckAfterError) RETURN 1/$zero AS v", failed: true, params: map[string]interface{}{"zero": int64(0)}},
+				{name: "rollback-read", query: "MATCH (n:NoAckAfterError) RETURN count(n) AS count"},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					wire, err := json.Marshal(map[string]interface{}{"statements": []map[string]interface{}{{"statement": tc.query, "parameters": tc.params}}})
+					require.NoError(t, err)
+					req := httptest.NewRequest(http.MethodPost, "/db/nornic/tx/commit", bytes.NewReader(wire))
+					req = req.WithContext(context.WithValue(context.Background(), contextKeyClaims, &auth.JWTClaims{Username: "admin", Roles: []string{"admin"}}))
+					rec := httptest.NewRecorder()
+					srv.handleImplicitTransaction(rec, req, "nornic")
+					expected := http.StatusOK
+					if buffered && tc.writes {
+						expected = http.StatusAccepted
+					}
+					require.Equal(t, expected, rec.Code, "body=%s", rec.Body.String())
+					if expected == http.StatusAccepted {
+						require.Equal(t, "eventual", rec.Header().Get("X-NornicDB-Consistency"))
+					} else {
+						require.Empty(t, rec.Header().Get("X-NornicDB-Consistency"))
+					}
+					var payload map[string]interface{}
+					require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+					if tc.failed {
+						require.Len(t, payload["errors"], 1)
+						require.NotContains(t, payload, "receipt")
+						require.NotContains(t, payload, "optimistic")
+						return
+					}
+					require.Empty(t, payload["errors"])
+					if tc.writes {
+						require.Contains(t, payload, "receipt")
+						optimistic, ok := payload["optimistic"].(map[string]interface{})
+						require.True(t, ok, "actual created-ID metadata must survive dynamic calls")
+						ids, ok := optimistic["createdNodeIds"].([]interface{})
+						require.True(t, ok)
+						require.Len(t, ids, 1)
+					} else {
+						require.NotContains(t, payload, "optimistic")
+						require.NotContains(t, payload, "receipt")
+						results := payload["results"].([]interface{})
+						require.Len(t, results, 1)
+						data := results[0].(map[string]interface{})["data"].([]interface{})
+						require.Len(t, data, 1)
+						row := data[0].(map[string]interface{})["row"].([]interface{})
+						require.Len(t, row, 1)
+						want := float64(0)
+						if tc.name == "read" {
+							want = 2
+						}
+						require.Equal(t, want, row[0], "native graph and rollback are visible through real HTTP")
+					}
+				})
+			}
+		})
+	}
 }
 
 func TestHandleImplicitTransaction_AsyncEnabledBuffersSetWriteReturnsAccepted(t *testing.T) {
@@ -1499,7 +1550,7 @@ func TestHandleImplicitTransaction_AsyncEnabledBuffersSetWriteReturnsAccepted(t 
 		JWTSecret:       []byte("test-secret-key-for-testing-only-32b"),
 	}, authStorage)
 	require.NoError(t, err)
-	_, _ = authn.CreateUser("admin", "password123", []auth.Role{auth.RoleAdmin})
+	_, _ = authn.CreateUser(context.Background(), "admin", "password123", []auth.Role{auth.RoleAdmin})
 
 	cfg := DefaultConfig()
 	cfg.Port = 0
@@ -1568,15 +1619,16 @@ func TestExecuteTxStatements_NoAuth_SkipsRBACWriteCheck(t *testing.T) {
 	t.Cleanup(func() { _ = srv.Stop(context.Background()) })
 
 	dbName := srv.dbManager.DefaultDatabaseName()
-	tx, err := srv.txSessions.Open(context.Background(), dbName)
+	lease, err := srv.txSessions.OpenRequestForOwner(context.Background(), dbName, "")
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = srv.txSessions.RollbackAndDelete(context.Background(), tx) })
+	// End the request before the deferred DB.Close joins its retained work.
+	defer func() { _ = lease.RollbackAndDelete(context.Background()); lease.Release() }()
 
 	resp := &TransactionResponse{
 		Results: make([]QueryResult, 0, 1),
 		Errors:  make([]QueryError, 0, 1),
 	}
-	srv.executeTxStatements(context.Background(), "", nil, dbName, tx, []StatementRequest{
+	srv.executeTxStatements(context.Background(), "", nil, dbName, lease, []StatementRequest{
 		{Statement: "CREATE (n:Doc {name:'tx-open'}) RETURN n.name"},
 	}, resp)
 
@@ -1604,7 +1656,7 @@ func TestHandleSimilar(t *testing.T) {
 		Properties:      map[string]interface{}{"name": "Target Node"},
 		ChunkEmbeddings: [][]float32{targetEmbedding},
 	}
-	_, err = storageEngine.CreateNode(targetNode)
+	_, err = storageEngine.CreateNode(t.Context(), targetNode)
 	require.NoError(t, err, "should create target node")
 
 	// Create a similar node with a similar embedding (slight variation)
@@ -1618,7 +1670,7 @@ func TestHandleSimilar(t *testing.T) {
 		Properties:      map[string]interface{}{"name": "Similar Node"},
 		ChunkEmbeddings: [][]float32{similarEmbedding},
 	}
-	_, err = storageEngine.CreateNode(similarNode)
+	_, err = storageEngine.CreateNode(t.Context(), similarNode)
 	require.NoError(t, err, "should create similar node")
 
 	// Create a dissimilar node with a very different embedding
@@ -1632,7 +1684,7 @@ func TestHandleSimilar(t *testing.T) {
 		Properties:      map[string]interface{}{"name": "Dissimilar Node"},
 		ChunkEmbeddings: [][]float32{dissimilarEmbedding},
 	}
-	_, err = storageEngine.CreateNode(dissimilarNode)
+	_, err = storageEngine.CreateNode(t.Context(), dissimilarNode)
 	require.NoError(t, err, "should create dissimilar node")
 
 	// Test the similar endpoint
@@ -1679,7 +1731,7 @@ func TestHandleSimilar(t *testing.T) {
 		Properties:      map[string]interface{}{"name": "No Embedding"},
 		ChunkEmbeddings: nil, // No embedding
 	}
-	_, err = storageEngine.CreateNode(nodeWithoutEmbedding)
+	_, err = storageEngine.CreateNode(t.Context(), nodeWithoutEmbedding)
 	require.NoError(t, err, "should create node without embedding")
 
 	resp = makeRequest(t, server, "POST", "/nornicdb/similar", map[string]interface{}{

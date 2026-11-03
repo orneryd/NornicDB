@@ -17,12 +17,12 @@ import (
 func TestStoredValueFormsReadBack(t *testing.T) {
 	for _, dims := range []any{int8(4), uint8(200), uint16(384), int32(1536), int64(768), 3.0} {
 		engine := storage.NewNamespacedEngine(runtimeFixtureOwner.Own(t, runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test")
-		_, err := engine.CreateNode(&storage.Node{
+		_, err := engine.CreateNode(t.Context(), &storage.Node{
 			ID: collectionMetaNodeID, Labels: []string{collectionMetaNodeLabel},
 			Properties: map[string]any{"dimensions": dims, "distance": int8(qpb.Distance_Dot)},
 		})
 		require.NoError(t, err)
-		meta, err := readCollectionMeta(engine)
+		meta, err := readCollectionMeta(t.Context(), engine)
 		require.NoError(t, err, "%T", dims)
 		require.Positive(t, meta.Dimensions, "%T", dims)
 		require.Equal(t, qpb.Distance_Dot, meta.Distance, "%T", dims)

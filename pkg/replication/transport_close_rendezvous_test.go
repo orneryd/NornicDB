@@ -43,9 +43,9 @@ func TestClusterTransportCloseJoinsInflightResponseWithoutAdmissionLocks(t *test
 	})
 	server.resources.mu.Lock()
 	server.resources.connections["peer"] = conn
-	conn.wg.Add(1)
+	readRelease := conn.admitReader()
 	server.resources.mu.Unlock()
-	go conn.readLoop()
+	go conn.readLoop(readRelease)
 	payload := fixtureowner.Encode[any](t, storage.EncodeCommandPayload, &ClusterMessage{Type: ClusterMsgHeartbeat})
 	var frame bytes.Buffer
 	require.NoError(t, binary.Write(&frame, binary.BigEndian, uint32(len(payload))))
@@ -104,11 +104,12 @@ func TestClusterTransportCloseRejectsDelayedIncomingRegistration(t *testing.T) {
 	left, right := net.Pipe()
 	defer right.Close()
 	observed := &closeRendezvousConn{Conn: left, closed: make(chan struct{})}
-	server.wg.Add(1)
+	// The accepted socket's worker was admitted before Close started.
+	_, admitted, _ := server.work.Acquire(server.work.Context())
 	closeDone := make(chan struct{})
 	go func() { _ = server.Close(); close(closeDone) }()
-	<-server.closeCh
-	server.handleIncoming(context.Background(), observed, nil)
+	<-server.work.Context().Done()
+	server.handleIncoming(context.Background(), observed, nil, admitted)
 	select {
 	case <-closeDone:
 	case <-time.After(2 * time.Second):

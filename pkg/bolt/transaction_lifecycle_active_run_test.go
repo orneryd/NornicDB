@@ -146,7 +146,7 @@ func TestTransactionLifecycleDefersCompletionTelemetryUntilRunOwnedRollback(t *t
 		err    error
 	}, 2)
 	lifecycle := &transactionLifecycle{}
-	require.NoError(t, lifecycle.begin(context.Background(), 0, "nornic", executor, nil,
+	require.NoError(t, lifecycle.begin(context.Background(), testTxOwner(), 0, "nornic", executor, nil,
 		func(reason transactionTerminalReason, _ string, _ time.Duration, err error) {
 			events <- struct {
 				reason transactionTerminalReason

@@ -28,9 +28,9 @@ import (
 // operation; reading a known-absent node is a cheap way to force it.
 func beginPinnedTransaction(t *testing.T, engine *BadgerEngine) *BadgerTransaction {
 	t.Helper()
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	_, err = tx.GetNode("test:pin-probe")
+	_, err = tx.GetNode(t.Context(), "test:pin-probe")
 	require.ErrorIs(t, err, ErrNotFound)
 	return tx
 }
@@ -38,7 +38,7 @@ func beginPinnedTransaction(t *testing.T, engine *BadgerEngine) *BadgerTransacti
 func createEdgeEndpoints(t *testing.T, engine *BadgerEngine) {
 	t.Helper()
 	for _, id := range []NodeID{"test:a", "test:b"} {
-		_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"L"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"L"}})
 		require.NoError(t, err)
 	}
 }
@@ -57,14 +57,14 @@ func TestBug_UpdateEdgePeerCommittedAfterBeginIsConflictNotNotFound(t *testing.T
 	t.Cleanup(func() { _ = tx1.Rollback() })
 
 	// Peer commits the edge AFTER tx1's begin snapshot.
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL",
 		Properties: map[string]interface{}{"x": "peer"},
 	}))
 
 	// tx1 found the edge via a latest-committed lookup (the MERGE
 	// relationship-resolution path) and now tries to update it.
-	err = tx1.UpdateEdge(EdgeUpdateRequest{After: &Edge{
+	err = tx1.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL",
 		Properties: map[string]interface{}{"x": "tx1"},
 	}})
@@ -83,10 +83,10 @@ func TestBug_UpdateEdgePeerCommittedAfterBeginIsConflictNotNotFound(t *testing.T
 func TestUpdateEdgePeerDeletedEdgeStillNotFound(t *testing.T) {
 	err := snapshotEdgeWriteCase{
 		peer: func(t *testing.T, engine *BadgerEngine) {
-			require.NoError(t, engine.CreateEdge(&Edge{
+			require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 				ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL",
 			}))
-			require.NoError(t, engine.DeleteEdge("test:e1"))
+			require.NoError(t, engine.DeleteEdge(t.Context(), "test:e1"))
 		},
 		edgeID: "test:e1",
 	}.run(t)
@@ -120,11 +120,11 @@ func TestGetEdgeSnapshotReadStaysNotFound(t *testing.T) {
 	tx1 := beginPinnedTransaction(t, engine)
 	t.Cleanup(func() { _ = tx1.Rollback() })
 
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL",
 	}))
 
-	_, err = tx1.GetEdge("test:e1")
+	_, err = tx1.GetEdge(t.Context(), "test:e1")
 	require.ErrorIs(t, err, ErrNotFound,
 		"snapshot reads must not observe peer commits made after begin")
 	require.NotErrorIs(t, err, ErrConflict)
@@ -138,18 +138,18 @@ func TestGetCommittedEdgeForUpdateLockedZeroReadTSDelegates(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	createEdgeEndpoints(t, engine)
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL",
 	}))
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
 	// Force the legacy zero-readTS state (pre-MVCC transactions and
 	// manually constructed transactions in older codepaths).
 	tx.readTS = MVCCVersion{}
-	edge, err := tx.getCommittedEdgeForUpdateLocked("test:e1")
+	edge, err := tx.getCommittedEdgeForUpdateLocked(t.Context(), "test:e1")
 	require.NoError(t, err)
 	require.Equal(t, EdgeID("test:e1"), edge.ID)
 }
@@ -165,11 +165,11 @@ func BenchmarkTransaction_UpdateEdge(b *testing.B) {
 	}
 	b.Cleanup(func() { _ = engine.Close() })
 	for _, id := range []NodeID{"test:a", "test:b"} {
-		if _, err := engine.CreateNode(&Node{ID: id, Labels: []string{"L"}}); err != nil {
+		if _, err := engine.CreateNode(b.Context(), &Node{ID: id, Labels: []string{"L"}}); err != nil {
 			b.Fatal(err)
 		}
 	}
-	if err := engine.CreateEdge(&Edge{
+	if err := engine.CreateEdge(b.Context(), &Edge{
 		ID: "test:bench-edge", StartNode: "test:a", EndNode: "test:b", Type: "REL",
 		Properties: map[string]interface{}{"x": 0},
 	}); err != nil {
@@ -178,11 +178,11 @@ func BenchmarkTransaction_UpdateEdge(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		tx, err := engine.BeginTransaction()
+		tx, err := engine.BeginTransaction(b.Context())
 		if err != nil {
 			b.Fatal(err)
 		}
-		if err := tx.UpdateEdge(EdgeUpdateRequest{After: &Edge{
+		if err := tx.UpdateEdge(b.Context(), EdgeUpdateRequest{After: &Edge{
 			ID: "test:bench-edge", StartNode: "test:a", EndNode: "test:b", Type: "REL",
 			Properties: map[string]interface{}{"x": i},
 		}}); err != nil {

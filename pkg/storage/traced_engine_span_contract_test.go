@@ -59,13 +59,13 @@ func TestTracedEngine_SpanContract(t *testing.T) {
 	}{
 		{"CreateNode", want{"nornicdb.storage.CreateNode", "node"},
 			func(te *TracedEngine) {
-				_, _ = te.CreateNode(&Node{ID: "trace:n1", Labels: []string{"L"}, Properties: map[string]any{}})
+				_, _ = te.CreateNode(t.Context(), &Node{ID: "trace:n1", Labels: []string{"L"}, Properties: map[string]any{}})
 			}},
 		{"GetNode", want{"nornicdb.storage.GetNode", "node"},
-			func(te *TracedEngine) { _, _ = te.GetNode("trace:n1") }},
+			func(te *TracedEngine) { _, _ = te.GetNode(t.Context(), "trace:n1") }},
 		{"UpdateNode", want{"nornicdb.storage.UpdateNode", "node"},
 			func(te *TracedEngine) {
-				_ = te.UpdateNode(NodeUpdateRequest{After: &Node{
+				_ = te.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{
 					ID: "trace:n1", Labels: []string{"L"}, Properties: map[string]any{"v": int64(2)},
 				}})
 			}},
@@ -75,7 +75,7 @@ func TestTracedEngine_SpanContract(t *testing.T) {
 			func(te *TracedEngine) { _, _ = te.AllNodes(context.Background()) }},
 		{"BulkCreateNodes", want{"nornicdb.storage.BulkCreateNodes", "node"},
 			func(te *TracedEngine) {
-				_ = te.BulkCreateNodes([]*Node{
+				_ = te.BulkCreateNodes(t.Context(), []*Node{
 					{ID: "trace:n2", Labels: []string{"L"}, Properties: map[string]any{}},
 					{ID: "trace:n3", Labels: []string{"L"}, Properties: map[string]any{}},
 				})
@@ -86,13 +86,13 @@ func TestTracedEngine_SpanContract(t *testing.T) {
 			}},
 		{"CreateEdge", want{"nornicdb.storage.CreateEdge", "edge"},
 			func(te *TracedEngine) {
-				_ = te.CreateEdge(&Edge{ID: "trace:e1", StartNode: "trace:n1", EndNode: "trace:n2", Type: "REL"})
+				_ = te.CreateEdge(t.Context(), &Edge{ID: "trace:e1", StartNode: "trace:n1", EndNode: "trace:n2", Type: "REL"})
 			}},
 		{"GetEdge", want{"nornicdb.storage.GetEdge", "edge"},
-			func(te *TracedEngine) { _, _ = te.GetEdge("trace:e1") }},
+			func(te *TracedEngine) { _, _ = te.GetEdge(t.Context(), "trace:e1") }},
 		{"UpdateEdge", want{"nornicdb.storage.UpdateEdge", "edge"},
 			func(te *TracedEngine) {
-				_ = te.UpdateEdge(EdgeUpdateRequest{After: &Edge{
+				_ = te.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{
 					ID: "trace:e1", StartNode: "trace:n1", EndNode: "trace:n2", Type: "REL",
 					Properties: map[string]any{"k": "v2"},
 				}})
@@ -107,14 +107,14 @@ func TestTracedEngine_SpanContract(t *testing.T) {
 			func(te *TracedEngine) { _, _ = te.AllEdges(context.Background()) }},
 		{"BulkCreateEdges", want{"nornicdb.storage.BulkCreateEdges", "edge"},
 			func(te *TracedEngine) {
-				_ = te.BulkCreateEdges([]*Edge{
+				_ = te.BulkCreateEdges(t.Context(), []*Edge{
 					{ID: "trace:e2", StartNode: "trace:n2", EndNode: "trace:n3", Type: "BULK"},
 				})
 			}},
 		{"DeleteEdge", want{"nornicdb.storage.DeleteEdge", "edge"},
-			func(te *TracedEngine) { _ = te.DeleteEdge("trace:e1") }},
+			func(te *TracedEngine) { _ = te.DeleteEdge(t.Context(), "trace:e1") }},
 		{"DeleteNode", want{"nornicdb.storage.DeleteNode", "node"},
-			func(te *TracedEngine) { _ = te.DeleteNode("trace:n3") }},
+			func(te *TracedEngine) { _ = te.DeleteNode(t.Context(), "trace:n3") }},
 	}
 
 	for _, step := range steps {
@@ -154,7 +154,7 @@ func TestTracedEngine_SpanEndsOnBackingPanic(t *testing.T) {
 
 	traced := &TracedEngine{Engine: panickingEngine{}, ctx: context.Background()}
 
-	require.Panics(t, func() { _ = traced.DeleteNode("boom") })
+	require.Panics(t, func() { _ = traced.DeleteNode(t.Context(), "boom") })
 
 	spans := recorder.Ended()
 	require.Len(t, spans, 1, "span must be ended even though the backing call panicked")
@@ -169,4 +169,4 @@ type panickingEngine struct {
 	Engine
 }
 
-func (panickingEngine) DeleteNode(NodeID) error { panic("backing engine panic") }
+func (panickingEngine) DeleteNode(context.Context, NodeID) error { panic("backing engine panic") }

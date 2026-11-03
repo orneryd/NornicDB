@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"errors"
+
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"path/filepath"
@@ -53,7 +54,7 @@ func testHNSWBackgroundExact(t *testing.T, fileBacked bool) {
 		{"excluded", []float32{1, 0, 0}},
 	} {
 		node := &storage.Node{ID: storage.NodeID(item.id), ChunkEmbeddings: [][]float32{item.v}}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, svc.IndexNode(node))
 	}
@@ -154,8 +155,8 @@ func TestHNSWBackgroundBuildCancelledByOwner(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("owner did not join construction")
 			}
-			<-job.done
-			require.ErrorIs(t, job.err, context.Canceled)
+			<-job.built.Done()
+			require.ErrorIs(t, job.built.Err(), context.Canceled)
 			require.Nil(t, svc.hnswIndex)
 			require.False(t, svc.hnswRebuildInFlight.Load())
 			hnswBeforeInstallHook = nil

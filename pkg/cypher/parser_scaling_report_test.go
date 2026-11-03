@@ -135,7 +135,7 @@ func parserOp(parser, mode string) func(q string) error {
 		}
 	case "nornic/parse":
 		b := NewASTBuilder()
-		return func(q string) error { _, err := b.Build(q); return err }
+		return func(q string) error { _, err := b.Build(context.Background(), q); return err }
 	case "antlr/validate":
 		return antlrparser.Validate
 	case "antlr/parse":
@@ -198,7 +198,7 @@ func TestParserScaling(t *testing.T) {
 						continue
 					}
 					if parser == "nornic" && mode == "parse" {
-						if ast, err := NewASTBuilder().Build(q); err == nil {
+						if ast, err := NewASTBuilder().Build(t.Context(), q); err == nil {
 							row.Clauses = len(ast.Clauses)
 						}
 					}

@@ -3,10 +3,11 @@ package contract
 import (
 	"context"
 	"fmt"
+	"testing"
+
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 type LimitRequest struct {
@@ -37,7 +38,7 @@ func RunResultLimit(t *testing.T, factory func(*testing.T, bool) LimitFixture) {
 				} else {
 					node.Properties = map[string]any{"content": "ceilingtoken corpus"}
 				}
-				_, err := f.Engine.CreateNode(node)
+				_, err := f.Engine.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 				require.NoError(t, f.Service.IndexNode(node))
 			}

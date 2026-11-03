@@ -38,7 +38,7 @@ func BenchmarkQueryDisplay(b *testing.B) {
 			}
 			store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "query_display_bench")
 			for i := 0; i < 32; i++ {
-				_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("node%d", i)), Labels: []string{"DisplayBench"}, Properties: map[string]any{"name": "Ada"}})
+				_, err := store.CreateNode(b.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("node%d", i)), Labels: []string{"DisplayBench"}, Properties: map[string]any{"name": "Ada"}})
 				if err != nil {
 					b.Fatal(err)
 				}

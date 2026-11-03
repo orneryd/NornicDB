@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
@@ -13,7 +14,7 @@ import (
 // ID, so an unprefixed ID seeds the unprefixed namespace.
 func seedRawRecord(t *testing.T, engine *BadgerEngine, record any) {
 	t.Helper()
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		var (
 			key  []byte
 			body []byte

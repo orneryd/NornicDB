@@ -37,7 +37,7 @@ func TestSearchTextMalformedRerankTrailerParity(t *testing.T) {
 			Properties:      map[string]any{"content": "alpha document " + id},
 			ChunkEmbeddings: [][]float32{{1, float32(index) * 0.01}},
 		}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, service.IndexNode(node))
 	}

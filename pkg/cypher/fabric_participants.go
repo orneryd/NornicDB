@@ -17,6 +17,8 @@ import (
 type compositeStatement struct {
 	executor *cypherFabricExecutor
 	tx       *fabric.FabricTransaction
+	// nativeRoot is an issued native-autocommit root, never a composite or explicit owner.
+	nativeRoot *participantHandle
 	// begin is the context participants' transactions begin with, outside
 	// the composite statement: its client, credentials and metadata. An
 	// explicit transaction's participant may begin in a later statement, so
@@ -48,6 +50,21 @@ func (c *compositeContext) Value(key any) any {
 			return nil
 		}
 		return c.storage
+	}
+	if c.statement.executor.nativeOrigin != nil {
+		switch key {
+		case ctxKeyAuthToken, ctxKeyAuthenticatedPrincipal, ctxKeyRequestIdentity{}, permissionCheckerKey{}, procedureGrantCheckerKey{}:
+			return c.statement.begin.Value(key)
+		case databaseAuthorizationKey{}:
+			authority, _ := c.statement.begin.Value(key).(databaseAuthorization)
+			if authority.resolver == nil {
+				return nil
+			}
+			if selected, ok := c.Context.Value(ctxKeyUseDatabase).(string); ok && selected != "" {
+				authority.database = selected
+			}
+			return authority
+		}
 	}
 	return c.Context.Value(key)
 }
@@ -104,7 +121,10 @@ func (s *compositeStatement) remote(name string, engine storage.Engine) *storage
 		return bound
 	}
 	var bound *storage.RemoteEngine
-	if raw := remoteEngineOf(engine); raw != nil && c.remote != nil {
+	if raw := remoteEngineOf(engine); raw != nil && (c.remote != nil || c.nativeOrigin != nil) {
+		if c.remote == nil {
+			c.remote = fabric.NewRemoteFragmentExecutor()
+		}
 		bound = raw.WithStatementRunner(s, func(ctx context.Context, statement string, params map[string]interface{}, mode storage.RemoteAccessMode) ([]string, [][]interface{}, error) {
 			return c.remote.RunInStatement(s.begin, s.tx, name, raw, ctx, statement, params, mode)
 		})
@@ -181,7 +201,16 @@ func (s *compositeStatement) participant(database string, engine storage.Engine)
 // locate is the participant name of database, and whether it is a remote
 // constituent.
 func (s *compositeStatement) locate(database string) (string, bool) {
-	if catalog := s.executor.catalog; catalog != nil {
+	c := s.executor
+	var catalog *fabric.Catalog
+	if c.nativeOrigin != nil {
+		c.mu.Lock()
+		catalog = c.catalog
+		c.mu.Unlock()
+	} else {
+		catalog = c.catalog
+	}
+	if catalog != nil {
 		if location, err := catalog.Resolve(database); err == nil {
 			_, remote := location.(*fabric.LocationRemote)
 			return fabric.ParticipantKeyFromLocation(location), remote
@@ -195,6 +224,24 @@ func (s *compositeStatement) locate(database string) (string, bool) {
 // participant storage, the composite router, or a remote constituent's
 // engine inside the statement (remote).
 func (s *compositeStatement) on(ctx context.Context, database string, exec *StorageExecutor, engine storage.Engine) (*StorageExecutor, context.Context, error) {
+	// Ordinary native callbacks need no catalog. Resolve the existing catalog
+	// owner only after an actual authorized composite/remote selection needs it.
+	if c := s.executor; c.nativeOrigin != nil && c.base.useTargetRequiresFabric(database) {
+		c.mu.Lock()
+		present := c.catalog != nil
+		c.mu.Unlock()
+		if !present {
+			catalog, err := c.base.buildFabricCatalog()
+			if err != nil {
+				return nil, ctx, err
+			}
+			c.mu.Lock()
+			if c.catalog == nil {
+				c.catalog = catalog
+			}
+			c.mu.Unlock()
+		}
+	}
 	if member := membershipOfStorage(engine); member.statement == s && member.storage == nil {
 		view := exec.cloneWithStorage(engine, selectedDatabaseStorage)
 		view.txContext = nil

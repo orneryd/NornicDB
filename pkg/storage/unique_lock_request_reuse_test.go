@@ -65,7 +65,10 @@ func TestUniqueLockRequestReuseLargeRelationshipBatch(t *testing.T) {
 		edges[i] = EdgeID(fmt.Sprintf("db:edge-%d", i))
 		endpoints = append(endpoints, NodeID(fmt.Sprintf("db:node-%d", i)), "db:shared")
 	}
-	keys := entityCommitKeys(nil, edges, endpoints)
+	keys, keyErr := entityCommitKeys(t.Context(), nil, edges, endpoints)
+	if keyErr != nil {
+		t.Fatal(keyErr)
+	}
 	schema := NewSchemaManager()
 	first, err := schema.acquireUniqueConstraintCommitLocks(context.Background(), "first", keys)
 	if err != nil {
@@ -79,7 +82,11 @@ func TestUniqueLockRequestReuseLargeRelationshipBatch(t *testing.T) {
 	first()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if release, err := schema.acquireUniqueConstraintCommitLocks(ctx, "third", entityCommitKeys([]NodeID{"db:shared"}, nil, nil)); !errors.Is(err, context.Canceled) {
+	authorityKeys2, keyErr := entityCommitKeys(t.Context(), []NodeID{"db:shared"}, nil, nil)
+	if keyErr != nil {
+		t.Fatal(keyErr)
+	}
+	if release, err := schema.acquireUniqueConstraintCommitLocks(ctx, "third", authorityKeys2); !errors.Is(err, context.Canceled) {
 		if release != nil {
 			release()
 		}

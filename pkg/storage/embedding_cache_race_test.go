@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -29,10 +30,10 @@ func TestCommittedCopyDoesNotHideAStoredEmbedding(t *testing.T) {
 			require.True(t, sidecarPending(t, b, node.ID))
 
 			embedded := embeddingWriteback(t, b, node.ID, [][]float32{{0.1, 0.2}}, map[string]any{"has_embedding": true, "chunk_count": 1}, time.Time{})
-			require.NoError(t, b.UpdateNodeEmbeddingSidecar(embedded))
+			require.NoError(t, b.UpdateNodeEmbeddingSidecar(context.Background(), embedded))
 			late.apply(b, written)
 
-			got, err := b.GetNode(node.ID)
+			got, err := b.GetNode(t.Context(), node.ID)
 			require.NoError(t, err)
 			require.Equal(t, [][]float32{{0.1, 0.2}}, got.ChunkEmbeddings)
 		})

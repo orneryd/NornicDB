@@ -23,7 +23,7 @@ func BenchmarkEncodeTokenizedPropertiesNorthwind(b *testing.B) {
 	for _, tc := range cases {
 		b.Run(tc.name, func(b *testing.B) {
 			engine := benchEngine(b)
-			if _, err := engine.CreateNode(&Node{ID: "bench:seed", Properties: tc.props}); err != nil {
+			if _, err := engine.CreateNode(b.Context(), &Node{ID: "bench:seed", Properties: tc.props}); err != nil {
 				b.Fatal(err)
 			}
 			txn, readTS, err := engine.db.beginTxn(true)

@@ -34,7 +34,7 @@ func TestTransactionReplacementRoutesAtQuota(t *testing.T) {
 					engine := h.db.GetBaseStorageForManager()
 					for {
 						if base, ok := engine.(*storage.BadgerEngine); ok {
-							require.NoError(t, base.FlushWriteBehind(nil))
+							require.NoError(t, base.FlushWriteBehind(context.Background()))
 							return
 						}
 						wrapper, ok := engine.(storage.EngineUnwrapper)
@@ -93,7 +93,7 @@ func TestTransactionReplacementRoutesAtQuota(t *testing.T) {
 							}
 							policyBytes += size - measure(node)
 						}
-						edges, err := storage.CollectStoredEdges(context.Background(), store)
+						edges, err := storage.CollectStoredEdges(t.Context(), store)
 						require.NoError(t, err)
 						for _, edge := range edges {
 							edge.Database = ""
@@ -147,7 +147,8 @@ func TestTransactionReplacementRoutesAtQuota(t *testing.T) {
 									}
 									run := func(query string) {
 										t.Helper()
-										require.Empty(t, request(query).code, query)
+										outcome := request(query)
+										require.Empty(t, outcome.code, "%s: %s", query, outcome.message)
 									}
 									run("MATCH (n) WHERE reveal(n) IS NOT NULL DETACH DELETE n")
 									pattern, target := "(n:Doc {id: 'n'})", "n"
@@ -168,17 +169,17 @@ func TestTransactionReplacementRoutesAtQuota(t *testing.T) {
 									flush()
 									old := time.Now().Add(-72 * time.Hour)
 									if entity == "node" {
-										nodes, err := storage.GetStoredNodesByLabel(context.Background(), store, "Doc")
+										nodes, err := storage.GetStoredNodesByLabel(t.Context(), store, "Doc")
 										require.NoError(t, err)
 										require.Len(t, nodes, 1)
 										nodes[0].CreatedAt, nodes[0].UpdatedAt = old, old
-										require.NoError(t, store.UpdateNode(storage.NodeUpdateRequest{After: nodes[0]}))
+										require.NoError(t, store.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: nodes[0]}))
 									} else {
-										edges, err := storage.CollectStoredEdges(context.Background(), store)
+										edges, err := storage.CollectStoredEdges(t.Context(), store)
 										require.NoError(t, err)
 										require.Len(t, edges, 1)
 										edges[0].CreatedAt, edges[0].UpdatedAt = old, old
-										require.NoError(t, store.UpdateEdge(storage.EdgeUpdateRequest{After: edges[0]}))
+										require.NoError(t, store.UpdateEdge(t.Context(), storage.EdgeUpdateRequest{After: edges[0]}))
 									}
 									if visibility == "suppressed" {
 										run(prefix + "MATCH " + pattern + " CALL kp.suppress(" + target + ")")
@@ -192,9 +193,9 @@ func TestTransactionReplacementRoutesAtQuota(t *testing.T) {
 									// Initialize once from stored data; every later write must
 									// maintain the same byte model incrementally.
 									checkBytes(t)
-									nodes, err := store.NodeCount()
+									nodes, err := store.NodeCount(t.Context())
 									require.NoError(t, err)
-									edges, err := store.EdgeCount()
+									edges, err := store.EdgeCount(t.Context())
 									require.NoError(t, err)
 									for attempt := 0; attempt < 2; attempt++ {
 										before := checkBytes(t)
@@ -228,7 +229,7 @@ func TestTransactionReplacementRoutesAtQuota(t *testing.T) {
 											query = prefix + "MATCH " + pattern + " DELETE " + target + " CREATE " + created + " SET " + binding + ".payload = 'small' RETURN reveal(" + binding + ")"
 										}
 										if operation == "direct-update" {
-											require.NoError(t, updateQuotaPayload(store, entity, "small"))
+											require.NoError(t, updateQuotaPayload(t.Context(), store, entity, "small"))
 										} else if visibility != "visible" && operation == "merge-create" {
 											// Hidden nodes require a new physical identity; a different
 											// same-ID hidden edge CREATE is a permanent identity conflict.
@@ -245,12 +246,12 @@ func TestTransactionReplacementRoutesAtQuota(t *testing.T) {
 											wantPayload = strings.Repeat("x", 2048)
 										}
 										if entity == "node" {
-											stored, err := storage.GetStoredNodesByLabel(context.Background(), store, "Doc")
+											stored, err := storage.GetStoredNodesByLabel(t.Context(), store, "Doc")
 											require.NoError(t, err)
 											require.Len(t, stored, 1)
 											require.Equal(t, wantPayload, stored[0].Properties["payload"])
 										} else {
-											stored, err := storage.CollectStoredEdges(context.Background(), store)
+											stored, err := storage.CollectStoredEdges(t.Context(), store)
 											require.NoError(t, err)
 											require.Len(t, stored, 1)
 											require.Equal(t, wantPayload, stored[0].Properties["payload"])
@@ -263,10 +264,10 @@ func TestTransactionReplacementRoutesAtQuota(t *testing.T) {
 										if attempt == 1 {
 											require.Equal(t, before-beforePolicy, after-policyBytes)
 										}
-										gotNodes, err := store.NodeCount()
+										gotNodes, err := store.NodeCount(t.Context())
 										require.NoError(t, err)
 										require.Equal(t, nodes, gotNodes)
-										gotEdges, err := store.EdgeCount()
+										gotEdges, err := store.EdgeCount(t.Context())
 										require.NoError(t, err)
 										require.Equal(t, edges, gotEdges)
 									}
@@ -274,13 +275,13 @@ func TestTransactionReplacementRoutesAtQuota(t *testing.T) {
 									beforePolicy := policyBytes
 									if quota == "bytes" {
 										require.NoError(t, h.server.dbManager.SetDatabaseLimits(t.Context(), "nornic", &multidb.Limits{Storage: multidb.StorageLimits{MaxBytes: before}}))
-										require.ErrorIs(t, updateQuotaPayload(store, entity, strings.Repeat("x", 8192)), multidb.ErrStorageLimitExceeded)
+										require.ErrorIs(t, updateQuotaPayload(t.Context(), store, entity, strings.Repeat("x", 8192)), multidb.ErrStorageLimitExceeded)
 									} else if entity == "node" {
-										require.ErrorIs(t, store.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "overflow"}}), multidb.ErrStorageLimitExceeded)
+										require.ErrorIs(t, store.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: &storage.Node{ID: "overflow"}}), multidb.ErrStorageLimitExceeded)
 									} else {
-										edges, err := storage.CollectStoredEdges(context.Background(), store)
+										edges, err := storage.CollectStoredEdges(t.Context(), store)
 										require.NoError(t, err)
-										require.ErrorIs(t, store.CreateEdge(&storage.Edge{ID: "overflow", StartNode: edges[0].StartNode, EndNode: edges[0].EndNode, Type: "LINK"}), multidb.ErrStorageLimitExceeded)
+										require.ErrorIs(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "overflow", StartNode: edges[0].StartNode, EndNode: edges[0].EndNode, Type: "LINK"}), multidb.ErrStorageLimitExceeded)
 									}
 									flush()
 									after := checkBytes(t)
@@ -302,7 +303,7 @@ func quotaStoredBodies(t *testing.T, store storage.Engine) storage.TransactionCh
 	t.Helper()
 	nodes, err := storage.CollectStoredNodes(context.Background(), store)
 	require.NoError(t, err)
-	edges, err := storage.CollectStoredEdges(context.Background(), store)
+	edges, err := storage.CollectStoredEdges(t.Context(), store)
 	require.NoError(t, err)
 	result := storage.TransactionChanges{Nodes: make(map[storage.NodeID]*storage.Node), Edges: make(map[storage.EdgeID]*storage.Edge)}
 	for _, node := range nodes {
@@ -320,9 +321,9 @@ func quotaStoredBodies(t *testing.T, store storage.Engine) storage.TransactionCh
 	return result
 }
 
-func updateQuotaPayload(store storage.Engine, entity, payload string) error {
+func updateQuotaPayload(ctx context.Context, store storage.Engine, entity, payload string) error {
 	if entity == "node" {
-		nodes, err := storage.GetStoredNodesByLabel(context.Background(), store, "Doc")
+		nodes, err := storage.GetStoredNodesByLabel(ctx, store, "Doc")
 		if err != nil {
 			return err
 		}
@@ -333,9 +334,9 @@ func updateQuotaPayload(store storage.Engine, entity, payload string) error {
 			nodes[0].Properties = make(map[string]any)
 		}
 		nodes[0].Properties["payload"] = payload
-		return store.UpdateNode(storage.NodeUpdateRequest{After: nodes[0]})
+		return store.UpdateNode(ctx, storage.NodeUpdateRequest{After: nodes[0]})
 	}
-	edges, err := storage.CollectStoredEdges(context.Background(), store)
+	edges, err := storage.CollectStoredEdges(ctx, store)
 	if err != nil {
 		return err
 	}
@@ -346,5 +347,5 @@ func updateQuotaPayload(store storage.Engine, entity, payload string) error {
 		edges[0].Properties = make(map[string]any)
 	}
 	edges[0].Properties["payload"] = payload
-	return store.UpdateEdge(storage.EdgeUpdateRequest{After: edges[0]})
+	return store.UpdateEdge(ctx, storage.EdgeUpdateRequest{After: edges[0]})
 }

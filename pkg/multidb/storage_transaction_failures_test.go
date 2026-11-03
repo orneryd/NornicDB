@@ -21,9 +21,9 @@ func TestTransactionQuotaAdmissionReadFailureRollsBack(t *testing.T) {
 			require.NoError(t, err)
 			edgeCase := at == "edge" || at == "edges"
 			if edgeCase {
-				_, err = engine.CreateNode(&storage.Node{ID: "a"})
+				_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "a"})
 				require.NoError(t, err)
-				_, err = engine.CreateNode(&storage.Node{ID: "b"})
+				_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "b"})
 				require.NoError(t, err)
 			}
 			limits := &Limits{Storage: StorageLimits{MaxNodes: 10, MaxEdges: 10}}
@@ -39,27 +39,27 @@ func TestTransactionQuotaAdmissionReadFailureRollsBack(t *testing.T) {
 			faults := storagefault.NewReadFailureEngine(underlying.(storagefault.ReadEngine), stored, injected)
 			faults.SetFailure(storagefault.ReadOperation(at))
 			tracker.Engine = faults
-			tx, err := manager.inner.(*storage.MemoryEngine).BeginTransaction()
+			tx, err := manager.inner.(*storage.MemoryEngine).BeginTransaction(t.Context())
 			require.NoError(t, err)
 			require.NoError(t, tx.SetNamespace(db))
 			if edgeCase {
-				require.NoError(t, tx.CreateEdge(&storage.Edge{ID: storage.EdgeID(db + ":e"), StartNode: storage.NodeID(db + ":a"), EndNode: storage.NodeID(db + ":b"), Type: "R"}))
+				require.NoError(t, tx.CreateEdge(t.Context(), &storage.Edge{ID: storage.EdgeID(db + ":e"), StartNode: storage.NodeID(db + ":a"), EndNode: storage.NodeID(db + ":b"), Type: "R"}))
 			} else {
-				_, err = tx.CreateNode(&storage.Node{ID: storage.NodeID(db + ":rejected")})
+				_, err = tx.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(db + ":rejected")})
 				require.NoError(t, err)
 			}
 			commitErr := tracker.CommitTransaction(context.Background(), tx)
 			require.ErrorIs(t, commitErr, injected)
 			require.True(t, nornicerrors.IsCommitRolledBack(commitErr))
 			require.False(t, tx.IsActive())
-			count, err := underlying.NodeCount()
+			count, err := underlying.NodeCount(t.Context())
 			require.NoError(t, err)
 			if edgeCase {
 				require.EqualValues(t, 2, count)
 			} else {
 				require.Zero(t, count)
 			}
-			edges, err := underlying.EdgeCount()
+			edges, err := underlying.EdgeCount(t.Context())
 			require.NoError(t, err)
 			require.Zero(t, edges)
 		})
@@ -71,9 +71,9 @@ func TestTransactionQuotaNamespaceAndDatabaseLifecycle(t *testing.T) {
 	engine, err := manager.GetStorage(db)
 	require.NoError(t, err)
 	tracker := engine.(*sizeTrackingEngine)
-	wrong, err := manager.inner.(*storage.MemoryEngine).BeginTransaction()
+	wrong, err := manager.inner.(*storage.MemoryEngine).BeginTransaction(t.Context())
 	require.NoError(t, err)
-	_, err = wrong.CreateNode(&storage.Node{ID: "other:rejected"})
+	_, err = wrong.CreateNode(t.Context(), &storage.Node{ID: "other:rejected"})
 	require.NoError(t, err)
 	err = tracker.CommitTransaction(context.Background(), wrong)
 	require.ErrorIs(t, err, storage.ErrCrossNamespaceTransaction)
@@ -85,13 +85,12 @@ func TestTransactionQuotaNamespaceAndDatabaseLifecycle(t *testing.T) {
 	require.False(t, staged.IsActive())
 }
 
-func TestTransactionQuotaReadOnlyAndNilContext(t *testing.T) {
+func TestTransactionQuotaReadOnlyDoesNotWaitForWriteAdmission(t *testing.T) {
 	manager, db := setupTestManagerWithLimits(t, &Limits{Storage: StorageLimits{MaxNodes: 1}})
 	engine, err := manager.GetStorage(db)
 	require.NoError(t, err)
 	tracker := engine.(*sizeTrackingEngine)
-	require.NoError(t, tracker.CommitTransaction(nil, stagedQuotaNode(t, manager, db, "nil-context")))
-	read, err := manager.inner.(*storage.MemoryEngine).BeginTransaction()
+	read, err := manager.inner.(*storage.MemoryEngine).BeginTransaction(t.Context())
 	require.NoError(t, err)
 	tracker.writeMu.Lock()
 	done := make(chan error, 1)
@@ -139,7 +138,7 @@ func TestTransactionQuotaSizeInitializationWithConcurrentUnlimitedCommits(t *tes
 	nodes, edges, err := manager.calculateStorageSizeFromEngine(engine)
 	require.NoError(t, err)
 	require.Equal(t, nodes+edges, cached, "lazy initialization must not miss or double-count concurrent publications")
-	count, err := engine.NodeCount()
+	count, err := engine.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.EqualValues(t, writers, count)
 }
@@ -178,7 +177,7 @@ func TestTransactionQuotaCanceledReadOnlyReleasesTransaction(t *testing.T) {
 	manager, db := setupTestManager(t)
 	engine, err := manager.GetStorage(db)
 	require.NoError(t, err)
-	read, err := manager.inner.(*storage.MemoryEngine).BeginTransaction()
+	read, err := manager.inner.(*storage.MemoryEngine).BeginTransaction(t.Context())
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

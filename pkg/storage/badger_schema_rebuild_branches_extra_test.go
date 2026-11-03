@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -12,7 +13,7 @@ func TestBadgerEngine_RebuildUniqueConstraintValues_PropertyCompositeAndErrors(t
 	t.Run("rebuild populates unique/property/composite caches", func(t *testing.T) {
 		engine := newIsolatedBadgerEngine(t)
 
-		_, err := engine.CreateNode(&Node{
+		_, err := engine.CreateNode(t.Context(), &Node{
 			ID:     "alpha:u1",
 			Labels: []string{"User"},
 			Properties: map[string]interface{}{
@@ -23,7 +24,7 @@ func TestBadgerEngine_RebuildUniqueConstraintValues_PropertyCompositeAndErrors(t
 			},
 		})
 		require.NoError(t, err)
-		_, err = engine.CreateNode(&Node{
+		_, err = engine.CreateNode(t.Context(), &Node{
 			ID:     "alpha:u2",
 			Labels: []string{"User"},
 			Properties: map[string]interface{}{
@@ -42,14 +43,14 @@ func TestBadgerEngine_RebuildUniqueConstraintValues_PropertyCompositeAndErrors(t
 
 		require.NoError(t, engine.rebuildUniqueConstraintValues("alpha", sm))
 
-		uc, ok := sm.uniqueConstraints["User:email"]
+		uc, ok := sm.uniqueConstraints[nodePropertyKey{label: "User", property: "email"}]
 		require.True(t, ok)
 		uc.mu.RLock()
 		require.True(t, uc.valuesCacheComplete)
 		require.Len(t, uc.values, 2)
 		uc.mu.RUnlock()
 
-		pidx, ok := sm.GetPropertyIndex("User", "name")
+		pidx, ok := checkedIndexRange[*PropertyIndex](t)(sm.GetPropertyIndex(t.Context(), "User", "name"))
 		require.True(t, ok)
 		pidx.mu.RLock()
 		require.Len(t, pidx.values, 2)
@@ -73,9 +74,9 @@ func TestBadgerEngine_RebuildUniqueConstraintValues_PropertyCompositeAndErrors(t
 
 	t.Run("rebuild returns error on duplicate unique values", func(t *testing.T) {
 		engine := newIsolatedBadgerEngine(t)
-		_, err := engine.CreateNode(&Node{ID: "dup:u1", Labels: []string{"User"}, Properties: map[string]interface{}{"email": "same@example.com"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: "dup:u1", Labels: []string{"User"}, Properties: map[string]interface{}{"email": "same@example.com"}})
 		require.NoError(t, err)
-		_, err = engine.CreateNode(&Node{ID: "dup:u2", Labels: []string{"User"}, Properties: map[string]interface{}{"email": "same@example.com"}})
+		_, err = engine.CreateNode(t.Context(), &Node{ID: "dup:u2", Labels: []string{"User"}, Properties: map[string]interface{}{"email": "same@example.com"}})
 		require.NoError(t, err)
 
 		sm := NewSchemaManager()
@@ -88,7 +89,7 @@ func TestBadgerEngine_RebuildUniqueConstraintValues_PropertyCompositeAndErrors(t
 
 	t.Run("rebuild returns decode error for malformed node payload", func(t *testing.T) {
 		engine := newIsolatedBadgerEngine(t)
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			return txn.Set(nodeKey("broken:n1"), []byte("not-msgpack-node"))
 		}))
 

@@ -39,15 +39,22 @@ func TestConstraintValueLocksDoNotReacquireEntityAuthority(t *testing.T) {
 				} else {
 					nodes = []NodeID{"test:n"}
 				}
-				releaseEntity, err := schema.acquireUniqueConstraintCommitLocks(context.Background(), "owner", entityCommitKeys(nodes, edges, nil))
+				authorityKeys1, keyErr := entityCommitKeys(t.Context(), nodes, edges, nil)
+				if keyErr != nil {
+					t.Fatal(keyErr)
+				}
+				releaseEntity, err := schema.acquireUniqueConstraintCommitLocks(context.Background(), "owner", authorityKeys1)
 				require.NoError(t, err)
 				defer releaseEntity()
 				var releaseValues func()
+				var valueKeys []uniqueConstraintLockKey
 				if edgeCase {
-					releaseValues, err = schema.acquireUniqueConstraintCommitLocks(context.Background(), "owner", schema.appendConstraintValueKeys(nil, nil, []*Edge{{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: label, Properties: map[string]any{"uid": "value"}}}))
+					valueKeys, err = schema.appendConstraintValueKeys(t.Context(), nil, nil, []*Edge{{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: label, Properties: map[string]any{"uid": "value"}}})
 				} else {
-					releaseValues, err = schema.acquireUniqueConstraintCommitLocks(context.Background(), "owner", schema.appendConstraintValueKeys(nil, []*Node{{ID: "test:n", Labels: []string{label}, Properties: map[string]any{"uid": "value"}}}, nil))
+					valueKeys, err = schema.appendConstraintValueKeys(t.Context(), nil, []*Node{{ID: "test:n", Labels: []string{label}, Properties: map[string]any{"uid": "value"}}}, nil)
 				}
+				require.NoError(t, err)
+				releaseValues, err = schema.acquireUniqueConstraintCommitLocks(context.Background(), "owner", valueKeys)
 				require.NoError(t, err)
 				defer releaseValues()
 				schema.uniqueConstraintCommitLocksMu.Lock()
@@ -137,19 +144,19 @@ func TestPreparedEntityAuthorityRetainsOnlyItsCanonicalHold(t *testing.T) {
 			}
 			if relationship || mixed {
 				for _, id := range []NodeID{"test:a", "test:b"} {
-					_, err := b.CreateNode(&Node{ID: id})
+					_, err := b.CreateNode(t.Context(), &Node{ID: id})
 					require.NoError(t, err)
 				}
 			}
-			tx, err := b.BeginTransaction()
+			tx, err := b.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			defer tx.Rollback()
 			require.NoError(t, tx.SetNamespace("test"))
 			if relationship || mixed {
-				require.NoError(t, tx.CreateEdge(&Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"uid": "value"}}))
+				require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"uid": "value"}}))
 			}
 			if !relationship {
-				_, err = tx.CreateNode(&Node{ID: "test:n", Labels: []string{"Doc"}, Properties: map[string]any{"uid": "value"}})
+				_, err = tx.CreateNode(t.Context(), &Node{ID: "test:n", Labels: []string{"Doc"}, Properties: map[string]any{"uid": "value"}})
 				require.NoError(t, err)
 			}
 			p, err := tx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: tx.ID})
@@ -231,7 +238,7 @@ func TestPreparedEntityAuthorityRetainsOnlyItsCanonicalHold(t *testing.T) {
 				require.Equal(t, wantValues, values, "%s: value keys stay exclusively owned", stage)
 			}
 			check("prepared", preparedExpected, 1)
-			releaseAccepted, err := p.RetainAcceptedAuthority(nil)
+			releaseAccepted, err := p.RetainAcceptedAuthority(context.Background())
 			require.NoError(t, err)
 			defer releaseAccepted()
 			check("accepted", acceptedExpected, 2)
@@ -243,13 +250,13 @@ func TestPreparedEntityAuthorityRetainsOnlyItsCanonicalHold(t *testing.T) {
 			// prepared transaction still stabilizes.
 			if endpoint {
 				for _, end := range []NodeID{"test:a", "test:b"} {
-					blocked, err := b.BeginTransaction()
+					blocked, err := b.BeginTransaction(t.Context())
 					require.NoError(t, err)
 					require.NoError(t, blocked.SetNamespace("test"))
-					node, err := blocked.GetNode(end)
+					node, err := blocked.GetNode(t.Context(), end)
 					require.NoError(t, err)
 					node.Properties = map[string]any{"mutation": "blocked"}
-					require.NoError(t, blocked.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
+					require.NoError(t, blocked.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 					waiter, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
 					_, err = blocked.PrepareEntityCommit(waiter, EntityCommitRequest{LogicalID: "endpoint-writer"})
 					cancel()
@@ -262,13 +269,13 @@ func TestPreparedEntityAuthorityRetainsOnlyItsCanonicalHold(t *testing.T) {
 			require.Empty(t, entityAuthoritySnapshot(schema))
 			// With the prepared owner gone, the endpoint write it blocked proceeds.
 			if endpoint {
-				owner, err := b.BeginTransaction()
+				owner, err := b.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				require.NoError(t, owner.SetNamespace("test"))
-				node, err := owner.GetNode("test:a")
+				node, err := owner.GetNode(t.Context(), "test:a")
 				require.NoError(t, err)
 				node.Properties = map[string]any{"mutation": "allowed"}
-				require.NoError(t, owner.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
+				require.NoError(t, owner.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 				require.NoError(t, owner.Commit())
 			}
 		})
@@ -287,14 +294,14 @@ func TestPreparedRelationshipEndpointSerializesConflictingWrites(t *testing.T) {
 	schema := b.GetSchemaForNamespace("test")
 	require.NoError(t, schema.AddConstraint(Constraint{Name: "edge_unique", Type: ConstraintUnique, EntityType: ConstraintEntityRelationship, Label: "LINK", Properties: []string{"uid"}}))
 	for _, id := range []NodeID{"test:hub", "test:a", "test:b"} {
-		_, err := b.CreateNode(&Node{ID: id})
+		_, err := b.CreateNode(t.Context(), &Node{ID: id})
 		require.NoError(t, err)
 	}
 	prepareEdge := func(local, end string) *PreparedEntityCommit {
-		tx, err := b.BeginTransaction()
+		tx, err := b.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		require.NoError(t, tx.SetNamespace("test"))
-		require.NoError(t, tx.CreateEdge(&Edge{ID: EdgeID(local), StartNode: "test:hub", EndNode: NodeID(end), Type: "LINK", Properties: map[string]any{"uid": local}}))
+		require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: EdgeID(local), StartNode: "test:hub", EndNode: NodeID(end), Type: "LINK", Properties: map[string]any{"uid": local}}))
 		p, err := tx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: local})
 		require.NoError(t, err)
 		return p
@@ -316,12 +323,12 @@ func TestPreparedRelationshipEndpointSerializesConflictingWrites(t *testing.T) {
 		{
 			name: "update",
 			build: func(tx *BadgerTransaction) error {
-				node, err := tx.GetNode("test:a")
+				node, err := tx.GetNode(t.Context(), "test:a")
 				if err != nil {
 					return err
 				}
 				node.Properties = map[string]any{"mutation": "update"}
-				return tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits})
+				return tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node, Policy: ClientNodeEdits})
 			},
 			// The update touches only the node, so it proceeds on the published
 			// endpoint and commits.
@@ -330,7 +337,7 @@ func TestPreparedRelationshipEndpointSerializesConflictingWrites(t *testing.T) {
 		{
 			name: "delete",
 			build: func(tx *BadgerTransaction) error {
-				return tx.DeleteGraphNode("test:a", CascadeEdges)
+				return tx.DeleteGraphNode(t.Context(), "test:a", CascadeEdges)
 			},
 			// The cascade delete also removes the relationship the owner just
 			// published, which this delete's snapshot predates: it is admitted by
@@ -341,7 +348,7 @@ func TestPreparedRelationshipEndpointSerializesConflictingWrites(t *testing.T) {
 	} {
 		t.Run(caseConflict.name, func(t *testing.T) {
 			owner := prepareEdge("test:e-"+caseConflict.name, "test:a")
-			tx, err := b.BeginTransaction()
+			tx, err := b.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			require.NoError(t, tx.SetNamespace("test"))
 			require.NoError(t, caseConflict.build(tx))

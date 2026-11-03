@@ -34,7 +34,7 @@ func TestClusterGenerationFirstPersistentBuildKeepsLexicalProfiles(t *testing.T)
 	for topic := 0; topic < 4; topic++ {
 		for i := 0; i < 20; i++ {
 			f.next++
-			_, err := f.engine.CreateNode(f.node(fmt.Sprintf("fresh-%02d", f.next), topic, cgTopics[topic]+" document"))
+			_, err := f.engine.CreateNode(t.Context(), f.node(fmt.Sprintf("fresh-%02d", f.next), topic, cgTopics[topic]+" document"))
 			require.NoError(t, err)
 		}
 	}
@@ -133,7 +133,7 @@ func TestClusterGenerationRestoreUsesLiveMembership(t *testing.T) {
 					emptyCID = 0
 					for _, id := range f.svc.clusterIndex.GetClusterMemberIDsForCluster(emptyCID) {
 						owner := storage.NodeID(vectorOwnerForTest(t, id))
-						require.NoError(t, f.engine.DeleteNode(owner))
+						require.NoError(t, f.engine.DeleteNode(t.Context(), owner))
 						require.NoError(t, f.svc.RemoveNode(owner))
 					}
 				}
@@ -308,12 +308,12 @@ func TestClusterGenerationBackfillUsesStoreAtAdmission(t *testing.T) {
 			f := newCGFixture(t, 20, fileBacked)
 			f.t = t
 			svc := f.svc
-			node, err := f.engine.GetNode("n-0001")
+			node, err := f.engine.GetNode(t.Context(), "n-0001")
 			require.NoError(t, err)
 			node.ChunkEmbeddings = [][]float32{{0, 0, 0, 1}}
-			require.NoError(t, f.engine.UpdateNode(storage.NodeUpdateRequest{After: node}))
+			require.NoError(t, f.engine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
 			done := parkReconcile(t, svc, svc.EmbeddingCount()+1)
-			err = svc.indexNodeLocked(node, false)
+			err = svc.indexNodeLocked(t.Context(), node, false)
 			svc.removeNodeLocked("n-0002")
 			svc.indexMu.Unlock()
 			require.NoError(t, err)
@@ -364,7 +364,34 @@ func TestClusterGenerationPolicyRetryCompletesCancelledChange(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	cfg := HNSWQuantizationConfig{Mode: HNSWQuantizationBinary}
-	require.ErrorIs(t, f.svc.ConfigureHNSWQuantization(cancelInPolicyApply{ctx, cancel}, cfg), context.Canceled)
+	// Public admission must propagate a real canceled request.
+	cancel()
+	require.ErrorIs(t, f.svc.ConfigureHNSWQuantization(ctx, cfg), context.Canceled)
+	// Lifecycle derivation intentionally hides custom Err probes. Exercise
+	// the same policy publication component after acquiring a real reader;
+	// this proves its phase contract, not public phase injection.
+	ctx, cancel = context.WithCancel(t.Context())
+	defer cancel()
+	owned, release, err := f.svc.beginRead(ctx)
+	require.NoError(t, err)
+	func() {
+		defer release()
+		_, err := f.svc.setHNSWQuantizationOverride(owned, cfg)
+		require.NoError(t, err)
+		err = f.svc.publishClusterGeneration(cancelInPolicyApply{owned, cancel}, clusterPublication{policy: true})
+		require.ErrorIs(t, err, context.Canceled)
+		require.ErrorIs(t, ctx.Err(), context.Canceled)
+		select {
+		case <-ctx.Done():
+		default:
+			t.Fatal("policy probe did not cancel the real request")
+		}
+	}()
+	require.Equal(t, cfg.Mode, f.svc.hnswConfig().Quantization.Mode)
+	f.svc.clusterStateMu.RLock()
+	incompletePolicy := f.svc.clusterGen.policy.Mode
+	f.svc.clusterStateMu.RUnlock()
+	require.NotEqual(t, cfg.Mode, incompletePolicy, "cancellation leaves the generation policy incomplete before retry")
 	require.NoError(t, f.svc.ConfigureHNSWQuantization(context.Background(), cfg))
 	assertClusterGenerationCoherent(t, f.svc, cgAllChecks)
 	// A same-value call on a complete policy changes nothing.

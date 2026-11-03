@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
@@ -34,7 +35,7 @@ func TestPR1655BeginPresenceSnapshotModel(t *testing.T) {
 					require.NoError(t, tx.Commit())
 				}
 				synchronous := func(write func(*BadgerTransaction) error) {
-					tx, err := b.BeginTransaction()
+					tx, err := b.BeginTransaction(t.Context())
 					require.NoError(t, err)
 					require.NoError(t, write(tx))
 					require.NoError(t, tx.Commit())
@@ -47,17 +48,17 @@ func TestPR1655BeginPresenceSnapshotModel(t *testing.T) {
 						switch rng.Intn(3) {
 						case 0:
 							buffered(func(tx *BadgerTransaction) error {
-								_, err := tx.CreateNode(&Node{ID: id})
+								_, err := tx.CreateNode(t.Context(), &Node{ID: id})
 								return err
 							})
 						case 1:
 							synchronous(func(tx *BadgerTransaction) error {
-								_, err := tx.CreateNode(&Node{ID: id})
+								_, err := tx.CreateNode(t.Context(), &Node{ID: id})
 								return err
 							})
 							persisted[id] = true
 						default:
-							_, err := b.CreateNode(&Node{ID: id})
+							_, err := b.CreateNode(t.Context(), &Node{ID: id})
 							require.NoError(t, err)
 							persisted[id] = true
 						}
@@ -80,18 +81,18 @@ func TestPR1655BeginPresenceSnapshotModel(t *testing.T) {
 						}
 						switch producer {
 						case 0:
-							buffered(func(tx *BadgerTransaction) error { return tx.DeleteGraphNode(id, CascadeEdges) })
+							buffered(func(tx *BadgerTransaction) error { return tx.DeleteGraphNode(t.Context(), id, CascadeEdges) })
 						case 1:
-							synchronous(func(tx *BadgerTransaction) error { return tx.DeleteGraphNode(id, CascadeEdges) })
+							synchronous(func(tx *BadgerTransaction) error { return tx.DeleteGraphNode(t.Context(), id, CascadeEdges) })
 						default:
-							require.NoError(t, b.DeleteNode(id))
+							require.NoError(t, b.DeleteNode(t.Context(), id))
 						}
 						delete(live, id)
 					case op < 8: // begin
 						if len(open) >= 4 {
 							continue
 						}
-						tx, err := b.BeginTransaction()
+						tx, err := b.BeginTransaction(t.Context())
 						require.NoError(t, err)
 						require.NoError(t, tx.SetImplicit(true))
 						require.NoError(t, tx.SetNamespace("test"))
@@ -101,14 +102,14 @@ func TestPR1655BeginPresenceSnapshotModel(t *testing.T) {
 						}
 						open = append(open, &modelTx{tx: tx, begin: begin})
 					default: // flush and retire
-						require.NoError(t, b.FlushWriteBehind(nil))
+						require.NoError(t, b.FlushWriteBehind(context.Background()))
 						for id := range live {
 							persisted[id] = true
 						}
 					}
 				}
 				if rng.Intn(2) == 0 {
-					require.NoError(t, b.FlushWriteBehind(nil))
+					require.NoError(t, b.FlushWriteBehind(context.Background()))
 				}
 				checked := 0
 				for _, m := range open {
@@ -116,7 +117,7 @@ func TestPR1655BeginPresenceSnapshotModel(t *testing.T) {
 						if live[id] {
 							continue
 						}
-						err := m.tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: id}, Policy: ClientNodeEdits})
+						err := m.tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: id}, Policy: ClientNodeEdits})
 						if m.begin[id] {
 							require.ErrorIs(t, err, ErrConflict, "%s was live at begin and deleted after it", id)
 						} else {

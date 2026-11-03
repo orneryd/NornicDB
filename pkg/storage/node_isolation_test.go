@@ -13,10 +13,10 @@ import (
 // unchanged (#963).
 func TestTransactionLabelReadsAreIsolated(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	_, err := engine.CreateNode(&Node{ID: "test:scan", Labels: []string{"Doc"}, Properties: map[string]any{"text": "stored"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:scan", Labels: []string{"Doc"}, Properties: map[string]any{"text": "stored"}})
 	require.NoError(t, err)
 
-	tx, err := engine.BadgerEngine.BeginTransaction()
+	tx, err := engine.BadgerEngine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	for round := 0; round < 2; round++ { // a fresh scan, then the cached one
@@ -29,7 +29,7 @@ func TestTransactionLabelReadsAreIsolated(t *testing.T) {
 		require.Equal(t, "stored", nodes[0].Properties["text"])
 		nodes[0].Properties["text"] = "changed by the caller"
 	}
-	snapshot, err := tx.GetNode("test:scan")
+	snapshot, err := tx.GetNode(t.Context(), "test:scan")
 	require.NoError(t, err)
 	require.Equal(t, "stored", snapshot.Properties["text"])
 	require.NoError(t, tx.Rollback())

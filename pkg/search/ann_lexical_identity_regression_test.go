@@ -78,7 +78,7 @@ func TestANNPublicBuildUsesNamedVectorLexicalSeeds(t *testing.T) {
 			for i, id := range []string{"first", "second"} {
 				vec := make([]float32, 2)
 				vec[i] = 1
-				_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(id), Properties: map[string]any{"text": "alpha beta"}, NamedEmbeddings: map[string][]float32{"default": vec}})
+				_, err := engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(id), Properties: map[string]any{"text": "alpha beta"}, NamedEmbeddings: map[string][]float32{"default": vec}})
 				require.NoError(t, err)
 			}
 			svc := NewService(engine, 2, nil)

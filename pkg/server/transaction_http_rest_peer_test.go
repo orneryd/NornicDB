@@ -37,7 +37,7 @@ func TestCurrentHTTPPeerPreservesPositionalProvenance(t *testing.T) {
 				require.Len(t, request.Statements, 1)
 				response := &TransactionResponse{Results: []QueryResult{}, Errors: []QueryError{}}
 				result := &cypher.ExecuteResult{Columns: []string{"v", "r", "p"}, Rows: [][]interface{}{{[]interface{}{map[string]interface{}{}, node}, edge, path}}}
-				server.appendStatementResult(response, result, "neo4j", false, request.Statements[0].ResultDataContents)
+				require.NoError(t, server.appendStatementResult(t.Context(), response, result, "neo4j", false, request.Statements[0].ResultDataContents))
 				require.NoError(t, json.NewEncoder(w).Encode(response))
 			}))
 			defer peer.Close()
@@ -76,7 +76,9 @@ func TestHTTPRelationshipGraphPreservesNumericEndpoints(t *testing.T) {
 	s := &Server{}
 	graph := &GraphResult{}
 	edge := &storage.Edge{ID: "r", Type: "R", StartNode: "a", EndNode: "b", Properties: map[string]interface{}{}}
-	_, _ = s.transactionHTTPValue(edge, "neo4j", &transactionHTTPValueState{graph: graph})
+	var projectionErr2 error
+	_, _, projectionErr2 = s.transactionHTTPValue(t.Context(), edge, "neo4j", &transactionHTTPValueState{graph: graph})
+	require.NoError(t, projectionErr2)
 	b, err := json.Marshal(graph)
 	require.NoError(t, err)
 	var decoded struct {
@@ -91,5 +93,7 @@ func TestHTTPRelationshipGraphPreservesNumericEndpoints(t *testing.T) {
 func TestHTTPRESTMalformedPathDoesNotInventEntities(t *testing.T) {
 	s := &Server{}
 	state := &transactionHTTPValueState{rest: true}
-	require.Nil(t, s.transactionHTTPRESTPath([]interface{}{int64(1)}, "neo4j", state))
+	projectedValue3, projectionErr3 := s.transactionHTTPRESTPath(t.Context(), []interface{}{int64(1)}, "neo4j", state)
+	require.NoError(t, projectionErr3)
+	require.Nil(t, projectedValue3)
 }

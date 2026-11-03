@@ -9,16 +9,10 @@ import (
 type queryTextContextKey struct{}
 
 func withQueryText(ctx context.Context, query string) context.Context {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	return context.WithValue(ctx, queryTextContextKey{}, query)
 }
 
 func queryTextFromContext(ctx context.Context) string {
-	if ctx == nil {
-		return ""
-	}
 	v, _ := ctx.Value(queryTextContextKey{}).(string)
 	return strings.TrimSpace(v)
 }

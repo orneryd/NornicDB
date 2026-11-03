@@ -160,7 +160,7 @@ func TestQueryEmbeddingFabricCacheAcrossProviderChange(t *testing.T) {
 			database:   "shard_a",
 			nextVector: []float32{1, 0},
 			prepare: func(t *testing.T, exec *StorageExecutor, store storage.Engine) {
-				_, err := store.CreateNode(&storage.Node{ID: "doc", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "alpha"}, ChunkEmbeddings: [][]float32{{1, 0}}})
+				_, err := store.CreateNode(t.Context(), &storage.Node{ID: "doc", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "alpha"}, ChunkEmbeddings: [][]float32{{1, 0}}})
 				require.NoError(t, err)
 				svc := search.NewService(store, 2, nil)
 				require.NoError(t, svc.BuildIndexes(context.Background()))

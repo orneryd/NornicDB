@@ -33,7 +33,7 @@ func TestWALPropertyAuthorityRejectsInvalidRecords(t *testing.T) {
 		require.Error(t, ReplayWALEntry(b, WALEntry{Operation: OpBufferedCommit, Data: payload}))
 	}
 	assertPropertyDictionaryBijection(t, b)
-	node, err := b.GetNode("perf:a")
+	node, err := b.GetNode(t.Context(), "perf:a")
 	require.NoError(t, err)
 	require.Equal(t, map[string]any{"property_000": int64(0)}, node.Properties)
 }
@@ -67,14 +67,14 @@ func TestWALPropertyLosslessLegacyEdge(t *testing.T) {
 	destination := reviewBindingEngine(t, t.TempDir())
 	for _, b := range []*BadgerEngine{source, destination} {
 		for _, id := range []NodeID{"named:a", "named:b"} {
-			_, err := b.CreateNode(&Node{ID: id})
+			_, err := b.CreateNode(t.Context(), &Node{ID: id})
 			require.NoError(t, err)
 		}
 	}
-	_, err := destination.CreateNode(&Node{ID: "named:sentinel", Properties: map[string]any{"other": "unchanged"}})
+	_, err := destination.CreateNode(t.Context(), &Node{ID: "named:sentinel", Properties: map[string]any{"other": "unchanged"}})
 	require.NoError(t, err)
 	edge := &Edge{ID: "named:r", StartNode: "named:a", EndNode: "named:b", Type: "R", Properties: map[string]any{"stamp": time.Date(2026, 10, 23, 1, 2, 3, 4000, time.UTC)}}
-	require.NoError(t, source.CreateEdge(edge))
+	require.NoError(t, source.CreateEdge(t.Context(), edge))
 	var body []byte
 	require.NoError(t, source.db.View(func(tx *badger.Txn) error {
 		item, err := tx.Get(edgeKey(edge.ID))
@@ -92,7 +92,7 @@ func TestWALPropertyLosslessLegacyEdge(t *testing.T) {
 	payload, err := json.Marshal(walRecoverySidecar{Encoding: walRecoveryEncoding, Data: typed})
 	require.NoError(t, err)
 	require.NoError(t, ReplayWALEntry(destination, WALEntry{Operation: OpBufferedCommit, Data: payload}))
-	got, err := destination.GetEdge(edge.ID)
+	got, err := destination.GetEdge(t.Context(), edge.ID)
 	require.NoError(t, err)
 	stamp, ok := got.Properties["stamp"].(time.Time)
 	require.True(t, ok)

@@ -1,6 +1,9 @@
 package storage
 
-import "sync"
+import (
+	"fmt"
+	"sync"
+)
 
 // A commit reserves its notification position while publishing, then becomes
 // ready after storage locks and the database's quota/accounting lease release.
@@ -134,6 +137,10 @@ func (b *BadgerEngine) queueCommitNotification(n *commitNotification) *commitNot
 	return n
 }
 
+// errNotificationAfterSeal reports a commit notification reserved after the
+// engine sealed admission; its listeners are not run against retiring state.
+var errNotificationAfterSeal = fmt.Errorf("commit notification reserved after engine close sealed admission: %w", ErrStorageClosed)
+
 func (b *BadgerEngine) reserveCommitNotification(n *commitNotification) {
 	if n == nil {
 		return
@@ -143,8 +150,21 @@ func (b *BadgerEngine) reserveCommitNotification(n *commitNotification) {
 		b.notificationMu.Unlock()
 		return
 	}
+	// Every reserver is admitted engine work: a durable write holds the
+	// barrier Close takes before sealing, and the other producers are
+	// stopped before the seal. A refusal is therefore a broken invariant,
+	// reported through Close's outcome rather than delivered after retirement.
+	if !b.work.Enter() {
+		b.notificationMu.Unlock()
+		b.work.RecordError("", errNotificationAfterSeal)
+		if n.consumed != nil {
+			close(n.consumed)
+		}
+		return
+	}
+	// The reservation holds its engine admission until delivery, so
+	// retirement never releases the state a listener runs against.
 	n.reserved = true
-	b.notifyWG.Add(1)
 	if b.notificationTail == nil {
 		b.notificationHead = n
 	} else {
@@ -248,7 +268,7 @@ func (b *BadgerEngine) drainCommitNotifications() {
 		}
 		b.notificationMu.Unlock()
 		func() {
-			defer b.notifyWG.Done()
+			defer b.work.Leave()
 			if n.consumed != nil {
 				defer close(n.consumed)
 			}

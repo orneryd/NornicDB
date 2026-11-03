@@ -22,18 +22,46 @@ func BenchmarkAPOCSearchPostProcessing(b *testing.B) {
 	ctx := context.Background()
 	for _, population := range scanBenchSizes {
 		functions := search.New(&scanBenchStorage{nodes: scanBenchNodes(population.size)})
-		matched := functions.Prefix(ctx, "Person", "name", "Alice")
+		matched, apocCallError1 := functions.Prefix(ctx, "Person", "name", "Alice")
+		if apocCallError1 != nil {
+			b.Fatalf("APOC helper failed: %v", apocCallError1)
+		}
+
 		for _, helper := range []struct {
 			name string
 			call func()
 		}{
-			{name: "suggestLimit5", call: func() { functions.Suggest(ctx, "Person", "name", "Alice", 5) }},
-			{name: "suggestDefault", call: func() { functions.Suggest(ctx, "Person", "name", "Alice", 10) }},
-			{name: "autocomplete", call: func() { functions.Suggest(ctx, "Person", "name", "Alice") }},
-			{name: "didYouMean", call: func() { functions.DidYouMean(ctx, "Person", "name", "Alise1") }},
+			{name: "suggestLimit5", call: func() {
+				_, apocCallError2 := functions.Suggest(ctx, "Person", "name", "Alice", 5)
+				if apocCallError2 != nil {
+					b.Fatalf("APOC helper failed: %v", apocCallError2)
+				}
+			}},
+			{name: "suggestDefault", call: func() {
+				_, apocCallError3 := functions.Suggest(ctx, "Person", "name", "Alice", 10)
+				if apocCallError3 != nil {
+					b.Fatalf("APOC helper failed: %v", apocCallError3)
+				}
+			}},
+			{name: "autocomplete", call: func() {
+				_, apocCallError4 := functions.Suggest(ctx, "Person", "name", "Alice")
+				if apocCallError4 != nil {
+					b.Fatalf("APOC helper failed: %v", apocCallError4)
+				}
+			}},
+			{name: "didYouMean", call: func() {
+				_, apocCallError5 := functions.DidYouMean(ctx, "Person", "name", "Alise1")
+				if apocCallError5 != nil {
+					b.Fatalf("APOC helper failed: %v", apocCallError5)
+				}
+			}},
 			{name: "score", call: func() { functions.Score(ctx, matched, "name", "Alice") }},
 			{name: "nodeReduced", call: func() {
-				functions.NodeReduced(ctx, "Person", map[string]interface{}{"status": "active"}, 10)
+				_, apocCallError6 := functions.NodeReduced(ctx, "Person", map[string]interface{}{"status": "active"}, 10)
+				if apocCallError6 != nil {
+					b.Fatalf("APOC helper failed: %v", apocCallError6)
+				}
+
 			}},
 		} {
 			b.Run(population.name+"/"+helper.name, func(b *testing.B) {

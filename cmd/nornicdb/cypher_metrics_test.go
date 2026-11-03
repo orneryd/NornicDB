@@ -33,12 +33,12 @@ func TestServerStartup_CypherMetricsRegistered(t *testing.T) {
 
 	// Materialize one series per *Vec so Gather() surfaces the family.
 	cypherBag.Queries.WithLabelValues("read").Inc()
-	cypherBag.QueryDuration.Bind("read").Observe(nil, 0.001)
-	cypherBag.PlannerDuration.Bind("read").Observe(nil, 0.0001)
+	cypherBag.QueryDuration.Bind("read").Observe(t.Context(), 0.001)
+	cypherBag.PlannerDuration.Bind("read").Observe(t.Context(), 0.0001)
 	cypherBag.PlannerCacheHits.WithLabelValues().Inc()
 	cypherBag.PlannerCacheMisses.WithLabelValues().Inc()
 	cypherBag.PlannerCacheSize.Set(0)
-	cypherBag.RowsReturned.Bind("read").Observe(nil, 1)
+	cypherBag.RowsReturned.Bind("read").Observe(t.Context(), 1)
 	cypherBag.ActiveTransactions.Set(0)
 	cypherBag.TransactionConflicts.WithLabelValues().Inc()
 	cypherBag.SlowQueries.WithLabelValues().Inc()

@@ -89,7 +89,7 @@ func TestRecoveryRejectsUnsupportedWALBeforeRestoringSnapshot(t *testing.T) {
 	destination := newTestMemoryEngine(t)
 	_, _, err := RecoverIntoEngine(destination, dir, snapshot)
 	require.ErrorContains(t, err, "unsupported WAL")
-	count, err := destination.NodeCount()
+	count, err := destination.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.Zero(t, count, "incompatible WAL must fail before restoring any snapshot")
 	after, err := os.ReadFile(path)

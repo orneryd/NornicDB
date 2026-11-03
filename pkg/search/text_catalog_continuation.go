@@ -226,7 +226,7 @@ func (s *Service) newCompleteContinuationStream(ctx context.Context, options Sea
 		if scannedNodes > policy.MaxScannedNodes {
 			return resultstream.ErrCapacity
 		}
-		eligible, err := s.continuationNodeEligible(node, &options, wantedTypes, decayFilter, request.AuthorizeNode)
+		eligible, err := s.continuationNodeEligible(ctx, node, &options, wantedTypes, decayFilter, request.AuthorizeNode)
 		if err != nil || !eligible {
 			return err
 		}
@@ -465,7 +465,7 @@ func searchPassageFromResult(result SearchResult) SearchPassage {
 // for the whole build; its nil/empty value means Types doesn't constrain the
 // candidate. The membership test itself is nodeMatchesType, so every Type
 // decision on this path is the canonical one.
-func (s *Service) continuationNodeEligible(node *storage.Node, options *SearchOptions, wantedTypes map[string]struct{}, decayFilter NodeDecayFilterFunc, authorizeNode NodeAuthorizationFunc) (bool, error) {
+func (s *Service) continuationNodeEligible(ctx context.Context, node *storage.Node, options *SearchOptions, wantedTypes map[string]struct{}, decayFilter NodeDecayFilterFunc, authorizeNode NodeAuthorizationFunc) (bool, error) {
 	if node == nil || node.RuntimeMetadata().VisibilitySuppressed || (decayFilter != nil && decayFilter(string(node.ID))) {
 		return false, nil
 	}
@@ -481,7 +481,7 @@ func (s *Service) continuationNodeEligible(node *storage.Node, options *SearchOp
 	if !options.admitsNode(node) {
 		return false, nil
 	}
-	return s.shouldIndexNode(node)
+	return s.shouldIndexNode(ctx, node)
 }
 
 func searchResultFromContinuationNode(node *storage.Node, projection resultPropertyProjection) SearchResult {

@@ -22,7 +22,7 @@ func TestDescriptorPublicShowAndBothCatalogBuildersUseSafeViews(t *testing.T) {
 	require.NoError(t, err)
 	inner := newTestMemoryEngine(t)
 	system := storage.NewNamespacedEngine(inner, "system")
-	_, err = system.CreateNode(&storage.Node{ID: "databases:metadata", Labels: []string{"_System", "_Metadata"}, Properties: map[string]any{"type": "databases", "data": secured}})
+	_, err = system.CreateNode(t.Context(), &storage.Node{ID: "databases:metadata", Labels: []string{"_System", "_Metadata"}, Properties: map[string]any{"type": "databases", "data": secured}})
 	require.NoError(t, err)
 	cfg := multidb.DefaultConfig()
 	cfg.RemoteCredentialEncryptionKey = key

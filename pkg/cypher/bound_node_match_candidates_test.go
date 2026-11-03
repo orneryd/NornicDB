@@ -48,7 +48,7 @@ func newBoundMatchCandidateStore(t testing.TB, size int) *storage.NamespacedEngi
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	store := storage.NewNamespacedEngine(base, "bound_match")
 	for i := 0; i < size; i++ {
-		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("n%d", i)), Labels: []string{"Item"}, Properties: map[string]interface{}{"k": int64(1)}})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("n%d", i)), Labels: []string{"Item"}, Properties: map[string]interface{}{"k": int64(1)}})
 		require.NoError(t, err)
 	}
 	return store
@@ -56,7 +56,7 @@ func newBoundMatchCandidateStore(t testing.TB, size int) *storage.NamespacedEngi
 
 func TestBoundNodeMatchSkipsCandidateScan(t *testing.T) {
 	store := newBoundMatchCandidateStore(t, 2)
-	node, err := store.GetNode("n0")
+	node, err := store.GetNode(t.Context(), "n0")
 	require.NoError(t, err)
 	spy := &boundMatchCandidateEngine{Engine: store}
 	executor := NewStorageExecutor(spy)

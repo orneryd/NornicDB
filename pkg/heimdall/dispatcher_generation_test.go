@@ -9,7 +9,7 @@ func TestDispatcherRetiredGenerationCannotCreateQueue(t *testing.T) {
 	dispatcher := &dbEventDispatcher{}
 	dispatcher.start()
 	t.Cleanup(dispatcher.stop)
-	generation := dispatcher.done
+	generation := dispatcher.gen
 	hook := &coverageEventPlugin{
 		coverageMinimalPlugin: newCoverageMinimalPlugin("generation"),
 		events:                make(chan *DatabaseEvent, 1),

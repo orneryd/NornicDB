@@ -40,9 +40,9 @@ func TestStorageMetrics_RegistersEight(t *testing.T) {
 	// Touch *Vec families so they appear in Gather (vectors only surface
 	// with ≥1 child series).
 	bag.Bytes.WithLabelValues("nodes").Set(0)
-	bag.OpDuration.Bind("get").Observe(nil, 0.001)
+	bag.OpDuration.Bind("get").Observe(t.Context(), 0.001)
 	bag.CompactionsTotal.WithLabelValues("0", "success").Inc()
-	bag.CompactionDuration.Bind("0").Observe(nil, 0.001)
+	bag.CompactionDuration.Bind("0").Observe(t.Context(), 0.001)
 	bag.IndexRebuildTotal.WithLabelValues("label", "success").Inc()
 	bag.WALLagBytes.Set(0)
 
@@ -93,7 +93,7 @@ func TestStorageOp_ClosedEnum(t *testing.T) {
 	require.NotNil(t, bag)
 	te.AssertCardinalityCeiling(t, "nornicdb_storage_op_duration_seconds", 4, func(tenant string) {
 		for _, op := range AllowedStorageOps {
-			bag.OpDuration.Bind(op).Observe(nil, 0.001)
+			bag.OpDuration.Bind(op).Observe(t.Context(), 0.001)
 		}
 		_ = tenant
 	})

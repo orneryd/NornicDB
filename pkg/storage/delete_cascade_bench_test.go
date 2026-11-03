@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"fmt"
@@ -30,10 +31,10 @@ func BenchmarkTransactionDeleteNodeCascade(b *testing.B) {
 				&Edge{ID: EdgeID(fmt.Sprintf("test:in-edge-%d-%d", i, j)), StartNode: in, EndNode: hub, Type: "IN"},
 			)
 		}
-		require.NoError(b, engine.BulkCreateNodes(nodes))
-		require.NoError(b, engine.BulkCreateEdges(edges))
+		require.NoError(b, engine.BulkCreateNodes(b.Context(), nodes))
+		require.NoError(b, engine.BulkCreateEdges(b.Context(), edges))
 		for j := 0; j < degree; j += 2 {
-			require.NoError(b, engine.SetManualSuppression(StoredEntityEdgeKind, string(fmt.Sprintf("test:out-edge-%d-%d", i, j)), true))
+			require.NoError(b, engine.SetManualSuppression(context.Background(), StoredEntityEdgeKind, string(fmt.Sprintf("test:out-edge-%d-%d", i, j)), true))
 		}
 		return hub
 	}
@@ -43,14 +44,14 @@ func BenchmarkTransactionDeleteNodeCascade(b *testing.B) {
 		b.StopTimer()
 		hub := seed(i)
 		b.StartTimer()
-		tx, err := engine.BeginTransaction()
+		tx, err := engine.BeginTransaction(b.Context())
 		if err != nil {
 			b.Fatal(err)
 		}
 		if err := tx.SetNamespace("test"); err != nil {
 			b.Fatal(err)
 		}
-		if err := tx.DeleteGraphNode(hub, CascadeEdges); err != nil {
+		if err := tx.DeleteGraphNode(b.Context(), hub, CascadeEdges); err != nil {
 			b.Fatal(err)
 		}
 		if err := tx.Commit(); err != nil {

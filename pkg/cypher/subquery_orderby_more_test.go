@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestApplyOrderByToResult_DottedPropertyBranches(t *testing.T) {
+func TestApplyCallResultOrderWindow_DottedPropertyBranches(t *testing.T) {
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 
 	result := &ExecuteResult{
@@ -20,18 +20,20 @@ func TestApplyOrderByToResult_DottedPropertyBranches(t *testing.T) {
 		},
 	}
 
-	ordered := exec.applyOrderByToResult(result, "ORDER BY t.createdAt ASC")
+	ordered, err := exec.applyCallResultOrderWindow(t.Context(), result, parseOrderByTerms(t.Context(), "ORDER BY t.createdAt ASC"), 0, -1)
+	require.NoError(t, err)
 	require.Len(t, ordered.Rows, 3)
 	require.EqualValues(t, int64(1), extractPropertyFromValue(ordered.Rows[0][0], "createdAt"))
 	require.EqualValues(t, int64(2), extractPropertyFromValue(ordered.Rows[1][0], "createdAt"))
 	require.EqualValues(t, int64(3), extractPropertyFromValue(ordered.Rows[2][0], "createdAt"))
 
-	ordered = exec.applyOrderByToResult(result, "ORDER BY t.createdAt DESC LIMIT 2")
+	ordered, err = exec.applyCallResultOrderWindow(t.Context(), result, parseOrderByTerms(t.Context(), "ORDER BY t.createdAt DESC LIMIT 2"), 0, -1)
+	require.NoError(t, err)
 	require.Len(t, ordered.Rows, 3)
 	require.EqualValues(t, int64(3), extractPropertyFromValue(ordered.Rows[0][0], "createdAt"))
 }
 
-func TestApplyOrderByToResult_UnknownAndEmptyBranches(t *testing.T) {
+func TestApplyCallResultOrderWindow_UnknownAndEmptyBranches(t *testing.T) {
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 
 	base := &ExecuteResult{
@@ -42,10 +44,12 @@ func TestApplyOrderByToResult_UnknownAndEmptyBranches(t *testing.T) {
 		},
 	}
 
-	unchanged := exec.applyOrderByToResult(base, "ORDER BY missing")
+	unchanged, err := exec.applyCallResultOrderWindow(t.Context(), base, parseOrderByTerms(t.Context(), "ORDER BY missing"), 0, -1)
+	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"b"}, {"a"}}, unchanged.Rows)
 
-	unchanged = exec.applyOrderByToResult(base, "ORDER BY")
+	unchanged, err = exec.applyCallResultOrderWindow(t.Context(), base, parseOrderByTerms(t.Context(), "ORDER BY"), 0, -1)
+	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"b"}, {"a"}}, unchanged.Rows)
 }
 
@@ -122,7 +126,7 @@ func TestPipelineOrderByEvaluatesCompleteBooleanExpressions(t *testing.T) {
 		{"name": "E", "first": true, "second": false},
 	}
 
-	terms := parseOrderByTerms("ORDER BY NOT (first AND second) DESCENDING LIMIT 3")
+	terms := parseOrderByTerms(t.Context(), "ORDER BY NOT (first AND second) DESCENDING LIMIT 3")
 	require.Len(t, terms, 1)
 	require.Equal(t, "NOT (first AND second)", terms[0].column)
 	require.True(t, terms[0].descending)
@@ -147,7 +151,7 @@ func TestPipelineOrderByUsesIncomingAndProjectedScopeWithoutLeakingBindings(t *t
 		{"a": map[string]interface{}{"name": "C"}, "name": "C"},
 	}
 
-	require.True(t, exec.orderPipelineRowsWithScopes(context.Background(), rows, scopes, parseOrderByTerms("ORDER BY a.name + 'C' DESC")))
+	require.True(t, exec.orderPipelineRowsWithScopes(context.Background(), rows, scopes, parseOrderByTerms(t.Context(), "ORDER BY a.name + 'C' DESC")))
 	require.Equal(t, []pipelineRow{{"name": "C"}, {"name": "C"}, {"name": "B"}, {"name": "A"}, {"name": "A"}}, rows)
 	for _, row := range rows {
 		require.NotContains(t, row, "a")
@@ -163,7 +167,7 @@ func TestPipelineOrderByUsesGroupingKeyFromIncomingScope(t *testing.T) {
 		{"a": map[string]interface{}{"name": "C"}, "name": "C", "count": int64(2)},
 	}
 
-	require.True(t, exec.orderPipelineRowsWithScopes(context.Background(), rows, scopes, parseOrderByTerms("ORDER BY a.name DESC")))
+	require.True(t, exec.orderPipelineRowsWithScopes(context.Background(), rows, scopes, parseOrderByTerms(t.Context(), "ORDER BY a.name DESC")))
 	require.Equal(t, "C", rows[0]["name"])
 	require.NotContains(t, rows[0], "a")
 }

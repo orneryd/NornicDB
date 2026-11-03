@@ -71,12 +71,12 @@ func TestRepeatedRelationshipVariable(t *testing.T) {
 	_, err = exec.Execute(ctx, "MATCH (a:SP)-[r]->+(b), (c)-[r]->(d) RETURN count(*) AS c", nil)
 	require.ErrorContains(t, err, "Type mismatch: r defined with conflicting type List<Relationship> (expected Relationship)")
 
-	rewritten, _, err := desugarLabelExpressions("MATCH DIFFERENT RELATIONSHIPS (a)-[r]->(b), (c)-[r {k: [1]}]->(d) RETURN r", nil, false)
+	rewritten, _, err := desugarLabelExpressions(t.Context(), "MATCH DIFFERENT RELATIONSHIPS (a)-[r]->(b), (c)-[r {k: [1]}]->(d) RETURN r", nil, false)
 	require.NoError(t, err)
 	require.Equal(t, "MATCH  (a)-[r]->(b), (c)-[__nornic_lx0 {k: [1]}]->(d) WHERE r = __nornic_lx0 RETURN r", rewritten)
 	require.True(t, mayRepeatRelationshipVariable("MATCH ()-[r]->(), ()- [r]->() RETURN r"))
 	require.False(t, mayRepeatRelationshipVariable("MATCH ()-[r]->(), ()-[s]->() RETURN [r, 'x']"))
-	rewritten, _, err = desugarLabelExpressions("MATCH ()-[r]->() RETURN 'x-[r]' AS s", nil, false)
+	rewritten, _, err = desugarLabelExpressions(t.Context(), "MATCH ()-[r]->() RETURN 'x-[r]' AS s", nil, false)
 	require.NoError(t, err)
 	require.Equal(t, "MATCH ()-[r]->() RETURN 'x-[r]' AS s", rewritten, "a bracket in a string is a quick-check yes the rewrite reads as text")
 	require.False(t, mayRepeatRelationshipVariable("MATCH ()-[:T]->(), ()-[IS T]->() RETURN 1"))
@@ -85,7 +85,7 @@ func TestRepeatedRelationshipVariable(t *testing.T) {
 		many += "()-[r" + string(rune('a'+i)) + "]->(), "
 	}
 	require.True(t, mayRepeatRelationshipVariable(many+"() RETURN 1"), "past its table the check answers true")
-	predicates, err := (&labelExpressionRewriter{query: "(a)-[r"}).repeatedRelationshipVariables(0, len("(a)-[r"), false)
+	predicates, err := (&labelExpressionRewriter{ctx: t.Context(), query: "(a)-[r"}).repeatedRelationshipVariables(0, len("(a)-[r"), false)
 	require.NoError(t, err)
 	require.Empty(t, predicates, "an unclosed bracket is left to the parser")
 }

@@ -55,52 +55,52 @@ func (t *TracedEngine) startOperation(name, kind string) trace.Span {
 	return span
 }
 
-func (t *TracedEngine) CreateNode(node *Node) (NodeID, error) {
+func (t *TracedEngine) CreateNode(ctx context.Context, node *Node) (NodeID, error) {
 	span := t.startOperation("nornicdb.storage.CreateNode", "node")
 	defer span.End()
-	return t.Engine.CreateNode(node)
+	return t.Engine.CreateNode(ctx, node)
 }
 
-func (t *TracedEngine) GetNode(id NodeID) (*Node, error) {
+func (t *TracedEngine) GetNode(ctx context.Context, id NodeID) (*Node, error) {
 	span := t.startOperation("nornicdb.storage.GetNode", "node")
 	defer span.End()
-	return t.Engine.GetNode(id)
+	return t.Engine.GetNode(ctx, id)
 }
 
-func (t *TracedEngine) UpdateNode(updateRequest NodeUpdateRequest) error {
+func (t *TracedEngine) UpdateNode(ctx context.Context, updateRequest NodeUpdateRequest) error {
 	span := t.startOperation("nornicdb.storage.UpdateNode", "node")
 	defer span.End()
-	return t.Engine.UpdateNode(updateRequest)
+	return t.Engine.UpdateNode(ctx, updateRequest)
 }
 
-func (t *TracedEngine) DeleteNode(id NodeID) error {
+func (t *TracedEngine) DeleteNode(ctx context.Context, id NodeID) error {
 	span := t.startOperation("nornicdb.storage.DeleteNode", "node")
 	defer span.End()
-	return t.Engine.DeleteNode(id)
+	return t.Engine.DeleteNode(ctx, id)
 }
 
-func (t *TracedEngine) CreateEdge(edge *Edge) error {
+func (t *TracedEngine) CreateEdge(ctx context.Context, edge *Edge) error {
 	span := t.startOperation("nornicdb.storage.CreateEdge", "edge")
 	defer span.End()
-	return t.Engine.CreateEdge(edge)
+	return t.Engine.CreateEdge(ctx, edge)
 }
 
-func (t *TracedEngine) GetEdge(id EdgeID) (*Edge, error) {
+func (t *TracedEngine) GetEdge(ctx context.Context, id EdgeID) (*Edge, error) {
 	span := t.startOperation("nornicdb.storage.GetEdge", "edge")
 	defer span.End()
-	return t.Engine.GetEdge(id)
+	return t.Engine.GetEdge(ctx, id)
 }
 
-func (t *TracedEngine) UpdateEdge(updateRequest EdgeUpdateRequest) error {
+func (t *TracedEngine) UpdateEdge(ctx context.Context, updateRequest EdgeUpdateRequest) error {
 	span := t.startOperation("nornicdb.storage.UpdateEdge", "edge")
 	defer span.End()
-	return t.Engine.UpdateEdge(updateRequest)
+	return t.Engine.UpdateEdge(ctx, updateRequest)
 }
 
-func (t *TracedEngine) DeleteEdge(id EdgeID) error {
+func (t *TracedEngine) DeleteEdge(ctx context.Context, id EdgeID) error {
 	span := t.startOperation("nornicdb.storage.DeleteEdge", "edge")
 	defer span.End()
-	return t.Engine.DeleteEdge(id)
+	return t.Engine.DeleteEdge(ctx, id)
 }
 
 func (t *TracedEngine) GetNodesByLabel(ctx context.Context, label string) ([]*Node, error) {
@@ -139,18 +139,18 @@ func (t *TracedEngine) AllEdges(ctx context.Context) ([]*Edge, error) {
 	return t.Engine.AllEdges(ctx)
 }
 
-func (t *TracedEngine) BulkCreateNodes(nodes []*Node) error {
+func (t *TracedEngine) BulkCreateNodes(ctx context.Context, nodes []*Node) error {
 	span := t.startOperation("nornicdb.storage.BulkCreateNodes", "node")
 	span.SetAttributes(attribute.Int("batch_size", len(nodes)))
 	defer span.End()
-	return t.Engine.BulkCreateNodes(nodes)
+	return t.Engine.BulkCreateNodes(ctx, nodes)
 }
 
-func (t *TracedEngine) BulkCreateEdges(edges []*Edge) error {
+func (t *TracedEngine) BulkCreateEdges(ctx context.Context, edges []*Edge) error {
 	span := t.startOperation("nornicdb.storage.BulkCreateEdges", "edge")
 	span.SetAttributes(attribute.Int("batch_size", len(edges)))
 	defer span.End()
-	return t.Engine.BulkCreateEdges(edges)
+	return t.Engine.BulkCreateEdges(ctx, edges)
 }
 
 func (t *TracedEngine) BatchGetNodes(ctx context.Context, ids []NodeID) (map[NodeID]*Node, error) {

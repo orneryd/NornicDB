@@ -3,10 +3,11 @@ package multidb
 import (
 	"context"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -36,21 +37,21 @@ func TestTransactionQuotaReplacementAccounting(t *testing.T) {
 									require.NoError(t, err)
 									tracker := engine.(*sizeTrackingEngine)
 									for _, id := range []storage.NodeID{"a", "b"} {
-										_, err := engine.CreateNode(&storage.Node{ID: id})
+										_, err := engine.CreateNode(t.Context(), &storage.Node{ID: id})
 										require.NoError(t, err)
 									}
 									old := time.Now().Add(-72 * time.Hour)
 									properties := map[string]any{"payload": strings.Repeat("x", 2048)}
 									if entity == "node" {
-										_, err = engine.CreateNode(&storage.Node{ID: "n", Labels: []string{"Doc"}, Properties: properties, CreatedAt: old, UpdatedAt: old})
+										_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "n", Labels: []string{"Doc"}, Properties: properties, CreatedAt: old, UpdatedAt: old})
 										require.NoError(t, err)
 										if hidden == "manual" {
-											require.NoError(t, base.SetManualSuppression(storage.StoredEntityNodeKind, string(db+":n"), true))
+											require.NoError(t, base.SetManualSuppression(context.Background(), storage.StoredEntityNodeKind, string(db+":n"), true))
 										}
 									} else {
-										require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "LINK", Properties: properties, CreatedAt: old, UpdatedAt: old}))
+										require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "LINK", Properties: properties, CreatedAt: old, UpdatedAt: old}))
 										if hidden == "manual" {
-											require.NoError(t, base.SetManualSuppression(storage.StoredEntityEdgeKind, string(db+":e"), true))
+											require.NoError(t, base.SetManualSuppression(context.Background(), storage.StoredEntityEdgeKind, string(db+":e"), true))
 										}
 									}
 									if hidden == "decayed" {
@@ -66,15 +67,15 @@ func TestTransactionQuotaReplacementAccounting(t *testing.T) {
 										require.NoError(t, schema.CreateDecayProfileBinding(binding))
 									}
 									if entity == "node" {
-										_, err = engine.GetNode("n")
+										_, err = engine.GetNode(t.Context(), "n")
 									} else {
-										_, err = engine.GetEdge("e")
+										_, err = engine.GetEdge(t.Context(), "e")
 									}
 									require.ErrorIs(t, err, storage.ErrNotFound, "the prior body is hidden")
-									require.NoError(t, base.FlushWriteBehind(nil))
-									wantNodes, err := engine.NodeCount()
+									require.NoError(t, base.FlushWriteBehind(context.Background()))
+									wantNodes, err := engine.NodeCount(t.Context())
 									require.NoError(t, err)
-									wantEdges, err := engine.EdgeCount()
+									wantEdges, err := engine.EdgeCount(t.Context())
 									require.NoError(t, err)
 									for attempt := 0; attempt < 2; attempt++ {
 										before, _, _ := manager.GetStorageSize(db)
@@ -89,54 +90,54 @@ func TestTransactionQuotaReplacementAccounting(t *testing.T) {
 										}
 										if operation == "direct-update" {
 											if entity == "node" {
-												node, err := storage.GetStoredNode(engine, "n")
+												node, err := storage.GetStoredNode(t.Context(), engine, "n")
 												require.NoError(t, err)
 												node.Properties = props
-												require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: node}))
+												require.NoError(t, engine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
 											} else {
-												edge, err := storage.GetStoredEdge(engine, "e")
+												edge, err := storage.GetStoredEdge(t.Context(), engine, "e")
 												require.NoError(t, err)
 												edge.Properties = props
-												require.NoError(t, engine.UpdateEdge(storage.EdgeUpdateRequest{After: edge}))
+												require.NoError(t, engine.UpdateEdge(t.Context(), storage.EdgeUpdateRequest{After: edge}))
 											}
 										} else {
-											tx, err := base.BeginTransaction()
+											tx, err := base.BeginTransaction(t.Context())
 											require.NoError(t, err)
 											t.Cleanup(func() { _ = tx.Rollback() })
 											require.NoError(t, tx.SetNamespace(db))
 											if entity == "node" {
 												id := storage.NodeID(db + ":n")
-												node, err := tx.GetStoredNode(id)
+												node, err := tx.GetStoredNode(t.Context(), id)
 												require.NoError(t, err)
 												if operation == "create-set" || operation == "delete-recreate" {
-													require.NoError(t, tx.DeleteGraphNode(id, storage.CascadeEdges))
+													require.NoError(t, tx.DeleteGraphNode(t.Context(), id, storage.CascadeEdges))
 													node = &storage.Node{ID: id, Labels: []string{"Doc"}}
-													_, err = tx.CreateNode(node)
+													_, err = tx.CreateNode(t.Context(), node)
 													require.NoError(t, err)
 												}
 												node.Properties = props
 												node.UpdatedAt = time.Now()
-												require.NoError(t, tx.UpdateGraphNode(storage.NodeUpdateRequest{After: node, Policy: storage.ClientNodeEdits}))
+												require.NoError(t, tx.UpdateGraphNode(t.Context(), storage.NodeUpdateRequest{After: node, Policy: storage.ClientNodeEdits}))
 											} else {
 												id := storage.EdgeID(db + ":e")
-												edge, err := tx.GetStoredEdge(id)
+												edge, err := tx.GetStoredEdge(t.Context(), id)
 												require.NoError(t, err)
 												if operation == "create-set" || operation == "delete-recreate" {
-													require.NoError(t, tx.DeleteEdge(id))
+													require.NoError(t, tx.DeleteEdge(t.Context(), id))
 													edge = &storage.Edge{ID: id, StartNode: storage.NodeID(db + ":a"), EndNode: storage.NodeID(db + ":b"), Type: "LINK"}
-													require.NoError(t, tx.CreateEdge(storage.CopyEdge(edge)))
+													require.NoError(t, tx.CreateEdge(t.Context(), storage.CopyEdge(edge)))
 												}
 												edge.Properties = props
 												edge.UpdatedAt = time.Now()
-												require.NoError(t, tx.UpdateEdge(storage.EdgeUpdateRequest{After: edge}))
+												require.NoError(t, tx.UpdateEdge(t.Context(), storage.EdgeUpdateRequest{After: edge}))
 											}
 											require.NoError(t, tracker.CommitTransaction(context.Background(), tx))
 										}
-										require.NoError(t, base.FlushWriteBehind(nil))
-										count, err := engine.NodeCount()
+										require.NoError(t, base.FlushWriteBehind(context.Background()))
+										count, err := engine.NodeCount(t.Context())
 										require.NoError(t, err)
 										require.Equal(t, wantNodes, count)
-										count, err = engine.EdgeCount()
+										count, err = engine.EdgeCount(t.Context())
 										require.NoError(t, err)
 										require.Equal(t, wantEdges, count)
 										nodes, edges, err := tracker.manager.calculateStorageSizeFromEngine(tracker.Engine)

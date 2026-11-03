@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
@@ -28,7 +29,7 @@ func TestAccessMetaOwnsCatalogAndPreservesConcurrentPolicyState(t *testing.T) {
 	engine := newTestEngine(t)
 	require.Equal(t, accessMetaKey("test:node"), indexEntryCatalogKey("test:node"))
 	node := &Node{ID: "test:node", Labels: []string{"Old"}}
-	_, err := engine.CreateNode(node)
+	_, err := engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	meta, err := readStoredAccessMeta(t, engine, string(node.ID))
 	require.NoError(t, err)
@@ -36,16 +37,18 @@ func TestAccessMetaOwnsCatalogAndPreservesConcurrentPolicyState(t *testing.T) {
 	meta = &knowledgepolicy.AccessMetaEntry{TargetID: string(node.ID), TargetScope: knowledgepolicy.ScopeNode}
 	meta.Fixed.AccessCount = 42
 	meta.Overflow = map[string]interface{}{"custom": int64(7)}
-	require.NoError(t, engine.PutAccessMeta(string(node.ID), meta))
+	_, accessWriteErr1 := engine.WriteAccessMeta(context.Background(), knowledgepolicy.AccessMetaWriteRequest{Mode: knowledgepolicy.RecordState, EntityID: string(node.ID), Entry: meta})
+	require.NoError(t, accessWriteErr1)
 	stale, err := readStoredAccessMeta(t, engine, string(node.ID))
 	require.NoError(t, err)
 	node.Labels = []string{"New"}
-	require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: node}))
+	require.NoError(t, engine.UpdateNode(t.Context(), NodeUpdateRequest{After: node}))
 	current, err := engine.GetIndexEntryCatalog(string(node.ID))
 	require.NoError(t, err)
 	require.NotNil(t, current)
 	stale.Fixed.AccessCount++
-	require.NoError(t, engine.PutAccessMeta(string(node.ID), stale))
+	_, accessWriteErr2 := engine.WriteAccessMeta(context.Background(), knowledgepolicy.AccessMetaWriteRequest{Mode: knowledgepolicy.RecordState, EntityID: string(node.ID), Entry: stale})
+	require.NoError(t, accessWriteErr2)
 	got, err := engine.GetIndexEntryCatalog(string(node.ID))
 	require.NoError(t, err)
 	require.Equal(t, current, got)
@@ -75,7 +78,7 @@ func TestAccessMetaDeletionRetainsGraphCatalog(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			engine := newTestEngine(t)
 			if tc.catalog {
-				_, err := engine.CreateNode(&Node{ID: NodeID(tc.id), Labels: []string{"Person"}})
+				_, err := engine.CreateNode(t.Context(), &Node{ID: NodeID(tc.id), Labels: []string{"Person"}})
 				require.NoError(t, err)
 			}
 			before, err := engine.GetIndexEntryCatalog(tc.id)
@@ -85,12 +88,13 @@ func TestAccessMetaDeletionRetainsGraphCatalog(t *testing.T) {
 			} else {
 				require.Nil(t, before)
 			}
-			require.NoError(t, engine.PutAccessMeta(tc.id, &knowledgepolicy.AccessMetaEntry{TargetID: tc.id, TargetScope: knowledgepolicy.ScopeNode, Fixed: knowledgepolicy.AccessMetaFixedFields{AccessCount: tc.count}}))
+			_, accessWriteErr3 := engine.WriteAccessMeta(context.Background(), knowledgepolicy.AccessMetaWriteRequest{Mode: knowledgepolicy.RecordState, EntityID: tc.id, Entry: &knowledgepolicy.AccessMetaEntry{TargetID: tc.id, TargetScope: knowledgepolicy.ScopeNode, Fixed: knowledgepolicy.AccessMetaFixedFields{AccessCount: tc.count}}})
+			require.NoError(t, accessWriteErr3)
 			stored, err := readStoredAccessMeta(t, engine, tc.id)
 			require.NoError(t, err)
 			require.NotNil(t, stored)
 			require.Equal(t, tc.count, stored.Fixed.AccessCount)
-			require.NoError(t, engine.DeleteAccessMeta(tc.id))
+			require.NoError(t, engine.DeleteAccessMeta(context.Background(), tc.id))
 			stored, err = readStoredAccessMeta(t, engine, tc.id)
 			require.NoError(t, err)
 			require.Nil(t, stored)
@@ -115,8 +119,8 @@ func TestAccessMeta_PutAndGet(t *testing.T) {
 		MutationCount: 5,
 	}
 
-	if err := engine.PutAccessMeta("node-1", entry); err != nil {
-		t.Fatalf("PutAccessMeta: %v", err)
+	if _, err := engine.WriteAccessMeta(context.Background(), knowledgepolicy.AccessMetaWriteRequest{Mode: knowledgepolicy.RecordState, EntityID: "node-1", Entry: entry}); err != nil {
+		t.Fatalf("WriteAccessMeta: %v", err)
 	}
 
 	got, err := readStoredAccessMeta(t, engine, "node-1")
@@ -161,10 +165,10 @@ func TestAccessMeta_Overwrite(t *testing.T) {
 		Fixed:    knowledgepolicy.AccessMetaFixedFields{AccessCount: 99},
 	}
 
-	if err := engine.PutAccessMeta("node-1", entry1); err != nil {
+	if _, err := engine.WriteAccessMeta(context.Background(), knowledgepolicy.AccessMetaWriteRequest{Mode: knowledgepolicy.RecordState, EntityID: "node-1", Entry: entry1}); err != nil {
 		t.Fatal(err)
 	}
-	if err := engine.PutAccessMeta("node-1", entry2); err != nil {
+	if _, err := engine.WriteAccessMeta(context.Background(), knowledgepolicy.AccessMetaWriteRequest{Mode: knowledgepolicy.RecordState, EntityID: "node-1", Entry: entry2}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -185,7 +189,7 @@ func TestAccessMeta_Scan(t *testing.T) {
 			TargetID: id,
 			Fixed:    knowledgepolicy.AccessMetaFixedFields{AccessCount: 1},
 		}
-		if err := engine.PutAccessMeta(id, entry); err != nil {
+		if _, err := engine.WriteAccessMeta(context.Background(), knowledgepolicy.AccessMetaWriteRequest{Mode: knowledgepolicy.RecordState, EntityID: id, Entry: entry}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -226,7 +230,7 @@ func TestAccessMeta_WithKalmanFilters(t *testing.T) {
 		},
 	}
 
-	if err := engine.PutAccessMeta("node-1", entry); err != nil {
+	if _, err := engine.WriteAccessMeta(context.Background(), knowledgepolicy.AccessMetaWriteRequest{Mode: knowledgepolicy.RecordState, EntityID: "node-1", Entry: entry}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -272,7 +276,7 @@ func TestAccessMeta_WithVarianceTracker(t *testing.T) {
 		},
 	}
 
-	if err := engine.PutAccessMeta("node-1", entry); err != nil {
+	if _, err := engine.WriteAccessMeta(context.Background(), knowledgepolicy.AccessMetaWriteRequest{Mode: knowledgepolicy.RecordState, EntityID: "node-1", Entry: entry}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -322,7 +326,7 @@ func TestAccessMetaReadSelectionAndErrors(t *testing.T) {
 			if tc.corrupt {
 				data = []byte{0xc1}
 			}
-			require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return txn.Set(accessMetaKey(tc.id), data) }))
+			require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error { return txn.Set(accessMetaKey(tc.id), data) }))
 			point, err := engine.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{EntityID: tc.id})
 			require.Nil(t, point.Entries)
 			if tc.corrupt {
@@ -355,10 +359,11 @@ func TestAccessMetaReadSelectionAndErrors(t *testing.T) {
 
 func TestAccessMetaReadRejectsInvalidMode(t *testing.T) {
 	engine := newTestEngine(t)
-	require.NoError(t, engine.PutAccessMeta("node-1", &knowledgepolicy.AccessMetaEntry{
+	_, accessWriteErr10 := engine.WriteAccessMeta(context.Background(), knowledgepolicy.AccessMetaWriteRequest{Mode: knowledgepolicy.RecordState, EntityID: "node-1", Entry: &knowledgepolicy.AccessMetaEntry{
 		TargetID: "node-1",
 		Fixed:    knowledgepolicy.AccessMetaFixedFields{AccessCount: 7},
-	}))
+	}})
+	require.NoError(t, accessWriteErr10)
 	result, err := engine.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadMode(42), EntityID: "node-1"})
 	require.ErrorIs(t, err, ErrInvalidData)
 	require.Nil(t, result.Entry)

@@ -105,7 +105,7 @@ func TestParserBenchmarkReports(t *testing.T) {
 			antlrparser.Validate,
 		}},
 		{"parse", "CYPHER PARSE BENCHMARK REPORT", "parse", [2]func(string) error{
-			func(query string) error { _, err := astBuilder.Build(query); return err },
+			func(query string) error { _, err := astBuilder.Build(t.Context(), query); return err },
 			func(query string) error { _, err := antlrparser.Parse(query); return err },
 		}},
 	} {

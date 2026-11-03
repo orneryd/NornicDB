@@ -8,7 +8,7 @@ import (
 )
 
 func TestCallSubqueryStringParsers(t *testing.T) {
-	parts := splitTopLevelAndConjuncts("a = 1 AND b = 'x AND y' AND c = [1,2]")
+	parts := splitTopLevelAndConjuncts(t.Context(), "a = 1 AND b = 'x AND y' AND c = [1,2]")
 	require.Equal(t, []string{"a = 1", "b = 'x AND y'", "c = [1,2]"}, parts)
 
 	lhs, rhs, ok := splitTopLevelEqualityCallSubquery("a = b")
@@ -21,11 +21,11 @@ func TestCallSubqueryStringParsers(t *testing.T) {
 	_, _, ok = splitTopLevelEqualityCallSubquery("a")
 	require.False(t, ok)
 
-	idx := indexTopLevelKeywordCallSubquery("x = 'ORDER BY y' ORDER BY n.name", "ORDER BY")
+	idx := indexTopLevelKeywordCallSubquery(t.Context(), "x = 'ORDER BY y' ORDER BY n.name", "ORDER BY")
 	require.GreaterOrEqual(t, idx, 0)
 	require.Equal(t, "ORDER BY n.name", "x = 'ORDER BY y' ORDER BY n.name"[idx:])
 
-	idx = indexTopLevelKeywordCallSubquery("RETURN n", "ORDER BY")
+	idx = indexTopLevelKeywordCallSubquery(t.Context(), "RETURN n", "ORDER BY")
 	require.Equal(t, -1, idx)
 }
 
@@ -38,19 +38,19 @@ func TestCallSubqueryIdentifierHelpers(t *testing.T) {
 }
 
 func TestSplitTopLevelResultModifiersCallSubquery(t *testing.T) {
-	proj, mods := splitTopLevelResultModifiersCallSubquery("n.name AS name ORDER BY name SKIP 1 LIMIT 2")
+	proj, mods := splitTopLevelResultModifiersCallSubquery(t.Context(), "n.name AS name ORDER BY name SKIP 1 LIMIT 2")
 	require.Equal(t, "n.name AS name", proj)
 	require.Equal(t, "ORDER BY name SKIP 1 LIMIT 2", mods)
 
-	proj, mods = splitTopLevelResultModifiersCallSubquery("n.name AS name")
+	proj, mods = splitTopLevelResultModifiersCallSubquery(t.Context(), "n.name AS name")
 	require.Equal(t, "n.name AS name", proj)
 	require.Empty(t, mods)
 }
 
 func TestCallSubqueryWriteAndIdentifierChecks(t *testing.T) {
-	require.True(t, callSubqueryQueryIsWrite("MATCH (n) CREATE (m)"))
-	require.True(t, callSubqueryQueryIsWrite("MATCH (n) SET n.x = 1"))
-	require.False(t, callSubqueryQueryIsWrite("MATCH (n) RETURN n"))
+	require.True(t, callSubqueryQueryIsWrite(t.Context(), "MATCH (n) CREATE (m)"))
+	require.True(t, callSubqueryQueryIsWrite(t.Context(), "MATCH (n) SET n.x = 1"))
+	require.False(t, callSubqueryQueryIsWrite(t.Context(), "MATCH (n) RETURN n"))
 
 	require.True(t, isSimpleIdentifier("name_1"))
 	require.True(t, isSimpleIdentifier("`quoted`"))
@@ -59,6 +59,7 @@ func TestCallSubqueryWriteAndIdentifierChecks(t *testing.T) {
 }
 
 func TestCallSubqueryImportNullGuardTerm(t *testing.T) {
+	splitTopLevelAndConjuncts := func(text string) []string { return splitTopLevelAndConjuncts(t.Context(), text) }
 	for _, term := range []string{"seed IS NOT NULL", "`seed` is not null"} {
 		got, ok := cyphertext.FilterImportConjuncts(term, "seed", cyphertext.IdentifierUnqualifiedFold, splitTopLevelAndConjuncts)
 		require.True(t, ok)

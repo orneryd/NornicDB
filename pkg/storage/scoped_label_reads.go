@@ -18,7 +18,7 @@ import (
 // database.
 type ScopedLabelNodeReader interface {
 	GetNodesByLabelInScope(ctx context.Context, scope, label string) ([]*Node, error)
-	GetFirstNodeByLabelInScope(scope, label string) (*Node, error)
+	GetFirstNodeByLabelInScope(ctx context.Context, scope, label string) (*Node, error)
 	StreamNodesByLabelProjectedInScope(ctx context.Context, scope, label string, properties []string, visit func(*Node) error) error
 	GetNodesByLabelVisibleAtInScope(ctx context.Context, scope, label string, version MVCCVersion) ([]*Node, error)
 }
@@ -55,11 +55,11 @@ func getNodesByLabelInScope(ctx context.Context, engine Engine, scope, label str
 	return engine.GetNodesByLabel(ctx, label)
 }
 
-func getFirstNodeByLabelInScope(engine Engine, scope, label string) (*Node, error) {
+func getFirstNodeByLabelInScope(ctx context.Context, engine Engine, scope, label string) (*Node, error) {
 	if scoped, ok := engine.(ScopedLabelNodeReader); ok {
-		return scoped.GetFirstNodeByLabelInScope(scope, label)
+		return scoped.GetFirstNodeByLabelInScope(ctx, scope, label)
 	}
-	return engine.GetFirstNodeByLabel(label)
+	return engine.GetFirstNodeByLabel(ctx, label)
 }
 
 func streamNodesByLabelProjectedInScope(ctx context.Context, engine Engine, scope, label string, properties []string, visit func(*Node) error) error {
@@ -128,8 +128,8 @@ func (t *TracedEngine) GetNodesByLabelInScope(ctx context.Context, scope, label 
 }
 
 // GetFirstNodeByLabelInScope forwards the scoped first reader through tracing.
-func (t *TracedEngine) GetFirstNodeByLabelInScope(scope, label string) (*Node, error) {
-	return getFirstNodeByLabelInScope(t.Engine, scope, label)
+func (t *TracedEngine) GetFirstNodeByLabelInScope(ctx context.Context, scope, label string) (*Node, error) {
+	return getFirstNodeByLabelInScope(ctx, t.Engine, scope, label)
 }
 
 // StreamNodesByLabelProjectedInScope forwards the scoped stream through tracing.

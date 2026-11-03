@@ -31,21 +31,17 @@ func (n *NamespacedEngine) MarkCleanShutdown(ctx context.Context) error {
 }
 
 // NodeCountByPrefix counts nodes in this namespace whose ID starts with prefix.
-// The caller-supplied prefix is namespace-relative.
-func (n *NamespacedEngine) NodeCountByPrefix(prefix string) (int64, error) {
-	return namespacedPrefixCount(n, prefix, PrefixStatsEngine.NodeCountByPrefix, func() ([]*Node, error) {
-		// Prefix counts are maintenance reads: context.Background is the true
-		// lifetime at this context-free boundary.
-		return n.AllNodes(context.Background())
-	}, func(node *Node) string { return string(node.ID) })
+// The caller-supplied prefix is namespace-relative and the caller context owns
+// admission of the counter read and of the materialized fallback scan.
+func (n *NamespacedEngine) NodeCountByPrefix(ctx context.Context, prefix string) (int64, error) {
+	return namespacedPrefixCount(ctx, n, prefix, PrefixStatsEngine.NodeCountByPrefix, n.AllNodes, func(node *Node) string { return string(node.ID) })
 }
 
 // EdgeCountByPrefix counts edges in this namespace whose ID starts with prefix.
-// The caller-supplied prefix is namespace-relative.
-func (n *NamespacedEngine) EdgeCountByPrefix(prefix string) (int64, error) {
-	return namespacedPrefixCount(n, prefix, PrefixStatsEngine.EdgeCountByPrefix, func() ([]*Edge, error) {
-		return n.AllEdges(context.Background())
-	}, func(edge *Edge) string { return string(edge.ID) })
+// The caller-supplied prefix is namespace-relative and the caller context owns
+// admission of the counter read and of the materialized fallback scan.
+func (n *NamespacedEngine) EdgeCountByPrefix(ctx context.Context, prefix string) (int64, error) {
+	return namespacedPrefixCount(ctx, n, prefix, PrefixStatsEngine.EdgeCountByPrefix, n.AllEdges, func(edge *Edge) string { return string(edge.ID) })
 }
 
 // GetSchemaForNamespace forwards the per-namespace schema lookup.
@@ -74,8 +70,8 @@ func (n *NamespacedEngine) PropertyKeyKnown(name string) bool {
 }
 
 // NodeCountByLabelInNamespace forwards the namespace-scoped label count.
-func (n *NamespacedEngine) NodeCountByLabelInNamespace(namespace, label string) (int64, error) {
-	return namespaceLabelCount(n.inner, namespace, label)
+func (n *NamespacedEngine) NodeCountByLabelInNamespace(ctx context.Context, namespace, label string) (int64, error) {
+	return namespaceLabelCount(ctx, n.inner, namespace, label)
 }
 
 // IterateNodes streams this namespace's nodes with namespace prefixes stripped.
@@ -151,7 +147,7 @@ func (n *NamespacedEngine) RebuildTemporalIndexes(ctx context.Context) error {
 // embedding key space without touching the node record. Every production
 // inner engine implements EmbeddingSidecarUpdater (compile-time asserted);
 // anything else is reported as an error rather than silently degraded.
-func (n *NamespacedEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
+func (n *NamespacedEngine) UpdateNodeEmbeddingSidecar(ctx context.Context, node *Node) error {
 	if node == nil {
 		return ErrInvalidData
 	}
@@ -161,7 +157,7 @@ func (n *NamespacedEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 	}
 	namespaced := copyNode(node)
 	namespaced.ID = n.PrefixNodeID(node.ID)
-	return sidecar.UpdateNodeEmbeddingSidecar(namespaced)
+	return sidecar.UpdateNodeEmbeddingSidecar(ctx, namespaced)
 }
 
 // StreamParkedEmbeddingFailures streams this namespace's sidecar failure

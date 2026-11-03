@@ -40,11 +40,11 @@ type systemGraphView struct{ storage.Engine }
 
 func (systemGraphView) Namespace() string { return "system" }
 
-func (systemGraphView) GetNode(storage.NodeID) (*storage.Node, error) {
+func (systemGraphView) GetNode(ctx context.Context, _ storage.NodeID) (*storage.Node, error) {
 	return nil, storage.ErrNotFound
 }
 
-func (systemGraphView) GetEdge(storage.EdgeID) (*storage.Edge, error) {
+func (systemGraphView) GetEdge(ctx context.Context, _ storage.EdgeID) (*storage.Edge, error) {
 	return nil, storage.ErrNotFound
 }
 
@@ -52,7 +52,7 @@ func (systemGraphView) GetNodesByLabel(ctx context.Context, _ string) ([]*storag
 	return nil, nil
 }
 
-func (systemGraphView) GetFirstNodeByLabel(string) (*storage.Node, error) {
+func (systemGraphView) GetFirstNodeByLabel(ctx context.Context, _ string) (*storage.Node, error) {
 	return nil, storage.ErrNotFound
 }
 
@@ -68,8 +68,8 @@ func (systemGraphView) GetEdgesBetween(ctx context.Context, _, _ storage.NodeID)
 	return nil, nil
 }
 
-func (systemGraphView) GetEdgeBetween(storage.NodeID, storage.NodeID, string) *storage.Edge {
-	return nil
+func (systemGraphView) GetEdgeBetween(ctx context.Context, _ storage.NodeID, _ storage.NodeID, _ string) (*storage.Edge, error) {
+	return nil, nil
 }
 
 func (systemGraphView) GetEdgesByType(ctx context.Context, _ string) ([]*storage.Edge, error) {
@@ -84,9 +84,11 @@ func (systemGraphView) StreamNodesWithOptions(context.Context, storage.StreamNod
 	return nil
 }
 
-func (systemGraphView) GetInDegree(storage.NodeID) int { return 0 }
+func (systemGraphView) GetInDegree(ctx context.Context, _ storage.NodeID) (int, error) { return 0, nil }
 
-func (systemGraphView) GetOutDegree(storage.NodeID) int { return 0 }
+func (systemGraphView) GetOutDegree(ctx context.Context, _ storage.NodeID) (int, error) {
+	return 0, nil
+}
 
 func (systemGraphView) GetSchema() *storage.SchemaManager { return storage.NewSchemaManager() }
 
@@ -94,12 +96,16 @@ func (systemGraphView) BatchGetNodes(ctx context.Context, _ []storage.NodeID) (m
 	return map[storage.NodeID]*storage.Node{}, nil
 }
 
-func (systemGraphView) NodeCount() (int64, error) { return 0, nil }
+func (systemGraphView) NodeCount(ctx context.Context) (int64, error) { return 0, nil }
 
-func (systemGraphView) EdgeCount() (int64, error) { return 0, nil }
+func (systemGraphView) EdgeCount(ctx context.Context) (int64, error) { return 0, nil }
 
-func (systemGraphView) EdgeCountByType(string) (int64, error) { return 0, nil }
+func (systemGraphView) EdgeCountByType(ctx context.Context, _ string) (int64, error) { return 0, nil }
 
-func (systemGraphView) EdgeCountByStartLabel(string, string) (int64, error) { return 0, nil }
+func (systemGraphView) EdgeCountByStartLabel(ctx context.Context, _ string, _ string) (int64, error) {
+	return 0, nil
+}
 
-func (systemGraphView) EdgeCountByEndLabel(string, string) (int64, error) { return 0, nil }
+func (systemGraphView) EdgeCountByEndLabel(ctx context.Context, _ string, _ string) (int64, error) {
+	return 0, nil
+}

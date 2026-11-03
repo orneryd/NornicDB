@@ -179,7 +179,7 @@ func TestHTTPReadOnlyRoleCannotMutateInExplicitTransaction(t *testing.T) {
 
 func TestHTTPQueryPermissionModesMatchBolt(t *testing.T) {
 	server, authenticator := setupTestServer(t)
-	_, err := authenticator.CreateUser("editor", "password123", []auth.Role{auth.RoleEditor})
+	_, err := authenticator.CreateUser(context.Background(), "editor", "password123", []auth.Role{auth.RoleEditor})
 	require.NoError(t, err)
 
 	for name, testCase := range map[string]struct {

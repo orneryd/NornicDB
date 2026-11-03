@@ -132,7 +132,7 @@ curl -X POST http://localhost:7474/auth/users \
 Via Go code:
 ```go
 // Create service account for cluster node
-authenticator.CreateUser("cluster-node-1", "secure-password",
+authenticator.CreateUser(ctx, "cluster-node-1", "secure-password",
     []auth.Role{auth.RoleAdmin})
 ```
 

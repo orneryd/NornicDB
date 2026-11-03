@@ -130,14 +130,14 @@ func (e *StorageExecutor) pipelineApplyRemove(ctx context.Context, rows []pipeli
 			switch typed := entity.(type) {
 			case *storage.Node:
 				state := removals.stateOfNode(typed)
-				if err := mutateNodeWithObservation(store, state.before, typed); err != nil {
+				if err := mutateNodeWithObservation(ctx, store, state.before, typed); err != nil {
 					restoreSetEntities(removals.states)
 					return err
 				}
 				e.notifyNodeMutated(string(typed.ID))
 			case *storage.Edge:
 				state := removals.stateOfEdge(typed)
-				if err := mutateEdgeWithObservation(store, state.beforeEdge, typed); err != nil {
+				if err := mutateEdgeWithObservation(ctx, store, state.beforeEdge, typed); err != nil {
 					restoreSetEntities(removals.states)
 					return err
 				}

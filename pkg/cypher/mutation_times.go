@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -9,14 +10,14 @@ import (
 // mutateNodeWithObservation advances a user mutation's version time and sends
 // its immutable pre-mutation image through the canonical storage update API.
 // Callers own property/label rollback; this helper restores only the timestamp.
-func mutateNodeWithObservation(store storage.Engine, before, node *storage.Node) error {
+func mutateNodeWithObservation(ctx context.Context, store storage.Engine, before, node *storage.Node) error {
 	if node == nil {
-		return store.UpdateNode(storage.NodeUpdateRequest{Before: before})
+		return store.UpdateNode(ctx, storage.NodeUpdateRequest{Before: before})
 	}
 	previous := node.UpdatedAt
 	node.UpdatedAt = time.Now()
 	updateRequest := storage.NodeUpdateRequest{Before: before, After: node}
-	if err := store.UpdateNode(updateRequest); err != nil {
+	if err := store.UpdateNode(ctx, updateRequest); err != nil {
 		node.UpdatedAt = previous
 		return err
 	}
@@ -25,14 +26,14 @@ func mutateNodeWithObservation(store storage.Engine, before, node *storage.Node)
 
 // mutateEdgeWithObservation stores edge as an update observed from before, as
 // mutateNodeWithObservation does for a node.
-func mutateEdgeWithObservation(store storage.Engine, before, edge *storage.Edge) error {
+func mutateEdgeWithObservation(ctx context.Context, store storage.Engine, before, edge *storage.Edge) error {
 	if edge == nil {
-		return store.UpdateEdge(storage.EdgeUpdateRequest{Before: before})
+		return store.UpdateEdge(ctx, storage.EdgeUpdateRequest{Before: before})
 	}
 	previous := edge.UpdatedAt
 	edge.UpdatedAt = time.Now()
 	updateRequest := storage.EdgeUpdateRequest{Before: before, After: edge}
-	if err := store.UpdateEdge(updateRequest); err != nil {
+	if err := store.UpdateEdge(ctx, updateRequest); err != nil {
 		edge.UpdatedAt = previous
 		return err
 	}

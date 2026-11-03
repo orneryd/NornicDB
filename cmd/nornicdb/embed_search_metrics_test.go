@@ -38,10 +38,10 @@ func TestServerStartup_EmbedSearchMetricsRegistered(t *testing.T) {
 	// Deviation 1: client_golang only emits *Vec families with ≥1 child
 	// series; GaugeFunc + flat counters surface unconditionally).
 	embedBag.Processed.WithLabelValues("ollama", "bge-m3", "success", "cpu").Inc()
-	embedBag.Duration.Bind("ollama", "bge-m3", "cpu").Observe(nil, 0.001)
+	embedBag.Duration.Bind("ollama", "bge-m3", "cpu").Observe(t.Context(), 0.001)
 	embedBag.FFIPanicTotal.WithLabelValues("cpu").Inc()
 	searchBag.IncRequest("", "vector", "success")
-	searchBag.BindDuration("", "vector", "embed").Observe(nil, 0.001)
+	searchBag.BindDuration("", "vector", "embed").Observe(t.Context(), 0.001)
 	searchBag.Candidates.Vec().WithLabelValues().Observe(10)
 	searchBag.IndexSizeBytes.WithLabelValues("hnsw").Set(0)
 

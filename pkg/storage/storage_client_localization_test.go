@@ -91,7 +91,7 @@ func TestStorageClientNodeNamespaceValidation(t *testing.T) {
 		{
 			name: "create",
 			operation: func() error {
-				_, err := engine.CreateNode(&Node{ID: "node-1"})
+				_, err := engine.CreateNode(t.Context(), &Node{ID: "node-1"})
 				return err
 			},
 			messageID: localization.MessageStorageClientNodeIDNamespaceUnprefixed,
@@ -99,13 +99,13 @@ func TestStorageClientNodeNamespaceValidation(t *testing.T) {
 		},
 		{
 			name:      "update",
-			operation: func() error { return engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "node-2"}}) },
+			operation: func() error { return engine.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "node-2"}}) },
 			messageID: localization.MessageStorageClientNodeIDNamespaceUnprefixed,
 			text:      "node ID must be prefixed with namespace (e.g., 'nornic:node-123'), got unprefixed ID: node-2",
 		},
 		{
 			name:      "bulk",
-			operation: func() error { return engine.BulkCreateNodes([]*Node{{ID: "node-3"}}) },
+			operation: func() error { return engine.BulkCreateNodes(t.Context(), []*Node{{ID: "node-3"}}) },
 			messageID: localization.MessageStorageClientNodeIDNamespaceRequired,
 			text:      "node ID must be prefixed with namespace (e.g., 'nornic:node-123'), got: node-3",
 		},

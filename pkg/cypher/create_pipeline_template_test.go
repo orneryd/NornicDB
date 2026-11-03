@@ -48,7 +48,7 @@ func TestCreatePipelineTemplateMatchesGeneralRoute(t *testing.T) {
 		"CREATE (n {id: id})-[:R]->(:M)",
 		"CREATE (n:N $props)",
 	} {
-		tpl := exec.pipelineCreateTemplateFor(shape)
+		tpl := exec.pipelineCreateTemplateFor(ctx, shape)
 		require.False(t, tpl.usable, "shape %q must not use the template", shape)
 	}
 }
@@ -58,7 +58,7 @@ func TestCreatePipelineTemplateMatchesGeneralRoute(t *testing.T) {
 func TestCreatePipelineTemplatePlanIsAtomic(t *testing.T) {
 	exec := &StorageExecutor{}
 	ctx := context.Background()
-	tpl := exec.pipelineCreateTemplateFor("CREATE (a:T {id: 1}), (b:U {name: properties(1)})")
+	tpl := exec.pipelineCreateTemplateFor(ctx, "CREATE (a:T {id: 1}), (b:U {name: properties(1)})")
 	require.NotNil(t, tpl)
 	require.True(t, tpl.usable)
 
@@ -73,7 +73,7 @@ func TestCreatePipelineTemplatePlanIsAtomic(t *testing.T) {
 	require.Empty(t, nodes)
 	require.Empty(t, edges)
 
-	nullTemplate := exec.pipelineCreateTemplateFor("CREATE (a:T {id: 1}), (b:U {name: a.missing + 1})")
+	nullTemplate := exec.pipelineCreateTemplateFor(ctx, "CREATE (a:T {id: 1}), (b:U {name: a.missing + 1})")
 	paths, planned, err = nullTemplate.plan(ctx, exec, pipelineRow{}, nodes, edges, plan)
 	require.NoError(t, err)
 	require.True(t, planned)
@@ -81,7 +81,7 @@ func TestCreatePipelineTemplatePlanIsAtomic(t *testing.T) {
 	require.NotContains(t, nodes["b"].Properties, "name")
 
 	// A row that resolves completely plans all patterns.
-	okTemplate := exec.pipelineCreateTemplateFor("CREATE (a:T {id: 1}), (b:U {name: name})")
+	okTemplate := exec.pipelineCreateTemplateFor(ctx, "CREATE (a:T {id: 1}), (b:U {name: name})")
 	require.NotNil(t, okTemplate)
 	require.True(t, okTemplate.usable)
 	plan = acquireCreatePlan()
@@ -155,7 +155,7 @@ func planRowsGeneral(t *testing.T, exec *StorageExecutor, ctx context.Context, r
 // every row used it.
 func planRowsTemplate(t *testing.T, exec *StorageExecutor, ctx context.Context, rows []pipelineRow, clause string) ([]*storageNodeLite, []*storageEdgeLite, bool) {
 	t.Helper()
-	template := exec.pipelineCreateTemplateFor(clause)
+	template := exec.pipelineCreateTemplateFor(ctx, clause)
 	if template == nil || !template.usable {
 		return nil, nil, false
 	}

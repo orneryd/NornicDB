@@ -21,7 +21,7 @@ func setupNorthwindBenchExecutor(b *testing.B, products int, orders int) *cypher
 	// Categories
 	catIDs := make([]storage.NodeID, 0, 8)
 	for i := 0; i < 8; i++ {
-		id, err := store.CreateNode(&storage.Node{
+		id, err := store.CreateNode(b.Context(), &storage.Node{
 			ID:     storage.NodeID("cat-" + string(rune('a'+i))),
 			Labels: []string{"Category"},
 			Properties: map[string]interface{}{
@@ -38,7 +38,7 @@ func setupNorthwindBenchExecutor(b *testing.B, products int, orders int) *cypher
 	// Suppliers
 	supIDs := make([]storage.NodeID, 0, 8)
 	for i := 0; i < 8; i++ {
-		id, err := store.CreateNode(&storage.Node{
+		id, err := store.CreateNode(b.Context(), &storage.Node{
 			ID:     storage.NodeID("sup-" + string(rune('a'+i))),
 			Labels: []string{"Supplier"},
 			Properties: map[string]interface{}{
@@ -55,7 +55,7 @@ func setupNorthwindBenchExecutor(b *testing.B, products int, orders int) *cypher
 	// Customers
 	custIDs := make([]storage.NodeID, 0, 8)
 	for i := 0; i < 8; i++ {
-		id, err := store.CreateNode(&storage.Node{
+		id, err := store.CreateNode(b.Context(), &storage.Node{
 			ID:     storage.NodeID("cust-" + string(rune('a'+i))),
 			Labels: []string{"Customer"},
 			Properties: map[string]interface{}{
@@ -71,7 +71,7 @@ func setupNorthwindBenchExecutor(b *testing.B, products int, orders int) *cypher
 	// Products
 	prodIDs := make([]storage.NodeID, 0, products)
 	for i := 0; i < products; i++ {
-		id, err := store.CreateNode(&storage.Node{
+		id, err := store.CreateNode(b.Context(), &storage.Node{
 			ID:     storage.NodeID("prod-" + strconv.Itoa(i+1)),
 			Labels: []string{"Product"},
 			Properties: map[string]interface{}{
@@ -87,7 +87,7 @@ func setupNorthwindBenchExecutor(b *testing.B, products int, orders int) *cypher
 
 		// PART_OF
 		cat := catIDs[i%len(catIDs)]
-		if err := store.CreateEdge(&storage.Edge{
+		if err := store.CreateEdge(b.Context(), &storage.Edge{
 			ID:         storage.EdgeID("e-partof-" + strconv.Itoa(i+1)),
 			Type:       "PART_OF",
 			StartNode:  id,
@@ -99,7 +99,7 @@ func setupNorthwindBenchExecutor(b *testing.B, products int, orders int) *cypher
 
 		// SUPPLIES
 		sup := supIDs[i%len(supIDs)]
-		if err := store.CreateEdge(&storage.Edge{
+		if err := store.CreateEdge(b.Context(), &storage.Edge{
 			ID:         storage.EdgeID("e-supplies-" + strconv.Itoa(i+1)),
 			Type:       "SUPPLIES",
 			StartNode:  sup,
@@ -113,7 +113,7 @@ func setupNorthwindBenchExecutor(b *testing.B, products int, orders int) *cypher
 	// Orders
 	orderIDs := make([]storage.NodeID, 0, orders)
 	for i := 0; i < orders; i++ {
-		id, err := store.CreateNode(&storage.Node{
+		id, err := store.CreateNode(b.Context(), &storage.Node{
 			ID:     storage.NodeID("order-" + strconv.Itoa(i+1)),
 			Labels: []string{"Order"},
 			Properties: map[string]interface{}{
@@ -127,7 +127,7 @@ func setupNorthwindBenchExecutor(b *testing.B, products int, orders int) *cypher
 
 		// PURCHASED
 		cust := custIDs[i%len(custIDs)]
-		if err := store.CreateEdge(&storage.Edge{
+		if err := store.CreateEdge(b.Context(), &storage.Edge{
 			ID:         storage.EdgeID("e-purchased-" + strconv.Itoa(i+1)),
 			Type:       "PURCHASED",
 			StartNode:  cust,
@@ -140,7 +140,7 @@ func setupNorthwindBenchExecutor(b *testing.B, products int, orders int) *cypher
 		// ORDERS: 3 products per order
 		for j := 0; j < 3; j++ {
 			prod := prodIDs[(i*3+j)%len(prodIDs)]
-			if err := store.CreateEdge(&storage.Edge{
+			if err := store.CreateEdge(b.Context(), &storage.Edge{
 				ID:        storage.EdgeID("e-orders-" + strconv.Itoa(i+1) + "-" + strconv.Itoa(j+1)),
 				Type:      "ORDERS",
 				StartNode: id,

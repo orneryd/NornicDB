@@ -27,10 +27,10 @@
 //	}
 //
 //	// Set callbacks
-//	manager.SetDeleteCallback(func(record *retention.DataRecord) error {
+//	manager.SetDeleteCallback(func(ctx context.Context, record *retention.DataRecord) error {
 //		return database.Delete(record.ID)
 //	})
-//	manager.SetArchiveCallback(func(record *retention.DataRecord, path string) error {
+//	manager.SetArchiveCallback(func(ctx context.Context, record *retention.DataRecord, path string) error {
 //		return archiveSystem.Store(record, path)
 //	})
 //
@@ -356,8 +356,8 @@ type Manager struct {
 	erasures map[string]*ErasureRequest
 
 	// Callbacks
-	onDelete  func(record *DataRecord) error
-	onArchive func(record *DataRecord, archivePath string) error
+	onDelete  func(ctx context.Context, record *DataRecord) error
+	onArchive func(ctx context.Context, record *DataRecord, archivePath string) error
 
 	// Configuration
 	defaultPolicy *Policy
@@ -380,7 +380,7 @@ type Manager struct {
 //	}
 //
 //	// Set deletion callback
-//	manager.SetDeleteCallback(func(record *retention.DataRecord) error {
+//	manager.SetDeleteCallback(func(ctx context.Context, record *retention.DataRecord) error {
 //		return db.Delete(record.ID)
 //	})
 //
@@ -396,12 +396,12 @@ type Manager struct {
 //	}
 //
 //	// Set callbacks for data operations
-//	manager.SetDeleteCallback(func(record *retention.DataRecord) error {
+//	manager.SetDeleteCallback(func(ctx context.Context, record *retention.DataRecord) error {
 //		log.Printf("Deleting record: %s (age: %v)", record.ID, time.Since(record.CreatedAt))
 //		return database.Delete(record.ID)
 //	})
 //
-//	manager.SetArchiveCallback(func(record *retention.DataRecord, path string) error {
+//	manager.SetArchiveCallback(func(ctx context.Context, record *retention.DataRecord, path string) error {
 //		log.Printf("Archiving to: %s", path)
 //		return archiveSystem.Store(record, path)
 //	})
@@ -554,14 +554,14 @@ func (m *Manager) SetDefaultPolicy(policy *Policy) error {
 }
 
 // SetDeleteCallback sets the function called when data should be deleted.
-func (m *Manager) SetDeleteCallback(fn func(record *DataRecord) error) {
+func (m *Manager) SetDeleteCallback(fn func(ctx context.Context, record *DataRecord) error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.onDelete = fn
 }
 
 // SetArchiveCallback sets the function called when data should be archived.
-func (m *Manager) SetArchiveCallback(fn func(record *DataRecord, archivePath string) error) {
+func (m *Manager) SetArchiveCallback(fn func(ctx context.Context, record *DataRecord, archivePath string) error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.onArchive = fn
@@ -815,7 +815,7 @@ func (m *Manager) ProcessRecord(ctx context.Context, record *DataRecord) error {
 		m.mu.RUnlock()
 
 		if archiveFn != nil {
-			if err := archiveFn(record, policy.ArchivePath); err != nil {
+			if err := archiveFn(ctx, record, policy.ArchivePath); err != nil {
 				return fmt.Errorf("archive failed: %w", err)
 			}
 		}
@@ -827,7 +827,7 @@ func (m *Manager) ProcessRecord(ctx context.Context, record *DataRecord) error {
 	m.mu.RUnlock()
 
 	if deleteFn != nil {
-		if err := deleteFn(record); err != nil {
+		if err := deleteFn(ctx, record); err != nil {
 			return fmt.Errorf("delete failed (%s): %w", reason, err)
 		}
 	}
@@ -968,7 +968,7 @@ func (m *Manager) ProcessErasure(ctx context.Context, requestID string, records 
 		m.mu.RUnlock()
 
 		if deleteFn != nil {
-			if err := deleteFn(record); err != nil {
+			if err := deleteFn(ctx, record); err != nil {
 				m.updateErasureStatus(requestID, ErasureStatusFailed, erased, retained, err.Error(), retainedReasons)
 				return err
 			}

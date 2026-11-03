@@ -3,9 +3,10 @@ package search
 import (
 	"context"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"math"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -27,7 +28,7 @@ func BenchmarkSearchTextContinuationRankedHNSW(b *testing.B) {
 		for i := 0; i < docs; i++ {
 			angle := math.Pi * float64(i) / float64(docs)
 			node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("doc-%d", i)), ChunkEmbeddings: [][]float32{{float32(math.Cos(angle)), float32(math.Sin(angle))}}}
-			if _, err := engine.CreateNode(node); err != nil {
+			if _, err := engine.CreateNode(b.Context(), node); err != nil {
 				b.Fatal(err)
 			}
 			if err := service.IndexNode(node); err != nil {

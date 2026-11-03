@@ -17,26 +17,26 @@ type countingEndpointEngine struct {
 	hidden        storage.NodeID
 }
 
-func (e *countingEndpointEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
+func (e *countingEndpointEngine) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	e.reads++
 	if id == e.hidden {
 		return nil, storage.ErrNotFound
 	}
-	return e.NamespacedEngine.GetNode(id)
+	return e.NamespacedEngine.GetNode(ctx, id)
 }
 
-func (e *countingEndpointEngine) GetQueryNode(id storage.NodeID) (*storage.Node, error) {
+func (e *countingEndpointEngine) GetQueryNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	e.reads++
 	if id == e.hidden {
 		return nil, storage.ErrNotFound
 	}
-	return e.NamespacedEngine.GetQueryNode(id)
+	return e.NamespacedEngine.GetQueryNode(ctx, id)
 }
 
-func (e *countingEndpointEngine) GetNodeProjected(id storage.NodeID, properties []string) (*storage.Node, error) {
+func (e *countingEndpointEngine) GetNodeProjected(ctx context.Context, id storage.NodeID, properties []string) (*storage.Node, error) {
 	e.reads++
 	e.projected++
-	return e.NamespacedEngine.GetNodeProjected(id, properties)
+	return e.NamespacedEngine.GetNodeProjected(ctx, id, properties)
 }
 
 func (e *countingEndpointEngine) RelationshipEndpointVisible(id storage.NodeID) (bool, bool) {

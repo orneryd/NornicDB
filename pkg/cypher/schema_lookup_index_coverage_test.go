@@ -102,16 +102,53 @@ func TestMonster531LookupIndexAdmission(t *testing.T) {
 }
 
 // TestCreateLookupIndexReportsPersistFailure: a schema that can't be
-// persisted fails CREATE LOOKUP INDEX with the persist error.
+// persisted fails CREATE LOOKUP INDEX with the persist error and publishes
+// nothing.
+//
+// An ordinary DDL statement stages its declaration on its transaction's
+// schema view and publishes it at commit (schema_transaction.go,
+// BadgerTransaction.StageSchemaChanges), so the persistence owner the
+// statement reports is that view's persister, not the committed manager's.
+// Running the statement in the explicit transaction exposes the same view
+// through BadgerTransaction.Schema: failing its persister is the real
+// transactional schema write failing, and the statement must report it and
+// leave the committed schema untouched.
 func TestCreateLookupIndexReportsPersistFailure(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	eng := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+	exec := NewStorageExecutor(eng)
 	ctx := context.Background()
 	_, err := exec.Execute(ctx, "DROP INDEX "+storage.DefaultNodeLookupIndexName, nil)
 	require.NoError(t, err)
+	before := eng.GetSchema().GetIndexes()
+	_, published := eng.GetSchema().LookupIndexName(storage.ConstraintEntityNode)
+	require.False(t, published, "the node lookup index starts dropped")
+
+	_, err = exec.Execute(ctx, "BEGIN", nil)
+	require.NoError(t, err)
+	tx, ok := exec.txContext.tx.(*storage.BadgerTransaction)
+	require.True(t, ok, "transaction type %T", exec.txContext.tx)
+	view, err := tx.Schema(storage.OrdinarySchemaChanges)
+	require.NoError(t, err)
 	failed := errors.New("persist failed")
-	exec.storage.GetSchema().SetPersister(func(*storage.SchemaDefinition) error { return failed })
+	view.SetPersister(func(*storage.SchemaDefinition) error { return failed })
+
 	_, err = exec.Execute(ctx, "CREATE LOOKUP INDEX FOR (n) ON EACH labels(n)", nil)
 	require.ErrorIs(t, err, failed)
+	require.ElementsMatch(t, before, eng.GetSchema().GetIndexes())
+
+	_, err = exec.Execute(ctx, "ROLLBACK", nil)
+	require.NoError(t, err)
+	require.ElementsMatch(t, before, eng.GetSchema().GetIndexes())
+	_, published = eng.GetSchema().LookupIndexName(storage.ConstraintEntityNode)
+	require.False(t, published, "the failed statement publishes no lookup index")
+
+	// The failure was the persist attempt, not the statement: a healthy retry
+	// still creates the lookup index.
+	_, err = exec.Execute(ctx, "CREATE LOOKUP INDEX FOR (n) ON EACH labels(n)", nil)
+	require.NoError(t, err)
+	name, published := eng.GetSchema().LookupIndexName(storage.ConstraintEntityNode)
+	require.True(t, published)
+	require.Equal(t, storage.DefaultNodeLookupIndexName, name)
 }
 
 // TestParseCreateLookupIndexRejects: statements parseCreateLookupIndex does

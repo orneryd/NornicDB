@@ -28,20 +28,20 @@ func TestManagedWriteAfterBufferedCommitKeepsUsage(t *testing.T) {
 				require.NoError(t, err)
 				tracker := store.(*sizeTrackingEngine)
 				for _, id := range []storage.NodeID{"a", "b", "n"} {
-					_, err = store.CreateNode(&storage.Node{ID: id})
+					_, err = store.CreateNode(t.Context(), &storage.Node{ID: id})
 					require.NoError(t, err)
 				}
-				require.NoError(t, store.CreateEdge(&storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "LINK"}))
-				require.NoError(t, engine.FlushWriteBehind(nil))
+				require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "LINK"}))
+				require.NoError(t, engine.FlushWriteBehind(context.Background()))
 
-				tx, err := engine.BeginTransaction()
+				tx, err := engine.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				require.NoError(t, tx.SetImplicit(true))
 				acknowledged := map[string]any{"v": "acknowledged and much longer than the later body"}
 				if kind == "node" {
-					err = tx.UpdateGraphNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "nornic:n", Properties: acknowledged}, Policy: storage.ClientNodeEdits})
+					err = tx.UpdateGraphNode(t.Context(), storage.NodeUpdateRequest{After: &storage.Node{ID: "nornic:n", Properties: acknowledged}, Policy: storage.ClientNodeEdits})
 				} else {
-					err = tx.UpdateEdge(storage.EdgeUpdateRequest{After: &storage.Edge{ID: "nornic:r", StartNode: "nornic:a", EndNode: "nornic:b", Type: "LINK", Properties: acknowledged}})
+					err = tx.UpdateEdge(t.Context(), storage.EdgeUpdateRequest{After: &storage.Edge{ID: "nornic:r", StartNode: "nornic:a", EndNode: "nornic:b", Type: "LINK", Properties: acknowledged}})
 				}
 				require.NoError(t, err)
 				require.NoError(t, tracker.CommitTransaction(context.Background(), tx))
@@ -50,16 +50,16 @@ func TestManagedWriteAfterBufferedCommitKeepsUsage(t *testing.T) {
 				later := map[string]any{"v": "later"}
 				switch {
 				case kind == "node" && op == "delete":
-					err = store.DeleteNode("n")
+					err = store.DeleteNode(t.Context(), "n")
 				case kind == "node":
-					err = store.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "n", Properties: later}})
+					err = store.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: &storage.Node{ID: "n", Properties: later}})
 				case op == "delete":
-					err = store.DeleteEdge("r")
+					err = store.DeleteEdge(t.Context(), "r")
 				default:
-					err = store.UpdateEdge(storage.EdgeUpdateRequest{After: &storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "LINK", Properties: later}})
+					err = store.UpdateEdge(t.Context(), storage.EdgeUpdateRequest{After: &storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "LINK", Properties: later}})
 				}
 				require.NoError(t, err)
-				require.NoError(t, engine.FlushWriteBehind(nil))
+				require.NoError(t, engine.FlushWriteBehind(context.Background()))
 
 				wantNodes, wantEdges, err := manager.calculateStorageSizeFromEngine(tracker.Engine)
 				require.NoError(t, err)

@@ -2,8 +2,9 @@ package qdrantgrpc
 
 import (
 	"context"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -16,11 +17,11 @@ import (
 // was written with; it still reads as the same collection.
 func TestReadCollectionMeta_CompactIntegerTypes(t *testing.T) {
 	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "c")
-	_, err := engine.CreateNode(&storage.Node{ID: collectionMetaNodeID, Labels: []string{collectionMetaNodeLabel},
+	_, err := engine.CreateNode(t.Context(), &storage.Node{ID: collectionMetaNodeID, Labels: []string{collectionMetaNodeLabel},
 		Properties: map[string]any{"dimensions": int8(4), "distance": int8(qpb.Distance_Dot)}})
 	require.NoError(t, err)
 
-	meta, err := readCollectionMeta(engine)
+	meta, err := readCollectionMeta(t.Context(), engine)
 	require.NoError(t, err)
 	require.Equal(t, 4, meta.Dimensions)
 	require.Equal(t, qpb.Distance_Dot, meta.Distance, "not the Cosine default")

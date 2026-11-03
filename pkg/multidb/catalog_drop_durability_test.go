@@ -88,7 +88,7 @@ func newCatalogDropBarrier(t *testing.T) (*DatabaseManager, *f25CatalogReceiptPr
 	require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "target"}))
 	view, err := manager.GetStorage("target")
 	require.NoError(t, err)
-	_, err = view.CreateNode(&storage.Node{ID: "old"})
+	_, err = view.CreateNode(t.Context(), &storage.Node{ID: "old"})
 	require.NoError(t, err)
 	return manager, probe, native, dir
 }
@@ -106,9 +106,9 @@ func TestCatalogDropReceiptOwnsCompletionSync(t *testing.T) {
 	require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "target"}))
 	fresh, err := manager.GetStorage("target")
 	require.NoError(t, err)
-	_, err = fresh.CreateNode(&storage.Node{ID: "fresh"})
+	_, err = fresh.CreateNode(t.Context(), &storage.Node{ID: "fresh"})
 	require.NoError(t, err)
-	_, err = fresh.GetNode("fresh")
+	_, err = fresh.GetNode(t.Context(), "fresh")
 	require.NoError(t, err)
 }
 
@@ -176,7 +176,7 @@ func TestCatalogDropSyncFailureRetainsAbsentNameFence(t *testing.T) {
 				// An unrelated accepted catalog write persists the same canonical pending
 				// marker. Writable startup must finish it even though the record is absent.
 				require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "peer"}))
-				before, err := native.GetNode("system:databases:metadata")
+				before, err := native.GetNode(t.Context(), "system:databases:metadata")
 				require.NoError(t, err)
 				syncs := native.syncCalls.Load()
 				standby, err := NewDatabaseManager(t.Context(), &identityReadOnlyEngine{Engine: native}, nil)
@@ -184,7 +184,7 @@ func TestCatalogDropSyncFailureRetainsAbsentNameFence(t *testing.T) {
 				t.Cleanup(func() { _ = standby.Close() })
 				assert.True(t, standby.pendingDrops["target"])
 				assert.False(t, standby.Exists("target"))
-				after, err := native.GetNode("system:databases:metadata")
+				after, err := native.GetNode(t.Context(), "system:databases:metadata")
 				require.NoError(t, err)
 				assert.Equal(t, before.Properties, after.Properties, "read-only startup never rewrites the absent-record fence")
 				assert.Equal(t, syncs, native.syncCalls.Load())
@@ -206,9 +206,9 @@ func TestCatalogDropSyncFailureRetainsAbsentNameFence(t *testing.T) {
 			require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "target"}))
 			view, err := manager.GetStorage("target")
 			require.NoError(t, err)
-			_, err = view.CreateNode(&storage.Node{ID: "fresh"})
+			_, err = view.CreateNode(t.Context(), &storage.Node{ID: "fresh"})
 			require.NoError(t, err)
-			_, err = view.GetNode("fresh")
+			_, err = view.GetNode(t.Context(), "fresh")
 			require.NoError(t, err)
 		})
 	}
@@ -260,9 +260,9 @@ func TestCatalogDropInvocationSerializesOldGenerationPurges(t *testing.T) {
 			require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "target"}))
 			view, err := manager.GetStorage("target")
 			require.NoError(t, err)
-			_, err = view.CreateNode(&storage.Node{ID: "fresh"})
+			_, err = view.CreateNode(t.Context(), &storage.Node{ID: "fresh"})
 			require.NoError(t, err)
-			_, err = view.GetNode("fresh")
+			_, err = view.GetNode(t.Context(), "fresh")
 			require.NoError(t, err)
 			assert.EqualValues(t, 1, native.purgeCalls.Load(), "no old DROP continuation survives the new CREATE")
 		})
@@ -308,9 +308,9 @@ func TestCatalogCanceledWaitDuringCompletionSyncRetainsReceiptLease(t *testing.T
 	require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "target"}))
 	view, err := manager.GetStorage("target")
 	require.NoError(t, err)
-	_, err = view.CreateNode(&storage.Node{ID: "fresh"})
+	_, err = view.CreateNode(t.Context(), &storage.Node{ID: "fresh"})
 	require.NoError(t, err)
-	_, err = view.GetNode("fresh")
+	_, err = view.GetNode(t.Context(), "fresh")
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, native.purgeCalls.Load())
 }

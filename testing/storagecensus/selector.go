@@ -4,6 +4,7 @@ import (
 	"go/constant"
 	"go/token"
 
+	"github.com/orneryd/nornicdb/internal/workcensus"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -36,6 +37,26 @@ func integerConstant(value ssa.Value) (number int64, integer, fits bool) {
 	}
 	number, fits = constant.Int64Val(literal.Value)
 	return number, true, fits
+}
+
+// readOnlyCellValue follows a value read out of a local cell to the value the
+// cell holds: a mutex selected into a local variable is read through that
+// variable's SSA cell (the compiler keeps the cell once a closure captures the
+// variable), so the lock's receiver is a load whose one dominating store names
+// the selector call or the mutex field actually used. The def/use half is the
+// engine's fact, workcensus.ImmutableCellValueAt; a mutated, aliased, escaped
+// or otherwise written cell, and a value that is no cell load, stay unknown.
+// This resolves where the value came from, never whether it was acquired.
+func readOnlyCellValue(value ssa.Value) (ssa.Value, bool) {
+	load, ok := value.(*ssa.UnOp)
+	if !ok || load.Op != token.MUL {
+		return value, true
+	}
+	stored, ok := workcensus.ImmutableCellValueAt(load.X, load)
+	if !ok {
+		return nil, false
+	}
+	return stored, true
 }
 
 // readBranchCondition is the common predicate reader: it normalizes NOT for
@@ -212,7 +233,8 @@ func blockSelectors(fn *ssa.Function, block, next *ssa.BasicBlock) []selectorFac
 }
 
 // selectedValues are actual arguments of a returned-mutex selector that is
-// subsequently locked. Constants stay constants; no selector-name allowlist.
+// subsequently locked, directly or through the read-only cell that holds the
+// selected value. Constants stay constants; no selector-name allowlist.
 func (q *acquirer) selectedValues(fn *ssa.Function) map[ssa.Value]bool {
 	values := map[ssa.Value]bool{}
 	for _, block := range fn.Blocks {
@@ -225,7 +247,11 @@ func (q *acquirer) selectedValues(fn *ssa.Function) map[ssa.Value]bool {
 			if receiver == nil || !exclusive || action != "lock" {
 				continue
 			}
-			source, ok := receiver.(*ssa.Call)
+			selected, ok := readOnlyCellValue(receiver)
+			if !ok {
+				continue
+			}
+			source, ok := selected.(*ssa.Call)
 			if !ok {
 				continue
 			}
@@ -260,10 +286,18 @@ func knownArgument(argument ssa.Value, assumption flowAssumption) (selectorFact,
 }
 
 // mutexField resolves only returns consistent with the caller's predicate.
-// Ambiguous fields, interface calls and unknown return values grant no lock.
+// Ambiguous fields, interface calls, unknown return values and cells no single
+// dominating store fills grant no lock.
 func (q *acquirer) mutexField(value ssa.Value, assumption flowAssumption, depth int) string {
 	if depth > 8 {
 		return ""
+	}
+	// The lock's receiver may be a read of the local variable that holds the
+	// selected mutex: follow that cell to the value it holds before reading
+	// the field, so a captured variable names the same mutex as the selector
+	// call it was assigned from.
+	if stored, ok := readOnlyCellValue(value); ok && stored != value {
+		return q.mutexField(stored, assumption, depth+1)
 	}
 	if wrapped, ok := value.(*ssa.MakeInterface); ok {
 		return q.mutexField(wrapped.X, assumption, depth+1)

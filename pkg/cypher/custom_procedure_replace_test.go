@@ -62,9 +62,9 @@ func TestCallsUserProcedureMatchesAnyLetterCase(t *testing.T) {
 		"CALL custom.tally() YIELD c RETURN c",
 		"CALL apoc.cypher.run('CALL custom.Tally() YIELD c RETURN c', {}) YIELD value RETURN value",
 	} {
-		require.True(t, registry.callsUserProcedure(query), query)
+		require.True(t, registry.callsUserProcedure(t.Context(), query), query)
 	}
-	require.False(t, registry.callsUserProcedure("CALL db.labels() YIELD label RETURN label"))
+	require.False(t, registry.callsUserProcedure(t.Context(), "CALL db.labels() YIELD label RETURN label"))
 }
 
 func TestCallsUserProcedureWithExactRegistryKeys(t *testing.T) {
@@ -82,7 +82,7 @@ func TestCallsUserProcedureWithExactRegistryKeys(t *testing.T) {
 		"CALL `custom`.`CacheTick`() YIELD v RETURN v",
 		"CALL apoc.cypher.run('CALL custom.CacheTick() YIELD v RETURN v', {}) YIELD value RETURN value",
 	} {
-		require.True(t, registry.callsUserProcedure(query), query)
+		require.True(t, registry.callsUserProcedure(t.Context(), query), query)
 	}
 	_, executable := registry.Get("custom.cachetick")
 	require.False(t, executable)

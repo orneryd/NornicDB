@@ -87,16 +87,16 @@ func TestMutationEquivalence_SingleVsBulkNodeCreate(t *testing.T) {
 		t.Run(stack, func(t *testing.T) {
 			engine := build(t)
 
-			_, err := engine.CreateNode(&Node{ID: "test:single", Labels: []string{"Person", "Engineer"}, Properties: props})
+			_, err := engine.CreateNode(t.Context(), &Node{ID: "test:single", Labels: []string{"Person", "Engineer"}, Properties: props})
 			require.NoError(t, err)
-			require.NoError(t, engine.BulkCreateNodes([]*Node{
+			require.NoError(t, engine.BulkCreateNodes(t.Context(), []*Node{
 				{ID: "test:bulk", Labels: []string{"Person", "Engineer"}, Properties: props},
 			}))
 			flushEquivalenceStack(t, engine)
 
-			singleRead, err := engine.GetNode("test:single")
+			singleRead, err := engine.GetNode(t.Context(), "test:single")
 			require.NoError(t, err)
-			bulkRead, err := engine.GetNode("test:bulk")
+			bulkRead, err := engine.GetNode(t.Context(), "test:bulk")
 			require.NoError(t, err)
 
 			require.Equal(t, singleRead.Labels, bulkRead.Labels, "%s: labels diverge between single and bulk creates", stack)
@@ -117,20 +117,20 @@ func TestMutationEquivalence_SingleVsBulkEdgeCreate(t *testing.T) {
 		t.Run(stack, func(t *testing.T) {
 			engine := build(t)
 			for _, id := range []NodeID{"test:a", "test:b"} {
-				_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"Doc"}})
+				_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Doc"}})
 				require.NoError(t, err)
 			}
 			flushEquivalenceStack(t, engine)
 
-			require.NoError(t, engine.CreateEdge(&Edge{ID: "test:single", StartNode: "test:a", EndNode: "test:b", Type: "KNOWS", Properties: edgeProps}))
-			require.NoError(t, engine.BulkCreateEdges([]*Edge{
+			require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:single", StartNode: "test:a", EndNode: "test:b", Type: "KNOWS", Properties: edgeProps}))
+			require.NoError(t, engine.BulkCreateEdges(t.Context(), []*Edge{
 				{ID: "test:bulk", StartNode: "test:a", EndNode: "test:b", Type: "KNOWS", Properties: edgeProps},
 			}))
 			flushEquivalenceStack(t, engine)
 
-			singleRead, err := engine.GetEdge("test:single")
+			singleRead, err := engine.GetEdge(t.Context(), "test:single")
 			require.NoError(t, err)
-			bulkRead, err := engine.GetEdge("test:bulk")
+			bulkRead, err := engine.GetEdge(t.Context(), "test:bulk")
 			require.NoError(t, err)
 
 			require.Equal(t, singleRead.Type, bulkRead.Type, "%s: edge type diverges", stack)
@@ -148,18 +148,18 @@ func TestMutationEquivalence_SingleVsBulkDelete(t *testing.T) {
 		t.Run(stack, func(t *testing.T) {
 			engine := build(t)
 
-			_, err := engine.CreateNode(&Node{ID: "test:single-del", Labels: []string{"Doc"}})
+			_, err := engine.CreateNode(t.Context(), &Node{ID: "test:single-del", Labels: []string{"Doc"}})
 			require.NoError(t, err)
-			_, err = engine.CreateNode(&Node{ID: "test:bulk-del", Labels: []string{"Doc"}})
+			_, err = engine.CreateNode(t.Context(), &Node{ID: "test:bulk-del", Labels: []string{"Doc"}})
 			require.NoError(t, err)
 			flushEquivalenceStack(t, engine)
 
-			require.NoError(t, engine.DeleteNode("test:single-del"))
-			require.NoError(t, engine.BulkDeleteNodes([]NodeID{"test:bulk-del"}))
+			require.NoError(t, engine.DeleteNode(t.Context(), "test:single-del"))
+			require.NoError(t, engine.BulkDeleteNodes(t.Context(), []NodeID{"test:bulk-del"}))
 			flushEquivalenceStack(t, engine)
 
 			for _, id := range []NodeID{"test:single-del", "test:bulk-del"} {
-				_, err := engine.GetNode(id)
+				_, err := engine.GetNode(t.Context(), id)
 				require.ErrorIs(t, err, ErrNotFound, "%s: node %s should be deleted on both paths", stack, id)
 			}
 		})
@@ -174,20 +174,20 @@ func TestMutationEquivalence_SingleUpdateVsStagedUpdate(t *testing.T) {
 		t.Run(stack, func(t *testing.T) {
 			engine := build(t)
 			for _, id := range []NodeID{"test:u1", "test:u2"} {
-				_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]interface{}{"v": int64(1)}})
+				_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]interface{}{"v": int64(1)}})
 				require.NoError(t, err)
 			}
 			flushEquivalenceStack(t, engine)
 
-			require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:u1", Labels: []string{"Doc"}, Properties: map[string]interface{}{"v": int64(2), "tags": []interface{}{"x"}}}}))
+			require.NoError(t, engine.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:u1", Labels: []string{"Doc"}, Properties: map[string]interface{}{"v": int64(2), "tags": []interface{}{"x"}}}}))
 			// The second update is identical but travels through the staged
 			// overlay of the async layer when present.
-			require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:u2", Labels: []string{"Doc"}, Properties: map[string]interface{}{"v": int64(2), "tags": []interface{}{"x"}}}}))
+			require.NoError(t, engine.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:u2", Labels: []string{"Doc"}, Properties: map[string]interface{}{"v": int64(2), "tags": []interface{}{"x"}}}}))
 			flushEquivalenceStack(t, engine)
 
-			u1, err := engine.GetNode("test:u1")
+			u1, err := engine.GetNode(t.Context(), "test:u1")
 			require.NoError(t, err)
-			u2, err := engine.GetNode("test:u2")
+			u2, err := engine.GetNode(t.Context(), "test:u2")
 			require.NoError(t, err)
 			require.True(t, reflect.DeepEqual(u1.Properties, u2.Properties),
 				"%s: update results diverge: u1=%v u2=%v", stack, u1.Properties, u2.Properties)

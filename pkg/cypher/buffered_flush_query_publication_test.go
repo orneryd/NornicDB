@@ -40,7 +40,7 @@ func TestBufferedFlushPreservesQueryViewAndCacheRevision(t *testing.T) {
 		hit, cacheErr := cached.Execute(ctx, query, nil)
 		observations <- observation{raw, hit, rawErr, cacheErr}
 	})
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	var got observation
 	select {
 	case got = <-observations:

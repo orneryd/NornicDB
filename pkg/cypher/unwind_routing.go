@@ -23,7 +23,7 @@ func (e *StorageExecutor) prepareTopLevelUnwind(ctx context.Context, cypher stri
 	if !startsWithKeywordFold(cypher[head:], "UNWIND") {
 		return topLevelUnwindPlan{}, localizedError(localization.CypherResidualUnwindClauseNotFound(truncateQuery(cypher, 80)), nil)
 	}
-	product, ok := splitUnwindBody(cypher)
+	product, ok := splitUnwindBody(ctx, cypher)
 	if !ok {
 		return topLevelUnwindPlan{}, localizedError(localization.CypherMutationsUnwindASRequired(), nil)
 	}
@@ -67,7 +67,7 @@ func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan t
 	}
 	upperRest := upperASCII(strings.TrimSpace(plan.remainder))
 	matchMutation := (strings.HasPrefix(upperRest, "MATCH") || strings.HasPrefix(upperRest, "OPTIONAL MATCH")) &&
-		(findKeywordIndexInContext(plan.remainder, "MERGE") >= 0 || findKeywordIndexInContext(plan.remainder, "CREATE") >= 0 || findKeywordIndexInContext(plan.remainder, "SET") >= 0)
+		(findKeywordIndexInContext(ctx, plan.remainder, "MERGE") >= 0 || findKeywordIndexInContext(ctx, plan.remainder, "CREATE") >= 0 || findKeywordIndexInContext(ctx, plan.remainder, "SET") >= 0)
 	if matchMutation {
 		if strings.HasPrefix(upperRest, "MATCH") {
 			if result, handled, err := e.executeUnwindRelationshipMergeBatch(ctx, plan.variable, plan.items, plan.remainder); handled || err != nil {
@@ -80,7 +80,7 @@ func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan t
 				return result, true, err
 			}
 		}
-		returnIndex := findKeywordIndex(plan.remainder, "RETURN")
+		returnIndex := findKeywordIndex(ctx, plan.remainder, "RETURN")
 		mutationPart := plan.remainder
 		returnPart := ""
 		if returnIndex > 0 {
@@ -98,7 +98,7 @@ func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan t
 		}
 	}
 	if strings.HasPrefix(upperRest, "MERGE") || strings.HasPrefix(upperRest, "OPTIONAL MATCH") {
-		returnIndex := findKeywordIndex(plan.remainder, "RETURN")
+		returnIndex := findKeywordIndex(ctx, plan.remainder, "RETURN")
 		mutationPart := plan.remainder
 		returnPart := ""
 		if returnIndex > 0 {
@@ -113,10 +113,10 @@ func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan t
 		}
 	}
 	if strings.HasPrefix(upperRest, "MATCH") {
-		normalized := normalizeMultiMatchWhereClauses(plan.remainder)
-		if canApplySetBasedUnwindRewrite(normalized, plan.items) {
+		normalized := normalizeMultiMatchWhereClauses(ctx, plan.remainder)
+		if canApplySetBasedUnwindRewrite(ctx, normalized, plan.items) {
 			if rewritten, ok := rewriteUnwindCorrelationToIn(normalized, plan.variable, "__unwind_items"); ok {
-				rewritten = rewriteTopLevelMultiMatchToCartesianMatch(rewritten)
+				rewritten = rewriteTopLevelMultiMatchToCartesianMatch(ctx, rewritten)
 				params := make(map[string]interface{}, len(getParamsFromContext(ctx))+1)
 				for key, value := range getParamsFromContext(ctx) {
 					params[key] = value
@@ -135,15 +135,15 @@ func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan t
 	// could read what another row writes (MERGE, SET, MATCH, aggregation
 	// via WITH) keeps the row-by-row route.
 	if strings.HasPrefix(upperRest, "CREATE") &&
-		findKeywordIndexInContext(plan.remainder, "MERGE") < 0 &&
-		findKeywordIndexInContext(plan.remainder, "SET") < 0 &&
-		findKeywordIndexInContext(plan.remainder, "DELETE") < 0 &&
-		findKeywordIndexInContext(plan.remainder, "REMOVE") < 0 &&
-		findKeywordIndexInContext(plan.remainder, "FOREACH") < 0 &&
-		findKeywordIndexInContext(plan.remainder, "MATCH") < 0 &&
-		findKeywordIndexInContext(plan.remainder, "WITH") < 0 &&
-		findKeywordIndexInContext(plan.remainder, "CALL") < 0 &&
-		findKeywordIndexInContext(plan.remainder, "LOAD CSV") < 0 {
+		findKeywordIndexInContext(ctx, plan.remainder, "MERGE") < 0 &&
+		findKeywordIndexInContext(ctx, plan.remainder, "SET") < 0 &&
+		findKeywordIndexInContext(ctx, plan.remainder, "DELETE") < 0 &&
+		findKeywordIndexInContext(ctx, plan.remainder, "REMOVE") < 0 &&
+		findKeywordIndexInContext(ctx, plan.remainder, "FOREACH") < 0 &&
+		findKeywordIndexInContext(ctx, plan.remainder, "MATCH") < 0 &&
+		findKeywordIndexInContext(ctx, plan.remainder, "WITH") < 0 &&
+		findKeywordIndexInContext(ctx, plan.remainder, "CALL") < 0 &&
+		findKeywordIndexInContext(ctx, plan.remainder, "LOAD CSV") < 0 {
 		ctx = context.WithValue(ctx, pipelineIndependentCreateBatchKey{}, true)
 		return e.executeUnwindRowsPipeline(ctx, plan.variable, plan.items, plan.remainder)
 	}
@@ -167,7 +167,7 @@ func (e *StorageExecutor) executeUnwindRowsPipeline(ctx context.Context, variabl
 		}
 		if len(patterns) > 1 {
 			combined := "MATCH " + strings.Join(patterns, ", ")
-			if e.compilePipelineNodeMatchSource(combined).supported {
+			if e.compilePipelineNodeMatchSource(ctx, combined).supported {
 				clauses = append([]pipelineClause{{kind: pipelineClauseMatch, text: combined}}, clauses[len(patterns):]...)
 			}
 		}
@@ -198,16 +198,16 @@ func (e *StorageExecutor) executeUnwindRowsPipeline(ctx context.Context, variabl
 }
 
 func (e *StorageExecutor) executeSetBasedUnwindCreateOperator(ctx context.Context, plan topLevelUnwindPlan) (*ExecuteResult, bool, error) {
-	query := normalizeMultiMatchWhereClauses(plan.remainder)
-	if findKeywordIndexInContext(query, "CREATE") < 0 ||
-		findKeywordIndexInContext(query, "MERGE") >= 0 ||
-		findKeywordIndexInContext(query, "SET") >= 0 ||
-		findKeywordIndexInContext(query, "DELETE") >= 0 ||
-		findKeywordIndexInContext(query, "REMOVE") >= 0 ||
+	query := normalizeMultiMatchWhereClauses(ctx, plan.remainder)
+	if findKeywordIndexInContext(ctx, query, "CREATE") < 0 ||
+		findKeywordIndexInContext(ctx, query, "MERGE") >= 0 ||
+		findKeywordIndexInContext(ctx, query, "SET") >= 0 ||
+		findKeywordIndexInContext(ctx, query, "DELETE") >= 0 ||
+		findKeywordIndexInContext(ctx, query, "REMOVE") >= 0 ||
 		!unwindItemsAreDistinctComparable(plan.items) {
 		return nil, false, nil
 	}
-	returnIndex := findKeywordIndexInContext(query, "RETURN")
+	returnIndex := findKeywordIndexInContext(ctx, query, "RETURN")
 	if returnIndex < 0 {
 		return nil, false, nil
 	}
@@ -218,7 +218,7 @@ func (e *StorageExecutor) executeSetBasedUnwindCreateOperator(ctx context.Contex
 	if !ok {
 		return nil, false, nil
 	}
-	rewritten = rewriteTopLevelMultiMatchToCartesianMatch(rewritten)
+	rewritten = rewriteTopLevelMultiMatchToCartesianMatch(ctx, rewritten)
 	params := make(map[string]interface{}, len(getParamsFromContext(ctx))+1)
 	for key, value := range getParamsFromContext(ctx) {
 		params[key] = value

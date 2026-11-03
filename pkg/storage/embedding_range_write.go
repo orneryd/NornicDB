@@ -65,7 +65,7 @@ func (cw *commitWriter) replaceEmbeddingRange(id NodeID, embeddings [][]float32,
 	}
 	// The scan must close before cw.write can rotate the Badger transaction.
 	for _, key := range deletes {
-		if err := cw.write(func(txn *badger.Txn) error { return txn.Delete(key) }); err != nil {
+		if err := cw.write(cw.ctx, func(txn *badger.Txn) error { return txn.Delete(key) }); err != nil {
 			return err
 		}
 	}
@@ -76,7 +76,7 @@ func (cw *commitWriter) replaceEmbeddingRange(id NodeID, embeddings [][]float32,
 		if boundManifest && index == len(writes)-1 {
 			entry.WithMeta(embeddingRangeManifestBound)
 		}
-		if err := cw.write(func(txn *badger.Txn) error { return txn.SetEntry(entry) }); err != nil {
+		if err := cw.write(cw.ctx, func(txn *badger.Txn) error { return txn.SetEntry(entry) }); err != nil {
 			return err
 		}
 	}

@@ -237,9 +237,9 @@ func TestLabelNodeIDLookupHelpers(t *testing.T) {
 
 	t.Run("fallback engine path", func(t *testing.T) {
 		engine := NewNamespacedEngine(newTestMemoryEngine(t), "test")
-		_, err := engine.CreateNode(&Node{ID: "n1", Labels: []string{"Person"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: "n1", Labels: []string{"Person"}})
 		require.NoError(t, err)
-		_, err = engine.CreateNode(&Node{ID: "n2", Labels: []string{"Person"}})
+		_, err = engine.CreateNode(t.Context(), &Node{ID: "n2", Labels: []string{"Person"}})
 		require.NoError(t, err)
 
 		id, err := FirstNodeIDByLabel(context.Background(), engine, "Person")
@@ -318,7 +318,7 @@ func TestSchemaDefinitionPersistenceHelpers(t *testing.T) {
 		require.NoError(t, sm.AddVectorIndex("user_embedding_idx", "User", "embedding", 3, "cosine", ConstraintEntityNode))
 		require.NoError(t, sm.AddRangeIndex("user_age_range", "User", "age"))
 
-		def := sm.ExportDefinition()
+		def := schemaDefinitionForTest(t, sm)
 		require.NotNil(t, def)
 		require.Equal(t, schemaDefinitionVersion, def.Version)
 		require.Len(t, def.Constraints, 2)
@@ -331,13 +331,14 @@ func TestSchemaDefinitionPersistenceHelpers(t *testing.T) {
 		require.Equal(t, "user_email", def.RangeIndexes[1].OwningConstraint)
 
 		restored := NewSchemaManager()
-		require.NoError(t, restored.ReplaceFromDefinition(def))
+		require.NoError(t, restored.ReplaceFromDefinition(context.Background(), def))
 
-		constraints := restored.GetConstraints()
+		constraints, discoveryErr := restored.GetConstraints(t.Context())
+		require.NoError(t, discoveryErr)
 		require.Len(t, constraints, 1)
-		require.NoError(t, restored.CheckUniqueConstraint("User", "email", "alice@example.com", ""))
-		restored.ApplyUniqueValue("User", "email", "alice@example.com", "node-1", ValidatedUniqueClaim)
-		require.Error(t, restored.CheckUniqueConstraint("User", "email", "alice@example.com", ""))
+		require.NoError(t, restored.CheckUniqueConstraint(context.Background(), "User", "email", "alice@example.com", ""))
+		restored.ApplyUniqueValue(context.Background(), "User", "email", "alice@example.com", "node-1", ValidatedUniqueClaim)
+		require.Error(t, restored.CheckUniqueConstraint(context.Background(), "User", "email", "alice@example.com", ""))
 		_, ok := restored.GetCompositeIndex("user_loc_idx")
 		require.True(t, ok)
 		_, ok = restored.GetFulltextIndex("user_search_idx")
@@ -348,7 +349,7 @@ func TestSchemaDefinitionPersistenceHelpers(t *testing.T) {
 
 	t.Run("replace nil definition noops", func(t *testing.T) {
 		sm := NewSchemaManager()
-		require.NoError(t, sm.ReplaceFromDefinition(nil))
+		require.NoError(t, sm.ReplaceFromDefinition(context.Background(), nil))
 	})
 
 	t.Run("export definition is sorted and deep copied", func(t *testing.T) {
@@ -373,7 +374,7 @@ func TestSchemaDefinitionPersistenceHelpers(t *testing.T) {
 		require.NoError(t, sm.AddRangeIndex("z_range", "User", "age"))
 		require.NoError(t, sm.AddRangeIndex("a_range", "Account", "score"))
 
-		def := sm.ExportDefinition()
+		def := schemaDefinitionForTest(t, sm)
 		require.NotNil(t, def)
 		require.Len(t, def.Constraints, 2)
 		require.Equal(t, "a_unique", def.Constraints[0].Name)
@@ -399,7 +400,7 @@ func TestSchemaDefinitionPersistenceHelpers(t *testing.T) {
 		def.FulltextIndexes[0].Labels[0] = "Mutated"
 		def.FulltextIndexes[0].Properties[0] = "mutated"
 
-		fresh := sm.ExportDefinition()
+		fresh := schemaDefinitionForTest(t, sm)
 		require.Equal(t, "email", fresh.Constraints[0].Properties[0])
 		require.Equal(t, "name", fresh.PropertyIndexes[0].Properties[0])
 		require.Equal(t, "tenant", fresh.CompositeIndexes[0].Properties[0])
@@ -448,7 +449,9 @@ func TestBadgerSchemaHelpers(t *testing.T) {
 
 		sm := engine.GetSchemaForNamespace("testns")
 		require.NotNil(t, sm)
-		require.Len(t, sm.GetConstraints(), 1)
+		constraints, discoveryErr := sm.GetConstraints(t.Context())
+		require.NoError(t, discoveryErr)
+		require.Len(t, constraints, 1)
 		require.Len(t, nonLookupIndexes(sm.GetIndexes()), 1)
 	})
 
@@ -462,14 +465,14 @@ func TestBadgerSchemaHelpers(t *testing.T) {
 	t.Run("load persisted schema invalid key and invalid json", func(t *testing.T) {
 		engine := newIsolatedBadgerEngine(t)
 
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			require.NoError(t, txn.Set([]byte{prefixSchema, 0}, []byte(`{}`)))
 			return nil
 		}))
 		require.Error(t, engine.loadPersistedSchemas())
 
 		engine2 := newIsolatedBadgerEngine(t)
-		require.NoError(t, engine2.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine2.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			require.NoError(t, txn.Set(schemaKey("broken"), []byte(`{not-json`)))
 			return nil
 		}))
@@ -481,15 +484,15 @@ func TestBadgerSchemaHelpers(t *testing.T) {
 
 		node1 := &Node{ID: "nornic:u1", Labels: []string{"User"}, Properties: map[string]interface{}{"email": "alice@example.com"}}
 		node2 := &Node{ID: "nornic:u2", Labels: []string{"User"}, Properties: map[string]interface{}{"email": "bob@example.com"}}
-		_, err := engine.CreateNode(node1)
+		_, err := engine.CreateNode(t.Context(), node1)
 		require.NoError(t, err)
-		_, err = engine.CreateNode(node2)
+		_, err = engine.CreateNode(t.Context(), node2)
 		require.NoError(t, err)
 
 		sm := NewSchemaManager()
 		require.NoError(t, sm.AddUniqueConstraint("user_email", "User", "email"))
 		require.NoError(t, engine.rebuildUniqueConstraintValues("nornic", sm))
-		require.Error(t, sm.CheckUniqueConstraint("User", "email", "alice@example.com", ""))
+		require.Error(t, sm.CheckUniqueConstraint(context.Background(), "User", "email", "alice@example.com", ""))
 		require.NoError(t, engine.rebuildUniqueConstraintValues("", sm))
 		require.NoError(t, engine.rebuildUniqueConstraintValues("nornic", nil))
 	})
@@ -695,7 +698,7 @@ func TestStreamingFallbackAndCollectionHelpers(t *testing.T) {
 func TestLoaderEmbeddingFinderAndWALDegradedHelpers(t *testing.T) {
 	t.Run("loader embedding finder", func(t *testing.T) {
 		nonExportable := newTestMemoryEngine(t)
-		assert.Nil(t, FindNodeNeedingEmbedding(nonExportable))
+		assert.Nil(t, requireEmbeddingCandidate(t, func(ctx context.Context) (*Node, error) { return FindNodeNeedingEmbedding(ctx, nonExportable) }))
 
 		exportable := &exportableOnlyEngine{
 			Engine: newTestMemoryEngine(t),
@@ -709,12 +712,14 @@ func TestLoaderEmbeddingFinderAndWALDegradedHelpers(t *testing.T) {
 				_ = closer.Close()
 			}
 		})
-		got := FindNodeNeedingEmbedding(exportable)
+		got := requireEmbeddingCandidate(t, func(ctx context.Context) (*Node, error) { return FindNodeNeedingEmbedding(ctx, exportable) })
 		require.NotNil(t, got)
 		assert.Equal(t, NodeID("needs"), got.ID)
 
 		exportable.nodeErr = errors.New("loader nodes failed")
-		assert.Nil(t, FindNodeNeedingEmbedding(exportable))
+		node, err := FindNodeNeedingEmbedding(context.Background(), exportable)
+		require.ErrorIs(t, err, exportable.nodeErr)
+		assert.Nil(t, node)
 	})
 
 	t.Run("wal degraded status and diagnostics", func(t *testing.T) {
@@ -748,30 +753,30 @@ func TestConstraintValidationCreationHelpers(t *testing.T) {
 			}
 		})
 
-		require.NoError(t, ValidateConstraintOnCreationForEngine(engine, Constraint{
+		require.NoError(t, ValidateConstraintOnCreationForEngine(context.Background(), engine, Constraint{
 			Type:       ConstraintUnique,
 			Label:      "Person",
 			Properties: []string{"email"},
 		}))
-		require.NoError(t, ValidateConstraintOnCreationForEngine(engine, Constraint{
+		require.NoError(t, ValidateConstraintOnCreationForEngine(context.Background(), engine, Constraint{
 			Type:       ConstraintNodeKey,
 			Label:      "Person",
 			Properties: []string{"id", "name"},
 		}))
-		require.NoError(t, ValidateConstraintOnCreationForEngine(engine, Constraint{
+		require.NoError(t, ValidateConstraintOnCreationForEngine(context.Background(), engine, Constraint{
 			Type:       ConstraintExists,
 			Label:      "Person",
 			Properties: []string{"name"},
 		}))
 
-		err := ValidateConstraintOnCreationForEngine(engine, Constraint{Type: ConstraintType("weird")})
+		err := ValidateConstraintOnCreationForEngine(context.Background(), engine, Constraint{Type: ConstraintType("weird")})
 		require.ErrorContains(t, err, "unknown constraint type")
 	})
 
 	t.Run("node key helper validates property counts nulls and duplicates", func(t *testing.T) {
 		base := newTestMemoryEngine(t)
 
-		err := validateNodeKeyConstraintOnCreationWithEngine(&constraintValidationEngine{Engine: base}, Constraint{
+		err := validateNodeKeyConstraintOnCreationWithEngine(context.Background(), &constraintValidationEngine{Engine: base}, Constraint{
 			Type:       ConstraintNodeKey,
 			Label:      "Person",
 			Properties: nil,
@@ -784,7 +789,7 @@ func TestConstraintValidationCreationHelpers(t *testing.T) {
 				{ID: "n1", Labels: []string{"Person"}, Properties: map[string]any{"id": "1"}},
 			},
 		}
-		err = validateNodeKeyConstraintOnCreationWithEngine(engine, Constraint{
+		err = validateNodeKeyConstraintOnCreationWithEngine(context.Background(), engine, Constraint{
 			Type:       ConstraintNodeKey,
 			Label:      "Person",
 			Properties: []string{"id", "name"},
@@ -797,7 +802,7 @@ func TestConstraintValidationCreationHelpers(t *testing.T) {
 			{ID: "n1", Labels: []string{"Person"}, Properties: map[string]any{"id": "1", "name": "alice"}},
 			{ID: "n2", Labels: []string{"Person"}, Properties: map[string]any{"id": "1", "name": "alice"}},
 		}
-		err = validateNodeKeyConstraintOnCreationWithEngine(engine, Constraint{
+		err = validateNodeKeyConstraintOnCreationWithEngine(context.Background(), engine, Constraint{
 			Type:       ConstraintNodeKey,
 			Label:      "Person",
 			Properties: []string{"id", "name"},
@@ -809,7 +814,7 @@ func TestConstraintValidationCreationHelpers(t *testing.T) {
 	t.Run("temporal helper validates arity scan errors and temporal violations", func(t *testing.T) {
 		base := newTestMemoryEngine(t)
 
-		err := validateTemporalConstraintOnCreationWithEngine(&constraintValidationEngine{Engine: base}, Constraint{
+		err := validateTemporalConstraintOnCreationWithEngine(context.Background(), &constraintValidationEngine{Engine: base}, Constraint{
 			Type:       ConstraintTemporal,
 			Label:      "Person",
 			Properties: []string{"id", "from"},
@@ -820,7 +825,7 @@ func TestConstraintValidationCreationHelpers(t *testing.T) {
 			Engine: base,
 			err:    errors.New("scan failed"),
 		}
-		err = validateTemporalConstraintOnCreationWithEngine(engine, Constraint{
+		err = validateTemporalConstraintOnCreationWithEngine(context.Background(), engine, Constraint{
 			Type:       ConstraintTemporal,
 			Label:      "Person",
 			Properties: []string{"id", "from", "to"},
@@ -831,7 +836,7 @@ func TestConstraintValidationCreationHelpers(t *testing.T) {
 		engine.nodes = []*Node{
 			{ID: "n1", Labels: []string{"Person"}, Properties: map[string]any{"from": time.Now(), "to": time.Now().Add(time.Hour)}},
 		}
-		err = validateTemporalConstraintOnCreationWithEngine(engine, Constraint{
+		err = validateTemporalConstraintOnCreationWithEngine(context.Background(), engine, Constraint{
 			Type:       ConstraintTemporal,
 			Label:      "Person",
 			Properties: []string{"id", "from", "to"},
@@ -844,7 +849,7 @@ func TestConstraintValidationCreationHelpers(t *testing.T) {
 		engine.nodes = []*Node{
 			{ID: "n1", Labels: []string{"Person"}, Properties: map[string]any{"id": "a", "from": "bad", "to": now}},
 		}
-		err = validateTemporalConstraintOnCreationWithEngine(engine, Constraint{
+		err = validateTemporalConstraintOnCreationWithEngine(context.Background(), engine, Constraint{
 			Type:       ConstraintTemporal,
 			Label:      "Person",
 			Properties: []string{"id", "from", "to"},
@@ -856,7 +861,7 @@ func TestConstraintValidationCreationHelpers(t *testing.T) {
 			{ID: "n1", Labels: []string{"Person"}, Properties: map[string]any{"id": "a", "from": now, "to": now.Add(2 * time.Hour)}},
 			{ID: "n2", Labels: []string{"Person"}, Properties: map[string]any{"id": "a", "from": now.Add(time.Hour), "to": now.Add(3 * time.Hour)}},
 		}
-		err = validateTemporalConstraintOnCreationWithEngine(engine, Constraint{
+		err = validateTemporalConstraintOnCreationWithEngine(context.Background(), engine, Constraint{
 			Type:       ConstraintTemporal,
 			Label:      "Person",
 			Properties: []string{"id", "from", "to"},
@@ -868,7 +873,7 @@ func TestConstraintValidationCreationHelpers(t *testing.T) {
 			{ID: "n1", Labels: []string{"Person"}, Properties: map[string]any{"id": "a", "from": now, "to": now.Add(time.Hour)}},
 			{ID: "n2", Labels: []string{"Person"}, Properties: map[string]any{"id": "a", "from": now.Add(2 * time.Hour), "to": now.Add(3 * time.Hour)}},
 		}
-		require.NoError(t, validateTemporalConstraintOnCreationWithEngine(engine, Constraint{
+		require.NoError(t, validateTemporalConstraintOnCreationWithEngine(context.Background(), engine, Constraint{
 			Type:       ConstraintTemporal,
 			Label:      "Person",
 			Properties: []string{"id", "from", "to"},
@@ -887,7 +892,7 @@ func TestDecodeNodeWithEmbeddings(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			emb0, err := encodeEmbedding([]float32{1, 2})
 			if err != nil {
 				return err
@@ -923,7 +928,7 @@ func TestDecodeNodeWithEmbeddings(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			return txn.Set(embeddingKey(nodeID, 0), []byte("bad-embedding"))
 		}))
 
@@ -963,7 +968,7 @@ func TestDecodeNodeWithEmbeddings(t *testing.T) {
 				require.NoError(t, err)
 
 				if tc.wantChunks > 0 {
-					require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+					require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 						emb, err := encodeEmbedding([]float32{7, 8})
 						if err != nil {
 							return err
@@ -1007,10 +1012,10 @@ func TestSeparateEmbeddingChunkHelpers(t *testing.T) {
 		return count
 	}
 
-	t.Run("replaceSeparateEmbeddingChunks with no embeddings removes every chunk", func(t *testing.T) {
+	t.Run("canonical range writer with no embeddings removes every chunk", func(t *testing.T) {
 		engine := createTestBadgerEngine(t)
 		nodeID := NodeID(prefixTestID("chunk-delete"))
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			for i := 0; i < 260; i++ {
 				emb, err := encodeEmbedding([]float32{float32(i)})
 				if err != nil {
@@ -1023,14 +1028,16 @@ func TestSeparateEmbeddingChunkHelpers(t *testing.T) {
 			return nil
 		}))
 		require.Equal(t, 260, countChunks(t, engine, nodeID))
-		require.NoError(t, engine.replaceSeparateEmbeddingChunks(nodeID, nil, nil))
+		require.NoError(t, engine.commitEngineWrite(t.Context(), func(cw *commitWriter) error {
+			return cw.replaceEmbeddingRange(nodeID, nil, nil)
+		}))
 		require.Equal(t, 0, countChunks(t, engine, nodeID))
 	})
 
-	t.Run("replaceSeparateEmbeddingChunks rewrites chunks and supports empty replacement", func(t *testing.T) {
+	t.Run("canonical range writer rewrites chunks and supports empty replacement", func(t *testing.T) {
 		engine := createTestBadgerEngine(t)
 		nodeID := NodeID(prefixTestID("chunk-replace"))
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			oldEmb, err := encodeEmbedding([]float32{1, 2, 3})
 			if err != nil {
 				return err
@@ -1041,7 +1048,9 @@ func TestSeparateEmbeddingChunkHelpers(t *testing.T) {
 			return txn.Set(embeddingKey(nodeID, 1), oldEmb)
 		}))
 
-		require.NoError(t, engine.replaceSeparateEmbeddingChunks(nodeID, [][]float32{{9, 9}, {8, 8, 8}}, nil))
+		require.NoError(t, engine.commitEngineWrite(t.Context(), func(cw *commitWriter) error {
+			return cw.replaceEmbeddingRange(nodeID, [][]float32{{9, 9}, {8, 8, 8}}, nil)
+		}))
 		require.Equal(t, 2, countChunks(t, engine, nodeID))
 		require.NoError(t, engine.withView(func(txn *badger.Txn) error {
 			item, err := txn.Get(embeddingKey(nodeID, 1))
@@ -1054,7 +1063,9 @@ func TestSeparateEmbeddingChunkHelpers(t *testing.T) {
 			})
 		}))
 
-		require.NoError(t, engine.replaceSeparateEmbeddingChunks(nodeID, nil, nil))
+		require.NoError(t, engine.commitEngineWrite(t.Context(), func(cw *commitWriter) error {
+			return cw.replaceEmbeddingRange(nodeID, nil, nil)
+		}))
 		require.Equal(t, 0, countChunks(t, engine, nodeID))
 	})
 }
@@ -1075,7 +1086,7 @@ func TestBadgerConstraintValidationHelpers(t *testing.T) {
 		engine := createTestBadgerEngine(t)
 		require.NoError(t, engine.GetSchemaForNamespace("test").AddPropertyTypeConstraint("user_age_type", "User", "age", PropertyTypeInteger, PropertyTypeConstraintOptions{}))
 
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			schema := NewSchemaManager()
 			require.NoError(t, schema.AddConstraint(Constraint{
 				Name:       "ignored_multi_unique",
@@ -1083,10 +1094,10 @@ func TestBadgerConstraintValidationHelpers(t *testing.T) {
 				Label:      "User",
 				Properties: []string{"a", "b"},
 			}))
-			require.NoError(t, engine.validateNodeConstraintsInTxn(txn, nil, schema, "test", ""))
-			require.NoError(t, engine.validateNodeConstraintsInTxn(txn, &Node{ID: "test:u0", Labels: []string{"User"}}, nil, "test", ""))
+			require.NoError(t, engine.validateNodeConstraintsInTxn(t.Context(), txn, nil, schema, "test", ""))
+			require.NoError(t, engine.validateNodeConstraintsInTxn(t.Context(), txn, &Node{ID: "test:u0", Labels: []string{"User"}}, nil, "test", ""))
 
-			err := engine.validateNodeConstraintsInTxn(txn, &Node{
+			err := engine.validateNodeConstraintsInTxn(t.Context(), txn, &Node{
 				ID:         "test:u1",
 				Labels:     []string{"User"},
 				Properties: map[string]any{"name": "ok"},
@@ -1095,14 +1106,14 @@ func TestBadgerConstraintValidationHelpers(t *testing.T) {
 			return nil
 		}))
 
-		_, err := engine.CreateNode(&Node{
+		_, err := engine.CreateNode(t.Context(), &Node{
 			ID:         "test:existing-user",
 			Labels:     []string{"User"},
 			Properties: map[string]any{"email": "dup@example.com", "tenant": "t1", "username": "alice", "name": "Alice", "account": "acct", "from": time.Date(2026, 3, 7, 10, 0, 0, 0, time.UTC), "to": time.Date(2026, 3, 7, 11, 0, 0, 0, time.UTC), "age": int64(30)},
 		})
 		require.NoError(t, err)
 
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			schema := NewSchemaManager()
 			require.NoError(t, schema.AddUniqueConstraint("user_email", "User", "email"))
 			require.NoError(t, schema.AddConstraint(Constraint{
@@ -1125,49 +1136,49 @@ func TestBadgerConstraintValidationHelpers(t *testing.T) {
 			}))
 			require.NoError(t, schema.AddPropertyTypeConstraint("user_age_type", "User", "age", PropertyTypeInteger, PropertyTypeConstraintOptions{}))
 
-			err := engine.validateNodeConstraintsInTxn(txn, &Node{
+			err := engine.validateNodeConstraintsInTxn(t.Context(), txn, &Node{
 				ID:         "test:u2",
 				Labels:     []string{"User"},
 				Properties: map[string]any{"email": "dup@example.com", "tenant": "t2", "username": "bob", "name": "Bob", "account": "acct-2", "from": time.Date(2026, 3, 7, 12, 0, 0, 0, time.UTC), "to": time.Date(2026, 3, 7, 13, 0, 0, 0, time.UTC), "age": int64(31)},
 			}, schema, "test", "")
 			require.Error(t, err)
 
-			err = engine.validateNodeConstraintsInTxn(txn, &Node{
+			err = engine.validateNodeConstraintsInTxn(t.Context(), txn, &Node{
 				ID:         "test:u3",
 				Labels:     []string{"User"},
 				Properties: map[string]any{"email": "other@example.com", "tenant": "t1", "name": "Bob", "account": "acct-3", "from": time.Date(2026, 3, 7, 12, 0, 0, 0, time.UTC), "to": time.Date(2026, 3, 7, 13, 0, 0, 0, time.UTC), "age": int64(31)},
 			}, schema, "test", "")
 			require.Error(t, err)
 
-			err = engine.validateNodeConstraintsInTxn(txn, &Node{
+			err = engine.validateNodeConstraintsInTxn(t.Context(), txn, &Node{
 				ID:         "test:u4",
 				Labels:     []string{"User"},
 				Properties: nil,
 			}, schema, "test", "")
 			require.Error(t, err)
 
-			err = engine.validateNodeConstraintsInTxn(txn, &Node{
+			err = engine.validateNodeConstraintsInTxn(t.Context(), txn, &Node{
 				ID:         "test:u5",
 				Labels:     []string{"User"},
 				Properties: map[string]any{"email": "other@example.com", "tenant": "t5", "username": "eve", "name": "Eve"},
 			}, schema, "test", "")
 			require.Error(t, err)
 
-			err = engine.validateNodeConstraintsInTxn(txn, &Node{
+			err = engine.validateNodeConstraintsInTxn(t.Context(), txn, &Node{
 				ID:         "test:u6",
 				Labels:     []string{"User"},
 				Properties: map[string]any{"email": "other@example.com", "tenant": "t6", "username": "mallory", "name": "Mallory", "account": "acct-6", "from": "bad", "to": time.Date(2026, 3, 7, 13, 0, 0, 0, time.UTC), "age": int64(31)},
 			}, schema, "test", "")
 			require.Error(t, err)
 
-			err = engine.validateNodeConstraintsInTxn(txn, &Node{
+			err = engine.validateNodeConstraintsInTxn(t.Context(), txn, &Node{
 				ID:         "test:u7",
 				Labels:     []string{"User"},
 				Properties: map[string]any{"email": "other@example.com", "tenant": "t7", "username": "trent", "name": "Trent", "account": "acct", "from": time.Date(2026, 3, 7, 10, 30, 0, 0, time.UTC), "to": time.Date(2026, 3, 7, 12, 0, 0, 0, time.UTC), "age": int64(31)},
 			}, schema, "test", "")
 			require.Error(t, err)
 
-			err = engine.validateNodeConstraintsInTxn(txn, &Node{
+			err = engine.validateNodeConstraintsInTxn(t.Context(), txn, &Node{
 				ID:         "test:u8",
 				Labels:     []string{"User"},
 				Properties: map[string]any{"email": "other@example.com", "tenant": "t8", "username": "oscar", "name": "Oscar", "account": "acct-8", "from": time.Date(2026, 3, 7, 14, 0, 0, 0, time.UTC), "to": time.Date(2026, 3, 7, 15, 0, 0, 0, time.UTC), "age": "old"},

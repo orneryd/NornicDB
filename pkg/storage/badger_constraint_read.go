@@ -14,19 +14,29 @@ func (b *BadgerEngine) keyConstraintNodes(ctx context.Context, idx *CompositeInd
 	var pending []*Node
 	var states map[NodeID]bufferedEntityState
 	if w := b.writeBehind; w != nil {
-		w.ensurePendingValueTracked(label, property)
+		if err := w.ensurePendingValueTracked(ctx, label, property); err != nil {
+			return nil, err
+		}
 	}
 	var nodes []*Node
 	var captureErr error
-	err := b.withReadView(func(w *WriteBehindBuffer) {
-		ids = idx.LookupFull(values...)
+	err := b.withReadView(ctx, func(w *WriteBehindBuffer) {
+		ids, captureErr = idx.LookupFull(ctx, values...)
+		if captureErr != nil {
+			return
+		}
 		if w == nil {
 			return
 		}
 		// The overlay capture is part of the write's own integrity read, so it
 		// runs on that read's lifetime: a staging write's own context, the
 		// commit's caller context during commit validation.
-		if valueKey, ok := indexValueKey(values[0]); ok {
+		valueKey, keyed, err := indexValueKey(ctx, values[0])
+		if err != nil {
+			captureErr = err
+			return
+		}
+		if keyed {
 			pendingNodes, err := b.readBufferedEntities(ctx, w, storedRead, bufferedEntityRead{kind: bufferedKey, label: label, property: property, valueKey: valueKey})
 			if err != nil {
 				captureErr = err

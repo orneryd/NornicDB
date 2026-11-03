@@ -159,19 +159,19 @@ func TestLoadedPluginTracking(t *testing.T) {
 
 func TestLoadPluginsFromDir(t *testing.T) {
 	t.Run("empty directory path returns nil", func(t *testing.T) {
-		err := LoadPluginsFromDir("", nil)
+		err := LoadPluginsFromDir(t.Context(), "", nil)
 		assert.NoError(t, err)
 	})
 
 	t.Run("non-existent directory returns nil (not an error)", func(t *testing.T) {
-		err := LoadPluginsFromDir(filepath.Join(t.TempDir(), "missing", "plugins"), nil)
+		err := LoadPluginsFromDir(t.Context(), filepath.Join(t.TempDir(), "missing", "plugins"), nil)
 		assert.NoError(t, err)
 	})
 
 	t.Run("file path instead of directory returns error", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "not-a-directory")
 		require.NoError(t, os.WriteFile(path, []byte("file"), 0o600))
-		err := LoadPluginsFromDir(path, nil)
+		err := LoadPluginsFromDir(t.Context(), path, nil)
 		require.ErrorContains(t, err, "not a directory")
 	})
 
@@ -202,7 +202,7 @@ func (P) RecentEvents(limit int) []heimdall.SubsystemEvent { return nil }
 var Plugin P
 `)
 
-		err := LoadPluginsFromDir(dir, nil)
+		err := LoadPluginsFromDir(t.Context(), dir, nil)
 		require.NoError(t, err)
 		require.True(t, PluginsInitialized())
 		require.Empty(t, ListLoadedPlugins(), "heimdall plugin should be skipped without context")
@@ -235,7 +235,7 @@ func (P) RecentEvents(limit int) []heimdall.SubsystemEvent { return nil }
 var Plugin P
 `)
 
-		ctx := &heimdall.SubsystemContext{
+		host := &heimdall.SubsystemHost{
 			Config: heimdall.Config{
 				Model:       "test",
 				ModelsDir:   "models",
@@ -244,7 +244,7 @@ var Plugin P
 			},
 		}
 
-		err := LoadPluginsFromDir(dir, ctx)
+		err := LoadPluginsFromDir(t.Context(), dir, host)
 		require.NoError(t, err)
 		require.True(t, PluginsInitialized())
 		plugins := ListLoadedPlugins()
@@ -488,13 +488,13 @@ func TestPluginLoadAndProcedureExtractionHelpers(t *testing.T) {
 	})
 
 	t.Run("loadHeimdallPlugin reflection and validation branches", func(t *testing.T) {
-		loaded, err := loadHeimdallPlugin(mockReflectPluginErrors{}, "/tmp/heim.so", nil)
+		loaded, err := loadHeimdallPlugin(mockReflectPluginErrors{}, "/tmp/heim.so", nil, t.Context())
 		require.Error(t, err)
 		require.ErrorIs(t, err, errHeimdallContextRequired)
 		require.NotNil(t, loaded)
 		require.Equal(t, PluginTypeHeimdall, loaded.Type)
 
-		_, err = loadHeimdallPlugin(mockPluginNoType{}, "/tmp/invalid.so", nil)
+		_, err = loadHeimdallPlugin(mockPluginNoType{}, "/tmp/invalid.so", nil, t.Context())
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "missing")
 	})
@@ -513,7 +513,7 @@ func TestPluginLoadAndProcedureExtractionHelpers(t *testing.T) {
 		badPlugin := filepath.Join(t.TempDir(), "bad.so")
 		require.NoError(t, os.WriteFile(badPlugin, []byte("not-a-go-plugin"), 0644))
 
-		loaded, err := loadPluginFile(badPlugin, nil)
+		loaded, err := loadPluginFile(badPlugin, nil, t.Context())
 		require.Error(t, err)
 		require.Nil(t, loaded)
 		require.Contains(t, err.Error(), "open")
@@ -525,7 +525,7 @@ func TestPluginLoadAndProcedureExtractionHelpers(t *testing.T) {
 		noSymbol := buildTestPluginSO(t, tmpDir, "nosymbol", `package main
 var NotPlugin = 1
 `)
-		loaded, err := loadPluginFile(noSymbol, nil)
+		loaded, err := loadPluginFile(noSymbol, nil, t.Context())
 		require.Error(t, err)
 		require.Nil(t, loaded)
 		require.Contains(t, err.Error(), "no Plugin symbol")
@@ -534,7 +534,7 @@ var NotPlugin = 1
 type PluginValue struct{}
 var Plugin PluginValue
 `)
-		loaded, err = loadPluginFile(unknownType, nil)
+		loaded, err = loadPluginFile(unknownType, nil, t.Context())
 		require.Error(t, err)
 		require.Nil(t, loaded)
 		require.Contains(t, err.Error(), "unknown plugin type")
@@ -551,7 +551,7 @@ func (TestPlugin) Functions() map[string]interface{} {
 }
 var Plugin TestPlugin
 `)
-		loaded, err = loadPluginFile(functionPlugin, nil)
+		loaded, err = loadPluginFile(functionPlugin, nil, t.Context())
 		require.NoError(t, err)
 		require.NotNil(t, loaded)
 		require.Equal(t, PluginTypeFunction, loaded.Type)
@@ -564,7 +564,7 @@ var Plugin TestPlugin
 
 		dir := t.TempDir()
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "bad.so"), []byte("bad"), 0644))
-		err := LoadPluginsFromDir(dir, nil)
+		err := LoadPluginsFromDir(t.Context(), dir, nil)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "plugin bad.so was not loaded")
 		require.True(t, PluginsInitialized())
@@ -584,7 +584,7 @@ func (TestPlugin) Functions() map[string]interface{} {
 }
 var Plugin TestPlugin
 `)
-		err = LoadPluginsFromDir(dir, nil)
+		err = LoadPluginsFromDir(t.Context(), dir, nil)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "plugin bad.so was not loaded")
 		require.NotContains(t, err.Error(), "good_next_to_bad.so")
@@ -610,7 +610,7 @@ func (TestPlugin) Functions() map[string]interface{} {
 var Plugin TestPlugin
 `)
 
-		require.NoError(t, LoadPluginsFromDir(dir, nil))
+		require.NoError(t, LoadPluginsFromDir(t.Context(), dir, nil))
 		require.True(t, PluginsInitialized())
 		require.NotEmpty(t, ListLoadedPlugins())
 		require.NotEmpty(t, ListPluginFunctions())
@@ -622,7 +622,7 @@ var Plugin TestPlugin
 			version: "1.0.0",
 			ptype:   "heimdall",
 		}
-		loaded, err := registerHeimdallPlugin(p, "/tmp/start_err.so", &heimdall.SubsystemContext{})
+		loaded, err := registerHeimdallPlugin(p, "/tmp/start_err.so", &heimdall.SubsystemHost{}, t.Context())
 		require.Error(t, err)
 		require.Nil(t, loaded)
 		require.Contains(t, err.Error(), "start")
@@ -1077,7 +1077,7 @@ func TestRegisterHeimdallPlugin_RequiresSubsystemContext(t *testing.T) {
 		ptype:   "heimdall",
 	}
 
-	loaded, err := registerHeimdallPlugin(plugin, "/test/watcher.so", nil)
+	loaded, err := registerHeimdallPlugin(plugin, "/test/watcher.so", nil, t.Context())
 	require.Error(t, err)
 	require.ErrorIs(t, err, errHeimdallContextRequired)
 	require.NotNil(t, loaded)

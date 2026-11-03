@@ -42,7 +42,7 @@ func (e *relatedProbeEngine) GetIncomingEdges(ctx context.Context, nodeID storag
 	return e.Engine.GetIncomingEdges(ctx, nodeID)
 }
 
-func (e *relatedProbeEngine) GetNode(nodeID storage.NodeID) (*storage.Node, error) {
+func (e *relatedProbeEngine) GetNode(ctx context.Context, nodeID storage.NodeID) (*storage.Node, error) {
 	e.mu.Lock()
 	e.nodes = append(e.nodes, string(nodeID))
 	hook := e.onNode
@@ -55,7 +55,7 @@ func (e *relatedProbeEngine) GetNode(nodeID storage.NodeID) (*storage.Node, erro
 	if missing {
 		return nil, storage.ErrNotFound
 	}
-	return e.Engine.GetNode(nodeID)
+	return e.Engine.GetNode(ctx, nodeID)
 }
 
 func (e *relatedProbeEngine) snapshot() (outgoing, incoming, nodes []string) {
@@ -78,13 +78,13 @@ func createRelatedNode(t *testing.T, engine storage.Engine, id storage.NodeID, l
 	if len(labels) == 0 {
 		labels = []string{"Doc"}
 	}
-	_, err := engine.CreateNode(&storage.Node{ID: id, Labels: labels, Properties: map[string]interface{}{"title": string(id)}})
+	_, err := engine.CreateNode(t.Context(), &storage.Node{ID: id, Labels: labels, Properties: map[string]interface{}{"title": string(id)}})
 	require.NoError(t, err)
 }
 
 func createRelatedEdge(t *testing.T, engine storage.Engine, id storage.EdgeID, from, to storage.NodeID) {
 	t.Helper()
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: id, StartNode: from, EndNode: to, Type: "LINK"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: id, StartNode: from, EndNode: to, Type: "LINK"}))
 }
 
 func TestHeimdallRelatedNodesDepthOrderingAndCycles(t *testing.T) {
@@ -211,17 +211,17 @@ func TestHeimdallDiscoverRelatedNodesComeFromCanonicalWalk(t *testing.T) {
 
 	rootID := storage.NodeID("nornic:related-root")
 	childID := storage.NodeID("nornic:related-child")
-	_, err = engine.CreateNode(&storage.Node{ID: rootID, Labels: []string{"Document"}, Properties: map[string]interface{}{
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: rootID, Labels: []string{"Document"}, Properties: map[string]interface{}{
 		"title":   "Related Root",
 		"content": "canonical walk root document",
 	}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: childID, Labels: []string{"Document"}, Properties: map[string]interface{}{
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: childID, Labels: []string{"Document"}, Properties: map[string]interface{}{
 		"title":   "Related Child",
 		"content": "neighbor document",
 	}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "nornic:related-edge", StartNode: rootID, EndNode: childID, Type: "LINKS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "nornic:related-edge", StartNode: rootID, EndNode: childID, Type: "LINKS"}))
 	require.NoError(t, server.db.BuildSearchIndexes(context.Background()))
 
 	result, err := router.Discover(ctx, dbName, "canonical walk root", []string{"Document"}, 5, 1)
@@ -322,12 +322,12 @@ func (e *relatedWideEngine) GetIncomingEdges(context.Context, storage.NodeID) ([
 	return nil, nil
 }
 
-func (e *relatedWideEngine) GetNode(nodeID storage.NodeID) (*storage.Node, error) {
+func (e *relatedWideEngine) GetNode(ctx context.Context, nodeID storage.NodeID) (*storage.Node, error) {
 	e.nodes++
 	if e.onNode != nil {
 		e.onNode(e.nodes)
 	}
-	return e.Engine.GetNode(nodeID)
+	return e.Engine.GetNode(ctx, nodeID)
 }
 
 // TestHeimdallRelatedNodesCancellationBoundsWideAdjacency is the router's

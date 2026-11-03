@@ -159,7 +159,7 @@ func TestDirectStatementPublicationPreservesCommittedWrites(t *testing.T) {
 			statement := exec.newStatementExecutionContext(ctx, time.Now().UTC(), nil)
 			cancel()
 			exec.publishDirectStatementCommit(statement, testCase.query)
-			require.Equal(t, testCase.committed, statement.outcome.committed.Load())
+			require.Equal(t, testCase.committed, statement.outcome.committed())
 		})
 	}
 }

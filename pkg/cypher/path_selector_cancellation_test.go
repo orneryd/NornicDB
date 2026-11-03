@@ -13,7 +13,7 @@ func TestSelectedPathCancelledReconstruction(t *testing.T) {
 	defer cancel()
 	node := func(id string) *storage.Node {
 		n := &storage.Node{ID: storage.NodeID(id), Labels: []string{"N"}, Properties: map[string]interface{}{}}
-		if _, err := e.storage.CreateNode(n); err != nil {
+		if _, err := e.storage.CreateNode(t.Context(), n); err != nil {
 			t.Fatal(err)
 		}
 		return n
@@ -23,7 +23,7 @@ func TestSelectedPathCancelledReconstruction(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		left, right, next := node(fmt.Sprintf("l%d", i)), node(fmt.Sprintf("r%d", i)), node(fmt.Sprintf("n%d", i))
 		for j, pair := range [][2]*storage.Node{{previous, left}, {previous, right}, {left, next}, {right, next}} {
-			err := e.storage.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("e%d-%d", i, j)), Type: "T", StartNode: pair[0].ID, EndNode: pair[1].ID, Properties: map[string]interface{}{}})
+			err := e.storage.CreateEdge(t.Context(), &storage.Edge{ID: storage.EdgeID(fmt.Sprintf("e%d-%d", i, j)), Type: "T", StartNode: pair[0].ID, EndNode: pair[1].ID, Properties: map[string]interface{}{}})
 			if err != nil {
 				t.Fatal(err)
 			}

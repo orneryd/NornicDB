@@ -20,7 +20,7 @@ func TestNestedUseFromSystemDatabaseWritesNothing(t *testing.T) {
 		name := map[bool]string{false: "auto-commit", true: "explicit transaction"}[explicit]
 		t.Run(name, func(t *testing.T) {
 			server, users := setupTestServer(t)
-			_, err := users.CreateUser("writer", "password123", []auth.Role{auth.RoleEditor})
+			_, err := users.CreateUser(context.Background(), "writer", "password123", []auth.Role{auth.RoleEditor})
 			require.NoError(t, err)
 			writer := getAuthToken(t, users, "writer")
 			system, err := server.dbManager.GetStorage("system")

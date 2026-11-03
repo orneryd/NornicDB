@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"sync"
@@ -19,11 +20,11 @@ func TestEmbeddingOutcomeSnapshotOwnership(t *testing.T) {
 			b, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 			require.NoError(t, err)
 			defer b.Close()
-			_, err = b.CreateNode(&Node{ID: "test:doc", Properties: map[string]any{"text": "original"}})
+			_, err = b.CreateNode(t.Context(), &Node{ID: "test:doc", Properties: map[string]any{"text": "original"}})
 			require.NoError(t, err)
-			payload, err := b.GetNode("test:doc")
+			payload, err := b.GetNode(t.Context(), "test:doc")
 			require.NoError(t, err)
-			payload, err = SnapshotNodeForEmbedding(payload)
+			payload, err = SnapshotNodeForEmbedding(t.Context(), payload)
 			require.NoError(t, err)
 			payload.ChunkEmbeddings = [][]float32{{1, 2}}
 			payload.EmbedMeta = map[string]any{"chunk_count": 1}
@@ -52,7 +53,7 @@ func TestEmbeddingOutcomeSnapshotOwnership(t *testing.T) {
 				})
 				b.OnNodeUpdated(func(node *Node) { listener <- node })
 				blockerDone = make(chan error, 1)
-				go func() { _, err := b.CreateNode(&Node{ID: "test:blocker"}); blockerDone <- err }()
+				go func() { _, err := b.CreateNode(t.Context(), &Node{ID: "test:blocker"}); blockerDone <- err }()
 				select {
 				case <-entered:
 				case <-time.After(3 * time.Second):
@@ -60,7 +61,7 @@ func TestEmbeddingOutcomeSnapshotOwnership(t *testing.T) {
 				}
 			}
 			done := make(chan error, 1)
-			go func() { done <- b.UpdateNodeEmbeddingSidecar(payload) }()
+			go func() { done <- b.UpdateNodeEmbeddingSidecar(context.Background(), payload) }()
 			if mode == "bound_listener" {
 				select {
 				case <-entered:
@@ -115,46 +116,46 @@ func TestEmbeddingRevisionCapturedBufferedUpdates(t *testing.T) {
 	b := newWriteBehindTestEngine(t, time.Hour)
 	b.writeBehind.Close()
 	bufferedCreate(t, b, &Node{ID: "test:doc", Properties: map[string]any{"text": "before"}})
-	require.NoError(t, b.FlushWriteBehind(nil))
-	old, err := b.GetNode("test:doc")
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
+	old, err := b.GetNode(t.Context(), "test:doc")
 	require.NoError(t, err)
-	old, err = SnapshotNodeForEmbedding(old)
+	old, err = SnapshotNodeForEmbedding(t.Context(), old)
 	require.NoError(t, err)
 	stamp := old.UpdatedAt
-	tx, err := b.BeginTransaction()
+	tx, err := b.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: old.ID, UpdatedAt: stamp, Properties: map[string]any{"text": "after"}}, Policy: ClientNodeEdits}))
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: old.ID, UpdatedAt: stamp, Properties: map[string]any{"text": "after"}}, Policy: ClientNodeEdits}))
 	require.NoError(t, tx.Commit())
-	ack, err := b.GetNode("test:doc")
+	ack, err := b.GetNode(t.Context(), "test:doc")
 	require.NoError(t, err)
 	require.True(t, stamp.Equal(ack.UpdatedAt))
-	same, err := b.embeddingRevisionIsCurrent(ack.ID, old.EmbeddingRevision())
+	same, err := b.embeddingRevisionIsCurrent(t.Context(), ack.ID, old.EmbeddingRevision())
 	require.NoError(t, err)
 	require.False(t, same)
-	same, err = b.embeddingRevisionIsCurrent(ack.ID, ack.EmbeddingRevision())
+	same, err = b.embeddingRevisionIsCurrent(t.Context(), ack.ID, ack.EmbeddingRevision())
 	require.NoError(t, err)
 	require.True(t, same)
-	require.NoError(t, b.FlushWriteBehind(nil))
-	materialized, err := b.GetNode("test:doc")
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
+	materialized, err := b.GetNode(t.Context(), "test:doc")
 	require.NoError(t, err)
-	materialized, err = SnapshotNodeForEmbedding(materialized)
+	materialized, err = SnapshotNodeForEmbedding(t.Context(), materialized)
 	require.NoError(t, err)
-	same, err = ack.EmbeddingRevision().MatchesNode(materialized)
+	same, err = ack.EmbeddingRevision().MatchesNode(t.Context(), materialized)
 	require.NoError(t, err)
 	require.True(t, same)
-	tx, err = b.BeginTransaction()
+	tx, err = b.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, tx.DeleteGraphNode(ack.ID, CascadeEdges))
+	require.NoError(t, tx.DeleteGraphNode(t.Context(), ack.ID, CascadeEdges))
 	require.NoError(t, tx.Commit())
-	same, err = b.embeddingRevisionIsCurrent(ack.ID, ack.EmbeddingRevision())
+	same, err = b.embeddingRevisionIsCurrent(t.Context(), ack.ID, ack.EmbeddingRevision())
 	require.ErrorIs(t, err, ErrNotFound)
 	require.False(t, same)
-	require.NoError(t, b.FlushWriteBehind(nil))
-	same, err = b.embeddingRevisionIsCurrent(ack.ID, ack.EmbeddingRevision())
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
+	same, err = b.embeddingRevisionIsCurrent(t.Context(), ack.ID, ack.EmbeddingRevision())
 	require.ErrorIs(t, err, ErrNotFound)
 	require.False(t, same)
 }

@@ -34,7 +34,7 @@ func FirstNodeIDByLabel(ctx context.Context, engine Engine, label string) (NodeI
 		return found, nil
 	}
 
-	node, err := engine.GetFirstNodeByLabel(label)
+	node, err := engine.GetFirstNodeByLabel(ctx, label)
 	if err != nil {
 		return "", err
 	}

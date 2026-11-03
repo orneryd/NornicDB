@@ -37,7 +37,7 @@ func TestSol1482R3PayloadMutationsRefreshSearch(t *testing.T) {
 				_, err = points.ClearPayload(ctx, &qpb.ClearPayloadPoints{CollectionName: "test_vectors", Points: selector})
 			}
 			require.NoError(t, err)
-			stored, err := store.GetNode(pointIDToNodeID(pid))
+			stored, err := store.GetNode(t.Context(), pointIDToNodeID(pid))
 			require.NoError(t, err)
 			if operation == "set" || operation == "overwrite" {
 				require.Equal(t, "newword", stored.Properties["content"])

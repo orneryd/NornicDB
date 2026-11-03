@@ -42,19 +42,37 @@ func BeginQueryRevealScopeContext(ctx context.Context, engine Engine, reveal boo
 	return ctx, func() { once.Do(func() { scope.active.Store(false); release() }) }
 }
 
-// InheritQueryRevealScopes carries genuine live leases from an owning statement
-// into a derived evaluator context without changing its cancellation or values.
-// An arbitrary context cannot manufacture a lease; released leases are ignored.
-// Only use this while the owner is active, e.g. when restoring a statement's
-// expression-failure context before a nested service call.
-func InheritQueryRevealScopes(ctx, owner context.Context) context.Context {
-	if owner == nil {
+// RevealScopes is an opaque, copyable handle to the genuine query reveal leases
+// recorded on an actual context. The zero value records no lease and cannot
+// manufacture one; only QueryRevealScopes reads existing leases from a caller
+// context. Holding the handle instead of that context keeps request cancellation
+// and request values out of the borrowing owner, and it reuses the existing
+// lease links, so capturing metadata allocates nothing.
+type RevealScopes struct {
+	link *queryProjectionScopeLink
+}
+
+// QueryRevealScopes captures the query reveal leases currently recorded on ctx.
+// ctx must be the actual caller context; a context without leases yields the
+// zero RevealScopes handle, which inherits nothing. Capture once where the
+// owning statement is known and keep the handle; do not retain ctx for it.
+func QueryRevealScopes(ctx context.Context) RevealScopes {
+	link, _ := ctx.Value(queryProjectionScopeKey{}).(*queryProjectionScopeLink)
+	return RevealScopes{link: link}
+}
+
+// InheritQueryRevealScopes carries the genuine live leases held by scopes into a
+// derived evaluator context without changing its cancellation, deadline or
+// values. An empty handle cannot manufacture a lease; released leases are
+// ignored. Only use this while the owner is active, e.g. when restoring a
+// statement's expression-failure context before a nested service call.
+func InheritQueryRevealScopes(ctx context.Context, scopes RevealScopes) context.Context {
+	if scopes.link == nil {
 		return ctx
 	}
-	inherited, _ := owner.Value(queryProjectionScopeKey{}).(*queryProjectionScopeLink)
 	current, _ := ctx.Value(queryProjectionScopeKey{}).(*queryProjectionScopeLink)
 	changed := false
-	for link := inherited; link != nil; link = link.next {
+	for link := scopes.link; link != nil; link = link.next {
 		if !link.scope.active.Load() {
 			continue
 		}

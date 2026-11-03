@@ -204,7 +204,7 @@ func TestStatementCacheFamilyPreciseReferenceInvalidation(t *testing.T) {
 			if err := root.validateSyntax(context.Background(), query, false, syntaxStatement); err != nil {
 				t.Fatal(err)
 			}
-			root.cachedUpperQuery(query)
+			root.cachedUpperQuery(t.Context(), query)
 			switch removal {
 			case "database":
 				err = manager.DropDatabase(t.Context(), "cache_removed")
@@ -310,7 +310,7 @@ func TestStatementCacheFamilyDynamicFabricReference(t *testing.T) {
 	if !recorded {
 		t.Fatal("dynamic outer text lost its resolved dependency")
 	}
-	root.cachedUpperQuery(query)
+	root.cachedUpperQuery(t.Context(), query)
 	if err := manager.RemoveConstituent(t.Context(), "cache_dynamic", "leaf"); err != nil {
 		t.Fatal(err)
 	}

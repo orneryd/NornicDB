@@ -31,16 +31,16 @@ func TestTransactionDeleteFormerEndpointKeepsMovedEdge(t *testing.T) {
 					{ID: "test:b", Labels: []string{"Peer"}},
 					{ID: "test:c", Labels: []string{"New"}},
 				} {
-					_, err := engine.CreateNode(node)
+					_, err := engine.CreateNode(t.Context(), node)
 					require.NoError(t, err)
 				}
 				edge := &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}
 				if incoming {
 					edge.StartNode, edge.EndNode = edge.EndNode, edge.StartNode
 				}
-				require.NoError(t, engine.CreateEdge(edge))
-				require.NoError(t, engine.FlushWriteBehind(nil))
-				tx, err := engine.BeginTransaction()
+				require.NoError(t, engine.CreateEdge(t.Context(), edge))
+				require.NoError(t, engine.FlushWriteBehind(context.Background()))
+				tx, err := engine.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = tx.Rollback() })
 				require.NoError(t, tx.SetNamespace("test"))
@@ -51,19 +51,19 @@ func TestTransactionDeleteFormerEndpointKeepsMovedEdge(t *testing.T) {
 				} else {
 					moved.StartNode = "test:c"
 				}
-				require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: moved}))
-				require.NoError(t, tx.DeleteGraphNode("test:a", CascadeEdges))
-				pending, err := tx.GetEdge(edge.ID)
+				require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: moved}))
+				require.NoError(t, tx.DeleteGraphNode(t.Context(), "test:a", CascadeEdges))
+				pending, err := tx.GetEdge(t.Context(), edge.ID)
 				require.NoError(t, err, "deleting the former endpoint must retain the pending rewrite")
 				require.Equal(t, moved.StartNode, pending.StartNode)
 				require.Equal(t, moved.EndNode, pending.EndNode)
 				require.NoError(t, tx.Commit())
-				require.NoError(t, engine.FlushWriteBehind(nil))
-				stored, err := engine.GetStoredEdge(edge.ID)
+				require.NoError(t, engine.FlushWriteBehind(context.Background()))
+				stored, err := engine.GetStoredEdge(t.Context(), edge.ID)
 				require.NoError(t, err)
 				require.Equal(t, moved.StartNode, stored.StartNode)
 				require.Equal(t, moved.EndNode, stored.EndNode)
-				_, err = engine.GetStoredNode("test:a")
+				_, err = engine.GetStoredNode(t.Context(), "test:a")
 				require.ErrorIs(t, err, ErrNotFound)
 				outgoing, err := engine.GetStoredOutgoingEdges(context.Background(), moved.StartNode)
 				require.NoError(t, err)
@@ -71,10 +71,10 @@ func TestTransactionDeleteFormerEndpointKeepsMovedEdge(t *testing.T) {
 				incomingEdges, err := engine.GetStoredIncomingEdges(context.Background(), moved.EndNode)
 				require.NoError(t, err)
 				require.Len(t, incomingEdges, 1)
-				count, err := engine.EdgeCountByType("LINK")
+				count, err := engine.EdgeCountByType(context.Background(), "LINK")
 				require.NoError(t, err)
 				require.EqualValues(t, 1, count)
-				count, err = engine.EdgeCount()
+				count, err = engine.EdgeCount(t.Context())
 				require.NoError(t, err)
 				require.EqualValues(t, 1, count)
 			})

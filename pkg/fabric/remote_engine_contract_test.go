@@ -165,9 +165,9 @@ func TestRemoteFactoryDecorators(t *testing.T) {
 				require.NoError(t, executor.RollbackParticipants(context.Background()))
 			}
 			if commit {
-				require.NoError(t, transaction.Commit(nil, nil))
+				require.NoError(t, transaction.Commit(TerminalContexts{Commit: statementCtx, Cleanup: context.WithoutCancel(statementCtx)}, nil, nil))
 			} else {
-				require.NoError(t, transaction.Rollback(nil))
+				require.NoError(t, transaction.Rollback(context.WithoutCancel(statementCtx), nil))
 			}
 			require.Equal(t, 1, factoryCalls)
 			require.Equal(t, 1, wrapped.Calls)

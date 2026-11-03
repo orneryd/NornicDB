@@ -3,9 +3,10 @@ package search
 import (
 	"context"
 	"errors"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -131,7 +132,7 @@ func TestNodeSearchFallbackWithoutRerankOutputIgnoresMinimum(t *testing.T) {
 				ID: storage.NodeID(string(rune('a' + index))), Labels: []string{"Doc"},
 				Properties: map[string]any{"content": fixture.content}, ChunkEmbeddings: [][]float32{fixture.embedding},
 			}
-			_, err := engine.CreateNode(node)
+			_, err := engine.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 			require.NoError(t, service.IndexNode(node))
 		}

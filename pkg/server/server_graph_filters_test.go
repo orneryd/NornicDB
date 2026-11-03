@@ -1,8 +1,9 @@
 package server
 
 import (
-	"github.com/orneryd/nornicdb/internal/jsontext"
 	"testing"
+
+	"github.com/orneryd/nornicdb/internal/jsontext"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -29,17 +30,17 @@ func TestGraphNeighborhoodEndpoint_ExcludeSymbolNameFragmentsGraph(t *testing.T)
 	for id, label := range map[string]string{
 		"a": "Code", "b": "Code", "c": "Code", "d": "Code",
 	} {
-		_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{label}})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(id), Labels: []string{label}})
 		require.NoError(t, err)
 	}
 	// The context symbol threads every parser call: a -> x -> b links the
 	// two otherwise independent chains a -> c and b -> d.
-	_, err := engine.CreateNode(&storage.Node{ID: "x", Labels: []string{"Code"}, Properties: map[string]interface{}{"label": "context.Context"}})
+	_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "x", Labels: []string{"Code"}, Properties: map[string]interface{}{"label": "context.Context"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "ac", StartNode: "a", EndNode: "c", Type: "CALLS"}))
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "bd", StartNode: "b", EndNode: "d", Type: "CALLS"}))
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "ax", StartNode: "a", EndNode: "x", Type: "CALLS"}))
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "xb", StartNode: "x", EndNode: "b", Type: "CALLS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "ac", StartNode: "a", EndNode: "c", Type: "CALLS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "bd", StartNode: "b", EndNode: "d", Type: "CALLS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "ax", StartNode: "a", EndNode: "x", Type: "CALLS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "xb", StartNode: "x", EndNode: "b", Type: "CALLS"}))
 
 	resp := makeRequest(t, server, "POST", defaultGraphPath(server, "neighborhood"), map[string]interface{}{
 		"node_ids": []string{"a"},
@@ -89,11 +90,11 @@ func TestGraphNeighborhoodEndpoint_ExcludePropertyWithValue(t *testing.T) {
 	token := getAuthToken(t, authenticator, "admin")
 	engine := getDefaultStorage(t, server)
 
-	_, err := engine.CreateNode(&storage.Node{ID: "a", Labels: []string{"Code"}, Properties: map[string]interface{}{"context": "ctx"}})
+	_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"Code"}, Properties: map[string]interface{}{"context": "ctx"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "b", Labels: []string{"Code"}, Properties: map[string]interface{}{"context": "other"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"Code"}, Properties: map[string]interface{}{"context": "other"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "CALLS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "CALLS"}))
 
 	ctx := "ctx"
 	resp := makeRequest(t, server, "POST", defaultGraphPath(server, "neighborhood"), map[string]interface{}{
@@ -133,11 +134,11 @@ func TestGraphNeighborhoodEndpoint_ExcludeRelationshipType(t *testing.T) {
 	engine := getDefaultStorage(t, server)
 
 	for _, id := range []string{"a", "b", "c"} {
-		_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{"Code"}})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(id), Labels: []string{"Code"}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "CALLS"}))
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "bc", StartNode: "b", EndNode: "c", Type: "IMPORTS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "CALLS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "bc", StartNode: "b", EndNode: "c", Type: "IMPORTS"}))
 
 	resp := makeRequest(t, server, "POST", defaultGraphPath(server, "neighborhood"), map[string]interface{}{
 		"node_ids":                   []string{"a"},
@@ -161,19 +162,19 @@ func TestGraphNeighborhoodEndpoint_IncludeNamesAndProperties(t *testing.T) {
 	token := getAuthToken(t, authenticator, "admin")
 	engine := getDefaultStorage(t, server)
 
-	_, err := engine.CreateNode(&storage.Node{ID: "a", Labels: []string{"Code"}, Properties: map[string]interface{}{"label": "symA", "entry": true}})
+	_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"Code"}, Properties: map[string]interface{}{"label": "symA", "entry": true}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "b", Labels: []string{"Code"}, Properties: map[string]interface{}{"label": "symB"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"Code"}, Properties: map[string]interface{}{"label": "symB"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "c", Labels: []string{"Code"}, Properties: map[string]interface{}{"label": "symC", "entry": true}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "c", Labels: []string{"Code"}, Properties: map[string]interface{}{"label": "symC", "entry": true}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "e", Labels: []string{"Topic"}, Properties: map[string]interface{}{"label": "symE", "entry": true}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "e", Labels: []string{"Topic"}, Properties: map[string]interface{}{"label": "symE", "entry": true}})
 	require.NoError(t, err)
 
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "CALLS"}))
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "bc", StartNode: "b", EndNode: "c", Type: "CALLS"}))
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "ae", StartNode: "a", EndNode: "e", Type: "CALLS"}))
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "ac", StartNode: "a", EndNode: "c", Type: "CALLS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "CALLS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "bc", StartNode: "b", EndNode: "c", Type: "CALLS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "ae", StartNode: "a", EndNode: "e", Type: "CALLS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "ac", StartNode: "a", EndNode: "c", Type: "CALLS"}))
 
 	// Name gate: only symA, symC, symE may enter. Property gate: Code nodes
 	// must carry entry. e (Topic) passes the name gate but is dropped by the

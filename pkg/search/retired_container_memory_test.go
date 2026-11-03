@@ -34,7 +34,7 @@ func TestRetiredRankingPayloadCollectible(t *testing.T) {
 
 func TestRetiredStrategyDeltasCollectible(t *testing.T) {
 	for _, applied := range []uint64{0, 1} {
-		owner := &Service{}
+		owner := &Service{lifecycleCtx: t.Context()}
 		reference := func() weak.Pointer[byte] {
 			id := strings.Repeat("retired", 64)
 			owner.strategyTransitionDeltas = []strategyDeltaMutation{{id: "kept", seq: 2}, {id: id, seq: 1}}

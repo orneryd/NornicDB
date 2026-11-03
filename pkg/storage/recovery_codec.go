@@ -15,7 +15,7 @@ func (e *valueEncoder) recovery(value any) ([]byte, error) {
 	if !typed {
 		return jsontext.Marshal(value)
 	}
-	return e.encode(payload)
+	return e.encode(payload, storedValueFraming)
 }
 
 // prepareRecoveryPayload returns the value to encode for an entity-bearing
@@ -221,7 +221,7 @@ func marshalWALRecoveryPayload(buffer *bytes.Buffer, value any) ([]byte, error) 
 	}
 	encoder := getValueEncoder()
 	defer putValueEncoder(encoder)
-	encoded, err := encoder.encode(payload)
+	encoded, err := encoder.encode(payload, storedValueFraming)
 	if err != nil {
 		return nil, err
 	}

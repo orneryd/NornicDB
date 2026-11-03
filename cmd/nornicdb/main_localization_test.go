@@ -194,7 +194,7 @@ func TestTransactionAdapterErrorsPreserveIdentityCauseAndLocale(t *testing.T) {
 		txMgr: txsession.NewManager(time.Minute, func(string) (*cypher.StorageExecutor, error) {
 			t.Fatal("missing transaction must fail before creating an executor")
 			return nil, nil
-		}),
+		}, t.Context()),
 	}
 	_, err = executor.Execute(context.Background(), "RETURN 1", nil)
 	require.EqualError(t, err, "no se encontró la transacción")

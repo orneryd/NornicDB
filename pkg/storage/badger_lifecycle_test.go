@@ -138,7 +138,7 @@ func TestBadgerEngine_Lifecycle_NilControllerBehavior(t *testing.T) {
 
 func TestBadgerEngine_CloseReleasesRetainedState(t *testing.T) {
 	e := newTestMemoryEngine(t)
-	_, err := e.CreateNode(&Node{
+	_, err := e.CreateNode(t.Context(), &Node{
 		ID:         "nornic:release-node",
 		Labels:     []string{"Release"},
 		Properties: map[string]interface{}{"name": "closed"},
@@ -148,7 +148,7 @@ func TestBadgerEngine_CloseReleasesRetainedState(t *testing.T) {
 
 	require.NoError(t, e.Close())
 
-	require.True(t, e.closed)
+	require.True(t, e.work.Closing())
 	require.Nil(t, e.DB())
 	require.Nil(t, e.nodeCache)
 	require.Nil(t, e.nodeBodyCache)
@@ -278,11 +278,11 @@ func TestBadgerEngine_IterateMVCCHeads_AndVersions_ReadWrite(t *testing.T) {
 	e := newTestMemoryEngine(t)
 
 	// Bootstrap a node and an edge so the head index has rows.
-	_, err := e.CreateNode(&Node{ID: "test:n1", Labels: []string{"L"}, Properties: map[string]any{}})
+	_, err := e.CreateNode(t.Context(), &Node{ID: "test:n1", Labels: []string{"L"}, Properties: map[string]any{}})
 	require.NoError(t, err)
-	_, err = e.CreateNode(&Node{ID: "test:n2", Labels: []string{"L"}, Properties: map[string]any{}})
+	_, err = e.CreateNode(t.Context(), &Node{ID: "test:n2", Labels: []string{"L"}, Properties: map[string]any{}})
 	require.NoError(t, err)
-	require.NoError(t, e.CreateEdge(&Edge{
+	require.NoError(t, e.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:n1", EndNode: "test:n2",
 		Type: "REL", Properties: map[string]any{},
 	}))
@@ -357,7 +357,7 @@ func TestBadgerEngine_IterateMVCCHeads_RespectsContextCancel(t *testing.T) {
 
 	// Stage some heads.
 	for i := 0; i < 5; i++ {
-		_, err := e.CreateNode(&Node{
+		_, err := e.CreateNode(t.Context(), &Node{
 			ID:         NodeID("test:n-" + string(rune('a'+i))),
 			Labels:     []string{"L"},
 			Properties: map[string]any{},

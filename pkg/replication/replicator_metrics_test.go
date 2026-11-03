@@ -233,7 +233,9 @@ func TestRaftReplicator_BootstrapEmitsRole(t *testing.T) {
 // tests that do not exercise data-plane paths.
 type nullStorage struct{}
 
-func (nullStorage) ApplyCommand(*Command) error { return nil }
+func (nullStorage) ApplyCommand(context.Context, *Command, WALPublicationMode) (CommandPublication, error) {
+	return CommandPublication{}, nil
+}
 func (nullStorage) GetWALPosition() (uint64, error) {
 	return 0, nil
 }

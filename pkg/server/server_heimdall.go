@@ -13,6 +13,7 @@ import (
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/heimdall"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
@@ -142,6 +143,7 @@ func (r *heimdallDBRouter) newExecutor(engine storage.Engine, database string) (
 	if r.db != nil {
 		if baseExecutor := r.db.GetCypherExecutor(); baseExecutor != nil {
 			exec.ShareEmbedderFrom(baseExecutor)
+			exec.ShareInferenceManagerFrom(baseExecutor)
 			exec.SetLocalizationRenderer(baseExecutor.GetLocalizationRenderer())
 			// NornicDB issue #563 defect 1: without this, Heimdall-routed
 			// queries against a non-default database log to io.Discard and
@@ -214,9 +216,9 @@ func (r *heimdallDBRouter) statementExecutor(ctx context.Context, database strin
 	if err != nil {
 		return nil, nil, err
 	}
-	var admit sync.Once
+	var admit lifecycle.OnceCompletion
 	ctx = cypher.WithStatementAdmitted(ctx, exec, func() {
-		admit.Do(func() {
+		admit.Run(func() {
 			r.finishExecutor(dbName, engine, exec)
 			r.publishExecutor(dbName, exec)
 		})
@@ -237,9 +239,6 @@ func (r *heimdallDBRouter) statementExecutor(ctx context.Context, database strin
 // with no principal and no such mark, a principal without its database scope
 // (auth.WithRequestPrincipal attaches both), or no context at all is refused.
 func (r *heimdallDBRouter) authorizeDatabase(ctx context.Context, database string, permission auth.Permission) (context.Context, string, error) {
-	if ctx == nil {
-		return nil, "", r.databaseForbidden(database)
-	}
 	allows := auth.RequestEntitlementResolverFromContext(ctx)
 	if allows == nil {
 		if !auth.RequestAuthenticationDisabledFromContext(ctx) {
@@ -333,8 +332,8 @@ func (r *heimdallDBRouter) Stats(ctx context.Context, database string) (heimdall
 		return heimdall.DatabaseStats{}, err
 	}
 
-	nodeCount, _ := engine.NodeCount()
-	edgeCount, _ := engine.EdgeCount()
+	nodeCount, _ := engine.NodeCount(ctx)
+	edgeCount, _ := engine.EdgeCount(ctx)
 
 	result := heimdall.DatabaseStats{
 		NodeCount:         nodeCount,
@@ -482,8 +481,8 @@ type heimdallRelatedAcceptor struct {
 	visible storage.QueryResultProjection
 }
 
-func (a heimdallRelatedAcceptor) Discover(_ context.Context, n *relatedwalk.Neighbor) (heimdall.RelatedNode, bool, bool) {
-	node, err := a.engine.GetNode(storage.NodeID(n.ID))
+func (a heimdallRelatedAcceptor) Discover(ctx context.Context, n *relatedwalk.Neighbor) (heimdall.RelatedNode, bool, bool) {
+	node, err := a.engine.GetNode(ctx, storage.NodeID(n.ID))
 	if err != nil || node == nil {
 		return heimdall.RelatedNode{}, false, false
 	}

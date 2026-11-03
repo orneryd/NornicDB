@@ -20,7 +20,7 @@ func newRangeIndexEngine(t *testing.T, flushed, pending []interface{}) *SchemaMa
 	require.NoError(t, schema.AddPropertyIndex("item_v", "Item", []string{"v"}))
 	create := func(prefix string, values []interface{}) {
 		for i, v := range values {
-			_, err := badger.CreateNode(&Node{ID: NodeID(fmt.Sprintf("nornic:%s-%d", prefix, i)), Labels: []string{"Item"}, Properties: map[string]any{"v": v}})
+			_, err := badger.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("nornic:%s-%d", prefix, i)), Labels: []string{"Item"}, Properties: map[string]any{"v": v}})
 			require.NoError(t, err)
 		}
 	}
@@ -31,7 +31,7 @@ func newRangeIndexEngine(t *testing.T, flushed, pending []interface{}) *SchemaMa
 
 func rangeValues(t *testing.T, schema *SchemaManager, flushed, pending []interface{}, bounds PropertyIndexBounds) []interface{} {
 	t.Helper()
-	ids, ok := schema.PropertyIndexRange("Item", "v", bounds)
+	ids, ok := checkedIndexRange[[]NodeID](t)(schema.PropertyIndexRange(t.Context(), "Item", "v", bounds))
 	require.True(t, ok)
 	values := make([]interface{}, 0, len(ids))
 	for _, id := range ids {
@@ -78,14 +78,14 @@ func TestPropertyIndexRange_SelectsValuesWithinBounds(t *testing.T) {
 
 func TestPropertyIndexRange_DeclinesWithoutIndexOrComparableBound(t *testing.T) {
 	schema := newRangeIndexEngine(t, []interface{}{int64(1)}, nil)
-	_, ok := schema.PropertyIndexRange("Item", "w", PropertyIndexBounds{Lower: int64(1), HasLower: true})
+	_, ok := checkedIndexRange[[]NodeID](t)(schema.PropertyIndexRange(t.Context(), "Item", "w", PropertyIndexBounds{Lower: int64(1), HasLower: true}))
 	require.False(t, ok, "no index on the property")
-	_, ok = schema.PropertyIndexRange("Other", "v", PropertyIndexBounds{Lower: int64(1), HasLower: true})
+	_, ok = checkedIndexRange[[]NodeID](t)(schema.PropertyIndexRange(t.Context(), "Other", "v", PropertyIndexBounds{Lower: int64(1), HasLower: true}))
 	require.False(t, ok, "no index on the label")
 	for _, bound := range []interface{}{true, nil, []interface{}{int64(1)}} {
-		_, ok = schema.PropertyIndexRange("Item", "v", PropertyIndexBounds{Upper: bound, HasUpper: true})
+		_, ok = checkedIndexRange[[]NodeID](t)(schema.PropertyIndexRange(t.Context(), "Item", "v", PropertyIndexBounds{Upper: bound, HasUpper: true}))
 		require.False(t, ok, "bound %v is neither a number nor a string", bound)
-		_, ok = schema.PropertyIndexRange("Item", "v", PropertyIndexBounds{Lower: bound, HasLower: true})
+		_, ok = checkedIndexRange[[]NodeID](t)(schema.PropertyIndexRange(t.Context(), "Item", "v", PropertyIndexBounds{Lower: bound, HasLower: true}))
 		require.False(t, ok, "bound %v is neither a number nor a string", bound)
 	}
 }

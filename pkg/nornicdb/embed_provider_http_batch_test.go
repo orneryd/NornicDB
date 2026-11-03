@@ -65,16 +65,16 @@ func TestProviderHTTPWorkerPartialFailure(t *testing.T) {
 			engine.SetEmbeddingsEnabled(true)
 			store := storage.NewNamespacedEngine(engine, "http-batch")
 			for _, id := range []storage.NodeID{"first", "poison", "third"} {
-				_, err := store.CreateNode(&storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"text": string(id)}})
+				_, err := store.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"text": string(id)}})
 				require.NoError(t, err)
 			}
 			worker := nornicdb.NewEmbedWorker(embed.NewTracedEmbedder(embed.NewCachedEmbedder(base, 16)), store, &nornicdb.EmbedWorkerConfig{NumWorkers: 1, MaxRetries: 1, ChunkSize: 512, EmbedBatchSize: 32, DeferWorkerStart: true, ScanInterval: time.Minute})
 			t.Cleanup(worker.Close)
 			worker.StartWorkers()
 			require.Eventually(t, func() bool {
-				first, err1 := store.GetNode("first")
-				third, err3 := store.GetNode("third")
-				poison, err2 := store.GetNode("poison")
+				first, err1 := store.GetNode(t.Context(), "first")
+				third, err3 := store.GetNode(t.Context(), "third")
+				poison, err2 := store.GetNode(t.Context(), "poison")
 				return err1 == nil && err2 == nil && err3 == nil && len(first.ChunkEmbeddings) == 1 && len(third.ChunkEmbeddings) == 1 && poison.EmbedMeta["embedding_failed"] == true
 			}, 5*time.Second, 10*time.Millisecond)
 			worker.Close()
@@ -82,7 +82,7 @@ func TestProviderHTTPWorkerPartialFailure(t *testing.T) {
 				id     storage.NodeID
 				marker float32
 			}{{"first", 1}, {"third", 3}} {
-				node, err := store.GetNode(tc.id)
+				node, err := store.GetNode(t.Context(), tc.id)
 				require.NoError(t, err)
 				require.Equal(t, [][]float32{{tc.marker, 1}}, node.ChunkEmbeddings)
 			}
@@ -111,7 +111,7 @@ func TestProviderHTTPWorkerMultimodalChunkMetadata(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	engine.SetEmbeddingsEnabled(true)
 	store := storage.NewNamespacedEngine(engine, "http-multimodal")
-	_, err = store.CreateNode(&storage.Node{ID: "document", Labels: []string{"Doc"}, Properties: map[string]any{
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "document", Labels: []string{"Doc"}, Properties: map[string]any{
 		"text":               "fallback",
 		"_embedding_content": `[{"type":"text","text":"first passage"},{"type":"image_url","image_url":"https://example.test/mock.png"},{"type":"text","text":"later passage"}]`,
 	}})
@@ -120,11 +120,11 @@ func TestProviderHTTPWorkerMultimodalChunkMetadata(t *testing.T) {
 	t.Cleanup(worker.Close)
 	worker.StartWorkers()
 	require.Eventually(t, func() bool {
-		node, err := store.GetNode("document")
+		node, err := store.GetNode(t.Context(), "document")
 		return err == nil && len(node.ChunkEmbeddings) == 1
 	}, 5*time.Second, 10*time.Millisecond)
 	worker.Close()
-	node, err := store.GetNode("document")
+	node, err := store.GetNode(t.Context(), "document")
 	require.NoError(t, err)
 	require.EqualValues(t, 7, node.EmbedMeta["embedding_total_tokens"])
 	chunks, err := json.Marshal(node.EmbedMeta["chunk_texts"])

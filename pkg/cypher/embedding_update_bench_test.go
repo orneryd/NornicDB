@@ -20,7 +20,7 @@ func BenchmarkEmbeddedNodeUpdates(b *testing.B) {
 	for i := 0; i < 1000; i++ {
 		vector := make([]float32, 256)
 		vector[i%256] = 1
-		if _, err := store.CreateNode(&storage.Node{
+		if _, err := store.CreateNode(b.Context(), &storage.Node{
 			ID:              storage.NodeID(fmt.Sprintf("n%d", i)),
 			Labels:          []string{"E"},
 			Properties:      map[string]interface{}{"k": int64(i), "text": "embedded text", "tag": "t"},

@@ -15,29 +15,29 @@ func TestBadgerEngine_MVCCEdgeVisibility_FallbackAndTombstoneBranches(t *testing
 	end := NodeID("test:mvcc-edge-vis-end")
 	edgeID := EdgeID("test:mvcc-edge-vis-e1")
 
-	_, err := engine.CreateNode(&Node{ID: start, Labels: []string{"N"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: start, Labels: []string{"N"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: end, Labels: []string{"N"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: end, Labels: []string{"N"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: edgeID, StartNode: start, EndNode: end, Type: "REL", Properties: map[string]any{"w": 1}}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: edgeID, StartNode: start, EndNode: end, Type: "REL", Properties: map[string]any{"w": 1}}))
 
-	head, err := engine.GetEdgeCurrentHead(edgeID)
+	head, err := engine.GetEdgeCurrentHead(context.Background(), edgeID)
 	require.NoError(t, err)
 
 	// Ensure an explicit version record exists at head.Version, then remove primary key
 	// so GetEdgeLatestVisible/GetEdgeVisibleAt must resolve via MVCC fallback paths.
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
-		edge, gErr := engine.GetEdge(edgeID)
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
+		edge, gErr := engine.GetEdge(t.Context(), edgeID)
 		require.NoError(t, gErr)
 		require.NoError(t, engine.writeEdgeMVCCVersionInTxn(txn, edge, head.Version))
 		return txn.Delete(edgeKey(edgeID))
 	}))
 
-	latest, err := engine.GetEdgeLatestVisible(edgeID)
+	latest, err := engine.GetEdgeLatestVisible(t.Context(), edgeID)
 	require.NoError(t, err)
 	require.Equal(t, edgeID, latest.ID)
 
-	_, err = engine.GetEdgeVisibleAt(edgeID, head.Version)
+	_, err = engine.GetEdgeVisibleAt(t.Context(), edgeID, head.Version)
 	// Depending on whether an exact head-version record exists in this test setup,
 	// the reader may resolve via fallback or report not found; both execute the
 	// targeted fallback branch after primary-key miss.
@@ -45,7 +45,7 @@ func TestBadgerEngine_MVCCEdgeVisibility_FallbackAndTombstoneBranches(t *testing
 		require.ErrorIs(t, err, ErrNotFound)
 	}
 
-	_, err = engine.GetEdgeVisibleAt(edgeID, MVCCVersion{})
+	_, err = engine.GetEdgeVisibleAt(t.Context(), edgeID, MVCCVersion{})
 	require.ErrorIs(t, err, ErrNotVisibleAtSnapshot)
 
 	// Append a tombstone head explicitly because we removed the primary edge key
@@ -55,13 +55,13 @@ func TestBadgerEngine_MVCCEdgeVisibility_FallbackAndTombstoneBranches(t *testing
 		CommitSequence:  head.Version.CommitSequence + 1,
 	}
 	require.NoError(t, engine.AppendEdgeTombstone(edgeID, tombVersion))
-	tombHead, err := engine.GetEdgeCurrentHead(edgeID)
+	tombHead, err := engine.GetEdgeCurrentHead(context.Background(), edgeID)
 	require.NoError(t, err)
 	require.True(t, tombHead.Tombstoned)
 
-	_, err = engine.GetEdgeLatestVisible(edgeID)
+	_, err = engine.GetEdgeLatestVisible(t.Context(), edgeID)
 	require.ErrorIs(t, err, ErrNotFound)
-	_, err = engine.GetEdgeVisibleAt(edgeID, tombHead.Version)
+	_, err = engine.GetEdgeVisibleAt(t.Context(), edgeID, tombHead.Version)
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
@@ -73,18 +73,18 @@ func TestBadgerEngine_MVCCEdgeVisibility_FilterAndBetweenGuards(t *testing.T) {
 	end := NodeID("test:mvcc-edge-filter-end")
 	edgeID := EdgeID("test:mvcc-edge-filter-e1")
 
-	_, err := engine.CreateNode(&Node{ID: start, Labels: []string{"N"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: start, Labels: []string{"N"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: end, Labels: []string{"N"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: end, Labels: []string{"N"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: edgeID, StartNode: start, EndNode: end, Type: "REL", VisibilitySuppressed: true}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: edgeID, StartNode: start, EndNode: end, Type: "REL", VisibilitySuppressed: true}))
 
-	head, err := engine.GetEdgeCurrentHead(edgeID)
+	head, err := engine.GetEdgeCurrentHead(context.Background(), edgeID)
 	require.NoError(t, err)
 
-	_, err = engine.GetEdgeVisibleAt(edgeID, head.Version)
+	_, err = engine.GetEdgeVisibleAt(t.Context(), edgeID, head.Version)
 	require.ErrorIs(t, err, ErrNotFound)
-	_, err = engine.GetEdgeLatestVisible(edgeID)
+	_, err = engine.GetEdgeLatestVisible(t.Context(), edgeID)
 	require.ErrorIs(t, err, ErrNotFound)
 
 	_, err = engine.GetEdgesBetweenVisibleAt(context.Background(), "", end, MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 1})
@@ -96,13 +96,13 @@ func TestBadgerEngine_MVCCEdgeVisibility_HistoricalFallbackAndSuppressionBranche
 		engine := createMVCCBadgerEngine(t)
 		engine.SetDecayEnabled(true)
 		for _, nodeID := range []NodeID{"test:hs-a", "test:hs-b"} {
-			_, err := engine.CreateNode(&Node{ID: nodeID, Labels: []string{"N"}})
+			_, err := engine.CreateNode(t.Context(), &Node{ID: nodeID, Labels: []string{"N"}})
 			require.NoError(t, err)
 		}
 		edgeID := EdgeID("test:hs-edge")
 		v1 := MVCCVersion{CommitTimestamp: time.Now().UTC().Add(-time.Second), CommitSequence: 10}
 		v2 := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 11}
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			if err := engine.writeEdgeMVCCVersionInTxn(txn, &Edge{ID: edgeID, StartNode: "test:hs-a", EndNode: "test:hs-b", Type: "REL", VisibilitySuppressed: true}, v1); err != nil {
 				return err
 			}
@@ -119,22 +119,22 @@ func TestBadgerEngine_MVCCEdgeVisibility_HistoricalFallbackAndSuppressionBranche
 	t.Run("missing primary falls back to older mvcc record when head record is absent", func(t *testing.T) {
 		engine := createMVCCBadgerEngine(t)
 		for _, nodeID := range []NodeID{"test:hf-a", "test:hf-b"} {
-			_, err := engine.CreateNode(&Node{ID: nodeID, Labels: []string{"N"}})
+			_, err := engine.CreateNode(t.Context(), &Node{ID: nodeID, Labels: []string{"N"}})
 			require.NoError(t, err)
 		}
 		edgeID := EdgeID("test:hf-edge")
-		require.NoError(t, engine.CreateEdge(&Edge{ID: edgeID, StartNode: "test:hf-a", EndNode: "test:hf-b", Type: "REL", Properties: map[string]any{"w": int64(1)}}))
-		v1, err := engine.GetEdgeCurrentHead(edgeID)
+		require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: edgeID, StartNode: "test:hf-a", EndNode: "test:hf-b", Type: "REL", Properties: map[string]any{"w": int64(1)}}))
+		v1, err := engine.GetEdgeCurrentHead(context.Background(), edgeID)
 		require.NoError(t, err)
 		// A complete archived record, as an earlier version or a delete writes.
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			return engine.writeEdgeMVCCVersionInTxn(txn, &Edge{ID: edgeID, StartNode: "test:hf-a", EndNode: "test:hf-b", Type: "REL", Properties: map[string]any{"w": int64(1)}}, v1.Version)
 		}))
-		require.NoError(t, engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: edgeID, StartNode: "test:hf-a", EndNode: "test:hf-b", Type: "REL", Properties: map[string]any{"w": int64(2)}}}))
-		v2, err := engine.GetEdgeCurrentHead(edgeID)
+		require.NoError(t, engine.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: edgeID, StartNode: "test:hf-a", EndNode: "test:hf-b", Type: "REL", Properties: map[string]any{"w": int64(2)}}}))
+		v2, err := engine.GetEdgeCurrentHead(context.Background(), edgeID)
 		require.NoError(t, err)
 
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			return txn.Delete(edgeKey(edgeID))
 		}))
 
@@ -149,15 +149,15 @@ func TestBadgerEngine_MVCCEdgeVisibility_HistoricalFallbackAndSuppressionBranche
 	t.Run("missing primary leaves an undo record nothing to rebuild from", func(t *testing.T) {
 		engine := createMVCCBadgerEngine(t)
 		for _, nodeID := range []NodeID{"test:hu-a", "test:hu-b"} {
-			_, err := engine.CreateNode(&Node{ID: nodeID, Labels: []string{"N"}})
+			_, err := engine.CreateNode(t.Context(), &Node{ID: nodeID, Labels: []string{"N"}})
 			require.NoError(t, err)
 		}
 		edgeID := EdgeID("test:hu-edge")
-		require.NoError(t, engine.CreateEdge(&Edge{ID: edgeID, StartNode: "test:hu-a", EndNode: "test:hu-b", Type: "REL", Properties: map[string]any{"w": int64(1)}}))
-		require.NoError(t, engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: edgeID, StartNode: "test:hu-a", EndNode: "test:hu-b", Type: "REL", Properties: map[string]any{"w": int64(2)}}}))
-		v2, err := engine.GetEdgeCurrentHead(edgeID)
+		require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: edgeID, StartNode: "test:hu-a", EndNode: "test:hu-b", Type: "REL", Properties: map[string]any{"w": int64(1)}}))
+		require.NoError(t, engine.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: edgeID, StartNode: "test:hu-a", EndNode: "test:hu-b", Type: "REL", Properties: map[string]any{"w": int64(2)}}}))
+		v2, err := engine.GetEdgeCurrentHead(context.Background(), edgeID)
 		require.NoError(t, err)
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			return txn.Delete(edgeKey(edgeID))
 		}))
 		require.NoError(t, engine.withView(func(txn *badger.Txn) error {

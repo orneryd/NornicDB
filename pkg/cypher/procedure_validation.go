@@ -16,8 +16,8 @@ import (
 // arguments, as Neo4j does when it compiles the statement: whether the call
 // runs on its own or as a clause of a larger query, and whatever rows reach
 // it.
-func validateProcedureCallArguments(callCypher string) error {
-	if procedureCallContainsAggregation(callCypher) {
+func validateProcedureCallArguments(ctx context.Context, callCypher string) error {
+	if procedureCallContainsAggregation(ctx, callCypher) {
 		return newSemanticError(
 			"Neo.ClientError.Statement.SyntaxError",
 			"InvalidAggregation",
@@ -28,7 +28,7 @@ func validateProcedureCallArguments(callCypher string) error {
 }
 
 func extractProcedureInvocationArguments(ctx context.Context, spec ProcedureSpec, callCypher string) ([]interface{}, error) {
-	if err := validateProcedureCallArguments(callCypher); err != nil {
+	if err := validateProcedureCallArguments(ctx, callCypher); err != nil {
 		return nil, err
 	}
 	if strings.Index(callCypher, "(") >= 0 {
@@ -75,7 +75,7 @@ func (e *StorageExecutor) extractBoundProcedureInvocationArguments(ctx context.C
 		bindings = make(map[string]interface{})
 		bindParameterRow(ctx, pipelineRow(bindings))
 	}
-	if err := validateProcedureCallArguments(callCypher); err != nil {
+	if err := validateProcedureCallArguments(ctx, callCypher); err != nil {
 		return nil, err
 	}
 	args := make([]interface{}, len(texts))
@@ -227,7 +227,13 @@ func validateAndCoerceProcedureArguments(spec ProcedureSpec, args []interface{},
 // LIST parameter also takes NornicDB's other forms (a node id, a label, a
 // request's short form).
 func staticProcedureArgumentTypeError(ctx context.Context, clause string, scope staticTypeScope, unwound map[string]struct{}) error {
-	procedure, found := globalProcedureRegistry.Get(extractProcedureName(ctx, clause))
+	name, err := extractProcedureName(ctx, clause)
+	if err != nil {
+		// A clause the reader could not parse gets no static type verdict; the
+		// owner that runs the CALL reports the parse error.
+		return nil
+	}
+	procedure, found := globalProcedureRegistry.Get(name)
 	if !found {
 		return nil
 	}
@@ -249,7 +255,7 @@ func staticProcedureArgumentTypeError(ctx context.Context, clause string, scope 
 		if index >= len(procedure.Spec.Params) {
 			break
 		}
-		typeName := scope.staticExpressionType(text)
+		typeName := scope.staticExpressionType(ctx, text)
 		if typeName == "" {
 			continue
 		}
@@ -267,7 +273,7 @@ func projectUnwoundValues(ctx context.Context, unwound map[string]struct{}, clau
 	if len(unwound) == 0 {
 		return nil
 	}
-	body, _ := projectionSemanticBodyAndTail(clause, "WITH")
+	body, _ := projectionSemanticBodyAndTail(ctx, clause, "WITH")
 	var projected map[string]struct{}
 	keep := func(name string) {
 		if projected == nil {
@@ -389,7 +395,7 @@ func isFloatProcedureValue(value interface{}) bool {
 	return ok
 }
 
-func procedureCallContainsAggregation(callCypher string) bool {
+func procedureCallContainsAggregation(ctx context.Context, callCypher string) bool {
 	open := strings.Index(callCypher, "(")
 	if open < 0 {
 		return false
@@ -400,7 +406,7 @@ func procedureCallContainsAggregation(callCypher string) bool {
 	}
 	body := callCypher[open+1 : close]
 	for _, name := range []string{"count", "sum", "avg", "min", "max", "collect", "stdev", "stdevp", "percentilecont", "percentiledisc"} {
-		if findKeywordIndexInContext(body, name) >= 0 && strings.Contains(lowerASCII(body), name+"(") {
+		if findKeywordIndexInContext(ctx, body, name) >= 0 && strings.Contains(lowerASCII(body), name+"(") {
 			return true
 		}
 	}

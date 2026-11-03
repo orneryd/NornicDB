@@ -2,8 +2,9 @@ package linkpredict
 
 import (
 	"context"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -14,11 +15,11 @@ import (
 func TestGraphBuilderRelationshipTypes(t *testing.T) {
 	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test")
 	for _, id := range []string{"a", "b", "c"} {
-		_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(id)})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(id)})
 		require.NoError(t, err)
 	}
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "K"}))
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "ac", StartNode: "a", EndNode: "c", Type: "L"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "K"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "ac", StartNode: "a", EndNode: "c", Type: "L"}))
 
 	config := DefaultBuildConfig()
 	config.RelationshipTypes = []string{"K"}
@@ -37,11 +38,11 @@ func TestGraphBuilderRelationshipTypes(t *testing.T) {
 func TestGraphBuilderCacheKeepsOptionsApart(t *testing.T) {
 	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test")
 	for _, id := range []string{"a", "b", "c"} {
-		_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(id)})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(id)})
 		require.NoError(t, err)
 	}
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "K"}))
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "ac", StartNode: "a", EndNode: "c", Type: "L"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "K"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "ac", StartNode: "a", EndNode: "c", Type: "L"}))
 	cache := t.TempDir()
 	build := func(types ...string) Graph {
 		t.Helper()

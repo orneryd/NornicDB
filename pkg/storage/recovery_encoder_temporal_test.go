@@ -78,7 +78,7 @@ func TestRecoveryEncoderRegisteredPropertyKinds(t *testing.T) {
 	engine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	for _, id := range []storage.NodeID{"nornic:a", "nornic:b"} {
-		_, err := engine.CreateNode(&storage.Node{ID: id})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: id})
 		require.NoError(t, err)
 	}
 	// UUID/vector are supported by the materialized format above but are
@@ -87,7 +87,7 @@ func TestRecoveryEncoderRegisteredPropertyKinds(t *testing.T) {
 	storedKinds := []string{"date", "local-time", "time", "local-datetime", "datetime", "duration", "point", "nested"}
 	for _, key := range storedKinds {
 		value := properties[key]
-		require.NoError(t, engine.CreateEdge(&storage.Edge{ID: storage.EdgeID("nornic:" + key), StartNode: "nornic:a", EndNode: "nornic:b", Type: "TYPED",
+		require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: storage.EdgeID("nornic:" + key), StartNode: "nornic:a", EndNode: "nornic:b", Type: "TYPED",
 			Properties: map[string]any{"value": value}, VisibilitySuppressed: true}))
 	}
 	var fast, general bytes.Buffer

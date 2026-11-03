@@ -42,9 +42,6 @@ func withRerankMemo(ctx context.Context, memo *rerankMemo) context.Context {
 }
 
 func rerankMemoFromContext(ctx context.Context) *rerankMemo {
-	if ctx == nil {
-		return nil
-	}
 	memo, _ := ctx.Value(rerankMemoContextKey{}).(*rerankMemo)
 	return memo
 }

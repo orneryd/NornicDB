@@ -39,20 +39,20 @@ func TestTemporalConstraintBackfillsBufferedNodes(t *testing.T) {
 	t.Cleanup(func() { _ = inner.Close() })
 	engine := NewNamespacedEngine(inner, "test")
 	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	tx, err := inner.BeginTransaction()
+	tx, err := inner.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	require.NoError(t, tx.SetImplicit(true))
-	_, err = tx.CreateNode(&Node{ID: "test:period1", Labels: []string{"Period"}, Properties: map[string]any{"key": "k", "from": from, "to": from.Add(24 * time.Hour)}})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:period1", Labels: []string{"Period"}, Properties: map[string]any{"key": "k", "from": from, "to": from.Add(24 * time.Hour)}})
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 	require.True(t, tx.AcknowledgedBuffered(), "the create is acknowledged, not yet applied")
 
 	c := Constraint{Name: "period_history", Type: ConstraintTemporal, EntityType: ConstraintEntityNode, Label: "Period", Properties: []string{"key", "from", "to"}}
-	require.NoError(t, ValidateConstraintOnCreationForEngine(engine, c))
+	require.NoError(t, ValidateConstraintOnCreationForEngine(context.Background(), engine, c))
 	require.NoError(t, engine.GetSchema().AddConstraint(c))
 	require.NoError(t, MarkNewTemporalConstraintsForEngine(engine, engine.GetSchema(), []Constraint{c}))
-	require.NoError(t, inner.FlushWriteBehind(nil))
+	require.NoError(t, inner.FlushWriteBehind(context.Background()))
 
 	require.Equal(t, 1, countKeysWithPrefix(t, inner, prefixTemporalIndex),
 		"the node acknowledged before the constraint has no history entry, yet the index is recorded complete")
@@ -64,30 +64,30 @@ func TestTemporalConstraintBackfillsBufferedNodes(t *testing.T) {
 func TestBetweenSelfHealWritesOnlyWhatIsStored(t *testing.T) {
 	b := newWriteBehindTestEngine(t, time.Hour)
 	for _, id := range []NodeID{"test:a", "test:b"} {
-		_, err := b.CreateNode(&Node{ID: id})
+		_, err := b.CreateNode(t.Context(), &Node{ID: id})
 		require.NoError(t, err)
 	}
-	require.NoError(t, b.CreateEdge(&Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}))
-	require.NoError(t, b.FlushWriteBehind(nil))
+	require.NoError(t, b.CreateEdge(t.Context(), &Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}))
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
 	// Drift: the between index lost the relationship; the legacy outgoing
 	// index still holds it.
-	edge, err := b.GetEdge("test:e")
+	edge, err := b.GetEdge(t.Context(), "test:e")
 	require.NoError(t, err)
-	require.NoError(t, b.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return b.deleteEdgeBetweenIndexesInTxn(txn, edge) }))
+	require.NoError(t, b.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error { return b.deleteEdgeBetweenIndexesInTxn(txn, edge) }))
 	require.Zero(t, countKeysWithPrefix(t, b, prefixEdgeBetweenIndex))
 
 	var once sync.Once
 	restore := setBetweenSelfHealHook(func() {
 		once.Do(func() {
-			require.NoError(t, b.DeleteEdge("test:e"))
-			require.NoError(t, b.FlushWriteBehind(nil))
+			require.NoError(t, b.DeleteEdge(t.Context(), "test:e"))
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
 		})
 	})
 	defer restore()
 	_, err = b.GetEdgesBetween(context.Background(), "test:a", "test:b")
 	require.NoError(t, err)
 	restore()
-	require.NoError(t, b.FlushWriteBehind(nil))
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
 
 	require.Zero(t, countKeysWithPrefix(t, b, prefixEdgeBetweenIndex), "the heal indexed a relationship deleted before it")
 	require.Zero(t, countKeysWithPrefix(t, b, prefixEdgeBetweenHead), "the heal pointed the between head at a relationship deleted before it")
@@ -154,9 +154,9 @@ func TestTemporalRebuildRunsAcrossNoWrite(t *testing.T) {
 			period := func(start time.Time) *Node {
 				return &Node{ID: "p1", Labels: []string{"Period"}, Properties: map[string]any{"key": "k", "from": start, "to": start.Add(24 * time.Hour)}}
 			}
-			_, err := engine.CreateNode(period(from))
+			_, err := engine.CreateNode(t.Context(), period(from))
 			require.NoError(t, err)
-			require.NoError(t, inner.FlushWriteBehind(nil))
+			require.NoError(t, inner.FlushWriteBehind(context.Background()))
 
 			attempts := 0
 			hook, wait := writeAtPause(pauseTemporalRebuildNode, func() error {
@@ -164,19 +164,19 @@ func TestTemporalRebuildRunsAcrossNoWrite(t *testing.T) {
 				moved.ID = "test:p1"
 				var err error
 				attempts, err = conflictRetried(inner, func(tx *BadgerTransaction) error {
-					return tx.UpdateGraphNode(NodeUpdateRequest{After: moved, Policy: ClientNodeEdits})
+					return tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: moved, Policy: ClientNodeEdits})
 				})
 				if err != nil {
 					return err
 				}
-				return inner.FlushWriteBehind(nil)
+				return inner.FlushWriteBehind(context.Background())
 			})
 			restore := setMaintenancePauseHook(hook)
 			defer restore()
 			require.NoError(t, inner.RebuildTemporalIndexes(context.Background()))
 			restore()
 			require.NoError(t, wait())
-			require.NoError(t, inner.FlushWriteBehind(nil))
+			require.NoError(t, inner.FlushWriteBehind(context.Background()))
 
 			published := indexKeys(t, inner, prefixTemporalIndex, prefixTemporalHead)
 			require.NoError(t, inner.RebuildTemporalIndexes(context.Background()))
@@ -199,7 +199,7 @@ func TestIDRepairRunsAcrossNoWrite(t *testing.T) {
 			dir := t.TempDir()
 			seed := openBackfillTestEngine(t, dir, false)
 			for _, node := range []*Node{{ID: "test:a", Labels: []string{"Doc"}}, {ID: "test:b", Labels: []string{"Doc", "Source"}}} {
-				_, err := seed.CreateNode(node)
+				_, err := seed.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 			}
 			dropDictionaryEntries(t, seed, []NodeID{"test:b"}, nil)
@@ -210,12 +210,12 @@ func TestIDRepairRunsAcrossNoWrite(t *testing.T) {
 			hook, wait := writeAtPause(pauseIDRepairRestore, func() error {
 				var err error
 				attempts, err = conflictRetried(b, func(tx *BadgerTransaction) error {
-					return tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:b", Labels: []string{"Doc", "Source", "Fresh"}}, Policy: ClientNodeEdits})
+					return tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:b", Labels: []string{"Doc", "Source", "Fresh"}}, Policy: ClientNodeEdits})
 				})
 				if err != nil {
 					return err
 				}
-				return b.FlushWriteBehind(nil)
+				return b.FlushWriteBehind(context.Background())
 			})
 			restore := setMaintenancePauseHook(hook)
 			defer restore()
@@ -223,7 +223,7 @@ func TestIDRepairRunsAcrossNoWrite(t *testing.T) {
 			require.NoError(t, err)
 			restore()
 			require.NoError(t, wait())
-			require.NoError(t, b.FlushWriteBehind(nil))
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
 
 			require.Equal(t, []NodeID{"test:b"}, report.RestoredNodes)
 			require.True(t, labelled(t, b, "Fresh", "test:b"), "a label added during the repair is indexed under a number the repair moved the node off")

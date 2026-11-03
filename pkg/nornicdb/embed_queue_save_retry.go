@@ -1,6 +1,7 @@
 package nornicdb
 
 import (
+	"errors"
 	"strings"
 	"time"
 
@@ -37,11 +38,11 @@ func (ew *EmbedWorker) validNodeClaimLocked(id storage.NodeID) bool {
 // Enqueue only journals IDs; it never waits for a storage claim to finish.
 // The retry owner consumes notifications before selection and result validity.
 func (ew *EmbedWorker) embeddingSnapshot(id storage.NodeID) (*storage.Node, error) {
-	node, err := ew.storage.GetNode(id)
+	node, err := ew.storage.GetNode(ew.ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	return storage.SnapshotNodeForEmbedding(node)
+	return storage.SnapshotNodeForEmbedding(ew.ctx, node)
 }
 
 // observeNodeRevisionLocked is the sole update/reset decision. Notifications
@@ -50,14 +51,14 @@ func (ew *EmbedWorker) embeddingSnapshot(id storage.NodeID) (*storage.Node, erro
 func (ew *EmbedWorker) observeNodeRevisionLocked(node *storage.Node) bool {
 	changed := false
 	if state := ew.nodeRetries[node.ID]; state != nil {
-		same, err := state.revision.MatchesNode(node)
+		same, err := state.revision.MatchesNode(ew.ctx, node)
 		if err == nil && !same {
 			delete(ew.nodeRetries, node.ID)
 			changed = true
 		}
 	}
 	if attempt := ew.claimedNodes[string(node.ID)]; attempt != nil {
-		same, err := attempt.token.BodyRevision.MatchesNode(node)
+		same, err := attempt.token.BodyRevision.MatchesNode(ew.ctx, node)
 		if err == nil && !same {
 			attempt.invalidated = true
 			changed = true
@@ -88,6 +89,7 @@ func (ew *EmbedWorker) applyNodeUpdatesLocked() {
 		}
 	}
 	observed := make(map[storage.NodeID]bool)
+	retryObservation := false
 	observe := func(id storage.NodeID) {
 		if observed[id] || !matches(string(id)) {
 			return
@@ -100,6 +102,8 @@ func (ew *EmbedWorker) applyNodeUpdatesLocked() {
 				if attempt := ew.claimedNodes[string(id)]; attempt != nil {
 					attempt.invalidated = true
 				}
+			} else {
+				retryObservation = true
 			}
 			return
 		}
@@ -114,6 +118,20 @@ func (ew *EmbedWorker) applyNodeUpdatesLocked() {
 	}
 	for id := range ew.claimedNodes {
 		observe(storage.NodeID(id))
+	}
+	if retryObservation {
+		// A failed read is not an observed revision. Keep the original hints
+		// in the existing journal for the next ordinary recovery pass.
+		ew.mu.Lock()
+		if ew.nodeUpdates == nil {
+			ew.nodeUpdates = updates
+		} else {
+			for id := range updates {
+				ew.nodeUpdates[id] = struct{}{}
+			}
+		}
+		ew.nodeUpdatesPending.Store(true)
+		ew.mu.Unlock()
 	}
 }
 
@@ -173,7 +191,7 @@ func (ew *EmbedWorker) failNodeEmbedding(node *storage.Node, failure error) bool
 	}
 	ew.claimMu.Unlock()
 	if park {
-		ew.markNodeEmbeddingFailed(node.ID, failure, node)
+		ew.markNodeEmbeddingFailed(ew.ctx, node.ID, failure, node)
 	}
 	return firstFailure // A repeatedly rejected retry is not progress.
 }
@@ -197,13 +215,16 @@ func (ew *EmbedWorker) clearNodeEmbeddingRetriesLocked() {
 // nextEmbeddingNodeID runs under claimMu. Storage markers for DLQ IDs are
 // consumed while seeking fresh work; the retry owner keeps those IDs and its
 // deadline wakes the worker independently of the storage index.
-func (ew *EmbedWorker) nextEmbeddingNodeID(now time.Time, mainOnly bool) storage.NodeID {
+func (ew *EmbedWorker) nextEmbeddingNodeID(now time.Time, mainOnly bool) (storage.NodeID, error) {
 	// MAIN is the storage pending index. A body update restores a DLQ ID to
 	// that index; detect it even when the update did not call Enqueue.
 	blockedMain := false
 	var skipped storage.NodeID
 	for attempts, bound := 0, len(ew.nodeRetries)+len(ew.claimedNodes)+1; attempts < bound; attempts++ {
-		pending := ew.findNodeWithoutEmbedding()
+		pending, err := ew.findNodeWithoutEmbedding(ew.ctx)
+		if err != nil {
+			return "", err
+		}
 		if pending == nil {
 			break
 		}
@@ -215,6 +236,9 @@ func (ew *EmbedWorker) nextEmbeddingNodeID(now time.Time, mainOnly bool) storage
 			// Finder projections need only identify the node. Retry metadata
 			// compares the authoritative body, never a partial index projection.
 			body, err := ew.embeddingSnapshot(pending.ID)
+			if err != nil && !nodeGone(body, err) {
+				return "", err
+			}
 			if err == nil && body != nil && ew.observeNodeRevisionLocked(body) {
 				// New body attempt; the next attempt requests a new provider result.
 			} else {
@@ -225,7 +249,7 @@ func (ew *EmbedWorker) nextEmbeddingNodeID(now time.Time, mainOnly bool) storage
 			}
 		}
 		if _, claimed := ew.claimedNodes[string(pending.ID)]; !claimed {
-			return pending.ID
+			return pending.ID, nil
 		}
 		blockedMain = true
 		skipped = pending.ID
@@ -236,11 +260,14 @@ func (ew *EmbedWorker) nextEmbeddingNodeID(now time.Time, mainOnly bool) storage
 	// same storage eligibility predicate, excluding the retry owner's IDs.
 	if _, indexed := ew.storage.(EmbeddingIndexManager); (blockedMain || !indexed) && len(ew.nodeRetries)+len(ew.claimedNodes) > 0 {
 		var fresh storage.NodeID
-		_ = ew.storage.StreamNodesWithOptions(ew.ctx, storage.StreamNodesOptions{WithEmbeddings: true}, func(node *storage.Node) error {
+		scanErr := ew.storage.StreamNodesWithOptions(ew.ctx, storage.StreamNodesOptions{WithEmbeddings: true}, func(node *storage.Node) error {
 			state := ew.nodeRetries[node.ID]
 			_, claimed := ew.claimedNodes[string(node.ID)]
 			if state != nil {
 				snapshot, err := ew.embeddingSnapshot(node.ID)
+				if err != nil && !nodeGone(snapshot, err) {
+					return err
+				}
 				if err == nil && snapshot != nil && ew.observeNodeRevisionLocked(snapshot) {
 					state = nil
 				}
@@ -251,12 +278,15 @@ func (ew *EmbedWorker) nextEmbeddingNodeID(now time.Time, mainOnly bool) storage
 			}
 			return nil
 		})
+		if scanErr != nil && !errors.Is(scanErr, storage.ErrIterationStopped) {
+			return "", scanErr
+		}
 		if fresh != "" {
-			return fresh
+			return fresh, nil
 		}
 	}
 	if mainOnly {
-		return ""
+		return "", nil
 	}
 	var due storage.NodeID
 	var order uint64
@@ -266,7 +296,7 @@ func (ew *EmbedWorker) nextEmbeddingNodeID(now time.Time, mainOnly bool) storage
 			due, order = id, state.order
 		}
 	}
-	return due
+	return due, nil
 }
 
 // Reuse the worker's existing idle wait rather than spawning retry goroutines.
@@ -291,18 +321,31 @@ func (ew *EmbedWorker) nodeEmbeddingRetryDelay(delay time.Duration) time.Duratio
 
 // Every claim goes through the ordinary provider dispatch. No rejected-save
 // payload survives into a retry; the DLQ owns only revision and scheduling.
-func (ew *EmbedWorker) claimNextNodeResult(selections ...embeddingSelection) (*storage.Node, bool) {
+func (ew *EmbedWorker) claimNextNodeResult(selections ...embeddingSelection) (*storage.Node, bool, error) {
 	return ew.claimNextNodeResultFrom(false, ew.embeddingSelection(selections))
 }
 
 // claimNodeBatch finishes a MAIN batch before requesting any DLQ result.
 // Every returned node has a fresh claim and needs a provider request.
-func (ew *EmbedWorker) claimNodeBatch(limit int, selections ...embeddingSelection) ([]*storage.Node, bool) {
+func (ew *EmbedWorker) claimNodeBatch(limit int, selections ...embeddingSelection) ([]*storage.Node, bool, error) {
 	nodes := make([]*storage.Node, 0, limit)
 	progressed := false
 	for attempts := 0; attempts < limit; attempts++ {
 		// Finish the MAIN batch before selecting or saving any DLQ entry.
-		node, advanced := ew.claimNextNodeResultFrom(len(nodes) > 0, ew.embeddingSelection(selections))
+		node, advanced, err := ew.claimNextNodeResultFrom(len(nodes) > 0, ew.embeddingSelection(selections))
+		if err != nil {
+			for _, claimed := range nodes {
+				// No provider owns this claim yet: preserve its existing
+				// invalidated-claim requeue path after a later poll failed.
+				ew.claimMu.Lock()
+				if attempt := ew.claimedNodes[string(claimed.ID)]; attempt != nil {
+					attempt.invalidated = true
+				}
+				ew.claimMu.Unlock()
+				ew.releaseNodeClaim(claimed.ID)
+			}
+			return nil, progressed, err
+		}
 		progressed = progressed || advanced
 		if node == nil {
 			if advanced {
@@ -312,5 +355,5 @@ func (ew *EmbedWorker) claimNodeBatch(limit int, selections ...embeddingSelectio
 		}
 		nodes = append(nodes, node)
 	}
-	return nodes, progressed
+	return nodes, progressed, nil
 }

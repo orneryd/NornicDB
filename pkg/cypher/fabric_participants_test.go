@@ -24,11 +24,11 @@ func TestRemoteConstituentEngineJoinsTheStatement(t *testing.T) {
 
 	unjoined := composite.remote("remote:far", inner)
 	require.Same(t, unjoined, composite.remote("remote:far", inner), "one engine per constituent")
-	_, err := unjoined.CreateNode(&storage.Node{ID: "n1", Labels: []string{"Far"}})
+	_, err := unjoined.CreateNode(t.Context(), &storage.Node{ID: "n1", Labels: []string{"Far"}})
 	require.ErrorContains(t, err, "storage engine has unexpected type for 'remote:far'")
-	_, err = unjoined.GetNode("n1")
+	_, err = unjoined.GetNode(t.Context(), "n1")
 	require.ErrorContains(t, err, "storage engine has unexpected type for 'remote:far'")
-	count, err := inner.NodeCount()
+	count, err := inner.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.Zero(t, count, "the engine is never reached")
 
@@ -90,7 +90,7 @@ func TestFabricValueFragmentRunsInTheStatement(t *testing.T) {
 			{"exists", "CALL { USE comp.one RETURN CASE WHEN EXISTS { (n:AcAtom {run:$run}) } THEN 1 ELSE 0 END AS c }"},
 		} {
 			t.Run(fmt.Sprintf("%s/explicit_%t", shape.name, explicit), func(t *testing.T) {
-				e := f.compositeSession(t)
+				e := newCompositeTestExecutor(t, f.mgr, "comp", f.exec.dbManager)
 				t.Cleanup(func() {
 					if e.txContext != nil && e.txContext.active {
 						_, err := e.Execute(ctx, "ROLLBACK", nil)
@@ -113,7 +113,7 @@ func TestFabricValueFragmentRunsInTheStatement(t *testing.T) {
 			})
 		}
 		t.Run(fmt.Sprintf("nested_write/explicit_%t", explicit), func(t *testing.T) {
-			e := f.compositeSession(t)
+			e := newCompositeTestExecutor(t, f.mgr, "comp", f.exec.dbManager)
 			t.Cleanup(func() {
 				if e.txContext != nil && e.txContext.active {
 					_, err := e.Execute(ctx, "ROLLBACK", nil)
@@ -152,12 +152,12 @@ func TestFabricValueFragmentRunsInTheStatement(t *testing.T) {
 
 type ownershipBeginCapture struct {
 	storage.Engine
-	begin   func() (*storage.BadgerTransaction, error)
+	begin   func(context.Context) (*storage.BadgerTransaction, error)
 	started *storage.BadgerTransaction
 }
 
-func (engine *ownershipBeginCapture) BeginTransaction() (*storage.BadgerTransaction, error) {
-	tx, err := engine.begin()
+func (engine *ownershipBeginCapture) BeginTransaction(ctx context.Context) (*storage.BadgerTransaction, error) {
+	tx, err := engine.begin(ctx)
 	engine.started = tx
 	return tx, err
 }
@@ -197,14 +197,17 @@ func TestFabricParticipantBeginPreservesMetadataAndBindingCleanup(t *testing.T) 
 					runningTransactions.end(entry)
 				}
 			})
-			participant, err := c.ensureLocalShardTxExecutor(WithTransactionMetadata(context.Background(), map[string]any{"client": "ownership-proof"}), sub, "one", engine)
+			// The coordinator rollback below receives this test-owned scope as its
+			// explicit cleanup owner, independent of the statement completion.
+			ctx := context.Background()
+			participant, err := c.ensureLocalShardTxExecutor(WithTransactionMetadata(ctx, map[string]any{"client": "ownership-proof"}), sub, "one", engine)
 			require.NotNil(t, engine.started)
 			require.Equal(t, "ownership-proof", engine.started.GetMetadata()["client"], "canonical BEGIN applies caller metadata")
 			if registered {
 				require.NoError(t, err)
 				require.True(t, participant.txContext.coordinatorOwned)
 				require.NotNil(t, participant.txContext.running)
-				require.NoError(t, tx.Rollback(nil))
+				require.NoError(t, tx.Rollback(ctx, nil))
 				require.False(t, engine.started.IsActive())
 			} else {
 				require.ErrorContains(t, err, "not found")
@@ -226,7 +229,7 @@ func TestExplicitStatementPanicCannotCommitEarlierWrites(t *testing.T) {
 	t.Cleanup(ClearUserProcedures)
 	for _, composite := range []bool{false, true} {
 		t.Run(fmt.Sprintf("composite_%t", composite), func(t *testing.T) {
-			e := f.compositeSession(t)
+			e := newCompositeTestExecutor(t, f.mgr, "comp", f.exec.dbManager)
 			if !composite {
 				store, err := f.mgr.GetStorage("one")
 				require.NoError(t, err)

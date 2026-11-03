@@ -49,12 +49,12 @@ func newLargeEmbeddingGraphOn(tb testing.TB, docs int, engine *storage.BadgerEng
 	g := &largeEmbeddingGraph{engine: engine, store: storage.NewNamespacedEngine(engine, "test")}
 	g.exec = NewStorageExecutor(g.store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	g.run(tb, "CREATE INDEX doc_k FOR (n:Doc) ON (n.k)", nil)
-	if _, err := g.store.CreateNode(&storage.Node{ID: "hub", Labels: []string{"Hub"}, Properties: map[string]interface{}{"k": int64(0)}}); err != nil {
+	if _, err := g.store.CreateNode(tb.Context(), &storage.Node{ID: "hub", Labels: []string{"Hub"}, Properties: map[string]interface{}{"k": int64(0)}}); err != nil {
 		tb.Fatal(err)
 	}
 	for i := 0; i < docs; i++ {
 		id := storage.NodeID(fmt.Sprintf("doc-%d", i))
-		if _, err := g.store.CreateNode(&storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]interface{}{"k": int64(i), "title": fmt.Sprintf("doc %d", i)}}); err != nil {
+		if _, err := g.store.CreateNode(tb.Context(), &storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]interface{}{"k": int64(i), "title": fmt.Sprintf("doc %d", i)}}); err != nil {
 			tb.Fatal(err)
 		}
 		vector := make([]float32, 2048)
@@ -76,7 +76,7 @@ func (g *largeEmbeddingGraph) run(tb testing.TB, query string, params map[string
 
 func (g *largeEmbeddingGraph) link(tb testing.TB, from, to storage.NodeID, relType string) {
 	tb.Helper()
-	if err := g.store.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("%s-%s-%s", from, relType, to)), StartNode: from, EndNode: to, Type: relType}); err != nil {
+	if err := g.store.CreateEdge(tb.Context(), &storage.Edge{ID: storage.EdgeID(fmt.Sprintf("%s-%s-%s", from, relType, to)), StartNode: from, EndNode: to, Type: relType}); err != nil {
 		tb.Fatal(err)
 	}
 }
@@ -84,21 +84,21 @@ func (g *largeEmbeddingGraph) link(tb testing.TB, from, to storage.NodeID, relTy
 // embed writes vector as id's managed embedding through the worker sidecar.
 func (g *largeEmbeddingGraph) embed(tb testing.TB, id storage.NodeID, vector []float32) {
 	tb.Helper()
-	stored, err := g.engine.GetNode("test:" + id)
+	stored, err := g.engine.GetNode(tb.Context(), "test:"+id)
 	if err != nil {
 		tb.Fatal(err)
 	}
 	payload := storage.CopyNode(stored)
 	payload.ChunkEmbeddings = [][]float32{vector}
 	payload.EmbedMeta = map[string]any{"has_embedding": true, "chunk_count": 1}
-	if err := g.engine.UpdateNodeEmbeddingSidecar(payload); err != nil {
+	if err := g.engine.UpdateNodeEmbeddingSidecar(tb.Context(), payload); err != nil {
 		tb.Fatal(err)
 	}
 }
 
 func (g *largeEmbeddingGraph) storedChunks(t *testing.T, id storage.NodeID) [][]float32 {
 	t.Helper()
-	node, err := g.store.GetNode(id)
+	node, err := g.store.GetNode(t.Context(), id)
 	require.NoError(t, err)
 	return node.ChunkEmbeddings
 }
@@ -141,7 +141,7 @@ func TestQueryNodeWritesKeepStoredEmbeddings(t *testing.T) {
 		large[c] = make([]float32, 4000) // ~64KB in all: stored apart from the body
 		large[c][c] = 1
 	}
-	_, err := g.store.CreateNode(&storage.Node{ID: "big", Labels: []string{"Doc"}, Properties: map[string]interface{}{"k": int64(100), "title": "big"}, ChunkEmbeddings: large})
+	_, err := g.store.CreateNode(t.Context(), &storage.Node{ID: "big", Labels: []string{"Doc"}, Properties: map[string]interface{}{"k": int64(100), "title": "big"}, ChunkEmbeddings: large})
 	require.NoError(t, err)
 	g.link(t, "hub", "big", "HAS")
 
@@ -170,11 +170,11 @@ func TestQueryNodeWritesKeepStoredEmbeddings(t *testing.T) {
 // engine's UpdateNode takes the body as written.
 func TestGetQueryNodeOutsideTransactionReadsFullNode(t *testing.T) {
 	g := newLargeEmbeddingGraph(t, 1)
-	node, err := (*StorageExecutor)(nil).getQueryNode(g.store, "doc-0")
+	node, err := (*StorageExecutor)(nil).getQueryNode(t.Context(), g.store, "doc-0")
 	require.NoError(t, err)
 	require.Len(t, node.ChunkEmbeddings, 1)
 	require.Len(t, node.ChunkEmbeddings[0], 2048)
-	node, err = g.exec.getQueryNode(g.store, "doc-0")
+	node, err = g.exec.getQueryNode(t.Context(), g.store, "doc-0")
 	require.NoError(t, err)
 	require.Len(t, node.ChunkEmbeddings, 1, "an executor that may write reads the full node")
 }
@@ -185,14 +185,14 @@ type queryNodeReadSpy struct {
 	full, query atomic.Int64
 }
 
-func (s *queryNodeReadSpy) GetNode(id storage.NodeID) (*storage.Node, error) {
+func (s *queryNodeReadSpy) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	s.full.Add(1)
-	return s.Engine.GetNode(id)
+	return s.Engine.GetNode(ctx, id)
 }
 
-func (s *queryNodeReadSpy) GetQueryNode(id storage.NodeID) (*storage.Node, error) {
+func (s *queryNodeReadSpy) GetQueryNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	s.query.Add(1)
-	return s.Engine.(storage.QueryNodeReader).GetQueryNode(id)
+	return s.Engine.(storage.QueryNodeReader).GetQueryNode(ctx, id)
 }
 
 // TestAutoCommitQueryNodeReadsLeaveEmbeddingsInStorage: an auto-commit

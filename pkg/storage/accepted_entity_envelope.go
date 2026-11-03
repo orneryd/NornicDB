@@ -32,10 +32,10 @@ type EntityTransactionEnvelope struct {
 }
 
 type entityWriter interface {
-	CreateNode(*Node) (NodeID, error)
-	CreateEdge(*Edge) error
-	UpdateEdge(updateRequest EdgeUpdateRequest) error
-	DeleteEdge(EdgeID) error
+	CreateNode(ctx context.Context, node *Node) (NodeID, error)
+	CreateEdge(ctx context.Context, edge *Edge) error
+	UpdateEdge(ctx context.Context, updateRequest EdgeUpdateRequest) error
+	DeleteEdge(ctx context.Context, id EdgeID) error
 }
 
 // DecodeEntityChange decodes one current direct replication command. It never
@@ -80,21 +80,29 @@ func DecodeEntityChange(kind EntityCommandKind, data []byte) (Operation, error) 
 	}
 	return op, nil
 }
-func ApplyEntityChange(target entityWriter, op Operation, updateNode func(NodeUpdateRequest) error, deleteNode func(NodeID) error) error {
+func ApplyEntityChange(ctx context.Context, target entityWriter, op Operation, updateNode func(context.Context, NodeUpdateRequest) error, deleteNode func(context.Context, NodeID) error) error {
 	switch op.Type {
 	case OpCreateNode:
-		_, err := target.CreateNode(op.Node)
+		_, err := target.CreateNode(ctx, op.Node)
 		return err
 	case OpUpdateNode:
-		return updateNode(op.NodeUpdate())
+		return updateNode(ctx, op.NodeUpdate())
 	case OpDeleteNode:
-		return deleteNode(op.NodeID)
+		err := deleteNode(ctx, op.NodeID)
+		if op.skipMissingDelete && errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		return err
 	case OpCreateEdge:
-		return target.CreateEdge(op.Edge)
+		return target.CreateEdge(ctx, op.Edge)
 	case OpUpdateEdge:
-		return target.UpdateEdge(op.EdgeUpdate())
+		return target.UpdateEdge(ctx, op.EdgeUpdate())
 	case OpDeleteEdge:
-		return target.DeleteEdge(op.EdgeID)
+		err := target.DeleteEdge(ctx, op.EdgeID)
+		if op.skipMissingDelete && errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		return err
 	default:
 		return fmt.Errorf("not an entity operation: %s", op.Type)
 	}
@@ -112,7 +120,7 @@ const (
 
 // BeginEntityTransaction obtains one native frame through the actual wrapper
 // chain and binds its durability mode before exposing it to a caller.
-func BeginEntityTransaction(engine Engine, mode EntityCommitMode) (*BadgerTransaction, error) {
+func BeginEntityTransaction(ctx context.Context, engine Engine, mode EntityCommitMode) (*BadgerTransaction, error) {
 	if !mode.valid() {
 		return nil, ErrInvalidData
 	}
@@ -120,9 +128,9 @@ func BeginEntityTransaction(engine Engine, mode EntityCommitMode) (*BadgerTransa
 	for engine != nil && !visited[engine] {
 		visited[engine] = true
 		if starter, ok := engine.(interface {
-			BeginTransaction() (*BadgerTransaction, error)
+			BeginTransaction(context.Context) (*BadgerTransaction, error)
 		}); ok {
-			tx, err := starter.BeginTransaction()
+			tx, err := starter.BeginTransaction(ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -158,7 +166,7 @@ func ApplyAcceptedEntityTransaction(engine Engine, data []byte) error {
 // returns the commit receipt. DecodeEntityTransaction validates the wire image
 // before callers publish it to replication or recovery logs.
 func SubmitAcceptedEntityTransaction(ctx context.Context, engine Engine, envelope EntityTransactionEnvelope, ops []Operation, settle func(CommitOutcome)) (*CommitReceipt, error) {
-	tx, err := BeginEntityTransaction(engine, envelope.Mode)
+	tx, err := BeginEntityTransaction(ctx, engine, envelope.Mode)
 	if err != nil {
 		return nil, err
 	}

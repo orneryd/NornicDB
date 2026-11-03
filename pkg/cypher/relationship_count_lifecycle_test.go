@@ -36,13 +36,13 @@ CREATE (a {name: 'David'}),
        (d)-[:REL]->()`, nil)
 	require.NoError(t, err)
 
-	count, err := store.EdgeCount()
+	count, err := store.EdgeCount(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, int64(8), count)
 
 	_, err = exec.Execute(ctx, "MATCH (n) DETACH DELETE n", nil)
 	require.NoError(t, err)
-	count, err = store.EdgeCount()
+	count, err = store.EdgeCount(t.Context())
 	require.NoError(t, err)
 	require.Zero(t, count)
 

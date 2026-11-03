@@ -31,16 +31,16 @@ func Run(t *testing.T, factory func(*testing.T) Fixture) {
 	for _, failure := range []string{"cancelled", "deadline"} {
 		t.Run(failure, func(t *testing.T) {
 			f := factory(t)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
 			var results []search.SearchResult
 			for _, id := range []string{"retry-a", "retry-b", "retry-c"} {
-				_, err := f.Engine.CreateNode(&storage.Node{ID: storage.NodeID(id), Properties: map[string]any{"retry_id": id}})
+				_, err := f.Engine.CreateNode(ctx, &storage.Node{ID: storage.NodeID(id), Properties: map[string]any{"retry_id": id}})
 				require.NoError(t, err)
 				results = append(results, search.SearchResult{ID: id, NodeID: storage.NodeID(id), Score: 1})
 			}
 			var issued []int
 			armed := false
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
 			producer := func(step context.Context, _ string, _ []float32, options *search.SearchOptions) (*search.SearchResponse, error) {
 				issued = append(issued, options.Limit)
 				if armed {

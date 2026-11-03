@@ -92,14 +92,14 @@ func TestRoleStore_ErrorAndLoadPaths(t *testing.T) {
 	eng := storage.NewNamespacedEngine(runtimeFixtureOwner.Own(t, runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "system")
 	defer eng.Close()
 
-	_, err := eng.CreateNode(&storage.Node{
+	_, err := eng.CreateNode(context.Background(), &storage.Node{
 		ID:     storage.NodeID(rolePrefix + "loadedrole"),
 		Labels: []string{roleLabel, roleSystems},
 	})
 	if err != nil {
 		t.Fatalf("create role node: %v", err)
 	}
-	_, err = eng.CreateNode(&storage.Node{
+	_, err = eng.CreateNode(context.Background(), &storage.Node{
 		ID:     storage.NodeID("system:bad-role-node"),
 		Labels: []string{roleLabel},
 	})

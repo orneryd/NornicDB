@@ -61,7 +61,7 @@ func TestCompositeNativeDoubledBacktickValues(t *testing.T) {
 			require.Equal(t, "pa`ss", resolved[0].Password)
 			system, err := manager.GetStorage("system")
 			require.NoError(t, err)
-			metadata, err := system.GetNode("databases:metadata")
+			metadata, err := system.GetNode(t.Context(), "databases:metadata")
 			require.NoError(t, err)
 			encoded, err := json.Marshal(metadata.Properties)
 			require.NoError(t, err)

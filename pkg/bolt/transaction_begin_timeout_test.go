@@ -122,7 +122,7 @@ func TestTransactionBeginCannotPublishExpiredTransactionAsActive(t *testing.T) {
 		},
 	}
 	require.NoError(t, lifecycle.begin(
-		context.Background(), 10*time.Millisecond, "nornic", executor, nil, nil))
+		context.Background(), testTxOwner(), 10*time.Millisecond, "nornic", executor, nil, nil))
 	_, err := lifecycle.claimCommit()
 	require.ErrorIs(t, err, errTransactionTimedOut)
 	require.Equal(t, int64(1), executor.rollbackCalls.Load())
@@ -151,7 +151,7 @@ func TestBoltExpiredBeginCleanupFailureClosesAndQuarantines(t *testing.T) {
 				ReadBufferSize:  8192,
 				WriteBufferSize: 8192,
 			}, executor)
-			port := startBoltTestServer(t, server)
+			port := startBoltTestServer(t, server, rollbackShutdownCheck(t, tt.rollbackErr, tt.rollbackPanic))
 			conn := openBoltTestConn(t, port)
 			require.NoError(t, SendBegin(t, conn, map[string]any{"tx_timeout": int64(50)}))
 			select {
@@ -163,7 +163,7 @@ func TestBoltExpiredBeginCleanupFailureClosesAndQuarantines(t *testing.T) {
 			close(release)
 			code, _, err := AssertFailure(t, conn)
 			require.NoError(t, err, "failed cleanup must not return BEGIN SUCCESS")
-			require.Equal(t, "Neo.ClientError.Transaction.TransactionStartFailed", code)
+			require.Equal(t, "Neo.DatabaseError.Transaction.TransactionStartFailed", code)
 			requireBoltConnectionClosed(t, conn)
 			require.Eventually(t, func() bool { return server.activeConnections.Load() == 0 },
 				time.Second, time.Millisecond)

@@ -47,7 +47,7 @@ func TestHTTPDescriptorMetadataUsesSafeDerivedView(t *testing.T) {
 	require.NoError(t, err)
 	data, _, err := plan.Transform(t.Context(), string(original))
 	require.NoError(t, err)
-	_, err = storage.NewNamespacedEngine(db.GetBaseStorageForManager(), "system").CreateNode(&storage.Node{ID: "databases:metadata", Labels: []string{"_System", "_Metadata"}, Properties: map[string]any{"type": "databases", "data": data}})
+	_, err = storage.NewNamespacedEngine(db.GetBaseStorageForManager(), "system").CreateNode(t.Context(), &storage.Node{ID: "databases:metadata", Labels: []string{"_System", "_Metadata"}, Properties: map[string]any{"type": "databases", "data": data}})
 	require.NoError(t, err)
 	serverCfg := DefaultConfig()
 	serverCfg.ProcessConfig = cfg

@@ -106,19 +106,19 @@ func TestApocExportJsonAll(t *testing.T) {
 	ctx := context.Background()
 
 	// Create test data
-	_, err := engine.CreateNode(&storage.Node{
+	_, err := engine.CreateNode(t.Context(), &storage.Node{
 		ID:         "n1",
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Alice"},
 	})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{
+	_, err = engine.CreateNode(t.Context(), &storage.Node{
 		ID:         "n2",
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Bob"},
 	})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&storage.Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "e1",
 		StartNode: "n1",
 		EndNode:   "n2",
@@ -165,7 +165,7 @@ func TestApocExportCsvAll(t *testing.T) {
 	ctx := context.Background()
 
 	// Create test data
-	_, err := engine.CreateNode(&storage.Node{
+	_, err := engine.CreateNode(t.Context(), &storage.Node{
 		ID:         "n1",
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Alice"},
@@ -238,16 +238,16 @@ func TestApocImportJson(t *testing.T) {
 		assert.Equal(t, 1, result.Rows[0][2]) // 1 relationship imported
 
 		// Verify nodes were imported
-		node1, err := engine.GetNode("imported1")
+		node1, err := engine.GetNode(t.Context(), "imported1")
 		require.NoError(t, err)
 		assert.Equal(t, "Charlie", node1.Properties["name"])
 
-		node2, err := engine.GetNode("imported2")
+		node2, err := engine.GetNode(t.Context(), "imported2")
 		require.NoError(t, err)
 		assert.Equal(t, "Diana", node2.Properties["name"])
 
 		// Verify relationship was imported
-		edge, err := engine.GetEdge("rel1")
+		edge, err := engine.GetEdge(t.Context(), "rel1")
 		require.NoError(t, err)
 		assert.Equal(t, "KNOWS", edge.Type)
 	})

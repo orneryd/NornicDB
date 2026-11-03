@@ -3,8 +3,12 @@ package storage
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
+	"context"
 	"fmt"
+	"runtime"
 	"sort"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -25,13 +29,13 @@ func TestMergePendingPropertyMatches(t *testing.T) {
 		{ID: "db:gone", Labels: []string{"P"}, Properties: map[string]interface{}{"k": "a"}},
 		{ID: "db:unlabeled", Labels: []string{"P"}, Properties: map[string]interface{}{"k": "a"}},
 	} {
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 	// What a (P, k) index holds for "a" and "b" in committed state.
 	committedA := func() []NodeID { return []NodeID{"db:kept", "db:moved", "db:gone", "db:unlabeled"} }
 	lookup := func(tx *BadgerTransaction, committed []NodeID, label, property string, value interface{}) []string {
-		ids := tx.MergePendingPropertyMatches(committed, label, property, value)
+		ids := checkedIndexRead[[]NodeID](t)(tx.MergePendingPropertyMatches(t.Context(), committed, label, property, value))
 		out := make([]string, 0, len(ids))
 		for _, id := range ids {
 			out = append(out, string(id))
@@ -40,7 +44,7 @@ func TestMergePendingPropertyMatches(t *testing.T) {
 		return out
 	}
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -50,7 +54,7 @@ func TestMergePendingPropertyMatches(t *testing.T) {
 	require.Nil(t, tx.pendingIndex)
 
 	// A few pending nodes are compared directly, without an index.
-	_, err = tx.CreateNode(&Node{ID: "db:early", Labels: []string{"P"}, Properties: map[string]interface{}{"k": "e", "n": int64(1)}})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "db:early", Labels: []string{"P"}, Properties: map[string]interface{}{"k": "e", "n": int64(1)}})
 	require.NoError(t, err)
 	require.Equal(t, []string{"db:early"}, lookup(tx, nil, "P", "k", "e"))
 	require.Equal(t, []string{"db:early"}, lookup(tx, nil, "P", "n", float64(1)))
@@ -61,14 +65,14 @@ func TestMergePendingPropertyMatches(t *testing.T) {
 	// With more of them, writes made before the first lookup are indexed by
 	// that lookup.
 	for i := 0; i < pendingIndexMinNodes; i++ {
-		_, err = tx.CreateNode(&Node{ID: NodeID(fmt.Sprintf("db:fill%d", i)), Labels: []string{"P"}, Properties: map[string]interface{}{"k": "fill"}})
+		_, err = tx.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("db:fill%d", i)), Labels: []string{"P"}, Properties: map[string]interface{}{"k": "fill"}})
 		require.NoError(t, err)
 	}
-	_, err = tx.CreateNode(&Node{ID: "db:new", Labels: []string{"P"}, Properties: map[string]interface{}{"k": "a"}})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "db:new", Labels: []string{"P"}, Properties: map[string]interface{}{"k": "a"}})
 	require.NoError(t, err)
-	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "db:moved", Labels: []string{"P"}, Properties: map[string]interface{}{"k": "b"}}, Policy: ClientNodeEdits}))
-	require.NoError(t, tx.DeleteGraphNode("db:gone", CascadeEdges))
-	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "db:unlabeled", Labels: []string{"Q"}, Properties: map[string]interface{}{"k": "a"}}, Policy: ClientNodeEdits}))
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "db:moved", Labels: []string{"P"}, Properties: map[string]interface{}{"k": "b"}}, Policy: ClientNodeEdits}))
+	require.NoError(t, tx.DeleteGraphNode(t.Context(), "db:gone", CascadeEdges))
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "db:unlabeled", Labels: []string{"Q"}, Properties: map[string]interface{}{"k": "a"}}, Policy: ClientNodeEdits}))
 	require.Nil(t, tx.pendingIndex)
 	require.Equal(t, []string{"db:kept", "db:new"}, lookup(tx, committedA(), "P", "k", "a"))
 	require.NotNil(t, tx.pendingIndex)
@@ -78,9 +82,9 @@ func TestMergePendingPropertyMatches(t *testing.T) {
 
 	// Writes made after it keep the index current: a second update of a
 	// pending node, a delete of a pending node, a create.
-	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "db:moved", Labels: []string{"P"}, Properties: map[string]interface{}{"k": "c"}}, Policy: ClientNodeEdits}))
-	require.NoError(t, tx.DeleteGraphNode("db:new", CascadeEdges))
-	_, err = tx.CreateNode(&Node{ID: "db:later", Labels: []string{"P"}, Properties: map[string]interface{}{"k": "b"}})
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "db:moved", Labels: []string{"P"}, Properties: map[string]interface{}{"k": "c"}}, Policy: ClientNodeEdits}))
+	require.NoError(t, tx.DeleteGraphNode(t.Context(), "db:new", CascadeEdges))
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "db:later", Labels: []string{"P"}, Properties: map[string]interface{}{"k": "b"}})
 	require.NoError(t, err)
 	require.Equal(t, []string{"db:kept"}, lookup(tx, committedA(), "P", "k", "a"))
 	require.Equal(t, []string{"db:later"}, lookup(tx, nil, "P", "k", "b"))
@@ -88,11 +92,123 @@ func TestMergePendingPropertyMatches(t *testing.T) {
 
 	// A second property is indexed by its first lookup, for the nodes
 	// already pending.
-	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "db:kept", Labels: []string{"P"}, Properties: map[string]interface{}{"k": "a", "other": int64(7)}}, Policy: ClientNodeEdits}))
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "db:kept", Labels: []string{"P"}, Properties: map[string]interface{}{"k": "a", "other": int64(7)}}, Policy: ClientNodeEdits}))
 	require.Equal(t, []string{"db:kept"}, lookup(tx, nil, "P", "other", int64(7)))
 	require.Equal(t, []string{"db:kept"}, lookup(tx, nil, "P", "other", float64(7)), "numeric values match as the property indexes match them")
 
 	// A value no index can hold (a list) matches nothing, and still drops
 	// the committed entries the transaction superseded.
 	require.Equal(t, []string{"db:unseen"}, lookup(tx, []NodeID{"db:unseen", "db:gone"}, "P", "k", []interface{}{"a"}))
+}
+
+type pendingStageContext struct {
+	context.Context
+	cancel context.CancelFunc
+	budget atomic.Int64
+	phase  string
+}
+
+func (c *pendingStageContext) Err() error {
+	var pcs [48]uintptr
+	n := runtime.Callers(2, pcs[:])
+	frames := runtime.CallersFrames(pcs[:n])
+	for {
+		frame, more := frames.Next()
+		if strings.Contains(frame.Function, c.phase) {
+			if c.budget.Add(-1) == 0 {
+				c.cancel()
+			}
+			break
+		}
+		if !more {
+			break
+		}
+	}
+	return c.Context.Err()
+}
+
+func TestPendingIndexStagingCancellationKeepsReadsCoherent(t *testing.T) {
+	for _, deleting := range []bool{false, true} {
+		name, phase := "update", "BadgerTransaction).UpdateGraphNode"
+		if deleting {
+			name, phase = "delete", "BadgerTransaction).DeleteGraphNode"
+		}
+		t.Run(name, func(t *testing.T) {
+			for budget := 1; budget <= 512; budget++ {
+				finished := false
+				t.Run(fmt.Sprint(budget), func(t *testing.T) {
+					engine := newTestEngine(t)
+					tx, err := engine.BeginTransaction(t.Context())
+					require.NoError(t, err)
+					t.Cleanup(func() {
+						if err := tx.Rollback(); err != nil {
+							require.ErrorIs(t, err, ErrTransactionClosed)
+						}
+					})
+					for i := 0; i <= pendingIndexMinNodes; i++ {
+						_, err := tx.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("db:fill%d", i)), Labels: []string{"P"}, Properties: map[string]any{"k": "fill", "other": "x"}})
+						require.NoError(t, err)
+					}
+					ids, err := tx.MergePendingPropertyMatches(t.Context(), nil, "P", "k", "fill")
+					require.NoError(t, err)
+					require.Len(t, ids, pendingIndexMinNodes+1)
+					require.NotNil(t, tx.pendingIndex)
+					base, cancel := context.WithCancel(t.Context())
+					defer cancel()
+					ctx := &pendingStageContext{Context: base, cancel: cancel, phase: phase}
+					ctx.budget.Store(int64(budget))
+					if deleting {
+						err = tx.DeleteGraphNode(ctx, "db:fill0", CascadeEdges)
+					} else {
+						err = tx.UpdateGraphNode(ctx, NodeUpdateRequest{After: &Node{ID: "db:fill0", Labels: []string{"P"}, Properties: map[string]any{"k": "changed", "other": "x"}}})
+					}
+					finished = base.Err() == nil
+					if err != nil {
+						require.ErrorIs(t, err, context.Canceled)
+					}
+					node, readErr := tx.GetNode(t.Context(), "db:fill0")
+					visible := readErr == nil
+					value := ""
+					if visible {
+						value = node.Properties["k"].(string)
+						require.Contains(t, []string{"fill", "changed"}, value)
+					} else {
+						require.ErrorIs(t, readErr, ErrNotFound)
+					}
+					nodes, err := tx.GetNodesByLabel(t.Context(), "P")
+					require.NoError(t, err)
+					found := false
+					for _, node := range nodes {
+						found = found || node.ID == "db:fill0"
+					}
+					require.Equal(t, visible, found, "label and point reads must agree")
+					for _, candidate := range []struct{ property, value string }{{"k", "fill"}, {"k", "changed"}, {"other", "x"}} {
+						matches, err := tx.MergePendingPropertyMatches(t.Context(), nil, "P", candidate.property, candidate.value)
+						require.NoError(t, err)
+						expected := visible && (candidate.property == "other" || candidate.value == value)
+						if expected {
+							require.Contains(t, matches, NodeID("db:fill0"))
+						} else {
+							require.NotContains(t, matches, NodeID("db:fill0"))
+						}
+					}
+					if finished {
+						require.NoError(t, tx.Commit())
+						stored, err := engine.GetNode(t.Context(), "db:fill0")
+						if deleting {
+							require.ErrorIs(t, err, ErrNotFound)
+						} else {
+							require.NoError(t, err)
+							require.Equal(t, "changed", stored.Properties["k"])
+						}
+					}
+				})
+				if finished {
+					require.Greater(t, budget, 1, "exercise actual cancellation boundaries")
+					return
+				}
+			}
+			t.Fatal("cancellation sweep did not reach a healthy statement")
+		})
+	}
 }

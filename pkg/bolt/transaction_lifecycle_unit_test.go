@@ -150,7 +150,7 @@ func TestTransactionLifecycleBeginFailureLeavesIdle(t *testing.T) {
 	executor := &lifecycleContextExecutor{beginErr: wantErr}
 	lifecycle := &transactionLifecycle{}
 
-	err := lifecycle.begin(context.Background(), 0, "neo4j", executor, nil, nil)
+	err := lifecycle.begin(context.Background(), testTxOwner(), 0, "neo4j", executor, nil, nil)
 	require.ErrorIs(t, err, wantErr)
 	_, err = lifecycle.claimCommit()
 	require.ErrorIs(t, err, errTransactionNotActive)
@@ -173,9 +173,9 @@ func TestHandleBeginRejectsDuplicateWithoutReplacingActiveExecutor(t *testing.T)
 func TestTransactionLifecycleRejectsOverlappingBegin(t *testing.T) {
 	executor := &lifecycleContextExecutor{}
 	lifecycle := &transactionLifecycle{}
-	require.NoError(t, lifecycle.begin(context.Background(), 0, "neo4j", executor, nil, nil))
+	require.NoError(t, lifecycle.begin(context.Background(), testTxOwner(), 0, "neo4j", executor, nil, nil))
 
-	err := lifecycle.begin(context.Background(), 0, "neo4j", executor, nil, nil)
+	err := lifecycle.begin(context.Background(), testTxOwner(), 0, "neo4j", executor, nil, nil)
 	require.ErrorContains(t, err, "already active")
 	require.NoError(t, lifecycle.rollback(transactionTerminalRollback))
 }
@@ -189,13 +189,13 @@ func TestTransactionLifecycleConcurrentBeginAllocatesOnce(t *testing.T) {
 	lifecycle := &transactionLifecycle{}
 	first := make(chan error, 1)
 	go func() {
-		first <- lifecycle.begin(context.Background(), 0, "neo4j", executor, nil, nil)
+		first <- lifecycle.begin(context.Background(), testTxOwner(), 0, "neo4j", executor, nil, nil)
 	}()
 	<-executor.beginEntered
 
 	second := make(chan error, 1)
 	go func() {
-		second <- lifecycle.begin(context.Background(), 0, "neo4j", executor, nil, nil)
+		second <- lifecycle.begin(context.Background(), testTxOwner(), 0, "neo4j", executor, nil, nil)
 	}()
 	select {
 	case err := <-second:
@@ -235,7 +235,7 @@ func TestHandleCommitPanicRollsBackBeforePreservingPanic(t *testing.T) {
 			session := newTestSession(&mockConn{}, executor)
 			session.inTransaction = true
 			require.NoError(t, session.txLifecycle.begin(
-				context.Background(), 0, "neo4j", executor, nil, nil))
+				context.Background(), testTxOwner(), 0, "neo4j", executor, nil, nil))
 
 			require.PanicsWithValue(t, test.panicValue, func() { _ = session.handleCommit(nil) })
 			require.Equal(t, test.wantInTransaction, session.inTransaction)
@@ -251,7 +251,7 @@ func TestHandleCommitPanicRollsBackBeforePreservingPanic(t *testing.T) {
 func TestTransactionLifecycleCommitWithoutExecutor(t *testing.T) {
 	lifecycle := &transactionLifecycle{}
 	observed := 0
-	require.NoError(t, lifecycle.begin(nil, 0, "neo4j", nil, nil, //nolint:staticcheck // Exercises the nil-parent fallback.
+	require.NoError(t, lifecycle.begin(t.Context(), testTxOwner(), 0, "neo4j", nil, nil,
 		func(reason transactionTerminalReason, database string, _ time.Duration, err error) {
 			observed++
 			require.Equal(t, transactionTerminalCommit, reason)
@@ -291,7 +291,7 @@ func TestTransactionLifecycleRollbackUsesUncancelledCleanupContext(t *testing.T)
 	parent, cancel := context.WithCancel(context.Background())
 	lifecycle := &transactionLifecycle{}
 	var observedErr error
-	require.NoError(t, lifecycle.begin(parent, 0, "neo4j", executor, nil,
+	require.NoError(t, lifecycle.begin(parent, testTxOwner(), 0, "neo4j", executor, nil,
 		func(_ transactionTerminalReason, _ string, _ time.Duration, err error) {
 			observedErr = err
 		}))
@@ -303,14 +303,6 @@ func TestTransactionLifecycleRollbackUsesUncancelledCleanupContext(t *testing.T)
 	require.NotNil(t, executor.rollbackCtx)
 	require.NoError(t, executor.ctxErrAtCall, "cleanup must not inherit connection cancellation")
 	require.NoError(t, lifecycle.rollback(transactionTerminalDisconnect), "cleanup ownership is exactly once")
-}
-
-func TestRollbackWithCleanupDeadlineHandlesMissingInputs(t *testing.T) {
-	require.NoError(t, rollbackWithCleanupDeadline(nil, nil)) //nolint:staticcheck // Exercises the nil-base fallback.
-	executor := &lifecycleContextExecutor{}
-	require.NoError(t, rollbackWithCleanupDeadline(nil, executor)) //nolint:staticcheck // Exercises the nil-base fallback.
-	require.NotNil(t, executor.rollbackCtx)
-	require.NoError(t, executor.ctxErrAtCall)
 }
 
 func TestRollbackWithCleanupDeadlineDoesNotAbandonUncooperativeExecutor(t *testing.T) {
@@ -350,7 +342,7 @@ func TestTransactionLifecycleDisjointRollbacksDoNotSerialize(t *testing.T) {
 	lifecycles := []*transactionLifecycle{{}, {}}
 	for index := range lifecycles {
 		require.NoError(t, lifecycles[index].begin(
-			context.Background(), 0, "neo4j", executors[index], nil, nil))
+			context.Background(), testTxOwner(), 0, "neo4j", executors[index], nil, nil))
 	}
 
 	done := make(chan error, len(lifecycles))
@@ -377,7 +369,7 @@ func TestTransactionLifecycleIdleTimeoutReportsCompletionAfterCleanup(t *testing
 	executor := &blockingLifecycleExecutor{entered: make(chan struct{}), release: release}
 	events := make(chan transactionTerminalReason, 2)
 	lifecycle := &transactionLifecycle{}
-	require.NoError(t, lifecycle.begin(context.Background(), 10*time.Millisecond, "neo4j", executor, nil,
+	require.NoError(t, lifecycle.begin(context.Background(), testTxOwner(), 10*time.Millisecond, "neo4j", executor, nil,
 		func(reason transactionTerminalReason, _ string, _ time.Duration, _ error) {
 			events <- reason
 		}))
@@ -405,7 +397,7 @@ func TestTransactionLifecycleCompletionObserverPanicCannotBlockWaiters(t *testin
 	release := make(chan struct{})
 	executor := &blockingLifecycleExecutor{entered: make(chan struct{}), release: release}
 	lifecycle := &transactionLifecycle{}
-	require.NoError(t, lifecycle.begin(context.Background(), 0, "neo4j", executor, nil,
+	require.NoError(t, lifecycle.begin(context.Background(), testTxOwner(), 0, "neo4j", executor, nil,
 		func(reason transactionTerminalReason, _ string, _ time.Duration, _ error) {
 			if reason == transactionTerminalTimeout {
 				panic("completion observer panic")
@@ -480,5 +472,5 @@ func TestObserveTransactionTerminalStructuredDiagnostics(t *testing.T) {
 	disabledSession.observeTransactionTerminal(transactionTerminalCommit, "neo4j", time.Millisecond, nil)
 	require.Empty(t, disabled.String(), "disabled debug diagnostics must stay on the allocation-free path")
 
-	(&Session{}).observeTransactionTerminal(transactionTerminalCommit, "neo4j", 0, nil)
+	(&Session{server: &Server{}}).observeTransactionTerminal(transactionTerminalCommit, "neo4j", 0, nil)
 }

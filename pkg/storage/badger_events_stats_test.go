@@ -4,6 +4,7 @@ package storage
 // test file: these exercise the engine directly, not the deleted wrapper.
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -12,29 +13,29 @@ import (
 
 func TestBadgerEngine_NodeCount(t *testing.T) {
 	b := createTestBadgerEngine(t)
-	count, err := b.NodeCount()
+	count, err := b.NodeCount(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), count)
 
-	_, _ = b.CreateNode(testNode(prefixTestID("cnt1")))
-	count, err = b.NodeCount()
+	_, _ = b.CreateNode(t.Context(), testNode(prefixTestID("cnt1")))
+	count, err = b.NodeCount(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), count)
 }
 
 func TestBadgerEngine_NodeCountByPrefix(t *testing.T) {
 	b := createTestBadgerEngine(t)
-	_, _ = b.CreateNode(testNode(prefixTestID("pfx-1")))
-	_, _ = b.CreateNode(testNode(prefixTestID("pfx-2")))
+	_, _ = b.CreateNode(t.Context(), testNode(prefixTestID("pfx-1")))
+	_, _ = b.CreateNode(t.Context(), testNode(prefixTestID("pfx-2")))
 
-	count, err := b.NodeCountByPrefix(prefixTestID("pfx-"))
+	count, err := b.NodeCountByPrefix(context.Background(), prefixTestID("pfx-"))
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, count, int64(0))
 }
 
 func TestBadgerEngine_EdgeCount(t *testing.T) {
 	b := createTestBadgerEngine(t)
-	count, err := b.EdgeCount()
+	count, err := b.EdgeCount(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), count)
 }
@@ -84,8 +85,8 @@ func TestBadgerEngine_EventSetterCallbacks(t *testing.T) {
 
 func TestBadgerEngine_LabelBatchAndStatsHelpers(t *testing.T) {
 	b := createTestBadgerEngine(t)
-	_, _ = b.CreateNode(&Node{ID: NodeID(prefixTestID("lbl-1")), Labels: []string{"Person"}})
-	_, _ = b.CreateNode(&Node{ID: NodeID(prefixTestID("lbl-2")), Labels: []string{"Other"}})
+	_, _ = b.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("lbl-1")), Labels: []string{"Person"}})
+	_, _ = b.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("lbl-2")), Labels: []string{"Other"}})
 
 	result, err := b.HasLabelBatch([]NodeID{
 		NodeID(prefixTestID("lbl-1")),
@@ -111,9 +112,9 @@ func TestBadgerEngine_LabelBatchAndStatsHelpers(t *testing.T) {
 
 func TestBadgerEngine_ListNamespaces(t *testing.T) {
 	b := createTestBadgerEngine(t)
-	_, _ = b.CreateNode(&Node{ID: "tenant_a:n1", Labels: []string{"Person"}})
-	_, _ = b.CreateNode(&Node{ID: "tenant_b:n2", Labels: []string{"Person"}})
-	_ = b.CreateEdge(&Edge{ID: "tenant_b:e1", StartNode: "tenant_b:n2", EndNode: "tenant_b:n2", Type: "SELF"})
+	_, _ = b.CreateNode(t.Context(), &Node{ID: "tenant_a:n1", Labels: []string{"Person"}})
+	_, _ = b.CreateNode(t.Context(), &Node{ID: "tenant_b:n2", Labels: []string{"Person"}})
+	_ = b.CreateEdge(t.Context(), &Edge{ID: "tenant_b:e1", StartNode: "tenant_b:n2", EndNode: "tenant_b:n2", Type: "SELF"})
 
 	namespaces := b.ListNamespaces()
 	assert.Contains(t, namespaces, "tenant_a")

@@ -30,23 +30,23 @@ func TestAdjacencyReadsIgnoreDeletedNeighbourKeys(t *testing.T) {
 	// the surviving nodes' adjacency prefixes.
 	const droppedEdges = 20_000
 	for i := 0; i <= droppedEdges; i++ {
-		_, err := engine.CreateNode(&Node{ID: NodeID(fmt.Sprintf("gone:n%d", i)), Labels: []string{"V"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("gone:n%d", i)), Labels: []string{"V"}})
 		require.NoError(t, err)
 	}
 	for i := 0; i < droppedEdges; i++ {
-		require.NoError(t, engine.CreateEdge(&Edge{
+		require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 			ID: EdgeID(fmt.Sprintf("gone:e%d", i)), Type: "NEXT",
 			StartNode: NodeID(fmt.Sprintf("gone:n%d", i)), EndNode: NodeID(fmt.Sprintf("gone:n%d", i+1)),
 		}))
 	}
 	const probes = 500
 	for i := 0; i < probes; i++ {
-		_, err := engine.CreateNode(&Node{ID: NodeID(fmt.Sprintf("keep:n%d", i)), Labels: []string{"V"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("keep:n%d", i)), Labels: []string{"V"}})
 		require.NoError(t, err)
 	}
 
 	readAll := func() time.Duration {
-		tx, err := engine.BeginTransaction()
+		tx, err := engine.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		defer func() { _ = tx.Rollback() }()
 		start := time.Now()
@@ -113,7 +113,7 @@ func TestLoadMVCCRecordAtOrBeforeBoundedScan(t *testing.T) {
 
 	// A short key under the prefix, below every version, is the greatest key
 	// at or below an earlier version.
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		return txn.Set(append(engine.mvccNodeVersionPrefixString(nodeID), 0x01), []byte{0})
 	}))
 	_, _, err = load(MVCCVersion{CommitTimestamp: time.Unix(50, 0).UTC()})
@@ -128,7 +128,7 @@ func TestDescendingPrefixKeys(t *testing.T) {
 	t.Cleanup(func() { _ = engine.Close() })
 	key := func(group byte, n int) []byte { return []byte{0xE0, group, byte(n >> 8), byte(n)} }
 	set := func(keys ...[]byte) {
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			for _, k := range keys {
 				if err := txn.Set(k, []byte{1}); err != nil {
 					return err
@@ -188,7 +188,7 @@ func TestDescendingPrefixKeys(t *testing.T) {
 	for start := 0; start < len(deleted); start += 5000 {
 		set(deleted[start : start+5000]...)
 	}
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		for _, k := range deleted {
 			if err := txn.Delete(k); err != nil {
 				return err
@@ -212,29 +212,32 @@ func TestTemporalHistoryLookupsDescending(t *testing.T) {
 	}))
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	n1 := &Node{ID: "test:n1", Labels: []string{"Role"}, Properties: map[string]any{"role": "captain", "valid_from": base, "valid_to": base.Add(24 * time.Hour)}}
-	_, err := engine.CreateNode(n1)
+	_, err := engine.CreateNode(t.Context(), n1)
 	require.NoError(t, err)
-	c := sm.GetConstraintsForLabels([]string{"Role"})[0]
+	roleConstraints, err := sm.GetConstraintsForLabels(t.Context(), []string{"Role"})
+	require.NoError(t, err)
+	require.Len(t, roleConstraints, 1)
+	c := roleConstraints[0]
 
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		target, err := engine.writeTemporalIndexForNodeInTxn(txn, ns, n1, c)
 		require.NoError(t, err)
 		prefix := temporalHistoryPrefix(target.desc)
 		require.NoError(t, txn.Set(append([]byte{}, prefix...), []byte{}), "malformed: no node ID")
 
-		node, _, err := engine.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{at: base.Add(12 * time.Hour)})
+		node, _, err := engine.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{ctx: t.Context(), at: base.Add(12 * time.Hour)})
 		require.NoError(t, err)
 		require.Equal(t, NodeID("test:n1"), node.ID)
-		node, _, err = engine.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{at: base.Add(36 * time.Hour)})
+		node, _, err = engine.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{ctx: t.Context(), at: base.Add(36 * time.Hour)})
 		require.NoError(t, err)
 		require.Nil(t, node, "n1 has ended; the malformed key is skipped")
 
 		// A history entry whose node body does not decode fails the lookups.
 		require.NoError(t, txn.Set(temporalHistoryKey(target.desc, base.Add(30*time.Hour), "test:bad"), []byte{}))
 		require.NoError(t, txn.Set(nodeKey("test:bad"), []byte("not a node")))
-		_, _, err = engine.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{at: base.Add(36 * time.Hour)})
+		_, _, err = engine.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{ctx: t.Context(), at: base.Add(36 * time.Hour)})
 		require.Error(t, err)
-		_, _, err = engine.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{at: base.Add(36 * time.Hour), adjacent: true})
+		_, _, err = engine.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{ctx: t.Context(), at: base.Add(36 * time.Hour), adjacent: true})
 		require.Error(t, err)
 		return nil
 	}))

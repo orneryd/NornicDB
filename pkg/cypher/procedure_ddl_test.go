@@ -117,7 +117,7 @@ func TestLoadPersistedProcedures_BranchCoverage(t *testing.T) {
 		}
 		validBlob, err := msgpack.Marshal(valid)
 		require.NoError(t, err)
-		_, err = store.CreateNode(&storage.Node{
+		_, err = store.CreateNode(t.Context(), &storage.Node{
 			ID:     procedureCatalogNodeID("nornic.loadedProc"),
 			Labels: []string{procedureCatalogLabel},
 			Properties: map[string]interface{}{
@@ -140,7 +140,7 @@ func TestLoadPersistedProcedures_BranchCoverage(t *testing.T) {
 		store := storage.NewNamespacedEngine(base, "test")
 		exec := NewStorageExecutor(store)
 
-		_, err := store.CreateNode(&storage.Node{
+		_, err := store.CreateNode(t.Context(), &storage.Node{
 			ID:     procedureCatalogNodeID("nornic.badb64"),
 			Labels: []string{procedureCatalogLabel},
 			Properties: map[string]interface{}{
@@ -167,7 +167,7 @@ func TestLoadPersistedProcedures_BranchCoverage(t *testing.T) {
 		}
 		invalidBlob, err := msgpack.Marshal(invalidMode)
 		require.NoError(t, err)
-		_, err = store.CreateNode(&storage.Node{
+		_, err = store.CreateNode(t.Context(), &storage.Node{
 			ID:     procedureCatalogNodeID("nornic.invalidMode"),
 			Labels: []string{procedureCatalogLabel},
 			Properties: map[string]interface{}{
@@ -210,7 +210,7 @@ func TestDropProcedure_ErrorBranches(t *testing.T) {
 		_, err := exec.Execute(ctx, "CREATE OR REPLACE PROCEDURE nornic.to_drop() MODE READ AS RETURN 1 AS value", nil)
 		require.NoError(t, err)
 
-		_, err = store.CreateNode(&storage.Node{
+		_, err = store.CreateNode(t.Context(), &storage.Node{
 			ID:     procedureCatalogNodeID("nornic.bad_reload"),
 			Labels: []string{procedureCatalogLabel},
 			Properties: map[string]interface{}{

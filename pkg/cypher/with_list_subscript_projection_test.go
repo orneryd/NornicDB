@@ -17,11 +17,11 @@ func TestWithListSubscriptPreservesNodeProjection(t *testing.T) {
 
 	function := &storage.Node{ID: "fn-1", Labels: []string{"Function"}, Properties: map[string]interface{}{"id": "fn-1"}}
 	workload := &storage.Node{ID: "workload-1", Labels: []string{"Workload"}, Properties: map[string]interface{}{"name": "checkout"}}
-	_, err := store.CreateNode(function)
+	_, err := store.CreateNode(t.Context(), function)
 	require.NoError(t, err)
-	_, err = store.CreateNode(workload)
+	_, err = store.CreateNode(t.Context(), workload)
 	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "fn-runs-in-workload",
 		Type:      "RUNS_IN",
 		StartNode: function.ID,

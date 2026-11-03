@@ -105,7 +105,7 @@ func TestPrivateReproCompositeConstituentAccess(t *testing.T) {
 		{Alias: "a", DatabaseName: "private_allowed", Type: "local", AccessMode: "read_write"},
 		{Alias: "b", DatabaseName: "private_denied", Type: "local", AccessMode: "read_write"},
 	}))
-	_, err := authenticator.CreateUser("private_editor", "password123", []auth.Role{auth.RoleEditor})
+	_, err := authenticator.CreateUser(context.Background(), "private_editor", "password123", []auth.Role{auth.RoleEditor})
 	require.NoError(t, err)
 	require.NoError(t, server.allowlistStore.SaveRoleDatabases(context.Background(), "editor", []string{"private_allowed", "private_cmp"}))
 	for _, database := range []string{"private_allowed", "private_cmp"} {
@@ -154,7 +154,7 @@ func TestPrivateReproCompositePatternFormsRequireConstituentTarget(t *testing.T)
 		{Alias: "a", DatabaseName: "private_allowed", Type: "local", AccessMode: "read_write"},
 		{Alias: "b", DatabaseName: "private_denied", Type: "local", AccessMode: "read_write"},
 	}))
-	_, err := authenticator.CreateUser("private_editor", "password123", []auth.Role{auth.RoleEditor})
+	_, err := authenticator.CreateUser(context.Background(), "private_editor", "password123", []auth.Role{auth.RoleEditor})
 	require.NoError(t, err)
 	require.NoError(t, server.allowlistStore.SaveRoleDatabases(context.Background(), "editor", []string{"private_allowed", "private_cmp"}))
 	for _, database := range []string{"private_allowed", "private_cmp"} {
@@ -207,7 +207,7 @@ func TestPrivateReproCompositePatternFormsRequireConstituentTarget(t *testing.T)
 // caller of the same database, and neither can clear or overwrite them.
 func TestPrivateReproShellParamsAreScopedPerClient(t *testing.T) {
 	server, authenticator := setupTestServer(t)
-	_, err := authenticator.CreateUser("zz_reader", "password123", []auth.Role{auth.RoleViewer})
+	_, err := authenticator.CreateUser(context.Background(), "zz_reader", "password123", []auth.Role{auth.RoleViewer})
 	require.NoError(t, err)
 	require.NoError(t, server.allowlistStore.SaveRoleDatabases(context.Background(), "viewer", []string{"nornic"}))
 	require.NoError(t, server.privilegesStore.SavePrivilege(context.Background(), "viewer", "nornic", true, true))
@@ -255,7 +255,7 @@ func TestPrivateReproShellParamsAreScopedPerClient(t *testing.T) {
 // silently doing nothing.
 func TestPrivateReproCreateOrReplaceDatabaseRequiresAdmin(t *testing.T) {
 	server, authenticator := setupTestServer(t)
-	_, err := authenticator.CreateUser("zz_editor", "password123", []auth.Role{auth.RoleEditor})
+	_, err := authenticator.CreateUser(context.Background(), "zz_editor", "password123", []auth.Role{auth.RoleEditor})
 	require.NoError(t, err)
 	require.NoError(t, server.allowlistStore.SaveRoleDatabases(context.Background(), "editor", []string{"nornic"}))
 	require.NoError(t, server.privilegesStore.SavePrivilege(context.Background(), "editor", "nornic", true, true))

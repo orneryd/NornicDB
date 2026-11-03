@@ -11,7 +11,7 @@ import (
 
 func TestStripLeadingWithImportsForFabricRecord_MatchIsStripped(t *testing.T) {
 	query := "WITH textKey128 MATCH (tt) WHERE tt.textKey128 = textKey128 RETURN collect(tt) AS texts"
-	got := stripLeadingWithImportsForFabricRecord(query, map[string]interface{}{"textKey128": "h1"})
+	got := stripLeadingWithImportsForFabricRecord(t.Context(), query, map[string]interface{}{"textKey128": "h1"})
 	want := "MATCH (tt) WHERE tt.textKey128 = $textKey128 RETURN collect(tt) AS texts"
 	if got != want {
 		t.Fatalf("expected stripped query %q, got %q", want, got)
@@ -20,7 +20,7 @@ func TestStripLeadingWithImportsForFabricRecord_MatchIsStripped(t *testing.T) {
 
 func TestStripLeadingWithImportsForFabricRecord_UnwindPipelineIsStripped(t *testing.T) {
 	query := "WITH rows UNWIND rows AS r WITH collect(DISTINCT r.textKey128) AS keys RETURN keys"
-	got := stripLeadingWithImportsForFabricRecord(query, map[string]interface{}{"rows": []interface{}{}})
+	got := stripLeadingWithImportsForFabricRecord(t.Context(), query, map[string]interface{}{"rows": []interface{}{}})
 	// Parameter names remain valid without quoting, including rows.
 	want := "UNWIND $rows AS r WITH collect(DISTINCT r.textKey128) AS keys RETURN keys"
 	if got != want {
@@ -36,7 +36,7 @@ func TestStrippedImportsExecuteWithTypedParameterBindings(t *testing.T) {
 		map[string]interface{}{"textKey128": "a"},
 	}}
 	query := "WITH rows UNWIND rows AS r WITH collect(DISTINCT r.textKey128) AS keys RETURN keys"
-	generated := stripLeadingWithImportsForFabricRecord(query, bindings)
+	generated := stripLeadingWithImportsForFabricRecord(t.Context(), query, bindings)
 	result, err := exec.Execute(context.Background(), generated, bindings)
 	if err != nil {
 		t.Fatal(err)
@@ -49,7 +49,7 @@ func TestStrippedImportsExecuteWithTypedParameterBindings(t *testing.T) {
 
 func TestStripLeadingWithImportsForFabricRecord_UseClauseIsStripped(t *testing.T) {
 	query := "WITH textKey128 USE translations.txr MATCH (tt) WHERE tt.translationId = textKey128 RETURN collect(tt) AS texts"
-	got := stripLeadingWithImportsForFabricRecord(query, map[string]interface{}{"textKey128": "abc"})
+	got := stripLeadingWithImportsForFabricRecord(t.Context(), query, map[string]interface{}{"textKey128": "abc"})
 	want := "USE translations.txr MATCH (tt) WHERE tt.translationId = $textKey128 RETURN collect(tt) AS texts"
 	if got != want {
 		t.Fatalf("expected stripped query %q, got %q", want, got)
@@ -58,7 +58,7 @@ func TestStripLeadingWithImportsForFabricRecord_UseClauseIsStripped(t *testing.T
 
 func TestFindLeadingWithEndLocalAndSplitCommaTopLevelLocal(t *testing.T) {
 	query := "WITH a, collect({k: b, t: c}) AS rows USE translations.txr MATCH (n) RETURN n"
-	idx := findLeadingWithEndLocal(query)
+	idx := findLeadingWithEndLocal(t.Context(), query)
 	if idx <= 0 {
 		t.Fatalf("expected positive with-end index, got %d", idx)
 	}
@@ -186,6 +186,38 @@ func TestShouldUseFabricPlanner_OnlyForCompositeUseTargets(t *testing.T) {
 			name:  "composite constituent use triggers fabric",
 			query: "CALL { USE cmp.a MATCH (n) RETURN n } RETURN 1 AS ok",
 			want:  true,
+		},
+		{
+			// A leading comment is trivia: the statement still begins with its
+			// top-level USE clause, whose grammar admits SHOW INDEXES.
+			name:  "leading line comment keeps the use top-level",
+			query: "// staged drop\nUSE cmp.a SHOW INDEXES",
+			want:  true,
+		},
+		{
+			name:  "leading BOM and comment keeps the use top-level",
+			query: "\xef\xbb\xbf/* staged drop */ USE cmp.a SHOW INDEXES",
+			want:  true,
+		},
+		{
+			name:  "leading block comment keeps the use top-level",
+			query: "/* staged drop */ USE cmp.a SHOW INDEXES",
+			want:  true,
+		},
+		{
+			// Leading trivia decides only the first USE: a comment before a
+			// non-composite target still stays native.
+			name:  "leading comment does not promote a non-composite use",
+			query: "/* staged drop */ USE leaf_a SHOW INDEXES",
+			want:  false,
+		},
+		{
+			// The subquery grammar has no administration command, so a nested
+			// USE followed by SHOW is not Fabric admission for a composite
+			// constituent: the statement keeps its own syntax error.
+			name:  "nested use keeps the subquery grammar",
+			query: "CALL { /* staged drop */ USE cmp.a SHOW INDEXES } RETURN 1 AS ok",
+			want:  false,
 		},
 	}
 

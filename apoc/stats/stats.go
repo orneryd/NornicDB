@@ -4,6 +4,8 @@
 // statistical measures and distributions.
 package stats
 
+import "errors"
+
 import (
 	"context"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
@@ -32,30 +34,57 @@ func New(backend storage.Storage) *Functions {
 // Example:
 //
 //	apoc.stats.degrees('KNOWS') => {min: 0, max: 100, mean: 5.2, ...}
-func (f *Functions) Degrees(relType string) map[string]interface{} {
-	// apoc.stats.degrees is procedure-classified and the bundled plugin
-	// implements no such procedure: no statement context reaches this helper,
-	// whose whole-graph read runs on the background lifetime.
-	nodes, err := f.backend.AllNodes(context.Background())
+func (f *Functions) Degrees(ctx context.Context, relType string) (map[string]interface{}, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	// The caller supplies the lifetime for storage work.
+
+	nodes, err := f.backend.AllNodes(ctx)
 	if err != nil {
+		return nil, err
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	if err != nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
 		return map[string]interface{}{
 			"min":    0,
 			"max":    0,
 			"mean":   0.0,
 			"median": 0.0,
 			"stdDev": 0.0,
-		}
+		}, nil
 	}
 
 	degrees := make([]float64, 0, len(nodes))
 	for _, node := range nodes {
-		degree, err := f.backend.GetNodeDegree(node.ID, relType, storage.DirectionBoth)
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
+		degree, err := f.backend.GetNodeDegree(ctx, node.ID, relType, storage.DirectionBoth)
+		if err != nil && !errors.Is(err, storage.ErrNodeNotFound) {
+			return nil, err
+		}
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		if err == nil {
 			degrees = append(degrees, float64(degree))
 		}
 	}
 
 	if len(degrees) == 0 {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
 		return map[string]interface{}{
 			"min":    0,
 			"max":    0,
@@ -63,9 +92,12 @@ func (f *Functions) Degrees(relType string) map[string]interface{} {
 			"median": 0.0,
 			"stdDev": 0.0,
 			"count":  0,
-		}
+		}, nil
 	}
 
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
 	return map[string]interface{}{
 		"min":    Min(degrees),
 		"max":    Max(degrees),
@@ -73,7 +105,7 @@ func (f *Functions) Degrees(relType string) map[string]interface{} {
 		"median": Median(degrees),
 		"stdDev": StdDev(degrees),
 		"count":  len(degrees),
-	}
+	}, nil
 }
 
 // Mean calculates arithmetic mean.

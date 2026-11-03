@@ -60,10 +60,10 @@ func (f *statementCacheDisposeFixture) warm(t *testing.T) {
 // churn is the concurrent schedule's per-member work: under the shared owner
 // it keeps recording the same verdict and upper-text entry while retirement
 // runs.
-func (f *statementCacheDisposeFixture) churn(child *StorageExecutor, iterations int) {
+func (f *statementCacheDisposeFixture) churn(ctx context.Context, child *StorageExecutor, iterations int) {
 	for range iterations {
-		child.markCachedValidSyntax(f.key, activeSyntaxValidator())
-		child.cachedUpperQuery("return 42 as value")
+		child.markCachedValidSyntax(ctx, f.key, activeSyntaxValidator())
+		child.cachedUpperQuery(ctx, "return 42 as value")
 		child.hasCachedValidSyntax(f.key, activeSyntaxValidator())
 	}
 }
@@ -115,7 +115,7 @@ func TestStatementCacheFamilyDispose(t *testing.T) {
 			if schedule.concurrent {
 				for i := range schedule.members {
 					member := fixture.members[i%len(fixture.members)]
-					wg.Go(func() { fixture.churn(member, schedule.iterations) })
+					wg.Go(func() { fixture.churn(t.Context(), member, schedule.iterations) })
 				}
 			}
 			for range schedule.disposals {

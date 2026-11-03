@@ -67,17 +67,20 @@ type dlqPublicStore struct {
 	beforeFind  func()
 }
 
-func (s *dlqPublicStore) FindNodeNeedingEmbedding() *storage.Node {
+func (s *dlqPublicStore) FindNodeNeedingEmbedding(ctx context.Context) (*storage.Node, error) {
 	if s.beforeFind != nil {
 		s.beforeFind()
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(s.pending) == 0 {
-		return nil
+		return nil, nil
 	}
-	n, _ := s.Engine.GetNode(s.pending[0])
-	return n
+	n, err := s.Engine.GetNode(ctx, s.pending[0])
+	if errors.Is(err, storage.ErrNotFound) {
+		return nil, nil
+	}
+	return n, err
 }
 func (s *dlqPublicStore) RefreshPendingEmbeddingsIndex() int { return 0 }
 func (s *dlqPublicStore) StreamParkedEmbeddingFailures(ctx context.Context, visit func(storage.NodeID, map[string]any) error) (int, error) {
@@ -103,7 +106,7 @@ func (s *dlqPublicStore) AddToPendingEmbeddings(id storage.NodeID) {
 	}
 	s.pending = append(s.pending, id)
 }
-func (s *dlqPublicStore) UpdateNodeEmbeddingSidecar(n *storage.Node) error {
+func (s *dlqPublicStore) UpdateNodeEmbeddingSidecar(ctx context.Context, n *storage.Node) error {
 	if s.beforeWrite != nil {
 		s.beforeWrite(n)
 	}
@@ -117,7 +120,7 @@ func (s *dlqPublicStore) UpdateNodeEmbeddingSidecar(n *storage.Node) error {
 		}
 		return errors.New("sidecar unavailable")
 	}
-	return s.Engine.(storage.EmbeddingSidecarUpdater).UpdateNodeEmbeddingSidecar(n)
+	return s.Engine.(storage.EmbeddingSidecarUpdater).UpdateNodeEmbeddingSidecar(ctx, n)
 }
 func dlqPublicFixture(t *testing.T, p *dlqPublicProvider, configure ...func(*nornicdb.EmbedWorkerConfig)) (*nornicdb.EmbedWorker, *dlqPublicStore) {
 	t.Helper()
@@ -145,7 +148,7 @@ func dlqPublicFixture(t *testing.T, p *dlqPublicProvider, configure ...func(*nor
 }
 func dlqPublicAdd(t *testing.T, s *dlqPublicStore, id string) {
 	t.Helper()
-	_, err := s.CreateNode(&storage.Node{ID: storage.NodeID(id), Properties: map[string]any{"text": id}})
+	_, err := s.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(id), Properties: map[string]any{"text": id}})
 	require.NoError(t, err)
 	s.AddToPendingEmbeddings(storage.NodeID(id))
 }
@@ -208,7 +211,7 @@ func TestEmbedWorkerDLQPublicTailAndArrivingMain(t *testing.T) {
 	// must take it before the other ready DLQ entry.
 	s.beforeWrite = func(n *storage.Node) {
 		if n.ID == "a" && len(dlqPublicAttempts(s)) == 2 {
-			_, err := s.CreateNode(&storage.Node{ID: "arrived", Properties: map[string]any{"text": "arrived"}})
+			_, err := s.CreateNode(t.Context(), &storage.Node{ID: "arrived", Properties: map[string]any{"text": "arrived"}})
 			if err != nil {
 				panic(err)
 			}
@@ -242,10 +245,10 @@ func TestEmbedWorkerDLQPublicUpdatePullsMainAndRejectsStale(t *testing.T) {
 	s.reject["bad"] = true
 	w.StartWorkers()
 	require.Eventually(t, paused.Load, 3*time.Second, time.Millisecond)
-	n, err := s.GetNode("bad")
+	n, err := s.GetNode(t.Context(), "bad")
 	require.NoError(t, err)
 	n.Properties["text"] = "updated source"
-	require.NoError(t, s.UpdateNode(storage.NodeUpdateRequest{After: n}))
+	require.NoError(t, s.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: n}))
 	s.mu.Lock()
 	s.reject["bad"] = false
 	s.mu.Unlock()
@@ -258,7 +261,7 @@ func TestEmbedWorkerDLQPublicUpdatePullsMainAndRejectsStale(t *testing.T) {
 	p.mu.Unlock()
 	require.Len(t, calls, 2, "updated source must be requested again")
 	require.Contains(t, calls[1], "updated source")
-	stored, err := s.GetNode("bad")
+	stored, err := s.GetNode(t.Context(), "bad")
 	require.NoError(t, err)
 	require.NotEmpty(t, stored.ChunkEmbeddings)
 }
@@ -324,11 +327,11 @@ func TestEmbedWorkerDLQPublicUpdateResetsRetryLimit(t *testing.T) {
 	s.reject["bad"] = true
 	w.StartWorkers()
 	require.Eventually(t, paused.Load, 3*time.Second, time.Millisecond)
-	n, err := s.GetNode("bad")
+	n, err := s.GetNode(t.Context(), "bad")
 	require.NoError(t, err)
 	n.Properties["text"] = "new attempt"
 	n.UpdatedAt = time.Now()
-	require.NoError(t, s.UpdateNode(storage.NodeUpdateRequest{After: n}))
+	require.NoError(t, s.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: n}))
 	w.Enqueue("bad")
 	paused.Store(false)
 	w.TriggerImmediate()
@@ -373,11 +376,11 @@ func TestEmbedWorkerDLQPublicUpdateRejectsInFlightRetry(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("retry write never started")
 	}
-	n, err := s.GetNode("bad")
+	n, err := s.GetNode(t.Context(), "bad")
 	require.NoError(t, err)
 	n.Properties["text"] = "changed in flight"
 	n.UpdatedAt = time.Now()
-	require.NoError(t, s.UpdateNode(storage.NodeUpdateRequest{After: n}))
+	require.NoError(t, s.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: n}))
 	w.Enqueue("bad")
 	once.Do(func() { close(release) })
 	require.Eventually(t, func() bool { return w.Stats().Processed == 1 }, 3*time.Second, time.Millisecond)
@@ -479,7 +482,7 @@ func TestEmbedWorkerDLQPublicFailureRoutes(t *testing.T) {
 			dlqPublicAdd(t, s, "healthy")
 			w.StartWorkers()
 			require.Eventually(t, func() bool { return w.Stats().Processed == 1 && w.Stats().Parked == 1 }, 4*time.Second, time.Millisecond)
-			n, err := s.GetNode("healthy")
+			n, err := s.GetNode(t.Context(), "healthy")
 			require.NoError(t, err)
 			require.NotEmpty(t, n.ChunkEmbeddings)
 			failures, err := w.ParkedEmbeddingFailures(context.Background(), 10)

@@ -441,10 +441,10 @@ func TestSelectedPathSearchHelpers(t *testing.T) {
 	for _, pattern := range []string{"", "(a", "(a)-->", "-->(a)", "(a)-->-->(b)", "(a) x", "(a)(b)", "(a)-[r->(b)",
 		"(a)((x)-->(y))(b)", "(a)(((x)-->(y))+)+(b)", "(a)((x)-->)+(b)", "(a $p)", "(a)-[:``]->(b)", "(a)-[:$(t)]->(b)",
 		"(a)-[r $p]->(b)", "(a:)", "(a)--[r]->(b)", "(a)-[r]--(b)"} {
-		_, ok := parsePathPatternItems(pattern, false)
+		_, ok := parsePathPatternItemsContext(t.Context(), pattern, false)
 		require.False(t, ok, pattern)
 	}
-	items, ok := parsePathPatternItems("(a:L WHERE a.x = 1)-[r:T WHERE r.w > 1]->(b)-[:T*2]->(c)-[*..3]-(d)<-[:U*2..]-(e)", false)
+	items, ok := parsePathPatternItemsContext(t.Context(), "(a:L WHERE a.x = 1)-[r:T WHERE r.w > 1]->(b)-[:T*2]->(c)-[*..3]-(d)<-[:U*2..]-(e)", false)
 	require.True(t, ok)
 	require.Equal(t, []string{"a.x = 1"}, items[0].predicates)
 	require.Equal(t, "(a:L )", items[0].text)

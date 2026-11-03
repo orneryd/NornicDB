@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"math"
@@ -431,14 +432,14 @@ func TestContinuationReturnsEveryLiveDocumentAfterRemovalsAndInserts(t *testing.
 	indexDoc := func(i int) {
 		id := fmt.Sprintf("doc-%d", i)
 		node := &storage.Node{ID: storage.NodeID(id), ChunkEmbeddings: [][]float32{{1, float32(i) / 40}}}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, service.IndexNode(node))
 		live[id] = true
 	}
 	remove := func(i int) {
 		id := fmt.Sprintf("doc-%d", i)
-		require.NoError(t, engine.DeleteNode(storage.NodeID(id)))
+		require.NoError(t, engine.DeleteNode(t.Context(), storage.NodeID(id)))
 		require.NoError(t, service.RemoveNode(storage.NodeID(id)))
 		delete(live, id)
 	}
@@ -643,7 +644,7 @@ func TestContinuationReturnsDocumentNoGraphLinkReaches(t *testing.T) {
 			for i := 0; i < docs; i++ {
 				angle := math.Pi * float64(i) / float64(docs) / 2
 				node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("doc-%d", i)), ChunkEmbeddings: [][]float32{{float32(math.Cos(angle)), float32(math.Sin(angle))}}}
-				_, err := engine.CreateNode(node)
+				_, err := engine.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 				require.NoError(t, service.IndexNode(node))
 			}
@@ -781,7 +782,7 @@ func seedSoleMatchNodes(t *testing.T, engine storage.Engine, docs int, decorate 
 		if decorate != nil {
 			decorate(node)
 		}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		if afterCreate != nil {
 			require.NoError(t, afterCreate(node))

@@ -71,19 +71,22 @@ func TestEncodeRecordV5ElementIDs(t *testing.T) {
 	// Bolt 4.x: the three-field node structure keeps no element id (#745 §1).
 	// Index 0 is the record list header (0x91 for one field); the struct
 	// marker follows.
-	v4 := encodeRecordListInto(nil, []any{node}, true, false, "testdb")
+	v4, encodeErr := encodeRecordListInto(t.Context(), nil, []any{node}, true, false, "testdb")
+	require.NoError(t, encodeErr)
 	require.Equal(t, byte(0x91), v4[0], "record list header for one field")
 	require.Equal(t, byte(0xB3), v4[1], "4.x node is a 3-field struct")
 	require.NotContains(t, string(v4), "4:testdb:node-1")
 
 	// Bolt 5.0: the node is a 4-field struct ending in the element id.
-	v5 := encodeRecordListInto(nil, []any{node}, true, true, "testdb")
+	v5, encodeErr := encodeRecordListInto(t.Context(), nil, []any{node}, true, true, "testdb")
+	require.NoError(t, encodeErr)
 	require.Equal(t, []byte{0xB4, 0x4E}, v5[1:3], "5.0 node is a 4-field struct")
 	require.Contains(t, string(v5), "4:testdb:node-1")
 
 	// Bolt 5.0 relationships: 8 fields (B8 52) — id, start, end, type,
 	// properties, element_id, start_node_element_id, end_node_element_id.
-	v5rel := encodeRecordListInto(nil, []any{edge}, true, true, "testdb")
+	v5rel, encodeErr := encodeRecordListInto(t.Context(), nil, []any{edge}, true, true, "testdb")
+	require.NoError(t, encodeErr)
 	require.Equal(t, []byte{0xB8, 0x52}, v5rel[1:3], "5.0 relationship is an 8-field struct")
 	require.Contains(t, string(v5rel), "5:testdb:edge-1")
 	require.Contains(t, string(v5rel), "4:testdb:node-1")
@@ -94,7 +97,8 @@ func TestEncodeRecordV5ElementIDs(t *testing.T) {
 	node2 := &storage.Node{ID: "node-2", Labels: []string{"EID"}, Properties: map[string]any{}}
 	pathNodes := []*storage.Node{node, node2}
 	pathRels := []*storage.Edge{edge}
-	v5path := encodePathV5Into(nil, pathNodes, pathRels, "testdb")
+	v5path, encodeErr := encodePathV5Into(t.Context(), nil, pathNodes, pathRels, "testdb")
+	require.NoError(t, encodeErr)
 	require.Equal(t, []byte{0xB3, 0x50}, v5path[:2], "path stays a 3-field struct")
 	require.Contains(t, string(v5path), "4:testdb:node-1")
 	require.Contains(t, string(v5path), "4:testdb:node-2")
@@ -104,12 +108,14 @@ func TestEncodeRecordV5ElementIDs(t *testing.T) {
 
 	// Entities nested in maps and lists keep their Bolt 5.0 structures.
 	nested := map[string]any{"n": node}
-	v5nested := encodeRecordListInto(nil, []any{nested}, true, true, "testdb")
+	v5nested, encodeErr := encodeRecordListInto(t.Context(), nil, []any{nested}, true, true, "testdb")
+	require.NoError(t, encodeErr)
 	require.Contains(t, string(v5nested), "4:testdb:node-1")
 	require.NotContains(t, string(v5nested), string(byte(0xB3))+string(byte(0x4E))+"\x03", "nested node must not use the Bolt 4 3-field struct")
 
 	deepList := []any{[]any{map[string]any{"e": edge}}}
-	v5deep := encodeRecordListInto(nil, []any{deepList}, true, true, "testdb")
+	v5deep, encodeErr := encodeRecordListInto(t.Context(), nil, []any{deepList}, true, true, "testdb")
+	require.NoError(t, encodeErr)
 	require.Contains(t, string(v5deep), "5:testdb:edge-1")
 	require.Contains(t, string(v5deep), "4:testdb:node-2")
 }

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -34,10 +35,10 @@ func TestCloseWaitsForInFlightListener(t *testing.T) {
 				<-release
 				finished.Store(true)
 			})
-			tx, err := b.BeginTransaction()
+			tx, err := b.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			require.NoError(t, tx.SetImplicit(true))
-			_, err = tx.CreateNode(&Node{ID: "test:held", Properties: map[string]any{"v": int64(1)}})
+			_, err = tx.CreateNode(t.Context(), &Node{ID: "test:held", Properties: map[string]any{"v": int64(1)}})
 			require.NoError(t, err)
 			require.NoError(t, tx.Commit()) // acknowledged into the buffer
 
@@ -109,7 +110,7 @@ func TestFlushReleasesBarrierBeforeWorkerListeners(t *testing.T) {
 		t.Fatal("the worker never claimed the generation")
 	}
 	flushed := make(chan error, 1)
-	go func() { flushed <- b.FlushWriteBehind(nil) }()
+	go func() { flushed <- b.FlushWriteBehind(context.Background()) }()
 	// The flush waits for the generation the worker is applying.
 	time.Sleep(50 * time.Millisecond)
 	close(applied)
@@ -131,7 +132,9 @@ func TestFlushSettlesGenerationAppliedOutsideTheDrain(t *testing.T) {
 		t.Run(fmt.Sprintf("claimed=%v", claimed), func(t *testing.T) {
 			b := newWriteBehindTestEngine(t, time.Hour)
 			bufferedCreate(t, b, &Node{ID: "test:direct"})
-			b.writeBehind.rotate()
+			if _, rotateErr := b.writeBehind.rotate(t.Context()); rotateErr != nil {
+				t.Fatal(rotateErr)
+			}
 			b.writeBehind.mu.RLock()
 			buf := b.writeBehind.draining[len(b.writeBehind.draining)-1]
 			b.writeBehind.mu.RUnlock()
@@ -143,7 +146,7 @@ func TestFlushSettlesGenerationAppliedOutsideTheDrain(t *testing.T) {
 				buf.releaseDrain()
 			}
 			flushed := make(chan error, 1)
-			go func() { flushed <- b.FlushWriteBehind(nil) }()
+			go func() { flushed <- b.FlushWriteBehind(context.Background()) }()
 			select {
 			case err := <-flushed:
 				require.NoError(t, err)

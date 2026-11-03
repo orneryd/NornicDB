@@ -227,7 +227,7 @@ func (s *Service) rerankGraphPool(ctx context.Context, query string, pool []*gra
 		byKey[key] = candidate
 		text := ""
 		if index < top {
-			text = s.graphRerankContent(&candidate.result, query, maxChars)
+			text = s.graphRerankContent(ctx, &candidate.result, query, maxChars)
 		}
 		candidates = append(candidates, RerankCandidate{ID: key, Content: text, Score: candidate.rrf})
 	}
@@ -256,11 +256,11 @@ func (s *Service) rerankGraphPool(ctx context.Context, query string, pool []*gra
 //     that list reaches the reranker.
 //
 // The budget counts characters, not bytes.
-func (s *Service) graphRerankContent(result *SearchResult, query string, maxChars int) string {
+func (s *Service) graphRerankContent(ctx context.Context, result *SearchResult, query string, maxChars int) string {
 	match := graphBestMatch(result)
 	if relationship := result.Relationship; relationship != nil {
 		edge := relationship
-		if stored, err := s.engine.GetEdge(relationship.ID); err == nil && stored != nil {
+		if stored, err := s.engine.GetEdge(ctx, relationship.ID); err == nil && stored != nil {
 			edge = stored
 		}
 		if match != nil && s.relationshipPropertyListed(match.Property) {
@@ -274,16 +274,16 @@ func (s *Service) graphRerankContent(result *SearchResult, query string, maxChar
 	if id == "" {
 		id = storage.NodeID(result.ID)
 	}
-	if node, err := s.getNodeWithoutEmbeddings(id); err == nil && node != nil {
+	if node, err := s.getNodeWithoutEmbeddings(ctx, id); err == nil && node != nil {
 		matched := rrfResult{ID: string(id)}
 		if match != nil && match.Kind == SearchMatchChunk {
-			if len(managedChunkTexts(s.hitEmbedMeta(node))) > match.Chunk {
+			if len(managedChunkTexts(s.hitEmbedMeta(ctx, node))) > match.Chunk {
 				matched.MatchID = nodeChunkVectorKey(string(id), match.Chunk)
 			} else if passage := graphPassage(node.Properties, match, maxChars); passage != "" {
 				return passage
 			}
 		}
-		return s.rerankCandidateContent(node, matched, query, maxChars)
+		return s.rerankCandidateContent(ctx, node, matched, query, maxChars)
 	}
 	return boundedPrefix(s.extractSearchableText(graphCandidateTextNode(result)), maxChars)
 }

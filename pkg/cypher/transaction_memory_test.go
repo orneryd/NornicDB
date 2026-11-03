@@ -40,7 +40,7 @@ func TestTransactionMemoryScopeCannotOverflow(t *testing.T) {
 
 func TestUnrelatedDatabaseLimitDoesNotTrackUnlimitedTransaction(t *testing.T) {
 	resetTransactionMemory(t)
-	SetDatabaseTransactionMemoryLimits("limited", TransactionMemoryLimits{TransactionMax: 1 << 20})
+	SetDatabaseTransactionMemoryLimits("limited", DatabaseTransactionMemoryLimits{TransactionMax: new(int64(1 << 20))})
 	require.True(t, transactionMemoryActive.Load())
 
 	tx := &runningTransaction{database: "nornic"}
@@ -50,7 +50,7 @@ func TestUnrelatedDatabaseLimitDoesNotTrackUnlimitedTransaction(t *testing.T) {
 
 func TestRemovingLimitKeepsExistingTransactionChargeUntilEnd(t *testing.T) {
 	resetTransactionMemory(t)
-	SetDatabaseTransactionMemoryLimits("nornic", TransactionMemoryLimits{TransactionMax: 1 << 20})
+	SetDatabaseTransactionMemoryLimits("nornic", DatabaseTransactionMemoryLimits{TransactionMax: new(int64(1 << 20))})
 	tx := &runningTransaction{database: "nornic"}
 	executor := &StorageExecutor{}
 	executor.beginTransactionMemory(tx, nil)
@@ -59,8 +59,8 @@ func TestRemovingLimitKeepsExistingTransactionChargeUntilEnd(t *testing.T) {
 	require.NoError(t, tracker.root.grow(64))
 	require.NoError(t, tracker.settleStaged(64))
 
-	SetDatabaseTransactionMemoryLimits("nornic", TransactionMemoryLimits{})
-	SetDatabaseTransactionMemoryLimits("limited", TransactionMemoryLimits{TransactionMax: 1 << 20})
+	SetDatabaseTransactionMemoryLimits("nornic", DatabaseTransactionMemoryLimits{})
+	SetDatabaseTransactionMemoryLimits("limited", DatabaseTransactionMemoryLimits{TransactionMax: new(int64(1 << 20))})
 	executor.beginTransactionMemory(tx, nil)
 	require.Same(t, tracker, tx.memory.Load(), "the existing staged-write owner must retain its charge")
 	global, database := TransactionMemoryPoolUsage("nornic")
@@ -75,7 +75,7 @@ func TestRemovingLimitKeepsExistingTransactionChargeUntilEnd(t *testing.T) {
 
 func TestRemovingLastLimitStillReleasesExplicitTransaction(t *testing.T) {
 	resetTransactionMemory(t)
-	SetDatabaseTransactionMemoryLimits("nornic", TransactionMemoryLimits{TransactionMax: 1 << 20})
+	SetDatabaseTransactionMemoryLimits("nornic", DatabaseTransactionMemoryLimits{TransactionMax: new(int64(1 << 20))})
 	executor := newTransactionMemoryExecutor(t)
 	ctx := context.Background()
 	_, err := executor.Execute(ctx, "BEGIN", nil)
@@ -85,7 +85,7 @@ func TestRemovingLastLimitStillReleasesExplicitTransaction(t *testing.T) {
 	global, database := TransactionMemoryPoolUsage("nornic")
 	require.Positive(t, global)
 	require.Positive(t, database)
-	SetDatabaseTransactionMemoryLimits("nornic", TransactionMemoryLimits{})
+	SetDatabaseTransactionMemoryLimits("nornic", DatabaseTransactionMemoryLimits{})
 	require.False(t, transactionMemoryActive.Load())
 	_, err = executor.Execute(ctx, "RETURN 1 AS n", nil)
 	require.NoError(t, err)
@@ -411,7 +411,7 @@ func TestTransactionMemoryPoolFailsWhileSmallStatementsSucceed(t *testing.T) {
 	requirePoolsEmpty(t, "nornic")
 
 	// The database pool, db.memory.transaction.total.max, fails the same way.
-	SetDatabaseTransactionMemoryLimits("nornic", TransactionMemoryLimits{DatabaseTotalMax: 1 << 20})
+	SetDatabaseTransactionMemoryLimits("nornic", DatabaseTransactionMemoryLimits{DatabaseTotalMax: new(int64(1 << 20))})
 	_, err = executor.Execute(context.Background(), heavyCollectQuery, nil)
 	requireMemoryError(t, err, "Neo.TransientError.General.MemoryPoolOutOfMemoryError", "db.memory.transaction.total.max")
 	requirePoolsEmpty(t, "nornic")
@@ -564,14 +564,14 @@ func TestTransactionMemoryReleasedAfterCommitRollbackAndFailure(t *testing.T) {
 func TestTransactionMemoryLimitsAreDynamic(t *testing.T) {
 	resetTransactionMemory(t)
 	executor := newTransactionMemoryExecutor(t)
-	SetDatabaseTransactionMemoryLimits("nornic", TransactionMemoryLimits{TransactionMax: 1 << 20})
+	SetDatabaseTransactionMemoryLimits("nornic", DatabaseTransactionMemoryLimits{TransactionMax: new(int64(1 << 20))})
 	_, err := executor.Execute(context.Background(), heavyCollectQuery, nil)
 	requireMemoryError(t, err, "Neo.ClientError.General.TransactionOutOfMemoryError", "db.memory.transaction.max")
 	// Process defaults don't override a database's own limit.
 	ConfigureTransactionMemory(0, TransactionMemoryLimits{TransactionMax: 1 << 30})
 	_, err = executor.Execute(context.Background(), heavyCollectQuery, nil)
 	require.Error(t, err)
-	SetDatabaseTransactionMemoryLimits("nornic", TransactionMemoryLimits{})
+	SetDatabaseTransactionMemoryLimits("nornic", DatabaseTransactionMemoryLimits{TransactionMax: new(int64(0)), DatabaseTotalMax: new(int64(0))})
 	result, err := executor.Execute(context.Background(), heavyCollectQuery, nil)
 	require.NoError(t, err)
 	require.Equal(t, int64(200000), result.Rows[0][0])
@@ -674,7 +674,7 @@ func BenchmarkTransactionMemoryTracking(b *testing.B) {
 // An unrelated database's configured cap must not charge an unlimited query.
 func BenchmarkTransactionMemoryOtherDatabaseLimited(b *testing.B) {
 	resetTransactionMemory(b)
-	SetDatabaseTransactionMemoryLimits("limited", TransactionMemoryLimits{TransactionMax: 1 << 20})
+	SetDatabaseTransactionMemoryLimits("limited", DatabaseTransactionMemoryLimits{TransactionMax: new(int64(1 << 20))})
 	executor := newTransactionMemoryExecutor(b)
 	b.ReportAllocs()
 	b.ResetTimer()

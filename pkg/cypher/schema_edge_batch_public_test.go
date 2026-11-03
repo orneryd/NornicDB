@@ -15,11 +15,11 @@ func TestTransactionBulkCreateEdgesPreservesTokenOrder(t *testing.T) {
 				base := newTestMemoryEngine(t)
 				ns := storage.NewNamespacedEngine(base, "tenant")
 				for _, id := range []storage.NodeID{"from", "to"} {
-					_, err := ns.CreateNode(&storage.Node{ID: id})
+					_, err := ns.CreateNode(t.Context(), &storage.Node{ID: id})
 					require.NoError(t, err)
 				}
 				require.NoError(t, base.EnsureNamespaceMVCC("tenant"))
-				tx, err := base.BeginTransaction()
+				tx, err := base.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = tx.Rollback() })
 				require.NoError(t, tx.SetNamespace("tenant"))
@@ -28,8 +28,8 @@ func TestTransactionBulkCreateEdgesPreservesTokenOrder(t *testing.T) {
 				if minted {
 					create = w.BulkCreateMintedEdges
 				}
-				require.ErrorIs(t, create([]*storage.Edge{{Type: "invalid-batch"}, nil}), storage.ErrInvalidData)
-				require.Empty(t, w.GetSchema().ExportDefinition().RelationshipTypeTokens)
+				require.ErrorIs(t, create(t.Context(), []*storage.Edge{{Type: "invalid-batch"}, nil}), storage.ErrInvalidData)
+				require.Empty(t, schemaDefinitionForTest(t, w.GetSchema()).RelationshipTypeTokens)
 				var edges []*storage.Edge
 				var want []string
 				for i := 0; i < distinct; i++ {
@@ -39,11 +39,11 @@ func TestTransactionBulkCreateEdgesPreservesTokenOrder(t *testing.T) {
 						edges = append(edges, &storage.Edge{ID: storage.EdgeID(fmt.Sprintf("e-%d-%d", i, j)), StartNode: "from", EndNode: "to", Type: kind})
 					}
 				}
-				require.NoError(t, create(edges))
-				require.Equal(t, want, w.GetSchema().ExportDefinition().RelationshipTypeTokens)
+				require.NoError(t, create(t.Context(), edges))
+				require.Equal(t, want, schemaDefinitionForTest(t, w.GetSchema()).RelationshipTypeTokens)
 				require.NoError(t, tx.Commit())
 				for _, edge := range edges {
-					got, err := ns.GetEdge(edge.ID)
+					got, err := ns.GetEdge(t.Context(), edge.ID)
 					require.NoError(t, err)
 					require.Equal(t, edge.ID, got.ID)
 					require.Equal(t, edge.StartNode, got.StartNode)

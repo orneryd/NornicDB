@@ -1,22 +1,23 @@
 package cypher
 
 import (
+	"context"
 	"slices"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func (e *StorageExecutor) admitIndexCreation(query, name, kind, label string, properties []string, entityType storage.ConstraintEntityType) (bool, error) {
-	return e.admitIndexCreationForTargets(query, name, kind, []string{label}, properties, entityType)
+func (e *StorageExecutor) admitIndexCreation(ctx context.Context, query, name, kind, label string, properties []string, entityType storage.ConstraintEntityType) (bool, error) {
+	return e.admitIndexCreationForTargets(ctx, query, name, kind, []string{label}, properties, entityType)
 }
 
-func (e *StorageExecutor) admitIndexCreationForTargets(query, name, kind string, targets, properties []string, entityType storage.ConstraintEntityType) (bool, error) {
-	return admitSchemaIndexCreation(e.storage.GetSchema(), query, name, kind, targets, properties, entityType)
+func (e *StorageExecutor) admitIndexCreationForTargets(ctx context.Context, query, name, kind string, targets, properties []string, entityType storage.ConstraintEntityType) (bool, error) {
+	return admitSchemaIndexCreation(ctx, e.storage.GetSchema(), query, name, kind, targets, properties, entityType)
 }
 
-func admitSchemaIndexCreation(schema *storage.SchemaManager, query, name, kind string, targets, properties []string, entityType storage.ConstraintEntityType) (bool, error) {
-	guarded := keywordIndexFrom(query, "IF NOT EXISTS", 0, defaultKeywordScanOpts()) >= 0
+func admitSchemaIndexCreation(ctx context.Context, schema *storage.SchemaManager, query, name, kind string, targets, properties []string, entityType storage.ConstraintEntityType) (bool, error) {
+	guarded := keywordIndexFrom(ctx, query, "IF NOT EXISTS", 0, defaultKeywordScanOpts()) >= 0
 	for _, constraint := range schema.GetAllConstraints() {
 		if constraint.Name != name {
 			continue

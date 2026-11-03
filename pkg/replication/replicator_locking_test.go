@@ -323,18 +323,28 @@ func TestReplicators_ConcurrentShutdownClosesOnce(t *testing.T) {
 		for _, r := range newReplicators(t) {
 			start := make(chan struct{})
 			var wg sync.WaitGroup
+			results := make([]error, 4)
 			for g := 0; g < 4; g++ {
 				wg.Add(1)
-				go func() {
+				go func(g int) {
 					defer wg.Done()
 					<-start
-					if err := r.Shutdown(); err != nil {
-						t.Error(err)
-					}
-				}()
+					results[g] = r.Shutdown()
+				}(g)
 			}
 			close(start)
 			wg.Wait()
+			// Every concurrent caller joins the one stop: each receives the
+			// same outcome, and a later caller receives it again.
+			final := r.Shutdown()
+			for g, err := range results {
+				if fmt.Sprint(err) != fmt.Sprint(final) {
+					t.Errorf("caller %d got %v, the stop's outcome is %v", g, err, final)
+				}
+			}
+			if final != nil {
+				t.Error(final)
+			}
 		}
 	}
 }

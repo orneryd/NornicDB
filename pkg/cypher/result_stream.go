@@ -38,7 +38,7 @@ type ResultStream struct {
 
 	// Set by Execute before the statement runs; read by the statement.
 	statement    string
-	mapColumns   func([]string) []string
+	mapColumns   func(context.Context, []string) []string
 	recordAccess func([][]interface{})
 	frame        *pipelineClause
 	columns      []string
@@ -108,7 +108,7 @@ type armedResultStreamKey struct{}
 // the text Execute routes. mapColumns maps the statement's column names to
 // the ones the client sees; recordAccess records the access to the nodes
 // and relationships of rows handed to the client.
-func armResultStream(ctx context.Context, stream *ResultStream, statement string, mapColumns func([]string) []string, recordAccess func([][]interface{})) context.Context {
+func armResultStream(ctx context.Context, stream *ResultStream, statement string, mapColumns func(context.Context, []string) []string, recordAccess func([][]interface{})) context.Context {
 	stream.statement = statement
 	stream.mapColumns = mapColumns
 	stream.recordAccess = recordAccess
@@ -158,7 +158,7 @@ func (s *ResultStream) emit(ctx context.Context, owner *StorageExecutor, row []i
 	if !s.started {
 		s.buffered = append(s.buffered, row)
 		if len(s.buffered) > s.threshold {
-			s.start()
+			s.start(ctx)
 		}
 		return true
 	}
@@ -186,9 +186,9 @@ func (s *ResultStream) emit(ctx context.Context, owner *StorageExecutor, row []i
 	return true
 }
 
-func (s *ResultStream) start() {
+func (s *ResultStream) start(ctx context.Context) {
 	if s.mapColumns != nil {
-		s.columns = s.mapColumns(s.columns)
+		s.columns = s.mapColumns(ctx, s.columns)
 	}
 	s.recordBatch(s.buffered)
 	// The hand-over channels are only used once the statement streams;
@@ -226,9 +226,9 @@ func (s *ResultStream) end() ([][]interface{}, bool) {
 // threshold rows, the failure is past the first threshold rows: the stream
 // starts, so those rows reach the client and the error reaches the request
 // that asks past them, as an error after the stream started does (#939).
-func (s *ResultStream) fail() {
+func (s *ResultStream) fail(ctx context.Context) {
 	if !s.started && len(s.buffered) >= s.threshold {
-		s.start()
+		s.start(ctx)
 	}
 }
 

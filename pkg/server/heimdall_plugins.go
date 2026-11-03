@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
@@ -26,46 +25,68 @@ func (s *Server) initHeimdallPluginsWithoutInference(features *nornicConfig.Feat
 	cfg := heimdall.ConfigFromFeatureFlags(features)
 	cfg.Enabled = false
 	cfg.BifrostEnabled = false
-	s.loadHeimdallPlugins(heimdall.SubsystemContext{
+	// Plugin-only loading runs during construction, under the server's own
+	// work lifetime; it has no other caller context.
+	s.loadHeimdallPlugins(s.shutdown.work.Context(), heimdall.SubsystemHost{
 		Config: cfg, Database: router, Metrics: metrics, Bifrost: bridge,
 		Heimdall: heimdall.NewLiveHeimdallInvoker(manager, nil, bridge, router, metrics),
 	}, server)
 }
 
 // loadHeimdallPlugins is shared by inference-enabled and plugin-only startup.
-func (s *Server) loadHeimdallPlugins(ctx heimdall.SubsystemContext, server *mcp.Server) {
+// callCtx carries the caller's own cancellation into the accepted initialization
+// work; host supplies metadata only, and each registration publishes the host
+// metadata with the work context that registration was admitted under.
+func (s *Server) loadHeimdallPlugins(callCtx context.Context, host heimdall.SubsystemHost, server *mcp.Server) {
+	constructorCtx, release, accepted := s.shutdown.work.Acquire(callCtx)
+	if accepted {
+		defer release()
+	}
+	host.Lifetime = &s.shutdown.work
 	s.heimdallPluginsMu.Lock()
-	defer s.heimdallPluginsMu.Unlock()
-	if s.closed.Load() {
-		if router, ok := ctx.Database.(*heimdallDBRouter); ok {
-			router.Close()
+	if s.shutdown.work.Closing() {
+		if router, ok := host.Database.(*heimdallDBRouter); ok {
+			s.shutdown.mu.Lock()
+			s.shutdown.unpublishedRouters = append(s.shutdown.unpublishedRouters, router)
+			s.shutdown.mu.Unlock()
 		}
+		s.heimdallPluginsMu.Unlock()
 		return
 	}
 	manager := heimdall.GetSubsystemManager()
+	if s.heimdallSubsystem == nil {
+		manager.SetHostContext(host)
+	} else {
+		manager.SetContext(host)
+	}
 	s.heimdallSubsystem = manager
-	diagnosticCredentials := observability.ClientCredentials(ctx.Config.APIURL, ctx.Config.APIKey)
+	diagnosticCredentials := observability.ClientCredentials(host.Config.APIURL, host.Config.APIKey)
 	diagnosticCredentials = append(diagnosticCredentials, observability.ClientCredentials(s.config.PluginsDir)...)
 	diagnosticCredentials = append(diagnosticCredentials, observability.ClientCredentials(s.config.HeimdallPluginsDir)...)
-	pluginContext := ctx
-	pluginContext.Config.APIURL = observability.RedactText(ctx.Config.APIURL, diagnosticCredentials...)
-	pluginContext.Config.APIKey = ""
+	pluginHost := host
+	pluginHost.Config.APIURL = observability.RedactText(host.Config.APIURL, diagnosticCredentials...)
+	pluginHost.Config.APIKey = ""
 	pluginsDir := observability.RedactText(s.config.PluginsDir, diagnosticCredentials...)
 	heimdallPluginsDir := observability.RedactText(s.config.HeimdallPluginsDir, diagnosticCredentials...)
-	if router, ok := ctx.Database.(*heimdallDBRouter); ok {
+	if router, ok := host.Database.(*heimdallDBRouter); ok {
 		s.heimdallCacheRouter = router
 	}
-	manager.SetContext(pluginContext)
+	manager.SetContext(pluginHost)
+	s.heimdallPluginsMu.Unlock()
 	if dir := s.config.PluginsDir; dir != "" {
 		s.logEvent(context.Background(), slog.LevelDebug, localization.ServerAPOCPluginsLoadingEvent(pluginsDir))
-		if err := nornicdb.LoadPluginsFromDir(dir, &pluginContext); err != nil {
-			s.logEvent(context.Background(), slog.LevelWarn, localization.ServerAPOCPluginsLoadFailedEvent(pluginsDir, observability.RedactError(err, diagnosticCredentials...)))
+		if err := nornicdb.LoadPluginsFromDir(constructorCtx, dir, &pluginHost); err != nil {
+			err = observability.RedactError(err, diagnosticCredentials...)
+			s.shutdown.work.RecordError("", err)
+			s.logEvent(context.Background(), slog.LevelWarn, localization.ServerAPOCPluginsLoadFailedEvent(pluginsDir, err))
 		}
 	}
 	if dir := s.config.HeimdallPluginsDir; dir != "" && dir != s.config.PluginsDir {
 		s.logEvent(context.Background(), slog.LevelDebug, localization.ServerHeimdallPluginsLoadingEvent(heimdallPluginsDir))
-		if err := nornicdb.LoadPluginsFromDir(dir, &pluginContext); err != nil {
-			s.logEvent(context.Background(), slog.LevelWarn, localization.ServerHeimdallPluginsLoadFailedEvent(heimdallPluginsDir, observability.RedactError(err, diagnosticCredentials...)))
+		if err := nornicdb.LoadPluginsFromDir(constructorCtx, dir, &pluginHost); err != nil {
+			err = observability.RedactError(err, diagnosticCredentials...)
+			s.shutdown.work.RecordError("", err)
+			s.logEvent(context.Background(), slog.LevelWarn, localization.ServerHeimdallPluginsLoadFailedEvent(heimdallPluginsDir, err))
 		}
 	}
 	if s.config.HeimdallPluginsDir == "" {
@@ -73,20 +94,31 @@ func (s *Server) loadHeimdallPlugins(ctx heimdall.SubsystemContext, server *mcp.
 	} else if s.config.HeimdallPluginsDir == s.config.PluginsDir {
 		s.logEvent(context.Background(), slog.LevelDebug, localization.ServerHeimdallPluginsDirectoryDuplicateEvent(heimdallPluginsDir, pluginsDir))
 	}
-	registerHeimdallMCPTools(server, manager, pluginContext.Database, pluginContext.Metrics, pluginContext.Bifrost)
+	registerHeimdallMCPTools(server, manager, pluginHost.Database, pluginHost.Metrics, pluginHost.Bifrost)
 }
 
-// stopHeimdallPlugins serializes cleanup with both plugin-only and async startup.
-func (s *Server) stopHeimdallPlugins() error {
+func (s *Server) signalHeimdallPlugins() error {
 	s.heimdallPluginsMu.Lock()
-	defer s.heimdallPluginsMu.Unlock()
-	var err error
-	if manager := s.heimdallSubsystem; manager != nil {
-		err = observability.RedactError(errors.Join(manager.StopAll(), manager.ShutdownAll()))
-		s.heimdallSubsystem = nil
+	manager := s.heimdallSubsystem
+	s.heimdallPluginsMu.Unlock()
+	if manager == nil {
+		return nil
 	}
-	if s.heimdallCacheRouter != nil {
-		s.heimdallCacheRouter.Close()
+	manager.CloseAdmission()
+	return manager.StopAll()
+}
+
+func (s *Server) disposeHeimdallPlugins() error {
+	s.heimdallPluginsMu.Lock()
+	manager, router := s.heimdallSubsystem, s.heimdallCacheRouter
+	s.heimdallSubsystem = nil
+	s.heimdallPluginsMu.Unlock()
+	var err error
+	if manager != nil {
+		err = manager.ShutdownAll()
+	}
+	if router != nil {
+		router.Close()
 	}
 	return err
 }

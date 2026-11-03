@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -44,24 +45,24 @@ func TestEmbeddingSidecar_SourceChangedIsNotWritten(t *testing.T) {
 			node := sidecarTestNode(t, b, "source-changed", map[string]any{"title": "v1"}, now)
 			embedded := embeddingWriteback(t, b, node.ID, [][]float32{{0.1, 0.2}}, map[string]any{"has_embedding": true, "chunk_count": 1}, time.Time{})
 
-			changed, err := b.GetNode(node.ID)
+			changed, err := b.GetNode(t.Context(), node.ID)
 			require.NoError(t, err)
 			change.apply(changed)
-			require.NoError(t, b.UpdateNode(NodeUpdateRequest{After: changed}))
+			require.NoError(t, b.UpdateNode(t.Context(), NodeUpdateRequest{After: changed}))
 			require.True(t, sidecarPending(t, b, node.ID))
 
-			require.ErrorIs(t, b.UpdateNodeEmbeddingSidecar(embedded), ErrEmbeddingSourceChanged)
+			require.ErrorIs(t, b.UpdateNodeEmbeddingSidecar(context.Background(), embedded), ErrEmbeddingSourceChanged)
 			require.True(t, sidecarPending(t, b, node.ID), "the change's pending marker must stay")
-			got, err := b.GetNode(node.ID)
+			got, err := b.GetNode(t.Context(), node.ID)
 			require.NoError(t, err)
 			require.Empty(t, got.ChunkEmbeddings)
 			require.Empty(t, got.EmbedMeta)
 
 			// The worker's next pass embeds the current content.
 			current := embeddingWriteback(t, b, node.ID, [][]float32{{0.3, 0.4}}, map[string]any{"has_embedding": true, "chunk_count": 1}, time.Time{})
-			require.NoError(t, b.UpdateNodeEmbeddingSidecar(current))
+			require.NoError(t, b.UpdateNodeEmbeddingSidecar(context.Background(), current))
 			require.False(t, sidecarPending(t, b, node.ID))
-			got, err = b.GetNode(node.ID)
+			got, err = b.GetNode(t.Context(), node.ID)
 			require.NoError(t, err)
 			require.Equal(t, [][]float32{{0.3, 0.4}}, got.ChunkEmbeddings)
 		})
@@ -78,18 +79,18 @@ func TestEmbeddingSidecar_ConcurrentChangeIsNotWritten(t *testing.T) {
 	embedded := embeddingWriteback(t, b, node.ID, [][]float32{{0.1, 0.2}}, map[string]any{"has_embedding": true, "chunk_count": 1}, time.Time{})
 
 	hook := func() {
-		changed, err := b.GetNode(node.ID)
+		changed, err := b.GetNode(t.Context(), node.ID)
 		require.NoError(t, err)
 		changed.Properties = map[string]any{"title": "v2"}
-		require.NoError(t, b.UpdateNode(NodeUpdateRequest{After: changed}))
+		require.NoError(t, b.UpdateNode(t.Context(), NodeUpdateRequest{After: changed}))
 	}
 	embeddingSourceCheckedHook.Store(&hook)
 	t.Cleanup(func() { embeddingSourceCheckedHook.Store(nil) })
 
-	require.ErrorIs(t, b.UpdateNodeEmbeddingSidecar(embedded), ErrEmbeddingSourceChanged)
+	require.ErrorIs(t, b.UpdateNodeEmbeddingSidecar(context.Background(), embedded), ErrEmbeddingSourceChanged)
 	embeddingSourceCheckedHook.Store(nil)
 	require.True(t, sidecarPending(t, b, node.ID))
-	got, err := b.GetNode(node.ID)
+	got, err := b.GetNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	require.Equal(t, "v2", got.Properties["title"])
 	require.Empty(t, got.ChunkEmbeddings)
@@ -138,7 +139,7 @@ func TestEmbeddingSidecar_SourceReadAndWriteFailures(t *testing.T) {
 	t.Run("undecodable stored node", func(t *testing.T) {
 		b := newSidecarTestBadger(t)
 		writeRawValue(t, b, nodeKey("test:corrupt"), []byte{0xFF, 0x00})
-		err := b.UpdateNodeEmbeddingSidecar(&Node{ID: "test:corrupt", ChunkEmbeddings: [][]float32{{0.1}}})
+		err := b.UpdateNodeEmbeddingSidecar(context.Background(), &Node{ID: "test:corrupt", ChunkEmbeddings: [][]float32{{0.1}}})
 		require.Error(t, err)
 		require.NotErrorIs(t, err, ErrEmbeddingSourceChanged)
 	})
@@ -152,7 +153,7 @@ func TestEmbeddingSidecar_SourceReadAndWriteFailures(t *testing.T) {
 		payload := CopyNode(node)
 		payload.ChunkEmbeddings = [][]float32{{0.1}}
 		payload.EmbedMeta = map[string]any{"has_embedding": true}
-		require.Error(t, b.UpdateNodeEmbeddingSidecar(payload))
+		require.Error(t, b.UpdateNodeEmbeddingSidecar(context.Background(), payload))
 		require.NoError(t, b.withView(func(txn *badger.Txn) error {
 			_, err := txn.Get(embeddingMetaKey(node.ID))
 			require.ErrorIs(t, err, badger.ErrKeyNotFound)

@@ -23,10 +23,12 @@ import (
 // range, simulating a legacy or partial store. No ranges retains planted entries.
 func wipeLabelIndexAndMarker(t *testing.T, eng *BadgerEngine, prefixes ...byte) {
 	t.Helper()
+	// This raw fixture replacement also invalidates the engine's live proof.
+	eng.rememberIndexReadiness(startupLabelIndex, false)
 	for _, prefix := range prefixes {
 		require.NoError(t, eng.db.DropPrefix(context.Background(), prefixDropOptions{}, []byte{prefix}))
 	}
-	require.NoError(t, eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		return txn.Delete(labelIndexReadyKey)
 	}))
 }
@@ -60,7 +62,7 @@ func TestLabelIndexBackfill_HandlesMultiLabelNodesCorrectly(t *testing.T) {
 	}
 	require.NoError(t, err)
 	for i := 0; i < 50; i++ {
-		_, err := engine1.CreateNode(&Node{
+		_, err := engine1.CreateNode(t.Context(), &Node{
 			ID:     NodeID(fmt.Sprintf("test:multi-%03d", i)),
 			Labels: []string{"Aprodan", "Academic", "Concept"},
 		})
@@ -112,7 +114,7 @@ func TestLabelIndexBackfill_IsIdempotentAcrossRestarts(t *testing.T) {
 	}
 	require.NoError(t, err)
 	for i := 0; i < 10; i++ {
-		_, err := engine1.CreateNode(&Node{
+		_, err := engine1.CreateNode(t.Context(), &Node{
 			ID:     NodeID(fmt.Sprintf("test:idem-%02d", i)),
 			Labels: []string{"L"},
 		})
@@ -143,7 +145,7 @@ func TestLabelIndexBackfill_IsIdempotentAcrossRestarts(t *testing.T) {
 	// Third-open backfill goroutine must NOT run because the marker
 	// is set. Probe: backfillDone is nil (no goroutine launched).
 	engine3.labelIndexBackfillMu.Lock()
-	stillIdle := engine3.labelIndexBackfillDone == nil
+	stillIdle := engine3.labelIndexBackfill == nil
 	engine3.labelIndexBackfillMu.Unlock()
 	assert.True(t, stillIdle,
 		"backfill must not relaunch on subsequent opens once the marker is set")
@@ -173,7 +175,7 @@ func TestLabelIndexBackfill_BackfillCancelledOnClose(t *testing.T) {
 			Labels: []string{"BG"},
 		}
 	}
-	require.NoError(t, engine1.BulkCreateNodes(nodes))
+	require.NoError(t, engine1.BulkCreateNodes(t.Context(), nodes))
 	wipeLabelIndexAndMarker(t, engine1, prefixLabelIndex)
 	require.NoError(t, engine1.Close())
 
@@ -207,13 +209,13 @@ func TestLabelIndexBackfill_RebuildIsFreshNotMerged(t *testing.T) {
 		fixtureowner.Own(t, engine1)
 	}
 	require.NoError(t, err)
-	_, err = engine1.CreateNode(&Node{ID: "test:fresh-1", Labels: []string{"Real"}})
+	_, err = engine1.CreateNode(t.Context(), &Node{ID: "test:fresh-1", Labels: []string{"Real"}})
 	require.NoError(t, err)
 
 	// Plant a fake stale index entry. Use a numID nobody allocated
 	// (max uint64 - 1) to ensure it can't accidentally point to a
 	// real node.
-	require.NoError(t, engine1.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine1.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		stale := labelIndexKey("ghost", 1<<63)
 		return txn.Set(stale, []byte{})
 	}))
@@ -260,7 +262,7 @@ func TestLabelIndexBackfill_ReadyMarkerRequiresCurrentScheme(t *testing.T) {
 				{name: "malformed", value: []byte{3, 0}},
 			} {
 				t.Run(testCase.name, func(t *testing.T) {
-					require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+					require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 						if testCase.value == nil {
 							return txn.Delete(key)
 						}
@@ -282,11 +284,11 @@ func TestLabelIndexBackfill_ReadyMarkerRequiresCurrentScheme(t *testing.T) {
 
 // pendingLabelIndexBackfill returns the scheduled backfill's completion channel,
 // or nil when the persisted marker already reports the current scheme.
-func pendingLabelIndexBackfill(t *testing.T, store *BadgerEngine) <-chan struct{} {
+func pendingLabelIndexBackfill(t *testing.T, store *BadgerEngine) *engineWorker {
 	t.Helper()
 	store.labelIndexBackfillMu.Lock()
 	defer store.labelIndexBackfillMu.Unlock()
-	return store.labelIndexBackfillDone
+	return store.labelIndexBackfill
 }
 
 // requireLabelIndexReadyMarker asserts the persisted marker names want as the
@@ -310,11 +312,11 @@ func TestLabelIndexBackfill_LegacyMarkerRebuildsCurrentScheme(t *testing.T) {
 	engine := openBackfillTestEngine(t, dir, false)
 	for _, namespace := range []string{"alpha", "beta"} {
 		store := NewNamespacedEngine(engine, namespace)
-		_, err := store.CreateNode(&Node{ID: "existing", Labels: []string{"Label", "Second"}, Properties: map[string]interface{}{"id": namespace}})
+		_, err := store.CreateNode(t.Context(), &Node{ID: "existing", Labels: []string{"Label", "Second"}, Properties: map[string]interface{}{"id": namespace}})
 		require.NoError(t, err)
 	}
 	wipeLabelIndexAndMarker(t, engine, prefixLabelIndex)
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		return txn.Set(labelIndexReadyKey, []byte{1})
 	}))
 	require.NoError(t, engine.Close())
@@ -323,7 +325,7 @@ func TestLabelIndexBackfill_LegacyMarkerRebuildsCurrentScheme(t *testing.T) {
 	done := pendingLabelIndexBackfill(t, reopened)
 	require.NotNil(t, done, "a legacy ready marker must schedule the existing backfill")
 	select {
-	case <-done:
+	case <-done.done.Done():
 	case <-time.After(5 * time.Second):
 		t.Fatal("legacy label-index backfill did not finish")
 	}
@@ -348,7 +350,7 @@ func TestLabelIndexBackfill_EmptyStoreMarksCurrentScheme(t *testing.T) {
 		t.Run(fmt.Sprintf("legacy_%t", legacy), func(t *testing.T) {
 			dir := t.TempDir()
 			engine := openBackfillTestEngine(t, dir, false)
-			require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+			require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 				if legacy {
 					return txn.Set(labelIndexReadyKey, []byte{1})
 				}

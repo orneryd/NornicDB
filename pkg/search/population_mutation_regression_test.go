@@ -39,7 +39,7 @@ func TestPopulationCannotReplaceLiveMutation(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			base := newNamespacedEngine(t)
 			node := &storage.Node{ID: "point", ChunkEmbeddings: [][]float32{{1, 0, 0, 0}}}
-			_, err := base.CreateNode(node)
+			_, err := base.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 			engine := &pausedPopulationEngine{Engine: base, captured: make(chan struct{}), resume: make(chan struct{})}
 			svc := NewService(engine, 4, nil)
@@ -48,10 +48,10 @@ func TestPopulationCannotReplaceLiveMutation(t *testing.T) {
 			<-engine.captured
 			mutationDone := make(chan error, 1)
 			if remove {
-				require.NoError(t, base.DeleteNode(node.ID))
+				require.NoError(t, base.DeleteNode(t.Context(), node.ID))
 			} else {
 				node = &storage.Node{ID: "point", ChunkEmbeddings: [][]float32{{0, 1, 0, 0}}}
-				require.NoError(t, base.UpdateNode(storage.NodeUpdateRequest{After: node}))
+				require.NoError(t, base.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
 			}
 			go func() {
 				if remove {

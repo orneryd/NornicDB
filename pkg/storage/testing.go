@@ -43,3 +43,23 @@ func SetUniqueKeyLockWaitHookForTesting(hook func()) (restore func()) {
 	previous := uniqueKeyLockWaitHook.Swap(&hook)
 	return func() { uniqueKeyLockWaitHook.Store(previous) }
 }
+
+// schemaIndexFillHook, when set, runs at the entry of every composite index
+// fill (SchemaManager.BackfillCompositeIndex), after that fill has resolved the
+// index it fills and before any of its values are written. It is given the
+// index's name and label, so an observer can select one declaration instead of
+// every fill.
+var schemaIndexFillHook atomic.Pointer[func(indexName, label string) error]
+
+// SetSchemaIndexFillHookForTesting makes hook run at the entry of every
+// composite index fill, so tests outside this package can observe a schema
+// declaration whose fill is in progress (or make that fill fail) instead of
+// ordering concurrent work by timing. hook returning an error fails that fill;
+// the statement that declared the index then publishes no schema change. The
+// hook is called once per fill with the filled index's name and label, so a
+// test can arm itself for one declaration and let other fills through. The
+// returned function restores the previous hook.
+func SetSchemaIndexFillHookForTesting(hook func(indexName, label string) error) (restore func()) {
+	previous := schemaIndexFillHook.Swap(&hook)
+	return func() { schemaIndexFillHook.Store(previous) }
+}

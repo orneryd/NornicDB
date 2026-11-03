@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -21,9 +22,14 @@ import (
 // condition prevents earlier admission readers from consuming the schedule.
 type nor293PlanningContext struct {
 	context.Context
-	action func()
-	once   sync.Once
-	frames []string
+	action          func()
+	once            sync.Once
+	frames          []string
+	targetFunction  string
+	excludeFunction string
+	afterChecks     int64
+	targetChecks    atomic.Int64
+	targetLines     []int
 }
 
 func (c *nor293PlanningContext) Err() error {
@@ -34,10 +40,18 @@ func (c *nor293PlanningContext) Err() error {
 	n := runtime.Callers(2, pcs[:])
 	frames := runtime.CallersFrames(pcs[:n])
 	var names []string
-	var cache, pipeline, public bool
+	var cache, pipeline, public, target, excluded bool
+	targetLine := 0
 	for {
 		frame, more := frames.Next()
 		names = append(names, frame.Function)
+		excluded = excluded || c.excludeFunction != "" && strings.HasSuffix(frame.Function, c.excludeFunction)
+		if c.targetFunction != "" {
+			if strings.HasSuffix(frame.Function, c.targetFunction) {
+				target = true
+				targetLine = frame.Line
+			}
+		}
 		cache = cache || strings.HasSuffix(frame.Function, ".cachedPipelineClauses")
 		pipeline = pipeline || strings.HasSuffix(frame.Function, ".(*StorageExecutor).executePipeline")
 		public = public || strings.HasSuffix(frame.Function, ".(*StorageExecutor).Execute")
@@ -45,7 +59,15 @@ func (c *nor293PlanningContext) Err() error {
 			break
 		}
 	}
-	if cache && pipeline && public {
+	scheduled := cache && pipeline && public
+	if c.targetFunction != "" {
+		target = target && !excluded
+		if target {
+			c.targetLines = append(c.targetLines, targetLine)
+		}
+		scheduled = target && c.targetChecks.Add(1) >= max(int64(1), c.afterChecks)
+	}
+	if scheduled {
 		c.once.Do(func() {
 			c.frames = names
 			c.action()

@@ -29,11 +29,11 @@ func TestRelationshipMutationPublicPurposePolicy(t *testing.T) {
 			} else {
 				requireSemanticDetail(t, err, tc.detail)
 			}
-			count, err := store.EdgeCount()
+			count, err := store.EdgeCount(t.Context())
 			require.NoError(t, err)
 			require.Equal(t, tc.edges, count)
 			if tc.detail != "" {
-				count, err := store.NodeCount()
+				count, err := store.NodeCount(t.Context())
 				require.NoError(t, err)
 				require.Zero(t, count, "rejected mutation must not create endpoints")
 			}

@@ -14,7 +14,7 @@ func TestVectorQueryNodesLazyFirstReadBuilds(t *testing.T) {
 		t.Run(similarity, func(t *testing.T) {
 			engine := newNamespacedEngine(t)
 			svc := NewService(engine, 4, nil)
-			_, err := engine.CreateNode(&storage.Node{ID: "point", ChunkEmbeddings: [][]float32{{1, 0, 0, 0}}})
+			_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "point", ChunkEmbeddings: [][]float32{{1, 0, 0, 0}}})
 			require.NoError(t, err)
 			svc.SetLazyWarming(true, func() { require.NoError(t, svc.BuildIndexes(context.Background())) })
 			hits, err := svc.VectorQueryNodesWithOptions(context.Background(), []float32{1, 0, 0, 0}, VectorQuerySpec{Similarity: similarity, Limit: 1}, nil)
@@ -36,7 +36,7 @@ func TestVectorQueryNodesRejectsIncompleteBuild(t *testing.T) {
 func TestPersistedVectorQueriesPreserveMagnitude(t *testing.T) {
 	engine := newNamespacedEngine(t)
 	node := &storage.Node{ID: "point", NamedEmbeddings: map[string][]float32{"default": {3, 4, 0, 0}}}
-	_, err := engine.CreateNode(node)
+	_, err := engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	path := filepath.Join(t.TempDir(), "vectors")
 	makeService := func() *Service {

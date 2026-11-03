@@ -21,7 +21,7 @@ func TestV4ExistingStoreUpgradesV5SemanticWALAtStartup(t *testing.T) {
 			options := BadgerOptions{DataDir: dir, LowMemory: true}
 			engine, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
 			require.NoError(t, err)
-			_, err = engine.CreateNode(&Node{ID: "test:existing", Properties: map[string]any{"value": "old"}})
+			_, err = engine.CreateNode(t.Context(), &Node{ID: "test:existing", Properties: map[string]any{"value": "old"}})
 			require.NoError(t, err)
 			require.NoError(t, engine.writeSchemaVersion(storageVersionCatalogV4))
 			if interrupted {
@@ -49,10 +49,10 @@ func TestV4ExistingStoreUpgradesV5SemanticWALAtStartup(t *testing.T) {
 			options.AllowStorageUpgrade = !interrupted
 			engine, err = fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
 			require.NoError(t, err)
-			existing, err := engine.GetStoredNode("test:existing")
+			existing, err := engine.GetStoredNode(t.Context(), "test:existing")
 			require.NoError(t, err)
 			require.Equal(t, "old", existing.Properties["value"])
-			replayed, err := engine.GetStoredNode("test:replayed")
+			replayed, err := engine.GetStoredNode(t.Context(), "test:replayed")
 			require.NoError(t, err)
 			require.Equal(t, int64(9), replayed.Properties["count"])
 			require.NoError(t, engine.Close())
@@ -60,10 +60,10 @@ func TestV4ExistingStoreUpgradesV5SemanticWALAtStartup(t *testing.T) {
 			options.AllowStorageUpgrade = false
 			engine, err = fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
 			require.NoError(t, err)
-			replayed, err = engine.GetStoredNode("test:replayed")
+			replayed, err = engine.GetStoredNode(t.Context(), "test:replayed")
 			require.NoError(t, err)
 			require.Equal(t, int64(9), replayed.Properties["count"])
-			count, err := engine.NodeCount()
+			count, err := engine.NodeCount(t.Context())
 			require.NoError(t, err)
 			require.EqualValues(t, 2, count)
 		})

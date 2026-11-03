@@ -10,14 +10,14 @@ import (
 )
 
 func TestSplitWhereByVariable(t *testing.T) {
-	own, rest := splitWhereByVariable("id(a) = 'x' AND a.name STARTS WITH 'N' AND toLower(b.k) = 'y' AND a.k = b.k AND $flag AND c.k = 1 AND (a.v = 1 OR a.v = 2) AND a.s = 'p->q' AND EXISTS { (a)-->() } AND (a)-->(b)", []string{"a", "b"})
+	own, rest := splitWhereByVariable(t.Context(), "id(a) = 'x' AND a.name STARTS WITH 'N' AND toLower(b.k) = 'y' AND a.k = b.k AND $flag AND c.k = 1 AND (a.v = 1 OR a.v = 2) AND a.s = 'p->q' AND EXISTS { (a)-->() } AND (a)-->(b)", []string{"a", "b"})
 	require.Equal(t, map[string]string{
 		"a": "(id(a) = 'x') AND (a.name STARTS WITH 'N') AND ((a.v = 1 OR a.v = 2)) AND (a.s = 'p->q')",
 		"b": "toLower(b.k) = 'y'",
 	}, own)
 	require.Equal(t, "(a.k = b.k) AND ($flag) AND (c.k = 1) AND (EXISTS { (a)-->() }) AND ((a)-->(b))", rest)
 
-	own, rest = splitWhereByVariable("", []string{"a"})
+	own, rest = splitWhereByVariable(t.Context(), "", []string{"a"})
 	require.Empty(t, own)
 	require.Empty(t, rest)
 }

@@ -37,34 +37,34 @@ func TestStatementRemoteEngineRunsEveryOperationThroughItsRunner(t *testing.T) {
 	})
 	operations := map[string]statementRemoteOperation{
 		"CreateNode": {run: func(engine *RemoteEngine) error {
-			_, err := engine.CreateNode(&Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}})
+			_, err := engine.CreateNode(t.Context(), &Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}})
 			return err
 		}},
 		"UpdateNode": {run: func(engine *RemoteEngine) error {
-			return engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"x": 1}}})
+			return engine.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"x": 1}}})
 		}},
-		"DeleteNode": {run: func(engine *RemoteEngine) error { return engine.DeleteNode("n1") }},
+		"DeleteNode": {run: func(engine *RemoteEngine) error { return engine.DeleteNode(t.Context(), "n1") }},
 		"CreateEdge": {run: func(engine *RemoteEngine) error {
-			return engine.CreateEdge(&Edge{ID: "e1", StartNode: "a", EndNode: "b", Type: "KNOWS"})
+			return engine.CreateEdge(t.Context(), &Edge{ID: "e1", StartNode: "a", EndNode: "b", Type: "KNOWS"})
 		}},
 		"UpdateEdge": {run: func(engine *RemoteEngine) error {
-			return engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "e1", StartNode: "a", EndNode: "b", Type: "KNOWS"}})
+			return engine.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "e1", StartNode: "a", EndNode: "b", Type: "KNOWS"}})
 		}},
-		"DeleteEdge": {run: func(engine *RemoteEngine) error { return engine.DeleteEdge("e1") }},
+		"DeleteEdge": {run: func(engine *RemoteEngine) error { return engine.DeleteEdge(t.Context(), "e1") }},
 		"BulkCreateNodes": {run: func(engine *RemoteEngine) error {
-			return engine.BulkCreateNodes([]*Node{{ID: "n2", Labels: []string{"Person"}}})
+			return engine.BulkCreateNodes(t.Context(), []*Node{{ID: "n2", Labels: []string{"Person"}}})
 		}},
 		"BulkCreateEdges": {run: func(engine *RemoteEngine) error {
-			return engine.BulkCreateEdges([]*Edge{{ID: "e2", StartNode: "a", EndNode: "b", Type: "KNOWS"}})
+			return engine.BulkCreateEdges(t.Context(), []*Edge{{ID: "e2", StartNode: "a", EndNode: "b", Type: "KNOWS"}})
 		}},
-		"BulkDeleteNodes": {run: func(engine *RemoteEngine) error { return engine.BulkDeleteNodes([]NodeID{"n2"}) }},
-		"BulkDeleteEdges": {run: func(engine *RemoteEngine) error { return engine.BulkDeleteEdges([]EdgeID{"e2"}) }},
+		"BulkDeleteNodes": {run: func(engine *RemoteEngine) error { return engine.BulkDeleteNodes(t.Context(), []NodeID{"n2"}) }},
+		"BulkDeleteEdges": {run: func(engine *RemoteEngine) error { return engine.BulkDeleteEdges(t.Context(), []EdgeID{"e2"}) }},
 		"GetNodesByLabel": {read: true, run: func(engine *RemoteEngine) error {
 			_, err := engine.GetNodesByLabel(context.Background(), "Person")
 			return err
 		}},
 		"NodeCount": {read: true, run: func(engine *RemoteEngine) error {
-			_, err := engine.NodeCount()
+			_, err := engine.NodeCount(t.Context())
 			return err
 		}},
 		"QueryCypher": {read: true, run: func(engine *RemoteEngine) error {
@@ -106,6 +106,6 @@ func TestStatementRemoteEngineRunsEveryOperationThroughItsRunner(t *testing.T) {
 		require.ErrorIs(t, operations[name].run(engine), fail, "%s preserves its owner's failure", name)
 	}
 
-	_, err = engine.CreateNode(&Node{ID: "n3", Labels: []string{"Person"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "n3", Labels: []string{"Person"}})
 	require.ErrorIs(t, err, fail)
 }

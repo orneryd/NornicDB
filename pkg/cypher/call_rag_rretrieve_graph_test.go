@@ -120,7 +120,7 @@ func TestCallDbRRetrieveGraphReranksChunkedQueryHits(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 	exec := NewStorageExecutor(store)
 	exec.SetEmbedder(oneChunkMatchingEmbedder{chunks: []string{"bravo", "zzzz", "yyyy"}})
-	_, err := store.CreateNode(&storage.Node{ID: "src", Labels: []string{"Source"}, Properties: map[string]interface{}{"text": "bravo notes"}, ChunkEmbeddings: [][]float32{{1, 0}}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "src", Labels: []string{"Source"}, Properties: map[string]interface{}{"text": "bravo notes"}, ChunkEmbeddings: [][]float32{{1, 0}}})
 	require.NoError(t, err)
 	svc := search.NewService(store, 2, nil)
 	t.Cleanup(func() { _ = svc.Close() })

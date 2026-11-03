@@ -18,7 +18,7 @@ func TestStatementHTTPCompositeSelection(t *testing.T) {
 	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "r2blockedcmp", []multidb.ConstituentRef{
 		{Alias: "source", DatabaseName: "nornic", Type: "local", AccessMode: "read_write"},
 	}))
-	_, err := users.CreateUser("r2limited", "password123", []auth.Role{auth.RoleEditor})
+	_, err := users.CreateUser(context.Background(), "r2limited", "password123", []auth.Role{auth.RoleEditor})
 	require.NoError(t, err)
 	require.NoError(t, server.allowlistStore.SaveRoleDatabases(ctx, "editor", []string{"nornic"}))
 	token := getAuthToken(t, users, "r2limited")
@@ -61,7 +61,7 @@ func (w *passwordChangeWriter) Header() http.Header {
 
 func TestStatementPasswordCacheRepopulation(t *testing.T) {
 	server, users := setupTestServer(t)
-	_, err := users.CreateUser("r2race", "oldpassword123", []auth.Role{auth.RoleViewer})
+	_, err := users.CreateUser(context.Background(), "r2race", "oldpassword123", []auth.Role{auth.RoleViewer})
 	require.NoError(t, err)
 	basic := "Basic " + base64.StdEncoding.EncodeToString([]byte("r2race:oldpassword123"))
 	handler := server.withAuth(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }, auth.PermRead)
@@ -69,11 +69,11 @@ func TestStatementPasswordCacheRepopulation(t *testing.T) {
 	req.Header.Set("Authorization", basic)
 	// Complete an account update while the response cookie is being written.
 	first := &passwordChangeWriter{ResponseRecorder: httptest.NewRecorder(), beforeCacheInsert: func() {
-		require.NoError(t, users.ChangePassword("r2race", "oldpassword123", "newpassword123"))
+		require.NoError(t, users.ChangePassword(context.Background(), "r2race", "oldpassword123", "newpassword123"))
 	}}
 	handler(first, req)
 	require.Equal(t, http.StatusOK, first.Code)
-	_, _, err = users.Authenticate("r2race", "oldpassword123", "review", "review")
+	_, _, err = users.Authenticate(context.Background(), "r2race", "oldpassword123", "review", "review")
 	require.Error(t, err, "the authenticator already refuses the old password")
 	next := httptest.NewRecorder()
 	handler(next, req)

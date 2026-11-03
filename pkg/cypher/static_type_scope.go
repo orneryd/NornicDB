@@ -105,7 +105,7 @@ func projectTypeScope(ctx context.Context, types typeScope, cypher25 bool, claus
 // projectTypeScopeIn is projectTypeScope for a caller that holds types'
 // static view (input) already.
 func projectTypeScopeIn(ctx context.Context, types typeScope, input staticTypeScope, clause string) typeScope {
-	body, _ := projectionSemanticBodyAndTail(clause, "WITH")
+	body, _ := projectionSemanticBodyAndTail(ctx, clause, "WITH")
 	input.complete = false
 	projected := make(typeScope)
 	for _, raw := range splitTopLevelComma(body) {
@@ -124,7 +124,7 @@ func projectTypeScopeIn(ctx context.Context, types typeScope, input staticTypeSc
 		if name == "" {
 			continue
 		}
-		operand := projectedOperand(types, input, expression)
+		operand := projectedOperand(ctx, types, input, expression)
 		if simpleSemanticIdentifier(name) == "" {
 			// Unaliased, a column is named by its text (WITH {a: 1}); only a
 			// name binds a variable whose members are known.
@@ -144,7 +144,7 @@ func projectTypeScopeIn(ctx context.Context, types typeScope, input staticTypeSc
 // any other expression the type the static operator check gives it (a
 // literal, arithmetic, a function's result, CASE, a comparison, a map
 // projection, a comprehension, a subscript or slice of a typed list).
-func projectedOperand(types typeScope, input staticTypeScope, expression string) staticOperand {
+func projectedOperand(ctx context.Context, types typeScope, input staticTypeScope, expression string) staticOperand {
 	expression = strings.TrimSpace(expression)
 	if strings.EqualFold(expression, "null") {
 		// Null, as written in place (+z of WITH null AS z is a number); it
@@ -158,21 +158,21 @@ func projectedOperand(types typeScope, input staticTypeScope, expression string)
 		return operandOfKind(kind)
 	}
 	// Every other expression has the one static type its scope derives.
-	return input.operandOf(expression)
+	return input.operandOf(ctx, expression)
 }
 
 // unwoundOperand is the static type of the variable UNWIND binds from list:
 // a list's element type (a node of a List<Node>, an Integer of a
 // List<Integer>), a known non-list value itself (UNWIND 5), unknown for a
 // list of unknown elements.
-func unwoundOperand(types typeScope, input staticTypeScope, clause string) staticOperand {
-	return listElementOperand(types, input, unwindSourceExpression(clause))
+func unwoundOperand(ctx context.Context, types typeScope, input staticTypeScope, clause string) staticOperand {
+	return listElementOperand(ctx, types, input, unwindSourceExpression(ctx, clause))
 }
 
 // listElementOperand is the static type of an element of list (UNWIND's
 // variable, a comprehension's or quantifier's local; localBindingKind).
-func listElementOperand(types typeScope, input staticTypeScope, list string) staticOperand {
-	operand := projectedOperand(types, input, list)
+func listElementOperand(ctx context.Context, types typeScope, input staticTypeScope, list string) staticOperand {
+	operand := projectedOperand(ctx, types, input, list)
 	if !operand.union && operand.known() && !operand.list() {
 		return operand // UNWIND 5 binds 5
 	}

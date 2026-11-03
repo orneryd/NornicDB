@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -70,12 +71,12 @@ func TestWALPublicDowngradeFixture(t *testing.T) {
 	if strings.HasPrefix(mode, "write") {
 		if mode == "write-clean-foreign" {
 			// Destination beta=1, alpha=2; the source below writes alpha=1.
-			_, err := b.CreateNode(&Node{ID: "upgrade:seed", Properties: map[string]any{"beta": int64(0)}})
+			_, err := b.CreateNode(t.Context(), &Node{ID: "upgrade:seed", Properties: map[string]any{"beta": int64(0)}})
 			check(err)
 		}
-		_, err := b.CreateNode(&Node{ID: "upgrade:a", Properties: map[string]any{"alpha": int64(1)}})
+		_, err := b.CreateNode(t.Context(), &Node{ID: "upgrade:a", Properties: map[string]any{"alpha": int64(1)}})
 		check(err)
-		check(b.FlushWriteBehind(nil))
+		check(b.FlushWriteBehind(context.Background()))
 		check(b.Sync())
 		parkBuffer()
 		if mode == "write-clean-foreign" {
@@ -90,7 +91,7 @@ func TestWALPublicDowngradeFixture(t *testing.T) {
 		if (mode == "read-recover" || mode == "read-three") && applied != 1 {
 			t.Fatalf("replayed %d, want one genuinely pending commit", applied)
 		}
-		node, err := b.GetNode("upgrade:a")
+		node, err := b.GetNode(t.Context(), "upgrade:a")
 		check(err)
 		want := int64(2)
 		if mode == "read-three" {
@@ -100,7 +101,7 @@ func TestWALPublicDowngradeFixture(t *testing.T) {
 			t.Fatalf("alpha=%v, want %d", node.Properties["alpha"], want)
 		}
 		if mode == "old-update" || mode == "read-three" {
-			seed, err := b.GetNode("upgrade:seed")
+			seed, err := b.GetNode(t.Context(), "upgrade:seed")
 			check(err)
 			if seed.Properties["beta"] != int64(0) {
 				t.Fatal("foreign replay changed the destination's existing binding")
@@ -113,16 +114,16 @@ func TestWALPublicDowngradeFixture(t *testing.T) {
 		if mode == "old-update" {
 			value = 3
 			// Warm the inherited cold-reopen sequence path using public CRUD.
-			node, err := b.GetNode("upgrade:a")
+			node, err := b.GetNode(t.Context(), "upgrade:a")
 			check(err)
-			check(b.UpdateNode(NodeUpdateRequest{After: node}))
+			check(b.UpdateNode(t.Context(), NodeUpdateRequest{After: node}))
 			parkBuffer()
 		}
-		tx, err := b.BeginTransaction()
+		tx, err := b.BeginTransaction(t.Context())
 		check(err)
 		check(tx.SetNamespace("upgrade"))
 		check(tx.SetImplicit(true))
-		check(tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "upgrade:a", Properties: map[string]any{"alpha": value}}, Policy: ClientNodeEdits}))
+		check(tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "upgrade:a", Properties: map[string]any{"alpha": value}}, Policy: ClientNodeEdits}))
 		check(tx.Commit())
 		if !tx.AcknowledgedBuffered() {
 			t.Fatal("fixture did not exercise write-behind")
@@ -159,21 +160,21 @@ func walDowngradeSynchronousRestore(t *testing.T, dir, mode string, cfg *WALConf
 		source, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: filepath.Join(dir, "source"), WriteBehind: false}))
 		check(err)
 		t.Cleanup(func() { _ = source.Close() })
-		_, err = source.CreateNode(&Node{ID: "upgrade:a", Properties: map[string]any{"alpha": int64(2), "beta": "sync"}})
+		_, err = source.CreateNode(t.Context(), &Node{ID: "upgrade:a", Properties: map[string]any{"alpha": int64(2), "beta": "sync"}})
 		check(err)
 		backup := filepath.Join(dir, "native.backup")
 		check(source.Backup(backup))
 		check(source.Close())
 		check(b.Restore(backup))
-		_, err = journal.CreateNode(&Node{ID: "upgrade:sync-marker", Properties: map[string]any{"after": true}})
+		_, err = journal.CreateNode(t.Context(), &Node{ID: "upgrade:sync-marker", Properties: map[string]any{"after": true}})
 		check(err)
 	}
-	node, err := b.GetNode("upgrade:a")
+	node, err := b.GetNode(t.Context(), "upgrade:a")
 	check(err)
 	if node.Properties["alpha"] != int64(2) || node.Properties["beta"] != "sync" {
 		t.Fatalf("synchronous restore changed properties: %v", node.Properties)
 	}
-	marker, err := b.GetNode("upgrade:sync-marker")
+	marker, err := b.GetNode(t.Context(), "upgrade:sync-marker")
 	check(err)
 	if marker.Properties["after"] != true {
 		t.Fatalf("synchronous post-restore write missing: %v", marker.Properties)
@@ -197,17 +198,17 @@ func walDowngradeForeignSource(t *testing.T, destination *BadgerEngine, logDir s
 	source, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: filepath.Join(filepath.Dir(logDir), "source"), WriteBehind: true, WriteBehindInterval: time.Hour}))
 	check(err)
 	source.writeBehind.SetDelayBounds(time.Hour, time.Hour)
-	_, err = source.CreateNode(&Node{ID: "upgrade:a", Properties: map[string]any{"alpha": int64(0)}})
+	_, err = source.CreateNode(t.Context(), &Node{ID: "upgrade:a", Properties: map[string]any{"alpha": int64(0)}})
 	check(err)
-	check(source.FlushWriteBehind(nil))
+	check(source.FlushWriteBehind(context.Background()))
 	wal, err := NewWAL(logDir, DefaultWALConfig())
 	check(err)
 	journal := NewWALEngine(source, wal)
-	tx, err := source.BeginTransaction()
+	tx, err := source.BeginTransaction(t.Context())
 	check(err)
 	check(tx.SetNamespace("upgrade"))
 	check(tx.SetImplicit(true))
-	check(tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "upgrade:a", Properties: map[string]any{"alpha": int64(2)}}, Policy: ClientNodeEdits}))
+	check(tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "upgrade:a", Properties: map[string]any{"alpha": int64(2)}}, Policy: ClientNodeEdits}))
 	check(tx.Commit())
 	if !tx.AcknowledgedBuffered() {
 		t.Fatal("foreign fixture did not use a buffered record")

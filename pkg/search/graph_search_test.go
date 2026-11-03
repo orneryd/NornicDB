@@ -23,7 +23,7 @@ func TestSearchGraph(t *testing.T) {
 		{ID: "span-node", Labels: []string{"Note"}, Properties: map[string]any{"content": "a span"}, ChunkEmbeddings: [][]float32{{1, 0, 0}}},
 		{ID: "river-node", Labels: []string{"Note"}, Properties: map[string]any{"content": "zephyrine river"}, ChunkEmbeddings: [][]float32{{0, 1, 0}}},
 	} {
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, svc.IndexNode(node))
 	}

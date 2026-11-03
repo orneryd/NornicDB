@@ -1,8 +1,9 @@
 package search
 
 import (
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -32,7 +33,7 @@ func indexVectorNodes(t testing.TB, svc *Service, engine storage.Engine, nodes .
 	t.Helper()
 	for _, node := range nodes {
 		if engine != nil {
-			_, err := engine.CreateNode(node)
+			_, err := engine.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 		}
 		require.NoError(t, svc.IndexNode(node))

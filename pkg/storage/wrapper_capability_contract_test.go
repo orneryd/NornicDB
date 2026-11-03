@@ -24,14 +24,14 @@ func TestWrapperCapabilityParity_ProjectedReadsAcrossStack(t *testing.T) {
 	wal := NewWALEngine(badger, walBacking)
 	namespaced := NewNamespacedEngine(wal, "ns")
 
-	_, err = namespaced.CreateNode(&Node{
+	_, err = namespaced.CreateNode(t.Context(), &Node{
 		ID:         "n1",
 		Labels:     []string{"Doc"},
 		Properties: map[string]any{"a": int64(1), "b": "two", "c": 3.5},
 	})
 	require.NoError(t, err)
 
-	projected, err := namespaced.GetNodeProjected("n1", []string{"a", "c"})
+	projected, err := namespaced.GetNodeProjected(t.Context(), "n1", []string{"a", "c"})
 	require.NoError(t, err)
 	require.NotNil(t, projected)
 	require.Equal(t, NodeID("n1"), projected.ID)
@@ -39,33 +39,33 @@ func TestWrapperCapabilityParity_ProjectedReadsAcrossStack(t *testing.T) {
 	require.Equal(t, map[string]any{"a": int64(1), "c": 3.5}, projected.Properties)
 
 	// Same read through the WAL layer uses the prefixed ID.
-	walProjected, err := wal.GetNodeProjected("ns:n1", []string{"b"})
+	walProjected, err := wal.GetNodeProjected(t.Context(), "ns:n1", []string{"b"})
 	require.NoError(t, err)
 	require.Equal(t, map[string]any{"b": "two"}, walProjected.Properties)
 
-	walProjected, err = wal.GetNodeProjected("ns:n1", []string{"a"})
+	walProjected, err = wal.GetNodeProjected(t.Context(), "ns:n1", []string{"a"})
 	require.NoError(t, err)
 	require.Equal(t, map[string]any{"a": int64(1)}, walProjected.Properties)
 
-	badgerProjected, err := badger.GetNodeProjected("ns:n1", []string{"c"})
+	badgerProjected, err := badger.GetNodeProjected(t.Context(), "ns:n1", []string{"c"})
 	require.NoError(t, err)
 	require.Equal(t, map[string]any{"c": 3.5}, badgerProjected.Properties)
 
 	// Parity: an update is visible through the namespaced projected read
 	// immediately, and a delete reports ErrNotFound.
-	latest, err := namespaced.GetNode("n1")
+	latest, err := namespaced.GetNode(t.Context(), "n1")
 	require.NoError(t, err)
 	latest.Properties["d"] = int64(4)
-	require.NoError(t, namespaced.UpdateNode(NodeUpdateRequest{After: latest}))
+	require.NoError(t, namespaced.UpdateNode(t.Context(), NodeUpdateRequest{After: latest}))
 
-	overlayRead, err := namespaced.GetNodeProjected("n1", []string{"d"})
+	overlayRead, err := namespaced.GetNodeProjected(t.Context(), "n1", []string{"d"})
 	require.NoError(t, err)
 	require.Equal(t, map[string]any{"d": int64(4)}, overlayRead.Properties)
 
-	_, err = namespaced.CreateNode(&Node{ID: "n2", Labels: []string{"Doc"}})
+	_, err = namespaced.CreateNode(t.Context(), &Node{ID: "n2", Labels: []string{"Doc"}})
 	require.NoError(t, err)
-	require.NoError(t, namespaced.DeleteNode("n2"))
-	_, err = wal.GetNodeProjected("ns:n2", nil)
+	require.NoError(t, namespaced.DeleteNode(t.Context(), "n2"))
+	_, err = wal.GetNodeProjected(t.Context(), "ns:n2", nil)
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
@@ -82,7 +82,7 @@ func TestWrapperCapabilityParity_NamespacedMaintenanceForwards(t *testing.T) {
 	nsB := NewNamespacedEngine(badger, "b")
 
 	for index := 0; index < 3; index++ {
-		_, err := nsA.CreateNode(&Node{
+		_, err := nsA.CreateNode(t.Context(), &Node{
 			ID:         NodeID(fmt.Sprintf("n-%d", index)),
 			Labels:     []string{"Doc"},
 			Properties: map[string]any{"seq": int64(index)},
@@ -90,24 +90,24 @@ func TestWrapperCapabilityParity_NamespacedMaintenanceForwards(t *testing.T) {
 		require.NoError(t, err)
 	}
 	for index := 0; index < 2; index++ {
-		_, err := nsB.CreateNode(&Node{
+		_, err := nsB.CreateNode(t.Context(), &Node{
 			ID:         NodeID(fmt.Sprintf("m-%d", index)),
 			Labels:     []string{"Other"},
 			Properties: map[string]any{"seq": int64(index)},
 		})
 		require.NoError(t, err)
 	}
-	err = nsA.CreateEdge(&Edge{ID: "e-0", Type: "R", StartNode: "n-0", EndNode: "n-1"})
+	err = nsA.CreateEdge(t.Context(), &Edge{ID: "e-0", Type: "R", StartNode: "n-0", EndNode: "n-1"})
 	require.NoError(t, err)
 
 	t.Run("prefix counts are namespace scoped", func(t *testing.T) {
-		nodes, err := nsA.NodeCountByPrefix("")
+		nodes, err := nsA.NodeCountByPrefix(context.Background(), "")
 		require.NoError(t, err)
 		require.Equal(t, int64(3), nodes)
-		edges, err := nsA.EdgeCountByPrefix("")
+		edges, err := nsA.EdgeCountByPrefix(context.Background(), "")
 		require.NoError(t, err)
 		require.Equal(t, int64(1), edges)
-		other, err := nsB.NodeCountByPrefix("")
+		other, err := nsB.NodeCountByPrefix(context.Background(), "")
 		require.NoError(t, err)
 		require.Equal(t, int64(2), other)
 	})
@@ -123,7 +123,7 @@ func TestWrapperCapabilityParity_NamespacedMaintenanceForwards(t *testing.T) {
 	})
 
 	t.Run("label count in namespace forwards", func(t *testing.T) {
-		count, err := nsA.NodeCountByLabelInNamespace("a", "Doc")
+		count, err := nsA.NodeCountByLabelInNamespace(t.Context(), "a", "Doc")
 		require.NoError(t, err)
 		require.Equal(t, int64(3), count)
 	})
@@ -140,15 +140,15 @@ func TestWrapperCapabilityParity_NamespacedMaintenanceForwards(t *testing.T) {
 	})
 
 	t.Run("embedding update rejects missing and persists existing", func(t *testing.T) {
-		require.ErrorIs(t, nsA.UpdateNodeEmbeddingSidecar(&Node{ID: "missing", ChunkEmbeddings: [][]float32{{0.1}}}), ErrNotFound)
+		require.ErrorIs(t, nsA.UpdateNodeEmbeddingSidecar(context.Background(), &Node{ID: "missing", ChunkEmbeddings: [][]float32{{0.1}}}), ErrNotFound)
 
-		node, err := nsA.GetNode("n-0")
+		node, err := nsA.GetNode(t.Context(), "n-0")
 		require.NoError(t, err)
 		node.ChunkEmbeddings = [][]float32{{0.2, 0.3}}
 		node.EmbedMeta = map[string]any{"embedded": true, "chunk_count": 1}
-		require.NoError(t, nsA.UpdateNodeEmbeddingSidecar(node))
+		require.NoError(t, nsA.UpdateNodeEmbeddingSidecar(context.Background(), node))
 
-		readback, err := nsA.GetNode("n-0")
+		readback, err := nsA.GetNode(t.Context(), "n-0")
 		require.NoError(t, err)
 		require.NotEmpty(t, readback.ChunkEmbeddings)
 		require.NotEmpty(t, readback.EmbedMeta)
@@ -181,15 +181,15 @@ func TestWrapperCapabilityParity_EventCallbacksTranslateThroughWrappers(t *testi
 
 	// A node created through the other namespace's view must not fire this
 	// view's callback.
-	_, err = nsB.CreateNode(&Node{ID: "foreign", Labels: []string{"B"}})
+	_, err = nsB.CreateNode(t.Context(), &Node{ID: "foreign", Labels: []string{"B"}})
 	require.NoError(t, err)
 	require.Empty(t, createdA)
 
-	_, err = nsA.CreateNode(&Node{ID: "only-a", Labels: []string{"A"}})
+	_, err = nsA.CreateNode(t.Context(), &Node{ID: "only-a", Labels: []string{"A"}})
 	require.NoError(t, err)
 	require.Equal(t, []NodeID{"only-a"}, createdA)
 
-	require.NoError(t, nsA.DeleteNode("only-a"))
+	require.NoError(t, nsA.DeleteNode(t.Context(), "only-a"))
 	require.Equal(t, []NodeID{"only-a"}, deletedA)
 
 	t.Run("WAL passes events through unchanged", func(t *testing.T) {
@@ -203,9 +203,9 @@ func TestWrapperCapabilityParity_EventCallbacksTranslateThroughWrappers(t *testi
 		var edges []EdgeID
 		wal.OnNodeCreated(func(node *Node) { created = append(created, node.ID) })
 		wal.OnEdgeCreated(func(edge *Edge) { edges = append(edges, edge.ID) })
-		_, err = wal.CreateNode(&Node{ID: "w:x", Labels: []string{"W"}})
+		_, err = wal.CreateNode(t.Context(), &Node{ID: "w:x", Labels: []string{"W"}})
 		require.NoError(t, err)
-		err = wal.CreateEdge(&Edge{ID: "w:e", Type: "T", StartNode: "w:x", EndNode: "w:x"})
+		err = wal.CreateEdge(t.Context(), &Edge{ID: "w:e", Type: "T", StartNode: "w:x", EndNode: "w:x"})
 		require.NoError(t, err)
 		require.Equal(t, []NodeID{"w:x"}, created)
 		require.Equal(t, []EdgeID{"w:e"}, edges)

@@ -15,7 +15,7 @@ func TestASTSourceViewsBuilderConcurrent(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 8; j++ {
-				ast, err := builder.Build(`RETURN ['\u0061', '\u0061'] AS x`)
+				ast, err := builder.Build(t.Context(), `RETURN ['\u0061', '\u0061'] AS x`)
 				if err != nil || len(ast.Clauses) != 1 {
 					t.Errorf("build failed: %v", err)
 					return
@@ -33,7 +33,7 @@ func TestASTSourceViewsBuilderConcurrent(t *testing.T) {
 
 func TestASTSourceNestedCommentsAndMergeActions(t *testing.T) {
 	query := `MERGE (\u006e:L {k: ['\u0061', /* middle */ '\u0061']}) ON CREATE SET n.p = {k: '\u0062'} ON MATCH SET n.p = '\u0063' RETURN n`
-	ast, err := NewASTBuilder().Build(query)
+	ast, err := NewASTBuilder().Build(t.Context(), query)
 	require.NoError(t, err)
 	require.Len(t, ast.Clauses, 2)
 	merge := ast.Clauses[0].Merge
@@ -56,7 +56,7 @@ func TestASTSourceNestedCommentsAndMergeActions(t *testing.T) {
 	// The canonical MERGE owner exposes extents for the same parsed products.
 	body := `  (n) ON CREATE SET n.p=1 ON MATCH SET n.p=2 ON CREATE SET n.p=3  `
 	var spans mergeActionSpans
-	parts := splitMergeClauseActions(body, &spans)
+	parts := splitMergeClauseActions(t.Context(), body, &spans)
 	require.Equal(t, parts.pattern, body[spans.pattern.Start:spans.pattern.End])
 	for group, actions := range []mergeActionClauses{parts.onCreate, parts.onMatch} {
 		groupSpans := spans.onCreate
@@ -83,7 +83,7 @@ func TestASTCommentProjectionNoCommentAllocations(t *testing.T) {
 func TestASTMergeActionOverflowExtents(t *testing.T) {
 	body := "(n:`π😀`) ON CREATE SET n.p='ON MATCH SET' ON MATCH SET n.p=2 ON CREATE SET n.p=3 ON MATCH SET n.p=4 ON CREATE SET n.p=5 ON MATCH SET n.p=6 ON CREATE SET n.p=7 ON MATCH SET n.p=8"
 	var spans mergeActionSpans
-	parts := splitMergeClauseActions(body, &spans)
+	parts := splitMergeClauseActions(t.Context(), body, &spans)
 	expected := [][]string{{"SET n.p='ON MATCH SET'", "SET n.p=3", "SET n.p=5", "SET n.p=7"}, {"SET n.p=2", "SET n.p=4", "SET n.p=6", "SET n.p=8"}}
 	for group, wants := range expected {
 		actions, extents := parts.onCreate, spans.onCreate
@@ -187,7 +187,7 @@ func TestASTUnicodeSourcePopulations(t *testing.T) {
 		t.Run(group.name, func(t *testing.T) {
 			for _, c := range group.cases {
 				for _, query := range c.queries {
-					ast, err := NewASTBuilder().Build(query)
+					ast, err := NewASTBuilder().Build(t.Context(), query)
 					if c.wantError {
 						require.Error(t, err)
 						continue

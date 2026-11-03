@@ -22,19 +22,19 @@ type countingCallTailNodes struct {
 	reads int
 }
 
-func (engine *countingCallTailNodes) GetNode(id storage.NodeID) (*storage.Node, error) {
+func (engine *countingCallTailNodes) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	engine.reads++
-	return engine.Engine.GetNode(id)
+	return engine.Engine.GetNode(ctx, id)
 }
 
 func TestCallTailRelationshipReusesEndpointsWithinExecution(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "calltailreuse")
-	_, err := store.CreateNode(&storage.Node{ID: "a", Labels: []string{"CT"}, Properties: map[string]interface{}{"name": "Alice"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"CT"}, Properties: map[string]interface{}{"name": "Alice"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "b", Labels: []string{"CT"}, Properties: map[string]interface{}{"name": "Bob"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"CT"}, Properties: map[string]interface{}{"name": "Bob"}})
 	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "edge", StartNode: "a", EndNode: "b", Type: "CTR", Properties: map[string]interface{}{"name": "shared"}}))
-	edge, err := store.GetEdge("edge")
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "edge", StartNode: "a", EndNode: "b", Type: "CTR", Properties: map[string]interface{}{"name": "shared"}}))
+	edge, err := store.GetEdge(t.Context(), "edge")
 	require.NoError(t, err)
 
 	counted := &countingCallTailNodes{Engine: store}
@@ -105,11 +105,11 @@ func TestCallTailPlansEvaluateLikeThePipeline(t *testing.T) {
 func TestCallTailCachedPlansResolveCurrentPagination(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "calltail-current-pagination")
 	for _, id := range []storage.NodeID{"left", "right"} {
-		_, err := store.CreateNode(&storage.Node{ID: id, Labels: []string{"PageNode"}, Properties: map[string]interface{}{"name": string(id)}})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"PageNode"}, Properties: map[string]interface{}{"name": string(id)}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "page-edge", StartNode: "left", EndNode: "right", Type: "PageEdge", Properties: map[string]interface{}{"key": "one"}}))
-	edge, err := store.GetEdge("page-edge")
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "page-edge", StartNode: "left", EndNode: "right", Type: "PageEdge", Properties: map[string]interface{}{"key": "one"}}))
+	edge, err := store.GetEdge(t.Context(), "page-edge")
 	require.NoError(t, err)
 	exec := NewStorageExecutor(store)
 	for _, tc := range []struct {

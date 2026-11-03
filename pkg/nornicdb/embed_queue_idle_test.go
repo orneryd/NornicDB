@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -24,13 +25,13 @@ type idleCountingEngine struct {
 	onEmpty   func()
 }
 
-func (e *idleCountingEngine) FindNodeNeedingEmbedding() *storage.Node {
+func (e *idleCountingEngine) FindNodeNeedingEmbedding(ctx context.Context) (*storage.Node, error) {
 	e.claims.Add(1)
-	node := e.Engine.(EmbeddingFinder).FindNodeNeedingEmbedding()
-	if node == nil && e.onEmpty != nil {
+	node, err := e.Engine.(EmbeddingFinder).FindNodeNeedingEmbedding(ctx)
+	if err == nil && node == nil && e.onEmpty != nil {
 		e.onEmpty()
 	}
-	return node
+	return node, err
 }
 
 func (e *idleCountingEngine) RefreshPendingEmbeddingsIndex() int {
@@ -42,8 +43,8 @@ func (e *idleCountingEngine) MarkNodeEmbedded(id storage.NodeID) {
 	e.Engine.(EmbeddingIndexManager).MarkNodeEmbedded(id)
 }
 
-func (e *idleCountingEngine) UpdateNodeEmbeddingSidecar(node *storage.Node) error {
-	return e.Engine.(storage.EmbeddingSidecarUpdater).UpdateNodeEmbeddingSidecar(node)
+func (e *idleCountingEngine) UpdateNodeEmbeddingSidecar(ctx context.Context, node *storage.Node) error {
+	return e.Engine.(storage.EmbeddingSidecarUpdater).UpdateNodeEmbeddingSidecar(ctx, node)
 }
 
 func idleTestWorker(t *testing.T, workers int) (*EmbedWorker, *idleCountingEngine) {
@@ -71,7 +72,7 @@ func waitForIdleStartup(t *testing.T, worker *EmbedWorker, store *idleCountingEn
 
 func idleTestCreate(t *testing.T, store storage.Engine, id string) {
 	t.Helper()
-	_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{"Doc"}, Properties: map[string]any{"content": id}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(id), Labels: []string{"Doc"}, Properties: map[string]any{"content": id}})
 	require.NoError(t, err)
 }
 

@@ -25,23 +25,23 @@ type procedurePrivilegeCommand struct {
 // isProcedurePrivilegeCommand reports whether cypher is a GRANT or REVOKE of
 // procedure execution, the privilege statements NornicDB runs; every other
 // GRANT, REVOKE or DENY is unsupported.
-func isProcedurePrivilegeCommand(cypher string) bool {
-	_, ok, _ := parseProcedurePrivilegeCommand(cypher)
+func isProcedurePrivilegeCommand(ctx context.Context, cypher string) bool {
+	_, ok, _ := parseProcedurePrivilegeCommand(ctx, cypher)
 	return ok
 }
 
 // isPrivilegeAdministrationCommand reports whether cypher is a GRANT, REVOKE
 // or DENY, or a SHOW of privileges, which administrators alone may run.
-func isPrivilegeAdministrationCommand(cypher string) bool {
+func isPrivilegeAdministrationCommand(ctx context.Context, cypher string) bool {
 	trimmed := strings.TrimSpace(cypher)
 	return startsWithKeywordFold(trimmed, "GRANT") || startsWithKeywordFold(trimmed, "REVOKE") ||
-		startsWithKeywordFold(trimmed, "DENY") || isShowPrivilegesCommand(trimmed)
+		startsWithKeywordFold(trimmed, "DENY") || isShowPrivilegesCommand(ctx, trimmed)
 }
 
 // isPrivilegeCommandShaped reports a GRANT, REVOKE or DENY shaped as a
 // privilege statement: GRANT / REVOKE ROLE[S] …, or one with an ON clause.
 // Another statement starting with these words is a syntax error.
-func isPrivilegeCommandShaped(cypher string) bool {
+func isPrivilegeCommandShaped(ctx context.Context, cypher string) bool {
 	rest := strings.TrimSpace(cypher)
 	var keyword string
 	for _, candidate := range []string{"GRANT", "REVOKE", "DENY"} {
@@ -57,7 +57,7 @@ func isPrivilegeCommandShaped(cypher string) bool {
 	if keyword != "DENY" && (startsWithKeywordFold(rest, "ROLE") || startsWithKeywordFold(rest, "ROLES")) {
 		return true
 	}
-	return findKeywordIndex(rest, "ON") > 0
+	return findKeywordIndex(ctx, rest, "ON") > 0
 }
 
 // parseProcedurePrivilegeCommand parses
@@ -67,7 +67,7 @@ func isPrivilegeCommandShaped(cypher string) bool {
 //
 // ok is false for any other statement; err is a statement of this shape
 // that is malformed.
-func parseProcedurePrivilegeCommand(cypher string) (procedurePrivilegeCommand, bool, error) {
+func parseProcedurePrivilegeCommand(ctx context.Context, cypher string) (procedurePrivilegeCommand, bool, error) {
 	var command procedurePrivilegeCommand
 	rest := strings.TrimSpace(cypher)
 	switch {
@@ -102,7 +102,7 @@ func parseProcedurePrivilegeCommand(cypher string) (procedurePrivilegeCommand, b
 	default:
 		return command, false, nil
 	}
-	on := findKeywordIndex(rest, "ON")
+	on := findKeywordIndex(ctx, rest, "ON")
 	if on < 0 {
 		return command, true, procedurePrivilegeSyntaxError("expected ON DBMS")
 	}
@@ -224,7 +224,7 @@ func authenticationDisabled(ctx context.Context) bool {
 //     IMMUTABLE, that names an immutable grant (Neo.ClientError.Security.Forbidden
 //     "Immutable privileges cannot be revoked."); nothing is changed then.
 func (e *StorageExecutor) executeProcedurePrivilegeCommand(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	command, _, err := parseProcedurePrivilegeCommand(cypher)
+	command, _, err := parseProcedurePrivilegeCommand(ctx, cypher)
 	if err != nil {
 		return nil, err
 	}
@@ -290,19 +290,19 @@ func (e *StorageExecutor) executeProcedurePrivilegeCommand(ctx context.Context, 
 
 // isShowPrivilegesCommand reports SHOW PRIVILEGES and SHOW ROLE[S] r[, …]
 // PRIVILEGES.
-func isShowPrivilegesCommand(cypher string) bool {
-	if startsWithKeywords(cypher, "SHOW", "PRIVILEGES") || startsWithKeywords(cypher, "SHOW", "PRIVILEGE") {
+func isShowPrivilegesCommand(ctx context.Context, cypher string) bool {
+	if startsWithKeywords(ctx, cypher, "SHOW", "PRIVILEGES") || startsWithKeywords(ctx, cypher, "SHOW", "PRIVILEGE") {
 		return true
 	}
-	if startsWithKeywords(cypher, "SHOW", "ROLES") || startsWithKeywords(cypher, "SHOW", "ROLE") {
-		return findKeywordIndex(showCommandHead(cypher), "PRIVILEGES") > 0 || findKeywordIndex(showCommandHead(cypher), "PRIVILEGE") > 0
+	if startsWithKeywords(ctx, cypher, "SHOW", "ROLES") || startsWithKeywords(ctx, cypher, "SHOW", "ROLE") {
+		return findKeywordIndex(ctx, showCommandHead(ctx, cypher), "PRIVILEGES") > 0 || findKeywordIndex(ctx, showCommandHead(ctx, cypher), "PRIVILEGE") > 0
 	}
 	return false
 }
 
 // showPrivilegeRoles are the roles SHOW ROLE r[, …] PRIVILEGES names; nil for
 // SHOW PRIVILEGES (every role).
-func showPrivilegeRoles(head string) []string {
+func showPrivilegeRoles(ctx context.Context, head string) []string {
 	rest := strings.TrimSpace(head)
 	rest = strings.TrimSpace(rest[len("SHOW"):])
 	switch {
@@ -313,9 +313,9 @@ func showPrivilegeRoles(head string) []string {
 	default:
 		return nil
 	}
-	end := findKeywordIndex(rest, "PRIVILEGES")
+	end := findKeywordIndex(ctx, rest, "PRIVILEGES")
 	if end < 0 {
-		end = findKeywordIndex(rest, "PRIVILEGE")
+		end = findKeywordIndex(ctx, rest, "PRIVILEGE")
 	}
 	if end < 0 {
 		return nil
@@ -341,7 +341,7 @@ func (e *StorageExecutor) executeShowPrivileges(ctx context.Context, head string
 		return nil, err
 	}
 	only := map[string]bool{}
-	for _, role := range showPrivilegeRoles(head) {
+	for _, role := range showPrivilegeRoles(ctx, head) {
 		only[role] = true
 	}
 	result := &ExecuteResult{Columns: []string{"access", "action", "resource", "graph", "segment", "role", "immutable"}, Rows: [][]interface{}{}}

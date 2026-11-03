@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,12 +18,12 @@ func TestMonster531TypedIndexPersistence(t *testing.T) {
 			t.Run(string(kind)+string(entity), func(t *testing.T) {
 				schema := NewSchemaManager()
 				require.NoError(t, schema.AddTypedIndexForEntity(kind, "typed", "T", []string{"value"}, entity))
-				encoded, err := json.Marshal(schema.ExportDefinition())
+				encoded, err := json.Marshal(schemaDefinitionForTest(t, schema))
 				require.NoError(t, err)
 				var definition SchemaDefinition
 				require.NoError(t, json.Unmarshal(encoded, &definition))
 				restored := NewSchemaManager()
-				require.NoError(t, restored.ReplaceFromDefinition(&definition))
+				require.NoError(t, restored.ReplaceFromDefinition(context.Background(), &definition))
 				index, exists := restored.GetRangeIndex("typed")
 				require.True(t, exists)
 				require.Equal(t, kind, index.Kind)
@@ -45,7 +46,7 @@ func TestMonster531TypedIndexPersistence(t *testing.T) {
 	_, exists := schema.GetRangeIndex("failed")
 	require.False(t, exists)
 	legacy := NewSchemaManager()
-	require.NoError(t, legacy.ReplaceFromDefinition(&SchemaDefinition{RangeIndexes: []SchemaRangeIndexDef{{Name: "legacy", Label: "T", Property: "value"}}}))
+	require.NoError(t, legacy.ReplaceFromDefinition(context.Background(), &SchemaDefinition{RangeIndexes: []SchemaRangeIndexDef{{Name: "legacy", Label: "T", Property: "value"}}}))
 	index, exists := legacy.GetRangeIndex("legacy")
 	require.True(t, exists)
 	require.Equal(t, IndexKindRange, index.effectiveKind())
@@ -72,7 +73,8 @@ func TestSchemaManager(t *testing.T) {
 			t.Fatalf("Failed with IF NOT EXISTS: %v", err)
 		}
 
-		constraints := sm.GetConstraints()
+		constraints, discoveryErr := sm.GetConstraints(t.Context())
+		require.NoError(t, discoveryErr)
 		if len(constraints) != 1 {
 			t.Errorf("Expected 1 constraint, got %d", len(constraints))
 		}
@@ -83,28 +85,28 @@ func TestSchemaManager(t *testing.T) {
 		sm.AddUniqueConstraint("email_unique", "User", "email")
 
 		// First value should be fine
-		err := sm.CheckUniqueConstraint("User", "email", "test@example.com", "")
+		err := sm.CheckUniqueConstraint(context.Background(), "User", "email", "test@example.com", "")
 		if err != nil {
 			t.Errorf("Unexpected error: %v", err)
 		}
 
 		// Register the value
-		sm.ApplyUniqueValue("User", "email", "test@example.com", "node1", ValidatedUniqueClaim)
+		sm.ApplyUniqueValue(context.Background(), "User", "email", "test@example.com", "node1", ValidatedUniqueClaim)
 
 		// Same value should fail
-		err = sm.CheckUniqueConstraint("User", "email", "test@example.com", "")
+		err = sm.CheckUniqueConstraint(context.Background(), "User", "email", "test@example.com", "")
 		if err == nil {
 			t.Error("Expected constraint violation error")
 		}
 
 		// Same value with same node ID should be OK (update case)
-		err = sm.CheckUniqueConstraint("User", "email", "test@example.com", "node1")
+		err = sm.CheckUniqueConstraint(context.Background(), "User", "email", "test@example.com", "node1")
 		if err != nil {
 			t.Errorf("Unexpected error for same node: %v", err)
 		}
 
 		// No constraint on different property
-		err = sm.CheckUniqueConstraint("User", "name", "test@example.com", "")
+		err = sm.CheckUniqueConstraint(context.Background(), "User", "name", "test@example.com", "")
 		if err != nil {
 			t.Errorf("Unexpected error for unconstrained property: %v", err)
 		}
@@ -114,18 +116,21 @@ func TestSchemaManager(t *testing.T) {
 		sm := NewSchemaManager()
 		require.NoError(t, sm.AddUniqueConstraint("age_unique", "User", "age"))
 
-		sm.ApplyUniqueValue("User", "age", int(1), "node1", ValidatedUniqueClaim)
+		sm.ApplyUniqueValue(context.Background(), "User", "age", int(1), "node1", ValidatedUniqueClaim)
 
-		got, found, constrained, _ := sm.LookupUniqueConstraintValue("User", "age", int64(1))
+		got, found, constrained, _, uniqueLookupErr1 := sm.LookupUniqueConstraintValue(t.Context(), "User", "age", int64(1))
+		if uniqueLookupErr1 != nil {
+			t.Errorf("unique index read failed: %v", uniqueLookupErr1)
+		}
 		require.True(t, constrained)
 		require.True(t, found)
 		assert.Equal(t, NodeID("node1"), got)
 
-		err := sm.CheckUniqueConstraint("User", "age", float64(1), "")
+		err := sm.CheckUniqueConstraint(context.Background(), "User", "age", float64(1), "")
 		require.Error(t, err)
 
-		sm.ApplyUniqueValue("User", "age", int64(1), "node1", RetiredUniqueClaim)
-		err = sm.CheckUniqueConstraint("User", "age", float64(1), "")
+		sm.ApplyUniqueValue(context.Background(), "User", "age", int64(1), "node1", RetiredUniqueClaim)
+		err = sm.CheckUniqueConstraint(context.Background(), "User", "age", float64(1), "")
 		require.NoError(t, err)
 	})
 
@@ -134,7 +139,10 @@ func TestSchemaManager(t *testing.T) {
 		require.NoError(t, sm.AddUniqueConstraint("test_tags_unique", "User", "tags"))
 
 		require.NotPanics(t, func() {
-			nodeID, valueFound, constraintExists, _ := sm.LookupUniqueConstraintValue("User", "tags", []string{"a"})
+			nodeID, valueFound, constraintExists, _, uniqueLookupErr2 := sm.LookupUniqueConstraintValue(t.Context(), "User", "tags", []string{"a"})
+			if uniqueLookupErr2 != nil {
+				t.Errorf("unique index read failed: %v", uniqueLookupErr2)
+			}
 			require.Empty(t, nodeID)
 			require.True(t, constraintExists)
 			require.False(t, valueFound)
@@ -144,23 +152,23 @@ func TestSchemaManager(t *testing.T) {
 	t.Run("UnregisterUniqueValue", func(t *testing.T) {
 		sm := NewSchemaManager()
 		sm.AddUniqueConstraint("id_unique", "Node", "id")
-		sm.ApplyUniqueValue("Node", "id", "test-1", "node1", ValidatedUniqueClaim)
+		sm.ApplyUniqueValue(context.Background(), "Node", "id", "test-1", "node1", ValidatedUniqueClaim)
 
 		// Should fail before unregister
-		err := sm.CheckUniqueConstraint("Node", "id", "test-1", "")
+		err := sm.CheckUniqueConstraint(context.Background(), "Node", "id", "test-1", "")
 		if err == nil {
 			t.Error("Expected constraint violation")
 		}
 
 		// A stale retirement cannot release a different owner's claim.
-		sm.ApplyUniqueValue("Node", "id", "test-1", "another-node", RetiredUniqueClaim)
-		require.Error(t, sm.CheckUniqueConstraint("Node", "id", "test-1", ""))
+		sm.ApplyUniqueValue(context.Background(), "Node", "id", "test-1", "another-node", RetiredUniqueClaim)
+		require.Error(t, sm.CheckUniqueConstraint(context.Background(), "Node", "id", "test-1", ""))
 
 		// Unregister the actual owner.
-		sm.ApplyUniqueValue("Node", "id", "test-1", "node1", RetiredUniqueClaim)
+		sm.ApplyUniqueValue(context.Background(), "Node", "id", "test-1", "node1", RetiredUniqueClaim)
 
 		// Should succeed after unregister
-		err = sm.CheckUniqueConstraint("Node", "id", "test-1", "")
+		err = sm.CheckUniqueConstraint(context.Background(), "Node", "id", "test-1", "")
 		if err != nil {
 			t.Errorf("Unexpected error after unregister: %v", err)
 		}
@@ -282,7 +290,8 @@ func TestSchemaManager(t *testing.T) {
 		sm.AddUniqueConstraint("user_username", "User", "username")
 		sm.AddUniqueConstraint("post_id", "Post", "id")
 
-		constraints := sm.GetConstraints()
+		constraints, discoveryErr := sm.GetConstraints(t.Context())
+		require.NoError(t, discoveryErr)
 		if len(constraints) != 3 {
 			t.Errorf("Expected 3 constraints, got %d", len(constraints))
 		}
@@ -302,7 +311,7 @@ func TestSchemaManager_DropConstraintAndIndexHelpers(t *testing.T) {
 		if err := sm.DropConstraint("user_email_unique"); err != nil {
 			t.Fatalf("DropConstraint(unique) failed: %v", err)
 		}
-		if err := sm.CheckUniqueConstraint("User", "email", "a@example.com", ""); err != nil {
+		if err := sm.CheckUniqueConstraint(context.Background(), "User", "email", "a@example.com", ""); err != nil {
 			t.Fatalf("expected dropped unique constraint to stop enforcing, got %v", err)
 		}
 
@@ -333,7 +342,9 @@ func TestSchemaManager_DropConstraintAndIndexHelpers(t *testing.T) {
 		if err := sm.DropConstraint("user_email_unique"); err == nil {
 			t.Fatal("expected persist rollback error for unique constraint")
 		}
-		if len(sm.GetConstraints()) == 0 {
+		constraints, discoveryErr := sm.GetConstraints(t.Context())
+		require.NoError(t, discoveryErr)
+		if len(constraints) == 0 {
 			t.Fatal("expected dropped unique constraint to be restored after persist error")
 		}
 
@@ -427,7 +438,9 @@ func TestSchemaManager_PersistRollbackAndRangeDeleteBranches(t *testing.T) {
 		if len(sm.GetAllConstraints()) != 0 {
 			t.Fatal("constraint map should be rolled back on persist failure")
 		}
-		if len(sm.GetConstraints()) != 0 {
+		constraints, discoveryErr := sm.GetConstraints(t.Context())
+		require.NoError(t, discoveryErr)
+		if len(constraints) != 0 {
 			t.Fatal("unique constraints map should be rolled back on persist failure")
 		}
 	})
@@ -496,7 +509,7 @@ func TestMemoryEngineConstraintIntegration(t *testing.T) {
 				"name":  "Alice",
 			},
 		}
-		_, err := store.CreateNode(node1)
+		_, err := store.CreateNode(t.Context(), node1)
 		if err != nil {
 			t.Fatalf("Failed to create first node: %v", err)
 		}
@@ -510,7 +523,7 @@ func TestMemoryEngineConstraintIntegration(t *testing.T) {
 				"name":  "Bob",
 			},
 		}
-		_, err = store.CreateNode(node2)
+		_, err = store.CreateNode(t.Context(), node2)
 		if err == nil {
 			t.Fatal("Expected constraint violation error")
 		}
@@ -524,7 +537,7 @@ func TestMemoryEngineConstraintIntegration(t *testing.T) {
 				"name":  "Charlie",
 			},
 		}
-		_, err = store.CreateNode(node3)
+		_, err = store.CreateNode(t.Context(), node3)
 		if err != nil {
 			t.Fatalf("Failed to create node with different email: %v", err)
 		}
@@ -543,7 +556,7 @@ func TestMemoryEngineConstraintIntegration(t *testing.T) {
 				"id": "unique-id-1",
 			},
 		}
-		_, err := store.CreateNode(node1)
+		_, err := store.CreateNode(t.Context(), node1)
 		if err != nil {
 			t.Fatalf("Failed to create first node: %v", err)
 		}
@@ -556,7 +569,7 @@ func TestMemoryEngineConstraintIntegration(t *testing.T) {
 				"id": "unique-id-1",
 			},
 		}
-		_, err = store.CreateNode(node2)
+		_, err = store.CreateNode(t.Context(), node2)
 		if err == nil {
 			t.Fatal("Expected constraint violation")
 		}
@@ -575,7 +588,7 @@ func TestMemoryEngineConstraintIntegration(t *testing.T) {
 				"email": "test@example.com",
 			},
 		}
-		store.CreateNode(user)
+		store.CreateNode(t.Context(), user)
 
 		// Post with same email property should succeed (different label)
 		post := &Node{
@@ -585,7 +598,7 @@ func TestMemoryEngineConstraintIntegration(t *testing.T) {
 				"email": "test@example.com",
 			},
 		}
-		_, err := store.CreateNode(post)
+		_, err := store.CreateNode(t.Context(), post)
 		if err != nil {
 			t.Errorf("Unexpected error for different label: %v", err)
 		}
@@ -598,7 +611,10 @@ func TestMemoryEngineConstraintIntegration(t *testing.T) {
 
 func TestCompositeKey(t *testing.T) {
 	t.Run("CreateCompositeKey", func(t *testing.T) {
-		key := NewCompositeKey("US", "NYC", "10001")
+		key, err := NewCompositeKey(t.Context(), "US", "NYC", "10001")
+		if err != nil {
+			t.Fatalf("composite key failed: %v", err)
+		}
 
 		if len(key.Values) != 3 {
 			t.Errorf("Expected 3 values, got %d", len(key.Values))
@@ -613,8 +629,14 @@ func TestCompositeKey(t *testing.T) {
 
 	t.Run("CompositeKeyDeterminism", func(t *testing.T) {
 		// Same values should produce same hash
-		key1 := NewCompositeKey("US", "NYC", 10001)
-		key2 := NewCompositeKey("US", "NYC", 10001)
+		key1, err := NewCompositeKey(t.Context(), "US", "NYC", 10001)
+		if err != nil {
+			t.Fatalf("composite key failed: %v", err)
+		}
+		key2, err := NewCompositeKey(t.Context(), "US", "NYC", 10001)
+		if err != nil {
+			t.Fatalf("composite key failed: %v", err)
+		}
 
 		if key1.Hash != key2.Hash {
 			t.Error("Expected identical hashes for same values")
@@ -622,8 +644,14 @@ func TestCompositeKey(t *testing.T) {
 	})
 
 	t.Run("CompositeKeyDifferentValues", func(t *testing.T) {
-		key1 := NewCompositeKey("US", "NYC")
-		key2 := NewCompositeKey("US", "LA")
+		key1, err := NewCompositeKey(t.Context(), "US", "NYC")
+		if err != nil {
+			t.Fatalf("composite key failed: %v", err)
+		}
+		key2, err := NewCompositeKey(t.Context(), "US", "LA")
+		if err != nil {
+			t.Fatalf("composite key failed: %v", err)
+		}
 
 		if key1.Hash == key2.Hash {
 			t.Error("Expected different hashes for different values")
@@ -632,8 +660,14 @@ func TestCompositeKey(t *testing.T) {
 
 	t.Run("CompositeKeyTypeAwareness", func(t *testing.T) {
 		// String "10" vs int 10 should produce different keys
-		key1 := NewCompositeKey("10")
-		key2 := NewCompositeKey(10)
+		key1, err := NewCompositeKey(t.Context(), "10")
+		if err != nil {
+			t.Fatalf("composite key failed: %v", err)
+		}
+		key2, err := NewCompositeKey(t.Context(), 10)
+		if err != nil {
+			t.Fatalf("composite key failed: %v", err)
+		}
 
 		if key1.Hash == key2.Hash {
 			t.Error("Expected different hashes for different types")
@@ -641,7 +675,11 @@ func TestCompositeKey(t *testing.T) {
 	})
 
 	t.Run("CompositeKeyString", func(t *testing.T) {
-		key := NewCompositeKey("US", "NYC", 10001)
+		key, err := NewCompositeKey(t.Context(), "US", "NYC", 10001)
+		if err != nil {
+			t.Fatalf("composite key failed: %v", err)
+		}
+
 		str := key.String()
 
 		if str != "US, NYC, 10001" {
@@ -746,36 +784,36 @@ func TestCompositeIndexOperations(t *testing.T) {
 		idx, _ := sm.GetCompositeIndex("location_idx")
 
 		// Index some nodes
-		idx.IndexNode("user1", map[string]interface{}{
+		idx.IndexNode(t.Context(), "user1", map[string]interface{}{
 			"country": "US",
 			"city":    "NYC",
 			"zipcode": "10001",
 		})
-		idx.IndexNode("user2", map[string]interface{}{
+		idx.IndexNode(t.Context(), "user2", map[string]interface{}{
 			"country": "US",
 			"city":    "NYC",
 			"zipcode": "10002",
 		})
-		idx.IndexNode("user3", map[string]interface{}{
+		idx.IndexNode(t.Context(), "user3", map[string]interface{}{
 			"country": "US",
 			"city":    "LA",
 			"zipcode": "90001",
 		})
 
 		// Full lookup
-		results := idx.LookupFull("US", "NYC", "10001")
+		results := checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), "US", "NYC", "10001"))
 		if len(results) != 1 || results[0] != "user1" {
 			t.Errorf("Expected [user1], got %v", results)
 		}
 
 		// Non-existent lookup
-		results = idx.LookupFull("US", "NYC", "99999")
+		results = checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), "US", "NYC", "99999"))
 		if results != nil {
 			t.Errorf("Expected nil for non-existent key, got %v", results)
 		}
 
 		// Partial lookup should fail with LookupFull
-		results = idx.LookupFull("US", "NYC")
+		results = checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), "US", "NYC"))
 		if results != nil {
 			t.Errorf("Expected nil for partial key with LookupFull, got %v", results)
 		}
@@ -787,47 +825,47 @@ func TestCompositeIndexOperations(t *testing.T) {
 		idx, _ := sm.GetCompositeIndex("location_idx")
 
 		// Index some nodes
-		idx.IndexNode("user1", map[string]interface{}{
+		idx.IndexNode(t.Context(), "user1", map[string]interface{}{
 			"country": "US",
 			"city":    "NYC",
 			"zipcode": "10001",
 		})
-		idx.IndexNode("user2", map[string]interface{}{
+		idx.IndexNode(t.Context(), "user2", map[string]interface{}{
 			"country": "US",
 			"city":    "NYC",
 			"zipcode": "10002",
 		})
-		idx.IndexNode("user3", map[string]interface{}{
+		idx.IndexNode(t.Context(), "user3", map[string]interface{}{
 			"country": "US",
 			"city":    "LA",
 			"zipcode": "90001",
 		})
-		idx.IndexNode("user4", map[string]interface{}{
+		idx.IndexNode(t.Context(), "user4", map[string]interface{}{
 			"country": "UK",
 			"city":    "London",
 			"zipcode": "SW1A",
 		})
 
 		// Prefix lookup: country only
-		results := idx.LookupPrefix("US")
+		results := checkedIndexRead[[]NodeID](t)(idx.LookupPrefix(t.Context(), "US"))
 		if len(results) != 3 {
 			t.Errorf("Expected 3 US users, got %d: %v", len(results), results)
 		}
 
 		// Prefix lookup: country + city
-		results = idx.LookupPrefix("US", "NYC")
+		results = checkedIndexRead[[]NodeID](t)(idx.LookupPrefix(t.Context(), "US", "NYC"))
 		if len(results) != 2 {
 			t.Errorf("Expected 2 NYC users, got %d: %v", len(results), results)
 		}
 
 		// Full key via LookupPrefix should work too
-		results = idx.LookupPrefix("US", "NYC", "10001")
+		results = checkedIndexRead[[]NodeID](t)(idx.LookupPrefix(t.Context(), "US", "NYC", "10001"))
 		if len(results) != 1 {
 			t.Errorf("Expected 1 user for full prefix, got %d", len(results))
 		}
 
 		// Empty prefix should return nil
-		results = idx.LookupPrefix()
+		results = checkedIndexRead[[]NodeID](t)(idx.LookupPrefix(t.Context()))
 		if results != nil {
 			t.Errorf("Expected nil for empty prefix, got %v", results)
 		}
@@ -844,21 +882,21 @@ func TestCompositeIndexOperations(t *testing.T) {
 		}
 
 		// Index and verify
-		idx.IndexNode("user1", props)
-		results := idx.LookupFull("US", "NYC")
+		idx.IndexNode(t.Context(), "user1", props)
+		results := checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), "US", "NYC"))
 		if len(results) != 1 {
 			t.Fatal("Index failed")
 		}
 
 		// Remove and verify
 		idx.RemoveNode("user1", props)
-		results = idx.LookupFull("US", "NYC")
+		results = checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), "US", "NYC"))
 		if results != nil {
 			t.Errorf("Expected nil after removal, got %v", results)
 		}
 
 		// Prefix should also be gone
-		results = idx.LookupPrefix("US")
+		results = checkedIndexRead[[]NodeID](t)(idx.LookupPrefix(t.Context(), "US"))
 		if results != nil {
 			t.Errorf("Expected nil prefix after removal, got %v", results)
 		}
@@ -870,25 +908,25 @@ func TestCompositeIndexOperations(t *testing.T) {
 		idx, _ := sm.GetCompositeIndex("location_idx")
 
 		// Node with only some properties
-		idx.IndexNode("user1", map[string]interface{}{
+		idx.IndexNode(t.Context(), "user1", map[string]interface{}{
 			"country": "US",
 			"city":    "NYC",
 			// No zipcode
 		})
 
 		// Should be findable by prefix
-		results := idx.LookupPrefix("US")
+		results := checkedIndexRead[[]NodeID](t)(idx.LookupPrefix(t.Context(), "US"))
 		if len(results) != 1 {
 			t.Errorf("Expected 1 result for prefix, got %d", len(results))
 		}
 
-		results = idx.LookupPrefix("US", "NYC")
+		results = checkedIndexRead[[]NodeID](t)(idx.LookupPrefix(t.Context(), "US", "NYC"))
 		if len(results) != 1 {
 			t.Errorf("Expected 1 result for full available prefix, got %d", len(results))
 		}
 
 		// But not findable by full lookup (missing property)
-		results = idx.LookupFull("US", "NYC", "10001")
+		results = checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), "US", "NYC", "10001"))
 		if results != nil {
 			t.Errorf("Expected nil for full lookup on partial data, got %v", results)
 		}
@@ -900,14 +938,14 @@ func TestCompositeIndexOperations(t *testing.T) {
 		idx, _ := sm.GetCompositeIndex("location_idx")
 
 		// Index some nodes - we'll filter by ID for simplicity
-		idx.IndexNode("user1", map[string]interface{}{"country": "US", "city": "NYC"})
-		idx.IndexNode("user2", map[string]interface{}{"country": "US", "city": "NYC"})
-		idx.IndexNode("user3", map[string]interface{}{"country": "US", "city": "NYC"})
+		idx.IndexNode(t.Context(), "user1", map[string]interface{}{"country": "US", "city": "NYC"})
+		idx.IndexNode(t.Context(), "user2", map[string]interface{}{"country": "US", "city": "NYC"})
+		idx.IndexNode(t.Context(), "user3", map[string]interface{}{"country": "US", "city": "NYC"})
 
 		// Filter to only even-numbered users (user2)
-		results := idx.LookupWithFilter(func(id NodeID) bool {
+		results := checkedIndexRead[[]NodeID](t)(idx.LookupWithFilter(t.Context(), func(id NodeID) bool {
 			return id == "user2"
-		}, "US", "NYC")
+		}, "US", "NYC"))
 
 		if len(results) != 1 || results[0] != "user2" {
 			t.Errorf("Expected [user2], got %v", results)
@@ -919,8 +957,8 @@ func TestCompositeIndexOperations(t *testing.T) {
 		sm.AddCompositeIndex("location_idx", "User", []string{"country", "city", "zipcode"})
 		idx, _ := sm.GetCompositeIndex("location_idx")
 
-		idx.IndexNode("user1", map[string]interface{}{"country": "US", "city": "NYC", "zipcode": "10001"})
-		idx.IndexNode("user2", map[string]interface{}{"country": "US", "city": "LA", "zipcode": "90001"})
+		idx.IndexNode(t.Context(), "user1", map[string]interface{}{"country": "US", "city": "NYC", "zipcode": "10001"})
+		idx.IndexNode(t.Context(), "user2", map[string]interface{}{"country": "US", "city": "LA", "zipcode": "90001"})
 
 		stats := idx.Stats()
 
@@ -963,11 +1001,11 @@ func TestCompositeIndexConcurrency(t *testing.T) {
 				}
 
 				// Index
-				idx.IndexNode(nodeID, props)
+				idx.IndexNode(t.Context(), nodeID, props)
 
 				// Lookup
-				idx.LookupFull(fmt.Sprintf("a-%d", gid), fmt.Sprintf("b-%d", i))
-				idx.LookupPrefix(fmt.Sprintf("a-%d", gid))
+				checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), fmt.Sprintf("a-%d", gid), fmt.Sprintf("b-%d", i)))
+				checkedIndexRead[[]NodeID](t)(idx.LookupPrefix(t.Context(), fmt.Sprintf("a-%d", gid)))
 
 				// Remove every other
 				if i%2 == 0 {
@@ -1026,7 +1064,7 @@ func TestCompositeIndexEdgeCases(t *testing.T) {
 
 		// Indexing with a nil leading value: like a single-property index,
 		// null has no index key, so the node is not filed under any key.
-		err := idx.IndexNode("user1", map[string]interface{}{
+		err := idx.IndexNode(t.Context(), "user1", map[string]interface{}{
 			"a": nil,
 			"b": "test",
 		})
@@ -1035,7 +1073,7 @@ func TestCompositeIndexEdgeCases(t *testing.T) {
 		}
 
 		// A nil lookup therefore finds nothing through the index.
-		results := idx.LookupFull(nil, "test")
+		results := checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), nil, "test"))
 		if len(results) != 0 {
 			t.Errorf("Expected 0 results with nil key, got %d", len(results))
 		}
@@ -1046,12 +1084,12 @@ func TestCompositeIndexEdgeCases(t *testing.T) {
 		sm.AddCompositeIndex("test_idx", "User", []string{"a", "b"})
 		idx, _ := sm.GetCompositeIndex("test_idx")
 
-		idx.IndexNode("user1", map[string]interface{}{
+		idx.IndexNode(t.Context(), "user1", map[string]interface{}{
 			"a": "",
 			"b": "test",
 		})
 
-		results := idx.LookupFull("", "test")
+		results := checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), "", "test"))
 		if len(results) != 1 {
 			t.Errorf("Expected 1 result with empty string, got %d", len(results))
 		}
@@ -1062,19 +1100,19 @@ func TestCompositeIndexEdgeCases(t *testing.T) {
 		sm.AddCompositeIndex("test_idx", "Node", []string{"int_val", "float_val", "bool_val"})
 		idx, _ := sm.GetCompositeIndex("test_idx")
 
-		idx.IndexNode("node1", map[string]interface{}{
+		idx.IndexNode(t.Context(), "node1", map[string]interface{}{
 			"int_val":   42,
 			"float_val": 3.14,
 			"bool_val":  true,
 		})
 
-		results := idx.LookupFull(42, 3.14, true)
+		results := checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), 42, 3.14, true))
 		if len(results) != 1 {
 			t.Errorf("Expected 1 result with complex types, got %d", len(results))
 		}
 
 		// Different types should not match
-		results = idx.LookupFull("42", 3.14, true)
+		results = checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), "42", 3.14, true))
 		if len(results) != 0 {
 			t.Errorf("Expected 0 results for wrong type, got %d", len(results))
 		}
@@ -1088,11 +1126,11 @@ func TestCompositeIndexEdgeCases(t *testing.T) {
 		props := map[string]interface{}{"a": "x", "b": "y"}
 
 		// Index same node twice
-		idx.IndexNode("user1", props)
-		idx.IndexNode("user1", props)
+		idx.IndexNode(t.Context(), "user1", props)
+		idx.IndexNode(t.Context(), "user1", props)
 
 		// Should still only have one entry
-		results := idx.LookupFull("x", "y")
+		results := checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), "x", "y"))
 		if len(results) != 1 {
 			t.Errorf("Expected 1 result (no duplicates), got %d", len(results))
 		}
@@ -1113,7 +1151,7 @@ func TestCompositeIndexEdgeCases(t *testing.T) {
 		idx, _ := sm.GetCompositeIndex("test_idx")
 
 		// Index a node with all 5 properties
-		idx.IndexNode("user1", map[string]interface{}{
+		idx.IndexNode(t.Context(), "user1", map[string]interface{}{
 			"a": "1", "b": "2", "c": "3", "d": "4", "e": "5",
 		})
 
@@ -1135,7 +1173,7 @@ func BenchmarkCompositeIndex(b *testing.B) {
 
 	// Pre-populate with some data
 	for i := 0; i < 10000; i++ {
-		idx.IndexNode(NodeID(prefixTestID(fmt.Sprintf("user-%d", i))), map[string]interface{}{
+		idx.IndexNode(b.Context(), NodeID(prefixTestID(fmt.Sprintf("user-%d", i))), map[string]interface{}{
 			"country": fmt.Sprintf("country-%d", i%100),
 			"city":    fmt.Sprintf("city-%d", i%1000),
 			"zipcode": fmt.Sprintf("zip-%d", i),
@@ -1144,7 +1182,7 @@ func BenchmarkCompositeIndex(b *testing.B) {
 
 	b.Run("IndexNode", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			idx.IndexNode(NodeID(prefixTestID(fmt.Sprintf("bench-user-%d", i))), map[string]interface{}{
+			idx.IndexNode(b.Context(), NodeID(prefixTestID(fmt.Sprintf("bench-user-%d", i))), map[string]interface{}{
 				"country": "US",
 				"city":    "NYC",
 				"zipcode": fmt.Sprintf("1000%d", i),
@@ -1153,20 +1191,29 @@ func BenchmarkCompositeIndex(b *testing.B) {
 	})
 
 	b.Run("LookupFull", func(b *testing.B) {
+		ctx := b.Context()
 		for i := 0; i < b.N; i++ {
-			idx.LookupFull("country-1", "city-1", "zip-1")
+			if _, err := idx.LookupFull(ctx, "country-1", "city-1", "zip-1"); err != nil {
+				b.Fatal(err)
+			}
 		}
 	})
 
 	b.Run("LookupPrefix", func(b *testing.B) {
+		ctx := b.Context()
 		for i := 0; i < b.N; i++ {
-			idx.LookupPrefix("country-1")
+			if _, err := idx.LookupPrefix(ctx, "country-1"); err != nil {
+				b.Fatal(err)
+			}
 		}
 	})
 
 	b.Run("LookupPrefixTwoProps", func(b *testing.B) {
+		ctx := b.Context()
 		for i := 0; i < b.N; i++ {
-			idx.LookupPrefix("country-1", "city-1")
+			if _, err := idx.LookupPrefix(ctx, "country-1", "city-1"); err != nil {
+				b.Fatal(err)
+			}
 		}
 	})
 }
@@ -1182,7 +1229,8 @@ func TestSchemaManager_PersistenceErrorRollback(t *testing.T) {
 		require.ErrorIs(t, err, persistErr)
 
 		// Constraint should NOT be registered
-		constraints := sm.GetConstraints()
+		constraints, discoveryErr := sm.GetConstraints(t.Context())
+		require.NoError(t, discoveryErr)
 		assert.Len(t, constraints, 0)
 	})
 
@@ -1242,7 +1290,7 @@ func TestValidateConstraintOnCreation_UnknownType(t *testing.T) {
 	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
-	err := ValidateConstraintOnCreationForEngine(engine, Constraint{
+	err := ValidateConstraintOnCreationForEngine(context.Background(), engine, Constraint{
 		Name:       "bad",
 		Type:       ConstraintType("INVALID"),
 		Label:      "Person",
@@ -1257,12 +1305,12 @@ func TestValidateConstraintOnCreation_UniqueViolation(t *testing.T) {
 	defer engine.Close()
 
 	// Create two nodes with the same property value
-	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"email": "dup@test.com"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"email": "dup@test.com"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:n2", Labels: []string{"Person"}, Properties: map[string]interface{}{"email": "dup@test.com"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:n2", Labels: []string{"Person"}, Properties: map[string]interface{}{"email": "dup@test.com"}})
 	require.NoError(t, err)
 
-	err = ValidateConstraintOnCreationForEngine(engine, Constraint{
+	err = ValidateConstraintOnCreationForEngine(context.Background(), engine, Constraint{
 		Name:       "unique_email",
 		Type:       ConstraintUnique,
 		Label:      "Person",
@@ -1279,10 +1327,10 @@ func TestValidateConstraintOnCreation_ExistenceViolation(t *testing.T) {
 	defer engine.Close()
 
 	// Create a node missing the required property
-	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]interface{}{}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]interface{}{}})
 	require.NoError(t, err)
 
-	err = ValidateConstraintOnCreationForEngine(engine, Constraint{
+	err = ValidateConstraintOnCreationForEngine(context.Background(), engine, Constraint{
 		Name:       "exists_name",
 		Type:       ConstraintExists,
 		Label:      "Person",
@@ -1298,7 +1346,7 @@ func TestValidateConstraintOnCreation_UniqueMultipleProperties(t *testing.T) {
 	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
-	err := ValidateConstraintOnCreationForEngine(engine, Constraint{
+	err := ValidateConstraintOnCreationForEngine(context.Background(), engine, Constraint{
 		Name:       "composite_unique",
 		Type:       ConstraintUnique,
 		Label:      "Person",
@@ -1313,11 +1361,11 @@ func TestValidateExistenceRelationshipConstraint(t *testing.T) {
 	// Create nodes and an edge without the required property
 	n1 := testNode("rel-n1")
 	n2 := testNode("rel-n2")
-	_, err := engine.CreateNode(n1)
+	_, err := engine.CreateNode(t.Context(), n1)
 	require.NoError(t, err)
-	_, err = engine.CreateNode(n2)
+	_, err = engine.CreateNode(t.Context(), n2)
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: EdgeID(prefixTestID("rel-e1")), StartNode: n1.ID, EndNode: n2.ID,
 		Type: "WORKS_AT", Properties: map[string]interface{}{},
 	}))
@@ -1328,7 +1376,7 @@ func TestValidateExistenceRelationshipConstraint(t *testing.T) {
 		RelType:    "WORKS_AT",
 		Properties: []string{"since"},
 	}
-	err = engine.validateExistenceRelationshipConstraint(rc)
+	err = engine.validateExistenceRelationshipConstraint(context.Background(), rc)
 	require.Error(t, err)
 	var cve *ConstraintViolationError
 	require.True(t, errors.As(err, &cve))
@@ -1343,7 +1391,7 @@ func TestValidateExistenceRelationshipConstraint_MultipleProperties(t *testing.T
 		RelType:    "WORKS_AT",
 		Properties: []string{"a", "b"},
 	}
-	err := engine.validateExistenceRelationshipConstraint(rc)
+	err := engine.validateExistenceRelationshipConstraint(context.Background(), rc)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "exactly 1 property")
 }
@@ -1353,12 +1401,12 @@ func TestValidateConstraintOnCreation_NodeKeyViolation(t *testing.T) {
 	defer engine.Close()
 
 	// Create two nodes with the same composite key
-	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"first": "John", "last": "Doe"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"first": "John", "last": "Doe"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:n2", Labels: []string{"Person"}, Properties: map[string]interface{}{"first": "John", "last": "Doe"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:n2", Labels: []string{"Person"}, Properties: map[string]interface{}{"first": "John", "last": "Doe"}})
 	require.NoError(t, err)
 
-	err = ValidateConstraintOnCreationForEngine(engine, Constraint{
+	err = ValidateConstraintOnCreationForEngine(context.Background(), engine, Constraint{
 		Name:       "nk_person",
 		Type:       ConstraintNodeKey,
 		Label:      "Person",
@@ -1374,10 +1422,10 @@ func TestValidateConstraintOnCreation_NodeKeyNullProperty(t *testing.T) {
 	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
-	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"first": "John"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"first": "John"}})
 	require.NoError(t, err)
 
-	err = ValidateConstraintOnCreationForEngine(engine, Constraint{
+	err = ValidateConstraintOnCreationForEngine(context.Background(), engine, Constraint{
 		Name:       "nk_person2",
 		Type:       ConstraintNodeKey,
 		Label:      "Person",
@@ -1395,7 +1443,7 @@ func TestValidateConstraintOnCreation_TemporalOverlap(t *testing.T) {
 	defer engine.Close()
 
 	// Create two nodes with overlapping temporal intervals for the same key
-	_, err := engine.CreateNode(&Node{
+	_, err := engine.CreateNode(t.Context(), &Node{
 		ID: "test:n1", Labels: []string{"Contract"},
 		Properties: map[string]interface{}{
 			"contract_id": "C1",
@@ -1405,7 +1453,7 @@ func TestValidateConstraintOnCreation_TemporalOverlap(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = engine.CreateNode(&Node{
+	_, err = engine.CreateNode(t.Context(), &Node{
 		ID: "test:n2", Labels: []string{"Contract"},
 		Properties: map[string]interface{}{
 			"contract_id": "C1",
@@ -1415,7 +1463,7 @@ func TestValidateConstraintOnCreation_TemporalOverlap(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	err = ValidateConstraintOnCreationForEngine(engine, Constraint{
+	err = ValidateConstraintOnCreationForEngine(context.Background(), engine, Constraint{
 		Name:       "temporal_contract",
 		Type:       ConstraintTemporal,
 		Label:      "Contract",
@@ -1428,7 +1476,7 @@ func TestValidateConstraintOnCreation_TemporalBadProperties(t *testing.T) {
 	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
-	err := ValidateConstraintOnCreationForEngine(engine, Constraint{
+	err := ValidateConstraintOnCreationForEngine(context.Background(), engine, Constraint{
 		Name:       "bad_temporal",
 		Type:       ConstraintTemporal,
 		Label:      "Contract",
@@ -1442,7 +1490,7 @@ func TestValidateConstraintOnCreation_ExistenceMultipleProperties(t *testing.T) 
 	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
-	err := ValidateConstraintOnCreationForEngine(engine, Constraint{
+	err := ValidateConstraintOnCreationForEngine(context.Background(), engine, Constraint{
 		Name:       "bad_exists",
 		Type:       ConstraintExists,
 		Label:      "Person",
@@ -1515,19 +1563,19 @@ func TestCompositeIndex_LookupWithFilter(t *testing.T) {
 		prefixIndex: make(map[string][]NodeID),
 	}
 
-	idx.IndexNode("test:n1", map[string]interface{}{"country": "US", "city": "NYC"})
-	idx.IndexNode("test:n2", map[string]interface{}{"country": "US", "city": "LA"})
-	idx.IndexNode("test:n3", map[string]interface{}{"country": "UK", "city": "LDN"})
+	idx.IndexNode(t.Context(), "test:n1", map[string]interface{}{"country": "US", "city": "NYC"})
+	idx.IndexNode(t.Context(), "test:n2", map[string]interface{}{"country": "US", "city": "LA"})
+	idx.IndexNode(t.Context(), "test:n3", map[string]interface{}{"country": "UK", "city": "LDN"})
 
 	// Filter by prefix "US", then apply filter to only keep n1
-	results := idx.LookupWithFilter(func(id NodeID) bool {
+	results := checkedIndexRead[[]NodeID](t)(idx.LookupWithFilter(t.Context(), func(id NodeID) bool {
 		return id == "test:n1"
-	}, "US")
+	}, "US"))
 	assert.Len(t, results, 1)
 	assert.Equal(t, NodeID("test:n1"), results[0])
 
 	// Filter with no prefix match
-	results = idx.LookupWithFilter(func(id NodeID) bool { return true }, "JP")
+	results = checkedIndexRead[[]NodeID](t)(idx.LookupWithFilter(t.Context(), func(id NodeID) bool { return true }, "JP"))
 	assert.Nil(t, results)
 }
 
@@ -1540,7 +1588,7 @@ func TestCompositeIndex_Stats(t *testing.T) {
 		prefixIndex: make(map[string][]NodeID),
 	}
 
-	idx.IndexNode("test:n1", map[string]interface{}{"country": "US", "city": "NYC"})
+	idx.IndexNode(t.Context(), "test:n1", map[string]interface{}{"country": "US", "city": "NYC"})
 
 	stats := idx.Stats()
 	assert.Equal(t, "stats_idx", stats["name"])
@@ -1557,18 +1605,18 @@ func TestSchemaManager_LookupPrefix_FullMatch(t *testing.T) {
 		prefixIndex: make(map[string][]NodeID),
 	}
 
-	idx.IndexNode("test:n1", map[string]interface{}{"country": "US", "city": "NYC"})
+	idx.IndexNode(t.Context(), "test:n1", map[string]interface{}{"country": "US", "city": "NYC"})
 
 	// LookupPrefix with all properties is a full match
-	results := idx.LookupPrefix("US", "NYC")
+	results := checkedIndexRead[[]NodeID](t)(idx.LookupPrefix(t.Context(), "US", "NYC"))
 	assert.Len(t, results, 1)
 
 	// LookupPrefix with no values returns nil
-	results = idx.LookupPrefix()
+	results = checkedIndexRead[[]NodeID](t)(idx.LookupPrefix(t.Context()))
 	assert.Nil(t, results)
 
 	// LookupPrefix with too many values returns nil
-	results = idx.LookupPrefix("US", "NYC", "extra")
+	results = checkedIndexRead[[]NodeID](t)(idx.LookupPrefix(t.Context(), "US", "NYC", "extra"))
 	assert.Nil(t, results)
 }
 
@@ -1582,24 +1630,24 @@ func TestCompositeIndex_RemoveNode(t *testing.T) {
 	}
 
 	// Index a node
-	idx.IndexNode("test:n1", map[string]interface{}{"country": "US", "city": "NYC"})
-	idx.IndexNode("test:n2", map[string]interface{}{"country": "US", "city": "LA"})
+	idx.IndexNode(t.Context(), "test:n1", map[string]interface{}{"country": "US", "city": "NYC"})
+	idx.IndexNode(t.Context(), "test:n2", map[string]interface{}{"country": "US", "city": "LA"})
 
 	// Verify indexed
-	results := idx.LookupFull("US", "NYC")
+	results := checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), "US", "NYC"))
 	assert.Len(t, results, 1)
-	prefixResults := idx.LookupPrefix("US")
+	prefixResults := checkedIndexRead[[]NodeID](t)(idx.LookupPrefix(t.Context(), "US"))
 	assert.Len(t, prefixResults, 2)
 
 	// Remove n1
 	idx.RemoveNode("test:n1", map[string]interface{}{"country": "US", "city": "NYC"})
 
 	// Full lookup for NYC should return empty
-	results = idx.LookupFull("US", "NYC")
+	results = checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), "US", "NYC"))
 	assert.Len(t, results, 0)
 
 	// Prefix lookup for US should only have n2
-	prefixResults = idx.LookupPrefix("US")
+	prefixResults = checkedIndexRead[[]NodeID](t)(idx.LookupPrefix(t.Context(), "US"))
 	assert.Len(t, prefixResults, 1)
 }
 
@@ -1612,9 +1660,9 @@ func TestSchemaManager_PropertyIndexTopK(t *testing.T) {
 	require.NoError(t, sm.PropertyIndexInsert("MongoDocument", "sourceId", NodeID("n4"), "src-004"))
 	require.NoError(t, sm.PropertyIndexInsert("MongoDocument", "sourceId", NodeID("n-nil"), nil))
 
-	asc := sm.PropertyIndexTopK("MongoDocument", "sourceId", 2, false)
+	asc := checkedIndexRead[[]NodeID](t)(sm.PropertyIndexTopK(t.Context(), "MongoDocument", "sourceId", 2, false))
 	require.Equal(t, []NodeID{"n1", "n2"}, asc)
 
-	desc := sm.PropertyIndexTopK("MongoDocument", "sourceId", 2, true)
+	desc := checkedIndexRead[[]NodeID](t)(sm.PropertyIndexTopK(t.Context(), "MongoDocument", "sourceId", 2, true))
 	require.Equal(t, []NodeID{"n4", "n3"}, desc)
 }

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -25,7 +26,7 @@ func TestDirectWritesOrderAfterBufferedEndpoints(t *testing.T) {
 		{
 			name:    "relationship delete over a relabelled start",
 			relabel: "test:n0",
-			write:   func(b *BadgerEngine) error { return b.DeleteEdge("test:r0") },
+			write:   func(b *BadgerEngine) error { return b.DeleteEdge(t.Context(), "test:r0") },
 			start:   map[string]int64{"A": 0, "C": 0},
 			end:     map[string]int64{"B": 0},
 		},
@@ -33,7 +34,7 @@ func TestDirectWritesOrderAfterBufferedEndpoints(t *testing.T) {
 			name:    "relationship move off a relabelled start",
 			relabel: "test:n0",
 			write: func(b *BadgerEngine) error {
-				return b.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:r0", StartNode: "test:n2", EndNode: "test:n1", Type: "LINK"}})
+				return b.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "test:r0", StartNode: "test:n2", EndNode: "test:n1", Type: "LINK"}})
 			},
 			start:    map[string]int64{"A": 0, "C": 0, "D": 1},
 			end:      map[string]int64{"B": 1},
@@ -42,7 +43,7 @@ func TestDirectWritesOrderAfterBufferedEndpoints(t *testing.T) {
 		{
 			name:    "node delete cascading to a relabelled far end",
 			relabel: "test:n1",
-			write:   func(b *BadgerEngine) error { return b.DeleteNode("test:n0") },
+			write:   func(b *BadgerEngine) error { return b.DeleteNode(t.Context(), "test:n0") },
 			start:   map[string]int64{"A": 0},
 			end:     map[string]int64{"B": 0, "C": 0},
 		},
@@ -50,34 +51,36 @@ func TestDirectWritesOrderAfterBufferedEndpoints(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			b := newWriteBehindTestEngine(t, time.Hour)
 			for id, label := range map[NodeID]string{"test:n0": "A", "test:n1": "B", "test:n2": "D"} {
-				_, err := b.CreateNode(&Node{ID: id, Labels: []string{label}})
+				_, err := b.CreateNode(t.Context(), &Node{ID: id, Labels: []string{label}})
 				require.NoError(t, err)
 			}
-			require.NoError(t, b.CreateEdge(&Edge{ID: "test:r0", StartNode: "test:n0", EndNode: "test:n1", Type: "LINK"}))
-			require.NoError(t, b.FlushWriteBehind(nil))
+			require.NoError(t, b.CreateEdge(t.Context(), &Edge{ID: "test:r0", StartNode: "test:n0", EndNode: "test:n1", Type: "LINK"}))
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
 
 			buffered, err := implicitWrite(b, func(tx *BadgerTransaction) error {
-				return tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: tc.relabel, Labels: []string{"C"}}, Policy: ClientNodeEdits})
+				return tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: tc.relabel, Labels: []string{"C"}}, Policy: ClientNodeEdits})
 			})
 			require.NoError(t, err)
 			require.True(t, buffered, "the relabel is acknowledged, not yet applied")
 
 			require.NoError(t, tc.write(b), "a direct write over an endpoint's acknowledged commit is refused")
-			require.False(t, b.writeBehind.holdsEntities(writtenEntities{nodes: []NodeID{tc.relabel}}),
+			held, holdErr := b.writeBehind.holdsEntities(t.Context(), writtenEntities{nodes: []NodeID{tc.relabel}})
+			require.NoError(t, holdErr)
+			require.False(t, held,
 				"the direct write ran before the endpoint's acknowledged relabel was applied")
-			require.NoError(t, b.FlushWriteBehind(nil))
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
 
 			for label, want := range tc.start {
-				got, err := b.EdgeCountByStartLabelInNamespace("test", label, "LINK")
+				got, err := b.EdgeCountByStartLabelInNamespace(context.Background(), "test", label, "LINK")
 				require.NoError(t, err)
 				require.Equal(t, want, got, "relationships starting at %s", label)
 			}
 			for label, want := range tc.end {
-				got, err := b.EdgeCountByEndLabelInNamespace("test", label, "LINK")
+				got, err := b.EdgeCountByEndLabelInNamespace(context.Background(), "test", label, "LINK")
 				require.NoError(t, err)
 				require.Equal(t, want, got, "relationships ending at %s", label)
 			}
-			total, err := b.EdgeCountByTypeInNamespace("test", "LINK")
+			total, err := b.EdgeCountByTypeInNamespace(context.Background(), "test", "LINK")
 			require.NoError(t, err)
 			require.Equal(t, tc.typeLeft, total)
 		})

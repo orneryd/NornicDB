@@ -12,6 +12,7 @@ import (
 type statementExecutionContract struct {
 	writes, transaction, calls, dynamic bool
 	unknownProcedure                    bool
+	selectsDatabase                     bool
 }
 
 func readStatementExecutionContract(ctx context.Context, query string) (statementExecutionContract, error) {
@@ -19,7 +20,18 @@ func readStatementExecutionContract(ctx context.Context, query string) (statemen
 	if mode == ModeExplain {
 		return statementExecutionContract{}, nil
 	}
-	if startsWithKeywordFold(body, "SHOW") || isNornicExtensionStatement(body) || isSchemaCommandStatement(body) || bareTransactionCommand(body) != "" {
+	if startsWithKeywordFold(body, "SHOW") || isNornicExtensionStatement(ctx, body) || bareTransactionCommand(body) != "" {
+		return statementExecutionContract{}, nil
+	}
+	if isOrdinarySchemaDDL(ctx, body) {
+		// Ordinary schema DDL is a write whose effects the implicit
+		// transaction's schema view stages and publishes (schema_transaction.go):
+		// the declared index or constraint and its fill from the stored nodes
+		// become visible together. Catalog commands (CREATE / DROP DATABASE,
+		// ALIAS, ...) keep their own contract below.
+		return statementExecutionContract{writes: true, transaction: true}, nil
+	}
+	if isSchemaCommandStatement(body) {
 		return statementExecutionContract{}, nil
 	}
 	if fabric.IsAdministrationCommand(body) {
@@ -55,5 +67,21 @@ func readStatementExecutionContract(ctx context.Context, query string) (statemen
 			(fixedWrite || spec.ExecutesStatements || spec.Name == "tx.setMetaData")
 		return false
 	})
+	// Only transaction-bearing static statements need a selection owner. A
+	// retained USE token is merely a cheap admission hint: property/label names
+	// can use that keyword, so only a grammar-owned clause selects the owner.
+	if contract.transaction && !contract.dynamic {
+		for i := 0; i < structure.TokenCount(); i++ {
+			if structure.Token(i).Kind() == cypherantlr.CypherParserUSE {
+				structure.Walk(func(node cypherantlr.SyntaxNode) func() {
+					if node.Rule() == cypherantlr.CypherParserRULE_useClause {
+						contract.selectsDatabase = true
+					}
+					return nil
+				})
+				break
+			}
+		}
+	}
 	return contract, nil
 }

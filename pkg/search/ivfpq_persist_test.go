@@ -215,8 +215,7 @@ func TestIVFPQPersist_ServiceSuccessAndCacheBranches(t *testing.T) {
 
 		svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 		svc.ivfpqIndex = idx
-		var nilCtx context.Context
-		cached, err := svc.getOrBuildIVFPQIndex(nilCtx, tinyProfile, nil, nil)
+		cached, err := svc.getOrBuildIVFPQIndex(t.Context(), tinyProfile, nil, nil)
 		require.NoError(t, err)
 		require.Same(t, idx, cached)
 

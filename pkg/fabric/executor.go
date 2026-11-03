@@ -1756,7 +1756,7 @@ func importColumnsFromFragment(f Fragment) []string {
 	return nil
 }
 
-func rewriteFragmentWithImports(fragment Fragment) Fragment {
+func rewriteFragmentWithImports(ctx context.Context, fragment Fragment) Fragment {
 	if fragment == nil {
 		return nil
 	}
@@ -1764,7 +1764,7 @@ func rewriteFragmentWithImports(fragment Fragment) Fragment {
 	switch f := fragment.(type) {
 	case *FragmentExec:
 		importCols := importColumnsFromFragment(f.Input)
-		if rewritten := rewriteLeadingWithImports(f.Query, importCols); rewritten != f.Query {
+		if rewritten := rewriteLeadingWithImports(ctx, f.Query, importCols); rewritten != f.Query {
 			copied := *f
 			copied.Query = rewritten
 			return &copied
@@ -1772,20 +1772,20 @@ func rewriteFragmentWithImports(fragment Fragment) Fragment {
 		return fragment
 	case *FragmentApply:
 		copied := *f
-		copied.Input = rewriteFragmentWithImports(copied.Input)
-		copied.Inner = rewriteFragmentWithImports(copied.Inner)
+		copied.Input = rewriteFragmentWithImports(ctx, copied.Input)
+		copied.Inner = rewriteFragmentWithImports(ctx, copied.Inner)
 		return &copied
 	case *FragmentUnion:
 		copied := *f
-		copied.LHS = rewriteFragmentWithImports(copied.LHS)
-		copied.RHS = rewriteFragmentWithImports(copied.RHS)
+		copied.LHS = rewriteFragmentWithImports(ctx, copied.LHS)
+		copied.RHS = rewriteFragmentWithImports(ctx, copied.RHS)
 		return &copied
 	default:
 		return fragment
 	}
 }
 
-func rewriteFragmentWithRuntimeImports(fragment Fragment, runtimeCols []string) Fragment {
+func rewriteFragmentWithRuntimeImports(ctx context.Context, fragment Fragment, runtimeCols []string) Fragment {
 	if fragment == nil {
 		return nil
 	}
@@ -1793,7 +1793,7 @@ func rewriteFragmentWithRuntimeImports(fragment Fragment, runtimeCols []string) 
 	case *FragmentExec:
 		importCols := importColumnsFromFragment(f.Input)
 		merged := mergeImportColumns(runtimeCols, importCols)
-		if rewritten := rewriteLeadingWithImports(f.Query, merged); rewritten != f.Query {
+		if rewritten := rewriteLeadingWithImports(ctx, f.Query, merged); rewritten != f.Query {
 			copied := *f
 			copied.Query = rewritten
 			return &copied
@@ -1801,13 +1801,13 @@ func rewriteFragmentWithRuntimeImports(fragment Fragment, runtimeCols []string) 
 		return fragment
 	case *FragmentApply:
 		copied := *f
-		copied.Input = rewriteFragmentWithRuntimeImports(copied.Input, runtimeCols)
-		copied.Inner = rewriteFragmentWithRuntimeImports(copied.Inner, runtimeCols)
+		copied.Input = rewriteFragmentWithRuntimeImports(ctx, copied.Input, runtimeCols)
+		copied.Inner = rewriteFragmentWithRuntimeImports(ctx, copied.Inner, runtimeCols)
 		return &copied
 	case *FragmentUnion:
 		copied := *f
-		copied.LHS = rewriteFragmentWithRuntimeImports(copied.LHS, runtimeCols)
-		copied.RHS = rewriteFragmentWithRuntimeImports(copied.RHS, runtimeCols)
+		copied.LHS = rewriteFragmentWithRuntimeImports(ctx, copied.LHS, runtimeCols)
+		copied.RHS = rewriteFragmentWithRuntimeImports(ctx, copied.RHS, runtimeCols)
 		return &copied
 	default:
 		return fragment
@@ -2014,7 +2014,7 @@ func dropResultColumns(res *ResultStream, columns []string) {
 	res.Columns = kept
 }
 
-func rewriteLeadingWithImports(query string, importCols []string) string {
+func rewriteLeadingWithImports(ctx context.Context, query string, importCols []string) string {
 	if len(importCols) == 0 {
 		return query
 	}
@@ -2040,7 +2040,7 @@ func rewriteLeadingWithImports(query string, importCols []string) string {
 		return query
 	}
 
-	withEnd, ok := findLeadingWithClauseEnd(trimmed, nil)
+	withEnd, ok := findLeadingWithClauseEnd(ctx, trimmed, nil)
 	if !ok || withEnd <= 0 {
 		return query
 	}
@@ -2136,7 +2136,7 @@ func replaceStandaloneVar(s, ident, replacement string) string {
 	return b.String()
 }
 
-func findLeadingWithClauseEnd(query string, isName ClauseKeywordNameReader) (int, bool) {
+func findLeadingWithClauseEnd(ctx context.Context, query string, isName ClauseKeywordNameReader) (int, bool) {
 	if query == "" {
 		return 0, false
 	}
@@ -2146,15 +2146,18 @@ func findLeadingWithClauseEnd(query string, isName ClauseKeywordNameReader) (int
 	}
 	i += len("WITH")
 	i = skipLeadingSpace(query, i)
-	return nextTopLevelClause(query, i, isName), true
+	return nextTopLevelClause(ctx, query, i, isName), true
 }
 
 // nextTopLevelClause returns the start of the first clause keyword at or
 // after from that is outside brackets, quoted text and comments, len(query)
 // if none.
-func nextTopLevelClause(query string, from int, isName ClauseKeywordNameReader) int {
+func nextTopLevelClause(ctx context.Context, query string, from int, isName ClauseKeywordNameReader) int {
 	depth := 0
 	for idx := from; idx < len(query); idx++ {
+		if idx&1023 == 0 && ctx.Err() != nil {
+			return len(query)
+		}
 		if next, quoted := cyphertext.SkipToken(query, idx); quoted {
 			idx = next - 1
 			continue
@@ -2171,7 +2174,7 @@ func nextTopLevelClause(query string, from int, isName ClauseKeywordNameReader) 
 			continue
 		}
 
-		if depth == 0 && isCypherClauseStart(query, idx, isName) {
+		if depth == 0 && isCypherClauseStart(ctx, query, idx, isName) {
 			return idx
 		}
 	}
@@ -2189,9 +2192,9 @@ func projectionModifierAt(query string, idx int) bool {
 	return false
 }
 
-func isCypherClauseStart(query string, idx int, isName ClauseKeywordNameReader) bool {
+func isCypherClauseStart(ctx context.Context, query string, idx int, isName ClauseKeywordNameReader) bool {
 	for _, kw := range clauseStartKeywords {
-		if clauseKeywordAt(query, idx, kw, isName) {
+		if clauseKeywordAt(ctx, query, idx, kw, isName) {
 			return true
 		}
 	}

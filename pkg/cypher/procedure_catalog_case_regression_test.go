@@ -56,15 +56,15 @@ func TestProcedureCatalogLegacyCaseMigration(t *testing.T) {
 	blob, err := msgpack.Marshal(record)
 	require.NoError(t, err)
 	legacy := storage.NodeID(procedureCatalogPrefix + "custom.legacy")
-	_, err = store.CreateNode(&storage.Node{ID: legacy, Labels: []string{procedureCatalogLabel}, Properties: map[string]interface{}{"name": record.Name, "record": base64.StdEncoding.EncodeToString(blob)}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: legacy, Labels: []string{procedureCatalogLabel}, Properties: map[string]interface{}{"name": record.Name, "record": base64.StdEncoding.EncodeToString(blob)}})
 	require.NoError(t, err)
 	exec := NewStorageExecutor(store)
 	result, err := exec.Execute(context.Background(), "CALL custom.Legacy() YIELD n RETURN n", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(7)}}, result.Rows)
-	_, err = store.GetNode(legacy)
+	_, err = store.GetNode(t.Context(), legacy)
 	require.ErrorIs(t, err, storage.ErrNotFound)
-	_, err = store.GetNode(procedureCatalogNodeID(record.Name))
+	_, err = store.GetNode(t.Context(), procedureCatalogNodeID(record.Name))
 	require.NoError(t, err)
 	// Dropping an absent spelling must never delete the differently named procedure.
 	_, _ = exec.Execute(context.Background(), "CALL apoc.custom.dropProcedure('legacy')", nil)
@@ -77,23 +77,23 @@ type procedureIdentityFaultEngine struct {
 	readErr, createErr, deleteErr error
 }
 
-func (e *procedureIdentityFaultEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
+func (e *procedureIdentityFaultEngine) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	if e.readErr != nil {
 		return nil, e.readErr
 	}
-	return e.Engine.GetNode(id)
+	return e.Engine.GetNode(ctx, id)
 }
-func (e *procedureIdentityFaultEngine) CreateNode(node *storage.Node) (storage.NodeID, error) {
+func (e *procedureIdentityFaultEngine) CreateNode(ctx context.Context, node *storage.Node) (storage.NodeID, error) {
 	if e.createErr != nil {
 		return "", e.createErr
 	}
-	return e.Engine.CreateNode(node)
+	return e.Engine.CreateNode(ctx, node)
 }
-func (e *procedureIdentityFaultEngine) DeleteNode(id storage.NodeID) error {
+func (e *procedureIdentityFaultEngine) DeleteNode(ctx context.Context, id storage.NodeID) error {
 	if e.deleteErr != nil {
 		return e.deleteErr
 	}
-	return e.Engine.DeleteNode(id)
+	return e.Engine.DeleteNode(ctx, id)
 }
 
 func TestProcedureCatalogMigrationFailuresPreserveRecord(t *testing.T) {
@@ -104,7 +104,7 @@ func TestProcedureCatalogMigrationFailuresPreserveRecord(t *testing.T) {
 			blob, err := msgpack.Marshal(record)
 			require.NoError(t, err)
 			legacy := &storage.Node{ID: storage.NodeID(procedureCatalogPrefix + "custom.report"), Labels: []string{procedureCatalogLabel}, Properties: map[string]interface{}{"name": record.Name, "record": base64.StdEncoding.EncodeToString(blob)}}
-			_, err = base.CreateNode(legacy)
+			_, err = base.CreateNode(t.Context(), legacy)
 			require.NoError(t, err)
 			fault := errors.New("catalog " + stage + " unavailable")
 			engine := &procedureIdentityFaultEngine{Engine: base}
@@ -119,16 +119,16 @@ func TestProcedureCatalogMigrationFailuresPreserveRecord(t *testing.T) {
 			exec := NewStorageExecutor(engine)
 			_, _, err = exec.resolveProcedureCatalogIdentity(t.Context(), engine, record.Name, legacy)
 			require.Error(t, err)
-			_, err = base.GetNode(legacy.ID)
+			_, err = base.GetNode(t.Context(), legacy.ID)
 			require.NoError(t, err, "failed migration must preserve original record")
 			engine.readErr = nil
 			engine.createErr = nil
 			engine.deleteErr = nil
 			_, _, err = exec.resolveProcedureCatalogIdentity(t.Context(), engine, record.Name, legacy)
 			require.NoError(t, err)
-			_, err = base.GetNode(procedureCatalogNodeID(record.Name))
+			_, err = base.GetNode(t.Context(), procedureCatalogNodeID(record.Name))
 			require.NoError(t, err)
-			_, err = base.GetNode(legacy.ID)
+			_, err = base.GetNode(t.Context(), legacy.ID)
 			require.ErrorIs(t, err, storage.ErrNotFound)
 		})
 	}

@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/math/angle"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
@@ -32,14 +33,14 @@ func toFloat64Slice(v interface{}) ([]float64, bool) {
 // This prevents matching substrings like "RemoveReturn" when searching for "RETURN".
 // Also prevents matching labels like ":Return" as keywords.
 // Returns -1 if not found.
-func findKeywordIndex(s, keyword string) int {
-	return keywordIndex(s, keyword)
+func findKeywordIndex(ctx context.Context, s, keyword string) int {
+	return keywordIndex(ctx, s, keyword)
 }
 
 // containsKeywordOutsideStrings checks if a keyword exists in the string but NOT inside
 // string literals. This prevents matching keywords inside user data content.
-func containsKeywordOutsideStrings(s, keyword string) bool {
-	return findKeywordIndex(s, keyword) != -1
+func containsKeywordOutsideStrings(ctx context.Context, s, keyword string) bool {
+	return findKeywordIndex(ctx, s, keyword) != -1
 }
 
 // containsOutsideStrings checks if a substring exists in the string but NOT inside
@@ -186,7 +187,7 @@ func extractPolygonPoints(geom map[string]interface{}) []interface{} {
 // secondWord) == 0, checked at the start of s instead of by scanning all of
 // it (whitespace between the words; word boundaries; the first word not
 // used as a name, clauseKeywordUsedAsName).
-func startsWithKeywords(s, firstWord, secondWord string) bool {
+func startsWithKeywords(ctx context.Context, s, firstWord, secondWord string) bool {
 	firstStart, firstEnd := trimKeywordWSBounds(firstWord)
 	secondStart, secondEnd := trimKeywordWSBounds(secondWord)
 	if firstStart >= firstEnd || secondStart >= secondEnd {
@@ -198,7 +199,7 @@ func startsWithKeywords(s, firstWord, secondWord string) bool {
 	}
 	// (An operator WITH, as in STARTS WITH, needs a word before it, so
 	// it can't start the statement.)
-	if clauseKeywordUsedAsName(s, 0, afterFirst, firstWord[firstStart:firstEnd]) {
+	if clauseKeywordUsedAsName(ctx, s, 0, afterFirst, firstWord[firstStart:firstEnd]) {
 		return false
 	}
 	j, unfinished := cyphertext.GapEnd(s, afterFirst)
@@ -219,7 +220,7 @@ func startsWithKeywords(s, firstWord, secondWord string) bool {
 //   - secondWord: Second word of the keyword (e.g., "DATABASES")
 //
 // Returns the position of the first word if the multi-word keyword is found, -1 otherwise.
-func findMultiWordKeywordIndex(s, firstWord, secondWord string) int {
+func findMultiWordKeywordIndex(ctx context.Context, s, firstWord, secondWord string) int {
 	opts := defaultKeywordScanOpts()
 
 	firstStart, firstEnd := trimKeywordWSBounds(firstWord)
@@ -230,7 +231,7 @@ func findMultiWordKeywordIndex(s, firstWord, secondWord string) int {
 
 	searchFrom := 0
 	for {
-		idx := keywordIndexFrom(s, firstWord[firstStart:firstEnd], searchFrom, opts)
+		idx := keywordIndexFrom(ctx, s, firstWord[firstStart:firstEnd], searchFrom, opts)
 		if idx == -1 {
 			return -1
 		}

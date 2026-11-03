@@ -18,7 +18,8 @@ func TestClusterLifecycleZeroValues(t *testing.T) {
 	require.NoError(t, connection.Close())
 	require.NoError(t, connection.Close())
 	var transport ClusterTransport
-	require.Panics(t, func() { _ = transport.Close() }, "the uninitialized transport has no shutdown channel, as before")
+	require.NoError(t, transport.Close(), "the zero-value owner is ready; Close joins an empty lifetime")
+	require.NoError(t, transport.Close())
 }
 
 func TestClusterLifecycleRepeatedCloseWorkerJoin(t *testing.T) {
@@ -29,14 +30,15 @@ func TestClusterLifecycleRepeatedCloseWorkerJoin(t *testing.T) {
 			observed := &closeRendezvousConn{Conn: left, closed: make(chan struct{}), closes: make(chan struct{}, 2)}
 			connection := transport.createConnection("peer", observed)
 			var closer io.Closer = connection
-			workers := &connection.wg
+			owner := &connection.work
 			retired := (<-chan struct{})(observed.closes)
 			if role == "transport" {
-				closer, workers, retired = transport, &transport.wg, transport.closeCh
+				closer, owner, retired = transport, &transport.work, transport.work.Context().Done()
 			}
-			workers.Add(1)
+			// An admitted worker that Close must join.
+			_, workerRelease, _ := owner.Acquire(owner.Context())
 			var releaseOnce sync.Once
-			release := func() { releaseOnce.Do(workers.Done) }
+			release := func() { releaseOnce.Do(workerRelease) }
 			first, second := make(chan error, 1), make(chan error, 1)
 			firstJoined, secondJoined := make(chan struct{}), make(chan struct{})
 			secondStarted := false
@@ -70,24 +72,12 @@ func TestClusterLifecycleRepeatedCloseWorkerJoin(t *testing.T) {
 			}
 			secondStarted = true
 			go func() { defer close(secondJoined); second <- closer.Close() }()
-			if role == "transport" {
-				select {
-				case err := <-second:
-					require.NoError(t, err)
-				case <-time.After(2 * time.Second):
-					t.Fatal("transport repeat did not return immediately")
-				}
-			} else {
-				select {
-				case <-observed.closes:
-				case <-time.After(2 * time.Second):
-					t.Fatal("connection repeat did not close socket")
-				}
-				select {
-				case err := <-second:
-					t.Fatalf("connection repeat missed reader join: %v", err)
-				default:
-				}
+			// A repeated Close joins the first one's actual completion: it must not
+			// report success while the admitted worker still runs, in either role.
+			select {
+			case err := <-second:
+				t.Fatalf("%s repeat returned before the admitted worker finished: %v", role, err)
+			case <-time.After(50 * time.Millisecond):
 			}
 			release()
 			select {
@@ -96,13 +86,11 @@ func TestClusterLifecycleRepeatedCloseWorkerJoin(t *testing.T) {
 			case <-time.After(2 * time.Second):
 				t.Fatal("first Close did not finish")
 			}
-			if role == "connection" {
-				select {
-				case err := <-second:
-					require.NoError(t, err)
-				case <-time.After(2 * time.Second):
-					t.Fatal("connection repeat did not finish")
-				}
+			select {
+			case err := <-second:
+				require.NoError(t, err)
+			case <-time.After(2 * time.Second):
+				t.Fatalf("%s repeat did not finish", role)
 			}
 		})
 	}

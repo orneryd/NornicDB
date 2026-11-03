@@ -68,12 +68,12 @@ func TestExpressionLabelTestRewriterEdges(t *testing.T) {
 		"RETURN f(x): 1 AS v",                  // no label chain after the colon
 		"RETURN (exists((a)-->(:A|B))):C AS v", // the expression holds a rewrite of its own
 	} {
-		out, _, err := desugarLabelExpressions(query, nil, false)
+		out, _, err := desugarLabelExpressions(t.Context(), query, nil, false)
 		require.NoError(t, err, query)
 		require.NotContains(t, out, dynamicLabelTestFunction+"((", query)
 	}
-	_, _, err := desugarLabelExpressions("RETURN size((a)-[:R]->+(b)):A AS v", nil, false)
+	_, _, err := desugarLabelExpressions(t.Context(), "RETURN size((a)-[:R]->+(b)):A AS v", nil, false)
 	require.Error(t, err)
-	_, _, err = desugarLabelExpressions("MATCH (a)-[r WHERE size((a)-[:R]->+(b)) > 0]->(b) RETURN a", nil, false)
+	_, _, err = desugarLabelExpressions(t.Context(), "MATCH (a)-[r WHERE size((a)-[:R]->+(b)) > 0]->(b) RETURN a", nil, false)
 	require.Error(t, err)
 }

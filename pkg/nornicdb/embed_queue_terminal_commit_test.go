@@ -47,7 +47,7 @@ type terminalCommitStore struct {
 	paused   atomic.Bool
 }
 
-func (s *terminalCommitStore) UpdateNodeEmbeddingSidecar(node *storage.Node) error {
+func (s *terminalCommitStore) UpdateNodeEmbeddingSidecar(ctx context.Context, node *storage.Node) error {
 	if failed, _ := node.EmbedMeta["embedding_failed"].(bool); failed {
 		s.attempts.Add(1)
 		if s.rejects.Add(-1) >= 0 {
@@ -55,7 +55,7 @@ func (s *terminalCommitStore) UpdateNodeEmbeddingSidecar(node *storage.Node) err
 			return errors.New("transient terminal-marker sidecar failure")
 		}
 	}
-	return s.BadgerEngine.UpdateNodeEmbeddingSidecar(node)
+	return s.BadgerEngine.UpdateNodeEmbeddingSidecar(ctx, node)
 }
 
 // Only the DB-to-worker wiring is assembled here. Claims, provider failures,
@@ -86,7 +86,7 @@ func TestEmbedWorkerTerminalMarkerCommitFailureRemainsPending(t *testing.T) {
 			defer worker.Close()
 			worker.SetShouldYield(store.paused.Load)
 			db := &DB{baseStorage: store, embedQueue: worker}
-			_, err = store.CreateNode(&storage.Node{ID: "terminal:poison", Properties: map[string]any{"text": "poison"}})
+			_, err = store.CreateNode(t.Context(), &storage.Node{ID: "terminal:poison", Properties: map[string]any{"text": "poison"}})
 			require.NoError(t, err)
 			worker.StartWorkers()
 
@@ -94,7 +94,7 @@ func TestEmbedWorkerTerminalMarkerCommitFailureRemainsPending(t *testing.T) {
 				require.Eventually(t, func() bool {
 					return store.attempts.Load() == rejected && store.paused.Load() && worker.Stats().InFlight == 0
 				}, 5*time.Second, time.Millisecond)
-				stored, err := store.GetNode("terminal:poison")
+				stored, err := store.GetNode(t.Context(), "terminal:poison")
 				require.NoError(t, err)
 				require.Empty(t, stored.ChunkEmbeddings)
 				require.NotEqual(t, true, stored.EmbedMeta["embedding_failed"], "the rejected marker is not durable")
@@ -111,7 +111,7 @@ func TestEmbedWorkerTerminalMarkerCommitFailureRemainsPending(t *testing.T) {
 				if pending != 1 || waitErr == nil {
 					return // Preserve both original public failure assertions.
 				}
-				_, err = store.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("terminal:healthy-%d", rejected)), Properties: map[string]any{"text": "healthy MAIN"}})
+				_, err = store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("terminal:healthy-%d", rejected)), Properties: map[string]any{"text": "healthy MAIN"}})
 				require.NoError(t, err)
 				if rejected == 2 && recoverProvider {
 					provider.failing.Store(false)
@@ -124,7 +124,7 @@ func TestEmbedWorkerTerminalMarkerCommitFailureRemainsPending(t *testing.T) {
 			defer cancel()
 			require.NoError(t, db.WaitForEmbeddings(ctx))
 			require.Zero(t, db.PendingEmbeddingsCount())
-			stored, err := store.GetNode("terminal:poison")
+			stored, err := store.GetNode(t.Context(), "terminal:poison")
 			require.NoError(t, err)
 			if recoverProvider {
 				require.NotEmpty(t, stored.ChunkEmbeddings)
@@ -141,7 +141,7 @@ func TestEmbedWorkerTerminalMarkerCommitFailureRemainsPending(t *testing.T) {
 				reopened, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(path))
 				require.NoError(t, err)
 				defer reopened.Close()
-				node, err := reopened.GetNode("terminal:poison")
+				node, err := reopened.GetNode(t.Context(), "terminal:poison")
 				require.NoError(t, err)
 				require.Equal(t, true, node.EmbedMeta["embedding_failed"], "draining requires a marker that survives reopen")
 			}

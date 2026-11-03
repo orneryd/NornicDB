@@ -20,10 +20,10 @@ func TestGH462_RelationshipSetEvaluatesBoundPropertyExpressions(t *testing.T) {
 				{ID: "o", Labels: []string{"O"}, Properties: map[string]interface{}{"id": int64(2)}},
 				{ID: "i", Labels: []string{"I"}, Properties: map[string]interface{}{"sku": "a1"}},
 			} {
-				_, err := store.CreateNode(node)
+				_, err := store.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 			}
-			require.NoError(t, store.CreateEdge(&storage.Edge{
+			require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{
 				ID: "has", StartNode: "o", EndNode: "i", Type: "HAS",
 				Properties: map[string]interface{}{"n": int64(5)},
 			}))

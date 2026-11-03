@@ -13,7 +13,7 @@ func TestConversionRejectsInvalidTypedValuesInsideListComprehension(t *testing.T
 		"values": []interface{}{true, []interface{}{}},
 	}
 
-	_, _, err := executor.evaluateRowValue(
+	_, _, err := executor.evaluateRowValue(t.Context(),
 		"[value IN values | toBoolean(value)]",
 		row,
 	)

@@ -16,7 +16,7 @@ import (
 // ============================================================================
 
 func TestPromptContext_Cancel(t *testing.T) {
-	ctx := &PromptContext{}
+	ctx := &PromptContext{Context: t.Context()}
 
 	assert.False(t, ctx.Cancelled())
 	assert.Empty(t, ctx.CancelReason())
@@ -30,7 +30,7 @@ func TestPromptContext_Cancel(t *testing.T) {
 }
 
 func TestPromptContext_Notifications(t *testing.T) {
-	ctx := &PromptContext{}
+	ctx := &PromptContext{Context: t.Context()}
 
 	ctx.NotifyInfo("Info Title", "Info message")
 	ctx.NotifyWarning("Warn Title", "Warn message")
@@ -51,7 +51,7 @@ func TestPromptContext_Notifications(t *testing.T) {
 }
 
 func TestPromptContext_Notify_Direct(t *testing.T) {
-	ctx := &PromptContext{}
+	ctx := &PromptContext{Context: t.Context()}
 	ctx.Notify("success", "Done", "All good")
 
 	notifications := ctx.DrainNotifications()
@@ -62,14 +62,14 @@ func TestPromptContext_Notify_Direct(t *testing.T) {
 }
 
 func TestPromptContext_SendMessage_NilBifrost(t *testing.T) {
-	ctx := &PromptContext{}
+	ctx := &PromptContext{Context: t.Context()}
 	// Should not panic with nil bifrost
 	ctx.SendMessage("test message")
 	ctx.Broadcast("broadcast message")
 }
 
 func TestPromptContext_SetBifrost_SendMessage(t *testing.T) {
-	ctx := &PromptContext{}
+	ctx := &PromptContext{Context: t.Context()}
 	bifrost := NewMockBifrost()
 	ctx.SetBifrost(bifrost)
 
@@ -82,7 +82,7 @@ func TestPromptContext_SetBifrost_SendMessage(t *testing.T) {
 }
 
 func TestPromptContext_SetBifrost_Broadcast(t *testing.T) {
-	ctx := &PromptContext{}
+	ctx := &PromptContext{Context: t.Context()}
 	bifrost := NewMockBifrost()
 	ctx.SetBifrost(bifrost)
 
@@ -96,6 +96,7 @@ func TestPromptContext_SetBifrost_Broadcast(t *testing.T) {
 
 func TestPromptContext_BuildFinalPrompt_WithContext(t *testing.T) {
 	ctx := &PromptContext{
+		Context:                t.Context(),
 		ActionPrompt:           "available actions: query, status",
 		UserMessage:            "show me all nodes",
 		AdditionalInstructions: "The user has admin access.",
@@ -114,6 +115,7 @@ func TestPromptContext_BuildFinalPrompt_WithContext(t *testing.T) {
 
 func TestPromptContext_BuildFinalPromptForTools_WithContext(t *testing.T) {
 	ctx := &PromptContext{
+		Context:                t.Context(),
 		ActionPrompt:           "actions: store, recall",
 		UserMessage:            "store this memory",
 		AdditionalInstructions: "Context from plugin.",
@@ -133,6 +135,7 @@ func TestPromptContext_BuildFinalPrompt_FallsBackToMinimalWhenHuge(t *testing.T)
 	// ActionPrompt so large it exceeds system token budget → triggers minimal prompt
 	huge := strings.Repeat("x", MaxSystemPromptTokens()*8) // way over limit
 	ctx := &PromptContext{
+		Context:      t.Context(),
 		ActionPrompt: huge,
 		UserMessage:  "test",
 	}
@@ -145,6 +148,7 @@ func TestPromptContext_BuildFinalPrompt_FallsBackToMinimalWhenHuge(t *testing.T)
 
 func TestPromptContext_EstimatedSystemTokens(t *testing.T) {
 	ctx := &PromptContext{
+		Context:      t.Context(),
 		ActionPrompt: "some actions",
 		UserMessage:  "hello",
 	}
@@ -154,6 +158,7 @@ func TestPromptContext_EstimatedSystemTokens(t *testing.T) {
 
 func TestPromptContext_ValidateTokenBudget_OK(t *testing.T) {
 	ctx := &PromptContext{
+		Context:      t.Context(),
 		ActionPrompt: "short action prompt",
 		UserMessage:  "short user message",
 	}
@@ -165,6 +170,7 @@ func TestPromptContext_ValidateTokenBudget_SystemTooLarge(t *testing.T) {
 	// System prompt that's too large
 	huge := strings.Repeat("x", MaxSystemPromptTokens()*8) // forces over budget
 	ctx := &PromptContext{
+		Context:      t.Context(),
 		ActionPrompt: huge,
 		UserMessage:  "ok",
 	}
@@ -185,6 +191,7 @@ func TestPromptContext_ValidateTokenBudget_TotalTooLarge(t *testing.T) {
 	}
 
 	ctx := &PromptContext{
+		Context:      t.Context(),
 		ActionPrompt: "actions: x",
 		UserMessage:  strings.Repeat("u", MaxContextTokens()*8),
 	}
@@ -194,6 +201,7 @@ func TestPromptContext_ValidateTokenBudget_TotalTooLarge(t *testing.T) {
 
 func TestPromptContext_GetBudgetInfo(t *testing.T) {
 	ctx := &PromptContext{
+		Context:      t.Context(),
 		ActionPrompt: "actions",
 		UserMessage:  "hello",
 	}
@@ -707,7 +715,7 @@ func TestSubsystemManager_AllHealth(t *testing.T) {
 		plugins: make(map[string]*LoadedHeimdallPlugin),
 		actions: make(map[string]ActionFunc),
 	}
-	ctx := SubsystemContext{Config: DefaultConfig(), Bifrost: &NoOpBifrost{}}
+	ctx := SubsystemHost{Config: DefaultConfig(), Bifrost: &NoOpBifrost{}}
 	manager.SetContext(ctx)
 
 	p1 := NewMockPlugin("svc_a")
@@ -728,7 +736,7 @@ func TestSubsystemManager_AllSummaries(t *testing.T) {
 		plugins: make(map[string]*LoadedHeimdallPlugin),
 		actions: make(map[string]ActionFunc),
 	}
-	ctx := SubsystemContext{Config: DefaultConfig(), Bifrost: &NoOpBifrost{}}
+	ctx := SubsystemHost{Config: DefaultConfig(), Bifrost: &NoOpBifrost{}}
 	manager.SetContext(ctx)
 
 	plugin := NewMockPlugin("summarized_svc")
@@ -744,7 +752,7 @@ func TestSubsystemManager_DuplicatePlugin(t *testing.T) {
 		plugins: make(map[string]*LoadedHeimdallPlugin),
 		actions: make(map[string]ActionFunc),
 	}
-	ctx := SubsystemContext{Config: DefaultConfig(), Bifrost: &NoOpBifrost{}}
+	ctx := SubsystemHost{Config: DefaultConfig(), Bifrost: &NoOpBifrost{}}
 	manager.SetContext(ctx)
 
 	p1 := NewMockPlugin("dup_plugin")

@@ -196,12 +196,6 @@ func TestWithHotPathTrace_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestHotPathTraceFromContext_Nil(t *testing.T) {
-	if hotPathTraceFromContext(nil) != nil {
-		t.Fatal("expected nil for nil context")
-	}
-}
-
 func TestHotPathTraceFromContext_NoValue(t *testing.T) {
 	if hotPathTraceFromContext(context.Background()) != nil {
 		t.Fatal("expected nil for context without trace")

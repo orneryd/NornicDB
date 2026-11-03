@@ -16,12 +16,12 @@ import (
 // function calls; schema and administration commands declare rules, not
 // calls. A SHOW command's YIELD / WHERE / RETURN tail is checked, as in
 // Neo4j.
-func validateKnownFunctions(expression string) error {
+func validateKnownFunctions(ctx context.Context, expression string) error {
 	if !startsWithKeywordFold(strings.TrimSpace(expression), "SHOW") &&
-		(isSchemaCommandStatement(expression) || isMetadataCommand(expression, metadataCreateAdmission)) {
+		(isSchemaCommandStatement(expression) || isMetadataCommand(ctx, expression, metadataCreateAdmission)) {
 		return nil
 	}
-	return forEachFunctionCall(expression, func(name, normalized string) error {
+	return forEachFunctionCall(ctx, expression, func(name, normalized string) error {
 		if _, known := builtInCypherFunctions[normalized]; known {
 			if nativeAPOCCaseMismatch(name) {
 				if _, found := pluginFunctionHandler(name); !found {
@@ -53,11 +53,11 @@ func validateKnownFunctions(expression string) error {
 // dynamic labels, path selectors), so the check reads the text before any
 // rewrite: Execute's statement and the statement text a procedure runs
 // (executeUserStatement).
-func internalFunctionCallError(text string) error {
+func internalFunctionCallError(ctx context.Context, text string) error {
 	if !containsInternalFunctionPrefix(text) {
 		return nil
 	}
-	return forEachFunctionCall(text, func(name, normalized string) error {
+	return forEachFunctionCall(ctx, text, func(name, normalized string) error {
 		if _, internal := builtInCypherFunctions[normalized]; internal && strings.HasPrefix(normalized, "__nornic_") {
 			return unknownFunctionError(name)
 		}
@@ -89,13 +89,17 @@ func unknownFunctionError(name string) error {
 // its name as written (dotted parts joined) and lower-cased, without
 // backticks. Strings and comments, a procedure a CALL names, the graph a USE
 // names and the keywords that can stand before a parenthesis are not calls.
-func forEachFunctionCall(text string, visit func(name, normalized string) error) error {
-	return forEachFunctionInvocation(text, func(name, normalized string, _ int) error { return visit(name, normalized) })
+// It stops at the caller's cancellation and returns that error.
+func forEachFunctionCall(ctx context.Context, text string, visit func(name, normalized string) error) error {
+	return forEachFunctionInvocation(ctx, text, func(name, normalized string, _ int) error { return visit(name, normalized) })
 }
 
 // forEachFunctionInvocation preserves the common semantic scanner and also
 // exposes the argument delimiter to consumers that need invocation semantics.
-func forEachFunctionInvocation(text string, visit func(name, normalized string, open int) error) error {
+// The scan belongs to the caller's request: it reads the caller's context at
+// each name and completion, returns the caller's cancellation, and the
+// USE grammar read it performs runs in the caller's context.
+func forEachFunctionInvocation(ctx context.Context, text string, visit func(name, normalized string, open int) error) error {
 	expression := text
 	for index := 0; index < len(expression); {
 		if expression[index] >= 0x80 {
@@ -117,11 +121,19 @@ func forEachFunctionInvocation(text string, visit func(name, normalized string, 
 			index++
 			continue
 		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if !isCypherBacktickByte(expression[index]) && isUseKeyword(name.Value) {
-			syntax, err := cypherantlr.ParseSyntax(context.Background(), expression[index:], cypherantlr.UseEntry, false, cypherantlr.AcceptedSource)
+			syntax, err := cypherantlr.ParseSyntax(ctx, expression[index:], cypherantlr.UseEntry, false, cypherantlr.AcceptedSource)
 			if err != nil {
 				// USE may also be an identifier in a fragment. Syntax validation
 				// owns invalid clauses; this scanner never guesses their extent.
+				// A canceled read is not an invalid clause: it is the caller's
+				// cancellation, and the scan reports it.
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return ctxErr
+				}
 				index = name.End
 				continue
 			}
@@ -135,7 +147,7 @@ func forEachFunctionInvocation(text string, visit func(name, normalized string, 
 					continue
 				}
 				start, end := argument.Span()
-				if err := forEachFunctionInvocation(expression[index+start:index+end], func(name, normalized string, open int) error {
+				if err := forEachFunctionInvocation(ctx, expression[index+start:index+end], func(name, normalized string, open int) error {
 					return visit(name, normalized, index+start+open)
 				}); err != nil {
 					return err
@@ -168,7 +180,7 @@ func forEachFunctionInvocation(text string, visit func(name, normalized string, 
 			return err
 		}
 	}
-	return nil
+	return ctx.Err()
 }
 
 func isNonFunctionSemanticKeyword(name string) bool {

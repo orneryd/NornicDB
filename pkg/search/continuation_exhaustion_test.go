@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"math"
@@ -21,7 +22,7 @@ func TestContinuationShortApproximateBatchDoesNotEndSearch(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	for i := 0; i < 3; i++ {
 		id := storage.NodeID(fmt.Sprintf("doc-%d", i))
-		_, err := engine.CreateNode(&storage.Node{ID: id, Labels: []string{"Document"}})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"Document"}})
 		require.NoError(t, err)
 	}
 	var depths []int
@@ -61,7 +62,7 @@ func TestContinuationFilteredBM25EnumeratesBeyondShortFirstBatch(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	for i := 0; i < 100; i++ {
 		node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("doc-%03d", i)), Properties: map[string]any{"content": "library searchable transcript"}}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, service.IndexNode(node))
 	}
@@ -72,10 +73,10 @@ func TestContinuationFilteredBM25EnumeratesBeyondShortFirstBatch(t *testing.T) {
 	require.Len(t, all.Results, 100)
 	want := []string{searchResultID(all.Results[1]), searchResultID(all.Results[70])}
 	for _, id := range want {
-		node, err := engine.GetNode(storage.NodeID(id))
+		node, err := engine.GetNode(t.Context(), storage.NodeID(id))
 		require.NoError(t, err)
 		node.Properties["eligible"] = "yes"
-		require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: node}))
+		require.NoError(t, engine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
 	}
 	opts = DefaultSearchOptions()
 	opts.Limit = 4
@@ -112,7 +113,7 @@ func TestContinuationCanDeepenBeyondFormerEngineCeiling(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	for i := 0; i < 8_000; i++ {
 		id := storage.NodeID(fmt.Sprintf("doc-%d", i))
-		_, err := engine.CreateNode(&storage.Node{ID: id, Labels: []string{"Document"}})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"Document"}})
 		require.NoError(t, err)
 	}
 	var depths []int
@@ -145,7 +146,7 @@ func TestContinuationShortExpansionDoesNotEndSearch(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	for i := 0; i < 7; i++ {
 		id := storage.NodeID(fmt.Sprintf("doc-%d", i))
-		_, err := engine.CreateNode(&storage.Node{ID: id, Labels: []string{"Document"}})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"Document"}})
 		require.NoError(t, err)
 	}
 	search := func(_ context.Context, _ string, _ []float32, opts *SearchOptions) (*SearchResponse, error) {
@@ -239,7 +240,7 @@ func TestContinuationDefaultHNSWFinishesFinitePopulation(t *testing.T) {
 			t.Cleanup(func() { require.NoError(t, service.Close()) })
 			for i := 0; i < 6; i++ {
 				node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("doc-%d", i)), ChunkEmbeddings: [][]float32{{1, float32(i) / 10}}}
-				_, err := engine.CreateNode(node)
+				_, err := engine.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 				require.NoError(t, service.IndexNode(node))
 			}
@@ -247,7 +248,7 @@ func TestContinuationDefaultHNSWFinishesFinitePopulation(t *testing.T) {
 			if deleted {
 				_, err := service.Search(context.Background(), "", []float32{1, 0}, &SearchOptions{Limit: 6})
 				require.NoError(t, err)
-				require.NoError(t, engine.DeleteNode("doc-5"))
+				require.NoError(t, engine.DeleteNode(t.Context(), "doc-5"))
 				require.NoError(t, service.RemoveNode("doc-5"))
 				want = 5
 			}
@@ -289,7 +290,7 @@ func TestContinuationUnavailableEmbeddingPreservesBM25Fallback(t *testing.T) {
 			service := NewService(engine, DefaultVectorDimensions, nil)
 			t.Cleanup(func() { require.NoError(t, service.Close()) })
 			node := &storage.Node{ID: "doc", Properties: map[string]any{"content": "library transcript"}}
-			_, err := engine.CreateNode(node)
+			_, err := engine.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 			require.NoError(t, service.IndexNode(node))
 			if unavailable == "retrieval" {
@@ -359,7 +360,7 @@ func TestContinuationChunkDepthIsNotCappedAtOneShotLimit(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	for i := 0; i < 600; i++ {
 		id := storage.NodeID(fmt.Sprintf("doc-%04d", i))
-		_, err := engine.CreateNode(&storage.Node{ID: id, Labels: []string{"Document"}})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"Document"}})
 		require.NoError(t, err)
 	}
 	embeds := 0

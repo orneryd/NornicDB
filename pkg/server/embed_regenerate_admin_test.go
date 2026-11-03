@@ -18,7 +18,7 @@ func seedEmbeddedNode(t *testing.T, server *Server, database, id string) storage
 	t.Helper()
 	engine, err := server.dbManager.GetStorage(database)
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{
+	_, err = engine.CreateNode(t.Context(), &storage.Node{
 		ID:              storage.NodeID(id),
 		Labels:          []string{"Doc"},
 		Properties:      map[string]interface{}{"content": id},
@@ -37,7 +37,7 @@ func as(req *http.Request, roles ...string) *http.Request {
 
 func hasEmbedding(t *testing.T, engine storage.Engine, id string) bool {
 	t.Helper()
-	node, err := engine.GetNode(storage.NodeID(id))
+	node, err := engine.GetNode(t.Context(), storage.NodeID(id))
 	require.NoError(t, err)
 	return len(node.ChunkEmbeddings) > 0
 }

@@ -41,8 +41,14 @@ func (e *StorageExecutor) callInfo(ctx context.Context, scope infoScope) (*Execu
 		columns = columnNames(dbmsInfoColumns)
 		row = make([]interface{}, 3)
 	} else {
-		nodeCount, _ := e.storage.NodeCount()
-		edgeCount, _ := e.storage.EdgeCount()
+		nodeCount, err := e.storage.NodeCount(ctx)
+		if err != nil {
+			return nil, err
+		}
+		edgeCount, err := e.storage.EdgeCount(ctx)
+		if err != nil {
+			return nil, err
+		}
 		name = e.databaseName()
 		if selected := GetUseDatabaseFromContext(ctx); selected != "" {
 			name = selected
@@ -530,7 +536,7 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsWithVector(ctx cont
 			return nil, err
 		}
 		for _, hit := range hits {
-			edge, err := e.storage.GetEdge(storage.EdgeID(hit.ID))
+			edge, err := e.storage.GetEdge(ctx, storage.EdgeID(hit.ID))
 			if err != nil {
 				continue
 			}
@@ -657,14 +663,14 @@ func (e *StorageExecutor) callDbIndexVectorCreateIndex(ctx context.Context, args
 		return nil, newSemanticError("Neo.ClientError.Procedure.ProcedureCallFailed", "InvalidArgument", "vector index creation requires a positive dimension and a supported similarity function")
 	}
 	err = e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
-		if _, err := admitSchemaIndexCreation(schema, "", indexName, "VECTOR", []string{token}, []string{property}, entity); err != nil {
+		if _, err := admitSchemaIndexCreation(ctx, schema, "", indexName, "VECTOR", []string{token}, []string{property}, entity); err != nil {
 			return err
 		}
 		if err := schema.AddVectorIndex(indexName, token, property, int(dimension), similarity, entity); err != nil {
 			return err
 		}
 		if entity == storage.ConstraintEntityNode {
-			return e.afterCommit(ctx, func() error {
+			return e.afterCommit(ctx, func(context.Context) error {
 				e.registerVectorSpace(indexName, token, property, int(dimension), similarity)
 				return nil
 			})
@@ -725,7 +731,7 @@ func (e *StorageExecutor) callDbIndexFulltextCreateIndex(ctx context.Context, ar
 	}
 
 	err = e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
-		if _, err := admitSchemaIndexCreation(schema, "", indexName, "FULLTEXT", tokens, properties, entity); err != nil {
+		if _, err := admitSchemaIndexCreation(ctx, schema, "", indexName, "FULLTEXT", tokens, properties, entity); err != nil {
 			return err
 		}
 		return schema.AddFulltextIndex(indexName, tokens, properties, entity)
@@ -746,13 +752,13 @@ func (e *StorageExecutor) callDbIndexFulltextCreateIndex(ctx context.Context, ar
 
 // callDbIndexFulltextDrop drops a fulltext index - Neo4j db.index.fulltext.drop()
 // Syntax: CALL db.index.fulltext.drop(indexName)
-func (e *StorageExecutor) callDbIndexFulltextDrop(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbIndexFulltextDrop(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	indexName, err := requiredProcedureString("db.index.fulltext.drop", args, 0, "indexName")
 	if err != nil {
 		return nil, err
 	}
 
-	if err := e.dropIndexOfKind(indexName, "fulltext", func(schema *storage.SchemaManager) bool {
+	if err := e.dropIndexOfKind(ctx, indexName, "fulltext", func(schema *storage.SchemaManager) bool {
 		_, ok := schema.GetFulltextIndex(indexName)
 		return ok
 	}); err != nil {
@@ -766,13 +772,13 @@ func (e *StorageExecutor) callDbIndexFulltextDrop(args []interface{}) (*ExecuteR
 
 // callDbIndexVectorDrop drops a vector index - Neo4j db.index.vector.drop()
 // Syntax: CALL db.index.vector.drop(indexName)
-func (e *StorageExecutor) callDbIndexVectorDrop(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbIndexVectorDrop(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	indexName, err := requiredProcedureString("db.index.vector.drop", args, 0, "indexName")
 	if err != nil {
 		return nil, err
 	}
 
-	if err := e.dropIndexOfKind(indexName, "vector", func(schema *storage.SchemaManager) bool {
+	if err := e.dropIndexOfKind(ctx, indexName, "vector", func(schema *storage.SchemaManager) bool {
 		_, ok := schema.GetVectorIndex(indexName)
 		return ok
 	}); err != nil {
@@ -789,11 +795,11 @@ func (e *StorageExecutor) callDbIndexVectorDrop(args []interface{}) (*ExecuteRes
 // an index of that kind exists under the name, and otherwise fails with
 // Neo.ClientError.Schema.IndexDropFailed, so a procedure never reports a drop
 // that did not happen and never drops an index of another kind.
-func (e *StorageExecutor) dropIndexOfKind(name, kind string, exists func(*storage.SchemaManager) bool) error {
-	if isCompositeRoot(e.storage) {
-		return localizedError(localization.CypherSchemaCompositeDDLNotAllowed(), nil)
+func (e *StorageExecutor) dropIndexOfKind(ctx context.Context, name, kind string, exists func(*storage.SchemaManager) bool) error {
+	if err := schemaDDLTargetError(e.storage); err != nil {
+		return err
 	}
-	return e.mutateSchema(context.Background(), func(schema *storage.SchemaManager) error {
+	return e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
 		if schema == nil || !exists(schema) {
 			return newSemanticError("Neo.ClientError.Schema.IndexDropFailed", "MissingIndex",
 				fmt.Sprintf("there is no %s index named %q", kind, name))
@@ -853,7 +859,7 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 			edge = &image
 		} else {
 			var err error
-			edge, err = store.GetEdge(storage.EdgeID(identifier))
+			edge, err = store.GetEdge(ctx, storage.EdgeID(identifier))
 			if err != nil {
 				return nil, localizedError(localization.CypherProceduresRelationshipNotFound(identifier), err)
 			}
@@ -864,7 +870,7 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 			before := observeEdge(edge)
 			edge.Properties = cloneStringAnyMap(edge.Properties)
 			edge.Properties[propertyKey] = vector
-			if err := mutateEdgeWithObservation(store, before, edge); err != nil {
+			if err := mutateEdgeWithObservation(ctx, store, before, edge); err != nil {
 				return nil, localizedError(localization.CypherProceduresUpdateRelationshipFailed(err), err)
 			}
 			e.notifyEdgeMutated(string(edge.ID))
@@ -886,7 +892,7 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 		node = &image
 	} else {
 		var err error
-		node, err = store.GetNode(storage.NodeID(identifier))
+		node, err = store.GetNode(ctx, storage.NodeID(identifier))
 		if err != nil {
 			return nil, localizedError(localization.CypherProceduresNodeNotFound(identifier), err)
 		}
@@ -897,7 +903,7 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 		before := observeNode(node)
 		node.Properties = cloneStringAnyMap(node.Properties)
 		node.Properties[propertyKey] = vector
-		if err := mutateNodeWithObservation(store, before, node); err != nil {
+		if err := mutateNodeWithObservation(ctx, store, before, node); err != nil {
 			return nil, localizedError(localization.CypherProceduresUpdateNodeFailed(err), err)
 		}
 		e.notifyNodeMutated(string(node.ID))

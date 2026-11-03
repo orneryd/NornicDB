@@ -65,3 +65,34 @@ func ensureOptimisticMeta(result *ExecuteResult) *optimisticMutationMeta {
 	result.Metadata["optimistic"] = meta
 	return meta
 }
+
+// mergeOptimisticMetadata folds only canonical created IDs. Result transforms
+// do not inherit another statement's plan, selected database, receipt or mode.
+// Each incoming ID uses the existing O(1) dedup owner; runMany never rescans its
+// accumulated IDs and neither source slices nor source seen sets are mutated.
+func mergeOptimisticMetadata(result, source *ExecuteResult) {
+	if result == nil || source == nil || result == source {
+		return
+	}
+	var incoming *optimisticMutationMeta
+	switch value := source.Metadata["optimistic"].(type) {
+	case *optimisticMutationMeta:
+		incoming = value
+	case optimisticMutationMeta:
+		incoming = &value
+	default:
+		return
+	}
+	if incoming == nil {
+		return
+	}
+	if current, ok := result.Metadata["optimistic"].(*optimisticMutationMeta); ok && current == incoming {
+		return
+	}
+	for _, id := range incoming.CreatedNodeIDs {
+		addOptimisticNodeID(result, storage.NodeID(id))
+	}
+	for _, id := range incoming.CreatedRelationshipIDs {
+		addOptimisticRelationshipID(result, storage.EdgeID(id))
+	}
+}

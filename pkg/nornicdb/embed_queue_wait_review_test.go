@@ -75,12 +75,12 @@ type deleteDiscoveredEmbeddingEngine struct {
 	deleted atomic.Bool
 }
 
-func (e *deleteDiscoveredEmbeddingEngine) FindNodeNeedingEmbedding() *storage.Node {
-	node := e.idleCountingEngine.FindNodeNeedingEmbedding()
+func (e *deleteDiscoveredEmbeddingEngine) FindNodeNeedingEmbedding(ctx context.Context) (*storage.Node, error) {
+	node, err := e.idleCountingEngine.FindNodeNeedingEmbedding(ctx)
 	if node != nil && node.ID == "a" && e.deleted.CompareAndSwap(false, true) {
-		_ = e.Engine.DeleteNode(node.ID)
+		_ = e.Engine.DeleteNode(ctx, node.ID)
 	}
-	return node
+	return node, err
 }
 
 type deleteDuringEmbeddingProvider struct {
@@ -90,7 +90,7 @@ type deleteDuringEmbeddingProvider struct {
 }
 
 func (p *deleteDuringEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
-	p.once.Do(func() { _ = p.store.DeleteNode("a") })
+	p.once.Do(func() { _ = p.store.DeleteNode(ctx, "a") })
 	return p.mockEmbedder.EmbedBatch(ctx, texts)
 }
 
@@ -114,7 +114,7 @@ func TestEmbedWorkerDrainContinuesAfterDeletedCandidate(t *testing.T) {
 			<-worker.trigger // One coalesced notification has woken the drainer.
 			worker.processUntilEmpty()
 			require.Equal(t, 1, worker.Stats().Processed, "skipping a deleted candidate must continue with b")
-			node, err := store.GetNode("b")
+			node, err := store.GetNode(t.Context(), "b")
 			require.NoError(t, err)
 			require.NotEmpty(t, node.ChunkEmbeddings)
 			require.LessOrEqual(t, store.claims.Load(), int64(4), "a truly empty queue still ends the drain")

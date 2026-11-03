@@ -1,12 +1,15 @@
 package bolt
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"net"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/orneryd/nornicdb/internal/catalogadapter"
@@ -143,6 +146,31 @@ func TestGh745_BoltCompositeSubqueryResults(t *testing.T) {
 	require.NoError(t, err)
 	server := NewWithDatabaseManager(&Config{Port: 0, ReadBufferSize: 8192, WriteBufferSize: 8192}, &mockExecutor{}, manager)
 	t.Cleanup(func() { _ = server.Close() })
+	t.Run("canceled pull writes no partial record and healthy retry retains origin", func(t *testing.T) {
+		nodes, readErr := store.GetNodesByLabel(t.Context(), "EI")
+		require.NoError(t, readErr)
+		require.NotEmpty(t, nodes)
+		for _, rowsCount := range []int{1, 51} {
+			t.Run(fmt.Sprint(rowsCount), func(t *testing.T) {
+				rows := make([][]any, rowsCount)
+				for i := range rows {
+					rows[i] = []any{map[string]any{"node": nodes[0]}}
+				}
+				var output bytes.Buffer
+				request, cancel := context.WithCancel(t.Context())
+				cancel()
+				session := &Session{server: server, writer: bufio.NewWriter(&output), version: 0x0500, connCtx: request, database: "pcomp", lastQueryDatabase: "pcomp", lastResult: &QueryResult{Columns: []string{"value"}, Rows: rows}}
+				require.ErrorIs(t, session.handlePull(nil), context.Canceled)
+				require.Zero(t, session.writer.Buffered(), "no partial record reaches the pending wire buffer")
+				require.Zero(t, output.Len(), "canceled PULL must not emit a record with a fallback origin")
+				require.Zero(t, session.resultIndex)
+				session.connCtx = t.Context()
+				require.NoError(t, session.handlePull(nil))
+				require.Contains(t, output.String(), "4:pother:", "healthy lookup preserves constituent element identity")
+			})
+		}
+	})
+
 	port := startBoltTestServer(t, server)
 	ctx := context.Background()
 	driver, err := neo4jdriver.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4jdriver.NoAuth())
@@ -467,8 +495,9 @@ func databaseScopedExecutor(t *testing.T, store storage.Engine, transaction ...b
 // startBoltTestServer pre-binds a loopback listener for the test server and
 // runs the accept loop directly, avoiding racy reads of server.listener and the
 // reserve-then-rebind TOCTOU window.
-func startBoltTestServer(t *testing.T, server *Server) int {
+func startBoltTestServer(t *testing.T, server *Server, shutdownChecks ...func(error)) int {
 	t.Helper()
+	require.LessOrEqual(t, len(shutdownChecks), 1)
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -483,8 +512,14 @@ func startBoltTestServer(t *testing.T, server *Server) int {
 	}()
 
 	t.Cleanup(func() {
-		require.NoError(t, server.Close())
-		require.NoError(t, <-errCh)
+		shutdownErr := server.Close()
+		serveErr := <-errCh
+		if len(shutdownChecks) == 1 {
+			shutdownChecks[0](shutdownErr)
+		} else {
+			require.NoError(t, shutdownErr)
+		}
+		require.NoError(t, serveErr)
 	})
 	return addr.Port
 }
@@ -566,7 +601,7 @@ func TestSessionGetExecutorForDatabase_InheritsEmbedder_ForStringVectorQuery(t *
 	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "nornic")
 	require.NoError(t, store.GetSchema().AddVectorIndex("idx_doc", "Doc", "embedding", 3, "cosine", storage.ConstraintEntityNode))
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:     "d1",
 		Labels: []string{"Doc"},
 		Properties: map[string]interface{}{
@@ -616,7 +651,7 @@ func TestSessionGetExecutorForDatabase_InheritsEmbedder_FromBaseExecutorProvider
 	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "nornic")
 	require.NoError(t, store.GetSchema().AddVectorIndex("idx_doc", "Doc", "embedding", 3, "cosine", storage.ConstraintEntityNode))
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:     "d1",
 		Labels: []string{"Doc"},
 		Properties: map[string]interface{}{

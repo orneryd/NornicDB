@@ -61,7 +61,7 @@ func (cache *semanticValidationCache) add(query string) {
 // executor prevents optimized and general MERGE paths from accepting different
 // syntax or producing effects before a semantic failure.
 func (e *StorageExecutor) validateMergeSemanticScopes(ctx context.Context, cypher string, cypher25 bool) error {
-	if findKeywordIndexInContext(cypher, "MERGE") < 0 {
+	if findKeywordIndexInContext(ctx, cypher, "MERGE") < 0 {
 		return nil
 	}
 	// Literal-bearing MERGE statements share one compile verdict through the
@@ -102,11 +102,11 @@ func (e *StorageExecutor) validateMergeSemanticScopes(ctx context.Context, cyphe
 				return err
 			}
 		case pipelineClauseUnwind:
-			if alias := unwindBindingName(clause.text); alias != "" {
+			if alias := unwindBindingName(ctx, clause.text); alias != "" {
 				scope.bind(alias)
 			}
 		case pipelineClauseMerge:
-			if err := e.validateMergeClause(scope, clause.text, cypher25); err != nil {
+			if err := e.validateMergeClause(ctx, scope, clause.text, cypher25); err != nil {
 				return err
 			}
 		}
@@ -140,7 +140,7 @@ func addMergePatternBindings(scope *semanticBindingScope, clause string) {
 // cypher25 adds Neo4j 2026.09's rule for a Cypher 25 statement: a property
 // value may not read a node or relationship the same MERGE creates
 // (MERGE (a {x: 1})-[:T]->(b {x: a.x})).
-func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, clause string, cypher25 bool) error {
+func (e *StorageExecutor) validateMergeClause(ctx context.Context, scope *semanticBindingScope, clause string, cypher25 bool) error {
 	// Neo4j rejects EXISTS / COUNT / COLLECT { … } anywhere in a MERGE clause:
 	// its pattern, property maps and ON CREATE / ON MATCH SET actions.
 	if mayContainSubqueryExpression(clause) && len(findSubqueryExpressions(clause)) > 0 {
@@ -150,7 +150,7 @@ func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, claus
 			"Subquery expressions are not allowed in a MERGE clause.",
 		)
 	}
-	pattern := mergeClausePattern(clause)
+	pattern := mergeClausePattern(ctx, clause)
 	if pattern == "" {
 		return nil
 	}
@@ -177,7 +177,7 @@ func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, claus
 		}
 	}
 	if cypher25 {
-		if err := e.validateCreateSamePatternReferences(scope, pattern, relationshipVariables, make(map[string]string), "MERGE"); err != nil {
+		if err := e.validateCreateSamePatternReferences(ctx, scope, pattern, relationshipVariables, make(map[string]string), "MERGE"); err != nil {
 			return err
 		}
 	}
@@ -215,7 +215,7 @@ func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, claus
 		}
 		scope.bind(pathVariable)
 	}
-	if err := e.validateMergeActionScopes(scope, clause); err != nil {
+	if err := e.validateMergeActionScopes(ctx, scope, clause); err != nil {
 		return err
 	}
 	for _, nodePattern := range e.splitNodePatterns(pattern) {
@@ -229,11 +229,11 @@ func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, claus
 	return nil
 }
 
-func (e *StorageExecutor) validateMergeActionScopes(scope *semanticBindingScope, clause string) error {
-	parts := splitMergeClauseActions(pipelineClauseBody(clause, "MERGE"), nil)
+func (e *StorageExecutor) validateMergeActionScopes(ctx context.Context, scope *semanticBindingScope, clause string) error {
+	parts := splitMergeClauseActions(ctx, pipelineClauseBody(clause, "MERGE"), nil)
 	for _, clauses := range [...]mergeActionClauses{parts.onCreate, parts.onMatch} {
 		for index := 0; index < clauses.len(); index++ {
-			if err := e.validateSetClauseScope(scope, inlineOverflowAt(clauses.inline[:], clauses.overflow, index)); err != nil {
+			if err := e.validateSetClauseScope(ctx, scope, inlineOverflowAt(clauses.inline[:], clauses.overflow, index)); err != nil {
 				return err
 			}
 		}
@@ -241,8 +241,8 @@ func (e *StorageExecutor) validateMergeActionScopes(scope *semanticBindingScope,
 	return nil
 }
 
-func mergeClausePattern(clause string) string {
-	return splitMergeClauseActions(pipelineClauseBody(clause, "MERGE"), nil).pattern
+func mergeClausePattern(ctx context.Context, clause string) string {
+	return splitMergeClauseActions(ctx, pipelineClauseBody(clause, "MERGE"), nil).pattern
 }
 
 func mergePatternUsesParameterPredicate(pattern string) bool {

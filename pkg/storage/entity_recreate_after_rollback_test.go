@@ -21,15 +21,15 @@ func TestEntityRecreatedAfterRolledBackCreateSurvivesReopen(t *testing.T) {
 	}
 	require.NoError(t, err)
 	for _, id := range []NodeID{"test:a", "test:b"} {
-		_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"N"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"N"}})
 		require.NoError(t, err)
 	}
 	inTx := func(commit bool) {
-		tx, err := engine.BeginTransaction()
+		tx, err := engine.BeginTransaction(t.Context())
 		require.NoError(t, err)
-		_, err = tx.CreateNode(&Node{ID: "test:fixed", Labels: []string{"Fixed"}})
+		_, err = tx.CreateNode(t.Context(), &Node{ID: "test:fixed", Labels: []string{"Fixed"}})
 		require.NoError(t, err)
-		require.NoError(t, tx.CreateEdge(&Edge{ID: "test:merge-x", StartNode: "test:a", EndNode: "test:b", Type: "R", Properties: map[string]any{"id": "new"}}))
+		require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:merge-x", StartNode: "test:a", EndNode: "test:b", Type: "R", Properties: map[string]any{"id": "new"}}))
 		if commit {
 			require.NoError(t, tx.Commit())
 		} else {
@@ -43,14 +43,14 @@ func TestEntityRecreatedAfterRolledBackCreateSurvivesReopen(t *testing.T) {
 	engine, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
-	edge, err := engine.GetEdge("test:merge-x")
+	edge, err := engine.GetEdge(t.Context(), "test:merge-x")
 	require.NoError(t, err)
 	require.Equal(t, "new", edge.Properties["id"])
 	outgoing, err := engine.GetOutgoingEdges(context.Background(), "test:a")
 	require.NoError(t, err)
 	require.Len(t, outgoing, 1)
 	require.Equal(t, EdgeID("test:merge-x"), outgoing[0].ID)
-	_, err = engine.GetNode("test:fixed")
+	_, err = engine.GetNode(t.Context(), "test:fixed")
 	require.NoError(t, err)
 	fixed, err := engine.GetNodesByLabel(context.Background(), "Fixed")
 	require.NoError(t, err)

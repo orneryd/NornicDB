@@ -2,13 +2,14 @@ package search
 
 import (
 	"context"
-	"github.com/orneryd/nornicdb/pkg/storage"
-	"github.com/stretchr/testify/require"
 	"log/slog"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
 )
 
 type reviewerR4BuildLog struct {
@@ -49,7 +50,7 @@ func TestReviewerR4RequestCancellationDoesNotRestartHNSW(t *testing.T) {
 	})
 	for _, id := range []string{"a", "b", "c"} {
 		n := &storage.Node{ID: storage.NodeID(id), ChunkEmbeddings: [][]float32{{1, 0, 0}}}
-		_, err := engine.CreateNode(n)
+		_, err := engine.CreateNode(t.Context(), n)
 		require.NoError(t, err)
 		require.NoError(t, svc.IndexNode(n))
 	}

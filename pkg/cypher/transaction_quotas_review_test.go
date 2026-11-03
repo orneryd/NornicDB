@@ -42,7 +42,7 @@ func TestTransactionQuotaUnlimitedDisjointMergeCommits(t *testing.T) {
 	for err := range errs {
 		require.NoError(t, err, "disjoint unlimited MERGEs must not manufacture admission conflicts")
 	}
-	count, err := engine.NodeCount()
+	count, err := engine.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.EqualValues(t, writers, count)
 }
@@ -59,7 +59,7 @@ func TestTransactionQuotaExplicitCommitUsesCallerContext(t *testing.T) {
 	_, err = exec.handleCommit(ctx)
 	require.ErrorIs(t, err, context.Canceled)
 	require.False(t, exec.HasActiveTransaction())
-	count, err := engine.NodeCount()
+	count, err := engine.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.Zero(t, count)
 }

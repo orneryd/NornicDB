@@ -25,7 +25,8 @@ func TestPR1655ConstraintSelectionPreservesOrderAndLabels(t *testing.T) {
 		{"absent", []ConstraintType{ConstraintTemporal}, []string{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := schema.GetConstraintsForLabels([]string{"Doc", "Doc"}, tc.types...)
+			got, err := schema.GetConstraintsForLabels(t.Context(), []string{"Doc", "Doc"}, tc.types...)
+			require.NoError(t, err)
 			names := make([]string, 0, len(got))
 			for _, c := range got {
 				names = append(names, c.Name)
@@ -34,5 +35,7 @@ func TestPR1655ConstraintSelectionPreservesOrderAndLabels(t *testing.T) {
 			require.Equal(t, tc.want, names)
 		})
 	}
-	require.Len(t, schema.GetConstraintsForLabels([]string{"Doc", "Other"}, ConstraintUnique), 2)
+	both, err := schema.GetConstraintsForLabels(t.Context(), []string{"Doc", "Other"}, ConstraintUnique)
+	require.NoError(t, err)
+	require.Len(t, both, 2)
 }

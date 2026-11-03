@@ -21,6 +21,6 @@ func TestReleaseEmbedderInstallationAfterCloseDoesNotRestartDB(t *testing.T) {
 	assert.Nil(t, db.GetCypherExecutor().GetEmbedder(),
 		"a closed database must refuse late embedder initialization")
 	if queue := db.GetEmbedQueue(); queue != nil {
-		assert.True(t, queue.closed.Load(), "late initialization must not start a new queue")
+		assert.True(t, queue.work.Closing(), "late initialization must not start a new queue")
 	}
 }

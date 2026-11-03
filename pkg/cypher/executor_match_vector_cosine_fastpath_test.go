@@ -36,6 +36,11 @@ func (e *blockingNodeIteratorEngine) IterateNodes(fn func(*storage.Node) bool) e
 	return nil
 }
 
+// projectedCountingEngine counts the executor's direct node reads and records
+// the property projections they ask for. It adds no behavior of its own, so it
+// is a transparent decorator and exposes the canonical
+// storage.EngineUnwrapper accessor: a write statement opens its transaction on
+// the engine underneath, and read statements keep counting through this probe.
 type projectedCountingEngine struct {
 	storage.Engine
 	projectedCalls int
@@ -43,19 +48,22 @@ type projectedCountingEngine struct {
 	projectedProps [][]string
 }
 
-func (e *projectedCountingEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
+// GetInnerEngine is the canonical EngineUnwrapper accessor.
+func (e *projectedCountingEngine) GetInnerEngine() storage.Engine { return e.Engine }
+
+func (e *projectedCountingEngine) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	e.getNodeCalls++
-	return e.Engine.GetNode(id)
+	return e.Engine.GetNode(ctx, id)
 }
 
-func (e *projectedCountingEngine) GetNodeProjected(id storage.NodeID, properties []string) (*storage.Node, error) {
+func (e *projectedCountingEngine) GetNodeProjected(ctx context.Context, id storage.NodeID, properties []string) (*storage.Node, error) {
 	e.projectedCalls++
 	props := append([]string(nil), properties...)
 	e.projectedProps = append(e.projectedProps, props)
 	if reader, ok := e.Engine.(storage.ProjectedNodeReader); ok {
-		return reader.GetNodeProjected(id, properties)
+		return reader.GetNodeProjected(ctx, id, properties)
 	}
-	node, err := e.Engine.GetNode(id)
+	node, err := e.Engine.GetNode(ctx, id)
 	if err != nil || node == nil {
 		return node, err
 	}

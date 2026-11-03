@@ -93,7 +93,7 @@ func TestRuntimeStrategyTransitionDoesNotRepublishRetiredGraph(t *testing.T) {
 				}
 				if operation == "clear" {
 					node := &storage.Node{ID: "replacement", ChunkEmbeddings: [][]float32{{0, 1, 0}}}
-					_, err = svc.engine.CreateNode(node)
+					_, err = svc.engine.CreateNode(t.Context(), node)
 					require.NoError(t, err)
 					require.NoError(t, svc.IndexNode(node))
 					results, err := svc.VectorSearchCandidates(context.Background(), []float32{0, 1, 0}, nil)

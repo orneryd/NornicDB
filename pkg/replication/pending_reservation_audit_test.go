@@ -36,30 +36,30 @@ func TestPendingReplicationRetainsByteReservation(t *testing.T) {
 	require.NoError(t, err)
 	at := time.Unix(1700000000, 0)
 	for _, id := range []storage.NodeID{"n", "m"} {
-		_, err = view.CreateNode(&storage.Node{ID: id, Labels: []string{"Doc"}, CreatedAt: at, UpdatedAt: at})
+		_, err = view.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"Doc"}, CreatedAt: at, UpdatedAt: at})
 		require.NoError(t, err)
 	}
-	prior, err := storage.GetStoredNode(view, "n")
+	prior, err := storage.GetStoredNode(t.Context(), view, "n")
 	require.NoError(t, err)
 	growth := storage.CopyNode(prior)
 	growth.Properties = map[string]any{"payload": strings.Repeat("x", 4096)}
 	before, _, _ := manager.GetStorageSize(db)
-	require.NoError(t, view.UpdateNode(storage.NodeUpdateRequest{After: growth}))
+	require.NoError(t, view.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: growth}))
 	ceiling, _, _ := manager.GetStorageSize(db)
 	require.Greater(t, ceiling, before)
-	require.NoError(t, view.UpdateNode(storage.NodeUpdateRequest{After: prior}))
+	require.NoError(t, view.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: prior}))
 	restored, _, _ := manager.GetStorageSize(db)
 	require.Equal(t, before, restored)
 	require.NoError(t, manager.SetDatabaseLimits(t.Context(), db, &multidb.Limits{Storage: multidb.StorageLimits{MaxBytes: ceiling}}))
 	route.delay = true
-	err = view.UpdateNode(storage.NodeUpdateRequest{After: growth})
+	err = view.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: growth})
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	pending := route.pending
 	require.NotNil(t, pending)
 	route.delay = false
 	other := storage.CopyNode(growth)
 	other.ID = "m"
-	otherErr := view.UpdateNode(storage.NodeUpdateRequest{After: other})
+	otherErr := view.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: other})
 	assert.ErrorIs(t, otherErr, multidb.ErrStorageLimitExceeded, "the pending command already reserved this only growth allowance")
 	require.NoError(t, route.applyPending(adapter, pending))
 	recount, err := multidb.NewDatabaseManager(t.Context(), base, nil)

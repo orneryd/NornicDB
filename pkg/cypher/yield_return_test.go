@@ -41,7 +41,7 @@ func TestYieldReturnIntegration(t *testing.T) {
 	}
 
 	for _, n := range testNodes {
-		_, err := store.CreateNode(&storage.Node{
+		_, err := store.CreateNode(t.Context(), &storage.Node{
 			ID:         storage.NodeID(n.id),
 			Labels:     n.labels,
 			Properties: n.props,
@@ -302,7 +302,7 @@ func TestCallDbIndexFulltextQueryNodes_DirectBranches(t *testing.T) {
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:         "n1",
 		Labels:     []string{"Doc"},
 		Properties: map[string]interface{}{"content": "alpha beta"},
@@ -330,19 +330,19 @@ func TestCallDbIndexFulltextQueryNodes_DirectBranches(t *testing.T) {
 	_, err = exec.Execute(context.Background(), "CREATE FULLTEXT INDEX idx_ft IF NOT EXISTS FOR (n:Doc) ON EACH [n.content]", nil)
 	require.NoError(t, err)
 
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:         "n2",
 		Labels:     []string{"Doc"},
 		Properties: map[string]interface{}{"content": "alpha must keep"},
 	})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:         "n3",
 		Labels:     []string{"Doc"},
 		Properties: map[string]interface{}{"content": "alpha beta must"}, // excluded by NOT beta
 	})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:         "n4",
 		Labels:     []string{"Other"},
 		Properties: map[string]interface{}{"content": "alpha must"}, // filtered by label
@@ -398,7 +398,7 @@ func TestYieldReturnWithOtherProcedures(t *testing.T) {
 	ctx := context.Background()
 
 	// Create some test data
-	store.CreateNode(&storage.Node{
+	store.CreateNode(t.Context(), &storage.Node{
 		ID:     "person-1",
 		Labels: []string{"Person"},
 		Properties: map[string]interface{}{
@@ -406,7 +406,7 @@ func TestYieldReturnWithOtherProcedures(t *testing.T) {
 			"age":  int64(30),
 		},
 	})
-	store.CreateNode(&storage.Node{
+	store.CreateNode(t.Context(), &storage.Node{
 		ID:     "person-2",
 		Labels: []string{"Person", "Developer"},
 		Properties: map[string]interface{}{
@@ -440,7 +440,7 @@ func TestYieldReturnWithOtherProcedures(t *testing.T) {
 
 	t.Run("db.relationshipTypes with ORDER BY", func(t *testing.T) {
 		// Create a relationship first
-		store.CreateEdge(&storage.Edge{
+		store.CreateEdge(t.Context(), &storage.Edge{
 			ID:        "rel-1",
 			StartNode: "person-1",
 			EndNode:   "person-2",
@@ -467,7 +467,7 @@ func TestYieldReturnEdgeCases(t *testing.T) {
 	ctx := context.Background()
 
 	// Create minimal test data
-	store.CreateNode(&storage.Node{
+	store.CreateNode(t.Context(), &storage.Node{
 		ID:         "test-1",
 		Labels:     []string{"Test"},
 		Properties: map[string]interface{}{"name": "test", "content": "searchable content"},

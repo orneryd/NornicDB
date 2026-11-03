@@ -25,7 +25,7 @@ func TestDeleteNode_RemovesEmbeddings_WhenDeletedBeforeFlush(t *testing.T) {
 
 	// Create a node that will be buffered in AsyncEngine (not necessarily flushed yet).
 	localID := storage.NodeID("cache-only-delete-1")
-	_, err = db.storage.CreateNode(&storage.Node{
+	_, err = db.storage.CreateNode(t.Context(), &storage.Node{
 		ID:              localID,
 		Labels:          []string{"Test"},
 		Properties:      map[string]any{"name": "cached"},
@@ -45,7 +45,7 @@ func TestDeleteNode_RemovesEmbeddings_WhenDeletedBeforeFlush(t *testing.T) {
 	require.GreaterOrEqual(t, db.EmbeddingCount(), 1)
 
 	// Delete before flush commits to inner engine (AsyncEngine may satisfy from cache).
-	require.NoError(t, db.storage.DeleteNode(localID))
+	require.NoError(t, db.storage.DeleteNode(t.Context(), localID))
 
 	// Allow callback to run (it is synchronous, but keep a small buffer for timing).
 	time.Sleep(10 * time.Millisecond)

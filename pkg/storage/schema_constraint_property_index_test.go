@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"errors"
@@ -22,26 +23,26 @@ func TestConstraintPropertyIndexSeekableOnceFilled(t *testing.T) {
 	_, owned = sm.ConstraintPropertyIndex("missing")
 	require.False(t, owned)
 
-	_, ok := sm.GetPropertyIndex("Rec", "uid")
+	_, ok := checkedIndexRange[*PropertyIndex](t)(sm.GetPropertyIndex(t.Context(), "Rec", "uid"))
 	require.False(t, ok)
-	require.False(t, sm.HasPropertyIndex("Rec", "uid"))
+	require.False(t, checkedIndexRead[bool](t)(sm.HasPropertyIndex(t.Context(), "Rec", "uid")))
 	require.True(t, sm.MaintainsPropertyIndex("Rec", "uid"))
 	require.True(t, sm.HasAnyPropertyIndexForLabel("Rec"))
 
 	require.NoError(t, sm.PropertyIndexInsert("Rec", "uid", "n1", "a"))
-	require.Nil(t, sm.PropertyIndexLookup("Rec", "uid", "a"))
-	require.Nil(t, sm.PropertyIndexLookupAnyLabel("uid", "a"))
-	require.Nil(t, sm.PropertyIndexAllNonNil("Rec", "uid", false))
-	require.False(t, sm.VisitPropertyIndexGroups("Rec", "uid", false, func([]NodeID) bool { return true }))
+	require.Nil(t, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "Rec", "uid", "a")))
+	require.Nil(t, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookupAnyLabel(t.Context(), "uid", "a")))
+	require.Nil(t, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexAllNonNil(t.Context(), "Rec", "uid", false)))
+	require.False(t, checkedIndexRead[bool](t)(sm.VisitPropertyIndexGroups(t.Context(), "Rec", "uid", false, func([]NodeID) bool { return true })))
 
 	require.NoError(t, sm.BackfillPropertyIndex("Rec", "uid", map[NodeID]interface{}{"n2": "b"}))
-	_, ok = sm.GetPropertyIndex("Rec", "uid")
+	_, ok = checkedIndexRange[*PropertyIndex](t)(sm.GetPropertyIndex(t.Context(), "Rec", "uid"))
 	require.True(t, ok)
-	require.True(t, sm.HasPropertyIndex("Rec", "uid"))
-	require.Equal(t, []NodeID{"n1"}, sm.PropertyIndexLookup("Rec", "uid", "a"))
-	require.Equal(t, []NodeID{"n2"}, sm.PropertyIndexLookupAnyLabel("uid", "b"))
-	require.ElementsMatch(t, []NodeID{"n1", "n2"}, sm.PropertyIndexAllNonNil("Rec", "uid", false))
-	require.True(t, sm.VisitPropertyIndexGroups("Rec", "uid", false, func([]NodeID) bool { return true }))
+	require.True(t, checkedIndexRead[bool](t)(sm.HasPropertyIndex(t.Context(), "Rec", "uid")))
+	require.Equal(t, []NodeID{"n1"}, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "Rec", "uid", "a")))
+	require.Equal(t, []NodeID{"n2"}, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookupAnyLabel(t.Context(), "uid", "b")))
+	require.ElementsMatch(t, []NodeID{"n1", "n2"}, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexAllNonNil(t.Context(), "Rec", "uid", false)))
+	require.True(t, checkedIndexRead[bool](t)(sm.VisitPropertyIndexGroups(t.Context(), "Rec", "uid", false, func([]NodeID) bool { return true })))
 }
 
 // A label-less lookup can't be answered from the indexes while one of the
@@ -50,13 +51,13 @@ func TestPropertyIndexLookupAnyLabelSkipsWhileAnIndexIsUnfilled(t *testing.T) {
 	sm := NewSchemaManager()
 	require.NoError(t, sm.AddPropertyIndex("i_a", "A", []string{"uid"}))
 	require.NoError(t, sm.PropertyIndexInsert("A", "uid", "a1", "x"))
-	require.Equal(t, []NodeID{"a1"}, sm.PropertyIndexLookupAnyLabel("uid", "x"))
+	require.Equal(t, []NodeID{"a1"}, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookupAnyLabel(t.Context(), "uid", "x")))
 
 	require.NoError(t, sm.AddUniqueConstraint("c_b", "B", "uid"))
-	require.Nil(t, sm.PropertyIndexLookupAnyLabel("uid", "x"))
+	require.Nil(t, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookupAnyLabel(t.Context(), "uid", "x")))
 
 	sm.MarkPropertyIndexesFilled()
-	require.Equal(t, []NodeID{"a1"}, sm.PropertyIndexLookupAnyLabel("uid", "x"))
+	require.Equal(t, []NodeID{"a1"}, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookupAnyLabel(t.Context(), "uid", "x")))
 }
 
 // A node key constraint owns a property index too; relationship and
@@ -77,9 +78,9 @@ func TestConstraintPropertyIndexOwners(t *testing.T) {
 	_, owned = sm.ConstraintPropertyIndex("ex")
 	require.False(t, owned)
 
-	require.False(t, sm.HasPropertyIndex("K", "k"))
+	require.False(t, checkedIndexRead[bool](t)(sm.HasPropertyIndex(t.Context(), "K", "k")))
 	sm.MarkPropertyIndexesFilled()
-	require.True(t, sm.HasPropertyIndex("K", "k"))
+	require.True(t, checkedIndexRead[bool](t)(sm.HasPropertyIndex(t.Context(), "K", "k")))
 }
 
 // The owned property index is the constraint's RANGE index: it isn't listed,
@@ -105,11 +106,11 @@ func TestConstraintPropertyIndexListedOnlyAsConstraintIndex(t *testing.T) {
 		require.NotEqual(t, "PROPERTY", stat.Type)
 	}
 	require.False(t, sm.isPropertyInStructuralIndex([]string{"Rec"}, "uid"))
-	require.Empty(t, sm.ExportDefinition().PropertyIndexes)
+	require.Empty(t, schemaDefinitionForTest(t, sm).PropertyIndexes)
 
 	require.NoError(t, sm.AddPropertyIndex("i_name", "Rec", []string{"name"}))
 	require.True(t, sm.isPropertyInStructuralIndex([]string{"Rec"}, "name"))
-	require.Len(t, sm.ExportDefinition().PropertyIndexes, 1)
+	require.Len(t, schemaDefinitionForTest(t, sm).PropertyIndexes, 1)
 }
 
 // Loading a definition recreates the owned index unfilled; a store written
@@ -120,20 +121,20 @@ func TestConstraintPropertyIndexFromDefinition(t *testing.T) {
 	require.NoError(t, source.AddUniqueConstraint("c_uid", "Rec", "uid"))
 
 	loaded := NewSchemaManager()
-	require.NoError(t, loaded.ReplaceFromDefinition(source.ExportDefinition()))
+	require.NoError(t, loaded.ReplaceFromDefinition(context.Background(), schemaDefinitionForTest(t, source)))
 	idx, owned := loaded.ConstraintPropertyIndex("c_uid")
 	require.True(t, owned)
 	require.True(t, idx.unfilled.Load())
 	require.True(t, loaded.MaintainsPropertyIndex("Rec", "uid"))
-	require.False(t, loaded.HasPropertyIndex("Rec", "uid"))
+	require.False(t, checkedIndexRead[bool](t)(loaded.HasPropertyIndex(t.Context(), "Rec", "uid")))
 
-	legacy := source.ExportDefinition()
+	legacy := schemaDefinitionForTest(t, source)
 	legacy.PropertyIndexes = []SchemaPropertyIndexDef{{Name: "i_uid", Label: "Rec", Properties: []string{"uid"}}}
 	both := NewSchemaManager()
-	require.NoError(t, both.ReplaceFromDefinition(legacy))
+	require.NoError(t, both.ReplaceFromDefinition(context.Background(), legacy))
 	_, owned = both.ConstraintPropertyIndex("c_uid")
 	require.False(t, owned)
-	standalone, ok := both.GetPropertyIndex("Rec", "uid")
+	standalone, ok := checkedIndexRange[*PropertyIndex](t)(both.GetPropertyIndex(t.Context(), "Rec", "uid"))
 	require.True(t, ok)
 	require.Equal(t, "i_uid", standalone.Name)
 	require.Empty(t, standalone.OwningConstraint)
@@ -191,13 +192,13 @@ func TestBadgerConstraintPropertyIndexMaintainedAndRebuilt(t *testing.T) {
 	schema := engine.GetSchemaForNamespace("test")
 	require.NoError(t, schema.AddUniqueConstraint("c_uid", "Rec", "uid"))
 
-	_, err := engine.CreateNode(&Node{ID: NodeID(prefixTestID("n1")), Labels: []string{"Rec"}, Properties: map[string]interface{}{"uid": "a"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("n1")), Labels: []string{"Rec"}, Properties: map[string]interface{}{"uid": "a"}})
 	require.NoError(t, err)
-	require.Nil(t, schema.PropertyIndexLookup("Rec", "uid", "a"))
+	require.Nil(t, checkedIndexRead[[]NodeID](t)(schema.PropertyIndexLookup(t.Context(), "Rec", "uid", "a")))
 	require.NoError(t, schema.BackfillPropertyIndex("Rec", "uid", nil))
-	require.Len(t, schema.PropertyIndexLookup("Rec", "uid", "a"), 1)
+	require.Len(t, checkedIndexRead[[]NodeID](t)(schema.PropertyIndexLookup(t.Context(), "Rec", "uid", "a")), 1)
 
-	_, err = engine.CreateNode(&Node{ID: NodeID(prefixTestID("n2")), Labels: []string{"Rec"}, Properties: map[string]interface{}{"uid": "b"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("n2")), Labels: []string{"Rec"}, Properties: map[string]interface{}{"uid": "b"}})
 	require.NoError(t, err)
 	require.NoError(t, engine.Close())
 
@@ -205,7 +206,7 @@ func TestBadgerConstraintPropertyIndexMaintainedAndRebuilt(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reopened.Close() })
 	schema = reopened.GetSchemaForNamespace("test")
-	require.True(t, schema.HasPropertyIndex("Rec", "uid"))
-	require.Len(t, schema.PropertyIndexLookup("Rec", "uid", "a"), 1)
-	require.Len(t, schema.PropertyIndexLookup("Rec", "uid", "b"), 1)
+	require.True(t, checkedIndexRead[bool](t)(schema.HasPropertyIndex(t.Context(), "Rec", "uid")))
+	require.Len(t, checkedIndexRead[[]NodeID](t)(schema.PropertyIndexLookup(t.Context(), "Rec", "uid", "a")), 1)
+	require.Len(t, checkedIndexRead[[]NodeID](t)(schema.PropertyIndexLookup(t.Context(), "Rec", "uid", "b")), 1)
 }

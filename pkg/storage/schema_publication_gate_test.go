@@ -14,7 +14,7 @@ import (
 type schemaPublicationGateMutation struct {
 	name      string
 	apply     func(*SchemaManager) error
-	published func(*SchemaManager) bool
+	published func(t testing.TB, sm *SchemaManager) bool
 }
 
 // schemaPublicationGateMutations is the population of direct persisting schema
@@ -42,35 +42,40 @@ func schemaPublicationGateMutations() []schemaPublicationGateMutation {
 			apply: func(sm *SchemaManager) error {
 				return sm.AddFulltextIndex("direct_fulltext", []string{"Doc"}, []string{"body"}, ConstraintEntityNode)
 			},
-			published: func(sm *SchemaManager) bool { _, ok := sm.GetFulltextIndex("direct_fulltext"); return ok },
+			published: func(t testing.TB, sm *SchemaManager) bool { _, ok := sm.GetFulltextIndex("direct_fulltext"); return ok },
 		},
 		{
-			name:      "property index",
-			apply:     func(sm *SchemaManager) error { return sm.AddPropertyIndex("direct_property", "Doc", []string{"body"}) },
-			published: func(sm *SchemaManager) bool { _, ok := sm.GetCompositeIndex("direct_property"); return ok },
+			name:  "property index",
+			apply: func(sm *SchemaManager) error { return sm.AddPropertyIndex("direct_property", "Doc", []string{"body"}) },
+			published: func(t testing.TB, sm *SchemaManager) bool {
+				_, ok := sm.GetCompositeIndex("direct_property")
+				return ok
+			},
 		},
 		{
 			name:      "range index",
 			apply:     func(sm *SchemaManager) error { return sm.AddRangeIndex("direct_range", "Doc", "body") },
-			published: func(sm *SchemaManager) bool { _, ok := sm.GetRangeIndex("direct_range"); return ok },
+			published: func(t testing.TB, sm *SchemaManager) bool { _, ok := sm.GetRangeIndex("direct_range"); return ok },
 		},
 		{
 			name: "vector index",
 			apply: func(sm *SchemaManager) error {
 				return sm.AddVectorIndex("direct_vector", "Doc", "body", 3, "cosine", ConstraintEntityNode)
 			},
-			published: func(sm *SchemaManager) bool { _, ok := sm.GetVectorIndex("direct_vector"); return ok },
+			published: func(t testing.TB, sm *SchemaManager) bool { _, ok := sm.GetVectorIndex("direct_vector"); return ok },
 		},
 		{
 			name:      "unique constraint",
 			apply:     func(sm *SchemaManager) error { return sm.AddUniqueConstraint("direct_unique", "Doc", "body") },
-			published: func(sm *SchemaManager) bool { return hasConstraint(sm, "direct_unique") },
+			published: func(t testing.TB, sm *SchemaManager) bool { return hasConstraint(sm, "direct_unique") },
 		},
 		{
-			name:  "token registration",
-			apply: func(sm *SchemaManager) error { return sm.RegisterTokens([]string{"Direct"}, []string{"DIRECT"}) },
-			published: func(sm *SchemaManager) bool {
-				definition := sm.ExportDefinition()
+			name: "token registration",
+			apply: func(sm *SchemaManager) error {
+				return sm.RegisterTokens(context.Background(), []string{"Direct"}, []string{"DIRECT"})
+			},
+			published: func(t testing.TB, sm *SchemaManager) bool {
+				definition := schemaDefinitionForTest(t, sm)
 				return hasToken(definition.LabelTokens, "Direct") && hasToken(definition.RelationshipTypeTokens, "DIRECT")
 			},
 		},
@@ -91,7 +96,7 @@ func TestNativeSchemaPublicationGateSerializesDirectSchemaMutations(t *testing.T
 			const namespace = "publicationgate"
 			schema := engine.GetSchemaForNamespace(namespace)
 
-			tx, err := engine.BeginTransaction()
+			tx, err := engine.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			require.NoError(t, tx.SetNamespace(namespace))
 			view, err := tx.Schema(KnowledgePolicyChanges)
@@ -166,7 +171,7 @@ func TestNativeSchemaPublicationGateSerializesDirectSchemaMutations(t *testing.T
 				policies[policy.Name] = true
 			}
 			require.True(t, policies["native"], "the direct mutation must observe the accepted native policy")
-			require.True(t, mutation.published(schema), "the direct schema change is missing from the live schema")
+			require.True(t, mutation.published(t, schema), "the direct schema change is missing from the live schema")
 
 			require.NoError(t, engine.Close())
 			reopened := openPolicyPersistenceEngine(t, dir)
@@ -176,7 +181,7 @@ func TestNativeSchemaPublicationGateSerializesDirectSchemaMutations(t *testing.T
 				durablePolicies[policy.Name] = true
 			}
 			require.True(t, durablePolicies["native"], "the durable definition must retain the accepted native policy")
-			require.True(t, mutation.published(reopenedSchema), "the durable definition must retain the direct schema change")
+			require.True(t, mutation.published(t, reopenedSchema), "the durable definition must retain the direct schema change")
 		})
 	}
 }
@@ -191,7 +196,7 @@ func TestNativeSchemaCommitCanceledWaitingForPublicationGate(t *testing.T) {
 	const namespace = "canceledpublication"
 	schema := engine.GetSchemaForNamespace(namespace)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace(namespace))
 	view, err := tx.Schema(KnowledgePolicyChanges)
@@ -257,18 +262,18 @@ func TestNativeSchemaCommitCanceledWaitingForPublicationGate(t *testing.T) {
 func TestSchemaPublicationGateLeavesEntityOnlyCommitsFree(t *testing.T) {
 	engine := openPolicyPersistenceEngine(t, t.TempDir())
 	schema := engine.GetSchemaForNamespace("entitycommit")
-	require.NoError(t, schema.RegisterTokens([]string{"Doc"}, nil))
+	require.NoError(t, schema.RegisterTokens(t.Context(), []string{"Doc"}, nil))
 
 	schema.publicationGate.Lock()
 	defer schema.publicationGate.Unlock()
 
 	done := make(chan error, 1)
 	go func() {
-		if err := schema.RegisterTokens([]string{"Doc"}, nil); err != nil {
+		if err := schema.RegisterTokens(t.Context(), []string{"Doc"}, nil); err != nil {
 			done <- err
 			return
 		}
-		_, err := engine.CreateNode(&Node{ID: "entitycommit:1", Labels: []string{"Doc"}, Properties: map[string]any{"body": "x"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: "entitycommit:1", Labels: []string{"Doc"}, Properties: map[string]any{"body": "x"}})
 		done <- err
 	}()
 	select {

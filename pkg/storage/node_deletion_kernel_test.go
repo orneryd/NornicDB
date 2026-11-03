@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"github.com/dgraph-io/badger/v4"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/stretchr/testify/require"
@@ -12,10 +13,10 @@ func TestDirectDeleteKernelPhysicalCompletion(t *testing.T) {
 	b := newWriteBehindTestEngine(t, time.Hour)
 	bufferedCreate(t, b, &Node{ID: "test:delete", Labels: []string{"L"}})
 	bufferedWrite(t, b, func(tx *BadgerTransaction) error {
-		return tx.CreateEdge(&Edge{ID: "test:loop", StartNode: "test:delete", EndNode: "test:delete", Type: "SELF"})
+		return tx.CreateEdge(t.Context(), &Edge{ID: "test:loop", StartNode: "test:delete", EndNode: "test:delete", Type: "SELF"})
 	})
 	require.Positive(t, b.writeBehind.PendingOps())
-	require.NoError(t, b.DeleteNode("test:delete"))
+	require.NoError(t, b.DeleteNode(t.Context(), "test:delete"))
 	// Physical storage is checked before Flush, including older acknowledged work.
 	require.NoError(t, b.withView(func(txn *badger.Txn) error {
 		_, e := txn.Get(nodeKey("test:delete"))
@@ -25,14 +26,14 @@ func TestDirectDeleteKernelPhysicalCompletion(t *testing.T) {
 		return nil
 	}))
 	require.Zero(t, b.writeBehind.PendingOps(), "direct deletion was physically committed, not acknowledged into the buffer")
-	nodes, e := b.NodeCount()
+	nodes, e := b.NodeCount(t.Context())
 	require.NoError(t, e)
 	require.Zero(t, nodes)
-	edges, e := b.EdgeCount()
+	edges, e := b.EdgeCount(t.Context())
 	require.NoError(t, e)
 	require.Zero(t, edges)
-	require.NoError(t, b.FlushWriteBehind(nil))
-	_, err := b.GetNode("test:delete")
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
+	_, err := b.GetNode(t.Context(), "test:delete")
 	require.ErrorIs(t, err, ErrNotFound)
 }
 func TestDirectDeleteKernelCatalogAndRollback(t *testing.T) {
@@ -40,19 +41,20 @@ func TestDirectDeleteKernelCatalogAndRollback(t *testing.T) {
 		t.Run(map[bool]string{false: "rollback", true: "commit"}[commit], func(t *testing.T) {
 			b := newTestEngine(t)
 			id := NodeID("test:catalog")
-			_, err := b.CreateNode(&Node{ID: id, Labels: []string{"L"}})
+			_, err := b.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"L"}})
 			require.NoError(t, err)
 			original := &knowledgepolicy.AccessMetaEntry{TargetID: string(id), TargetScope: knowledgepolicy.ScopeNode, HasAccessState: true, LastMutatedAt: 123, HasIndexKeys: true, IndexKeys: [][]byte{{1, 2}}, Deindexed: true}
-			require.NoError(t, b.PutAccessMeta(string(id), original))
+			_, accessWriteErr1 := b.WriteAccessMeta(context.Background(), knowledgepolicy.AccessMetaWriteRequest{Mode: knowledgepolicy.RecordState, EntityID: string(id), Entry: original})
+			require.NoError(t, accessWriteErr1)
 			originalResult, e := b.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: string(id)})
 			require.NoError(t, e)
 			originalEntry := originalResult.Entry
 			if commit {
-				require.NoError(t, b.DeleteNode(id))
+				require.NoError(t, b.DeleteNode(t.Context(), id))
 			} else {
-				tx, e := b.BeginTransaction()
+				tx, e := b.BeginTransaction(t.Context())
 				require.NoError(t, e)
-				require.NoError(t, tx.DeleteGraphNode(id, CascadeEdges))
+				require.NoError(t, tx.DeleteGraphNode(t.Context(), id, CascadeEdges))
 				require.NoError(t, tx.Rollback())
 			}
 			metaResult, e := b.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: string(id)})
@@ -80,18 +82,18 @@ func TestNodeDeletionKernelSelfLoopAndStagedCatalog(t *testing.T) {
 		t.Run(map[bool]string{false: "native", true: "staged"}[staged], func(t *testing.T) {
 			b := newTestEngine(t)
 			id := NodeID("test:self")
-			_, err := b.CreateNode(&Node{ID: id, Labels: []string{"L"}})
+			_, err := b.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"L"}})
 			require.NoError(t, err)
-			require.NoError(t, b.CreateEdge(&Edge{ID: "test:loop", StartNode: id, EndNode: id, Type: "SELF"}))
+			require.NoError(t, b.CreateEdge(t.Context(), &Edge{ID: "test:loop", StartNode: id, EndNode: id, Type: "SELF"}))
 			var result nodeDeletionResult
 			if staged {
-				tx, e := b.BeginTransaction()
+				tx, e := b.BeginTransaction(t.Context())
 				require.NoError(t, e)
 				defer tx.Rollback()
 				_, e = accessMetaInTxn(tx.staged(), string(id), accessMetaWrite, &knowledgepolicy.AccessMetaEntry{TargetID: string(id), TargetScope: knowledgepolicy.ScopeNode, HasAccessState: true, LastMutatedAt: 456, HasIndexKeys: true, IndexKeys: [][]byte{{1, 2}}, Deindexed: true})
 				require.NoError(t, e)
 				tx.mu.Lock()
-				result, err = b.executeNodeDeletion(tx.staged(), id, &Node{ID: id, Labels: []string{"L"}})
+				result, err = b.executeNodeDeletion(t.Context(), tx.staged(), id, &Node{ID: id, Labels: []string{"L"}})
 				tx.mu.Unlock()
 				require.NoError(t, err)
 				meta, e := accessMetaInTxn(tx.staged(), string(id), accessMetaRead, nil)
@@ -101,12 +103,15 @@ func TestNodeDeletionKernelSelfLoopAndStagedCatalog(t *testing.T) {
 				require.Empty(t, meta.IndexKeys)
 				require.False(t, meta.Deindexed)
 				require.NoError(t, tx.Rollback())
-				_, e = b.GetNode(id)
+				_, e = b.GetNode(t.Context(), id)
 				require.NoError(t, e)
-				_, e = b.GetEdge("test:loop")
+				_, e = b.GetEdge(t.Context(), "test:loop")
 				require.NoError(t, e)
 			} else {
-				require.NoError(t, b.withUpdate(updateRequest{}, func(raw *badger.Txn) error { result, err = b.executeNodeDeletion(raw, id, nil); return err }))
+				require.NoError(t, b.withUpdate(context.Background(), updateRequest{}, func(raw *badger.Txn) error {
+					result, err = b.executeNodeDeletion(t.Context(), raw, id, nil)
+					return err
+				}))
 			}
 			require.Equal(t, []EdgeID{"test:loop"}, result.ids)
 			require.Len(t, result.edges, 1)

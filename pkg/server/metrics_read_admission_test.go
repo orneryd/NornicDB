@@ -18,8 +18,14 @@ import (
 // Matches cmd/nornicdb's production Badger probe, including system storage.
 type metricsReadStorageProbe struct{ engine *storage.BadgerEngine }
 
-func (p metricsReadStorageProbe) NodeCount() int64 { n, _ := p.engine.NodeCount(); return n }
-func (p metricsReadStorageProbe) EdgeCount() int64 { n, _ := p.engine.EdgeCount(); return n }
+func (p metricsReadStorageProbe) NodeCount() int64 {
+	n, _ := p.engine.NodeCount(context.Background())
+	return n
+}
+func (p metricsReadStorageProbe) EdgeCount() int64 {
+	n, _ := p.engine.EdgeCount(context.Background())
+	return n
+}
 func (p metricsReadStorageProbe) IDDictCounterNodes() uint64 {
 	n, _ := p.engine.IDDictCounters()
 	return n
@@ -62,17 +68,17 @@ func TestMetricsDatabaseReadAdmission(t *testing.T) {
 				engine, err := s.dbManager.GetStorage(database)
 				require.NoError(t, err)
 				for i := 0; i < size; i++ {
-					_, err = engine.CreateNode(&storage.Node{ID: storage.NodeID(strconv.Itoa(i)), Labels: []string{"MetricSecret"}})
+					_, err = engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(strconv.Itoa(i)), Labels: []string{"MetricSecret"}})
 					require.NoError(t, err)
 				}
-				require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "edge", StartNode: "0", EndNode: "1", Type: "SECRET"}))
+				require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "edge", StartNode: "0", EndNode: "1", Type: "SECRET"}))
 			}
 			require.NoError(t, s.roleStore.CreateRole(ctx, role))
 			require.NoError(t, s.roleEntitlementsStore.Set(ctx, role, []string{"read"}))
 			require.NoError(t, s.allowlistStore.SaveRoleDatabases(ctx, role, []string{"nornic"}))
 			require.NoError(t, s.privilegesStore.SavePrivilege(ctx, role, "nornic", true, false))
 			require.NoError(t, s.privilegesStore.SavePrivilege(ctx, role, "metrics_private", true, false))
-			_, err := users.CreateUser(role, "password123", []auth.Role{auth.Role(role)})
+			_, err := users.CreateUser(context.Background(), role, "password123", []auth.Role{auth.Role(role)})
 			require.NoError(t, err)
 			// Authenticate once: policy edits must apply to this same token.
 			token := "Bearer " + getAuthToken(t, users, role)
@@ -128,7 +134,7 @@ func TestMetricsDatabaseReadAdmission(t *testing.T) {
 			t.Run("read-revoked", func(t *testing.T) { check(t, 2, 1, visibleSlow) })
 			private, err := s.dbManager.GetStorage("metrics_private")
 			require.NoError(t, err)
-			_, err = private.CreateNode(&storage.Node{ID: "new-private", Labels: []string{"MetricSecret"}})
+			_, err = private.CreateNode(t.Context(), &storage.Node{ID: "new-private", Labels: []string{"MetricSecret"}})
 			require.NoError(t, err)
 			t.Run("unreadable-mutation", func(t *testing.T) { check(t, 2, 1, visibleSlow) })
 			require.NoError(t, s.privilegesStore.SavePrivilege(ctx, role, "metrics_private", true, false))
@@ -157,9 +163,9 @@ func TestMetricsDatabaseReadAdmission(t *testing.T) {
 			require.NoError(t, s.privilegesStore.SavePrivilege(ctx, role, "system", true, false))
 			system, err := s.dbManager.GetStorage("system")
 			require.NoError(t, err)
-			systemNodes, err := system.NodeCount()
+			systemNodes, err := system.NodeCount(t.Context())
 			require.NoError(t, err)
-			systemEdges, err := system.EdgeCount()
+			systemEdges, err := system.EdgeCount(t.Context())
 			require.NoError(t, err)
 			systemSlow := float64(0)
 			if tenantLabels {

@@ -77,11 +77,11 @@ func BenchmarkTransactionWrapperAdjacency(b *testing.B) {
 	for _, size := range []int{8, 1024} {
 		base := newTestMemoryEngine(b)
 		tenant := storage.NewNamespacedEngine(base, "tenant")
-		if _, err := tenant.CreateNode(&storage.Node{ID: "x", Labels: []string{"N"}}); err != nil {
+		if _, err := tenant.CreateNode(b.Context(), &storage.Node{ID: "x", Labels: []string{"N"}}); err != nil {
 			b.Fatal(err)
 		}
 		for i := 0; i < size; i++ {
-			if err := tenant.CreateEdge(&storage.Edge{
+			if err := tenant.CreateEdge(b.Context(), &storage.Edge{
 				ID:         storage.EdgeID("e" + strconv.Itoa(i)),
 				StartNode:  "x",
 				EndNode:    "x",
@@ -91,7 +91,7 @@ func BenchmarkTransactionWrapperAdjacency(b *testing.B) {
 				b.Fatal(err)
 			}
 		}
-		tx, err := base.BeginTransaction()
+		tx, err := base.BeginTransaction(b.Context())
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -125,14 +125,14 @@ func BenchmarkTransactionWrapperCount(b *testing.B) {
 			}
 			base := newTestMemoryEngine(b)
 			tenant := storage.NewNamespacedEngine(base, "tenant")
-			if _, err := tenant.CreateNode(&storage.Node{ID: "x", Labels: []string{"N"}}); err != nil {
+			if _, err := tenant.CreateNode(b.Context(), &storage.Node{ID: "x", Labels: []string{"N"}}); err != nil {
 				b.Fatal(err)
 			}
 			for i := 0; i < size; i++ {
-				if _, err := tenant.CreateNode(&storage.Node{ID: storage.NodeID("n" + strconv.Itoa(i)), Labels: []string{"N"}}); err != nil {
+				if _, err := tenant.CreateNode(b.Context(), &storage.Node{ID: storage.NodeID("n" + strconv.Itoa(i)), Labels: []string{"N"}}); err != nil {
 					b.Fatal(err)
 				}
-				if err := tenant.CreateEdge(&storage.Edge{
+				if err := tenant.CreateEdge(b.Context(), &storage.Edge{
 					ID:        storage.EdgeID("e" + strconv.Itoa(i)),
 					StartNode: "x",
 					EndNode:   "x",
@@ -141,7 +141,7 @@ func BenchmarkTransactionWrapperCount(b *testing.B) {
 					b.Fatal(err)
 				}
 			}
-			tx, err := base.BeginTransaction()
+			tx, err := base.BeginTransaction(b.Context())
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -150,10 +150,10 @@ func BenchmarkTransactionWrapperCount(b *testing.B) {
 				b.Fatal(err)
 			}
 			if staged {
-				if _, err := tx.CreateNode(&storage.Node{ID: "tenant:pending", Labels: []string{"N"}}); err != nil {
+				if _, err := tx.CreateNode(b.Context(), &storage.Node{ID: "tenant:pending", Labels: []string{"N"}}); err != nil {
 					b.Fatal(err)
 				}
-				if err := tx.CreateEdge(&storage.Edge{ID: "tenant:pending", StartNode: "tenant:x", EndNode: "tenant:x", Type: "REL"}); err != nil {
+				if err := tx.CreateEdge(b.Context(), &storage.Edge{ID: "tenant:pending", StartNode: "tenant:x", EndNode: "tenant:x", Type: "REL"}); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -162,7 +162,7 @@ func BenchmarkTransactionWrapperCount(b *testing.B) {
 			b.Run(fmt.Sprintf("%s/nodes/%d", decision, size), func(b *testing.B) {
 				b.ReportAllocs()
 				for i := 0; i < b.N; i++ {
-					if _, err := wrapper.NodeCount(); err != nil {
+					if _, err := wrapper.NodeCount(b.Context()); err != nil {
 						b.Fatal(err)
 					}
 				}
@@ -170,7 +170,7 @@ func BenchmarkTransactionWrapperCount(b *testing.B) {
 			b.Run(fmt.Sprintf("%s/edges/%d", decision, size), func(b *testing.B) {
 				b.ReportAllocs()
 				for i := 0; i < b.N; i++ {
-					if _, err := wrapper.EdgeCount(); err != nil {
+					if _, err := wrapper.EdgeCount(b.Context()); err != nil {
 						b.Fatal(err)
 					}
 				}

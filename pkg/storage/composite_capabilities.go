@@ -55,7 +55,7 @@ func (c *CompositeEngine) StreamNodesWithOptions(ctx context.Context, opts Strea
 
 // GetNodeLatestEffective routes latest-effective node reads to the first
 // constituent that resolves the ID.
-func (c *CompositeEngine) GetNodeLatestEffective(id NodeID) (*Node, error) {
+func (c *CompositeEngine) GetNodeLatestEffective(ctx context.Context, id NodeID) (*Node, error) {
 	aliases, local, _ := c.constituentsForEntity("4", string(id))
 	id = NodeID(local)
 	for _, alias := range aliases {
@@ -64,7 +64,7 @@ func (c *CompositeEngine) GetNodeLatestEffective(id NodeID) (*Node, error) {
 			continue
 		}
 		if provider, ok := engine.(MVCCLatestEffectiveEngine); ok {
-			node, err := provider.GetNodeLatestEffective(id)
+			node, err := provider.GetNodeLatestEffective(ctx, id)
 			if err == nil {
 				return c.sourceNode(alias, engine, node), nil
 			}
@@ -73,7 +73,7 @@ func (c *CompositeEngine) GetNodeLatestEffective(id NodeID) (*Node, error) {
 			}
 			continue
 		}
-		node, err := engine.GetNode(id)
+		node, err := engine.GetNode(ctx, id)
 		if err == nil {
 			return c.sourceNode(alias, engine, node), nil
 		}
@@ -86,7 +86,7 @@ func (c *CompositeEngine) GetNodeLatestEffective(id NodeID) (*Node, error) {
 
 // GetEdgeLatestEffective routes latest-effective edge reads to the first
 // constituent that resolves the ID.
-func (c *CompositeEngine) GetEdgeLatestEffective(id EdgeID) (*Edge, error) {
+func (c *CompositeEngine) GetEdgeLatestEffective(ctx context.Context, id EdgeID) (*Edge, error) {
 	aliases, local, _ := c.constituentsForEntity("5", string(id))
 	id = EdgeID(local)
 	for _, alias := range aliases {
@@ -95,7 +95,7 @@ func (c *CompositeEngine) GetEdgeLatestEffective(id EdgeID) (*Edge, error) {
 			continue
 		}
 		if provider, ok := engine.(MVCCLatestEffectiveEngine); ok {
-			edge, err := provider.GetEdgeLatestEffective(id)
+			edge, err := provider.GetEdgeLatestEffective(ctx, id)
 			if err == nil {
 				return c.sourceEdge(alias, engine, edge), nil
 			}
@@ -104,7 +104,7 @@ func (c *CompositeEngine) GetEdgeLatestEffective(id EdgeID) (*Edge, error) {
 			}
 			continue
 		}
-		edge, err := engine.GetEdge(id)
+		edge, err := engine.GetEdge(ctx, id)
 		if err == nil {
 			return c.sourceEdge(alias, engine, edge), nil
 		}
@@ -115,7 +115,7 @@ func (c *CompositeEngine) GetEdgeLatestEffective(id EdgeID) (*Edge, error) {
 	return nil, ErrNotFound
 }
 
-func (c *CompositeEngine) GetNodeLatestVisible(id NodeID) (*Node, error) {
+func (c *CompositeEngine) GetNodeLatestVisible(ctx context.Context, id NodeID) (*Node, error) {
 	aliases, local, _ := c.constituentsForEntity("4", string(id))
 	id = NodeID(local)
 	for _, alias := range aliases {
@@ -124,7 +124,7 @@ func (c *CompositeEngine) GetNodeLatestVisible(id NodeID) (*Node, error) {
 			continue
 		}
 		if provider, ok := engine.(MVCCVisibilityEngine); ok {
-			node, err := provider.GetNodeLatestVisible(id)
+			node, err := provider.GetNodeLatestVisible(ctx, id)
 			if err == nil {
 				return c.sourceNode(alias, engine, node), nil
 			}
@@ -133,7 +133,7 @@ func (c *CompositeEngine) GetNodeLatestVisible(id NodeID) (*Node, error) {
 			}
 			continue
 		}
-		node, err := engine.GetNode(id)
+		node, err := engine.GetNode(ctx, id)
 		if err == nil {
 			return c.sourceNode(alias, engine, node), nil
 		}
@@ -144,7 +144,7 @@ func (c *CompositeEngine) GetNodeLatestVisible(id NodeID) (*Node, error) {
 	return nil, ErrNotFound
 }
 
-func (c *CompositeEngine) GetNodeVisibleAt(id NodeID, version MVCCVersion) (*Node, error) {
+func (c *CompositeEngine) GetNodeVisibleAt(ctx context.Context, id NodeID, version MVCCVersion) (*Node, error) {
 	aliases, local, _ := c.constituentsForEntity("4", string(id))
 	id = NodeID(local)
 	for _, alias := range aliases {
@@ -153,7 +153,7 @@ func (c *CompositeEngine) GetNodeVisibleAt(id NodeID, version MVCCVersion) (*Nod
 			continue
 		}
 		if provider, ok := engine.(MVCCVisibilityEngine); ok {
-			node, err := provider.GetNodeVisibleAt(id, version)
+			node, err := provider.GetNodeVisibleAt(ctx, id, version)
 			if err == nil {
 				return c.sourceNode(alias, engine, node), nil
 			}
@@ -162,7 +162,7 @@ func (c *CompositeEngine) GetNodeVisibleAt(id NodeID, version MVCCVersion) (*Nod
 			}
 			continue
 		}
-		node, err := engine.GetNode(id)
+		node, err := engine.GetNode(ctx, id)
 		if err == nil {
 			return c.sourceNode(alias, engine, node), nil
 		}
@@ -173,7 +173,7 @@ func (c *CompositeEngine) GetNodeVisibleAt(id NodeID, version MVCCVersion) (*Nod
 	return nil, ErrNotFound
 }
 
-func (c *CompositeEngine) GetEdgeLatestVisible(id EdgeID) (*Edge, error) {
+func (c *CompositeEngine) GetEdgeLatestVisible(ctx context.Context, id EdgeID) (*Edge, error) {
 	aliases, local, _ := c.constituentsForEntity("5", string(id))
 	id = EdgeID(local)
 	for _, alias := range aliases {
@@ -182,7 +182,7 @@ func (c *CompositeEngine) GetEdgeLatestVisible(id EdgeID) (*Edge, error) {
 			continue
 		}
 		if provider, ok := engine.(MVCCVisibilityEngine); ok {
-			edge, err := provider.GetEdgeLatestVisible(id)
+			edge, err := provider.GetEdgeLatestVisible(ctx, id)
 			if err == nil {
 				return c.sourceEdge(alias, engine, edge), nil
 			}
@@ -191,7 +191,7 @@ func (c *CompositeEngine) GetEdgeLatestVisible(id EdgeID) (*Edge, error) {
 			}
 			continue
 		}
-		edge, err := engine.GetEdge(id)
+		edge, err := engine.GetEdge(ctx, id)
 		if err == nil {
 			return c.sourceEdge(alias, engine, edge), nil
 		}
@@ -202,7 +202,7 @@ func (c *CompositeEngine) GetEdgeLatestVisible(id EdgeID) (*Edge, error) {
 	return nil, ErrNotFound
 }
 
-func (c *CompositeEngine) GetEdgeVisibleAt(id EdgeID, version MVCCVersion) (*Edge, error) {
+func (c *CompositeEngine) GetEdgeVisibleAt(ctx context.Context, id EdgeID, version MVCCVersion) (*Edge, error) {
 	aliases, local, _ := c.constituentsForEntity("5", string(id))
 	id = EdgeID(local)
 	for _, alias := range aliases {
@@ -211,7 +211,7 @@ func (c *CompositeEngine) GetEdgeVisibleAt(id EdgeID, version MVCCVersion) (*Edg
 			continue
 		}
 		if provider, ok := engine.(MVCCVisibilityEngine); ok {
-			edge, err := provider.GetEdgeVisibleAt(id, version)
+			edge, err := provider.GetEdgeVisibleAt(ctx, id, version)
 			if err == nil {
 				return c.sourceEdge(alias, engine, edge), nil
 			}
@@ -220,7 +220,7 @@ func (c *CompositeEngine) GetEdgeVisibleAt(id EdgeID, version MVCCVersion) (*Edg
 			}
 			continue
 		}
-		edge, err := engine.GetEdge(id)
+		edge, err := engine.GetEdge(ctx, id)
 		if err == nil {
 			return c.sourceEdge(alias, engine, edge), nil
 		}
@@ -233,7 +233,7 @@ func (c *CompositeEngine) GetEdgeVisibleAt(id EdgeID, version MVCCVersion) (*Edg
 
 // --- MVCC heads: route by ID to the owning constituent.
 
-func (c *CompositeEngine) GetNodeCurrentHead(id NodeID) (MVCCHead, error) {
+func (c *CompositeEngine) GetNodeCurrentHead(ctx context.Context, id NodeID) (MVCCHead, error) {
 	aliases, local, _ := c.constituentsForEntity("4", string(id))
 	id = NodeID(local)
 	for _, alias := range aliases {
@@ -242,7 +242,7 @@ func (c *CompositeEngine) GetNodeCurrentHead(id NodeID) (MVCCHead, error) {
 			continue
 		}
 		if provider, ok := engine.(MVCCHeadEngine); ok {
-			head, err := provider.GetNodeCurrentHead(id)
+			head, err := provider.GetNodeCurrentHead(ctx, id)
 			if err == nil {
 				return head, nil
 			}
@@ -254,7 +254,7 @@ func (c *CompositeEngine) GetNodeCurrentHead(id NodeID) (MVCCHead, error) {
 	return MVCCHead{}, ErrNotFound
 }
 
-func (c *CompositeEngine) GetEdgeCurrentHead(id EdgeID) (MVCCHead, error) {
+func (c *CompositeEngine) GetEdgeCurrentHead(ctx context.Context, id EdgeID) (MVCCHead, error) {
 	aliases, local, _ := c.constituentsForEntity("5", string(id))
 	id = EdgeID(local)
 	for _, alias := range aliases {
@@ -263,7 +263,7 @@ func (c *CompositeEngine) GetEdgeCurrentHead(id EdgeID) (MVCCHead, error) {
 			continue
 		}
 		if provider, ok := engine.(MVCCHeadEngine); ok {
-			head, err := provider.GetEdgeCurrentHead(id)
+			head, err := provider.GetEdgeCurrentHead(ctx, id)
 			if err == nil {
 				return head, nil
 			}
@@ -417,7 +417,7 @@ func (c *CompositeEngine) ForEachNodeIDByLabel(ctx context.Context, label string
 // --- Projection, iteration, embedding and mutation versions route across
 // constituents like their non-projected counterparts.
 
-func (c *CompositeEngine) GetNodeProjected(id NodeID, properties []string) (*Node, error) {
+func (c *CompositeEngine) GetNodeProjected(ctx context.Context, id NodeID, properties []string) (*Node, error) {
 	aliases, local, _ := c.constituentsForEntity("4", string(id))
 	id = NodeID(local)
 	for _, alias := range aliases {
@@ -425,7 +425,7 @@ func (c *CompositeEngine) GetNodeProjected(id NodeID, properties []string) (*Nod
 		if err != nil {
 			continue
 		}
-		node, err := getNodeProjectedThrough(engine, id, properties)
+		node, err := getNodeProjectedThrough(ctx, engine, id, properties)
 		if err == nil {
 			return c.sourceNode(alias, engine, node), nil
 		}
@@ -476,7 +476,7 @@ func (c *CompositeEngine) IterateNodes(fn func(*Node) bool) error {
 
 // UpdateNodeEmbeddingSidecar routes the embedding-only sidecar write to the
 // constituent holding the node, without touching any node record.
-func (c *CompositeEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
+func (c *CompositeEngine) UpdateNodeEmbeddingSidecar(ctx context.Context, node *Node) error {
 	if node == nil {
 		return ErrInvalidData
 	}
@@ -485,7 +485,7 @@ func (c *CompositeEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 		if err != nil {
 			continue
 		}
-		if _, err := engine.GetNode(node.ID); err != nil {
+		if _, err := engine.GetNode(ctx, node.ID); err != nil {
 			if errors.Is(err, ErrNotFound) {
 				continue
 			}
@@ -495,7 +495,7 @@ func (c *CompositeEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 		if !ok {
 			return fmt.Errorf("storage engine %T does not support embedding sidecar writes", engine)
 		}
-		return sidecar.UpdateNodeEmbeddingSidecar(node)
+		return sidecar.UpdateNodeEmbeddingSidecar(ctx, node)
 	}
 	return ErrNotFound
 }

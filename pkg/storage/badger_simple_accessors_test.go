@@ -69,18 +69,18 @@ func TestBadgerTransaction_HasPendingNodeMutations(t *testing.T) {
 			be := newTestMemoryEngine(t)
 			if deletion {
 				// Seed a committed node so we can stage a delete in a fresh tx.
-				_, err := be.CreateNode(&Node{ID: "test:committed", Labels: []string{"L"}})
+				_, err := be.CreateNode(t.Context(), &Node{ID: "test:committed", Labels: []string{"L"}})
 				require.NoError(t, err)
 			}
-			tx, err := be.BeginTransaction()
+			tx, err := be.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			require.False(t, tx.HasPendingNodeMutations())
 			if deletion {
-				require.NoError(t, tx.DeleteGraphNode("test:committed", CascadeEdges))
+				require.NoError(t, tx.DeleteGraphNode(t.Context(), "test:committed", CascadeEdges))
 				require.True(t, tx.HasPendingNodeMutations(), "a staged delete should also trigger HasPendingNodeMutations")
 			} else {
-				_, err = tx.CreateNode(&Node{ID: "test:pending-1", Labels: []string{"L"}})
+				_, err = tx.CreateNode(t.Context(), &Node{ID: "test:pending-1", Labels: []string{"L"}})
 				require.NoError(t, err)
 				require.True(t, tx.HasPendingNodeMutations())
 			}
@@ -91,7 +91,7 @@ func TestBadgerTransaction_HasPendingNodeMutations(t *testing.T) {
 func TestReadNodeLabelsInTxn_ReturnsLabels(t *testing.T) {
 	be := newTestMemoryEngine(t)
 
-	_, err := be.CreateNode(&Node{
+	_, err := be.CreateNode(t.Context(), &Node{
 		ID:     "test:ln",
 		Labels: []string{"Alpha", "Beta"},
 	})

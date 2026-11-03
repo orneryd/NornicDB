@@ -14,7 +14,7 @@ func newGDSEngineGraph(t *testing.T, database string, nodes ...*storage.Node) (*
 	t.Helper()
 	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), database)
 	for _, node := range nodes {
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 	exec := NewStorageExecutor(engine)

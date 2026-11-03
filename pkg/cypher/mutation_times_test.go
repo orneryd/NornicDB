@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,20 +24,20 @@ type observationEngine struct {
 	edgeErr      error
 }
 
-func (e *observationEngine) UpdateNode(updateRequest storage.NodeUpdateRequest) error {
+func (e *observationEngine) UpdateNode(ctx context.Context, updateRequest storage.NodeUpdateRequest) error {
 	e.nodeRequests = append(e.nodeRequests, updateRequest)
 	if e.nodeErr != nil {
 		return e.nodeErr
 	}
-	return e.Engine.UpdateNode(updateRequest)
+	return e.Engine.UpdateNode(ctx, updateRequest)
 }
 
-func (e *observationEngine) UpdateEdge(updateRequest storage.EdgeUpdateRequest) error {
+func (e *observationEngine) UpdateEdge(ctx context.Context, updateRequest storage.EdgeUpdateRequest) error {
 	e.edgeRequests = append(e.edgeRequests, updateRequest)
 	if e.edgeErr != nil {
 		return e.edgeErr
 	}
-	return e.Engine.UpdateEdge(updateRequest)
+	return e.Engine.UpdateEdge(ctx, updateRequest)
 }
 
 func (e *observationEngine) lastNodeRequest(t *testing.T) storage.NodeUpdateRequest {
@@ -57,11 +58,11 @@ func TestFailedCypherMutationPreservesVersionTime(t *testing.T) {
 	store := &observationEngine{nodeErr: want, edgeErr: want}
 	node := &storage.Node{CreatedAt: old, UpdatedAt: old}
 	edge := &storage.Edge{CreatedAt: old, UpdatedAt: old}
-	require.ErrorIs(t, mutateNodeWithObservation(store, observeNode(node), node), want)
+	require.ErrorIs(t, mutateNodeWithObservation(t.Context(), store, observeNode(node), node), want)
 	require.Equal(t, old, node.UpdatedAt)
 	require.Equal(t, old, node.CreatedAt)
 	require.Equal(t, old, beforeNode(t, store).UpdatedAt)
-	require.ErrorIs(t, mutateEdgeWithObservation(store, observeEdge(edge), edge), want)
+	require.ErrorIs(t, mutateEdgeWithObservation(t.Context(), store, observeEdge(edge), edge), want)
 	require.Equal(t, old, edge.UpdatedAt)
 	require.Equal(t, old, edge.CreatedAt)
 	require.Equal(t, old, beforeEdge(t, store).UpdatedAt)
@@ -81,9 +82,9 @@ func TestCypherMutationObservationIsTheUnchangedEntity(t *testing.T) {
 		CreatedAt:  old,
 		UpdatedAt:  old,
 	}
-	_, err := source.CreateNode(node)
+	_, err := source.CreateNode(t.Context(), node)
 	require.NoError(t, err)
-	require.NoError(t, mutateNodeWithObservation(store, observeNode(node), node))
+	require.NoError(t, mutateNodeWithObservation(t.Context(), store, observeNode(node), node))
 	nodeRequest := store.lastNodeRequest(t)
 	require.NotNil(t, nodeRequest.Before, "a Cypher mutation always observes the entity it writes")
 	require.Same(t, node, nodeRequest.After)
@@ -104,11 +105,11 @@ func TestCypherMutationObservationIsTheUnchangedEntity(t *testing.T) {
 		UpdatedAt:  old,
 	}
 	for _, id := range []storage.NodeID{"a", "b"} {
-		_, err := source.CreateNode(&storage.Node{ID: id})
+		_, err := source.CreateNode(t.Context(), &storage.Node{ID: id})
 		require.NoError(t, err)
 	}
-	require.NoError(t, source.CreateEdge(edge))
-	require.NoError(t, mutateEdgeWithObservation(store, observeEdge(edge), edge))
+	require.NoError(t, source.CreateEdge(t.Context(), edge))
+	require.NoError(t, mutateEdgeWithObservation(t.Context(), store, observeEdge(edge), edge))
 	edgeRequest := store.lastEdgeRequest(t)
 	require.NotNil(t, edgeRequest.Before)
 	require.Same(t, edge, edgeRequest.After)
@@ -124,63 +125,359 @@ func TestCypherMutationFailureRestoresObservation(t *testing.T) {
 	want := errors.New("storage rejected mutation")
 	store := &observationEngine{Engine: newTestMemoryEngine(t), nodeErr: want, edgeErr: want}
 	node := &storage.Node{ID: "n1", Labels: []string{"Clock"}, Properties: map[string]interface{}{"title": "v1"}, CreatedAt: old, UpdatedAt: old}
-	require.ErrorIs(t, mutateNodeWithObservation(store, observeNode(node), node), want)
+	require.ErrorIs(t, mutateNodeWithObservation(t.Context(), store, observeNode(node), node), want)
 	require.Equal(t, old, node.UpdatedAt, "a failed mutation keeps the caller's version time")
 	require.Equal(t, old, beforeNode(t, store).UpdatedAt, "and so does the observation it shared")
 	edge := &storage.Edge{ID: "e1", Type: "VERSION", Properties: map[string]interface{}{"v": int64(1)}, CreatedAt: old, UpdatedAt: old}
-	require.ErrorIs(t, mutateEdgeWithObservation(store, observeEdge(edge), edge), want)
+	require.ErrorIs(t, mutateEdgeWithObservation(t.Context(), store, observeEdge(edge), edge), want)
 	require.Equal(t, old, edge.UpdatedAt)
 	require.Equal(t, old, beforeEdge(t, store).UpdatedAt)
 }
 
-// TestCypherMutationSendsNoBlindWrite checks that every Cypher mutation path
-// this package owns observes the entity it writes, so storage is never asked to
-// guess an entity's pre-change image.
-func TestCypherMutationSendsNoBlindWrite(t *testing.T) {
-	for _, tc := range []struct {
-		query    string
-		labels   []string
-		property int64
-	}{
-		{"MATCH (n:Clock) SET n.title = 'v2'", []string{"Clock", "Old"}, 1},
-		{"MATCH (n:Clock) SET n += {title: 'v2'}", []string{"Clock", "Old"}, 1},
-		{"MATCH (n:Clock) SET n = {title: 'v2'}", []string{"Clock", "Old"}, 1},
-		{"MATCH (n:Clock) SET n:Changed", []string{"Clock", "Old"}, 1},
-		{"MATCH (n:Clock) REMOVE n.title", []string{"Clock", "Old"}, 1},
-		{"MATCH (n:Clock) REMOVE n:Old", []string{"Clock", "Old"}, 1},
-		{"MATCH (n:Clock) CALL db.create.setNodeVectorProperty(n, 'emb', [2.0,3.0])", []string{"Clock", "Old"}, 1},
-		{"MATCH ()-[r:VERSION]->() SET r.v = 2", nil, 1},
-		{"MATCH ()-[r:VERSION]->() REMOVE r.v", nil, 1},
-		{"MATCH ()-[r:VERSION]->() CALL db.create.setRelationshipVectorProperty(r, 'emb', [2.0,3.0])", nil, 1},
-	} {
+// mutationShapeVersionTime is the version time of every entity a mutation shape
+// starts from, so a test can tell a preserved version from an advanced one.
+var mutationShapeVersionTime = time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
+
+// mutationShape is one user mutation this file covers: the query the supported
+// Execute path runs, the clause its component owner applies to the same entity,
+// and the change that clause makes.
+type mutationShape struct {
+	query  string
+	clause string    // SET/REMOVE clause text; empty for the vector-property procedure
+	vector []float64 // the vector the procedure sets; nil for a clause shape
+	labels []string  // the labels a node clause leaves observed; nil for a relationship shape
+	edge   bool
+	// property is the relationship property value before the clause.
+	property int64
+	// changed asserts the change this shape makes to the entity storage holds.
+	changed func(t *testing.T, node *storage.Node, edge *storage.Edge)
+}
+
+// mutationShapes is the mutation surface this file proves: the SET, REMOVE and
+// vector-property clauses this package owns, for a node and for a relationship.
+func mutationShapes() []mutationShape {
+	onNode := func(check func(t *testing.T, node *storage.Node)) func(*testing.T, *storage.Node, *storage.Edge) {
+		return func(t *testing.T, node *storage.Node, _ *storage.Edge) {
+			check(t, node)
+		}
+	}
+	onEdge := func(check func(t *testing.T, edge *storage.Edge)) func(*testing.T, *storage.Node, *storage.Edge) {
+		return func(t *testing.T, _ *storage.Node, edge *storage.Edge) {
+			check(t, edge)
+		}
+	}
+	observed := []string{"Clock", "Old"}
+	return []mutationShape{
+		{
+			query:    "MATCH (n:Clock) SET n.title = 'v2'",
+			clause:   "SET n.title = 'v2'",
+			labels:   observed,
+			property: 1,
+			changed: onNode(func(t *testing.T, node *storage.Node) {
+				require.Equal(t, "v2", node.Properties["title"], "SET n.title stores the assigned value")
+			}),
+		},
+		{
+			query:    "MATCH (n:Clock) SET n += {title: 'v2'}",
+			clause:   "SET n += {title: 'v2'}",
+			labels:   observed,
+			property: 1,
+			changed: onNode(func(t *testing.T, node *storage.Node) {
+				require.Equal(t, "v2", node.Properties["title"], "SET n += merges the assigned value")
+				require.Equal(t, []float64{1, 2}, node.Properties["emb"], "SET n += keeps the properties it did not name")
+			}),
+		},
+		{
+			query:    "MATCH (n:Clock) SET n = {title: 'v2'}",
+			clause:   "SET n = {title: 'v2'}",
+			labels:   observed,
+			property: 1,
+			changed: onNode(func(t *testing.T, node *storage.Node) {
+				require.Equal(t, map[string]interface{}{"title": "v2"}, node.Properties, "SET n = replaces the property map")
+			}),
+		},
+		{
+			query:    "MATCH (n:Clock) SET n:Changed",
+			clause:   "SET n:Changed",
+			labels:   observed,
+			property: 1,
+			changed: onNode(func(t *testing.T, node *storage.Node) {
+				require.Equal(t, []string{"Clock", "Old", "Changed"}, node.Labels, "SET n:Changed adds the label")
+			}),
+		},
+		{
+			query:    "MATCH (n:Clock) REMOVE n.title",
+			clause:   "REMOVE n.title",
+			labels:   observed,
+			property: 1,
+			changed: onNode(func(t *testing.T, node *storage.Node) {
+				require.NotContains(t, node.Properties, "title", "REMOVE n.title deletes the property")
+			}),
+		},
+		{
+			query:    "MATCH (n:Clock) REMOVE n:Old",
+			clause:   "REMOVE n:Old",
+			labels:   observed,
+			property: 1,
+			changed: onNode(func(t *testing.T, node *storage.Node) {
+				require.Equal(t, []string{"Clock"}, node.Labels, "REMOVE n:Old removes the label")
+			}),
+		},
+		{
+			query:    "MATCH (n:Clock) CALL db.create.setNodeVectorProperty(n, 'emb', [2.0,3.0])",
+			vector:   []float64{2, 3},
+			labels:   observed,
+			property: 1,
+			changed: onNode(func(t *testing.T, node *storage.Node) {
+				require.Equal(t, []float64{2, 3}, node.Properties["emb"], "the vector procedure stores the vector it was given")
+			}),
+		},
+		{
+			query:    "MATCH ()-[r:VERSION]->() SET r.v = 2",
+			clause:   "SET r.v = 2",
+			edge:     true,
+			property: 1,
+			changed: onEdge(func(t *testing.T, edge *storage.Edge) {
+				require.Equal(t, int64(2), edge.Properties["v"], "SET r.v stores the assigned value")
+			}),
+		},
+		{
+			query:    "MATCH ()-[r:VERSION]->() REMOVE r.v",
+			clause:   "REMOVE r.v",
+			edge:     true,
+			property: 1,
+			changed: onEdge(func(t *testing.T, edge *storage.Edge) {
+				require.NotContains(t, edge.Properties, "v", "REMOVE r.v deletes the property")
+			}),
+		},
+		{
+			query:    "MATCH ()-[r:VERSION]->() CALL db.create.setRelationshipVectorProperty(r, 'emb', [2.0,3.0])",
+			vector:   []float64{2, 3},
+			edge:     true,
+			property: 1,
+			changed: onEdge(func(t *testing.T, edge *storage.Edge) {
+				require.Equal(t, []float64{2, 3}, edge.Properties["emb"], "the vector procedure stores the vector it was given")
+			}),
+		},
+	}
+}
+
+// seedMutationShape stores the entities every mutation shape starts from: node
+// "a" carrying the labels, properties and version time the clauses replace, node
+// "b" beside it, and the VERSION relationship between them. It returns the node
+// and relationship a clause owner binds in its row.
+func seedMutationShape(t *testing.T, store storage.Engine) (node *storage.Node, edge *storage.Edge) {
+	t.Helper()
+	old := mutationShapeVersionTime
+	node = &storage.Node{
+		ID:         "a",
+		Labels:     []string{"Clock", "Old"},
+		Properties: map[string]interface{}{"title": "v1", "emb": []float64{1, 2}},
+		CreatedAt:  old,
+		UpdatedAt:  old,
+	}
+	_, err := store.CreateNode(t.Context(), node)
+	require.NoError(t, err)
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"Other"}, Properties: map[string]interface{}{}, CreatedAt: old, UpdatedAt: old})
+	require.NoError(t, err)
+	edge = &storage.Edge{
+		ID:         "e",
+		StartNode:  "a",
+		EndNode:    "b",
+		Type:       "VERSION",
+		Properties: map[string]interface{}{"v": int64(1), "emb": []float64{1, 2}},
+		CreatedAt:  old,
+		UpdatedAt:  old,
+	}
+	require.NoError(t, store.CreateEdge(t.Context(), edge))
+	return node, edge
+}
+
+// TestCypherMutationSendsNoBlindWriteComponent is the COMPONENT check that every
+// Cypher mutation path this package owns observes the entity it writes, so
+// storage is never asked to guess an entity's pre-change image.
+//
+// Each case drives the recording engine through the canonical owner Execute
+// uses for that clause — pipelineApplySet, pipelineApplyRemove or
+// callSetVectorProperty — so the fake genuinely receives the update request,
+// and asserts the exact Before (pre-clause) and After (post-clause) images
+// storage was handed.
+//
+// Coverage boundary: a statement's implicit-transaction admission, commit and
+// rollback owners are not on this path. A plain storage.Engine wrapper does not
+// expose the transaction capability a write statement needs, so Execute refuses
+// such a statement with "engine does not support transactions" before any clause
+// owner runs. TestCypherMutationPublicNativeStoresChangedEntity and
+// TestCypherMutationPublicNativeRollbackAndRefusal run the same mutations
+// through Execute on a transaction-capable store and assert the stored result.
+func TestCypherMutationSendsNoBlindWriteComponent(t *testing.T) {
+	old := mutationShapeVersionTime
+	for _, tc := range mutationShapes() {
 		t.Run(tc.query, func(t *testing.T) {
 			source := storage.NewNamespacedEngine(newTestMemoryEngine(t), "clock")
-			old := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
-			_, err := source.CreateNode(&storage.Node{ID: "a", Labels: []string{"Clock", "Old"}, Properties: map[string]interface{}{"title": "v1", "emb": []float64{1, 2}}, CreatedAt: old, UpdatedAt: old})
-			require.NoError(t, err)
-			_, err = source.CreateNode(&storage.Node{ID: "b", Labels: []string{"Other"}, Properties: map[string]interface{}{}, CreatedAt: old, UpdatedAt: old})
-			require.NoError(t, err)
-			require.NoError(t, source.CreateEdge(&storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "VERSION", Properties: map[string]interface{}{"v": int64(1), "emb": []float64{1, 2}}, CreatedAt: old, UpdatedAt: old}))
+			node, edge := seedMutationShape(t, source)
 			store := &observationEngine{Engine: source}
-			_, err = NewStorageExecutor(store).Execute(context.Background(), tc.query, nil)
-			require.NoError(t, err)
-			require.Len(t, store.nodeRequests, map[bool]int{true: 1, false: 0}[tc.labels != nil], "a node mutation is one observed update")
-			require.Len(t, store.edgeRequests, map[bool]int{true: 0, false: 1}[tc.labels != nil], "a relationship mutation is one observed update")
+			exec := NewStorageExecutor(store)
+			ctx := context.Background()
+			row := pipelineRow{"n": node}
+			if tc.edge {
+				row = pipelineRow{"r": edge}
+			}
+			switch {
+			case tc.vector != nil:
+				entity := interface{}(node)
+				if tc.edge {
+					entity = edge
+				}
+				_, err := exec.callSetVectorProperty(ctx, []interface{}{entity, "emb", tc.vector}, tc.edge)
+				require.NoError(t, err)
+			case strings.HasPrefix(tc.clause, "REMOVE"):
+				require.NoError(t, exec.pipelineApplyRemove(ctx, []pipelineRow{row}, tc.clause, &ExecuteResult{Stats: &QueryStats{}}))
+			default:
+				_, handled, err := exec.pipelineApplySet(ctx, []pipelineRow{row}, tc.clause)
+				require.NoError(t, err)
+				require.True(t, handled, "the SET owner must handle this clause")
+			}
+			if tc.edge {
+				require.Empty(t, store.nodeRequests, "a relationship mutation must not update a node")
+				require.Len(t, store.edgeRequests, 1, "a relationship mutation is one observed update")
+			} else {
+				require.Len(t, store.nodeRequests, 1, "a node mutation is one observed update")
+				require.Empty(t, store.edgeRequests, "a node mutation must not update a relationship")
+			}
 			for _, updateRequest := range store.nodeRequests {
 				require.NotNil(t, updateRequest.Before, "storage receives the observed node")
 				require.Equal(t, "v1", updateRequest.Before.Properties["title"], "the observation keeps the value the clause replaced")
 				require.Equal(t, tc.labels, updateRequest.Before.Labels, "the observation keeps the labels the clause changed")
 				require.True(t, old.Equal(updateRequest.Before.UpdatedAt), "the observation keeps the version the caller read")
 				require.Equal(t, []float64{1, 2}, updateRequest.Before.Properties["emb"], "vector replacement must not rewrite the observed map")
+				require.NotNil(t, updateRequest.After, "the request carries the image this clause wrote")
+				require.False(t, updateRequest.After.UpdatedAt.Before(old), "the image carries this mutation's version time")
+				tc.changed(t, updateRequest.After, nil)
 			}
 			for _, updateRequest := range store.edgeRequests {
 				require.NotNil(t, updateRequest.Before, "storage receives the observed relationship")
 				require.Equal(t, tc.property, updateRequest.Before.Properties["v"], "the observation keeps the value the clause replaced")
-				require.True(t, old.Equal(updateRequest.Before.UpdatedAt))
-				require.Equal(t, []float64{1, 2}, updateRequest.Before.Properties["emb"])
+				require.True(t, old.Equal(updateRequest.Before.UpdatedAt), "the observation keeps the version the caller read")
+				require.Equal(t, []float64{1, 2}, updateRequest.Before.Properties["emb"], "vector replacement must not rewrite the observed map")
+				require.NotNil(t, updateRequest.After, "the request carries the image this clause wrote")
+				require.False(t, updateRequest.After.UpdatedAt.Before(old), "the image carries this mutation's version time")
+				tc.changed(t, nil, updateRequest.After)
 			}
 		})
 	}
+}
+
+// TestCypherMutationPublicNativeStoresChangedEntity is the PUBLIC NATIVE check
+// for the same mutations: each query runs through Execute on a
+// transaction-capable store, as a client statement does.
+//
+// Coverage boundary: the statement's implicit transaction commits the change, so
+// the recording component fake above is not on this path; this test asserts the
+// stored result instead — the value the clause changed, the preserved creation
+// time, the version time this statement set, and the snapshot read before the
+// statement, which storage must replace rather than rewrite.
+func TestCypherMutationPublicNativeStoresChangedEntity(t *testing.T) {
+	old := mutationShapeVersionTime
+	for _, tc := range mutationShapes() {
+		t.Run(tc.query, func(t *testing.T) {
+			store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "clock")
+			seedMutationShape(t, store)
+			snapshotNode, err := store.GetNode(t.Context(), "a")
+			require.NoError(t, err)
+			snapshotEdge, err := store.GetEdge(t.Context(), "e")
+			require.NoError(t, err)
+			before := time.Now()
+			_, err = NewStorageExecutor(store).Execute(context.Background(), tc.query, nil)
+			require.NoError(t, err)
+			node, err := store.GetNode(t.Context(), "a")
+			require.NoError(t, err)
+			edge, err := store.GetEdge(t.Context(), "e")
+			require.NoError(t, err)
+			tc.changed(t, node, edge)
+			if tc.edge {
+				require.True(t, old.Equal(edge.CreatedAt), "mutation must preserve creation time")
+				require.False(t, edge.UpdatedAt.Before(before), "a changed mutation must advance version time")
+				require.False(t, edge.UpdatedAt.After(time.Now()), "version time must describe this mutation")
+				require.Equal(t, tc.property, snapshotEdge.Properties["v"], "the snapshot read before the mutation must not be rewritten")
+				require.Equal(t, []float64{1, 2}, snapshotEdge.Properties["emb"], "the snapshot keeps its unchanged vector")
+				require.True(t, old.Equal(snapshotEdge.UpdatedAt), "the snapshot keeps the version read before the mutation")
+				require.True(t, old.Equal(snapshotEdge.CreatedAt))
+				return
+			}
+			require.True(t, old.Equal(node.CreatedAt), "mutation must preserve creation time")
+			require.False(t, node.UpdatedAt.Before(before), "a changed mutation must advance version time")
+			require.False(t, node.UpdatedAt.After(time.Now()), "version time must describe this mutation")
+			require.Equal(t, "v1", snapshotNode.Properties["title"], "the snapshot read before the mutation must not be rewritten")
+			require.Equal(t, []string{"Clock", "Old"}, snapshotNode.Labels, "the snapshot keeps the labels read before the mutation")
+			require.Equal(t, []float64{1, 2}, snapshotNode.Properties["emb"], "the snapshot keeps its unchanged vector")
+			require.True(t, old.Equal(snapshotNode.UpdatedAt), "the snapshot keeps the version read before the mutation")
+			require.True(t, old.Equal(snapshotNode.CreatedAt))
+		})
+	}
+}
+
+// TestCypherMutationPublicNativeRollbackAndRefusal is the PUBLIC NATIVE control
+// for the same mutations, proven through the supported Execute path: a mutation a
+// client rolls back, and one storage refuses at commit, must leave the stored
+// entity and its version time exactly as they were.
+//
+// Coverage boundary: each ROLLBACK case asserts the committed store after the
+// rollback, so on its own it cannot tell a discarded write from one never made.
+// TestCypherMutationUpdatesVersionTime/*/explicit runs the same statements
+// committed inside an explicit transaction and asserts the change and its new
+// version time are stored; the pair proves ROLLBACK discards a change the
+// statement does apply.
+func TestCypherMutationPublicNativeRollbackAndRefusal(t *testing.T) {
+	old := mutationShapeVersionTime
+	for _, tc := range mutationShapes() {
+		t.Run(tc.query+"/ROLLBACK", func(t *testing.T) {
+			store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "clock")
+			seedMutationShape(t, store)
+			exec := NewStorageExecutor(store)
+			ctx := context.Background()
+			_, err := exec.Execute(ctx, "BEGIN", nil)
+			require.NoError(t, err)
+			t.Cleanup(func() { _, _ = exec.Execute(ctx, "ROLLBACK", nil) })
+			_, err = exec.Execute(ctx, tc.query, nil)
+			require.NoError(t, err)
+			_, err = exec.Execute(ctx, "ROLLBACK", nil)
+			require.NoError(t, err)
+			node, err := store.GetNode(t.Context(), "a")
+			require.NoError(t, err)
+			edge, err := store.GetEdge(t.Context(), "e")
+			require.NoError(t, err)
+			require.Equal(t, "v1", node.Properties["title"], "a rolled-back statement must not reach the node")
+			require.Equal(t, []string{"Clock", "Old"}, node.Labels, "a rolled-back statement must not change node labels")
+			require.Equal(t, []float64{1, 2}, node.Properties["emb"], "a rolled-back statement must not rewrite the node vector")
+			require.True(t, old.Equal(node.UpdatedAt), "a rolled-back statement must not publish a node version time")
+			require.True(t, old.Equal(node.CreatedAt), "a rolled-back statement must not touch node creation time")
+			require.Equal(t, int64(1), edge.Properties["v"], "a rolled-back statement must not reach the relationship")
+			require.Equal(t, []float64{1, 2}, edge.Properties["emb"], "a rolled-back statement must not rewrite the relationship vector")
+			require.True(t, old.Equal(edge.UpdatedAt), "a rolled-back statement must not publish a relationship version time")
+			require.True(t, old.Equal(edge.CreatedAt), "a rolled-back statement must not touch relationship creation time")
+		})
+	}
+
+	t.Run("commit refusal keeps the stored entity", func(t *testing.T) {
+		store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "clock")
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"Clock"}, Properties: map[string]interface{}{"title": "v1", "key": "k1"}, CreatedAt: old, UpdatedAt: old})
+		require.NoError(t, err)
+		_, err = store.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"Clock"}, Properties: map[string]interface{}{"title": "other", "key": "k2"}, CreatedAt: old, UpdatedAt: old})
+		require.NoError(t, err)
+		exec := NewStorageExecutor(store)
+		ctx := context.Background()
+		_, err = exec.Execute(ctx, "CREATE CONSTRAINT clock_key_unique FOR (n:Clock) REQUIRE n.key IS UNIQUE", nil)
+		require.NoError(t, err)
+		_, err = exec.Execute(ctx, "MATCH (n:Clock {title: 'v1'}) SET n.key = 'k2'", nil)
+		var violation *storage.ConstraintViolationError
+		require.ErrorAs(t, err, &violation, "storage must refuse the conflicting value at commit")
+		node, err := store.GetNode(t.Context(), "a")
+		require.NoError(t, err)
+		require.Equal(t, "k1", node.Properties["key"], "a refused mutation must not reach storage")
+		require.True(t, old.Equal(node.UpdatedAt), "a refused mutation must not publish a version time")
+		require.True(t, old.Equal(node.CreatedAt))
+	})
 }
 
 func TestCypherMutationUpdatesVersionTime(t *testing.T) {
@@ -222,10 +519,10 @@ func TestCypherMutationUpdatesVersionTime(t *testing.T) {
 							{ID: "a", Labels: []string{"Clock", "Old"}, Properties: map[string]interface{}{"title": "v1", "emb": []float64{1, 2}}, CreatedAt: old, UpdatedAt: old},
 							{ID: "b", Labels: []string{"Other"}, Properties: map[string]interface{}{}, CreatedAt: old, UpdatedAt: old},
 						} {
-							_, err := store.CreateNode(node)
+							_, err := store.CreateNode(t.Context(), node)
 							require.NoError(t, err)
 						}
-						require.NoError(t, store.CreateEdge(&storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "VERSION", Properties: map[string]interface{}{"v": int64(1), "emb": []float64{1, 2}}, CreatedAt: old, UpdatedAt: old}))
+						require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "VERSION", Properties: map[string]interface{}{"v": int64(1), "emb": []float64{1, 2}}, CreatedAt: old, UpdatedAt: old}))
 						exec := NewStorageExecutor(store)
 						if explicit {
 							_, err := exec.Execute(ctx, "BEGIN", nil)
@@ -241,11 +538,11 @@ func TestCypherMutationUpdatesVersionTime(t *testing.T) {
 						}
 						var created, updated time.Time
 						if tc.edge {
-							edge, err := store.GetEdge("e")
+							edge, err := store.GetEdge(t.Context(), "e")
 							require.NoError(t, err)
 							created, updated = edge.CreatedAt, edge.UpdatedAt
 						} else {
-							node, err := store.GetNode("a")
+							node, err := store.GetNode(t.Context(), "a")
 							require.NoError(t, err)
 							created, updated = node.CreatedAt, node.UpdatedAt
 						}

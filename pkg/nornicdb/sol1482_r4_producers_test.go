@@ -2,10 +2,11 @@ package nornicdb
 
 import (
 	"context"
-	"github.com/orneryd/nornicdb/pkg/storage"
-	"github.com/stretchr/testify/require"
 	"path/filepath"
 	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSol1482R4ColdPersistedNamespaceReset(t *testing.T) {
@@ -21,7 +22,7 @@ func TestSol1482R4ColdPersistedNamespaceReset(t *testing.T) {
 			db, err := Open(config.Database.DataDir, config)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = db.Close() })
-			db.bgWg.Wait()
+			waitDBWorkIdle(t, db)
 			tenant := storage.NewNamespacedEngine(db.GetBaseStorageForManager(), "tenant")
 			dims := config.Memory.EmbeddingDimensions
 			if dims <= 0 {
@@ -29,17 +30,17 @@ func TestSol1482R4ColdPersistedNamespaceReset(t *testing.T) {
 			}
 			vector := make([]float32, dims)
 			vector[0] = 1
-			_, err = tenant.CreateNode(&storage.Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "backupword"}, ChunkEmbeddings: [][]float32{vector}})
+			_, err = tenant.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "backupword"}, ChunkEmbeddings: [][]float32{vector}})
 			require.NoError(t, err)
 			svc, err := db.EnsureSearchIndexes(ctx, "tenant", tenant, SearchIndexBuildWait)
 			require.NoError(t, err)
 			requireIndexed(t, svc, 1, "seed")
 			backup := filepath.Join(t.TempDir(), "backup.bin")
 			require.NoError(t, db.Backup(ctx, backup))
-			node, err := tenant.GetNode("a")
+			node, err := tenant.GetNode(t.Context(), "a")
 			require.NoError(t, err)
 			node.Properties["content"] = "laterword"
-			require.NoError(t, tenant.UpdateNode(storage.NodeUpdateRequest{After: node}))
+			require.NoError(t, tenant.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
 			settleQueuedRefreshes()
 			svc.PersistIndexesToDisk()
 			path, err := searchPersistenceBasePath(config.Database.DataDir, "tenant")
@@ -52,7 +53,7 @@ func TestSol1482R4ColdPersistedNamespaceReset(t *testing.T) {
 			} else {
 				_, _, err = db.GetBaseStorageForManager().DeleteByPrefix("tenant:")
 				require.NoError(t, err)
-				_, err = tenant.CreateNode(&storage.Node{ID: "b", Labels: []string{"Doc"}, Properties: map[string]any{"content": "freshword"}, ChunkEmbeddings: [][]float32{vector}})
+				_, err = tenant.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"Doc"}, Properties: map[string]any{"content": "freshword"}, ChunkEmbeddings: [][]float32{vector}})
 				require.NoError(t, err)
 			}
 			fresh, err := db.EnsureSearchIndexes(ctx, "tenant", tenant, SearchIndexBuildWait)

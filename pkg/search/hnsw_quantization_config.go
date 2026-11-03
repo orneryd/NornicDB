@@ -120,13 +120,15 @@ func (s *Service) hnswConfig() HNSWConfig {
 // The configured policy also applies after graph rebuilds and restarts when
 // the owning collection reloads its durable configuration.
 func (s *Service) ConfigureHNSWQuantization(ctx context.Context, cfg HNSWQuantizationConfig) error {
-	if ctx == nil {
-		ctx = context.Background()
+	ctx, finishRead, err := s.beginRead(ctx)
+	if err != nil {
+		return err
 	}
+	defer finishRead()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	cfg, err := normalizeHNSWQuantizationConfig(cfg)
+	cfg, err = normalizeHNSWQuantizationConfig(cfg)
 	if err != nil {
 		return err
 	}

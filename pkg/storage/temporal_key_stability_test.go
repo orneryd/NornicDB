@@ -33,7 +33,7 @@ func TestTemporalIndexFormat_CleanStartRebuildsOldFormat(t *testing.T) {
 	require.NoError(t, MarkNewTemporalConstraintsForEngine(engine, sm, []Constraint{factWindow}))
 	commitNodes(t, engine, temporalFact("a", int64(1), 0, 10))
 	// Simulate an old store: no format marker, an entry under a foreign hash.
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		if err := txn.Delete(temporalIndexFormatKey); err != nil {
 			return err
 		}
@@ -54,9 +54,9 @@ func TestTemporalIndexFormat_CleanStartRebuildsOldFormat(t *testing.T) {
 	require.True(t, current, "the clean start rebuilt the old-format index")
 	require.True(t, reopened.temporalIndexReady.Load())
 
-	tx, err := reopened.BeginTransaction()
+	tx, err := reopened.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	_, err = tx.CreateNode(temporalFact("b", int64(1), 5, 15))
+	_, err = tx.CreateNode(t.Context(), temporalFact("b", int64(1), 5, 15))
 	require.Error(t, err, "the rebuilt index lists the stored period")
 	require.NoError(t, tx.Rollback())
 }

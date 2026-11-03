@@ -265,7 +265,7 @@ LIMIT 5`
 
 	t.Run("node_search built-in index should work without creation", func(t *testing.T) {
 		// Create test data with searchable content
-		store.CreateNode(&storage.Node{
+		store.CreateNode(t.Context(), &storage.Node{
 			ID:     "test-memory-1",
 			Labels: []string{"Memory"},
 			Properties: map[string]interface{}{
@@ -274,7 +274,7 @@ LIMIT 5`
 				"content": "The authentication system uses JWT tokens for session management",
 			},
 		})
-		store.CreateNode(&storage.Node{
+		store.CreateNode(t.Context(), &storage.Node{
 			ID:     "test-memory-2",
 			Labels: []string{"Memory"},
 			Properties: map[string]interface{}{

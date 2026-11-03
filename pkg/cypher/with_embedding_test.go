@@ -92,7 +92,7 @@ func TestWithEmbedding_SetMutations(t *testing.T) {
 				"MERGE (n:Doc {id:'m1'}) SET n.content='seed content' WITH EMBEDDING RETURN count(n) AS c",
 			},
 			read: func(t *testing.T, store *storage.NamespacedEngine) *storage.Node {
-				node, err := store.GetFirstNodeByLabel("Doc")
+				node, err := store.GetFirstNodeByLabel(t.Context(), "Doc")
 				require.NoError(t, err)
 				require.NotNil(t, node)
 				return node

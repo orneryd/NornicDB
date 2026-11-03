@@ -107,19 +107,19 @@ func (e *walStreamErrorEngine) StreamNodesWithOptions(_ context.Context, _ Strea
 	return e.nodeErr
 }
 
-func (e *walPrefixErrorEngine) NodeCountByPrefix(prefix string) (int64, error) {
+func (e *walPrefixErrorEngine) NodeCountByPrefix(ctx context.Context, prefix string) (int64, error) {
 	return 0, e.nodeErr
 }
 
-func (e *walPrefixErrorEngine) EdgeCountByPrefix(prefix string) (int64, error) {
+func (e *walPrefixErrorEngine) EdgeCountByPrefix(ctx context.Context, prefix string) (int64, error) {
 	return 0, e.edgeErr
 }
 
-func (e *walPrefixStatsEngine) NodeCountByPrefix(prefix string) (int64, error) {
+func (e *walPrefixStatsEngine) NodeCountByPrefix(ctx context.Context, prefix string) (int64, error) {
 	return e.nodeCount, nil
 }
 
-func (e *walPrefixStatsEngine) EdgeCountByPrefix(prefix string) (int64, error) {
+func (e *walPrefixStatsEngine) EdgeCountByPrefix(ctx context.Context, prefix string) (int64, error) {
 	return e.edgeCount, nil
 }
 
@@ -127,16 +127,20 @@ func (e *walSchemaProviderEngine) GetSchemaForNamespace(namespace string) *Schem
 	return e.schema
 }
 
-func (e *walSchemaProviderEngine) NodeCountByPrefix(prefix string) (int64, error) {
-	if stats, ok := e.Engine.(interface{ NodeCountByPrefix(string) (int64, error) }); ok {
-		return stats.NodeCountByPrefix(prefix)
+func (e *walSchemaProviderEngine) NodeCountByPrefix(ctx context.Context, prefix string) (int64, error) {
+	if stats, ok := e.Engine.(interface {
+		NodeCountByPrefix(context.Context, string) (int64, error)
+	}); ok {
+		return stats.NodeCountByPrefix(ctx, prefix)
 	}
 	return 0, nil
 }
 
-func (e *walSchemaProviderEngine) EdgeCountByPrefix(prefix string) (int64, error) {
-	if stats, ok := e.Engine.(interface{ EdgeCountByPrefix(string) (int64, error) }); ok {
-		return stats.EdgeCountByPrefix(prefix)
+func (e *walSchemaProviderEngine) EdgeCountByPrefix(ctx context.Context, prefix string) (int64, error) {
+	if stats, ok := e.Engine.(interface {
+		EdgeCountByPrefix(context.Context, string) (int64, error)
+	}); ok {
+		return stats.EdgeCountByPrefix(ctx, prefix)
 	}
 	return 0, nil
 }
@@ -319,15 +323,15 @@ func (e *walNamespaceListerEngine) ListNamespaces() []string {
 	return append([]string(nil), e.namespaces...)
 }
 
-func (e *walEmbeddingDispatchEngine) UpdateNode(updateRequest NodeUpdateRequest) error {
+func (e *walEmbeddingDispatchEngine) UpdateNode(ctx context.Context, updateRequest NodeUpdateRequest) error {
 	e.updateNodeCalls++
 	if e.updateNodeErr != nil {
 		return e.updateNodeErr
 	}
-	return e.Engine.UpdateNode(updateRequest)
+	return e.Engine.UpdateNode(ctx, updateRequest)
 }
 
-func (e *walEmbeddingDispatchEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
+func (e *walEmbeddingDispatchEngine) UpdateNodeEmbeddingSidecar(ctx context.Context, node *Node) error {
 	e.updateEmbeddingCalls++
 	if e.updateEmbeddingErr != nil {
 		return e.updateEmbeddingErr
@@ -336,7 +340,7 @@ func (e *walEmbeddingDispatchEngine) UpdateNodeEmbeddingSidecar(node *Node) erro
 	if !ok {
 		return fmt.Errorf("storage engine %T does not support embedding sidecar writes", e.Engine)
 	}
-	return sidecar.UpdateNodeEmbeddingSidecar(node)
+	return sidecar.UpdateNodeEmbeddingSidecar(context.Background(), node)
 }
 
 func (l *walCaptureLogger) Log(level, msg string, fields map[string]any) {
@@ -1311,11 +1315,11 @@ func TestSnapshot_CreateAndLoad(t *testing.T) {
 
 	// Create engine with data
 	engine := newTestMemoryEngine(t)
-	_, err = engine.CreateNode(&Node{ID: NodeID(prefixTestID("n1")), Labels: []string{"Person"}, Properties: map[string]any{"name": "Alice"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("n1")), Labels: []string{"Person"}, Properties: map[string]any{"name": "Alice"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: NodeID(prefixTestID("n2")), Labels: []string{"Person"}, Properties: map[string]any{"name": "Bob"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("n2")), Labels: []string{"Person"}, Properties: map[string]any{"name": "Bob"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: EdgeID(prefixTestID("e1")), StartNode: NodeID(prefixTestID("n1")), EndNode: NodeID(prefixTestID("n2")), Type: "KNOWS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: EdgeID(prefixTestID("e1")), StartNode: NodeID(prefixTestID("n1")), EndNode: NodeID(prefixTestID("n2")), Type: "KNOWS"}))
 
 	// Create snapshot
 	snapshot, err := wal.CreateSnapshot(engine)
@@ -1379,7 +1383,7 @@ func TestReplayWALEntry(t *testing.T) {
 		err := ReplayWALEntry(engine, entry)
 		assert.NoError(t, err)
 
-		node, err := engine.GetNode("n1")
+		node, err := engine.GetNode(t.Context(), "n1")
 		assert.NoError(t, err)
 		assert.NotNil(t, node)
 	})
@@ -1387,7 +1391,7 @@ func TestReplayWALEntry(t *testing.T) {
 	t.Run("replay_update_node", func(t *testing.T) {
 		baseEngine := newTestMemoryEngine(t)
 		engine := NewNamespacedEngine(baseEngine, "test")
-		engine.CreateNode(&Node{ID: "n1", Labels: []string{"Test"}})
+		engine.CreateNode(t.Context(), &Node{ID: "n1", Labels: []string{"Test"}})
 
 		entry := WALEntry{
 			Sequence:  2,
@@ -1399,7 +1403,7 @@ func TestReplayWALEntry(t *testing.T) {
 		err := ReplayWALEntry(engine, entry)
 		assert.NoError(t, err)
 
-		node, _ := engine.GetNode("n1")
+		node, _ := engine.GetNode(t.Context(), "n1")
 		// Labels are normalized to lowercase during storage
 		found := false
 		for _, l := range node.Labels {
@@ -1414,7 +1418,7 @@ func TestReplayWALEntry(t *testing.T) {
 	t.Run("replay_delete_node", func(t *testing.T) {
 		baseEngine := newTestMemoryEngine(t)
 		engine := NewNamespacedEngine(baseEngine, "test")
-		engine.CreateNode(&Node{ID: "n1", Labels: []string{"Test"}})
+		engine.CreateNode(t.Context(), &Node{ID: "n1", Labels: []string{"Test"}})
 
 		entry := WALEntry{
 			Sequence:  3,
@@ -1426,15 +1430,15 @@ func TestReplayWALEntry(t *testing.T) {
 		err := ReplayWALEntry(engine, entry)
 		assert.NoError(t, err)
 
-		_, err = engine.GetNode("n1")
+		_, err = engine.GetNode(t.Context(), "n1")
 		assert.Equal(t, ErrNotFound, err)
 	})
 
 	t.Run("replay_create_edge", func(t *testing.T) {
 		baseEngine := newTestMemoryEngine(t)
 		engine := NewNamespacedEngine(baseEngine, "test")
-		engine.CreateNode(&Node{ID: "n1"})
-		engine.CreateNode(&Node{ID: "n2"})
+		engine.CreateNode(t.Context(), &Node{ID: "n1"})
+		engine.CreateNode(t.Context(), &Node{ID: "n2"})
 
 		entry := WALEntry{
 			Sequence:  4,
@@ -1446,7 +1450,7 @@ func TestReplayWALEntry(t *testing.T) {
 		err := ReplayWALEntry(engine, entry)
 		assert.NoError(t, err)
 
-		edge, err := engine.GetEdge("e1")
+		edge, err := engine.GetEdge(t.Context(), "e1")
 		assert.NoError(t, err)
 		assert.NotNil(t, edge)
 	})
@@ -1469,7 +1473,7 @@ func TestReplayWALEntry(t *testing.T) {
 		err := ReplayWALEntry(engine, entry)
 		assert.NoError(t, err)
 
-		count, _ := engine.NodeCount()
+		count, _ := engine.NodeCount(t.Context())
 		assert.Equal(t, int64(2), count)
 	})
 
@@ -1515,9 +1519,9 @@ func TestRecoverFromWAL(t *testing.T) {
 		require.NoError(t, err)
 
 		engine := newTestMemoryEngine(t)
-		_, err = engine.CreateNode(&Node{ID: NodeID(prefixTestID("n1")), Labels: []string{"Original"}})
+		_, err = engine.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("n1")), Labels: []string{"Original"}})
 		require.NoError(t, err)
-		_, err = engine.CreateNode(&Node{ID: NodeID(prefixTestID("n2")), Labels: []string{"Original"}})
+		_, err = engine.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("n2")), Labels: []string{"Original"}})
 		require.NoError(t, err)
 
 		// Create and save snapshot
@@ -1537,10 +1541,10 @@ func TestRecoverFromWAL(t *testing.T) {
 
 		// Verify state (wrap recovered base engine with namespace used in WAL)
 		recoveredNS := NewNamespacedEngine(recovered, "test")
-		count, _ := recoveredNS.NodeCount()
+		count, _ := recoveredNS.NodeCount(t.Context())
 		assert.Equal(t, int64(3), count)
 
-		n1, _ := recoveredNS.GetNode("n1")
+		n1, _ := recoveredNS.GetNode(t.Context(), "n1")
 		// Labels are normalized to lowercase
 		found := false
 		for _, l := range n1.Labels {
@@ -1551,7 +1555,7 @@ func TestRecoverFromWAL(t *testing.T) {
 		}
 		assert.True(t, found, "n1 should have Modified label")
 
-		n3, _ := recoveredNS.GetNode("n3")
+		n3, _ := recoveredNS.GetNode(t.Context(), "n3")
 		assert.NotNil(t, n3)
 	})
 
@@ -1571,7 +1575,7 @@ func TestRecoverFromWAL(t *testing.T) {
 		require.NoError(t, err)
 
 		recoveredNS := NewNamespacedEngine(recovered, "test")
-		count, _ := recoveredNS.NodeCount()
+		count, _ := recoveredNS.NodeCount(t.Context())
 		assert.Equal(t, int64(2), count)
 	})
 
@@ -1586,7 +1590,7 @@ func TestRecoverFromWAL(t *testing.T) {
 		// If no WAL file exists, should still return empty engine (not error)
 		require.NoError(t, err)
 
-		count, _ := recovered.NodeCount()
+		count, _ := recovered.NodeCount(t.Context())
 		assert.Equal(t, int64(0), count) // Empty engine
 	})
 
@@ -1612,7 +1616,7 @@ func TestRecoverFromWAL(t *testing.T) {
 		require.NoError(t, err)
 		recoveredNS := NewNamespacedEngine(recovered, "test")
 
-		node, err := recoveredNS.GetNode("ok-node")
+		node, err := recoveredNS.GetNode(t.Context(), "ok-node")
 		require.NoError(t, err)
 		require.NotNil(t, node)
 	})
@@ -1670,7 +1674,7 @@ func TestRecoverFromWALWithResult_ErrorAndRoutingBranches(t *testing.T) {
 		require.Equal(t, 0, result.Failed)
 
 		ns := NewNamespacedEngine(engine, "tenant_pref")
-		node, getErr := ns.GetNode("n1")
+		node, getErr := ns.GetNode(t.Context(), "n1")
 		require.NoError(t, getErr)
 		require.NotNil(t, node)
 	})
@@ -1766,11 +1770,11 @@ func TestWALEngine(t *testing.T) {
 		defer walEngine.Close()
 
 		// Create node
-		_, err = walEngine.CreateNode(&Node{ID: "n1", Labels: []string{"Test"}})
+		_, err = walEngine.CreateNode(t.Context(), &Node{ID: "n1", Labels: []string{"Test"}})
 		require.NoError(t, err)
 
 		// Verify node exists
-		node, err := walEngine.GetNode("n1")
+		node, err := walEngine.GetNode(t.Context(), "n1")
 		assert.NoError(t, err)
 		assert.NotNil(t, node)
 
@@ -1791,27 +1795,27 @@ func TestWALEngine(t *testing.T) {
 		defer walEngine.Close()
 
 		// Create nodes
-		walEngine.CreateNode(&Node{ID: "n1"})
-		walEngine.CreateNode(&Node{ID: "n2"})
+		walEngine.CreateNode(t.Context(), &Node{ID: "n1"})
+		walEngine.CreateNode(t.Context(), &Node{ID: "n2"})
 
 		// Update node
-		walEngine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "n1", Labels: []string{"Updated"}}})
+		walEngine.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "n1", Labels: []string{"Updated"}}})
 
 		// Create edge
-		walEngine.CreateEdge(&Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS"})
+		walEngine.CreateEdge(t.Context(), &Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS"})
 
 		// Update edge
-		walEngine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "FRIENDS"}})
+		walEngine.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "FRIENDS"}})
 
 		// Delete edge
-		walEngine.DeleteEdge("e1")
+		walEngine.DeleteEdge(t.Context(), "e1")
 
 		// Delete node
-		walEngine.DeleteNode("n2")
+		walEngine.DeleteNode(t.Context(), "n2")
 
 		// Bulk create
-		walEngine.BulkCreateNodes([]*Node{{ID: "b1"}, {ID: "b2"}})
-		walEngine.BulkCreateEdges([]*Edge{{ID: "be1", StartNode: "n1", EndNode: "b1", Type: "TEST"}})
+		walEngine.BulkCreateNodes(t.Context(), []*Node{{ID: "b1"}, {ID: "b2"}})
+		walEngine.BulkCreateEdges(t.Context(), []*Edge{{ID: "be1", StartNode: "n1", EndNode: "b1", Type: "TEST"}})
 
 		// Verify sequence
 		assert.Equal(t, uint64(9), wal.Sequence())
@@ -1824,28 +1828,28 @@ func TestWALEngine(t *testing.T) {
 		require.NoError(t, err)
 
 		engine := newTestMemoryEngine(t)
-		engine.CreateNode(&Node{ID: "n1"})
-		engine.CreateNode(&Node{ID: "n2"})
-		engine.CreateEdge(&Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "TEST"})
+		engine.CreateNode(t.Context(), &Node{ID: "n1"})
+		engine.CreateNode(t.Context(), &Node{ID: "n2"})
+		engine.CreateEdge(t.Context(), &Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "TEST"})
 
 		walEngine := NewWALEngine(engine, wal)
 		defer walEngine.Close()
 
 		// All read operations - should not increase sequence
-		walEngine.GetNode("n1")
-		walEngine.GetEdge("e1")
+		walEngine.GetNode(t.Context(), "n1")
+		walEngine.GetEdge(t.Context(), "e1")
 		walEngine.GetNodesByLabel(context.Background(), "Test")
 		walEngine.GetOutgoingEdges(context.Background(), "n1")
 		walEngine.GetIncomingEdges(context.Background(), "n2")
 		walEngine.GetEdgesBetween(context.Background(), "n1", "n2")
-		walEngine.GetEdgeBetween("n1", "n2", "TEST")
+		walEngine.GetEdgeBetween(t.Context(), "n1", "n2", "TEST")
 		walEngine.AllNodes(context.Background())
 		walEngine.AllEdges(context.Background())
-		walEngine.GetInDegree("n2")
-		walEngine.GetOutDegree("n1")
+		walEngine.GetInDegree(t.Context(), "n2")
+		walEngine.GetOutDegree(t.Context(), "n1")
 		walEngine.GetSchema()
-		walEngine.NodeCount()
-		walEngine.EdgeCount()
+		walEngine.NodeCount(t.Context())
+		walEngine.EdgeCount(t.Context())
 
 		assert.Equal(t, uint64(0), wal.Sequence())
 	})
@@ -1875,15 +1879,15 @@ func TestWALEngine_WithFeatureFlagDisabled(t *testing.T) {
 	defer walEngine.Close()
 
 	// Operations should succeed but not log
-	walEngine.CreateNode(&Node{ID: "n1"})
-	walEngine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "n1", Labels: []string{"Updated"}}})
-	walEngine.DeleteNode("n1")
+	walEngine.CreateNode(t.Context(), &Node{ID: "n1"})
+	walEngine.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "n1", Labels: []string{"Updated"}}})
+	walEngine.DeleteNode(t.Context(), "n1")
 
 	// No entries should be written when disabled
 	assert.Equal(t, uint64(0), wal.Sequence())
 
 	// But operations should still execute
-	_, err = walEngine.GetNode("n1")
+	_, err = walEngine.GetNode(t.Context(), "n1")
 	assert.Equal(t, ErrNotFound, err) // Deleted
 }
 
@@ -2029,7 +2033,7 @@ func BenchmarkWALEngine_CreateNode(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		walEngine.CreateNode(&Node{ID: NodeID("n" + string(rune(i)))})
+		walEngine.CreateNode(b.Context(), &Node{ID: NodeID("n" + string(rune(i)))})
 	}
 }
 
@@ -2194,7 +2198,7 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 		// Add entries before snapshot
 		for i := 1; i <= 5; i++ {
 			node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i))), Labels: []string{"BeforeSnapshot"}}
-			engine.CreateNode(node)
+			engine.CreateNode(t.Context(), node)
 			wal.Append(OpCreateNode, WALNodeData{Node: node})
 		}
 
@@ -2210,7 +2214,7 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 		// Add entries after snapshot
 		for i := 6; i <= 10; i++ {
 			node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i))), Labels: []string{"AfterSnapshot"}}
-			engine.CreateNode(node)
+			engine.CreateNode(t.Context(), node)
 			wal.Append(OpCreateNode, WALNodeData{Node: node})
 		}
 
@@ -2261,7 +2265,7 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 		// Add 100 nodes
 		for i := 1; i <= 100; i++ {
 			prefixed := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i)))}
-			_, err := engine.CreateNode(prefixed)
+			_, err := engine.CreateNode(t.Context(), prefixed)
 			require.NoError(t, err)
 			require.NoError(t, wal.AppendWithDatabase(OpCreateNode, WALNodeData{Node: &Node{ID: NodeID(fmt.Sprintf("n%d", i))}}, "test"))
 		}
@@ -2274,7 +2278,7 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 		// Add 50 more nodes
 		for i := 101; i <= 150; i++ {
 			prefixed := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i)))}
-			_, err := engine.CreateNode(prefixed)
+			_, err := engine.CreateNode(t.Context(), prefixed)
 			require.NoError(t, err)
 			require.NoError(t, wal.AppendWithDatabase(OpCreateNode, WALNodeData{Node: &Node{ID: NodeID(fmt.Sprintf("n%d", i))}}, "test"))
 		}
@@ -2295,20 +2299,20 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 		recoveredNS := NewNamespacedEngine(recovered, "test")
 
 		// Should have all 100 nodes from snapshot + 50 post-snapshot + 1 after truncate
-		count, err := recoveredNS.NodeCount()
+		count, err := recoveredNS.NodeCount(t.Context())
 		require.NoError(t, err)
 		assert.Equal(t, int64(151), count, "Should have 151 nodes after recovery")
 
 		// Verify specific nodes exist
-		n1, err := recoveredNS.GetNode("n1")
+		n1, err := recoveredNS.GetNode(t.Context(), "n1")
 		assert.NoError(t, err)
 		assert.NotNil(t, n1)
 
-		n150, err := recoveredNS.GetNode("n150")
+		n150, err := recoveredNS.GetNode(t.Context(), "n150")
 		assert.NoError(t, err)
 		assert.NotNil(t, n150)
 
-		nAfter, err := recoveredNS.GetNode("n-after-truncate")
+		nAfter, err := recoveredNS.GetNode(t.Context(), "n-after-truncate")
 		assert.NoError(t, err)
 		assert.NotNil(t, nAfter)
 	})
@@ -2328,7 +2332,7 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 		// Add nodes
 		for i := 1; i <= 10; i++ {
 			node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i)))}
-			engine.CreateNode(node)
+			engine.CreateNode(t.Context(), node)
 			wal.Append(OpCreateNode, WALNodeData{Node: node})
 		}
 
@@ -2379,7 +2383,7 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 
 		engine := newTestMemoryEngine(t)
 		n1 := &Node{ID: NodeID(prefixTestID("n1")), Labels: []string{"BeforeSnapshot"}}
-		_, err = engine.CreateNode(n1)
+		_, err = engine.CreateNode(t.Context(), n1)
 		require.NoError(t, err)
 		require.NoError(t, wal.Append(OpCreateNode, WALNodeData{Node: n1}))
 
@@ -2388,7 +2392,7 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 		require.NoError(t, SaveSnapshot(snapshot, snapshotPath))
 
 		n2 := &Node{ID: NodeID(prefixTestID("n2")), Labels: []string{"AfterSnapshot"}}
-		_, err = engine.CreateNode(n2)
+		_, err = engine.CreateNode(t.Context(), n2)
 		require.NoError(t, err)
 		require.NoError(t, wal.Append(OpCreateNode, WALNodeData{Node: n2}))
 		require.NoError(t, wal.Sync())
@@ -2568,7 +2572,7 @@ func TestWALEngine_AutoCompaction(t *testing.T) {
 		// Add many nodes to WAL
 		for i := 1; i <= 50; i++ {
 			node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i)))}
-			walEngine.CreateNode(node)
+			walEngine.CreateNode(t.Context(), node)
 		}
 
 		// Get WAL size before compaction
@@ -2593,7 +2597,7 @@ func TestWALEngine_AutoCompaction(t *testing.T) {
 		// Add more nodes after first compaction
 		for i := 51; i <= 100; i++ {
 			node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i)))}
-			walEngine.CreateNode(node)
+			walEngine.CreateNode(t.Context(), node)
 		}
 
 		// Wait for another snapshot cycle
@@ -2610,7 +2614,7 @@ func TestWALEngine_AutoCompaction(t *testing.T) {
 
 		// Verify all nodes are still accessible (data not lost)
 		for i := 1; i <= 100; i++ {
-			node, err := walEngine.GetNode(NodeID(prefixTestID(fmt.Sprintf("n%d", i))))
+			node, err := walEngine.GetNode(t.Context(), NodeID(prefixTestID(fmt.Sprintf("n%d", i))))
 			assert.NoError(t, err)
 			assert.NotNil(t, node)
 		}
@@ -2641,7 +2645,7 @@ func TestWALEngine_AutoCompaction(t *testing.T) {
 			// Create nodes
 			for i := 1; i <= 100; i++ {
 				node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i)))}
-				walEngine.CreateNode(node)
+				walEngine.CreateNode(t.Context(), node)
 			}
 
 			// Wait for snapshot
@@ -2672,16 +2676,16 @@ func TestWALEngine_AutoCompaction(t *testing.T) {
 		recoveredNS := NewNamespacedEngine(recovered, "test")
 
 		// Verify all data recovered
-		count, err := recoveredNS.NodeCount()
+		count, err := recoveredNS.NodeCount(t.Context())
 		require.NoError(t, err)
 		assert.Equal(t, int64(100), count, "All nodes should be recovered")
 
 		// Spot check nodes
-		n1, err := recoveredNS.GetNode("n1")
+		n1, err := recoveredNS.GetNode(t.Context(), "n1")
 		assert.NoError(t, err)
 		assert.NotNil(t, n1)
 
-		n100, err := recoveredNS.GetNode("n100")
+		n100, err := recoveredNS.GetNode(t.Context(), "n100")
 		assert.NoError(t, err)
 		assert.NotNil(t, n100)
 	})
@@ -2711,7 +2715,7 @@ func TestWALEngine_AutoCompaction(t *testing.T) {
 		// Add nodes
 		for i := 1; i <= 20; i++ {
 			node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i)))}
-			walEngine.CreateNode(node)
+			walEngine.CreateNode(t.Context(), node)
 		}
 
 		// Wait longer than snapshot interval
@@ -2790,7 +2794,7 @@ func TestWALEngine_StreamNodes(t *testing.T) {
 
 	// Create 100 nodes
 	for i := 0; i < 100; i++ {
-		_, err := walEngine.CreateNode(&Node{
+		_, err := walEngine.CreateNode(t.Context(), &Node{
 			ID:     NodeID(prefixTestID(fmt.Sprintf("node-%d", i))),
 			Labels: []string{"Test"},
 		})
@@ -2887,7 +2891,7 @@ func TestWALEngine_ForEachNodeIDByLabel(t *testing.T) {
 	base := newTestMemoryEngine(t)
 
 	for i := 0; i < 5; i++ {
-		_, err := base.CreateNode(&Node{
+		_, err := base.CreateNode(t.Context(), &Node{
 			ID:     NodeID(fmt.Sprintf("nornic:n-%d", i)),
 			Labels: []string{"Person"},
 		})
@@ -2928,7 +2932,7 @@ func TestWALEngine_StreamEdges(t *testing.T) {
 
 	// Create nodes first
 	for i := 0; i < 10; i++ {
-		_, err := walEngine.CreateNode(&Node{
+		_, err := walEngine.CreateNode(t.Context(), &Node{
 			ID:     NodeID(prefixTestID(fmt.Sprintf("node-%d", i))),
 			Labels: []string{"Test"},
 		})
@@ -2937,7 +2941,7 @@ func TestWALEngine_StreamEdges(t *testing.T) {
 
 	// Create edges
 	for i := 0; i < 50; i++ {
-		err := walEngine.CreateEdge(&Edge{
+		err := walEngine.CreateEdge(t.Context(), &Edge{
 			ID:        EdgeID(prefixTestID(fmt.Sprintf("edge-%d", i))),
 			Type:      "CONNECTS",
 			StartNode: NodeID(prefixTestID(fmt.Sprintf("node-%d", i%10))),
@@ -2987,7 +2991,7 @@ func TestWALEngine_StreamNodeChunks(t *testing.T) {
 
 	// Create 100 nodes
 	for i := 0; i < 100; i++ {
-		_, err := walEngine.CreateNode(&Node{
+		_, err := walEngine.CreateNode(t.Context(), &Node{
 			ID:     NodeID(prefixTestID(fmt.Sprintf("node-%d", i))),
 			Labels: []string{"Test"},
 		})
@@ -3009,8 +3013,7 @@ func TestWALEngine_StreamNodeChunks(t *testing.T) {
 }
 
 func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
-	config.EnableWAL()
-	defer config.DisableWAL()
+	t.Cleanup(config.WithWALEnabled())
 
 	newWALEngine := func(t *testing.T, engine Engine) *WALEngine {
 		t.Helper()
@@ -3029,11 +3032,11 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 		}
 		walEngine := newWALEngine(t, engine)
 
-		nodes, err := walEngine.NodeCountByPrefix("test:")
+		nodes, err := walEngine.NodeCountByPrefix(context.Background(), "test:")
 		require.NoError(t, err)
 		assert.Equal(t, int64(1), nodes)
 
-		edges, err := walEngine.EdgeCountByPrefix("test:")
+		edges, err := walEngine.EdgeCountByPrefix(context.Background(), "test:")
 		require.NoError(t, err)
 		assert.Equal(t, int64(1), edges)
 
@@ -3045,10 +3048,10 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 		}
 		walEngine = newWALEngine(t, streamErrEngine)
 
-		_, err = walEngine.NodeCountByPrefix("test:")
+		_, err = walEngine.NodeCountByPrefix(context.Background(), "test:")
 		require.ErrorContains(t, err, "stream nodes failed")
 
-		_, err = walEngine.EdgeCountByPrefix("test:")
+		_, err = walEngine.EdgeCountByPrefix(context.Background(), "test:")
 		require.ErrorContains(t, err, "stream edges failed")
 	})
 
@@ -3065,11 +3068,11 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 		}
 		walEngine := newWALEngine(t, engine)
 
-		nodes, err := walEngine.NodeCountByPrefix("ignored:")
+		nodes, err := walEngine.NodeCountByPrefix(context.Background(), "ignored:")
 		require.NoError(t, err)
 		assert.Equal(t, int64(7), nodes)
 
-		edges, err := walEngine.EdgeCountByPrefix("ignored:")
+		edges, err := walEngine.EdgeCountByPrefix(context.Background(), "ignored:")
 		require.NoError(t, err)
 		assert.Equal(t, int64(4), edges)
 
@@ -3096,11 +3099,11 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 		}
 		walEngine := newWALEngine(t, engine)
 
-		nodes, err := walEngine.NodeCountByPrefix("test:")
+		nodes, err := walEngine.NodeCountByPrefix(context.Background(), "test:")
 		require.NoError(t, err)
 		assert.Equal(t, int64(2), nodes)
 
-		edges, err := walEngine.EdgeCountByPrefix("test:")
+		edges, err := walEngine.EdgeCountByPrefix(context.Background(), "test:")
 		require.NoError(t, err)
 		assert.Equal(t, int64(2), edges)
 	})
@@ -3110,12 +3113,12 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 		engine.SetEmbeddingsEnabled(true)
 		walEngine := newWALEngine(t, engine)
 
-		_, err := engine.CreateNode(&Node{ID: "test:embed", Labels: []string{"Doc"}, Properties: map[string]any{"text": "embed me"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: "test:embed", Labels: []string{"Doc"}, Properties: map[string]any{"text": "embed me"}})
 		require.NoError(t, err)
 		walEngine.AddToPendingEmbeddings("test:embed")
 		assert.Equal(t, 1, walEngine.PendingEmbeddingsCount())
 
-		found := walEngine.FindNodeNeedingEmbedding()
+		found := requireEmbeddingCandidate(t, walEngine.FindNodeNeedingEmbedding)
 		require.NotNil(t, found)
 		assert.Equal(t, NodeID("test:embed"), found.ID)
 
@@ -3136,7 +3139,7 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 		noIter := newWALEngine(t, &exportableOnlyEngine{Engine: noIterBase})
 		err = noIter.IterateNodes(func(node *Node) bool { return true })
 		require.ErrorContains(t, err, "does not support IterateNodes")
-		assert.Nil(t, noIter.FindNodeNeedingEmbedding())
+		assert.Nil(t, requireEmbeddingCandidate(t, noIter.FindNodeNeedingEmbedding))
 		assert.Equal(t, 0, noIter.RefreshPendingEmbeddingsIndex())
 		assert.Equal(t, 0, noIter.PendingEmbeddingsCount())
 		noIter.AddToPendingEmbeddings("test:none")
@@ -3213,11 +3216,11 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 		})
 		require.ErrorIs(t, err, errBoom)
 
-		_, err = base.CreateNode(&Node{ID: "test:drop-n1"})
+		_, err = base.CreateNode(t.Context(), &Node{ID: "test:drop-n1"})
 		require.NoError(t, err)
-		_, err = base.CreateNode(&Node{ID: "other:keep"})
+		_, err = base.CreateNode(t.Context(), &Node{ID: "other:keep"})
 		require.NoError(t, err)
-		require.NoError(t, base.CreateEdge(&Edge{ID: "test:drop-e1", StartNode: "test:drop-n1", EndNode: "other:keep", Type: "REL"}))
+		require.NoError(t, base.CreateEdge(t.Context(), &Edge{ID: "test:drop-e1", StartNode: "test:drop-n1", EndNode: "other:keep", Type: "REL"}))
 
 		nodesDeleted, edgesDeleted, err := walEngine.DeleteByPrefix("test:")
 		require.NoError(t, err)
@@ -3237,7 +3240,7 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 
 		assert.Equal(t, []string{"tenant_a", "tenant_b"}, walEngine.ListNamespaces())
 
-		_, err := walEngine.CreateNode(&Node{ID: NodeID(prefixTestID("last-write-node")), Labels: []string{"Doc"}})
+		_, err := walEngine.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("last-write-node")), Labels: []string{"Doc"}})
 		require.NoError(t, err)
 		lastWrite := walEngine.LastWriteTime()
 		assert.False(t, lastWrite.IsZero())
@@ -3251,7 +3254,7 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 
 		dispatch := &walEmbeddingDispatchEngine{Engine: base}
 		walEngine := newWALEngine(t, dispatch)
-		_, err := walEngine.CreateNode(&Node{
+		_, err := walEngine.CreateNode(t.Context(), &Node{
 			ID:         "tenant_a:embed-node",
 			Labels:     []string{"Doc"},
 			Properties: map[string]any{"k": "v1"},
@@ -3259,7 +3262,7 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 		require.NoError(t, err)
 
 		// The writeback carries the node it embedded (#889).
-		err = walEngine.UpdateNodeEmbeddingSidecar(&Node{
+		err = walEngine.UpdateNodeEmbeddingSidecar(context.Background(), &Node{
 			ID:         "tenant_a:embed-node",
 			Labels:     []string{"Doc"},
 			Properties: map[string]any{"k": "v1"},
@@ -3269,47 +3272,47 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 		assert.Equal(t, 0, dispatch.updateNodeCalls)
 
 		dispatch.updateEmbeddingErr = errors.New("embed dispatch failed")
-		err = walEngine.UpdateNodeEmbeddingSidecar(&Node{ID: "tenant_a:embed-node", Labels: []string{"Doc"}})
+		err = walEngine.UpdateNodeEmbeddingSidecar(context.Background(), &Node{ID: "tenant_a:embed-node", Labels: []string{"Doc"}})
 		require.ErrorContains(t, err, "embed dispatch failed")
 
 		// No silent legacy fallback: an inner engine without the sidecar
 		// capability is reported, never degraded to a node-record write.
 		fallbackEngine := newWALEngine(t, &exportableOnlyEngine{Engine: base})
-		err = fallbackEngine.UpdateNodeEmbeddingSidecar(&Node{
+		err = fallbackEngine.UpdateNodeEmbeddingSidecar(context.Background(), &Node{
 			ID:         "tenant_a:embed-node",
 			Labels:     []string{"Doc"},
 			Properties: map[string]any{"k": "v3"},
 		})
 		require.ErrorContains(t, err, "does not support embedding sidecar writes")
 
-		node, err := base.GetNode("tenant_a:embed-node")
+		node, err := base.GetNode(t.Context(), "tenant_a:embed-node")
 		require.NoError(t, err)
 		require.Equal(t, "v1", node.Properties["k"])
 
-		err = walEngine.BulkCreateNodes([]*Node{
+		err = walEngine.BulkCreateNodes(t.Context(), []*Node{
 			{ID: "tenant_a:n1"},
 			{ID: "tenant_b:n2"},
 		})
 		require.ErrorContains(t, err, "multiple databases")
 
-		err = walEngine.BulkCreateNodes([]*Node{
+		err = walEngine.BulkCreateNodes(t.Context(), []*Node{
 			{ID: "tenant_a:n3"},
 			nil,
 		})
 		require.ErrorIs(t, err, ErrInvalidData)
 
-		err = walEngine.BulkCreateEdges([]*Edge{
+		err = walEngine.BulkCreateEdges(t.Context(), []*Edge{
 			{ID: "tenant_a:e1", StartNode: "tenant_a:n1", EndNode: "tenant_a:n2", Type: "REL"},
 			{ID: "tenant_b:e2", StartNode: "tenant_b:n1", EndNode: "tenant_b:n2", Type: "REL"},
 		})
 		require.ErrorContains(t, err, "multiple databases")
 
-		err = walEngine.BulkCreateEdges([]*Edge{
+		err = walEngine.BulkCreateEdges(t.Context(), []*Edge{
 			{ID: "tenant_a:e3", StartNode: "tenant_b:n1", EndNode: "tenant_a:n2", Type: "REL"},
 		})
 		require.ErrorContains(t, err, "inconsistent database prefixes")
 
-		err = walEngine.BulkCreateEdges([]*Edge{
+		err = walEngine.BulkCreateEdges(t.Context(), []*Edge{
 			{ID: "tenant_a:e4", StartNode: "tenant_a:n1", EndNode: "tenant_a:n2", Type: "REL"},
 			nil,
 		})
@@ -3320,16 +3323,16 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 		engine := newTestMemoryEngine(t)
 		walEngine := newWALEngine(t, engine)
 
-		_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"Doc"}, Properties: map[string]any{"name": "one"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: "test:n1", Labels: []string{"Doc"}, Properties: map[string]any{"name": "one"}})
 		require.NoError(t, err)
-		_, err = engine.CreateNode(&Node{ID: "test:n2", Labels: []string{"Doc"}, Properties: map[string]any{"name": "two"}})
+		_, err = engine.CreateNode(t.Context(), &Node{ID: "test:n2", Labels: []string{"Doc"}, Properties: map[string]any{"name": "two"}})
 		require.NoError(t, err)
-		_, err = engine.CreateNode(&Node{ID: "test:n3", Labels: []string{"Other"}, Properties: map[string]any{"name": "three"}})
+		_, err = engine.CreateNode(t.Context(), &Node{ID: "test:n3", Labels: []string{"Other"}, Properties: map[string]any{"name": "three"}})
 		require.NoError(t, err)
-		require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:n1", EndNode: "test:n2", Type: "REL"}))
-		require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e2", StartNode: "test:n2", EndNode: "test:n3", Type: "REL"}))
+		require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:n1", EndNode: "test:n2", Type: "REL"}))
+		require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e2", StartNode: "test:n2", EndNode: "test:n3", Type: "REL"}))
 
-		first, err := walEngine.GetFirstNodeByLabel("Doc")
+		first, err := walEngine.GetFirstNodeByLabel(t.Context(), "Doc")
 		require.NoError(t, err)
 		require.NotNil(t, first)
 
@@ -3341,10 +3344,10 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, byType, 2)
 
-		require.NoError(t, walEngine.BulkDeleteEdges([]EdgeID{"test:e1", "test:e2"}))
-		_, err = engine.GetEdge("test:e1")
+		require.NoError(t, walEngine.BulkDeleteEdges(t.Context(), []EdgeID{"test:e1", "test:e2"}))
+		_, err = engine.GetEdge(t.Context(), "test:e1")
 		assert.ErrorIs(t, err, ErrNotFound)
-		_, err = engine.GetEdge("test:e2")
+		_, err = engine.GetEdge(t.Context(), "test:e2")
 		assert.ErrorIs(t, err, ErrNotFound)
 	})
 }
@@ -3392,7 +3395,7 @@ func TestFullStorageChain_Streaming(t *testing.T) {
 
 	// Create 100 nodes through the full chain
 	for i := 0; i < 100; i++ {
-		_, err := walEngine.CreateNode(&Node{
+		_, err := walEngine.CreateNode(t.Context(), &Node{
 			ID:     NodeID(prefixTestID(fmt.Sprintf("chain-node-%d", i))),
 			Labels: []string{"ChainTest"},
 		})
@@ -3455,27 +3458,7 @@ func TestCloneNodeForWAL(t *testing.T) {
 	})
 }
 
-func TestCloneEdgeForWAL(t *testing.T) {
-	t.Run("nil edge returns nil", func(t *testing.T) {
-		result := cloneEdgeForWAL("mydb", nil)
-		assert.Nil(t, result)
-	})
-
-	t.Run("strips database prefix from all IDs", func(t *testing.T) {
-		edge := &Edge{
-			ID:         EdgeID("mydb:edge-1"),
-			StartNode:  NodeID("mydb:node-1"),
-			EndNode:    NodeID("mydb:node-2"),
-			Type:       "KNOWS",
-			Properties: map[string]interface{}{"since": 2020},
-		}
-		result := cloneEdgeForWAL("mydb", edge)
-		require.NotNil(t, result)
-		assert.Equal(t, EdgeID("edge-1"), result.ID)
-		assert.Equal(t, NodeID("node-1"), result.StartNode)
-		assert.Equal(t, NodeID("node-2"), result.EndNode)
-		assert.Equal(t, "KNOWS", result.Type)
-		// Original should be unchanged
-		assert.Equal(t, EdgeID("mydb:edge-1"), edge.ID)
-	})
-}
+// These fixtures decorate a native engine transparently; exposing that owner
+// preserves atomic preparation while their distinct optional capabilities are tested.
+func (e *walNamespaceListerEngine) GetInnerEngine() Engine   { return e.Engine }
+func (e *walEmbeddingDispatchEngine) GetInnerEngine() Engine { return e.Engine }

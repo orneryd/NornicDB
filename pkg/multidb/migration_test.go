@@ -31,7 +31,7 @@ func TestMigration_LegacyDataMigration(t *testing.T) {
 			"version":    "1.0",
 		},
 	}
-	_, err := inner.CreateNode(oldNode)
+	_, err := inner.CreateNode(t.Context(), oldNode)
 	require.NoError(t, err)
 
 	oldNode2 := &storage.Node{
@@ -41,7 +41,7 @@ func TestMigration_LegacyDataMigration(t *testing.T) {
 			"version": "1.0",
 		},
 	}
-	_, err = inner.CreateNode(oldNode2)
+	_, err = inner.CreateNode(t.Context(), oldNode2)
 	require.NoError(t, err)
 
 	oldEdge := &storage.Edge{
@@ -53,7 +53,7 @@ func TestMigration_LegacyDataMigration(t *testing.T) {
 			"created_at": "2024-01-01",
 		},
 	}
-	err = inner.CreateEdge(oldEdge)
+	err = inner.CreateEdge(t.Context(), oldEdge)
 	require.NoError(t, err)
 
 	// Step 2: Create DatabaseManager (simulates upgrade to multi-db version)
@@ -62,7 +62,7 @@ func TestMigration_LegacyDataMigration(t *testing.T) {
 	defer manager.Close()
 
 	// Step 3: Verify migration completed
-	assert.True(t, manager.isMigrationComplete(), "Migration should be marked as complete")
+	assert.True(t, manager.isMigrationComplete(t.Context()), "Migration should be marked as complete")
 
 	// Step 4: Verify old data is accessible through default database
 	store, err := manager.GetDefaultStorage()
@@ -118,7 +118,7 @@ func TestMigration_NoUnprefixedData(t *testing.T) {
 	defer manager.Close()
 
 	// Migration should be marked as complete (nothing to migrate)
-	assert.True(t, manager.isMigrationComplete(), "Migration should be marked as complete")
+	assert.True(t, manager.isMigrationComplete(t.Context()), "Migration should be marked as complete")
 
 	// Create new data through namespaced engine (already prefixed)
 	store, err := manager.GetDefaultStorage()
@@ -128,11 +128,11 @@ func TestMigration_NoUnprefixedData(t *testing.T) {
 		ID:     storage.NodeID("new-node"),
 		Labels: []string{"New"},
 	}
-	_, err = store.CreateNode(newNode)
+	_, err = store.CreateNode(t.Context(), newNode)
 	require.NoError(t, err)
 
 	// Verify new data is accessible
-	retrieved, err := store.GetNode(storage.NodeID("new-node"))
+	retrieved, err := store.GetNode(t.Context(), storage.NodeID("new-node"))
 	require.NoError(t, err)
 	assert.Equal(t, "new-node", string(retrieved.ID))
 }
@@ -161,7 +161,7 @@ func TestMigration_MixedData(t *testing.T) {
 			"type": "unprefixed",
 		},
 	}
-	_, err := inner.CreateNode(unprefixedNode)
+	_, err := inner.CreateNode(t.Context(), unprefixedNode)
 	require.NoError(t, err)
 
 	prefixedNode := &storage.Node{
@@ -171,7 +171,7 @@ func TestMigration_MixedData(t *testing.T) {
 			"type": "prefixed",
 		},
 	}
-	_, err = inner.CreateNode(prefixedNode)
+	_, err = inner.CreateNode(t.Context(), prefixedNode)
 	require.NoError(t, err)
 
 	// Create DatabaseManager
@@ -180,7 +180,7 @@ func TestMigration_MixedData(t *testing.T) {
 	defer manager.Close()
 
 	// Migration should complete
-	assert.True(t, manager.isMigrationComplete())
+	assert.True(t, manager.isMigrationComplete(t.Context()))
 
 	// Verify both nodes are accessible
 	store, err := manager.GetDefaultStorage()
@@ -225,14 +225,14 @@ func TestMigration_EdgeRelationshipsPreserved(t *testing.T) {
 		ID:     storage.NodeID("node-1"),
 		Labels: []string{"Test"},
 	}
-	_, err := inner.CreateNode(node1)
+	_, err := inner.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
 
 	node2 := &storage.Node{
 		ID:     storage.NodeID("node-2"),
 		Labels: []string{"Test"},
 	}
-	_, err = inner.CreateNode(node2)
+	_, err = inner.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
 
 	edge := &storage.Edge{
@@ -241,7 +241,7 @@ func TestMigration_EdgeRelationshipsPreserved(t *testing.T) {
 		EndNode:   storage.NodeID("node-2"),
 		Type:      "CONNECTS",
 	}
-	err = inner.CreateEdge(edge)
+	err = inner.CreateEdge(t.Context(), edge)
 	require.NoError(t, err)
 
 	// Migrate
@@ -253,7 +253,7 @@ func TestMigration_EdgeRelationshipsPreserved(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify edge relationships are preserved
-	retrieved, err := store.GetEdge(storage.EdgeID("edge-1"))
+	retrieved, err := store.GetEdge(t.Context(), storage.EdgeID("edge-1"))
 	require.NoError(t, err)
 	assert.Equal(t, storage.NodeID("node-1"), retrieved.StartNode)
 	assert.Equal(t, storage.NodeID("node-2"), retrieved.EndNode)
@@ -285,7 +285,7 @@ func TestMigration_LabelIndexesPreserved(t *testing.T) {
 			"name": "Alice",
 		},
 	}
-	_, err := inner.CreateNode(node1)
+	_, err := inner.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
 
 	node2 := &storage.Node{
@@ -295,7 +295,7 @@ func TestMigration_LabelIndexesPreserved(t *testing.T) {
 			"name": "Bob",
 		},
 	}
-	_, err = inner.CreateNode(node2)
+	_, err = inner.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
 
 	// Migrate
@@ -334,7 +334,7 @@ func TestMigration_CustomDefaultDatabase(t *testing.T) {
 		ID:     storage.NodeID("legacy-node"),
 		Labels: []string{"Legacy"},
 	}
-	_, err := inner.CreateNode(oldNode)
+	_, err := inner.CreateNode(t.Context(), oldNode)
 	require.NoError(t, err)
 
 	// Create manager with custom default database
@@ -349,13 +349,13 @@ func TestMigration_CustomDefaultDatabase(t *testing.T) {
 	defer manager.Close()
 
 	// Verify migration completed
-	assert.True(t, manager.isMigrationComplete())
+	assert.True(t, manager.isMigrationComplete(t.Context()))
 
 	// Verify data is accessible through custom default database
 	store, err := manager.GetStorage("customdb")
 	require.NoError(t, err)
 
-	retrieved, err := store.GetNode(storage.NodeID("legacy-node"))
+	retrieved, err := store.GetNode(t.Context(), storage.NodeID("legacy-node"))
 	require.NoError(t, err)
 	assert.Equal(t, "legacy-node", string(retrieved.ID))
 }
@@ -372,22 +372,22 @@ func TestMigration_NodePropertiesRemainUserOwned(t *testing.T) {
 			}
 			node := &storage.Node{ID: storage.NodeID(id), Labels: []string{label}, Properties: map[string]any{"name": name}}
 			if legacy {
-				_, err := inner.CreateNode(node)
+				_, err := inner.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 			}
 			manager, err := NewDatabaseManager(t.Context(), inner, &Config{DefaultDatabase: "nornic", SystemDatabase: "system", MaxDatabases: 0, AllowDropDefault: false})
 			require.NoError(t, err)
 			defer manager.Close()
 			if legacy {
-				assert.True(t, manager.isMigrationComplete())
+				assert.True(t, manager.isMigrationComplete(t.Context()))
 			}
 			store, err := manager.GetStorage("nornic")
 			require.NoError(t, err)
 			if !legacy {
-				_, err = store.CreateNode(node)
+				_, err = store.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 			}
-			retrieved, err := store.GetNode(storage.NodeID(id))
+			retrieved, err := store.GetNode(t.Context(), storage.NodeID(id))
 			require.NoError(t, err)
 			assert.Equal(t, id, string(retrieved.ID))
 			_, exists := retrieved.Properties["db"]
@@ -403,18 +403,18 @@ func TestMigration_NodePropertiesRemainUserOwned(t *testing.T) {
 func runMigrationVisibility(t *testing.T, seed *storage.Node, readID string, prop string, want any, restart bool) {
 	t.Helper()
 	inner := newLegacyTestEngine(t)
-	_, err := inner.CreateNode(seed)
+	_, err := inner.CreateNode(t.Context(), seed)
 	require.NoError(t, err)
 
 	manager, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
-	assert.True(t, manager.isMigrationComplete())
+	assert.True(t, manager.isMigrationComplete(t.Context()))
 
 	if restart {
 		manager2, err := NewDatabaseManager(t.Context(), inner, nil)
 		require.NoError(t, err)
 		defer manager2.Close()
-		assert.True(t, manager2.isMigrationComplete(), "Migration should already be complete")
+		assert.True(t, manager2.isMigrationComplete(t.Context()), "Migration should already be complete")
 		manager = manager2
 	} else {
 		defer manager.Close()
@@ -422,7 +422,7 @@ func runMigrationVisibility(t *testing.T, seed *storage.Node, readID string, pro
 
 	store, err := manager.GetDefaultStorage()
 	require.NoError(t, err)
-	retrieved, err := store.GetNode(storage.NodeID(readID))
+	retrieved, err := store.GetNode(t.Context(), storage.NodeID(readID))
 	require.NoError(t, err)
 	assert.Equal(t, readID, string(retrieved.ID))
 	assert.Equal(t, want, retrieved.Properties[prop])

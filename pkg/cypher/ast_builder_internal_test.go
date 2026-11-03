@@ -13,10 +13,10 @@ func TestASTBuilderDirectHelperCoverage(t *testing.T) {
 
 	t.Run("canonical clause scanner skips embedded and quoted keywords", func(t *testing.T) {
 		s := "XMATCH MATCH1 MATCH RETURN"
-		assert.Equal(t, 14, keywordIndexFrom(s, "MATCH", 0, defaultKeywordScanOpts()))
-		assert.Equal(t, 7, keywordIndexFrom("MATCH1 MATCH", "MATCH", 0, defaultKeywordScanOpts()))
-		assert.Equal(t, -1, keywordIndexFrom("XMATCH", "MATCH", 0, defaultKeywordScanOpts()))
-		assert.Equal(t, -1, keywordIndexFrom("RETURNING", "RETURN", 0, defaultKeywordScanOpts()))
+		assert.Equal(t, 14, keywordIndexFrom(t.Context(), s, "MATCH", 0, defaultKeywordScanOpts()))
+		assert.Equal(t, 7, keywordIndexFrom(t.Context(), "MATCH1 MATCH", "MATCH", 0, defaultKeywordScanOpts()))
+		assert.Equal(t, -1, keywordIndexFrom(t.Context(), "XMATCH", "MATCH", 0, defaultKeywordScanOpts()))
+		assert.Equal(t, -1, keywordIndexFrom(t.Context(), "RETURNING", "RETURN", 0, defaultKeywordScanOpts()))
 	})
 
 	t.Run("quoted clause names retain their complete RETURN projection", func(t *testing.T) {
@@ -25,7 +25,7 @@ func TestASTBuilderDirectHelperCoverage(t *testing.T) {
 			"RETURN 'MATCH' AS text, {value: 'RETURN'} AS object",
 			"RETURN 1 AS `MATCH`, 2 AS `RETURN`",
 		} {
-			ast, err := builder.Build(source)
+			ast, err := builder.Build(t.Context(), source)
 			require.NoError(t, err)
 			require.Len(t, ast.Clauses, 1, source)
 			require.Equal(t, source, ast.Clauses[0].RawText)
@@ -35,14 +35,14 @@ func TestASTBuilderDirectHelperCoverage(t *testing.T) {
 	})
 
 	t.Run("parseMerge handles on create and on match branches", func(t *testing.T) {
-		merge := builder.parseMerge(cyphertext.NormalizeSource("MERGE (n:Person {id: 1}) ON CREATE SET n.created = timestamp() ON MATCH SET n.updated = timestamp()"))
+		merge := builder.parseMerge(t.Context(), cyphertext.NormalizeSource("MERGE (n:Person {id: 1}) ON CREATE SET n.created = timestamp() ON MATCH SET n.updated = timestamp()"))
 		require.Equal(t, "n", merge.Pattern.Nodes[0].Variable)
 		require.Len(t, merge.OnCreate, 1)
 		require.Len(t, merge.OnMatch, 1)
 		assert.Equal(t, "created", merge.OnCreate[0].Property)
 		assert.Equal(t, "updated", merge.OnMatch[0].Property)
 
-		merge = builder.parseMerge(cyphertext.NormalizeSource("MERGE (n:Person {id: 1}) ON MATCH SET n.seen = true"))
+		merge = builder.parseMerge(t.Context(), cyphertext.NormalizeSource("MERGE (n:Person {id: 1}) ON MATCH SET n.seen = true"))
 		require.Empty(t, merge.OnCreate)
 		require.Len(t, merge.OnMatch, 1)
 	})

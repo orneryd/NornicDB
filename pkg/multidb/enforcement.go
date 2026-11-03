@@ -63,7 +63,7 @@ type LimitChecker interface {
 	// CheckStorageLimits checks if storage operations are within limits.
 	// Returns error if limit would be exceeded.
 	// For create operations, pass the node/edge being created to calculate exact size.
-	CheckStorageLimits(operation string, node *storage.Node, edge *storage.Edge) error
+	CheckStorageLimits(ctx context.Context, operation string, node *storage.Node, edge *storage.Edge) error
 
 	// CheckQueryLimits checks if query execution is allowed.
 	// Returns error if limit would be exceeded.
@@ -138,7 +138,7 @@ func (c *databaseLimitChecker) policy() *databaseLimitPolicy {
 //   - MaxNodes: "has reached max_nodes limit (1000/1000)"
 //   - MaxEdges: "has reached max_edges limit (5000/5000)"
 //   - MaxBytes: "would exceed max_bytes limit (current: 500 bytes, limit: 1024 bytes, new entity: 600 bytes)"
-func (c *databaseLimitChecker) CheckStorageLimits(operation string, node *storage.Node, edge *storage.Edge) error {
+func (c *databaseLimitChecker) CheckStorageLimits(ctx context.Context, operation string, node *storage.Node, edge *storage.Edge) error {
 	limits := c.policy().snapshot()
 	if limits == nil || limits.IsUnlimited() {
 		return nil // No limits
@@ -150,12 +150,12 @@ func (c *databaseLimitChecker) CheckStorageLimits(operation string, node *storag
 		return err
 	}
 
-	nodeCount, err := engine.NodeCount()
+	nodeCount, err := engine.NodeCount(ctx)
 	if err != nil {
 		return localizedError(localization.MultidbStorageGetNodeCountFailed(err), err)
 	}
 
-	edgeCount, err := engine.EdgeCount()
+	edgeCount, err := engine.EdgeCount(ctx)
 	if err != nil {
 		return localizedError(localization.MultidbStorageGetEdgeCountFailed(err), err)
 	}
@@ -190,7 +190,7 @@ func (c *databaseLimitChecker) CheckStorageLimits(operation string, node *storag
 				return localizedError(localization.MultidbStorageCalculateNodeSizeFailed(err), err)
 			}
 		} else if operation == "update_node" && node != nil {
-			existing, getErr := storage.GetStoredNode(engine, node.ID)
+			existing, getErr := storage.GetStoredNode(ctx, engine, node.ID)
 			if getErr != nil {
 				return nil
 			}
@@ -209,7 +209,7 @@ func (c *databaseLimitChecker) CheckStorageLimits(operation string, node *storag
 				return localizedError(localization.MultidbStorageCalculateEdgeSizeFailed(err), err)
 			}
 		} else if operation == "update_edge" && edge != nil {
-			existing, getErr := storage.GetStoredEdge(engine, edge.ID)
+			existing, getErr := storage.GetStoredEdge(ctx, engine, edge.ID)
 			if getErr != nil {
 				return nil
 			}

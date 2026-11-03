@@ -14,41 +14,41 @@ func TestWriteBehind_TypedNodeEdgeIdentityAPI(t *testing.T) {
 		t.Run(fmt.Sprintf("shared=%v", shared), func(t *testing.T) {
 			b := newWriteBehindTestEngine(t, time.Hour)
 			node := &Node{ID: "test:collision", Labels: []string{"Person"}}
-			_, err := b.CreateNode(node)
+			_, err := b.CreateNode(t.Context(), node)
 			require.NoError(t, err)
-			_, err = b.CreateNode(&Node{ID: "test:peer"})
+			_, err = b.CreateNode(t.Context(), &Node{ID: "test:peer"})
 			require.NoError(t, err)
 			id := EdgeID("test:edge-control")
 			if shared {
 				id = EdgeID(node.ID)
 			}
 			edge := &Edge{ID: id, StartNode: node.ID, EndNode: "test:peer", Type: "REL"}
-			require.NoError(t, b.CreateEdge(edge))
+			require.NoError(t, b.CreateEdge(t.Context(), edge))
 			readEdge := func() (*Edge, error) {
-				tx, err := b.BeginTransaction()
+				tx, err := b.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				defer tx.Rollback()
 				require.NoError(t, tx.SetImplicit(true))
 				require.NoError(t, tx.SetNamespace("test"))
-				return tx.GetEdge(id)
+				return tx.GetEdge(t.Context(), id)
 			}
 			before, err := readEdge()
 			require.NoError(t, err, "SETUP: persisted graph and public transaction reader")
 			require.Equal(t, edge.ID, before.ID)
 			t.Log("SETUP PASS: initial graph persisted; public tx.GetEdge accepts identity")
-			bufferedWrite(t, b, func(tx *BadgerTransaction) error { return tx.DeleteGraphNode(node.ID, CascadeEdges) })
+			bufferedWrite(t, b, func(tx *BadgerTransaction) error { return tx.DeleteGraphNode(t.Context(), node.ID, CascadeEdges) })
 			_, err = readEdge()
 			require.ErrorIs(t, err, ErrNotFound, "detach-delete initially hides edge")
 			bufferedCreate(t, b, &Node{ID: node.ID, Labels: node.Labels, Properties: map[string]any{"recreated": true}})
 			require.Greater(t, b.writeBehind.PendingOps(), 0, "mutations stay unflushed")
-			_, err = b.GetNode(node.ID)
+			_, err = b.GetNode(t.Context(), node.ID)
 			require.NoError(t, err)
 			t.Run("point", func(t *testing.T) {
 				_, err := readEdge()
 				require.ErrorIs(t, err, ErrNotFound, "node recreation cannot revive detached edge")
 			})
 			t.Run("type", func(t *testing.T) {
-				tx, err := b.BeginTransaction()
+				tx, err := b.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				defer tx.Rollback()
 				require.NoError(t, tx.SetImplicit(true))

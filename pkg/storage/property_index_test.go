@@ -32,13 +32,13 @@ func TestPropertyIndex_BasicLookup(t *testing.T) {
 	}
 
 	// Lookup "Alice" - should return 2 nodes
-	results := sm.PropertyIndexLookup("Person", "name", "Alice")
+	results := checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "Person", "name", "Alice"))
 	if len(results) != 2 {
 		t.Errorf("Expected 2 results for 'Alice', got %d: %v", len(results), results)
 	}
 
 	// Lookup "Bob" - should return 1 node
-	results = sm.PropertyIndexLookup("Person", "name", "Bob")
+	results = checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "Person", "name", "Bob"))
 	if len(results) != 1 {
 		t.Errorf("Expected 1 result for 'Bob', got %d", len(results))
 	}
@@ -47,7 +47,7 @@ func TestPropertyIndex_BasicLookup(t *testing.T) {
 	}
 
 	// Lookup non-existent value
-	results = sm.PropertyIndexLookup("Person", "name", "Dave")
+	results = checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "Person", "name", "Dave"))
 	if results != nil && len(results) != 0 {
 		t.Errorf("Expected 0 results for 'Dave', got %d", len(results))
 	}
@@ -66,10 +66,10 @@ func TestPropertyIndex_Delete(t *testing.T) {
 	sm.PropertyIndexInsert("User", "email", "user-2", "bob@example.com")
 
 	// Verify both exist
-	if len(sm.PropertyIndexLookup("User", "email", "alice@example.com")) != 1 {
+	if len(checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "User", "email", "alice@example.com"))) != 1 {
 		t.Error("alice@example.com should exist")
 	}
-	if len(sm.PropertyIndexLookup("User", "email", "bob@example.com")) != 1 {
+	if len(checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "User", "email", "bob@example.com"))) != 1 {
 		t.Error("bob@example.com should exist")
 	}
 
@@ -80,13 +80,13 @@ func TestPropertyIndex_Delete(t *testing.T) {
 	}
 
 	// Verify deletion
-	results := sm.PropertyIndexLookup("User", "email", "alice@example.com")
+	results := checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "User", "email", "alice@example.com"))
 	if results != nil && len(results) != 0 {
 		t.Errorf("alice@example.com should be deleted, got %v", results)
 	}
 
 	// bob should still exist
-	if len(sm.PropertyIndexLookup("User", "email", "bob@example.com")) != 1 {
+	if len(checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "User", "email", "bob@example.com"))) != 1 {
 		t.Error("bob@example.com should still exist")
 	}
 }
@@ -95,7 +95,7 @@ func TestPropertyIndex_NonExistentIndex(t *testing.T) {
 	sm := NewSchemaManager()
 
 	// Lookup on non-existent index returns nil
-	results := sm.PropertyIndexLookup("NonExistent", "prop", "value")
+	results := checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "NonExistent", "prop", "value"))
 	if results != nil {
 		t.Errorf("Expected nil for non-existent index, got %v", results)
 	}
@@ -127,12 +127,12 @@ func TestPropertyIndex_NumericValues(t *testing.T) {
 	sm.PropertyIndexInsert("Person", "age", "person-3", 25) // Same age
 
 	// Lookup by integer
-	results := sm.PropertyIndexLookup("Person", "age", 25)
+	results := checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "Person", "age", 25))
 	if len(results) != 2 {
 		t.Errorf("Expected 2 results for age 25, got %d", len(results))
 	}
 
-	results = sm.PropertyIndexLookup("Person", "age", 30)
+	results = checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "Person", "age", 30))
 	if len(results) != 1 {
 		t.Errorf("Expected 1 result for age 30, got %d", len(results))
 	}
@@ -152,7 +152,7 @@ func TestPropertyIndex_NonComparableValuesAreFiledByCanonicalKey(t *testing.T) {
 		t.Fatalf("PropertyIndexInsert of a map value failed: %v", err)
 	}
 
-	results := sm.PropertyIndexLookup("Doc", "payload", map[string]interface{}{"nested": "value"})
+	results := checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "Doc", "payload", map[string]interface{}{"nested": "value"}))
 	if len(results) != 1 || results[0] != "doc-1" {
 		t.Fatalf("expected doc-1 for an equal map value, got: %v", results)
 	}
@@ -160,7 +160,7 @@ func TestPropertyIndex_NonComparableValuesAreFiledByCanonicalKey(t *testing.T) {
 	if err := sm.PropertyIndexDelete("Doc", "payload", "doc-1", nonComparable); err != nil {
 		t.Fatalf("PropertyIndexDelete of a map value failed: %v", err)
 	}
-	if results := sm.PropertyIndexLookup("Doc", "payload", nonComparable); len(results) != 0 {
+	if results := checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "Doc", "payload", nonComparable)); len(results) != 0 {
 		t.Fatalf("expected no rows after delete, got: %v", results)
 	}
 }
@@ -183,21 +183,21 @@ func TestPropertyIndex_SortedKeyCacheInvalidation(t *testing.T) {
 	requireNoErr(sm.PropertyIndexInsert("MongoDocument", "sourceId", "n2", "src-002"))
 
 	// Prime cache.
-	top2 := sm.PropertyIndexTopK("MongoDocument", "sourceId", 2, false)
+	top2 := checkedIndexRead[[]NodeID](t)(sm.PropertyIndexTopK(t.Context(), "MongoDocument", "sourceId", 2, false))
 	if len(top2) != 2 || top2[0] != "n1" || top2[1] != "n2" {
 		t.Fatalf("unexpected top2: %#v", top2)
 	}
 
 	// Add a new lower key; cache must invalidate.
 	requireNoErr(sm.PropertyIndexInsert("MongoDocument", "sourceId", "n0", "src-000"))
-	top2 = sm.PropertyIndexTopK("MongoDocument", "sourceId", 2, false)
+	top2 = checkedIndexRead[[]NodeID](t)(sm.PropertyIndexTopK(t.Context(), "MongoDocument", "sourceId", 2, false))
 	if len(top2) != 2 || top2[0] != "n0" || top2[1] != "n1" {
 		t.Fatalf("unexpected top2 after insert: %#v", top2)
 	}
 
 	// Delete the lowest key; cache must invalidate again.
 	requireNoErr(sm.PropertyIndexDelete("MongoDocument", "sourceId", "n0", "src-000"))
-	top2 = sm.PropertyIndexTopK("MongoDocument", "sourceId", 2, false)
+	top2 = checkedIndexRead[[]NodeID](t)(sm.PropertyIndexTopK(t.Context(), "MongoDocument", "sourceId", 2, false))
 	if len(top2) != 2 || top2[0] != "n1" || top2[1] != "n2" {
 		t.Fatalf("unexpected top2 after delete: %#v", top2)
 	}
@@ -207,7 +207,7 @@ func TestGetPropertyIndex(t *testing.T) {
 	sm := NewSchemaManager()
 
 	// Non-existent index
-	_, exists := sm.GetPropertyIndex("Person", "name")
+	_, exists := checkedIndexRange[*PropertyIndex](t)(sm.GetPropertyIndex(t.Context(), "Person", "name"))
 	if exists {
 		t.Error("Expected index to not exist")
 	}
@@ -219,7 +219,7 @@ func TestGetPropertyIndex(t *testing.T) {
 	}
 
 	// Now it should exist
-	idx, exists := sm.GetPropertyIndex("Person", "name")
+	idx, exists := checkedIndexRange[*PropertyIndex](t)(sm.GetPropertyIndex(t.Context(), "Person", "name"))
 	if !exists {
 		t.Error("Expected index to exist")
 	}
@@ -237,8 +237,11 @@ func BenchmarkPropertyIndex_Lookup(b *testing.B) {
 		sm.PropertyIndexInsert("Node", "value", NodeID("node-"+string(rune(i))), i%100) // 100 distinct values
 	}
 
+	ctx := b.Context()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		sm.PropertyIndexLookup("Node", "value", i%100)
+		if _, err := sm.PropertyIndexLookup(ctx, "Node", "value", i%100); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

@@ -49,18 +49,18 @@ func TestScopedLabelReadsReturnOneDatabase(t *testing.T) {
 	a := NewNamespacedEngine(engine, "a")
 	b := NewNamespacedEngine(engine, "b")
 	for i := 0; i < 3; i++ {
-		_, err := a.CreateNode(&Node{ID: NodeID(fmt.Sprintf("p%d", i)), Labels: []string{"Person"}, Properties: map[string]any{"age": int64(i)}})
+		_, err := a.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("p%d", i)), Labels: []string{"Person"}, Properties: map[string]any{"age": int64(i)}})
 		require.NoError(t, err)
-		_, err = b.CreateNode(&Node{ID: NodeID(fmt.Sprintf("p%d", i)), Labels: []string{"Person"}, Properties: map[string]any{"age": int64(10 + i)}})
+		_, err = b.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("p%d", i)), Labels: []string{"Person"}, Properties: map[string]any{"age": int64(10 + i)}})
 		require.NoError(t, err)
 	}
 	// Writes apply synchronously: a new node in each database, and b's p0
 	// deleted.
-	_, err := a.CreateNode(&Node{ID: "p9", Labels: []string{"Person"}})
+	_, err := a.CreateNode(t.Context(), &Node{ID: "p9", Labels: []string{"Person"}})
 	require.NoError(t, err)
-	_, err = b.CreateNode(&Node{ID: "p9", Labels: []string{"Person"}})
+	_, err = b.CreateNode(t.Context(), &Node{ID: "p9", Labels: []string{"Person"}})
 	require.NoError(t, err)
-	require.NoError(t, b.DeleteNode("p0"))
+	require.NoError(t, b.DeleteNode(t.Context(), "p0"))
 
 	want := []string{"a:p0", "a:p1", "a:p2", "a:p9"}
 	nodes, err := engine.GetNodesByLabelInScope(context.Background(), "a:", "Person")
@@ -72,7 +72,7 @@ func TestScopedLabelReadsReturnOneDatabase(t *testing.T) {
 		return nil
 	}))
 	require.Equal(t, want, sortedIDs(streamed))
-	first, err := engine.GetFirstNodeByLabelInScope("b:", "Person")
+	first, err := engine.GetFirstNodeByLabelInScope(t.Context(), "b:", "Person")
 	require.NoError(t, err)
 	require.Contains(t, []NodeID{"b:p1", "b:p2", "b:p9"}, first.ID)
 
@@ -80,7 +80,7 @@ func TestScopedLabelReadsReturnOneDatabase(t *testing.T) {
 	nodes, err = b.GetNodesByLabel(context.Background(), "Person")
 	require.NoError(t, err)
 	require.Equal(t, []string{"p1", "p2", "p9"}, sortedIDs(nodes))
-	first, err = a.GetFirstNodeByLabel("Person")
+	first, err = a.GetFirstNodeByLabel(t.Context(), "Person")
 	require.NoError(t, err)
 	require.Contains(t, []NodeID{"p0", "p1", "p2", "p9"}, first.ID)
 
@@ -95,7 +95,7 @@ func TestScopedLabelReadsVisibleAtAndInTransactions(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	for _, id := range []NodeID{"a:p1", "a:p2", "b:p1"} {
-		_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"Person"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Person"}})
 		require.NoError(t, err)
 	}
 	version := engine.currentMVCCReadVersion("a")
@@ -108,7 +108,7 @@ func TestScopedLabelReadsVisibleAtAndInTransactions(t *testing.T) {
 
 	// A transaction pinned to a database scans only that database's label
 	// entries, from the snapshot and, without a read version, the engine.
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.Equal(t, "", tx.labelScanScopeLocked(), "unpinned")
@@ -152,7 +152,7 @@ func TestScopedLabelReadCostIgnoresOtherDatabases(t *testing.T) {
 	a := NewNamespacedEngine(engine, "a")
 	b := NewNamespacedEngine(engine, "b")
 	for i := 0; i < 1000; i++ {
-		_, err := a.CreateNode(&Node{ID: NodeID(fmt.Sprintf("n%d", i)), Labels: []string{"Person"}, Properties: map[string]any{"age": int64(i)}})
+		_, err := a.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("n%d", i)), Labels: []string{"Person"}, Properties: map[string]any{"age": int64(i)}})
 		require.NoError(t, err)
 	}
 	scan := func() time.Duration {
@@ -172,7 +172,7 @@ func TestScopedLabelReadCostIgnoresOtherDatabases(t *testing.T) {
 	}
 	alone := scan()
 	for i := 0; i < 50_000; i++ {
-		_, err := b.CreateNode(&Node{ID: NodeID(fmt.Sprintf("n%d", i)), Labels: []string{"Person"}, Properties: map[string]any{"age": int64(i)}})
+		_, err := b.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("n%d", i)), Labels: []string{"Person"}, Properties: map[string]any{"age": int64(i)}})
 		require.NoError(t, err)
 	}
 	shared := scan()

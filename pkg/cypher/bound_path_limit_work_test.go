@@ -34,16 +34,16 @@ func stableBoundPathEdges(edges []*storage.Edge) []*storage.Edge {
 func TestBoundEndpointPathLimitBoundsWork(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "bound_limit")
 	for _, id := range []storage.NodeID{"a", "d"} {
-		_, err := store.CreateNode(&storage.Node{ID: id})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: id})
 		require.NoError(t, err)
 	}
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "00-direct", StartNode: "a", EndNode: "d", Type: "R"}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "00-direct", StartNode: "a", EndNode: "d", Type: "R"}))
 	for i := 0; i < 16; i++ {
 		id := storage.NodeID(fmt.Sprintf("side%d", i))
-		_, err := store.CreateNode(&storage.Node{ID: id})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: id})
 		require.NoError(t, err)
 		for j := 0; j < 2; j++ {
-			require.NoError(t, store.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("side%02d-%d", i, j)), StartNode: "a", EndNode: id, Type: "R"}))
+			require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: storage.EdgeID(fmt.Sprintf("side%02d-%d", i, j)), StartNode: "a", EndNode: id, Type: "R"}))
 		}
 	}
 	engine := &boundedPathWorkEngine{Engine: store}
@@ -67,11 +67,11 @@ func TestBoundEndpointLimitPreservesSelection(t *testing.T) {
 		t.Run(fmt.Sprint(explicit), func(t *testing.T) {
 			store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "bound_controls")
 			for _, id := range []storage.NodeID{"a", "b", "d", "isolated"} {
-				_, err := store.CreateNode(&storage.Node{ID: id})
+				_, err := store.CreateNode(t.Context(), &storage.Node{ID: id})
 				require.NoError(t, err)
 			}
 			for _, edge := range []*storage.Edge{{ID: "00-direct", StartNode: "a", EndNode: "d", Type: "R"}, {ID: "10-ab", StartNode: "a", EndNode: "b", Type: "R"}, {ID: "11-bd", StartNode: "b", EndNode: "d", Type: "R"}, {ID: "12-bd", StartNode: "b", EndNode: "d", Type: "R"}, {ID: "20-loop", StartNode: "a", EndNode: "a", Type: "R"}, {ID: "99-pinned", StartNode: "a", EndNode: "d", Type: "R"}} {
-				require.NoError(t, store.CreateEdge(edge))
+				require.NoError(t, store.CreateEdge(t.Context(), edge))
 			}
 			exec := NewStorageExecutor(store)
 			ctx := context.Background()

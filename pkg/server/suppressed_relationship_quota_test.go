@@ -61,7 +61,7 @@ func TestSuppressedRelationshipIdenticalReMergeIsNoOpAtQuota(t *testing.T) {
 						beforeBody := storedEdge()
 						store, err := h.server.dbManager.GetStorage("nornic")
 						require.NoError(t, err)
-						_, err = store.GetEdge(beforeBody.ID)
+						_, err = store.GetEdge(t.Context(), beforeBody.ID)
 						require.ErrorIs(t, err, storage.ErrNotFound, "the authoritative visibility state hides the stored relationship")
 						beforeTotal, beforeNodes, beforeEdges := h.server.dbManager.GetStorageSize("nornic")
 						require.Positive(t, beforeEdges)
@@ -137,7 +137,7 @@ func TestSuppressedRelationshipRepeatedMergeIsNoOp(t *testing.T) {
 						require.NoError(t, err)
 						require.Len(t, after, 1)
 						require.Equal(t, before[0].Properties, after[0].Properties)
-						_, err = store.GetEdge(before[0].ID)
+						_, err = store.GetEdge(t.Context(), before[0].ID)
 						require.ErrorIs(t, err, storage.ErrNotFound)
 					})
 				}

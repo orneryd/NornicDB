@@ -44,10 +44,10 @@ const mapFromPairsFunction = "__nornic_map_from_pairs"
 // the result with each pass's rewrite, in order (restore them in reverse).
 // cypher25 is the statement's version, which decides where RETURN ALL
 // begins (projectionAllEdits).
-func desugarCypher25Expressions(query string, cypher25 bool) (string, []*queryRewrite, error) {
+func desugarCypher25Expressions(ctx context.Context, query string, cypher25 bool) (string, []*queryRewrite, error) {
 	var rewrites []*queryRewrite
-	projectionAll := func(query string) ([]labelRewriteEdit, error) { return projectionAllEdits(query, cypher25) }
-	for _, pass := range []func(string) ([]labelRewriteEdit, error){interpolationEdits, mapComprehensionEdits, projectionAll, groupByEdits} {
+	projectionAll := func(query string) ([]labelRewriteEdit, error) { return projectionAllEdits(ctx, query, cypher25) }
+	for _, pass := range []func(string) ([]labelRewriteEdit, error){interpolationEdits, func(text string) ([]labelRewriteEdit, error) { return mapComprehensionEdits(ctx, text) }, projectionAll, func(query string) ([]labelRewriteEdit, error) { return groupByEdits(ctx, query) }} {
 		edits, err := pass(query)
 		if err != nil {
 			return query, nil, err
@@ -69,7 +69,7 @@ func desugarCypher25Expressions(query string, cypher25 bool) (string, []*queryRe
 // expression (RETURN all + 1 is RETURN ALL +1, all[0] is ALL [0]), as in
 // Neo4j 2026.09; a Cypher 5 statement reads them as the variable all
 // (Neo4j 5.26).
-func projectionAllEdits(query string, cypher25 bool) ([]labelRewriteEdit, error) {
+func projectionAllEdits(ctx context.Context, query string, cypher25 bool) ([]labelRewriteEdit, error) {
 	if indexASCIIFold(query, "all") < 0 {
 		return nil, nil
 	}
@@ -97,7 +97,7 @@ func projectionAllEdits(query string, cypher25 bool) ([]labelRewriteEdit, error)
 		// In Cypher 5, a complete binding clause ends WITH's all projection.
 		// Cypher 25 retains its ALL modifier before keyword-shaped subscripts.
 		if !cypher25 && equalFoldASCII(word, "WITH") {
-			if _, clause := splitUnwindBody(query[next:]); clause {
+			if _, clause := splitUnwindBody(ctx, query[next:]); clause {
 				return
 			}
 		}
@@ -352,7 +352,7 @@ func fnMapFromPairs(workCtx context.Context, ctx cypherfn.Context, args []string
 }
 
 // mapComprehensionEdits rewrites each {k: v IN map [WHERE p] | key: value}.
-func mapComprehensionEdits(query string) ([]labelRewriteEdit, error) {
+func mapComprehensionEdits(ctx context.Context, query string) ([]labelRewriteEdit, error) {
 	if !strings.Contains(query, "|") {
 		return nil, nil
 	}
@@ -367,7 +367,7 @@ func mapComprehensionEdits(query string) ([]labelRewriteEdit, error) {
 			if close < 0 {
 				return edits, nil
 			}
-			if text, ok := mapComprehensionText(query[i+1 : close]); ok {
+			if text, ok := mapComprehensionText(ctx, query[i+1:close]); ok {
 				edits = append(edits, labelRewriteEdit{start: i, end: close + 1, text: text})
 				i = close
 			}
@@ -383,7 +383,7 @@ func mapComprehensionEdits(query string) ([]labelRewriteEdit, error) {
 //
 //	__nornic_map_from_pairs([k IN keys(m) WHERE any(v IN [m[k]] WHERE p) |
 //	    [v IN [m[k]] | [key, value]][0]])
-func mapComprehensionText(body string) (string, bool) {
+func mapComprehensionText(ctx context.Context, body string) (string, bool) {
 	key, ok := cyphertext.ScanIdentifier(body, skipASCIISpaces(body, 0, len(body)))
 	colon := skipASCIISpaces(body, key.End, len(body))
 	if !ok || colon >= len(body) || body[colon] != ':' {
@@ -400,7 +400,7 @@ func mapComprehensionText(body string) (string, bool) {
 		return "", false
 	}
 	source, predicate := strings.TrimSpace(rest[:bar]), ""
-	if where := topLevelKeywordIndex(source, "WHERE"); where >= 0 {
+	if where := topLevelKeywordIndex(ctx, source, "WHERE"); where >= 0 {
 		source, predicate = strings.TrimSpace(source[:where]), strings.TrimSpace(source[where+len("WHERE"):])
 	}
 	projection := rest[bar+1:]
@@ -414,7 +414,7 @@ func mapComprehensionText(body string) (string, bool) {
 	}
 	// Map comprehensions nested in the parts.
 	for _, part := range []*string{&source, &predicate, &keyExpression, &valueExpression} {
-		if edits, _ := mapComprehensionEdits(*part); len(edits) > 0 {
+		if edits, _ := mapComprehensionEdits(ctx, *part); len(edits) > 0 {
 			*part, _ = applyLabelRewriteEdits(*part, edits, true)
 		}
 	}

@@ -1,6 +1,7 @@
 package multidb
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"reflect"
@@ -137,7 +138,7 @@ func TestManagedWALRebuildCacheBindingsControl(t *testing.T) {
 					view, err := manager.GetStorage("binding_model")
 					require.NoError(t, err)
 					for prior := 0; prior < generation; prior++ {
-						node, err := view.GetNode(storage.NodeID(fmt.Sprintf("n%d", prior)))
+						node, err := view.GetNode(t.Context(), storage.NodeID(fmt.Sprintf("n%d", prior)))
 						require.NoError(t, err)
 						require.Equal(t, fmt.Sprintf("value-%d", prior), node.Properties["v"])
 					}
@@ -146,20 +147,20 @@ func TestManagedWALRebuildCacheBindingsControl(t *testing.T) {
 						// the separately owned cold-reopen deadlock is outside this control.
 						require.NoError(t, manager.SetDatabaseLimits(t.Context(), "binding_model", &Limits{}))
 						node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("n%d", generation)), Properties: map[string]any{"v": fmt.Sprintf("value-%d", generation)}}
-						_, err = view.CreateNode(node)
+						_, err = view.CreateNode(t.Context(), node)
 						require.NoError(t, err)
 						if implicit {
 							// Re-encode the actual catalog body through the buffered writer.
-							tx, err := base.BeginTransaction()
+							tx, err := base.BeginTransaction(t.Context())
 							require.NoError(t, err)
 							require.NoError(t, tx.SetNamespace("system"))
 							require.NoError(t, tx.SetImplicit(true))
-							catalog, err := tx.GetNode(storage.NodeID("system:" + metadataNodeID))
+							catalog, err := tx.GetNode(t.Context(), storage.NodeID("system:"+metadataNodeID))
 							require.NoError(t, err)
-							require.NoError(t, tx.UpdateGraphNode(storage.NodeUpdateRequest{After: catalog, Policy: storage.ClientNodeEdits}))
+							require.NoError(t, tx.UpdateGraphNode(t.Context(), storage.NodeUpdateRequest{After: catalog, Policy: storage.ClientNodeEdits}))
 							require.NoError(t, tx.Commit())
 						}
-						require.NoError(t, base.FlushWriteBehind(nil))
+						require.NoError(t, base.FlushWriteBehind(context.Background()))
 					}
 					require.NoError(t, manager.Close())
 					audit := auditManagedCatalogDisk(t, dataDir, base)

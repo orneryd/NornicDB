@@ -216,7 +216,7 @@ func pr1655PhysicalBody(t *testing.T, b *BadgerEngine, id NodeID) *Node {
 		}
 		return item.Value(func(val []byte) error {
 			var decodeErr error
-			node, decodeErr = b.decodeNode(namespaceForNodeID(id), append([]byte(nil), val...))
+			node, decodeErr = b.decodeNodeProjected(txn, namespaceForNodeID(id), append([]byte(nil), val...), nil)
 			return decodeErr
 		})
 	})
@@ -238,7 +238,7 @@ func pr1655AssertFaultFired(t *testing.T, fault *pr1655CommitReadFault) {
 // is physically stored before a transaction pins its snapshot.
 func pr1655DrainWriteBehind(t *testing.T, b *BadgerEngine) {
 	t.Helper()
-	require.NoError(t, b.FlushWriteBehind(nil))
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
 }
 
 // pr1655AssertNoLeaks checks the observable post-commit state: the commit
@@ -269,7 +269,7 @@ func pr1655AssertNoLeaks(t *testing.T, b *BadgerEngine, sequenced uint64, messag
 
 // pr1655StageBody stages an update of id's body inside tx.
 func pr1655StageBody(tx *BadgerTransaction, id NodeID, body string) error {
-	return tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"body": body}}, Policy: ClientNodeEdits})
+	return tx.UpdateGraphNode(context.Background(), NodeUpdateRequest{After: &Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"body": body}}, Policy: ClientNodeEdits})
 }
 
 // pr1655SeedDoc creates a Doc node with a body in the test namespace, drains
@@ -277,10 +277,10 @@ func pr1655StageBody(tx *BadgerTransaction, id NodeID, body string) error {
 // namespace's committed sequence afterwards.
 func pr1655SeedDoc(t *testing.T, b *BadgerEngine, id NodeID, body string) uint64 {
 	t.Helper()
-	seed, err := b.BeginTransaction()
+	seed, err := b.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, seed.SetNamespace("test"))
-	_, err = seed.CreateNode(&Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"body": body}})
+	_, err = seed.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"body": body}})
 	require.NoError(t, err)
 	require.NoError(t, seed.Commit())
 	pr1655DrainWriteBehind(t, b)
@@ -296,7 +296,7 @@ func TestPR1655CommitReadFixturesStayInert(t *testing.T) {
 	engine, fault := pr1655NewCommitReadFaultEngine(t, false)
 	pr1655SeedDoc(t, engine, "test:fixture-inert", "before")
 
-	rename, err := engine.BeginTransaction()
+	rename, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, rename.SetNamespace("test"))
 	require.NoError(t, rename.SetMetadata(map[string]any{"fixture": true}))
@@ -305,7 +305,7 @@ func TestPR1655CommitReadFixturesStayInert(t *testing.T) {
 	require.False(t, fault.fired.Load(), "the fault fired without being armed")
 	require.False(t, rename.IsActive(), "the committed transaction closed")
 
-	node, err := engine.GetNode("test:fixture-inert")
+	node, err := engine.GetNode(t.Context(), "test:fixture-inert")
 	require.NoError(t, err)
 	require.Equal(t, "changed", node.Properties["body"])
 }
@@ -329,17 +329,17 @@ func TestPR1655CommitReadCorruptionIsRestorable(t *testing.T) {
 	_, corruptionErr := decodeMVCCHead(corrupted)
 	require.Error(t, corruptionErr)
 	require.Equal(t, decodeErr.Error(), corruptionErr.Error(), "the stored head is exactly the corrupted record")
-	_, headErr := engine.GetNodeCurrentHead("test:fixture-head")
+	_, headErr := engine.GetNodeCurrentHead(context.Background(), "test:fixture-head")
 	require.Error(t, headErr, "the commit-path head reload fails on the corrupted record")
 	require.ErrorContains(t, headErr, corruptionErr.Error())
 
 	// The saved bytes restore the healthy head, as the cleanup does, so the
 	// ordinary MVCC path reads the untouched body again.
 	require.NoError(t, pr1655WriteHeadBytes(engine, "test:fixture-head", healthy))
-	restored, err := engine.GetNodeCurrentHead("test:fixture-head")
+	restored, err := engine.GetNodeCurrentHead(context.Background(), "test:fixture-head")
 	require.NoError(t, err)
 	require.Equal(t, healthyHead.Version, restored.Version)
-	node, err := engine.GetNode("test:fixture-head")
+	node, err := engine.GetNode(t.Context(), "test:fixture-head")
 	require.NoError(t, err)
 	require.Equal(t, "before", node.Properties["body"])
 	require.False(t, fault.firedOnce(), "the fixture never arms the fault in this test")
@@ -372,7 +372,7 @@ func TestPR1655CommitReadSeedIsDurableForWriteBehind(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, decoded.Tombstoned)
 	require.Equal(t, "before", pr1655PhysicalBody(t, engine, "test:seed-durable").Properties["body"])
-	current, err := engine.GetNodeCurrentHead("test:seed-durable")
+	current, err := engine.GetNodeCurrentHead(context.Background(), "test:seed-durable")
 	require.NoError(t, err)
 	require.Equal(t, decoded.Version, current.Version)
 }

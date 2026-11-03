@@ -20,7 +20,7 @@ type xhighReadOutage struct {
 	failures atomic.Int32
 }
 
-func (e *xhighReadOutage) GetNode(id storage.NodeID) (*storage.Node, error) {
+func (e *xhighReadOutage) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	if id == "a" && e.armed.Load() {
 		now := time.Now().UnixNano()
 		if e.until.Load() == 0 {
@@ -31,7 +31,7 @@ func (e *xhighReadOutage) GetNode(id storage.NodeID) (*storage.Node, error) {
 			return nil, errors.New("injected 400ms storage read outage")
 		}
 	}
-	return e.Engine.GetNode(id)
+	return e.Engine.GetNode(ctx, id)
 }
 
 func TestXhighTransientOutageDoesNotSpendAllRefreshRetriesImmediately(t *testing.T) {
@@ -41,19 +41,19 @@ func TestXhighTransientOutageDoesNotSpendAllRefreshRetriesImmediately(t *testing
 	fault := &xhighReadOutage{Engine: tenant}
 	svc, err := db.EnsureSearchIndexes(ctx, "retrytenant", fault, SearchIndexBuildWait)
 	require.NoError(t, err)
-	_, err = tenant.CreateNode(&storage.Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "beforeoutage"}})
+	_, err = tenant.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "beforeoutage"}})
 	require.NoError(t, err)
-	require.NoError(t, svc.RefreshNode("a"))
+	require.NoError(t, svc.RefreshNode(t.Context(), "a"))
 	settleQueuedRefreshes()
 	require.Equal(t, 1, consumerDBHits(t, svc, "beforeoutage"))
 	fault.armed.Store(true)
-	require.NoError(t, tenant.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "afteroutage"}}}))
+	require.NoError(t, tenant.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: &storage.Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "afteroutage"}}}))
 	require.Eventually(t, func() bool { return fault.failures.Load() > 0 }, 5*time.Second, 10*time.Millisecond)
 	// Correct exponential backoff's first retry is 500ms after the first
 	// failed read; it therefore observes recovery. A drain that immediately
 	// consumes its retry map burns all eight attempts inside the outage.
 	time.Sleep(1500 * time.Millisecond)
-	stored, err := tenant.GetNode("a")
+	stored, err := tenant.GetNode(t.Context(), "a")
 	require.NoError(t, err)
 	require.Equal(t, "afteroutage", stored.Properties["content"])
 	t.Logf("failed storage reads during 400ms outage: %d", fault.failures.Load())

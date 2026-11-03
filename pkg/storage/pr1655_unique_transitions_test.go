@@ -28,11 +28,11 @@ func TestPR1655UniqueTransitionsLifecycle(t *testing.T) {
 				target := NewNamespacedEngine(engine, "test")
 				schema := target.GetSchema()
 				require.NoError(t, schema.AddUniqueConstraint("doc_id", "Doc", "id"))
-				require.NoError(t, RefreshUniqueConstraintValuesForEngine(target, schema))
+				require.NoError(t, RefreshUniqueConstraintValuesForEngine(context.Background(), target, schema))
 				expected := make(map[NodeID]string)
 				create := func(id NodeID, value string) {
 					t.Helper()
-					_, err := target.CreateNode(&Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": value}})
+					_, err := target.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": value}})
 					require.NoError(t, err, "create %s with released key %s", id, value)
 					expected[id] = value
 				}
@@ -41,11 +41,11 @@ func TestPR1655UniqueTransitionsLifecycle(t *testing.T) {
 					t.Helper()
 					rejected++
 					id := NodeID(fmt.Sprintf("rejected-%d", rejected))
-					_, err := target.CreateNode(&Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": value}})
+					_, err := target.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": value}})
 					var violation *ConstraintViolationError
 					require.ErrorAs(t, err, &violation, "committed key %s must have exactly one owner", value)
 					require.Equal(t, ConstraintUnique, violation.Type)
-					_, err = target.GetNode(id)
+					_, err = target.GetNode(t.Context(), id)
 					require.ErrorIs(t, err, ErrNotFound, "a rejected duplicate publishes no body")
 				}
 				assertGraph := func() {
@@ -65,7 +65,7 @@ func TestPR1655UniqueTransitionsLifecycle(t *testing.T) {
 					require.Len(t, nodes, len(expected))
 					require.Equal(t, expected, actual)
 					for id, value := range expected {
-						node, err := target.GetNode(id)
+						node, err := target.GetNode(t.Context(), id)
 						require.NoError(t, err)
 						require.Equal(t, value, node.Properties["id"], "point and label reads agree for %s", id)
 					}
@@ -74,36 +74,36 @@ func TestPR1655UniqueTransitionsLifecycle(t *testing.T) {
 					t.Helper()
 					if producer == "direct" {
 						if remove {
-							require.NoError(t, target.DeleteNode(id))
+							require.NoError(t, target.DeleteNode(t.Context(), id))
 						} else {
-							before, err := target.GetNode(id)
+							before, err := target.GetNode(t.Context(), id)
 							require.NoError(t, err)
 							after := *before
 							after.Properties = maps.Clone(before.Properties)
 							after.Properties["id"] = value
-							require.NoError(t, target.UpdateNode(NodeUpdateRequest{Before: before, After: &after}))
+							require.NoError(t, target.UpdateNode(t.Context(), NodeUpdateRequest{Before: before, After: &after}))
 						}
 					} else {
-						tx, err := engine.BeginTransaction()
+						tx, err := engine.BeginTransaction(t.Context())
 						require.NoError(t, err)
 						defer tx.Rollback()
 						require.NoError(t, tx.SetNamespace("test"))
 						require.NoError(t, tx.SetImplicit(producer == "implicit"))
 						qualified := NodeID("test:" + string(id))
 						if remove {
-							require.NoError(t, tx.DeleteGraphNode(qualified, CascadeEdges))
+							require.NoError(t, tx.DeleteGraphNode(t.Context(), qualified, CascadeEdges))
 						} else {
-							before, err := tx.GetNode(qualified)
+							before, err := tx.GetNode(t.Context(), qualified)
 							require.NoError(t, err)
 							after := *before
 							after.Properties = maps.Clone(before.Properties)
 							after.Properties["id"] = value
-							require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{Before: before, After: &after, Policy: ClientNodeEdits}))
+							require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{Before: before, After: &after, Policy: ClientNodeEdits}))
 						}
 						require.NoError(t, tx.Commit())
 					}
 					if remove {
-						_, err := target.GetNode(id)
+						_, err := target.GetNode(t.Context(), id)
 						require.ErrorIs(t, err, ErrNotFound)
 						delete(expected, id)
 					} else {
@@ -115,15 +115,15 @@ func TestPR1655UniqueTransitionsLifecycle(t *testing.T) {
 				create("keeper", "held")
 				// Staging a rename publishes neither its new claim nor release
 				// of its old claim. A separate writer may take the new key.
-				rollback, err := engine.BeginTransaction()
+				rollback, err := engine.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				defer rollback.Rollback()
-				before, err := rollback.GetNode("test:a")
+				before, err := rollback.GetNode(t.Context(), "test:a")
 				require.NoError(t, err)
 				after := *before
 				after.Properties = maps.Clone(before.Properties)
 				after.Properties["id"] = "rolled-back"
-				require.NoError(t, rollback.UpdateGraphNode(NodeUpdateRequest{Before: before, After: &after, Policy: ClientNodeEdits}))
+				require.NoError(t, rollback.UpdateGraphNode(t.Context(), NodeUpdateRequest{Before: before, After: &after, Policy: ClientNodeEdits}))
 				rejectDuplicate("old")
 				create("independent", "rolled-back")
 				require.NoError(t, rollback.Rollback())
@@ -133,7 +133,7 @@ func TestPR1655UniqueTransitionsLifecycle(t *testing.T) {
 				create("b", "old")
 				rejectDuplicate("old")
 				assertGraph() // Includes the unflushed ACK in implicit mode.
-				require.NoError(t, engine.FlushWriteBehind(nil))
+				require.NoError(t, engine.FlushWriteBehind(context.Background()))
 				assertGraph()
 				rejectDuplicate("old") // Replay cannot erase the newer owner's claim.
 				mutate("a", "final", false)
@@ -148,10 +148,10 @@ func TestPR1655UniqueTransitionsLifecycle(t *testing.T) {
 				mutate("a", "after-drop", false)
 				create("e", "final")
 				require.NoError(t, schema.AddUniqueConstraint("doc_id", "Doc", "id"))
-				require.NoError(t, RefreshUniqueConstraintValuesForEngine(target, schema))
+				require.NoError(t, RefreshUniqueConstraintValuesForEngine(context.Background(), target, schema))
 				rejectDuplicate("after-drop")
 				rejectDuplicate("final")
-				require.NoError(t, engine.FlushWriteBehind(nil))
+				require.NoError(t, engine.FlushWriteBehind(context.Background()))
 				assertGraph()
 
 				require.NoError(t, engine.Close())
@@ -164,7 +164,7 @@ func TestPR1655UniqueTransitionsLifecycle(t *testing.T) {
 				}
 				mutate("d", "", true)
 				create("after-restart", "old")
-				require.NoError(t, engine.FlushWriteBehind(nil))
+				require.NoError(t, engine.FlushWriteBehind(context.Background()))
 				assertGraph()
 				rejectDuplicate("old")
 			})
@@ -183,48 +183,48 @@ func TestPR1655UniqueTransitionsStaleWriterAfterReuse(t *testing.T) {
 				target := NewNamespacedEngine(engine, "test")
 				schema := target.GetSchema()
 				require.NoError(t, schema.AddUniqueConstraint("doc_id", "Doc", "id"))
-				require.NoError(t, RefreshUniqueConstraintValuesForEngine(target, schema))
-				_, err := target.CreateNode(&Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "old", "note": "seed"}})
+				require.NoError(t, RefreshUniqueConstraintValuesForEngine(context.Background(), target, schema))
+				_, err := target.CreateNode(t.Context(), &Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "old", "note": "seed"}})
 				require.NoError(t, err)
-				loser, err := engine.BeginTransaction()
+				loser, err := engine.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				defer loser.Rollback()
 				require.NoError(t, loser.SetImplicit(implicit))
-				before, err := loser.GetNode("test:a")
+				before, err := loser.GetNode(t.Context(), "test:a")
 				require.NoError(t, err)
 				after := *before
 				after.Properties = maps.Clone(before.Properties)
 				after.Properties["note"] = "loser"
-				require.NoError(t, loser.UpdateGraphNode(NodeUpdateRequest{Before: before, After: &after, Policy: ClientNodeEdits}))
-				_, err = loser.CreateNode(&Node{ID: "test:marker", Properties: map[string]interface{}{"note": "must roll back"}})
+				require.NoError(t, loser.UpdateGraphNode(t.Context(), NodeUpdateRequest{Before: before, After: &after, Policy: ClientNodeEdits}))
+				_, err = loser.CreateNode(t.Context(), &Node{ID: "test:marker", Properties: map[string]interface{}{"note": "must roll back"}})
 				require.NoError(t, err)
-				peer, err := engine.BeginTransaction()
+				peer, err := engine.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				defer peer.Rollback()
 				require.NoError(t, peer.SetImplicit(true))
-				peerBefore, err := peer.GetNode("test:a")
+				peerBefore, err := peer.GetNode(t.Context(), "test:a")
 				require.NoError(t, err)
 				peerAfter := *peerBefore
 				peerAfter.Properties = maps.Clone(peerBefore.Properties)
 				peerAfter.Properties["id"] = "renamed"
 				peerAfter.Properties["note"] = "peer"
-				require.NoError(t, peer.UpdateGraphNode(NodeUpdateRequest{Before: peerBefore, After: &peerAfter, Policy: ClientNodeEdits}))
+				require.NoError(t, peer.UpdateGraphNode(t.Context(), NodeUpdateRequest{Before: peerBefore, After: &peerAfter, Policy: ClientNodeEdits}))
 				require.NoError(t, peer.Commit())
-				_, err = target.CreateNode(&Node{ID: "third", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "old"}})
+				_, err = target.CreateNode(t.Context(), &Node{ID: "third", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "old"}})
 				require.NoError(t, err)
 				err = loser.Commit()
 				require.ErrorIs(t, err, ErrConflict)
 				var violation *ConstraintViolationError
 				require.NotErrorAs(t, err, &violation, "unchanged keys remain ordinary retryable conflicts")
-				require.NoError(t, engine.FlushWriteBehind(nil))
-				a, err := target.GetNode("a")
+				require.NoError(t, engine.FlushWriteBehind(context.Background()))
+				a, err := target.GetNode(t.Context(), "a")
 				require.NoError(t, err)
 				require.Equal(t, "renamed", a.Properties["id"])
 				require.Equal(t, "peer", a.Properties["note"])
-				third, err := target.GetNode("third")
+				third, err := target.GetNode(t.Context(), "third")
 				require.NoError(t, err)
 				require.Equal(t, "old", third.Properties["id"])
-				_, err = target.GetNode("marker")
+				_, err = target.GetNode(t.Context(), "marker")
 				require.ErrorIs(t, err, ErrNotFound)
 				nodes, err := target.GetNodesByLabel(context.Background(), "Doc")
 				require.NoError(t, err)
@@ -246,11 +246,11 @@ func TestPR1655UniqueTransitionsPrefixReleasesClaim(t *testing.T) {
 				schema := store.GetSchema()
 				require.NoError(t, schema.AddUniqueConstraint("doc_id", "Doc", "id"))
 				require.NoError(t, schema.AddUniqueConstraint("doc_code", "Doc", "code"))
-				require.NoError(t, RefreshUniqueConstraintValuesForEngine(store, schema))
+				require.NoError(t, RefreshUniqueConstraintValuesForEngine(context.Background(), store, schema))
 			}
 			for _, store := range []*NamespacedEngine{target, other} {
 				for id, key := range map[NodeID]string{"prefix-victim": "released", "keeper": "held"} {
-					_, err := store.CreateNode(&Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": key, "code": "code-" + key}})
+					_, err := store.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": key, "code": "code-" + key}})
 					require.NoError(t, err)
 				}
 			}
@@ -258,24 +258,30 @@ func TestPR1655UniqueTransitionsPrefixReleasesClaim(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, int64(1), removed)
 			require.Zero(t, edges)
-			_, err = target.GetNode("prefix-victim")
+			_, err = target.GetNode(t.Context(), "prefix-victim")
 			require.ErrorIs(t, err, ErrNotFound)
 			for _, property := range []string{"id", "code"} {
 				value := "released"
 				if property == "code" {
 					value = "code-released"
 				}
-				_, found, constrained, complete := target.GetSchema().LookupUniqueConstraintValue("Doc", property, value)
+				_, found, constrained, complete, uniqueLookupErr1 := target.GetSchema().LookupUniqueConstraintValue(t.Context(), "Doc", property, value)
+				if uniqueLookupErr1 != nil {
+					t.Errorf("unique index read failed: %v", uniqueLookupErr1)
+				}
 				require.True(t, constrained)
 				require.True(t, complete, "bulk retirement preserves completeness")
 				require.False(t, found, "the deleted owner releases every constraint entry")
-				holder, found, constrained, complete := other.GetSchema().LookupUniqueConstraintValue("Doc", property, value)
+				holder, found, constrained, complete, uniqueLookupErr2 := other.GetSchema().LookupUniqueConstraintValue(t.Context(), "Doc", property, value)
+				if uniqueLookupErr2 != nil {
+					t.Errorf("unique index read failed: %v", uniqueLookupErr2)
+				}
 				require.True(t, found)
 				require.True(t, constrained)
 				require.True(t, complete)
 				require.Equal(t, NodeID("test2:prefix-victim"), holder, "a similarly named namespace is untouched")
 			}
-			_, err = target.CreateNode(&Node{ID: "replacement", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "released", "code": "code-released"}})
+			_, err = target.CreateNode(t.Context(), &Node{ID: "replacement", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "released", "code": "code-released"}})
 			require.NoError(t, err, "prefix deletion releases all deleted claims with the body")
 			for _, store := range []*NamespacedEngine{target, other} {
 				for _, property := range []string{"id", "code"} {
@@ -285,18 +291,18 @@ func TestPR1655UniqueTransitionsPrefixReleasesClaim(t *testing.T) {
 					} else {
 						properties[property] = "code-held"
 					}
-					_, err := store.CreateNode(&Node{ID: NodeID("duplicate-" + property), Labels: []string{"Doc"}, Properties: properties})
+					_, err := store.CreateNode(t.Context(), &Node{ID: NodeID("duplicate-" + property), Labels: []string{"Doc"}, Properties: properties})
 					var violation *ConstraintViolationError
 					require.ErrorAs(t, err, &violation, "another owner's %s remains reserved", property)
 					require.Equal(t, []string{property}, violation.Properties)
 				}
 			}
-			require.NoError(t, engine.FlushWriteBehind(nil))
+			require.NoError(t, engine.FlushWriteBehind(context.Background()))
 			for _, store := range []*NamespacedEngine{target, other} {
 				nodes, err := store.GetNodesByLabel(context.Background(), "Doc")
 				require.NoError(t, err)
 				require.Len(t, nodes, 2)
-				keeper, err := store.GetNode("keeper")
+				keeper, err := store.GetNode(t.Context(), "keeper")
 				require.NoError(t, err)
 				require.Equal(t, "held", keeper.Properties["id"])
 			}
@@ -312,8 +318,8 @@ func TestPR1655UniqueTransitionsConcurrentPrefixReuse(t *testing.T) {
 			engine := openPR1655AcceptanceEngine(t, writeBehind)
 			target := NewNamespacedEngine(engine, "test")
 			require.NoError(t, target.GetSchema().AddUniqueConstraint("doc_id", "Doc", "id"))
-			require.NoError(t, RefreshUniqueConstraintValuesForEngine(target, target.GetSchema()))
-			_, err := target.CreateNode(&Node{ID: "prefix-victim", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "reclaimed"}})
+			require.NoError(t, RefreshUniqueConstraintValuesForEngine(context.Background(), target, target.GetSchema()))
+			_, err := target.CreateNode(t.Context(), &Node{ID: "prefix-victim", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "reclaimed"}})
 			require.NoError(t, err)
 			entered, resume := make(chan struct{}), make(chan struct{})
 			var once sync.Once
@@ -333,13 +339,16 @@ func TestPR1655UniqueTransitionsConcurrentPrefixReuse(t *testing.T) {
 				engine.writeBarrier.RUnlock()
 				t.Fatal("prefix drop released write authority before retiring its claims")
 			}
-			_, found, _, complete := target.GetSchema().LookupUniqueConstraintValue("Doc", "id", "reclaimed")
+			_, found, _, complete, uniqueLookupErr3 := target.GetSchema().LookupUniqueConstraintValue(t.Context(), "Doc", "id", "reclaimed")
+			if uniqueLookupErr3 != nil {
+				t.Errorf("unique index read failed: %v", uniqueLookupErr3)
+			}
 			require.True(t, complete)
 			require.False(t, found, "the successful primary drop already retired its claim")
 			started, created := make(chan struct{}), make(chan error, 1)
 			go func() {
 				close(started)
-				_, err := target.CreateNode(&Node{ID: "peer", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "reclaimed"}})
+				_, err := target.CreateNode(t.Context(), &Node{ID: "peer", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "reclaimed"}})
 				created <- err
 			}()
 			<-started
@@ -347,11 +356,11 @@ func TestPR1655UniqueTransitionsConcurrentPrefixReuse(t *testing.T) {
 			require.NoError(t, <-dropped)
 			require.NoError(t, <-created)
 			engine.dropPrefixTailHook = nil
-			require.NoError(t, engine.FlushWriteBehind(nil))
-			peer, err := target.GetNode("peer")
+			require.NoError(t, engine.FlushWriteBehind(context.Background()))
+			peer, err := target.GetNode(t.Context(), "peer")
 			require.NoError(t, err)
 			require.Equal(t, "reclaimed", peer.Properties["id"])
-			_, err = target.CreateNode(&Node{ID: "duplicate", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "reclaimed"}})
+			_, err = target.CreateNode(t.Context(), &Node{ID: "duplicate", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "reclaimed"}})
 			var violation *ConstraintViolationError
 			require.ErrorAs(t, err, &violation, "bulk retirement cannot erase the peer's later reservation")
 			nodes, err := target.GetNodesByLabel(context.Background(), "Doc")
@@ -366,15 +375,18 @@ func TestPR1655UniqueTransitionsPrimaryDropRetiresBeforeCleanupFailure(t *testin
 	target := NewNamespacedEngine(engine, "test")
 	schema := target.GetSchema()
 	require.NoError(t, schema.AddUniqueConstraint("doc_id", "Doc", "id"))
-	require.NoError(t, RefreshUniqueConstraintValuesForEngine(target, schema))
-	_, err := target.CreateNode(&Node{ID: "prefix-victim", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "released"}})
+	require.NoError(t, RefreshUniqueConstraintValuesForEngine(context.Background(), target, schema))
+	_, err := target.CreateNode(t.Context(), &Node{ID: "prefix-victim", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "released"}})
 	require.NoError(t, err)
 	failure := errors.New("injected post-primary prefix cleanup failure")
 	engine.dropPrefixTailHook = func(string) error { return failure }
 	_, _, err = engine.DeleteByPrefix("test:prefix-")
 	require.ErrorIs(t, err, failure)
 	engine.dropPrefixTailHook = nil
-	_, found, constrained, complete := schema.LookupUniqueConstraintValue("Doc", "id", "released")
+	_, found, constrained, complete, uniqueLookupErr4 := schema.LookupUniqueConstraintValue(t.Context(), "Doc", "id", "released")
+	if uniqueLookupErr4 != nil {
+		t.Errorf("unique index read failed: %v", uniqueLookupErr4)
+	}
 	require.True(t, constrained)
 	require.True(t, complete)
 	require.False(t, found, "a later cleanup failure cannot restore an already deleted node's claim")
@@ -389,33 +401,36 @@ func TestPR1655UniqueTransitionsRestoredSchemaPendingClaims(t *testing.T) {
 			source := openPR1655AcceptanceEngine(t, writeBehind)
 			original := NewNamespacedEngine(source, "test")
 			require.NoError(t, original.GetSchema().AddUniqueConstraint("doc_id", "Doc", "id"))
-			require.NoError(t, RefreshUniqueConstraintValuesForEngine(original, original.GetSchema()))
-			_, err := original.CreateNode(&Node{ID: "original", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "key"}})
+			require.NoError(t, RefreshUniqueConstraintValuesForEngine(context.Background(), original, original.GetSchema()))
+			_, err := original.CreateNode(t.Context(), &Node{ID: "original", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "key"}})
 			require.NoError(t, err)
 			backup := filepath.Join(t.TempDir(), "claims.backup")
 			require.NoError(t, source.Backup(backup))
 			target := openPR1655AcceptanceEngine(t, writeBehind)
 			require.NoError(t, target.Restore(backup))
 			restored := NewNamespacedEngine(target, "test")
-			tx, err := target.BeginTransaction()
+			tx, err := target.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			defer tx.Rollback()
 			require.NoError(t, tx.SetImplicit(true))
-			require.NoError(t, tx.DeleteGraphNode("test:original", CascadeEdges))
+			require.NoError(t, tx.DeleteGraphNode(t.Context(), "test:original", CascadeEdges))
 			require.NoError(t, tx.Commit())
-			_, found, constrained, complete := restored.GetSchema().LookupUniqueConstraintValue("Doc", "id", "key")
+			_, found, constrained, complete, uniqueLookupErr5 := restored.GetSchema().LookupUniqueConstraintValue(t.Context(), "Doc", "id", "key")
+			if uniqueLookupErr5 != nil {
+				t.Errorf("unique index read failed: %v", uniqueLookupErr5)
+			}
 			require.False(t, found, "the acknowledged delete shadows the restored stored claim")
 			require.True(t, constrained)
 			require.True(t, complete)
-			_, err = restored.CreateNode(&Node{ID: "replacement", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "key"}})
+			_, err = restored.CreateNode(t.Context(), &Node{ID: "replacement", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "key"}})
 			require.NoError(t, err, "an unflushed delete releases a restored schema's claim")
-			require.NoError(t, target.FlushWriteBehind(nil))
-			_, err = restored.GetNode("original")
+			require.NoError(t, target.FlushWriteBehind(context.Background()))
+			_, err = restored.GetNode(t.Context(), "original")
 			require.ErrorIs(t, err, ErrNotFound)
-			replacement, err := restored.GetNode("replacement")
+			replacement, err := restored.GetNode(t.Context(), "replacement")
 			require.NoError(t, err)
 			require.Equal(t, "key", replacement.Properties["id"])
-			_, err = restored.CreateNode(&Node{ID: "duplicate", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "key"}})
+			_, err = restored.CreateNode(t.Context(), &Node{ID: "duplicate", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "key"}})
 			var violation *ConstraintViolationError
 			require.ErrorAs(t, err, &violation)
 		})
@@ -434,18 +449,18 @@ func TestPR1655UniqueTransitionsBufferedDeleteThenReuse(t *testing.T) {
 				schema := target.GetSchema()
 				require.NoError(t, schema.AddUniqueConstraint("doc_id", "Doc", "id"))
 				require.NoError(t, schema.AddUniqueConstraint("doc_code", "Doc", "code"))
-				require.NoError(t, RefreshUniqueConstraintValuesForEngine(target, schema))
-				_, err := target.CreateNode(&Node{ID: "old-owner", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "key", "code": "code-key"}})
+				require.NoError(t, RefreshUniqueConstraintValuesForEngine(context.Background(), target, schema))
+				_, err := target.CreateNode(t.Context(), &Node{ID: "old-owner", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "key", "code": "code-key"}})
 				require.NoError(t, err)
-				peer, err := engine.BeginTransaction()
+				peer, err := engine.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				require.NoError(t, peer.SetImplicit(true))
-				require.NoError(t, peer.DeleteGraphNode(NodeID(namespace+":old-owner"), CascadeEdges))
+				require.NoError(t, peer.DeleteGraphNode(t.Context(), NodeID(namespace+":old-owner"), CascadeEdges))
 				require.NoError(t, peer.Commit())
-				_, err = target.CreateNode(&Node{ID: "new-owner", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "key", "code": "code-key"}})
+				_, err = target.CreateNode(t.Context(), &Node{ID: "new-owner", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "key", "code": "code-key"}})
 				require.NoError(t, err)
 			}
-			require.NoError(t, engine.FlushWriteBehind(nil))
+			require.NoError(t, engine.FlushWriteBehind(context.Background()))
 			for _, namespace := range []string{"test", "test2"} {
 				target := NewNamespacedEngine(engine, namespace)
 				for _, property := range []string{"id", "code"} {
@@ -455,12 +470,15 @@ func TestPR1655UniqueTransitionsBufferedDeleteThenReuse(t *testing.T) {
 						value = "code-key"
 					}
 					properties[property] = value
-					holder, found, constrained, complete := target.GetSchema().LookupUniqueConstraintValue("Doc", property, value)
+					holder, found, constrained, complete, uniqueLookupErr6 := target.GetSchema().LookupUniqueConstraintValue(t.Context(), "Doc", property, value)
+					if uniqueLookupErr6 != nil {
+						t.Errorf("unique index read failed: %v", uniqueLookupErr6)
+					}
 					require.True(t, found)
 					require.True(t, constrained)
 					require.True(t, complete)
 					require.Equal(t, NodeID(namespace+":new-owner"), holder)
-					_, err := target.CreateNode(&Node{ID: NodeID("duplicate-" + property), Labels: []string{"Doc"}, Properties: properties})
+					_, err := target.CreateNode(t.Context(), &Node{ID: NodeID("duplicate-" + property), Labels: []string{"Doc"}, Properties: properties})
 					var violation *ConstraintViolationError
 					require.ErrorAs(t, err, &violation, "old replay cannot erase a reused %s claim", property)
 					require.Equal(t, []string{property}, violation.Properties)
@@ -468,9 +486,9 @@ func TestPR1655UniqueTransitionsBufferedDeleteThenReuse(t *testing.T) {
 				nodes, err := target.GetNodesByLabel(context.Background(), "Doc")
 				require.NoError(t, err)
 				require.Len(t, nodes, 1)
-				_, err = target.GetNode("old-owner")
+				_, err = target.GetNode(t.Context(), "old-owner")
 				require.ErrorIs(t, err, ErrNotFound)
-				owner, err := target.GetNode("new-owner")
+				owner, err := target.GetNode(t.Context(), "new-owner")
 				require.NoError(t, err)
 				require.Equal(t, "key", owner.Properties["id"])
 				require.Equal(t, "code-key", owner.Properties["code"])
@@ -490,25 +508,25 @@ func TestPR1655UniqueTransitionsIntermediateAcknowledgedClaims(t *testing.T) {
 			schema := target.GetSchema()
 			require.NoError(t, schema.AddUniqueConstraint("doc_id", "Doc", "id"))
 			require.NoError(t, schema.AddUniqueConstraint("doc_code", "Doc", "code"))
-			require.NoError(t, RefreshUniqueConstraintValuesForEngine(target, schema))
-			_, err := target.CreateNode(&Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "seed", "code": "code-seed"}})
+			require.NoError(t, RefreshUniqueConstraintValuesForEngine(context.Background(), target, schema))
+			_, err := target.CreateNode(t.Context(), &Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "seed", "code": "code-seed"}})
 			require.NoError(t, err)
 			for _, value := range []string{"old", "renamed"} {
-				tx, err := engine.BeginTransaction()
+				tx, err := engine.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				require.NoError(t, tx.SetImplicit(true))
-				before, err := tx.GetNode("test:a")
+				before, err := tx.GetNode(t.Context(), "test:a")
 				require.NoError(t, err)
 				after := *before
 				after.Properties = maps.Clone(before.Properties)
 				after.Properties["id"] = value
 				after.Properties["code"] = "code-" + value
-				require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{Before: before, After: &after, Policy: ClientNodeEdits}))
+				require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{Before: before, After: &after, Policy: ClientNodeEdits}))
 				require.NoError(t, tx.Commit())
 			}
-			_, err = target.CreateNode(&Node{ID: "b", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "old", "code": "code-old"}})
+			_, err = target.CreateNode(t.Context(), &Node{ID: "b", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "old", "code": "code-old"}})
 			require.NoError(t, err, "the final ACK already released the intermediate claim")
-			require.NoError(t, engine.FlushWriteBehind(nil))
+			require.NoError(t, engine.FlushWriteBehind(context.Background()))
 			for _, property := range []string{"id", "code"} {
 				value := "old"
 				properties := map[string]interface{}{"id": "unused", "code": "unused-code"}
@@ -516,13 +534,13 @@ func TestPR1655UniqueTransitionsIntermediateAcknowledgedClaims(t *testing.T) {
 					value = "code-old"
 				}
 				properties[property] = value
-				_, err := target.CreateNode(&Node{ID: NodeID("duplicate-" + property), Labels: []string{"Doc"}, Properties: properties})
+				_, err := target.CreateNode(t.Context(), &Node{ID: NodeID("duplicate-" + property), Labels: []string{"Doc"}, Properties: properties})
 				var violation *ConstraintViolationError
 				require.ErrorAs(t, err, &violation, "an intermediate replay image cannot steal the %s claim", property)
 				require.Equal(t, []string{property}, violation.Properties)
 			}
 			for id, value := range map[NodeID]string{"a": "renamed", "b": "old"} {
-				node, err := target.GetNode(id)
+				node, err := target.GetNode(t.Context(), id)
 				require.NoError(t, err)
 				require.Equal(t, value, node.Properties["id"])
 				require.Equal(t, "code-"+value, node.Properties["code"])
@@ -545,14 +563,14 @@ func TestPR1655UniqueTransitionsRecoveredIntermediateClaims(t *testing.T) {
 			engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 			target := NewNamespacedEngine(engine, "test")
 			require.NoError(t, target.GetSchema().AddUniqueConstraint("doc_id", "Doc", "id"))
-			require.NoError(t, RefreshUniqueConstraintValuesForEngine(target, target.GetSchema()))
-			_, err := target.CreateNode(&Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]any{"id": "seed"}})
+			require.NoError(t, RefreshUniqueConstraintValuesForEngine(context.Background(), target, target.GetSchema()))
+			_, err := target.CreateNode(t.Context(), &Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]any{"id": "seed"}})
 			require.NoError(t, err)
 			for _, value := range []string{"old", "renamed"} {
-				tx, err := engine.BeginTransaction()
+				tx, err := engine.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				require.NoError(t, tx.SetImplicit(true))
-				before, err := tx.GetNode("test:a")
+				before, err := tx.GetNode(t.Context(), "test:a")
 				require.NoError(t, err)
 				after := *before
 				after.Properties = maps.Clone(before.Properties)
@@ -560,7 +578,7 @@ func TestPR1655UniqueTransitionsRecoveredIntermediateClaims(t *testing.T) {
 				if payloadBytes > 0 {
 					after.Properties["payload"] = strings.Repeat(value[:1], payloadBytes)
 				}
-				require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{Before: before, After: &after, Policy: ClientNodeEdits}))
+				require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{Before: before, After: &after, Policy: ClientNodeEdits}))
 				require.NoError(t, tx.Commit())
 				require.True(t, tx.AcknowledgedBuffered())
 				if value == "old" && scenario.semantic {
@@ -569,7 +587,7 @@ func TestPR1655UniqueTransitionsRecoveredIntermediateClaims(t *testing.T) {
 					require.NoError(t, engine.bufferedCommitWAL.AppendWithDatabase(OpEntityCommit, walEntityCommitData{Payload: payload}, "test"))
 				}
 			}
-			_, err = target.CreateNode(&Node{ID: "b", Labels: []string{"Doc"}, Properties: map[string]any{"id": "old"}})
+			_, err = target.CreateNode(t.Context(), &Node{ID: "b", Labels: []string{"Doc"}, Properties: map[string]any{"id": "old"}})
 			require.NoError(t, err)
 			crashClose(t, engine, engine.bufferedCommitWAL)
 			recovered := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
@@ -577,16 +595,16 @@ func TestPR1655UniqueTransitionsRecoveredIntermediateClaims(t *testing.T) {
 			require.NoError(t, err)
 			target = NewNamespacedEngine(recovered, "test")
 			if scenario.semantic {
-				node, err := target.GetNode("semantic")
+				node, err := target.GetNode(t.Context(), "semantic")
 				require.NoError(t, err)
 				require.EqualValues(t, 42, node.Properties["value"])
 			}
 			for id, value := range map[NodeID]string{"a": "renamed", "b": "old"} {
-				node, err := target.GetNode(id)
+				node, err := target.GetNode(t.Context(), id)
 				require.NoError(t, err)
 				require.Equal(t, value, node.Properties["id"])
 			}
-			_, err = target.CreateNode(&Node{ID: "duplicate", Labels: []string{"Doc"}, Properties: map[string]any{"id": "old"}})
+			_, err = target.CreateNode(t.Context(), &Node{ID: "duplicate", Labels: []string{"Doc"}, Properties: map[string]any{"id": "old"}})
 			var violation *ConstraintViolationError
 			require.ErrorAs(t, err, &violation, "recovery cannot release the surviving owner's key")
 		})
@@ -599,12 +617,12 @@ func TestPR1655UniqueTransitionsAtomicSwap(t *testing.T) {
 			engine := openPR1655AcceptanceEngine(t, writeBehind)
 			target := NewNamespacedEngine(engine, "test")
 			require.NoError(t, target.GetSchema().AddUniqueConstraint("doc_id", "Doc", "id"))
-			require.NoError(t, RefreshUniqueConstraintValuesForEngine(target, target.GetSchema()))
+			require.NoError(t, RefreshUniqueConstraintValuesForEngine(context.Background(), target, target.GetSchema()))
 			for id, value := range map[NodeID]string{"a": "x", "b": "y"} {
-				_, err := target.CreateNode(&Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"id": value}})
+				_, err := target.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"id": value}})
 				require.NoError(t, err)
 			}
-			tx, err := engine.BeginTransaction()
+			tx, err := engine.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			require.NoError(t, tx.SetImplicit(true))
 			for _, mutation := range []struct {
@@ -612,24 +630,27 @@ func TestPR1655UniqueTransitionsAtomicSwap(t *testing.T) {
 				value string
 			}{{"test:a", "temporary"}, {"test:b", "x"}, {"test:a", "y"}} {
 				id, value := mutation.id, mutation.value
-				before, err := tx.GetNode(id)
+				before, err := tx.GetNode(t.Context(), id)
 				require.NoError(t, err)
 				after := *before
 				after.Properties = maps.Clone(before.Properties)
 				after.Properties["id"] = value
-				require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{Before: before, After: &after, Policy: ClientNodeEdits}))
+				require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{Before: before, After: &after, Policy: ClientNodeEdits}))
 			}
 			require.NoError(t, tx.Commit())
-			require.NoError(t, engine.FlushWriteBehind(nil))
+			require.NoError(t, engine.FlushWriteBehind(context.Background()))
 			for id, value := range map[NodeID]string{"a": "y", "b": "x"} {
-				node, err := target.GetNode(id)
+				node, err := target.GetNode(t.Context(), id)
 				require.NoError(t, err)
 				require.Equal(t, value, node.Properties["id"])
-				holder, found, exists, _ := target.GetSchema().LookupUniqueConstraintValue("Doc", "id", value)
+				holder, found, exists, _, uniqueLookupErr7 := target.GetSchema().LookupUniqueConstraintValue(t.Context(), "Doc", "id", value)
+				if uniqueLookupErr7 != nil {
+					t.Errorf("unique index read failed: %v", uniqueLookupErr7)
+				}
 				require.True(t, found)
 				require.True(t, exists)
 				require.Equal(t, NodeID("test:"+string(id)), holder)
-				_, err = target.CreateNode(&Node{ID: NodeID("duplicate-" + string(id)), Labels: []string{"Doc"}, Properties: map[string]any{"id": value}})
+				_, err = target.CreateNode(t.Context(), &Node{ID: NodeID("duplicate-" + string(id)), Labels: []string{"Doc"}, Properties: map[string]any{"id": value}})
 				var violation *ConstraintViolationError
 				require.ErrorAs(t, err, &violation)
 			}

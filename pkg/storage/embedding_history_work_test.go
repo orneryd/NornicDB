@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"expvar"
 	"fmt"
 	"os"
@@ -24,29 +25,29 @@ func TestEmbeddingSidecarHistoryBoundedWork(t *testing.T) {
 				engine := newTestMemoryEngine(t).BadgerEngine
 				t.Cleanup(func() { require.NoError(t, engine.Close()) })
 				body := &Node{ID: "test:history-owner", Labels: []string{"Doc"}, Properties: map[string]any{"text": "original"}}
-				_, err := engine.CreateNode(body)
+				_, err := engine.CreateNode(t.Context(), body)
 				require.NoError(t, err)
 				initial := [][]float32{{10, 20}, {30, 40}}
 				seed := CopyNode(body)
 				seed.ChunkEmbeddings = initial
 				seed.EmbedMeta = map[string]any{"chunk_count": 2}
-				require.NoError(t, engine.UpdateNodeEmbeddingSidecar(seed))
+				require.NoError(t, engine.UpdateNodeEmbeddingSidecar(context.Background(), seed))
 
 				// Keep the public transaction open: the old keys/versions must stay
 				// readable, independently of compaction or cache timing.
-				old, err := engine.BeginTransaction()
+				old, err := engine.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				t.Cleanup(func() { require.NoError(t, old.Rollback()) })
-				oldNode, err := old.GetNode(body.ID)
+				oldNode, err := old.GetNode(t.Context(), body.ID)
 				require.NoError(t, err)
 				require.Equal(t, initial, oldNode.ChunkEmbeddings)
 				for i := 0; i < history; i++ {
 					payload := CopyNode(body)
 					payload.ChunkEmbeddings = [][]float32{{float32(i), 2}}
 					payload.EmbedMeta = map[string]any{"chunk_count": 1}
-					require.NoError(t, engine.UpdateNodeEmbeddingSidecar(payload))
+					require.NoError(t, engine.UpdateNodeEmbeddingSidecar(context.Background(), payload))
 				}
-				current, err := engine.GetNode(body.ID)
+				current, err := engine.GetNode(t.Context(), body.ID)
 				require.NoError(t, err)
 				current.Properties = map[string]any{"text": "changed"}
 				var before int64
@@ -58,16 +59,16 @@ func TestEmbeddingSidecarHistoryBoundedWork(t *testing.T) {
 					payload := CopyNode(body)
 					payload.ChunkEmbeddings = [][]float32{{-1, -2}}
 					payload.EmbedMeta = map[string]any{"chunk_count": 1}
-					require.NoError(t, engine.UpdateNodeEmbeddingSidecar(payload))
+					require.NoError(t, engine.UpdateNodeEmbeddingSidecar(context.Background(), payload))
 				case "update":
-					require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: current}))
+					require.NoError(t, engine.UpdateNode(t.Context(), NodeUpdateRequest{After: current}))
 				case "transaction":
-					tx, err := engine.BeginTransaction()
+					tx, err := engine.BeginTransaction(t.Context())
 					require.NoError(t, err)
-					require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: current, Policy: ClientNodeEdits}))
+					require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: current, Policy: ClientNodeEdits}))
 					require.NoError(t, tx.Commit())
 				case "delete":
-					require.NoError(t, engine.DeleteNode(body.ID))
+					require.NoError(t, engine.DeleteNode(t.Context(), body.ID))
 				}
 				if instrumented {
 					work := metric.Value() - before
@@ -75,10 +76,10 @@ func TestEmbeddingSidecarHistoryBoundedWork(t *testing.T) {
 					require.LessOrEqual(t, work, int64(64), "embedding replacement walked retained versions")
 				}
 				if operation == "delete" {
-					_, err := engine.GetNode(body.ID)
+					_, err := engine.GetNode(t.Context(), body.ID)
 					require.ErrorIs(t, err, ErrNotFound)
 				} else {
-					got, err := engine.GetNode(body.ID)
+					got, err := engine.GetNode(t.Context(), body.ID)
 					require.NoError(t, err)
 					if operation == "sidecar" {
 						require.Equal(t, [][]float32{{-1, -2}}, got.ChunkEmbeddings)
@@ -94,7 +95,7 @@ func TestEmbeddingSidecarHistoryBoundedWork(t *testing.T) {
 					require.ErrorIs(t, err, badger.ErrKeyNotFound)
 					return nil
 				}))
-				oldNode, err = old.GetNode(body.ID)
+				oldNode, err = old.GetNode(t.Context(), body.ID)
 				require.NoError(t, err)
 				require.Equal(t, initial, oldNode.ChunkEmbeddings)
 			})

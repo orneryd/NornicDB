@@ -3,9 +3,10 @@ package search
 import (
 	"context"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"math/rand"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -46,7 +47,7 @@ func BenchmarkNodeVectorSearch(b *testing.B) {
 		}
 		engine := storage.NewNamespacedEngine(fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
 		for _, node := range nodes {
-			if _, err := engine.CreateNode(node); err != nil {
+			if _, err := engine.CreateNode(b.Context(), node); err != nil {
 				b.Fatal(err)
 			}
 		}

@@ -22,19 +22,19 @@ func TestFabricSuppressionOwnsCompletionAndWriter(t *testing.T) {
 				run := t.Name()
 				id := storage.NodeID(run + "/target")
 				peer := storage.NodeID(run + "/peer")
-				_, err := leaf.CreateNode(&storage.Node{ID: id, Labels: []string{"VisibilityProof"}, Properties: map[string]interface{}{"run": run, "payload": "retained"}})
+				_, err := leaf.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"VisibilityProof"}, Properties: map[string]interface{}{"run": run, "payload": "retained"}})
 				require.NoError(t, err)
-				_, err = leaf.CreateNode(&storage.Node{ID: peer, Labels: []string{"VisibilityPeer"}})
+				_, err = leaf.CreateNode(t.Context(), &storage.Node{ID: peer, Labels: []string{"VisibilityPeer"}})
 				require.NoError(t, err)
 				eid := storage.EdgeID(run + "/edge")
-				require.NoError(t, leaf.CreateEdge(&storage.Edge{ID: eid, StartNode: id, EndNode: peer, Type: "VisibilityProofLink", Properties: map[string]interface{}{"run": run, "payload": "retained"}}))
+				require.NoError(t, leaf.CreateEdge(t.Context(), &storage.Edge{ID: eid, StartNode: id, EndNode: peer, Type: "VisibilityProofLink", Properties: map[string]interface{}{"run": run, "payload": "retained"}}))
 				kind, key := storage.StoredEntityNodeKind, string(id)
 				if edge {
 					kind, key = storage.StoredEntityEdgeKind, string(eid)
 				}
 				suppressor := manualSuppressionEngine(leaf)
 				require.NotNil(t, suppressor)
-				require.NoError(t, suppressor.SetManualSuppression(kind, key, false))
+				require.NoError(t, suppressor.SetManualSuppression(context.Background(), kind, key, false))
 				assertHidden := func(hidden bool) {
 					t.Helper()
 					if edge {
@@ -45,17 +45,17 @@ func TestFabricSuppressionOwnsCompletionAndWriter(t *testing.T) {
 							found = found || candidate.ID == eid
 						}
 						require.Equal(t, !hidden, found)
-						raw, err := storage.GetStoredEdge(leaf, eid)
+						raw, err := storage.GetStoredEdge(t.Context(), leaf, eid)
 						require.NoError(t, err)
 						require.Equal(t, "retained", raw.Properties["payload"])
 					} else {
-						_, err := leaf.GetNode(id)
+						_, err := leaf.GetNode(t.Context(), id)
 						if hidden {
 							require.ErrorIs(t, err, storage.ErrNotFound)
 						} else {
 							require.NoError(t, err)
 						}
-						raw, err := storage.GetStoredNode(leaf, id)
+						raw, err := storage.GetStoredNode(t.Context(), leaf, id)
 						require.NoError(t, err)
 						require.Equal(t, "retained", raw.Properties["payload"])
 					}
@@ -75,7 +75,7 @@ func TestFabricSuppressionOwnsCompletionAndWriter(t *testing.T) {
 				case "second_writer_after":
 					query = fragment + " " + writer + " RETURN w,z"
 				}
-				e := f.compositeSession(t)
+				e := newCompositeTestExecutor(t, f.mgr, "comp", f.exec.dbManager)
 				explicit := completion == "commit" || completion == "rollback"
 				if explicit {
 					_, err = e.Execute(ctx, "BEGIN", nil)
@@ -151,9 +151,9 @@ func TestFabricRevealFindsSuppressedCandidates(t *testing.T) {
 	f := &fabricAtomicityFixture{mgr: mgr, exec: exec}
 	leaf, err := f.mgr.GetStorage("one")
 	require.NoError(t, err)
-	_, err = leaf.CreateNode(&storage.Node{ID: "reveal-target", Labels: []string{"RevealProof"}, Properties: map[string]interface{}{"key": "target"}})
+	_, err = leaf.CreateNode(t.Context(), &storage.Node{ID: "reveal-target", Labels: []string{"RevealProof"}, Properties: map[string]interface{}{"key": "target"}})
 	require.NoError(t, err)
-	require.NoError(t, manualSuppressionEngine(leaf).SetManualSuppression(storage.StoredEntityNodeKind, "reveal-target", true))
+	require.NoError(t, manualSuppressionEngine(leaf).SetManualSuppression(context.Background(), storage.StoredEntityNodeKind, "reveal-target", true))
 	for name, query := range map[string]string{
 		"direct":   "MATCH (n:RevealProof {key:'target'}) RETURN reveal(n).key AS key",
 		"selected": "USE comp.one MATCH (n:RevealProof {key:'target'}) RETURN reveal(n).key AS key",
@@ -171,7 +171,7 @@ func TestFabricRevealFindsSuppressedCandidates(t *testing.T) {
 	}
 	_, err = f.exec.Execute(ctx, "CALL { USE comp.one MATCH (n:RevealProof {key:'target'}) WHERE reveal(n) IS NOT NULL CALL kp.unsuppress(n) RETURN 1 AS w } RETURN w", nil)
 	require.NoError(t, err)
-	node, err := leaf.GetNode("reveal-target")
+	node, err := leaf.GetNode(t.Context(), "reveal-target")
 	require.NoError(t, err)
 	require.Equal(t, "target", node.Properties["key"])
 

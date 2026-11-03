@@ -19,7 +19,7 @@ func TestSearchStreamDeliveryCypherFailedDelivery(t *testing.T) {
 	engine, err := s.dbManager.GetStorage(database)
 	require.NoError(t, err)
 	for _, id := range []storage.NodeID{"sol-a", "sol-b", "sol-c"} {
-		_, err = engine.CreateNode(&storage.Node{ID: id})
+		_, err = engine.CreateNode(t.Context(), &storage.Node{ID: id})
 		require.NoError(t, err)
 	}
 	body := `{"statements":[{"statement":"CALL db.retrieve({mode: 'id', n: 1})"}]}`
@@ -74,7 +74,7 @@ func TestSearchStreamDeliveryCypherFailedDeliveryCapacity(t *testing.T) {
 	engine, err := s.dbManager.GetStorage(database)
 	require.NoError(t, err)
 	for _, id := range []storage.NodeID{"sol-a", "sol-b"} {
-		_, err = engine.CreateNode(&storage.Node{ID: id})
+		_, err = engine.CreateNode(t.Context(), &storage.Node{ID: id})
 		require.NoError(t, err)
 	}
 	for i := 0; i < 65; i++ {

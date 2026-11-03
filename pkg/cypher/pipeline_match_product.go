@@ -25,7 +25,7 @@ func (e *StorageExecutor) pipelineApplyMatchProduct(ctx context.Context, rows []
 			}
 		}
 	}
-	nodeWhere, rest := splitWhereByVariable(where, nodeVariables)
+	nodeWhere, rest := splitWhereByVariable(ctx, where, nodeVariables)
 	if joined, handled, err := e.pipelineApplyNodeJoinProduct(ctx, rows, parts, where); handled || err != nil {
 		return joined, handled, err
 	}
@@ -107,13 +107,19 @@ func (e *StorageExecutor) pipelineApplyMatchProduct(ctx context.Context, rows []
 // candidates are narrowed by the conditions that read its variable only
 // (splitWhereByVariable) first.
 func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows []pipelineRow, parts []string, where string) ([]pipelineRow, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, true, err
+	}
 	if strings.TrimSpace(where) == "" {
 		return nil, false, nil
 	}
 	templates := make([]*pipelineNodeMatchTemplate, len(parts))
 	variables := make(map[string]struct{}, len(parts))
 	for index, part := range parts {
-		template := e.pipelineNodeMatchTemplateFor("MATCH " + strings.TrimSpace(part))
+		template := e.pipelineNodeMatchTemplateFor(ctx, "MATCH "+strings.TrimSpace(part))
+		if err := ctx.Err(); err != nil {
+			return nil, true, err
+		}
 		if !template.usable || template.labelErr != nil {
 			return nil, false, nil
 		}
@@ -134,7 +140,7 @@ func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows
 		}
 	}
 	joinable := false
-	for _, term := range splitTopLevelAndConjuncts(where) {
+	for _, term := range splitTopLevelAndConjuncts(ctx, where) {
 		left, _, right, _, _, equality := parseCartesianVarPropEqualityTerm(strings.TrimSpace(term))
 		_, leftLocal := variables[left]
 		_, rightLocal := variables[right]
@@ -147,7 +153,7 @@ func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows
 	for name := range variables {
 		names = append(names, name)
 	}
-	nodeWhere, _ := splitWhereByVariable(where, names)
+	nodeWhere, _ := splitWhereByVariable(ctx, where, names)
 	var out []pipelineRow
 	for _, row := range rows {
 		if err := ctx.Err(); err != nil {
@@ -185,7 +191,7 @@ func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows
 			}
 			matches[index].variable, matches[index].nodes = pattern.variable, nodes
 		}
-		combinations, _ := e.buildCombinationsUsingWhereJoin(matches, where)
+		combinations, _ := e.buildCombinationsUsingWhereJoin(ctx, matches, where)
 		for _, combination := range combinations {
 			joined := make(pipelineRow, len(row)+len(combination))
 			for name, value := range row {

@@ -19,7 +19,7 @@ func TestMaintainPropertyIndexesOnNodeCreated_Updated_Deleted(t *testing.T) {
 	}
 
 	engine.maintainPropertyIndexesOnNodeCreated(node)
-	require.Equal(t, []NodeID{node.ID}, sm.PropertyIndexLookup("Person", "name", "Alice"))
+	require.Equal(t, []NodeID{node.ID}, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "Person", "name", "Alice")))
 
 	oldNode := &Node{
 		ID:         node.ID,
@@ -28,15 +28,15 @@ func TestMaintainPropertyIndexesOnNodeCreated_Updated_Deleted(t *testing.T) {
 	}
 	node.Properties["name"] = "Alicia"
 	engine.maintainPropertyIndexesOnNodeUpdated(node, oldNode)
-	require.Empty(t, sm.PropertyIndexLookup("Person", "name", "Alice"))
-	require.Equal(t, []NodeID{node.ID}, sm.PropertyIndexLookup("Person", "name", "Alicia"))
+	require.Empty(t, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "Person", "name", "Alice")))
+	require.Equal(t, []NodeID{node.ID}, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "Person", "name", "Alicia")))
 
 	engine.nodeCacheMu.Lock()
 	engine.nodeCache[node.ID] = &Node{ID: node.ID, Labels: []string{"Person"}, Properties: map[string]any{"name": "Alicia"}}
 	engine.nodeCacheMu.Unlock()
 
 	engine.maintainPropertyIndexesOnNodeDeletedWithNode(node.ID, node)
-	require.Empty(t, sm.PropertyIndexLookup("Person", "name", "Alicia"))
+	require.Empty(t, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "Person", "name", "Alicia")))
 }
 
 func TestMaintainPropertyIndexesOnNodeDeletedWithNode_EarlyReturns(t *testing.T) {

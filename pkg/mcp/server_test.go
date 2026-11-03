@@ -593,14 +593,14 @@ func TestServerStorageAndExecutorHelpers(t *testing.T) {
 		engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = engine.Close() })
 
-		_, err := engine.CreateNode(&storage.Node{ID: "tenant_a:1", Labels: []string{"Memory"}, Properties: map[string]interface{}{"title": "Root"}})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "tenant_a:1", Labels: []string{"Memory"}, Properties: map[string]interface{}{"title": "Root"}})
 		require.NoError(t, err)
-		_, err = engine.CreateNode(&storage.Node{ID: "tenant_a:2", Labels: []string{"Task"}, Properties: map[string]interface{}{"name": "Neighbor"}})
+		_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "tenant_a:2", Labels: []string{"Task"}, Properties: map[string]interface{}{"name": "Neighbor"}})
 		require.NoError(t, err)
-		_, err = engine.CreateNode(&storage.Node{ID: "tenant_a:3", Labels: []string{"Doc"}, Properties: map[string]interface{}{"title": "Incoming"}})
+		_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "tenant_a:3", Labels: []string{"Doc"}, Properties: map[string]interface{}{"title": "Incoming"}})
 		require.NoError(t, err)
-		require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "tenant_a:e1", StartNode: "tenant_a:1", EndNode: "tenant_a:2", Type: "RELATES_TO"}))
-		require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "tenant_a:e2", StartNode: "tenant_a:3", EndNode: "tenant_a:1", Type: "REFERENCES"}))
+		require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "tenant_a:e1", StartNode: "tenant_a:1", EndNode: "tenant_a:2", Type: "RELATES_TO"}))
+		require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "tenant_a:e2", StartNode: "tenant_a:3", EndNode: "tenant_a:1", Type: "REFERENCES"}))
 
 		var calledDB string
 		server.SetDatabaseScopedStorage(func(dbName string) (storage.Engine, error) {
@@ -1085,7 +1085,7 @@ func TestHandleDiscover_ReturnsEmbeddingFallbackReason(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	engine := db.GetStorage()
-	_, err = engine.CreateNode(&storage.Node{
+	_, err = engine.CreateNode(t.Context(), &storage.Node{
 		ID: "fallback-node", Labels: []string{"Memory"},
 		Properties: map[string]interface{}{"title": "Fallback", "content": "provider fallback document"},
 	})
@@ -1116,7 +1116,7 @@ func TestHandleDiscover_VectorBranchWithManualEmbeddings(t *testing.T) {
 	vector := make([]float32, 1024)
 	vector[0] = 1.0
 
-	_, err = engine.CreateNode(&storage.Node{
+	_, err = engine.CreateNode(t.Context(), &storage.Node{
 		ID:     "vector-node",
 		Labels: []string{"Memory"},
 		Properties: map[string]interface{}{
@@ -1172,7 +1172,7 @@ func TestHandleDiscover_SimilarityIsCosineNotRRF(t *testing.T) {
 	missVec := make([]float32, 1024)
 	missVec[1] = 1.0 // orthogonal to matchVec
 
-	_, err = engine.CreateNode(&storage.Node{
+	_, err = engine.CreateNode(t.Context(), &storage.Node{
 		ID:     "match-node",
 		Labels: []string{"Memory"},
 		Properties: map[string]interface{}{
@@ -1182,7 +1182,7 @@ func TestHandleDiscover_SimilarityIsCosineNotRRF(t *testing.T) {
 		ChunkEmbeddings: [][]float32{matchVec},
 	})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{
+	_, err = engine.CreateNode(t.Context(), &storage.Node{
 		ID:     "miss-node",
 		Labels: []string{"Memory"},
 		Properties: map[string]interface{}{

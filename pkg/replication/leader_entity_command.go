@@ -109,7 +109,10 @@ func entityOperationsNamespace(ops []storage.Operation) (string, error) {
 // routeLeaderEntityCommand is called only after the mode's leader check and
 // before any enqueue/log record. Cmd19 and non-entity commands stay at their
 // existing owners; one shared accepted submit path handles normalized work.
-func routeLeaderEntityCommand(owner Storage, replicator Replicator, cmd *Command, timeout time.Duration) (bool, error) {
+func routeLeaderEntityCommand(ctx context.Context, owner Storage, replicator Replicator, cmd *Command, timeout time.Duration) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return true, err
+	}
 	if err := retiredCommandError(cmd.Type); err != nil {
 		return true, err
 	}
@@ -123,7 +126,6 @@ func routeLeaderEntityCommand(owner Storage, replicator Replicator, cmd *Command
 	if !ok {
 		return false, nil
 	}
-	ctx := context.Background()
 	var cancel context.CancelFunc
 	if timeout > 0 {
 		ctx, cancel = context.WithTimeout(ctx, timeout)

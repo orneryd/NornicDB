@@ -21,7 +21,7 @@ func BenchmarkCartesianMatchEqualityJoin(b *testing.B) {
 			{ID: storage.NodeID("left-" + key), Labels: []string{"CartesianLeft"}, Properties: map[string]interface{}{"key": key}},
 			{ID: storage.NodeID("right-" + key), Labels: []string{"CartesianRight"}, Properties: map[string]interface{}{"key": key}},
 		} {
-			if _, err := store.CreateNode(node); err != nil {
+			if _, err := store.CreateNode(b.Context(), node); err != nil {
 				b.Fatal(err)
 			}
 		}
@@ -47,7 +47,7 @@ func BenchmarkGh728CartesianPreparedMembership(b *testing.B) {
 	for index := 0; index < 32; index++ {
 		key := "key-" + strconv.Itoa(index)
 		for _, side := range []string{"Left", "Right"} {
-			_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(side + key), Labels: []string{"Prepared" + side}, Properties: map[string]interface{}{"key": key}})
+			_, err := store.CreateNode(b.Context(), &storage.Node{ID: storage.NodeID(side + key), Labels: []string{"Prepared" + side}, Properties: map[string]interface{}{"key": key}})
 			require.NoError(b, err)
 		}
 	}
@@ -252,7 +252,7 @@ func BenchmarkGh713CartesianParallel(b *testing.B) {
 			store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "cartesian-parallel-bench")
 			for index := 0; index < size; index++ {
 				for _, side := range []string{"Left", "Right"} {
-					_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(side + strconv.Itoa(index)), Labels: []string{"Parallel" + side}, Properties: map[string]interface{}{"key": "group-" + strconv.Itoa(index%16), "value": int64(index)}})
+					_, err := store.CreateNode(b.Context(), &storage.Node{ID: storage.NodeID(side + strconv.Itoa(index)), Labels: []string{"Parallel" + side}, Properties: map[string]interface{}{"key": "group-" + strconv.Itoa(index%16), "value": int64(index)}})
 					require.NoError(b, err)
 				}
 			}
@@ -305,7 +305,7 @@ func BenchmarkGh713CartesianAggregation(b *testing.B) {
 	for index := 0; index < 32; index++ {
 		key := "key-" + strconv.Itoa(index)
 		for _, side := range []string{"Left", "Right"} {
-			_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(side + key), Labels: []string{"Aggregate" + side}, Properties: map[string]interface{}{"key": key}})
+			_, err := store.CreateNode(b.Context(), &storage.Node{ID: storage.NodeID(side + key), Labels: []string{"Aggregate" + side}, Properties: map[string]interface{}{"key": key}})
 			require.NoError(b, err)
 		}
 	}
@@ -348,7 +348,7 @@ func TestGh728CartesianMembershipParameterFreshness(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "cartesian-membership-test")
 	for _, key := range []string{"key-1", "key-2"} {
 		for _, side := range []string{"Left", "Right"} {
-			_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(side + key), Labels: []string{"Prepared" + side}, Properties: map[string]interface{}{"key": key}})
+			_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(side + key), Labels: []string{"Prepared" + side}, Properties: map[string]interface{}{"key": key}})
 			require.NoError(t, err)
 		}
 	}
@@ -465,7 +465,7 @@ func TestGh713CartesianSharedProjectionWindows(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "cartesian-projection-test")
 	for _, key := range []string{"key-1", "key-2"} {
 		for _, side := range []string{"Left", "Right"} {
-			_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(side + key), Labels: []string{"Projection" + side}, Properties: map[string]interface{}{"key": key}})
+			_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(side + key), Labels: []string{"Projection" + side}, Properties: map[string]interface{}{"key": key}})
 			require.NoError(t, err)
 		}
 	}
@@ -544,7 +544,7 @@ func TestCartesianWherePushdown_InAndEqualityJoin(t *testing.T) {
 	ctx := context.Background()
 
 	for _, k := range []string{"k1", "k2", "k3"} {
-		_, err := store.CreateNode(&storage.Node{
+		_, err := store.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID("nornic:o-" + k),
 			Labels: []string{"OriginalText"},
 			Properties: map[string]interface{}{
@@ -563,7 +563,7 @@ func TestCartesianWherePushdown_InAndEqualityJoin(t *testing.T) {
 		{"t-k2-es", "k2", "es"},
 		{"t-k9-es", "k9", "es"},
 	} {
-		_, err := store.CreateNode(&storage.Node{
+		_, err := store.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID("nornic:" + row.id),
 			Labels: []string{"TranslatedText"},
 			Properties: map[string]interface{}{
@@ -624,7 +624,7 @@ func TestCartesianWherePushdown_NullConstraint(t *testing.T) {
 	require.Equal(t, "o-1", string(filtered[0].nodes[0].ID))
 	require.Len(t, filtered[1].nodes, 1)
 	require.Equal(t, "t-1", string(filtered[1].nodes[0].ID))
-	joined, ok := exec.buildCombinationsUsingWhereJoin(filtered, "o.joinKey IS NOT NULL AND t.joinKey = o.joinKey")
+	joined, ok := exec.buildCombinationsUsingWhereJoin(t.Context(), filtered, "o.joinKey IS NOT NULL AND t.joinKey = o.joinKey")
 	require.True(t, ok)
 	require.Len(t, joined, 1)
 	require.Equal(t, "o-1", string(joined[0]["o"].ID))
@@ -693,7 +693,7 @@ func TestMatchCreate_BatchJoinWithDualInFilters(t *testing.T) {
 	ctx := context.Background()
 
 	for _, k := range []string{"k1", "k2", "k3"} {
-		_, err := store.CreateNode(&storage.Node{
+		_, err := store.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID("o-" + k),
 			Labels: []string{"OriginalText"},
 			Properties: map[string]interface{}{
@@ -701,7 +701,7 @@ func TestMatchCreate_BatchJoinWithDualInFilters(t *testing.T) {
 			},
 		})
 		require.NoError(t, err)
-		_, err = store.CreateNode(&storage.Node{
+		_, err = store.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID("t-" + k),
 			Labels: []string{"TranslatedText"},
 			Properties: map[string]interface{}{
@@ -758,7 +758,7 @@ func TestBuildCombinationsUsingWhereJoin_TwoVarEquality(t *testing.T) {
 		{variable: "t", nodes: []*storage.Node{t1, t2, t3}},
 	}
 
-	joined, ok := exec.buildCombinationsUsingWhereJoin(
+	joined, ok := exec.buildCombinationsUsingWhereJoin(t.Context(),
 		patternMatches,
 		"o.joinKey IN ['k1','k2'] AND t.joinKey IN ['k1','k2'] AND o.joinKey = t.joinKey",
 	)
@@ -795,7 +795,7 @@ func TestBuildCombinationsUsingWhereJoin_ThreeVarEqualityChain(t *testing.T) {
 		{variable: "a", nodes: []*storage.Node{a1, a2, a3}},
 	}
 
-	joined, ok := exec.buildCombinationsUsingWhereJoin(
+	joined, ok := exec.buildCombinationsUsingWhereJoin(t.Context(),
 		patternMatches,
 		"o.joinKey IN ['k1','k2'] AND t.joinKey = o.joinKey AND a.joinKey = t.joinKey",
 	)

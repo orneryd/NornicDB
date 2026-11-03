@@ -1,6 +1,7 @@
 package replication
 
 import (
+	"context"
 	"encoding/json"
 	"reflect"
 	"sync/atomic"
@@ -49,10 +50,10 @@ func wireEdge(id, start, end, value string) *storage.Edge {
 func TestPrototypeTransactionWireAtomicAndReceipt(t *testing.T) {
 	b, a := wireFixture(t, false)
 	for _, id := range []string{"a", "b", "gone"} {
-		_, err := b.CreateNode(wireNode(id, "old"))
+		_, err := b.CreateNode(t.Context(), wireNode(id, "old"))
 		require.NoError(t, err)
 	}
-	require.NoError(t, b.CreateEdge(wireEdge("old", "a", "b", "old")))
+	require.NoError(t, b.CreateEdge(t.Context(), wireEdge("old", "a", "b", "old")))
 	var events atomic.Int64
 	b.OnNodeCreated(func(*storage.Node) { events.Add(1) })
 	b.OnNodeUpdated(func(*storage.Node) { events.Add(1) })
@@ -67,52 +68,52 @@ func TestPrototypeTransactionWireAtomicAndReceipt(t *testing.T) {
 		{Type: storage.OpDeleteNode, NodeID: storage.NodeID("wire:gone")}, {Type: storage.OpCreateNode, Node: wireNode("gone", "recreated")},
 	}
 	invalid := append(append([]storage.Operation(nil), ops...), storage.Operation{Type: storage.OpCreateEdge, Edge: wireEdge("invalid", "a", "missing", "invalid")})
-	require.Error(t, a.ApplyCommand(wireCommand(t, "atomic", invalid...)))
-	old, err := b.GetStoredNode("wire:a")
+	require.Error(t, applyQueued(t, a, wireCommand(t, "atomic", invalid...)))
+	old, err := b.GetStoredNode(t.Context(), "wire:a")
 	require.NoError(t, err)
 	require.Equal(t, "old", old.Properties["value"])
-	_, err = b.GetStoredNode("wire:new")
+	_, err = b.GetStoredNode(t.Context(), "wire:new")
 	require.ErrorIs(t, err, storage.ErrNotFound)
-	edge, err := b.GetStoredEdge("wire:old")
+	edge, err := b.GetStoredEdge(t.Context(), "wire:old")
 	require.NoError(t, err)
 	require.Equal(t, "old", edge.Properties["value"])
-	gone, err := b.GetStoredNode("wire:gone")
+	gone, err := b.GetStoredNode(t.Context(), "wire:gone")
 	require.NoError(t, err)
 	require.Equal(t, "old", gone.Properties["value"])
 	require.Zero(t, events.Load())
 	// The failed transaction did not commit its receipt: the corrected same-ID
 	// command applies, including delete/recreate, through one native transaction.
 	command := wireCommand(t, "atomic", ops...)
-	require.NoError(t, a.ApplyCommand(command))
-	got, err := b.GetStoredNode("wire:a")
+	require.NoError(t, applyQueued(t, a, command))
+	got, err := b.GetStoredNode(t.Context(), "wire:a")
 	require.NoError(t, err)
 	require.Equal(t, "updated", got.Properties["value"])
-	got, err = b.GetStoredNode("wire:new")
+	got, err = b.GetStoredNode(t.Context(), "wire:new")
 	require.NoError(t, err)
 	require.Equal(t, "created", got.Properties["value"])
-	got, err = b.GetStoredNode("wire:gone")
+	got, err = b.GetStoredNode(t.Context(), "wire:gone")
 	require.NoError(t, err)
 	require.Equal(t, "recreated", got.Properties["value"])
-	_, err = b.GetStoredEdge("wire:old")
+	_, err = b.GetStoredEdge(t.Context(), "wire:old")
 	require.ErrorIs(t, err, storage.ErrNotFound)
-	edge, err = b.GetStoredEdge("wire:new-edge")
+	edge, err = b.GetStoredEdge(t.Context(), "wire:new-edge")
 	require.NoError(t, err)
 	require.Equal(t, "final", edge.Properties["value"])
 	beforeEvents := events.Load()
 	require.Positive(t, beforeEvents)
 	beforeVersion, ok := b.GraphMutationVersionInNamespace("wire")
 	require.True(t, ok)
-	nodes, err := b.NodeCount()
+	nodes, err := b.NodeCount(t.Context())
 	require.NoError(t, err)
-	edges, err := b.EdgeCount()
+	edges, err := b.EdgeCount(t.Context())
 	require.NoError(t, err)
-	require.NoError(t, a.ApplyCommand(command))
+	require.NoError(t, applyQueued(t, a, command))
 	require.Equal(t, beforeEvents, events.Load())
 	afterVersion, _ := b.GraphMutationVersionInNamespace("wire")
 	require.Equal(t, beforeVersion, afterVersion)
-	afterNodes, err := b.NodeCount()
+	afterNodes, err := b.NodeCount(t.Context())
 	require.NoError(t, err)
-	afterEdges, err := b.EdgeCount()
+	afterEdges, err := b.EdgeCount(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, nodes, afterNodes)
 	require.Equal(t, edges, afterEdges)
@@ -141,12 +142,12 @@ func TestPrototypeTransactionWireRejectsVersionAndNamespace(t *testing.T) {
 				invalid := append(append([]storage.Operation(nil), ops...), storage.Operation{Type: storage.OpCreateEdge, Edge: &storage.Edge{ID: "wire:r", StartNode: "wire:a", EndNode: "different:b", Type: "LINK"}})
 				command = wireCommand(t, "invalid", invalid...)
 			}
-			require.Error(t, a.ApplyCommand(command))
-			nodes, err := b.NodeCount()
+			require.Error(t, applyQueued(t, a, command))
+			nodes, err := b.NodeCount(t.Context())
 			require.NoError(t, err)
 			require.Zero(t, nodes)
 			// Corrected metadata using the same logical ID remains admissible.
-			require.NoError(t, a.ApplyCommand(wireCommand(t, "invalid", ops...)))
+			require.NoError(t, applyQueued(t, a, wireCommand(t, "invalid", ops...)))
 		})
 	}
 }
@@ -158,16 +159,16 @@ func wireDictionaryIdentity(t *testing.T, b *storage.BadgerEngine, key string) s
 	require.NoError(t, err)
 	fixtureowner.OwnChecked(t, w)
 	b.SetBufferedCommitWAL(w)
-	tx, err := b.BeginTransaction()
+	tx, err := b.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("wire"))
 	require.NoError(t, tx.SetImplicit(true))
-	_, err = tx.CreateNode(&storage.Node{ID: storage.NodeID("wire:dictionary-" + key), Properties: map[string]any{key: "sentinel"}})
+	_, err = tx.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID("wire:dictionary-" + key), Properties: map[string]any{key: "sentinel"}})
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 	require.True(t, tx.AcknowledgedBuffered())
-	require.NoError(t, b.FlushWriteBehind(nil))
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
 	require.NoError(t, w.Sync())
 	entries, err := storage.ReadWALEntriesFromDir(dir)
 	require.NoError(t, err)
@@ -201,29 +202,29 @@ func TestPrototypeTransactionWireUsesDestinationDictionaries(t *testing.T) {
 	node.Properties = map[string]any{"alpha": int32(9), "beta": []byte{0, 1, 255}, "float": float32(1.25), "list": []int64{1, 2}, "when": stamp, "nested": map[string]any{"count": int64(7)}}
 	node.ChunkEmbeddings = [][]float32{{1, 0, 0}, {0, 1, 0}}
 	node.NamedEmbeddings = map[string][]float32{"named": {0, 0, 1}}
-	_, err := source.CreateNode(node)
+	_, err := source.CreateNode(t.Context(), node)
 	require.NoError(t, err)
-	authoritative, err := source.GetStoredNode(node.ID)
+	authoritative, err := source.GetStoredNode(t.Context(), node.ID)
 	require.NoError(t, err)
-	_, err = source.CreateNode(wireNode("dictionary-beta", "source-endpoint"))
+	_, err = source.CreateNode(t.Context(), wireNode("dictionary-beta", "source-endpoint"))
 	require.NoError(t, err)
 	edge := wireEdge("typed-edge", "typed", "dictionary-beta", "typed")
 	edge.Properties = map[string]any{"alpha": int64(4), "when": stamp}
-	require.NoError(t, source.CreateEdge(edge))
-	authoritativeEdge, err := source.GetStoredEdge(edge.ID)
+	require.NoError(t, source.CreateEdge(t.Context(), edge))
+	authoritativeEdge, err := source.GetStoredEdge(t.Context(), edge.ID)
 	require.NoError(t, err)
-	require.NoError(t, peer.ApplyCommand(wireCommand(t, "typed", storage.Operation{Type: storage.OpCreateNode, Node: authoritative}, storage.Operation{Type: storage.OpCreateEdge, Edge: authoritativeEdge})))
-	got, err := destination.GetStoredNode(node.ID)
+	require.NoError(t, applyQueued(t, peer, wireCommand(t, "typed", storage.Operation{Type: storage.OpCreateNode, Node: authoritative}, storage.Operation{Type: storage.OpCreateEdge, Edge: authoritativeEdge})))
+	got, err := destination.GetStoredNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	require.Equal(t, authoritative.Properties, got.Properties)
 	require.Equal(t, authoritative.ChunkEmbeddings, got.ChunkEmbeddings)
 	require.Equal(t, authoritative.NamedEmbeddings, got.NamedEmbeddings)
 	require.True(t, authoritative.CreatedAt.Equal(got.CreatedAt))
 	require.True(t, authoritative.UpdatedAt.Equal(got.UpdatedAt))
-	gotEdge, err := destination.GetStoredEdge(edge.ID)
+	gotEdge, err := destination.GetStoredEdge(t.Context(), edge.ID)
 	require.NoError(t, err)
 	require.Equal(t, authoritativeEdge.Properties, gotEdge.Properties)
-	sentinel, err := destination.GetStoredNode("wire:dictionary-beta")
+	sentinel, err := destination.GetStoredNode(t.Context(), "wire:dictionary-beta")
 	require.NoError(t, err)
 	require.Equal(t, map[string]any{"beta": "sentinel"}, sentinel.Properties)
 }
@@ -242,18 +243,18 @@ func TestPrototypeTransactionReceiptSurvivesReopen(t *testing.T) {
 	}
 	b, a := open()
 	command := wireCommand(t, "durable-receipt", storage.Operation{Type: storage.OpCreateNode, Node: wireNode("durable", "value")})
-	require.NoError(t, a.ApplyCommand(command))
+	require.NoError(t, applyQueued(t, a, command))
 	require.NoError(t, a.Close())
 	require.NoError(t, b.Close())
 	b, a = open()
 	var events atomic.Int64
 	b.OnNodeCreated(func(*storage.Node) { events.Add(1) })
-	require.NoError(t, a.ApplyCommand(command))
+	require.NoError(t, applyQueued(t, a, command))
 	require.Zero(t, events.Load())
-	n, err := b.GetStoredNode("wire:durable")
+	n, err := b.GetStoredNode(t.Context(), "wire:durable")
 	require.NoError(t, err)
 	require.Equal(t, "value", n.Properties["value"])
-	count, err := b.NodeCount()
+	count, err := b.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.EqualValues(t, 1, count)
 }
@@ -268,7 +269,7 @@ func TestPrototypeTransactionWireAllStoredSemanticFields(t *testing.T) {
 	destinationDir := t.TempDir()
 	destination, peer := wireFixture(t, false, destinationDir)
 	for _, b := range []*storage.BadgerEngine{source, destination} {
-		_, err := b.CreateNode(wireNode("target", "endpoint"))
+		_, err := b.CreateNode(t.Context(), wireNode("target", "endpoint"))
 		require.NoError(t, err)
 	}
 	node := wireNode("metadata", "value")
@@ -285,9 +286,9 @@ func TestPrototypeTransactionWireAllStoredSemanticFields(t *testing.T) {
 	node.EmbedMeta = map[string]any{"embedding_model": "synthetic", "chunk_count": int(1), "has_embedding": true}
 	node.ChunkEmbeddings = [][]float32{{1, 2, 3}}
 	node.NamedEmbeddings = map[string][]float32{"named": {3, 2, 1}}
-	_, err := source.CreateNode(node)
+	_, err := source.CreateNode(t.Context(), node)
 	require.NoError(t, err)
-	storedNode, err := source.GetStoredNode(node.ID)
+	storedNode, err := source.GetStoredNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	edge := wireEdge("metadata-edge", "metadata", "target", "edge")
 	edge.Database = "transient-provenance"
@@ -295,13 +296,13 @@ func TestPrototypeTransactionWireAllStoredSemanticFields(t *testing.T) {
 	edge.Confidence = 0.75
 	edge.AutoGenerated = true
 	edge.VisibilitySuppressed = true
-	require.NoError(t, source.CreateEdge(edge))
-	storedEdge, err := source.GetStoredEdge(edge.ID)
+	require.NoError(t, source.CreateEdge(t.Context(), edge))
+	storedEdge, err := source.GetStoredEdge(t.Context(), edge.ID)
 	require.NoError(t, err)
-	require.NoError(t, peer.ApplyCommand(wireCommand(t, "metadata", storage.Operation{Type: storage.OpCreateNode, Node: storedNode}, storage.Operation{Type: storage.OpCreateEdge, Edge: storedEdge})))
-	nodePeer, err := destination.GetStoredNode(node.ID)
+	require.NoError(t, applyQueued(t, peer, wireCommand(t, "metadata", storage.Operation{Type: storage.OpCreateNode, Node: storedNode}, storage.Operation{Type: storage.OpCreateEdge, Edge: storedEdge})))
+	nodePeer, err := destination.GetStoredNode(t.Context(), node.ID)
 	require.NoError(t, err)
-	edgePeer, err := destination.GetStoredEdge(edge.ID)
+	edgePeer, err := destination.GetStoredEdge(t.Context(), edge.ID)
 	require.NoError(t, err)
 	assertStoredNodeParity(t, storedNode, nodePeer)
 	assertStoredEdgeParity(t, storedEdge, edgePeer)
@@ -312,21 +313,21 @@ func TestPrototypeTransactionWireAllStoredSemanticFields(t *testing.T) {
 		metadata.VisibilitySuppressed = false
 		next.SetRuntimeMetadata(metadata)
 	}
-	require.NoError(t, source.UpdateNode(storage.NodeUpdateRequest{After: next}))
-	nextStored, err := source.GetStoredNode(node.ID)
+	require.NoError(t, source.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: next}))
+	nextStored, err := source.GetStoredNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	nextEdge := storage.CopyEdge(storedEdge)
 	nextEdge.UpdatedAt = time.Unix(1700000004, 321).UTC()
 	nextEdge.Confidence = 0.5
 	nextEdge.AutoGenerated = false
 	nextEdge.VisibilitySuppressed = false
-	require.NoError(t, source.UpdateEdge(storage.EdgeUpdateRequest{After: nextEdge}))
-	nextStoredEdge, err := source.GetStoredEdge(edge.ID)
+	require.NoError(t, source.UpdateEdge(t.Context(), storage.EdgeUpdateRequest{After: nextEdge}))
+	nextStoredEdge, err := source.GetStoredEdge(t.Context(), edge.ID)
 	require.NoError(t, err)
-	require.NoError(t, peer.ApplyCommand(wireCommand(t, "metadata-update", storage.Operation{Type: storage.OpUpdateNode, Node: nextStored}, storage.Operation{Type: storage.OpUpdateEdge, Edge: nextStoredEdge})))
-	nodePeer, err = destination.GetStoredNode(node.ID)
+	require.NoError(t, applyQueued(t, peer, wireCommand(t, "metadata-update", storage.Operation{Type: storage.OpUpdateNode, Node: nextStored}, storage.Operation{Type: storage.OpUpdateEdge, Edge: nextStoredEdge})))
+	nodePeer, err = destination.GetStoredNode(t.Context(), node.ID)
 	require.NoError(t, err)
-	edgePeer, err = destination.GetStoredEdge(edge.ID)
+	edgePeer, err = destination.GetStoredEdge(t.Context(), edge.ID)
 	require.NoError(t, err)
 	assertStoredNodeParity(t, nextStored, nodePeer)
 	assertStoredEdgeParity(t, nextStoredEdge, edgePeer)
@@ -334,9 +335,9 @@ func TestPrototypeTransactionWireAllStoredSemanticFields(t *testing.T) {
 	require.NoError(t, destination.Close())
 	reopened, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(destinationDir))
 	require.NoError(t, err)
-	persistedNode, err := reopened.GetStoredNode(node.ID)
+	persistedNode, err := reopened.GetStoredNode(t.Context(), node.ID)
 	require.NoError(t, err)
-	persistedEdge, err := reopened.GetStoredEdge(edge.ID)
+	persistedEdge, err := reopened.GetStoredEdge(t.Context(), edge.ID)
 	require.NoError(t, err)
 	assertStoredNodeParity(t, nextStored, persistedNode)
 	assertStoredEdgeParity(t, nextStoredEdge, persistedEdge)
@@ -398,17 +399,17 @@ func TestPrototypeTransactionCodecAllStoredFields(t *testing.T) {
 	}
 	node.ChunkEmbeddings = [][]float32{{1, 2}}
 	node.NamedEmbeddings = map[string][]float32{"named": {2, 1}}
-	_, err := b.CreateNode(node)
+	_, err := b.CreateNode(t.Context(), node)
 	require.NoError(t, err)
-	stored, err := b.GetStoredNode(node.ID)
+	stored, err := b.GetStoredNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	edge := wireEdge("codec-edge", "codec", "codec", "value")
 	edge.UpdatedAt = time.Unix(1700000004, 123).UTC()
 	edge.VisibilitySuppressed = true
 	edge.Confidence = 0.8
 	edge.AutoGenerated = true
-	require.NoError(t, b.CreateEdge(edge))
-	storedEdge, err := b.GetStoredEdge(edge.ID)
+	require.NoError(t, b.CreateEdge(t.Context(), edge))
+	storedEdge, err := b.GetStoredEdge(t.Context(), edge.ID)
 	require.NoError(t, err)
 	for _, mode := range []bool{false, true} {
 		nodeKind, edgeKind := storage.OpCreateNode, storage.OpCreateEdge
@@ -430,28 +431,28 @@ func TestPrototypeTransactionWireLargeVectorUpdateParity(t *testing.T) {
 	destination, peer := wireFixture(t, false, destinationDir)
 	node := wireNode("large-vector", "value")
 	node.ChunkEmbeddings = [][]float32{{1}}
-	_, err := source.CreateNode(node)
+	_, err := source.CreateNode(t.Context(), node)
 	require.NoError(t, err)
-	small, err := source.GetStoredNode(node.ID)
+	small, err := source.GetStoredNode(t.Context(), node.ID)
 	require.NoError(t, err)
-	require.NoError(t, peer.ApplyCommand(wireCommand(t, "small-vector", storage.Operation{Type: storage.OpCreateNode, Node: small})))
+	require.NoError(t, applyQueued(t, peer, wireCommand(t, "small-vector", storage.Operation{Type: storage.OpCreateNode, Node: small})))
 	large := storage.CopyNode(small)
 	large.ChunkEmbeddings = [][]float32{make([]float32, 16000)}
 	for i := range large.ChunkEmbeddings[0] {
 		large.ChunkEmbeddings[0][i] = 1.25
 	}
 	large.EmbedMeta = map[string]any{"embedding_model": "larger"}
-	require.NoError(t, source.UpdateNode(storage.NodeUpdateRequest{After: large}))
-	authoritative, err := source.GetStoredNode(node.ID)
+	require.NoError(t, source.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: large}))
+	authoritative, err := source.GetStoredNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	require.Len(t, authoritative.ChunkEmbeddings, 1)
 	require.Len(t, authoritative.ChunkEmbeddings[0], 16000)
-	require.NoError(t, peer.ApplyCommand(wireCommand(t, "large-vector", storage.Operation{Type: storage.OpUpdateNode, Node: authoritative})))
+	require.NoError(t, applyQueued(t, peer, wireCommand(t, "large-vector", storage.Operation{Type: storage.OpUpdateNode, Node: authoritative})))
 	require.NoError(t, peer.Close())
 	require.NoError(t, destination.Close())
 	destination, err = fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(destinationDir))
 	require.NoError(t, err)
-	got, err := destination.GetStoredNode(node.ID)
+	got, err := destination.GetStoredNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	require.Len(t, got.ChunkEmbeddings, 1, "destination native staging must persist its own separate chunk layout")
 	require.Equal(t, authoritative.ChunkEmbeddings, got.ChunkEmbeddings)

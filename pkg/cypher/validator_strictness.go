@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 )
@@ -21,7 +22,7 @@ func validateExpressionOperandCompleteness(expression string) error {
 	return nil
 }
 
-func validateExpressionLexicalTokens(text string) error {
+func validateExpressionLexicalTokens(ctx context.Context, text string) error {
 	for index := 0; index < len(text); index++ {
 		if end, quoted := skipCypherLexicalToken(text, index); quoted {
 			index = end - 1
@@ -29,7 +30,7 @@ func validateExpressionLexicalTokens(text string) error {
 		}
 		character := text[index]
 		malformedOptional := matchKeywordAt(text, index, "OPTIONAL") &&
-			(index == 0 || !clauseKeywordUsedAsName(text, index, index+len("OPTIONAL"), "OPTIONAL")) &&
+			(index == 0 || !clauseKeywordUsedAsName(ctx, text, index, index+len("OPTIONAL"), "OPTIONAL")) &&
 			strings.HasPrefix(text[skipSpaces(text, index+len("OPTIONAL")):], "<tab>")
 		if character == '\\' || malformedOptional {
 			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: invalid expression token")
@@ -190,7 +191,7 @@ func foldByte(b byte) int {
 // lastTopLevelClauseWord returns the last top-level clause keyword in s, or "".
 // Keywords inside quotes, comments or nested delimiters do not count; keywords
 // used as names (aliases, property keys) do not count either.
-func lastTopLevelClauseWord(s string) string {
+func lastTopLevelClauseWord(ctx context.Context, s string) string {
 	parenDepth, bracketDepth, braceDepth := 0, 0, 0
 	last := ""
 	mergeOwner := false
@@ -240,7 +241,7 @@ func lastTopLevelClauseWord(s string) string {
 		for _, keywordIndex := range validatorKeywordFirst[foldByte(c)] {
 			keyword := validatorClauseKeywords[keywordIndex]
 			if matchKeywordAt(s, i, keyword) &&
-				!clauseKeywordUsedAsName(s, i, i+len(keyword), keyword) {
+				!clauseKeywordUsedAsName(ctx, s, i, i+len(keyword), keyword) {
 				// A WITH inside an expression is not a clause start:
 				// `x STARTS WITH 'a'`, `x ENDS WITH 'a'` and the type
 				// predicate `IS :: TIME WITH TIME ZONE`. A real WITH clause

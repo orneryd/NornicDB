@@ -24,7 +24,7 @@ func apocBenchmarkBackend(b *testing.B, size int) apocstorage.Storage {
 	b.Helper()
 	backend := apocstorage.NewInMemoryStorage()
 	for i := 0; i < size; i++ {
-		if _, err := backend.CreateNode([]string{"Person"}, map[string]interface{}{
+		if _, err := backend.CreateNode(b.Context(), []string{"Person"}, map[string]interface{}{
 			"name": fmt.Sprintf("Person-%d", i),
 			"rank": i,
 		}); err != nil {
@@ -43,8 +43,14 @@ func BenchmarkBoundSearchPrefixSmallGraph(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if nodes := functions.Prefix(ctx, "Person", "name", "Person-1"); len(nodes) == 0 {
-			b.Fatal("expected matches")
+		{
+			nodes, apocCallError1 := functions.Prefix(ctx, "Person", "name", "Person-1")
+			if apocCallError1 != nil {
+				b.Fatalf("APOC helper failed: %v", apocCallError1)
+			}
+			if len(nodes) == 0 {
+				b.Fatal("expected matches")
+			}
 		}
 	}
 }
@@ -58,8 +64,14 @@ func BenchmarkBoundSearchPrefixLargeGraph(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if nodes := functions.Prefix(ctx, "Person", "name", "Person-19999"); len(nodes) != 1 {
-			b.Fatalf("expected one match, got %d", len(nodes))
+		{
+			nodes, apocCallError2 := functions.Prefix(ctx, "Person", "name", "Person-19999")
+			if apocCallError2 != nil {
+				b.Fatalf("APOC helper failed: %v", apocCallError2)
+			}
+			if len(nodes) != 1 {
+				b.Fatalf("expected one match, got %d", len(nodes))
+			}
 		}
 	}
 }
@@ -130,7 +142,7 @@ func BenchmarkIndependentInstancePerRow(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	values := []reflect.Value{reflect.ValueOf(relationship)}
+	values := []reflect.Value{reflect.ValueOf(b.Context()), reflect.ValueOf(relationship)}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -164,11 +176,18 @@ func BenchmarkBoundNodeDegreeSmallGraph(b *testing.B) {
 	backend := apocBenchmarkBackend(b, 100)
 	functions := apocnode.New(backend)
 	node := &apocstorage.Node{ID: 1, Labels: []string{"Person"}}
+	ctx := b.Context()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if got := functions.Degree(node, ""); got != 0 {
-			b.Fatalf("unexpected degree %d", got)
+		{
+			got, apocCallError3 := functions.Degree(ctx, node, "")
+			if apocCallError3 != nil {
+				b.Fatalf("APOC helper failed: %v", apocCallError3)
+			}
+			if got != 0 {
+				b.Fatalf("unexpected degree %d", got)
+			}
 		}
 	}
 }

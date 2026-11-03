@@ -23,7 +23,7 @@ func TestEmbeddingKeysCleanedOnDeleteAndInlineUpdate(t *testing.T) {
 				chunks[i] = []float32{float32(i), 1, 2}
 			}
 			node := &Node{ID: "test:vectors", Properties: map[string]any{"content": strings.Repeat("x", 60*1024)}, ChunkEmbeddings: chunks}
-			_, err := eng.CreateNode(node)
+			_, err := eng.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 			count := func() int {
 				n := 0
@@ -41,11 +41,11 @@ func TestEmbeddingKeysCleanedOnDeleteAndInlineUpdate(t *testing.T) {
 			}
 			require.Equal(t, 16, count(), "fixture stores all chunks separately")
 			if remove {
-				err = eng.DeleteNode(node.ID)
+				err = eng.DeleteNode(t.Context(), node.ID)
 			} else {
 				node.Properties = map[string]any{"content": "small"}
 				node.ChunkEmbeddings = [][]float32{{1, 2, 3}}
-				err = eng.UpdateNode(NodeUpdateRequest{After: node})
+				err = eng.UpdateNode(t.Context(), NodeUpdateRequest{After: node})
 			}
 			require.NoError(t, err)
 			require.Zero(t, count(), "no orphaned embedding keys survive")

@@ -42,7 +42,7 @@ func New(t *testing.T) (*multidb.DatabaseManager, *Peer) {
 	t.Helper()
 	remote := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	peer := &Peer{store: storage.NewNamespacedEngine(remote, "peer")}
-	_, err := peer.store.CreateNode(&storage.Node{ID: "marker", Labels: []string{"DescriptorPeer"}, Properties: map[string]interface{}{"marker": "first-remote-row"}})
+	_, err := peer.store.CreateNode(t.Context(), &storage.Node{ID: "marker", Labels: []string{"DescriptorPeer"}, Properties: map[string]interface{}{"marker": "first-remote-row"}})
 	require.NoError(t, err)
 	executor := cypher.NewStorageExecutor(peer.store)
 	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -122,12 +122,12 @@ func New(t *testing.T) (*multidb.DatabaseManager, *Peer) {
 // the peer's execution and storage path rather than a cached constant response.
 func (p *Peer) SetMarker(t *testing.T, marker string) {
 	t.Helper()
-	node, err := p.store.GetNode("marker")
+	node, err := p.store.GetNode(t.Context(), "marker")
 	require.NoError(t, err)
 	before := *node
 	before.Properties = maps.Clone(node.Properties)
 	node.Properties["marker"] = marker
-	require.NoError(t, p.store.UpdateNode(storage.NodeUpdateRequest{Before: &before, After: node}))
+	require.NoError(t, p.store.UpdateNode(t.Context(), storage.NodeUpdateRequest{Before: &before, After: node}))
 }
 
 // Calls counts authenticated statement executions against the remote graph.

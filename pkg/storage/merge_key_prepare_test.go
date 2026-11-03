@@ -16,13 +16,13 @@ func newMergeKeyTestEngine(t *testing.T) (*BadgerEngine, *SchemaManager) {
 	engine := createTestBadgerEngine(t)
 	schema := engine.GetSchemaForNamespace("test")
 	require.NoError(t, schema.AddConstraint(Constraint{Name: "u_k", Type: ConstraintUnique, Label: "U", Properties: []string{"k"}}))
-	require.NoError(t, RefreshUniqueConstraintValuesForEngine(NewNamespacedEngine(engine, "test"), schema))
+	require.NoError(t, RefreshUniqueConstraintValuesForEngine(context.Background(), NewNamespacedEngine(engine, "test"), schema))
 	return engine, schema
 }
 
 func beginMergeKeyTx(t *testing.T, engine *BadgerEngine) *BadgerTransaction {
 	t.Helper()
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	return tx
@@ -32,7 +32,7 @@ func createKeyNode(t *testing.T, engine *BadgerEngine, id string, k int64) NodeI
 	t.Helper()
 	tx := beginMergeKeyTx(t, engine)
 	nodeID := NodeID(prefixTestID(id))
-	_, err := tx.CreateNode(&Node{ID: nodeID, Labels: []string{"U"}, Properties: map[string]interface{}{"k": k}})
+	_, err := tx.CreateNode(t.Context(), &Node{ID: nodeID, Labels: []string{"U"}, Properties: map[string]interface{}{"k": k}})
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 	return nodeID
@@ -53,15 +53,15 @@ func TestPrepareMergeKeyMovesSnapshotToCommittedNode(t *testing.T) {
 	nodeID := createKeyNode(t, engine, "n1", 1)
 
 	require.NoError(t, fresh.PrepareMergeKey(ctx, "U", "k", int64(1)))
-	node, err := fresh.GetNode(nodeID)
+	node, err := fresh.GetNode(t.Context(), nodeID)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), node.Properties["k"])
 	node.Properties["seen"] = true
-	require.NoError(t, fresh.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
+	require.NoError(t, fresh.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 	require.NoError(t, fresh.Commit())
 
 	require.ErrorIs(t, reader.PrepareMergeKey(ctx, "U", "k", int64(1)), ErrConflict)
-	_, err = reader.GetNode(nodeID)
+	_, err = reader.GetNode(t.Context(), nodeID)
 	require.ErrorIs(t, err, ErrNotFound)
 	require.NoError(t, reader.Rollback())
 
@@ -70,7 +70,7 @@ func TestPrepareMergeKeyMovesSnapshotToCommittedNode(t *testing.T) {
 	visible := beginMergeKeyTx(t, engine)
 	require.NoError(t, visible.PrepareMergeKey(ctx, "U", "other", int64(1)))
 	require.NoError(t, visible.PrepareMergeKey(ctx, "U", "k", int64(1)))
-	_, err = visible.GetNode(nodeID)
+	_, err = visible.GetNode(t.Context(), nodeID)
 	require.NoError(t, err)
 	require.NoError(t, visible.Rollback())
 	require.NoError(t, visible.PrepareMergeKey(ctx, "U", "k", int64(2)))
@@ -94,11 +94,11 @@ func TestPrepareMergeKeyWaitsForCreator(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 	nodeID := NodeID(prefixTestID("n5"))
-	_, err := creator.CreateNode(&Node{ID: nodeID, Labels: []string{"U"}, Properties: map[string]interface{}{"k": int64(5)}})
+	_, err := creator.CreateNode(t.Context(), &Node{ID: nodeID, Labels: []string{"U"}, Properties: map[string]interface{}{"k": int64(5)}})
 	require.NoError(t, err)
 	require.NoError(t, creator.Commit())
 	require.NoError(t, <-done)
-	node, err := waiter.GetNode(nodeID)
+	node, err := waiter.GetNode(t.Context(), nodeID)
 	require.NoError(t, err)
 	require.Equal(t, int64(5), node.Properties["k"])
 	require.NoError(t, waiter.Commit())
@@ -136,7 +136,7 @@ func TestPrepareMergeKeyAfterWrites(t *testing.T) {
 	ctx := context.Background()
 	write := func(tx *BadgerTransaction, id string) {
 		t.Helper()
-		_, err := tx.CreateNode(&Node{ID: NodeID(prefixTestID(id)), Labels: []string{"Source"}})
+		_, err := tx.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID(id)), Labels: []string{"Source"}})
 		require.NoError(t, err)
 	}
 
@@ -155,7 +155,7 @@ func TestPrepareMergeKeyAfterWrites(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 	nodeID := NodeID(prefixTestID("n31"))
-	_, err := creator.CreateNode(&Node{ID: nodeID, Labels: []string{"U"}, Properties: map[string]interface{}{"k": int64(31)}})
+	_, err := creator.CreateNode(t.Context(), &Node{ID: nodeID, Labels: []string{"U"}, Properties: map[string]interface{}{"k": int64(31)}})
 	require.NoError(t, err)
 	require.NoError(t, creator.Commit())
 	require.ErrorIs(t, <-done, ErrConflict)
@@ -164,7 +164,7 @@ func TestPrepareMergeKeyAfterWrites(t *testing.T) {
 	retry := beginMergeKeyTx(t, engine)
 	write(retry, "src2")
 	require.NoError(t, retry.PrepareMergeKey(ctx, "U", "k", int64(31)), "the node is in the retry's snapshot")
-	node, err := retry.GetNode(nodeID)
+	node, err := retry.GetNode(t.Context(), nodeID)
 	require.NoError(t, err)
 	require.Equal(t, int64(31), node.Properties["k"])
 	require.NoError(t, retry.Commit())
@@ -216,9 +216,9 @@ func TestPrepareMergeKeyDeadlockAtCommit(t *testing.T) {
 	second := beginMergeKeyTx(t, engine)
 	require.NoError(t, first.PrepareMergeKey(ctx, "U", "k", int64(1)))
 	require.NoError(t, second.PrepareMergeKey(ctx, "U", "k", int64(2)))
-	_, err := first.CreateNode(&Node{ID: NodeID(prefixTestID("a")), Labels: []string{"U"}, Properties: map[string]interface{}{"k": int64(2)}})
+	_, err := first.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("a")), Labels: []string{"U"}, Properties: map[string]interface{}{"k": int64(2)}})
 	require.NoError(t, err)
-	_, err = second.CreateNode(&Node{ID: NodeID(prefixTestID("b")), Labels: []string{"U"}, Properties: map[string]interface{}{"k": int64(1)}})
+	_, err = second.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("b")), Labels: []string{"U"}, Properties: map[string]interface{}{"k": int64(1)}})
 	require.NoError(t, err)
 
 	results := make(chan error, 2)
@@ -270,7 +270,7 @@ func TestPrepareMergeKeyEdgeBranches(t *testing.T) {
 	require.Empty(t, schema.uniqueConstraintCommitLocks)
 	schema.uniqueConstraintCommitLocksMu.Unlock()
 
-	schema.ApplyUniqueValue("U", "k", int64(10), NodeID(prefixTestID("ghost")), ValidatedUniqueClaim)
+	schema.ApplyUniqueValue(context.Background(), "U", "k", int64(10), NodeID(prefixTestID("ghost")), ValidatedUniqueClaim)
 	stale := beginMergeKeyTx(t, engine)
 	require.NoError(t, stale.PrepareMergeKey(ctx, "U", "k", int64(10)))
 	require.NoError(t, stale.Rollback())
@@ -278,7 +278,7 @@ func TestPrepareMergeKeyEdgeBranches(t *testing.T) {
 	nodeID := createKeyNode(t, engine, "n11", 11)
 	observed := beginMergeKeyTx(t, engine)
 	_, _ = observed.GetNodesByLabel(ctx, "U")
-	require.NoError(t, observed.catchUpToNode(nodeID), "the node is in its snapshot")
+	require.NoError(t, observed.catchUpToNode(context.Background(), nodeID), "the node is in its snapshot")
 	require.NoError(t, observed.Rollback())
 
 	closing := beginMergeKeyTx(t, engine)
@@ -295,10 +295,10 @@ func TestEngineWriteLockFailureIsReturned(t *testing.T) {
 	lockEngineWriteKeys = func(context.Context, *SchemaManager, *Node, string) (func(), error) { return nil, ErrDeadlock }
 	t.Cleanup(func() { lockEngineWriteKeys = previous })
 	node := &Node{ID: NodeID(prefixTestID("direct")), Labels: []string{"U"}, Properties: map[string]interface{}{"k": int64(20)}}
-	_, err := engine.CreateNode(node)
+	_, err := engine.CreateNode(t.Context(), node)
 	require.ErrorIs(t, err, ErrDeadlock)
-	require.ErrorIs(t, engine.UpdateNode(NodeUpdateRequest{After: node}), ErrDeadlock)
+	require.ErrorIs(t, engine.UpdateNode(t.Context(), NodeUpdateRequest{After: node}), ErrDeadlock)
 	lockEngineWriteKeys = previous
-	_, err = engine.GetNode(node.ID)
+	_, err = engine.GetNode(t.Context(), node.ID)
 	require.ErrorIs(t, err, ErrNotFound)
 }

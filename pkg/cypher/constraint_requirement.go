@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"regexp"
 	"strings"
 
@@ -20,8 +21,8 @@ var constraintRequirementSpelling = regexp.MustCompile(`(?is)^(.*?)\s+IS\s+(?:(N
 // RELATIONSHIP KEY`. An entity that isn't the pattern's is Neo4j's
 // SyntaxError ('IS NODE KEY' does not allow relationship patterns). Any
 // other statement is returned as it is.
-func (e *StorageExecutor) canonicalConstraintRequirement(cypher string) (string, error) {
-	_, patternSpan, requireExpr, err := e.parseCreateConstraintForRequireHead(cypher)
+func (e *StorageExecutor) canonicalConstraintRequirement(ctx context.Context, cypher string) (string, error) {
+	_, patternSpan, requireExpr, err := e.parseCreateConstraintForRequireHead(ctx, cypher)
 	if err != nil {
 		return cypher, nil
 	}

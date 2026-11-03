@@ -1,6 +1,7 @@
 package search
 
 import (
+	"context"
 	"errors"
 	"sync"
 
@@ -141,22 +142,22 @@ func (s *Service) ReserveNodeMutation(nodeID storage.NodeID) NodeMutation {
 // is stored and visible, removed otherwise. Live writers and readers that find
 // a node missing use it rather than IndexNode or RemoveNode, so none of them
 // decides from a read that a newer write may already have outdated.
-func (s *Service) RefreshNode(nodeID storage.NodeID) error {
+func (s *Service) RefreshNode(ctx context.Context, nodeID storage.NodeID) error {
 	if s == nil || nodeID == "" {
 		return nil
 	}
-	return s.RefreshNodeWithMutation(s.ReserveNodeMutation(nodeID))
+	return s.RefreshNodeWithMutation(ctx, s.ReserveNodeMutation(nodeID))
 }
 
 // RefreshNodeWithMutation applies a refresh reserved earlier, such as one
 // queued for a storage event. Storage is read after the reservation: a write
 // this read misses commits later and reserves a newer refresh of its own,
 // which makes this one a no-op.
-func (s *Service) RefreshNodeWithMutation(mutation NodeMutation) error {
+func (s *Service) RefreshNodeWithMutation(ctx context.Context, mutation NodeMutation) error {
 	if mutation.mutation.owner() != s || mutation.mutation.retire() {
 		return nil
 	}
-	node, err := s.engine.GetNode(mutation.mutation.id)
+	node, err := s.engine.GetNode(ctx, mutation.mutation.id)
 	if errors.Is(err, storage.ErrNotFound) {
 		return s.applyReservedNodeRemoval(mutation)
 	}
@@ -164,7 +165,7 @@ func (s *Service) RefreshNodeWithMutation(mutation NodeMutation) error {
 		s.retryRefresh(RefreshRetry{Node: mutation}, err)
 		return err
 	}
-	return s.applyReservedNodeIndex(node, mutation)
+	return s.applyReservedNodeIndex(ctx, node, mutation)
 }
 
 // DiscardNodeMutation retires work that could not be prepared for application.
@@ -189,20 +190,20 @@ func (s *Service) ReserveEdgeMutation(edgeID storage.EdgeID) EdgeMutation {
 
 // RefreshEdge makes the relationship's index entries match storage, as
 // RefreshNode does for nodes; a deleted relationship leaves them.
-func (s *Service) RefreshEdge(edgeID storage.EdgeID) error {
+func (s *Service) RefreshEdge(ctx context.Context, edgeID storage.EdgeID) error {
 	if s == nil || edgeID == "" {
 		return nil
 	}
-	return s.RefreshEdgeWithMutation(s.ReserveEdgeMutation(edgeID))
+	return s.RefreshEdgeWithMutation(ctx, s.ReserveEdgeMutation(edgeID))
 }
 
 // RefreshEdgeWithMutation applies a relationship refresh reserved earlier;
 // storage is read after the reservation, as in RefreshNodeWithMutation.
-func (s *Service) RefreshEdgeWithMutation(mutation EdgeMutation) error {
+func (s *Service) RefreshEdgeWithMutation(ctx context.Context, mutation EdgeMutation) error {
 	if mutation.mutation.owner() != s || mutation.mutation.retire() {
 		return nil
 	}
-	edge, err := s.engine.GetEdge(mutation.mutation.id)
+	edge, err := s.engine.GetEdge(ctx, mutation.mutation.id)
 	if errors.Is(err, storage.ErrNotFound) {
 		return s.applyReservedEdgeRemoval(mutation)
 	}
@@ -222,7 +223,7 @@ func (s *Service) updateRelationshipWithMutation(write deferredIndexWrite, mutat
 		return
 	}
 	write.valid = mutation.mutation.current
-	if queued, _, _ := s.queueBuildWrite(write); queued {
+	if queued, _, _ := s.queueBuildWrite(s.LifetimeContext(), write); queued {
 		return
 	}
 	lane := s.lockMutation(string(mutation.mutation.id))

@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"go/token"
 	"go/types"
-	"golang.org/x/tools/go/ssa"
 	"sort"
 	"strings"
+
+	"github.com/orneryd/nornicdb/internal/workcensus"
+	"golang.org/x/tools/go/ssa"
 )
 
 // typeGuard is a necessary branch condition, never an acquisition. Unknown
@@ -60,8 +62,17 @@ func typeGuardsAt(fn *ssa.Function, at ssa.Instruction) []typeGuard {
 		if _, it := assertion.AssertedType.Underlying().(*types.Interface); it {
 			continue
 		}
-		parameter, ok := assertion.X.(*ssa.Parameter)
-		if !ok {
+		subject := assertion.X
+		if load, ok := subject.(*ssa.UnOp); ok && load.Op == token.MUL {
+			// Capturing a parameter can spill it into a local cell. Reuse
+			// the canonical def/use proof: the exact parameter must be its
+			// sole dominating value, including every captured address use.
+			if value, immutable := workcensus.ImmutableCellValueAt(load.X, load); immutable {
+				subject = value
+			}
+		}
+		parameter, ok := subject.(*ssa.Parameter)
+		if !ok || parameter.Parent() != fn {
 			continue
 		}
 		index := -1

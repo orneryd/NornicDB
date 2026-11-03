@@ -9,13 +9,16 @@ import (
 )
 
 func (b *BadgerEngine) migrateV2ToV3() error {
+	// The startup migration is a context-free entry: its own unbounded lifetime
+	// is established here and threaded to the private repair helpers.
+	ctx := context.Background()
 	start := []byte{prefixEdge}
 	for {
-		edges, lastScanned, reachedEnd, err := collectMVCCBootstrapBatch[*Edge, EdgeID, edgeMVCCBootstrapKind](b, context.Background(), start, mvccRebuildScanBatchSize)
+		edges, lastScanned, reachedEnd, err := collectMVCCBootstrapBatch[*Edge, EdgeID, edgeMVCCBootstrapKind](b, ctx, start, mvccRebuildScanBatchSize)
 		if err != nil {
 			return fmt.Errorf("scan edges: %w", err)
 		}
-		if err := b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+		if err := b.withUpdate(ctx, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 			for _, edge := range edges {
 				head, err := b.loadEdgeMVCCHeadInTxn(txn, edge.ID)
 				if err == ErrNotFound {
@@ -40,7 +43,7 @@ func (b *BadgerEngine) migrateV2ToV3() error {
 		}
 		start = nextScanStart(lastScanned)
 	}
-	if err := b.repairArchivedEdgeAdjacency(); err != nil {
+	if err := b.repairArchivedEdgeAdjacency(ctx); err != nil {
 		return fmt.Errorf("repair archived edge adjacency: %w", err)
 	}
 	if _, err := b.rebuildRelationshipIndexes(context.Background(), rebuildCaseSensitiveUpgrade); err != nil {
@@ -54,7 +57,7 @@ type archivedEdgeAdjacency struct {
 	version MVCCVersion
 }
 
-func (b *BadgerEngine) repairArchivedEdgeAdjacency() error {
+func (b *BadgerEngine) repairArchivedEdgeAdjacency(ctx context.Context) error {
 	start := []byte{prefixMVCCEdge}
 	for {
 		batch := make([]archivedEdgeAdjacency, 0, mvccRebuildScanBatchSize)
@@ -103,7 +106,7 @@ func (b *BadgerEngine) repairArchivedEdgeAdjacency() error {
 			return err
 		}
 		if len(batch) > 0 {
-			if err := b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+			if err := b.withUpdate(ctx, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 				for _, record := range batch {
 					if err := b.ensureEdgeAdjacencyAtHeadInTxn(txn, record.edge, record.version); err != nil {
 						return err

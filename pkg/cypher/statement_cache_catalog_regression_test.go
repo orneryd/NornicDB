@@ -101,7 +101,7 @@ func TestRule73SelectionForms(t *testing.T) {
 				if err := root.validateSyntax(context.Background(), query, false, syntaxStatement); err != nil {
 					t.Fatal(err)
 				}
-				root.cachedUpperQuery(query)
+				root.cachedUpperQuery(t.Context(), query)
 			}
 			if _, err := root.Execute(context.Background(), "RETURN 17 AS live", nil); err != nil {
 				t.Fatal(err)
@@ -180,7 +180,7 @@ func TestRule73ReferenceCycles64(t *testing.T) {
 				if _, err := root.Execute(context.Background(), query, nil); err != nil {
 					t.Fatal(err)
 				}
-				root.cachedUpperQuery(query)
+				root.cachedUpperQuery(t.Context(), query)
 				switch kind {
 				case "database":
 					err = manager.DropDatabase(t.Context(), selection)
@@ -237,7 +237,7 @@ func TestRule73FabricResultCacheRetarget(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := engine.CreateNode(&storage.Node{ID: "same_id", Labels: []string{"GateValue"}, Properties: map[string]interface{}{"v": name}}); err != nil {
+		if _, err := engine.CreateNode(t.Context(), &storage.Node{ID: "same_id", Labels: []string{"GateValue"}, Properties: map[string]interface{}{"v": name}}); err != nil {
 			t.Fatal(err)
 		}
 	}

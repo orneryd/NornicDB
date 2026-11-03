@@ -2,7 +2,6 @@ package bolt
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -16,27 +15,43 @@ import (
 // stored under atomic.Pointer for lock-free reads on the hot path.
 //
 // Returns the initial encoding error if the OAuth config fails URL
-// validation; in that case the server should fail startup.
-func (s *Server) startDiscoveryRefresher() error {
+// validation, and errServerClosed once the server is stopping; either way the
+// start attempt fails instead of serving a half-published listener.
+func (s *Server) startDiscoveryRefresher(parents ...context.Context) error {
 	initial, err := buildDiscoveryResponse(s.config.OAuthConfig, time.Now())
 	if err != nil {
 		return err
 	}
 	s.discoveryResponse.Store(&initial)
-	stop := make(chan struct{})
-	s.lifecycleMu.Lock()
-	if s.closed.Load() {
-		s.lifecycleMu.Unlock()
-		return fmt.Errorf("bolt server is closed")
+	w := s.lifetime()
+	parent := w.Context()
+	if len(parents) > 0 {
+		parent = parents[0]
 	}
-	s.discoveryStop = stop
+	ctx, release, accepted := w.Acquire(parent)
+	if !accepted {
+		return errServerClosed
+	}
+	s.lifecycleMu.Lock()
+	if w.Closing() {
+		s.lifecycleMu.Unlock()
+		release()
+		return errServerClosed
+	}
+	if s.discoveryStarted {
+		s.lifecycleMu.Unlock()
+		release()
+		return nil
+	}
+	s.discoveryStarted = true
 	s.lifecycleMu.Unlock()
 	go func() {
+		defer release()
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 		for {
 			select {
-			case <-stop:
+			case <-ctx.Done():
 				return
 			case now := <-ticker.C:
 				bytes, err := buildDiscoveryResponse(s.config.OAuthConfig, now)
@@ -44,6 +59,7 @@ func (s *Server) startDiscoveryRefresher() error {
 					// Validation errors are surfaced at startup; a
 					// runtime failure here means OAuthConfig was mutated.
 					// Log but keep the previous bytes.
+					w.RecordError("Bolt discovery refresh", err)
 					s.logEvent(context.Background(), slog.LevelWarn, localization.BoltDiscoveryRefreshFailedEvent(err))
 					continue
 				}
@@ -52,21 +68,6 @@ func (s *Server) startDiscoveryRefresher() error {
 		}
 	}()
 	return nil
-}
-
-// stopDiscoveryRefresher signals the discovery refresh goroutine to exit.
-// Safe to call multiple times.
-func (s *Server) stopDiscoveryRefresher() {
-	s.lifecycleMu.Lock()
-	defer s.lifecycleMu.Unlock()
-	if s.discoveryStop != nil {
-		select {
-		case <-s.discoveryStop:
-		default:
-			close(s.discoveryStop)
-		}
-		s.discoveryStop = nil
-	}
 }
 
 // serveDiscovery writes the cached pre-encoded discovery response to conn

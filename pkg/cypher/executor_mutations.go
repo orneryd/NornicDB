@@ -2,11 +2,9 @@ package cypher
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -34,281 +32,6 @@ func (e *StorageExecutor) parseMergePattern(ctx context.Context, pattern string)
 // Properties are included at the top level for Neo4j compatibility.
 // Embeddings are replaced with a summary showing status and dimensions.
 
-// tryExecuteDeleteWithWithLimitHotPath executes:
-//
-//	MATCH ... [WHERE ...]
-//	WITH <var> LIMIT <n>
-//	DETACH DELETE <var>
-//	[RETURN ...]
-//
-// with a streamlined path that avoids generic WITH parsing in delete execution.
-func (e *StorageExecutor) tryExecuteDeleteWithWithLimitHotPath(ctx context.Context, cypher string, matchIdx, deleteIdx int, deleteVars string, detach bool, needEdgeStats bool) (*ExecuteResult, bool, error) {
-	if !detach || matchIdx < 0 || deleteIdx <= matchIdx {
-		return nil, false, nil
-	}
-	if strings.Contains(deleteVars, ",") {
-		return nil, false, nil
-	}
-	deleteVar := strings.TrimSpace(deleteVars)
-	if deleteVar == "" {
-		return nil, false, nil
-	}
-
-	matchSegment := strings.TrimSpace(cypher[matchIdx:deleteIdx])
-	withIdx := findKeywordIndex(matchSegment, "WITH")
-	if withIdx <= 0 {
-		return nil, false, nil
-	}
-
-	// Keep this hot path strict and deterministic.
-	for _, blocked := range []string{"ORDER BY", "SKIP", "UNWIND", "CALL", "OPTIONAL MATCH"} {
-		if containsKeywordOutsideStrings(matchSegment, blocked) {
-			return nil, false, nil
-		}
-	}
-
-	baseMatch := strings.TrimSpace(matchSegment[:withIdx])
-	withPart := strings.TrimSpace(matchSegment[withIdx+4:]) // skip "WITH"
-	limitIdx := findKeywordIndex(withPart, "LIMIT")
-	if limitIdx <= 0 {
-		return nil, false, nil
-	}
-
-	withVar := strings.TrimSpace(withPart[:limitIdx])
-	if withVar != deleteVar {
-		return nil, false, nil
-	}
-	limitLiteral := strings.TrimSpace(withPart[limitIdx+5:]) // skip "LIMIT"
-	if limitLiteral == "" {
-		return nil, false, nil
-	}
-	limitFields := strings.Fields(limitLiteral)
-	if len(limitFields) == 0 {
-		return nil, false, nil
-	}
-	limitN, err := strconv.Atoi(limitFields[0])
-	if err != nil || limitN <= 0 {
-		return nil, false, nil
-	}
-
-	result := &ExecuteResult{
-		Columns: []string{},
-		Rows:    [][]interface{}{},
-		Stats:   &QueryStats{},
-	}
-	store := e.getStorage(ctx)
-
-	candidates, ok, err := e.collectDeleteWithLimitCandidates(ctx, baseMatch, deleteVar, limitN, getParamsFromContext(ctx))
-	if err != nil {
-		return nil, true, err
-	}
-	if !ok {
-		return nil, false, nil
-	}
-
-	deletedNodeIDs := make(map[string]struct{}, len(candidates))
-	for _, node := range candidates {
-		if node == nil {
-			continue
-		}
-		lookupID, validSource := node.Identity().NodeLookupID(store)
-		if !validSource {
-			continue
-		}
-		nodeID := string(lookupID)
-		if _, seen := deletedNodeIDs[nodeID]; seen {
-			continue
-		}
-		edgesCount := 0
-		if needEdgeStats {
-			outgoingEdges, _ := store.GetOutgoingEdges(ctx, storage.NodeID(nodeID))
-			incomingEdges, _ := store.GetIncomingEdges(ctx, storage.NodeID(nodeID))
-			edgesCount = len(outgoingEdges) + len(incomingEdges)
-		}
-		if err := store.DeleteNode(storage.NodeID(nodeID)); err == nil {
-			result.Stats.NodesDeleted++
-			result.Stats.RelationshipsDeleted += edgesCount
-			deletedNodeIDs[nodeID] = struct{}{}
-			e.removeNodeFromSearch(nodeID)
-		}
-	}
-
-	input := &ExecuteResult{Columns: []string{deleteVar}, Rows: make([][]interface{}, 0, len(candidates))}
-	for _, node := range candidates {
-		input.Rows = append(input.Rows, []interface{}{node})
-	}
-	e.applyDeleteReturnProjection(result, cypher, deleteVar, deleteProjectionInfo{ctx: ctx, input: input})
-	return result, true, getExpressionFailure(ctx)
-}
-
-func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, baseMatch, deleteVar string, limitN int, params map[string]interface{}) ([]*storage.Node, bool, error) {
-	matchIdx := findKeywordIndex(baseMatch, "MATCH")
-	if matchIdx < 0 {
-		return nil, false, nil
-	}
-	whereIdx := findKeywordIndex(baseMatch, "WHERE")
-	patternPart := strings.TrimSpace(baseMatch[matchIdx+5:])
-	wherePart := ""
-	if whereIdx > 0 {
-		patternPart = strings.TrimSpace(baseMatch[matchIdx+5 : whereIdx])
-		wherePart = strings.TrimSpace(baseMatch[whereIdx+5:])
-	}
-	if !patternMapsAreConstant(patternPart) || !patternMapsAreConstant(wherePart) {
-		return nil, false, nil
-	}
-	nodePat, parseErr := readNodePattern(ctx, patternPart, patternPropertyKeys)
-	if parseErr != nil {
-		return nil, true, parseErr
-	}
-	if strings.TrimSpace(nodePat.variable) != deleteVar {
-		return nil, false, nil
-	}
-	// Admit the WHERE shape and parameter type before reading property values.
-	if wherePart != "" {
-		equality := deleteWherePropertyEquals.FindStringSubmatch(wherePart)
-		membership := deleteWherePropertyInParameter.FindStringSubmatch(wherePart)
-		if len(equality) == 4 && strings.EqualFold(equality[1], deleteVar) {
-			// The equality path accepts literal and parameter values.
-		} else if len(membership) == 4 && strings.EqualFold(membership[1], deleteVar) {
-			if raw, exists := params[membership[3]]; exists {
-				switch raw.(type) {
-				case []interface{}, []string:
-				default:
-					return nil, false, nil
-				}
-			}
-		} else {
-			return nil, false, nil
-		}
-	}
-	rowCtx, prepared, prepareErr := e.bindPatternProperties(ctx, patternPart, nil)
-	if prepareErr != nil {
-		return nil, true, prepareErr
-	}
-	ctx = rowCtx
-	nodePat, parseErr = e.parseNodePattern(ctx, prepared)
-	if parseErr != nil {
-		return nil, true, parseErr
-	}
-
-	var nodes []*storage.Node
-	var err error
-	usedIndex := false
-	if wherePart != "" {
-		if candidates, used, idxErr := e.tryCollectNodesFromIDIn(ctx, nodePat, wherePart, params); idxErr == nil && used {
-			nodes = candidates
-			usedIndex = true
-		}
-		if !usedIndex {
-			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndexIn(wherePartNodePattern(nodePat, deleteVar), wherePart, params); idxErr == nil && used {
-				nodes = candidates
-				usedIndex = true
-			}
-		}
-		if !usedIndex {
-			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndexInLiteral(ctx, wherePartNodePattern(nodePat, deleteVar), wherePart); idxErr == nil && used {
-				nodes = candidates
-				usedIndex = true
-			}
-		}
-		if !usedIndex {
-			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndex(ctx, wherePartNodePattern(nodePat, deleteVar), wherePart); idxErr == nil && used {
-				nodes = candidates
-				usedIndex = true
-			}
-		}
-	}
-	if !usedIndex {
-		if len(nodePat.labels) > 0 {
-			nodes, err = e.storage.GetNodesByLabel(ctx, nodePat.labels[0])
-		} else {
-			nodes, err = e.storage.AllNodes(ctx)
-		}
-		if err != nil {
-			return nil, true, err
-		}
-	}
-	if len(nodePat.properties) > 0 {
-		nodes = e.filterNodesByProperties(nodes, nodePat.properties)
-	}
-
-	if wherePart != "" {
-		// Supported hot-path predicates:
-		//   var.prop = $param | 'literal'
-		//   var.prop IN $param
-		if m := deleteWherePropertyEquals.FindStringSubmatch(wherePart); len(m) == 4 && strings.EqualFold(m[1], deleteVar) {
-			prop := m[2]
-			rhs := strings.TrimSpace(m[3])
-			var expected interface{}
-			if strings.HasPrefix(rhs, "$") {
-				key := strings.TrimSpace(strings.TrimPrefix(rhs, "$"))
-				val, ok := params[key]
-				if !ok {
-					return []*storage.Node{}, true, nil
-				}
-				expected = val
-			} else {
-				expected = strings.Trim(rhs, "'\"")
-			}
-			filtered := make([]*storage.Node, 0, len(nodes))
-			for _, n := range nodes {
-				if n == nil {
-					continue
-				}
-				if e.compareEqual(n.Properties[prop], expected) {
-					filtered = append(filtered, n)
-				}
-			}
-			nodes = filtered
-		} else if m := deleteWherePropertyInParameter.FindStringSubmatch(wherePart); len(m) == 4 && strings.EqualFold(m[1], deleteVar) {
-			prop := m[2]
-			paramName := m[3]
-			raw, ok := params[paramName]
-			if !ok {
-				return []*storage.Node{}, true, nil
-			}
-			allowed := map[string]struct{}{}
-			switch v := raw.(type) {
-			case []interface{}:
-				for _, item := range v {
-					allowed[fmt.Sprintf("%v", item)] = struct{}{}
-				}
-			case []string:
-				for _, item := range v {
-					allowed[item] = struct{}{}
-				}
-			default:
-				return nil, false, nil
-			}
-			filtered := make([]*storage.Node, 0, len(nodes))
-			for _, n := range nodes {
-				if n == nil {
-					continue
-				}
-				if _, ok := allowed[fmt.Sprintf("%v", n.Properties[prop])]; ok {
-					filtered = append(filtered, n)
-				}
-			}
-			nodes = filtered
-		} else {
-			return nil, false, nil
-		}
-	}
-
-	if limitN < len(nodes) {
-		nodes = nodes[:limitN]
-	}
-	return nodes, true, nil
-}
-
-func wherePartNodePattern(nodePat nodePatternInfo, variable string) nodePatternInfo {
-	if strings.TrimSpace(nodePat.variable) != "" {
-		return nodePat
-	}
-	nodePat.variable = variable
-	return nodePat
-}
-
 type deleteProjectionKind uint8
 
 const (
@@ -317,19 +40,10 @@ const (
 	deleteProjectionRelationship
 )
 
-type deleteProjectionInfo struct {
-	ctx   context.Context
-	input *ExecuteResult
-}
-
 type deleteTargetValue struct {
 	kind   deleteProjectionKind
 	nodeID storage.NodeID
 	edgeID storage.EdgeID
-}
-
-func singleDeleteProjectionInfo(_ string, _ deleteProjectionKind) deleteProjectionInfo {
-	return deleteProjectionInfo{}
 }
 
 func classifyDeleteTargetValue(val interface{}) deleteTargetValue {
@@ -357,79 +71,7 @@ func classifyDeleteTargetValue(val interface{}) deleteTargetValue {
 	return deleteTargetValue{}
 }
 
-func (e *StorageExecutor) applyDeleteReturnProjection(result *ExecuteResult, cypher, deleteVars string, info deleteProjectionInfo) {
-	if result == nil {
-		return
-	}
-	returnIdx := topLevelKeywordIndex(cypher, "RETURN")
-	if returnIdx <= 0 {
-		return
-	}
-	ctx := info.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	rows := []pipelineRow{}
-	nodeIDs := []storage.NodeID{}
-	edgeIDs := make(map[storage.EdgeID]struct{})
-	if info.input != nil {
-		store := e.getStorage(ctx)
-		seenNodes, seenEdges := map[string]struct{}{}, map[string]struct{}{}
-		var targetEdges []storage.EdgeID
-		for _, values := range info.input.Rows {
-			row := pipelineRow(buildRowValueMap(info.input.Columns, values))
-			rows = append(rows, row)
-			// An entity the DELETE removed without naming it (a DETACH
-			// DELETE's relationships) is gone from storage.
-			for _, value := range row {
-				switch entity := value.(type) {
-				case *storage.Node:
-					if entity != nil {
-						id, valid := entity.Identity().NodeLookupID(store)
-						if _, err := e.getQueryNode(store, id); valid && errors.Is(err, storage.ErrNotFound) {
-							nodeIDs = append(nodeIDs, id)
-						}
-					}
-				case *storage.Edge:
-					if entity != nil {
-						id := deleteEdgeLookupID(store, entity)
-						if _, err := store.GetEdge(id); errors.Is(err, storage.ErrNotFound) {
-							edgeIDs[id] = struct{}{}
-						}
-					}
-				}
-			}
-			// The DELETE's targets, as the pipeline DELETE collects them (a
-			// path's nodes and relationships, a list's entities).
-			for _, target := range splitTopLevelComma(deleteVars) {
-				value, ok := e.evaluateRowExpressionWithContext(ctx, strings.TrimSpace(target), row)
-				if !ok {
-					pipelineItemUnevaluable(ctx, target)
-					return
-				}
-				collectDeleteTargetValue(store, value, seenNodes, seenEdges, &nodeIDs, &targetEdges)
-			}
-		}
-		for _, id := range targetEdges {
-			edgeIDs[id] = struct{}{}
-		}
-	}
-	deleted := &deletedEntities{}
-	deleted.addFromStorage(e.getStorage(ctx), nodeIDs, edgeIDs)
-	if err := validateDeletedEntityReads(rows, cypher[returnIdx:], deleted); err != nil {
-		recordExpressionFailure(ctx, err)
-		return
-	}
-	e.replaceDeletedEntityViews(rows, deleted)
-	projected, err := e.projectMergeReturn(ctx, rows, cypher[returnIdx:])
-	if err != nil {
-		return
-	}
-	result.Columns = projected.Columns
-	result.Rows = projected.Rows
-}
-
-func (e *StorageExecutor) isDeleteStreamingEligible(matchSegment, deleteVars string, detach bool) bool {
+func (e *StorageExecutor) isDeleteStreamingEligible(ctx context.Context, matchSegment, deleteVars string, detach bool) bool {
 	if !detach {
 		return false
 	}
@@ -438,7 +80,7 @@ func (e *StorageExecutor) isDeleteStreamingEligible(matchSegment, deleteVars str
 	}
 	// Keep streaming path conservative to avoid semantic drift.
 	for _, blocked := range []string{"WITH", "LIMIT", "SKIP", "ORDER", "CALL", "UNWIND"} {
-		if containsKeywordOutsideStrings(matchSegment, blocked) {
+		if containsKeywordOutsideStrings(ctx, matchSegment, blocked) {
 			return false
 		}
 	}
@@ -453,7 +95,7 @@ func (e *StorageExecutor) isDeleteStreamingEligible(matchSegment, deleteVars str
 	return cyphertext.IsIdentifier(deleteVars)
 }
 
-func (e *StorageExecutor) normalizeSetMatchRowsToNodes(matchResult *ExecuteResult, store storage.Engine) {
+func (e *StorageExecutor) normalizeSetMatchRowsToNodes(ctx context.Context, matchResult *ExecuteResult, store storage.Engine) {
 	if matchResult == nil {
 		return
 	}
@@ -472,7 +114,7 @@ func (e *StorageExecutor) normalizeSetMatchRowsToNodes(matchResult *ExecuteResul
 			if !ok || nodeID == "" {
 				continue
 			}
-			node, err := e.getQueryNode(store, storage.NodeID(nodeID))
+			node, err := e.getQueryNode(ctx, store, storage.NodeID(nodeID))
 			if err != nil || node == nil {
 				continue
 			}
@@ -481,7 +123,7 @@ func (e *StorageExecutor) normalizeSetMatchRowsToNodes(matchResult *ExecuteResul
 	}
 }
 
-func (e *StorageExecutor) normalizeSetMatchRowsToEdges(matchResult *ExecuteResult, store storage.Engine) {
+func (e *StorageExecutor) normalizeSetMatchRowsToEdges(ctx context.Context, matchResult *ExecuteResult, store storage.Engine) {
 	if matchResult == nil {
 		return
 	}
@@ -500,7 +142,7 @@ func (e *StorageExecutor) normalizeSetMatchRowsToEdges(matchResult *ExecuteResul
 			if !ok || edgeID == "" {
 				continue
 			}
-			edge, err := store.GetEdge(storage.EdgeID(edgeID))
+			edge, err := store.GetEdge(ctx, storage.EdgeID(edgeID))
 			if err != nil || edge == nil {
 				continue
 			}
@@ -514,7 +156,7 @@ var setScopeVarPattern = regexp.MustCompile(`(?i)\b([A-Za-z_][A-Za-z0-9_]*)\s*(?
 // extractScopeVariablesFromSetAndReturn returns variable names referenced in
 // SET assignments and RETURN items so the pre-SET MATCH query includes all
 // variables needed for mutation and projection.
-func extractScopeVariablesFromSetAndReturn(setPart, returnPart string) []string {
+func extractScopeVariablesFromSetAndReturn(ctx context.Context, setPart, returnPart string) []string {
 	seen := map[string]struct{}{}
 	out := make([]string, 0, 4)
 	add := func(v string) {
@@ -544,7 +186,7 @@ func extractScopeVariablesFromSetAndReturn(setPart, returnPart string) []string 
 			if expr == "" {
 				continue
 			}
-			if asIdx := findKeywordIndex(expr, "AS"); asIdx > 0 {
+			if asIdx := findKeywordIndex(ctx, expr, "AS"); asIdx > 0 {
 				expr = strings.TrimSpace(expr[:asIdx])
 			}
 			add(extractVariableNameFromReturnItem(expr))
@@ -557,18 +199,18 @@ func extractScopeVariablesFromSetAndReturn(setPart, returnPart string) []string 
 // Example: "n += $props SET n.x = 1 SET n.y = 2" -> "n += $props, n.x = 1, n.y = 2".
 // Counting what a SET writes needs the clause boundaries, so the SET
 // applicators walk the clauses with nextChainedSetClause instead.
-func collapseChainedSetClauses(setPart string) string {
+func collapseChainedSetClauses(ctx context.Context, setPart string) string {
 	setPart = strings.TrimSpace(setPart)
-	first, next, ok := nextChainedSetClause(setPart, 0)
+	first, next, ok := nextChainedSetClause(ctx, setPart, 0)
 	if !ok {
 		return setPart
 	}
-	clause, next, ok := nextChainedSetClause(setPart, next)
+	clause, next, ok := nextChainedSetClause(ctx, setPart, next)
 	if !ok {
 		return first
 	}
 	clauses := []string{first}
-	for ; ok; clause, next, ok = nextChainedSetClause(setPart, next) {
+	for ; ok; clause, next, ok = nextChainedSetClause(ctx, setPart, next) {
 		clauses = append(clauses, clause)
 	}
 	return strings.Join(clauses, ", ")
@@ -578,10 +220,10 @@ func collapseChainedSetClauses(setPart string) string {
 // setPart, a SET assignment list that may chain further SET clauses
 // ("n += $props SET n.x = 1"), and the index where the clause after it
 // starts. ok is false when no clause is left.
-func nextChainedSetClause(setPart string, start int) (clause string, next int, ok bool) {
+func nextChainedSetClause(ctx context.Context, setPart string, start int) (clause string, next int, ok bool) {
 	for start < len(setPart) {
 		end, after := len(setPart), len(setPart)
-		if idx := keywordIndexFrom(setPart, "SET", start, defaultKeywordScanOpts()); idx >= 0 {
+		if idx := keywordIndexFrom(ctx, setPart, "SET", start, defaultKeywordScanOpts()); idx >= 0 {
 			end, after = idx, idx+len("SET")
 		}
 		if clause = strings.TrimSpace(setPart[start:end]); clause != "" {
@@ -594,7 +236,7 @@ func nextChainedSetClause(setPart string, start int) (clause string, next int, o
 
 // firstPostSetClauseIndex returns the first index of a clause keyword that can
 // legally follow a SET assignment list. Returns -1 when none are present.
-func firstPostSetClauseIndex(setTail string) int {
+func firstPostSetClauseIndex(ctx context.Context, setTail string) int {
 	opts := defaultKeywordScanOpts()
 	first := -1
 	for _, kw := range []string{
@@ -602,7 +244,7 @@ func firstPostSetClauseIndex(setTail string) int {
 		"CREATE", "MATCH", "MERGE", "DELETE", "CALL",
 		"ORDER BY", "LIMIT", "SKIP",
 	} {
-		if idx := keywordIndexFrom(setTail, kw, 0, opts); idx >= 0 {
+		if idx := keywordIndexFrom(ctx, setTail, kw, 0, opts); idx >= 0 {
 			if first == -1 || idx < first {
 				first = idx
 			}
@@ -848,109 +490,6 @@ func (e *StorageExecutor) idCounter() int64 {
 	return atomic.LoadInt64(&idCounter)
 }
 
-// evaluateRelationshipPatternInWhere evaluates a WHERE clause relationship pattern
-// like "(n)-[:SUPERSEDED_BY]->()" and returns true if the node has a matching edge.
-// Used when NOT (n)-[:TYPE]->() is evaluated after stripping outer parens to "n)-[:TYPE]->()".
-func (e *StorageExecutor) evaluateRelationshipPatternInWhere(ctx context.Context, node *storage.Node, variable, pattern string) bool {
-	if !strings.Contains(pattern, "("+variable+")") && !strings.Contains(pattern, "("+variable+":") {
-		return false
-	}
-	if e.isChainedPattern(pattern) {
-		return e.checkChainedPattern(ctx, node, variable, pattern, "")
-	}
-	_ = e.extractTargetVariable(pattern, variable) // not needed for simple (var)-[]->() pattern
-	relPattern := e.parseOptionalRelPattern(context.Background(), pattern)
-	targetMatches := func(targetNodeID storage.NodeID) bool {
-		if len(relPattern.targetLabels) == 0 && len(relPattern.targetProps) == 0 {
-			return true
-		}
-		targetNode, err := e.getQueryNode(e.storage, targetNodeID)
-		if err != nil || targetNode == nil {
-			return false
-		}
-		if len(relPattern.targetLabels) > 0 && !mergeNodeHasLabels(targetNode, relPattern.targetLabels) {
-			return false
-		}
-		for key, expected := range relPattern.targetProps {
-			actual, ok := targetNode.Properties[key]
-			if !ok || !e.compareEqual(actual, expected) {
-				return false
-			}
-		}
-		return true
-	}
-	var checkIncoming, checkOutgoing bool
-	var relTypes []string
-	checkIncoming, checkOutgoing, relTypes = e.relationshipExistencePatternDirections(pattern, variable)
-	if checkIncoming {
-		edges, _ := e.storage.GetIncomingEdges(ctx, node.ID)
-		for _, edge := range edges {
-			if (len(relTypes) == 0 || e.edgeTypeMatches(edge.Type, relTypes)) && targetMatches(edge.StartNode) {
-				return true
-			}
-		}
-	}
-	if checkOutgoing {
-		edges, _ := e.storage.GetOutgoingEdges(ctx, node.ID)
-		for _, edge := range edges {
-			if (len(relTypes) == 0 || e.edgeTypeMatches(edge.Type, relTypes)) && targetMatches(edge.EndNode) {
-				return true
-			}
-		}
-	}
-	if !checkIncoming && !checkOutgoing {
-		incoming, _ := e.storage.GetIncomingEdges(ctx, node.ID)
-		outgoing, _ := e.storage.GetOutgoingEdges(ctx, node.ID)
-		return len(incoming) > 0 || len(outgoing) > 0
-	}
-	return false
-}
-
-// checkChainedPattern handles chained relationship patterns like (p)-[:KNOWS]->()-[:KNOWS]->()
-func (e *StorageExecutor) checkChainedPattern(ctx context.Context, node *storage.Node, variable, pattern, innerWhere string) bool {
-	// Parse the pattern to extract relationship hops
-	// E.g., (p)-[:KNOWS]->()-[:KNOWS]->() has two hops
-
-	// Find the first relationship part
-	// Pattern looks like: (variable)-[rel1]->(intermediate)-[rel2]->...
-
-	// Find the start of the first relationship (after the variable node)
-	varPattern := "(" + variable + ")"
-	if !strings.Contains(pattern, varPattern) {
-		// Try with label: (variable:Label)
-		idx := strings.Index(pattern, "("+variable+":")
-		if idx < 0 {
-			return false
-		}
-	}
-
-	// Extract relationship hops
-	hops := e.parseRelationshipHops(pattern, variable)
-	if len(hops) == 0 {
-		return false
-	}
-
-	// Traverse the chain starting from the given node
-	return e.traverseChain(ctx, node, hops, 0)
-}
-
-// relationshipHop represents one step in a chained relationship pattern
-type relationshipHop struct {
-	relTypes []string
-	outgoing bool
-}
-
-// parseRelationshipHops extracts relationship hops from a pattern
-func (e *StorageExecutor) parseRelationshipHops(pattern, variable string) []relationshipHop {
-	var hops []relationshipHop
-	forEachRelationshipSource(pattern, func(_, open, close, _ int, incoming, _ bool) bool {
-		declaration := relationshipDeclarationOf(StripComments(pattern[open+1 : close]))
-		hops = append(hops, relationshipHop{relTypes: declaration.types, outgoing: !incoming})
-		return true
-	})
-	return hops
-}
-
 // forEachRelationshipSource frames relationship declarations in pattern text.
 // The relationship grammar remains here; opaque, name and delimiter extents
 // belong to the shared lexical owners and the existing declaration reader.
@@ -997,46 +536,6 @@ func forEachRelationshipSource(pattern string, visit func(start, open, close, en
 	}
 }
 
-func (e *StorageExecutor) traverseChain(ctx context.Context, node *storage.Node, hops []relationshipHop, hopIndex int) bool {
-	if hopIndex >= len(hops) {
-		return true // All hops matched
-	}
-
-	hop := hops[hopIndex]
-
-	if hop.outgoing {
-		edges, _ := e.storage.GetOutgoingEdges(ctx, node.ID)
-		for _, edge := range edges {
-			if len(hop.relTypes) == 0 || e.edgeTypeMatches(edge.Type, hop.relTypes) {
-				// Get the target node and recurse
-				nextNode, err := e.getQueryNode(e.storage, edge.EndNode)
-				if err != nil {
-					continue
-				}
-				if e.traverseChain(ctx, nextNode, hops, hopIndex+1) {
-					return true
-				}
-			}
-		}
-	} else {
-		edges, _ := e.storage.GetIncomingEdges(ctx, node.ID)
-		for _, edge := range edges {
-			if len(hop.relTypes) == 0 || e.edgeTypeMatches(edge.Type, hop.relTypes) {
-				// Get the source node and recurse
-				nextNode, err := e.getQueryNode(e.storage, edge.StartNode)
-				if err != nil {
-					continue
-				}
-				if e.traverseChain(ctx, nextNode, hops, hopIndex+1) {
-					return true
-				}
-			}
-		}
-	}
-
-	return false
-}
-
 // extractVariableNameFromReturnItem extracts the variable name from a return item expression.
 // Examples:
 //   - "n" -> "n"
@@ -1072,44 +571,6 @@ func extractVariableNameFromReturnItem(expr string) string {
 
 	// Simple variable name
 	return expr
-}
-
-// extractTargetVariable extracts the target variable name from a relationship pattern
-// e.g., from "(m)-[:MANAGES]->(report)" it extracts "report"
-func (e *StorageExecutor) extractTargetVariable(pattern, sourceVar string) string {
-	target := ""
-	forEachRelationshipSource(pattern, func(start, _, _, end int, incoming, outgoing bool) bool {
-		if outgoing {
-			open, _ := cyphertext.GapEnd(pattern, end)
-			if open < len(pattern) && pattern[open] == '(' {
-				at, _ := cyphertext.GapEnd(pattern, open+1)
-				if name, ok := cyphertext.ScanIdentifier(pattern, at); ok {
-					target = name.Value
-				}
-			}
-		} else if incoming {
-			for index := 0; index < start; index++ {
-				if next, opaque := cyphertext.SkipToken(pattern, index); opaque {
-					index = next - 1
-					continue
-				}
-				if pattern[index] != '(' {
-					continue
-				}
-				close := cyphertext.FindMatchingDelimiter(pattern, index, '(', ')', cyphertext.OpeningDelimiter)
-				if close < 0 {
-					break
-				}
-				at, _ := cyphertext.GapEnd(pattern, index+1)
-				if name, ok := cyphertext.ScanIdentifier(pattern, at); ok {
-					target = name.Value
-				}
-				index = close
-			}
-		}
-		return target == ""
-	})
-	return target
 }
 
 // extractRelTypesFromPattern consumes the existing relationship grammar.
@@ -1217,7 +678,7 @@ func validatePolicyOnLabelChange(ctx context.Context, store storage.Engine, node
 	// Check outgoing edges (node is the source).
 	outgoing, _ := store.GetOutgoingEdges(ctx, node.ID)
 	for _, edge := range outgoing {
-		targetNode, err := store.GetNode(storage.NodeID(edge.EndNode))
+		targetNode, err := store.GetNode(ctx, storage.NodeID(edge.EndNode))
 		if err != nil || targetNode == nil {
 			continue
 		}
@@ -1229,7 +690,7 @@ func validatePolicyOnLabelChange(ctx context.Context, store storage.Engine, node
 	// Check incoming edges (node is the target).
 	incoming, _ := store.GetIncomingEdges(ctx, node.ID)
 	for _, edge := range incoming {
-		sourceNode, err := store.GetNode(storage.NodeID(edge.StartNode))
+		sourceNode, err := store.GetNode(ctx, storage.NodeID(edge.StartNode))
 		if err != nil || sourceNode == nil {
 			continue
 		}
@@ -1287,11 +748,5 @@ func sliceContains(slice []string, item string) bool {
 
 // Patterns compiled once (#591): these helpers run per statement or per row.
 var (
-	// deleteWherePropertyEquals is the DELETE hot path's
-	// "variable.property = value" predicate (the variable is compared by the
-	// caller).
-	deleteWherePropertyEquals = regexp.MustCompile(`(?i)^\s*([^.\s]+)\.(\w+)\s*=\s*(.+?)\s*$`)
-	// deleteWherePropertyInParameter is "variable.property IN $param".
-	deleteWherePropertyInParameter = regexp.MustCompile(`(?i)^\s*([^.\s]+)\.(\w+)\s+IN\s+\$(\w+)\s*$`)
-	subqueryWherePattern           = regexp.MustCompile(`(?i)\s+WHERE\s+`)
+	subqueryWherePattern = regexp.MustCompile(`(?i)\s+WHERE\s+`)
 )

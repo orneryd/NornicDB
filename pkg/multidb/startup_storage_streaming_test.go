@@ -3,9 +3,10 @@ package multidb
 import (
 	"context"
 	"errors"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -153,7 +154,7 @@ func TestStartupCleanupScansOnlyLeakedSystemNodePrefixes(t *testing.T) {
 		{ID: "nornic:system:other", Labels: []string{"_System"}},
 	}
 	for _, node := range nodes {
-		_, err := engine.MemoryEngine.CreateNode(node)
+		_, err := engine.MemoryEngine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 
@@ -180,7 +181,7 @@ func TestStartupCleanupScansOnlyLeakedSystemNodePrefixes(t *testing.T) {
 		"nornic:system:migration:legacy",
 		"nornic:system:user:admin",
 	} {
-		_, err := engine.MemoryEngine.GetNode(id)
+		_, err := engine.MemoryEngine.GetNode(t.Context(), id)
 		require.Error(t, err)
 	}
 	for _, id := range []storage.NodeID{
@@ -188,7 +189,7 @@ func TestStartupCleanupScansOnlyLeakedSystemNodePrefixes(t *testing.T) {
 		"nornic:system:user:application",
 		"nornic:system:other",
 	} {
-		_, err := engine.MemoryEngine.GetNode(id)
+		_, err := engine.MemoryEngine.GetNode(t.Context(), id)
 		require.NoError(t, err)
 	}
 }
@@ -201,9 +202,9 @@ func TestStorageSizeReconciliationStreamsEntities(t *testing.T) {
 	t.Cleanup(func() { _ = engine.Close() })
 	node := &storage.Node{ID: "nornic:node", Labels: []string{"Application"}, Properties: map[string]interface{}{"payload": strings.Repeat("x", 4096)}}
 	edge := &storage.Edge{ID: "nornic:edge", StartNode: node.ID, EndNode: node.ID, Type: "SELF", Properties: map[string]interface{}{"weight": int64(1)}}
-	_, err := engine.MemoryEngine.CreateNode(node)
+	_, err := engine.MemoryEngine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
-	require.NoError(t, engine.MemoryEngine.CreateEdge(edge))
+	require.NoError(t, engine.MemoryEngine.CreateEdge(t.Context(), edge))
 
 	wantNodeSize, err := calculateNodeSize(node)
 	require.NoError(t, err)
@@ -228,7 +229,7 @@ func TestDatabaseManagerRestartDefersStorageSizeScan(t *testing.T) {
 	first, err := NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
 	require.NotNil(t, first)
-	_, err = base.CreateNode(&storage.Node{
+	_, err = base.CreateNode(t.Context(), &storage.Node{
 		ID:         "nornic:large-node",
 		Labels:     []string{"Document"},
 		Properties: map[string]any{"payload": strings.Repeat("x", 4096)},
@@ -251,7 +252,7 @@ func TestWriteDoesNotForceDeferredStorageSizeScanWithoutByteLimit(t *testing.T) 
 	t.Cleanup(func() { _ = base.Close() })
 	_, err := NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	_, err = base.CreateNode(&storage.Node{ID: "nornic:existing", Labels: []string{"Document"}})
+	_, err = base.CreateNode(t.Context(), &storage.Node{ID: "nornic:existing", Labels: []string{"Document"}})
 	require.NoError(t, err)
 
 	engine := &startupStreamingEngine{MemoryEngine: base}
@@ -263,7 +264,7 @@ func TestWriteDoesNotForceDeferredStorageSizeScanWithoutByteLimit(t *testing.T) 
 	engine.prefixes = nil // Ignore the narrowly scoped leaked-metadata cleanup.
 	database, err := restarted.GetDefaultStorage()
 	require.NoError(t, err)
-	_, err = database.CreateNode(&storage.Node{ID: "new", Labels: []string{"Document"}})
+	_, err = database.CreateNode(t.Context(), &storage.Node{ID: "new", Labels: []string{"Document"}})
 	require.NoError(t, err)
 	require.Zero(t, engine.nodeStreamCalls)
 	require.Zero(t, engine.edgeStreamCalls)

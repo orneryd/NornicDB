@@ -12,21 +12,21 @@ func TestMapRelationshipShapeUsesCanonicalTrivia(t *testing.T) {
 		for _, arrow := range []string{"-", "-" + gap + ">"} {
 			query := "MATCH (a)-[r:R {x:1}]" + gap + arrow + gap + "(b) RETURN r"
 			brace := strings.IndexByte(query, '{')
-			require.True(t, newMapPatternContext(query).insidePatternDelimiter(query, brace), "%q", query)
+			require.True(t, newMapPatternContext(query).insidePatternDelimiter(t.Context(), query, brace), "%q", query)
 		}
 	}
 	for _, tail := range []string{"", "/*unfinished", "// EOF", "+(b)", "- 42", "- /*unfinished", "-> /*unfinished", "-'(b)'"} {
 		query := "MATCH (a)-[r:R {x:1}]" + tail
 		brace := strings.IndexByte(query, '{')
-		require.False(t, newMapPatternContext(query).insidePatternDelimiter(query, brace), "%q", query)
+		require.False(t, newMapPatternContext(query).insidePatternDelimiter(t.Context(), query, brace), "%q", query)
 	}
 }
 
 func TestMapNodeWhereTriviaRetainsPatternOwnership(t *testing.T) {
 	for _, gap := range []string{" ", "\u00a0", " /*gap*/ ", " //gap\n"} {
 		named := "MATCH (WHERE" + gap + "{x:1}) RETURN WHERE"
-		require.True(t, newMapPatternContext(named).insidePatternDelimiter(named, strings.IndexByte(named, '{')))
+		require.True(t, newMapPatternContext(named).insidePatternDelimiter(t.Context(), named, strings.IndexByte(named, '{')))
 		predicate := "MATCH (n WHERE" + gap + "n.value = {x:1}) RETURN n"
-		require.False(t, newMapPatternContext(predicate).insidePatternDelimiter(predicate, strings.IndexByte(predicate, '{')))
+		require.False(t, newMapPatternContext(predicate).insidePatternDelimiter(t.Context(), predicate, strings.IndexByte(predicate, '{')))
 	}
 }

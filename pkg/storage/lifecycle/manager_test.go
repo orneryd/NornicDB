@@ -21,10 +21,10 @@ func TestManagerRunPruneNow_RealEngineKeepsClosedVersions(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	nodeID := storage.NodeID("lifecycle:n")
-	_, err = engine.CreateNode(&storage.Node{ID: nodeID, Properties: map[string]any{"v": 0}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: nodeID, Properties: map[string]any{"v": 0}})
 	require.NoError(t, err)
 	for version := 1; version <= 10; version++ {
-		require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: nodeID, Properties: map[string]any{"v": version}}}))
+		require.NoError(t, engine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: &storage.Node{ID: nodeID, Properties: map[string]any{"v": version}}}))
 	}
 	var logical []byte
 	require.NoError(t, engine.IterateMVCCHeads(context.Background(), func(key []byte, _ storage.MVCCHead) error {

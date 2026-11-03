@@ -21,7 +21,7 @@ func TestPaginationWordsRetainVariableRoles(t *testing.T) {
 		} {
 			query := fmt.Sprintf(template, name)
 			t.Run(query, func(t *testing.T) {
-				got, rewrite := desugarStandaloneOrderClauses(query)
+				got, rewrite := desugarStandaloneOrderClauses(t.Context(), query)
 				t.Logf("ORIGINAL=%q REWRITTEN=%q", query, got)
 				require.Equal(t, query, got)
 				require.Nil(t, rewrite)
@@ -72,7 +72,7 @@ func TestPaginationRolePredicateAndSourceEdits(t *testing.T) {
 		require.Zero(t, testing.AllocsPerRun(100, func() { _ = standaloneOperandWord(word) }))
 	}
 	q := "MATCH limit = (n) LIMIT 1 RETURN limit"
-	got, r := desugarStandaloneOrderClauses(q)
+	got, r := desugarStandaloneOrderClauses(t.Context(), q)
 	require.Equal(t, "MATCH limit = (n) WITH * LIMIT 1 RETURN limit", got)
 	require.NotNil(t, r)
 	require.Len(t, r.Edits, 1)

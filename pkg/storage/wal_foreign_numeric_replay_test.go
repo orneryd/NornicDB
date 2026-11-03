@@ -59,12 +59,12 @@ func newForeignNumericReplayFixture(t *testing.T) *foreignNumericReplayFixture {
 
 	for i := 0; i < foreignNodeCount; i++ {
 		id := NodeID(fmt.Sprintf("test:n%d", i))
-		_, err := source.CreateNode(&Node{ID: id})
+		_, err := source.CreateNode(t.Context(), &Node{ID: id})
 		require.NoError(t, err)
 	}
 	for i := foreignNodeCount - 1; i >= 0; i-- {
 		id := NodeID(fmt.Sprintf("test:n%d", i))
-		_, err := dest.CreateNode(&Node{ID: id})
+		_, err := dest.CreateNode(t.Context(), &Node{ID: id})
 		require.NoError(t, err)
 	}
 
@@ -105,7 +105,7 @@ func newForeignNumericReplayFixture(t *testing.T) *foreignNumericReplayFixture {
 // transaction on the source and returns the resulting OpBufferedCommit entry.
 func (f *foreignNumericReplayFixture) bufferedEdgeCommit(t *testing.T, mutate func(tx *BadgerTransaction) error) WALEntry {
 	t.Helper()
-	tx, err := f.source.BeginTransaction()
+	tx, err := f.source.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	require.NoError(t, tx.SetImplicit(true))
@@ -154,7 +154,7 @@ func (f *foreignNumericReplayFixture) reopenDestination(t *testing.T) {
 // numbers the destination assigned them.
 func (f *foreignNumericReplayFixture) requireIntendedEndpoints(t *testing.T, id EdgeID) *Edge {
 	t.Helper()
-	edge, err := f.dest.GetEdge(id)
+	edge, err := f.dest.GetEdge(t.Context(), id)
 	require.NoError(t, err)
 	require.Equal(t, foreignStartNode, edge.StartNode,
 		"replay must resolve the start endpoint by identity, not by the source's number %d", f.srcStart)
@@ -195,13 +195,13 @@ func TestForeignBufferedWALNumericIDsCreateKeepsDestinationEndpoints(t *testing.
 
 	// The destination already owns an edge between the logical nodes whose
 	// numbers equal the source numbers of the mutated endpoints.
-	require.NoError(t, f.dest.CreateEdge(&Edge{
+	require.NoError(t, f.dest.CreateEdge(t.Context(), &Edge{
 		ID: priorID, StartNode: f.holderNode, EndNode: f.holderEnd,
 		Type: priorType, Properties: map[string]any{"keep": "prior-create"},
 	}))
 
 	entry := f.bufferedEdgeCommit(t, func(tx *BadgerTransaction) error {
-		return tx.CreateEdge(&Edge{
+		return tx.CreateEdge(t.Context(), &Edge{
 			ID: linkID, StartNode: foreignStartNode, EndNode: foreignEndNode,
 			Type: linkType, Properties: map[string]any{"p": int64(1)},
 		})
@@ -228,7 +228,7 @@ func TestForeignBufferedWALNumericIDsCreateKeepsDestinationEndpoints(t *testing.
 
 	// The destination-owned edge whose endpoints hold the source numbers is
 	// untouched in body and in every index.
-	prior, err := f.dest.GetEdge(priorID)
+	prior, err := f.dest.GetEdge(t.Context(), priorID)
 	require.NoError(t, err, "the destination edge at the source numbers must survive the replayed create")
 	require.Equal(t, f.holderNode, prior.StartNode)
 	require.Equal(t, f.holderEnd, prior.EndNode)
@@ -252,7 +252,7 @@ func TestForeignBufferedWALNumericIDsCreateKeepsDestinationEndpoints(t *testing.
 	persisted := f.requireIntendedEndpoints(t, linkID)
 	require.Equal(t, int64(1), persisted.Properties["p"])
 	f.requireEdgeIndexed(t, linkID)
-	_, err = f.dest.GetEdge(priorID)
+	_, err = f.dest.GetEdge(t.Context(), priorID)
 	require.NoError(t, err)
 }
 
@@ -267,23 +267,23 @@ func TestForeignBufferedWALNumericIDsUpdateKeepsDestinationIndexes(t *testing.T)
 
 	f := newForeignNumericReplayFixture(t)
 
-	require.NoError(t, f.dest.CreateEdge(&Edge{
+	require.NoError(t, f.dest.CreateEdge(t.Context(), &Edge{
 		ID: priorID, StartNode: f.holderNode, EndNode: f.holderEnd,
 		Type: priorType, Properties: map[string]any{"keep": "prior-update"},
 	}))
 	// The mutated edge exists in both stores with identical logical
 	// endpoints; only its endpoints' numeric identities differ.
-	require.NoError(t, f.source.CreateEdge(&Edge{
+	require.NoError(t, f.source.CreateEdge(t.Context(), &Edge{
 		ID: movingID, StartNode: foreignStartNode, EndNode: foreignEndNode,
 		Type: oldType, Properties: map[string]any{"v": "old"},
 	}))
-	require.NoError(t, f.dest.CreateEdge(&Edge{
+	require.NoError(t, f.dest.CreateEdge(t.Context(), &Edge{
 		ID: movingID, StartNode: foreignStartNode, EndNode: foreignEndNode,
 		Type: oldType, Properties: map[string]any{"v": "old"},
 	}))
 
 	entry := f.bufferedEdgeCommit(t, func(tx *BadgerTransaction) error {
-		return tx.UpdateEdge(EdgeUpdateRequest{After: &Edge{
+		return tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{
 			ID: movingID, StartNode: foreignStartNode, EndNode: foreignEndNode,
 			Type: newType, Properties: map[string]any{"v": "new"},
 		}})
@@ -315,7 +315,7 @@ func TestForeignBufferedWALNumericIDsUpdateKeepsDestinationIndexes(t *testing.T)
 	require.Equal(t, []EdgeID{movingID}, testEdgeIDs(between))
 
 	// Unrelated destination data keeps its body and its indexes.
-	prior, err := f.dest.GetEdge(priorID)
+	prior, err := f.dest.GetEdge(t.Context(), priorID)
 	require.NoError(t, err, "unrelated destination data must survive the replayed update")
 	require.Equal(t, f.holderNode, prior.StartNode)
 	require.Equal(t, f.holderEnd, prior.EndNode)
@@ -338,7 +338,7 @@ func TestForeignBufferedWALNumericIDsUpdateKeepsDestinationIndexes(t *testing.T)
 	stale, err = f.dest.GetEdgesByType(context.Background(), oldType)
 	require.NoError(t, err)
 	require.Empty(t, testEdgeIDs(stale))
-	_, err = f.dest.GetEdge(priorID)
+	_, err = f.dest.GetEdge(t.Context(), priorID)
 	require.NoError(t, err)
 }
 
@@ -352,7 +352,7 @@ func TestForeignBufferedWALNumericIDsDeleteKeepsDestinationEdges(t *testing.T) {
 
 	f := newForeignNumericReplayFixture(t)
 
-	require.NoError(t, f.dest.CreateEdge(&Edge{
+	require.NoError(t, f.dest.CreateEdge(t.Context(), &Edge{
 		ID: priorID, StartNode: f.holderNode, EndNode: f.holderEnd,
 		Type: priorType, Properties: map[string]any{"keep": "prior-delete"},
 	}))
@@ -360,17 +360,17 @@ func TestForeignBufferedWALNumericIDsDeleteKeepsDestinationEdges(t *testing.T) {
 	// logical endpoints. Its destination numbers are the source numbers of the
 	// holder nodes, so a replay that installs source numbers, or that tombstones
 	// by index position, removes the unrelated destination edge instead.
-	require.NoError(t, f.source.CreateEdge(&Edge{
+	require.NoError(t, f.source.CreateEdge(t.Context(), &Edge{
 		ID: goneID, StartNode: foreignStartNode, EndNode: foreignEndNode,
 		Type: goneType, Properties: map[string]any{"v": "gone"},
 	}))
-	require.NoError(t, f.dest.CreateEdge(&Edge{
+	require.NoError(t, f.dest.CreateEdge(t.Context(), &Edge{
 		ID: goneID, StartNode: foreignStartNode, EndNode: foreignEndNode,
 		Type: goneType, Properties: map[string]any{"v": "gone"},
 	}))
 
 	entry := f.bufferedEdgeCommit(t, func(tx *BadgerTransaction) error {
-		return tx.DeleteEdge(goneID)
+		return tx.DeleteEdge(t.Context(), goneID)
 	})
 	f.closeSource(t)
 	f.replay(t, entry)
@@ -378,7 +378,7 @@ func TestForeignBufferedWALNumericIDsDeleteKeepsDestinationEdges(t *testing.T) {
 	check := func(t *testing.T) {
 		t.Helper()
 
-		_, err := f.dest.GetEdge(goneID)
+		_, err := f.dest.GetEdge(t.Context(), goneID)
 		require.ErrorIs(t, err, ErrNotFound, "the replayed delete must remove its own relationship")
 		goneOut, err := f.dest.GetOutgoingEdges(context.Background(), foreignStartNode)
 		require.NoError(t, err)
@@ -392,7 +392,7 @@ func TestForeignBufferedWALNumericIDsDeleteKeepsDestinationEdges(t *testing.T) {
 
 		// The destination edge whose numbers equal the source endpoints
 		// survives in its body and in every index.
-		prior, err := f.dest.GetEdge(priorID)
+		prior, err := f.dest.GetEdge(t.Context(), priorID)
 		require.NoError(t, err, "deleting another relationship must not remove the destination edge at the source numbers")
 		require.Equal(t, f.holderNode, prior.StartNode)
 		require.Equal(t, f.holderEnd, prior.EndNode)

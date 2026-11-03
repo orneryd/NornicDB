@@ -46,7 +46,7 @@ func (e *StorageExecutor) validateStaticPaginationExpressions(ctx context.Contex
 		if shape.forbidden {
 			return paginationCompileTypeError(keyword, expression)
 		}
-		if paginationExpressionUsesRowVariable(expression) {
+		if paginationExpressionUsesRowVariable(ctx, expression) {
 			return newSemanticError(
 				"Neo.ClientError.Statement.SyntaxError",
 				"NonConstantExpression",
@@ -56,7 +56,7 @@ func (e *StorageExecutor) validateStaticPaginationExpressions(ctx context.Contex
 		if strings.Contains(expression, "$") {
 			continue
 		}
-		value, evaluated, err := e.evaluateRowValue(expression, pipelineRow{})
+		value, evaluated, err := e.evaluateRowValue(ctx, expression, pipelineRow{})
 		if err != nil {
 			return err
 		}
@@ -81,8 +81,8 @@ func (e *StorageExecutor) validateRuntimePaginationClause(ctx context.Context, c
 		return nil
 	}
 	for _, keyword := range []string{"SKIP", "LIMIT"} {
-		if topLevelKeywordIndex(clause, keyword) >= 0 {
-			if err := e.validateRuntimePaginationExpressions(ctx, paginationExpression{keyword: keyword, value: pipelinePaginationExpression(clause, keyword)}); err != nil {
+		if topLevelKeywordIndex(ctx, clause, keyword) >= 0 {
+			if err := e.validateRuntimePaginationExpressions(ctx, paginationExpression{keyword: keyword, value: pipelinePaginationExpression(ctx, clause, keyword)}); err != nil {
 				return err
 			}
 		}
@@ -101,7 +101,7 @@ func (e *StorageExecutor) validateRuntimePaginationExpressions(ctx context.Conte
 		}
 		values := make(pipelineRow, len(params))
 		bindParameterRow(ctx, values)
-		value, evaluated, err := e.evaluateRowValue(pagination.value, values)
+		value, evaluated, err := e.evaluateRowValue(ctx, pagination.value, values)
 		if err != nil {
 			return err
 		}
@@ -124,8 +124,8 @@ func (e *StorageExecutor) validateRuntimePaginationExpressions(ctx context.Conte
 // keys, function names and variables the expression binds itself (list
 // comprehensions, reduce) are not variables; expressionFreeVariables is the
 // one scanner that knows them (#829).
-func paginationExpressionUsesRowVariable(expression string) bool {
-	return len(expressionFreeVariables(expression)) > 0
+func paginationExpressionUsesRowVariable(ctx context.Context, expression string) bool {
+	return len(expressionFreeVariables(ctx, expression)) > 0
 }
 
 func paginationCompileTypeError(keyword string, value interface{}) error {

@@ -136,7 +136,7 @@ func seedStateUser(t *testing.T, users *Authenticator, disabled bool, failed int
 	user.Email = "worker@example.com"
 	user.Roles = []Role{RoleEditor, RoleViewer}
 	user.Metadata = map[string]string{"team": "ops"}
-	require.NoError(t, users.saveUser(user, nil))
+	require.NoError(t, users.saveUser(context.Background(), user, nil))
 	return cloneStoredUser(user)
 }
 
@@ -183,11 +183,11 @@ func assertStoredState(t *testing.T, engine storage.Engine, before *User, change
 		require.Equal(t, before.PasswordHash, node.Properties["password_hash"])
 	}
 
-	node, err := engine.GetNode("user:worker")
+	node, err := engine.GetNode(context.Background(), "user:worker")
 	require.NoError(t, err)
 	assertRecord(node)
 	require.NoError(t, WithStoreTransaction(context.Background(), engine, func(view storage.Engine) error {
-		viewNode, err := view.GetNode("user:worker")
+		viewNode, err := view.GetNode(context.Background(), "user:worker")
 		if err != nil {
 			return err
 		}
@@ -236,7 +236,7 @@ func TestChangeUserStateFieldTransitionMatrix(t *testing.T) {
 			listenerCalls := recordPasswordListeners(users)
 			changeStarted := time.Now()
 
-			require.NoError(t, users.ChangeUserState("worker", transition.change))
+			require.NoError(t, users.ChangeUserState(context.Background(), "worker", transition.change))
 
 			require.Len(t, *events, 1, "exactly one success audit event")
 			assertStateAuditEvent(t, (*events)[0], transition.eventType, "worker", before.ID, changeStarted)
@@ -266,50 +266,50 @@ func TestChangeUserStateGatesAuthentication(t *testing.T) {
 
 	// Disable: the correct password stops authenticating, and the refusal is
 	// audited as a failed login without touching the stored record.
-	require.NoError(t, users.ChangeUserState("worker", UserDisable))
-	beforeNode, err := fault.Engine.GetNode("user:worker")
+	require.NoError(t, users.ChangeUserState(context.Background(), "worker", UserDisable))
+	beforeNode, err := fault.Engine.GetNode(context.Background(), "user:worker")
 	require.NoError(t, err)
 	*events = (*events)[:0]
-	_, _, err = users.Authenticate("worker", "password123", "127.0.0.1", "test")
+	_, _, err = users.Authenticate(context.Background(), "worker", "password123", "127.0.0.1", "test")
 	require.ErrorIs(t, err, ErrInvalidCredentials)
 	require.Len(t, *events, 1, "the disabled refusal is audited exactly once")
 	require.Equal(t, "login", (*events)[0].EventType)
 	require.Equal(t, "account disabled", (*events)[0].Details)
 	require.False(t, (*events)[0].Success)
-	afterNode, err := fault.Engine.GetNode("user:worker")
+	afterNode, err := fault.Engine.GetNode(context.Background(), "user:worker")
 	require.NoError(t, err)
 	require.Equal(t, beforeNode, afterNode, "a disabled refusal persists nothing")
 
 	// Unlock alone leaves the account disabled.
-	require.NoError(t, users.ChangeUserState("worker", UserUnlock))
+	require.NoError(t, users.ChangeUserState(context.Background(), "worker", UserUnlock))
 	*events = (*events)[:0]
-	_, _, err = users.Authenticate("worker", "password123", "127.0.0.1", "test")
+	_, _, err = users.Authenticate(context.Background(), "worker", "password123", "127.0.0.1", "test")
 	require.ErrorIs(t, err, ErrInvalidCredentials)
 	require.Len(t, *events, 1)
 	require.Equal(t, "account disabled", (*events)[0].Details)
 	require.False(t, (*events)[0].Success)
 
 	// Enable re-admits the account and clears the lockout budget.
-	require.NoError(t, users.ChangeUserState("worker", UserEnable))
-	_, _, err = users.Authenticate("worker", "password123", "127.0.0.1", "test")
+	require.NoError(t, users.ChangeUserState(context.Background(), "worker", UserEnable))
+	_, _, err = users.Authenticate(context.Background(), "worker", "password123", "127.0.0.1", "test")
 	require.NoError(t, err)
 
 	// A lockout then blocks even the correct password, and Unlock restores
 	// access without re-enabling anything.
 	for i := 0; i < users.config.MaxFailedLogins; i++ {
-		_, _, err = users.Authenticate("worker", "wrong-password", "127.0.0.1", "test")
+		_, _, err = users.Authenticate(context.Background(), "worker", "wrong-password", "127.0.0.1", "test")
 		require.ErrorIs(t, err, ErrInvalidCredentials)
 	}
 	require.True(t, users.users["worker"].LockedUntil.After(time.Now()), "the failure budget locked the account")
 	*events = (*events)[:0]
-	_, _, err = users.Authenticate("worker", "password123", "127.0.0.1", "test")
+	_, _, err = users.Authenticate(context.Background(), "worker", "password123", "127.0.0.1", "test")
 	require.ErrorIs(t, err, ErrAccountLocked)
 	require.Len(t, *events, 1)
 	require.Equal(t, "account locked", (*events)[0].Details)
 	require.False(t, (*events)[0].Success)
-	require.NoError(t, users.ChangeUserState("worker", UserUnlock))
+	require.NoError(t, users.ChangeUserState(context.Background(), "worker", UserUnlock))
 	require.False(t, users.users["worker"].Disabled, "unlock never disables")
-	_, _, err = users.Authenticate("worker", "password123", "127.0.0.1", "test")
+	_, _, err = users.Authenticate(context.Background(), "worker", "password123", "127.0.0.1", "test")
 	require.NoError(t, err)
 }
 
@@ -322,18 +322,18 @@ func TestChangeUserStateRejectsUnknownActionWithoutChanges(t *testing.T) {
 			users, fault := combinedUserFixture(t)
 			seedStateUser(t, users, true, 3, true)
 			before := cloneStoredUser(users.users["worker"])
-			beforeNode, err := fault.Engine.GetNode("user:worker")
+			beforeNode, err := fault.Engine.GetNode(context.Background(), "user:worker")
 			require.NoError(t, err)
 			events := recordAuditEvents(users)
 			listenerCalls := recordPasswordListeners(users)
 
-			err = users.ChangeUserState("worker", change)
+			err = users.ChangeUserState(context.Background(), "worker", change)
 			require.Error(t, err)
 			require.Contains(t, err.Error(), fmt.Sprintf("invalid user state change %d", change))
 			require.NotErrorIs(t, err, ErrUserNotFound)
 
 			require.Equal(t, before, users.users["worker"], "live cache untouched")
-			afterNode, err := fault.Engine.GetNode("user:worker")
+			afterNode, err := fault.Engine.GetNode(context.Background(), "user:worker")
 			require.NoError(t, err)
 			require.Equal(t, beforeNode, afterNode, "stored record untouched")
 			require.Empty(t, *events, "a rejected action audits nothing")
@@ -342,7 +342,7 @@ func TestChangeUserStateRejectsUnknownActionWithoutChanges(t *testing.T) {
 	}
 	// A rejected action is rejected before the username is even resolved.
 	users, _ := combinedUserFixture(t)
-	require.Error(t, users.ChangeUserState("missing", 0))
+	require.Error(t, users.ChangeUserState(context.Background(), "missing", 0))
 	require.Len(t, users.users, 1)
 }
 
@@ -354,7 +354,7 @@ func TestChangeUserStateUnknownUser(t *testing.T) {
 			users, _ := combinedUserFixture(t)
 			events := recordAuditEvents(users)
 			before := cloneStoredUser(users.users["worker"])
-			require.ErrorIs(t, users.ChangeUserState("missing", change), ErrUserNotFound)
+			require.ErrorIs(t, users.ChangeUserState(context.Background(), "missing", change), ErrUserNotFound)
 			require.Empty(t, *events)
 			require.Equal(t, before, users.users["worker"])
 		})
@@ -369,7 +369,7 @@ func TestChangeUserStatePersistFailureChangesNothing(t *testing.T) {
 		t.Run(transition.name, func(t *testing.T) {
 			users, fault := combinedUserFixture(t)
 			before := seedStateUser(t, users, transition.disabled, transition.failed, transition.locked)
-			beforeNode, err := fault.Engine.GetNode("user:worker")
+			beforeNode, err := fault.Engine.GetNode(context.Background(), "user:worker")
 			require.NoError(t, err)
 			events := recordAuditEvents(users)
 			listenerCalls := recordPasswordListeners(users)
@@ -377,11 +377,11 @@ func TestChangeUserStatePersistFailureChangesNothing(t *testing.T) {
 			// transaction admitted its view and read the Before image.
 			fault.Operation, fault.ID = storagefault.MutationUpdate, "user:worker"
 
-			err = users.ChangeUserState("worker", transition.change)
+			err = users.ChangeUserState(context.Background(), "worker", transition.change)
 			require.ErrorIs(t, err, errRoleMutation)
 			require.Contains(t, err.Error(), "failed to persist "+transition.operation)
 			require.Equal(t, before, users.users["worker"], "live cache untouched")
-			afterNode, err := fault.Engine.GetNode("user:worker")
+			afterNode, err := fault.Engine.GetNode(context.Background(), "user:worker")
 			require.NoError(t, err)
 			require.Equal(t, beforeNode, afterNode, "stored record untouched")
 			require.Empty(t, *events, "no success audit on persistence failure")
@@ -406,7 +406,7 @@ func TestChangeUserStatePublishesAfterDurableCommit(t *testing.T) {
 		require.Equal(t, "user_disable", event.EventType)
 		observed = true
 	})
-	require.NoError(t, users.ChangeUserState("worker", UserDisable))
+	require.NoError(t, users.ChangeUserState(context.Background(), "worker", UserDisable))
 	require.True(t, observed)
 }
 
@@ -419,12 +419,12 @@ func TestChangePasswordContractPreserved(t *testing.T) {
 	t.Run("incorrect old password audits failure and changes nothing", func(t *testing.T) {
 		users, fault := combinedUserFixture(t)
 		before := cloneStoredUser(users.users["worker"])
-		beforeNode, err := fault.Engine.GetNode("user:worker")
+		beforeNode, err := fault.Engine.GetNode(context.Background(), "user:worker")
 		require.NoError(t, err)
 		events := recordAuditEvents(users)
 		listenerCalls := recordPasswordListeners(users)
 
-		require.ErrorIs(t, users.ChangePassword("worker", "wrong-password", "replacement123"), ErrInvalidCredentials)
+		require.ErrorIs(t, users.ChangePassword(context.Background(), "worker", "wrong-password", "replacement123"), ErrInvalidCredentials)
 		require.Len(t, *events, 1)
 		failure := (*events)[0]
 		require.Equal(t, "password_change", failure.EventType)
@@ -433,7 +433,7 @@ func TestChangePasswordContractPreserved(t *testing.T) {
 		require.False(t, failure.Success)
 		require.Equal(t, "old password incorrect", failure.Details)
 		require.Equal(t, before, users.users["worker"])
-		afterNode, err := fault.Engine.GetNode("user:worker")
+		afterNode, err := fault.Engine.GetNode(context.Background(), "user:worker")
 		require.NoError(t, err)
 		require.Equal(t, beforeNode, afterNode)
 		require.Empty(t, *listenerCalls, "a refused change forgets no cached credentials")
@@ -443,17 +443,17 @@ func TestChangePasswordContractPreserved(t *testing.T) {
 		users, fault := combinedUserFixture(t)
 		require.Equal(t, 8, users.config.MinPasswordLength)
 		before := cloneStoredUser(users.users["worker"])
-		beforeNode, err := fault.Engine.GetNode("user:worker")
+		beforeNode, err := fault.Engine.GetNode(context.Background(), "user:worker")
 		require.NoError(t, err)
 		events := recordAuditEvents(users)
 		listenerCalls := recordPasswordListeners(users)
 
-		err = users.ChangePassword("worker", "password123", "short")
+		err = users.ChangePassword(context.Background(), "worker", "password123", "short")
 		require.ErrorIs(t, err, ErrPasswordTooShort)
 		require.Contains(t, err.Error(), "minimum 8 characters required")
 		require.Empty(t, *events, "the length rejection emits no audit event")
 		require.Equal(t, before, users.users["worker"])
-		afterNode, err := fault.Engine.GetNode("user:worker")
+		afterNode, err := fault.Engine.GetNode(context.Background(), "user:worker")
 		require.NoError(t, err)
 		require.Equal(t, beforeNode, afterNode)
 		require.Empty(t, *listenerCalls)
@@ -465,18 +465,18 @@ func TestChangePasswordContractPreserved(t *testing.T) {
 		// old password verified and the length check passed.
 		users.config.BcryptCost = 32
 		before := cloneStoredUser(users.users["worker"])
-		beforeNode, err := fault.Engine.GetNode("user:worker")
+		beforeNode, err := fault.Engine.GetNode(context.Background(), "user:worker")
 		require.NoError(t, err)
 		events := recordAuditEvents(users)
 		listenerCalls := recordPasswordListeners(users)
 
-		err = users.ChangePassword("worker", "password123", "replacement123")
+		err = users.ChangePassword(context.Background(), "worker", "password123", "replacement123")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to hash password")
 		require.NotErrorIs(t, err, ErrInvalidCredentials)
 		require.Empty(t, *events)
 		require.Equal(t, before, users.users["worker"])
-		afterNode, err := fault.Engine.GetNode("user:worker")
+		afterNode, err := fault.Engine.GetNode(context.Background(), "user:worker")
 		require.NoError(t, err)
 		require.Equal(t, beforeNode, afterNode)
 		require.Empty(t, *listenerCalls)
@@ -485,18 +485,18 @@ func TestChangePasswordContractPreserved(t *testing.T) {
 	t.Run("persistence failure changes nothing and forgets nothing", func(t *testing.T) {
 		users, fault := combinedUserFixture(t)
 		before := cloneStoredUser(users.users["worker"])
-		beforeNode, err := fault.Engine.GetNode("user:worker")
+		beforeNode, err := fault.Engine.GetNode(context.Background(), "user:worker")
 		require.NoError(t, err)
 		events := recordAuditEvents(users)
 		listenerCalls := recordPasswordListeners(users)
 		fault.Operation, fault.ID = storagefault.MutationUpdate, "user:worker"
 
-		err = users.ChangePassword("worker", "password123", "replacement123")
+		err = users.ChangePassword(context.Background(), "worker", "password123", "replacement123")
 		require.ErrorIs(t, err, errRoleMutation)
 		require.Contains(t, err.Error(), "failed to persist password change")
 		require.Empty(t, *events)
 		require.Equal(t, before, users.users["worker"])
-		afterNode, err := fault.Engine.GetNode("user:worker")
+		afterNode, err := fault.Engine.GetNode(context.Background(), "user:worker")
 		require.NoError(t, err)
 		require.Equal(t, beforeNode, afterNode)
 		require.Empty(t, *listenerCalls)
@@ -524,7 +524,7 @@ func TestChangePasswordContractPreserved(t *testing.T) {
 			// The listener runs under a.mu after durable success and audit:
 			// the committed record and the live cache already agree, and the
 			// success audit has already been emitted.
-			node, err := fault.Engine.GetNode("user:worker")
+			node, err := fault.Engine.GetNode(context.Background(), "user:worker")
 			require.NoError(t, err)
 			require.NotEmpty(t, users.users["worker"].PasswordHash)
 			require.Equal(t, users.users["worker"].PasswordHash, node.Properties["password_hash"],
@@ -534,7 +534,7 @@ func TestChangePasswordContractPreserved(t *testing.T) {
 			observed = true
 		})
 
-		require.NoError(t, users.ChangePassword("worker", "password123", "replacement123"))
+		require.NoError(t, users.ChangePassword(context.Background(), "worker", "password123", "replacement123"))
 		require.True(t, observed)
 		require.Equal(t, 1, auditRuns, "exactly one success audit event")
 		_, cached := cache.Get("worker", "password123")
@@ -546,7 +546,7 @@ func TestChangePasswordContractPreserved(t *testing.T) {
 		// success login event is captured separately rather than counted as a
 		// password change.
 		events := recordAuditEvents(users)
-		_, _, err := users.Authenticate("worker", "replacement123", "127.0.0.1", "test")
+		_, _, err := users.Authenticate(context.Background(), "worker", "replacement123", "127.0.0.1", "test")
 		require.NoError(t, err)
 		require.Len(t, *events, 1)
 		require.Equal(t, "login", (*events)[0].EventType)
@@ -562,7 +562,7 @@ func TestUpdateRolesAndStatusUsesTheAdmittedView(t *testing.T) {
 	users, fault := combinedUserFixture(t)
 	seedStateUser(t, users, false, 2, true)
 	before := cloneStoredUser(users.users["worker"])
-	beforeNode, err := fault.Engine.GetNode("user:worker")
+	beforeNode, err := fault.Engine.GetNode(context.Background(), "user:worker")
 	require.NoError(t, err)
 	events := recordAuditEvents(users)
 	fault.Operation, fault.ID = storagefault.MutationUpdate, "user:worker"
@@ -571,7 +571,7 @@ func TestUpdateRolesAndStatusUsesTheAdmittedView(t *testing.T) {
 	err = users.UpdateRolesAndStatus(context.Background(), "worker", []Role{RoleAdmin}, &disabled)
 	require.ErrorIs(t, err, errRoleMutation)
 	require.Equal(t, before, users.users["worker"])
-	afterNode, err := fault.Engine.GetNode("user:worker")
+	afterNode, err := fault.Engine.GetNode(context.Background(), "user:worker")
 	require.NoError(t, err)
 	require.Equal(t, beforeNode, afterNode)
 	require.Empty(t, *events)

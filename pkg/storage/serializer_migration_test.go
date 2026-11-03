@@ -91,7 +91,7 @@ func TestLegacySerializerMigration(t *testing.T) {
 			require.NoError(t, err)
 			defer base2.Close()
 			engine2 := NewNamespacedEngine(base2, "test")
-			node, err := engine2.GetNode(NodeID("node-1"))
+			node, err := engine2.GetNode(t.Context(), NodeID("node-1"))
 			require.NoError(t, err)
 			require.Equal(t, NodeID("node-1"), node.ID)
 
@@ -184,7 +184,7 @@ func TestDetectStoredSerializer(t *testing.T) {
 		msgpackEngine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: msgpackDir}))
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = msgpackEngine.Close() })
-		_, err = msgpackEngine.CreateNode(&Node{ID: "detect:msgpack", Labels: []string{"Test"}})
+		_, err = msgpackEngine.CreateNode(t.Context(), &Node{ID: "detect:msgpack", Labels: []string{"Test"}})
 		require.NoError(t, err)
 
 		serializer, hasData, err = detectStoredSerializer(msgpackEngine.db)

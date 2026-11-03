@@ -20,11 +20,11 @@ func TestAllDatabaseOperationsIncludeSystemAdmission(t *testing.T) {
 	require.NoError(t, s.roleEntitlementsStore.Set(ctx, role, []string{"read", "write", "admin"}))
 	require.NoError(t, s.allowlistStore.SaveRoleDatabases(ctx, role, []string{"nornic", "system"}))
 	require.NoError(t, s.privilegesStore.SavePrivilege(ctx, role, "nornic", true, true))
-	_, err := users.CreateUser(role, "password123", []auth.Role{auth.Role(role)})
+	_, err := users.CreateUser(context.Background(), role, "password123", []auth.Role{auth.Role(role)})
 	require.NoError(t, err)
 	token := "Bearer " + getAuthToken(t, users, role)
 	vectors := [][]float32{{1, 0, 0}}
-	_, err = s.db.GetStorage().CreateNode(&storage.Node{ID: "population-vector", Labels: []string{"Seed"}, ChunkEmbeddings: vectors})
+	_, err = s.db.GetStorage().CreateNode(t.Context(), &storage.Node{ID: "population-vector", Labels: []string{"Seed"}, ChunkEmbeddings: vectors})
 	require.NoError(t, err)
 	for _, readable := range []bool{false, true, false} {
 		require.NoError(t, s.privilegesStore.SavePrivilege(ctx, role, "system", readable, readable))
@@ -52,12 +52,12 @@ func TestAllDatabaseOperationsIncludeSystemAdmission(t *testing.T) {
 			}
 		}
 		if !readable {
-			node, err := s.db.GetStorage().GetNode("population-vector")
+			node, err := s.db.GetStorage().GetNode(t.Context(), "population-vector")
 			require.NoError(t, err)
 			require.Equal(t, vectors, node.ChunkEmbeddings, "denied global regeneration cleared vectors")
 		}
 		// The granted regeneration intentionally clears vectors. Restore the
 		// fixture before testing revocation with the same token.
-		require.NoError(t, s.db.GetStorage().UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "population-vector", Labels: []string{"Seed"}, ChunkEmbeddings: vectors}}))
+		require.NoError(t, s.db.GetStorage().UpdateNode(t.Context(), storage.NodeUpdateRequest{After: &storage.Node{ID: "population-vector", Labels: []string{"Seed"}, ChunkEmbeddings: vectors}}))
 	}
 }

@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/memory"
 )
 
@@ -412,7 +413,7 @@ func (b *CommitBuffer) getEdge(id EdgeID) (*Edge, bool, bool) {
 // generations. Apply is injected so the replay destination (Badger) stays a
 // detail of the caller.
 type WriteBehindBuffer struct {
-	mu                  sync.RWMutex
+	mu                  contextRWMutex
 	beginPresenceMu     sync.Mutex
 	beginPresences      *transactionBeginPresence
 	beginPresenceClosed bool
@@ -472,13 +473,12 @@ type WriteBehindBuffer struct {
 	// trackedPairs is the set of (label, property) pairs an attached
 	// schema indexes by value; the pending index rebuilds from it when it
 	// has been released empty. Guarded by mu.
-	trackedPairs []pendingPropertyKey
+	trackedPairs []nodePropertyKey
 
 	flushCh chan struct{}
-	done    chan struct{}
-	closeMu sync.Mutex
-	closed  bool
-	wg      sync.WaitGroup
+	// work is the buffer's one owner: the background flusher is its accepted
+	// work and Close is its one stop.
+	work lifecycle.WorkLifetime
 
 	errMu   sync.Mutex
 	lastErr error
@@ -532,7 +532,6 @@ func NewWriteBehindBuffer(interval time.Duration, maxOps int, apply func(*Commit
 		minDelay:     defaultWriteBehindMinDelay,
 		maxDelay:     defaultWriteBehindMaxDelay,
 		flushCh:      make(chan struct{}, 1),
-		done:         make(chan struct{}),
 	}
 	if w.minDelay > interval {
 		w.minDelay = interval
@@ -540,8 +539,9 @@ func NewWriteBehindBuffer(interval time.Duration, maxOps int, apply func(*Commit
 	if w.maxDelay < interval {
 		w.maxDelay = interval
 	}
-	w.wg.Add(1)
-	go w.run()
+	if w.work.Enter() {
+		go w.run()
+	}
 	return w
 }
 
@@ -687,7 +687,7 @@ func (w *WriteBehindBuffer) AppendCommit(c bufferedCommit) {
 		// rebuild it from the tracked pairs before indexing this commit.
 		w.pendingIndex = newPendingNodeIndex()
 		for _, pair := range w.trackedPairs {
-			w.pendingIndex.track(pair.label, pair.property, func(id NodeID) *Node {
+			w.pendingIndex.track(context.Background(), pair.label, pair.property, func(id NodeID) *Node {
 				node, _ := w.nodeLocked(id)
 				return node
 			})
@@ -711,20 +711,45 @@ func (w *WriteBehindBuffer) AppendCommit(c bufferedCommit) {
 }
 
 // rotate moves the active generation into draining and installs a fresh one.
-// It is O(1); writers immediately continue on the new generation.
-func (w *WriteBehindBuffer) rotate(capture ...bool) []*CommitBuffer {
-	w.mu.Lock()
+// Rotation is O(1); writers immediately continue on the new generation.
+// Optional frontier capture copies its generation pointers with cancellation.
+func (w *WriteBehindBuffer) rotate(ctx context.Context, capture ...bool) ([]*CommitBuffer, error) {
+	if err := w.mu.LockContext(ctx); err != nil {
+		return nil, err
+	}
 	defer w.mu.Unlock()
+	// Prepare the optional captured frontier before changing ownership. Once
+	// rotation is applied, accepted replay owns the generation independently.
+	var generations []*CommitBuffer
+	if len(capture) > 0 && capture[0] {
+		count := len(w.draining)
+		if w.opCount != 0 {
+			count++
+		}
+		if count > 0 {
+			generations = make([]*CommitBuffer, count)
+			var cancel bulkReadCancellation
+			for i, generation := range w.draining {
+				if err := cancel.check(ctx); err != nil {
+					return nil, err
+				}
+				generations[i] = generation
+			}
+			if w.opCount != 0 {
+				generations[count-1] = w.active
+			}
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if w.opCount != 0 {
 		w.active.ops = w.opCount
 		w.draining = append(w.draining, w.active)
 		w.active = newCommitBuffer()
 		w.opCount = 0
 	}
-	if len(capture) > 0 && capture[0] {
-		return append([]*CommitBuffer(nil), w.draining...)
-	}
-	return nil
+	return generations, nil
 }
 
 // targetSizeLocked returns the current size threshold. Caller holds w.mu.
@@ -752,7 +777,8 @@ func (w *WriteBehindBuffer) effectiveMaxLocked() int {
 }
 
 func (w *WriteBehindBuffer) run() {
-	defer w.wg.Done()
+	defer w.work.Leave()
+	stop := w.work.Context().Done()
 	timer := time.NewTimer(w.interval)
 	defer timer.Stop()
 	reset := func() {
@@ -763,14 +789,14 @@ func (w *WriteBehindBuffer) run() {
 	}
 	for {
 		select {
-		case <-w.done:
+		case <-stop:
 			return
 		case <-timer.C:
-			w.rotate()
+			_, _ = w.rotate(context.Background()) // accepted worker rotation cannot cancel
 			w.drainOne(true, nil)
 			reset()
 		case <-w.flushCh:
-			w.rotate()
+			_, _ = w.rotate(context.Background()) // accepted worker rotation cannot cancel
 			w.drainOne(true, nil)
 			if !timer.Stop() {
 				select {
@@ -951,9 +977,17 @@ func (w *WriteBehindBuffer) nodeLocked(id NodeID) (*Node, bool) {
 
 // lockPendingWrites holds the pending nodes still until unlockPendingWrites,
 // so a lookup combines the committed index with a stable buffer view.
-func (w *WriteBehindBuffer) lockPendingWrites() pendingWriteView {
-	w.mu.RLock()
-	return pendingWriteView{index: w.pendingIndex, owner: w}
+func (w *WriteBehindBuffer) lockPendingWrites(ctx context.Context) (pendingWriteView, error) {
+	if err := w.mu.RLockContext(ctx); err != nil {
+		return pendingWriteView{}, err
+	}
+	// The lease is still owned by the returned source even when no mutation
+	// can shadow a committed ID. Include raw order and draining generations:
+	// a delete-only generation must never be mistaken for empty membership.
+	if w.opCount == 0 && len(w.draining) == 0 && (w.active == nil || len(w.active.order) == 0) {
+		return pendingWriteView{}, nil
+	}
+	return pendingWriteView{index: w.pendingIndex, owner: w}, nil
 }
 
 // unlockPendingWrites releases the lock pendingWrites took.
@@ -963,31 +997,95 @@ func (w *WriteBehindBuffer) unlockPendingWrites() {
 
 // trackPendingValues indexes these (label, property) pairs of buffered
 // nodes by value from now on, including the nodes already buffered.
-func (w *WriteBehindBuffer) trackPendingValues(pairs []pendingPropertyKey) {
-	if len(pairs) == 0 {
-		return
+func (w *WriteBehindBuffer) trackPendingValues(ctx context.Context, pairs []nodePropertyKey) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	w.mu.Lock()
+	if len(pairs) == 0 {
+		return nil
+	}
+	if err := w.mu.LockContext(ctx); err != nil {
+		return err
+	}
 	defer w.mu.Unlock()
-	if w.pendingIndex == nil {
-		w.pendingIndex = newPendingNodeIndex()
-		// Pending indexes share entity visibility until locked retirement. The
-		// rebuild is the buffer's own copy: it has no caller to cancel it, so
-		// context.Background is its lifetime.
-		nodes, _, _ := w.allNodesOverlayLocked(context.Background())
-		for _, node := range nodes {
-			w.pendingIndex.add(node)
+	missing := w.pendingIndex == nil
+	for _, pair := range pairs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !slices.Contains(w.trackedPairs, pair) {
+			missing = true
 		}
 	}
-	for _, pair := range pairs {
-		w.pendingIndex.track(pair.label, pair.property, func(id NodeID) *Node {
+	if !missing {
+		return nil
+	}
+	if len(pairs) == 1 && w.pendingIndex != nil {
+		// track already builds and publishes a single pair atomically. There
+		// must be no further fallible poll after that publication.
+		pair := pairs[0]
+		if err := w.pendingIndex.track(ctx, pair.label, pair.property, func(id NodeID) *Node {
 			node, _ := w.nodeLocked(id)
 			return node
-		})
-		if !slices.Contains(w.trackedPairs, pair) {
-			w.trackedPairs = append(w.trackedPairs, pair)
+		}); err != nil {
+			return err
+		}
+		w.trackedPairs = append(w.trackedPairs, pair)
+		return nil
+	}
+	// Keep the entire multi-pair publication private. track publishes each
+	// completed pair into this candidate, never the live buffer on failure.
+	candidate := newPendingNodeIndex()
+	if w.pendingIndex == nil {
+		nodes, _, err := w.allNodesOverlayLocked(ctx)
+		if err != nil {
+			return err
+		}
+		for _, node := range nodes {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			candidate.add(node)
+		}
+	} else {
+		candidate.byLabel = w.pendingIndex.byLabel // read-only under w.mu
+		candidate.byValue = w.pendingIndex.byValue // track builds a replacement
+		for label, properties := range w.pendingIndex.tracked {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			candidate.tracked[label] = properties // track replaces the inner map
+		}
+		for pair, ids := range w.pendingIndex.byProperty {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			candidate.byProperty[pair] = ids // track replaces each new population
 		}
 	}
+	tracked := make([]nodePropertyKey, 0, len(w.trackedPairs)+len(pairs))
+	for _, pair := range w.trackedPairs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		tracked = append(tracked, pair)
+	}
+	for _, pair := range pairs {
+		if err := candidate.track(ctx, pair.label, pair.property, func(id NodeID) *Node {
+			node, _ := w.nodeLocked(id)
+			return node
+		}); err != nil {
+			return err
+		}
+		if !slices.Contains(tracked, pair) {
+			tracked = append(tracked, pair)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	w.pendingIndex, w.trackedPairs = candidate, tracked
+	return nil
 }
 
 // KeyCandidates returns the newest buffered version of every unflushed node
@@ -995,18 +1093,24 @@ func (w *WriteBehindBuffer) trackPendingValues(pairs []pendingPropertyKey) {
 // pending value index (the pair is tracked from its first use) instead of by
 // copying every buffered node of the label: constraint validation calls it on
 // every write of a bulk load.
-func (w *WriteBehindBuffer) ensurePendingValueTracked(label, property string) {
-	pair := pendingPropertyKey{label: label, property: property}
-	w.mu.RLock()
+func (w *WriteBehindBuffer) ensurePendingValueTracked(ctx context.Context, label, property string) error {
+	pair := nodePropertyKey{label: label, property: property}
+	if err := w.mu.RLockContext(ctx); err != nil {
+		return err
+	}
 	tracked := slices.Contains(w.trackedPairs, pair)
 	w.mu.RUnlock()
 	if !tracked {
-		w.trackPendingValues([]pendingPropertyKey{pair})
+		return w.trackPendingValues(ctx, []nodePropertyKey{pair})
 	}
+	return ctx.Err()
 }
 
 func (w *WriteBehindBuffer) KeyCandidates(label, property string, valueKey interface{}) []*Node {
-	w.ensurePendingValueTracked(label, property)
+	// This exported context-free accessor owns its buffer maintenance lifetime.
+	if err := w.ensurePendingValueTracked(context.Background(), label, property); err != nil {
+		panic(err) // Background cannot cancel; do not silently lose candidates.
+	}
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	// A context-free buffer accessor: the copy runs on the buffer's own
@@ -1061,15 +1165,27 @@ func (w *WriteBehindBuffer) Flush() error {
 // (orderAfterBufferedCommits) holds the stripes of the caller's entities, so
 // no commit of theirs enters a later generation.
 func (w *WriteBehindBuffer) flush(dispatch, frontier bool) error {
-	return w.flushContext(nil, dispatch, frontier)
+	// flush owns no request context, so it states the detached completion
+	// lifetime explicitly: the drain wait it starts cannot cancel.
+	return w.flushContext(context.Background(), dispatch, frontier)
 }
 
+// flushContext drains the generations this caller observes under its
+// completion lifetime. ctx is nonnil: a caller passes its own cancellable
+// context, or the detached completion lifetime the owners without a request
+// context select. A context whose Done is nil cannot cancel and waits for the
+// generations alone, without a timer and without allocating per wait.
+// A cancellable waiter never becomes the accepted replay owner.
 func (w *WriteBehindBuffer) flushContext(ctx context.Context, dispatch, frontier bool) error {
-	w.rotate()
+	if _, err := w.rotate(ctx); err != nil {
+		return err
+	}
 	w.signal()
 	var last *CommitBuffer
 	if frontier {
-		w.mu.RLock()
+		if err := w.mu.RLockContext(ctx); err != nil {
+			return err
+		}
 		if n := len(w.draining); n > 0 {
 			last = w.draining[n-1]
 		}
@@ -1078,13 +1194,14 @@ func (w *WriteBehindBuffer) flushContext(ctx context.Context, dispatch, frontier
 			return nil
 		}
 	}
+	noncancellable := ctx.Done() == nil
 	lastPending := -1
 	stalls := 0
 	for {
-		if ctx != nil && ctx.Err() != nil {
-			return ctx.Err()
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-		if ctx == nil || ctx.Done() == nil {
+		if noncancellable {
 			w.drainOne(dispatch, last)
 		} else {
 			// A cancellable waiter never becomes the accepted replay
@@ -1093,9 +1210,26 @@ func (w *WriteBehindBuffer) flushContext(ctx context.Context, dispatch, frontier
 			// the same claim, application and settlement lifetime.
 			w.signal()
 		}
-		w.mu.RLock()
+		if err := w.mu.RLockContext(ctx); err != nil {
+			return err
+		}
 		pending := len(w.draining)
-		done := pending == 0 || (last != nil && !slices.Contains(w.draining, last))
+		done := pending == 0
+		if last != nil && !done {
+			found := false
+			var cancel bulkReadCancellation
+			for _, generation := range w.draining {
+				if err := cancel.check(ctx); err != nil {
+					w.mu.RUnlock()
+					return err
+				}
+				if generation == last {
+					found = true
+					break
+				}
+			}
+			done = !found
+		}
 		w.mu.RUnlock()
 		if done {
 			return nil
@@ -1115,16 +1249,16 @@ func (w *WriteBehindBuffer) flushContext(ctx context.Context, dispatch, frontier
 			stalls = 0
 		}
 		observeWriteAdmissionWait(w, ctx)
-		if ctx == nil {
+		if noncancellable {
 			time.Sleep(time.Millisecond)
-		} else {
-			timer := time.NewTimer(time.Millisecond)
-			select {
-			case <-timer.C:
-			case <-ctx.Done():
-				timer.Stop()
-				return ctx.Err()
-			}
+			continue
+		}
+		timer := time.NewTimer(time.Millisecond)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
 		}
 	}
 }
@@ -1136,17 +1270,10 @@ func (w *WriteBehindBuffer) LastErr() error {
 	return w.lastErr
 }
 
-// Close stops the background flusher. Callers must Flush first to drain.
+// Close stops the background flusher and joins its actual return; every
+// caller joins the same stop. Callers must Flush first to drain.
 func (w *WriteBehindBuffer) Close() {
-	w.closeMu.Lock()
-	if w.closed {
-		w.closeMu.Unlock()
-		return
-	}
-	w.closed = true
-	close(w.done)
-	w.closeMu.Unlock()
-	w.wg.Wait()
+	<-w.work.BeginStop(nil)
 }
 
 // GetNode resolves the latest buffered state for id across generations,
@@ -1369,107 +1496,31 @@ func (w *WriteBehindBuffer) selectAllEdgesOverlayLocked(ctx context.Context, pre
 // applies the same deltas to the persisted counters when it lands the
 // generation, so reads see committed counts + this delta.
 func (w *WriteBehindBuffer) LabelCountDelta(label string) int64 {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	var total int64
-	sum := func(buf *CommitBuffer) {
-		if buf.countsApplied.Load() {
-			return
-		}
-		for _, c := range buf.commits {
-			for key, delta := range c.labelDeltas {
-				if key.label == label {
-					total += delta
-				}
-			}
-		}
-	}
-	sum(w.active)
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		if w.draining[i].IsApplied() {
-			continue
-		}
-		sum(w.draining[i])
-	}
+	// Author: storage-format-owners lane (Codex), 1 November 2026.
+	total, _ := w.namedCountDelta(context.Background(), countDeltaKindLabel, "", label, false)
 	return total
 }
 
 // LabelCountDeltaInNamespace is LabelCountDelta restricted to namespace.
 func (w *WriteBehindBuffer) LabelCountDeltaInNamespace(namespace, label string) int64 {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	var total int64
-	sum := func(buf *CommitBuffer) {
-		if buf.countsApplied.Load() {
-			return
-		}
-		for _, c := range buf.commits {
-			if delta, ok := c.labelDeltas[namespaceLabel{namespace: namespace, label: label}]; ok {
-				total += delta
-			}
-		}
-	}
-	sum(w.active)
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		if w.draining[i].IsApplied() {
-			continue
-		}
-		sum(w.draining[i])
-	}
+	// Author: storage-format-owners lane (Codex), 1 November 2026.
+	total, _ := w.namedCountDelta(context.Background(), countDeltaKindLabel, namespace, label, true)
 	return total
 }
 
 // EdgeTypeCountDelta sums the derived edge-type count deltas of every
 // buffered commit that has not been replayed yet, across all namespaces.
 func (w *WriteBehindBuffer) EdgeTypeCountDelta(edgeType string) int64 {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	var total int64
-	sum := func(buf *CommitBuffer) {
-		if buf.countsApplied.Load() {
-			return
-		}
-		for _, c := range buf.commits {
-			for key, delta := range c.edgeTypeDeltas {
-				if key.edgeType == edgeType {
-					total += delta
-				}
-			}
-		}
-	}
-	sum(w.active)
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		if w.draining[i].IsApplied() {
-			continue
-		}
-		sum(w.draining[i])
-	}
+	// Author: storage-format-owners lane (Codex), 1 November 2026.
+	total, _ := w.namedCountDelta(context.Background(), countDeltaKindEdgeType, "", edgeType, false)
 	return total
 }
 
 // EdgeTypeCountDeltaInNamespace is EdgeTypeCountDelta restricted to
 // namespace.
 func (w *WriteBehindBuffer) EdgeTypeCountDeltaInNamespace(namespace, edgeType string) int64 {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	var total int64
-	sum := func(buf *CommitBuffer) {
-		if buf.countsApplied.Load() {
-			return
-		}
-		for _, c := range buf.commits {
-			if delta, ok := c.edgeTypeDeltas[namespaceEdgeType{namespace: namespace, edgeType: edgeType}]; ok {
-				total += delta
-			}
-		}
-	}
-	sum(w.active)
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		if w.draining[i].IsApplied() {
-			continue
-		}
-		sum(w.draining[i])
-	}
+	// Author: storage-format-owners lane (Codex), 1 November 2026.
+	total, _ := w.namedCountDelta(context.Background(), countDeltaKindEdgeType, namespace, edgeType, true)
 	return total
 }
 
@@ -1586,7 +1637,8 @@ func (w *WriteBehindBuffer) edgesBetweenOverlayLocked(ctx context.Context, sourc
 // EdgeCountDelta is the buffered total edge-count delta: creates minus
 // deletes across every generation that has not been replayed yet.
 func (w *WriteBehindBuffer) EdgeCountDelta() int64 {
-	return w.totalCountDeltaForPrefix("", true)
+	delta, _ := w.totalCountDeltaForPrefix(context.Background(), "", true)
+	return delta
 }
 
 // EdgeTypeLabelCountDeltaInNamespace sums the buffered positional
@@ -1648,14 +1700,16 @@ func (w *WriteBehindBuffer) EdgeTypeLabelCountDelta(sub byte, label, edgeType st
 // edges whose ID starts with prefix: live buffered edge IDs minus buffered
 // deleted edge IDs. prefix may be empty for the whole graph.
 func (w *WriteBehindBuffer) EdgeCountDeltaForPrefix(prefix string) int64 {
-	return w.totalCountDeltaForPrefix(prefix, true)
+	delta, _ := w.totalCountDeltaForPrefix(context.Background(), prefix, true)
+	return delta
 }
 
 // NodeCountDeltaForPrefix is the buffered total node-count delta restricted to
 // nodes whose ID starts with prefix: live buffered node IDs minus buffered
 // deleted node IDs. prefix may be empty for the whole graph.
 func (w *WriteBehindBuffer) NodeCountDeltaForPrefix(prefix string) int64 {
-	return w.totalCountDeltaForPrefix(prefix, false)
+	delta, _ := w.totalCountDeltaForPrefix(context.Background(), prefix, false)
+	return delta
 }
 
 // PendingOps reports how many mutations are buffered but not yet applied.

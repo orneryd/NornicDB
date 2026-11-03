@@ -34,11 +34,11 @@ func TestMergeBodyTriviaSharedProducts(t *testing.T) {
 		require.Equal(t, map[string][]string{"id": {"1"}}, keys)
 		clauses, ok := splitPipelineClauses(ctx, query)
 		require.True(t, ok)
-		labels, dynamic := statementSetLabels(clauses)
+		labels, dynamic := statementSetLabels(ctx, clauses)
 		require.Equal(t, []string{"Seen"}, labels["n"])
 		require.Empty(t, dynamic)
 		relationship := "MERGE" + gap + "(a)-[r:LocalMergeRel {id:row.id}]->(b)"
-		template := exec.pipelineMergeTemplateFor(relationship)
+		template := exec.pipelineMergeTemplateFor(ctx, relationship)
 		require.True(t, template.usable, relationship)
 		require.Equal(t, "LocalMergeRel", template.shape.relType)
 		require.Len(t, template.properties, 1)
@@ -60,7 +60,7 @@ func TestMergeBodyTriviaTypedSource(t *testing.T) {
 	for _, gap := range []string{" ", "/*c*/", " //c\n"} {
 		query := "MERGE" + gap + `(\u006e:LocalMergeBody {id:'\u0061'}) ON CREATE SET n.v='\u0062'`
 		source := cyphertext.NormalizeSource(query)
-		merge := NewASTBuilder().parseMerge(source)
+		merge := NewASTBuilder().parseMerge(t.Context(), source)
 		require.Equal(t, `(\u006e:LocalMergeBody {id:'\u0061'})`, merge.Pattern.RawText)
 		require.Equal(t, "n", merge.Pattern.Nodes[0].Variable)
 		require.Equal(t, `id:'\u0061'`, merge.Pattern.Nodes[0].RawProps)

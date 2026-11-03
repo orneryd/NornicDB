@@ -30,5 +30,5 @@ func reviewedCallbackBoundary(qualified string, argument int, syntax ast.Node, s
 	if err := format.Node(&normalized, set, declaration.Body); err != nil {
 		return false
 	}
-	return fmt.Sprintf("%x", sha256.Sum256(normalized.Bytes())) == "190c5519a3c7a69b3406452d700bf14a2e4d81987bc5eef9501f03b84dce4e68"
+	return fmt.Sprintf("%x", sha256.Sum256(normalized.Bytes())) == "ecaa5aa04706799b8116c64a788fbf51a2e923386332eb1cd0f85ae6b2ebcf25"
 }

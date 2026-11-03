@@ -185,7 +185,7 @@ func TestBoltImmutableGrantNeedsAuthenticationDisabled(t *testing.T) {
 	require.NoError(t, err)
 	// A stored administrator: a session's roles are its account's current
 	// ones.
-	_, err = authenticator.CreateUser("admin", "password123", []auth.Role{auth.RoleAdmin})
+	_, err = authenticator.CreateUser(context.Background(), "admin", "password123", []auth.Role{auth.RoleAdmin})
 	require.NoError(t, err)
 	adapter := NewAuthenticatorAdapter(authenticator)
 	adapter.SetGetEffectivePermissions(func(roles []string) []string { return auth.PermissionsForRoles(roles, nil) })

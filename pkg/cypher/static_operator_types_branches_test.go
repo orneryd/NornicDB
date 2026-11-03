@@ -76,7 +76,7 @@ func TestStaticOperatorCheckerBranches(t *testing.T) {
 		{expr: "CASE WHEN true THEN 1 END", want: "Integer"},
 		{expr: "(a)-[:R]->(b)", want: ""},
 	} {
-		got, err := checker.check(tc.expr)
+		got, err := checker.check(t.Context(), tc.expr)
 		if tc.fails {
 			require.Error(t, err, tc.expr)
 			continue
@@ -85,7 +85,7 @@ func TestStaticOperatorCheckerBranches(t *testing.T) {
 		require.Equal(t, tc.want, got.typeName(), tc.expr)
 	}
 	noParams := staticOperatorChecker{}
-	got, err := noParams.check("$i")
+	got, err := noParams.check(t.Context(), "$i")
 	require.NoError(t, err)
 	require.False(t, got.known())
 }

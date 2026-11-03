@@ -77,8 +77,16 @@ type PatternInfo struct {
 }
 
 // DetectQueryPattern analyzes a Cypher query and returns pattern info
-func DetectQueryPattern(ctx context.Context, query string) PatternInfo {
-	info := PatternInfo{
+func DetectQueryPattern(ctx context.Context, query string) (info PatternInfo, err error) {
+	defer func() {
+		if cause := ctx.Err(); cause != nil {
+			info, err = PatternInfo{}, cause
+		}
+	}()
+	if err := ctx.Err(); err != nil {
+		return PatternInfo{}, err
+	}
+	info = PatternInfo{
 		Pattern: PatternGeneric,
 	}
 
@@ -87,18 +95,22 @@ func DetectQueryPattern(ctx context.Context, query string) PatternInfo {
 	// Don't optimize queries with WITH clause - they have complex aggregation
 	// semantics that the optimized executors don't handle (aliases, collect, etc.)
 	// Use word boundary check to avoid matching "STARTS WITH" or "ENDS WITH"
-	if containsKeywordOutsideStrings(query, "WITH") {
-		return info
+	if containsKeywordOutsideStrings(ctx, query, "WITH") {
+		return info, nil
 	}
 
 	// Extract LIMIT first (affects multiple patterns)
-	if limit, ok := ExtractLimit(query); ok {
+	limit, ok, err := ExtractLimit(ctx, query)
+	if err != nil {
+		return PatternInfo{}, err
+	}
+	if ok {
 		info.Limit = limit
 	}
 
 	// Check for mutual relationship pattern: (a)-[:T]->(b)-[:T]->(a)
 	if info.Pattern == PatternGeneric && detectMutualRelationship(ctx, query, &info) {
-		return info
+		return info, nil
 	}
 
 	// Check for incoming count aggregation
@@ -115,13 +127,13 @@ func DetectQueryPattern(ctx context.Context, query string) PatternInfo {
 			!strings.Contains(upperQuery, "MIN(") &&
 			!strings.Contains(upperQuery, "MAX(") &&
 			!strings.Contains(upperQuery, "COLLECT(") {
-			matchClause := extractMatchClause(query)
+			matchClause := extractMatchClause(ctx, query)
 			if countRelationshipPatterns(matchClause) == 1 {
 				if detectIncomingCountAgg(ctx, query, &info) {
-					return info
+					return info, nil
 				}
 				if detectOutgoingCountAgg(ctx, query, &info) {
-					return info
+					return info, nil
 				}
 			}
 		}
@@ -129,26 +141,26 @@ func DetectQueryPattern(ctx context.Context, query string) PatternInfo {
 
 	// Check for edge property aggregation
 	if info.Pattern == PatternGeneric && detectEdgePropertyAgg(ctx, query, &info) {
-		return info
+		return info, nil
 	}
 
 	// Check for large result set (LIMIT > 100)
 	if info.Limit > 100 && strings.Contains(upperQuery, "MATCH") {
 		info.Pattern = PatternLargeResultSet
-		return info
+		return info, nil
 	}
 
-	return info
+	return info, nil
 }
 
-func extractMatchClause(query string) string {
-	matchIdx := findKeywordIndex(query, "MATCH")
+func extractMatchClause(ctx context.Context, query string) string {
+	matchIdx := findKeywordIndex(ctx, query, "MATCH")
 	if matchIdx < 0 {
 		return ""
 	}
 	end := len(query)
 	for _, keyword := range []string{"WHERE", "RETURN", "WITH", "ORDER", "LIMIT", "SKIP"} {
-		if idx := findKeywordIndex(query[matchIdx:], keyword); idx > 0 {
+		if idx := findKeywordIndex(ctx, query[matchIdx:], keyword); idx > 0 {
 			if matchIdx+idx < end {
 				end = matchIdx + idx
 			}
@@ -172,7 +184,7 @@ func countRelationshipPatterns(s string) int {
 
 // detectMutualRelationship checks for (a)-[:T]->(b)-[:T]->(a) pattern
 func detectMutualRelationship(ctx context.Context, query string, info *PatternInfo) bool {
-	matchClause := extractMatchClause(query)
+	matchClause := extractMatchClause(ctx, query)
 	matchClause = strings.TrimSpace(matchClause)
 	if matchClause == "" {
 		return false
@@ -216,7 +228,7 @@ func detectMutualRelationship(ctx context.Context, query string, info *PatternIn
 
 // detectIncomingCountAgg checks for (x)<-[:T]-(y) ... count(y) pattern
 func detectIncomingCountAgg(ctx context.Context, query string, info *PatternInfo) bool {
-	startVar, relVar, relType, endVar, ok := parseDirectionalCountPattern(ctx, extractMatchClause(query), true)
+	startVar, relVar, relType, endVar, ok := parseDirectionalCountPattern(ctx, extractMatchClause(ctx, query), true)
 	if !ok {
 		return false
 	}
@@ -228,7 +240,7 @@ func detectIncomingCountAgg(ctx context.Context, query string, info *PatternInfo
 	countStarPattern := "COUNT(*)"
 
 	if (strings.Contains(upperQuery, countPattern) || strings.Contains(upperQuery, countStarPattern)) &&
-		isReturnNameCountShape(query, startVar, endVar) {
+		isReturnNameCountShape(ctx, query, startVar, endVar) {
 		info.Pattern = PatternIncomingCountAgg
 		info.StartVar = startVar
 		info.EndVar = endVar
@@ -243,7 +255,7 @@ func detectIncomingCountAgg(ctx context.Context, query string, info *PatternInfo
 
 // detectOutgoingCountAgg checks for (x)-[:T]->(y) ... count(y) pattern
 func detectOutgoingCountAgg(ctx context.Context, query string, info *PatternInfo) bool {
-	startVar, relVar, relType, endVar, ok := parseDirectionalCountPattern(ctx, extractMatchClause(query), false)
+	startVar, relVar, relType, endVar, ok := parseDirectionalCountPattern(ctx, extractMatchClause(ctx, query), false)
 	if !ok {
 		return false
 	}
@@ -253,7 +265,7 @@ func detectOutgoingCountAgg(ctx context.Context, query string, info *PatternInfo
 	upperQuery := upperASCII(query)
 	countPattern := "COUNT(" + upperASCII(endVar)
 
-	if strings.Contains(upperQuery, countPattern) && isReturnNameCountShape(query, startVar, endVar) {
+	if strings.Contains(upperQuery, countPattern) && isReturnNameCountShape(ctx, query, startVar, endVar) {
 		info.Pattern = PatternOutgoingCountAgg
 		info.StartVar = startVar
 		info.EndVar = endVar
@@ -266,8 +278,8 @@ func detectOutgoingCountAgg(ctx context.Context, query string, info *PatternInfo
 	return false
 }
 
-func isReturnNameCountShape(query string, startVar string, endVar string) bool {
-	parts := returnShapeItems(query)
+func isReturnNameCountShape(ctx context.Context, query string, startVar string, endVar string) bool {
+	parts := returnShapeItems(ctx, query)
 	if len(parts) != 2 {
 		return false
 	}
@@ -352,14 +364,14 @@ func edgeAggregationProperty(function string, inner string, relVar string) (prop
 // detectEdgePropertyAgg checks for avg(r.prop), sum(r.prop) patterns
 func detectEdgePropertyAgg(ctx context.Context, query string, info *PatternInfo) bool {
 	// First, find relationship variable in MATCH
-	matchClause := extractMatchClause(query)
+	matchClause := extractMatchClause(ctx, query)
 	relVar := extractRelationshipVariable(matchClause)
 	if relVar == "" {
 		return false
 	}
 
 	exec := &StorageExecutor{}
-	returnIdx := findKeywordIndex(query, "RETURN")
+	returnIdx := findKeywordIndex(ctx, query, "RETURN")
 	if returnIdx < 0 {
 		return false
 	}
@@ -397,7 +409,7 @@ func detectEdgePropertyAgg(ctx context.Context, query string, info *PatternInfo)
 	if info.AggProperty == "" {
 		return false
 	}
-	if !isReturnEdgePropertyAggNameShape(query, relVar, info.AggProperty) {
+	if !isReturnEdgePropertyAggNameShape(ctx, query, relVar, info.AggProperty) {
 		return false
 	}
 	info.Pattern = PatternEdgePropertyAgg
@@ -406,8 +418,8 @@ func detectEdgePropertyAgg(ctx context.Context, query string, info *PatternInfo)
 	return true
 }
 
-func isReturnEdgePropertyAggNameShape(query string, relVar string, propName string) bool {
-	items := returnShapeItems(query)
+func isReturnEdgePropertyAggNameShape(ctx context.Context, query string, relVar string, propName string) bool {
+	items := returnShapeItems(ctx, query)
 	if len(items) < 2 {
 		return false
 	}

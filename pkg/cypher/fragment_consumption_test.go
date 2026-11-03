@@ -54,7 +54,7 @@ func TestSharedScannersConsumeCompleteFragments(t *testing.T) {
 	t.Run("forEachListOperand", func(t *testing.T) {
 		var visits []int
 		text := "' IN ' IN [1, 2] /* IN */ IN [3] // IN\n"
-		err := forEachListOperand(text, func(start, in int) error {
+		err := forEachListOperand(t.Context(), text, func(start, in int) error {
 			visits = append(visits, in)
 			return nil
 		})
@@ -74,10 +74,10 @@ func TestSharedScannersConsumeCompleteFragments(t *testing.T) {
 	t.Run("keyword scanners skip fragments", func(t *testing.T) {
 		query := "RETURN 'WITH' AS `x//y`, /* RETURN */ 1 // WITH\rWITH 2 AS z RETURN z"
 		want := strings.Index(query, "WITH 2")
-		require.Equal(t, want, keywordIndexFrom(query, "WITH", 0, defaultKeywordScanOpts()), "cached-default")
+		require.Equal(t, want, keywordIndexFrom(t.Context(), query, "WITH", 0, defaultKeywordScanOpts()), "cached-default")
 		opts := defaultKeywordScanOpts()
 		opts.SkipParens = false
-		require.Equal(t, want, keywordIndexFrom(query, "WITH", 0, opts), "general")
+		require.Equal(t, want, keywordIndexFrom(t.Context(), query, "WITH", 0, opts), "general")
 	})
 
 	t.Run("lastLiveByte", func(t *testing.T) {
@@ -101,10 +101,10 @@ func TestSharedScannersConsumeCompleteFragments(t *testing.T) {
 			"RETURN 1 /* WITH */ WITH 2 AS z RETURN z",
 		} {
 			want := strings.Index(query, "WITH 2")
-			require.Equal(t, want, keywordIndexFrom(query, "WITH", 0, defaultKeywordScanOpts()), "cached-default %q", query)
+			require.Equal(t, want, keywordIndexFrom(t.Context(), query, "WITH", 0, defaultKeywordScanOpts()), "cached-default %q", query)
 			opts := defaultKeywordScanOpts()
 			opts.SkipParens = false
-			require.Equal(t, want, keywordIndexFrom(query, "WITH", 0, opts), "general %q", query)
+			require.Equal(t, want, keywordIndexFrom(t.Context(), query, "WITH", 0, opts), "general %q", query)
 		}
 	})
 }

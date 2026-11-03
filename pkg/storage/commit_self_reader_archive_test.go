@@ -12,18 +12,18 @@ import (
 // archived and that reader keeps its snapshot.
 func TestCommitArchivesSupersededVersionOnlyForOtherReaders(t *testing.T) {
 	eng := newTestEngine(t)
-	_, err := eng.CreateNode(&Node{ID: "test:a", Labels: []string{"N"}, Properties: map[string]any{"v": int64(1)}})
+	_, err := eng.CreateNode(t.Context(), &Node{ID: "test:a", Labels: []string{"N"}, Properties: map[string]any{"v": int64(1)}})
 	require.NoError(t, err)
 	base := countKeysWithPrefix(t, eng, prefixMVCCNode)
 
 	update := func(v int64) {
 		t.Helper()
-		tx, err := eng.BeginTransaction()
+		tx, err := eng.BeginTransaction(t.Context())
 		require.NoError(t, err)
-		node, err := tx.GetNode("test:a")
+		node, err := tx.GetNode(t.Context(), "test:a")
 		require.NoError(t, err)
 		node.Properties["v"] = v
-		require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
+		require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 		require.NoError(t, tx.Commit())
 	}
 
@@ -31,21 +31,21 @@ func TestCommitArchivesSupersededVersionOnlyForOtherReaders(t *testing.T) {
 	require.Equal(t, base, countKeysWithPrefix(t, eng, prefixMVCCNode), "no other reader: nothing archived")
 	require.Zero(t, eng.activeMVCCSnapshotReaders.Load())
 
-	reader, err := eng.BeginTransaction()
+	reader, err := eng.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer func() { _ = reader.Rollback() }()
-	before, err := reader.GetNode("test:a")
+	before, err := reader.GetNode(t.Context(), "test:a")
 	require.NoError(t, err)
 	require.Equal(t, int64(2), before.Properties["v"])
 
 	update(3)
 	require.Greater(t, countKeysWithPrefix(t, eng, prefixMVCCNode), base, "another reader: superseded version archived")
-	seen, err := reader.GetNode("test:a")
+	seen, err := reader.GetNode(t.Context(), "test:a")
 	require.NoError(t, err)
 	require.Equal(t, int64(2), seen.Properties["v"], "the reader keeps its snapshot")
 	require.Equal(t, int64(1), eng.activeMVCCSnapshotReaders.Load())
 
-	latest, err := eng.GetNode("test:a")
+	latest, err := eng.GetNode(t.Context(), "test:a")
 	require.NoError(t, err)
 	require.Equal(t, int64(3), latest.Properties["v"])
 }

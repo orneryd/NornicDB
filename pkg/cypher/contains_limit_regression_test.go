@@ -17,7 +17,7 @@ func TestContainsMultiWordWithLimitFiltersNonStreamingStorage(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "nornic")
 	for i := 0; i < 6; i++ {
-		_, err := store.CreateNode(&storage.Node{
+		_, err := store.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("unrelated-%d", i)),
 			Labels: []string{"Document"},
 			Properties: map[string]interface{}{
@@ -26,7 +26,7 @@ func TestContainsMultiWordWithLimitFiltersNonStreamingStorage(t *testing.T) {
 		})
 		require.NoError(t, err)
 	}
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:     "exact-match",
 		Labels: []string{"Document"},
 		Properties: map[string]interface{}{

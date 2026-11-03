@@ -67,9 +67,9 @@ func TestTypePredicatesMatchNeo4j(t *testing.T) {
 }
 
 func TestTypePredicateTypesAreNotVariables(t *testing.T) {
-	require.Empty(t, expressionFreeVariables("1 IS :: INTEGER | LIST<STRING NOT NULL>"))
-	require.Equal(t, []string{"n"}, expressionFreeVariables("count(CASE WHEN n.v IS :: INTEGER | FLOAT THEN 1 END)"))
-	require.Equal(t, []string{"x", "y"}, expressionFreeVariables("x IS TYPED TIME WITH TIME ZONE AND y IS NOT TYPED ANY<INT> NOT NULL"))
+	require.Empty(t, expressionFreeVariables(t.Context(), "1 IS :: INTEGER | LIST<STRING NOT NULL>"))
+	require.Equal(t, []string{"n"}, expressionFreeVariables(t.Context(), "count(CASE WHEN n.v IS :: INTEGER | FLOAT THEN 1 END)"))
+	require.Equal(t, []string{"x", "y"}, expressionFreeVariables(t.Context(), "x IS TYPED TIME WITH TIME ZONE AND y IS NOT TYPED ANY<INT> NOT NULL"))
 	require.Equal(t, "plain", maskTypePredicateTypes("plain"))
 }
 
@@ -117,9 +117,9 @@ func TestTypePredicateSplittingAndRowValueErrors(t *testing.T) {
 	require.Equal(t, "x    ", maskTypePredicateTypes("x :: "))
 
 	e := setupTestExecutor(t)
-	_, _, err = e.evaluateRowValue("1 IS :: FOO", pipelineRow{})
+	_, _, err = e.evaluateRowValue(t.Context(), "1 IS :: FOO", pipelineRow{})
 	require.Error(t, err)
-	_, ok, err = e.evaluateRowValue("missing.v IS :: INTEGER", pipelineRow{})
+	_, ok, err = e.evaluateRowValue(t.Context(), "missing.v IS :: INTEGER", pipelineRow{})
 	require.False(t, ok && err == nil, "an operand without a value is not a result")
 }
 

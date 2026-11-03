@@ -32,7 +32,7 @@ func TestSol1482R2CypherCommittedReadCannotResurrectNewerDelete(t *testing.T) {
 	require.NoError(t, err)
 	barrier.ReleaseWrites()
 	require.NoError(t, <-done)
-	_, err = store.GetNode("source")
+	_, err = store.GetNode(t.Context(), "source")
 	require.ErrorIs(t, err, storage.ErrNotFound)
 	require.Zero(t, svc.EmbeddingCount())
 }

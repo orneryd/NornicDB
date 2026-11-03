@@ -17,7 +17,7 @@ func newGh713UnwindReturnExecutor(t testing.TB, namespace string, count int, nod
 	t.Helper()
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), namespace)
 	for index := 0; index < count; index++ {
-		_, err := store.CreateNode(node(index))
+		_, err := store.CreateNode(t.Context(), node(index))
 		require.NoError(t, err)
 	}
 	return NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0}), store
@@ -103,7 +103,7 @@ func TestGh713MatchWithUnwindSharedReturn(t *testing.T) {
 		{"empty list", []interface{}{}, [][]interface{}{}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(test.name), Labels: []string{"UnwindEdge"}, Properties: map[string]interface{}{"name": test.name, "items": test.items}})
+			_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(test.name), Labels: []string{"UnwindEdge"}, Properties: map[string]interface{}{"name": test.name, "items": test.items}})
 			require.NoError(t, err)
 			query := "MATCH (n:UnwindEdge) WHERE n.name = $name WITH n.items AS items UNWIND items AS item RETURN item AS value"
 			params := map[string]interface{}{"name": test.name}
@@ -193,7 +193,7 @@ func BenchmarkGh713MultiMatchAggregation(b *testing.B) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "multi-match-aggregate-bench")
 	for index := 0; index < 32; index++ {
 		for _, side := range []string{"Left", "Right"} {
-			_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("%s-%d", side, index)), Labels: []string{"Aggregate" + side}, Properties: map[string]interface{}{"key": int64(index), "value": int64(index)}})
+			_, err := store.CreateNode(b.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("%s-%d", side, index)), Labels: []string{"Aggregate" + side}, Properties: map[string]interface{}{"key": int64(index), "value": int64(index)}})
 			require.NoError(b, err)
 		}
 	}
@@ -240,7 +240,7 @@ func TestGh713MultiMatchAggregateSharedReturn(t *testing.T) {
 		{ID: "small", Labels: []string{"ExactSumLeft"}, Properties: map[string]interface{}{"key": "small", "value": int64(2)}},
 		{ID: "right", Labels: []string{"ExactSumRight"}, Properties: map[string]interface{}{"fraction": 0.5}},
 	} {
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
@@ -283,12 +283,12 @@ func TestGh713MultiMatchBorrowedReturn(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "multi-match-borrowed-return")
 	for _, side := range []string{"Left", "Right"} {
 		for index := 1; index <= 2; index++ {
-			_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("%s-%d", side, index)), Labels: []string{"Borrow" + side}, Properties: map[string]interface{}{"value": int64(index)}})
+			_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("%s-%d", side, index)), Labels: []string{"Borrow" + side}, Properties: map[string]interface{}{"value": int64(index)}})
 			require.NoError(t, err)
 		}
 	}
 	for index := 1; index <= 2; index++ {
-		require.NoError(t, store.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("edge-%d", index)), StartNode: storage.NodeID(fmt.Sprintf("Left-%d", index)), EndNode: storage.NodeID(fmt.Sprintf("Right-%d", index)), Type: "BORROWED"}))
+		require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: storage.EdgeID(fmt.Sprintf("edge-%d", index)), StartNode: storage.NodeID(fmt.Sprintf("Left-%d", index)), EndNode: storage.NodeID(fmt.Sprintf("Right-%d", index)), Type: "BORROWED"}))
 	}
 	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	params := map[string]interface{}{"skip": int64(1), "limit": int64(2)}
@@ -351,7 +351,7 @@ func BenchmarkGh713MultiMatchProjection(b *testing.B) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "multi-match-projection-bench")
 	for index := 0; index < 32; index++ {
 		for _, side := range []string{"Left", "Right"} {
-			_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("%s-%d", side, index)), Labels: []string{"Projection" + side}, Properties: map[string]interface{}{"value": int64(index)}})
+			_, err := store.CreateNode(b.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("%s-%d", side, index)), Labels: []string{"Projection" + side}, Properties: map[string]interface{}{"value": int64(index)}})
 			require.NoError(b, err)
 		}
 	}
@@ -449,7 +449,7 @@ func TestCartesianHelpers_ParseAndFilterBranches(t *testing.T) {
 		_, _, _, ok = parseCartesianNullTerm("a.name = 1")
 		require.False(t, ok)
 
-		parts := splitTopLevelAndConjuncts("a.x = 1 AND 'x AND y' = 'x AND y' AND [1,2] = [1,2]")
+		parts := splitTopLevelAndConjuncts(t.Context(), "a.x = 1 AND 'x AND y' = 'x AND y' AND [1,2] = [1,2]")
 		require.Equal(t, []string{"a.x = 1", "'x AND y' = 'x AND y'", "[1,2] = [1,2]"}, parts)
 
 		vv, pp, ok := parseCartesianVarProp(" a.`p` ")
@@ -773,9 +773,9 @@ func TestExecuteMatchWithUnwind_Branches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{ID: "nornic:n1", Labels: []string{"Thing"}, Properties: map[string]interface{}{"id": "n1", "labels": []string{"b", "a"}}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "nornic:n1", Labels: []string{"Thing"}, Properties: map[string]interface{}{"id": "n1", "labels": []string{"b", "a"}}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "nornic:n2", Labels: []string{"Thing"}, Properties: map[string]interface{}{"id": "n2", "labels": []string{"a"}}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "nornic:n2", Labels: []string{"Thing"}, Properties: map[string]interface{}{"id": "n2", "labels": []string{"a"}}})
 	require.NoError(t, err)
 
 	res, err := exec.Execute(ctx, "MATCH (n:Thing) WITH n, n.labels AS labels UNWIND labels AS label RETURN label, n.id ORDER BY label", getParamsFromContext(ctx))
@@ -801,15 +801,15 @@ func TestEvaluateWhereForContext_RelationshipAndBooleanBranches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{ID: "nornic:a", Labels: []string{"N"}, Properties: map[string]interface{}{"id": "a", "x": int64(1)}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "nornic:a", Labels: []string{"N"}, Properties: map[string]interface{}{"id": "a", "x": int64(1)}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "nornic:b", Labels: []string{"N"}, Properties: map[string]interface{}{"id": "b", "x": int64(2)}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "nornic:b", Labels: []string{"N"}, Properties: map[string]interface{}{"id": "b", "x": int64(2)}})
 	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "nornic:r1", Type: "R", StartNode: "nornic:a", EndNode: "nornic:b"}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "nornic:r1", Type: "R", StartNode: "nornic:a", EndNode: "nornic:b"}))
 
-	a, err := store.GetNode("nornic:a")
+	a, err := store.GetNode(t.Context(), "nornic:a")
 	require.NoError(t, err)
-	b, err := store.GetNode("nornic:b")
+	b, err := store.GetNode(t.Context(), "nornic:b")
 	require.NoError(t, err)
 	nodeMap := map[string]*storage.Node{"a": a, "b": b}
 

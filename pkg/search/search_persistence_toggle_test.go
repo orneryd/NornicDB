@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"os"
@@ -15,7 +16,7 @@ import (
 func TestBuildIndexes_DoesNotPersistWhenDisabled(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	engine := storage.NewNamespacedEngine(base, "test")
-	_, err := engine.CreateNode(&storage.Node{
+	_, err := engine.CreateNode(t.Context(), &storage.Node{
 		ID:     "doc-1",
 		Labels: []string{"Doc"},
 		Properties: map[string]any{
@@ -52,7 +53,7 @@ func TestBuildIndexes_DoesNotPersistWhenDisabled(t *testing.T) {
 func TestSetPersistenceEnabledFalse_DisablesExistingVectorFileStoreWrites(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	engine := storage.NewNamespacedEngine(base, "test")
-	_, err := engine.CreateNode(&storage.Node{
+	_, err := engine.CreateNode(t.Context(), &storage.Node{
 		ID:     "doc-1",
 		Labels: []string{"Doc"},
 		Properties: map[string]any{
@@ -78,7 +79,7 @@ func TestSetPersistenceEnabledFalse_DisablesExistingVectorFileStoreWrites(t *tes
 	require.NoError(t, statErr)
 	sizeBefore := fiBefore.Size()
 
-	_, err = engine.CreateNode(&storage.Node{
+	_, err = engine.CreateNode(t.Context(), &storage.Node{
 		ID:     "doc-2",
 		Labels: []string{"Doc"},
 		Properties: map[string]any{

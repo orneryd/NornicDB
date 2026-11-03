@@ -47,11 +47,11 @@ type collectNodesIDProbeEngine struct {
 	getNodeErr error
 }
 
-func (e *collectNodesIDProbeEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
+func (e *collectNodesIDProbeEngine) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	if e.getNodeErr != nil {
 		return nil, e.getNodeErr
 	}
-	return e.Engine.GetNode(id)
+	return e.Engine.GetNode(ctx, id)
 }
 
 func (e *collectNodesLabelProbeEngine) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
@@ -131,7 +131,7 @@ func TestCollectNodesWithStreaming_LabelLimitPrefersLabelLookup(t *testing.T) {
 			label = "SystemPrompt"
 		}
 		id := storage.NodeID(fmt.Sprintf("nornic:n-%d", i))
-		_, err := base.CreateNode(&storage.Node{
+		_, err := base.CreateNode(t.Context(), &storage.Node{
 			ID:     id,
 			Labels: []string{label},
 			Properties: map[string]any{

@@ -48,7 +48,7 @@ func TestMissingVectorIndexUsesManagedEmbeddings(t *testing.T) {
 				return
 			}
 			for _, node := range nodes {
-				_, err := engine.CreateNode(node)
+				_, err := engine.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 			}
 			exec := cypher.NewStorageExecutor(engine)

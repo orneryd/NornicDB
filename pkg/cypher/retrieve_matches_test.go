@@ -35,7 +35,7 @@ func TestRetrieveReturnsMatches(t *testing.T) {
 	source := embeddingutil.BuildEmbedText(properties, nil, &embeddingutil.EmbedTextOptions{})
 	embeddingutil.ApplyManagedEmbedding(node, [][]float32{{0, 1}, {1, 0}}, "test", 2, time.Now())
 	embeddingutil.RecordChunkSpans(node, source, []string{"text: Rent is due monthly. ", "Notices go to Müller."})
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	service := search.NewService(store, 2, nil)
 	require.NoError(t, service.BuildIndexes(ctx))

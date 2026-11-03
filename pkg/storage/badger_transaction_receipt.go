@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"strconv"
 	"strings"
 
@@ -31,8 +32,11 @@ type bufferedReceiptObservation struct {
 // never observes pending generations. For native logical reads, retirement is
 // excluded from the generation lookup through its physical fallback. The caller
 // holds tx.mu before the buffer read lock, as with the previous receipt owner.
-func (b *BadgerEngine) observeBufferedCommitReceipt(request bufferedReceiptRead) (bufferedReceiptObservation, error) {
+func (b *BadgerEngine) observeBufferedCommitReceipt(ctx context.Context, request bufferedReceiptRead) (bufferedReceiptObservation, error) {
 	observation := bufferedReceiptObservation{}
+	if err := ctx.Err(); err != nil {
+		return observation, err
+	}
 	if request.txID == "" && request.logicalID == "" {
 		return observation, nil
 	}
@@ -51,12 +55,21 @@ func (b *BadgerEngine) observeBufferedCommitReceipt(request bufferedReceiptRead)
 		}
 	}
 	if w := b.writeBehind; request.native != nil && w != nil && request.logicalID != "" {
-		w.mu.RLock()
+		if err := w.mu.RLockContext(ctx); err != nil {
+			return bufferedReceiptObservation{}, err
+		}
 		defer w.mu.RUnlock()
-		if w.logicalReceiptPresentLocked(request.namespace, request.logicalID) {
+		present, err := w.logicalReceiptPresentLocked(ctx, request.namespace, request.logicalID)
+		if err != nil {
+			return bufferedReceiptObservation{}, err
+		}
+		if present {
 			observation.present = true
 			return observation, nil
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return bufferedReceiptObservation{}, err
 	}
 	err := b.withView(lookup)
 	return observation, err
@@ -66,33 +79,50 @@ func (b *BadgerEngine) observeBufferedCommitReceipt(request bufferedReceiptRead)
 // generations. The caller holds w.mu.RLock through the physical receipt read,
 // preventing retirement between the generation observation and its fallback.
 // Entity bodies remain owned by the canonical overlay visibility composition.
-func (w *WriteBehindBuffer) logicalReceiptPresentLocked(namespace, logicalID string) bool {
-	contains := func(buf *CommitBuffer) bool {
+func (w *WriteBehindBuffer) logicalReceiptPresentLocked(ctx context.Context, namespace, logicalID string) (bool, error) {
+	contains := func(ctx context.Context, buf *CommitBuffer) (bool, error) {
 		if buf != nil {
 			for _, commit := range buf.commits {
+				if err := ctx.Err(); err != nil {
+					return false, err
+				}
 				if commit.namespace == namespace && commit.logicalTxID == logicalID {
-					return true
+					return true, nil
 				}
 			}
 		}
-		return false
+		return false, nil
 	}
-	if contains(w.active) {
-		return true
+	present, err := contains(ctx, w.active)
+	if err != nil || present {
+		return present, err
 	}
 	for _, generation := range w.draining {
-		if contains(generation) {
-			return true
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		present, err := contains(ctx, generation)
+		if err != nil || present {
+			return present, err
 		}
 	}
-	return false
+	return false, nil
 }
 
 // bufferedCommitMarkerKey is the single writer/reader key owner for both
 // physical generation receipts and namespace-scoped logical entity receipts.
 func bufferedCommitMarkerKey(namespace, txID, logicalID string) []byte {
 	if logicalID != "" {
-		txID = "replication/" + strconv.Itoa(len(namespace)) + ":" + namespace + "/" + logicalID
+		var decimal [20]byte
+		length := strconv.AppendInt(decimal[:0], int64(len(namespace)), 10)
+		key := make([]byte, 0, 1+len("replication/")+len(length)+1+len(namespace)+1+len(logicalID))
+		key = append(key, prefixBufferedFlush)
+		key = append(key, "replication/"...)
+		key = append(key, length...)
+		key = append(key, ':')
+		key = append(key, namespace...)
+		key = append(key, '/')
+		return append(key, logicalID...)
 	}
 	key := make([]byte, 0, 1+len(txID))
 	key = append(key, prefixBufferedFlush)

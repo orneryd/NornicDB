@@ -34,7 +34,7 @@ func populationBenchEngine(b *testing.B, nodes int) *storage.MemoryEngine {
 	b.Cleanup(func() { _ = engine.Close() })
 	r := rand.New(rand.NewSource(1))
 	for i := range nodes {
-		_, err := engine.CreateNode(populationBenchNode(r, i))
+		_, err := engine.CreateNode(b.Context(), populationBenchNode(r, i))
 		require.NoError(b, err)
 	}
 	return engine

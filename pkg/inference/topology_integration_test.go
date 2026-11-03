@@ -2,8 +2,9 @@ package inference
 
 import (
 	"context"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -305,7 +306,7 @@ func setupTestGraph(t *testing.T, engine storage.Engine) {
 	}
 
 	for _, node := range nodes {
-		if _, err := engine.CreateNode(node); err != nil {
+		if _, err := engine.CreateNode(t.Context(), node); err != nil {
 			t.Fatalf("Failed to create node: %v", err)
 		}
 	}
@@ -318,7 +319,7 @@ func setupTestGraph(t *testing.T, engine storage.Engine) {
 	}
 
 	for _, edge := range edges {
-		if err := engine.CreateEdge(edge); err != nil {
+		if err := engine.CreateEdge(t.Context(), edge); err != nil {
 			t.Fatalf("Failed to create edge: %v", err)
 		}
 	}
@@ -336,7 +337,7 @@ func BenchmarkTopologyIntegration(b *testing.B) {
 			ID:     storage.NodeID("node-" + string(rune(i))),
 			Labels: []string{"Test"},
 		}
-		engine.CreateNode(node)
+		engine.CreateNode(b.Context(), node)
 	}
 
 	// Create edges
@@ -348,7 +349,7 @@ func BenchmarkTopologyIntegration(b *testing.B) {
 				EndNode:   storage.NodeID("node-" + string(rune(j))),
 				Type:      "CONNECTS",
 			}
-			engine.CreateEdge(edge)
+			engine.CreateEdge(b.Context(), edge)
 		}
 	}
 
@@ -374,19 +375,19 @@ func TestNormalizeScoreEdgeCases(t *testing.T) {
 	ctx := context.Background()
 
 	// Create some nodes
-	engine.CreateNode(&storage.Node{ID: "a", Labels: []string{"Test"}})
-	engine.CreateNode(&storage.Node{ID: "b", Labels: []string{"Test"}})
-	engine.CreateNode(&storage.Node{ID: "c", Labels: []string{"Test"}})
-	engine.CreateNode(&storage.Node{ID: "d", Labels: []string{"Test"}})
-	engine.CreateNode(&storage.Node{ID: "e", Labels: []string{"Test"}})
+	engine.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"Test"}})
+	engine.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"Test"}})
+	engine.CreateNode(t.Context(), &storage.Node{ID: "c", Labels: []string{"Test"}})
+	engine.CreateNode(t.Context(), &storage.Node{ID: "d", Labels: []string{"Test"}})
+	engine.CreateNode(t.Context(), &storage.Node{ID: "e", Labels: []string{"Test"}})
 
 	// Create edges: a-b, a-c, b-c, b-d, c-d, c-e (small connected graph)
-	engine.CreateEdge(&storage.Edge{ID: "e1", StartNode: "a", EndNode: "b", Type: "KNOWS"})
-	engine.CreateEdge(&storage.Edge{ID: "e2", StartNode: "a", EndNode: "c", Type: "KNOWS"})
-	engine.CreateEdge(&storage.Edge{ID: "e3", StartNode: "b", EndNode: "c", Type: "KNOWS"})
-	engine.CreateEdge(&storage.Edge{ID: "e4", StartNode: "b", EndNode: "d", Type: "KNOWS"})
-	engine.CreateEdge(&storage.Edge{ID: "e5", StartNode: "c", EndNode: "d", Type: "KNOWS"})
-	engine.CreateEdge(&storage.Edge{ID: "e6", StartNode: "c", EndNode: "e", Type: "KNOWS"})
+	engine.CreateEdge(t.Context(), &storage.Edge{ID: "e1", StartNode: "a", EndNode: "b", Type: "KNOWS"})
+	engine.CreateEdge(t.Context(), &storage.Edge{ID: "e2", StartNode: "a", EndNode: "c", Type: "KNOWS"})
+	engine.CreateEdge(t.Context(), &storage.Edge{ID: "e3", StartNode: "b", EndNode: "c", Type: "KNOWS"})
+	engine.CreateEdge(t.Context(), &storage.Edge{ID: "e4", StartNode: "b", EndNode: "d", Type: "KNOWS"})
+	engine.CreateEdge(t.Context(), &storage.Edge{ID: "e5", StartNode: "c", EndNode: "d", Type: "KNOWS"})
+	engine.CreateEdge(t.Context(), &storage.Edge{ID: "e6", StartNode: "c", EndNode: "e", Type: "KNOWS"})
 
 	config := DefaultTopologyConfig()
 	config.Enabled = true
