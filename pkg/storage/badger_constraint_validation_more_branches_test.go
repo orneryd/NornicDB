@@ -37,19 +37,19 @@ func TestBadgerConstraintValidation_MoreEdgeBranchCoverage(t *testing.T) {
 	t.Run("checkEdgeUniqueness single-key nil and composite branches", func(t *testing.T) {
 		require.NoError(t, engine.withView(func(txn *badger.Txn) error {
 			// Single-key uniqueness: nil new value short-circuits as non-violating.
-			err := engine.checkEdgeUniquenessInTxn(txn, &Edge{ID: "test:new-1", Type: "LINK", Properties: map[string]any{"token": nil}}, Constraint{Type: ConstraintUnique, Label: "LINK", Properties: []string{"token"}}, "test", "")
+			err := engine.checkEdgeUniquenessInTxn(t.Context(), txn, &Edge{ID: "test:new-1", Type: "LINK", Properties: map[string]any{"token": nil}}, Constraint{Type: ConstraintUnique, Label: "LINK", Properties: []string{"token"}}, "test", "")
 			require.NoError(t, err)
 
 			// Composite uniqueness: missing component short-circuits as non-violating.
-			err = engine.checkEdgeUniquenessInTxn(txn, &Edge{ID: "test:new-2", Type: "LINK", Properties: map[string]any{"a": "x", "b": nil}}, Constraint{Type: ConstraintUnique, Label: "LINK", Properties: []string{"a", "b"}}, "test", "")
+			err = engine.checkEdgeUniquenessInTxn(t.Context(), txn, &Edge{ID: "test:new-2", Type: "LINK", Properties: map[string]any{"a": "x", "b": nil}}, Constraint{Type: ConstraintUnique, Label: "LINK", Properties: []string{"a", "b"}}, "test", "")
 			require.NoError(t, err)
 
 			// Composite uniqueness: full match reports violation.
-			err = engine.checkEdgeUniquenessInTxn(txn, &Edge{ID: "test:new-3", Type: "LINK", Properties: map[string]any{"a": "x", "b": "y"}}, Constraint{Type: ConstraintUnique, Label: "LINK", Properties: []string{"a", "b"}}, "test", "")
+			err = engine.checkEdgeUniquenessInTxn(t.Context(), txn, &Edge{ID: "test:new-3", Type: "LINK", Properties: map[string]any{"a": "x", "b": "y"}}, Constraint{Type: ConstraintUnique, Label: "LINK", Properties: []string{"a", "b"}}, "test", "")
 			require.Error(t, err)
 
 			// Namespace filter skips when target namespace doesn't match existing edge IDs.
-			err = engine.checkEdgeUniquenessInTxn(txn, &Edge{ID: "other:new", Type: "LINK", Properties: map[string]any{"token": "tok-1"}}, Constraint{Type: ConstraintUnique, Label: "LINK", Properties: []string{"token"}}, "other", "")
+			err = engine.checkEdgeUniquenessInTxn(t.Context(), txn, &Edge{ID: "other:new", Type: "LINK", Properties: map[string]any{"token": "tok-1"}}, Constraint{Type: ConstraintUnique, Label: "LINK", Properties: []string{"token"}}, "other", "")
 			require.NoError(t, err)
 			return nil
 		}))

@@ -947,10 +947,14 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// counter reflects intent regardless of how the query resolves.
 	opType := classifyOpType(info, false /* isFabric */, isMetadataCommand(ctx, cypher, metadataCatalogExecution))
 	e.observeQuery(opType, true /* observeDuration */, slowStart)
-	planSpan.SetAttributes(attribute.String("cypher.op_type", opType))
+	if planSpan.IsRecording() {
+		planSpan.SetAttributes(attribute.String("cypher.op_type", opType))
+	}
 	planSpan.End()
 	// Update the execute span with the resolved op_type.
-	execSpan.SetAttributes(attribute.String("cypher.op_type", opType))
+	if execSpan.IsRecording() {
+		execSpan.SetAttributes(attribute.String("cypher.op_type", opType))
+	}
 
 	// For routing, we still need upperQuery for some handlers
 	// TODO: Migrate handlers to use QueryInfo directly

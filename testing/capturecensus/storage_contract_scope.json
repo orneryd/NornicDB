@@ -250,34 +250,11 @@
         "call context.Background (+5 in (*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).commit)"
       ]
     },
-    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).maintainCompositeIndexesOnNodeUpdated": {
-      "Reason": "index/unique publication mirrors a write that already committed.",
-      "Approver": "orneryd (2 November 2026)",
-      "Occurrences": [
-        "call context.Background (+16 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).maintainCompositeIndexesOnNodeUpdated)"
-      ]
-    },
     "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).publishUniqueValues": {
-      "Reason": "index/unique publication mirrors a write that already committed.",
+      "Reason": "index/unique publication mirrors a write that already committed. One completion context now feeds both canonical-claim comparison and publication after the same acceptance point.",
       "Approver": "orneryd (2 November 2026)",
       "Occurrences": [
-        "call context.Background (+4 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).publishUniqueValues)",
-        "call context.Background (+11 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).publishUniqueValues)",
-        "call context.Background (+21 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).publishUniqueValues)"
-      ]
-    },
-    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).maintainCompositeIndexesOnNodeCreated": {
-      "Reason": "index/unique publication mirrors a write that already committed.",
-      "Approver": "orneryd (2 November 2026)",
-      "Occurrences": [
-        "call context.Background (+6 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).maintainCompositeIndexesOnNodeCreated)"
-      ]
-    },
-    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).updateRelationshipUniqueIndexes": {
-      "Reason": "unique index publication mirrors a write that already committed.",
-      "Approver": "orneryd (2 November 2026)",
-      "Occurrences": [
-        "call context.Background (+9 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).updateRelationshipUniqueIndexes)"
+        "call context.Background (+4 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).publishUniqueValues)"
       ]
     },
     "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).retire": {
@@ -317,10 +294,10 @@
       ]
     },
     "(*github.com/orneryd/nornicdb/pkg/storage.WriteBehindBuffer).AppendCommit": {
-      "Reason": "write-behind worker rotation and pending-index rebuild for accepted commits.",
+      "Reason": "write-behind worker rotation and pending-index rebuild for accepted commits. The existing completion context also selects the accepted frame; WAL/decision admission remains before this method.",
       "Approver": "orneryd (2 November 2026)",
       "Occurrences": [
-        "call context.Background (+18 in (*github.com/orneryd/nornicdb/pkg/storage.WriteBehindBuffer).AppendCommit)"
+        "call context.Background (+7 in (*github.com/orneryd/nornicdb/pkg/storage.WriteBehindBuffer).AppendCommit)"
       ]
     },
     "(*github.com/orneryd/nornicdb/pkg/storage.WriteBehindBuffer).run": {
@@ -350,7 +327,7 @@
       "Reason": "pending index mirrors writes the engine already accepted.",
       "Approver": "orneryd (2 November 2026)",
       "Occurrences": [
-        "call context.Background (+23 in (*github.com/orneryd/nornicdb/pkg/storage.SchemaManager).trackPendingPairs)"
+        "call context.Background (+26 in (*github.com/orneryd/nornicdb/pkg/storage.SchemaManager).trackPendingPairs)"
       ]
     },
     "(*github.com/orneryd/nornicdb/pkg/storage.pendingNodeIndex).addValue": {
@@ -364,10 +341,7 @@
       "Reason": "removal follows a write that already removed the entry.",
       "Approver": "orneryd (2 November 2026)",
       "Occurrences": [
-        "call context.Background (+9 in (*github.com/orneryd/nornicdb/pkg/storage.CompositeIndex).removeNodeLocked)",
-        "call context.Background (+26 in (*github.com/orneryd/nornicdb/pkg/storage.CompositeIndex).removeNodeLocked)",
-        "call context.Background (+33 in (*github.com/orneryd/nornicdb/pkg/storage.CompositeIndex).removeNodeLocked)",
-        "call context.Background (+45 in (*github.com/orneryd/nornicdb/pkg/storage.CompositeIndex).removeNodeLocked)"
+        "call context.Background (+3 in (*github.com/orneryd/nornicdb/pkg/storage.CompositeIndex).removeNodeLocked)"
       ]
     },
     "(*github.com/orneryd/nornicdb/pkg/storage.trackedRWMutex).Lock": {
@@ -405,6 +379,34 @@
       "Approver": "orneryd (2 November 2026)",
       "Occurrences": [
         "call context.Background (+19 in (*github.com/orneryd/nornicdb/pkg/txsession.Manager).Delete)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).replaceNodeIndexEntries": {
+      "Reason": "Successor of maintainCompositeIndexesOnNodeCreated/Updated: derived equality postings finish after the physical commit; request-driven index builds still pass their request lifetime. See index-publication.md for exact caller and phase proof.",
+      "Approver": "Existing accepted-publication approval: orneryd (2 November 2026); successor-source review: Codex (3 November 2026), docs/development/index-publication.md",
+      "Occurrences": [
+        "call context.Background (+15 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).replaceNodeIndexEntries$1)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).publishRelationshipIndexMembership": {
+      "Reason": "Successor of updateRelationshipUniqueIndexes: publication consumes only the accepted before/final frame; request-driven relationship cache builds retain ctx. Same accepted index-publication phase, no additional request bypass.",
+      "Approver": "Existing accepted-publication approval: orneryd (2 November 2026); successor-source review: Codex (3 November 2026), docs/development/index-publication.md",
+      "Occurrences": [
+        "call context.Background (+14 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).publishRelationshipIndexMembership)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).publishCommitOperations": {
+      "Reason": "The existing accepted unique-publication fold moved from publishUniqueValues into its caller so claims, indexes and caches reuse one frame. Invoked only by durable ordered publication; this context folds accepted images, not request preparation.",
+      "Approver": "Existing accepted-publication approval: orneryd (2 November 2026); successor-source review: Codex (3 November 2026), docs/development/index-publication.md",
+      "Occurrences": [
+        "call context.Background (+6 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).publishCommitOperations)"
+      ]
+    },
+    "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).EnqueueDeindexIfSuppressed": {
+      "Reason": "Only the memory-publication callback after withPublishingUpdate commits uses this lifetime to fold its already admitted rewrite; suppression checks, write staging and publication-key preparation retain the request context.",
+      "Approver": "Existing accepted-publication approval: orneryd (2 November 2026); successor-source review: Codex (3 November 2026), docs/development/index-publication.md",
+      "Occurrences": [
+        "call context.Background (+3 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).EnqueueDeindexIfSuppressed$2)"
       ]
     }
   },

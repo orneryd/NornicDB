@@ -26,7 +26,8 @@ func (b *BadgerEngine) restoreBufferedOperationBodies(txn *badger.Txn, commit *b
 		}
 		return item.ValueCopy(nil)
 	}
-	for id, old := range states.committedNodes {
+	for id, pair := range states.nodes {
+		old := pair.before
 		if old == nil {
 			continue
 		}
@@ -41,9 +42,11 @@ func (b *BadgerEngine) restoreBufferedOperationBodies(txn *badger.Txn, commit *b
 		if err != nil {
 			return fmt.Errorf("recover prior node %s: %w", id, err)
 		}
-		states.committedNodes[id] = node
+		pair.before = node
+		states.nodes[id] = pair
 	}
-	for id, old := range states.committedEdges {
+	for id, pair := range states.edges {
+		old := pair.before
 		if old == nil {
 			continue
 		}
@@ -58,9 +61,11 @@ func (b *BadgerEngine) restoreBufferedOperationBodies(txn *badger.Txn, commit *b
 		if err != nil {
 			return fmt.Errorf("recover prior edge %s: %w", id, err)
 		}
-		states.committedEdges[id] = edge
+		pair.before = edge
+		states.edges[id] = pair
 	}
-	for id, projected := range states.finalNodes {
+	for id, pair := range states.nodes {
+		projected := pair.after
 		if projected == nil {
 			continue
 		}
@@ -76,9 +81,11 @@ func (b *BadgerEngine) restoreBufferedOperationBodies(txn *badger.Txn, commit *b
 		if err := restoreBufferedNodeVectors(node, id, readFinal); err != nil {
 			return err
 		}
-		states.finalNodes[id] = node
+		pair.after = node
+		states.nodes[id] = pair
 	}
-	for id, projected := range states.finalEdges {
+	for id, pair := range states.edges {
+		projected := pair.after
 		if projected == nil {
 			continue
 		}
@@ -90,18 +97,19 @@ func (b *BadgerEngine) restoreBufferedOperationBodies(txn *badger.Txn, commit *b
 		if err != nil {
 			return err
 		}
-		states.finalEdges[id] = edge
+		pair.after = edge
+		states.edges[id] = pair
 	}
-	// Committed/final bodies describe MVCC endpoints. Cache/index publication
-	// follows the ordered operations instead: an update followed by deletion
-	// must unregister the intermediate value, not the initial committed one.
-	currentNodes := make(map[NodeID]*Node, len(states.committedNodes))
-	for id, node := range states.committedNodes {
-		currentNodes[id] = node
+	// Restore the event stream for MVCC and notifications. Live membership
+	// folds its committed/final endpoints; it never publishes these intermediate
+	// operation images.
+	currentNodes := make(map[NodeID]*Node, len(states.nodes))
+	for id, pair := range states.nodes {
+		currentNodes[id] = pair.before
 	}
-	currentEdges := make(map[EdgeID]*Edge, len(states.committedEdges))
-	for id, edge := range states.committedEdges {
-		currentEdges[id] = edge
+	currentEdges := make(map[EdgeID]*Edge, len(states.edges))
+	for id, pair := range states.edges {
+		currentEdges[id] = pair.before
 	}
 	lastNodeWrite := make(map[NodeID]int)
 	lastEdgeWrite := make(map[EdgeID]int)
@@ -119,7 +127,7 @@ func (b *BadgerEngine) restoreBufferedOperationBodies(txn *badger.Txn, commit *b
 			op.OldNode = currentNodes[op.OldNode.ID]
 		}
 		if op.Node != nil {
-			if node := states.finalNodes[op.Node.ID]; node != nil && lastNodeWrite[op.Node.ID] == i {
+			if node := states.nodes[op.Node.ID].after; node != nil && lastNodeWrite[op.Node.ID] == i {
 				op.Node = node
 			}
 			currentNodes[op.Node.ID] = op.Node
@@ -132,7 +140,7 @@ func (b *BadgerEngine) restoreBufferedOperationBodies(txn *badger.Txn, commit *b
 			op.OldEdge = currentEdges[op.OldEdge.ID]
 		}
 		if op.Edge != nil {
-			if edge := states.finalEdges[op.Edge.ID]; edge != nil && lastEdgeWrite[op.Edge.ID] == i {
+			if edge := states.edges[op.Edge.ID].after; edge != nil && lastEdgeWrite[op.Edge.ID] == i {
 				op.Edge = edge
 			}
 			currentEdges[op.Edge.ID] = op.Edge

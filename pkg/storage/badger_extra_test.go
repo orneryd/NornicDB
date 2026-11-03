@@ -787,6 +787,7 @@ func TestBadgerEngine_DeleteEdge_UnknownType(t *testing.T) {
 	require.NoError(t, engine.CreateEdge(t.Context(), e))
 
 	// Delete without knowing the type first — exercises the cacheOnEdgeDeleted path
+	// Publication retires its membership as well.
 	err = engine.DeleteEdge(t.Context(), e.ID)
 	require.NoError(t, err)
 

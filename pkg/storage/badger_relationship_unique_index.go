@@ -193,28 +193,25 @@ func (b *BadgerEngine) relationshipUniqueCandidates(ctx context.Context, edge *E
 	}
 	return ids, true, nil
 }
-func (b *BadgerEngine) updateRelationshipUniqueIndexes(edge *Edge) {
+
+// publishRelationshipIndexMembership shares one committed frame with the
+// node indexes. Candidate readers cannot meet staged relationship images.
+func (b *BadgerEngine) publishRelationshipIndexMembership(states commitStates) {
 	set := &b.relationshipUniqueIndexes
-	if edge == nil || !set.active.Load() {
+	if len(states.edges) == 0 || !set.active.Load() {
 		return
 	}
 	set.mu.Lock()
 	defer set.mu.Unlock()
 	for _, idx := range set.entries {
-		// An accepted write carries that write's lifetime, not a request's.
-		_ = idx.put(context.Background(), edge)
-	}
-}
-func (b *BadgerEngine) deleteRelationshipUniqueIndexes(ids ...EdgeID) {
-	set := &b.relationshipUniqueIndexes
-	if len(ids) == 0 || !set.active.Load() {
-		return
-	}
-	set.mu.Lock()
-	defer set.mu.Unlock()
-	for _, idx := range set.entries {
-		for _, id := range ids {
-			idx.remove(id)
+		for id, pair := range states.edges {
+			edge := pair.after
+			if edge == nil {
+				idx.remove(id)
+			} else {
+				// An accepted write carries that write's lifetime, not a request's.
+				_ = idx.put(context.Background(), edge)
+			}
 		}
 	}
 }

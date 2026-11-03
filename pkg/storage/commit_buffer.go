@@ -668,12 +668,17 @@ func (w *WriteBehindBuffer) Append(m BufferedMutation) error {
 
 // AppendCommit appends one committed statement captured at transaction
 // commit. It folds the statement's operations into the read overlay and
-// counts every operation toward the size threshold.
-func (w *WriteBehindBuffer) AppendCommit(c bufferedCommit) {
+// counts every operation toward the size threshold. It returns the selected
+// frame for the caller's existing claim publication policy.
+func (w *WriteBehindBuffer) AppendCommit(c bufferedCommit) commitStates {
 	w.mu.Lock()
 	w.readEpoch.Store((w.readEpoch.Load() + 2) | 1)
 	w.markCommitReadScopesLocked(c)
 	w.active.AddCommit(c)
+	// The statement is committed: its frame is selected on that commit's
+	// completion lifetime, so the fold cannot cancel.
+	accepted := context.Background()
+	states, _ := newCommitStates(accepted, c.ops)
 	w.opCount += len(c.ops) + len(c.writes) + len(c.deletes)
 	if w.opCount < 1 {
 		w.opCount = 1
@@ -687,7 +692,7 @@ func (w *WriteBehindBuffer) AppendCommit(c bufferedCommit) {
 		// rebuild it from the tracked pairs before indexing this commit.
 		w.pendingIndex = newPendingNodeIndex()
 		for _, pair := range w.trackedPairs {
-			w.pendingIndex.track(context.Background(), pair.label, pair.property, func(id NodeID) *Node {
+			w.pendingIndex.track(accepted, pair.label, pair.property, func(id NodeID) *Node {
 				node, _ := w.nodeLocked(id)
 				return node
 			})
@@ -708,6 +713,7 @@ func (w *WriteBehindBuffer) AppendCommit(c bufferedCommit) {
 	if rotate {
 		w.signal()
 	}
+	return states
 }
 
 // rotate moves the active generation into draining and installs a fresh one.

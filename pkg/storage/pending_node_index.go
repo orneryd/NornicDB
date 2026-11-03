@@ -15,9 +15,9 @@ import (
 // uniqueness checks (#719).
 //
 // Every pending node is listed by label. Only the (label, property) pairs
-// that have a property index or a UNIQUE / NODE KEY constraint in some
-// attached schema are indexed by value (tracked), so a write pays for the
-// lookups that can happen.
+// that an attached schema reads by value - a property index, a UNIQUE / NODE
+// KEY constraint, or a composite index's properties - are indexed by value
+// (tracked), so a write pays for the lookups that can happen.
 //
 // It is guarded by AsyncEngine.mu, and holds exactly the nodes in
 // AsyncEngine.nodeCache: every cache write goes through replace, and every
@@ -324,6 +324,68 @@ func (v pendingWriteView) valueMatches(ctx context.Context, out []NodeID, label,
 	return v.appendInNamespace(ctx, out, v.valueMatchSet(label, property, valueKey))
 }
 
+// compositeMatches merges namespace-scoped pending equality candidates directly
+// into the caller's owned output. It starts with the smallest requested value
+// bucket, so a common tenant plus a unique ID does not scan every pending node.
+func (v pendingWriteView) compositeMatches(ctx context.Context, out []NodeID, label string, properties []string, values []interface{}) ([]NodeID, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if v.index == nil || len(values) == 0 || len(values) > len(properties) {
+		return out, nil
+	}
+	var small [8]interface{}
+	canonical := small[:min(len(values), len(small))]
+	if len(values) > len(small) {
+		canonical = make([]interface{}, len(values))
+	}
+	var candidates []NodeID
+	for i, value := range values {
+		key, keyed, err := indexValueKey(ctx, value)
+		if err != nil {
+			return nil, err
+		}
+		if !keyed {
+			return out, nil
+		}
+		canonical[i] = key
+		bucket := v.valueMatchSet(label, properties[i], key)
+		if len(bucket) == 0 {
+			return out, nil
+		}
+		if i == 0 || len(bucket) < len(candidates) {
+			candidates = bucket
+		}
+	}
+	var cancellation bulkReadCancellation
+	for _, id := range candidates {
+		if err := cancellation.check(ctx); err != nil {
+			return nil, err
+		}
+		if !v.inNamespace(id) {
+			continue
+		}
+		matches := true
+		for i, key := range canonical {
+			if err := cancellation.check(ctx); err != nil {
+				return nil, err
+			}
+			value, exists := v.index.byProperty[nodePropertyKey{label: label, property: properties[i]}][id]
+			if !exists || value != key {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			out = append(out, id)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // appendInNamespace appends the ids that belong to the view's namespace to
 // out.
 func (v pendingWriteView) appendInNamespace(ctx context.Context, out, ids []NodeID) ([]NodeID, error) {
@@ -401,8 +463,11 @@ func (sm *SchemaManager) trackPendingPairs() {
 	sm.mu.RLock()
 	pairs := make([]nodePropertyKey, 0, len(sm.compositeIndexes)+len(sm.uniqueConstraints))
 	for _, idx := range sm.compositeIndexes {
-		if len(idx.Properties) == 1 {
-			pairs = append(pairs, nodePropertyKey{label: idx.Label, property: idx.Properties[0]})
+		// Every property of a composite index is tracked by value: a composite
+		// equality or prefix read merges its pending candidates from these
+		// populations, for an arity-1 index exactly as for a wider one.
+		for _, property := range idx.Properties {
+			pairs = append(pairs, nodePropertyKey{label: idx.Label, property: property})
 		}
 	}
 	for _, constraint := range sm.uniqueConstraints {
