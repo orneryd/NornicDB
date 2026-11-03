@@ -35,17 +35,24 @@ func (b *BadgerEngine) SetRevealAll(reveal bool) {
 // on the same engine. Reveal queries take an exclusive scope while normal
 // queries take a shared scope so they cannot observe revealAll=true.
 func (b *BadgerEngine) BeginQueryRevealScope(reveal bool) func() {
+	b.beginQueryRevealScope(reveal)
+	return func() { b.endQueryRevealScope(reveal) }
+}
+
+func (b *BadgerEngine) beginQueryRevealScope(reveal bool) {
 	if reveal {
 		b.revealQueryMu.Lock()
 		b.revealAll.Store(true)
-		return func() {
-			b.revealAll.Store(false)
-			b.revealQueryMu.Unlock()
-		}
+		return
 	}
-
 	b.revealQueryMu.RLock()
-	return func() {
+}
+
+func (b *BadgerEngine) endQueryRevealScope(reveal bool) {
+	if reveal {
+		b.revealAll.Store(false)
+		b.revealQueryMu.Unlock()
+	} else {
 		b.revealQueryMu.RUnlock()
 	}
 }

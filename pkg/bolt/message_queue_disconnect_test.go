@@ -154,7 +154,9 @@ func TestPeerProbeSeesServiceConnectionAdapter(t *testing.T) {
 	require.NotNil(t, socketConn(owned), "the service connection adapter must expose its socket")
 	closed, release := newPeerCloseProbe(owned)
 	require.NotNil(t, closed, "the hangup probe must reach the adapter's socket")
-	defer release()
+	if release != nil {
+		defer release()
+	}
 	require.False(t, closed())
 	require.NoError(t, client.Close())
 	require.Eventually(t, closed, time.Second, 5*time.Millisecond,

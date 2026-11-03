@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve runtime type errors for duration-plus-property expressions, avoid
+  redundant reveal-lease and non-recording trace allocations, and honor optional
+  Bolt peer-probe cleanup callbacks in the cross-platform regression test.
+
 - Preserve exact JSON INTEGER values and whole-FLOAT kind through import, public results, remote parameters, export and supported backup/recovery boundaries. Numeric text and typed wire output retain accepted value and kind.
 - Match equal INTEGER/FLOAT CDC selectors without rounding adjacent large integers; preserve native unsigned event values and observable numeric-kind changes.
 - Decode float32 extrema and midpoint decimals at destination precision, avoiding rejected valid values and double rounding.
@@ -566,6 +570,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   interval, and all embedding batch paths honor foreground-pressure pauses. Model readiness and resume
   wake the worker pool; skipping deleted candidates continues draining pending work (#1230).
 - Reuse pending embedding candidates between active claims so deleted index markers are not traversed again for every document. Durable markers and atomic storage writes remain authoritative across replay and restart.
+- Keep a node findable by its indexed key while a concurrent write publishes it.
+  Property, composite and uniqueness-backed node postings replace entries under
+  one lock and retain unchanged keys. Transactions publish their committed-before
+  and final node images, including repeated updates, label remove/restore, drain,
+  recovery and replay. Cache and claim publishers consume that selected frame;
+  their policies and operation-based counts and notifications are preserved.
 
 
 - Require Go 1.26.9 and align the 1.26 CI/release/build pins with its upstream

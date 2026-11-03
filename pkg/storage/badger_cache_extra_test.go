@@ -99,22 +99,28 @@ func TestBadgerCache_EdgeCreateUpdateDelete_Extra(t *testing.T) {
 	assert.EqualValues(t, 0, b.edgeCount.Load())
 }
 
-func TestBadgerCache_BulkCacheHooks_Extra(t *testing.T) {
+func TestBadgerCommitPublicationCounts(t *testing.T) {
 	b := createTestBadgerEngine(t)
-
+	var images commitCacheImages
+	var creates []Operation
 	for _, id := range []NodeID{NodeID(prefixTestID("bn-1")), NodeID(prefixTestID("bn-2"))} {
-		b.cacheOnNodeCreated(&Node{ID: id, Labels: []string{"L"}, Properties: map[string]interface{}{}})
+		creates = append(creates, Operation{Type: OpCreateNode, Node: &Node{ID: id, Labels: []string{"L"}, Properties: map[string]interface{}{}}})
 	}
-	assert.EqualValues(t, 2, b.nodeCount.Load())
 	for _, id := range []EdgeID{EdgeID(prefixTestID("be-1")), EdgeID(prefixTestID("be-2")), EdgeID(prefixTestID("be-3"))} {
-		b.cacheOnEdgeCreated(&Edge{ID: id, Type: "REL"})
+		creates = append(creates, Operation{Type: OpCreateEdge, Edge: &Edge{ID: id, Type: "REL"}})
 	}
+	b.publishCommitOperations("", nil, creates, true, true, &images)
+	assert.EqualValues(t, 2, b.nodeCount.Load())
 	assert.EqualValues(t, 3, b.edgeCount.Load())
-
-	b.cacheOnEdgesDeleted([]EdgeID{EdgeID(prefixTestID("be-1")), EdgeID(prefixTestID("be-2"))})
+	b.publishCommitOperations("", nil, []Operation{
+		{Type: OpDeleteEdge, EdgeID: EdgeID(prefixTestID("be-1"))},
+		{Type: OpDeleteEdge, EdgeID: EdgeID(prefixTestID("be-2"))},
+	}, true, true, &images)
 	assert.EqualValues(t, 1, b.edgeCount.Load())
-
-	b.cacheOnNodesDeleted([]NodeID{NodeID(prefixTestID("bn-1")), NodeID(prefixTestID("bn-2"))}, 2, 1)
+	b.publishCommitOperations("", nil, []Operation{
+		{Type: OpDeleteNode, NodeID: NodeID(prefixTestID("bn-1")), EdgesDeleted: 1},
+		{Type: OpDeleteNode, NodeID: NodeID(prefixTestID("bn-2"))},
+	}, true, true, &images)
 	assert.EqualValues(t, 0, b.nodeCount.Load())
 	assert.EqualValues(t, 0, b.edgeCount.Load())
 }
@@ -129,10 +135,7 @@ func TestBadgerCache_NoopBranches_Extra(t *testing.T) {
 	b.labelCacheSetFirst(b.labelFirstCacheGen.current(), "L", "", b.db.oracle.published.Load())
 	b.labelCacheInvalidateForNodeLabels(nil, NodeID("x"))
 	b.labelCacheInvalidateForRemovedLabels(nil, nil, NodeID("x"))
-	b.cacheOnEdgeCreated(nil)
-	b.cacheOnEdgeUpdated("", nil)
-	b.cacheOnEdgesDeleted(nil)
-	b.cacheOnNodesDeleted(nil, 0, 0)
+	b.publishCommitOperations("", nil, nil, true, true, &commitCacheImages{})
 
 	assert.EqualValues(t, 0, b.nodeCount.Load())
 	assert.EqualValues(t, 0, b.edgeCount.Load())

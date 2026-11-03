@@ -349,9 +349,10 @@ func TestNilResultCorrelationActualSourceMutant(t *testing.T) {
 	path := filepath.Join(c.Dir, "pkg/search/lifetime.go")
 	raw, err := os.ReadFile(path)
 	require.NoError(t, err)
+	source := strings.ReplaceAll(string(raw), "\r\n", "\n")
 	const before = "if !accepted {\n\t\treturn nil, nil, context.Canceled\n\t}"
-	require.Equal(t, 1, strings.Count(string(raw), before), "actual admission-refusal anchor changed")
-	c.Overlay = map[string][]byte{path: []byte(strings.Replace(string(raw), before, "if !accepted {\n\t\treturn nil, nil, nil\n\t}", 1))}
+	require.Equal(t, 1, strings.Count(source, before), "actual admission-refusal anchor changed")
+	c.Overlay = map[string][]byte{path: []byte(strings.Replace(source, before, "if !accepted {\n\t\treturn nil, nil, nil\n\t}", 1))}
 	facts, err := Extract(c, StoragePolicy())
 	require.NoError(t, err)
 	var unpaired []string

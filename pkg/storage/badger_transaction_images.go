@@ -154,7 +154,8 @@ func writtenBodyKey(buf []byte, prefix byte, id string) []byte {
 // of the body writes holds for it (writtenNodeImage, writtenEdgeImage), so a
 // commit publishes to the write-behind overlay, the entity caches and its
 // callbacks what a read from storage returns. Earlier operations on the same
-// entity keep their intermediate values for ordered publication.
+// entity keep their intermediate values for notifications and history. Live
+// index membership uses only the committed-before/final pair.
 func (b *BadgerEngine) storeWrittenBodies(ctx context.Context, writes map[string][]byte, ops []Operation) error {
 	var keyBuf [64]byte
 	var lastNodeWrite map[NodeID]int
