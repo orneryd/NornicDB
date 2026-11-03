@@ -61,19 +61,27 @@ func NewEmbeddingAttempt(generation, epoch uint64, revision EmbeddingBodyRevisio
 type embeddingDeliveryKey struct{}
 
 type embeddingDelivery struct {
-	complete func()
+	completions []func()
+}
+
+func completeEmbeddingDelivery(ctx context.Context, complete func()) {
+	if delivery, ok := ctx.Value(embeddingDeliveryKey{}).(*embeddingDelivery); ok {
+		delivery.completions = append(delivery.completions, complete)
+		return
+	}
+	complete()
 }
 
 // PersistEmbeddingOutcome separates commit from callback delivery across the
 // outermost provider or WAL lease. Nested owners share the same boundary.
 func PersistEmbeddingOutcome(ctx context.Context, node *Node, persist func(context.Context) error) error {
-	if ctx.Value(embeddingDeliveryKey{}) != nil || node == nil || node.EmbeddingAttempt() == nil {
+	if ctx.Value(embeddingDeliveryKey{}) != nil || node == nil {
 		return persist(ctx)
 	}
 	delivery := &embeddingDelivery{}
 	err := persist(context.WithValue(ctx, embeddingDeliveryKey{}, delivery))
-	if delivery.complete != nil {
-		delivery.complete()
+	for _, complete := range delivery.completions {
+		complete()
 	}
 	if err != nil {
 		return err
@@ -100,8 +108,8 @@ func commitEmbeddingOutcome(ctx context.Context, node *Node, persist func() erro
 	} else if err := persist(); err != nil {
 		return err
 	}
-	if delivery, ok := ctx.Value(embeddingDeliveryKey{}).(*embeddingDelivery); ok {
-		delivery.complete = func() { notify(node) }
+	if ctx.Value(embeddingDeliveryKey{}) != nil {
+		completeEmbeddingDelivery(ctx, func() { notify(node) })
 		return nil
 	}
 	notify(node)

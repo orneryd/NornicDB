@@ -132,7 +132,7 @@ func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(ctx context.Context, node *Nod
 	})
 	if err != nil {
 		release()
-		b.completeCommitNotification(notification)
+		completeEmbeddingDelivery(ctx, func() { b.completeCommitNotification(notification) })
 	}
 	return err
 }
