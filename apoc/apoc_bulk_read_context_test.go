@@ -324,6 +324,23 @@ func apocRegisteredSources(t *testing.T) []apocRegisteredSource {
 	return sources
 }
 
+// apocClosureOwner maps a closure symbol (load.JSONItems.func1, including
+// nested .funcN.M forms) to its enclosing declared function, the source owner
+// of a handler returned by a factory.
+func apocClosureOwner(symbol string) string {
+	for {
+		dot := strings.LastIndex(symbol, ".")
+		if dot <= 0 {
+			return symbol
+		}
+		last := strings.TrimPrefix(symbol[dot+1:], "func")
+		if last == "" || strings.Trim(last, "0123456789") != "" {
+			return symbol
+		}
+		symbol = symbol[:dot]
+	}
+}
+
 // apocSymbolTarget maps one admitted handler symbol to the apoc package
 // directory and the helper the parsed source declares behind it. A bound helper
 // is a method value (apoc/search.(*Functions).Prefix-fm,
@@ -348,6 +365,7 @@ func apocSymbolTarget(rest string, sources map[string]apocPackageSource) (direct
 		}
 		return directory, function, true
 	}
+	rest = apocClosureOwner(rest)
 	dot := strings.LastIndex(rest, ".")
 	if dot <= 0 || strings.Contains(rest[:dot], "/") {
 		return "", "", false
