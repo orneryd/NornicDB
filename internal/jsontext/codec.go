@@ -99,7 +99,7 @@ func Unmarshal(raw []byte, out any, stages ...DecodeStage) error {
 			}
 		})
 
-		return &std.UnmarshalTypeError{Value: failure.Value, Type: failure.Type, Offset: int64(offset), Struct: failure.Struct, Field: jsonFieldPath(reflect.TypeOf(out), fieldPath, failure.Field)}
+		return &std.UnmarshalTypeError{Value: failure.Value, Type: failure.Type, Offset: int64(offset), Struct: jsonRootName(reflect.TypeOf(out), fieldPath), Field: jsonFieldPath(fieldPath)}
 	case *alt.InvalidUnmarshalError:
 		return &std.InvalidUnmarshalError{Type: failure.Type}
 	}
@@ -229,60 +229,30 @@ func decodeValue(raw []byte, projected bool) (any, error) {
 	return value, nil
 }
 
-// jsonFieldPath projects only error metadata, never binds or writes values.
-// Supported typed binding reports a Go-field path; standard errors expose its
-// declared JSON-tag path. Promoted fields use reflect's existing field lookup.
-func jsonFieldPath(owner reflect.Type, path []string, unresolved string) string {
-	result := make([]string, 0, len(path))
-	for _, name := range path {
-		for owner != nil && (owner.Kind() == reflect.Pointer || owner.Kind() == reflect.Slice || owner.Kind() == reflect.Array) {
-			owner = owner.Elem()
-		}
-		if owner != nil && owner.Kind() == reflect.Map {
-			owner = owner.Elem()
-			continue
-		}
-		if owner == nil || owner.Kind() != reflect.Struct {
-			return unresolved
-		}
-		var selected *reflect.StructField
-		for _, field := range reflect.VisibleFields(owner) {
-			tag := strings.Split(field.Tag.Get("json"), ",")[0]
-			if field.PkgPath != "" || tag == "-" {
-				continue
-			}
-			nested := field.Type
-			for nested.Kind() == reflect.Pointer {
-				nested = nested.Elem()
-			}
-			if field.Anonymous && tag == "" && nested.Kind() == reflect.Struct {
-				continue
-			}
-			fieldName := tag
-			if fieldName == "" {
-				fieldName = field.Name
-			}
-			if fieldName == name {
-				copy := field
-				selected = &copy
-				break
-			}
-			if selected == nil && strings.EqualFold(fieldName, name) {
-				copy := field
-				selected = &copy
-			}
-		}
-		if selected == nil {
-			return unresolved
-		}
-		tag := strings.Split(selected.Tag.Get("json"), ",")[0]
-		if tag == "" {
-			tag = selected.Name
-		}
-		result = append(result, tag)
-		owner = selected.Type
+// jsonFieldPath renders the standard library's UnmarshalTypeError.Field: the
+// failing value's JSON Pointer tokens, as written in the input (including array
+// indices and map keys), joined by "." with RFC 6901 "~0"/"~1" escapes retained.
+func jsonFieldPath(path []string) string {
+	escaped := make([]string, len(path))
+	for i, token := range path {
+		escaped[i] = jsonPointerEscaper.Replace(token)
 	}
-	return strings.Join(result, ".")
+	return strings.Join(escaped, ".")
+}
+
+var jsonPointerEscaper = strings.NewReplacer("~", "~0", "/", "~1")
+
+// jsonRootName renders the standard library's UnmarshalTypeError.Struct: the
+// root destination's type name after one pointer indirection, or empty when
+// the failure is at the root value.
+func jsonRootName(root reflect.Type, path []string) string {
+	if root == nil || len(path) == 0 {
+		return ""
+	}
+	if root.Kind() == reflect.Pointer {
+		root = root.Elem()
+	}
+	return root.Name()
 }
 
 // Encoder writes one standard JSON value followed by a newline. It preserves

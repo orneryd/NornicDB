@@ -4,6 +4,7 @@ import (
 	"bytes"
 	std "encoding/json"
 	"errors"
+	"strconv"
 )
 
 // readValue uses Token's structural and numeric authority. InputOffset selects
@@ -46,7 +47,11 @@ func readValue(decoder *std.Decoder, raw []byte, projected bool, path []string, 
 		case '[':
 			list := []any{}
 			for decoder.More() {
-				item, err := readValue(decoder, raw, projected, path, visit)
+				itemPath := path
+				if visit != nil {
+					itemPath = append(path[:len(path):len(path)], strconv.Itoa(len(list)))
+				}
+				item, err := readValue(decoder, raw, projected, itemPath, visit)
 				if err != nil {
 					return nil, err
 				}

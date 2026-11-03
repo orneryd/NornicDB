@@ -27,7 +27,7 @@ import (
 
 func preferenceStrings() ([]string, error) {
 	languages := C.CFLocaleCopyPreferredLanguages()
-	if unsafe.Pointer(languages) == nil {
+	if languages == 0 {
 		return nil, ErrNotDetected
 	}
 	defer C.CFRelease(C.CFTypeRef(languages))

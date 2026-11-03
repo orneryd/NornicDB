@@ -13,7 +13,7 @@ import (
 	"strings"
 
 	gherkin "github.com/cucumber/gherkin/go/v26"
-	messages "github.com/cucumber/messages/go/v21"
+	messages "github.com/cucumber/messages/go/v34"
 )
 
 // UpstreamRevision is the immutable openCypher commit used by the corpus.
