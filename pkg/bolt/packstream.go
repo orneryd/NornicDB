@@ -3,7 +3,6 @@ package bolt
 
 import (
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"strings"

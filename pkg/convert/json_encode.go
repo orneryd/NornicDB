@@ -60,26 +60,43 @@ func (encoder *JSONEncoder) Encode(value interface{}) error {
 	return encoder.err
 }
 
-func marshalJSON(value interface{}) ([]byte, error) {
+func marshalJSON(value interface{}, typedState bool) ([]byte, error) {
+	state := jsonWriterStates.Get().(*jsonWriterState)
+	defer jsonWriterStates.Put(state)
+	state.reset(true)
+	state.typedState = typedState
+	var err error
+	if typedState {
+		err = state.value(reflect.ValueOf(value))
+	} else {
+		err = state.any(value)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return append([]byte(nil), state.data...), nil
+}
+
+// marshalJSONIndent avoids copying the compact working buffer before indenting.
+// The indented result belongs to the caller; only the compact working buffer
+// returns to the pool, matching the existing Marshal/Encoder retention policy.
+// Capacity accounting reserves the standard indenter's output once, avoiding
+// repeated growth and copies for deeply indented documents.
+func marshalJSONIndent(value interface{}, prefix, indent string) ([]byte, error) {
 	state := jsonWriterStates.Get().(*jsonWriterState)
 	defer jsonWriterStates.Put(state)
 	state.reset(true)
 	if err := state.any(value); err != nil {
 		return nil, err
 	}
-	return append([]byte(nil), state.data...), nil
-}
-
-func marshalJSONIndent(value interface{}, prefix, indent string) ([]byte, error) {
-	data, err := marshalJSON(value)
-	if err != nil {
+	var output bytes.Buffer
+	if capacity, ok := indentedJSONCapacity(state.data, prefix, indent); ok {
+		output.Grow(capacity)
+	}
+	if err := json.Indent(&output, state.data, prefix, indent); err != nil {
 		return nil, err
 	}
-	var out bytes.Buffer
-	if err := json.Indent(&out, data, prefix, indent); err != nil {
-		return nil, err
-	}
-	return out.Bytes(), nil
+	return output.Bytes(), nil
 }
 
 // jsonFloat is Neo4j HTTP's FLOAT representation. Nonfinite values are text
@@ -100,7 +117,7 @@ func prepareJSON(value interface{}) interface{} {
 
 type preparedJSON struct{ value interface{} }
 
-func (value preparedJSON) MarshalJSON() ([]byte, error) { return marshalJSON(value.value) }
+func (value preparedJSON) MarshalJSON() ([]byte, error) { return marshalJSON(value.value, false) }
 
 type jsonEncodingVisit struct {
 	kind   reflect.Kind
@@ -116,6 +133,7 @@ type jsonWriterState struct {
 	raw, indented bytes.Buffer
 	opaque        *jsontext.Encoder
 	escapeHTML    bool
+	typedState    bool
 	depth         int
 	active        map[jsonEncodingVisit]bool
 }
@@ -124,7 +142,7 @@ var jsonWriterStates = sync.Pool{New: func() interface{} { return new(jsonWriter
 
 func (state *jsonWriterState) reset(escape bool) {
 	state.data = state.data[:0]
-	state.escapeHTML, state.depth = escape, 0
+	state.escapeHTML, state.depth, state.typedState = escape, 0, false
 }
 
 func (state *jsonWriterState) opaqueValue(value interface{}) error {
@@ -143,11 +161,16 @@ func (state *jsonWriterState) opaqueValue(value interface{}) error {
 
 func (state *jsonWriterState) float(value float64, bits int, original reflect.Value) error {
 	var err error
-	state.data, err = appendJSONFloat(state.data, value, bits, original)
+	state.data, err = appendJSONFloat(state.data, value, bits, original, state.typedState)
 	return err
 }
 
 func (state *jsonWriterState) any(value interface{}) error {
+	// Crossing an interface loses the declared numeric type. Even a typed
+	// container nested here needs explicit FLOAT tokens for an exact reader.
+	typedState := state.typedState
+	state.typedState = false
+	defer func() { state.typedState = typedState }()
 	switch value := value.(type) {
 	case nil:
 		state.data = append(state.data, "null"...)

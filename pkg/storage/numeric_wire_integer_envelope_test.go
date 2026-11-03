@@ -21,9 +21,13 @@ import (
 // integer kinds of metadata while whole FLOAT properties keep their own kind.
 func TestNumericWireWALIntegerEnvelopes(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
-	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{wal: true})
-	wal := engine.bufferedCommitWAL
-	t.Cleanup(func() { _ = wal.Close(); _ = engine.Close() })
+	// This is a format fixture, not an accepted native transaction. Keep the
+	// WAL standalone so synthetic counter extremes are not recovery obligations
+	// of a live storage engine during checked shutdown.
+	dictionary := newTestEngine(t).propKeyDict
+	wal, err := NewWAL(t.TempDir(), DefaultWALConfig())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, wal.Close()) })
 	const sequence = uint64(9007199254740993)
 	wal.sequence.Store(sequence)
 	properties := map[string]any{"whole": float64(2), "integer": int64(9007199254740993)}
@@ -34,8 +38,8 @@ func TestNumericWireWALIntegerEnvelopes(t *testing.T) {
 		propKeyDrain: propKeyTxnDrain{counters: map[string]uint64{"test": sequence}},
 		ops:          []Operation{{Type: OpCreateNode, Node: &Node{ID: "test:a", Properties: properties}}},
 	}
-	require.NoError(t, wal.AppendBufferedCommit(&commit, engine.propKeyDict))
-	_, err := wal.AppendWithDatabaseReturningSeq(OpTxCommit, WALTxData{TxID: "integer-envelope", OpCount: 7}, "test")
+	require.NoError(t, wal.AppendBufferedCommit(&commit, dictionary))
+	_, err = wal.AppendWithDatabaseReturningSeq(OpTxCommit, WALTxData{TxID: "integer-envelope", OpCount: 7}, "test")
 	require.NoError(t, err)
 	require.NoError(t, wal.Checkpoint())
 	require.NoError(t, wal.Sync())
@@ -122,14 +126,15 @@ func TestNumericWireWALFrameIntegerFields(t *testing.T) {
 }
 
 func TestNumericWireSnapshotIntegerMetadata(t *testing.T) {
+	ctx := t.Context()
 	store := NewNamespacedEngine(newTestMemoryEngine(t), "test")
 	t.Cleanup(func() { _ = store.Close() })
 	properties := map[string]any{"whole": float64(2), "integer": int64(9007199254740993)}
 	node := &Node{ID: "a", Properties: properties}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(ctx, node)
 	require.NoError(t, err)
 	edge := &Edge{ID: "r", StartNode: "a", EndNode: "a", Type: "SELF", Properties: properties}
-	require.NoError(t, store.CreateEdge(edge))
+	require.NoError(t, store.CreateEdge(ctx, edge))
 	for _, materialized := range []bool{false, true} {
 		t.Run(map[bool]string{false: "streaming", true: "materialized"}[materialized], func(t *testing.T) {
 			var raw bytes.Buffer

@@ -24,6 +24,7 @@ func TestNumericWireSchemaTransactionRewrite(t *testing.T) {
 	} {
 		for _, mutation := range []string{"native_backup", "schema", "knowledge_policy"} {
 			t.Run(format.name+"/"+mutation, func(t *testing.T) {
+				ctx := t.Context()
 				dir := t.TempDir()
 				open := func(path string) *BadgerEngine {
 					engine, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(path))
@@ -32,20 +33,22 @@ func TestNumericWireSchemaTransactionRewrite(t *testing.T) {
 				}
 				engine := open(dir)
 				raw := []byte(fmt.Sprintf(`{%s"constraints":[{"name":"value_domain","type":"DOMAIN","entity_type":"NODE","label":"Value","properties":["v"],"allowed_values":[%s]}]}`, format.header, format.token))
-				require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return txn.Set(schemaKey("test"), raw) }))
+				require.NoError(t, engine.withUpdate(ctx, updateRequest{}, func(txn *badger.Txn) error { return txn.Set(schemaKey("test"), raw) }))
 				require.NoError(t, engine.Close())
 				engine = open(dir)
 				check := func(engine *BadgerEngine, stage string) {
 					t.Helper()
-					require.Equal(t, []interface{}{format.want}, engine.GetSchemaForNamespace("test").ExportDefinition().Constraints[0].AllowedValues)
-					require.NoError(t, writeNumericWireSchemaValue(engine, "node", false, "test:"+stage+"-accepted", format.want))
+					definition, err := engine.GetSchemaForNamespace("test").ExportDefinition(ctx)
+					require.NoError(t, err)
+					require.Equal(t, []interface{}{format.want}, definition.Constraints[0].AllowedValues)
+					require.NoError(t, writeNumericWireSchemaValue(ctx, engine, "node", false, "test:"+stage+"-accepted", format.want))
 					var violation *ConstraintViolationError
-					require.ErrorAs(t, writeNumericWireSchemaValue(engine, "node", false, "test:"+stage+"-rejected", format.rejected), &violation)
+					require.ErrorAs(t, writeNumericWireSchemaValue(ctx, engine, "node", false, "test:"+stage+"-rejected", format.rejected), &violation)
 					require.Equal(t, ConstraintDomain, violation.Type)
 				}
 				check(engine, "original")
 				if mutation != "native_backup" {
-					tx, err := engine.BeginTransaction()
+					tx, err := engine.BeginTransaction(ctx)
 					require.NoError(t, err)
 					defer tx.Rollback()
 					require.NoError(t, tx.SetNamespace("test"))
@@ -78,7 +81,9 @@ func TestNumericWireSchemaTransactionRewrite(t *testing.T) {
 				if mutation == "schema" {
 					require.True(t, engine.GetSchemaForNamespace("test").MaintainsPropertyIndex("Other", "v"))
 				} else if mutation == "knowledge_policy" {
-					require.Len(t, engine.GetSchemaForNamespace("test").ExportDefinition().PromotionProfiles, 1)
+					definition, err := engine.GetSchemaForNamespace("test").ExportDefinition(ctx)
+					require.NoError(t, err)
+					require.Len(t, definition.PromotionProfiles, 1)
 				}
 				backup := filepath.Join(t.TempDir(), "schema.backup")
 				require.NoError(t, engine.Backup(backup))

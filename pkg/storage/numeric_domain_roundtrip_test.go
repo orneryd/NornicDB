@@ -67,12 +67,13 @@ func numericDomainTransforms(t *testing.T) map[string]func(string) string {
 }
 
 func TestNumericDomainExportTransformRestore(t *testing.T) {
+	ctx := t.Context()
 	source := NewNamespacedEngine(newTestMemoryEngine(t), "test")
 	t.Cleanup(func() { _ = source.Close() })
 	properties := numericDomainProperties()
-	_, err := source.CreateNode(&Node{ID: "domain", Labels: []string{"NumericDomain"}, Properties: properties})
+	_, err := source.CreateNode(ctx, &Node{ID: "domain", Labels: []string{"NumericDomain"}, Properties: properties})
 	require.NoError(t, err)
-	require.NoError(t, source.CreateEdge(&Edge{ID: "domain-edge", StartNode: "domain", EndNode: "domain", Type: "DOMAIN", Properties: properties}))
+	require.NoError(t, source.CreateEdge(ctx, &Edge{ID: "domain-edge", StartNode: "domain", EndNode: "domain", Type: "DOMAIN", Properties: properties}))
 	path := filepath.Join(t.TempDir(), "export.json")
 	require.NoError(t, SaveToNeo4jExport(source, path))
 	raw, err := os.ReadFile(path)
@@ -84,10 +85,10 @@ func TestNumericDomainExportTransformRestore(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "formatted.json")
 			require.NoError(t, os.WriteFile(path, []byte(transform(string(raw))), 0600))
 			require.NoError(t, LoadFromNeo4jExport(target, path))
-			node, err := target.GetNode("domain")
+			node, err := target.GetNode(ctx, "domain")
 			require.NoError(t, err)
 			numericoracle.Equal(t, properties, node.Properties)
-			edge, err := target.GetEdge("domain-edge")
+			edge, err := target.GetEdge(ctx, "domain-edge")
 			require.NoError(t, err)
 			numericoracle.Equal(t, properties, edge.Properties)
 		})

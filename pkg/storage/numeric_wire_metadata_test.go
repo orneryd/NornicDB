@@ -11,6 +11,7 @@ import (
 func TestNumericWireImportMetadataCompatibility(t *testing.T) {
 	for _, lines := range []bool{false, true} {
 		t.Run(map[bool]string{false: "combined", true: "json-lines"}[lines], func(t *testing.T) {
+			ctx := t.Context()
 			store := NewNamespacedEngine(newTestMemoryEngine(t), "test")
 			t.Cleanup(func() { _ = store.Close() })
 			const node = `{"id":"a","labels":["OldExport"],"properties":{"v":7,"_createdAt":1600000000,"_updatedAt":1600000100}}`
@@ -25,9 +26,9 @@ func TestNumericWireImportMetadataCompatibility(t *testing.T) {
 				require.NoError(t, os.WriteFile(path, []byte(`{"nodes":[`+node+`],"relationships":[`+edge+`]}`), 0600))
 				require.NoError(t, LoadFromNeo4jExport(store, path))
 			}
-			n, err := store.GetNode("a")
+			n, err := store.GetNode(ctx, "a")
 			require.NoError(t, err)
-			r, err := store.GetEdge("r")
+			r, err := store.GetEdge(ctx, "r")
 			require.NoError(t, err)
 			t.Logf("node created=%v updated=%v props=%#v; edge confidence=%v created=%v props=%#v", n.CreatedAt, n.UpdatedAt, n.Properties, r.Confidence, r.CreatedAt, r.Properties)
 			require.Equal(t, int64(1600000000), n.CreatedAt.Unix())

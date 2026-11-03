@@ -44,7 +44,20 @@ func (propertyJSONDomain) UnmarshalLegacyState(data []byte, target interface{}) 
 func (propertyJSONDomain) Numbers(value interface{}) (interface{}, error) {
 	return jsonNumbers(value, jsonNumberPolicy{exact: true})
 }
-func (propertyJSONDomain) Marshal(value interface{}) ([]byte, error) { return marshalJSON(value) }
+func (propertyJSONDomain) Marshal(value interface{}) ([]byte, error) {
+	return marshalJSON(value, false)
+}
+
+// MarshalState encodes a persisted typed document without changing the existing
+// numeric spelling of declared fields. Dynamic interface values still carry
+// exact INTEGER/FLOAT tokens because their destination has no declared type.
+// This compact state operation is distinct from property-result Marshal,
+// MarshalIndent and streaming Encode, which always preserve explicit FLOATs.
+// For example, a schema's float64 score keeps its old JSON bytes while a DOMAIN
+// constraint's []any values preserve the numeric kinds they must read back.
+func (propertyJSONDomain) MarshalState(value interface{}) ([]byte, error) {
+	return marshalJSON(value, true)
+}
 func (propertyJSONDomain) MarshalIndent(value interface{}, prefix, indent string) ([]byte, error) {
 	return marshalJSONIndent(value, prefix, indent)
 }
@@ -62,7 +75,9 @@ func (cypherInputJSONDomain) Unmarshal(data []byte, target interface{}) error {
 func (cypherInputJSONDomain) Numbers(value interface{}) (interface{}, error) {
 	return jsonNumbers(value, jsonNumberPolicy{})
 }
-func (cypherInputJSONDomain) Marshal(value interface{}) ([]byte, error) { return marshalJSON(value) }
+func (cypherInputJSONDomain) Marshal(value interface{}) ([]byte, error) {
+	return marshalJSON(value, false)
+}
 func (cypherInputJSONDomain) MarshalIndent(value interface{}, prefix, indent string) ([]byte, error) {
 	return marshalJSONIndent(value, prefix, indent)
 }
@@ -77,7 +92,7 @@ func (cypherInputJSONDomain) AppendUnsigned(dst []byte, value uint64) []byte {
 	return appendJSONUnsigned(dst, value)
 }
 func (cypherInputJSONDomain) AppendFloat(dst []byte, value float64, bits int) ([]byte, error) {
-	return appendJSONFloat(dst, value, bits, reflect.Value{})
+	return appendJSONFloat(dst, value, bits, reflect.Value{}, false)
 }
 
 func appendJSONInteger(dst []byte, value int64) []byte   { return strconv.AppendInt(dst, value, 10) }
@@ -89,7 +104,7 @@ func appendJSONUnsigned(dst []byte, value uint64) []byte { return strconv.Append
 // with the standard encoder's error for original (the caller's typed value,
 // or the float itself when original is the zero Value). original is unwrapped
 // only on that error path, so a finite typed value costs no allocation.
-func appendJSONFloat(dst []byte, value float64, bits int, original reflect.Value) ([]byte, error) {
+func appendJSONFloat(dst []byte, value float64, bits int, original reflect.Value, typedState bool) ([]byte, error) {
 	if math.IsNaN(value) || math.IsInf(value, 0) {
 		var rejected interface{} = value
 		if original.IsValid() {
@@ -99,6 +114,27 @@ func appendJSONFloat(dst []byte, value float64, bits int, original reflect.Value
 		}
 		_, err := json.Marshal(rejected)
 		return dst, err
+	}
+	if typedState {
+		// Match encoding/json for declared numeric metadata; its destination
+		// already supplies the FLOAT type. Keep this in the same finite-value
+		// and precision owner used by dynamic properties.
+		format := byte('f')
+		absolute := math.Abs(value)
+		if bits == 32 {
+			a := float32(absolute)
+			if a != 0 && (a < 1e-6 || a >= 1e21) {
+				format = 'e'
+			}
+		} else if absolute != 0 && (absolute < 1e-6 || absolute >= 1e21) {
+			format = 'e'
+		}
+		dst = strconv.AppendFloat(dst, value, format, -1, bits)
+		if format == 'e' && len(dst) >= 4 && dst[len(dst)-4] == 'e' && dst[len(dst)-3] == '-' && dst[len(dst)-2] == '0' {
+			dst[len(dst)-2] = dst[len(dst)-1]
+			dst = dst[:len(dst)-1]
+		}
+		return dst, nil
 	}
 	return appendFloatText(dst, value, bits), nil
 }

@@ -97,7 +97,7 @@
   },
   "pkg/auth/allowlist.go:AllowlistStore.SaveMappings": {
     "reason": "Authentication/token protocol or typed account mapping/metadata; not graph property JSON transport.",
-    "sha256": "201a83318b8d9dfaeccfe036b9849a8da9eb6385cc6908d8ded793c508e1496c"
+    "sha256": "203a6e4754f06fc5d82768cbe08a2c4cb0602af3eee7af3ad1ccf92d02158c2f"
   },
   "pkg/auth/allowlist.go:databasesFromProperties": {
     "reason": "Authentication/token protocol or typed account mapping/metadata; not graph property JSON transport.",
@@ -121,7 +121,7 @@
   },
   "pkg/auth/role_entitlements.go:RoleEntitlementsStore.SetMappings": {
     "reason": "Authentication/token protocol or typed account mapping/metadata; not graph property JSON transport.",
-    "sha256": "9de1a8115fba8404c3f70e9ec06f1fb3ac96d27e31dbc3fbfbd798cfc0c5f0e9"
+    "sha256": "ec98158dded6d245135c65d8d288c0f6d747934f9fb93304e1e37203412ffc32"
   },
   "pkg/bolt/discovery.go:buildDiscoveryResponse": {
     "reason": "Discovery URL and version strings; no query result values.",
@@ -137,7 +137,7 @@
   },
   "pkg/config/dbconfig/store.go:Store.SetOverrides": {
     "reason": "Typed runtime configuration overrides, not graph property values.",
-    "sha256": "1f556ec1cb583890a9723f86914e75855c791f6b6626ca5bfcfd0dd200bea33f"
+    "sha256": "b416b004ef0e390afad0dbeb19be236f72c95ed2930c72fd35b71451eff7b644"
   },
   "pkg/cypher/clauses.go:unwindMergeKey": {
     "reason": "Stable UNWIND merge identity key, not a JSON transport or property round trip.",
@@ -621,7 +621,7 @@
   },
   "internal/testutil/remotegraph/remote_graph.go:New": {
     "reason": "Author: #1665 implementation lane (Codex). Internal remote-graph fixture server reads typed control requests and writes fixed test graph envelopes, not a production property admission path; unchanged TJ body.",
-    "sha256": "cc6fab590eebea3cdf7f1fd0d61d370b9369e207596fe78f41b3ebb9480e9464"
+    "sha256": "2fc254a16c9e29c4efd67cf4154b1d1cec680dcf71e136e28fbee33481d63b27"
   },
   "pkg/replication/storage_adapter.go:StorageAdapter.GetWALEntries": {
     "reason": "Author: #1665 implementation lane (Codex). Decodes a typed historical replication wrapper; its entity payload remains opaque bytes and is transcoded through the retained payload owner. TJ body unchanged.",
@@ -637,7 +637,7 @@
   },
   "pkg/server/server_dbconfig.go:Server.handleDbConfig": {
     "reason": "Author: #1665 implementation lane (Codex). Typed database configuration/settings input retains TJ normalization and override owner; it is not graph-property import. TJ function body unchanged.",
-    "sha256": "d59c5877e42858f9014f7a2a8f356f8aebd531dafd973dd6daba87879b5b9900"
+    "sha256": "eeb305adb3e0c432d18fc2c09cd4ed6625a2ab0d807f8065cf496b5048efcebb"
   },
   "pkg/server/server_nornicdb.go:Server.handleEmbeddingFailures": {
     "reason": "Author: #1665 implementation lane (Codex). Typed retry/control input is administrative metadata. The delta changes only the shared response adapter; retry authorization and request parsing are unchanged.",
@@ -689,7 +689,7 @@
   },
   "pkg/heimdall/handler.go:Handler.handleStreamingResponse": {
     "reason": "Author: L6 / #1665 lane (Codex). Restored release Heimdall/agent protocol under the standing 1.5.0 MCP exclusion; no targeted MCP correction or correctness claim belongs to this bounded numeric PR.",
-    "sha256": "7f28e3b64152a028abe96a0805a2cbf1fa17fa2b6da496d5e74c4b7ca3701a0a"
+    "sha256": "ddbc37cba475b2f75eb563abead80c0896a33b197c84119f5be713ff1a3b2102"
   },
   "pkg/heimdall/handler.go:Handler.handleStreamingWithTools": {
     "reason": "Author: L6 / #1665 lane (Codex). Restored release Heimdall/agent protocol under the standing 1.5.0 MCP exclusion; no targeted MCP correction or correctness claim belongs to this bounded numeric PR.",
@@ -718,5 +718,17 @@
   "internal/rerankwire/decode.go:UnmarshalJSON": {
     "reason": "Reranker model protocol parsing: typed document IDs, score fields and opaque model response envelopes. Not graph-property JSON.",
     "sha256": "db187038ae1ed7e00c6ac90e4f821d41112995126519b43e155e1399f3efc659"
+  },
+  "internal/testutil/walterminal/outcome_contract.go:CaptureOutcome": {
+    "reason": "Test evidence record contains only names, error strings and committed boolean; no numeric graph payload or input conversion.",
+    "sha256": "a98af6ec95a26f9bacb4f79b96b2d4c4f2c56e17dd287f27a12b3068a0dedd6a"
+  },
+  "pkg/storage/badger_transaction_receipt.go:bufferedCommitMarkerKey": {
+    "reason": "Existing persisted receipt-key framing appends decimal namespace byte length; this is an integer-only key codec, not JSON property serialization. Numeric-domain formatting would change the established storage key.",
+    "sha256": "2e074f389898370e24d86c0d4ab6d1e165b46a3333eea8ebc17ba8bd00c01e48"
+  },
+  "testing/capturecensus/storage.go:StoragePolicy": {
+    "reason": "Typed static-analysis policy JSON contains source review classifications and audit metadata, not application graph data.",
+    "sha256": "dc1918f85da728aa095e7339eab431fae7a79e6c7b41b447f3a2a254a6fb218c"
   }
 }

@@ -450,7 +450,7 @@
       "Reason": "#1548's context.Background() on ReconcileDecaySuppression's path; kept as merged. It is the same never-cancelled value as namespaceMaintenanceContext, and its owner context arrives with U-1636.",
       "Approver": "Nornic2 ruling (31 October 2026), subject to the independent review",
       "Occurrences": [
-        "call context.Background (+18 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).persistSchemaDefinition)"
+        "call context.Background (+13 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).persistSchemaDefinition)"
       ]
     }
   },
@@ -498,7 +498,7 @@
         "github.com/orneryd/nornicdb/pkg/localization.storageValidationMessage": "990e006cdab070bd32672fc600fc66523cbc03ff3cffccfe48fdfc34109a9b98",
         "github.com/orneryd/nornicdb/pkg/math/libm.Float64frombits": "24f405596402e464051c8ad40a4db07d999ea97c63c8fc036aa8dc90edeea498"
       },
-      "Closure": "50e35cb72bfe3453cc716b8ca52144a7ea7f781fce6387abf771ce7d352c5b58",
+      "Closure": "7d182ff686fdee0dcba3587e6861b617bb0e890004429409b3c389832ecc4b12",
       "Modules": null,
       "Callers": {
         "(*github.com/orneryd/nornicdb/pkg/storage.largeCommit).abort": [
@@ -515,7 +515,7 @@
       },
       "FieldWriters": null,
       "Methods": null,
-      "Reason": "Maintainer-approved compensation-only completion: rollback of previously written unpublished batches and startup crash repair must finish independently of canceled request work. Exact two caller edges and their transitive sources/caller sets are pinned; ordinary preparation and any new caller remain unapproved. Re-reviewed 2026-11-02 after native WAL publication integration: intent and restore batches pass a nil journal to commitDurableWrite, so compensation neither repeats WAL admission nor inherits the failed request. Closure re-pinned after the commitPreparationLifetime nil-default helper was deleted (callers now pass their required context directly; no caller or source pin changed). Permanent TestInstalledRollbackPhaseRecord covers source/body/helper mutations and an added caller.",
+      "Reason": "Maintainer-approved compensation-only completion: rollback of previously written unpublished batches and startup crash repair must finish independently of canceled request work. Exact two caller edges and their transitive sources/caller sets are pinned; ordinary preparation and any new caller remain unapproved. Re-reviewed 2026-11-02 after native WAL publication integration: intent and restore batches pass a nil journal to commitDurableWrite, so compensation neither repeats WAL admission nor inherits the failed request. Closure re-pinned after the commitPreparationLifetime nil-default helper was deleted (callers now pass their required context directly; no caller or source pin changed). Permanent TestInstalledRollbackPhaseRecord covers source/body/helper mutations and an added caller. Closure re-pinned 2026-11-03 at snapshot daa12f834 (release base 04571a481): the transitive static closure moved from 159 to 188 module functions with none removed, all of them numeric/JSON encoder helpers newly reached through WAL encoder ownership (WAL.rotateSegmentLocked, WAL.reopenWAL and marshalJSONCompact now build valueconvert.PropertyJSON.NewEncoder, and internal/jsontext.Unmarshal delegates to the new number-preserving unmarshal helper), i.e. the same publication path below the pinned sources. All 13 pinned sources are byte-identical to release045, both compensation caller routes and the held value are unchanged, and no phase, boundary or caller was added; the approval above still covers only those two compensation routes. The final integrated numeric encoder review changed only jsonWriterState.any/reset/float and appendJSONFloat within that same closure: typed metadata spelling is request-local writer state, reset clears it, interface boundaries restore it, and finite numeric/error behavior introduces no context, admission, publication or caller change. The exact final closure was recomputed as 7d182ff686fdee0dcba3587e6861b617bb0e890004429409b3c389832ecc4b12. This pin holds only while the encoding source stays below them: any later change to the encoding owner, to a pinned source, or any added caller stales the record again.",
       "Approver": "Tim Sweet (OrneryD), explicit approval 2026-11-01; principal-agent source review and public/mutation controls in rollback-phase-current-review"
     }
   }

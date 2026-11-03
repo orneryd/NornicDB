@@ -14,6 +14,7 @@ func TestJSONIngestionNeo4jImports(t *testing.T) {
 	const edge = `{"id":"r","type":"EXACT","start":{"id":"a"},"end":{"id":"a"},"properties":{"v":-9007199254740993,"unsigned":18446744073709551615,"decimal":2.5}}`
 	for _, lines := range []bool{false, true} {
 		t.Run(map[bool]string{false: "combined", true: "json-lines"}[lines], func(t *testing.T) {
+			ctx := t.Context()
 			base := newTestMemoryEngine(t)
 			store := NewNamespacedEngine(base, "test")
 			dir := t.TempDir()
@@ -26,13 +27,13 @@ func TestJSONIngestionNeo4jImports(t *testing.T) {
 				require.NoError(t, os.WriteFile(path, []byte(`{"nodes":[`+nodes+`],"relationships":[`+edge+`]}`), 0600))
 				require.NoError(t, LoadFromNeo4jExport(store, path))
 			}
-			node, err := store.GetNode("a")
+			node, err := store.GetNode(ctx, "a")
 			require.NoError(t, err)
 			require.Equal(t, int64(9007199254740993), node.Properties["v"])
 			require.Equal(t, uint64(math.MaxUint64), node.Properties["unsigned"])
 			require.Equal(t, 1.25, node.Properties["decimal"])
 			require.Equal(t, []interface{}{int64(-9007199254740993), float64(2)}, node.Properties["nested"])
-			rel, err := store.GetEdge("r")
+			rel, err := store.GetEdge(ctx, "r")
 			require.NoError(t, err)
 			require.Equal(t, int64(-9007199254740993), rel.Properties["v"])
 			require.Equal(t, uint64(math.MaxUint64), rel.Properties["unsigned"])
@@ -42,11 +43,12 @@ func TestJSONIngestionNeo4jImports(t *testing.T) {
 }
 
 func TestJSONIngestionNeo4jExportRoundTrip(t *testing.T) {
+	ctx := t.Context()
 	base := newTestMemoryEngine(t)
 	source := NewNamespacedEngine(base, "test")
-	_, err := source.CreateNode(&Node{ID: "a", Labels: []string{"Exact"}, Properties: map[string]interface{}{"v": int64(9007199254740993), "unsigned": uint64(math.MaxUint64), "whole": float64(2), "nested": []interface{}{float64(4), int64(5)}}})
+	_, err := source.CreateNode(ctx, &Node{ID: "a", Labels: []string{"Exact"}, Properties: map[string]interface{}{"v": int64(9007199254740993), "unsigned": uint64(math.MaxUint64), "whole": float64(2), "nested": []interface{}{float64(4), int64(5)}}})
 	require.NoError(t, err)
-	require.NoError(t, source.CreateEdge(&Edge{ID: "r", StartNode: "a", EndNode: "a", Type: "EXACT", Properties: map[string]interface{}{"v": int64(-9007199254740993), "whole": float64(3)}}))
+	require.NoError(t, source.CreateEdge(ctx, &Edge{ID: "r", StartNode: "a", EndNode: "a", Type: "EXACT", Properties: map[string]interface{}{"v": int64(-9007199254740993), "whole": float64(3)}}))
 	for _, save := range []func(string) error{
 		func(path string) error { return SaveToNeo4jExport(source, path) },
 		func(path string) error { return GenericSaveToNeo4jExport(source, path) },
@@ -56,13 +58,13 @@ func TestJSONIngestionNeo4jExportRoundTrip(t *testing.T) {
 		other := newTestMemoryEngine(t)
 		restored := NewNamespacedEngine(other, "test")
 		require.NoError(t, LoadFromNeo4jExport(restored, path))
-		node, err := restored.GetNode("a")
+		node, err := restored.GetNode(ctx, "a")
 		require.NoError(t, err)
 		require.Equal(t, int64(9007199254740993), node.Properties["v"])
 		require.Equal(t, uint64(math.MaxUint64), node.Properties["unsigned"])
 		require.Equal(t, float64(2), node.Properties["whole"])
 		require.Equal(t, []interface{}{float64(4), int64(5)}, node.Properties["nested"])
-		edge, err := restored.GetEdge("r")
+		edge, err := restored.GetEdge(ctx, "r")
 		require.NoError(t, err)
 		require.Equal(t, int64(-9007199254740993), edge.Properties["v"])
 		require.Equal(t, float64(3), edge.Properties["whole"])

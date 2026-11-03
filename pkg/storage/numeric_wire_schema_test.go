@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -26,6 +27,7 @@ func TestNumericWireSchemaDomainValuesSurviveRestart(t *testing.T) {
 		{"legacy_unversioned", 0}, {"legacy_v1", 1}, {"exact_v2", 2},
 	} {
 		t.Run(format.name, func(t *testing.T) {
+			ctx := t.Context()
 			expected := append([]interface{}(nil), want...)
 			rejected := []interface{}{int64(1152921504606847000), int64(3), "2"}
 			if format.version < 2 {
@@ -45,7 +47,7 @@ func TestNumericWireSchemaDomainValuesSurviveRestart(t *testing.T) {
 			}
 			engine := open()
 			for _, id := range []NodeID{"test:a", "test:b"} {
-				_, err := engine.CreateNode(&Node{ID: id})
+				_, err := engine.CreateNode(ctx, &Node{ID: id})
 				require.NoError(t, err)
 			}
 			constraints := []Constraint{
@@ -61,7 +63,7 @@ func TestNumericWireSchemaDomainValuesSurviveRestart(t *testing.T) {
 				if format.version == 0 {
 					raw = bytes.Replace(raw, []byte(`"version":0,`), nil, 1)
 				}
-				require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+				require.NoError(t, engine.withUpdate(ctx, updateRequest{}, func(txn *badger.Txn) error {
 					return txn.Set(schemaKey("test"), raw)
 				}))
 			} else {
@@ -104,11 +106,11 @@ func TestNumericWireSchemaDomainValuesSurviveRestart(t *testing.T) {
 					for _, explicit := range []bool{false, true} {
 						for i, value := range accepted {
 							id := fmt.Sprintf("test:%s-%s-%t-accept-%d", stage, entity, explicit, i)
-							require.NoError(t, writeNumericWireSchemaValue(engine, entity, explicit, id, value), "%s: %T(%v)", id, value, value)
+							require.NoError(t, writeNumericWireSchemaValue(ctx, engine, entity, explicit, id, value), "%s: %T(%v)", id, value, value)
 						}
 						for i, value := range rejected {
 							id := fmt.Sprintf("test:%s-%s-%t-reject-%d", stage, entity, explicit, i)
-							err := writeNumericWireSchemaValue(engine, entity, explicit, id, value)
+							err := writeNumericWireSchemaValue(ctx, engine, entity, explicit, id, value)
 							var violation *ConstraintViolationError
 							require.ErrorAs(t, err, &violation, "%s: %T(%v)", id, value, value)
 							require.Equal(t, ConstraintDomain, violation.Type)
@@ -129,15 +131,15 @@ func TestNumericWireSchemaDomainValuesSurviveRestart(t *testing.T) {
 	}
 }
 
-func writeNumericWireSchemaValue(engine *BadgerEngine, entity string, explicit bool, id string, value interface{}) error {
+func writeNumericWireSchemaValue(ctx context.Context, engine *BadgerEngine, entity string, explicit bool, id string, value interface{}) error {
 	var writer interface {
-		CreateNode(*Node) (NodeID, error)
-		CreateEdge(*Edge) error
+		CreateNode(context.Context, *Node) (NodeID, error)
+		CreateEdge(context.Context, *Edge) error
 	} = engine
 	var tx *BadgerTransaction
 	if explicit {
 		var err error
-		tx, err = engine.BeginTransaction()
+		tx, err = engine.BeginTransaction(ctx)
 		if err != nil {
 			return err
 		}
@@ -150,9 +152,9 @@ func writeNumericWireSchemaValue(engine *BadgerEngine, entity string, explicit b
 	properties := map[string]interface{}{"v": value}
 	var err error
 	if entity == "node" {
-		_, err = writer.CreateNode(&Node{ID: NodeID(id), Labels: []string{"Value"}, Properties: properties})
+		_, err = writer.CreateNode(ctx, &Node{ID: NodeID(id), Labels: []string{"Value"}, Properties: properties})
 	} else {
-		err = writer.CreateEdge(&Edge{ID: EdgeID(id), Type: "Value", StartNode: "test:a", EndNode: "test:b", Properties: properties})
+		err = writer.CreateEdge(ctx, &Edge{ID: EdgeID(id), Type: "Value", StartNode: "test:a", EndNode: "test:b", Properties: properties})
 	}
 	if err == nil && tx != nil {
 		err = tx.Commit()

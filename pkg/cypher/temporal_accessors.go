@@ -54,9 +54,6 @@ func formatCypherValueString(value interface{}) string {
 	}
 }
 
-// FormatFloat delegates the shared numeric text contract.
-func FormatFloat(value float64, bits int) string { return convert.FormatFloat(value, bits) }
-
 func formatZonedDateTimeString(value time.Time, zoneID string) string {
 	if zoneID == "" && strings.Contains(value.Location().String(), "/") {
 		zoneID = value.Location().String()

@@ -8,11 +8,19 @@ FLOATs, including whole and subnormal values, retain a fractional/exponent token
 JSON does not carry unsigned-width tags: uint64 at or below MaxInt64 reads as the
 canonical signed INTEGER with the same value.
 
+Persisted typed metadata uses `PropertyJSON.MarshalState` through its schema
+codec. Declared numeric fields keep their existing `encoding/json` spelling:
+the destination type already identifies a FLOAT. At an interface boundary,
+including a typed container or envelope stored inside `any`, the same writer
+switches to explicit numeric tokens so a dynamic reader retains the kind.
+Ordinary property/result writers continue to preserve FLOAT tokens everywhere;
+this state operation does not change their contract or add a second encoder.
+
 Internal state has a separate compatibility boundary. Schema definitions at
 version 0/1 and replication's legacy JSON frames use the shared
 `PropertyJSON.UnmarshalLegacyState` reader, which preserves the former
 `encoding/json` float64 interpretation. Schema version 2 uses exact PropertyJSON;
-new replication frames keep the existing typed Gob encoding. A rewritten legacy
+new replication frames keep the existing typed MessagePack encoding. A rewritten legacy
 schema stores its already-decoded FLOAT values in version 2. DOMAIN equality
 continues to compare INTEGERs and FLOATs exactly, without float64 widening.
 See [the persisted-reader inventory](numeric_state_compatibility.md).
@@ -63,7 +71,7 @@ properties, or send input and receive properties; those are separate paths.
 Changing a reader/writer or its domain fails `TestNumericWireOwnership`.
 `TestNumericDomainPolicyMutations` checks the positive fixture and flips every
 registered reference to the opposite domain, requiring the semantic diagnostic.
-The legacy `cypher.JSONNumbers` forwarding API is classified as external input.
+The legacy `cypher.JSONNumbers` forwarding API is retired; Go consumers call `convert.CypherInputJSON.Numbers` directly.
 
 The guard scans production Go source across the repository, including all `pkg/`
 and `apoc/` packages, replication and future files/packages. Raw JSON readers and
@@ -91,7 +99,7 @@ backup/restore/retention export, document transforms and JSONL parsing, WAL and
 legacy recovery, replication fallback, HTTP and remote values, GraphQL
 arguments and results, and the migration script's source properties and
 destination parameters (MCP and Heimdall in-process tool paths excluded, see
-above). Native MessagePack/Gob and declared CSV/GraphML numeric types keep
+above). Native MessagePack and declared CSV/GraphML numeric types keep
 their existing protocol contracts. The PR Evidence table lists each registered
 consumer and its domains; non-property exceptions retain their own reasons.
 

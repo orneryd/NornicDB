@@ -49,6 +49,7 @@ func jsonPublicWALWriteBench(b *testing.B, syncMode string, create bool) {
 }
 
 func jsonPublicWALWriteBatch(b *testing.B, dir string, nodes []*storage.Node, syncMode string, create bool) {
+	ctx := b.Context()
 	defer func() {
 		b.StopTimer()
 		jsonPublicStorageCheck(b, os.RemoveAll(dir))
@@ -59,7 +60,7 @@ func jsonPublicWALWriteBatch(b *testing.B, dir string, nodes []*storage.Node, sy
 	b.StartTimer()
 	for _, node := range nodes {
 		if create {
-			_, err := engine.CreateNode(node)
+			_, err := engine.CreateNode(ctx, node)
 			jsonPublicStorageCheck(b, err)
 		} else {
 			jsonPublicStorageCheck(b, wal.Append(storage.OpCreateNode, storage.WALNodeData{Node: node}))
@@ -92,12 +93,13 @@ func BenchmarkJSONPublicBufferedRecoveryBounded(b *testing.B) {
 }
 
 func jsonPublicBufferedSource(b *testing.B, root string, nodes []*storage.Node) (string, string) {
+	ctx := b.Context()
 	store := jsonPublicBufferedOpen(b, filepath.Join(root, "store"))
 	defer func() { jsonPublicStorageCheck(b, store.Close()) }()
 	// Seed and flush the property dictionary before taking a physical preimage.
 	// A graceful source close can then flush normally: restoring this preimage
 	// gives recovery the original dictionary without any of the 64 flush markers.
-	_, err := store.CreateNode(&storage.Node{ID: "jsonbench:seed", Properties: nodes[0].Properties})
+	_, err := store.CreateNode(ctx, &storage.Node{ID: "jsonbench:seed", Properties: nodes[0].Properties})
 	jsonPublicStorageCheck(b, err)
 	jsonPublicStorageCheck(b, store.FlushWriteBehind(nil))
 	backup := filepath.Join(root, "before-wal.backup")
@@ -107,11 +109,11 @@ func jsonPublicBufferedSource(b *testing.B, root string, nodes []*storage.Node) 
 	journal := storage.NewWALEngine(store, wal)
 	defer func() { jsonPublicStorageCheck(b, journal.Close()) }()
 	for _, node := range nodes {
-		tx, err := store.BeginTransaction()
+		tx, err := store.BeginTransaction(ctx)
 		jsonPublicStorageCheck(b, err)
 		jsonPublicStorageCheck(b, tx.SetNamespace("jsonbench"))
 		jsonPublicStorageCheck(b, tx.SetImplicit(true))
-		_, err = tx.CreateNode(node)
+		_, err = tx.CreateNode(ctx, node)
 		jsonPublicStorageCheck(b, err)
 		jsonPublicStorageCheck(b, tx.Commit())
 		if !tx.AcknowledgedBuffered() {
@@ -271,18 +273,19 @@ func jsonPublicStorageNodes(payloadBytes int) []*storage.Node {
 }
 
 func jsonPublicStorageValidate(b *testing.B, engine storage.Engine, nodes []*storage.Node) {
+	ctx := b.Context()
 	b.Helper()
 	provider, ok := engine.(storage.NamespaceLabelStatsProvider)
 	if !ok {
 		b.Fatal("fixture engine must provide public namespace label counts")
 	}
-	count, err := provider.NodeCountByLabelInNamespace("jsonbench", "JSONPublicDoc")
+	count, err := provider.NodeCountByLabelInNamespace(ctx, "jsonbench", "JSONPublicDoc")
 	jsonPublicStorageCheck(b, err)
 	if count != int64(len(nodes)) {
 		b.Fatalf("recovered %d labelled nodes, want %d", count, len(nodes))
 	}
 	for _, node := range nodes {
-		got, err := engine.GetNode(node.ID)
+		got, err := engine.GetNode(ctx, node.ID)
 		jsonPublicStorageCheck(b, err)
 		// Shape checks work on both base and head, without requiring the base's
 		// known numeric precision/type defects to pass corrected assertions.

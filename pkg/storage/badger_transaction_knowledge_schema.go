@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/orneryd/nornicdb/internal/jsontext"
 )
 
 // Schema returns the transaction's isolated schema for purpose. Ordinary DDL

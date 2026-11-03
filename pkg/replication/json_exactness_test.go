@@ -36,6 +36,7 @@ func TestNumericWireReplicationLegacyJSONUsesMigrationOwner(t *testing.T) {
 func TestNumericWireReplicationNumbersSurviveReplay(t *testing.T) {
 	for _, legacy := range []bool{true, false} {
 		t.Run(map[bool]string{true: "migrated_v4_json", false: "current_messagepack"}[legacy], func(t *testing.T) {
+			ctx := t.Context()
 			properties := map[string]interface{}{
 				"large_whole": float64(1 << 60), "whole": float64(2), "negative_zero": math.Copysign(0, -1),
 				"integer": int64(9007199254740993), "unsigned": uint64(math.MaxUint64),
@@ -75,7 +76,8 @@ func TestNumericWireReplicationNumbersSurviveReplay(t *testing.T) {
 			committedAt := time.Unix(1700000000, 123).UTC()
 			for _, command := range commands {
 				command.Timestamp = committedAt
-				require.NoError(t, source.ApplyCommand(command))
+				_, err := source.ApplyCommand(ctx, command, WALQueued)
+				require.NoError(t, err)
 			}
 			require.NoError(t, source.FlushWAL())
 			require.NoError(t, source.Close())
@@ -90,13 +92,14 @@ func TestNumericWireReplicationNumbersSurviveReplay(t *testing.T) {
 			for _, entry := range entries {
 				require.Equal(t, committedAt.UnixNano(), entry.Timestamp)
 				require.True(t, committedAt.Equal(entry.Command.Timestamp))
-				require.NoError(t, target.ApplyCommand(entry.Command))
+				_, err = target.ApplyCommand(ctx, entry.Command, WALQueued)
+				require.NoError(t, err)
 			}
-			replayed, err := target.Engine().GetNode("a")
+			replayed, err := target.Engine().GetNode(ctx, "a")
 			require.NoError(t, err)
 			require.Equal(t, expected, replayed.Properties)
 			require.True(t, math.Signbit(replayed.Properties["negative_zero"].(float64)))
-			replayedEdge, err := target.Engine().GetEdge("r")
+			replayedEdge, err := target.Engine().GetEdge(ctx, "r")
 			require.NoError(t, err)
 			require.Equal(t, expected, replayedEdge.Properties)
 			require.True(t, math.Signbit(replayedEdge.Properties["negative_zero"].(float64)))
@@ -114,18 +117,18 @@ func TestNumericWireReplicationNumbersSurviveReplay(t *testing.T) {
 			})
 			require.NoError(t, err)
 			require.Error(t, restored.RestoreSnapshot(bytes.NewReader(legacySnapshot)), "current snapshot admission must reject historical JSON")
-			count, err := restored.Engine().NodeCount()
+			count, err := restored.Engine().NodeCount(ctx)
 			require.NoError(t, err)
 			require.Zero(t, count, "rejected snapshot must not publish partial entities")
 			require.NoError(t, restored.RestoreSnapshot(bytes.NewReader(snapshot)))
 			position, err := restored.GetWALPosition()
 			require.NoError(t, err)
 			require.Equal(t, uint64(math.MaxUint64), position)
-			restoredNode, err := restored.Engine().GetNode("a")
+			restoredNode, err := restored.Engine().GetNode(ctx, "a")
 			require.NoError(t, err)
 			require.Equal(t, expected, restoredNode.Properties)
 			require.True(t, math.Signbit(restoredNode.Properties["negative_zero"].(float64)))
-			restoredEdge, err := restored.Engine().GetEdge("r")
+			restoredEdge, err := restored.Engine().GetEdge(ctx, "r")
 			require.NoError(t, err)
 			require.Equal(t, expected, restoredEdge.Properties)
 
@@ -134,10 +137,10 @@ func TestNumericWireReplicationNumbersSurviveReplay(t *testing.T) {
 			require.NoError(t, target.WriteSnapshot(&currentSnapshot))
 			current := setupTestAdapter(t).adapter
 			require.NoError(t, current.RestoreSnapshot(&currentSnapshot))
-			currentNode, err := current.Engine().GetNode("a")
+			currentNode, err := current.Engine().GetNode(ctx, "a")
 			require.NoError(t, err)
 			require.Equal(t, expected, currentNode.Properties)
-			currentEdge, err := current.Engine().GetEdge("r")
+			currentEdge, err := current.Engine().GetEdge(ctx, "r")
 			require.NoError(t, err)
 			require.Equal(t, expected, currentEdge.Properties)
 		})
@@ -148,6 +151,7 @@ func TestNumericWireReplicationAcceptedTransactions(t *testing.T) {
 	for _, buffered := range []bool{false, true} {
 		for _, format := range []string{"typed", "legacy_json", "trailing_value"} {
 			t.Run(map[bool]string{false: "direct", true: "buffered"}[buffered]+"/"+format, func(t *testing.T) {
+				ctx := t.Context()
 				engine, adapter := wireFixture(t, buffered)
 				properties := map[string]any{"integer": int64(9007199254740993), "unsigned": uint64(math.MaxUint64), "whole": float64(2), "negative_zero": math.Copysign(0, -1)}
 				node := &storage.Node{ID: "wire:a", Labels: []string{"Numeric"}, Properties: properties}
@@ -163,25 +167,28 @@ func TestNumericWireReplicationAcceptedTransactions(t *testing.T) {
 					command.Data = append(command.Data, command.Data...)
 				}
 				if format != "typed" {
-					require.Error(t, adapter.ApplyCommand(command))
-					nodes, err := engine.NodeCount()
+					_, err := adapter.ApplyCommand(ctx, command, WALQueued)
+					require.Error(t, err)
+					nodes, err := engine.NodeCount(ctx)
 					require.NoError(t, err)
 					require.Zero(t, nodes, "strict envelope rejection must not publish partial entities")
 					return
 				}
-				require.NoError(t, adapter.ApplyCommand(command))
-				require.NoError(t, adapter.ApplyCommand(command), "accepted transaction replay is idempotent")
-				storedNode, err := engine.GetStoredNode(node.ID)
+				_, err := adapter.ApplyCommand(ctx, command, WALQueued)
+				require.NoError(t, err)
+				_, err = adapter.ApplyCommand(ctx, command, WALQueued)
+				require.NoError(t, err, "accepted transaction replay is idempotent")
+				storedNode, err := engine.GetStoredNode(ctx, node.ID)
 				require.NoError(t, err)
 				require.Equal(t, properties, storedNode.Properties)
 				require.True(t, math.Signbit(storedNode.Properties["negative_zero"].(float64)))
-				storedEdge, err := engine.GetStoredEdge(edge.ID)
+				storedEdge, err := engine.GetStoredEdge(ctx, edge.ID)
 				require.NoError(t, err)
 				require.Equal(t, properties, storedEdge.Properties)
-				nodes, err := engine.NodeCount()
+				nodes, err := engine.NodeCount(ctx)
 				require.NoError(t, err)
 				require.EqualValues(t, 1, nodes)
-				edges, err := engine.EdgeCount()
+				edges, err := engine.EdgeCount(ctx)
 				require.NoError(t, err)
 				require.EqualValues(t, 1, edges)
 			})

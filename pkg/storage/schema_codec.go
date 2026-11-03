@@ -15,7 +15,7 @@ func EncodeSchemaDefinition(def *SchemaDefinition) ([]byte, error) {
 	}
 	current := *def
 	current.Version = schemaDefinitionVersion
-	return convert.PropertyJSON.Marshal(&current)
+	return convert.PropertyJSON.MarshalState(&current)
 }
 
 // DecodeSchemaDefinition reads a complete persisted schema document. Versions

@@ -1,8 +1,9 @@
 # Persisted numeric reader compatibility for PR #1665
 
-This inventory compares the PR's production readers with release base
-`b1b018d3f407eb7ec9d4b3038667be5dae58a09e`. It applies the operator's explicit
-distinction between internal replay state and JSON document/backup imports.
+The original inventory compared the numeric layer with historical release base
+`b1b018d3f407eb7ec9d4b3038667be5dae58a09e`. The owner names and binary-replication
+rows below are updated for the rebase onto release `04571a481e8324139b46c82d99c76db71a951ab8`.
+Internal replay state and JSON document/backup imports have distinct contracts.
 
 Case **a** means the former internal format already preserved numeric types.
 Case **b** means untagged internal JSON was formerly read as float64. **a\***
@@ -12,12 +13,12 @@ contract, even where its former reader returned float64.
 
 | Store / reader | Former format and reader | Class | Result in this correction |
 | --- | --- | --- | --- |
-| Schema definitions: engine load/persist, transaction DDL and knowledge policies, transaction publication copies, admin schema sidecars | Envelope version 1 (or absent); plain JSON; `encoding/json.Unmarshal` decoded interface numbers as float64 | b | One owner, `storage.EncodeSchemaDefinition` / `DecodeSchemaDefinition`, handles every persisted read, write and deep copy. Versions 0/1 use `PropertyJSON.UnmarshalLegacyState`; version 2 uses exact PropertyJSON. Every writer uses version 2 from decoded values, including rewrites of legacy state. Native backup preserves bytes and restore uses the engine loader. |
-| Replication direct commands, batches and snapshots; `storage.decodeCommandPayload`, `decodeNodePayload`, `decodeEdgePayload` in `entity_payload_codec.go` | Gob typed payloads, with historical plain JSON fallbacks decoded by `encoding/json.Unmarshal` | a for Gob; b for JSON | The shared storage codec retains Gob and legacy JSON dispatch. All three JSON fallback branches use the shared legacy-state reader. Accepted semantic transaction envelopes and their entity payloads remain strict Gob with trailing-data rejection; named property values retain their typed binary owner. Retired raw property/query commands are rejected rather than restored. |
+| Schema definitions: engine load/persist, transaction DDL and knowledge policies, transaction publication copies, admin schema sidecars | Envelope version 1 (or absent); plain JSON; `encoding/json.Unmarshal` decoded interface numbers as float64 | b | One owner, `storage.EncodeSchemaDefinition` / `DecodeSchemaDefinition`, handles every persisted read, write and deep copy. Versions 0/1 use `PropertyJSON.UnmarshalLegacyState`; version 2 uses exact PropertyJSON. The shared writer preserves existing declared metadata bytes while dynamic DOMAIN values retain explicit FLOAT kind. Every writer uses version 2 from decoded values, including rewrites of legacy state. Native backup preserves bytes and restore uses the engine loader. |
+| Replication commands and snapshots; `storage.EncodeCommandPayload` / `DecodeCommandPayload`, node and edge image codecs | Current release uses typed MessagePack; historical Gob/JSON is confined to the V4 migration reader | a | Keep the current strict MessagePack owner. Historical `replication.decodeV4ReplicationValue` and `storage.TranscodeV4EntityChange` read Gob or legacy JSON only while upgrading old V4 inputs; it is not a current traffic/replay fallback. Retired raw property/query commands remain rejected. |
 | WAL outer frames, `wal.go`, `wal_jsonbuf.go`, `wal_entry_codec.go` | Versioned framing; typed sequence, timestamp, operation, checksum and database fields; property payload is opaque `[]byte` | a | No property reader changed in the outer envelope. New JSON projections preserve FLOAT tokens; payload interpretation remains at the recovery codec. |
 | WAL redo/undo/bulk/buffered payloads and framed snapshots, `recovery_codec.go`, `snapshot_stream.go` | `storage-msgpack-v1` sidecar or serialization header selects typed MessagePack; native property bodies also retain typed storage values | a | Preserve existing marker/header dispatch and typed reader. New writes continue to carry typed authority. |
 | Untagged WAL recovery JSON and legacy JSON snapshots, `decodeRecoveryPayloadAuthority`, `decodeLegacyRecoveryJSON`, `LoadSnapshot` | At the release base, `json.Decoder.UseNumber` plus `legacyRecoveryNumber` already read integral lexemes as int64/uint64 and decimal/exponent lexemes as float64 | a* | Keep that exact-lexeme contract. The shared PropertyJSON replacement preserves this existing policy; do not introduce the schema/replication float64 compatibility policy here. Added a `1152921504606847000` INTEGER control. |
-| CDC, `cypher.cdcValue`, `cdcSelectorValuesEqual`; storage `ChangeEvents` | Change events and transaction metadata are stored through `encodeValue` and decoded through `decodeValue` as typed MessagePack | a | Keep typed persisted values. Shared numeric normalization/equality preserves exact cross-type identity; there is no legacy JSON reader to version. |
+| CDC, `cypher.cdcValue`, `holdsValues`; storage `ChangeEvents` | Change events and transaction metadata are stored through `encodeValue` and decoded through `decodeValue` as typed MessagePack | a | Keep typed persisted values. Shared numeric normalization/equality preserves exact cross-type identity; there is no legacy JSON reader to version. |
 | Native Badger entity storage and native backup restore | Versioned typed storage serialization; native backups carry the original key/value bytes, including schema envelopes | a | Entity decoding remains typed. Restored schema envelopes pass through the version-aware schema reader above. |
 | JSON backup restore, `nornicdb.DB.Backup` / `Restore` | Version `1.0` plain JSON with untagged interface numbers; former JSON restore returned float64 | Import | All backup versions intentionally restore exact integer token digits. New JSON backups identify format `2.0` and retain FLOAT tokens and negative zero. |
 | Combined graph exports and JSONL, `loader.go`, `types.go` | Plain Neo4j-style JSON; former combined/line readers returned float64; `types.go` converts already-decoded values and writes JSON | Import | Preserve exact PropertyJSON imports and new FLOAT-preserving writers. There was no existing graph-export format version field to bump. |
@@ -51,10 +52,10 @@ The domain-reader functions (excluding the shared codec owners) are:
 - `pkg/graphql/models`: `JSON.UnmarshalGQL`.
 - `pkg/heimdall`: `parseActionEnvelope`, `tryParseActionResponse`.
 - `pkg/nornicdb`: `DB.Restore`.
-- `pkg/storage/entity_payload_codec.go`: `decodeCommandPayload`, `decodeNodePayload`, `decodeEdgePayload`; replication consumes these shared storage owners.
+- `pkg/storage/entity_payload_codec.go`: current `DecodeCommandPayload`, `DecodeNodePayload`, `DecodeEdgePayload` consume typed MessagePack, not a JSON domain reader. Historical JSON/Gob decoding is restricted to explicit V4 migration owners, including `pkg/replication/wal_v4_payload.go:decodeV4ReplicationValue` and `pkg/storage/wal_v4_gob_entity.go:TranscodeV4EntityChange`.
 - `pkg/server`: `decodeTransactionRequest`, `readJSON`.
 - `pkg/storage`: `BadgerEngine.loadPersistedSchemas`,
-  `BadgerTransaction.KnowledgePolicySchema` (both use the versioned schema codec), `decodeLegacyRecoveryJSON`,
+  `BadgerTransaction.Schema` (both use the versioned schema codec), `decodeLegacyRecoveryJSON`,
   `LoadFromNeo4jExport`, `loadNodesFromReader`, `loadRelationshipsFromReader`,
   `decodeRecoveryPayloadAuthority`, `httpTransport.doRequestToURL`,
   `decodeRemoteHTTPRowValue`, `remoteHTTPRESTEntity`.
@@ -73,8 +74,8 @@ The complete persisted-schema boundary is:
 | `BadgerEngine.loadPersistedSchemas` | Startup and native-restore read of `prefixSchema` | `DecodeSchemaDefinition` |
 | `BadgerEngine.persistSchemaDefinition` | Engine write of `schemaKey(namespace)` | `EncodeSchemaDefinition` |
 | `BadgerEngine.GetSchemaForNamespace` / startup `SetPersister` | Attach the engine writer to ordinary and knowledge-policy mutations | `persistSchemaDefinition` → `EncodeSchemaDefinition` |
-| `BadgerTransaction.KnowledgePolicySchema` | Snapshot read of `schemaKey`, staged write of the same key, deep copy for commit | `DecodeSchemaDefinition`, `EncodeSchemaDefinition`, then `DecodeSchemaDefinition` |
-| `BadgerTransaction.Schema` / `StageSchemaChanges`, Cypher `prepareSchemaTransaction` / `mutateSchema` | Ordinary DDL transaction and runtime backfill snapshot | `KnowledgePolicySchema`; staged typed snapshot comes from its codec-produced copy |
+| `BadgerTransaction.Schema` | Snapshot read of `schemaKey`, staged write of the same key, deep copy for commit | `DecodeSchemaDefinition`, `EncodeSchemaDefinition`, then `DecodeSchemaDefinition` |
+| `BadgerTransaction.Schema` / `StageSchemaChanges`, Cypher `prepareSchemaTransaction` / `mutateSchema` | Ordinary DDL transaction and runtime backfill snapshot | `Schema(KnowledgePolicyChanges)`; staged typed snapshot comes from its codec-produced copy |
 | `publishKnowledgePolicySchemaLocked` | Publish committed schema/knowledge-policy snapshot | Consumes the codec-produced isolated definition; no serialization |
 | `finishKnowledgePolicyMutationLocked` / `persistLocked` | Direct and transactional knowledge-policy mutations | Registered engine or transaction persister above |
 | `adminimport.exportNornicSchemaDefinition` | Schema sidecar export | `EncodeSchemaDefinition` |
@@ -104,7 +105,7 @@ Regression coverage added or extended:
   `CREATE INDEX`, `COMMIT`, restart and DOMAIN enforcement on both parsers.
 - `TestNumericWireSchemaSidecarRoundTrip`: versioned sidecar import, export and
   reimport; `TestSchemaDefinitionCodec`: exact deep copy and version/error controls.
-- `TestNumericWireReplicationNumbersSurviveReplay`: legacy JSON and typed Gob
+- `TestNumericWireReplicationNumbersSurviveReplay`: typed MessagePack
   commands persisted to WAL, adapter reopen and replay into fresh storage;
   node/relationship properties, set-property values and Cypher parameters;
   replication snapshot restore; large whole FLOAT, 2.0, negative zero and
@@ -150,7 +151,7 @@ PR's schema codec; its added callers were checked against the worktree with rg.
 | Buffered WAL / MVCC | `allocateMVCCVersion` -> `commitBufferedLocked` -> `bufferedCommit` -> `AppendBufferedCommit` -> `walBufferedCommitPayload` -> `marshalJSONCompact`; recovery decodes `WALBufferedCommitData`. Node/edge counters, property IDs/counters and commit sequence are uint64. | The version and counters are copied as typed fields and typed maps throughout. Native MVCC heads/version bodies use binary/MessagePack, not JSON. |
 | WAL markers, redo/undo/bulk | `AppendTxCommit` uses typed int `WALTxData.OpCount`; checkpoint's map receives uint64 directly from `sequence.Load()`. Engine/batch writers construct typed entity payloads -> `marshalWALRecoveryPayload`. | No intermediate float64 decoding. Entity JSON projections retain typed metadata; the existing MessagePack sidecar remains authoritative for properties. |
 | Snapshots | `WriteSnapshot` and `writeSnapshotCollection` write binary uint64 sequence and typed uint64 footer counts through `writeSnapshotFrame` -> `encodeRecoveryPayload`; `ReadSnapshot` strictly decodes `snapshotCompletion`. | Counts originate from uint64 counters or explicit uint64 length conversion. Entity frames are typed; legacy snapshot reads do not feed an untyped whole-envelope rewrite. |
-| Replication | `ApplyCommand` builds typed `replicationWALRecord.Timestamp` from `UnixNano()` (int64), used unchanged by async and synchronous append. Commands, batches, parameters and snapshot WALPosition use typed Gob writers; historical JSON fallback decodes into typed envelopes. | Only interface property/parameter leaves take legacy float64 semantics. Typed timestamps, positions and counts never pass through an untyped JSON map. |
+| Replication | `ApplyCommand` builds typed `replicationWALRecord.Timestamp` from `UnixNano()` (int64), used unchanged by async and synchronous append. Commands, batches, parameters and snapshot WALPosition use typed MessagePack writers; historical JSON fallback decodes into typed envelopes. | Only interface property/parameter leaves take legacy float64 semantics. Typed timestamps, positions and counts never pass through an untyped JSON map. |
 | CDC | `ChangeEvent` integer sequence/timestamp fields are encoded/decoded with native MessagePack; `callDbCdcQuery` (`pkg/cypher/call_cdc.go`) projects sequence integers directly to external results. | No internal JSON rewrite. FLOAT normalization is confined to value leaves; it does not modify the typed event envelope. |
 | Schema | Typed `SchemaDefinition.Version` (int) and constraint/index metadata reach the sole `EncodeSchemaDefinition` owner, including transactional publication and sidecars. Versions 0/1 decode into that typed envelope with legacy semantics for interface leaves only. | The writer sets version 2 as an int; old interface FLOAT values occur only inside allowed-value/property fields, not integer metadata. |
 | Catalog / database metadata | Database metadata remains `json.Marshal(map[string]*DatabaseInfo)` -> JSON string -> typed `json.Unmarshal`; index/access metadata uses its existing MessagePack owner. | These writers are unchanged and outside the FLOAT-preserving writer route. The frozen typed-catalog exception is retained, not broadened. |

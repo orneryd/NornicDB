@@ -21,13 +21,16 @@ func TestNumericWireSchemaSidecarRoundTrip(t *testing.T) {
 		{"v2_exact_integer", `"version":2,`, "9007199254740993", int64(9007199254740993)},
 	} {
 		t.Run(format.name, func(t *testing.T) {
+			ctx := t.Context()
 			path := filepath.Join(t.TempDir(), "schema.json")
 			raw := []byte(fmt.Sprintf(`{%s"constraints":[{"name":"value_domain","type":"DOMAIN","label":"Value","properties":["v"],"allowed_values":[%s]}]}`, format.header, format.token))
 			require.NoError(t, os.WriteFile(path, raw, 0600))
 			for stage := 0; stage < 2; stage++ {
 				engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-				require.NoError(t, applySchemaDefinition(engine, path))
-				require.Equal(t, []interface{}{format.want}, engine.GetSchema().ExportDefinition().Constraints[0].AllowedValues)
+				require.NoError(t, applySchemaDefinition(ctx, engine, path))
+				definition, err := engine.GetSchema().ExportDefinition(ctx)
+				require.NoError(t, err)
+				require.Equal(t, []interface{}{format.want}, definition.Constraints[0].AllowedValues)
 				require.NoError(t, exportNornicSchemaDefinition(path, engine.GetSchema()))
 			}
 		})

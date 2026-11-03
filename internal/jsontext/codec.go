@@ -56,13 +56,6 @@ func Unmarshal(raw []byte, out any, stages ...DecodeStage) error {
 	return unmarshal(raw, out, false, stages...)
 }
 
-// UnmarshalNumbers retains dynamic number lexemes while using the same string
-// projection, typed binding and error mapping as Unmarshal. Numeric domain
-// owners decide how those lexemes become property or input values.
-func UnmarshalNumbers(raw []byte, out any) error {
-	return unmarshal(raw, out, true)
-}
-
 func unmarshal(raw []byte, out any, numbers bool, stages ...DecodeStage) error {
 	stage := RawInput
 	if len(stages) > 1 {

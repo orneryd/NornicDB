@@ -184,7 +184,7 @@ func normalizeDecodedJSON(value reflect.Value, policy jsonNumberPolicy) error {
 	case reflect.Struct:
 		for _, index := range plan.fields {
 			field := value.Field(index)
-			if field.CanSet() {
+			if field.CanSet() || value.Type().Field(index).Anonymous {
 				if err := normalizeDecodedJSON(field, policy); err != nil {
 					return err
 				}
@@ -231,7 +231,7 @@ func jsonNormalizationPlanFor(typ reflect.Type) *jsonNormalizationPlan {
 	if plan.needed && typ.Kind() == reflect.Struct {
 		for index := 0; index < typ.NumField(); index++ {
 			field := typ.Field(index)
-			if field.PkgPath == "" && field.Tag.Get("json") != "-" && jsonContainsInterfaces(field.Type, map[reflect.Type]bool{}) {
+			if (field.PkgPath == "" || field.Anonymous) && field.Tag.Get("json") != "-" && jsonContainsInterfaces(field.Type, map[reflect.Type]bool{}) {
 				plan.fields = append(plan.fields, index)
 			}
 		}
@@ -256,7 +256,7 @@ func jsonContainsInterfaces(typ reflect.Type, seen map[reflect.Type]bool) bool {
 	case reflect.Struct:
 		for index := 0; index < typ.NumField(); index++ {
 			field := typ.Field(index)
-			if field.PkgPath == "" && field.Tag.Get("json") != "-" && jsonContainsInterfaces(field.Type, seen) {
+			if (field.PkgPath == "" || field.Anonymous) && field.Tag.Get("json") != "-" && jsonContainsInterfaces(field.Type, seen) {
 				return true
 			}
 		}

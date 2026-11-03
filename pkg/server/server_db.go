@@ -18,8 +18,6 @@ import (
 	"github.com/orneryd/nornicdb/internal/jsontext"
 	"github.com/orneryd/nornicdb/internal/localizationboundary"
 
-	math "github.com/orneryd/nornicdb/pkg/math/libm"
-
 	"github.com/orneryd/nornicdb/internal/catalogadapter"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/config/dbconfig"
@@ -34,13 +32,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/txphase"
 	"github.com/orneryd/nornicdb/pkg/txsession"
-	"io"
-	"net/http"
-	"reflect"
-	"sort"
-	"strconv"
-	"strings"
-	"time"
 )
 
 // =============================================================================
@@ -1174,7 +1165,7 @@ func (s *Server) transactionHTTPValue(ctx context.Context, value interface{}, db
 }
 
 // transactionHTTPFloat is a float as Neo4j's HTTP API writes it: a JSON
-// number in Java's text (cypher.FormatFloat: 1.0, 1.0E20, 1.0E-7), or, for a
+// number in Java's text (convert.FormatFloat: 1.0, 1.0E20, 1.0E-7), or, for a
 // value JSON can't hold, the string "Infinity", "-Infinity" or "NaN".
 func transactionHTTPFloat(value float64, bits int) interface{} {
 	return valueconvert.PropertyJSON.Float(value, bits)

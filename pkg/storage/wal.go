@@ -45,7 +45,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/orneryd/nornicdb/internal/jsontext"
 	"github.com/orneryd/nornicdb/pkg/config"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/errors/compose"

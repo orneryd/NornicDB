@@ -222,13 +222,6 @@
       "property.NewEncoder": 1
     }
   },
-  "pkg/cypher/json_values.go:JSONNumbers": {
-    "read_domain": "input",
-    "contract": "Explicit Cypher conversion reads external JSON; serialization writes an existing value document.",
-    "calls": {
-      "input.Numbers": 1
-    }
-  },
   "pkg/graphql/models/models.go:FloatArray.MarshalGQL": {
     "write_domain": "property",
     "contract": "External GraphQL scalar input and existing result/embedding JSON output, classified separately by direction.",
@@ -529,9 +522,9 @@
   },
   "pkg/storage/schema_codec.go:EncodeSchemaDefinition": {
     "write_domain": "property",
-    "contract": "Sole schema writer: version 2 preserves exact INTEGERs and FLOAT tokens from decoded values.",
+    "contract": "Sole schema writer: version 2 preserves dynamic INTEGER/FLOAT identity while declared metadata retains its existing typed JSON bytes.",
     "calls": {
-      "property.Marshal": 1
+      "property.MarshalState": 1
     }
   },
   "pkg/storage/schema_codec.go:DecodeSchemaDefinition": {

@@ -50,17 +50,8 @@ func unescapeLineSeparators(encoded string) string {
 	return out.String()
 }
 
-// JSONNumbers converts the json.Number values of a value decoded with
-// UseNumber to Cypher numbers, as Neo4j's HTTP API reads JSON: a number
-// without '.', 'e' or 'E' that fits int64 is an INTEGER, a larger one is
-// rejected, any other is a FLOAT (+/-Infinity when out of range). Lists and
-// maps are converted in place.
-func JSONNumbers(value interface{}) (interface{}, error) {
-	return valueconvert.CypherInputJSON.Numbers(value)
-}
-
 // apocConvertFromJSON is apoc.convert.fromJsonMap / fromJsonList(text): the
-// JSON text's map or list with JSONNumbers' numbers; ok is false for a
+// JSON text's map or list with the canonical input-domain numbers; ok is false for a
 // value that isn't text, text that isn't JSON, or JSON of the other kind.
 func apocConvertFromJSON(wantMap bool, value interface{}) (interface{}, error) {
 	// APOC 5.26.30 JsonUtil.parse: null/empty input and decoded JSON null

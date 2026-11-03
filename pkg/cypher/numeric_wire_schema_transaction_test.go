@@ -24,7 +24,7 @@ func TestNumericWireSchemaDDLTransactionRestart(t *testing.T) {
 			dir := t.TempDir()
 			// Seed the historical schema bytes, including the old FLOAT writer's
 			// rounded integral token, without passing through today's encoder.
-			db, err := badger.Open(badger.DefaultOptions(dir).WithLogger(nil))
+			db, err := fixtureowner.OwnResult[*badger.DB](t, badger.ErrDBClosed)(badger.Open(badger.DefaultOptions(dir).WithLogger(nil)))
 			require.NoError(t, err)
 			raw := []byte(fmt.Sprintf(`{%s"constraints":[{"name":"value_domain","type":"DOMAIN","entity_type":"NODE","label":"Value","properties":["v"],"allowed_values":[%s]}]}`, format.header, format.token))
 			err = db.Update(func(txn *badger.Txn) error { return txn.Set([]byte("\x09test\x00"), raw) })
@@ -46,7 +46,9 @@ func TestNumericWireSchemaDDLTransactionRestart(t *testing.T) {
 			require.NoError(t, engine.Close())
 			engine = open()
 			require.True(t, engine.GetSchemaForNamespace("test").MaintainsPropertyIndex("Other", "v"))
-			require.Equal(t, []interface{}{format.want}, engine.GetSchemaForNamespace("test").ExportDefinition().Constraints[0].AllowedValues)
+			definition, err := engine.GetSchemaForNamespace("test").ExportDefinition(ctx)
+			require.NoError(t, err)
+			require.Equal(t, []interface{}{format.want}, definition.Constraints[0].AllowedValues)
 			executor = NewStorageExecutor(storage.NewNamespacedEngine(engine, "test"))
 			_, err = executor.Execute(ctx, "CREATE (:Value {v:$v})", map[string]interface{}{"v": format.want})
 			require.NoError(t, err)
