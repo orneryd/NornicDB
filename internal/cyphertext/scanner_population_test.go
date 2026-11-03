@@ -131,7 +131,7 @@ func TestFoundationLexicalPopulation(t *testing.T) {
 		}
 		return false
 	}
-	outputName := regexp.MustCompile(`^(Printf|Println|Fprintf|Fatalf|Errorf|Warn|Warnf|Info|Infof|Debug|Debugf|Error|Encode|Write|WriteString|Send|Set|Add|SetHeader|WriteJSON|JSON|WriteError)$`)
+	outputName := regexp.MustCompile(`^(Printf|Println|Fprintf|Fatalf|Errorf|Warn|Warnf|Info|Infof|Debug|Debugf|Error|Encode|Write|WriteString|Send|Set|Add|SetHeader|WriteJSON|WritePropertyJSON|JSON|WriteError)$`)
 	patternClass := regexp.MustCompile(`\\[dsw]|\[0-9|A-Za-z|a-zA-Z`)
 	var actual []scannerPopulationEntry
 	functions := map[string]populationFunctionNode{}

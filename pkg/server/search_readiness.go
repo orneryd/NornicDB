@@ -11,7 +11,7 @@ import (
 // writeSearchNotReady keeps early readiness checks and a search interrupted by
 // a concurrent rebuild on the same documented, retryable HTTP response.
 func (s *Server) writeSearchNotReady(w http.ResponseWriter, database string, status nornicdb.DatabaseSearchStatus) {
-	httpresponse.WriteJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+	httpresponse.WritePropertyJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
 		"error":          search.ErrSearchIndexBuilding.Error(),
 		"database":       database,
 		"bm25_enabled":   status.BM25Enabled,

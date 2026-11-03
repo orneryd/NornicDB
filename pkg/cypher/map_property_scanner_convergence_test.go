@@ -110,6 +110,7 @@ func TestPropertyScannerFamilyUsesCanonicalReaders(t *testing.T) {
 		"splitCommaTopLevelLocal": true, "splitArgsRespectingArrays": true,
 	}
 	quoteMechanismAllowlist := map[string]string{
+		"pkg/convert/json_encode.go:jsonTagOption":                "Consumes a Go JSON struct-tag option or quoted format value, converting its wrapper for the canonical strconv.Unquote Go-literal decoder. Go escapes and format-value commas are not Cypher source quotation; using Cypher decoding would admit different escapes and lone surrogate units. TestJSONFormatTagOptionBoundaries retains standard positive/negative escape and quoted-comma behavior.",
 		"pkg/cypher/executor_spans.go:redactSpanErrorText":        "Finds quoted Cypher fragments inside free-form trace errors, then delegates escape handling and literal masking to the canonical Cypher readers.",
 		"pkg/adminimport/importer.go:withDefaults":                "sets a CSV quote option; does not read Cypher source",
 		"pkg/adminimport/importer.go:openCSVSource":               "validates a CSV quote option before encoding/csv parsing; does not read Cypher source",

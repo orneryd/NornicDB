@@ -450,7 +450,7 @@
       "Reason": "#1548's context.Background() on ReconcileDecaySuppression's path; kept as merged. It is the same never-cancelled value as namespaceMaintenanceContext, and its owner context arrives with U-1636.",
       "Approver": "Nornic2 ruling (31 October 2026), subject to the independent review",
       "Occurrences": [
-        "call context.Background (+18 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).persistSchemaDefinition)"
+        "call context.Background (+13 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).persistSchemaDefinition)"
       ]
     }
   },
@@ -498,7 +498,7 @@
         "github.com/orneryd/nornicdb/pkg/localization.storageValidationMessage": "990e006cdab070bd32672fc600fc66523cbc03ff3cffccfe48fdfc34109a9b98",
         "github.com/orneryd/nornicdb/pkg/math/libm.Float64frombits": "24f405596402e464051c8ad40a4db07d999ea97c63c8fc036aa8dc90edeea498"
       },
-      "Closure": "50e35cb72bfe3453cc716b8ca52144a7ea7f781fce6387abf771ce7d352c5b58",
+      "Closure": "3b1a02dc8adc3ba1cd94e762f2d59ef3da2196b17aa355a22e922560092e8610",
       "Modules": null,
       "Callers": {
         "(*github.com/orneryd/nornicdb/pkg/storage.largeCommit).abort": [
@@ -515,7 +515,7 @@
       },
       "FieldWriters": null,
       "Methods": null,
-      "Reason": "Maintainer-approved compensation-only completion: rollback of previously written unpublished batches and startup crash repair must finish independently of canceled request work. Exact two caller edges and their transitive sources/caller sets are pinned; ordinary preparation and any new caller remain unapproved. Re-reviewed 2026-11-02 after native WAL publication integration: intent and restore batches pass a nil journal to commitDurableWrite, so compensation neither repeats WAL admission nor inherits the failed request. Closure re-pinned after the commitPreparationLifetime nil-default helper was deleted (callers now pass their required context directly; no caller or source pin changed). Permanent TestInstalledRollbackPhaseRecord covers source/body/helper mutations and an added caller.",
+      "Reason": "Maintainer-approved compensation-only completion: rollback of previously written unpublished batches and startup crash repair finish independently of canceled request work. Intent and restore batches pass a nil journal to commitDurableWrite, so compensation neither repeats WAL admission nor inherits the failed request. The exact two caller edges, held value, thirteen source pins and caller sets remain the approved boundary; ordinary preparation and any new caller remain unapproved. Re-reviewed 2026-11-03 against release df07c94fb and the final numeric writer: comparison to reviewed closure 7d182ff686fdee0dcba3587e6861b617bb0e890004429409b3c389832ecc4b12 adds ten payload/error-formatting helpers, removes none, and changes nine payload/error-formatting bodies. All thirteen pinned sources remain byte-identical. The final elementSeparator review retains bytes.Buffer growth for small documents and uses geometric size classes for large documents to avoid oversized retained capacity; its only operations are length/capacity arithmetic, allocation, copy and byte layout. New helpers own single-buffer JSON token layout, borrowed formatting-string release, Go field-tag metadata and standard error root naming. The JSON readValue/field-path changes project error metadata; numeric/string binding and the existing provenance context site remain unchanged. No added helper creates a context, admits a write, publishes a commit or calls rollback. Caller and phase approval is unchanged. The final exact closure is 3b1a02dc8adc3ba1cd94e762f2d59ef3da2196b17aa355a22e922560092e8610. TestInstalledRollbackPhaseRecord retains the positive two-route proof plus source/body/helper mutations and an added-caller rejection. Any later encoding/source/caller change stales this record and requires renewed source review.",
       "Approver": "Tim Sweet (OrneryD), explicit approval 2026-11-01; principal-agent source review and public/mutation controls in rollback-phase-current-review"
     }
   }

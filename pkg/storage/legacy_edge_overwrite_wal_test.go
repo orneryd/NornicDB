@@ -1,8 +1,10 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"strconv"
 	"testing"
 	"time"
 
@@ -55,9 +57,27 @@ func TestHistoricalEdgeOverwriteWALKeepsCounts(t *testing.T) {
 	require.NoError(t, err)
 	encoded, err := json.Marshal(data)
 	require.NoError(t, err)
+	// The legacy flag is decoded only, so the fixture injects it into the
+	// record's own JSON text. json.Number keeps every typed number's original
+	// lexeme: decoding these leaves as float64 would fabricate FLOAT spellings
+	// (a whole commit_sequence written as "0.0") that no writer ever produced,
+	// and the current reader rightly refuses a FLOAT literal for a uint64.
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	decoder.UseNumber()
 	var payload map[string]any
-	require.NoError(t, json.Unmarshal(encoded, &payload))
-	payload["ops"].([]any)[0].(map[string]any)["replaces_existing"] = true
+	require.NoError(t, decoder.Decode(&payload))
+	version, ok := payload["version"].(map[string]any)
+	require.True(t, ok)
+	sequence, ok := version["commit_sequence"].(json.Number)
+	require.True(t, ok, "fixture keeps the record's own integer lexeme")
+	require.Equal(t, strconv.FormatUint(data.Version.CommitSequence, 10), sequence.String())
+	ops, ok := payload["ops"].([]any)
+	require.True(t, ok)
+	require.Len(t, ops, 1)
+	operation, ok := ops[0].(map[string]any)
+	require.True(t, ok)
+	require.NotContains(t, operation, "replaces_existing", "current writers never emit the legacy flag")
+	operation["replaces_existing"] = true
 	require.NoError(t, wal.AppendWithDatabase(OpBufferedCommit, payload, "test"))
 	require.NoError(t, wal.Sync())
 

@@ -1,13 +1,12 @@
 package adminimport
 
 import (
+	"encoding/json"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
-	"github.com/orneryd/nornicdb/internal/jsontext"
 
 	"bytes"
 	"context"
 	"encoding/csv"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -514,7 +513,7 @@ func exportNornicSchemaDefinition(path string, schema *storage.SchemaManager) er
 	}
 	// jsontext.Marshal owns exact string identity; encoding/json.Indent reformats
 	// those valid bytes without decoding, so escaped lone UTF16 units survive.
-	data, err := jsontext.Marshal(def)
+	data, err := storage.EncodeSchemaDefinition(def)
 	if err != nil {
 		return err
 	}

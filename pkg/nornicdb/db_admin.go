@@ -3,7 +3,6 @@ package nornicdb
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +16,7 @@ import (
 
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/envutil"
 	"github.com/orneryd/nornicdb/pkg/gpu"
@@ -1459,13 +1459,13 @@ func (db *DB) Backup(ctx context.Context, path string) error {
 	}
 
 	backup := map[string]interface{}{
-		"version":    "1.0",
+		"version":    "2.0", // Exact PropertyJSON numbers, including whole FLOATs and -0.
 		"created_at": time.Now().Format(time.RFC3339),
 		"nodes":      nodes,
 		"edges":      edges,
 	}
 
-	data, err := json.MarshalIndent(backup, "", "  ")
+	data, err := valueconvert.PropertyJSON.MarshalIndent(backup, "", "  ")
 	if err != nil {
 		return localizedError(localization.NornicDBCoreBackupMarshalFailed(err), err)
 	}
@@ -1563,7 +1563,7 @@ legacyJSONRestore:
 		Edges     []*storage.Edge `json:"edges"`
 	}
 
-	if err := json.Unmarshal(data, &backup); err != nil {
+	if err := valueconvert.PropertyJSON.Unmarshal(data, &backup); err != nil {
 		return localizedError(localization.NornicDBCoreBackupParseFailed(err), err)
 	}
 
@@ -1685,7 +1685,7 @@ func (db *DB) ExportUserData(ctx context.Context, userID, format string) ([]byte
 	}
 
 	// Default to JSON
-	return json.Marshal(map[string]interface{}{
+	return valueconvert.PropertyJSON.Marshal(map[string]interface{}{
 		"user_id":     userID,
 		"data":        userData,
 		"exported_at": time.Now(),

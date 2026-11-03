@@ -17,6 +17,7 @@ import (
 	"github.com/orneryd/nornicdb/internal/httpresponse"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
@@ -45,7 +46,7 @@ func (s *Server) handleDecay(w http.ResponseWriter, r *http.Request) {
 		"visibilityThreshold": info.VisibilityThreshold,
 		"flushInterval":       info.FlushInterval.String(),
 	}
-	httpresponse.WriteJSON(w, http.StatusOK, response)
+	httpresponse.WritePropertyJSON(w, http.StatusOK, response)
 }
 
 // handleEmbedTrigger triggers the embedding worker to process nodes without embeddings.
@@ -86,7 +87,7 @@ func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
 			"regenerate": true,
 			"message":    s.localizedText(w, r, localization.EmbeddingRegenerationStarted()),
 		}
-		httpresponse.WriteJSON(w, http.StatusAccepted, response)
+		httpresponse.WritePropertyJSON(w, http.StatusAccepted, response)
 
 		// Start background clearing and regeneration.
 		s.runBackground(r.Context(), func(ctx context.Context) {
@@ -154,7 +155,7 @@ func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
 		"message":        s.localizedText(w, r, message),
 		"stats":          stats,
 	}
-	httpresponse.WriteJSON(w, http.StatusOK, response)
+	httpresponse.WritePropertyJSON(w, http.StatusOK, response)
 }
 
 // handleEmbedStats returns embedding worker statistics.
@@ -202,7 +203,7 @@ func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
 			"configured_provider":     s.config.EmbeddingProvider,
 			"vector_index_dimensions": vectorIndexDims,
 		}
-		httpresponse.WriteJSON(w, http.StatusOK, response)
+		httpresponse.WritePropertyJSON(w, http.StatusOK, response)
 		return
 	}
 	response := map[string]interface{}{
@@ -215,7 +216,7 @@ func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
 		"configured_provider":     s.config.EmbeddingProvider,
 		"vector_index_dimensions": vectorIndexDims,
 	}
-	httpresponse.WriteJSON(w, http.StatusOK, response)
+	httpresponse.WritePropertyJSON(w, http.StatusOK, response)
 }
 
 type embeddingFailureOperation uint8
@@ -260,7 +261,7 @@ func (s *Server) handleEmbeddingFailures(w http.ResponseWriter, r *http.Request,
 		if stats := s.db.EmbedQueueStats(); stats != nil {
 			total = stats.Parked
 		}
-		httpresponse.WriteJSON(w, http.StatusOK, map[string]any{"failures": failures, "count": total, "returned": len(failures)})
+		httpresponse.WritePropertyJSON(w, http.StatusOK, map[string]any{"failures": failures, "count": total, "returned": len(failures)})
 	case embeddingFailureRetry:
 		if r.Method != http.MethodPost {
 			s.writeNeo4jPostRequired(w, r, "Neo.ClientError.Request.Invalid")
@@ -278,7 +279,7 @@ func (s *Server) handleEmbeddingFailures(w http.ResponseWriter, r *http.Request,
 			s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.DatabaseError.General.UnknownError", err)
 			return
 		}
-		httpresponse.WriteJSON(w, http.StatusAccepted, map[string]any{"accepted": true, "retried": retried})
+		httpresponse.WritePropertyJSON(w, http.StatusAccepted, map[string]any{"accepted": true, "retried": retried})
 	default:
 		s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.DatabaseError.General.UnknownError", errors.New("invalid embedding failure operation"))
 	}
@@ -307,7 +308,7 @@ func (s *Server) handleEmbedClear(w http.ResponseWriter, r *http.Request) {
 		"cleared": cleared,
 		"message": fmt.Sprintf("Cleared embeddings from %d nodes - use /nornicdb/embed/trigger to regenerate", cleared),
 	}
-	httpresponse.WriteJSON(w, http.StatusOK, response)
+	httpresponse.WritePropertyJSON(w, http.StatusOK, response)
 }
 
 // handleSearchRebuild rebuilds search indexes from all nodes in the specified database.
@@ -367,7 +368,7 @@ func (s *Server) handleSearchRebuild(w http.ResponseWriter, r *http.Request) {
 		"database": dbName,
 		"message":  fmt.Sprintf("Search indexes rebuilt for database '%s'", dbName),
 	}
-	httpresponse.WriteJSON(w, http.StatusOK, response)
+	httpresponse.WritePropertyJSON(w, http.StatusOK, response)
 }
 
 // getOrCreateSearchService returns a cached search service for the database,
@@ -490,7 +491,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	continuationResume := req.QID != ""
 	searchStatus := s.db.GetDatabaseSearchStatus(dbName)
 	if !req.Relationships && !continuationResume && !idStart && !searchStatus.BM25Enabled && !searchStatus.VectorEnabled {
-		httpresponse.WriteJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+		httpresponse.WritePropertyJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
 			"error":          "search is disabled for this database",
 			"database":       dbName,
 			"bm25_enabled":   false,
@@ -531,7 +532,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	// services, so this is free for the steady-state hot path.
 	if !continuationResume && !idStart {
 		if err := searchSvc.EnsureWarm(ctx); err != nil {
-			httpresponse.WriteJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+			httpresponse.WritePropertyJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
 				"error":          "search index warming did not complete: " + err.Error(),
 				"database":       dbName,
 				"bm25_enabled":   searchStatus.BM25Enabled,
@@ -739,7 +740,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		}))
 	}
 
-	httpresponse.WriteJSON(w, http.StatusOK, results)
+	httpresponse.WritePropertyJSON(w, http.StatusOK, results)
 }
 
 func (s *Server) writeSearchContinuationError(w http.ResponseWriter, _ *http.Request, err error) {
@@ -768,7 +769,7 @@ func (s *Server) writeSearchContinuationError(w http.ResponseWriter, _ *http.Req
 		body["request_status"] = "page_size_exceeded"
 		body["max_page_size"] = oversized.MaxPageSize
 	}
-	httpresponse.WriteJSON(w, status, body)
+	httpresponse.WritePropertyJSON(w, status, body)
 }
 
 func (s *Server) writeSearchContinuationPage(w http.ResponseWriter, r *http.Request, owner, database string, page *search.SearchContinuationPage) {
@@ -808,7 +809,7 @@ func (s *Server) writeSearchContinuationPage(w http.ResponseWriter, r *http.Requ
 	addQueryChunkCounts(body, page.QueryChunksSearched, page.QueryChunksTotal)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	err := json.NewEncoder(w).Encode(body)
+	err := valueconvert.PropertyJSON.NewEncoder(w).Encode(body)
 	if err == nil {
 		err = r.Context().Err()
 	}
@@ -970,5 +971,5 @@ func (s *Server) handleSimilar(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	httpresponse.WriteJSON(w, http.StatusOK, searchResults)
+	httpresponse.WritePropertyJSON(w, http.StatusOK, searchResults)
 }

@@ -3,6 +3,7 @@ package httpresponse
 
 import (
 	"github.com/orneryd/nornicdb/internal/jsontext"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"net/http"
 )
 
@@ -13,4 +14,11 @@ func WriteJSON(writer http.ResponseWriter, status int, value any) {
 	writer.Header().Set("Content-Type", "application/json")
 	writer.WriteHeader(status)
 	_ = jsontext.NewEncoder(writer).Encode(value)
+}
+
+// WritePropertyJSON binds the property-number domain before the shared HTTP
+// response owner writes headers and standard JSON. It adds no response framing
+// or error policy of its own.
+func WritePropertyJSON(writer http.ResponseWriter, status int, value any) {
+	WriteJSON(writer, status, valueconvert.PropertyJSON.Prepare(value))
 }

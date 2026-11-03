@@ -133,7 +133,7 @@ func (s *Server) handleGDPRDelete(w http.ResponseWriter, r *http.Request) {
 
 	s.logAudit(r, req.UserID, "gdpr_delete", true, fmt.Sprintf("action: %s", action))
 
-	httpresponse.WriteJSON(w, http.StatusOK, map[string]string{
+	httpresponse.WritePropertyJSON(w, http.StatusOK, map[string]string{
 		"status":  action,
 		"user_id": req.UserID,
 	})

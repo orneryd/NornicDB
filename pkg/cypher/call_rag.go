@@ -4,7 +4,6 @@ package cypher
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
@@ -167,7 +166,7 @@ func (e *StorageExecutor) callDbInfer(ctx context.Context, args []interface{}) (
 		model = stringOr(req["model"], "")
 	}
 
-	if json.Unmarshal([]byte(text), &structured) != nil {
+	if valueconvert.CypherInputJSON.Unmarshal([]byte(text), &structured) != nil {
 		structured = nil
 	}
 
