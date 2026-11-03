@@ -94,7 +94,7 @@ func TestResidualPublicationDecisionRoutes(t *testing.T) {
 				require.EqualValues(t, 1, calls.Load())
 				require.NotNil(t, retained)
 				require.ErrorIs(t, retained(), ErrInvalidData, "returned/rejected actions cannot run later")
-				require.NoError(t, b.FlushWriteBehind(nil))
+				require.NoError(t, b.FlushWriteBehind(context.Background()))
 				_, readErr := b.GetStoredNode(t.Context(), "test:decision")
 				if veto {
 					require.ErrorIs(t, readErr, ErrNotFound)

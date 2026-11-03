@@ -136,7 +136,7 @@ func TestResidualFinalCacheImages(t *testing.T) {
 				} else {
 					require.NoError(t, tx.Commit())
 				}
-				require.NoError(t, b.FlushWriteBehind(nil))
+				require.NoError(t, b.FlushWriteBehind(context.Background()))
 				require.True(t, observed)
 				require.NoError(t, observationErr)
 				point, err := b.GetStoredEdge(t.Context(), "test:e")
@@ -163,7 +163,7 @@ func TestResidualUnrelatedCachesRemainWarm(t *testing.T) {
 			}
 			require.NoError(t, b.CreateEdge(t.Context(), &Edge{ID: "test:keep-e", StartNode: "test:keep-a", EndNode: "test:keep-b", Type: "KEEP"}))
 			// Land the fixture before warming physical caches; overlay scans need not populate them.
-			require.NoError(t, b.FlushWriteBehind(nil))
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
 			_, err = b.GetStoredNode(t.Context(), "test:keep-a")
 			require.NoError(t, err)
 			_, err = b.GetOutgoingEdges(context.Background(), "test:keep-a")
@@ -217,7 +217,7 @@ func TestResidualUnrelatedCachesRemainWarm(t *testing.T) {
 				}
 				require.NoError(t, tx.Commit())
 				assertWarm() // ACK visibility must preserve unrelated caches before replay too.
-				require.NoError(t, b.FlushWriteBehind(nil))
+				require.NoError(t, b.FlushWriteBehind(context.Background()))
 			} else {
 				_, err := b.CreateNode(t.Context(), &Node{ID: "other:new", Labels: []string{"OTHER"}, Properties: map[string]any{"fresh-property": int64(1)}})
 				require.NoError(t, err)

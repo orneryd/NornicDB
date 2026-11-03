@@ -8,7 +8,7 @@ import (
 
 func TestParseSimpleMatchClause(t *testing.T) {
 	t.Run("valid", func(t *testing.T) {
-		m, ok := parseSimpleMatchClause("MATCH (u:User {id: row.uid})", "row")
+		m, ok := parseSimpleMatchClause(t.Context(), "MATCH (u:User {id: row.uid})", "row")
 		require.True(t, ok)
 		require.Equal(t, "u", m.variable)
 		require.Equal(t, "User", m.label)
@@ -17,12 +17,12 @@ func TestParseSimpleMatchClause(t *testing.T) {
 	})
 
 	t.Run("invalid with multiple props", func(t *testing.T) {
-		_, ok := parseSimpleMatchClause("MATCH (u:User {id: row.uid, name: row.name})", "row")
+		_, ok := parseSimpleMatchClause(t.Context(), "MATCH (u:User {id: row.uid, name: row.name})", "row")
 		require.False(t, ok)
 	})
 
 	t.Run("invalid expression base", func(t *testing.T) {
-		_, ok := parseSimpleMatchClause("MATCH (u:User {id: other.uid})", "row")
+		_, ok := parseSimpleMatchClause(t.Context(), "MATCH (u:User {id: other.uid})", "row")
 		require.False(t, ok)
 	})
 }
@@ -101,7 +101,7 @@ func TestParsePropsBodyForUnwindFastPath(t *testing.T) {
 
 func TestParseUnwindMultiMatchCreatePlan(t *testing.T) {
 	rest := "MATCH (u:User {id: row.uid}) CREATE (p:Post {id: row.pid, title: 't'}) CREATE (u)-[:AUTHORED {at: row.ts}]->(p)"
-	plan, ok := parseUnwindMultiMatchCreatePlan(rest, "row")
+	plan, ok := parseUnwindMultiMatchCreatePlan(t.Context(), rest, "row")
 	require.True(t, ok)
 	require.Len(t, plan.matches, 1)
 	require.Len(t, plan.nodeCreates, 1)
@@ -111,13 +111,13 @@ func TestParseUnwindMultiMatchCreatePlan(t *testing.T) {
 	require.Equal(t, "t", plan.nodeCreates[0].literals["title"])
 	require.Equal(t, "ts", plan.edgeCreates[0].rowFieldRefs["at"])
 
-	_, ok = parseUnwindMultiMatchCreatePlan("CREATE (p:Post {id: row.pid})", "row")
+	_, ok = parseUnwindMultiMatchCreatePlan(t.Context(), "CREATE (p:Post {id: row.pid})", "row")
 	require.False(t, ok)
 
-	_, ok = parseUnwindMultiMatchCreatePlan("MATCH (u:User {id: row.uid})", "row")
+	_, ok = parseUnwindMultiMatchCreatePlan(t.Context(), "MATCH (u:User {id: row.uid})", "row")
 	require.False(t, ok)
 
-	_, ok = parseUnwindMultiMatchCreatePlan("MATCH (u:User {id: row.uid}) CREATE nonsense", "row")
+	_, ok = parseUnwindMultiMatchCreatePlan(t.Context(), "MATCH (u:User {id: row.uid}) CREATE nonsense", "row")
 	require.False(t, ok)
 }
 
@@ -135,13 +135,13 @@ func TestBuildPropsFromSpecAndIndexMatchingParen(t *testing.T) {
 }
 
 func TestIsSimpleWithPassthroughClause(t *testing.T) {
-	require.True(t, isSimpleWithPassthroughClause("o, row"))
-	require.True(t, isSimpleWithPassthroughClause("o AS keep, row AS source"))
-	require.True(t, isSimpleWithPassthroughClause("o,row"))
+	require.True(t, isSimpleWithPassthroughClause(t.Context(), "o, row"))
+	require.True(t, isSimpleWithPassthroughClause(t.Context(), "o AS keep, row AS source"))
+	require.True(t, isSimpleWithPassthroughClause(t.Context(), "o,row"))
 
-	require.False(t, isSimpleWithPassthroughClause(""))
-	require.False(t, isSimpleWithPassthroughClause("o,"))
-	require.False(t, isSimpleWithPassthroughClause("o, row.products"))
-	require.False(t, isSimpleWithPassthroughClause("o, toString(row.id) AS s"))
-	require.False(t, isSimpleWithPassthroughClause("o + 1 AS x"))
+	require.False(t, isSimpleWithPassthroughClause(t.Context(), ""))
+	require.False(t, isSimpleWithPassthroughClause(t.Context(), "o,"))
+	require.False(t, isSimpleWithPassthroughClause(t.Context(), "o, row.products"))
+	require.False(t, isSimpleWithPassthroughClause(t.Context(), "o, toString(row.id) AS s"))
+	require.False(t, isSimpleWithPassthroughClause(t.Context(), "o + 1 AS x"))
 }

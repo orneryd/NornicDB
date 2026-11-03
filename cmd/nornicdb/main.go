@@ -1530,7 +1530,7 @@ func NewDBQueryExecutor(db *nornicdb.DB) *DBQueryExecutor {
 	}
 	exec.txMgr = txsession.NewManager(30*time.Second, func(dbName string) (*cypher.StorageExecutor, error) {
 		return newTxScopedExecutor(db, dbName)
-	})
+	}, db.LifetimeContext())
 	return exec
 }
 

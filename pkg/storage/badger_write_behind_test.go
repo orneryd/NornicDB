@@ -113,7 +113,7 @@ func TestWriteBehind_FlushLandsInBadger(t *testing.T) {
 
 	bufferedCreate(t, engine, &Node{ID: "test:n1", Labels: []string{"L"}, Properties: map[string]any{"v": int64(1)}})
 
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	require.Zero(t, engine.writeBehind.PendingOps())
 
 	got, err := engine.GetNode(t.Context(), "test:n1")
@@ -145,7 +145,7 @@ func TestWriteBehind_MultipleCommitsApplyInOrder(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(2), got.Properties["v"], "newest commit shadows the older one")
 
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	got, err = engine.GetNode(t.Context(), "test:n1")
 	require.NoError(t, err)
 	require.Equal(t, int64(2), got.Properties["v"])
@@ -155,7 +155,7 @@ func TestWriteBehind_BufferedDeleteHidesAndPersists(t *testing.T) {
 	engine := newWriteBehindTestEngine(t, time.Hour)
 
 	bufferedCreate(t, engine, &Node{ID: "test:n1", Labels: []string{"L"}})
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 
 	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
@@ -167,7 +167,7 @@ func TestWriteBehind_BufferedDeleteHidesAndPersists(t *testing.T) {
 	_, err = engine.GetNode(t.Context(), "test:n1")
 	require.ErrorIs(t, err, ErrNotFound, "buffered delete hides the node")
 
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	_, err = engine.GetNode(t.Context(), "test:n1")
 	require.ErrorIs(t, err, ErrNotFound, "delete persists after flush")
 }
@@ -274,7 +274,7 @@ func TestWriteBehind_ScansSeeBufferedWrites(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, nodes, 4, "buffered delete must hide the node from label scans")
 
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	nodes, err = engine.GetNodesByLabel(context.Background(), "Order")
 	require.NoError(t, err)
 	require.Len(t, nodes, 4, "delete persists through the flush")
@@ -288,7 +288,7 @@ func TestWriteBehind_ExplicitBeginDrainsBufferedWrites(t *testing.T) {
 
 	// The storage layer's BeginTransaction does not drain (autocommit uses it);
 	// the explicit-transaction admission path drains via FlushWriteBehind.
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	require.Zero(t, engine.writeBehind.PendingOps())
 
 	tx, err := engine.BeginTransaction(t.Context())
@@ -352,7 +352,7 @@ func TestWriteBehind_DetachDeleteAcrossBatchesDeletesEdgesOnce(t *testing.T) {
 	}
 	// Land the creates so the delete path reads committed records, exactly
 	// like a wipe of previously persisted data.
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	require.Equal(t, int64(2), mustEdgeCount(t, engine))
 
 	// Wipe batch 1: delete a, which detaches a->b.
@@ -390,7 +390,7 @@ func TestWriteBehind_DetachDeleteAcrossBatchesDeletesEdgesOnce(t *testing.T) {
 
 	// The flush lands both batches: counts must not underflow and the
 	// type is empty.
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	require.Zero(t, engine.writeBehind.LastErr())
 	require.Zero(t, mustEdgeCount(t, engine), "wipe must not double-delete the cached total edge count")
 	count, err := engine.EdgeCountByType(context.Background(), "R")
@@ -409,7 +409,7 @@ func TestWriteBehind_DetachDeleteAcrossBatchesDeletesEdgesOnce(t *testing.T) {
 	require.NoError(t, tx.SetNamespace("test"))
 	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:a2b2", StartNode: "test:a2", EndNode: "test:b2", Type: "R"}))
 	require.NoError(t, tx.Commit())
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	require.Equal(t, int64(1), mustEdgeCount(t, engine), "reseeded relationship counted exactly once")
 	count, err = engine.EdgeCountByType(context.Background(), "R")
 	require.NoError(t, err)
@@ -439,7 +439,7 @@ func TestWriteBehind_DetachDeleteAfterFlushStillDeletesOnce(t *testing.T) {
 	require.NoError(t, tx.SetNamespace("test"))
 	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:ab", StartNode: "test:a", EndNode: "test:b", Type: "R"}))
 	require.NoError(t, tx.Commit())
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 
 	// Wipe batch 1: delete a (detaches a->b). Flush immediately: the
 	// generation is applied and removed from the buffer's overlay.
@@ -449,7 +449,7 @@ func TestWriteBehind_DetachDeleteAfterFlushStillDeletesOnce(t *testing.T) {
 	require.NoError(t, tx.SetNamespace("test"))
 	require.NoError(t, tx.DeleteGraphNode(t.Context(), "test:a", CascadeEdges))
 	require.NoError(t, tx.Commit())
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 
 	// Wipe batch 2: delete b. The relationship is already tombstoned in
 	// Badger; the batch must not delete it again.
@@ -461,7 +461,7 @@ func TestWriteBehind_DetachDeleteAfterFlushStillDeletesOnce(t *testing.T) {
 	require.NoError(t, tx.Commit())
 	require.Equal(t, int64(0), engine.writeBehind.EdgeTypeCountDelta("R"),
 		"already-applied relationship must not be deleted twice")
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	require.Zero(t, engine.writeBehind.LastErr())
 	require.Zero(t, mustEdgeCount(t, engine))
 	count, err := engine.EdgeCountByType(context.Background(), "R")
@@ -537,7 +537,7 @@ func TestWriteBehind_PropertyIndexBufferedGenerations(t *testing.T) {
 				switch step.action {
 				case "": // Observe the initial buffered generation.
 				case "flush":
-					require.NoError(t, engine.FlushWriteBehind(nil))
+					require.NoError(t, engine.FlushWriteBehind(context.Background()))
 				case "create":
 					bufferedCreate(t, engine, node(step.id, step.version))
 				case "update":

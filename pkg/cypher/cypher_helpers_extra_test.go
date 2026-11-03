@@ -246,8 +246,12 @@ func TestCypherHelpers_LooksNumericAndSkipString(t *testing.T) {
 	assert.True(t, looksNumeric("42"))
 	assert.True(t, looksNumeric("3.1415"))
 	assert.False(t, looksNumeric("x42"))
-	assert.Equal(t, "17", ExtractSkipString("MATCH (n) RETURN n SKIP 17 LIMIT 5"))
-	assert.Equal(t, "", ExtractSkipString("MATCH (n) RETURN n"))
+	skip, err := ExtractSkipString(t.Context(), "MATCH (n) RETURN n SKIP 17 LIMIT 5")
+	require.NoError(t, err)
+	assert.Equal(t, "17", skip)
+	skip, err = ExtractSkipString(t.Context(), "MATCH (n) RETURN n")
+	require.NoError(t, err)
+	assert.Equal(t, "", skip)
 }
 
 func TestCypherHelpers_ClauseAndMapLiterals(t *testing.T) {
@@ -1519,22 +1523,22 @@ func TestCypherHelpers_QueryPatternAndFastPathHelpers(t *testing.T) {
 	assert.Equal(t, "", extractRelationshipType("(a)-->(b)"))
 
 	// isReturnEdgePropertyAggNameShape strictness.
-	assert.True(t, isReturnEdgePropertyAggNameShape(
+	assert.True(t, isReturnEdgePropertyAggNameShape(t.Context(),
 		"MATCH (c)-[r:REVIEWED]->(p) RETURN p.name AS name, avg(r.rating) AS score, count(r) AS cnt",
 		"r",
 		"rating",
 	))
-	assert.False(t, isReturnEdgePropertyAggNameShape(
+	assert.False(t, isReturnEdgePropertyAggNameShape(t.Context(),
 		"MATCH (c)-[r:REVIEWED]->(p) RETURN p.id AS id, avg(r.rating) AS score",
 		"r",
 		"rating",
 	))
-	assert.False(t, isReturnEdgePropertyAggNameShape(
+	assert.False(t, isReturnEdgePropertyAggNameShape(t.Context(),
 		"MATCH (c)-[r:REVIEWED]->(p) RETURN p.name AS name, avg(r.other) AS score",
 		"r",
 		"rating",
 	))
-	assert.False(t, isReturnEdgePropertyAggNameShape("RETURN p.name", "r", "rating"))
+	assert.False(t, isReturnEdgePropertyAggNameShape(t.Context(), "RETURN p.name", "r", "rating"))
 }
 
 func TestExtractMatchOrderByClause_IgnoresOrderLabelsAndRelationshipTypes(t *testing.T) {
@@ -1544,14 +1548,14 @@ func TestExtractMatchOrderByClause_IgnoresOrderLabelsAndRelationshipTypes(t *tes
 		ORDER BY orders DESC
 		LIMIT 10
 	`
-	returnIdx := findKeywordNotInBrackets(strings.ToUpper(query), " RETURN ")
+	returnIdx := findKeywordNotInBrackets(t.Context(), strings.ToUpper(query), " RETURN ")
 	if returnIdx < 0 {
-		returnIdx = findKeywordIndex(query, "RETURN")
+		returnIdx = findKeywordIndex(t.Context(), query, "RETURN")
 	}
-	require.Equal(t, "orders DESC", extractMatchOrderByClause(query, returnIdx))
+	require.Equal(t, "orders DESC", extractMatchOrderByClause(t.Context(), query, returnIdx))
 	queryNoOrder := `MATCH (o:Order)-[:ORDERS]->(p:Product) RETURN p`
-	returnIdx = findKeywordIndex(queryNoOrder, "RETURN")
-	require.Equal(t, "", extractMatchOrderByClause(queryNoOrder, returnIdx))
+	returnIdx = findKeywordIndex(t.Context(), queryNoOrder, "RETURN")
+	require.Equal(t, "", extractMatchOrderByClause(t.Context(), queryNoOrder, returnIdx))
 }
 
 func TestCypherHelpers_ExecuteCreateConstraint_TypeAndErrorBranches(t *testing.T) {
@@ -2622,8 +2626,8 @@ func TestCypherHelpers_YieldParsingAndFiltering_Branches(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 
 	// Keyword detection should ignore quoted occurrences.
-	assert.Equal(t, -1, findKeywordIndexInContext("x = 'ORDER BY' and y = 'LIMIT'", "ORDER"))
-	assert.NotEqual(t, -1, findKeywordIndexInContext(" score > 0.1 ORDER BY score DESC", "ORDER"))
+	assert.Equal(t, -1, findKeywordIndexInContext(t.Context(), "x = 'ORDER BY' and y = 'LIMIT'", "ORDER"))
+	assert.NotEqual(t, -1, findKeywordIndexInContext(t.Context(), " score > 0.1 ORDER BY score DESC", "ORDER"))
 
 	// A RETURN after YIELD starts the tail; the YIELD keeps its own WHERE,
 	// ORDER BY, SKIP and LIMIT, which come before it.
@@ -2807,14 +2811,16 @@ func TestCypherHelpers_ExplainInferenceAndCostHelpers(t *testing.T) {
 	cols = exec.StatementColumns("MATCH (n)")
 	require.Empty(t, cols)
 
-	limit := exec.analyzeLimitSkip("MATCH (n) RETURN n SKIP 5 LIMIT 10")
+	limit, err := exec.analyzeLimitSkip(t.Context(), "MATCH (n) RETURN n SKIP 5 LIMIT 10")
+	require.NoError(t, err)
 	require.Equal(t, "10", limit.Arguments["limit"])
 	require.Equal(t, "5", limit.Arguments["skip"])
 	assert.Equal(t, int64(10), limit.EstimatedRows)
 	assert.Contains(t, limit.Description, "Limit to 10 rows")
 	assert.Contains(t, limit.Description, "skip 5")
 
-	skipOnly := exec.analyzeLimitSkip("MATCH (n) RETURN n SKIP 2")
+	skipOnly, err := exec.analyzeLimitSkip(t.Context(), "MATCH (n) RETURN n SKIP 2")
+	require.NoError(t, err)
 	assert.Equal(t, int64(100), skipOnly.EstimatedRows)
 	assert.Equal(t, "2", skipOnly.Arguments["skip"])
 
@@ -2847,18 +2853,22 @@ func TestCypherHelpers_ExplainInferenceAndCostHelpers(t *testing.T) {
 }
 
 func TestCypherHelpers_ExtractCreateVariableRefsBranches(t *testing.T) {
-	vars := extractCreateVariableRefs("CREATE (a)-[:KNOWS]->(b)")
+	vars, err := extractCreateVariableRefs(t.Context(), "CREATE (a)-[:KNOWS]->(b)")
+	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"a", "b"}, vars)
 
-	vars = extractCreateVariableRefs("CREATE (a)<-[:KNOWS]-(b)")
+	vars, err = extractCreateVariableRefs(t.Context(), "CREATE (a)<-[:KNOWS]-(b)")
+	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"a", "b"}, vars)
 
 	// Inline node definitions are not simple variable refs.
-	vars = extractCreateVariableRefs("CREATE (:Person {name:'x'})-[:KNOWS]->(:Person {name:'y'})")
+	vars, err = extractCreateVariableRefs(t.Context(), "CREATE (:Person {name:'x'})-[:KNOWS]->(:Person {name:'y'})")
+	require.NoError(t, err)
 	assert.Empty(t, vars)
 
 	// Mixed CREATE clauses deduplicate refs.
-	vars = extractCreateVariableRefs("CREATE (a)-[:R]->(b) CREATE (a)-[:R]->(c)")
+	vars, err = extractCreateVariableRefs(t.Context(), "CREATE (a)-[:R]->(b) CREATE (a)-[:R]->(c)")
+	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"a", "b", "c"}, vars)
 }
 
@@ -2936,10 +2946,10 @@ func TestCypherHelpers_ExecuteSetTrailingPipelinesAndHelpers(t *testing.T) {
 	require.NoError(t, err)
 
 	// Helper branches.
-	assert.Equal(t, "n += $props, n.x = 1, n.y = 2", collapseChainedSetClauses("n += $props SET n.x = 1 SET n.y = 2"))
-	assert.Equal(t, -1, firstPostSetClauseIndex("n.x = 1, n.y = 2"))
-	assert.GreaterOrEqual(t, firstPostSetClauseIndex("n.x = 1 RETURN n"), 0)
-	assert.GreaterOrEqual(t, firstPostSetClauseIndex("n.x = 1 UNWIND [1] AS x RETURN x"), 0)
+	assert.Equal(t, "n += $props, n.x = 1, n.y = 2", collapseChainedSetClauses(ctx, "n += $props SET n.x = 1 SET n.y = 2"))
+	assert.Equal(t, -1, firstPostSetClauseIndex(ctx, "n.x = 1, n.y = 2"))
+	assert.GreaterOrEqual(t, firstPostSetClauseIndex(ctx, "n.x = 1 RETURN n"), 0)
+	assert.GreaterOrEqual(t, firstPostSetClauseIndex(ctx, "n.x = 1 UNWIND [1] AS x RETURN x"), 0)
 }
 
 func TestCypherHelpers_ValueToCypherLiteralAndPipelineRowsBranches(t *testing.T) {

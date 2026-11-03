@@ -200,7 +200,7 @@ func (e *StorageExecutor) cacheDependencyScopes(ctx context.Context, query strin
 	opts := defaultKeywordScanOpts()
 	opts.SkipParens, opts.SkipBrackets = false, false
 	for from := 0; ; {
-		at := useKeywordIndexFrom(query, from, opts)
+		at := useKeywordIndexFrom(ctx, query, from, opts)
 		if at < 0 {
 			break
 		}

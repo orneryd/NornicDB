@@ -444,7 +444,7 @@ func stopR2RollbackManager(t *testing.T, s *Server, ttl time.Duration, gate *sto
 	require.NoError(t, s.txSessions.Close())
 	s.txSessions = txsession.NewManager(ttl, func(string) (*cypher.StorageExecutor, error) {
 		return cypher.NewStorageExecutor(storage.NewNamespacedEngine(engine, "nornic")), nil
-	})
+	}, t.Context())
 	return engine, controller
 }
 func TestServerStopR2RollbackWorkerLifetime(t *testing.T) {

@@ -1,5 +1,7 @@
 package cypher
 
+import "context"
+
 // The element loops of the row evaluator's list forms, one implementation
 // each for the text path (evaluateRowValueText) and the compiled programs
 // (row_value_program.go) (#1214). The caller binds the row in scope once and
@@ -88,7 +90,7 @@ func rowConditionHolds(condition interface{}, evaluated bool, err error) (bool, 
 // step's operand index when the step has an append plan (nil: none). A
 // step, operand or predicate that can't be evaluated leaves the form
 // unresolved.
-func rowReduceLoop(form reduceForm, accumulator, listValue interface{}, scope map[string]interface{}, step, predicate func() (interface{}, bool, error), term func(index int) (interface{}, bool, error)) (interface{}, bool, error) {
+func rowReduceLoop(ctx context.Context, form reduceForm, accumulator, listValue interface{}, scope map[string]interface{}, step, predicate func() (interface{}, bool, error), term func(index int) (interface{}, bool, error)) (interface{}, bool, error) {
 	bind := func(evaluate func() (interface{}, bool, error)) func(accumulator, item interface{}) (interface{}, error) {
 		return func(accumulator, item interface{}) (interface{}, error) {
 			scope[form.accumulator], scope[form.variable] = accumulator, item
@@ -100,7 +102,7 @@ func rowReduceLoop(form reduceForm, accumulator, listValue interface{}, scope ma
 		}
 	}
 	var appender *reduceAppender
-	if plan := form.appendPlan(); term != nil && plan.usable(scope) {
+	if plan := form.appendPlan(ctx); term != nil && plan.usable(scope) {
 		appender = &reduceAppender{plan: plan, term: func(index int, accumulator, item interface{}) (interface{}, error) {
 			return bind(func() (interface{}, bool, error) { return term(index) })(accumulator, item)
 		}}

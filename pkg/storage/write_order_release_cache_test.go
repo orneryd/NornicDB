@@ -19,7 +19,7 @@ func TestOrderReleaseEvictsCachedImages(t *testing.T) {
 		_, err := b.CreateNode(t.Context(), &Node{ID: id})
 		require.NoError(t, err)
 	}
-	require.NoError(t, b.FlushWriteBehind(nil))
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
 	_, err := b.GetNode(t.Context(), "test:b") // cache test:b's image
 	require.NoError(t, err)
 
@@ -58,7 +58,7 @@ func TestOrderReleaseEvictsCachedImages(t *testing.T) {
 	restore()
 	createErr := <-created
 
-	require.NoError(t, b.FlushWriteBehind(nil))
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
 	edges, err := b.AllEdges(context.Background())
 	require.NoError(t, err)
 	for _, e := range edges {

@@ -107,23 +107,6 @@ func TestInferCategory_DefaultsToUserCategory(t *testing.T) {
 	require.Equal(t, retention.CategoryUser, got)
 }
 
-func TestRetentionContext_FallbackChain(t *testing.T) {
-	// Explicit context wins.
-	type contextKey struct{}
-	want := context.WithValue(context.Background(), contextKey{}, "x")
-	db := &DB{}
-	require.Equal(t, want, db.retentionContext(want))
-
-	// A background context remains unchanged when no build context exists.
-	got := db.retentionContext(context.Background())
-	require.Equal(t, context.Background(), got)
-
-	// An explicit context takes precedence over buildCtx.
-	build := context.WithValue(context.Background(), contextKey{}, "build")
-	db.buildCtx = build
-	require.Equal(t, want, db.retentionContext(want))
-}
-
 func TestRetentionExcludedLabels_TrimWhitespaceAndDropEmpty(t *testing.T) {
 	require.Nil(t, (*DB)(nil).retentionExcludedLabels())
 

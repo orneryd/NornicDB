@@ -58,7 +58,7 @@ func BenchmarkR4HTTPAdmissionAndLease(b *testing.B) {
 		}
 		b.Run(name, func(b *testing.B) {
 			s, a := setupTestServer(b)
-			s.txSessions = txsession.NewManager(time.Hour, s.newExecutorForDatabase)
+			s.txSessions = txsession.NewManager(time.Hour, s.newExecutorForDatabase, b.Context())
 			token := "Bearer " + getAuthToken(b, a, "admin")
 			opened := makeRequest(b, s, http.MethodPost, "/db/nornic/tx", map[string]any{"statements": []any{}}, token)
 			path := strings.TrimPrefix(opened.Header().Get("Location"), "http://example.com")

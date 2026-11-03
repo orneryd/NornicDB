@@ -700,9 +700,6 @@ func (db *DB) startSearchIndexBuild(entry *dbSearchService, ctx context.Context)
 	if entry == nil || entry.svc == nil || entry.isRetired() {
 		return
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	select {
 	case <-entry.build.Done():
 		return
@@ -836,9 +833,6 @@ func (db *DB) ensureSearchIndexesBuilt(ctx context.Context, dbName string) error
 		return localizedError(localization.NornicDBCoreSearchDatabaseNotInitialized(dbName), nil)
 	}
 	db.startSearchIndexBuild(entry, ctx)
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	select {
 	case <-entry.build.Done():
 		return entry.build.Err()
@@ -1091,9 +1085,6 @@ func (db *DB) GetDatabaseManagedEmbeddingStats(dbName string) (embeddingCount in
 
 // runClusteringOnceAllDatabases runs k-means for each database. Stops when ctx is cancelled (e.g. shutdown).
 func (db *DB) runClusteringOnceAllDatabases(ctx context.Context) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	// Ensure the default database service exists so an immediate clustering run
 	// produces deterministic behavior even before the first search request.
 	if _, err := db.GetOrCreateSearchService(db.defaultDatabaseName(), db.storage); err != nil {

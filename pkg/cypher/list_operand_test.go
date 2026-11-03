@@ -89,11 +89,11 @@ func TestSharedEvaluatorQuantifierListRule(t *testing.T) {
 }
 
 func TestParseQuantifierArguments(t *testing.T) {
-	variable, list, predicate, ok := parseQuantifierArguments("x IN n.list WHERE x > 1")
+	variable, list, predicate, ok := parseQuantifierArguments(t.Context(), "x IN n.list WHERE x > 1")
 	require.True(t, ok)
 	assert.Equal(t, []string{"x", "n.list", "x > 1"}, []string{variable, list, predicate})
 	for _, inner := range []string{"x n.list WHERE x", "x IN n.list", " IN n.list WHERE x", "x IN  WHERE x", "x IN n.list WHERE "} {
-		_, _, _, ok := parseQuantifierArguments(inner)
+		_, _, _, ok := parseQuantifierArguments(t.Context(), inner)
 		assert.False(t, ok, inner)
 	}
 }

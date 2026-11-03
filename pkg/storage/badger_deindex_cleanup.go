@@ -88,7 +88,7 @@ func (j *DeindexCleanupJob) RunOnce(ctx context.Context) (int, error) {
 				"retry", item.RetryCount,
 				"error", err,
 			)
-			j.retryWorkItem(item)
+			j.retryWorkItem(ctx, item)
 			continue
 		}
 		deindexed++
@@ -106,10 +106,10 @@ func (j *DeindexCleanupJob) processWorkItem(ctx context.Context, item *DeindexWo
 		return fmt.Errorf("get catalog for %s: %w", item.TargetID, err)
 	}
 	if cat == nil {
-		return j.engine.DeleteDeindexWorkItem(item.WorkItemID)
+		return j.engine.DeleteDeindexWorkItem(ctx, item.WorkItemID)
 	}
 	if cat.Deindexed {
-		return j.engine.DeleteDeindexWorkItem(item.WorkItemID)
+		return j.engine.DeleteDeindexWorkItem(ctx, item.WorkItemID)
 	}
 
 	if err := j.engine.SetIndexTombstones(ctx, cat.IndexKeys, true); err != nil {
@@ -121,10 +121,10 @@ func (j *DeindexCleanupJob) processWorkItem(ctx context.Context, item *DeindexWo
 		return fmt.Errorf("mark catalog deindexed for %s: %w", item.TargetID, err)
 	}
 
-	return j.engine.DeleteDeindexWorkItem(item.WorkItemID)
+	return j.engine.DeleteDeindexWorkItem(ctx, item.WorkItemID)
 }
 
-func (j *DeindexCleanupJob) retryWorkItem(item *DeindexWorkItem) {
+func (j *DeindexCleanupJob) retryWorkItem(ctx context.Context, item *DeindexWorkItem) {
 	item.RetryCount++
 	backoff := time.Duration(1<<uint(item.RetryCount)) * time.Minute
 	if backoff > 24*time.Hour {
@@ -134,5 +134,5 @@ func (j *DeindexCleanupJob) retryWorkItem(item *DeindexWorkItem) {
 	if item.RetryCount > 10 {
 		item.Status = "failed"
 	}
-	_ = j.engine.PutDeindexWorkItem(item)
+	_ = j.engine.PutDeindexWorkItem(ctx, item)
 }

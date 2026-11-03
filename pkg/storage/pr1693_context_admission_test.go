@@ -130,7 +130,7 @@ func TestDeindexJobLifetimeOwnsItsMetadataWrites(t *testing.T) {
 	engine := newTestEngine(t)
 	key := labelIndexKey("person", 7)
 	require.NoError(t, engine.PutIndexEntryCatalog(context.Background(), "test:deindex", &IndexEntryCatalog{IndexKeys: [][]byte{key}}))
-	require.NoError(t, engine.PutDeindexWorkItem(&DeindexWorkItem{WorkItemID: "test:deindex", TargetID: "test:deindex", Status: "pending"}))
+	require.NoError(t, engine.PutDeindexWorkItem(t.Context(), &DeindexWorkItem{WorkItemID: "test:deindex", TargetID: "test:deindex", Status: "pending"}))
 
 	job := NewDeindexCleanupJob(engine, time.Hour)
 

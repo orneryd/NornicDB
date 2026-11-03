@@ -29,11 +29,14 @@ func (w *WALEngine) logger() *slog.Logger {
 
 // WALEngine wraps a storage engine with write-ahead logging.
 //
-// All mutating operations are appended to the WAL before they are applied to
+// Native mutating operations are appended to the WAL before they are applied to
 // the wrapped engine. This provides crash recovery via snapshot + replay while
 // keeping the underlying Engine implementations simple and fast.
 //
 // Design notes:
+//   - Issued views: statement-owned routers and remote views delegate writes to
+//     their participants. A WAL decorator on such a view does not journal its
+//     pending operations; the participant retains sole publication authority.
 //   - Database routing: WALEngine supports multi-database usage by recording the
 //     database/namespace in each WAL entry and by normalizing IDs when needed.
 //   - Embedding updates: embedding-only updates are logged using OpUpdateEmbedding

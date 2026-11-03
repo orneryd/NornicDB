@@ -20,10 +20,10 @@ func readStatementExecutionContract(ctx context.Context, query string) (statemen
 	if mode == ModeExplain {
 		return statementExecutionContract{}, nil
 	}
-	if startsWithKeywordFold(body, "SHOW") || isNornicExtensionStatement(body) || bareTransactionCommand(body) != "" {
+	if startsWithKeywordFold(body, "SHOW") || isNornicExtensionStatement(ctx, body) || bareTransactionCommand(body) != "" {
 		return statementExecutionContract{}, nil
 	}
-	if isOrdinarySchemaDDL(body) {
+	if isOrdinarySchemaDDL(ctx, body) {
 		// Ordinary schema DDL is a write whose effects the implicit
 		// transaction's schema view stages and publishes (schema_transaction.go):
 		// the declared index or constraint and its fill from the stored nodes

@@ -163,9 +163,6 @@ func (a *StorageAdapter) ApplyCommand(waitCtx context.Context, cmd *Command, pub
 	if publication != WALQueued && publication != WALPublished {
 		return CommandPublication{}, fmt.Errorf("replication: unknown WAL publication mode %d", publication)
 	}
-	if waitCtx == nil {
-		return CommandPublication{}, fmt.Errorf("replication: WAL publication wait context is required")
-	}
 
 	if err := retiredCommandError(cmd.Type); err != nil {
 		return CommandPublication{}, err

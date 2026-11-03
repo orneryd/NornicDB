@@ -509,9 +509,6 @@ func (b *BadgerEngine) initializeManagedEntityNamespace(ctx context.Context, nam
 	if registry == nil || (*registry)[namespace].initialize == nil {
 		return nil
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	return (*registry)[namespace].initialize(ctx)
 }
 
@@ -520,9 +517,6 @@ func (b *BadgerEngine) initializeManagedEntityNamespace(ctx context.Context, nam
 // Callers establish routing and wrapper admission before preparation; this
 // operation neither journals nor publishes the prepared changes.
 func PrepareEntityChanges(ctx context.Context, engine Engine, namespace string, operations []Operation, mode EntityCommitMode) (*PreparedEntityCommit, func(CommitOutcome), error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
@@ -629,7 +623,7 @@ func (b *BadgerEngine) RetireManagedEntityRuntime(namespace string) {
 // prepareDeletedEntityPublication uses the prefix deletion owner's existing
 // victim dictionaries. Its final view is known absence; the original snapshot
 // hydrates the same complete prior images as ordinary commits.
-func (b *BadgerEngine) prepareDeletedEntityPublication(nodes, edges map[uint64]struct{}) (func(), error) {
+func (b *BadgerEngine) prepareDeletedEntityPublication(ctx context.Context, nodes, edges map[uint64]struct{}) (func(), error) {
 	registry := b.storedEntityObservers.Load()
 	if registry == nil {
 		return nil, nil
@@ -651,13 +645,13 @@ func (b *BadgerEngine) prepareDeletedEntityPublication(nodes, edges map[uint64]s
 	var changes []StoredEntityChange
 	err := b.db.View(func(txn *badger.Txn) error {
 		var err error
-		changes, err = b.captureStoredEntityChanges(context.Background(), storedEntityCapture{keys: keys, before: storedEntityView{read: embeddingRecordReader{txn: txn}, boundaries: registry}, after: storedEntityView{absent: true}})
+		changes, err = b.captureStoredEntityChanges(ctx, storedEntityCapture{keys: keys, before: storedEntityView{read: embeddingRecordReader{txn: txn}, boundaries: registry}, after: storedEntityView{absent: true}})
 		return err
 	})
 	if err != nil {
 		return nil, err
 	}
-	return b.prepareStoredEntityChanges(context.Background(), registry, generateTxID(), changes)
+	return b.prepareStoredEntityChanges(ctx, registry, generateTxID(), changes)
 }
 
 func (b *BadgerEngine) prepareStoredEntityChanges(ctx context.Context, registry *storedEntityObserverRegistry, logicalID string, changes []StoredEntityChange) (func(), error) {

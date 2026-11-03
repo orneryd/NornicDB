@@ -50,7 +50,7 @@ func TestSnapshotOverlayProjectedCallbacksOwnPayload(t *testing.T) {
 				require.Equal(t, [][]float32{{1, 2}}, node.ChunkEmbeddings)
 			}
 			check()
-			require.NoError(t, b.FlushWriteBehind(nil))
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
 			b.invalidateCachesAfterRestore()
 			check()
 		})
@@ -67,7 +67,7 @@ func TestSnapshotOverlayQueryCacheWithWriteBehind(t *testing.T) {
 			if phase != "idle" {
 				bufferedCreate(t, b, &Node{ID: "test:other"})
 				if phase == "retired" {
-					require.NoError(t, b.FlushWriteBehind(nil))
+					require.NoError(t, b.FlushWriteBehind(context.Background()))
 				}
 			}
 			b.invalidateCachesAfterRestore()
@@ -94,7 +94,7 @@ func TestSnapshotOverlayQueryCacheWithWriteBehind(t *testing.T) {
 			node, err = b.GetQueryNode(t.Context(), "test:cached")
 			require.NoError(t, err)
 			require.Equal(t, int64(2), node.Properties["v"], "pending update shadows the cache")
-			require.NoError(t, b.FlushWriteBehind(nil))
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
 			node, err = b.GetQueryNode(t.Context(), "test:cached")
 			require.NoError(t, err)
 			require.Equal(t, int64(2), node.Properties["v"])
@@ -128,7 +128,7 @@ func TestSnapshotOverlayCascadeInvalidatesAdjacency(t *testing.T) {
 				require.NoError(t, tx.DeleteGraphNode(t.Context(), "test:hub", CascadeEdges))
 				require.NoError(t, tx.Commit())
 			}
-			require.NoError(t, b.FlushWriteBehind(nil))
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
 			_, err = b.GetEdge(t.Context(), "test:edge")
 			require.ErrorIs(t, err, ErrNotFound, "the record was physically deleted")
 			edges, err = b.GetIncomingEdges(context.Background(), "test:peer")

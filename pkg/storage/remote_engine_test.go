@@ -1138,10 +1138,10 @@ func TestRemoteEngineQueryCypherAndHTTPClosedBranches(t *testing.T) {
 		}
 	})
 
-	var nilCtx context.Context
-	cols, rows, err := engine.QueryCypher(nilCtx, "RETURN 42 AS n", nil, RemoteAccessRead)
+	ctx := t.Context()
+	cols, rows, err := engine.QueryCypher(ctx, "RETURN 42 AS n", nil, RemoteAccessRead)
 	if err != nil {
-		t.Fatalf("QueryCypher with nil context failed: %v", err)
+		t.Fatalf("QueryCypher failed: %v", err)
 	}
 	if len(cols) != 1 || cols[0] != "n" || len(rows) != 1 || rows[0][0].(int64) != 42 {
 		t.Fatalf("unexpected query result cols=%v rows=%v", cols, rows)
@@ -1152,9 +1152,9 @@ func TestRemoteEngineQueryCypherAndHTTPClosedBranches(t *testing.T) {
 		t.Fatalf("CRUD consumer of the column-bearing result failed: count=%d err=%v", count, err)
 	}
 
-	tx, err := engine.BeginCypherTx(nilCtx, RemoteAccessWrite)
+	tx, err := engine.BeginCypherTx(ctx, RemoteAccessWrite)
 	if err != nil {
-		t.Fatalf("BeginCypherTx with nil context failed: %v", err)
+		t.Fatalf("BeginCypherTx failed: %v", err)
 	}
 	if err := tx.Commit(context.Background()); err != nil {
 		t.Fatalf("Commit failed: %v", err)

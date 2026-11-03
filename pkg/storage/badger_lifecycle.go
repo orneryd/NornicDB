@@ -222,14 +222,12 @@ func (b *BadgerEngine) IterateMVCCVersions(ctx context.Context, logicalKey []byt
 }
 
 // DeleteMVCCVersion deletes a single MVCC version for a logical key.
-// Nil retains the detached native lifetime; nonnil contexts keep their original
-// values and cancellation while waiting for write admission.
+// ctx keeps its values and cancellation while waiting for write admission.
 func (b *BadgerEngine) DeleteMVCCVersion(ctx context.Context, logicalKey []byte, version MVCCVersion) error {
 	fullKey, err := mvccVersionKeyForLogicalKey(logicalKey, version)
 	if err != nil {
 		return err
 	}
-	ctx = commitPreparationLifetime(ctx)
 	// Ordered after the entity's acknowledged write-behind commits, as
 	// WriteMVCCHead is; the version the entity's head names is never deleted
 	// (a commit landed after the caller read its fence).
@@ -253,9 +251,7 @@ func (b *BadgerEngine) DeleteMVCCVersion(ctx context.Context, logicalKey []byte,
 // version and tombstone stay and only the floor is raised. It is ordered
 // after the entity's acknowledged write-behind commits
 // (orderAfterBufferedCommits), so none of them lands over it afterwards.
-// Nil retains the detached native lifetime; nonnil contexts are unchanged.
 func (b *BadgerEngine) WriteMVCCHead(ctx context.Context, logicalKey []byte, head MVCCHead) error {
-	ctx = commitPreparationLifetime(ctx)
 	return b.withUpdate(ctx, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		current, err := b.loadMVCCHeadForLogicalKeyInTxn(txn, logicalKey)
 		if err != nil && !errors.Is(err, ErrNotFound) {

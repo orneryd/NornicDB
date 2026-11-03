@@ -239,7 +239,7 @@ func contextSites(p *workcensus.Program, policy Policy, log *acceptanceLog, sour
 			crossSeen[key] = true
 			log.accept(KindCrossUnitOwner, where, fmt.Sprintf("a request context is in scope; fixed by %s in merge unit %s: %s", cross.FixingPR, cross.Unit, cross.Reason), cross.Approver, &site)
 		case len(held) > 0:
-			violations = append(violations, fmt.Sprintf("%s: a request context is in scope; pass it (held: %s) [held values: %q; source %s %s]", where, held[0], held, key, digests.of(key)))
+			violations = append(violations, fmt.Sprintf("%s: a request context is in scope; pass it (held: %s) [occurrence %q] [held values: %q; source %s %s]", where, held[0], heldDescription(origin), held, key, digests.of(key)))
 		default:
 			chain, also, allocated, cut := requestChain(p, top, policy.ReviewedHeldValues[key], policy, pb, crossSeen, reviewedSeen, namedSeen, staleHolders, digests, log, where)
 			public := pb.unfulfilled(cut)
@@ -320,6 +320,10 @@ func contextSites(p *workcensus.Program, policy Policy, log *acceptanceLog, sour
 								unknownField = projected.Field
 							}
 							witness, why = projected.Witness, projected.Why
+							if witness != nil && p.GuardedInlineFieldUses(arg, fieldPath, projected) {
+								witness = nil
+								why = []string{"proof: private inline field has only sibling-guarded, non-nil semantic uses"}
+							}
 							suffix = fmt.Sprintf("/argument-%d/field-%v(%s)", argument, fieldPath, workcensus.InlineFieldName(arg.Type(), fieldPath))
 						}
 						pos := p.FileSet.PositionFor(call.Pos(), false)

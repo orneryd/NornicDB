@@ -16,12 +16,15 @@ import (
 // so no operation response can outrun storage ownership release.
 func (s *Session) claimTransactionOperation() (context.Context, error) {
 	ctx, err := s.txLifecycle.claimOperation()
-	if errors.Is(err, errTransactionTimedOut) {
-		if cleanupErr := s.joinTransactionTimeout(); cleanupErr != nil {
-			return nil, cleanupErr
+	if err != nil {
+		if errors.Is(err, errTransactionTimedOut) {
+			if cleanupErr := s.joinTransactionTimeout(); cleanupErr != nil {
+				return nil, cleanupErr
+			}
 		}
+		return nil, err
 	}
-	return ctx, err
+	return ctx, nil
 }
 
 // joinTransactionTimeout propagates cleanup uncertainty as a fatal session

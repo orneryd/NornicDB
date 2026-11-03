@@ -171,7 +171,6 @@ func TestReplaceDefinitionDurableRequiresContextAndEngine(t *testing.T) {
 		ctx    context.Context
 		engine Engine
 	}{
-		{name: "missing context", ctx: nil, engine: target},
 		{name: "missing engine", ctx: context.Background(), engine: nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

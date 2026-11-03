@@ -46,7 +46,7 @@ func TestPlan_UnionPlainAllocations(t *testing.T) {
 func TestSplitTopLevelUnion_NoUnionAllocations(t *testing.T) {
 	for _, query := range []string{"RETURN 'plain' AS value", "RETURN 'UNION' AS value /* UNION */", "RETURN 'plain' AS value // UNION\n"} {
 		allocs := testing.AllocsPerRun(100, func() {
-			unionPlainPartsSink, _, _, _ = splitTopLevelUnion(query, nil)
+			unionPlainPartsSink, _, _, _ = splitTopLevelUnion(t.Context(), query, nil)
 		})
 		require.Zero(t, allocs, query)
 	}

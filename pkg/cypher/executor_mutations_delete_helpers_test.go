@@ -44,12 +44,12 @@ func TestDeleteHelpers_StreamEligibilityAndExecution(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	require.False(t, exec.isDeleteStreamingEligible("", "n", true))
-	require.False(t, exec.isDeleteStreamingEligible("MATCH (n) WITH n", "n", true))
-	require.False(t, exec.isDeleteStreamingEligible("MATCH (n)", "n,m", true))
-	require.False(t, exec.isDeleteStreamingEligible("MATCH (n)", "n-1", true))
-	require.False(t, exec.isDeleteStreamingEligible("MATCH (n)", "n", false))
-	require.True(t, exec.isDeleteStreamingEligible("MATCH (n:Tmp)", "n", true))
+	require.False(t, exec.isDeleteStreamingEligible(ctx, "", "n", true))
+	require.False(t, exec.isDeleteStreamingEligible(ctx, "MATCH (n) WITH n", "n", true))
+	require.False(t, exec.isDeleteStreamingEligible(ctx, "MATCH (n)", "n,m", true))
+	require.False(t, exec.isDeleteStreamingEligible(ctx, "MATCH (n)", "n-1", true))
+	require.False(t, exec.isDeleteStreamingEligible(ctx, "MATCH (n)", "n", false))
+	require.True(t, exec.isDeleteStreamingEligible(ctx, "MATCH (n:Tmp)", "n", true))
 
 	_, err := exec.Execute(ctx, "CREATE (a:Tmp {id:'a'}), (b:Tmp {id:'b'})", nil)
 	require.NoError(t, err)

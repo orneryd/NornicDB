@@ -547,8 +547,7 @@ func TestLLMReranker_RerankOrderPreservesRawSubsetAndErrorFallback(t *testing.T)
 	r := NewLLMReranker(cfg, func(ctx context.Context, prompt string) (string, error) {
 		return `{"order":[2,0]}`, nil
 	})
-	var nilCtx context.Context
-	out, err := r.Rerank(nilCtx, " query ", cands)
+	out, err := r.Rerank(t.Context(), " query ", cands)
 	require.NoError(t, err)
 	require.Len(t, out, 2)
 	assert.Equal(t, "c", out[0].ID)

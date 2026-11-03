@@ -16,7 +16,8 @@ func TestSharedLexicalSchemaAndHintQuotedNames(t *testing.T) {
 	_, err = exec.Execute(ctx, "CREATE INDEX quoted_lexical FOR (n:`Label)part`) ON (n.`key]part`)", nil)
 	require.NoError(t, err)
 	query := "MATCH (n:`Label)part`) USING INDEX n:`Label)part`(`key]part`) RETURN properties(n) AS value"
-	hints, cleanQuery := ParseIndexHints(query)
+	hints, cleanQuery, err := ParseIndexHints(ctx, query)
+	require.NoError(t, err)
 	require.Len(t, hints, 1)
 	require.Equal(t, "Label)part", hints[0].Label)
 	require.Equal(t, []string{"key]part"}, hints[0].Properties)
@@ -130,7 +131,8 @@ func TestParseIndexHints(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			hints, cleanQuery := ParseIndexHints(tt.query)
+			hints, cleanQuery, err := ParseIndexHints(t.Context(), tt.query)
+			require.NoError(t, err)
 
 			if len(hints) != tt.expectedHints {
 				t.Errorf("expected %d hints, got %d", tt.expectedHints, len(hints))

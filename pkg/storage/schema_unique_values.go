@@ -372,9 +372,6 @@ func constraintLockValue(ctx context.Context, node *Node, prop string) (interfac
 // ErrDeadlock, and a wait ends with ctx's error when ctx ends. The locks
 // taken so far are released either way.
 func (sm *SchemaManager) acquireUniqueConstraintCommitLocks(ctx context.Context, owner string, keys []uniqueConstraintLockKey) (func(), error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if len(keys) == 0 {
 		return func() {}, nil
 	}

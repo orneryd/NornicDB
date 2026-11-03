@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -57,7 +58,7 @@ func TestWALPropertyEpochMidBufferSnapshotAndCrashBoundaries(t *testing.T) {
 				_, err := source.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 			}
-			require.NoError(t, source.FlushWriteBehind(nil))
+			require.NoError(t, source.FlushWriteBehind(context.Background()))
 			baselinePath := filepath.Join(t.TempDir(), "before.snapshot")
 			require.NoError(t, SaveSnapshot(baseline, baselinePath))
 			cfg := DefaultWALConfig()
@@ -166,7 +167,7 @@ func TestWALPropertyEpochMidBufferSnapshotAndCrashBoundaries(t *testing.T) {
 			check("a2", "b2") // retained entries keep their original epoch
 			update("epoch:a", map[string]any{"alpha": "a3", "beta": "b3"})
 			check("a3", "b3") // first steady append after truncation
-			require.NoError(t, source.FlushWriteBehind(nil))
+			require.NoError(t, source.FlushWriteBehind(context.Background()))
 			assertPropertyDictionaryBijection(t, source)
 		})
 	}

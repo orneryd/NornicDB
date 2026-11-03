@@ -1886,7 +1886,7 @@ func TestHTTPExplicitTransactionEndsOnStatementError(t *testing.T) {
 // Idle HTTP transactions expire and roll back, as they do in Neo4j's HTTP API.
 func TestHTTPExplicitTransactionExpiresWhenIdle(t *testing.T) {
 	server, authenticator := setupTestServer(t)
-	server.txSessions = txsession.NewManager(3*time.Second, server.newExecutorForDatabase)
+	server.txSessions = txsession.NewManager(3*time.Second, server.newExecutorForDatabase, t.Context())
 	token := "Bearer " + getAuthToken(t, authenticator, "admin")
 	post := func(path string, statements ...string) (int, TransactionResponse) {
 		t.Helper()

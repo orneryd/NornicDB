@@ -118,12 +118,8 @@ func TestCaptureReadViewCacheCancellationAndDetachedControl(t *testing.T) {
 		require.Nil(t, view)
 		require.False(t, captured)
 	}
-	// Nil remains the private detached admission convention.
-	view, err := engine.captureReadView(nil, nil)
-	require.NoError(t, err)
-	view.Close()
 	opts := readViewOptions{cached: func(*WriteBehindBuffer) (bool, error) { return true, nil }}
-	for _, ctx := range []context.Context{nil, context.Background(), t.Context()} {
+	for _, ctx := range []context.Context{context.Background(), t.Context()} {
 		allocations := testing.AllocsPerRun(100, func() {
 			cached, err := engine.captureReadView(ctx, nil, opts)
 			if err != nil || cached != nil {

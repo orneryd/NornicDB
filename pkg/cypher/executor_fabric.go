@@ -51,7 +51,7 @@ func (e *StorageExecutor) shouldUseFabricPlanner(ctx context.Context, cypher str
 	opts := defaultKeywordScanOpts()
 	searchFrom := 0
 	for {
-		useIdx := useKeywordIndexFrom(cypher, searchFrom, opts)
+		useIdx := useKeywordIndexFrom(ctx, cypher, searchFrom, opts)
 		if useIdx < 0 {
 			break
 		}
@@ -385,9 +385,6 @@ func (e *StorageExecutor) prepareFabricExecution(ctx context.Context, cypher str
 }
 
 func (e *StorageExecutor) preparedFabricFromContext(ctx context.Context) (*fabricPreparedExec, error) {
-	if ctx == nil {
-		return nil, nil
-	}
 	v := ctx.Value(fabricPreparedExecKey{})
 	if v == nil {
 		return nil, nil
@@ -459,7 +456,7 @@ func (e *StorageExecutor) validateFabricSemanticScopes(ctx context.Context, cyph
 		err = e.validateSemanticScopes(ctx, desugared)
 	}
 	parseItems := func(text string) []returnItem { return e.parseReturnItems(ctx, text) }
-	_, err = (resultRestoration{names: names}).restore(nil, err, parseItems)
+	_, err = (resultRestoration{names: names}).restore(ctx, nil, err, parseItems)
 	return err
 }
 
@@ -471,9 +468,7 @@ func (e *StorageExecutor) validateFabricSemanticScopes(ctx context.Context, cyph
 func fabricSingleGraphStatement(ctx context.Context, cypher string) string {
 	planner := fabric.NewFabricPlanner(nil)
 	planner.SetClauseKeywordNameReader(clauseKeywordUsedAsName)
-	planner.SetCallImportReader(func(scope string, scoped bool, body string) ([]string, error) {
-		return callSubqueryImportedVariables(ctx, scope, scoped, body)
-	})
+	planner.SetCallImportReader(callSubqueryImportedVariables)
 	statement, err := planner.SingleGraphStatement(ctx, cypher, cyphertext.AcceptedSource)
 	if err != nil {
 		return cypher
@@ -491,9 +486,7 @@ func (e *StorageExecutor) planFabricQuery(ctx context.Context, catalog *fabric.C
 	planner := fabric.NewFabricPlanner(catalog)
 	// A name spelled UNION, OPTIONAL or RETURN is read as ordinary statements read it.
 	planner.SetClauseKeywordNameReader(clauseKeywordUsedAsName)
-	planner.SetCallImportReader(func(scope string, scoped bool, body string) ([]string, error) {
-		return callSubqueryImportedVariables(ctx, scope, scoped, body)
-	})
+	planner.SetCallImportReader(callSubqueryImportedVariables)
 	fragment, err := planner.Plan(ctx, cypher, sessionDB, cyphertext.AcceptedSource)
 	if err != nil {
 		return nil, err
@@ -773,7 +766,7 @@ func (c *cypherFabricExecutor) ExecuteRecordQuery(ctx context.Context, dbName, q
 		}
 	}
 	keywords := queryKeywords(query)
-	if statementAccessesGraphText(query) || keywords["STARTNODE"] || keywords["ENDNODE"] {
+	if statementAccessesGraphText(ctx, query) || keywords["STARTNODE"] || keywords["ENDNODE"] {
 		return nil, nil, false, nil
 	}
 	engine := c.base.storage
@@ -816,7 +809,7 @@ func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbNam
 		return nil, nil, err
 	}
 	if len(recordBindings) > 0 {
-		query = stripLeadingWithImportsForFabricRecord(query, recordBindings)
+		query = stripLeadingWithImportsForFabricRecord(ctx, query, recordBindings)
 	}
 	ctx = withExecutionDatabase(ctx, dbName)
 	return c.executeFragmentQuery(ctx, exec, query, params, recordBindings)
@@ -852,12 +845,12 @@ func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *S
 		scopeErr = exec.validateMatchSemanticScopes(ctx, scopeQuery, cypherVersionFromContext(ctx) == "25")
 	}
 	if scopeErr != nil {
-		_, scopeErr = (resultRestoration{names: names}).restore(nil, scopeErr, parseReturnItems)
+		_, scopeErr = (resultRestoration{names: names}).restore(ctx, nil, scopeErr, parseReturnItems)
 		return nil, nil, scopeErr
 	}
 	var result *ExecuteResult
 	var err error
-	if stripped, embedding := stripWithEmbeddingSuffix(query); embedding || statementHasEmbeddingCandidate(ctx, query) {
+	if stripped, embedding := stripWithEmbeddingSuffix(ctx, query); embedding || statementHasEmbeddingCandidate(ctx, query) {
 		// Inline embeddings use the normal mutation/transaction owner. Internal
 		// fragment execution alone deliberately does not start an implicit tx.
 		result, err = exec.executeWithImplicitTransactionCallback(ctx, query, upperASCII(query), func(txCtx context.Context, txExec *StorageExecutor) (*ExecuteResult, error) {
@@ -866,7 +859,7 @@ func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *S
 	} else {
 		result, err = exec.executeInternal(ctx, query, params)
 	}
-	result, err = (resultRestoration{names: names}).restore(result, err, parseReturnItems)
+	result, err = (resultRestoration{names: names}).restore(ctx, result, err, parseReturnItems)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -879,7 +872,7 @@ func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *S
 	return result.Columns, result.Rows, nil
 }
 
-func stripLeadingWithImportsForFabricRecord(query string, recordBindings map[string]interface{}) string {
+func stripLeadingWithImportsForFabricRecord(ctx context.Context, query string, recordBindings map[string]interface{}) string {
 	if len(recordBindings) == 0 {
 		return query
 	}
@@ -887,7 +880,7 @@ func stripLeadingWithImportsForFabricRecord(query string, recordBindings map[str
 	if !strings.HasPrefix(upperASCII(trimmed), "WITH ") {
 		return query
 	}
-	withEnd := findLeadingWithEndLocal(trimmed)
+	withEnd := findLeadingWithEndLocal(ctx, trimmed)
 	if withEnd <= 0 || withEnd >= len(trimmed) {
 		return query
 	}
@@ -928,7 +921,7 @@ func stripLeadingWithImportsForFabricRecord(query string, recordBindings map[str
 	return rewritten
 }
 
-func findLeadingWithEndLocal(query string) int {
+func findLeadingWithEndLocal(ctx context.Context, query string) int {
 	const prefix = "WITH "
 	if len(query) <= len(prefix) {
 		return -1
@@ -939,7 +932,7 @@ func findLeadingWithEndLocal(query string) int {
 		"MATCH", "OPTIONAL MATCH", "RETURN", "WHERE", "USE", "WITH", "CALL",
 		"CREATE", "MERGE", "UNWIND", "SET", "DELETE", "DETACH DELETE",
 	} {
-		if index := topLevelKeywordIndex(body, keyword); index >= 0 && (end < 0 || index < end) {
+		if index := topLevelKeywordIndex(ctx, body, keyword); index >= 0 && (end < 0 || index < end) {
 			end = index
 		}
 	}

@@ -42,7 +42,7 @@ func walHTTPServer(t *testing.T, locale ...language.Tag) (*Server, *walterminal.
 	newExec := func(string) (*cypher.StorageExecutor, error) {
 		return cypher.NewStorageExecutor(storage.NewNamespacedEngine(engine, "nornic")), nil
 	}
-	s.txSessions = txsession.NewManager(time.Minute, newExec)
+	s.txSessions = txsession.NewManager(time.Minute, newExec, t.Context())
 	exec, err := newExec("nornic")
 	require.NoError(t, err)
 	s.executorsMu.Lock()

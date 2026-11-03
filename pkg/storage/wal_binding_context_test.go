@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -93,7 +94,7 @@ func TestWALBindingContextMixedPrefixAndRestart(t *testing.T) {
 				}
 				require.NoError(t, err)
 				require.NoError(t, tx.Commit())
-				require.NoError(t, source.FlushWriteBehind(nil))
+				require.NoError(t, source.FlushWriteBehind(context.Background()))
 			}
 			entries, err := ReadWALEntriesFromDir(capture.Config().Dir)
 			require.NoError(t, err)

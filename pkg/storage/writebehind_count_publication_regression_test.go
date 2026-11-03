@@ -55,7 +55,7 @@ func TestWriteBehindCountsDuringCommitPublication(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:part", StartNode: "test:product", EndNode: "test:category", Type: "PART_OF"}))
 	require.NoError(t, tx.Commit())
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	var readings []reading
 	select {
 	case readings = <-observed:

@@ -14,12 +14,12 @@ import (
 
 var errRemoteNativeTransportFailure = errors.New("remote native transport failure")
 
-// Context-free native entries own one bounded lifetime and retire it on return.
+// Native entries own one bounded lifetime and retire it on return.
 // These transport controls assert decoded results, access mode, caller deadlines,
 // cancellation and cleanup. The existing compiled census reviews caller ownership.
 
-// nativeContextEntry is one context-free Engine entry and the reply its remote
-// statement returns. want is what the entry must decode from that reply.
+// nativeContextEntry is one Engine entry and the reply its remote statement
+// returns. want is what the entry must decode from that reply.
 type nativeContextEntry struct {
 	name    string
 	mode    RemoteAccessMode
@@ -168,6 +168,69 @@ func TestRemoteNativeEntryTransportErrorIsUnchanged(t *testing.T) {
 				return
 			}
 			require.Same(t, transportErr, err, "the owned context must not change error propagation")
+		})
+	}
+}
+
+func TestRemoteNativeEntryCallerValuesSurviveDeadline(t *testing.T) {
+	type callerValueKey struct{}
+	key := callerValueKey{}
+	const value = "remote-call-correlation"
+	for _, operation := range []struct {
+		name string
+		mode RemoteAccessMode
+		run  func(*RemoteEngine, context.Context) error
+	}{
+		{"count", RemoteAccessRead, func(engine *RemoteEngine, ctx context.Context) error {
+			_, err := engine.NodeCount(ctx)
+			return err
+		}},
+		{"mutation", RemoteAccessWrite, func(engine *RemoteEngine, ctx context.Context) error {
+			return engine.UpdateNode(ctx, NodeUpdateRequest{After: &Node{ID: "node:one"}})
+		}},
+	} {
+		t.Run(operation.name, func(t *testing.T) {
+			engine := &RemoteEngine{transport: &fakeRemoteTransport{queryModeFn: func(ctx context.Context, _ string, _ map[string]interface{}, mode RemoteAccessMode) ([]string, [][]interface{}, error) {
+				require.Equal(t, value, ctx.Value(key), "the caller's context value must survive the owned deadline")
+				require.Equal(t, operation.mode, mode)
+				requireOwnedContext(t, ctx)
+				return nil, [][]interface{}{{int64(1)}}, nil
+			}}}
+			ctx := context.WithValue(context.Background(), key, value)
+			require.NoError(t, operation.run(engine, ctx))
+		})
+	}
+}
+
+func TestRemoteNativeEntryCallerCancellationIsNotSuppressed(t *testing.T) {
+	for _, operation := range []struct {
+		name string
+		run  func(*RemoteEngine, context.Context) error
+	}{
+		{"typed edge lookup", func(engine *RemoteEngine, ctx context.Context) error {
+			_, err := engine.GetEdgeBetween(ctx, "node:a", "node:b", "LINK")
+			return err
+		}},
+		{"in degree", func(engine *RemoteEngine, ctx context.Context) error {
+			_, err := engine.GetInDegree(ctx, "node:one")
+			return err
+		}},
+		{"out degree", func(engine *RemoteEngine, ctx context.Context) error {
+			_, err := engine.GetOutDegree(ctx, "node:one")
+			return err
+		}},
+	} {
+		t.Run(operation.name, func(t *testing.T) {
+			var calls int
+			engine := &RemoteEngine{transport: &fakeRemoteTransport{queryModeFn: func(context.Context, string, map[string]interface{}, RemoteAccessMode) ([]string, [][]interface{}, error) {
+				calls++
+				return nil, nil, nil
+			}}}
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			err := operation.run(engine, ctx)
+			require.ErrorIs(t, err, context.Canceled)
+			require.Zero(t, calls, "a cancelled caller must not reach the transport")
 		})
 	}
 }
@@ -385,7 +448,7 @@ func TestRemoteBoltCallerContextSurvivesOneDerivation(t *testing.T) {
 }
 
 // BenchmarkRemoteNativeEntryContextOwnership records the allocation cost of the
-// context-free entries: each call derives exactly one bounded context, so the
+// native entries: each call derives exactly one bounded context, so the
 // before/after comparison of this benchmark shows whether the ownership
 // migration added a second timeout allocation.
 func BenchmarkRemoteNativeEntryContextOwnership(b *testing.B) {

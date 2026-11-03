@@ -100,9 +100,9 @@ func TestKernelWriterContextsRemainFailClosed(t *testing.T) {
 	txPath := filepath.Join(abs, "pkg/storage/badger_transaction.go")
 	txSource, err := os.ReadFile(txPath)
 	require.NoError(t, err)
-	anchor := "tx.engine.executeNodeDeletion(context.Background(), tx.staged(), nodeID, oldNode)"
+	anchor := "tx.engine.executeNodeDeletion(ctx, tx.staged(), nodeID, oldNode)"
 	require.Equal(t, 1, strings.Count(string(txSource), anchor))
-	mutant := strings.Replace(string(txSource), anchor, "tx.engine.executeNodeDeletion(context.Background(), tx.badgerTx, nodeID, oldNode)", 1)
+	mutant := strings.Replace(string(txSource), anchor, "tx.engine.executeNodeDeletion(ctx, tx.badgerTx, nodeID, oldNode)", 1)
 	report, err := Census(root, map[string][]byte{kernelPath: kernel, txPath: []byte(mutant)})
 	require.NoError(t, err)
 	require.Contains(t, strings.Join(report.Violations, "\n"), "unordered write: pkg/storage.BadgerTransaction.DeleteGraphNode")

@@ -57,7 +57,7 @@ func TestConstraintRequirementSpellings(t *testing.T) {
 		"CREATE CONSTRAINT x FOR n:L REQUIRE n.a IS UNIQUE",
 		"CREATE CONSTRAINT x FOR [r:R] REQUIRE r.a IS UNIQUE",
 	} {
-		rewritten, err := exec.canonicalConstraintRequirement(statement)
+		rewritten, err := exec.canonicalConstraintRequirement(ctx, statement)
 		require.NoError(t, err, statement)
 		require.Equal(t, statement, rewritten, statement)
 	}

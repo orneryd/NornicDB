@@ -98,7 +98,7 @@ func mergeActionAssignments(clauses mergeActionClauses) []string {
 // the one parser of MERGE actions: the pipeline applies them
 // (pipelineApplyMerge), and the statement analysers and the AST builder read
 // them. It allocates only past two clauses of a kind or eight in all.
-func splitMergeClauseActions(mergeBody string, spans *mergeActionSpans) mergeClauseActions {
+func splitMergeClauseActions(ctx context.Context, mergeBody string, spans *mergeActionSpans) mergeClauseActions {
 	if spans != nil {
 		*spans = mergeActionSpans{}
 	}
@@ -110,7 +110,7 @@ func splitMergeClauseActions(mergeBody string, spans *mergeActionSpans) mergeCla
 	actions := buffer[:0]
 	for _, keyword := range [...]string{"ON CREATE SET", "ON MATCH SET"} {
 		for from := 0; ; {
-			position := keywordIndexFromDefault(mergeBody, keyword, from)
+			position := keywordIndexFromDefault(ctx, mergeBody, keyword, from)
 			if position < 0 {
 				break
 			}
@@ -277,7 +277,7 @@ func (e *StorageExecutor) pipelineMergePath(ctx context.Context, row pipelineRow
 	// dependent assignments use the checked SET owner after the path binds.
 	identityPattern := strings.TrimSpace(match[len("MATCH"):])
 	identityTail := ""
-	if where := topLevelKeywordIndex(identityPattern, "WHERE"); where >= 0 {
+	if where := topLevelKeywordIndex(ctx, identityPattern, "WHERE"); where >= 0 {
 		identityTail = identityPattern[where:]
 		identityPattern = strings.TrimSpace(identityPattern[:where])
 	}
@@ -338,9 +338,9 @@ func (e *StorageExecutor) pipelineMergePath(ctx context.Context, row pipelineRow
 	// set once its elements exist, as Neo4j's MERGE evaluates it; CREATE
 	// itself can't read an element it creates.
 	createPattern, assignments := identityPattern, ""
-	if where := topLevelKeywordIndex(match, "WHERE"); where >= 0 {
+	if where := topLevelKeywordIndex(ctx, match, "WHERE"); where >= 0 {
 		createPattern = strings.TrimSpace(match[len("MATCH"):where])
-		assignments = strings.Join(splitTopLevelAndConjuncts(match[where+len("WHERE"):]), ", ")
+		assignments = strings.Join(splitTopLevelAndConjuncts(ctx, match[where+len("WHERE"):]), ", ")
 	}
 	// One row: the create reports not-ok only with an error.
 	createdRows, result, _, err := e.pipelineApplyCreateClauses(ctx, []pipelineRow{row}, []pipelineClause{{kind: pipelineClauseCreate, text: "CREATE " + directedMergePath(createPattern)}})

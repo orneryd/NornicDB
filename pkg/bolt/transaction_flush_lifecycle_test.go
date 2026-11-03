@@ -147,6 +147,7 @@ func TestPendingFlushJoinsTimeoutCleanupThatWonAdmission(t *testing.T) {
 		rollbackRelease: make(chan struct{}),
 	}
 	session := &Session{
+		server:        &Server{config: DefaultConfig()},
 		executor:      executor,
 		inTransaction: true,
 		pendingFlush:  true,

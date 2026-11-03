@@ -2226,7 +2226,7 @@ func TestFindKeywordIndex(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := findKeywordIndex(tt.input, tt.keyword)
+			got := findKeywordIndex(t.Context(), tt.input, tt.keyword)
 			if got != tt.expected {
 				t.Errorf("findKeywordIndex(%q, %q) = %d, want %d", tt.input, tt.keyword, got, tt.expected)
 			}
@@ -2236,7 +2236,7 @@ func TestFindKeywordIndex(t *testing.T) {
 
 func TestTopLevelKeywordIndex_IgnoresCallSubqueryBody(t *testing.T) {
 	input := "CALL { RETURN 1 } RETURN 2"
-	got := topLevelKeywordIndex(input, "RETURN")
+	got := topLevelKeywordIndex(t.Context(), input, "RETURN")
 	if got != 18 {
 		t.Fatalf("topLevelKeywordIndex(%q, %q) = %d, want %d", input, "RETURN", got, 18)
 	}

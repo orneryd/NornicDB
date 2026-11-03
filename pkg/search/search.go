@@ -1697,7 +1697,7 @@ func (s *Service) replaceClusterIndex(gpuManager *gpu.Manager, numClusters int) 
 	defer s.mu.Unlock()
 
 	// A closed service installs no cluster index again.
-	if s.lifecycleCtx != nil && s.lifecycleCtx.Err() != nil {
+	if s.lifecycleCtx.Err() != nil {
 		return false
 	}
 	// If clustering is already enabled, only rebuild when switching CPU<->GPU.
@@ -1866,9 +1866,6 @@ func (s *Service) reconcileClusterPopulation(targetCount int) {
 // be skipped silently and the default non-clustered vector strategy is used.
 // Returns error only if clustering is not enabled or fails unexpectedly.
 func (s *Service) TriggerClustering(ctx context.Context) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	ctx, finishRead, err := s.beginRead(ctx)
 	if err != nil {
 		return err
@@ -1974,9 +1971,6 @@ func (s *Service) triggerClustering(ctx context.Context, lexicalReady func() err
 // it available first (a persistent build drops BM25 from memory while the
 // graphs are built and reloads it here).
 func (s *Service) buildClusterGeneration(ctx context.Context, clusterIndex *gpu.ClusterIndex, clustering *gpu.Clustering, persisted *ivfHNSWManifest, lexicalReady func() error) (*clusterGeneration, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	var graphs map[int]*HNSWIndex
 	if envutil.GetBoolStrict("NORNICDB_VECTOR_IVF_HNSW_ENABLED", false) {
 		built, err := s.buildClusterHNSWIndexes(ctx, clustering, persisted)
@@ -2248,7 +2242,7 @@ func (s *Service) setPersistenceEnabledNow(enabled bool) {
 // Closed reports whether Close was called (its background workers stopped
 // and its file-backed vector store released).
 func (s *Service) Closed() bool {
-	return s != nil && s.lifecycleCtx != nil && s.lifecycleCtx.Err() != nil
+	return s != nil && s.lifecycleCtx.Err() != nil
 }
 
 // Close stops search-service background workers and releases file-backed vector resources.
@@ -2434,9 +2428,6 @@ func (s *Service) runPersist() {
 }
 
 func (s *Service) runPersistWithContext(ctx context.Context) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if !s.persistEnabled.Load() {
 		return
 	}
@@ -2592,9 +2583,6 @@ func applyHNSWMutationSnapshot(index *HNSWIndex, pending annMutationOverlaySnaps
 }
 
 func (s *Service) persistIVFHNSWBackground(ctx context.Context, hnswPath string) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	// When IVF-HNSW is the strategy, persist per-cluster HNSW and centroids (same dir as hnsw, in hnsw_ivf/).
 	if hnswPath == "" {
 		return
@@ -2920,21 +2908,22 @@ func (s *Service) maybeAutoSetVectorDimensions(dimensions int) {
 // IndexNode adds a node to all search indexes.
 // All embeddings are stored in ChunkEmbeddings (even single chunk = array of 1).
 func (s *Service) IndexNode(node *storage.Node) error {
+	ctx := s.LifetimeContext()
 	// A payload write for rebuilds and offline sinks; live writers use
 	// RefreshNode (TestLiveIndexWritersRefreshFromStorage). Population and
 	// checkpoint restoration must not be overtaken by a live mutation; their
 	// snapshots may contain older node state. During a build the write is
 	// handed to the build (build_write_queue.go).
-	if queued, err := s.readLockOrQueue(deferredIndexWrite{node: node}); queued || err != nil {
+	if queued, err := s.readLockOrQueue(ctx, deferredIndexWrite{node: node}); queued || err != nil {
 		return err
 	}
 	defer s.buildMu.RUnlock()
-	return s.indexNodeOwned(node, nil)
+	return s.indexNodeOwned(ctx, node, nil)
 }
 
 // indexNodeOwned is IndexNode for a caller holding buildMu (read or write).
 // current, when set, is the temporal decision made at the call.
-func (s *Service) indexNodeOwned(node *storage.Node, current *bool) error {
+func (s *Service) indexNodeOwned(ctx context.Context, node *storage.Node, current *bool) error {
 	// Per-DB master switches: when both indexes are off, IndexNode is a full
 	// no-op — the database has no search and never will until a flag flip
 	// triggers ResetSearchService. When one is off, indexNodeLocked still
@@ -2945,21 +2934,28 @@ func (s *Service) indexNodeOwned(node *storage.Node, current *bool) error {
 	if !bm25On && !vecOn {
 		return nil
 	}
+	shouldIndex := false
+	if current != nil {
+		shouldIndex = *current
+	} else {
+		var err error
+		shouldIndex, err = s.shouldIndexNode(ctx, node)
+		if err != nil {
+			return err
+		}
+	}
 	if !s.buildInProgress.Load() {
 		defer s.schedulePersist()
 		if s.resultCache != nil {
 			s.resultCache.Invalidate()
 		}
 	}
-	s.maybeAutoSetVectorDimensions(firstVectorDimensions(node))
+	if shouldIndex {
+		s.maybeAutoSetVectorDimensions(firstVectorDimensions(node))
+	}
 
 	s.indexMu.Lock()
-	var err error
-	if current == nil {
-		err = s.indexNodeLocked(node, false)
-	} else {
-		err = s.indexNodeAsLocked(node, false, *current, true)
-	}
+	err := s.indexNodeAsLocked(node, false, shouldIndex, true)
 	s.indexMu.Unlock()
 	if err == nil && !s.buildInProgress.Load() {
 		s.scheduleStrategyTransitionCheck()
@@ -3176,17 +3172,15 @@ func (s *Service) lastWriteTime() time.Time {
 	return time.Time{}
 }
 
-func (s *Service) shouldIndexNode(node *storage.Node) (bool, error) {
+func (s *Service) shouldIndexNode(ctx context.Context, node *storage.Node) (bool, error) {
 	if node == nil {
 		return false, nil
 	}
-	provider, ok := s.engine.(interface {
-		IsCurrentTemporalNode(node *storage.Node, asOf time.Time) (bool, error)
-	})
+	provider, ok := s.engine.(storage.TemporalCurrentNodeEngine)
 	if !ok {
 		return true, nil
 	}
-	return provider.IsCurrentTemporalNode(node, time.Now().UTC())
+	return provider.IsCurrentTemporalNode(ctx, node, time.Now().UTC())
 }
 
 // indexNodeLocked does the work of IndexNode. Caller must hold s.indexMu.
@@ -3222,16 +3216,12 @@ func (s *Service) checkEmbeddingDimensions(node *storage.Node) error {
 // caller's write it is not rejected for an embedding whose dimensions differ
 // from the index's: the indexer logs and skips that vector and indexes the
 // rest of the node, so one bad stored embedding cannot fail the whole build.
-func (s *Service) indexStoredNodeLocked(node *storage.Node, skipFulltext bool) error {
-	shouldIndex, err := s.shouldIndexNode(node)
-	if err != nil {
-		return err
-	}
-	return s.indexNodeAsLocked(node, skipFulltext, shouldIndex, false)
+func (s *Service) indexStoredNodeLocked(node *storage.Node, skipFulltext, current bool) error {
+	return s.indexNodeAsLocked(node, skipFulltext, current, false)
 }
 
-func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
-	shouldIndex, err := s.shouldIndexNode(node)
+func (s *Service) indexNodeLocked(ctx context.Context, node *storage.Node, skipFulltext bool) error {
+	shouldIndex, err := s.shouldIndexNode(ctx, node)
 	if err != nil {
 		return err
 	}
@@ -3581,7 +3571,7 @@ func (s *Service) removeNodeEntriesLocked(nodeIDStr string, removeFulltext bool)
 // writers use RefreshNode (TestLiveIndexWritersRefreshFromStorage).
 func (s *Service) RemoveNode(nodeID storage.NodeID) error {
 	// Like IndexNode: during a build the removal is handed to the build.
-	if queued, err := s.readLockOrQueue(deferredIndexWrite{nodeID: string(nodeID)}); queued || err != nil {
+	if queued, err := s.readLockOrQueue(s.LifetimeContext(), deferredIndexWrite{nodeID: string(nodeID)}); queued || err != nil {
 		return err
 	}
 	defer s.buildMu.RUnlock()
@@ -3594,12 +3584,12 @@ func (s *Service) RemoveNode(nodeID storage.NodeID) error {
 // snapshots may contain older node state. During a build the write is handed to
 // the build (build_write_queue.go), which installs it only if the reservation
 // is still current when its turn comes.
-func (s *Service) applyReservedNodeIndex(node *storage.Node, mutation NodeMutation) error {
+func (s *Service) applyReservedNodeIndex(ctx context.Context, node *storage.Node, mutation NodeMutation) error {
 	applyMutation := mutation.mutation
 	if node == nil || applyMutation.id != node.ID {
 		return nil
 	}
-	if queued, err := s.readLockOrQueue(deferredIndexWrite{node: node, valid: func() bool {
+	if queued, err := s.readLockOrQueue(ctx, deferredIndexWrite{node: node, valid: func() bool {
 		return claimReservedIndexMutation(applyMutation)
 	}}); queued || err != nil {
 		if err != nil {
@@ -3608,14 +3598,14 @@ func (s *Service) applyReservedNodeIndex(node *storage.Node, mutation NodeMutati
 		return err
 	}
 	defer s.buildMu.RUnlock()
-	return applyReservedIndexMutation(applyMutation, func() error { return s.indexNodeOwned(node, nil) })
+	return applyReservedIndexMutation(applyMutation, func() error { return s.indexNodeOwned(ctx, node, nil) })
 }
 
 // applyReservedNodeRemoval is applyReservedNodeIndex for a removal: during a
 // build the removal is handed to the build.
 func (s *Service) applyReservedNodeRemoval(mutation NodeMutation) error {
 	applyMutation := mutation.mutation
-	if queued, err := s.readLockOrQueue(deferredIndexWrite{nodeID: string(applyMutation.id), valid: func() bool {
+	if queued, err := s.readLockOrQueue(s.LifetimeContext(), deferredIndexWrite{nodeID: string(applyMutation.id), valid: func() bool {
 		return claimReservedIndexMutation(applyMutation)
 	}}); queued || err != nil {
 		if err != nil {
@@ -3664,7 +3654,7 @@ func (s *Service) IndexEdge(edge *storage.Edge) error {
 	// Like node writes: the explicit build's relationship stream applies a
 	// snapshot of stored edges, so during a build a live edge write is handed
 	// to the build, which applies it after the stream's copy.
-	if queued, err := s.readLockOrQueue(deferredIndexWrite{edge: edge}); queued || err != nil {
+	if queued, err := s.readLockOrQueue(s.LifetimeContext(), deferredIndexWrite{edge: edge}); queued || err != nil {
 		return err
 	}
 	defer s.buildMu.RUnlock()
@@ -3679,7 +3669,7 @@ func (s *Service) IndexEdge(edge *storage.Edge) error {
 func (s *Service) applyReservedEdgeIndex(edge *storage.Edge, mutation EdgeMutation) error {
 	s.updateRelationshipWithMutation(deferredIndexWrite{edge: edge, relationship: true}, mutation)
 	applyMutation := mutation.mutation
-	if queued, err := s.readLockOrQueue(deferredIndexWrite{edge: edge, valid: func() bool {
+	if queued, err := s.readLockOrQueue(s.LifetimeContext(), deferredIndexWrite{edge: edge, valid: func() bool {
 		return claimReservedIndexMutation(applyMutation)
 	}}); queued || err != nil {
 		if err != nil {
@@ -3695,7 +3685,7 @@ func (s *Service) applyReservedEdgeIndex(edge *storage.Edge, mutation EdgeMutati
 func (s *Service) applyReservedEdgeRemoval(mutation EdgeMutation) error {
 	applyMutation := mutation.mutation
 	s.updateRelationshipWithMutation(deferredIndexWrite{edgeID: string(applyMutation.id), relationship: true}, mutation)
-	if queued, err := s.readLockOrQueue(deferredIndexWrite{edgeID: string(applyMutation.id), valid: func() bool {
+	if queued, err := s.readLockOrQueue(s.LifetimeContext(), deferredIndexWrite{edgeID: string(applyMutation.id), valid: func() bool {
 		return claimReservedIndexMutation(applyMutation)
 	}}); queued || err != nil {
 		if err != nil {
@@ -3807,7 +3797,7 @@ func (s *Service) RemoveEdge(edgeID storage.EdgeID) error {
 	s.RemoveRelationship(edgeID)
 	// Like node writes (see IndexEdge): during a build the removal is handed
 	// to the build, so its relationship stream cannot re-add the edge.
-	if queued, err := s.readLockOrQueue(deferredIndexWrite{edgeID: string(edgeID)}); queued || err != nil {
+	if queued, err := s.readLockOrQueue(s.LifetimeContext(), deferredIndexWrite{edgeID: string(edgeID)}); queued || err != nil {
 		return err
 	}
 	defer s.buildMu.RUnlock()
@@ -4017,14 +4007,6 @@ type NodeIterator interface {
 // if both load with count > 0 (and semver format version matches), the full iteration
 // is skipped. Otherwise iterates over storage and saves both indexes at the end when paths are set.
 func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
-	if ctx == nil {
-		// A caller with no context of its own builds under the service's
-		// lifetime, which Close ends (never a substituted Background).
-		if s == nil || s.lifecycleCtx == nil {
-			return context.Canceled
-		}
-		ctx = s.lifecycleCtx
-	}
 	ctx, finishRead, err := s.beginRead(ctx)
 	if err != nil {
 		return err
@@ -4462,10 +4444,9 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 			if len(batch) == 0 {
 				return nil
 			}
-			s.adoptBuildBatchDimensions(batch)
 			filtered := make([]*storage.Node, 0, len(batch))
 			for _, n := range batch {
-				shouldIndex, err := s.shouldIndexNode(n)
+				shouldIndex, err := s.shouldIndexNode(ctx, n)
 				if err != nil {
 					return err
 				}
@@ -4473,6 +4454,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 					filtered = append(filtered, n)
 				}
 			}
+			s.adoptBuildBatchDimensions(filtered)
 			if s.bm25MemoryMaxBytes > 0 || s.vectorMemoryMaxBytes > 0 || s.metadataMemoryMaxBytes > 0 {
 				s.indexMu.Lock()
 				defer s.indexMu.Unlock()
@@ -4480,7 +4462,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 					s.ensureVectorFileStore()
 				}
 				for _, node := range filtered {
-					if err := s.indexStoredNodeLocked(node, false); err != nil {
+					if err := s.indexStoredNodeLocked(node, false, true); err != nil {
 						return err
 					}
 				}
@@ -4518,7 +4500,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 			}
 			s.indexMu.Lock()
 			for _, n := range filtered {
-				if err := s.indexStoredNodeLocked(n, true); err != nil {
+				if err := s.indexStoredNodeLocked(n, true, true); err != nil {
 					s.indexMu.Unlock()
 					return err
 				}
@@ -4600,10 +4582,9 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 		if len(batch) == 0 {
 			return nil
 		}
-		s.adoptBuildBatchDimensions(batch)
 		filtered := make([]*storage.Node, 0, len(batch))
 		for _, n := range batch {
-			shouldIndex, err := s.shouldIndexNode(n)
+			shouldIndex, err := s.shouldIndexNode(ctx, n)
 			if err != nil {
 				return err
 			}
@@ -4611,6 +4592,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 				filtered = append(filtered, n)
 			}
 		}
+		s.adoptBuildBatchDimensions(filtered)
 		if !skipFulltextRebuild {
 			entries := make([]FulltextBatchEntry, 0, len(filtered))
 			for _, n := range filtered {
@@ -4641,7 +4623,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 		}
 		s.indexMu.Lock()
 		for _, n := range filtered {
-			if err := s.indexStoredNodeLocked(n, true); err != nil {
+			if err := s.indexStoredNodeLocked(n, true, true); err != nil {
 				s.indexMu.Unlock()
 				return err
 			}
@@ -4774,9 +4756,6 @@ func (s *Service) finishBuildWithFinalPersist(ctx context.Context) {
 // cluster generation's lexical state is derived (a persistent build drops BM25
 // from memory during warmup).
 func (s *Service) warmupVectorPipeline(ctx context.Context, lexicalReady func() error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	s.hnswVectorsChanging.Store(false)
 	if !s.vectorEnabled.Load() {
 		s.logPrintf("🔍 Vector search disabled — skipping ANN warmup")
@@ -5894,9 +5873,6 @@ func collapseIndexResultsByNodeIDSlow(results []indexResult) []indexResult {
 //   - CPU brute-force only when NORNICDB_VECTOR_CPU_BRUTE_MAX_N is set above zero
 //   - Global HNSW by default when clustering is not active
 func (s *Service) getOrCreateVectorPipeline(ctx context.Context) (*VectorSearchPipeline, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

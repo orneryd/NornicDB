@@ -262,7 +262,7 @@ func (p *Parser) Parse(ctx context.Context, cypher string) (*Query, error) {
 		case "RETURN":
 			if returns == nil {
 				builder := NewASTBuilder()
-				for _, fragment := range builder.splitIntoClauses(cypher) {
+				for _, fragment := range builder.splitIntoClauses(ctx, cypher) {
 					if fragment.clauseType == ASTClauseReturn {
 						items, distinct := builder.parseProjection(ctx, source.Window(fragment.startPos, fragment.startPos+len(fragment.text)), len("RETURN"))
 						returns = append(returns, &ASTReturn{Items: items, Distinct: distinct})

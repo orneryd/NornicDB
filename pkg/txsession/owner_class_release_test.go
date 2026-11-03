@@ -18,7 +18,7 @@ func TestOwnerClassSessionReleaseIdleExpiry(t *testing.T) {
 	m := NewManager(20*time.Millisecond, func(string) (*cypher.StorageExecutor, error) {
 		executor = cypher.NewStorageExecutor(engine)
 		return executor, nil
-	})
+	}, t.Context())
 	defer func() {
 		if closer, ok := any(m).(interface{ Close() error }); ok {
 			_ = closer.Close()

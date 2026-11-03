@@ -11,7 +11,7 @@ import (
 
 func TestSnapshotOverlayVersionedBodyCaches(t *testing.T) {
 	b := snapshotOverlayFixture(t)
-	require.NoError(t, b.FlushWriteBehind(nil))
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
 	_, err := b.GetNode(t.Context(), "test:a")
 	require.NoError(t, err)
 	_, err = b.GetOutgoingEdges(context.Background(), "test:a")
@@ -28,7 +28,7 @@ func TestSnapshotOverlayVersionedBodyCaches(t *testing.T) {
 	require.NoError(t, writer.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:a", Labels: []string{"Live"}, Properties: map[string]any{"v": int64(4)}}, Policy: ClientNodeEdits}))
 	require.NoError(t, writer.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "REL", Properties: map[string]any{"v": int64(4)}}}))
 	require.NoError(t, writer.Commit())
-	require.NoError(t, b.FlushWriteBehind(nil))
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
 	// Warm the newer bodies before asking the pinned view for its old records.
 	current, err := b.GetNode(t.Context(), "test:a")
 	require.NoError(t, err)
@@ -53,7 +53,7 @@ func TestSnapshotOverlayVersionedBodyCaches(t *testing.T) {
 
 func TestSnapshotOverlayBodyCacheHydratesSidecarsAtReadPoint(t *testing.T) {
 	b := snapshotOverlayFixture(t)
-	require.NoError(t, b.FlushWriteBehind(nil))
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
 	node, err := b.GetNode(t.Context(), "test:a")
 	require.NoError(t, err)
 	view, err := b.captureReadView(t.Context(), nil)

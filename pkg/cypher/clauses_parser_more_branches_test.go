@@ -64,14 +64,14 @@ func TestUnwindClauseParsers_MoreBranches(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "count(*)", alias)
 
-	clauses, ok := splitUnwindMergeChainClauses("MERGE (n:A {k: row.k}) ON CREATE SET n.created = true SET n.updated = true")
+	clauses, ok := splitUnwindMergeChainClauses(t.Context(), "MERGE (n:A {k: row.k}) ON CREATE SET n.created = true SET n.updated = true")
 	require.True(t, ok)
 	require.Equal(t, []string{
 		"MERGE (n:A {k: row.k})",
 		"ON CREATE SET n.created = true",
 		"SET n.updated = true",
 	}, clauses)
-	_, ok = splitUnwindMergeChainClauses("XYZ n")
+	_, ok = splitUnwindMergeChainClauses(t.Context(), "XYZ n")
 	require.False(t, ok)
 }
 
@@ -85,19 +85,19 @@ WITH collect(DISTINCT row.k) AS keys RETURN keys`, nil)
 	require.Len(t, res.Rows, 1)
 	require.Equal(t, []interface{}{"a", "b"}, res.Rows[0][0])
 
-	require.False(t, canApplySetBasedUnwindRewrite("UNWIND $rows AS row RETURN count(row)", []interface{}{nil, nil}))
-	require.False(t, canApplySetBasedUnwindRewrite("UNWIND $rows AS row RETURN row", []interface{}{1, 2}))
-	require.False(t, canApplySetBasedUnwindRewrite("UNWIND $rows AS row REMOVE row.x RETURN count(row)", []interface{}{1, 2}))
+	require.False(t, canApplySetBasedUnwindRewrite(t.Context(), "UNWIND $rows AS row RETURN count(row)", []interface{}{nil, nil}))
+	require.False(t, canApplySetBasedUnwindRewrite(t.Context(), "UNWIND $rows AS row RETURN row", []interface{}{1, 2}))
+	require.False(t, canApplySetBasedUnwindRewrite(t.Context(), "UNWIND $rows AS row REMOVE row.x RETURN count(row)", []interface{}{1, 2}))
 }
 
 func TestRewriteTopLevelMultiMatchToCartesianMatch_MoreBranches(t *testing.T) {
-	require.Equal(t, "RETURN 1", rewriteTopLevelMultiMatchToCartesianMatch("RETURN 1"))
-	require.Equal(t, "MATCH (a:A) WHERE a.id = 1", rewriteTopLevelMultiMatchToCartesianMatch("MATCH (a:A) WHERE a.id = 1"))
-	require.Equal(t, "MATCH (a:A) MATCH (b:B) RETURN a, b", rewriteTopLevelMultiMatchToCartesianMatch("MATCH (a:A) MATCH (b:B) RETURN a, b"))
+	require.Equal(t, "RETURN 1", rewriteTopLevelMultiMatchToCartesianMatch(t.Context(), "RETURN 1"))
+	require.Equal(t, "MATCH (a:A) WHERE a.id = 1", rewriteTopLevelMultiMatchToCartesianMatch(t.Context(), "MATCH (a:A) WHERE a.id = 1"))
+	require.Equal(t, "MATCH (a:A) MATCH (b:B) RETURN a, b", rewriteTopLevelMultiMatchToCartesianMatch(t.Context(), "MATCH (a:A) MATCH (b:B) RETURN a, b"))
 	require.Equal(
 		t,
 		"MATCH (a:A), (b:B) WHERE a.id = b.id RETURN a, b",
-		rewriteTopLevelMultiMatchToCartesianMatch("MATCH (a:A) MATCH (b:B) WHERE a.id = b.id RETURN a, b"),
+		rewriteTopLevelMultiMatchToCartesianMatch(t.Context(), "MATCH (a:A) MATCH (b:B) WHERE a.id = b.id RETURN a, b"),
 	)
 }
 

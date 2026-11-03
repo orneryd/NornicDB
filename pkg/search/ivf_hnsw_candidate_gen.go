@@ -60,9 +60,6 @@ func (c *clusterServing) population(ctx context.Context, own *gpu.ClusterIndex) 
 		}
 		return own.Count()
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	_, view, done := c.view(ctx)
 	defer done()
 	if view.index == nil {
@@ -149,9 +146,6 @@ func (g *IVFHNSWCandidateGen) SearchCandidates(ctx context.Context, query []floa
 
 // candidatePopulation is the number of vectors the clustered index holds.
 func (g *IVFHNSWCandidateGen) candidatePopulation(ctx context.Context) int {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	_, view, unlock, done := g.serving.open(ctx, ownClusterView(g.clusterIndex, g.numClustersToSearch, g.getClusterHNSW))
 	defer done()
 	defer unlock()
@@ -188,9 +182,6 @@ func (g *IVFHNSWCandidateGen) searchCandidatesWithExhaustion(ctx context.Context
 // routed (routedGraphs routes all of them for a request as wide as their
 // population).
 func (g *IVFHNSWCandidateGen) searchCandidatesWithEvidence(ctx context.Context, query []float32, k int, minSimilarity float64) ([]Candidate, candidateEvidence, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	ctx, view, unlock, done := g.serving.open(ctx, ownClusterView(g.clusterIndex, g.numClustersToSearch, g.getClusterHNSW))
 	defer done()
 	defer unlock()

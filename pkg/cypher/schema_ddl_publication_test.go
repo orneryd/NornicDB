@@ -312,7 +312,7 @@ func TestOrdinarySchemaDDLStatementContract(t *testing.T) {
 		require.NoError(t, err, body)
 		require.True(t, contract.writes, body)
 		require.True(t, contract.transaction, body)
-		require.True(t, isOrdinarySchemaDDL(body), body)
+		require.True(t, isOrdinarySchemaDDL(t.Context(), body), body)
 	}
 	for _, body := range []string{"SHOW INDEXES", "SHOW CONSTRAINTS"} {
 		contract, err := readStatementExecutionContract(t.Context(), body)
@@ -323,8 +323,8 @@ func TestOrdinarySchemaDDLStatementContract(t *testing.T) {
 	// Catalog commands keep their own owner: they are metadata commands, not
 	// ordinary schema DDL, whatever their own contract reports.
 	for _, body := range []string{"CREATE DATABASE d", "DROP DATABASE d", "CREATE ALIAS a FOR DATABASE d", "DROP ALIAS a IF EXISTS"} {
-		require.False(t, isOrdinarySchemaDDL(body), body)
-		require.True(t, isMetadataCommand(body, metadataCatalogExecution), body)
+		require.False(t, isOrdinarySchemaDDL(t.Context(), body), body)
+		require.True(t, isMetadataCommand(t.Context(), body, metadataCatalogExecution), body)
 	}
 }
 
@@ -634,7 +634,7 @@ func TestCreateIndexFillsFromBufferedWritePopulation(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ddlPublishedCompositeIndex(store.GetSchema(), index))
 
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	require.Len(t, ddlIndexValueOwnerIDs(t, store, label, property, "alice"), 2,
 		"the fill missed a node that was still buffered")
 	require.Len(t, ddlIndexValueOwnerIDs(t, store, label, property, "bob"), 1)

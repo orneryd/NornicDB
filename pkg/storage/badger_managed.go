@@ -232,8 +232,7 @@ func (m *managedBadgerDB) commitShared(ctx context.Context, txn *badger.Txn, pub
 	defer m.commitGate.RUnlock()
 	m.advanceDiscardTs()
 	if publish != nil && publish.owner != nil {
-		preparationContext := commitPreparationLifetime(ctx)
-		if err := publish.owner.prepareStoredEntityPublication(preparationContext); err != nil {
+		if err := publish.owner.prepareStoredEntityPublication(ctx); err != nil {
 			return 0, err
 		}
 	}
@@ -678,8 +677,7 @@ func (lc *largeCommit) finish(w *batchWriter, publication ...*commitPublication)
 		lc.finalPublication = publication[0]
 	}
 	if len(publication) > 0 && publication[0] != nil && publication[0].owner != nil {
-		preparationContext := commitPreparationLifetime(lc.ctx)
-		if err := publication[0].owner.prepareStoredEntityPublication(preparationContext); err != nil {
+		if err := publication[0].owner.prepareStoredEntityPublication(lc.ctx); err != nil {
 			return err
 		}
 	}

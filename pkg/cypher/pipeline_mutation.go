@@ -32,7 +32,7 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 				"DELETE accepts nodes, relationships, and paths, not labels or relationship types",
 			)
 		}
-		references := expressionFreeVariables(expression)
+		references := expressionFreeVariables(ctx, expression)
 		for _, name := range references {
 			if _, bound := scope[name]; !bound {
 				return nil, true, deleteUndefinedVariableError(name)
@@ -156,7 +156,7 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 	// body may chain SET clauses (SET a SET b); the applicators keep their
 	// boundaries, which properties_set depends on (setWrites).
 	body := strings.TrimSpace(clause[len("SET"):])
-	assignments := splitSetAssignments(collapseChainedSetClauses(body))
+	assignments := splitSetAssignments(collapseChainedSetClauses(ctx, body))
 	if body == "" || len(assignments) == 0 {
 		return nil, false, nil
 	}
@@ -169,7 +169,7 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 	simpleTarget, simpleProperty, simpleExpression, simplePropertyAssignment := pipelineSimplePropertyAssignment(assignments)
 	targets := pipelineSetTargetVariables(assignments)
 	var runBuffer [4]setRun
-	runs := appendSetClauseRuns(runBuffer[:0], body, assignments)
+	runs := appendSetClauseRuns(ctx, runBuffer[:0], body, assignments)
 	var stateBuffer [4]setEntityState
 	wrapSetError := func(state setEntityState, err error) error {
 		return fmt.Errorf("SET %s: %w", pipelineSetOperation(state.variable, assignments), err)
@@ -494,7 +494,7 @@ func (e *StorageExecutor) pipelinePlanCreateRow(ctx context.Context, row pipelin
 			// template is parsed from the clause text, so a clause with
 			// row-dependent dynamic labels or types keeps the general route,
 			// which plans the resolved pattern instead.
-			if template := e.pipelineCreateTemplateFor(clause.text); template != nil && template.usable {
+			if template := e.pipelineCreateTemplateFor(ctx, clause.text); template != nil && template.usable {
 				var err error
 				paths, planned, err = template.plan(ctx, e, newRow, nodes, edges, plan)
 				if err != nil {
@@ -533,7 +533,7 @@ func (e *StorageExecutor) pipelinePlanCreateRow(ctx context.Context, row pipelin
 // mutation semantics after UNWIND/WITH without duplicating MERGE behavior.
 func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, *QueryStats, error) {
 	if body := strings.TrimSpace(clause); hasDynamicToken(body) && startsWithKeywordFold(body, "MERGE") {
-		if actions := splitMergeClauseActions(pipelineClauseBody(body, "MERGE"), nil); hasDynamicToken(actions.pattern) {
+		if actions := splitMergeClauseActions(ctx, pipelineClauseBody(body, "MERGE"), nil); hasDynamicToken(actions.pattern) {
 			pattern := actions.pattern
 			stats := &QueryStats{}
 			out := make([]pipelineRow, 0, len(rows))
@@ -563,7 +563,7 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 	if len(rows) > 1 {
 		identities = newRelationshipMergeIdentityCache()
 	}
-	template := e.pipelineMergeTemplateFor(clause)
+	template := e.pipelineMergeTemplateFor(ctx, clause)
 	// The clause's pattern and actions (each action clause a SET of its own,
 	// in order) are the same for every row.
 	clauseBody := strings.TrimSpace(clause)
@@ -571,7 +571,7 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 	var clausePattern, onCreateSet, onMatchSet string
 	multiRelationship := false
 	if isMerge {
-		parts := splitMergeClauseActions(pipelineClauseBody(clauseBody, "MERGE"), nil)
+		parts := splitMergeClauseActions(ctx, pipelineClauseBody(clauseBody, "MERGE"), nil)
 		clausePattern, onCreateSet, onMatchSet = parts.pattern, parts.onCreate.setText(), parts.onMatch.setText()
 		multiRelationship = e.isMultiRelationshipPattern(clausePattern)
 	}
@@ -593,7 +593,7 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 			}
 			if template.usable {
 				if preparedPattern != templatePattern {
-					preparedTemplate = e.pipelineMergeTemplateFor("MERGE " + preparedPattern)
+					preparedTemplate = e.pipelineMergeTemplateFor(ctx, "MERGE "+preparedPattern)
 					templatePattern = preparedPattern
 				}
 				rowTemplate = preparedTemplate
@@ -888,11 +888,11 @@ func (e *StorageExecutor) mergeRelationshipRows(ctx context.Context, row pipelin
 
 // containsRemoveClauseAnywhere reports a REMOVE keyword outside strings,
 // including one nested in a FOREACH body or subquery.
-func containsRemoveClauseAnywhere(cypher string) bool {
+func containsRemoveClauseAnywhere(ctx context.Context, cypher string) bool {
 	opts := defaultKeywordScanOpts()
 	opts.SkipParens = false
 	opts.SkipBrackets = false
-	return keywordIndexFrom(cypher, "REMOVE", 0, opts) >= 0
+	return keywordIndexFrom(ctx, cypher, "REMOVE", 0, opts) >= 0
 }
 
 func (e *StorageExecutor) pipelineApplyForeach(ctx context.Context, rows []pipelineRow, clause pipelineClause) (*QueryStats, error) {
@@ -963,19 +963,19 @@ func setSourceTypeError(property, operator string, source staticOperand) error {
 // check, validateStaticPropertyAccessParameters). Literal sources are checked
 // with each item's scope check (validateSetClauseScope), in item order, as
 // Neo4j reports them.
-func setClauseSourceTypeError(clause string, types map[string]string, params map[string]interface{}) error {
+func setClauseSourceTypeError(ctx context.Context, clause string, types map[string]string, params map[string]interface{}) error {
 	body := strings.TrimSpace(clause)
 	if startsWithKeywordFold(body, "SET") {
 		body = body[len("SET"):]
 	}
 	for _, assignment := range splitSetAssignments(body) {
 		_, property, operator, source := splitSetAssignment(assignment)
-		if staticLiteralType(source, literalLedExpression) != "" {
+		if staticLiteralType(ctx, source, literalLedExpression) != "" {
 			continue
 		}
 		// Parameter values are the run's facts (the per-execution check).
 		var operand staticOperand
-		if typeName := propertyAccessExpressionType(source, types, params); typeName != "" {
+		if typeName := propertyAccessExpressionType(ctx, source, types, params); typeName != "" {
 			operand = typedOperand(typeName).proved()
 		}
 		if err := setSourceTypeError(property, operator, operand); err != nil {

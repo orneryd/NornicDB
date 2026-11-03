@@ -9,16 +9,16 @@ import (
 )
 
 func TestParseMatchWithStages_Branches(t *testing.T) {
-	_, _, ok := parseMatchWithStages("RETURN 1")
+	_, _, ok := parseMatchWithStages(t.Context(), "RETURN 1")
 	require.False(t, ok)
 
-	_, _, ok = parseMatchWithStages("MATCH (n) RETURN n")
+	_, _, ok = parseMatchWithStages(t.Context(), "MATCH (n) RETURN n")
 	require.False(t, ok)
 
-	_, _, ok = parseMatchWithStages("MATCH (n) WITH n MATCH (m) WITH m")
+	_, _, ok = parseMatchWithStages(t.Context(), "MATCH (n) WITH n MATCH (m) WITH m")
 	require.False(t, ok)
 
-	stages, ret, ok := parseMatchWithStages("MATCH (n:A) WITH count(n) AS c MATCH (m:B) WITH c AS c2, count(m) AS d RETURN c2, d")
+	stages, ret, ok := parseMatchWithStages(t.Context(), "MATCH (n:A) WITH count(n) AS c MATCH (m:B) WITH c AS c2, count(m) AS d RETURN c2, d")
 	require.True(t, ok)
 	require.Len(t, stages, 2)
 	require.Equal(t, "(n:A)", stages[0].matchClause)

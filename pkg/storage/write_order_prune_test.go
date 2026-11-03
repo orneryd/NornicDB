@@ -23,9 +23,9 @@ func TestPruneOrdersAfterBufferedRecreate(t *testing.T) {
 
 	_, err = b.CreateNode(t.Context(), &Node{ID: "test:p", Properties: map[string]any{"v": int64(1)}})
 	require.NoError(t, err)
-	require.NoError(t, b.FlushWriteBehind(nil))
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
 	require.NoError(t, b.DeleteNode(t.Context(), "test:p"))
-	require.NoError(t, b.FlushWriteBehind(nil))
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
 
 	tx, err := b.BeginTransaction(t.Context())
 	require.NoError(t, err)
@@ -38,7 +38,7 @@ func TestPruneOrdersAfterBufferedRecreate(t *testing.T) {
 
 	_, err = b.PruneMVCCVersions(context.Background(), MVCCPruneOptions{})
 	require.NoError(t, err)
-	require.NoError(t, b.FlushWriteBehind(nil))
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
 
 	got, err := b.GetNode(t.Context(), "test:p")
 	require.NoError(t, err)

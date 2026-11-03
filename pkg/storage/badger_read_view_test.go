@@ -18,7 +18,7 @@ func snapshotOverlayFixture(t *testing.T) *BadgerEngine {
 	for _, id := range []NodeID{"test:a", "test:b", "test:gone"} {
 		bufferedCreate(t, b, &Node{ID: id, Labels: []string{"Old"}, Properties: map[string]any{"v": int64(1)}})
 	}
-	require.NoError(t, b.FlushWriteBehind(nil))
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
 	tx, err := b.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
@@ -71,7 +71,7 @@ func TestSnapshotOverlayCaptureClasses(t *testing.T) {
 			require.NoError(t, err)
 			defer view.Close()
 			// Replay and remove the captured generation before consuming either side.
-			require.NoError(t, b.FlushWriteBehind(nil))
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
 			require.Empty(t, b.writeBehind.draining)
 			_, err = view.txn.Get(edgeKey("test:r"))
 			require.ErrorIs(t, err, badger.ErrKeyNotFound)
@@ -191,7 +191,7 @@ func TestSnapshotOverlayPublicReaderClasses(t *testing.T) {
 		require.Equal(t, int64(1), count)
 	}
 	t.Run("buffered", check)
-	require.NoError(t, b.FlushWriteBehind(nil))
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
 	t.Run("retired", check)
 }
 
@@ -211,7 +211,7 @@ func TestSnapshotOverlayStreamRetainsViewAcrossReplay(t *testing.T) {
 			visit := func() {
 				if !drained {
 					drained = true
-					require.NoError(t, b.FlushWriteBehind(nil))
+					require.NoError(t, b.FlushWriteBehind(context.Background()))
 					bufferedCreate(t, b, &Node{ID: "test:later", Labels: []string{"Live"}})
 				}
 			}
@@ -251,7 +251,7 @@ func TestSnapshotOverlayTransactionOwnWrites(t *testing.T) {
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, b.FlushWriteBehind(nil))
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
 	n, err := tx.GetNode(t.Context(), "test:a")
 	require.NoError(t, err)
 	require.Equal(t, int64(2), n.Properties["v"])
@@ -326,7 +326,7 @@ func TestSnapshotOverlayTransactionLabelCache(t *testing.T) {
 	for _, stopEarly := range []bool{false, true} {
 		t.Run(map[bool]string{false: "complete", true: "prefix"}[stopEarly], func(t *testing.T) {
 			b := snapshotOverlayFixture(t)
-			require.NoError(t, b.FlushWriteBehind(nil))
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
 			tx, err := b.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			defer tx.Rollback()
@@ -360,7 +360,7 @@ func TestSnapshotOverlayTransactionLabelCache(t *testing.T) {
 				require.Equal(t, []NodeID{"test:second"}, ids)
 			}
 			check()
-			require.NoError(t, b.FlushWriteBehind(nil))
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
 			check()
 		})
 	}

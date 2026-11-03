@@ -99,7 +99,7 @@ func TestMapQuotationConsumers(t *testing.T) {
 							require.True(t, resolved)
 						case "compiled":
 							compiler := rowValueCompiler{}
-							root, _ := compiler.compile(tc.text)
+							root, _ := compiler.compile(ctx, tc.text)
 							var resolved bool
 							got, resolved, err = root.eval(t.Context(), e, nil, nil)
 							require.True(t, resolved)

@@ -104,12 +104,6 @@ func (b *BadgerEngine) beginHelperTxn() (*managedBadgerDB, error) {
 	return b.db, nil
 }
 
-// errUpdateContextRequired rejects a private engine write handed no owning
-// context. withUpdate never substitutes one: the caller that knows its phase
-// passes it, and a missing context fails before order acquisition, admission
-// and the callback.
-var errUpdateContextRequired = errors.New("storage: withUpdate requires a non-nil owning context")
-
 // updateRequest carries what a withUpdate caller knows about its write before
 // the callback runs: the cache scope its writes belong to and whether it
 // writes metadata only. The owning context is withUpdate's first argument, so
@@ -131,9 +125,6 @@ type updateRequest struct {
 // the write's owning phase, required: a context-free caller establishes its
 // own explicit root at its entry instead of leaving this helper to guess one.
 func (b *BadgerEngine) withUpdate(ctx context.Context, request updateRequest, fn func(txn *badger.Txn) error, entities ...writtenEntities) error {
-	if ctx == nil {
-		return errUpdateContextRequired
-	}
 	if len(entities) > 0 && b.writeBehind != nil {
 		var order orderHold
 		if _, err := b.orderAfterBufferedCommits(ctx, &order, entities[0]); err != nil {
@@ -159,9 +150,8 @@ func (b *BadgerEngine) withPublishingUpdate(ctx context.Context, fn func(*badger
 		}
 		cw.publish = publish
 		if keys != nil {
-			preparationContext := commitPreparationLifetime(ctx)
 			var err error
-			cw.publishKeys, err = keys(preparationContext)
+			cw.publishKeys, err = keys(ctx)
 			if err != nil {
 				return err
 			}

@@ -36,6 +36,7 @@ type Program struct {
 
 	nonNilResults map[*ssa.Function]map[int]string // validated client-reviewed result contracts; nil flow only
 	nilFlow       *nilFlow                         // MayBeNil's memo; a Program is queried by one goroutine
+	guardedFields map[*types.Var]bool              // complete private inline-field use proof
 	// dynamicTargets is CallTargets' memo of DynamicCallTargets.
 	dynamicTargets map[ssa.CallInstruction][]*ssa.Function
 	// channelFamilies is channelFamilyOf's memo of one exact element type's

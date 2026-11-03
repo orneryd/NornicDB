@@ -77,7 +77,7 @@ func TestSyntaxValidationCacheRejectedExtension(t *testing.T) {
 	config.SetParserType(config.ParserTypeANTLR)
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	rejected := "SHOW LIMITS YIELD name WHERE name IN ['a',]"
-	require.True(t, isNornicExtensionStatement(rejected))
+	require.True(t, isNornicExtensionStatement(t.Context(), rejected))
 	require.Error(t, exec.validateSyntax(context.Background(), rejected, false, syntaxStatement))
 	require.False(t, exec.hasCachedValidSyntax(rejected, syntaxValidANTLR))
 }

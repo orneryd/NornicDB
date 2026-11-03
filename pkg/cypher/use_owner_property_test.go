@@ -173,7 +173,7 @@ func (f *usePropertyFixture) check(ctx context.Context, statement usePropertySta
 	}
 	// Removing the generated selectors gives an independent body baseline. Real
 	// argument functions still count; the graph-reference pseudo-function does not.
-	body, _ := desugarStandaloneOrderClauses(statement.body)
+	body, _ := desugarStandaloneOrderClauses(ctx, statement.body)
 	wantContract, err := readStatementExecutionContract(ctx, body)
 	if err != nil {
 		return map[string]error{"baseline": err}
@@ -184,16 +184,16 @@ func (f *usePropertyFixture) check(ctx context.Context, statement usePropertySta
 	if wantContract.writes != statement.writes {
 		return map[string]error{"baseline": fmt.Errorf("body write contract disagrees with generator")}
 	}
-	contractQuery, _ := desugarStandaloneOrderClauses(input("contract"))
+	contractQuery, _ := desugarStandaloneOrderClauses(ctx, input("contract"))
 	contract, err := readStatementExecutionContract(ctx, contractQuery)
 	if err != nil {
 		issues["contract"] = err
 	} else {
 		check("contract", contract, wantContract)
 	}
-	permissionQuery, _ := desugarStandaloneOrderClauses(input("permissions"))
+	permissionQuery, _ := desugarStandaloneOrderClauses(ctx, input("permissions"))
 	check("permissions", QueryPermissionRequirements(ctx, permissionQuery, RawSource), QueryPermissionRequirements(ctx, body, RawSource))
-	procedureQuery, _ := desugarStandaloneOrderClauses(input("procedures"))
+	procedureQuery, _ := desugarStandaloneOrderClauses(ctx, input("procedures"))
 	check("procedures", usePropertyProcedureNames(ctx, procedureQuery), usePropertyProcedureNames(ctx, body))
 	wantFunctions, err := usePropertyFunctions(body)
 	if err != nil {
@@ -215,7 +215,7 @@ func (f *usePropertyFixture) check(ctx context.Context, statement usePropertySta
 	} else {
 		check("functions", functions, wantFunctions)
 	}
-	cacheQuery, _ := desugarStandaloneOrderClauses(input("cache"))
+	cacheQuery, _ := desugarStandaloneOrderClauses(ctx, input("cache"))
 	wantCache := compileExecutionPolicy(ctx, body, 0).cacheable
 	for _, argument := range owner.Args {
 		wantCache = wantCache && compileExecutionPolicy(ctx, "RETURN "+argument, 0).cacheable
@@ -245,10 +245,10 @@ func (f *usePropertyFixture) check(ctx context.Context, statement usePropertySta
 			}
 		}
 	}
-	check("desugar", func() string { q, _ := desugarStandaloneOrderClauses(input("desugar")); return q }(), statement.rewritten)
+	check("desugar", func() string { q, _ := desugarStandaloneOrderClauses(ctx, input("desugar")); return q }(), statement.rewritten)
 	// Check every grammar-owned selector in the complete statement too, including
 	// nested CALL and both UNION branches. This catches missing generator slots.
-	normalized, _ := desugarStandaloneOrderClauses(statement.query)
+	normalized, _ := desugarStandaloneOrderClauses(ctx, statement.query)
 	syntax, err := cypherantlr.ParseSyntax(ctx, normalized, cypherantlr.FragmentEntry, false, cypherantlr.RawSource)
 	if err != nil {
 		issues["owner"] = err
@@ -271,7 +271,7 @@ func (f *usePropertyFixture) check(ctx context.Context, statement usePropertySta
 		return nil
 	})
 	check("owner", count, statement.uses)
-	routeQuery, _ := desugarStandaloneOrderClauses(input("routing"))
+	routeQuery, _ := desugarStandaloneOrderClauses(ctx, input("routing"))
 	plan, err := f.planner.Plan(ctx, routeQuery, "cmp", cyphertext.RawSource)
 	if err != nil {
 		issues["routing"] = err

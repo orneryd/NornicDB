@@ -108,9 +108,6 @@ func GetStoredIncomingEdges(ctx context.Context, engine Engine, nodeID NodeID) (
 // entities (StoredReader), else those its type or whole-graph edge stream
 // visits.
 func StreamStoredEdgesByType(ctx context.Context, engine Engine, edgeType string, visit func(*Edge) error) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if reader, ok := StoredReader(engine); ok {
 		return reader.StreamStoredEdgesByType(ctx, edgeType, visit)
 	}
@@ -131,9 +128,6 @@ func StreamStoredNodesByLabelProjected(ctx context.Context, engine Engine, label
 // StreamNodesWithOptions' options: every engine can stream stored nodes
 // (ApplyDecayFilter false), so it only rules the visibility out.
 func StreamStoredNodes(ctx context.Context, engine Engine, opts StreamNodesOptions, visit func(*Node) error) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	opts.ApplyDecayFilter = false
 	return engine.StreamNodesWithOptions(ctx, opts, visit)
 }
@@ -308,9 +302,6 @@ func streamStoredEdgesByTypeInScope(ctx context.Context, engine Engine, scope, e
 		return scoped.StreamStoredEdgesByTypeInScope(ctx, scope, edgeType, visit)
 	}
 	if reader, ok := StoredReader(engine); ok {
-		if ctx == nil {
-			ctx = context.Background()
-		}
 		return reader.StreamStoredEdgesByType(ctx, edgeType, visit)
 	}
 	return streamEdgesByTypeInScope(ctx, engine, scope, edgeType, visit)

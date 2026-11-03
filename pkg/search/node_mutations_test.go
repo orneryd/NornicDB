@@ -41,7 +41,7 @@ func TestNodeMutationReservationsPreserveNewerWrites(t *testing.T) {
 				}
 				// A reserved write can arrive after the latest generation was applied
 				// and its bookkeeping retired. It must still remain obsolete.
-				require.NoError(t, svc.applyReservedNodeIndex(old, reservation))
+				require.NoError(t, svc.applyReservedNodeIndex(t.Context(), old, reservation))
 				require.NoError(t, svc.applyReservedNodeRemoval(reservation))
 				if remove {
 					require.Zero(t, svc.EmbeddingCount())
@@ -84,7 +84,7 @@ func TestNodeMutationReservationsPreserveNewerWrites(t *testing.T) {
 					}
 					_ = svc.RefreshNode(t.Context(), node.ID)
 					if stored, err := engine.GetNode(t.Context(), node.ID); err == nil {
-						_ = svc.applyReservedNodeIndex(stored, reservation)
+						_ = svc.applyReservedNodeIndex(t.Context(), stored, reservation)
 					} else {
 						_ = svc.applyReservedNodeRemoval(reservation)
 					}
@@ -99,7 +99,7 @@ func TestNodeMutationReservationsPreserveNewerWrites(t *testing.T) {
 			require.NoError(t, svc.RefreshNode(t.Context(), id))
 			// The older reservation is obsolete: handing it a payload must not
 			// restore the deleted vector.
-			require.NoError(t, svc.applyReservedNodeIndex(&storage.Node{ID: id, ChunkEmbeddings: [][]float32{{1, 0}}}, stale))
+			require.NoError(t, svc.applyReservedNodeIndex(t.Context(), &storage.Node{ID: id, ChunkEmbeddings: [][]float32{{1, 0}}}, stale))
 		}
 		require.Zero(t, svc.EmbeddingCount())
 	})
@@ -116,7 +116,7 @@ func TestDiscardedReservationRestoresTheOneItSuperseded(t *testing.T) {
 	older := svc.ReserveNodeMutation("source")
 	rejected := svc.ReserveNodeMutation("source")
 	svc.DiscardNodeMutation(rejected)
-	require.NoError(t, svc.applyReservedNodeIndex(&storage.Node{ID: "source", ChunkEmbeddings: [][]float32{{1, 0}}}, older))
+	require.NoError(t, svc.applyReservedNodeIndex(t.Context(), &storage.Node{ID: "source", ChunkEmbeddings: [][]float32{{1, 0}}}, older))
 	require.Equal(t, 1, svc.EmbeddingCount(), "a rejected reservation superseded the older write")
 }
 

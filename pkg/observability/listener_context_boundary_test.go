@@ -2,7 +2,6 @@ package observability
 
 import (
 	"context"
-	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -73,7 +72,6 @@ func forEachListenerBoundary(t *testing.T, drive func(t *testing.T, b publicList
 }
 
 // TestListenerLifetimeInit_ContextBoundary pins the shared owner's boundary:
-// the optional nil caller context is normalized once to a live non-nil context,
 // a caller's own context is returned unchanged (identity, value, deadline and
 // cancellation), and neither call re-binds the once-owned transport resources.
 func TestListenerLifetimeInit_ContextBoundary(t *testing.T) {
@@ -87,15 +85,10 @@ func TestListenerLifetimeInit_ContextBoundary(t *testing.T) {
 			out.WriteHeader(http.StatusNoContent)
 		})
 
-		// nil: one normalization to a live context — no deadline, no
-		// cancellation, and none of the work lifetime's stop trigger.
-		got := owner.init(nil, b.srv, b.ln, b.beforeStop)
-		require.NotNil(t, got)
-		require.NoError(t, got.Err())
-		require.Nil(t, got.Done(), "nil caller context must behave like context.Background")
-		_, hasDeadline := got.Deadline()
-		require.False(t, hasDeadline)
-		require.NotNil(t, owner.listener, "nil caller context must still bind the owned resources")
+		first := t.Context()
+		got := owner.init(first, b.srv, b.ln, b.beforeStop)
+		require.True(t, got == first, "init must return the caller's context unchanged")
+		require.NotNil(t, owner.listener, "init must bind the owned resources")
 
 		boundListener := owner.listener
 
@@ -130,57 +123,10 @@ func TestListenerLifetimeInit_ContextBoundary(t *testing.T) {
 		// Steady state (initOnce already done): the boundary choice adds no
 		// allocation.
 		allocs := testing.AllocsPerRun(200, func() {
-			_ = owner.init(nil, b.srv, b.ln, b.beforeStop)
+			_ = owner.init(first, b.srv, b.ln, b.beforeStop)
 		})
 		require.LessOrEqualf(t, allocs, 0.0,
 			"steady-state context boundary must not allocate; got %.1f allocs/op", allocs)
-	})
-}
-
-// TestListener_PublicNilContextDefaults proves the public nil default for both
-// services: nil Start serves until Shutdown, nil Shutdown drains, and nil
-// WaitStopped joins the completed retirement instead of failing.
-func TestListener_PublicNilContextDefaults(t *testing.T) {
-	forEachListenerBoundary(t, func(t *testing.T, b publicListenerBoundary) {
-		client := &http.Client{Timeout: time.Second}
-		t.Cleanup(client.CloseIdleConnections)
-		startErr := make(chan error, 1)
-		go func() { startErr <- b.start(nil) }()
-
-		require.Eventually(t, func() bool {
-			resp, err := client.Get("http://" + b.addr + b.probe)
-			if err != nil {
-				return false
-			}
-			defer func() { _ = resp.Body.Close() }()
-			_, _ = io.Copy(io.Discard, resp.Body)
-			return resp.StatusCode == http.StatusOK
-		}, 2*time.Second, 10*time.Millisecond,
-			"Start(nil) must behave like context.Background and keep serving")
-
-		shutdownErr := make(chan error, 1)
-		go func() { shutdownErr <- b.shutdown(nil) }()
-		select {
-		case err := <-shutdownErr:
-			require.NoError(t, err)
-		case <-time.After(5 * time.Second):
-			t.Fatal("Shutdown(nil) did not return within 5s")
-		}
-
-		select {
-		case err := <-startErr:
-			require.NoError(t, err)
-		case <-time.After(5 * time.Second):
-			t.Fatal("Start(nil) did not return after Shutdown(nil)")
-		}
-
-		require.NoError(t, b.wait(nil), "WaitStopped(nil) must observe the completed retirement")
-
-		conn, err := net.DialTimeout("tcp", b.addr, 100*time.Millisecond)
-		if err == nil {
-			_ = conn.Close()
-			t.Fatalf("listener %s still accepting connections after Shutdown(nil)", b.addr)
-		}
 	})
 }
 

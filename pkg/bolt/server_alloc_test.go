@@ -12,6 +12,7 @@ var boltAllocSink error
 
 func TestWriteRecordNoFlush_Allocs_SmallRowIsZero(t *testing.T) {
 	session := &Session{
+		server: &Server{config: DefaultConfig()},
 		writer: bufio.NewWriterSize(io.Discard, 64*1024),
 	}
 	row := []any{int64(1), "Alice", int64(30)}
@@ -32,6 +33,7 @@ func TestWriteRecordNoFlush_Allocs_SmallRowIsZero(t *testing.T) {
 
 func TestWriteRecordNoFlush_Allocs_LargeRowIsZero(t *testing.T) {
 	session := &Session{
+		server: &Server{config: DefaultConfig()},
 		writer: bufio.NewWriterSize(io.Discard, 64*1024),
 	}
 
@@ -61,6 +63,7 @@ func TestWriteRecordNoFlush_Allocs_LargeRowIsZero(t *testing.T) {
 
 func TestWriteMessageNoFlush_Allocs_IsZero(t *testing.T) {
 	session := &Session{
+		server: &Server{config: DefaultConfig()},
 		writer: bufio.NewWriterSize(io.Discard, 64*1024),
 	}
 

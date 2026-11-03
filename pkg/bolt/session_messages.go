@@ -195,11 +195,11 @@ func (s *Session) handleRun(data []byte) error {
 	// timeout arbitration, so expiry between dispatch and this point fails
 	// closed without making an early-return path responsible for cleanup.
 	if s.inTransaction {
-		parentCtx, err = s.claimTransactionOperation()
-		if errors.Is(err, errTransactionTimedOut) {
-			return s.sendTransactionTimeoutFailure()
-		}
+		txCtx, err := s.claimTransactionOperation()
 		if err != nil {
+			if errors.Is(err, errTransactionTimedOut) {
+				return s.sendTransactionTimeoutFailure()
+			}
 			if s.transactionCleanupFailed {
 				return err
 			}
@@ -207,6 +207,7 @@ func (s *Session) handleRun(data []byte) error {
 				"Neo.ClientError.Transaction.TransactionNotFound", "No active transaction for RUN")
 		}
 		defer func() { _ = s.txLifecycle.finishRun() }()
+		parentCtx = txCtx
 	}
 	parentCtx = extractTraceparent(parentCtx, metadata)
 	if !s.inTransaction {

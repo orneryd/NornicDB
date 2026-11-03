@@ -15,7 +15,7 @@ func pipelineProcedureCallsAreClauses(ctx context.Context, cypher string) bool {
 		return false
 	}
 	ensureBuiltInProceduresRegistered()
-	for _, position := range findAllTopLevelPipelineKeywordPositions(cypher, "CALL") {
+	for _, position := range findAllTopLevelPipelineKeywordPositions(ctx, cypher, "CALL") {
 		name, err := extractProcedureName(ctx, cypher[position:])
 		if err != nil {
 			// A clause whose own parse ended before its name was read is not
@@ -28,10 +28,10 @@ func pipelineProcedureCallsAreClauses(ctx context.Context, cypher string) bool {
 			return false
 		}
 	}
-	topLevel := len(findAllTopLevelPipelineKeywordPositions(cypher, "CALL"))
+	topLevel := len(findAllTopLevelPipelineKeywordPositions(ctx, cypher, "CALL"))
 	total := 0
 	for offset := 0; offset < len(cypher); {
-		index := findKeywordIndex(cypher[offset:], "CALL")
+		index := findKeywordIndex(ctx, cypher[offset:], "CALL")
 		if index < 0 {
 			break
 		}
@@ -53,7 +53,7 @@ func pipelineProcedureCallsAreClauses(ctx context.Context, cypher string) bool {
 // Void calls without YIELD preserve input rows; non-void calls require YIELD.
 // Explicit arguments are evaluated as typed values in the canonical invocation.
 func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows []pipelineRow, clause string, totals *QueryStats) ([]pipelineRow, []string, bool, error) {
-	yieldIndex := findKeywordIndexInContext(clause, "YIELD")
+	yieldIndex := findKeywordIndexInContext(ctx, clause, "YIELD")
 	invocation := strings.TrimSpace(clause)
 	if yieldIndex >= 0 {
 		invocation = strings.TrimSpace(clause[:yieldIndex])
@@ -69,7 +69,7 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 	if yieldIndex < 0 && len(procedure.Spec.Returns) > 0 {
 		return nil, nil, true, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax", "procedure calls inside a query must name results explicitly using YIELD")
 	}
-	if err := validateProcedureCallArguments(invocation); err != nil {
+	if err := validateProcedureCallArguments(ctx, invocation); err != nil {
 		return nil, nil, true, err
 	}
 	yieldBody := ""
@@ -77,7 +77,7 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 		yieldBody = strings.TrimSpace(clause[yieldIndex+len("YIELD"):])
 	}
 	where := ""
-	if whereIndex := topLevelKeywordIndex(yieldBody, "WHERE"); whereIndex >= 0 {
+	if whereIndex := topLevelKeywordIndex(ctx, yieldBody, "WHERE"); whereIndex >= 0 {
 		where = strings.TrimSpace(yieldBody[whereIndex+len("WHERE"):])
 		yieldBody = strings.TrimSpace(yieldBody[:whereIndex])
 	}

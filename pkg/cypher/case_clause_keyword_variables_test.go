@@ -95,7 +95,7 @@ func TestCaseAfterCaseIsReadByItsEnds(t *testing.T) {
 // of the whole text (the graph-access check) sees COLLECT { MATCH … }; and a
 // variable named case takes a label test (case IS Person) (#1162).
 func TestCaseKeywordRulesKeepTheirScope(t *testing.T) {
-	require.True(t, statementAccessesGraphText("RETURN CASE WHEN true THEN COLLECT { MATCH (n) RETURN n } ELSE [] END AS v"))
+	require.True(t, statementAccessesGraphText(t.Context(), "RETURN CASE WHEN true THEN COLLECT { MATCH (n) RETURN n } ELSE [] END AS v"))
 	require.False(t, insideCaseBlock("RETURN CASE WHEN true THEN COLLECT { MATCH (n) RETURN n } ELSE [] END AS v", len("RETURN CASE WHEN true THEN COLLECT { ")))
 	require.True(t, insideCaseBlock("RETURN CASE match WHEN 1 THEN match END AS v", len("RETURN CASE ")))
 

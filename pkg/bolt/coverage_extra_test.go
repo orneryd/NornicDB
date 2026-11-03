@@ -758,7 +758,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 		require.NoError(t, err)
 
 		t.Run("parse hello auth edge cases", func(t *testing.T) {
-			session := &Session{}
+			session := &Session{server: &Server{}}
 			params, err := session.parseHelloAuth(nil)
 			require.NoError(t, err)
 			assert.Empty(t, params["scheme"])
@@ -984,7 +984,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 		assert.Equal(t, int64(1), s.lastTxSequence)
 		s.server.txSequence = -1
 		assert.Equal(t, formatBookmark(0), s.currentBookmark())
-		assert.Equal(t, formatBookmark(0), (&Session{}).currentBookmark())
+		assert.Equal(t, formatBookmark(0), (&Session{server: &Server{}}).currentBookmark())
 		assert.Panics(t, func() { (&Session{}).generateBookmark() })
 	})
 
@@ -1136,7 +1136,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 	})
 
 	t.Run("database executor lookup and adapter execute", func(t *testing.T) {
-		session := &Session{}
+		session := &Session{server: &Server{}}
 		_, err := session.getExecutorForDatabase("graph")
 		require.ErrorContains(t, err, "database manager not available")
 

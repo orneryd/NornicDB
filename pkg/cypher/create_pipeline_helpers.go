@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -77,10 +78,13 @@ func (e *StorageExecutor) validateSetAssignments(assignments []string) error {
 
 // extractCreateVariableRefs returns variable names used as simple refs in CREATE relationship patterns
 // (e.g. (o)-[:R]->(pharmacy) yields ["o", "pharmacy"]). Used to know which bindings the pipeline must return.
-func extractCreateVariableRefs(createPart string) []string {
+func extractCreateVariableRefs(ctx context.Context, createPart string) ([]string, error) {
 	seen := make(map[string]bool)
 	exec := &StorageExecutor{}
-	createClauses := SplitByCreate(createPart)
+	createClauses, err := SplitByCreate(ctx, createPart)
+	if err != nil {
+		return nil, err
+	}
 	for _, clause := range createClauses {
 		clause = strings.TrimSpace(clause)
 		if clause == "" {
@@ -108,7 +112,10 @@ func extractCreateVariableRefs(createPart string) []string {
 	for k := range seen {
 		out = append(out, k)
 	}
-	return out
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func sortNodesByProperty(nodes []*storage.Node, prop string) {

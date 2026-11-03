@@ -28,7 +28,7 @@ type mutant struct {
 const storageHeader = "package storage\n\nimport (\n\t\"context\"\n\n\tbadger \"github.com/dgraph-io/badger/v4\"\n)\n\nvar _ = badger.NewEntry\nvar _ context.Context\n\n"
 
 const commitCountLockBinding = "\tcw.beforeLarge = tx.acquireCommitPublicationLocked\n"
-const commitCountLockInline = "\tif err := tx.acquireCommitPublicationLocked(); err != nil {\n\t\treturn tx.abortCommitLocked(err)\n\t}\n"
+const commitCountLockInline = "\tif err := tx.acquireCommitPublicationLocked(ctx); err != nil {\n\t\treturn tx.abortCommitLocked(err)\n\t}\n"
 
 var mutants = []mutant{
 	{
@@ -189,13 +189,13 @@ func (b *BadgerEngine) CensusMutantRunnerKeeps(id NodeID) { b.censusMutantRunWit
 	{
 		name: "hidden decision split into a helper", file: "pkg/storage/zz_census_mutant.go",
 		src: storageHeader + `func (b *BadgerEngine) censusMutantHidden(id NodeID) bool {
-	_, err := b.GetStoredNode(id)
+	_, err := b.GetStoredNode(context.Background(), id)
 	return err == nil
 }
 
 func (b *BadgerEngine) CensusMutantHiddenReplace(n *Node) error {
 	if b.censusMutantHidden(n.ID) {
-		return b.UpdateNode(NodeUpdateRequest{After: n})
+		return b.UpdateNode(context.Background(), NodeUpdateRequest{After: n})
 	}
 	return nil
 }
@@ -242,7 +242,7 @@ func (b *BadgerEngine) CensusMutantHiddenReplace(n *Node) error {
 	},
 	{
 		name: "extra count inside an existing writer", file: "pkg/storage/badger_nodes.go",
-		edits: [][2]string{{"func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {", "func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {\n\tb.nodeCount.Add(1)"}},
+		edits: [][2]string{{"func (b *BadgerEngine) CreateNode(ctx context.Context, node *Node) (NodeID, error) {", "func (b *BadgerEngine) CreateNode(ctx context.Context, node *Node) (NodeID, error) {\n\tb.nodeCount.Add(1)"}},
 		want:  []string{"unowned entity-count change: pkg/storage.BadgerEngine.nodeCount", "in pkg/storage.BadgerEngine.CreateNode"},
 	},
 	{
@@ -292,7 +292,7 @@ func (b *BadgerEngine) CensusMutantHelper() error { return b.withUpdate(context.
 	},
 	{
 		name: "unscoped total read for a quota", file: "pkg/multidb/zz_census_mutant.go",
-		src:  "package multidb\n\nfunc (m *DatabaseManager) CensusMutantQuota() int64 {\n\tn, _ := m.inner.NodeCount()\n\treturn n\n}\n",
+		src:  "package multidb\n\nimport \"context\"\n\nfunc (m *DatabaseManager) CensusMutantQuota() int64 {\n\tn, _ := m.inner.NodeCount(context.Background())\n\treturn n\n}\n",
 		want: []string{"unscoped total: pkg/multidb.DatabaseManager.CensusMutantQuota"},
 	},
 	{
@@ -310,10 +310,13 @@ func (b *BadgerEngine) CensusMutantHelper() error { return b.withUpdate(context.
 	{
 		name: "static visible read in quota accounting", file: "pkg/multidb/zz_census_mutant.go",
 		src: `package multidb
-import "github.com/orneryd/nornicdb/pkg/storage"
+import (
+    "context"
+    "github.com/orneryd/nornicdb/pkg/storage"
+)
 func (m *DatabaseManager) CensusMutantStaticVisible() error {
  engine := storage.NewNamespacedEngine(m.inner,m.config.DefaultDatabase)
- _,err := engine.GetNode(storage.NodeID("census-mutant"))
+ _,err := engine.GetNode(context.Background(), storage.NodeID("census-mutant"))
  return err
 }
 `,
@@ -321,7 +324,7 @@ func (m *DatabaseManager) CensusMutantStaticVisible() error {
 	},
 	{
 		name: "visible prior sized for quota", file: "pkg/multidb/storage_transaction.go",
-		edits: [][2]string{{"if trackBytes {\n\t\tchanges = prepared.Changes()", "if trackBytes {\n\t\tchanges = prepared.Changes()\nfor i := range changes { if changes[i].BeforeNode != nil { changes[i].BeforeNode, _ = t.Engine.GetNode(changes[i].BeforeNode.ID) } }"}},
+		edits: [][2]string{{"if trackBytes {\n\t\tchanges = prepared.Changes()", "if trackBytes {\n\t\tchanges = prepared.Changes()\nfor i := range changes { if changes[i].BeforeNode != nil { changes[i].BeforeNode, _ = t.Engine.GetNode(context.Background(), changes[i].BeforeNode.ID) } }"}},
 		want:  []string{"visible read in quota accounting: pkg/multidb.sizeTrackingEngine.admitPrepared"},
 	},
 	{

@@ -241,11 +241,6 @@ func TestJSONItemsCapabilityAdmission(t *testing.T) {
 			require.ErrorIs(t, err, apocio.ErrCapabilityMissing)
 			require.Nil(t, items, "no capability means no I/O and no rows")
 
-			// A nil context has no capability to inherit and no fallback.
-			items, err = handler(nil, path)
-			require.ErrorIs(t, err, apocio.ErrCapabilityMissing)
-			require.Nil(t, items, "a nil context performs no I/O")
-
 			items, err = handler(callerContext(denied), path)
 			require.ErrorIs(t, err, apocio.ErrLocalImportFileAccessDisabled)
 			require.Nil(t, items, "the default policy denies import file access")

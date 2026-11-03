@@ -115,7 +115,7 @@ func recordTerminalOutcome(ctx context.Context, outcome error) {
 // Fabric coordinator outcome aggregation belongs to NOR-174. These are the
 // existing scope markers; this journal does not change coordinator policy.
 func nativeTerminalOutcomeScope(ctx context.Context) bool {
-	if ctx == nil || storage.CoordinatorOwnsTransaction(ctx) {
+	if storage.CoordinatorOwnsTransaction(ctx) {
 		return false
 	}
 	_, distributed := fabric.FabricTransactionFromContext(ctx)

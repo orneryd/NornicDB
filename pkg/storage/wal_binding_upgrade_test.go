@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -33,7 +34,7 @@ func TestReviewLegacySameStoreUpgrade(t *testing.T) {
 			source := reviewBindingEngine(t, dir)
 			_, err := source.CreateNode(t.Context(), &Node{ID: "legacy:a", Properties: map[string]any{"value": int64(0)}})
 			require.NoError(t, err)
-			require.NoError(t, source.FlushWriteBehind(nil))
+			require.NoError(t, source.FlushWriteBehind(context.Background()))
 			// Flush can leave an empty rotation request queued. Start the crash phase
 			// with a fresh idle buffer, so that request cannot persist later updates.
 			source.writeBehind.Close()
@@ -147,7 +148,7 @@ func TestReviewLegacyLosslessNamedRecords(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, tx.Commit())
 		require.True(t, tx.AcknowledgedBuffered())
-		require.NoError(t, source.FlushWriteBehind(nil))
+		require.NoError(t, source.FlushWriteBehind(context.Background()))
 	}
 	entries, err := ReadWALEntriesFromDir(capture.Config().Dir)
 	require.NoError(t, err)
@@ -206,7 +207,7 @@ func TestReviewBindingGrowthAndRestart(t *testing.T) {
 					_, err = b.CreateNode(t.Context(), &Node{ID: NodeID(ns + ":b")})
 					require.NoError(t, err)
 					require.NoError(t, b.CreateEdge(t.Context(), &Edge{ID: EdgeID(ns + ":r"), StartNode: NodeID(ns + ":a"), EndNode: NodeID(ns + ":b"), Type: "R", Properties: map[string]any{"removed": "old"}}))
-					require.NoError(t, b.FlushWriteBehind(nil))
+					require.NoError(t, b.FlushWriteBehind(context.Background()))
 				}
 			}
 			wal, err := NewWAL(t.TempDir(), DefaultWALConfig())
@@ -230,7 +231,7 @@ func TestReviewBindingGrowthAndRestart(t *testing.T) {
 					require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: EdgeID(ns + ":r"), StartNode: NodeID(ns + ":a"), EndNode: NodeID(ns + ":b"), Type: "R", Properties: props}}))
 					require.NoError(t, tx.Commit())
 					require.True(t, tx.AcknowledgedBuffered())
-					require.NoError(t, source.FlushWriteBehind(nil))
+					require.NoError(t, source.FlushWriteBehind(context.Background()))
 					node, err := source.GetNode(t.Context(), NodeID(ns+":a"))
 					require.NoError(t, err)
 					expected[ns] = node.Properties

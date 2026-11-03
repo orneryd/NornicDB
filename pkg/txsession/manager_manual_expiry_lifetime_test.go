@@ -10,7 +10,7 @@ import (
 func TestManagerManualExpiryJoinsStoppedTimer(t *testing.T) {
 	for _, operation := range []string{"touch", "admission"} {
 		t.Run(operation, func(t *testing.T) {
-			manager := NewManager(time.Hour, newExecutorFactory(t))
+			manager := NewManager(time.Hour, newExecutorFactory(t), t.Context())
 			defer manager.Close()
 			now := time.Unix(1700000000, 0)
 			manager.nowFunc = func() time.Time { return now }

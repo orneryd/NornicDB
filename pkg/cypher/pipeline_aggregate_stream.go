@@ -39,7 +39,7 @@ func pipelineClauseAggregates(ctx context.Context, clause pipelineClause) bool {
 	if clause.kind == pipelineClauseWith {
 		body = pipelineClauseBody(clause.text, "WITH")
 	}
-	if where := topLevelKeywordIndex(body, "WHERE"); where >= 0 {
+	if where := topLevelKeywordIndex(ctx, body, "WHERE"); where >= 0 {
 		body = body[:where]
 	}
 	return returnProjectionPlanFor(ctx, "RETURN "+body).hasAggregate

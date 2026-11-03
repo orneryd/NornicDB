@@ -13,7 +13,7 @@ import (
 // write maintains the index inside its publishing transaction, before the
 // commit finishes and before that write's publication is decided, so its
 // constraint discovery and current-pointer refresh are preparation: they carry
-// the write's own preparation lifetime (commitPreparationLifetime of the write
+// the write's own preparation lifetime (the context of the write
 // context), exactly as a transaction commit's temporal preparation carries its
 // commit's preparation context. A rebuild or label backfill prepares each
 // stored node the same way, on the maintenance write's own lifetime. A canceled

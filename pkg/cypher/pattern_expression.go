@@ -136,10 +136,10 @@ func (e *StorageExecutor) evaluateBoundPatternRows(ctx context.Context, pattern 
 func (e *StorageExecutor) boundPatternRows(ctx context.Context, pattern string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, values map[string]interface{}) ([]traversalOptRow, bool) {
 	pattern = strings.TrimSpace(pattern)
 	if end := keywordEndAt(pattern, 0, "MATCH"); end > 0 &&
-		keywordBoundaryOK(pattern, end, keywordBoundaryWord, keywordAfter) && !clauseKeywordUsedAsName(pattern, 0, end, "MATCH") {
+		keywordBoundaryOK(pattern, end, keywordBoundaryWord, keywordAfter) && !clauseKeywordUsedAsName(ctx, pattern, 0, end, "MATCH") {
 		pattern = strings.TrimSpace(pattern[queryGapEnd(pattern, end):])
 	}
-	clauses := splitOptionalMatchClauses(pattern)
+	clauses := splitOptionalMatchClauses(ctx, pattern)
 	if len(clauses) != 1 {
 		return nil, false
 	}
@@ -197,7 +197,7 @@ func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Contex
 	// Static scopes cannot know a heterogeneous iterator's current element.
 	// Validate the actual correlated row before matching instead of treating a
 	// non-node binding as an absent match.
-	if err := validateBoundPatternNodes([]pipelineRow{outer}, pattern); err != nil {
+	if err := validateBoundPatternNodes(ctx, []pipelineRow{outer}, pattern); err != nil {
 		recordExpressionFailure(ctx, err)
 		return nil
 	}

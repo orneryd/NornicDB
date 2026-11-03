@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"testing"
@@ -29,7 +30,7 @@ func TestOrderedDrainProceedsPastQueuedExclusiveWriter(t *testing.T) {
 	})
 	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:n", Properties: map[string]any{"v": int64(1)}})
 	require.NoError(t, err)
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"github.com/stretchr/testify/require"
 	"sync"
 	"testing"
@@ -26,7 +27,7 @@ func TestBufferedPublicationCallbacksKeepAcknowledgedRevision(t *testing.T) {
 		change(tx)
 		require.NoError(t, tx.Commit())
 		acknowledged, _ := engine.GraphMutationVersionInNamespace("test")
-		require.NoError(t, engine.FlushWriteBehind(nil))
+		require.NoError(t, engine.FlushWriteBehind(context.Background()))
 		persisted, _ := engine.GraphMutationVersionInNamespace("test")
 		require.Equal(t, acknowledged, persisted, "durability does not change the logical graph")
 	}

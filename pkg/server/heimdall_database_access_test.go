@@ -291,9 +291,7 @@ func TestHeimdallRouterRefusesIncompletePrincipal(t *testing.T) {
 	server, _ := setupTestServer(t)
 	router := newHeimdallDBRouter(server.db, server.dbManager, nil)
 	resolverOnly := auth.WithRequestEntitlementResolver(context.Background(), func(string, auth.Permission) bool { return true })
-	var noContext context.Context
-
-	for _, ctx := range []context.Context{resolverOnly, noContext} {
+	for _, ctx := range []context.Context{resolverOnly} {
 		_, err := router.Query(ctx, "nornic", "RETURN 1 AS n", nil)
 		requireHeimdallForbidden(t, err)
 		_, err = router.Discover(ctx, "nornic", "x", nil, 5, 0)

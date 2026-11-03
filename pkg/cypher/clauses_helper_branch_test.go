@@ -60,15 +60,15 @@ func TestClauseHelpers_ParseAndRewrite(t *testing.T) {
 	require.False(t, isSimplePropertyReference(""))
 
 	in := "MATCH (a:Person) MATCH (b:Person) WHERE a.id = b.id RETURN a"
-	out := rewriteTopLevelMultiMatchToCartesianMatch(in)
+	out := rewriteTopLevelMultiMatchToCartesianMatch(t.Context(), in)
 	require.Equal(t, "MATCH (a:Person), (b:Person) WHERE a.id = b.id RETURN a", out)
-	require.Equal(t, "MATCH (a:Person) RETURN a", rewriteTopLevelMultiMatchToCartesianMatch("MATCH (a:Person) RETURN a"))
+	require.Equal(t, "MATCH (a:Person) RETURN a", rewriteTopLevelMultiMatchToCartesianMatch(t.Context(), "MATCH (a:Person) RETURN a"))
 
-	require.True(t, canApplySetBasedUnwindRewrite("UNWIND $rows AS row MATCH (n) RETURN count(n) AS c", []interface{}{1, 2, 3}))
-	require.False(t, canApplySetBasedUnwindRewrite("", []interface{}{1}))
-	require.False(t, canApplySetBasedUnwindRewrite("UNWIND $rows AS row MATCH (n) RETURN count(n) AS c", []interface{}{1, 1}))
-	require.False(t, canApplySetBasedUnwindRewrite("UNWIND $rows AS row MATCH (n) RETURN count(n) AS c", []interface{}{map[string]interface{}{"k": "v"}}))
-	require.False(t, canApplySetBasedUnwindRewrite("UNWIND $rows AS row MATCH (n) SET n.x = 1 RETURN count(n) AS c", []interface{}{1}))
+	require.True(t, canApplySetBasedUnwindRewrite(t.Context(), "UNWIND $rows AS row MATCH (n) RETURN count(n) AS c", []interface{}{1, 2, 3}))
+	require.False(t, canApplySetBasedUnwindRewrite(t.Context(), "", []interface{}{1}))
+	require.False(t, canApplySetBasedUnwindRewrite(t.Context(), "UNWIND $rows AS row MATCH (n) RETURN count(n) AS c", []interface{}{1, 1}))
+	require.False(t, canApplySetBasedUnwindRewrite(t.Context(), "UNWIND $rows AS row MATCH (n) RETURN count(n) AS c", []interface{}{map[string]interface{}{"k": "v"}}))
+	require.False(t, canApplySetBasedUnwindRewrite(t.Context(), "UNWIND $rows AS row MATCH (n) SET n.x = 1 RETURN count(n) AS c", []interface{}{1}))
 }
 
 func TestParseSimpleCountReturnAndRelClause(t *testing.T) {

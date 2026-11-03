@@ -16,9 +16,9 @@ import (
 
 // newEnrollmentManager registers retirement before the first assertion so a
 // failed control cannot leave an idle timer or an accepted session behind.
-func newEnrollmentManager(t *testing.T, parents ...context.Context) *Manager {
+func newEnrollmentManager(t *testing.T, parent context.Context) *Manager {
 	t.Helper()
-	manager := NewManager(time.Hour, newExecutorFactory(t), parents...)
+	manager := NewManager(time.Hour, newExecutorFactory(t), parent)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -59,7 +59,7 @@ func TestManagerCanceledCallerBeginOutcome(t *testing.T) {
 		},
 	} {
 		t.Run(mode.name, func(t *testing.T) {
-			manager := newEnrollmentManager(t)
+			manager := newEnrollmentManager(t, t.Context())
 
 			caller, cancelCaller := mode.call()
 			defer cancelCaller()
@@ -181,7 +181,7 @@ func TestManagerRefusesRootsAfterClose(t *testing.T) {
 // Releasing a lease or one of its retained shares is idempotent: the request
 // slot, its idle renewal and its lifetime credit each end exactly once.
 func TestManagerLeaseReleaseIsIdempotent(t *testing.T) {
-	manager := newEnrollmentManager(t)
+	manager := newEnrollmentManager(t, t.Context())
 	base := time.Unix(1700000000, 0)
 	manager.nowFunc = func() time.Time { return base }
 	session, err := manager.OpenForOwner(context.Background(), "neo4j", "user:alice")
@@ -227,7 +227,7 @@ func TestManagerLeaseReleaseIsIdempotent(t *testing.T) {
 // A granted request lease is accepted work: close reports its own wait while the
 // request still runs, and actual completion is joined only after Release.
 func TestManagerCloseJoinsRequestLeaseCompletion(t *testing.T) {
-	manager := newEnrollmentManager(t)
+	manager := newEnrollmentManager(t, t.Context())
 	lease, err := manager.OpenRequestForOwner(context.Background(), "neo4j", "user:alice")
 	if lease != nil {
 		t.Cleanup(lease.Release)

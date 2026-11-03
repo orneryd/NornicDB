@@ -22,7 +22,7 @@ func TestManagerStopR2OpenFactoryLifetime(t *testing.T) {
 		close(entered)
 		<-release
 		return cypher.NewStorageExecutor(store), nil
-	})
+	}, t.Context())
 	t.Cleanup(func() {
 		joinCtx, joinCancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer joinCancel()

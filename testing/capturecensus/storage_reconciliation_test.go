@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/orneryd/nornicdb/internal/workcensus"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/tools/go/ssa"
 )
@@ -67,12 +68,12 @@ func TestStorageReconciliationRecords(t *testing.T) {
 	check := func(symbol string, proof storageSourceProof) {
 		t.Helper()
 		if !proof.Present {
-			require.Equal(t, "missing", digests.of(symbol), "%s: retired function reappeared; review its current flow", symbol)
+			assert.Equal(t, "missing", digests.of(symbol), "%s: retired function reappeared; review its current flow", symbol)
 			return
 		}
 		require.NotEmpty(t, proof.File)
 		require.NotEmpty(t, proof.Digest)
-		require.Equal(t, proof.Digest, digests.of(symbol), "%s: reconciliation source changed; re-review instead of carrying its proof forward", symbol)
+		assert.Equal(t, proof.Digest, digests.of(symbol), "%s: reconciliation source changed; re-review instead of carrying its proof forward", symbol)
 		sites := map[ssa.Value]bool{}
 		for _, fn := range program.Functions {
 			if symbolOf(workcensus.OutermostFunction(fn)) != symbol {
@@ -86,7 +87,7 @@ func TestStorageReconciliationRecords(t *testing.T) {
 				}
 			}
 		}
-		require.Len(t, sites, len(proof.Fresh), "%s: fresh contexts must stay inventoried even after a former source is retired", symbol)
+		assert.Len(t, sites, len(proof.Fresh), "%s: fresh contexts must stay inventoried even after a former source is retired", symbol)
 	}
 	for symbol, entry := range record.RetiredOwners {
 		require.NotEmpty(t, entry.Reason)

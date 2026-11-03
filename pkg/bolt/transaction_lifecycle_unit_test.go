@@ -251,7 +251,7 @@ func TestHandleCommitPanicRollsBackBeforePreservingPanic(t *testing.T) {
 func TestTransactionLifecycleCommitWithoutExecutor(t *testing.T) {
 	lifecycle := &transactionLifecycle{}
 	observed := 0
-	require.NoError(t, lifecycle.begin(nil, testTxOwner(), 0, "neo4j", nil, nil, //nolint:staticcheck // Exercises the nil-parent fallback.
+	require.NoError(t, lifecycle.begin(t.Context(), testTxOwner(), 0, "neo4j", nil, nil,
 		func(reason transactionTerminalReason, database string, _ time.Duration, err error) {
 			observed++
 			require.Equal(t, transactionTerminalCommit, reason)
@@ -303,14 +303,6 @@ func TestTransactionLifecycleRollbackUsesUncancelledCleanupContext(t *testing.T)
 	require.NotNil(t, executor.rollbackCtx)
 	require.NoError(t, executor.ctxErrAtCall, "cleanup must not inherit connection cancellation")
 	require.NoError(t, lifecycle.rollback(transactionTerminalDisconnect), "cleanup ownership is exactly once")
-}
-
-func TestRollbackWithCleanupDeadlineHandlesMissingInputs(t *testing.T) {
-	require.NoError(t, rollbackWithCleanupDeadline(nil, nil)) //nolint:staticcheck // Exercises the nil-base fallback.
-	executor := &lifecycleContextExecutor{}
-	require.NoError(t, rollbackWithCleanupDeadline(nil, executor)) //nolint:staticcheck // Exercises the nil-base fallback.
-	require.NotNil(t, executor.rollbackCtx)
-	require.NoError(t, executor.ctxErrAtCall)
 }
 
 func TestRollbackWithCleanupDeadlineDoesNotAbandonUncooperativeExecutor(t *testing.T) {
@@ -480,5 +472,5 @@ func TestObserveTransactionTerminalStructuredDiagnostics(t *testing.T) {
 	disabledSession.observeTransactionTerminal(transactionTerminalCommit, "neo4j", time.Millisecond, nil)
 	require.Empty(t, disabled.String(), "disabled debug diagnostics must stay on the allocation-free path")
 
-	(&Session{}).observeTransactionTerminal(transactionTerminalCommit, "neo4j", 0, nil)
+	(&Session{server: &Server{}}).observeTransactionTerminal(transactionTerminalCommit, "neo4j", 0, nil)
 }

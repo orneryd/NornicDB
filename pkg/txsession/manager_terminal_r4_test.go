@@ -41,7 +41,7 @@ func TestManagerR4TerminalRetirement(t *testing.T) {
 			engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 			t.Cleanup(func() { require.NoError(t, engine.Close()) })
 			executor := cypher.NewStorageExecutor(storage.NewNamespacedEngine(engine, "nornic"))
-			manager := NewManager(time.Minute, func(string) (*cypher.StorageExecutor, error) { return executor, nil })
+			manager := NewManager(time.Minute, func(string) (*cypher.StorageExecutor, error) { return executor, nil }, t.Context())
 			t.Cleanup(func() { require.NoError(t, manager.Close()) })
 			if operation == "delete" {
 				session, err := manager.Open(context.Background(), "nornic")

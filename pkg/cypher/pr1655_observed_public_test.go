@@ -42,7 +42,7 @@ func TestPR1655ExecuteObservedVanishedMutation(t *testing.T) {
 						_, err = store.CreateNode(t.Context(), &storage.Node{ID: id})
 						require.NoError(t, err)
 					}
-					require.NoError(t, base.FlushWriteBehind(nil))
+					require.NoError(t, base.FlushWriteBehind(context.Background()))
 					if tc.edge {
 						require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "target", StartNode: "a", EndNode: "b", Type: "TARGET", Properties: map[string]interface{}{"value": "old", "emb": []float64{1, 2}}}))
 					} else {
@@ -144,7 +144,7 @@ func TestPR1655ExecuteNewlyObservedTargetDisappears(t *testing.T) {
 					_, err = store.CreateNode(t.Context(), &storage.Node{ID: id})
 					require.NoError(t, err)
 				}
-				require.NoError(t, base.FlushWriteBehind(nil))
+				require.NoError(t, base.FlushWriteBehind(context.Background()))
 				writer := NewStorageExecutor(store)
 				ctx := context.Background()
 				if explicit {

@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 	"sync/atomic"
@@ -98,7 +99,7 @@ var reduceAppendDisabled atomic.Bool
 // appendPlan returns the step's plan, read from the row compiler's shape of
 // the step so that it splits the step as every evaluator does; nil when
 // the step isn't such a sum.
-func (form reduceForm) appendPlan() *reduceAppendPlan {
+func (form reduceForm) appendPlan(ctx context.Context) *reduceAppendPlan {
 	key := form.accumulator + "\x00" + form.step
 	if plan, cached := reduceAppendPlans.get(key); cached {
 		return plan
@@ -109,7 +110,7 @@ func (form reduceForm) appendPlan() *reduceAppendPlan {
 	// arithmetic split doesn't skip; a step with one has no plan.
 	if !containsIdentifierToken(strings.ToLower(form.step), "case") {
 		compiler := rowValueCompiler{}
-		node, _ = compiler.compile(form.step)
+		node, _ = compiler.compile(ctx, form.step)
 	}
 	var terms, texts []string
 	for node != nil {

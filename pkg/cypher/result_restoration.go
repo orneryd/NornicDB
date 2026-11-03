@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"strconv"
 	"strings"
 
@@ -19,7 +20,7 @@ type resultRestoration struct {
 // restore owns result copying, metadata and EXPLAIN row presentation for both
 // policies. Ordinary rows remain data; quoted RETURN columns use the projection
 // owner, and each error policy keeps its original classification and cause.
-func (restoration resultRestoration) restore(result *ExecuteResult, err error, parseItems func(string) []returnItem) (*ExecuteResult, error) {
+func (restoration resultRestoration) restore(ctx context.Context, result *ExecuteResult, err error, parseItems func(string) []returnItem) (*ExecuteResult, error) {
 	if restoration.source == nil && restoration.names == nil {
 		return result, err
 	}
@@ -81,7 +82,7 @@ func (restoration resultRestoration) restore(result *ExecuteResult, err error, p
 					}
 				}
 				if !restoreRows && len(restored.Columns) > 0 {
-					restoration.names.restoreResultColumns(&restored, parseItems)
+					restoration.names.restoreResultColumns(ctx, &restored, parseItems)
 				}
 			}
 			result = &restored

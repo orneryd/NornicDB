@@ -9,13 +9,13 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func (e *StorageExecutor) orderNodes(nodes []*storage.Node, variable, orderExpr string) []*storage.Node {
+func (e *StorageExecutor) orderNodes(ctx context.Context, nodes []*storage.Node, variable, orderExpr string) []*storage.Node {
 	if len(nodes) <= 1 {
 		return nodes
 	}
 
 	// Parse multiple ORDER BY columns: "n.value ASC, n.name DESC"
-	specs, _ := e.parseNodeOrderSpecs(orderExpr, variable)
+	specs, _ := e.parseNodeOrderSpecs(ctx, orderExpr, variable)
 	if len(specs) == 0 {
 		return nodes
 	}
@@ -31,8 +31,8 @@ func (e *StorageExecutor) orderNodes(nodes []*storage.Node, variable, orderExpr 
 }
 
 // parseNodeOrderSpecs parses "n.value ASC, n.name DESC" for node sorting
-func (e *StorageExecutor) parseNodeOrderSpecs(orderExpr, variable string) ([]nodeOrderSpec, bool) {
-	terms := parseOrderByClause(orderExpr)
+func (e *StorageExecutor) parseNodeOrderSpecs(ctx context.Context, orderExpr, variable string) ([]nodeOrderSpec, bool) {
+	terms := parseOrderByClause(ctx, orderExpr)
 	if len(terms) == 0 || variable == "" {
 		return nil, false
 	}

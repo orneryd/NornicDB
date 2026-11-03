@@ -523,7 +523,7 @@ type memoryScopeKey struct{}
 // memoryScopeFromContext is the scope a statement's memory grows in, nil
 // when nothing is tracked.
 func memoryScopeFromContext(ctx context.Context) *memoryScope {
-	if ctx == nil || (!transactionMemoryActive.Load() && transactionMemoryTracked.Load() == 0) {
+	if !transactionMemoryActive.Load() && transactionMemoryTracked.Load() == 0 {
 		return nil
 	}
 	scope, _ := ctx.Value(memoryScopeKey{}).(*memoryScope)

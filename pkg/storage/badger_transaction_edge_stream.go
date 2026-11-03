@@ -24,9 +24,6 @@ func (tx *BadgerTransaction) streamEdgesByType(ctx context.Context, edgeType str
 	if visit == nil {
 		return ErrInvalidData
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if err := tx.clientOwnershipError(transactionRead); err != nil {
 		return err
 	}

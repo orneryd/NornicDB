@@ -23,6 +23,17 @@ An error from a failed forwarded reply is recovery-pending because the leader
 may have accepted the request. A definite pre-admission rejection remains an
 ordinary error. Do not roll back catalog admission on an accepted error.
 
+An outer WAL wrapper preserves the first authoritative commit submitter and its
+admission gate, even when that decorator inherits ordinary CRUD methods. Observed
+updates use the registered namespace preparer before journaling. Preparation and
+journal admission share one snapshot barrier; accepted submission owns its release.
+Ordinary native blind writes retain their existing staging path.
+
+Bulk deletion still skips absent and repeated IDs. Only actual deletions enter
+the accepted semantic record. Replaying a previously accepted transaction after
+prefix deletion does not resurrect its entities; a new write requires a new
+transaction identity.
+
 ## Retired low-level replication commands
 
 The internal `CmdCypher`, `CmdSetProperty` and `CmdBatchWrite` entry points are
@@ -82,8 +93,8 @@ available for recovery.
 
 ## Native image interpretation
 
-`BeginEntityTransaction(engine, mode)` binds the originating durability policy.
-Node updates use `tx.UpdateGraphNode(storage.NodeUpdateRequest{Before: before, After: after, Policy: policy})`.
+`BeginEntityTransaction(ctx, engine, mode)` binds the originating durability policy.
+Node updates use `tx.UpdateGraphNode(ctx, storage.NodeUpdateRequest{Before: before, After: after, Policy: policy})`.
 `Engine.UpdateNode` accepts the same request; relationship updates accept
 `storage.EdgeUpdateRequest{Before: before, After: after}`. `ClientNodeEdits` retains normal managed-embedding
 reconciliation; `StoredNodeImages` applies a complete authoritative stored image.
@@ -128,18 +139,22 @@ These checks and snapshot pins change no Badger keys, persisted payloads, WAL
 encoding or storage version.
 
 ```go
-tx, err := storage.BeginEntityTransaction(engine, storage.CommitModeExplicit)
+tx, err := storage.BeginEntityTransaction(ctx, engine, storage.CommitModeExplicit)
 if err != nil { return err }
 defer tx.Rollback()
-before, err := tx.GetNode(id)
+before, err := tx.GetNode(ctx, id)
 if err != nil { return err }
 after := *before
 after.Properties = map[string]any{"name": "updated"}
-if err := tx.UpdateGraphNode(storage.NodeUpdateRequest{
+if err := tx.UpdateGraphNode(ctx, storage.NodeUpdateRequest{
     Before: before, After: &after, Policy: storage.ClientNodeEdits,
 }); err != nil { return err }
 return tx.Commit()
 ```
+
+Transaction pending indexes mirror already-staged writes. Cancellation remains a
+preparation outcome; index retirement cannot abort halfway through an accepted
+staging step and leave point, label and property reads reporting different state.
 
 The redundant Go batch replay helper `ReplayWALEntries` is removed. Keep the
 single-entry `ReplayWALEntry` applier and accumulate its actual outcomes with

@@ -137,7 +137,7 @@ func (b *BadgerEngine) createEdgeWithWriteContext(ctx context.Context, edge *Edg
 	var publicationOps []Operation
 
 	// Capture before physical assembly can acquire the commit gate.
-	constraints, preparationErr := capturePublicationConstraintView(commitPreparationLifetime(write.ctx), schema)
+	constraints, preparationErr := capturePublicationConstraintView(write.ctx, schema)
 	if preparationErr != nil {
 		return preparationErr
 	}
@@ -154,7 +154,7 @@ func (b *BadgerEngine) createEdgeWithWriteContext(ctx context.Context, edge *Edg
 		dbName, _, _ := ParseDatabasePrefix(string(edge.ID))
 		schema := b.GetSchemaForNamespace(dbName)
 		if schema != nil {
-			if err := b.validateEdgeConstraintsInTxn(commitPreparationLifetime(write.ctx), txn, edge, schema, dbName, ""); err != nil {
+			if err := b.validateEdgeConstraintsInTxn(write.ctx, txn, edge, schema, dbName, ""); err != nil {
 				return err
 			}
 		}
@@ -402,7 +402,7 @@ func (b *BadgerEngine) UpdateEdge(ctx context.Context, updateRequest EdgeUpdateR
 	}
 	var publicationOps []Operation
 	// Capture before physical assembly can acquire the commit gate.
-	constraints, preparationErr := capturePublicationConstraintView(commitPreparationLifetime(write.ctx), schema)
+	constraints, preparationErr := capturePublicationConstraintView(write.ctx, schema)
 	if preparationErr != nil {
 		return preparationErr
 	}
@@ -445,7 +445,7 @@ func (b *BadgerEngine) UpdateEdge(ctx context.Context, updateRequest EdgeUpdateR
 		dbName, _, _ := ParseDatabasePrefix(string(edge.ID))
 		schema := b.GetSchemaForNamespace(dbName)
 		if schema != nil {
-			if err := b.validateEdgeConstraintsInTxn(commitPreparationLifetime(write.ctx), txn, edge, schema, dbName, edge.ID); err != nil {
+			if err := b.validateEdgeConstraintsInTxn(write.ctx, txn, edge, schema, dbName, edge.ID); err != nil {
 				return err
 			}
 		}
@@ -649,7 +649,7 @@ func (b *BadgerEngine) DeleteEdge(ctx context.Context, id EdgeID) error {
 	var publicationOps []Operation
 	schema := b.GetSchemaForNamespace(namespaceForEdgeID(id))
 	// Capture before physical assembly can acquire the commit gate.
-	constraints, preparationErr := capturePublicationConstraintView(commitPreparationLifetime(write.ctx), schema)
+	constraints, preparationErr := capturePublicationConstraintView(write.ctx, schema)
 	if preparationErr != nil {
 		return preparationErr
 	}

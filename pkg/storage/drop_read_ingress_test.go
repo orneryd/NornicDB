@@ -42,11 +42,11 @@ func TestPendingDropPublicReadIngress(t *testing.T) {
 					}
 					require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "REL"}))
 				}
-				require.NoError(t, b.FlushWriteBehind(nil))
+				require.NoError(t, b.FlushWriteBehind(context.Background()))
 				// Work IDs are opaque and deliberately name the opposite
 				// namespace. Only their stored graph target controls access.
-				require.NoError(t, b.PutDeindexWorkItem(&storage.DeindexWorkItem{WorkItemID: "tenant:opaque-peer", TargetID: "peer:a", Status: "pending"}))
-				require.NoError(t, b.PutDeindexWorkItem(&storage.DeindexWorkItem{WorkItemID: "peer:opaque-victim", TargetID: "tenant:a", Status: "pending"}))
+				require.NoError(t, b.PutDeindexWorkItem(t.Context(), &storage.DeindexWorkItem{WorkItemID: "tenant:opaque-peer", TargetID: "peer:a", Status: "pending"}))
+				require.NoError(t, b.PutDeindexWorkItem(t.Context(), &storage.DeindexWorkItem{WorkItemID: "peer:opaque-victim", TargetID: "tenant:a", Status: "pending"}))
 
 				// Warm actual materialized result caches; metrics prove a real public hit.
 				makeExecutor := func(engine storage.Engine) (*cypher.StorageExecutor, *observability.CacheMetrics) {
@@ -254,7 +254,7 @@ func TestPendingDropUnboundTransactionPrefixReadsRemainPeerScoped(t *testing.T) 
 					_, err = b.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"ReadFence"}})
 					require.NoError(t, err)
 				}
-				require.NoError(t, b.FlushWriteBehind(nil))
+				require.NoError(t, b.FlushWriteBehind(context.Background()))
 				storage.ReviewSetDropTailFailure(b, func(string) error { return errors.New("unbound prefix fixture tail failure") })
 				t.Cleanup(func() { storage.ReviewSetDropTailFailure(b, nil) })
 				_, _, err = b.DeleteByPrefix("tenant:")

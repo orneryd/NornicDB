@@ -18,9 +18,9 @@ func TestTransactionQuotaRateRefillAndCancellation(t *testing.T) {
 	tracker.checker.policy().writeRateLimiter = newRateLimiterWithClock(1, clock.Now)
 	commit := func(ctx context.Context, id string) error {
 		t.Helper()
-		tx, err := manager.inner.(*storage.MemoryEngine).BeginTransaction(ctx)
+		tx, err := manager.inner.(*storage.MemoryEngine).BeginTransaction(t.Context())
 		require.NoError(t, err)
-		_, err = tx.CreateNode(ctx, &storage.Node{ID: storage.NodeID(db + ":" + id)})
+		_, err = tx.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(db + ":" + id)})
 		require.NoError(t, err)
 		return tracker.CommitTransaction(ctx, tx)
 	}

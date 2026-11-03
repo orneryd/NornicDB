@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -19,7 +20,7 @@ func TestWriteBehind_NodeKeyAfterBufferRetirement(t *testing.T) {
 	require.NoError(t, sm.BackfillCompositeIndex(t.Context(), idx.Name, nil))
 	require.NoError(t, bufferedTry(t, b, factNode("holder", 1, "name", 1)))
 	require.Error(t, bufferedTry(t, b, factNode("pending-duplicate", 1, "name", 1)))
-	require.NoError(t, b.FlushWriteBehind(nil))
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
 	require.Empty(t, b.writeBehind.draining)
 	require.Zero(t, b.writeBehind.PendingOps())
 	require.Len(t, checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), int64(1), "name", int64(1))), 1)
@@ -46,7 +47,7 @@ func TestWriteBehind_IdleFilledKeyConstraints(t *testing.T) {
 				require.NoError(t, sm.BackfillCompositeIndex(t.Context(), idx.Name, nil))
 				if retired {
 					require.NoError(t, bufferedTry(t, b, factNode("holder", 1, "name", 1)))
-					require.NoError(t, b.FlushWriteBehind(nil))
+					require.NoError(t, b.FlushWriteBehind(context.Background()))
 				} else {
 					_, err := b.CreateNode(t.Context(), factNode("holder", 1, "name", 1))
 					require.NoError(t, err)

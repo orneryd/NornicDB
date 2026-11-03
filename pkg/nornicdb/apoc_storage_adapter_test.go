@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	apocstorage "github.com/orneryd/nornicdb/apoc/storage"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -804,8 +805,7 @@ func TestAPOCStorageAdapter_CreateErrorsAndDirectionalDegree(t *testing.T) {
 }
 
 func TestAPOCStorageAdapterNativeDeleteCascadesIncidentRelationships(t *testing.T) {
-	base := storage.NewMemoryEngine()
-	t.Cleanup(func() { require.NoError(t, base.Close()) })
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	native := storage.NewNamespacedEngine(base, "apoc_delete_parity")
 	for _, id := range []storage.NodeID{"1", "2", "3"} {
 		_, err := native.CreateNode(t.Context(), &storage.Node{ID: id})
@@ -829,8 +829,7 @@ func TestAPOCStorageAdapterNativeDeleteCascadesIncidentRelationships(t *testing.
 }
 
 func TestAPOCStorageAdapterPreservesNativePointFailure(t *testing.T) {
-	base := storage.NewMemoryEngine()
-	t.Cleanup(func() { require.NoError(t, base.Close()) })
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	adapter := NewAPOCStorageAdapter(storage.NewNamespacedEngine(base, "apoc_native_failure"))
 	require.NoError(t, base.Close())
 	_, err := adapter.GetNode(t.Context(), 1)
@@ -846,8 +845,7 @@ func TestAPOCStorageAdapterPreservesNativePointFailure(t *testing.T) {
 }
 
 func TestAPOCStorageAdapterNativeTraversalVisitorCancellation(t *testing.T) {
-	base := storage.NewMemoryEngine()
-	t.Cleanup(func() { require.NoError(t, base.Close()) })
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	native := storage.NewNamespacedEngine(base, "apoc_visitor_cancel")
 	for _, id := range []storage.NodeID{"1", "2"} {
 		_, err := native.CreateNode(t.Context(), &storage.Node{ID: id})

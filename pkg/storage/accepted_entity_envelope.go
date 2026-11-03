@@ -88,13 +88,21 @@ func ApplyEntityChange(ctx context.Context, target entityWriter, op Operation, u
 	case OpUpdateNode:
 		return updateNode(ctx, op.NodeUpdate())
 	case OpDeleteNode:
-		return deleteNode(ctx, op.NodeID)
+		err := deleteNode(ctx, op.NodeID)
+		if op.skipMissingDelete && errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		return err
 	case OpCreateEdge:
 		return target.CreateEdge(ctx, op.Edge)
 	case OpUpdateEdge:
 		return target.UpdateEdge(ctx, op.EdgeUpdate())
 	case OpDeleteEdge:
-		return target.DeleteEdge(ctx, op.EdgeID)
+		err := target.DeleteEdge(ctx, op.EdgeID)
+		if op.skipMissingDelete && errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		return err
 	default:
 		return fmt.Errorf("not an entity operation: %s", op.Type)
 	}

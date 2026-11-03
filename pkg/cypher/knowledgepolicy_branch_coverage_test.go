@@ -11,6 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type knowledgePolicyOpaqueEngine struct{ storage.Engine }
+
 func TestPolicySchemaLookupAndClosedTransaction(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	tx := fixtureowner.NamespaceTransaction(t, base.BeginTransaction, "lookup")
@@ -175,7 +177,8 @@ func TestKnowledgePolicyProcedure_Branches(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	ctx := context.Background()
 
-	res, err := exec.callNornicDbKnowledgePolicyDeindexStatus()
+	unsupported := NewStorageExecutor(&knowledgePolicyOpaqueEngine{Engine: exec.storage})
+	res, err := unsupported.callNornicDbKnowledgePolicyDeindexStatus()
 	require.NoError(t, err)
 	require.Equal(t, []string{"pending_count", "supported", "message", "workItemId", "targetId", "targetScope", "enqueuedAt", "status"}, res.Columns)
 	require.Len(t, res.Rows, 1)
@@ -239,7 +242,7 @@ func TestKnowledgePolicyProcedure_Branches(t *testing.T) {
 }
 
 func TestKnowledgePolicyFunctionHelpers_Branches(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(&knowledgePolicyOpaqueEngine{Engine: newTestMemoryEngine(t)}, "test"))
 	now := time.Now().UTC()
 	node := &storage.Node{ID: storage.NodeID("n1"), Labels: []string{"Fact"}, CreatedAt: now.Add(-2 * time.Hour), UpdatedAt: now.Add(-1 * time.Hour)}
 	edge := &storage.Edge{ID: storage.EdgeID("e1"), Type: "REL", CreatedAt: now.Add(-30 * time.Minute)}
@@ -308,7 +311,7 @@ func TestKnowledgePolicyFunctionHelpers_Branches(t *testing.T) {
 	require.False(t, handled)
 	require.Nil(t, v)
 
-	// Memory engine has no decay context, so decay helpers return neutral fallback values.
+	// The opaque engine exposes no native decay capability.
 	decayScore, policyHandled := exec.evaluateKnowledgePolicyFunction(context.Background(), "decayScore(n, {unknown:'x'})", "", map[string]*storage.Node{"n": node}, nil)
 	if !policyHandled {
 		t.Fatal("knowledge-policy expression was not handled")

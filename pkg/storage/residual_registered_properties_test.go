@@ -139,7 +139,7 @@ func TestResidualRegisteredPropertyImages(t *testing.T) {
 				require.Equal(t, warmNode.Properties, recoveredNode.Properties)
 				require.Equal(t, warmEdge.Properties, recoveredEdge.Properties)
 			}
-			require.NoError(t, b.FlushWriteBehind(nil))
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
 			require.NoError(t, b.Close())
 			b = open()
 			coldNode, err := b.GetStoredNode(t.Context(), n.ID)

@@ -106,7 +106,7 @@ func TestResidualCypherFinalRelationshipImage(t *testing.T) {
 				require.NoError(t, err)
 			}
 			run("CREATE (:Owned {id:'a'})-[:OWNED {p:0}]->(:Owned {id:'b'})")
-			require.NoError(t, b.FlushWriteBehind(nil))
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
 			const read = "MATCH (:Owned {id:'a'})-[r:OWNED]->() RETURN r.p"
 			_, err = reader.Execute(ctx, read, nil)
 			require.NoError(t, err)
@@ -130,7 +130,7 @@ func TestResidualCypherFinalRelationshipImage(t *testing.T) {
 			if !buffered {
 				run("COMMIT")
 			}
-			require.NoError(t, b.FlushWriteBehind(nil))
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
 			require.True(t, observed)
 			require.NoError(t, observationErr)
 			result, err := reader.Execute(ctx, read, nil)

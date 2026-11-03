@@ -158,23 +158,23 @@ func TestConfigureHNSWQuantizationAppliesDatabasePolicyAndInvalidatesPipeline(t 
 	svc := NewService(engine, 2, nil)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	cfg := HNSWQuantizationConfig{Mode: HNSWQuantizationScalar}
-	require.NoError(t, svc.ConfigureHNSWQuantization(nil, cfg))
+	require.NoError(t, svc.ConfigureHNSWQuantization(t.Context(), cfg))
 	require.NoError(t, svc.BuildIndexes(context.Background()))
 	hits, err := svc.VectorQueryNodesWithOptions(context.Background(), []float32{1, 0}, VectorQuerySpec{Property: "default", Limit: 1}, nil)
 	require.NoError(t, err)
 	require.Len(t, hits, 1)
 	require.Positive(t, svc.hnswIndex.QuantizationBytes())
 	previous := svc.vectorPipeline
-	require.NoError(t, svc.ConfigureHNSWQuantization(nil, cfg))
+	require.NoError(t, svc.ConfigureHNSWQuantization(t.Context(), cfg))
 	require.Same(t, previous, svc.vectorPipeline)
 	cfg = HNSWQuantizationConfig{Mode: HNSWQuantizationBinary}
-	require.NoError(t, svc.ConfigureHNSWQuantization(nil, cfg))
+	require.NoError(t, svc.ConfigureHNSWQuantization(t.Context(), cfg))
 	require.Nil(t, svc.vectorPipeline)
 	require.Equal(t, HNSWQuantizationBinary, svc.hnswConfig().Quantization.Mode)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	require.ErrorIs(t, svc.ConfigureHNSWQuantization(ctx, HNSWQuantizationConfig{}), context.Canceled)
-	require.Error(t, svc.ConfigureHNSWQuantization(nil, HNSWQuantizationConfig{Mode: "invalid"}))
+	require.Error(t, svc.ConfigureHNSWQuantization(t.Context(), HNSWQuantizationConfig{Mode: "invalid"}))
 	require.Equal(t, HNSWQuantizationBinary, svc.hnswConfig().Quantization.Mode)
 }
 

@@ -71,7 +71,7 @@ func classifyDeleteTargetValue(val interface{}) deleteTargetValue {
 	return deleteTargetValue{}
 }
 
-func (e *StorageExecutor) isDeleteStreamingEligible(matchSegment, deleteVars string, detach bool) bool {
+func (e *StorageExecutor) isDeleteStreamingEligible(ctx context.Context, matchSegment, deleteVars string, detach bool) bool {
 	if !detach {
 		return false
 	}
@@ -80,7 +80,7 @@ func (e *StorageExecutor) isDeleteStreamingEligible(matchSegment, deleteVars str
 	}
 	// Keep streaming path conservative to avoid semantic drift.
 	for _, blocked := range []string{"WITH", "LIMIT", "SKIP", "ORDER", "CALL", "UNWIND"} {
-		if containsKeywordOutsideStrings(matchSegment, blocked) {
+		if containsKeywordOutsideStrings(ctx, matchSegment, blocked) {
 			return false
 		}
 	}
@@ -156,7 +156,7 @@ var setScopeVarPattern = regexp.MustCompile(`(?i)\b([A-Za-z_][A-Za-z0-9_]*)\s*(?
 // extractScopeVariablesFromSetAndReturn returns variable names referenced in
 // SET assignments and RETURN items so the pre-SET MATCH query includes all
 // variables needed for mutation and projection.
-func extractScopeVariablesFromSetAndReturn(setPart, returnPart string) []string {
+func extractScopeVariablesFromSetAndReturn(ctx context.Context, setPart, returnPart string) []string {
 	seen := map[string]struct{}{}
 	out := make([]string, 0, 4)
 	add := func(v string) {
@@ -186,7 +186,7 @@ func extractScopeVariablesFromSetAndReturn(setPart, returnPart string) []string 
 			if expr == "" {
 				continue
 			}
-			if asIdx := findKeywordIndex(expr, "AS"); asIdx > 0 {
+			if asIdx := findKeywordIndex(ctx, expr, "AS"); asIdx > 0 {
 				expr = strings.TrimSpace(expr[:asIdx])
 			}
 			add(extractVariableNameFromReturnItem(expr))
@@ -199,18 +199,18 @@ func extractScopeVariablesFromSetAndReturn(setPart, returnPart string) []string 
 // Example: "n += $props SET n.x = 1 SET n.y = 2" -> "n += $props, n.x = 1, n.y = 2".
 // Counting what a SET writes needs the clause boundaries, so the SET
 // applicators walk the clauses with nextChainedSetClause instead.
-func collapseChainedSetClauses(setPart string) string {
+func collapseChainedSetClauses(ctx context.Context, setPart string) string {
 	setPart = strings.TrimSpace(setPart)
-	first, next, ok := nextChainedSetClause(setPart, 0)
+	first, next, ok := nextChainedSetClause(ctx, setPart, 0)
 	if !ok {
 		return setPart
 	}
-	clause, next, ok := nextChainedSetClause(setPart, next)
+	clause, next, ok := nextChainedSetClause(ctx, setPart, next)
 	if !ok {
 		return first
 	}
 	clauses := []string{first}
-	for ; ok; clause, next, ok = nextChainedSetClause(setPart, next) {
+	for ; ok; clause, next, ok = nextChainedSetClause(ctx, setPart, next) {
 		clauses = append(clauses, clause)
 	}
 	return strings.Join(clauses, ", ")
@@ -220,10 +220,10 @@ func collapseChainedSetClauses(setPart string) string {
 // setPart, a SET assignment list that may chain further SET clauses
 // ("n += $props SET n.x = 1"), and the index where the clause after it
 // starts. ok is false when no clause is left.
-func nextChainedSetClause(setPart string, start int) (clause string, next int, ok bool) {
+func nextChainedSetClause(ctx context.Context, setPart string, start int) (clause string, next int, ok bool) {
 	for start < len(setPart) {
 		end, after := len(setPart), len(setPart)
-		if idx := keywordIndexFrom(setPart, "SET", start, defaultKeywordScanOpts()); idx >= 0 {
+		if idx := keywordIndexFrom(ctx, setPart, "SET", start, defaultKeywordScanOpts()); idx >= 0 {
 			end, after = idx, idx+len("SET")
 		}
 		if clause = strings.TrimSpace(setPart[start:end]); clause != "" {
@@ -236,7 +236,7 @@ func nextChainedSetClause(setPart string, start int) (clause string, next int, o
 
 // firstPostSetClauseIndex returns the first index of a clause keyword that can
 // legally follow a SET assignment list. Returns -1 when none are present.
-func firstPostSetClauseIndex(setTail string) int {
+func firstPostSetClauseIndex(ctx context.Context, setTail string) int {
 	opts := defaultKeywordScanOpts()
 	first := -1
 	for _, kw := range []string{
@@ -244,7 +244,7 @@ func firstPostSetClauseIndex(setTail string) int {
 		"CREATE", "MATCH", "MERGE", "DELETE", "CALL",
 		"ORDER BY", "LIMIT", "SKIP",
 	} {
-		if idx := keywordIndexFrom(setTail, kw, 0, opts); idx >= 0 {
+		if idx := keywordIndexFrom(ctx, setTail, kw, 0, opts); idx >= 0 {
 			if first == -1 || idx < first {
 				first = idx
 			}

@@ -347,7 +347,7 @@ func TestRRFFusion(t *testing.T) {
 }
 
 func TestCollapseIndexResultsByNodeIDFastPathAndFallback(t *testing.T) {
-	svc := &Service{}
+	svc := &Service{lifecycleCtx: t.Context()}
 	canonical := []indexResult{{ID: "doc-a", Score: 0.9}, {ID: "doc-b", Score: 0.8}}
 	got := collapseIndexResultsByNodeID(canonical)
 	require.Equal(t, canonical, got)
@@ -506,8 +506,7 @@ func TestSearchWarmupVectorPipelineBranches(t *testing.T) {
 	svc := NewService(engine, 3, nil)
 
 	// No embeddings: warmup is a no-op.
-	var nilCtx context.Context
-	svc.warmupVectorPipeline(nilCtx, nil)
+	svc.warmupVectorPipeline(t.Context(), nil)
 	svc.pipelineMu.RLock()
 	require.Nil(t, svc.vectorPipeline)
 	svc.pipelineMu.RUnlock()
@@ -2432,8 +2431,7 @@ func TestVectorQueryNodes_IndexedAndExactPaths(t *testing.T) {
 
 func TestVectorQueryNodes_ExactPathDefaultsAndNamedBranches(t *testing.T) {
 	emptySvc, _ := newVectorService(t, 3, "")
-	var nilCtx context.Context
-	hits, err := emptySvc.VectorQueryNodes(nilCtx, []float32{1, 0, 0}, VectorQuerySpec{Similarity: "dot"})
+	hits, err := emptySvc.VectorQueryNodes(t.Context(), []float32{1, 0, 0}, VectorQuerySpec{Similarity: "dot"})
 	require.NoError(t, err)
 	assert.Empty(t, hits)
 

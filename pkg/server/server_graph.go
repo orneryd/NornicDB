@@ -974,6 +974,9 @@ func (s *Server) collectLatestNeighborhood(ctx context.Context, engine storage.E
 			continue
 		}
 		node, err := engine.GetNode(ctx, storage.NodeID(seedID))
+		if err != nil && !errors.Is(err, storage.ErrNotFound) {
+			return collection, err
+		}
 		node = projection.Node(node)
 		if err != nil || node == nil {
 			continue
@@ -1014,6 +1017,9 @@ func (s *Server) collectLatestNeighborhood(ctx context.Context, engine storage.E
 				otherID = string(edge.EndNode)
 			}
 			neighbor, err := engine.GetNode(ctx, storage.NodeID(otherID))
+			if err != nil && !errors.Is(err, storage.ErrNotFound) {
+				return collection, err
+			}
 			neighbor = projection.Node(neighbor)
 			if err != nil || neighbor == nil {
 				continue
@@ -1050,6 +1056,9 @@ func (s *Server) collectLatestPath(ctx context.Context, engine storage.Engine, s
 	if sourceID == targetID {
 		collection := newGraphCollection()
 		node, err := engine.GetNode(ctx, storage.NodeID(sourceID))
+		if err != nil && !errors.Is(err, storage.ErrNotFound) {
+			return collection, err
+		}
 		node = projection.Node(node)
 		if err != nil || node == nil {
 			return collection, storage.ErrNotFound
@@ -1101,6 +1110,9 @@ func (s *Server) collectLatestPath(ctx context.Context, engine storage.Engine, s
 				nextID = string(edge.EndNode)
 			}
 			node, err := engine.GetNode(ctx, storage.NodeID(nextID))
+			if err != nil && !errors.Is(err, storage.ErrNotFound) {
+				return graphCollection{}, err
+			}
 			node = projection.Node(node)
 			if err != nil || node == nil || !filters.allowNode(node) {
 				continue
@@ -1136,6 +1148,9 @@ func (s *Server) collectLatestPath(ctx context.Context, engine storage.Engine, s
 	current := targetID
 	for {
 		node, err := engine.GetNode(ctx, storage.NodeID(current))
+		if err != nil && !errors.Is(err, storage.ErrNotFound) {
+			return graphCollection{}, err
+		}
 		node = projection.Node(node)
 		if err == nil && node != nil {
 			collection.addNode(node, "")
@@ -1159,6 +1174,9 @@ func (s *Server) collectLatestInducedSubgraph(ctx context.Context, engine storag
 	visible := normalizeNodeIDs(nodeIDs)
 	for _, nodeID := range visible {
 		node, err := engine.GetNode(ctx, storage.NodeID(nodeID))
+		if err != nil && !errors.Is(err, storage.ErrNotFound) {
+			return collection, err
+		}
 		if err != nil || node == nil || !filters.allowNode(node) {
 			continue
 		}
@@ -1207,7 +1225,7 @@ func (s *Server) collectSnapshotInducedSubgraph(ctx context.Context, engine stor
 	collection := newGraphCollection()
 	for _, nodeID := range normalizeNodeIDs(nodeIDs) {
 		node, err := provider.GetNodeVisibleAt(ctx, storage.NodeID(nodeID), version)
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		if err != nil && !errors.Is(err, storage.ErrNotFound) && !errors.Is(err, storage.ErrNotVisibleAtSnapshot) {
 			return graphCollection{}, err
 		}
 		if err != nil || node == nil || !filters.allowNode(node) {

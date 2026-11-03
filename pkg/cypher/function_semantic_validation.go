@@ -18,7 +18,7 @@ import (
 // Neo4j.
 func validateKnownFunctions(ctx context.Context, expression string) error {
 	if !startsWithKeywordFold(strings.TrimSpace(expression), "SHOW") &&
-		(isSchemaCommandStatement(expression) || isMetadataCommand(expression, metadataCreateAdmission)) {
+		(isSchemaCommandStatement(expression) || isMetadataCommand(ctx, expression, metadataCreateAdmission)) {
 		return nil
 	}
 	return forEachFunctionCall(ctx, expression, func(name, normalized string) error {

@@ -142,9 +142,6 @@ func (s *Service) vectorQueryNodes(ctx context.Context, queryEmbedding []float32
 	if s == nil || s.engine == nil {
 		return nil, localizedError(localization.SearchServiceUnavailable(), nil)
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	ctx, finishRead, err := s.beginRead(ctx)
 	if err != nil {
 		return nil, err
@@ -204,9 +201,6 @@ func (s *Service) vectorQueryNodes(ctx context.Context, queryEmbedding []float32
 func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding []float32, spec RelationshipVectorQuerySpec) ([]RelationshipVectorQueryHit, error) {
 	if s == nil || s.engine == nil {
 		return nil, localizedError(localization.SearchServiceUnavailable(), nil)
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	ctx, finishRead, err := s.beginRead(ctx)
 	if err != nil {

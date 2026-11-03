@@ -63,7 +63,7 @@ func TestCachedNestedValuesAcrossPopulationReaders(t *testing.T) {
 				if reader != nil {
 					require.NotContains(t, second.Properties, "omitted")
 				}
-				require.NoError(t, b.FlushWriteBehind(nil))
+				require.NoError(t, b.FlushWriteBehind(context.Background()))
 				stored, err := b.GetStoredNode(t.Context(), id)
 				require.NoError(t, err)
 				require.Equal(t, []int64{1, 2}, stored.Properties["nested"].(map[string]any)["values"])

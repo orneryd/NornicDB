@@ -119,9 +119,6 @@ func (e *StorageExecutor) failTransaction(ctx context.Context, err error) error 
 // timeout), and never longer than the remote client's request timeout. It
 // isn't cancelled with the statement, which already failed.
 func remoteFailureRollbackContext(ctx context.Context) (context.Context, context.CancelFunc) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	deadline := time.Now().Add(storage.RemoteRequestTimeout)
 	if statementDeadline, ok := ctx.Deadline(); ok && statementDeadline.Before(deadline) {
 		deadline = statementDeadline
@@ -495,7 +492,7 @@ func (e *StorageExecutor) executeInTransaction(ctx context.Context, cypher strin
 		return e.executeWithoutTransaction(ctx, cypher, upperQuery)
 	}
 
-	parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(cypher)
+	parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(ctx, cypher)
 	if inlineEmbeddingEnabled {
 		cypher = parsedCypher
 		upperQuery = upperASCII(cypher)
@@ -585,8 +582,8 @@ func (e *StorageExecutor) transactionStorageFor(tx *storage.BadgerTransaction) *
 	return wrapper
 }
 
-func looksLikeWriteQuery(cypher string) bool {
-	upper := upperASCII(classificationText(cypher))
+func looksLikeWriteQuery(ctx context.Context, cypher string) bool {
+	upper := upperASCII(classificationText(ctx, cypher))
 	return strings.Contains(upper, "CREATE") ||
 		strings.Contains(upper, "MERGE") ||
 		strings.Contains(upper, "DELETE") ||

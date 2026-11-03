@@ -493,9 +493,6 @@ func withQuotedVariableNames(ctx context.Context, names *quotedVariableNames) co
 // quotedVariableNamesFor returns the canonicalization whose canonical text
 // is cypher, or nil.
 func quotedVariableNamesFor(ctx context.Context, cypher string) *quotedVariableNames {
-	if ctx == nil {
-		return nil
-	}
 	names, _ := ctx.Value(quotedVariablesKey{}).(*quotedVariableNames)
 	if names == nil || names.Text != cypher {
 		return nil
@@ -505,8 +502,8 @@ func quotedVariableNamesFor(ctx context.Context, cypher string) *quotedVariableN
 
 // finalReturnBody locates the body of text's last top-level RETURN (after
 // the keyword).
-func finalReturnBody(text string) (int, int, bool) {
-	positions := findAllTopLevelPipelineKeywordPositions(text, "RETURN")
+func finalReturnBody(ctx context.Context, text string) (int, int, bool) {
+	positions := findAllTopLevelPipelineKeywordPositions(ctx, text, "RETURN")
 	if len(positions) == 0 {
 		return 0, 0, false
 	}

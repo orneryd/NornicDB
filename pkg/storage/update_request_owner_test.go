@@ -11,49 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// withUpdate's owning context is required: a missing one fails before order
-// acquisition, admission and the callback, instead of substituting a lifetime
-// the caller did not choose. Empty and non-empty entity lists both fail the
-// same way, and the engine keeps no hold from the rejected write.
-func TestWithUpdateRequiresOwningContext(t *testing.T) {
-	engine, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: true, WriteBehindInterval: time.Hour}))
-	require.NoError(t, err)
-	markerKey := []byte("test:update-owner-marker")
-	callbacks := 0
-	write := func(txn *badger.Txn) error {
-		callbacks++
-		return txn.Set(markerKey, []byte{1})
-	}
-
-	for _, tc := range []struct {
-		name     string
-		entities []writtenEntities
-	}{
-		{name: "omitted entities"},
-		{name: "empty entities", entities: []writtenEntities{{}}},
-		{name: "written entity", entities: []writtenEntities{{nodes: []NodeID{"test:owned"}}}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			err := engine.withUpdate(nil, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, write, tc.entities...)
-			require.ErrorIs(t, err, errUpdateContextRequired)
-		})
-	}
-	require.Zero(t, callbacks, "a rejected write must not run its callback")
-	require.NoError(t, engine.withView(func(txn *badger.Txn) error {
-		_, err := txn.Get(markerKey)
-		require.ErrorIs(t, err, badger.ErrKeyNotFound)
-		return nil
-	}))
-
-	// No ownership survives the rejection: the same entity is writable now.
-	require.NoError(t, engine.withUpdate(t.Context(), updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, write, writtenEntities{nodes: []NodeID{"test:owned"}}))
-	require.Equal(t, 1, callbacks, "the single accepted call runs its callback once")
-	require.NoError(t, engine.withView(func(txn *badger.Txn) error {
-		_, err := txn.Get(markerKey)
-		return err
-	}))
-}
-
 // A withUpdate blocked on the write-order admission of its entities writes
 // nothing when its owning context ends: the callback never runs, the metadata
 // stays absent, the order hold is released, and a later healthy write of the

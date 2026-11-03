@@ -124,7 +124,7 @@ func (b *BadgerEngine) beginEntityWrite(ctx context.Context, id string, isEdge b
 			}
 			for _, ns := range namespaces {
 				entities := batches[ns]
-				keys, err := entityCommitKeys(commitPreparationLifetime(admission), entities.nodes, entities.edges, nil)
+				keys, err := entityCommitKeys(admission, entities.nodes, entities.edges, nil)
 				if err != nil {
 					releaseAll()
 					return nil, err
@@ -169,7 +169,7 @@ func (b *BadgerEngine) beginEntityWrite(ctx context.Context, id string, isEdge b
 		} else {
 			nodes = append(nodes, NodeID(id))
 		}
-		keys, err := entityCommitKeys(commitPreparationLifetime(admission), nodes, edges, nil)
+		keys, err := entityCommitKeys(admission, nodes, edges, nil)
 		if err != nil {
 			return nil, err
 		}

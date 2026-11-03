@@ -85,12 +85,11 @@ func TestTransactionQuotaNamespaceAndDatabaseLifecycle(t *testing.T) {
 	require.False(t, staged.IsActive())
 }
 
-func TestTransactionQuotaReadOnlyAndNilContext(t *testing.T) {
+func TestTransactionQuotaReadOnlyDoesNotWaitForWriteAdmission(t *testing.T) {
 	manager, db := setupTestManagerWithLimits(t, &Limits{Storage: StorageLimits{MaxNodes: 1}})
 	engine, err := manager.GetStorage(db)
 	require.NoError(t, err)
 	tracker := engine.(*sizeTrackingEngine)
-	require.NoError(t, tracker.CommitTransaction(nil, stagedQuotaNode(t, manager, db, "nil-context")))
 	read, err := manager.inner.(*storage.MemoryEngine).BeginTransaction(t.Context())
 	require.NoError(t, err)
 	tracker.writeMu.Lock()

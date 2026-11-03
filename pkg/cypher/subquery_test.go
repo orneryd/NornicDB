@@ -2406,13 +2406,13 @@ func TestSubqueryHelpers_AddLimitSkipAndAfterCallProcessing(t *testing.T) {
 	// RETURN may read variables only the write clause binds.
 	assert.Equal(t,
 		"MATCH (n) RETURN 1",
-		exec.makeSubqueryReadOnly("MATCH (n) SET n.x = 1 RETURN n"),
+		exec.makeSubqueryReadOnly(ctx, "MATCH (n) SET n.x = 1 RETURN n"),
 	)
 	assert.Equal(t,
 		"MATCH (n) RETURN 1",
-		exec.makeSubqueryReadOnly("MATCH (n) CREATE (m) RETURN m.x"),
+		exec.makeSubqueryReadOnly(ctx, "MATCH (n) CREATE (m) RETURN m.x"),
 	)
-	assert.Equal(t, "", exec.makeSubqueryReadOnly("CALL db.labels()"))
+	assert.Equal(t, "", exec.makeSubqueryReadOnly(ctx, "CALL db.labels()"))
 
 	inner := &ExecuteResult{
 		Columns: []string{"name", "score"},
@@ -3263,21 +3263,21 @@ RETURN
 	require.True(t, all)
 	require.Len(t, branches, 2)
 
-	withVars0, inner0, hasWith0, err := parseLeadingWithImports(branches[0])
+	withVars0, inner0, hasWith0, err := parseLeadingWithImports(t.Context(), branches[0])
 	require.NoError(t, err)
 	require.True(t, hasWith0)
 	require.Equal(t, []string{"p"}, withVars0)
-	assert.True(t, isCallSubqueryPureReturn(inner0), "first UNION branch should be pure RETURN projection")
+	assert.True(t, isCallSubqueryPureReturn(t.Context(), inner0), "first UNION branch should be pure RETURN projection")
 
-	withVars1, inner1, hasWith1, err := parseLeadingWithImports(branches[1])
+	withVars1, inner1, hasWith1, err := parseLeadingWithImports(t.Context(), branches[1])
 	require.NoError(t, err)
 	require.True(t, hasWith1)
 	require.Equal(t, []string{"p"}, withVars1)
-	assert.False(t, isCallSubqueryPureReturn(inner1), "second UNION branch should not be pure RETURN")
+	assert.False(t, isCallSubqueryPureReturn(t.Context(), inner1), "second UNION branch should not be pure RETURN")
 }
 
 func TestParseLeadingWithImports_WithWherePredicate(t *testing.T) {
-	withVars, inner, hasWith, err := parseLeadingWithImports(`
+	withVars, inner, hasWith, err := parseLeadingWithImports(t.Context(), `
 WITH o, t
 WHERE t IS NULL
 CREATE (n:Tmp)

@@ -263,9 +263,6 @@ func (p *Provider) Config() ObservabilityConfig { return p.cfg }
 // Called by the telemetry listener's Shutdown in Plan 03 (per Open Question 4
 // resolution — the lifecycle.Component owns the Provider's flush budget).
 func (p *Provider) Shutdown(ctx context.Context) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	return p.shutdown.DoContext(ctx, func() error {
 		return p.finishShutdown(context.WithoutCancel(ctx))
 	})

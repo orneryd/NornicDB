@@ -157,8 +157,6 @@ func TestStorageAdapterPublicationInputRejectionsHaveNoEffects(t *testing.T) {
 	}{
 		{name: "zero value mode", ctx: context.Background(), cmd: command, mode: WALPublicationMode(0)},
 		{name: "unknown mode", ctx: context.Background(), cmd: command, mode: WALPublicationMode(3)},
-		{name: "nil wait context published", ctx: nil, cmd: command, mode: WALPublished},
-		{name: "nil wait context queued", ctx: nil, cmd: command, mode: WALQueued},
 		{name: "nil command", ctx: context.Background(), cmd: nil, mode: WALPublished},
 		{name: "decode rejection", ctx: context.Background(), cmd: &Command{Type: CmdCreateNode, Data: []byte("bad"), Timestamp: time.Now()}, mode: WALPublished},
 	}

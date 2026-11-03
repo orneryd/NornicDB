@@ -65,8 +65,7 @@ func TestRebuildEdgeTypeIndexBranches(t *testing.T) {
 		seedRawRecord(t, engine, &Edge{ID: "test:untyped", StartNode: "test:a", EndNode: "test:b"})
 		writeRawValue(t, engine, []byte{prefixEdge}, []byte{0})
 
-		var nilCtx context.Context
-		processed, err := engine.rebuildEdgeTypeIndex(nilCtx)
+		processed, err := engine.rebuildEdgeTypeIndex(t.Context())
 		require.NoError(t, err)
 		require.Equal(t, 2, processed)
 		edges, err := engine.GetEdgesByType(context.Background(), "Knows")

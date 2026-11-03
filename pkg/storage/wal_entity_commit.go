@@ -39,7 +39,7 @@ func (w *WALEngine) submitEntityCommit(ctx context.Context, prepared *PreparedEn
 	if prepared == nil {
 		return nil, ErrInvalidData
 	}
-	if ctx != nil && ctx.Err() != nil {
+	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
 	// Preparation owns an immutable private operation snapshot. Encoding only
@@ -58,7 +58,7 @@ func (w *WALEngine) submitEntityCommit(ctx context.Context, prepared *PreparedEn
 	if err != nil {
 		return nil, err
 	}
-	if ctx != nil && ctx.Err() != nil {
+	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
 	releaseAuthority, err := prepared.RetainAcceptedAuthority(ctx)

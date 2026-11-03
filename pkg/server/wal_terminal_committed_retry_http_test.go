@@ -45,7 +45,7 @@ func TestHTTPWALTerminalCommittedOutcomeIsNotRetriable(t *testing.T) {
 				require.NoError(t, err)
 				faulty := &httpMatrixSuppression{Engine: store, cause: storage.ErrStorageRestoring}
 				s, auth := setupTestServer(t)
-				s.txSessions = txsession.NewManager(time.Minute, func(string) (*cypher.StorageExecutor, error) { return cypher.NewStorageExecutor(faulty), nil })
+				s.txSessions = txsession.NewManager(time.Minute, func(string) (*cypher.StorageExecutor, error) { return cypher.NewStorageExecutor(faulty), nil }, t.Context())
 				s.executorsMu.Lock()
 				s.executors["nornic"] = cypher.NewStorageExecutor(faulty)
 				s.executorsMu.Unlock()

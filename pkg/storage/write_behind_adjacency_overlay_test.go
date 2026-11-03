@@ -96,7 +96,7 @@ func TestWriteBehind_AdjacencyOverlayMatchesFlushedView(t *testing.T) {
 	}
 
 	pre := readAdjacencySnapshot(t, engine, nodeIDs)
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	post := readAdjacencySnapshot(t, engine, nodeIDs)
 
 	require.Equal(t, post.totalEdges, pre.totalEdges, "EdgeCount must include buffered edges")
@@ -136,7 +136,7 @@ func TestWriteBehind_MergeDoesNotDuplicateBufferedEdges(t *testing.T) {
 	require.Len(t, between, 1)
 
 	require.Equal(t, int64(1), mustEdgeCount(t, engine))
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	require.Equal(t, int64(1), mustEdgeCount(t, engine), "flush must not duplicate the edge")
 	between, err = engine.GetEdgesBetween(context.Background(), "test:a", "test:b")
 	require.NoError(t, err)
@@ -173,7 +173,7 @@ func TestWriteBehind_DetachDeleteLeavesNoOrphans(t *testing.T) {
 	require.Empty(t, all, "every incident edge must be removed while buffered")
 	require.Equal(t, int64(0), mustEdgeCount(t, engine))
 
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	all, err = engine.AllEdges(context.Background())
 	require.NoError(t, err)
 	require.Empty(t, all, "no orphan may reappear after the flush")

@@ -50,13 +50,16 @@ var pipelineNodeMatchTemplates = newBoundedCache[string, *pipelineNodeMatchTempl
 
 // pipelineNodeMatchTemplateFor parses a MATCH clause's single node pattern
 // once per clause text.
-func (e *StorageExecutor) pipelineNodeMatchTemplateFor(clause string) *pipelineNodeMatchTemplate {
+func (e *StorageExecutor) pipelineNodeMatchTemplateFor(ctx context.Context, clause string) *pipelineNodeMatchTemplate {
+	if ctx.Err() != nil {
+		return &pipelineNodeMatchTemplate{}
+	}
 	if template, ok := pipelineNodeMatchTemplates.get(clause); ok {
 		return template
 	}
 	template := &pipelineNodeMatchTemplate{}
 	pattern := strings.TrimSpace(clause[len("MATCH"):])
-	if whereIndex := topLevelKeywordIndex(pattern, "WHERE"); whereIndex >= 0 {
+	if whereIndex := topLevelKeywordIndex(ctx, pattern, "WHERE"); whereIndex >= 0 {
 		template.where = normalizePipelineWhitespace(pattern[whereIndex+len("WHERE"):])
 		pattern = strings.TrimSpace(pattern[:whereIndex])
 	}
@@ -69,13 +72,18 @@ func (e *StorageExecutor) pipelineNodeMatchTemplateFor(clause string) *pipelineN
 		template.properties, template.usable = e.pipelinePropertyExpressions(props)
 		template.usable = template.usable && template.variable != "" && template.pathVariable == ""
 	}
-	pipelineNodeMatchTemplates.put(clause, template)
+	if ctx.Err() == nil {
+		pipelineNodeMatchTemplates.put(clause, template)
+	}
 	return template
 }
 
 // node returns the row's node pattern, ok false when the row takes the
 // general route.
 func (t *pipelineNodeMatchTemplate) node(ctx context.Context, e *StorageExecutor, row pipelineRow) (nodePatternInfo, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nodePatternInfo{}, true, err
+	}
 	if !t.usable {
 		return nodePatternInfo{}, false, nil
 	}
@@ -116,14 +124,17 @@ var pipelineMergeTemplates = newBoundedCache[string, *pipelineMergeTemplate](512
 
 // pipelineMergeTemplateFor parses a MERGE clause once per clause text. The
 // template covers `MERGE (a)-[r:T {…}]->(b)` without ON CREATE / ON MATCH SET.
-func (e *StorageExecutor) pipelineMergeTemplateFor(clause string) *pipelineMergeTemplate {
+func (e *StorageExecutor) pipelineMergeTemplateFor(ctx context.Context, clause string) *pipelineMergeTemplate {
+	if ctx.Err() != nil {
+		return &pipelineMergeTemplate{}
+	}
 	if template, ok := pipelineMergeTemplates.get(clause); ok {
 		return template
 	}
 	template := &pipelineMergeTemplate{}
 	body := strings.TrimSpace(clause)
 	if startsWithKeywordFold(body, "MERGE") {
-		parts := splitMergeClauseActions(pipelineClauseBody(body, "MERGE"), nil)
+		parts := splitMergeClauseActions(ctx, pipelineClauseBody(body, "MERGE"), nil)
 		pattern := parts.pattern
 		if open, _ := readRelationshipBracket(pattern, 0, requireClosedRelationship); open >= 0 && parts.onCreate.len() == 0 && parts.onMatch.len() == 0 {
 			if shape, err := e.parseMergeRelationshipShape(pattern); err == nil &&
@@ -136,13 +147,18 @@ func (e *StorageExecutor) pipelineMergeTemplateFor(clause string) *pipelineMerge
 			}
 		}
 	}
-	pipelineMergeTemplates.put(clause, template)
+	if ctx.Err() == nil {
+		pipelineMergeTemplates.put(clause, template)
+	}
 	return template
 }
 
 // pattern returns the row's relationship pattern, ok false when the row
 // takes the general route because syntax or endpoint bindings are unsupported.
 func (t *pipelineMergeTemplate) pattern(ctx context.Context, e *StorageExecutor, row pipelineRow) (*mergeRelationshipPattern, *storage.Node, *storage.Node, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, nil, true, err
+	}
 	if !t.usable {
 		return nil, nil, nil, false, nil
 	}

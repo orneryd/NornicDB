@@ -67,7 +67,7 @@ func TestLifetimeAuditChecksActualStateAndDisposesLeaks(t *testing.T) {
 				resource = &countOnlyLifetime{&countLifetimeState{lifetimeState: *state, readErr: lifetimeReadFailed}}
 			}
 			entry := lifetimeEntry{resource: resource, closedError: lifetimeClosed, site: "constructor.go:37"}
-			entry.audit(&owner)
+			entry.audit(t.Context(), &owner)
 			if tc.closed {
 				if len(owner.failures) != 0 || state.closes != 0 {
 					t.Fatal("closed resource was rejected or closed again")
@@ -86,7 +86,7 @@ func TestLifetimeAuditChecksActualStateAndDisposesLeaks(t *testing.T) {
 			if tc.closeFailure && !strings.Contains(owner.failures[0], "disposal failed") {
 				t.Fatal("close error was lost")
 			}
-			if closed, known := entry.isClosed(); known && !closed {
+			if closed, known := entry.isClosed(t.Context()); known && !closed {
 				t.Fatal("leaked resource was not disposed")
 			}
 		})
@@ -96,19 +96,19 @@ func TestLifetimeAuditChecksActualStateAndDisposesLeaks(t *testing.T) {
 func TestLifetimeCountProbeRequiresClosedSentinel(t *testing.T) {
 	state := &countLifetimeState{}
 	entry := lifetimeEntry{resource: &countOnlyLifetime{state}, closedError: lifetimeClosed, site: "count"}
-	if closed, known := entry.isClosed(); closed || !known {
+	if closed, known := entry.isClosed(t.Context()); closed || !known {
 		t.Fatal("open count-based resource considered closed")
 	}
 	state.readErr = lifetimeReadFailed
-	if closed, known := entry.isClosed(); closed || !known {
+	if closed, known := entry.isClosed(t.Context()); closed || !known {
 		t.Fatal("unrelated read error accepted as closure")
 	}
 	state.closed = true
-	if closed, known := entry.isClosed(); !closed || !known {
+	if closed, known := entry.isClosed(t.Context()); !closed || !known {
 		t.Fatal("closed sentinel not observed")
 	}
 	entry.closedError = nil
-	if _, known := entry.isClosed(); known {
+	if _, known := entry.isClosed(t.Context()); known {
 		t.Fatal("missing closed sentinel was accepted")
 	}
 }

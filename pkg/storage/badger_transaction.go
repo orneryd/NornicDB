@@ -916,7 +916,7 @@ func (tx *BadgerTransaction) createNode(ctx context.Context, node *Node, minted 
 
 	// Track for read-your-writes and constraint validation
 	nodeCopy := copyNode(node)
-	_ = tx.pendingNodeChangedLocked(ctx, tx.pendingNodes[node.ID], nodeCopy)
+	tx.pendingNodeChangedLocked(tx.pendingNodes[node.ID], nodeCopy)
 	tx.pendingNodes[node.ID] = nodeCopy
 	delete(tx.deletedNodes, node.ID)
 
@@ -1110,7 +1110,7 @@ func (tx *BadgerTransaction) UpdateGraphNode(ctx context.Context, updateRequest 
 
 	// Track for read-your-writes
 	nodeCopy := copyNode(node)
-	_ = tx.pendingNodeChangedLocked(ctx, tx.pendingNodes[node.ID], nodeCopy)
+	tx.pendingNodeChangedLocked(tx.pendingNodes[node.ID], nodeCopy)
 	tx.pendingNodes[node.ID] = nodeCopy
 	if len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0 {
 		tx.bufferDelete(pendingEmbedKey(node.ID))
@@ -1494,7 +1494,8 @@ func (tx *BadgerTransaction) DeleteGraphNode(ctx context.Context, nodeID NodeID,
 	if err != nil {
 		return err
 	}
-	return tx.recordNodeDeletionLocked(ctx, nodeID, result)
+	tx.recordNodeDeletionLocked(nodeID, result)
+	return nil
 }
 
 // enrollCommittedWriteLocked adds key, the primary key of a committed node or
@@ -1512,16 +1513,13 @@ func (tx *BadgerTransaction) enrollCommittedWriteLocked(key []byte, kind string)
 
 // recordNodeDeletionLocked owns the staged deletion's pending-state and
 // Operation publication after the common physical/staged kernel succeeds.
-func (tx *BadgerTransaction) recordNodeDeletionLocked(ctx context.Context, nodeID NodeID, result nodeDeletionResult) error {
-	if err := tx.pendingNodeChangedLocked(ctx, tx.pendingNodes[nodeID], nil); err != nil {
-		return err
-	}
+func (tx *BadgerTransaction) recordNodeDeletionLocked(nodeID NodeID, result nodeDeletionResult) {
+	tx.pendingNodeChangedLocked(tx.pendingNodes[nodeID], nil)
 	delete(tx.pendingNodes, nodeID)
 	tx.deletedNodes[nodeID] = struct{}{}
 	operation := result.operation(nodeID)
 	operation.Timestamp = time.Now()
 	tx.operations = append(tx.operations, operation)
-	return nil
 }
 
 // IncidentEdges lists every relationship that connects nodeID as the

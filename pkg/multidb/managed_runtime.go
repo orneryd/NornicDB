@@ -90,7 +90,7 @@ func (runtime *managedDatabaseRuntime) requiresManaged(limits *Limits) bool {
 // Native peer application and helpers may call it before their first lifecycle
 // lease even when a peer's local quota would reject that accepted change.
 func (runtime *managedDatabaseRuntime) initializeManagedUsage(ctx context.Context, boundary storage.StoredEntityReadBoundary) error {
-	if ctx != nil && ctx.Err() != nil {
+	if ctx.Err() != nil {
 		return ctx.Err()
 	}
 	limits := runtime.policy.snapshot()

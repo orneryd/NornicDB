@@ -229,9 +229,8 @@ func (s *Session) closeConnection() {
 
 // parentContext is the session's lifetime for the work its messages start:
 // the connection context (cancelled on disconnect and by the server's stop),
-// else the session span, else the Bolt server's lifetime. Production always
-// sets connCtx in handleConnection; only a hand-built session with no server
-// has no owner and gets the boundary default.
+// else the session span, else the Bolt server's lifetime. Every session
+// belongs to a server.
 func (s *Session) parentContext() context.Context {
 	if s.connCtx != nil {
 		return s.connCtx
@@ -239,8 +238,5 @@ func (s *Session) parentContext() context.Context {
 	if s.spanCtx != nil {
 		return s.spanCtx
 	}
-	if s.server != nil {
-		return s.server.lifetime().Context()
-	}
-	return context.Background()
+	return s.server.lifetime().Context()
 }

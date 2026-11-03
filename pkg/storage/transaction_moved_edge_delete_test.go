@@ -39,7 +39,7 @@ func TestTransactionDeleteFormerEndpointKeepsMovedEdge(t *testing.T) {
 					edge.StartNode, edge.EndNode = edge.EndNode, edge.StartNode
 				}
 				require.NoError(t, engine.CreateEdge(t.Context(), edge))
-				require.NoError(t, engine.FlushWriteBehind(nil))
+				require.NoError(t, engine.FlushWriteBehind(context.Background()))
 				tx, err := engine.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = tx.Rollback() })
@@ -58,7 +58,7 @@ func TestTransactionDeleteFormerEndpointKeepsMovedEdge(t *testing.T) {
 				require.Equal(t, moved.StartNode, pending.StartNode)
 				require.Equal(t, moved.EndNode, pending.EndNode)
 				require.NoError(t, tx.Commit())
-				require.NoError(t, engine.FlushWriteBehind(nil))
+				require.NoError(t, engine.FlushWriteBehind(context.Background()))
 				stored, err := engine.GetStoredEdge(t.Context(), edge.ID)
 				require.NoError(t, err)
 				require.Equal(t, moved.StartNode, stored.StartNode)

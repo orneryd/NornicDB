@@ -10,9 +10,9 @@ import (
 
 func TestTraversalSeedHelpers_WhereExtractionAndReverse(t *testing.T) {
 	where := "d.filed_at IS NOT NULL AND r.name = 'root' AND id(d) = 'x' AND elementId(d) = 'x2'"
-	seedOnly := (&StorageExecutor{}).extractTraversalSeedWhereClause(where, "d", "r")
+	seedOnly := (&StorageExecutor{}).extractTraversalSeedWhereClause(t.Context(), where, "d", "r")
 	require.Equal(t, "d.filed_at IS NOT NULL AND id(d) = 'x' AND elementId(d) = 'x2'", seedOnly)
-	require.Equal(t, "", (&StorageExecutor{}).extractTraversalSeedWhereClause("", "d"))
+	require.Equal(t, "", (&StorageExecutor{}).extractTraversalSeedWhereClause(t.Context(), "", "d"))
 
 	orig := &TraversalMatch{
 		StartNode:    nodePatternInfo{variable: "a", labels: []string{"A"}},

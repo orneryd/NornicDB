@@ -35,7 +35,8 @@ func TestQueryProjectionScopeReusesOnlyLivePhysicalOwner(t *testing.T) {
 	fresh, _, freshEnd := BeginQueryResultProjectionContext(owner, be)
 	require.NotSame(t, owner, fresh, "expired context must acquire a new genuine scope")
 	freshEnd()
-	unowned, noop := BeginQueryRevealScopeContext(ctx, newTestMemoryEngine(t), false)
+	// This Engine-only wrapper does not expose a physical Badger owner.
+	unowned, noop := BeginQueryRevealScopeContext(ctx, &namespacedPrefixStatsEngine{Engine: newTestMemoryEngine(t)}, false)
 	require.Same(t, ctx, unowned)
 	noop()
 	same := InheritQueryRevealScopes(ctx, RevealScopes{})

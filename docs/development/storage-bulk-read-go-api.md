@@ -76,10 +76,18 @@ HTTP and Bolt value contracts are unchanged by the storage API migration.
 
 ### Remote native entry lifetime
 
-Context-free remote point reads, scalar counts and entity mutations create the
-existing 30-second `RemoteRequestTimeout` context at their entry and release it
-on return. Private query/count helpers consume that context directly; they do
-not create another timeout. Reads with a caller context preserve cancellation
-and an earlier deadline. The public `QueryCypher(nil, ...)` and
-`BeginCypherTx(nil, ...)` contracts remain supported. This ownership migration
-does not change wire queries, result cardinality, access mode or stored data.
+Remote point reads, scalar counts and entity mutations derive the existing
+30-second `RemoteRequestTimeout` context at their entry and release it on
+return. Private query/count helpers consume that context directly; they do not
+create another timeout. Remote Engine methods that accept a context require it
+to be non-nil; reads preserve its values, cancellation and any earlier deadline.
+`QueryCypher` and `BeginCypherTx` likewise require a non-nil context. This
+ownership migration does not change wire queries, result cardinality, access
+mode or stored data.
+
+### Search consumers
+
+Candidate population and IVF-HNSW searches forward the same operation context
+through their serving-view callbacks. Local and LLM rerankers also require a
+non-nil context; they no longer replace nil with a background context. Admission,
+model scoring and inference retain the caller's values and cancellation.

@@ -585,10 +585,8 @@ func (g *GPUBruteForceCandidateGen) searchExactCandidates(ctx context.Context, q
 	if g.embeddingIndex == nil {
 		return exactCandidatePage{}, localizedError(localization.SearchGPUEmbeddingUnavailable(), nil)
 	}
-	if ctx != nil {
-		if err := ctx.Err(); err != nil {
-			return exactCandidatePage{}, err
-		}
+	if err := ctx.Err(); err != nil {
+		return exactCandidatePage{}, err
 	}
 
 	candidateLimit := boundCandidateLimit(k)
@@ -608,9 +606,6 @@ func (g *GPUBruteForceCandidateGen) searchExactCandidates(ctx context.Context, q
 type IdentityExactScorer struct{}
 
 func (i *IdentityExactScorer) ScoreCandidates(ctx context.Context, query []float32, candidates []Candidate) ([]ScoredCandidate, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	work := newSearchBatch(ctx)
 	if err := work.check(); err != nil {
 		return nil, err

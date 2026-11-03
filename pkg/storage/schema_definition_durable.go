@@ -64,9 +64,6 @@ func (sm *SchemaManager) ReplaceDefinitionDurable(ctx context.Context, engine En
 	if def == nil {
 		return fmt.Errorf("schema: definition is required")
 	}
-	if ctx == nil {
-		return fmt.Errorf("schema: context is required")
-	}
 	if engine == nil {
 		return fmt.Errorf("schema: engine is required")
 	}

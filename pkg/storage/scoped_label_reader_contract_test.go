@@ -132,7 +132,7 @@ func TestScopedLabelReadersKeepBufferedReplacementVisibility(t *testing.T) {
 		require.Equal(t, int64(2), count)
 	}
 	check()
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	check()
 }
 

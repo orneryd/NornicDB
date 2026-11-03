@@ -433,7 +433,7 @@ func TestMatchUsesPropertyIndexForOrInParamList_NoScan(t *testing.T) {
 
 func TestParseSimpleIndexedInParam(t *testing.T) {
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
-	prop, vals, ok := exec.parseSimpleIndexedInParam("n", "n.translationId IN $keys", map[string]interface{}{
+	prop, vals, ok := exec.parseSimpleIndexedInParam(t.Context(), "n", "n.translationId IN $keys", map[string]interface{}{
 		"keys": []interface{}{"src-a", "src-c"},
 	})
 	require.True(t, ok)

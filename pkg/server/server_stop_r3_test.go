@@ -428,7 +428,7 @@ func TestServerStopR3LateRollbackOutcomes(t *testing.T) {
 			if explicit {
 				ttl = time.Hour
 			}
-			s.txSessions = txsession.NewManager(ttl, s.newExecutorForDatabase)
+			s.txSessions = txsession.NewManager(ttl, s.newExecutorForDatabase, t.Context())
 			token := "Bearer " + getAuthToken(t, authenticator, "admin")
 			status, opened := lifecycleTransactionPost(t, s, token, "/db/r3_remote/tx", "USE r3_remote.remote RETURN 1 AS k")
 			require.Equal(t, http.StatusCreated, status)

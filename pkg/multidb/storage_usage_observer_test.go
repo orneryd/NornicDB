@@ -1,6 +1,7 @@
 package multidb
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -202,7 +203,7 @@ func TestManagedUsageBufferedPublicationRetiresReservationOnce(t *testing.T) {
 	require.Equal(t, wantNodes, nodeBytes)
 	require.Equal(t, wantEdges, edgeBytes)
 	require.Equal(t, wantNodes+wantEdges, total)
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	afterTotal, afterNodes, afterEdges := manager.GetStorageSize("test")
 	require.Equal(t, total, afterTotal)
 	require.Equal(t, nodeBytes, afterNodes)

@@ -104,7 +104,7 @@ func TestDesugarStandaloneOrderClauses(t *testing.T) {
 		"MATCH (n ORDER BY n.v RETURN n":                      "MATCH (n ORDER BY n.v RETURN n",
 		"MATCH (n) WHERE EXISTS { MATCH (m) LIMIT 1 RETURN n": "MATCH (n) WHERE EXISTS { MATCH (m) LIMIT 1 RETURN n",
 	} {
-		got, _ := desugarStandaloneOrderClauses(query)
+		got, _ := desugarStandaloneOrderClauses(t.Context(), query)
 		require.Equal(t, want, got, query)
 	}
 }
@@ -113,7 +113,7 @@ func TestDesugarStandaloneOrderClauses(t *testing.T) {
 func TestDesugarStandaloneOrderClausesAllocatesNothingWithoutEdits(t *testing.T) {
 	query := "MATCH (n:Person)-[:KNOWS]->(friend) WHERE n.age > $min RETURN friend.name AS name ORDER BY name SKIP 5 LIMIT 10"
 	allocations := testing.AllocsPerRun(100, func() {
-		if _, rewrite := desugarStandaloneOrderClauses(query); rewrite != nil {
+		if _, rewrite := desugarStandaloneOrderClauses(t.Context(), query); rewrite != nil {
 			t.Fatal("unexpected rewrite")
 		}
 	})
@@ -131,20 +131,20 @@ func TestDesugarStandaloneOrderClausesKeepsUseGraphNames(t *testing.T) {
 				"USE " + reference + " MATCH (n) RETURN n  ",
 				"CALL { USE " + reference + " MATCH (n:P) RETURN n.db AS k } RETURN k",
 			} {
-				got, rewrite := desugarStandaloneOrderClauses(query)
+				got, rewrite := desugarStandaloneOrderClauses(t.Context(), query)
 				require.Equal(t, query, got, query)
 				require.Nil(t, rewrite, query)
 				// The grammar span ends at the graph reference; the scanner
 				// consumes following whitespace on its next iteration.
 				start := strings.Index(query, "USE ")
 				end := start + len("USE "+reference)
-				gotEnd := useClauseReferenceEnd(query, start, strings.HasPrefix(query, "CALL"))
+				gotEnd := useClauseReferenceEnd(t.Context(), query, start, strings.HasPrefix(query, "CALL"))
 				require.Equal(t, end, gotEnd, query)
 				require.Equal(t, "USE "+reference, query[start:gotEnd], query)
 			}
 		}
 	}
 	// A standalone clause after the USE clause is still rewritten.
-	got, _ := desugarStandaloneOrderClauses("USE GRAPH limit MATCH (n) LIMIT 1 RETURN n")
+	got, _ := desugarStandaloneOrderClauses(t.Context(), "USE GRAPH limit MATCH (n) LIMIT 1 RETURN n")
 	require.Equal(t, "USE GRAPH limit MATCH (n) WITH * LIMIT 1 RETURN n", got)
 }

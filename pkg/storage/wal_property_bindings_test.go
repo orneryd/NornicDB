@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -51,7 +52,7 @@ func TestBufferedWALBindingsAcrossStores(t *testing.T) {
 					_, err = b.CreateNode(t.Context(), &Node{ID: NodeID(ns + ":b")})
 					require.NoError(t, err)
 					require.NoError(t, b.CreateEdge(t.Context(), &Edge{ID: EdgeID(ns + ":r"), StartNode: NodeID(ns + ":a"), EndNode: NodeID(ns + ":b"), Type: "R", Properties: before}))
-					require.NoError(t, b.FlushWriteBehind(nil))
+					require.NoError(t, b.FlushWriteBehind(context.Background()))
 				}
 			}
 			wal, err := NewWAL(t.TempDir(), DefaultWALConfig())
@@ -75,7 +76,7 @@ func TestBufferedWALBindingsAcrossStores(t *testing.T) {
 					require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge}))
 					require.NoError(t, tx.Commit())
 					require.True(t, tx.AcknowledgedBuffered())
-					require.NoError(t, source.FlushWriteBehind(nil))
+					require.NoError(t, source.FlushWriteBehind(context.Background()))
 					if stage == 0 {
 						head, err := source.loadNodeMVCCHead(node.ID)
 						require.NoError(t, err)

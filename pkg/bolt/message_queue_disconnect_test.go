@@ -36,7 +36,7 @@ func testMessageQueueDisconnect(t *testing.T, extra int) {
 	defer conn.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	session := &Session{conn: conn, reader: bufio.NewReader(conn), messageQueue: make(chan *boltMessage, 16), readErrQueue: make(chan error, 1), connCtx: ctx, connCancel: cancel}
+	session := &Session{server: &Server{config: DefaultConfig()}, conn: conn, reader: bufio.NewReader(conn), messageQueue: make(chan *boltMessage, 16), readErrQueue: make(chan error, 1), connCtx: ctx, connCancel: cancel}
 	runCtx, runCancel := context.WithCancel(ctx)
 	defer runCancel()
 	session.setActiveRun(runCancel)
@@ -69,7 +69,7 @@ func TestMessageQueueOpenConnectionPreservesOrder(t *testing.T) {
 	defer right.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	s := &Session{conn: left, messageQueue: make(chan *boltMessage, 1), connCtx: ctx}
+	s := &Session{server: &Server{config: DefaultConfig()}, conn: left, messageQueue: make(chan *boltMessage, 1), connCtx: ctx}
 	first, second := &boltMessage{msgType: MsgPull}, &boltMessage{msgType: MsgRun}
 	require.True(t, s.enqueueMessage(first, ctx.Done()))
 	done := make(chan bool, 1)
@@ -112,7 +112,7 @@ func TestMessageReaderCancellationAndEmptyMessages(t *testing.T) {
 			defer cancel()
 			runCtx, runCancel := context.WithCancel(ctx)
 			defer runCancel()
-			s := &Session{conn: a, reader: bufio.NewReader(a), messageQueue: make(chan *boltMessage, 1), readErrQueue: make(chan error, 1), connCtx: ctx, connCancel: cancel}
+			s := &Session{server: &Server{config: DefaultConfig()}, conn: a, reader: bufio.NewReader(a), messageQueue: make(chan *boltMessage, 1), readErrQueue: make(chan error, 1), connCtx: ctx, connCancel: cancel}
 			s.setActiveRun(runCancel)
 			s.startMessageReader()
 			_, err := b.Write([]byte{0, 0, 0, 2, 0xb0, kind, 0, 0})
@@ -131,7 +131,7 @@ func TestMessageReaderCancellationAndEmptyMessages(t *testing.T) {
 			}
 		})
 	}
-	(&Session{}).startMessageReader()
+	(&Session{server: &Server{}}).startMessageReader()
 }
 
 // The server's accepted-connection adapter must stay transparent to the
@@ -173,7 +173,7 @@ func TestPeerCloseProbeResumesWithoutCancelling(t *testing.T) {
 	defer conn.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	s := &Session{conn: conn, messageQueue: make(chan *boltMessage, 1), connCtx: ctx}
+	s := &Session{server: &Server{config: DefaultConfig()}, conn: conn, messageQueue: make(chan *boltMessage, 1), connCtx: ctx}
 	first, second := &boltMessage{msgType: MsgPull}, &boltMessage{msgType: MsgRun}
 	s.messageQueue <- first
 	done := make(chan bool, 1)

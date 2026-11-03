@@ -16,7 +16,7 @@ import (
 // that does not exist, after the buffer drained.
 func noDanglingRelationships(t *testing.T, engine *BadgerEngine) {
 	t.Helper()
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	engine.invalidateCachesAfterRestore()
 	edges, err := engine.AllEdges(context.Background())
 	require.NoError(t, err)
@@ -63,7 +63,7 @@ func TestRelationshipEndpointsHoldAcrossOrderedCommits(t *testing.T) {
 				_, err := engine.CreateNode(t.Context(), &Node{ID: id})
 				require.NoError(t, err)
 			}
-			require.NoError(t, engine.FlushWriteBehind(nil))
+			require.NoError(t, engine.FlushWriteBehind(context.Background()))
 			tx, err := engine.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			if c.stagedImplicit {
@@ -97,7 +97,7 @@ func TestManualSuppressionOrdersAfterBufferedCommits(t *testing.T) {
 						require.NoError(t, engine.CreateEdge(t.Context(), listenerOrderEdge("initial")))
 					}
 				}
-				require.NoError(t, engine.FlushWriteBehind(nil))
+				require.NoError(t, engine.FlushWriteBehind(context.Background()))
 				var notified any
 				engine.OnNodeUpdated(func(n *Node) { notified = n.Properties["v"] })
 				engine.OnEdgeUpdated(func(e *Edge) { notified = e.Properties["v"] })
@@ -168,7 +168,7 @@ func TestEmbeddingSidecarOrdersAfterBufferedCommits(t *testing.T) {
 	engine.writeBehind.SetDelayBounds(time.Hour, time.Hour)
 	_, err = engine.CreateNode(t.Context(), listenerOrderNode("initial"))
 	require.NoError(t, err)
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	require.NoError(t, runPublicationTransaction(engine, true, func(tx *BadgerTransaction) error {
 		return tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: listenerOrderNode("acknowledged"), Policy: ClientNodeEdits})
 	}, nil))
@@ -211,7 +211,7 @@ func TestRelationshipDeleteCountsTheNewestEndpointLabels(t *testing.T) {
 			} else {
 				require.NoError(t, runPublicationTransaction(engine, false, func(tx *BadgerTransaction) error { return tx.DeleteEdge(t.Context(), "test:r") }, nil))
 			}
-			require.NoError(t, engine.FlushWriteBehind(nil))
+			require.NoError(t, engine.FlushWriteBehind(context.Background()))
 			for _, label := range []string{"Old", "New"} {
 				count, err := engine.EdgeCountByStartLabelInNamespace(context.Background(), "test", label, "LINK")
 				require.NoError(t, err)

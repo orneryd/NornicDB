@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
@@ -473,7 +474,7 @@ func (e *StorageExecutor) evaluateRowValueText(operationCtx context.Context, exp
 		{suffix: " IS NOT NULL", notNull: true},
 		{suffix: " IS NULL"},
 	} {
-		if operand, nullTest := nullPredicateOperand(expr, strings.TrimSpace(predicate.suffix)); nullTest {
+		if operand, nullTest := nullPredicateOperand(operationCtx, expr, strings.TrimSpace(predicate.suffix)); nullTest {
 			value, ok, err := e.evaluateRowValue(operationCtx, operand, values)
 			if err != nil {
 				return nil, false, err
@@ -1111,7 +1112,7 @@ func (e *StorageExecutor) evaluateRowQuantifier(ctx context.Context, expr string
 	if !isFunction || !isQuantifierFunction(function) {
 		return nil, false, false, nil
 	}
-	variable, listExpression, predicate, parsed := parseQuantifierArguments(inner)
+	variable, listExpression, predicate, parsed := parseQuantifierArguments(ctx, inner)
 	if !parsed {
 		return nil, true, false, nil
 	}
@@ -1423,7 +1424,7 @@ func (e *StorageExecutor) evaluateRowPredicateParts(ctx context.Context, express
 	if inner, ok := stripEnclosingExpressionParentheses(expression); ok {
 		return e.evaluateRowPredicateParts(ctx, inner, values)
 	}
-	strictLogical := rowPredicateIsStrictLogical(expression)
+	strictLogical := rowPredicateIsStrictLogical(ctx, expression)
 	if mayContainArithmetic(expression) && strictLogical && !containsRelationshipPattern(expression) {
 		value, evaluated, err := e.evaluateRowValue(ctx, expression, values)
 		if err != nil {
@@ -1441,8 +1442,8 @@ func (e *StorageExecutor) evaluateRowPredicateParts(ctx context.Context, express
 // evaluates whole with the row value evaluator first: one with arithmetic
 // that is a NOT or an XOR, or an AND / OR with an operand of a type the
 // static checker can't tell.
-func rowPredicateIsStrictLogical(expression string) bool {
-	strictLogical := startsWithKeywordFold(expression, "NOT") || topLevelKeywordIndex(expression, "XOR") >= 0
+func rowPredicateIsStrictLogical(ctx context.Context, expression string) bool {
+	strictLogical := startsWithKeywordFold(expression, "NOT") || topLevelKeywordIndex(ctx, expression, "XOR") >= 0
 	if mayContainArithmetic(expression) && !strictLogical {
 		checker := staticOperatorChecker{}
 		for _, operator := range []string{" AND ", " OR "} {
@@ -1451,9 +1452,9 @@ func rowPredicateIsStrictLogical(expression string) bool {
 					if mayContainArithmetic(operand) {
 						continue
 					}
-					typeInfo, _ := checker.check(operand)
+					typeInfo, _ := checker.check(ctx, operand)
 					if !typeInfo.known() {
-						typeInfo, _ = checker.checkAtom(operand)
+						typeInfo, _ = checker.checkAtom(ctx, operand)
 					}
 					if !typeInfo.known() {
 						strictLogical = true
@@ -1597,7 +1598,7 @@ func (e *StorageExecutor) evaluateRowPredicateTextFromSubqueries(ctx context.Con
 		return ok && known && matched
 	}
 	for _, operator := range []string{" IS NOT NULL", " IS NULL"} {
-		if left, nullTest := nullPredicateOperand(expression, strings.TrimSpace(operator)); nullTest {
+		if left, nullTest := nullPredicateOperand(ctx, expression, strings.TrimSpace(operator)); nullTest {
 			value, ok := e.rowPredicateOperand(ctx, left, values)
 			if !ok {
 				value = nil
@@ -1754,7 +1755,7 @@ func (e *StorageExecutor) rowRelationshipEndpoint(ctx context.Context, function,
 		}
 	}
 	result, err := e.relationshipEndpointValue(ctx, value, equalFoldASCII(function, "endNode"))
-	return result, true, err
+	return result, err == nil, err
 }
 
 func (e *StorageExecutor) relationshipEndpointValue(ctx context.Context, value interface{}, end bool) (interface{}, error) {
@@ -1766,32 +1767,33 @@ func (e *StorageExecutor) relationshipEndpointValue(ctx context.Context, value i
 	if err != nil {
 		return nil, err
 	}
-	return e.relationshipEndpoint(ctx, edge, end, store), nil
+	return e.relationshipEndpoint(ctx, edge, end, store)
 }
 
 // relationshipEndpoint is startNode(edge) / endNode(edge) (end): the
-// endpoint read by its id, null when it is gone. The one implementation, for
+// endpoint read by its id, null when it is gone, or the original read error.
+// The one implementation, for
 // the row evaluator (rowRelationshipEndpoint) and the context evaluator
 // (evaluateExpressionWithContextFullMath).
-func (e *StorageExecutor) relationshipEndpoint(ctx context.Context, edge *storage.Edge, end bool, stores ...storage.Engine) interface{} {
+func (e *StorageExecutor) relationshipEndpoint(ctx context.Context, edge *storage.Edge, end bool, stores ...storage.Engine) (interface{}, error) {
 	return e.relationshipEndpointWithProperties(ctx, edge, end, nil, stores...)
 }
 
-func (e *StorageExecutor) relationshipEndpointWithProperties(ctx context.Context, edge *storage.Edge, end bool, properties []string, stores ...storage.Engine) interface{} {
+func (e *StorageExecutor) relationshipEndpointWithProperties(ctx context.Context, edge *storage.Edge, end bool, properties []string, stores ...storage.Engine) (interface{}, error) {
 	store := e.storage
 	if len(stores) > 0 {
 		store = stores[0]
 	}
-	id, exists := e.relationshipEndpointID(ctx, edge, end, store)
-	if !exists {
-		return nil
+	id, exists, err := e.relationshipEndpointID(ctx, edge, end, store)
+	if err != nil || !exists {
+		return nil, err
 	}
 	return e.readRelationshipEndpoint(ctx, id, properties, store)
 }
 
-func (e *StorageExecutor) relationshipEndpointID(ctx context.Context, edge *storage.Edge, end bool, stores ...storage.Engine) (storage.NodeID, bool) {
+func (e *StorageExecutor) relationshipEndpointID(ctx context.Context, edge *storage.Edge, end bool, stores ...storage.Engine) (storage.NodeID, bool, error) {
 	if edge == nil {
-		return "", false
+		return "", false, nil
 	}
 	store := e.storage
 	if len(stores) > 0 {
@@ -1804,24 +1806,31 @@ func (e *StorageExecutor) relationshipEndpointID(ctx context.Context, edge *stor
 	edgeID, edgeSelected := edge.Identity().LookupID(store, "5")
 	nodeID, nodeSelected := (storage.EntityIdentity{Database: edge.Database, LocalID: string(id)}).NodeLookupID(store)
 	if !edgeSelected || !nodeSelected {
-		return "", false
+		return "", false, nil
 	}
-	if current, err := store.GetEdge(ctx, storage.EdgeID(edgeID)); err != nil || current == nil {
-		return "", false
+	current, err := store.GetEdge(ctx, storage.EdgeID(edgeID))
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return "", false, nil
+		}
+		return "", false, err
 	}
-	return nodeID, true
+	return nodeID, current != nil, nil
 }
 
-func (e *StorageExecutor) readRelationshipEndpoint(ctx context.Context, id storage.NodeID, properties []string, stores ...storage.Engine) interface{} {
+func (e *StorageExecutor) readRelationshipEndpoint(ctx context.Context, id storage.NodeID, properties []string, stores ...storage.Engine) (interface{}, error) {
 	store := e.storage
 	if len(stores) > 0 {
 		store = stores[0]
 	}
 	node, err := e.newRelationshipEndpointReader(store).read(ctx, id, properties)
-	if err != nil {
-		return nil
+	if err != nil || node == nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, err
 	}
-	return node
+	return node, nil
 }
 
 // isRelationshipPatternOperand reports whether expression is one whole

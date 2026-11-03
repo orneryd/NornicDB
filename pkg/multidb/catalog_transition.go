@@ -30,9 +30,6 @@ type catalogTransitionPolicy struct {
 // settles. A canceled waiter neither releases accepted authority nor publishes it.
 // No manager read lock is retained across storage preparation or settlement.
 func (m *DatabaseManager) transitionCatalog(ctx context.Context, policy catalogTransitionPolicy, edit func(*DatabaseManager) error) error {
-	if ctx == nil {
-		return fmt.Errorf("catalog mutation requires an operation context: %w", storage.ErrInvalidData)
-	}
 	select {
 	case <-ctx.Done():
 		return ctx.Err()

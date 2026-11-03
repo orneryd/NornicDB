@@ -699,7 +699,7 @@ func (w *WriteBehindBuffer) AppendCommit(c bufferedCommit) {
 			case OpCreateNode, OpUpdateNode:
 				w.pendingIndex.replace(op.OldNode, op.Node)
 			case OpDeleteNode:
-				_ = w.pendingIndex.remove(context.Background(), op.OldNode) // acknowledged buffer retirement cannot cancel
+				w.pendingIndex.remove(op.OldNode)
 			}
 		}
 	}
@@ -930,12 +930,12 @@ func (w *WriteBehindBuffer) removeDrained(buf *CommitBuffer) {
 			for _, op := range c.ops {
 				switch op.Type {
 				case OpCreateNode, OpUpdateNode:
-					_ = w.pendingIndex.remove(context.Background(), op.Node) // acknowledged buffer retirement cannot cancel
+					w.pendingIndex.remove(op.Node)
 					if node, ok := w.nodeLocked(op.Node.ID); ok {
 						w.pendingIndex.add(node)
 					}
 				case OpDeleteNode:
-					_ = w.pendingIndex.remove(context.Background(), op.OldNode) // acknowledged buffer retirement cannot cancel
+					w.pendingIndex.remove(op.OldNode)
 					if node, ok := w.nodeLocked(op.NodeID); ok {
 						w.pendingIndex.add(node)
 					}

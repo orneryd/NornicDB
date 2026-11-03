@@ -26,8 +26,8 @@ func (e *StorageExecutor) evaluateRowReduce(ctx context.Context, function, argum
 	for name, value := range values {
 		scope[name] = value
 	}
-	plan := form.appendPlan()
-	return rowReduceLoop(form, accumulator, listValue, scope,
+	plan := form.appendPlan(ctx)
+	return rowReduceLoop(ctx, form, accumulator, listValue, scope,
 		func() (interface{}, bool, error) { return evaluate(ctx, form.step, scope) },
 		func() (interface{}, bool, error) { return evaluate(ctx, form.predicate, scope) },
 		func(index int) (interface{}, bool, error) { return evaluate(ctx, plan.terms[index], scope) })

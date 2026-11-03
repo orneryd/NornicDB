@@ -102,15 +102,13 @@ func (p *pendingNodeIndex) addValue(node *Node, label, property string) {
 }
 
 // remove drops the entries add made for node (the cached object being
-// replaced or retired).
-func (p *pendingNodeIndex) remove(ctx context.Context, node *Node) error {
+// replaced or retired). This apply step mirrors already-staged writes; it
+// cannot cancel midway and leave the index disagreeing with its node owner.
+func (p *pendingNodeIndex) remove(node *Node) {
 	if node == nil {
-		return nil
+		return
 	}
 	for _, label := range node.Labels {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
 		if ids := p.byLabel[label]; ids != nil {
 			delete(ids, node.ID)
 			if len(ids) == 0 {
@@ -118,9 +116,6 @@ func (p *pendingNodeIndex) remove(ctx context.Context, node *Node) error {
 			}
 		}
 		for property := range p.tracked[label] {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
 			pair := nodePropertyKey{label: label, property: property}
 			valueKey, ok := p.byProperty[pair][node.ID]
 			if !ok {
@@ -129,9 +124,6 @@ func (p *pendingNodeIndex) remove(ctx context.Context, node *Node) error {
 			key := pendingValueKey{label: label, property: property, value: valueKey}
 			valueIDs := p.byValue[key]
 			for index, id := range valueIDs {
-				if err := ctx.Err(); err != nil {
-					return err
-				}
 				if id != node.ID {
 					continue
 				}
@@ -153,7 +145,6 @@ func (p *pendingNodeIndex) remove(ctx context.Context, node *Node) error {
 			}
 		}
 	}
-	return nil
 }
 
 // replace moves node's entries from prev to node. A write-back that keeps
@@ -168,7 +159,7 @@ func (p *pendingNodeIndex) replace(prev, node *Node) {
 	if prev != nil && node != nil && prev.ID == node.ID && p.listed(prev) && p.sameEntries(prev, node) {
 		return
 	}
-	_ = p.remove(context.Background(), prev) // native/acknowledged write bookkeeping cannot cancel
+	p.remove(prev)
 	p.add(node)
 }
 

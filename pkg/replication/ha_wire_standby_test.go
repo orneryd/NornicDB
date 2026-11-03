@@ -79,9 +79,26 @@ func TestHAWireStandbyAcknowledgesOwnPublishedRecord(t *testing.T) {
 	require.Equal(t, uint64(1), position)
 	require.GreaterOrEqual(t, primary.walStreamer.LastAcked(), position,
 		"the acknowledgement covers the record's own published position")
+	records, err := primaryFixture.adapter.GetWALEntries(0, 10)
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	require.Equal(t, position, records[0].Position)
+	require.Equal(t, CmdCommitTransaction, records[0].Command.Type)
+	require.NotEmpty(t, records[0].Command.RequestID)
 
 	require.Eventually(t, func() bool {
 		_, nodeErr := standbyFixture.adapter.engine.GetNode(t.Context(), "test:wire-own-record")
 		return nodeErr == nil
 	}, 5*time.Second, time.Millisecond, "the wire standby applied the leader's own record")
+	local, err := storage.GetStoredNode(t.Context(), primaryFixture.adapter.engine, "test:wire-own-record")
+	require.NoError(t, err)
+	remote, err := storage.GetStoredNode(t.Context(), standbyFixture.adapter.engine, "test:wire-own-record")
+	require.NoError(t, err)
+	require.Equal(t, local.ID, remote.ID)
+	require.Equal(t, local.Labels, remote.Labels)
+	require.Equal(t, local.Properties, remote.Properties)
+	require.True(t, local.CreatedAt.Equal(remote.CreatedAt))
+	require.True(t, local.UpdatedAt.Equal(remote.UpdatedAt))
+	require.Empty(t, local.EmbedMeta)
+	require.Empty(t, remote.EmbedMeta)
 }

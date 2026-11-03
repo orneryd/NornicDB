@@ -29,7 +29,7 @@ func TestReadViewIdleCaptureRunsCommittedWork(t *testing.T) {
 					t.Cleanup(func() { b.writeBehind = w })
 				} else if mode == "retired" {
 					bufferedCreate(t, b, &Node{ID: "test:retired"})
-					require.NoError(t, b.FlushWriteBehind(nil))
+					require.NoError(t, b.FlushWriteBehind(context.Background()))
 				} else if mode == "other-namespace" {
 					tx, err := b.BeginTransaction(t.Context())
 					require.NoError(t, err)
@@ -125,7 +125,7 @@ func TestReadViewIdleAdjacencyCommittedIDs(t *testing.T) {
 			edge := &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "R"}
 			if retired {
 				bufferedWrite(t, b, func(tx *BadgerTransaction) error { return tx.CreateEdge(t.Context(), edge) })
-				require.NoError(t, b.FlushWriteBehind(nil))
+				require.NoError(t, b.FlushWriteBehind(context.Background()))
 			} else {
 				require.NoError(t, b.CreateEdge(t.Context(), edge))
 			}

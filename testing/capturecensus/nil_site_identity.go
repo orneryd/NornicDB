@@ -11,7 +11,8 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-// nilContextSite preserves reviewed physical-site keys. A source-less compiler
+// nilContextSite preserves reviewed physical-site keys, qualifying generic
+// instances that share a position by their compiled owner. A source-less compiler
 // call instead uses its exact SSA owner, source carriers and instruction slot.
 // Function.String alone is insufficient: separate bound-method wrappers can
 // have identical names, signatures and bodies but different source bindings.
@@ -22,7 +23,11 @@ func nilContextSite(program *workcensus.Program, call ssa.CallInstruction, argum
 		if relative, err := filepath.Rel(program.Root, file); err == nil {
 			file = filepath.ToSlash(relative)
 		}
-		return fmt.Sprintf("%s:%d:%d", file, position.Line, position.Column)
+		site := fmt.Sprintf("%s:%d:%d", file, position.Line, position.Column)
+		if function := call.Parent(); function.Origin() != nil {
+			site += fmt.Sprintf("/instantiation=%q", function.String())
+		}
+		return site
 	}
 	function := call.Parent()
 	owner, found := syntheticOwners[function]

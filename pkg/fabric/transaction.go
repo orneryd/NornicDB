@@ -77,9 +77,6 @@ func (t *FabricTransaction) BindContext(ctx context.Context) context.Context {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.lifetimeCtx == nil {
-		if ctx == nil {
-			ctx = context.Background()
-		}
 		t.lifetimeCtx, t.lifetimeCancel = context.WithCancel(transactionLifetime(ctx))
 	}
 	return t.lifetimeCtx
@@ -477,9 +474,6 @@ func (t *FabricTransaction) sortedOpenLocked(names []string) []string {
 // (nothing of it is committed; its cleanup is not confirmed), and every
 // failure is reported.
 func (t *FabricTransaction) Rollback(ctx context.Context, rollbackFn RollbackCallback) error {
-	if ctx == nil {
-		return fmt.Errorf("fabric: Rollback requires a non-nil cleanup context")
-	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	defer t.cancelLifetime()

@@ -1065,7 +1065,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (re
 	}
 	// Enroll the whole constructor before it can touch borrowed DB state or
 	// launch a model user. Transfer this retention to the eventual shutdown.
-	_, dbRelease, accepted := db.RetainBackground()
+	dbCtx, dbRelease, accepted := db.RetainBackground()
 	if !accepted {
 		return nil, nornicdb.ErrClosed
 	}
@@ -1076,14 +1076,14 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (re
 	// plugin's Stop may be what lets that work finish.
 	s.shutdown.work.OnStop(s.signalHeimdallPlugins)
 	// A DB closed without Stop stops this server too.
-	s.shutdown.stopOnDBClose = context.AfterFunc(db.LifetimeContext(), func() { s.beginShutdown(context.Background()) })
+	s.shutdown.stopOnDBClose = context.AfterFunc(db.LifetimeContext(), func() { s.beginShutdown(context.WithoutCancel(dbCtx)) })
 	defer func() {
 		if newErr == nil && db.LifetimeContext().Err() != nil {
 			newErr = nornicdb.ErrClosed
 			result = nil
 		}
 		if newErr != nil {
-			s.beginShutdown(context.Background())
+			s.beginShutdown(context.WithoutCancel(dbCtx))
 		}
 		releaseConstruction()
 		if newErr != nil {
@@ -1999,7 +1999,7 @@ func (s *Server) Start() (startErr error) {
 	defer func() {
 		if startAttempted && startErr != nil && !errors.Is(startErr, ErrServerClosed) {
 			s.shutdown.work.RecordError("", fmt.Errorf("HTTP server start: %w", startErr))
-			s.beginShutdown(context.Background())
+			s.beginShutdown(context.WithoutCancel(startCtx))
 		}
 		release()
 	}()

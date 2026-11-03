@@ -153,7 +153,7 @@ func TestCallSubqueryScannerPopulations(t *testing.T) {
 				}
 			}
 			for _, test := range tc.keywords {
-				require.Equal(t, test.index, indexTopLevelKeywordCallSubquery(test.source, "RETURN"))
+				require.Equal(t, test.index, indexTopLevelKeywordCallSubquery(t.Context(), test.source, "RETURN"))
 			}
 			for _, test := range tc.identifiers {
 				found := cyphertext.FindIdentifier(test.source, "x", 0, cyphertext.IdentifierUnqualifiedFold) >= 0

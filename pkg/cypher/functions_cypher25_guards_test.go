@@ -77,7 +77,7 @@ func TestCypher25FunctionArgumentErrors(t *testing.T) {
 	require.False(t, parameterMayBeFunctionArgument("RETURN $a + $b"))
 	// Only a bare parameter is typed here: $m.k is a property access, and a
 	// parameter the statement doesn't pass has no type.
-	require.NoError(t, validateStaticFunctionParameters("RETURN toUpper($m.k), toUpper($missing), toUpper($s)", map[string]interface{}{"m": map[string]interface{}{"k": "a"}, "s": "b"}, false))
+	require.NoError(t, validateStaticFunctionParameters(ctx, "RETURN toUpper($m.k), toUpper($missing), toUpper($s)", map[string]interface{}{"m": map[string]interface{}{"k": "a"}, "s": "b"}, false))
 
 	value := func(query string, params map[string]interface{}) interface{} {
 		result, err := exec.Execute(ctx, "CYPHER 25 "+query, params)

@@ -201,7 +201,7 @@ func firstTopLevelCallSubquery(ctx context.Context, query string) int {
 // callSubqueryAt reports whether a CALL { } or scoped CALL (vars) { }
 // subquery clause starts at offset i of query.
 func callSubqueryAt(ctx context.Context, query string, i int) bool {
-	if !matchKeywordAt(query, i, "CALL") || clauseKeywordUsedAsName(query, i, i+len("CALL"), "CALL") {
+	if !matchKeywordAt(query, i, "CALL") || clauseKeywordUsedAsName(ctx, query, i, i+len("CALL"), "CALL") {
 		return false
 	}
 	// Classification consumes the same CALL frame as scope and execution.
@@ -1505,7 +1505,7 @@ func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher strin
 // conflict is recoverable for the application.
 func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, error) {
 	executionCypher, executionUpperQuery := cypher, upperQuery
-	if parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(cypher); inlineEmbeddingEnabled {
+	if parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(ctx, cypher); inlineEmbeddingEnabled {
 		executionCypher = parsedCypher
 		executionUpperQuery = upperASCII(parsedCypher)
 	}
@@ -1516,7 +1516,7 @@ func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cy
 
 func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Context, cypher string, upperQuery string, execute func(context.Context, *StorageExecutor) (*ExecuteResult, error)) (result *ExecuteResult, retErr error) {
 	defer func() { completeStatementTerminalOutcome(ctx, true, &result, &retErr, nil) }()
-	parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(cypher)
+	parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(ctx, cypher)
 	if inlineEmbeddingEnabled {
 		cypher = parsedCypher
 		upperQuery = upperASCII(cypher)
@@ -1539,7 +1539,7 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	// composite root through the schema owner's validator without executing a
 	// callback on an engine that has no atomic write owner.
 	_, body := parseExecutionMode(cypher)
-	schemaDDL := isOrdinarySchemaDDL(body)
+	schemaDDL := isOrdinarySchemaDDL(ctx, body)
 	if schemaDDL {
 		if err := schemaDDLTargetError(e.storage); err != nil {
 			return nil, err
@@ -1800,10 +1800,10 @@ func (e *StorageExecutor) applyInlineEmbeddingMutations(ctx context.Context, ids
 // stripWithEmbeddingSuffix removes the WITH EMBEDDING execution option where
 // it ends the statement (or its UNION branch). A nonterminal WITH EMBEDDING is
 // a projection candidate that the scope compiler and pipeline frame resolve.
-func stripWithEmbeddingSuffix(cypher string) (string, bool) {
+func stripWithEmbeddingSuffix(ctx context.Context, cypher string) (string, bool) {
 	idx, embeddingStart := -1, -1
 	for from := 0; from < len(cypher); {
-		at := keywordIndexFrom(cypher, "WITH", from, defaultKeywordScanOpts())
+		at := keywordIndexFrom(ctx, cypher, "WITH", from, defaultKeywordScanOpts())
 		if at < 0 {
 			break
 		}
@@ -1951,7 +1951,7 @@ func statementAccessesGraph(info *QueryInfo) bool {
 // direction is safe by construction: a false positive only forces the caller
 // to target a constituent (and pass its authorization), while a false
 // negative would read denied data.
-func statementAccessesGraphText(cypher string) bool {
+func statementAccessesGraphText(ctx context.Context, cypher string) bool {
 	opts := defaultKeywordScanOpts()
 	for _, keyword := range []string{
 		"MATCH", "OPTIONAL MATCH", "CREATE", "MERGE", "DELETE", "DETACH DELETE",
@@ -1959,19 +1959,19 @@ func statementAccessesGraphText(cypher string) bool {
 		"CREATE RANGE INDEX", "CREATE FULLTEXT INDEX", "CREATE VECTOR INDEX",
 		"CREATE CONSTRAINT", "DROP INDEX", "DROP CONSTRAINT",
 	} {
-		if keywordIndexFrom(cypher, keyword, 0, opts) >= 0 {
+		if keywordIndexFrom(ctx, cypher, keyword, 0, opts) >= 0 {
 			return true
 		}
 	}
-	return expressionReadsGraphText(cypher)
+	return expressionReadsGraphText(ctx, cypher)
 }
 
 // expressionReadsGraphText reports whether cypher holds an expression that
 // reads the graph (graphReadingExpression). statementAccessesGraphText,
 // statementReadsGraphText and the system database's statement policy read
 // expressions through it.
-func expressionReadsGraphText(cypher string) bool {
-	return graphReadingExpression(cypher) != ""
+func expressionReadsGraphText(ctx context.Context, cypher string) bool {
+	return graphReadingExpression(ctx, cypher) != ""
 }
 
 // Kinds of graph-reading expression graphReadingExpression reports.
@@ -1990,14 +1990,14 @@ const (
 // allShortestPaths graphReadingPattern; and a bare relationship pattern
 // ((a)-->() in an expression) graphReadingPatternPredicate, reported only
 // when there is nothing else. Clause patterns, literals and comments don't count.
-func graphReadingExpression(cypher string) string {
+func graphReadingExpression(ctx context.Context, cypher string) string {
 	opts := defaultKeywordScanOpts()
 	opts.SkipParens = false
 	opts.SkipBrackets = false
 	opts.SkipBraces = false
 	for _, keyword := range []string{"COUNT", "EXISTS", "COLLECT"} {
 		for from := 0; ; {
-			index := keywordIndexFrom(cypher, keyword, from, opts)
+			index := keywordIndexFrom(ctx, cypher, keyword, from, opts)
 			if index < 0 {
 				break
 			}
@@ -2020,7 +2020,7 @@ func graphReadingExpression(cypher string) string {
 	}
 	for _, keyword := range []string{"shortestPath", "allShortestPaths"} {
 		for from := 0; from < len(cypher); {
-			at := keywordIndexFrom(cypher, keyword, from, opts)
+			at := keywordIndexFrom(ctx, cypher, keyword, from, opts)
 			if at < 0 {
 				break
 			}
@@ -2066,18 +2066,18 @@ func graphReadingExpression(cypher string) string {
 // creates, and sets, removes or deletes what it created, reads nothing:
 // QueryPermissionRequirements then needs write but not read, as Neo4j lets
 // a principal with WRITE but no READ privilege run CREATE.
-func statementReadsGraphText(cypher string) bool {
+func statementReadsGraphText(ctx context.Context, cypher string) bool {
 	opts := defaultKeywordScanOpts()
 	opts.SkipParens = false
 	opts.SkipBrackets = false
 	opts.SkipBraces = false
 	for _, keyword := range []string{"MATCH", "MERGE", "SHOW"} {
-		if keywordIndexFrom(cypher, keyword, 0, opts) >= 0 {
+		if keywordIndexFrom(ctx, cypher, keyword, 0, opts) >= 0 {
 			return true
 		}
 	}
 	for from := 0; from < len(cypher); {
-		at := keywordIndexFrom(cypher, "CALL", from, opts)
+		at := keywordIndexFrom(ctx, cypher, "CALL", from, opts)
 		if at < 0 {
 			break
 		}
@@ -2086,7 +2086,7 @@ func statementReadsGraphText(cypher string) bool {
 			return true
 		}
 	}
-	return expressionReadsGraphText(cypher)
+	return expressionReadsGraphText(ctx, cypher)
 }
 
 // statementParametersError is Neo4j's ParameterMissing for a statement that

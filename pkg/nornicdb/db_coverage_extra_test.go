@@ -12,10 +12,9 @@ import (
 
 type unwrapOnlyEngine struct {
 	storage.Engine
-	inner storage.Engine
 }
 
-func (u unwrapOnlyEngine) GetInnerEngine() storage.Engine { return u.inner }
+func (unwrapOnlyEngine) GetInnerEngine() storage.Engine { return nil }
 
 func TestDB_Coverage_ResolveSearchFlagsLazyFromConfig(t *testing.T) {
 	cfg := DefaultConfig()
@@ -90,10 +89,10 @@ func TestDB_Coverage_QueryChunkEmbeddingEdgeBranches(t *testing.T) {
 }
 
 func TestDB_Coverage_UnwrapToBadgerEngine_NonBadgerChain(t *testing.T) {
-	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() { _ = base.Close() })
-	wrapper := &unwrapOnlyEngine{Engine: base, inner: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
-	t.Cleanup(func() { _ = wrapper.inner.Close() })
+	// This fixture intentionally exposes only the wrapper capability. MemoryEngine
+	// is Badger-backed, so using one here would no longer represent a non-Badger
+	// terminal engine after canonical unwrapping.
+	wrapper := &unwrapOnlyEngine{}
 	require.Nil(t, unwrapToBadgerEngine(wrapper))
 }
 

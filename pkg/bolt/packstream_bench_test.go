@@ -73,6 +73,7 @@ func BenchmarkEncodePackStreamValueInto_RowLarge(b *testing.B) {
 func BenchmarkBolt_WriteRecordNoFlush_SmallRow(b *testing.B) {
 	row := []any{int64(1), "Alice", int64(30)}
 	session := &Session{
+		server: &Server{config: DefaultConfig()},
 		writer: bufio.NewWriterSize(io.Discard, 256*1024),
 	}
 
@@ -102,6 +103,7 @@ func BenchmarkBolt_WriteRecordNoFlush_LargeRow(b *testing.B) {
 	}
 	row := []any{node, "ok", float64(3.14159)}
 	session := &Session{
+		server: &Server{config: DefaultConfig()},
 		writer: bufio.NewWriterSize(io.Discard, 256*1024),
 	}
 
@@ -123,6 +125,7 @@ func BenchmarkBolt_RecordBatch_FlushPerRecord_SmallRow(b *testing.B) {
 
 	row := []any{int64(1), "Alice", int64(30)}
 	session := &Session{
+		server: &Server{config: DefaultConfig()},
 		writer: bufio.NewWriterSize(io.Discard, 256*1024),
 	}
 
@@ -156,6 +159,7 @@ func BenchmarkBolt_SendRecordsBatched_SmallRow(b *testing.B) {
 	}
 
 	session := &Session{
+		server: &Server{config: DefaultConfig()},
 		writer: bufio.NewWriterSize(io.Discard, 256*1024),
 	}
 
@@ -186,6 +190,7 @@ func BenchmarkBolt_RecordBatch_FlushPerRecord_LargeRow(b *testing.B) {
 	}
 	row := []any{node, "ok", float64(3.14159)}
 	session := &Session{
+		server: &Server{config: DefaultConfig()},
 		writer: bufio.NewWriterSize(io.Discard, 256*1024),
 	}
 
@@ -228,6 +233,7 @@ func BenchmarkBolt_SendRecordsBatched_LargeRow(b *testing.B) {
 	}
 
 	session := &Session{
+		server: &Server{config: DefaultConfig()},
 		writer: bufio.NewWriterSize(io.Discard, 256*1024),
 	}
 

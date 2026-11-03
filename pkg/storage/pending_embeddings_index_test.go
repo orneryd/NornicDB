@@ -646,13 +646,15 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 		require.Error(t, engine.RunGC())
 		assert.Equal(t, 0, engine.PendingEmbeddingsCount())
 		assert.Equal(t, 0, engine.RefreshPendingEmbeddingsIndex())
-		assert.Nil(t, requireEmbeddingCandidate(t, engine.FindNodeNeedingEmbedding))
+		node, err := engine.FindNodeNeedingEmbedding(context.Background())
+		require.ErrorIs(t, err, ErrStorageClosed)
+		assert.Nil(t, node)
 
 		lsm, vlog := engine.Size()
 		assert.Equal(t, int64(0), lsm)
 		assert.Equal(t, int64(0), vlog)
 
-		_, err := engine.ClearAllEmbeddingsForPrefix("tenant_a:")
+		_, err = engine.ClearAllEmbeddingsForPrefix("tenant_a:")
 		require.Error(t, err)
 
 		err = engine.StreamNodeChunks(context.Background(), 2, func(nodes []*Node) error { return nil })

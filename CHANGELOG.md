@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Go USE/clause preparation scanners now require operation contexts and explicit
+  errors across thirteen existing Cypher APIs. Fabric keyword-name and import
+  readers are context-first stateless callbacks; canceled preparation is not
+  cached. See [the migration guide](docs/development/cypher-preparation-context-api.md#use-and-clause-scanner-migration).
 - Go query metadata and permission readers now require an explicit raw or accepted source stage; see [the source-stage migration guide](docs/development/cypher-source-stage-api.md).
 
 ### Added
@@ -22,6 +26,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Search candidate serving and local/LLM reranking require the supplied operation
+  context instead of retaining test-only nil-to-background compatibility.
+- Go storage, search, Bolt, Fabric, transaction-session, replication, auth, MCP
+  and lifecycle APIs touched by this release require a non-nil context; nil
+  no longer falls back to `context.Background()`. Embedders passing nil must
+  pass their operation or owner context and rebuild. Accepted compensation and
+  post-acceptance completion (session-close rollback, accepted replication
+  apply, namespace index cleanup, server stop) now detach from cancellation with
+  `context.WithoutCancel` of the owning context instead of a fresh background.
 - Go parser and MERGE retry classifiers take an explicit operation context;
   canceled classification preserves the original commit error. See the
   [preparation API guide](docs/development/cypher-preparation-context-api.md).
@@ -151,6 +164,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   interruption; see [Securing Replication Traffic](docs/user-guides/clustering.md#securing-replication-traffic).
 
 ### Fixed
+
+- Preserve authoritative wrapper admission and namespace preparation for WAL
+  entity mutations, including accepted-failure outcomes and replay identity.
+- Finish pending-index bookkeeping with its staged write so cancellation cannot
+  make transaction point, label and property reads disagree.
+- Retain caller cancellation, values and the existing default timeout through
+  remote storage operations.
 
 - Preserve the caller's cancellation error when a `CALL` fragment is read
   after its transaction opens; do not report an empty procedure name instead.

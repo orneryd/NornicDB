@@ -3,6 +3,7 @@ package storage
 // Regression controls for large-generation write-behind flush and token draining.
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"strconv"
@@ -30,7 +31,7 @@ func flushLargeWriteBehindGeneration(t *testing.T, engine *BadgerEngine, n int, 
 		require.NoError(t, err)
 		require.NoError(t, tx.Commit())
 	}
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	require.Zero(t, engine.writeBehind.PendingOps())
 }
 

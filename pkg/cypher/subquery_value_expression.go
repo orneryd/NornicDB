@@ -251,11 +251,7 @@ func (e *StorageExecutor) evaluateRowSubqueryAtom(expr string, values map[string
 	if !ok {
 		return nil, false, nil
 	}
-	ctx := rowStatementContext(values)
-	if ctx == nil {
-		return nil, false, nil
-	}
-	value, resolved, err := e.rowSubqueryValue(ctx, kind, strings.TrimSpace(expr[open+1:len(expr)-1]), values)
+	value, resolved, err := e.evaluateRowSubqueryBody(kind, strings.TrimSpace(expr[open+1:len(expr)-1]), values)
 	if err != nil {
 		return nil, true, err
 	}
@@ -263,6 +259,19 @@ func (e *StorageExecutor) evaluateRowSubqueryAtom(expr string, values map[string
 		return nil, false, nil
 	}
 	return value, true, nil
+}
+
+// evaluateRowSubqueryBody is the row adapter shared by text and compiled
+// subquery expressions. Only the row's statement context owns body execution:
+// an operation context supplied for expression parsing is not a substitute.
+// Without a statement context the expression remains unresolved. Body errors
+// pass through unchanged, rather than being retried through another adapter.
+func (e *StorageExecutor) evaluateRowSubqueryBody(kind, body string, values map[string]interface{}) (interface{}, bool, error) {
+	ctx := rowStatementContext(values)
+	if ctx == nil {
+		return nil, false, nil
+	}
+	return e.rowSubqueryValue(ctx, kind, body, values)
 }
 
 // evaluateRowSubqueryValue evaluates EXISTS / COUNT / COLLECT { body } for a
@@ -312,7 +321,7 @@ func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body strin
 	if patternOnly {
 		query = "MATCH " + query
 	}
-	if topLevelKeywordIndex(query, "RETURN") < 0 {
+	if topLevelKeywordIndex(ctx, query, "RETURN") < 0 {
 		switch kind {
 		case "COUNT":
 			query += " RETURN 1 AS __count"
@@ -562,7 +571,7 @@ func parseBoundNodeShape(ctx context.Context, body string) boundNodeShape {
 		return boundNodeShape{}
 	}
 	where := ""
-	if index := topLevelKeywordIndex(pattern, "WHERE"); index >= 0 {
+	if index := topLevelKeywordIndex(ctx, pattern, "WHERE"); index >= 0 {
 		where = strings.TrimSpace(pattern[index+len("WHERE"):])
 		pattern = strings.TrimSpace(pattern[:index])
 	}
@@ -622,7 +631,7 @@ func (e *StorageExecutor) boundChainCount(ctx context.Context, body string, valu
 		return 0, false
 	}
 	where := ""
-	if index := topLevelKeywordIndex(pattern, "WHERE"); index >= 0 {
+	if index := topLevelKeywordIndex(ctx, pattern, "WHERE"); index >= 0 {
 		where = strings.TrimSpace(pattern[index+len("WHERE"):])
 		pattern = strings.TrimSpace(pattern[:index])
 	}

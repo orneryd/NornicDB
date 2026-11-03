@@ -16,7 +16,7 @@ import (
 //
 // The periodic streamer interval is widened so it cannot mask the boundary under
 // test; quorum's own proactive send still runs through the HA logic.
-func startOwnPositionPrimary(t *testing.T, adapter *StorageAdapter, mode SyncMode) *HAStandbyReplicator {
+func startOwnPositionPrimary(t *testing.T, adapter Storage, mode SyncMode) *HAStandbyReplicator {
 	t.Helper()
 	cfg := DefaultConfig()
 	cfg.Mode = ModeHAStandby

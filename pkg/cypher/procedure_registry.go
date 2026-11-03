@@ -181,7 +181,7 @@ func (r *ProcedureRegistry) Get(name string) (registeredProcedure, bool) {
 // the answer doesn't depend on how the registry keys a name; erring towards
 // "calls one" only skips the cache. It is false at once while none is
 // registered.
-func (r *ProcedureRegistry) callsUserProcedure(query string) bool {
+func (r *ProcedureRegistry) callsUserProcedure(ctx context.Context, query string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	if len(r.user) == 0 {
@@ -193,7 +193,7 @@ func (r *ProcedureRegistry) callsUserProcedure(query string) bool {
 	opts.SkipBraces = false
 	opts.SkipStrings = false
 	for from := 0; from < len(query); {
-		at := keywordIndexFrom(query, "CALL", from, opts)
+		at := keywordIndexFrom(ctx, query, "CALL", from, opts)
 		if at < 0 {
 			return false
 		}

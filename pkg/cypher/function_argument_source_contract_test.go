@@ -76,7 +76,7 @@ func TestDistinctOnlyArgumentConsumerProducts(t *testing.T) {
 }
 func TestASTFunctionArgumentOriginalExtent(t *testing.T) {
 	for _, source := range []string{"WITH 7 AS all RETURN sum(DISTINCT all ) AS k", "WITH 7 AS all RETURN sum( DISTINCT all  ) AS k"} {
-		ast, err := NewASTBuilder().Build(source)
+		ast, err := NewASTBuilder().Build(t.Context(), source)
 		require.NoError(t, err)
 		require.Len(t, ast.Clauses, 2)
 		require.NotNil(t, ast.Clauses[1].Return)

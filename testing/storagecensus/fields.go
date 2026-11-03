@@ -57,6 +57,10 @@ var fieldClasses = map[string]fieldRow{
 	// quota, suppression or publication state. Future fields need their own row.
 	"pkg/storage.nodeRef.num":                    {class: "snapshot dictionary numeric reference (local value)"},
 	"pkg/storage.bufferedOrderResources.stripes": {class: "write-order stripes (the acquisition itself)"},
+	// The native commit writer retains the selected durability policy and its
+	// encoded journal payload only across one physical publication.
+	"pkg/storage.commitWriter.entityMode":        {class: "native commit policy snapshot", owners: []string{"pkg/storage.BadgerTransaction.PublishCommit"}, readers: []string{"pkg/storage.commitWriter.prepareNativeWAL"}},
+	"pkg/storage.commitWriter.entityJournalData": {class: "native commit journal payload", owners: []string{"pkg/storage.commitWriter.prepareNativeWAL", "pkg/storage.commitWriter.finish"}, readers: []string{"pkg/storage.commitWriter.acceptNativeWAL"}},
 	// Pending destructive cleanup is published by one lifecycle transition;
 	// point/scan/write owners consult the same scope fence.
 	"pkg/storage.prefixDrops.pendingCount": {class: "publication-order", owners: []string{"pkg/storage.BadgerEngine.transitionPending"}, readers: []string{"pkg/storage.BadgerEngine.pendingNamespaceConflict", "pkg/storage.BadgerEngine.pendingPrefixConflict", "pkg/storage.commitWriter.pendingNamespaceWriteConflict"}},

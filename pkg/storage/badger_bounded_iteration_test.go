@@ -225,19 +225,19 @@ func TestTemporalHistoryLookupsDescending(t *testing.T) {
 		prefix := temporalHistoryPrefix(target.desc)
 		require.NoError(t, txn.Set(append([]byte{}, prefix...), []byte{}), "malformed: no node ID")
 
-		node, _, err := engine.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{at: base.Add(12 * time.Hour)})
+		node, _, err := engine.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{ctx: t.Context(), at: base.Add(12 * time.Hour)})
 		require.NoError(t, err)
 		require.Equal(t, NodeID("test:n1"), node.ID)
-		node, _, err = engine.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{at: base.Add(36 * time.Hour)})
+		node, _, err = engine.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{ctx: t.Context(), at: base.Add(36 * time.Hour)})
 		require.NoError(t, err)
 		require.Nil(t, node, "n1 has ended; the malformed key is skipped")
 
 		// A history entry whose node body does not decode fails the lookups.
 		require.NoError(t, txn.Set(temporalHistoryKey(target.desc, base.Add(30*time.Hour), "test:bad"), []byte{}))
 		require.NoError(t, txn.Set(nodeKey("test:bad"), []byte("not a node")))
-		_, _, err = engine.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{at: base.Add(36 * time.Hour)})
+		_, _, err = engine.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{ctx: t.Context(), at: base.Add(36 * time.Hour)})
 		require.Error(t, err)
-		_, _, err = engine.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{at: base.Add(36 * time.Hour), adjacent: true})
+		_, _, err = engine.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{ctx: t.Context(), at: base.Add(36 * time.Hour), adjacent: true})
 		require.Error(t, err)
 		return nil
 	}))

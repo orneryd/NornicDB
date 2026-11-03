@@ -174,7 +174,7 @@ func deleteExpressionRootIdentifier(expression string) string {
 
 func addPipelinePatternBindings(ctx context.Context, executor *StorageExecutor, scope map[string]struct{}, clause, keyword string) {
 	pattern := pipelineClauseBody(clause, keyword)
-	if where := findKeywordIndexInContext(pattern, "WHERE"); where >= 0 {
+	if where := findKeywordIndexInContext(ctx, pattern, "WHERE"); where >= 0 {
 		pattern = strings.TrimSpace(pattern[:where])
 	}
 	for _, variable := range executor.extractVariableNamesFromPattern(ctx, pattern) {
@@ -214,11 +214,11 @@ func appendUniquePipelineBinding(bindings []string, binding string) []string {
 	return append(bindings, binding)
 }
 
-func pipelineUnwindAlias(clause string) string {
-	if _, alias, ok := parsePipelineIteration(clause); ok {
+func pipelineUnwindAlias(ctx context.Context, clause string) string {
+	if _, alias, ok := parsePipelineIteration(ctx, clause); ok {
 		return normalizeProjectionColumnName(alias)
 	}
-	if index := findKeywordIndexInContext(clause, "AS"); index >= 0 {
+	if index := findKeywordIndexInContext(ctx, clause, "AS"); index >= 0 {
 		return strings.TrimSpace(clause[index+len("AS"):])
 	}
 	return ""
@@ -338,13 +338,13 @@ func residualRelationshipDeleteError(nodeID storage.NodeID) error {
 // staticDeleteTargetTypeError keeps known non-entity values as compile-time
 // errors, while widened UNWIND map elements remain runtime checks. Strings
 // and lists retain the existing NornicDB DELETE extensions.
-func staticDeleteTargetTypeError(clause string, scope staticTypeScope) error {
+func staticDeleteTargetTypeError(ctx context.Context, clause string, scope staticTypeScope) error {
 	targets, _, _ := deleteClauseTargets(clause)
 	// Undefined targets retain the existing DELETE scope error owner.
 	scope.complete = false
 	checker := staticOperatorChecker{scope: scope}
 	for _, target := range targets {
-		operand, err := checker.check(strings.TrimSpace(target))
+		operand, err := checker.check(ctx, strings.TrimSpace(target))
 		if err != nil {
 			return err
 		}

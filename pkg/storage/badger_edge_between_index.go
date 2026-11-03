@@ -45,9 +45,6 @@ const (
 // rebuildRelationshipIndexes owns relationship lookup rebuilds and the complete
 // case-sensitive storage upgrade, including its ordered preparation and markers.
 func (b *BadgerEngine) rebuildRelationshipIndexes(ctx context.Context, selection relationshipIndexRebuild) (processed int, err error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}

@@ -169,7 +169,7 @@ func TestHTTPWALTerminalOutcomeMatrix(t *testing.T) {
 				}
 				return cypher.NewStorageExecutor(backing), nil
 			}
-			s.txSessions = txsession.NewManager(time.Minute, newExec)
+			s.txSessions = txsession.NewManager(time.Minute, newExec, t.Context())
 			s.executorsMu.Lock()
 			s.executors["nornic"] = cypher.NewStorageExecutor(backing)
 			s.executorsMu.Unlock()

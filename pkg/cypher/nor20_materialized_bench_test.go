@@ -25,7 +25,7 @@ import (
 // nor20OrderTerms is the ORDER BY of the profiled workload: three constant tie
 // terms and one unique rank term, so the owner sorts on the last key.
 func nor20OrderTerms() []orderByTerm {
-	return parseOrderByTerms("ORDER BY n.tie1, n.tie2, n.tie3, n.rank")
+	return parseOrderByTerms(context.Background(), "ORDER BY n.tie1, n.tie2, n.tie3, n.rank")
 }
 
 // nor20WorkloadRows builds one scan order per workload. payload records the

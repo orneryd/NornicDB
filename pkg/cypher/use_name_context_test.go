@@ -41,8 +41,8 @@ func TestFabricUseVariableContext(t *testing.T) {
 func TestUseNameContextReader(t *testing.T) {
 	for _, query := range []string{"WITH 7 AS use RETURN use", "WITH 7 AS use WITH DISTINCT use RETURN use", "WITH 7 AS use /* USE fake */ RETURN use"} {
 		at := strings.Index(query, "use")
-		require.True(t, clauseKeywordUsedAsName(query, at, at+3, "USE"))
-		require.Zero(t, testing.AllocsPerRun(100, func() { _ = clauseKeywordUsedAsName(query, at, at+3, "USE") }))
+		require.True(t, clauseKeywordUsedAsName(t.Context(), query, at, at+3, "USE"))
+		require.Zero(t, testing.AllocsPerRun(100, func() { _ = clauseKeywordUsedAsName(t.Context(), query, at, at+3, "USE") }))
 	}
 	p := fabric.NewFabricPlanner(nil)
 	p.SetClauseKeywordNameReader(clauseKeywordUsedAsName)

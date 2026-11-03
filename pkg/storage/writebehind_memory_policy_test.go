@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -101,7 +102,7 @@ func TestWriteBehindMemoryReservationEndsAfterFlush(t *testing.T) {
 	require.NoError(t, tx.Commit())
 	require.True(t, tx.AcknowledgedBuffered())
 	require.Positive(t, policy.Reserved(), "acknowledged generation still owns its forecast")
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	require.Zero(t, policy.Reserved(), "retired generation must release its forecast")
 	got, err := engine.GetNode(t.Context(), "test:small")
 	require.NoError(t, err)

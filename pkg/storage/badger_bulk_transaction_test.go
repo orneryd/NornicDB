@@ -148,7 +148,6 @@ func TestBulkOperations_ClosedEngine(t *testing.T) {
 	// No namespace to load: the transaction itself reports the closed engine.
 	require.ErrorIs(t, engine.BulkDeleteEdges(t.Context(), []EdgeID{""}), ErrStorageClosed)
 	require.ErrorIs(t, engine.BulkDeleteNodes(t.Context(), []NodeID{"test:n"}), ErrStorageClosed)
-	require.ErrorIs(t, engine.replaceSeparateEmbeddingChunks("test:n", nil, nil), ErrStorageClosed)
 }
 
 func TestEncodeFailuresAreLocalized(t *testing.T) {
@@ -212,7 +211,9 @@ func TestEngineWriteUnits(t *testing.T) {
 		return nil
 	}))
 	// Nothing stored and nothing to store is not a write.
-	require.NoError(t, engine.replaceSeparateEmbeddingChunks("test:no-chunks", nil, nil))
+	require.NoError(t, engine.commitEngineWrite(t.Context(), func(cw *commitWriter) error {
+		return cw.replaceEmbeddingRange("test:no-chunks", nil, nil)
+	}))
 }
 
 type failingBulkEngine struct {

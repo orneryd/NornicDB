@@ -372,16 +372,16 @@ func TestHeimdallCoverage_ReflectPluginAndInvokers(t *testing.T) {
 	assert.Contains(t, adapter.Actions(), "test_action")
 	assert.Equal(t, "Mock plugin summary", adapter.Summary())
 	assert.Len(t, adapter.RecentEvents(5), 0)
-	require.NoError(t, adapter.PrePrompt(&PromptContext{RequestID: "req-1"}))
+	require.NoError(t, adapter.PrePrompt(&PromptContext{Context: t.Context(), RequestID: "req-1"}))
 	done := make(chan PreExecuteResult, 1)
-	adapter.PreExecute(&PreExecuteContext{RequestID: "req-1"}, func(r PreExecuteResult) { done <- r })
+	adapter.PreExecute(&PreExecuteContext{Context: t.Context(), RequestID: "req-1"}, func(r PreExecuteResult) { done <- r })
 	assert.True(t, (<-done).Continue)
-	adapter.PostExecute(&PostExecuteContext{RequestID: "req-1"})
+	adapter.PostExecute(&PostExecuteContext{Context: t.Context(), RequestID: "req-1"})
 	require.NoError(t, adapter.Stop())
 	require.NoError(t, adapter.Shutdown())
 
 	noHooks := &reflectHeimdallPlugin{val: reflect.ValueOf(newCoverageMinimalPlugin("minimal"))}
-	require.NoError(t, noHooks.PrePrompt(&PromptContext{}))
+	require.NoError(t, noHooks.PrePrompt(&PromptContext{Context: t.Context()}))
 	done = make(chan PreExecuteResult, 1)
 	noHooks.PreExecute(&PreExecuteContext{}, func(r PreExecuteResult) { done <- r })
 	assert.True(t, (<-done).Continue)
@@ -526,6 +526,7 @@ func TestHeimdallCoverage_HooksDispatcherAndActionInvoker(t *testing.T) {
 	require.NoError(t, manager.RegisterPlugin(eventer, "", true))
 
 	promptCtx := &PromptContext{
+		Context:     t.Context(),
 		RequestID:   "req-hooks",
 		RequestTime: time.Now(),
 		PluginData:  make(map[string]interface{}),
@@ -536,6 +537,7 @@ func TestHeimdallCoverage_HooksDispatcherAndActionInvoker(t *testing.T) {
 	assert.Equal(t, "alpha", promptCtx.AdditionalInstructions)
 
 	preExecCtx := &PreExecuteContext{
+		Context:     t.Context(),
 		RequestID:   "req-hooks",
 		RequestTime: time.Now(),
 		Action:      "heimdall_cov_echo",
@@ -546,7 +548,7 @@ func TestHeimdallCoverage_HooksDispatcherAndActionInvoker(t *testing.T) {
 	assert.Equal(t, "cancelled by beta", preResult.AbortMessage)
 	assert.Equal(t, "alpha", preExecCtx.Params["stage"])
 
-	postCtx := &PostExecuteContext{RequestID: "req-hooks", Action: "act"}
+	postCtx := &PostExecuteContext{Context: t.Context(), RequestID: "req-hooks", Action: "act"}
 	CallPostExecuteHooks(postCtx)
 	select {
 	case got := <-postExecuteCalled:
@@ -555,7 +557,7 @@ func TestHeimdallCoverage_HooksDispatcherAndActionInvoker(t *testing.T) {
 		t.Fatal("expected post execute hook to run")
 	}
 
-	synth := CallSynthesisHooks(&SynthesisContext{RequestID: "req-hooks"})
+	synth := CallSynthesisHooks(&SynthesisContext{Context: t.Context(), RequestID: "req-hooks"})
 	assert.Equal(t, "custom synthesis", synth)
 
 	RegisterBuiltinAction(ActionFunc{
@@ -737,6 +739,7 @@ func TestHeimdallCoverage_ModelsEndpointDefaults(t *testing.T) {
 
 func TestHeimdallCoverage_PromptToolBudgetBranches(t *testing.T) {
 	ctx := &PromptContext{
+		Context:      t.Context(),
 		ActionPrompt: strings.Repeat("x", MaxSystemPromptTokens()*8),
 		UserMessage:  "test",
 	}
@@ -744,7 +747,7 @@ func TestHeimdallCoverage_PromptToolBudgetBranches(t *testing.T) {
 	assert.Contains(t, prompt, "ACTIONS:")
 	assert.NotContains(t, prompt, "RESPONSE RULES:")
 
-	toolCtx := &PromptContext{ExternalTools: []MCPTool{
+	toolCtx := &PromptContext{Context: t.Context(), ExternalTools: []MCPTool{
 		{Name: "", Description: "skip me"},
 		{Name: "real_tool"},
 		{Name: "schema_tool", Description: "schema desc", InputSchema: json.RawMessage(`{"type":"object"}`)},
@@ -758,6 +761,7 @@ func TestHeimdallCoverage_PromptToolBudgetBranches(t *testing.T) {
 	originalBudget := tokenBudget
 	t.Cleanup(func() { tokenBudget = originalBudget })
 	budgetCtx := &PromptContext{
+		Context:      t.Context(),
 		ActionPrompt: "act",
 		UserMessage:  strings.Repeat("u", 800),
 	}
@@ -819,7 +823,7 @@ func TestHeimdallCoverage_PostExecuteAndEventQueueBranches(t *testing.T) {
 		},
 	}
 	pool := &postExecuteWorkerPool{workers: 1}
-	pool.enqueue(postExecuteJob{pluginName: "post-hook", hook: hook, ctx: &PostExecuteContext{Action: "act"}})
+	pool.enqueue(postExecuteJob{pluginName: "post-hook", hook: hook, ctx: &PostExecuteContext{Context: t.Context(), Action: "act"}})
 	require.Eventually(t, func() bool {
 		select {
 		case got := <-postCalled:
@@ -832,7 +836,7 @@ func TestHeimdallCoverage_PostExecuteAndEventQueueBranches(t *testing.T) {
 
 	dropPool := &postExecuteWorkerPool{jobs: make(chan postExecuteJob)}
 	require.NotPanics(t, func() {
-		dropPool.enqueue(postExecuteJob{pluginName: "drop", hook: hook, ctx: &PostExecuteContext{Action: "drop"}})
+		dropPool.enqueue(postExecuteJob{pluginName: "drop", hook: hook, ctx: &PostExecuteContext{Context: t.Context(), Action: "drop"}})
 	})
 
 	dispatcher := &dbEventDispatcher{}
@@ -1051,6 +1055,7 @@ func TestHeimdallCoverage_ToolLoopAndProviderGenerators(t *testing.T) {
 		handler := testHandler(manager, manager.config)
 		lifecycle := &requestLifecycle{
 			promptCtx: &PromptContext{
+				Context:     t.Context(),
 				RequestID:   "req-tools",
 				RequestTime: time.Now(),
 				UserMessage: "run a tool",
@@ -1420,6 +1425,7 @@ func TestHeimdallCoverage_PromptStreamingAndPluginLoading(t *testing.T) {
 		handler := testHandler(manager, manager.config)
 		lifecycle := &requestLifecycle{
 			promptCtx: &PromptContext{
+				Context:     t.Context(),
 				RequestID:   "req-prompt",
 				RequestTime: time.Now(),
 				UserMessage: "do prompt action",
@@ -1475,6 +1481,7 @@ func TestHeimdallCoverage_PromptStreamingAndPluginLoading(t *testing.T) {
 		handler := testHandler(manager, manager.config)
 		lifecycle := &requestLifecycle{
 			promptCtx: &PromptContext{
+				Context:     t.Context(),
 				RequestID:   "req-streaming",
 				RequestTime: time.Now(),
 				UserMessage: "do stream action",
@@ -1673,6 +1680,7 @@ var Plugin = &pluginImpl{}
 		handler := testHandler(manager, manager.config)
 		lifecycle := &requestLifecycle{
 			promptCtx: &PromptContext{
+				Context:     t.Context(),
 				RequestID:   "req-branches",
 				RequestTime: time.Now(),
 				UserMessage: "run branchy prompts",
@@ -1754,6 +1762,7 @@ var Plugin = &pluginImpl{}
 		handler = testHandler(newTestManager(streamGen), Config{Enabled: true, Model: "test-model", BifrostEnabled: true})
 		lifecycle = &requestLifecycle{
 			promptCtx: &PromptContext{
+				Context:     t.Context(),
 				RequestID:   "req-stream-branches",
 				RequestTime: time.Now(),
 				UserMessage: "stream branches",
@@ -1839,6 +1848,7 @@ func TestHeimdallCoverage_StreamingResponseExtraBranches(t *testing.T) {
 		handler := testHandler(newTestManager(mockGen), Config{Enabled: true, Model: "test-model", BifrostEnabled: true})
 		lifecycle := &requestLifecycle{
 			promptCtx: &PromptContext{
+				Context:     t.Context(),
 				RequestID:   "req-cancel-stream",
 				RequestTime: time.Now(),
 				UserMessage: "cancel this",
@@ -1890,6 +1900,7 @@ func TestHeimdallCoverage_StreamingResponseExtraBranches(t *testing.T) {
 		}
 		lifecycle := &requestLifecycle{
 			promptCtx: &PromptContext{
+				Context:     t.Context(),
 				RequestID:   "req-memory-stream",
 				RequestTime: time.Now(),
 				UserMessage: "save memory",
@@ -1975,6 +1986,7 @@ func TestHeimdallCoverage_HandlerToolAndPromptHelpers(t *testing.T) {
 	require.Contains(t, formatted, `"count": 2`)
 
 	prompt := &PromptContext{
+		Context:      t.Context(),
 		ActionPrompt: "- heimdall_status: status",
 		UserMessage:  "What is status?",
 		ExternalTools: []MCPTool{

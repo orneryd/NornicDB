@@ -208,14 +208,14 @@ func TestCallAndClauseHelpers_Branches(t *testing.T) {
 	abEdge, err := store.GetEdge(t.Context(), "ab")
 	require.NoError(t, err)
 
-	require.Equal(t, "MATCH (n) RETURN n", buildCallTailPredicateInjection(" MATCH (n) RETURN n ", nil))
+	require.Equal(t, "MATCH (n) RETURN n", buildCallTailPredicateInjection(ctx, " MATCH (n) RETURN n ", nil))
 	require.Equal(t,
 		"MATCH (n) WHERE n.id = '1' AND x = 1 RETURN n",
-		buildCallTailPredicateInjection("MATCH (n) WHERE n.id = '1' RETURN n", []string{"x = 1"}),
+		buildCallTailPredicateInjection(ctx, "MATCH (n) WHERE n.id = '1' RETURN n", []string{"x = 1"}),
 	)
 	require.Equal(t,
 		"MATCH (n) WHERE x = 1 RETURN n",
-		buildCallTailPredicateInjection("MATCH (n) RETURN n", []string{"x = 1"}),
+		buildCallTailPredicateInjection(ctx, "MATCH (n) RETURN n", []string{"x = 1"}),
 	)
 
 	varMap := map[string]interface{}{"s": aNode}
@@ -285,7 +285,7 @@ func TestSubqueryHelperBranches(t *testing.T) {
 	_, _, ok = splitTopLevelEqualityCallSubquery("x")
 	require.False(t, ok)
 
-	idx := indexTopLevelKeywordCallSubquery(`x = "RETURN y" RETURN x`, "RETURN")
+	idx := indexTopLevelKeywordCallSubquery(ctx, `x = "RETURN y" RETURN x`, "RETURN")
 	require.Equal(t, 15, idx)
 
 	cache := map[string]map[string]interface{}{"s1": {"x": "cached"}}

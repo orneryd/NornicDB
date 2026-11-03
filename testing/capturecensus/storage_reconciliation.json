@@ -89,7 +89,7 @@
       "proof": {
         "present": true,
         "file": "pkg/multidb/manager.go",
-        "sourceSHA256": "8883c51060005546fc47cd3ca9e4b8e99f709673af10081a11d3a0fb232632f3",
+        "sourceSHA256": "a4bbe6710ede33b2c539f201ae5694812642b616ca4438015ff035d14830eb90",
         "directCalls": [
           "string",
           "strings.HasPrefix",
@@ -102,6 +102,8 @@
           "m.lifetime",
           "isLeak",
           "engine.DeleteNode",
+          "m.lifetime().Context",
+          "m.lifetime",
           "log.Printf"
         ]
       },
@@ -125,7 +127,7 @@
       "proof": {
         "present": true,
         "file": "pkg/nornicdb/auto_embed_inference.go",
-        "sourceSHA256": "7d5874dbae9a6feef009069b2cacb383379769118ac4b4b577f7f1903d661b76",
+        "sourceSHA256": "39a72dcdea2a621af07a82258d1c75111bd3dd80bf485cb4c7f003abb1fe734e",
         "directCalls": [
           "len",
           "splitQualifiedID",
@@ -133,7 +135,6 @@
           "strings.HasPrefix",
           "db.getOrCreateInferenceService",
           "inferEngine.OnStoreBestOfChunks",
-          "db.LifetimeContext",
           "len",
           "db.resolveDatabaseStorage",
           "time.Now",
@@ -145,7 +146,7 @@
           "storageEngine.CreateEdge"
         ]
       },
-      "reason": "No fresh context creation remains in this exact function; its current callers and replacement lifetime paths remain subject to the normal census."
+      "reason": "Reviewed after source drift: onNodeEmbedded enrolls the callback with DB.RunBackgroundTask and forwards that ticket context through runInferenceForEmbeddedNode to both OnStoreBestOfChunks and CreateEdge. The actual-path test captures the identical context at inference and the resolved storage writer, proves nested admission after shutdown begins, and rejects bare DB.LifetimeContext admission; the existing server-side embedding test retains its real publication assertion."
     },
     "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).rebindBufferedNumericIDs": {
       "proof": {
@@ -288,15 +289,17 @@
     "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).ReconcileDecaySuppression": {
       "present": true,
       "file": "pkg/storage/badger_decay_reconcile.go",
-      "sourceSHA256": "827f889404e1c6c1e8743152b55d635f0a489d21203debb1ae7d3a50fe6a119f",
+      "sourceSHA256": "4af4dd8c95c7f4c822d452a247ada5360d755755cc28f0d8fc0237f687bb0f8f",
       "directCalls": [
+        "context.Background",
         "b.collectNamespaceNodeIDs",
         "b.EnqueueDeindexIfSuppressed",
         "string",
         "b.collectNamespaceEdgeIDs",
         "b.EnqueueDeindexIfSuppressed",
         "string"
-      ]
+      ],
+      "freshContextCalls": ["context.Background"]
     },
     "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).drainCommitNotifications": {
       "present": true,

@@ -58,8 +58,7 @@ func TestPreparedConstraintKeyCancellationReleasesAdditionalAuthority(t *testing
 	require.NoError(t, tx.SetNamespace("test"))
 	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:prepared_tuple", Labels: []string{"PreparedTuple"}, Properties: map[string]interface{}{"a": int64(1), "b": int64(2)}})
 	require.NoError(t, err)
-	// nil is the documented non-cancellable native preparation boundary.
-	prepared, err := tx.PrepareEntityCommit(nil, EntityCommitRequest{LogicalID: "constraint-key-cancellation"})
+	prepared, err := tx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: "constraint-key-cancellation"})
 	require.NoError(t, err)
 	t.Cleanup(prepared.Abort)
 	snapshot := func() map[uniqueConstraintLockKey][2]int {
@@ -82,7 +81,7 @@ func TestPreparedConstraintKeyCancellationReleasesAdditionalAuthority(t *testing
 	require.Equal(t, before, snapshot(), "failed key preparation leaked additional entity authority")
 	_, err = engine.GetStoredNode(t.Context(), "test:prepared_tuple")
 	require.ErrorIs(t, err, ErrNotFound, "failed retention published the prepared node")
-	release, err = prepared.RetainAcceptedAuthority(nil)
+	release, err = prepared.RetainAcceptedAuthority(context.Background())
 	require.NoError(t, err)
 	release()
 	require.Equal(t, before, snapshot(), "healthy retry did not release its additional authority")

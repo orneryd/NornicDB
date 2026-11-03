@@ -22,13 +22,13 @@ func TestCompoundKeywordTriviaSpans(t *testing.T) {
 	for _, text := range []string{"OPTIONALMATCH", "OPTIONAL/* unfinished", "OPTIONAL // MATCH"} {
 		_, ok := keywordMatchAt(text, 0, "OPTIONAL MATCH", 0, len("OPTIONAL MATCH"))
 		require.False(t, ok, text)
-		require.False(t, startsWithKeywords(text, "OPTIONAL", "MATCH"), text)
-		require.Equal(t, -1, findMultiWordKeywordIndex(text, "OPTIONAL", "MATCH"), text)
+		require.False(t, startsWithKeywords(t.Context(), text, "OPTIONAL", "MATCH"), text)
+		require.Equal(t, -1, findMultiWordKeywordIndex(t.Context(), text, "OPTIONAL", "MATCH"), text)
 	}
 	for _, text := range []string{"OPTIONAL/*c*/MATCH (n)", "OPTIONAL //c\nMATCH (n)"} {
-		require.True(t, startsWithKeywords(text, "OPTIONAL", "MATCH"), text)
+		require.True(t, startsWithKeywords(t.Context(), text, "OPTIONAL", "MATCH"), text)
 		require.Equal(t, "(n)", pipelineClauseBody(text, "OPTIONAL MATCH"), text)
-		require.Equal(t, 0, findMultiWordKeywordIndex(text, "OPTIONAL", "MATCH"), text)
+		require.Equal(t, 0, findMultiWordKeywordIndex(t.Context(), text, "OPTIONAL", "MATCH"), text)
 	}
 	const text = "ON/*c*/CREATE //c\nSET n.x=1"
 	allocs := testing.AllocsPerRun(100, func() {

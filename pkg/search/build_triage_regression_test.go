@@ -78,16 +78,6 @@ func triageNode(id string) *storage.Node {
 	return &storage.Node{ID: storage.NodeID(id), Properties: map[string]any{"text": id}, NamedEmbeddings: map[string][]float32{"v": {1, 0, 0}}}
 }
 
-func TestBuildTriageNilContext(t *testing.T) {
-	engine := &triageSnapshotEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
-	t.Cleanup(func() { _ = engine.Close() })
-	_, err := engine.CreateNode(t.Context(), triageNode("nornic:baseline"))
-	require.NoError(t, err)
-	svc := newSearchPersistenceTestService(t, engine, t.TempDir(), false)
-	require.NotPanics(t, func() { require.NoError(t, svc.BuildIndexes(nil)) })
-	require.Zero(t, engine.active.Load())
-}
-
 func TestBuildTriageSnapshotClosedBeforePersistAndWarmup(t *testing.T) {
 	engine := &triageSnapshotEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
 	t.Cleanup(func() { _ = engine.Close() })

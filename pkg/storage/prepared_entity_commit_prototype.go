@@ -117,13 +117,8 @@ type EntityCommitRequest struct {
 // PrepareEntityCommit observes the logical receipt once, stages new entity work,
 // and runs the native commit pipeline up to its prephysical boundary. A staging
 // error leaves cleanup with the caller. Schema transactions use ordinary Commit.
-// A nil ctx selects the independent preparation lifetime once at this public
-// boundary. A nonnil ctx retains the caller lifetime until publication acceptance.
+// ctx retains the caller lifetime until publication acceptance.
 func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request EntityCommitRequest) (*PreparedEntityCommit, error) {
-	// This public API preserves its documented optional nil preparation
-	// context. Select that lifetime once before any private required-context
-	// admission, while retaining every nonnil caller context unchanged.
-	ctx = commitPreparationLifetime(ctx)
 	logicalID := request.LogicalID
 	if logicalID == "" {
 		return nil, ErrInvalidID
@@ -227,7 +222,7 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 			prepared = &PreparedEntityCommit{engine: tx.engine, mode: tx.commitMode, namespace: tx.namespace, logicalID: logicalID, operations: operations, changes: changes, decide: make(chan bool, 1), finished: finished}
 			tx.preparedEntityCommit = prepared
 			prepared.retainAuthority = func(admission context.Context) (func(), error) {
-				keyContext := commitPreparationLifetime(admission)
+				keyContext := admission
 				entityKeys, err := entityCommitKeys(keyContext, nodes, edges, endpoints)
 				if err != nil {
 					return nil, err
@@ -297,7 +292,7 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 	}()
 	select {
 	case prepared := <-ready:
-		if ctx != nil && ctx.Err() != nil {
+		if ctx.Err() != nil {
 			prepared.Abort()
 			return nil, ctx.Err()
 		}

@@ -49,7 +49,7 @@ func TestTerminalContextsPreserveCommitIdentityAndCanceledAdmission(t *testing.T
 }
 
 func TestTerminalContextsInvalidInputsHaveNoEffects(t *testing.T) {
-	for _, mode := range []string{"commit", "cleanup", "both", "rollback"} {
+	for _, mode := range []string{"commit", "cleanup", "both"} {
 		t.Run(mode, func(t *testing.T) {
 			tx := NewFabricTransaction("invalid-context")
 			_, err := tx.GetOrOpen("writer", true)
@@ -66,11 +66,7 @@ func TestTerminalContextsInvalidInputsHaveNoEffects(t *testing.T) {
 			case "both":
 				scopes = TerminalContexts{}
 			}
-			if mode == "rollback" {
-				err = tx.Rollback(nil, nil)
-			} else {
-				err = tx.Commit(scopes, nil, nil)
-			}
+			err = tx.Commit(scopes, nil, nil)
 			require.Error(t, err)
 			require.Zero(t, calls)
 			require.Equal(t, "open", tx.State())

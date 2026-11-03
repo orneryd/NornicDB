@@ -8,9 +8,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type optionalUpdateContextKey struct{}
+type mvccUpdateContextKey struct{}
 
-func TestPublicMVCCUpdateKeepsOptionalDetachedContext(t *testing.T) {
+func TestPublicMVCCUpdateHonorsRequestContext(t *testing.T) {
 	for _, route := range []string{"write_head", "delete_version"} {
 		t.Run(route, func(t *testing.T) {
 			engine := newTestMemoryEngine(t)
@@ -51,7 +51,7 @@ func TestPublicMVCCUpdateKeepsOptionalDetachedContext(t *testing.T) {
 				require.True(t, hasOlder())
 			}
 			marker := new(int)
-			ctx, cancel := context.WithCancel(context.WithValue(context.Background(), optionalUpdateContextKey{}, marker))
+			ctx, cancel := context.WithCancel(context.WithValue(context.Background(), mvccUpdateContextKey{}, marker))
 			defer cancel()
 			engine.db.commitGate.Lock()
 			held := true
@@ -62,7 +62,7 @@ func TestPublicMVCCUpdateKeepsOptionalDetachedContext(t *testing.T) {
 			}()
 			observed := make(chan context.Context, 1)
 			restore := setAdmissionWaitObserver(func(owner any, actual context.Context) {
-				if owner == &engine.db.commitGate && actual != nil && actual.Value(optionalUpdateContextKey{}) == marker {
+				if owner == &engine.db.commitGate && actual != nil && actual.Value(mvccUpdateContextKey{}) == marker {
 					select {
 					case observed <- actual:
 					default:
@@ -74,7 +74,7 @@ func TestPublicMVCCUpdateKeepsOptionalDetachedContext(t *testing.T) {
 			go func() { done <- operation(ctx) }()
 			select {
 			case actual := <-observed:
-				require.True(t, actual == ctx, "nonnil request identity must survive public normalization")
+				require.True(t, actual == ctx, "request identity must reach admission")
 			case <-time.After(10 * time.Second):
 				t.Fatal("public update never reached cancellable commit admission")
 			}
@@ -93,13 +93,13 @@ func TestPublicMVCCUpdateKeepsOptionalDetachedContext(t *testing.T) {
 			if route == "delete_version" {
 				require.True(t, hasOlder())
 			}
-			require.NoError(t, operation(nil), "public nil context retains its established detached native contract")
+			require.NoError(t, operation(t.Context()), "healthy retry after cancellation publishes")
 			if route == "write_head" {
 				after, err = engine.ReadMVCCHead(context.Background(), logical)
 				require.NoError(t, err)
 				require.Zero(t, after.Version.Compare(target.Version))
 			} else {
-				require.False(t, hasOlder(), "nil-context delete must remove the actual archived version")
+				require.False(t, hasOlder(), "healthy retry must remove the actual archived version")
 			}
 		})
 	}

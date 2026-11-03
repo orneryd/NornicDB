@@ -1,6 +1,7 @@
 package replication
 
 import (
+	"context"
 	"encoding/json"
 	"reflect"
 	"sync/atomic"
@@ -167,7 +168,7 @@ func wireDictionaryIdentity(t *testing.T, b *storage.BadgerEngine, key string) s
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 	require.True(t, tx.AcknowledgedBuffered())
-	require.NoError(t, b.FlushWriteBehind(nil))
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
 	require.NoError(t, w.Sync())
 	entries, err := storage.ReadWALEntriesFromDir(dir)
 	require.NoError(t, err)

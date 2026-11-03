@@ -1,6 +1,7 @@
 package multidb
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"reflect"
@@ -159,7 +160,7 @@ func TestManagedWALRebuildCacheBindingsControl(t *testing.T) {
 							require.NoError(t, tx.UpdateGraphNode(t.Context(), storage.NodeUpdateRequest{After: catalog, Policy: storage.ClientNodeEdits}))
 							require.NoError(t, tx.Commit())
 						}
-						require.NoError(t, base.FlushWriteBehind(nil))
+						require.NoError(t, base.FlushWriteBehind(context.Background()))
 					}
 					require.NoError(t, manager.Close())
 					audit := auditManagedCatalogDisk(t, dataDir, base)

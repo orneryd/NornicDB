@@ -71,7 +71,7 @@ func TestManagedFollowerPreservesSingleItemBulkProducerMode(t *testing.T) {
 			t.Cleanup(func() { _ = manager.Close() })
 			managed, err := manager.GetStorage("nornic")
 			require.NoError(t, err)
-			require.NoError(t, base.FlushWriteBehind(nil))
+			require.NoError(t, base.FlushWriteBehind(context.Background()))
 			before := wal.Sequence()
 			capture.mu.Lock()
 			capture.modes = nil

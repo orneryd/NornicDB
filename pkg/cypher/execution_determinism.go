@@ -73,11 +73,11 @@ func compileExecutionPolicy(ctx context.Context, text string, depth int) *execut
 	if depth >= 16 {
 		return policy
 	}
-	text = classificationText(text)
+	text = classificationText(ctx, text)
 	trimmed := strings.TrimSpace(text)
 	opts := defaultKeywordScanOpts()
 	opts.SkipParens, opts.SkipBrackets, opts.SkipBraces = false, false, false
-	if startsWithKeywordFold(trimmed, "SHOW") || startsWithKeywordFold(trimmed, "TERMINATE") || startsWithKeywordFold(trimmed, "PROFILE") || keywordIndexFrom(text, "LOAD", 0, opts) >= 0 {
+	if startsWithKeywordFold(trimmed, "SHOW") || startsWithKeywordFold(trimmed, "TERMINATE") || startsWithKeywordFold(trimmed, "PROFILE") || keywordIndexFrom(ctx, text, "LOAD", 0, opts) >= 0 {
 		return policy
 	}
 	requirements := QueryPermissionRequirements(ctx, text, AcceptedSource)
@@ -123,7 +123,7 @@ func compileExecutionPolicy(ctx context.Context, text string, depth int) *execut
 		return policy
 	}
 	for from := 0; from < len(text); {
-		at := keywordIndexFrom(text, "CALL", from, opts)
+		at := keywordIndexFrom(ctx, text, "CALL", from, opts)
 		if at < 0 {
 			break
 		}

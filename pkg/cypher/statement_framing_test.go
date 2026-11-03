@@ -166,7 +166,7 @@ func TestResidualLabelPredicateReferences(t *testing.T) {
 		{"coalesce(n:Ignored, missing)", []string{"n", "missing"}},
 	} {
 		t.Run(test.expression, func(t *testing.T) {
-			require.Equal(t, test.want, expressionFreeVariables(test.expression))
+			require.Equal(t, test.want, expressionFreeVariables(t.Context(), test.expression))
 		})
 	}
 	for _, mode := range []string{"nornic", "antlr"} {

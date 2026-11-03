@@ -57,7 +57,7 @@ func TestWriteBehindTotalCountsDuringPublicationCallbacks(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:link", StartNode: "test:anchor", EndNode: "test:child", Type: "LINK"}))
 	require.NoError(t, tx.Commit())
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	for range 2 {
 		select {
 		case got := <-observed:
@@ -180,7 +180,7 @@ func TestWriteBehindTotalCountsColdPrefixesAndMutationLifecycle(t *testing.T) {
 	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:new", StartNode: "test:a", EndNode: "test:c", Type: "LINK"}))
 	require.NoError(t, tx.Commit())
 	// Do not warm partial-prefix caches here: their first read occurs in callback.
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	require.GreaterOrEqual(t, len(observed), 4)
 	for len(observed) > 0 {
 		check(<-observed)
@@ -191,7 +191,7 @@ func TestWriteBehindTotalCountsColdPrefixesAndMutationLifecycle(t *testing.T) {
 	require.NoError(t, noop.SetImplicit(true))
 	require.NoError(t, noop.SetNamespace("test"))
 	require.NoError(t, noop.Commit())
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	check(read())
 	require.Empty(t, observed, "empty commits do not republish callbacks")
 	require.NoError(t, engine.Close())

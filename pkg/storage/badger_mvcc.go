@@ -1449,9 +1449,6 @@ func nextScanStart(key []byte) []byte {
 // (beginMaintenanceWrite): no write runs across it, and every write-behind
 // commit acknowledged before it is applied first.
 func (b *BadgerEngine) RebuildMVCCHeads(ctx context.Context) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	lifecycle, err := b.beginMaintenanceWrite(ctx, nil)
 	if err != nil {
 		return err
@@ -1878,9 +1875,6 @@ func bootstrapMVCCFromCurrentStateInTxn[E any, ID ~string, M mvccBootstrapKind[E
 }
 
 func (b *BadgerEngine) PruneMVCCVersions(ctx context.Context, opts MVCCPruneOptions) (int64, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if err := b.mvccPruneMu.LockContext(ctx); err != nil {
 		return 0, err
 	}

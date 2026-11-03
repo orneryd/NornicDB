@@ -90,6 +90,50 @@ func (tx *BadgerTransaction) validateSnapshotIsolationConflicts(ctx context.Cont
 	return nil
 }
 
+// validatePreparedBodyConflictsLocked closes the physical conflict boundary
+// before an outer owner can durably accept the prepared command. Policy
+// suppression rewrites bodies/adjacency without changing logical MVCC heads;
+// head validation alone can therefore miss a native SSI conflict. The existing
+// entity authority is held here, after any acknowledged-buffer rebase, so these
+// bodies cannot change again between this check and accepted publication.
+func (tx *BadgerTransaction) validatePreparedBodyConflictsLocked(ctx context.Context, keys []uniqueConstraintLockKey) error {
+	return tx.engine.withView(func(view *badger.Txn) error {
+		for _, key := range keys {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if key.shared {
+				// Endpoint existence is validated separately; merely reading
+				// one does not put its body in the native writer's SSI set.
+				continue
+			}
+			var body []byte
+			switch key.entityKind {
+			case 1:
+				body = nodeKey(NodeID(key.entityID))
+			case 2:
+				body = edgeKey(EdgeID(key.entityID))
+			default:
+				continue
+			}
+			item, err := view.Get(body)
+			if err == badger.ErrKeyNotFound {
+				continue
+			}
+			if err != nil {
+				return &CommitFailureError{Cause: err}
+			}
+			if item.Version() > tx.badgerTx.ReadTs() {
+				if key.entityKind == 1 {
+					return localizedError(localization.StorageTransactionNodeChanged(key.entityID), ErrConflict)
+				}
+				return localizedError(localization.StorageTransactionEdgeChanged(key.entityID), ErrConflict)
+			}
+		}
+		return nil
+	})
+}
+
 // snapshotIsolationConflict reports true when the head version was
 // committed STRICTLY AFTER the transaction began, comparing on the
 // per-namespace monotonic commit sequence rather than on wall-clock

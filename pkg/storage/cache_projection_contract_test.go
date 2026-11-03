@@ -71,7 +71,7 @@ func TestCacheProjectionNestedOwnership(t *testing.T) {
 					require.Equal(t, []int64{3, 4}, again.Properties["right"].(map[string]any)["values"])
 				})
 			}
-			require.NoError(t, b.FlushWriteBehind(nil))
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
 			require.NoError(t, b.Close())
 			b, err = fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 			require.NoError(t, err)

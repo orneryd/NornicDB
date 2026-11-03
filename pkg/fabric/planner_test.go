@@ -115,14 +115,14 @@ RETURN translationId, textKey, texts`
 }
 
 func TestPlannerHelpers_ReturnClauseAndWithAliases(t *testing.T) {
-	if !hasTopLevelReturnClause("MATCH (n) RETURN n", nil) {
+	if !hasTopLevelReturnClause(t.Context(), "MATCH (n) RETURN n", nil) {
 		t.Fatalf("expected RETURN clause to be detected")
 	}
-	if hasTopLevelReturnClause("MATCH (n {x: 'RETURN literal'})", nil) {
+	if hasTopLevelReturnClause(t.Context(), "MATCH (n {x: 'RETURN literal'})", nil) {
 		t.Fatalf("did not expect RETURN inside string literal to count")
 	}
 
-	aliases := trailingWithAliases("MATCH (n) WITH n.id AS id, n.name AS name", nil)
+	aliases := trailingWithAliases(t.Context(), "MATCH (n) WITH n.id AS id, n.name AS name", nil)
 	if len(aliases) != 2 || aliases[0] != "id" || aliases[1] != "name" {
 		t.Fatalf("unexpected trailing WITH aliases: %#v", aliases)
 	}
@@ -258,7 +258,7 @@ RETURN tt.textKey128 AS k, collect(tt) AS texts`
 // where a CALL's imports bind, the Cypher executor's reader what they are.
 func recordedCallImports(imports ...string) (CallImportReader, *[]string) {
 	asked := &[]string{}
-	return func(scope string, scoped bool, body string) ([]string, error) {
+	return func(ctx context.Context, scope string, scoped bool, body string) ([]string, error) {
 		*asked = append(*asked, strconv.FormatBool(scoped)+"|"+scope+"|"+body)
 		return imports, nil
 	}, asked
@@ -478,7 +478,7 @@ func TestParseLeadingUse_DynamicGraphReference(t *testing.T) {
 }
 
 func TestPlannerHelpers_SplitAtTopLevelUse(t *testing.T) {
-	prefix, suffix, ok := splitAtTopLevelUse("MATCH (n) WITH n USE translations.tr RETURN n", nil)
+	prefix, suffix, ok := splitAtTopLevelUse(t.Context(), "MATCH (n) WITH n USE translations.tr RETURN n", nil)
 	if !ok {
 		t.Fatalf("expected top-level USE split")
 	}
@@ -578,7 +578,7 @@ func TestQueryIsWrite(t *testing.T) {
 // --- Additional coverage tests ---
 
 func TestSplitTopLevelUnion_NoUnion(t *testing.T) {
-	parts, ops, hasUnion, err := splitTopLevelUnion("MATCH (n) RETURN n", nil)
+	parts, ops, hasUnion, err := splitTopLevelUnion(t.Context(), "MATCH (n) RETURN n", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -591,14 +591,14 @@ func TestSplitTopLevelUnion_NoUnion(t *testing.T) {
 }
 
 func TestSplitTopLevelUnion_EmptyBranch(t *testing.T) {
-	_, _, _, err := splitTopLevelUnion("UNION ALL RETURN 1", nil)
+	_, _, _, err := splitTopLevelUnion(t.Context(), "UNION ALL RETURN 1", nil)
 	if err == nil {
 		t.Fatal("expected error for empty leading branch")
 	}
 }
 
 func TestSplitTopLevelUnion_EmptyTrailingBranch(t *testing.T) {
-	_, _, _, err := splitTopLevelUnion("RETURN 1 UNION ALL ", nil)
+	_, _, _, err := splitTopLevelUnion(t.Context(), "RETURN 1 UNION ALL ", nil)
 	if err == nil {
 		t.Fatal("expected error for empty trailing branch")
 	}
@@ -606,7 +606,7 @@ func TestSplitTopLevelUnion_EmptyTrailingBranch(t *testing.T) {
 
 func TestSplitTopLevelUnion_InsideQuotes(t *testing.T) {
 	// UNION inside single-quoted string.
-	_, _, hasUnion, err := splitTopLevelUnion("RETURN 'UNION ALL' AS x", nil)
+	_, _, hasUnion, err := splitTopLevelUnion(t.Context(), "RETURN 'UNION ALL' AS x", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -614,7 +614,7 @@ func TestSplitTopLevelUnion_InsideQuotes(t *testing.T) {
 		t.Fatal("expected UNION inside quotes to be ignored")
 	}
 	// UNION inside double-quoted string.
-	_, _, hasUnion, err = splitTopLevelUnion(`RETURN "UNION" AS x`, nil)
+	_, _, hasUnion, err = splitTopLevelUnion(t.Context(), `RETURN "UNION" AS x`, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -625,19 +625,19 @@ func TestSplitTopLevelUnion_InsideQuotes(t *testing.T) {
 
 func TestSplitTopLevelUnion_InsideBracesParens(t *testing.T) {
 	// UNION inside braces should not split.
-	_, _, hasUnion, _ := splitTopLevelUnion("CALL { RETURN 1 UNION RETURN 2 } RETURN x", nil)
+	_, _, hasUnion, _ := splitTopLevelUnion(t.Context(), "CALL { RETURN 1 UNION RETURN 2 } RETURN x", nil)
 	if hasUnion {
 		t.Fatal("expected UNION inside braces to be ignored")
 	}
 	// UNION inside parens should not split.
-	_, _, hasUnion, _ = splitTopLevelUnion("RETURN (1 UNION 2)", nil)
+	_, _, hasUnion, _ = splitTopLevelUnion(t.Context(), "RETURN (1 UNION 2)", nil)
 	if hasUnion {
 		t.Fatal("expected UNION inside parens to be ignored")
 	}
 }
 
 func TestSplitTopLevelUnion_DistinctUnion(t *testing.T) {
-	parts, ops, hasUnion, err := splitTopLevelUnion("RETURN 1 AS x UNION RETURN 2 AS x", nil)
+	parts, ops, hasUnion, err := splitTopLevelUnion(t.Context(), "RETURN 1 AS x UNION RETURN 2 AS x", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -654,17 +654,17 @@ func TestSplitTopLevelUnion_DistinctUnion(t *testing.T) {
 
 func TestSplitAtTopLevelUse_WithQuotedStrings(t *testing.T) {
 	// USE inside single-quoted string should not split.
-	_, _, ok := splitAtTopLevelUse("MATCH (n {x: 'USE db'}) RETURN n", nil)
+	_, _, ok := splitAtTopLevelUse(t.Context(), "MATCH (n {x: 'USE db'}) RETURN n", nil)
 	if ok {
 		t.Fatal("expected USE inside single quotes to be ignored")
 	}
 	// USE inside double-quoted string should not split.
-	_, _, ok = splitAtTopLevelUse(`MATCH (n {x: "USE db"}) RETURN n`, nil)
+	_, _, ok = splitAtTopLevelUse(t.Context(), `MATCH (n {x: "USE db"}) RETURN n`, nil)
 	if ok {
 		t.Fatal("expected USE inside double quotes to be ignored")
 	}
 	// USE inside backtick.
-	_, _, ok = splitAtTopLevelUse("MATCH (n) WITH `USE` AS x USE db RETURN n", nil)
+	_, _, ok = splitAtTopLevelUse(t.Context(), "MATCH (n) WITH `USE` AS x USE db RETURN n", nil)
 	if !ok {
 		t.Fatal("expected USE after backtick to split")
 	}
@@ -672,30 +672,30 @@ func TestSplitAtTopLevelUse_WithQuotedStrings(t *testing.T) {
 
 func TestSplitAtTopLevelUse_InsideNesting(t *testing.T) {
 	// USE inside braces.
-	_, _, ok := splitAtTopLevelUse("CALL { USE db RETURN 1 } RETURN x", nil)
+	_, _, ok := splitAtTopLevelUse(t.Context(), "CALL { USE db RETURN 1 } RETURN x", nil)
 	if ok {
 		t.Fatal("expected USE inside braces to be ignored")
 	}
 	// USE inside parens.
-	_, _, ok = splitAtTopLevelUse("MATCH (n WHERE USE = 1) RETURN n", nil)
+	_, _, ok = splitAtTopLevelUse(t.Context(), "MATCH (n WHERE USE = 1) RETURN n", nil)
 	// This one might match depending on keyword boundary logic.
 	// Just ensure no panic.
 	_ = ok
 	// USE inside brackets.
-	_, _, ok = splitAtTopLevelUse("RETURN [x IN list WHERE USE = 1]", nil)
+	_, _, ok = splitAtTopLevelUse(t.Context(), "RETURN [x IN list WHERE USE = 1]", nil)
 	_ = ok
 }
 
 func TestSplitAtTopLevelUse_LeadingUseSkipped(t *testing.T) {
 	// Leading USE should be skipped (handled by parseLeadingUse).
-	_, _, ok := splitAtTopLevelUse("USE db MATCH (n) RETURN n", nil)
+	_, _, ok := splitAtTopLevelUse(t.Context(), "USE db MATCH (n) RETURN n", nil)
 	if ok {
 		t.Fatal("expected leading USE to be skipped")
 	}
 }
 
 func TestSplitAtTopLevelUse_NoUse(t *testing.T) {
-	_, _, ok := splitAtTopLevelUse("MATCH (n) RETURN n", nil)
+	_, _, ok := splitAtTopLevelUse(t.Context(), "MATCH (n) RETURN n", nil)
 	if !ok {
 		// No USE at all → ok=false.
 	}
@@ -703,35 +703,35 @@ func TestSplitAtTopLevelUse_NoUse(t *testing.T) {
 
 func TestEnsureRowProducingPrefix(t *testing.T) {
 	// Empty query.
-	if ensureRowProducingPrefix("", nil) != "" {
+	if ensureRowProducingPrefix(t.Context(), "", nil) != "" {
 		t.Fatal("expected empty for empty input")
 	}
 	// Query with RETURN.
-	got := ensureRowProducingPrefix("MATCH (n) RETURN n", nil)
+	got := ensureRowProducingPrefix(t.Context(), "MATCH (n) RETURN n", nil)
 	if got != "MATCH (n) RETURN n" {
 		t.Fatalf("expected unchanged with RETURN, got %q", got)
 	}
 	// WITH clause with aliases.
-	got = ensureRowProducingPrefix("WITH a, b", nil)
+	got = ensureRowProducingPrefix(t.Context(), "WITH a, b", nil)
 	if !strings.HasSuffix(got, "RETURN a, b") {
 		t.Fatalf("expected RETURN aliases appended, got %q", got)
 	}
 	// Query without RETURN and without WITH.
-	got = ensureRowProducingPrefix("MATCH (n)", nil)
+	got = ensureRowProducingPrefix(t.Context(), "MATCH (n)", nil)
 	if !strings.HasSuffix(got, "RETURN *") {
 		t.Fatalf("expected RETURN * appended, got %q", got)
 	}
 	// A clause after the WITH keeps the WITH's variables and adds its own.
-	got = ensureRowProducingPrefix("WITH 'ab' AS s UNWIND [1, 2] AS x", nil)
+	got = ensureRowProducingPrefix(t.Context(), "WITH 'ab' AS s UNWIND [1, 2] AS x", nil)
 	if got != "WITH 'ab' AS s UNWIND [1, 2] AS x RETURN *" {
 		t.Fatalf("expected RETURN * after a later clause, got %q", got)
 	}
 	// The WITH's own WHERE, ORDER BY, SKIP and LIMIT are part of it.
-	got = ensureRowProducingPrefix("UNWIND [3, 1] AS y WITH y AS x WHERE x > 0 ORDER BY x SKIP 0 LIMIT 2", nil)
+	got = ensureRowProducingPrefix(t.Context(), "UNWIND [3, 1] AS y WITH y AS x WHERE x > 0 ORDER BY x SKIP 0 LIMIT 2", nil)
 	if !strings.HasSuffix(got, "LIMIT 2 RETURN *") {
 		t.Fatalf("expected RETURN * for a prefix starting with UNWIND, got %q", got)
 	}
-	got = ensureRowProducingPrefix("WITH [3, 1] AS ys, 1 AS z WITH z AS x WHERE x > 0 ORDER BY x SKIP 0 LIMIT 2", nil)
+	got = ensureRowProducingPrefix(t.Context(), "WITH [3, 1] AS ys, 1 AS z WITH z AS x WHERE x > 0 ORDER BY x SKIP 0 LIMIT 2", nil)
 	if !strings.HasSuffix(got, "LIMIT 2 RETURN x") {
 		t.Fatalf("expected the last WITH's alias, got %q", got)
 	}
@@ -739,48 +739,48 @@ func TestEnsureRowProducingPrefix(t *testing.T) {
 
 func TestHasTopLevelReturnClause_WithQuotes(t *testing.T) {
 	// RETURN inside single quotes.
-	if hasTopLevelReturnClause("MATCH (n {x: 'RETURN n'})", nil) {
+	if hasTopLevelReturnClause(t.Context(), "MATCH (n {x: 'RETURN n'})", nil) {
 		t.Fatal("expected RETURN in single quotes to be ignored")
 	}
 	// RETURN inside double quotes.
-	if hasTopLevelReturnClause(`MATCH (n {x: "RETURN n"})`, nil) {
+	if hasTopLevelReturnClause(t.Context(), `MATCH (n {x: "RETURN n"})`, nil) {
 		t.Fatal("expected RETURN in double quotes to be ignored")
 	}
 	// RETURN inside backticks.
-	if hasTopLevelReturnClause("MATCH (n) WITH `RETURN` AS x", nil) {
+	if hasTopLevelReturnClause(t.Context(), "MATCH (n) WITH `RETURN` AS x", nil) {
 		t.Fatal("expected RETURN in backticks to be ignored")
 	}
 	// RETURN inside braces.
-	if hasTopLevelReturnClause("CALL { RETURN 1 }", nil) {
+	if hasTopLevelReturnClause(t.Context(), "CALL { RETURN 1 }", nil) {
 		t.Fatal("expected RETURN inside braces to be ignored")
 	}
 	// RETURN inside parens.
-	if hasTopLevelReturnClause("MATCH (RETURN)", nil) {
+	if hasTopLevelReturnClause(t.Context(), "MATCH (RETURN)", nil) {
 		// "RETURN" after ( is inside paren depth.
 		t.Fatal("expected RETURN inside parens to be ignored")
 	}
 	// RETURN inside brackets.
-	if hasTopLevelReturnClause("[RETURN 1]", nil) {
+	if hasTopLevelReturnClause(t.Context(), "[RETURN 1]", nil) {
 		t.Fatal("expected RETURN inside brackets to be ignored")
 	}
 	// Top-level RETURN.
-	if !hasTopLevelReturnClause("MATCH (n) RETURN n", nil) {
+	if !hasTopLevelReturnClause(t.Context(), "MATCH (n) RETURN n", nil) {
 		t.Fatal("expected top-level RETURN to be detected")
 	}
 }
 
 func TestTrailingWithAliases_EdgeCases(t *testing.T) {
 	// No WITH.
-	if trailingWithAliases("MATCH (n)", nil) != nil {
+	if trailingWithAliases(t.Context(), "MATCH (n)", nil) != nil {
 		t.Fatal("expected nil for no WITH")
 	}
 	// WITH inside quotes should not match.
-	got := trailingWithAliases("MATCH (n {x: 'WITH foo'}) WITH a", nil)
+	got := trailingWithAliases(t.Context(), "MATCH (n {x: 'WITH foo'}) WITH a", nil)
 	if len(got) != 1 || got[0] != "a" {
 		t.Fatalf("expected [a], got %v", got)
 	}
 	// WITH inside backticks.
-	got = trailingWithAliases("MATCH (n) WITH `weird name` AS x", nil)
+	got = trailingWithAliases(t.Context(), "MATCH (n) WITH `weird name` AS x", nil)
 	// `weird name` is not a valid identifier, so AS alias "x" should be found.
 	// But the item with backtick goes through lastAsIndexFold which finds AS.
 	// alias = "x", cyphertext.IsIdentifier("x") = true.
@@ -788,22 +788,22 @@ func TestTrailingWithAliases_EdgeCases(t *testing.T) {
 		t.Fatalf("expected [x] with backtick alias, got %v", got)
 	}
 	// Empty WITH clause.
-	got = trailingWithAliases("WITH ", nil)
+	got = trailingWithAliases(t.Context(), "WITH ", nil)
 	if got != nil {
 		t.Fatalf("expected nil for empty WITH clause, got %v", got)
 	}
 	// WITH inside braces.
-	got = trailingWithAliases("CALL { WITH inner } WITH outer", nil)
+	got = trailingWithAliases(t.Context(), "CALL { WITH inner } WITH outer", nil)
 	if len(got) != 1 || got[0] != "outer" {
 		t.Fatalf("expected [outer], got %v", got)
 	}
 	// WITH inside double quotes.
-	got = trailingWithAliases(`MATCH (n) WITH "WITH" AS x`, nil)
+	got = trailingWithAliases(t.Context(), `MATCH (n) WITH "WITH" AS x`, nil)
 	if len(got) != 1 || got[0] != "x" {
 		t.Fatalf("expected [x], got %v", got)
 	}
 	// Non-valid identifier (has dot).
-	got = trailingWithAliases("WITH n.x", nil)
+	got = trailingWithAliases(t.Context(), "WITH n.x", nil)
 	if len(got) != 0 {
 		t.Fatalf("expected empty for non-valid identifier, got %v", got)
 	}
@@ -835,7 +835,7 @@ func TestIdentifierValidation(t *testing.T) {
 func TestExtractTopLevelCallBlocks_WithComments(t *testing.T) {
 	// Line comment.
 	query := "// comment\nCALL { RETURN 1 }\nRETURN x"
-	blocks, err := extractTopLevelCallBlocks(query, nil)
+	blocks, err := extractTopLevelCallBlocks(t.Context(), query, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -844,7 +844,7 @@ func TestExtractTopLevelCallBlocks_WithComments(t *testing.T) {
 	}
 	// Block comment.
 	query = "/* block comment */ CALL { RETURN 1 } RETURN x"
-	blocks, err = extractTopLevelCallBlocks(query, nil)
+	blocks, err = extractTopLevelCallBlocks(t.Context(), query, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -856,7 +856,7 @@ func TestExtractTopLevelCallBlocks_WithComments(t *testing.T) {
 func TestExtractTopLevelCallBlocks_InsideQuotes(t *testing.T) {
 	// CALL inside single-quoted string.
 	query := "RETURN 'CALL { RETURN 1 }' AS x"
-	blocks, err := extractTopLevelCallBlocks(query, nil)
+	blocks, err := extractTopLevelCallBlocks(t.Context(), query, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -868,7 +868,7 @@ func TestExtractTopLevelCallBlocks_InsideQuotes(t *testing.T) {
 func TestExtractTopLevelCallBlocks_CallWithoutBrace(t *testing.T) {
 	// CALL followed by non-brace (procedure call, not subquery).
 	query := "CALL db.procedure() RETURN x"
-	blocks, err := extractTopLevelCallBlocks(query, nil)
+	blocks, err := extractTopLevelCallBlocks(t.Context(), query, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -879,7 +879,7 @@ func TestExtractTopLevelCallBlocks_CallWithoutBrace(t *testing.T) {
 
 func TestExtractTopLevelCallBlocks_UnmatchedBrace(t *testing.T) {
 	query := "CALL { RETURN 1"
-	_, err := extractTopLevelCallBlocks(query, nil)
+	_, err := extractTopLevelCallBlocks(t.Context(), query, nil)
 	if err == nil {
 		t.Fatal("expected error for unmatched brace")
 	}
@@ -1102,12 +1102,12 @@ func TestHasGraphWithPrefix_Match(t *testing.T) {
 
 func TestSplitTopLevelUnion_EscapedQuotes(t *testing.T) {
 	// Single-quoted string with escaped quote containing UNION.
-	_, _, hasUnion, _ := splitTopLevelUnion("RETURN 'it''s a UNION' AS x", nil)
+	_, _, hasUnion, _ := splitTopLevelUnion(t.Context(), "RETURN 'it''s a UNION' AS x", nil)
 	if hasUnion {
 		t.Fatal("expected UNION inside escaped single quotes to be ignored")
 	}
 	// Double-quoted string with escaped quote containing UNION.
-	_, _, hasUnion, _ = splitTopLevelUnion(`RETURN "say ""UNION""" AS x`, nil)
+	_, _, hasUnion, _ = splitTopLevelUnion(t.Context(), `RETURN "say ""UNION""" AS x`, nil)
 	if hasUnion {
 		t.Fatal("expected UNION inside escaped double quotes to be ignored")
 	}
@@ -1141,7 +1141,7 @@ func TestParseLeadingUse_GraphRefError(t *testing.T) {
 
 func TestExtractTopLevelCallBlocks_QuotedCallBrace(t *testing.T) {
 	// CALL inside double-quoted string.
-	blocks, err := extractTopLevelCallBlocks(`RETURN "CALL { RETURN 1 }" AS x`, nil)
+	blocks, err := extractTopLevelCallBlocks(t.Context(), `RETURN "CALL { RETURN 1 }" AS x`, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1152,7 +1152,7 @@ func TestExtractTopLevelCallBlocks_QuotedCallBrace(t *testing.T) {
 
 func TestExtractTopLevelCallBlocks_EscapedQuotes(t *testing.T) {
 	// CALL inside single-quoted string with escaped quotes.
-	blocks, err := extractTopLevelCallBlocks("RETURN 'it''s CALL { }' AS x", nil)
+	blocks, err := extractTopLevelCallBlocks(t.Context(), "RETURN 'it''s CALL { }' AS x", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1160,7 +1160,7 @@ func TestExtractTopLevelCallBlocks_EscapedQuotes(t *testing.T) {
 		t.Fatalf("expected 0 blocks, got %d", len(blocks))
 	}
 	// CALL inside double-quoted string with escaped quotes.
-	blocks, err = extractTopLevelCallBlocks(`RETURN "say ""CALL { }""" AS x`, nil)
+	blocks, err = extractTopLevelCallBlocks(t.Context(), `RETURN "say ""CALL { }""" AS x`, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1194,14 +1194,14 @@ func TestCallBlockContainsFabricUse_NestedCallError(t *testing.T) {
 
 func TestSplitAtTopLevelUse_EscapedSingleQuote(t *testing.T) {
 	// Escaped single quote.
-	_, _, ok := splitAtTopLevelUse("MATCH (n {x: 'it''s USE db'}) RETURN n", nil)
+	_, _, ok := splitAtTopLevelUse(t.Context(), "MATCH (n {x: 'it''s USE db'}) RETURN n", nil)
 	if ok {
 		t.Fatal("expected USE inside escaped single quote to be ignored")
 	}
 }
 
 func TestSplitAtTopLevelUse_EscapedDoubleQuote(t *testing.T) {
-	_, _, ok := splitAtTopLevelUse(`MATCH (n {x: "say ""USE db"""}) RETURN n`, nil)
+	_, _, ok := splitAtTopLevelUse(t.Context(), `MATCH (n {x: "say ""USE db"""}) RETURN n`, nil)
 	if ok {
 		t.Fatal("expected USE inside escaped double quote to be ignored")
 	}
@@ -1209,30 +1209,30 @@ func TestSplitAtTopLevelUse_EscapedDoubleQuote(t *testing.T) {
 
 func TestHasTopLevelReturnClause_EscapedQuotes(t *testing.T) {
 	// Escaped single quote.
-	if !hasTopLevelReturnClause("MATCH (n {x: 'it''s'}) RETURN n", nil) {
+	if !hasTopLevelReturnClause(t.Context(), "MATCH (n {x: 'it''s'}) RETURN n", nil) {
 		t.Fatal("expected RETURN to be found after escaped single quote")
 	}
 	// Escaped double quote.
-	if !hasTopLevelReturnClause(`MATCH (n {x: "say ""hello"""}) RETURN n`, nil) {
+	if !hasTopLevelReturnClause(t.Context(), `MATCH (n {x: "say ""hello"""}) RETURN n`, nil) {
 		t.Fatal("expected RETURN to be found after escaped double quote")
 	}
 }
 
 func TestTrailingWithAliases_EscapedQuotes(t *testing.T) {
 	// Escaped single quote in WITH clause.
-	got := trailingWithAliases("MATCH (n {x: 'it''s'}) WITH a", nil)
+	got := trailingWithAliases(t.Context(), "MATCH (n {x: 'it''s'}) WITH a", nil)
 	if len(got) != 1 || got[0] != "a" {
 		t.Fatalf("expected [a], got %v", got)
 	}
 	// Escaped double quote.
-	got = trailingWithAliases(`MATCH (n {x: "say ""hi"""}) WITH b`, nil)
+	got = trailingWithAliases(t.Context(), `MATCH (n {x: "say ""hi"""}) WITH b`, nil)
 	if len(got) != 1 || got[0] != "b" {
 		t.Fatalf("expected [b], got %v", got)
 	}
 }
 
 func TestTrailingWithAliases_BracketsAndParens(t *testing.T) {
-	got := trailingWithAliases("WITH (WITH inside) AS x", nil)
+	got := trailingWithAliases(t.Context(), "WITH (WITH inside) AS x", nil)
 	// WITH inside parens depth → not detected as trailing WITH.
 	// Only the outer WITH at position 0 is found.
 	_ = got // Behavior depends on keyword matching — just ensure no panic.
@@ -1240,14 +1240,14 @@ func TestTrailingWithAliases_BracketsAndParens(t *testing.T) {
 
 func TestTrailingWithAliases_NonValidAlias(t *testing.T) {
 	// Expression without AS and non-valid identifier.
-	got := trailingWithAliases("WITH count(*)", nil)
+	got := trailingWithAliases(t.Context(), "WITH count(*)", nil)
 	if len(got) != 0 {
 		t.Fatalf("expected empty for non-valid identifier, got %v", got)
 	}
 }
 
 func TestTrailingWithAliases_AsNonValidAlias(t *testing.T) {
-	got := trailingWithAliases("WITH x AS 1invalid", nil)
+	got := trailingWithAliases(t.Context(), "WITH x AS 1invalid", nil)
 	if len(got) != 0 {
 		t.Fatalf("expected empty for invalid AS alias, got %v", got)
 	}
@@ -1268,7 +1268,7 @@ func TestFindMatchingBrace_EscapedQuotes(t *testing.T) {
 
 func TestTrailingWithAliases_BracketsAndBraces(t *testing.T) {
 	// WITH inside brackets.
-	got := trailingWithAliases("WITH [1, WITH, 3] AS arr", nil)
+	got := trailingWithAliases(t.Context(), "WITH [1, WITH, 3] AS arr", nil)
 	// keywordAt requires word boundary — "WITH" inside brackets at depth != 0 is skipped.
 	// The outer WITH at position 0 is found. Then "arr" is the alias.
 	// But actually the bracket depth is > 0 so the inner WITH is skipped.
@@ -1277,7 +1277,7 @@ func TestTrailingWithAliases_BracketsAndBraces(t *testing.T) {
 	}
 
 	// WITH inside braces.
-	got = trailingWithAliases("WITH {WITH: 1} AS m", nil)
+	got = trailingWithAliases(t.Context(), "WITH {WITH: 1} AS m", nil)
 	if len(got) == 0 {
 		t.Fatal("expected alias from brace-containing WITH")
 	}

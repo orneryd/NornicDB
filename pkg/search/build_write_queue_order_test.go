@@ -45,7 +45,7 @@ type temporalWindowEngine struct {
 	expired atomic.Bool
 }
 
-func (e *temporalWindowEngine) IsCurrentTemporalNode(node *storage.Node, _ time.Time) (bool, error) {
+func (e *temporalWindowEngine) IsCurrentTemporalNode(_ context.Context, node *storage.Node, _ time.Time) (bool, error) {
 	if node.Properties["window"] == "closing" && e.expired.Load() {
 		return false, nil
 	}

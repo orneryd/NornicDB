@@ -25,9 +25,9 @@ func TestHTTPMetrics_RegistersFiveFamilies(t *testing.T) {
 	// (client_golang skips empty *Vec families). InFlight is a plain Gauge
 	// so it surfaces unconditionally.
 	bag.Requests.WithLabelValues("GET", "/livez", "2xx").Inc()
-	bag.RequestDuration.Bind("GET", "/livez", "2xx").Observe(nil, 0.001)
-	bag.RequestBodyBytes.Bind("GET", "/livez").Observe(nil, 0)
-	bag.ResponseBodyBytes.Bind("GET", "/livez").Observe(nil, 0)
+	bag.RequestDuration.Bind("GET", "/livez", "2xx").Observe(t.Context(), 0.001)
+	bag.RequestBodyBytes.Bind("GET", "/livez").Observe(t.Context(), 0)
+	bag.ResponseBodyBytes.Bind("GET", "/livez").Observe(t.Context(), 0)
 
 	mfs, err := te.Registry.Gather()
 	require.NoError(t, err)
@@ -105,7 +105,7 @@ func TestHTTPMetrics_BindHelperRespectsTenantFlag(t *testing.T) {
 		bag := NewHTTPMetrics(te.Registry, false)
 		// Subsystem passes database unconditionally; helper drops it.
 		bound := bag.BindRequestDuration("GET", "/livez", "2xx", "ignored")
-		bound.Observe(nil, 0.001)
+		bound.Observe(t.Context(), 0.001)
 		bag.BindRequests("GET", "/livez", "2xx", "ignored").Inc()
 		// No panic + Gather succeeds = success.
 		_, err := te.Registry.Gather()
@@ -116,7 +116,7 @@ func TestHTTPMetrics_BindHelperRespectsTenantFlag(t *testing.T) {
 		te := NewTestEnv(t)
 		bag := NewHTTPMetrics(te.Registry, true)
 		bound := bag.BindRequestDuration("GET", "/db/{database}/foo", "2xx", "mydb")
-		bound.Observe(nil, 0.001)
+		bound.Observe(t.Context(), 0.001)
 		bag.BindRequests("GET", "/db/{database}/foo", "2xx", "mydb").Inc()
 		_, err := te.Registry.Gather()
 		require.NoError(t, err)
@@ -163,7 +163,7 @@ func TestMetricCardinality_HTTP(t *testing.T) {
 				for _, m := range methods {
 					for _, tmpl := range templates {
 						for _, sc := range AllowedStatusClasses {
-							bag.RequestDuration.Bind(m, tmpl, sc).Observe(nil, 0.001)
+							bag.RequestDuration.Bind(m, tmpl, sc).Observe(t.Context(), 0.001)
 						}
 					}
 				}
@@ -186,7 +186,7 @@ func TestMetricCardinality_HTTP(t *testing.T) {
 					for _, tmpl := range templates {
 						for _, sc := range AllowedStatusClasses {
 							for _, db := range databases {
-								bag.RequestDuration.Bind(m, tmpl, sc, db).Observe(nil, 0.001)
+								bag.RequestDuration.Bind(m, tmpl, sc, db).Observe(t.Context(), 0.001)
 							}
 						}
 					}

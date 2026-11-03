@@ -86,9 +86,6 @@ func (l *transactionLifecycle) begin(
 ) (retErr error) {
 	// Every failure returned here is a BEGIN failure, classified here.
 	defer func() { retErr = nornicerrors.TransactionControlFailure(nornicerrors.TerminalBegin, retErr) }()
-	if parent == nil {
-		parent = context.Background()
-	}
 	var timerRelease func()
 	timerTransferred := false
 	if timeout > 0 {

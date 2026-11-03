@@ -32,7 +32,7 @@ func TestDirectDeleteKernelPhysicalCompletion(t *testing.T) {
 	edges, e := b.EdgeCount(t.Context())
 	require.NoError(t, e)
 	require.Zero(t, edges)
-	require.NoError(t, b.FlushWriteBehind(nil))
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
 	_, err := b.GetNode(t.Context(), "test:delete")
 	require.ErrorIs(t, err, ErrNotFound)
 }

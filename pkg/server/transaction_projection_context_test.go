@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/txphase"
 	"github.com/stretchr/testify/require"
 )
 
@@ -35,6 +37,16 @@ func TestHTTPProjectionNativeFailureDoesNotPublishPartialRow(t *testing.T) {
 	require.Equal(t, receipt, response.Receipt)
 	require.Equal(t, "source-result-optimistic", response.Optimistic)
 	require.True(t, response.Eventual, "projection failure cannot erase supplied native outcome metadata")
+
+	ctx, cancel := txphase.WithExecutionDeadline(t.Context(), time.Minute)
+	defer cancel()
+	_, err = txphase.CommitContext(ctx)
+	require.NoError(t, err)
+	cancel()
+	err = server.appendStatementResult(ctx, response, result, "projection_root", false, []string{"row", "graph", "rest"})
+	require.ErrorIs(t, err, storage.ErrStorageClosed, "admitted projection must still report a real native read failure")
+	require.Equal(t, []QueryResult{prior}, response.Results)
+	require.Equal(t, receipt, response.Receipt)
 }
 
 func TestHTTPProjectionCancellationKeepsOriginalExecutionError(t *testing.T) {
@@ -52,4 +64,32 @@ func TestHTTPProjectionCancellationKeepsOriginalExecutionError(t *testing.T) {
 	require.Empty(t, response.Results)
 	require.Len(t, response.Errors, 1)
 	require.Equal(t, "Neo.ClientError.Statement.ArithmeticError", response.Errors[0].Code)
+}
+
+func TestHTTPProjectionAdmittedOutcomeKeepsOriginalFailure(t *testing.T) {
+	server, users := setupTestServer(t)
+	claims, err := users.ValidateToken(getAuthToken(t, users, "admin"))
+	require.NoError(t, err)
+	ctx, cancel := txphase.WithExecutionDeadline(t.Context(), time.Minute)
+	defer cancel()
+	original := errors.New("Neo.DatabaseError.Transaction.TransactionCommitFailed: accepted completion failed")
+	receipt := map[string]any{"id": "accepted-receipt"}
+	response := &TransactionResponse{}
+	failed := server.runRequestStatements(ctx, "", claims, "nornic", []StatementRequest{{Statement: "RETURN 7 AS value"}}, func(ctx context.Context, _, _ string, _ map[string]any) (*cypher.ExecuteResult, *cypher.StorageExecutor, error) {
+		_, err := txphase.CommitContext(ctx)
+		require.NoError(t, err)
+		cancel()
+		return &cypher.ExecuteResult{
+			Columns: []string{"value"}, Rows: [][]any{{int64(7)}},
+			Metadata: map[string]any{"receipt": receipt},
+		}, nil, original
+	}, func(message localization.Message) string { return "unused" }, response)
+	require.True(t, failed)
+	require.Len(t, response.Errors, 1)
+	require.Equal(t, "Neo.DatabaseError.Transaction.TransactionCommitFailed", response.Errors[0].Code)
+	require.Equal(t, "accepted completion failed", response.Errors[0].Message)
+	require.Equal(t, receipt, response.Receipt)
+	require.Len(t, response.Results, 1)
+	require.Equal(t, []interface{}{int64(7)}, response.Results[0].Data[0].Row)
+	require.ErrorIs(t, ctx.Err(), context.Canceled)
 }

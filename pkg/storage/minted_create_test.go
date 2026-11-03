@@ -41,7 +41,7 @@ func TestCreatePresenceReadSkipsOnlyMintedIDs(t *testing.T) {
 			}
 			require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: hiddenEdge, StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"key": "old"}}))
 			if buffered {
-				require.NoError(t, engine.FlushWriteBehind(nil))
+				require.NoError(t, engine.FlushWriteBehind(context.Background()))
 			}
 			require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityNodeKind, string(hiddenNode), true))
 			require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityEdgeKind, string(hiddenEdge), true))
@@ -128,7 +128,7 @@ func TestWALReplayCreateMeetsHiddenPredecessor(t *testing.T) {
 		hidden := NodeID("test:" + raw)
 		_, err = engine.CreateNode(t.Context(), &Node{ID: hidden, Labels: []string{"Original"}})
 		require.NoError(t, err)
-		require.NoError(t, engine.FlushWriteBehind(nil))
+		require.NoError(t, engine.FlushWriteBehind(context.Background()))
 		require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityNodeKind, string(hidden), true))
 
 		entryEncoder := getValueEncoder()

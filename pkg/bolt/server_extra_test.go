@@ -218,6 +218,7 @@ func TestDispatchMessage_UnknownType(t *testing.T) {
 	defer client.Close()
 
 	session := &Session{
+		server:     &Server{config: DefaultConfig()},
 		conn:       server,
 		reader:     bufio.NewReaderSize(server, 8192),
 		writer:     bufio.NewWriterSize(server, 8192),
@@ -269,6 +270,7 @@ func TestSessionRunWithMultipleResults(t *testing.T) {
 	defer client.Close()
 
 	session := &Session{
+		server:     &Server{config: DefaultConfig()},
 		conn:       server,
 		reader:     bufio.NewReaderSize(server, 8192),
 		writer:     bufio.NewWriterSize(server, 8192),
@@ -315,6 +317,7 @@ func TestHandlePullWithLimit(t *testing.T) {
 	defer client.Close()
 
 	session := &Session{
+		server:     &Server{config: DefaultConfig()},
 		conn:       server,
 		reader:     bufio.NewReaderSize(server, 8192),
 		writer:     bufio.NewWriterSize(server, 8192),

@@ -44,12 +44,17 @@ func TestWALBindingReuseKeepsRecordAuthority(t *testing.T) {
 			data.PropertyBindings = nil
 			require.ErrorContains(t, play(), "missing property name binding")
 			data.PropertyBindings = original
-			// A namespace reset reuses numeric IDs for different names. Replaying
-			// the exact same complete record must resolve through the new mapping.
+			// Deletion retains accepted transaction history. A new intent must
+			// resolve the unchanged binding table through the new numeric mapping.
 			_, _, err = destination.DeleteByPrefix("perf:")
 			require.NoError(t, err)
 			_, err = destination.CreateNode(t.Context(), &Node{ID: "perf:sentinel", Properties: map[string]any{"other": "keep"}})
 			require.NoError(t, err)
+			require.NoError(t, play())
+			_, err = destination.GetNode(t.Context(), "perf:a")
+			require.ErrorIs(t, err, ErrNotFound, "accepted history must not undo prefix deletion")
+			data.TxID = generateTxID()
+			require.Equal(t, original, data.PropertyBindings)
 			require.NoError(t, play())
 			node, err := destination.GetNode(t.Context(), "perf:a")
 			require.NoError(t, err)

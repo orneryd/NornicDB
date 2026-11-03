@@ -77,7 +77,10 @@ type rowValueProgram struct {
 
 // rowValueProgramFor returns expr's program, or nil when expr is to be
 // read from the text this time.
-func rowValueProgramFor(expr string) *rowValueProgram {
+func rowValueProgramFor(ctx context.Context, expr string) *rowValueProgram {
+	if ctx.Err() != nil {
+		return nil
+	}
 	if rowValueProgramsDisabled.Load() {
 		return nil
 	}
@@ -90,7 +93,10 @@ func rowValueProgramFor(expr string) *rowValueProgram {
 		return program
 	}
 	compiler := rowValueCompiler{}
-	root, _ := compiler.compile(expr)
+	root, _ := compiler.compile(ctx, expr)
+	if ctx.Err() != nil {
+		return nil
+	}
 	program = &rowValueProgram{root: root}
 	rowValuePrograms.put(expr, program)
 	return program
@@ -100,7 +106,11 @@ func rowValueProgramFor(expr string) *rowValueProgram {
 // resolved (an expression this evaluator can't evaluate is not), and the
 // statement error.
 func (e *StorageExecutor) evaluateRowValue(ctx context.Context, expr string, values map[string]interface{}) (interface{}, bool, error) {
-	if program := rowValueProgramFor(expr); program != nil {
+	program := rowValueProgramFor(ctx, expr)
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	if program != nil {
 		return program.root.eval(ctx, e, values, nil)
 	}
 	return runtimeRowResult(e.evaluateRowValueText(ctx, expr, values))
@@ -199,8 +209,8 @@ func (c *rowValueCompiler) compose(whole rowValueInfo, parts []rowValueNode, inf
 }
 
 // part compiles one part of a composite form.
-func (c *rowValueCompiler) part(expr string) (rowValueNode, rowValueInfo) {
-	return c.compile(expr)
+func (c *rowValueCompiler) part(ctx context.Context, expr string) (rowValueNode, rowValueInfo) {
+	return c.compile(ctx, expr)
 }
 
 func rowTextValue(expr string) (rowValueNode, rowValueInfo) {
@@ -217,8 +227,8 @@ func bound(expr string, node rowValueNode, info rowValueInfo) (rowValueNode, row
 }
 
 // compile compiles expr, running evaluateRowValueText's tests in its order.
-func (c *rowValueCompiler) compile(expr string) (rowValueNode, rowValueInfo) {
-	node, info := c.compileValue(expr)
+func (c *rowValueCompiler) compile(ctx context.Context, expr string) (rowValueNode, rowValueInfo) {
+	node, info := c.compileValue(ctx, expr)
 	return normalizeRowValueNode(node), info
 }
 
@@ -260,13 +270,13 @@ func (n *rowRuntimeValueNode) eval(ctx context.Context, e *StorageExecutor, valu
 	return runtimeRowResult(n.inner.eval(ctx, e, values, frames))
 }
 
-func (c *rowValueCompiler) compileValue(expr string) (rowValueNode, rowValueInfo) {
+func (c *rowValueCompiler) compileValue(ctx context.Context, expr string) (rowValueNode, rowValueInfo) {
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
 		return rowUnresolvedNode{}, rowValueInfo{pure: true, trivial: true}
 	}
 	if inner, ok := stripEnclosingExpressionParentheses(expr); ok {
-		return c.compile(inner)
+		return c.compile(ctx, inner)
 	}
 	if caseEnd := leadingCaseExpressionEnd(expr); caseEnd > 0 && strings.TrimSpace(expr[caseEnd:]) != "" && !hasTopLevelLogicalOperator(expr) {
 		return rowTextValue(expr)
@@ -298,7 +308,7 @@ func (c *rowValueCompiler) compileValue(expr string) (rowValueNode, rowValueInfo
 		return rowTextValue(expr)
 	}
 	if isCaseExpression(expr) {
-		return bound(expr, c.compileCase(expr), impureRowValue())
+		return bound(expr, c.compileCase(ctx, expr), impureRowValue())
 	}
 	if _, _, projection := mapProjectionSplit(expr, mapProjectionRuntime, nil); projection {
 		return rowTextValue(expr)
@@ -308,7 +318,7 @@ func (c *rowValueCompiler) compileValue(expr string) (rowValueNode, rowValueInfo
 	}
 	if inner, enclosed := stripEnclosingRowDelimiter(expr, '[', ']'); enclosed {
 		if variable, listExpression, predicate, projection, comprehension := parseListComprehension(inner); comprehension {
-			return c.compileComprehension(expr, variable, listExpression, predicate, projection)
+			return c.compileComprehension(ctx, expr, variable, listExpression, predicate, projection)
 		}
 		if inner == "" {
 			return bound(expr, rowEmptyListNode{}, rowValueInfo{pure: true, trivial: true})
@@ -317,7 +327,7 @@ func (c *rowValueCompiler) compileValue(expr string) (rowValueNode, rowValueInfo
 		parts := make([]rowValueNode, len(items))
 		infos := make([]rowValueInfo, len(items))
 		for i, item := range items {
-			parts[i], infos[i] = c.part(item)
+			parts[i], infos[i] = c.part(ctx, item)
 		}
 		info := combineRowValueInfo(infos...)
 		c.compose(info, parts, infos)
@@ -329,13 +339,13 @@ func (c *rowValueCompiler) compileValue(expr string) (rowValueNode, rowValueInfo
 
 		name := lowerASCII(function)
 		if isQuantifierFunction(name) {
-			variable, listExpression, predicate, parsed := parseQuantifierArguments(inner)
+			variable, listExpression, predicate, parsed := parseQuantifierArguments(ctx, inner)
 			if !parsed {
 				return rowTextValue(expr)
 			}
-			return c.compileQuantifier(expr, name, variable, listExpression, predicate)
+			return c.compileQuantifier(ctx, expr, name, variable, listExpression, predicate)
 		}
-		return c.compileFunction(expr, name, inner)
+		return c.compileFunction(ctx, expr, name, inner)
 	}
 	var buffer [8]string
 	if plan := planLogicalExpression(expr, buffer[:0]); plan.kind != logicalNone {
@@ -343,7 +353,7 @@ func (c *rowValueCompiler) compileValue(expr string) (rowValueNode, rowValueInfo
 		parts := make([]rowValueNode, len(plan.operands))
 		infos := make([]rowValueInfo, len(plan.operands))
 		for i, operand := range plan.operands {
-			parts[i], infos[i] = c.part(operand)
+			parts[i], infos[i] = c.part(ctx, operand)
 			if plan.kind == logicalOr && rowOperandRecordsFailure(operand) {
 				parts[i] = &rowDeferredOperandNode{operand: parts[i]}
 			}
@@ -361,7 +371,7 @@ func (c *rowValueCompiler) compileValue(expr string) (rowValueNode, rowValueInfo
 		infos := make([]rowValueInfo, scan.count+1)
 		for i := 0; i <= scan.count; i++ {
 			operand := scan.operand(expr, i)
-			parts[i], infos[i] = c.part(operand)
+			parts[i], infos[i] = c.part(ctx, operand)
 
 		}
 		info := combineRowValueInfo(infos...)
@@ -378,8 +388,8 @@ func (c *rowValueCompiler) compileValue(expr string) (rowValueNode, rowValueInfo
 		suffix  string
 		notNull bool
 	}{{suffix: " IS NOT NULL", notNull: true}, {suffix: " IS NULL"}} {
-		if operand, nullTest := nullPredicateOperand(expr, strings.TrimSpace(predicate.suffix)); nullTest {
-			operand, info := c.part(operand)
+		if operand, nullTest := nullPredicateOperand(ctx, expr, strings.TrimSpace(predicate.suffix)); nullTest {
+			operand, info := c.part(ctx, operand)
 			parts, infos := []rowValueNode{operand}, []rowValueInfo{info}
 			c.compose(info, parts, infos)
 			return bound(expr, &rowNullTestNode{operand: parts[0], notNull: predicate.notNull}, info)
@@ -390,8 +400,8 @@ func (c *rowValueCompiler) compileValue(expr string) (rowValueNode, rowValueInfo
 		negated  bool
 	}{{operator: " NOT IN ", negated: true}, {operator: " IN "}} {
 		if left, right, ok := splitByOperatorOutsideCase(expr, membership.operator, true, true); ok {
-			leftNode, leftInfo := c.part(left)
-			rightNode, rightInfo := c.part(right)
+			leftNode, leftInfo := c.part(ctx, left)
+			rightNode, rightInfo := c.part(ctx, right)
 			parts, infos := []rowValueNode{leftNode, rightNode}, []rowValueInfo{leftInfo, rightInfo}
 			info := combineRowValueInfo(infos...)
 			c.compose(info, parts, infos)
@@ -407,8 +417,8 @@ func (c *rowValueCompiler) compileValue(expr string) (rowValueNode, rowValueInfo
 		{operator: " CONTAINS ", match: strings.Contains},
 	} {
 		if left, right, ok := splitByOperatorOutsideCase(expr, predicate.operator, true, true); ok {
-			leftNode, leftInfo := c.part(left)
-			rightNode, rightInfo := c.part(right)
+			leftNode, leftInfo := c.part(ctx, left)
+			rightNode, rightInfo := c.part(ctx, right)
 			parts, infos := []rowValueNode{leftNode, rightNode}, []rowValueInfo{leftInfo, rightInfo}
 			info := combineRowValueInfo(infos...)
 			c.compose(info, parts, infos)
@@ -420,8 +430,8 @@ func (c *rowValueCompiler) compileValue(expr string) (rowValueNode, rowValueInfo
 	}
 	for _, tier := range []string{"+-", "*/%"} {
 		if left, right, operator, ok := splitRowArithmeticTier(expr, tier); ok {
-			leftNode, leftInfo := c.part(left)
-			rightNode, rightInfo := c.part(right)
+			leftNode, leftInfo := c.part(ctx, left)
+			rightNode, rightInfo := c.part(ctx, right)
 			parts, infos := []rowValueNode{leftNode, rightNode}, []rowValueInfo{leftInfo, rightInfo}
 			info := combineRowValueInfo(infos...)
 			c.compose(info, parts, infos)
@@ -451,7 +461,7 @@ func (c *rowValueCompiler) compileValue(expr string) (rowValueNode, rowValueInfo
 			}
 			return bound(expr, endpoint, impureRowValue())
 		}
-		base, info := c.part(strings.TrimSpace(expr[:dot]))
+		base, info := c.part(ctx, strings.TrimSpace(expr[:dot]))
 		parts, infos := []rowValueNode{base}, []rowValueInfo{info}
 		c.compose(info, parts, infos)
 		return bound(expr, &rowPropertyNode{text: expr, base: parts[0], chain: strings.TrimSpace(expr[dot+1:])}, info)
@@ -468,7 +478,7 @@ func (c *rowValueCompiler) compileValue(expr string) (rowValueNode, rowValueInfo
 // itself; any other is read from the text. None of these names is a
 // temporal, math, extension, plugin (those have a dot) or GDS function,
 // which evaluateRowValueText tries first.
-func (c *rowValueCompiler) compileFunction(expr, name, argument string) (rowValueNode, rowValueInfo) {
+func (c *rowValueCompiler) compileFunction(ctx context.Context, expr, name, argument string) (rowValueNode, rowValueInfo) {
 	switch name {
 	case "startnode", "endnode":
 		variable := strings.TrimSpace(argument)
@@ -477,7 +487,7 @@ func (c *rowValueCompiler) compileFunction(expr, name, argument string) (rowValu
 		}
 		return bound(expr, &rowEndpointNode{text: expr, function: name, variable: variable}, rowValueInfo{pure: true, refs: []string{variable}})
 	case "size", "head", "last", "reverse", "type":
-		operand, operandInfo := c.part(argument)
+		operand, operandInfo := c.part(ctx, argument)
 		info := combineRowValueInfo(operandInfo)
 		parts, infos := []rowValueNode{operand}, []rowValueInfo{operandInfo}
 		c.compose(info, parts, infos)
@@ -487,7 +497,7 @@ func (c *rowValueCompiler) compileFunction(expr, name, argument string) (rowValu
 		parts := make([]rowValueNode, len(operands))
 		infos := make([]rowValueInfo, len(operands))
 		for i, operand := range operands {
-			parts[i], infos[i] = c.part(operand)
+			parts[i], infos[i] = c.part(ctx, operand)
 
 		}
 		info := combineRowValueInfo(infos...)
@@ -498,66 +508,66 @@ func (c *rowValueCompiler) compileFunction(expr, name, argument string) (rowValu
 		if !ok {
 			return rowTextValue(expr)
 		}
-		return c.compileReduce(expr, form)
+		return c.compileReduce(ctx, expr, form)
 	}
 	return rowTextValue(expr)
 }
 
 // compileLoopBody compiles a per-element part of a list evaluation over
 // variable.
-func (c *rowValueCompiler) compileLoopBody(loop *rowValueLoop, expr string) rowValueNode {
+func (c *rowValueCompiler) compileLoopBody(ctx context.Context, loop *rowValueLoop, expr string) rowValueNode {
 	if expr == "" {
 		return nil
 	}
 	c.loops = append(c.loops, loop)
-	node, info := c.compile(expr)
+	node, info := c.compile(ctx, expr)
 	node = c.hoist(node, info)
 	c.loops = c.loops[:len(c.loops)-1]
 	return node
 }
 
-func (c *rowValueCompiler) compileQuantifier(expr, function, variable, listExpression, predicate string) (rowValueNode, rowValueInfo) {
-	list, listInfo := c.part(listExpression)
+func (c *rowValueCompiler) compileQuantifier(ctx context.Context, expr, function, variable, listExpression, predicate string) (rowValueNode, rowValueInfo) {
+	list, listInfo := c.part(ctx, listExpression)
 	parts, infos := []rowValueNode{list}, []rowValueInfo{listInfo}
 	c.compose(impureRowValue(), parts, infos)
 	loop := &rowValueLoop{variables: []string{variable}}
-	body := c.compileLoopBody(loop, predicate)
+	body := c.compileLoopBody(ctx, loop, predicate)
 	return bound(expr, &rowQuantifierNode{function: function, variable: variable, list: parts[0], predicate: body, loop: loop}, impureRowValue())
 }
 
-func (c *rowValueCompiler) compileComprehension(expr, variable, listExpression, predicate, projection string) (rowValueNode, rowValueInfo) {
+func (c *rowValueCompiler) compileComprehension(ctx context.Context, expr, variable, listExpression, predicate, projection string) (rowValueNode, rowValueInfo) {
 	if predicate != "" && containsRelationshipPattern(predicate) {
 		return rowTextValue(expr)
 	}
-	list, listInfo := c.part(listExpression)
+	list, listInfo := c.part(ctx, listExpression)
 	parts, infos := []rowValueNode{list}, []rowValueInfo{listInfo}
 	c.compose(impureRowValue(), parts, infos)
 	loop := &rowValueLoop{variables: []string{variable}}
 	node := &rowComprehensionNode{variable: variable, list: parts[0], loop: loop}
-	node.predicate = c.compileLoopBody(loop, predicate)
-	node.projection = c.compileLoopBody(loop, projection)
+	node.predicate = c.compileLoopBody(ctx, loop, predicate)
+	node.projection = c.compileLoopBody(ctx, loop, projection)
 	return bound(expr, node, impureRowValue())
 }
 
 // compileReduce compiles reduce / allReduce as evaluateRowReduce evaluates
 // it: a list evaluation whose step and predicate read the accumulator and
 // the variable.
-func (c *rowValueCompiler) compileReduce(expr string, form reduceForm) (rowValueNode, rowValueInfo) {
-	initial, initialInfo := c.part(form.initial)
-	list, listInfo := c.part(form.list)
+func (c *rowValueCompiler) compileReduce(ctx context.Context, expr string, form reduceForm) (rowValueNode, rowValueInfo) {
+	initial, initialInfo := c.part(ctx, form.initial)
+	list, listInfo := c.part(ctx, form.list)
 	parts, infos := []rowValueNode{initial, list}, []rowValueInfo{initialInfo, listInfo}
 	c.compose(impureRowValue(), parts, infos)
 	loop := &rowValueLoop{variables: []string{form.accumulator, form.variable}}
 	node := &rowReduceNode{form: form, initial: parts[0], list: parts[1], loop: loop}
-	node.step = c.compileLoopBody(loop, form.step)
+	node.step = c.compileLoopBody(ctx, loop, form.step)
 	if form.all {
-		if node.predicate = c.compileLoopBody(loop, form.predicate); node.predicate == nil {
+		if node.predicate = c.compileLoopBody(ctx, loop, form.predicate); node.predicate == nil {
 			node.predicate = rowUnresolvedNode{}
 		}
 	}
-	if plan := form.appendPlan(); plan != nil {
+	if plan := form.appendPlan(ctx); plan != nil {
 		for _, term := range plan.terms {
-			node.terms = append(node.terms, c.compileLoopBody(loop, term))
+			node.terms = append(node.terms, c.compileLoopBody(ctx, loop, term))
 		}
 	}
 	return bound(expr, node, impureRowValue())
@@ -591,34 +601,34 @@ func (n *rowReduceNode) eval(ctx context.Context, e *StorageExecutor, values map
 	if len(n.terms) > 0 {
 		term = func(index int) (interface{}, bool, error) { return n.terms[index].eval(ctx, e, scope, inner) }
 	}
-	return rowReduceLoop(n.form, accumulator, listValue, scope,
+	return rowReduceLoop(ctx, n.form, accumulator, listValue, scope,
 		func() (interface{}, bool, error) { return n.step.eval(ctx, e, scope, inner) },
 		func() (interface{}, bool, error) { return n.predicate.eval(ctx, e, scope, inner) }, term)
 }
 
 // compileCase compiles a CASE expression as evaluateRowCaseExpression
 // evaluates it.
-func (c *rowValueCompiler) compileCase(expr string) *rowCaseNode {
+func (c *rowValueCompiler) compileCase(ctx context.Context, expr string) *rowCaseNode {
 	parsed, err := parseCaseExpression(expr)
 	if err != nil {
 		return &rowCaseNode{}
 	}
 	node := &rowCaseNode{parsed: parsed}
 	if parsed.isSimple {
-		node.test, _ = c.compile(parsed.testExpression)
+		node.test, _ = c.compile(ctx, parsed.testExpression)
 	}
 	node.whens = make([]rowValueNode, len(parsed.whenClauses))
 	node.results = make([]rowValueNode, len(parsed.whenClauses))
 	for i, clause := range parsed.whenClauses {
 		if parsed.isSimple {
-			node.whens[i], _ = c.compile(clause.value)
+			node.whens[i], _ = c.compile(ctx, clause.value)
 		} else {
-			node.whens[i], _ = c.compile(clause.condition)
+			node.whens[i], _ = c.compile(ctx, clause.condition)
 		}
-		node.results[i], _ = c.compile(clause.result)
+		node.results[i], _ = c.compile(ctx, clause.result)
 	}
 	if parsed.elseResult != "" {
-		node.elseResult, _ = c.compile(parsed.elseResult)
+		node.elseResult, _ = c.compile(ctx, parsed.elseResult)
 	}
 	return node
 }
@@ -666,7 +676,7 @@ type rowSubqueryNode struct {
 }
 
 func (n *rowSubqueryNode) eval(ctx context.Context, e *StorageExecutor, values map[string]interface{}, _ [][]rowValueMemo) (interface{}, bool, error) {
-	value, resolved, err := e.rowSubqueryValue(ctx, n.kind, n.body, values)
+	value, resolved, err := e.evaluateRowSubqueryBody(n.kind, n.body, values)
 	if err != nil {
 		return nil, false, err
 	}

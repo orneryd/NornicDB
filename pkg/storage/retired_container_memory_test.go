@@ -36,7 +36,7 @@ func TestRetiredStorageStringsCollectible(t *testing.T) {
 			owner.add(&Node{ID: "test:keep", Labels: []string{"L"}, Properties: map[string]any{"v": 1}})
 			node := &Node{ID: NodeID(key), Labels: []string{"L"}, Properties: map[string]any{"v": 1}}
 			owner.add(node)
-			require.NoError(t, owner.remove(t.Context(), node))
+			owner.remove(node)
 			return owner
 		},
 		"snapshot_node_order": func(key string) any {

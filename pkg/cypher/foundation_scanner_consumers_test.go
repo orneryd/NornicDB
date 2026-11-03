@@ -24,13 +24,13 @@ func TestFoundationScannerConsumers(t *testing.T) {
 		for _, source := range []string{"n.`a,b`, n.x", "n.a /* , ) */, n.x", "[1,2], n.x", "{a:1,b:2}, n.x", "'a,b', 1e-3"} {
 			require.Len(t, splitTopLevelComma(source), 2, source)
 		}
-		require.Len(t, e.parseOrderBySpecs("n.`a,b`, n.x DESC", []string{"n.`a,b`", "n.x"}), 2)
-		specs := e.parseOrderBySpecs("n.`a b` DESC /* , */, n.x", []string{"n.`a b`", "n.x"})
+		require.Len(t, e.parseOrderBySpecs(t.Context(), "n.`a,b`, n.x DESC", []string{"n.`a,b`", "n.x"}), 2)
+		specs := e.parseOrderBySpecs(t.Context(), "n.`a b` DESC /* , */, n.x", []string{"n.`a b`", "n.x"})
 		require.Len(t, specs, 2)
 		require.True(t, specs[0].descending)
 		nodes := []*storage.Node{{Properties: map[string]interface{}{"a,b": int64(2)}}, {Properties: map[string]interface{}{"a,b": int64(1)}}}
-		require.EqualValues(t, 1, e.orderNodes(nodes, "n", "n.`a,b`")[0].Properties["a,b"])
-		indexed, ok := e.parseNodeOrderSpecs("n.`a,b` DESC /* , */, n.x", "n")
+		require.EqualValues(t, 1, e.orderNodes(t.Context(), nodes, "n", "n.`a,b`")[0].Properties["a,b"])
+		indexed, ok := e.parseNodeOrderSpecs(t.Context(), "n.`a,b` DESC /* , */, n.x", "n")
 		require.True(t, ok)
 		require.Len(t, indexed, 2)
 		require.Equal(t, "a,b", indexed[0].propName)
@@ -38,13 +38,13 @@ func TestFoundationScannerConsumers(t *testing.T) {
 	t.Run("list token closure and exponents", func(t *testing.T) {
 		for _, source := range []string{"'open", "\"open"} {
 			require.NotPanics(t, func() {
-				end, kind, _ := staticListOperand(source, 0, nil)
+				end, kind, _ := staticListOperand(t.Context(), source, 0, nil)
 				require.LessOrEqual(t, end, len(source))
 				require.Empty(t, kind)
 			})
 		}
 		for _, source := range []string{"'a\\'b'", "\"a,b\"", "1e-3", "2E+4"} {
-			end, _, _ := staticListOperand(source+" IN []", 0, nil)
+			end, _, _ := staticListOperand(t.Context(), source+" IN []", 0, nil)
 			require.Equal(t, len(source), end, source)
 		}
 		require.Equal(t, []string{"1e-3 ", "+", " 2E+4"}, splitArithmeticExpression("1e-3 + 2E+4"))

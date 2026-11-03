@@ -150,7 +150,7 @@ func TestFabricIdleHTTPTransactionCompletes(t *testing.T) {
 	t.Cleanup(remoteHTTP.Close)
 	coordinator, authenticator := setupTestServer(t)
 	const ttl = 50 * time.Millisecond
-	coordinator.txSessions = txsession.NewManager(ttl, coordinator.newExecutorForDatabase)
+	coordinator.txSessions = txsession.NewManager(ttl, coordinator.newExecutorForDatabase, t.Context())
 	localHTTP := httptest.NewServer(coordinator.buildRouter())
 	t.Cleanup(localHTTP.Close)
 	token := "Bearer " + getAuthToken(t, authenticator, "admin")

@@ -129,7 +129,7 @@ func TestStoredEntityPublicationBufferedAckOnce(t *testing.T) {
 	second, err := b.GetNode(t.Context(), "test:a")
 	require.NoError(t, err)
 	assertStoredNodeImage(t, second, events[1].Changes[0].AfterNode)
-	require.NoError(t, b.FlushWriteBehind(nil))
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
 	require.Len(t, events, 2, "physical replay does not charge acknowledged commits again")
 }
 

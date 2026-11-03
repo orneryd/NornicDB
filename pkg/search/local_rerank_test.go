@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"errors"
 	"math"
 	"testing"
 )
@@ -169,13 +170,43 @@ type captureScorer struct {
 	score   float32
 }
 
+type contextScorer func(context.Context, string, string) (float32, error)
+
+func (s contextScorer) Score(ctx context.Context, query, document string) (float32, error) {
+	return s(ctx, query, document)
+}
+
+func TestLocalReranker_RetainsRequestContext(t *testing.T) {
+	type key struct{}
+	ctx, cancel := context.WithCancel(context.WithValue(t.Context(), key{}, "request"))
+	scorer := contextScorer(func(actual context.Context, _, _ string) (float32, error) {
+		if actual.Value(key{}) != "request" {
+			t.Fatal("scorer lost the request values")
+		}
+		cancel()
+		return 0, actual.Err()
+	})
+	admitted, finished := false, false
+	r := NewLocalReranker(scorer, DefaultLocalRerankerConfig(), func(actual context.Context) (context.Context, func(), error) {
+		if actual != ctx {
+			t.Fatal("admission replaced the request")
+		}
+		admitted = true
+		return actual, func() { finished = true }, nil
+	})
+	results, err := r.Rerank(ctx, "query", []RerankCandidate{{ID: "one", Content: "document"}})
+	if !errors.Is(err, context.Canceled) || results != nil || !admitted || !finished {
+		t.Fatalf("results=%v err=%v admitted=%v finished=%v", results, err, admitted, finished)
+	}
+}
+
 func (c *captureScorer) Score(ctx context.Context, query, document string) (float32, error) {
 	c.queries = append(c.queries, query)
 	c.docs = append(c.docs, document)
 	return c.score, nil
 }
 
-func TestLocalReranker_RerankNilContextCapsAndTruncates(t *testing.T) {
+func TestLocalReranker_RerankCapsAndTruncates(t *testing.T) {
 	scorer := &captureScorer{score: 0.75}
 	cfg := &LocalRerankerConfig{
 		Enabled:       true,
@@ -185,8 +216,7 @@ func TestLocalReranker_RerankNilContextCapsAndTruncates(t *testing.T) {
 	}
 	r := NewLocalReranker(scorer, cfg, testRerankAdmission())
 
-	var nilCtx context.Context
-	results, err := r.Rerank(nilCtx, " query ", []RerankCandidate{
+	results, err := r.Rerank(t.Context(), " query ", []RerankCandidate{
 		{ID: "a", Content: " abcdef ", Score: 0.1},
 		{ID: "b", Content: "second", Score: 0.2},
 	})

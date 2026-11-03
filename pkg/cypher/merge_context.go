@@ -480,7 +480,7 @@ func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context,
 
 	writes := setWrites{known: propertyKeyLookup(e.getStorage(ctx))}
 	var run setPropertyRun
-	for segment, next, ok := nextChainedSetClause(setClause, 0); ok; segment, next, ok = nextChainedSetClause(setClause, next) {
+	for segment, next, ok := nextChainedSetClause(ctx, setClause, 0); ok; segment, next, ok = nextChainedSetClause(ctx, setClause, next) {
 		run.applyToRelationship(edge, &writes)
 		writes.endRun()
 		for _, assignment := range splitSetAssignments(segment) {
@@ -564,7 +564,7 @@ func (e *StorageExecutor) applySetToNodeWithContext(ctx context.Context, node *s
 
 	writes := setWrites{known: propertyKeyLookup(e.getStorage(ctx))}
 	var run setPropertyRun
-	for segment, next, ok := nextChainedSetClause(setClause, 0); ok; segment, next, ok = nextChainedSetClause(setClause, next) {
+	for segment, next, ok := nextChainedSetClause(ctx, setClause, 0); ok; segment, next, ok = nextChainedSetClause(ctx, setClause, next) {
 		writes.endRun()
 		if err := e.applyNodeSetClause(ctx, node, varName, segment, fullContext, relContext, &writes, &run); err != nil {
 			return writes.count, err

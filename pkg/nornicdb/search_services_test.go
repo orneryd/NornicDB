@@ -587,7 +587,7 @@ func TestSearchServices_RunClusteringOnceAllDatabases(t *testing.T) {
 		db := openClusteringTestCache(t)
 
 		require.NotPanics(t, func() {
-			db.runClusteringOnceAllDatabases(nil)
+			db.runClusteringOnceAllDatabases(context.Background())
 		})
 		require.NotPanics(t, func() {
 			db.runClusteringOnceAllDatabases(context.TODO())
@@ -802,7 +802,7 @@ func TestSearchServices_RerankerStatusAndBuildStartHelpers(t *testing.T) {
 	require.Equal(t, "not_initialized", nilSvc.Phase)
 
 	// Start build without waiting; helper should return service and initialize status.
-	startedSvc, err := db.EnsureSearchIndexes(nil, "tenant_cov", nil, SearchIndexBuildStart)
+	startedSvc, err := db.EnsureSearchIndexes(t.Context(), "tenant_cov", nil, SearchIndexBuildStart)
 	require.NoError(t, err)
 	require.Same(t, svc, startedSvc)
 
@@ -823,7 +823,7 @@ func TestSearchServices_StartBuildDefaultAndClosedBranches(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	// Empty dbName should resolve to default database.
-	svc, err := db.EnsureSearchIndexes(nil, "", db.storage, SearchIndexBuildStart)
+	svc, err := db.EnsureSearchIndexes(t.Context(), "", db.storage, SearchIndexBuildStart)
 	require.NoError(t, err)
 	require.NotNil(t, svc)
 
@@ -914,7 +914,7 @@ func TestSearchServices_EnsureBuiltAndStart_ErrorBranches(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = db.Close() })
 
-		_, err = db.EnsureSearchIndexes(nil, "system", nil, SearchIndexBuildStart)
+		_, err = db.EnsureSearchIndexes(t.Context(), "system", nil, SearchIndexBuildStart)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "system database")
 	})
@@ -953,7 +953,7 @@ func TestSearchServices_EnsureIndexesModes(t *testing.T) {
 		// A held initial build stays open: only a mode that does not wait
 		// can return.
 		t.Cleanup(holdInitialBuild(entry))
-		svc, err := db.EnsureSearchIndexes(nil, dbName, nil, SearchIndexBuildStart)
+		svc, err := db.EnsureSearchIndexes(t.Context(), dbName, nil, SearchIndexBuildStart)
 		require.NoError(t, err)
 		require.Same(t, entry.svc, svc)
 		require.False(t, svc.GetBuildProgress().Ready)
@@ -961,7 +961,7 @@ func TestSearchServices_EnsureIndexesModes(t *testing.T) {
 
 	t.Run("wait reports the build that a prior start initiated", func(t *testing.T) {
 		db, entry, dbName := start(t)
-		_, err := db.EnsureSearchIndexes(nil, dbName, nil, SearchIndexBuildStart)
+		_, err := db.EnsureSearchIndexes(t.Context(), dbName, nil, SearchIndexBuildStart)
 		require.NoError(t, err)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -1048,7 +1048,7 @@ func TestSearchServices_OffLazyStatsAndRemoveBranches(t *testing.T) {
 	require.False(t, lazyStatus.Ready)
 	require.True(t, lazyStatus.LazyTriggerNeeded)
 
-	startedLazy, err := db.EnsureSearchIndexes(nil, "lazy_started_cov", nil, SearchIndexBuildStart)
+	startedLazy, err := db.EnsureSearchIndexes(t.Context(), "lazy_started_cov", nil, SearchIndexBuildStart)
 	require.NoError(t, err)
 	require.NotNil(t, startedLazy)
 	require.False(t, startedLazy.GetBuildProgress().Ready)
@@ -1332,7 +1332,7 @@ func TestSearchServices_EventDuringBuild_IsDeterministicallyReplay(t *testing.T)
 				})
 				require.NoError(t, err)
 			}
-			_, err = db.EnsureSearchIndexes(nil, tc.dbName, blocking, SearchIndexBuildStart)
+			_, err = db.EnsureSearchIndexes(t.Context(), tc.dbName, blocking, SearchIndexBuildStart)
 			require.NoError(t, err)
 
 			select {

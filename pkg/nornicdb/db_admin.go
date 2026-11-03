@@ -1917,7 +1917,7 @@ func (db *DB) searchAfterInitialBuild(ctx context.Context, run func() (*search.S
 		// Both signals can be ready; the wait may report a successful build
 		// even though the caller's context has already ended.
 		switch {
-		case ctx != nil && ctx.Err() != nil:
+		case ctx.Err() != nil:
 			return nil, ctx.Err()
 		case waitErr == nil:
 			response, err = run()

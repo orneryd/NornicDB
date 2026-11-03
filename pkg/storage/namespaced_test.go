@@ -141,13 +141,16 @@ func (e *namespacedHelperEngine) StreamNodeChunks(ctx context.Context, chunkSize
 	return nil
 }
 
-func (e *namespacedHelperEngine) FindNodeNeedingEmbedding(ctx context.Context) *Node {
+func (e *namespacedHelperEngine) FindNodeNeedingEmbedding(ctx context.Context) (*Node, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if len(e.findQueue) == 0 {
-		return nil
+		return nil, nil
 	}
 	node := CopyNode(e.findQueue[0])
 	e.findQueue = e.findQueue[1:]
-	return node
+	return node, nil
 }
 
 func (e *namespacedHelperEngine) RefreshPendingEmbeddingsIndex() int {

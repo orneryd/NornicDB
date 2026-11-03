@@ -9,6 +9,8 @@ package capturecensus
 // unproved variant still reports.
 
 import (
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -302,8 +304,8 @@ func TestNilResultCorrelationProvesTheCaptureAndKeepsEveryOtherFlow(t *testing.T
 
 // TestNilResultCorrelationRealSources reads the current provider and search
 // lifetime owners in their own packages: the same-call error test before each
-// capture is now a recorded proof, and the other nil sources of those packages
-// stay reported.
+// capture is a recorded proof. Actual-source mutation controls ensure that
+// removing the result/error correlation restores the finding.
 func TestNilResultCorrelationRealSources(t *testing.T) {
 	const (
 		provider = "result of (*github.com/orneryd/nornicdb/pkg/nornicdb.DB).beginProviderUse"
@@ -313,7 +315,7 @@ func TestNilResultCorrelationRealSources(t *testing.T) {
 	facts, err := Extract(c, StoragePolicy())
 	require.NoError(t, err)
 	flows := nilContextFlows(facts)
-	require.NotEmpty(t, flows, "the other nil sources of these packages must stay reported")
+	require.Empty(t, flows, "all current nil flows in the corrected source population must be resolved")
 	t.Logf("nil flows=%d outside the boundary=%d", len(flows), len(facts.NilContextsElsewhere))
 	for _, flow := range flows {
 		require.NotContains(t, flow, provider, "a nil provider result reaches the boundary")
@@ -334,18 +336,29 @@ func TestNilResultCorrelationRealSources(t *testing.T) {
 		require.NotZero(t, proofs["proof: reaching store before the capture of ctx of "+capture], "the capture in %s must be judged at its reaching store: %v", capture, proofs)
 	}
 	require.NotZero(t, proofs["proof: return with a non-nil error excluded by the caller's check"], "the callee's error returns must be excluded by the caller's check")
-	// The same correlation governs the nil flows of code that reaches no
-	// boundary reader: they stay listed there, and the two owners are gone.
+	// The same correlation governs nil flows of code that reaches no boundary
+	// reader: they stay listed there.
 	for _, finding := range facts.NilContextsElsewhere {
 		require.NotContains(t, finding, provider)
 		require.NotContains(t, finding, reading)
 	}
-	// The unqualified populations of these packages are untouched.
-	var other int
-	for _, flow := range flows {
-		if strings.Contains(flow, "zero field commitCtx") || strings.Contains(flow, "zero field drainContext") {
-			other++
+}
+
+func TestNilResultCorrelationActualSourceMutant(t *testing.T) {
+	c := storageNilContextConfig(t, "./pkg/storage", "./pkg/search")
+	path := filepath.Join(c.Dir, "pkg/search/lifetime.go")
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	const before = "if !accepted {\n\t\treturn nil, nil, context.Canceled\n\t}"
+	require.Equal(t, 1, strings.Count(string(raw), before), "actual admission-refusal anchor changed")
+	c.Overlay = map[string][]byte{path: []byte(strings.Replace(string(raw), before, "if !accepted {\n\t\treturn nil, nil, nil\n\t}", 1))}
+	facts, err := Extract(c, StoragePolicy())
+	require.NoError(t, err)
+	var unpaired []string
+	for _, flow := range nilContextFlows(facts) {
+		if strings.Contains(flow, "result of (*github.com/orneryd/nornicdb/pkg/search.Service).beginRead") {
+			unpaired = append(unpaired, flow)
 		}
 	}
-	require.NotZero(t, other, "out-of-scope nil sources remain reported")
+	require.NotEmpty(t, unpaired, "an actual successful nil admission must not inherit the checked-error proof")
 }

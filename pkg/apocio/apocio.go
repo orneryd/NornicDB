@@ -320,10 +320,8 @@ func WithCapability(ctx context.Context, c Capability) context.Context {
 // ErrCapabilityMissing when ctx carries none: APOC I/O does not fall back to
 // unrestricted access.
 func CapabilityFrom(ctx context.Context) (Capability, error) {
-	if ctx != nil {
-		if c, ok := ctx.Value(CapabilityKey{}).(Capability); ok && c.record != nil {
-			return c, nil
-		}
+	if c, ok := ctx.Value(CapabilityKey{}).(Capability); ok && c.record != nil {
+		return c, nil
 	}
 	return Capability{}, ErrCapabilityMissing
 }

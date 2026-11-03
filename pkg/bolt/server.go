@@ -1970,7 +1970,7 @@ func (s *Session) dispatchMessage(msgType byte, data []byte, reservations ...*me
 // sibling so the metrics wrapper above stays a thin chokepoint.
 func (s *Session) dispatchInner(msgType byte, data []byte, op string, lease *memory.WireRequest) error {
 	// TRC-13: per-message span, child of session span.
-	_, msgSpan := startMessageSpan(s.spanCtx, op)
+	_, msgSpan := startMessageSpan(s.parentContext(), op)
 	defer func() {
 		msgSpan.End()
 	}()

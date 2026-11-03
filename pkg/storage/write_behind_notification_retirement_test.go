@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
@@ -37,13 +38,13 @@ func TestReplayNotificationRetiresGenerationBeforeConcurrentListenerFlush(t *tes
 			return
 		}
 		close(listenerEntered)
-		listenerDone <- b.FlushWriteBehind(nil)
+		listenerDone <- b.FlushWriteBehind(context.Background())
 	})
 	bufferedCreate(t, b, &Node{ID: "test:notification-retirement"})
 	if _, rotateErr := b.writeBehind.rotate(t.Context()); rotateErr != nil {
 		t.Fatal(rotateErr)
 	}
-	go func() { defer close(drained); originalFlushDone <- b.FlushWriteBehind(nil) }()
+	go func() { defer close(drained); originalFlushDone <- b.FlushWriteBehind(context.Background()) }()
 	var generation *CommitBuffer
 	select {
 	case generation = <-applied:

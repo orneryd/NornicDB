@@ -238,7 +238,7 @@ func TestPreparedEntityAuthorityRetainsOnlyItsCanonicalHold(t *testing.T) {
 				require.Equal(t, wantValues, values, "%s: value keys stay exclusively owned", stage)
 			}
 			check("prepared", preparedExpected, 1)
-			releaseAccepted, err := p.RetainAcceptedAuthority(nil)
+			releaseAccepted, err := p.RetainAcceptedAuthority(context.Background())
 			require.NoError(t, err)
 			defer releaseAccepted()
 			check("accepted", acceptedExpected, 2)

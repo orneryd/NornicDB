@@ -352,7 +352,7 @@ func (b *BadgerEngine) deleteByPrefixHeld(ctx context.Context, prefix string, li
 
 	var publishUsage func()
 	if !wholeNamespace {
-		publishUsage, err = b.prepareDeletedEntityPublication(nodeNums, edgeNums)
+		publishUsage, err = b.prepareDeletedEntityPublication(ctx, nodeNums, edgeNums)
 		if err != nil {
 			return 0, 0, nil, err
 		}
@@ -425,7 +425,7 @@ func (b *BadgerEngine) deleteByPrefixHeld(ctx context.Context, prefix string, li
 
 	deleteIndexEntriesBySuffixPrefix := func(indexPrefix byte) error {
 		indexKeyPrefix := []byte{indexPrefix}
-		wb := b.db.NewWriteBatch(context.Background())
+		wb := b.db.NewWriteBatch(context.WithoutCancel(ctx))
 		defer wb.Cancel()
 
 		const flushEvery = 50_000

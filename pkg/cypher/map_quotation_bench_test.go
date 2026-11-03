@@ -14,7 +14,7 @@ func BenchmarkTopLevelAndConjunctsEscapedString(b *testing.B) {
 	const expression = `n.text = 'O\'Reilly AND Sons' AND n.id = 1`
 	b.ReportAllocs()
 	for index := 0; index < b.N; index++ {
-		if len(splitTopLevelAndConjuncts(expression)) == 0 {
+		if len(splitTopLevelAndConjuncts(b.Context(), expression)) == 0 {
 			b.Fatal("missing conjuncts")
 		}
 	}

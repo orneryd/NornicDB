@@ -33,7 +33,7 @@ func TestManagerPanicReleasesOperationMutex(t *testing.T) {
 		t.Run(operation, func(t *testing.T) {
 			base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 			engine := &managerPanicCommitEngine{Engine: base, base: base}
-			mgr := NewManager(time.Hour, nil)
+			mgr := NewManager(time.Hour, nil, t.Context())
 			executor := cypher.NewStorageExecutor(engine)
 			session, err := mgr.OpenWithExecutorForOwner(context.Background(), "nornic", executor, "")
 			require.NoError(t, err)

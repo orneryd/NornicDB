@@ -38,8 +38,8 @@ func TestLexicalUnicodeBoundaryScanners(t *testing.T) {
 			for _, keyword := range []string{"RETURN", "ORDER BY", "IS NOT NULL"} {
 				spelling := strings.ReplaceAll(keyword, " ", space)
 				text := "café" + space + spelling + space + "x"
-				require.Equal(t, len("café"+space), keywordIndexFrom(text, keyword, 0, defaultKeywordScanOpts()))
-				require.Negative(t, keywordIndexFrom("café"+spelling+"界", keyword, 0, defaultKeywordScanOpts()))
+				require.Equal(t, len("café"+space), keywordIndexFrom(t.Context(), text, keyword, 0, defaultKeywordScanOpts()))
+				require.Negative(t, keywordIndexFrom(t.Context(), "café"+spelling+"界", keyword, 0, defaultKeywordScanOpts()))
 			}
 			var names []string
 			cyphertext.ParameterReferences("a$b"+space+"$café"+space+"$0", func(name string, _, _ int) { names = append(names, name) })

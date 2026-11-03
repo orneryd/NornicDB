@@ -13,7 +13,7 @@ type matchWithStage struct {
 	withClause  string
 }
 
-func parseMatchWithStages(cypher string) ([]matchWithStage, string, bool) {
+func parseMatchWithStages(ctx context.Context, cypher string) ([]matchWithStage, string, bool) {
 	query := strings.TrimSpace(cypher)
 	upper := upperASCII(query)
 	if !strings.HasPrefix(upper, "MATCH ") {
@@ -23,7 +23,7 @@ func parseMatchWithStages(cypher string) ([]matchWithStage, string, bool) {
 	var stages []matchWithStage
 	pos := 0
 	for {
-		matchIdxRel := findKeywordIndexInContext(query[pos:], "MATCH")
+		matchIdxRel := findKeywordIndexInContext(ctx, query[pos:], "MATCH")
 		if matchIdxRel < 0 {
 			return nil, "", false
 		}
@@ -32,7 +32,7 @@ func parseMatchWithStages(cypher string) ([]matchWithStage, string, bool) {
 			return nil, "", false
 		}
 
-		withIdxRel := findKeywordIndexInContext(query[matchIdx:], "WITH")
+		withIdxRel := findKeywordIndexInContext(ctx, query[matchIdx:], "WITH")
 		if withIdxRel < 0 {
 			return nil, "", false
 		}
@@ -42,8 +42,8 @@ func parseMatchWithStages(cypher string) ([]matchWithStage, string, bool) {
 			return nil, "", false
 		}
 
-		nextMatchRel := findKeywordIndexInContext(query[withIdx:], "MATCH")
-		nextReturnRel := findKeywordIndexInContext(query[withIdx:], "RETURN")
+		nextMatchRel := findKeywordIndexInContext(ctx, query[withIdx:], "MATCH")
+		nextReturnRel := findKeywordIndexInContext(ctx, query[withIdx:], "RETURN")
 		if nextReturnRel < 0 {
 			return nil, "", false
 		}
@@ -75,7 +75,7 @@ func parseMatchWithStages(cypher string) ([]matchWithStage, string, bool) {
 
 func (e *StorageExecutor) evaluateMatchClauseNodes(ctx context.Context, clause string) ([]*storage.Node, string, error) {
 	trimmed := strings.TrimSpace(clause)
-	whereIdx := findKeywordIndexInContext(trimmed, "WHERE")
+	whereIdx := findKeywordIndexInContext(ctx, trimmed, "WHERE")
 	patternPart := trimmed
 	whereClause := ""
 	if whereIdx > 0 {

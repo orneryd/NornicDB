@@ -15,6 +15,7 @@ import (
 func TestSessionHandlerJoinsReaderExit(t *testing.T) {
 	t.Run("no queued message ends with EOF", func(t *testing.T) {
 		s := &Session{
+			server:            &Server{config: DefaultConfig()},
 			messageQueue:      make(chan *boltMessage),
 			readErrQueue:      make(chan error, 1),
 			messageReaderDone: make(chan struct{}),
@@ -38,6 +39,7 @@ func TestSessionHandlerJoinsReaderExit(t *testing.T) {
 	t.Run("a message queued before exit is delivered first", func(t *testing.T) {
 		queued := &boltMessage{msgType: MsgReset}
 		s := &Session{
+			server:            &Server{config: DefaultConfig()},
 			messageQueue:      make(chan *boltMessage, 1),
 			readErrQueue:      make(chan error, 1),
 			messageReaderDone: make(chan struct{}),

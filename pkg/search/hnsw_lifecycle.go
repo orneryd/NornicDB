@@ -32,9 +32,6 @@ func (s *Service) startHNSWBuild(dimensions int) (*HNSWIndex, *hnswBuildJob, err
 	s.hnswMu.Lock()
 	defer s.hnswMu.Unlock()
 	ctx := s.lifecycleCtx
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
@@ -107,9 +104,6 @@ func (s *Service) retireVectorSnapshotLocked() {
 // Cancelling the wait cannot cancel construction. Request strategy resolution
 // calls startHNSWBuild directly and answers with exact search in the meantime.
 func (s *Service) getOrCreateHNSWIndex(ctx context.Context, dimensions int) (*HNSWIndex, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -251,9 +245,6 @@ var hnswBeforeInstallHook func(context.Context)
 
 // buildInitialHNSWIndex constructs and publishes one service-owned generation.
 func (s *Service) buildInitialHNSWIndex(ctx context.Context, dimensions int) (*HNSWIndex, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	s.hnswMu.RLock()
 	if idx := s.servingHNSW(); idx != nil {
 		s.hnswMu.RUnlock()
@@ -387,9 +378,6 @@ func (s *Service) ensureHNSWMaintenance() {
 }
 
 func (s *Service) maybeRebuildHNSW(ctx context.Context, tombstoneRatioThreshold, maxOverheadFactor float64, minInterval time.Duration) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}

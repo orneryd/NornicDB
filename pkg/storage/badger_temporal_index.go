@@ -259,10 +259,8 @@ func (b *BadgerEngine) visitTemporalHistoryNodeInTxn(txn *badger.Txn, target tem
 	var previous, next *Node
 	forward := false
 	accept := func(item *badger.Item) (bool, error) {
-		if selection.ctx != nil {
-			if err := selection.ctx.Err(); err != nil {
-				return false, err
-			}
+		if err := selection.ctx.Err(); err != nil {
+			return false, err
 		}
 		id := extractNodeIDFromTemporalHistoryKey(item.Key(), len(prefix))
 		_, excluded := selection.exclude[id]
@@ -312,10 +310,8 @@ func (b *BadgerEngine) visitTemporalHistoryNodeInTxn(txn *badger.Txn, target tem
 		seek = append(append([]byte{}, prefix...), encoded...)
 	}
 	for it.Seek(seek); it.ValidForPrefix(prefix); it.Next() {
-		if selection.ctx != nil {
-			if err := selection.ctx.Err(); err != nil {
-				return nil, nil, err
-			}
+		if err := selection.ctx.Err(); err != nil {
+			return nil, nil, err
 		}
 		more, err := accept(it.Item())
 		if err != nil {
@@ -355,7 +351,7 @@ func (b *BadgerEngine) deleteTemporalIndexForNodeInTxn(txn *badger.Txn, namespac
 // preparation: it runs before the commit finishes and before the write's
 // publication is decided, exactly as a transaction commit's temporal index
 // preparation does. ctx is therefore that write's own preparation lifetime
-// (the commitPreparationLifetime of the write context its caller holds), not a
+// (the write context its caller holds), not a
 // lifetime chosen here: a canceled write stops at the schema admission this
 // discovery waits on and installs nothing.
 func (b *BadgerEngine) applyTemporalIndexesForNodeChangeInTxn(ctx context.Context, txn *badger.Txn, namespace string, schema *SchemaManager, oldNode, newNode *Node) error {
@@ -627,9 +623,6 @@ func (b *BadgerEngine) IsCurrentTemporalNode(ctx context.Context, node *Node, as
 }
 
 func (b *BadgerEngine) clearBadgerPrefix(ctx context.Context, prefix byte) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if err := b.ensureOpen(false); err != nil {
 		return err
 	}
@@ -726,9 +719,6 @@ func (b *BadgerEngine) rebuildTemporalNodeInTxn(ctx context.Context, txn *badger
 func (b *BadgerEngine) RebuildTemporalIndexes(ctx context.Context) error {
 	if err := b.ensureOpen(false); err != nil {
 		return err
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	// The index is replaced wholesale from the stored nodes: a maintenance
 	// write (beginMaintenanceWrite), so every write-behind commit
@@ -845,9 +835,6 @@ func (b *BadgerEngine) PruneTemporalHistory(ctx context.Context, opts TemporalPr
 	}
 	if opts.MaxVersionsPerKey <= 0 && opts.MinRetentionAge <= 0 {
 		return 0, nil
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	now := time.Now().UTC()
 	groups := make(map[string][]*temporalPruneGroup)

@@ -129,8 +129,8 @@ func TestReservationRegistryDomainsAndComparableTokens(t *testing.T) {
 	require.True(t, (RefreshRetry{}).Retired())
 	(RefreshRetry{}).Discard()
 
-	svc := &Service{}
-	other := &Service{}
+	svc := &Service{lifecycleCtx: t.Context()}
+	other := &Service{lifecycleCtx: t.Context()}
 	node := svc.ReserveNodeMutation("same")
 	edge := svc.ReserveEdgeMutation("same")
 	foreign := other.ReserveNodeMutation("same")

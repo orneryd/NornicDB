@@ -430,12 +430,8 @@ func (h *LiveHeimdallInvoker) SendPromptAsync(ctx context.Context, prompt string
 }
 
 // detachedContext is ctx for work that outlives its caller: ctx's values,
-// such as the request principal, without its cancellation or deadline. A nil
-// ctx is an empty context, which carries no principal.
+// such as the request principal, without its cancellation or deadline.
 func detachedContext(ctx context.Context) context.Context {
-	if ctx == nil {
-		return context.Background()
-	}
 	return context.WithoutCancel(ctx)
 }
 
@@ -916,9 +912,6 @@ func (m *SubsystemManager) CloseAdmission() {
 }
 
 func (m *SubsystemManager) acquireWork(ctx context.Context) (context.Context, func(), bool) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if m == nil {
 		m = GetSubsystemManager()
 	}

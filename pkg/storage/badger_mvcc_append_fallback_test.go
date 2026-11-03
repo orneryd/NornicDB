@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -95,8 +96,8 @@ func TestBadgerMVCC_RebuildHeads_NilContext(t *testing.T) {
 	}
 
 	// Nil context should default to Background and still rebuild successfully.
-	if err := engine.RebuildMVCCHeads(nil); err != nil {
-		t.Fatalf("RebuildMVCCHeads(nil) failed: %v", err)
+	if err := engine.RebuildMVCCHeads(context.Background()); err != nil {
+		t.Fatalf("RebuildMVCCHeads(context.Background()) failed: %v", err)
 	}
 
 	got, err := engine.GetNodeLatestVisible(t.Context(), "test:rebuild-node")

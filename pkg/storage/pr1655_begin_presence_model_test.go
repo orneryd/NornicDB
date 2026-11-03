@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
@@ -101,14 +102,14 @@ func TestPR1655BeginPresenceSnapshotModel(t *testing.T) {
 						}
 						open = append(open, &modelTx{tx: tx, begin: begin})
 					default: // flush and retire
-						require.NoError(t, b.FlushWriteBehind(nil))
+						require.NoError(t, b.FlushWriteBehind(context.Background()))
 						for id := range live {
 							persisted[id] = true
 						}
 					}
 				}
 				if rng.Intn(2) == 0 {
-					require.NoError(t, b.FlushWriteBehind(nil))
+					require.NoError(t, b.FlushWriteBehind(context.Background()))
 				}
 				checked := 0
 				for _, m := range open {

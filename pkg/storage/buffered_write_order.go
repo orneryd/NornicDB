@@ -269,8 +269,7 @@ func (b *BadgerEngine) orderAfterBufferedCommits(ctx context.Context, h *orderHo
 	if err := w.order.lockContext(ctx, &h.resources.stripes, true); err != nil {
 		return false, err
 	}
-	preparationContext := commitPreparationLifetime(ctx)
-	held, err := w.holdsEntities(preparationContext, e)
+	held, err := w.holdsEntities(ctx, e)
 	if err != nil {
 		w.order.unlock(&h.resources.stripes, true)
 		return false, err

@@ -166,7 +166,7 @@ var showUsersColumns = []string{"user", "roles", "passwordChangeRequired", "susp
 // (SHOW CURRENT USER). home is null: NornicDB has no per-user home database.
 func (e *StorageExecutor) executeShowUsers(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	current, signedIn := authenticatedUserFromContext(ctx)
-	currentOnly := startsWithKeywords(cypher, "SHOW", "CURRENT USER")
+	currentOnly := startsWithKeywords(ctx, cypher, "SHOW", "CURRENT USER")
 	var users []UserListing
 	if identity := requestIdentityFromContext(ctx); identity != nil && identity.Users != nil {
 		users = identity.Users()
@@ -189,13 +189,13 @@ func (e *StorageExecutor) executeShowUsers(ctx context.Context, cypher string) (
 // unsupportedAdministrationCommandError is Neo4j Community's error for an
 // administration command it doesn't offer (SHOW ROLES, SHOW PRIVILEGES,
 // SHOW USER … PRIVILEGES); SHOW SERVERS is NotSystemDatabaseError.
-func unsupportedAdministrationCommandError(cypher string) error {
+func unsupportedAdministrationCommandError(ctx context.Context, cypher string) error {
 	code := "Neo.ClientError.Statement.UnsupportedAdministrationCommand"
-	if startsWithKeywords(cypher, "SHOW", "SERVERS") || startsWithKeywords(cypher, "SHOW", "SERVER") {
+	if startsWithKeywords(ctx, cypher, "SHOW", "SERVERS") || startsWithKeywords(ctx, cypher, "SHOW", "SERVER") {
 		code = "Neo.ClientError.Statement.NotSystemDatabaseError"
 	}
 	return localizedStatusError(code, "UnsupportedAdministrationCommand",
-		localization.CypherAdminUnsupportedAdministrationCommand(strings.TrimSpace(showCommandHead(cypher))))
+		localization.CypherAdminUnsupportedAdministrationCommand(strings.TrimSpace(showCommandHead(ctx, cypher))))
 }
 
 // runningTransaction is one SHOW TRANSACTIONS row: an explicit transaction

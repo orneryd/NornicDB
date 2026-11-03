@@ -980,7 +980,7 @@ MATCH (o:OriginalText)-[:TRANSLATES_TO]->(t)
 WHERE o.pagePath STARTS WITH $pagePath
 RETURN count(t) AS c
 `, map[string]interface{}{"language": "es", "pagePath": "/benefits"})
-	t.Logf("normalized stageD: %s", normalizeMultiMatchWhereClauses(`
+	t.Logf("normalized stageD: %s", normalizeMultiMatchWhereClauses(ctx, `
 MATCH (t:TranslatedText)
 WHERE t.language = $language AND t.isReviewed = false
 MATCH (o:OriginalText)-[:TRANSLATES_TO]->(t)
@@ -999,16 +999,16 @@ RETURN count(t) AS c
 		"o": nodeO,
 		"t": nodeT,
 	}, "t.language = 'es' AND t.isReviewed = false AND o.pagePath STARTS WITH '/benefits'", nil))
-	normalized := normalizeMultiMatchWhereClauses(`
+	normalized := normalizeMultiMatchWhereClauses(ctx, `
 MATCH (t:TranslatedText)
 WHERE t.language = $language AND t.isReviewed = false
 MATCH (o:OriginalText)-[:TRANSLATES_TO]->(t)
 WHERE o.pagePath STARTS WITH $pagePath
 RETURN count(t) AS c
 `)
-	returnIdx := findKeywordIndex(normalized, "RETURN")
-	whereIdx := lastKeywordIndexBefore(normalized, "WHERE", returnIdx)
-	matchClauses := splitMatchClauses(normalized, whereIdx, returnIdx)
+	returnIdx := findKeywordIndex(ctx, normalized, "RETURN")
+	whereIdx := lastKeywordIndexBefore(ctx, normalized, "WHERE", returnIdx)
+	matchClauses := splitMatchClauses(ctx, normalized, whereIdx, returnIdx)
 	require.Len(t, matchClauses, 2)
 	bindings, relBindings := exec.sharedFirstMatchForTest(context.Background(), matchClauses[0])
 	require.NotEmpty(t, bindings)
@@ -1073,12 +1073,12 @@ RETURN elementId(t) AS translationId,
        o.trackingId AS trackingId
 ORDER BY t.createdAt DESC
 LIMIT 30`
-	t.Logf("normalized full shape: %s", normalizeMultiMatchWhereClauses(shape))
+	t.Logf("normalized full shape: %s", normalizeMultiMatchWhereClauses(ctx, shape))
 	shapeDirectCtx := context.WithValue(ctx, paramsKey, map[string]interface{}{
 		"language": "es",
 		"pagePath": "/benefits",
 	})
-	shapeDirectRes, shapeDirectErr := exec.Execute(shapeDirectCtx, normalizeMultiMatchWhereClauses(shape), getParamsFromContext(shapeDirectCtx))
+	shapeDirectRes, shapeDirectErr := exec.Execute(shapeDirectCtx, normalizeMultiMatchWhereClauses(ctx, shape), getParamsFromContext(shapeDirectCtx))
 	require.NoError(t, shapeDirectErr)
 	require.NotNil(t, shapeDirectRes)
 	require.Len(t, shapeDirectRes.Rows, 1, "direct executeMultiMatch should return row for full shape")

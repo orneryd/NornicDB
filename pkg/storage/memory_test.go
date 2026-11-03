@@ -1346,9 +1346,9 @@ func TestGetEdgeBetween(t *testing.T) {
 		closedEngine.Close()
 
 		edge, err := closedEngine.GetEdgeBetween(t.Context(), NodeID(prefixTestID("a")), NodeID(prefixTestID("b")), "T")
-		require.NoError(t, err)
+		require.ErrorIs(t, err, ErrStorageClosed)
 		if edge != nil {
-			t.Error("Closed engine should return nil")
+			t.Error("Closed engine should not return an edge")
 		}
 	})
 }
@@ -1400,7 +1400,7 @@ func TestGetInDegree(t *testing.T) {
 		closedEngine.Close()
 
 		degree, err := closedEngine.GetInDegree(t.Context(), NodeID(prefixTestID("x")))
-		require.NoError(t, err)
+		require.ErrorIs(t, err, ErrStorageClosed)
 		if degree != 0 {
 			t.Errorf("Closed engine should return 0, got %d", degree)
 		}
@@ -1452,7 +1452,7 @@ func TestGetOutDegree(t *testing.T) {
 		closedEngine.Close()
 
 		degree, err := closedEngine.GetOutDegree(t.Context(), NodeID(prefixTestID("x")))
-		require.NoError(t, err)
+		require.ErrorIs(t, err, ErrStorageClosed)
 		if degree != 0 {
 			t.Errorf("Closed engine should return 0, got %d", degree)
 		}

@@ -10,14 +10,14 @@ import (
 func TestAdvisoryDecodedIdentityAcceptance(t *testing.T) {
 	builder := NewASTBuilder()
 	t.Run("REMOVE preserves decoded label whitespace", func(t *testing.T) {
-		ast, err := builder.Build("MATCH (`a``b`) REMOVE `a``b`:` Label ` RETURN 1")
+		ast, err := builder.Build(t.Context(), "MATCH (`a``b`) REMOVE `a``b`:` Label ` RETURN 1")
 		require.NoError(t, err)
 		require.Len(t, ast.Clauses, 3)
 		require.Equal(t, "a`b", ast.Clauses[1].Remove.Items[0].Variable)
 		require.Equal(t, []string{" Label "}, ast.Clauses[1].Remove.Items[0].Labels)
 	})
 	t.Run("UNWIND uses executable AS and decoded binding", func(t *testing.T) {
-		ast, err := builder.Build("UNWIND ['x AS y']/* gap */AS/* gap */` a ` RETURN 1")
+		ast, err := builder.Build(t.Context(), "UNWIND ['x AS y']/* gap */AS/* gap */` a ` RETURN 1")
 		require.NoError(t, err)
 		require.Len(t, ast.Clauses, 2)
 		unwind := ast.Clauses[0].Unwind
@@ -28,7 +28,7 @@ func TestAdvisoryDecodedIdentityAcceptance(t *testing.T) {
 	})
 	t.Run("expression identities and string escapes", func(t *testing.T) {
 		parse := func(source string) ASTExpression {
-			ast, err := builder.Build("RETURN " + source + " AS result")
+			ast, err := builder.Build(t.Context(), "RETURN "+source+" AS result")
 			require.NoError(t, err)
 			require.Len(t, ast.Clauses, 1)
 			require.Len(t, ast.Clauses[0].Return.Items, 1)
@@ -54,7 +54,7 @@ func TestAdvisoryDecodedIdentityAcceptance(t *testing.T) {
 			"['日本 AS 語'] // before binding\n",
 			"[1] /* AS inside comment */ ",
 		} {
-			ast, err := builder.Build("UNWIND " + raw + "AS ` a ` RETURN 1")
+			ast, err := builder.Build(t.Context(), "UNWIND "+raw+"AS ` a ` RETURN 1")
 			require.NoError(t, err)
 			require.Len(t, ast.Clauses, 2)
 			require.Equal(t, strings.TrimSpace(raw), ast.Clauses[0].Unwind.RawExpr)

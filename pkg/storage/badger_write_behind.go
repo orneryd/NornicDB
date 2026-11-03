@@ -769,7 +769,7 @@ func (b *BadgerEngine) FlushWriteBehind(ctx context.Context) error {
 		return nil
 	}
 	// Normalize the optional waiting context, without changing replay ownership.
-	waitCtx := commitPreparationLifetime(ctx)
+	waitCtx := ctx
 	if err := b.writeBarrier.RLockContext(waitCtx); err != nil {
 		return err
 	}

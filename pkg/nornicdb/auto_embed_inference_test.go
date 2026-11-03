@@ -2,6 +2,8 @@ package nornicdb
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -10,6 +12,18 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
+
+type inferenceContextEdgeEngine struct {
+	storage.Engine
+	entered chan context.Context
+	release <-chan struct{}
+}
+
+func (e *inferenceContextEdgeEngine) CreateEdge(ctx context.Context, _ *storage.Edge) error {
+	e.entered <- ctx
+	<-e.release
+	return nil
+}
 
 type staticTestEmbedder struct {
 	dims int
@@ -155,4 +169,77 @@ func TestRunInferenceForEmbeddedNode_GuardBranches(t *testing.T) {
 		db.runInferenceForEmbeddedNode(t.Context(), &storage.Node{ID: "tenant:n1", ChunkEmbeddings: [][]float32{{1, 0, 0}}})
 		require.True(t, searched)
 	})
+}
+
+func TestEmbeddedInferenceRetainsAdmittedContextThroughEdgeWrite(t *testing.T) {
+	config := DefaultConfig()
+	config.Memory.AutoLinksEnabled = true
+	db, err := Open(t.TempDir(), config)
+	require.NoError(t, err)
+
+	releaseEdge := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseEdge) }) }
+	t.Cleanup(func() {
+		release()
+		_ = db.Close()
+	})
+
+	edgeEngine := &inferenceContextEdgeEngine{
+		Engine:  db.storage,
+		entered: make(chan context.Context, 1),
+		release: releaseEdge,
+	}
+	db.SetDatabaseStorageResolver(func(string) (storage.Engine, error) {
+		return edgeEngine, nil
+	})
+
+	inferEngine, err := db.GetOrCreateInferenceService(db.defaultDatabaseName(), db.storage)
+	require.NoError(t, err)
+	require.NotNil(t, inferEngine)
+	inferenceEntered := make(chan context.Context, 1)
+	inferEngine.SetSimilaritySearch(func(ctx context.Context, _ []float32, _ int) ([]inference.SimilarityResult, error) {
+		inferenceEntered <- ctx
+		return []inference.SimilarityResult{{ID: "target", Score: 0.99}}, nil
+	})
+
+	db.onNodeEmbedded(&storage.Node{
+		ID:              storage.NodeID(db.defaultDatabaseName() + ":source"),
+		ChunkEmbeddings: [][]float32{{1, 0, 0}},
+	})
+
+	var inferenceCtx, edgeCtx context.Context
+	select {
+	case inferenceCtx = <-inferenceEntered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("embedded inference did not reach its similarity provider")
+	}
+	select {
+	case edgeCtx = <-edgeEngine.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("embedded inference did not reach its edge write")
+	}
+	require.Same(t, inferenceCtx, edgeCtx, "inference and its edge write must receive the same admitted callback context")
+
+	closed := make(chan error, 1)
+	go func() { closed <- db.Close() }()
+	require.Eventually(t, db.work.Closing, 5*time.Second, time.Millisecond, "Close must seal new work before joining the accepted callback")
+	require.Eventually(t, func() bool {
+		return errors.Is(inferenceCtx.Err(), context.Canceled) && errors.Is(edgeCtx.Err(), context.Canceled)
+	}, 5*time.Second, time.Millisecond, "the admitted callback observes shutdown cancellation")
+
+	// The actual inference-to-edge path still carries its accepted ticket after
+	// root admission closes. A context taken directly from the DB lifetime has
+	// no such parent ticket and must not be able to enroll more work.
+	child, childRelease, accepted := db.work.Acquire(edgeCtx)
+	require.True(t, accepted, "accepted embedded work may finish its owned child after shutdown begins")
+	require.ErrorIs(t, child.Err(), context.Canceled)
+	childRelease()
+
+	_, unownedRelease, unownedAccepted := db.work.Acquire(db.LifetimeContext())
+	require.False(t, unownedAccepted, "a bare lifetime context cannot extend admission after Close")
+	unownedRelease()
+
+	release()
+	require.NoError(t, <-closed)
 }

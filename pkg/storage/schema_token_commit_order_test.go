@@ -65,7 +65,7 @@ func TestBufferedReplayDoesNotHoldCommitGateWhileReadingSchema(t *testing.T) {
 	flushed, registered := make(chan struct{}), make(chan struct{})
 	var flushErr, registerErr error
 	registrationStarted := false
-	go func() { defer close(flushed); flushErr = b.FlushWriteBehind(nil) }()
+	go func() { defer close(flushed); flushErr = b.FlushWriteBehind(context.Background()) }()
 	defer func() {
 		abortOnce.Do(func() { close(abort) })
 		<-flushed

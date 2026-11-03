@@ -246,9 +246,6 @@ func (b *BadgerEngine) stopIndexBackfill(kind startupIndexKind) {
 // dropped first so any stale entries from past dict allocations or
 // half-applied writes don't shadow the rebuilt set.
 func (b *BadgerEngine) rebuildLabelIndex(ctx context.Context) (int, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}

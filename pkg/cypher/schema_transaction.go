@@ -14,13 +14,13 @@ import (
 // write for one and not for the other. Catalog commands (CREATE / DROP
 // DATABASE, ALIAS, ...) and schema introspection keep their own owners and are
 // not ordinary schema DDL.
-func isOrdinarySchemaDDL(query string) bool {
+func isOrdinarySchemaDDL(ctx context.Context, query string) bool {
 	for _, command := range []string{"INDEX", "RANGE INDEX", "TEXT INDEX", "POINT INDEX", "VECTOR INDEX", "FULLTEXT INDEX", "LOOKUP INDEX", "CONSTRAINT"} {
-		if startsWithKeywords(query, "CREATE", command) {
+		if startsWithKeywords(ctx, query, "CREATE", command) {
 			return true
 		}
 	}
-	return startsWithKeywords(query, "DROP", "INDEX") || startsWithKeywords(query, "DROP", "CONSTRAINT")
+	return startsWithKeywords(ctx, query, "DROP", "INDEX") || startsWithKeywords(ctx, query, "DROP", "CONSTRAINT")
 }
 
 // prepareSchemaTransaction gives the statement its transaction's isolated

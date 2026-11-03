@@ -189,20 +189,21 @@ func TestWithStoreTransactionNamespaceAndFailures(t *testing.T) {
 }
 
 type transactionStartEngine struct {
-	*storage.MemoryEngine
+	storage.Engine
+	memory          *storage.MemoryEngine
 	failFlush       bool
 	pinnedNamespace string
 }
 
-func (e *transactionStartEngine) FlushWriteBehind(context.Context) error {
+func (e *transactionStartEngine) FlushWriteBehind(ctx context.Context) error {
 	if e.failFlush {
 		return errRoleMutation
 	}
-	return e.MemoryEngine.FlushWriteBehind(nil)
+	return e.memory.FlushWriteBehind(ctx)
 }
 
-func (e *transactionStartEngine) BeginTransaction(context.Context) (*storage.BadgerTransaction, error) {
-	tx, err := e.MemoryEngine.BeginTransaction(context.Background())
+func (e *transactionStartEngine) BeginTransaction(ctx context.Context) (*storage.BadgerTransaction, error) {
+	tx, err := e.memory.BeginTransaction(ctx)
 	if err == nil && e.pinnedNamespace != "" {
 		err = tx.SetNamespace(e.pinnedNamespace)
 	}
@@ -228,7 +229,7 @@ func TestStoreTransactionReadsItsOwnChangesAndStartFailures(t *testing.T) {
 			return nil
 		})
 	}))
-	beginner := &transactionStartEngine{MemoryEngine: base, failFlush: true}
+	beginner := &transactionStartEngine{Engine: base, memory: base, failFlush: true}
 	require.ErrorIs(t, WithStoreTransaction(ctx, beginner, func(storage.Engine) error { return nil }), errRoleMutation)
 	beginner.failFlush = false
 	beginner.pinnedNamespace = "other"

@@ -60,7 +60,7 @@ func TestManagedBulkPreservesReplacementContract(t *testing.T) {
 						}
 						for replay := 0; replay < 2; replay++ {
 							if replay == 1 {
-								require.NoError(t, base.FlushWriteBehind(nil))
+								require.NoError(t, base.FlushWriteBehind(context.Background()))
 							}
 							nodes, edges, err := manager.calculateStorageSizeFromEngine(engine)
 							require.NoError(t, err)

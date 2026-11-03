@@ -88,7 +88,7 @@ func stressWriteOrder(t *testing.T, countsChecked bool) {
 				func(r *rand.Rand) error {
 					return inTx(false, func(tx *BadgerTransaction) error { return tx.DeleteGraphNode(t.Context(), node(r), CascadeEdges) })
 				},
-				func(r *rand.Rand) error { return engine.FlushWriteBehind(nil) },
+				func(r *rand.Rand) error { return engine.FlushWriteBehind(context.Background()) },
 			}
 			expected := func(err error) bool {
 				// A direct write reports a Badger conflict with a concurrent writer
@@ -136,7 +136,7 @@ func stressWriteOrder(t *testing.T, countsChecked bool) {
 				t.Fatalf("unexpected write error: %v", err)
 			}
 
-			require.NoError(t, engine.FlushWriteBehind(nil))
+			require.NoError(t, engine.FlushWriteBehind(context.Background()))
 			engine.invalidateCachesAfterRestore()
 			nodes, err := engine.AllNodes(context.Background())
 			require.NoError(t, err)

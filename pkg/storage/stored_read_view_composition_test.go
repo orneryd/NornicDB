@@ -31,7 +31,7 @@ func TestStoredReadViewHiddenIntegrity(t *testing.T) {
 						require.NoError(t, sm.BackfillCompositeIndex(t.Context(), idx.Name, nil))
 						holder = factNode("holder", 1, "name", 1)
 						require.NoError(t, bufferedTry(t, b, holder))
-						require.NoError(t, b.FlushWriteBehind(nil))
+						require.NoError(t, b.FlushWriteBehind(context.Background()))
 						require.NoError(t, b.SetManualSuppression(context.Background(), StoredEntityNodeKind, string(holder.ID), true))
 
 					} else {
@@ -40,7 +40,7 @@ func TestStoredReadViewHiddenIntegrity(t *testing.T) {
 					if phase != "idle" {
 						bufferedCreate(t, b, &Node{ID: "test:unrelated"})
 						if phase == "retired" {
-							require.NoError(t, b.FlushWriteBehind(nil))
+							require.NoError(t, b.FlushWriteBehind(context.Background()))
 						}
 					}
 					if keyHolder {

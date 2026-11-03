@@ -611,12 +611,12 @@ func (e *StorageExecutor) tryExecuteTraversalSeedOrderLimit(ctx context.Context,
 		return nil, false, nil
 	}
 
-	orderSpecs, _ := e.parseNodeOrderSpecs(orderExpr, matches.EndNode.variable)
+	orderSpecs, _ := e.parseNodeOrderSpecs(ctx, orderExpr, matches.EndNode.variable)
 	if len(orderSpecs) == 0 {
 		return nil, false, nil
 	}
 
-	seedWhere := e.extractTraversalSeedWhereClause(whereClause, matches.EndNode.variable, matches.StartNode.variable)
+	seedWhere := e.extractTraversalSeedWhereClause(ctx, whereClause, matches.EndNode.variable, matches.StartNode.variable)
 	if strings.TrimSpace(seedWhere) == "" && strings.TrimSpace(whereClause) != "" {
 		return nil, false, nil
 	}
@@ -683,12 +683,12 @@ func (e *StorageExecutor) tryExecuteTraversalSeedOrderLimit(ctx context.Context,
 	return result, true, nil
 }
 
-func (e *StorageExecutor) extractTraversalSeedWhereClause(whereClause string, seedVar string, blockedVars ...string) string {
+func (e *StorageExecutor) extractTraversalSeedWhereClause(ctx context.Context, whereClause string, seedVar string, blockedVars ...string) string {
 	clause := unwrapOuterParens(strings.TrimSpace(whereClause))
 	if clause == "" {
 		return ""
 	}
-	parts := splitTopLevelAndConjuncts(clause)
+	parts := splitTopLevelAndConjuncts(ctx, clause)
 	selected := make([]string, 0, len(parts))
 	for _, part := range parts {
 		term := unwrapOuterParens(strings.TrimSpace(part))
@@ -814,7 +814,7 @@ func (e *StorageExecutor) tryCollectTraversalStartSeedOrderNodes(
 	}
 
 	if len(seedNodes) > limit {
-		if topK, ok := e.selectTopKNodesByOrder(seedNodes, nodePattern.variable, orderExpr, limit); ok {
+		if topK, ok := e.selectTopKNodesByOrder(ctx, seedNodes, nodePattern.variable, orderExpr, limit); ok {
 			seedNodes = topK
 		}
 	}
@@ -1441,7 +1441,7 @@ func (e *StorageExecutor) traverseGraphSequential(ctx context.Context, match *Tr
 		if remaining > 0 {
 			remaining -= len(paths)
 		}
-		if ctx != nil && ctx.Err() != nil {
+		if ctx.Err() != nil {
 			break
 		}
 	}
@@ -1483,7 +1483,7 @@ func (e *StorageExecutor) traverseGraphParallel(ctx context.Context, match *Trav
 
 			var workerPaths []PathResult
 			for _, startNode := range workerNodes {
-				if ctx != nil && ctx.Err() != nil {
+				if ctx.Err() != nil {
 					break
 				}
 				// Each goroutine gets its own traversal state (no shared state)

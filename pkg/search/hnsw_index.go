@@ -1149,9 +1149,6 @@ func SaveIVFHNSWWithContext(ctx context.Context, hnswPath string, graphs map[int
 // cluster files under names unique to the generation, then the manifest
 // (with the current build settings), then the prune.
 func saveIVFHNSWSnapshots(ctx context.Context, hnswPath string, graphs map[int]*hnswIndexSnapshot) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if hnswPath == "" || len(graphs) == 0 {
 		return nil
 	}
@@ -1440,22 +1437,27 @@ func (h *HNSWIndex) reselectEntryPointLocked() {
 	h.maxLevel = bestLevel
 }
 
+// searchLayerSingle is insertion's greedy descent; insertion has no request
+// lifetime, so it runs the shared descent without a cancellation check.
 func (h *HNSWIndex) searchLayerSingle(query []float32, entryID uint32, level int) uint32 {
-	out, _ := h.searchLayerSingleWithContext(context.Background(), query, entryID, level)
+	out, _ := h.greedyLayerLocked(query, entryID, level, nil, nil)
 	return out
 }
 
 func (h *HNSWIndex) searchLayerSingleWithContext(ctx context.Context, query []float32, entryID uint32, level int) (uint32, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	current := entryID
 	scorer, _ := ctx.Value(hnswQuantizedQueryKey{}).(*hnswQuantizedQuery)
+	return h.greedyLayerLocked(query, entryID, level, scorer, ctx.Err)
+}
+
+func (h *HNSWIndex) greedyLayerLocked(query []float32, entryID uint32, level int, scorer *hnswQuantizedQuery, stopped func() error) (uint32, error) {
+	current := entryID
 	currentDist := h.graphDistanceLocked(query, current, scorer)
 
 	for {
-		if err := ctx.Err(); err != nil {
-			return current, err
+		if stopped != nil {
+			if err := stopped(); err != nil {
+				return current, err
+			}
 		}
 		changed := false
 		neighbors, ok := h.neighborsAtLevelLocked(current, level)
@@ -1465,8 +1467,8 @@ func (h *HNSWIndex) searchLayerSingleWithContext(ctx context.Context, query []fl
 
 		// Reverse iteration: order doesn't matter when finding closest neighbor
 		for i := len(neighbors) - 1; i >= 0; i-- {
-			if i&31 == 0 {
-				if err := ctx.Err(); err != nil {
+			if stopped != nil && i&31 == 0 {
+				if err := stopped(); err != nil {
 					return current, err
 				}
 			}
@@ -1509,9 +1511,6 @@ func (h *HNSWIndex) releaseCandidateIDs(ids []uint32) {
 }
 
 func (h *HNSWIndex) searchLayerHeapPooledFromEntriesWithContext(ctx context.Context, query []float32, entryIDs []uint32, ef int, level int) ([]hnswDistItem, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if len(entryIDs) == 0 {
 		return nil, nil
 	}

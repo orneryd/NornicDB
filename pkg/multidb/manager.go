@@ -176,9 +176,6 @@ func DefaultConfig() *Config {
 //   - System database (for metadata)
 //   - Default database ("nornic" by default, configurable)
 func NewDatabaseManager(ctx context.Context, inner storage.Engine, config *Config) (*DatabaseManager, error) {
-	if ctx == nil {
-		return nil, fmt.Errorf("database manager requires a startup context: %w", storage.ErrInvalidData)
-	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -490,9 +487,6 @@ func (m *DatabaseManager) CreateDatabase(ctx context.Context, request DatabaseCr
 // Returns ErrDatabaseNotFound if database doesn't exist.
 // Returns ErrCannotDropSystemDB for system/default databases.
 func (m *DatabaseManager) DropDatabase(ctx context.Context, name string) error {
-	if ctx == nil {
-		return fmt.Errorf("DROP requires an operation context: %w", storage.ErrInvalidData)
-	}
 	// A physical purge is a distinct synchronous owner. Serializing DROP
 	// invocations prevents a delayed old-generation purge from deleting a fresh
 	// same-name database; catalog receipts separately retain accepted authority.

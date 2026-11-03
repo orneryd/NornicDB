@@ -136,9 +136,13 @@ func (n *rowEndpointPropertyNode) eval(ctx context.Context, e *StorageExecutor, 
 	if err != nil {
 		return nil, false, err
 	}
-	id, exists := e.relationshipEndpointID(ctx, edge, n.end)
-	if !exists {
-		return nil, true, nil
+	store, err := e.FunctionStorage(e.databaseName())
+	if err != nil {
+		return nil, false, err
+	}
+	id, exists, err := e.relationshipEndpointID(ctx, edge, n.end, store)
+	if err != nil || !exists {
+		return nil, err == nil, err
 	}
 	cache, _ := values[endpointPropertyCacheKey].(*endpointPropertyCache)
 	key := endpointPropertyKey{id: id, property: n.property}
@@ -147,7 +151,10 @@ func (n *rowEndpointPropertyNode) eval(ctx context.Context, e *StorageExecutor, 
 			return value, true, nil
 		}
 	}
-	node := e.readRelationshipEndpoint(ctx, id, []string{n.property})
+	node, err := e.readRelationshipEndpoint(ctx, id, []string{n.property}, store)
+	if err != nil {
+		return nil, false, err
+	}
 	value, ok := evaluateRowPropertyChain(node, n.property, e, false)
 	if ok && cache != nil {
 		cache.keep(key, value)

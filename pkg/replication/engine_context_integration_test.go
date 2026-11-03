@@ -134,11 +134,4 @@ func TestReplicatedEngineLeaderPreparationReceivesRequestContext(t *testing.T) {
 	count, err = base.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, int64(1), count)
-	err = engine.ForwardEntityChanges(nil, []storage.Operation{{Type: storage.OpCreateNode, Node: &storage.Node{ID: "test:nil-forward"}}}, storage.CommitModeDirect)
-	require.NoError(t, err)
-	require.NotNil(t, capture.seen)
-	require.Nil(t, capture.seen.Done(), "optional nil selects detached completion once at the entry")
-	count, err = base.NodeCount(t.Context())
-	require.NoError(t, err)
-	require.Equal(t, int64(2), count)
 }

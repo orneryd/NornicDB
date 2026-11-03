@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"fmt"
@@ -135,7 +136,7 @@ func TestEveryIngressPublishesStoredImage(t *testing.T) {
 				for round := 0; round < 2; round++ {
 					r.write(t, engine, round)
 					published := read()
-					require.NoError(t, engine.FlushWriteBehind(nil))
+					require.NoError(t, engine.FlushWriteBehind(context.Background()))
 					engine.invalidateCachesAfterRestore()
 					decoded := read()
 					require.Equal(t, decoded, published, "round %d: published body differs from the stored one", round)

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"time"
@@ -24,7 +25,7 @@ func TestBufferedWALConflictingDrainCacheControl(t *testing.T) {
 	seed := func(b *BadgerEngine, name string) {
 		_, err := b.CreateNode(t.Context(), &Node{ID: NodeID("binding:seed-" + name), Properties: map[string]any{name: "keep-" + name}})
 		require.NoError(t, err)
-		require.NoError(t, b.FlushWriteBehind(nil))
+		require.NoError(t, b.FlushWriteBehind(context.Background()))
 	}
 	seed(source, "alpha")
 	seed(source, "beta")
@@ -52,7 +53,7 @@ func TestBufferedWALConflictingDrainCacheControl(t *testing.T) {
 	node := &Node{ID: "binding:imported", Properties: map[string]any{"alpha": "after-alpha", "beta": "after-beta"}}
 	_, err := source.CreateNode(t.Context(), node)
 	require.NoError(t, err)
-	require.NoError(t, source.FlushWriteBehind(nil))
+	require.NoError(t, source.FlushWriteBehind(context.Background()))
 	var body []byte
 	require.NoError(t, source.db.View(func(tx *badger.Txn) error {
 		item, err := tx.Get(nodeKey(node.ID))

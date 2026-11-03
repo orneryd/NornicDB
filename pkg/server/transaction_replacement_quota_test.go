@@ -34,7 +34,7 @@ func TestTransactionReplacementRoutesAtQuota(t *testing.T) {
 					engine := h.db.GetBaseStorageForManager()
 					for {
 						if base, ok := engine.(*storage.BadgerEngine); ok {
-							require.NoError(t, base.FlushWriteBehind(nil))
+							require.NoError(t, base.FlushWriteBehind(context.Background()))
 							return
 						}
 						wrapper, ok := engine.(storage.EngineUnwrapper)
@@ -147,7 +147,8 @@ func TestTransactionReplacementRoutesAtQuota(t *testing.T) {
 									}
 									run := func(query string) {
 										t.Helper()
-										require.Empty(t, request(query).code, query)
+										outcome := request(query)
+										require.Empty(t, outcome.code, "%s: %s", query, outcome.message)
 									}
 									run("MATCH (n) WHERE reveal(n) IS NOT NULL DETACH DELETE n")
 									pattern, target := "(n:Doc {id: 'n'})", "n"

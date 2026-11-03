@@ -33,9 +33,6 @@ type listenerLifetime struct {
 // deadline and cancellation. Only the bound resources are once-owned — they
 // never derive from the caller's context, which bounds this entry alone.
 func (c *listenerLifetime) init(ctx context.Context, server *http.Server, listener net.Listener, beforeStop func(context.Context) error) context.Context {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	c.initOnce.Do(func() {
 		c.server, c.beforeStop = server, beforeStop
 		c.listener = &retirementListener{Listener: listener, owner: c}

@@ -1515,7 +1515,7 @@ func TestParseRunMessage(t *testing.T) {
 			0xA0, // Empty map for params
 		}
 
-		session := &Session{}
+		session := &Session{server: &Server{}}
 		query, params, metadata, err := session.parseRunMessage(data)
 
 		if err != nil {
@@ -1545,7 +1545,7 @@ func TestParseRunMessage(t *testing.T) {
 			0x85, 'A', 'l', 'i', 'c', 'e', // Value: "Alice"
 		}
 
-		session := &Session{}
+		session := &Session{server: &Server{}}
 		_, params, metadata, err := session.parseRunMessage(data)
 
 		if err != nil {
@@ -1560,7 +1560,7 @@ func TestParseRunMessage(t *testing.T) {
 	})
 
 	t.Run("empty data", func(t *testing.T) {
-		session := &Session{}
+		session := &Session{server: &Server{}}
 		_, _, _, err := session.parseRunMessage([]byte{})
 
 		if err == nil {
@@ -1581,7 +1581,7 @@ func TestParseRunMessage(t *testing.T) {
 
 		data := append(append(queryBytes, paramsBytes...), metadataBytes...)
 
-		session := &Session{}
+		session := &Session{server: &Server{}}
 		query, params, metadata, err := session.parseRunMessage(data)
 
 		if err != nil {
@@ -2002,6 +2002,7 @@ func TestHandlePull(t *testing.T) {
 	defer client.Close()
 
 	session := &Session{
+		server:     &Server{config: DefaultConfig()},
 		conn:       server,
 		reader:     bufio.NewReaderSize(server, 8192),
 		writer:     bufio.NewWriterSize(server, 8192),
@@ -2055,6 +2056,7 @@ func TestHandleDiscard(t *testing.T) {
 	defer client.Close()
 
 	session := &Session{
+		server:     &Server{config: DefaultConfig()},
 		conn:       server,
 		reader:     bufio.NewReaderSize(server, 8192),
 		writer:     bufio.NewWriterSize(server, 8192),
@@ -2100,6 +2102,7 @@ func TestHandleRoute(t *testing.T) {
 	defer client.Close()
 
 	session := &Session{
+		server:     &Server{config: DefaultConfig()},
 		conn:       server,
 		reader:     bufio.NewReaderSize(server, 8192),
 		writer:     bufio.NewWriterSize(server, 8192),
@@ -2135,6 +2138,7 @@ func TestSendRecord(t *testing.T) {
 	defer client.Close()
 
 	session := &Session{
+		server:     &Server{config: DefaultConfig()},
 		conn:       server,
 		reader:     bufio.NewReaderSize(server, 8192),
 		writer:     bufio.NewWriterSize(server, 8192),

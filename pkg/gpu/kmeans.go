@@ -263,9 +263,6 @@ func (ci *ClusterIndex) ClusterWithContext(ctx context.Context) error {
 // ComputeClustering runs k-means on a copy of the current embeddings without
 // changing the published clustering. It returns nil when the index is empty.
 func (ci *ClusterIndex) ComputeClustering(ctx context.Context) (*Clustering, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 
 	// Lock order: always clusterMu before mu (matches GetClusterMemberIDs, OnNodeUpdate).
 	ci.clusterMu.Lock()
@@ -425,9 +422,6 @@ func initCentroidsKMeansPlusPlusSeededFromVectors(vectors []float32, n, dims, k 
 }
 
 func initCentroidsKMeansPlusPlusSeededFromVectorsWithContext(ctx context.Context, vectors []float32, n, dims, k int, preferredSeeds []int) ([][]float32, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	centroids := make([][]float32, k)
 	firstIdx := rand.Intn(n)
 	if len(preferredSeeds) > 0 {
@@ -790,9 +784,6 @@ func (ci *ClusterIndex) RestoreClusteringState(centroids [][]float32, idToCluste
 // one restored from persisted centroids). Like ComputeClustering it copies
 // the embeddings and assigns them without holding the index's locks.
 func (ci *ClusterIndex) AssignedClustering(ctx context.Context, centroids [][]float32) (*Clustering, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	ci.mu.RLock()
 	if err := ci.checkCentroidsLocked(centroids); err != nil {
 		ci.mu.RUnlock()

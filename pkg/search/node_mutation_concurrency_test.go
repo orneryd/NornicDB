@@ -12,7 +12,7 @@ import (
 // Applying one entity's indexed image must order newer work for that entity,
 // but should not stop an unrelated entity from reserving its own work.
 func TestIndependentSearchMutationReservationsCanProceed(t *testing.T) {
-	svc := &Service{}
+	svc := &Service{lifecycleCtx: t.Context()}
 	first := svc.ReserveNodeMutation(storage.NodeID("entity-a"))
 	entered, release := make(chan struct{}), make(chan struct{})
 	var releaseOnce sync.Once

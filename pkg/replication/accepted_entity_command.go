@@ -86,7 +86,7 @@ func (e *ReplicatedEngine) SubmitEntityCommit(ctx context.Context, prepared *sto
 	if err := e.CheckEntityCommitAdmission(); err != nil {
 		return nil, err
 	}
-	if ctx != nil && ctx.Err() != nil {
+	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
 	submitter, ok := e.replicator.(AcceptedCommandSubmitter)
@@ -110,9 +110,6 @@ func (e *ReplicatedEngine) SubmitEntityCommit(ctx context.Context, prepared *sto
 
 	cmd := &Command{Type: CmdCommitTransaction, Data: payload, Timestamp: time.Now(), RequestID: prepared.LogicalID()}
 	cmd.accepted = &acceptedEntityCommand{owner: e.Engine, prepared: storage.NewAcceptedEntityCommitHandle(prepared), inner: inner.Submitter, nativeDone: make(chan struct{})}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	queueCtx, cancelQueue := context.WithTimeout(ctx, e.timeout)
 	defer cancelQueue()
 	var receipt *storage.CommitReceipt
@@ -139,12 +136,12 @@ func submitAcceptedByApply(ctx context.Context, cmd *Command, settle func(storag
 	if err := validate(); err != nil {
 		return nil, err
 	}
-	if ctx != nil && ctx.Err() != nil {
+	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
 	receipt, resolve := storage.NewCommitReceipt(settle)
 	go func() {
-		completionCtx := context.Background()
+		completionCtx := context.WithoutCancel(ctx)
 		err := apply(completionCtx, cmd, timeout)
 		if cmd.accepted != nil && !cmd.accepted.started.Load() && (errors.Is(err, ErrClosed) || errors.Is(err, ErrNotReady) || errors.Is(err, ErrNotLeader) || errors.Is(err, ErrStandbyMode)) {
 			cmd.accepted.prepared.AbortNative()
@@ -163,6 +160,21 @@ func (r *StandaloneReplicator) SubmitAcceptedCommand(ctx context.Context, cmd *C
 	}, r.Apply, 0)
 }
 func (r *HAStandbyReplicator) SubmitAcceptedCommand(ctx context.Context, cmd *Command, settle func(storage.CommitOutcome)) (*storage.CommitReceipt, error) {
+	apply := r.Apply
+	if r.config.HAStandby.SyncMode == SyncQuorum {
+		deadline, bounded := ctx.Deadline()
+		if !bounded {
+			deadline = time.Now().Add(r.quorumWaitTimeout(0))
+		}
+		apply = func(completionCtx context.Context, cmd *Command, _ time.Duration) error {
+			// Queue admission and caller cancellation do not own accepted native
+			// completion. Retain only the original publication+ACK deadline;
+			// never restart its budget when this goroutine begins execution.
+			waitCtx, cancel := context.WithDeadline(completionCtx, deadline)
+			defer cancel()
+			return r.applyCommand(waitCtx, cmd)
+		}
+	}
 	return submitAcceptedByApply(ctx, cmd, settle, func() error {
 		if err := checkApplyReadiness(r.work.Closing(), r.started.Load()); err != nil {
 			return err
@@ -171,7 +183,7 @@ func (r *HAStandbyReplicator) SubmitAcceptedCommand(ctx context.Context, cmd *Co
 			return ErrNotLeader
 		}
 		return nil
-	}, r.Apply, 0)
+	}, apply, 0)
 }
 
 func (r *MultiRegionReplicator) SubmitAcceptedCommand(ctx context.Context, cmd *Command, settle func(storage.CommitOutcome)) (*storage.CommitReceipt, error) {
@@ -196,9 +208,6 @@ func (e *ReplicatedEngine) ForwardEntityChanges(ctx context.Context, ops []stora
 		return nil
 	}
 	// This existing optional-context entry keeps its detached nil contract.
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}

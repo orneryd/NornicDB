@@ -41,7 +41,7 @@ func TestEmbeddingBufferedRevisionComparisonUsesCallerContext(t *testing.T) {
 	ack, err := b.GetNode(t.Context(), "test:doc")
 	require.NoError(t, err)
 	require.NotZero(t, ack.EmbeddingRevision().bufferedSequence)
-	require.NoError(t, b.FlushWriteBehind(nil))
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
 	materialized, err := b.getNodeSnapshot(t.Context(), ack.ID, true)
 	require.NoError(t, err)
 	require.NotZero(t, materialized.EmbeddingRevision().physical)

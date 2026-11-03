@@ -59,7 +59,7 @@ func (w *r4LogGate) Write(p []byte) (int, error) {
 
 func TestServerStopR4OpeningLease(t *testing.T) {
 	s, a := setupTestServer(t)
-	s.txSessions = txsession.NewManager(120*time.Millisecond, s.newExecutorForDatabase)
+	s.txSessions = txsession.NewManager(120*time.Millisecond, s.newExecutorForDatabase, t.Context())
 	gate := newStopR2Gate(t)
 	writer := &r4ResponseGate{httptest.NewRecorder(), gate}
 	req := httptest.NewRequest(http.MethodPost, "/db/nornic/tx", strings.NewReader(`{"statements":[{"statement":"CREATE (:R4Opening)"}]}`))
@@ -91,7 +91,7 @@ func TestServerStopR4OneShotLease(t *testing.T) {
 		t.Run(fmt.Sprint(fallback), func(t *testing.T) {
 			s, _ := stopR2Server(t)
 			a := s.auth
-			s.txSessions = txsession.NewManager(100*time.Millisecond, s.newExecutorForDatabase)
+			s.txSessions = txsession.NewManager(100*time.Millisecond, s.newExecutorForDatabase, t.Context())
 			gate := newStopR2Gate(t)
 			logGate := &r4LogGate{gate: gate, after: 1}
 			if fallback {

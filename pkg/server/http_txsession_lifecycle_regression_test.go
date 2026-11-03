@@ -57,7 +57,7 @@ func lifecycleTransactionOwner(t *testing.T, s *Server, token string) string {
 func TestHTTPEmptyTransactionRequestRefreshesExpiry(t *testing.T) {
 	s, authenticator := setupTestServer(t)
 	t.Cleanup(func() { _ = s.Stop(context.Background()) })
-	s.txSessions = txsession.NewManager(4*time.Second, s.newExecutorForDatabase)
+	s.txSessions = txsession.NewManager(4*time.Second, s.newExecutorForDatabase, t.Context())
 	token := "Bearer " + getAuthToken(t, authenticator, "admin")
 	status, opened := lifecycleTransactionPost(t, s, token, "/db/nornic/tx", "CREATE (:EmptyKeepAlive)")
 	require.Equal(t, http.StatusCreated, status)
@@ -97,7 +97,7 @@ func TestHTTPExpiryDuringRequestBodyDecodeReturnsNotFound(t *testing.T) {
 		t.Run(endpoint, func(t *testing.T) {
 			s, authenticator := setupTestServer(t)
 			t.Cleanup(func() { _ = s.Stop(context.Background()) })
-			s.txSessions = txsession.NewManager(300*time.Millisecond, s.newExecutorForDatabase)
+			s.txSessions = txsession.NewManager(300*time.Millisecond, s.newExecutorForDatabase, t.Context())
 			token := "Bearer " + getAuthToken(t, authenticator, "admin")
 			status, opened := lifecycleTransactionPost(t, s, token, "/db/nornic/tx", "CREATE (:BodyDecodeExpiry)")
 			require.Equal(t, http.StatusCreated, status)
@@ -142,7 +142,7 @@ func TestHTTPExpiryDuringRequestBodyDecodeReturnsNotFound(t *testing.T) {
 func TestHTTPConcurrentRunsSerializeSessionExpiryState(t *testing.T) {
 	s, authenticator := setupTestServer(t)
 	t.Cleanup(func() { _ = s.Stop(context.Background()) })
-	s.txSessions = txsession.NewManager(time.Minute, s.newExecutorForDatabase)
+	s.txSessions = txsession.NewManager(time.Minute, s.newExecutorForDatabase, t.Context())
 	token := "Bearer " + getAuthToken(t, authenticator, "admin")
 	status, opened := lifecycleTransactionPost(t, s, token, "/db/nornic/tx", "RETURN 1")
 	require.Equal(t, http.StatusCreated, status)
@@ -172,7 +172,7 @@ func TestHTTPConcurrentRunsSerializeSessionExpiryState(t *testing.T) {
 func TestHTTPServerStopRollsBackAndRemovesExplicitTransactions(t *testing.T) {
 	s, authenticator := setupTestServer(t)
 	t.Cleanup(func() { _ = s.Stop(context.Background()) })
-	s.txSessions = txsession.NewManager(time.Hour, s.newExecutorForDatabase)
+	s.txSessions = txsession.NewManager(time.Hour, s.newExecutorForDatabase, t.Context())
 	token := "Bearer " + getAuthToken(t, authenticator, "admin")
 	status, opened := lifecycleTransactionPost(t, s, token, "/db/nornic/tx", "CREATE (:StopRollsBackTx)")
 	require.Equal(t, http.StatusCreated, status)

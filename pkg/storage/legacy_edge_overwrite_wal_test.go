@@ -153,7 +153,7 @@ func TestEdgeUpdateKeepsPhysicalCounts(t *testing.T) {
 					}
 				}
 				verify("acknowledged")
-				require.NoError(t, engine.FlushWriteBehind(nil))
+				require.NoError(t, engine.FlushWriteBehind(context.Background()))
 				verify("flushed")
 			})
 		}

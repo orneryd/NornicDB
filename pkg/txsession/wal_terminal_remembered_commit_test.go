@@ -27,7 +27,7 @@ func TestWALTerminalRememberedErrorAtCommitKeepsClassification(t *testing.T) {
 	t.Cleanup(func() { _ = engine.Close() })
 	controller := &lifecycleControllerStub{}
 	engine.SetLifecycleController(controller)
-	mgr := NewManager(time.Second, nil)
+	mgr := NewManager(time.Second, nil, t.Context())
 	session, err := mgr.OpenWithExecutorForOwner(context.Background(), "neo4j", cypher.NewStorageExecutor(engine), "")
 	require.NoError(t, err)
 

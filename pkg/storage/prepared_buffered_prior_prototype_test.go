@@ -23,7 +23,7 @@ func TestPreparedPriorSurvivesAcknowledgedBufferRetirement(t *testing.T) {
 	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:prior", Properties: map[string]any{"value": "new"}}, Policy: ClientNodeEdits}))
 	// The canonical coherent-usage initializer drains before preparation. The
 	// transaction began after this ACK and must retain its actual prior image.
-	require.NoError(t, b.FlushWriteBehind(nil))
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
 	prepared, err := tx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: "logical-after-drain"})
 	require.NoError(t, err)
 	defer prepared.Abort()

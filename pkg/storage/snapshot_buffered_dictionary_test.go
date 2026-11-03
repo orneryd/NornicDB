@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 	"time"
@@ -29,7 +30,7 @@ func TestSnapshotBufferedWALPropertyBindingsControl(t *testing.T) {
 	}
 	initialEdge := &Edge{ID: "binding:r", StartNode: "binding:a", EndNode: "binding:b", Type: "R", Properties: map[string]any{"alpha": "before-alpha"}}
 	require.NoError(t, source.CreateEdge(t.Context(), initialEdge))
-	require.NoError(t, source.FlushWriteBehind(nil))
+	require.NoError(t, source.FlushWriteBehind(context.Background()))
 	for i, node := range initial {
 		initial[i], err = source.GetNode(t.Context(), node.ID)
 		require.NoError(t, err)
@@ -50,7 +51,7 @@ func TestSnapshotBufferedWALPropertyBindingsControl(t *testing.T) {
 	require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: finalEdge}))
 	require.NoError(t, tx.Commit())
 	require.True(t, tx.AcknowledgedBuffered())
-	require.NoError(t, source.FlushWriteBehind(nil))
+	require.NoError(t, source.FlushWriteBehind(context.Background()))
 	require.NoError(t, journal.Close())
 	entries, err := ReadWALEntriesFromDir(walDir)
 	require.NoError(t, err)

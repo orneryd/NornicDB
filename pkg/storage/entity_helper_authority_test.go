@@ -29,9 +29,6 @@ func TestNativeEntityHelpersRespectPreparedAuthority(t *testing.T) {
 			node.EmbedMeta = map[string]any{"chunk_count": 1}
 			return b.UpdateNodeEmbeddingSidecar(context.Background(), node)
 		}},
-		{name: "range", mutate: func(b *BadgerEngine, id string) error {
-			return b.replaceSeparateEmbeddingChunks(NodeID(id), [][]float32{{7, 8}}, nil)
-		}},
 		{name: "manual_node", mutate: func(b *BadgerEngine, id string) error {
 			return b.SetManualSuppression(context.Background(), StoredEntityNodeKind, string(id), true)
 		}},
@@ -145,7 +142,7 @@ func TestAcceptedPhysicalFailureLetsAuthorityWaiterYieldRepairCut(t *testing.T) 
 	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 	prepared, err := tx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: "accepted-repair"})
 	require.NoError(t, err)
-	releaseAccepted, err := prepared.RetainAcceptedAuthority(nil)
+	releaseAccepted, err := prepared.RetainAcceptedAuthority(context.Background())
 	require.NoError(t, err)
 	enrolled := make(chan struct{})
 	var once sync.Once

@@ -25,7 +25,7 @@ func (e *StorageExecutor) indexSeekConstant(ctx context.Context, expr string) (v
 	if expr == "" {
 		return nil, false
 	}
-	for _, variable := range expressionFreeVariables(expr) {
+	for _, variable := range expressionFreeVariables(ctx, expr) {
 		if _, bound := e.boundValue(ctx, variable); !bound {
 			return nil, false
 		}
@@ -317,7 +317,7 @@ func (e *StorageExecutor) tryCollectNodesFromIDEqualityCompound(
 
 	// 2) Conjunction: any recognized id-conjunct is safe to use as a pruning seek.
 	if findTopLevelKeyword(clause, " AND ") > 0 {
-		for _, raw := range splitTopLevelAndConjuncts(clause) {
+		for _, raw := range splitTopLevelAndConjuncts(ctx, clause) {
 			term := unwrapOuterParens(strings.TrimSpace(raw))
 			if term == "" {
 				continue
@@ -502,7 +502,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInAnyOf(ctx context.Co
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
 	}
-	property, listValues, ok := e.parseSimpleIndexedInParam(nodePattern.variable, whereClause, params)
+	property, listValues, ok := e.parseSimpleIndexedInParam(ctx, nodePattern.variable, whereClause, params)
 	if !ok {
 		return nil, false, nil
 	}
@@ -710,7 +710,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInCompound(
 	// A label disjunction among the conjuncts names the labels a match must
 	// carry, for a pattern without labels (#858).
 	if findTopLevelKeyword(clause, " AND ") > 0 {
-		conjuncts := splitTopLevelAndConjuncts(clause)
+		conjuncts := splitTopLevelAndConjuncts(ctx, clause)
 		anyOf := whereLabelDisjunctionConjunct(nodePattern.variable, conjuncts)
 		for _, raw := range conjuncts {
 			term := unwrapOuterParens(strings.TrimSpace(raw))
@@ -767,7 +767,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexEqualityCompound(
 	// (n.id = $id AND (n:A OR n:B)) names the labels a match must carry, for
 	// a pattern without labels (#858).
 	if findTopLevelKeyword(clause, " AND ") > 0 {
-		conjuncts := splitTopLevelAndConjuncts(clause)
+		conjuncts := splitTopLevelAndConjuncts(ctx, clause)
 		anyOf := whereLabelDisjunctionConjunct(nodePattern.variable, conjuncts)
 		for _, raw := range conjuncts {
 			term := unwrapOuterParens(strings.TrimSpace(raw))
@@ -812,8 +812,8 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInOrParam(ctx context.
 		return nil, false, nil
 	}
 
-	lprop, lvals, lok := e.parseSimpleIndexedInParam(nodePattern.variable, left, params)
-	rprop, rvals, rok := e.parseSimpleIndexedInParam(nodePattern.variable, right, params)
+	lprop, lvals, lok := e.parseSimpleIndexedInParam(ctx, nodePattern.variable, left, params)
+	rprop, rvals, rok := e.parseSimpleIndexedInParam(ctx, nodePattern.variable, right, params)
 	if !lok || !rok {
 		return nil, false, nil
 	}
@@ -1216,14 +1216,14 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrderLimit(
 	// BY because it accepts the seek only when the two name the same property.
 	var whereProp string
 	if mode == indexOrderExplicitNotNull {
-		parsed, ok := e.parseSimpleIndexedIsNotNull(nodePattern.variable, whereClause)
+		parsed, ok := e.parseSimpleIndexedIsNotNull(ctx, nodePattern.variable, whereClause)
 		if !ok {
 			return nil, false, nil
 		}
 		whereProp = parsed
 	}
 
-	orderSpecs, ok := e.parseNodeOrderSpecs(orderExpr, nodePattern.variable)
+	orderSpecs, ok := e.parseNodeOrderSpecs(ctx, orderExpr, nodePattern.variable)
 	if !ok {
 		return nil, false, nil
 	}
@@ -1244,8 +1244,8 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrderLimit(
 		// A WHERE that bounds the first sort property (n.t > $last, the keyset
 		// form n.t > $t OR (n.t = $t AND n.id > $id)) starts the index scan at
 		// the bound, and rules out rows where it is null (#939).
-		bounds = impliedPropertyBounds(nodePattern.variable, spec.propName, whereClause, getParamsFromContext(ctx))
-		primaryNonNull = bounds.HasLower || bounds.HasUpper || e.indexedOrderRequiresNonNull(nodePattern.variable, spec.propName, whereClause)
+		bounds = impliedPropertyBounds(ctx, nodePattern.variable, spec.propName, whereClause, getParamsFromContext(ctx))
+		primaryNonNull = bounds.HasLower || bounds.HasUpper || e.indexedOrderRequiresNonNull(ctx, nodePattern.variable, spec.propName, whereClause)
 		if spec.descending && !primaryNonNull {
 			return nil, false, nil
 		}
@@ -1303,7 +1303,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexNotNull(ctx context.Co
 	if len(nodePattern.labels) == 0 {
 		return nil, false, nil
 	}
-	property, ok := e.parseSimpleIndexedIsNotNull(nodePattern.variable, whereClause)
+	property, ok := e.parseSimpleIndexedIsNotNull(ctx, nodePattern.variable, whereClause)
 	if !ok {
 		return nil, false, nil
 	}
@@ -1487,7 +1487,7 @@ func (e *StorageExecutor) parseSimpleIndexedEquality(ctx context.Context, variab
 		return "", nil, false
 	}
 	for _, kw := range []string{"NOT", " IN ", " IS ", "<>", "!=", ">=", "<=", ">", "<"} {
-		if topLevelKeywordIndex(clause, kw) >= 0 {
+		if topLevelKeywordIndex(ctx, clause, kw) >= 0 {
 			return "", nil, false
 		}
 	}
@@ -1518,7 +1518,7 @@ func (e *StorageExecutor) parseSimpleIndexedEquality(ctx context.Context, variab
 	return "", nil, false
 }
 
-func (e *StorageExecutor) parseSimpleIndexedInParam(variable, whereClause string, params map[string]interface{}) (property string, values []interface{}, ok bool) {
+func (e *StorageExecutor) parseSimpleIndexedInParam(ctx context.Context, variable, whereClause string, params map[string]interface{}) (property string, values []interface{}, ok bool) {
 	clause := strings.TrimSpace(whereClause)
 	for strings.HasPrefix(clause, "(") && strings.HasSuffix(clause, ")") && len(clause) >= 2 {
 		inner := strings.TrimSpace(clause[1 : len(clause)-1])
@@ -1534,7 +1534,7 @@ func (e *StorageExecutor) parseSimpleIndexedInParam(variable, whereClause string
 	if containsFold(clause, " AND ") || containsFold(clause, " OR ") {
 		return "", nil, false
 	}
-	inIdx := keywordIndexFrom(clause, "IN", 0, defaultKeywordScanOpts())
+	inIdx := keywordIndexFrom(ctx, clause, "IN", 0, defaultKeywordScanOpts())
 	if inIdx <= 0 || inIdx >= len(clause)-2 {
 		return "", nil, false
 	}
@@ -1591,7 +1591,7 @@ func (e *StorageExecutor) parseSimpleIndexedInLiteral(ctx context.Context, varia
 	if containsFold(clause, " AND ") || containsFold(clause, " OR ") {
 		return "", nil, false
 	}
-	inIdx := keywordIndexFrom(clause, "IN", 0, defaultKeywordScanOpts())
+	inIdx := keywordIndexFrom(ctx, clause, "IN", 0, defaultKeywordScanOpts())
 	if inIdx <= 0 || inIdx >= len(clause)-2 {
 		return "", nil, false
 	}
@@ -1639,13 +1639,13 @@ func coerceInterfaceList(v interface{}) []interface{} {
 	return items
 }
 
-func (e *StorageExecutor) parseSimpleIndexedIsNotNull(variable, whereClause string) (property string, ok bool) {
+func (e *StorageExecutor) parseSimpleIndexedIsNotNull(ctx context.Context, variable, whereClause string) (property string, ok bool) {
 	clause := strings.TrimSpace(whereClause)
 	clause = unwrapOuterParens(clause)
 	if clause == "" {
 		return "", false
 	}
-	parts := splitTopLevelAndConjuncts(clause)
+	parts := splitTopLevelAndConjuncts(ctx, clause)
 	targetProp := ""
 	for _, raw := range parts {
 		part := strings.TrimSpace(raw)
@@ -1705,8 +1705,8 @@ func unwrapOuterParens(clause string) string {
 // condition, #699) belongs to its operand. It is the one AND splitter of the
 // WHERE planners (index seek, cartesian and CREATE / MERGE filters, CALL
 // subquery correlation).
-func splitTopLevelAndConjuncts(clause string) []string {
-	if topLevelKeywordIndex(clause, "OR") >= 0 || topLevelKeywordIndex(clause, "XOR") >= 0 {
+func splitTopLevelAndConjuncts(ctx context.Context, clause string) []string {
+	if topLevelKeywordIndex(ctx, clause, "OR") >= 0 || topLevelKeywordIndex(ctx, clause, "XOR") >= 0 {
 		return []string{strings.TrimSpace(clause)}
 	}
 	paren, bracket, brace, caseDepth := 0, 0, 0, 0
@@ -2068,7 +2068,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexRange(ctx context.Cont
 	if len(nodePattern.labels) == 0 {
 		return nil, false, nil
 	}
-	property, bounds, ok := parseIndexedRangeBounds(nodePattern.variable, whereClause, params)
+	property, bounds, ok := parseIndexedRangeBounds(ctx, nodePattern.variable, whereClause, params)
 	if !ok {
 		return nil, false, nil
 	}
@@ -2085,12 +2085,12 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexRange(ctx context.Cont
 // parseIndexedRangeBounds finds, among the top-level AND conjuncts of a
 // WHERE, comparisons of variable.property with a literal or parameter, and
 // returns the bounds they place on the first such property.
-func parseIndexedRangeBounds(variable, whereClause string, params map[string]interface{}) (property string, bounds storage.PropertyIndexBounds, ok bool) {
+func parseIndexedRangeBounds(ctx context.Context, variable, whereClause string, params map[string]interface{}) (property string, bounds storage.PropertyIndexBounds, ok bool) {
 	clause := unwrapOuterParens(strings.TrimSpace(whereClause))
 	if clause == "" {
 		return "", bounds, false
 	}
-	for _, raw := range splitTopLevelAndConjuncts(clause) {
+	for _, raw := range splitTopLevelAndConjuncts(ctx, clause) {
 		operands, operators, isChain := splitComparisonChain(unwrapOuterParens(strings.TrimSpace(raw)))
 		if !isChain {
 			continue
@@ -2203,7 +2203,7 @@ func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Conte
 	// An id IN list among AND conditions seeks the same way; the caller
 	// still evaluates the whole WHERE on the nodes it selects.
 	if findTopLevelKeyword(whereClause, " AND ") > 0 {
-		for _, conjunct := range splitTopLevelAndConjuncts(whereClause) {
+		for _, conjunct := range splitTopLevelAndConjuncts(ctx, whereClause) {
 			if nodes, used, err := e.tryCollectNodesFromIDIn(ctx, nodePattern, conjunct, params); err != nil || used {
 				return nodes, false, used, err
 			}

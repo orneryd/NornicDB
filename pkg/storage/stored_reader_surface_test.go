@@ -103,7 +103,7 @@ func TestStoredReaderSurfaceIncludesHiddenEntities(t *testing.T) {
 				}))
 				require.Equal(t, []string{"ns:a", "ns:h", "other:z"}, idsOf(t).nodes(streamed, nil))
 				var edges []*Edge
-				require.NoError(t, StreamStoredEdgesByType(nil, engine, "LINK", func(edge *Edge) error {
+				require.NoError(t, StreamStoredEdgesByType(ctx, engine, "LINK", func(edge *Edge) error {
 					edges = append(edges, edge)
 					return nil
 				}))

@@ -101,7 +101,7 @@ func TestDeindexCleanupJob_AdditionalBranches(t *testing.T) {
 			Status:     "pending",
 			RetryCount: 10,
 		}
-		job.retryWorkItem(item)
+		job.retryWorkItem(t.Context(), item)
 		require.Equal(t, "failed", item.Status)
 		require.Equal(t, 11, item.RetryCount)
 	})

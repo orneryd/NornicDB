@@ -139,15 +139,11 @@ func (l *Lease) Release() {
 	})
 }
 
-// NewManager binds its optional lifetime parent once, before any opening work.
+// NewManager binds its lifetime parent once, before any opening work.
 // Start/transport contexts must never replace this owner after enrollment.
-func NewManager(ttl time.Duration, factory ExecutorFactory, parents ...context.Context) *Manager {
+func NewManager(ttl time.Duration, factory ExecutorFactory, parent context.Context) *Manager {
 	if ttl <= 0 {
 		ttl = 30 * time.Second
-	}
-	parent := context.Background()
-	if len(parents) > 0 && parents[0] != nil {
-		parent = parents[0]
 	}
 	return &Manager{
 		work:         lifecycle.NewWorkLifetime(parent),
@@ -419,6 +415,9 @@ func (m *Manager) beginClose() {
 	m.sessions = make(map[string]*Session)
 	m.work.CloseAdmission()
 	m.mu.Unlock()
+	// Accepted rollbacks are compensation: they keep the work's values but
+	// must outlive the cancellation that stops new and in-flight requests.
+	rollbackCtx := context.WithoutCancel(m.work.Context())
 	m.work.Cancel()
 
 	for i, session := range sessions {
@@ -442,7 +441,7 @@ func (m *Manager) beginClose() {
 			var closeErr error
 			if !session.completed && session.terminalErr == nil && session.Executor != nil {
 				session.mu.Unlock()
-				_, err := m.executeTerminal(context.Background(), session, "ROLLBACK")
+				_, err := m.executeTerminal(rollbackCtx, session, "ROLLBACK")
 				completed := !session.Executor.HasActiveTransaction()
 				terminal := isTerminalLifecycleError(err)
 				if err != nil {

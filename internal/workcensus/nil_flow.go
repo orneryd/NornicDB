@@ -78,14 +78,14 @@ type nilFlow struct {
 	fields              map[*types.Var][]string
 	active              map[any]bool
 	recovers            map[*ssa.Function]bool
-	why                 map[ssa.Value][]string              // the reasons behind each cached non-nil verdict
-	fieldWhy            map[*types.Var][]string             // the same for field verdicts
-	trail               []string                            // reasons recorded during the current query
-	external            map[string]string                   // deferred callee -> verdict from its package's source
-	bodies              map[string]map[string]*ssa.Function // package path -> its functions, loaded on demand
-	sourcePackages      map[string]*ssa.Package             // same loaded source packages, including globals/init
-	globalInitializers  map[*ssa.Global]*globalInitializer  // source facts only; phase stays per-load
-	initializationOrder map[*ssa.Store]map[string]bool      // proven prefix order per exact initializer/read owner
+	why                 map[ssa.Value][]string                // the reasons behind each cached non-nil verdict
+	fieldWhy            map[*types.Var][]string               // the same for field verdicts
+	trail               []string                              // reasons recorded during the current query
+	external            map[string]string                     // deferred callee -> verdict from its package's source
+	bodies              map[string]map[string]*ssa.Function   // package path -> its functions, loaded on demand
+	sourcePackages      map[string]*ssa.Package               // same loaded source packages, including globals/init
+	globalInitializers  map[*ssa.Global]*globalInitializer    // source facts only; phase stays per-load
+	initializationOrder map[*ssa.Store]map[*ssa.Function]bool // proven prefix order per exact initializer/read owner
 }
 
 // use applies the guard at this use, then the value's own may-nil result.
@@ -1725,296 +1725,17 @@ func (f *nilFlow) initializedGlobal(global *ssa.Global, load *ssa.UnOp) bool {
 // Imported package init functions have already completed before owner init.
 func (f *nilFlow) initializerPrecedesFunction(fact *globalInitializer, reader *ssa.Function) bool {
 	if f.initializationOrder == nil {
-		f.initializationOrder = map[*ssa.Store]map[string]bool{}
+		f.initializationOrder = map[*ssa.Store]map[*ssa.Function]bool{}
 	}
-	key := reader.String()
+	key := reader
 	if cached := f.initializationOrder[fact.store]; cached != nil {
 		if result, ok := cached[key]; ok {
 			return result
 		}
 	}
-	active, done := map[string]bool{}, map[string]bool{}
-	checked := map[ssa.Instruction]bool{}
-	containers := []ssa.Value{}
-	containerSet := map[ssa.Value]bool{}
-	addContainer := func(value ssa.Value) {
-		if !containerSet[value] {
-			containerSet[value] = true
-			containers = append(containers, value)
-		}
-	}
-	privateGlobal := func(value ssa.Value) bool {
-		root, ok := value.(*ssa.Global)
-		return ok && root.Pkg != nil && root.Pkg.Pkg.Path() == fact.owner.Pkg.Path() && root.Object() != nil && !root.Object().Exported()
-	}
-	// A method-expression conversion may only initialize a private package
-	// slot. This does not assume its body is safe: no prefix may read or expose
-	// that slot, and unknown/dynamic prefix calls remain rejected.
-	var storedCallable func(ssa.Value, map[ssa.Value]bool) bool
-	storedCallable = func(value ssa.Value, seen map[ssa.Value]bool) bool {
-		if seen[value] {
-			return false
-		}
-		seen[value] = true
-		if _, ok := value.Type().Underlying().(*types.Signature); !ok {
-			return false
-		}
-		refs := value.Referrers()
-		if refs == nil || len(*refs) == 0 {
-			return false
-		}
-		for _, ref := range *refs {
-			if _, ok := ref.(*ssa.DebugRef); ok {
-				continue
-			}
-			switch use := ref.(type) {
-			case *ssa.ChangeType:
-				if use.X != value || !storedCallable(use, seen) {
-					return false
-				}
-			case *ssa.Store:
-				if use.Val != value {
-					return false
-				}
-				address := use.Addr
-				for {
-					field, ok := address.(*ssa.FieldAddr)
-					if !ok {
-						break
-					}
-					address = field.X
-				}
-				if !privateGlobal(address) {
-					allocation, ok := address.(*ssa.Alloc)
-					if !ok || allocation.Parent().Pkg == nil || allocation.Parent().Pkg.Pkg.Path() != fact.owner.Pkg.Path() || !localReferences(allocation, inlineNonEscapeFact, map[ssa.Value]bool{}) {
-						return false
-					}
-				}
-				addContainer(address)
-			default:
-				return false
-			}
-		}
-		return true
-	}
-	var visit func(*ssa.Function, bool) bool
-	visit = func(fn *ssa.Function, prefix bool) bool {
-		if fn == nil || fn.String() == key {
-			return false
-		}
-		name := fn.String()
-		if active[name] {
-			return false
-		}
-		if done[name] && !prefix {
-			return true
-		}
-		if len(fn.Blocks) == 0 {
-			fn = f.externalBody(fn)
-		}
-		if fn == nil || len(fn.Blocks) == 0 || fn.Recover != nil {
-			return false
-		}
-		active[name] = true
-		defer delete(active, name)
-		seen := map[*ssa.BasicBlock]bool{}
-		var block func(*ssa.BasicBlock) bool
-		block = func(b *ssa.BasicBlock) bool {
-			if seen[b] {
-				return true
-			}
-			seen[b] = true
-			// This is finite instruction/call absence, not termination or value flow:
-			// every loop block is checked once; unknown calls and recursion stay open.
-			for _, ins := range b.Instrs {
-				if prefix && ins == fact.store {
-					return true
-				}
-				checked[ins] = true
-				// An already-running dependency may consume a capability published by
-				// this prefix. Thus absence of local calls is insufficient: writes and
-				// sends must not expose values through imported or unknown containers.
-				switch use := ins.(type) {
-				case *ssa.Store:
-					address := use.Addr
-					for {
-						switch a := address.(type) {
-						case *ssa.FieldAddr:
-							address = a.X
-						case *ssa.IndexAddr:
-							address = a.X
-						default:
-							goto storeRoot
-						}
-					}
-				storeRoot:
-					switch root := address.(type) {
-					case *ssa.Alloc: // fresh source-local staging cell
-					case *ssa.Global:
-						if root.Pkg == nil || root.Pkg.Pkg.Path() != fact.owner.Pkg.Path() {
-							return false
-						}
-					default:
-						return false
-					}
-				case *ssa.MapUpdate:
-					target := use.Map
-					for {
-						converted, ok := target.(*ssa.ChangeType)
-						if !ok {
-							break
-						}
-						target = converted.X
-					}
-					if _, local := target.(*ssa.MakeMap); !local {
-						load, ok := target.(*ssa.UnOp)
-						if !ok {
-							return false
-						}
-						root, ok := load.X.(*ssa.Global)
-						if !ok || root.Pkg == nil || root.Pkg.Pkg.Path() != fact.owner.Pkg.Path() {
-							return false
-						}
-					}
-				case *ssa.Send:
-					return false
-				}
-				switch ins.(type) {
-				case *ssa.Go, *ssa.Defer, *ssa.RunDefers, *ssa.MakeClosure:
-					return false
-				}
-				for _, operand := range ins.Operands(nil) {
-					if operand == nil || *operand == nil {
-						continue
-					}
-					if _, callable := (*operand).(*ssa.Function); callable {
-						if call, ok := ins.(*ssa.Call); ok && call.Common().Value == *operand {
-							continue
-						}
-						switch use := ins.(type) {
-						case *ssa.ChangeType:
-							if use.X != *operand || !storedCallable(use, map[ssa.Value]bool{}) {
-								return false
-							}
-						case *ssa.Store:
-							// Include this store's exact function value in the same alias proof.
-							if !storedCallable(*operand, map[ssa.Value]bool{}) {
-								return false
-							}
-						default:
-							return false
-						}
-					}
-				}
-				if call, ok := ins.(*ssa.Call); ok {
-					if builtin, ok := call.Common().Value.(*ssa.Builtin); ok {
-						if builtin.Name() == "append" || builtin.Name() == "copy" {
-							return false
-						}
-						continue
-					}
-					target := call.Common().StaticCallee()
-					if target == nil {
-						return false
-					}
-					if target.Name() == "init" && target.Synthetic == "package initializer" && target.Pkg != nil && target.Pkg.Pkg.Path() != fact.owner.Pkg.Path() {
-						continue
-					}
-					if !visit(target, false) {
-						return false
-					}
-				}
-			}
-			for _, successor := range b.Succs {
-				if !block(successor) {
-					return false
-				}
-			}
-			return true
-		}
-		result := block(fn.Blocks[0])
-		if result && !prefix {
-			done[name] = true
-		}
-		return result
-	}
-	result := visit(fact.owner.Func("init"), true)
-	// Container addresses must remain initialization-only across the COMPLETE
-	// checked prefix, including source-loaded helpers and all CFG loop blocks.
-	var addressLocal func(ssa.Value, map[ssa.Value]bool) bool
-	addressLocal = func(address ssa.Value, seen map[ssa.Value]bool) bool {
-		if seen[address] {
-			return true
-		}
-		seen[address] = true
-		refs := address.Referrers()
-		sameReference := func(value ssa.Value) bool { return value == address }
-		if global, ok := address.(*ssa.Global); ok {
-			// SSA intentionally omits global referrer lists. Reuse the COMPLETE
-			// checked source prefix, never treat absent Referrers as no accesses.
-			sameReference = func(value ssa.Value) bool { return sameGlobal(value, global) }
-			uses := []ssa.Instruction{}
-			for instruction := range checked {
-				for _, operand := range instruction.Operands(nil) {
-					if operand != nil && *operand != nil && sameReference(*operand) {
-						uses = append(uses, instruction)
-						break
-					}
-				}
-			}
-			refs = &uses
-		}
-		if refs == nil {
-			return false
-		}
-		for _, ref := range *refs {
-			if !checked[ref] {
-				continue
-			}
-			switch use := ref.(type) {
-			case *ssa.DebugRef:
-			case *ssa.FieldAddr:
-				if !sameReference(use.X) || !addressLocal(use, seen) {
-					return false
-				}
-			case *ssa.Store:
-				if !sameReference(use.Addr) || sameReference(use.Val) {
-					return false
-				}
-			case *ssa.UnOp:
-				// SSA constructs a struct literal in a local cell, then copies its
-				// whole value into the private declaration. A load is allowed only for
-				// that exact transfer, never to inspect/call an initialized callback.
-				if _, local := address.(*ssa.Alloc); !local || use.Op != token.MUL || use.X != address || use.Referrers() == nil {
-					return false
-				}
-				for _, consumer := range *use.Referrers() {
-					if _, debug := consumer.(*ssa.DebugRef); debug {
-						continue
-					}
-					store, ok := consumer.(*ssa.Store)
-					if !ok || store.Val != use || !privateGlobal(store.Addr) {
-						return false
-					}
-					addContainer(store.Addr)
-				}
-			default:
-				return false
-			}
-		}
-		return true
-	}
-	if result {
-		for index := 0; index < len(containers); index++ {
-			root := containers[index]
-			if !addressLocal(root, map[ssa.Value]bool{}) {
-				result = false
-				break
-			}
-		}
-	}
+	result := f.proveInitializerCapabilities(fact, reader)
 	if f.initializationOrder[fact.store] == nil {
-		f.initializationOrder[fact.store] = map[string]bool{}
+		f.initializationOrder[fact.store] = map[*ssa.Function]bool{}
 	}
 	f.initializationOrder[fact.store][key] = result
 	return result

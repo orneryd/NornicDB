@@ -30,11 +30,11 @@ func TestCypherMetrics_RegistersElevenFamilies(t *testing.T) {
 	// (PlannerCacheSize, ActiveTransactions) and GaugeFunc
 	// (slow_query_threshold_seconds) surface unconditionally.
 	bag.Queries.WithLabelValues("read").Inc()
-	bag.QueryDuration.Bind("read").Observe(nil, 0.001)
-	bag.PlannerDuration.Bind("read").Observe(nil, 0.001)
+	bag.QueryDuration.Bind("read").Observe(t.Context(), 0.001)
+	bag.PlannerDuration.Bind("read").Observe(t.Context(), 0.001)
 	bag.PlannerCacheHits.WithLabelValues().Inc()
 	bag.PlannerCacheMisses.WithLabelValues().Inc()
-	bag.RowsReturned.Bind("read").Observe(nil, 1)
+	bag.RowsReturned.Bind("read").Observe(t.Context(), 1)
 	bag.TransactionConflicts.WithLabelValues().Inc()
 	bag.SlowQueries.WithLabelValues().Inc()
 
@@ -212,7 +212,7 @@ func TestCypherMetrics_BindHelperRespectsTenantFlag(t *testing.T) {
 		bag := NewCypherMetrics(te.Registry, false, func() float64 { return 1.0 })
 		// Subsystem passes database unconditionally; helper drops it.
 		bound := bag.BindQueryDuration("read", "ignored")
-		bound.Observe(nil, 0.001)
+		bound.Observe(t.Context(), 0.001)
 		bag.BindQueries("read", "ignored").Inc()
 		bag.BindTransactionConflicts("ignored").Inc()
 		bag.BindSlowQueries("ignored").Inc()
@@ -225,7 +225,7 @@ func TestCypherMetrics_BindHelperRespectsTenantFlag(t *testing.T) {
 		te := NewTestEnv(t)
 		bag := NewCypherMetrics(te.Registry, true, func() float64 { return 1.0 })
 		bound := bag.BindQueryDuration("read", "mydb")
-		bound.Observe(nil, 0.001)
+		bound.Observe(t.Context(), 0.001)
 		bag.BindQueries("read", "mydb").Inc()
 		bag.BindTransactionConflicts("mydb").Inc()
 		bag.BindSlowQueries("mydb").Inc()

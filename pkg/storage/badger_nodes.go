@@ -73,7 +73,7 @@ func (b *BadgerEngine) createNodeWithWriteContext(ctx context.Context, node *Nod
 		defer order.release()
 	}
 	// Capture before physical assembly can acquire the commit gate.
-	constraints, preparationErr := capturePublicationConstraintView(commitPreparationLifetime(write.ctx), schema)
+	constraints, preparationErr := capturePublicationConstraintView(write.ctx, schema)
 	if preparationErr != nil {
 		return "", preparationErr
 	}
@@ -99,7 +99,7 @@ func (b *BadgerEngine) createNodeWithWriteContext(ctx context.Context, node *Nod
 		if getErr != badger.ErrKeyNotFound {
 			return getErr
 		}
-		if err := b.validateNodeConstraintsInTxn(commitPreparationLifetime(write.ctx), txn, node, schema, dbName, node.ID); err != nil {
+		if err := b.validateNodeConstraintsInTxn(write.ctx, txn, node, schema, dbName, node.ID); err != nil {
 			return err
 		}
 		data, embeddingsSeparate, err := b.writeCreatedNode(txn, txn, key, node)
@@ -128,7 +128,7 @@ func (b *BadgerEngine) createNodeWithWriteContext(ctx context.Context, node *Nod
 				return localizedError(localization.StorageClientNodePendingEmbedIndexWriteFailed(err), err)
 			}
 		}
-		if err := b.applyTemporalIndexesForNodeChangeInTxn(commitPreparationLifetime(write.ctx), txn, dbName, schema, nil, node); err != nil {
+		if err := b.applyTemporalIndexesForNodeChangeInTxn(write.ctx, txn, dbName, schema, nil, node); err != nil {
 			return err
 		}
 		// Create-only path: primary key IS the current head body.
@@ -538,7 +538,7 @@ func (b *BadgerEngine) UpdateNode(ctx context.Context, updateRequest NodeUpdateR
 		defer order.release()
 	}
 	// Capture before physical assembly can acquire the commit gate.
-	constraints, preparationErr := capturePublicationConstraintView(commitPreparationLifetime(write.ctx), schema)
+	constraints, preparationErr := capturePublicationConstraintView(write.ctx, schema)
 	if preparationErr != nil {
 		return preparationErr
 	}
@@ -566,7 +566,7 @@ func (b *BadgerEngine) UpdateNode(ctx context.Context, updateRequest NodeUpdateR
 		if err == badger.ErrKeyNotFound {
 			// Node doesn't exist - do an insert (upsert behavior)
 			wasInsert = true
-			if err := b.validateNodeConstraintsInTxn(commitPreparationLifetime(write.ctx), txn, node, schema, dbName, node.ID); err != nil {
+			if err := b.validateNodeConstraintsInTxn(write.ctx, txn, node, schema, dbName, node.ID); err != nil {
 				return err
 			}
 			data, embeddingsSeparate, err := b.encodeNodeInTxn(txn, dbName, node)
@@ -633,12 +633,12 @@ func (b *BadgerEngine) UpdateNode(ctx context.Context, updateRequest NodeUpdateR
 		// them from storage too (#963).
 		dropStaleCarriedEmbeddings(b, existingNode, node)
 
-		if err := b.validateNodeConstraintsInTxn(commitPreparationLifetime(write.ctx), txn, node, schema, dbName, node.ID); err != nil {
+		if err := b.validateNodeConstraintsInTxn(write.ctx, txn, node, schema, dbName, node.ID); err != nil {
 			return err
 		}
 
 		// Validate policy constraints on label changes.
-		if err := b.validatePolicyOnNodeLabelChangeInTxn(commitPreparationLifetime(write.ctx), txn, node, existingNode, schema, dbName); err != nil {
+		if err := b.validatePolicyOnNodeLabelChangeInTxn(write.ctx, txn, node, existingNode, schema, dbName); err != nil {
 			return err
 		}
 
@@ -721,7 +721,7 @@ func (b *BadgerEngine) UpdateNode(ctx context.Context, updateRequest NodeUpdateR
 			txn.Delete(pendingEmbedKey(node.ID))
 		}
 
-		if err := b.applyTemporalIndexesForNodeChangeInTxn(commitPreparationLifetime(write.ctx), txn, dbName, schema, existingNode, node); err != nil {
+		if err := b.applyTemporalIndexesForNodeChangeInTxn(write.ctx, txn, dbName, schema, existingNode, node); err != nil {
 			return err
 		}
 		// Label changes may rebind the node to a different decay profile (or
@@ -755,25 +755,6 @@ func (b *BadgerEngine) UpdateNode(ctx context.Context, updateRequest NodeUpdateR
 	})
 
 	return err
-}
-
-// replaceSeparateEmbeddingChunks replaces a node's separately stored
-// embedding chunks with embeddings as one atomic commit of any size: the old
-// chunks' deletions come first, then the new chunks, each key its own unit
-// (commitEngineWrite repeatable units). Readers see the old chunks or the new ones, never a mix
-// (#703).
-func (b *BadgerEngine) replaceSeparateEmbeddingChunks(nodeID NodeID, embeddings [][]float32, inherited *entityWriteContext) error {
-	write, releaseWrite, err := b.beginEntityWrite(context.Background(), string(nodeID), false, inherited)
-	if err != nil {
-		return err
-	}
-	defer releaseWrite()
-	return b.commitEngineWrite(write.ctx, func(cw *commitWriter) error {
-		if err := cw.replaceEmbeddingRange(nodeID, embeddings, nil); err != nil {
-			return err
-		}
-		return write.stagePublication(cw)
-	})
 }
 
 // DeleteNode removes a node and all its edges.
@@ -818,7 +799,7 @@ func (b *BadgerEngine) DeleteNode(ctx context.Context, id NodeID) error {
 	var publicationOps []Operation
 	schema := b.schemaForNodeID(id)
 	// Capture before physical assembly can acquire the commit gate.
-	constraints, preparationErr := capturePublicationConstraintView(commitPreparationLifetime(write.ctx), schema)
+	constraints, preparationErr := capturePublicationConstraintView(write.ctx, schema)
 	if preparationErr != nil {
 		return preparationErr
 	}
@@ -833,7 +814,7 @@ func (b *BadgerEngine) DeleteNode(ctx context.Context, id NodeID) error {
 
 	err = b.withPublishingUpdate(write.ctx, func(txn *badger.Txn) error {
 		var err error
-		result, err = b.executeNodeDeletion(commitPreparationLifetime(write.ctx), txn, id, nil)
+		result, err = b.executeNodeDeletion(write.ctx, txn, id, nil)
 		return err
 	}, publish, keys, notification, &publicationOps, write.stagePublication)
 

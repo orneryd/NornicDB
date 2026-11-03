@@ -35,7 +35,7 @@ func TestManagerTouchAfterCommitDoesNotRestartExpiry(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 	manager := NewManager(time.Hour, func(string) (*cypher.StorageExecutor, error) {
 		return cypher.NewStorageExecutor(storage.NewNamespacedEngine(store, "nornic")), nil
-	})
+	}, t.Context())
 	t.Cleanup(func() { _ = manager.Close() })
 	session, err := manager.Open(context.Background(), "nornic")
 	if err != nil {
@@ -67,7 +67,7 @@ func TestManagerCloseRollsBackSessionsAndStopsTimers(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 	manager := NewManager(time.Hour, func(string) (*cypher.StorageExecutor, error) {
 		return cypher.NewStorageExecutor(storage.NewNamespacedEngine(store, "nornic")), nil
-	})
+	}, t.Context())
 	t.Cleanup(func() { _ = manager.Close() })
 	session, err := manager.Open(context.Background(), "nornic")
 	if err != nil {
@@ -117,7 +117,7 @@ func TestManagerOpenRacingCloseRollsBackUnregisteredTransaction(t *testing.T) {
 	}
 	var releaseOnce sync.Once
 	releaseBegin := func() { releaseOnce.Do(func() { close(engine.release) }) }
-	manager := NewManager(time.Hour, nil)
+	manager := NewManager(time.Hour, nil, t.Context())
 	t.Cleanup(func() {
 		joinCtx, joinCancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer joinCancel()
@@ -191,7 +191,7 @@ func TestManagerAcquireExpiredSessionRejectsAndExpires(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 	manager := NewManager(time.Hour, func(string) (*cypher.StorageExecutor, error) {
 		return cypher.NewStorageExecutor(storage.NewNamespacedEngine(store, "nornic")), nil
-	})
+	}, t.Context())
 	t.Cleanup(func() { _ = manager.Close() })
 	session, err := manager.Open(context.Background(), "nornic")
 	if err != nil {
@@ -227,7 +227,7 @@ func TestManagerDeleteRemovesSessionAndStopsTimer(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 	manager := NewManager(time.Hour, func(string) (*cypher.StorageExecutor, error) {
 		return cypher.NewStorageExecutor(storage.NewNamespacedEngine(store, "nornic")), nil
-	})
+	}, t.Context())
 	t.Cleanup(func() { _ = manager.Close() })
 	session, err := manager.Open(context.Background(), "nornic")
 	if err != nil {
@@ -251,7 +251,7 @@ func TestManagerExpiryIgnoresStaleAndRemovedSessions(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 	manager := NewManager(time.Hour, func(string) (*cypher.StorageExecutor, error) {
 		return cypher.NewStorageExecutor(storage.NewNamespacedEngine(store, "nornic")), nil
-	})
+	}, t.Context())
 	t.Cleanup(func() { _ = manager.Close() })
 	session, err := manager.Open(context.Background(), "nornic")
 	if err != nil {
@@ -289,7 +289,7 @@ func TestManagerCloseContextHonorsDeadlineAndRollsBackAfterLease(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 	manager := NewManager(time.Hour, func(string) (*cypher.StorageExecutor, error) {
 		return cypher.NewStorageExecutor(storage.NewNamespacedEngine(store, "nornic")), nil
-	})
+	}, t.Context())
 	t.Cleanup(func() { _ = manager.Close() })
 	session, err := manager.Open(context.Background(), "nornic")
 	if err != nil {
@@ -345,7 +345,7 @@ func TestManagerCloseContextReturnsRollbackErrors(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 	manager := NewManager(time.Hour, func(string) (*cypher.StorageExecutor, error) {
 		return cypher.NewStorageExecutor(storage.NewNamespacedEngine(store, "nornic")), nil
-	})
+	}, t.Context())
 	t.Cleanup(func() { _ = manager.Close() })
 	session, err := manager.Open(context.Background(), "nornic")
 	if err != nil {
@@ -364,7 +364,7 @@ func TestManagerCloseContextMarksTerminalSessionsComplete(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 	manager := NewManager(time.Hour, func(string) (*cypher.StorageExecutor, error) {
 		return cypher.NewStorageExecutor(storage.NewNamespacedEngine(store, "nornic")), nil
-	})
+	}, t.Context())
 	t.Cleanup(func() { _ = manager.Close() })
 	session, err := manager.Open(context.Background(), "nornic")
 	if err != nil {
@@ -388,7 +388,7 @@ func TestManagerCloseContextMarksTerminalSessionsComplete(t *testing.T) {
 // The lifecycle owner rejects a nil context loudly instead of substituting
 // one: a caller's missing deadline is a programming error, not a default.
 func TestManagerCloseContextRejectsNilContext(t *testing.T) {
-	manager := NewManager(time.Hour, nil)
+	manager := NewManager(time.Hour, nil, t.Context())
 	t.Cleanup(func() {
 		if err := manager.Close(); err != nil {
 			t.Error(err)
@@ -407,7 +407,7 @@ func TestManagerCloseContextDoesNotWaitForSessionStateLock(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 	manager := NewManager(time.Hour, func(string) (*cypher.StorageExecutor, error) {
 		return cypher.NewStorageExecutor(storage.NewNamespacedEngine(store, "nornic")), nil
-	})
+	}, t.Context())
 	t.Cleanup(func() { _ = manager.Close() })
 	session, err := manager.Open(context.Background(), "nornic")
 	if err != nil {

@@ -78,7 +78,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	}
 	if cypher != source.Text {
 		normalized := sourceQueryRewrite(source)
-		defer func() { result, retErr = (resultRestoration{source: normalized}).restore(result, retErr, nil) }()
+		defer func() { result, retErr = (resultRestoration{source: normalized}).restore(ctx, result, retErr, nil) }()
 	}
 	cypher = source.Text
 	if config.IsCypherQueryNormalizationEnabled() {
@@ -104,9 +104,12 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 			ctx = withSourceRewrite(ctx, rewrite)
 		}
 	}
-	if canonical, rewrite := desugarStandaloneOrderClauses(cypher); rewrite != nil {
+	if canonical, rewrite := desugarStandaloneOrderClauses(ctx, cypher); rewrite != nil {
 		cypher = canonical
 		ctx = withSourceRewrite(ctx, rewrite)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	ctx, cypher = trimSourceText(ctx, cypher, trimSourceTerminator)
 	if err := e.validateStatementFraming(ctx, cypher); err != nil {
@@ -166,7 +169,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	if labelRewrite != nil {
 		cypher = desugared
 		defer func() {
-			result, retErr = (resultRestoration{source: labelRewrite}).restore(withoutGeneratedColumns(result), retErr, nil)
+			result, retErr = (resultRestoration{source: labelRewrite}).restore(ctx, withoutGeneratedColumns(result), retErr, nil)
 		}()
 	}
 
@@ -234,7 +237,7 @@ func (e *StorageExecutor) validateBoundParameterExpressions(ctx context.Context,
 	if err := validateStaticPropertyAccessParameters(ctx, cypher, params); err != nil {
 		return err
 	}
-	if err := validateStaticFunctionParameters(cypher, params, cypherVersionFromContext(ctx) == "25"); err != nil {
+	if err := validateStaticFunctionParameters(ctx, cypher, params, cypherVersionFromContext(ctx) == "25"); err != nil {
 		return err
 	}
 	// A transactional CALL commits independently before later runtime
@@ -245,5 +248,5 @@ func (e *StorageExecutor) validateBoundParameterExpressions(ctx context.Context,
 			return err
 		}
 	}
-	return validateListOperands(cypher, params)
+	return validateListOperands(ctx, cypher, params)
 }

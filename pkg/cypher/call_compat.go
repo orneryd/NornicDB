@@ -663,7 +663,7 @@ func (e *StorageExecutor) callDbIndexVectorCreateIndex(ctx context.Context, args
 		return nil, newSemanticError("Neo.ClientError.Procedure.ProcedureCallFailed", "InvalidArgument", "vector index creation requires a positive dimension and a supported similarity function")
 	}
 	err = e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
-		if _, err := admitSchemaIndexCreation(schema, "", indexName, "VECTOR", []string{token}, []string{property}, entity); err != nil {
+		if _, err := admitSchemaIndexCreation(ctx, schema, "", indexName, "VECTOR", []string{token}, []string{property}, entity); err != nil {
 			return err
 		}
 		if err := schema.AddVectorIndex(indexName, token, property, int(dimension), similarity, entity); err != nil {
@@ -731,7 +731,7 @@ func (e *StorageExecutor) callDbIndexFulltextCreateIndex(ctx context.Context, ar
 	}
 
 	err = e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
-		if _, err := admitSchemaIndexCreation(schema, "", indexName, "FULLTEXT", tokens, properties, entity); err != nil {
+		if _, err := admitSchemaIndexCreation(ctx, schema, "", indexName, "FULLTEXT", tokens, properties, entity); err != nil {
 			return err
 		}
 		return schema.AddFulltextIndex(indexName, tokens, properties, entity)

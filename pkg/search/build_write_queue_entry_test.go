@@ -199,7 +199,7 @@ func TestBuildSupersededWriteIsSkippedAtInstall(t *testing.T) {
 	t.Cleanup(engine.open)
 	built := startGatedBuild(t, engine, svc)
 	stale := buildWriteNode("nornic:r", "staleterm", []float32{0, 1, 0})
-	queued, err := svc.readLockOrQueue(deferredIndexWrite{node: stale, valid: func() bool { return false }})
+	queued, err := svc.readLockOrQueue(t.Context(), deferredIndexWrite{node: stale, valid: func() bool { return false }})
 	require.NoError(t, err)
 	require.True(t, queued)
 	engine.open()

@@ -117,9 +117,6 @@ const edgeTypeIndexRebuildBatchSize = 5000
 // writes it again from the stored edges. The V2-to-V3 upgrade uses it: older
 // stores keyed the index by the lower-cased type (#862).
 func (b *BadgerEngine) rebuildEdgeTypeIndex(ctx context.Context) (int, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if err := b.db.DropPrefix(ctx, prefixDropOptions{engine: b}, []byte{prefixEdgeTypeIndex}); err != nil {
 		return 0, fmt.Errorf("clear edge-type index before rebuild: %w", err)
 	}

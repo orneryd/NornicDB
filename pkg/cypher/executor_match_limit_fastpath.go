@@ -26,13 +26,13 @@ func (e *StorageExecutor) tryFastPathSimpleMatchReturnLimit(ctx context.Context,
 		"WHERE", "ORDER", "SKIP", "WITH", "UNWIND", "OPTIONAL MATCH", "CALL",
 		"CREATE", "MERGE", "DELETE", "DETACH DELETE", "SET", "REMOVE", "UNION",
 	} {
-		if findKeywordIndex(trimmed, kw) > 0 {
+		if findKeywordIndex(ctx, trimmed, kw) > 0 {
 			return nil, false
 		}
 	}
 
-	returnIdx := findKeywordIndex(trimmed, "RETURN")
-	limitIdx := findKeywordIndex(trimmed, "LIMIT")
+	returnIdx := findKeywordIndex(ctx, trimmed, "RETURN")
+	limitIdx := findKeywordIndex(ctx, trimmed, "LIMIT")
 	if returnIdx <= 0 || limitIdx <= returnIdx {
 		return nil, false
 	}
@@ -49,7 +49,7 @@ func (e *StorageExecutor) tryFastPathSimpleMatchReturnLimit(ctx context.Context,
 		return nil, false
 	}
 
-	limitExpression := StripComments(pipelinePaginationExpression(trimmed[returnIdx:], "LIMIT"))
+	limitExpression := StripComments(pipelinePaginationExpression(ctx, trimmed[returnIdx:], "LIMIT"))
 	limit, ok := e.evaluatePipelinePagination(ctx, limitExpression, nil)
 	if !ok {
 		return nil, false

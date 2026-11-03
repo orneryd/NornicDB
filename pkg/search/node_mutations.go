@@ -165,7 +165,7 @@ func (s *Service) RefreshNodeWithMutation(ctx context.Context, mutation NodeMuta
 		s.retryRefresh(RefreshRetry{Node: mutation}, err)
 		return err
 	}
-	return s.applyReservedNodeIndex(node, mutation)
+	return s.applyReservedNodeIndex(ctx, node, mutation)
 }
 
 // DiscardNodeMutation retires work that could not be prepared for application.
@@ -223,7 +223,7 @@ func (s *Service) updateRelationshipWithMutation(write deferredIndexWrite, mutat
 		return
 	}
 	write.valid = mutation.mutation.current
-	if queued, _, _ := s.queueBuildWrite(write); queued {
+	if queued, _, _ := s.queueBuildWrite(s.LifetimeContext(), write); queued {
 		return
 	}
 	lane := s.lockMutation(string(mutation.mutation.id))

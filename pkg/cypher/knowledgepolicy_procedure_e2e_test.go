@@ -371,7 +371,7 @@ func TestKnowledgePolicyApplyFormattingRoundTrips(t *testing.T) {
 		},
 	}
 	var parsedPolicy knowledgepolicy.PromotionPolicyDef
-	require.NoError(t, parsePolicyApplyBlock(policyDDLSource{Source: cyphertext.NewSource(t.Context(), formatPromotionPolicyApply(policy), cyphertext.RawSource), original: true}, &parsedPolicy))
+	require.NoError(t, parsePolicyApplyBlock(t.Context(), policyDDLSource{Source: cyphertext.NewSource(t.Context(), formatPromotionPolicyApply(policy), cyphertext.RawSource), original: true}, &parsedPolicy))
 	assert.Equal(t, policy.OnAccess, parsedPolicy.OnAccess)
 	assert.Equal(t, policy.WhenClauses, parsedPolicy.WhenClauses)
 }
@@ -736,7 +736,7 @@ func TestE2E_CallNornicDbKnowledgePolicyDeindexStatus(t *testing.T) {
 		EnqueuedAt:  1715000000000,
 		Status:      "pending",
 	}
-	require.NoError(t, be.PutDeindexWorkItem(item))
+	require.NoError(t, be.PutDeindexWorkItem(t.Context(), item))
 
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(be, "test"))
 	ctx := context.Background()

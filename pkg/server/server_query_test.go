@@ -143,7 +143,7 @@ func TestHandleOpenTransaction_CompositeRemoteOpenSucceeds(t *testing.T) {
 	}))
 
 	server.dbManager = dbManager
-	server.txSessions = txsession.NewManager(30*time.Second, server.newExecutorForDatabase)
+	server.txSessions = txsession.NewManager(30*time.Second, server.newExecutorForDatabase, t.Context())
 
 	resp := makeRequest(t, server, "POST", "/db/comp_remote/tx", map[string]interface{}{
 		"statements": []map[string]interface{}{},
@@ -173,7 +173,7 @@ func TestCompositeExplicitTx_SecondWriteShardErrorCode(t *testing.T) {
 		{Alias: "b", DatabaseName: "shard_b", Type: "local", AccessMode: "read_write"},
 	}))
 	server.dbManager = dbManager
-	server.txSessions = txsession.NewManager(30*time.Second, server.newExecutorForDatabase)
+	server.txSessions = txsession.NewManager(30*time.Second, server.newExecutorForDatabase, t.Context())
 
 	// Open explicit transaction.
 	openResp := makeRequest(t, server, "POST", "/db/cmp_tx_code/tx", map[string]interface{}{"statements": []map[string]interface{}{}}, "Bearer "+token)

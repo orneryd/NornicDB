@@ -89,7 +89,7 @@ func TestWriteBehindOverlayServesStoredImage(t *testing.T) {
 		return out
 	}
 	overlay := read()
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	// Drop the caches the flush filled, so the second read decodes storage.
 	engine.invalidateCachesAfterRestore()
 	physical := read()
@@ -285,7 +285,7 @@ func TestWriteBehindOverlayKeepsSidecarEmbedding(t *testing.T) {
 	engine.SetEmbeddingTextPolicy(EmbeddingTextPolicy{Include: []string{"text"}})
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	node := sidecarTestNode(t, engine, "keep", map[string]any{"text": "boiler invoice", "tags": []any{"a"}}, now)
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	require.NoError(t, engine.UpdateNodeEmbeddingSidecar(context.Background(), embeddingWriteback(t, engine, node.ID, [][]float32{{0.1, 0.2}}, map[string]any{"has_embedding": true, "chunk_count": 1}, now)))
 
 	tx, err := engine.BeginTransaction(t.Context())
@@ -301,7 +301,7 @@ func TestWriteBehindOverlayKeepsSidecarEmbedding(t *testing.T) {
 	overlay, err := engine.GetNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	require.Equal(t, [][]float32{{0.1, 0.2}}, overlay.ChunkEmbeddings)
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	physical, err := engine.GetNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	require.Equal(t, physical.ChunkEmbeddings, overlay.ChunkEmbeddings)

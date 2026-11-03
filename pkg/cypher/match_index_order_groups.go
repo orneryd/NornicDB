@@ -10,9 +10,9 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func (e *StorageExecutor) indexedOrderRequiresNonNull(variable, property, where string) bool {
-	for _, term := range splitTopLevelAndConjuncts(unwrapOuterParens(strings.TrimSpace(where))) {
-		required, ok := e.parseSimpleIndexedIsNotNull(variable, unwrapOuterParens(strings.TrimSpace(term)))
+func (e *StorageExecutor) indexedOrderRequiresNonNull(ctx context.Context, variable, property, where string) bool {
+	for _, term := range splitTopLevelAndConjuncts(ctx, unwrapOuterParens(strings.TrimSpace(where))) {
+		required, ok := e.parseSimpleIndexedIsNotNull(ctx, variable, unwrapOuterParens(strings.TrimSpace(term)))
 		if ok && strings.EqualFold(required, property) {
 			return true
 		}

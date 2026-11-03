@@ -26,9 +26,6 @@ func rollbackWithCleanupTimeout(
 	if executor == nil {
 		return nil
 	}
-	if base == nil {
-		base = context.Background()
-	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(base), timeout)
 	defer cancel()
 	return invokeTransactionRollback(ctx, executor)

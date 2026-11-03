@@ -314,7 +314,7 @@ func (t *ClusterTransport) createConnection(addr string, netConn net.Conn) *Clus
 		readTimeout:  t.readTimeout,
 		writeTimeout: t.writeTimeout,
 		maxMsgSize:   t.maxMsgSize,
-		pendingRPCs:  make(map[uint64]chan *ClusterMessage),
+		rpcGate:      make(chan struct{}, 1),
 		authSecret:   t.authSecret,
 		authMaxSkew:  t.authMaxSkew,
 	}
@@ -479,10 +479,11 @@ type ClusterConnection struct {
 	writeTimeout time.Duration
 	maxMsgSize   int
 
-	// RPC tracking
+	// The wire has no request IDs. One complete exchange owns the connection;
+	// waiting callers must not publish until that exchange has retired.
+	rpcGate     chan struct{}
 	rpcMu       sync.Mutex
-	nextRPCID   uint64
-	pendingRPCs map[uint64]chan *ClusterMessage
+	pendingRPC  *pendingClusterRPC
 	authSecret  []byte
 	authMaxSkew time.Duration
 
@@ -495,32 +496,62 @@ type ClusterConnection struct {
 	replay     *replayCache
 }
 
+type pendingClusterRPC struct {
+	responseType ClusterMessageType
+	response     chan *ClusterMessage
+}
+
 func (c *ClusterConnection) sendRPC(ctx context.Context, msg *ClusterMessage) (*ClusterMessage, error) {
 	if !c.connected.Load() {
 		return nil, localizedError(localization.ReplicationRPCNotConnected(), nil)
 	}
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-c.work.Context().Done():
+		return nil, localizedError(localization.ReplicationRPCConnectionClosed(), nil)
+	case c.rpcGate <- struct{}{}:
+	}
+	defer func() { <-c.rpcGate }()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if c.work.Closing() || !c.connected.Load() {
+		return nil, localizedError(localization.ReplicationRPCConnectionClosed(), nil)
+	}
+
 	if msg.NodeID == "" && c.transport != nil && c.transport.nodeID != "" {
 		msg.NodeID = c.transport.nodeID
 	}
 	c.signMessage(msg)
 
-	// Create response channel
+	// Every request/response pair occupies consecutive protocol slots.
+	// A request received in the opposite direction is still dispatched to its
+	// handler; it cannot masquerade as this request's response.
+	pending := &pendingClusterRPC{responseType: msg.Type + 1, response: make(chan *ClusterMessage, 1)}
 	c.rpcMu.Lock()
-	rpcID := c.nextRPCID
-	c.nextRPCID++
-	respCh := make(chan *ClusterMessage, 1)
-	c.pendingRPCs[rpcID] = respCh
+	c.pendingRPC = pending
 	c.rpcMu.Unlock()
 
 	defer func() {
 		c.rpcMu.Lock()
-		delete(c.pendingRPCs, rpcID)
+		c.pendingRPC = nil
 		c.rpcMu.Unlock()
 	}()
 
+	// Once an exchange is admitted, cancellation must also interrupt blocked
+	// writes. An abandoned reply has no correlation ID: retire this connection
+	// rather than allowing a later request to consume it.
+	stopCancellation := context.AfterFunc(ctx, func() { c.work.BeginStop(nil) })
+	defer stopCancellation()
+
 	// Send request
 	c.resources.mu.Lock()
-	c.resources.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout))
+	writeDeadline := time.Now().Add(c.writeTimeout)
+	if deadline, bounded := ctx.Deadline(); bounded && deadline.Before(writeDeadline) {
+		writeDeadline = deadline
+	}
+	c.resources.conn.SetWriteDeadline(writeDeadline)
 	err := transferClusterMessage(msg, nil, c.writer, 0)
 	if err == nil {
 		err = c.writer.Flush()
@@ -528,16 +559,29 @@ func (c *ClusterConnection) sendRPC(ctx context.Context, msg *ClusterMessage) (*
 	c.resources.mu.Unlock()
 
 	if err != nil {
+		c.work.BeginStop(nil)
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		// The socket deadline may fire just before the context's timer is
+		// scheduled. Preserve both the spent caller budget and the I/O cause.
+		if deadline, bounded := ctx.Deadline(); bounded && !time.Now().Before(deadline) {
+			return nil, localizedError(localization.ReplicationRPCWriteFailed(err), errors.Join(context.DeadlineExceeded, err))
+		}
 		return nil, localizedError(localization.ReplicationRPCWriteFailed(err), err)
 	}
 
 	// Wait for response
 	select {
 	case <-ctx.Done():
+		c.work.BeginStop(nil)
 		return nil, ctx.Err()
 	case <-c.work.Context().Done():
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, localizedError(localization.ReplicationRPCConnectionClosed(), nil)
-	case resp := <-respCh:
+	case resp := <-pending.response:
 		return resp, nil
 	}
 }
@@ -606,23 +650,12 @@ func (c *ClusterConnection) readLoopWithContext(ctx context.Context, release fun
 			onAuthenticated()
 		}
 
-		// Dispatch to pending RPC (single outstanding RPC per connection is expected today).
+		// The gate admits exactly one outstanding request. Deliver only its
+		// response type, never an arbitrary pending waiter or an inbound request.
 		c.rpcMu.Lock()
-		var (
-			deliverCh chan *ClusterMessage
-			deliverID uint64
-		)
-		for id, ch := range c.pendingRPCs {
-			deliverCh = ch
-			deliverID = id
-			break
-		}
-		if deliverCh != nil {
-			select {
-			case deliverCh <- msg:
-			default:
-			}
-			delete(c.pendingRPCs, deliverID)
+		if pending := c.pendingRPC; pending != nil && msg.Type == pending.responseType {
+			pending.response <- msg
+			c.pendingRPC = nil
 			c.rpcMu.Unlock()
 			continue
 		}
@@ -719,7 +752,7 @@ func (c *ClusterConnection) SendForwardApply(ctx context.Context, cmd *Command, 
 
 // IsConnected returns true if the connection is active.
 func (c *ClusterConnection) IsConnected() bool {
-	return c.connected.Load()
+	return c.connected.Load() && !c.work.Closing()
 }
 
 func (c *ClusterConnection) signMessage(msg *ClusterMessage) {

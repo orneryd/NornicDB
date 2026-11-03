@@ -678,10 +678,29 @@ func (r *HAStandbyReplicator) Apply(ctx context.Context, cmd *Command, timeout t
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	// Establish the quorum deadline before normalization/acceptance. The
+	// accepted owner retains this absolute deadline, not a fresh default wait.
+	if r.config.HAStandby.SyncMode == SyncQuorum {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, r.quorumWaitTimeout(timeout))
+		defer cancel()
+	}
 	if cmd != nil {
 		if handled, err := routeLeaderEntityCommand(ctx, r.storage, r, cmd, timeout); handled || err != nil {
 			return err
 		}
+	}
+	return r.applyCommand(ctx, cmd)
+}
+
+// applyCommand executes owned intent. ctx bounds publication and ACK only:
+// even an expired wait cannot suppress already-accepted native application.
+func (r *HAStandbyReplicator) applyCommand(ctx context.Context, cmd *Command) error {
+	if err := checkApplyReadiness(r.work.Closing(), r.started.Load()); err != nil {
+		return err
+	}
+	if !r.isPrimary.Load() {
+		return ErrStandbyMode
 	}
 	traceWrites := os.Getenv("NORNICDB_CLUSTER_TRACE_WRITES") != ""
 	start := time.Now()
@@ -693,12 +712,6 @@ func (r *HAStandbyReplicator) Apply(ctx context.Context, cmd *Command, timeout t
 		_, err := r.storage.ApplyCommand(r.work.Context(), cmd, WALQueued)
 		return err
 	}
-
-	// One deadline covers this command's publication and the standby
-	// acknowledgement of that exact record: publication delay consumes the ACK
-	// budget, and neither wait starts a second full timeout.
-	ctx, cancel := context.WithTimeout(ctx, r.quorumWaitTimeout(timeout))
-	defer cancel()
 
 	publication, err := r.storage.ApplyCommand(ctx, cmd, WALPublished)
 	applyDur := time.Since(start)

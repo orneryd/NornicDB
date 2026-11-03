@@ -21,7 +21,7 @@ func TestWALTerminalCommitAdmissionKeepsCleanup(t *testing.T) {
 			engine := walterminal.New(t)
 			manager := NewManager(time.Minute, func(string) (*cypher.StorageExecutor, error) {
 				return cypher.NewStorageExecutor(storage.NewNamespacedEngine(engine, "nornic")), nil
-			})
+			}, t.Context())
 			session, err := manager.Open(context.Background(), "nornic")
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = manager.RollbackAndDelete(context.Background(), session) })

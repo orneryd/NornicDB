@@ -1,6 +1,7 @@
 package replication
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"errors"
@@ -36,7 +37,7 @@ func TestFollowerCreateMeetsHiddenPredecessor(t *testing.T) {
 			require.NoError(t, err)
 		}
 		require.NoError(t, base.CreateEdge(t.Context(), &storage.Edge{ID: hiddenEdge, StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"key": "old"}}))
-		require.NoError(t, base.FlushWriteBehind(nil))
+		require.NoError(t, base.FlushWriteBehind(context.Background()))
 		require.NoError(t, base.SetManualSuppression(t.Context(), storage.StoredEntityNodeKind, string(hiddenNode), true))
 		require.NoError(t, base.SetManualSuppression(t.Context(), storage.StoredEntityEdgeKind, string(hiddenEdge), true))
 
@@ -46,7 +47,7 @@ func TestFollowerCreateMeetsHiddenPredecessor(t *testing.T) {
 		var conflict *storage.HiddenEdgeIdentityConflictError
 		require.True(t, errors.Is(err, storage.ErrAlreadyExists) || errors.As(err, &conflict), "write-behind=%v: %v", buffered, err)
 
-		require.NoError(t, base.FlushWriteBehind(nil))
+		require.NoError(t, base.FlushWriteBehind(context.Background()))
 		node, err := base.GetStoredNode(t.Context(), hiddenNode)
 		require.NoError(t, err)
 		require.Equal(t, []string{"Original"}, node.Labels)

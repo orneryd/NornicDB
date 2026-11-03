@@ -210,14 +210,14 @@ func TestContinuationNodeEligibleTypePredicateContract(t *testing.T) {
 	sort.Strings(keys)
 	for _, key := range keys {
 		node := nodes[key]
-		eligible, err := service.continuationNodeEligible(node, options, wanted, nil, nil)
+		eligible, err := service.continuationNodeEligible(t.Context(), node, options, wanted, nil, nil)
 		require.NoError(t, err)
 		require.Equal(t, nodeMatchesType(node, wanted), eligible, "node %s", key)
 	}
 
 	// Empty Types leaves the wanted set empty, so no Type rejection applies.
 	unconstrained := &SearchOptions{}
-	eligible, err := service.continuationNodeEligible(nodes["other"], unconstrained, wantedTypesLower(unconstrained.Types), nil, nil)
+	eligible, err := service.continuationNodeEligible(t.Context(), nodes["other"], unconstrained, wantedTypesLower(unconstrained.Types), nil, nil)
 	require.NoError(t, err)
 	require.True(t, eligible)
 }
@@ -244,7 +244,7 @@ func TestContinuationCatalogCompilesWantedTypesOncePerBuild(t *testing.T) {
 	allocations := testing.AllocsPerRun(10, func() {
 		matched = 0
 		for _, node := range nodes {
-			admitted, err := service.continuationNodeEligible(node, options, wanted, nil, nil)
+			admitted, err := service.continuationNodeEligible(t.Context(), node, options, wanted, nil, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

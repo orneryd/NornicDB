@@ -55,9 +55,6 @@ func StreamEdgesByType(ctx context.Context, engine Engine, edgeType string, visi
 	if engine == nil || visit == nil {
 		return ErrInvalidData
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if streamer, ok := engine.(EdgeTypeStreamer); ok {
 		return streamer.StreamEdgesByType(ctx, edgeType, visit)
 	}
@@ -72,9 +69,6 @@ func StreamEdgesByType(ctx context.Context, engine Engine, edgeType string, visi
 func streamEdgesByTypeInScope(ctx context.Context, engine Engine, scope, edgeType string, visit func(*Edge) error) error {
 	if engine == nil || visit == nil {
 		return ErrInvalidData
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	if scoped, ok := engine.(ScopedEdgeTypeStreamer); ok {
 		return scoped.StreamEdgesByTypeInScope(ctx, scope, edgeType, visit)
@@ -139,9 +133,6 @@ func (b *BadgerEngine) streamEdgesByTypeInScope(ctx context.Context, scope, edge
 func (b *BadgerEngine) streamEdgesByTypeInScopeWithBodies(ctx context.Context, scope, edgeType string, v readVisibility, visit func(*Edge) error, body storedEdgeBodyVisitor) error {
 	if visit == nil {
 		return ErrInvalidData
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurScan)
@@ -319,9 +310,6 @@ func (b *BadgerEngine) streamEdgesByTypeAtSnapshotWithView(ctx context.Context, 
 		return err
 	}
 	defer deregister()
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	return view(func(txn *badger.Txn) error {
 		if edgeType == "" {
 			return b.iterateEdgesAtInTxn(ctx, txn, version, v, func(edge *Edge) error {

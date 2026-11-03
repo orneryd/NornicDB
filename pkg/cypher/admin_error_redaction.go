@@ -58,7 +58,9 @@ func (reader *adminCredentialReader) record(index int, value string, password bo
 // This also covers errors before consumption and malformed/duplicate clauses.
 // RedactError retains localized identity, causes and transport classification.
 func redactAdminCommandError(query string, retErr *error, sets ...*cyphertext.CredentialSet) {
-	if *retErr == nil {
+	// These exact immutable errors contain no statement-derived text. Wrapped
+	// errors still go through credential capture and redaction below.
+	if *retErr == nil || *retErr == context.Canceled || *retErr == context.DeadlineExceeded {
 		return
 	}
 	var source *cyphertext.Source
@@ -75,7 +77,7 @@ func redactAdminCommandError(query string, retErr *error, sets ...*cyphertext.Cr
 }
 
 func redactAdminCommandErrorSource(source *cyphertext.Source, query string, retErr *error, sets ...*cyphertext.CredentialSet) {
-	if *retErr == nil {
+	if *retErr == nil || *retErr == context.Canceled || *retErr == context.DeadlineExceeded {
 		return
 	}
 	values := statementCredentialValues(query, sets...)

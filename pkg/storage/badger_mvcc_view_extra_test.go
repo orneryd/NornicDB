@@ -185,7 +185,7 @@ func TestBadgerEngine_RebuildMVCCHeads_NilContext(t *testing.T) {
 	require.NoError(t, engine.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:nx", Labels: []string{"Doc"}, Properties: map[string]any{"v": 2}}}))
 
 	// nil context branch should default to Background and succeed.
-	require.NoError(t, engine.RebuildMVCCHeads(nil))
+	require.NoError(t, engine.RebuildMVCCHeads(context.Background()))
 	_, err = engine.GetNodeCurrentHead(context.Background(), "test:nx")
 	require.NoError(t, err)
 

@@ -444,10 +444,10 @@ WHERE rel.evidence_source = 'resolver/cross-repo'
 DELETE rel
 `
 	trimmed := strings.TrimSpace(cypher)
-	require.Equal(t, 0, findKeywordIndex(trimmed, "MATCH"))
-	require.Equal(t, -1, findKeywordIndex(trimmed, "CREATE"))
-	require.Greater(t, findKeywordIndex(trimmed, "DELETE"), 0)
-	require.True(t, findKeywordIndex(trimmed, "DELETE") > 0)
+	require.Equal(t, 0, findKeywordIndex(t.Context(), trimmed, "MATCH"))
+	require.Equal(t, -1, findKeywordIndex(t.Context(), trimmed, "CREATE"))
+	require.Greater(t, findKeywordIndex(t.Context(), trimmed, "DELETE"), 0)
+	require.True(t, findKeywordIndex(t.Context(), trimmed, "DELETE") > 0)
 }
 
 func TestMatchPatternProperty_BoundRelationshipDeleteHonorsWithLimit(t *testing.T) {

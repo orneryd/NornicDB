@@ -53,7 +53,7 @@ func TestSplitUnwindCompoundMutationStages_AdditionalRejections(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			stages, ok := splitUnwindCompoundMutationStages(tt.query, "rows", "row")
+			stages, ok := splitUnwindCompoundMutationStages(t.Context(), tt.query, "rows", "row")
 			require.False(t, ok)
 			require.Nil(t, stages)
 		})

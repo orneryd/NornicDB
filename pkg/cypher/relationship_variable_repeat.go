@@ -66,7 +66,7 @@ func (r *labelExpressionRewriter) repeatedRelationshipVariables(start, end int, 
 			if ok && relationshipBracketAt(q, start, i) {
 				_, _, quantified := quantifierAfterArrow(q, close, end)
 				inner := close
-				if where := elementWhereIndex(q, i, close); where >= 0 {
+				if where := elementWhereIndex(r.ctx, q, i, close); where >= 0 {
 					inner = where
 				}
 				if brace := indexOutsideQuotes(q[i+1:inner], '{'); brace >= 0 {

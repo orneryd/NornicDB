@@ -14,7 +14,7 @@ import (
 func TestManagerR4JoinsArmedExpiryCallback(t *testing.T) {
 	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
-	manager := NewManager(10*time.Millisecond, func(string) (*cypher.StorageExecutor, error) { return cypher.NewStorageExecutor(engine), nil })
+	manager := NewManager(10*time.Millisecond, func(string) (*cypher.StorageExecutor, error) { return cypher.NewStorageExecutor(engine), nil }, t.Context())
 	entered, release := make(chan struct{}), make(chan struct{})
 	var releaseOnce sync.Once
 	unblock := func() { releaseOnce.Do(func() { close(release) }) }

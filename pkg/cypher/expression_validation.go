@@ -22,13 +22,13 @@ import (
 // that isn't a list is a list of that one value (coerceToUnwindItems). Variables
 // bound to a node, relationship or path are checked with their scope
 // (graphListOperandTypeError).
-func validateListOperands(cypher string, params map[string]interface{}) error {
-	return forEachListOperand(cypher, func(start, in int) error {
+func validateListOperands(ctx context.Context, cypher string, params map[string]interface{}) error {
+	return forEachListOperand(ctx, cypher, func(start, in int) error {
 		// FOREACH (x IN 5 | …) runs once with x = 5 in Neo4j, not a type error.
-		if coercingIterationDeclaration(cypher, in) {
+		if coercingIterationDeclaration(ctx, cypher, in) {
 			return nil
 		}
-		end, typeName, parameter := staticListOperand(cypher, start, params)
+		end, typeName, parameter := staticListOperand(ctx, cypher, start, params)
 		if typeName == "" || !wholeListOperand(cypher, end) {
 			return nil
 		}
@@ -43,7 +43,7 @@ func validateListOperands(cypher string, params map[string]interface{}) error {
 // forEachListOperand calls visit with the offset of each list-position
 // operand in text (the operand after an IN keyword outside quotes) and the
 // offset of that IN, stopping at the first error.
-func forEachListOperand(text string, visit func(start, in int) error) error {
+func forEachListOperand(ctx context.Context, text string, visit func(start, in int) error) error {
 	for i := 0; i < len(text); i++ {
 		if end, quoted := skipCypherLexicalToken(text, i); quoted {
 			i = end - 1
@@ -53,7 +53,7 @@ func forEachListOperand(text string, visit func(start, in int) error) error {
 			i+2 >= len(text) || cyphertext.NamePartAt(text, i+2) {
 			continue
 		}
-		if wordIsName(text, i) {
+		if wordIsName(ctx, text, i) {
 			continue
 		}
 		if err := visit(queryGapEnd(text, i+2), i); err != nil {
@@ -78,15 +78,15 @@ func wholeListOperand(text string, end int) bool {
 // and subquery bodies. FOREACH (x IN n | …) is not a type error in Neo4j (it
 // runs once). A list element declaration (`[n IN list | …]`) is not itself
 // an operand and cannot change the type of a separate `IN n` operand.
-func graphListOperandTypeError(text string, scope matchSemanticScope) error {
-	return staticListOperandTypeError(text, staticTypeScope{kinds: scope})
+func graphListOperandTypeError(ctx context.Context, text string, scope matchSemanticScope) error {
+	return staticListOperandTypeError(ctx, text, staticTypeScope{kinds: scope})
 }
 
-func staticListOperandTypeError(text string, scope staticTypeScope) error {
+func staticListOperandTypeError(ctx context.Context, text string, scope staticTypeScope) error {
 	if len(scope.kinds) == 0 && len(scope.values) == 0 {
 		return nil
 	}
-	return forEachListOperand(text, func(start, in int) error {
+	return forEachListOperand(ctx, text, func(start, in int) error {
 		end := start
 		end = cyphertext.NamePartEnd(text, end)
 		if end == start || !wholeListOperand(text, end) {
@@ -97,7 +97,7 @@ func staticListOperandTypeError(text string, scope staticTypeScope) error {
 		if typeName == "" || mayBeListType(typeName) {
 			return nil
 		}
-		if coercingIterationDeclaration(text, in) || localVariableShadowsAt(text, start, name) {
+		if coercingIterationDeclaration(ctx, text, in) || localVariableShadowsAt(text, start, name) {
 			return nil
 		}
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", localization.CypherCoreListOperandTypeMismatch(typeName))
@@ -114,7 +114,7 @@ func mayBeListType(typeName string) bool {
 // coercingIterationDeclaration reports whether IN belongs to a scalar-coercing
 // iteration header: FOREACH (x IN ...) or FOR x IN .... A separate membership
 // expression inside either clause still requires a list operand.
-func coercingIterationDeclaration(text string, in int) bool {
+func coercingIterationDeclaration(ctx context.Context, text string, in int) bool {
 	opts := defaultKeywordScanOpts()
 	opts.SkipParens = false
 	opts.SkipBrackets = false
@@ -126,7 +126,7 @@ func coercingIterationDeclaration(text string, in int) bool {
 			continue
 		}
 		for from := 0; from < in; {
-			start := keywordIndexFrom(text, header.keyword, from, opts)
+			start := keywordIndexFrom(ctx, text, header.keyword, from, opts)
 			if start < 0 || start >= in {
 				break
 			}
@@ -398,7 +398,7 @@ func localBindingStep(text string, open int, name string) (int, localBinding, bo
 // around it typed first (withLocalTypes): in
 // all(x IN [y] WHERE all(r IN [x] WHERE …)) [x] holds the outer local's
 // node. It is unknown when that type isn't known.
-func localBindingOperand(text string, at int, name string, scope staticTypeScope) staticOperand {
+func localBindingOperand(ctx context.Context, text string, at int, name string, scope staticTypeScope) staticOperand {
 	binding, index, ok := localBindingOf(text, at, name)
 	if !ok {
 		return staticOperand{}
@@ -411,18 +411,18 @@ func localBindingOperand(text string, at int, name string, scope staticTypeScope
 		return staticOperand{}
 	}
 	source := strings.TrimSpace(text[span[0]:span[1]])
-	inner := withLocalTypes(scope, text, span[0])
+	inner := withLocalTypes(ctx, scope, text, span[0])
 	types := typeScopeOf(inner)
 	if binding.element[index] {
-		return listElementOperand(types, inner, source)
+		return listElementOperand(ctx, types, inner, source)
 	}
 	// The one other local is reduce's accumulator.
-	return reduceAccumulatorOperand(projectedOperand(types, inner, source))
+	return reduceAccumulatorOperand(projectedOperand(ctx, types, inner, source))
 }
 
 // localBindingKind is localBindingOperand's binding kind.
-func localBindingKind(text string, at int, name string, scope staticTypeScope) matchBindingKind {
-	return localBindingOperand(text, at, name, scope).bindingKind()
+func localBindingKind(ctx context.Context, text string, at int, name string, scope staticTypeScope) matchBindingKind {
+	return localBindingOperand(ctx, text, at, name, scope).bindingKind()
 }
 
 // withLocalTypes is scope with each name a local binds around offset at of
@@ -430,7 +430,7 @@ func localBindingKind(text string, at int, name string, scope staticTypeScope) m
 // (localBindingOperand): in all(r IN [1] WHERE EXISTS { (r)-->() }) the r
 // a subquery's pattern reads is an Integer, not the clause's relationship.
 // The scope goes through typeScope, the one type of every variable.
-func withLocalTypes(scope staticTypeScope, text string, at int) staticTypeScope {
+func withLocalTypes(ctx context.Context, scope staticTypeScope, text string, at int) staticTypeScope {
 	var types typeScope
 	for name := range expressionLocalBindings(text) {
 		if !localVariableShadowsAt(text, at, name) {
@@ -439,7 +439,7 @@ func withLocalTypes(scope staticTypeScope, text string, at int) staticTypeScope 
 		if types == nil {
 			types = typeScopeOf(scope)
 		}
-		types[name] = localBindingOperand(text, at, name, scope)
+		types[name] = localBindingOperand(ctx, text, at, name, scope)
 	}
 	if types == nil {
 		return scope
@@ -663,7 +663,7 @@ func withoutLocalVariables(scope staticTypeScope, text string, at int) (staticTy
 // staticListOperand reads the operand of a list position starting at start
 // and returns where it ends and, when its type is static and not a list, that
 // type's Neo4j name (with the parameter's name for a parameter).
-func staticListOperand(cypher string, start int, params map[string]interface{}) (end int, typeName, parameter string) {
+func staticListOperand(ctx context.Context, cypher string, start int, params map[string]interface{}) (end int, typeName, parameter string) {
 	if start >= len(cypher) {
 		return start, "", ""
 	}
@@ -730,7 +730,7 @@ func staticListOperand(cypher string, start int, params map[string]interface{}) 
 	// The operator check types the operand (a variable or a property is
 	// known per row); a list position rejects a type with no list or null
 	// alternative.
-	operand := (staticTypeScope{}).operandOf(cypher[start:end])
+	operand := (staticTypeScope{}).operandOf(ctx, cypher[start:end])
 	if operand.typeName() == "" || !operand.excludes(isListTypeName) {
 		return end, "", ""
 	}

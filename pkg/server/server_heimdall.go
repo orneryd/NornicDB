@@ -239,9 +239,6 @@ func (r *heimdallDBRouter) statementExecutor(ctx context.Context, database strin
 // with no principal and no such mark, a principal without its database scope
 // (auth.WithRequestPrincipal attaches both), or no context at all is refused.
 func (r *heimdallDBRouter) authorizeDatabase(ctx context.Context, database string, permission auth.Permission) (context.Context, string, error) {
-	if ctx == nil {
-		return nil, "", r.databaseForbidden(database)
-	}
 	allows := auth.RequestEntitlementResolverFromContext(ctx)
 	if allows == nil {
 		if !auth.RequestAuthenticationDisabledFromContext(ctx) {

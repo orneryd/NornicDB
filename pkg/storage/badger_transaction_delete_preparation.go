@@ -49,9 +49,7 @@ func (tx *BadgerTransaction) resolveConnectedDeletesLocked(ctx context.Context) 
 		if err != nil {
 			return err
 		}
-		if err := tx.recordNodeDeletionLocked(ctx, id, result); err != nil {
-			return err
-		}
+		tx.recordNodeDeletionLocked(id, result)
 	}
 	tx.connectedDeletes = nil
 	return nil

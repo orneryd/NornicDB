@@ -1263,6 +1263,7 @@ func (s *Server) transactionCommitURL(r *http.Request, dbName, txID string) stri
 
 func (s *Server) appendStatementResult(ctx context.Context, response *TransactionResponse, result *cypher.ExecuteResult, dbName string, includeStats bool, contents ...[]string) error {
 	defer applyResultMetadata(response, result.Metadata)
+	ctx = txphase.ResultContext(ctx)
 	if selected, ok := result.Metadata["db"].(string); ok && selected != "" {
 		dbName = selected
 	}

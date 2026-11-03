@@ -101,12 +101,18 @@ func (h *IndexHint) String() string {
 //	hints, cleanQuery := ParseIndexHints(query)
 //	// hints = [{Type: HintIndex, Variable: "n", Label: "Person", Property: "name"}]
 //	// cleanQuery = "MATCH (n:Person)  WHERE n.name = 'Alice' RETURN n"
-func ParseIndexHints(query string) ([]IndexHint, string) {
+func ParseIndexHints(ctx context.Context, query string) ([]IndexHint, string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, "", err
+	}
 	var hints []IndexHint
 	var clean strings.Builder
 	pos := 0
 	for {
-		usingIdx := keywordIndexFrom(query, "USING", pos, defaultKeywordScanOpts())
+		usingIdx := keywordIndexFrom(ctx, query, "USING", pos, defaultKeywordScanOpts())
+		if err := ctx.Err(); err != nil {
+			return nil, "", err
+		}
 		if usingIdx < 0 {
 			clean.WriteString(query[pos:])
 			break
@@ -124,7 +130,11 @@ func ParseIndexHints(query string) ([]IndexHint, string) {
 		pos = usingIdx + 5
 	}
 
-	return hints, strings.Join(strings.Fields(clean.String()), " ")
+	cleanQuery := strings.Join(strings.Fields(clean.String()), " ")
+	if err := ctx.Err(); err != nil {
+		return nil, "", err
+	}
+	return hints, cleanQuery, nil
 }
 
 func parseSingleIndexHint(query string, usingIdx int) (IndexHint, int, bool) {

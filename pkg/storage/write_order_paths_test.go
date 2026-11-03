@@ -44,18 +44,18 @@ func TestDecaySuppressionRescoresTheNewestBufferedBody(t *testing.T) {
 		t.Cleanup(func() { _ = engine.Close() })
 		_, err := engine.CreateNode(t.Context(), &Node{ID: "test:n", Labels: []string{"Untargeted"}, Properties: map[string]any{"v": "x"}, CreatedAt: old, UpdatedAt: old})
 		require.NoError(t, err)
-		require.NoError(t, engine.FlushWriteBehind(nil))
+		require.NoError(t, engine.FlushWriteBehind(context.Background()))
 		tx, err := engine.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		require.NoError(t, tx.SetImplicit(true))
 		require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:n", Labels: []string{"Doc"}, Properties: map[string]any{"v": "x"}, CreatedAt: old, UpdatedAt: old}, Policy: ClientNodeEdits}))
 		require.NoError(t, tx.Commit())
 		if flushFirst {
-			require.NoError(t, engine.FlushWriteBehind(nil))
+			require.NoError(t, engine.FlushWriteBehind(context.Background()))
 		}
 		became, err := engine.EnqueueDeindexIfSuppressed(context.Background(), "test:n", false)
 		require.NoError(t, err)
-		require.NoError(t, engine.FlushWriteBehind(nil))
+		require.NoError(t, engine.FlushWriteBehind(context.Background()))
 		engine.invalidateCachesAfterRestore()
 		stored, err := engine.GetStoredNode(t.Context(), "test:n")
 		require.NoError(t, err)
@@ -78,7 +78,7 @@ func TestDrainedTransactionKeepsItsNewPropertyKeys(t *testing.T) {
 	engine.writeBehind.SetDelayBounds(time.Hour, time.Hour)
 	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:n", Properties: map[string]any{"v": "initial"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	buffered, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, buffered.SetImplicit(true))
@@ -125,7 +125,7 @@ func TestOrderedWriteFailsWhenItsDrainFails(t *testing.T) {
 		require.NoError(t, err)
 	}
 	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"v": "initial"}}))
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 
 	failing.Store(true)
 	tx, err := engine.BeginTransaction(t.Context())
@@ -173,7 +173,7 @@ func TestOrderedWriteFailsWhenItsDrainFails(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 
 	failing.Store(false)
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	engine.invalidateCachesAfterRestore()
 	stored, err = engine.GetStoredNode(t.Context(), "test:a")
 	require.NoError(t, err)

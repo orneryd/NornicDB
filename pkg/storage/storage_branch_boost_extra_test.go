@@ -109,7 +109,7 @@ func TestTemporalCurrentNode_Branches(t *testing.T) {
 	require.NoError(t, err)
 	_, err = engine.CreateNode(t.Context(), n2)
 	require.NoError(t, err)
-	require.NoError(t, engine.RebuildTemporalIndexes(nil))
+	require.NoError(t, engine.RebuildTemporalIndexes(context.Background()))
 
 	ok, err = engine.IsCurrentTemporalNodeInNamespace(context.Background(), ns, n1, asOf)
 	require.NoError(t, err)

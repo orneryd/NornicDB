@@ -55,7 +55,7 @@ func TestDirectWritesOrderAfterBufferedEndpoints(t *testing.T) {
 				require.NoError(t, err)
 			}
 			require.NoError(t, b.CreateEdge(t.Context(), &Edge{ID: "test:r0", StartNode: "test:n0", EndNode: "test:n1", Type: "LINK"}))
-			require.NoError(t, b.FlushWriteBehind(nil))
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
 
 			buffered, err := implicitWrite(b, func(tx *BadgerTransaction) error {
 				return tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: tc.relabel, Labels: []string{"C"}}, Policy: ClientNodeEdits})
@@ -68,7 +68,7 @@ func TestDirectWritesOrderAfterBufferedEndpoints(t *testing.T) {
 			require.NoError(t, holdErr)
 			require.False(t, held,
 				"the direct write ran before the endpoint's acknowledged relabel was applied")
-			require.NoError(t, b.FlushWriteBehind(nil))
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
 
 			for label, want := range tc.start {
 				got, err := b.EdgeCountByStartLabelInNamespace(context.Background(), "test", label, "LINK")

@@ -57,7 +57,7 @@ func TestResidualPropertyOwnership(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, "original", second.Properties["nested"].(map[string]any)["list"].([]any)[1])
 			require.Equal(t, "original", second.EmbedMeta["nested"].([]any)[1])
-			require.NoError(t, b.FlushWriteBehind(nil))
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
 			require.NoError(t, b.Close())
 			b = open()
 			cold, err := b.GetStoredNode(t.Context(), node.ID)

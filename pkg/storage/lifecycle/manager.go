@@ -70,9 +70,6 @@ func NewMVCCLifecycleManager(config LifecycleConfig, engine LifecycleStorageEngi
 func (m *MVCCLifecycleManager) StartLifecycle(ctx context.Context) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	m.parentCtx = ctx
 	if m.running || !m.config.Enabled || m.config.CycleInterval <= 0 {
 		return

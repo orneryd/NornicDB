@@ -63,9 +63,6 @@ type LocalReranker struct {
 func (r *LocalReranker) UnderlyingScorer() RerankScorer { return r.scorer }
 
 func (r *LocalReranker) beginUse(ctx context.Context) (context.Context, func(), error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	return r.admit(ctx)
 }
 
@@ -104,15 +101,13 @@ func (r *LocalReranker) IsAvailable(ctx context.Context) bool {
 // Rerank scores each candidate with the scorer and returns results sorted by
 // score (desc). A scorer error is an error (see Reranker). The raw scored
 // batch, including entries below MinScore, is retained for Service validation.
+// The caller must supply a non-nil context.
 func (r *LocalReranker) Rerank(ctx context.Context, query string, candidates []RerankCandidate) ([]RerankResult, error) {
 	if !r.Enabled() {
 		return voyage.PassThrough(candidates), nil
 	}
 	if len(candidates) == 0 {
 		return nil, nil
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	ctx, finish, useErr := r.beginUse(ctx)
 	if useErr != nil {

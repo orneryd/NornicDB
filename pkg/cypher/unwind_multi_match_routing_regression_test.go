@@ -105,7 +105,7 @@ RETURN count(*) AS c
 
 func TestNormalizeMultiMatchWhereClauses(t *testing.T) {
 	in := "MATCH (o:OriginalText) WHERE o.joinKey = joinKey MATCH (t:TranslatedText) WHERE t.joinKey = joinKey RETURN count(*) AS c"
-	got := normalizeMultiMatchWhereClauses(in)
+	got := normalizeMultiMatchWhereClauses(t.Context(), in)
 	require.Equal(
 		t,
 		"MATCH (o:OriginalText) MATCH (t:TranslatedText) WHERE o.joinKey = joinKey AND t.joinKey = joinKey RETURN count(*) AS c",
@@ -115,7 +115,7 @@ func TestNormalizeMultiMatchWhereClauses(t *testing.T) {
 
 func TestNormalizeMultiMatchWhereClauses_SingleWhereBetweenMatches(t *testing.T) {
 	in := "MATCH (o:OriginalText) WHERE o.joinKey = joinKey MATCH (t:TranslatedText) RETURN count(*) AS c"
-	got := normalizeMultiMatchWhereClauses(in)
+	got := normalizeMultiMatchWhereClauses(t.Context(), in)
 	require.Equal(
 		t,
 		"MATCH (o:OriginalText) MATCH (t:TranslatedText) WHERE o.joinKey = joinKey RETURN count(*) AS c",
@@ -346,7 +346,7 @@ func TestRewriteUnwindCorrelationToIn(t *testing.T) {
 
 func TestRewriteTopLevelMultiMatchToCartesianMatch(t *testing.T) {
 	in := "MATCH (o:OriginalText) MATCH (t:TranslatedText) WHERE o.joinKey IN $__unwind_items AND t.joinKey = o.joinKey RETURN count(*) AS c"
-	got := rewriteTopLevelMultiMatchToCartesianMatch(in)
+	got := rewriteTopLevelMultiMatchToCartesianMatch(t.Context(), in)
 	require.Equal(
 		t,
 		"MATCH (o:OriginalText), (t:TranslatedText) WHERE o.joinKey IN $__unwind_items AND t.joinKey = o.joinKey RETURN count(*) AS c",

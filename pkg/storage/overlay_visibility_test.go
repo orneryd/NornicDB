@@ -30,7 +30,7 @@ func TestBufferedSuppressedEntitiesFollowReadVisibility(t *testing.T) {
 		require.NoError(t, err)
 	}
 	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"v": int64(1)}}))
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityNodeKind, "test:h", true))
 	require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityEdgeKind, "test:r", true))
 	tx, err := engine.BeginTransaction(t.Context())
@@ -122,7 +122,7 @@ func TestBufferedSuppressedEntitiesFollowReadVisibility(t *testing.T) {
 	// after the flush: on-demand suppression racing the write-behind flusher
 	// on the same key is a separate, queued bug
 	// (sig/handoff/bugqueue-q-suppress-flusher-race-20261021.md).
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityNodeKind, "test:h", false))
 	require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityEdgeKind, "test:r", false))
 	require.Contains(t, edgeIDs(engine.GetEdgesBetween(ctx, "test:a", "test:b")), EdgeID("test:r"))

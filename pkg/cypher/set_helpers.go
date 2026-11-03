@@ -336,8 +336,8 @@ type setRun struct {
 // reads the old one (#907). A chained SET clause (SET a SET b) starts new
 // stretches. A stretch's text is a slice of the body. assignments, when not nil, are body's assignments already split
 // (splitSetAssignments): they are used when body is one SET clause.
-func appendSetClauseRuns(runs []setRun, body string, assignments []string) []setRun {
-	for segment, next, ok := nextChainedSetClause(body, 0); ok; segment, next, ok = nextChainedSetClause(body, next) {
+func appendSetClauseRuns(ctx context.Context, runs []setRun, body string, assignments []string) []setRun {
+	for segment, next, ok := nextChainedSetClause(ctx, body, 0); ok; segment, next, ok = nextChainedSetClause(ctx, body, next) {
 		open := false
 		start, searchFrom := 0, 0
 		items := assignments

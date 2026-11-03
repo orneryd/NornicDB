@@ -14,7 +14,7 @@ import (
 func TestRetryConsumerPreservesCommitFailureOnCancellation(t *testing.T) {
 	query := "MERGE (u:U {k:1}) SET u.k=1"
 	failure := &storage.ConstraintViolationError{Type: storage.ConstraintUnique, Label: "U", Properties: []string{"k"}}
-	session := &Session{txHasMerge: true, txWriteInfos: []*cypher.QueryInfo{boltTxWriteAnalyzer.Analyze(t.Context(), query)}, txMergeStatements: []cypher.CommitStatement{{Query: query}}}
+	session := &Session{server: &Server{config: DefaultConfig()}, txHasMerge: true, txWriteInfos: []*cypher.QueryInfo{boltTxWriteAnalyzer.Analyze(t.Context(), query)}, txMergeStatements: []cypher.CommitStatement{{Query: query}}}
 	require.True(t, session.canRetryMergeCommitConflict(t.Context(), failure))
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()

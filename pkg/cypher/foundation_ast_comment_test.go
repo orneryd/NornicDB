@@ -20,10 +20,12 @@ func TestFoundationASTMutationItems(t *testing.T) {
 		{"MATCH (`n.x`) REMOVE `n.x`.`a``:,b.c` RETURN `n.x`", "n.x", "a`:,b.c", true},
 	} {
 		t.Run(test.query, func(t *testing.T) {
-			built, err := NewASTBuilder().Build(test.query)
+			built, err := NewASTBuilder().Build(t.Context(), test.query)
 			require.NoError(t, err)
 			info := NewQueryAnalyzer(4).Analyze(t.Context(), test.query)
-			for _, ast := range []*AST{built, info.GetAST()} {
+			cached, err := info.GetAST(t.Context())
+			require.NoError(t, err)
+			for _, ast := range []*AST{built, cached} {
 				require.NotNil(t, ast)
 				require.Len(t, ast.Clauses, 3)
 				if test.remove {
@@ -44,7 +46,9 @@ func TestFoundationASTMutationItems(t *testing.T) {
 					require.Equal(t, int64(1), item.Value.Literal)
 				}
 			}
-			require.Same(t, info.GetAST(), info.GetAST())
+			again, err := info.GetAST(t.Context())
+			require.NoError(t, err)
+			require.Same(t, cached, again)
 		})
 	}
 	t.Run("label branch and mixed assignments", func(t *testing.T) {
@@ -69,7 +73,7 @@ func TestFoundationCommentExtentConsumers(t *testing.T) {
 			require.Equal(t, "STARTS", previousSignificantWord(before, len(before)))
 			query := "\ufeff // text" + ending + "CREATE DATABASE d"
 			require.Equal(t, strings.Index(query, "CREATE"), firstExecutableCypherOffset(query))
-			require.True(t, isAdminPermissionQuery(query))
+			require.True(t, isAdminPermissionQuery(t.Context(), query))
 			expression := "'value' STARTS // text" + ending + "WITH 'v'"
 			at := strings.Index(expression, "WITH")
 			require.True(t, isExpressionWith(expression, at, at+len("WITH")))

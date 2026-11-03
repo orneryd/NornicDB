@@ -16,18 +16,28 @@ import (
 )
 
 // createdNodeIDs lists the node IDs (as the WAL records them, without the
-// database prefix) of the create_node entries readable in the WAL directory
+// database prefix) of raw and semantic create operations in the WAL directory
 // (sealed segments and the active WAL), as db.txlog reads them.
 func createdNodeIDs(t *testing.T, walDir string) []string {
 	t.Helper()
 	var ids []string
 	require.NoError(t, VisitWALEntriesAfterFromDir(walDir, 0, func(entry WALEntry) error {
-		if entry.Operation != OpCreateNode {
-			return nil
+		switch entry.Operation {
+		case OpCreateNode:
+			var data WALNodeData
+			require.NoError(t, decodeRecoveryPayload(entry.Data, &data))
+			ids = append(ids, string(data.Node.ID))
+		case OpEntityCommit:
+			var data walEntityCommitData
+			require.NoError(t, decodeRecoveryPayload(entry.Data, &data))
+			envelope, operations, err := DecodeEntityTransaction(data.Payload)
+			require.NoError(t, err)
+			for _, operation := range operations {
+				if operation.Type == OpCreateNode {
+					ids = append(ids, StripDatabasePrefix(envelope.Namespace, string(operation.Node.ID)))
+				}
+			}
 		}
-		var data WALNodeData
-		require.NoError(t, decodeRecoveryPayload(entry.Data, &data))
-		ids = append(ids, string(data.Node.ID))
 		return nil
 	}))
 	sort.Strings(ids)

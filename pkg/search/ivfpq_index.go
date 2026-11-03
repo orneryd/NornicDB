@@ -11,9 +11,6 @@ import (
 
 // SearchApprox searches compressed IVF/PQ lists and returns approximate candidates.
 func (i *IVFPQIndex) SearchApprox(ctx context.Context, query []float32, k int, minSimilarity float64, nprobe int) ([]Candidate, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
