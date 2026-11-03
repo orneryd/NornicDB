@@ -13,6 +13,7 @@ import (
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j/dbtype"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 )
 
 // A remote participant receives every statement parameter as its Cypher
@@ -357,18 +358,19 @@ func (w *remoteHTTPWriter) value(value interface{}) (*remoteHTTPShape, remoteHTT
 		w.buf = strconv.AppendBool(w.buf, v)
 		return nil, remoteHTTPOther, nil
 	case int64:
-		w.buf = strconv.AppendInt(w.buf, v, 10)
+		w.buf = valueconvert.CypherInputJSON.AppendInteger(w.buf, v)
 		return nil, remoteHTTPOther, nil
 	case int:
-		w.buf = strconv.AppendInt(w.buf, int64(v), 10)
+		w.buf = valueconvert.CypherInputJSON.AppendInteger(w.buf, int64(v))
 		return nil, remoteHTTPOther, nil
 	case float64:
 		return w.float(v, 64)
 	case float32:
 		return w.float(float64(v), 32)
 	case json.Number:
-		w.buf = append(w.buf, v...)
-		return nil, remoteHTTPOther, nil
+		raw, err := valueconvert.CypherInputJSON.Marshal(v)
+		w.buf = append(w.buf, raw...)
+		return nil, remoteHTTPOther, err
 	case time.Time:
 		w.dateTime(v)
 		return remoteHTTPDateTime, remoteHTTPOther, nil
@@ -388,21 +390,19 @@ func (w *remoteHTTPWriter) value(value interface{}) (*remoteHTTPShape, remoteHTT
 		return remoteHTTPLocalDateTime, remoteHTTPOther, nil
 	case dbtype.Duration:
 		w.buf = append(w.buf, `{"months":`...)
-		w.buf = strconv.AppendInt(w.buf, v.Months, 10)
+		w.buf = valueconvert.CypherInputJSON.AppendInteger(w.buf, v.Months)
 		w.buf = append(w.buf, `,"days":`...)
-		w.buf = strconv.AppendInt(w.buf, v.Days, 10)
+		w.buf = valueconvert.CypherInputJSON.AppendInteger(w.buf, v.Days)
 		w.buf = append(w.buf, `,"seconds":`...)
-		w.buf = strconv.AppendInt(w.buf, v.Seconds, 10)
+		w.buf = valueconvert.CypherInputJSON.AppendInteger(w.buf, v.Seconds)
 		w.buf = append(w.buf, `,"nanoseconds":`...)
-		w.buf = strconv.AppendInt(w.buf, int64(v.Nanos), 10)
+		w.buf = valueconvert.CypherInputJSON.AppendInteger(w.buf, int64(v.Nanos))
 		w.buf = append(w.buf, '}')
 		return remoteHTTPDuration, remoteHTTPOther, nil
 	case dbtype.Point2D:
-		w.point(v.SpatialRefId, v.X, v.Y, 0, false)
-		return remoteHTTPPoint, remoteHTTPOther, nil
+		return remoteHTTPPoint, remoteHTTPOther, w.point(v.SpatialRefId, v.X, v.Y, 0, false)
 	case dbtype.Point3D:
-		w.point(v.SpatialRefId, v.X, v.Y, v.Z, true)
-		return remoteHTTPPoint, remoteHTTPOther, nil
+		return remoteHTTPPoint, remoteHTTPOther, w.point(v.SpatialRefId, v.X, v.Y, v.Z, true)
 	case []byte:
 		w.buf = append(w.buf, '"')
 		w.buf = base64.StdEncoding.AppendEncode(w.buf, v)
@@ -420,10 +420,10 @@ func (w *remoteHTTPWriter) value(value interface{}) (*remoteHTTPShape, remoteHTT
 		w.buf = strconv.AppendBool(w.buf, rv.Bool())
 		return nil, remoteHTTPOther, nil
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		w.buf = strconv.AppendInt(w.buf, rv.Int(), 10)
+		w.buf = valueconvert.CypherInputJSON.AppendInteger(w.buf, rv.Int())
 		return nil, remoteHTTPOther, nil
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		w.buf = strconv.AppendUint(w.buf, rv.Uint(), 10)
+		w.buf = valueconvert.CypherInputJSON.AppendUnsigned(w.buf, rv.Uint())
 		return nil, remoteHTTPOther, nil
 	case reflect.Float32, reflect.Float64:
 		return w.float(rv.Float(), rv.Type().Bits())
@@ -454,7 +454,7 @@ func (w *remoteHTTPWriter) value(value interface{}) (*remoteHTTPShape, remoteHTT
 			return shape, remoteHTTPOther, err
 		}
 	}
-	raw, err := jsontext.Marshal(value)
+	raw, err := valueconvert.CypherInputJSON.Marshal(value)
 	if err != nil {
 		return nil, remoteHTTPOther, err
 	}
@@ -476,8 +476,9 @@ func (w *remoteHTTPWriter) float(value float64, bitSize int) (*remoteHTTPShape, 
 		w.buf = append(w.buf, `"-Infinity"`...)
 		return remoteHTTPSpecialFloat, remoteHTTPOther, nil
 	}
-	w.buf = appendRemoteJSONFloat(w.buf, value, bitSize)
-	return nil, remoteHTTPFloatKind, nil
+	var err error
+	w.buf, err = valueconvert.CypherInputJSON.AppendFloat(w.buf, value, bitSize)
+	return nil, remoteHTTPFloatKind, err
 }
 
 // object writes a map as a JSON object and returns the shape of the fields
@@ -680,9 +681,9 @@ func (w *remoteHTTPWriter) dateTime(t time.Time) {
 			zone = remoteOffsetText(offset)
 		}
 		w.buf = append(w.buf, `{"epochSeconds":`...)
-		w.buf = strconv.AppendInt(w.buf, t.Unix(), 10)
+		w.buf = valueconvert.CypherInputJSON.AppendInteger(w.buf, t.Unix())
 		w.buf = append(w.buf, `,"nanosecond":`...)
-		w.buf = strconv.AppendInt(w.buf, int64(t.Nanosecond()), 10)
+		w.buf = valueconvert.CypherInputJSON.AppendInteger(w.buf, int64(t.Nanosecond()))
 		w.buf = append(w.buf, `,"timezone":`...)
 		w.buf = jsontext.AppendString(w.buf, zone)
 		w.buf = append(w.buf, '}')
@@ -702,13 +703,13 @@ func (w *remoteHTTPWriter) dateTime(t time.Time) {
 func (w *remoteHTTPWriter) timeOfDay(t time.Time) {
 	if _, offset := t.Zone(); offset%60 != 0 {
 		w.buf = append(w.buf, `{"hour":`...)
-		w.buf = strconv.AppendInt(w.buf, int64(t.Hour()), 10)
+		w.buf = valueconvert.CypherInputJSON.AppendInteger(w.buf, int64(t.Hour()))
 		w.buf = append(w.buf, `,"minute":`...)
-		w.buf = strconv.AppendInt(w.buf, int64(t.Minute()), 10)
+		w.buf = valueconvert.CypherInputJSON.AppendInteger(w.buf, int64(t.Minute()))
 		w.buf = append(w.buf, `,"second":`...)
-		w.buf = strconv.AppendInt(w.buf, int64(t.Second()), 10)
+		w.buf = valueconvert.CypherInputJSON.AppendInteger(w.buf, int64(t.Second()))
 		w.buf = append(w.buf, `,"nanosecond":`...)
-		w.buf = strconv.AppendInt(w.buf, int64(t.Nanosecond()), 10)
+		w.buf = valueconvert.CypherInputJSON.AppendInteger(w.buf, int64(t.Nanosecond()))
 		w.buf = append(w.buf, `,"timezone":`...)
 		w.buf = jsontext.AppendString(w.buf, remoteOffsetText(offset))
 		w.buf = append(w.buf, '}')
@@ -723,11 +724,11 @@ func (w *remoteHTTPWriter) timeOfDay(t time.Time) {
 func (w *remoteHTTPWriter) date(t time.Time) {
 	if t.Year() < 1 || t.Year() > 9999 {
 		w.buf = append(w.buf, `{"year":`...)
-		w.buf = strconv.AppendInt(w.buf, int64(t.Year()), 10)
+		w.buf = valueconvert.CypherInputJSON.AppendInteger(w.buf, int64(t.Year()))
 		w.buf = append(w.buf, `,"month":`...)
-		w.buf = strconv.AppendInt(w.buf, int64(t.Month()), 10)
+		w.buf = valueconvert.CypherInputJSON.AppendInteger(w.buf, int64(t.Month()))
 		w.buf = append(w.buf, `,"day":`...)
-		w.buf = strconv.AppendInt(w.buf, int64(t.Day()), 10)
+		w.buf = valueconvert.CypherInputJSON.AppendInteger(w.buf, int64(t.Day()))
 		w.buf = append(w.buf, '}')
 		return
 	}
@@ -741,19 +742,19 @@ func (w *remoteHTTPWriter) date(t time.Time) {
 func (w *remoteHTTPWriter) localDateTime(t time.Time) {
 	if t.Year() < 1 || t.Year() > 9999 {
 		w.buf = append(w.buf, `{"year":`...)
-		w.buf = strconv.AppendInt(w.buf, int64(t.Year()), 10)
+		w.buf = valueconvert.CypherInputJSON.AppendInteger(w.buf, int64(t.Year()))
 		w.buf = append(w.buf, `,"month":`...)
-		w.buf = strconv.AppendInt(w.buf, int64(t.Month()), 10)
+		w.buf = valueconvert.CypherInputJSON.AppendInteger(w.buf, int64(t.Month()))
 		w.buf = append(w.buf, `,"day":`...)
-		w.buf = strconv.AppendInt(w.buf, int64(t.Day()), 10)
+		w.buf = valueconvert.CypherInputJSON.AppendInteger(w.buf, int64(t.Day()))
 		w.buf = append(w.buf, `,"hour":`...)
-		w.buf = strconv.AppendInt(w.buf, int64(t.Hour()), 10)
+		w.buf = valueconvert.CypherInputJSON.AppendInteger(w.buf, int64(t.Hour()))
 		w.buf = append(w.buf, `,"minute":`...)
-		w.buf = strconv.AppendInt(w.buf, int64(t.Minute()), 10)
+		w.buf = valueconvert.CypherInputJSON.AppendInteger(w.buf, int64(t.Minute()))
 		w.buf = append(w.buf, `,"second":`...)
-		w.buf = strconv.AppendInt(w.buf, int64(t.Second()), 10)
+		w.buf = valueconvert.CypherInputJSON.AppendInteger(w.buf, int64(t.Second()))
 		w.buf = append(w.buf, `,"nanosecond":`...)
-		w.buf = strconv.AppendInt(w.buf, int64(t.Nanosecond()), 10)
+		w.buf = valueconvert.CypherInputJSON.AppendInteger(w.buf, int64(t.Nanosecond()))
 		w.buf = append(w.buf, '}')
 		return
 	}
@@ -763,32 +764,29 @@ func (w *remoteHTTPWriter) localDateTime(t time.Time) {
 }
 
 // point writes the JSON point() reads.
-func (w *remoteHTTPWriter) point(srid uint32, x, y, z float64, threeD bool) {
+func (w *remoteHTTPWriter) point(srid uint32, x, y, z float64, threeD bool) error {
 	w.buf = append(w.buf, `{"srid":`...)
-	w.buf = strconv.AppendUint(w.buf, uint64(srid), 10)
+	w.buf = valueconvert.CypherInputJSON.AppendUnsigned(w.buf, uint64(srid))
 	w.buf = append(w.buf, `,"x":`...)
-	w.buf = appendRemoteJSONFloat(w.buf, x, 64)
+	var err error
+	w.buf, err = valueconvert.CypherInputJSON.AppendFloat(w.buf, x, 64)
+	if err != nil {
+		return err
+	}
 	w.buf = append(w.buf, `,"y":`...)
-	w.buf = appendRemoteJSONFloat(w.buf, y, 64)
+	w.buf, err = valueconvert.CypherInputJSON.AppendFloat(w.buf, y, 64)
+	if err != nil {
+		return err
+	}
 	if threeD {
 		w.buf = append(w.buf, `,"z":`...)
-		w.buf = appendRemoteJSONFloat(w.buf, z, 64)
-	}
-	w.buf = append(w.buf, '}')
-}
-
-// appendRemoteJSONFloat appends a finite float as a JSON float: with a
-// fraction or an exponent, so the server reads a Float even when it is
-// integral.
-func appendRemoteJSONFloat(buf []byte, value float64, bitSize int) []byte {
-	start := len(buf)
-	buf = strconv.AppendFloat(buf, value, 'g', -1, bitSize)
-	for _, c := range buf[start:] {
-		if c == '.' || c == 'e' || c == 'E' {
-			return buf
+		w.buf, err = valueconvert.CypherInputJSON.AppendFloat(w.buf, z, 64)
+		if err != nil {
+			return err
 		}
 	}
-	return append(buf, ".0"...)
+	w.buf = append(w.buf, '}')
+	return nil
 }
 
 // appendRemoteJSONString appends s as a JSON string. Invalid UTF-8 is

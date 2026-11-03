@@ -3,7 +3,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -19,11 +18,10 @@ import (
 	"github.com/orneryd/nornicdb/internal/jsontext"
 	"github.com/orneryd/nornicdb/internal/localizationboundary"
 
-	math "github.com/orneryd/nornicdb/pkg/math/libm"
-
 	"github.com/orneryd/nornicdb/internal/catalogadapter"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/config/dbconfig"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -386,7 +384,7 @@ func (s *Server) handleDatabaseInfo(w http.ResponseWriter, r *http.Request, dbNa
 			"statsPartial":          partial,
 			"statsProvenance":       stats,
 		}
-		httpresponse.WriteJSON(w, http.StatusOK, response)
+		httpresponse.WritePropertyJSON(w, http.StatusOK, response)
 		return
 	}
 
@@ -430,7 +428,7 @@ func (s *Server) handleDatabaseInfo(w http.ResponseWriter, r *http.Request, dbNa
 		"searchRate":            searchStatus.RateNodesPerSec,
 		"searchEtaSeconds":      searchStatus.ETASeconds,
 	}
-	httpresponse.WriteJSON(w, http.StatusOK, response)
+	httpresponse.WritePropertyJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) compositeConstituentStats(r *http.Request, compositeName string) ([]map[string]interface{}, bool) {
@@ -520,7 +518,7 @@ func (s *Server) handleClusterStatus(w http.ResponseWriter, r *http.Request, dbN
 		"database": dbName,
 		"status":   "online",
 	}
-	httpresponse.WriteJSON(w, http.StatusOK, response)
+	httpresponse.WritePropertyJSON(w, http.StatusOK, response)
 }
 
 // handleTransactionEndpoint routes transaction-related requests
@@ -611,7 +609,7 @@ func decodeTransactionRequest(body io.Reader, req *TransactionRequest, limit tra
 	if limit.bounded {
 		body = http.MaxBytesReader(nil, io.NopCloser(body), limit.bytes)
 	}
-	decoder := jsontext.NewDecoder(body)
+	decoder := valueconvert.CypherInputJSON.NewDecoder(body)
 	if err := decoder.Decode(req); err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.Is(err, io.EOF) || errors.As(err, &tooLarge) {
@@ -624,11 +622,6 @@ func decodeTransactionRequest(body io.Reader, req *TransactionRequest, limit tra
 	}
 	if _, err := io.Copy(io.Discard, body); err != nil {
 		return err
-	}
-	for i := range req.Statements {
-		for key, value := range req.Statements[i].Parameters {
-			req.Statements[i].Parameters[key] = cypher.JSONNumbers(value)
-		}
 	}
 	return nil
 }
@@ -858,7 +851,7 @@ func (s *Server) handleImplicitTransaction(w http.ResponseWriter, r *http.Reques
 	}
 
 	s.applyMVCCPressureWarnings(w, dbName, &response)
-	httpresponse.WriteJSON(w, status, response)
+	httpresponse.WritePropertyJSON(w, status, response)
 }
 
 // grantAccessToNewDatabase grants the admin role and the creating principal's roles full access
@@ -1172,14 +1165,10 @@ func (s *Server) transactionHTTPValue(ctx context.Context, value interface{}, db
 }
 
 // transactionHTTPFloat is a float as Neo4j's HTTP API writes it: a JSON
-// number in Java's text (cypher.FormatFloat: 1.0, 1.0E20, 1.0E-7), or, for a
+// number in Java's text (convert.FormatFloat: 1.0, 1.0E20, 1.0E-7), or, for a
 // value JSON can't hold, the string "Infinity", "-Infinity" or "NaN".
 func transactionHTTPFloat(value float64, bits int) interface{} {
-	text := cypher.FormatFloat(value, bits)
-	if math.IsInf(value, 0) || math.IsNaN(value) {
-		return text
-	}
-	return json.Number(text)
+	return valueconvert.PropertyJSON.Float(value, bits)
 }
 
 // entityDatabase resolves the database an entity actually lives in for
@@ -1719,6 +1708,9 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 	}
 	var req TransactionRequest
 	if err := decodeTransactionRequest((r).Body, &req, transactionRequestLimit{bounded: true, bytes: s.config.MaxRequestSize}); err != nil && err != io.EOF {
+		if s.writeNeo4jUnsupportedNumber(w, err) {
+			return
+		}
 		s.writeNeo4jInvalidRequestBody(w, r, "Neo.ClientError.Request.InvalidFormat")
 		return
 	}
@@ -1730,7 +1722,7 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 		if openErr.Code == "Neo.ClientError.Database.DatabaseNotFound" {
 			status = http.StatusNotFound
 		}
-		httpresponse.WriteJSON(w, status, TransactionResponse{Results: make([]QueryResult, 0), Errors: []QueryError{*openErr}})
+		httpresponse.WritePropertyJSON(w, status, TransactionResponse{Results: make([]QueryResult, 0), Errors: []QueryError{*openErr}})
 		return
 	}
 	defer lease.Release()
@@ -1754,7 +1746,7 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 
 	s.applyMVCCPressureWarnings(w, dbName, &response)
 	w.Header().Set("Location", s.transactionURL(r, dbName, txSession.ID))
-	httpresponse.WriteJSON(w, http.StatusCreated, response)
+	httpresponse.WritePropertyJSON(w, http.StatusCreated, response)
 }
 
 func (s *Server) handleExecuteInTransaction(w http.ResponseWriter, r *http.Request, dbName, txID string) {
@@ -1807,7 +1799,7 @@ func (s *Server) handleExecuteInTransaction(w http.ResponseWriter, r *http.Reque
 	response.Transaction.Expires = transactionExpires(tx.ExpiresAt())
 
 	s.applyMVCCPressureWarnings(w, dbName, &response)
-	httpresponse.WriteJSON(w, http.StatusOK, response)
+	httpresponse.WritePropertyJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handleCommitTransaction(w http.ResponseWriter, r *http.Request, dbName, txID string) {
@@ -1850,13 +1842,13 @@ func (s *Server) handleCommitTransaction(w http.ResponseWriter, r *http.Request,
 	if s.executeTxStatements(r.Context(), r.Header.Get("Authorization"), claims, dbName, lease, req.Statements, &response) {
 		s.rollbackRequestTransaction(r.Context(), lease, &response)
 		s.applyMVCCPressureWarnings(w, dbName, &response)
-		httpresponse.WriteJSON(w, http.StatusOK, response)
+		httpresponse.WritePropertyJSON(w, http.StatusOK, response)
 		return
 	}
 
 	s.commitRequestTransaction(r.Context(), lease, &response)
 	s.applyMVCCPressureWarnings(w, dbName, &response)
-	httpresponse.WriteJSON(w, http.StatusOK, response)
+	httpresponse.WritePropertyJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handleRollbackTransaction(w http.ResponseWriter, r *http.Request, dbName, txID string) {
@@ -1878,7 +1870,7 @@ func (s *Server) handleRollbackTransaction(w http.ResponseWriter, r *http.Reques
 	}
 	s.rollbackRequestTransaction(r.Context(), lease, &response)
 	s.applyMVCCPressureWarnings(w, dbName, &response)
-	httpresponse.WriteJSON(w, http.StatusOK, response)
+	httpresponse.WritePropertyJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) leaseTransactionOrNotFound(w http.ResponseWriter, r *http.Request, dbName, txID, owner string) (*txsession.Lease, bool) {

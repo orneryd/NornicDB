@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -30,15 +31,19 @@ func TestRemoteHTTPNumbers(t *testing.T) {
 			{"2.5", 2.5},
 			{"1.0E20", 1e20},
 			{"1e3", float64(1000)},
-			{"18446744073709551616", 18446744073709551616.0},
+			{"9223372036854775808", uint64(math.MaxInt64) + 1},
+			{"18446744073709551615", uint64(math.MaxUint64)},
 		} {
-			require.Equal(t, tt.want, remoteHTTPNumber(json.Number(tt.text)), tt.text)
+			var got interface{}
+			require.NoError(t, valueconvert.PropertyJSON.Unmarshal([]byte(tt.text), &got))
+			require.Equal(t, tt.want, got, tt.text)
 		}
 		var nested interface{}
-		require.NoError(t, unmarshalRemoteHTTPJSON([]byte(`{"a":[{"n":-42,"f":2.0}],"t":"x"}`), &nested))
-		require.Equal(t, map[string]interface{}{"a": []interface{}{map[string]interface{}{"n": int64(-42), "f": float64(2)}}, "t": "x"}, remoteHTTPNumbers(nested))
-		require.Error(t, unmarshalRemoteHTTPJSON([]byte(`1 2`), &nested))
-		require.Error(t, unmarshalRemoteHTTPJSON([]byte(`{`), &nested))
+		require.NoError(t, valueconvert.PropertyJSON.Unmarshal([]byte(`{"a":[{"n":-42,"f":2.0}],"t":"x"}`), &nested))
+		require.Equal(t, map[string]interface{}{"a": []interface{}{map[string]interface{}{"n": int64(-42), "f": float64(2)}}, "t": "x"}, nested)
+		for _, raw := range []string{`1 2`, `{`, `18446744073709551616`} {
+			require.Error(t, valueconvert.PropertyJSON.Unmarshal([]byte(raw), &nested))
+		}
 		for value, want := range map[interface{}]float64{float64(1.5): 1.5, int64(3): 3} {
 			got, ok := remoteHTTPFloat64(value)
 			require.True(t, ok)

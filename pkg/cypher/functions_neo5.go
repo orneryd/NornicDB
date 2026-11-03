@@ -1,3 +1,4 @@
+// Author: L6 / #1665 lane (Codex gpt-6.1-sol). Numeric toString selection delegates to the shared text owner.
 package cypher
 
 import (
@@ -827,14 +828,8 @@ func convertToStringOrNull(value interface{}) interface{} {
 	case []interface{}, map[string]interface{}, *storage.Node, *storage.Edge:
 		return nil
 	}
-	if number, numeric := valueconvert.ReadNumber(value); numeric {
-		if integer, signed := number.Signed(); signed {
-			return strconv.FormatInt(integer, 10)
-		}
-		if integer, unsigned := number.Unsigned(); unsigned {
-			return strconv.FormatUint(integer, 10)
-		}
-		return formatCypherValueString(value)
+	if text, numeric := valueconvert.NumericText(value); numeric {
+		return text
 	}
 	if stringer, ok := value.(fmt.Stringer); ok {
 		return stringer.String()

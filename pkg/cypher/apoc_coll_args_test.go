@@ -36,22 +36,27 @@ func TestApocCollFunctionsReadTheirArguments(t *testing.T) {
 
 // The expression evaluator's own copies read their arguments after the
 // function's name too (a path or WHERE expression reaches it), and
-// apoc.convert.fromJsonList keeps a fraction, nesting and a number too large
-// for an INTEGER as JSON gives them.
+// apoc.convert.fromJsonList keeps a fraction, nesting and an exponent number
+// as JSON gives them. An integer outside the 64-bit range is rejected as Neo4j
+// 5.26 rejects it ("Unsupported type of Number"; Neo4j reference probe 1c,
+// one HTTP request per value) instead of becoming a rounded FLOAT as on the
+// release: a stated behaviour change.
 func TestEvaluatorReadsAPOCArguments(t *testing.T) {
 	e := setupTestExecutor(t)
 	ctx := context.Background()
 	for expression, want := range map[string]interface{}{
-		"apoc.coll.flatten([[1, 2], [3]])": []interface{}{int64(1), int64(2), int64(3)},
-		"apoc.coll.toSet([1, 1, 2])":       []interface{}{int64(1), int64(2)},
-		"apoc.coll.sum([1, 2, 3])":         float64(6),
-		"apoc.coll.reverse([1, 2])":        []interface{}{int64(2), int64(1)},
-		"apoc.map.merge({a: 1}, {b: 2})":   map[string]interface{}{"a": int64(1), "b": int64(2)},
-		"apoc.map.fromPairs([['a', 1]])":   map[string]interface{}{"a": int64(1)},
-		"apoc.convert.fromJsonList('[1.5, [2], {\"a\": 3}, 1e2, 99999999999999999999]')": []interface{}{1.5, []interface{}{int64(2)}, map[string]interface{}{"a": int64(3)}, float64(100), float64(1e20)},
+		"apoc.coll.flatten([[1, 2], [3]])":                               []interface{}{int64(1), int64(2), int64(3)},
+		"apoc.coll.toSet([1, 1, 2])":                                     []interface{}{int64(1), int64(2)},
+		"apoc.coll.sum([1, 2, 3])":                                       float64(6),
+		"apoc.coll.reverse([1, 2])":                                      []interface{}{int64(2), int64(1)},
+		"apoc.map.merge({a: 1}, {b: 2})":                                 map[string]interface{}{"a": int64(1), "b": int64(2)},
+		"apoc.map.fromPairs([['a', 1]])":                                 map[string]interface{}{"a": int64(1)},
+		"apoc.convert.fromJsonList('[1.5, [2], {\"a\": 3}, 1e2, 1e20]')": []interface{}{1.5, []interface{}{int64(2)}, map[string]interface{}{"a": int64(3)}, float64(100), float64(1e20)},
 	} {
 		require.Equal(t, want, e.evaluateExpressionWithContext(ctx, expression, nil, nil), expression)
 	}
 	require.NotNil(t, e.evaluateExpressionWithContext(ctx, "duration('P1D')", nil, nil))
 	require.Nil(t, e.evaluateExpressionWithContext(ctx, "apoc.convert.fromJsonMap('[1]')", nil, nil))
+	_, err := e.Execute(ctx, "RETURN apoc.convert.fromJsonList('[1.5, 99999999999999999999]') AS v", nil)
+	require.ErrorContains(t, err, "Unsupported type of Number 99999999999999999999", "Neo4j 5.26 rejects an integer outside the 64-bit range")
 }
