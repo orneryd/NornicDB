@@ -99,28 +99,20 @@ func (b *BadgerEngine) materializeMVCCCommitWithHeads(ctx context.Context, w *ba
 	// snapshot isolation must hold regardless of retention config.
 	retainsHistory := b.mustArchiveForHistory()
 	if staged && retainsHistory {
-		heads.nodes = make(map[NodeID]commitMVCCHeadResult, len(states.committedNodes))
-		heads.edges = make(map[EdgeID]commitMVCCHeadResult, len(states.committedEdges))
+		heads.nodes = make(map[NodeID]commitMVCCHeadResult, len(states.nodes))
+		heads.edges = make(map[EdgeID]commitMVCCHeadResult, len(states.edges))
 		// All operations in this statement archive the same predecessor, even
 		// when the statement updates the same entity repeatedly.
-		for id := range states.committedNodes {
+		for id := range states.nodes {
 			if _, err := heads.node(w.txn, id); err != nil && err != ErrNotFound {
 				return err
 			}
 		}
-		for id := range states.committedEdges {
+		// The fold carries a node delete's cascaded relationships too, so every
+		// edge this statement archives has its committed head read here once.
+		for id := range states.edges {
 			if _, err := heads.edge(w.txn, id); err != nil && err != ErrNotFound {
 				return err
-			}
-		}
-		for _, op := range operations {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			for _, id := range op.DeletedEdgeIDs {
-				if _, err := heads.edge(w.txn, id); err != nil && err != ErrNotFound {
-					return err
-				}
 			}
 		}
 	}
@@ -148,8 +140,8 @@ func (b *BadgerEngine) materializeMVCCCommitWithHeads(ctx context.Context, w *ba
 			}
 			err = w.write(ctx, func(txn *badger.Txn) error {
 				var err error
-				if old := states.committedNodes[op.Node.ID]; retainsHistory && old != nil {
-					err = heads.archiveNodeUpdate(txn, op.Node.ID, old, states.finalNodes[op.Node.ID], version)
+				if old := states.nodes[op.Node.ID].before; retainsHistory && old != nil {
+					err = heads.archiveNodeUpdate(txn, op.Node.ID, old, states.nodes[op.Node.ID].after, version)
 				}
 				if err == nil {
 					err = heads.writeNode(txn, op.Node.ID, version, false)
@@ -159,7 +151,7 @@ func (b *BadgerEngine) materializeMVCCCommitWithHeads(ctx context.Context, w *ba
 		case OpDeleteNode:
 			err = w.write(ctx, func(txn *badger.Txn) error {
 				var err error
-				if old := states.committedNodes[op.NodeID]; retainsHistory && old != nil {
+				if old := states.nodes[op.NodeID].before; retainsHistory && old != nil {
 					err = heads.archiveNode(txn, op.NodeID, old)
 				}
 				// Tombstone marker (tiny, no body) preserves delete semantics.
@@ -232,8 +224,8 @@ func (b *BadgerEngine) materializeMVCCCommitWithHeads(ctx context.Context, w *ba
 				if op.OldEdge != nil && (op.OldEdge.StartNode != op.Edge.StartNode || op.OldEdge.EndNode != op.Edge.EndNode) {
 					err = b.writeEdgeAdjacencyDeltaInTxn(txn, op.OldEdge, op.Edge, version)
 				}
-				if old := states.committedEdges[op.Edge.ID]; err == nil && retainsHistory && old != nil {
-					err = heads.archiveEdgeUpdate(txn, op.Edge.ID, old, states.finalEdges[op.Edge.ID], version)
+				if old := states.edges[op.Edge.ID].before; err == nil && retainsHistory && old != nil {
+					err = heads.archiveEdgeUpdate(txn, op.Edge.ID, old, states.edges[op.Edge.ID].after, version)
 				}
 				if err == nil {
 					err = heads.writeEdge(txn, op.Edge.ID, version, false)
@@ -247,7 +239,7 @@ func (b *BadgerEngine) materializeMVCCCommitWithHeads(ctx context.Context, w *ba
 				if op.OldEdge != nil {
 					err = b.writeEdgeAdjacencyDeltaInTxn(txn, op.OldEdge, nil, version)
 				}
-				if old := states.committedEdges[op.EdgeID]; err == nil && retainsHistory && old != nil {
+				if old := states.edges[op.EdgeID].before; err == nil && retainsHistory && old != nil {
 					err = heads.archiveEdge(txn, op.EdgeID, old)
 				}
 				// Tombstone marker preserves delete semantics.
@@ -313,64 +305,71 @@ func (b *BadgerEngine) archiveEdgeUpdateAtCommittedHeadInTxn(txn kvWriter, id Ed
 	})
 }
 
-// commitStates is what a commit's archiving needs about each node and
-// relationship it writes.
-type commitStates struct {
-	// committedNodes and committedEdges hold the state each entity had
-	// before the transaction: the first update's or delete's previous
-	// state. A later operation's previous state is the transaction's own
-	// uncommitted write, which must not be archived as the committed
-	// version.
-	committedNodes map[NodeID]*Node
-	committedEdges map[EdgeID]*Edge
-	// finalNodes and finalEdges hold the state the commit leaves, nil for
-	// one it deletes, so an update archived as an undo record names it.
-	finalNodes map[NodeID]*Node
-	finalEdges map[EdgeID]*Edge
+// commitEntityState keeps one entity's committed predecessor and final image
+// together. A nil predecessor is creation (or an implicit cascade's bodyless
+// deletion); a nil final image is deletion.
+type commitEntityState[T any] struct {
+	before, after T
 }
 
-func newCommitStates(ctx context.Context, operations []Operation) (commitStates, error) {
-	states := commitStates{
-		committedNodes: make(map[NodeID]*Node),
-		committedEdges: make(map[EdgeID]*Edge),
-		finalNodes:     make(map[NodeID]*Node),
-		finalEdges:     make(map[EdgeID]*Edge),
-	}
-	committedNode := func(id NodeID, old *Node) {
-		if _, seen := states.committedNodes[id]; !seen {
-			states.committedNodes[id] = old
+// commitStates is shared by history, claims, indexes, pending views and cache
+// publication, so every consumer agrees on the entity's publication unit.
+type commitStates struct {
+	nodes map[NodeID]commitEntityState[*Node]
+	edges map[EdgeID]commitEntityState[*Edge]
+}
+
+// newCommitStates is the one before/final fold. Several acknowledged frames
+// can share a physical publication boundary; consumers never select staged
+// intermediate images independently. ctx is the frame's own lifetime: a
+// cancelled caller selects no images and folds none.
+func newCommitStates(ctx context.Context, operationFrames ...[]Operation) (commitStates, error) {
+	var states commitStates
+	var err error
+	for _, operations := range operationFrames {
+		for _, op := range operations {
+			if err := ctx.Err(); err != nil {
+				return commitStates{}, err
+			}
+			switch {
+			case (op.Type == OpCreateNode || op.Type == OpUpdateNode) && op.Node != nil:
+				states.nodes, err = foldCommitEntity(ctx, states.nodes, op.Node.ID, op.OldNode, op.Node)
+			case op.Type == OpDeleteNode:
+				states.nodes, err = foldCommitEntity(ctx, states.nodes, op.NodeID, op.OldNode, nil)
+				for _, id := range op.DeletedEdgeIDs {
+					if err == nil {
+						states.edges, err = foldCommitEntity(ctx, states.edges, id, nil, nil)
+					}
+				}
+			case (op.Type == OpCreateEdge || op.Type == OpUpdateEdge) && op.Edge != nil:
+				states.edges, err = foldCommitEntity(ctx, states.edges, op.Edge.ID, op.OldEdge, op.Edge)
+			case op.Type == OpDeleteEdge:
+				states.edges, err = foldCommitEntity(ctx, states.edges, op.EdgeID, op.OldEdge, nil)
+			}
+			if err != nil {
+				return commitStates{}, err
+			}
 		}
 	}
-	committedEdge := func(id EdgeID, old *Edge) {
-		if _, seen := states.committedEdges[id]; !seen {
-			states.committedEdges[id] = old
-		}
+	return states, nil
+}
+
+// foldCommitEntity folds one operation into its entity's pair: the first
+// operation keeps the committed predecessor, the last keeps the final image.
+// ctx is the operation's own lifetime, so a cancelled frame folds nothing.
+func foldCommitEntity[K comparable, T any](ctx context.Context, states map[K]commitEntityState[T], id K, before, after T) (map[K]commitEntityState[T], error) {
+	if err := ctx.Err(); err != nil {
+		return states, err
 	}
-	for _, op := range operations {
-		if err := ctx.Err(); err != nil {
-			return commitStates{}, err
-		}
-		switch {
-		case op.Type == OpCreateNode && op.Node != nil:
-			committedNode(op.Node.ID, nil)
-			states.finalNodes[op.Node.ID] = op.Node
-		case op.Type == OpUpdateNode && op.Node != nil:
-			committedNode(op.Node.ID, op.OldNode)
-			states.finalNodes[op.Node.ID] = op.Node
-		case op.Type == OpDeleteNode:
-			committedNode(op.NodeID, op.OldNode)
-			states.finalNodes[op.NodeID] = nil
-		case op.Type == OpCreateEdge && op.Edge != nil:
-			committedEdge(op.Edge.ID, nil)
-			states.finalEdges[op.Edge.ID] = op.Edge
-		case op.Type == OpUpdateEdge && op.Edge != nil:
-			committedEdge(op.Edge.ID, op.OldEdge)
-			states.finalEdges[op.Edge.ID] = op.Edge
-		case op.Type == OpDeleteEdge:
-			committedEdge(op.EdgeID, op.OldEdge)
-			states.finalEdges[op.EdgeID] = nil
-		}
+	if states == nil {
+		states = make(map[K]commitEntityState[T])
 	}
+	pair, seen := states[id]
+	if !seen {
+		pair.before = before
+	}
+	pair.after = after
+	states[id] = pair
 	return states, nil
 }
 

@@ -892,6 +892,10 @@ func isDurationOrNumberTypeName(typeName string) bool {
 	return typeName == "Duration" || typeName == "Number"
 }
 
+func isAddableToDuration(typeName string) bool {
+	return typeName == "Duration" || isTemporalTypeName(typeName) || isListTypeName(typeName)
+}
+
 // isAddableToNumberOrString is what a number or a string adds: a number, a
 // string or a list.
 func isAddableToNumberOrString(typeName string) bool {

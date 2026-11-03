@@ -37,7 +37,7 @@ func TestCompositeDDLPublicParserParity(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
-	binary := filepath.Join(dir, "nornicdb")
+	binary := cliTestExecutablePath(dir, "nornicdb")
 	build := exec.Command("go", "build", "-tags=noui,nolocalllm", "-o", binary, "./cmd/nornicdb")
 	build.Dir = root
 	if data, err := build.CombinedOutput(); err != nil {

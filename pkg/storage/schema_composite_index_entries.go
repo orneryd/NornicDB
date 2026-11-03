@@ -105,13 +105,7 @@ func (idx *CompositeIndex) prepareNodeKeys(ctx context.Context, properties map[s
 // applyNodeKeysLocked publishes a complete projection after cancellable preparation.
 func (idx *CompositeIndex) applyNodeKeysLocked(nodeID NodeID, keys *preparedCompositeNodeKeys) {
 	if keys.hasValue {
-		if idx.values == nil {
-			idx.values = make(map[interface{}][]NodeID)
-		}
-		if _, exists := idx.values[keys.value]; !exists {
-			idx.keysDirty = true
-		}
-		idx.values[keys.value] = appendUnique(idx.values[keys.value], nodeID)
+		idx.fileValueLocked(nodeID, keys.value)
 	}
 	if keys.fullHash != "" {
 		idx.fullIndex[keys.fullHash] = appendUnique(idx.fullIndex[keys.fullHash], nodeID)
@@ -135,57 +129,31 @@ func (idx *CompositeIndex) RemoveNode(nodeID NodeID, properties map[string]inter
 // removeNodeLocked is the accepted mutation phase shared by RemoveNode and
 // relationship replacement after all cancellable preparation has succeeded.
 func (idx *CompositeIndex) removeNodeLocked(nodeID NodeID, properties map[string]interface{}) {
-
-	if len(idx.Properties) == 1 {
-		value, exists := properties[idx.Properties[0]]
-		if !exists {
-			return
-		}
-		// RemoveNode follows the write that removed the node's index entry, so
-		// the key has that write's lifetime: it cannot cancel.
-		valueKey, ok, err := indexNonNilMembershipKey(context.Background(), value)
-		if err != nil || !ok {
-			return
-		}
-		ids := removeNodeID(idx.values[valueKey], nodeID)
-		if len(ids) > 0 {
-			idx.values[valueKey] = ids
-		} else {
-			delete(idx.values, valueKey)
-			idx.keysDirty = true
-		}
+	// This is completion of an accepted removal, independent of its request.
+	var keys preparedCompositeNodeKeys
+	if err := idx.prepareNodeKeys(context.Background(), properties, &keys); err != nil {
 		return
 	}
+	idx.removeNodeKeysLocked(nodeID, &keys, 0)
+}
 
-	// RemoveNode follows the write that removed the node's index entry: its
-	// keys digest on that write's lifetime, which cannot cancel, so a full or
-	// prefix key is either complete or the entry is left in place.
-	values, err := compositeIndexValues(context.Background(), idx, properties)
-	if err != nil {
-		return
+// removeNodeKeysLocked retires a prepared projection, retaining shared leading
+// keys during replacement. The caller holds idx.mu and has prepared both sides.
+func (idx *CompositeIndex) removeNodeKeysLocked(nodeID NodeID, keys *preparedCompositeNodeKeys, shared int) {
+	if keys.hasValue {
+		idx.unfileValueLocked(nodeID, keys.value)
 	}
-
-	// Remove from full index.
-	if len(values) == len(idx.Properties) {
-		key, err := NewCompositeKey(context.Background(), values...)
-		if err != nil {
-			return
+	for i := shared; i < keys.prefixCount; i++ {
+		hash := preparedPrefixHash(keys, i)
+		idx.prefixIndex[hash] = removeNodeID(idx.prefixIndex[hash], nodeID)
+		if len(idx.prefixIndex[hash]) == 0 {
+			delete(idx.prefixIndex, hash)
 		}
-		idx.fullIndex[key.Hash] = removeNodeID(idx.fullIndex[key.Hash], nodeID)
-		if len(idx.fullIndex[key.Hash]) == 0 {
-			delete(idx.fullIndex, key.Hash)
-		}
-	}
-
-	// Remove from all prefix indexes.
-	for i := 1; i <= len(values); i++ {
-		prefixKey, err := NewCompositeKey(context.Background(), values[:i]...)
-		if err != nil {
-			return
-		}
-		idx.prefixIndex[prefixKey.Hash] = removeNodeID(idx.prefixIndex[prefixKey.Hash], nodeID)
-		if len(idx.prefixIndex[prefixKey.Hash]) == 0 {
-			delete(idx.prefixIndex, prefixKey.Hash)
+		if keys.fullHash != "" && hash == keys.fullHash {
+			idx.fullIndex[hash] = removeNodeID(idx.fullIndex[hash], nodeID)
+			if len(idx.fullIndex[hash]) == 0 {
+				delete(idx.fullIndex, hash)
+			}
 		}
 	}
 }

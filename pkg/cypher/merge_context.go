@@ -95,7 +95,7 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(ctx context.
 			for i := 0; i < covered; i++ {
 				values[i] = nodeInfo.properties[idx.Properties[i]]
 			}
-			ids, err := compositeIndexLookup(ctx, store, idx, values, covered == len(idx.Properties))
+			ids, err := compositeIndexLookup(ctx, store, schema, idx, values, covered == len(idx.Properties))
 			if err != nil {
 				return nil, false, err
 			}

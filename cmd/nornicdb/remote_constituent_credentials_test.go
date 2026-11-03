@@ -291,7 +291,7 @@ func TestRemoteConstituentCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
-	binary := filepath.Join(dir, "nornicdb")
+	binary := cliTestExecutablePath(dir, "nornicdb")
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	build := exec.CommandContext(ctx, "go", "build", "-tags=noui,nolocalllm", "-o", binary, "./cmd/nornicdb")

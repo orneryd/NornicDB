@@ -442,10 +442,10 @@ func (tx *BadgerTransaction) writeChangeEventsLocked(ctx context.Context, w *bat
 				continue
 			}
 			seenNodes[id] = true
-			if event, ok := nodeChangeEvent(base, states.committedNodes[id], states.finalNodes[id]); ok {
-				whole := states.finalNodes[id]
+			if event, ok := nodeChangeEvent(base, states.nodes[id].before, states.nodes[id].after); ok {
+				whole := states.nodes[id].after
 				if whole == nil {
-					whole = states.committedNodes[id]
+					whole = states.nodes[id].before
 				}
 				nodeKeys, keysErr := keys.ofNode(ctx, whole)
 				if keysErr != nil {
@@ -461,7 +461,7 @@ func (tx *BadgerTransaction) writeChangeEventsLocked(ctx context.Context, w *bat
 			if op.Edge != nil {
 				id = op.Edge.ID
 			}
-			if err := edgeEvent(id, states.committedEdges[id], states.finalEdges[id]); err != nil {
+			if err := edgeEvent(id, states.edges[id].before, states.edges[id].after); err != nil {
 				return err
 			}
 		}
@@ -552,9 +552,10 @@ func newChangeEndpointLabels(engine *BadgerEngine, states commitStates) *changeE
 // transaction touched it (before its delete when it deleted it), else as
 // stored; nil when there is none.
 func (l *changeEndpointLabels) node(ctx context.Context, id NodeID) (*Node, error) {
-	if node, touched := l.states.finalNodes[id]; touched {
+	if pair, touched := l.states.nodes[id]; touched {
+		node := pair.after
 		if node == nil {
-			node = l.states.committedNodes[id]
+			node = l.states.nodes[id].before
 		}
 		if node != nil {
 			return node, nil

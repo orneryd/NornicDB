@@ -833,12 +833,14 @@ test: lint-slog lint-cardinality
 ifeq ($(HOST_OS),windows)
 	powershell -NoProfile -File scripts/test-windows.ps1 -PackageParallelism 1 -Parallel 1
 else
+	# The largest packages each hold several GiB; run packages one at a time
+	# so Cypher, storage and server do not compete for the same memory budget.
 	# pipefail propagates `go test`'s real exit through the grep filter,
 	# so a test failure still fails the make target even though grep
 	# strips most of the noise. `go test ./...` always emits at least one
 	# `ok` or `FAIL` line per package, so grep never returns 1 in
 	# practice — pipefail's status is `go test`'s status.
-	@bash -c 'set -o pipefail; go test -timeout 30m ./... 2>&1 | grep -E "^(FAIL|ok|---[[:space:]]+FAIL)"'
+	@bash -c 'set -o pipefail; go test -p 1 -parallel 4 -timeout 30m ./... 2>&1 | grep -E "^(FAIL|ok|---[[:space:]]+FAIL)"'
 endif
 
 install-hooks:

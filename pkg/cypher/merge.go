@@ -258,7 +258,7 @@ func (e *StorageExecutor) findMergeNode(ctx context.Context, store storage.Engin
 			}
 			schemaLookupUsed = true
 			e.markMergeSchemaLookupUsed()
-			ids, err := compositeIndexLookup(ctx, store, idx, compositeLookupValues(idx, props), true)
+			ids, err := compositeIndexLookup(ctx, store, schema, idx, compositeLookupValues(idx, props), true)
 			if err != nil {
 				return nil, err
 			}
@@ -489,7 +489,7 @@ func (e *StorageExecutor) mergeNodeIndexedCandidateIDs(ctx context.Context, stor
 	for _, idx := range indexes {
 		if mergeIndexMatchesAllProperties(idx, props) {
 			e.markMergeSchemaLookupUsed()
-			ids, err := compositeIndexLookup(ctx, store, idx, compositeLookupValues(idx, props), true)
+			ids, err := compositeIndexLookup(ctx, store, schema, idx, compositeLookupValues(idx, props), true)
 			return ids, true, err
 		}
 	}
