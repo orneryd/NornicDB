@@ -12,12 +12,12 @@
     "sha256": "2f7a4bea69fd6ddd9ac9444c5fbf42e140d81d829fa3a9adebb0613a15626894"
   },
   "apoc/json/json.go:Size": {
-    "reason": "Serialization/decoding owns a fixed wire or internal key representation; it does not narrow runtime list coordinates.",
-    "sha256": "736b8bc6afb48936bafea8574d7f3f3e028887a1268bb2caed88a0f17e2f0c4e"
+    "reason": "Nonconsumer: reports the length of a string, list or map decoded by the property JSON domain; it reads no number (structure only).",
+    "sha256": "a5f424530ef09472f9e67dd274fa5a710f0fab160f66c42d19eef474a356ec6e"
   },
   "apoc/json/json.go:Type": {
-    "reason": "Serialization/decoding owns a fixed wire or internal key representation; it does not narrow runtime list coordinates.",
-    "sha256": "105d1f7f01359f7960cfa9bdbb6e1bb37524844c4de428c4cd1390e5c22fb77b"
+    "reason": "Nonconsumer: names the JSON type of a value decoded by the property JSON domain; a number is recognised through the shared convert.ReadNumber, and the switch only names string, boolean, list and map structure.",
+    "sha256": "9333b9119d9cd189b9b2f1eac4fcedc59d567be1f67d2c19d1b4012161d60e7d"
   },
   "apoc/json/json.go:extractPath": {
     "reason": "Serialization/decoding owns a fixed wire or internal key representation; it does not narrow runtime list coordinates.",
@@ -52,8 +52,8 @@
     "sha256": "36c86cad013d4b12e9eea5530c2c0536acc2cc5ea2bbe7e4e8a8ae351b29cbd1"
   },
   "pkg/cypher/call_cdc.go:cdcValue": {
-    "reason": "Serialization/decoding owns a fixed wire or internal key representation; it does not narrow runtime list coordinates.",
-    "sha256": "ff99c8ef12abc395894ad721fdd1fba3249ffd8fdf4ef9d36518e830b7becaac"
+    "reason": "CDC output reads all numbers through convert.ReadNumber, retaining INTEGER values (uint64 above MaxInt64) and FLOAT kind. Its remaining switch only traverses stored lists/maps; selectors share canonical exact Cypher equality, while change detection retains type identity.",
+    "sha256": "7eac9aae7e6f9c95ea6b254ad49911d1e25557c4fe99019fe808c6d659864d8e"
   },
   "pkg/cypher/call_rag.go:parseRetrievalFilters": {
     "reason": "String/token or type/format rendering policy; it does not convert numeric elements. Length dispatch already has a reflection fallback for every list width.",
@@ -128,8 +128,8 @@
     "sha256": "8f68f3a810e140fcbb6f7f7b50bd61bce9a2f8488230676671673ba173d76a64"
   },
   "pkg/cypher/functions_neo5.go:convertToStringOrNull": {
-    "reason": "String/token or type/format rendering policy; it does not convert numeric elements. Length dispatch already has a reflection fallback for every list width.",
-    "sha256": "14f948b6515e50aea3d6560f698fd2b639f0d2edbff8dc063c882e0a4dcc982a"
+    "reason": "Author: L6 / #1665 lane (Codex gpt-6.1-sol). toStringOrNull rejects container shapes and delegates all numeric text to convert.NumericText; the remaining array case is a format-domain exclusion, not numeric/list conversion.",
+    "sha256": "49e50e33412ab3b8bfd2c28b1eacd1063ed3cdb94043c32f9a1d11cbac2d62e8"
   },
   "pkg/cypher/gds_projection.go:gdsJavaType": {
     "reason": "String/token or type/format rendering policy; it does not convert numeric elements. Length dispatch already has a reflection fallback for every list width.",
@@ -298,5 +298,13 @@
   "pkg/cypher/value_equivalence.go:cypherValueKey": {
     "reason": "Existing storage/identity/comparison-key contract, distinct from generic coordinate reading; do not change adjudicated equivalence or physical write detection.",
     "sha256": "b55b25dbdda67c326f5784855c1da83f21da56e60902576522e071ecaf99c911"
+  },
+  "pkg/convert/json.go:jsonNumbers": {
+    "reason": "Owner: the one JSON number read decision (kind and range of every JSON number, per domain policy); its switch walks lists and maps to reach the json.Number leaves it decides.",
+    "sha256": "eaa71c9ea3c495242bceaf8b30c39849b430fec787757f909ceb04c64840f04e"
+  },
+  "pkg/convert/json_encode.go:any": {
+    "reason": "Owner (output): the JSON writer's value dispatch (jsonWriterState.any); an encoder, not an input reader; every FLOAT is written through the one write decision appendJSONFloat. Typed persisted-state metadata spelling is temporarily disabled across dynamic interface values and restored for siblings; this state controls output spelling only, not number acceptance or input normalization. The added save/restore is the reviewed source delta.",
+    "sha256": "6340aeeab8ecf0a55fa13db61b20406691b1540fb8fbc8edbb744645567479db"
   }
 }
