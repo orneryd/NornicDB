@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   readers are context-first stateless callbacks; canceled preparation is not
   cached. See [the migration guide](docs/development/cypher-preparation-context-api.md#use-and-clause-scanner-migration).
 - Go query metadata and permission readers now require an explicit raw or accepted source stage; see [the source-stage migration guide](docs/development/cypher-source-stage-api.md).
+- Require Go 1.27.3 (go.mod, CI, release and Docker builders). Go embedders and
+  `.so` plugins must rebuild with Go 1.27.3. Roll up dependency updates: gqlgen
+  0.17.98 (regenerated GraphQL executor), godog 0.16.0 (cucumber messages v34),
+  gRPC 1.85.0, OpenTelemetry 1.47.0, qdrant client 1.20.1, google.golang.org/api
+  0.310.0, docker/login-action 4.7.0, and UI dependencies.
 
 ### Added
 

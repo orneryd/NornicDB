@@ -12,11 +12,12 @@ import (
 )
 
 type statusDiagnosticFixture struct {
-	error
+	cause   error
 	message localization.Message
 }
 
-func (e *statusDiagnosticFixture) Unwrap() error                          { return e.error }
+func (e *statusDiagnosticFixture) Error() string                          { return e.cause.Error() }
+func (e *statusDiagnosticFixture) Unwrap() error                          { return e.cause }
 func (e *statusDiagnosticFixture) StatusDiagnostic() localization.Message { return e.message }
 
 func TestStatusDiagnosticsPreservePrimary(t *testing.T) {
