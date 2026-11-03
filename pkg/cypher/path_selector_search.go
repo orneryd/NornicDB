@@ -89,13 +89,6 @@ type pathPatternItem struct {
 	group int
 }
 
-// parsePathPatternItems reads a selected pattern into its elements. ok is
-// false for text that isn't a path pattern: node patterns joined by
-// relationship patterns, quantified groups and juxtapositions.
-func parsePathPatternItems(pattern string, nested bool) ([]pathPatternItem, bool) {
-	return parsePathPatternItemsContext(context.Background(), pattern, nested)
-}
-
 func parsePathPatternItemsContext(ctx context.Context, pattern string, nested bool) ([]pathPatternItem, bool) {
 	var items []pathPatternItem
 	for at := skipASCIISpaces(pattern, 0, len(pattern)); at < len(pattern); at = skipASCIISpaces(pattern, at, len(pattern)) {
@@ -114,7 +107,7 @@ func parsePathPatternItemsContext(ctx context.Context, pattern string, nested bo
 					return nil, false
 				}
 				inner, where := pattern[at+1:close], ""
-				if index := topLevelKeywordIndex(inner, "WHERE"); index >= 0 {
+				if index := topLevelKeywordIndex(ctx, inner, "WHERE"); index >= 0 {
 					inner, where = inner[:index], strings.TrimSpace(inner[index+len("WHERE"):])
 				}
 				members, ok := parsePathPatternItemsContext(ctx, inner, true)
@@ -125,7 +118,7 @@ func parsePathPatternItemsContext(ctx context.Context, pattern string, nested bo
 				at = quantifier.end
 				continue
 			}
-			item, ok := parsePathPatternNode(pattern[at : close+1])
+			item, ok := parsePathPatternNode(ctx, pattern[at:close+1])
 			if !ok || len(items) > 0 && items[len(items)-1].kind == pathPatternNode {
 				// Only a quantified group juxtaposes with a node pattern.
 				return nil, false
@@ -144,7 +137,7 @@ func parsePathPatternItemsContext(ctx context.Context, pattern string, nested bo
 				text = pattern[at:arrowEnd]
 				end = arrowEnd
 			}
-			item, ok := parsePathPatternRelationship(text)
+			item, ok := parsePathPatternRelationship(ctx, text)
 			if !ok || len(items) == 0 || items[len(items)-1].kind == pathPatternRelationship {
 				return nil, false
 			}
@@ -161,10 +154,10 @@ func parsePathPatternItemsContext(ctx context.Context, pattern string, nested bo
 }
 
 // parsePathPatternNode reads a node pattern (text is its parentheses).
-func parsePathPatternNode(text string) (pathPatternItem, bool) {
+func parsePathPatternNode(ctx context.Context, text string) (pathPatternItem, bool) {
 	item := pathPatternItem{kind: pathPatternNode, text: text}
 	inner := text[1 : len(text)-1]
-	if where := elementWhereIndex(text, 0, len(text)-1); where >= 0 {
+	if where := elementWhereIndex(ctx, text, 0, len(text)-1); where >= 0 {
 		item.predicates = append(item.predicates, strings.TrimSpace(text[where+len("WHERE"):len(text)-1]))
 		inner = text[1:where]
 		item.text = "(" + inner + ")"
@@ -186,7 +179,7 @@ func parsePathPatternNode(text string) (pathPatternItem, bool) {
 
 // parsePathPatternRelationship reads a relationship pattern with its
 // arrows (-->, <-[r:T*1..3]-, …).
-func parsePathPatternRelationship(text string) (pathPatternItem, bool) {
+func parsePathPatternRelationship(ctx context.Context, text string) (pathPatternItem, bool) {
 	item := pathPatternItem{kind: pathPatternRelationship, direction: "both", min: 1, max: 1}
 	incoming, outgoing := strings.HasPrefix(text, "<"), strings.HasSuffix(text, ">")
 	switch {
@@ -204,7 +197,7 @@ func parsePathPatternRelationship(text string) (pathPatternItem, bool) {
 		return item, false
 	}
 	inner := text[open+1 : close]
-	if where := elementWhereIndex(text, open, close); where >= 0 {
+	if where := elementWhereIndex(ctx, text, open, close); where >= 0 {
 		item.predicates = append(item.predicates, strings.TrimSpace(text[where+len("WHERE"):close]))
 		inner = text[open+1 : where]
 	}
@@ -714,7 +707,7 @@ func buildSelectedPathPlanContext(ctx context.Context, pattern, pathVariable, pr
 		case pathPatternGroup:
 			item.group = groups
 			groups++
-			plan.compileGroup(item, name)
+			plan.compileGroup(ctx, item, name)
 		}
 	}
 	// A relationship without a variable but with a property map needs one.
@@ -762,7 +755,7 @@ func buildSelectedPathPlanContext(ctx context.Context, pattern, pathVariable, pr
 	}
 	// A length bound among the pattern's predicates (shortestPath's WHERE)
 	// bounds the search too; each path is still checked against it.
-	for _, term := range splitTopLevelAndConjuncts(predicate) {
+	for _, term := range splitTopLevelAndConjuncts(ctx, predicate) {
 		if term = strings.TrimSpace(term); term != "" {
 			if bound, ok := pathLengthBoundOf(term, pathVariable); ok {
 				plan.lengthBounds = append(plan.lengthBounds, bound)
@@ -805,7 +798,7 @@ func buildSelectedPathPlanContext(ctx context.Context, pattern, pathVariable, pr
 // its WHERE: one that reads a single element of the group is checked on it
 // in each repetition, one that reads none of them on each of its
 // relationships, any other on each repetition of a path traced.
-func (plan *selectedPathPlan) compileGroup(group *pathPatternItem, name func() string) {
+func (plan *selectedPathPlan) compileGroup(ctx context.Context, group *pathPatternItem, name func() string) {
 	var elements []string
 	for index := range group.items {
 		item := &group.items[index]
@@ -818,7 +811,7 @@ func (plan *selectedPathPlan) compileGroup(group *pathPatternItem, name func() s
 			plan.listVariables = append(plan.listVariables, item.variable)
 		}
 	}
-	for _, term := range splitTopLevelAndConjuncts(group.where) {
+	for _, term := range splitTopLevelAndConjuncts(ctx, group.where) {
 		if term = strings.TrimSpace(term); term == "" {
 			continue
 		}

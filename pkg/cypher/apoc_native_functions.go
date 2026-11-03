@@ -85,7 +85,7 @@ func (e *StorageExecutor) evaluateNativeAPOCFunction(ctx context.Context, name s
 		}
 		return v, true, err
 	case "apoc.rel.startNode", "apoc.rel.endNode":
-		v, err := e.relationshipEndpointValue(value, name == "apoc.rel.endNode")
+		v, err := e.relationshipEndpointValue(ctx, value, name == "apoc.rel.endNode")
 		return v, true, err
 	case "apoc.node.degree", "apoc.nodes.connected":
 		v, err := e.nativeAPOCAdjacency(ctx, name, args)
@@ -100,7 +100,7 @@ func (e *StorageExecutor) evaluateNativeAPOCFunction(ctx context.Context, name s
 		}
 		return v, true, nil
 	case "apoc.path.slice", "apoc.path.combine":
-		v, err := e.nativeAPOCPath(name, args)
+		v, err := e.nativeAPOCPath(ctx, name, args)
 		return v, true, err
 	case "apoc.temporal.format":
 		v, err := nativeAPOCTemporalFormat(args)
@@ -196,7 +196,7 @@ func (e *StorageExecutor) nativeAPOCAdjacency(ctx context.Context, name string, 
 }
 
 // nativeAPOCPath preserves genuine typed local and remote path carriers.
-func (e *StorageExecutor) nativeAPOCPath(name string, args []interface{}) (interface{}, error) {
+func (e *StorageExecutor) nativeAPOCPath(ctx context.Context, name string, args []interface{}) (interface{}, error) {
 	if name == "apoc.path.combine" {
 		if args[0] == nil {
 			return args[1], nil
@@ -273,7 +273,7 @@ func (e *StorageExecutor) nativeAPOCPath(name string, args []interface{}) (inter
 			path.Relationships = append(path.Relationships, edge)
 		}
 	}
-	return e.pathToMap(path), nil
+	return e.pathToMapContext(ctx, path), nil
 }
 
 // APOC's standalone Go graph uses integer IDs and its own global store. It

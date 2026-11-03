@@ -8,7 +8,7 @@ import (
 )
 
 func TestSourceRestorationKeepsDiagnosticAndValuePolicies(t *testing.T) {
-	_, rewrite := canonicalizeQueryText("MATCH (n) WHERE n.x IS  NULL RETURN n")
+	_, rewrite := canonicalizeQueryText(t.Context(), "MATCH (n) WHERE n.x IS  NULL RETURN n")
 	require.NotNil(t, rewrite)
 	value, changed := (resultRestoration{source: rewrite}).value("n.x IS NULL", sourceValueText)
 	require.True(t, changed)
@@ -36,12 +36,12 @@ func TestSourceRestorationKeepsDiagnosticAndValuePolicies(t *testing.T) {
 
 func TestSourceRestorationParserUnicodeCRLF(t *testing.T) {
 	query := "RETURN 'π'\r\n  @"
-	canonical, rewrite := canonicalizeQueryText(query)
+	canonical, rewrite := canonicalizeQueryText(t.Context(), query)
 	require.NotNil(t, rewrite)
 	executor := NewStorageExecutor(newTestMemoryEngine(t))
 	cause := executor.validateSyntax(t.Context(), canonical, false, syntaxANTLRCore)
 	require.Error(t, cause)
-	_, err := (resultRestoration{source: rewrite}).restore(nil, cause, nil)
+	_, err := (resultRestoration{source: rewrite}).restore(t.Context(), nil, cause, nil)
 	require.ErrorIs(t, err, cause)
 	var diagnostic *localization.LocalizedError
 	require.True(t, errors.As(err, &diagnostic))

@@ -3,10 +3,11 @@ package contract
 import (
 	"context"
 	"fmt"
+	"testing"
+
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 // The wire APIs do not expose candidate evidence or a quantization-rescore
@@ -21,7 +22,7 @@ func RunResultLimitEvidence(t *testing.T, factory func(*testing.T, int, Policy) 
 			query[0] = 1
 			for i := 0; i < 8; i++ {
 				node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("ceiling-%02d", i)), ChunkEmbeddings: [][]float32{query}}
-				_, err := f.Engine.CreateNode(node)
+				_, err := f.Engine.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 				require.NoError(t, f.Service.IndexNode(node))
 			}

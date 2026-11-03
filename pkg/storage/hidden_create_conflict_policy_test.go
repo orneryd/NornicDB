@@ -26,7 +26,7 @@ func TestHiddenCreateConflictPolicy(t *testing.T) {
 	transactionRoute := func(name string, implicit, bulk bool) createRoute {
 		apply := func(t *testing.T, engine *BadgerEngine, stage func(*BadgerTransaction) error) error {
 			t.Helper()
-			tx, err := engine.BeginTransaction()
+			tx, err := engine.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			require.NoError(t, tx.SetNamespace("test"))
@@ -42,16 +42,16 @@ func TestHiddenCreateConflictPolicy(t *testing.T) {
 				return apply(t, engine, func(tx *BadgerTransaction) error {
 					// Transactions expose bulk admission only for relationships;
 					// node cells use the actual per-node transaction API.
-					_, err := tx.CreateNode(node)
+					_, err := tx.CreateNode(t.Context(), node)
 					return err
 				})
 			},
 			edge: func(t *testing.T, engine *BadgerEngine, edge *Edge) error {
 				return apply(t, engine, func(tx *BadgerTransaction) error {
 					if bulk {
-						return tx.BulkCreateEdges([]*Edge{edge})
+						return tx.BulkCreateEdges(t.Context(), []*Edge{edge})
 					}
-					return tx.CreateEdge(edge)
+					return tx.CreateEdge(t.Context(), edge)
 				})
 			},
 		}
@@ -60,20 +60,20 @@ func TestHiddenCreateConflictPolicy(t *testing.T) {
 		{
 			name: "direct",
 			node: func(_ *testing.T, engine *BadgerEngine, node *Node) error {
-				_, err := engine.CreateNode(node)
+				_, err := engine.CreateNode(t.Context(), node)
 				return err
 			},
 			edge: func(_ *testing.T, engine *BadgerEngine, edge *Edge) error {
-				return engine.CreateEdge(edge)
+				return engine.CreateEdge(t.Context(), edge)
 			},
 		},
 		{
 			name: "bulk",
 			node: func(_ *testing.T, engine *BadgerEngine, node *Node) error {
-				return engine.BulkCreateNodes([]*Node{node})
+				return engine.BulkCreateNodes(t.Context(), []*Node{node})
 			},
 			edge: func(_ *testing.T, engine *BadgerEngine, edge *Edge) error {
-				return engine.BulkCreateEdges([]*Edge{edge})
+				return engine.BulkCreateEdges(t.Context(), []*Edge{edge})
 			},
 		},
 		transactionRoute("explicit transaction", false, false),
@@ -104,7 +104,7 @@ func TestHiddenCreateConflictPolicy(t *testing.T) {
 					{ID: "test:d", Labels: []string{"D"}},
 					{ID: "test:hidden-node", Labels: []string{"Original"}, Properties: map[string]any{"value": int64(1)}},
 				} {
-					_, err := engine.CreateNode(node)
+					_, err := engine.CreateNode(t.Context(), node)
 					require.NoError(t, err)
 				}
 				createdAt := time.Now().Add(-time.Hour).UTC().Round(time.Microsecond)
@@ -113,22 +113,22 @@ func TestHiddenCreateConflictPolicy(t *testing.T) {
 					{ID: "test:different", StartNode: "test:c", EndNode: "test:d", Type: "LINK", Properties: map[string]any{"key": "old"}, CreatedAt: createdAt, UpdatedAt: createdAt},
 				}
 				for _, edge := range originals {
-					require.NoError(t, engine.CreateEdge(edge))
+					require.NoError(t, engine.CreateEdge(t.Context(), edge))
 				}
 				if buffered {
-					require.NoError(t, engine.FlushWriteBehind(nil))
+					require.NoError(t, engine.FlushWriteBehind(context.Background()))
 				}
-				require.NoError(t, engine.SetManualSuppression(StoredEntityNodeKind, "test:hidden-node", true))
-				require.NoError(t, engine.SetManualSuppression(StoredEntityEdgeKind, "test:identical", true))
-				require.NoError(t, engine.SetManualSuppression(StoredEntityEdgeKind, "test:different", true))
+				require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityNodeKind, "test:hidden-node", true))
+				require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityEdgeKind, "test:identical", true))
+				require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityEdgeKind, "test:different", true))
 
-				beforeIdentical, err := engine.GetStoredEdge("test:identical")
+				beforeIdentical, err := engine.GetStoredEdge(t.Context(), "test:identical")
 				require.NoError(t, err)
 				beforeIdentical = comparableStoredEdge(beforeIdentical)
-				beforeDifferent, err := engine.GetStoredEdge("test:different")
+				beforeDifferent, err := engine.GetStoredEdge(t.Context(), "test:different")
 				require.NoError(t, err)
 				beforeDifferent = comparableStoredEdge(beforeDifferent)
-				beforeNode, err := engine.GetStoredNode("test:hidden-node")
+				beforeNode, err := engine.GetStoredNode(t.Context(), "test:hidden-node")
 				require.NoError(t, err)
 				beforeNode = comparableStoredNode(beforeNode)
 				createdCallbacks, updatedCallbacks, deletedCallbacks := 0, 0, 0
@@ -154,24 +154,24 @@ func TestHiddenCreateConflictPolicy(t *testing.T) {
 
 				check := func(stage string) {
 					t.Helper()
-					got, err := engine.GetStoredEdge("test:identical")
+					got, err := engine.GetStoredEdge(t.Context(), "test:identical")
 					require.NoError(t, err, stage)
 					require.Equal(t, beforeIdentical, comparableStoredEdge(got), stage+": identical retry changed the stored body")
-					got, err = engine.GetStoredEdge("test:different")
+					got, err = engine.GetStoredEdge(t.Context(), "test:different")
 					require.NoError(t, err, stage)
 					require.Equal(t, beforeDifferent, comparableStoredEdge(got), stage+": rejected retry changed the stored body")
-					gotNode, err := engine.GetStoredNode("test:hidden-node")
+					gotNode, err := engine.GetStoredNode(t.Context(), "test:hidden-node")
 					require.NoError(t, err, stage)
 					require.Equal(t, beforeNode, comparableStoredNode(gotNode), stage+": rejected node retry changed the stored body")
 					for _, id := range []EdgeID{"test:identical", "test:different"} {
-						_, err = engine.GetEdge(id)
+						_, err = engine.GetEdge(t.Context(), id)
 						require.ErrorIs(t, err, ErrNotFound, stage+": relationship must remain hidden")
 					}
-					_, err = engine.GetNode("test:hidden-node")
+					_, err = engine.GetNode(t.Context(), "test:hidden-node")
 					require.ErrorIs(t, err, ErrNotFound, stage+": node must remain hidden")
-					edgeCount, err := engine.EdgeCount()
+					edgeCount, err := engine.EdgeCount(t.Context())
 					require.EqualValues(t, 2, mustCount(t, edgeCount, err), stage+": physical edge count")
-					typeCount, err := engine.EdgeCountByType("LINK")
+					typeCount, err := engine.EdgeCountByType(context.Background(), "LINK")
 					require.EqualValues(t, 2, mustCount(t, typeCount, err), stage+": type count")
 					for _, positional := range []struct {
 						label string
@@ -184,12 +184,12 @@ func TestHiddenCreateConflictPolicy(t *testing.T) {
 						if positional.start {
 							read = engine.EdgeCountByStartLabel
 						}
-						count, err := read(positional.label, "LINK")
+						count, err := read(context.Background(), positional.label, "LINK")
 						require.EqualValues(t, 1, mustCount(t, count, err), stage+": original positional count "+positional.label)
-						count, err = read(positional.label, "MOVED")
+						count, err = read(context.Background(), positional.label, "MOVED")
 						require.Zero(t, mustCount(t, count, err), stage+": rejected type has no positional entry")
 					}
-					movedCount, err := engine.EdgeCountByType("MOVED")
+					movedCount, err := engine.EdgeCountByType(context.Background(), "MOVED")
 					require.Zero(t, mustCount(t, movedCount, err), stage+": rejected type has no count")
 					outgoingA, err := engine.GetStoredOutgoingEdges(context.Background(), "test:a")
 					require.NoError(t, err)
@@ -248,7 +248,7 @@ func TestHiddenCreateConflictPolicy(t *testing.T) {
 				require.Zero(t, updatedCallbacks, "no UPDATE callback/search publication")
 				require.Zero(t, deletedCallbacks, "no DELETE callback/search publication")
 				if buffered {
-					require.NoError(t, engine.FlushWriteBehind(nil))
+					require.NoError(t, engine.FlushWriteBehind(context.Background()))
 					check("flushed")
 				}
 				require.NoError(t, engine.Close())
@@ -276,25 +276,25 @@ func TestHiddenEdgeCreateUsesFinalTransactionImage(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = engine.Close() })
 			for _, id := range []NodeID{"test:a", "test:b"} {
-				_, err := engine.CreateNode(&Node{ID: id})
+				_, err := engine.CreateNode(t.Context(), &Node{ID: id})
 				require.NoError(t, err)
 			}
 			stored := &Edge{
 				ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK",
 				Properties: map[string]any{"key": "same", "payload": "stored"},
 			}
-			require.NoError(t, engine.CreateEdge(stored))
+			require.NoError(t, engine.CreateEdge(t.Context(), stored))
 			if buffered {
-				require.NoError(t, engine.FlushWriteBehind(nil))
+				require.NoError(t, engine.FlushWriteBehind(context.Background()))
 			}
-			require.NoError(t, engine.SetManualSuppression(StoredEntityEdgeKind, string(stored.ID), true))
-			before, err := engine.GetStoredEdge(stored.ID)
+			require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityEdgeKind, string(stored.ID), true))
+			before, err := engine.GetStoredEdge(t.Context(), stored.ID)
 			require.NoError(t, err)
 			before = comparableStoredEdge(before)
 
 			begin := func() *BadgerTransaction {
 				t.Helper()
-				tx, err := engine.BeginTransaction()
+				tx, err := engine.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				require.NoError(t, tx.SetNamespace("test"))
 				return tx
@@ -304,22 +304,22 @@ func TestHiddenEdgeCreateUsesFinalTransactionImage(t *testing.T) {
 				Properties: map[string]any{"key": "same"},
 			}
 			tx := begin()
-			require.NoError(t, tx.CreateEdge(candidate))
+			require.NoError(t, tx.CreateEdge(t.Context(), candidate))
 			require.True(t, tx.EdgeCreateWasNoOp(candidate.ID))
-			_, err = tx.GetEdge(candidate.ID)
+			_, err = tx.GetEdge(t.Context(), candidate.ID)
 			require.ErrorIs(t, err, ErrNotFound, "the hidden-only candidate must not enter the visible point-read overlay")
 			between, err := tx.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadBetween, Node: candidate.StartNode, Other: candidate.EndNode})
 			require.NoError(t, err)
 			require.Empty(t, between, "the hidden-only candidate must not enter relationship matching")
 			candidate.Properties["payload"] = "stored"
-			require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: candidate}))
+			require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: candidate}))
 			repeated := &Edge{
 				ID: stored.ID, StartNode: stored.StartNode, EndNode: stored.EndNode, Type: stored.Type,
 				Properties: map[string]any{"key": "same"},
 			}
-			require.NoError(t, tx.CreateEdge(repeated), "a repeated hidden-ID admission reuses the hidden-only disposition")
+			require.NoError(t, tx.CreateEdge(t.Context(), repeated), "a repeated hidden-ID admission reuses the hidden-only disposition")
 			repeated.Properties["payload"] = "stored"
-			require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: repeated}))
+			require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: repeated}))
 			require.NoError(t, tx.Commit(), "the final image, not the intermediate CREATE image, decides identity")
 
 			different := &Edge{
@@ -327,9 +327,9 @@ func TestHiddenEdgeCreateUsesFinalTransactionImage(t *testing.T) {
 				Properties: map[string]any{"key": "same"},
 			}
 			tx = begin()
-			require.NoError(t, tx.CreateEdge(different))
+			require.NoError(t, tx.CreateEdge(t.Context(), different))
 			different.Properties["payload"] = "different"
-			require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: different}))
+			require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: different}))
 			err = tx.Commit()
 			var conflict *HiddenEdgeIdentityConflictError
 			require.ErrorAs(t, err, &conflict)
@@ -337,12 +337,12 @@ func TestHiddenEdgeCreateUsesFinalTransactionImage(t *testing.T) {
 			require.Equal(t, "Neo.ClientError.Schema.ConstraintValidationFailed", conflict.BoltErrorCode())
 
 			if buffered {
-				require.NoError(t, engine.FlushWriteBehind(nil))
+				require.NoError(t, engine.FlushWriteBehind(context.Background()))
 			}
-			after, err := engine.GetStoredEdge(stored.ID)
+			after, err := engine.GetStoredEdge(t.Context(), stored.ID)
 			require.NoError(t, err)
 			require.Equal(t, before, comparableStoredEdge(after))
-			count, err := engine.EdgeCount()
+			count, err := engine.EdgeCount(t.Context())
 			require.NoError(t, err)
 			require.EqualValues(t, 1, count)
 		})
@@ -386,18 +386,18 @@ func TestHiddenEdgeCandidateLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	for _, id := range []NodeID{"test:a", "test:b"} {
-		_, err := engine.CreateNode(&Node{ID: id})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: id})
 		require.NoError(t, err)
 	}
 	stored := &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"key": "same"}}
-	require.NoError(t, engine.CreateEdge(stored))
-	require.NoError(t, engine.SetManualSuppression(StoredEntityEdgeKind, string(stored.ID), true))
-	before, err := engine.GetStoredEdge(stored.ID)
+	require.NoError(t, engine.CreateEdge(t.Context(), stored))
+	require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityEdgeKind, string(stored.ID), true))
+	before, err := engine.GetStoredEdge(t.Context(), stored.ID)
 	require.NoError(t, err)
 	before = comparableStoredEdge(before)
 	begin := func() *BadgerTransaction {
 		t.Helper()
-		tx, err := engine.BeginTransaction()
+		tx, err := engine.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		require.NoError(t, tx.SetNamespace("test"))
 		return tx
@@ -411,21 +411,21 @@ func TestHiddenEdgeCandidateLifecycle(t *testing.T) {
 	t.Run("delete drops the candidate", func(t *testing.T) {
 		tx := begin()
 		require.False(t, tx.RequiresCommitValidation())
-		require.NoError(t, tx.CreateEdge(candidate("LINK")))
+		require.NoError(t, tx.CreateEdge(t.Context(), candidate("LINK")))
 		require.True(t, tx.RequiresCommitValidation(), "an operation-free candidate still needs the commit owner")
 		require.Zero(t, tx.OperationCount())
-		require.NoError(t, tx.DeleteEdge(stored.ID))
+		require.NoError(t, tx.DeleteEdge(t.Context(), stored.ID))
 		require.False(t, tx.EdgeCreateWasNoOp(stored.ID))
 		require.False(t, tx.RequiresCommitValidation())
 		require.NoError(t, tx.Commit())
-		after, err := engine.GetStoredEdge(stored.ID)
+		after, err := engine.GetStoredEdge(t.Context(), stored.ID)
 		require.NoError(t, err)
 		require.Equal(t, before, comparableStoredEdge(after), "CREATE then DELETE of a hidden candidate leaves its predecessor untouched")
 	})
 
 	t.Run("different type conflicts", func(t *testing.T) {
 		tx := begin()
-		require.NoError(t, tx.CreateEdge(candidate("OTHER")))
+		require.NoError(t, tx.CreateEdge(t.Context(), candidate("OTHER")))
 		err := tx.Commit()
 		var conflict *HiddenEdgeIdentityConflictError
 		require.ErrorAs(t, err, &conflict)
@@ -435,22 +435,22 @@ func TestHiddenEdgeCandidateLifecycle(t *testing.T) {
 
 	t.Run("re-create after delete checks endpoints", func(t *testing.T) {
 		visible := &Edge{ID: "test:v", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}
-		require.NoError(t, engine.CreateEdge(visible))
+		require.NoError(t, engine.CreateEdge(t.Context(), visible))
 		tx := begin()
 		defer func() { _ = tx.Rollback() }()
-		require.NoError(t, tx.DeleteEdge(visible.ID))
-		err := tx.CreateEdge(&Edge{ID: visible.ID, StartNode: "test:missing", EndNode: "test:b", Type: "LINK"})
+		require.NoError(t, tx.DeleteEdge(t.Context(), visible.ID))
+		err := tx.CreateEdge(t.Context(), &Edge{ID: visible.ID, StartNode: "test:missing", EndNode: "test:b", Type: "LINK"})
 		require.ErrorIs(t, err, ErrNotFound)
-		err = tx.CreateEdge(&Edge{ID: visible.ID, StartNode: "test:a", EndNode: "test:missing", Type: "LINK"})
+		err = tx.CreateEdge(t.Context(), &Edge{ID: visible.ID, StartNode: "test:a", EndNode: "test:missing", Type: "LINK"})
 		require.ErrorIs(t, err, ErrNotFound)
-		require.NoError(t, tx.CreateEdge(&Edge{ID: visible.ID, StartNode: "test:a", EndNode: "test:b", Type: "LINK"}))
+		require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: visible.ID, StartNode: "test:a", EndNode: "test:b", Type: "LINK"}))
 	})
 
 	t.Run("empty property sets are identical", func(t *testing.T) {
-		require.NoError(t, engine.CreateEdge(&Edge{ID: "test:empty", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}))
-		require.NoError(t, engine.SetManualSuppression(StoredEntityEdgeKind, "test:empty", true))
+		require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:empty", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}))
+		require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityEdgeKind, "test:empty", true))
 		tx := begin()
-		require.NoError(t, tx.CreateEdge(&Edge{ID: "test:empty", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{}}))
+		require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:empty", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{}}))
 		require.NoError(t, tx.Commit())
 	})
 
@@ -458,21 +458,23 @@ func TestHiddenEdgeCandidateLifecycle(t *testing.T) {
 		tx := begin()
 		unstorable := candidate("LINK")
 		unstorable.Properties["value"] = make(chan int)
-		require.NoError(t, tx.CreateEdge(unstorable))
+		require.NoError(t, tx.CreateEdge(t.Context(), unstorable))
 		err := tx.Commit()
 		require.Error(t, err)
 		var conflict *HiddenEdgeIdentityConflictError
 		require.False(t, errors.As(err, &conflict), "an encoding failure is not an identity verdict")
-		after, err := engine.GetStoredEdge(stored.ID)
+		after, err := engine.GetStoredEdge(t.Context(), stored.ID)
 		require.NoError(t, err)
 		require.Equal(t, before, comparableStoredEdge(after))
 	})
 
 	t.Run("revealed predecessor is not a no-op", func(t *testing.T) {
 		tx := begin()
-		require.NoError(t, tx.CreateEdge(candidate("LINK")))
-		require.NoError(t, engine.SetManualSuppression(StoredEntityEdgeKind, string(stored.ID), false))
-		t.Cleanup(func() { require.NoError(t, engine.SetManualSuppression(StoredEntityEdgeKind, string(stored.ID), true)) })
+		require.NoError(t, tx.CreateEdge(t.Context(), candidate("LINK")))
+		require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityEdgeKind, string(stored.ID), false))
+		t.Cleanup(func() {
+			require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityEdgeKind, string(stored.ID), true))
+		})
 		require.ErrorIs(t, tx.Commit(), ErrAlreadyExists)
 	})
 }
@@ -524,46 +526,46 @@ func TestHiddenEdgeIdentityUsesStoredValueRepresentation(t *testing.T) {
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = engine.Close() })
 				for _, id := range []NodeID{"test:a", "test:b"} {
-					_, err := engine.CreateNode(&Node{ID: id})
+					_, err := engine.CreateNode(t.Context(), &Node{ID: id})
 					require.NoError(t, err)
 				}
 				edge := func(value any) *Edge {
 					return &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK",
 						Properties: map[string]any{"key": "same", "value": value}}
 				}
-				require.NoError(t, engine.CreateEdge(edge(tc.same())))
+				require.NoError(t, engine.CreateEdge(t.Context(), edge(tc.same())))
 				implicit := func() *BadgerTransaction {
-					tx, err := engine.BeginTransaction()
+					tx, err := engine.BeginTransaction(t.Context())
 					require.NoError(t, err)
 					require.NoError(t, tx.SetImplicit(true))
 					return tx
 				}
 				if mode.flushed {
-					require.NoError(t, engine.FlushWriteBehind(nil))
+					require.NoError(t, engine.FlushWriteBehind(context.Background()))
 				} else {
 					rewrite := implicit()
-					require.NoError(t, rewrite.UpdateEdge(EdgeUpdateRequest{After: edge(tc.same())}))
+					require.NoError(t, rewrite.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge(tc.same())}))
 					require.NoError(t, rewrite.Commit())
 				}
-				require.NoError(t, engine.SetManualSuppression(StoredEntityEdgeKind, "test:r", true))
-				before, err := engine.GetStoredEdge("test:r")
+				require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityEdgeKind, "test:r", true))
+				before, err := engine.GetStoredEdge(t.Context(), "test:r")
 				require.NoError(t, err)
 				before = comparableStoredEdge(before)
 
-				require.NoError(t, engine.CreateEdge(edge(tc.same())), "the same value is the permitted no-op")
-				require.NoError(t, engine.BulkCreateEdges([]*Edge{edge(tc.same())}))
+				require.NoError(t, engine.CreateEdge(t.Context(), edge(tc.same())), "the same value is the permitted no-op")
+				require.NoError(t, engine.BulkCreateEdges(t.Context(), []*Edge{edge(tc.same())}))
 				retry := implicit()
-				require.NoError(t, retry.CreateEdge(edge(tc.same())))
+				require.NoError(t, retry.CreateEdge(t.Context(), edge(tc.same())))
 				require.NoError(t, retry.Commit(), "a transaction retry is the same no-op")
-				err = engine.CreateEdge(edge(tc.different()))
+				err = engine.CreateEdge(t.Context(), edge(tc.different()))
 				var conflict *HiddenEdgeIdentityConflictError
 				require.ErrorAs(t, err, &conflict, "a different value is a permanent conflict")
 
-				require.NoError(t, engine.FlushWriteBehind(nil))
-				after, err := engine.GetStoredEdge("test:r")
+				require.NoError(t, engine.FlushWriteBehind(context.Background()))
+				after, err := engine.GetStoredEdge(t.Context(), "test:r")
 				require.NoError(t, err)
 				require.Equal(t, before, comparableStoredEdge(after), "the overlay served the body storage holds")
-				count, err := engine.EdgeCount()
+				count, err := engine.EdgeCount(t.Context())
 				require.NoError(t, err)
 				require.EqualValues(t, 1, count)
 			})

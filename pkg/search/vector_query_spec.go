@@ -3,9 +3,10 @@ package search
 import (
 	"context"
 	"errors"
-	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"sort"
 	"strings"
+
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
@@ -141,11 +142,13 @@ func (s *Service) vectorQueryNodes(ctx context.Context, queryEmbedding []float32
 	if s == nil || s.engine == nil {
 		return nil, localizedError(localization.SearchServiceUnavailable(), nil)
 	}
+	ctx, finishRead, err := s.beginRead(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer finishRead()
 	if len(queryEmbedding) == 0 {
 		return nil, localizedError(localization.SearchQueryEmbeddingRequired(), nil)
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	if requireReady {
 		if err := s.prepareSearchRead(ctx); err != nil {
@@ -199,11 +202,13 @@ func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding [
 	if s == nil || s.engine == nil {
 		return nil, localizedError(localization.SearchServiceUnavailable(), nil)
 	}
+	ctx, finishRead, err := s.beginRead(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer finishRead()
 	if len(queryEmbedding) == 0 {
 		return nil, localizedError(localization.SearchQueryEmbeddingRequired(), nil)
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	if spec.Limit <= 0 {
 		spec.Limit = 10
@@ -738,7 +743,7 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			node, err := s.getNodeWithoutEmbeddings(storage.NodeID(candidate.id))
+			node, err := s.getNodeWithoutEmbeddings(ctx, storage.NodeID(candidate.id))
 			if err != nil || !opts.Where(node) {
 				continue
 			}
@@ -786,7 +791,7 @@ func (s *Service) exactStoredNodeScores(ctx context.Context, prepared cypherVect
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		node, err := s.engine.GetNode(storage.NodeID(id))
+		node, err := s.engine.GetNode(ctx, storage.NodeID(id))
 		if errors.Is(err, storage.ErrNotFound) {
 			continue
 		}

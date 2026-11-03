@@ -35,7 +35,7 @@ func newVectorInputExecutor(t testing.TB, dims int) *StorageExecutor {
 		dims = 2
 	}
 	for id, axis := range map[storage.NodeID]int{"n1": 0, "n2": 1} {
-		_, err := store.CreateNode(&storage.Node{
+		_, err := store.CreateNode(t.Context(), &storage.Node{
 			ID:         id,
 			Labels:     []string{"Doc"},
 			Properties: map[string]interface{}{"embedding": axisVector(dims, axis)},
@@ -51,7 +51,7 @@ func newVectorInputExecutor(t testing.TB, dims int) *StorageExecutor {
 		{id: "r2", typ: "LINKS", axis: 1},
 		{id: "r3", typ: "OTHER", axis: 0},
 	} {
-		require.NoError(t, store.CreateEdge(&storage.Edge{
+		require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{
 			ID:         edge.id,
 			StartNode:  "n1",
 			EndNode:    "n2",

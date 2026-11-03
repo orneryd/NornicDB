@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"strconv"
 	"strings"
@@ -73,7 +74,7 @@ func cardinalityDifferentialEngine(t *testing.T) *BadgerEngine {
 	t.Helper()
 	engine := newTestEngine(t)
 	for _, id := range []NodeID{"test:a", "test:b", "test:c", "test:d", "test:e", "other:o1", "other:o2"} {
-		_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"Endpoint"}, Properties: map[string]any{}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Endpoint"}, Properties: map[string]any{}})
 		require.NoError(t, err, "CreateNode(%q)", id)
 	}
 	return engine
@@ -83,7 +84,7 @@ func cardinalityDifferentialEngine(t *testing.T) *BadgerEngine {
 // failure the caller would see and committing the writes otherwise.
 func stagedCardinalityWrite(t *testing.T, engine *BadgerEngine, steps func(tx *BadgerTransaction) error) error {
 	t.Helper()
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	if err := steps(tx); err != nil {
@@ -150,128 +151,128 @@ func TestCardinalityRoutesAgree(t *testing.T) {
 			constraint: outgoingMaxTwo,
 			committed:  func(t *testing.T, engine *BadgerEngine) { constrain(t, engine, outgoingMaxTwo) },
 			direct: func(t *testing.T, engine *BadgerEngine) error {
-				return engine.CreateEdge(image("test:e1", "test:a", "test:b", "OWNS"))
+				return engine.CreateEdge(t.Context(), image("test:e1", "test:a", "test:b", "OWNS"))
 			},
 			staged: staged(func(tx *BadgerTransaction) error {
-				return tx.CreateEdge(image("test:e1", "test:a", "test:b", "OWNS"))
+				return tx.CreateEdge(t.Context(), image("test:e1", "test:a", "test:b", "OWNS"))
 			}),
 		},
 		{
 			name:       "outgoing_max_reached",
 			constraint: outgoingMaxOne,
 			committed: func(t *testing.T, engine *BadgerEngine) {
-				require.NoError(t, engine.CreateEdge(image("test:e0", "test:a", "test:b", "OWNS")))
+				require.NoError(t, engine.CreateEdge(t.Context(), image("test:e0", "test:a", "test:b", "OWNS")))
 				constrain(t, engine, outgoingMaxOne)
 			},
 			direct: func(t *testing.T, engine *BadgerEngine) error {
-				return engine.CreateEdge(image("test:e1", "test:a", "test:c", "OWNS"))
+				return engine.CreateEdge(t.Context(), image("test:e1", "test:a", "test:c", "OWNS"))
 			},
 			staged: staged(func(tx *BadgerTransaction) error {
-				return tx.CreateEdge(image("test:e1", "test:a", "test:c", "OWNS"))
+				return tx.CreateEdge(t.Context(), image("test:e1", "test:a", "test:c", "OWNS"))
 			}),
 		},
 		{
 			name:       "incoming_max_reached",
 			constraint: incomingMaxOne,
 			committed: func(t *testing.T, engine *BadgerEngine) {
-				require.NoError(t, engine.CreateEdge(image("test:e0", "test:a", "test:b", "OWNS")))
+				require.NoError(t, engine.CreateEdge(t.Context(), image("test:e0", "test:a", "test:b", "OWNS")))
 				constrain(t, engine, incomingMaxOne)
 			},
 			direct: func(t *testing.T, engine *BadgerEngine) error {
-				return engine.CreateEdge(image("test:e1", "test:c", "test:b", "OWNS"))
+				return engine.CreateEdge(t.Context(), image("test:e1", "test:c", "test:b", "OWNS"))
 			},
 			staged: staged(func(tx *BadgerTransaction) error {
-				return tx.CreateEdge(image("test:e1", "test:c", "test:b", "OWNS"))
+				return tx.CreateEdge(t.Context(), image("test:e1", "test:c", "test:b", "OWNS"))
 			}),
 		},
 		{
 			name:       "direction_isolated",
 			constraint: outgoingMaxOne,
 			committed: func(t *testing.T, engine *BadgerEngine) {
-				require.NoError(t, engine.CreateEdge(image("test:e0", "test:a", "test:b", "OWNS")))
+				require.NoError(t, engine.CreateEdge(t.Context(), image("test:e0", "test:a", "test:b", "OWNS")))
 				constrain(t, engine, outgoingMaxOne)
 			},
 			direct: func(t *testing.T, engine *BadgerEngine) error {
-				return engine.CreateEdge(image("test:e1", "test:c", "test:a", "OWNS"))
+				return engine.CreateEdge(t.Context(), image("test:e1", "test:c", "test:a", "OWNS"))
 			},
 			staged: staged(func(tx *BadgerTransaction) error {
-				return tx.CreateEdge(image("test:e1", "test:c", "test:a", "OWNS"))
+				return tx.CreateEdge(t.Context(), image("test:e1", "test:c", "test:a", "OWNS"))
 			}),
 		},
 		{
 			name:       "namespace_isolated",
 			constraint: outgoingMaxOne,
 			committed: func(t *testing.T, engine *BadgerEngine) {
-				require.NoError(t, engine.CreateEdge(image("other:e0", "other:o1", "other:o2", "OWNS")))
+				require.NoError(t, engine.CreateEdge(t.Context(), image("other:e0", "other:o1", "other:o2", "OWNS")))
 				constrain(t, engine, outgoingMaxOne)
 			},
 			direct: func(t *testing.T, engine *BadgerEngine) error {
-				return engine.CreateEdge(image("test:e1", "test:a", "test:b", "OWNS"))
+				return engine.CreateEdge(t.Context(), image("test:e1", "test:a", "test:b", "OWNS"))
 			},
 			staged: staged(func(tx *BadgerTransaction) error {
-				return tx.CreateEdge(image("test:e1", "test:a", "test:b", "OWNS"))
+				return tx.CreateEdge(t.Context(), image("test:e1", "test:a", "test:b", "OWNS"))
 			}),
 		},
 		{
 			name:       "own_edge_rewrite",
 			constraint: outgoingMaxOne,
 			committed: func(t *testing.T, engine *BadgerEngine) {
-				require.NoError(t, engine.CreateEdge(image("test:e0", "test:a", "test:b", "OWNS")))
+				require.NoError(t, engine.CreateEdge(t.Context(), image("test:e0", "test:a", "test:b", "OWNS")))
 				constrain(t, engine, outgoingMaxOne)
 			},
 			direct: func(t *testing.T, engine *BadgerEngine) error {
-				return engine.UpdateEdge(EdgeUpdateRequest{After: withRelationType("test:e0", "test:a", "test:b", "OWNS")})
+				return engine.UpdateEdge(t.Context(), EdgeUpdateRequest{After: withRelationType("test:e0", "test:a", "test:b", "OWNS")})
 			},
 			staged: staged(func(tx *BadgerTransaction) error {
-				return tx.UpdateEdge(EdgeUpdateRequest{After: withRelationType("test:e0", "test:a", "test:b", "OWNS")})
+				return tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: withRelationType("test:e0", "test:a", "test:b", "OWNS")})
 			}),
 		},
 		{
 			name:       "delete_frees_slot",
 			constraint: outgoingMaxOne,
 			committed: func(t *testing.T, engine *BadgerEngine) {
-				require.NoError(t, engine.CreateEdge(image("test:e0", "test:a", "test:b", "OWNS")))
+				require.NoError(t, engine.CreateEdge(t.Context(), image("test:e0", "test:a", "test:b", "OWNS")))
 				constrain(t, engine, outgoingMaxOne)
 			},
 			direct: func(t *testing.T, engine *BadgerEngine) error {
-				require.NoError(t, engine.DeleteEdge("test:e0"))
-				return engine.CreateEdge(image("test:e1", "test:a", "test:c", "OWNS"))
+				require.NoError(t, engine.DeleteEdge(t.Context(), "test:e0"))
+				return engine.CreateEdge(t.Context(), image("test:e1", "test:a", "test:c", "OWNS"))
 			},
 			staged: staged(func(tx *BadgerTransaction) error {
-				require.NoError(t, tx.DeleteEdge("test:e0"))
-				return tx.CreateEdge(image("test:e1", "test:a", "test:c", "OWNS"))
+				require.NoError(t, tx.DeleteEdge(t.Context(), "test:e0"))
+				return tx.CreateEdge(t.Context(), image("test:e1", "test:a", "test:c", "OWNS"))
 			}),
 		},
 		{
 			name:       "retype_frees_slot",
 			constraint: outgoingMaxOne,
 			committed: func(t *testing.T, engine *BadgerEngine) {
-				require.NoError(t, engine.CreateEdge(image("test:e0", "test:a", "test:b", "OWNS")))
+				require.NoError(t, engine.CreateEdge(t.Context(), image("test:e0", "test:a", "test:b", "OWNS")))
 				constrain(t, engine, outgoingMaxOne)
 			},
 			direct: func(t *testing.T, engine *BadgerEngine) error {
-				require.NoError(t, engine.UpdateEdge(EdgeUpdateRequest{After: image("test:e0", "test:a", "test:b", "OTHER")}))
-				return engine.CreateEdge(image("test:e1", "test:a", "test:c", "OWNS"))
+				require.NoError(t, engine.UpdateEdge(t.Context(), EdgeUpdateRequest{After: image("test:e0", "test:a", "test:b", "OTHER")}))
+				return engine.CreateEdge(t.Context(), image("test:e1", "test:a", "test:c", "OWNS"))
 			},
 			staged: staged(func(tx *BadgerTransaction) error {
-				require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: image("test:e0", "test:a", "test:b", "OTHER")}))
-				return tx.CreateEdge(image("test:e1", "test:a", "test:c", "OWNS"))
+				require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: image("test:e0", "test:a", "test:b", "OTHER")}))
+				return tx.CreateEdge(t.Context(), image("test:e1", "test:a", "test:c", "OWNS"))
 			}),
 		},
 		{
 			name:       "move_frees_slot",
 			constraint: outgoingMaxOne,
 			committed: func(t *testing.T, engine *BadgerEngine) {
-				require.NoError(t, engine.CreateEdge(image("test:e0", "test:a", "test:b", "OWNS")))
+				require.NoError(t, engine.CreateEdge(t.Context(), image("test:e0", "test:a", "test:b", "OWNS")))
 				constrain(t, engine, outgoingMaxOne)
 			},
 			direct: func(t *testing.T, engine *BadgerEngine) error {
-				require.NoError(t, engine.UpdateEdge(EdgeUpdateRequest{After: image("test:e0", "test:b", "test:c", "OWNS")}))
-				return engine.CreateEdge(image("test:e1", "test:a", "test:d", "OWNS"))
+				require.NoError(t, engine.UpdateEdge(t.Context(), EdgeUpdateRequest{After: image("test:e0", "test:b", "test:c", "OWNS")}))
+				return engine.CreateEdge(t.Context(), image("test:e1", "test:a", "test:d", "OWNS"))
 			},
 			staged: staged(func(tx *BadgerTransaction) error {
-				require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: image("test:e0", "test:b", "test:c", "OWNS")}))
-				return tx.CreateEdge(image("test:e1", "test:a", "test:d", "OWNS"))
+				require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: image("test:e0", "test:b", "test:c", "OWNS")}))
+				return tx.CreateEdge(t.Context(), image("test:e1", "test:a", "test:d", "OWNS"))
 			}),
 		},
 		{
@@ -280,20 +281,20 @@ func TestCardinalityRoutesAgree(t *testing.T) {
 			committed: func(t *testing.T, engine *BadgerEngine) {
 				// The publishing route sees the population the staged route builds
 				// up: one committed image plus the image the transaction stages.
-				require.NoError(t, engine.CreateEdge(image("test:e0", "test:a", "test:b", "OWNS")))
-				require.NoError(t, engine.CreateEdge(image("test:e1", "test:a", "test:c", "OWNS")))
+				require.NoError(t, engine.CreateEdge(t.Context(), image("test:e0", "test:a", "test:b", "OWNS")))
+				require.NoError(t, engine.CreateEdge(t.Context(), image("test:e1", "test:a", "test:c", "OWNS")))
 				constrain(t, engine, outgoingMaxTwo)
 			},
 			stagedCommitted: func(t *testing.T, engine *BadgerEngine) {
-				require.NoError(t, engine.CreateEdge(image("test:e0", "test:a", "test:b", "OWNS")))
+				require.NoError(t, engine.CreateEdge(t.Context(), image("test:e0", "test:a", "test:b", "OWNS")))
 				constrain(t, engine, outgoingMaxTwo)
 			},
 			direct: func(t *testing.T, engine *BadgerEngine) error {
-				return engine.CreateEdge(image("test:e2", "test:a", "test:d", "OWNS"))
+				return engine.CreateEdge(t.Context(), image("test:e2", "test:a", "test:d", "OWNS"))
 			},
 			staged: staged(func(tx *BadgerTransaction) error {
-				require.NoError(t, tx.CreateEdge(image("test:e1", "test:a", "test:c", "OWNS")))
-				return tx.CreateEdge(image("test:e2", "test:a", "test:d", "OWNS"))
+				require.NoError(t, tx.CreateEdge(t.Context(), image("test:e1", "test:a", "test:c", "OWNS")))
+				return tx.CreateEdge(t.Context(), image("test:e2", "test:a", "test:d", "OWNS"))
 			}),
 		},
 		{
@@ -301,16 +302,16 @@ func TestCardinalityRoutesAgree(t *testing.T) {
 			constraint: overLimit,
 			committed: func(t *testing.T, engine *BadgerEngine) {
 				// The constraint arrives over an existing population.
-				require.NoError(t, engine.CreateEdge(image("test:e0", "test:a", "test:b", "OWNS")))
-				require.NoError(t, engine.CreateEdge(image("test:e1", "test:a", "test:c", "OWNS")))
-				require.NoError(t, engine.CreateEdge(image("test:e2", "test:a", "test:d", "OWNS")))
+				require.NoError(t, engine.CreateEdge(t.Context(), image("test:e0", "test:a", "test:b", "OWNS")))
+				require.NoError(t, engine.CreateEdge(t.Context(), image("test:e1", "test:a", "test:c", "OWNS")))
+				require.NoError(t, engine.CreateEdge(t.Context(), image("test:e2", "test:a", "test:d", "OWNS")))
 				constrain(t, engine, overLimit)
 			},
 			direct: func(t *testing.T, engine *BadgerEngine) error {
-				return engine.CreateEdge(image("test:e3", "test:a", "test:e", "OWNS"))
+				return engine.CreateEdge(t.Context(), image("test:e3", "test:a", "test:e", "OWNS"))
 			},
 			staged: staged(func(tx *BadgerTransaction) error {
-				return tx.CreateEdge(image("test:e3", "test:a", "test:e", "OWNS"))
+				return tx.CreateEdge(t.Context(), image("test:e3", "test:a", "test:e", "OWNS"))
 			}),
 			overThreshold: true,
 		},
@@ -362,7 +363,7 @@ func stagedCardinalityViaCurrentAdjacency(tx *BadgerTransaction, edge *Edge, c C
 	if c.Direction != "OUTGOING" {
 		direction = adjacencyIncoming
 	}
-	images, err := tx.currentDirectedEdgesLocked(counter.anchor, direction)
+	images, err := tx.currentDirectedEdgesLocked(context.Background(), counter.anchor, direction)
 	if err != nil {
 		return err
 	}
@@ -400,8 +401,8 @@ func TestStagedCardinalityMatchesCurrentAdjacencySelection(t *testing.T) {
 	for _, overlay := range overlays {
 		t.Run(overlay.name, func(t *testing.T) {
 			engine := cardinalityDifferentialEngine(t)
-			require.NoError(t, engine.CreateEdge(image("test:e0", "test:a", "test:b", "OWNS")))
-			require.NoError(t, engine.CreateEdge(image("test:e1", "test:a", "test:c", "OWNS")))
+			require.NoError(t, engine.CreateEdge(t.Context(), image("test:e0", "test:a", "test:b", "OWNS")))
+			require.NoError(t, engine.CreateEdge(t.Context(), image("test:e1", "test:a", "test:c", "OWNS")))
 			tx := &BadgerTransaction{
 				engine:       engine,
 				pendingEdges: make(map[EdgeID]*Edge, len(overlay.pending)),
@@ -414,7 +415,7 @@ func TestStagedCardinalityMatchesCurrentAdjacencySelection(t *testing.T) {
 				tx.deletedEdges[id] = struct{}{}
 			}
 
-			streamed := tx.checkEdgeCardinality(probe, outgoingMaxTwo, "test")
+			streamed := tx.checkEdgeCardinality(context.Background(), probe, outgoingMaxTwo, "test")
 			viaAdjacency := stagedCardinalityViaCurrentAdjacency(tx, probe, outgoingMaxTwo, "test")
 			require.Equal(t, streamed == nil, viaAdjacency == nil,
 				"staged selection and current-adjacency selection disagree: %v vs %v", streamed, viaAdjacency)

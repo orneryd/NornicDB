@@ -22,7 +22,7 @@ func newStartupBenchmarkEngine(b *testing.B, includeEdges bool) *storage.BadgerE
 	payload := strings.Repeat("x", 1024)
 	for index := 0; index < startupBenchmarkEntityCount; index++ {
 		nodeID := storage.NodeID(fmt.Sprintf("nornic:node-%06d", index))
-		_, err := engine.CreateNode(&storage.Node{
+		_, err := engine.CreateNode(b.Context(), &storage.Node{
 			ID:         nodeID,
 			Labels:     []string{"Application"},
 			Properties: map[string]interface{}{"payload": payload, "index": int64(index)},
@@ -31,7 +31,7 @@ func newStartupBenchmarkEngine(b *testing.B, includeEdges bool) *storage.BadgerE
 			b.Fatal(err)
 		}
 		if includeEdges {
-			err = engine.CreateEdge(&storage.Edge{
+			err = engine.CreateEdge(b.Context(), &storage.Edge{
 				ID:         storage.EdgeID(fmt.Sprintf("nornic:edge-%06d", index)),
 				StartNode:  nodeID,
 				EndNode:    nodeID,

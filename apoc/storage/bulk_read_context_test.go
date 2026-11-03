@@ -38,12 +38,12 @@ func bulkReadFixture(t *testing.T) *InMemoryStorage {
 		"the fixture must cross the in-loop context check")
 	store := NewInMemoryStorage()
 	for index := 0; index < bulkReadFixtureSize; index++ {
-		_, err := store.CreateNode([]string{"Fixture"}, map[string]interface{}{"index": int64(index)})
+		_, err := store.CreateNode(t.Context(), []string{"Fixture"}, map[string]interface{}{"index": int64(index)})
 		require.NoError(t, err)
 		if index == 0 {
 			continue
 		}
-		_, err = store.CreateRelationship(int64(index), int64(index+1), "NEXT", map[string]interface{}{"index": int64(index)})
+		_, err = store.CreateRelationship(t.Context(), int64(index), int64(index+1), "NEXT", map[string]interface{}{"index": int64(index)})
 		require.NoError(t, err)
 	}
 	return store

@@ -31,8 +31,8 @@ func TestMaterializedPathUsesTypedCarrier(t *testing.T) {
 	}{
 		{"value", path},
 		{"pointer", &path},
-		{"path map", exec.pathToMap(path)},
-		{"nested path map", map[string]interface{}{"payload": []interface{}{exec.pathToMap(path)}}},
+		{"path map", exec.pathToMapContext(t.Context(), path)},
+		{"nested path map", map[string]interface{}{"payload": []interface{}{exec.pathToMapContext(t.Context(), path)}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			recorder := &recordingAccessRecorder{}
@@ -65,11 +65,11 @@ func TestMaterializedPathAccessAcrossTransactions(t *testing.T) {
 			store := storage.NewNamespacedEngine(inner, "materialized")
 			exec := NewStorageExecutor(store)
 			ctx := context.Background()
-			_, err := store.CreateNode(&storage.Node{ID: "a", Labels: []string{"MaterializedPathAccess"}, Properties: map[string]interface{}{"id": "a"}})
+			_, err := store.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"MaterializedPathAccess"}, Properties: map[string]interface{}{"id": "a"}})
 			require.NoError(t, err)
-			_, err = store.CreateNode(&storage.Node{ID: "b", Labels: []string{"MaterializedPathAccess"}, Properties: map[string]interface{}{"id": "b"}})
+			_, err = store.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"MaterializedPathAccess"}, Properties: map[string]interface{}{"id": "b"}})
 			require.NoError(t, err)
-			require.NoError(t, store.CreateEdge(&storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "MATERIALIZED_PATH_ACCESS"}))
+			require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "MATERIALIZED_PATH_ACCESS"}))
 
 			if explicit {
 				_, err = exec.Execute(ctx, "BEGIN", nil)
@@ -105,7 +105,7 @@ func BenchmarkMaterializedValuePath(b *testing.B) {
 		name  string
 		value interface{}
 	}{
-		{"path map", exec.pathToMap(path)},
+		{"path map", exec.pathToMapContext(b.Context(), path)},
 		{"node control", path.Nodes[0]},
 	} {
 		b.Run(tc.name, func(b *testing.B) {

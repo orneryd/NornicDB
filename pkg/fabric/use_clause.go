@@ -109,7 +109,12 @@ func ReadUseClause(ctx context.Context, query string, inSubquery bool, stage Sou
 		}
 		text = source.Text
 	}
-	leading := len(text) - len(strings.TrimLeftFunc(text, cyphertext.IsWhitespace))
+	// Leading whitespace and comments are trivia, not statement text: the
+	// statement begins at its first live byte, so a comment-only prefix never
+	// reads as the text ahead of a mid-statement USE for the planner to run as
+	// the statement's prefix fragment. skipSpacesAndComments is the shared
+	// trivia owner (cyphertext.GapEnd): line and block comments, CR/LF ends.
+	leading := skipSpacesAndComments(text, 0)
 	trailing := max(leading, len(strings.TrimRightFunc(text, cyphertext.IsWhitespace)))
 	trimmed := text[leading:trailing]
 	if !startsWithWordFold(trimmed, "USE") {
@@ -391,9 +396,12 @@ func useKeywordAt(query string, at int) bool { return keywordAt(query, at, "USE"
 // nesting traversal. It returns the original source before and from USE; a
 // leading USE stays with parseLeadingUse, and a query without such a USE
 // returns empty strings and false.
-func splitAtTopLevelUse(query string, isName ClauseKeywordNameReader) (string, string, bool) {
+func splitAtTopLevelUse(ctx context.Context, query string, isName ClauseKeywordNameReader) (string, string, bool) {
 	start := 0
 	for {
+		if ctx.Err() != nil {
+			return "", "", false
+		}
 		idx := indexTopLevelKeyword(query[start:], "USE")
 		if idx < 0 {
 			return "", "", false
@@ -404,7 +412,7 @@ func splitAtTopLevelUse(query string, isName ClauseKeywordNameReader) (string, s
 			start = at + len("USE")
 			continue
 		}
-		if !clauseKeywordAt(query, at, "USE", isName) {
+		if !clauseKeywordAt(ctx, query, at, "USE", isName) {
 			start = at + len("USE")
 			continue
 		}

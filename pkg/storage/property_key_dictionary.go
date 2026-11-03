@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"sync"
@@ -359,17 +360,17 @@ func (d *propertyKeyDictionary) flushTxnCounters(txn *badger.Txn) propKeyTxnDrai
 
 // persistTxnCounters makes one drain's forward/reverse tokens and namespace
 // counters durable through the commit owner's batch target, and only then marks
-// them persisted. Ordinary commits supply metadataBatches; replay holding the
+// them persisted. Ordinary commits supply the managed database; replay holding the
 // large-commit gate supplies that existing largeCommit instead of reacquiring it.
-func (d *propertyKeyDictionary) persistTxnCounters(to batchTarget, drain propKeyTxnDrain) error {
+func (d *propertyKeyDictionary) persistTxnCounters(ctx context.Context, to batchTarget, drain propKeyTxnDrain) error {
 	if drain.empty() {
 		return nil
 	}
 	w := &batchWriter{to: to}
 	defer w.discard()
-	err := drain.writeTo(w)
+	err := drain.writeTo(ctx, w)
 	if err == nil {
-		err = w.flush()
+		err = w.flush(ctx)
 	}
 	if err != nil {
 		return err
@@ -387,7 +388,7 @@ func (drain propKeyTxnDrain) empty() bool {
 // w, one unit per token and per counter, so any number of them fits: a
 // statement introducing more property names than one Badger batch holds
 // commits like any other large statement (#703).
-func (drain propKeyTxnDrain) writeTo(w *batchWriter) error {
+func (drain propKeyTxnDrain) writeTo(ctx context.Context, w *batchWriter) error {
 	units := make([]func(txn *badger.Txn) error, 0, len(drain.pending)+len(drain.counters))
 	for _, entry := range drain.pending {
 		forward := propKeyForwardKey(entry.namespace, entry.name)
@@ -406,7 +407,7 @@ func (drain propKeyTxnDrain) writeTo(w *batchWriter) error {
 		units = append(units, func(txn *badger.Txn) error { return txn.Set(key, value) })
 	}
 	for _, unit := range units {
-		if err := w.write(unit); err != nil {
+		if err := w.write(ctx, unit); err != nil {
 			return err
 		}
 	}

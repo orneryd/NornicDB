@@ -70,24 +70,24 @@ func TestStreamNodesOptionsParityAcrossStacks(t *testing.T) {
 
 			switch e := engine.(type) {
 			case *NamespacedEngine:
-				_, err := e.CreateNode(&Node{ID: "n-1", Labels: []string{"Doc"}, Properties: map[string]any{"a": int64(1), "b": "two"}})
+				_, err := e.CreateNode(t.Context(), &Node{ID: "n-1", Labels: []string{"Doc"}, Properties: map[string]any{"a": int64(1), "b": "two"}})
 				require.NoError(t, err)
-				_, err = e.CreateNode(&Node{ID: "n-2", Labels: []string{"Doc"}, Properties: map[string]any{"a": int64(2)}})
+				_, err = e.CreateNode(t.Context(), &Node{ID: "n-2", Labels: []string{"Doc"}, Properties: map[string]any{"a": int64(2)}})
 				require.NoError(t, err)
-				_, err = e.CreateNode(&Node{ID: "n-3", Labels: []string{"Other"}, Properties: map[string]any{"a": int64(3)}})
+				_, err = e.CreateNode(t.Context(), &Node{ID: "n-3", Labels: []string{"Other"}, Properties: map[string]any{"a": int64(3)}})
 				require.NoError(t, err)
 			case *CompositeEngine:
 				nsA, err := e.GetConstituentByAlias("a")
 				require.NoError(t, err)
 				nsB, err := e.GetConstituentByAlias("b")
 				require.NoError(t, err)
-				_, err = nsA.CreateNode(&Node{ID: "n-1", Labels: []string{"Doc"}, Properties: map[string]any{"a": int64(1)}})
+				_, err = nsA.CreateNode(t.Context(), &Node{ID: "n-1", Labels: []string{"Doc"}, Properties: map[string]any{"a": int64(1)}})
 				require.NoError(t, err)
-				_, err = nsB.CreateNode(&Node{ID: "n-2", Labels: []string{"Doc"}, Properties: map[string]any{"a": int64(2)}})
+				_, err = nsB.CreateNode(t.Context(), &Node{ID: "n-2", Labels: []string{"Doc"}, Properties: map[string]any{"a": int64(2)}})
 				require.NoError(t, err)
 			default:
 				for index := int64(1); index <= 3; index++ {
-					_, err := engine.CreateNode(&Node{ID: NodeID(fmt.Sprintf("db:n-%d", index)), Labels: []string{"Doc"}, Properties: map[string]any{"a": index}})
+					_, err := engine.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("db:n-%d", index)), Labels: []string{"Doc"}, Properties: map[string]any{"a": index}})
 					require.NoError(t, err)
 				}
 			}

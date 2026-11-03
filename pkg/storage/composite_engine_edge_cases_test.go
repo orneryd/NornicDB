@@ -35,7 +35,7 @@ func TestCompositeEngine_EmptyComposite(t *testing.T) {
 
 	// Write operations should fail with clear error
 	node := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
-	_, err = composite.CreateNode(node)
+	_, err = composite.CreateNode(t.Context(), node)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no writable constituents available")
 }
@@ -103,7 +103,7 @@ func TestCompositeEngine_ClosedConstituentReads(t *testing.T) {
 			if tc.seedDB1 {
 				// Create node in db1
 				node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
-				_, seedErr := engine1.CreateNode(node1)
+				_, seedErr := engine1.CreateNode(t.Context(), node1)
 				require.NoError(t, seedErr)
 			}
 
@@ -121,7 +121,7 @@ func TestCompositeEngine_ClosedConstituentReads(t *testing.T) {
 			require.Nil(t, nodes)
 
 			// Write expectations stay per case (online target vs all offline).
-			_, err = composite.CreateNode(tc.writeNode)
+			_, err = composite.CreateNode(t.Context(), tc.writeNode)
 			tc.checkWrite(t, err)
 		})
 	}
@@ -152,7 +152,7 @@ func TestCompositeEngine_CircularDependencyPrevention(t *testing.T) {
 
 		// Create node in C
 		nodeC := &Node{ID: NodeID(prefixTestID("nodeC")), Labels: []string{"Person"}}
-		_, err := engineC.CreateNode(nodeC)
+		_, err := engineC.CreateNode(t.Context(), nodeC)
 		require.NoError(t, err)
 
 		// Create composite A with constituent B (which is itself a composite)
@@ -193,7 +193,7 @@ func TestCompositeEngine_CircularDependencyPrevention(t *testing.T) {
 
 		// Create node in engine1
 		node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
-		_, err := engine1.CreateNode(node1)
+		_, err := engine1.CreateNode(t.Context(), node1)
 		require.NoError(t, err)
 
 		// Manually create a composite that references itself (simulating a bug or bypass)
@@ -264,7 +264,7 @@ func TestCompositeEngine_CircularDependencyPrevention(t *testing.T) {
 
 		// Create node in engine1
 		node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
-		_, err := engine1.CreateNode(node1)
+		_, err := engine1.CreateNode(t.Context(), node1)
 		require.NoError(t, err)
 
 		// Query should work - it will query engine1 and compositeB
@@ -301,7 +301,7 @@ func TestCompositeEngine_CircularDependencyPrevention(t *testing.T) {
 
 		// Create node in engine1
 		node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
-		_, err := engine1.CreateNode(node1)
+		_, err := engine1.CreateNode(t.Context(), node1)
 		require.NoError(t, err)
 
 		// Manually create second composite using first composite as constituent
@@ -420,19 +420,19 @@ func TestCompositeEngine_UpdateEdge_CrossConstituent(t *testing.T) {
 	// Create nodes and edge in db1 — IDs must be namespace-prefixed
 	n1 := &Node{ID: "db1:n1", Labels: []string{"A"}, Properties: map[string]interface{}{"database_id": "db1"}}
 	n2 := &Node{ID: "db1:n2", Labels: []string{"B"}, Properties: map[string]interface{}{"database_id": "db1"}}
-	_, err := engine1.CreateNode(n1)
+	_, err := engine1.CreateNode(t.Context(), n1)
 	require.NoError(t, err)
-	_, err = engine1.CreateNode(n2)
+	_, err = engine1.CreateNode(t.Context(), n2)
 	require.NoError(t, err)
-	require.NoError(t, engine1.CreateEdge(&Edge{ID: "db1:e1", StartNode: "db1:n1", EndNode: "db1:n2", Type: "KNOWS", Properties: map[string]interface{}{}}))
+	require.NoError(t, engine1.CreateEdge(t.Context(), &Edge{ID: "db1:e1", StartNode: "db1:n1", EndNode: "db1:n2", Type: "KNOWS", Properties: map[string]interface{}{}}))
 
 	// Update the edge through composite
 	updated := &Edge{ID: "db1:e1", StartNode: "db1:n1", EndNode: "db1:n2", Type: "LIKES", Properties: map[string]interface{}{"weight": 1}}
-	err = composite.UpdateEdge(EdgeUpdateRequest{After: updated})
+	err = composite.UpdateEdge(t.Context(), EdgeUpdateRequest{After: updated})
 	require.NoError(t, err)
 
 	// Verify through composite
-	edge, err := composite.GetEdge("db1:e1")
+	edge, err := composite.GetEdge(t.Context(), "db1:e1")
 	require.NoError(t, err)
 	assert.Equal(t, "LIKES", edge.Type)
 }
@@ -449,18 +449,18 @@ func TestCompositeEngine_DeleteEdge_CrossConstituent(t *testing.T) {
 
 	n1 := &Node{ID: "db1:n1", Labels: []string{"A"}, Properties: map[string]interface{}{}}
 	n2 := &Node{ID: "db1:n2", Labels: []string{"B"}, Properties: map[string]interface{}{}}
-	_, err := engine1.CreateNode(n1)
+	_, err := engine1.CreateNode(t.Context(), n1)
 	require.NoError(t, err)
-	_, err = engine1.CreateNode(n2)
+	_, err = engine1.CreateNode(t.Context(), n2)
 	require.NoError(t, err)
-	require.NoError(t, engine1.CreateEdge(&Edge{ID: "db1:e1", StartNode: "db1:n1", EndNode: "db1:n2", Type: "KNOWS", Properties: map[string]interface{}{}}))
+	require.NoError(t, engine1.CreateEdge(t.Context(), &Edge{ID: "db1:e1", StartNode: "db1:n1", EndNode: "db1:n2", Type: "KNOWS", Properties: map[string]interface{}{}}))
 
 	// Delete through composite
-	err = composite.DeleteEdge("db1:e1")
+	err = composite.DeleteEdge(t.Context(), "db1:e1")
 	require.NoError(t, err)
 
 	// Verify gone
-	_, err = composite.GetEdge("db1:e1")
+	_, err = composite.GetEdge(t.Context(), "db1:e1")
 	assert.ErrorIs(t, err, ErrNotFound)
 }
 
@@ -472,11 +472,11 @@ func TestCompositeEngine_StreamEdges_Fallback(t *testing.T) {
 	// Create test data — IDs must be namespace-prefixed
 	n1 := &Node{ID: "db1:n1", Labels: []string{"A"}, Properties: map[string]interface{}{}}
 	n2 := &Node{ID: "db1:n2", Labels: []string{"B"}, Properties: map[string]interface{}{}}
-	_, err := engine1.CreateNode(n1)
+	_, err := engine1.CreateNode(t.Context(), n1)
 	require.NoError(t, err)
-	_, err = engine1.CreateNode(n2)
+	_, err = engine1.CreateNode(t.Context(), n2)
 	require.NoError(t, err)
-	require.NoError(t, engine1.CreateEdge(&Edge{ID: "db1:e1", StartNode: "db1:n1", EndNode: "db1:n2", Type: "KNOWS", Properties: map[string]interface{}{}}))
+	require.NoError(t, engine1.CreateEdge(t.Context(), &Edge{ID: "db1:e1", StartNode: "db1:n1", EndNode: "db1:n2", Type: "KNOWS", Properties: map[string]interface{}{}}))
 
 	composite := NewCompositeEngine(
 		map[string]Engine{"db1": engine1},

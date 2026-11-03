@@ -61,7 +61,7 @@ func TestOpenMigratesGenuinePreIdentityWAL(t *testing.T) {
 	require.NoError(t, err)
 	first := db
 	t.Cleanup(func() { _ = first.Close() })
-	node, err := db.GetBaseStorageForManager().GetNode("upgrade:a")
+	node, err := db.GetBaseStorageForManager().GetNode(t.Context(), "upgrade:a")
 	require.NoError(t, err)
 	require.Equal(t, int64(20), node.Properties["value"])
 	archives, err := filepath.Glob(filepath.Join(dir, "wal.pre-v4-*"))
@@ -76,7 +76,7 @@ func TestOpenMigratesGenuinePreIdentityWAL(t *testing.T) {
 	require.NoError(t, err)
 	second := db
 	t.Cleanup(func() { _ = second.Close() })
-	node, err = db.GetBaseStorageForManager().GetNode("upgrade:a")
+	node, err = db.GetBaseStorageForManager().GetNode(t.Context(), "upgrade:a")
 	require.NoError(t, err)
 	require.Equal(t, int64(20), node.Properties["value"])
 	require.NoError(t, db.Close())

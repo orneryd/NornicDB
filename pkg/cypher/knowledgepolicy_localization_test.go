@@ -72,7 +72,7 @@ func TestKnowledgePolicyParserErrorsHaveTypedIdentityAndExactEnglish(t *testing.
 			messageID: localization.MessageCypherKnowledgePolicyUnknownKalmanConfigKey,
 			text:      `unknown Kalman config key: "gain"`,
 			parse: func() error {
-				_, err := parseOnAccessBlock(policyDDLSource{Source: cyphertext.NewSource(t.Context(), "WITH KALMAN { gain: 1 } SET n.score = 1", cyphertext.RawSource), original: true})
+				_, err := parseOnAccessBlock(t.Context(), policyDDLSource{Source: cyphertext.NewSource(t.Context(), "WITH KALMAN { gain: 1 } SET n.score = 1", cyphertext.RawSource), original: true})
 				return err
 			},
 		},
@@ -122,7 +122,7 @@ func TestKnowledgePolicyExecutionAndFunctionErrorsHaveTypedIdentity(t *testing.T
 }
 
 func TestKnowledgePolicyReturnedHumanTextUsesDescriptors(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	exec := NewStorageExecutor(&knowledgePolicyOpaqueEngine{Engine: storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")})
 	result, err := exec.callNornicDbKnowledgePolicyDeindexStatus()
 	require.NoError(t, err)
 	require.Equal(t, localization.CypherKnowledgePolicyDeindexBadgerRequired().Fallback, result.Rows[0][2])

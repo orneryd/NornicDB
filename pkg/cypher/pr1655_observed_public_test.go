@@ -39,14 +39,14 @@ func TestPR1655ExecuteObservedVanishedMutation(t *testing.T) {
 					t.Cleanup(func() { require.NoError(t, base.Close()) })
 					store := storage.NewNamespacedEngine(base, "observed")
 					for _, id := range []storage.NodeID{"a", "b"} {
-						_, err = store.CreateNode(&storage.Node{ID: id})
+						_, err = store.CreateNode(t.Context(), &storage.Node{ID: id})
 						require.NoError(t, err)
 					}
-					require.NoError(t, base.FlushWriteBehind(nil))
+					require.NoError(t, base.FlushWriteBehind(context.Background()))
 					if tc.edge {
-						require.NoError(t, store.CreateEdge(&storage.Edge{ID: "target", StartNode: "a", EndNode: "b", Type: "TARGET", Properties: map[string]interface{}{"value": "old", "emb": []float64{1, 2}}}))
+						require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "target", StartNode: "a", EndNode: "b", Type: "TARGET", Properties: map[string]interface{}{"value": "old", "emb": []float64{1, 2}}}))
 					} else {
-						_, err = store.CreateNode(&storage.Node{ID: "target", Labels: []string{"Target", "Old"}, Properties: map[string]interface{}{"value": "old", "emb": []float64{1, 2}}})
+						_, err = store.CreateNode(t.Context(), &storage.Node{ID: "target", Labels: []string{"Target", "Old"}, Properties: map[string]interface{}{"value": "old", "emb": []float64{1, 2}}})
 						require.NoError(t, err)
 					}
 					writer := NewStorageExecutor(store)
@@ -73,7 +73,7 @@ func TestPR1655ExecuteObservedVanishedMutation(t *testing.T) {
 							return func(observed interface{}) (interface{}, error) {
 								deleted++
 								require.Equal(t, 1, deleted)
-								peer, err := base.BeginTransaction()
+								peer, err := base.BeginTransaction(t.Context())
 								if err != nil {
 									return nil, err
 								}
@@ -82,12 +82,12 @@ func TestPR1655ExecuteObservedVanishedMutation(t *testing.T) {
 									entity, ok := observed.(*storage.Edge)
 									require.True(t, ok)
 									require.Equal(t, "old", entity.Properties["value"])
-									err = peer.DeleteEdge("observed:target")
+									err = peer.DeleteEdge(t.Context(), "observed:target")
 								} else {
 									entity, ok := observed.(*storage.Node)
 									require.True(t, ok)
 									require.Equal(t, "old", entity.Properties["value"])
-									err = peer.DeleteGraphNode("observed:target", storage.CascadeEdges)
+									err = peer.DeleteGraphNode(t.Context(), "observed:target", storage.CascadeEdges)
 								}
 								if err != nil {
 									return nil, err
@@ -112,12 +112,12 @@ func TestPR1655ExecuteObservedVanishedMutation(t *testing.T) {
 						_, err = writer.Execute(ctx, "COMMIT", nil)
 					}
 					require.ErrorIs(t, err, storage.ErrConflict)
-					code, _ := nornicerrors.Neo4jCommitStatus(err)
+					code, _ := nornicerrors.Neo4jStatus(nornicerrors.TransactionControlFailure(nornicerrors.TerminalCommit, err))
 					require.Equal(t, nornicerrors.TransientOutdated, code)
 					if tc.edge {
-						_, err = store.GetEdge("target")
+						_, err = store.GetEdge(t.Context(), "target")
 					} else {
-						_, err = store.GetNode("target")
+						_, err = store.GetNode(t.Context(), "target")
 					}
 					require.ErrorIs(t, err, storage.ErrNotFound, "no resurrection")
 					markers, err := store.GetNodesByLabel(ctx, "Marker")
@@ -141,10 +141,10 @@ func TestPR1655ExecuteNewlyObservedTargetDisappears(t *testing.T) {
 				t.Cleanup(func() { require.NoError(t, base.Close()) })
 				store := storage.NewNamespacedEngine(base, "new_observation")
 				for _, id := range []storage.NodeID{"a", "b"} {
-					_, err = store.CreateNode(&storage.Node{ID: id})
+					_, err = store.CreateNode(t.Context(), &storage.Node{ID: id})
 					require.NoError(t, err)
 				}
-				require.NoError(t, base.FlushWriteBehind(nil))
+				require.NoError(t, base.FlushWriteBehind(context.Background()))
 				writer := NewStorageExecutor(store)
 				ctx := context.Background()
 				if explicit {
@@ -164,15 +164,15 @@ func TestPR1655ExecuteNewlyObservedTargetDisappears(t *testing.T) {
 							frame, ok := writer.getStorage(ctx).(*transactionStorageWrapper)
 							require.True(t, ok)
 							if edge {
-								if err := store.CreateEdge(&storage.Edge{ID: "target", StartNode: "a", EndNode: "b", Type: "TARGET", Properties: map[string]interface{}{"value": "old"}}); err != nil {
+								if err := store.CreateEdge(t.Context(), &storage.Edge{ID: "target", StartNode: "a", EndNode: "b", Type: "TARGET", Properties: map[string]interface{}{"value": "old"}}); err != nil {
 									return nil, err
 								}
-								return frame.GetEdge("target")
+								return frame.GetEdge(t.Context(), "target")
 							}
-							if _, err := store.CreateNode(&storage.Node{ID: "target", Labels: []string{"Target"}, Properties: map[string]interface{}{"value": "old"}}); err != nil {
+							if _, err := store.CreateNode(t.Context(), &storage.Node{ID: "target", Labels: []string{"Target"}, Properties: map[string]interface{}{"value": "old"}}); err != nil {
 								return nil, err
 							}
-							return frame.GetNode("target")
+							return frame.GetNode(t.Context(), "target")
 						}, true
 					case "audit.erase":
 						return func(entity interface{}) (string, error) {
@@ -182,12 +182,12 @@ func TestPR1655ExecuteNewlyObservedTargetDisappears(t *testing.T) {
 								record, ok := entity.(*storage.Edge)
 								require.True(t, ok)
 								require.Equal(t, "old", record.Properties["value"])
-								return "new", store.DeleteEdge("target")
+								return "new", store.DeleteEdge(t.Context(), "target")
 							}
 							record, ok := entity.(*storage.Node)
 							require.True(t, ok)
 							require.Equal(t, "old", record.Properties["value"])
-							return "new", store.DeleteNode("target")
+							return "new", store.DeleteNode(t.Context(), "target")
 						}, true
 					}
 					if previous != nil {
@@ -201,15 +201,15 @@ func TestPR1655ExecuteNewlyObservedTargetDisappears(t *testing.T) {
 				require.Equal(t, 1, deleted)
 				require.ErrorIs(t, err, storage.ErrConflict, "the actual post-BEGIN observation must reach storage")
 				require.NotErrorIs(t, err, storage.ErrNotFound)
-				code, _ := nornicerrors.Neo4jCommitStatus(err)
+				code, _ := nornicerrors.Neo4jStatus(nornicerrors.TransactionControlFailure(nornicerrors.TerminalCommit, err))
 				require.Equal(t, nornicerrors.TransientOutdated, code)
 				markers, err := store.GetNodesByLabel(ctx, "Marker")
 				require.NoError(t, err)
 				require.Empty(t, markers)
 				if edge {
-					_, err = store.GetEdge("target")
+					_, err = store.GetEdge(t.Context(), "target")
 				} else {
-					_, err = store.GetNode("target")
+					_, err = store.GetNode(t.Context(), "target")
 				}
 				require.ErrorIs(t, err, storage.ErrNotFound)
 			})

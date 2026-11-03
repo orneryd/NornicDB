@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"errors"
+
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"log/slog"
@@ -77,20 +78,10 @@ func triageNode(id string) *storage.Node {
 	return &storage.Node{ID: storage.NodeID(id), Properties: map[string]any{"text": id}, NamedEmbeddings: map[string][]float32{"v": {1, 0, 0}}}
 }
 
-func TestBuildTriageNilContext(t *testing.T) {
-	engine := &triageSnapshotEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
-	t.Cleanup(func() { _ = engine.Close() })
-	_, err := engine.CreateNode(triageNode("nornic:baseline"))
-	require.NoError(t, err)
-	svc := newSearchPersistenceTestService(t, engine, t.TempDir(), false)
-	require.NotPanics(t, func() { require.NoError(t, svc.BuildIndexes(nil)) })
-	require.Zero(t, engine.active.Load())
-}
-
 func TestBuildTriageSnapshotClosedBeforePersistAndWarmup(t *testing.T) {
 	engine := &triageSnapshotEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
 	t.Cleanup(func() { _ = engine.Close() })
-	_, err := engine.CreateNode(triageNode("nornic:baseline"))
+	_, err := engine.CreateNode(t.Context(), triageNode("nornic:baseline"))
 	require.NoError(t, err)
 	svc := newSearchPersistenceTestService(t, engine, t.TempDir(), false)
 	h := &triageSnapshotLog{engine: engine}
@@ -109,7 +100,7 @@ func TestBuildTriageSnapshotClosedBeforePersistAndWarmup(t *testing.T) {
 func TestBuildTriageClosesReplacedVectorFileStore(t *testing.T) {
 	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { _ = engine.Close() })
-	_, err := engine.CreateNode(triageNode("nornic:baseline"))
+	_, err := engine.CreateNode(t.Context(), triageNode("nornic:baseline"))
 	require.NoError(t, err)
 	svc := newSearchPersistenceTestService(t, engine, t.TempDir(), false)
 	require.NoError(t, svc.BuildIndexes(context.Background()))
@@ -127,7 +118,7 @@ func TestBuildTriageDeferredWriteFailure(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			engine := &triageSnapshotEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), entered: make(chan struct{}), release: make(chan struct{})}
 			t.Cleanup(func() { _ = engine.Close() })
-			_, err := engine.CreateNode(triageNode("nornic:baseline"))
+			_, err := engine.CreateNode(t.Context(), triageNode("nornic:baseline"))
 			require.NoError(t, err)
 			svc := newSearchPersistenceTestService(t, engine, t.TempDir(), false)
 			var releaseOnce sync.Once
@@ -168,12 +159,12 @@ func TestBuildTriageDeferredWriteFailure(t *testing.T) {
 					bad.NamedEmbeddings = nil
 					bad.Properties["v"] = []float32{1, 0, 0}
 				}
-				_, err = engine.CreateNode(bad)
+				_, err = engine.CreateNode(t.Context(), bad)
 				require.NoError(t, err)
 				write = func() error { return svc.IndexNode(bad) }
 			} else {
 				bad := &storage.Edge{ID: "nornic:bad", StartNode: "nornic:baseline", EndNode: "nornic:baseline", Type: "REL", Properties: map[string]any{"v": []float32{1, 0, 0}}}
-				require.NoError(t, engine.CreateEdge(bad))
+				require.NoError(t, engine.CreateEdge(t.Context(), bad))
 				write = func() error { return svc.IndexEdge(bad) }
 			}
 			// The API has acknowledged these writes while the scan is parked.
@@ -193,7 +184,7 @@ func TestBuildTriageDeferredWriteFailure(t *testing.T) {
 				injected = ErrIndexMemoryBudgetExceeded
 			} else {
 				good := triageNode("nornic:good")
-				_, err = engine.CreateNode(good)
+				_, err = engine.CreateNode(t.Context(), good)
 				require.NoError(t, err)
 				require.NoError(t, svc.IndexNode(good))
 			}
@@ -238,7 +229,7 @@ func testTriageLateReplayFailure(t *testing.T, message string, before func(*Serv
 	t.Helper()
 	engine := &triageSnapshotEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
 	t.Cleanup(func() { _ = engine.Close() })
-	_, err := engine.CreateNode(triageNode("nornic:baseline"))
+	_, err := engine.CreateNode(t.Context(), triageNode("nornic:baseline"))
 	require.NoError(t, err)
 	svc := newSearchPersistenceTestService(t, engine, t.TempDir(), false)
 	injected := errors.New("injected late vector file I/O failure")
@@ -258,7 +249,7 @@ func testTriageLateReplayFailure(t *testing.T, message string, before func(*Serv
 		}
 		for _, id := range []string{"nornic:bad", "nornic:good"} {
 			node := triageNode(id)
-			_, err := engine.CreateNode(node)
+			_, err := engine.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 			require.NoError(t, svc.IndexNode(node), "write should be acknowledged before replay")
 		}

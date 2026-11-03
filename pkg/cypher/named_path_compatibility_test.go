@@ -28,12 +28,12 @@ func TestNamedPathPreservesRepeatedNodesAcrossUndirectedSegments(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	left, err := store.CreateNode(&storage.Node{ID: "left", Labels: []string{"A"}})
+	left, err := store.CreateNode(t.Context(), &storage.Node{ID: "left", Labels: []string{"A"}})
 	require.NoError(t, err)
-	right, err := store.CreateNode(&storage.Node{ID: "right", Labels: []string{"B"}})
+	right, err := store.CreateNode(t.Context(), &storage.Node{ID: "right", Labels: []string{"B"}})
 	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "forward", Type: "T1", StartNode: left, EndNode: right}))
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "reverse", Type: "T2", StartNode: right, EndNode: left}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "forward", Type: "T1", StartNode: left, EndNode: right}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "reverse", Type: "T2", StartNode: right, EndNode: left}))
 
 	result, err := exec.Execute(ctx, "MATCH path = (node)<-->(other)<-->(node) RETURN path", nil)
 	require.NoError(t, err)
@@ -51,13 +51,13 @@ func TestNamedPathPreservesEveryNodeInFixedLengthSegment(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	start, err := store.CreateNode(&storage.Node{ID: "start", Labels: []string{"Start"}})
+	start, err := store.CreateNode(t.Context(), &storage.Node{ID: "start", Labels: []string{"Start"}})
 	require.NoError(t, err)
-	end, err := store.CreateNode(&storage.Node{ID: "end", Labels: []string{"End"}})
+	end, err := store.CreateNode(t.Context(), &storage.Node{ID: "end", Labels: []string{"End"}})
 	require.NoError(t, err)
-	middle, err := store.CreateNode(&storage.Node{ID: "middle"})
+	middle, err := store.CreateNode(t.Context(), &storage.Node{ID: "middle"})
 	require.NoError(t, err)
-	other, err := store.CreateNode(&storage.Node{ID: "other"})
+	other, err := store.CreateNode(t.Context(), &storage.Node{ID: "other"})
 	require.NoError(t, err)
 	for _, edge := range []*storage.Edge{
 		{ID: "start-middle", Type: "CONNECTED_TO", StartNode: middle, EndNode: start},
@@ -66,7 +66,7 @@ func TestNamedPathPreservesEveryNodeInFixedLengthSegment(t *testing.T) {
 		{ID: "middle-other-one", Type: "CONNECTED_TO", StartNode: middle, EndNode: other},
 		{ID: "middle-other-two", Type: "CONNECTED_TO", StartNode: middle, EndNode: other},
 	} {
-		require.NoError(t, store.CreateEdge(edge))
+		require.NoError(t, store.CreateEdge(t.Context(), edge))
 	}
 
 	result, err := exec.Execute(ctx, "MATCH path = (:Start)<-[:CONNECTED_TO]-()-[:CONNECTED_TO*3..3]-(:End) RETURN path", nil)

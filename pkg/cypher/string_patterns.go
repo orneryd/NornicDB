@@ -10,6 +10,7 @@
 package cypher
 
 import (
+	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 )
@@ -25,18 +26,18 @@ import (
 //
 //	SplitByKeyword("MATCH (a) MATCH (b)", "MATCH")
 //	// Returns: ["", "(a) ", "(b)"]
-func SplitByKeyword(s, keyword string) []string {
-	return splitKeywordParts(s, keyword, keywordSplitGeneric)
+func SplitByKeyword(ctx context.Context, s, keyword string) ([]string, error) {
+	return splitKeywordParts(ctx, s, keyword, keywordSplitGeneric)
 }
 
 // SplitByMatch splits by "MATCH " keyword. Convenience wrapper for hot path.
-func SplitByMatch(s string) []string {
-	return SplitByKeyword(s, "MATCH")
+func SplitByMatch(ctx context.Context, s string) ([]string, error) {
+	return SplitByKeyword(ctx, s, "MATCH")
 }
 
 // SplitByCreate splits by "CREATE " keyword. Convenience wrapper for hot path.
-func SplitByCreate(s string) []string {
-	return splitKeywordParts(s, "CREATE", keywordSplitCreate)
+func SplitByCreate(ctx context.Context, s string) ([]string, error) {
+	return splitKeywordParts(ctx, s, "CREATE", keywordSplitCreate)
 }
 
 // =============================================================================
@@ -51,9 +52,9 @@ func SplitByCreate(s string) []string {
 //
 //	ExtractLimit("MATCH (n) RETURN n LIMIT 10")
 //	// Returns: 10, true
-func ExtractLimit(query string) (int, bool) {
-	_, value, found := decimalAfterKeyword(query, "LIMIT")
-	return value, found
+func ExtractLimit(ctx context.Context, query string) (int, bool, error) {
+	_, value, found, err := decimalAfterKeyword(ctx, query, "LIMIT")
+	return value, found, err
 }
 
 // ExtractSkip extracts the SKIP value from a query string.
@@ -63,41 +64,47 @@ func ExtractLimit(query string) (int, bool) {
 //
 //	ExtractSkip("MATCH (n) RETURN n SKIP 5 LIMIT 10")
 //	// Returns: 5, true
-func ExtractSkip(query string) (int, bool) {
-	_, value, found := decimalAfterKeyword(query, "SKIP")
-	return value, found
+func ExtractSkip(ctx context.Context, query string) (int, bool, error) {
+	_, value, found, err := decimalAfterKeyword(ctx, query, "SKIP")
+	return value, found, err
 }
 
 // ExtractLimitString extracts the LIMIT value as a string (for compatibility).
 // Returns empty string if not found.
-func ExtractLimitString(query string) string {
-	text, _, _ := decimalAfterKeyword(query, "LIMIT")
-	return text
+func ExtractLimitString(ctx context.Context, query string) (string, error) {
+	text, _, _, err := decimalAfterKeyword(ctx, query, "LIMIT")
+	return text, err
 }
 
 // ExtractSkipString extracts the SKIP value as a string (for compatibility).
 // Returns empty string if not found.
-func ExtractSkipString(query string) string {
-	text, _, _ := decimalAfterKeyword(query, "SKIP")
-	return text
+func ExtractSkipString(ctx context.Context, query string) (string, error) {
+	text, _, _, err := decimalAfterKeyword(ctx, query, "SKIP")
+	return text, err
 }
 
 // decimalAfterKeyword owns the shared decimal extent and conversion used by
 // the public LIMIT/SKIP observations. Text is a slice of the original source.
-func decimalAfterKeyword(s, keyword string) (text string, value int, found bool) {
-	idx := FindKeywordIndex(s, keyword)
+func decimalAfterKeyword(ctx context.Context, s, keyword string) (text string, value int, found bool, err error) {
+	idx, err := FindKeywordIndex(ctx, s, keyword)
+	if err != nil {
+		return "", 0, false, err
+	}
 	if idx < 0 {
-		return "", 0, false
+		return "", 0, false, nil
 	}
 	start, _ := cyphertext.GapEnd(s, idx+len(keyword))
 	token, ok := cyphertext.ScanNumber(s, start)
 	if !ok || token.Invalid || token.Base != 10 || token.Fraction || token.Exponent || token.Grouped || token.Suffix != 0 {
-		return "", 0, false
+		return "", 0, false, nil
 	}
 	for i := start; i < token.End; i++ {
 		value = value*10 + int(s[i]-'0')
 	}
-	return s[start:token.End], value, true
+	if err := ctx.Err(); err != nil {
+		return "", 0, false, err
+	}
+	return s[start:token.End], value, true, nil
 }
 
 // =============================================================================
@@ -107,16 +114,24 @@ func decimalAfterKeyword(s, keyword string) (text string, value int, found bool)
 // FindKeywordIndex finds the position of a keyword in a query (case-insensitive).
 // Returns -1 if not found. Respects word boundaries.
 // This is faster than using regexp for simple keyword detection.
-func FindKeywordIndex(s, keyword string) int {
+func FindKeywordIndex(ctx context.Context, s, keyword string) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return -1, err
+	}
 	opts := defaultKeywordScanOpts()
 	opts.SkipParens, opts.SkipBrackets, opts.SkipBraces = false, false, false
-	return keywordIndexFrom(s, keyword, 0, opts)
+	index := keywordIndexFrom(ctx, s, keyword, 0, opts)
+	if err := ctx.Err(); err != nil {
+		return -1, err
+	}
+	return index, nil
 }
 
 // ContainsKeyword checks if a query contains a keyword (case-insensitive).
 // Respects word boundaries.
-func ContainsKeyword(s, keyword string) bool {
-	return FindKeywordIndex(s, keyword) >= 0
+func ContainsKeyword(ctx context.Context, s, keyword string) (bool, error) {
+	index, err := FindKeywordIndex(ctx, s, keyword)
+	return index >= 0 && err == nil, err
 }
 
 // =============================================================================
@@ -277,9 +292,12 @@ const (
 )
 
 // splitKeywordParts owns slicing and whitespace trimming for both public policies.
-func splitKeywordParts(s, keyword string, policy keywordSplitPolicy) []string {
+func splitKeywordParts(ctx context.Context, s, keyword string, policy keywordSplitPolicy) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if s == "" || keyword == "" {
-		return []string{s}
+		return []string{s}, nil
 	}
 	opts := defaultKeywordScanOpts()
 	opts.SkipParens, opts.SkipBrackets = false, false
@@ -289,7 +307,10 @@ func splitKeywordParts(s, keyword string, policy keywordSplitPolicy) []string {
 	var parts []string
 	last := 0
 	for from := 0; from < len(s); {
-		index := keywordIndexFrom(s, keyword, from, opts)
+		index := keywordIndexFrom(ctx, s, keyword, from, opts)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if index < 0 {
 			break
 		}
@@ -315,5 +336,5 @@ func splitKeywordParts(s, keyword string, policy keywordSplitPolicy) []string {
 		}
 		from = last
 	}
-	return append(parts, s[last:])
+	return append(parts, s[last:]), nil
 }

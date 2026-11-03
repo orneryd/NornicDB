@@ -64,7 +64,7 @@ func TestQdrantUpsertIndexCannotResurrectDelete(t *testing.T) {
 	require.NoError(t, err)
 	barrier.barrier.ReleaseWrites()
 	require.NoError(t, <-done)
-	_, err = store.GetNode(pointIDToNodeID(pid))
+	_, err = store.GetNode(t.Context(), pointIDToNodeID(pid))
 	require.ErrorIs(t, err, storage.ErrNotFound)
 	require.Zero(t, svc.EmbeddingCount(), "an upsert's late index call resurrected a deleted point")
 }
@@ -80,7 +80,7 @@ func TestQdrantUpsertIndexCannotOverwriteNewerUpsert(t *testing.T) {
 	require.NoError(t, err)
 	barrier.barrier.ReleaseWrites()
 	require.NoError(t, <-done)
-	stored, err := store.GetNode(pointIDToNodeID(pid))
+	stored, err := store.GetNode(t.Context(), pointIDToNodeID(pid))
 	require.NoError(t, err)
 	require.NotNil(t, stored)
 	candidates, err := svc.VectorSearchCandidates(ctx, []float32{0, 0, 1, 0}, search.DefaultSearchOptions())

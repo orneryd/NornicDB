@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"slices"
 	"strings"
@@ -37,8 +38,8 @@ func (e *StorageExecutor) newRelationshipEndpointReader(store storage.Engine) re
 	return relationshipEndpointReader{executor: e, store: store}
 }
 
-func (reader relationshipEndpointReader) read(id storage.NodeID, _ []string) (*storage.Node, error) {
-	node, err := reader.executor.getQueryNode(reader.store, id)
+func (reader relationshipEndpointReader) read(ctx context.Context, id storage.NodeID, _ []string) (*storage.Node, error) {
+	node, err := reader.executor.getQueryNode(ctx, reader.store, id)
 	if err != nil || node == nil {
 		return node, err
 	}
@@ -54,8 +55,8 @@ func (reader relationshipEndpointReader) read(id storage.NodeID, _ []string) (*s
 // escape into a traversal cache or binding. A nil projection requires the full
 // entity; a non-nil projection retains only its demanded property values.
 // Reuse the caller-owned node and small map instead of copying every read.
-func (reader relationshipEndpointReader) readRetained(id storage.NodeID, properties []string) (*storage.Node, error) {
-	node, err := reader.read(id, properties)
+func (reader relationshipEndpointReader) readRetained(ctx context.Context, id storage.NodeID, properties []string) (*storage.Node, error) {
+	node, err := reader.read(ctx, id, properties)
 	if err != nil || node == nil || properties == nil {
 		return node, err
 	}
@@ -126,8 +127,8 @@ func endpointPropertyNode(base, property string) *rowEndpointPropertyNode {
 	return &rowEndpointPropertyNode{argument: strings.TrimSpace(argument), property: property, end: equalFoldASCII(function, "endNode")}
 }
 
-func (n *rowEndpointPropertyNode) eval(e *StorageExecutor, values map[string]interface{}, _ [][]rowValueMemo) (interface{}, bool, error) {
-	value, resolved, err := e.evaluateRowValue(n.argument, values)
+func (n *rowEndpointPropertyNode) eval(ctx context.Context, e *StorageExecutor, values map[string]interface{}, _ [][]rowValueMemo) (interface{}, bool, error) {
+	value, resolved, err := e.evaluateRowValue(ctx, n.argument, values)
 	if !resolved || err != nil {
 		return nil, resolved, err
 	}
@@ -135,9 +136,13 @@ func (n *rowEndpointPropertyNode) eval(e *StorageExecutor, values map[string]int
 	if err != nil {
 		return nil, false, err
 	}
-	id, exists := e.relationshipEndpointID(edge, n.end)
-	if !exists {
-		return nil, true, nil
+	store, err := e.FunctionStorage(e.databaseName())
+	if err != nil {
+		return nil, false, err
+	}
+	id, exists, err := e.relationshipEndpointID(ctx, edge, n.end, store)
+	if err != nil || !exists {
+		return nil, err == nil, err
 	}
 	cache, _ := values[endpointPropertyCacheKey].(*endpointPropertyCache)
 	key := endpointPropertyKey{id: id, property: n.property}
@@ -146,7 +151,10 @@ func (n *rowEndpointPropertyNode) eval(e *StorageExecutor, values map[string]int
 			return value, true, nil
 		}
 	}
-	node := e.readRelationshipEndpoint(id, []string{n.property})
+	node, err := e.readRelationshipEndpoint(ctx, id, []string{n.property}, store)
+	if err != nil {
+		return nil, false, err
+	}
 	value, ok := evaluateRowPropertyChain(node, n.property, e, false)
 	if ok && cache != nil {
 		cache.keep(key, value)

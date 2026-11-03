@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
@@ -19,7 +20,7 @@ func TestIndexCatalog_PutAndGet(t *testing.T) {
 		},
 	}
 
-	if err := eng.PutIndexEntryCatalog("nornic:node1", cat); err != nil {
+	if err := eng.PutIndexEntryCatalog(context.Background(), "nornic:node1", cat); err != nil {
 		t.Fatal(err)
 	}
 
@@ -58,7 +59,7 @@ func TestIndexCatalog_Delete(t *testing.T) {
 		TargetScope: "NODE",
 		IndexKeys:   [][]byte{labelIndexKey("person", 1)},
 	}
-	if err := eng.PutIndexEntryCatalog("nornic:node1", cat); err != nil {
+	if err := eng.PutIndexEntryCatalog(context.Background(), "nornic:node1", cat); err != nil {
 		t.Fatal(err)
 	}
 	if err := eng.DeleteIndexEntryCatalog("nornic:node1"); err != nil {
@@ -82,7 +83,7 @@ func TestIndexCatalog_DeindexedFlag(t *testing.T) {
 		IndexKeys:   [][]byte{labelIndexKey("person", 1)},
 		Deindexed:   true,
 	}
-	if err := eng.PutIndexEntryCatalog("nornic:node1", cat); err != nil {
+	if err := eng.PutIndexEntryCatalog(context.Background(), "nornic:node1", cat); err != nil {
 		t.Fatal(err)
 	}
 
@@ -108,7 +109,7 @@ func TestIndexCatalog_CollectIndexKeys(t *testing.T) {
 			t.Cleanup(func() { _ = engine.Close() })
 			if kind == "node" {
 				// Seed a numID so the compact collector returns the expected keys.
-				if err := engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+				if err := engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 					_, err := resolveOrAllocateNumericIDInTxn(engine.idDict, txn, NodeID("nornic:n1"))
 					return err
 				}); err != nil {
@@ -126,7 +127,7 @@ func TestIndexCatalog_CollectIndexKeys(t *testing.T) {
 				return
 			}
 			// Pre-seed the dict so the edge-between key makes it into the catalog.
-			err = engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+			err = engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 				if _, err := resolveOrAllocateNumericIDInTxn(engine.idDict, txn, NodeID("nornic:a")); err != nil {
 					return err
 				}
@@ -174,7 +175,7 @@ func TestIndexCatalog_WrittenOnCreateNode(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Alice"},
 	}
-	if _, err := eng.CreateNode(node); err != nil {
+	if _, err := eng.CreateNode(t.Context(), node); err != nil {
 		t.Fatal(err)
 	}
 
@@ -201,11 +202,11 @@ func TestIndexCatalog_DeletedOnDeleteNode(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Bob"},
 	}
-	if _, err := eng.CreateNode(node); err != nil {
+	if _, err := eng.CreateNode(t.Context(), node); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := eng.DeleteNode("nornic:del_cat"); err != nil {
+	if err := eng.DeleteNode(t.Context(), "nornic:del_cat"); err != nil {
 		t.Fatal(err)
 	}
 

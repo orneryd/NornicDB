@@ -59,7 +59,7 @@ func BenchmarkSnapshotStoredGraph(b *testing.B) {
 				"repo": "nornicdb", "gen": int64(7), "props_hash": fmt.Sprintf("%064x", j),
 			}})
 		}
-		if err := engine.BulkCreateNodes(batch); err != nil {
+		if err := engine.BulkCreateNodes(b.Context(), batch); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -79,7 +79,7 @@ func BenchmarkSnapshotStoredGraph(b *testing.B) {
 				},
 			})
 		}
-		if err := engine.BulkCreateEdges(batch); err != nil {
+		if err := engine.BulkCreateEdges(b.Context(), batch); err != nil {
 			b.Fatal(err)
 		}
 	}

@@ -19,11 +19,11 @@ func TestBoundAnchorCompoundTraversalReturnsEndpoint(t *testing.T) {
 	instance := &storage.Node{ID: "i1", Labels: []string{"WorkloadInstance"}, Properties: map[string]interface{}{"id": "i1"}}
 	resource := &storage.Node{ID: "p1", Labels: []string{"CloudResource"}, Properties: map[string]interface{}{"id": "p1"}}
 	for _, node := range []*storage.Node{workload, instance, resource} {
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "instance-of", Type: "INSTANCE_OF", StartNode: instance.ID, EndNode: workload.ID}))
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "instance-uses-resource", Type: "USES", StartNode: instance.ID, EndNode: resource.ID}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "instance-of", Type: "INSTANCE_OF", StartNode: instance.ID, EndNode: workload.ID}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "instance-uses-resource", Type: "USES", StartNode: instance.ID, EndNode: resource.ID}))
 
 	assertEndpoint := func(t *testing.T, query string) {
 		t.Helper()
@@ -59,11 +59,11 @@ func TestBoundAnchorMultiHopTraversalBindsIntermediateNodes(t *testing.T) {
 	otherFile := &storage.Node{ID: "other-file", Labels: []string{"File"}, Properties: map[string]interface{}{"id": "other", "relative_path": "other.go"}}
 	function := &storage.Node{ID: "function", Labels: []string{"Function"}, Properties: map[string]interface{}{"id": "ag-e"}}
 	for _, node := range []*storage.Node{repository, file, otherFile, function} {
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "repo-file", Type: "REPO_CONTAINS", StartNode: repository.ID, EndNode: file.ID}))
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "file-function", Type: "CONTAINS", StartNode: file.ID, EndNode: function.ID}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "repo-file", Type: "REPO_CONTAINS", StartNode: repository.ID, EndNode: file.ID}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "file-function", Type: "CONTAINS", StartNode: file.ID, EndNode: function.ID}))
 
 	tests := []struct {
 		name  string

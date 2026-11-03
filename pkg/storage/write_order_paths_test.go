@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"errors"
@@ -41,22 +42,22 @@ func TestDecaySuppressionRescoresTheNewestBufferedBody(t *testing.T) {
 	run := func(flushFirst bool) (bool, bool) {
 		engine := newDecayWriteBehindEngine(t, t.TempDir())
 		t.Cleanup(func() { _ = engine.Close() })
-		_, err := engine.CreateNode(&Node{ID: "test:n", Labels: []string{"Untargeted"}, Properties: map[string]any{"v": "x"}, CreatedAt: old, UpdatedAt: old})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: "test:n", Labels: []string{"Untargeted"}, Properties: map[string]any{"v": "x"}, CreatedAt: old, UpdatedAt: old})
 		require.NoError(t, err)
-		require.NoError(t, engine.FlushWriteBehind(nil))
-		tx, err := engine.BeginTransaction()
+		require.NoError(t, engine.FlushWriteBehind(context.Background()))
+		tx, err := engine.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		require.NoError(t, tx.SetImplicit(true))
-		require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:n", Labels: []string{"Doc"}, Properties: map[string]any{"v": "x"}, CreatedAt: old, UpdatedAt: old}, Policy: ClientNodeEdits}))
+		require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:n", Labels: []string{"Doc"}, Properties: map[string]any{"v": "x"}, CreatedAt: old, UpdatedAt: old}, Policy: ClientNodeEdits}))
 		require.NoError(t, tx.Commit())
 		if flushFirst {
-			require.NoError(t, engine.FlushWriteBehind(nil))
+			require.NoError(t, engine.FlushWriteBehind(context.Background()))
 		}
-		became, err := engine.EnqueueDeindexIfSuppressed("test:n", false)
+		became, err := engine.EnqueueDeindexIfSuppressed(context.Background(), "test:n", false)
 		require.NoError(t, err)
-		require.NoError(t, engine.FlushWriteBehind(nil))
+		require.NoError(t, engine.FlushWriteBehind(context.Background()))
 		engine.invalidateCachesAfterRestore()
-		stored, err := engine.GetStoredNode("test:n")
+		stored, err := engine.GetStoredNode(t.Context(), "test:n")
 		require.NoError(t, err)
 		require.Equal(t, []string{"Doc"}, stored.Labels)
 		return became, stored.RuntimeMetadata().VisibilitySuppressed
@@ -75,25 +76,25 @@ func TestDrainedTransactionKeepsItsNewPropertyKeys(t *testing.T) {
 	engine, err := runtimeFixtureOwner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour}))
 	require.NoError(t, err)
 	engine.writeBehind.SetDelayBounds(time.Hour, time.Hour)
-	_, err = engine.CreateNode(&Node{ID: "test:n", Properties: map[string]any{"v": "initial"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:n", Properties: map[string]any{"v": "initial"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.FlushWriteBehind(nil))
-	buffered, err := engine.BeginTransaction()
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
+	buffered, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, buffered.SetImplicit(true))
-	require.NoError(t, buffered.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:n", Properties: map[string]any{"v": "acknowledged"}}, Policy: ClientNodeEdits}))
+	require.NoError(t, buffered.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:n", Properties: map[string]any{"v": "acknowledged"}}, Policy: ClientNodeEdits}))
 	require.NoError(t, buffered.Commit())
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:n", Properties: map[string]any{"v": "explicit", "first_seen_here": "kept"}}, Policy: ClientNodeEdits}))
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:n", Properties: map[string]any{"v": "explicit", "first_seen_here": "kept"}}, Policy: ClientNodeEdits}))
 	require.NoError(t, tx.Commit())
 	require.NoError(t, engine.Close())
 
 	reopened, err := runtimeFixtureOwner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reopened.Close() })
-	stored, err := reopened.GetStoredNode("test:n")
+	stored, err := reopened.GetStoredNode(t.Context(), "test:n")
 	require.NoError(t, err)
 	require.Equal(t, map[string]any{"v": "explicit", "first_seen_here": "kept"}, stored.Properties)
 }
@@ -120,39 +121,42 @@ func TestOrderedWriteFailsWhenItsDrainFails(t *testing.T) {
 		_ = engine.Close()
 	})
 	for _, id := range []NodeID{"test:a", "test:b"} {
-		_, err := engine.CreateNode(&Node{ID: id, Properties: map[string]any{"v": "initial"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: id, Properties: map[string]any{"v": "initial"}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"v": "initial"}}))
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"v": "initial"}}))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 
 	failing.Store(true)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
-	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"v": "acknowledged"}}, Policy: ClientNodeEdits}))
-	require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"v": "acknowledged"}}}))
-	require.NoError(t, tx.DeleteGraphNode("test:b", CascadeEdges))
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"v": "acknowledged"}}, Policy: ClientNodeEdits}))
+	require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"v": "acknowledged"}}}))
+	require.NoError(t, tx.DeleteGraphNode(t.Context(), "test:b", CascadeEdges))
 	require.NoError(t, tx.Commit())
 
 	writes := map[string]func() error{
-		"create node": func() error { _, err := engine.CreateNode(&Node{ID: "test:b"}); return err },
+		"create node": func() error { _, err := engine.CreateNode(t.Context(), &Node{ID: "test:b"}); return err },
 		"update node": func() error {
-			return engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"v": "direct"}}})
+			return engine.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"v": "direct"}}})
 		},
-		"delete node": func() error { return engine.DeleteNode("test:a") },
+		"delete node": func() error { return engine.DeleteNode(t.Context(), "test:a") },
 		"create edge": func() error {
-			return engine.CreateEdge(&Edge{ID: "test:s", StartNode: "test:a", EndNode: "test:a", Type: "LINK"})
+			return engine.CreateEdge(t.Context(), &Edge{ID: "test:s", StartNode: "test:a", EndNode: "test:a", Type: "LINK"})
 		},
 		"update edge": func() error {
-			return engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}})
+			return engine.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}})
 		},
-		"delete edge": func() error { return engine.DeleteEdge("test:r") },
-		"suppression": func() error { _, err := engine.EnqueueDeindexIfSuppressed("test:a", false); return err },
+		"delete edge": func() error { return engine.DeleteEdge(t.Context(), "test:r") },
+		"suppression": func() error {
+			_, err := engine.EnqueueDeindexIfSuppressed(context.Background(), "test:a", false)
+			return err
+		},
 		"explicit tx commit": func() error {
-			tx, err := engine.BeginTransaction()
+			tx, err := engine.BeginTransaction(t.Context())
 			require.NoError(t, err)
-			if err := tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"v": "explicit"}}, Policy: ClientNodeEdits}); err != nil {
+			if err := tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"v": "explicit"}}, Policy: ClientNodeEdits}); err != nil {
 				_ = tx.Rollback()
 				return err
 			}
@@ -162,19 +166,19 @@ func TestOrderedWriteFailsWhenItsDrainFails(t *testing.T) {
 	for name, write := range writes {
 		require.ErrorIs(t, write(), injected, name)
 	}
-	stored, err := engine.GetStoredNode("test:a")
+	stored, err := engine.GetStoredNode(t.Context(), "test:a")
 	require.NoError(t, err)
 	require.Equal(t, "acknowledged", stored.Properties["v"], "no failed write landed")
-	_, err = engine.GetStoredEdge("test:s")
+	_, err = engine.GetStoredEdge(t.Context(), "test:s")
 	require.ErrorIs(t, err, ErrNotFound)
 
 	failing.Store(false)
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	engine.invalidateCachesAfterRestore()
-	stored, err = engine.GetStoredNode("test:a")
+	stored, err = engine.GetStoredNode(t.Context(), "test:a")
 	require.NoError(t, err)
 	require.Equal(t, "acknowledged", stored.Properties["v"])
-	_, err = engine.GetStoredNode("test:b")
+	_, err = engine.GetStoredNode(t.Context(), "test:b")
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
@@ -189,7 +193,9 @@ func TestOrderDrainStopsAtItsFrontier(t *testing.T) {
 	buf = NewWriteBehindBuffer(time.Hour, 0, func(*CommitBuffer) error {
 		later.Do(func() {
 			require.NoError(t, buf.Append(BufferedMutation{Kind: BufferedOpNode, Node: &Node{ID: "test:later"}}))
-			buf.rotate()
+			if _, rotateErr := buf.rotate(t.Context()); rotateErr != nil {
+				t.Fatal(rotateErr)
+			}
 		})
 		applied.Add(1)
 		return nil

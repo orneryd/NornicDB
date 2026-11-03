@@ -15,7 +15,7 @@ func BenchmarkMergeRetryShape(b *testing.B) {
 		b.Run(query.name, func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
-				_ = IsRetrySafeMergeCommitQuery(analyzeQuery(query.cypher))
+				_ = IsRetrySafeMergeCommitQuery(b.Context(), analyzeQuery(query.cypher))
 			}
 		})
 	}

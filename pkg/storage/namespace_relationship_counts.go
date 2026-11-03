@@ -1,6 +1,9 @@
 package storage
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
 // RelationshipCountTier selects one of the persisted relationship counter tiers.
 type RelationshipCountTier uint8
@@ -19,64 +22,64 @@ const (
 // cannot answer for a database, and scanning would discard the count-store
 // point-read guarantee. Transparent decorators forward here without unwrapping
 // transaction, composite or other views that own different read semantics.
-func NamespaceRelationshipCount(engine Engine, namespace, edgeType, label string, tier RelationshipCountTier) (int64, error) {
+func NamespaceRelationshipCount(ctx context.Context, engine Engine, namespace, edgeType, label string, tier RelationshipCountTier) (int64, error) {
 	counter, ok := engine.(NamespaceEdgeTypeStatsProvider)
 	if !ok {
 		return 0, fmt.Errorf("%w: namespace relationship counters unavailable on %T", ErrInvalidData, engine)
 	}
 	switch tier {
 	case RelationshipCountByType:
-		return counter.EdgeCountByTypeInNamespace(namespace, edgeType)
+		return counter.EdgeCountByTypeInNamespace(ctx, namespace, edgeType)
 	case RelationshipCountByStartLabel:
-		return counter.EdgeCountByStartLabelInNamespace(namespace, label, edgeType)
+		return counter.EdgeCountByStartLabelInNamespace(ctx, namespace, label, edgeType)
 	case RelationshipCountByEndLabel:
-		return counter.EdgeCountByEndLabelInNamespace(namespace, label, edgeType)
+		return counter.EdgeCountByEndLabelInNamespace(ctx, namespace, label, edgeType)
 	default:
 		return 0, ErrInvalidData
 	}
 }
 
 // EdgeCountByTypeInNamespace preserves the namespace relationship counter.
-func (w *WALEngine) EdgeCountByTypeInNamespace(namespace, edgeType string) (int64, error) {
-	return NamespaceRelationshipCount(w.engine, namespace, edgeType, "", RelationshipCountByType)
+func (w *WALEngine) EdgeCountByTypeInNamespace(ctx context.Context, namespace, edgeType string) (int64, error) {
+	return NamespaceRelationshipCount(ctx, w.engine, namespace, edgeType, "", RelationshipCountByType)
 }
 
 // EdgeCountByStartLabelInNamespace preserves the physical start-label counter.
-func (w *WALEngine) EdgeCountByStartLabelInNamespace(namespace, label, edgeType string) (int64, error) {
-	return NamespaceRelationshipCount(w.engine, namespace, edgeType, label, RelationshipCountByStartLabel)
+func (w *WALEngine) EdgeCountByStartLabelInNamespace(ctx context.Context, namespace, label, edgeType string) (int64, error) {
+	return NamespaceRelationshipCount(ctx, w.engine, namespace, edgeType, label, RelationshipCountByStartLabel)
 }
 
 // EdgeCountByEndLabelInNamespace preserves the physical end-label counter.
-func (w *WALEngine) EdgeCountByEndLabelInNamespace(namespace, label, edgeType string) (int64, error) {
-	return NamespaceRelationshipCount(w.engine, namespace, edgeType, label, RelationshipCountByEndLabel)
+func (w *WALEngine) EdgeCountByEndLabelInNamespace(ctx context.Context, namespace, label, edgeType string) (int64, error) {
+	return NamespaceRelationshipCount(ctx, w.engine, namespace, edgeType, label, RelationshipCountByEndLabel)
 }
 
 // EdgeCountByTypeInNamespace preserves the namespace relationship counter.
-func (n *NamespacedEngine) EdgeCountByTypeInNamespace(namespace, edgeType string) (int64, error) {
-	return NamespaceRelationshipCount(n.inner, namespace, edgeType, "", RelationshipCountByType)
+func (n *NamespacedEngine) EdgeCountByTypeInNamespace(ctx context.Context, namespace, edgeType string) (int64, error) {
+	return NamespaceRelationshipCount(ctx, n.inner, namespace, edgeType, "", RelationshipCountByType)
 }
 
 // EdgeCountByStartLabelInNamespace preserves the physical start-label counter.
-func (n *NamespacedEngine) EdgeCountByStartLabelInNamespace(namespace, label, edgeType string) (int64, error) {
-	return NamespaceRelationshipCount(n.inner, namespace, edgeType, label, RelationshipCountByStartLabel)
+func (n *NamespacedEngine) EdgeCountByStartLabelInNamespace(ctx context.Context, namespace, label, edgeType string) (int64, error) {
+	return NamespaceRelationshipCount(ctx, n.inner, namespace, edgeType, label, RelationshipCountByStartLabel)
 }
 
 // EdgeCountByEndLabelInNamespace preserves the physical end-label counter.
-func (n *NamespacedEngine) EdgeCountByEndLabelInNamespace(namespace, label, edgeType string) (int64, error) {
-	return NamespaceRelationshipCount(n.inner, namespace, edgeType, label, RelationshipCountByEndLabel)
+func (n *NamespacedEngine) EdgeCountByEndLabelInNamespace(ctx context.Context, namespace, label, edgeType string) (int64, error) {
+	return NamespaceRelationshipCount(ctx, n.inner, namespace, edgeType, label, RelationshipCountByEndLabel)
 }
 
 // EdgeCountByTypeInNamespace preserves the namespace relationship counter.
-func (t *TracedEngine) EdgeCountByTypeInNamespace(namespace, edgeType string) (int64, error) {
-	return NamespaceRelationshipCount(t.Engine, namespace, edgeType, "", RelationshipCountByType)
+func (t *TracedEngine) EdgeCountByTypeInNamespace(ctx context.Context, namespace, edgeType string) (int64, error) {
+	return NamespaceRelationshipCount(ctx, t.Engine, namespace, edgeType, "", RelationshipCountByType)
 }
 
 // EdgeCountByStartLabelInNamespace preserves the physical start-label counter.
-func (t *TracedEngine) EdgeCountByStartLabelInNamespace(namespace, label, edgeType string) (int64, error) {
-	return NamespaceRelationshipCount(t.Engine, namespace, edgeType, label, RelationshipCountByStartLabel)
+func (t *TracedEngine) EdgeCountByStartLabelInNamespace(ctx context.Context, namespace, label, edgeType string) (int64, error) {
+	return NamespaceRelationshipCount(ctx, t.Engine, namespace, edgeType, label, RelationshipCountByStartLabel)
 }
 
 // EdgeCountByEndLabelInNamespace preserves the physical end-label counter.
-func (t *TracedEngine) EdgeCountByEndLabelInNamespace(namespace, label, edgeType string) (int64, error) {
-	return NamespaceRelationshipCount(t.Engine, namespace, edgeType, label, RelationshipCountByEndLabel)
+func (t *TracedEngine) EdgeCountByEndLabelInNamespace(ctx context.Context, namespace, label, edgeType string) (int64, error) {
+	return NamespaceRelationshipCount(ctx, t.Engine, namespace, edgeType, label, RelationshipCountByEndLabel)
 }

@@ -58,11 +58,11 @@ func TestTransactionQuotas(t *testing.T) {
 					err = run("COMMIT")
 				}
 				require.Error(t, err)
-				count, err := engine.NodeCount()
+				count, err := engine.NodeCount(t.Context())
 				require.NoError(t, err)
 				require.Equal(t, tc.count, count, "rejected transaction must persist no partial writes")
 				if tc.name == "edges" {
-					edges, err := engine.EdgeCount()
+					edges, err := engine.EdgeCount(t.Context())
 					require.NoError(t, err)
 					require.EqualValues(t, 1, edges)
 				}
@@ -99,7 +99,7 @@ func TestTransactionQuotasConcurrentCommit(t *testing.T) {
 		}
 	}
 	require.Equal(t, 1, accepted)
-	count, err := engine.NodeCount()
+	count, err := engine.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.EqualValues(t, 1, count)
 }
@@ -132,7 +132,7 @@ func TestTransactionQuotasByteAccounting(t *testing.T) {
 	size, _, _ = manager.GetStorageSize("quota")
 	require.Zero(t, size, "cascade deletes must release node and edge bytes exactly once")
 	require.NoError(t, run("CREATE (:Quota {id: 3})"))
-	count, err := engine.NodeCount()
+	count, err := engine.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.EqualValues(t, 1, count)
 }
@@ -165,7 +165,7 @@ func TestTransactionQuotasPersistedUsage(t *testing.T) {
 	require.NoError(t, err)
 	_, err = NewStorageExecutor(engine).Execute(context.Background(), "CREATE (:Quota)", nil)
 	require.ErrorIs(t, err, multidb.ErrStorageLimitExceeded)
-	count, err := engine.NodeCount()
+	count, err := engine.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.EqualValues(t, 1, count)
 }

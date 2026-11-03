@@ -131,9 +131,9 @@ func TestIssue862RelationshipTypeFiltersAreCaseSensitive(t *testing.T) {
 		require.NoError(t, err)
 		return parsed
 	}
-	upper, err := exec.buildGraphProjection("upper", specs("N", "node"), specs("R", "relationship"), false)
+	upper, err := exec.buildGraphProjection(context.Background(), "upper", specs("N", "node"), specs("R", "relationship"), false)
 	require.NoError(t, err)
-	lower, err := exec.buildGraphProjection("lower", specs("N", "node"), specs("r", "relationship"), false)
+	lower, err := exec.buildGraphProjection(context.Background(), "lower", specs("N", "node"), specs("r", "relationship"), false)
 	require.NoError(t, err)
 	require.Equal(t, 2, upper.RelationshipCount)
 	require.Equal(t, 1, lower.RelationshipCount)
@@ -142,7 +142,7 @@ func TestIssue862RelationshipTypeFiltersAreCaseSensitive(t *testing.T) {
 func TestIssue862ContractNameKeepsLabelCase(t *testing.T) {
 	exec, _ := newTestExecutor(t)
 	for _, label := range []string{"Person", "person"} {
-		parsed, err := exec.parseCreateConstraintContractDDL("CREATE CONSTRAINT FOR (n:" + label + ") REQUIRE { n.id IS UNIQUE }")
+		parsed, err := exec.parseCreateConstraintContractDDL(t.Context(), "CREATE CONSTRAINT FOR (n:"+label+") REQUIRE { n.id IS UNIQUE }")
 		require.NoError(t, err)
 		require.Equal(t, "constraint_"+label+"_contract", parsed.name)
 	}

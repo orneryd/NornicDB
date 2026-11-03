@@ -1,12 +1,13 @@
 package multidb
 
 import (
+	"strings"
+	"testing"
+
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
-	"strings"
-	"testing"
 )
 
 func TestRejectedManagedGrowthNeverReplays(t *testing.T) {
@@ -25,21 +26,21 @@ func TestRejectedManagedGrowthNeverReplays(t *testing.T) {
 			view, err := manager.GetStorage(db)
 			require.NoError(t, err)
 			for _, id := range []storage.NodeID{"a", "b"} {
-				_, err = view.CreateNode(&storage.Node{ID: id})
+				_, err = view.CreateNode(t.Context(), &storage.Node{ID: id})
 				require.NoError(t, err)
 			}
 			if entity == "node" {
-				_, err = view.CreateNode(&storage.Node{ID: "n", Properties: map[string]any{"payload": "small"}})
+				_, err = view.CreateNode(t.Context(), &storage.Node{ID: "n", Properties: map[string]any{"payload": "small"}})
 			} else {
-				err = view.CreateEdge(&storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "LINK", Properties: map[string]any{"payload": "small"}})
+				err = view.CreateEdge(t.Context(), &storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "LINK", Properties: map[string]any{"payload": "small"}})
 			}
 			require.NoError(t, err)
 			before, _, _ := manager.GetStorageSize(db)
 			require.NoError(t, manager.SetDatabaseLimits(t.Context(), db, &Limits{Storage: StorageLimits{MaxBytes: before}}))
 			if entity == "node" {
-				err = view.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "n", Properties: map[string]any{"payload": strings.Repeat("x", 4096)}}})
+				err = view.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: &storage.Node{ID: "n", Properties: map[string]any{"payload": strings.Repeat("x", 4096)}}})
 			} else {
-				err = view.UpdateEdge(storage.EdgeUpdateRequest{After: &storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "LINK", Properties: map[string]any{"payload": strings.Repeat("x", 4096)}}})
+				err = view.UpdateEdge(t.Context(), storage.EdgeUpdateRequest{After: &storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "LINK", Properties: map[string]any{"payload": strings.Repeat("x", 4096)}}})
 			}
 			require.ErrorIs(t, err, ErrStorageLimitExceeded)
 			// Remove the quota before real recovery: absence of the rejected payload
@@ -50,11 +51,11 @@ func TestRejectedManagedGrowthNeverReplays(t *testing.T) {
 			require.NoError(t, err)
 			defer recovered.Close()
 			if entity == "node" {
-				n, e := storage.GetStoredNode(recovered, storage.NodeID(db+":n"))
+				n, e := storage.GetStoredNode(t.Context(), recovered, storage.NodeID(db+":n"))
 				require.NoError(t, e)
 				require.Equal(t, "small", n.Properties["payload"])
 			} else {
-				e, readErr := storage.GetStoredEdge(recovered, storage.EdgeID(db+":e"))
+				e, readErr := storage.GetStoredEdge(t.Context(), recovered, storage.EdgeID(db+":e"))
 				require.NoError(t, readErr)
 				require.Equal(t, "small", e.Properties["payload"])
 			}

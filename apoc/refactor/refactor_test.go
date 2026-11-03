@@ -15,19 +15,22 @@ func TestRenameLabel(t *testing.T) {
 	functions := New(backend)
 
 	// Create nodes with OldLabel
-	node1, _ := backend.CreateNode([]string{"OldLabel", "Other"}, map[string]interface{}{"name": "A"})
-	node2, _ := backend.CreateNode([]string{"OldLabel"}, map[string]interface{}{"name": "B"})
-	backend.CreateNode([]string{"Different"}, map[string]interface{}{"name": "C"})
+	node1, _ := backend.CreateNode(t.Context(), []string{"OldLabel", "Other"}, map[string]interface{}{"name": "A"})
+	node2, _ := backend.CreateNode(t.Context(), []string{"OldLabel"}, map[string]interface{}{"name": "B"})
+	backend.CreateNode(t.Context(), []string{"Different"}, map[string]interface{}{"name": "C"})
 
 	// Rename OldLabel -> NewLabel
-	count := functions.RenameLabel(context.Background(), "OldLabel", "NewLabel")
+	count, apocCallError1 := functions.RenameLabel(context.Background(), "OldLabel", "NewLabel")
+	if apocCallError1 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError1)
+	}
 
 	if count != 2 {
 		t.Errorf("RenameLabel returned %d, expected 2", count)
 	}
 
 	// Verify labels were renamed
-	updated1, _ := backend.GetNode(node1.ID)
+	updated1, _ := backend.GetNode(t.Context(), node1.ID)
 	if !hasLabel(updated1, "NewLabel") {
 		t.Error("Node 1 should have NewLabel")
 	}
@@ -38,7 +41,7 @@ func TestRenameLabel(t *testing.T) {
 		t.Error("Node 1 should still have Other label")
 	}
 
-	updated2, _ := backend.GetNode(node2.ID)
+	updated2, _ := backend.GetNode(t.Context(), node2.ID)
 	if !hasLabel(updated2, "NewLabel") {
 		t.Error("Node 2 should have NewLabel")
 	}
@@ -50,28 +53,31 @@ func TestRenameType(t *testing.T) {
 	functions := New(backend)
 
 	// Create nodes and relationships
-	node1, _ := backend.CreateNode([]string{"Person"}, map[string]interface{}{"name": "A"})
-	node2, _ := backend.CreateNode([]string{"Person"}, map[string]interface{}{"name": "B"})
-	node3, _ := backend.CreateNode([]string{"Person"}, map[string]interface{}{"name": "C"})
+	node1, _ := backend.CreateNode(t.Context(), []string{"Person"}, map[string]interface{}{"name": "A"})
+	node2, _ := backend.CreateNode(t.Context(), []string{"Person"}, map[string]interface{}{"name": "B"})
+	node3, _ := backend.CreateNode(t.Context(), []string{"Person"}, map[string]interface{}{"name": "C"})
 
-	rel1, _ := backend.CreateRelationship(node1.ID, node2.ID, "OLD_TYPE", nil)
-	rel2, _ := backend.CreateRelationship(node2.ID, node3.ID, "OLD_TYPE", nil)
-	backend.CreateRelationship(node1.ID, node3.ID, "DIFFERENT", nil)
+	rel1, _ := backend.CreateRelationship(t.Context(), node1.ID, node2.ID, "OLD_TYPE", nil)
+	rel2, _ := backend.CreateRelationship(t.Context(), node2.ID, node3.ID, "OLD_TYPE", nil)
+	backend.CreateRelationship(t.Context(), node1.ID, node3.ID, "DIFFERENT", nil)
 
 	// Rename OLD_TYPE -> NEW_TYPE
-	count := functions.RenameType(context.Background(), "OLD_TYPE", "NEW_TYPE")
+	count, apocCallError2 := functions.RenameType(context.Background(), "OLD_TYPE", "NEW_TYPE")
+	if apocCallError2 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError2)
+	}
 
 	if count != 2 {
 		t.Errorf("RenameType returned %d, expected 2", count)
 	}
 
 	// Verify types were renamed
-	updated1, _ := backend.GetRelationship(rel1.ID)
+	updated1, _ := backend.GetRelationship(t.Context(), rel1.ID)
 	if updated1.Type != "NEW_TYPE" {
 		t.Errorf("Rel 1 type = %s, expected NEW_TYPE", updated1.Type)
 	}
 
-	updated2, _ := backend.GetRelationship(rel2.ID)
+	updated2, _ := backend.GetRelationship(t.Context(), rel2.ID)
 	if updated2.Type != "NEW_TYPE" {
 		t.Errorf("Rel 2 type = %s, expected NEW_TYPE", updated2.Type)
 	}
@@ -139,17 +145,21 @@ func TestRenamePropertyKernel(t *testing.T) {
 				functions := New(backend)
 
 				// Create nodes with oldProp
-				node1, _ := backend.CreateNode([]string{"Person"}, map[string]interface{}{"oldProp": "value1", "other": "x"})
-				node2, _ := backend.CreateNode([]string{"Person"}, map[string]interface{}{"oldProp": "value2"})
-				backend.CreateNode([]string{"Person"}, map[string]interface{}{"different": "y"})
+				node1, _ := backend.CreateNode(t.Context(), []string{"Person"}, map[string]interface{}{"oldProp": "value1", "other": "x"})
+				node2, _ := backend.CreateNode(t.Context(), []string{"Person"}, map[string]interface{}{"oldProp": "value2"})
+				backend.CreateNode(t.Context(), []string{"Person"}, map[string]interface{}{"different": "y"})
 
 				return func() int {
-						return functions.RenameProperty(context.Background(), "oldProp", "newProp")
+						apocCallValue3, apocCallError3 := functions.RenameProperty(context.Background(), "oldProp", "newProp")
+						if apocCallError3 != nil {
+							t.Fatalf("APOC helper failed: %v", apocCallError3)
+						}
+						return apocCallValue3
 					}, []renamedRecord{
 						{
 							record: "Node 1",
 							load: func() map[string]interface{} {
-								updated, _ := backend.GetNode(node1.ID)
+								updated, _ := backend.GetNode(t.Context(), node1.ID)
 								return updated.Properties
 							},
 							wantNew: "value1",
@@ -158,7 +168,7 @@ func TestRenamePropertyKernel(t *testing.T) {
 						{
 							record: "Node 2",
 							load: func() map[string]interface{} {
-								updated, _ := backend.GetNode(node2.ID)
+								updated, _ := backend.GetNode(t.Context(), node2.ID)
 								return updated.Properties
 							},
 							wantNew: "value2",
@@ -177,21 +187,25 @@ func TestRenamePropertyKernel(t *testing.T) {
 				functions := New(backend)
 
 				// Create nodes and relationships with oldProp
-				node1, _ := backend.CreateNode([]string{"Person"}, nil)
-				node2, _ := backend.CreateNode([]string{"Person"}, nil)
-				node3, _ := backend.CreateNode([]string{"Person"}, nil)
+				node1, _ := backend.CreateNode(t.Context(), []string{"Person"}, nil)
+				node2, _ := backend.CreateNode(t.Context(), []string{"Person"}, nil)
+				node3, _ := backend.CreateNode(t.Context(), []string{"Person"}, nil)
 
-				rel1, _ := backend.CreateRelationship(node1.ID, node2.ID, "KNOWS", map[string]interface{}{"oldProp": "val1"})
-				rel2, _ := backend.CreateRelationship(node2.ID, node3.ID, "KNOWS", map[string]interface{}{"oldProp": "val2", "other": "x"})
-				backend.CreateRelationship(node1.ID, node3.ID, "KNOWS", map[string]interface{}{"different": "y"})
+				rel1, _ := backend.CreateRelationship(t.Context(), node1.ID, node2.ID, "KNOWS", map[string]interface{}{"oldProp": "val1"})
+				rel2, _ := backend.CreateRelationship(t.Context(), node2.ID, node3.ID, "KNOWS", map[string]interface{}{"oldProp": "val2", "other": "x"})
+				backend.CreateRelationship(t.Context(), node1.ID, node3.ID, "KNOWS", map[string]interface{}{"different": "y"})
 
 				return func() int {
-						return functions.RenameRelProperty("oldProp", "newProp")
+						apocCallValue4, apocCallError4 := functions.RenameRelProperty(t.Context(), "oldProp", "newProp")
+						if apocCallError4 != nil {
+							t.Fatalf("APOC helper failed: %v", apocCallError4)
+						}
+						return apocCallValue4
 					}, []renamedRecord{
 						{
 							record: "Rel 1",
 							load: func() map[string]interface{} {
-								updated, _ := backend.GetRelationship(rel1.ID)
+								updated, _ := backend.GetRelationship(t.Context(), rel1.ID)
 								return updated.Properties
 							},
 							wantNew: "val1",
@@ -199,7 +213,7 @@ func TestRenamePropertyKernel(t *testing.T) {
 						{
 							record: "Rel 2",
 							load: func() map[string]interface{} {
-								updated, _ := backend.GetRelationship(rel2.ID)
+								updated, _ := backend.GetRelationship(t.Context(), rel2.ID)
 								return updated.Properties
 							},
 							wantNew: "val2",

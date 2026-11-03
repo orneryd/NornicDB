@@ -52,12 +52,12 @@ func TestBuiltInApocResultsMatchAPOC(t *testing.T) {
 		"apoc.coll.flatten([[1, [2]], [3]])":       []interface{}{int64(1), []interface{}{int64(2)}, int64(3)},
 		"apoc.coll.flatten([[1, [2]], [3]], true)": []interface{}{int64(1), int64(2), int64(3)},
 	} {
-		value, ok, err := exec.evaluateRowValue(expression, nil)
+		value, ok, err := exec.evaluateRowValue(t.Context(), expression, nil)
 		require.NoError(t, err, expression)
 		require.True(t, ok, expression)
 		require.Equal(t, want, value, expression)
 	}
-	_, ok, _ := exec.evaluateRowValue("apoc.coll.flatten([1], true, 3)", nil)
+	_, ok, _ := exec.evaluateRowValue(t.Context(), "apoc.coll.flatten([1], true, 3)", nil)
 	require.False(t, ok)
 	require.Nil(t, exec.evaluateExpressionWithContext(ctx, "apoc.coll.flatten([1], true, 3)", nil, nil))
 }

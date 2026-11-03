@@ -27,7 +27,7 @@ func TestWriteOnlyDatabaseAccessRunsOnlyWrites(t *testing.T) {
 	require.NoError(t, server.privilegesStore.SavePrivilege(ctx, "loader", "nornic", false, true))
 	server.roleEntitlementsStore = auth.NewRoleEntitlementsStore(system)
 	require.NoError(t, server.roleEntitlementsStore.Set(ctx, "loader", []string{"read", "write"}))
-	_, err = users.CreateUser("loader1", "password123", []auth.Role{"loader"})
+	_, err = users.CreateUser(context.Background(), "loader1", "password123", []auth.Role{"loader"})
 	require.NoError(t, err)
 	token := getAuthToken(t, users, "loader1")
 
@@ -75,7 +75,7 @@ func TestHTTPDatabaseSelectionRefusesWritesWithoutWriteAccess(t *testing.T) {
 		require.NoError(t, server.allowlistStore.SaveRoleDatabases(ctx, access.role, []string{"nornic"}))
 		require.NoError(t, server.privilegesStore.SavePrivilege(ctx, access.role, "nornic", access.read, false))
 		require.NoError(t, server.roleEntitlementsStore.Set(ctx, access.role, []string{"read", "write"}))
-		_, err := users.CreateUser(access.role, "password123", []auth.Role{auth.Role(access.role)})
+		_, err := users.CreateUser(context.Background(), access.role, "password123", []auth.Role{auth.Role(access.role)})
 		require.NoError(t, err)
 		token := getAuthToken(t, users, access.role)
 		for _, prefix := range []string{"", "USE nornic ", ":USE nornic\n"} {

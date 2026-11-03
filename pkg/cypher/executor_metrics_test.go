@@ -39,7 +39,7 @@ func TestObserveQuery_NormalPath(t *testing.T) {
 	bag, reg := newCypherMetricsForTest(t)
 	exec.SetCypherMetrics(bag, "")
 
-	_, _ = store.CreateNode(&storage.Node{
+	_, _ = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "n1",
 		Labels: []string{"User"},
 	})

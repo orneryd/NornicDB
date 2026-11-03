@@ -15,19 +15,19 @@ import (
 func TestGH481_OptionalMatchCountGroupsPerOuterRow(t *testing.T) {
 	setup := func(store storage.Engine) {
 		for index := int64(1); index <= 4; index++ {
-			_, err := store.CreateNode(&storage.Node{
+			_, err := store.CreateNode(t.Context(), &storage.Node{
 				ID:         storage.NodeID("n" + string(rune('0'+index))),
 				Labels:     []string{"A"},
 				Properties: map[string]interface{}{"id": index},
 			})
 			require.NoError(t, err)
 		}
-		err := store.CreateEdge(&storage.Edge{
+		err := store.CreateEdge(t.Context(), &storage.Edge{
 			ID: "e1", Type: "NEXT", StartNode: "n1", EndNode: "n2",
 			Properties: map[string]interface{}{"w": int64(10)},
 		})
 		require.NoError(t, err)
-		err = store.CreateEdge(&storage.Edge{
+		err = store.CreateEdge(t.Context(), &storage.Edge{
 			ID: "e2", Type: "NEXT", StartNode: "n2", EndNode: "n3",
 			Properties: map[string]interface{}{"w": int64(20)},
 		})

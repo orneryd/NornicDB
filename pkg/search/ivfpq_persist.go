@@ -165,6 +165,7 @@ func (s *Service) persistIVFPQBackground(vectorPath, hnswPath string) {
 		return
 	}
 	if err := saveIVFPQBundleSnapshot(basePath, idx, mutations); err != nil {
+		s.recordLifetimeOutcome("IVFPQ save", err)
 		logSearchPrintf("⚠️ Background persist: failed to save IVFPQ bundle (%s): %v", basePath, err)
 		return
 	}
@@ -174,9 +175,6 @@ func (s *Service) persistIVFPQBackground(vectorPath, hnswPath string) {
 // seedIDs (pipelineBuildSeeds) are resolved by the caller before pipelineMu,
 // since they read the node metadata under indexMu.
 func (s *Service) getOrBuildIVFPQIndex(ctx context.Context, profile IVFPQProfile, vfs *VectorFileStore, seedIDs []string) (*IVFPQIndex, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	s.ivfpqMu.RLock()
 	if s.servingIVFPQ() != nil && s.servingIVFPQ().compatibleProfile(profile) {
 		idx := s.servingIVFPQ()

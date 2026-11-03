@@ -28,12 +28,12 @@ func TestResidualFlushWaitCancellation(t *testing.T) {
 		})
 	}
 	ack := func(id NodeID) {
-		tx, err := b.BeginTransaction()
+		tx, err := b.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		defer tx.Rollback()
 		require.NoError(t, tx.SetNamespace("test"))
 		require.NoError(t, tx.SetImplicit(true))
-		_, err = tx.CreateNode(&Node{ID: id})
+		_, err = tx.CreateNode(t.Context(), &Node{ID: id})
 		require.NoError(t, err)
 		require.NoError(t, tx.Commit())
 	}
@@ -99,7 +99,9 @@ func TestResidualFlushWaitCancellation(t *testing.T) {
 	// claim generation two; it remains blocked until its physical peer leaves.
 	select {
 	case workerCtx := <-workerWaiting:
-		require.Nil(t, workerCtx, "accepted replay retains its detached context")
+		require.NotNil(t, workerCtx, "accepted replay has an explicit completion owner")
+		require.Nil(t, workerCtx.Done(), "accepted replay remains detached after caller cancellation")
+		require.NoError(t, workerCtx.Err(), "cancelled flush must not cancel acknowledged replay")
 	case <-time.After(2 * time.Second):
 		t.Fatal("existing worker did not retain accepted replay")
 	}
@@ -117,6 +119,6 @@ func TestResidualFlushWaitCancellation(t *testing.T) {
 		t.Fatal("worker did not settle accepted replay after the peer left")
 	}
 	require.True(t, second.IsApplied())
-	_, err = b.GetStoredNode("test:flush-two")
+	_, err = b.GetStoredNode(t.Context(), "test:flush-two")
 	require.NoError(t, err)
 }

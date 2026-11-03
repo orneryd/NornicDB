@@ -597,10 +597,10 @@ func TestCompositeFanOutPreservesSourceIdentityAndPairRouting(t *testing.T) {
 	for _, database := range []string{"one", "two"} {
 		engine := newTestMemoryEngine(t)
 		for _, id := range []NodeID{same, target} {
-			_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"db": database}})
+			_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"db": database}})
 			require.NoError(t, err)
 		}
-		require.NoError(t, engine.CreateEdge(&Edge{ID: relation, StartNode: same, EndNode: target, Type: "REL"}))
+		require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: relation, StartNode: same, EndNode: target, Type: "REL"}))
 		engines[database] = engine
 		counted[database] = &compositePairCountProbe{Engine: engine}
 	}
@@ -762,7 +762,7 @@ func (p *compositeProjectedProbe) StreamNodesByLabelProjected(ctx context.Contex
 // the preflight, before any supported source visits a node.
 func TestCompositeStreamNodesByLabelProjectedRejectsUnsupportedSourceBeforeFirstVisit(t *testing.T) {
 	supported := &compositeProjectedProbe{MemoryEngine: newTestMemoryEngine(t)}
-	_, err := supported.MemoryEngine.CreateNode(&Node{ID: NodeID(prefixTestID("projected-unsupported")), Labels: []string{"Doc"}})
+	_, err := supported.MemoryEngine.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("projected-unsupported")), Labels: []string{"Doc"}})
 	require.NoError(t, err)
 	unsupported := struct{ Engine }{newTestMemoryEngine(t)}
 

@@ -41,11 +41,11 @@ type updateNodeErrEngine struct {
 	err error
 }
 
-func (e *updateNodeErrEngine) UpdateNode(updateRequest storage.NodeUpdateRequest) error {
+func (e *updateNodeErrEngine) UpdateNode(ctx context.Context, updateRequest storage.NodeUpdateRequest) error {
 	if e.err != nil {
 		return e.err
 	}
-	return e.Engine.UpdateNode(updateRequest)
+	return e.Engine.UpdateNode(ctx, updateRequest)
 }
 
 type getNodeErrEngine struct {
@@ -53,11 +53,11 @@ type getNodeErrEngine struct {
 	err error
 }
 
-func (e *getNodeErrEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
+func (e *getNodeErrEngine) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	if e.err != nil {
 		return nil, e.err
 	}
-	return e.Engine.GetNode(id)
+	return e.Engine.GetNode(ctx, id)
 }
 
 func TestApplyInlineEmbeddingMutations_Branches(t *testing.T) {
@@ -92,7 +92,7 @@ func TestApplyInlineEmbeddingMutations_Branches(t *testing.T) {
 
 	t.Run("chunk_error_surfaces", func(t *testing.T) {
 		store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "inline_embed_chunk_err")
-		n, err := store.CreateNode(&storage.Node{ID: storage.NodeID("n1"), Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "hello"}})
+		n, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID("n1"), Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "hello"}})
 		require.NoError(t, err)
 		exec := NewStorageExecutor(store)
 		exec.SetEmbedder(&queryEmbedderStub{chunkFn: func(string, int, int) ([]string, error) {
@@ -105,7 +105,7 @@ func TestApplyInlineEmbeddingMutations_Branches(t *testing.T) {
 
 	t.Run("embed_error_surfaces", func(t *testing.T) {
 		store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "inline_embed_embed_err")
-		n, err := store.CreateNode(&storage.Node{ID: storage.NodeID("n1"), Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "hello"}})
+		n, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID("n1"), Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "hello"}})
 		require.NoError(t, err)
 		exec := NewStorageExecutor(store)
 		exec.SetEmbedder(&queryEmbedderStub{embedFn: func(context.Context, string) ([]float32, error) {
@@ -118,7 +118,7 @@ func TestApplyInlineEmbeddingMutations_Branches(t *testing.T) {
 
 	t.Run("empty_embed_vector_surfaces", func(t *testing.T) {
 		store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "inline_embed_empty_vector")
-		n, err := store.CreateNode(&storage.Node{ID: storage.NodeID("n1"), Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "hello"}})
+		n, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID("n1"), Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "hello"}})
 		require.NoError(t, err)
 		exec := NewStorageExecutor(store)
 		exec.SetEmbedder(&queryEmbedderStub{embedFn: func(context.Context, string) ([]float32, error) {
@@ -132,7 +132,7 @@ func TestApplyInlineEmbeddingMutations_Branches(t *testing.T) {
 	t.Run("update_node_error_surfaces", func(t *testing.T) {
 		boom := errors.New("update boom")
 		base := storage.NewNamespacedEngine(newTestMemoryEngine(t), "inline_embed_update_err")
-		n, err := base.CreateNode(&storage.Node{ID: storage.NodeID("n1"), Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "hello"}})
+		n, err := base.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID("n1"), Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "hello"}})
 		require.NoError(t, err)
 		exec := NewStorageExecutor(&updateNodeErrEngine{Engine: base, err: boom})
 		exec.SetEmbedder(&queryEmbedderStub{})
@@ -142,7 +142,7 @@ func TestApplyInlineEmbeddingMutations_Branches(t *testing.T) {
 
 	t.Run("typed_embedder_uses_document_input_type", func(t *testing.T) {
 		store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "inline_embed_document_type")
-		n, err := store.CreateNode(&storage.Node{ID: storage.NodeID("n1"), Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "hello"}})
+		n, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID("n1"), Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "hello"}})
 		require.NoError(t, err)
 		var gotInputTypes []string
 		exec := NewStorageExecutor(store)
@@ -174,19 +174,19 @@ func TestExecutorConfusableAndEmbeddingSuffixHelpers(t *testing.T) {
 	require.False(t, ok)
 
 	// With a following RETURN, EMBEDDING remains a possible projected variable.
-	stripped, found := stripWithEmbeddingSuffix("CREATE (n) WITH EMBEDDING RETURN n")
+	stripped, found := stripWithEmbeddingSuffix(t.Context(), "CREATE (n) WITH EMBEDDING RETURN n")
 	require.False(t, found)
 	require.Equal(t, "CREATE (n) WITH EMBEDDING RETURN n", stripped)
 
-	stripped, found = stripWithEmbeddingSuffix("CREATE (n) WITH EMBEDDING")
+	stripped, found = stripWithEmbeddingSuffix(t.Context(), "CREATE (n) WITH EMBEDDING")
 	require.True(t, found)
 	require.Equal(t, "CREATE (n)", stripped)
 
-	stripped, found = stripWithEmbeddingSuffix("WITH EMBEDDING RETURN n")
+	stripped, found = stripWithEmbeddingSuffix(t.Context(), "WITH EMBEDDING RETURN n")
 	require.False(t, found)
 	require.Equal(t, "WITH EMBEDDING RETURN n", stripped)
 
-	stripped, found = stripWithEmbeddingSuffix("CREATE (n)")
+	stripped, found = stripWithEmbeddingSuffix(t.Context(), "CREATE (n)")
 	require.False(t, found)
 	require.Equal(t, "CREATE (n)", stripped)
 }

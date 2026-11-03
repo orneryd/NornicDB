@@ -1,10 +1,12 @@
 package multidb
 
 import (
+	"context"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -26,15 +28,15 @@ func TestManagedBulkPreservesReplacementContract(t *testing.T) {
 						engine, err := manager.GetStorage(db)
 						require.NoError(t, err)
 						for _, id := range []storage.NodeID{"a", "b", "n"} {
-							_, err = engine.CreateNode(&storage.Node{ID: id, Properties: map[string]any{"payload": strings.Repeat("x", 2048)}})
+							_, err = engine.CreateNode(t.Context(), &storage.Node{ID: id, Properties: map[string]any{"payload": strings.Repeat("x", 2048)}})
 							require.NoError(t, err)
 						}
-						require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "LINK", Properties: map[string]any{"payload": strings.Repeat("x", 2048)}}))
+						require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "LINK", Properties: map[string]any{"payload": strings.Repeat("x", 2048)}}))
 						if hidden {
 							if entity == "node" {
-								require.NoError(t, base.SetManualSuppression(storage.StoredEntityNodeKind, string(db+":n"), true))
+								require.NoError(t, base.SetManualSuppression(context.Background(), storage.StoredEntityNodeKind, string(db+":n"), true))
 							} else {
-								require.NoError(t, base.SetManualSuppression(storage.StoredEntityEdgeKind, string(db+":e"), true))
+								require.NoError(t, base.SetManualSuppression(context.Background(), storage.StoredEntityEdgeKind, string(db+":e"), true))
 							}
 						}
 						before, _, _ := manager.GetStorageSize(db)
@@ -44,39 +46,39 @@ func TestManagedBulkPreservesReplacementContract(t *testing.T) {
 						}
 						require.NoError(t, manager.SetDatabaseLimits(t.Context(), db, limits))
 						if entity == "node" {
-							err = engine.BulkCreateNodes([]*storage.Node{{ID: "n", Properties: map[string]any{"payload": "small"}}})
+							err = engine.BulkCreateNodes(t.Context(), []*storage.Node{{ID: "n", Properties: map[string]any{"payload": "small"}}})
 						} else {
-							err = engine.BulkCreateEdges([]*storage.Edge{{ID: "e", StartNode: "a", EndNode: "b", Type: "LINK", Properties: map[string]any{"payload": "small"}}})
+							err = engine.BulkCreateEdges(t.Context(), []*storage.Edge{{ID: "e", StartNode: "a", EndNode: "b", Type: "LINK", Properties: map[string]any{"payload": "small"}}})
 						}
 						// Released create identity is physical: a different final
 						// image cannot overwrite even a hidden same-ID edge.
 						require.ErrorIs(t, err, storage.ErrAlreadyExists)
 						if hidden && entity == "edge" {
-							prior, readErr := storage.GetStoredEdge(engine, "e")
+							prior, readErr := storage.GetStoredEdge(t.Context(), engine, "e")
 							require.NoError(t, readErr)
-							require.NoError(t, engine.BulkCreateEdges([]*storage.Edge{prior}), "the identical hidden image remains an idempotent no-op at quota")
+							require.NoError(t, engine.BulkCreateEdges(t.Context(), []*storage.Edge{prior}), "the identical hidden image remains an idempotent no-op at quota")
 						}
 						for replay := 0; replay < 2; replay++ {
 							if replay == 1 {
-								require.NoError(t, base.FlushWriteBehind(nil))
+								require.NoError(t, base.FlushWriteBehind(context.Background()))
 							}
 							nodes, edges, err := manager.calculateStorageSizeFromEngine(engine)
 							require.NoError(t, err)
 							after, _, _ := manager.GetStorageSize(db)
 							require.Equal(t, nodes+edges, after)
-							nc, err := engine.NodeCount()
+							nc, err := engine.NodeCount(t.Context())
 							require.NoError(t, err)
 							require.EqualValues(t, 3, nc)
-							ec, err := engine.EdgeCount()
+							ec, err := engine.EdgeCount(t.Context())
 							require.NoError(t, err)
 							require.EqualValues(t, 1, ec)
 							want := strings.Repeat("x", 2048)
 							if entity == "node" {
-								node, err := storage.GetStoredNode(engine, "n")
+								node, err := storage.GetStoredNode(t.Context(), engine, "n")
 								require.NoError(t, err)
 								require.Equal(t, want, node.Properties["payload"])
 							} else {
-								edge, err := storage.GetStoredEdge(engine, "e")
+								edge, err := storage.GetStoredEdge(t.Context(), engine, "e")
 								require.NoError(t, err)
 								require.Equal(t, want, edge.Properties["payload"])
 							}

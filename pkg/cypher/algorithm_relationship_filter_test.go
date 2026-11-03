@@ -12,7 +12,7 @@ func algorithmRelationshipFixture(t *testing.T, types ...string) *StorageExecuto
 	t.Helper()
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "filtered_algo")
 	for _, id := range []string{"a", "b", "c", "d"} {
-		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{"P"}, Properties: map[string]interface{}{"name": id}})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(id), Labels: []string{"P"}, Properties: map[string]interface{}{"name": id}})
 		require.NoError(t, err)
 	}
 	for _, kind := range types {
@@ -21,7 +21,7 @@ func algorithmRelationshipFixture(t *testing.T, types ...string) *StorageExecuto
 			pairs = [][2]string{{"a", "c"}, {"c", "d"}}
 		}
 		for _, pair := range pairs {
-			require.NoError(t, store.CreateEdge(&storage.Edge{ID: storage.EdgeID(kind + pair[0] + pair[1]), StartNode: storage.NodeID(pair[0]), EndNode: storage.NodeID(pair[1]), Type: kind}))
+			require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: storage.EdgeID(kind + pair[0] + pair[1]), StartNode: storage.NodeID(pair[0]), EndNode: storage.NodeID(pair[1]), Type: kind}))
 		}
 	}
 	return NewStorageExecutor(store)
@@ -143,7 +143,7 @@ func TestAlgorithmRelationshipFilterForwardsStorageEvents(t *testing.T) {
 	require.NoError(t, storage.SubscribeEvents(reader, storage.EventHandlers{
 		NodeCreated: func(node *storage.Node) { created = append(created, node.ID) },
 	}))
-	_, err := store.CreateNode(&storage.Node{ID: "event-node", Labels: []string{"P"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "event-node", Labels: []string{"P"}})
 	require.NoError(t, err)
 	require.Equal(t, []storage.NodeID{"event-node"}, created)
 }

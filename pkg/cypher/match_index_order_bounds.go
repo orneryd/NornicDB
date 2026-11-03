@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"strings"
@@ -26,22 +27,22 @@ type impliedBound struct {
 // only let an ordered index scan skip values that can't match
 // (VisitPropertyIndexGroupsInRange); the caller still evaluates where on
 // every row (#939).
-func impliedPropertyBounds(variable, property, where string, params map[string]interface{}) storage.PropertyIndexBounds {
-	lower, upper := impliedBounds(variable, property, where, params)
+func impliedPropertyBounds(ctx context.Context, variable, property, where string, params map[string]interface{}) storage.PropertyIndexBounds {
+	lower, upper := impliedBounds(ctx, variable, property, where, params)
 	return storage.PropertyIndexBounds{
 		Lower: lower.value, HasLower: lower.set, LowerInclusive: lower.inclusive,
 		Upper: upper.value, HasUpper: upper.set, UpperInclusive: upper.inclusive,
 	}
 }
 
-func impliedBounds(variable, property, expression string, params map[string]interface{}) (lower, upper impliedBound) {
+func impliedBounds(ctx context.Context, variable, property, expression string, params map[string]interface{}) (lower, upper impliedBound) {
 	expression = unwrapOuterParens(strings.TrimSpace(expression))
 	if expression == "" {
 		return lower, upper
 	}
 	if disjuncts := splitTopLevelOrTerms(expression); len(disjuncts) > 1 {
 		for index, disjunct := range disjuncts {
-			disjunctLower, disjunctUpper := impliedBounds(variable, property, disjunct, params)
+			disjunctLower, disjunctUpper := impliedBounds(ctx, variable, property, disjunct, params)
 			if index == 0 {
 				lower, upper = disjunctLower, disjunctUpper
 				continue
@@ -51,9 +52,9 @@ func impliedBounds(variable, property, expression string, params map[string]inte
 		}
 		return lower, upper
 	}
-	if conjuncts := splitTopLevelAndConjuncts(expression); len(conjuncts) > 1 {
+	if conjuncts := splitTopLevelAndConjuncts(ctx, expression); len(conjuncts) > 1 {
 		for _, conjunct := range conjuncts {
-			conjunctLower, conjunctUpper := impliedBounds(variable, property, conjunct, params)
+			conjunctLower, conjunctUpper := impliedBounds(ctx, variable, property, conjunct, params)
 			lower = tighterBound(lower, conjunctLower, false)
 			upper = tighterBound(upper, conjunctUpper, true)
 		}

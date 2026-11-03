@@ -16,7 +16,10 @@ type mvccEntityRead struct {
 // readEntityAtWithView is the single point-read admission/reader-registration
 // owner. A typed method expression selects the entity decoder; all loads keep
 // the caller's physical snapshot and return its exact value/error pair.
-func readEntityAtWithView[I ~string, T Node | Edge, P any](b *BadgerEngine, id I, version MVCCVersion, policy P, view func(func(*badger.Txn) error) error, load func(*BadgerEngine, *badger.Txn, I, MVCCVersion, P) (*T, error)) (*T, error) {
+func readEntityAtWithView[I ~string, T Node | Edge, P any](ctx context.Context, b *BadgerEngine, id I, version MVCCVersion, policy P, view func(func(*badger.Txn) error) error, load func(*BadgerEngine, *badger.Txn, I, MVCCVersion, P) (*T, error)) (*T, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	namespace, _, _ := ParseDatabasePrefix(string(id))
 	if err := b.pendingNamespaceConflict(namespace); err != nil {
 		return nil, err
@@ -28,6 +31,9 @@ func readEntityAtWithView[I ~string, T Node | Edge, P any](b *BadgerEngine, id I
 	defer deregister()
 	var entity *T
 	err = view(func(txn *badger.Txn) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		var loadErr error
 		entity, loadErr = load(b, txn, id, version, policy)
 		return loadErr

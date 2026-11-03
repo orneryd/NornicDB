@@ -16,7 +16,7 @@ func TestTypedNumericBoltBoundaries(t *testing.T) {
 	store := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "numeric_wire")
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	for _, input := range listinputs.NumericInputs() {
-		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(input.Name), Labels: []string{"NumericWireProperty"}, Properties: map[string]interface{}{"name": input.Name, "xs": input.Property}})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(input.Name), Labels: []string{"NumericWireProperty"}, Properties: map[string]interface{}{"name": input.Name, "xs": input.Property}})
 		require.NoError(t, err)
 	}
 	_, port := startBoltIntegrationServerWithExplicitTx(t, store)

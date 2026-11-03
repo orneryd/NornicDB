@@ -25,19 +25,19 @@ func TestManagedEntityRegistryPreservesObserverAndAdmission(t *testing.T) {
 	require.NoError(t, b.InitializeStoredEntityObserver("test", func(StoredEntitySnapshot) (StoredEntityObserver, error) {
 		return func(StoredEntityPublication) (func(), error) { return func() { observed.Add(1) }, nil }, nil
 	}, nil))
-	_, err := b.CreateNode(&Node{ID: "test:a"})
+	_, err := b.CreateNode(t.Context(), &Node{ID: "test:a"})
 	require.NoError(t, err)
 	require.Equal(t, int32(1), observed.Load())
 	wrapped := NewNamespacedEngine(b, "test")
 	_, _, err = PrepareEntityChanges(context.Background(), wrapped, "test", []Operation{{Type: OpDeleteNode, NodeID: "test:a"}}, CommitModeDirect)
 	require.ErrorIs(t, err, rejected)
-	_, readErr := b.GetNode("test:a")
+	_, readErr := b.GetNode(t.Context(), "test:a")
 	require.NoError(t, readErr, "registered rejection cannot fall back to native apply")
 	_, _, err = PrepareEntityChanges(context.Background(), wrapped, "other", nil, CommitModeDirect)
 	require.NoError(t, err)
 	require.Equal(t, int32(1), admission.Load())
 	b.RegisterManagedEntityPreparer("test", callback, nil)
-	require.NoError(t, b.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"value": "after"}}}))
+	require.NoError(t, b.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"value": "after"}}}))
 	require.Equal(t, int32(2), observed.Load(), "preparer registration preserves installed observer")
 }
 
@@ -125,7 +125,7 @@ func (r *registryUsageRuntime) ResetManagedEntityUsage(ManagedEntityUsageTransit
 
 func TestManagedEntityRuntimeResetRetainsBindingUntilCatalogRetirement(t *testing.T) {
 	b := newTestEngine(t)
-	_, err := b.CreateNode(&Node{ID: "test:a"})
+	_, err := b.CreateNode(t.Context(), &Node{ID: "test:a"})
 	require.NoError(t, err)
 	runtime := &registryUsageRuntime{policy: "keep-policy"}
 	require.Same(t, runtime, b.GetOrAttachManagedEntityRuntime("test", runtime))
@@ -168,7 +168,7 @@ func TestManagedEntityPartialPrefixPublishesExactDeletion(t *testing.T) {
 		t.Run(map[bool]string{false: "apply", true: "reject"}[reject], func(t *testing.T) {
 			b := newTestEngine(t)
 			for _, id := range []NodeID{"test:part-a", "test:keep"} {
-				_, err := b.CreateNode(&Node{ID: id, Properties: map[string]interface{}{"body": "stored"}})
+				_, err := b.CreateNode(t.Context(), &Node{ID: id, Properties: map[string]interface{}{"body": "stored"}})
 				require.NoError(t, err)
 			}
 			var prepared, applied int
@@ -192,15 +192,15 @@ func TestManagedEntityPartialPrefixPublishesExactDeletion(t *testing.T) {
 			if reject {
 				require.ErrorIs(t, err, rejected)
 				require.Zero(t, applied)
-				_, err = b.GetNode("test:part-a")
+				_, err = b.GetNode(t.Context(), "test:part-a")
 				require.NoError(t, err)
 			} else {
 				require.NoError(t, err)
 				require.Equal(t, 1, applied)
-				_, err = b.GetNode("test:part-a")
+				_, err = b.GetNode(t.Context(), "test:part-a")
 				require.ErrorIs(t, err, ErrNotFound)
 			}
-			_, err = b.GetNode("test:keep")
+			_, err = b.GetNode(t.Context(), "test:keep")
 			require.NoError(t, err)
 		})
 	}

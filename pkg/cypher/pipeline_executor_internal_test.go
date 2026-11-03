@@ -108,7 +108,7 @@ func TestPipelineSimpleNodeReadPlan_HandlesBoundedLabelStream(t *testing.T) {
 	store := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = store.Close() })
 	for index := 0; index < 20; index++ {
-		_, err := store.CreateNode(&storage.Node{
+		_, err := store.CreateNode(t.Context(), &storage.Node{
 			ID:         storage.NodeID("nornic:" + string(rune('a'+index))),
 			Labels:     []string{"Person"},
 			Properties: map[string]any{"name": index},

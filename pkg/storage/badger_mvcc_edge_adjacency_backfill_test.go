@@ -27,11 +27,11 @@ func TestBadgerStartupRepairsLegacyEdgeAdjacency(t *testing.T) {
 	startID := NodeID("repair:owner")
 	endID := NodeID("repair:item")
 	edgeID := EdgeID("repair:relationship")
-	require.NoError(t, engine.BulkCreateNodes([]*Node{
+	require.NoError(t, engine.BulkCreateNodes(t.Context(), []*Node{
 		{ID: startID, Labels: []string{"Owner"}},
 		{ID: endID, Labels: []string{"Item"}},
 	}))
-	require.NoError(t, engine.BulkCreateEdges([]*Edge{{
+	require.NoError(t, engine.BulkCreateEdges(t.Context(), []*Edge{{
 		ID: edgeID, StartNode: startID, EndNode: endID, Type: "HAS",
 	}}))
 	head, err := engine.loadEdgeMVCCHead(edgeID)
@@ -79,7 +79,7 @@ func TestBadgerStartupRepairsLegacyEdgeAdjacency(t *testing.T) {
 	version, err := engine.readSchemaVersion()
 	require.NoError(t, err)
 	require.Equal(t, storageVersionCurrent, version)
-	reader, err := engine.BeginTransaction()
+	reader, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, reader.SetNamespace("repair"))
 	t.Cleanup(func() {
@@ -127,8 +127,8 @@ func TestV3MigrationPreservesLegacyEdgeHistory(t *testing.T) {
 			})
 			startID, endID := tc.start, tc.end
 			edgeID := tc.edge
-			require.NoError(t, engine.BulkCreateNodes([]*Node{{ID: startID}, {ID: endID}}))
-			require.NoError(t, engine.BulkCreateEdges([]*Edge{{ID: edgeID, StartNode: startID, EndNode: endID, Type: "HAS", Properties: tc.initial}}))
+			require.NoError(t, engine.BulkCreateNodes(t.Context(), []*Node{{ID: startID}, {ID: endID}}))
+			require.NoError(t, engine.BulkCreateEdges(t.Context(), []*Edge{{ID: edgeID, StartNode: startID, EndNode: endID, Type: "HAS", Properties: tc.initial}}))
 			created, err := engine.loadEdgeMVCCHead(edgeID)
 			require.NoError(t, err)
 			require.NoError(t, engine.db.Update(func(txn *badger.Txn) error {
@@ -146,9 +146,9 @@ func TestV3MigrationPreservesLegacyEdgeHistory(t *testing.T) {
 				return txn.Delete(in)
 			}))
 			if tc.deleted {
-				require.NoError(t, engine.DeleteEdge(edgeID))
+				require.NoError(t, engine.DeleteEdge(t.Context(), edgeID))
 			} else {
-				require.NoError(t, engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: edgeID, StartNode: startID, EndNode: endID, Type: "HAS", Properties: tc.replacement}}))
+				require.NoError(t, engine.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: edgeID, StartNode: startID, EndNode: endID, Type: "HAS", Properties: tc.replacement}}))
 			}
 			require.NoError(t, engine.writeSchemaVersion(storageVersionPropKeyDictV2))
 			require.NoError(t, engine.Close())
@@ -190,12 +190,12 @@ func TestRepairArchivedEdgeAdjacencyToleratesLegacyVersionKeys(t *testing.T) {
 	startID := NodeID("legacy:owner")
 	endID := NodeID("legacy:item")
 	edgeID := EdgeID("legacy:relationship")
-	require.NoError(t, engine.BulkCreateNodes([]*Node{
+	require.NoError(t, engine.BulkCreateNodes(t.Context(), []*Node{
 		{ID: startID, Labels: []string{"Owner"}},
 		{ID: endID, Labels: []string{"Item"}},
 	}))
 	edge := &Edge{ID: edgeID, StartNode: startID, EndNode: endID, Type: "HAS"}
-	require.NoError(t, engine.BulkCreateEdges([]*Edge{edge}))
+	require.NoError(t, engine.BulkCreateEdges(t.Context(), []*Edge{edge}))
 	head, err := engine.loadEdgeMVCCHead(edgeID)
 	require.NoError(t, err)
 
@@ -230,7 +230,7 @@ func TestRepairArchivedEdgeAdjacencyToleratesLegacyVersionKeys(t *testing.T) {
 	}))
 
 	// The archived-adjacency repair must accept the legacy key.
-	require.NoError(t, engine.repairArchivedEdgeAdjacency())
+	require.NoError(t, engine.repairArchivedEdgeAdjacency(context.Background()))
 
 	// The runtime version scan must yield the legacy entry with its version.
 	found := false

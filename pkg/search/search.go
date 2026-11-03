@@ -98,7 +98,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"hash/fnv"
 	"log/slog"
 	"os"
@@ -113,7 +112,9 @@ import (
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/envutil"
 	"github.com/orneryd/nornicdb/pkg/gpu"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/search/stemmer"
@@ -915,8 +916,6 @@ type Service struct {
 	hnswVectorsChanging atomic.Bool
 	hnswGeneration      atomic.Uint64
 	hnswMaintOnce       sync.Once
-	hnswMaintCancel     context.CancelFunc
-	hnswMaintDone       chan struct{}
 	hnswRebuildInFlight atomic.Bool
 	hnswLastRebuildUnix atomic.Int64
 	// hnswRebuildOverlay records only mutations that race an active rebuild.
@@ -996,25 +995,22 @@ type Service struct {
 	// the eager build for this database; the FIRST read path (Search,
 	// VectorSearchCandidates, db.index.vector.queryNodes, Bolt search,
 	// GraphQL search resolver, gRPC) calls EnsureWarm which fires lazyTrigger
-	// exactly once via warmOnce. Subsequent readers wait on warmDone (which
-	// is closed when the triggered build completes — success or failure).
+	// exactly once through the warm completion; every reader joins that same
+	// completion (success or failure).
 	//
 	// The trigger fires the build in the owner's long-lived context (via
 	// the WarmFunc callback the DB wires at construction time), NOT the
 	// caller's request context. Caller ctx only governs the wait — a
 	// timed-out request returns ctx.Err() but the build continues so the
 	// next request finds the service warm.
-	warmingLazy  atomic.Bool
-	warmOnce     sync.Once
-	warmDone     chan struct{}
-	warmDoneOnce sync.Once    // guards every close(s.warmDone) site
-	warmFunc     atomic.Value // WarmFunc; called by EnsureWarm to request a build
-	warmInFlight atomic.Bool
+	warmingLazy atomic.Bool
+	warm        lifecycle.OnceCompletion // the one lazy warm build
+	warmFunc    atomic.Value             // WarmFunc; called by EnsureWarm to request a build
 
 	// Debounced persist: after IndexNode/RemoveNode we schedule a write to disk after an idle delay.
 	persistMu        sync.Mutex
 	persistRunMu     sync.Mutex
-	persistTimer     *time.Timer
+	persistTimer     *lifecycle.OwnedTimer
 	buildInProgress  atomic.Bool
 	persistEnabled   atomic.Bool
 	buildPhase       atomic.Value // string
@@ -1054,7 +1050,7 @@ type Service struct {
 	strategyTransitionMu         sync.Mutex
 	strategyTransitionInProgress bool
 	strategyTransitionPending    strategyMode
-	strategyTransitionTimer      *time.Timer
+	strategyTransitionTimer      *lifecycle.OwnedTimer
 	strategyTransitionSeq        uint64
 	strategyTransitionDeltas     []strategyDeltaMutation
 	strategyTransitionStarts     uint64
@@ -1070,7 +1066,8 @@ type Service struct {
 	boundDurationFuse  observability.BoundLatencyObserver
 
 	lifecycleCtx    context.Context
-	lifecycleCancel context.CancelFunc
+	lifecycleCancel context.CancelFunc // alias of lifetimeWork.Cancel, not another cancellation source
+	lifetimeWork    lifecycle.WorkLifetime
 
 	// relationships holds relationship search's indexes when it is enabled
 	// (#1065); nil otherwise.
@@ -1246,7 +1243,6 @@ func NewService(engine storage.Engine, dimensions int, options *ServiceOptions) 
 		analyzer = NewStemmedTextAnalyzer(*options.BM25Stemmer)
 	}
 	fulltextIndex := NewFulltextIndexV2WithAnalyzer(analyzer)
-	lifecycleCtx, lifecycleCancel := context.WithCancel(context.Background())
 	var resultCache *searchResultCache
 	defaults := DefaultServiceOptions("")
 	cacheEntries := defaults.SearchResultCacheEntries
@@ -1288,9 +1284,10 @@ func NewService(engine storage.Engine, dimensions int, options *ServiceOptions) 
 		hnswRebuildOverlay:         newANNMutationOverlay(),
 		resultCache:                resultCache,
 		cacheNamespace:             cacheNamespace,
-		lifecycleCtx:               lifecycleCtx,
-		lifecycleCancel:            lifecycleCancel,
 	}
+	svc.lifecycleCtx = svc.lifetimeWork.Context()
+	svc.lifetimeWork.OnStop(svc.signalStop)
+	svc.lifecycleCancel = svc.lifetimeWork.Cancel
 	svc.setFulltext(fulltextIndex)
 	svc.completePolicy.Store(defaultCompleteContinuationPolicy())
 	if options != nil {
@@ -1309,7 +1306,6 @@ func NewService(engine storage.Engine, dimensions int, options *ServiceOptions) 
 	svc.bm25Enabled.Store(true)
 	svc.vectorEnabled.Store(true)
 	svc.runtimeStrategyTransitions.Store(envutil.GetBoolStrict("NORNICDB_VECTOR_RUNTIME_STRATEGY_TRANSITIONS_ENABLED", false))
-	svc.warmDone = make(chan struct{})
 	return svc
 }
 
@@ -1379,7 +1375,7 @@ func (s *Service) RuntimeStrategyTransitionsEnabled() bool {
 // build in the owner's long-lived context. The DB wires this at service
 // creation time so the build is rooted in db.buildCtx (cancelled on DB
 // close), independent of any caller's request context. Implementations
-// MUST be idempotent — EnsureWarm uses sync.Once to fire it at most once
+// MUST be idempotent — EnsureWarm uses its completion owner to fire it at most once
 // per service lifetime, but the implementation is also free to be a no-op
 // for already-warmed services as a defensive guard.
 type WarmFunc func()
@@ -1410,54 +1406,42 @@ func (s *Service) SetLazyWarming(lazy bool, fn WarmFunc) {
 //   - When warmingLazy=false (eager) or the service is already fully built,
 //     EnsureWarm returns immediately.
 func (s *Service) EnsureWarm(ctx context.Context) error {
+	if err := s.lifecycleCtx.Err(); err != nil {
+		return err
+	}
 	if !s.warmingLazy.Load() || s.ready.Load() {
 		return nil
 	}
-	s.warmOnce.Do(func() {
-		// Run the trigger in a goroutine so it doesn't block on the
-		// caller; the build completes regardless of whether the caller
-		// is still waiting.
-		fn, _ := s.warmFunc.Load().(WarmFunc)
-		if fn == nil {
-			// No trigger wired — close immediately so waiters return.
-			// IsReady() is still false but at least we don't deadlock.
-			s.logPrintf("⚠️  Search: lazy trigger requested but WarmFunc is nil — closing warm channel")
-			s.closeWarmDone()
-			return
-		}
-		s.warmInFlight.Store(true)
-		go func() {
-			defer s.warmInFlight.Store(false)
-			defer s.closeWarmDone()
-			fn()
-		}()
-	})
-	if ctx == nil {
-		ctx = context.Background()
+	done := s.warm.Done()
+	select {
+	case <-done:
+		return nil
+	default:
+	}
+	// Each first reader enrolls one joiner as service work. The first to run
+	// executes the trigger; the others join that same completion.
+	if !s.RunBackgroundTask(func() { s.warm.Do(s.runWarm) }) {
+		return context.Canceled
 	}
 	select {
-	case <-s.warmDone:
+	case <-done:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	}
 }
 
-// MarkWarmDone signals waiters that the lazy-triggered build has finished.
-// Used by callers that drive the build externally (e.g. the DB owner that
-// wired the WarmFunc) so they can clear the lazy state once the service is
-// ready. Idempotent — safe to interleave with EnsureWarm's goroutine close.
-func (s *Service) MarkWarmDone() {
-	s.closeWarmDone()
-}
-
-// closeWarmDone closes s.warmDone exactly once across all paths
-// (EnsureWarm's goroutine, the nil-WarmFunc fallback, and MarkWarmDone).
-// Without this guard, two paths racing to close would panic.
-func (s *Service) closeWarmDone() {
-	s.warmDoneOnce.Do(func() {
-		close(s.warmDone)
-	})
+// runWarm is the lazy warm build: the DB's WarmFunc in the service's own
+// accepted work, not the caller's request.
+func (s *Service) runWarm() error {
+	fn, _ := s.warmFunc.Load().(WarmFunc)
+	if fn == nil {
+		// No trigger wired: complete so waiters return. IsReady() stays false.
+		s.logPrintf("⚠️  Search: lazy trigger requested but WarmFunc is nil — completing warm")
+		return nil
+	}
+	fn()
+	return nil
 }
 
 // MarkReadyDisabled marks the service ready without doing any build work.
@@ -1713,7 +1697,7 @@ func (s *Service) replaceClusterIndex(gpuManager *gpu.Manager, numClusters int) 
 	defer s.mu.Unlock()
 
 	// A closed service installs no cluster index again.
-	if s.lifecycleCtx != nil && s.lifecycleCtx.Err() != nil {
+	if s.lifecycleCtx.Err() != nil {
 		return false
 	}
 	// If clustering is already enabled, only rebuild when switching CPU<->GPU.
@@ -1882,19 +1866,22 @@ func (s *Service) reconcileClusterPopulation(targetCount int) {
 // be skipped silently and the default non-clustered vector strategy is used.
 // Returns error only if clustering is not enabled or fails unexpectedly.
 func (s *Service) TriggerClustering(ctx context.Context) error {
+	ctx, finishRead, err := s.beginRead(ctx)
+	if err != nil {
+		return err
+	}
+	defer finishRead()
 	s.buildMu.RLock()
 	defer s.buildMu.RUnlock()
 	return s.triggerClustering(ctx, nil)
 }
 
 // triggerClustering runs with the base operation already owned, either by
-// BuildIndexes or the public TriggerClustering wrapper. lexicalReady, when
+// BuildIndexes or the public TriggerClustering wrapper. Both provide a nonnil
+// owned context; nil normalization belongs to their entry boundaries. lexicalReady, when
 // set, makes the served fulltext available before the generation's lexical
 // state is derived (see buildClusterGeneration).
 func (s *Service) triggerClustering(ctx context.Context, lexicalReady func() error) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if !s.kmeansInProgress.CompareAndSwap(false, true) {
 		s.logPrintf("[K-MEANS] ⏭️  SKIPPED | reason=already_running")
 		return nil
@@ -1984,9 +1971,6 @@ func (s *Service) triggerClustering(ctx context.Context, lexicalReady func() err
 // it available first (a persistent build drops BM25 from memory while the
 // graphs are built and reloads it here).
 func (s *Service) buildClusterGeneration(ctx context.Context, clusterIndex *gpu.ClusterIndex, clustering *gpu.Clustering, persisted *ivfHNSWManifest, lexicalReady func() error) (*clusterGeneration, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	var graphs map[int]*HNSWIndex
 	if envutil.GetBoolStrict("NORNICDB_VECTOR_IVF_HNSW_ENABLED", false) {
 		built, err := s.buildClusterHNSWIndexes(ctx, clustering, persisted)
@@ -2258,7 +2242,7 @@ func (s *Service) setPersistenceEnabledNow(enabled bool) {
 // Closed reports whether Close was called (its background workers stopped
 // and its file-backed vector store released).
 func (s *Service) Closed() bool {
-	return s != nil && s.lifecycleCtx != nil && s.lifecycleCtx.Err() != nil
+	return s != nil && s.lifecycleCtx.Err() != nil
 }
 
 // Close stops search-service background workers and releases file-backed vector resources.
@@ -2268,19 +2252,23 @@ func (s *Service) Close() error {
 	if s == nil {
 		return nil
 	}
-	if s.lifecycleCancel != nil {
-		s.lifecycleCancel()
-	}
-	relationshipErr := s.joinRelationshipIndex()
+	s.lifetimeWork.BeginStop(s.closeResources)
+	return s.lifetimeWork.JoinStopped()
+}
+
+// signalStop is the service's stop signal, run when its owner is cancelled:
+// it retires construction and stops the producers' timers so accepted work
+// can return.
+func (s *Service) signalStop() error {
 	s.pauseHNSWBuild() // Service shutdown permanently retires construction.
 	s.continuationMu.Lock()
-	if s.continuationRegistry != nil && s.continuationOwned {
-		s.continuationRegistry.Close()
-	}
+	continuation, owned := s.continuationRegistry, s.continuationOwned
 	s.continuationRegistry = nil
 	s.continuationOwned = false
 	s.continuationMu.Unlock()
-	s.stopHNSWMaintenance()
+	if continuation != nil && owned {
+		continuation.Close()
+	}
 
 	s.persistMu.Lock()
 	if s.persistTimer != nil {
@@ -2296,6 +2284,13 @@ func (s *Service) Close() error {
 	}
 	s.strategyTransitionPending = strategyModeUnknown
 	s.strategyTransitionMu.Unlock()
+	return nil
+}
+
+// closeResources is the owner's dispose: it runs once, after every accepted
+// read, build and timer callback actually returned.
+func (s *Service) closeResources() error {
+	relationshipErr := s.joinRelationshipIndex()
 
 	// Join the exclusive base build without excluding derived operations.
 	// indexMu below serializes retirement with their final publications.
@@ -2317,7 +2312,7 @@ func (s *Service) Close() error {
 	s.cleanupPopulationArtifacts()
 	s.persistRunMu.Unlock()
 	s.publishClusterServing()
-	return relationshipErr
+	return errors.Join(relationshipErr, s.lifetimeWork.Err())
 }
 
 // schedulePersist schedules a write of BM25 and vector indexes to disk after an idle delay.
@@ -2350,7 +2345,7 @@ func (s *Service) schedulePersist() {
 		s.persistTimer.Stop()
 		s.persistTimer = nil
 	}
-	s.persistTimer = time.AfterFunc(delay, func() {
+	s.persistTimer = s.AfterFunc(delay, func() {
 		s.persistMu.Lock()
 		s.persistTimer = nil
 		s.persistMu.Unlock()
@@ -2414,6 +2409,7 @@ func (s *Service) persistBaseIndexes() error {
 				persistErr = errors.Join(persistErr, fmt.Errorf("sync vector file store: %w", err))
 			}
 			if err := vfs.Save(); err != nil {
+				s.recordLifetimeOutcome("vector store save", err)
 				s.logPrintf("⚠️ Background persist: failed to save vector file store to %s: %v", vPath, err)
 				persistErr = errors.Join(persistErr, fmt.Errorf("save vector file store: %w", err))
 			} else {
@@ -2432,9 +2428,6 @@ func (s *Service) runPersist() {
 }
 
 func (s *Service) runPersistWithContext(ctx context.Context) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if !s.persistEnabled.Load() {
 		return
 	}
@@ -2517,6 +2510,7 @@ func (s *Service) persistBM25Background(fulltextPath string) {
 	}
 	s.logPrintf("📇 Persist: saving BM25 to %s...", fulltextPath)
 	if err := s.fulltext().Save(fulltextPath); err != nil {
+		s.recordLifetimeOutcome("BM25 save", err)
 		s.logPrintf("⚠️ Background persist: failed to save BM25 index to %s: %v", fulltextPath, err)
 		return
 	}
@@ -2533,8 +2527,9 @@ func (s *Service) persistVectorStoreBackground(vectorPath string, vfs *VectorFil
 	}
 	s.persistVectorQueryMetadata(vfs)
 	s.logPrintf("📇 Persist: syncing %s.vec and saving %s.meta...", vectorPath, vectorPath)
-	_ = vfs.Sync()
+	s.recordLifetimeOutcome("vector store sync", vfs.Sync())
 	if err := vfs.Save(); err != nil {
+		s.recordLifetimeOutcome("vector store save", err)
 		s.logPrintf("⚠️ Background persist: failed to save vector file store to %s: %v", vectorPath, err)
 		return
 	}
@@ -2568,6 +2563,7 @@ func (s *Service) persistHNSWBackground(hnswPath string) {
 		return
 	}
 	if err := idx.Save(hnswPath); err != nil {
+		s.recordLifetimeOutcome("HNSW save", err)
 		s.logPrintf("⚠️ Background persist: failed to save HNSW index to %s: %v", hnswPath, err)
 		return
 	}
@@ -2587,9 +2583,6 @@ func applyHNSWMutationSnapshot(index *HNSWIndex, pending annMutationOverlaySnaps
 }
 
 func (s *Service) persistIVFHNSWBackground(ctx context.Context, hnswPath string) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	// When IVF-HNSW is the strategy, persist per-cluster HNSW and centroids (same dir as hnsw, in hnsw_ivf/).
 	if hnswPath == "" {
 		return
@@ -2608,6 +2601,7 @@ func (s *Service) persistIVFHNSWBackground(ctx context.Context, hnswPath string)
 		return
 	}
 	if err := saveIVFHNSWSnapshots(ctx, hnswPath, save.graphs); err != nil {
+		s.recordLifetimeOutcome("IVF-HNSW save", err)
 		s.logPrintf("⚠️ Background persist: failed to save IVF-HNSW clusters to %s: %v", hnswPath, err)
 		return
 	}
@@ -2914,21 +2908,22 @@ func (s *Service) maybeAutoSetVectorDimensions(dimensions int) {
 // IndexNode adds a node to all search indexes.
 // All embeddings are stored in ChunkEmbeddings (even single chunk = array of 1).
 func (s *Service) IndexNode(node *storage.Node) error {
+	ctx := s.LifetimeContext()
 	// A payload write for rebuilds and offline sinks; live writers use
 	// RefreshNode (TestLiveIndexWritersRefreshFromStorage). Population and
 	// checkpoint restoration must not be overtaken by a live mutation; their
 	// snapshots may contain older node state. During a build the write is
 	// handed to the build (build_write_queue.go).
-	if queued, err := s.readLockOrQueue(deferredIndexWrite{node: node}); queued || err != nil {
+	if queued, err := s.readLockOrQueue(ctx, deferredIndexWrite{node: node}); queued || err != nil {
 		return err
 	}
 	defer s.buildMu.RUnlock()
-	return s.indexNodeOwned(node, nil)
+	return s.indexNodeOwned(ctx, node, nil)
 }
 
 // indexNodeOwned is IndexNode for a caller holding buildMu (read or write).
 // current, when set, is the temporal decision made at the call.
-func (s *Service) indexNodeOwned(node *storage.Node, current *bool) error {
+func (s *Service) indexNodeOwned(ctx context.Context, node *storage.Node, current *bool) error {
 	// Per-DB master switches: when both indexes are off, IndexNode is a full
 	// no-op — the database has no search and never will until a flag flip
 	// triggers ResetSearchService. When one is off, indexNodeLocked still
@@ -2939,21 +2934,28 @@ func (s *Service) indexNodeOwned(node *storage.Node, current *bool) error {
 	if !bm25On && !vecOn {
 		return nil
 	}
+	shouldIndex := false
+	if current != nil {
+		shouldIndex = *current
+	} else {
+		var err error
+		shouldIndex, err = s.shouldIndexNode(ctx, node)
+		if err != nil {
+			return err
+		}
+	}
 	if !s.buildInProgress.Load() {
 		defer s.schedulePersist()
 		if s.resultCache != nil {
 			s.resultCache.Invalidate()
 		}
 	}
-	s.maybeAutoSetVectorDimensions(firstVectorDimensions(node))
+	if shouldIndex {
+		s.maybeAutoSetVectorDimensions(firstVectorDimensions(node))
+	}
 
 	s.indexMu.Lock()
-	var err error
-	if current == nil {
-		err = s.indexNodeLocked(node, false)
-	} else {
-		err = s.indexNodeAsLocked(node, false, *current, true)
-	}
+	err := s.indexNodeAsLocked(node, false, shouldIndex, true)
 	s.indexMu.Unlock()
 	if err == nil && !s.buildInProgress.Load() {
 		s.scheduleStrategyTransitionCheck()
@@ -3151,7 +3153,7 @@ func (s *Service) replaceVectorFileStoreLocked(store *VectorFileStore) {
 		return
 	}
 	if s.vectorFileStore != nil {
-		_ = s.vectorFileStore.Close()
+		s.recordLifetimeOutcome("vector store close", s.vectorFileStore.Close())
 	}
 	s.vectorFileStore = store
 }
@@ -3170,17 +3172,15 @@ func (s *Service) lastWriteTime() time.Time {
 	return time.Time{}
 }
 
-func (s *Service) shouldIndexNode(node *storage.Node) (bool, error) {
+func (s *Service) shouldIndexNode(ctx context.Context, node *storage.Node) (bool, error) {
 	if node == nil {
 		return false, nil
 	}
-	provider, ok := s.engine.(interface {
-		IsCurrentTemporalNode(node *storage.Node, asOf time.Time) (bool, error)
-	})
+	provider, ok := s.engine.(storage.TemporalCurrentNodeEngine)
 	if !ok {
 		return true, nil
 	}
-	return provider.IsCurrentTemporalNode(node, time.Now().UTC())
+	return provider.IsCurrentTemporalNode(ctx, node, time.Now().UTC())
 }
 
 // indexNodeLocked does the work of IndexNode. Caller must hold s.indexMu.
@@ -3216,16 +3216,12 @@ func (s *Service) checkEmbeddingDimensions(node *storage.Node) error {
 // caller's write it is not rejected for an embedding whose dimensions differ
 // from the index's: the indexer logs and skips that vector and indexes the
 // rest of the node, so one bad stored embedding cannot fail the whole build.
-func (s *Service) indexStoredNodeLocked(node *storage.Node, skipFulltext bool) error {
-	shouldIndex, err := s.shouldIndexNode(node)
-	if err != nil {
-		return err
-	}
-	return s.indexNodeAsLocked(node, skipFulltext, shouldIndex, false)
+func (s *Service) indexStoredNodeLocked(node *storage.Node, skipFulltext, current bool) error {
+	return s.indexNodeAsLocked(node, skipFulltext, current, false)
 }
 
-func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
-	shouldIndex, err := s.shouldIndexNode(node)
+func (s *Service) indexNodeLocked(ctx context.Context, node *storage.Node, skipFulltext bool) error {
+	shouldIndex, err := s.shouldIndexNode(ctx, node)
 	if err != nil {
 		return err
 	}
@@ -3575,7 +3571,7 @@ func (s *Service) removeNodeEntriesLocked(nodeIDStr string, removeFulltext bool)
 // writers use RefreshNode (TestLiveIndexWritersRefreshFromStorage).
 func (s *Service) RemoveNode(nodeID storage.NodeID) error {
 	// Like IndexNode: during a build the removal is handed to the build.
-	if queued, err := s.readLockOrQueue(deferredIndexWrite{nodeID: string(nodeID)}); queued || err != nil {
+	if queued, err := s.readLockOrQueue(s.LifetimeContext(), deferredIndexWrite{nodeID: string(nodeID)}); queued || err != nil {
 		return err
 	}
 	defer s.buildMu.RUnlock()
@@ -3588,12 +3584,12 @@ func (s *Service) RemoveNode(nodeID storage.NodeID) error {
 // snapshots may contain older node state. During a build the write is handed to
 // the build (build_write_queue.go), which installs it only if the reservation
 // is still current when its turn comes.
-func (s *Service) applyReservedNodeIndex(node *storage.Node, mutation NodeMutation) error {
+func (s *Service) applyReservedNodeIndex(ctx context.Context, node *storage.Node, mutation NodeMutation) error {
 	applyMutation := mutation.mutation
 	if node == nil || applyMutation.id != node.ID {
 		return nil
 	}
-	if queued, err := s.readLockOrQueue(deferredIndexWrite{node: node, valid: func() bool {
+	if queued, err := s.readLockOrQueue(ctx, deferredIndexWrite{node: node, valid: func() bool {
 		return claimReservedIndexMutation(applyMutation)
 	}}); queued || err != nil {
 		if err != nil {
@@ -3602,14 +3598,14 @@ func (s *Service) applyReservedNodeIndex(node *storage.Node, mutation NodeMutati
 		return err
 	}
 	defer s.buildMu.RUnlock()
-	return applyReservedIndexMutation(applyMutation, func() error { return s.indexNodeOwned(node, nil) })
+	return applyReservedIndexMutation(applyMutation, func() error { return s.indexNodeOwned(ctx, node, nil) })
 }
 
 // applyReservedNodeRemoval is applyReservedNodeIndex for a removal: during a
 // build the removal is handed to the build.
 func (s *Service) applyReservedNodeRemoval(mutation NodeMutation) error {
 	applyMutation := mutation.mutation
-	if queued, err := s.readLockOrQueue(deferredIndexWrite{nodeID: string(applyMutation.id), valid: func() bool {
+	if queued, err := s.readLockOrQueue(s.LifetimeContext(), deferredIndexWrite{nodeID: string(applyMutation.id), valid: func() bool {
 		return claimReservedIndexMutation(applyMutation)
 	}}); queued || err != nil {
 		if err != nil {
@@ -3658,7 +3654,7 @@ func (s *Service) IndexEdge(edge *storage.Edge) error {
 	// Like node writes: the explicit build's relationship stream applies a
 	// snapshot of stored edges, so during a build a live edge write is handed
 	// to the build, which applies it after the stream's copy.
-	if queued, err := s.readLockOrQueue(deferredIndexWrite{edge: edge}); queued || err != nil {
+	if queued, err := s.readLockOrQueue(s.LifetimeContext(), deferredIndexWrite{edge: edge}); queued || err != nil {
 		return err
 	}
 	defer s.buildMu.RUnlock()
@@ -3673,7 +3669,7 @@ func (s *Service) IndexEdge(edge *storage.Edge) error {
 func (s *Service) applyReservedEdgeIndex(edge *storage.Edge, mutation EdgeMutation) error {
 	s.updateRelationshipWithMutation(deferredIndexWrite{edge: edge, relationship: true}, mutation)
 	applyMutation := mutation.mutation
-	if queued, err := s.readLockOrQueue(deferredIndexWrite{edge: edge, valid: func() bool {
+	if queued, err := s.readLockOrQueue(s.LifetimeContext(), deferredIndexWrite{edge: edge, valid: func() bool {
 		return claimReservedIndexMutation(applyMutation)
 	}}); queued || err != nil {
 		if err != nil {
@@ -3689,7 +3685,7 @@ func (s *Service) applyReservedEdgeIndex(edge *storage.Edge, mutation EdgeMutati
 func (s *Service) applyReservedEdgeRemoval(mutation EdgeMutation) error {
 	applyMutation := mutation.mutation
 	s.updateRelationshipWithMutation(deferredIndexWrite{edgeID: string(applyMutation.id), relationship: true}, mutation)
-	if queued, err := s.readLockOrQueue(deferredIndexWrite{edgeID: string(applyMutation.id), valid: func() bool {
+	if queued, err := s.readLockOrQueue(s.LifetimeContext(), deferredIndexWrite{edgeID: string(applyMutation.id), valid: func() bool {
 		return claimReservedIndexMutation(applyMutation)
 	}}); queued || err != nil {
 		if err != nil {
@@ -3801,7 +3797,7 @@ func (s *Service) RemoveEdge(edgeID storage.EdgeID) error {
 	s.RemoveRelationship(edgeID)
 	// Like node writes (see IndexEdge): during a build the removal is handed
 	// to the build, so its relationship stream cannot re-add the edge.
-	if queued, err := s.readLockOrQueue(deferredIndexWrite{edgeID: string(edgeID)}); queued || err != nil {
+	if queued, err := s.readLockOrQueue(s.LifetimeContext(), deferredIndexWrite{edgeID: string(edgeID)}); queued || err != nil {
 		return err
 	}
 	defer s.buildMu.RUnlock()
@@ -3935,8 +3931,8 @@ func (s *Service) openBuildSnapshot(ctx context.Context) (storage.ReadSnapshotVi
 	if err != nil {
 		return nil, func() {}, err
 	}
-	var once sync.Once
-	return snapshot, func() { once.Do(snapshot.Close) }, nil
+	var once lifecycle.OnceCompletion
+	return snapshot, func() { once.Run(snapshot.Close) }, nil
 }
 
 // buildNodeIterator is the node source of the build: its snapshot, or the
@@ -3991,7 +3987,7 @@ func (s *Service) handleOrphanedEmbedding(ctx context.Context, nodeIDStr string,
 		return true // already logged and refreshed this request
 	}
 	s.logPrintf("[search] orphaned embedding detected, removing from indexes: nodeID=%s", nodeIDStr)
-	if removeErr := s.RefreshNode(storage.NodeID(nodeIDStr)); removeErr != nil {
+	if removeErr := s.RefreshNode(ctx, storage.NodeID(nodeIDStr)); removeErr != nil {
 		s.logPrintf("[search] failed to remove orphaned embedding for nodeID=%s: %v", nodeIDStr, removeErr)
 	}
 	if seenOrphans != nil {
@@ -4011,19 +4007,11 @@ type NodeIterator interface {
 // if both load with count > 0 (and semver format version matches), the full iteration
 // is skipped. Otherwise iterates over storage and saves both indexes at the end when paths are set.
 func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
-	if ctx == nil {
-		ctx = context.Background()
+	ctx, finishRead, err := s.beginRead(ctx)
+	if err != nil {
+		return err
 	}
-	if s.lifecycleCtx != nil {
-		if err := s.lifecycleCtx.Err(); err != nil {
-			return err
-		}
-		buildCtx, cancel := context.WithCancel(ctx)
-		stop := context.AfterFunc(s.lifecycleCtx, cancel)
-		defer cancel()
-		defer stop()
-		ctx = buildCtx
-	}
+	defer finishRead()
 	// The build reads its baseline (nodes, relationships) through one storage
 	// snapshot, opened after the queue: a write whose search call ran live
 	// before the queue opened committed before the snapshot, which therefore
@@ -4092,7 +4080,9 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 		interval := time.Duration(sec) * time.Second
 		ticker := time.NewTicker(interval)
 		stop := make(chan struct{})
+		done := make(chan struct{})
 		go func() {
+			defer close(done)
 			for {
 				select {
 				case <-ticker.C:
@@ -4108,8 +4098,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 				}
 			}
 		}()
-		defer close(stop)
-		defer ticker.Stop()
+		defer func() { close(stop); ticker.Stop(); <-done }()
 	}
 
 	// Clear cache once for the whole build so IndexNode/RemoveNode don't clear per node.
@@ -4131,7 +4120,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 		return fmt.Errorf("search: vector disk storage requires index persistence and a configured vector index path")
 	}
 	var storageNodeCount int64
-	if n, err := s.engine.NodeCount(); err == nil {
+	if n, err := s.engine.NodeCount(ctx); err == nil {
 		storageNodeCount = n
 		if n > 0 {
 			s.buildTotalNodes.Store(n)
@@ -4455,10 +4444,9 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 			if len(batch) == 0 {
 				return nil
 			}
-			s.adoptBuildBatchDimensions(batch)
 			filtered := make([]*storage.Node, 0, len(batch))
 			for _, n := range batch {
-				shouldIndex, err := s.shouldIndexNode(n)
+				shouldIndex, err := s.shouldIndexNode(ctx, n)
 				if err != nil {
 					return err
 				}
@@ -4466,6 +4454,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 					filtered = append(filtered, n)
 				}
 			}
+			s.adoptBuildBatchDimensions(filtered)
 			if s.bm25MemoryMaxBytes > 0 || s.vectorMemoryMaxBytes > 0 || s.metadataMemoryMaxBytes > 0 {
 				s.indexMu.Lock()
 				defer s.indexMu.Unlock()
@@ -4473,7 +4462,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 					s.ensureVectorFileStore()
 				}
 				for _, node := range filtered {
-					if err := s.indexStoredNodeLocked(node, false); err != nil {
+					if err := s.indexStoredNodeLocked(node, false, true); err != nil {
 						return err
 					}
 				}
@@ -4511,7 +4500,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 			}
 			s.indexMu.Lock()
 			for _, n := range filtered {
-				if err := s.indexStoredNodeLocked(n, true); err != nil {
+				if err := s.indexStoredNodeLocked(n, true, true); err != nil {
 					s.indexMu.Unlock()
 					return err
 				}
@@ -4593,10 +4582,9 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 		if len(batch) == 0 {
 			return nil
 		}
-		s.adoptBuildBatchDimensions(batch)
 		filtered := make([]*storage.Node, 0, len(batch))
 		for _, n := range batch {
-			shouldIndex, err := s.shouldIndexNode(n)
+			shouldIndex, err := s.shouldIndexNode(ctx, n)
 			if err != nil {
 				return err
 			}
@@ -4604,6 +4592,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 				filtered = append(filtered, n)
 			}
 		}
+		s.adoptBuildBatchDimensions(filtered)
 		if !skipFulltextRebuild {
 			entries := make([]FulltextBatchEntry, 0, len(filtered))
 			for _, n := range filtered {
@@ -4634,7 +4623,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 		}
 		s.indexMu.Lock()
 		for _, n := range filtered {
-			if err := s.indexStoredNodeLocked(n, true); err != nil {
+			if err := s.indexStoredNodeLocked(n, true, true); err != nil {
 				s.indexMu.Unlock()
 				return err
 			}
@@ -4644,7 +4633,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 		s.buildProcessed.Store(int64(count))
 		return nil
 	}
-	err := storage.StreamNodesWithFallback(ctx, s.engine, 1000, func(node *storage.Node) error {
+	err = storage.StreamNodesWithFallback(ctx, s.engine, 1000, func(node *storage.Node) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -4767,9 +4756,6 @@ func (s *Service) finishBuildWithFinalPersist(ctx context.Context) {
 // cluster generation's lexical state is derived (a persistent build drops BM25
 // from memory during warmup).
 func (s *Service) warmupVectorPipeline(ctx context.Context, lexicalReady func() error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	s.hnswVectorsChanging.Store(false)
 	if !s.vectorEnabled.Load() {
 		s.logPrintf("🔍 Vector search disabled — skipping ANN warmup")
@@ -4928,6 +4914,11 @@ func (s *Service) tryRestoreClusteredWarmupFromDisk(ctx context.Context, cluster
 //
 // Returns a SearchResponse with ranked results and metadata about the search method used.
 func (s *Service) Search(ctx context.Context, query string, embedding []float32, opts *SearchOptions) (resp *SearchResponse, err error) {
+	ctx, finishRead, err := s.beginRead(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer finishRead()
 	start := time.Now()
 	// Plan 04-05-05: observe requests_total + candidates_rows at the
 	// single Search chokepoint so all internal call paths (vector-only,
@@ -5301,6 +5292,11 @@ type SearchCandidate struct {
 // with automatic strategy selection. HNSW is the default; CPU brute-force is
 // only selected automatically when NORNICDB_VECTOR_CPU_BRUTE_MAX_N is set above zero.
 func (s *Service) VectorSearchCandidates(ctx context.Context, embedding []float32, opts *SearchOptions) ([]SearchCandidate, error) {
+	ctx, finishRead, err := s.beginRead(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer finishRead()
 	if err := s.EnsureWarm(ctx); err != nil {
 		return nil, err
 	}
@@ -5877,9 +5873,6 @@ func collapseIndexResultsByNodeIDSlow(results []indexResult) []indexResult {
 //   - CPU brute-force only when NORNICDB_VECTOR_CPU_BRUTE_MAX_N is set above zero
 //   - Global HNSW by default when clustering is not active
 func (s *Service) getOrCreateVectorPipeline(ctx context.Context) (*VectorSearchPipeline, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -6041,7 +6034,7 @@ func (s *Service) scheduleDebouncedStrategyTransition(target strategyMode) {
 	if s.strategyTransitionTimer != nil {
 		_ = s.strategyTransitionTimer.Stop()
 	}
-	s.strategyTransitionTimer = time.AfterFunc(debounceDelay, func() {
+	s.strategyTransitionTimer = s.AfterFunc(debounceDelay, func() {
 		s.launchScheduledStrategyTransition()
 	})
 }
@@ -6060,7 +6053,11 @@ func (s *Service) launchScheduledStrategyTransition() {
 	s.strategyTransitionDeltas = s.strategyTransitionDeltas[:0]
 	s.strategyTransitionMu.Unlock()
 
-	go s.runStrategyTransition(target)
+	if !s.RunBackgroundTask(func() { s.runStrategyTransition(target) }) {
+		s.strategyTransitionMu.Lock()
+		s.strategyTransitionInProgress = false
+		s.strategyTransitionMu.Unlock()
+	}
 }
 
 func (s *Service) runStrategyTransition(target strategyMode) {
@@ -6703,11 +6700,11 @@ func envDurationSec(key string, fallbackSec int) time.Duration {
 	return time.Duration(sec) * time.Second
 }
 
-func (s *Service) getNodeWithoutEmbeddings(id storage.NodeID) (*storage.Node, error) {
+func (s *Service) getNodeWithoutEmbeddings(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	if reader, ok := s.engine.(storage.NodeWithoutEmbeddingsReader); ok {
-		return reader.GetNodeWithoutEmbeddings(id)
+		return reader.GetNodeWithoutEmbeddings(ctx, id)
 	}
-	return s.engine.GetNode(id)
+	return s.engine.GetNode(ctx, id)
 }
 
 func (s *Service) batchGetNodesWithoutEmbeddings(ctx context.Context, ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
@@ -6725,7 +6722,7 @@ func (s *Service) batchGetNodesWithoutEmbeddings(ctx context.Context, ids []stor
 	}
 	nodes := make(map[storage.NodeID]*storage.Node, len(ids))
 	for _, id := range ids {
-		node, err := s.getNodeWithoutEmbeddings(id)
+		node, err := s.getNodeWithoutEmbeddings(ctx, id)
 		if err != nil {
 			if errors.Is(err, storage.ErrNotFound) {
 				continue
@@ -6761,7 +6758,7 @@ func (s *Service) filterCandidatesByType(ctx context.Context, candidates []Searc
 
 	filtered := make([]SearchCandidate, 0, len(candidates))
 	for _, cand := range candidates {
-		node, err := s.getNodeWithoutEmbeddings(storage.NodeID(cand.ID))
+		node, err := s.getNodeWithoutEmbeddings(ctx, storage.NodeID(cand.ID))
 		if err != nil {
 			if s.handleOrphanedEmbedding(ctx, cand.ID, err, seenOrphans) {
 				continue
@@ -6975,7 +6972,7 @@ func (s *Service) applyMMR(ctx context.Context, results []rrfResult, queryEmbedd
 	candidates := make([]docWithEmbed, 0, len(results))
 	for _, r := range results {
 		// Get embedding from storage
-		node, err := s.engine.GetNode(storage.NodeID(r.ID))
+		node, err := s.engine.GetNode(ctx, storage.NodeID(r.ID))
 		if err != nil {
 			if s.handleOrphanedEmbedding(ctx, r.ID, err, seenOrphans) {
 				continue
@@ -7085,7 +7082,7 @@ func (s *Service) applyStage2Rerank(ctx context.Context, query string, results [
 			candidates = append(candidates, candidate)
 			continue
 		}
-		node, err := s.getNodeWithoutEmbeddings(storage.NodeID(r.ID))
+		node, err := s.getNodeWithoutEmbeddings(ctx, storage.NodeID(r.ID))
 		if err != nil {
 			_ = s.handleOrphanedEmbedding(ctx, r.ID, err, seenOrphans)
 			candidates = append(candidates, candidate)
@@ -7096,7 +7093,7 @@ func (s *Service) applyStage2Rerank(ctx context.Context, query string, results [
 			continue
 		}
 
-		candidate.Content = s.rerankCandidateContent(node, r, query, maxDocumentChars)
+		candidate.Content = s.rerankCandidateContent(ctx, node, r, query, maxDocumentChars)
 		if candidate.Content != "" {
 			newCandidates++
 		}
@@ -7176,33 +7173,47 @@ func (s *Service) SetReranker(r Reranker) {
 
 // RerankerName returns the configured Stage-2 reranker name, or an empty string.
 func (s *Service) RerankerName() string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.reranker == nil {
+	_, release, err := s.beginRead(context.Background())
+	if err != nil {
 		return ""
 	}
-	return s.reranker.Name()
+	defer release()
+	s.mu.RLock()
+	reranker := s.reranker
+	s.mu.RUnlock()
+	if reranker == nil {
+		return ""
+	}
+	return reranker.Name()
 }
 
 // CrossEncoderAvailable returns true if a cross-encoder reranker is configured and available.
 func (s *Service) CrossEncoderAvailable(ctx context.Context) bool {
+	ctx, release, err := s.beginRead(ctx)
+	if err != nil {
+		return false
+	}
+	defer release()
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.reranker == nil {
+	reranker := s.reranker
+	s.mu.RUnlock()
+	if _, ok := reranker.(*CrossEncoder); !ok {
 		return false
 	}
-	_, ok := s.reranker.(*CrossEncoder)
-	if !ok {
-		return false
-	}
-	return s.reranker.IsAvailable(ctx)
+	return reranker.IsAvailable(ctx)
 }
 
 // RerankerAvailable returns true if Stage-2 reranking is configured and available.
 func (s *Service) RerankerAvailable(ctx context.Context) bool {
+	ctx, release, err := s.beginRead(ctx)
+	if err != nil {
+		return false
+	}
+	defer release()
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.reranker != nil && s.reranker.IsAvailable(ctx)
+	reranker := s.reranker
+	s.mu.RUnlock()
+	return reranker != nil && reranker.IsAvailable(ctx)
 }
 
 // RerankCandidates applies the configured Stage-2 reranker to caller-provided candidates.
@@ -7211,6 +7222,11 @@ func (s *Service) RerankCandidates(ctx context.Context, query string, candidates
 	if s == nil {
 		return nil, localizedError(localization.SearchServiceUnavailable(), nil)
 	}
+	ctx, finishRead, err := s.beginRead(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer finishRead()
 	if opts == nil {
 		defaults := defaultSearchOptionsValue()
 		opts = &defaults
@@ -7782,7 +7798,7 @@ func (s *Service) filterByProperties(ctx context.Context, results []indexResult,
 	}
 	var filtered []indexResult
 	for _, r := range results {
-		node, err := s.getNodeWithoutEmbeddings(storage.NodeID(r.ID))
+		node, err := s.getNodeWithoutEmbeddings(ctx, storage.NodeID(r.ID))
 		if err != nil {
 			if s.handleOrphanedEmbedding(ctx, r.ID, err, seenOrphans) {
 				continue
@@ -7879,7 +7895,7 @@ func (s *Service) filterByType(ctx context.Context, results []indexResult, types
 
 	var filtered []indexResult
 	for _, r := range results {
-		node, err := s.getNodeWithoutEmbeddings(storage.NodeID(r.ID))
+		node, err := s.getNodeWithoutEmbeddings(ctx, storage.NodeID(r.ID))
 		if err != nil {
 			if s.handleOrphanedEmbedding(ctx, r.ID, err, seenOrphans) {
 				continue

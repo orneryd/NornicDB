@@ -41,7 +41,7 @@ func TestStatementBoltUseAndFabric(t *testing.T) {
 	} {
 		require.NoError(t, stores.privileges.SavePrivilege(ctx, "r2loader", database, access.Read, access.Write))
 	}
-	_, err = users.CreateUser("r2loader", "password123", []auth.Role{"r2loader"})
+	_, err = users.CreateUser(context.Background(), "r2loader", "password123", []auth.Role{"r2loader"})
 	require.NoError(t, err)
 	config := fixture.config
 	config.Port = 0

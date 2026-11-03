@@ -136,13 +136,13 @@ func TestWatcherPlugin_Lifecycle(t *testing.T) {
 	p := &WatcherPlugin{}
 
 	// Initialize
-	ctx := heimdall.SubsystemContext{
+	ctx := heimdall.SubsystemContext{SubsystemHost: heimdall.SubsystemHost{
 		Config: heimdall.Config{
 			Model:       "test-model",
 			MaxTokens:   512,
 			Temperature: 0.1,
 		},
-	}
+	}}
 	err := p.Initialize(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, heimdall.StatusReady, p.Status())
@@ -199,13 +199,13 @@ func TestWatcherPlugin_Actions(t *testing.T) {
 func TestWatcherPlugin_HelpAction(t *testing.T) {
 	p := &WatcherPlugin{}
 
-	ctx := heimdall.SubsystemContext{
+	ctx := heimdall.SubsystemContext{SubsystemHost: heimdall.SubsystemHost{
 		Config: heimdall.Config{
 			Model:       "test-model",
 			MaxTokens:   512,
 			Temperature: 0.1,
 		},
-	}
+	}}
 	require.NoError(t, p.Initialize(ctx))
 	require.NoError(t, p.Start())
 
@@ -226,13 +226,13 @@ func TestWatcherPlugin_HelpAction(t *testing.T) {
 func TestWatcherPlugin_StatusAction(t *testing.T) {
 	p := &WatcherPlugin{}
 
-	ctx := heimdall.SubsystemContext{
+	ctx := heimdall.SubsystemContext{SubsystemHost: heimdall.SubsystemHost{
 		Config: heimdall.Config{
 			Model:       "qwen3-0.6b",
 			MaxTokens:   512,
 			Temperature: 0.1,
 		},
-	}
+	}}
 	require.NoError(t, p.Initialize(ctx))
 	require.NoError(t, p.Start())
 
@@ -256,11 +256,11 @@ func TestWatcherPlugin_StatusAction(t *testing.T) {
 func TestWatcherPlugin_MetricsAction(t *testing.T) {
 	p := &WatcherPlugin{}
 
-	ctx := heimdall.SubsystemContext{
+	ctx := heimdall.SubsystemContext{SubsystemHost: heimdall.SubsystemHost{
 		Config: heimdall.Config{
 			Model: "test-model",
 		},
-	}
+	}}
 	require.NoError(t, p.Initialize(ctx))
 	require.NoError(t, p.Start())
 
@@ -288,11 +288,11 @@ func TestWatcherPlugin_MetricsAction(t *testing.T) {
 func TestWatcherPlugin_EventsAction(t *testing.T) {
 	p := &WatcherPlugin{}
 
-	ctx := heimdall.SubsystemContext{
+	ctx := heimdall.SubsystemContext{SubsystemHost: heimdall.SubsystemHost{
 		Config: heimdall.Config{
 			Model: "test-model",
 		},
-	}
+	}}
 	require.NoError(t, p.Initialize(ctx))
 	require.NoError(t, p.Start())
 
@@ -310,13 +310,13 @@ func TestWatcherPlugin_EventsAction(t *testing.T) {
 func TestWatcherPlugin_ConfigureAction(t *testing.T) {
 	p := &WatcherPlugin{}
 
-	ctx := heimdall.SubsystemContext{
+	ctx := heimdall.SubsystemContext{SubsystemHost: heimdall.SubsystemHost{
 		Config: heimdall.Config{
 			Model:       "test-model",
 			MaxTokens:   512,
 			Temperature: 0.1,
 		},
-	}
+	}}
 	require.NoError(t, p.Initialize(ctx))
 	require.NoError(t, p.Start())
 
@@ -344,11 +344,11 @@ func TestWatcherPlugin_ConfigureAction(t *testing.T) {
 func TestWatcherPlugin_BroadcastAction(t *testing.T) {
 	p := &WatcherPlugin{}
 
-	ctx := heimdall.SubsystemContext{
+	ctx := heimdall.SubsystemContext{SubsystemHost: heimdall.SubsystemHost{
 		Config: heimdall.Config{
 			Model: "test-model",
 		},
-	}
+	}}
 	require.NoError(t, p.Initialize(ctx))
 	require.NoError(t, p.Start())
 
@@ -378,9 +378,9 @@ func TestWatcherPlugin_BroadcastAction(t *testing.T) {
 func TestWatcherPlugin_QueryReadOnlyGuard(t *testing.T) {
 	p := &WatcherPlugin{}
 
-	ctx := heimdall.SubsystemContext{
+	ctx := heimdall.SubsystemContext{SubsystemHost: heimdall.SubsystemHost{
 		Config: heimdall.Config{Model: "test-model"},
-	}
+	}}
 	require.NoError(t, p.Initialize(ctx))
 	require.NoError(t, p.Start())
 
@@ -392,7 +392,7 @@ func TestWatcherPlugin_QueryReadOnlyGuard(t *testing.T) {
 	require.Contains(t, blocked.Message, "read-only Cypher")
 
 	allowedDB := &memoryDBRouter{}
-	p.Initialize(heimdall.SubsystemContext{Config: heimdall.Config{Model: "test-model"}, Database: allowedDB})
+	p.Initialize(heimdall.SubsystemContext{SubsystemHost: heimdall.SubsystemHost{Config: heimdall.Config{Model: "test-model"}, Database: allowedDB}})
 	require.NoError(t, p.Start())
 
 	allowed, err := p.actionQuery(heimdall.ActionContext{
@@ -412,11 +412,11 @@ func TestWatcherPlugin_QueryReadOnlyGuard(t *testing.T) {
 func TestWatcherPlugin_NotifyAction(t *testing.T) {
 	p := &WatcherPlugin{}
 
-	ctx := heimdall.SubsystemContext{
+	ctx := heimdall.SubsystemContext{SubsystemHost: heimdall.SubsystemHost{
 		Config: heimdall.Config{
 			Model: "test-model",
 		},
-	}
+	}}
 	require.NoError(t, p.Initialize(ctx))
 	require.NoError(t, p.Start())
 
@@ -445,11 +445,11 @@ func TestWatcherPlugin_NotifyAction(t *testing.T) {
 func TestWatcherPlugin_Concurrency(t *testing.T) {
 	p := &WatcherPlugin{}
 
-	ctx := heimdall.SubsystemContext{
+	ctx := heimdall.SubsystemContext{SubsystemHost: heimdall.SubsystemHost{
 		Config: heimdall.Config{
 			Model: "test-model",
 		},
-	}
+	}}
 	require.NoError(t, p.Initialize(ctx))
 	require.NoError(t, p.Start())
 
@@ -479,7 +479,7 @@ func TestWatcherPlugin_Concurrency(t *testing.T) {
 func TestWatcherPlugin_EventBufferConcurrentAccess(t *testing.T) {
 	p := &WatcherPlugin{}
 
-	ctx := heimdall.SubsystemContext{Config: heimdall.Config{Model: "test-model"}}
+	ctx := heimdall.SubsystemContext{SubsystemHost: heimdall.SubsystemHost{Config: heimdall.Config{Model: "test-model"}}}
 	require.NoError(t, p.Initialize(ctx))
 	require.NoError(t, p.Start())
 
@@ -504,13 +504,13 @@ func TestWatcherPlugin_EventBufferConcurrentAccess(t *testing.T) {
 func TestWatcherPlugin_CaptureSessionMemory(t *testing.T) {
 	p := &WatcherPlugin{}
 
-	ctx := heimdall.SubsystemContext{
+	ctx := heimdall.SubsystemContext{SubsystemHost: heimdall.SubsystemHost{
 		Config: heimdall.Config{
 			Model:       "test-model",
 			MaxTokens:   512,
 			Temperature: 0.1,
 		},
-	}
+	}}
 	require.NoError(t, p.Initialize(ctx))
 	require.NoError(t, p.Start())
 
@@ -552,14 +552,14 @@ func TestWatcherPlugin_GraphBackedSessionMemory(t *testing.T) {
 	db := &memoryDBRouter{}
 	p := &WatcherPlugin{}
 
-	ctx := heimdall.SubsystemContext{
+	ctx := heimdall.SubsystemContext{SubsystemHost: heimdall.SubsystemHost{
 		Config: heimdall.Config{
 			Model:       "test-model",
 			MaxTokens:   512,
 			Temperature: 0.1,
 		},
 		Database: db,
-	}
+	}}
 	require.NoError(t, p.Initialize(ctx))
 	require.NoError(t, p.Start())
 

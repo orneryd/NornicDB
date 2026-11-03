@@ -95,7 +95,7 @@ func TestSearchCandidateLocalizationDirectGenerators(t *testing.T) {
 }
 
 func TestSearchCandidateLocalizationHNSWInitializationCause(t *testing.T) {
-	service := &Service{}
+	service := &Service{lifecycleCtx: t.Context()}
 	_, err := service.resolveStandardVectorStrategy(context.Background(), vectorBuildSeeds{}, 0, 3, nil)
 	require.EqualError(t, err, "failed to create HNSW index: vector index is nil")
 

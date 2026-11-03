@@ -51,7 +51,10 @@ func cypherVersionFromContext(ctx context.Context) string {
 //     aggregates is Neo4j 5's implicit-grouping error (RETURN count(*) + g).
 //
 // Cypher 25 aggregates over the body's rows alone, as the body runs.
-func cypher5ImportGrouping(body string, imports map[string]interface{}) (string, error) {
+func cypher5ImportGrouping(ctx context.Context, body string, imports map[string]interface{}) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if len(imports) == 0 || !containsAggregateFunc(body) {
 		return body, nil
 	}
@@ -80,7 +83,10 @@ func cypher5ImportGrouping(body string, imports map[string]interface{}) (string,
 		aggregating := false
 		projected := map[string]bool{}
 		for _, item := range items {
-			itemSource := readProjectionItemSource(context.Background(), item, projectionBeforeRewrite)
+			itemSource := readProjectionItemSource(ctx, item, projectionBeforeRewrite)
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
 			expression, alias := itemSource.expression, itemSource.alias
 			projected[alias] = true
 			spans := findAggregateSpans(expression)

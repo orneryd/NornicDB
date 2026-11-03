@@ -17,7 +17,7 @@ type cancellationTraversalEngine struct {
 	cancel          context.CancelFunc
 }
 
-func (s *cancellationTraversalEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
+func (s *cancellationTraversalEngine) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	return s.nodes[id], nil
 }
 

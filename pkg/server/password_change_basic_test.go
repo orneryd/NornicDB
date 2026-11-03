@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/base64"
 	"net/http"
 	"testing"
@@ -17,7 +18,7 @@ func TestChangedPasswordStopsWorkingOverBasic(t *testing.T) {
 	}
 	require.Equal(t, http.StatusOK, makeRequest(t, server, http.MethodGet, "/auth/me", nil, basic("password123")).Code)
 	require.Equal(t, http.StatusOK, makeRequest(t, server, http.MethodGet, "/auth/me", nil, basic("password123")).Code, "cached")
-	require.NoError(t, users.ChangePassword("reader", "password123", "newPassword456"))
+	require.NoError(t, users.ChangePassword(context.Background(), "reader", "password123", "newPassword456"))
 	require.Equal(t, http.StatusUnauthorized, makeRequest(t, server, http.MethodGet, "/auth/me", nil, basic("password123")).Code)
 	require.Equal(t, http.StatusOK, makeRequest(t, server, http.MethodGet, "/auth/me", nil, basic("newPassword456")).Code)
 }

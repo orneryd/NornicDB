@@ -517,7 +517,7 @@ func TestApocLoadExportHelpers_CallApocExportJsonAll_NoFile(t *testing.T) {
 	eng := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(eng)
 
-	_, err := eng.CreateNode(&storage.Node{
+	_, err := eng.CreateNode(t.Context(), &storage.Node{
 		ID:         "n1",
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "alice"},
@@ -537,7 +537,7 @@ func TestApocLoadExportHelpers_CallApocExportJsonAll_WriteError(t *testing.T) {
 	exec := NewStorageExecutor(eng)
 	exec.SetAllowLocalAPOCFileAccess(true)
 
-	_, err := eng.CreateNode(&storage.Node{
+	_, err := eng.CreateNode(t.Context(), &storage.Node{
 		ID:         "n1",
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "alice"},

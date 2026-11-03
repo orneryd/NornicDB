@@ -25,7 +25,7 @@ func (e *grantBarrierEngine) WithStoreTransaction(ctx context.Context, mutate fu
 	})
 }
 
-func (e *grantBarrierEngine) CreateNode(node *storage.Node) (storage.NodeID, error) {
+func (e *grantBarrierEngine) CreateNode(ctx context.Context, node *storage.Node) (storage.NodeID, error) {
 	if strings.HasPrefix(string(node.ID), "proc_priv:") {
 		close(e.entered)
 		select {
@@ -34,7 +34,7 @@ func (e *grantBarrierEngine) CreateNode(node *storage.Node) (storage.NodeID, err
 			return "", context.DeadlineExceeded
 		}
 	}
-	return e.Engine.CreateNode(node)
+	return e.Engine.CreateNode(ctx, node)
 }
 
 func TestGrantsAndRoleChangesSerialize(t *testing.T) {

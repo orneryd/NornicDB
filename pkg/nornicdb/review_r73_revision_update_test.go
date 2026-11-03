@@ -1,6 +1,8 @@
 package nornicdb_test
 
 import (
+	"context"
+
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"errors"
@@ -21,12 +23,12 @@ type reviewR73RejectOnce struct {
 	paused   atomic.Bool
 }
 
-func (s *reviewR73RejectOnce) UpdateNodeEmbeddingSidecar(n *storage.Node) error {
+func (s *reviewR73RejectOnce) UpdateNodeEmbeddingSidecar(ctx context.Context, n *storage.Node) error {
 	if s.rejected.CompareAndSwap(false, true) {
 		s.paused.Store(true)
 		return errors.New("first sidecar rejected")
 	}
-	return s.NamespacedEngine.UpdateNodeEmbeddingSidecar(n)
+	return s.NamespacedEngine.UpdateNodeEmbeddingSidecar(ctx, n)
 }
 
 func TestReviewR73DLQUpdateWithoutEnqueue(t *testing.T) {
@@ -37,7 +39,7 @@ func TestReviewR73DLQUpdateWithoutEnqueue(t *testing.T) {
 			defer disk.Close()
 			disk.SetEmbeddingsEnabled(true)
 			s := &reviewR73RejectOnce{NamespacedEngine: storage.NewNamespacedEngine(disk, "dlqupdate")}
-			_, err = s.CreateNode(&storage.Node{ID: "doc", Properties: map[string]any{"text": "before"}})
+			_, err = s.CreateNode(t.Context(), &storage.Node{ID: "doc", Properties: map[string]any{"text": "before"}})
 			require.NoError(t, err)
 			cfg := nornicdb.DefaultEmbedWorkerConfig()
 			cfg.DeferWorkerStart, cfg.NumWorkers, cfg.EmbedBatchSize = true, 1, 1
@@ -49,7 +51,7 @@ func TestReviewR73DLQUpdateWithoutEnqueue(t *testing.T) {
 			w.SetShouldYield(s.paused.Load)
 			w.StartWorkers()
 			require.Eventually(t, func() bool { return s.paused.Load() && w.Stats().InFlight == 0 }, 3*time.Second, time.Millisecond)
-			node, err := s.GetNode("doc")
+			node, err := s.GetNode(t.Context(), "doc")
 			require.NoError(t, err)
 			stamp := node.UpdatedAt
 			if mode != "idempotent" {
@@ -58,8 +60,8 @@ func TestReviewR73DLQUpdateWithoutEnqueue(t *testing.T) {
 			if mode == "advanced_timestamp" {
 				node.UpdatedAt = stamp.Add(time.Second)
 			}
-			require.NoError(t, s.UpdateNode(storage.NodeUpdateRequest{After: node}))
-			current, err := s.GetNode("doc")
+			require.NoError(t, s.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
+			current, err := s.GetNode(t.Context(), "doc")
 			require.NoError(t, err)
 			if mode != "advanced_timestamp" {
 				require.True(t, stamp.Equal(current.UpdatedAt), "the body API preserves a supplied timestamp")
@@ -85,7 +87,7 @@ func TestReviewR73UpdateAfterSuccessWithoutEnqueue(t *testing.T) {
 	disk.SetEmbeddingsEnabled(true)
 	s := &reviewR73RejectOnce{NamespacedEngine: storage.NewNamespacedEngine(disk, "updatedsuccess")}
 	s.rejected.Store(true)
-	_, err = s.CreateNode(&storage.Node{ID: "doc", Properties: map[string]any{"text": "before"}})
+	_, err = s.CreateNode(t.Context(), &storage.Node{ID: "doc", Properties: map[string]any{"text": "before"}})
 	require.NoError(t, err)
 	cfg := nornicdb.DefaultEmbedWorkerConfig()
 	cfg.DeferWorkerStart, cfg.NumWorkers, cfg.EmbedBatchSize = true, 1, 1
@@ -96,12 +98,12 @@ func TestReviewR73UpdateAfterSuccessWithoutEnqueue(t *testing.T) {
 	w.SetOnEmbedded(func(*storage.Node) { s.paused.Store(true) })
 	w.StartWorkers()
 	require.Eventually(t, func() bool { return w.Stats().Processed == 1 && w.Stats().InFlight == 0 }, 3*time.Second, time.Millisecond)
-	node, err := s.GetNode("doc")
+	node, err := s.GetNode(t.Context(), "doc")
 	require.NoError(t, err)
 	stamp := node.UpdatedAt
 	node.Properties["text"] = "after"
-	require.NoError(t, s.UpdateNode(storage.NodeUpdateRequest{After: node}))
-	current, err := s.GetNode("doc")
+	require.NoError(t, s.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
+	current, err := s.GetNode(t.Context(), "doc")
 	require.NoError(t, err)
 	require.True(t, stamp.Equal(current.UpdatedAt))
 	require.Equal(t, 1, s.PendingEmbeddingsCount())

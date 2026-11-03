@@ -72,7 +72,7 @@ func TestBeginTransaction_DoesNotConflictAfterClockSkew(t *testing.T) {
 	// start" conflict; with it, the tx commits cleanly.
 	e := newTestMemoryEngine(t)
 
-	_, err := e.CreateNode(&Node{
+	_, err := e.CreateNode(t.Context(), &Node{
 		ID:         "test:skew",
 		Labels:     []string{"L"},
 		Properties: map[string]any{"v": int64(1)},
@@ -85,16 +85,16 @@ func TestBeginTransaction_DoesNotConflictAfterClockSkew(t *testing.T) {
 	require.NoError(t, err)
 	state.highWaterNanos.Store(time.Now().Add(2 * time.Second).UnixNano())
 
-	tx, err := e.BeginTransaction()
+	tx, err := e.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{
 		ID:         "test:skew",
 		Labels:     []string{"L"},
 		Properties: map[string]any{"v": int64(2)},
 	}, Policy: ClientNodeEdits}))
 	require.NoError(t, tx.Commit(), "skewed clock must not cause a phantom conflict")
 
-	got, err := e.GetNode("test:skew")
+	got, err := e.GetNode(t.Context(), "test:skew")
 	require.NoError(t, err)
 	require.Equal(t, int64(2), got.Properties["v"])
 }

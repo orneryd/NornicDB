@@ -22,12 +22,12 @@ func TestStandaloneOrderCommentGapPublic(t *testing.T) {
 				require.NoError(t, err, tc.query)
 				require.Equal(t, []string{"call"}, result.Columns, tc.query)
 				require.Equal(t, [][]interface{}{{int64(7)}}, result.Rows, tc.query)
-				got, rewrite := desugarStandaloneOrderClauses(tc.query)
+				got, rewrite := desugarStandaloneOrderClauses(ctx, tc.query)
 				require.Equal(t, tc.want, got, tc.query)
 				if tc.name == "projection" {
 					require.Nil(t, rewrite)
 					allocs := testing.AllocsPerRun(100, func() {
-						if got, rewrite := desugarStandaloneOrderClauses(tc.query); got != tc.query || rewrite != nil {
+						if got, rewrite := desugarStandaloneOrderClauses(ctx, tc.query); got != tc.query || rewrite != nil {
 							panic("unexpected comment order rewrite")
 						}
 					})

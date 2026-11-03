@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -31,9 +32,9 @@ func TestReviewLegacySameStoreUpgrade(t *testing.T) {
 			t.Cleanup(config.WithWALEnabled())
 			dir := t.TempDir()
 			source := reviewBindingEngine(t, dir)
-			_, err := source.CreateNode(&Node{ID: "legacy:a", Properties: map[string]any{"value": int64(0)}})
+			_, err := source.CreateNode(t.Context(), &Node{ID: "legacy:a", Properties: map[string]any{"value": int64(0)}})
 			require.NoError(t, err)
-			require.NoError(t, source.FlushWriteBehind(nil))
+			require.NoError(t, source.FlushWriteBehind(context.Background()))
 			// Flush can leave an empty rotation request queued. Start the crash phase
 			// with a fresh idle buffer, so that request cannot persist later updates.
 			source.writeBehind.Close()
@@ -42,11 +43,11 @@ func TestReviewLegacySameStoreUpgrade(t *testing.T) {
 			require.NoError(t, err)
 			source.SetBufferedCommitWAL(capture)
 			for i := 1; i <= 20; i++ {
-				tx, err := source.BeginTransaction()
+				tx, err := source.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				require.NoError(t, tx.SetNamespace("legacy"))
 				require.NoError(t, tx.SetImplicit(true))
-				require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "legacy:a", Properties: map[string]any{"value": int64(i)}}, Policy: ClientNodeEdits}))
+				require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "legacy:a", Properties: map[string]any{"value": int64(i)}}, Policy: ClientNodeEdits}))
 				require.NoError(t, tx.Commit())
 				require.True(t, tx.AcknowledgedBuffered())
 			}
@@ -90,7 +91,7 @@ func TestReviewLegacySameStoreUpgrade(t *testing.T) {
 				for _, failure := range result.Errors {
 					require.ErrorContains(t, failure.Error, "missing property name binding")
 				}
-				node, err := dest.GetNode("legacy:a")
+				node, err := dest.GetNode(t.Context(), "legacy:a")
 				require.NoError(t, err)
 				require.Equal(t, map[string]any{"value": int64(0)}, node.Properties)
 				assertPropertyDictionaryBijection(t, dest)
@@ -105,7 +106,7 @@ func TestReviewLegacySameStoreUpgrade(t *testing.T) {
 				data, err := decodeBufferedWALRecord(entry)
 				require.NoError(t, err)
 				require.NotEmpty(t, data.TxID)
-				marker, err := recovered.observeBufferedCommitReceipt(bufferedReceiptRead{txID: data.TxID})
+				marker, err := recovered.observeBufferedCommitReceipt(t.Context(), bufferedReceiptRead{txID: data.TxID})
 				require.NoError(t, err)
 				require.False(t, marker.present, "fixture update unexpectedly reached storage")
 			}
@@ -116,7 +117,7 @@ func TestReviewLegacySameStoreUpgrade(t *testing.T) {
 			t.Logf("legacy records=20, records missing per-record bindings=20, replayed=%d, error=%v", n, err)
 			require.NoError(t, err, "upgrade must retain recoverability when the original source dictionary is intact")
 			require.Equal(t, 20, n)
-			node, err := recovered.GetNode("legacy:a")
+			node, err := recovered.GetNode(t.Context(), "legacy:a")
 			require.NoError(t, err)
 			require.Equal(t, int64(20), node.Properties["value"])
 		})
@@ -134,20 +135,20 @@ func TestReviewLegacyLosslessNamedRecords(t *testing.T) {
 	t.Cleanup(func() { _ = capture.Close() })
 	source.SetBufferedCommitWAL(capture)
 	for i := 0; i < 2; i++ {
-		tx, err := source.BeginTransaction()
+		tx, err := source.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		require.NoError(t, tx.SetNamespace("prefix"))
 		require.NoError(t, tx.SetImplicit(true))
 		node := &Node{ID: "prefix:a", Properties: map[string]any{"value": int64(i)}}
 		if i == 0 {
-			_, err = tx.CreateNode(node)
+			_, err = tx.CreateNode(t.Context(), node)
 		} else {
-			err = tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits})
+			err = tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node, Policy: ClientNodeEdits})
 		}
 		require.NoError(t, err)
 		require.NoError(t, tx.Commit())
 		require.True(t, tx.AcknowledgedBuffered())
-		require.NoError(t, source.FlushWriteBehind(nil))
+		require.NoError(t, source.FlushWriteBehind(context.Background()))
 	}
 	entries, err := ReadWALEntriesFromDir(capture.Config().Dir)
 	require.NoError(t, err)
@@ -177,7 +178,7 @@ func TestReviewLegacyLosslessNamedRecords(t *testing.T) {
 		index++
 	}
 	require.Equal(t, 2, index)
-	node, err := destination.GetNode("prefix:a")
+	node, err := destination.GetNode(t.Context(), "prefix:a")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), node.Properties["value"])
 }
@@ -198,15 +199,15 @@ func TestReviewBindingGrowthAndRestart(t *testing.T) {
 						if b == dest {
 							k = 131 - i
 						}
-						_, err := b.CreateNode(&Node{ID: NodeID(fmt.Sprintf("%s:seed%03d", ns, i)), Properties: map[string]any{fmt.Sprintf("k%03d", k): int64(k)}})
+						_, err := b.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("%s:seed%03d", ns, i)), Properties: map[string]any{fmt.Sprintf("k%03d", k): int64(k)}})
 						require.NoError(t, err)
 					}
-					_, err := b.CreateNode(&Node{ID: NodeID(ns + ":a"), Properties: map[string]any{"removed": "old"}})
+					_, err := b.CreateNode(t.Context(), &Node{ID: NodeID(ns + ":a"), Properties: map[string]any{"removed": "old"}})
 					require.NoError(t, err)
-					_, err = b.CreateNode(&Node{ID: NodeID(ns + ":b")})
+					_, err = b.CreateNode(t.Context(), &Node{ID: NodeID(ns + ":b")})
 					require.NoError(t, err)
-					require.NoError(t, b.CreateEdge(&Edge{ID: EdgeID(ns + ":r"), StartNode: NodeID(ns + ":a"), EndNode: NodeID(ns + ":b"), Type: "R", Properties: map[string]any{"removed": "old"}}))
-					require.NoError(t, b.FlushWriteBehind(nil))
+					require.NoError(t, b.CreateEdge(t.Context(), &Edge{ID: EdgeID(ns + ":r"), StartNode: NodeID(ns + ":a"), EndNode: NodeID(ns + ":b"), Type: "R", Properties: map[string]any{"removed": "old"}}))
+					require.NoError(t, b.FlushWriteBehind(context.Background()))
 				}
 			}
 			wal, err := NewWAL(t.TempDir(), DefaultWALConfig())
@@ -222,16 +223,16 @@ func TestReviewBindingGrowthAndRestart(t *testing.T) {
 					for k := stage * 80; k < stage*80+160; k++ {
 						props[fmt.Sprintf("k%03d", k)] = int64(stage*1000 + k)
 					}
-					tx, err := source.BeginTransaction()
+					tx, err := source.BeginTransaction(t.Context())
 					require.NoError(t, err)
 					require.NoError(t, tx.SetNamespace(ns))
 					require.NoError(t, tx.SetImplicit(true))
-					require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: NodeID(ns + ":a"), Properties: props}, Policy: ClientNodeEdits}))
-					require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: EdgeID(ns + ":r"), StartNode: NodeID(ns + ":a"), EndNode: NodeID(ns + ":b"), Type: "R", Properties: props}}))
+					require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: NodeID(ns + ":a"), Properties: props}, Policy: ClientNodeEdits}))
+					require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: EdgeID(ns + ":r"), StartNode: NodeID(ns + ":a"), EndNode: NodeID(ns + ":b"), Type: "R", Properties: props}}))
 					require.NoError(t, tx.Commit())
 					require.True(t, tx.AcknowledgedBuffered())
-					require.NoError(t, source.FlushWriteBehind(nil))
-					node, err := source.GetNode(NodeID(ns + ":a"))
+					require.NoError(t, source.FlushWriteBehind(context.Background()))
+					node, err := source.GetNode(t.Context(), NodeID(ns+":a"))
 					require.NoError(t, err)
 					expected[ns] = node.Properties
 					if stage == 0 {
@@ -271,20 +272,20 @@ func TestReviewBindingGrowthAndRestart(t *testing.T) {
 			dest = reviewBindingEngine(t, destDir)
 			assertPropertyDictionaryBijection(t, dest)
 			for _, ns := range []string{"growth", "other"} {
-				node, err := dest.GetNode(NodeID(ns + ":a"))
+				node, err := dest.GetNode(t.Context(), NodeID(ns+":a"))
 				require.NoError(t, err)
 				require.Equal(t, expected[ns], node.Properties)
 				require.NotContains(t, node.Properties, "removed")
-				edge, err := dest.GetEdge(EdgeID(ns + ":r"))
+				edge, err := dest.GetEdge(t.Context(), EdgeID(ns+":r"))
 				require.NoError(t, err)
 				require.Equal(t, expected[ns], edge.Properties)
-				node, err = dest.GetNodeVisibleAt(NodeID(ns+":a"), versions[ns])
+				node, err = dest.GetNodeVisibleAt(t.Context(), NodeID(ns+":a"), versions[ns])
 				require.NoError(t, err)
 				require.Equal(t, history[ns], node.Properties)
-				edge, err = dest.GetEdgeVisibleAt(EdgeID(ns+":r"), versions[ns])
+				edge, err = dest.GetEdgeVisibleAt(t.Context(), EdgeID(ns+":r"), versions[ns])
 				require.NoError(t, err)
 				require.Equal(t, history[ns], edge.Properties)
-				sentinel, err := dest.GetNode(NodeID(ns + ":seed000"))
+				sentinel, err := dest.GetNode(t.Context(), NodeID(ns+":seed000"))
 				require.NoError(t, err)
 				require.Equal(t, map[string]any{"k131": int64(131)}, sentinel.Properties)
 			}
@@ -292,26 +293,26 @@ func TestReviewBindingGrowthAndRestart(t *testing.T) {
 			// A direct synchronous write initializes lazy namespace MVCC state.
 			// Develop has a separately recorded cold-first-buffered-write deadlock
 			// before reaching this PR's writer; do not conflate it with rebinding.
-			_, err = dest.CreateNode(&Node{ID: "growth:warm"})
+			_, err = dest.CreateNode(t.Context(), &Node{ID: "growth:warm"})
 			require.NoError(t, err)
 			secondLog, err := NewWAL(t.TempDir(), DefaultWALConfig())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = secondLog.Close() })
 			dest.SetBufferedCommitWAL(secondLog)
-			tx, err := dest.BeginTransaction()
+			tx, err := dest.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			require.NoError(t, tx.SetNamespace("growth"))
 			require.NoError(t, tx.SetImplicit(true))
-			node, err := dest.GetNode("growth:a")
+			node, err := dest.GetNode(t.Context(), "growth:a")
 			require.NoError(t, err)
-			require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
+			require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 			require.NoError(t, tx.Commit())
 			require.True(t, tx.AcknowledgedBuffered())
 			third := reviewBindingEngine(t, t.TempDir())
 			n, err = RecoverBufferedCommits(third, secondLog)
 			require.NoError(t, err)
 			require.Equal(t, 1, n)
-			node, err = third.GetNode("growth:a")
+			node, err = third.GetNode(t.Context(), "growth:a")
 			require.NoError(t, err)
 			require.Equal(t, expected["growth"], node.Properties)
 		})

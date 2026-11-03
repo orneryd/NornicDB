@@ -3,9 +3,10 @@ package ir
 import (
 	"context"
 	"errors"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -80,7 +81,7 @@ func TestNornicDocumentSinkPreservesBEIRID(t *testing.T) {
 	index := search.NewService(engine, 2, nil)
 	sink := &NornicDocumentSink{Engine: engine, Indexer: index}
 	require.NoError(t, sink.StoreDocument(context.Background(), Document{ID: "doc-1", Title: "Title", Text: "retrieval text"}))
-	node, err := engine.GetNode("doc-1")
+	node, err := engine.GetNode(t.Context(), "doc-1")
 	require.NoError(t, err)
 	assert.Equal(t, "doc-1", node.Properties["beir_id"])
 	assert.Equal(t, "retrieval text", node.Properties["text"])

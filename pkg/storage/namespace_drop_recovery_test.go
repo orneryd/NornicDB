@@ -31,17 +31,17 @@ func TestNamespaceDropRecoveryPreservesVictimsAndCounts(t *testing.T) {
 					}
 					b := open()
 					require.NoError(t, b.GetSchemaForNamespace("victim").AddUniqueConstraint("uid", "Person", "uid"))
-					tx, err := b.BeginTransaction()
+					tx, err := b.BeginTransaction(t.Context())
 					require.NoError(t, err)
 					defer tx.Rollback()
 					require.NoError(t, tx.SetImplicit(buffered))
 					for i, id := range []NodeID{"victim:a", "victim:b"} {
-						_, err = tx.CreateNode(&Node{ID: id, Labels: []string{"Person"}, Properties: map[string]any{"uid": string(id)}, ChunkEmbeddings: [][]float32{make([]float32, 16384)}})
+						_, err = tx.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Person"}, Properties: map[string]any{"uid": string(id)}, ChunkEmbeddings: [][]float32{make([]float32, 16384)}})
 						require.NoError(t, err, "seed node %d", i)
 					}
-					require.NoError(t, tx.CreateEdge(&Edge{ID: "victim:e", StartNode: "victim:a", EndNode: "victim:b", Type: "LINK"}))
+					require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "victim:e", StartNode: "victim:a", EndNode: "victim:b", Type: "LINK"}))
 					require.NoError(t, tx.Commit())
-					_, err = b.CreateNode(&Node{ID: "peer:keep"})
+					_, err = b.CreateNode(t.Context(), &Node{ID: "peer:keep"})
 					require.NoError(t, err)
 					var resets atomic.Int32
 					b.OnNamespaceReset(func(prefix string) {
@@ -64,7 +64,7 @@ func TestNamespaceDropRecoveryPreservesVictimsAndCounts(t *testing.T) {
 						}
 						// A batch of intrinsic cleanup can remove forward dictionaries
 						// before failing, while numeric MVCC/reverse/index keys remain.
-						if err := b.db.updateHeld(func(txn *badger.Txn) error {
+						if err := b.db.updateHeld(context.Background(), func(txn *badger.Txn) error {
 							for _, key := range [][]byte{nodeIDForwardKey("victim:a"), nodeIDForwardKey("victim:b"), edgeIDForwardKey("victim:e"), schemaKey("victim")} {
 								if err := txn.Delete(key); err != nil {
 									return err
@@ -92,16 +92,16 @@ func TestNamespaceDropRecoveryPreservesVictimsAndCounts(t *testing.T) {
 						require.Equal(t, intent.nodes, persisted[0].nodes)
 						require.Equal(t, intent.edges, persisted[0].edges)
 					}
-					_, err = b.CreateNode(&Node{ID: "victim:blocked"})
+					_, err = b.CreateNode(t.Context(), &Node{ID: "victim:blocked"})
 					require.ErrorIs(t, err, ErrConflict)
-					require.ErrorIs(t, b.BulkCreateNodes([]*Node{{ID: "victim:bulk"}}), ErrConflict)
+					require.ErrorIs(t, b.BulkCreateNodes(t.Context(), []*Node{{ID: "victim:bulk"}}), ErrConflict)
 					require.ErrorIs(t, b.GetSchemaForNamespace("victim").AddUniqueConstraint("blocked_schema", "Blocked", "uid"), ErrConflict)
 					for _, implicit := range []bool{false, true} {
-						writer, err := b.BeginTransaction()
+						writer, err := b.BeginTransaction(t.Context())
 						require.NoError(t, err)
 						err = writer.SetImplicit(implicit)
 						if err == nil {
-							_, err = writer.CreateNode(&Node{ID: "victim:transaction"})
+							_, err = writer.CreateNode(t.Context(), &Node{ID: "victim:transaction"})
 						}
 						if err == nil {
 							err = writer.Commit()
@@ -120,7 +120,7 @@ func TestNamespaceDropRecoveryPreservesVictimsAndCounts(t *testing.T) {
 						cancel()
 					}
 					require.ErrorIs(t, err, ErrConflict)
-					_, err = b.CreateNode(&Node{ID: "peer:after"})
+					_, err = b.CreateNode(t.Context(), &Node{ID: "peer:after"})
 					require.NoError(t, err)
 					b.dropPrefixTailHook = nil
 					switch resolution {
@@ -152,24 +152,24 @@ func TestNamespaceDropRecoveryPreservesVictimsAndCounts(t *testing.T) {
 						}
 						return nil
 					}))
-					count, err := b.NodeCountByPrefix("victim:")
+					count, err := b.NodeCountByPrefix(context.Background(), "victim:")
 					require.NoError(t, err)
 					require.Zero(t, count)
-					count, err = b.EdgeCountByPrefix("victim:")
+					count, err = b.EdgeCountByPrefix(context.Background(), "victim:")
 					require.NoError(t, err)
 					require.Zero(t, count)
-					count, err = b.NodeCount()
+					count, err = b.NodeCount(t.Context())
 					require.NoError(t, err)
 					require.EqualValues(t, 2, count, "recovery counts actual peer rows, never subtracts old victim counts twice")
-					count, err = b.EdgeCount()
+					count, err = b.EdgeCount(t.Context())
 					require.NoError(t, err)
 					require.Zero(t, count)
-					_, err = b.GetNode("peer:keep")
+					_, err = b.GetNode(t.Context(), "peer:keep")
 					require.NoError(t, err)
-					_, err = b.GetNode("peer:after")
+					_, err = b.GetNode(t.Context(), "peer:after")
 					require.NoError(t, err)
-					require.Empty(t, b.GetSchemaForNamespace("victim").ExportDefinition().Constraints)
-					_, err = b.CreateNode(&Node{ID: "victim:recreated"})
+					require.Empty(t, schemaDefinitionForTest(t, b.GetSchemaForNamespace("victim")).Constraints)
+					_, err = b.CreateNode(t.Context(), &Node{ID: "victim:recreated"})
 					require.NoError(t, err)
 				})
 			}
@@ -180,7 +180,8 @@ func TestNamespaceDropRecoveryPreservesVictimsAndCounts(t *testing.T) {
 func TestNamespaceDropIntentUsesAtomicLargeWriter(t *testing.T) {
 	b := newTestEngine(t)
 	defer b.Close()
-	lease, err := b.beginLifecycleWrite(context.Background(), "")
+	ctx := context.Background()
+	lease, err := b.beginLifecycleWrite(ctx, "")
 	require.NoError(t, err)
 	defer lease.finish()
 	intent := &namespaceDropIntent{namespace: "large", nodes: make(map[uint64]struct{}), edges: make(map[uint64]struct{})}
@@ -191,7 +192,7 @@ func TestNamespaceDropIntentUsesAtomicLargeWriter(t *testing.T) {
 	batches := 0
 	restore := setLargeCommitBatchHook(func(int) error { batches++; return sentinel })
 	defer restore()
-	require.ErrorIs(t, b.writeNamespaceDropIntent(intent, &lease), sentinel)
+	require.ErrorIs(t, b.writeNamespaceDropIntent(ctx, intent, &lease), sentinel)
 	require.Positive(t, batches)
 	persisted, err := b.loadNamespaceDrops()
 	require.NoError(t, err)
@@ -205,15 +206,15 @@ func TestNamespaceDropIntentUsesAtomicLargeWriter(t *testing.T) {
 		require.False(t, it.ValidForPrefix(prefix), "known-abort leaves neither head nor orphan victim chunks")
 		return nil
 	}))
-	require.NoError(t, b.recoverNamespaceDrops(&lease), "an aborted preparation cannot schedule future deletion")
+	require.NoError(t, b.recoverNamespaceDrops(ctx, &lease), "an aborted preparation cannot schedule future deletion")
 
 	restore()
-	require.NoError(t, b.writeNamespaceDropIntent(intent, &lease))
+	require.NoError(t, b.writeNamespaceDropIntent(ctx, intent, &lease))
 	persisted, err = b.loadNamespaceDrops()
 	require.NoError(t, err)
 	require.Len(t, persisted, 1)
 	require.Equal(t, intent.nodes, persisted[0].nodes)
-	require.NoError(t, b.completeNamespaceDrop(intent, &lease))
+	require.NoError(t, b.completeNamespaceDrop(ctx, intent, &lease))
 	b.transitionPending(namespaceDropRetire, "large", nil)
 	persisted, err = b.loadNamespaceDrops()
 	require.NoError(t, err)

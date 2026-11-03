@@ -41,9 +41,6 @@ func contextWithURLDatabase(ctx context.Context, dbName string) context.Context 
 }
 
 func urlDatabaseFromContext(ctx context.Context) string {
-	if ctx == nil {
-		return ""
-	}
 	if s, ok := ctx.Value(keyURLDatabase).(string); ok {
 		return s
 	}
@@ -57,9 +54,6 @@ func hasAuthorizedDatabase(ctx context.Context) bool {
 
 // DatabaseFromContext returns the database name from the context, or empty if not set.
 func DatabaseFromContext(ctx context.Context) string {
-	if ctx == nil {
-		return ""
-	}
 	v := ctx.Value(keyDatabase)
 	if s, ok := v.(string); ok {
 		return s

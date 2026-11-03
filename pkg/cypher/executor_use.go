@@ -40,8 +40,8 @@ func parseUseClause(ctx context.Context, cypher string, inSubquery bool, stage c
 // starting at s[start:] ends: the offset of the text after it. It is -1 when
 // no valid USE clause starts there. Lexical scanners use it so that a graph
 // spelled like a clause keyword (USE GRAPH limit CALL { … }) stays a name.
-func useClauseReferenceEnd(s string, start int, inSubquery bool) int {
-	reference, _, hasUse, err := fabric.ReadUseClause(context.Background(), s[start:], inSubquery, cyphertext.AcceptedSource)
+func useClauseReferenceEnd(ctx context.Context, s string, start int, inSubquery bool) int {
+	reference, _, hasUse, err := fabric.ReadUseClause(ctx, s[start:], inSubquery, cyphertext.AcceptedSource)
 	if !hasUse || err != nil {
 		return -1
 	}
@@ -267,10 +267,16 @@ func (e *StorageExecutor) executeOnDatabase(ctx context.Context, db, query strin
 // transaction (explicit, or the one the statement is nested in) stays on
 // that transaction's database. It returns db's executor and ctx scoped to db.
 func (e *StorageExecutor) useDatabase(ctx context.Context, db, query string) (*StorageExecutor, context.Context, error) {
-	if err := e.authorizeSelectedDatabase(ctx, db, query); err != nil {
+	selection := e
+	if owner := e.membership(ctx).statement; owner != nil && owner.executor.nativeOrigin != nil {
+		// Issued storage carries the statement's catalog authority. Rebuilding
+		// an executor (or attaching a replacement manager) cannot redirect it.
+		selection = owner.executor.base
+	}
+	if err := selection.authorizeSelectedDatabase(ctx, db, query); err != nil {
 		return nil, ctx, err
 	}
-	scopedExec, resolvedDB, err := e.scopedExecutorForUse(db, GetAuthTokenFromContext(ctx))
+	scopedExec, resolvedDB, err := selection.scopedExecutorForUse(db, GetAuthTokenFromContext(ctx))
 	if err != nil {
 		return nil, ctx, err
 	}
@@ -315,11 +321,11 @@ func systemDatabaseStatementError(ctx context.Context, query string) error {
 	// A SHOW command runs, and its tail is held to Neo4j's rules for it
 	// (systemShowTailError).
 	if startsWithKeywordFold(query, "SHOW") {
-		return systemShowTailError(query)
+		return systemShowTailError(ctx, query)
 	}
 	// Transaction control (BEGIN, COMMIT, ROLLBACK) is no statement on a
 	// graph; a BEGIN … COMMIT script is its statement.
-	if isMetadataCommand(query, metadataCatalogExecution) || bareTransactionCommand(query) != "" {
+	if isMetadataCommand(ctx, query, metadataCatalogExecution) || bareTransactionCommand(query) != "" {
 		return nil
 	}
 	if startsWithKeywordFold(query, "BEGIN") && transactionScriptShape(query) {
@@ -341,12 +347,12 @@ func systemDatabaseStatementError(ctx context.Context, query string) error {
 	if requirements.Write || requirements.Schema || queryKeywords(query)["MATCH"] {
 		return graphAccess
 	}
-	if StatementDatabase("", query) == "system" || startsWithKeywordFold(query, "TERMINATE") || isNornicExtensionStatement(query) {
+	if StatementDatabase("", query) == "system" || startsWithKeywordFold(query, "TERMINATE") || isNornicExtensionStatement(ctx, query) {
 		return nil
 	}
 	if startsWithKeywordFold(query, "CALL") {
 		if _, procedureCall := procedureNameAt(query, len("CALL")); procedureCall {
-			if expressionReadsGraphText(query) {
+			if expressionReadsGraphText(ctx, query) {
 				return graphAccess
 			}
 			return nil
@@ -366,9 +372,9 @@ func systemDatabaseStatementError(ctx context.Context, query string) error {
 // user database a SHOW tail is not limited this way (the Cypher 25 clauses
 // after YIELD and graph-reading expressions run there, as Neo4j runs the
 // expressions).
-func systemShowTailError(query string) error {
+func systemShowTailError(ctx context.Context, query string) error {
 	query = strings.TrimSpace(strings.TrimSuffix(query, ";"))
-	tail := strings.TrimSpace(query[len(showCommandHead(query)):])
+	tail := strings.TrimSpace(query[len(showCommandHead(ctx, query)):])
 	if tail == "" {
 		return nil
 	}
@@ -383,7 +389,7 @@ func systemShowTailError(query string) error {
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
 			localization.CypherAdminShowClauseUnexpected(clause[:end]))
 	}
-	switch kind := graphReadingExpression(tail); kind {
+	switch kind := graphReadingExpression(ctx, tail); kind {
 	case "":
 		return nil
 	case "COUNT", "EXISTS", "COLLECT":
@@ -462,13 +468,16 @@ func (e *StorageExecutor) resolveCompositeConstituent(fullName, compositeName, a
 // clauses through these boundary-aware operations, then read the grammar product.
 func isUseKeyword(word string) bool         { return strings.EqualFold(word, "USE") }
 func startsWithUseClause(query string) bool { return startsWithKeywordFold(query, "USE") }
-func useKeywordIndexFrom(query string, from int, opts keywordScanOpts) int {
-	return keywordIndexFrom(query, "USE", from, opts)
+func useKeywordIndexFrom(ctx context.Context, query string, from int, opts keywordScanOpts) int {
+	return keywordIndexFrom(ctx, query, "USE", from, opts)
 }
 
 // USE owns graph-name boundaries, including the optional GRAPH keyword.
 // Reuse that owner when a graph is spelled like a clause keyword.
-func useGraphNameAt(s string, pos int) bool {
+func useGraphNameAt(ctx context.Context, s string, pos int) bool {
+	if ctx.Err() != nil {
+		return false
+	}
 	// A graph name directly follows USE or USE GRAPH. Unless a comment can
 	// sit between them, the raw preceding word decides without a full scan.
 	if word := rawWordBefore(s, pos); !strings.EqualFold(word, "USE") && !strings.EqualFold(word, "GRAPH") &&
@@ -490,5 +499,5 @@ func useGraphNameAt(s string, pos int) bool {
 	if !strings.EqualFold(s[start:end], "USE") {
 		return false
 	}
-	return pos < useClauseReferenceEnd(s, start, true)
+	return pos < useClauseReferenceEnd(ctx, s, start, true)
 }

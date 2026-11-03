@@ -95,17 +95,17 @@ func TestMapQuotationConsumers(t *testing.T) {
 							}
 						case "row":
 							var resolved bool
-							got, resolved, err = e.evaluateRowValue(tc.text, nil)
+							got, resolved, err = e.evaluateRowValue(t.Context(), tc.text, nil)
 							require.True(t, resolved)
 						case "compiled":
 							compiler := rowValueCompiler{}
-							root, _ := compiler.compile(tc.text)
+							root, _ := compiler.compile(ctx, tc.text)
 							var resolved bool
-							got, resolved, err = root.eval(e, nil, nil)
+							got, resolved, err = root.eval(t.Context(), e, nil, nil)
 							require.True(t, resolved)
 						case "map-projection":
 							var resolved bool
-							got, resolved, err = e.evaluateRowValue("base"+tc.text, map[string]interface{}{"base": map[string]interface{}{}})
+							got, resolved, err = e.evaluateRowValue(t.Context(), "base"+tc.text, map[string]interface{}{"base": map[string]interface{}{}})
 							require.True(t, resolved)
 						}
 						require.NoError(t, err, tc.text)

@@ -52,7 +52,7 @@ func (e *StorageExecutor) resolveProcedureCatalogIdentity(ctx context.Context, s
 			keys = append(keys, legacy)
 		}
 		for _, key := range keys {
-			node, err := store.GetNode(key)
+			node, err := store.GetNode(ctx, key)
 			if errors.Is(err, storage.ErrNotFound) {
 				continue
 			}
@@ -77,7 +77,7 @@ func (e *StorageExecutor) resolveProcedureCatalogIdentity(ctx context.Context, s
 		if node.ID == destinationID || node.ID != storage.NodeID(procedureCatalogPrefix+lowerASCII(strings.TrimSpace(record.Name))) {
 			continue
 		}
-		existing, err := store.GetNode(destinationID)
+		existing, err := store.GetNode(ctx, destinationID)
 		if err != nil && !errors.Is(err, storage.ErrNotFound) {
 			return nil, false, localizedError(localization.CypherProceduresPersistCatalogFailed(err), err)
 		}
@@ -96,18 +96,18 @@ func (e *StorageExecutor) resolveProcedureCatalogIdentity(ctx context.Context, s
 		} else {
 			migrated := *node
 			migrated.ID = destinationID
-			if _, err := store.CreateNode(&migrated); err != nil {
+			if _, err := store.CreateNode(ctx, &migrated); err != nil {
 				return nil, false, localizedError(localization.CypherProceduresPersistCatalogFailed(err), err)
 			}
 		}
-		if err := store.DeleteNode(node.ID); err != nil {
+		if err := store.DeleteNode(ctx, node.ID); err != nil {
 			return nil, false, localizedError(localization.CypherProceduresDropFailed(record.Name, err), err)
 		}
 	}
 	if len(supplied) != 0 {
 		return nil, superseded, nil
 	}
-	node, err := store.GetNode(canonical)
+	node, err := store.GetNode(ctx, canonical)
 	if errors.Is(err, storage.ErrNotFound) {
 		return nil, false, nil
 	}

@@ -1,6 +1,7 @@
 package storage_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
@@ -542,11 +543,11 @@ func TestBootstrap_PromotionPolicies(t *testing.T) {
 func TestBootstrap_PersistenceRoundTrip(t *testing.T) {
 	sm := newBootstrapSchema(t)
 
-	def := sm.ExportDefinition()
+	def := schemaDefinitionForTest(t, sm)
 	require.NotNil(t, def)
 
 	sm2 := storage.NewSchemaManager()
-	require.NoError(t, sm2.ReplaceFromDefinition(def))
+	require.NoError(t, sm2.ReplaceFromDefinition(context.Background(), def))
 
 	bundles2, bindings2 := sm2.ShowDecayProfiles()
 	assert.Len(t, bundles2, 5)

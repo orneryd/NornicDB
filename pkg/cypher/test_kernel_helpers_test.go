@@ -61,3 +61,16 @@ func runCreateDeleteSteps(t *testing.T, exec *StorageExecutor, ctx context.Conte
 		}
 	}
 }
+
+// readIndexNames owns ordered schema-name projection; callers retain their
+// original namespace, context, exact filter query and residual-state assertions.
+func readIndexNames(t *testing.T, ctx context.Context, exec *StorageExecutor, query string) []string {
+	t.Helper()
+	result, err := exec.Execute(ctx, query, nil)
+	require.NoError(t, err)
+	names := make([]string, 0, len(result.Rows))
+	for _, row := range result.Rows {
+		names = append(names, row[0].(string))
+	}
+	return names
+}

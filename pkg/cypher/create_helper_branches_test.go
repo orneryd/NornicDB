@@ -66,46 +66,46 @@ func TestResolveNodeFromIDEqualityTerm_Branches(t *testing.T) {
 	require.NotEmpty(t, nodes)
 	nid := string(nodes[0].ID)
 
-	v, node := exec.resolveNodeFromIDEqualityTerm("", nil)
+	v, node := exec.resolveNodeFromIDEqualityTerm(t.Context(), "", nil)
 	require.Empty(t, v)
 	require.Nil(t, node)
 
-	v, node = exec.resolveNodeFromIDEqualityTerm("id(n) != 'x'", nil)
+	v, node = exec.resolveNodeFromIDEqualityTerm(t.Context(), "id(n) != 'x'", nil)
 	require.Empty(t, v)
 	require.Nil(t, node)
 
-	v, node = exec.resolveNodeFromIDEqualityTerm("id(n) == 'x'", nil)
+	v, node = exec.resolveNodeFromIDEqualityTerm(t.Context(), "id(n) == 'x'", nil)
 	require.Empty(t, v)
 	require.Nil(t, node)
 
-	v, node = exec.resolveNodeFromIDEqualityTerm("name = 'x'", nil)
+	v, node = exec.resolveNodeFromIDEqualityTerm(t.Context(), "name = 'x'", nil)
 	require.Empty(t, v)
 	require.Nil(t, node)
 
-	v, node = exec.resolveNodeFromIDEqualityTerm("id(n) = $p", nil)
+	v, node = exec.resolveNodeFromIDEqualityTerm(t.Context(), "id(n) = $p", nil)
 	require.Empty(t, v)
 	require.Nil(t, node)
 
-	v, node = exec.resolveNodeFromIDEqualityTerm("id(n) = $p", map[string]interface{}{"p": int64(1)})
+	v, node = exec.resolveNodeFromIDEqualityTerm(t.Context(), "id(n) = $p", map[string]interface{}{"p": int64(1)})
 	require.Empty(t, v)
 	require.Nil(t, node)
 
-	v, node = exec.resolveNodeFromIDEqualityTerm("id(n) = $p", map[string]interface{}{"p": nid})
+	v, node = exec.resolveNodeFromIDEqualityTerm(t.Context(), "id(n) = $p", map[string]interface{}{"p": nid})
 	require.Equal(t, "n", v)
 	require.NotNil(t, node)
 	require.Equal(t, nid, string(node.ID))
 
-	v, node = exec.resolveNodeFromIDEqualityTerm("id(n) = '"+nid+"'", nil)
+	v, node = exec.resolveNodeFromIDEqualityTerm(t.Context(), "id(n) = '"+nid+"'", nil)
 	require.Equal(t, "n", v)
 	require.NotNil(t, node)
 	require.Equal(t, nid, string(node.ID))
 
-	v, node = exec.resolveNodeFromIDEqualityTerm("elementId(n) = '4:nornic:"+nid+"'", nil)
+	v, node = exec.resolveNodeFromIDEqualityTerm(t.Context(), "elementId(n) = '4:nornic:"+nid+"'", nil)
 	require.Equal(t, "n", v)
 	require.NotNil(t, node)
 	require.Equal(t, nid, string(node.ID))
 
-	v, node = exec.resolveNodeFromIDEqualityTerm("elementId(n) = $p", map[string]interface{}{"p": "4:nornic:" + nid})
+	v, node = exec.resolveNodeFromIDEqualityTerm(t.Context(), "elementId(n) = $p", map[string]interface{}{"p": "4:nornic:" + nid})
 	require.Equal(t, "n", v)
 	require.NotNil(t, node)
 	require.Equal(t, nid, string(node.ID))

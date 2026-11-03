@@ -10,7 +10,7 @@ import (
 func BenchmarkDirectDatabaseReadRoutes(b *testing.B) {
 	server, users := setupTestServer(b)
 	token := "Bearer " + getAuthToken(b, users, "admin")
-	_, err := server.db.GetStorage().CreateNode(&storage.Node{ID: "read-bench", Labels: []string{"ReadBench"}})
+	_, err := server.db.GetStorage().CreateNode(b.Context(), &storage.Node{ID: "read-bench", Labels: []string{"ReadBench"}})
 	if err != nil {
 		b.Fatal(err)
 	}

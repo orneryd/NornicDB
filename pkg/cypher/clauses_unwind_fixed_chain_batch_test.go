@@ -16,10 +16,10 @@ func TestExecuteUnwindFixedChainLinkBatch_SuccessAndIdempotence(t *testing.T) {
 	ctx := context.Background()
 
 	for _, key := range []string{"a", "b"} {
-		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID("orig-" + key), Labels: []string{"OriginalText"}, Properties: map[string]interface{}{"textKey": key}})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID("orig-" + key), Labels: []string{"OriginalText"}, Properties: map[string]interface{}{"textKey": key}})
 		require.NoError(t, err)
 		for depth := 1; depth <= 2; depth++ {
-			_, err = store.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("hop-%s-%d", key, depth)), Labels: []string{"Hop"}, Properties: map[string]interface{}{"hopId": fmt.Sprintf("%s:%d", key, depth)}})
+			_, err = store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("hop-%s-%d", key, depth)), Labels: []string{"Hop"}, Properties: map[string]interface{}{"hopId": fmt.Sprintf("%s:%d", key, depth)}})
 			require.NoError(t, err)
 		}
 	}
@@ -63,11 +63,11 @@ func TestExecuteUnwindFixedChainLinkBatch_ElementIDRootPath(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	rootID, err := store.CreateNode(&storage.Node{ID: storage.NodeID("orig-id"), Labels: []string{"OriginalText"}, Properties: map[string]interface{}{"textKey": "k"}})
+	rootID, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID("orig-id"), Labels: []string{"OriginalText"}, Properties: map[string]interface{}{"textKey": "k"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: storage.NodeID("hop-id-1"), Labels: []string{"Hop"}, Properties: map[string]interface{}{"hopId": "k:1"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID("hop-id-1"), Labels: []string{"Hop"}, Properties: map[string]interface{}{"hopId": "k:1"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: storage.NodeID("hop-id-2"), Labels: []string{"Hop"}, Properties: map[string]interface{}{"hopId": "k:2"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID("hop-id-2"), Labels: []string{"Hop"}, Properties: map[string]interface{}{"hopId": "k:2"}})
 	require.NoError(t, err)
 
 	rest := `

@@ -23,13 +23,13 @@ func expressionSubqueryClauseBindingError(ctx context.Context, clause pipelineCl
 	}
 	switch clause.kind {
 	case pipelineClauseUnwind:
-		return check("", unwindBindingName(clause.text))
+		return check("", unwindBindingName(ctx, clause.text))
 	case pipelineClauseWith, pipelineClauseReturn:
 		keyword := "WITH"
 		if clause.kind == pipelineClauseReturn {
 			keyword = "RETURN"
 		}
-		projection, _ := projectionSemanticBodyAndTail(clause.text, keyword)
+		projection, _ := projectionSemanticBodyAndTail(ctx, clause.text, keyword)
 		projection, _ = cutDistinct(strings.TrimSpace(projection))
 		for _, raw := range splitTopLevelComma(projection) {
 			itemSource := readProjectionItemSource(ctx, strings.TrimSpace(raw), projectionAdmitted)

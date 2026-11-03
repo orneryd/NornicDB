@@ -107,6 +107,7 @@
 //
 // The Cypher executor is like a smart assistant that understands these
 // questions and knows how to find the answers in your data!
+// Author: Codex, NOR-180 terminal WAL outcome changes, 2026-10-26.
 package cypher
 
 import (
@@ -200,7 +201,7 @@ func firstTopLevelCallSubquery(ctx context.Context, query string) int {
 // callSubqueryAt reports whether a CALL { } or scoped CALL (vars) { }
 // subquery clause starts at offset i of query.
 func callSubqueryAt(ctx context.Context, query string, i int) bool {
-	if !matchKeywordAt(query, i, "CALL") || clauseKeywordUsedAsName(query, i, i+len("CALL"), "CALL") {
+	if !matchKeywordAt(query, i, "CALL") || clauseKeywordUsedAsName(ctx, query, i, i+len("CALL"), "CALL") {
 		return false
 	}
 	// Classification consumes the same CALL frame as scope and execution.
@@ -387,7 +388,7 @@ type StorageExecutor struct {
 	searchDatabase string
 
 	// inferenceManager optionally provides LLM inference for db.infer.
-	inferenceManager InferenceManager
+	inferenceManager *inferenceManagerBinding
 
 	// localizationRenderer renders descriptor-backed metadata using request context.
 	localizationRenderer ProcedureMetadataRenderer
@@ -790,6 +791,7 @@ func NewStorageExecutor(store storage.Engine, cachePolicy ...QueryCachePolicy) *
 		vectorIndexSpaces:            make(map[string]vectorspace.VectorSpaceKey),
 		hotPathTraceState:            &hotPathTraceState{},
 		queryEmbedder:                &QueryEmbedderBinding{},
+		inferenceManager:             &inferenceManagerBinding{},
 		unwindMergeChainPlanCache:    &unwindMergeChainPlanCache{plans: make(map[string]unwindMergeChainPlan, 128)},
 		inlineEmbeddingTextOptions:   embeddingutil.EmbedTextOptionsFromConfig(runtimeCfg),
 		inlineEmbeddingChunkSize:     maxInt(runtimeCfg.EmbeddingWorker.ChunkSize, 1),
@@ -1235,12 +1237,17 @@ func (e *StorageExecutor) shareSearchFor(target *StorageExecutor, database strin
 
 // SetInferenceManager sets the inference manager used by db.infer.
 func (e *StorageExecutor) SetInferenceManager(mgr InferenceManager) {
-	e.inferenceManager = mgr
+	e.inferenceManager.current.Store(&inferenceManagerState{manager: mgr})
 }
 
 // GetInferenceManager returns the configured inference manager.
 func (e *StorageExecutor) GetInferenceManager() InferenceManager {
-	return e.inferenceManager
+	if e.inferenceManager != nil {
+		if state := e.inferenceManager.current.Load(); state != nil {
+			return state.manager
+		}
+	}
+	return nil
 }
 
 // SetVectorRegistry allows wiring a shared index registry (e.g., per database).
@@ -1300,7 +1307,7 @@ func (e *StorageExecutor) GetDefaultEmbeddingDimensions() int {
 // Search reads the node itself after reserving the refresh, so a later write or
 // delete that commits first is not overwritten by this notification.
 func (e *StorageExecutor) notifyNodeMutated(nodeID string) {
-	_ = search.RefreshIndexes(context.Background(), cypherRefreshScope{executor: e}, search.RefreshRequest{Node: storage.NodeID(nodeID)})
+	e.refreshSearch(search.RefreshRequest{Node: storage.NodeID(nodeID)})
 	if e.onNodeMutated != nil {
 		e.onNodeMutated(nodeID)
 	}
@@ -1311,7 +1318,7 @@ func (e *StorageExecutor) notifyNodeMutated(nodeID string) {
 // a full search warmup/build has run. Call it after deleting one too, so its
 // vectors leave search.
 func (e *StorageExecutor) notifyEdgeMutated(edgeID string) {
-	_ = search.RefreshIndexes(context.Background(), cypherRefreshScope{executor: e}, search.RefreshRequest{Edge: storage.EdgeID(edgeID)})
+	e.refreshSearch(search.RefreshRequest{Edge: storage.EdgeID(edgeID)})
 }
 
 // refreshSearchAfterCommit refreshes what the committed transaction changed.
@@ -1320,12 +1327,11 @@ func (e *StorageExecutor) notifyEdgeMutated(edgeID string) {
 func (e *StorageExecutor) refreshSearchAfterCommit(tx *transactionStorageWrapper) {
 	nodes, edges := tx.takeSearchRefreshes()
 	service := e.search()
-	scope := cypherRefreshScope{executor: e}
 	for id := range nodes {
-		_ = search.RefreshIndexes(context.Background(), scope, search.RefreshRequest{Node: id, PostCommit: true, PostCommitService: service})
+		e.refreshSearch(search.RefreshRequest{Node: id, PostCommit: true, PostCommitService: service})
 	}
 	for id := range edges {
-		_ = search.RefreshIndexes(context.Background(), scope, search.RefreshRequest{Edge: id, PostCommit: true, PostCommitService: service})
+		e.refreshSearch(search.RefreshRequest{Edge: id, PostCommit: true, PostCommitService: service})
 	}
 }
 
@@ -1338,7 +1344,7 @@ func (e *StorageExecutor) removeNodeFromSearch(nodeID string) {
 	if _, unprefixed, ok := storage.ParseDatabasePrefix(nodeID); ok {
 		localID = unprefixed
 	}
-	_ = search.RefreshIndexes(context.Background(), cypherRefreshScope{executor: e}, search.RefreshRequest{Node: storage.NodeID(localID)})
+	e.refreshSearch(search.RefreshRequest{Node: storage.NodeID(localID)})
 }
 
 // Flush persists all pending writes to storage.
@@ -1404,8 +1410,10 @@ func cypherSyntaxConfusableReplacement(character rune) (string, bool) {
 
 // TransactionCapableEngine is an engine that supports ACID transactions.
 // Used for type assertion to wrap implicit writes in rollback-capable transactions.
+// BeginTransaction uses ctx for admission and snapshot capture. The returned
+// handle has its own lifetime; subsequent operations supply their own contexts.
 type TransactionCapableEngine interface {
-	BeginTransaction() (*storage.BadgerTransaction, error)
+	BeginTransaction(context.Context) (*storage.BadgerTransaction, error)
 }
 
 type implicitTxEngines struct {
@@ -1460,7 +1468,7 @@ func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher strin
 	}
 	// Check if this is a write operation using cached analysis
 	info := e.analyzer.Analyze(ctx, cypher)
-	needsTransaction, err := statementNeedsTransaction(ctx, cypher)
+	contract, err := readStatementExecutionContract(ctx, cypher)
 	if err != nil {
 		return nil, err
 	}
@@ -1472,7 +1480,11 @@ func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher strin
 
 	// For write operations, use implicit transaction for atomicity
 	// This ensures partial writes are rolled back on error
-	if needsTransaction {
+	if contract.transaction {
+		_, managed := fabric.FabricTransactionFromContext(ctx)
+		if (contract.dynamic || contract.selectsDatabase) && !managed && !storage.CoordinatorOwnsTransaction(ctx) {
+			return e.executeNativeCoordinatedStatement(ctx, cypher, upperQuery)
+		}
 		return e.executeWithImplicitTransaction(ctx, cypher, upperQuery)
 	}
 
@@ -1487,20 +1499,13 @@ func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher strin
 	return e.executeWithoutTransaction(ctx, cypher, upperQuery)
 }
 
-// statementNeedsTransaction keeps write clauses and registered WRITE procedures
-// under the same statement rollback owner. tx.setMetaData also needs a transaction.
-func statementNeedsTransaction(ctx context.Context, cypher string) (bool, error) {
-	contract, err := readStatementExecutionContract(ctx, cypher)
-	return contract.transaction, err
-}
-
 // executeWithImplicitTransaction wraps a write query in a single implicit
 // transaction. Commit-time conflicts are returned to the caller; retry-aware
 // clients own any replay decision because NornicDB does not know whether a
 // conflict is recoverable for the application.
 func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, error) {
 	executionCypher, executionUpperQuery := cypher, upperQuery
-	if parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(cypher); inlineEmbeddingEnabled {
+	if parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(ctx, cypher); inlineEmbeddingEnabled {
 		executionCypher = parsedCypher
 		executionUpperQuery = upperASCII(parsedCypher)
 	}
@@ -1510,7 +1515,8 @@ func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cy
 }
 
 func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Context, cypher string, upperQuery string, execute func(context.Context, *StorageExecutor) (*ExecuteResult, error)) (result *ExecuteResult, retErr error) {
-	parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(cypher)
+	defer func() { completeStatementTerminalOutcome(ctx, true, &result, &retErr, nil) }()
+	parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(ctx, cypher)
 	if inlineEmbeddingEnabled {
 		cypher = parsedCypher
 		upperQuery = upperASCII(cypher)
@@ -1529,6 +1535,17 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 		return result, err
 	}
 
+	// Schema target semantics precede local transaction capability. Reject a
+	// composite root through the schema owner's validator without executing a
+	// callback on an engine that has no atomic write owner.
+	_, body := parseExecutionMode(cypher)
+	schemaDDL := isOrdinarySchemaDDL(ctx, body)
+	if schemaDDL {
+		if err := schemaDDLTargetError(e.storage); err != nil {
+			return nil, err
+		}
+	}
+
 	// Try to get a transaction-capable engine and async wrapper (if present)
 	engines := e.resolveImplicitTxEngines()
 	if engines.namespace == "" {
@@ -1540,77 +1557,36 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	}
 	txEngine := engines.txEngine
 
-	// If no transaction support, fall back to direct execution (legacy mode)
-	// This is less safe but maintains backward compatibility
+	// Local writes require a rollback owner before any execution or callback.
+	// Delegated Fabric and inherited statement owners were selected above.
 	if txEngine == nil {
 		if inlineEmbeddingEnabled {
 			return nil, localizedError(localization.CypherCoreEmbeddingTransactionStorageRequired(), nil)
 		}
-		result, err := execute(ctx, e)
-		if err == nil {
-			// Legacy engines apply writes directly; successful execution is
-			// their publication boundary, with no pending transaction.
-			e.publishDirectStatementCommit(ctx, cypher)
-		}
-		return result, err
+		return nil, localizedError(localization.CypherTransactionsEngineUnsupported(), nil)
 	}
 
-	// Start implicit transaction
-	if engines.namespace != "" {
-		if primer, ok := txEngine.(interface{ EnsureNamespaceMVCC(string) error }); ok {
-			if err := primer.EnsureNamespaceMVCC(engines.namespace); err != nil {
-				return nil, localizedError(localization.CypherCoreImplicitTransactionPrimeFailed(err), err)
-			}
+	// Start implicit transaction. Constraint validation is deferred to
+	// commit, which avoids duplicate per-operation checks and improves write
+	// throughput.
+	start := transactionStart{implicit: true, namespace: engines.namespace}
+	if schemaDDL {
+		start.schema = e.storage.GetSchema()
+		if provider, ok := e.storage.(interface {
+			GetSchemaForNamespace(string) *storage.SchemaManager
+		}); ok && engines.namespace != "" {
+			start.schema = provider.GetSchemaForNamespace(engines.namespace)
 		}
 	}
-	tx, err := beginTransactionSnapshot(txEngine)
+	tx, bookkeeping, err := e.openTransaction(ctx, txEngine, start, nil)
 	if err != nil {
-		return nil, localizedError(localization.CypherCoreImplicitTransactionStartFailed(err), err)
-	}
-	if engines.namespace != "" {
-		if err := tx.SetNamespace(engines.namespace); err != nil {
-			_ = tx.Rollback()
-			return nil, localizedError(localization.CypherCoreImplicitTransactionPinFailed(err), err)
-		}
-	}
-	if err := applyTransactionMetadata(ctx, tx); err != nil {
-		_ = tx.Rollback()
 		return nil, err
 	}
-
-	// Defer constraint validation to commit for implicit transactions.
-	// This avoids duplicate per-operation checks and improves write throughput.
-	if err := tx.SetValidationSetting(storage.DeferredConstraintValidation, true); err != nil {
-		_ = tx.Rollback()
-		return nil, localizedError(localization.CypherCoreImplicitTransactionConfigureFailed(err), err)
-	}
-	if err := tx.SetValidationSetting(storage.SkipCreateCommitHeadReload, true); err != nil {
-		_ = tx.Rollback()
-		return nil, localizedError(localization.CypherCoreImplicitTransactionConfigureFailed(err), err)
-	}
-	// Skip the per-commit engine.Sync(). The Bolt session's end-of-session
-	// Flush and the async engine's ticker-driven flush coalesce durability
-	// for implicit writes; forcing an Msync per UNWIND batch turned every
-	// batch into a 300µs syscall for no user-visible benefit.
-	if err := tx.SetImplicit(true); err != nil {
-		_ = tx.Rollback()
-		return nil, localizedError(localization.CypherCoreImplicitTransactionConfigureFailed(err), err)
-	}
-
-	// Optional WAL transaction markers for receipts.
-	var wal *storage.WAL
-	var walSeqStart uint64
-	txID := tx.ID
-	var dbName string
-	if txID != "" {
-		wal, dbName = e.resolveWALAndDatabase()
-		if wal != nil {
-			walSeqStart, err = wal.AppendWithDatabaseReturningSeq(storage.OpTxBegin, storage.WALTxData{TxID: txID, Metadata: nil}, dbName)
-			if err != nil {
-				_ = tx.Rollback()
-				return nil, localizedError(localization.CypherCoreImplicitTransactionWALBeginFailed(err), err)
-			}
-		}
+	if start.schema != nil {
+		// Rejections before the native commit (including managed-owner rejection)
+		// still close the schema statement's snapshot and admission. Already
+		// closed transactions retain their terminal outcome and own no lease.
+		defer func() { _ = tx.Rollback() }()
 	}
 
 	// Create a transactional wrapper that routes writes through the transaction
@@ -1669,31 +1645,21 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 		// Rollback on any error - prevents partial data corruption
 		tx.Rollback()
 		txExec.invalidateNodeLookupCache()
-		if wal != nil && walSeqStart > 0 {
-			_, _ = wal.AppendWithDatabaseReturningSeq(storage.OpTxAbort, storage.WALTxData{TxID: txID, Reason: execErr.Error()}, dbName)
-		}
-		return result, execErr
+		return result, bookkeeping.abort(ctx, execErr, execErr.Error())
 	}
 
 	// A write-shaped query can legitimately match no mutation targets. Committing
 	// an empty Badger transaction still performs store-wide validation work, so
 	// roll it back after the match has completed instead.
-	if tx.OperationCount() == 0 && !tx.HasKnowledgePolicyChanges() && !tx.RequiresCommitValidation() && len(txWrapper.commitActions) == 0 {
-		_ = tx.Rollback()
-		if wal != nil && walSeqStart > 0 {
-			_, _ = wal.AppendWithDatabaseReturningSeq(storage.OpTxAbort, storage.WALTxData{TxID: txID, Reason: "no mutations"}, dbName)
-		}
-		return result, nil
+	if !txWrapper.hasPendingCommitEffects() {
+		return result, txExec.endEmptyNativeTransaction(ctx, tx, bookkeeping)
 	}
 
 	if inlineEmbeddingEnabled {
 		if err := txExec.completeInlineEmbedding(txCtx, txWrapper); err != nil {
 			tx.Rollback()
 			txExec.invalidateNodeLookupCache()
-			if wal != nil && walSeqStart > 0 {
-				_, _ = wal.AppendWithDatabaseReturningSeq(storage.OpTxAbort, storage.WALTxData{TxID: txID, Reason: err.Error()}, dbName)
-			}
-			return nil, err
+			return nil, bookkeeping.abort(ctx, err, err.Error())
 		}
 	}
 
@@ -1701,10 +1667,7 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	if running, ok := ctx.Value(ctxKeyRunningTransaction{}).(*runningTransaction); ok && running.terminated.Load() {
 		tx.Rollback()
 		txExec.invalidateNodeLookupCache()
-		if wal != nil && walSeqStart > 0 {
-			_, _ = wal.AppendWithDatabaseReturningSeq(storage.OpTxAbort, storage.WALTxData{TxID: txID, Reason: "terminated"}, dbName)
-		}
-		return nil, transactionTerminatedError()
+		return nil, bookkeeping.abort(ctx, transactionTerminatedError(), "terminated")
 	}
 
 	// Commit successful transaction. The statement's context makes commit-time
@@ -1714,59 +1677,32 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	if admissionErr != nil {
 		_ = tx.Rollback()
 		txExec.invalidateNodeLookupCache()
-		if wal != nil && walSeqStart > 0 {
-			_, _ = wal.AppendWithDatabaseReturningSeq(storage.OpTxAbort, storage.WALTxData{TxID: txID, Reason: admissionErr.Error()}, dbName)
-		}
-		return nil, admissionErr
+		// Author: Codex, NOR-180. Rejected admission retains the existing
+		// terminal owner's outcome after the same native rollback.
+		return nil, bookkeeping.rejectCommit(ctx, admissionErr, admissionErr.Error())
 	}
 	if err := e.commitStorageTransaction(commitCtx, tx); err != nil {
 		txExec.invalidateNodeLookupCache()
-		if wal != nil && walSeqStart > 0 {
-			_, _ = wal.AppendWithDatabaseReturningSeq(storage.OpTxAbort, storage.WALTxData{TxID: txID, Reason: err.Error()}, dbName)
-		}
-		if info := e.analyzer.Analyze(ctx, cypher); IsRetrySafeMergeCommitQuery(info) && MergeUniqueConflictIsRetrySafe([]CommitStatement{{Query: cypher, Params: getParamsFromContext(ctx)}}, err) {
-			err = nornicerrors.MarkMergeCommitTimeUniqueConflict(err)
-		}
+		err = bookkeeping.rejectCommit(ctx, err, err.Error())
 		// Wire contract: substring "commit failed" is matched by downstream Bolt classifiers.
 		// See docs/plans/consumer-pinned-error-contract-plan.md §2.1.
 		// The implicit-autocommit path was historically wrapped with "failed to commit
 		// implicit transaction: ..." which broke the consumer-pinned classifier; aligned
 		// with pkg/cypher/transaction.go:181 so the explicit and implicit paths produce the
 		// same wire shape.
-		return nil, localizedError(localization.CypherCoreImplicitTransactionCommitFailed(err), err)
+		return nil, nornicerrors.TransactionControlFailure(nornicerrors.TerminalCommit, localizedError(localization.CypherCoreImplicitTransactionCommitFailed(err), err))
 	}
-	completionErr := txWrapper.completeCommitActions()
-	txExec.refreshSearchAfterCommit(txWrapper)
-	if completionErr != nil {
-		return result, completionErr
-	}
+	// The admitted commit lifetime above owns both halves of acceptance: the
+	// native commit and the completion actions it queued. The cancelable
+	// statement context admitted the commit; it cannot cancel what admission
+	// accepted. The implicit and explicit paths share that one lifetime.
+	receipt, completionErr, bookkeepingErr := bookkeeping.finishCommitted(commitCtx, tx.OperationCount(), func(admittedCtx context.Context) error {
+		completionErr := txWrapper.completeCommitActions(admittedCtx)
+		txExec.refreshSearchAfterCommit(txWrapper)
+		return completionErr
+	})
 
-	// Attach receipt metadata if WAL markers were recorded. Receipts are
-	// attached exactly as on the durable path: the write-behind ACK carries
-	// the same information (its commit markers are appended before the ACK
-	// per the buffer design). The eventual marker below is how the HTTP
-	// layer tells an acknowledged buffered commit from a durable one.
-	if wal != nil && walSeqStart > 0 {
-		opCount := tx.OperationCount()
-		if commitSeq, walErr := wal.AppendWithDatabaseReturningSeq(storage.OpTxCommit, storage.WALTxData{TxID: txID, OpCount: opCount}, dbName); walErr == nil {
-			if receipt, recErr := storage.NewReceipt(txID, walSeqStart, commitSeq, dbName, time.Now().UTC()); recErr == nil {
-				if result.Metadata == nil {
-					result.Metadata = make(map[string]interface{})
-				}
-				result.Metadata["receipt"] = receipt
-			}
-		}
-	}
-
-	// Mark commits that were acknowledged through the write-behind buffer.
-	// Every eligible write buffers when the engine has it enabled; this
-	// marker is what makes the server answer 202 Accepted instead of 200.
-	if tx.AcknowledgedBuffered() {
-		if result.Metadata == nil {
-			result.Metadata = make(map[string]interface{})
-		}
-		result.Metadata["eventual"] = true
-	}
+	attachNativeCommitMetadata(result, receipt, tx.AcknowledgedBuffered())
 
 	// Promote the tx-scoped MERGE lookup cache into the parent so
 	// subsequent Execute calls still benefit from the cross-query
@@ -1774,7 +1710,11 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	// its own clone; only post-commit entries graduate to the parent.
 	txExec.promoteNodeLookupCacheTo(e)
 
-	return result, nil
+	if bookkeepingErr != nil {
+		return nil, localizedError(localization.CypherCoreImplicitTransactionCommitFailed(bookkeepingErr), bookkeepingErr)
+	}
+
+	return result, completionErr
 }
 
 // ctxKeyTxStorage is the context key for transaction storage wrapper.
@@ -1798,7 +1738,7 @@ func (e *StorageExecutor) applyInlineEmbeddingMutations(ctx context.Context, ids
 	store := e.getStorage(ctx)
 	typedEmbedder, hasTypedEmbedder := embedder.(typedQueryEmbedder)
 	for id := range ids {
-		node, err := store.GetNode(storage.NodeID(id))
+		node, err := store.GetNode(ctx, storage.NodeID(id))
 		if err != nil {
 			if err == storage.ErrNotFound {
 				continue
@@ -1850,7 +1790,7 @@ func (e *StorageExecutor) applyInlineEmbeddingMutations(ctx context.Context, ids
 		before.EmbedMeta = maps.Clone(node.EmbedMeta)
 		embeddingutil.ApplyManagedEmbedding(node, embeddings, model, dimensions, time.Now())
 		embeddingutil.RecordChunkSpans(node, source, chunks)
-		if err := store.UpdateNode(storage.NodeUpdateRequest{Before: &before, After: node}); err != nil {
+		if err := store.UpdateNode(ctx, storage.NodeUpdateRequest{Before: &before, After: node}); err != nil {
 			return err
 		}
 	}
@@ -1860,10 +1800,10 @@ func (e *StorageExecutor) applyInlineEmbeddingMutations(ctx context.Context, ids
 // stripWithEmbeddingSuffix removes the WITH EMBEDDING execution option where
 // it ends the statement (or its UNION branch). A nonterminal WITH EMBEDDING is
 // a projection candidate that the scope compiler and pipeline frame resolve.
-func stripWithEmbeddingSuffix(cypher string) (string, bool) {
+func stripWithEmbeddingSuffix(ctx context.Context, cypher string) (string, bool) {
 	idx, embeddingStart := -1, -1
 	for from := 0; from < len(cypher); {
-		at := keywordIndexFrom(cypher, "WITH", from, defaultKeywordScanOpts())
+		at := keywordIndexFrom(ctx, cypher, "WITH", from, defaultKeywordScanOpts())
 		if at < 0 {
 			break
 		}
@@ -2011,7 +1951,7 @@ func statementAccessesGraph(info *QueryInfo) bool {
 // direction is safe by construction: a false positive only forces the caller
 // to target a constituent (and pass its authorization), while a false
 // negative would read denied data.
-func statementAccessesGraphText(cypher string) bool {
+func statementAccessesGraphText(ctx context.Context, cypher string) bool {
 	opts := defaultKeywordScanOpts()
 	for _, keyword := range []string{
 		"MATCH", "OPTIONAL MATCH", "CREATE", "MERGE", "DELETE", "DETACH DELETE",
@@ -2019,19 +1959,19 @@ func statementAccessesGraphText(cypher string) bool {
 		"CREATE RANGE INDEX", "CREATE FULLTEXT INDEX", "CREATE VECTOR INDEX",
 		"CREATE CONSTRAINT", "DROP INDEX", "DROP CONSTRAINT",
 	} {
-		if keywordIndexFrom(cypher, keyword, 0, opts) >= 0 {
+		if keywordIndexFrom(ctx, cypher, keyword, 0, opts) >= 0 {
 			return true
 		}
 	}
-	return expressionReadsGraphText(cypher)
+	return expressionReadsGraphText(ctx, cypher)
 }
 
 // expressionReadsGraphText reports whether cypher holds an expression that
 // reads the graph (graphReadingExpression). statementAccessesGraphText,
 // statementReadsGraphText and the system database's statement policy read
 // expressions through it.
-func expressionReadsGraphText(cypher string) bool {
-	return graphReadingExpression(cypher) != ""
+func expressionReadsGraphText(ctx context.Context, cypher string) bool {
+	return graphReadingExpression(ctx, cypher) != ""
 }
 
 // Kinds of graph-reading expression graphReadingExpression reports.
@@ -2050,14 +1990,14 @@ const (
 // allShortestPaths graphReadingPattern; and a bare relationship pattern
 // ((a)-->() in an expression) graphReadingPatternPredicate, reported only
 // when there is nothing else. Clause patterns, literals and comments don't count.
-func graphReadingExpression(cypher string) string {
+func graphReadingExpression(ctx context.Context, cypher string) string {
 	opts := defaultKeywordScanOpts()
 	opts.SkipParens = false
 	opts.SkipBrackets = false
 	opts.SkipBraces = false
 	for _, keyword := range []string{"COUNT", "EXISTS", "COLLECT"} {
 		for from := 0; ; {
-			index := keywordIndexFrom(cypher, keyword, from, opts)
+			index := keywordIndexFrom(ctx, cypher, keyword, from, opts)
 			if index < 0 {
 				break
 			}
@@ -2080,7 +2020,7 @@ func graphReadingExpression(cypher string) string {
 	}
 	for _, keyword := range []string{"shortestPath", "allShortestPaths"} {
 		for from := 0; from < len(cypher); {
-			at := keywordIndexFrom(cypher, keyword, from, opts)
+			at := keywordIndexFrom(ctx, cypher, keyword, from, opts)
 			if at < 0 {
 				break
 			}
@@ -2126,18 +2066,18 @@ func graphReadingExpression(cypher string) string {
 // creates, and sets, removes or deletes what it created, reads nothing:
 // QueryPermissionRequirements then needs write but not read, as Neo4j lets
 // a principal with WRITE but no READ privilege run CREATE.
-func statementReadsGraphText(cypher string) bool {
+func statementReadsGraphText(ctx context.Context, cypher string) bool {
 	opts := defaultKeywordScanOpts()
 	opts.SkipParens = false
 	opts.SkipBrackets = false
 	opts.SkipBraces = false
 	for _, keyword := range []string{"MATCH", "MERGE", "SHOW"} {
-		if keywordIndexFrom(cypher, keyword, 0, opts) >= 0 {
+		if keywordIndexFrom(ctx, cypher, keyword, 0, opts) >= 0 {
 			return true
 		}
 	}
 	for from := 0; from < len(cypher); {
-		at := keywordIndexFrom(cypher, "CALL", from, opts)
+		at := keywordIndexFrom(ctx, cypher, "CALL", from, opts)
 		if at < 0 {
 			break
 		}
@@ -2146,7 +2086,7 @@ func statementReadsGraphText(cypher string) bool {
 			return true
 		}
 	}
-	return expressionReadsGraphText(cypher)
+	return expressionReadsGraphText(ctx, cypher)
 }
 
 // statementParametersError is Neo4j's ParameterMissing for a statement that

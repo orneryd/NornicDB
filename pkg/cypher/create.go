@@ -194,7 +194,7 @@ func (e *StorageExecutor) planCreatePatterns(ctx context.Context, pattern string
 
 			// Property keys follow the map-key rule (a symbolic name, or a
 			// backtick-quoted name holding any character).
-			if err := validateCreatePropertyKeys("["+relStr+"]", relProps); err != nil {
+			if err := validateCreatePropertyKeys(ctx, "["+relStr+"]", relProps); err != nil {
 				return nil, err
 			}
 
@@ -306,7 +306,7 @@ func (e *StorageExecutor) applyCreatePlan(ctx context.Context, plan *createPlan,
 	case 0:
 	case 1:
 		node := plan.nodes[0]
-		actualID, err := createMintedNode(store, node)
+		actualID, err := createMintedNode(ctx, store, node)
 		if err != nil {
 			return localizedError(localization.CypherMutationsCreateNodeFailed(err), err)
 		}
@@ -314,7 +314,7 @@ func (e *StorageExecutor) applyCreatePlan(ctx context.Context, plan *createPlan,
 			node.ID = actualID
 		}
 	default:
-		if err := bulkCreateMintedNodes(store, plan.nodes); err != nil {
+		if err := bulkCreateMintedNodes(ctx, store, plan.nodes); err != nil {
 			return localizedError(localization.CypherMutationsCreateNodeFailed(err), err)
 		}
 	}
@@ -322,9 +322,9 @@ func (e *StorageExecutor) applyCreatePlan(ctx context.Context, plan *createPlan,
 	switch len(plan.edges) {
 	case 0:
 	case 1:
-		edgeErr = createMintedEdge(store, plan.edges[0])
+		edgeErr = createMintedEdge(ctx, store, plan.edges[0])
 	default:
-		edgeErr = bulkCreateMintedEdges(store, plan.edges)
+		edgeErr = bulkCreateMintedEdges(ctx, store, plan.edges)
 	}
 	if edgeErr != nil {
 		// The clause's nodes are already written; remove them so the clause
@@ -334,7 +334,7 @@ func (e *StorageExecutor) applyCreatePlan(ctx context.Context, plan *createPlan,
 			for i, node := range plan.nodes {
 				ids[i] = node.ID
 			}
-			_ = store.BulkDeleteNodes(ids)
+			_ = store.BulkDeleteNodes(ctx, ids)
 		}
 		return localizedError(localization.CypherMutationsCreateRelationshipFailed(edgeErr), edgeErr)
 	}
@@ -402,7 +402,7 @@ func (e *StorageExecutor) projectCreateReturn(ctx context.Context, out *createOu
 	}
 	row := e.mergeBindingRow(ctx, out.nodes, out.edges)
 	for name, path := range out.paths {
-		row[name] = e.pathToMap(path)
+		row[name] = e.pathToMapContext(ctx, path)
 	}
 	projected, err := e.projectMergeReturn(ctx, []pipelineRow{row}, out.cypher[out.returnIdx:])
 	if err != nil {
@@ -464,7 +464,7 @@ func (e *StorageExecutor) prepareCreateNodePattern(ctx context.Context, pattern 
 	// SECURITY: Validate property keys and values. Keys follow the map-key
 	// rule (a symbolic name, or a backtick-quoted name holding any
 	// character).
-	if err := validateCreatePropertyKeys(pattern, nodePattern.properties); err != nil {
+	if err := validateCreatePropertyKeys(ctx, pattern, nodePattern.properties); err != nil {
 		return nodePatternInfo{}, err
 	}
 	for key, val := range nodePattern.properties {
@@ -945,7 +945,7 @@ func parseParamPathParts(source string) ([]string, bool) {
 	return parts, true
 }
 
-func (e *StorageExecutor) buildCombinationsUsingWhereJoin(
+func (e *StorageExecutor) buildCombinationsUsingWhereJoin(ctx context.Context,
 	patternMatches []struct {
 		variable string
 		nodes    []*storage.Node
@@ -969,7 +969,7 @@ func (e *StorageExecutor) buildCombinationsUsingWhereJoin(
 	}
 
 	eqConstraints := make([]cartesianEqConstraint, 0, 4)
-	for _, term := range splitTopLevelAndConjuncts(whereClause) {
+	for _, term := range splitTopLevelAndConjuncts(ctx, whereClause) {
 		term = strings.TrimSpace(term)
 		if term == "" {
 			continue
@@ -1254,7 +1254,7 @@ func (e *StorageExecutor) tryResolveMatchNodesByIDFromWhere(
 	for _, clause := range matchClauses {
 		whereForClause := ""
 		patternPart := clause
-		if whereIdx := findKeywordIndex(clause, "WHERE"); whereIdx > 0 {
+		if whereIdx := findKeywordIndex(ctx, clause, "WHERE"); whereIdx > 0 {
 			whereForClause = strings.TrimSpace(clause[whereIdx+5:])
 			patternPart = strings.TrimSpace(clause[:whereIdx])
 		}
@@ -1285,7 +1285,7 @@ func (e *StorageExecutor) tryResolveMatchNodesByIDFromWhere(
 		}
 
 		if whereForClause != "" {
-			for _, term := range splitTopLevelAndConjuncts(whereForClause) {
+			for _, term := range splitTopLevelAndConjuncts(ctx, whereForClause) {
 				term = strings.TrimSpace(term)
 				if term != "" {
 					allWhereTerms = append(allWhereTerms, term)
@@ -1301,7 +1301,7 @@ func (e *StorageExecutor) tryResolveMatchNodesByIDFromWhere(
 	// Try to resolve each variable from an ID equality predicate.
 	resolved := make(map[string]*storage.Node, len(variables))
 	for _, term := range allWhereTerms {
-		varName, node := e.resolveNodeFromIDEqualityTerm(term, params)
+		varName, node := e.resolveNodeFromIDEqualityTerm(ctx, term, params)
 		if varName == "" || node == nil {
 			continue
 		}
@@ -1336,7 +1336,7 @@ func (e *StorageExecutor) tryResolveMatchNodesByIDFromWhere(
 // elementId(<var>) = <value> or id(<var>) = <value> and resolves the node.
 // Returns the variable name and resolved node, or ("", nil) if the term
 // doesn't match the expected shape.
-func (e *StorageExecutor) resolveNodeFromIDEqualityTerm(
+func (e *StorageExecutor) resolveNodeFromIDEqualityTerm(ctx context.Context,
 	term string,
 	params map[string]interface{},
 ) (string, *storage.Node) {
@@ -1416,7 +1416,7 @@ func (e *StorageExecutor) resolveNodeFromIDEqualityTerm(
 		return "", nil
 	}
 
-	node, err := e.getQueryNode(e.storage, storage.NodeID(lookupID))
+	node, err := e.getQueryNode(ctx, e.storage, storage.NodeID(lookupID))
 	if err != nil || node == nil {
 		return "", nil
 	}
@@ -1429,12 +1429,12 @@ func (e *StorageExecutor) resolveNodeFromIDEqualityTerm(
 // (holding any character) in the pattern text. Only a key that is neither
 // is checked on the text by validateStaticMapKeys, which reports it, so a
 // pattern with plain keys isn't scanned again.
-func validateCreatePropertyKeys(text string, properties map[string]interface{}) error {
+func validateCreatePropertyKeys(ctx context.Context, text string, properties map[string]interface{}) error {
 	for key := range properties {
 		if cyphertext.IsIdentifier(key) || strings.Contains(text, cyphertext.PrintIdentifier(key, nil, cyphertext.AcceptedSource)) {
 			continue
 		}
-		if err := validateStaticMapKeys(text); err != nil {
+		if err := validateStaticMapKeys(ctx, text); err != nil {
 			return err
 		}
 		return localizedError(localization.CypherMutationsInvalidPropertyKey(key), nil)

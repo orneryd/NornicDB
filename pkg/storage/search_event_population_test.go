@@ -217,6 +217,8 @@ func buildsOnLinux(file *ast.File) bool {
 // derives from. Adding a mutator without a row fails
 // TestStorageMutatorPopulationIsClassified.
 var storageMutatorClassification = map[string]string{
+	"BadgerEngine.WriteAccessMeta":                      "access-policy state only; FlushExistingEntity reads graph keys for presence but writes only accessMetaInTxn; entity images/suppression/index keys are preserved (TestAccessMetaConditionalWriterStoredAndRetiredEntities)",
+	"BadgerEngine.PutDeindexWorkItem":                   "queues policy work through WriteAccessMeta RecordState; does not execute graph deindexing or alter entity visibility; the cleanup publication owns that change",
 	"BadgerTransaction.PrepareEntityCommit":             scenarioPublishes + " (prepared client/stored-image commit and abort; preparation itself publishes nothing)",
 	"BadgerTransaction.AdvanceImplicitSnapshot":         "advances a read snapshot only; independent child commits publish their own events",
 	"BadgerTransaction.ResumeAfterIndependentCommit":    "advances a read snapshot while retaining pending mutations; only Commit publishes those writes",

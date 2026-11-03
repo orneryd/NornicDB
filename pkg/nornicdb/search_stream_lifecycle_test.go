@@ -18,7 +18,7 @@ func TestSearchStreamLifecycleDatabaseDrop(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	for _, id := range []storage.NodeID{"a", "b"} {
-		_, err := db.storage.CreateNode(&storage.Node{ID: id})
+		_, err := db.storage.CreateNode(t.Context(), &storage.Node{ID: id})
 		require.NoError(t, err)
 	}
 	database := db.defaultDatabaseName()

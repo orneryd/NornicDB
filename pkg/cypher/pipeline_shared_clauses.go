@@ -61,9 +61,9 @@ func usesSharedGrammarClauses(ctx context.Context, query string) bool {
 	return false
 }
 
-func parsePipelineIteration(clause string) (expression, alias string, ok bool) {
+func parsePipelineIteration(ctx context.Context, clause string) (expression, alias string, ok bool) {
 	if !startsWithKeywordFold(strings.TrimSpace(clause), "FOR") {
-		product, found := splitUnwindBody(clause)
+		product, found := splitUnwindBody(ctx, clause)
 		return product.expression, product.aliasTail, found
 	}
 	body := pipelineClauseBody(clause, "FOR")
@@ -137,7 +137,7 @@ func (e *StorageExecutor) validateSharedClause(ctx context.Context, scope matchS
 		if pipelineExpressionContainsAggregate(expression) {
 			return sharedClauseSyntaxError("Aggregation is not allowed in FILTER")
 		}
-		if err := undefinedExpressionVariable(scope, expression); err != nil {
+		if err := undefinedExpressionVariable(ctx, scope, expression); err != nil {
 			return err
 		}
 		return e.validateStaticClauseTypes(ctx, clause, input)
@@ -150,10 +150,10 @@ func (e *StorageExecutor) validateSharedClause(ctx context.Context, scope matchS
 		if err := projectionItemTermError(projection.expression); err != nil {
 			return err
 		}
-		if err := undefinedExpressionVariable(scope, projection.expression); err != nil {
+		if err := undefinedExpressionVariable(ctx, scope, projection.expression); err != nil {
 			return err
 		}
-		if err := validateStaticFunctionVariables(projection.expression, input); err != nil {
+		if err := validateStaticFunctionVariables(ctx, projection.expression, input); err != nil {
 			return err
 		}
 	}

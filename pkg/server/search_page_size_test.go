@@ -49,7 +49,7 @@ func TestSearchContinuationPageSizeHTTPConfigured(t *testing.T) {
 			for i := range nodes {
 				nodes[i] = &storage.Node{ID: storage.NodeID(fmt.Sprintf("page-%04d", i))}
 			}
-			require.NoError(t, store.BulkCreateNodes(nodes))
+			require.NoError(t, store.BulkCreateNodes(t.Context(), nodes))
 			request := func(input map[string]any, status int) map[string]any {
 				response := makeRequest(t, server, http.MethodPost, "/nornicdb/search", input, "")
 				require.Equal(t, status, response.Code, response.Body.String())

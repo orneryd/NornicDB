@@ -26,18 +26,18 @@ func TestBufferedSuppressedEntitiesFollowReadVisibility(t *testing.T) {
 		{ID: "test:b", Labels: []string{"B"}},
 		{ID: "test:h", Labels: []string{"H"}, Properties: map[string]any{"v": int64(1)}},
 	} {
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"v": int64(1)}}))
-	require.NoError(t, engine.FlushWriteBehind(nil))
-	require.NoError(t, engine.SetManualSuppression(StoredEntityNodeKind, "test:h", true))
-	require.NoError(t, engine.SetManualSuppression(StoredEntityEdgeKind, "test:r", true))
-	tx, err := engine.BeginTransaction()
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"v": int64(1)}}))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
+	require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityNodeKind, "test:h", true))
+	require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityEdgeKind, "test:r", true))
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
-	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:h", Labels: []string{"H"}, Properties: map[string]any{"v": int64(2)}}, Policy: ClientNodeEdits}))
-	require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"v": int64(2)}}}))
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:h", Labels: []string{"H"}, Properties: map[string]any{"v": int64(2)}}, Policy: ClientNodeEdits}))
+	require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"v": int64(2)}}}))
 	require.NoError(t, tx.Commit())
 	ctx := context.Background()
 
@@ -78,9 +78,9 @@ func TestBufferedSuppressedEntitiesFollowReadVisibility(t *testing.T) {
 	all := func(*Edge) bool { return true }
 
 	// Visible reads leave the buffered suppressed bodies out.
-	_, err = engine.GetNode("test:h")
+	_, err = engine.GetNode(t.Context(), "test:h")
 	require.ErrorIs(t, err, ErrNotFound)
-	_, err = engine.GetEdge("test:r")
+	_, err = engine.GetEdge(t.Context(), "test:r")
 	require.ErrorIs(t, err, ErrNotFound)
 	require.NotContains(t, nodeIDs(engine.GetNodesByLabel(ctx, "H")), NodeID("test:h"))
 	require.NotContains(t, nodeIDs(streamNodes(func(f func(*Node) error) error { return engine.StreamNodesByLabelProjected(ctx, "H", nil, f) })), NodeID("test:h"))
@@ -97,14 +97,16 @@ func TestBufferedSuppressedEntitiesFollowReadVisibility(t *testing.T) {
 	require.NotContains(t, edgeIDs(engine.GetOutgoingEdges(ctx, "test:a")), EdgeID("test:r"))
 	require.NotContains(t, edgeIDs(engine.GetIncomingEdges(ctx, "test:b")), EdgeID("test:r"))
 	require.NotContains(t, edgeIDs(engine.GetEdgesBetween(ctx, "test:a", "test:b")), EdgeID("test:r"))
-	require.Nil(t, engine.GetEdgeBetween("test:a", "test:b", "LINK"))
-	require.NotContains(t, edgeIDs(engine.MatchEdgesBetween("test:a", "test:b", "LINK", nil, all)), EdgeID("test:r"))
+	edge, err := engine.GetEdgeBetween(t.Context(), "test:a", "test:b", "LINK")
+	require.NoError(t, err)
+	require.Nil(t, edge)
+	require.NotContains(t, edgeIDs(engine.MatchEdgesBetween(context.Background(), "test:a", "test:b", "LINK", nil, all)), EdgeID("test:r"))
 
 	// Stored reads return them, as the buffer holds them.
-	stored, err := engine.GetStoredNode("test:h")
+	stored, err := engine.GetStoredNode(t.Context(), "test:h")
 	require.NoError(t, err)
 	require.EqualValues(t, 2, stored.Properties["v"])
-	storedEdge, err := engine.GetStoredEdge("test:r")
+	storedEdge, err := engine.GetStoredEdge(t.Context(), "test:r")
 	require.NoError(t, err)
 	require.EqualValues(t, 2, storedEdge.Properties["v"])
 	require.Contains(t, nodeIDs(engine.GetStoredNodesByLabel(ctx, "H")), NodeID("test:h"))
@@ -120,10 +122,12 @@ func TestBufferedSuppressedEntitiesFollowReadVisibility(t *testing.T) {
 	// after the flush: on-demand suppression racing the write-behind flusher
 	// on the same key is a separate, queued bug
 	// (sig/handoff/bugqueue-q-suppress-flusher-race-20261021.md).
-	require.NoError(t, engine.FlushWriteBehind(nil))
-	require.NoError(t, engine.SetManualSuppression(StoredEntityNodeKind, "test:h", false))
-	require.NoError(t, engine.SetManualSuppression(StoredEntityEdgeKind, "test:r", false))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
+	require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityNodeKind, "test:h", false))
+	require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityEdgeKind, "test:r", false))
 	require.Contains(t, edgeIDs(engine.GetEdgesBetween(ctx, "test:a", "test:b")), EdgeID("test:r"))
-	require.NotNil(t, engine.GetEdgeBetween("test:a", "test:b", "LINK"))
+	edge, err = engine.GetEdgeBetween(t.Context(), "test:a", "test:b", "LINK")
+	require.NoError(t, err)
+	require.NotNil(t, edge)
 	require.Contains(t, nodeIDs(engine.GetNodesByLabel(ctx, "H")), NodeID("test:h"))
 }

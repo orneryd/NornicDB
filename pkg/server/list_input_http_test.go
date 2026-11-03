@@ -17,7 +17,7 @@ func TestListInputHTTPRepresentations(t *testing.T) {
 	store, err := srv.dbManager.GetStorage(srv.dbManager.DefaultDatabaseName())
 	require.NoError(t, err)
 	for _, input := range listinputs.TransportInputs() {
-		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(input.Name), Labels: []string{"TypedWireList"}, Properties: map[string]interface{}{"name": input.Name, "xs": input.PropertyValue()}})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(input.Name), Labels: []string{"TypedWireList"}, Properties: map[string]interface{}{"name": input.Name, "xs": input.PropertyValue()}})
 		require.NoError(t, err)
 	}
 	for _, explicit := range []bool{false, true} {

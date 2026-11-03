@@ -18,7 +18,7 @@ func TestBadgerEngine_WriteEmbeddingChunksBatched_OversizedChunk(t *testing.T) {
 	// Oversized payload should be sharded instead of failing on Badger's value-size guardrail.
 	huge := make([]float32, 300_000)
 	const nodeID = NodeID("test:huge")
-	_, err := engine.CreateNode(&Node{
+	_, err := engine.CreateNode(t.Context(), &Node{
 		ID:     nodeID,
 		Labels: []string{"Doc"},
 		Properties: map[string]any{
@@ -26,10 +26,10 @@ func TestBadgerEngine_WriteEmbeddingChunksBatched_OversizedChunk(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	err = engine.UpdateNodeEmbeddingSidecar(embeddingWriteback(t, engine, nodeID, [][]float32{huge}, map[string]any{"chunk_count": 1}, time.Time{}))
+	err = engine.UpdateNodeEmbeddingSidecar(context.Background(), embeddingWriteback(t, engine, nodeID, [][]float32{huge}, map[string]any{"chunk_count": 1}, time.Time{}))
 	require.NoError(t, err)
 
-	got, err := engine.GetNode(nodeID)
+	got, err := engine.GetNode(t.Context(), nodeID)
 	require.NoError(t, err)
 	require.Len(t, got.ChunkEmbeddings, 1)
 	require.Len(t, got.ChunkEmbeddings[0], len(huge))
@@ -46,7 +46,7 @@ func TestBadgerEngine_DeleteNodeInTxn_NotFoundStillCleansEmbeddingChunks(t *test
 		t.Run(tc.name, func(t *testing.T) {
 			engine := newTestEngine(t)
 			id := NodeID("test:ghost")
-			err := engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+			err := engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 				if tc.chunks {
 					if err := txn.Set(embeddingKey(id, 0), []byte{1, 2, 3}); err != nil {
 						return err
@@ -55,7 +55,7 @@ func TestBadgerEngine_DeleteNodeInTxn_NotFoundStillCleansEmbeddingChunks(t *test
 						return err
 					}
 				}
-				_, err := engine.executeNodeDeletion(txn, id, nil)
+				_, err := engine.executeNodeDeletion(t.Context(), txn, id, nil)
 				if tc.commitCleanup {
 					require.ErrorIs(t, err, ErrNotFound)
 					return nil
@@ -84,22 +84,22 @@ func TestBadgerEngine_DeleteNodeInTxn_NotFoundStillCleansEmbeddingChunks(t *test
 func TestBadgerEngine_DeleteNodeInTxn_ErrorBranches(t *testing.T) {
 	t.Run("read-only txn fails deleting embedding chunks", func(t *testing.T) {
 		engine := createMVCCBadgerEngine(t)
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			return txn.Set(embeddingKey("test:embed-node", 0), []byte{1, 2, 3})
 		}))
 		readTxn := engine.db.testTxn(false)
 		defer readTxn.Discard()
-		_, err := engine.executeNodeDeletion(readTxn, "test:embed-node", nil)
+		_, err := engine.executeNodeDeletion(t.Context(), readTxn, "test:embed-node", nil)
 		require.ErrorContains(t, err, "failed to delete embedding chunk")
 	})
 
 	t.Run("corrupt node body bubbles decode error", func(t *testing.T) {
 		engine := createMVCCBadgerEngine(t)
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			return txn.Set(nodeKey("test:corrupt-node"), []byte("bad-node"))
 		}))
 		require.NoError(t, engine.withView(func(txn *badger.Txn) error {
-			_, err := engine.executeNodeDeletion(txn, "test:corrupt-node", nil)
+			_, err := engine.executeNodeDeletion(t.Context(), txn, "test:corrupt-node", nil)
 			require.Error(t, err)
 			return nil
 		}))
@@ -107,25 +107,25 @@ func TestBadgerEngine_DeleteNodeInTxn_ErrorBranches(t *testing.T) {
 
 	t.Run("read-only txn fails archiving current body", func(t *testing.T) {
 		engine := createMVCCBadgerEngine(t)
-		_, err := engine.CreateNode(&Node{ID: "test:archive-node", Labels: []string{"N"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: "test:archive-node", Labels: []string{"N"}})
 		require.NoError(t, err)
 		readTxn := engine.db.testTxn(false)
 		defer readTxn.Discard()
-		_, err = engine.executeNodeDeletion(readTxn, "test:archive-node", nil)
+		_, err = engine.executeNodeDeletion(t.Context(), readTxn, "test:archive-node", nil)
 		require.Error(t, err)
 	})
 
 	t.Run("corrupt mvcc head bubbles out", func(t *testing.T) {
 		engine := createMVCCBadgerEngine(t)
-		_, err := engine.CreateNode(&Node{ID: "test:bad-head-node", Labels: []string{"N"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: "test:bad-head-node", Labels: []string{"N"}})
 		require.NoError(t, err)
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			nodeNum, ok := engine.idDict.lookupNodeNumID("test:bad-head-node")
 			require.True(t, ok)
 			return txn.Set(mvccNodeHeadKey(nodeNum), []byte("bad-head"))
 		}))
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
-			_, err := engine.executeNodeDeletion(txn, "test:bad-head-node", nil)
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
+			_, err := engine.executeNodeDeletion(t.Context(), txn, "test:bad-head-node", nil)
 			require.Error(t, err)
 			return nil
 		}))
@@ -133,46 +133,46 @@ func TestBadgerEngine_DeleteNodeInTxn_ErrorBranches(t *testing.T) {
 
 	t.Run("read-only txn fails deleting label indexes after tombstoned head", func(t *testing.T) {
 		engine := createMVCCBadgerEngine(t)
-		_, err := engine.CreateNode(&Node{ID: "test:label-delete-node", Labels: []string{"N"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: "test:label-delete-node", Labels: []string{"N"}})
 		require.NoError(t, err)
-		head, err := engine.GetNodeCurrentHead("test:label-delete-node")
+		head, err := engine.GetNodeCurrentHead(context.Background(), "test:label-delete-node")
 		require.NoError(t, err)
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			return engine.writeNodeMVCCHeadWithFloorInTxn(txn, "test:label-delete-node", head.Version, true, head.FloorVersion)
 		}))
 		readTxn := engine.db.testTxn(false)
 		defer readTxn.Discard()
-		_, err = engine.executeNodeDeletion(readTxn, "test:label-delete-node", nil)
+		_, err = engine.executeNodeDeletion(t.Context(), readTxn, "test:label-delete-node", nil)
 		require.Error(t, err)
 	})
 
 	t.Run("read-only txn fails deleting primary node after tombstoned head", func(t *testing.T) {
 		engine := createMVCCBadgerEngine(t)
-		_, err := engine.CreateNode(&Node{ID: "test:primary-delete-node"})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: "test:primary-delete-node"})
 		require.NoError(t, err)
-		head, err := engine.GetNodeCurrentHead("test:primary-delete-node")
+		head, err := engine.GetNodeCurrentHead(context.Background(), "test:primary-delete-node")
 		require.NoError(t, err)
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			return engine.writeNodeMVCCHeadWithFloorInTxn(txn, "test:primary-delete-node", head.Version, true, head.FloorVersion)
 		}))
 		readTxn := engine.db.testTxn(false)
 		defer readTxn.Discard()
-		_, err = engine.executeNodeDeletion(readTxn, "test:primary-delete-node", nil)
+		_, err = engine.executeNodeDeletion(t.Context(), readTxn, "test:primary-delete-node", nil)
 		require.Error(t, err)
 	})
 
 	t.Run("outgoing edge delete helper error bubbles out", func(t *testing.T) {
 		engine := createMVCCBadgerEngine(t)
 		for _, nodeID := range []NodeID{"test:out-mid", "test:out-end"} {
-			_, err := engine.CreateNode(&Node{ID: nodeID, Labels: []string{"N"}})
+			_, err := engine.CreateNode(t.Context(), &Node{ID: nodeID, Labels: []string{"N"}})
 			require.NoError(t, err)
 		}
-		require.NoError(t, engine.CreateEdge(&Edge{ID: "test:out-edge", StartNode: "test:out-mid", EndNode: "test:out-end", Type: "R"}))
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:out-edge", StartNode: "test:out-mid", EndNode: "test:out-end", Type: "R"}))
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			return txn.Set(edgeKey("test:out-edge"), []byte("bad-edge"))
 		}))
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
-			_, err := engine.executeNodeDeletion(txn, "test:out-mid", nil)
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
+			_, err := engine.executeNodeDeletion(t.Context(), txn, "test:out-mid", nil)
 			require.Error(t, err)
 			return nil
 		}))
@@ -181,15 +181,15 @@ func TestBadgerEngine_DeleteNodeInTxn_ErrorBranches(t *testing.T) {
 	t.Run("incoming edge delete helper error bubbles out", func(t *testing.T) {
 		engine := createMVCCBadgerEngine(t)
 		for _, nodeID := range []NodeID{"test:in-start", "test:in-mid"} {
-			_, err := engine.CreateNode(&Node{ID: nodeID, Labels: []string{"N"}})
+			_, err := engine.CreateNode(t.Context(), &Node{ID: nodeID, Labels: []string{"N"}})
 			require.NoError(t, err)
 		}
-		require.NoError(t, engine.CreateEdge(&Edge{ID: "test:in-edge", StartNode: "test:in-start", EndNode: "test:in-mid", Type: "R"}))
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:in-edge", StartNode: "test:in-start", EndNode: "test:in-mid", Type: "R"}))
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			return txn.Set(edgeKey("test:in-edge"), []byte("bad-edge"))
 		}))
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
-			_, err := engine.executeNodeDeletion(txn, "test:in-mid", nil)
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
+			_, err := engine.executeNodeDeletion(t.Context(), txn, "test:in-mid", nil)
 			require.Error(t, err)
 			return nil
 		}))
@@ -201,12 +201,12 @@ func corruptAdjacencyEdgeFixture(t *testing.T, prefix string) *BadgerEngine {
 	engine := createMVCCBadgerEngine(t)
 	left, right := NodeID("test:"+prefix+"-a"), NodeID("test:"+prefix+"-b")
 	for _, id := range []NodeID{left, right} {
-		_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"N"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"N"}})
 		require.NoError(t, err)
 	}
 	id := EdgeID("test:" + prefix + "-edge")
-	require.NoError(t, engine.CreateEdge(&Edge{ID: id, StartNode: left, EndNode: right, Type: "R"}))
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: id, StartNode: left, EndNode: right, Type: "R"}))
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		return txn.Set(edgeKey(id), []byte("bad-edge"))
 	}))
 	return engine
@@ -215,22 +215,22 @@ func corruptAdjacencyEdgeFixture(t *testing.T, prefix string) *BadgerEngine {
 func TestBadgerEngine_DeleteEdgeFamily_AdjacencyLoadErrors(t *testing.T) {
 	t.Run("DeleteEdge propagates corrupt edge decode", func(t *testing.T) {
 		engine := corruptAdjacencyEdgeFixture(t, "de")
-		err := engine.DeleteEdge("test:de-edge")
+		err := engine.DeleteEdge(t.Context(), "test:de-edge")
 		require.Error(t, err)
 	})
 
 	t.Run("BulkDeleteEdges propagates corrupt edge decode", func(t *testing.T) {
 		engine := corruptAdjacencyEdgeFixture(t, "bde")
-		err := engine.BulkDeleteEdges([]EdgeID{"test:bde-edge"})
+		err := engine.BulkDeleteEdges(t.Context(), []EdgeID{"test:bde-edge"})
 		require.Error(t, err)
 	})
 
 	t.Run("deleteEdgesWithPrefix propagates adjacency edge load errors", func(t *testing.T) {
 		engine := corruptAdjacencyEdgeFixture(t, "dp")
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			prefix := engine.outgoingIndexPrefixString("test:dp-a")
 			require.NotNil(t, prefix)
-			_, err := engine.executeNodeDeletion(txn, "test:dp-a", nil)
+			_, err := engine.executeNodeDeletion(t.Context(), txn, "test:dp-a", nil)
 			require.Error(t, err)
 			return nil
 		}))
@@ -240,24 +240,24 @@ func TestBadgerEngine_DeleteEdgeFamily_AdjacencyLoadErrors(t *testing.T) {
 func TestBadgerEngine_UpdateEdgeAndDeletePrefixHelpers_Branches(t *testing.T) {
 	engine := newTestEngine(t)
 
-	_, err := engine.CreateNode(&Node{ID: "test:a", Labels: []string{"N"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:a", Labels: []string{"N"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:b", Labels: []string{"N"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:b", Labels: []string{"N"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL"}))
 
 	// UpdateEdge endpoint-change branch that validates new endpoint existence.
-	err = engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:e1", StartNode: "test:missing", EndNode: "test:b", Type: "REL"}})
+	err = engine.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "test:e1", StartNode: "test:missing", EndNode: "test:b", Type: "REL"}})
 	require.ErrorIs(t, err, ErrNotFound)
 
 	// deleteEdgesWithPrefix: malformed index key should be skipped while valid edge deletes.
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		prefix := engine.outgoingIndexPrefixString("test:a")
 		require.NotNil(t, prefix)
 		if err := txn.Set(append(append([]byte{}, prefix...), []byte("bad")...), []byte{}); err != nil {
 			return err
 		}
-		result, delErr := engine.executeNodeDeletion(txn, "test:a", nil)
+		result, delErr := engine.executeNodeDeletion(t.Context(), txn, "test:a", nil)
 		deleted, ids := int64(len(result.ids)), result.ids
 		if delErr != nil {
 			return delErr
@@ -267,21 +267,21 @@ func TestBadgerEngine_UpdateEdgeAndDeletePrefixHelpers_Branches(t *testing.T) {
 		return nil
 	}))
 
-	_, err = engine.GetEdge("test:e1")
+	_, err = engine.GetEdge(t.Context(), "test:e1")
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
 func TestBadgerEngine_DeleteNodeInTxn_ReturnsDeletedEdgeBodiesForAdjacencyTombstones(t *testing.T) {
 	engine := createMVCCBadgerEngine(t)
 	for _, nodeID := range []NodeID{"test:left", "test:center", "test:right"} {
-		_, err := engine.CreateNode(&Node{ID: nodeID, Labels: []string{"N"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: nodeID, Labels: []string{"N"}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:left-center", StartNode: "test:left", EndNode: "test:center", Type: "REL"}))
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:center-right", StartNode: "test:center", EndNode: "test:right", Type: "REL"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:left-center", StartNode: "test:left", EndNode: "test:center", Type: "REL"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:center-right", StartNode: "test:center", EndNode: "test:right", Type: "REL"}))
 
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
-		result, err := engine.executeNodeDeletion(txn, "test:center", nil)
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
+		result, err := engine.executeNodeDeletion(t.Context(), txn, "test:center", nil)
 		deletedCount, deletedIDs, deletedEdges, deletedNode := int64(len(result.ids)), result.ids, result.edges, result.node
 		require.NoError(t, err)
 		require.Equal(t, int64(2), deletedCount)
@@ -308,14 +308,14 @@ func TestBadgerEngine_BulkDeleteEdges_MixedIDsStillWriteAdjacencyTombstones(t *t
 	t.Cleanup(func() { _ = engine.Close() })
 
 	for _, nodeID := range []NodeID{"test:bulk-start", "test:bulk-end"} {
-		_, err := engine.CreateNode(&Node{ID: nodeID, Labels: []string{"Node"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: nodeID, Labels: []string{"Node"}})
 		require.NoError(t, err)
 	}
 	edgeID := EdgeID("test:bulk-edge")
-	require.NoError(t, engine.CreateEdge(&Edge{ID: edgeID, StartNode: "test:bulk-start", EndNode: "test:bulk-end", Type: "REL"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: edgeID, StartNode: "test:bulk-start", EndNode: "test:bulk-end", Type: "REL"}))
 
-	require.NoError(t, engine.BulkDeleteEdges([]EdgeID{"", "test:missing", edgeID}))
-	_, err = engine.GetEdge(edgeID)
+	require.NoError(t, engine.BulkDeleteEdges(t.Context(), []EdgeID{"", "test:missing", edgeID}))
+	_, err = engine.GetEdge(t.Context(), edgeID)
 	require.ErrorIs(t, err, ErrNotFound)
 
 	outPrefix := engine.mvccOutgoingAdjacencyPrefixString("test:bulk-start")
@@ -327,10 +327,10 @@ func TestBadgerEngine_BulkDeleteEdges_MixedIDsStillWriteAdjacencyTombstones(t *t
 func TestBadgerEngine_MVCCIteratorsAndVisibilityExtraBranches(t *testing.T) {
 	t.Run("node head decode error", func(t *testing.T) {
 		engine := createMVCCBadgerEngine(t)
-		_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"Doc"}, Properties: map[string]any{"v": 1}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: "test:n1", Labels: []string{"Doc"}, Properties: map[string]any{"v": 1}})
 		require.NoError(t, err)
 
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			num, ok := engine.idDict.lookupNodeNumID("test:n1")
 			require.True(t, ok)
 			return txn.Set(mvccNodeHeadKey(num), []byte("corrupt-head"))
@@ -347,7 +347,7 @@ func TestBadgerEngine_MVCCIteratorsAndVisibilityExtraBranches(t *testing.T) {
 
 	t.Run("yield error and floor skip", func(t *testing.T) {
 		engine := createMVCCBadgerEngine(t)
-		_, err := engine.CreateNode(&Node{ID: "test:n2", Labels: []string{"Doc"}, Properties: map[string]any{"v": 1}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: "test:n2", Labels: []string{"Doc"}, Properties: map[string]any{"v": 1}})
 		require.NoError(t, err)
 
 		old := MVCCVersion{CommitTimestamp: time.Unix(0, 0).UTC(), CommitSequence: 0}
@@ -366,23 +366,23 @@ func TestBadgerEngine_MVCCIteratorsAndVisibilityExtraBranches(t *testing.T) {
 
 	t.Run("missing primary falls back to version record", func(t *testing.T) {
 		engine := createMVCCBadgerEngine(t)
-		_, err := engine.CreateNode(&Node{ID: "test:n3", Labels: []string{"Doc"}, Properties: map[string]any{"v": "old"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: "test:n3", Labels: []string{"Doc"}, Properties: map[string]any{"v": "old"}})
 		require.NoError(t, err)
-		require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:n3", Labels: []string{"Doc"}, Properties: map[string]any{"v": "new"}}}))
+		require.NoError(t, engine.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:n3", Labels: []string{"Doc"}, Properties: map[string]any{"v": "new"}}}))
 
-		head, err := engine.GetNodeCurrentHead("test:n3")
+		head, err := engine.GetNodeCurrentHead(context.Background(), "test:n3")
 		require.NoError(t, err)
-		current, err := engine.GetNode("test:n3")
+		current, err := engine.GetNode(t.Context(), "test:n3")
 		require.NoError(t, err)
 
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			if err := engine.writeNodeMVCCVersionInTxn(txn, current, head.Version); err != nil {
 				return err
 			}
 			return txn.Delete(nodeKey("test:n3"))
 		}))
 
-		node, err := engine.GetNodeVisibleAt("test:n3", head.Version)
+		node, err := engine.GetNodeVisibleAt(t.Context(), "test:n3", head.Version)
 		require.NoError(t, err)
 		require.Equal(t, "new", node.Properties["v"])
 	})
@@ -391,16 +391,16 @@ func TestBadgerEngine_MVCCIteratorsAndVisibilityExtraBranches(t *testing.T) {
 		engine := createMVCCBadgerEngine(t)
 		engine.SetDecayEnabled(true)
 
-		_, err := engine.CreateNode(&Node{ID: "test:s1", Labels: []string{"Doc"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: "test:s1", Labels: []string{"Doc"}})
 		require.NoError(t, err)
-		_, err = engine.CreateNode(&Node{ID: "test:s2", Labels: []string{"Doc"}})
+		_, err = engine.CreateNode(t.Context(), &Node{ID: "test:s2", Labels: []string{"Doc"}})
 		require.NoError(t, err)
-		require.NoError(t, engine.CreateEdge(&Edge{ID: "test:se", StartNode: "test:s1", EndNode: "test:s2", Type: "REL", VisibilitySuppressed: true}))
+		require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:se", StartNode: "test:s1", EndNode: "test:s2", Type: "REL", VisibilitySuppressed: true}))
 
-		head, err := engine.GetEdgeCurrentHead("test:se")
+		head, err := engine.GetEdgeCurrentHead(context.Background(), "test:se")
 		require.NoError(t, err)
 
-		_, err = engine.GetEdgeVisibleAt("test:se", head.Version)
+		_, err = engine.GetEdgeVisibleAt(t.Context(), "test:se", head.Version)
 		require.ErrorIs(t, err, ErrNotFound)
 
 		edges, err := engine.GetEdgesByTypeVisibleAt(context.Background(), "REL", head.Version)
@@ -412,26 +412,26 @@ func TestBadgerEngine_MVCCIteratorsAndVisibilityExtraBranches(t *testing.T) {
 func TestBadgerEngine_MaterializeMVCCCommitInTxn_AllOperationKinds(t *testing.T) {
 	engine := createMVCCBadgerEngine(t)
 
-	_, err := engine.CreateNode(&Node{ID: "test:m1", Labels: []string{"Doc"}, Properties: map[string]any{"v": 1}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:m1", Labels: []string{"Doc"}, Properties: map[string]any{"v": 1}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:m2", Labels: []string{"Doc"}, Properties: map[string]any{"v": 2}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:m2", Labels: []string{"Doc"}, Properties: map[string]any{"v": 2}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:m3", Labels: []string{"Doc"}, Properties: map[string]any{"v": 3}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:m3", Labels: []string{"Doc"}, Properties: map[string]any{"v": 3}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:me1", StartNode: "test:m1", EndNode: "test:m2", Type: "REL", Properties: map[string]any{"w": 1}}))
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:me2", StartNode: "test:m2", EndNode: "test:m3", Type: "REL", Properties: map[string]any{"w": 2}}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:me1", StartNode: "test:m1", EndNode: "test:m2", Type: "REL", Properties: map[string]any{"w": 1}}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:me2", StartNode: "test:m2", EndNode: "test:m3", Type: "REL", Properties: map[string]any{"w": 2}}))
 
-	oldN1, err := engine.GetNode("test:m1")
+	oldN1, err := engine.GetNode(t.Context(), "test:m1")
 	require.NoError(t, err)
-	oldN3, err := engine.GetNode("test:m3")
+	oldN3, err := engine.GetNode(t.Context(), "test:m3")
 	require.NoError(t, err)
-	oldE1, err := engine.GetEdge("test:me1")
+	oldE1, err := engine.GetEdge(t.Context(), "test:me1")
 	require.NoError(t, err)
-	oldE2, err := engine.GetEdge("test:me2")
+	oldE2, err := engine.GetEdge(t.Context(), "test:me2")
 	require.NoError(t, err)
 
 	version := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 40_001}
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		ops := []Operation{
 			{Type: OpCreateNode, Node: &Node{ID: "test:newfresh", Labels: []string{"Doc"}}, FreshID: true},
 			{Type: OpCreateNode, Node: &Node{ID: "test:newplain", Labels: []string{"Doc"}}, FreshID: false},
@@ -442,16 +442,16 @@ func TestBadgerEngine_MaterializeMVCCCommitInTxn_AllOperationKinds(t *testing.T)
 			{Type: OpUpdateEdge, Edge: &Edge{ID: "test:me1", StartNode: "test:m1", EndNode: "test:m2", Type: "REL2", Properties: map[string]any{"w": 11}}, OldEdge: oldE1},
 			{Type: OpDeleteEdge, EdgeID: "test:me2", OldEdge: oldE2},
 		}
-		return engine.materializeMVCCCommit(singleBatchWriter(txn), version, ops)
+		return engine.materializeMVCCCommit(t.Context(), singleBatchWriter(txn), version, ops)
 	}))
 
-	_, err = engine.GetNodeCurrentHead("test:newfresh")
+	_, err = engine.GetNodeCurrentHead(context.Background(), "test:newfresh")
 	require.NoError(t, err)
-	_, err = engine.GetNodeCurrentHead("test:newplain")
+	_, err = engine.GetNodeCurrentHead(context.Background(), "test:newplain")
 	require.NoError(t, err)
-	_, err = engine.GetEdgeCurrentHead("test:efresh")
+	_, err = engine.GetEdgeCurrentHead(context.Background(), "test:efresh")
 	require.NoError(t, err)
-	_, err = engine.GetEdgeCurrentHead("test:eplain")
+	_, err = engine.GetEdgeCurrentHead(context.Background(), "test:eplain")
 	require.NoError(t, err)
 }
 
@@ -459,7 +459,7 @@ func TestBadgerEngine_BulkCreateNodes_LargeEmbeddingChunk(t *testing.T) {
 	engine := newTestEngine(t)
 	huge := make([]float32, 300_000)
 
-	err := engine.BulkCreateNodes([]*Node{
+	err := engine.BulkCreateNodes(t.Context(), []*Node{
 		{
 			ID:              "test:bulk-huge",
 			Labels:          []string{"Doc"},
@@ -469,7 +469,7 @@ func TestBadgerEngine_BulkCreateNodes_LargeEmbeddingChunk(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	got, err := engine.GetNode("test:bulk-huge")
+	got, err := engine.GetNode(t.Context(), "test:bulk-huge")
 	require.NoError(t, err)
 	require.Len(t, got.ChunkEmbeddings, 1)
 	require.Len(t, got.ChunkEmbeddings[0], len(huge))
@@ -509,7 +509,7 @@ func TestBadgerEngine_MVCCAdjacencyHelperBranches(t *testing.T) {
 	require.Nil(t, engine.mvccOutgoingAdjacencyPrefixString("test:missing-node"))
 	require.Nil(t, engine.mvccIncomingAdjacencyPrefixString("test:missing-node"))
 
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		outKey, err := engine.mvccAdjacencyKeyString(mvccAdjacencyOutgoing, txn, "test:n1", "test:e1", version)
 		require.NoError(t, err)
 		require.Equal(t, byte(prefixMVCCOutgoingAdj), outKey[0])
@@ -545,7 +545,7 @@ func TestBadgerEngine_MVCCAdjacencyTxnErrorBranches(t *testing.T) {
 func TestBadgerEngine_LoadEdgeForAdjacencyTombstone_ErrorBranches(t *testing.T) {
 	t.Run("corrupt primary body returns decode error", func(t *testing.T) {
 		engine := createMVCCBadgerEngine(t)
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			return txn.Set(edgeKey("test:bad-edge"), []byte("bad-edge-payload"))
 		}))
 		require.NoError(t, engine.withView(func(txn *badger.Txn) error {
@@ -558,11 +558,11 @@ func TestBadgerEngine_LoadEdgeForAdjacencyTombstone_ErrorBranches(t *testing.T) 
 	t.Run("corrupt mvcc head returns error after primary missing", func(t *testing.T) {
 		engine := createMVCCBadgerEngine(t)
 		for _, nodeID := range []NodeID{"test:head-start", "test:head-end"} {
-			_, err := engine.CreateNode(&Node{ID: nodeID, Labels: []string{"Node"}})
+			_, err := engine.CreateNode(t.Context(), &Node{ID: nodeID, Labels: []string{"Node"}})
 			require.NoError(t, err)
 		}
-		require.NoError(t, engine.CreateEdge(&Edge{ID: "test:head-edge", StartNode: "test:head-start", EndNode: "test:head-end", Type: "REL"}))
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:head-edge", StartNode: "test:head-start", EndNode: "test:head-end", Type: "REL"}))
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			headKey, err := engine.mvccEdgeHeadKeyString(txn, "test:head-edge")
 			if err != nil {
 				return err
@@ -583,7 +583,7 @@ func TestBadgerEngine_LoadEdgeForAdjacencyTombstone_ErrorBranches(t *testing.T) 
 func TestBadgerEngine_MVCCAdjacencyVisibilityExtraBranches(t *testing.T) {
 	t.Run("invalid ids and nil adjacency writes", func(t *testing.T) {
 		engine := createMVCCBadgerEngine(t)
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			require.NoError(t, engine.writeEdgeAdjacencyDeltaInTxn(txn, nil, nil, MVCCVersion{}))
 			return nil
 		}))
@@ -596,9 +596,9 @@ func TestBadgerEngine_MVCCAdjacencyVisibilityExtraBranches(t *testing.T) {
 
 	t.Run("public visible adjacency surfaces malformed keys", func(t *testing.T) {
 		engine := createMVCCBadgerEngine(t)
-		_, err := engine.CreateNode(&Node{ID: "test:bad-out", Labels: []string{"Node"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: "test:bad-out", Labels: []string{"Node"}})
 		require.NoError(t, err)
-		_, err = engine.CreateNode(&Node{ID: "test:bad-in", Labels: []string{"Node"}})
+		_, err = engine.CreateNode(t.Context(), &Node{ID: "test:bad-in", Labels: []string{"Node"}})
 		require.NoError(t, err)
 
 		outPrefix := engine.mvccOutgoingAdjacencyPrefixString("test:bad-out")
@@ -606,7 +606,7 @@ func TestBadgerEngine_MVCCAdjacencyVisibilityExtraBranches(t *testing.T) {
 		require.NotNil(t, outPrefix)
 		require.NotNil(t, inPrefix)
 
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			if err := txn.Set(append(append([]byte{}, outPrefix...), []byte("bad")...), []byte{0}); err != nil {
 				return err
 			}
@@ -622,16 +622,16 @@ func TestBadgerEngine_MVCCAdjacencyVisibilityExtraBranches(t *testing.T) {
 	t.Run("archived edge fallback and mismatched adjacency filter", func(t *testing.T) {
 		engine := createMVCCBadgerEngine(t)
 		for _, nodeID := range []NodeID{"test:a", "test:b", "test:c", "test:ghost"} {
-			_, err := engine.CreateNode(&Node{ID: nodeID, Labels: []string{"Node"}})
+			_, err := engine.CreateNode(t.Context(), &Node{ID: nodeID, Labels: []string{"Node"}})
 			require.NoError(t, err)
 		}
-		require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL"}))
-		head, err := engine.GetEdgeCurrentHead("test:e1")
+		require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL"}))
+		head, err := engine.GetEdgeCurrentHead(context.Background(), "test:e1")
 		require.NoError(t, err)
-		current, err := engine.GetEdge("test:e1")
+		current, err := engine.GetEdge(t.Context(), "test:e1")
 		require.NoError(t, err)
 
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			require.NoError(t, engine.writeEdgeMVCCVersionInTxn(txn, current, head.Version))
 			require.NoError(t, txn.Delete(edgeKey("test:e1")))
 
@@ -645,13 +645,13 @@ func TestBadgerEngine_MVCCAdjacencyVisibilityExtraBranches(t *testing.T) {
 			return nil
 		}))
 
-		require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e2", StartNode: "test:b", EndNode: "test:c", Type: "REL"}))
-		head2, err := engine.GetEdgeCurrentHead("test:e2")
+		require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e2", StartNode: "test:b", EndNode: "test:c", Type: "REL"}))
+		head2, err := engine.GetEdgeCurrentHead(context.Background(), "test:e2")
 		require.NoError(t, err)
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			return engine.writeAdjacencyMVCCVersionInTxn(mvccAdjacencyOutgoing, txn, "test:ghost", "test:e2", head2.Version, false)
 		}))
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			return engine.writeAdjacencyMVCCVersionInTxn(mvccAdjacencyIncoming, txn, "test:ghost", "test:e2", head2.Version, false)
 		}))
 
@@ -662,7 +662,7 @@ func TestBadgerEngine_MVCCAdjacencyVisibilityExtraBranches(t *testing.T) {
 		require.NoError(t, err)
 		require.Empty(t, incoming)
 
-		require.NoError(t, engine.DeleteEdge("test:e2"))
+		require.NoError(t, engine.DeleteEdge(t.Context(), "test:e2"))
 		require.NoError(t, engine.withView(func(txn *badger.Txn) error {
 			_, err := engine.loadEdgeForAdjacencyTombstoneInTxn(txn, "test:e2")
 			require.ErrorIs(t, err, ErrNotFound)
@@ -672,12 +672,12 @@ func TestBadgerEngine_MVCCAdjacencyVisibilityExtraBranches(t *testing.T) {
 
 	t.Run("malformed adjacency key surfaces decode error", func(t *testing.T) {
 		engine := createMVCCBadgerEngine(t)
-		_, err := engine.CreateNode(&Node{ID: "test:malformed", Labels: []string{"Node"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: "test:malformed", Labels: []string{"Node"}})
 		require.NoError(t, err)
 		prefix := engine.mvccOutgoingAdjacencyPrefixString("test:malformed")
 		require.NotNil(t, prefix)
 
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			badKey := append(append([]byte{}, prefix...), []byte("bad")...)
 			return txn.Set(badKey, []byte{0})
 		}))
@@ -693,17 +693,17 @@ func TestBadgerEngine_MVCCAdjacencyVisibilityExtraBranches(t *testing.T) {
 	t.Run("direct adjacency writes and edge visibility helpers", func(t *testing.T) {
 		engine := createMVCCBadgerEngine(t)
 		for _, nodeID := range []NodeID{"test:direct-a", "test:direct-b"} {
-			_, err := engine.CreateNode(&Node{ID: nodeID, Labels: []string{"Node"}})
+			_, err := engine.CreateNode(t.Context(), &Node{ID: nodeID, Labels: []string{"Node"}})
 			require.NoError(t, err)
 		}
-		require.NoError(t, engine.CreateEdge(&Edge{ID: "test:direct-edge", StartNode: "test:direct-a", EndNode: "test:direct-b", Type: "REL"}))
-		head, err := engine.GetEdgeCurrentHead("test:direct-edge")
+		require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:direct-edge", StartNode: "test:direct-a", EndNode: "test:direct-b", Type: "REL"}))
+		head, err := engine.GetEdgeCurrentHead(context.Background(), "test:direct-edge")
 		require.NoError(t, err)
-		current, err := engine.GetEdge("test:direct-edge")
+		current, err := engine.GetEdge(t.Context(), "test:direct-edge")
 		require.NoError(t, err)
 
 		later := MVCCVersion{CommitTimestamp: head.Version.CommitTimestamp.Add(time.Millisecond), CommitSequence: head.Version.CommitSequence + 1}
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			if _, err := engine.mvccAdjacencyKeyString(mvccAdjacencyOutgoing, txn, current.StartNode, current.ID, head.Version); err != nil {
 				return err
 			}
@@ -729,7 +729,7 @@ func TestBadgerEngine_MVCCAdjacencyVisibilityExtraBranches(t *testing.T) {
 			return nil
 		}))
 
-		require.NoError(t, engine.DeleteEdge(current.ID))
+		require.NoError(t, engine.DeleteEdge(t.Context(), current.ID))
 		require.NoError(t, engine.withView(func(txn *badger.Txn) error {
 			_, err := engine.getEdgeAtInTxn(txn, current.ID, maxMVCCVersion(), mvccEntityRead{visibility: visibleRead})
 			require.ErrorIs(t, err, ErrNotFound)
@@ -743,15 +743,15 @@ func TestBadgerEngine_DeleteNode_WithPropertiesCascadesAdjacencyAndSchemaCleanup
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
-	_, err = engine.CreateNode(&Node{ID: "test:owner", Labels: []string{"Person"}, Properties: map[string]any{"email": "owner@example.com"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:owner", Labels: []string{"Person"}, Properties: map[string]any{"email": "owner@example.com"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:peer", Labels: []string{"Person"}, Properties: map[string]any{"email": "peer@example.com"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:peer", Labels: []string{"Person"}, Properties: map[string]any{"email": "peer@example.com"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:owner-peer", StartNode: "test:owner", EndNode: "test:peer", Type: "KNOWS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:owner-peer", StartNode: "test:owner", EndNode: "test:peer", Type: "KNOWS"}))
 
-	require.NoError(t, engine.DeleteNode("test:owner"))
-	_, err = engine.GetNode("test:owner")
+	require.NoError(t, engine.DeleteNode(t.Context(), "test:owner"))
+	_, err = engine.GetNode(t.Context(), "test:owner")
 	require.ErrorIs(t, err, ErrNotFound)
-	_, err = engine.GetEdge("test:owner-peer")
+	_, err = engine.GetEdge(t.Context(), "test:owner-peer")
 	require.ErrorIs(t, err, ErrNotFound)
 }

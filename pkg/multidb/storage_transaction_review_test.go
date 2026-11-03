@@ -13,10 +13,10 @@ import (
 
 func stagedQuotaNode(t *testing.T, manager *DatabaseManager, db, id string) *storage.BadgerTransaction {
 	t.Helper()
-	tx, err := manager.inner.(*storage.MemoryEngine).BeginTransaction()
+	tx, err := manager.inner.(*storage.MemoryEngine).BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace(db))
-	_, err = tx.CreateNode(&storage.Node{ID: storage.NodeID(db + ":" + id), Labels: []string{"Review"}})
+	_, err = tx.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(db + ":" + id), Labels: []string{"Review"}})
 	require.NoError(t, err)
 	return tx
 }
@@ -44,7 +44,7 @@ func TestTransactionQuotaListenerReentry(t *testing.T) {
 						completed <- fmt.Errorf("listener saw stale byte accounting: %d", size)
 						return
 					}
-					_, err := engine.CreateNode(&storage.Node{ID: "child", Labels: []string{"Review"}})
+					_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "child", Labels: []string{"Review"}})
 					completed <- err
 				}()
 				select {
@@ -66,7 +66,7 @@ func TestTransactionQuotaListenerReentry(t *testing.T) {
 					t.Fatal("re-entry did not finish after commit returned")
 				}
 			}
-			count, err := engine.NodeCount()
+			count, err := engine.NodeCount(t.Context())
 			require.NoError(t, err)
 			require.EqualValues(t, 2, count)
 		})
@@ -98,7 +98,7 @@ func TestTransactionQuotaAdmissionCancellationWhileWaiting(t *testing.T) {
 	}
 	require.ErrorIs(t, commitErr, context.DeadlineExceeded)
 	require.True(t, nornicerrors.IsCommitRolledBack(commitErr), "pre-publication cancellation has a known rollback outcome")
-	count, err := engine.NodeCount()
+	count, err := engine.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.Zero(t, count)
 }
@@ -137,7 +137,7 @@ func TestTransactionQuotaUnlimitedWritersDoNotWaitForListener(t *testing.T) {
 		t.Error("unlimited disjoint writer serialized behind listener")
 	}
 	require.NoError(t, <-firstDone)
-	count, err := engine.NodeCount()
+	count, err := engine.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.EqualValues(t, 2, count)
 }
@@ -159,8 +159,9 @@ func TestTransactionQuotaWireStatus(t *testing.T) {
 			require.NoError(t, tracker.CommitTransaction(context.Background(), stagedQuotaNode(t, manager, db, "first")))
 			err = tracker.CommitTransaction(context.Background(), stagedQuotaNode(t, manager, db, "rejected"))
 			require.Error(t, err)
-			for _, mapper := range []func(error) (string, string){nornicerrors.Neo4jStatus, nornicerrors.Neo4jCommitStatus} {
-				code, _ := mapper(err)
+			// The commit producer's classification keeps the quota rejection's own status.
+			for _, failure := range []error{err, nornicerrors.TransactionControlFailure(nornicerrors.TerminalCommit, err)} {
+				code, _ := nornicerrors.Neo4jStatus(failure)
 				require.Equal(t, tc.code, code)
 			}
 			require.True(t, nornicerrors.IsCommitRolledBack(err))

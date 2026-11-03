@@ -23,7 +23,7 @@ func TestGH463_AggregateWrappedInArithmeticUsesAllRows(t *testing.T) {
 				{ID: "o1", Labels: []string{"O"}, Properties: map[string]interface{}{"id": 1}},
 				{ID: "o2", Labels: []string{"O"}, Properties: map[string]interface{}{"id": 2}},
 			} {
-				_, err := store.CreateNode(node)
+				_, err := store.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 			}
 			for _, edge := range []*storage.Edge{
@@ -31,7 +31,7 @@ func TestGH463_AggregateWrappedInArithmeticUsesAllRows(t *testing.T) {
 				{ID: "o1-c", StartNode: "o1", EndNode: "c", Type: "HAS", Properties: map[string]interface{}{"n": int64(1)}},
 				{ID: "o2-a", StartNode: "o2", EndNode: "a", Type: "HAS", Properties: map[string]interface{}{"n": int64(5)}},
 			} {
-				require.NoError(t, store.CreateEdge(edge))
+				require.NoError(t, store.CreateEdge(t.Context(), edge))
 			}
 			exec := NewStorageExecutor(store)
 			ctx := context.Background()

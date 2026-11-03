@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"testing"
@@ -18,9 +19,8 @@ func TestOrderedDrainProceedsPastQueuedExclusiveWriter(t *testing.T) {
 	engine, err := runtimeFixtureOwner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: true, WriteBehindInterval: time.Hour}))
 	require.NoError(t, err)
 	engine.writeBehind.SetDelayBounds(time.Hour, time.Hour)
-	// No background flusher: only the ordered write's drain applies the
-	// acknowledged generation.
-	engine.writeBehind.Close()
+	// Keep the accepted replay owner live: the request-cancellable ordered
+	// write waits for it without borrowing the queued exclusive barrier.
 	// A deadlocked engine cannot close: the failure below leaves it.
 	deadlocked := false
 	t.Cleanup(func() {
@@ -28,23 +28,23 @@ func TestOrderedDrainProceedsPastQueuedExclusiveWriter(t *testing.T) {
 			_ = engine.Close()
 		}
 	})
-	_, err = engine.CreateNode(&Node{ID: "test:n", Properties: map[string]any{"v": int64(1)}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:n", Properties: map[string]any{"v": int64(1)}})
 	require.NoError(t, err)
-	require.NoError(t, engine.FlushWriteBehind(nil))
-	tx, err := engine.BeginTransaction()
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
-	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:n", Properties: map[string]any{"v": int64(2)}}, Policy: ClientNodeEdits}))
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:n", Properties: map[string]any{"v": int64(2)}}, Policy: ClientNodeEdits}))
 	require.NoError(t, tx.Commit())
 
 	// Park the direct update on its write-order stripe, after it took the
 	// barrier shared and before its drain.
 	var stripes orderStripeSet
 	stripes.entities(writtenEntities{nodes: []NodeID{"test:n"}})
-	require.NoError(t, engine.writeBehind.order.lockContext(nil, &stripes, true))
+	require.NoError(t, engine.writeBehind.order.lockContext(t.Context(), &stripes, true))
 	updated := make(chan error, 1)
 	go func() {
-		updated <- engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:n", Properties: map[string]any{"v": int64(3)}}})
+		updated <- engine.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:n", Properties: map[string]any{"v": int64(3)}}})
 	}()
 	require.Eventually(t, func() bool {
 		if engine.writeBarrier.TryLock() {
@@ -81,7 +81,7 @@ func TestOrderedDrainProceedsPastQueuedExclusiveWriter(t *testing.T) {
 		deadlocked = true
 		t.Fatal("the exclusive writer never acquired the barrier")
 	}
-	node, err := engine.GetNode("test:n")
+	node, err := engine.GetNode(t.Context(), "test:n")
 	require.NoError(t, err)
 	require.Equal(t, int64(3), node.Properties["v"])
 }

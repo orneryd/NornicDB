@@ -45,18 +45,29 @@ func (e *StorageExecutor) splitBySemicolon(s string) []string {
 
 // extractProcedureName uses the same component reader as authorization,
 // retaining exact case while accepting quoted names and spaced separators.
-func extractProcedureName(ctx context.Context, source string) string {
-	syntax, _ := cypherantlr.ParseSyntax(ctx, source, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
+//
+// The CALL fragment's parse error is the reader's error, not an absent name: a
+// caller whose context ended between the statement's own admission and this
+// read (a cancellation released at the statement's transaction BEGIN, for
+// example) must report that cancellation, not look up the empty name a failed
+// parse leaves behind. Callers that only classify a clause keep their
+// established answer for a clause they could not read; the owner that runs the
+// CALL reports the error.
+func extractProcedureName(ctx context.Context, source string) (string, error) {
+	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
+	if err != nil {
+		return "", err
+	}
 	if !syntax.Valid() {
-		return ""
+		return "", nil
 	}
 	call, found := syntax.LeadingCall()
 	if !found {
-		return ""
+		return "", nil
 	}
 	invocation := call.ChildRule(cypherantlr.CypherParserRULE_invocationName)
 	if !invocation.Valid() {
-		return ""
+		return "", nil
 	}
-	return invocation.QualifiedName()
+	return invocation.QualifiedName(), nil
 }

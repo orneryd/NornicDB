@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 	"time"
@@ -24,14 +25,14 @@ func TestSnapshotBufferedWALPropertyBindingsControl(t *testing.T) {
 		{ID: "separator:n", Properties: map[string]any{"separator": "batch-boundary"}},
 	}
 	for _, node := range initial {
-		_, err = source.CreateNode(node)
+		_, err = source.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 	initialEdge := &Edge{ID: "binding:r", StartNode: "binding:a", EndNode: "binding:b", Type: "R", Properties: map[string]any{"alpha": "before-alpha"}}
-	require.NoError(t, source.CreateEdge(initialEdge))
-	require.NoError(t, source.FlushWriteBehind(nil))
+	require.NoError(t, source.CreateEdge(t.Context(), initialEdge))
+	require.NoError(t, source.FlushWriteBehind(context.Background()))
 	for i, node := range initial {
-		initial[i], err = source.GetNode(node.ID)
+		initial[i], err = source.GetNode(t.Context(), node.ID)
 		require.NoError(t, err)
 	}
 	walDir := t.TempDir()
@@ -39,18 +40,18 @@ func TestSnapshotBufferedWALPropertyBindingsControl(t *testing.T) {
 	require.NoError(t, err)
 	journal := NewWALEngine(source, wal)
 	t.Cleanup(func() { _ = journal.Close() })
-	tx, err := source.BeginTransaction()
+	tx, err := source.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("binding"))
 	require.NoError(t, tx.SetImplicit(true))
 	final := &Node{ID: "binding:a", Properties: map[string]any{"alpha": "after-alpha", "beta": "after-beta"}}
-	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: final, Policy: ClientNodeEdits}))
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: final, Policy: ClientNodeEdits}))
 	finalEdge := copyEdge(initialEdge)
 	finalEdge.Properties = final.Properties
-	require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: finalEdge}))
+	require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: finalEdge}))
 	require.NoError(t, tx.Commit())
 	require.True(t, tx.AcknowledgedBuffered())
-	require.NoError(t, source.FlushWriteBehind(nil))
+	require.NoError(t, source.FlushWriteBehind(context.Background()))
 	require.NoError(t, journal.Close())
 	entries, err := ReadWALEntriesFromDir(walDir)
 	require.NoError(t, err)
@@ -78,20 +79,20 @@ func TestSnapshotBufferedWALPropertyBindingsControl(t *testing.T) {
 			result, _, err := RecoverIntoEngine(fresh, walDir, snapshotPath)
 			require.NoError(t, err)
 			require.Zero(t, result.Failed, "%s", result.Summary())
-			got, err := fresh.GetNode("binding:a")
+			got, err := fresh.GetNode(t.Context(), "binding:a")
 			require.NoError(t, err)
 			require.Equal(t, final.Properties, got.Properties, "physical WAL must retain property names after semantic snapshot restoration")
 			// Reopen to exercise persisted bodies rather than the replay cache.
 			require.NoError(t, fresh.Close())
 			fresh, err = fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 			require.NoError(t, err)
-			got, err = fresh.GetNode("binding:a")
+			got, err = fresh.GetNode(t.Context(), "binding:a")
 			require.NoError(t, err)
 			require.Equal(t, final.Properties, got.Properties)
-			edge, err := fresh.GetEdge("binding:r")
+			edge, err := fresh.GetEdge(t.Context(), "binding:r")
 			require.NoError(t, err)
 			require.Equal(t, final.Properties, edge.Properties)
-			sentinel, err := fresh.GetNode("binding:b")
+			sentinel, err := fresh.GetNode(t.Context(), "binding:b")
 			require.NoError(t, err)
 			require.Equal(t, initial[1].Properties, sentinel.Properties, "restored bodies keep their own token bindings")
 		})

@@ -199,14 +199,14 @@ type queryMemoryNodeReadGuard struct {
 	fullReads int
 }
 
-func (g *queryMemoryNodeReadGuard) GetNode(id storage.NodeID) (*storage.Node, error) {
+func (g *queryMemoryNodeReadGuard) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	g.fullReads++
-	return g.BadgerEngine.GetNode(id)
+	return g.BadgerEngine.GetNode(ctx, id)
 }
 
-func (g *queryMemoryNodeReadGuard) GetQueryNode(id storage.NodeID) (*storage.Node, error) {
+func (g *queryMemoryNodeReadGuard) GetQueryNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	g.fullReads++
-	return g.BadgerEngine.GetQueryNode(id)
+	return g.BadgerEngine.GetQueryNode(ctx, id)
 }
 
 func TestQueryMemoryScalarEndpointsReuseQueryReads(t *testing.T) {

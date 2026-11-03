@@ -3,8 +3,9 @@ package search
 import (
 	"context"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -51,9 +52,9 @@ func (s *candidateFilterReadSpy) BatchGetNodes(ctx context.Context, ids []storag
 	return s.Engine.BatchGetNodes(ctx, ids)
 }
 
-func (s *candidateFilterReadSpy) GetNode(id storage.NodeID) (*storage.Node, error) {
+func (s *candidateFilterReadSpy) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	s.fullIndividualReads++
-	return s.Engine.GetNode(id)
+	return s.Engine.GetNode(ctx, id)
 }
 
 func (s *candidateFilterReadSpy) BatchGetNodesWithoutEmbeddings(ctx context.Context, ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
@@ -70,7 +71,7 @@ func (s *candidateFilterReadSpy) BatchGetNodesWithoutEmbeddings(ctx context.Cont
 	return result, nil
 }
 
-func (s *candidateFilterReadSpy) GetNodeWithoutEmbeddings(id storage.NodeID) (*storage.Node, error) {
+func (s *candidateFilterReadSpy) GetNodeWithoutEmbeddings(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	s.lightReads++
 	if node, ok := s.lightNodes[id]; ok {
 		return node, nil

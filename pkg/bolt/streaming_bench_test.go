@@ -259,7 +259,7 @@ func BenchmarkBoltResultStreamState(b *testing.B) {
 	result := &QueryResult{Rows: [][]any{{int64(1)}}}
 
 	b.Run("autocommit", func(b *testing.B) {
-		session := &Session{lastResult: result}
+		session := &Session{server: &Server{config: DefaultConfig()}, lastResult: result}
 		b.ReportAllocs()
 		for b.Loop() {
 			stream, statementID, ok := session.selectResultStream(-1)
@@ -273,6 +273,7 @@ func BenchmarkBoltResultStreamState(b *testing.B) {
 	b.Run("explicit", func(b *testing.B) {
 		stream := &resultStream{result: result}
 		session := &Session{
+			server:            &Server{config: DefaultConfig()},
 			inTransaction:     true,
 			resultStreams:     map[int64]*resultStream{0: stream},
 			latestStatementID: 0,

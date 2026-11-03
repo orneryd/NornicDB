@@ -53,7 +53,7 @@ func setupTraversalTestData(t *testing.T, exec *StorageExecutor) {
 	}
 
 	if aliceNode != nil && bobNode != nil {
-		exec.storage.CreateEdge(&storage.Edge{
+		exec.storage.CreateEdge(t.Context(), &storage.Edge{
 			ID:        "e1",
 			Type:      "KNOWS",
 			StartNode: aliceNode.ID,
@@ -61,7 +61,7 @@ func setupTraversalTestData(t *testing.T, exec *StorageExecutor) {
 		})
 	}
 	if bobNode != nil && carolNode != nil {
-		exec.storage.CreateEdge(&storage.Edge{
+		exec.storage.CreateEdge(t.Context(), &storage.Edge{
 			ID:        "e2",
 			Type:      "KNOWS",
 			StartNode: bobNode.ID,
@@ -69,7 +69,7 @@ func setupTraversalTestData(t *testing.T, exec *StorageExecutor) {
 		})
 	}
 	if aliceNode != nil && carolNode != nil {
-		exec.storage.CreateEdge(&storage.Edge{
+		exec.storage.CreateEdge(t.Context(), &storage.Edge{
 			ID:        "e3",
 			Type:      "WORKS_WITH",
 			StartNode: aliceNode.ID,
@@ -77,7 +77,7 @@ func setupTraversalTestData(t *testing.T, exec *StorageExecutor) {
 		})
 	}
 	if bobNode != nil && daveNode != nil {
-		exec.storage.CreateEdge(&storage.Edge{
+		exec.storage.CreateEdge(t.Context(), &storage.Edge{
 			ID:        "e4",
 			Type:      "FOLLOWS",
 			StartNode: bobNode.ID,

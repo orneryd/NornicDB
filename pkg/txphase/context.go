@@ -39,6 +39,16 @@ func CommitAdmitted(ctx context.Context) bool {
 	return phase.admitted
 }
 
+// ResultContext preserves the admitted terminal outcome through response
+// projection, including any entity reads required to render it. It cannot admit
+// a commit: unadmitted requests and independent statements keep cancellation.
+func ResultContext(ctx context.Context) context.Context {
+	if CommitAdmitted(ctx) {
+		return context.WithoutCancel(ctx)
+	}
+	return ctx
+}
+
 // CommitContext is the only phase transition. Terminal owners call it after
 // statement execution and arbitration, immediately before irreversible commit.
 // Other transports retain their existing cancellation contract.

@@ -20,8 +20,10 @@ func TestSchemaManager_GetConstraintsForLabelsOrderedByName(t *testing.T) {
 		}
 		require.NoError(t, sm.AddConstraint(Constraint{Name: name, Type: ConstraintExists, Label: label, Properties: []string{name}}))
 	}
+	constraints, err := sm.GetConstraintsForLabels(t.Context(), []string{"User"})
+	require.NoError(t, err)
 	var names []string
-	for _, c := range sm.GetConstraintsForLabels([]string{"User"}) {
+	for _, c := range constraints {
 		names = append(names, c.Name)
 	}
 	require.Equal(t, []string{"a_exists", "b_key", "c_unique"}, names)
@@ -35,10 +37,10 @@ func TestBadgerConstraintValidation_NullUniqueValueAndMissingProperties(t *testi
 	require.NoError(t, schema.AddConstraint(Constraint{Name: "e_name", Type: ConstraintExists, Label: "User", Properties: []string{"name"}}))
 	require.NoError(t, schema.AddConstraint(Constraint{Name: "u_email", Type: ConstraintUnique, Label: "User", Properties: []string{"email"}}))
 
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
-		require.NoError(t, engine.validateNodeConstraintsInTxn(txn, &Node{ID: "test:u1", Labels: []string{"User"}, Properties: map[string]any{"name": "A"}}, schema, "test", ""))
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.validateNodeConstraintsInTxn(t.Context(), txn, &Node{ID: "test:u1", Labels: []string{"User"}, Properties: map[string]any{"name": "A"}}, schema, "test", ""))
 
-		err := engine.validateNodeConstraintsInTxn(txn, &Node{ID: "test:u2", Labels: []string{"User"}}, schema, "test", "")
+		err := engine.validateNodeConstraintsInTxn(t.Context(), txn, &Node{ID: "test:u2", Labels: []string{"User"}}, schema, "test", "")
 		var violation *ConstraintViolationError
 		require.ErrorAs(t, err, &violation)
 		require.Equal(t, ConstraintExists, violation.Type)
@@ -52,7 +54,7 @@ func TestBadgerTransaction_TemporalConstraintIgnoresPendingNodesWithOtherKeys(t 
 	constraint := Constraint{Name: "person_temporal", Type: ConstraintTemporal, Label: "Person", Properties: []string{"account", "from", "to"}}
 	require.NoError(t, engine.GetSchemaForNamespace("test").AddConstraint(constraint))
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
 	require.NoError(t, tx.SetNamespace("test"))

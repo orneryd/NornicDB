@@ -78,14 +78,14 @@ func TestIDDictionary_ReopenNeverReallocatesACommittedNumID(t *testing.T) {
 	edgeCounterBefore := persistedIDCounter(t, engine1, idCounterEdgeKey)
 
 	for i := 1; i <= 3; i++ {
-		_, err := engine1.CreateNode(&Node{
+		_, err := engine1.CreateNode(t.Context(), &Node{
 			ID:         NodeID(fmt.Sprintf("tenant-a:%d", i)),
 			Labels:     []string{"Resource"},
 			Properties: map[string]any{"tenant": "a", "ordinal": int64(i)},
 		})
 		require.NoError(t, err)
 	}
-	require.NoError(t, engine1.CreateEdge(&Edge{
+	require.NoError(t, engine1.CreateEdge(t.Context(), &Edge{
 		ID: "tenant-a:e1", StartNode: "tenant-a:1", EndNode: "tenant-a:2",
 		Type: "CONTAINS", Properties: map[string]any{"tenant": "a"},
 	}))
@@ -104,14 +104,14 @@ func TestIDDictionary_ReopenNeverReallocatesACommittedNumID(t *testing.T) {
 	t.Cleanup(func() { _ = engine2.Close() })
 
 	for i := 1; i <= 3; i++ {
-		_, err := engine2.CreateNode(&Node{
+		_, err := engine2.CreateNode(t.Context(), &Node{
 			ID:         NodeID(fmt.Sprintf("tenant-b:%d", i)),
 			Labels:     []string{"Resource"},
 			Properties: map[string]any{"tenant": "b", "ordinal": int64(i)},
 		})
 		require.NoError(t, err)
 	}
-	require.NoError(t, engine2.CreateEdge(&Edge{
+	require.NoError(t, engine2.CreateEdge(t.Context(), &Edge{
 		ID: "tenant-b:e1", StartNode: "tenant-b:1", EndNode: "tenant-b:2",
 		Type: "CONTAINS", Properties: map[string]any{"tenant": "b"},
 	}))
@@ -156,7 +156,7 @@ func TestIDDictionary_ReopenKeepsAHigherPersistedCounter(t *testing.T) {
 		fixtureowner.Own(t, engine1)
 	}
 	require.NoError(t, err)
-	_, err = engine1.CreateNode(&Node{ID: "solo:1", Labels: []string{"L"}})
+	_, err = engine1.CreateNode(t.Context(), &Node{ID: "solo:1", Labels: []string{"L"}})
 	require.NoError(t, err)
 	// Persist a counter well above anything the forward map holds, as if
 	// allocations had been rolled back after the counter write.

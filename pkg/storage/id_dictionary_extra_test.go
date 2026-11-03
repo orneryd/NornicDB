@@ -335,10 +335,10 @@ func TestBadgerEngine_IDDictCountersAndFreelistPending(t *testing.T) {
 	// Allocate some IDs by creating nodes and edges through the
 	// public engine API. Counters must advance.
 	for _, id := range []NodeID{"test:n1", "test:n2"} {
-		_, err := e.CreateNode(&Node{ID: id, Labels: []string{"L"}, Properties: map[string]any{}})
+		_, err := e.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"L"}, Properties: map[string]any{}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, e.CreateEdge(&Edge{
+	require.NoError(t, e.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:n1", EndNode: "test:n2",
 		Type: "REL", Properties: map[string]any{},
 	}))

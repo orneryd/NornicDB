@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
@@ -47,10 +48,10 @@ func TestBadgerEngine_HelperUpdateTailSurvivesConcurrentClose(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	closeDone := closeWhileTailRuns(t, engine)
-	err = engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error { return txn.Set([]byte("helper-update"), []byte("value")) })
+	err = engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error { return txn.Set([]byte("helper-update"), []byte("value")) })
 	require.NoError(t, err)
 	require.NoError(t, <-closeDone)
-	require.ErrorIs(t, engine.withUpdate(updateRequest{}, func(*badger.Txn) error { t.Error("callback called after Close"); return nil }), ErrStorageClosed)
+	require.ErrorIs(t, engine.withUpdate(context.Background(), updateRequest{}, func(*badger.Txn) error { t.Error("callback called after Close"); return nil }), ErrStorageClosed)
 }
 
 // TestBadgerTransaction_CommitTailSurvivesConcurrentClose pins the shutdown
@@ -67,9 +68,9 @@ func TestBadgerTransaction_CommitTailSurvivesConcurrentClose(t *testing.T) {
 	}
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	_, err = tx.CreateNode(&Node{ID: "race:1", Labels: []string{"Race"}, Properties: map[string]any{"k": "v"}})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "race:1", Labels: []string{"Race"}, Properties: map[string]any{"k": "v"}})
 	require.NoError(t, err)
 
 	closeDone := closeWhileTailRuns(t, engine)
@@ -81,7 +82,7 @@ func TestBadgerTransaction_CommitTailSurvivesConcurrentClose(t *testing.T) {
 	reopened, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reopened.Close() })
-	node, err := reopened.GetNode("race:1")
+	node, err := reopened.GetNode(t.Context(), "race:1")
 	require.NoError(t, err)
 	require.Equal(t, "v", node.Properties["k"])
 	num, ok := reopened.idDict.lookupNodeNumID("race:1")
@@ -102,7 +103,7 @@ func TestBadgerEngine_NonTransactionalWriteTailSurvivesConcurrentClose(t *testin
 	require.NoError(t, err)
 
 	closeDone := closeWhileTailRuns(t, engine)
-	_, err = engine.CreateNode(&Node{ID: "race:2", Labels: []string{"Race"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "race:2", Labels: []string{"Race"}})
 	require.NoError(t, err)
 	require.NoError(t, <-closeDone)
 
@@ -126,9 +127,9 @@ func TestBadgerTransaction_CommitAfterCloseFailsCleanly(t *testing.T) {
 	}
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	_, err = tx.CreateNode(&Node{ID: "late:1", Labels: []string{"Late"}})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "late:1", Labels: []string{"Late"}})
 	require.NoError(t, err)
 	require.NoError(t, engine.Close())
 

@@ -32,18 +32,18 @@ func (e *retryOwnerReadWindow) failing() bool {
 	return false
 }
 
-func (e *retryOwnerReadWindow) GetNode(id storage.NodeID) (*storage.Node, error) {
+func (e *retryOwnerReadWindow) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	if !e.edge && id == "a" && e.failing() {
 		return nil, errors.New("400ms node read outage")
 	}
-	return e.Engine.GetNode(id)
+	return e.Engine.GetNode(ctx, id)
 }
 
-func (e *retryOwnerReadWindow) GetEdge(id storage.EdgeID) (*storage.Edge, error) {
+func (e *retryOwnerReadWindow) GetEdge(ctx context.Context, id storage.EdgeID) (*storage.Edge, error) {
 	if e.edge && id == "r" && e.failing() {
 		return nil, errors.New("400ms relationship read outage")
 	}
-	return e.Engine.GetEdge(id)
+	return e.Engine.GetEdge(ctx, id)
 }
 
 // The same outage must recover through every refresh entrance. A running drain
@@ -58,22 +58,22 @@ func TestRefreshRetryOwnerPublicEntrances(t *testing.T) {
 				fault := &retryOwnerReadWindow{Engine: tenant, edge: kind == "relationship"}
 				svc, err := db.EnsureSearchIndexes(ctx, "retryowner", fault, SearchIndexBuildWait)
 				require.NoError(t, err)
-				_, err = tenant.CreateNode(&storage.Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "beforeowneroutage"}})
+				_, err = tenant.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "beforeowneroutage"}})
 				require.NoError(t, err)
-				_, err = tenant.CreateNode(&storage.Node{ID: "b"})
+				_, err = tenant.CreateNode(t.Context(), &storage.Node{ID: "b"})
 				require.NoError(t, err)
 				vector := make([]float32, db.config.Memory.EmbeddingDimensions)
 				vector[0] = 1
-				require.NoError(t, tenant.CreateEdge(&storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "BEFORE", Properties: map[string]any{"vec": vector}}))
-				require.NoError(t, svc.RefreshNode("a"))
-				require.NoError(t, svc.RefreshEdge("r"))
+				require.NoError(t, tenant.CreateEdge(t.Context(), &storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "BEFORE", Properties: map[string]any{"vec": vector}}))
+				require.NoError(t, svc.RefreshNode(t.Context(), "a"))
+				require.NoError(t, svc.RefreshEdge(t.Context(), "r"))
 				settleQueuedRefreshes()
 
 				update := func() {
 					if kind == "node" {
-						require.NoError(t, tenant.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "afterowneroutage"}}}))
+						require.NoError(t, tenant.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: &storage.Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "afterowneroutage"}}}))
 					} else {
-						require.NoError(t, tenant.UpdateEdge(storage.EdgeUpdateRequest{After: &storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "AFTER", Properties: map[string]any{"vec": vector}}}))
+						require.NoError(t, tenant.UpdateEdge(t.Context(), storage.EdgeUpdateRequest{After: &storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "AFTER", Properties: map[string]any{"vec": vector}}}))
 					}
 				}
 				visible := func() bool {
@@ -97,9 +97,9 @@ func TestRefreshRetryOwnerPublicEntrances(t *testing.T) {
 				if entrance == "drain" {
 					update()
 				} else if kind == "node" {
-					require.Error(t, svc.RefreshNode("a"))
+					require.Error(t, svc.RefreshNode(t.Context(), "a"))
 				} else {
-					require.Error(t, svc.RefreshEdge("r"))
+					require.Error(t, svc.RefreshEdge(t.Context(), "r"))
 				}
 				require.Eventually(t, func() bool { return fault.failures.Load() > 0 }, 5*time.Second, 5*time.Millisecond)
 				time.Sleep(150 * time.Millisecond)
@@ -119,23 +119,23 @@ func TestRefreshRetryOwnerSupersededAndRetired(t *testing.T) {
 				fault := &retryOwnerReadWindow{Engine: tenant, edge: kind == "relationship"}
 				svc, err := db.EnsureSearchIndexes(context.Background(), "retrynewer", fault, SearchIndexBuildWait)
 				require.NoError(t, err)
-				_, err = tenant.CreateNode(&storage.Node{ID: "a", Properties: map[string]any{"content": "initialownerword"}})
+				_, err = tenant.CreateNode(t.Context(), &storage.Node{ID: "a", Properties: map[string]any{"content": "initialownerword"}})
 				require.NoError(t, err)
-				_, err = tenant.CreateNode(&storage.Node{ID: "b"})
+				_, err = tenant.CreateNode(t.Context(), &storage.Node{ID: "b"})
 				require.NoError(t, err)
 				vector := make([]float32, db.config.Memory.EmbeddingDimensions)
 				vector[0] = 1
-				require.NoError(t, tenant.CreateEdge(&storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "BEFORE", Properties: map[string]any{"vec": vector}}))
-				require.NoError(t, svc.RefreshNode("a"))
-				require.NoError(t, svc.RefreshEdge("r"))
+				require.NoError(t, tenant.CreateEdge(t.Context(), &storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "BEFORE", Properties: map[string]any{"vec": vector}}))
+				require.NoError(t, svc.RefreshNode(t.Context(), "a"))
+				require.NoError(t, svc.RefreshEdge(t.Context(), "r"))
 				settleQueuedRefreshes()
 				fault.armed.Store(true)
 				if kind == "node" {
-					require.Error(t, svc.RefreshNode("a"))
-					require.NoError(t, tenant.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "a", Properties: map[string]any{"content": "newestownerword"}}}))
+					require.Error(t, svc.RefreshNode(t.Context(), "a"))
+					require.NoError(t, tenant.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: &storage.Node{ID: "a", Properties: map[string]any{"content": "newestownerword"}}}))
 				} else {
-					require.Error(t, svc.RefreshEdge("r"))
-					require.NoError(t, tenant.UpdateEdge(storage.EdgeUpdateRequest{After: &storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "AFTER", Properties: map[string]any{"vec": vector}}}))
+					require.Error(t, svc.RefreshEdge(t.Context(), "r"))
+					require.NoError(t, tenant.UpdateEdge(t.Context(), storage.EdgeUpdateRequest{After: &storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "AFTER", Properties: map[string]any{"vec": vector}}}))
 				}
 				fault.armed.Store(false)
 				if retire {
@@ -144,9 +144,9 @@ func TestRefreshRetryOwnerSupersededAndRetired(t *testing.T) {
 					svc, err = db.EnsureSearchIndexes(context.Background(), "retrynewer", tenant, SearchIndexBuildWait)
 					require.NoError(t, err)
 				} else if kind == "node" {
-					require.NoError(t, svc.RefreshNode("a"))
+					require.NoError(t, svc.RefreshNode(t.Context(), "a"))
 				} else {
-					require.NoError(t, svc.RefreshEdge("r"))
+					require.NoError(t, svc.RefreshEdge(t.Context(), "r"))
 				}
 				visible := func() bool {
 					if kind == "node" {

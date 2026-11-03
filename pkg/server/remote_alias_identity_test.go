@@ -49,7 +49,7 @@ func newIdentityRemoteServer(t *testing.T, remotes map[string]*aliasIdentityRemo
 		require.NoError(t, backend.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: remote.marker}))
 		store, err := backend.dbManager.GetStorage(remote.marker)
 		require.NoError(t, err)
-		_, err = store.CreateNode(&storage.Node{ID: "identity-marker", Labels: []string{"AliasIdentityProbe"}, Properties: map[string]any{"marker": remote.marker}})
+		_, err = store.CreateNode(t.Context(), &storage.Node{ID: "identity-marker", Labels: []string{"AliasIdentityProbe"}, Properties: map[string]any{"marker": remote.marker}})
 		require.NoError(t, err)
 	}
 	router := backend.buildRouter()

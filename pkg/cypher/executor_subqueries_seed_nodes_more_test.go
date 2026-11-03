@@ -14,9 +14,9 @@ func TestSeedNodesFromOuterMatch_IDAndIndexPaths(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	n1ID, err := store.CreateNode(&storage.Node{ID: storage.NodeID("n1"), Labels: []string{"Seed"}, Properties: map[string]interface{}{"ext": "e1", "team": "red"}})
+	n1ID, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID("n1"), Labels: []string{"Seed"}, Properties: map[string]interface{}{"ext": "e1", "team": "red"}})
 	require.NoError(t, err)
-	n2ID, err := store.CreateNode(&storage.Node{ID: storage.NodeID("n2"), Labels: []string{"Seed"}, Properties: map[string]interface{}{"ext": "e2", "team": "blue"}})
+	n2ID, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID("n2"), Labels: []string{"Seed"}, Properties: map[string]interface{}{"ext": "e2", "team": "blue"}})
 	require.NoError(t, err)
 
 	_, err = exec.Execute(ctx, "CREATE INDEX seed_ext_idx IF NOT EXISTS FOR (n:Seed) ON (n.ext)", nil)

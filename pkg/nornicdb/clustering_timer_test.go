@@ -3,9 +3,10 @@ package nornicdb
 import (
 	"context"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	featureflags "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/search"
@@ -89,7 +90,7 @@ func TestClusteringTimer_ClustersBulkLoadWhenItStops(t *testing.T) {
 			ID:              storage.NodeID(fmt.Sprintf("v%d", i)),
 			ChunkEmbeddings: [][]float32{{float32(i%7) + 1, float32(i%5) + 1, float32(i%3) + 1}},
 		}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, svc.IndexNode(node))
 	}

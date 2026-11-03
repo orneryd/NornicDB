@@ -70,7 +70,7 @@ type rowFunctionArgumentFailure struct{ err error }
 // the other evaluator reports them. The flags are (handled, resolved): a
 // registry miss never evaluates arguments; an unresolved registered call must
 // never be retried as another function implementation.
-func (e *StorageExecutor) evaluateRowGraphFunction(function, argument string, values map[string]interface{}) (value interface{}, handled, resolved bool, err error) {
+func (e *StorageExecutor) evaluateRowGraphFunction(ctx context.Context, function, argument string, values map[string]interface{}) (value interface{}, handled, resolved bool, err error) {
 	defer func() {
 		if aborted := recover(); aborted != nil {
 			failure, ok := aborted.(rowFunctionArgumentFailure)
@@ -87,9 +87,13 @@ func (e *StorageExecutor) evaluateRowGraphFunction(function, argument string, va
 	if strings.TrimSpace(argument) != "" {
 		args = splitTopLevelComma(argument)
 	}
-	statementCtx := rowStatementContextOrBackground(values)
-	fnCtx := e.registryFunctionContext(statementCtx, func(expression string) (interface{}, error) {
-		value, resolved, err := e.evaluateRowValue(expression, values)
+	statementCtx := ctx
+	metadataCtx := statementCtx
+	if inherited := rowStatementContext(values); inherited != nil {
+		metadataCtx = inherited
+	}
+	fnCtx := e.registryFunctionContext(metadataCtx, func(expression string) (interface{}, error) {
+		value, resolved, err := e.evaluateRowValue(statementCtx, expression, values)
 		if err != nil {
 			panic(rowFunctionArgumentFailure{err})
 		}

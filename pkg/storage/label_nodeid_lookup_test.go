@@ -27,7 +27,7 @@ func (e *labelLookupFallbackEngine) GetNodesByLabel(ctx context.Context, label s
 	return e.nodes, nil
 }
 
-func (e *firstNodeOnlyEngine) GetFirstNodeByLabel(label string) (*Node, error) {
+func (e *firstNodeOnlyEngine) GetFirstNodeByLabel(ctx context.Context, label string) (*Node, error) {
 	if e.err != nil {
 		return nil, e.err
 	}
@@ -39,13 +39,13 @@ func TestFirstNodeIDByLabel_NamespaceFiltering(t *testing.T) {
 	engineA := NewNamespacedEngine(base, "a")
 	engineB := NewNamespacedEngine(base, "b")
 
-	_, err := engineA.CreateNode(&Node{
+	_, err := engineA.CreateNode(t.Context(), &Node{
 		ID:     NodeID("node-a"),
 		Labels: []string{"Person"},
 	})
 	require.NoError(t, err)
 
-	_, err = engineB.CreateNode(&Node{
+	_, err = engineB.CreateNode(t.Context(), &Node{
 		ID:     NodeID("node-b"),
 		Labels: []string{"Person"},
 	})
@@ -60,13 +60,13 @@ func TestFirstNodeIDByLabel_InvalidatesOnDelete(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	engine := NewNamespacedEngine(base, "test")
 
-	_, err := engine.CreateNode(&Node{
+	_, err := engine.CreateNode(t.Context(), &Node{
 		ID:     NodeID("node-1"),
 		Labels: []string{"Person"},
 	})
 	require.NoError(t, err)
 
-	_, err = engine.CreateNode(&Node{
+	_, err = engine.CreateNode(t.Context(), &Node{
 		ID:     NodeID("node-2"),
 		Labels: []string{"Person"},
 	})
@@ -75,7 +75,7 @@ func TestFirstNodeIDByLabel_InvalidatesOnDelete(t *testing.T) {
 	id1, err := FirstNodeIDByLabel(context.Background(), engine, "Person")
 	require.NoError(t, err)
 
-	require.NoError(t, engine.DeleteNode(id1))
+	require.NoError(t, engine.DeleteNode(t.Context(), id1))
 
 	id2, err := FirstNodeIDByLabel(context.Background(), engine, "Person")
 	require.NoError(t, err)

@@ -10,18 +10,18 @@ import (
 
 func TestFabricHelpers_MoreRewriteAndKeywordBranches(t *testing.T) {
 	// stripLeadingWithImportsForFabricRecord guard branches
-	require.Equal(t, "RETURN 1", stripLeadingWithImportsForFabricRecord("RETURN 1", map[string]interface{}{}))
-	require.Equal(t, "MATCH (n) RETURN n", stripLeadingWithImportsForFabricRecord("MATCH (n) RETURN n", map[string]interface{}{"x": 1}))
-	require.Equal(t, "WITH x", stripLeadingWithImportsForFabricRecord("WITH x", map[string]interface{}{"x": 1}))
-	require.Equal(t, "WITH x CREATE (n)", stripLeadingWithImportsForFabricRecord("WITH x CREATE (n)", map[string]interface{}{"x": 1}))
-	require.Equal(t, "WITH x, y MATCH (n) RETURN n", stripLeadingWithImportsForFabricRecord("WITH x, y MATCH (n) RETURN n", map[string]interface{}{"x": 1}))
-	require.Equal(t, "WITH x AS y MATCH (n) RETURN n", stripLeadingWithImportsForFabricRecord("WITH x AS y MATCH (n) RETURN n", map[string]interface{}{"x": 1, "y": 2}))
-	require.Equal(t, "USE shard RETURN $x", stripLeadingWithImportsForFabricRecord("WITH x USE shard RETURN x", map[string]interface{}{"x": 1}))
+	require.Equal(t, "RETURN 1", stripLeadingWithImportsForFabricRecord(t.Context(), "RETURN 1", map[string]interface{}{}))
+	require.Equal(t, "MATCH (n) RETURN n", stripLeadingWithImportsForFabricRecord(t.Context(), "MATCH (n) RETURN n", map[string]interface{}{"x": 1}))
+	require.Equal(t, "WITH x", stripLeadingWithImportsForFabricRecord(t.Context(), "WITH x", map[string]interface{}{"x": 1}))
+	require.Equal(t, "WITH x CREATE (n)", stripLeadingWithImportsForFabricRecord(t.Context(), "WITH x CREATE (n)", map[string]interface{}{"x": 1}))
+	require.Equal(t, "WITH x, y MATCH (n) RETURN n", stripLeadingWithImportsForFabricRecord(t.Context(), "WITH x, y MATCH (n) RETURN n", map[string]interface{}{"x": 1}))
+	require.Equal(t, "WITH x AS y MATCH (n) RETURN n", stripLeadingWithImportsForFabricRecord(t.Context(), "WITH x AS y MATCH (n) RETURN n", map[string]interface{}{"x": 1, "y": 2}))
+	require.Equal(t, "USE shard RETURN $x", stripLeadingWithImportsForFabricRecord(t.Context(), "WITH x USE shard RETURN x", map[string]interface{}{"x": 1}))
 
 	// findLeadingWithEndLocal branches
-	require.Equal(t, -1, findLeadingWithEndLocal("WITH x + 1"))
-	require.Greater(t, findLeadingWithEndLocal("WITH x, y MATCH (n) RETURN n"), 0)
-	require.Greater(t, findLeadingWithEndLocal("WITH apoc.map.fromPairs([[1,2]]) RETURN 1"), 0)
+	require.Equal(t, -1, findLeadingWithEndLocal(t.Context(), "WITH x + 1"))
+	require.Greater(t, findLeadingWithEndLocal(t.Context(), "WITH x, y MATCH (n) RETURN n"), 0)
+	require.Greater(t, findLeadingWithEndLocal(t.Context(), "WITH apoc.map.fromPairs([[1,2]]) RETURN 1"), 0)
 	for _, query := range []string{
 		"WITH x OPTIONAL MATCH (n) RETURN n",
 		"WITH x WHERE x IS NOT NULL RETURN x",
@@ -35,14 +35,14 @@ func TestFabricHelpers_MoreRewriteAndKeywordBranches(t *testing.T) {
 		"WITH x DELETE x",
 		"WITH x DETACH DELETE x",
 	} {
-		require.Greater(t, findLeadingWithEndLocal(query), 0)
+		require.Greater(t, findLeadingWithEndLocal(t.Context(), query), 0)
 	}
-	require.Greater(t, findLeadingWithEndLocal("WITH 'MATCH' AS x RETURN x"), 0)
-	require.Greater(t, findLeadingWithEndLocal("WITH \"MATCH\" AS x RETURN x"), 0)
-	require.Greater(t, findLeadingWithEndLocal("WITH `MATCH` AS x RETURN x"), 0)
-	require.Greater(t, findLeadingWithEndLocal("WITH [1, 2, 3] AS xs MATCH (n) RETURN n"), 0)
-	require.Greater(t, findLeadingWithEndLocal("WITH {k: 1} AS m MATCH (n) RETURN n"), 0)
-	require.Equal(t, -1, findLeadingWithEndLocal("WITH 'unterminated"))
+	require.Greater(t, findLeadingWithEndLocal(t.Context(), "WITH 'MATCH' AS x RETURN x"), 0)
+	require.Greater(t, findLeadingWithEndLocal(t.Context(), "WITH \"MATCH\" AS x RETURN x"), 0)
+	require.Greater(t, findLeadingWithEndLocal(t.Context(), "WITH `MATCH` AS x RETURN x"), 0)
+	require.Greater(t, findLeadingWithEndLocal(t.Context(), "WITH [1, 2, 3] AS xs MATCH (n) RETURN n"), 0)
+	require.Greater(t, findLeadingWithEndLocal(t.Context(), "WITH {k: 1} AS m MATCH (n) RETURN n"), 0)
+	require.Equal(t, -1, findLeadingWithEndLocal(t.Context(), "WITH 'unterminated"))
 
 	// The canonical comma reader handles nesting, strings and quoted names.
 	parts := splitTopLevelComma("a, apoc.map.fromPairs([[1,2],[3,4]]), 'x,y', `q,r`, b")
@@ -117,7 +117,7 @@ func TestFabricHelpers_TransactionOwnerAndCallbacks(t *testing.T) {
 	require.NoError(t, err)
 	c.base.txContext = &TransactionContext{active: true, tx: tx}
 	require.Same(t, tx, c.fabricTransaction())
-	require.NoError(t, c.fabricTransaction().BindParticipantCallbacks("s1", fabric.ParticipantCallbacks{Commit: func(*fabric.SubTransaction) error { return nil }, Rollback: func(*fabric.SubTransaction) error { return nil }}))
+	require.NoError(t, c.fabricTransaction().BindParticipantCallbacks("s1", fabric.ParticipantCallbacks{Commit: func(context.Context, *fabric.SubTransaction) error { return nil }, Rollback: func(context.Context, *fabric.SubTransaction) error { return nil }}))
 	err = c.fabricTransaction().BindParticipantCallbacks("missing", fabric.ParticipantCallbacks{Commit: nil, Rollback: nil})
 	require.Error(t, err)
 }

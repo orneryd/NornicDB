@@ -3,11 +3,12 @@ package search
 import (
 	"context"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"math/rand"
 	"strings"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -97,7 +98,7 @@ func newMatchTestService(t *testing.T) (*Service, storage.Engine) {
 }
 
 func indexMatchTestNode(t *testing.T, service *Service, engine storage.Engine, node *storage.Node) {
-	_, err := engine.CreateNode(node)
+	_, err := engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, service.IndexNode(node))
 }
@@ -205,15 +206,15 @@ func TestSearchMatchesReadBadgerSidecarMeta(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 
 	properties := map[string]any{"text": "alpha beta. gamma delta."}
-	_, err = engine.CreateNode(&storage.Node{ID: "doc", Properties: properties})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "doc", Properties: properties})
 	require.NoError(t, err)
-	node, err := badgerEngine.GetNode("nornic:doc")
+	node, err := badgerEngine.GetNode(t.Context(), "nornic:doc")
 	require.NoError(t, err)
 	chunks := []string{"text: alpha beta. ", "gamma delta."}
 	embeddingutil.ApplyManagedEmbedding(node, [][]float32{{0, 1}, {1, 0}}, "voyage-context-4", 2, time.Now())
 	node.EmbedMeta["chunk_texts"] = []any{chunks[0], chunks[1]}
 	embeddingutil.RecordChunkSpans(node, embeddingutil.BuildEmbedText(properties, nil, &embeddingutil.EmbedTextOptions{}), chunks)
-	require.NoError(t, badgerEngine.UpdateNodeEmbeddingSidecar(node))
+	require.NoError(t, badgerEngine.UpdateNodeEmbeddingSidecar(t.Context(), node))
 	// Indexed from a copy without the metadata, as a write that didn't load
 	// the embedding indexes it (and a full read would cache the node with its
 	// metadata, which the hit read would then copy).
@@ -233,7 +234,7 @@ func TestSearchMatchesReadBadgerSidecarMeta(t *testing.T) {
 	// are dropped, and the new ones read.
 	node.EmbedMeta["chunk_texts"] = []any{"text: alpha beta. gamma ", "delta."}
 	embeddingutil.RecordChunkSpans(node, embeddingutil.BuildEmbedText(properties, nil, &embeddingutil.EmbedTextOptions{}), []string{"text: alpha beta. gamma ", "delta."})
-	require.NoError(t, badgerEngine.UpdateNodeEmbeddingSidecar(node))
+	require.NoError(t, badgerEngine.UpdateNodeEmbeddingSidecar(t.Context(), node))
 	require.NoError(t, service.IndexNode(indexed))
 	response, err = service.Search(context.Background(), "", []float32{1, 0}, &SearchOptions{Limit: 6})
 	require.NoError(t, err)
@@ -241,14 +242,14 @@ func TestSearchMatchesReadBadgerSidecarMeta(t *testing.T) {
 	require.Equal(t, 24, response.Results[0].Matches[0].End)
 	node.EmbedMeta["chunk_texts"] = []any{chunks[0], chunks[1]}
 	embeddingutil.RecordChunkSpans(node, embeddingutil.BuildEmbedText(properties, nil, &embeddingutil.EmbedTextOptions{}), chunks)
-	require.NoError(t, badgerEngine.UpdateNodeEmbeddingSidecar(node))
+	require.NoError(t, badgerEngine.UpdateNodeEmbeddingSidecar(t.Context(), node))
 
-	light, err := service.getNodeWithoutEmbeddings("doc")
+	light, err := service.getNodeWithoutEmbeddings(t.Context(), "doc")
 	require.NoError(t, err)
 	require.Empty(t, light.EmbedMeta)
 	// The matched chunk's window; without its chunk texts the reranker would
 	// read the text's start ("alpha beta.").
-	require.Equal(t, "gamma delta.", service.rerankCandidateContent(light, rrfResult{ID: "doc", MatchID: nodeChunkVectorKey("doc", 1)}, "zzz", 12))
+	require.Equal(t, "gamma delta.", service.rerankCandidateContent(t.Context(), light, rrfResult{ID: "doc", MatchID: nodeChunkVectorKey("doc", 1)}, "zzz", 12))
 }
 
 // A keyword hit's term matches list its rarest query terms' occurrences

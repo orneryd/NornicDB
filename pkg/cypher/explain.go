@@ -97,7 +97,7 @@ func (e *StorageExecutor) executeExplain(ctx context.Context, query string) (*Ex
 	}
 	// Catalog commands are validated by their typed command preparation; graph
 	// body composition has no clauses to validate in their native DDL syntax.
-	if !isMetadataCommand(query, metadataCatalogExecution) {
+	if !isMetadataCommand(ctx, query, metadataCatalogExecution) {
 		if err := validateQueryBodyComposition(ctx, query); err != nil {
 			return nil, err
 		}
@@ -111,7 +111,7 @@ func (e *StorageExecutor) executeExplain(ctx context.Context, query string) (*Ex
 			return nil, err
 		}
 	}
-	plan, err := e.buildExecutionPlan(query)
+	plan, err := e.buildExecutionPlan(ctx, query)
 	if err != nil {
 		return nil, localizedError(localization.CypherCoreExecutionPlanBuildFailed(err), err)
 	}
@@ -140,7 +140,7 @@ func (e *StorageExecutor) executeProfile(ctx context.Context, query string) (*Ex
 		return nil, err
 	}
 	// Build the plan first
-	plan, err := e.buildExecutionPlan(query)
+	plan, err := e.buildExecutionPlan(ctx, query)
 	if err != nil {
 		return nil, localizedError(localization.CypherCoreExecutionPlanBuildFailed(err), err)
 	}
@@ -191,14 +191,14 @@ func (e *StorageExecutor) executeProfile(ctx context.Context, query string) (*Ex
 }
 
 // buildExecutionPlan creates an execution plan for a query
-func (e *StorageExecutor) buildExecutionPlan(query string) (*ExecutionPlan, error) {
+func (e *StorageExecutor) buildExecutionPlan(ctx context.Context, query string) (*ExecutionPlan, error) {
 	plan := &ExecutionPlan{
 		Query: query,
 		Mode:  ModeNormal,
 	}
 
 	// Analyze query and build operator tree
-	root, err := e.analyzeQuery(query)
+	root, err := e.analyzeQuery(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -208,7 +208,7 @@ func (e *StorageExecutor) buildExecutionPlan(query string) (*ExecutionPlan, erro
 }
 
 // analyzeQuery analyzes a Cypher query and builds the operator tree
-func (e *StorageExecutor) analyzeQuery(query string) (*PlanOperator, error) {
+func (e *StorageExecutor) analyzeQuery(ctx context.Context, query string) (*PlanOperator, error) {
 	// Build operators in query clause order (Neo4j-style plan chain).
 	type plannedClause struct {
 		idx int
@@ -222,69 +222,77 @@ func (e *StorageExecutor) analyzeQuery(query string) (*PlanOperator, error) {
 		}
 	}
 
-	if idx := findKeywordIndex(query, "MATCH"); idx >= 0 {
+	if idx := findKeywordIndex(ctx, query, "MATCH"); idx >= 0 {
 		add(idx, e.analyzeMatchClause(query))
 	}
-	if idx := findKeywordIndex(query, "CALL"); idx >= 0 {
-		add(idx, e.analyzeCallClause(query))
+	if idx := findKeywordIndex(ctx, query, "CALL"); idx >= 0 {
+		add(idx, e.analyzeCallClause(ctx, query))
 	}
-	if idx := findKeywordIndex(query, "WHERE"); idx >= 0 {
-		add(idx, e.analyzeWhereClause(query))
+	if idx := findKeywordIndex(ctx, query, "WHERE"); idx >= 0 {
+		add(idx, e.analyzeWhereClause(ctx, query))
 	}
-	if idx := findKeywordIndex(query, "WITH"); idx >= 0 {
+	if idx := findKeywordIndex(ctx, query, "WITH"); idx >= 0 {
 		add(idx, &PlanOperator{
 			OperatorType:  "Projection",
 			Description:   "Project intermediate results",
 			EstimatedRows: 100,
 		})
 	}
-	if idx := findKeywordIndex(query, "CREATE"); idx >= 0 {
+	if idx := findKeywordIndex(ctx, query, "CREATE"); idx >= 0 {
 		add(idx, &PlanOperator{
 			OperatorType:  "Create",
 			Description:   "Create nodes and relationships",
 			EstimatedRows: 1,
 		})
 	}
-	if idx := findKeywordIndex(query, "MERGE"); idx >= 0 {
+	if idx := findKeywordIndex(ctx, query, "MERGE"); idx >= 0 {
 		add(idx, &PlanOperator{
 			OperatorType:  "Merge",
 			Description:   "Merge (create if not exists)",
 			EstimatedRows: 1,
 		})
 	}
-	if idx := findKeywordIndex(query, "SET"); idx >= 0 {
+	if idx := findKeywordIndex(ctx, query, "SET"); idx >= 0 {
 		add(idx, &PlanOperator{
 			OperatorType:  "Set",
 			Description:   "Set properties",
 			EstimatedRows: 100,
 		})
 	}
-	if idx := findKeywordIndex(query, "REMOVE"); idx >= 0 {
+	if idx := findKeywordIndex(ctx, query, "REMOVE"); idx >= 0 {
 		add(idx, &PlanOperator{
 			OperatorType:  "Remove",
 			Description:   "Remove labels/properties",
 			EstimatedRows: 100,
 		})
 	}
-	if idx := findKeywordIndex(query, "DETACH DELETE"); idx >= 0 {
-		add(idx, e.analyzeDeleteClause(query, true))
-	} else if idx := findKeywordIndex(query, "DELETE"); idx >= 0 {
-		add(idx, e.analyzeDeleteClause(query, false))
+	if idx := findKeywordIndex(ctx, query, "DETACH DELETE"); idx >= 0 {
+		add(idx, e.analyzeDeleteClause(ctx, query, true))
+	} else if idx := findKeywordIndex(ctx, query, "DELETE"); idx >= 0 {
+		add(idx, e.analyzeDeleteClause(ctx, query, false))
 	}
-	if idx := findKeywordIndex(query, "ORDER BY"); idx >= 0 {
+	if idx := findKeywordIndex(ctx, query, "ORDER BY"); idx >= 0 {
 		add(idx, &PlanOperator{
 			OperatorType:  "Sort",
 			Description:   "Sort results",
 			EstimatedRows: 100,
 		})
 	}
-	if idx := findKeywordIndex(query, "LIMIT"); idx >= 0 {
-		add(idx, e.analyzeLimitSkip(query))
-	} else if idx := findKeywordIndex(query, "SKIP"); idx >= 0 {
-		add(idx, e.analyzeLimitSkip(query))
+	if idx := findKeywordIndex(ctx, query, "LIMIT"); idx >= 0 {
+		op, err := e.analyzeLimitSkip(ctx, query)
+		if err != nil {
+			return nil, err
+		}
+		add(idx, op)
+	} else if idx := findKeywordIndex(ctx, query, "SKIP"); idx >= 0 {
+		op, err := e.analyzeLimitSkip(ctx, query)
+		if err != nil {
+			return nil, err
+		}
+		add(idx, op)
 	}
-	if idx := findKeywordIndex(query, "RETURN"); idx >= 0 {
-		add(idx, e.analyzeReturnClause(query))
+	if idx := findKeywordIndex(ctx, query, "RETURN"); idx >= 0 {
+		add(idx, e.analyzeReturnClause(ctx, query))
 	}
 
 	sort.SliceStable(clauses, func(i, j int) bool {
@@ -455,9 +463,9 @@ func (e *StorageExecutor) annotateIndexDiagnostics(args map[string]interface{}, 
 }
 
 // analyzeWhereClause analyzes WHERE conditions
-func (e *StorageExecutor) analyzeWhereClause(query string) *PlanOperator {
+func (e *StorageExecutor) analyzeWhereClause(ctx context.Context, query string) *PlanOperator {
 	// Extract WHERE clause
-	whereIdx := findKeywordIndex(query, "WHERE")
+	whereIdx := findKeywordIndex(ctx, query, "WHERE")
 	if whereIdx < 0 {
 		return nil
 	}
@@ -465,7 +473,7 @@ func (e *StorageExecutor) analyzeWhereClause(query string) *PlanOperator {
 	// Find end of WHERE clause
 	endIdx := len(query)
 	for _, keyword := range []string{"RETURN", "ORDER", "LIMIT", "SKIP", "WITH", "CREATE", "SET", "REMOVE", "DETACH DELETE", "DELETE"} {
-		if idx := findKeywordIndex(query[whereIdx:], keyword); idx > 0 {
+		if idx := findKeywordIndex(ctx, query[whereIdx:], keyword); idx > 0 {
 			if whereIdx+idx < endIdx {
 				endIdx = whereIdx + idx
 			}
@@ -484,14 +492,14 @@ func (e *StorageExecutor) analyzeWhereClause(query string) *PlanOperator {
 	}
 }
 
-func (e *StorageExecutor) analyzeDeleteClause(query string, detach bool) *PlanOperator {
+func (e *StorageExecutor) analyzeDeleteClause(ctx context.Context, query string, detach bool) *PlanOperator {
 	startKeyword := "DELETE"
 	operator := "Delete"
 	if detach {
 		startKeyword = "DETACH DELETE"
 		operator = "DetachDelete"
 	}
-	deleteIdx := findKeywordIndex(query, startKeyword)
+	deleteIdx := findKeywordIndex(ctx, query, startKeyword)
 	if deleteIdx < 0 {
 		return &PlanOperator{
 			OperatorType:  operator,
@@ -502,7 +510,7 @@ func (e *StorageExecutor) analyzeDeleteClause(query string, detach bool) *PlanOp
 
 	endIdx := len(query)
 	for _, keyword := range []string{"RETURN", "WITH", "ORDER BY", "LIMIT", "SKIP"} {
-		if idx := findKeywordIndex(query[deleteIdx:], keyword); idx > 0 {
+		if idx := findKeywordIndex(ctx, query[deleteIdx:], keyword); idx > 0 {
 			candidate := deleteIdx + idx
 			if candidate < endIdx {
 				endIdx = candidate
@@ -531,8 +539,8 @@ func (e *StorageExecutor) analyzeDeleteClause(query string, detach bool) *PlanOp
 }
 
 // analyzeReturnClause analyzes the RETURN clause
-func (e *StorageExecutor) analyzeReturnClause(query string) *PlanOperator {
-	returnIdx := findKeywordIndex(query, "RETURN")
+func (e *StorageExecutor) analyzeReturnClause(ctx context.Context, query string) *PlanOperator {
+	returnIdx := findKeywordIndex(ctx, query, "RETURN")
 	if returnIdx < 0 {
 		return nil
 	}
@@ -541,7 +549,7 @@ func (e *StorageExecutor) analyzeReturnClause(query string) *PlanOperator {
 	returnClause := query[returnIdx+6:]
 	// Trim ORDER BY, LIMIT, etc.
 	for _, keyword := range []string{"ORDER BY", "LIMIT", "SKIP"} {
-		if idx := findKeywordIndex(returnClause, keyword); idx > 0 {
+		if idx := findKeywordIndex(ctx, returnClause, keyword); idx > 0 {
 			returnClause = returnClause[:idx]
 		}
 	}
@@ -652,7 +660,7 @@ func isAllDigits(s string) bool {
 }
 
 // analyzeLimitSkip analyzes LIMIT and SKIP clauses
-func (e *StorageExecutor) analyzeLimitSkip(query string) *PlanOperator {
+func (e *StorageExecutor) analyzeLimitSkip(ctx context.Context, query string) (*PlanOperator, error) {
 	upper := upperASCII(query)
 
 	op := &PlanOperator{
@@ -661,13 +669,21 @@ func (e *StorageExecutor) analyzeLimitSkip(query string) *PlanOperator {
 	}
 
 	// Extract LIMIT value
-	if limit := ExtractLimitString(query); limit != "" {
+	limit, err := ExtractLimitString(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	if limit != "" {
 		op.Arguments["limit"] = limit
 		op.Description = fmt.Sprintf("Limit to %s rows", limit)
 	}
 
 	// Extract SKIP value
-	if skip := ExtractSkipString(query); skip != "" {
+	skip, err := ExtractSkipString(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	if skip != "" {
 		op.Arguments["skip"] = skip
 		if op.Description != "" {
 			op.Description += fmt.Sprintf(", skip %s", skip)
@@ -683,13 +699,13 @@ func (e *StorageExecutor) analyzeLimitSkip(query string) *PlanOperator {
 		op.EstimatedRows = 100
 	}
 
-	return op
+	return op, ctx.Err()
 }
 
 // analyzeCallClause analyzes CALL procedure invocations
-func (e *StorageExecutor) analyzeCallClause(query string) *PlanOperator {
+func (e *StorageExecutor) analyzeCallClause(ctx context.Context, query string) *PlanOperator {
 	procName := "unknown"
-	if callIdx := keywordIndexFrom(query, "CALL", 0, defaultKeywordScanOpts()); callIdx >= 0 {
+	if callIdx := keywordIndexFrom(ctx, query, "CALL", 0, defaultKeywordScanOpts()); callIdx >= 0 {
 		callEnd, ok := keywordSpanAt(query, callIdx, "CALL")
 		if ok {
 			rest := strings.TrimSpace(query[callEnd:])

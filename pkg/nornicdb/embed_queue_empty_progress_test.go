@@ -101,7 +101,7 @@ func TestEmbedWorkerEmptyResultRetryProgress(t *testing.T) {
 				}
 				require.Equal(t, 1, worker.Stats().Parked)
 				require.Empty(t, worker.nodeRetries)
-				saved, err := queue.GetNode("node-000")
+				saved, err := queue.GetNode(t.Context(), "node-000")
 				require.NoError(t, err)
 				require.Equal(t, true, saved.EmbedMeta["embedding_failed"])
 				require.Empty(t, saved.ChunkEmbeddings)

@@ -74,7 +74,7 @@ func TestGDPRExportRequiresDefaultDatabaseRead(t *testing.T) {
 
 	defaultStorage, err := server.dbManager.GetStorage("nornic")
 	require.NoError(t, err)
-	_, err = defaultStorage.CreateNode(&storage.Node{
+	_, err = defaultStorage.CreateNode(t.Context(), &storage.Node{
 		ID: "default-subject", Labels: []string{"Person"}, Properties: map[string]any{
 			"owner_id": "boundary_default_reader", "secret": "default database payload",
 		},
@@ -82,7 +82,7 @@ func TestGDPRExportRequiresDefaultDatabaseRead(t *testing.T) {
 	require.NoError(t, err)
 	namedStorage, err := server.dbManager.GetStorage("named")
 	require.NoError(t, err)
-	_, err = namedStorage.CreateNode(&storage.Node{
+	_, err = namedStorage.CreateNode(t.Context(), &storage.Node{
 		ID: "named-subject", Labels: []string{"Person"}, Properties: map[string]any{
 			"owner_id": "boundary_default_reader", "secret": "named database payload",
 		},
@@ -120,7 +120,7 @@ func TestStatusAggregatesOnlyReadableDatabases(t *testing.T) {
 	for _, database := range []string{"nornic", "named"} {
 		engine, err := server.dbManager.GetStorage(database)
 		require.NoError(t, err)
-		_, err = engine.CreateNode(&storage.Node{ID: storage.NodeID(database + "-status-node"), Labels: []string{"Doc"}})
+		_, err = engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(database + "-status-node"), Labels: []string{"Doc"}})
 		require.NoError(t, err)
 	}
 

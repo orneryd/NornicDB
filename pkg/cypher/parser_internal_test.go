@@ -14,7 +14,7 @@ func TestParserParseAdditionalBranches(t *testing.T) {
 	parser := NewParser()
 
 	t.Run("skips unknown tokens before parsing recognized clauses", func(t *testing.T) {
-		query, err := parser.Parse("USE foo MATCH (n) RETURN n")
+		query, err := parser.Parse(t.Context(), "USE foo MATCH (n) RETURN n")
 		require.NoError(t, err)
 		require.Len(t, query.Clauses, 2)
 		_, ok := query.Clauses[0].(*MatchClause)
@@ -25,7 +25,7 @@ func TestParserParseAdditionalBranches(t *testing.T) {
 	})
 
 	t.Run("marks optional match clauses", func(t *testing.T) {
-		query, err := parser.Parse("OPTIONAL MATCH (n) RETURN n")
+		query, err := parser.Parse(t.Context(), "OPTIONAL MATCH (n) RETURN n")
 		require.NoError(t, err)
 		require.Len(t, query.Clauses, 2)
 		matchClause, ok := query.Clauses[0].(*MatchClause)
@@ -34,7 +34,7 @@ func TestParserParseAdditionalBranches(t *testing.T) {
 	})
 
 	t.Run("walks all supported clause types in sequence", func(t *testing.T) {
-		query, err := parser.Parse("MATCH (n) WHERE n.name = 'a' CREATE (m) SET m.name = 'b' DELETE m RETURN m")
+		query, err := parser.Parse(t.Context(), "MATCH (n) WHERE n.name = 'a' CREATE (m) SET m.name = 'b' DELETE m RETURN m")
 		require.NoError(t, err)
 		require.Len(t, query.Clauses, 6)
 		assert.IsType(t, &MatchClause{}, query.Clauses[0])
@@ -95,7 +95,7 @@ func TestParserMarkerMethodsDirect(t *testing.T) {
 
 func TestTokenizeAdditionalBranches(t *testing.T) {
 	t.Run("handles double quoted strings and operators", func(t *testing.T) {
-		tokens, err := tokenize(`RETURN "Alice Smith" + n.score / 2`)
+		tokens, err := tokenize(t.Context(), `RETURN "Alice Smith" + n.score / 2`)
 		require.NoError(t, err)
 		assert.Equal(t,
 			[]string{"RETURN", "\"Alice Smith\"", "+", "n", ".", "score", "/", "2"},
@@ -107,7 +107,7 @@ func TestTokenizeAdditionalBranches(t *testing.T) {
 func TestParserRejectsUnterminatedStringLiteral(t *testing.T) {
 	parser := NewParser()
 
-	_, err := parser.Parse("CREATE (n {name: 'Alice})")
+	_, err := parser.Parse(t.Context(), "CREATE (n {name: 'Alice})")
 	require.Error(t, err)
 	require.ErrorContains(t, err, "unterminated string")
 
@@ -122,7 +122,7 @@ func TestParserRejectsBareOptionalClause(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := parser.Parse("OPTIONAL CREATE (n)")
+		_, err := parser.Parse(t.Context(), "OPTIONAL CREATE (n)")
 		done <- err
 	}()
 

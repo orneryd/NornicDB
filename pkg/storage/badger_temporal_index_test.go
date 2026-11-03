@@ -42,22 +42,22 @@ func TestBadgerTemporal_AsOfAndCurrentPointer(t *testing.T) {
 			makeVersion := func(id NodeID, start time.Time, end interface{}) *Node {
 				return &Node{ID: id, Labels: []string{"FactVersion"}, Properties: map[string]interface{}{"fact_key": key, "valid_from": start, "valid_to": end}}
 			}
-			_, err := engine.CreateNode(makeVersion(closedID, closedStart, closedEnd))
+			_, err := engine.CreateNode(t.Context(), makeVersion(closedID, closedStart, closedEnd))
 			require.NoError(t, err)
 			current := makeVersion(currentID, currentStart, nil)
 			if transactional {
-				tx, err := engine.BeginTransaction()
+				tx, err := engine.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				defer tx.Rollback()
-				_, err = tx.CreateNode(current)
+				_, err = tx.CreateNode(t.Context(), current)
 				require.NoError(t, err)
 				require.NoError(t, tx.Commit())
 			} else {
-				_, err = engine.CreateNode(current)
+				_, err = engine.CreateNode(t.Context(), current)
 				require.NoError(t, err)
 			}
 			for _, query := range queries {
-				node, err := engine.GetTemporalNodeAsOfInNamespace("test", "FactVersion", "fact_key", key, "valid_from", "valid_to", query.at)
+				node, err := engine.GetTemporalNodeAsOfInNamespace(context.Background(), "test", "FactVersion", "fact_key", key, "valid_from", "valid_to", query.at)
 				require.NoError(t, err)
 				require.NotNil(t, node)
 				require.Equal(t, query.want, node.ID)
@@ -80,12 +80,12 @@ func TestBadgerTemporal_AsOfAndCurrentPointer(t *testing.T) {
 				require.Equal(t, currentID, gotID)
 			}
 			if transactional {
-				tx, err := engine.BeginTransaction()
+				tx, err := engine.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				defer tx.Rollback()
-				require.NoError(t, tx.DeleteGraphNode(currentID, CascadeEdges))
+				require.NoError(t, tx.DeleteGraphNode(t.Context(), currentID, CascadeEdges))
 				require.NoError(t, tx.Commit())
-				node, err := engine.GetTemporalNodeAsOfInNamespace("test", "FactVersion", "fact_key", key, "valid_from", "valid_to", base)
+				node, err := engine.GetTemporalNodeAsOfInNamespace(context.Background(), "test", "FactVersion", "fact_key", key, "valid_from", "valid_to", base)
 				require.NoError(t, err)
 				require.Nil(t, node)
 				err = engine.withView(func(txn *badger.Txn) error {
@@ -122,12 +122,12 @@ func TestBadgerEngine_TemporalAdjacentOverlapChecks(t *testing.T) {
 	}
 
 	base := time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
-	_, err := engine.CreateNode(makeNode("acct-v1", "acct", base, base.Add(2*time.Hour)))
+	_, err := engine.CreateNode(t.Context(), makeNode("acct-v1", "acct", base, base.Add(2*time.Hour)))
 	require.NoError(t, err)
-	_, err = engine.CreateNode(makeNode("acct-v2", "acct", base.Add(3*time.Hour), base.Add(5*time.Hour)))
+	_, err = engine.CreateNode(t.Context(), makeNode("acct-v2", "acct", base.Add(3*time.Hour), base.Add(5*time.Hour)))
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	err = tx.checkTemporalConstraint(context.Background(), makeNode("acct-middle-ok", "acct", base.Add(2*time.Hour), base.Add(3*time.Hour)), constraint)
 	require.NoError(t, err)
@@ -142,7 +142,7 @@ func TestBadgerEngine_RebuildTemporalIndexes(t *testing.T) {
 	v1End := time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC)
 	v2Start := time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC)
 
-	_, err := engine.CreateNode(&Node{
+	_, err := engine.CreateNode(t.Context(), &Node{
 		ID:     NodeID(prefixTestID("rebuild-v1")),
 		Labels: []string{"FactVersion"},
 		Properties: map[string]interface{}{
@@ -152,7 +152,7 @@ func TestBadgerEngine_RebuildTemporalIndexes(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{
+	_, err = engine.CreateNode(t.Context(), &Node{
 		ID:     NodeID(prefixTestID("rebuild-v2")),
 		Labels: []string{"FactVersion"},
 		Properties: map[string]interface{}{
@@ -172,7 +172,7 @@ func TestBadgerEngine_RebuildTemporalIndexes(t *testing.T) {
 	require.NoError(t, engine.GetSchemaForNamespace("test").AddConstraint(constraint))
 	require.NoError(t, engine.RebuildTemporalIndexes(context.Background()))
 
-	node, err := engine.GetTemporalNodeAsOfInNamespace("test", "FactVersion", "fact_key", "rebuild", "valid_from", "valid_to", time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC))
+	node, err := engine.GetTemporalNodeAsOfInNamespace(context.Background(), "test", "FactVersion", "fact_key", "rebuild", "valid_from", "valid_to", time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC))
 	require.NoError(t, err)
 	require.NotNil(t, node)
 	require.Equal(t, NodeID(prefixTestID("rebuild-v2")), node.ID)
@@ -195,8 +195,10 @@ func TestBadgerEngine_PruneTemporalHistory(t *testing.T) {
 		if i < 3 {
 			end = start.Add(24 * time.Hour)
 		}
-		_, err := engine.CreateNode(&Node{
-			ID:     NodeID(prefixTestID("prune-" + constraintValueKey(i))),
+		composite, keyErr := NewCompositeKey(t.Context(), i)
+		require.NoError(t, keyErr)
+		_, err := engine.CreateNode(t.Context(), &Node{
+			ID:     NodeID(prefixTestID("prune-" + composite.Hash)),
 			Labels: []string{"FactVersion"},
 			Properties: map[string]interface{}{
 				"fact_key":   "prune",
@@ -215,7 +217,7 @@ func TestBadgerEngine_PruneTemporalHistory(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, nodes, 2)
 
-	node, err := engine.GetTemporalNodeAsOfInNamespace("test", "FactVersion", "fact_key", "prune", "valid_from", "valid_to", time.Now().UTC())
+	node, err := engine.GetTemporalNodeAsOfInNamespace(context.Background(), "test", "FactVersion", "fact_key", "prune", "valid_from", "valid_to", time.Now().UTC())
 	require.NoError(t, err)
 	require.NotNil(t, node)
 }
@@ -242,8 +244,10 @@ func BenchmarkBadgerTemporalAsOfGhostOfVersioning(b *testing.B) {
 		if i < 999 {
 			end = start.Add(time.Hour)
 		}
-		_, err := engine.CreateNode(&Node{
-			ID:     NodeID(prefixTestID("ghost-" + constraintValueKey(i))),
+		composite, keyErr := NewCompositeKey(b.Context(), i)
+		require.NoError(b, keyErr)
+		_, err := engine.CreateNode(b.Context(), &Node{
+			ID:     NodeID(prefixTestID("ghost-" + composite.Hash)),
 			Labels: []string{"FactVersion"},
 			Properties: map[string]interface{}{
 				"fact_key":   "ghost",
@@ -259,14 +263,14 @@ func BenchmarkBadgerTemporalAsOfGhostOfVersioning(b *testing.B) {
 
 	b.Run("initial", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			_, err := engine.GetTemporalNodeAsOfInNamespace("test", "FactVersion", "fact_key", "ghost", "valid_from", "valid_to", initialTS)
+			_, err := engine.GetTemporalNodeAsOfInNamespace(context.Background(), "test", "FactVersion", "fact_key", "ghost", "valid_from", "valid_to", initialTS)
 			require.NoError(b, err)
 		}
 	})
 
 	b.Run("current", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			_, err := engine.GetTemporalNodeAsOfInNamespace("test", "FactVersion", "fact_key", "ghost", "valid_from", "valid_to", currentTS)
+			_, err := engine.GetTemporalNodeAsOfInNamespace(context.Background(), "test", "FactVersion", "fact_key", "ghost", "valid_from", "valid_to", currentTS)
 			require.NoError(b, err)
 		}
 	})

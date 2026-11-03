@@ -38,7 +38,7 @@ func benchmarkStatementRouting(b *testing.B, queries []statementRoutingBenchQuer
 	setup := func(b *testing.B) (*StorageExecutor, context.Context) {
 		store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "bench")
 		for i := 0; i < 2000; i++ {
-			_, err := store.CreateNode(&storage.Node{
+			_, err := store.CreateNode(b.Context(), &storage.Node{
 				ID:         storage.NodeID(fmt.Sprintf("person-%d", i)),
 				Labels:     []string{"Person"},
 				Properties: map[string]interface{}{"id": i, "name": fmt.Sprintf("p%d", i), "age": i % 60},
@@ -46,7 +46,7 @@ func benchmarkStatementRouting(b *testing.B, queries []statementRoutingBenchQuer
 			require.NoError(b, err)
 		}
 		for i := 0; i < 500; i++ {
-			err := store.CreateEdge(&storage.Edge{
+			err := store.CreateEdge(b.Context(), &storage.Edge{
 				ID:        storage.EdgeID(fmt.Sprintf("knows-%d", i)),
 				StartNode: storage.NodeID(fmt.Sprintf("person-%d", i)),
 				EndNode:   storage.NodeID(fmt.Sprintf("person-%d", i+1)),

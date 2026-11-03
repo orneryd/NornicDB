@@ -3,15 +3,16 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
-	"net/http/httptest"
-	"strings"
-	"testing"
-	"time"
 )
 
 func setupSimilarityPropertyPolicy(t *testing.T, be *storage.BadgerEngine, namespace, label string) {
@@ -30,7 +31,7 @@ func TestHTTPSimilarProjectsSuppressedProperties(t *testing.T) {
 	setupSimilarityPropertyPolicy(t, be, server.dbManager.DefaultDatabaseName(), "Doc")
 	old := time.Now().Add(-time.Hour)
 	for _, id := range []storage.NodeID{"root", "other"} {
-		_, err = engine.CreateNode(&storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]interface{}{"public": "yes", "secret": "hidden"}, ChunkEmbeddings: [][]float32{{1, 0}}, CreatedAt: old, UpdatedAt: old})
+		_, err = engine.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]interface{}{"public": "yes", "secret": "hidden"}, ChunkEmbeddings: [][]float32{{1, 0}}, CreatedAt: old, UpdatedAt: old})
 		require.NoError(t, err)
 	}
 	req := httptest.NewRequest("POST", "/nornicdb/similar", strings.NewReader(`{"node_id":"root","limit":1}`)).WithContext(context.WithValue(context.Background(), contextKeyClaims, &auth.JWTClaims{Username: "admin", Roles: []string{"admin"}}))
@@ -42,7 +43,7 @@ func TestHTTPSimilarProjectsSuppressedProperties(t *testing.T) {
 	require.Len(t, results, 1)
 	require.NotContains(t, results[0].Node.Properties, "secret")
 	require.Equal(t, "yes", results[0].Node.Properties["public"])
-	raw, err := engine.GetNode("other")
+	raw, err := engine.GetNode(t.Context(), "other")
 	require.NoError(t, err)
 	require.Contains(t, raw.Properties, "secret")
 }

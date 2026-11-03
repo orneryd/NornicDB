@@ -263,7 +263,7 @@ func TestSubsystemManager_RegisterPlugin(t *testing.T) {
 		actions: make(map[string]ActionFunc),
 	}
 
-	ctx := SubsystemContext{
+	ctx := SubsystemHost{
 		Config:  DefaultConfig(),
 		Bifrost: &NoOpBifrost{},
 	}
@@ -290,7 +290,7 @@ func TestSubsystemManager_RegisterPlugin_WrongType(t *testing.T) {
 		actions: make(map[string]ActionFunc),
 	}
 
-	ctx := SubsystemContext{Config: DefaultConfig()}
+	ctx := SubsystemHost{Config: DefaultConfig()}
 	manager.SetContext(ctx)
 
 	// Plugin that returns wrong type
@@ -314,7 +314,7 @@ func TestSubsystemManager_RegisterActions(t *testing.T) {
 		actions: make(map[string]ActionFunc),
 	}
 
-	ctx := SubsystemContext{
+	ctx := SubsystemHost{
 		Config:  DefaultConfig(),
 		Bifrost: &NoOpBifrost{},
 	}
@@ -336,7 +336,7 @@ func TestSubsystemManager_StartAll(t *testing.T) {
 		actions: make(map[string]ActionFunc),
 	}
 
-	ctx := SubsystemContext{
+	ctx := SubsystemHost{
 		Config:  DefaultConfig(),
 		Bifrost: &NoOpBifrost{},
 	}
@@ -359,7 +359,7 @@ func TestSubsystemManager_StopAll(t *testing.T) {
 		actions: make(map[string]ActionFunc),
 	}
 
-	ctx := SubsystemContext{
+	ctx := SubsystemHost{
 		Config:  DefaultConfig(),
 		Bifrost: &NoOpBifrost{},
 	}
@@ -382,7 +382,7 @@ func TestSubsystemManager_ShutdownAll(t *testing.T) {
 		actions: make(map[string]ActionFunc),
 	}
 
-	ctx := SubsystemContext{
+	ctx := SubsystemHost{
 		Config:  DefaultConfig(),
 		Bifrost: &NoOpBifrost{},
 	}
@@ -554,7 +554,7 @@ func TestListHeimdallPlugins(t *testing.T) {
 	globalManager = nil
 
 	manager := GetSubsystemManager()
-	ctx := SubsystemContext{
+	ctx := SubsystemHost{
 		Config:  DefaultConfig(),
 		Bifrost: &NoOpBifrost{},
 	}
@@ -602,7 +602,7 @@ func TestListHeimdallPlugins_Ordering(t *testing.T) {
 	globalManager = nil
 
 	manager := GetSubsystemManager()
-	ctx := SubsystemContext{
+	ctx := SubsystemHost{
 		Config:  DefaultConfig(),
 		Bifrost: &NoOpBifrost{},
 	}
@@ -628,7 +628,7 @@ func TestListHeimdallActions(t *testing.T) {
 	globalManager = nil
 
 	manager := GetSubsystemManager()
-	ctx := SubsystemContext{
+	ctx := SubsystemHost{
 		Config:  DefaultConfig(),
 		Bifrost: &NoOpBifrost{},
 	}
@@ -653,7 +653,7 @@ func TestListHeimdallActions(t *testing.T) {
 func TestActionsAsMCPTools(t *testing.T) {
 	globalManager = nil
 	manager := GetSubsystemManager()
-	ctx := SubsystemContext{Config: DefaultConfig(), Bifrost: &NoOpBifrost{}}
+	ctx := SubsystemHost{Config: DefaultConfig(), Bifrost: &NoOpBifrost{}}
 	manager.SetContext(ctx)
 	plugin := NewMockPlugin("test")
 	_ = manager.RegisterPlugin(plugin, "", true)
@@ -677,7 +677,7 @@ func TestGetHeimdallAction(t *testing.T) {
 	globalManager = nil
 
 	manager := GetSubsystemManager()
-	ctx := SubsystemContext{
+	ctx := SubsystemHost{
 		Config:  DefaultConfig(),
 		Bifrost: &NoOpBifrost{},
 	}
@@ -704,7 +704,7 @@ func TestHeimdallPluginsInitialized(t *testing.T) {
 	// Not initialized yet
 	assert.False(t, manager.initialized)
 
-	ctx := SubsystemContext{
+	ctx := SubsystemHost{
 		Config:  DefaultConfig(),
 		Bifrost: &NoOpBifrost{},
 	}

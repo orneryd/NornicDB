@@ -17,8 +17,9 @@ package search
 
 import (
 	"context"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
@@ -44,7 +45,7 @@ func makeNode(tb testing.TB, eng storage.Engine, id string, labels []string, pro
 		Labels:     labels,
 		Properties: props,
 	}
-	_, err := eng.CreateNode(n)
+	_, err := eng.CreateNode(tb.Context(), n)
 	require.NoError(tb, err)
 	return n
 }

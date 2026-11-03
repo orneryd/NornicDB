@@ -9,56 +9,77 @@ import (
 )
 
 func TestUnwindMatchSetBatch_UsesIndexedLookupWithoutCreatingMissingNodes(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	schema := store.GetSchema()
-	require.NotNil(t, schema)
-	// The constraint owns the uid index (#875); an index of its own on the
-	// same property is what Neo4j rejects (#884).
-	require.NoError(t, schema.AddUniqueConstraint("unique_function_uid", "Function", "uid"))
+	// The component retains the faulting no-scan owner; native executes the same
+	// query and assertions through the supported atomic statement path.
+	for _, component := range []bool{true, false} {
+		name := "native"
+		if component {
+			name = "component"
+		}
+		t.Run(name, func(t *testing.T) {
 
-	existingID, err := store.CreateNode(&storage.Node{
-		ID:     "fn-1",
-		Labels: []string{"Function"},
-		Properties: map[string]interface{}{
-			"uid":  "content-entity:e_1",
-			"name": "before",
-		},
-	})
-	require.NoError(t, err)
-	require.NoError(t, schema.BackfillPropertyIndex("Function", "uid", map[storage.NodeID]interface{}{existingID: "content-entity:e_1"}))
+			baseStore := newTestMemoryEngine(t)
+			store := storage.NewNamespacedEngine(baseStore, "test")
+			schema := store.GetSchema()
+			require.NotNil(t, schema)
+			// The constraint owns the uid index (#875); an index of its own on the
+			// same property is what Neo4j rejects (#884).
+			require.NoError(t, schema.AddUniqueConstraint("unique_function_uid", "Function", "uid"))
 
-	exec := NewStorageExecutor(&noScanMergeLookupEngine{Engine: store})
-	_, err = exec.Execute(context.Background(), `
+			existingID, err := store.CreateNode(t.Context(), &storage.Node{
+				ID:     "fn-1",
+				Labels: []string{"Function"},
+				Properties: map[string]interface{}{
+					"uid":  "content-entity:e_1",
+					"name": "before",
+				},
+			})
+			require.NoError(t, err)
+			require.NoError(t, schema.BackfillPropertyIndex("Function", "uid", map[storage.NodeID]interface{}{existingID: "content-entity:e_1"}))
+
+			exec := NewStorageExecutor(store)
+			if component {
+				exec = NewStorageExecutor(&noScanMergeLookupEngine{Engine: store})
+			}
+			query := `
 UNWIND $rows AS row
 MATCH (n:Function {uid: row.entity_id})
 SET n.name = row.name,
     n.semantic_kind = row.semantic_kind
-`, map[string]interface{}{
-		"rows": []map[string]interface{}{
-			{
-				"entity_id":     "content-entity:e_1",
-				"name":          "after",
-				"semantic_kind": "function",
-			},
-			{
-				"entity_id":     "content-entity:e_missing",
-				"name":          "missing",
-				"semantic_kind": "function",
-			},
-		},
-	})
-	require.NoError(t, err)
+`
+			params := map[string]interface{}{
+				"rows": []map[string]interface{}{
+					{
+						"entity_id":     "content-entity:e_1",
+						"name":          "after",
+						"semantic_kind": "function",
+					},
+					{
+						"entity_id":     "content-entity:e_missing",
+						"name":          "missing",
+						"semantic_kind": "function",
+					},
+				},
+			}
+			if component {
+				_, err = exec.executeRequiredPipeline(withParams(context.Background(), params), query)
+			} else {
+				_, err = exec.Execute(context.Background(), query, params)
+			}
+			require.NoError(t, err)
 
-	node, err := store.GetNode(existingID)
-	require.NoError(t, err)
-	require.Equal(t, "after", node.Properties["name"])
-	require.Equal(t, "function", node.Properties["semantic_kind"])
+			node, err := store.GetNode(t.Context(), existingID)
+			require.NoError(t, err)
+			require.Equal(t, "after", node.Properties["name"])
+			require.Equal(t, "function", node.Properties["semantic_kind"])
 
-	nodes, err := store.GetNodesByLabel(context.Background(), "Function")
-	require.NoError(t, err)
-	require.Len(t, nodes, 1, "MATCH/SET hot path must not create nodes for missing matches")
-	require.NotEqual(t, "content-entity:e_missing", nodes[0].Properties["uid"])
+			nodes, err := store.GetNodesByLabel(context.Background(), "Function")
+			require.NoError(t, err)
+			require.Len(t, nodes, 1, "MATCH/SET hot path must not create nodes for missing matches")
+			require.NotEqual(t, "content-entity:e_missing", nodes[0].Properties["uid"])
+
+		})
+	}
 }
 
 func TestUnwindMatchSetBatch_FallsBackForNonUniqueMatchSet(t *testing.T) {
@@ -69,7 +90,7 @@ func TestUnwindMatchSetBatch_FallsBackForNonUniqueMatchSet(t *testing.T) {
 	require.NoError(t, schema.AddPropertyIndex("idx_function_uid", "Function", []string{"uid"}))
 
 	for _, id := range []storage.NodeID{"fn-1", "fn-2"} {
-		nodeID, err := store.CreateNode(&storage.Node{
+		nodeID, err := store.CreateNode(t.Context(), &storage.Node{
 			ID:     id,
 			Labels: []string{"Function"},
 			Properties: map[string]interface{}{

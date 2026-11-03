@@ -11,14 +11,14 @@ import (
 func TestBadgerEngine_MVCCBootstrapHelpersAndTxnVariants(t *testing.T) {
 	engine := createMVCCBadgerEngine(t)
 
-	_, err := engine.CreateNode(&Node{ID: "test:bn1", Labels: []string{"N"}, Properties: map[string]any{"i": int64(1)}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:bn1", Labels: []string{"N"}, Properties: map[string]any{"i": int64(1)}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:bn2", Labels: []string{"N"}, Properties: map[string]any{"i": int64(2)}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:bn2", Labels: []string{"N"}, Properties: map[string]any{"i": int64(2)}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:bn3", Labels: []string{"N"}, Properties: map[string]any{"i": int64(3)}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:bn3", Labels: []string{"N"}, Properties: map[string]any{"i": int64(3)}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:be1", StartNode: "test:bn1", EndNode: "test:bn2", Type: "R"}))
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:be2", StartNode: "test:bn2", EndNode: "test:bn3", Type: "R"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:be1", StartNode: "test:bn1", EndNode: "test:bn2", Type: "R"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:be2", StartNode: "test:bn2", EndNode: "test:bn3", Type: "R"}))
 
 	// Remove current heads so bootstrap paths have work to do.
 	require.NoError(t, engine.clearBadgerPrefix(context.Background(), prefixMVCCNodeHead))
@@ -55,24 +55,24 @@ func TestBadgerEngine_MVCCBootstrapHelpersAndTxnVariants(t *testing.T) {
 	require.NoError(t, engine.clearBadgerPrefix(context.Background(), prefixMVCCEdgeHead))
 	require.NoError(t, engine.bootstrapMVCCHeadsFromCurrentState(context.Background()))
 
-	_, err = engine.GetNodeCurrentHead("test:bn1")
+	_, err = engine.GetNodeCurrentHead(context.Background(), "test:bn1")
 	require.NoError(t, err)
-	_, err = engine.GetEdgeCurrentHead("test:be1")
+	_, err = engine.GetEdgeCurrentHead(context.Background(), "test:be1")
 	require.NoError(t, err)
 
 	// In-txn bootstrap variants.
 	require.NoError(t, engine.clearBadgerPrefix(context.Background(), prefixMVCCNodeHead))
 	require.NoError(t, engine.clearBadgerPrefix(context.Background(), prefixMVCCEdgeHead))
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		if err := bootstrapMVCCFromCurrentStateInTxn[*Node, NodeID, nodeMVCCBootstrapKind](engine, txn); err != nil {
 			return err
 		}
 		return bootstrapMVCCFromCurrentStateInTxn[*Edge, EdgeID, edgeMVCCBootstrapKind](engine, txn)
 	}))
 
-	_, err = engine.GetNodeCurrentHead("test:bn2")
+	_, err = engine.GetNodeCurrentHead(context.Background(), "test:bn2")
 	require.NoError(t, err)
-	_, err = engine.GetEdgeCurrentHead("test:be2")
+	_, err = engine.GetEdgeCurrentHead(context.Background(), "test:be2")
 	require.NoError(t, err)
 
 	// Cancellation path in collectors.

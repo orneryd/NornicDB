@@ -6,12 +6,12 @@ func TestKeywordScan_Allocs(t *testing.T) {
 	query := "MATCH (n:Person {name: 'Alice'})-[r:KNOWS]->(m:Person) WHERE m.age > 21 WITH m, COUNT(r) AS cnt ORDER BY cnt DESC LIMIT 10 RETURN m.name, cnt"
 
 	allocs := testing.AllocsPerRun(1000, func() {
-		_ = findKeywordIndex(query, "MATCH")
-		_ = findKeywordIndex(query, "WHERE")
-		_ = findKeywordIndex(query, "WITH")
-		_ = findKeywordIndex(query, "ORDER BY")
-		_ = findKeywordIndex(query, "LIMIT")
-		_ = findKeywordIndex(query, "RETURN")
+		_ = findKeywordIndex(t.Context(), query, "MATCH")
+		_ = findKeywordIndex(t.Context(), query, "WHERE")
+		_ = findKeywordIndex(t.Context(), query, "WITH")
+		_ = findKeywordIndex(t.Context(), query, "ORDER BY")
+		_ = findKeywordIndex(t.Context(), query, "LIMIT")
+		_ = findKeywordIndex(t.Context(), query, "RETURN")
 	})
 
 	if allocs != 0 {

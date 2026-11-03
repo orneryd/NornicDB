@@ -178,8 +178,10 @@ func TestCompositeEngine_GetSchema_MergesConstraints(t *testing.T) {
 
 	// Verify constraints are merged
 	// GetConstraintsForLabels with specific labels
-	personConstraints := mergedSchema.GetConstraintsForLabels([]string{"Person"})
-	companyConstraints := mergedSchema.GetConstraintsForLabels([]string{"Company"})
+	personConstraints, err := mergedSchema.GetConstraintsForLabels(t.Context(), []string{"Person"})
+	require.NoError(t, err)
+	companyConstraints, err := mergedSchema.GetConstraintsForLabels(t.Context(), []string{"Company"})
+	require.NoError(t, err)
 
 	// At least one constraint should be found
 	foundPerson := false
@@ -214,7 +216,8 @@ func TestCompositeEngine_GetSchema_EmptyComposite(t *testing.T) {
 	indexes := nonLookupIndexes(mergedSchema.GetIndexes())
 	assert.Equal(t, 0, len(indexes))
 
-	constraints := mergedSchema.GetConstraints()
+	constraints, discoveryErr := mergedSchema.GetConstraints(t.Context())
+	require.NoError(t, discoveryErr)
 	assert.Equal(t, 0, len(constraints))
 }
 

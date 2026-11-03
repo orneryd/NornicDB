@@ -3,8 +3,9 @@ package qdrantgrpc
 import (
 	"context"
 	"fmt"
-	"github.com/orneryd/nornicdb/internal/grpcresponse"
 	"time"
+
+	"github.com/orneryd/nornicdb/internal/grpcresponse"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/search"
@@ -228,7 +229,11 @@ func (s *CollectionsService) Update(ctx context.Context, req *qpb.UpdateCollecti
 	}
 
 	// Verify collection exists
-	if !s.collections.Exists(req.CollectionName) {
+	exists, err := s.collections.Exists(ctx, req.CollectionName)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
 		return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.NotFound, localization.QdrantCollectionNotFound(req.CollectionName), grpcresponse.QdrantSourceFallback)
 	}
 
@@ -255,7 +260,10 @@ func (s *CollectionsService) CollectionExists(ctx context.Context, req *qpb.Coll
 		return nil, err
 	}
 
-	exists := s.collections.Exists(req.CollectionName)
+	exists, err := s.collections.Exists(ctx, req.CollectionName)
+	if err != nil {
+		return nil, err
+	}
 
 	return &qpb.CollectionExistsResponse{
 		Result: &qpb.CollectionExists{Exists: exists},

@@ -74,21 +74,21 @@ func TestSnapshotOverlayStrippedStreamOwnership(t *testing.T) {
 				node := &Node{ID: "test:owned", Labels: []string{"Doc"}, Properties: map[string]any{"keep": "ack", "drop": "retained"},
 					ChunkEmbeddings: [][]float32{{1, 2}}, NamedEmbeddings: map[string][]float32{"named": {3, 4}}, EmbedMeta: map[string]any{"chunk_count": 1, "origin": "ack"}}
 				if reader == "legacy" {
-					_, err = b.CreateNode(node)
+					_, err = b.CreateNode(t.Context(), node)
 					require.NoError(t, err)
 				} else if reader != "pending-new" {
 					bufferedCreate(t, b, node)
 				}
 				scan, read := b.StreamNodesWithOptions, b.GetNode
 				if reader != "engine" {
-					tx, err := b.BeginTransaction()
+					tx, err := b.BeginTransaction(t.Context())
 					require.NoError(t, err)
 					t.Cleanup(func() { require.NoError(t, tx.Rollback()) })
 					if reader == "pending-new" {
-						_, err = tx.CreateNode(node)
+						_, err = tx.CreateNode(t.Context(), node)
 						require.NoError(t, err)
 					} else if reader == "pending-replace" {
-						require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
+						require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 					} else if reader == "legacy" {
 						tx.snapshotTx.Discard()
 						tx.snapshotTx = nil
@@ -118,7 +118,7 @@ func TestSnapshotOverlayStrippedStreamOwnership(t *testing.T) {
 				})
 				require.NoError(t, err)
 				require.Equal(t, 1, calls)
-				original, err := read("test:owned")
+				original, err := read(t.Context(), "test:owned")
 				require.NoError(t, err)
 				require.Equal(t, []string{"Doc"}, original.Labels)
 				require.Equal(t, "ack", original.Properties["keep"])

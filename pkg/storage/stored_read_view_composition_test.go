@@ -28,11 +28,11 @@ func TestStoredReadViewHiddenIntegrity(t *testing.T) {
 						require.NoError(t, sm.AddConstraint(factKey))
 						idx, ok := sm.ConstraintPropertyIndex(factKey.Name)
 						require.True(t, ok)
-						require.NoError(t, sm.BackfillCompositeIndex(idx.Name, nil))
+						require.NoError(t, sm.BackfillCompositeIndex(t.Context(), idx.Name, nil))
 						holder = factNode("holder", 1, "name", 1)
 						require.NoError(t, bufferedTry(t, b, holder))
-						require.NoError(t, b.FlushWriteBehind(nil))
-						require.NoError(t, b.SetManualSuppression(StoredEntityNodeKind, string(holder.ID), true))
+						require.NoError(t, b.FlushWriteBehind(context.Background()))
+						require.NoError(t, b.SetManualSuppression(context.Background(), StoredEntityNodeKind, string(holder.ID), true))
 
 					} else {
 						setupHiddenGraph(t, b)
@@ -40,13 +40,13 @@ func TestStoredReadViewHiddenIntegrity(t *testing.T) {
 					if phase != "idle" {
 						bufferedCreate(t, b, &Node{ID: "test:unrelated"})
 						if phase == "retired" {
-							require.NoError(t, b.FlushWriteBehind(nil))
+							require.NoError(t, b.FlushWriteBehind(context.Background()))
 						}
 					}
 					if keyHolder {
-						_, err := b.GetNode(holder.ID)
+						_, err := b.GetNode(t.Context(), holder.ID)
 						require.ErrorIs(t, err, ErrNotFound)
-						_, err = b.GetStoredNode(holder.ID)
+						_, err = b.GetStoredNode(t.Context(), holder.ID)
 						require.NoError(t, err)
 						require.Error(t, bufferedTry(t, b, factNode("duplicate", 1, "name", 1)),
 							"a hidden physical holder must still enforce the filled NODE KEY")
@@ -54,12 +54,12 @@ func TestStoredReadViewHiddenIntegrity(t *testing.T) {
 						b.cacheInvalidateEdges()
 						for _, temperature := range []string{"cold", "warm"} {
 							t.Run(temperature, func(t *testing.T) {
-								_, err := b.GetNode("test:hiddenPeer")
+								_, err := b.GetNode(t.Context(), "test:hiddenPeer")
 								require.ErrorIs(t, err, ErrNotFound)
-								node, err := b.GetStoredNode("test:hiddenPeer")
+								node, err := b.GetStoredNode(t.Context(), "test:hiddenPeer")
 								require.NoError(t, err)
 								require.Equal(t, NodeID("test:hiddenPeer"), node.ID)
-								_, err = b.GetNode("test:hiddenPeer")
+								_, err = b.GetNode(t.Context(), "test:hiddenPeer")
 								require.ErrorIs(t, err, ErrNotFound)
 								ids := edgeIDLister(t)
 								require.Equal(t, []string{"test:e1", "test:e4"}, ids(b.GetStoredIncomingEdges(context.Background(), "test:peer1")))
@@ -67,9 +67,9 @@ func TestStoredReadViewHiddenIntegrity(t *testing.T) {
 								require.Equal(t, []string{"test:e1", "test:e3"}, ids(b.GetStoredOutgoingEdges(context.Background(), "test:hub")))
 								require.Equal(t, []string{"test:e1", "test:e4"}, ids(b.GetStoredEdgesByType(context.Background(), "SUPPRESSED")))
 								require.Empty(t, ids(b.GetEdgesByType(context.Background(), "SUPPRESSED")))
-								_, err = b.GetEdge("test:e1")
+								_, err = b.GetEdge(t.Context(), "test:e1")
 								require.ErrorIs(t, err, ErrNotFound)
-								_, err = b.GetStoredEdge("test:e1")
+								_, err = b.GetStoredEdge(t.Context(), "test:e1")
 								require.NoError(t, err)
 								nodes, err := b.GetStoredNodesByLabel(context.Background(), "Peer")
 								require.NoError(t, err)
@@ -98,19 +98,19 @@ func TestStoredReadViewTransactionIncidenceAcrossReplay(t *testing.T) {
 	b := newWriteBehindTestEngine(t, time.Hour)
 	b.writeBehind.Close()
 	for _, id := range []NodeID{"test:a", "test:b"} {
-		_, err := b.CreateNode(&Node{ID: id})
+		_, err := b.CreateNode(t.Context(), &Node{ID: id})
 		require.NoError(t, err)
 	}
 	bufferedWrite(t, b, func(tx *BadgerTransaction) error {
-		return tx.CreateEdge(&Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK"})
+		return tx.CreateEdge(t.Context(), &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK"})
 	})
 	count := b.GapProbeAcrossReplay(t, func() (int64, error) {
-		tx, err := b.BeginTransaction()
+		tx, err := b.BeginTransaction(t.Context())
 		if err != nil {
 			return 0, err
 		}
 		defer tx.Rollback()
-		edges, err := tx.IncidentEdges("test:a")
+		edges, err := tx.IncidentEdges(t.Context(), "test:a")
 		return int64(len(edges)), err
 	})
 	require.EqualValues(t, 1, count)

@@ -3,9 +3,10 @@ package search
 import (
 	"context"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"math/rand"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -27,7 +28,7 @@ func lifecycleBenchmarkFixture(b *testing.B, indexed bool) (*Service, *storage.N
 			query = append([]float32(nil), vector...)
 		}
 		node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("node-%04d", i)), ChunkEmbeddings: [][]float32{vector}}
-		if _, err := engine.CreateNode(node); err != nil {
+		if _, err := engine.CreateNode(b.Context(), node); err != nil {
 			b.Fatal(err)
 		}
 		if indexed {

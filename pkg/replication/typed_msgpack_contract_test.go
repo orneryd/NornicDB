@@ -41,7 +41,7 @@ func TestMessagePackReplicationPreservesCypherTypedProperties(t *testing.T) {
 	t.Run("snapshot", func(t *testing.T) {
 		source := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		target := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-		_, err := source.CreateNode(node)
+		_, err := source.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		from, err := NewStorageAdapterWithWAL(source, t.TempDir())
 		require.NoError(t, err)
@@ -52,7 +52,7 @@ func TestMessagePackReplicationPreservesCypherTypedProperties(t *testing.T) {
 		var data bytes.Buffer
 		require.NoError(t, from.WriteSnapshot(&data))
 		require.NoError(t, to.RestoreSnapshot(&data))
-		got, err := target.GetNode(node.ID)
+		got, err := target.GetNode(t.Context(), node.ID)
 		require.NoError(t, err)
 		assertProperties(t, got.Properties)
 	})

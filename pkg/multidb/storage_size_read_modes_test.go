@@ -2,10 +2,11 @@ package multidb
 
 import (
 	"errors"
+	"testing"
+
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestStorageSizeReadModesPreserveInitializationError(t *testing.T) {
@@ -23,7 +24,7 @@ func TestStorageSizeReadModesPreserveInitializationError(t *testing.T) {
 	_, checker, err := manager.databaseViewLocked("test", false)
 	manager.mu.Unlock()
 	require.NoError(t, err)
-	err = checker.CheckStorageLimits("create_node", &storage.Node{ID: "n"}, nil)
+	err = checker.CheckStorageLimits(t.Context(), "create_node", &storage.Node{ID: "n"}, nil)
 	require.ErrorIs(t, err, injected, "admission propagates the same actual scan failure")
 	require.EqualValues(t, 18, info.accountingOwner().totalSize)
 	missingTotal, missingNodes, missingEdges := manager.GetStorageSize("missing")

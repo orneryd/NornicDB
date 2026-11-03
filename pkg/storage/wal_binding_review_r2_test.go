@@ -24,7 +24,7 @@ func TestReviewR2RemapCrashBeforeApply(t *testing.T) {
 	_, data := r2BindingData(t, 1)
 	dir := t.TempDir()
 	dest := reviewBindingEngine(t, dir)
-	_, err := dest.CreateNode(&Node{ID: "perf:sentinel", Properties: map[string]any{"unrelated": "keep"}})
+	_, err := dest.CreateNode(t.Context(), &Node{ID: "perf:sentinel", Properties: map[string]any{"unrelated": "keep"}})
 	require.NoError(t, err)
 	c, err := dest.importBufferedWALRecord(&data, walForeignImport)
 	require.NoError(t, err)
@@ -44,7 +44,7 @@ func TestReviewR2ConcurrentAllocation(t *testing.T) {
 	_, data := r2BindingData(t, 160)
 	dir := t.TempDir()
 	dest := reviewBindingEngine(t, dir)
-	_, err := dest.CreateNode(&Node{ID: "perf:sentinel", Properties: map[string]any{"unrelated": "keep"}})
+	_, err := dest.CreateNode(t.Context(), &Node{ID: "perf:sentinel", Properties: map[string]any{"unrelated": "keep"}})
 	require.NoError(t, err)
 	var wg sync.WaitGroup
 	errs := make(chan error, 32)
@@ -61,7 +61,7 @@ func TestReviewR2ConcurrentAllocation(t *testing.T) {
 		}(i)
 		go func(i int) {
 			defer wg.Done()
-			_, e := dest.CreateNode(&Node{ID: NodeID(fmt.Sprintf("perf:local%d", i)), Properties: map[string]any{fmt.Sprintf("property_%03d", i): int64(i), fmt.Sprintf("local_%03d", i): int64(i)}})
+			_, e := dest.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("perf:local%d", i)), Properties: map[string]any{fmt.Sprintf("property_%03d", i): int64(i), fmt.Sprintf("local_%03d", i): int64(i)}})
 			errs <- e
 		}(i)
 	}
@@ -72,7 +72,7 @@ func TestReviewR2ConcurrentAllocation(t *testing.T) {
 		require.NoError(t, e)
 	}
 	for d := range drains {
-		require.NoError(t, dest.propKeyDict.persistTxnCounters(metadataBatches{db: dest.db, ctx: context.Background()}, d))
+		require.NoError(t, dest.propKeyDict.persistTxnCounters(context.Background(), dest.db, d))
 	}
 	assertPropertyDictionaryBijection(t, dest)
 	for i := 0; i < 160; i++ {
@@ -95,13 +95,13 @@ func TestReviewR2DoubleReplay(t *testing.T) {
 	require.NoError(t, err)
 	entry := WALEntry{Operation: OpBufferedCommit, Data: raw}
 	dest := reviewBindingEngine(t, t.TempDir())
-	_, err = dest.CreateNode(&Node{ID: "perf:sentinel", Properties: map[string]any{"other": "keep"}})
+	_, err = dest.CreateNode(t.Context(), &Node{ID: "perf:sentinel", Properties: map[string]any{"other": "keep"}})
 	require.NoError(t, err)
 	for i := 0; i < 2; i++ {
 		require.NoError(t, ReplayWALEntry(dest, entry))
 		assertPropertyDictionaryBijection(t, dest)
 	}
-	node, err := dest.GetNode("perf:a")
+	node, err := dest.GetNode(t.Context(), "perf:a")
 	require.NoError(t, err)
 	require.Len(t, node.Properties, 160)
 	for i := 0; i < 160; i++ {
@@ -112,22 +112,22 @@ func TestReviewR2DoubleReplay(t *testing.T) {
 func TestReviewR2ForeignIdentityWithoutObservedRemap(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
 	source := reviewBindingEngine(t, t.TempDir())
-	_, err := source.CreateNode(&Node{ID: "identity:a", Properties: map[string]any{"alpha": int64(0)}})
+	_, err := source.CreateNode(t.Context(), &Node{ID: "identity:a", Properties: map[string]any{"alpha": int64(0)}})
 	require.NoError(t, err)
-	_, err = source.CreateNode(&Node{ID: "identity:b", Properties: map[string]any{"beta": int64(0)}})
+	_, err = source.CreateNode(t.Context(), &Node{ID: "identity:b", Properties: map[string]any{"beta": int64(0)}})
 	require.NoError(t, err)
 	capture, err := NewWAL(t.TempDir(), DefaultWALConfig())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = capture.Close() })
 	source.SetBufferedCommitWAL(capture)
 	for i, name := range []string{"alpha", "beta"} {
-		tx, e := source.BeginTransaction()
+		tx, e := source.BeginTransaction(t.Context())
 		require.NoError(t, e)
 		require.NoError(t, tx.SetNamespace("identity"))
 		require.NoError(t, tx.SetImplicit(true))
-		require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: NodeID(fmt.Sprintf("identity:%c", 'a'+i)), Properties: map[string]any{name: int64(i + 1)}}, Policy: ClientNodeEdits}))
+		require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: NodeID(fmt.Sprintf("identity:%c", 'a'+i)), Properties: map[string]any{name: int64(i + 1)}}, Policy: ClientNodeEdits}))
 		require.NoError(t, tx.Commit())
-		require.NoError(t, source.FlushWriteBehind(nil))
+		require.NoError(t, source.FlushWriteBehind(context.Background()))
 	}
 	entries, err := ReadWALEntriesFromDir(capture.Config().Dir)
 	require.NoError(t, err)
@@ -152,9 +152,9 @@ func TestReviewR2ForeignIdentityWithoutObservedRemap(t *testing.T) {
 	require.NoError(t, wal.Close())
 	dir := t.TempDir()
 	dest := reviewBindingEngine(t, dir)
-	_, err = dest.CreateNode(&Node{ID: "identity:a", Properties: map[string]any{"alpha": int64(0)}})
+	_, err = dest.CreateNode(t.Context(), &Node{ID: "identity:a", Properties: map[string]any{"alpha": int64(0)}})
 	require.NoError(t, err)
-	_, err = dest.CreateNode(&Node{ID: "identity:b", Properties: map[string]any{"other": int64(0)}})
+	_, err = dest.CreateNode(t.Context(), &Node{ID: "identity:b", Properties: map[string]any{"other": int64(0)}})
 	require.NoError(t, err)
 	// The imported prefix happens to use an identical mapping; its unobserved
 	// source token 2 means beta, while destination token 2 means other.
@@ -162,7 +162,7 @@ func TestReviewR2ForeignIdentityWithoutObservedRemap(t *testing.T) {
 	require.NoError(t, dest.Close())
 	dest = reviewBindingEngine(t, dir)
 	n, recoverErr := RecoverBufferedCommitsAtOpen(dest, wal)
-	node, readErr := dest.GetNode("identity:b")
+	node, readErr := dest.GetNode(t.Context(), "identity:b")
 	require.NoError(t, readErr)
 	t.Logf("replayed=%d err=%v cold-body=%#v foreign=%v", n, recoverErr, node.Properties, dest.walPropertySource.foreign)
 	require.ErrorContains(t, recoverErr, "missing property name binding", "foreign destination identity must survive restart even when the first imported token happened to match")

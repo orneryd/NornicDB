@@ -206,14 +206,14 @@ func (s *Service) completeBuildPopulation() error {
 // not fit the queue's memory reservation (queueFitsLocked): the write waits
 // for the build and the live path decides it in order. Administrative
 // operations carry no payload and are always queued.
-func (s *Service) queueBuildWrite(write deferredIndexWrite) (queued, wait bool, err error) {
+func (s *Service) queueBuildWrite(ctx context.Context, write deferredIndexWrite) (queued, wait bool, err error) {
 	q := &s.buildWrites
 	if !q.open.Load() || !s.buildDefersWrites() {
 		return false, false, nil
 	}
 	switch {
 	case write.node != nil:
-		current, wait, err := s.admitQueuedNode(write.node)
+		current, wait, err := s.admitQueuedNode(ctx, write.node)
 		if err != nil {
 			return false, false, err
 		}
@@ -321,7 +321,7 @@ func (s *Service) orderIndexFlags(bm25Enabled, vectorEnabled bool) (changed bool
 // build's baseline, so the final state equals that of the same calls made one
 // after another; otherwise it runs now.
 func (s *Service) orderWithBuild(op func()) {
-	if queued, _, _ := s.queueBuildWrite(deferredIndexWrite{apply: op}); queued {
+	if queued, _, _ := s.queueBuildWrite(s.LifetimeContext(), deferredIndexWrite{apply: op}); queued {
 		return
 	}
 	op()
@@ -332,7 +332,7 @@ func (s *Service) orderWithBuild(op func()) {
 // flags): until it is installed, a write carrying a vector waits for the
 // build (vectorNeedsOrderedDecision).
 func (s *Service) orderDimensionChange(op func()) {
-	if queued, _, _ := s.queueBuildWrite(deferredIndexWrite{apply: op, dims: true}); queued {
+	if queued, _, _ := s.queueBuildWrite(s.LifetimeContext(), deferredIndexWrite{apply: op, dims: true}); queued {
 		return
 	}
 	op()
@@ -342,7 +342,7 @@ func (s *Service) orderDimensionChange(op func()) {
 // build's own saves (the persistence toggle): in the serial order it comes
 // after them, so it is installed once the build has finished (endBuildWrites).
 func (s *Service) orderWithBuildEnd(op func()) {
-	if queued, _ := s.readLockOrQueue(deferredIndexWrite{apply: op, atEnd: true}); queued {
+	if queued, _ := s.readLockOrQueue(s.LifetimeContext(), deferredIndexWrite{apply: op, atEnd: true}); queued {
 		return
 	}
 	defer s.buildMu.RUnlock()
@@ -353,7 +353,7 @@ func (s *Service) orderWithBuildEnd(op func()) {
 // build sequence: queued with write, or, when its copy does not fit the
 // queue's reservation, after the build; otherwise now.
 func (s *Service) orderRelationshipUpdate(write deferredIndexWrite, update func()) {
-	queued, wait, _ := s.queueBuildWrite(write)
+	queued, wait, _ := s.queueBuildWrite(s.LifetimeContext(), write)
 	if queued {
 		return
 	}
@@ -377,12 +377,12 @@ func (q *buildWriteQueue) opApplied() {
 // turn; at the call only while no setting change is queued. A node carrying
 // a vector waits while its dimension decision depends on the operations
 // ahead (vectorNeedsOrderedDecision).
-func (s *Service) admitQueuedNode(node *storage.Node) (current, wait bool, err error) {
+func (s *Service) admitQueuedNode(ctx context.Context, node *storage.Node) (current, wait bool, err error) {
 	pending := s.settingChangeQueued()
 	if !pending && !s.bm25Enabled.Load() && !s.vectorEnabled.Load() {
 		return false, false, nil
 	}
-	current, err = s.shouldIndexNode(node)
+	current, err = s.shouldIndexNode(ctx, node)
 	if err != nil || !current {
 		return current, false, err
 	}
@@ -446,9 +446,9 @@ func (s *Service) adoptBuildBatchDimensions(batch []*storage.Node) {
 // false (the caller releases it). A failed TryRLock with the queue closed
 // means a short holder (ClearVectorIndex, or a build releasing buildMu), so
 // waiting for it is short.
-func (s *Service) readLockOrQueue(write deferredIndexWrite) (queued bool, err error) {
+func (s *Service) readLockOrQueue(ctx context.Context, write deferredIndexWrite) (queued bool, err error) {
 	for {
-		queued, wait, err := s.queueBuildWrite(write)
+		queued, wait, err := s.queueBuildWrite(ctx, write)
 		if queued || err != nil {
 			return queued, err
 		}
@@ -526,7 +526,7 @@ func (s *Service) applyBuildWrites(writes []deferredIndexWrite) (changed bool, r
 		case write.relationship:
 			s.updateRelationshipNow(write)
 		case write.node != nil:
-			err = s.indexNodeOwned(write.node, &write.current)
+			err = s.indexNodeOwned(s.LifetimeContext(), write.node, &write.current)
 		case write.nodeID != "":
 			s.removeNodeOwned(storage.NodeID(write.nodeID))
 		case write.edge != nil:

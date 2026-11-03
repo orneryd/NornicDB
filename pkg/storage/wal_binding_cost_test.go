@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -22,7 +23,7 @@ func bindingCostFixture(t testing.TB, count int) (*BadgerEngine, *WAL, *buffered
 	for i := 0; i < count; i++ {
 		properties[fmt.Sprintf("property_%03d", i)] = int64(i)
 	}
-	_, err = b.CreateNode(&Node{ID: "perf:a", Properties: properties})
+	_, err = b.CreateNode(context.Background(), &Node{ID: "perf:a", Properties: properties})
 	require.NoError(t, err)
 	var body []byte
 	require.NoError(t, b.db.View(func(txn *badger.Txn) error {
@@ -54,7 +55,7 @@ func TestBufferedWALBindingAllocationBounds(t *testing.T) {
 			for i := 0; i < 4096; i++ {
 				unused[fmt.Sprintf("unused_%04d", i)] = int64(i)
 			}
-			_, err := b.CreateNode(&Node{ID: "perf:unused", Properties: unused})
+			_, err := b.CreateNode(t.Context(), &Node{ID: "perf:unused", Properties: unused})
 			require.NoError(t, err)
 			after := testing.AllocsPerRun(32, appendRecord)
 			require.LessOrEqual(t, after, appendAllocs+4, "unreferenced dictionary names must not add steady-append work")

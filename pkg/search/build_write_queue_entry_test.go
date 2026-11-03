@@ -7,7 +7,6 @@ package search
 
 import (
 	"context"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"runtime"
 	"runtime/debug"
 	"runtime/metrics"
@@ -16,6 +15,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -30,7 +31,7 @@ func TestBuildRemoveLastVectorThenNewDimensions(t *testing.T) {
 		t.Run(map[bool]string{false: "serial", true: "gated"}[gated], func(t *testing.T) {
 			engine := newNodeSnapshotGateEngine(t)
 			seed := buildWriteNode("nornic:seed", "seedterm", []float32{1, 0, 0})
-			_, err := engine.CreateNode(storage.CopyNode(seed))
+			_, err := engine.CreateNode(t.Context(), storage.CopyNode(seed))
 			require.NoError(t, err)
 			svc := NewService(engine, 3, nil)
 			t.Cleanup(func() { _ = svc.Close() })
@@ -46,7 +47,7 @@ func TestBuildRemoveLastVectorThenNewDimensions(t *testing.T) {
 			next := buildWriteNode("nornic:next", "nextterm", []float32{0, 1})
 			done := make(chan error, 1)
 			go func() {
-				if err := engine.DeleteNode(seed.ID); err != nil {
+				if err := engine.DeleteNode(t.Context(), seed.ID); err != nil {
 					done <- err
 					return
 				}
@@ -54,7 +55,7 @@ func TestBuildRemoveLastVectorThenNewDimensions(t *testing.T) {
 					done <- err
 					return
 				}
-				if _, err := engine.CreateNode(storage.CopyNode(next)); err != nil {
+				if _, err := engine.CreateNode(t.Context(), storage.CopyNode(next)); err != nil {
 					done <- err
 					return
 				}
@@ -84,7 +85,7 @@ func TestBuildQueuedIndexFlagsDecideInOrder(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "1000")
 	run := func(gated bool) (changed [2]bool, indexed bool) {
 		engine := newNodeSnapshotGateEngine(t)
-		_, err := engine.CreateNode(&storage.Node{ID: "nornic:stored", Labels: []string{"Doc"}, Properties: map[string]any{"text": "storedterm"}})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "nornic:stored", Labels: []string{"Doc"}, Properties: map[string]any{"text": "storedterm"}})
 		require.NoError(t, err)
 		svc := buildWriteService(t, engine, "", "v2", nil)
 		t.Cleanup(func() { _ = svc.Close() })
@@ -97,7 +98,7 @@ func TestBuildQueuedIndexFlagsDecideInOrder(t *testing.T) {
 			require.NoError(t, svc.BuildIndexes(context.Background()))
 		}
 		node := &storage.Node{ID: "nornic:f", Labels: []string{"Doc"}, Properties: map[string]any{"text": "flagterm"}}
-		_, err = engine.CreateNode(storage.CopyNode(node))
+		_, err = engine.CreateNode(t.Context(), storage.CopyNode(node))
 		require.NoError(t, err)
 		changed[0] = svc.SetIndexFlags(false, true)
 		changed[1] = svc.SetIndexFlags(false, true)
@@ -133,7 +134,7 @@ func TestBuildWriteBeyondMemoryLimitWaitsInOrder(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "1000")
 	engine := newNodeSnapshotGateEngine(t)
 	buildWriteEdgeEndpoints(t, engine)
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "nornic:big-rel", StartNode: "nornic:s", EndNode: "nornic:e", Type: "REL", Properties: map[string]any{"note": "relterm"}}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "nornic:big-rel", StartNode: "nornic:s", EndNode: "nornic:e", Type: "REL", Properties: map[string]any{"note": "relterm"}}))
 	svc := buildWriteService(t, engine, "", "v2", nil)
 	svc.EnableRelationshipSearch(nil)
 	t.Cleanup(func() { _ = svc.Close() })
@@ -152,11 +153,11 @@ func TestBuildWriteBeyondMemoryLimitWaitsInOrder(t *testing.T) {
 	}
 	first := large("firstterm")
 	// Storage holds a small copy: the stored node only has to exist.
-	_, err := engine.CreateNode(&storage.Node{ID: first.ID, Labels: first.Labels, Properties: map[string]any{"text": "firstterm"}})
+	_, err := engine.CreateNode(t.Context(), &storage.Node{ID: first.ID, Labels: first.Labels, Properties: map[string]any{"text": "firstterm"}})
 	require.NoError(t, err)
 	requireReturnsDuringBuild(t, "a write within the reservation", func() error { return svc.IndexNode(first) })
 	second := large("secondterm")
-	require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: second.ID, Labels: second.Labels, Properties: map[string]any{"text": "secondterm"}}}))
+	require.NoError(t, engine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: &storage.Node{ID: second.ID, Labels: second.Labels, Properties: map[string]any{"text": "secondterm"}}}))
 	relationship := &storage.Edge{ID: "nornic:big-rel", StartNode: "nornic:s", EndNode: "nornic:e", Type: "REL", Properties: map[string]any{"note": "updatedrelterm", "blob": blob}}
 	nodeDone, relDone := make(chan error, 1), make(chan struct{})
 	go func() { nodeDone <- svc.IndexNode(second) }()
@@ -191,14 +192,14 @@ func TestBuildWriteBeyondMemoryLimitWaitsInOrder(t *testing.T) {
 func TestBuildSupersededWriteIsSkippedAtInstall(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "1000")
 	engine := newNodeSnapshotGateEngine(t)
-	_, err := engine.CreateNode(buildWriteNode("nornic:r", "storedterm", []float32{1, 0, 0}))
+	_, err := engine.CreateNode(t.Context(), buildWriteNode("nornic:r", "storedterm", []float32{1, 0, 0}))
 	require.NoError(t, err)
 	svc := buildWriteService(t, engine, "", "v2", nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	t.Cleanup(engine.open)
 	built := startGatedBuild(t, engine, svc)
 	stale := buildWriteNode("nornic:r", "staleterm", []float32{0, 1, 0})
-	queued, err := svc.readLockOrQueue(deferredIndexWrite{node: stale, valid: func() bool { return false }})
+	queued, err := svc.readLockOrQueue(t.Context(), deferredIndexWrite{node: stale, valid: func() bool { return false }})
 	require.NoError(t, err)
 	require.True(t, queued)
 	engine.open()
@@ -218,7 +219,7 @@ func TestBuildRelationshipPhaseReadsWithTheNodeSnapshot(t *testing.T) {
 		engine := newNodeSnapshotGateEngine(t)
 		buildWriteEdgeEndpoints(t, engine)
 		stored := &storage.Edge{ID: "nornic:rel", StartNode: "nornic:s", EndNode: "nornic:e", Type: "REL", Properties: map[string]any{"v": []float32{1, 0, 0}}}
-		require.NoError(t, engine.CreateEdge(storage.CopyEdge(stored)))
+		require.NoError(t, engine.CreateEdge(t.Context(), storage.CopyEdge(stored)))
 		svc := buildWriteService(t, engine, "", "v2", nil)
 		t.Cleanup(func() { _ = svc.Close() })
 		t.Cleanup(engine.open)
@@ -231,7 +232,7 @@ func TestBuildRelationshipPhaseReadsWithTheNodeSnapshot(t *testing.T) {
 		}
 		svc.SetIndexFlags(true, false)
 		updated := &storage.Edge{ID: stored.ID, StartNode: stored.StartNode, EndNode: stored.EndNode, Type: stored.Type, Properties: map[string]any{"v": []float32{0, 1, 0}}}
-		require.NoError(t, engine.UpdateEdge(storage.EdgeUpdateRequest{After: storage.CopyEdge(updated)}))
+		require.NoError(t, engine.UpdateEdge(t.Context(), storage.EdgeUpdateRequest{After: storage.CopyEdge(updated)}))
 		require.NoError(t, svc.IndexEdge(updated))
 		if gated {
 			engine.open()
@@ -288,9 +289,9 @@ func TestBuildBaselineIsOneStoragePoint(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "1000")
 	engine := newNodeReadParkEngine(t)
 	buildWriteEdgeEndpoints(t, engine)
-	_, err := engine.CreateNode(&storage.Node{ID: "nornic:doc", Labels: []string{"Doc"}, Properties: map[string]any{"text": "oldterm"}})
+	_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "nornic:doc", Labels: []string{"Doc"}, Properties: map[string]any{"text": "oldterm"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "nornic:rel", StartNode: "nornic:s", EndNode: "nornic:e", Type: "REL", Properties: map[string]any{"v": []float32{1, 0, 0}}}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "nornic:rel", StartNode: "nornic:s", EndNode: "nornic:e", Type: "REL", Properties: map[string]any{"v": []float32{1, 0, 0}}}))
 	svc := buildWriteService(t, engine, "", "v2", nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	t.Cleanup(engine.open)
@@ -304,11 +305,11 @@ func TestBuildBaselineIsOneStoragePoint(t *testing.T) {
 	svc.SetIndexFlags(false, false)
 	node := &storage.Node{ID: "nornic:doc", Labels: []string{"Doc"}, Properties: map[string]any{"text": "newterm"}}
 	edge := &storage.Edge{ID: "nornic:rel", StartNode: "nornic:s", EndNode: "nornic:e", Type: "REL", Properties: map[string]any{"v": []float32{0, 1, 0}}}
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("nornic"))
-	require.NoError(t, tx.UpdateGraphNode(storage.NodeUpdateRequest{After: storage.CopyNode(node), Policy: storage.ClientNodeEdits}))
-	require.NoError(t, tx.UpdateEdge(storage.EdgeUpdateRequest{After: storage.CopyEdge(edge)}))
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), storage.NodeUpdateRequest{After: storage.CopyNode(node), Policy: storage.ClientNodeEdits}))
+	require.NoError(t, tx.UpdateEdge(t.Context(), storage.EdgeUpdateRequest{After: storage.CopyEdge(edge)}))
 	require.NoError(t, tx.Commit())
 	require.NoError(t, svc.IndexNode(node))
 	require.NoError(t, svc.IndexEdge(edge))
@@ -330,14 +331,14 @@ func TestBuildIndexesAcknowledgedWriteBehindNodes(t *testing.T) {
 	engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: t.TempDir(), WriteBehind: true, WriteBehindInterval: time.Hour}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("nornic"))
-	_, err = tx.CreateNode(&storage.Node{ID: "nornic:buffered", Labels: []string{"Doc"}, Properties: map[string]any{"text": "bufferedterm"}})
+	_, err = tx.CreateNode(t.Context(), &storage.Node{ID: "nornic:buffered", Labels: []string{"Doc"}, Properties: map[string]any{"text": "bufferedterm"}})
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
-	got, err := engine.GetNode("nornic:buffered")
+	got, err := engine.GetNode(t.Context(), "nornic:buffered")
 	require.NoError(t, err, "the acknowledged node is visible to storage reads")
 	require.NotNil(t, got)
 	svc := buildWriteService(t, engine, "", "v2", nil)
@@ -376,7 +377,7 @@ func TestBuildWithoutReadSnapshotsMakesWritesWait(t *testing.T) {
 		t.Fatal("the build did not read its nodes")
 	}
 	node := buildWriteNode("nornic:w", "waitterm", []float32{1, 0, 0})
-	_, err := gate.CreateNode(storage.CopyNode(node))
+	_, err := gate.CreateNode(t.Context(), storage.CopyNode(node))
 	require.NoError(t, err)
 	done := make(chan error, 1)
 	go func() { done <- svc.IndexNode(node) }()
@@ -463,7 +464,7 @@ func TestBuildQueuedCopiesCountTheirHeap(t *testing.T) {
 	engine := newNodeSnapshotGateEngine(t)
 	node := buildWriteNode("nornic:counted", strings.Repeat("x", 1<<10), []float32{1, 0, 0})
 	node.EmbedMeta = map[string]any{"chunk_count": int64(1), "model": "m"}
-	_, err := engine.CreateNode(storage.CopyNode(node))
+	_, err := engine.CreateNode(t.Context(), storage.CopyNode(node))
 	require.NoError(t, err)
 	svc := buildWriteService(t, engine, "", "v2", nil)
 	svc.EnableRelationshipSearch(nil)

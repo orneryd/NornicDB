@@ -25,7 +25,7 @@ type rejectingSidecarQueue struct {
 	rejections int
 }
 
-func (q *rejectingSidecarQueue) UpdateNodeEmbeddingSidecar(node *storage.Node) error {
+func (q *rejectingSidecarQueue) UpdateNodeEmbeddingSidecar(ctx context.Context, node *storage.Node) error {
 	q.writeMu.Lock()
 	q.attempts[node.ID]++
 	reject := q.attempts[node.ID] <= q.rejections
@@ -33,7 +33,7 @@ func (q *rejectingSidecarQueue) UpdateNodeEmbeddingSidecar(node *storage.Node) e
 	if reject {
 		return errors.New("test: sidecar write rejected")
 	}
-	return q.orderedEmbeddingQueue.UpdateNodeEmbeddingSidecar(node)
+	return q.orderedEmbeddingQueue.UpdateNodeEmbeddingSidecar(ctx, node)
 }
 
 type retryDocumentEmbedder struct{ *mockEmbedder }
@@ -79,7 +79,7 @@ func nodeSaveRetryFixture(tb testing.TB, mode string, nodes, rejections int) (*E
 	ids := make([]storage.NodeID, nodes)
 	for i := range ids {
 		ids[i] = storage.NodeID(fmt.Sprintf("node-%03d", i))
-		_, err := store.CreateNode(&storage.Node{ID: ids[i], Labels: []string{"Doc"}, Properties: map[string]any{"text": strings.Repeat("alpha beta ", 20), "_embedding_content": "original"}})
+		_, err := store.CreateNode(tb.Context(), &storage.Node{ID: ids[i], Labels: []string{"Doc"}, Properties: map[string]any{"text": strings.Repeat("alpha beta ", 20), "_embedding_content": "original"}})
 		require.NoError(tb, err)
 	}
 	queue := &rejectingSidecarQueue{orderedEmbeddingQueue: &orderedEmbeddingQueue{Engine: store, pending: ids}, attempts: make(map[storage.NodeID]int), rejections: rejections}
@@ -124,7 +124,7 @@ func TestEmbedWorkerSaveRetryRequestsProvider(t *testing.T) {
 				calls := provider.GetEmbedCount()
 				require.Positive(t, calls)
 				require.Zero(t, published)
-				node, err := queue.GetNode("node-000")
+				node, err := queue.GetNode(t.Context(), "node-000")
 				require.NoError(t, err)
 				require.Empty(t, node.ChunkEmbeddings, "rejected results must not publish")
 				switch change {
@@ -136,7 +136,7 @@ func TestEmbedWorkerSaveRetryRequestsProvider(t *testing.T) {
 					node.Properties["_embedding_content"] = "changed"
 				}
 				if change != "unchanged" {
-					require.NoError(t, queue.UpdateNode(storage.NodeUpdateRequest{After: node}))
+					require.NoError(t, queue.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
 				}
 				for i := 0; i < 4 && published == 0; i++ {
 					makeNodeSaveRetriesReady(worker)
@@ -144,7 +144,7 @@ func TestEmbedWorkerSaveRetryRequestsProvider(t *testing.T) {
 				}
 				require.Equal(t, 1, published)
 				require.Equal(t, 2*calls, provider.GetEmbedCount(), "every rejected save requests the current input again")
-				saved, err := queue.GetNode(node.ID)
+				saved, err := queue.GetNode(t.Context(), node.ID)
 				require.NoError(t, err)
 				require.NotEmpty(t, saved.ChunkEmbeddings)
 				require.Equal(t, provider.Model(), saved.EmbedMeta["embedding_model"])

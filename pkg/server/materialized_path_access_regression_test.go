@@ -49,11 +49,11 @@ func TestMaterializedPathAccessHTTP(t *testing.T) {
 	base.SetAccessAccumulator(recorder)
 	store, err := server.dbManager.GetStorage("nornic")
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "a", Labels: []string{"MaterializedPathAccess"}, Properties: map[string]interface{}{"id": "a"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"MaterializedPathAccess"}, Properties: map[string]interface{}{"id": "a"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "b", Labels: []string{"MaterializedPathAccess"}, Properties: map[string]interface{}{"id": "b"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"MaterializedPathAccess"}, Properties: map[string]interface{}{"id": "b"}})
 	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "MATERIALIZED_PATH_ACCESS"}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "MATERIALIZED_PATH_ACCESS"}))
 	token := "Bearer " + getAuthToken(t, authenticator, "admin")
 	query := "MATCH p=(:MaterializedPathAccess {id:'a'})-[:MATERIALIZED_PATH_ACCESS]->(:MaterializedPathAccess {id:'b'}) RETURN p"
 	request := map[string]interface{}{"statements": []map[string]interface{}{{"statement": query}}}
@@ -86,11 +86,11 @@ func TestMaterializedEntityAccessHTTP(t *testing.T) {
 	base.SetAccessAccumulator(recorder)
 	store, err := server.dbManager.GetStorage("nornic")
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "a", Labels: []string{"MaterializedEntityAccess"}, Properties: map[string]interface{}{"id": "a"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"MaterializedEntityAccess"}, Properties: map[string]interface{}{"id": "a"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "b", Labels: []string{"MaterializedEntityAccess"}, Properties: map[string]interface{}{"id": "b"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"MaterializedEntityAccess"}, Properties: map[string]interface{}{"id": "b"}})
 	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "MATERIALIZED_ENTITY_ACCESS"}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "MATERIALIZED_ENTITY_ACCESS"}))
 	token := "Bearer " + getAuthToken(t, authenticator, "admin")
 	query := "MATCH (a:MaterializedEntityAccess {id:'a'})-[r:MATERIALIZED_ENTITY_ACCESS]->(b:MaterializedEntityAccess {id:'b'}) RETURN a,r,b"
 	request := map[string]interface{}{"statements": []map[string]interface{}{{"statement": query}}}

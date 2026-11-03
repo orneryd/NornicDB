@@ -27,11 +27,11 @@ func newCompositeIdentityExecutor(t *testing.T, explicit bool) (*StorageExecutor
 		require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: db}))
 		s, err := mgr.GetStorage(db)
 		require.NoError(t, err)
-		_, err = s.CreateNode(&storage.Node{ID: "same", Labels: []string{"P"}, Properties: map[string]interface{}{"db": db, "v": int64(7)}})
+		_, err = s.CreateNode(t.Context(), &storage.Node{ID: "same", Labels: []string{"P"}, Properties: map[string]interface{}{"db": db, "v": int64(7)}})
 		require.NoError(t, err)
-		_, err = s.CreateNode(&storage.Node{ID: "target", Labels: []string{"Q"}, Properties: map[string]interface{}{"v": int64(7)}})
+		_, err = s.CreateNode(t.Context(), &storage.Node{ID: "target", Labels: []string{"Q"}, Properties: map[string]interface{}{"v": int64(7)}})
 		require.NoError(t, err)
-		require.NoError(t, s.CreateEdge(&storage.Edge{ID: "same-rel", StartNode: "same", EndNode: "target", Type: "R"}))
+		require.NoError(t, s.CreateEdge(t.Context(), &storage.Edge{ID: "same-rel", StartNode: "same", EndNode: "target", Type: "R"}))
 	}
 	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "comp", []multidb.ConstituentRef{
 		{Alias: "one", DatabaseName: "one", Type: "local", AccessMode: "read_write"},

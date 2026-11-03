@@ -193,9 +193,14 @@ type SetItem struct {
 	Value    Expression
 }
 
-// Parse parses a Cypher query string into a Query AST.
-func (p *Parser) Parse(cypher string) (*Query, error) {
-	ctx, source := cyphertext.WithSource(context.Background(), cypher)
+// Parse parses a Cypher query string into a Query AST under ctx. Cancellation
+// returns no partial Query; lexical token boundaries and clause preparation
+// retain the caller. The caller must supply a non-nil context.
+func (p *Parser) Parse(ctx context.Context, cypher string) (*Query, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	ctx, source := cyphertext.WithSource(ctx, cypher)
 	if source.Err != nil {
 		return nil, source.Err
 	}
@@ -211,7 +216,7 @@ func (p *Parser) Parse(cypher string) (*Query, error) {
 	}
 
 	// Tokenize and parse
-	tokens, err := tokenize(cypher)
+	tokens, err := tokenize(ctx, cypher)
 	if err != nil {
 		return nil, err
 	}
@@ -226,6 +231,9 @@ func (p *Parser) Parse(cypher string) (*Query, error) {
 	// Simple top-down parser
 	pos := 0
 	for pos < len(tokens) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		token := upperASCII(tokens[pos])
 
 		switch token {
@@ -254,7 +262,7 @@ func (p *Parser) Parse(cypher string) (*Query, error) {
 		case "RETURN":
 			if returns == nil {
 				builder := NewASTBuilder()
-				for _, fragment := range builder.splitIntoClauses(cypher) {
+				for _, fragment := range builder.splitIntoClauses(ctx, cypher) {
 					if fragment.clauseType == ASTClauseReturn {
 						items, distinct := builder.parseProjection(ctx, source.Window(fragment.startPos, fragment.startPos+len(fragment.text)), len("RETURN"))
 						returns = append(returns, &ASTReturn{Items: items, Distinct: distinct})
@@ -347,15 +355,18 @@ func (p *Parser) parseDelete(tokens []string, pos int) (*DeleteClause, int) {
 }
 
 // tokenize splits Cypher into tokens.
-func tokenize(cypher string) ([]string, error) {
-	tokens, _, err := tokenizeSource(cypher)
+func tokenize(ctx context.Context, cypher string) ([]string, error) {
+	tokens, _, err := tokenizeSource(ctx, cypher)
 	return tokens, err
 }
 
 type sourceToken struct{ start, end int }
 
 // tokenizeSource retains exact source spans for the DDL value reader.
-func tokenizeSource(cypher string, sets ...*cyphertext.CredentialSet) ([]string, []sourceToken, error) {
+func tokenizeSource(ctx context.Context, cypher string, sets ...*cyphertext.CredentialSet) ([]string, []sourceToken, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
 	var tokens []string
 	var spans []sourceToken
 	start := -1
@@ -372,7 +383,14 @@ func tokenizeSource(cypher string, sets ...*cyphertext.CredentialSet) ([]string,
 			start = -1
 		}
 	}
+	var lexicalWork uint32
 	for i := 0; i < len(cypher); i++ {
+		if lexicalWork&255 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, nil, err
+			}
+		}
+		lexicalWork++
 		if end := cyphertext.CommentEnd(cypher, i); end >= 0 {
 			emit(i)
 			i = end - 1
@@ -390,7 +408,10 @@ func tokenizeSource(cypher string, sets ...*cyphertext.CredentialSet) ([]string,
 			if start < 0 {
 				start = i
 			}
-			end, closed := scanCypherQuotedText(cypher, i, c)
+			end, closed, scanErr := cyphertext.ScanQuotedTextContext(ctx, cypher, i)
+			if scanErr != nil {
+				return nil, nil, scanErr
+			}
 			if !closed {
 				return nil, nil, localizedError(localization.CypherCoreUnterminatedStringLiteral(), nil)
 			}
@@ -412,6 +433,9 @@ func tokenizeSource(cypher string, sets ...*cyphertext.CredentialSet) ([]string,
 		}
 	}
 	emit(len(cypher))
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
 	return tokens, spans, nil
 }
 
@@ -431,7 +455,7 @@ func NewExecutor() *Executor {
 // parses and validates a Cypher query but, does not execute.
 func (e *Executor) ParseAndValidate(ctx context.Context, cypher string, params map[string]any) (*Result, error) {
 	// Parse query
-	query, err := e.parser.Parse(cypher)
+	query, err := e.parser.Parse(ctx, cypher)
 	if err != nil {
 		return nil, localizedError(localization.CypherCoreParseFailed(err), err)
 	}

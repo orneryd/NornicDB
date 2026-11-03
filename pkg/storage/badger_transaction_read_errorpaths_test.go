@@ -12,13 +12,13 @@ func TestBadgerTransaction_ReadEdgeAndAdjacency_ErrorPaths(t *testing.T) {
 	engine := newTestEngine(t)
 
 	// Seed a minimal graph for read helpers.
-	_, err := engine.CreateNode(&Node{ID: "test:a", Labels: []string{"N"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:a", Labels: []string{"N"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:b", Labels: []string{"N"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:b", Labels: []string{"N"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL"}))
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 
 	// pinNamespaceFromIDLocked failure through public read methods.
@@ -49,16 +49,16 @@ func TestBadgerTransaction_GetCommittedEdgeLocked_PrimaryDecodeError(t *testing.
 	engine := newTestEngine(t)
 
 	badEdgeID := EdgeID("test:bad-edge")
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		return txn.Set(edgeKey(badEdgeID), []byte("not-a-valid-edge-encoding"))
 	}))
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
 	tx.readTS = MVCCVersion{}
 
-	_, err = tx.getCommittedEdgeLocked(badEdgeID)
+	_, err = tx.getCommittedEdgeLocked(t.Context(), badEdgeID)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unexpected format")
 }
@@ -87,10 +87,10 @@ func runGetNodesByLabelLockedReadTSCases(t *testing.T, cases []getNodesByLabelLo
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			engine := newTestEngine(t)
-			_, err := engine.CreateNode(&Node{ID: tc.nodeID, Labels: []string{tc.label}})
+			_, err := engine.CreateNode(t.Context(), &Node{ID: tc.nodeID, Labels: []string{tc.label}})
 			require.NoError(t, err)
 
-			tx, err := engine.BeginTransaction()
+			tx, err := engine.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, tx.Rollback()) })
 			if tc.namespace != "" {
@@ -117,20 +117,20 @@ func TestBadgerTransaction_GetNodesByLabelLocked_ReadTSBranches(t *testing.T) {
 func TestBadgerTransaction_GetCommittedEdgeLocked_VisibleAtDecodeErrorPath(t *testing.T) {
 	engine := newTestEngine(t)
 
-	_, err := engine.CreateNode(&Node{ID: "test:a", Labels: []string{"N"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:a", Labels: []string{"N"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:b", Labels: []string{"N"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:b", Labels: []string{"N"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL"}))
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	defer func() { _ = tx.Rollback() }()
 
 	// Existing tests cover ErrNotVisibleAtSnapshot->ErrNotFound conversion.
 	// Corrupt the edge MVCC head so visible-at returns a different error.
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		headKey := engine.mvccEdgeHeadKeyStringLookup("test:e1")
 		if headKey == nil {
 			return ErrNotFound
@@ -139,14 +139,14 @@ func TestBadgerTransaction_GetCommittedEdgeLocked_VisibleAtDecodeErrorPath(t *te
 	}))
 
 	// The original physical snapshot predates the injected corruption.
-	_, err = tx.getCommittedEdgeLocked("test:e1")
+	_, err = tx.getCommittedEdgeLocked(t.Context(), "test:e1")
 	require.NoError(t, err)
 
-	corruptReader, err := engine.BeginTransaction()
+	corruptReader, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, corruptReader.SetNamespace("test"))
 	defer func() { _ = corruptReader.Rollback() }()
-	_, err = corruptReader.getCommittedEdgeLocked("test:e1")
+	_, err = corruptReader.getCommittedEdgeLocked(t.Context(), "test:e1")
 	require.Error(t, err)
 	require.NotErrorIs(t, err, ErrNotFound)
 }

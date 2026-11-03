@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Go USE/clause preparation scanners now require operation contexts and explicit
+  errors across thirteen existing Cypher APIs. Fabric keyword-name and import
+  readers are context-first stateless callbacks; canceled preparation is not
+  cached. See [the migration guide](docs/development/cypher-preparation-context-api.md#use-and-clause-scanner-migration).
 - Go query metadata and permission readers now require an explicit raw or accepted source stage; see [the source-stage migration guide](docs/development/cypher-source-stage-api.md).
 
 ### Added
@@ -21,6 +25,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Normalize duration seconds/nanoseconds and preserve TIME offset versus DATETIME region identity in canonical temporal equality. Use typed temporal keys for allocation-free collection lookup.
 
 ### Changed
+
+- Search candidate serving and local/LLM reranking require the supplied operation
+  context instead of retaining test-only nil-to-background compatibility.
+- Go storage, search, Bolt, Fabric, transaction-session, replication, auth, MCP
+  and lifecycle APIs touched by this release require a non-nil context; nil
+  no longer falls back to `context.Background()`. Embedders passing nil must
+  pass their operation or owner context and rebuild. Accepted compensation and
+  post-acceptance completion (session-close rollback, accepted replication
+  apply, namespace index cleanup, server stop) now detach from cancellation with
+  `context.WithoutCancel` of the owning context instead of a fresh background.
+- Go parser and MERGE retry classifiers take an explicit operation context;
+  canceled classification preserves the original commit error. See the
+  [preparation API guide](docs/development/cypher-preparation-context-api.md).
+- Go label-count capabilities receive the caller context through native metadata
+  and wrapper scans; see [label counts](docs/api-reference/storage-label-counts.md).
+  Reveal-lease inheritance uses an opaque `RevealScopes` handle instead of
+  retaining a statement context; see [reveal handles](docs/development/reveal-scope-metadata-api.md).
+
+- Plugin host configuration uses typed `heimdall.SubsystemHost` metadata;
+  registration work retains its own context. Go hosts and plugins must rebuild
+  and migrate loader calls and keyed literals; see [the migration guide](docs/development/plugin-host-metadata-api.md).
+
+- Owned shutdowns join the existing completion channel with `WorkLifetime.JoinStopped`; bounded waits retain their caller budgets. See the [lifetime guide](docs/development/work-lifetime.md).
+
+- Composite index and node-key tuple hashes frame each property separately, so
+  delimiter-shaped values cannot collide before hashing and reject valid bulk
+  writes. These hashes are process-local; persisted temporal keys are unchanged.
+
+- Embedded Go index discovery, candidate/ordered reads, unique-value, transaction
+  pending-merge, composite-key and keyed-digest APIs take the caller context and
+  return errors. Migrate callers
+  using the [index-read guide](docs/development/index-read-cancellation.md).
 
 - Storage-backed Go APOC helpers use immutable `New(backend)` instances instead
   of module storage globals. Backend replacement publishes a new registry for
@@ -63,7 +99,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Go native transaction schemas use `Schema(SchemaPurpose)` for ordinary DDL or
   knowledge-policy edits. Composite participant callbacks bind their complete
-  terminal contract together; see the [participant lifecycle guide](docs/development/fabric-participant-lifecycle.md).
+  terminal contract together. Fabric terminal callbacks are context-first;
+  commits require explicit `TerminalContexts` and rollbacks an explicit cleanup
+  dispatch context. Rebuild Go consumers using the
+  [participant lifecycle guide](docs/development/fabric-participant-lifecycle.md).
 
 - Go entity commits use typed preparation, publication and encoding requests.
   Replication encodes accepted snapshots directly; public diagnostic operation
@@ -125,6 +164,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   interruption; see [Securing Replication Traffic](docs/user-guides/clustering.md#securing-replication-traffic).
 
 ### Fixed
+
+- Preserve authoritative wrapper admission and namespace preparation for WAL
+  entity mutations, including accepted-failure outcomes and replay identity.
+- Finish pending-index bookkeeping with its staged write so cancellation cannot
+  make transaction point, label and property reads disagree.
+- Retain caller cancellation, values and the existing default timeout through
+  remote storage operations.
+
+- Preserve the caller's cancellation error when a `CALL` fragment is read
+  after its transaction opens; do not report an empty procedure name instead.
+- Keep acknowledged replay, token persistence and post-durable count updates on
+  one explicit completion lifetime, independent of client cancellation.
+- Preserve transaction-memory inheritance when process defaults change or a
+  database override is removed, including overrides equal to inherited values.
+  Go configuration callers use per-setting optional overrides described in the
+  [memory-limit guide](docs/operations/transaction-memory-limits.md).
+- `gds.graph.project` retains request cancellation through node and relationship
+  streams and checks it before publishing the graph projection.
+- Transaction streams cancel lock reacquisition after a visitor returns, preserve
+  intentional prefix completion, and never release another operation's lock.
+- Explicit composite transactions see their own staged index drops in
+  `USE ... SHOW INDEXES`; leading comments no longer route that statement through
+  a different transaction when query normalization is disabled. Comment-only
+  prefixes before Fabric subqueries are not executed as empty statements, and
+  comment-led `WITH ... USE` prefixes retain their real row bindings.
+
+- Snapshot/read-view admission observes caller cancellation while waiting for
+  the write-behind retirement lock, including completed-cache admission.
+- Sorted property-index readers retain their rebuilt key cache through an atomic
+  write-to-read lock handoff, preventing repeated rebuild starvation under writes.
+
+- Keep namespace-scoped label reads complete during index rebuilding and retain
+  snapshot property names and node identities across database DROP/recreate.
+  Low-memory backfills reduce their transaction batch after a size rejection.
+- Stop indexed statement preparation on caller cancellation, retain accepted
+  work until shutdown completion, and preserve terminal cleanup errors across
+  repeated Close calls. Stored keys, payloads and storage version are unchanged.
 
 - Escape CSV export identifiers, relationship types and headers containing
   commas, quotes or line breaks while preserving ordinary export bytes.
@@ -221,6 +297,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   through the database manager. Enforce constituent access modes before remote
   dispatch, including dynamic graph selections and execution without a grant
   resolver; preserve read-only alias reads and writable-alias writes.
+
+<!-- Author: Codex, NOR-180 implementation lane, updated 2026-10-29. -->
+- Report logical WAL commit and abort record failures from explicit and implicit
+  transactions through HTTP, Bolt, GraphQL and the CLI shell, retaining primary
+  statuses, localized diagnostics and the actual native graph outcome across
+  cleanup, cancellation, callback and procedure aggregation, and response
+  formatting. Keep independently failed terminal records visible together.
+  <!-- Author: Claude, NOR-180, 2026-10-30. -->
+  A transaction start, commit or rollback failure without a more specific
+  status now reports Neo4j's `Neo.DatabaseError.Transaction.Transaction{Start,Commit,Rollback}Failed`
+  on every route, auto-commit statements included (previously `ClientError`,
+  or `Statement.SyntaxError` on some routes).
+  A failure after a transaction's work was committed (a failed post-commit
+  step, or a failed WAL commit record), or a WAL failure of one part of an
+  operation whose other parts committed, is never reported with a status drivers
+  retry, alone or combined with other failures in any order: a retryable status
+  becomes `Neo.DatabaseError.Transaction.TransactionCommitFailed`, and each
+  combined failure keeps its own status in the message (previously, for example,
+  `Neo.TransientError.General.DatabaseUnavailable`, so a managed transaction
+  repeated stored work).
 
 - Keep typed relationship counts scoped through WAL, tracing, replication and
   managed database views. Journal catalog DROP intent before deleting data;

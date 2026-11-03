@@ -28,11 +28,11 @@ type pathSelector struct {
 // selector, the selector's predicate (the pattern's own predicates) and the
 // clause's WHERE conjuncts. ok is false when where doesn't start with a
 // selector.
-func splitPathSelectorTerm(where string) (*pathSelector, string, []string, bool) {
+func splitPathSelectorTerm(ctx context.Context, where string) (*pathSelector, string, []string, bool) {
 	if len(where) < len(pathSelectorFunction) || !equalFoldASCII(where[:len(pathSelectorFunction)], pathSelectorFunction) {
 		return nil, "", nil, false
 	}
-	terms := splitTopLevelAndConjuncts(where)
+	terms := splitTopLevelAndConjuncts(ctx, where)
 	call := strings.TrimSpace(terms[0])
 	open := strings.IndexByte(call, '(')
 	if open < 0 || findMatchingParen(call, open) != len(call)-1 {
@@ -123,7 +123,7 @@ func (e *StorageExecutor) pipelineApplySelectedPathMatch(ctx context.Context, ro
 			found++
 		}
 		if optional && found == 0 {
-			out = append(out, m.unmatchedRow(row))
+			out = append(out, m.unmatchedRow(ctx, row))
 		}
 	}
 	return out, nil

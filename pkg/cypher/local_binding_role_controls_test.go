@@ -53,16 +53,16 @@ func TestNamedPatternKeywordPrefixRoles(t *testing.T) {
 	defer restore()
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "path_keyword_roles")
 	exec := NewStorageExecutor(store)
-	_, err := store.CreateNode(&storage.Node{ID: "source", Labels: []string{"LocalPathSource"}, Properties: map[string]interface{}{"id": "source"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "source", Labels: []string{"LocalPathSource"}, Properties: map[string]interface{}{"id": "source"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "target", Labels: []string{"LocalPathTarget"}, Properties: map[string]interface{}{"id": "target"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "target", Labels: []string{"LocalPathTarget"}, Properties: map[string]interface{}{"id": "target"}})
 	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "edge", Type: "LocalPathRel", StartNode: "source", EndNode: "target", Properties: map[string]interface{}{"id": "edge"}}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "edge", Type: "LocalPathRel", StartNode: "source", EndNode: "target", Properties: map[string]interface{}{"id": "edge"}}))
 	for _, name := range []string{"create", "match", "merge", "p"} {
 		pattern := name + " = (s:LocalPathSource)-[:LocalPathRel]->(t:LocalPathTarget)"
 		for _, prefix := range []string{"", "CREATE ", "CREATE/*c*/", "MERGE\t"} {
 			kinds := make(matchSemanticScope)
-			addMatchPatternBindingKinds(kinds, prefix+pattern)
+			addMatchPatternBindingKinds(t.Context(), kinds, prefix+pattern)
 			require.Equal(t, matchBindingPath, kinds[name], prefix+pattern)
 			require.Equal(t, matchBindingNode, kinds["s"], prefix+pattern)
 		}

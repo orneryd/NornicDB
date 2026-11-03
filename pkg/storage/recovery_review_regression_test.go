@@ -37,7 +37,7 @@ func TestLightweightSnapshotDoesNotAdvertiseOmittedVectors(t *testing.T) {
 		vectors[i] = make([]float32, 1536)
 		vectors[i][0] = 1
 	}
-	_, err = engine.CreateNode(&Node{ID: "test:large", Labels: []string{"Doc"}, Properties: map[string]interface{}{"title": "kept"}, ChunkEmbeddings: vectors, EmbedMeta: map[string]interface{}{"has_embedding": true, "has_chunks": true, "chunk_count": int64(16), "unrelated": "kept"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:large", Labels: []string{"Doc"}, Properties: map[string]interface{}{"title": "kept"}, ChunkEmbeddings: vectors, EmbedMeta: map[string]interface{}{"has_embedding": true, "has_chunks": true, "chunk_count": int64(16), "unrelated": "kept"}})
 	require.NoError(t, err)
 	var output bytes.Buffer
 	require.NoError(t, WriteSnapshot(context.Background(), engine, &output, SnapshotOptions{}))
@@ -52,7 +52,7 @@ func TestLightweightSnapshotDoesNotAdvertiseOmittedVectors(t *testing.T) {
 	require.NotEqual(t, true, restored.EmbedMeta["has_chunks"])
 	require.NotContains(t, restored.EmbedMeta, "chunk_count")
 	require.Equal(t, "kept", restored.EmbedMeta["unrelated"])
-	original, err := engine.GetNode("test:large")
+	original, err := engine.GetNode(t.Context(), "test:large")
 	require.NoError(t, err)
 	require.True(t, original.EmbedMeta["has_embedding"].(bool), "snapshot must not mutate stored metadata")
 }

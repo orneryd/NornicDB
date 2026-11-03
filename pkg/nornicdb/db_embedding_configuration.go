@@ -15,7 +15,7 @@ func (db *DB) SetDefaultEmbedConfig(defaultConfig *embed.Config) {
 	}
 	db.mu.Lock()
 	eq := db.embedQueue
-	closed := db.closed
+	closed := db.work.Closing()
 	db.mu.Unlock()
 	if closed {
 		return

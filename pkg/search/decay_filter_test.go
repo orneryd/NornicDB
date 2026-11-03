@@ -3,7 +3,7 @@ package search
 import "testing"
 
 func TestFilterDecayedCandidates_NilFilter(t *testing.T) {
-	s := &Service{}
+	s := &Service{lifecycleCtx: t.Context()}
 	input := []indexResult{
 		{ID: "a", Score: 0.9},
 		{ID: "b", Score: 0.8},
@@ -15,7 +15,7 @@ func TestFilterDecayedCandidates_NilFilter(t *testing.T) {
 }
 
 func TestFilterDecayedCandidates_SuppressSome(t *testing.T) {
-	s := &Service{}
+	s := &Service{lifecycleCtx: t.Context()}
 	s.nodeDecayFilter = func(nodeID string) bool {
 		return nodeID == "decayed"
 	}
@@ -35,7 +35,7 @@ func TestFilterDecayedCandidates_SuppressSome(t *testing.T) {
 }
 
 func TestFilterDecayedCandidates_AllSuppressed(t *testing.T) {
-	s := &Service{}
+	s := &Service{lifecycleCtx: t.Context()}
 	s.nodeDecayFilter = func(nodeID string) bool {
 		return true
 	}
@@ -51,7 +51,7 @@ func TestFilterDecayedCandidates_AllSuppressed(t *testing.T) {
 }
 
 func TestSetNodeDecayFilter(t *testing.T) {
-	s := &Service{}
+	s := &Service{lifecycleCtx: t.Context()}
 	if s.nodeDecayFilter != nil {
 		t.Error("expected nil filter initially")
 	}

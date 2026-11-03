@@ -2,11 +2,12 @@ package nornicdb
 
 import (
 	"context"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	featureflags "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher"
@@ -432,7 +433,7 @@ func TestDBWrapperHelpers_CountAndBuildBranches(t *testing.T) {
 		buildCtx:            context.Background(),
 	}
 
-	_, err := db.storage.CreateNode(&storage.Node{ID: "default", Properties: map[string]any{"content": "default"}, ChunkEmbeddings: [][]float32{{1, 0, 0}}})
+	_, err := db.storage.CreateNode(t.Context(), &storage.Node{ID: "default", Properties: map[string]any{"content": "default"}, ChunkEmbeddings: [][]float32{{1, 0, 0}}})
 	require.NoError(t, err)
 	require.NoError(t, db.BuildSearchIndexes(context.Background()))
 	require.Equal(t, 1, db.EmbeddingCount())
@@ -440,7 +441,7 @@ func TestDBWrapperHelpers_CountAndBuildBranches(t *testing.T) {
 	require.Equal(t, 3, db.VectorIndexDimensionsCached())
 
 	tenantStorage := storage.NewNamespacedEngine(base, "tenant_count")
-	_, err = tenantStorage.CreateNode(&storage.Node{ID: "tenant", Properties: map[string]any{"content": "tenant"}, ChunkEmbeddings: [][]float32{{0, 1, 0}}})
+	_, err = tenantStorage.CreateNode(t.Context(), &storage.Node{ID: "tenant", Properties: map[string]any{"content": "tenant"}, ChunkEmbeddings: [][]float32{{0, 1, 0}}})
 	require.NoError(t, err)
 	tenantSvc, err := db.EnsureSearchIndexes(context.Background(), "tenant_count", tenantStorage, SearchIndexBuildWait)
 	require.NoError(t, err)
@@ -457,6 +458,6 @@ func TestDBWrapperHelpers_CountAndBuildBranches(t *testing.T) {
 	})
 	require.Equal(t, 2, db.EmbeddingCount())
 
-	db.closed = true
+	db.work.CloseAdmission()
 	require.ErrorIs(t, db.BuildSearchIndexes(context.Background()), ErrClosed)
 }

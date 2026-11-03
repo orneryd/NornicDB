@@ -121,11 +121,18 @@ func TestIteratorErrorPropagationBranches(t *testing.T) {
 		err:      baseErr,
 		closeErr: closeErr,
 	}, 0)
+	t.Cleanup(func() { _ = prefetch.Close() })
 	require.True(t, prefetch.Next())
 	require.Equal(t, []interface{}{"x"}, prefetch.Row())
 	require.False(t, prefetch.Next())
 	require.ErrorIs(t, prefetch.Err(), baseErr)
-	require.NoError(t, prefetch.Close())
+	// Closing the lifetime retains both the producer and resource-close
+	// failures; repeated Close calls must retain that terminal outcome.
+	for range 2 {
+		terminal := prefetch.Close()
+		require.ErrorIs(t, terminal, baseErr)
+		require.ErrorIs(t, terminal, closeErr)
+	}
 
 	concat := NewConcatRowIterator(
 		&fabricErrorIterator{idx: -1, rows: [][]interface{}{{"a"}}},
@@ -135,7 +142,9 @@ func TestIteratorErrorPropagationBranches(t *testing.T) {
 	require.Equal(t, []interface{}{"a"}, concat.Row())
 	require.False(t, concat.Next())
 	require.ErrorIs(t, concat.Err(), baseErr)
-	require.NoError(t, concat.Close())
+	for range 2 {
+		require.ErrorIs(t, concat.Close(), baseErr)
+	}
 
 	concatWithCloseErr := NewConcatRowIterator(&fabricErrorIterator{idx: -1, closeErr: closeErr})
 	require.ErrorIs(t, concatWithCloseErr.Close(), closeErr)

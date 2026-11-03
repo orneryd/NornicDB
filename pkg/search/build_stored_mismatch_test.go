@@ -2,9 +2,10 @@ package search
 
 import (
 	"context"
+	"testing"
+
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
-	"testing"
 
 	"github.com/stretchr/testify/require"
 )
@@ -17,9 +18,9 @@ func TestBuildSkipsAStoredEmbeddingWithOtherDimensions(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "1000")
 	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { _ = engine.Close() })
-	_, err := engine.CreateNode(buildWriteNode("nornic:good", "goodterm", []float32{1, 0, 0}))
+	_, err := engine.CreateNode(t.Context(), buildWriteNode("nornic:good", "goodterm", []float32{1, 0, 0}))
 	require.NoError(t, err)
-	_, err = engine.CreateNode(buildWriteNode("nornic:bad", "badterm", []float32{1, 0}))
+	_, err = engine.CreateNode(t.Context(), buildWriteNode("nornic:bad", "badterm", []float32{1, 0}))
 	require.NoError(t, err)
 	svc := buildWriteService(t, engine, "", "v2", nil)
 	t.Cleanup(func() { _ = svc.Close() })

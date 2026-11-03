@@ -132,7 +132,7 @@ func (e *StorageExecutor) callDbTemporalAsOf(ctx context.Context, args []interfa
 	}
 
 	if temporalLookup, ok := e.storage.(storage.TemporalLookupEngine); ok && !hasSnapshot {
-		node, err := temporalLookup.GetTemporalNodeAsOf(label, keyProp, keyValue, validFromProp, validToProp, asOf)
+		node, err := temporalLookup.GetTemporalNodeAsOf(ctx, label, keyProp, keyValue, validFromProp, validToProp, asOf)
 		if err != nil {
 			return nil, localizedError(localization.CypherSpecializedCallsTemporalLookupFailed(label, err), err)
 		}

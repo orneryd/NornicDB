@@ -54,11 +54,11 @@ func TestExecuteMergeWithContext_RelationshipChainAndSet(t *testing.T) {
 	a := &storage.Node{ID: "a", Labels: []string{"Person"}, Properties: map[string]interface{}{"id": "a"}}
 	b := &storage.Node{ID: "b", Labels: []string{"Person"}, Properties: map[string]interface{}{"id": "b"}}
 	c := &storage.Node{ID: "c", Labels: []string{"Person"}, Properties: map[string]interface{}{"id": "c"}}
-	_, err := store.CreateNode(a)
+	_, err := store.CreateNode(t.Context(), a)
 	require.NoError(t, err)
-	_, err = store.CreateNode(b)
+	_, err = store.CreateNode(t.Context(), b)
 	require.NoError(t, err)
-	_, err = store.CreateNode(c)
+	_, err = store.CreateNode(t.Context(), c)
 	require.NoError(t, err)
 
 	q := "MATCH (a:Person {id: 'a'}), (b:Person {id: 'b'}), (c:Person {id: 'c'}) MERGE (a)-[r:KNOWS]->(b) SET r.weight = 1 MERGE (b)-[s:KNOWS]->(c) RETURN r.weight AS rw"

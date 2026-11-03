@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -128,7 +129,7 @@ func TestSchemaManager_RelationshipFulltextIndex_RoundTrip(t *testing.T) {
 	// Re-load the persisted def into a fresh manager — round-trip drops
 	// nothing.
 	sm2 := NewSchemaManager()
-	require.NoError(t, sm2.ReplaceFromDefinition(persisted))
+	require.NoError(t, sm2.ReplaceFromDefinition(context.Background(), persisted))
 	idx2, ok := sm2.GetFulltextIndex("rel_search")
 	require.True(t, ok)
 	assert.Equal(t, []string{"KNOWS"}, idx2.RelationshipTypes)
@@ -406,14 +407,14 @@ func TestFulltextIndex_RoundTripIdempotent(t *testing.T) {
 	require.NoError(t, sm.AddFulltextIndex("node_idx", []string{"A", "B"}, []string{"p", "q"}, ConstraintEntityNode))
 	require.NoError(t, sm.AddFulltextIndex("rel_idx", []string{"R1", "R2"}, []string{"x"}, ConstraintEntityRelationship))
 
-	def1 := sm.ExportDefinition()
+	def1 := schemaDefinitionForTest(t, sm)
 	bytes1, err := json.Marshal(def1)
 	require.NoError(t, err)
 
 	sm2 := NewSchemaManager()
-	require.NoError(t, sm2.ReplaceFromDefinition(def1))
+	require.NoError(t, sm2.ReplaceFromDefinition(context.Background(), def1))
 
-	def2 := sm2.ExportDefinition()
+	def2 := schemaDefinitionForTest(t, sm2)
 	bytes2, err := json.Marshal(def2)
 	require.NoError(t, err)
 

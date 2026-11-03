@@ -50,7 +50,7 @@ func newLexicalFixture(t *testing.T) lexicalFixture {
 	engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = engine.Close() })
 	store := storage.NewNamespacedEngine(engine, "nornic")
-	_, err := store.CreateNode(&storage.Node{ID: "seed", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": seedContent}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "seed", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": seedContent}})
 	require.NoError(t, err)
 	service := search.NewService(store, search.DefaultVectorDimensions, nil)
 	require.NoError(t, service.BuildIndexes(t.Context()))

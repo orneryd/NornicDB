@@ -107,7 +107,7 @@ func (plan traversalScanPlan) visitEdges(ctx context.Context, e *StorageExecutor
 			case "incoming":
 				edges = e.traversalEdges(traversal, lookupID, false)
 			case "both":
-				edges, err = undirectedIncidentEdges(store, lookupID)
+				edges, err = undirectedIncidentEdges(ctx, store, lookupID)
 			default:
 				edges = e.traversalEdges(traversal, lookupID, true)
 			}

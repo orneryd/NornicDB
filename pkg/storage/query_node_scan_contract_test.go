@@ -33,7 +33,7 @@ func TestQueryNodeScanDecayOptionAcrossReadViews(t *testing.T) {
 				if buffered && node.ID != "other:visible" {
 					bufferedCreate(t, b, node)
 				} else {
-					_, err := b.CreateNode(node)
+					_, err := b.CreateNode(t.Context(), node)
 					require.NoError(t, err)
 				}
 			}
@@ -43,7 +43,7 @@ func TestQueryNodeScanDecayOptionAcrossReadViews(t *testing.T) {
 			}
 			scan := b.StreamNodesWithOptions
 			if view != "storage" && view != "buffered-storage" {
-				tx, err := b.BeginTransaction()
+				tx, err := b.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = tx.Rollback() })
 				if view == "logical" || view == "current" {
@@ -98,7 +98,7 @@ func TestQueryNodeScanBufferedCallerCopy(t *testing.T) {
 	})
 	resident, ok := b.writeBehind.LookupNode("test:buffered")
 	require.True(t, ok, "the regression must exercise an unflushed overlay")
-	tx, err := b.BeginTransaction()
+	tx, err := b.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	for name, scan := range map[string]func(context.Context, StreamNodesOptions, func(*Node) error) error{
@@ -134,7 +134,7 @@ func TestQueryNodeScanBufferedCallerCopy(t *testing.T) {
 		}
 	}
 	t.Run("stop-before-pending-rows", func(t *testing.T) {
-		_, err := tx.CreateNode(&Node{ID: "test:pending", Labels: []string{"Doc"}})
+		_, err := tx.CreateNode(t.Context(), &Node{ID: "test:pending", Labels: []string{"Doc"}})
 		require.NoError(t, err)
 		rows := 0
 		err = tx.StreamNodesWithOptions(context.Background(), StreamNodesOptions{Label: "Doc", QueryNodes: true}, func(*Node) error {
@@ -151,10 +151,10 @@ func TestQueryNodeScanNestedVisitorsKeepTheirOptions(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = b.Close() })
 	for _, id := range []NodeID{"test:a", "test:b"} {
-		_, err := b.CreateNode(&Node{ID: id, Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{1, 2}}})
+		_, err := b.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{1, 2}}})
 		require.NoError(t, err)
 	}
-	tx, err := b.BeginTransaction()
+	tx, err := b.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -199,7 +199,7 @@ func TestQueryNodeScanLogicalSnapshotsSkipStoredVectors(t *testing.T) {
 				b := newSidecarTestBadger(t)
 				tc.create(t, b, "test:lazy")
 				corruptFirstEmbeddingChunk(t, b, "test:lazy")
-				tx, err := b.BeginTransaction()
+				tx, err := b.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				defer tx.Rollback()
 				tx.snapshotTx.Discard()

@@ -1,6 +1,7 @@
 package storagecensus
 
 import (
+	"github.com/orneryd/nornicdb/internal/workcensus"
 	"go/token"
 	"go/types"
 	"sort"
@@ -226,7 +227,7 @@ func (q *acquirer) flow(fn *ssa.Function, kind int, assumption flowAssumption) *
 					if name := q.mutexField(receiver, assumption, 0); name == field {
 						if takes {
 							if fallible {
-								if iff, succ := successEdge(call, 0); succ != nil {
+								if iff, succ := workcensus.SuccessfulCallEdge(call, 0); succ != nil {
 									f.gen[[2]*ssa.BasicBlock{iff.Block(), succ}] = true
 								}
 							} else {
@@ -242,7 +243,7 @@ func (q *acquirer) flow(fn *ssa.Function, kind int, assumption flowAssumption) *
 				if h, ok := lockHelpers[q.p.methodIdentity(callee)]; ok && h.lock == field {
 					if h.takes {
 						if h.fallible {
-							if iff, succ := successEdge(call, 0); succ != nil {
+							if iff, succ := workcensus.SuccessfulCallEdge(call, 0); succ != nil {
 								f.gen[[2]*ssa.BasicBlock{iff.Block(), succ}] = true
 							}
 						} else {
@@ -265,7 +266,7 @@ func (q *acquirer) flow(fn *ssa.Function, kind int, assumption flowAssumption) *
 		if !ok {
 			continue
 		}
-		if iff, succ := successEdge(call, a.errIndex); succ != nil {
+		if iff, succ := workcensus.SuccessfulCallEdge(call, a.errIndex); succ != nil {
 			f.gen[[2]*ssa.BasicBlock{iff.Block(), succ}] = true
 		}
 		for _, rc := range calls {
@@ -410,7 +411,8 @@ func (q *acquirer) bufferTest(v ssa.Value, depth int) (present, ok bool) {
 
 // nilTest reports whether cmp compares BadgerEngine.writeBehind with nil.
 func (q *acquirer) nilTest(cmp *ssa.BinOp) bool {
-	if cmp.Op != token.NEQ && cmp.Op != token.EQL {
+	tested, _, ok := workcensus.NilComparison(cmp)
+	if !ok {
 		return false
 	}
 	isField := func(v ssa.Value) bool {
@@ -425,78 +427,7 @@ func (q *acquirer) nilTest(cmp *ssa.BinOp) bool {
 		name, _ := q.p.field(fa.X.Type().Underlying().(*types.Pointer).Elem(), fa.Field)
 		return name == "pkg/storage.BadgerEngine.writeBehind"
 	}
-	isNil := func(v ssa.Value) bool {
-		c, ok := v.(*ssa.Const)
-		return ok && c.IsNil()
-	}
-	return isField(cmp.X) && isNil(cmp.Y) || isField(cmp.Y) && isNil(cmp.X)
-}
-
-// successEdge is the branch taken when the call's result errIndex is nil:
-// the If of "err != nil" (or "== nil") and its successor without an error.
-func successEdge(call *ssa.Call, errIndex int) (*ssa.If, *ssa.BasicBlock) {
-	// A call with one result (the error) is compared itself.
-	if _, tuple := call.Type().(*types.Tuple); !tuple && errIndex == 0 {
-		return nilCheck(call)
-	}
-	for _, ref := range *call.Referrers() {
-		ex, ok := ref.(*ssa.Extract)
-		if !ok || ex.Index != errIndex {
-			continue
-		}
-		// The error, or (a named result a deferred closure captures lives
-		// in a cell) a load of the cell it is stored in.
-		errs := []ssa.Value{ex}
-		for _, r := range *ex.Referrers() {
-			if st, ok := r.(*ssa.Store); ok && st.Val == ex {
-				if cell, ok := st.Addr.(*ssa.Alloc); ok {
-					for _, u := range *cell.Referrers() {
-						if load, ok := u.(*ssa.UnOp); ok && load.Op == token.MUL && st.Block().Dominates(load.Block()) {
-							errs = append(errs, load)
-						}
-					}
-				}
-			}
-		}
-		for _, e := range errs {
-			if iff, succ := nilCheck(e); succ != nil {
-				return iff, succ
-			}
-		}
-	}
-	return nil, nil
-}
-
-// nilCheck is the If that compares e with nil and its successor taken when
-// e is nil.
-func nilCheck(e ssa.Value) (*ssa.If, *ssa.BasicBlock) {
-	{
-		ex := e
-		for _, r := range *ex.Referrers() {
-			cmp, ok := r.(*ssa.BinOp)
-			if !ok || (cmp.Op != token.NEQ && cmp.Op != token.EQL) {
-				continue
-			}
-			other := cmp.Y
-			if cmp.Y == ex {
-				other = cmp.X
-			}
-			if c, ok := other.(*ssa.Const); !ok || !c.IsNil() {
-				continue
-			}
-			for _, u := range *cmp.Referrers() {
-				iff, ok := u.(*ssa.If)
-				if !ok || len(iff.Block().Succs) != 2 {
-					continue
-				}
-				if cmp.Op == token.NEQ {
-					return iff, iff.Block().Succs[1]
-				}
-				return iff, iff.Block().Succs[0]
-			}
-		}
-	}
-	return nil, nil
+	return isField(tested)
 }
 
 // covers reports whether the write order is held at ins on every path to

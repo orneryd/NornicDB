@@ -3,8 +3,9 @@ package eval
 import (
 	"bytes"
 	"context"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -181,7 +182,7 @@ func TestHarnessSingleTestCaseEvaluation(t *testing.T) {
 					"content": "Test content for search",
 				},
 			}
-			store.CreateNode(node)
+			store.CreateNode(t.Context(), node)
 			service.IndexNode(node)
 		}
 
@@ -208,7 +209,7 @@ func TestHarnessSingleTestCaseEvaluation(t *testing.T) {
 					"content": "Test content for search",
 				},
 			}
-			store.CreateNode(node)
+			store.CreateNode(t.Context(), node)
 			service.IndexNode(node)
 		}
 
@@ -252,7 +253,7 @@ func TestHarnessSingleTestCaseEvaluation(t *testing.T) {
 					"content": n.content,
 				},
 			}
-			store.CreateNode(node)
+			store.CreateNode(t.Context(), node)
 			service.IndexNode(node)
 		}
 
@@ -396,7 +397,7 @@ func TestGradedRelevance(t *testing.T) {
 				"title": id,
 			},
 		}
-		store.CreateNode(node)
+		store.CreateNode(t.Context(), node)
 		service.IndexNode(node)
 	}
 

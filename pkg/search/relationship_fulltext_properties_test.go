@@ -15,8 +15,8 @@ import (
 func TestRelationshipSearchReadsItsOwnPropertyList(t *testing.T) {
 	ctx := context.Background()
 	engine := relationshipTestEngine(t)
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "opted", StartNode: "a", EndNode: "c", Type: "LINK", Properties: map[string]any{"search_text": "harbour explanation", "text": "user note harbour"}}))
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "plain", StartNode: "c", EndNode: "a", Type: "LINK", Properties: map[string]any{"text": "harbour note"}}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "opted", StartNode: "a", EndNode: "c", Type: "LINK", Properties: map[string]any{"search_text": "harbour explanation", "text": "user note harbour"}}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "plain", StartNode: "c", EndNode: "a", Type: "LINK", Properties: map[string]any{"text": "harbour note"}}))
 	svc := startRelationshipService(t, engine, nil, func(s *Service) {
 		s.SetFulltextProperties([]string{"text", "search_text"})
 		s.SetRelationshipFulltextProperties([]string{" search_text ", "search_text"})

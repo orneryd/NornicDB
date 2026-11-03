@@ -17,10 +17,10 @@ func TestPrefixRetainsWrittenAliasIdentities(t *testing.T) {
 		{"WITH x, n.x, x + 1, x AS 1invalid, 1 AS `x` tail", []string{"x"}, "x"},
 	} {
 		t.Run(tc.query, func(t *testing.T) {
-			if got := trailingWithAliases(tc.query, nil); !reflect.DeepEqual(got, tc.aliases) {
+			if got := trailingWithAliases(t.Context(), tc.query, nil); !reflect.DeepEqual(got, tc.aliases) {
 				t.Fatalf("aliases=%q want%q", got, tc.aliases)
 			}
-			if got := ensureRowProducingPrefix(tc.query, nil); got != tc.query+" RETURN "+tc.prefix {
+			if got := ensureRowProducingPrefix(t.Context(), tc.query, nil); got != tc.query+" RETURN "+tc.prefix {
 				t.Fatalf("prefix=%q", got)
 			}
 		})

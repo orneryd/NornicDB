@@ -600,54 +600,54 @@ func TestRemoteEngineEngineMethods(t *testing.T) {
 		return remoteEngineMethodReplyHTTPServed(txReq.Statements[0].Statement, txReq.Statements[0].Parameters), nil
 	})
 
-	if _, err := engine.CreateNode(&Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}}); err != nil {
+	if _, err := engine.CreateNode(t.Context(), &Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}}); err != nil {
 		t.Fatalf("CreateNode failed: %v", err)
 	}
-	if _, err := engine.GetNode("missing"); err != ErrNotFound {
+	if _, err := engine.GetNode(t.Context(), "missing"); err != ErrNotFound {
 		t.Fatalf("expected ErrNotFound for missing node, got: %v", err)
 	}
-	if _, err := engine.GetNode("n1"); err != nil {
+	if _, err := engine.GetNode(t.Context(), "n1"); err != nil {
 		t.Fatalf("GetNode failed: %v", err)
 	}
-	if err := engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "missing", Properties: map[string]interface{}{"x": 1}}}); err != ErrNotFound {
+	if err := engine.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "missing", Properties: map[string]interface{}{"x": 1}}}); err != ErrNotFound {
 		t.Fatalf("expected ErrNotFound from UpdateNode")
 	}
-	if err := engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "n1", Properties: map[string]interface{}{"x": 1}}}); err != nil {
+	if err := engine.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "n1", Properties: map[string]interface{}{"x": 1}}}); err != nil {
 		t.Fatalf("UpdateNode failed: %v", err)
 	}
-	if err := engine.DeleteNode("n1"); err != nil {
+	if err := engine.DeleteNode(t.Context(), "n1"); err != nil {
 		t.Fatalf("DeleteNode failed: %v", err)
 	}
 
-	if err := engine.CreateEdge(&Edge{ID: "e1", StartNode: "missing", EndNode: "n2", Type: "KNOWS"}); err != ErrNotFound {
+	if err := engine.CreateEdge(t.Context(), &Edge{ID: "e1", StartNode: "missing", EndNode: "n2", Type: "KNOWS"}); err != ErrNotFound {
 		t.Fatalf("expected ErrNotFound from CreateEdge")
 	}
-	if err := engine.CreateEdge(&Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS"}); err != nil {
+	if err := engine.CreateEdge(t.Context(), &Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS"}); err != nil {
 		t.Fatalf("CreateEdge failed: %v", err)
 	}
-	if _, err := engine.GetEdge("missing"); err != ErrNotFound {
+	if _, err := engine.GetEdge(t.Context(), "missing"); err != ErrNotFound {
 		t.Fatalf("expected ErrNotFound from GetEdge")
 	}
-	if _, err := engine.GetEdge("e1"); err != nil {
+	if _, err := engine.GetEdge(t.Context(), "e1"); err != nil {
 		t.Fatalf("GetEdge failed: %v", err)
 	}
-	if err := engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "missing", Properties: map[string]interface{}{"w": 1}}}); err != ErrNotFound {
+	if err := engine.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "missing", Properties: map[string]interface{}{"w": 1}}}); err != ErrNotFound {
 		t.Fatalf("expected ErrNotFound from UpdateEdge")
 	}
-	if err := engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "e1", Properties: map[string]interface{}{"w": 1}}}); err != nil {
+	if err := engine.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "e1", Properties: map[string]interface{}{"w": 1}}}); err != nil {
 		t.Fatalf("UpdateEdge failed: %v", err)
 	}
-	if err := engine.DeleteEdge("e1"); err != nil {
+	if err := engine.DeleteEdge(t.Context(), "e1"); err != nil {
 		t.Fatalf("DeleteEdge failed: %v", err)
 	}
 
 	if nodes, err := engine.GetNodesByLabel(context.Background(), "Person"); err != nil || len(nodes) == 0 {
 		t.Fatalf("GetNodesByLabel failed: len=%d err=%v", len(nodes), err)
 	}
-	if _, err := engine.GetFirstNodeByLabel("Missing"); err != ErrNotFound {
+	if _, err := engine.GetFirstNodeByLabel(t.Context(), "Missing"); err != ErrNotFound {
 		t.Fatalf("expected ErrNotFound from GetFirstNodeByLabel")
 	}
-	if _, err := engine.GetFirstNodeByLabel("Person"); err != nil {
+	if _, err := engine.GetFirstNodeByLabel(t.Context(), "Person"); err != nil {
 		t.Fatalf("GetFirstNodeByLabel failed: %v", err)
 	}
 	if edges, err := engine.GetOutgoingEdges(context.Background(), "n1"); err != nil || len(edges) == 0 {
@@ -659,7 +659,11 @@ func TestRemoteEngineEngineMethods(t *testing.T) {
 	if edges, err := engine.GetEdgesBetween(context.Background(), "n1", "n2"); err != nil || len(edges) == 0 {
 		t.Fatalf("GetEdgesBetween failed: len=%d err=%v", len(edges), err)
 	}
-	if edge := engine.GetEdgeBetween("n1", "n2", "KNOWS"); edge == nil {
+	edge, err := engine.GetEdgeBetween(t.Context(), "n1", "n2", "KNOWS")
+	if err != nil {
+		t.Fatalf("GetEdgeBetween failed: %v", err)
+	}
+	if edge == nil {
 		t.Fatalf("GetEdgeBetween failed")
 	}
 	if edges, err := engine.GetEdgesByType(context.Background(), "KNOWS"); err != nil || len(edges) == 0 {
@@ -671,11 +675,19 @@ func TestRemoteEngineEngineMethods(t *testing.T) {
 	if allNodes, err := engine.AllNodes(context.Background()); err != nil || len(allNodes) == 0 {
 		t.Fatalf("AllNodes failed: len=%d err=%v", len(allNodes), err)
 	}
-	if got := engine.GetInDegree("n1"); got != 2 {
-		t.Fatalf("GetInDegree mismatch: %d", got)
+	inDegree, err := engine.GetInDegree(t.Context(), "n1")
+	if err != nil {
+		t.Fatalf("GetInDegree failed: %v", err)
 	}
-	if got := engine.GetOutDegree("n1"); got != 3 {
-		t.Fatalf("GetOutDegree mismatch: %d", got)
+	if inDegree != 2 {
+		t.Fatalf("GetInDegree mismatch: %d", inDegree)
+	}
+	outDegree, err := engine.GetOutDegree(t.Context(), "n1")
+	if err != nil {
+		t.Fatalf("GetOutDegree failed: %v", err)
+	}
+	if outDegree != 3 {
+		t.Fatalf("GetOutDegree mismatch: %d", outDegree)
 	}
 	if got := engine.GetSchema(); got == nil {
 		t.Fatalf("expected schema")
@@ -683,10 +695,10 @@ func TestRemoteEngineEngineMethods(t *testing.T) {
 	if err := engine.Close(); err != nil {
 		t.Fatalf("Close should be nil, got: %v", err)
 	}
-	if n, err := engine.NodeCount(); err != nil || n != 7 {
+	if n, err := engine.NodeCount(t.Context()); err != nil || n != 7 {
 		t.Fatalf("NodeCount mismatch: n=%d err=%v", n, err)
 	}
-	if n, err := engine.EdgeCount(); err != nil || n != 8 {
+	if n, err := engine.EdgeCount(t.Context()); err != nil || n != 8 {
 		t.Fatalf("EdgeCount mismatch: n=%d err=%v", n, err)
 	}
 	if _, _, err := engine.DeleteByPrefix("x:"); err == nil {
@@ -718,7 +730,7 @@ func TestRemoteEngineBulkBatching(t *testing.T) {
 		{ID: "n3", Labels: []string{"X"}, Properties: map[string]interface{}{}},
 	}
 	batchCalls = 0
-	if err := engine.BulkCreateNodes(nodes); err != nil {
+	if err := engine.BulkCreateNodes(t.Context(), nodes); err != nil {
 		t.Fatalf("BulkCreateNodes failed: %v", err)
 	}
 	if batchCalls != 1 {
@@ -731,7 +743,7 @@ func TestRemoteEngineBulkBatching(t *testing.T) {
 		{ID: "e2", StartNode: "c", EndNode: "d", Type: "REL", Properties: map[string]interface{}{}},
 	}
 	batchCalls = 0
-	if err := engine.BulkCreateEdges(edges); err != nil {
+	if err := engine.BulkCreateEdges(t.Context(), edges); err != nil {
 		t.Fatalf("BulkCreateEdges failed: %v", err)
 	}
 	if batchCalls != 1 {
@@ -740,7 +752,7 @@ func TestRemoteEngineBulkBatching(t *testing.T) {
 
 	// Delete nodes in batch.
 	batchCalls = 0
-	if err := engine.BulkDeleteNodes([]NodeID{"n1", "n2"}); err != nil {
+	if err := engine.BulkDeleteNodes(t.Context(), []NodeID{"n1", "n2"}); err != nil {
 		t.Fatalf("BulkDeleteNodes failed: %v", err)
 	}
 	if batchCalls != 1 {
@@ -749,7 +761,7 @@ func TestRemoteEngineBulkBatching(t *testing.T) {
 
 	// Delete edges in batch.
 	batchCalls = 0
-	if err := engine.BulkDeleteEdges([]EdgeID{"e1", "e2"}); err != nil {
+	if err := engine.BulkDeleteEdges(t.Context(), []EdgeID{"e1", "e2"}); err != nil {
 		t.Fatalf("BulkDeleteEdges failed: %v", err)
 	}
 	if batchCalls != 1 {
@@ -779,16 +791,16 @@ func TestRemoteEngineBulkAndErrorFallbacks(t *testing.T) {
 		}, nil)}, nil
 	})
 
-	if err := engine.BulkCreateNodes([]*Node{{ID: "n1"}}); err == nil {
+	if err := engine.BulkCreateNodes(t.Context(), []*Node{{ID: "n1"}}); err == nil {
 		t.Fatalf("expected BulkCreateNodes error on first failure")
 	}
-	if err := engine.BulkCreateEdges([]*Edge{{ID: "e1", StartNode: "a", EndNode: "b", Type: "REL"}}); err != nil {
+	if err := engine.BulkCreateEdges(t.Context(), []*Edge{{ID: "e1", StartNode: "a", EndNode: "b", Type: "REL"}}); err != nil {
 		t.Fatalf("BulkCreateEdges failed: %v", err)
 	}
-	if err := engine.BulkDeleteNodes([]NodeID{"n1"}); err != nil {
+	if err := engine.BulkDeleteNodes(t.Context(), []NodeID{"n1"}); err != nil {
 		t.Fatalf("BulkDeleteNodes failed: %v", err)
 	}
-	if err := engine.BulkDeleteEdges([]EdgeID{"e1"}); err != nil {
+	if err := engine.BulkDeleteEdges(t.Context(), []EdgeID{"e1"}); err != nil {
 		t.Fatalf("BulkDeleteEdges failed: %v", err)
 	}
 	if got, err := engine.BatchGetNodes(context.Background(), []NodeID{"n1", "n2"}); err != nil {
@@ -800,10 +812,10 @@ func TestRemoteEngineBulkAndErrorFallbacks(t *testing.T) {
 	if nodes, err := engine.AllNodes(context.Background()); err == nil || len(nodes) != 0 {
 		t.Fatalf("AllNodes must report the failed read: len=%d err=%v", len(nodes), err)
 	}
-	if n, err := engine.NodeCount(); err != nil || n != 0 {
+	if n, err := engine.NodeCount(t.Context()); err != nil || n != 0 {
 		t.Fatalf("expected NodeCount fallback to zero with nil error; n=%d err=%v", n, err)
 	}
-	if n, err := engine.EdgeCount(); err != nil || n != 0 {
+	if n, err := engine.EdgeCount(t.Context()); err != nil || n != 0 {
 		t.Fatalf("expected EdgeCount fallback to zero with nil error; n=%d err=%v", n, err)
 	}
 }
@@ -853,22 +865,22 @@ func TestRemoteEngineAdditionalErrorBranches(t *testing.T) {
 		}
 	})
 
-	if _, err := engine.GetNode("bad"); err == nil {
+	if _, err := engine.GetNode(t.Context(), "bad"); err == nil {
 		t.Fatalf("expected node decode error")
 	}
-	if err := engine.DeleteNode("n1"); err == nil {
+	if err := engine.DeleteNode(t.Context(), "n1"); err == nil {
 		t.Fatalf("expected DeleteNode error")
 	}
-	if err := engine.DeleteEdge("e1"); err == nil {
+	if err := engine.DeleteEdge(t.Context(), "e1"); err == nil {
 		t.Fatalf("expected DeleteEdge error")
 	}
-	if err := engine.BulkCreateEdges([]*Edge{{ID: "e1", StartNode: "a", EndNode: "b", Type: "REL"}}); err == nil {
+	if err := engine.BulkCreateEdges(t.Context(), []*Edge{{ID: "e1", StartNode: "a", EndNode: "b", Type: "REL"}}); err == nil {
 		t.Fatalf("expected BulkCreateEdges error")
 	}
-	if err := engine.BulkDeleteNodes([]NodeID{"n1"}); err == nil {
+	if err := engine.BulkDeleteNodes(t.Context(), []NodeID{"n1"}); err == nil {
 		t.Fatalf("expected BulkDeleteNodes error")
 	}
-	if err := engine.BulkDeleteEdges([]EdgeID{"e1"}); err == nil {
+	if err := engine.BulkDeleteEdges(t.Context(), []EdgeID{"e1"}); err == nil {
 		t.Fatalf("expected BulkDeleteEdges error")
 	}
 	if _, err := engine.GetOutgoingEdges(context.Background(), "n1"); err == nil {
@@ -886,7 +898,11 @@ func TestRemoteEngineAdditionalErrorBranches(t *testing.T) {
 	if _, err := engine.AllEdges(context.Background()); err == nil {
 		t.Fatalf("expected AllEdges conversion error")
 	}
-	if edge := engine.GetEdgeBetween("a", "b", "REL"); edge != nil {
+	conversionEdge, err := engine.GetEdgeBetween(t.Context(), "a", "b", "REL")
+	if err != nil {
+		t.Fatalf("GetEdgeBetween failed: %v", err)
+	}
+	if conversionEdge != nil {
 		t.Fatalf("expected nil edge for conversion error")
 	}
 
@@ -904,16 +920,16 @@ func TestRemoteEngineRemainingBranches(t *testing.T) {
 	queryErrEngine := makeEngineWithTransport(t, "http://remote.example", func(_ *http.Request) (*http.Response, error) {
 		return nil, fmt.Errorf("query boom")
 	})
-	if _, err := queryErrEngine.GetNode("n1"); err == nil {
+	if _, err := queryErrEngine.GetNode(t.Context(), "n1"); err == nil {
 		t.Fatalf("expected GetNode query error")
 	}
-	if err := queryErrEngine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "n1"}}); err == nil {
+	if err := queryErrEngine.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "n1"}}); err == nil {
 		t.Fatalf("expected UpdateNode query error")
 	}
-	if _, err := queryErrEngine.GetEdge("e1"); err == nil {
+	if _, err := queryErrEngine.GetEdge(t.Context(), "e1"); err == nil {
 		t.Fatalf("expected GetEdge query error")
 	}
-	if err := queryErrEngine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "e1"}}); err == nil {
+	if err := queryErrEngine.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "e1"}}); err == nil {
 		t.Fatalf("expected UpdateEdge query error")
 	}
 	if _, err := queryErrEngine.GetNodesByLabel(context.Background(), "Person"); err == nil {
@@ -934,16 +950,19 @@ func TestRemoteEngineRemainingBranches(t *testing.T) {
 	if _, err := queryErrEngine.AllEdges(context.Background()); err == nil {
 		t.Fatalf("expected AllEdges query error")
 	}
-	if _, err := queryErrEngine.GetFirstNodeByLabel("Person"); err == nil {
+	if _, err := queryErrEngine.GetFirstNodeByLabel(t.Context(), "Person"); err == nil {
 		t.Fatalf("expected GetFirstNodeByLabel query error")
 	}
-	if got := queryErrEngine.GetInDegree("n1"); got != 0 {
+	queryErrInDegree, _ := queryErrEngine.GetInDegree(t.Context(), "n1")
+	if queryErrInDegree != 0 {
 		t.Fatalf("expected zero indegree on query error")
 	}
-	if got := queryErrEngine.GetOutDegree("n1"); got != 0 {
+	queryErrOutDegree, _ := queryErrEngine.GetOutDegree(t.Context(), "n1")
+	if queryErrOutDegree != 0 {
 		t.Fatalf("expected zero outdegree on query error")
 	}
-	if got := queryErrEngine.GetEdgeBetween("a", "b", "REL"); got != nil {
+	queryErrEdge, _ := queryErrEngine.GetEdgeBetween(t.Context(), "a", "b", "REL")
+	if queryErrEdge != nil {
 		t.Fatalf("expected nil edge on query error")
 	}
 
@@ -957,7 +976,7 @@ func TestRemoteEngineRemainingBranches(t *testing.T) {
 		}
 		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{{float64(1)}}, nil)}, nil
 	})
-	if _, err := noRowsEngine.CreateNode(&Node{Labels: []string{"X"}}); err == nil {
+	if _, err := noRowsEngine.CreateNode(t.Context(), &Node{Labels: []string{"X"}}); err == nil {
 		t.Fatalf("expected CreateNode no-row error")
 	}
 	// Also cover BulkCreateNodes success path + node.ID empty branch in CreateNode.
@@ -972,16 +991,16 @@ func TestRemoteEngineRemainingBranches(t *testing.T) {
 		}
 		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{{float64(1)}}, nil)}, nil
 	})
-	if err := successEngine.BulkCreateNodes([]*Node{{Labels: []string{"X"}, Properties: map[string]interface{}{}}}); err != nil {
+	if err := successEngine.BulkCreateNodes(t.Context(), []*Node{{Labels: []string{"X"}, Properties: map[string]interface{}{}}}); err != nil {
 		t.Fatalf("expected BulkCreateNodes success: %v", err)
 	}
-	if _, err := successEngine.CreateNode(&Node{Labels: []string{"X"}, Properties: map[string]interface{}{}}); err != nil {
+	if _, err := successEngine.CreateNode(t.Context(), &Node{Labels: []string{"X"}, Properties: map[string]interface{}{}}); err != nil {
 		t.Fatalf("expected CreateNode success with empty id: %v", err)
 	}
-	if err := successEngine.CreateEdge(&Edge{StartNode: "a", EndNode: "b", Type: "REL"}); err != nil {
+	if err := successEngine.CreateEdge(t.Context(), &Edge{StartNode: "a", EndNode: "b", Type: "REL"}); err != nil {
 		t.Fatalf("expected CreateEdge success with empty id: %v", err)
 	}
-	if err := successEngine.CreateEdge(&Edge{
+	if err := successEngine.CreateEdge(t.Context(), &Edge{
 		ID:         "edge-with-props",
 		StartNode:  "a",
 		EndNode:    "b",
@@ -1004,10 +1023,10 @@ func TestRemoteEngineRemainingBranches(t *testing.T) {
 	badRowEngine := makeEngineWithTransport(t, "http://remote.example", func(_ *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{{1}}, nil)}, nil
 	})
-	if _, err := badRowEngine.CreateNode(&Node{ID: "n1"}); err == nil {
+	if _, err := badRowEngine.CreateNode(t.Context(), &Node{ID: "n1"}); err == nil {
 		t.Fatalf("expected CreateNode conversion error")
 	}
-	if _, err := badRowEngine.GetFirstNodeByLabel("Person"); err == nil {
+	if _, err := badRowEngine.GetFirstNodeByLabel(t.Context(), "Person"); err == nil {
 		t.Fatalf("expected GetFirstNodeByLabel conversion error")
 	}
 }
@@ -1119,23 +1138,23 @@ func TestRemoteEngineQueryCypherAndHTTPClosedBranches(t *testing.T) {
 		}
 	})
 
-	var nilCtx context.Context
-	cols, rows, err := engine.QueryCypher(nilCtx, "RETURN 42 AS n", nil, RemoteAccessRead)
+	ctx := t.Context()
+	cols, rows, err := engine.QueryCypher(ctx, "RETURN 42 AS n", nil, RemoteAccessRead)
 	if err != nil {
-		t.Fatalf("QueryCypher with nil context failed: %v", err)
+		t.Fatalf("QueryCypher failed: %v", err)
 	}
 	if len(cols) != 1 || cols[0] != "n" || len(rows) != 1 || rows[0][0].(int64) != 42 {
 		t.Fatalf("unexpected query result cols=%v rows=%v", cols, rows)
 	}
 
-	count, err := engine.NodeCount()
+	count, err := engine.NodeCount(t.Context())
 	if err != nil || count != 42 {
 		t.Fatalf("CRUD consumer of the column-bearing result failed: count=%d err=%v", count, err)
 	}
 
-	tx, err := engine.BeginCypherTx(nilCtx, RemoteAccessWrite)
+	tx, err := engine.BeginCypherTx(ctx, RemoteAccessWrite)
 	if err != nil {
-		t.Fatalf("BeginCypherTx with nil context failed: %v", err)
+		t.Fatalf("BeginCypherTx failed: %v", err)
 	}
 	if err := tx.Commit(context.Background()); err != nil {
 		t.Fatalf("Commit failed: %v", err)

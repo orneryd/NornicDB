@@ -29,7 +29,7 @@ type beginFailEngine struct {
 	storage.Engine
 }
 
-func (e *beginFailEngine) BeginTransaction() (*storage.BadgerTransaction, error) {
+func (e *beginFailEngine) BeginTransaction(ctx context.Context) (*storage.BadgerTransaction, error) {
 	return nil, errors.New("begin failed")
 }
 
@@ -67,7 +67,7 @@ func TestCallDbLabelsWithError(t *testing.T) {
 		Labels:     []string{"TestLabel", "SecondLabel"},
 		Properties: map[string]interface{}{},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -88,7 +88,7 @@ func TestResolveReturnItemWithCount(t *testing.T) {
 		Labels:     []string{"CountRI"},
 		Properties: map[string]interface{}{},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -101,7 +101,7 @@ func TestResolveReturnItemWithCount(t *testing.T) {
 // Test Parser MERGE clause
 func TestParseMerge(t *testing.T) {
 	parser := NewParser()
-	query, err := parser.Parse("MERGE (n:Person {name: 'Alice'})")
+	query, err := parser.Parse(t.Context(), "MERGE (n:Person {name: 'Alice'})")
 	require.NoError(t, err)
 	assert.NotNil(t, query)
 	// MERGE is currently parsed but treated as CREATE internally
@@ -125,7 +125,7 @@ func TestEvaluateWhereFullCoverage(t *testing.T) {
 			"score":  float64(85.5),
 		},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -167,7 +167,7 @@ func TestEvaluateStringOpEdgeCases(t *testing.T) {
 		Labels:     []string{"StrEdge"},
 		Properties: map[string]interface{}{"text": "hello world"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -205,7 +205,7 @@ func TestEvaluateInOpMatch(t *testing.T) {
 		Labels:     []string{"InMatch"},
 		Properties: map[string]interface{}{"status": "pending"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -222,7 +222,7 @@ func TestEvaluateInOpMatch(t *testing.T) {
 			"file_tags": []interface{}{"github", "argoCD"},
 		},
 	}
-	_, err = store.CreateNode(node2)
+	_, err = store.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
 
 	result, err = exec.Execute(ctx, "MATCH (n:InMatch) WHERE 'github' IN n.file_tags RETURN n", nil)
@@ -284,7 +284,7 @@ func TestParserDefaultCase(t *testing.T) {
 	parser := NewParser()
 
 	// Query with tokens that aren't recognized keywords
-	query, err := parser.Parse("MATCH (n) RETURN n")
+	query, err := parser.Parse(t.Context(), "MATCH (n) RETURN n")
 	require.NoError(t, err)
 	assert.NotNil(t, query)
 }
@@ -525,7 +525,7 @@ func TestApocDynamicRunAndRunMany_Direct(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:         "apoc-dyn-1",
 		Labels:     []string{"Dyn"},
 		Properties: map[string]interface{}{"name": "a"},
@@ -602,18 +602,18 @@ func TestApocPeriodicIterateAndCommit_Direct(t *testing.T) {
 func TestExecuteWithImplicitTransaction_Branches(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("fallback when tx unsupported", func(t *testing.T) {
+	t.Run("reject when tx unsupported", func(t *testing.T) {
 		base := newTestMemoryEngine(t)
 		store := storage.NewNamespacedEngine(base, "test")
 		exec := NewStorageExecutor(&nonTransactionalEngine{Engine: store})
 
 		result, err := exec.executeWithImplicitTransaction(ctx, "CREATE (:FallbackTx {id:'1'})", "CREATE (:FALLBACKTX {ID:'1'})")
-		require.NoError(t, err)
-		require.NotNil(t, result)
+		require.ErrorContains(t, err, "engine does not support transactions")
+		require.Nil(t, result)
 
 		readBack, err := exec.Execute(ctx, "MATCH (n:FallbackTx {id:'1'}) RETURN count(n)", nil)
 		require.NoError(t, err)
-		require.Equal(t, int64(1), readBack.Rows[0][0])
+		require.Equal(t, int64(0), readBack.Rows[0][0])
 	})
 
 	t.Run("begin transaction failure", func(t *testing.T) {
@@ -1158,48 +1158,48 @@ func TestRelationshipCountAggregation(t *testing.T) {
 	// Create categories
 	cat1 := &storage.Node{ID: "cat1", Labels: []string{"Category"}, Properties: map[string]interface{}{"categoryID": int64(1), "name": "Beverages"}}
 	cat2 := &storage.Node{ID: "cat2", Labels: []string{"Category"}, Properties: map[string]interface{}{"categoryID": int64(2), "name": "Condiments"}}
-	_, err := store.CreateNode(cat1)
+	_, err := store.CreateNode(t.Context(), cat1)
 	require.NoError(t, err)
-	_, err = store.CreateNode(cat2)
+	_, err = store.CreateNode(t.Context(), cat2)
 	require.NoError(t, err)
 
 	// Create suppliers
 	sup1 := &storage.Node{ID: "sup1", Labels: []string{"Supplier"}, Properties: map[string]interface{}{"supplierID": int64(1), "name": "Exotic Liquids"}}
 	sup2 := &storage.Node{ID: "sup2", Labels: []string{"Supplier"}, Properties: map[string]interface{}{"supplierID": int64(2), "name": "New Orleans"}}
-	_, err = store.CreateNode(sup1)
+	_, err = store.CreateNode(t.Context(), sup1)
 	require.NoError(t, err)
-	_, err = store.CreateNode(sup2)
+	_, err = store.CreateNode(t.Context(), sup2)
 	require.NoError(t, err)
 
 	// Create products
 	prod1 := &storage.Node{ID: "prod1", Labels: []string{"Product"}, Properties: map[string]interface{}{"productID": int64(1), "name": "Chai"}}
 	prod2 := &storage.Node{ID: "prod2", Labels: []string{"Product"}, Properties: map[string]interface{}{"productID": int64(2), "name": "Chang"}}
 	prod3 := &storage.Node{ID: "prod3", Labels: []string{"Product"}, Properties: map[string]interface{}{"productID": int64(3), "name": "Aniseed Syrup"}}
-	_, err = store.CreateNode(prod1)
+	_, err = store.CreateNode(t.Context(), prod1)
 	require.NoError(t, err)
-	_, err = store.CreateNode(prod2)
+	_, err = store.CreateNode(t.Context(), prod2)
 	require.NoError(t, err)
-	_, err = store.CreateNode(prod3)
+	_, err = store.CreateNode(t.Context(), prod3)
 	require.NoError(t, err)
 
 	// Create relationships
 	// Product 1: Beverages category, Supplier 1
 	edge1 := &storage.Edge{ID: "e1", StartNode: "prod1", EndNode: "cat1", Type: "PART_OF"}
 	edge2 := &storage.Edge{ID: "e2", StartNode: "sup1", EndNode: "prod1", Type: "SUPPLIES"}
-	require.NoError(t, store.CreateEdge(edge1))
-	require.NoError(t, store.CreateEdge(edge2))
+	require.NoError(t, store.CreateEdge(t.Context(), edge1))
+	require.NoError(t, store.CreateEdge(t.Context(), edge2))
 
 	// Product 2: Beverages category, Supplier 1
 	edge3 := &storage.Edge{ID: "e3", StartNode: "prod2", EndNode: "cat1", Type: "PART_OF"}
 	edge4 := &storage.Edge{ID: "e4", StartNode: "sup1", EndNode: "prod2", Type: "SUPPLIES"}
-	require.NoError(t, store.CreateEdge(edge3))
-	require.NoError(t, store.CreateEdge(edge4))
+	require.NoError(t, store.CreateEdge(t.Context(), edge3))
+	require.NoError(t, store.CreateEdge(t.Context(), edge4))
 
 	// Product 3: Condiments category, Supplier 2
 	edge5 := &storage.Edge{ID: "e5", StartNode: "prod3", EndNode: "cat2", Type: "PART_OF"}
 	edge6 := &storage.Edge{ID: "e6", StartNode: "sup2", EndNode: "prod3", Type: "SUPPLIES"}
-	require.NoError(t, store.CreateEdge(edge5))
-	require.NoError(t, store.CreateEdge(edge6))
+	require.NoError(t, store.CreateEdge(t.Context(), edge5))
+	require.NoError(t, store.CreateEdge(t.Context(), edge6))
 
 	// Test 1: Count all relationships
 	t.Run("count all relationships", func(t *testing.T) {
@@ -1299,7 +1299,7 @@ func TestSetLabelSyntax(t *testing.T) {
 		Labels:     []string{"File"},
 		Properties: map[string]interface{}{"path": "/test/file.txt"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1314,7 +1314,7 @@ func TestSetLabelSyntax(t *testing.T) {
 		assert.Equal(t, 1, result.Stats.LabelsAdded)
 
 		// Verify the node now has both labels
-		updatedNode, err := store.GetNode("label-test-1")
+		updatedNode, err := store.GetNode(t.Context(), "label-test-1")
 		require.NoError(t, err)
 		assert.Contains(t, updatedNode.Labels, "File")
 		assert.Contains(t, updatedNode.Labels, "Node")
@@ -1345,7 +1345,7 @@ func TestSetLabelWithPropertyAssignment(t *testing.T) {
 		Labels:     []string{"Document"},
 		Properties: map[string]interface{}{"name": "readme"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1361,7 +1361,7 @@ func TestSetLabelWithPropertyAssignment(t *testing.T) {
 		assert.Equal(t, 1, result.Stats.PropertiesSet)
 
 		// Verify both label and property were set
-		updatedNode, err := store.GetNode("combo-test-1")
+		updatedNode, err := store.GetNode(t.Context(), "combo-test-1")
 		require.NoError(t, err)
 		assert.Contains(t, updatedNode.Labels, "Document")
 		assert.Contains(t, updatedNode.Labels, "Indexed")
@@ -1382,7 +1382,7 @@ func TestSetMultipleLabels(t *testing.T) {
 		Labels:     []string{"Base"},
 		Properties: map[string]interface{}{},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1397,7 +1397,7 @@ func TestSetMultipleLabels(t *testing.T) {
 		assert.Equal(t, 1, result.Stats.LabelsAdded)
 
 		// Verify all labels present
-		updatedNode, err := store.GetNode("multi-label-1")
+		updatedNode, err := store.GetNode(t.Context(), "multi-label-1")
 		require.NoError(t, err)
 		assert.Contains(t, updatedNode.Labels, "Base")
 		assert.Contains(t, updatedNode.Labels, "First")
@@ -1423,7 +1423,7 @@ func TestWhereLabelCheck(t *testing.T) {
 		{ID: "company-1", Labels: []string{"Company"}, Properties: map[string]interface{}{"name": "Acme"}},
 	}
 	for _, n := range nodes {
-		_, err := store.CreateNode(n)
+		_, err := store.CreateNode(t.Context(), n)
 		require.NoError(t, err)
 	}
 
@@ -1469,7 +1469,7 @@ func TestWhereNotLabelMigrationPattern(t *testing.T) {
 		{ID: "file-3", Labels: []string{"File"}, Properties: map[string]interface{}{"path": "/c.txt"}},
 	}
 	for _, n := range nodes {
-		_, err := store.CreateNode(n)
+		_, err := store.CreateNode(t.Context(), n)
 		require.NoError(t, err)
 	}
 
@@ -1486,19 +1486,19 @@ func TestWhereNotLabelMigrationPattern(t *testing.T) {
 		assert.Equal(t, 2, result.Stats.PropertiesSet)
 
 		// Verify file-1 now has Node label
-		file1, err := store.GetNode("file-1")
+		file1, err := store.GetNode(t.Context(), "file-1")
 		require.NoError(t, err)
 		assert.Contains(t, file1.Labels, "Node")
 		assert.Equal(t, "file", file1.Properties["type"])
 
 		// Verify file-2 unchanged (already had Node label)
-		file2, err := store.GetNode("file-2")
+		file2, err := store.GetNode(t.Context(), "file-2")
 		require.NoError(t, err)
 		assert.Contains(t, file2.Labels, "Node")
 		assert.Nil(t, file2.Properties["type"]) // type not set because it wasn't matched
 
 		// Verify file-3 now has Node label
-		file3, err := store.GetNode("file-3")
+		file3, err := store.GetNode(t.Context(), "file-3")
 		require.NoError(t, err)
 		assert.Contains(t, file3.Labels, "Node")
 		assert.Equal(t, "file", file3.Properties["type"])
@@ -1531,7 +1531,7 @@ func TestWhereLabelWithAndCondition(t *testing.T) {
 		{ID: "cust-1", Labels: []string{"Person", "Customer"}, Properties: map[string]interface{}{"name": "Charlie", "age": int64(35)}},
 	}
 	for _, n := range nodes {
-		_, err := store.CreateNode(n)
+		_, err := store.CreateNode(t.Context(), n)
 		require.NoError(t, err)
 	}
 
@@ -1851,9 +1851,9 @@ func TestMatchMultiAndUnwindBranchCoverage(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{ID: "p1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice", "age": int64(30), "items": []interface{}{"x", "y", "z"}}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "p1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice", "age": int64(30), "items": []interface{}{"x", "y", "z"}}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "p2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob", "age": int64(40), "items": []interface{}{"x", "x"}}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "p2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob", "age": int64(40), "items": []interface{}{"x", "x"}}})
 	require.NoError(t, err)
 
 	_, err = exec.Execute(ctx, "MATCH (a:Person) MATCH (b:Person) WHERE a <> b", getParamsFromContext(ctx))
@@ -1990,7 +1990,7 @@ func TestRunSearchRequestBranches(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "query is required")
 
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:         "doc1",
 		Labels:     []string{"Doc"},
 		Properties: map[string]interface{}{"name": "alpha", "text": "alpha beta"},
@@ -2019,17 +2019,17 @@ func TestExecuteMatchRelationshipsWithClauseBranches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{ID: "a1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "a1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "a2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "a2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "a3", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "carl"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "a3", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "carl"}})
 	require.NoError(t, err)
-	err = store.CreateEdge(&storage.Edge{ID: "e1", StartNode: "a1", EndNode: "a2", Type: "KNOWS"})
+	err = store.CreateEdge(t.Context(), &storage.Edge{ID: "e1", StartNode: "a1", EndNode: "a2", Type: "KNOWS"})
 	require.NoError(t, err)
-	err = store.CreateEdge(&storage.Edge{ID: "e2", StartNode: "a1", EndNode: "a3", Type: "KNOWS"})
+	err = store.CreateEdge(t.Context(), &storage.Edge{ID: "e2", StartNode: "a1", EndNode: "a3", Type: "KNOWS"})
 	require.NoError(t, err)
-	err = store.CreateEdge(&storage.Edge{ID: "e3", StartNode: "a2", EndNode: "a3", Type: "KNOWS"})
+	err = store.CreateEdge(t.Context(), &storage.Edge{ID: "e3", StartNode: "a2", EndNode: "a3", Type: "KNOWS"})
 	require.NoError(t, err)
 
 	_, err = exec.sharedRelationshipPipelineForTest(ctx, "not-a-pattern", "", "WITH a RETURN a")
@@ -2246,9 +2246,9 @@ func TestExecuteMatchCreateBlock_AdditionalBranches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{ID: "a1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "a1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "b1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "b1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob"}})
 	require.NoError(t, err)
 
 	res, err := exec.Execute(ctx, "MATCH (a:Person {name: 'alice'})", nil)
@@ -2291,18 +2291,18 @@ func TestExecuteMatchRelationshipsWithClause_AggregationBranches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "n2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "n2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "n3", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "carol"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "n3", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "carol"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "n4", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "dave"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "n4", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "dave"}})
 	require.NoError(t, err)
 
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "e1", StartNode: "n1", EndNode: "n3", Type: "KNOWS", Properties: map[string]interface{}{"weight": int64(2)}}))
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "e2", StartNode: "n1", EndNode: "n4", Type: "KNOWS", Properties: map[string]interface{}{"weight": int64(3)}}))
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "e3", StartNode: "n2", EndNode: "n4", Type: "KNOWS", Properties: map[string]interface{}{"weight": int64(5)}}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "e1", StartNode: "n1", EndNode: "n3", Type: "KNOWS", Properties: map[string]interface{}{"weight": int64(2)}}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "e2", StartNode: "n1", EndNode: "n4", Type: "KNOWS", Properties: map[string]interface{}{"weight": int64(3)}}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "e3", StartNode: "n2", EndNode: "n4", Type: "KNOWS", Properties: map[string]interface{}{"weight": int64(5)}}))
 
 	pattern := "(a:Person)-[r:KNOWS]->(b:Person)"
 	withAndReturn := "WITH a.name AS person, count(*) AS c, sum(r.weight) AS s, avg(r.weight) AS av, min(r.weight) AS mn, max(r.weight) AS mx, collect(b.name) AS names, collect(DISTINCT b.name) AS dnames WHERE c >= 2 RETURN person, c, s, av, mn, mx, size(names) AS n ORDER BY person ASC SKIP 0 LIMIT 10"
@@ -2384,16 +2384,16 @@ func TestExecuteMatchWithClause_DelegationAndErrorBranches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{ID: "w1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice", "age": int64(31)}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "w1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice", "age": int64(31)}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "w2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob", "age": int64(29)}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "w2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob", "age": int64(29)}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "w3", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "carol", "age": int64(22)}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "w3", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "carol", "age": int64(22)}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "w4", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "nobody"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "w4", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "nobody"}})
 	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "wr1", StartNode: "w1", EndNode: "w2", Type: "KNOWS", Properties: map[string]interface{}{"weight": int64(3)}}))
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "wr2", StartNode: "w1", EndNode: "w3", Type: "KNOWS", Properties: map[string]interface{}{"weight": int64(5)}}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "wr1", StartNode: "w1", EndNode: "w2", Type: "KNOWS", Properties: map[string]interface{}{"weight": int64(3)}}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "wr2", StartNode: "w1", EndNode: "w3", Type: "KNOWS", Properties: map[string]interface{}{"weight": int64(5)}}))
 
 	// Missing WITH/RETURN must fail deterministically.
 	_, err = exec.Execute(ctx, "MATCH (n:Person) RETURN n.name", getParamsFromContext(ctx))
@@ -2476,9 +2476,9 @@ func TestExecuteMatchWithClause_ChainedWithAndStorageFailureBranches(t *testing.
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{ID: "cw1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "cw1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "cw2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "cw2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob"}})
 	require.NoError(t, err)
 
 	// Chained WITH parsing: first WITH has WHERE, second WITH has projection.
@@ -2523,7 +2523,7 @@ func TestExecuteMatchWithClause_AggregationAndWindowBranches(t *testing.T) {
 		{ID: "mwc3", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "cara", "dept": "sales", "age": int64(25)}},
 	}
 	for _, n := range seed {
-		_, err := store.CreateNode(n)
+		_, err := store.CreateNode(t.Context(), n)
 		require.NoError(t, err)
 	}
 
@@ -2561,7 +2561,7 @@ func TestExecuteMatchWithClause_MoreAggregationBranches(t *testing.T) {
 		{ID: "mwa3", Labels: []string{"Emp"}, Properties: map[string]interface{}{"name": "cara", "dept": "ops", "score": int64(7)}},
 	}
 	for _, n := range seed {
-		_, err := store.CreateNode(n)
+		_, err := store.CreateNode(t.Context(), n)
 		require.NoError(t, err)
 	}
 
@@ -2649,7 +2649,7 @@ func TestCreateDeleteAdditionalNoReturnAndEdgeCleanupBranches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:         "alice-create-delete",
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "alice"},
@@ -2687,7 +2687,7 @@ func TestExecuteSet_AdditionalMapAndLabelValidationBranches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:         "set-branch-node",
 		Labels:     []string{"P"},
 		Properties: map[string]interface{}{"name": "set-branch"},

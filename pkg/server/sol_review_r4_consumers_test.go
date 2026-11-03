@@ -44,7 +44,7 @@ func TestSolR4ConsumerShutdown(t *testing.T) {
 			require.NoError(t, err)
 			vector := make([]float32, 1024)
 			vector[0] = 1
-			_, err = engine.CreateNode(&storage.Node{ID: "seed", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "needle"}, ChunkEmbeddings: [][]float32{vector}})
+			_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "seed", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "needle"}, ChunkEmbeddings: [][]float32{vector}})
 			require.NoError(t, err)
 			svc, err := server.db.GetOrCreateSearchService(dbName, engine)
 			require.NoError(t, err)

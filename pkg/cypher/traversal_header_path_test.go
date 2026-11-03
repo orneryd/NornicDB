@@ -15,14 +15,14 @@ type edgePathCountingEngine struct {
 	headerReads, fullReads int
 }
 
-func (e *edgePathCountingEngine) OutgoingEdgeHeaders(id storage.NodeID) ([]*storage.Edge, bool, error) {
+func (e *edgePathCountingEngine) OutgoingEdgeHeaders(ctx context.Context, id storage.NodeID) ([]*storage.Edge, bool, error) {
 	e.headerReads++
-	return e.NamespacedEngine.OutgoingEdgeHeaders(id)
+	return e.NamespacedEngine.OutgoingEdgeHeaders(ctx, id)
 }
 
-func (e *edgePathCountingEngine) IncomingEdgeHeaders(id storage.NodeID) ([]*storage.Edge, bool, error) {
+func (e *edgePathCountingEngine) IncomingEdgeHeaders(ctx context.Context, id storage.NodeID) ([]*storage.Edge, bool, error) {
 	e.headerReads++
-	return e.NamespacedEngine.IncomingEdgeHeaders(id)
+	return e.NamespacedEngine.IncomingEdgeHeaders(ctx, id)
 }
 
 func (e *edgePathCountingEngine) GetOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {

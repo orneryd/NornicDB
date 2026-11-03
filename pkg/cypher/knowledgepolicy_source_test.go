@@ -68,7 +68,7 @@ func TestKnowledgePolicyRawSourceNativeReopenAndEvaluation(t *testing.T) {
 			engine = open()
 			require.Equal(t, `n.literal = '\u005cu0062'`, engine.GetSchemaForNamespace("policy_source").ShowPromotionPolicies()[0].OnAccess.Mutations[0].Expression)
 			engine.SetDecayEnabled(true)
-			_, err := engine.CreateNode(&storage.Node{ID: "policy_source:one", Labels: []string{"Fact"}, Properties: map[string]interface{}{}})
+			_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "policy_source:one", Labels: []string{"Fact"}, Properties: map[string]interface{}{}})
 			require.NoError(t, err)
 			accumulator := knowledgepolicy.NewAccessAccumulator(true, 0)
 			flusher := knowledgepolicy.NewAccessFlusher(accumulator, engine, time.Hour)

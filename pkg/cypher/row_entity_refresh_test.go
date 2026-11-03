@@ -62,13 +62,13 @@ func TestRefreshRowEntities(t *testing.T) {
 	nodes, err := store.GetNodesByLabel(ctx, "RF")
 	require.NoError(t, err)
 	require.Len(t, nodes, 2)
-	first, _ := store.GetNode(nodes[0].ID)
-	second, _ := store.GetNode(nodes[0].ID)
-	other, _ := store.GetNode(nodes[1].ID)
+	first, _ := store.GetNode(t.Context(), nodes[0].ID)
+	second, _ := store.GetNode(t.Context(), nodes[0].ID)
+	other, _ := store.GetNode(t.Context(), nodes[1].ID)
 	edges, err := store.GetEdgesByType(ctx, "RR")
 	require.NoError(t, err)
-	edgeA, _ := store.GetEdge(edges[0].ID)
-	edgeB, _ := store.GetEdge(edges[0].ID)
+	edgeA, _ := store.GetEdge(t.Context(), edges[0].ID)
+	edgeB, _ := store.GetEdge(t.Context(), edges[0].ID)
 
 	// One row: nothing to share.
 	single := []pipelineRow{{"n": first}}
@@ -88,8 +88,8 @@ func TestRefreshRowEntities(t *testing.T) {
 	require.Same(t, rows[0]["r"], rows[1]["r"])
 
 	// An entity deleted since keeps its copies.
-	require.NoError(t, store.DeleteEdge(edgeA.ID))
-	require.NoError(t, store.DeleteNode(other.ID))
+	require.NoError(t, store.DeleteEdge(t.Context(), edgeA.ID))
+	require.NoError(t, store.DeleteNode(t.Context(), other.ID))
 	otherCopy := &storage.Node{ID: other.ID}
 	edgeCopy := &storage.Edge{ID: edgeA.ID}
 	deleted := []pipelineRow{{"n": other, "r": edgeA}, {"n": otherCopy, "r": edgeCopy}}

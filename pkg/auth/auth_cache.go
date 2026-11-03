@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -50,7 +51,7 @@ func (c *BasicAuthCache) GetFromHeader(authHeader string) (*JWTClaims, bool) {
 	if c == nil || authHeader == "" {
 		return nil, false
 	}
-	return c.get(basicAuthCacheKeyFromHeader(authHeader))
+	return c.get(authCacheKey("auth.basic.header", authHeader))
 }
 
 // SetFromHeader caches claims using the full Basic auth header at the current
@@ -68,7 +69,7 @@ func (c *BasicAuthCache) SetFromHeaderAtGeneration(authHeader string, claims *JW
 	if c == nil || authHeader == "" || claims == nil {
 		return
 	}
-	c.set(basicAuthCacheKeyFromHeader(authHeader), claims, generation)
+	c.set(authCacheKey("auth.basic.header", authHeader), claims, generation)
 }
 
 // Get retrieves cached claims using username/password (when header isn't available).
@@ -76,7 +77,7 @@ func (c *BasicAuthCache) Get(username, password string) (*JWTClaims, bool) {
 	if c == nil || username == "" || password == "" {
 		return nil, false
 	}
-	return c.get(basicAuthCacheKeyFromCredentials(username, password))
+	return c.get(authCacheKey("auth.basic.credentials", username, password))
 }
 
 // Set caches claims using username/password at the current generation. It
@@ -94,7 +95,7 @@ func (c *BasicAuthCache) SetAtGeneration(username, password string, claims *JWTC
 	if c == nil || username == "" || password == "" || claims == nil {
 		return
 	}
-	c.set(basicAuthCacheKeyFromCredentials(username, password), claims, generation)
+	c.set(authCacheKey("auth.basic.credentials", username, password), claims, generation)
 }
 
 // Generation captures the cache publication generation before credentials are
@@ -125,12 +126,25 @@ func (c *BasicAuthCache) ForgetUser(username string) {
 	}
 }
 
-func basicAuthCacheKeyFromHeader(authHeader string) [32]byte {
-	return security.KeyedDigest("auth.basic.header", authHeader)
-}
-
-func basicAuthCacheKeyFromCredentials(username, password string) [32]byte {
-	return security.KeyedDigest("auth.basic.credentials", username, password)
+// authCacheKey derives the process-local cache key for the supplied namespace
+// and parts. It is the canonical owner of every auth cache key: each cache
+// supplies its own namespace literal ("auth.basic.header",
+// "auth.basic.credentials", "auth.jwt.token"), and the namespace keeps an entry
+// written through one path from being read through another.
+//
+// The auth caches expose no context to their callers (the HTTP, Bolt and gRPC
+// credential paths consult them synchronously), so the context-free boundary is
+// an explicit context.Background(): these digests cannot be cancelled and their
+// errors are not discarded.
+func authCacheKey(namespace string, parts ...string) [32]byte {
+	key, err := security.KeyedDigest(context.Background(), namespace, parts...)
+	if err != nil {
+		// Unreachable: a background context is never cancelled and HMAC writes
+		// do not fail. Surface it rather than using a zero key, which would
+		// collide every cache entry.
+		panic("auth: derive cache key: " + err.Error())
+	}
+	return key
 }
 
 func (c *BasicAuthCache) get(key [32]byte) (*JWTClaims, bool) {
@@ -209,16 +223,12 @@ func newTokenCache(maxEntries int, ttl time.Duration) *tokenCache {
 	}
 }
 
-func tokenCacheKey(token string) [32]byte {
-	return security.KeyedDigest("auth.jwt.token", token)
-}
-
 func (c *tokenCache) get(token string) (*JWTClaims, bool) {
 	if c == nil || token == "" {
 		return nil, false
 	}
 	now := time.Now()
-	key := tokenCacheKey(token)
+	key := authCacheKey("auth.jwt.token", token)
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -266,7 +276,7 @@ func (c *tokenCache) set(token string, claims *JWTClaims) {
 		}
 	}
 
-	c.entries[tokenCacheKey(token)] = tokenCacheEntry{
+	c.entries[authCacheKey("auth.jwt.token", token)] = tokenCacheEntry{
 		claims:    cloneJWTClaims(claims),
 		expiresAt: expiresAt,
 	}

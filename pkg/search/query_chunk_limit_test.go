@@ -200,7 +200,7 @@ func TestSearchTextChunksKeepsAppliedEmptyRerankSelection(t *testing.T) {
 						Properties:      map[string]any{"content": "alpha complete query chunk one chunk two " + id},
 						ChunkEmbeddings: [][]float32{{1, 0}, {0, 1}},
 					}
-					_, err := engine.CreateNode(node)
+					_, err := engine.CreateNode(t.Context(), node)
 					require.NoError(t, err)
 					require.NoError(t, service.IndexNode(node))
 				}
@@ -249,7 +249,7 @@ func TestMultiChunkCataloguePreservesRerankEligibility(t *testing.T) {
 			Properties:      map[string]any{"content": "alpha beta document " + id},
 			ChunkEmbeddings: [][]float32{{1, 0}},
 		}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, service.IndexNode(node))
 	}

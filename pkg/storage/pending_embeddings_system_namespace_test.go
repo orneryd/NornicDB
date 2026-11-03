@@ -15,7 +15,7 @@ func TestPendingEmbeddingsIndex_SkipsSystemNamespace(t *testing.T) {
 	engine.SetEmbeddingsEnabled(true)
 
 	// System node should never be added to pending index.
-	_, err = engine.CreateNode(&Node{
+	_, err = engine.CreateNode(t.Context(), &Node{
 		ID:     "system:meta-1",
 		Labels: []string{"Meta"},
 	})
@@ -23,14 +23,14 @@ func TestPendingEmbeddingsIndex_SkipsSystemNamespace(t *testing.T) {
 	require.Equal(t, 0, engine.PendingEmbeddingsCount())
 
 	// A normal node should be in pending index (no embeddings).
-	_, err = engine.CreateNode(&Node{
+	_, err = engine.CreateNode(t.Context(), &Node{
 		ID:     "nornic:user-1",
 		Labels: []string{"Person"},
 	})
 	require.NoError(t, err)
 	require.Equal(t, 1, engine.PendingEmbeddingsCount())
 
-	found := engine.FindNodeNeedingEmbedding()
+	found := requireEmbeddingCandidate(t, engine.FindNodeNeedingEmbedding)
 	require.NotNil(t, found)
 	require.Equal(t, NodeID("nornic:user-1"), found.ID)
 

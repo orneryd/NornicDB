@@ -21,10 +21,10 @@ func TestHandleSearchRelationships(t *testing.T) {
 	engine, err := server.dbManager.GetStorage(database)
 	require.NoError(t, err)
 	for _, id := range []storage.NodeID{"rel-a", "rel-b"} {
-		_, err := engine.CreateNode(&storage.Node{ID: id, Labels: []string{"Doc"}})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"Doc"}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "rel-r", StartNode: "rel-a", EndNode: "rel-b", Type: "CITES", Properties: map[string]any{"reason": "zephyrine bridge"}}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "rel-r", StartNode: "rel-a", EndNode: "rel-b", Type: "CITES", Properties: map[string]any{"reason": "zephyrine bridge"}}))
 	request := map[string]any{"database": database, "query": "zephyrine", "relationships": true}
 
 	disabled := makeRequest(t, server, http.MethodPost, "/nornicdb/search", request, token)

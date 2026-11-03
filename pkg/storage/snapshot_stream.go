@@ -58,6 +58,10 @@ func WriteSnapshot(ctx context.Context, engine Engine, writer io.Writer, options
 		return fmt.Errorf("snapshot max record bytes must be between 0 and %d", defaultSnapshotRecordSize)
 	}
 
+	if err := checkNativeSnapshotPublication(engine); err != nil {
+		return err
+	}
+
 	// A snapshot holds what storage holds: the entities the visibility
 	// layer hides from reads are stored data too, and the WAL is truncated
 	// once the snapshot is written.
@@ -233,7 +237,7 @@ func (w *snapshotFrameWriter) write(frameType byte, value any, maxRecordBytes in
 	if edge != nil {
 		// Stored-body and decoded edges share one record encoder. Only snapshot
 		// edge maps sort their keys; the format is unchanged.
-		w.encoder.reset()
+		w.encoder.reset(storedValueFraming)
 		w.encoder.msgpack.SetSortMapKeys(true)
 		err = encodeSnapshotEdge(w.encoder.msgpack, edge, properties)
 		payload = w.encoder.buffer.Bytes()

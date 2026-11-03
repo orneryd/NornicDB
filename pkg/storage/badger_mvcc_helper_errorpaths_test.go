@@ -17,7 +17,7 @@ func TestBadgerMVCC_HelperWriteFunctions_InvalidIDErrors(t *testing.T) {
 	engine := newTestEngine(t)
 	v := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 77}
 
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		// Empty IDs are currently accepted by dictionary-backed key helpers;
 		// this test ensures all helper paths execute without panic.
 		require.NoError(t, engine.writeNodeMVCCVersionInTxn(txn, &Node{ID: "", Labels: []string{"L"}}, v))
@@ -33,11 +33,11 @@ func TestBadgerMVCC_HelperWriteFunctions_InvalidIDErrors(t *testing.T) {
 func TestBadgerMVCC_AppendTombstoneAndIterateEarlyExitBranches(t *testing.T) {
 	engine := createMVCCBadgerEngine(t)
 
-	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"Doc"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:n1", Labels: []string{"Doc"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:n2", Labels: []string{"Doc"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:n2", Labels: []string{"Doc"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:n1", EndNode: "test:n2", Type: "REL"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:n1", EndNode: "test:n2", Type: "REL"}))
 
 	v := MVCCVersion{CommitTimestamp: time.Now().UTC().Add(time.Second), CommitSequence: 91}
 	require.NoError(t, engine.AppendNodeTombstone("", v))

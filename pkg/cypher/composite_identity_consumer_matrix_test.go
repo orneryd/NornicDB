@@ -125,11 +125,11 @@ func TestCompositeNativeGDSStreamConsumerMatrix(t *testing.T) {
 				require.NoError(t, err)
 				// Predictions select non-neighbours. Keep this fixture as a
 				// three-node chain, with two hops from P to Q through T.
-				require.NoError(t, store.DeleteEdge("same-rel"))
-				_, err = store.CreateNode(&storage.Node{ID: "shared", Labels: []string{"T"}})
+				require.NoError(t, store.DeleteEdge(t.Context(), "same-rel"))
+				_, err = store.CreateNode(t.Context(), &storage.Node{ID: "shared", Labels: []string{"T"}})
 				require.NoError(t, err)
 				for _, start := range []storage.NodeID{"same", "target"} {
-					require.NoError(t, store.CreateEdge(&storage.Edge{ID: storage.EdgeID(string(start) + "-shared"), StartNode: start, EndNode: "shared", Type: "R"}))
+					require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: storage.EdgeID(string(start) + "-shared"), StartNode: start, EndNode: "shared", Type: "R"}))
 				}
 			}
 			ctx := context.Background()

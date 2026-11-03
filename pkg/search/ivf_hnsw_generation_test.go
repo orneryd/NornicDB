@@ -3,11 +3,11 @@ package search
 import (
 	"context"
 	"fmt"
+
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"math/rand"
 	"path/filepath"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -39,7 +39,7 @@ func TestIVFHNSWPublicQueriesSpanGrowthDrivenReclustering(t *testing.T) {
 	}
 	engine := newNamespacedEngine(t)
 	for i := 0; i < initial; i++ {
-		_, err := engine.CreateNode(newNode(fmt.Sprintf("initial-%04d", i)))
+		_, err := engine.CreateNode(t.Context(), newNode(fmt.Sprintf("initial-%04d", i)))
 		require.NoError(t, err)
 	}
 	svc := NewService(engine, dimensions, nil)
@@ -54,7 +54,7 @@ func TestIVFHNSWPublicQueriesSpanGrowthDrivenReclustering(t *testing.T) {
 
 	for i := 0; i < grown; i++ {
 		node := newNode(fmt.Sprintf("grown-%04d", i))
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, svc.IndexNode(node))
 	}
@@ -232,23 +232,6 @@ func TestClusterGenerationReplacementAfterCheckRetiresPublication(t *testing.T) 
 	}
 }
 
-// pauseAfterSnapshotContext pauses clustering right after k-means copied the
-// population and released the index (the third Err call of a TriggerClustering
-// run: admission check, check under the index locks, first initializer check).
-type pauseAfterSnapshotContext struct {
-	context.Context
-	calls          atomic.Int32
-	paused, resume chan struct{}
-}
-
-func (c *pauseAfterSnapshotContext) Err() error {
-	if c.calls.Add(1) == 3 {
-		close(c.paused)
-		<-c.resume
-	}
-	return c.Context.Err()
-}
-
 func graphHolds(index *HNSWIndex, id string) bool {
 	index.mu.RLock()
 	defer index.mu.RUnlock()
@@ -279,7 +262,7 @@ func TestIVFHNSWReclusteringReconcilesAdmissionsDuringCompute(t *testing.T) {
 					for d := range vec {
 						vec[d] = float32(rng.NormFloat64())
 					}
-					_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("seed-%04d", i)), ChunkEmbeddings: [][]float32{vec}})
+					_, err := engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("seed-%04d", i)), ChunkEmbeddings: [][]float32{vec}})
 					require.NoError(t, err)
 				}
 				svc := NewService(engine, dims, nil)
@@ -292,7 +275,7 @@ func TestIVFHNSWReclusteringReconcilesAdmissionsDuringCompute(t *testing.T) {
 				late := &storage.Node{ID: "late", ChunkEmbeddings: [][]float32{{1, 0, 0, 0, 0, 0, 0, 0}}}
 				mutate := func() error {
 					if mutation == "add" {
-						if _, err := engine.CreateNode(late); err != nil {
+						if _, err := engine.CreateNode(t.Context(), late); err != nil {
 							return err
 						}
 						return svc.IndexNode(late)
@@ -300,31 +283,15 @@ func TestIVFHNSWReclusteringReconcilesAdmissionsDuringCompute(t *testing.T) {
 					return svc.RemoveNode("seed-0007")
 				}
 				var mutateErr error
-				ctx := &pauseAfterSnapshotContext{Context: context.Background(), paused: make(chan struct{}), resume: make(chan struct{})}
-				if phase == "build" {
-					close(ctx.resume) // no pause in compute
-					ctx.calls.Store(-1 << 20)
-					ivfHNSWBuildHook = func() { mutateErr = mutate() }
-					t.Cleanup(func() { ivfHNSWBuildHook = nil })
-				}
-				done := make(chan error, 1)
-				go func() { done <- svc.TriggerClustering(ctx) }()
+				// Reuse the shared owned component/public coverage fixture. The
+				// public wrapper derives its context, so a caller Err probe cannot
+				// inject into the compute phase. Build uses the real existing hook.
+				fixture := &cgFixture{t: t, svc: svc}
+				applyMutation := func() { mutateErr = mutate() }
 				if phase == "compute" {
-					select {
-					case <-ctx.paused:
-					case err := <-done:
-						t.Fatalf("clustering finished without pausing after its snapshot: %v", err)
-					case <-time.After(time.Minute):
-						t.Fatal("clustering did not reach its snapshot")
-					}
-					mutateErr = mutate()
-					close(ctx.resume)
-				}
-				select {
-				case err := <-done:
-					require.NoError(t, err)
-				case <-time.After(2 * time.Minute):
-					t.Fatal("reclustering did not finish")
+					fixture.duringCompute(applyMutation)
+				} else {
+					fixture.duringBuild(applyMutation)
 				}
 				require.NoError(t, mutateErr)
 

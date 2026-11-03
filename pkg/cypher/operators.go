@@ -1003,8 +1003,8 @@ func (e *StorageExecutor) hasStringPredicate(expr, predicate string) bool {
 	return findTopLevelOperator(expr, predicate, true, true) >= 0
 }
 
-func nullPredicateOperand(expression, keyword string) (string, bool) {
-	at := topLevelKeywordIndex(expression, keyword)
+func nullPredicateOperand(ctx context.Context, expression, keyword string) (string, bool) {
+	at := topLevelKeywordIndex(ctx, expression, keyword)
 	if at <= 0 || strings.TrimSpace(expression[keywordEndAt(expression, at, keyword):]) != "" {
 		return "", false
 	}

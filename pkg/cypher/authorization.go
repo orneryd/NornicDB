@@ -59,11 +59,11 @@ func QueryPermissionRequirements(ctx context.Context, query string, stage Source
 // text can never inherit another stage's or dialect's verdict.
 func permissionRequirementsOfSource(ctx context.Context, source *cyphertext.Source) PermissionRequirements {
 	query := source.Text
-	query = classificationText(query)
+	query = classificationText(ctx, query)
 	requirements := PermissionRequirements{
 		Read:   true,
-		Schema: isSchemaPermissionQuery(query),
-		Admin:  isAdminPermissionQuery(query),
+		Schema: isSchemaPermissionQuery(ctx, query),
+		Admin:  isAdminPermissionQuery(ctx, query),
 	}
 	if !requirements.Schema && !requirements.Admin {
 		_, body := parseExecutionMode(query)
@@ -96,7 +96,7 @@ func permissionRequirementsOfSource(ctx context.Context, source *cyphertext.Sour
 	// A write that reads nothing of the graph (CREATE, and SET / DELETE of
 	// what it created) needs write but not read, as Neo4j lets a principal
 	// with WRITE but no READ privilege run CREATE. Any other statement reads.
-	if requirements.Write && !requirements.Schema && !requirements.Admin && !statementReadsGraphText(query) {
+	if requirements.Write && !requirements.Schema && !requirements.Admin && !statementReadsGraphText(ctx, query) {
 		requirements.Read = false
 	}
 	return requirements
@@ -225,7 +225,7 @@ func procedureNameAt(query string, offset int) (string, bool) {
 	return query[startName:endName], true
 }
 
-func isSchemaPermissionQuery(query string) bool {
+func isSchemaPermissionQuery(ctx context.Context, query string) bool {
 	commandOffset := firstExecutableCypherOffset(query)
 	for _, command := range [][2]string{
 		{"CREATE", "INDEX"},
@@ -236,22 +236,22 @@ func isSchemaPermissionQuery(query string) bool {
 		{"CREATE", "CONSTRAINT"},
 		{"DROP", "CONSTRAINT"},
 	} {
-		if findMultiWordKeywordIndex(query, command[0], command[1]) == commandOffset {
+		if findMultiWordKeywordIndex(ctx, query, command[0], command[1]) == commandOffset {
 			return true
 		}
 	}
 	return false
 }
 
-func isAdminPermissionQuery(query string) bool {
+func isAdminPermissionQuery(ctx context.Context, query string) bool {
 	commandOffset := firstExecutableCypherOffset(query)
 	// GRANT, REVOKE, DENY and SHOW … PRIVILEGES administer privileges.
-	if commandOffset >= 0 && commandOffset < len(query) && isPrivilegeAdministrationCommand(query[commandOffset:]) {
+	if commandOffset >= 0 && commandOffset < len(query) && isPrivilegeAdministrationCommand(ctx, query[commandOffset:]) {
 		return true
 	}
 	// CREATE OR REPLACE DATABASE: the pair scan below misses the OR REPLACE
 	// between CREATE and DATABASE.
-	if isCreateOrReplaceDatabaseQuery(query) {
+	if isCreateOrReplaceDatabaseQuery(ctx, query) {
 		return true
 	}
 	for _, command := range [][2]string{
@@ -261,7 +261,7 @@ func isAdminPermissionQuery(query string) bool {
 		{"TERMINATE", "TRANSACTIONS"},
 		{"TERMINATE", "TRANSACTION"},
 	} {
-		if findMultiWordKeywordIndex(query, command[0], command[1]) == commandOffset {
+		if findMultiWordKeywordIndex(ctx, query, command[0], command[1]) == commandOffset {
 			return true
 		}
 	}
@@ -284,7 +284,7 @@ func isAdminPermissionQuery(query string) bool {
 		{"ALTER", "PROMOTION POLICY"},
 		{"DROP", "PROMOTION POLICY"},
 	} {
-		if findMultiWordKeywordIndex(query, command[0], command[1]) == commandOffset {
+		if findMultiWordKeywordIndex(ctx, query, command[0], command[1]) == commandOffset {
 			return true
 		}
 	}
@@ -293,18 +293,18 @@ func isAdminPermissionQuery(query string) bool {
 
 // isCreateOrReplaceDatabaseQuery reports whether query is
 // CREATE OR REPLACE DATABASE <name>.
-func isCreateOrReplaceDatabaseQuery(query string) bool {
+func isCreateOrReplaceDatabaseQuery(ctx context.Context, query string) bool {
 	commandOffset := firstExecutableCypherOffset(query)
 	opts := defaultKeywordScanOpts()
-	create := keywordIndexFrom(query, "CREATE", commandOffset, opts)
+	create := keywordIndexFrom(ctx, query, "CREATE", commandOffset, opts)
 	if create != commandOffset {
 		return false
 	}
-	orReplace := keywordIndexFrom(query, "OR REPLACE", create+len("CREATE"), opts)
+	orReplace := keywordIndexFrom(ctx, query, "OR REPLACE", create+len("CREATE"), opts)
 	if orReplace < 0 {
 		return false
 	}
-	database := keywordIndexFrom(query, "DATABASE", orReplace+len("OR REPLACE"), opts)
+	database := keywordIndexFrom(ctx, query, "DATABASE", orReplace+len("OR REPLACE"), opts)
 	return database >= 0
 }
 

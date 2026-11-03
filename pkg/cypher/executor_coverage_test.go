@@ -64,7 +64,7 @@ func TestSubstituteParamsAllTypes(t *testing.T) {
 		Labels:     []string{"Test"},
 		Properties: map[string]interface{}{"val": float64(100)},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -90,7 +90,7 @@ func TestSubstituteParamsAllTypes(t *testing.T) {
 		Labels:     []string{"Test2"},
 		Properties: map[string]interface{}{"active": true},
 	}
-	_, err = store.CreateNode(node2)
+	_, err = store.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
 
 	params = map[string]interface{}{
@@ -132,7 +132,7 @@ func TestParseValueVariants(t *testing.T) {
 			"count":  float64(42),
 		},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -169,7 +169,7 @@ func TestCompareEqualNilCases(t *testing.T) {
 		Labels:     []string{"NilTest"},
 		Properties: map[string]interface{}{"name": "test"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -201,7 +201,7 @@ func TestCompareGreaterLessStrings(t *testing.T) {
 			Labels:     []string{"Fruit"},
 			Properties: map[string]interface{}{"name": n.name},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -229,7 +229,7 @@ func TestCompareRegexInvalidPattern(t *testing.T) {
 		Labels:     []string{"RegexTest"},
 		Properties: map[string]interface{}{"pattern": "test"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -252,7 +252,7 @@ func TestCompareRegexNonStringExpected(t *testing.T) {
 		Labels:     []string{"RegexNum"},
 		Properties: map[string]interface{}{"val": float64(123)},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -275,7 +275,7 @@ func TestEvaluateStringOpMissingProperty(t *testing.T) {
 		Labels:     []string{"StrMiss"},
 		Properties: map[string]interface{}{"name": "test"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -307,7 +307,7 @@ func TestEvaluateInOpMissingProperty(t *testing.T) {
 		Labels:     []string{"InMiss"},
 		Properties: map[string]interface{}{"name": "test"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -329,7 +329,7 @@ func TestEvaluateInOpNotAList(t *testing.T) {
 		Labels:     []string{"InNotList"},
 		Properties: map[string]interface{}{"status": "active"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -351,7 +351,7 @@ func TestEvaluateWhereNonBooleanPredicateReturnsTypeError(t *testing.T) {
 		Labels:     []string{"NoOp"},
 		Properties: map[string]interface{}{"val": float64(5)},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -372,7 +372,7 @@ func TestEvaluateWhereNonPropertyComparison(t *testing.T) {
 		Labels:     []string{"NonProp"},
 		Properties: map[string]interface{}{"val": float64(5)},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -394,7 +394,7 @@ func TestEvaluateWherePropertyNotExists(t *testing.T) {
 		Labels:     []string{"PropNE"},
 		Properties: map[string]interface{}{"existing": "yes"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -419,7 +419,7 @@ func TestOrderNodesStringSorting(t *testing.T) {
 			Labels:     []string{"Person"},
 			Properties: map[string]interface{}{"name": name},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -450,7 +450,7 @@ func TestOrderNodesWithoutVariablePrefix(t *testing.T) {
 			Labels:     []string{"Item"},
 			Properties: map[string]interface{}{"priority": float64(3 - i)}, // 3, 2, 1
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -583,7 +583,7 @@ func TestParseReturnItemsWithAlias(t *testing.T) {
 		Labels:     []string{"Item"},
 		Properties: map[string]interface{}{"value": float64(100)},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -659,7 +659,7 @@ func TestParseReturnItemsOrderByLimit(t *testing.T) {
 			Labels:     []string{"OLTest"},
 			Properties: map[string]interface{}{"idx": float64(i)},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -724,7 +724,7 @@ func TestExecuteSetInvalidPropertyAccess(t *testing.T) {
 		Labels:     []string{"SetInv"},
 		Properties: map[string]interface{}{},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -767,7 +767,7 @@ func TestExecuteAggregationCountStar(t *testing.T) {
 			Labels:     []string{"CountStar"},
 			Properties: map[string]interface{}{},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -790,7 +790,7 @@ func TestExecuteAggregationCollectNodes(t *testing.T) {
 			Labels:     []string{"CollectNode"},
 			Properties: map[string]interface{}{"idx": float64(i)},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -819,7 +819,7 @@ func TestExecuteAggregationNonAggregateInQuery(t *testing.T) {
 			Labels:     []string{"NonAgg"},
 			Properties: map[string]interface{}{"name": fmt.Sprintf("Item%d", i), "val": float64(i * 10)},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -870,7 +870,7 @@ func TestExecuteAggregationSumNoMatch(t *testing.T) {
 		Labels:     []string{"SumNo"},
 		Properties: map[string]interface{}{"value": float64(100)},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -891,7 +891,7 @@ func TestExecuteAggregationAvgNoMatch(t *testing.T) {
 		Labels:     []string{"AvgNo"},
 		Properties: map[string]interface{}{"value": float64(100)},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -912,7 +912,7 @@ func TestExecuteAggregationMinNoMatch(t *testing.T) {
 		Labels:     []string{"MinNo"},
 		Properties: map[string]interface{}{"value": float64(100)},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -933,7 +933,7 @@ func TestExecuteAggregationMaxNoMatch(t *testing.T) {
 		Labels:     []string{"MaxNo"},
 		Properties: map[string]interface{}{"value": float64(100)},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -954,7 +954,7 @@ func TestResolveReturnItemCountFunction(t *testing.T) {
 		Labels:     []string{"CountResolve"},
 		Properties: map[string]interface{}{},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -977,7 +977,7 @@ func TestResolveReturnItemNonExistentProperty(t *testing.T) {
 		Labels:     []string{"NEP"},
 		Properties: map[string]interface{}{"exists": "yes"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -998,7 +998,7 @@ func TestResolveReturnItemDifferentVariable(t *testing.T) {
 		Labels:     []string{"DiffVar"},
 		Properties: map[string]interface{}{"val": "test"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1021,14 +1021,14 @@ func TestDbSchemaVisualizationWithRelationships(t *testing.T) {
 	// Create nodes and edges
 	node1 := &storage.Node{ID: "sv1", Labels: []string{"Person"}, Properties: map[string]interface{}{}}
 	node2 := &storage.Node{ID: "sv2", Labels: []string{"Company"}, Properties: map[string]interface{}{}}
-	_, err := store.CreateNode(node1)
+	_, err := store.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
 	require.NoError(t, err)
-	_, err = store.CreateNode(node2)
+	_, err = store.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
 
 	edge := &storage.Edge{ID: "sev1", StartNode: "sv1", EndNode: "sv2", Type: "WORKS_AT", Properties: map[string]interface{}{}}
-	require.NoError(t, store.CreateEdge(edge))
+	require.NoError(t, store.CreateEdge(t.Context(), edge))
 
 	result, err := exec.Execute(ctx, "CALL db.schema.visualization()", nil)
 	require.NoError(t, err)
@@ -1057,10 +1057,10 @@ func TestDbSchemaNodePropertiesMultipleLabels(t *testing.T) {
 		Labels:     []string{"Company"},
 		Properties: map[string]interface{}{"name": "Acme", "revenue": 1000000},
 	}
-	_, err := store.CreateNode(node1)
+	_, err := store.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
 	require.NoError(t, err)
-	_, err = store.CreateNode(node2)
+	_, err = store.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
 
 	result, err := exec.Execute(ctx, "CALL db.schema.nodeProperties()", nil)
@@ -1078,10 +1078,10 @@ func TestDbSchemaRelPropertiesWithProperties(t *testing.T) {
 
 	node1 := &storage.Node{ID: "srp1", Labels: []string{"A"}, Properties: map[string]interface{}{}}
 	node2 := &storage.Node{ID: "srp2", Labels: []string{"B"}, Properties: map[string]interface{}{}}
-	_, err := store.CreateNode(node1)
+	_, err := store.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
 	require.NoError(t, err)
-	_, err = store.CreateNode(node2)
+	_, err = store.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
 
 	edge := &storage.Edge{
@@ -1091,7 +1091,7 @@ func TestDbSchemaRelPropertiesWithProperties(t *testing.T) {
 		Type:       "CONNECTS",
 		Properties: map[string]interface{}{"weight": 5, "since": "2020"},
 	}
-	require.NoError(t, store.CreateEdge(edge))
+	require.NoError(t, store.CreateEdge(t.Context(), edge))
 
 	result, err := exec.Execute(ctx, "CALL db.schema.relProperties()", nil)
 	require.NoError(t, err)
@@ -1107,10 +1107,10 @@ func TestDbPropertyKeysWithEdgeProperties(t *testing.T) {
 
 	node1 := &storage.Node{ID: "dpk1", Labels: []string{"X"}, Properties: map[string]interface{}{"nodeProp": "value"}}
 	node2 := &storage.Node{ID: "dpk2", Labels: []string{"Y"}, Properties: map[string]interface{}{}}
-	_, err := store.CreateNode(node1)
+	_, err := store.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
 	require.NoError(t, err)
-	_, err = store.CreateNode(node2)
+	_, err = store.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
 
 	edge := &storage.Edge{
@@ -1120,7 +1120,7 @@ func TestDbPropertyKeysWithEdgeProperties(t *testing.T) {
 		Type:       "REL",
 		Properties: map[string]interface{}{"edgeProp": "edgeValue"},
 	}
-	require.NoError(t, store.CreateEdge(edge))
+	require.NoError(t, store.CreateEdge(t.Context(), edge))
 
 	result, err := exec.Execute(ctx, "CALL db.propertyKeys()", nil)
 	require.NoError(t, err)
@@ -1144,18 +1144,18 @@ func TestCountLabelsAndRelTypes(t *testing.T) {
 	node1 := &storage.Node{ID: "cl1", Labels: []string{"Label1"}, Properties: map[string]interface{}{}}
 	node2 := &storage.Node{ID: "cl2", Labels: []string{"Label2"}, Properties: map[string]interface{}{}}
 	node3 := &storage.Node{ID: "cl3", Labels: []string{"Label3"}, Properties: map[string]interface{}{}}
-	_, err := store.CreateNode(node1)
+	_, err := store.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
 	require.NoError(t, err)
-	_, err = store.CreateNode(node2)
+	_, err = store.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
-	_, err = store.CreateNode(node3)
+	_, err = store.CreateNode(t.Context(), node3)
 	require.NoError(t, err)
 
 	edge1 := &storage.Edge{ID: "ce1", StartNode: "cl1", EndNode: "cl2", Type: "TYPE1", Properties: map[string]interface{}{}}
 	edge2 := &storage.Edge{ID: "ce2", StartNode: "cl2", EndNode: "cl3", Type: "TYPE2", Properties: map[string]interface{}{}}
-	require.NoError(t, store.CreateEdge(edge1))
-	require.NoError(t, store.CreateEdge(edge2))
+	require.NoError(t, store.CreateEdge(t.Context(), edge1))
+	require.NoError(t, store.CreateEdge(t.Context(), edge2))
 
 	result, err := exec.Execute(ctx, "CALL nornicdb.stats()", nil)
 	require.NoError(t, err)
@@ -1176,20 +1176,20 @@ func TestDetachDeleteWithIncomingEdges(t *testing.T) {
 	node1 := &storage.Node{ID: "dd1", Labels: []string{"Node"}, Properties: map[string]interface{}{}}
 	node2 := &storage.Node{ID: "dd2", Labels: []string{"Target"}, Properties: map[string]interface{}{}}
 	node3 := &storage.Node{ID: "dd3", Labels: []string{"Node"}, Properties: map[string]interface{}{}}
-	_, err := store.CreateNode(node1)
+	_, err := store.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
 	require.NoError(t, err)
-	_, err = store.CreateNode(node2)
+	_, err = store.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
-	_, err = store.CreateNode(node3)
+	_, err = store.CreateNode(t.Context(), node3)
 	require.NoError(t, err)
 
 	// node1 -> node2 (incoming to node2)
 	edge1 := &storage.Edge{ID: "dde1", StartNode: "dd1", EndNode: "dd2", Type: "POINTS_TO", Properties: map[string]interface{}{}}
 	// node2 -> node3 (outgoing from node2)
 	edge2 := &storage.Edge{ID: "dde2", StartNode: "dd2", EndNode: "dd3", Type: "POINTS_TO", Properties: map[string]interface{}{}}
-	require.NoError(t, store.CreateEdge(edge1))
-	require.NoError(t, store.CreateEdge(edge2))
+	require.NoError(t, store.CreateEdge(t.Context(), edge1))
+	require.NoError(t, store.CreateEdge(t.Context(), edge2))
 
 	// Detach delete node2 - should delete both edges
 	result, err := exec.Execute(ctx, "MATCH (n:Target) DETACH DELETE n", nil)
@@ -1237,7 +1237,7 @@ func TestExecuteReturnStarWithMultipleNodes(t *testing.T) {
 		Labels:     []string{"Star"},
 		Properties: map[string]interface{}{"name": "test"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1260,7 +1260,7 @@ func TestToFloat64WithInt(t *testing.T) {
 		Labels:     []string{"IntTest"},
 		Properties: map[string]interface{}{"value": 42}, // plain int
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1282,7 +1282,7 @@ func TestToFloat64WithInvalidString(t *testing.T) {
 		Labels:     []string{"InvStr"},
 		Properties: map[string]interface{}{"value": "not-a-number"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1310,7 +1310,7 @@ func TestExecuteDistinctWithDuplicates(t *testing.T) {
 			Labels:     []string{"Dist"},
 			Properties: map[string]interface{}{"cat": category},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -1397,7 +1397,7 @@ func TestParseValueFloatParsing(t *testing.T) {
 		Labels:     []string{"FloatParse"},
 		Properties: map[string]interface{}{"value": float64(3.14159)},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1419,7 +1419,7 @@ func TestParseValuePlainString(t *testing.T) {
 		Labels:     []string{"PlainStr"},
 		Properties: map[string]interface{}{"status": "active"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1441,7 +1441,7 @@ func TestStringPredicateRejectsUndefinedVariable(t *testing.T) {
 		Labels:     []string{"StrNV"},
 		Properties: map[string]interface{}{"name": "Alice"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1461,7 +1461,7 @@ func TestMembershipPredicateRejectsUndefinedVariable(t *testing.T) {
 		Labels:     []string{"InNV"},
 		Properties: map[string]interface{}{"val": "test"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1481,7 +1481,7 @@ func TestEvaluateIsNullNonVariablePrefix(t *testing.T) {
 		Labels:     []string{"NullNV"},
 		Properties: map[string]interface{}{},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1517,7 +1517,7 @@ func TestExecuteMatchCountVariable(t *testing.T) {
 			Labels:     []string{"CountVar"},
 			Properties: map[string]interface{}{},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -1538,10 +1538,10 @@ func TestExecuteDeleteWithWhere(t *testing.T) {
 	// Create nodes
 	node1 := &storage.Node{ID: "del-w1", Labels: []string{"DelKeep"}, Properties: map[string]interface{}{"type": "keeper"}}
 	node2 := &storage.Node{ID: "del-w2", Labels: []string{"DelRemove"}, Properties: map[string]interface{}{"type": "remove"}}
-	_, err := store.CreateNode(node1)
+	_, err := store.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
 	require.NoError(t, err)
-	_, err = store.CreateNode(node2)
+	_, err = store.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
 
 	// DELETE with label filter - DELETE all DelRemove nodes
@@ -1566,7 +1566,7 @@ func TestExecuteSetUpdateNodeError(t *testing.T) {
 		Labels:     []string{"SetErr"},
 		Properties: nil, // nil properties map
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1588,7 +1588,7 @@ func TestParseReturnItemsEmptyAfterSplit(t *testing.T) {
 		Labels:     []string{"EmptyRet"},
 		Properties: map[string]interface{}{},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1624,7 +1624,7 @@ func TestCallDbLabelsWithEmptyLabels(t *testing.T) {
 		Labels:     []string{},
 		Properties: map[string]interface{}{},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1668,7 +1668,7 @@ func TestExecuteCreateWithDeleteBasic(t *testing.T) {
 	assert.Equal(t, 1, result.Stats.NodesDeleted)
 
 	// Verify node is gone
-	nodeCount, _ := store.NodeCount()
+	nodeCount, _ := store.NodeCount(t.Context())
 	assert.Equal(t, int64(0), nodeCount)
 }
 
@@ -1691,7 +1691,7 @@ func TestExecuteCreateWithDeleteAndReturn(t *testing.T) {
 	assert.NotEmpty(t, result.Rows)
 
 	// Verify node is gone
-	nodeCount, _ := store.NodeCount()
+	nodeCount, _ := store.NodeCount(t.Context())
 	assert.Equal(t, int64(0), nodeCount)
 }
 
@@ -1710,7 +1710,7 @@ func TestExecuteCreateWithDeleteTimestamp(t *testing.T) {
 	assert.Equal(t, 1, result.Stats.NodesDeleted)
 
 	// Verify node is gone
-	nodeCount, _ := store.NodeCount()
+	nodeCount, _ := store.NodeCount(t.Context())
 	assert.Equal(t, int64(0), nodeCount)
 }
 
@@ -1731,9 +1731,9 @@ func TestExecuteCreateWithDeleteRelationship(t *testing.T) {
 	assert.Equal(t, 1, result.Stats.RelationshipsDeleted)
 
 	// Verify relationship is gone but nodes remain
-	nodeCount, _ := store.NodeCount()
+	nodeCount, _ := store.NodeCount(t.Context())
 	assert.Equal(t, int64(2), nodeCount)
-	edgeCount, _ := store.EdgeCount()
+	edgeCount, _ := store.EdgeCount(t.Context())
 	assert.Equal(t, int64(0), edgeCount)
 }
 
@@ -1751,7 +1751,7 @@ func TestExecuteCreateWithDeleteMultipleNodes(t *testing.T) {
 	assert.Equal(t, 1, result.Stats.NodesCreated)
 	assert.Equal(t, 1, result.Stats.NodesDeleted)
 
-	nodeCount, _ := store.NodeCount()
+	nodeCount, _ := store.NodeCount(t.Context())
 	assert.Equal(t, int64(0), nodeCount)
 }
 
@@ -1764,14 +1764,14 @@ func TestExecuteDeleteDetachKeywordPosition(t *testing.T) {
 
 	node1 := &storage.Node{ID: "dk1", Labels: []string{"DK"}, Properties: map[string]interface{}{}}
 	node2 := &storage.Node{ID: "dk2", Labels: []string{"DK"}, Properties: map[string]interface{}{}}
-	_, err := store.CreateNode(node1)
+	_, err := store.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
 	require.NoError(t, err)
-	_, err = store.CreateNode(node2)
+	_, err = store.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
 
 	edge := &storage.Edge{ID: "dke1", StartNode: "dk1", EndNode: "dk2", Type: "REL", Properties: map[string]interface{}{}}
-	require.NoError(t, store.CreateEdge(edge))
+	require.NoError(t, store.CreateEdge(t.Context(), edge))
 
 	// DETACH DELETE at end of line (different position handling)
 	result, err := exec.Execute(ctx, "MATCH (n:DK) DETACH DELETE n", nil)
@@ -1791,7 +1791,7 @@ func TestCollectRegexWithProperty(t *testing.T) {
 		Labels:     []string{"CollectProp"},
 		Properties: map[string]interface{}{"name": "test"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1841,7 +1841,7 @@ func TestExecuteMatchOrderByWithSkipLimit(t *testing.T) {
 			Labels:     []string{"OSL"},
 			Properties: map[string]interface{}{"val": float64(i)},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -1864,7 +1864,7 @@ func TestParseValueIntegerParsing(t *testing.T) {
 		Labels:     []string{"IntParse"},
 		Properties: map[string]interface{}{"count": float64(100)},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1889,7 +1889,7 @@ func TestCompareEqualBothNil(t *testing.T) {
 		Labels:     []string{"NilBoth"},
 		Properties: map[string]interface{}{"val": nil},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1917,9 +1917,9 @@ func runNumericConversions(t *testing.T, cases []numericConversionCase) {
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
 			if test.update {
-				require.NoError(t, store.UpdateNode(storage.NodeUpdateRequest{After: &test.node}))
+				require.NoError(t, store.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: &test.node}))
 			} else {
-				_, err := store.CreateNode(&test.node)
+				_, err := store.CreateNode(t.Context(), &test.node)
 				require.NoError(t, err)
 			}
 			result, err := exec.Execute(context.Background(), test.query, nil)
@@ -1968,7 +1968,7 @@ func TestEvaluateStringOpDefaultCase(t *testing.T) {
 		Labels:     []string{"StrDef"},
 		Properties: map[string]interface{}{"name": "test value"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1996,14 +1996,14 @@ func TestExecuteMatchWithRelationshipQuery(t *testing.T) {
 	// Create relationship
 	node1 := &storage.Node{ID: "rel-m1", Labels: []string{"Start"}, Properties: map[string]interface{}{}}
 	node2 := &storage.Node{ID: "rel-m2", Labels: []string{"End"}, Properties: map[string]interface{}{}}
-	_, err := store.CreateNode(node1)
+	_, err := store.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
 	require.NoError(t, err)
-	_, err = store.CreateNode(node2)
+	_, err = store.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
 
 	edge := &storage.Edge{ID: "rel-me", StartNode: "rel-m1", EndNode: "rel-m2", Type: "CONNECTS"}
-	require.NoError(t, store.CreateEdge(edge))
+	require.NoError(t, store.CreateEdge(t.Context(), edge))
 
 	// Match with relationship type
 	result, err := exec.Execute(ctx, "CALL db.relationshipTypes()", nil)
@@ -2025,7 +2025,7 @@ func TestExecuteReturnAliasedCount(t *testing.T) {
 			Labels:     []string{"AC"},
 			Properties: map[string]interface{}{},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -2048,7 +2048,7 @@ func TestExecuteSetNewProperty(t *testing.T) {
 		Labels:     []string{"SetNew"},
 		Properties: map[string]interface{}{"existing": "yes"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -2071,7 +2071,7 @@ func TestExecuteMatchWithNilParams(t *testing.T) {
 		Labels:     []string{"NilParams"},
 		Properties: map[string]interface{}{},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -2093,7 +2093,7 @@ func TestParseReturnItemsEmptyString(t *testing.T) {
 		Labels:     []string{"EmptyItems"},
 		Properties: map[string]interface{}{},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -2114,7 +2114,7 @@ func TestExecuteMatchWhereEqualsNumber(t *testing.T) {
 		Labels:     []string{"NumEq"},
 		Properties: map[string]interface{}{"val": float64(42)},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -2136,7 +2136,7 @@ func TestExecuteReturnCountN(t *testing.T) {
 			Labels:     []string{"CountN"},
 			Properties: map[string]interface{}{},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -2160,7 +2160,7 @@ func TestExecuteAggregationWithNonNumeric(t *testing.T) {
 		Labels:     []string{"NonNum"},
 		Properties: map[string]interface{}{"value": "not a number"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -2176,7 +2176,7 @@ func TestExecuteMatchCreateBlock_SetAndDeleteErrorBranches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{ID: "a1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "a1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}})
 	require.NoError(t, err)
 
 	// Invalid label name branch in SET label assignment.
@@ -2357,9 +2357,9 @@ func TestExecuteMatchCreateBlock_SetMergeAndDeleteBranches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{ID: "aa", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "aa", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "bb", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "bb", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob"}})
 	require.NoError(t, err)
 
 	// Direct DELETE (without WITH) branch on created relationship + count() return.

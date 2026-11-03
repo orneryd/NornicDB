@@ -62,11 +62,11 @@ func (e *StorageExecutor) nodeCountFromStore(ctx context.Context, node nodePatte
 	if !countStoreDescribesReads(ctx, store) {
 		return 0, false, nil
 	}
-	counter, ok := store.(interface{ NodeCountByLabel(string) (int64, error) })
+	counter, ok := store.(storage.LabelStatsEngine)
 	if !ok {
 		return 0, false, nil
 	}
-	count, err := counter.NodeCountByLabel(node.labels[0])
+	count, err := counter.NodeCountByLabel(ctx, node.labels[0])
 	return count, true, err
 }
 
@@ -118,9 +118,9 @@ func (e *StorageExecutor) relationshipCountFromStore(ctx context.Context, matche
 			var n int64
 			var err error
 			if startTier {
-				n, err = store.EdgeCountByStartLabel(label, edgeType)
+				n, err = store.EdgeCountByStartLabel(ctx, label, edgeType)
 			} else {
-				n, err = store.EdgeCountByEndLabel(label, edgeType)
+				n, err = store.EdgeCountByEndLabel(ctx, label, edgeType)
 			}
 			if err != nil {
 				return 0, true, err
@@ -134,14 +134,14 @@ func (e *StorageExecutor) relationshipCountFromStore(ctx context.Context, matche
 		return countUndirectedRelationshipMatches(ctx, store, types)
 	}
 	if len(types) == 0 {
-		n, err := store.EdgeCount()
+		n, err := store.EdgeCount(ctx)
 		return n, true, err
 	}
 	// Every engine keeps a per-type counter (#638): typed counts are point
 	// reads.
 	var total int64
 	for _, edgeType := range types {
-		n, err := store.EdgeCountByType(edgeType)
+		n, err := store.EdgeCountByType(ctx, edgeType)
 		if err != nil {
 			return 0, true, err
 		}

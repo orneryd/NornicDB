@@ -17,7 +17,7 @@ func TestStoredLiteralUnicodeNameSourceRoundtrip(t *testing.T) {
 			t.Cleanup(func() { config.SetParserType(previous) })
 			engine := newTestMemoryEngine(t)
 			for _, node := range []*storage.Node{{ID: "nornic:historical", Labels: []string{"legacy\\u0062"}, Properties: map[string]any{"key\\u0062": int64(1)}}, {ID: "nornic:decoded", Labels: []string{"legacyb"}, Properties: map[string]any{"keyb": int64(2)}}} {
-				_, err := engine.CreateNode(node)
+				_, err := engine.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 			}
 			executor := NewStorageExecutor(engine)
@@ -25,7 +25,7 @@ func TestStoredLiteralUnicodeNameSourceRoundtrip(t *testing.T) {
 			result, err := executor.Execute(t.Context(), query, nil)
 			require.NoError(t, err)
 			require.Equal(t, [][]any{{int64(1)}}, result.Rows, "printing a stored literal name must not target its Unicode-decoded sibling")
-			original, err := engine.GetNode("nornic:historical")
+			original, err := engine.GetNode(t.Context(), "nornic:historical")
 			require.NoError(t, err)
 			require.Equal(t, []string{"legacy\\u0062"}, original.Labels)
 			require.Equal(t, int64(1), original.Properties["key\\u0062"])

@@ -32,7 +32,7 @@ func newPrefixedEdge(id, edgeType string, start, end string) *Edge {
 
 func TestBadgerTransaction_FirstNodeWritePinsNamespace(t *testing.T) {
 	engine := newTestEngine(t)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	if err != nil {
 		t.Fatalf("BeginTransaction: %v", err)
 	}
@@ -42,7 +42,7 @@ func TestBadgerTransaction_FirstNodeWritePinsNamespace(t *testing.T) {
 		t.Fatalf("namespace must be empty before first write, got %q", got)
 	}
 
-	if _, err := tx.CreateNode(newPrefixedNode("tenant_a:n1", "L")); err != nil {
+	if _, err := tx.CreateNode(t.Context(), newPrefixedNode("tenant_a:n1", "L")); err != nil {
 		t.Fatalf("CreateNode(tenant_a:n1): %v", err)
 	}
 	if got := tx.Namespace(); got != "tenant_a" {
@@ -52,16 +52,16 @@ func TestBadgerTransaction_FirstNodeWritePinsNamespace(t *testing.T) {
 
 func TestBadgerTransaction_SecondWriteSameNamespaceSucceeds(t *testing.T) {
 	engine := newTestEngine(t)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	if err != nil {
 		t.Fatalf("BeginTransaction: %v", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if _, err := tx.CreateNode(newPrefixedNode("nornic:a", "L")); err != nil {
+	if _, err := tx.CreateNode(t.Context(), newPrefixedNode("nornic:a", "L")); err != nil {
 		t.Fatalf("first CreateNode: %v", err)
 	}
-	if _, err := tx.CreateNode(newPrefixedNode("nornic:b", "L")); err != nil {
+	if _, err := tx.CreateNode(t.Context(), newPrefixedNode("nornic:b", "L")); err != nil {
 		t.Fatalf("second CreateNode in same namespace must succeed, got: %v", err)
 	}
 	if got := tx.Namespace(); got != "nornic" {
@@ -71,16 +71,16 @@ func TestBadgerTransaction_SecondWriteSameNamespaceSucceeds(t *testing.T) {
 
 func TestBadgerTransaction_CreateNodeCrossNamespaceRejected(t *testing.T) {
 	engine := newTestEngine(t)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	if err != nil {
 		t.Fatalf("BeginTransaction: %v", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if _, err := tx.CreateNode(newPrefixedNode("tenant_a:n1", "L")); err != nil {
+	if _, err := tx.CreateNode(t.Context(), newPrefixedNode("tenant_a:n1", "L")); err != nil {
 		t.Fatalf("first CreateNode: %v", err)
 	}
-	_, err = tx.CreateNode(newPrefixedNode("tenant_b:n2", "L"))
+	_, err = tx.CreateNode(t.Context(), newPrefixedNode("tenant_b:n2", "L"))
 	if err == nil {
 		t.Fatalf("CreateNode in second namespace must fail")
 	}
@@ -101,18 +101,20 @@ func TestBadgerTransaction_NodeMutationCrossNamespaceRejected(t *testing.T) {
 		mutate func(*BadgerTransaction) error
 	}{
 		{"UpdateNode", func(tx *BadgerTransaction) error {
-			return tx.UpdateGraphNode(NodeUpdateRequest{After: newPrefixedNode("tenant_b:n1", "L"), Policy: ClientNodeEdits})
+			return tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: newPrefixedNode("tenant_b:n1", "L"), Policy: ClientNodeEdits})
 		}},
-		{"DeleteNode", func(tx *BadgerTransaction) error { return tx.DeleteGraphNode(NodeID("tenant_b:n1"), CascadeEdges) }},
+		{"DeleteNode", func(tx *BadgerTransaction) error {
+			return tx.DeleteGraphNode(t.Context(), NodeID("tenant_b:n1"), CascadeEdges)
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			engine := newTestEngine(t)
-			tx, err := engine.BeginTransaction()
+			tx, err := engine.BeginTransaction(t.Context())
 			if err != nil {
 				t.Fatalf("BeginTransaction: %v", err)
 			}
 			defer func() { _ = tx.Rollback() }()
-			if _, err := tx.CreateNode(newPrefixedNode("tenant_a:n1", "L")); err != nil {
+			if _, err := tx.CreateNode(t.Context(), newPrefixedNode("tenant_a:n1", "L")); err != nil {
 				t.Fatalf("CreateNode: %v", err)
 			}
 			err = tc.mutate(tx)
@@ -128,13 +130,13 @@ func TestBadgerTransaction_NodeMutationCrossNamespaceRejected(t *testing.T) {
 
 func TestBadgerTransaction_UnprefixedNodeRejected(t *testing.T) {
 	engine := newTestEngine(t)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	if err != nil {
 		t.Fatalf("BeginTransaction: %v", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	_, err = tx.CreateNode(newPrefixedNode("unprefixed-id", "L"))
+	_, err = tx.CreateNode(t.Context(), newPrefixedNode("unprefixed-id", "L"))
 	if err == nil {
 		t.Fatalf("CreateNode with unprefixed ID must fail")
 	}
@@ -150,14 +152,14 @@ func TestBadgerTransaction_CreateEdgeCrossNamespaceEndpointsRejected(t *testing.
 	engine := newTestEngine(t)
 	// Pre-create endpoints in two namespaces using direct engine API
 	// (engine-level creates do not enforce the per-tx pin).
-	if _, err := engine.CreateNode(newPrefixedNode("tenant_a:start", "L")); err != nil {
+	if _, err := engine.CreateNode(t.Context(), newPrefixedNode("tenant_a:start", "L")); err != nil {
 		t.Fatalf("create tenant_a:start: %v", err)
 	}
-	if _, err := engine.CreateNode(newPrefixedNode("tenant_b:end", "L")); err != nil {
+	if _, err := engine.CreateNode(t.Context(), newPrefixedNode("tenant_b:end", "L")); err != nil {
 		t.Fatalf("create tenant_b:end: %v", err)
 	}
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	if err != nil {
 		t.Fatalf("BeginTransaction: %v", err)
 	}
@@ -165,7 +167,7 @@ func TestBadgerTransaction_CreateEdgeCrossNamespaceEndpointsRejected(t *testing.
 
 	// Edge ID lives in tenant_a; StartNode in tenant_a; EndNode in tenant_b.
 	// pinEdgeNamespaceLocked must reject because the endpoints disagree.
-	err = tx.CreateEdge(newPrefixedEdge("tenant_a:e1", "REL", "tenant_a:start", "tenant_b:end"))
+	err = tx.CreateEdge(t.Context(), newPrefixedEdge("tenant_a:e1", "REL", "tenant_a:start", "tenant_b:end"))
 	if err == nil {
 		t.Fatalf("CreateEdge with mismatched endpoint namespaces must fail")
 	}
@@ -176,21 +178,21 @@ func TestBadgerTransaction_CreateEdgeCrossNamespaceEndpointsRejected(t *testing.
 
 func TestBadgerTransaction_CreateEdgeIDInDifferentNamespaceRejected(t *testing.T) {
 	engine := newTestEngine(t)
-	if _, err := engine.CreateNode(newPrefixedNode("tenant_a:start", "L")); err != nil {
+	if _, err := engine.CreateNode(t.Context(), newPrefixedNode("tenant_a:start", "L")); err != nil {
 		t.Fatalf("create tenant_a:start: %v", err)
 	}
-	if _, err := engine.CreateNode(newPrefixedNode("tenant_a:end", "L")); err != nil {
+	if _, err := engine.CreateNode(t.Context(), newPrefixedNode("tenant_a:end", "L")); err != nil {
 		t.Fatalf("create tenant_a:end: %v", err)
 	}
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	if err != nil {
 		t.Fatalf("BeginTransaction: %v", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
 	// Edge ID lives in tenant_b but endpoints live in tenant_a.
-	err = tx.CreateEdge(newPrefixedEdge("tenant_b:e1", "REL", "tenant_a:start", "tenant_a:end"))
+	err = tx.CreateEdge(t.Context(), newPrefixedEdge("tenant_b:e1", "REL", "tenant_a:start", "tenant_a:end"))
 	if err == nil {
 		t.Fatalf("CreateEdge whose ID does not share endpoint namespace must fail")
 	}
@@ -202,12 +204,12 @@ func TestBadgerTransaction_CreateEdgeIDInDifferentNamespaceRejected(t *testing.T
 func TestBadgerTransaction_BulkCreateEdgesMixedNamespaceRejected(t *testing.T) {
 	engine := newTestEngine(t)
 	for _, id := range []string{"tenant_a:s1", "tenant_a:e1", "tenant_b:s2", "tenant_b:e2"} {
-		if _, err := engine.CreateNode(newPrefixedNode(id, "L")); err != nil {
+		if _, err := engine.CreateNode(t.Context(), newPrefixedNode(id, "L")); err != nil {
 			t.Fatalf("seed %s: %v", id, err)
 		}
 	}
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	if err != nil {
 		t.Fatalf("BeginTransaction: %v", err)
 	}
@@ -217,7 +219,7 @@ func TestBadgerTransaction_BulkCreateEdgesMixedNamespaceRejected(t *testing.T) {
 		newPrefixedEdge("tenant_a:r1", "REL", "tenant_a:s1", "tenant_a:e1"),
 		newPrefixedEdge("tenant_b:r2", "REL", "tenant_b:s2", "tenant_b:e2"),
 	}
-	err = tx.BulkCreateEdges(edges)
+	err = tx.BulkCreateEdges(t.Context(), edges)
 	if err == nil {
 		t.Fatalf("BulkCreateEdges with mixed namespaces must fail")
 	}
@@ -231,7 +233,7 @@ func TestBadgerTransaction_BulkCreateEdgesMixedNamespaceRejected(t *testing.T) {
 
 func TestBadgerTransaction_SetNamespacePinsExplicitly(t *testing.T) {
 	engine := newTestEngine(t)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	if err != nil {
 		t.Fatalf("BeginTransaction: %v", err)
 	}
@@ -259,11 +261,11 @@ func TestBadgerTransaction_SetNamespacePinsExplicitly(t *testing.T) {
 	}
 
 	// Subsequent write in pinned namespace still works.
-	if _, err := tx.CreateNode(newPrefixedNode("tenant_a:n1", "L")); err != nil {
+	if _, err := tx.CreateNode(t.Context(), newPrefixedNode("tenant_a:n1", "L")); err != nil {
 		t.Fatalf("CreateNode after SetNamespace: %v", err)
 	}
 	// Write into the rejected namespace must still fail.
-	_, err = tx.CreateNode(newPrefixedNode("tenant_b:n1", "L"))
+	_, err = tx.CreateNode(t.Context(), newPrefixedNode("tenant_b:n1", "L"))
 	if !errors.Is(err, ErrCrossNamespaceTransaction) {
 		t.Fatalf("CreateNode in tenant_b must remain rejected, got: %v", err)
 	}
@@ -271,7 +273,7 @@ func TestBadgerTransaction_SetNamespacePinsExplicitly(t *testing.T) {
 
 func TestBadgerTransaction_SetNamespaceRejectsEmpty(t *testing.T) {
 	engine := newTestEngine(t)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	if err != nil {
 		t.Fatalf("BeginTransaction: %v", err)
 	}
@@ -287,23 +289,23 @@ func TestBadgerTransaction_PinSurvivesRollbackOfFailedWrite(t *testing.T) {
 	// so a subsequent same-namespace write still succeeds. This exercises
 	// the "pin only on success" property of pinNamespaceFromIDLocked.
 	engine := newTestEngine(t)
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	if err != nil {
 		t.Fatalf("BeginTransaction: %v", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if _, err := tx.CreateNode(newPrefixedNode("tenant_a:n1", "L")); err != nil {
+	if _, err := tx.CreateNode(t.Context(), newPrefixedNode("tenant_a:n1", "L")); err != nil {
 		t.Fatalf("first CreateNode: %v", err)
 	}
-	if _, err := tx.CreateNode(newPrefixedNode("tenant_b:n1", "L")); !errors.Is(err, ErrCrossNamespaceTransaction) {
+	if _, err := tx.CreateNode(t.Context(), newPrefixedNode("tenant_b:n1", "L")); !errors.Is(err, ErrCrossNamespaceTransaction) {
 		t.Fatalf("expected ErrCrossNamespaceTransaction, got %v", err)
 	}
 	if got := tx.Namespace(); got != "tenant_a" {
 		t.Fatalf("pin must remain %q after rejected write, got %q", "tenant_a", got)
 	}
 	// Same-namespace write must still succeed.
-	if _, err := tx.CreateNode(newPrefixedNode("tenant_a:n2", "L")); err != nil {
+	if _, err := tx.CreateNode(t.Context(), newPrefixedNode("tenant_a:n2", "L")); err != nil {
 		t.Fatalf("subsequent same-namespace write: %v", err)
 	}
 }

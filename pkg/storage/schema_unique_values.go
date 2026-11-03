@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/ctxsort"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"reflect"
 	"sort"
@@ -13,10 +14,13 @@ import (
 )
 
 // CheckUniqueConstraint checks if a value violates a unique constraint.
+// ctx owns key preparation and admission; cancellation leaves claims unchanged.
 // Returns error if constraint is violated.
-func (sm *SchemaManager) CheckUniqueConstraint(label, property string, value interface{}, excludeNode NodeID) error {
-	sm.mu.RLock()
-	key := label + ":" + property
+func (sm *SchemaManager) CheckUniqueConstraint(ctx context.Context, label, property string, value interface{}, excludeNode NodeID) error {
+	if err := sm.mu.RLockContext(ctx); err != nil {
+		return err
+	}
+	key := nodePropertyKey{label: label, property: property}
 	constraint, exists := sm.uniqueConstraints[key]
 	sm.mu.RUnlock()
 
@@ -24,17 +28,28 @@ func (sm *SchemaManager) CheckUniqueConstraint(label, property string, value int
 		return nil // No constraint
 	}
 
-	constraint.mu.RLock()
+	return constraint.checkValue(ctx, value, excludeNode)
+}
+
+// checkValue owns canonical claim validation after the caller selected a constraint.
+func (constraint *UniqueConstraint) checkValue(ctx context.Context, value interface{}, excludeNode NodeID) error {
+	if err := constraint.mu.RLockContext(ctx); err != nil {
+		return err
+	}
 	defer constraint.mu.RUnlock()
 
-	valueKey, ok := indexValueKey(value)
+	// Key preparation follows the caller that is still admitting this claim.
+	valueKey, ok, err := indexValueKey(ctx, value)
+	if err != nil {
+		return err
+	}
 	if !ok {
 		return nil
 	}
 
 	if existingNode, found := constraint.values[valueKey]; found {
 		if existingNode != excludeNode {
-			return localizedError(localization.StorageSchemaUniqueConstraintViolation(label, property, value), nil)
+			return localizedError(localization.StorageSchemaUniqueConstraintViolation(constraint.Label, constraint.Property, value), nil)
 		}
 	}
 
@@ -46,69 +61,61 @@ func (sm *SchemaManager) CheckUniqueConstraint(label, property string, value int
 // cache has been rebuilt from storage and can be trusted for misses. Planners
 // may trust absence only when cacheComplete is true; otherwise they must retain
 // a scan fallback because the cache may not have been rebuilt from storage yet.
-func (sm *SchemaManager) LookupUniqueConstraintValue(label, property string, value interface{}) (nodeID NodeID, valueFound bool, constraintExists bool, cacheComplete bool) {
-	sm.mu.RLock()
-	key := label + ":" + property
-	constraint, exists := sm.uniqueConstraints[key]
+func (sm *SchemaManager) LookupUniqueConstraintValue(ctx context.Context, label, property string, value interface{}) (nodeID NodeID, valueFound bool, constraintExists bool, cacheComplete bool, err error) {
+	if err := sm.mu.RLockContext(ctx); err != nil {
+		return "", false, false, false, err
+	}
+	constraint, exists := sm.uniqueConstraints[nodePropertyKey{label: label, property: property}]
 	sm.mu.RUnlock()
 	if !exists || value == nil {
-		return "", false, exists, false
+		return "", false, exists, false, ctx.Err()
 	}
-	valueKey, ok := indexValueKey(value)
+	valueKey, ok, err := indexValueKey(ctx, value)
+	if err != nil {
+		return "", false, false, false, err
+	}
 	if !ok {
-		return "", false, true, false
+		return "", false, true, false, ctx.Err()
 	}
-	nodeID, valueFound, cacheComplete = sm.lookupUniqueValue(constraint, label, property, value, valueKey)
-	return nodeID, valueFound, true, cacheComplete
-}
-
-// uniqueValueHolders returns the nodes holding value under label's unique
-// constraint on property, merged with the pending writes: the registered
-// holder unless a pending write supersedes it, and every pending node with
-// the value. cacheComplete reports whether the registered values cover all
-// stored nodes, so an empty result can be trusted.
-func (sm *SchemaManager) uniqueValueHolders(label, property string, value interface{}) (holders []NodeID, cacheComplete bool, constraintExists bool) {
-	sm.mu.RLock()
-	constraint, exists := sm.uniqueConstraints[label+":"+property]
-	sm.mu.RUnlock()
-	if !exists {
-		return nil, false, false
+	nodeID, valueFound, cacheComplete, err = sm.lookupUniqueValue(ctx, constraint, label, property, valueKey)
+	if err != nil {
+		return "", false, false, false, err
 	}
-	valueKey, ok := indexValueKey(value)
-	if !ok {
-		return nil, false, true
-	}
-	view, source := sm.beginPendingRead()
-	defer endPendingRead(source)
-	constraint.mu.RLock()
-	holder, found := constraint.values[valueKey]
-	cacheComplete = constraint.valuesCacheComplete
-	constraint.mu.RUnlock()
-	if found && view.keep(holder) {
-		holders = append(holders, holder)
-	}
-	holders = view.valueMatches(holders, label, property, valueKey)
-	return holders, cacheComplete, true
+	return nodeID, valueFound, true, cacheComplete, nil
 }
 
 // lookupUniqueValue returns the node holding valueKey under constraint,
 // merged with the pending writes: a registered holder with a pending update
 // or delete no longer counts, and a pending node with the value does.
-func (sm *SchemaManager) lookupUniqueValue(constraint *UniqueConstraint, label, property string, value, valueKey interface{}) (nodeID NodeID, found bool, cacheComplete bool) {
-	view, source := sm.beginPendingRead()
+func (sm *SchemaManager) lookupUniqueValue(ctx context.Context, constraint *UniqueConstraint, label, property string, valueKey interface{}) (nodeID NodeID, found bool, cacheComplete bool, err error) {
+	view, source, err := sm.beginPendingRead(ctx)
+	if err != nil {
+		return "", false, false, err
+	}
 	defer endPendingRead(source)
-	constraint.mu.RLock()
+	if err := constraint.mu.RLockContext(ctx); err != nil {
+		return "", false, false, err
+	}
 	nodeID, found = constraint.values[valueKey]
 	cacheComplete = constraint.valuesCacheComplete
 	constraint.mu.RUnlock()
 	if found && !view.keep(nodeID) {
 		nodeID, found = "", false
 	}
-	if pending := view.valueMatches(nil, label, property, valueKey); len(pending) > 0 {
-		sort.Slice(pending, func(i, j int) bool { return string(pending[i]) < string(pending[j]) })
+	pending, err := view.valueMatches(ctx, nil, label, property, valueKey)
+	if err != nil {
+		return "", false, false, err
+	}
+	if len(pending) > 0 {
+		if err := ctxsort.Sort(ctx, pending, func(a, b NodeID) int { return strings.Compare(string(a), string(b)) }, false); err != nil {
+			return "", false, false, err
+		}
 		nodeID, found = pending[0], true
 	}
-	return nodeID, found, cacheComplete
+	if err := ctx.Err(); err != nil {
+		return "", false, false, err
+	}
+	return nodeID, found, cacheComplete, nil
 }
 
 // uniqueConstraintLockKey identifies one (label, property, value) triple for
@@ -204,19 +211,31 @@ func recycleUniqueConstraintRequests(batch *uniqueConstraintRequestBatch, reques
 // appendConstraintValueKeys projects node and relationship VALUE keys for the
 // canonical registry. Entity and endpoint authority belongs to the earlier
 // write/prepare owner; unconstrained images append no keys.
-func (sm *SchemaManager) appendConstraintValueKeys(keys []uniqueConstraintLockKey, nodes []*Node, edges []*Edge) []uniqueConstraintLockKey {
+func (sm *SchemaManager) appendConstraintValueKeys(ctx context.Context, keys []uniqueConstraintLockKey, nodes []*Node, edges []*Edge) ([]uniqueConstraintLockKey, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if sm == nil {
-		return keys
+		return keys, nil
 	}
 	for _, node := range nodes {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if node == nil || len(node.Properties) == 0 {
 			continue
 		}
-		for _, c := range sm.GetConstraintsForLabels(node.Labels) {
+		constraints, err := sm.GetConstraintsForLabels(ctx, node.Labels)
+		if err != nil {
+			return nil, err
+		}
+		for _, c := range constraints {
 			if c.EffectiveEntityType() != ConstraintEntityNode {
 				continue
 			}
-			if key, ok := nodeConstraintLockKey(c, node); ok {
+			if key, ok, err := nodeConstraintLockKey(ctx, c, node); err != nil {
+				return nil, err
+			} else if ok {
 				if keys == nil {
 					keys = make([]uniqueConstraintLockKey, 0, len(nodes))
 				}
@@ -225,32 +244,52 @@ func (sm *SchemaManager) appendConstraintValueKeys(keys []uniqueConstraintLockKe
 		}
 	}
 	for _, edge := range edges {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if edge == nil || len(edge.Properties) == 0 {
 			continue
 		}
-		for _, c := range sm.GetConstraintsForLabels([]string{edge.Type}) {
+		constraints, err := sm.GetConstraintsForLabels(ctx, []string{edge.Type})
+		if err != nil {
+			return nil, err
+		}
+		for _, c := range constraints {
 			if c.EffectiveEntityType() != ConstraintEntityRelationship || (c.Type != ConstraintUnique && c.Type != ConstraintRelationshipKey) {
 				continue
 			}
-			values, ok := relationshipConstraintValueKeys(c.Properties, edge.Properties, true)
+			values, ok, err := relationshipConstraintValueKeys(ctx, c.Properties, edge.Properties, true)
+			if err != nil {
+				return nil, err
+			}
 			if !ok || len(values) == 0 {
 				continue
 			}
 			var key interface{} = values[0]
 			if len(values) > 1 {
-				key = NewCompositeKey(values...).Hash
+				composite, err := NewCompositeKey(ctx, values...)
+				if err != nil {
+					return nil, err
+				}
+				key = composite.Hash
 			}
 			keys = append(keys, uniqueConstraintLockKey{label: "\x00relationship:" + edge.Type, property: relationshipPropertyKey(c.Properties), value: key})
 		}
 	}
 
-	return keys
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return keys, nil
 }
 
 // nodeConstraintLockKey is the canonical node key projection for both commit
 // and MERGE admission. Composite constraints lock one tuple, never its columns,
 // under the hash the constraint's composite index files that tuple under.
-func nodeConstraintLockKey(c Constraint, node *Node) (uniqueConstraintLockKey, bool) {
+func nodeConstraintLockKey(ctx context.Context, c Constraint, node *Node) (uniqueConstraintLockKey, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return uniqueConstraintLockKey{}, false, err
+	}
 	var properties []string
 	switch {
 	case (c.Type == ConstraintUnique || c.Type == ConstraintNodeKey) && len(c.Properties) > 0:
@@ -258,41 +297,55 @@ func nodeConstraintLockKey(c Constraint, node *Node) (uniqueConstraintLockKey, b
 	case c.Type == ConstraintTemporal && len(c.Properties) >= 3:
 		properties = c.Properties[:len(c.Properties)-2]
 	default:
-		return uniqueConstraintLockKey{}, false
+		return uniqueConstraintLockKey{}, false, nil
 	}
 	// Preserve TEMPORAL's raw whole-key hash for composite list-bearing keys.
 	if c.Type == ConstraintTemporal && len(properties) > 1 {
 		if spec, ok := splitTemporalKeySpec(c.Properties); ok {
 			value, missing := spec.keyValue(node.Properties)
 			if missing == "" && spec.composite() && spec.listBearing(value) {
-				return uniqueConstraintLockKey{label: c.Label, property: string(c.Type) + ":" + strings.Join(properties, ","), value: spec.keyHash(value)}, true
+				return uniqueConstraintLockKey{label: c.Label, property: string(c.Type) + ":" + strings.Join(properties, ","), value: spec.keyHash(value)}, true, nil
 			}
 		}
 	}
 	if len(properties) == 1 {
-		value, ok := constraintLockValue(node, properties[0])
-		return uniqueConstraintLockKey{label: c.Label, property: properties[0], value: value}, ok
+		value, ok, err := constraintLockValue(ctx, node, properties[0])
+		if err != nil {
+			return uniqueConstraintLockKey{}, false, err
+		}
+		return uniqueConstraintLockKey{label: c.Label, property: properties[0], value: value}, ok, nil
 	}
 	values := make([]interface{}, len(properties))
 	for i, property := range properties {
-		value, ok := constraintLockValue(node, property)
+		if err := ctx.Err(); err != nil {
+			return uniqueConstraintLockKey{}, false, err
+		}
+		value, ok, err := constraintLockValue(ctx, node, property)
+		if err != nil {
+			return uniqueConstraintLockKey{}, false, err
+		}
 		if !ok {
-			return uniqueConstraintLockKey{}, false
+			return uniqueConstraintLockKey{}, false, nil
 		}
 		values[i] = value
 	}
-	return uniqueConstraintLockKey{label: c.Label, property: string(c.Type) + ":" + strings.Join(properties, ","), value: constraintCompositeKey(values)}, true
+	composite, err := NewCompositeKey(ctx, values...)
+	if err != nil {
+		return uniqueConstraintLockKey{}, false, err
+	}
+	return uniqueConstraintLockKey{label: c.Label, property: string(c.Type) + ":" + strings.Join(properties, ","), value: composite.Hash}, true, nil
 }
 
 // constraintLockValue is node's canonical value of prop for a constraint key
 // lock; ok is false when the property is missing, null or not comparable (no
-// key to lock).
-func constraintLockValue(node *Node, prop string) (interface{}, bool) {
+// key to lock). ctx is the lifetime of the caller the key is prepared for, so
+// preparing a list or map value observes that lifetime's cancellation.
+func constraintLockValue(ctx context.Context, node *Node, prop string) (interface{}, bool, error) {
 	rawValue, has := node.Properties[prop]
 	if !has || rawValue == nil {
-		return nil, false
+		return nil, false, nil
 	}
-	return indexValueKey(rawValue)
+	return indexValueKey(ctx, rawValue)
 }
 
 // acquireUniqueConstraintCommitLocks acquires exact UNIQUE value locks for
@@ -319,9 +372,6 @@ func constraintLockValue(node *Node, prop string) (interface{}, bool) {
 // ErrDeadlock, and a wait ends with ctx's error when ctx ends. The locks
 // taken so far are released either way.
 func (sm *SchemaManager) acquireUniqueConstraintCommitLocks(ctx context.Context, owner string, keys []uniqueConstraintLockKey) (func(), error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if len(keys) == 0 {
 		return func() {}, nil
 	}
@@ -670,23 +720,36 @@ type mergeAdmissionKey struct {
 	properties []string
 }
 
-func (sm *SchemaManager) uniqueMergeKeys(labels []string, props map[string]interface{}) []mergeAdmissionKey {
+func (sm *SchemaManager) uniqueMergeKeys(ctx context.Context, labels []string, props map[string]interface{}) ([]mergeAdmissionKey, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if sm == nil || len(props) == 0 {
-		return nil
+		return nil, nil
 	}
 	var keys []mergeAdmissionKey
 	node := &Node{Properties: props}
-	for _, c := range sm.GetConstraintsForLabels(labels) {
+	constraints, err := sm.GetConstraintsForLabels(ctx, labels)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range constraints {
 		if c.EffectiveEntityType() != ConstraintEntityNode || (c.Type != ConstraintUnique && c.Type != ConstraintNodeKey) {
 			continue
 		}
-		key, ok := nodeConstraintLockKey(c, node)
+		key, ok, err := nodeConstraintLockKey(ctx, c, node)
+		if err != nil {
+			return nil, err
+		}
 		if !ok || !lockableUniqueConstraintKey(key) {
 			continue
 		}
 		keys = append(keys, mergeAdmissionKey{lock: key, properties: c.Properties})
 	}
-	return keys
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return keys, nil
 }
 
 // HasUniqueValueTracking reports whether any unique constraint exists whose
@@ -727,34 +790,50 @@ const (
 // Atomic publication retires all predecessor claims with RetiredUniqueClaim
 // before acquiring final claims, so key transfers do not depend on mutation
 // order. A nil or non-indexable value, or an unconstrained (label, property)
-// pair, is a no-op.
+// pair, is a no-op. ctx owns preparation and admission; an error leaves the
+// current claim unchanged. Accepted publication supplies its completion lifetime.
 //
 // Example usage:
 //
 //	// Publish one current, validated claim.
-//	schema.ApplyUniqueValue("User", "email", "alice@example.com", node.ID, storage.ValidatedUniqueClaim)
+//	err := schema.ApplyUniqueValue(ctx, "User", "email", "alice@example.com", node.ID, storage.ValidatedUniqueClaim)
 //
 //	// Retire the claim held by the stored node being deleted.
-//	schema.ApplyUniqueValue("User", "email", "alice@example.com", node.ID, storage.RetiredUniqueClaim)
-func (sm *SchemaManager) ApplyUniqueValue(label, property string, value any, nodeID NodeID, action UniqueValueAction) {
+//	err = schema.ApplyUniqueValue(ctx, "User", "email", "alice@example.com", node.ID, storage.RetiredUniqueClaim)
+func (sm *SchemaManager) ApplyUniqueValue(ctx context.Context, label, property string, value any, nodeID NodeID, action UniqueValueAction) error {
 	if action != ValidatedUniqueClaim && action != RecoveredUniqueClaim && action != RetiredUniqueClaim {
 		panic(fmt.Sprintf("storage: ApplyUniqueValue: unknown UniqueValueAction %d", action))
 	}
 
-	sm.mu.RLock()
-	key := label + ":" + property
+	if err := sm.mu.RLockContext(ctx); err != nil {
+		return err
+	}
+	key := nodePropertyKey{label: label, property: property}
 	constraint, exists := sm.uniqueConstraints[key]
 	sm.mu.RUnlock()
 
 	if !exists {
-		return
+		return nil
 	}
-	valueKey, ok := indexValueKey(value)
+	return constraint.applyValue(ctx, value, nodeID, action)
+}
+
+// applyValue owns key preparation and atomic mutation of one selected claim.
+// The caller has validated action or supplies a known canonical action.
+func (constraint *UniqueConstraint) applyValue(ctx context.Context, value any, nodeID NodeID, action UniqueValueAction) error {
+	// Prepare the complete key and acquire admission before changing a claim.
+	// Accepted publication callers explicitly supply their completion lifetime.
+	valueKey, ok, err := indexValueKey(ctx, value)
+	if err != nil {
+		return err
+	}
 	if !ok {
-		return
+		return ctx.Err()
 	}
 
-	constraint.mu.Lock()
+	if err := constraint.mu.LockContext(ctx); err != nil {
+		return err
+	}
 	switch action {
 	case ValidatedUniqueClaim:
 		constraint.values[valueKey] = nodeID
@@ -768,6 +847,7 @@ func (sm *SchemaManager) ApplyUniqueValue(label, property string, value any, nod
 		}
 	}
 	constraint.mu.Unlock()
+	return nil
 }
 
 // retireUniqueValuesByNodePrefix publishes a bulk node deletion to the same

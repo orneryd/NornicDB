@@ -2,6 +2,7 @@ package bolt
 
 import (
 	"bufio"
+	"context"
 	"crypto/tls"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -379,13 +380,13 @@ func TestWSBolt_CookieWinsOverHeader(t *testing.T) {
 	mem := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authenticator, err := auth.NewAuthenticator(authCfg, mem)
 	requireNoError(t, err)
-	_, err = authenticator.CreateUser("alice", "alice-password", []auth.Role{auth.RoleAdmin})
+	_, err = authenticator.CreateUser(context.Background(), "alice", "alice-password", []auth.Role{auth.RoleAdmin})
 	requireNoError(t, err)
-	_, err = authenticator.CreateUser("bob", "bob-password", []auth.Role{auth.RoleViewer})
+	_, err = authenticator.CreateUser(context.Background(), "bob", "bob-password", []auth.Role{auth.RoleViewer})
 	requireNoError(t, err)
-	aliceResp, _, err := authenticator.Authenticate("alice", "alice-password", "127.0.0.1", "test")
+	aliceResp, _, err := authenticator.Authenticate(context.Background(), "alice", "alice-password", "127.0.0.1", "test")
 	requireNoError(t, err)
-	bobResp, _, err := authenticator.Authenticate("bob", "bob-password", "127.0.0.1", "test")
+	bobResp, _, err := authenticator.Authenticate(context.Background(), "bob", "bob-password", "127.0.0.1", "test")
 	requireNoError(t, err)
 
 	cfg := DefaultConfig()

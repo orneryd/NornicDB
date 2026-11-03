@@ -51,7 +51,7 @@ func databaseOptionValue(key string, value interface{}) (string, error) {
 // clause (searched from from): the statement before it, and the options it
 // sets, validated. No clause is no options.
 func (e *StorageExecutor) splitDatabaseOptions(ctx context.Context, cypher string, from int) (string, map[string]string, error) {
-	at := keywordIndexFrom(cypher, "OPTIONS", from, defaultKeywordScanOpts())
+	at := keywordIndexFrom(ctx, cypher, "OPTIONS", from, defaultKeywordScanOpts())
 	if at < 0 {
 		return cypher, nil, nil
 	}
@@ -79,8 +79,8 @@ func (e *StorageExecutor) splitDatabaseOptions(ctx context.Context, cypher strin
 // handled is false for another ALTER DATABASE form. A missing database is
 // a no-op with IF EXISTS.
 func (e *StorageExecutor) alterDatabaseOption(ctx context.Context, cypher string, from int) (result *ExecuteResult, handled bool, err error) {
-	setAt := findMultiWordKeywordIndex(cypher[from:], "SET", "OPTION")
-	removeAt := findMultiWordKeywordIndex(cypher[from:], "REMOVE", "OPTION")
+	setAt := findMultiWordKeywordIndex(ctx, cypher[from:], "SET", "OPTION")
+	removeAt := findMultiWordKeywordIndex(ctx, cypher[from:], "REMOVE", "OPTION")
 	at, remove := setAt, false
 	if removeAt >= 0 && (setAt < 0 || removeAt < setAt) {
 		at, remove = removeAt, true

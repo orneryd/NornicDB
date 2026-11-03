@@ -18,7 +18,7 @@ func TestNewParser(t *testing.T) {
 
 func TestParseEmptyQuery(t *testing.T) {
 	parser := NewParser()
-	_, err := parser.Parse("")
+	_, err := parser.Parse(t.Context(), "")
 	if err == nil {
 		t.Error("expected error for empty query")
 	}
@@ -56,7 +56,7 @@ func TestParseMatch(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			query, err := parser.Parse(tt.cypher)
+			query, err := parser.Parse(t.Context(), tt.cypher)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -95,7 +95,7 @@ func TestParseCreate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			query, err := parser.Parse(tt.cypher)
+			query, err := parser.Parse(t.Context(), tt.cypher)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -119,7 +119,7 @@ func TestParseReturn(t *testing.T) {
 		{"RETURN DISTINCT count(*) AS total, {value: 1} AS object", []string{"total", "object"}, []string{"count(*)", "{value: 1}"}},
 	} {
 		t.Run(tc.query, func(t *testing.T) {
-			query, err := NewParser().Parse(tc.query)
+			query, err := NewParser().Parse(t.Context(), tc.query)
 			if err != nil {
 				t.Fatalf("Parse() error = %v", err)
 			}
@@ -157,7 +157,7 @@ func TestParseReturn(t *testing.T) {
 func TestParseWhere(t *testing.T) {
 	parser := NewParser()
 
-	query, err := parser.Parse("MATCH (n) WHERE n.name = 'Alice' RETURN n")
+	query, err := parser.Parse(t.Context(), "MATCH (n) WHERE n.name = 'Alice' RETURN n")
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
@@ -179,7 +179,7 @@ func TestParseExactTranslationQuery(t *testing.T) {
 	parser := NewParser()
 	cypher := "MATCH (o:OriginalText)-[:TRANSLATES_TO]->(t:TranslatedText) WHERE t.language = 'fr' RETURN o, t, t.createdAt ORDER BY t.createdAt DESC LIMIT 10"
 
-	query, err := parser.Parse(cypher)
+	query, err := parser.Parse(t.Context(), cypher)
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
@@ -218,7 +218,7 @@ func TestParseTranslationQueryFamilyVariants(t *testing.T) {
 	}
 
 	for _, cypher := range queries {
-		query, err := parser.Parse(cypher)
+		query, err := parser.Parse(t.Context(), cypher)
 		if err != nil {
 			t.Fatalf("Parse(%q) error = %v", cypher, err)
 		}
@@ -234,7 +234,7 @@ func TestParseTranslationQueryFamilyVariants(t *testing.T) {
 func TestParseSet(t *testing.T) {
 	parser := NewParser()
 
-	query, err := parser.Parse("MATCH (n) SET n.name = 'Bob' RETURN n")
+	query, err := parser.Parse(t.Context(), "MATCH (n) SET n.name = 'Bob' RETURN n")
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
@@ -248,7 +248,7 @@ func TestParseDelete(t *testing.T) {
 	parser := NewParser()
 
 	t.Run("simple delete", func(t *testing.T) {
-		query, err := parser.Parse("MATCH (n) DELETE n")
+		query, err := parser.Parse(t.Context(), "MATCH (n) DELETE n")
 		if err != nil {
 			t.Fatalf("Parse() error = %v", err)
 		}
@@ -258,7 +258,7 @@ func TestParseDelete(t *testing.T) {
 	})
 
 	t.Run("detach delete", func(t *testing.T) {
-		query, err := parser.Parse("MATCH (n) DETACH DELETE n")
+		query, err := parser.Parse(t.Context(), "MATCH (n) DETACH DELETE n")
 		if err != nil {
 			t.Fatalf("Parse() error = %v", err)
 		}
@@ -314,9 +314,9 @@ func TestTokenize(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tokens, err := tokenize(tt.input)
+			tokens, err := tokenize(t.Context(), tt.input)
 			if err != nil {
-				t.Fatalf("tokenize() error = %v", err)
+				t.Fatalf("tokenize(t.Context(), ) error = %v", err)
 			}
 			if len(tokens) != len(tt.expected) {
 				t.Errorf("expected %d tokens, got %d: %v", len(tt.expected), len(tokens), tokens)

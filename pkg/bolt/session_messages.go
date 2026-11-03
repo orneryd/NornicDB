@@ -1,3 +1,4 @@
+// Author: Codex, NOR-180 terminal outcomes through cancellation and result responses, 2026-10-27.
 package bolt
 
 import (
@@ -98,16 +99,7 @@ func (s *Session) handleRun(data []byte) error {
 	// client disconnected. Now: handleConnection's defer connCancel()
 	// propagates here, the Cypher executor sees ctx.Err() at the next
 	// traversal/match boundary, and the RUN goroutine returns.
-	parentCtx := s.connCtx
-	if parentCtx == nil {
-		// Defensive fallback for tests that construct a Session by hand
-		// without going through handleConnection. Production always sets
-		// connCtx in handleConnection.
-		parentCtx = s.spanCtx
-		if parentCtx == nil {
-			parentCtx = context.Background()
-		}
-	}
+	parentCtx := s.parentContext()
 	// Pick the effective timeout: client tx_timeout wins over
 	// server-side BoltStatementTimeout (Neo4j semantics — the driver's
 	// per-call cap is authoritative; the server cap is the fallback
@@ -203,11 +195,11 @@ func (s *Session) handleRun(data []byte) error {
 	// timeout arbitration, so expiry between dispatch and this point fails
 	// closed without making an early-return path responsible for cleanup.
 	if s.inTransaction {
-		parentCtx, err = s.claimTransactionOperation()
-		if errors.Is(err, errTransactionTimedOut) {
-			return s.sendTransactionTimeoutFailure()
-		}
+		txCtx, err := s.claimTransactionOperation()
 		if err != nil {
+			if errors.Is(err, errTransactionTimedOut) {
+				return s.sendTransactionTimeoutFailure()
+			}
 			if s.transactionCleanupFailed {
 				return err
 			}
@@ -215,6 +207,7 @@ func (s *Session) handleRun(data []byte) error {
 				"Neo.ClientError.Transaction.TransactionNotFound", "No active transaction for RUN")
 		}
 		defer func() { _ = s.txLifecycle.finishRun() }()
+		parentCtx = txCtx
 	}
 	parentCtx = extractTraceparent(parentCtx, metadata)
 	if !s.inTransaction {
@@ -267,6 +260,7 @@ func (s *Session) handleRun(data []byte) error {
 		// Bolt owns this deadline, so it marks the timeout for any executor,
 		// not only one that marks it itself.
 		err = nornicerrors.MarkStatementTimeout(err, context.Cause(ctx))
+		err = nornicerrors.NormalizeTerminalOutcome(err)
 	}
 	// Complete any RUN-owned timeout cleanup before sending a response. The
 	// defer remains the panic/early-return safety net; finishRun is idempotent.
@@ -275,10 +269,10 @@ func (s *Session) handleRun(data []byte) error {
 		finishErr = s.txLifecycle.finishRun()
 	}
 	if finishErr != nil {
-		return s.sendTransactionTimeoutAfterJoin()
+		return s.sendTransactionTimeoutAfterJoin(err)
 	}
 	if err != nil {
-		if errors.Is(err, context.Canceled) {
+		if errors.Is(err, context.Canceled) && !nornicerrors.HasStatusDiagnostic(err) {
 			switch s.activeRunReason() {
 			case MsgReset, MsgGoodbye:
 				return nil
@@ -289,13 +283,8 @@ func (s *Session) handleRun(data []byte) error {
 			s.server.logEvent(context.Background(), slog.LevelWarn, localization.BoltQueryErrorEvent())
 		}
 		if s.inTransaction {
-			// An explicit transaction checks constraints when the statement
-			// runs (#700), so a MERGE race can fail here rather than at
-			// COMMIT. The failed statement is one of the transaction's writes,
-			// and the same rule as for COMMIT decides whether its UNIQUE
-			// violation is a retryable race.
-			s.recordExplicitTransactionWrite(query, params, isWrite)
-			if s.canRetryMergeCommitConflict(err) {
+			s.recordExplicitTransactionWrite(ctx, query, params, isWrite)
+			if s.canRetryMergeCommitConflict(ctx, err) {
 				err = nornicerrors.MarkMergeCommitTimeUniqueConflict(err)
 			}
 		}
@@ -333,16 +322,7 @@ func (s *Session) handleRun(data []byte) error {
 			resultMemoryLease, err = s.server.memoryPolicy.Reserve(resultBytes)
 		}
 		if err != nil {
-			if s.inTransaction {
-				if cleanupErr := s.rollbackExplicitTransaction(transactionTerminalRollback); cleanupErr != nil {
-					return cleanupErr
-				}
-			}
-			message := localization.ApplicationMemoryPressure()
-			if errors.Is(err, memory.ErrStaleSample) {
-				message = localization.ApplicationMemoryUnavailable()
-			}
-			return s.sendLocalizedRunFailure("Neo.TransientError.General.MemoryPoolOutOfMemoryError", message)
+			return s.sendApplicationAdmissionFailure(err)
 		}
 	}
 
@@ -359,7 +339,7 @@ func (s *Session) handleRun(data []byte) error {
 	}
 	s.lastQueryDatabase = resultDatabase
 	if s.inTransaction {
-		s.recordExplicitTransactionWrite(query, params, isWrite)
+		s.recordExplicitTransactionWrite(ctx, query, params, isWrite)
 	}
 
 	// Store result for PULL
@@ -462,27 +442,29 @@ func (s *Session) logRunTiming(status, dbName, query string, duration time.Durat
 // failures, which only Bolt has, then nornicerrors.Neo4jStatus, the status
 // every protocol reports.
 func mapBoltQueryError(err error) (code, message string) {
+	return nornicerrors.RenderStatusWithFallback(err, nil, boltResultStreamStatus)
+}
+
+// boltResultStreamStatus classifies Bolt's result-stream failures; every other
+// error takes the shared status classification in the same render pass.
+func boltResultStreamStatus(err error) (code, message string, ok bool) {
 	if err == nil {
-		return nornicerrors.Neo4jStatus(err)
+		return "", "", false
 	}
 	if errors.Is(err, resultstream.ErrCapacity) || errors.Is(err, resultstream.ErrClosed) {
-		return "Neo.TransientError.General.DatabaseUnavailable", err.Error()
+		return "Neo.TransientError.General.DatabaseUnavailable", err.Error(), true
 	}
 	if errors.Is(err, resultstream.ErrDisabled) {
-		return "Neo.ClientError.Statement.UnsupportedOperation", err.Error()
+		return "Neo.ClientError.Statement.UnsupportedOperation", err.Error(), true
 	}
 	if errors.Is(err, resultstream.ErrExpiredQID) || errors.Is(err, resultstream.ErrGoneQID) || errors.Is(err, resultstream.ErrInvalidated) {
-		return "Neo.ClientError.Statement.EntityNotFound", err.Error()
+		return "Neo.ClientError.Statement.EntityNotFound", err.Error(), true
 	}
-	return nornicerrors.Neo4jStatus(err)
+	return "", "", false
 }
 
 func mapBoltQueryErrorForQuery(err error, query string) (code, message string) {
-	code, message = mapBoltQueryError(err)
-	if err != nil && nornicerrors.IsMergeCommitTimeUniqueConflict(err) {
-		return nornicerrors.TransientOutdated, message
-	}
-	return code, message
+	return mapBoltQueryError(err)
 }
 
 type boltDetailedError interface {
@@ -495,66 +477,6 @@ func boltErrorDetail(err error) string {
 		return detailed.BoltErrorDetail()
 	}
 	return ""
-}
-
-// mapBoltCommitError is the Bolt status of a failed COMMIT
-// (nornicerrors.Neo4jCommitStatus: a constraint violation is
-// ConstraintValidationFailed, an unclassified failure TransactionCommitFailed)
-// while allowing MERGE transaction conflicts to surface as Neo4j transient
-// errors for clients that choose retry-managed transaction APIs.
-//
-// A commit-time UNIQUE constraint violation from a concurrent MERGE race is
-// resolvable by a fresh attempt: the loser, on retry, observes the peer's
-// now-committed node via the constraint cache and the MERGE matches. The
-// raw storage error does not wrap ErrTransactionConflict, so the mapper
-// uses the explicit transaction's observed MERGE shape plus the commit error
-// body. Non-MERGE transactions keep the ordinary commit-failed code even
-// when the body is a UNIQUE violation.
-func mapBoltCommitError(err error, canRetryMergeConflict bool) (code, message string) {
-	if canRetryMergeConflict {
-		err = nornicerrors.MarkMergeCommitTimeUniqueConflict(err)
-	}
-	code, message = nornicerrors.Neo4jCommitStatus(err)
-	if err != nil && canRetryMergeConflict && nornicerrors.IsMergeCommitTimeUniqueConflict(err) {
-		return nornicerrors.TransientOutdated, message
-	}
-	return code, message
-}
-
-func isRetryableBoltStatus(code string) bool {
-	return strings.HasPrefix(code, "Neo.TransientError.")
-}
-
-func (s *Session) recordExplicitTransactionWrite(query string, params map[string]any, isWrite bool) {
-	if !isWrite {
-		return
-	}
-	info := boltTxWriteAnalyzer.Analyze(context.Background(), query)
-	if info != nil && info.HasMerge {
-		s.txHasMerge = true
-		s.txMergeStatements = append(s.txMergeStatements, cypher.CommitStatement{Query: query, Params: params})
-	}
-	if info == nil {
-		s.txHasNonMergeWrite = true
-		return
-	}
-	s.txWriteInfos = append(s.txWriteInfos, info)
-}
-
-// canRetryMergeCommitConflict reports whether a UNIQUE violation err of the
-// explicit transaction, at COMMIT or at the statement that broke the
-// constraint, is a retry-safe MERGE race: every write was MERGE-shaped and no
-// SET in them wrote a violated property (cypher.MergeUniqueConflictIsRetrySafe).
-func (s *Session) canRetryMergeCommitConflict(err error) bool {
-	if !s.txHasMerge || s.txHasNonMergeWrite {
-		return false
-	}
-	for _, info := range s.txWriteInfos {
-		if !cypher.IsRetrySafeMergeCommitQuery(info) {
-			return false
-		}
-	}
-	return cypher.MergeUniqueConflictIsRetrySafe(s.txMergeStatements, err)
 }
 
 // truncateQuery truncates a query for logging.
@@ -858,7 +780,7 @@ func (s *Session) handlePull(data []byte) error {
 
 	// For large batches (>50 records), use batched writing to reduce syscalls
 	if remaining > 50 {
-		if err := s.sendRecordsBatched(stream.result.Rows[stream.index:stream.index+remaining], stream.database, stream.delivery); err != nil {
+		if err := s.sendRecordsBatched(s.withSessionIdentity(s.parentContext()), stream.result.Rows[stream.index:stream.index+remaining], stream.database, stream.delivery); err != nil {
 			return err
 		}
 		stream.index += remaining
@@ -871,7 +793,7 @@ func (s *Session) handlePull(data []byte) error {
 			}
 
 			row := stream.result.Rows[stream.index]
-			if err := s.writeRecordNoFlush(row, stream.database, stream.delivery); err != nil {
+			if err := s.writeRecordNoFlush(s.withSessionIdentity(s.parentContext()), row, stream.database, stream.delivery); err != nil {
 				return err
 			}
 
@@ -1023,10 +945,17 @@ func (s *Session) handleDiscard(data []byte) error {
 
 	if stream.lazy != nil && options.limit <= 0 {
 		// Discarding the rest of a lazy result stops its statement.
-		stream.lazy.close()
+		lazy := stream.lazy
+		lazy.close()
+		reason := s.activeRunReason()
 		s.clearActiveRun()
 		stream.lazy = nil
 		stream.index = len(stream.result.Rows)
+		if nornicerrors.HasStatusDiagnostic(lazy.err) {
+			lazy.errorConsumed = true
+			s.finishResultStream(statementID, stream)
+			return s.sendLazyFailure(&lazyStatementError{err: lazy.err, query: lazy.query, reason: reason})
+		}
 	}
 	discarded := 0
 	for {
@@ -1036,7 +965,9 @@ func (s *Session) handleDiscard(data []byte) error {
 			discardCount = options.limit - discarded
 		}
 		if options.limit > 0 && (stream.lazy != nil || discardCount < remaining) {
-			s.discardResultDelivery(stream, stream.result.Rows[stream.index:stream.index+discardCount])
+			if err := s.discardResultDelivery(s.withSessionIdentity(s.parentContext()), stream, stream.result.Rows[stream.index:stream.index+discardCount]); err != nil {
+				return err
+			}
 		}
 		stream.index += discardCount
 		discarded += discardCount
@@ -1131,7 +1062,20 @@ func (s *Session) handleReset(data []byte) error {
 	// that backend ownership was released. A failed rollback leaves storage
 	// state unknown, so fail the connection closed instead of admitting more
 	// work on a potentially open transaction.
-	if err := s.rollbackExplicitTransaction(transactionTerminalReset); err != nil {
+	err := s.rollbackExplicitTransaction(transactionTerminalReset)
+	// RESET's own rollback failure was classified where it was produced; a
+	// pending result's outcome keeps its statement's classification.
+	if failure := s.pendingResultFailure; failure != nil {
+		s.pendingResultFailure = nil
+		err = nornicerrors.CombineTerminalOutcomes(failure, err)
+		s.markTransactionCleanupFailed()
+	}
+	if err != nil {
+		if nornicerrors.HasStatusDiagnostic(err) {
+			if sendErr := s.sendTransactionControlError(err); sendErr != nil {
+				return sendErr
+			}
+		}
 		return fmt.Errorf("RESET transaction cleanup failed: %w", err)
 	}
 	s.failedUntilReset = false
@@ -1151,8 +1095,7 @@ func (s *Session) handleReset(data []byte) error {
 // If the executor implements TransactionalExecutor, commits the real transaction.
 func (s *Session) handleCommit(data []byte) error {
 	if !s.inTransaction {
-		return s.sendTransactionControlFailure("Neo.ClientError.Transaction.TransactionNotFound",
-			s.localize(localization.BoltNoTransactionToCommit()))
+		return s.sendTransactionControlError(nornicerrors.WithStatus(nil, "Neo.ClientError.Transaction.TransactionNotFound", localization.BoltNoTransactionToCommit()))
 	}
 	txExec, claimErr := s.txLifecycle.claimCommit()
 	if errors.Is(claimErr, errTransactionTimedOut) {
@@ -1160,8 +1103,7 @@ func (s *Session) handleCommit(data []byte) error {
 	}
 	if claimErr != nil {
 		s.clearExplicitTransactionState()
-		return s.sendTransactionControlFailure("Neo.ClientError.Transaction.TransactionNotFound",
-			s.localize(localization.BoltNoTransactionToCommit()))
+		return s.sendTransactionControlError(nornicerrors.WithStatus(nil, "Neo.ClientError.Transaction.TransactionNotFound", localization.BoltNoTransactionToCommit()))
 	}
 	commitCallStarted := false
 	commitCallReturned := false
@@ -1198,24 +1140,22 @@ func (s *Session) handleCommit(data []byte) error {
 	// executor, so a COMMIT that starts before the deadline remains the sole
 	// terminal owner even if storage work crosses the deadline.
 	if txExec != nil {
-		ctx := s.txLifecycle.commitContext()
+		ctx := s.txLifecycle.commitContext(s.parentContext())
 		commitCallStarted = true
-		commitCallErr = txExec.CommitTransaction(ctx)
+		commitCallErr = nornicerrors.TransactionControlFailure(nornicerrors.TerminalCommit, nornicerrors.NormalizeTerminalOutcome(txExec.CommitTransaction(ctx)))
 		commitCallReturned = true
 		if err := commitCallErr; err != nil {
-			canRetryMergeConflict := s.canRetryMergeCommitConflict(err)
-			observedErr := err
-			if canRetryMergeConflict {
-				observedErr = nornicerrors.MarkMergeCommitTimeUniqueConflict(err)
+			if s.canRetryMergeCommitConflict(ctx, err) {
+				err = nornicerrors.MarkMergeCommitTimeUniqueConflict(err)
 			}
-			s.txLifecycle.finishCommit(observedErr)
-			code, message := mapBoltCommitError(err, canRetryMergeConflict)
+			s.txLifecycle.finishCommit(err)
+			code, message := nornicerrors.RenderStatus(err, s.localize)
 			// A retryable failure, or one after which nothing was written
 			// (nornicerrors.IsCommitRolledBack: a constraint violation found
 			// before the write), has a known outcome: the session keeps its
 			// connection, as Neo4j's does. Any other failure leaves the
 			// outcome unknown and closes it.
-			retryable := isRetryableBoltStatus(code)
+			retryable := nornicerrors.IsRetriableStatus(code)
 			knownOutcome := retryable || nornicerrors.IsCommitRolledBack(err)
 			if knownOutcome {
 				s.clearExplicitTransactionState()
@@ -1429,8 +1369,7 @@ func (s *Session) handleRollback(data []byte) error {
 	}
 
 	if err := s.rollbackExplicitTransaction(transactionTerminalRollback); err != nil {
-		if err := s.sendTransactionControlFailure(
-			"Neo.ClientError.Transaction.TransactionRollbackFailed", err.Error()); err != nil {
+		if err := s.sendTransactionControlError(err); err != nil {
 			return err
 		}
 		if flushErr := s.flushIfPending(); flushErr != nil {
@@ -1458,15 +1397,17 @@ func (s *Session) recordEntityDatabaseResolver(dbName string) boltEntityDatabase
 	if !ok {
 		return nil
 	}
-	return func(nodeID storage.NodeID, edgeID storage.EdgeID) string {
+	return func(ctx context.Context, nodeID storage.NodeID, edgeID storage.EdgeID) (string, error) {
 		if nodeID != "" {
-			return composite.ConstituentDatabaseForNode(nodeID)
+			return composite.ConstituentDatabaseForNode(ctx, nodeID)
 		}
-		return composite.ConstituentDatabaseForEdge(edgeID)
+		return composite.ConstituentDatabaseForEdge(ctx, edgeID)
 	}
 }
 
-func (s *Session) sendRecord(fields []any) error {
+func (s *Session) sendRecord(ctx context.Context, fields []any) error {
+	var encodeErr error
+
 	buf := s.recordBuf
 	if cap(buf) < 16*1024 {
 		buf = make([]byte, 0, 16*1024)
@@ -1475,7 +1416,11 @@ func (s *Session) sendRecord(fields []any) error {
 
 	// Format: <struct marker 0xB1> <signature 0x71> <list of fields>
 	buf = append(buf, recordHeader...)
-	buf = encodeRecordListInto(buf, fields, s.useUTCDateTimeStructs(), s.boltV5(), s.database, s.recordEntityDatabaseResolver(s.database))
+	buf, encodeErr = encodeRecordListInto(ctx, buf, fields, s.useUTCDateTimeStructs(), s.boltV5(), s.database, s.recordEntityDatabaseResolver(s.database))
+	if encodeErr != nil {
+		s.recordBuf = buf[:0]
+		return encodeErr
+	}
 
 	// sendChunk flushes immediately, so it's safe to reuse the buffer after.
 	err := s.sendChunk(buf)
@@ -1487,7 +1432,9 @@ func (s *Session) sendRecord(fields []any) error {
 // It is used by PULL streaming to batch many records into a single flush
 // (the final SUCCESS message flushes everything). dbName is the database the
 // active result stream ran on (its entities carry its element ids, #745).
-func (s *Session) writeRecordNoFlush(fields []any, dbName string, delivery ...*resultstream.Delivery) error {
+func (s *Session) writeRecordNoFlush(ctx context.Context, fields []any, dbName string, delivery ...*resultstream.Delivery) error {
+	var encodeErr error
+
 	buf := s.recordBuf
 	if cap(buf) < 16*1024 {
 		buf = make([]byte, 0, 16*1024)
@@ -1495,7 +1442,11 @@ func (s *Session) writeRecordNoFlush(fields []any, dbName string, delivery ...*r
 	buf = buf[:0]
 
 	buf = append(buf, recordHeader...)
-	buf = encodeRecordListInto(buf, fields, s.useUTCDateTimeStructs(), s.boltV5(), dbName, s.recordEntityDatabaseResolver(dbName))
+	buf, encodeErr = encodeRecordListInto(ctx, buf, fields, s.useUTCDateTimeStructs(), s.boltV5(), dbName, s.recordEntityDatabaseResolver(dbName))
+	if encodeErr != nil {
+		s.recordBuf = buf[:0]
+		return encodeErr
+	}
 
 	err := s.writeMessageNoFlush(buf)
 	if err == nil && len(delivery) > 0 && delivery[0] != nil {
@@ -1510,7 +1461,9 @@ func (s *Session) writeRecordNoFlush(fields []any, dbName string, delivery ...*r
 // For 500 records: ~500 syscalls → 1 syscall = ~8x faster
 // Uses buffer pooling to reduce allocations per record. dbName is the
 // database the active result stream ran on (#745 element ids).
-func (s *Session) sendRecordsBatched(rows [][]any, dbName string, delivery ...*resultstream.Delivery) error {
+func (s *Session) sendRecordsBatched(ctx context.Context, rows [][]any, dbName string, delivery ...*resultstream.Delivery) error {
+	var encodeErr error
+
 	if len(rows) == 0 {
 		return nil
 	}
@@ -1528,7 +1481,11 @@ func (s *Session) sendRecordsBatched(rows [][]any, dbName string, delivery ...*r
 
 		// Build record: struct marker + signature + list of fields
 		buf = append(buf, recordHeader...)
-		buf = encodeRecordListInto(buf, row, s.useUTCDateTimeStructs(), s.boltV5(), dbName, resolver)
+		buf, encodeErr = encodeRecordListInto(ctx, buf, row, s.useUTCDateTimeStructs(), s.boltV5(), dbName, resolver)
+		if encodeErr != nil {
+			s.recordBuf = buf[:0]
+			return encodeErr
+		}
 
 		// bufio.Writer does not retain the provided slice after Write returns,
 		// so it's safe to reuse the pooled buffer on the next iteration.
@@ -1643,8 +1600,11 @@ func (s *Session) sendRunFailureWithDetail(code, message, detail string) error {
 	return s.sendFailureWithDetail(code, message, detail)
 }
 
-func (s *Session) sendTransactionControlFailure(code, message string) error {
-	return s.sendTransactionControlFailureWithDetail(code, message, "")
+// sendTransactionControlError is the existing control-response boundary with
+// the complete owner value. Its fallback applies only to ordinary provider errors.
+func (s *Session) sendTransactionControlError(err error) error {
+	code, message := nornicerrors.RenderStatus(err, s.localize)
+	return s.sendTransactionControlFailureWithDetail(code, message, boltErrorDetail(err))
 }
 
 // sendTransactionControlFailureWithDetail is sendTransactionControlFailure
@@ -1654,9 +1614,12 @@ func (s *Session) sendTransactionControlFailureWithDetail(code, message, detail 
 	return s.sendFailureWithDetail(code, message, detail)
 }
 
-func (s *Session) sendTransactionTimeoutFailure() error {
+func (s *Session) sendTransactionTimeoutFailure(statementErrors ...error) error {
 	s.failedUntilReset = true
-	return s.sendFailure(transactionTimedOutCode, transactionTimedOutMsg)
+	var outcome error = nornicerrors.MarkStatementTimeout(context.DeadlineExceeded, nornicerrors.ErrClientTransactionTimeout)
+	outcome = nornicerrors.CombineTerminalOutcomes(outcome, statementErrors...)
+	code, message := nornicerrors.RenderStatus(outcome, s.localize)
+	return s.sendFailure(code, message)
 }
 
 func (s *Session) sendIgnored() error {
@@ -1889,4 +1852,57 @@ func (s *Session) requestIdentity() *cypher.RequestIdentity {
 	}
 	s.identity, s.identityAuth = identity, s.authResult
 	return identity
+}
+
+func mapBoltCommitError(err error, canRetryMergeConflict bool) (code, message string) {
+	if canRetryMergeConflict {
+		err = nornicerrors.MarkMergeCommitTimeUniqueConflict(err)
+	}
+	code, message = nornicerrors.RenderStatus(nornicerrors.TransactionControlFailure(nornicerrors.TerminalCommit, err), nil)
+	if err != nil && canRetryMergeConflict && nornicerrors.IsMergeCommitTimeUniqueConflict(err) {
+		return nornicerrors.TransientOutdated, message
+	}
+	return code, message
+}
+
+func isRetryableBoltStatus(code string) bool {
+	return strings.HasPrefix(code, "Neo.TransientError.")
+}
+
+// Retry metadata cannot override the accepted RUN outcome. If its request
+// ends before classification completes, preserve that outcome but make the
+// transaction ineligible for automatic unique-conflict retry.
+func (s *Session) recordExplicitTransactionWrite(ctx context.Context, query string, params map[string]any, isWrite bool) {
+	if !isWrite {
+		return
+	}
+	if ctx.Err() != nil {
+		s.txHasNonMergeWrite = true
+		return
+	}
+	info := boltTxWriteAnalyzer.Analyze(ctx, query)
+	if ctx.Err() != nil || info == nil {
+		s.txHasNonMergeWrite = true
+		return
+	}
+	if info.HasMerge {
+		s.txHasMerge = true
+		s.txMergeStatements = append(s.txMergeStatements, cypher.CommitStatement{Query: query, Params: params})
+	}
+	s.txWriteInfos = append(s.txWriteInfos, info)
+}
+
+func (s *Session) canRetryMergeCommitConflict(ctx context.Context, err error) bool {
+	if nornicerrors.HasTerminalOutcome(err) {
+		return false
+	}
+	if !s.txHasMerge || s.txHasNonMergeWrite {
+		return false
+	}
+	for _, info := range s.txWriteInfos {
+		if !cypher.IsRetrySafeMergeCommitQuery(ctx, info) {
+			return false
+		}
+	}
+	return cypher.MergeUniqueConflictIsRetrySafe(ctx, s.txMergeStatements, err)
 }

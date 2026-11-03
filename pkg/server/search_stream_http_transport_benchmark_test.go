@@ -19,7 +19,7 @@ func BenchmarkSearchStreamHTTPTransport(b *testing.B) {
 	store, err := s.dbManager.GetStorage(database)
 	require.NoError(b, err)
 	for _, id := range []storage.NodeID{"a", "b"} {
-		_, err = store.CreateNode(&storage.Node{ID: id})
+		_, err = store.CreateNode(b.Context(), &storage.Node{ID: id})
 		require.NoError(b, err)
 	}
 	server := httptest.NewServer(s.buildRouter())

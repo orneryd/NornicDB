@@ -109,6 +109,57 @@ func TestBoundLockHelperRequiresOriginalReceiverMethod(t *testing.T) {
 	}
 }
 
+// Author: storage-format-owners lane (Codex), 1 November 2026.
+// The count reader keeps its selected mutex in a read-only captured cell so
+// cancellation can balance its read/upgrade holds. Field identity must follow
+// that value, while acquisition still needs its own checked success edge.
+func TestCapturedMutexBindingRetainsCheckedAcquisition(t *testing.T) {
+	p, pkg := ssaFixture(t, `package storage
+type trackedRWMutex struct{}
+func (*trackedRWMutex) LockContext()error{return nil}
+func (*trackedRWMutex) RLockContext()error{return nil}
+func (*trackedRWMutex) Unlock(){}
+func (*trackedRWMutex) RUnlock(){}
+type BadgerEngine struct{labelCountWriteMu trackedRWMutex; other trackedRWMutex}
+func sink(){}
+func retain(*trackedRWMutex){}
+func escape(**trackedRWMutex){}
+func checked(b *BadgerEngine)error{
+ mu:=&b.labelCountWriteMu
+ held:=true
+ defer func(){if held{mu.RUnlock()}}()
+ if err:=mu.RLockContext();err!=nil{return err}
+ mu.RUnlock();held=false
+ if err:=mu.LockContext();err!=nil{return err}
+ sink();mu.Unlock();return nil
+}
+func unchecked(b *BadgerEngine){mu:=&b.labelCountWriteMu;defer func(){retain(mu)}();_ = mu.LockContext();sink()}
+func failed(b *BadgerEngine){mu:=&b.labelCountWriteMu;defer func(){retain(mu)}();if err:=mu.LockContext();err!=nil{sink()}}
+func released(b *BadgerEngine)error{mu:=&b.labelCountWriteMu;defer func(){retain(mu)}();if err:=mu.LockContext();err!=nil{return err};mu.Unlock();sink();return nil}
+func changed(b *BadgerEngine,flag bool)error{mu:=&b.labelCountWriteMu;defer func(){retain(mu)}();if flag{mu=&b.other};if err:=mu.LockContext();err!=nil{return err};sink();return nil}
+func escaped(b *BadgerEngine)error{mu:=&b.labelCountWriteMu;defer func(){retain(mu)}();escape(&mu);if err:=mu.LockContext();err!=nil{return err};sink();return nil}
+`, "pkg/storage", ssa.SanityCheckFunctions)
+	q := &acquirer{p: p, cache: map[flowKey]*flow{}}
+	for _, tc := range []struct {
+		name string
+		held bool
+	}{{"checked", true}, {"unchecked", false}, {"failed", false}, {"released", false}, {"changed", false}, {"escaped", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			fn := pkg.Func(tc.name)
+			found := false
+			for _, block := range fn.Blocks {
+				for _, ins := range block.Instrs {
+					if call, ok := ins.(*ssa.Call); ok && call.Common().StaticCallee() == pkg.Func("sink") {
+						found = true
+						require.Equal(t, tc.held, q.covers(fn, call).has("prefixMVCCMetaLabelCount"))
+					}
+				}
+			}
+			require.True(t, found, "the write boundary is present")
+		})
+	}
+}
+
 func TestKeyBuilderPhiRetainsEveryArm(t *testing.T) {
 	p, pkg := ssaFixture(t, `package storage
  func label(ns,name string)[]byte{return []byte{1}}

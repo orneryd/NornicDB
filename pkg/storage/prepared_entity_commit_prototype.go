@@ -117,6 +117,7 @@ type EntityCommitRequest struct {
 // PrepareEntityCommit observes the logical receipt once, stages new entity work,
 // and runs the native commit pipeline up to its prephysical boundary. A staging
 // error leaves cleanup with the caller. Schema transactions use ordinary Commit.
+// ctx retains the caller lifetime until publication acceptance.
 func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request EntityCommitRequest) (*PreparedEntityCommit, error) {
 	logicalID := request.LogicalID
 	if logicalID == "" {
@@ -138,7 +139,7 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 		// set, then the buffer generations and the physical marker under its
 		// retirement exclusion. An absent receipt is staged under the key the
 		// observation already built.
-		observation, err := tx.engine.observeBufferedCommitReceipt(bufferedReceiptRead{
+		observation, err := tx.engine.observeBufferedCommitReceipt(ctx, bufferedReceiptRead{
 			namespace: tx.namespace,
 			logicalID: logicalID,
 			native:    tx.badgerTx,
@@ -170,10 +171,13 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 		return &PreparedEntityCommit{engine: engine, mode: mode, namespace: namespace, logicalID: logicalID, decide: make(chan bool, 1), finished: done, terminal: CommitOutcome{State: CommitApplied}}, nil
 	}
 	for _, op := range request.Operations {
-		if err := ApplyEntityChange(tx, op, func(updateRequest NodeUpdateRequest) error {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if err := ApplyEntityChange(ctx, tx, op, func(ctx context.Context, updateRequest NodeUpdateRequest) error {
 			updateRequest.Policy = StoredNodeImages
-			return tx.UpdateGraphNode(updateRequest)
-		}, func(id NodeID) error { return tx.DeleteGraphNode(id, CascadeEdges) }); err != nil {
+			return tx.UpdateGraphNode(ctx, updateRequest)
+		}, func(ctx context.Context, id NodeID) error { return tx.DeleteGraphNode(ctx, id, CascadeEdges) }); err != nil {
 			return nil, err
 		}
 	}
@@ -195,30 +199,45 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 			if prepared != nil && prepared.afterPublication != nil {
 				prepared.afterPublication()
 			}
-		}, prepare: func() error {
+		}, prepare: func(preparationContext context.Context) error {
 			if tx.schemaRuntime != nil || tx.knowledgeSchemaDirty {
 				return ErrInvalidData
 			}
-			changes, err := tx.engine.captureStoredEntityChanges(storedEntityCapture{staged: tx})
+			changes, err := tx.engine.captureStoredEntityChanges(preparationContext, storedEntityCapture{staged: tx})
 			if err != nil {
 				return err
 			}
 			operations := append([]Operation(nil), tx.operations...)
 			for i := range operations {
+				if err := preparationContext.Err(); err != nil {
+					return err
+				}
 				operations[i].snapshotForNotification()
 			}
-			nodes, edges, endpoints := tx.pendingEntityAuthorityKeysLocked()
+			nodes, edges, endpoints, err := tx.pendingEntityAuthorityKeysLocked(preparationContext)
+			if err != nil {
+				return err
+			}
 			schema, owner := tx.engine.GetSchemaForNamespace(tx.namespace), tx.ID
 			prepared = &PreparedEntityCommit{engine: tx.engine, mode: tx.commitMode, namespace: tx.namespace, logicalID: logicalID, operations: operations, changes: changes, decide: make(chan bool, 1), finished: finished}
 			tx.preparedEntityCommit = prepared
 			prepared.retainAuthority = func(admission context.Context) (func(), error) {
-				releaseEntities, err := schema.acquireUniqueConstraintCommitLocks(admission, owner, entityCommitKeys(nodes, edges, endpoints))
+				keyContext := admission
+				entityKeys, err := entityCommitKeys(keyContext, nodes, edges, endpoints)
+				if err != nil {
+					return nil, err
+				}
+				releaseEntities, err := schema.acquireUniqueConstraintCommitLocks(admission, owner, entityKeys)
 				if err != nil {
 					return nil, err
 				}
 				var nodeImages []*Node
 				var edgeImages []*Edge
 				for _, op := range operations {
+					if err := keyContext.Err(); err != nil {
+						releaseEntities()
+						return nil, err
+					}
 					if op.Node != nil {
 						nodeImages = append(nodeImages, op.Node)
 					}
@@ -232,7 +251,12 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 						edgeImages = append(edgeImages, op.OldEdge)
 					}
 				}
-				releaseValues, err := schema.acquireUniqueConstraintCommitLocks(admission, owner, schema.appendConstraintValueKeys(nil, nodeImages, edgeImages))
+				valueKeys, err := schema.appendConstraintValueKeys(keyContext, nil, nodeImages, edgeImages)
+				if err != nil {
+					releaseEntities()
+					return nil, err
+				}
+				releaseValues, err := schema.acquireUniqueConstraintCommitLocks(admission, owner, valueKeys)
 				if err != nil {
 					releaseEntities()
 					return nil, err
@@ -251,8 +275,8 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 			if !commit {
 				return errPreparedEntityDiscarded
 			}
-			// Accepted work belongs to its terminal owner, no longer the waiter.
-			tx.commitCtx = nil
+			// Success transfers the publication continuation to the accepted
+			// terminal owner; PublishCommit selects its detached completion scope.
 			return nil
 		}})
 		if prepared != nil {
@@ -268,7 +292,7 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 	}()
 	select {
 	case prepared := <-ready:
-		if ctx != nil && ctx.Err() != nil {
+		if ctx.Err() != nil {
 			prepared.Abort()
 			return nil, ctx.Err()
 		}

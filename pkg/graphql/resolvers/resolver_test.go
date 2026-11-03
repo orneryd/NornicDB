@@ -1221,7 +1221,7 @@ func TestQuerySimilarAdditionalCoverage(t *testing.T) {
 		Properties:      map[string]interface{}{"content": "dog"},
 		ChunkEmbeddings: [][]float32{{1.0, 0.0, 0.0}},
 	}
-	mem1ID, err := db.GetStorage().CreateNode(mem1Node)
+	mem1ID, err := db.GetStorage().CreateNode(t.Context(), mem1Node)
 	require.NoError(t, err)
 	puppyNode := &storage.Node{
 		ID:              storage.NodeID(uuid.New().String()),
@@ -1229,7 +1229,7 @@ func TestQuerySimilarAdditionalCoverage(t *testing.T) {
 		Properties:      map[string]interface{}{"content": "puppy"},
 		ChunkEmbeddings: [][]float32{{0.95, 0.05, 0.0}},
 	}
-	_, err = db.GetStorage().CreateNode(puppyNode)
+	_, err = db.GetStorage().CreateNode(t.Context(), puppyNode)
 	require.NoError(t, err)
 	catNode := &storage.Node{
 		ID:              storage.NodeID(uuid.New().String()),
@@ -1237,7 +1237,7 @@ func TestQuerySimilarAdditionalCoverage(t *testing.T) {
 		Properties:      map[string]interface{}{"content": "cat"},
 		ChunkEmbeddings: [][]float32{{0.0, 1.0, 0.0}},
 	}
-	_, err = db.GetStorage().CreateNode(catNode)
+	_, err = db.GetStorage().CreateNode(t.Context(), catNode)
 	require.NoError(t, err)
 
 	limit := 2
@@ -1492,7 +1492,7 @@ func TestQuerySearchAndStatsAdditionalCoverage(t *testing.T) {
 		Properties:      map[string]interface{}{"content": "Alice builds graph search systems", "title": "Alice Memory"},
 		ChunkEmbeddings: [][]float32{{1.0, 0.0, 0.0}},
 	}
-	storedID, err := db.GetStorage().CreateNode(aliceNode)
+	storedID, err := db.GetStorage().CreateNode(t.Context(), aliceNode)
 	require.NoError(t, err)
 	require.NotEmpty(t, storedID)
 
@@ -1502,7 +1502,7 @@ func TestQuerySearchAndStatsAdditionalCoverage(t *testing.T) {
 		Properties:      map[string]interface{}{"content": "Bob maintains retrieval pipelines", "title": "Bob Memory"},
 		ChunkEmbeddings: [][]float32{{0.9, 0.1, 0.0}},
 	}
-	_, err = db.GetStorage().CreateNode(bobNode)
+	_, err = db.GetStorage().CreateNode(t.Context(), bobNode)
 	require.NoError(t, err)
 
 	require.NoError(t, db.BuildSearchIndexes(ctx))

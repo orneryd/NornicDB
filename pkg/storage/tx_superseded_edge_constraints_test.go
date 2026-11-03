@@ -14,7 +14,7 @@ func TestTransactionEdgeConstraintsSkipSupersededRelationships(t *testing.T) {
 	day := func(month int) time.Time { return time.Date(2024, time.Month(month), 1, 0, 0, 0, 0, time.UTC) }
 	inTx := func(t *testing.T, engine *BadgerEngine, steps func(tx *BadgerTransaction) error) error {
 		t.Helper()
-		tx, err := engine.BeginTransaction()
+		tx, err := engine.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		if err := steps(tx); err != nil {
 			_ = tx.Rollback()
@@ -25,16 +25,16 @@ func TestTransactionEdgeConstraintsSkipSupersededRelationships(t *testing.T) {
 
 	t.Run("uniqueness", func(t *testing.T) {
 		engine := edgeConstraintFixture(t, Constraint{Name: "u", Type: ConstraintUnique, EntityType: ConstraintEntityRelationship, Label: "OWNS", Properties: []string{"token"}})
-		require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "OWNS", Properties: map[string]any{"token": "t"}}))
+		require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "OWNS", Properties: map[string]any{"token": "t"}}))
 		require.NoError(t, inTx(t, engine, func(tx *BadgerTransaction) error {
-			require.NoError(t, tx.DeleteEdge("test:e1"))
-			return tx.CreateEdge(&Edge{ID: "test:e2", StartNode: "test:a", EndNode: "test:b", Type: "OWNS", Properties: map[string]any{"token": "t"}})
+			require.NoError(t, tx.DeleteEdge(t.Context(), "test:e1"))
+			return tx.CreateEdge(t.Context(), &Edge{ID: "test:e2", StartNode: "test:a", EndNode: "test:b", Type: "OWNS", Properties: map[string]any{"token": "t"}})
 		}))
 		require.NoError(t, inTx(t, engine, func(tx *BadgerTransaction) error {
-			require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:e2", StartNode: "test:a", EndNode: "test:b", Type: "OWNS", Properties: map[string]any{"token": "moved"}}}))
-			return tx.CreateEdge(&Edge{ID: "test:e3", StartNode: "test:a", EndNode: "test:c", Type: "OWNS", Properties: map[string]any{"token": "t"}})
+			require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "test:e2", StartNode: "test:a", EndNode: "test:b", Type: "OWNS", Properties: map[string]any{"token": "moved"}}}))
+			return tx.CreateEdge(t.Context(), &Edge{ID: "test:e3", StartNode: "test:a", EndNode: "test:c", Type: "OWNS", Properties: map[string]any{"token": "t"}})
 		}))
-		require.Error(t, engine.CreateEdge(&Edge{ID: "test:e4", StartNode: "test:a", EndNode: "test:d", Type: "OWNS", Properties: map[string]any{"token": "t"}}))
+		require.Error(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e4", StartNode: "test:a", EndNode: "test:d", Type: "OWNS", Properties: map[string]any{"token": "t"}}))
 	})
 
 	t.Run("temporal no-overlap", func(t *testing.T) {
@@ -42,29 +42,29 @@ func TestTransactionEdgeConstraintsSkipSupersededRelationships(t *testing.T) {
 		interval := func(from, to int) map[string]any {
 			return map[string]any{"subject": "s", "valid_from": day(from), "valid_to": day(to)}
 		}
-		require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "RECORDS", Properties: interval(1, 6)}))
+		require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "RECORDS", Properties: interval(1, 6)}))
 		require.NoError(t, inTx(t, engine, func(tx *BadgerTransaction) error {
-			require.NoError(t, tx.DeleteEdge("test:e1"))
-			return tx.CreateEdge(&Edge{ID: "test:e2", StartNode: "test:a", EndNode: "test:b", Type: "RECORDS", Properties: interval(2, 7)})
+			require.NoError(t, tx.DeleteEdge(t.Context(), "test:e1"))
+			return tx.CreateEdge(t.Context(), &Edge{ID: "test:e2", StartNode: "test:a", EndNode: "test:b", Type: "RECORDS", Properties: interval(2, 7)})
 		}))
 		require.NoError(t, inTx(t, engine, func(tx *BadgerTransaction) error {
-			require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:e2", StartNode: "test:a", EndNode: "test:b", Type: "RECORDS", Properties: interval(10, 12)}}))
-			return tx.CreateEdge(&Edge{ID: "test:e3", StartNode: "test:a", EndNode: "test:b", Type: "RECORDS", Properties: interval(3, 8)})
+			require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "test:e2", StartNode: "test:a", EndNode: "test:b", Type: "RECORDS", Properties: interval(10, 12)}}))
+			return tx.CreateEdge(t.Context(), &Edge{ID: "test:e3", StartNode: "test:a", EndNode: "test:b", Type: "RECORDS", Properties: interval(3, 8)})
 		}))
-		require.Error(t, engine.CreateEdge(&Edge{ID: "test:e4", StartNode: "test:a", EndNode: "test:b", Type: "RECORDS", Properties: interval(4, 5)}))
+		require.Error(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e4", StartNode: "test:a", EndNode: "test:b", Type: "RECORDS", Properties: interval(4, 5)}))
 	})
 
 	t.Run("cardinality", func(t *testing.T) {
 		engine := edgeConstraintFixture(t, Constraint{Name: "c", Type: ConstraintCardinality, EntityType: ConstraintEntityRelationship, Label: "OWNS", Direction: "OUTGOING", MaxCount: 1})
-		require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "OWNS", Properties: map[string]any{}}))
+		require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "OWNS", Properties: map[string]any{}}))
 		require.NoError(t, inTx(t, engine, func(tx *BadgerTransaction) error {
-			require.NoError(t, tx.DeleteEdge("test:e1"))
-			return tx.CreateEdge(&Edge{ID: "test:e2", StartNode: "test:a", EndNode: "test:c", Type: "OWNS", Properties: map[string]any{}})
+			require.NoError(t, tx.DeleteEdge(t.Context(), "test:e1"))
+			return tx.CreateEdge(t.Context(), &Edge{ID: "test:e2", StartNode: "test:a", EndNode: "test:c", Type: "OWNS", Properties: map[string]any{}})
 		}))
 		// A rewritten relationship still counts, once.
 		require.Error(t, inTx(t, engine, func(tx *BadgerTransaction) error {
-			require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:e2", StartNode: "test:a", EndNode: "test:c", Type: "OWNS", Properties: map[string]any{"v": int64(1)}}}))
-			return tx.CreateEdge(&Edge{ID: "test:e3", StartNode: "test:a", EndNode: "test:d", Type: "OWNS", Properties: map[string]any{}})
+			require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "test:e2", StartNode: "test:a", EndNode: "test:c", Type: "OWNS", Properties: map[string]any{"v": int64(1)}}}))
+			return tx.CreateEdge(t.Context(), &Edge{ID: "test:e3", StartNode: "test:a", EndNode: "test:d", Type: "OWNS", Properties: map[string]any{}})
 		}))
 	})
 }

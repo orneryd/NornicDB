@@ -163,13 +163,43 @@ in `pkg/replication/replicator.go`:
 
 ```go
 type Storage interface {
-    ApplyCommand(cmd *Command) error
+    ApplyCommand(waitCtx context.Context, cmd *Command, publication WALPublicationMode) (CommandPublication, error)
     GetWALPosition() (uint64, error)
     GetWALEntries(fromPosition uint64, maxEntries int) ([]*WALEntry, error)
     WriteSnapshot(w SnapshotWriter) error
     RestoreSnapshot(r SnapshotReader) error
 }
+
+type WALPublicationMode uint8
+
+const (
+    // Admit the record to the bounded replication WAL FIFO and return the
+    // native command result without waiting for publication.
+    WALQueued WALPublicationMode = iota + 1
+    // Wait until this exact record is appended and published, then report its
+    // physical sequence.
+    WALPublished
+)
+
+// CommandPublication reports this command's own published record. Position is
+// its exact physical WAL sequence; zero is never a successful published result.
+type CommandPublication struct{ Position uint64 }
 ```
+
+`ApplyCommand` validates `publication` and a non-nil `waitCtx` before any queue or
+native side effect. A valid command is transferred to the single FIFO WAL writer
+before its native application, and the native result stays the primary error.
+`WALQueued` keeps the nonwaiting asynchronous contract: no publication wait, no
+per-write timer, and a zero `Position`. `WALPublished` waits for the writer's
+typed outcome for that command's own record and returns its exact physical
+sequence; it is publication completion, not an additional durability guarantee.
+
+`waitCtx` bounds only the caller's wait. An expired or canceled wait never
+retracts accepted intent, suppresses native application, removes a queued record
+or implies rollback. A native application error is returned unchanged and never
+filters the accepted record. A publication failure or expired publication wait
+after native acceptance is reported without implying rejected or rolled-back
+native work.
 
 Graph mutations pass through the accepted entity-commit owner rather than raw
 property-update commands. Go adapters use
@@ -179,6 +209,27 @@ actual read image; a deliberately blind authoritative replay supplies no caller
 observation. The requests are runtime inputs, not changes to persisted entity
 or WAL formats. See [replicated entity commits](../development/replicated-entity-commits.md)
 for preparation, publication and replay ownership.
+
+### Quorum Publication And Acknowledgement
+
+A quorum write resolves its existing default timeout once, builds one deadline,
+publishes its own record with `WALPublished` and waits for the standby to
+acknowledge that exact position under the same deadline. Publication delay
+consumes the acknowledgement budget; neither wait starts a second full timeout.
+Async mode uses `WALQueued`, reads no WAL position and acquires no timer.
+
+### Migrating A Custom Storage Implementation
+
+The `Storage` contract replaced `ApplyCommand(cmd *Command) error`; no forwarding
+wrapper remains, so every implementation and caller moves together. Callers that
+keep the asynchronous contract pass their owned lifetime context (or
+`context.Background()` where no lifetime exists) with `WALQueued` and discard the
+receipt. Quorum waits pass one deadline with `WALPublished` and use the returned
+position as the acknowledgement target. An implementation must validate the mode
+and context, validate and decode before any effect, return the native error
+unchanged, and report a nonzero position only for a record it actually
+published. No cluster wire message, replication WAL record or stored payload
+format changes.
 
 ## Network Protocol
 

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -16,17 +17,17 @@ func TestLookupIndexesPersist(t *testing.T) {
 	require.Equal(t, DefaultNodeLookupIndexName, name)
 	require.NoError(t, sm.DropIndex(DefaultRelationshipLookupIndexName))
 
-	def := sm.ExportDefinition()
+	def := schemaDefinitionForTest(t, sm)
 	require.NotNil(t, def.LookupIndexes)
 	restored := NewSchemaManager()
-	require.NoError(t, restored.ReplaceFromDefinition(def))
+	require.NoError(t, restored.ReplaceFromDefinition(context.Background(), def))
 	_, ok = restored.LookupIndexName(ConstraintEntityRelationship)
 	require.False(t, ok, "a dropped lookup index stays dropped")
 	_, ok = restored.LookupIndexName(ConstraintEntityNode)
 	require.True(t, ok)
 
 	old := &SchemaDefinition{Version: schemaDefinitionVersion}
-	require.NoError(t, restored.ReplaceFromDefinition(old))
+	require.NoError(t, restored.ReplaceFromDefinition(context.Background(), old))
 	for _, entityType := range []ConstraintEntityType{ConstraintEntityNode, ConstraintEntityRelationship} {
 		_, ok = restored.LookupIndexName(entityType)
 		require.True(t, ok, "an older schema has the default %s lookup index", entityType)

@@ -1,8 +1,8 @@
 package storage
 
 import (
+	"context"
 	"strings"
-	"sync"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -22,6 +22,7 @@ const (
 type readViewOptions struct {
 	scopeKind readScopeKind
 	nodeIDs   []NodeID
+
 	longLived bool
 	scope     string
 	cached    func(*WriteBehindBuffer) (bool, error)
@@ -29,14 +30,15 @@ type readViewOptions struct {
 }
 
 type badgerReadView struct {
-	scope     string
+	scope  string
+	txn    *badger.Txn
+	db     *managedBadgerDB
+	engine *BadgerEngine
+	readTs uint64
+	mu     contextRWMutex
+	// Keep the small state fields together after aligned admission state.
 	scopeKind readScopeKind
-	txn       *badger.Txn
-	db        *managedBadgerDB
-	engine    *BadgerEngine
-	readTs    uint64
 	longLived bool
-	mu        sync.Mutex
 	closed    bool
 }
 
@@ -50,12 +52,20 @@ type badgerReadView struct {
 // overlay source: nil means empty, and the overlay selectors accept nil without
 // allocating. Committed index/cache reads belong outside any nil-overlay guard.
 // Only a complete cached result can return without opening a view or capturing.
-func (b *BadgerEngine) captureReadView(capture func(*WriteBehindBuffer), options ...readViewOptions) (*badgerReadView, error) {
+// Context is a separate admission argument: placing it beside cached in the
+// options makes the callback and its captures escape during context polling,
+// allocating even when a completed cache read needs no managed transaction.
+func (b *BadgerEngine) captureReadView(ctx context.Context, capture func(*WriteBehindBuffer), options ...readViewOptions) (*badgerReadView, error) {
+	// Internal detached reads may pass nil; a supplied caller context owns
+	// admission even when no buffer or transaction is needed.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	var opts readViewOptions
 	if len(options) > 0 {
 		opts = options[0]
 	}
-	if err := b.pendingReadConflict(opts); err != nil {
+	if err := b.pendingReadConflict(opts.scopeKind, opts.scope, opts.nodeIDs, ctx); err != nil {
 		return nil, err
 	}
 	w := b.writeBehind
@@ -63,6 +73,9 @@ func (b *BadgerEngine) captureReadView(capture func(*WriteBehindBuffer), options
 		epoch, idle := w.idleReadEpoch(opts.scope)
 		if idle {
 			done, err := opts.cached(nil)
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
 			if after, stillIdle := w.idleReadEpoch(opts.scope); stillIdle && after == epoch && (done || err != nil) {
 				return nil, err
 			}
@@ -70,10 +83,16 @@ func (b *BadgerEngine) captureReadView(capture func(*WriteBehindBuffer), options
 	}
 	// Only the slow capture branch acquires a transaction and retirement lease.
 	if w != nil {
-		w.mu.RLock()
+		if err := w.mu.RLockContext(ctx); err != nil {
+			return nil, err
+		}
 		defer w.mu.RUnlock()
 		if opts.cached != nil {
-			if done, err := opts.cached(w); done || err != nil {
+			done, err := opts.cached(w)
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
+			if done || err != nil {
 				return nil, err
 			}
 		}
@@ -90,7 +109,7 @@ func (b *BadgerEngine) captureReadView(capture func(*WriteBehindBuffer), options
 		txn, readTs, err = db.beginTxn(false)
 	}
 	if err != nil {
-		b.txnWG.Done()
+		b.work.Leave()
 		return nil, err
 	}
 	view := &badgerReadView{scope: strings.Clone(opts.scope), scopeKind: opts.scopeKind, txn: txn, db: db, engine: b, readTs: readTs, longLived: opts.longLived}
@@ -109,7 +128,7 @@ func (b *BadgerEngine) captureReadView(capture func(*WriteBehindBuffer), options
 				if r := recover(); r != nil {
 					view.Close()
 					if opts.longLived {
-						b.txnWG.Done()
+						b.work.Leave()
 					}
 					panic(r)
 				}
@@ -118,7 +137,9 @@ func (b *BadgerEngine) captureReadView(capture func(*WriteBehindBuffer), options
 		}()
 	}
 	if opts.longLived {
-		b.txnWG.Done()
+		// A long-lived view holds only its oracle timestamp; each scan is
+		// admitted on its own (withView).
+		b.work.Leave()
 	}
 	return view, nil
 }
@@ -136,22 +157,27 @@ func (v *badgerReadView) Close() {
 	}
 	v.db.endRead(v.readTs)
 	if !v.longLived {
-		v.engine.txnWG.Done()
+		v.engine.work.Leave() // the short view's admission, returned by Close
 	}
 }
 
 // Long-lived views hold only the oracle timestamp between scans. Engine Close
 // waits for an active scan, never for the entire build lifetime.
-func (v *badgerReadView) withView(read func(*badger.Txn) error) error {
+func (v *badgerReadView) withView(ctx context.Context, read func(*badger.Txn) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if !v.longLived {
 		return read(v.txn)
 	}
-	v.mu.Lock()
+	if err := v.mu.LockContext(ctx); err != nil {
+		return err
+	}
 	defer v.mu.Unlock()
 	if v.closed {
 		return ErrStorageClosed
 	}
-	if err := v.engine.pendingReadConflict(readViewOptions{scope: v.scope, scopeKind: v.scopeKind}); err != nil {
+	if err := v.engine.pendingReadConflict(v.scopeKind, v.scope, nil, ctx); err != nil {
 		return err
 	}
 
@@ -159,7 +185,7 @@ func (v *badgerReadView) withView(read func(*badger.Txn) error) error {
 	if err != nil {
 		return err
 	}
-	defer v.engine.txnWG.Done()
+	defer v.engine.work.Leave()
 	if db != v.db {
 		return ErrStorageClosed
 	}
@@ -170,37 +196,37 @@ func (v *badgerReadView) withView(read func(*badger.Txn) error) error {
 	})
 }
 
-func (b *BadgerEngine) withReadView(capture func(*WriteBehindBuffer), read func(*badger.Txn) error, options ...readViewOptions) error {
+func (b *BadgerEngine) withReadView(ctx context.Context, capture func(*WriteBehindBuffer), read func(*badger.Txn) error, options ...readViewOptions) error {
 	if len(options) != 0 && options[0].current != nil {
-		return b.withCurrentReadView(capture, read, options[0])
+		return b.withCurrentReadView(ctx, capture, read, options[0])
 	}
-	view, err := b.captureReadView(capture, options...)
+	view, err := b.captureReadView(ctx, capture, options...)
 	if err != nil || view == nil {
 		return err
 	}
-	return view.readAndClose(read)
+	return view.readAndClose(ctx, read)
 }
 
-func (v *badgerReadView) readAndClose(read func(*badger.Txn) error) error {
+func (v *badgerReadView) readAndClose(ctx context.Context, read func(*badger.Txn) error) error {
 	defer v.Close()
-	return recoverBadgerClosedPanic(func() error { return v.withView(read) })
+	return recoverBadgerClosedPanic(func() error { return v.withView(ctx, read) })
 }
 
 // Only materializers opting into current body caches need group validation.
-func (b *BadgerEngine) withCurrentReadView(capture func(*WriteBehindBuffer), read func(*badger.Txn) error, opts readViewOptions) error {
+func (b *BadgerEngine) withCurrentReadView(ctx context.Context, capture func(*WriteBehindBuffer), read func(*badger.Txn) error, opts readViewOptions) error {
 	nodeGen, edgeGen := b.nodeCacheGen.current(), b.edgeCacheGen.current()
 	*opts.current = true
-	view, err := b.captureReadView(capture, opts)
+	view, err := b.captureReadView(ctx, capture, opts)
 	if err != nil || view == nil {
 		return err
 	}
 	defer view.Close()
 
-	err = recoverBadgerClosedPanic(func() error { return view.withView(read) })
+	err = recoverBadgerClosedPanic(func() error { return view.withView(ctx, read) })
 	if nodeGen != b.nodeCacheGen.current() || edgeGen != b.edgeCacheGen.current() {
 		// Re-evaluate only internal materialization, never a user callback.
 		*opts.current = false
-		return recoverBadgerClosedPanic(func() error { return view.withView(read) })
+		return recoverBadgerClosedPanic(func() error { return view.withView(ctx, read) })
 	}
 	return err
 }
@@ -208,15 +234,22 @@ func (b *BadgerEngine) withCurrentReadView(capture func(*WriteBehindBuffer), rea
 // pendingReadConflict admits exactly the graph population the capture reads.
 // Bounded ID requests only consult their namespaces when any DROP is pending;
 // the healthy batch path retains one atomic admission check rather than N.
-func (b *BadgerEngine) pendingReadConflict(opts readViewOptions) error {
-	switch opts.scopeKind {
+func (b *BadgerEngine) pendingReadConflict(kind readScopeKind, scope string, ids []NodeID, ctx context.Context) error {
+	switch kind {
 	case readPrefixScope:
-		return b.pendingPrefixConflict(opts.scope)
+		return b.pendingPrefixConflict(scope)
 	case readNodeIDsScope:
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if b.pendingNamespaceConflict("") == nil {
 			return nil
 		}
-		for _, id := range opts.nodeIDs {
+		var cancel bulkReadCancellation
+		for _, id := range ids {
+			if err := cancel.check(ctx); err != nil {
+				return err
+			}
 			if id != "" {
 				if err := b.pendingNamespaceConflict(namespaceForNodeID(id)); err != nil {
 					return err
@@ -225,6 +258,6 @@ func (b *BadgerEngine) pendingReadConflict(opts readViewOptions) error {
 		}
 		return nil
 	default:
-		return b.pendingNamespaceConflict(opts.scope)
+		return b.pendingNamespaceConflict(scope)
 	}
 }

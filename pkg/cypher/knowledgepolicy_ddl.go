@@ -188,17 +188,17 @@ func kpRequireStatementEnd(statement string, index int, command string) error {
 	return nil
 }
 
-func isKnowledgePolicyDDLStatement(statement string) bool {
+func isKnowledgePolicyDDLStatement(ctx context.Context, statement string) bool {
 	for _, operation := range []string{"CREATE", "ALTER", "DROP"} {
-		if startsWithKeywords(statement, operation, "DECAY PROFILE") ||
-			startsWithKeywords(statement, operation, "PROMOTION PROFILE") ||
-			startsWithKeywords(statement, operation, "PROMOTION POLICY") {
+		if startsWithKeywords(ctx, statement, operation, "DECAY PROFILE") ||
+			startsWithKeywords(ctx, statement, operation, "PROMOTION PROFILE") ||
+			startsWithKeywords(ctx, statement, operation, "PROMOTION POLICY") {
 			return true
 		}
 	}
-	return startsWithKeywords(statement, "SHOW", "DECAY PROFILES") ||
-		startsWithKeywords(statement, "SHOW", "PROMOTION PROFILES") ||
-		startsWithKeywords(statement, "SHOW", "PROMOTION POLICIES")
+	return startsWithKeywords(ctx, statement, "SHOW", "DECAY PROFILES") ||
+		startsWithKeywords(ctx, statement, "SHOW", "PROMOTION PROFILES") ||
+		startsWithKeywords(ctx, statement, "SHOW", "PROMOTION POLICIES")
 }
 
 type policyDDLSource struct {
@@ -266,7 +266,7 @@ func ParseKnowledgePolicyDDL(ctx context.Context, stmt string, stage SourceStage
 				return parseCreatePromotionProfile(s, l)
 			}
 			if l := cyphertext.KeywordEnd(s, k, "POLICY", cyphertext.CypherWord); l > 0 {
-				return parseCreatePromotionPolicy(source, l)
+				return parseCreatePromotionPolicy(ctx, source, l)
 			}
 		}
 		return nil, false, nil
@@ -286,7 +286,7 @@ func ParseKnowledgePolicyDDL(ctx context.Context, stmt string, stage SourceStage
 				return parseAlterPromotionProfile(s, l)
 			}
 			if l := cyphertext.KeywordEnd(s, k, "POLICY", cyphertext.CypherWord); l > 0 {
-				return parseAlterPromotionPolicy(source, l)
+				return parseAlterPromotionPolicy(ctx, source, l)
 			}
 		}
 		return nil, false, nil
@@ -976,7 +976,7 @@ func parseDropPromotionProfile(s string, i int) (interface{}, bool, error) {
 	})
 }
 
-func parseCreatePromotionPolicy(source policyDDLSource, i int) (interface{}, bool, error) {
+func parseCreatePromotionPolicy(ctx context.Context, source policyDDLSource, i int) (interface{}, bool, error) {
 	s := source.Text
 	i = kpSkipSpaces(s, i)
 	parseGuard := func(index int) (int, bool, error) {
@@ -1011,7 +1011,7 @@ func parseCreatePromotionPolicy(source policyDDLSource, i int) (interface{}, boo
 	if cyphertext.KeywordEnd(s, i, "FOR", cyphertext.CypherWord) < 0 {
 		return nil, false, localizedError(localization.CypherKnowledgePolicyExpectedAfter("FOR", "CREATE PROMOTION POLICY "+name), nil)
 	}
-	policy, err := parsePromotionPolicyDefinition(name, source, i)
+	policy, err := parsePromotionPolicyDefinition(ctx, name, source, i)
 	if err != nil {
 		return nil, false, err
 	}
@@ -1019,7 +1019,7 @@ func parseCreatePromotionPolicy(source policyDDLSource, i int) (interface{}, boo
 	return &CreatePromotionPolicyCmd{Policy: policy, IfNotExists: ifNotExists}, true, nil
 }
 
-func parsePromotionPolicyDefinition(name string, source policyDDLSource, i int) (knowledgepolicy.PromotionPolicyDef, error) {
+func parsePromotionPolicyDefinition(ctx context.Context, name string, source policyDDLSource, i int) (knowledgepolicy.PromotionPolicyDef, error) {
 	s := source.Text
 	i = kpSkipSpaces(s, i)
 	policy := knowledgepolicy.PromotionPolicyDef{Name: name, Enabled: true}
@@ -1048,7 +1048,7 @@ func parsePromotionPolicyDefinition(name string, source policyDDLSource, i int) 
 		}
 		i = k
 
-		if err := parsePolicyApplyBlock(source.window(k-1-len(body), k-1), &policy); err != nil {
+		if err := parsePolicyApplyBlock(ctx, source.window(k-1-len(body), k-1), &policy); err != nil {
 			return policy, err
 		}
 	}
@@ -1059,7 +1059,7 @@ func parsePromotionPolicyDefinition(name string, source policyDDLSource, i int) 
 	return policy, nil
 }
 
-func parsePolicyApplyBlock(source policyDDLSource, policy *knowledgepolicy.PromotionPolicyDef) error {
+func parsePolicyApplyBlock(ctx context.Context, source policyDDLSource, policy *knowledgepolicy.PromotionPolicyDef) error {
 	body := source.Text
 	i := 0
 	for i < len(body) {
@@ -1076,7 +1076,7 @@ func parsePolicyApplyBlock(source policyDDLSource, policy *knowledgepolicy.Promo
 				if l < 0 {
 					return localizedError(localization.CypherKnowledgePolicyExpectedAfter("{", "ON ACCESS"), nil)
 				}
-				onAccess, err := parseOnAccessBlock(source.window(l-1-len(accessBody), l-1))
+				onAccess, err := parseOnAccessBlock(ctx, source.window(l-1-len(accessBody), l-1))
 				if err != nil {
 					return err
 				}
@@ -1087,7 +1087,7 @@ func parsePolicyApplyBlock(source policyDDLSource, policy *knowledgepolicy.Promo
 		}
 
 		if j := cyphertext.KeywordEnd(body, i, "WHEN", cyphertext.CypherWord); j > 0 {
-			clause, l, err := parsePolicyWhenClause(source, j)
+			clause, l, err := parsePolicyWhenClause(ctx, source, j)
 			if err != nil {
 				return err
 			}
@@ -1103,7 +1103,7 @@ func parsePolicyApplyBlock(source policyDDLSource, policy *knowledgepolicy.Promo
 	return nil
 }
 
-func parseOnAccessBlock(source policyDDLSource) (*knowledgepolicy.PromotionPolicyOnAccess, error) {
+func parseOnAccessBlock(ctx context.Context, source policyDDLSource) (*knowledgepolicy.PromotionPolicyOnAccess, error) {
 	body := source.Text
 	onAccess := &knowledgepolicy.PromotionPolicyOnAccess{}
 	i := 0
@@ -1149,7 +1149,7 @@ func parseOnAccessBlock(source policyDDLSource) (*knowledgepolicy.PromotionPolic
 
 		if j := cyphertext.KeywordEnd(body, i, "SET", cyphertext.CypherWord); j > 0 {
 			j = kpSkipSpaces(body, j)
-			expr, l := scanToNextStatement(body, j)
+			expr, l := scanToNextStatement(ctx, body, j)
 			if expr == "" {
 				return nil, localizedError(localization.CypherKnowledgePolicyExpressionExpectedAfterSet(), nil)
 			}
@@ -1216,13 +1216,13 @@ func parseKalmanConfigBlock(body string, cfg *knowledgepolicy.KalmanConfig) erro
 	return nil
 }
 
-func scanToNextStatement(s string, i int) (string, int) {
+func scanToNextStatement(ctx context.Context, s string, i int) (string, int) {
 	start := i
 	boundary := len(s)
 	opts := defaultKeywordScanOpts()
 	opts.SkipBraces = true
 	for _, keyword := range []string{"SET", "WITH"} {
-		if next := keywordIndexFrom(s, keyword, start, opts); next >= 0 && next < boundary {
+		if next := keywordIndexFrom(ctx, s, keyword, start, opts); next >= 0 && next < boundary {
 			boundary = next
 		}
 	}
@@ -1254,7 +1254,7 @@ func scanToNextStatement(s string, i int) (string, int) {
 	return s[start:boundary], boundary
 }
 
-func parsePolicyWhenClause(source policyDDLSource, i int) (knowledgepolicy.PromotionPolicyWhenClause, int, error) {
+func parsePolicyWhenClause(ctx context.Context, source policyDDLSource, i int) (knowledgepolicy.PromotionPolicyWhenClause, int, error) {
 	s := source.Text
 	i = kpSkipSpaces(s, i)
 	clause := knowledgepolicy.PromotionPolicyWhenClause{}
@@ -1263,7 +1263,7 @@ func parsePolicyWhenClause(source policyDDLSource, i int) (knowledgepolicy.Promo
 	opts := defaultKeywordScanOpts()
 	opts.SkipBraces = true
 	opts.Boundary = keywordBoundaryWhitespace
-	applyIdx := keywordIndexFrom(s, "APPLY", predStart, opts)
+	applyIdx := keywordIndexFrom(ctx, s, "APPLY", predStart, opts)
 
 	if applyIdx < 0 {
 		return clause, i, localizedError(localization.CypherKnowledgePolicyExpectedAfter("APPLY", "WHEN predicate"), nil)
@@ -1297,7 +1297,7 @@ func parsePolicyWhenClause(source policyDDLSource, i int) (knowledgepolicy.Promo
 	return clause, i, nil
 }
 
-func parseAlterPromotionPolicy(source policyDDLSource, i int) (interface{}, bool, error) {
+func parseAlterPromotionPolicy(ctx context.Context, source policyDDLSource, i int) (interface{}, bool, error) {
 	s := source.Text
 	name, i, err := kpParseKnowledgeName(s, i, "ALTER PROMOTION POLICY", true)
 	if err != nil {
@@ -1306,7 +1306,7 @@ func parseAlterPromotionPolicy(source policyDDLSource, i int) (interface{}, bool
 
 	i = kpSkipSpaces(s, i)
 	if cyphertext.KeywordEnd(s, i, "FOR", cyphertext.CypherWord) > 0 {
-		policy, err := parsePromotionPolicyDefinition(name, source, i)
+		policy, err := parsePromotionPolicyDefinition(ctx, name, source, i)
 		if err != nil {
 			return nil, false, err
 		}

@@ -100,7 +100,7 @@ func TestBug_ConcurrentCreateAndCount(t *testing.T) {
 	finalLabelCount := result.Rows[0][0].(int64)
 	t.Logf("Final MATCH (n:Concurrent) RETURN count(n): %d", finalLabelCount)
 
-	storageCount, _ := db.storage.NodeCount()
+	storageCount, _ := db.storage.NodeCount(t.Context())
 	t.Logf("Final storage.NodeCount(): %d", storageCount)
 
 	// Log any mismatches found during concurrent access

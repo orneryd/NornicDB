@@ -38,8 +38,8 @@ func TestIsRetrySafeMergeCommitQuery(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			info := analyzer.Analyze(t.Context(), tt.query)
-			if got := IsRetrySafeMergeCommitQuery(info); got != tt.want {
-				t.Fatalf("IsRetrySafeMergeCommitQuery(%q) = %v, want %v", tt.query, got, tt.want)
+			if got := IsRetrySafeMergeCommitQuery(t.Context(), info); got != tt.want {
+				t.Fatalf("IsRetrySafeMergeCommitQuery(t.Context(), %q) = %v, want %v", tt.query, got, tt.want)
 			}
 		})
 	}

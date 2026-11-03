@@ -43,12 +43,12 @@ func (e *StorageExecutor) runGraphSearchRequest(ctx context.Context, procedure s
 
 // graphSearchEntity is one graph search result's kind and entities: a node,
 // or a relationship with its start and end nodes (null when not visible).
-func (e *StorageExecutor) graphSearchEntity(result *search.SearchResult) (kind string, node, relationship, start, end interface{}) {
+func (e *StorageExecutor) graphSearchEntity(ctx context.Context, result *search.SearchResult) (kind string, node, relationship, start, end interface{}) {
 	if result.Relationship == nil {
 		return "node", result.MaterializedNode(storage.DatabaseOf(e.storage)), nil, nil, nil
 	}
 	endpoint := func(id storage.NodeID) interface{} {
-		if found, err := e.storage.GetNode(id); err == nil && found != nil {
+		if found, err := e.storage.GetNode(ctx, id); err == nil && found != nil {
 			return found
 		}
 		return nil
@@ -59,7 +59,7 @@ func (e *StorageExecutor) graphSearchEntity(result *search.SearchResult) (kind s
 // graphSearchResult is a graph search's rows (db.retrieveGraph's columns),
 // each hit with its matches and, as db.retrieve's rows, how many chunks of a
 // query split into chunks were searched (0 and 0 for a query searched whole).
-func (e *StorageExecutor) graphSearchResult(response *search.SearchResponse) *ExecuteResult {
+func (e *StorageExecutor) graphSearchResult(ctx context.Context, response *search.SearchResponse) *ExecuteResult {
 	result := &ExecuteResult{
 		Columns: retrievalResultSchemas(retrievalGraphColumns)[0],
 		Rows:    make([][]interface{}, 0, len(response.Results)),
@@ -67,7 +67,7 @@ func (e *StorageExecutor) graphSearchResult(response *search.SearchResponse) *Ex
 	chunksSearched, chunksTotal := int64(response.QueryChunksSearched), int64(response.QueryChunksTotal)
 	for index := range response.Results {
 		r := &response.Results[index]
-		kind, node, relationship, start, end := e.graphSearchEntity(r)
+		kind, node, relationship, start, end := e.graphSearchEntity(ctx, r)
 		result.Rows = append(result.Rows, []interface{}{
 			kind, node, relationship, start, end,
 			r.Score, r.RRFScore, r.VectorRank, r.BM25Rank,
@@ -83,11 +83,11 @@ func (e *StorageExecutor) graphSearchResult(response *search.SearchResponse) *Ex
 // start and end, scores and matches; the page carries the search method,
 // fallback and, for a query split into chunks, how many were searched. It has
 // no qid: there is nothing to continue.
-func (e *StorageExecutor) graphSearchPage(response *search.SearchResponse) *ExecuteResult {
+func (e *StorageExecutor) graphSearchPage(ctx context.Context, response *search.SearchResponse) *ExecuteResult {
 	results := make([]interface{}, 0, len(response.Results))
 	for index := range response.Results {
 		r := &response.Results[index]
-		kind, node, relationship, start, end := e.graphSearchEntity(r)
+		kind, node, relationship, start, end := e.graphSearchEntity(ctx, r)
 		results = append(results, map[string]interface{}{
 			"kind": kind, "node": node, "relationship": relationship, "start": start, "end": end,
 			"score": r.Score, "rrf_score": r.RRFScore,

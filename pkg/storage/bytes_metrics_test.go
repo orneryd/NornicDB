@@ -81,15 +81,17 @@ type storageProbeAdapter struct {
 	be *BadgerEngine
 }
 
+// NodeCount and EdgeCount stay context-free: observability.StorageProbe is a
+// context-free collector contract, so each probe read owns its own lifetime.
 func (a storageProbeAdapter) NodeCount() int64 {
-	n, err := a.be.NodeCount()
+	n, err := a.be.NodeCount(context.Background())
 	if err != nil {
 		return 0
 	}
 	return n
 }
 func (a storageProbeAdapter) EdgeCount() int64 {
-	n, err := a.be.EdgeCount()
+	n, err := a.be.EdgeCount(context.Background())
 	if err != nil {
 		return 0
 	}
@@ -204,7 +206,7 @@ func TestBytesMetricsSweeper_RaceSafe(t *testing.T) {
 					ID:     NodeID("race-" + idStr(id) + "-" + idStr(i)),
 					Labels: []string{"L"},
 				}
-				_, _ = be.CreateNode(node)
+				_, _ = be.CreateNode(t.Context(), node)
 			}
 		}(g)
 	}

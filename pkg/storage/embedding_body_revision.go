@@ -1,6 +1,9 @@
 package storage
 
-import "github.com/dgraph-io/badger/v4"
+import (
+	"context"
+	"github.com/dgraph-io/badger/v4"
+)
 
 // EmbeddingBodyRevision is an opaque snapshot identity. A durable read uses
 // Badger's body-key version. An acknowledged buffered read uses its existing
@@ -17,8 +20,11 @@ func (revision EmbeddingBodyRevision) isZero() bool {
 
 // MatchesNode is the common body-change decision for claims, DLQ recovery and
 // publication. A buffered ACK and its materialized body are the same revision;
-// caller timestamps and notification delivery are not revision evidence.
-func (revision EmbeddingBodyRevision) MatchesNode(node *Node) (bool, error) {
+// caller timestamps and notification delivery are not revision evidence. The
+// capture read that resolves a buffered revision runs under the caller's
+// context, so a cancelled operation stops it; a comparison the revision
+// already answers performs no read.
+func (revision EmbeddingBodyRevision) MatchesNode(ctx context.Context, node *Node) (bool, error) {
 	if node == nil {
 		return false, nil
 	}
@@ -31,7 +37,7 @@ func (revision EmbeddingBodyRevision) MatchesNode(node *Node) (bool, error) {
 		return false, nil
 	}
 	var same bool
-	err := state.embeddingOwner.withReadView(nil, func(txn *badger.Txn) error {
+	err := state.embeddingOwner.withReadView(ctx, nil, func(txn *badger.Txn) error {
 		item, err := txn.Get(nodeKey(state.embeddingOwnerID))
 		if err != nil {
 			return err
@@ -59,10 +65,13 @@ func (revision EmbeddingBodyRevision) matches(b *BadgerEngine, txn *badger.Txn, 
 // Publication needs only the identity, not a decoded body or hydrated vectors.
 // The ordered event drainer supplies the publication boundary; an acknowledged
 // buffered body takes precedence over the physical body, as in snapshot reads.
-func (b *BadgerEngine) embeddingRevisionIsCurrent(id NodeID, revision EmbeddingBodyRevision, proof ...embeddingPublicationProof) (bool, error) {
+// The read view runs under ctx: the accepted-publication boundary passes the
+// engine's retained completion context with cancellation detached, so delivery survives a cancelled
+// client, while callers still holding the request pass that request.
+func (b *BadgerEngine) embeddingRevisionIsCurrent(ctx context.Context, id NodeID, revision EmbeddingBodyRevision, proof ...embeddingPublicationProof) (bool, error) {
 	var buffered *Node
 	proven := false
-	view, err := b.captureReadView(nil, readViewOptions{scope: namespaceForNodeID(id), cached: func(w *WriteBehindBuffer) (bool, error) {
+	view, err := b.captureReadView(ctx, nil, readViewOptions{scope: namespaceForNodeID(id), cached: func(w *WriteBehindBuffer) (bool, error) {
 		state := w.entityStateLocked(bufferedNodeEntity, string(id), bufferedReadVisibility{engine: b, visibility: storedRead})
 		if !state.found {
 			if len(proof) != 0 && proof[0].matches(b, id, revision) {
@@ -84,10 +93,10 @@ func (b *BadgerEngine) embeddingRevisionIsCurrent(id NodeID, revision EmbeddingB
 		if proven {
 			return true, nil
 		}
-		return revision.MatchesNode(buffered)
+		return revision.MatchesNode(ctx, buffered)
 	}
 	var same bool
-	err = view.readAndClose(func(txn *badger.Txn) error {
+	err = view.readAndClose(ctx, func(txn *badger.Txn) error {
 		item, err := txn.Get(nodeKey(id))
 		if err == badger.ErrKeyNotFound {
 			return ErrNotFound
@@ -104,8 +113,10 @@ func (b *BadgerEngine) embeddingRevisionIsCurrent(id NodeID, revision EmbeddingB
 // SnapshotNodeForEmbedding binds a body and its revision in one read. Ordinary
 // reads keep their existing write-cache fast path; only an embedding claim
 // needs to acquire a revision when that cache came from a body write. Copies
-// and namespace decorators preserve the private reader provenance.
-func SnapshotNodeForEmbedding(node *Node) (*Node, error) {
+// and namespace decorators preserve the private reader provenance. The
+// fallback read runs under ctx, the same lifetime as the read that produced
+// node, so it cannot outlive a cancelled operation.
+func SnapshotNodeForEmbedding(ctx context.Context, node *Node) (*Node, error) {
 	if node == nil {
 		return node, nil
 	}
@@ -114,7 +125,7 @@ func SnapshotNodeForEmbedding(node *Node) (*Node, error) {
 		return node, nil
 	}
 	b, id := state.embeddingOwner, state.embeddingOwnerID
-	snapshot, err := b.getNodeSnapshot(id, true)
+	snapshot, err := b.getNodeSnapshot(ctx, id, true)
 	if err == nil {
 		snapshot.ID = node.ID
 	}

@@ -1,6 +1,7 @@
 package nornicdb
 
 import (
+	"context"
 	"fmt"
 	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -108,7 +109,9 @@ func (ew *EmbedWorker) commitNodeOutcome(node *storage.Node) error {
 	if !ok {
 		return fmt.Errorf("storage engine %T does not support embedding sidecar writes", ew.storage)
 	}
-	return sidecar.UpdateNodeEmbeddingSidecar(node)
+	// A validated provider result settles under its admitted worker attempt,
+	// even if stop canceled preparation while that attempt was completing.
+	return sidecar.UpdateNodeEmbeddingSidecar(context.WithoutCancel(ew.ctx), node)
 }
 
 // PendingEmbeddingsCount is the canonical drain view: MAIN union active claims

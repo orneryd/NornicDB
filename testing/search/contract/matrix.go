@@ -52,7 +52,7 @@ func Run(t *testing.T, factory func(*testing.T, int, Policy) Fixture) {
 				query[0] = 1
 				for i := 0; i < population; i++ {
 					node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("matrix-%02d", i)), Labels: []string{"Matrix"}, Properties: map[string]any{"eligible": "yes"}, ChunkEmbeddings: [][]float32{query}}
-					_, err := f.Engine.CreateNode(node)
+					_, err := f.Engine.CreateNode(t.Context(), node)
 					require.NoError(t, err)
 					require.NoError(t, f.Service.IndexNode(node))
 				}

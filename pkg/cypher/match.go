@@ -4,6 +4,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -95,7 +96,7 @@ func storageHasDecayFiltering(engine storage.Engine) bool {
 	return false
 }
 
-func extractMatchWhereClause(cypher string, whereIdx, returnIdx int) string {
+func extractMatchWhereClause(ctx context.Context, cypher string, whereIdx, returnIdx int) string {
 	if whereIdx <= 0 || returnIdx <= whereIdx+5 || returnIdx > len(cypher) {
 		return ""
 	}
@@ -117,17 +118,17 @@ func extractMatchWhereClause(cypher string, whereIdx, returnIdx int) string {
 		"SKIP",
 		"LIMIT",
 	} {
-		if idx := topLevelKeywordIndex(segment, kw); idx >= 0 && idx < end {
+		if idx := topLevelKeywordIndex(ctx, segment, kw); idx >= 0 && idx < end {
 			end = idx
 		}
 	}
 	return strings.TrimSpace(segment[:end])
 }
 
-func hasStandaloneWithClause(cypher string) bool {
+func hasStandaloneWithClause(ctx context.Context, cypher string) bool {
 	searchStart := 0
 	for {
-		idx := topLevelKeywordIndex(cypher[searchStart:], "WITH")
+		idx := topLevelKeywordIndex(ctx, cypher[searchStart:], "WITH")
 		if idx < 0 {
 			return false
 		}
@@ -142,12 +143,12 @@ func hasStandaloneWithClause(cypher string) bool {
 	}
 }
 
-func extractMatchOrderByClause(cypher string, returnIdx int) string {
+func extractMatchOrderByClause(ctx context.Context, cypher string, returnIdx int) string {
 	if returnIdx < 0 || returnIdx+6 > len(cypher) {
 		return ""
 	}
 	returnScope := strings.TrimSpace(cypher[returnIdx+6:])
-	orderIdx := findKeywordIndexInContext(returnScope, "ORDER")
+	orderIdx := findKeywordIndexInContext(ctx, returnScope, "ORDER")
 	if orderIdx == -1 {
 		return ""
 	}
@@ -161,7 +162,7 @@ func extractMatchOrderByClause(cypher string, returnIdx int) string {
 	}
 	end := len(orderExpr)
 	for _, kw := range []string{"SKIP", "LIMIT"} {
-		if idx := findKeywordIndexInContext(orderExpr, kw); idx != -1 && idx < end {
+		if idx := findKeywordIndexInContext(ctx, orderExpr, kw); idx != -1 && idx < end {
 			end = idx
 		}
 	}
@@ -186,11 +187,11 @@ func (e *StorageExecutor) compareNodeOrderSpecs(a, b *storage.Node, specs []node
 
 // selectTopKNodesByOrder returns the first k nodes for simple ORDER BY expressions
 // without sorting the full node set. It supports any number of ORDER BY terms.
-func (e *StorageExecutor) selectTopKNodesByOrder(nodes []*storage.Node, variable, orderExpr string, k int) ([]*storage.Node, bool) {
+func (e *StorageExecutor) selectTopKNodesByOrder(ctx context.Context, nodes []*storage.Node, variable, orderExpr string, k int) ([]*storage.Node, bool) {
 	if k <= 0 || len(nodes) <= k {
 		return nodes, false
 	}
-	specs, _ := e.parseNodeOrderSpecs(orderExpr, variable)
+	specs, _ := e.parseNodeOrderSpecs(ctx, orderExpr, variable)
 	if len(specs) == 0 {
 		return nil, false
 	}

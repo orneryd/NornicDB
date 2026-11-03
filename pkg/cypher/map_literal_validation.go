@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 )
@@ -8,12 +9,12 @@ import (
 // validateStaticMapKeys rejects malformed symbolic map keys before either
 // parser frontend or executor can normalize them. Braces without a top-level
 // key/value separator are ignored because they may delimit a subquery.
-func validateStaticMapKeys(query string) error {
+func validateStaticMapKeys(ctx context.Context, query string) error {
 	upper := upperASCII(strings.TrimSpace(query))
-	if strings.HasPrefix(upper, "CREATE ") && strings.Contains(upper, "INDEX") && findKeywordIndex(query, "OPTIONS") >= 0 {
+	if strings.HasPrefix(upper, "CREATE ") && strings.Contains(upper, "INDEX") && findKeywordIndex(ctx, query, "OPTIONS") >= 0 {
 		return nil
 	}
-	if strings.HasPrefix(upper, "CREATE CONSTRAINT") && findKeywordIndex(query, "REQUIRE") >= 0 {
+	if strings.HasPrefix(upper, "CREATE CONSTRAINT") && findKeywordIndex(ctx, query, "REQUIRE") >= 0 {
 		return nil
 	}
 	var patternContext *mapPatternContext
@@ -45,7 +46,7 @@ func validateStaticMapKeys(query string) error {
 			// Validate in the nearest statement scope: an outer RETURN must
 			// not turn a nested MATCH property map into a map projection.
 			if close := cyphertext.FindMatchingDelimiter(query, index, '{', '}', cyphertext.OpeningDelimiter); close >= 0 {
-				if err := validateStaticMapKeys(query[index+1 : close]); err != nil {
+				if err := validateStaticMapKeys(ctx, query[index+1:close]); err != nil {
 					return err
 				}
 				index = close
@@ -77,7 +78,7 @@ func validateStaticMapKeys(query string) error {
 			if patternContext == nil {
 				patternContext = newMapPatternContext(query)
 			}
-			if patternContext.insidePatternDelimiter(query, index) && !inProjectionClause(query, index) {
+			if patternContext.insidePatternDelimiter(ctx, query, index) && !inProjectionClause(ctx, query, index) {
 				return newSemanticError(
 					"Neo.ClientError.Statement.SyntaxError",
 					"UnexpectedSyntax",
@@ -248,9 +249,9 @@ func subqueryBraceBodyStartsLikeClause(query string, braceIndex int) bool {
 // inProjectionClause reports whether position lies in a RETURN, WITH, UNWIND
 // or SET clause, where parentheses group an expression, such as a map
 // projection (n {.k}).k, rather than delimit a node pattern.
-func inProjectionClause(query string, position int) bool {
+func inProjectionClause(ctx context.Context, query string, position int) bool {
 
-	switch mapClauseBefore(query[:position]) {
+	switch mapClauseBefore(ctx, query[:position]) {
 	case "RETURN", "WITH", "UNWIND", "SET":
 		return true
 	}

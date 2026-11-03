@@ -107,7 +107,7 @@ func tryFlatReturnProjection(ctx context.Context, clause string) *returnProjecti
 		return nil
 	}
 	body := clause[len(keyword):]
-	if strings.ContainsAny(body, "\x60()[]{}\r\n*'\"") || firstTopLevelModifierIndex(body) >= 0 || topLevelKeywordIndex(body, "UNION") >= 0 {
+	if strings.ContainsAny(body, "\x60()[]{}\r\n*'\"") || firstTopLevelModifierIndex(ctx, body) >= 0 || topLevelKeywordIndex(ctx, body, "UNION") >= 0 {
 		return nil
 	}
 	plan := &returnProjectionPlan{}
@@ -216,7 +216,7 @@ func parseYieldClause(ctx context.Context, source string) *yieldClause {
 
 // callTailWithProjectionColumns consumes execution's WITH projection plan.
 func callTailWithProjectionColumns(ctx context.Context, withClause string) ([]string, bool) {
-	projection, _ := splitWithProjection(withClause)
+	projection, _ := splitWithProjection(ctx, withClause)
 	plan := returnProjectionPlanFor(ctx, "RETURN "+pipelineClauseBody(projection, "WITH"))
 	if !plan.valid || plan.star {
 		return nil, false
@@ -260,7 +260,7 @@ func pipelineProjectionScope(ctx context.Context, previous map[string]struct{}, 
 	if err := pipelineScopeFailure(ctx); err != nil {
 		return nil, err
 	}
-	projection, _ := splitWithProjection(clause)
+	projection, _ := splitWithProjection(ctx, clause)
 	plan := returnProjectionPlanFor(ctx, "RETURN "+pipelineClauseBody(projection, "WITH"))
 	if !plan.valid {
 		// returnProjectionPlanFor answers a canceled read with no plan: the
@@ -302,8 +302,8 @@ func pipelineScopeFailure(ctx context.Context) error {
 //
 // query is the canonical statement text supplied to pattern detection. The RETURN
 // offset is kept on its own so only the clause body below it is trimmed.
-func returnShapeItems(query string) []string {
-	returnAt := findKeywordIndex(query, "RETURN")
+func returnShapeItems(ctx context.Context, query string) []string {
+	returnAt := findKeywordIndex(ctx, query, "RETURN")
 	if returnAt < 0 {
 		return nil
 	}
@@ -312,7 +312,7 @@ func returnShapeItems(query string) []string {
 	// Strip ORDER BY / SKIP / LIMIT.
 	end := len(returnPart)
 	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if idx := findKeywordIndex(returnPart, keyword); idx >= 0 && idx < end {
+		if idx := findKeywordIndex(ctx, returnPart, keyword); idx >= 0 && idx < end {
 			end = idx
 		}
 	}
@@ -336,10 +336,10 @@ func trimReturnItemAlias(item string) string {
 
 // restoreResultColumns preserves final RETURN spelling after quoted variables
 // have executed with internal identities. Parsed aliases are already decoded.
-func (names *quotedVariableNames) restoreResultColumns(result *ExecuteResult, parseItems func(string) []returnItem) {
-	if start, end, ok := finalReturnBody(names.Text); ok {
+func (names *quotedVariableNames) restoreResultColumns(ctx context.Context, result *ExecuteResult, parseItems func(string) []returnItem) {
+	if start, end, ok := finalReturnBody(ctx, names.Text); ok {
 		body, _ := cutDistinct(strings.TrimSpace(names.Text[start:end]))
-		if strings.HasPrefix(body, "*") && (len(body) == 1 || !cyphertext.NamePartAt(body, 1)) && topLevelKeywordIndex(body, "UNION") < 0 {
+		if strings.HasPrefix(body, "*") && (len(body) == 1 || !cyphertext.NamePartAt(body, 1)) && topLevelKeywordIndex(ctx, body, "UNION") < 0 {
 			sortColumnsByName(result)
 		} else {
 			originalText, _ := names.OriginalText(cyphertext.Span{Start: start, End: end}, cyphertext.SourceExactBoundaries, func(text string) string { return names.restoreSourceText(text, quotedNamesOnly) })

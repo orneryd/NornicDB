@@ -12,11 +12,11 @@ import (
 func TestGDSSupportedNativeIdentityContracts(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "u5_native_gds")
 	for _, id := range []string{"alpha", "beta", "shared", "1", "true"} {
-		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{"P"}, Properties: map[string]interface{}{"name": id, "value": int64(7)}})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(id), Labels: []string{"P"}, Properties: map[string]interface{}{"name": id, "value": int64(7)}})
 		require.NoError(t, err)
 	}
 	for _, id := range []string{"alpha", "beta"} {
-		require.NoError(t, store.CreateEdge(&storage.Edge{ID: storage.EdgeID(id), StartNode: storage.NodeID(id), EndNode: "shared", Type: "K"}))
+		require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: storage.EdgeID(id), StartNode: storage.NodeID(id), EndNode: "shared", Type: "K"}))
 	}
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()

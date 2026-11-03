@@ -53,7 +53,7 @@ type populationArtifacts struct {
 }
 
 func (s *Service) populationCanPersist() bool {
-	if s.lifecycleCtx != nil && s.lifecycleCtx.Err() != nil {
+	if s.lifecycleCtx.Err() != nil {
 		return false
 	}
 	state := s.population.state.Load()
@@ -64,10 +64,7 @@ func (s *Service) populationContextError(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if s.lifecycleCtx != nil {
-		return s.lifecycleCtx.Err()
-	}
-	return nil
+	return s.lifecycleCtx.Err()
 }
 
 // populationMaySave runs with persistRunMu held. A new service may receive

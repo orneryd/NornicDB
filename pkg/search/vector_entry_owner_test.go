@@ -204,7 +204,7 @@ func TestVectorEntryOwnerInMemory(t *testing.T) {
 				svc := NewService(engine, vectorOwnerDims, nil)
 				t.Cleanup(func() { _ = svc.Close() })
 				for _, node := range nodes {
-					_, err := engine.CreateNode(cloneVectorOwnerNode(node))
+					_, err := engine.CreateNode(t.Context(), cloneVectorOwnerNode(node))
 					require.NoError(t, err)
 					require.NoError(t, svc.IndexNode(node))
 				}
@@ -213,7 +213,7 @@ func TestVectorEntryOwnerInMemory(t *testing.T) {
 
 				// Removing one node must leave the other node's embeddings.
 				removed := nodes[0]
-				require.NoError(t, engine.DeleteNode(removed.ID))
+				require.NoError(t, engine.DeleteNode(t.Context(), removed.ID))
 				require.NoError(t, svc.RemoveNode(removed.ID))
 				var remaining []vectorOwnerQuery
 				for _, query := range tc.queries {
@@ -233,7 +233,7 @@ func TestVectorEntryOwnerAfterPersistedReopen(t *testing.T) {
 			ctx := context.Background()
 			engine := newNamespacedEngine(t)
 			for _, node := range tc.nodes {
-				_, err := engine.CreateNode(cloneVectorOwnerNode(node))
+				_, err := engine.CreateNode(t.Context(), cloneVectorOwnerNode(node))
 				require.NoError(t, err)
 			}
 			dir := t.TempDir()

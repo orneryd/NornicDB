@@ -92,7 +92,7 @@ func TestRule73SelfAttackEveryHTTPDatabaseDataRoute(t *testing.T) {
 	for database, id := range map[string]string{"nornic": "default-secret", "rule73_named": "named-secret"} {
 		engine, err := server.dbManager.GetStorage(database)
 		require.NoError(t, err)
-		_, err = engine.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{"Rule73Secret"}, Properties: map[string]any{"secret": id}})
+		_, err = engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(id), Labels: []string{"Rule73Secret"}, Properties: map[string]any{"secret": id}})
 		require.NoError(t, err)
 	}
 
@@ -120,7 +120,7 @@ func TestRule73SelfAttackEveryHTTPDatabaseDataRoute(t *testing.T) {
 		for _, database := range []string{"nornic", "rule73_named"} {
 			require.NoError(t, server.privilegesStore.SavePrivilege(ctx, spec.name, database, spec.read && containsString(spec.databases, database), spec.write && containsString(spec.databases, database)))
 		}
-		_, err := users.CreateUser(spec.name, "password123", []auth.Role{auth.Role(spec.name)})
+		_, err := users.CreateUser(context.Background(), spec.name, "password123", []auth.Role{auth.Role(spec.name)})
 		require.NoError(t, err)
 		allowed := map[string]bool{}
 		for _, database := range spec.databases {
@@ -293,7 +293,7 @@ func TestRule73SelfAttackEveryMCPTool(t *testing.T) {
 		for _, database := range []string{"nornic", "rule73_named"} {
 			require.NoError(t, server.privilegesStore.SavePrivilege(ctx, spec.name, database, spec.read && allowed[database], spec.write && allowed[database]))
 		}
-		_, err := users.CreateUser(spec.name, "password123", []auth.Role{auth.Role(spec.name)})
+		_, err := users.CreateUser(context.Background(), spec.name, "password123", []auth.Role{auth.Role(spec.name)})
 		require.NoError(t, err)
 		profiles = append(profiles, profile{spec.name, "Bearer " + getAuthToken(t, users, spec.name), spec.read, spec.write, allowed})
 	}

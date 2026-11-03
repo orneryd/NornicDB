@@ -137,13 +137,13 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesWithVector(ctx context.Cont
 
 	seenOrphans := make(map[string]bool)
 	for _, hit := range hits {
-		node, err := e.storage.GetNode(storage.NodeID(hit.ID))
+		node, err := e.storage.GetNode(ctx, storage.NodeID(hit.ID))
 		if err != nil || node == nil {
 			if err != nil && errors.Is(err, storage.ErrNotFound) && svc != nil {
 				if !seenOrphans[hit.ID] {
 					e.logEvent(slog.LevelWarn, localization.CypherOrphanedEmbeddingDetectedEvent(hit.ID))
 					// Unless the node was stored again after this read.
-					if removeErr := svc.RefreshNode(storage.NodeID(hit.ID)); removeErr != nil {
+					if removeErr := svc.RefreshNode(ctx, storage.NodeID(hit.ID)); removeErr != nil {
 						e.logEvent(slog.LevelError, localization.CypherOrphanedEmbeddingRemovalFailedEvent(hit.ID, removeErr))
 					}
 					seenOrphans[hit.ID] = true

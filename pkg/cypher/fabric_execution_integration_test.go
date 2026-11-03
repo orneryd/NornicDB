@@ -73,12 +73,12 @@ RETURN translationId, textKey
 			require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), tc.composite, refs))
 			trStore, err := mgr.GetStorage("nornic_tr")
 			require.NoError(t, err)
-			_, err = trStore.CreateNode(&storage.Node{ID: storage.NodeID(tc.id), Labels: []string{"Translation"}, Properties: map[string]interface{}{"id": tc.id, "textKey": tc.textKey}})
+			_, err = trStore.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(tc.id), Labels: []string{"Translation"}, Properties: map[string]interface{}{"id": tc.id, "textKey": tc.textKey}})
 			require.NoError(t, err)
 			if tc.scope == fabricChainTestSequential {
 				txtStore, err := mgr.GetStorage("nornic_txt")
 				require.NoError(t, err)
-				_, err = txtStore.CreateNode(&storage.Node{ID: "tt-1", Labels: []string{"TranslationText"}, Properties: map[string]interface{}{"translationId": "t-1", "text": "Where are my orders?"}})
+				_, err = txtStore.CreateNode(t.Context(), &storage.Node{ID: "tt-1", Labels: []string{"TranslationText"}, Properties: map[string]interface{}{"translationId": "t-1", "text": "Where are my orders?"}})
 				require.NoError(t, err)
 			}
 			defaultStore, err := mgr.GetStorage(mgr.DefaultDatabaseName())
@@ -163,7 +163,7 @@ func TestExecute_FabricCorrelatedCallUseChain_EmptyOuterRowsStillHasColumns(t *t
 
 	txtStore, err := mgr.GetStorage("nornic_txt")
 	require.NoError(t, err)
-	_, err = txtStore.CreateNode(&storage.Node{ID: "tt-1", Labels: []string{"TranslationText"}, Properties: map[string]interface{}{
+	_, err = txtStore.CreateNode(t.Context(), &storage.Node{ID: "tt-1", Labels: []string{"TranslationText"}, Properties: map[string]interface{}{
 		"translationId": "missing",
 		"text":          "orphan",
 	}})
@@ -213,12 +213,12 @@ func TestExecute_FabricCorrelatedCallUseChain_AppliesWherePerOuterRow(t *testing
 
 	trStore, err := mgr.GetStorage("nornic_tr")
 	require.NoError(t, err)
-	_, err = trStore.CreateNode(&storage.Node{ID: "tr-1", Labels: []string{"Translation"}, Properties: map[string]interface{}{
+	_, err = trStore.CreateNode(t.Context(), &storage.Node{ID: "tr-1", Labels: []string{"Translation"}, Properties: map[string]interface{}{
 		"textKey":    "k1",
 		"textKey128": "h1",
 	}})
 	require.NoError(t, err)
-	_, err = trStore.CreateNode(&storage.Node{ID: "tr-2", Labels: []string{"Translation"}, Properties: map[string]interface{}{
+	_, err = trStore.CreateNode(t.Context(), &storage.Node{ID: "tr-2", Labels: []string{"Translation"}, Properties: map[string]interface{}{
 		"textKey":    "k2",
 		"textKey128": "h2",
 	}})
@@ -226,17 +226,17 @@ func TestExecute_FabricCorrelatedCallUseChain_AppliesWherePerOuterRow(t *testing
 
 	txrStore, err := mgr.GetStorage("nornic_txt")
 	require.NoError(t, err)
-	_, err = txrStore.CreateNode(&storage.Node{ID: "txr-1", Labels: []string{"TranslationText"}, Properties: map[string]interface{}{
+	_, err = txrStore.CreateNode(t.Context(), &storage.Node{ID: "txr-1", Labels: []string{"TranslationText"}, Properties: map[string]interface{}{
 		"textKey128": "h1",
 		"text":       "one",
 	}})
 	require.NoError(t, err)
-	_, err = txrStore.CreateNode(&storage.Node{ID: "txr-2", Labels: []string{"TranslationText"}, Properties: map[string]interface{}{
+	_, err = txrStore.CreateNode(t.Context(), &storage.Node{ID: "txr-2", Labels: []string{"TranslationText"}, Properties: map[string]interface{}{
 		"textKey128": "h2",
 		"text":       "two",
 	}})
 	require.NoError(t, err)
-	_, err = txrStore.CreateNode(&storage.Node{ID: "txr-x", Labels: []string{"TranslationText"}, Properties: map[string]interface{}{
+	_, err = txrStore.CreateNode(t.Context(), &storage.Node{ID: "txr-x", Labels: []string{"TranslationText"}, Properties: map[string]interface{}{
 		"textKey128": "hx",
 		"text":       "other",
 	}})
@@ -334,12 +334,12 @@ func TestExecute_FabricCorrelatedCallUseChain_ListComprehensionJoin(t *testing.T
 
 	trStore, err := mgr.GetStorage("nornic_tr")
 	require.NoError(t, err)
-	_, err = trStore.CreateNode(&storage.Node{ID: "tr-1", Labels: []string{"MongoDocument"}, Properties: map[string]interface{}{
+	_, err = trStore.CreateNode(t.Context(), &storage.Node{ID: "tr-1", Labels: []string{"MongoDocument"}, Properties: map[string]interface{}{
 		"textKey":    "k1",
 		"textKey128": "h1",
 	}})
 	require.NoError(t, err)
-	_, err = trStore.CreateNode(&storage.Node{ID: "tr-2", Labels: []string{"MongoDocument"}, Properties: map[string]interface{}{
+	_, err = trStore.CreateNode(t.Context(), &storage.Node{ID: "tr-2", Labels: []string{"MongoDocument"}, Properties: map[string]interface{}{
 		"textKey":    "k2",
 		"textKey128": "h2",
 	}})
@@ -347,12 +347,12 @@ func TestExecute_FabricCorrelatedCallUseChain_ListComprehensionJoin(t *testing.T
 
 	txrStore, err := mgr.GetStorage("nornic_txt")
 	require.NoError(t, err)
-	_, err = txrStore.CreateNode(&storage.Node{ID: "txr-1", Labels: []string{"MongoDocument"}, Properties: map[string]interface{}{
+	_, err = txrStore.CreateNode(t.Context(), &storage.Node{ID: "txr-1", Labels: []string{"MongoDocument"}, Properties: map[string]interface{}{
 		"textKey128": "h1",
 		"text":       "one",
 	}})
 	require.NoError(t, err)
-	_, err = txrStore.CreateNode(&storage.Node{ID: "txr-2", Labels: []string{"MongoDocument"}, Properties: map[string]interface{}{
+	_, err = txrStore.CreateNode(t.Context(), &storage.Node{ID: "txr-2", Labels: []string{"MongoDocument"}, Properties: map[string]interface{}{
 		"textKey128": "h2",
 		"text":       "two",
 	}})
@@ -440,24 +440,24 @@ func TestExecute_FabricCorrelatedCallUseChain_CoalesceReturn_NoInternalColumns(t
 
 	trStore, err := mgr.GetStorage("nornic_tr")
 	require.NoError(t, err)
-	_, err = trStore.CreateNode(&storage.Node{ID: "tr-1", Labels: []string{"MongoDocument"}, Properties: map[string]interface{}{
+	_, err = trStore.CreateNode(t.Context(), &storage.Node{ID: "tr-1", Labels: []string{"MongoDocument"}, Properties: map[string]interface{}{
 		"textKey":    "k1",
 		"textKey128": "h1",
 	}})
 	require.NoError(t, err)
-	_, err = trStore.CreateNode(&storage.Node{ID: "tr-2", Labels: []string{"MongoDocument"}, Properties: map[string]interface{}{
+	_, err = trStore.CreateNode(t.Context(), &storage.Node{ID: "tr-2", Labels: []string{"MongoDocument"}, Properties: map[string]interface{}{
 		"textKey128": "h2",
 	}})
 	require.NoError(t, err)
 
 	txrStore, err := mgr.GetStorage("nornic_txt")
 	require.NoError(t, err)
-	_, err = txrStore.CreateNode(&storage.Node{ID: "txr-1", Labels: []string{"MongoDocument"}, Properties: map[string]interface{}{
+	_, err = txrStore.CreateNode(t.Context(), &storage.Node{ID: "txr-1", Labels: []string{"MongoDocument"}, Properties: map[string]interface{}{
 		"translationId":  "h1",
 		"translatedText": "one",
 	}})
 	require.NoError(t, err)
-	_, err = txrStore.CreateNode(&storage.Node{ID: "txr-2", Labels: []string{"MongoDocument"}, Properties: map[string]interface{}{
+	_, err = txrStore.CreateNode(t.Context(), &storage.Node{ID: "txr-2", Labels: []string{"MongoDocument"}, Properties: map[string]interface{}{
 		"translationId":  "h2",
 		"translatedText": "two",
 	}})
@@ -549,13 +549,13 @@ func TestExecute_FabricSetBasedSourceTranslationJoin_NoFabricRowLeak(t *testing.
 
 	trStore, err := mgr.GetStorage("nornic_tr")
 	require.NoError(t, err)
-	_, err = trStore.CreateNode(&storage.Node{ID: "tr-1", Labels: []string{"MongoDocument"}, Properties: map[string]interface{}{
+	_, err = trStore.CreateNode(t.Context(), &storage.Node{ID: "tr-1", Labels: []string{"MongoDocument"}, Properties: map[string]interface{}{
 		"sourceId":     "src1",
 		"textKey":      "k1",
 		"originalText": "hello",
 	}})
 	require.NoError(t, err)
-	_, err = trStore.CreateNode(&storage.Node{ID: "tr-2", Labels: []string{"MongoDocument"}, Properties: map[string]interface{}{
+	_, err = trStore.CreateNode(t.Context(), &storage.Node{ID: "tr-2", Labels: []string{"MongoDocument"}, Properties: map[string]interface{}{
 		"sourceId":     "src2",
 		"textKey128":   "h2",
 		"originalText": "world",
@@ -564,13 +564,13 @@ func TestExecute_FabricSetBasedSourceTranslationJoin_NoFabricRowLeak(t *testing.
 
 	txrStore, err := mgr.GetStorage("nornic_txt")
 	require.NoError(t, err)
-	_, err = txrStore.CreateNode(&storage.Node{ID: "txr-1", Labels: []string{"MongoDocument"}, Properties: map[string]interface{}{
+	_, err = txrStore.CreateNode(t.Context(), &storage.Node{ID: "txr-1", Labels: []string{"MongoDocument"}, Properties: map[string]interface{}{
 		"translationId":  "src1",
 		"language":       "es",
 		"translatedText": "hola",
 	}})
 	require.NoError(t, err)
-	_, err = txrStore.CreateNode(&storage.Node{ID: "txr-2", Labels: []string{"MongoDocument"}, Properties: map[string]interface{}{
+	_, err = txrStore.CreateNode(t.Context(), &storage.Node{ID: "txr-2", Labels: []string{"MongoDocument"}, Properties: map[string]interface{}{
 		"translationId":  "src2",
 		"language":       "fr",
 		"translatedText": "monde",
@@ -637,28 +637,28 @@ func TestExecute_FabricCorrelatedSourceTranslationCount_HotPathResult(t *testing
 
 	trStore, err := mgr.GetStorage("nornic_tr")
 	require.NoError(t, err)
-	_, err = trStore.CreateNode(&storage.Node{ID: "tr-c1", Labels: []string{"MongoDocument"}, Properties: map[string]interface{}{
+	_, err = trStore.CreateNode(t.Context(), &storage.Node{ID: "tr-c1", Labels: []string{"MongoDocument"}, Properties: map[string]interface{}{
 		"sourceId": "src1",
 	}})
 	require.NoError(t, err)
-	_, err = trStore.CreateNode(&storage.Node{ID: "tr-c2", Labels: []string{"MongoDocument"}, Properties: map[string]interface{}{
+	_, err = trStore.CreateNode(t.Context(), &storage.Node{ID: "tr-c2", Labels: []string{"MongoDocument"}, Properties: map[string]interface{}{
 		"sourceId": "src2",
 	}})
 	require.NoError(t, err)
 
 	txrStore, err := mgr.GetStorage("nornic_txt")
 	require.NoError(t, err)
-	_, err = txrStore.CreateNode(&storage.Node{ID: "txr-c1", Labels: []string{"MongoDocument"}, Properties: map[string]interface{}{
+	_, err = txrStore.CreateNode(t.Context(), &storage.Node{ID: "txr-c1", Labels: []string{"MongoDocument"}, Properties: map[string]interface{}{
 		"translationId": "src1",
 		"language":      "es",
 	}})
 	require.NoError(t, err)
-	_, err = txrStore.CreateNode(&storage.Node{ID: "txr-c2", Labels: []string{"MongoDocument"}, Properties: map[string]interface{}{
+	_, err = txrStore.CreateNode(t.Context(), &storage.Node{ID: "txr-c2", Labels: []string{"MongoDocument"}, Properties: map[string]interface{}{
 		"translationId": "src1",
 		"language":      "fr",
 	}})
 	require.NoError(t, err)
-	_, err = txrStore.CreateNode(&storage.Node{ID: "txr-c3", Labels: []string{"MongoDocument"}, Properties: map[string]interface{}{
+	_, err = txrStore.CreateNode(t.Context(), &storage.Node{ID: "txr-c3", Labels: []string{"MongoDocument"}, Properties: map[string]interface{}{
 		"translationId": "src2",
 		"language":      "es",
 	}})
@@ -722,7 +722,7 @@ func BenchmarkFabricCorrelatedSourceTranslationJoin_Profile(b *testing.B) {
 	require.NoError(b, err)
 
 	for i := 0; i < trNodeCount; i++ {
-		_, err = trStore.CreateNode(&storage.Node{
+		_, err = trStore.CreateNode(b.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("tr-%d", i)),
 			Labels: []string{"MongoDocument"},
 			Properties: map[string]interface{}{
@@ -735,7 +735,7 @@ func BenchmarkFabricCorrelatedSourceTranslationJoin_Profile(b *testing.B) {
 	}
 
 	for i := 0; i < txrNodeCount; i++ {
-		_, err = txrStore.CreateNode(&storage.Node{
+		_, err = txrStore.CreateNode(b.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("txr-%d", i)),
 			Labels: []string{"MongoDocument"},
 			Properties: map[string]interface{}{
@@ -833,7 +833,7 @@ func TestExecute_FabricCorrelatedSourceTranslationJoin_HotPathTrace(t *testing.T
 	require.NoError(t, err)
 
 	for i := 0; i < 200; i++ {
-		_, err = trStore.CreateNode(&storage.Node{
+		_, err = trStore.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("tr-hot-%d", i)),
 			Labels: []string{"MongoDocument"},
 			Properties: map[string]interface{}{
@@ -843,7 +843,7 @@ func TestExecute_FabricCorrelatedSourceTranslationJoin_HotPathTrace(t *testing.T
 			},
 		})
 		require.NoError(t, err)
-		_, err = txrStore.CreateNode(&storage.Node{
+		_, err = txrStore.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("txr-hot-%d", i)),
 			Labels: []string{"MongoDocument"},
 			Properties: map[string]interface{}{
@@ -917,7 +917,7 @@ func TestExecute_FabricCorrelatedSourceTranslationJoin_HotPathShapeMatrix(t *tes
 	require.NoError(t, err)
 
 	for i := 0; i < 3; i++ {
-		_, err = trStore.CreateNode(&storage.Node{
+		_, err = trStore.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("tr-mat-%d", i)),
 			Labels: []string{"MongoDocument"},
 			Properties: map[string]interface{}{
@@ -930,7 +930,7 @@ func TestExecute_FabricCorrelatedSourceTranslationJoin_HotPathShapeMatrix(t *tes
 	}
 	for i := 0; i < 3; i++ {
 		for _, lang := range []string{"en", "es"} {
-			_, err = txrStore.CreateNode(&storage.Node{
+			_, err = txrStore.CreateNode(t.Context(), &storage.Node{
 				ID:     storage.NodeID(fmt.Sprintf("txr-mat-%d-%s", i, lang)),
 				Labels: []string{"MongoDocument"},
 				Properties: map[string]interface{}{
@@ -1042,7 +1042,7 @@ func TestExecute_FabricCache_HitOnRepeatReadQuery(t *testing.T) {
 
 			trStore, err := mgr.GetStorage("nornic_tr")
 			require.NoError(t, err)
-			_, err = trStore.CreateNode(&storage.Node{
+			_, err = trStore.CreateNode(t.Context(), &storage.Node{
 				ID:     "tr-1",
 				Labels: []string{"MongoDocument"},
 				Properties: map[string]interface{}{

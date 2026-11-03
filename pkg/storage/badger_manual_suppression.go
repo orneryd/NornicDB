@@ -2,9 +2,11 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // prefixMVCCMetaManualSuppression keys an entity suppressed on demand
@@ -118,7 +120,12 @@ func manualSuppressionKind(kind StoredEntityKind) (byte, error) {
 // deleting its data. Hidden entities remain available under reveal(). Changes
 // publish an update for search consumers, whether or not decay is enabled.
 // Unknown kinds return ErrInvalidData; missing entities return ErrNotFound.
-func (b *BadgerEngine) SetManualSuppression(entityKind StoredEntityKind, id string, suppressed bool) error {
+//
+// ctx is the caller's operation lifetime: it owns admission, buffered-order
+// drain and the stored-body read. An admitted suppression write, its in-memory
+// flag and its publication complete in the store, so a canceled ctx returns its
+// own error and changes nothing.
+func (b *BadgerEngine) SetManualSuppression(ctx context.Context, entityKind StoredEntityKind, id string, suppressed bool) error {
 	kind, err := manualSuppressionKind(entityKind)
 	if err != nil {
 		return err
@@ -133,7 +140,7 @@ func (b *BadgerEngine) SetManualSuppression(entityKind StoredEntityKind, id stri
 		if kind == manualSuppressionNode {
 			node, err = b.decodeNodeWithEmbeddings(txn, value, NodeID(id))
 		} else {
-			edge, err = b.decodeEdgeBodyWithID(namespaceForEdgeID(EdgeID(id)), value, EdgeID(id))
+			edge, err = b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(EdgeID(id)), value, EdgeID(id))
 		}
 		return err
 	}
@@ -146,7 +153,7 @@ func (b *BadgerEngine) SetManualSuppression(entityKind StoredEntityKind, id stri
 	if err := b.ensureOpen(false); err != nil {
 		return err
 	}
-	write, releaseWrite, err := b.beginEntityWrite(context.Background(), id, kind == manualSuppressionEdge, nil)
+	write, releaseWrite, err := b.beginEntityWrite(ctx, id, kind == manualSuppressionEdge, nil)
 	if err != nil {
 		return err
 	}
@@ -158,13 +165,13 @@ func (b *BadgerEngine) SetManualSuppression(entityKind StoredEntityKind, id stri
 		b.dropSuppressionEnd(kind, id)
 		b.prepareCommitOperations(ops, false)
 	}
-	keys := func() []any {
+	keys := func(context.Context) ([]any, error) {
 		ops = []Operation{operation()}
 		capturePublicationOperations(notification, ops)
 		if kind == manualSuppressionNode {
-			return []any{NodeID(id)}
+			return []any{NodeID(id)}, nil
 		}
-		return []any{EdgeID(id)}
+		return []any{EdgeID(id)}, nil
 	}
 	if b.writeBehind != nil {
 		// The commits its drain replays, then this one, are delivered once
@@ -201,7 +208,7 @@ func (b *BadgerEngine) SetManualSuppression(entityKind StoredEntityKind, id stri
 			return txn.Set(manualSuppressionKey(kind, id), []byte{})
 		}
 		return txn.Delete(manualSuppressionKey(kind, id))
-	}, publish, keys, notification, write.stagePublication)
+	}, publish, keys, notification, nil, write.stagePublication)
 	b.suppressionWriteMu.Unlock()
 	if err != nil {
 		return err
@@ -230,7 +237,19 @@ func (b *BadgerEngine) forgetManualSuppression(kind byte, id string) {
 	b.suppressionEnding = true
 	b.manualSuppressionMu.Unlock()
 	if start {
-		go b.endSuppressions(nil)
+		_, err := b.beginHelperTxn()
+		if err != nil {
+			b.manualSuppressionMu.Lock()
+			b.suppressionEnding = false
+			b.manualSuppressionMu.Unlock()
+			return // Close owns the pending ends after helper admission closes.
+		}
+		go func() {
+			defer b.work.Leave()
+			if err := b.endSuppressions(nil); err != nil && !util.ErrorIsOnly(err, ErrStorageClosed) {
+				b.work.RecordError("", fmt.Errorf("manual-suppression retirement: %w", err))
+			}
+		}()
 	}
 }
 
@@ -240,13 +259,13 @@ func (b *BadgerEngine) forgetManualSuppression(kind byte, id string) {
 // again with the same ID drops the pending end of its key, so it is never
 // deleted, and a lifecycle write discards the ends it supersedes. Close runs
 // it after its final drain.
-func (b *BadgerEngine) endSuppressions(inherited *entityWriteContext) {
+func (b *BadgerEngine) endSuppressions(inherited *entityWriteContext) error {
 	for {
 		b.manualSuppressionMu.Lock()
 		if len(b.suppressionEnds) == 0 {
 			b.suppressionEnding = false
 			b.manualSuppressionMu.Unlock()
-			return
+			return nil
 		}
 		ends := make(map[string]struct{}, len(b.suppressionEnds))
 		var first string
@@ -262,7 +281,7 @@ func (b *BadgerEngine) endSuppressions(inherited *entityWriteContext) {
 			b.manualSuppressionMu.Lock()
 			b.suppressionEnding = false
 			b.manualSuppressionMu.Unlock()
-			return
+			return err
 		}
 		// Never wait for entity authority while holding this mutex: an admitted
 		// manual suppression owns its entity first and can cancel a pending end.
@@ -290,7 +309,7 @@ func (b *BadgerEngine) endSuppressions(inherited *entityWriteContext) {
 					return err
 				}
 				for _, unit := range units {
-					if err := cw.write(unit); err != nil {
+					if err := cw.write(cw.ctx, unit); err != nil {
 						return err
 					}
 				}
@@ -303,7 +322,7 @@ func (b *BadgerEngine) endSuppressions(inherited *entityWriteContext) {
 			b.manualSuppressionMu.Lock()
 			b.suppressionEnding = false
 			b.manualSuppressionMu.Unlock()
-			return
+			return err
 		}
 	}
 }
@@ -327,11 +346,12 @@ func (b *BadgerEngine) dropManualSuppressions(prefix string) {
 // ManualSuppressionEngine hides and shows nodes and relationships on demand
 // (kp.suppress / unsuppress, #1064).
 type ManualSuppressionEngine interface {
-	SetManualSuppression(kind StoredEntityKind, id string, suppressed bool) error
+	SetManualSuppression(ctx context.Context, kind StoredEntityKind, id string, suppressed bool) error
 }
 
-// SetManualSuppression hides or shows an entity within this namespace.
-func (n *NamespacedEngine) SetManualSuppression(kind StoredEntityKind, id string, suppressed bool) error {
+// SetManualSuppression hides or shows an entity within this namespace under the
+// caller's operation lifetime.
+func (n *NamespacedEngine) SetManualSuppression(ctx context.Context, kind StoredEntityKind, id string, suppressed bool) error {
 	if _, err := manualSuppressionKind(kind); err != nil {
 		return err
 	}
@@ -339,12 +359,12 @@ func (n *NamespacedEngine) SetManualSuppression(kind StoredEntityKind, id string
 	if !ok {
 		return ErrNotImplemented
 	}
-	return inner.SetManualSuppression(kind, qualifyEntityID(n.scope, id), suppressed)
+	return inner.SetManualSuppression(ctx, kind, qualifyEntityID(n.scope, id), suppressed)
 }
 
 // SetManualSuppression passes storage metadata through to the wrapped
 // capability without adding a graph-write WAL record.
-func (w *WALEngine) SetManualSuppression(kind StoredEntityKind, id string, suppressed bool) error {
+func (w *WALEngine) SetManualSuppression(ctx context.Context, kind StoredEntityKind, id string, suppressed bool) error {
 	if _, err := manualSuppressionKind(kind); err != nil {
 		return err
 	}
@@ -352,5 +372,5 @@ func (w *WALEngine) SetManualSuppression(kind StoredEntityKind, id string, suppr
 	if !ok {
 		return ErrNotImplemented
 	}
-	return inner.SetManualSuppression(kind, id, suppressed)
+	return inner.SetManualSuppression(ctx, kind, id, suppressed)
 }

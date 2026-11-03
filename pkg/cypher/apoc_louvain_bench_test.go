@@ -20,14 +20,14 @@ func newLouvainBenchGraph(tb testing.TB, blocks, width int) *StorageExecutor {
 	ids := make([]string, blocks*width)
 	for i := range ids {
 		ids[i] = "n" + strconv.Itoa(i)
-		_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(ids[i]), Labels: []string{"L"}, Properties: map[string]interface{}{"seq": int64(i)}})
+		_, err := engine.CreateNode(tb.Context(), &storage.Node{ID: storage.NodeID(ids[i]), Labels: []string{"L"}, Properties: map[string]interface{}{"seq": int64(i)}})
 		if err != nil {
 			tb.Fatalf("create node %s: %v", ids[i], err)
 		}
 	}
 	edges := 0
 	link := func(a, b int) {
-		err := engine.CreateEdge(&storage.Edge{
+		err := engine.CreateEdge(tb.Context(), &storage.Edge{
 			ID:         storage.EdgeID("e" + strconv.Itoa(edges)),
 			Type:       "R",
 			StartNode:  storage.NodeID(ids[a]),

@@ -55,9 +55,6 @@ func StreamEdgesByType(ctx context.Context, engine Engine, edgeType string, visi
 	if engine == nil || visit == nil {
 		return ErrInvalidData
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if streamer, ok := engine.(EdgeTypeStreamer); ok {
 		return streamer.StreamEdgesByType(ctx, edgeType, visit)
 	}
@@ -72,9 +69,6 @@ func StreamEdgesByType(ctx context.Context, engine Engine, edgeType string, visi
 func streamEdgesByTypeInScope(ctx context.Context, engine Engine, scope, edgeType string, visit func(*Edge) error) error {
 	if engine == nil || visit == nil {
 		return ErrInvalidData
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	if scoped, ok := engine.(ScopedEdgeTypeStreamer); ok {
 		return scoped.StreamEdgesByTypeInScope(ctx, scope, edgeType, visit)
@@ -140,9 +134,6 @@ func (b *BadgerEngine) streamEdgesByTypeInScopeWithBodies(ctx context.Context, s
 	if visit == nil {
 		return ErrInvalidData
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurScan)
 	if err := b.ensureOpen(false); err != nil {
@@ -179,7 +170,7 @@ func (b *BadgerEngine) streamEdgesByTypeInScopeWithBodies(ctx context.Context, s
 		}
 		return visit(edge)
 	}
-	err := b.withReadView(capture, func(txn *badger.Txn) error {
+	err := b.withReadView(ctx, capture, func(txn *badger.Txn) error {
 		if captureErr != nil {
 			return captureErr // the canceled capture retires the scan
 		}
@@ -254,7 +245,7 @@ func (b *BadgerEngine) readEdgeInTxn(txn *badger.Txn, edgeID EdgeID) (*Edge, err
 	var edge *Edge
 	err = item.Value(func(val []byte) error {
 		var decodeErr error
-		edge, decodeErr = b.decodeEdgeBodyByID(val, edgeID)
+		edge, decodeErr = b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), val, edgeID)
 		return decodeErr
 	})
 	return edge, err
@@ -292,7 +283,7 @@ func (b *BadgerEngine) streamAllEdgesInScopeTxnWithBodies(ctx context.Context, t
 				}
 			}
 			var decodeErr error
-			edge, decodeErr = b.decodeEdgeBodyByID(val, edgeID)
+			edge, decodeErr = b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), val, edgeID)
 			return decodeErr
 		}); err != nil {
 			return err
@@ -319,9 +310,6 @@ func (b *BadgerEngine) streamEdgesByTypeAtSnapshotWithView(ctx context.Context, 
 		return err
 	}
 	defer deregister()
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	return view(func(txn *badger.Txn) error {
 		if edgeType == "" {
 			return b.iterateEdgesAtInTxn(ctx, txn, version, v, func(edge *Edge) error {

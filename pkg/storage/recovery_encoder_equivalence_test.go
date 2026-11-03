@@ -190,10 +190,10 @@ func TestRecoveryEncoderOwnedBytesAndConcurrentUse(t *testing.T) {
 func TestValueEncoderResetPreservesMarshalOptions(t *testing.T) {
 	encoder := getValueEncoder()
 	defer putValueEncoder(encoder)
-	_, err := encoder.encode(map[string]any{"n": int64(7)})
+	_, err := encoder.encode(map[string]any{"n": int64(7)}, storedValueFraming)
 	require.NoError(t, err)
 	encoder.msgpack.UseCompactInts(true)
-	current, err := encoder.encode(int64(7))
+	current, err := encoder.encode(int64(7), storedValueFraming)
 	require.NoError(t, err)
 	old, err := referenceEncodeValue(int64(7))
 	require.NoError(t, err)

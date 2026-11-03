@@ -322,7 +322,7 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 		// Create 100 nodes
 		for i := 1; i <= 100; i++ {
 			node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i))), Labels: []string{"Test"}}
-			_, err := walEngine.CreateNode(node)
+			_, err := walEngine.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 		}
 
@@ -369,7 +369,7 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 		// Create 50 nodes before snapshot
 		for i := 1; i <= 50; i++ {
 			node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i))), Labels: []string{"Test"}}
-			walEngine.CreateNode(node)
+			walEngine.CreateNode(t.Context(), node)
 		}
 
 		// Create snapshot at seq 50
@@ -380,7 +380,7 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 		// Add 50 more nodes AFTER snapshot
 		for i := 51; i <= 100; i++ {
 			node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i))), Labels: []string{"Test"}}
-			walEngine.CreateNode(node)
+			walEngine.CreateNode(t.Context(), node)
 		}
 
 		// Truncate WAL (should keep entries after snapshot)
@@ -417,7 +417,7 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 			// Create nodes
 			for i := 1; i <= 100; i++ {
 				node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i))), Labels: []string{"Test"}}
-				walEngine.CreateNode(node)
+				walEngine.CreateNode(t.Context(), node)
 			}
 
 			// Create and save snapshot
@@ -434,7 +434,7 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 			// Add more nodes after truncation
 			for i := 101; i <= 150; i++ {
 				node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i))), Labels: []string{"Test"}}
-				walEngine.CreateNode(node)
+				walEngine.CreateNode(t.Context(), node)
 			}
 
 			walEngine.Close()
@@ -447,16 +447,16 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 		recoveredNS := NewNamespacedEngine(recovered, "test")
 
 		// Should have all 150 nodes
-		count, err := recoveredNS.NodeCount()
+		count, err := recoveredNS.NodeCount(t.Context())
 		require.NoError(t, err)
 		assert.Equal(t, int64(150), count, "Should recover all nodes from snapshot + WAL")
 
 		// Verify specific nodes
-		n1, err := recoveredNS.GetNode("n1")
+		n1, err := recoveredNS.GetNode(t.Context(), "n1")
 		assert.NoError(t, err)
 		assert.NotNil(t, n1, "Node 1 should be recovered")
 
-		n150, err := recoveredNS.GetNode("n150")
+		n150, err := recoveredNS.GetNode(t.Context(), "n150")
 		assert.NoError(t, err)
 		assert.NotNil(t, n150, "Node 150 should be recovered")
 	})
@@ -536,7 +536,7 @@ func TestWALAutoCompactionEnabled(t *testing.T) {
 		// Add some data before enabling compaction
 		for i := 1; i <= 20; i++ {
 			node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i))), Labels: []string{"Test"}}
-			walEngine.CreateNode(node)
+			walEngine.CreateNode(t.Context(), node)
 		}
 
 		// Enable auto-compaction
@@ -652,7 +652,7 @@ func TestWALCompactionUnderLoad(t *testing.T) {
 				for i := 0; i < writeCount; i++ {
 					nodeID := fmt.Sprintf("w%d_n%d", writerID, i)
 					node := &Node{ID: NodeID(prefixTestID(nodeID)), Labels: []string{"Test"}}
-					_, err := walEngine.CreateNode(node)
+					_, err := walEngine.CreateNode(t.Context(), node)
 					if err != nil {
 						t.Errorf("Writer %d failed to create node %d: %v", writerID, i, err)
 					}
@@ -672,13 +672,13 @@ func TestWALCompactionUnderLoad(t *testing.T) {
 		for w := 0; w < writers; w++ {
 			for i := 0; i < writeCount; i++ {
 				nodeID := NodeID(prefixTestID(fmt.Sprintf("w%d_n%d", w, i)))
-				node, err := walEngine.GetNode(nodeID)
+				node, err := walEngine.GetNode(t.Context(), nodeID)
 				assert.NoError(t, err, "Node %s should exist", nodeID)
 				assert.NotNil(t, node, "Node %s should not be nil", nodeID)
 			}
 		}
 
-		totalNodes, err := walEngine.GetInnerEngine().NodeCount()
+		totalNodes, err := walEngine.GetInnerEngine().NodeCount(t.Context())
 		require.NoError(t, err)
 		assert.Equal(t, int64(writers*writeCount), totalNodes, "Should have all nodes")
 
@@ -718,7 +718,7 @@ func TestWALCompactionDiskSpace(t *testing.T) {
 					"counter":     i,
 				},
 			}
-			walEngine.CreateNode(node)
+			walEngine.CreateNode(t.Context(), node)
 		}
 
 		// Get WAL size before compaction
@@ -750,7 +750,7 @@ func TestWALCompactionDiskSpace(t *testing.T) {
 		assert.Less(t, sizeAfter, sizeBefore/2, "WAL should be at least 50% smaller after compaction")
 
 		// But data should still be intact
-		count, err := engine.NodeCount()
+		count, err := engine.NodeCount(t.Context())
 		require.NoError(t, err)
 		assert.Equal(t, int64(500), count, "All nodes should still exist")
 
@@ -789,7 +789,7 @@ func TestWALSnapshotRecovery(t *testing.T) {
 				for i := 0; i < 20; i++ {
 					nodeID := prefixTestID(fmt.Sprintf("b%d_n%d", batch, i))
 					node := &Node{ID: NodeID(nodeID), Labels: []string{"Test"}}
-					_, err := walEngine.CreateNode(node)
+					_, err := walEngine.CreateNode(t.Context(), node)
 					require.NoError(t, err)
 				}
 				time.Sleep(80 * time.Millisecond) // Allow snapshot between batches
@@ -818,7 +818,7 @@ func TestWALSnapshotRecovery(t *testing.T) {
 		require.NoError(t, err)
 
 		// Should have all 100 nodes (5 batches x 20 nodes)
-		count, err := recovered.NodeCount()
+		count, err := recovered.NodeCount(t.Context())
 		require.NoError(t, err)
 		assert.Equal(t, int64(100), count, "Should recover all nodes")
 	})
@@ -838,7 +838,7 @@ func TestWALSnapshotRecovery(t *testing.T) {
 
 			for i := 1; i <= 50; i++ {
 				node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", i))), Labels: []string{"Test"}}
-				walEngine.CreateNode(node)
+				walEngine.CreateNode(t.Context(), node)
 			}
 
 			walEngine.Close()
@@ -848,7 +848,7 @@ func TestWALSnapshotRecovery(t *testing.T) {
 		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(walDir, ""))
 		require.NoError(t, err)
 
-		count, err := recovered.NodeCount()
+		count, err := recovered.NodeCount(t.Context())
 		require.NoError(t, err)
 		assert.Equal(t, int64(50), count, "Should recover all nodes from WAL")
 	})
@@ -941,7 +941,7 @@ func BenchmarkWALCompaction(b *testing.B) {
 			// Create data
 			for j := 0; j < 1000; j++ {
 				node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", j)))}
-				walEngine.CreateNode(node)
+				walEngine.CreateNode(b.Context(), node)
 			}
 
 			// Create snapshot
@@ -968,7 +968,7 @@ func BenchmarkWALCompaction(b *testing.B) {
 		// Create test data
 		for j := 0; j < 10000; j++ {
 			node := &Node{ID: NodeID(prefixTestID(fmt.Sprintf("n%d", j)))}
-			engine.CreateNode(node)
+			engine.CreateNode(b.Context(), node)
 		}
 
 		b.ResetTimer()

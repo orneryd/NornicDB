@@ -21,8 +21,11 @@ func TestResidualReleaseOwnerConsumers(t *testing.T) {
 	require.NoError(t, err)
 	plantPath := filepath.Join(abs, "internal", "testfixture", "residualconsumer", "consumer.go")
 	const plant = `package residualconsumer
-import "github.com/orneryd/nornicdb/pkg/storage"
-func Read(b *storage.BadgerEngine, id storage.NodeID) (*storage.Node, error) { return b.GetNode(id) }
+import (
+    "context"
+    "github.com/orneryd/nornicdb/pkg/storage"
+)
+func Read(b *storage.BadgerEngine, id storage.NodeID) (*storage.Node, error) { return b.GetNode(context.Background(), id) }
 func Scalar(n int) int { return n }
 `
 	p, err := load(abs, map[string][]byte{plantPath: []byte(plant)})

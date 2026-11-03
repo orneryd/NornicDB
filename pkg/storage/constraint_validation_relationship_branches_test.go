@@ -44,7 +44,7 @@ func TestValidateRelationshipConstraintOnCreationForEngine_Branches(t *testing.T
 		}
 		t.Cleanup(func() { _ = eng.Engine.Close() })
 
-		err := validateRelationshipConstraintOnCreationForEngine(eng, Constraint{
+		err := validateRelationshipConstraintOnCreationForEngine(context.Background(), eng, Constraint{
 			Type:       ConstraintUnique,
 			EntityType: ConstraintEntityRelationship,
 			Label:      "REL",
@@ -64,7 +64,7 @@ func TestValidateRelationshipConstraintOnCreationForEngine_Branches(t *testing.T
 		}
 		t.Cleanup(func() { _ = eng.Engine.Close() })
 
-		err := validateRelationshipConstraintOnCreationForEngine(eng, Constraint{
+		err := validateRelationshipConstraintOnCreationForEngine(context.Background(), eng, Constraint{
 			Type:       ConstraintPropertyType,
 			EntityType: ConstraintEntityRelationship,
 			Label:      "REL",
@@ -84,7 +84,7 @@ func TestValidateRelationshipConstraintOnCreationForEngine_Branches(t *testing.T
 		}
 		t.Cleanup(func() { _ = eng.Engine.Close() })
 
-		err := validateRelationshipConstraintOnCreationForEngine(eng, Constraint{
+		err := validateRelationshipConstraintOnCreationForEngine(context.Background(), eng, Constraint{
 			Type:       ConstraintRelationshipKey,
 			EntityType: ConstraintEntityRelationship,
 			Label:      "REL",
@@ -104,7 +104,7 @@ func TestValidateRelationshipConstraintOnCreationForEngine_Branches(t *testing.T
 		}
 		t.Cleanup(func() { _ = eng.Engine.Close() })
 
-		err := validateRelationshipConstraintOnCreationForEngine(eng, Constraint{
+		err := validateRelationshipConstraintOnCreationForEngine(context.Background(), eng, Constraint{
 			Type:       ConstraintType("nonexistent"),
 			EntityType: ConstraintEntityRelationship,
 			Label:      "REL",

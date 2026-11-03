@@ -18,11 +18,11 @@ type raftDeferredStorage struct {
 	failure error
 }
 
-func (s *raftDeferredStorage) ApplyCommand(cmd *Command) error {
+func (s *raftDeferredStorage) ApplyCommand(waitCtx context.Context, cmd *Command, publication WALPublicationMode) (CommandPublication, error) {
 	if s.fail.Load() {
-		return s.failure
+		return CommandPublication{}, s.failure
 	}
-	return s.Storage.ApplyCommand(cmd)
+	return s.Storage.ApplyCommand(waitCtx, cmd, publication)
 }
 
 func TestRaftAcceptedEntityCommitOwnership(t *testing.T) {
@@ -53,7 +53,7 @@ func TestRaftAcceptedEntityCommitOwnership(t *testing.T) {
 				defer cancel()
 				result := make(chan error, 1)
 				go func() {
-					_, err := NewReplicatedEngine(engine, r, time.Second).CreateNode(&storage.Node{ID: "wire:raw", Properties: map[string]any{"value": "leader-prepared"}})
+					_, err := NewReplicatedEngine(engine, r, time.Second).CreateNode(ctx, &storage.Node{ID: "wire:raw", Properties: map[string]any{"value": "leader-prepared"}})
 					result <- err
 				}()
 				select {
@@ -70,16 +70,16 @@ func TestRaftAcceptedEntityCommitOwnership(t *testing.T) {
 				case <-ctx.Done():
 					t.Fatal("direct leader write did not finish")
 				}
-				node, err := engine.GetStoredNode("wire:raw")
+				node, err := engine.GetStoredNode(ctx, "wire:raw")
 				require.NoError(t, err)
 				require.Equal(t, "leader-prepared", node.Properties["value"])
 				require.EqualValues(t, 1, r.lastApplied)
 				return
 			}
-			tx, err := engine.BeginTransaction()
+			tx, err := engine.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			require.NoError(t, tx.SetNamespace("wire"))
-			_, err = tx.CreateNode(&storage.Node{ID: "wire:accepted", Properties: map[string]any{"value": "once"}})
+			_, err = tx.CreateNode(t.Context(), &storage.Node{ID: "wire:accepted", Properties: map[string]any{"value": "once"}})
 			require.NoError(t, err)
 			prepared, err := tx.PrepareEntityCommit(context.Background(), storage.EntityCommitRequest{LogicalID: tx.ID})
 			require.NoError(t, err)
@@ -98,7 +98,7 @@ func TestRaftAcceptedEntityCommitOwnership(t *testing.T) {
 				<-queueCtx.entered
 				stopped := make(chan struct{})
 				go func() { _ = r.Shutdown(); close(stopped) }()
-				<-r.stopCh
+				<-r.work.Context().Done()
 				select {
 				case <-stopped:
 					t.Fatal("shutdown drained before its admitted queue producer finished")
@@ -133,7 +133,7 @@ func TestRaftAcceptedEntityCommitOwnership(t *testing.T) {
 					require.Equal(t, storage.CommitRecoveryPending, outcome.State)
 					require.ErrorIs(t, outcome.Err, context.Canceled)
 					require.Zero(t, settled.Load())
-					_, err = engine.GetStoredNode("wire:accepted")
+					_, err = engine.GetStoredNode(ctx, "wire:accepted")
 					require.ErrorIs(t, err, storage.ErrNotFound)
 					require.ErrorIs(t, tx.Rollback(), storage.ErrTransactionClosed, "client cleanup cannot abort accepted staging")
 				}
@@ -150,7 +150,7 @@ func TestRaftAcceptedEntityCommitOwnership(t *testing.T) {
 					require.Equal(t, storage.CommitRecoveryPending, outcome.State)
 					require.ErrorContains(t, outcome.Err, "commit timeout")
 					require.Zero(t, settled.Load())
-					_, err = engine.GetStoredNode("wire:accepted")
+					_, err = engine.GetStoredNode(ctx, "wire:accepted")
 					require.ErrorIs(t, err, storage.ErrNotFound)
 					r.peerMu.Lock()
 					r.matchIndex["peer"] = 1
@@ -199,18 +199,18 @@ func TestRaftAcceptedEntityCommitOwnership(t *testing.T) {
 				} else {
 					require.ErrorIs(t, outcome.Err, ErrNotLeader)
 				}
-				_, err = engine.GetStoredNode("wire:accepted")
+				_, err = engine.GetStoredNode(ctx, "wire:accepted")
 				require.ErrorIs(t, err, storage.ErrNotFound)
 				// Definite discard releases both native staging and accepted authority.
-				_, err = engine.CreateNode(&storage.Node{ID: "wire:accepted"})
+				_, err = engine.CreateNode(ctx, &storage.Node{ID: "wire:accepted"})
 				require.NoError(t, err)
 			} else {
 				require.Equal(t, storage.CommitApplied, outcome.State)
 				require.NoError(t, outcome.Err)
-				node, err := engine.GetStoredNode("wire:accepted")
+				node, err := engine.GetStoredNode(ctx, "wire:accepted")
 				require.NoError(t, err)
 				require.Equal(t, "once", node.Properties["value"])
-				count, err := engine.NodeCount()
+				count, err := engine.NodeCount(ctx)
 				require.NoError(t, err)
 				require.EqualValues(t, 1, count)
 				require.EqualValues(t, 1, r.lastApplied)

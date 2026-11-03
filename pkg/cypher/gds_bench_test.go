@@ -29,7 +29,7 @@ func newGDSBenchmarkExecutor(b *testing.B) (*StorageExecutor, []string) {
 	ids := make([]string, gdsBenchmarkNodes)
 	for i := range ids {
 		ids[i] = fmt.Sprintf("node-%05d", i)
-		_, err := engine.CreateNode(&storage.Node{
+		_, err := engine.CreateNode(b.Context(), &storage.Node{
 			ID: storage.NodeID(ids[i]), Labels: []string{"BenchGDS"},
 			Properties: map[string]interface{}{
 				"integer": int64(i%23 + 1),
@@ -43,7 +43,7 @@ func newGDSBenchmarkExecutor(b *testing.B) (*StorageExecutor, []string) {
 	}
 	for i, id := range ids {
 		for j, hop := range []int{1, 7, 17, 97} {
-			err := engine.CreateEdge(&storage.Edge{
+			err := engine.CreateEdge(b.Context(), &storage.Edge{
 				ID:        storage.EdgeID(fmt.Sprintf("edge-%05d", 4*i+j)),
 				StartNode: storage.NodeID(id), EndNode: storage.NodeID(ids[(i+hop)%len(ids)]), Type: "GDS_LINK",
 				Properties: map[string]interface{}{"weight": float64(1+(i+j)%8) / 8},

@@ -16,11 +16,11 @@ func TestLinkPredictionPredictScores(t *testing.T) {
 	exec := NewStorageExecutor(engine)
 	ctx := context.Background()
 	create := func(id string, chunks [][]float32) {
-		_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{"P"}, ChunkEmbeddings: chunks})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(id), Labels: []string{"P"}, ChunkEmbeddings: chunks})
 		require.NoError(t, err)
 	}
 	link := func(from, to string) {
-		require.NoError(t, engine.CreateEdge(&storage.Edge{ID: storage.EdgeID(from + to), StartNode: storage.NodeID(from), EndNode: storage.NodeID(to), Type: "R"}))
+		require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: storage.EdgeID(from + to), StartNode: storage.NodeID(from), EndNode: storage.NodeID(to), Type: "R"}))
 	}
 	// The match is in each node's second chunk.
 	create("a", [][]float32{{1, 0, 0}, {0, 1, 0}})

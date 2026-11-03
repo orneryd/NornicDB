@@ -148,7 +148,7 @@ func (spec gdsElementSpec) merges() bool {
 // '|' ('Person:User', 'KNOWS|REFERENCES'): NornicDB's kept form. Labels,
 // types and properties no stored element has, and a name already in use,
 // are refused with GDS's messages.
-func (e *StorageExecutor) callGdsGraphProject(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callGdsGraphProject(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	const procedure = "gds.graph.project"
 	started := time.Now()
 	graphName, err := requiredProcedureString(procedure, args, 0, "graphName")
@@ -167,7 +167,7 @@ func (e *StorageExecutor) callGdsGraphProject(args []interface{}) (*ExecuteResul
 	if err != nil {
 		return nil, err
 	}
-	projection, err := e.buildGraphProjection(graphName, nodeSpecs, relSpecs, configuration["validateRelationships"] == true)
+	projection, err := e.buildGraphProjection(ctx, graphName, nodeSpecs, relSpecs, configuration["validateRelationships"] == true)
 	if err != nil {
 		return nil, err
 	}
@@ -176,6 +176,11 @@ func (e *StorageExecutor) callGdsGraphProject(args []interface{}) (*ExecuteResul
 	projection.Configuration = configuration
 	projection.Database = e.databaseName()
 
+	// Observe cancellation after projection construction as well as during the
+	// streams, before making the completed projection visible in the catalog.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	key := gdsCatalogKey(projection.Database, graphName)
 	projectionsMu.Lock()
 	if _, exists := graphProjections[key]; exists {
@@ -454,8 +459,9 @@ func readGDSPropertySpecs(value interface{}, aggregation string, elementKinds ..
 }
 
 // buildGraphProjection reads the projected nodes and relationships from
-// storage, streaming both.
-func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs []gdsElementSpec, validateRelationships bool) (*GraphProjection, error) {
+// storage, streaming both on the statement's context, so a caller that
+// cancels ends the read where it stands.
+func (e *StorageExecutor) buildGraphProjection(ctx context.Context, name string, nodeSpecs, relSpecs []gdsElementSpec, validateRelationships bool) (*GraphProjection, error) {
 	projection := &GraphProjection{
 		Name:                     name,
 		Database:                 e.databaseName(),
@@ -468,7 +474,6 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 		RelationshipProjection:   make(map[string]interface{}),
 		CreatedAt:                time.Now(),
 	}
-	ctx := context.Background()
 
 	labelsSeen := make(map[string]bool)
 	nodePropertySeen := make(map[string]bool)
@@ -512,6 +517,9 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 		return nil
 	})
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
 		var localized *localization.LocalizedError
 		if errors.As(err, &localized) {
 			return nil, err
@@ -566,6 +574,9 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 		return nil
 	})
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
 		return nil, localizedError(localization.CypherGraphProceduresStreamEdgesFailed(err), err)
 	}
 	sort.Slice(edges, func(i, j int) bool { return edges[i].ID < edges[j].ID })

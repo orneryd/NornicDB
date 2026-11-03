@@ -3,10 +3,11 @@ package search
 import (
 	"context"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"math"
 	"sync"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -23,13 +24,13 @@ func memberIndexService(t *testing.T) (*Service, *storage.Node) {
 	for n := 0; n < 2*stageBatch; n++ {
 		id := fmt.Sprintf("rival-%03d", n)
 		node := &storage.Node{ID: storage.NodeID(id), Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{.8, .6}}}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, svc.IndexNode(node))
 		candidates = append(candidates, Candidate{ID: id, Score: .8})
 	}
 	node := &storage.Node{ID: "winner", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{.1, float32(math.Sqrt(.99))}}, NamedEmbeddings: map[string][]float32{"best": {1, 0}}, Properties: map[string]interface{}{"embedding": []float32{.95, float32(math.Sqrt(1 - .95*.95))}}}
-	_, err := engine.CreateNode(node)
+	_, err := engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, svc.IndexNode(node))
 	candidates = append(candidates, Candidate{ID: "winner", Score: .1})
@@ -132,12 +133,12 @@ func TestMemberIndexWeakAliasStillExpandsCurrentMembers(t *testing.T) {
 				t.Cleanup(func() { require.NoError(t, svc.Close()) })
 				id := "winner"
 				node := &storage.Node{ID: storage.NodeID(id), ChunkEmbeddings: [][]float32{{1, 0}}}
-				_, err := engine.CreateNode(node)
+				_, err := engine.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 				require.NoError(t, svc.IndexNode(node))
 				if mixed {
 					other := &storage.Node{ID: "unrelated", ChunkEmbeddings: [][]float32{{0, 1}, {0, 1}}}
-					_, err := engine.CreateNode(other)
+					_, err := engine.CreateNode(t.Context(), other)
 					require.NoError(t, err)
 					require.NoError(t, svc.IndexNode(other))
 				}

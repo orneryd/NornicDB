@@ -26,27 +26,27 @@ func TestWrittenImageNeverModifiesWriterMaps(t *testing.T) {
 						require.NoError(t, direct())
 						return
 					}
-					tx, err := engine.BeginTransaction()
+					tx, err := engine.BeginTransaction(t.Context())
 					require.NoError(t, err)
 					require.NoError(t, apply(tx))
 					require.NoError(t, tx.Commit())
 				}
 				for _, id := range []NodeID{"test:a", "test:b"} {
 					node := &Node{ID: id, Labels: []string{"N"}, Properties: shared}
-					write(func(tx *BadgerTransaction) error { _, err := tx.CreateNode(node); return err },
-						func() error { _, err := engine.CreateNode(node); return err })
+					write(func(tx *BadgerTransaction) error { _, err := tx.CreateNode(t.Context(), node); return err },
+						func() error { _, err := engine.CreateNode(t.Context(), node); return err })
 				}
 				edge := &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: shared}
-				write(func(tx *BadgerTransaction) error { return tx.CreateEdge(edge) }, func() error { return engine.CreateEdge(edge) })
+				write(func(tx *BadgerTransaction) error { return tx.CreateEdge(t.Context(), edge) }, func() error { return engine.CreateEdge(t.Context(), edge) })
 				update := &Node{ID: "test:a", Labels: []string{"N"}, Properties: shared}
 				write(func(tx *BadgerTransaction) error {
-					return tx.UpdateGraphNode(NodeUpdateRequest{After: update, Policy: ClientNodeEdits})
-				}, func() error { return engine.UpdateNode(NodeUpdateRequest{After: update}) })
+					return tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: update, Policy: ClientNodeEdits})
+				}, func() error { return engine.UpdateNode(t.Context(), NodeUpdateRequest{After: update}) })
 				require.Equal(t, map[string]any{"n": 7, "u": uint16(8), "s": "x"}, shared)
-				stored, err := engine.GetNode("test:a")
+				stored, err := engine.GetNode(t.Context(), "test:a")
 				require.NoError(t, err)
 				require.Equal(t, map[string]any{"n": int64(7), "u": int64(8), "s": "x"}, stored.Properties)
-				storedEdge, err := engine.GetEdge("test:r")
+				storedEdge, err := engine.GetEdge(t.Context(), "test:r")
 				require.NoError(t, err)
 				require.Equal(t, map[string]any{"n": int64(7), "u": int64(8), "s": "x"}, storedEdge.Properties)
 			})

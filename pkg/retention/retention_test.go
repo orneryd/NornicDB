@@ -4,6 +4,7 @@ package retention
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -488,14 +489,17 @@ func TestManagerProcessRecord(t *testing.T) {
 
 	var deletedRecords []string
 	var archivedRecords []string
+	var deletedContext, archivedContext context.Context
 
-	m.SetDeleteCallback(func(record *DataRecord) error {
+	m.SetDeleteCallback(func(ctx context.Context, record *DataRecord) error {
 		deletedRecords = append(deletedRecords, record.ID)
-		return nil
+		deletedContext = ctx
+		return ctx.Err()
 	})
-	m.SetArchiveCallback(func(record *DataRecord, path string) error {
+	m.SetArchiveCallback(func(ctx context.Context, record *DataRecord, path string) error {
 		archivedRecords = append(archivedRecords, record.ID)
-		return nil
+		archivedContext = ctx
+		return ctx.Err()
 	})
 
 	// Add policy with archiving
@@ -546,6 +550,36 @@ func TestManagerProcessRecord(t *testing.T) {
 			t.Error("recent record should not be deleted")
 		}
 	})
+	t.Run("request cancellation reaches archive and preserves delete ordering", func(t *testing.T) {
+		deletedRecords = nil
+		archivedRecords = nil
+		deletedContext = nil
+		archivedContext = nil
+		record := &DataRecord{ID: "cancel-archive", Category: CategoryUser, CreatedAt: time.Now().Add(-2 * time.Hour)}
+		type key struct{}
+		request := context.WithValue(t.Context(), key{}, "retention-value")
+		canceled, cancel := context.WithCancel(request)
+		cancel()
+		if err := m.ProcessRecord(canceled, record); !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected archive cancellation, got %v", err)
+		}
+		if archivedContext != canceled || archivedContext.Value(key{}) != "retention-value" {
+			t.Fatal("archive lost actual request context or values")
+		}
+		if deletedContext != nil || len(deletedRecords) != 0 {
+			t.Fatal("delete ran after rejected archive")
+		}
+		if err := m.ProcessRecord(request, record); err != nil {
+			t.Fatal(err)
+		}
+		if archivedContext != request || deletedContext != request {
+			t.Fatal("healthy retry lost actual request context")
+		}
+		if len(deletedRecords) != 1 || deletedRecords[0] != record.ID {
+			t.Fatal("healthy retry failed to delete archived record")
+		}
+	})
+
 }
 
 func TestErasureRequest(t *testing.T) {
@@ -594,7 +628,7 @@ func TestProcessErasure(t *testing.T) {
 	m := NewManager()
 
 	var deletedRecords []string
-	m.SetDeleteCallback(func(record *DataRecord) error {
+	m.SetDeleteCallback(func(ctx context.Context, record *DataRecord) error {
 		deletedRecords = append(deletedRecords, record.ID)
 		return nil
 	})

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -30,10 +31,11 @@ func StartRuntime(ctx context.Context, base storage.Engine, config *Config) (Sta
 		return StartedRuntime{}, localizedError(localization.NornicDBCoreReplicationStorageAdapterCreateFailed(err), err)
 	}
 
+	// Every failed-start branch releases what it created, in reverse order, and
+	// returns those cleanup outcomes with the start failure to its caller.
 	replicator, err := NewReplicator(config, adapter)
 	if err != nil {
-		_ = adapter.Close()
-		return StartedRuntime{}, localizedError(localization.NornicDBCoreReplicationReplicatorCreateFailed(err), err)
+		return StartedRuntime{}, compose.Outcomes(localizedError(localization.NornicDBCoreReplicationReplicatorCreateFailed(err), err), adapter.Close())
 	}
 
 	// The transport is built from the whole loaded config, so the
@@ -42,9 +44,7 @@ func StartRuntime(ctx context.Context, base storage.Engine, config *Config) (Sta
 	// than run plaintext or unsigned.
 	transport, err := NewDefaultTransportFromConfig(config)
 	if err != nil {
-		_ = replicator.Shutdown()
-		_ = adapter.Close()
-		return StartedRuntime{}, localizedError(localization.NornicDBCoreReplicationStartFailed(err), err)
+		return StartedRuntime{}, compose.Outcomes(localizedError(localization.NornicDBCoreReplicationStartFailed(err), err), replicator.Shutdown(), adapter.Close())
 	}
 
 	// Wire transport into modes that support it.
@@ -57,10 +57,7 @@ func StartRuntime(ctx context.Context, base storage.Engine, config *Config) (Sta
 	}
 
 	if err := replicator.Start(ctx); err != nil {
-		_ = transport.Close()
-		_ = replicator.Shutdown()
-		_ = adapter.Close()
-		return StartedRuntime{}, localizedError(localization.NornicDBCoreReplicationStartFailed(err), err)
+		return StartedRuntime{}, compose.Outcomes(localizedError(localization.NornicDBCoreReplicationStartFailed(err), err), transport.Close(), replicator.Shutdown(), adapter.Close())
 	}
 
 	return StartedRuntime{Engine: NewReplicatedEngine(base, replicator, 30*time.Second), Replicator: replicator, Adapter: adapter, Transport: transport}, nil

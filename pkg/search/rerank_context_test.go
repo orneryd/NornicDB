@@ -20,24 +20,24 @@ func TestRerankCandidateContentPrependsTitleAndExpandsChunkNeighbours(t *testing
 	}
 	result := rrfResult{ID: "nornic:doc", MatchID: nodeChunkVectorKey("nornic:doc", 2), VectorRank: 1}
 
-	content := svc.rerankCandidateContent(node, result, "matched", 4096)
+	content := svc.rerankCandidateContent(t.Context(), node, result, "matched", 4096)
 	require.Equal(t, "The Title\nchunk zero chunk one chunk two matched chunk three chunk four", content)
 
 	// Header and body share one budget; the matched chunk is kept whole first.
-	content = svc.rerankCandidateContent(node, result, "matched", len("The Title")+1+len("chunk two matched")+1)
+	content = svc.rerankCandidateContent(t.Context(), node, result, "matched", len("The Title")+1+len("chunk two matched")+1)
 	require.Equal(t, "The Title\nchunk two matched", content)
 
 	// The window grows in document order: the next chunk first, then the previous one.
-	content = svc.rerankCandidateContent(node, result, "matched", len("The Title")+1+len("chunk one chunk two matched chunk three"))
+	content = svc.rerankCandidateContent(t.Context(), node, result, "matched", len("The Title")+1+len("chunk one chunk two matched chunk three"))
 	require.Equal(t, "The Title\nchunk one chunk two matched chunk three", content)
 
 	// A neighbour that does not fit whole is added as a bounded prefix, then expansion stops.
-	content = svc.rerankCandidateContent(node, result, "matched", len("The Title")+1+len("chunk two matched chunk th"))
+	content = svc.rerankCandidateContent(t.Context(), node, result, "matched", len("The Title")+1+len("chunk two matched chunk th"))
 	require.Equal(t, "The Title\nchunk two matched chunk th", content)
 
 	// No identifying properties: body only, as before.
 	delete(node.Properties, "title")
-	content = svc.rerankCandidateContent(node, result, "matched", 4096)
+	content = svc.rerankCandidateContent(t.Context(), node, result, "matched", 4096)
 	require.Equal(t, "chunk zero chunk one chunk two matched chunk three chunk four", content)
 }
 
@@ -50,7 +50,7 @@ func TestRerankCandidateContentHeaderPropertiesAreConfigurableAndBounded(t *test
 		Properties: map[string]interface{}{"name": longName, "title": "T"},
 		EmbedMeta:  map[string]interface{}{"chunk_texts": []any{"only chunk"}},
 	}
-	content := svc.rerankCandidateContent(node, rrfResult{ID: "nornic:doc", MatchID: "nornic:doc"}, "q", 4096)
+	content := svc.rerankCandidateContent(t.Context(), node, rrfResult{ID: "nornic:doc", MatchID: "nornic:doc"}, "q", 4096)
 	header, body, found := strings.Cut(content, "\n")
 	require.True(t, found)
 	require.Equal(t, "only chunk", body)
@@ -96,7 +96,7 @@ func TestRerankBudgetCountsCharactersNotBytes(t *testing.T) {
 		{"cjk", []string{strings.Repeat("字", 100), strings.Repeat("文", 100), strings.Repeat("本", 100)}},
 	} {
 		node := &storage.Node{ID: "nornic:doc", EmbedMeta: map[string]interface{}{"chunk_texts": script.chunks}}
-		content := svc.rerankCandidateContent(node, rrfResult{ID: "nornic:doc", MatchID: nodeChunkVectorKey("nornic:doc", 1)}, "", 250)
+		content := svc.rerankCandidateContent(t.Context(), node, rrfResult{ID: "nornic:doc", MatchID: nodeChunkVectorKey("nornic:doc", 1)}, "", 250)
 		// 100 (matched) + 1 + 100 (next) + 1 + 48 (bounded previous suffix) = 250 characters in every script.
 		require.Equal(t, 250, utf8.RuneCountInString(content), script.name)
 		bytesPerChar := len(script.chunks[0]) / 100
@@ -123,7 +123,7 @@ func TestRerankBudgetHandlesMixedScripts(t *testing.T) {
 	chunks := []string{mixed, mixed + " second", mixed + " third"}
 	node := &storage.Node{ID: "nornic:doc", EmbedMeta: map[string]interface{}{"chunk_texts": chunks}}
 	for budget := 1; budget <= 3*utf8.RuneCountInString(mixed)+20; budget += 3 {
-		content := svc.rerankCandidateContent(node, rrfResult{ID: "nornic:doc", MatchID: nodeChunkVectorKey("nornic:doc", 1)}, "gamma", budget)
+		content := svc.rerankCandidateContent(t.Context(), node, rrfResult{ID: "nornic:doc", MatchID: nodeChunkVectorKey("nornic:doc", 1)}, "gamma", budget)
 		require.LessOrEqual(t, utf8.RuneCountInString(content), budget, "budget %d", budget)
 		require.True(t, utf8.ValidString(content), "budget %d: cut inside a multi-byte character", budget)
 	}

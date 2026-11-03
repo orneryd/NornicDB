@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"bytes"
@@ -35,18 +36,18 @@ func TestCreatePresenceReadSkipsOnlyMintedIDs(t *testing.T) {
 				{ID: "test:b", Labels: []string{"B"}},
 				{ID: hiddenNode, Labels: []string{"Original"}, Properties: map[string]any{"value": int64(1)}},
 			} {
-				_, err := engine.CreateNode(node)
+				_, err := engine.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 			}
-			require.NoError(t, engine.CreateEdge(&Edge{ID: hiddenEdge, StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"key": "old"}}))
+			require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: hiddenEdge, StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"key": "old"}}))
 			if buffered {
-				require.NoError(t, engine.FlushWriteBehind(nil))
+				require.NoError(t, engine.FlushWriteBehind(context.Background()))
 			}
-			require.NoError(t, engine.SetManualSuppression(StoredEntityNodeKind, string(hiddenNode), true))
-			require.NoError(t, engine.SetManualSuppression(StoredEntityEdgeKind, string(hiddenEdge), true))
+			require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityNodeKind, string(hiddenNode), true))
+			require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityEdgeKind, string(hiddenEdge), true))
 
 			begin := func() *BadgerTransaction {
-				tx, err := engine.BeginTransaction()
+				tx, err := engine.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				require.NoError(t, tx.SetNamespace("test"))
 				require.NoError(t, tx.SetImplicit(true))
@@ -60,16 +61,16 @@ func TestCreatePresenceReadSkipsOnlyMintedIDs(t *testing.T) {
 
 			// Stable IDs: the hidden predecessors reject the create.
 			tx := begin()
-			_, err = tx.CreateNode(&Node{ID: hiddenNode, Labels: []string{"Replacement"}})
+			_, err = tx.CreateNode(t.Context(), &Node{ID: hiddenNode, Labels: []string{"Replacement"}})
 			require.ErrorIs(t, err, ErrAlreadyExists)
 			require.NoError(t, tx.Rollback())
 			for _, bulk := range []bool{false, true} {
 				tx = begin()
 				edge := &Edge{ID: hiddenEdge, StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"key": "new"}}
 				if bulk {
-					err = tx.BulkCreateEdges([]*Edge{edge})
+					err = tx.BulkCreateEdges(t.Context(), []*Edge{edge})
 				} else {
-					err = tx.CreateEdge(edge)
+					err = tx.CreateEdge(t.Context(), edge)
 				}
 				if err == nil {
 					err = tx.Commit()
@@ -78,35 +79,35 @@ func TestCreatePresenceReadSkipsOnlyMintedIDs(t *testing.T) {
 				}
 				require.True(t, hiddenConflict(err), "bulk=%v: %v", bulk, err)
 			}
-			stored, err := engine.GetStoredNode(hiddenNode)
+			stored, err := engine.GetStoredNode(t.Context(), hiddenNode)
 			require.NoError(t, err)
 			require.Equal(t, []string{"Original"}, stored.Labels)
-			storedEdge, err := engine.GetStoredEdge(hiddenEdge)
+			storedEdge, err := engine.GetStoredEdge(t.Context(), hiddenEdge)
 			require.NoError(t, err)
 			require.Equal(t, "old", storedEdge.Properties["key"])
 
 			// Minted IDs: the checks that need no storage read remain.
 			tx = begin()
 			minted := NodeID("test:" + uuid.NewString())
-			_, err = tx.CreateMintedNode(&Node{ID: minted, Labels: []string{"Minted"}})
+			_, err = tx.CreateMintedNode(t.Context(), &Node{ID: minted, Labels: []string{"Minted"}})
 			require.NoError(t, err)
-			_, err = tx.CreateMintedNode(&Node{ID: minted, Labels: []string{"Minted"}})
+			_, err = tx.CreateMintedNode(t.Context(), &Node{ID: minted, Labels: []string{"Minted"}})
 			require.ErrorIs(t, err, ErrAlreadyExists, "a pending create holds the ID")
-			require.ErrorIs(t, tx.CreateMintedEdge(&Edge{ID: EdgeID("test:" + uuid.NewString()), StartNode: minted, EndNode: "test:missing", Type: "LINK"}), ErrNotFound, "endpoints are still checked")
+			require.ErrorIs(t, tx.CreateMintedEdge(t.Context(), &Edge{ID: EdgeID("test:" + uuid.NewString()), StartNode: minted, EndNode: "test:missing", Type: "LINK"}), ErrNotFound, "endpoints are still checked")
 			first := EdgeID("test:" + uuid.NewString())
-			require.ErrorIs(t, tx.BulkCreateMintedEdges([]*Edge{
+			require.ErrorIs(t, tx.BulkCreateMintedEdges(t.Context(), []*Edge{
 				{ID: first, StartNode: minted, EndNode: "test:a", Type: "LINK"},
 				{ID: first, StartNode: minted, EndNode: "test:b", Type: "LINK"},
 			}), ErrAlreadyExists, "an earlier edge of the batch holds the ID")
 			second := EdgeID("test:" + uuid.NewString())
-			require.NoError(t, tx.CreateMintedEdge(&Edge{ID: first, StartNode: minted, EndNode: "test:a", Type: "LINK"}))
-			require.NoError(t, tx.BulkCreateMintedEdges([]*Edge{{ID: second, StartNode: "test:a", EndNode: minted, Type: "LINK"}}))
+			require.NoError(t, tx.CreateMintedEdge(t.Context(), &Edge{ID: first, StartNode: minted, EndNode: "test:a", Type: "LINK"}))
+			require.NoError(t, tx.BulkCreateMintedEdges(t.Context(), []*Edge{{ID: second, StartNode: "test:a", EndNode: minted, Type: "LINK"}}))
 			require.NoError(t, tx.Commit())
 			for _, id := range []EdgeID{first, second} {
-				_, err := engine.GetEdge(id)
+				_, err := engine.GetEdge(t.Context(), id)
 				require.NoError(t, err)
 			}
-			node, err := engine.GetNode(minted)
+			node, err := engine.GetNode(t.Context(), minted)
 			require.NoError(t, err)
 			require.Equal(t, []string{"Minted"}, node.Labels)
 		})
@@ -125,10 +126,10 @@ func TestWALReplayCreateMeetsHiddenPredecessor(t *testing.T) {
 		t.Cleanup(func() { _ = engine.Close() })
 		raw := uuid.NewString()
 		hidden := NodeID("test:" + raw)
-		_, err = engine.CreateNode(&Node{ID: hidden, Labels: []string{"Original"}})
+		_, err = engine.CreateNode(t.Context(), &Node{ID: hidden, Labels: []string{"Original"}})
 		require.NoError(t, err)
-		require.NoError(t, engine.FlushWriteBehind(nil))
-		require.NoError(t, engine.SetManualSuppression(StoredEntityNodeKind, string(hidden), true))
+		require.NoError(t, engine.FlushWriteBehind(context.Background()))
+		require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityNodeKind, string(hidden), true))
 
 		entryEncoder := getValueEncoder()
 		retained, err := entryEncoder.recovery(WALNodeData{Node: &Node{ID: NodeID(raw), Labels: []string{"Replayed"}}})
@@ -137,7 +138,7 @@ func TestWALReplayCreateMeetsHiddenPredecessor(t *testing.T) {
 		putValueEncoder(entryEncoder)
 		err = ReplayWALEntry(engine, WALEntry{Operation: OpCreateNode, Data: data, Database: "test"})
 		require.ErrorIs(t, err, ErrAlreadyExists, "write-behind=%v", buffered)
-		stored, err := engine.GetStoredNode(hidden)
+		stored, err := engine.GetStoredNode(t.Context(), hidden)
 		require.NoError(t, err)
 		require.Equal(t, []string{"Original"}, stored.Labels)
 	}

@@ -39,12 +39,12 @@ func (e *roleRenameFailureEngine) WithStoreTransaction(ctx context.Context, muta
 	})
 }
 
-func (e *roleRenameFailureEngine) DeleteNode(id storage.NodeID) error {
+func (e *roleRenameFailureEngine) DeleteNode(ctx context.Context, id storage.NodeID) error {
 	if id == "role_entitlement:ops" {
 		*e.fired = true
 		return errors.New("injected role rename failure")
 	}
-	return e.Engine.DeleteNode(id)
+	return e.Engine.DeleteNode(ctx, id)
 }
 
 func TestRenamedRoleKeepsItsGrantsOverHTTP(t *testing.T) {
@@ -63,7 +63,7 @@ func TestRenamedRoleKeepsItsGrantsOverHTTP(t *testing.T) {
 			require.NoError(t, server.allowlistStore.SaveRoleDatabases(ctx, "ops", []string{"nornic"}))
 			require.NoError(t, server.privilegesStore.SavePrivilege(ctx, "ops", "nornic", true, true))
 			require.NoError(t, server.roleEntitlementsStore.Set(ctx, "ops", []string{"read", "write"}))
-			_, err = users.CreateUser("worker", "password123", []auth.Role{"ops"})
+			_, err = users.CreateUser(context.Background(), "worker", "password123", []auth.Role{"ops"})
 			require.NoError(t, err)
 			require.Empty(t, txErrorCode(t, server, "system", admin, "GRANT EXECUTE BOOSTED PROCEDURE db.cdc.* ON DBMS TO ops"))
 			before, err := system.AllNodes(ctx)
@@ -118,7 +118,7 @@ func TestDeletedRoleStartsEmptyAfterRecreationOverHTTP(t *testing.T) {
 			require.NoError(t, server.allowlistStore.SaveRoleDatabases(ctx, "ops", []string{"nornic"}))
 			require.NoError(t, server.privilegesStore.SavePrivilege(ctx, "ops", "nornic", true, true))
 			require.NoError(t, server.roleEntitlementsStore.Set(ctx, "ops", []string{"read", "write"}))
-			_, err = users.CreateUser("worker", "password123", []auth.Role{"ops", auth.RoleViewer})
+			_, err = users.CreateUser(context.Background(), "worker", "password123", []auth.Role{"ops", auth.RoleViewer})
 			require.NoError(t, err)
 			require.Empty(t, txErrorCode(t, server, "system", admin, "GRANT EXECUTE BOOSTED PROCEDURE db.cdc.* ON DBMS TO ops"))
 			before, err := system.AllNodes(ctx)
@@ -169,16 +169,16 @@ func TestCombinedUserChangeFailureChangesNothingOverHTTP(t *testing.T) {
 	users, err := auth.NewAuthenticator(config, fault)
 	require.NoError(t, err)
 	server.auth = users
-	_, err = users.CreateUser("worker", "password123", []auth.Role{auth.RoleViewer})
+	_, err = users.CreateUser(context.Background(), "worker", "password123", []auth.Role{auth.RoleViewer})
 	require.NoError(t, err)
-	before, err := system.GetNode("user:worker")
+	before, err := system.GetNode(t.Context(), "user:worker")
 	require.NoError(t, err)
 	admin := getAuthToken(t, users, "admin")
 	resp := makeRequest(t, server, "PUT", "/auth/users/worker", map[string]any{
 		"roles": []string{"admin"}, "disabled": true,
 	}, "Bearer "+admin)
 	assert.Equal(t, http.StatusBadRequest, resp.Code, resp.Body.String())
-	after, err := system.GetNode("user:worker")
+	after, err := system.GetNode(t.Context(), "user:worker")
 	require.NoError(t, err)
 	assert.Equal(t, before, after)
 	user, err := users.GetUser("worker")
@@ -195,7 +195,7 @@ func (e *roleDeleteFailureEngine) WithStoreTransaction(ctx context.Context, muta
 	})
 }
 
-func (e *roleDeleteFailureEngine) DeleteNode(id storage.NodeID) error {
+func (e *roleDeleteFailureEngine) DeleteNode(ctx context.Context, id storage.NodeID) error {
 	if strings.HasPrefix(string(id), "proc_priv:") {
 		e.deletes++
 		if !e.failRole && e.deletes == 2 {
@@ -208,7 +208,7 @@ func (e *roleDeleteFailureEngine) DeleteNode(id storage.NodeID) error {
 		}
 		return errors.New("injected role deletion failure")
 	}
-	return e.Engine.DeleteNode(id)
+	return e.Engine.DeleteNode(ctx, id)
 }
 
 func TestDeleteRoleFailureChangesNothingOverHTTP(t *testing.T) {
@@ -234,7 +234,7 @@ func TestDeleteRoleFailureChangesNothingOverHTTP(t *testing.T) {
 			resp := makeRequest(t, server, "DELETE", "/auth/roles/ops", nil, "Bearer "+admin)
 			require.Equal(t, http.StatusInternalServerError, resp.Code, resp.Body.String())
 			require.True(t, server.roleStore.Exists("ops"))
-			_, err = system.GetNode("role:ops")
+			_, err = system.GetNode(t.Context(), "role:ops")
 			require.NoError(t, err)
 			after, err := grants.List(ctx)
 			require.NoError(t, err)

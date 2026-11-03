@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"testing"
@@ -35,7 +36,7 @@ func BenchmarkWALEnginePrefixCount(b *testing.B) {
 			b.Run(fmt.Sprintf("%s/nodes/%d", testCase.source, size), func(b *testing.B) {
 				b.ReportAllocs()
 				for i := 0; i < b.N; i++ {
-					count, err := walEngine.NodeCountByPrefix("test:")
+					count, err := walEngine.NodeCountByPrefix(context.Background(), "test:")
 					if err != nil || count != int64(size) {
 						b.Fatalf("count=%d err=%v, want %d", count, err, size)
 					}
@@ -44,7 +45,7 @@ func BenchmarkWALEnginePrefixCount(b *testing.B) {
 			b.Run(fmt.Sprintf("%s/edges/%d", testCase.source, size), func(b *testing.B) {
 				b.ReportAllocs()
 				for i := 0; i < b.N; i++ {
-					count, err := walEngine.EdgeCountByPrefix("test:")
+					count, err := walEngine.EdgeCountByPrefix(context.Background(), "test:")
 					if err != nil || count != int64(size) {
 						b.Fatalf("count=%d err=%v, want %d", count, err, size)
 					}

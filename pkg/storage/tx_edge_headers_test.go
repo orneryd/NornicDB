@@ -16,49 +16,49 @@ import (
 func TestTransactionEdgeHeaders(t *testing.T) {
 	eng := newTestEngine(t)
 	for _, id := range []NodeID{"test:a", "test:b", "test:c", "test:d"} {
-		_, err := eng.CreateNode(&Node{ID: id, Labels: []string{"N"}})
+		_, err := eng.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"N"}})
 		require.NoError(t, err)
 	}
 	w := map[string]any{"w": int64(1)}
-	require.NoError(t, eng.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "K", Properties: w}))
-	require.NoError(t, eng.CreateEdge(&Edge{ID: "test:e2", StartNode: "test:a", EndNode: "test:c", Type: "K", Properties: w}))
-	require.NoError(t, eng.CreateEdge(&Edge{ID: "test:e3", StartNode: "test:a", EndNode: "test:d", Type: "K", Properties: w}))
-	require.NoError(t, eng.CreateEdge(&Edge{ID: "test:e4", StartNode: "test:b", EndNode: "test:c", Type: "K", Properties: w}))
+	require.NoError(t, eng.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "K", Properties: w}))
+	require.NoError(t, eng.CreateEdge(t.Context(), &Edge{ID: "test:e2", StartNode: "test:a", EndNode: "test:c", Type: "K", Properties: w}))
+	require.NoError(t, eng.CreateEdge(t.Context(), &Edge{ID: "test:e3", StartNode: "test:a", EndNode: "test:d", Type: "K", Properties: w}))
+	require.NoError(t, eng.CreateEdge(t.Context(), &Edge{ID: "test:e4", StartNode: "test:b", EndNode: "test:c", Type: "K", Properties: w}))
 
 	// e3's entry predates the values.
 	aNum, _ := eng.idDict.lookupNodeNumID("test:a")
 	e3Num, _ := eng.idDict.lookupEdgeNumID("test:e3")
-	require.NoError(t, eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		return txn.Set(outgoingIndexKey(aNum, e3Num), []byte{})
 	}))
 
-	tx, err := eng.BeginTransaction()
+	tx, err := eng.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
 	require.NoError(t, tx.SetNamespace("test"))
 
 	// A peer retypes e1 after the snapshot.
-	require.NoError(t, eng.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "K2", Properties: w}}))
+	require.NoError(t, eng.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "K2", Properties: w}}))
 
-	require.NoError(t, tx.CreateEdge(&Edge{ID: "test:e5", StartNode: "test:a", EndNode: "test:b", Type: "L"}))
-	require.NoError(t, tx.DeleteEdge("test:e2"))
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:e5", StartNode: "test:a", EndNode: "test:b", Type: "L"}))
+	require.NoError(t, tx.DeleteEdge(t.Context(), "test:e2"))
 
 	same := func(nodeID NodeID) {
 		t.Helper()
-		headers, answered, err := tx.OutgoingEdgeHeaders(nodeID)
+		headers, answered, err := tx.OutgoingEdgeHeaders(context.Background(), nodeID)
 		require.NoError(t, err)
 		require.True(t, answered)
 		full, err := tx.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: nodeID})
 		require.NoError(t, err)
 		require.Equal(t, headerSummary(full), headerSummary(headers), nodeID)
-		headers, answered, err = tx.IncomingEdgeHeaders(nodeID)
+		headers, answered, err = tx.IncomingEdgeHeaders(context.Background(), nodeID)
 		require.NoError(t, err)
 		require.True(t, answered)
 		full, err = tx.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadIncoming, Node: nodeID})
 		require.NoError(t, err)
 		require.Equal(t, headerSummary(full), headerSummary(headers), nodeID)
 	}
-	headers, _, err := tx.OutgoingEdgeHeaders("test:a")
+	headers, _, err := tx.OutgoingEdgeHeaders(context.Background(), "test:a")
 	require.NoError(t, err)
 	require.Equal(t, []string{"test:e1:K:test:a->test:b", "test:e3:K:test:a->test:d", "test:e5:L:test:a->test:b"}, headerSummary(headers))
 	for _, header := range headers {
@@ -84,13 +84,13 @@ func TestTransactionEdgeHeaders(t *testing.T) {
 	tx.snapshotOutgoingAdjacency.clear()
 	readTS := tx.readTS
 	tx.readTS = e4Head.Version
-	require.NoError(t, eng.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:e4", StartNode: "test:b", EndNode: "test:c", Type: "K", Properties: map[string]any{"w": int64(2)}}}))
-	tx2, err := eng.BeginTransaction()
+	require.NoError(t, eng.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "test:e4", StartNode: "test:b", EndNode: "test:c", Type: "K", Properties: map[string]any{"w": int64(2)}}}))
+	tx2, err := eng.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer func() { _ = tx2.Rollback() }()
 	require.NoError(t, tx2.SetNamespace("test"))
 	tx2.readTS = e4Head.Version
-	headers, answered, err := tx2.OutgoingEdgeHeaders("test:b")
+	headers, answered, err := tx2.OutgoingEdgeHeaders(context.Background(), "test:b")
 	require.NoError(t, err)
 	require.True(t, answered)
 	require.Len(t, headers, 1)
@@ -100,18 +100,18 @@ func TestTransactionEdgeHeaders(t *testing.T) {
 	// Decay filtering and a missing read version decline; a finished
 	// transaction errors.
 	eng.SetDecayEnabled(true)
-	_, answered, err = tx.OutgoingEdgeHeaders("test:a")
+	_, answered, err = tx.OutgoingEdgeHeaders(context.Background(), "test:a")
 	require.NoError(t, err)
 	require.False(t, answered)
 	eng.SetDecayEnabled(false)
 	tx.readTS = MVCCVersion{}
-	_, answered, err = tx.OutgoingEdgeHeaders("test:a")
+	_, answered, err = tx.OutgoingEdgeHeaders(context.Background(), "test:a")
 	require.NoError(t, err)
 	require.False(t, answered)
 	tx.readTS = readTS
-	_, _, err = tx.OutgoingEdgeHeaders("other:a")
+	_, _, err = tx.OutgoingEdgeHeaders(context.Background(), "other:a")
 	require.Error(t, err)
 	require.NoError(t, tx.Rollback())
-	_, _, err = tx.IncomingEdgeHeaders("test:a")
+	_, _, err = tx.IncomingEdgeHeaders(context.Background(), "test:a")
 	require.Error(t, err)
 }

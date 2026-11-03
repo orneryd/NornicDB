@@ -95,15 +95,15 @@ func TestCompositeReviewImportedPendingWrites(t *testing.T) {
 			require.NoError(t, err)
 			two, err := mgr.GetStorage("two")
 			require.NoError(t, err)
-			before, err := two.GetNode("same")
+			before, err := two.GetNode(t.Context(), "same")
 			require.NoError(t, err)
 			require.Equal(t, int64(7), before.Properties["v"], "pending write must not escape its participant")
 			_, err = exec.Execute(ctx, terminal, nil)
 			require.NoError(t, err)
-			first, err := one.GetNode("same")
+			first, err := one.GetNode(t.Context(), "same")
 			require.NoError(t, err)
 			require.Equal(t, int64(7), first.Properties["v"])
-			second, err := two.GetNode("same")
+			second, err := two.GetNode(t.Context(), "same")
 			require.NoError(t, err)
 			want := int64(7)
 			if terminal == "COMMIT" {
@@ -136,7 +136,8 @@ func TestCompositeReviewPolicyReadsSourceMetadata(t *testing.T) {
 				base.GetSchemaForNamespace(database).SetBindingTable(table)
 				for id, scope := range map[string]knowledgepolicy.ScopeType{"same": knowledgepolicy.ScopeNode, "same-rel": knowledgepolicy.ScopeEdge} {
 					target := database + ":" + id
-					require.NoError(t, base.PutAccessMeta(target, &knowledgepolicy.AccessMetaEntry{TargetID: target, TargetScope: scope, Fixed: knowledgepolicy.AccessMetaFixedFields{AccessCount: int64(index + 3), LastAccessedAt: time.Now().UnixNano()}}))
+					_, accessWriteErr1 := base.WriteAccessMeta(context.Background(), knowledgepolicy.AccessMetaWriteRequest{Mode: knowledgepolicy.RecordState, EntityID: target, Entry: &knowledgepolicy.AccessMetaEntry{TargetID: target, TargetScope: scope, Fixed: knowledgepolicy.AccessMetaFixedFields{AccessCount: int64(index + 3), LastAccessedAt: time.Now().UnixNano()}}})
+					require.NoError(t, accessWriteErr1)
 				}
 			}
 			result, err := exec.Execute(context.Background(), "USE comp MATCH (n:P)-[r:R]->() RETURN decay(n).policy,decay(r).policy,policy(n).accessCount,policy(r).accessCount ORDER BY elementId(n)", nil)

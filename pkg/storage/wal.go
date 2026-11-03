@@ -34,7 +34,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/orneryd/nornicdb/internal/jsontext"
 	"hash/crc32"
 	"io"
 	"log/slog"
@@ -46,7 +45,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/jsontext"
 	"github.com/orneryd/nornicdb/pkg/config"
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -381,7 +383,12 @@ type WAL struct {
 	sequence atomic.Uint64
 	entries  atomic.Int64
 	bytes    atomic.Int64
-	closed   atomic.Bool
+	// work is the WAL's one owner: the batch sync loop is its accepted work,
+	// its seal is the closed state, and Close is its one stop.
+	work lifecycle.WorkLifetime
+	// handleReleased (mu) records that the owner's dispose released the
+	// append handle. Admission is the owner's seal; this is only the handle.
+	handleReleased bool
 
 	segmentFirstSeq  uint64
 	segmentEntries   int64
@@ -394,7 +401,6 @@ type WAL struct {
 
 	// Background sync goroutine
 	syncTicker *time.Ticker
-	stopSync   chan struct{}
 
 	// Stats
 	totalWrites   atomic.Int64
@@ -500,10 +506,9 @@ func NewWAL(dir string, cfg *WALConfig) (*WAL, error) {
 	}
 
 	w := &WAL{
-		config:   cfg,
-		file:     file,
-		writer:   bufio.NewWriterSize(file, 64*1024), // 64KB buffer
-		stopSync: make(chan struct{}),
+		config: cfg,
+		file:   file,
+		writer: bufio.NewWriterSize(file, 64*1024), // 64KB buffer
 		// D-07 subsystem-tag once: walLog inherits cfg.SlogLogger with
 		// subsystem=wal. Recovery, truncation, and corruption paths reuse it.
 		walLog: cfg.SlogLogger.With("subsystem", "wal"),
@@ -527,7 +532,9 @@ func NewWAL(dir string, cfg *WALConfig) (*WAL, error) {
 	// Start batch sync if configured
 	if cfg.SyncMode == "batch" && cfg.BatchSyncInterval > 0 {
 		w.syncTicker = time.NewTicker(cfg.BatchSyncInterval)
-		go w.batchSyncLoop()
+		if w.work.Enter() {
+			go w.batchSyncLoop()
+		}
 	}
 
 	return w, nil
@@ -568,11 +575,13 @@ func (w *WAL) loadActiveSegmentState() {
 
 // batchSyncLoop periodically syncs writes to disk.
 func (w *WAL) batchSyncLoop() {
+	defer w.work.Leave()
+	stop := w.work.Context().Done()
 	for {
 		select {
 		case <-w.syncTicker.C:
 			w.Sync()
-		case <-w.stopSync:
+		case <-stop:
 			return
 		}
 	}
@@ -615,7 +624,7 @@ func (w *WAL) AppendWithDatabaseReturningSeq(op OperationType, data interface{},
 		return 0, nil // WAL disabled, skip
 	}
 
-	if w.closed.Load() {
+	if w.work.Closing() {
 		return 0, ErrWALClosed
 	}
 
@@ -627,7 +636,7 @@ func (w *WAL) AppendWithDatabaseReturningSeq(op OperationType, data interface{},
 	// Entity-bearing records use their single lossless recovery representation.
 	dataBytes, err := marshalWALRecoveryPayload(dataBuf, data)
 	if err != nil {
-		return 0, fmt.Errorf("wal: failed to marshal data: %w", err)
+		return 0, &walRecordRejection{cause: fmt.Errorf("wal: failed to marshal data: %w", err)}
 	}
 
 	// Create entry
@@ -755,7 +764,7 @@ func (w *WAL) appendWithDatabaseForcedFlush(op OperationType, data interface{}, 
 	if !config.IsWALEnabled() {
 		return 0, nil
 	}
-	if w.closed.Load() {
+	if w.work.Closing() {
 		return 0, ErrWALClosed
 	}
 	if op != OpBufferedCommit {
@@ -854,7 +863,7 @@ func (w *WAL) appendWithDatabaseForcedFlush(op OperationType, data interface{}, 
 // bulk seed: batchSyncLoop's 100ms ticks used to block every Append
 // for the duration of each fsync.
 func (w *WAL) Sync() error {
-	if w.closed.Load() {
+	if w.work.Closing() {
 		return ErrWALClosed
 	}
 
@@ -1020,27 +1029,28 @@ func (w *WAL) Checkpoint() error {
 
 // Close closes the WAL, flushing all pending writes.
 func (w *WAL) Close() error {
-	// The closed flag and final handle release share the file owner. Epoch
+	// The seal and the final handle release share the file owner. Epoch
 	// sealing also owns mu and must never mistake a Close waiting here for
 	// an already flushed and closed handle.
 	w.mu.Lock()
-	defer w.mu.Unlock()
-	if w.closed.Swap(true) {
-		return nil // Already closed
-	}
-
-	// Stop sync goroutine
-	if w.syncTicker != nil {
+	if w.work.CloseAdmission() && w.syncTicker != nil {
 		w.syncTicker.Stop()
-		close(w.stopSync)
 	}
+	w.mu.Unlock()
+	// Every caller, first or repeated, joins the one stop: the sync loop
+	// returns, then the final sync and handle release run once.
+	w.work.BeginStop(w.closeFile)
+	return w.work.JoinStopped()
+}
 
-	// Final sync
-	if err := w.syncLocked(); err != nil {
-		// Log but continue closing
-	}
-
-	return w.file.Close()
+// closeFile is the WAL owner's dispose, after the sync loop returned.
+func (w *WAL) closeFile() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	syncErr := w.syncLocked()
+	closeErr := w.file.Close()
+	w.handleReleased = true
+	return compose.Outcomes(syncErr, closeErr)
 }
 
 // Stats returns current WAL statistics.
@@ -1061,7 +1071,7 @@ func (w *WAL) Stats() WALStats {
 		TotalSyncs:    w.totalSyncs.Load(),
 		LastSyncTime:  lastSync,
 		LastEntryTime: lastEntry,
-		Closed:        w.closed.Load(),
+		Closed:        w.work.Closing(),
 	}
 }
 
@@ -1298,8 +1308,12 @@ type Snapshot struct {
 
 // CreateSnapshot creates a point-in-time snapshot from the engine.
 func (w *WAL) CreateSnapshot(engine Engine) (*Snapshot, error) {
-	if w.closed.Load() {
+	if w.work.Closing() {
 		return nil, ErrWALClosed
+	}
+
+	if err := checkNativeSnapshotPublication(engine); err != nil {
+		return nil, err
 	}
 
 	// Get current sequence
@@ -1525,7 +1539,7 @@ func (m WALSnapshotMode) String() string {
 //	wal.ManageSnapshot(snapshot.Sequence, WALSnapshotTruncate)  // Reclaim disk space
 //	wal.ManageSnapshot(snapshot.Sequence, WALSnapshotRetention) // Retention only
 func (w *WAL) ManageSnapshot(snapshotSeq uint64, mode WALSnapshotMode) error {
-	if w.closed.Load() {
+	if w.work.Closing() {
 		return ErrWALClosed
 	}
 	if mode != WALSnapshotTruncate && mode != WALSnapshotRetention {
@@ -1539,7 +1553,7 @@ func (w *WAL) ManageSnapshot(snapshotSeq uint64, mode WALSnapshotMode) error {
 	defer w.mu.Unlock()
 	// Close publishes the closed state while holding the same lock. It may
 	// have won after the optimistic check above and before this acquisition.
-	if w.closed.Load() {
+	if w.work.Closing() {
 		return ErrWALClosed
 	}
 
@@ -2309,15 +2323,22 @@ func ReadWALEntriesAfter(path string, afterSeq uint64, scope WALReadScope) ([]WA
 // ReplayWALEntry applies a single WAL entry to the engine.
 // Uses the database name from the entry if present, otherwise wraps with default database.
 func ReplayWALEntry(engine Engine, entry WALEntry) error {
-	if entry.Operation != OpCheckpoint && entry.Operation != OpTxBegin && entry.Operation != OpTxCommit && entry.Operation != OpTxAbort {
+	switch entry.Operation {
+	case OpCheckpoint, OpTxBegin, OpTxCommit, OpTxAbort, OpUpdateEmbedding:
+		// Control records do not change graph state. Embedding audit records
+		// are regenerable, not semantic replay instructions.
+		return nil
+	}
+	{
 		// Retain engine state through provenance, import and physical apply.
 		// A lifetime lease permits delegated CRUD to acquire its own write
 		// barrier; holding that barrier here would risk recursive-read deadlock.
 		if b, ok := UnwrapEngine(engine).(*BadgerEngine); ok {
-			if _, err := b.beginHelperTxn(); err != nil {
+			_, err := b.beginHelperTxn()
+			if err != nil {
 				return err
 			}
-			defer b.txnWG.Done()
+			defer b.work.Leave()
 		}
 		if err := markRecoveryPropertyForeign(engine); err != nil {
 			return err
@@ -2358,7 +2379,7 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal node: %w", err)
 		}
-		_, err := namespacedEngine.CreateNode(data.Node)
+		_, err := namespacedEngine.CreateNode(context.Background(), data.Node)
 		return err
 
 	case OpUpdateNode:
@@ -2366,49 +2387,49 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal node: %w", err)
 		}
-		return namespacedEngine.UpdateNode(NodeUpdateRequest{After: data.Node})
+		return namespacedEngine.UpdateNode(context.Background(), NodeUpdateRequest{After: data.Node})
 
 	case OpDeleteNode:
 		var data WALDeleteData
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal delete: %w", err)
 		}
-		return namespacedEngine.DeleteNode(NodeID(data.ID))
+		return namespacedEngine.DeleteNode(context.Background(), NodeID(data.ID))
 
 	case OpCreateEdge:
 		var data WALEdgeData
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal edge: %w", err)
 		}
-		return namespacedEngine.CreateEdge(data.Edge)
+		return namespacedEngine.CreateEdge(context.Background(), data.Edge)
 
 	case OpUpdateEdge:
 		var data WALEdgeData
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal edge: %w", err)
 		}
-		return namespacedEngine.UpdateEdge(EdgeUpdateRequest{After: data.Edge})
+		return namespacedEngine.UpdateEdge(context.Background(), EdgeUpdateRequest{After: data.Edge})
 
 	case OpDeleteEdge:
 		var data WALDeleteData
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal delete: %w", err)
 		}
-		return namespacedEngine.DeleteEdge(EdgeID(data.ID))
+		return namespacedEngine.DeleteEdge(context.Background(), EdgeID(data.ID))
 
 	case OpBulkNodes:
 		var data WALBulkNodesData
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal bulk nodes: %w", err)
 		}
-		return namespacedEngine.BulkCreateNodes(data.Nodes)
+		return namespacedEngine.BulkCreateNodes(context.Background(), data.Nodes)
 
 	case OpBulkEdges:
 		var data WALBulkEdgesData
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal bulk edges: %w", err)
 		}
-		return namespacedEngine.BulkCreateEdges(data.Edges)
+		return namespacedEngine.BulkCreateEdges(context.Background(), data.Edges)
 
 	case OpBulkDeleteNodes:
 		var data WALBulkDeleteNodesData
@@ -2419,7 +2440,7 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 		for i, id := range data.IDs {
 			ids[i] = NodeID(id)
 		}
-		return namespacedEngine.BulkDeleteNodes(ids)
+		return namespacedEngine.BulkDeleteNodes(context.Background(), ids)
 
 	case OpBulkDeleteEdges:
 		var data WALBulkDeleteEdgesData
@@ -2430,18 +2451,19 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 		for i, id := range data.IDs {
 			ids[i] = EdgeID(id)
 		}
-		return namespacedEngine.BulkDeleteEdges(ids)
+		return namespacedEngine.BulkDeleteEdges(context.Background(), ids)
 
 	case OpBufferedCommit:
 		// A write-behind commit's full payload. Replay it through the same
 		// commit application path the flusher uses, so MVCC heads, ID
 		// counters, indexes and caches all land identically. Only
-		// BadgerEngine destinations support this; anything else skips.
+		// Native Badger destinations, including their canonical engine wrappers,
+		// support physical replay; other engines cannot materialize these keys.
 		data, err := decodeBufferedWALRecord(entry)
 		if err != nil {
 			return err
 		}
-		b, ok := baseEngine.(*BadgerEngine)
+		b, ok := UnwrapEngine(baseEngine).(*BadgerEngine)
 		if !ok || b == nil {
 			return fmt.Errorf("wal: buffered commit replay requires a BadgerEngine destination, got %T", baseEngine)
 		}
@@ -2453,15 +2475,6 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 			return err
 		}
 		return b.applyBufferedCommits([]bufferedCommit{c})
-
-	case OpCheckpoint:
-		// Checkpoints are markers, no action needed
-		return nil
-
-	case OpTxBegin, OpTxCommit, OpTxAbort:
-		// Transaction boundaries are markers handled at a higher level
-		// Individual replay doesn't need to process them
-		return nil
 
 	default:
 		return fmt.Errorf("wal: unknown operation: %s", entry.Operation)
@@ -2507,7 +2520,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if data.Node == nil {
 			return ErrNoUndoData
 		}
-		return namespacedEngine.DeleteNode(data.Node.ID)
+		return namespacedEngine.DeleteNode(context.Background(), data.Node.ID)
 
 	case OpUpdateNode:
 		// Undo update = restore old node
@@ -2518,7 +2531,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if data.OldNode == nil {
 			return ErrNoUndoData
 		}
-		return namespacedEngine.UpdateNode(NodeUpdateRequest{After: data.OldNode})
+		return namespacedEngine.UpdateNode(context.Background(), NodeUpdateRequest{After: data.OldNode})
 
 	case OpDeleteNode:
 		// Undo delete = recreate old node
@@ -2529,7 +2542,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if data.OldNode == nil {
 			return ErrNoUndoData
 		}
-		_, err := namespacedEngine.CreateNode(data.OldNode)
+		_, err := namespacedEngine.CreateNode(context.Background(), data.OldNode)
 		return err
 
 	case OpCreateEdge:
@@ -2541,7 +2554,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if data.Edge == nil {
 			return ErrNoUndoData
 		}
-		return namespacedEngine.DeleteEdge(data.Edge.ID)
+		return namespacedEngine.DeleteEdge(context.Background(), data.Edge.ID)
 
 	case OpUpdateEdge:
 		// Undo update = restore old edge
@@ -2552,7 +2565,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if data.OldEdge == nil {
 			return ErrNoUndoData
 		}
-		return namespacedEngine.UpdateEdge(EdgeUpdateRequest{After: data.OldEdge})
+		return namespacedEngine.UpdateEdge(context.Background(), EdgeUpdateRequest{After: data.OldEdge})
 
 	case OpDeleteEdge:
 		// Undo delete = recreate old edge
@@ -2563,7 +2576,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if data.OldEdge == nil {
 			return ErrNoUndoData
 		}
-		return namespacedEngine.CreateEdge(data.OldEdge)
+		return namespacedEngine.CreateEdge(context.Background(), data.OldEdge)
 
 	case OpBulkNodes:
 		// Undo bulk create = delete all
@@ -2575,7 +2588,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		for i, n := range data.Nodes {
 			ids[i] = n.ID
 		}
-		return engine.BulkDeleteNodes(ids)
+		return engine.BulkDeleteNodes(context.Background(), ids)
 
 	case OpBulkEdges:
 		// Undo bulk create = delete all
@@ -2587,7 +2600,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		for i, e := range data.Edges {
 			ids[i] = e.ID
 		}
-		return engine.BulkDeleteEdges(ids)
+		return engine.BulkDeleteEdges(context.Background(), ids)
 
 	case OpBulkDeleteNodes:
 		// Undo bulk delete = recreate all
@@ -2598,7 +2611,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if len(data.OldNodes) == 0 {
 			return ErrNoUndoData
 		}
-		return namespacedEngine.BulkCreateNodes(data.OldNodes)
+		return namespacedEngine.BulkCreateNodes(context.Background(), data.OldNodes)
 
 	case OpBulkDeleteEdges:
 		// Undo bulk delete = recreate all
@@ -2609,7 +2622,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		if len(data.OldEdges) == 0 {
 			return ErrNoUndoData
 		}
-		return namespacedEngine.BulkCreateEdges(data.OldEdges)
+		return namespacedEngine.BulkCreateEdges(context.Background(), data.OldEdges)
 
 	case OpCheckpoint, OpTxBegin, OpTxCommit, OpTxAbort, OpUpdateEmbedding:
 		// These don't need undo
@@ -2721,10 +2734,10 @@ func RecoverWithTransactions(walDir, snapshotPath string) (*MemoryEngine, *Trans
 			}
 			// Wrap engine with NamespacedEngine for snapshot restore (snapshot nodes have unprefixed IDs)
 			namespacedEngine := NewNamespacedEngine(engine, dbName)
-			if err := namespacedEngine.BulkCreateNodes(snapshot.Nodes); err != nil {
+			if err := namespacedEngine.BulkCreateNodes(context.Background(), snapshot.Nodes); err != nil {
 				return nil, result, fmt.Errorf("wal: failed to restore nodes: %w", err)
 			}
-			if err := namespacedEngine.BulkCreateEdges(snapshot.Edges); err != nil {
+			if err := namespacedEngine.BulkCreateEdges(context.Background(), snapshot.Edges); err != nil {
 				return nil, result, fmt.Errorf("wal: failed to restore edges: %w", err)
 			}
 		}
@@ -2986,10 +2999,10 @@ func RecoverFromWALWithResult(walDir, snapshotPath string) (*MemoryEngine, Repla
 				}
 
 				namespacedEngine := NewNamespacedEngine(engine, dbName)
-				if err := namespacedEngine.BulkCreateNodes(snapshot.Nodes); err != nil {
+				if err := namespacedEngine.BulkCreateNodes(context.Background(), snapshot.Nodes); err != nil {
 					return nil, result, fmt.Errorf("wal: failed to restore nodes: %w", err)
 				}
-				if err := namespacedEngine.BulkCreateEdges(snapshot.Edges); err != nil {
+				if err := namespacedEngine.BulkCreateEdges(context.Background(), snapshot.Edges); err != nil {
 					return nil, result, fmt.Errorf("wal: failed to restore edges: %w", err)
 				}
 			}
@@ -3033,7 +3046,7 @@ type engineSnapshotVisitor struct {
 }
 
 func (v engineSnapshotVisitor) VisitNode(node *Node) error {
-	_, err := v.engine.CreateNode(qualifyRecoverySnapshotNode(node))
+	_, err := v.engine.CreateNode(context.Background(), qualifyRecoverySnapshotNode(node))
 	if err != nil {
 		return fmt.Errorf("wal: failed to restore nodes: %w", err)
 	}
@@ -3041,7 +3054,7 @@ func (v engineSnapshotVisitor) VisitNode(node *Node) error {
 }
 
 func (v engineSnapshotVisitor) VisitEdge(edge *Edge) error {
-	if err := v.engine.CreateEdge(qualifyRecoverySnapshotEdge(edge)); err != nil {
+	if err := v.engine.CreateEdge(context.Background(), qualifyRecoverySnapshotEdge(edge)); err != nil {
 		return fmt.Errorf("wal: failed to restore edges: %w", err)
 	}
 	return nil

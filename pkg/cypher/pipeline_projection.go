@@ -46,24 +46,24 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 	// The clause is scanned with its keyword, which tells a keyword-named
 	// first item from a clause (WITH with WHERE with = 3, #894).
 	body := strings.TrimSpace(clause)
-	orderTerms := parseOrderByTerms(body)
+	orderTerms := parseOrderByTerms(ctx, body)
 	withSkip, withLimit := 0, -1
-	if skipIndex := topLevelKeywordIndex(body, "SKIP"); skipIndex >= 0 {
-		value, ok := e.evaluatePipelinePagination(ctx, pipelinePaginationExpression(body, "SKIP"), rows)
+	if skipIndex := topLevelKeywordIndex(ctx, body, "SKIP"); skipIndex >= 0 {
+		value, ok := e.evaluatePipelinePagination(ctx, pipelinePaginationExpression(ctx, body, "SKIP"), rows)
 		if !ok {
 			return nil, false
 		}
 		withSkip = value
 	}
-	if limitIndex := topLevelKeywordIndex(body, "LIMIT"); limitIndex >= 0 {
-		value, ok := e.evaluatePipelinePagination(ctx, pipelinePaginationExpression(body, "LIMIT"), rows)
+	if limitIndex := topLevelKeywordIndex(ctx, body, "LIMIT"); limitIndex >= 0 {
+		value, ok := e.evaluatePipelinePagination(ctx, pipelinePaginationExpression(ctx, body, "LIMIT"), rows)
 		if !ok {
 			return nil, false
 		}
 		withLimit = value
 	}
 	postWithWhere := ""
-	if whereIdx := topLevelKeywordIndex(body, "WHERE"); whereIdx >= 0 {
+	if whereIdx := topLevelKeywordIndex(ctx, body, "WHERE"); whereIdx >= 0 {
 		postWithWhere = strings.TrimSpace(body[whereIdx+len("WHERE"):])
 		body = strings.TrimSpace(body[:whereIdx])
 	}
@@ -76,7 +76,7 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 		windowedWhere, postWithWhere = postWithWhere, ""
 	}
 	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if index := topLevelKeywordIndex(body, keyword); index >= 0 {
+		if index := topLevelKeywordIndex(ctx, body, keyword); index >= 0 {
 			body = strings.TrimSpace(body[:index])
 		}
 	}
@@ -296,8 +296,8 @@ func (e *StorageExecutor) filterPipelineWindow(ctx context.Context, rows, scopes
 	return filtered
 }
 
-func pipelinePaginationExpression(body, keyword string) string {
-	index := topLevelKeywordIndex(body, keyword)
+func pipelinePaginationExpression(ctx context.Context, body, keyword string) string {
+	index := topLevelKeywordIndex(ctx, body, keyword)
 	if index < 0 {
 		return ""
 	}
@@ -305,7 +305,7 @@ func pipelinePaginationExpression(body, keyword string) string {
 	end := len(expression)
 	// WITH … SKIP / LIMIT n WHERE p: the WHERE isn't part of n.
 	for _, nextKeyword := range []string{"SKIP", "LIMIT", "WHERE"} {
-		if nextIndex := topLevelKeywordIndex(expression, nextKeyword); nextIndex >= 0 && nextIndex < end {
+		if nextIndex := topLevelKeywordIndex(ctx, expression, nextKeyword); nextIndex >= 0 && nextIndex < end {
 			end = nextIndex
 		}
 	}
@@ -870,7 +870,7 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 		// a projection's expression text as its value (count(*) in
 		// RETURN k, count(*) AS c ORDER BY count(*) DESC, k), as after an
 		// aggregating WITH.
-		orderTerms := parseOrderByTerms(modifiers)
+		orderTerms := parseOrderByTerms(ctx, modifiers)
 		if len(orderTerms) > 0 {
 			expressions := make([]string, len(projs))
 			for index, projection := range projs {
@@ -945,7 +945,7 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 
 	// ORDER BY and DISTINCT see the incoming row with the projection over
 	// it; the merged scope is built only when one of them needs it.
-	orderTerms := parseOrderByTerms(modifiers)
+	orderTerms := parseOrderByTerms(ctx, modifiers)
 	orderedExpressions := orderedProjectionExpressions(orderTerms, len(projs), func(index int) (string, string) {
 		return projs[index].expr, projs[index].alias
 	})
@@ -1121,7 +1121,7 @@ func (e *StorageExecutor) pipelineStreamReturn(ctx context.Context, stream *Resu
 		failure = getExpressionFailure(ctx)
 	}
 	if failure != nil {
-		stream.fail()
+		stream.fail(ctx)
 	}
 	buffered, streamed := stream.end()
 	switch {

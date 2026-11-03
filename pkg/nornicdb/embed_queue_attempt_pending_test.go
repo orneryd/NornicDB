@@ -1,15 +1,17 @@
 package nornicdb
 
 import (
-	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestEmbeddingAttemptCanonicalPending(t *testing.T) {
 	worker, queue, _ := nodeSaveRetryFixture(t, "whole", 2, 1)
 	require.Equal(t, 2, worker.PendingEmbeddingsCount())
-	node, _ := worker.claimNextNodeResult()
+	node, _, claimErr := worker.claimNextNodeResult()
+	require.NoError(t, claimErr)
 	require.NotNil(t, node)
 	// The same ID may also be restored to MAIN before its claim ends.
 	queue.AddToPendingEmbeddings(node.ID)

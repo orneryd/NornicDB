@@ -23,17 +23,17 @@ func TestHeimdallRelatedNodesProjectSuppressedTitle(t *testing.T) {
 	engine := storage.NewNamespacedEngine(be, "tenant")
 	old := time.Now().Add(-time.Hour)
 	for _, id := range []storage.NodeID{"a", "b"} {
-		_, err := engine.CreateNode(&storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]interface{}{"title": "private title"}, CreatedAt: old, UpdatedAt: old})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]interface{}{"title": "private title"}, CreatedAt: old, UpdatedAt: old})
 		require.NoError(t, err)
 	}
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "LINK"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "LINK"}))
 	be.SetDecayEnabled(true)
 	router := &heimdallDBRouter{}
 	related := router.getRelatedNodes(context.Background(), engine, "a", 1)
 	require.Len(t, related, 1)
 	require.Empty(t, related[0].Title)
 	require.Equal(t, "b", related[0].ID)
-	raw, err := engine.GetNode("b")
+	raw, err := engine.GetNode(t.Context(), "b")
 	require.NoError(t, err)
 	require.Equal(t, "private title", raw.Properties["title"])
 	// An already-owned REVEAL query preserves its own visibility without taking
@@ -50,13 +50,13 @@ func TestHeimdallRelatedNodesCapsSingleAdjacency(t *testing.T) {
 	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	engine := storage.NewNamespacedEngine(base, "related-cap")
-	_, err := engine.CreateNode(&storage.Node{ID: "root", Labels: []string{"Doc"}})
+	_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "root", Labels: []string{"Doc"}})
 	require.NoError(t, err)
 	for i := 0; i < 60; i++ {
 		id := storage.NodeID(fmt.Sprintf("neighbor-%02d", i))
-		_, err := engine.CreateNode(&storage.Node{ID: id, Labels: []string{"Doc"}})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"Doc"}})
 		require.NoError(t, err)
-		require.NoError(t, engine.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("edge-%02d", i)), StartNode: "root", EndNode: id, Type: "LINK"}))
+		require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: storage.EdgeID(fmt.Sprintf("edge-%02d", i)), StartNode: "root", EndNode: id, Type: "LINK"}))
 	}
 	router := &heimdallDBRouter{}
 	result := router.getRelatedNodes(context.Background(), engine, "root", 1)

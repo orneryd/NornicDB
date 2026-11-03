@@ -44,12 +44,12 @@ func TestRemoteQueryCredentialPersistence(t *testing.T) {
 			ref.URI += "&fixture_seal=" + secret + "&fixture_seal=" + secret + "#token=" + secret + "&token=" + secret + "&fixture_seal=" + secret
 			if legacy {
 				manager.databases["probe"] = &DatabaseInfo{Name: "probe", Type: "composite", Status: "online", Constituents: []ConstituentRef{ref}}
-				node, err := storage.NewNamespacedEngine(inner, "system").GetNode(storage.NodeID(metadataNodeID))
+				node, err := storage.NewNamespacedEngine(inner, "system").GetNode(t.Context(), storage.NodeID(metadataNodeID))
 				require.NoError(t, err)
 				data, err := json.Marshal(manager.databases)
 				require.NoError(t, err)
 				node.Properties["data"] = string(data)
-				require.NoError(t, storage.NewNamespacedEngine(inner, "system").UpdateNode(storage.NodeUpdateRequest{After: node}))
+				require.NoError(t, storage.NewNamespacedEngine(inner, "system").UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
 			} else {
 				require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "probe", []ConstituentRef{ref}))
 			}
@@ -66,7 +66,7 @@ func TestRemoteQueryCredentialPersistence(t *testing.T) {
 				require.NoError(t, err)
 				manager, err = NewDatabaseManager(t.Context(), inner, cfg)
 				require.NoError(t, err)
-				node, err := storage.NewNamespacedEngine(inner, "system").GetNode(storage.NodeID(metadataNodeID))
+				node, err := storage.NewNamespacedEngine(inner, "system").GetNode(t.Context(), storage.NodeID(metadataNodeID))
 				require.NoError(t, err)
 				if strings.Contains(node.Properties["data"].(string), secret) {
 					t.Error("persisted query contains synthetic credential")

@@ -1,5 +1,7 @@
 package storage
 
+import "context"
+
 // publicationConstraintView owns the rule metadata used to derive a physical
 // commit's dependencies. Capture it before batch assembly can take the commit
 // gate; late derivation then uses restored operation images without schema
@@ -29,15 +31,20 @@ type publicationConstraintRule struct {
 
 func (rule *publicationConstraintRule) empty() bool { return rule.kind == "" }
 
-func capturePublicationConstraintView(schema *SchemaManager) publicationConstraintView {
+func capturePublicationConstraintView(ctx context.Context, schema *SchemaManager) (publicationConstraintView, error) {
 	var view publicationConstraintView
 	if schema == nil {
-		return view
+		return view, nil
 	}
-	schema.mu.RLock()
+	if err := schema.mu.RLockContext(ctx); err != nil {
+		return publicationConstraintView{}, err
+	}
 	defer schema.mu.RUnlock()
 	nodeRules := len(schema.uniqueConstraints) > 0
 	for _, c := range schema.constraints {
+		if err := ctx.Err(); err != nil {
+			return publicationConstraintView{}, err
+		}
 		switch c.EffectiveEntityType() {
 		case ConstraintEntityNode:
 			if !nodeRules || len(c.Properties) != 1 || (c.Type != ConstraintUnique && c.Type != ConstraintNodeKey) {
@@ -58,7 +65,7 @@ func capturePublicationConstraintView(schema *SchemaManager) publicationConstrai
 			view.add(rule)
 		}
 	}
-	return view
+	return view, nil
 }
 
 func (v *publicationConstraintView) add(rule publicationConstraintRule) {

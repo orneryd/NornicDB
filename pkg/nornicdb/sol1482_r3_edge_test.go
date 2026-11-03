@@ -20,11 +20,11 @@ func TestSol1482R3DeferredEdgeDrain(t *testing.T) {
 				t.Cleanup(func() { _ = base.Close() })
 				store := storage.NewNamespacedEngine(base, "test")
 				for _, id := range []storage.NodeID{"a", "b"} {
-					_, err := store.CreateNode(&storage.Node{ID: id})
+					_, err := store.CreateNode(t.Context(), &storage.Node{ID: id})
 					require.NoError(t, err)
 				}
 				rel := &storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "CITES", Properties: map[string]any{"vec": []float32{1, 0}}}
-				require.NoError(t, store.CreateEdge(rel))
+				require.NoError(t, store.CreateEdge(t.Context(), rel))
 				svc := search.NewService(store, 2, nil)
 				t.Cleanup(func() { _ = svc.Close() })
 				if warm {
@@ -34,15 +34,15 @@ func TestSol1482R3DeferredEdgeDrain(t *testing.T) {
 				seedReservedSearchRefresh(entry, "r", search.RefreshRetry{Edge: entry.svc.ReserveEdgeMutation("r")})
 				_, stale := entry.drainPending()
 				rel.Properties["vec"] = []float32{0, 1}
-				require.NoError(t, store.UpdateEdge(storage.EdgeUpdateRequest{After: rel}))
-				require.NoError(t, svc.RefreshEdge("r"))
+				require.NoError(t, store.UpdateEdge(t.Context(), storage.EdgeUpdateRequest{After: rel}))
+				require.NoError(t, svc.RefreshEdge(t.Context(), "r"))
 				if remove {
-					require.NoError(t, store.DeleteEdge("r"))
+					require.NoError(t, store.DeleteEdge(t.Context(), "r"))
 					seedReservedSearchRefresh(entry, "r", search.RefreshRetry{Edge: entry.svc.ReserveEdgeMutation("r")})
 					_, newer := entry.drainPending()
-					require.NoError(t, svc.RefreshEdgeWithMutation(newer["r"]))
+					require.NoError(t, svc.RefreshEdgeWithMutation(t.Context(), newer["r"]))
 				}
-				require.NoError(t, svc.RefreshEdgeWithMutation(stale["r"]))
+				require.NoError(t, svc.RefreshEdgeWithMutation(t.Context(), stale["r"]))
 				hits, err := svc.VectorQueryRelationships(context.Background(), []float32{0, 1}, search.RelationshipVectorQuerySpec{Type: "CITES", Property: "vec", Limit: 1})
 				require.NoError(t, err)
 				if remove {
@@ -73,13 +73,13 @@ func TestSol1482R3EdgeEventsWithoutRelationshipText(t *testing.T) {
 	edge := edges[0]
 	require.True(t, svc.HasRelationshipVectorEntries("CITES", "vec"))
 	edge.Properties["vec"] = w
-	require.NoError(t, db.storage.UpdateEdge(storage.EdgeUpdateRequest{After: edge}))
+	require.NoError(t, db.storage.UpdateEdge(t.Context(), storage.EdgeUpdateRequest{After: edge}))
 	settleQueuedRefreshes()
 	hits, err := svc.VectorQueryRelationships(ctx, w, search.RelationshipVectorQuerySpec{Type: "CITES", Property: "vec", Limit: 1})
 	require.NoError(t, err)
 	require.Len(t, hits, 1)
 	require.InDelta(t, 1, hits[0].Score, 1e-6, "a storage update did not refresh the edge's vector while relationship text is off")
-	require.NoError(t, db.storage.DeleteEdge(edge.ID))
+	require.NoError(t, db.storage.DeleteEdge(t.Context(), edge.ID))
 	settleQueuedRefreshes()
 	require.False(t, svc.HasRelationshipVectorEntries("CITES", "vec"))
 }

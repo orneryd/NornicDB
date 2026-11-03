@@ -16,7 +16,7 @@ func TestUnwindCreatePureCreateDoesNotLabelScanExistingPopulation(t *testing.T) 
 	_, err := exec.Execute(ctx, "CREATE INDEX idx_doc_id FOR (n:Doc) ON (n.id)", nil)
 	require.NoError(t, err)
 	for i := 0; i < 64; i++ {
-		_, err := exec.storage.CreateNode(&storage.Node{
+		_, err := exec.storage.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("existing-%03d", i)),
 			Labels: []string{"Doc"},
 			Properties: map[string]any{
@@ -62,7 +62,7 @@ func TestUnwindMatchCreateSetFallbackUsesPropertyIndex(t *testing.T) {
 		require.NoError(t, err)
 	}
 	for i := 0; i < 96; i++ {
-		_, err := exec.storage.CreateNode(&storage.Node{
+		_, err := exec.storage.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("doc-%03d", i)),
 			Labels: []string{"Doc"},
 			Properties: map[string]any{
@@ -71,7 +71,7 @@ func TestUnwindMatchCreateSetFallbackUsesPropertyIndex(t *testing.T) {
 			},
 		})
 		require.NoError(t, err)
-		_, err = exec.storage.CreateNode(&storage.Node{
+		_, err = exec.storage.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("bucket-%03d", i)),
 			Labels: []string{"Bucket"},
 			Properties: map[string]any{
@@ -117,7 +117,7 @@ func TestIndexedMatchPropertyMapExpressionValueUsesIndex(t *testing.T) {
 	_, err := exec.Execute(ctx, "CREATE INDEX idx_doc_id FOR (n:Doc) ON (n.id)", nil)
 	require.NoError(t, err)
 	for i := 0; i < 128; i++ {
-		_, err := exec.storage.CreateNode(&storage.Node{
+		_, err := exec.storage.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("doc-%03d", i)),
 			Labels: []string{"Doc"},
 			Properties: map[string]any{
@@ -147,7 +147,7 @@ func TestIndexedMatchWhereExpressionValueUsesIndex(t *testing.T) {
 	_, err := exec.Execute(ctx, "CREATE INDEX idx_doc_id FOR (n:Doc) ON (n.id)", nil)
 	require.NoError(t, err)
 	for i := 0; i < 128; i++ {
-		_, err := exec.storage.CreateNode(&storage.Node{
+		_, err := exec.storage.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("doc-%03d", i)),
 			Labels: []string{"Doc"},
 			Properties: map[string]any{
@@ -177,7 +177,7 @@ func TestUnwindIndexedMatchExpressionValueUsesIndex(t *testing.T) {
 	_, err := exec.Execute(ctx, "CREATE INDEX idx_doc_id FOR (n:Doc) ON (n.id)", nil)
 	require.NoError(t, err)
 	for i := 0; i < 128; i++ {
-		_, err := exec.storage.CreateNode(&storage.Node{
+		_, err := exec.storage.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("doc-%03d", i)),
 			Labels: []string{"Doc"},
 			Properties: map[string]any{
@@ -212,7 +212,7 @@ func TestUnwindMultiMatchCreateBatchMapExpressionLookupUsesIndex(t *testing.T) {
 	_, err := exec.Execute(ctx, "CREATE INDEX idx_doc_id FOR (n:Doc) ON (n.id)", nil)
 	require.NoError(t, err)
 	for i := 0; i < 32; i++ {
-		_, err := exec.storage.CreateNode(&storage.Node{
+		_, err := exec.storage.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("doc-%03d", i)),
 			Labels: []string{"Doc"},
 			Properties: map[string]any{
@@ -251,7 +251,7 @@ func TestUnwindMultiMatchCreateBatchScalarExpressionLookupUsesIndex(t *testing.T
 	_, err := exec.Execute(ctx, "CREATE INDEX idx_doc_id FOR (n:Doc) ON (n.id)", nil)
 	require.NoError(t, err)
 	for i := 0; i < 32; i++ {
-		_, err := exec.storage.CreateNode(&storage.Node{
+		_, err := exec.storage.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("doc-%03d", i)),
 			Labels: []string{"Doc"},
 			Properties: map[string]any{
@@ -290,7 +290,7 @@ func TestUnwindRelationshipMergeBatchExpressionLookupUsesIndex(t *testing.T) {
 	_, err := exec.Execute(ctx, "CREATE INDEX idx_component_key FOR (n:Component) ON (n.key)", nil)
 	require.NoError(t, err)
 	for i := 0; i < 32; i++ {
-		_, err := exec.storage.CreateNode(&storage.Node{
+		_, err := exec.storage.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("component-%03d", i)),
 			Labels: []string{"Component"},
 			Properties: map[string]any{
@@ -339,7 +339,7 @@ func BenchmarkIndexedMatchPropertyMapExpressionValue(b *testing.B) {
 	_, err := exec.Execute(ctx, "CREATE INDEX idx_doc_id FOR (n:Doc) ON (n.id)", nil)
 	require.NoError(b, err)
 	for i := 0; i < 4096; i++ {
-		_, err := exec.storage.CreateNode(&storage.Node{
+		_, err := exec.storage.CreateNode(b.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("doc-%05d", i)),
 			Labels: []string{"Doc"},
 			Properties: map[string]any{
@@ -375,7 +375,7 @@ func BenchmarkUnwindMultiMatchCreateBatchExpressionLookup(b *testing.B) {
 	_, err := exec.Execute(ctx, "CREATE INDEX idx_doc_id FOR (n:Doc) ON (n.id)", nil)
 	require.NoError(b, err)
 	for i := 0; i < 1024; i++ {
-		_, err := exec.storage.CreateNode(&storage.Node{
+		_, err := exec.storage.CreateNode(b.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("doc-%05d", i)),
 			Labels: []string{"Doc"},
 			Properties: map[string]any{
@@ -422,7 +422,7 @@ func BenchmarkUnwindRelationshipMergeBatchExpressionLookup(b *testing.B) {
 	_, err := exec.Execute(ctx, "CREATE INDEX idx_component_key FOR (n:Component) ON (n.key)", nil)
 	require.NoError(b, err)
 	for i := 0; i < 1024; i++ {
-		_, err := exec.storage.CreateNode(&storage.Node{
+		_, err := exec.storage.CreateNode(b.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("component-%05d", i)),
 			Labels: []string{"Component"},
 			Properties: map[string]any{

@@ -80,15 +80,15 @@ func TestSnapshotTranscoderStoredStreamDifferential(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	for _, id := range []NodeID{"test:a", "test:b", "other:a", "other:b"} {
-		_, err := engine.CreateNode(&Node{ID: id})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: id})
 		require.NoError(t, err)
 	}
 	corpus := snapshotTranscoderCorpus()
 	for i, value := range corpus {
-		require.NoError(t, engine.CreateEdge(&Edge{ID: EdgeID(fmt.Sprintf("test:e-%03d", i)), StartNode: "test:a", EndNode: "test:b", Type: "CALLS",
+		require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: EdgeID(fmt.Sprintf("test:e-%03d", i)), StartNode: "test:a", EndNode: "test:b", Type: "CALLS",
 			Properties: map[string]any{"value": value}, VisibilitySuppressed: i%3 == 0}))
 	}
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "other:e", StartNode: "other:a", EndNode: "other:b", Type: "CALLS", VisibilitySuppressed: true}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "other:e", StartNode: "other:a", EndNode: "other:b", Type: "CALLS", VisibilitySuppressed: true}))
 	for name, source := range map[string]Engine{
 		"badger": engine, "wal": NewWALEngine(engine, nil),
 		"transparent": snapshotTransparentEngine{StreamingEngine: engine},
@@ -129,20 +129,20 @@ func TestSnapshotTranscoderStoredStreamDifferential(t *testing.T) {
 
 func TestSnapshotTranscoderOverlayDifferential(t *testing.T) {
 	engine := snapshotOverlayFixture(t)
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	for _, id := range []EdgeID{"test:stable-r", "test:gone-r"} {
-		require.NoError(t, engine.CreateEdge(&Edge{ID: id, StartNode: "test:a", EndNode: "test:b", Type: "REL", VisibilitySuppressed: true, Properties: map[string]any{"v": int64(2)}}))
+		require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: id, StartNode: "test:a", EndNode: "test:b", Type: "REL", VisibilitySuppressed: true, Properties: map[string]any{"v": int64(2)}}))
 	}
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	// The stored-read owner must keep an untouched committed body, shadow an
 	// updated body, omit an acknowledged deletion, and include a pending edge.
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "REL", VisibilitySuppressed: true, Properties: map[string]any{"v": int64(3)}}}))
-	require.NoError(t, tx.CreateEdge(&Edge{ID: "test:new-r", StartNode: "test:a", EndNode: "test:b", Type: "REL", VisibilitySuppressed: true}))
-	require.NoError(t, tx.DeleteEdge("test:gone-r"))
+	require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "REL", VisibilitySuppressed: true, Properties: map[string]any{"v": int64(3)}}}))
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:new-r", StartNode: "test:a", EndNode: "test:b", Type: "REL", VisibilitySuppressed: true}))
+	require.NoError(t, tx.DeleteEdge(t.Context(), "test:gone-r"))
 	require.NoError(t, tx.Commit())
 	snapshotStreamDifferential(t, engine, 3)
 }

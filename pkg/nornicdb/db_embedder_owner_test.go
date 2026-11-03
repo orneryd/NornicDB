@@ -41,7 +41,7 @@ func TestDB_EmbedderOwnershipReleaseIsIdempotent(t *testing.T) {
 	require.True(t, accepted)
 	require.NoError(t, release())
 	require.NoError(t, release())
-	require.Empty(t, db.ownedEmbedders, "failed attempts must not accumulate during retries")
+	require.Empty(t, db.ownedProviders, "failed attempts must not accumulate during retries")
 	require.NoError(t, db.Close())
 	require.EqualValues(t, 1, e.closes.Load())
 }
@@ -62,14 +62,14 @@ func TestDB_EmbedderOwnershipClosesAfterUsersAndReturnsError(t *testing.T) {
 	db, err := Open("", nil)
 	require.NoError(t, err)
 	var joined atomic.Bool
-	require.True(t, db.RunBackgroundTask(func() {
+	require.True(t, db.RunBackgroundTask(func(context.Context) {
 		<-db.LifetimeContext().Done()
 		joined.Store(true)
 	}))
 	closeErr := errors.New("model release failed")
 	e := &orderedClosingEmbedder{err: closeErr, check: func() {
 		require.True(t, joined.Load(), "initialization must join before releasing models")
-		require.True(t, db.GetEmbedQueue().closed.Load(), "queue must stop before releasing models")
+		require.True(t, db.GetEmbedQueue().work.Closing(), "queue must stop before releasing models")
 	}}
 	e.dims = 4
 	require.True(t, db.SetEmbedder(e))

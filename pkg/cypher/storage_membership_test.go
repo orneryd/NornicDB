@@ -158,6 +158,11 @@ func TestStorageMembershipConstructions(t *testing.T) {
 		}
 		_, err = nested.Execute(innerCtx, query, map[string]interface{}{"body": write})
 		nestedError = err
+		if form == "use" {
+			// Returning from a child is not statement completion: the enclosing
+			// owner must retain pending effects until it commits or rolls back.
+			require.Zero(t, f.writes(t, "one", run), "child USE must not publish before its callback returns")
+		}
 		return &ExecuteResult{Columns: []string{"v"}, Rows: [][]interface{}{{int64(1)}}}, err
 	}))
 	require.NoError(t, RegisterUserProcedure(ProcedureSpec{
@@ -187,7 +192,7 @@ func TestStorageMembershipConstructions(t *testing.T) {
 							e := NewStorageExecutor(store)
 							e.SetDatabaseManager(f.exec.dbManager)
 							if composite {
-								e = f.compositeSession(t)
+								e = newCompositeTestExecutor(t, f.mgr, "comp", f.exec.dbManager)
 							}
 							if explicit {
 								_, err = e.Execute(ctx, "BEGIN", nil)
@@ -202,7 +207,9 @@ func TestStorageMembershipConstructions(t *testing.T) {
 							}
 							_, execErr := e.Execute(ctx, query, nil)
 							control := statement == "script" || statement == "case_script" || statement == "begin" || statement == "commit" || statement == "rollback"
-							rejected := control || statement == "use" && !composite
+							// Explicit native transactions remain single-database; native
+							// autocommit uses the shared coordinator for child selection.
+							rejected := control || statement == "use" && explicit && !composite
 							if explicit {
 								end := "COMMIT"
 								if completion == "discard" || execErr != nil {
@@ -288,7 +295,7 @@ func TestStorageMembershipIssuedViews(t *testing.T) {
 						original = NewStorageExecutor(store)
 						original.SetDatabaseManager(f.exec.dbManager)
 						if source == "composite_root" {
-							original = f.compositeSession(t)
+							original = newCompositeTestExecutor(t, f.mgr, "comp", f.exec.dbManager)
 						}
 						_, err = original.Execute(ctx, "BEGIN", nil)
 						require.NoError(t, err)
@@ -353,9 +360,9 @@ func TestStorageMembershipIssuedViews(t *testing.T) {
 						}
 						_, err = original.Execute(ctx, command, nil)
 					} else if keep {
-						err = coordinator.Commit(nil, nil)
+						err = coordinator.Commit(fabric.TerminalContexts{Commit: ctx, Cleanup: ctx}, nil, nil)
 					} else {
-						err = coordinator.Rollback(nil)
+						err = coordinator.Rollback(ctx, nil)
 					}
 					require.NoError(t, err)
 					want := int64(0)
@@ -390,7 +397,7 @@ func TestStorageMembershipStorageIsAuthoritative(t *testing.T) {
 	require.NoError(t, err)
 	_, err = right.Execute(ctx, "COMMIT", nil)
 	require.NoError(t, err)
-	count, err := base.NodeCount()
+	count, err := base.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.Zero(t, count)
 	_, err = nested.Execute(ctx, "BEGIN CREATE (:Escaped) COMMIT", nil)
@@ -422,7 +429,7 @@ func TestStorageMembershipBatchControl(t *testing.T) {
 			}
 			_, err = owner.Execute(ctx, "ROLLBACK", nil)
 			require.NoError(t, err)
-			count, err := base.NodeCount()
+			count, err := base.NodeCount(t.Context())
 			require.NoError(t, err)
 			require.Zero(t, count)
 		})
@@ -441,7 +448,7 @@ func TestStorageMembershipControllerFailure(t *testing.T) {
 	require.ErrorContains(t, err, "owned")
 	_, err = owner.Execute(ctx, "COMMIT", nil)
 	require.ErrorContains(t, err, "was rolled back")
-	count, err := base.NodeCount()
+	count, err := base.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.Zero(t, count)
 }

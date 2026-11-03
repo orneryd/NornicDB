@@ -17,8 +17,8 @@ import (
 // horizon before execution. This is deliberately independent of row count:
 // an undefined variable is a compile-time error even when MATCH yields no rows.
 func (e *StorageExecutor) validateSetSemanticScopes(ctx context.Context, cypher string, imports ...string) error {
-	if !containsKeywordOutsideStrings(cypher, "SET") && !containsKeywordOutsideStrings(cypher, "REMOVE") &&
-		!containsKeywordOutsideStrings(cypher, "DELETE") && !containsKeywordOutsideStrings(cypher, "FOREACH") {
+	if !containsKeywordOutsideStrings(ctx, cypher, "SET") && !containsKeywordOutsideStrings(ctx, cypher, "REMOVE") &&
+		!containsKeywordOutsideStrings(ctx, cypher, "DELETE") && !containsKeywordOutsideStrings(ctx, cypher, "FOREACH") {
 		return nil
 	}
 	clauses, ok := splitPipelineClauses(ctx, cypher)
@@ -54,11 +54,11 @@ func (e *StorageExecutor) validateMutationClauseScopes(ctx context.Context, clau
 				return err
 			}
 		case pipelineClauseUnwind:
-			if alias := unwindBindingName(clause.text); alias != "" {
+			if alias := unwindBindingName(ctx, clause.text); alias != "" {
 				scope.bind(alias)
 			}
 		case pipelineClauseSet:
-			if err := e.validateSetClauseScope(scope, clause.text); err != nil {
+			if err := e.validateSetClauseScope(ctx, scope, clause.text); err != nil {
 				return err
 			}
 		case pipelineClauseForeach:
@@ -75,7 +75,7 @@ func (e *StorageExecutor) validateMutationClauseScopes(ctx context.Context, clau
 				return err
 			}
 		case pipelineClauseRemove:
-			if err := validateRemoveClauseScope(scope, clause.text); err != nil {
+			if err := validateRemoveClauseScope(ctx, scope, clause.text); err != nil {
 				return err
 			}
 		case pipelineClauseDelete:
@@ -105,7 +105,7 @@ func pipelineClauseKeyword(kind pipelineClauseKind) string {
 // m:$(e)) whose variable is not bound, as SET does and as Neo4j does
 // ("Variable `m` not defined"), and checks the expressions of its dynamic
 // keys and labels like a SET value's (validateWriteExpressionScope).
-func validateRemoveClauseScope(scope *semanticBindingScope, clause string) error {
+func validateRemoveClauseScope(ctx context.Context, scope *semanticBindingScope, clause string) error {
 	items, err := parseRemoveItems(strings.TrimSpace(clause[len("REMOVE"):]))
 	if err != nil {
 		return err
@@ -124,7 +124,7 @@ func validateRemoveClauseScope(scope *semanticBindingScope, clause string) error
 			}
 		}
 		for _, expression := range expressions {
-			if err := validateWriteExpressionScope(expression, scope); err != nil {
+			if err := validateWriteExpressionScope(ctx, expression, scope); err != nil {
 				return err
 			}
 		}
@@ -233,7 +233,7 @@ func deleteUndefinedVariableError(expression string) error {
 // shared by every route (MATCH, CREATE, MERGE, pipeline, fast paths): the
 // assignment shapes (validatePipelineSetAssignments), bound target and value
 // variables, and known functions in the assigned values.
-func (e *StorageExecutor) validateSetClauseScope(scope *semanticBindingScope, clause string) error {
+func (e *StorageExecutor) validateSetClauseScope(ctx context.Context, scope *semanticBindingScope, clause string) error {
 	body := strings.TrimSpace(clause[len("SET"):])
 	assignments := splitSetAssignments(body)
 	if err := validatePipelineSetAssignments(assignments); err != nil {
@@ -254,7 +254,7 @@ func (e *StorageExecutor) validateSetClauseScope(scope *semanticBindingScope, cl
 				if item.expression == "" {
 					continue
 				}
-				if err := validateWriteExpressionScope(item.expression, scope); err != nil {
+				if err := validateWriteExpressionScope(ctx, item.expression, scope); err != nil {
 					return err
 				}
 			}
@@ -268,17 +268,17 @@ func (e *StorageExecutor) validateSetClauseScope(scope *semanticBindingScope, cl
 		}
 		if operator == "[]=" {
 			// x[key] = v: the key is an expression too.
-			if err := validateWriteExpressionScope(property, scope); err != nil {
+			if err := validateWriteExpressionScope(ctx, property, scope); err != nil {
 				return err
 			}
 		}
-		if err := validateWriteExpressionScope(expression, scope); err != nil {
+		if err := validateWriteExpressionScope(ctx, expression, scope); err != nil {
 			return err
 		}
 		// A literal source here, in item order; the shared clause validator
 		// checks every source with the statement's types
 		// (staticSetItemsTokenError).
-		if err := setSourceTypeError(property, operator, (staticTypeScope{}).operandOf(expression)); err != nil {
+		if err := setSourceTypeError(property, operator, (staticTypeScope{}).operandOf(ctx, expression)); err != nil {
 			return err
 		}
 	}
@@ -288,18 +288,18 @@ func (e *StorageExecutor) validateSetClauseScope(scope *semanticBindingScope, cl
 // validateWriteExpressionScope checks an expression a SET or REMOVE item
 // evaluates (a value, a dynamic key or label): complete operands and bound
 // variables. Its functions are checked with the statement's.
-func validateWriteExpressionScope(expression string, scope *semanticBindingScope) error {
+func validateWriteExpressionScope(ctx context.Context, expression string, scope *semanticBindingScope) error {
 	if err := validateExpressionOperandCompleteness(expression); err != nil {
 		return err
 	}
-	if missing := firstUndefinedSetExpressionVariable(expression, scope); missing != "" {
+	if missing := firstUndefinedSetExpressionVariable(ctx, expression, scope); missing != "" {
 		return createUndefinedVariableError(missing)
 	}
 	return nil
 }
 
-func firstUndefinedSetExpressionVariable(expression string, scope *semanticBindingScope) string {
-	for _, name := range expressionFreeVariables(expression) {
+func firstUndefinedSetExpressionVariable(ctx context.Context, expression string, scope *semanticBindingScope) string {
+	for _, name := range expressionFreeVariables(ctx, expression) {
 		if _, exists := scope.names[name]; !exists {
 			return name
 		}
@@ -313,7 +313,7 @@ func firstUndefinedSetExpressionVariable(expression string, scope *semanticBindi
 // or names the expression binds itself (list comprehension iterators, reduce /
 // all / any / none / single).
 // It is the one reference scanner for the static SET and CREATE checks.
-func expressionFreeVariables(expression string) []string {
+func expressionFreeVariables(ctx context.Context, expression string) []string {
 	expression = maskTypePredicateTypes(maskPathFunctionCalls(expression))
 	// Both maskers blank in place: offsets are the expression's.
 	locals := newLocalReader(expression)
@@ -329,11 +329,11 @@ func expressionFreeVariables(expression string) []string {
 			if closing := findMatchingBracket(expression, index); closing >= 0 {
 				if pattern, projection, comprehension := splitPatternComprehension(expression[index : closing+1]); comprehension {
 					bindings := make(matchSemanticScope)
-					addMatchPatternBindingKinds(bindings, pattern)
-					if where := topLevelKeywordIndex(pattern, "WHERE"); where >= 0 {
+					addMatchPatternBindingKinds(ctx, bindings, pattern)
+					if where := topLevelKeywordIndex(ctx, pattern, "WHERE"); where >= 0 {
 						projection += ", " + pattern[where+len("WHERE"):]
 					}
-					for _, reference := range expressionFreeVariables(projection) {
+					for _, reference := range expressionFreeVariables(ctx, projection) {
 						if _, bound := bindings[reference]; bound {
 							continue
 						}
@@ -357,7 +357,7 @@ func expressionFreeVariables(expression string) []string {
 			// are not allowed to introduce new variables").
 			if chainEnd, chain := relationshipChainEnd(expression, index, len(expression)); chain {
 				bindings := make(matchSemanticScope)
-				addMatchPatternBindingKinds(bindings, expression[index:chainEnd])
+				addMatchPatternBindingKinds(ctx, bindings, expression[index:chainEnd])
 				references := make([]string, 0, len(bindings))
 				for reference := range bindings {
 					references = append(references, reference)
@@ -396,7 +396,7 @@ func expressionFreeVariables(expression string) []string {
 			open := skipSpaces(expression, name.End)
 			if closing := findMatchingParen(expression, open); closing >= 0 {
 				inner := expression[open+1 : closing]
-				parameters, grammar := trimFromArguments(inner)
+				parameters, grammar := trimFromArguments(ctx, inner)
 				if upper == "NORMALIZE" {
 					parameters = splitTopLevelComma(inner)
 					grammar = false
@@ -406,7 +406,7 @@ func expressionFreeVariables(expression string) []string {
 				}
 				if grammar {
 					for _, parameter := range parameters {
-						for _, reference := range expressionFreeVariables(parameter) {
+						for _, reference := range expressionFreeVariables(ctx, parameter) {
 							if !locals.shadows(reference, open) {
 								names = append(names, reference)
 							}

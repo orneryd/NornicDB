@@ -2,6 +2,7 @@
 package auth
 
 import (
+	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"testing"
@@ -67,7 +68,7 @@ func TestCreateUser(t *testing.T) {
 	auth := newTestAuthenticator(t)
 
 	// Create first user
-	user, err := auth.CreateUser("testuser", "password123", []Role{RoleEditor})
+	user, err := auth.CreateUser(context.Background(), "testuser", "password123", []Role{RoleEditor})
 	if err != nil {
 		t.Fatalf("CreateUser() error = %v", err)
 	}
@@ -82,19 +83,19 @@ func TestCreateUser(t *testing.T) {
 	}
 
 	// Try to create duplicate
-	_, err = auth.CreateUser("testuser", "password456", nil)
+	_, err = auth.CreateUser(context.Background(), "testuser", "password456", nil)
 	if err != ErrUserExists {
 		t.Errorf("expected ErrUserExists, got %v", err)
 	}
 
 	// Password too short
-	_, err = auth.CreateUser("shortpass", "short", nil)
+	_, err = auth.CreateUser(context.Background(), "shortpass", "short", nil)
 	if err == nil || !strings.Contains(err.Error(), "minimum") {
 		t.Errorf("expected password length error, got %v", err)
 	}
 
 	// Default role when none specified
-	user2, err := auth.CreateUser("defaultrole", "password123", nil)
+	user2, err := auth.CreateUser(context.Background(), "defaultrole", "password123", nil)
 	if err != nil {
 		t.Fatalf("CreateUser() error = %v", err)
 	}
@@ -107,13 +108,13 @@ func TestAuthenticate(t *testing.T) {
 	auth := newTestAuthenticator(t)
 
 	// Create test user
-	_, err := auth.CreateUser("testuser", "password123", []Role{RoleAdmin})
+	_, err := auth.CreateUser(context.Background(), "testuser", "password123", []Role{RoleAdmin})
 	if err != nil {
 		t.Fatalf("CreateUser() error = %v", err)
 	}
 
 	// Successful authentication
-	token, user, err := auth.Authenticate("testuser", "password123", "127.0.0.1", "TestAgent")
+	token, user, err := auth.Authenticate(context.Background(), "testuser", "password123", "127.0.0.1", "TestAgent")
 	if err != nil {
 		t.Fatalf("Authenticate() error = %v", err)
 	}
@@ -128,13 +129,13 @@ func TestAuthenticate(t *testing.T) {
 	}
 
 	// Wrong password
-	_, _, err = auth.Authenticate("testuser", "wrongpassword", "127.0.0.1", "TestAgent")
+	_, _, err = auth.Authenticate(context.Background(), "testuser", "wrongpassword", "127.0.0.1", "TestAgent")
 	if err != ErrInvalidCredentials {
 		t.Errorf("expected ErrInvalidCredentials, got %v", err)
 	}
 
 	// Non-existent user
-	_, _, err = auth.Authenticate("nonexistent", "password123", "127.0.0.1", "TestAgent")
+	_, _, err = auth.Authenticate(context.Background(), "nonexistent", "password123", "127.0.0.1", "TestAgent")
 	if err != ErrInvalidCredentials {
 		t.Errorf("expected ErrInvalidCredentials, got %v", err)
 	}
@@ -152,12 +153,12 @@ func TestAuthenticateWithExpiry(t *testing.T) {
 		t.Fatalf("NewAuthenticator() error = %v", err)
 	}
 
-	_, err = auth.CreateUser("testuser", "password123", []Role{RoleViewer})
+	_, err = auth.CreateUser(context.Background(), "testuser", "password123", []Role{RoleViewer})
 	if err != nil {
 		t.Fatalf("CreateUser() error = %v", err)
 	}
 
-	token, _, err := auth.Authenticate("testuser", "password123", "", "")
+	token, _, err := auth.Authenticate(context.Background(), "testuser", "password123", "", "")
 	if err != nil {
 		t.Fatalf("Authenticate() error = %v", err)
 	}
@@ -181,32 +182,32 @@ func TestAccountLockout(t *testing.T) {
 		t.Fatalf("NewAuthenticator() error = %v", err)
 	}
 
-	_, err = auth.CreateUser("locktest", "password123", nil)
+	_, err = auth.CreateUser(context.Background(), "locktest", "password123", nil)
 	if err != nil {
 		t.Fatalf("CreateUser() error = %v", err)
 	}
 
 	// Fail 3 times
 	for i := 0; i < 3; i++ {
-		_, _, err = auth.Authenticate("locktest", "wrongpassword", "", "")
+		_, _, err = auth.Authenticate(context.Background(), "locktest", "wrongpassword", "", "")
 		if err != ErrInvalidCredentials {
 			t.Fatalf("attempt %d: expected ErrInvalidCredentials, got %v", i+1, err)
 		}
 	}
 
 	// 4th attempt should be locked
-	_, _, err = auth.Authenticate("locktest", "password123", "", "") // Even correct password
+	_, _, err = auth.Authenticate(context.Background(), "locktest", "password123", "", "") // Even correct password
 	if err != ErrAccountLocked {
 		t.Errorf("expected ErrAccountLocked, got %v", err)
 	}
 
 	// Unlock user
-	if err := auth.ChangeUserState("locktest", UserUnlock); err != nil {
+	if err := auth.ChangeUserState(context.Background(), "locktest", UserUnlock); err != nil {
 		t.Fatalf("UnlockUser() error = %v", err)
 	}
 
 	// Should work now
-	_, _, err = auth.Authenticate("locktest", "password123", "", "")
+	_, _, err = auth.Authenticate(context.Background(), "locktest", "password123", "", "")
 	if err != nil {
 		t.Errorf("expected successful auth after unlock, got %v", err)
 	}
@@ -215,29 +216,29 @@ func TestAccountLockout(t *testing.T) {
 func TestDisabledUser(t *testing.T) {
 	auth := newTestAuthenticator(t)
 
-	_, err := auth.CreateUser("disabletest", "password123", nil)
+	_, err := auth.CreateUser(context.Background(), "disabletest", "password123", nil)
 	if err != nil {
 		t.Fatalf("CreateUser() error = %v", err)
 	}
 
 	// Disable user
-	if err := auth.ChangeUserState("disabletest", UserDisable); err != nil {
+	if err := auth.ChangeUserState(context.Background(), "disabletest", UserDisable); err != nil {
 		t.Fatalf("DisableUser() error = %v", err)
 	}
 
 	// Should not be able to authenticate
-	_, _, err = auth.Authenticate("disabletest", "password123", "", "")
+	_, _, err = auth.Authenticate(context.Background(), "disabletest", "password123", "", "")
 	if err != ErrInvalidCredentials {
 		t.Errorf("expected ErrInvalidCredentials for disabled user, got %v", err)
 	}
 
 	// Re-enable
-	if err := auth.ChangeUserState("disabletest", UserEnable); err != nil {
+	if err := auth.ChangeUserState(context.Background(), "disabletest", UserEnable); err != nil {
 		t.Fatalf("EnableUser() error = %v", err)
 	}
 
 	// Should work now
-	_, _, err = auth.Authenticate("disabletest", "password123", "", "")
+	_, _, err = auth.Authenticate(context.Background(), "disabletest", "password123", "", "")
 	if err != nil {
 		t.Errorf("expected successful auth after enable, got %v", err)
 	}
@@ -246,12 +247,12 @@ func TestDisabledUser(t *testing.T) {
 func TestValidateToken(t *testing.T) {
 	auth := newTestAuthenticator(t)
 
-	_, err := auth.CreateUser("tokentest", "password123", []Role{RoleAdmin, RoleEditor})
+	_, err := auth.CreateUser(context.Background(), "tokentest", "password123", []Role{RoleAdmin, RoleEditor})
 	if err != nil {
 		t.Fatalf("CreateUser() error = %v", err)
 	}
 
-	tokenResp, _, err := auth.Authenticate("tokentest", "password123", "", "")
+	tokenResp, _, err := auth.Authenticate(context.Background(), "tokentest", "password123", "", "")
 	if err != nil {
 		t.Fatalf("Authenticate() error = %v", err)
 	}
@@ -303,12 +304,12 @@ func TestTokenExpiration(t *testing.T) {
 		t.Fatalf("NewAuthenticator() error = %v", err)
 	}
 
-	_, err = auth.CreateUser("expiretest", "password123", nil)
+	_, err = auth.CreateUser(context.Background(), "expiretest", "password123", nil)
 	if err != nil {
 		t.Fatalf("CreateUser() error = %v", err)
 	}
 
-	tokenResp, _, err := auth.Authenticate("expiretest", "password123", "", "")
+	tokenResp, _, err := auth.Authenticate(context.Background(), "expiretest", "password123", "", "")
 	if err != nil {
 		t.Fatalf("Authenticate() error = %v", err)
 	}
@@ -364,37 +365,37 @@ func TestSecurityDisabled(t *testing.T) {
 func TestChangePassword(t *testing.T) {
 	auth := newTestAuthenticator(t)
 
-	_, err := auth.CreateUser("passchange", "oldpassword1", nil)
+	_, err := auth.CreateUser(context.Background(), "passchange", "oldpassword1", nil)
 	if err != nil {
 		t.Fatalf("CreateUser() error = %v", err)
 	}
 
 	// Change password
-	err = auth.ChangePassword("passchange", "oldpassword1", "newpassword1")
+	err = auth.ChangePassword(context.Background(), "passchange", "oldpassword1", "newpassword1")
 	if err != nil {
 		t.Fatalf("ChangePassword() error = %v", err)
 	}
 
 	// Old password should not work
-	_, _, err = auth.Authenticate("passchange", "oldpassword1", "", "")
+	_, _, err = auth.Authenticate(context.Background(), "passchange", "oldpassword1", "", "")
 	if err != ErrInvalidCredentials {
 		t.Errorf("expected old password to fail, got %v", err)
 	}
 
 	// New password should work
-	_, _, err = auth.Authenticate("passchange", "newpassword1", "", "")
+	_, _, err = auth.Authenticate(context.Background(), "passchange", "newpassword1", "", "")
 	if err != nil {
 		t.Errorf("expected new password to work, got %v", err)
 	}
 
 	// Wrong old password
-	err = auth.ChangePassword("passchange", "wrongold", "newnew123")
+	err = auth.ChangePassword(context.Background(), "passchange", "wrongold", "newnew123")
 	if err != ErrInvalidCredentials {
 		t.Errorf("expected ErrInvalidCredentials, got %v", err)
 	}
 
 	// New password too short
-	err = auth.ChangePassword("passchange", "newpassword1", "short")
+	err = auth.ChangePassword(context.Background(), "passchange", "newpassword1", "short")
 	if err == nil || !strings.Contains(err.Error(), "minimum") {
 		t.Errorf("expected password length error, got %v", err)
 	}
@@ -403,13 +404,13 @@ func TestChangePassword(t *testing.T) {
 func TestUpdateRoles(t *testing.T) {
 	auth := newTestAuthenticator(t)
 
-	_, err := auth.CreateUser("rolechange", "password123", []Role{RoleViewer})
+	_, err := auth.CreateUser(context.Background(), "rolechange", "password123", []Role{RoleViewer})
 	if err != nil {
 		t.Fatalf("CreateUser() error = %v", err)
 	}
 
 	// Update roles
-	err = auth.UpdateRoles("rolechange", []Role{RoleAdmin, RoleEditor})
+	err = auth.UpdateRoles(context.Background(), "rolechange", []Role{RoleAdmin, RoleEditor})
 	if err != nil {
 		t.Fatalf("UpdateRoles() error = %v", err)
 	}
@@ -423,7 +424,7 @@ func TestUpdateRoles(t *testing.T) {
 	}
 
 	// Non-existent user
-	err = auth.UpdateRoles("nonexistent", []Role{RoleAdmin})
+	err = auth.UpdateRoles(context.Background(), "nonexistent", []Role{RoleAdmin})
 	if err != ErrUserNotFound {
 		t.Errorf("expected ErrUserNotFound, got %v", err)
 	}
@@ -432,13 +433,13 @@ func TestUpdateRoles(t *testing.T) {
 func TestDeleteUser(t *testing.T) {
 	auth := newTestAuthenticator(t)
 
-	_, err := auth.CreateUser("deletetest", "password123", nil)
+	_, err := auth.CreateUser(context.Background(), "deletetest", "password123", nil)
 	if err != nil {
 		t.Fatalf("CreateUser() error = %v", err)
 	}
 
 	// Delete user
-	err = auth.DeleteUser("deletetest")
+	err = auth.DeleteUser(context.Background(), "deletetest")
 	if err != nil {
 		t.Fatalf("DeleteUser() error = %v", err)
 	}
@@ -450,7 +451,7 @@ func TestDeleteUser(t *testing.T) {
 	}
 
 	// Delete non-existent user
-	err = auth.DeleteUser("nonexistent")
+	err = auth.DeleteUser(context.Background(), "nonexistent")
 	if err != ErrUserNotFound {
 		t.Errorf("expected ErrUserNotFound, got %v", err)
 	}
@@ -460,9 +461,9 @@ func TestListUsers(t *testing.T) {
 	auth := newTestAuthenticator(t)
 
 	// Create multiple users
-	_, _ = auth.CreateUser("user1", "password123", []Role{RoleAdmin})
-	_, _ = auth.CreateUser("user2", "password123", []Role{RoleEditor})
-	_, _ = auth.CreateUser("user3", "password123", []Role{RoleViewer})
+	_, _ = auth.CreateUser(context.Background(), "user1", "password123", []Role{RoleAdmin})
+	_, _ = auth.CreateUser(context.Background(), "user2", "password123", []Role{RoleEditor})
+	_, _ = auth.CreateUser(context.Background(), "user3", "password123", []Role{RoleViewer})
 
 	users := auth.ListUsers()
 	if len(users) != 3 {
@@ -480,7 +481,7 @@ func TestListUsers(t *testing.T) {
 func TestGetUserByID(t *testing.T) {
 	auth := newTestAuthenticator(t)
 
-	created, err := auth.CreateUser("idtest", "password123", nil)
+	created, err := auth.CreateUser(context.Background(), "idtest", "password123", nil)
 	if err != nil {
 		t.Fatalf("CreateUser() error = %v", err)
 	}
@@ -506,14 +507,14 @@ func TestUserCount(t *testing.T) {
 		t.Error("expected 0 users initially")
 	}
 
-	_, _ = auth.CreateUser("user1", "password123", nil)
-	_, _ = auth.CreateUser("user2", "password123", nil)
+	_, _ = auth.CreateUser(context.Background(), "user1", "password123", nil)
+	_, _ = auth.CreateUser(context.Background(), "user2", "password123", nil)
 
 	if auth.UserCount() != 2 {
 		t.Errorf("expected 2 users, got %d", auth.UserCount())
 	}
 
-	_ = auth.DeleteUser("user1")
+	_ = auth.DeleteUser(context.Background(), "user1")
 
 	if auth.UserCount() != 1 {
 		t.Errorf("expected 1 user after delete, got %d", auth.UserCount())
@@ -683,13 +684,13 @@ func TestAuditLogging(t *testing.T) {
 	})
 
 	// Create user should log
-	_, _ = auth.CreateUser("audituser", "password123", nil)
+	_, _ = auth.CreateUser(context.Background(), "audituser", "password123", nil)
 
 	// Failed login should log
-	_, _, _ = auth.Authenticate("audituser", "wrongpassword", "127.0.0.1", "TestAgent")
+	_, _, _ = auth.Authenticate(context.Background(), "audituser", "wrongpassword", "127.0.0.1", "TestAgent")
 
 	// Successful login should log
-	_, _, _ = auth.Authenticate("audituser", "password123", "127.0.0.1", "TestAgent")
+	_, _, _ = auth.Authenticate(context.Background(), "audituser", "password123", "127.0.0.1", "TestAgent")
 
 	if len(events) < 3 {
 		t.Errorf("expected at least 3 audit events, got %d", len(events))

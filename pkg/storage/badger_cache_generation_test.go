@@ -41,11 +41,11 @@ func TestCacheFillsDropReadsThatRacedAWrite(t *testing.T) {
 	engine.cacheFillEdge(0, nil, engine.db.oracle.published.Load())
 
 	// A read through the adjacency cache fills the edge bodies it misses.
-	_, err = engine.CreateNode(&Node{ID: "gen:s"})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "gen:s"})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "gen:t"})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "gen:t"})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "gen:st", StartNode: "gen:s", EndNode: "gen:t", Type: "T"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "gen:st", StartNode: "gen:s", EndNode: "gen:t", Type: "T"}))
 	_, err = engine.GetOutgoingEdges(context.Background(), "gen:s")
 	require.NoError(t, err)
 	require.Contains(t, engine.outgoingAdjCache, NodeID("gen:s"))
@@ -104,7 +104,7 @@ func TestNodeCacheNotStaleAfterConcurrentUpdates(t *testing.T) {
 	defer engine.Close()
 	engine.nodeCacheMaxEntries = 4 // so reads keep missing
 	for i := 0; i < 16; i++ {
-		_, err := engine.CreateNode(&Node{ID: NodeID(fmt.Sprintf("race:n%d", i)), Labels: []string{"L"}, Properties: map[string]interface{}{"v": int64(0)}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("race:n%d", i)), Labels: []string{"L"}, Properties: map[string]interface{}{"v": int64(0)}})
 		require.NoError(t, err)
 	}
 	for round := 0; round < 200; round++ {
@@ -116,13 +116,13 @@ func TestNodeCacheNotStaleAfterConcurrentUpdates(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				for i := 0; !stop.Load(); i++ {
-					_, _ = engine.GetNode(NodeID(fmt.Sprintf("race:n%d", (i+r)%16)))
+					_, _ = engine.GetNode(t.Context(), NodeID(fmt.Sprintf("race:n%d", (i+r)%16)))
 				}
 			}()
 		}
 		want := int64(round*100 + 50)
 		for v := int64(1); v <= 50; v++ {
-			require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: "race:n0", Labels: []string{"L"}, Properties: map[string]interface{}{"v": int64(round*100) + v}}}))
+			require.NoError(t, engine.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "race:n0", Labels: []string{"L"}, Properties: map[string]interface{}{"v": int64(round*100) + v}}}))
 		}
 		stop.Store(true)
 		wg.Wait()
@@ -138,7 +138,7 @@ func TestNodeCacheNotStaleAfterConcurrentUpdates(t *testing.T) {
 			})
 		}))
 		require.EqualValues(t, want, stored.Properties["v"])
-		got, err := engine.GetNode("race:n0")
+		got, err := engine.GetNode(t.Context(), "race:n0")
 		require.NoError(t, err)
 		require.EqualValues(t, want, got.Properties["v"], "round %d", round)
 	}
@@ -150,9 +150,9 @@ func TestLabelScanReplacesFirstNodeThatLostTheLabel(t *testing.T) {
 	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	defer engine.Close()
-	_, err = engine.CreateNode(&Node{ID: "gen:other", Labels: []string{"Other"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "gen:other", Labels: []string{"Other"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "gen:person", Labels: []string{"Person"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "gen:person", Labels: []string{"Person"}})
 	require.NoError(t, err)
 	engine.labelCacheSetFirst(engine.labelFirstCacheGen.current(), "Person", "gen:other", engine.db.oracle.published.Load())
 

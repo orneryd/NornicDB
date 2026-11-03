@@ -41,7 +41,7 @@ func (e *StorageExecutor) executeDatabaseDrop(ctx context.Context, query string,
 	invalidSyntax := func() error {
 		return kind.failure(localization.CypherAdminInvalidSyntax("DROP DATABASE"), localization.CypherCompositeDropInvalidSyntax(), nil)
 	}
-	at := findMultiWordKeywordIndex(query, "DROP", subject)
+	at := findMultiWordKeywordIndex(ctx, query, "DROP", subject)
 	if at < 0 {
 		return nil, invalidSyntax()
 	}
@@ -56,7 +56,7 @@ func (e *StorageExecutor) executeDatabaseDrop(ctx context.Context, query string,
 
 	ifExists := false
 	if kind == dropStandardDatabase {
-		if clause := findMultiWordKeywordIndex(rawName, "IF", "EXISTS"); clause >= 0 {
+		if clause := findMultiWordKeywordIndex(ctx, rawName, "IF", "EXISTS"); clause >= 0 {
 			// Validate the entire suffix before admitting any deletion.
 			clauseEnd := keywordEndAt(rawName, clause, "IF EXISTS")
 			if strings.TrimSpace(rawName[clauseEnd:]) != "" {

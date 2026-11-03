@@ -48,8 +48,8 @@ func BenchmarkReviewRepeatedPropertyProjection(b *testing.B) {
 type reviewCloningPropertyEngine struct{ storage.Engine }
 
 func (e *reviewCloningPropertyEngine) GetInnerEngine() storage.Engine { return e.Engine }
-func (e *reviewCloningPropertyEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
-	n, err := e.Engine.GetNode(id)
+func (e *reviewCloningPropertyEngine) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
+	n, err := e.Engine.GetNode(ctx, id)
 	return storage.CopyNode(n), err
 }
 func TestReviewStatementPropertyViewsReuseClonedBodies(t *testing.T) {
@@ -58,9 +58,9 @@ func TestReviewStatementPropertyViewsReuseClonedBodies(t *testing.T) {
 		wrapper := &reviewCloningPropertyEngine{Engine: base.storage}
 		e := base.cloneWithStorage(wrapper).withStatementPropertyViews(context.Background(), "MATCH (n:Doc {title:'a'}) RETURN n.body")
 		require.NotNil(t, e)
-		first, err := wrapper.GetNode("a")
+		first, err := wrapper.GetNode(t.Context(), "a")
 		require.NoError(t, err)
-		again, err := wrapper.GetNode("a")
+		again, err := wrapper.GetNode(t.Context(), "a")
 		require.NoError(t, err)
 		require.NotSame(t, first, again)
 		a := e.queryVisibleValue(first).(*storage.Node)
@@ -75,7 +75,7 @@ func TestReviewStatementPropertyViewsReuseClonedBodies(t *testing.T) {
 		unscored := storage.CopyNode(again)
 		unscored.Labels = []string{"Other"}
 		require.Contains(t, e.queryVisibleValue(unscored).(*storage.Node).Properties, "body")
-		edge, err := wrapper.GetEdge("ab")
+		edge, err := wrapper.GetEdge(t.Context(), "ab")
 		require.NoError(t, err)
 		r := e.queryVisibleValue(edge).(*storage.Edge)
 		r2 := e.queryVisibleValue(storage.CopyEdge(edge)).(*storage.Edge)
@@ -101,7 +101,7 @@ func TestReviewStatementPropertyViewsReuseClonedBodies(t *testing.T) {
 		r, err := e.Execute(ctx, "MATCH (d:Doc {title:'a'}) SET d.title='updated' RETURN d.title,d.body", nil)
 		require.NoError(t, err)
 		require.Equal(t, [][]interface{}{{"updated", nil}}, r.Rows)
-		raw, err := be.GetNode("review:a")
+		raw, err := be.GetNode(t.Context(), "review:a")
 		require.NoError(t, err)
 		require.Equal(t, "hidden", raw.Properties["body"])
 		r, err = e.Execute(ctx, "MATCH (d:Doc {title:'updated'}) RETURN d.title", nil)

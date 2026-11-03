@@ -1,7 +1,7 @@
 package storage
 
 import (
-	"fmt"
+	"context"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
@@ -20,7 +20,10 @@ import (
 //	// CREATE CONSTRAINT person_contract FOR (n:Person) REQUIRE { n.id IS UNIQUE ... }
 //	err := schema.DropConstraint("person_contract") // removes the contract and person_contract__entry_01
 func (sm *SchemaManager) DropConstraint(name string) error {
-	lease := sm.beginSchemaMutation()
+	lease, admitErr := sm.beginSchemaMutation(context.Background())
+	if admitErr != nil {
+		return admitErr
+	}
 	defer lease.release()
 
 	var restore func()
@@ -35,8 +38,11 @@ func (sm *SchemaManager) DropConstraint(name string) error {
 	}
 
 	if sm.persist != nil {
-		def := sm.exportDefinitionLocked()
-		if err := sm.persist(def); err != nil {
+		def, err := sm.exportDefinitionLocked(context.Background()) // accepted mutation owns its completion
+		if err == nil {
+			err = sm.persist(def)
+		}
+		if err != nil {
 			restore()
 			return err
 		}
@@ -72,7 +78,7 @@ func (sm *SchemaManager) dropConstraintContractLocked(contract ConstraintContrac
 func (sm *SchemaManager) dropConstraintLocked(name string) (func(), error) {
 	if c, ok := sm.constraints[name]; ok {
 		var droppedUnique *UniqueConstraint
-		var droppedUniqueKey string
+		var droppedUniqueKey nodePropertyKey
 		var droppedOwnedIndex *RangeIndex
 		var droppedPropertyIndex *PropertyIndex
 
@@ -80,20 +86,31 @@ func (sm *SchemaManager) dropConstraintLocked(name string) (func(), error) {
 		temporalCompleteness := sm.forgetTemporalIndexCompleteLocked(c)
 
 		if constraintPropertyIndexKey(c) != "" {
-			if idx, ok := sm.arity1PropertyIndexLocked(c.Label, c.Properties[0]); ok && idx.OwningConstraint == name {
+			// The drop already holds the schema write lock: its index scan belongs
+			// to that mutation's lifetime, not to a request.
+			idx, ok, err := sm.arity1PropertyIndexLocked(context.Background(), c.Label, c.Properties[0])
+			if err != nil {
+				return nil, err
+			}
+			if ok && idx.OwningConstraint == name {
 				droppedPropertyIndex = idx
 				delete(sm.compositeIndexes, idx.Name)
 			}
 		}
 		if constraintCompositeKeyIndexWanted(c) {
-			if idx := sm.compositeKeyIndexLocked(c.Label, c.Properties); idx != nil && idx.OwningConstraint == name {
+			// DropConstraint owns this write-held, context-free DDL mutation.
+			idx, err := sm.compositeKeyIndexLocked(context.Background(), c.Label, c.Properties)
+			if err != nil {
+				return nil, err
+			}
+			if idx != nil && idx.OwningConstraint == name {
 				droppedPropertyIndex = idx
 				delete(sm.compositeIndexes, idx.Name)
 			}
 		}
 
-		if c.Type == ConstraintUnique && len(c.Properties) == 1 {
-			droppedUniqueKey = fmt.Sprintf("%s:%s", c.Label, c.Properties[0])
+		if c.Type == ConstraintUnique && c.EffectiveEntityType() == ConstraintEntityNode && len(c.Properties) == 1 {
+			droppedUniqueKey = nodePropertyKey{label: c.Label, property: c.Properties[0]}
 			if existing, ok := sm.uniqueConstraints[droppedUniqueKey]; ok {
 				droppedUnique = existing
 				delete(sm.uniqueConstraints, droppedUniqueKey)

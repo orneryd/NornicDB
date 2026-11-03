@@ -89,7 +89,7 @@ func normalizeQueryText(ctx context.Context, query string) (string, *queryRewrit
 	if !queryMayNeedCanonicalRewrite(query) {
 		return query, nil, nil
 	}
-	canonical, rewrite, err := readCanonicalQueryText(query, true)
+	canonical, rewrite, err := readCanonicalQueryText(ctx, query, true)
 	if err == nil && rewrite != nil && strings.TrimSpace(canonical) == "" {
 		err = emptyStatementError()
 	}

@@ -1,11 +1,12 @@
 package multidb
 
 import (
+	"path/filepath"
+	"testing"
+
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
-	"path/filepath"
-	"testing"
 )
 
 func TestDropCatalogFailureAndRecovery(t *testing.T) {
@@ -32,7 +33,7 @@ func TestDropCatalogFailureAndRecovery(t *testing.T) {
 					if name == "victim" {
 						victimView = view
 					}
-					_, err = view.CreateNode(&storage.Node{ID: "keep", Properties: map[string]interface{}{"value": name}})
+					_, err = view.CreateNode(t.Context(), &storage.Node{ID: "keep", Properties: map[string]interface{}{"value": name}})
 					require.NoError(t, err)
 				}
 				e.updates = 0
@@ -52,7 +53,7 @@ func TestDropCatalogFailureAndRecovery(t *testing.T) {
 					require.False(t, m.pendingDrops["victim"])
 					view, err := m.GetStorage("victim")
 					require.NoError(t, err)
-					node, err := view.GetNode("keep")
+					node, err := view.GetNode(t.Context(), "keep")
 					require.NoError(t, err)
 					require.Equal(t, "victim", node.Properties["value"])
 				} else {
@@ -72,7 +73,7 @@ func TestDropCatalogFailureAndRecovery(t *testing.T) {
 					// A standby loads the durable admission without applying DROP,
 					// initializing a live view, or publishing another catalog write.
 					updates := e.updates
-					before, err := base.NodeCountByPrefix("victim:")
+					before, err := base.NodeCountByPrefix(t.Context(), "victim:")
 					require.NoError(t, err)
 					standby, err := NewDatabaseManager(t.Context(), &identityReadOnlyEngine{Engine: e}, nil)
 					require.NoError(t, err)
@@ -82,7 +83,7 @@ func TestDropCatalogFailureAndRecovery(t *testing.T) {
 					require.ErrorIs(t, err, ErrDatabaseOffline)
 					require.NotContains(t, standby.engines, "victim")
 					require.Equal(t, updates, e.updates)
-					after, err := base.NodeCountByPrefix("victim:")
+					after, err := base.NodeCountByPrefix(t.Context(), "victim:")
 					require.NoError(t, err)
 					require.Equal(t, before, after)
 				}
@@ -94,13 +95,13 @@ func TestDropCatalogFailureAndRecovery(t *testing.T) {
 					require.NoError(t, base.Backup(backup))
 					require.NoError(t, base.Restore(backup))
 					if phase == "intent-rejected" {
-						kept, err := victimView.GetNode("keep")
+						kept, err := victimView.GetNode(t.Context(), "keep")
 						require.NoError(t, err)
 						require.Equal(t, "victim", kept.Properties["value"])
 					} else {
 						_, err := m.GetStorage("victim")
 						require.ErrorIs(t, err, ErrDatabaseOffline, "Restore must not unmask an admitted catalog DROP")
-						_, err = victimView.CreateNode(&storage.Node{ID: "must-not-appear"})
+						_, err = victimView.CreateNode(t.Context(), &storage.Node{ID: "must-not-appear"})
 						require.Error(t, err, "the pre-DROP handle cannot resume writes after restoring a pending catalog intent")
 					}
 				}
@@ -109,7 +110,7 @@ func TestDropCatalogFailureAndRecovery(t *testing.T) {
 					base, e, m = open()
 					if phase == "intent-rejected" {
 						require.True(t, m.Exists("victim"))
-						node, err := base.GetNode("victim:keep")
+						node, err := base.GetNode(t.Context(), "victim:keep")
 						require.NoError(t, err)
 						require.Equal(t, "victim", node.Properties["value"])
 						require.NoError(t, m.DropDatabase(t.Context(), "victim"))
@@ -118,22 +119,22 @@ func TestDropCatalogFailureAndRecovery(t *testing.T) {
 					require.NoError(t, m.DropDatabase(t.Context(), "victim"))
 				}
 				require.False(t, m.Exists("victim"))
-				_, err := base.GetNode("victim:keep")
+				_, err := base.GetNode(t.Context(), "victim:keep")
 				require.ErrorIs(t, err, storage.ErrNotFound)
-				peer, err := base.GetNode("peer:keep")
+				peer, err := base.GetNode(t.Context(), "peer:keep")
 				require.NoError(t, err)
 				require.Equal(t, "peer", peer.Properties["value"])
 				require.NoError(t, m.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "victim"}))
 				view, err := m.GetStorage("victim")
 				require.NoError(t, err)
-				count, err := view.NodeCount()
+				count, err := view.NodeCount(t.Context())
 				require.NoError(t, err)
 				require.Zero(t, count)
-				_, err = view.CreateNode(&storage.Node{ID: "fresh", Properties: map[string]interface{}{"value": "new"}})
+				_, err = view.CreateNode(t.Context(), &storage.Node{ID: "fresh", Properties: map[string]interface{}{"value": "new"}})
 				require.NoError(t, err)
 				require.NoError(t, m.Close())
 				base, _, m = open()
-				fresh, err := base.GetNode("victim:fresh")
+				fresh, err := base.GetNode(t.Context(), "victim:fresh")
 				require.NoError(t, err)
 				require.Equal(t, "new", fresh.Properties["value"])
 				require.False(t, m.pendingDrops["victim"])

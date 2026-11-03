@@ -25,7 +25,7 @@ func TestSizeTrackedDatabaseDeliversEvents(t *testing.T) {
 			mu.Unlock()
 		},
 	}))
-	_, err = engine.CreateNode(&storage.Node{ID: "a"})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "a"})
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
 		mu.Lock()

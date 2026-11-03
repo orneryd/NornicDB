@@ -35,7 +35,7 @@ func TestLabeledPropertyProjectionLimitReturnsRows(t *testing.T) {
 			require.NoError(t, err)
 			require.Empty(t, empty.Rows)
 			for _, id := range []int64{1, 2, 3} {
-				_, err := exec.storage.CreateNode(&storage.Node{
+				_, err := exec.storage.CreateNode(t.Context(), &storage.Node{
 					ID:     storage.NodeID(fmt.Sprintf("label-%d", id)),
 					Labels: []string{"Label"}, Properties: map[string]interface{}{"id": id},
 				})

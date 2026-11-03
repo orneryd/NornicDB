@@ -81,18 +81,18 @@ func TestMatchIndexSeek_ParserAdditionalBranches(t *testing.T) {
 	require.Equal(t, "a", prop)
 	require.Equal(t, "x", val)
 
-	prop, vals, ok := exec.parseSimpleIndexedInParam("n", "n.k IN $keys", map[string]interface{}{"keys": []interface{}{"a", "a", nil, "b"}})
+	prop, vals, ok := exec.parseSimpleIndexedInParam(ctx, "n", "n.k IN $keys", map[string]interface{}{"keys": []interface{}{"a", "a", nil, "b"}})
 	require.True(t, ok)
 	require.Equal(t, "k", prop)
 	require.Equal(t, []interface{}{"a", "b"}, vals)
 
-	_, _, ok = exec.parseSimpleIndexedInParam("n", "n.k IN keys", map[string]interface{}{"keys": []interface{}{"a"}})
+	_, _, ok = exec.parseSimpleIndexedInParam(ctx, "n", "n.k IN keys", map[string]interface{}{"keys": []interface{}{"a"}})
 	require.False(t, ok)
-	_, _, ok = exec.parseSimpleIndexedInParam("n", "n.k IN $missing", map[string]interface{}{"keys": []interface{}{"a"}})
+	_, _, ok = exec.parseSimpleIndexedInParam(ctx, "n", "n.k IN $missing", map[string]interface{}{"keys": []interface{}{"a"}})
 	require.False(t, ok)
-	_, _, ok = exec.parseSimpleIndexedInParam("n", "n.k IN $keys", map[string]interface{}{"keys": nil})
+	_, _, ok = exec.parseSimpleIndexedInParam(ctx, "n", "n.k IN $keys", map[string]interface{}{"keys": nil})
 	require.False(t, ok)
-	_, _, ok = exec.parseSimpleIndexedInParam("n", "n.k IN $keys AND n.x = 1", map[string]interface{}{"keys": []interface{}{"a"}})
+	_, _, ok = exec.parseSimpleIndexedInParam(ctx, "n", "n.k IN $keys AND n.x = 1", map[string]interface{}{"keys": []interface{}{"a"}})
 	require.False(t, ok)
 
 	prop, vals, ok = exec.parseSimpleIndexedInLiteral(ctx, "n", "n.k IN ['a','a',null,'b']")
@@ -105,17 +105,17 @@ func TestMatchIndexSeek_ParserAdditionalBranches(t *testing.T) {
 	_, _, ok = exec.parseSimpleIndexedInLiteral(ctx, "n", "n.k IN ['a'] OR n.x = 1")
 	require.False(t, ok)
 
-	p, ok := exec.parseSimpleIndexedIsNotNull("n", "n.k IS NOT NULL")
+	p, ok := exec.parseSimpleIndexedIsNotNull(ctx, "n", "n.k IS NOT NULL")
 	require.True(t, ok)
 	require.Equal(t, "k", p)
 
-	_, ok = exec.parseSimpleIndexedIsNotNull("n", "n.k IS NOT NULL AND n.x IS NOT NULL")
+	_, ok = exec.parseSimpleIndexedIsNotNull(ctx, "n", "n.k IS NOT NULL AND n.x IS NOT NULL")
 	require.False(t, ok)
-	_, ok = exec.parseSimpleIndexedIsNotNull("n", "n.k IS NOT NULL AND n.x > 1")
+	_, ok = exec.parseSimpleIndexedIsNotNull(ctx, "n", "n.k IS NOT NULL AND n.x > 1")
 	require.False(t, ok)
 
 	require.Equal(t, "x", unwrapOuterParens("(((x)))"))
-	require.Equal(t, []string{"a=1", "b='x AND y'", "c=2"}, splitTopLevelAndConjuncts("a=1 AND b='x AND y' AND c=2"))
+	require.Equal(t, []string{"a=1", "b='x AND y'", "c=2"}, splitTopLevelAndConjuncts(ctx, "a=1 AND b='x AND y' AND c=2"))
 }
 
 func TestMatchIndexSeek_IDEqualityCompoundAndIDInAdditionalBranches(t *testing.T) {

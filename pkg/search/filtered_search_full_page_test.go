@@ -21,7 +21,7 @@ func filteredSearchFixture(t *testing.T) *Service {
 	store := storage.NewNamespacedEngine(newNamespacedEngine(t), "test")
 	svc := NewService(store, 2, nil)
 	add := func(node *storage.Node) {
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, svc.IndexNode(node))
 	}

@@ -39,7 +39,11 @@ func TestSnapshotOverlayPublicReadsReachCapture(t *testing.T) {
 				if !ok || typ.Name != "BadgerEngine" {
 					continue
 				}
-				receiver = recv.Names[0].Name
+				// Unnamed receivers remain in the call population, but have
+				// no receiver variable whose selectors can be followed.
+				if len(recv.Names) > 0 {
+					receiver = recv.Names[0].Name
+				}
 			} else if fn.Name.Name == "readAdjacency" {
 				// The shared dispatcher calls the native reader only after an
 				// actual *BadgerEngine assertion. Follow that bound receiver,
@@ -97,6 +101,7 @@ func TestSnapshotOverlayPublicReadsReachCapture(t *testing.T) {
 			})
 		}
 	}
+	require.Contains(t, calls, "snapshotNodeRef", "an unnamed BadgerEngine receiver must remain in the inspected population")
 	readers := []string{"GetNode", "GetNodeProjected", "GetNodeWithoutEmbeddings", "GetEdge", "BatchGetNodes", "BatchGetNodesWithoutEmbeddings", "HasLabelBatch", "RelationshipEndpointVisible", "GetNodesByLabelInScope", "GetFirstNodeByLabelInScope", "ForEachNodeIDByLabelInScope", "AllNodes", "AllEdges", "GetEdgesByType", "GetOutgoingEdges", "GetIncomingEdges", "GetAdjacentEdges", "OutgoingEdgeHeaders", "IncomingEdgeHeaders", "GetEdgesBetween", "GetEdgeBetween", "MatchEdgesBetween", "StreamNodesWithOptions", "StreamNodesByLabelProjectedInScope", "StreamEdges", "StreamEdgesByTypeInScope", "IterateNodes", "StreamNodeChunks", "GetNodeEmbeddingMeta"}
 	if _, ok := calls["GetQueryNode"]; ok {
 		readers = append(readers, "GetQueryNode")

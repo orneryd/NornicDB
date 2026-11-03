@@ -1,5 +1,7 @@
 package storage
 
+import "context"
+
 // ManagedEntityEngine is the atomic publication capability required by managed
 // database writes that enforce storage quotas, track exact bytes, or cross a
 // journal/replication boundary. Writable database catalogs require native entity
@@ -13,7 +15,7 @@ package storage
 // EntityWriteBoundary so staged writes retain that policy on the same store.
 type ManagedEntityEngine interface {
 	Engine
-	BeginTransaction() (*BadgerTransaction, error)
+	BeginTransaction(ctx context.Context) (*BadgerTransaction, error)
 	InitializeStoredEntityObserver(string, func(StoredEntitySnapshot) (StoredEntityObserver, error), StoredEntityReadBoundary) error
 	EntityCommitSubmitter
 	ManagedEntityRuntimeRegistry

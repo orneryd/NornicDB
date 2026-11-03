@@ -38,7 +38,7 @@ func pr1655PublicStatus(err error) string {
 	if errors.As(err, &boltError) {
 		return boltError.Code
 	}
-	code, _ := nornicerrors.Neo4jCommitStatus(err)
+	code, _ := nornicerrors.Neo4jStatus(err)
 	return code
 }
 
@@ -272,7 +272,7 @@ func TestPR1655PublicUniqueClaimLifecycle(t *testing.T) {
 					require.NoError(t, err)
 					require.Empty(t, rows, "every rejected duplicate is atomic")
 					require.False(t, fault.fired.Load(), "no corruption fixture was armed")
-					require.NoError(t, fault.engine.FlushWriteBehind(nil))
+					require.NoError(t, fault.engine.FlushWriteBehind(context.Background()))
 				})
 			}
 		}
@@ -298,7 +298,7 @@ func TestPR1655PublicStagedEndpointDeletion(t *testing.T) {
 					err = client.commit()
 					require.Error(t, err)
 					require.Equal(t, nornicerrors.TransientOutdated, pr1655PublicStatus(err))
-					require.NoError(t, fault.engine.FlushWriteBehind(nil))
+					require.NoError(t, fault.engine.FlushWriteBehind(context.Background()))
 					for _, query := range []string{"MATCH (n:EndpointMarker) RETURN n", "MATCH ()-[r:ENDPOINT_NEW]->() RETURN r", "MATCH (n:Endpoint {id:'b'}) RETURN n"} {
 						rows, err := client.run(query)
 						require.NoError(t, err)

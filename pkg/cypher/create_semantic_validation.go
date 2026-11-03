@@ -38,7 +38,7 @@ func (s *semanticBindingScope) contains(name string) bool {
 // top-level clause decomposition as the semantic pipeline so fast paths cannot
 // disagree about whether a name is new, bound, or undefined.
 func (e *StorageExecutor) validateCreateSemanticScopes(ctx context.Context, cypher string, cypher25 bool) error {
-	if findKeywordIndexInContext(cypher, "CREATE") < 0 || isMetadataCommand(cypher, metadataCreateAdmission) {
+	if findKeywordIndexInContext(ctx, cypher, "CREATE") < 0 || isMetadataCommand(ctx, cypher, metadataCreateAdmission) {
 		return nil
 	}
 	clauses, ok := splitPipelineClauses(ctx, cypher)
@@ -63,7 +63,7 @@ func (e *StorageExecutor) validateCreateSemanticScopes(ctx context.Context, cyph
 				return err
 			}
 		case pipelineClauseUnwind:
-			if alias := unwindBindingName(clause.text); alias != "" {
+			if alias := unwindBindingName(ctx, clause.text); alias != "" {
 				scope.bind(alias)
 			}
 		case pipelineClauseMerge:
@@ -74,7 +74,7 @@ func (e *StorageExecutor) validateCreateSemanticScopes(ctx context.Context, cyph
 				scope.bind(name)
 			}
 		case pipelineClauseCreate:
-			if err := e.validateCreateClauseBindings(scope, clause.text, cypher25); err != nil {
+			if err := e.validateCreateClauseBindings(ctx, scope, clause.text, cypher25); err != nil {
 				return err
 			}
 		}
@@ -83,7 +83,7 @@ func (e *StorageExecutor) validateCreateSemanticScopes(ctx context.Context, cyph
 }
 
 func projectedBindingScope(ctx context.Context, input *semanticBindingScope, clause string) *semanticBindingScope {
-	body, _ := projectionSemanticBodyAndTail(clause, "WITH")
+	body, _ := projectionSemanticBodyAndTail(ctx, clause, "WITH")
 	output := newSemanticBindingScope()
 	for _, raw := range splitTopLevelComma(body) {
 		itemSource := readProjectionItemSource(ctx, strings.TrimSpace(raw), projectionAdmitted)
@@ -106,8 +106,8 @@ func projectedBindingScope(ctx context.Context, input *semanticBindingScope, cla
 // validateUnwindAlias rejects an UNWIND clause whose alias isn't exactly one
 // variable, as Neo4j does: UNWIND takes no WHERE, so "UNWIND l AS x WHERE …"
 // and "UNWIND l AS x y" are SyntaxErrors (Invalid input 'WHERE').
-func validateUnwindAlias(clause string) error {
-	_, alias, ok := parsePipelineIteration(clause)
+func validateUnwindAlias(ctx context.Context, clause string) error {
+	_, alias, ok := parsePipelineIteration(ctx, clause)
 	if !ok {
 		return sharedClauseSyntaxError("iteration requires a variable and an expression")
 	}
@@ -124,8 +124,8 @@ func validateUnwindAlias(clause string) error {
 }
 
 // unwindBindingName is the variable an UNWIND clause binds (splitUnwindBody).
-func unwindBindingName(clause string) string {
-	if _, alias, ok := parsePipelineIteration(clause); ok {
+func unwindBindingName(ctx context.Context, clause string) string {
+	if _, alias, ok := parsePipelineIteration(ctx, clause); ok {
 		if name, _, symbolic := scanSymbolicName(alias, 0); symbolic {
 			return normalizeProjectionColumnName(name)
 		}
@@ -133,7 +133,7 @@ func unwindBindingName(clause string) string {
 	return ""
 }
 
-func (e *StorageExecutor) validateCreateClauseBindings(scope *semanticBindingScope, clause string, cypher25 bool) error {
+func (e *StorageExecutor) validateCreateClauseBindings(ctx context.Context, scope *semanticBindingScope, clause string, cypher25 bool) error {
 	body := strings.TrimSpace(clause[len("CREATE"):])
 	created := make(map[string]string)
 	for _, pattern := range e.splitCreatePatterns(body) {
@@ -157,7 +157,7 @@ func (e *StorageExecutor) validateCreateClauseBindings(scope *semanticBindingSco
 			}
 		}
 
-		if err := e.validateCreateSamePatternReferences(scope, pattern, relationshipVariables, created, "CREATE"); err != nil {
+		if err := e.validateCreateSamePatternReferences(ctx, scope, pattern, relationshipVariables, created, "CREATE"); err != nil {
 			return err
 		}
 
@@ -295,7 +295,7 @@ func createRelationshipPropertyMapBodies(pattern string) []string {
 // pattern's): a fresh map per pattern for a Cypher 5 statement, one map per
 // clause for a Cypher 25 statement, where a pattern may not read an entity an
 // earlier pattern of the same CREATE creates either (Neo4j 2026.09).
-func (e *StorageExecutor) validateCreateSamePatternReferences(scope *semanticBindingScope, pattern string, relationshipVariables []string, created map[string]string, clause string) error {
+func (e *StorageExecutor) validateCreateSamePatternReferences(ctx context.Context, scope *semanticBindingScope, pattern string, relationshipVariables []string, created map[string]string, clause string) error {
 	nodePatterns := e.splitNodePatterns(pattern)
 	for _, nodePattern := range nodePatterns {
 		if variable := createNodePatternVariable(nodePattern); variable != "" && !scope.contains(variable) {
@@ -320,7 +320,7 @@ func (e *StorageExecutor) validateCreateSamePatternReferences(scope *semanticBin
 			if separator <= 0 {
 				continue
 			}
-			for _, variable := range expressionFreeVariables(pair[separator+1:]) {
+			for _, variable := range expressionFreeVariables(ctx, pair[separator+1:]) {
 				if kind, ok := created[variable]; ok {
 					return createSamePatternReferenceError(variable, kind, clause)
 				}

@@ -1,6 +1,7 @@
 package testfixture
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"reflect"
@@ -23,7 +24,7 @@ type lifetimeEntry struct {
 func Track[T Closer](owner Owner, resource T, closedError error) T {
 	testingOwner := requireTestingOwner(owner, resource)
 	testingOwner.Helper()
-	return track(testingOwner, resource, closedError, lifetimeSite())
+	return track(probeContext(testingOwner), testingOwner, resource, closedError, lifetimeSite())
 }
 
 // TrackResult preserves an error-returning constructor's original results.
@@ -34,7 +35,7 @@ func TrackResult[T Closer](owner Owner, closedError error) func(T, error) (T, er
 	testingOwner.Helper()
 	site := lifetimeSite()
 	return func(resource T, err error) (T, error) {
-		return track(testingOwner, resource, closedError, site), err
+		return track(probeContext(testingOwner), testingOwner, resource, closedError, site), err
 	}
 }
 
@@ -60,7 +61,7 @@ func OwnResult3[T Closer, U any](owner Owner, closedError error) func(T, U, erro
 }
 
 func ownResult[T Closer](owner testing.TB, resource T, closedError error, site string) T {
-	resource = track(owner, resource, closedError, site)
+	resource = track(probeContext(owner), owner, resource, closedError, site)
 	if hasLifetimeResource(resource) {
 		Own(owner, resource)
 	}
@@ -75,7 +76,13 @@ func TrackProcess[T Closer](owner *Boundary, resource T, closedError error) T {
 		disposeInvalidOwnerResource(resource)
 		panic("test fixture requires a non-nil process boundary")
 	}
-	return track(owner, resource, closedError, lifetimeSite())
+	return track(context.Background(), owner, resource, closedError, lifetimeSite())
+}
+
+// probeContext keeps the test's values for the post-test closed-state probe,
+// which runs in Cleanup after the test context is already canceled.
+func probeContext(owner testing.TB) context.Context {
+	return context.WithoutCancel(owner.Context())
 }
 
 func lifetimeSite() string {
@@ -113,29 +120,31 @@ func disposeInvalidOwnerResource(resource Closer) {
 	}
 }
 
-func track[T Closer](owner Owner, resource T, closedError error, site string) T {
+func track[T Closer](probe context.Context, owner Owner, resource T, closedError error, site string) T {
 	if !hasLifetimeResource(resource) {
 		return resource
 	}
 	entry := lifetimeEntry{resource: resource, closedError: closedError, site: site}
-	owner.Cleanup(func() { entry.audit(owner) })
+	owner.Cleanup(func() { entry.audit(probe, owner) })
 	return resource
 }
 
-func (entry lifetimeEntry) isClosed() (bool, bool) {
+func (entry lifetimeEntry) isClosed(probe context.Context) (bool, bool) {
 	if resource, ok := entry.resource.(interface{ IsClosed() bool }); ok {
 		return resource.IsClosed(), true
 	}
-	if resource, ok := entry.resource.(interface{ NodeCount() (int64, error) }); ok && entry.closedError != nil {
-		_, err := resource.NodeCount()
+	if resource, ok := entry.resource.(interface {
+		NodeCount(context.Context) (int64, error)
+	}); ok && entry.closedError != nil {
+		_, err := resource.NodeCount(probe)
 		return errors.Is(err, entry.closedError), true
 	}
 	return false, false
 }
 
-func (entry lifetimeEntry) audit(owner Owner) {
+func (entry lifetimeEntry) audit(probe context.Context, owner Owner) {
 	owner.Helper()
-	closed, supported := entry.isClosed()
+	closed, supported := entry.isClosed(probe)
 	if closed {
 		return
 	}

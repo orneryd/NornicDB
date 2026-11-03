@@ -32,7 +32,7 @@ func TestSearchTextChunksKeepsRankProvenance(t *testing.T) {
 					Properties:      map[string]interface{}{"text": "bravo filler"},
 					ChunkEmbeddings: [][]float32{vector},
 				}
-				_, err := store.CreateNode(node)
+				_, err := store.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 				svc := NewService(store, 2, nil)
 				t.Cleanup(func() { _ = svc.Close() })

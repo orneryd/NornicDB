@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/observability"
 )
@@ -26,7 +27,7 @@ import (
 //	defer replicator.Shutdown()
 //
 //	// All writes go through replicator
-//	if err := replicator.Apply(cmd); err != nil {
+//	if err := replicator.Apply(context.Background(), cmd, 0); err != nil {
 //	    if errors.Is(err, replication.ErrNotLeader) {
 //	        // Forward to leader
 //	    }
@@ -36,13 +37,18 @@ type Replicator interface {
 	// This should be called after the storage engine is ready.
 	Start(ctx context.Context) error
 
-	// Apply applies a write command to the cluster.
+	// LifetimeContext is the immutable context canceled by this owner's Shutdown.
+	// It is available before Start; accepted work must not replace its parent.
+	LifetimeContext() context.Context
+
+	// Apply applies a write command to the cluster. ctx owns preparation and
+	// admission; already accepted native work completes independently.
 	// Returns ErrNotLeader if this node cannot accept writes.
 	// The command is replicated according to the replication mode.
-	Apply(cmd *Command, timeout time.Duration) error
+	Apply(ctx context.Context, cmd *Command, timeout time.Duration) error
 
 	// ApplyBatch applies multiple commands atomically.
-	ApplyBatch(cmds []*Command, timeout time.Duration) error
+	ApplyBatch(ctx context.Context, cmds []*Command, timeout time.Duration) error
 
 	// IsLeader returns true if this node can accept writes.
 	// For standalone mode, this always returns true.
@@ -233,12 +239,43 @@ type PeerStatus struct {
 	State string `json:"state,omitempty"`
 }
 
+// WALPublicationMode states whether a Storage.ApplyCommand call returns before
+// its own replication WAL record is published.
+//
+// The zero value is invalid: every caller states whether it needs this
+// command's own publication receipt or keeps the nonwaiting asynchronous
+// native result.
+type WALPublicationMode uint8
+
+const (
+	// WALQueued admits the record to the bounded replication WAL FIFO and
+	// returns the native command result without waiting for publication. The
+	// returned CommandPublication carries no position.
+	WALQueued WALPublicationMode = iota + 1
+
+	// WALPublished waits until the sole WAL writer has appended and published
+	// this exact record, then returns that record's physical sequence. A
+	// successful WALPublished result never reports position zero. This is
+	// publication completion, not an additional durability guarantee.
+	WALPublished
+)
+
+// CommandPublication is the publication receipt of one applied command.
+// Position is the exact physical WAL sequence of this command's own record.
+type CommandPublication struct {
+	Position uint64
+}
+
 // Storage is the interface that the storage engine must implement
 // to work with replication. This is a subset of the full storage.Engine
 // interface, containing only what replication needs.
 type Storage interface {
 	// ApplyCommand applies a replicated command to storage.
-	ApplyCommand(cmd *Command) error
+	//
+	// waitCtx bounds only this caller's publication wait; it never retracts
+	// accepted intent or application already performed. publication must be
+	// WALQueued or WALPublished and waitCtx must be non-nil before any effect.
+	ApplyCommand(waitCtx context.Context, cmd *Command, publication WALPublicationMode) (CommandPublication, error)
 
 	// GetWALPosition returns the current WAL position.
 	GetWALPosition() (uint64, error)
@@ -319,7 +356,7 @@ type StandaloneReplicator struct {
 	storage Storage
 	mu      sync.RWMutex
 	started bool
-	closed  bool
+	work    lifecycle.WorkLifetime // stop signal of this replicator
 
 	// metrics is the Plan-04-06 observation seam. Standalone never
 	// publishes per-peer or transition metrics (no peers, no role
@@ -342,12 +379,15 @@ func NewStandaloneReplicator(config *Config, storage Storage) *StandaloneReplica
 	}
 }
 
+// LifetimeContext returns the standalone owner's immutable shutdown context.
+func (r *StandaloneReplicator) LifetimeContext() context.Context { return r.work.Context() }
+
 // Start initializes the standalone replicator (no-op).
 func (r *StandaloneReplicator) Start(ctx context.Context) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.closed {
+	if r.work.Closing() {
 		return ErrClosed
 	}
 
@@ -356,26 +396,38 @@ func (r *StandaloneReplicator) Start(ctx context.Context) error {
 }
 
 // Apply applies a command directly to storage.
-func (r *StandaloneReplicator) Apply(cmd *Command, timeout time.Duration) error {
+func (r *StandaloneReplicator) Apply(ctx context.Context, cmd *Command, timeout time.Duration) error {
+	// The application is accepted work: Shutdown waits for it to return.
+	_, release, accepted := r.work.Acquire(r.work.Context())
+	if !accepted {
+		return ErrClosed
+	}
+	defer release()
 	r.mu.RLock()
-	if err := checkApplyReadiness(r.closed, r.started); err != nil {
+	if err := checkApplyReadiness(r.work.Closing(), r.started); err != nil {
 		r.mu.RUnlock()
 		return err
 	}
 	r.mu.RUnlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	if cmd != nil {
-		if handled, err := routeLeaderEntityCommand(r.storage, r, cmd, timeout); handled || err != nil {
+		if handled, err := routeLeaderEntityCommand(ctx, r.storage, r, cmd, timeout); handled || err != nil {
 			return err
 		}
 	}
-	return r.storage.ApplyCommand(cmd)
+	// Standalone retains the nonwaiting asynchronous contract: the accepted
+	// application owner's context is passed and the receipt is discarded.
+	_, err := r.storage.ApplyCommand(r.work.Context(), cmd, WALQueued)
+	return err
 }
 
 // ApplyBatch applies multiple commands directly to storage.
-func (r *StandaloneReplicator) ApplyBatch(cmds []*Command, timeout time.Duration) error {
+func (r *StandaloneReplicator) ApplyBatch(ctx context.Context, cmds []*Command, timeout time.Duration) error {
 	for _, cmd := range cmds {
-		if err := r.Apply(cmd, timeout); err != nil {
+		if err := r.Apply(ctx, cmd, timeout); err != nil {
 			return err
 		}
 	}
@@ -406,7 +458,7 @@ func (r *StandaloneReplicator) Health() *HealthStatus {
 	if r.started {
 		state = "ready"
 	}
-	if r.closed {
+	if r.work.Closing() {
 		state = "closed"
 	}
 
@@ -417,7 +469,7 @@ func (r *StandaloneReplicator) Health() *HealthStatus {
 		IsLeader: true,
 		LeaderID: r.config.NodeID,
 		State:    state,
-		Healthy:  r.started && !r.closed,
+		Healthy:  r.started && !r.work.Closing(),
 	}
 }
 
@@ -428,11 +480,8 @@ func (r *StandaloneReplicator) WaitForLeader(ctx context.Context) error {
 
 // Shutdown stops the standalone replicator.
 func (r *StandaloneReplicator) Shutdown() error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	r.closed = true
-	return nil
+	r.work.BeginStop(nil)
+	return r.work.JoinStopped()
 }
 
 // Mode returns the replication mode.

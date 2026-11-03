@@ -111,10 +111,10 @@ func TestRemoteFragmentExecutor_ExplicitTxHandleLifecycle(t *testing.T) {
 			wantCommit, wantRollback := int32(0), int32(1)
 			var err error
 			if tc.commit {
-				err = tx.Commit(nil, nil)
+				err = tx.Commit(TerminalContexts{Commit: t.Context(), Cleanup: context.WithoutCancel(t.Context())}, nil, nil)
 				wantCommit, wantRollback = 1, 0
 			} else {
-				err = tx.Rollback(nil)
+				err = tx.Rollback(context.WithoutCancel(t.Context()), nil)
 			}
 			if err != nil {
 				t.Fatalf("fabric finish failed: %v", err)

@@ -117,35 +117,13 @@ func getParamsFromContext(ctx context.Context) map[string]interface{} {
 // under paramsKey. Used by internal call sites that receive an explicit
 // params map (binding-where eval, parameter substitution helpers) but
 // need to make those params reachable from the recursive expression
-// evaluator's getParamsFromContext lookup.
+// evaluator's getParamsFromContext lookup. The caller supplies its nonnil
+// statement context; parameter attachment never creates an unrelated lifetime.
 func withParams(ctx context.Context, params map[string]interface{}) context.Context {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if params == nil {
 		return ctx
 	}
-	// Fast path: if the same params are already on ctx, don't allocate.
-	if existing, ok := ctx.Value(paramsKey).(map[string]interface{}); ok {
-		if mapsEqualShallow(existing, params) {
-			return ctx
-		}
-	}
 	return withQueryParams(ctx, params)
-}
-
-// mapsEqualShallow does pointer-identity comparison on the same map header.
-// This is intentional — we only want to skip allocation when the caller
-// passed the exact same map that's already attached.
-func mapsEqualShallow(a, b map[string]interface{}) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	// Compare addresses by writing both into reflect.Value or using a
-	// no-op approach. Go doesn't expose map header equality, so a shallow
-	// length check suffices for the fast-path optimisation; correctness
-	// is unaffected if we always allocate.
-	return false
 }
 
 // substituteParams keeps parameter references as typed bindings. Query entry

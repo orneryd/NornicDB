@@ -39,28 +39,28 @@ type compositeErrorEngine struct {
 	bulkCreateEdgesErr error
 }
 
-func (e *compositeErrorEngine) GetNode(id NodeID) (*Node, error) {
+func (e *compositeErrorEngine) GetNode(ctx context.Context, id NodeID) (*Node, error) {
 	if e.getNodeErr != nil {
 		return nil, e.getNodeErr
 	}
-	return e.MemoryEngine.GetNode(id)
+	return e.MemoryEngine.GetNode(ctx, id)
 }
 
-func (e *compositeErrorEngine) GetEdge(id EdgeID) (*Edge, error) {
+func (e *compositeErrorEngine) GetEdge(ctx context.Context, id EdgeID) (*Edge, error) {
 	if e.getEdgeErr != nil {
 		return nil, e.getEdgeErr
 	}
-	return e.MemoryEngine.GetEdge(id)
+	return e.MemoryEngine.GetEdge(ctx, id)
 }
 
-func (e *compositeErrorEngine) GetFirstNodeByLabel(label string) (*Node, error) {
+func (e *compositeErrorEngine) GetFirstNodeByLabel(ctx context.Context, label string) (*Node, error) {
 	if e.firstNodeErr != nil {
 		return nil, e.firstNodeErr
 	}
 	if e.returnNilFirstNode {
 		return nil, nil
 	}
-	return e.MemoryEngine.GetFirstNodeByLabel(label)
+	return e.MemoryEngine.GetFirstNodeByLabel(ctx, label)
 }
 
 func (e *compositeErrorEngine) GetOutgoingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
@@ -106,18 +106,18 @@ func (e *compositeErrorEngine) BatchGetNodes(ctx context.Context, ids []NodeID) 
 	return e.MemoryEngine.BatchGetNodes(ctx, ids)
 }
 
-func (e *compositeErrorEngine) NodeCount() (int64, error) {
+func (e *compositeErrorEngine) NodeCount(ctx context.Context) (int64, error) {
 	if e.nodeCountErr != nil {
 		return 0, e.nodeCountErr
 	}
-	return e.MemoryEngine.NodeCount()
+	return e.MemoryEngine.NodeCount(ctx)
 }
 
-func (e *compositeErrorEngine) EdgeCount() (int64, error) {
+func (e *compositeErrorEngine) EdgeCount(ctx context.Context) (int64, error) {
 	if e.edgeCountErr != nil {
 		return 0, e.edgeCountErr
 	}
-	return e.MemoryEngine.EdgeCount()
+	return e.MemoryEngine.EdgeCount(ctx)
 }
 
 func (e *compositeErrorEngine) Close() error {
@@ -127,32 +127,32 @@ func (e *compositeErrorEngine) Close() error {
 	return e.MemoryEngine.Close()
 }
 
-func (e *compositeErrorEngine) CreateNode(node *Node) (NodeID, error) {
+func (e *compositeErrorEngine) CreateNode(ctx context.Context, node *Node) (NodeID, error) {
 	if e.createNodeErr != nil {
 		return "", e.createNodeErr
 	}
-	return e.MemoryEngine.CreateNode(node)
+	return e.MemoryEngine.CreateNode(ctx, node)
 }
 
-func (e *compositeErrorEngine) CreateEdge(edge *Edge) error {
+func (e *compositeErrorEngine) CreateEdge(ctx context.Context, edge *Edge) error {
 	if e.createEdgeErr != nil {
 		return e.createEdgeErr
 	}
-	return e.MemoryEngine.CreateEdge(edge)
+	return e.MemoryEngine.CreateEdge(ctx, edge)
 }
 
-func (e *compositeErrorEngine) BulkCreateNodes(nodes []*Node) error {
+func (e *compositeErrorEngine) BulkCreateNodes(ctx context.Context, nodes []*Node) error {
 	if e.bulkCreateNodesErr != nil {
 		return e.bulkCreateNodesErr
 	}
-	return e.MemoryEngine.BulkCreateNodes(nodes)
+	return e.MemoryEngine.BulkCreateNodes(ctx, nodes)
 }
 
-func (e *compositeErrorEngine) BulkCreateEdges(edges []*Edge) error {
+func (e *compositeErrorEngine) BulkCreateEdges(ctx context.Context, edges []*Edge) error {
 	if e.bulkCreateEdgesErr != nil {
 		return e.bulkCreateEdgesErr
 	}
-	return e.MemoryEngine.BulkCreateEdges(edges)
+	return e.MemoryEngine.BulkCreateEdges(ctx, edges)
 }
 
 func (e *compositeStreamEngine) StreamNodes(_ context.Context, fn func(node *Node) error) error {
@@ -221,12 +221,12 @@ func TestCompositeEngine_StreamingAPIs(t *testing.T) {
 		map[string]string{"db1": "read_write", "db2": "read_write"},
 	)
 
-	_, err := engine1.CreateNode(&Node{ID: NodeID(prefixTestID("n1")), Labels: []string{"A"}})
+	_, err := engine1.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("n1")), Labels: []string{"A"}})
 	require.NoError(t, err)
-	_, err = engine2.CreateNode(&Node{ID: NodeID(prefixTestID("n2")), Labels: []string{"B"}})
+	_, err = engine2.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("n2")), Labels: []string{"B"}})
 	require.NoError(t, err)
-	require.NoError(t, engine1.CreateEdge(&Edge{ID: EdgeID(prefixTestID("e1")), StartNode: NodeID(prefixTestID("n1")), EndNode: NodeID(prefixTestID("n1")), Type: "LOOP"}))
-	require.NoError(t, engine2.CreateEdge(&Edge{ID: EdgeID(prefixTestID("e2")), StartNode: NodeID(prefixTestID("n2")), EndNode: NodeID(prefixTestID("n2")), Type: "LOOP"}))
+	require.NoError(t, engine1.CreateEdge(t.Context(), &Edge{ID: EdgeID(prefixTestID("e1")), StartNode: NodeID(prefixTestID("n1")), EndNode: NodeID(prefixTestID("n1")), Type: "LOOP"}))
+	require.NoError(t, engine2.CreateEdge(t.Context(), &Edge{ID: EdgeID(prefixTestID("e2")), StartNode: NodeID(prefixTestID("n2")), EndNode: NodeID(prefixTestID("n2")), Type: "LOOP"}))
 
 	ctx := context.Background()
 	var nodeCount int
@@ -266,11 +266,11 @@ func TestCompositeEngine_StreamingFallbackAndErrors(t *testing.T) {
 			map[string]string{"db1": "read_write", "db2": "read_write"},
 		)
 
-		_, err := base1.CreateNode(&Node{ID: NodeID(prefixTestID("stream-n1")), Labels: []string{"A"}})
+		_, err := base1.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("stream-n1")), Labels: []string{"A"}})
 		require.NoError(t, err)
-		_, err = base1.CreateNode(&Node{ID: NodeID(prefixTestID("stream-n2")), Labels: []string{"A"}})
+		_, err = base1.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("stream-n2")), Labels: []string{"A"}})
 		require.NoError(t, err)
-		require.NoError(t, base1.CreateEdge(&Edge{ID: EdgeID(prefixTestID("stream-e1")), StartNode: NodeID(prefixTestID("stream-n1")), EndNode: NodeID(prefixTestID("stream-n2")), Type: "REL"}))
+		require.NoError(t, base1.CreateEdge(t.Context(), &Edge{ID: EdgeID(prefixTestID("stream-e1")), StartNode: NodeID(prefixTestID("stream-n1")), EndNode: NodeID(prefixTestID("stream-n2")), Type: "REL"}))
 
 		errBoom := errors.New("node callback failed")
 		err = composite.StreamNodes(context.Background(), func(node *Node) error { return errBoom })
@@ -310,12 +310,12 @@ func TestCompositeEngine_StreamingFallbackAndErrors(t *testing.T) {
 			map[string]string{"db1": "read_write", "db2": "read_write"},
 		)
 
-		_, err := base1.CreateNode(&Node{ID: NodeID(prefixTestID("fallback-n1")), Labels: []string{"A"}})
+		_, err := base1.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("fallback-n1")), Labels: []string{"A"}})
 		require.NoError(t, err)
-		_, err = base2.CreateNode(&Node{ID: NodeID(prefixTestID("fallback-n2")), Labels: []string{"B"}})
+		_, err = base2.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("fallback-n2")), Labels: []string{"B"}})
 		require.NoError(t, err)
-		require.NoError(t, base1.CreateEdge(&Edge{ID: EdgeID(prefixTestID("fallback-e1")), StartNode: NodeID(prefixTestID("fallback-n1")), EndNode: NodeID(prefixTestID("fallback-n1")), Type: "REL"}))
-		require.NoError(t, base2.CreateEdge(&Edge{ID: EdgeID(prefixTestID("fallback-e2")), StartNode: NodeID(prefixTestID("fallback-n2")), EndNode: NodeID(prefixTestID("fallback-n2")), Type: "REL"}))
+		require.NoError(t, base1.CreateEdge(t.Context(), &Edge{ID: EdgeID(prefixTestID("fallback-e1")), StartNode: NodeID(prefixTestID("fallback-n1")), EndNode: NodeID(prefixTestID("fallback-n1")), Type: "REL"}))
+		require.NoError(t, base2.CreateEdge(t.Context(), &Edge{ID: EdgeID(prefixTestID("fallback-e2")), StartNode: NodeID(prefixTestID("fallback-n2")), EndNode: NodeID(prefixTestID("fallback-n2")), Type: "REL"}))
 
 		var nodeCount int
 		err = composite.StreamNodes(context.Background(), func(node *Node) error {
@@ -399,13 +399,13 @@ func TestCompositeEngine_CreateNode(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Alice", "database_id": "db1"},
 	}
-	_, err := composite.CreateNode(node)
+	_, err := composite.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	// Node should be in one of the constituents
 	found := false
 	for _, engine := range []Engine{engine1, engine2} {
-		retrieved, err := engine.GetNode(node.ID)
+		retrieved, err := engine.GetNode(t.Context(), node.ID)
 		if err == nil {
 			assert.Equal(t, node.ID, retrieved.ID)
 			assert.Equal(t, node.Labels, retrieved.Labels)
@@ -423,21 +423,21 @@ func TestCompositeEngine_GetNode(t *testing.T) {
 	// Create nodes in each constituent
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
 	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
-	engine1.CreateNode(node1)
-	engine2.CreateNode(node2)
+	engine1.CreateNode(t.Context(), node1)
+	engine2.CreateNode(t.Context(), node2)
 
 	// Get node from first constituent
-	retrieved, err := composite.GetNode(node1.ID)
+	retrieved, err := composite.GetNode(t.Context(), node1.ID)
 	require.NoError(t, err)
 	assert.Equal(t, node1.ID, retrieved.ID)
 
 	// Get node from second constituent
-	retrieved, err = composite.GetNode(node2.ID)
+	retrieved, err = composite.GetNode(t.Context(), node2.ID)
 	require.NoError(t, err)
 	assert.Equal(t, node2.ID, retrieved.ID)
 
 	// Get non-existent node
-	_, err = composite.GetNode(NodeID(prefixTestID("nonexistent")))
+	_, err = composite.GetNode(t.Context(), NodeID(prefixTestID("nonexistent")))
 	assert.Error(t, err)
 	assert.Equal(t, ErrNotFound, err)
 }
@@ -449,8 +449,8 @@ func TestCompositeEngine_CreateEdge(t *testing.T) {
 	// Create nodes in first constituent
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
 	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
-	engine1.CreateNode(node1)
-	engine1.CreateNode(node2)
+	engine1.CreateNode(t.Context(), node1)
+	engine1.CreateNode(t.Context(), node2)
 
 	// Create edge
 	edge := &Edge{
@@ -460,11 +460,11 @@ func TestCompositeEngine_CreateEdge(t *testing.T) {
 		Type:       "KNOWS",
 		Properties: map[string]interface{}{"since": 2020},
 	}
-	err := composite.CreateEdge(edge)
+	err := composite.CreateEdge(t.Context(), edge)
 	require.NoError(t, err)
 
 	// Verify edge exists in first constituent
-	retrieved, err := engine1.GetEdge(edge.ID)
+	retrieved, err := engine1.GetEdge(t.Context(), edge.ID)
 	require.NoError(t, err)
 	assert.Equal(t, edge.ID, retrieved.ID)
 	assert.Equal(t, edge.StartNode, retrieved.StartNode)
@@ -480,10 +480,10 @@ func TestCompositeEngine_CreateEdge_ValidationPaths(t *testing.T) {
 			map[string]string{"db1": "read"},
 		)
 
-		err := composite.CreateEdge(nil)
+		err := composite.CreateEdge(t.Context(), nil)
 		require.ErrorContains(t, err, "edge cannot be nil")
 
-		err = composite.CreateEdge(&Edge{ID: EdgeID(prefixTestID("edge-no-write")), StartNode: NodeID(prefixTestID("n1")), EndNode: NodeID(prefixTestID("n2")), Type: "REL"})
+		err = composite.CreateEdge(t.Context(), &Edge{ID: EdgeID(prefixTestID("edge-no-write")), StartNode: NodeID(prefixTestID("n1")), EndNode: NodeID(prefixTestID("n2")), Type: "REL"})
 		require.ErrorContains(t, err, "no writable constituents available")
 	})
 
@@ -496,7 +496,7 @@ func TestCompositeEngine_CreateEdge_ValidationPaths(t *testing.T) {
 			map[string]string{"db1": "read_write", "db2": "read_write"},
 		)
 
-		err := composite.CreateEdge(&Edge{
+		err := composite.CreateEdge(t.Context(), &Edge{
 			ID:        EdgeID(prefixTestID("missing-edge")),
 			StartNode: NodeID(prefixTestID("missing-1")),
 			EndNode:   NodeID(prefixTestID("missing-2")),
@@ -517,9 +517,9 @@ func TestCompositeEngine_CreateEdge_ValidationPaths(t *testing.T) {
 			map[string]string{"db1": "read_write", "db2": "read_write"},
 		)
 
-		_, err := engine1.CreateNode(&Node{ID: "n1", Labels: []string{"Person"}})
+		_, err := engine1.CreateNode(t.Context(), &Node{ID: "n1", Labels: []string{"Person"}})
 		require.NoError(t, err)
-		_, err = engine1.CreateNode(&Node{ID: "n2", Labels: []string{"Person"}})
+		_, err = engine1.CreateNode(t.Context(), &Node{ID: "n2", Labels: []string{"Person"}})
 		require.NoError(t, err)
 
 		composite.mu.Lock()
@@ -527,10 +527,10 @@ func TestCompositeEngine_CreateEdge_ValidationPaths(t *testing.T) {
 		composite.nodeToConstituent["db1:n2"] = "db1"
 		composite.mu.Unlock()
 
-		err = composite.CreateEdge(&Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS"})
+		err = composite.CreateEdge(t.Context(), &Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS"})
 		require.NoError(t, err)
 
-		edge, err := engine1.GetEdge("e1")
+		edge, err := engine1.GetEdge(t.Context(), "e1")
 		require.NoError(t, err)
 		assert.Equal(t, EdgeID("e1"), edge.ID)
 	})
@@ -546,10 +546,10 @@ func TestCompositeEngine_CreateEdge_ValidationPaths(t *testing.T) {
 			map[string]string{"db1": "read", "db2": "read_write"},
 		)
 
-		_, err := engine1.CreateNode(&Node{ID: "n1", Labels: []string{"Person"}})
+		_, err := engine1.CreateNode(t.Context(), &Node{ID: "n1", Labels: []string{"Person"}})
 		require.NoError(t, err)
 
-		err = composite.CreateEdge(&Edge{ID: "e-readonly", StartNode: "n1", EndNode: "missing", Type: "KNOWS"})
+		err = composite.CreateEdge(t.Context(), &Edge{ID: "e-readonly", StartNode: "n1", EndNode: "missing", Type: "KNOWS"})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "start node found in read-only constituent 'db1'")
 	})
@@ -565,14 +565,14 @@ func TestCompositeEngine_BulkCreateNodes(t *testing.T) {
 		{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}, Properties: map[string]interface{}{"database_id": "db1"}},
 		{ID: NodeID(prefixTestID("node3")), Labels: []string{"Company"}, Properties: map[string]interface{}{"database_id": "db2"}},
 	}
-	err := composite.BulkCreateNodes(nodes)
+	err := composite.BulkCreateNodes(t.Context(), nodes)
 	require.NoError(t, err)
 
 	// Verify all nodes exist in one of the constituents
 	for _, node := range nodes {
 		found := false
 		for _, engine := range []Engine{engine1, engine2} {
-			_, err := engine.GetNode(node.ID)
+			_, err := engine.GetNode(t.Context(), node.ID)
 			if err == nil {
 				found = true
 				break
@@ -598,10 +598,10 @@ func TestCompositeEngine_GetSchema(t *testing.T) {
 	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Company"}}
 	node3 := &Node{ID: NodeID(prefixTestID("node3")), Labels: []string{"Person"}}
 	node4 := &Node{ID: NodeID(prefixTestID("node4")), Labels: []string{"Product"}}
-	engine1.CreateNode(node1)
-	engine1.CreateNode(node2)
-	engine2.CreateNode(node3)
-	engine2.CreateNode(node4)
+	engine1.CreateNode(t.Context(), node1)
+	engine1.CreateNode(t.Context(), node2)
+	engine2.CreateNode(t.Context(), node3)
+	engine2.CreateNode(t.Context(), node4)
 
 	// Get merged schema
 	mergedSchema := composite.GetSchema()
@@ -617,7 +617,7 @@ func TestCompositeEngine_ReadOnlyConstituent(t *testing.T) {
 
 	// Create node in first constituent
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
-	engine1.CreateNode(node1)
+	engine1.CreateNode(t.Context(), node1)
 
 	// Create composite engine with one read-only constituent
 	constituents := map[string]Engine{
@@ -635,17 +635,17 @@ func TestCompositeEngine_ReadOnlyConstituent(t *testing.T) {
 	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
 	// Can read from read-only constituent
-	retrieved, err := composite.GetNode(node1.ID)
+	retrieved, err := composite.GetNode(t.Context(), node1.ID)
 	require.NoError(t, err)
 	assert.Equal(t, node1.ID, retrieved.ID)
 
 	// Cannot write to read-only constituent - should route to writable one
 	newNode := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
-	_, err = composite.CreateNode(newNode)
+	_, err = composite.CreateNode(t.Context(), newNode)
 	require.NoError(t, err)
 
 	// New node should be in writable constituent
-	_, err = engine2.GetNode(newNode.ID)
+	_, err = engine2.GetNode(t.Context(), newNode.ID)
 	assert.NoError(t, err)
 }
 
@@ -655,12 +655,12 @@ func TestCompositeEngine_NodeAccess(t *testing.T) {
 			engine1 := newTestMemoryEngine(t)
 			engine2 := newTestMemoryEngine(t)
 			node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}}
-			_, err := engine1.CreateNode(node1)
+			_, err := engine1.CreateNode(t.Context(), node1)
 			require.NoError(t, err)
 			var node2 *Node
 			if mode == "get from multiple constituents" {
 				node2 = &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Bob"}}
-				_, err := engine2.CreateNode(node2)
+				_, err := engine2.CreateNode(t.Context(), node2)
 				require.NoError(t, err)
 			}
 			composite := NewCompositeEngine(
@@ -669,9 +669,9 @@ func TestCompositeEngine_NodeAccess(t *testing.T) {
 				map[string]string{"db1": "read_write", "db2": "read_write"})
 			if mode == "update" {
 				node1.Properties["age"] = 30
-				require.NoError(t, composite.UpdateNode(NodeUpdateRequest{After: node1}))
+				require.NoError(t, composite.UpdateNode(t.Context(), NodeUpdateRequest{After: node1}))
 			}
-			retrieved, err := composite.GetNode(node1.ID)
+			retrieved, err := composite.GetNode(t.Context(), node1.ID)
 			require.NoError(t, err)
 			if mode == "update" {
 				assert.EqualValues(t, 30, retrieved.Properties["age"])
@@ -679,7 +679,7 @@ func TestCompositeEngine_NodeAccess(t *testing.T) {
 			}
 			assert.Equal(t, node1.ID, retrieved.ID)
 			assert.Equal(t, "Alice", retrieved.Properties["name"])
-			retrieved, err = composite.GetNode(node2.ID)
+			retrieved, err = composite.GetNode(t.Context(), node2.ID)
 			require.NoError(t, err)
 			assert.Equal(t, node2.ID, retrieved.ID)
 			assert.Equal(t, "Bob", retrieved.Properties["name"])
@@ -693,14 +693,14 @@ func TestCompositeEngine_DeleteNode(t *testing.T) {
 
 	// Create node in first constituent
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
-	engine1.CreateNode(node1)
+	engine1.CreateNode(t.Context(), node1)
 
 	// Delete node
-	err := composite.DeleteNode(node1.ID)
+	err := composite.DeleteNode(t.Context(), node1.ID)
 	require.NoError(t, err)
 
 	// Verify deletion
-	_, err = composite.GetNode(node1.ID)
+	_, err = composite.GetNode(t.Context(), node1.ID)
 	assert.Error(t, err)
 	assert.Equal(t, ErrNotFound, err)
 }
@@ -713,12 +713,12 @@ func TestCompositeEngine_GetEdge(t *testing.T) {
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
 	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
 	edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
-	engine1.CreateNode(node1)
-	engine1.CreateNode(node2)
-	engine1.CreateEdge(edge1)
+	engine1.CreateNode(t.Context(), node1)
+	engine1.CreateNode(t.Context(), node2)
+	engine1.CreateEdge(t.Context(), edge1)
 
 	// Get edge
-	retrieved, err := composite.GetEdge(edge1.ID)
+	retrieved, err := composite.GetEdge(t.Context(), edge1.ID)
 	require.NoError(t, err)
 	assert.Equal(t, edge1.ID, retrieved.ID)
 	assert.Equal(t, edge1.StartNode, retrieved.StartNode)
@@ -733,17 +733,17 @@ func TestCompositeEngine_UpdateEdge(t *testing.T) {
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
 	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
 	edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
-	engine1.CreateNode(node1)
-	engine1.CreateNode(node2)
-	engine1.CreateEdge(edge1)
+	engine1.CreateNode(t.Context(), node1)
+	engine1.CreateNode(t.Context(), node2)
+	engine1.CreateEdge(t.Context(), edge1)
 
 	// Update edge
 	edge1.Properties = map[string]interface{}{"since": 2020}
-	err := composite.UpdateEdge(EdgeUpdateRequest{After: edge1})
+	err := composite.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge1})
 	require.NoError(t, err)
 
 	// Verify update
-	retrieved, err := composite.GetEdge(edge1.ID)
+	retrieved, err := composite.GetEdge(t.Context(), edge1.ID)
 	require.NoError(t, err)
 	// Gob may decode integers as different types (int, int8, int16, int32, int64, uint16, etc.)
 	// Normalize to int for comparison
@@ -781,16 +781,16 @@ func TestCompositeEngine_DeleteEdge(t *testing.T) {
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
 	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
 	edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
-	engine1.CreateNode(node1)
-	engine1.CreateNode(node2)
-	engine1.CreateEdge(edge1)
+	engine1.CreateNode(t.Context(), node1)
+	engine1.CreateNode(t.Context(), node2)
+	engine1.CreateEdge(t.Context(), edge1)
 
 	// Delete edge
-	err := composite.DeleteEdge(edge1.ID)
+	err := composite.DeleteEdge(t.Context(), edge1.ID)
 	require.NoError(t, err)
 
 	// Verify deletion
-	_, err = composite.GetEdge(edge1.ID)
+	_, err = composite.GetEdge(t.Context(), edge1.ID)
 	assert.Error(t, err)
 	assert.Equal(t, ErrNotFound, err)
 }
@@ -823,8 +823,8 @@ func TestCompositeEngine_NodeReadsAggregateConstituents(t *testing.T) {
 			// Create nodes in different constituents
 			node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
 			node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
-			engine1.CreateNode(node1)
-			engine2.CreateNode(node2)
+			engine1.CreateNode(t.Context(), node1)
+			engine2.CreateNode(t.Context(), node2)
 
 			nodes, err := tc.read(context.Background(), composite)
 			require.NoError(t, err)
@@ -848,11 +848,11 @@ func TestCompositeEngine_GetFirstNodeByLabel(t *testing.T) {
 	// Create nodes with same label in different constituents
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
 	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
-	engine1.CreateNode(node1)
-	engine2.CreateNode(node2)
+	engine1.CreateNode(t.Context(), node1)
+	engine2.CreateNode(t.Context(), node2)
 
 	// Get first node by label
-	node, err := composite.GetFirstNodeByLabel("Person")
+	node, err := composite.GetFirstNodeByLabel(t.Context(), "Person")
 	require.NoError(t, err)
 	assert.NotNil(t, node)
 	assert.Equal(t, "Person", node.Labels[0])
@@ -868,11 +868,11 @@ func TestCompositeEngine_GetOutgoingEdges(t *testing.T) {
 	node3 := &Node{ID: NodeID(prefixTestID("node3")), Labels: []string{"Person"}}
 	edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
 	edge2 := &Edge{ID: EdgeID(prefixTestID("edge2")), StartNode: node1.ID, EndNode: node3.ID, Type: "KNOWS"}
-	engine1.CreateNode(node1)
-	engine1.CreateNode(node2)
-	engine1.CreateEdge(edge1)
-	engine2.CreateNode(node3)
-	engine2.CreateEdge(edge2)
+	engine1.CreateNode(t.Context(), node1)
+	engine1.CreateNode(t.Context(), node2)
+	engine1.CreateEdge(t.Context(), edge1)
+	engine2.CreateNode(t.Context(), node3)
+	engine2.CreateEdge(t.Context(), edge2)
 
 	// Get outgoing edges
 	edges, err := composite.GetOutgoingEdges(context.Background(), node1.ID)
@@ -908,9 +908,9 @@ func TestCompositeEngine_AdjacencyReadsReturnConstituentEdges(t *testing.T) {
 			node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
 			node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
 			edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
-			engine1.CreateNode(node1)
-			engine1.CreateNode(node2)
-			engine1.CreateEdge(edge1)
+			engine1.CreateNode(t.Context(), node1)
+			engine1.CreateNode(t.Context(), node2)
+			engine1.CreateEdge(t.Context(), edge1)
 
 			edges, err := tc.read(context.Background(), composite, node1.ID, node2.ID)
 			require.NoError(t, err)
@@ -928,12 +928,13 @@ func TestCompositeEngine_GetEdgeBetween(t *testing.T) {
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
 	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
 	edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
-	engine1.CreateNode(node1)
-	engine1.CreateNode(node2)
-	engine1.CreateEdge(edge1)
+	engine1.CreateNode(t.Context(), node1)
+	engine1.CreateNode(t.Context(), node2)
+	engine1.CreateEdge(t.Context(), edge1)
 
 	// Get edge between nodes
-	edge := composite.GetEdgeBetween(node1.ID, node2.ID, "KNOWS")
+	edge, err := composite.GetEdgeBetween(t.Context(), node1.ID, node2.ID, "KNOWS")
+	require.NoError(t, err)
 	require.NotNil(t, edge)
 	assert.Equal(t, edge1.ID, edge.ID)
 }
@@ -970,12 +971,12 @@ func TestCompositeEngine_EdgeReadsAggregateConstituents(t *testing.T) {
 			node4 := &Node{ID: NodeID(prefixTestID("node4")), Labels: []string{"Person"}}
 			edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
 			edge2 := &Edge{ID: EdgeID(prefixTestID("edge2")), StartNode: node3.ID, EndNode: node4.ID, Type: "KNOWS"}
-			engine1.CreateNode(node1)
-			engine1.CreateNode(node2)
-			engine1.CreateEdge(edge1)
-			engine2.CreateNode(node3)
-			engine2.CreateNode(node4)
-			engine2.CreateEdge(edge2)
+			engine1.CreateNode(t.Context(), node1)
+			engine1.CreateNode(t.Context(), node2)
+			engine1.CreateEdge(t.Context(), edge1)
+			engine2.CreateNode(t.Context(), node3)
+			engine2.CreateNode(t.Context(), node4)
+			engine2.CreateEdge(t.Context(), edge2)
 
 			edges, err := tc.read(context.Background(), composite)
 			require.NoError(t, err)
@@ -1002,17 +1003,18 @@ func TestCompositeEngine_GetInDegree(t *testing.T) {
 	node3 := &Node{ID: NodeID(prefixTestID("node3")), Labels: []string{"Person"}}
 	edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
 	edge2 := &Edge{ID: EdgeID(prefixTestID("edge2")), StartNode: node3.ID, EndNode: node2.ID, Type: "KNOWS"}
-	engine1.CreateNode(node1)
-	engine1.CreateNode(node2)
-	engine1.CreateEdge(edge1)
+	engine1.CreateNode(t.Context(), node1)
+	engine1.CreateNode(t.Context(), node2)
+	engine1.CreateEdge(t.Context(), edge1)
 	// For edge2, node3 is in engine2 but node2 is in engine1
 	// We need to create node2 in engine2 as well, or create edge2 in engine1
 	// Let's create edge2 in engine1 since node2 is there
-	engine1.CreateNode(node3)
-	engine1.CreateEdge(edge2)
+	engine1.CreateNode(t.Context(), node3)
+	engine1.CreateEdge(t.Context(), edge2)
 
 	// Get in-degree (should count edges from both constituents)
-	degree := composite.GetInDegree(node2.ID)
+	degree, err := composite.GetInDegree(t.Context(), node2.ID)
+	require.NoError(t, err)
 	assert.GreaterOrEqual(t, degree, 2)
 }
 
@@ -1026,14 +1028,15 @@ func TestCompositeEngine_GetOutDegree(t *testing.T) {
 	node3 := &Node{ID: NodeID(prefixTestID("node3")), Labels: []string{"Person"}}
 	edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
 	edge2 := &Edge{ID: EdgeID(prefixTestID("edge2")), StartNode: node1.ID, EndNode: node3.ID, Type: "KNOWS"}
-	engine1.CreateNode(node1)
-	engine1.CreateNode(node2)
-	engine1.CreateEdge(edge1)
-	engine2.CreateNode(node3)
-	engine2.CreateEdge(edge2)
+	engine1.CreateNode(t.Context(), node1)
+	engine1.CreateNode(t.Context(), node2)
+	engine1.CreateEdge(t.Context(), edge1)
+	engine2.CreateNode(t.Context(), node3)
+	engine2.CreateEdge(t.Context(), edge2)
 
 	// Get out-degree (should count edges from both constituents)
-	degree := composite.GetOutDegree(node1.ID)
+	degree, err := composite.GetOutDegree(t.Context(), node1.ID)
+	require.NoError(t, err)
 	assert.GreaterOrEqual(t, degree, 1)
 }
 
@@ -1046,10 +1049,10 @@ func TestCompositeEngine_BulkCreateEdges(t *testing.T) {
 	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
 	node3 := &Node{ID: NodeID(prefixTestID("node3")), Labels: []string{"Person"}}
 	node4 := &Node{ID: NodeID(prefixTestID("node4")), Labels: []string{"Person"}}
-	engine1.CreateNode(node1)
-	engine1.CreateNode(node2)
-	engine2.CreateNode(node3)
-	engine2.CreateNode(node4)
+	engine1.CreateNode(t.Context(), node1)
+	engine1.CreateNode(t.Context(), node2)
+	engine2.CreateNode(t.Context(), node3)
+	engine2.CreateNode(t.Context(), node4)
 
 	// Create edges - edge1 within engine1, edge2 within engine2
 	edges := []*Edge{
@@ -1057,13 +1060,13 @@ func TestCompositeEngine_BulkCreateEdges(t *testing.T) {
 		{ID: EdgeID(prefixTestID("edge2")), StartNode: node3.ID, EndNode: node4.ID, Type: "KNOWS"},
 	}
 
-	err := composite.BulkCreateEdges(edges)
+	err := composite.BulkCreateEdges(t.Context(), edges)
 	require.NoError(t, err)
 
 	// Verify edges exist
-	_, err = composite.GetEdge(edges[0].ID)
+	_, err = composite.GetEdge(t.Context(), edges[0].ID)
 	require.NoError(t, err)
-	_, err = composite.GetEdge(edges[1].ID)
+	_, err = composite.GetEdge(t.Context(), edges[1].ID)
 	require.NoError(t, err)
 }
 
@@ -1074,17 +1077,17 @@ func TestCompositeEngine_BulkDeleteNodes(t *testing.T) {
 	// Create nodes in different constituents
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
 	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
-	engine1.CreateNode(node1)
-	engine2.CreateNode(node2)
+	engine1.CreateNode(t.Context(), node1)
+	engine2.CreateNode(t.Context(), node2)
 
 	// Delete nodes
-	err := composite.BulkDeleteNodes([]NodeID{node1.ID, node2.ID})
+	err := composite.BulkDeleteNodes(t.Context(), []NodeID{node1.ID, node2.ID})
 	require.NoError(t, err)
 
 	// Verify nodes are deleted
-	_, err = composite.GetNode(node1.ID)
+	_, err = composite.GetNode(t.Context(), node1.ID)
 	assert.Error(t, err)
-	_, err = composite.GetNode(node2.ID)
+	_, err = composite.GetNode(t.Context(), node2.ID)
 	assert.Error(t, err)
 }
 
@@ -1099,21 +1102,21 @@ func TestCompositeEngine_BulkDeleteEdges(t *testing.T) {
 	node4 := &Node{ID: NodeID(prefixTestID("node4")), Labels: []string{"Person"}}
 	edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
 	edge2 := &Edge{ID: EdgeID(prefixTestID("edge2")), StartNode: node3.ID, EndNode: node4.ID, Type: "KNOWS"}
-	engine1.CreateNode(node1)
-	engine1.CreateNode(node2)
-	engine1.CreateEdge(edge1)
-	engine2.CreateNode(node3)
-	engine2.CreateNode(node4)
-	engine2.CreateEdge(edge2)
+	engine1.CreateNode(t.Context(), node1)
+	engine1.CreateNode(t.Context(), node2)
+	engine1.CreateEdge(t.Context(), edge1)
+	engine2.CreateNode(t.Context(), node3)
+	engine2.CreateNode(t.Context(), node4)
+	engine2.CreateEdge(t.Context(), edge2)
 
 	// Delete edges
-	err := composite.BulkDeleteEdges([]EdgeID{edge1.ID, edge2.ID})
+	err := composite.BulkDeleteEdges(t.Context(), []EdgeID{edge1.ID, edge2.ID})
 	require.NoError(t, err)
 
 	// Verify edges are deleted
-	_, err = composite.GetEdge(edge1.ID)
+	_, err = composite.GetEdge(t.Context(), edge1.ID)
 	assert.Error(t, err)
-	_, err = composite.GetEdge(edge2.ID)
+	_, err = composite.GetEdge(t.Context(), edge2.ID)
 	assert.Error(t, err)
 }
 
@@ -1127,13 +1130,13 @@ func TestCompositeEngine_routeWrite_PropertyBased(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"database_id": "db1"},
 	}
-	_, err := composite.CreateNode(node)
+	_, err := composite.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	// Node should be in one of the constituents
 	found := false
 	for _, engine := range []Engine{engine1, engine2} {
-		_, err := engine.GetNode(node.ID)
+		_, err := engine.GetNode(t.Context(), node.ID)
 		if err == nil {
 			found = true
 			break
@@ -1152,7 +1155,7 @@ func TestCompositeEngine_routeWrite_LabelBased(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{},
 	}
-	_, err := composite.CreateNode(node)
+	_, err := composite.CreateNode(t.Context(), node)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "ambiguous composite write target")
 }
@@ -1167,7 +1170,7 @@ func TestCompositeEngine_routeWrite_PropertyBased_Int64(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"database_id": int64(123)},
 	}
-	_, err := composite.CreateNode(node)
+	_, err := composite.CreateNode(t.Context(), node)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "ambiguous composite write target")
 }
@@ -1182,7 +1185,7 @@ func TestCompositeEngine_routeWrite_PropertyBased_Int(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"database_id": 456},
 	}
-	_, err := composite.CreateNode(node)
+	_, err := composite.CreateNode(t.Context(), node)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "ambiguous composite write target")
 }
@@ -1197,7 +1200,7 @@ func TestCompositeEngine_routeWrite_PropertyBased_NegativeHash(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"database_id": int64(-123)},
 	}
-	_, err := composite.CreateNode(node)
+	_, err := composite.CreateNode(t.Context(), node)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "ambiguous composite write target")
 }
@@ -1212,7 +1215,7 @@ func TestCompositeEngine_routeWrite_PropertyBased_NegativeInt(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"database_id": -456},
 	}
-	_, err := composite.CreateNode(node)
+	_, err := composite.CreateNode(t.Context(), node)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "ambiguous composite write target")
 }
@@ -1227,7 +1230,7 @@ func TestCompositeEngine_routeWrite_LabelBased_NegativeHash(t *testing.T) {
 		Labels:     []string{"Z"}, // Single char that might produce negative hash
 		Properties: map[string]interface{}{},
 	}
-	_, err := composite.CreateNode(node)
+	_, err := composite.CreateNode(t.Context(), node)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "ambiguous composite write target")
 }
@@ -1242,7 +1245,7 @@ func TestCompositeEngine_routeWrite_NoLabelsNoProperties(t *testing.T) {
 		Labels:     []string{},
 		Properties: nil,
 	}
-	_, err := composite.CreateNode(node)
+	_, err := composite.CreateNode(t.Context(), node)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "ambiguous composite write target")
 }
@@ -1257,7 +1260,7 @@ func TestCompositeEngine_routeWrite_PropertiesWithoutDatabaseID(t *testing.T) {
 		Labels:     []string{},
 		Properties: map[string]interface{}{"name": "Alice"},
 	}
-	_, err := composite.CreateNode(node)
+	_, err := composite.CreateNode(t.Context(), node)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "ambiguous composite write target")
 }
@@ -1321,7 +1324,7 @@ func TestCompositeEngine_CreateNode_NoWritableConstituents(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{},
 	}
-	_, err := composite.CreateNode(node)
+	_, err := composite.CreateNode(t.Context(), node)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no writable constituents")
 }
@@ -1331,7 +1334,7 @@ func TestCompositeEngine_UpdateNode_NotFound(t *testing.T) {
 
 	// Try to update non-existent node
 	node := &Node{ID: NodeID(prefixTestID("nonexistent")), Labels: []string{"Person"}}
-	err := composite.UpdateNode(NodeUpdateRequest{After: node})
+	err := composite.UpdateNode(t.Context(), NodeUpdateRequest{After: node})
 	assert.Error(t, err)
 	assert.Equal(t, ErrNotFound, err)
 }
@@ -1341,7 +1344,7 @@ func TestCompositeEngine_DeleteNode_NotFound(t *testing.T) {
 	composite, _, _ := compositePairFixture(t)
 
 	// Try to delete non-existent node
-	err := composite.DeleteNode(NodeID(prefixTestID("nonexistent")))
+	err := composite.DeleteNode(t.Context(), NodeID(prefixTestID("nonexistent")))
 	assert.Error(t, err)
 	assert.Equal(t, ErrNotFound, err)
 }
@@ -1351,7 +1354,7 @@ func TestCompositeEngine_GetEdge_NotFound(t *testing.T) {
 	composite, _, _ := compositePairFixture(t)
 
 	// Try to get non-existent edge
-	_, err := composite.GetEdge(EdgeID(prefixTestID("nonexistent")))
+	_, err := composite.GetEdge(t.Context(), EdgeID(prefixTestID("nonexistent")))
 	assert.Error(t, err)
 	assert.Equal(t, ErrNotFound, err)
 }
@@ -1362,7 +1365,7 @@ func TestCompositeEngine_UpdateEdge_NotFound(t *testing.T) {
 
 	// Try to update non-existent edge
 	edge := &Edge{ID: EdgeID(prefixTestID("nonexistent")), StartNode: NodeID(prefixTestID("node1")), EndNode: NodeID(prefixTestID("node2")), Type: "KNOWS"}
-	err := composite.UpdateEdge(EdgeUpdateRequest{After: edge})
+	err := composite.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge})
 	assert.Error(t, err)
 	assert.Equal(t, ErrNotFound, err)
 }
@@ -1372,7 +1375,7 @@ func TestCompositeEngine_DeleteEdge_NotFound(t *testing.T) {
 	composite, _, _ := compositePairFixture(t)
 
 	// Try to delete non-existent edge
-	err := composite.DeleteEdge(EdgeID(prefixTestID("nonexistent")))
+	err := composite.DeleteEdge(t.Context(), EdgeID(prefixTestID("nonexistent")))
 	assert.Error(t, err)
 	assert.Equal(t, ErrNotFound, err)
 }
@@ -1383,7 +1386,7 @@ func TestCompositeEngine_GetFirstNodeByLabel_NotFound(t *testing.T) {
 
 	// Try to get first node with non-existent label
 	// GetFirstNodeByLabel should return nil, ErrNotFound when not found
-	node, err := composite.GetFirstNodeByLabel("NonExistent")
+	node, err := composite.GetFirstNodeByLabel(t.Context(), "NonExistent")
 	// CompositeEngine should return ErrNotFound after checking all constituents
 	assert.Error(t, err)
 	assert.Equal(t, ErrNotFound, err)
@@ -1395,7 +1398,8 @@ func TestCompositeEngine_GetEdgeBetween_NotFound(t *testing.T) {
 	composite, _, _ := compositePairFixture(t)
 
 	// Try to get edge between non-existent nodes
-	edge := composite.GetEdgeBetween(NodeID(prefixTestID("node1")), NodeID(prefixTestID("node2")), "KNOWS")
+	edge, err := composite.GetEdgeBetween(t.Context(), NodeID(prefixTestID("node1")), NodeID(prefixTestID("node2")), "KNOWS")
+	require.NoError(t, err)
 	assert.Nil(t, edge)
 }
 
@@ -1406,8 +1410,8 @@ func TestCompositeEngine_BulkCreateEdges_Unrouted(t *testing.T) {
 	// Create nodes in first constituent
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
 	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
-	engine1.CreateNode(node1)
-	engine1.CreateNode(node2)
+	engine1.CreateNode(t.Context(), node1)
+	engine1.CreateNode(t.Context(), node2)
 
 	// Create edge with non-existent start node (should route to first writable)
 	// But edge creation will fail because nodes don't exist
@@ -1418,7 +1422,7 @@ func TestCompositeEngine_BulkCreateEdges_Unrouted(t *testing.T) {
 		Type:      "KNOWS",
 	}
 
-	err := composite.BulkCreateEdges([]*Edge{edge})
+	err := composite.BulkCreateEdges(t.Context(), []*Edge{edge})
 	// Will fail because nodes don't exist, but tests the unrouted path
 	assert.Error(t, err)
 }
@@ -1430,8 +1434,8 @@ func TestCompositeEngine_BatchGetNodes(t *testing.T) {
 	// Create nodes in different constituents
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
 	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
-	engine1.CreateNode(node1)
-	engine2.CreateNode(node2)
+	engine1.CreateNode(t.Context(), node1)
+	engine2.CreateNode(t.Context(), node2)
 
 	// Batch get nodes
 	nodes, err := composite.BatchGetNodes(context.Background(), []NodeID{node1.ID, node2.ID, NodeID(prefixTestID("nonexistent"))})
@@ -1458,11 +1462,11 @@ func TestCompositeEngine_NodeCount(t *testing.T) {
 	// Create nodes in different constituents
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
 	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}}
-	engine1.CreateNode(node1)
-	engine2.CreateNode(node2)
+	engine1.CreateNode(t.Context(), node1)
+	engine2.CreateNode(t.Context(), node2)
 
 	// Get node count (should sum from all constituents)
-	count, err := composite.NodeCount()
+	count, err := composite.NodeCount(t.Context())
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, count, int64(2))
 }
@@ -1478,15 +1482,15 @@ func TestCompositeEngine_EdgeCount(t *testing.T) {
 	node4 := &Node{ID: NodeID(prefixTestID("node4")), Labels: []string{"Person"}}
 	edge1 := &Edge{ID: EdgeID(prefixTestID("edge1")), StartNode: node1.ID, EndNode: node2.ID, Type: "KNOWS"}
 	edge2 := &Edge{ID: EdgeID(prefixTestID("edge2")), StartNode: node3.ID, EndNode: node4.ID, Type: "KNOWS"}
-	engine1.CreateNode(node1)
-	engine1.CreateNode(node2)
-	engine1.CreateEdge(edge1)
-	engine2.CreateNode(node3)
-	engine2.CreateNode(node4)
-	engine2.CreateEdge(edge2)
+	engine1.CreateNode(t.Context(), node1)
+	engine1.CreateNode(t.Context(), node2)
+	engine1.CreateEdge(t.Context(), edge1)
+	engine2.CreateNode(t.Context(), node3)
+	engine2.CreateNode(t.Context(), node4)
+	engine2.CreateEdge(t.Context(), edge2)
 
 	// Get edge count (should sum from all constituents)
-	count, err := composite.EdgeCount()
+	count, err := composite.EdgeCount(t.Context())
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, count, int64(2))
 }
@@ -1499,7 +1503,7 @@ func TestCompositeEngine_ErrorPaths(t *testing.T) {
 		t.Cleanup(func() { _ = errEngine.MemoryEngine.Close() })
 
 		okNode := &Node{ID: NodeID(prefixTestID("ok-node")), Labels: []string{"Person"}}
-		_, err := okEngine.CreateNode(okNode)
+		_, err := okEngine.CreateNode(t.Context(), okNode)
 		require.NoError(t, err)
 
 		errorOnly := NewCompositeEngine(
@@ -1509,25 +1513,25 @@ func TestCompositeEngine_ErrorPaths(t *testing.T) {
 		)
 
 		errEngine.getNodeErr = boom
-		_, err = errorOnly.GetNode(okNode.ID)
+		_, err = errorOnly.GetNode(t.Context(), okNode.ID)
 		require.ErrorIs(t, err, boom)
-		err = errorOnly.UpdateNode(NodeUpdateRequest{After: &Node{ID: okNode.ID, Labels: []string{"Person"}}})
+		err = errorOnly.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: okNode.ID, Labels: []string{"Person"}}})
 		require.ErrorIs(t, err, boom)
-		err = errorOnly.DeleteNode(okNode.ID)
+		err = errorOnly.DeleteNode(t.Context(), okNode.ID)
 		require.ErrorIs(t, err, boom)
 		errEngine.getNodeErr = nil
 
 		errEngine.getEdgeErr = boom
-		_, err = errorOnly.GetEdge(EdgeID(prefixTestID("missing-edge")))
+		_, err = errorOnly.GetEdge(t.Context(), EdgeID(prefixTestID("missing-edge")))
 		require.ErrorIs(t, err, boom)
-		err = errorOnly.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: EdgeID(prefixTestID("missing-edge")), StartNode: okNode.ID, EndNode: okNode.ID, Type: "REL"}})
+		err = errorOnly.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: EdgeID(prefixTestID("missing-edge")), StartNode: okNode.ID, EndNode: okNode.ID, Type: "REL"}})
 		require.ErrorIs(t, err, boom)
-		err = errorOnly.DeleteEdge(EdgeID(prefixTestID("missing-edge")))
+		err = errorOnly.DeleteEdge(t.Context(), EdgeID(prefixTestID("missing-edge")))
 		require.ErrorIs(t, err, boom)
 		errEngine.getEdgeErr = nil
 
 		errEngine.firstNodeErr = boom
-		_, err = errorOnly.GetFirstNodeByLabel("Person")
+		_, err = errorOnly.GetFirstNodeByLabel(t.Context(), "Person")
 		require.ErrorIs(t, err, boom)
 		errEngine.firstNodeErr = nil
 
@@ -1537,7 +1541,7 @@ func TestCompositeEngine_ErrorPaths(t *testing.T) {
 			map[string]string{"err": "read_write", "ok": "read_write"},
 		)
 		errEngine.returnNilFirstNode = true
-		got, err := composite.GetFirstNodeByLabel("Person")
+		got, err := composite.GetFirstNodeByLabel(t.Context(), "Person")
 		require.NoError(t, err)
 		require.NotNil(t, got)
 		assert.Equal(t, okNode.ID, got.ID)
@@ -1579,12 +1583,12 @@ func TestCompositeEngine_ErrorPaths(t *testing.T) {
 		errEngine.batchGetErr = nil
 
 		errEngine.nodeCountErr = boom
-		_, err = composite.NodeCount()
+		_, err = composite.NodeCount(t.Context())
 		require.ErrorContains(t, err, "constituent 'err'")
 		errEngine.nodeCountErr = nil
 
 		errEngine.edgeCountErr = boom
-		_, err = composite.EdgeCount()
+		_, err = composite.EdgeCount(t.Context())
 		require.ErrorContains(t, err, "constituent 'err'")
 	})
 
@@ -1602,7 +1606,7 @@ func TestCompositeEngine_ErrorPaths(t *testing.T) {
 		composite.SetLabelRouting("ErrLabel", []string{"err"})
 
 		errEngine.createNodeErr = boom
-		_, err := composite.CreateNode(&Node{
+		_, err := composite.CreateNode(t.Context(), &Node{
 			ID:         NodeID(prefixTestID("route-node")),
 			Labels:     []string{"ErrLabel"},
 			Properties: map[string]interface{}{"database_id": "err"},
@@ -1612,18 +1616,18 @@ func TestCompositeEngine_ErrorPaths(t *testing.T) {
 
 		start := &Node{ID: NodeID(prefixTestID("start")), Labels: []string{"ErrLabel"}}
 		end := &Node{ID: NodeID(prefixTestID("end")), Labels: []string{"ErrLabel"}}
-		_, err = errEngine.CreateNode(start)
+		_, err = errEngine.CreateNode(t.Context(), start)
 		require.NoError(t, err)
-		_, err = errEngine.CreateNode(end)
+		_, err = errEngine.CreateNode(t.Context(), end)
 		require.NoError(t, err)
 
 		errEngine.createEdgeErr = boom
-		err = composite.CreateEdge(&Edge{ID: EdgeID(prefixTestID("route-edge")), StartNode: start.ID, EndNode: end.ID, Type: "REL"})
+		err = composite.CreateEdge(t.Context(), &Edge{ID: EdgeID(prefixTestID("route-edge")), StartNode: start.ID, EndNode: end.ID, Type: "REL"})
 		require.ErrorIs(t, err, boom)
 		errEngine.createEdgeErr = nil
 
 		errEngine.bulkCreateNodesErr = boom
-		err = composite.BulkCreateNodes([]*Node{{
+		err = composite.BulkCreateNodes(t.Context(), []*Node{{
 			ID:         NodeID(prefixTestID("bulk-node")),
 			Labels:     []string{"ErrLabel"},
 			Properties: map[string]interface{}{"database_id": "err"},
@@ -1632,7 +1636,7 @@ func TestCompositeEngine_ErrorPaths(t *testing.T) {
 		errEngine.bulkCreateNodesErr = nil
 
 		errEngine.bulkCreateEdgesErr = boom
-		err = composite.BulkCreateEdges([]*Edge{{ID: EdgeID(prefixTestID("bulk-edge")), StartNode: start.ID, EndNode: end.ID, Type: "REL"}})
+		err = composite.BulkCreateEdges(t.Context(), []*Edge{{ID: EdgeID(prefixTestID("bulk-edge")), StartNode: start.ID, EndNode: end.ID, Type: "REL"}})
 		require.ErrorContains(t, err, "failed to create edges in constituent 'err'")
 
 		errEngine.closeErr = errors.New("close failed")

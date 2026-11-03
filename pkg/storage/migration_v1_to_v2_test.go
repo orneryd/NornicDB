@@ -194,7 +194,7 @@ func TestMigrateV1ToV2_PreservesPropertiesRoundTrip(t *testing.T) {
 		return err
 	}))
 
-	decoded, err := eng.decodeNode("test", data)
+	decoded, err := eng.decodeNodeProjected(nil, "test", data, nil)
 	require.NoError(t, err)
 	require.Equal(t, node.ID, decoded.ID)
 	require.Equal(t, node.Labels, decoded.Labels)

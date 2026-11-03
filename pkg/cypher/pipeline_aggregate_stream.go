@@ -39,7 +39,7 @@ func pipelineClauseAggregates(ctx context.Context, clause pipelineClause) bool {
 	if clause.kind == pipelineClauseWith {
 		body = pipelineClauseBody(clause.text, "WITH")
 	}
-	if where := topLevelKeywordIndex(body, "WHERE"); where >= 0 {
+	if where := topLevelKeywordIndex(ctx, body, "WHERE"); where >= 0 {
 		body = body[:where]
 	}
 	return returnProjectionPlanFor(ctx, "RETURN "+body).hasAggregate
@@ -472,7 +472,7 @@ func (state *pipelineAggregateState) add(ctx context.Context, executor *StorageE
 		}
 		stored := pipelineRow{}
 		if len(state.percentileRows) == 0 {
-			if err := executor.validatePercentileCalls(state.name+"("+state.expression+")", row); err != nil {
+			if err := executor.validatePercentileCalls(ctx, state.name+"("+state.expression+")", row); err != nil {
 				recordExpressionFailure(ctx, err)
 				return false
 			}

@@ -14,11 +14,11 @@ func TestBufferedWALRejectsIncompleteNumericBindingsBeforeApplyingData(t *testin
 	f := newForeignNumericReplayFixture(t)
 	const priorID = EdgeID("test:binding-sentinel")
 	const newID = EdgeID("test:binding-replayed")
-	require.NoError(t, f.dest.CreateEdge(&Edge{
+	require.NoError(t, f.dest.CreateEdge(t.Context(), &Edge{
 		ID: priorID, StartNode: f.holderNode, EndNode: f.holderEnd, Type: "SENTINEL",
 	}))
 	entry := f.bufferedEdgeCommit(t, func(tx *BadgerTransaction) error {
-		return tx.CreateEdge(&Edge{ID: newID, StartNode: foreignStartNode, EndNode: foreignEndNode, Type: "LINK"})
+		return tx.CreateEdge(t.Context(), &Edge{ID: newID, StartNode: foreignStartNode, EndNode: foreignEndNode, Type: "LINK"})
 	})
 	data, err := decodeBufferedWALRecord(entry)
 	require.NoError(t, err)
@@ -33,9 +33,9 @@ func TestBufferedWALRejectsIncompleteNumericBindingsBeforeApplyingData(t *testin
 		broken.Checksum = crc32Checksum(broken.Data)
 		require.Error(t, ReplayWALEntry(f.dest, broken))
 		f.dest.invalidateCachesAfterRestore()
-		_, err = f.dest.GetEdge(newID)
+		_, err = f.dest.GetEdge(t.Context(), newID)
 		require.ErrorIs(t, err, ErrNotFound)
-		prior, err := f.dest.GetEdge(priorID)
+		prior, err := f.dest.GetEdge(t.Context(), priorID)
 		require.NoError(t, err)
 		require.Equal(t, f.holderNode, prior.StartNode)
 		require.Equal(t, f.holderEnd, prior.EndNode)
@@ -51,7 +51,7 @@ func TestBufferedWALRejectsUnknownPhysicalKeyBeforeApplyingData(t *testing.T) {
 	f := newForeignNumericReplayFixture(t)
 	const newID = EdgeID("test:unknown-family-replayed")
 	entry := f.bufferedEdgeCommit(t, func(tx *BadgerTransaction) error {
-		return tx.CreateEdge(&Edge{ID: newID, StartNode: foreignStartNode, EndNode: foreignEndNode, Type: "LINK"})
+		return tx.CreateEdge(t.Context(), &Edge{ID: newID, StartNode: foreignStartNode, EndNode: foreignEndNode, Type: "LINK"})
 	})
 	data, err := decodeBufferedWALRecord(entry)
 	require.NoError(t, err)
@@ -64,7 +64,7 @@ func TestBufferedWALRejectsUnknownPhysicalKeyBeforeApplyingData(t *testing.T) {
 	entry.Checksum = crc32Checksum(entry.Data)
 	require.Error(t, ReplayWALEntry(f.dest, entry))
 	f.dest.invalidateCachesAfterRestore()
-	_, err = f.dest.GetEdge(newID)
+	_, err = f.dest.GetEdge(t.Context(), newID)
 	require.ErrorIs(t, err, ErrNotFound)
 	require.NoError(t, f.dest.db.View(func(tx *badger.Txn) error {
 		_, err := tx.Get(unknown)
@@ -76,7 +76,7 @@ func TestBufferedWALRejectsUnknownPhysicalKeyBeforeApplyingData(t *testing.T) {
 func TestBufferedWALRejectsUnknownKeyWithoutNumericFields(t *testing.T) {
 	f := newForeignNumericReplayFixture(t)
 	entry := f.bufferedEdgeCommit(t, func(tx *BadgerTransaction) error {
-		return tx.CreateEdge(&Edge{ID: "test:forged", StartNode: foreignStartNode, EndNode: foreignEndNode, Type: "LINK"})
+		return tx.CreateEdge(t.Context(), &Edge{ID: "test:forged", StartNode: foreignStartNode, EndNode: foreignEndNode, Type: "LINK"})
 	})
 	data, err := decodeBufferedWALRecord(entry)
 	require.NoError(t, err)

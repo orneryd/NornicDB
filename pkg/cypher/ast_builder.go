@@ -335,8 +335,8 @@ func astWithoutComments(source *cyphertext.Source) *cyphertext.Source {
 }
 
 // Build parses a Cypher query into an AST.
-func (b *ASTBuilder) Build(cypher string) (*AST, error) {
-	source := cyphertext.NormalizeSource(cypher)
+func (b *ASTBuilder) Build(ctx context.Context, cypher string) (*AST, error) {
+	source := cyphertext.NewSource(ctx, cypher, cyphertext.RawSource)
 	if source.Err != nil {
 		return nil, source.Err
 	}
@@ -349,10 +349,13 @@ func (b *ASTBuilder) Build(cypher string) (*AST, error) {
 	// removal lets compound grammar phrases share their normal keyword owner.
 	source = astWithoutComments(source)
 	// Split into clauses
-	clauses := b.splitIntoClauses(source.Text)
+	clauses := b.splitIntoClauses(ctx, source.Text)
 
 	for _, clauseInfo := range clauses {
-		clause := b.parseClause(context.Background(), clauseInfo.clauseType, source.Window(clauseInfo.startPos, clauseInfo.startPos+len(clauseInfo.text)))
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		clause := b.parseClause(ctx, clauseInfo.clauseType, source.Window(clauseInfo.startPos, clauseInfo.startPos+len(clauseInfo.text)))
 		ast.Clauses = append(ast.Clauses, *clause)
 	}
 
@@ -361,6 +364,9 @@ func (b *ASTBuilder) Build(cypher string) (*AST, error) {
 	ast.IsCompound = len(ast.Clauses) > 1
 	ast.QueryType = b.determineQueryType(ast)
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return ast, nil
 }
 
@@ -371,7 +377,7 @@ type clauseInfo struct {
 }
 
 // splitIntoClauses splits a query into individual clauses.
-func (b *ASTBuilder) splitIntoClauses(cypher string) []clauseInfo {
+func (b *ASTBuilder) splitIntoClauses(ctx context.Context, cypher string) []clauseInfo {
 	var clauses []clauseInfo
 	upper := upperASCII(cypher)
 
@@ -417,7 +423,7 @@ func (b *ASTBuilder) splitIntoClauses(cypher string) []clauseInfo {
 	for _, kw := range keywords {
 		pos := 0
 		for {
-			absolutePos := keywordIndexFrom(cypher, kw.keyword, pos, options)
+			absolutePos := keywordIndexFrom(ctx, cypher, kw.keyword, pos, options)
 			if absolutePos < 0 {
 				break
 			}
@@ -509,7 +515,7 @@ func (b *ASTBuilder) parseClause(ctx context.Context, clauseType ASTClauseType, 
 			clause.Set = &ASTSet{Items: b.parseSetItems(body)}
 		}
 	case ASTClauseMerge:
-		clause.Merge = b.parseMerge(source)
+		clause.Merge = b.parseMerge(ctx, source)
 	case ASTClauseDelete, ASTClauseDetachDelete:
 		clause.Delete = b.parseDelete(source, clauseType == ASTClauseDetachDelete)
 	case ASTClauseRemove:
@@ -528,7 +534,7 @@ func (b *ASTBuilder) parseClause(ctx context.Context, clauseType ASTClauseType, 
 	case ASTClauseWhere:
 		clause.Where = b.parseWhere(source)
 	case ASTClauseUnwind:
-		clause.Unwind = b.parseUnwind(source)
+		clause.Unwind = b.parseUnwind(ctx, source)
 	case ASTClauseOrderBy:
 		clause.OrderBy = b.parseOrderBy(source)
 	case ASTClauseLimit:
@@ -560,12 +566,12 @@ func (b *ASTBuilder) parseMatch(source *cyphertext.Source, optional bool) *ASTMa
 // parseMerge parses a MERGE clause through the MERGE action parser
 // (splitMergeClauseActions): OnCreate and OnMatch hold the items of every
 // ON CREATE SET / ON MATCH SET clause, in order.
-func (b *ASTBuilder) parseMerge(source *cyphertext.Source) *ASTMerge {
+func (b *ASTBuilder) parseMerge(ctx context.Context, source *cyphertext.Source) *ASTMerge {
 	text := source.Text
 	merge := &ASTMerge{}
 	body := astTrim(source.Window(queryGapEnd(text, keywordEndAt(text, 0, "MERGE")), len(text)))
 	var spans mergeActionSpans
-	parts := splitMergeClauseActions(body.Text, &spans)
+	parts := splitMergeClauseActions(ctx, body.Text, &spans)
 	if patterns := b.parsePatterns(body.Window(spans.pattern.Start, spans.pattern.End)); len(patterns) > 0 {
 		merge.Pattern = patterns[0]
 	}
@@ -730,12 +736,12 @@ func (b *ASTBuilder) parseWhere(source *cyphertext.Source) *ASTWhere {
 }
 
 // parseUnwind parses an UNWIND clause.
-func (b *ASTBuilder) parseUnwind(source *cyphertext.Source) *ASTUnwind {
+func (b *ASTBuilder) parseUnwind(ctx context.Context, source *cyphertext.Source) *ASTUnwind {
 	unwind := &ASTUnwind{}
 	body := astTrim(source.Window(len("UNWIND"), len(source.Text)))
 	content := body.Text
 
-	if asIndex := topLevelKeywordIndex(content, "AS"); asIndex > 0 {
+	if asIndex := topLevelKeywordIndex(ctx, content, "AS"); asIndex > 0 {
 		// Map through the AS boundary before trimming accepted trivia: a
 		// normalized comment may occupy that trivia in the original source.
 		expressionSource := body.Window(0, asIndex)

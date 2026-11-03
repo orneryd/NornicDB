@@ -14,7 +14,7 @@ func TestEmbeddingRangeManifestReplacementSnapshotsAndMetadata(t *testing.T) {
 	engine := newTestMemoryEngine(t).BadgerEngine
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	body := &Node{ID: "test:manifest-owner", Labels: []string{"Doc"}, Properties: map[string]any{"text": "same source"}}
-	_, err := engine.CreateNode(body)
+	_, err := engine.CreateNode(t.Context(), body)
 	require.NoError(t, err)
 	large := make([]float32, maxEmbeddingValueBytes/4+100)
 	for i := range large {
@@ -25,19 +25,19 @@ func TestEmbeddingRangeManifestReplacementSnapshotsAndMetadata(t *testing.T) {
 		t.Helper()
 		payload := CopyNode(body)
 		payload.ChunkEmbeddings, payload.EmbedMeta = vectors, meta
-		require.NoError(t, engine.UpdateNodeEmbeddingSidecar(payload))
+		require.NoError(t, engine.UpdateNodeEmbeddingSidecar(context.Background(), payload))
 		require.NotContains(t, payload.EmbedMeta, embeddingRangeManifestKey, "the physical index cannot enter publication")
 	}
 	write(initial, map[string]any{"chunk_count": 2, "embedding_model": "first"})
-	old, err := engine.BeginTransaction()
+	old, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, old.Rollback()) })
 	write([][]float32{{5, 6}}, map[string]any{"chunk_count": 1, "embedding_model": "second"})
-	current, err := engine.GetNode(body.ID)
+	current, err := engine.GetNode(t.Context(), body.ID)
 	require.NoError(t, err)
 	require.Equal(t, [][]float32{{5, 6}}, current.ChunkEmbeddings)
 	require.NotContains(t, current.EmbedMeta, embeddingRangeManifestKey)
-	meta, err := engine.GetNodeEmbeddingMeta(body.ID)
+	meta, err := engine.GetNodeEmbeddingMeta(context.Background(), body.ID)
 	require.NoError(t, err)
 	require.NotContains(t, meta, embeddingRangeManifestKey)
 	require.NoError(t, engine.withView(func(txn *badger.Txn) error {
@@ -47,7 +47,7 @@ func TestEmbeddingRangeManifestReplacementSnapshotsAndMetadata(t *testing.T) {
 		}
 		return nil
 	}))
-	held, err := old.GetNode(body.ID)
+	held, err := old.GetNode(t.Context(), body.ID)
 	require.NoError(t, err)
 	require.Equal(t, initial, held.ChunkEmbeddings, "a new manifest cannot change a pinned public snapshot")
 	write(nil, map[string]any{"embedding_failed": true, "embedding_model": "failed"})
@@ -59,12 +59,12 @@ func TestEmbeddingRangeManifestReplacementSnapshotsAndMetadata(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, count)
 	write(nil, nil)
-	current, err = engine.GetNode(body.ID)
+	current, err = engine.GetNode(t.Context(), body.ID)
 	require.NoError(t, err)
 	require.Empty(t, current.ChunkEmbeddings)
 	require.Nil(t, current.EmbedMeta, "clearing a sidecar must remove its internal index too")
-	require.NoError(t, engine.DeleteNode(body.ID))
-	held, err = old.GetNode(body.ID)
+	require.NoError(t, engine.DeleteNode(t.Context(), body.ID))
+	held, err = old.GetNode(t.Context(), body.ID)
 	require.NoError(t, err)
 	require.Equal(t, initial, held.ChunkEmbeddings)
 }
@@ -86,13 +86,13 @@ func TestEmbeddingRangeManifestInvalidRecordRepairsThroughPublicReplacement(t *t
 			engine := newTestMemoryEngine(t).BadgerEngine
 			t.Cleanup(func() { require.NoError(t, engine.Close()) })
 			body := &Node{ID: "test:manifest-repair", Properties: map[string]any{"text": "unchanged"}}
-			_, err := engine.CreateNode(body)
+			_, err := engine.CreateNode(t.Context(), body)
 			require.NoError(t, err)
 			payload := CopyNode(body)
 			payload.ChunkEmbeddings = [][]float32{{1, 2}}
 			payload.EmbedMeta = map[string]any{"chunk_count": 1}
-			require.NoError(t, engine.UpdateNodeEmbeddingSidecar(payload))
-			require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+			require.NoError(t, engine.UpdateNodeEmbeddingSidecar(context.Background(), payload))
+			require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 				meta := map[string]any{"chunk_count": 1}
 				if marker != nil {
 					meta[embeddingRangeManifestKey] = marker
@@ -107,13 +107,13 @@ func TestEmbeddingRangeManifestInvalidRecordRepairsThroughPublicReplacement(t *t
 				return txn.Set(embeddingKey(body.ID, 3), data)
 			}))
 			payload.ChunkEmbeddings = [][]float32{{8, 9}}
-			require.NoError(t, engine.UpdateNodeEmbeddingSidecar(payload))
+			require.NoError(t, engine.UpdateNodeEmbeddingSidecar(context.Background(), payload))
 			require.NoError(t, engine.withView(func(txn *badger.Txn) error {
 				_, err := txn.Get(embeddingKey(body.ID, 3))
 				require.ErrorIs(t, err, badger.ErrKeyNotFound, "invalid/missing index must fall back to full owned-range cleanup")
 				return nil
 			}))
-			saved, err := engine.GetNode(body.ID)
+			saved, err := engine.GetNode(t.Context(), body.ID)
 			require.NoError(t, err)
 			require.Equal(t, payload.ChunkEmbeddings, saved.ChunkEmbeddings)
 			require.NotContains(t, saved.EmbedMeta, embeddingRangeManifestKey)
@@ -125,13 +125,13 @@ func TestEmbeddingRangeManifestLargeMetadataKeepsStorageLimit(t *testing.T) {
 	engine := newTestMemoryEngine(t).BadgerEngine
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	body := &Node{ID: "test:manifest-large-meta", Properties: map[string]any{"text": "unchanged"}}
-	_, err := engine.CreateNode(body)
+	_, err := engine.CreateNode(t.Context(), body)
 	require.NoError(t, err)
 	payload := CopyNode(body)
 	payload.ChunkEmbeddings = [][]float32{{1, 2}}
 	payload.EmbedMeta = map[string]any{"chunk_count": 1, "detail": strings.Repeat("x", maxEmbeddingValueBytes)}
-	require.NoError(t, engine.UpdateNodeEmbeddingSidecar(payload))
-	saved, err := engine.GetNodeEmbeddingMeta(body.ID)
+	require.NoError(t, engine.UpdateNodeEmbeddingSidecar(context.Background(), payload))
+	saved, err := engine.GetNodeEmbeddingMeta(context.Background(), body.ID)
 	require.NoError(t, err)
 	require.Equal(t, payload.EmbedMeta["detail"], saved["detail"])
 	require.NotContains(t, saved, embeddingRangeManifestKey)

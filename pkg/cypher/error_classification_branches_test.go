@@ -42,15 +42,15 @@ func TestMergeUniqueConflictRetryBranches(t *testing.T) {
 	statement := func(query string, params map[string]interface{}) []CommitStatement {
 		return []CommitStatement{{Query: query, Params: params}}
 	}
-	require.False(t, MergeUniqueConflictIsRetrySafe(statement("MERGE (u:U {k: 1})", nil), stderrors.New("other")))
-	require.False(t, MergeUniqueConflictIsRetrySafe(statement("CALL { MERGE (u:U {k: 1}) } IN TRANSACTIONS", nil), violation))
-	require.True(t, MergeUniqueConflictIsRetrySafe(statement("MERGE (u:U {k: 1, s: 'a{'}) SET u:Seen", nil), violation))
-	require.True(t, MergeUniqueConflictIsRetrySafe(statement("MERGE (u:U {k: 1}) SET u += {x: 1}", nil), violation))
-	require.True(t, MergeUniqueConflictIsRetrySafe(statement("MERGE (u:U {k: 1}) SET u = {x: 1, k: 1}", nil), violation))
-	require.True(t, MergeUniqueConflictIsRetrySafe(statement("MERGE (u:U {k: 1.5}) SET u.k = 1.5", nil), violation))
-	require.True(t, MergeUniqueConflictIsRetrySafe(statement("MERGE (u:U {k: true}) SET u.k = true", nil), violation))
-	require.True(t, MergeUniqueConflictIsRetrySafe(statement("MERGE (u:U {k: false}) SET u.k = false", nil), violation))
-	require.False(t, MergeUniqueConflictIsRetrySafe(statement("MERGE (u:U {k: 1}) SET u.k = 2", nil), violation))
+	require.False(t, MergeUniqueConflictIsRetrySafe(t.Context(), statement("MERGE (u:U {k: 1})", nil), stderrors.New("other")))
+	require.False(t, MergeUniqueConflictIsRetrySafe(t.Context(), statement("CALL { MERGE (u:U {k: 1}) } IN TRANSACTIONS", nil), violation))
+	require.True(t, MergeUniqueConflictIsRetrySafe(t.Context(), statement("MERGE (u:U {k: 1, s: 'a{'}) SET u:Seen", nil), violation))
+	require.True(t, MergeUniqueConflictIsRetrySafe(t.Context(), statement("MERGE (u:U {k: 1}) SET u += {x: 1}", nil), violation))
+	require.True(t, MergeUniqueConflictIsRetrySafe(t.Context(), statement("MERGE (u:U {k: 1}) SET u = {x: 1, k: 1}", nil), violation))
+	require.True(t, MergeUniqueConflictIsRetrySafe(t.Context(), statement("MERGE (u:U {k: 1.5}) SET u.k = 1.5", nil), violation))
+	require.True(t, MergeUniqueConflictIsRetrySafe(t.Context(), statement("MERGE (u:U {k: true}) SET u.k = true", nil), violation))
+	require.True(t, MergeUniqueConflictIsRetrySafe(t.Context(), statement("MERGE (u:U {k: false}) SET u.k = false", nil), violation))
+	require.False(t, MergeUniqueConflictIsRetrySafe(t.Context(), statement("MERGE (u:U {k: 1}) SET u.k = 2", nil), violation))
 	require.Equal(t, map[string][]string(nil), appendPatternPropertyExpressions(nil, "(u:U {k: 1", "U"))
 	require.Equal(t, map[string][]string(nil), appendPatternPropertyExpressions(nil, "(u:U {k: 1)", "U"))
 	require.Equal(t, map[string][]string{"k": {"3"}}, appendPatternPropertyExpressions(nil, "(x {k: 1})-[{k: 2}]->(u:U {k: 3})", "U"))
@@ -103,7 +103,7 @@ func TestRowPropertyAccessOnNullEntity(t *testing.T) {
 		{"n": (*storage.Edge)(nil)},
 		{"n": nil},
 	} {
-		value, ok, err := exec.evaluateRowValue("n.x", row)
+		value, ok, err := exec.evaluateRowValue(t.Context(), "n.x", row)
 		require.NoError(t, err)
 		require.True(t, ok)
 		require.Nil(t, value)

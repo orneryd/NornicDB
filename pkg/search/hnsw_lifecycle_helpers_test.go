@@ -1,11 +1,12 @@
 package search
 
 import (
-	"github.com/orneryd/nornicdb/pkg/storage"
-	"github.com/stretchr/testify/require"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
 )
 
 func serviceTestGoroutineID() string {
@@ -41,7 +42,7 @@ func allGoroutineStacks() []string {
 func sourceRetirementNode(t *testing.T, svc *Service, id string, vector []float32) {
 	t.Helper()
 	node := &storage.Node{ID: storage.NodeID(id), ChunkEmbeddings: [][]float32{vector}}
-	_, err := svc.engine.CreateNode(node)
+	_, err := svc.engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, svc.IndexNode(node))
 }

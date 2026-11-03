@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/stretchr/testify/require"
 	"testing"
@@ -9,14 +10,14 @@ import (
 func TestConstraintLexicalFoundation(t *testing.T) {
 	engine := constraintContractsEngineFixture(t)
 	node := &Node{ID: "test:lexical", Labels: []string{"Person"}, Properties: map[string]any{"kind": "a;b"}}
-	_, err := engine.CreateNode(node)
+	_, err := engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	for _, expression := range []string{
 		"COUNT\u00a0{\u00a0(n)-[:OWNS]->(:Item)\u00a0}\u00a0<=\u00a00",
 		"NOT/*gap*/EXISTS\u00a0{ (n)-[:OWNS]->() }",
 		"n.kind\u00a0IN\u00a0['a;b']",
 	} {
-		value, err := evaluateNodeConstraintContractExpressionEngine(engine, node, expression)
+		value, err := evaluateNodeConstraintContractExpressionEngine(context.Background(), engine, node, expression)
 		require.NoError(t, err)
 		require.True(t, value)
 	}

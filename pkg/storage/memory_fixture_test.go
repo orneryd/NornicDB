@@ -3,6 +3,7 @@ package storage
 import "github.com/orneryd/nornicdb/internal/testfixture"
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -20,9 +21,9 @@ func newTestMemoryEngine(t testing.TB) *MemoryEngine {
 // read succeeds and returns a node. The assertion body lives here once; each
 // caller passes its own read so GetNode, GetQueryNode and
 // GetNodeLatestVisible keep their distinct semantics.
-func mustReadNode(t *testing.T, read func(NodeID) (*Node, error), id NodeID) *Node {
+func mustReadNode(t *testing.T, read func(context.Context, NodeID) (*Node, error), id NodeID) *Node {
 	t.Helper()
-	node, err := read(id)
+	node, err := read(t.Context(), id)
 	require.NoError(t, err)
 	require.NotNil(t, node)
 	return node

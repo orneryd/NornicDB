@@ -1,11 +1,13 @@
 package knowledgepolicy
 
 import (
+	"context"
 	"testing"
 	"time"
 )
 
 type mockEntityMeta struct {
+	err       error
 	scope     ScopeType
 	labels    []string
 	edgeType  string
@@ -14,7 +16,10 @@ type mockEntityMeta struct {
 	versionAt int64
 }
 
-func (m *mockEntityMeta) GetEntityMeta(entityID string) (EntityMeta, error) {
+func (m *mockEntityMeta) GetEntityMeta(ctx context.Context, entityID string) (EntityMeta, error) {
+	if m.err != nil {
+		return EntityMeta{}, m.err
+	}
 	scope := m.scope
 	if scope == "" {
 		scope = ScopeNode

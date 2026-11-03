@@ -4,7 +4,10 @@
 // with relationships in graph queries.
 package rel
 
+import "errors"
+
 import (
+	"context"
 	"github.com/orneryd/nornicdb/apoc/storage"
 )
 
@@ -69,9 +72,20 @@ func Property(rel *Relationship, key string) interface{} {
 // Example:
 //
 //	apoc.rel.startNode(rel) => start node
-func (f *Functions) StartNode(rel *Relationship) *Node {
-	node, _ := f.backend.GetNode(rel.StartNode)
-	return node
+func (f *Functions) StartNode(ctx context.Context, rel *Relationship) (*Node, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	node, storageError1 := f.backend.GetNode(ctx, rel.StartNode)
+	if storageError1 != nil && !errors.Is(storageError1, storage.ErrNodeNotFound) {
+		return nil, storageError1
+	}
+
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return node, nil
 }
 
 // EndNode returns the end node of a relationship.
@@ -79,9 +93,20 @@ func (f *Functions) StartNode(rel *Relationship) *Node {
 // Example:
 //
 //	apoc.rel.endNode(rel) => end node
-func (f *Functions) EndNode(rel *Relationship) *Node {
-	node, _ := f.backend.GetNode(rel.EndNode)
-	return node
+func (f *Functions) EndNode(ctx context.Context, rel *Relationship) (*Node, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	node, storageError2 := f.backend.GetNode(ctx, rel.EndNode)
+	if storageError2 != nil && !errors.Is(storageError2, storage.ErrNodeNotFound) {
+		return nil, storageError2
+	}
+
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return node, nil
 }
 
 // Nodes returns both start and end nodes.
@@ -89,10 +114,29 @@ func (f *Functions) EndNode(rel *Relationship) *Node {
 // Example:
 //
 //	apoc.rel.nodes(rel) => [startNode, endNode]
-func (f *Functions) Nodes(rel *Relationship) []*Node {
-	start, _ := f.backend.GetNode(rel.StartNode)
-	end, _ := f.backend.GetNode(rel.EndNode)
-	return []*Node{start, end}
+func (f *Functions) Nodes(ctx context.Context, rel *Relationship) ([]*Node, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	start, storageError3 := f.backend.GetNode(ctx, rel.StartNode)
+	if storageError3 != nil && !errors.Is(storageError3, storage.ErrNodeNotFound) {
+		return nil, storageError3
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	end, storageError4 := f.backend.GetNode(ctx, rel.EndNode)
+	if storageError4 != nil && !errors.Is(storageError4, storage.ErrNodeNotFound) {
+		return nil, storageError4
+	}
+
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	return []*Node{start, end}, nil
 }
 
 // SetProperty sets a property on a relationship.
@@ -192,9 +236,20 @@ func FromMap(m map[string]interface{}) *Relationship {
 // Example:
 //
 //	apoc.rel.exists(relId) => true/false
-func (f *Functions) Exists(relID int64) bool {
-	rel, err := f.backend.GetRelationship(relID)
-	return err == nil && rel != nil
+func (f *Functions) Exists(ctx context.Context, relID int64) (bool, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return false, operationError
+	}
+
+	rel, err := f.backend.GetRelationship(ctx, relID)
+	if err != nil && !errors.Is(err, storage.ErrRelationshipNotFound) {
+		return false, err
+	}
+
+	if operationError := ctx.Err(); operationError != nil {
+		return false, operationError
+	}
+	return err == nil && rel != nil, nil
 }
 
 // Delete deletes a relationship.
@@ -202,9 +257,20 @@ func (f *Functions) Exists(relID int64) bool {
 // Example:
 //
 //	apoc.rel.delete(rel) => success
-func (f *Functions) Delete(rel *Relationship) bool {
-	err := f.backend.DeleteRelationship(rel.ID)
-	return err == nil
+func (f *Functions) Delete(ctx context.Context, rel *Relationship) (bool, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return false, operationError
+	}
+
+	err := f.backend.DeleteRelationship(ctx, rel.ID)
+	if err != nil && !errors.Is(err, storage.ErrRelationshipNotFound) {
+		return false, err
+	}
+
+	if operationError := ctx.Err(); operationError != nil {
+		return false, operationError
+	}
+	return err == nil, nil
 }
 
 // Clone creates a copy of a relationship.
@@ -212,14 +278,29 @@ func (f *Functions) Delete(rel *Relationship) bool {
 // Example:
 //
 //	apoc.rel.clone(rel) => new relationship
-func (f *Functions) Clone(rel *Relationship) *Relationship {
+func (f *Functions) Clone(ctx context.Context, rel *Relationship) (*Relationship, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	props := make(map[string]interface{})
 	for k, v := range rel.Properties {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		props[k] = v
 	}
 
-	created, _ := f.backend.CreateRelationship(rel.StartNode, rel.EndNode, rel.Type, props)
-	return created
+	created, storageError7 := f.backend.CreateRelationship(ctx, rel.StartNode, rel.EndNode, rel.Type, props)
+	if storageError7 != nil && !errors.Is(storageError7, storage.ErrNodeNotFound) {
+		return nil, storageError7
+	}
+
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return created, nil
 }
 
 // Reverse reverses the direction of a relationship.
@@ -347,15 +428,36 @@ func Direction(rel *Relationship, node *Node) string {
 // Example:
 //
 //	apoc.rel.otherNode(rel, node) => other node
-func (f *Functions) OtherNode(rel *Relationship, node *Node) *Node {
-	if rel.StartNode == node.ID {
-		otherNode, _ := f.backend.GetNode(rel.EndNode)
-		return otherNode
-	} else if rel.EndNode == node.ID {
-		otherNode, _ := f.backend.GetNode(rel.StartNode)
-		return otherNode
+func (f *Functions) OtherNode(ctx context.Context, rel *Relationship, node *Node) (*Node, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
 	}
-	return nil
+
+	if rel.StartNode == node.ID {
+		otherNode, storageError8 := f.backend.GetNode(ctx, rel.EndNode)
+		if storageError8 != nil && !errors.Is(storageError8, storage.ErrNodeNotFound) {
+			return nil, storageError8
+		}
+
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return otherNode, nil
+	} else if rel.EndNode == node.ID {
+		otherNode, storageError9 := f.backend.GetNode(ctx, rel.StartNode)
+		if storageError9 != nil && !errors.Is(storageError9, storage.ErrNodeNotFound) {
+			return nil, storageError9
+		}
+
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return otherNode, nil
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return nil, nil
 }
 
 // IsLoop checks if a relationship is a self-loop.

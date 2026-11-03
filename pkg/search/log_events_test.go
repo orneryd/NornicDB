@@ -16,7 +16,7 @@ import (
 
 func TestSearchLogEventEnglishFallbackAndAttrs(t *testing.T) {
 	var output bytes.Buffer
-	service := &Service{logger: slog.New(slog.NewTextHandler(&output, nil))}
+	service := &Service{lifecycleCtx: t.Context(), logger: slog.New(slog.NewTextHandler(&output, nil))}
 
 	service.logEvent(context.Background(), slog.LevelInfo, localization.SearchQueryEmbeddingFallbackEvent("http", "unavailable", "offline"))
 
@@ -32,7 +32,7 @@ func TestSearchLogEventUsesInjectedLocalizer(t *testing.T) {
 	var output bytes.Buffer
 	manager, err := localization.NewManager([]language.Tag{language.EuropeanSpanish}, nil)
 	require.NoError(t, err)
-	service := &Service{logger: slog.New(slog.NewTextHandler(&output, nil))}
+	service := &Service{lifecycleCtx: t.Context(), logger: slog.New(slog.NewTextHandler(&output, nil))}
 	service.SetLocalizer(manager)
 
 	service.logEvent(context.Background(), slog.LevelInfo, localization.SearchQueryEmbeddingFallbackEvent("http", "unavailable", "offline"))

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"sort"
 	"sync"
 )
@@ -74,8 +75,11 @@ func appendTokenNames(names []string, positions map[string]int, added []string) 
 
 // RegisterTokens allocates durable label and relationship-type positions.
 // Allocations are retained when their last entity is deleted.
-// Example: schema.RegisterTokens([]string{"Person"}, []string{"KNOWS"}).
-func (sm *SchemaManager) RegisterTokens(labels, relationships []string) error {
+// Example: schema.RegisterTokens(ctx, []string{"Person"}, []string{"KNOWS"}).
+func (sm *SchemaManager) RegisterTokens(ctx context.Context, labels, relationships []string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if len(labels) == 0 && len(relationships) == 0 {
 		return nil
 	}
@@ -85,10 +89,13 @@ func (sm *SchemaManager) RegisterTokens(labels, relationships []string) error {
 	if snapshot := sm.tokenSnapshot.Load(); snapshot != nil &&
 		snapshot.knows(labels, relationships) &&
 		sm.tokenSnapshot.Load() == snapshot {
-		return nil
+		return ctx.Err()
 	}
 
-	lease := sm.beginSchemaMutation()
+	lease, admitErr := sm.beginSchemaMutation(ctx)
+	if admitErr != nil {
+		return admitErr
+	}
 	defer lease.release()
 	if sm.tokenOrder.labelPositions == nil {
 		sm.tokenOrder = newSchemaTokenOrder(nil, nil)
@@ -96,11 +103,26 @@ func (sm *SchemaManager) RegisterTokens(labels, relationships []string) error {
 	labelCount, relationshipCount := len(sm.tokenOrder.labels), len(sm.tokenOrder.relationships)
 	sm.tokenOrder.labels = appendTokenNames(sm.tokenOrder.labels, sm.tokenOrder.labelPositions, labels)
 	sm.tokenOrder.relationships = appendTokenNames(sm.tokenOrder.relationships, sm.tokenOrder.relationshipPositions, relationships)
+	if err := ctx.Err(); err != nil {
+		sm.tokenOrder = newSchemaTokenOrder(sm.tokenOrder.labels[:labelCount], sm.tokenOrder.relationships[:relationshipCount])
+		return err
+	}
 	if labelCount == len(sm.tokenOrder.labels) && relationshipCount == len(sm.tokenOrder.relationships) {
 		return nil
 	}
 	if sm.persist != nil {
-		if err := sm.persist(sm.exportDefinitionLocked()); err != nil {
+		// The definition is still preparation. On cancellation restore the
+		// staged token order before releasing the lock; no snapshot was published.
+		def, err := sm.exportDefinitionLocked(ctx)
+		if err == nil {
+			err = ctx.Err()
+		}
+		if err == nil {
+			// Once the persister accepts the write, publication must finish
+			// independently of the initiating request's later cancellation.
+			err = sm.persist(def)
+		}
+		if err != nil {
 			sm.tokenOrder = newSchemaTokenOrder(sm.tokenOrder.labels[:labelCount], sm.tokenOrder.relationships[:relationshipCount])
 			return err
 		}
@@ -111,7 +133,10 @@ func (sm *SchemaManager) RegisterTokens(labels, relationships []string) error {
 
 // RegisterEdgeTokens validates a batch and registers its relationship types in
 // first-seen order. A batch of one type needs just one token lookup.
-func (sm *SchemaManager) RegisterEdgeTokens(edges []*Edge) error {
+func (sm *SchemaManager) RegisterEdgeTokens(ctx context.Context, edges []*Edge) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if len(edges) == 0 {
 		return nil
 	}
@@ -137,9 +162,9 @@ func (sm *SchemaManager) RegisterEdgeTokens(edges []*Edge) error {
 			}
 			names[i+j] = next.Type
 		}
-		return sm.RegisterTokens(nil, names)
+		return sm.RegisterTokens(ctx, nil, names)
 	}
-	return sm.RegisterTokens(nil, []string{first})
+	return sm.RegisterTokens(ctx, nil, []string{first})
 }
 
 // OrderTokens returns a copy of in-use names ordered by durable token position.

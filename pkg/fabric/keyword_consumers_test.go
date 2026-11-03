@@ -37,7 +37,7 @@ func TestTopLevelKeywordConsumerContracts(t *testing.T) {
 		{"name boundary", "WITH 1 AS xUSE RETURN xUSE", "", "", false},
 	} {
 		t.Run("USE/"+tc.name, func(t *testing.T) {
-			prefix, suffix, found := splitAtTopLevelUse(tc.input, nil)
+			prefix, suffix, found := splitAtTopLevelUse(t.Context(), tc.input, nil)
 			require.Equal(t, tc.found, found)
 			require.Equal(t, tc.prefix, prefix)
 			require.Equal(t, tc.suffix, suffix)
@@ -57,7 +57,7 @@ func BenchmarkTopLevelKeywordConsumers(b *testing.B) {
 		query := "WITH 'USE hidden' AS value USE cmp.a RETURN value"
 		b.ReportAllocs()
 		for b.Loop() {
-			_, _, _ = splitAtTopLevelUse(query, nil)
+			_, _, _ = splitAtTopLevelUse(b.Context(), query, nil)
 		}
 	})
 }

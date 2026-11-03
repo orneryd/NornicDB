@@ -59,11 +59,11 @@ func pr1655AcceptanceScenarios() []pr1655AcceptanceScenario {
 			nodes: [2]NodeID{"test:pr1655-a", "test:pr1655-b"},
 			peerDelete: func(t *testing.T, b *BadgerEngine, peer *BadgerTransaction) {
 				t.Helper()
-				require.NoError(t, peer.DeleteEdge("test:pr1655-r"))
+				require.NoError(t, peer.DeleteEdge(context.Background(), "test:pr1655-r"))
 			},
 			stage: func(t *testing.T, writer *BadgerTransaction) {
 				t.Helper()
-				require.NoError(t, writer.UpdateEdge(EdgeUpdateRequest{After: &Edge{
+				require.NoError(t, writer.UpdateEdge(context.Background(), EdgeUpdateRequest{After: &Edge{
 					ID:         "test:pr1655-r",
 					StartNode:  "test:pr1655-a",
 					EndNode:    "test:pr1655-b",
@@ -77,11 +77,11 @@ func pr1655AcceptanceScenarios() []pr1655AcceptanceScenario {
 			nodes: [2]NodeID{"test:pr1655-a", "test:pr1655-b"},
 			peerDelete: func(t *testing.T, b *BadgerEngine, peer *BadgerTransaction) {
 				t.Helper()
-				require.NoError(t, peer.DeleteGraphNode("test:pr1655-a", CascadeEdges))
+				require.NoError(t, peer.DeleteGraphNode(context.Background(), "test:pr1655-a", CascadeEdges))
 			},
 			stage: func(t *testing.T, writer *BadgerTransaction) {
 				t.Helper()
-				require.NoError(t, writer.UpdateGraphNode(NodeUpdateRequest{After: &Node{
+				require.NoError(t, writer.UpdateGraphNode(context.Background(), NodeUpdateRequest{After: &Node{
 					ID:         "test:pr1655-a",
 					Labels:     []string{"Node"},
 					Properties: map[string]any{"note": "writer"},
@@ -93,11 +93,11 @@ func pr1655AcceptanceScenarios() []pr1655AcceptanceScenario {
 			nodes: [2]NodeID{"test:pr1655-a", "test:pr1655-b"},
 			peerDelete: func(t *testing.T, b *BadgerEngine, peer *BadgerTransaction) {
 				t.Helper()
-				require.NoError(t, peer.DeleteGraphNode("test:pr1655-a", CascadeEdges))
+				require.NoError(t, peer.DeleteGraphNode(context.Background(), "test:pr1655-a", CascadeEdges))
 			},
 			stage: func(t *testing.T, writer *BadgerTransaction) {
 				t.Helper()
-				require.NoError(t, writer.CreateEdge(&Edge{
+				require.NoError(t, writer.CreateEdge(context.Background(), &Edge{
 					ID:        "test:pr1655-new",
 					StartNode: "test:pr1655-b",
 					EndNode:   "test:pr1655-a",
@@ -163,7 +163,7 @@ func TestPR1655StagedTargetRevalidatedAfterMetadataCallback(t *testing.T) {
 				writer := beginPR1655AcceptanceWriter(t, b)
 				require.NoError(t, writer.SetImplicit(implicit))
 				marker := NodeID("test:pr1655-marker")
-				_, err = writer.CreateNode(&Node{ID: marker, Labels: []string{"Marker"}})
+				_, err = writer.CreateNode(t.Context(), &Node{ID: marker, Labels: []string{"Marker"}})
 				require.NoError(t, err)
 				scenario.stage(t, writer)
 				require.NoError(t, writer.SetMetadata(map[string]interface{}{"validation_publication_control": true}))
@@ -180,7 +180,7 @@ func TestPR1655StagedTargetRevalidatedAfterMetadataCallback(t *testing.T) {
 				case <-time.After(5 * time.Second):
 					t.Fatal("writer did not reach the metadata boundary")
 				}
-				require.NoError(t, b.DeleteNode("test:pr1655-a"))
+				require.NoError(t, b.DeleteNode(t.Context(), "test:pr1655-a"))
 				release()
 				select {
 				case err := <-done:
@@ -188,7 +188,7 @@ func TestPR1655StagedTargetRevalidatedAfterMetadataCallback(t *testing.T) {
 				case <-time.After(5 * time.Second):
 					t.Fatal("writer did not finish after the callback")
 				}
-				require.NoError(t, b.FlushWriteBehind(nil))
+				require.NoError(t, b.FlushWriteBehind(context.Background()))
 				assertPR1655AcceptanceGraph(t, b, scenario, marker, "after metadata interposed deletion")
 			})
 		}
@@ -200,10 +200,10 @@ func TestPR1655StagedTargetRevalidatedAfterMetadataCallback(t *testing.T) {
 func seedPR1655AcceptanceGraph(t *testing.T, b *BadgerEngine, nodes [2]NodeID) {
 	t.Helper()
 	for _, id := range nodes {
-		_, err := b.CreateNode(&Node{ID: id, Labels: []string{"Node"}, Properties: map[string]any{"note": "old"}})
+		_, err := b.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Node"}, Properties: map[string]any{"note": "old"}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, b.CreateEdge(&Edge{
+	require.NoError(t, b.CreateEdge(t.Context(), &Edge{
 		ID:         "test:pr1655-r",
 		StartNode:  nodes[0],
 		EndNode:    nodes[1],
@@ -217,7 +217,7 @@ func seedPR1655AcceptanceGraph(t *testing.T, b *BadgerEngine, nodes [2]NodeID) {
 // snapshot in every producer path.
 func beginPR1655AcceptanceWriter(t *testing.T, b *BadgerEngine) *BadgerTransaction {
 	t.Helper()
-	writer, err := b.BeginTransaction()
+	writer, err := b.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = writer.Rollback() })
 	require.NoError(t, writer.SetNamespace("test"))
@@ -231,12 +231,12 @@ func peerPR1655Acceptance(t *testing.T, b *BadgerEngine, scenario pr1655Acceptan
 	if peer.direct {
 		switch scenario.name {
 		case "relationship-update/relationship-deleted":
-			return b.DeleteEdge("test:pr1655-r")
+			return b.DeleteEdge(t.Context(), "test:pr1655-r")
 		default:
-			return b.DeleteNode("test:pr1655-a")
+			return b.DeleteNode(t.Context(), "test:pr1655-a")
 		}
 	}
-	tx, err := b.BeginTransaction()
+	tx, err := b.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	require.NoError(t, tx.SetImplicit(peer.implicit))
@@ -319,7 +319,7 @@ func assertPR1655AcceptanceGraph(t *testing.T, b *BadgerEngine, scenario pr1655A
 	exists, err := pr1655AcceptanceStoredNodeExists(t, b, marker)
 	require.NoError(t, err)
 	require.False(t, exists, "%s: the failed commit published earlier marker %s", message, marker)
-	_, err = b.GetNode(marker)
+	_, err = b.GetNode(t.Context(), marker)
 	require.ErrorIs(t, err, ErrNotFound, "%s: the failed commit published earlier marker %s", message, marker)
 }
 
@@ -347,19 +347,19 @@ func TestPR1655StagedTargetVanishedBeforeCommit(t *testing.T) {
 						seedPR1655AcceptanceGraph(t, b, scenario.nodes)
 						if !writeBehind {
 							// The writer's begin snapshot is the seeded graph.
-							require.NoError(t, b.FlushWriteBehind(nil))
+							require.NoError(t, b.FlushWriteBehind(context.Background()))
 						}
 
 						writer := beginPR1655AcceptanceWriter(t, b)
 						marker := NodeID("test:pr1655-marker")
-						_, err := writer.CreateNode(&Node{ID: marker, Labels: []string{"Marker"}})
+						_, err := writer.CreateNode(t.Context(), &Node{ID: marker, Labels: []string{"Marker"}})
 						require.NoError(t, err)
 						scenario.stage(t, writer)
 
 						require.NoError(t, peerPR1655Acceptance(t, b, scenario, peer),
 							"the peer's deletion must be acknowledged")
 						if flush {
-							require.NoError(t, b.FlushWriteBehind(nil))
+							require.NoError(t, b.FlushWriteBehind(context.Background()))
 						}
 
 						err = writer.Commit()
@@ -369,13 +369,13 @@ func TestPR1655StagedTargetVanishedBeforeCommit(t *testing.T) {
 
 						// The failed commit's own writes never reach storage,
 						// buffered or not.
-						_, err = b.GetNode(marker)
+						_, err = b.GetNode(t.Context(), marker)
 						require.ErrorIs(t, err, ErrNotFound, "the failed commit published its marker")
-						_, err = b.GetEdge("test:pr1655-new")
+						_, err = b.GetEdge(t.Context(), "test:pr1655-new")
 						require.ErrorIs(t, err, ErrNotFound, "the failed commit created a relationship")
 
 						// Draining the buffer replays the peer's deletion alone.
-						require.NoError(t, b.FlushWriteBehind(nil))
+						require.NoError(t, b.FlushWriteBehind(context.Background()))
 						assertPR1655AcceptanceGraph(t, b, scenario, marker,
 							"after draining the write-behind buffer")
 					})
@@ -413,9 +413,9 @@ func TestPR1655StagedTargetDeletePublishedAfterCommitAllocation(t *testing.T) {
 				go func() {
 					switch scenario.name {
 					case "relationship-update/relationship-deleted":
-						done <- b.DeleteEdge("test:pr1655-r")
+						done <- b.DeleteEdge(t.Context(), "test:pr1655-r")
 					default:
-						done <- b.DeleteNode("test:pr1655-a")
+						done <- b.DeleteNode(t.Context(), "test:pr1655-a")
 					}
 				}()
 				deadline := time.Now().Add(10 * time.Second)
@@ -426,7 +426,7 @@ func TestPR1655StagedTargetDeletePublishedAfterCommitAllocation(t *testing.T) {
 
 				writer := beginPR1655AcceptanceWriter(t, b)
 				marker := NodeID("test:pr1655-marker")
-				_, err = writer.CreateNode(&Node{ID: marker, Labels: []string{"Marker"}})
+				_, err = writer.CreateNode(t.Context(), &Node{ID: marker, Labels: []string{"Marker"}})
 				require.NoError(t, err)
 				scenario.stage(t, writer)
 
@@ -439,12 +439,12 @@ func TestPR1655StagedTargetDeletePublishedAfterCommitAllocation(t *testing.T) {
 				require.ErrorIs(t, err, ErrConflict,
 					"the commit must fail as a retryable concurrent modification")
 
-				_, err = b.GetNode(marker)
+				_, err = b.GetNode(t.Context(), marker)
 				require.ErrorIs(t, err, ErrNotFound, "the failed commit published its marker")
-				_, err = b.GetEdge("test:pr1655-new")
+				_, err = b.GetEdge(t.Context(), "test:pr1655-new")
 				require.ErrorIs(t, err, ErrNotFound, "the failed commit created a relationship")
 
-				require.NoError(t, b.FlushWriteBehind(nil))
+				require.NoError(t, b.FlushWriteBehind(context.Background()))
 				assertPR1655AcceptanceGraph(t, b, scenario, marker,
 					"after the peer's deletion publishes first")
 			})
@@ -460,11 +460,11 @@ func TestPR1655StagedTargetControls(t *testing.T) {
 		for _, writeBehind := range []bool{true, false} {
 			b := openPR1655AcceptanceEngine(t, writeBehind)
 			seedPR1655AcceptanceGraph(t, b, [2]NodeID{"test:pr1655-a", "test:pr1655-b"})
-			require.NoError(t, b.DeleteEdge("test:pr1655-r"))
-			require.NoError(t, b.FlushWriteBehind(nil))
+			require.NoError(t, b.DeleteEdge(t.Context(), "test:pr1655-r"))
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
 
 			writer := beginPR1655AcceptanceWriter(t, b)
-			err := writer.UpdateEdge(EdgeUpdateRequest{After: &Edge{
+			err := writer.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{
 				ID:        "test:pr1655-r",
 				StartNode: "test:pr1655-a",
 				EndNode:   "test:pr1655-b",
@@ -473,10 +473,10 @@ func TestPR1655StagedTargetControls(t *testing.T) {
 			require.ErrorIs(t, err, ErrNotFound, "staging against a relationship deleted before begin")
 			require.NoError(t, writer.Rollback())
 
-			require.NoError(t, b.DeleteNode("test:pr1655-b"))
-			require.NoError(t, b.FlushWriteBehind(nil))
+			require.NoError(t, b.DeleteNode(t.Context(), "test:pr1655-b"))
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
 			nodeWriter := beginPR1655AcceptanceWriter(t, b)
-			err = nodeWriter.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:pr1655-b", Labels: []string{"Node"}}, Policy: ClientNodeEdits})
+			err = nodeWriter.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:pr1655-b", Labels: []string{"Node"}}, Policy: ClientNodeEdits})
 			require.ErrorIs(t, err, ErrNotFound, "staging against a node deleted before begin")
 		}
 	})
@@ -487,7 +487,7 @@ func TestPR1655StagedTargetControls(t *testing.T) {
 			seedPR1655AcceptanceGraph(t, b, [2]NodeID{"test:pr1655-a", "test:pr1655-b"})
 
 			writer := beginPR1655AcceptanceWriter(t, b)
-			err := writer.UpdateEdge(EdgeUpdateRequest{After: &Edge{
+			err := writer.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{
 				ID:        "test:pr1655-absent",
 				StartNode: "test:pr1655-a",
 				EndNode:   "test:pr1655-b",
@@ -496,14 +496,14 @@ func TestPR1655StagedTargetControls(t *testing.T) {
 			require.ErrorIs(t, err, ErrNotFound, "staging against a relationship that never existed")
 
 			nodeWriter := beginPR1655AcceptanceWriter(t, b)
-			err = nodeWriter.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:pr1655-absent", Labels: []string{"Node"}}, Policy: ClientNodeEdits})
+			err = nodeWriter.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:pr1655-absent", Labels: []string{"Node"}}, Policy: ClientNodeEdits})
 			require.ErrorIs(t, err, ErrNotFound, "staging against a node that never existed")
 
 			// A new relationship to a missing endpoint is refused when staged
 			// (statement time) or, when the absence is only visible at
 			// commit, as the same concurrent-modification conflict.
 			edgeWriter := beginPR1655AcceptanceWriter(t, b)
-			err = edgeWriter.CreateEdge(&Edge{
+			err = edgeWriter.CreateEdge(t.Context(), &Edge{
 				ID:        "test:pr1655-orphan",
 				StartNode: "test:pr1655-b",
 				EndNode:   "test:pr1655-absent",
@@ -517,7 +517,7 @@ func TestPR1655StagedTargetControls(t *testing.T) {
 			require.Error(t, err, "a relationship to a missing endpoint is refused")
 			require.True(t, errors.Is(err, ErrNotFound) || errors.Is(err, ErrConflict),
 				"the refusal is a missing-target shape, got %v", err)
-			_, err = b.GetEdge("test:pr1655-orphan")
+			_, err = b.GetEdge(t.Context(), "test:pr1655-orphan")
 			require.ErrorIs(t, err, ErrNotFound, "no relationship to a missing endpoint is stored")
 		}
 	})
@@ -530,30 +530,30 @@ func TestPR1655StagedTargetControls(t *testing.T) {
 			// The writer updates a target and then deletes it itself: its own
 			// delete wins, the commit succeeds and the update is not stored.
 			writer := beginPR1655AcceptanceWriter(t, b)
-			require.NoError(t, writer.UpdateEdge(EdgeUpdateRequest{After: &Edge{
+			require.NoError(t, writer.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{
 				ID:         "test:pr1655-r",
 				StartNode:  "test:pr1655-a",
 				EndNode:    "test:pr1655-b",
 				Type:       "R",
 				Properties: map[string]any{"note": "writer"},
 			}}))
-			require.NoError(t, writer.DeleteEdge("test:pr1655-r"), "a transaction may delete a relationship it updated")
+			require.NoError(t, writer.DeleteEdge(t.Context(), "test:pr1655-r"), "a transaction may delete a relationship it updated")
 			require.NoError(t, writer.Commit(), "its own deletion is not a concurrent modification")
-			require.NoError(t, b.FlushWriteBehind(nil))
-			_, err := b.GetEdge("test:pr1655-r")
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
+			_, err := b.GetEdge(t.Context(), "test:pr1655-r")
 			require.ErrorIs(t, err, ErrNotFound, "the writer's own deletion keeps its effect")
 
 			// Deleting an already-deleted node inside one transaction reports
 			// the existing missing-target shape and cascades its relationships.
 			deleter := beginPR1655AcceptanceWriter(t, b)
-			require.NoError(t, deleter.DeleteGraphNode("test:pr1655-b", CascadeEdges))
-			require.ErrorIs(t, deleter.DeleteGraphNode("test:pr1655-b", CascadeEdges), ErrNotFound,
+			require.NoError(t, deleter.DeleteGraphNode(t.Context(), "test:pr1655-b", CascadeEdges))
+			require.ErrorIs(t, deleter.DeleteGraphNode(t.Context(), "test:pr1655-b", CascadeEdges), ErrNotFound,
 				"a second delete of the same node reports ErrNotFound")
 			require.NoError(t, deleter.Commit())
-			require.NoError(t, b.FlushWriteBehind(nil))
-			_, err = b.GetNode("test:pr1655-b")
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
+			_, err = b.GetNode(t.Context(), "test:pr1655-b")
 			require.ErrorIs(t, err, ErrNotFound)
-			_, err = b.GetEdge("test:pr1655-r")
+			_, err = b.GetEdge(t.Context(), "test:pr1655-r")
 			require.ErrorIs(t, err, ErrNotFound)
 		}
 	})
@@ -577,33 +577,33 @@ func TestPR1655VanishedTargetAtStaging(t *testing.T) {
 							seed := beginPR1655AcceptanceWriter(t, b)
 							require.NoError(t, seed.SetImplicit(true))
 							for _, id := range scenario.nodes {
-								_, err := seed.CreateNode(&Node{ID: id, Labels: []string{"Node"}})
+								_, err := seed.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Node"}})
 								require.NoError(t, err)
 							}
-							require.NoError(t, seed.CreateEdge(&Edge{ID: "test:pr1655-r", StartNode: scenario.nodes[0], EndNode: scenario.nodes[1], Type: "R"}))
+							require.NoError(t, seed.CreateEdge(t.Context(), &Edge{ID: "test:pr1655-r", StartNode: scenario.nodes[0], EndNode: scenario.nodes[1], Type: "R"}))
 							require.NoError(t, seed.Commit())
 						} else {
 							seedPR1655AcceptanceGraph(t, b, scenario.nodes)
 						}
 						writer := beginPR1655AcceptanceWriter(t, b)
 						// The original statement has matched its mutation target.
-						_, err := writer.GetNode(scenario.nodes[0])
+						_, err := writer.GetNode(t.Context(), scenario.nodes[0])
 						require.NoError(t, err)
 						if scenario.name == "relationship-update/relationship-deleted" {
-							_, err = writer.GetEdge("test:pr1655-r")
+							_, err = writer.GetEdge(t.Context(), "test:pr1655-r")
 							require.NoError(t, err)
 						}
 						require.NoError(t, peerPR1655Acceptance(t, b, scenario, pr1655AcceptancePeer{implicit: true}))
 						if flush {
-							require.NoError(t, b.FlushWriteBehind(nil))
+							require.NoError(t, b.FlushWriteBehind(context.Background()))
 						}
 						switch scenario.name {
 						case "node-update/node-deleted":
-							err = writer.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: scenario.nodes[0], Labels: []string{"Node"}, Properties: map[string]interface{}{"note": "writer"}}, Policy: ClientNodeEdits})
+							err = writer.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: scenario.nodes[0], Labels: []string{"Node"}, Properties: map[string]interface{}{"note": "writer"}}, Policy: ClientNodeEdits})
 						case "relationship-update/relationship-deleted":
-							err = writer.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:pr1655-r", StartNode: scenario.nodes[0], EndNode: scenario.nodes[1], Type: "R", Properties: map[string]interface{}{"note": "writer"}}})
+							err = writer.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "test:pr1655-r", StartNode: scenario.nodes[0], EndNode: scenario.nodes[1], Type: "R", Properties: map[string]interface{}{"note": "writer"}}})
 						default:
-							err = writer.CreateEdge(&Edge{ID: "test:pr1655-new", StartNode: scenario.nodes[1], EndNode: scenario.nodes[0], Type: "R"})
+							err = writer.CreateEdge(t.Context(), &Edge{ID: "test:pr1655-new", StartNode: scenario.nodes[1], EndNode: scenario.nodes[0], Type: "R"})
 						}
 						if err == nil {
 							require.False(t, writeBehind, "a live buffered read must classify the missing target while staging")
@@ -625,19 +625,19 @@ func TestPR1655TargetObservedAfterBeginThenDeleted(t *testing.T) {
 			writer := beginPR1655AcceptanceWriter(t, b)
 			seedPR1655AcceptanceGraph(t, b, [2]NodeID{"test:pr1655-a", "test:pr1655-b"})
 			if kind == "node" {
-				node, err := writer.GetNode("test:pr1655-a")
+				node, err := writer.GetNode(t.Context(), "test:pr1655-a")
 				require.NoError(t, err, "write-behind exposes this committed target after begin")
-				require.NoError(t, b.DeleteNode(node.ID))
+				require.NoError(t, b.DeleteNode(t.Context(), node.ID))
 				after := *node
 				after.Properties = map[string]any{"note": "writer"}
-				require.ErrorIs(t, writer.UpdateGraphNode(NodeUpdateRequest{Before: node, After: &after, Policy: ClientNodeEdits}), ErrConflict, "the writer actually observed the target before the peer deleted it")
+				require.ErrorIs(t, writer.UpdateGraphNode(t.Context(), NodeUpdateRequest{Before: node, After: &after, Policy: ClientNodeEdits}), ErrConflict, "the writer actually observed the target before the peer deleted it")
 			} else {
-				edge, err := writer.GetEdge("test:pr1655-r")
+				edge, err := writer.GetEdge(t.Context(), "test:pr1655-r")
 				require.NoError(t, err, "write-behind exposes this committed target after begin")
-				require.NoError(t, b.DeleteEdge(edge.ID))
+				require.NoError(t, b.DeleteEdge(t.Context(), edge.ID))
 				after := *edge
 				after.Properties = map[string]any{"note": "writer"}
-				require.ErrorIs(t, writer.UpdateEdge(EdgeUpdateRequest{Before: edge, After: &after}), ErrConflict, "the writer actually observed the target before the peer deleted it")
+				require.ErrorIs(t, writer.UpdateEdge(t.Context(), EdgeUpdateRequest{Before: edge, After: &after}), ErrConflict, "the writer actually observed the target before the peer deleted it")
 			}
 		})
 	}

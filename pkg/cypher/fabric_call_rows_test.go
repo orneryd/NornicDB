@@ -39,7 +39,7 @@ func newFabricCallRowsExecutor(t testing.TB, narrow ...bool) *StorageExecutor {
 		if len(narrow) == 0 || !narrow[0] {
 			properties = map[string]interface{}{"db": db}
 		}
-		_, err = store.CreateNode(&storage.Node{ID: storage.NodeID(db), Labels: []string{"P"}, Properties: properties})
+		_, err = store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(db), Labels: []string{"P"}, Properties: properties})
 		require.NoError(t, err)
 	}
 	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "comp", []multidb.ConstituentRef{

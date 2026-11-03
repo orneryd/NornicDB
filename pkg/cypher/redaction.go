@@ -148,7 +148,7 @@ func (e *StorageExecutor) redactGrammarAccepts(ctx context.Context, query string
 	if redactGrammarValidate(ctx, query) != nil {
 		return false
 	}
-	e.markCachedValidSyntax(query, syntaxGrammarAccepted)
+	e.markCachedValidSyntax(ctx, query, syntaxGrammarAccepted)
 	return true
 }
 

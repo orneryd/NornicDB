@@ -14,15 +14,15 @@ func TestBadgerStats_RefreshPendingAndFindNodeBranchCoverage(t *testing.T) {
 	engine := newTestEngine(t)
 	engine.SetEmbeddingsEnabled(true)
 
-	_, err := engine.CreateNode(&Node{ID: "test:add", Labels: []string{"Doc"}, Properties: map[string]any{"title": "needs embedding"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:add", Labels: []string{"Doc"}, Properties: map[string]any{"title": "needs embedding"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:embedded", Labels: []string{"Doc"}, Properties: map[string]any{"title": "already embedded"}, ChunkEmbeddings: [][]float32{{0.1, 0.2}}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:embedded", Labels: []string{"Doc"}, Properties: map[string]any{"title": "already embedded"}, ChunkEmbeddings: [][]float32{{0.1, 0.2}}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:internal", Labels: []string{"_Internal"}, Properties: map[string]any{"title": "skip"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:internal", Labels: []string{"_Internal"}, Properties: map[string]any{"title": "skip"}})
 	require.NoError(t, err)
 	engine.MarkNodeEmbedded("test:add")
 
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		// First-pass pending index cleanup branches.
 		require.NoError(t, txn.Set([]byte{prefixPendingEmbed}, []byte{})) // len(key)<=1
 		require.NoError(t, txn.Set(pendingEmbedKey("system:idx"), []byte{}))
@@ -43,13 +43,13 @@ func TestBadgerStats_RefreshPendingAndFindNodeBranchCoverage(t *testing.T) {
 	require.GreaterOrEqual(t, added, 1)
 
 	// The valid pending candidate should be discoverable.
-	n := engine.FindNodeNeedingEmbedding()
+	n := requireEmbeddingCandidate(t, engine.FindNodeNeedingEmbedding)
 	require.NotNil(t, n)
 	require.Equal(t, NodeID("test:add"), n.ID)
 
 	// Mark as embedded and ensure no candidate remains from seeded entries.
 	engine.MarkNodeEmbedded("test:add")
-	n = engine.FindNodeNeedingEmbedding()
+	n = requireEmbeddingCandidate(t, engine.FindNodeNeedingEmbedding)
 	require.Nil(t, n)
 
 	// InvalidatePendingEmbeddingsIndex is a documented no-op.
@@ -58,12 +58,12 @@ func TestBadgerStats_RefreshPendingAndFindNodeBranchCoverage(t *testing.T) {
 
 func TestBadgerStats_StreamNodesByPrefixAndClosedBranchCoverage(t *testing.T) {
 	engine := newTestEngine(t)
-	_, err := engine.CreateNode(&Node{ID: "tenant:a", Labels: []string{"Doc"}, Properties: map[string]any{"title": "a"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "tenant:a", Labels: []string{"Doc"}, Properties: map[string]any{"title": "a"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "tenant:b", Labels: []string{"Doc"}, Properties: map[string]any{"title": "b"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "tenant:b", Labels: []string{"Doc"}, Properties: map[string]any{"title": "b"}})
 	require.NoError(t, err)
 
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		require.NoError(t, txn.Set([]byte{prefixNode}, []byte{}))            // len(key)<=1 callback path
 		require.NoError(t, txn.Set(nodeKey("tenant:broken"), []byte("bad"))) // decode error continue
 		return nil
@@ -119,29 +119,29 @@ func TestBadgerStats_UnexpectedClosedDBErrorBranches(t *testing.T) {
 	}
 	require.NoError(t, err)
 
-	_, err = engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"L"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:n1", Labels: []string{"L"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:n1", EndNode: "test:n1", Type: "R"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:n1", EndNode: "test:n1", Type: "R"}))
 
 	// Close only the underlying DB to exercise error returns where ensureOpen still passes.
 	require.NoError(t, engine.db.Close())
 
 	require.Error(t, engine.initializeCounts())
 
-	_, _ = engine.NodeCountByPrefix("test:")
-	_, _ = engine.EdgeCountByPrefix("test:")
+	_, _ = engine.NodeCountByPrefix(context.Background(), "test:")
+	_, _ = engine.EdgeCountByPrefix(context.Background(), "test:")
 	_, _ = engine.ClearAllEmbeddingsForPrefix("test:")
 }
 
 func TestBadgerStats_IterateAndStreamDecodeBranches(t *testing.T) {
 	engine := newTestEngine(t)
-	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"Doc"}, Properties: map[string]any{"title": "ok"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:n1", Labels: []string{"Doc"}, Properties: map[string]any{"title": "ok"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:n2", Labels: []string{"Doc"}, Properties: map[string]any{"title": "ok2"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:n2", Labels: []string{"Doc"}, Properties: map[string]any{"title": "ok2"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:n1", EndNode: "test:n2", Type: "REL"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:n1", EndNode: "test:n2", Type: "REL"}))
 
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		// Trigger len(key)<=1 and decode-error branches in node/edge streaming methods.
 		require.NoError(t, txn.Set([]byte{prefixNode}, []byte{}))
 		require.NoError(t, txn.Set(nodeKey("test:bad-node"), []byte("bad-node-payload")))
@@ -205,14 +205,14 @@ func TestBadgerStats_ClearAllEmbeddingsPrefixAdditionalBranches(t *testing.T) {
 	engine := newTestEngine(t)
 
 	// Valid node that should be cleared.
-	_, err := engine.CreateNode(&Node{
+	_, err := engine.CreateNode(t.Context(), &Node{
 		ID:              "tenant:good",
 		Labels:          []string{"Doc"},
 		ChunkEmbeddings: [][]float32{{1, 2, 3}},
 	})
 	require.NoError(t, err)
 
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		// len(key)<=1 branch.
 		require.NoError(t, txn.Set([]byte{prefixNode}, []byte{}))
 

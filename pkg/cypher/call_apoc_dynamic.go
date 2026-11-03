@@ -54,6 +54,7 @@ func (e *StorageExecutor) callApocCypherRun(ctx context.Context, procedure strin
 		result.Rows = append(result.Rows, []interface{}{valueMap})
 	}
 
+	mergeOptimisticMetadata(result, innerResult)
 	return result, nil
 }
 
@@ -150,6 +151,7 @@ func (e *StorageExecutor) callApocCypherRunMany(ctx context.Context, args []inte
 		if innerResult.Stats != nil {
 			addQueryStats(result.Stats, innerResult.Stats)
 		}
+		mergeOptimisticMetadata(result, innerResult)
 	}
 
 	return result, nil

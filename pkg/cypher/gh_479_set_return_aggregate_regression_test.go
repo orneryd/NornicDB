@@ -17,7 +17,7 @@ func TestGH479_SetThenReturnAggregatesAllMatchedRows(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "gh479")
 			for index := int64(1); index <= 4; index++ {
-				_, err := store.CreateNode(&storage.Node{
+				_, err := store.CreateNode(t.Context(), &storage.Node{
 					ID: storage.NodeID(string(rune('0' + index))), Labels: []string{"A"},
 					Properties: map[string]interface{}{"id": index, "name": "n" + string(rune('0'+index)), "tags": []string{"t", "all"}},
 				})

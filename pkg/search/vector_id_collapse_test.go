@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"testing"
@@ -55,7 +56,7 @@ func TestVectorSearchCandidates_CollapsesVectorEntryIDsToNodeID(t *testing.T) {
 			svc := NewService(engine, 3, nil)
 
 			node := tt.node
-			_, err := engine.CreateNode(node)
+			_, err := engine.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 			require.NoError(t, svc.IndexNode(node))
 
@@ -83,7 +84,7 @@ func TestSearch_VectorOnly_ResolvesNamedEmbeddingsToNode(t *testing.T) {
 			"default": {0, 1, 0},
 		},
 	}
-	_, err := engine.CreateNode(node)
+	_, err := engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, svc.IndexNode(node))
 

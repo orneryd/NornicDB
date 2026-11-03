@@ -37,7 +37,7 @@ func openConsumerDB(t *testing.T, relationships bool) (*DB, *search.Service) {
 func installConsumerBarrier(t *testing.T, db *DB) *storagefault.ConsumerBarrier {
 	t.Helper()
 	// Startup's background build reads db.storage; let it finish first.
-	db.bgWg.Wait()
+	waitDBWorkIdle(t, db)
 	db.mu.Lock()
 	original := db.storage
 	namespaced := original.(*storage.NamespacedEngine)
@@ -136,7 +136,7 @@ func TestDBDeleteAndUpdateRaceLeavesSearchMatchingStorage(t *testing.T) {
 			barrier.ReleaseWrites()
 			require.NoError(t, <-done)
 			settleQueuedRefreshes()
-			_, err = db.storage.GetNode("source")
+			_, err = db.storage.GetNode(t.Context(), "source")
 			require.ErrorIs(t, err, storage.ErrNotFound)
 			require.Zero(t, svc.FulltextDocCount(), tc.failure)
 		})
@@ -150,7 +150,7 @@ func TestStorageEventsConvergeUnderConcurrentWriters(t *testing.T) {
 	dims := db.config.Memory.EmbeddingDimensions
 	vector := make([]float32, dims)
 	vector[0] = 1
-	_, err := db.storage.CreateNode(&storage.Node{ID: "source", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "seedword"}, ChunkEmbeddings: [][]float32{vector}})
+	_, err := db.storage.CreateNode(t.Context(), &storage.Node{ID: "source", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "seedword"}, ChunkEmbeddings: [][]float32{vector}})
 	require.NoError(t, err)
 	for round := range 20 {
 		var writers sync.WaitGroup
@@ -159,11 +159,11 @@ func TestStorageEventsConvergeUnderConcurrentWriters(t *testing.T) {
 			go func() {
 				defer writers.Done()
 				node := &storage.Node{ID: "source", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": fmt.Sprintf("word%dx%d", round, writer)}, ChunkEmbeddings: [][]float32{vector}}
-				_ = db.storage.UpdateNode(storage.NodeUpdateRequest{After: node})
+				_ = db.storage.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node})
 			}()
 		}
 		writers.Wait()
-		stored, err := db.storage.GetNode("source")
+		stored, err := db.storage.GetNode(t.Context(), "source")
 		require.NoError(t, err)
 		word := stored.Properties["content"].(string)
 		settleQueuedRefreshes()
@@ -178,9 +178,9 @@ func seedStaleEmbeddingCallback(t *testing.T, db *DB) *storage.Node {
 	t.Helper()
 	vector := make([]float32, db.config.Memory.EmbeddingDimensions)
 	vector[0] = 1
-	_, err := db.storage.CreateNode(&storage.Node{ID: "source", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "alphaword"}})
+	_, err := db.storage.CreateNode(t.Context(), &storage.Node{ID: "source", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "alphaword"}})
 	require.NoError(t, err)
-	stored, err := db.storage.GetNode("source")
+	stored, err := db.storage.GetNode(t.Context(), "source")
 	require.NoError(t, err)
 	embedded := storage.CopyNode(stored)
 	embedded.ChunkEmbeddings = [][]float32{vector}
@@ -203,19 +203,19 @@ func TestLateEmbeddingCallbackCannotOverrideNewerWrite(t *testing.T) {
 	}{
 		{
 			name:       "deleted after callback snapshot",
-			newerWrite: func(ctx context.Context, db *DB) error { return db.storage.DeleteNode("source") },
+			newerWrite: func(ctx context.Context, db *DB) error { return db.storage.DeleteNode(ctx, "source") },
 			hits:       map[string]int{"alphaword": 0},
 		},
 		{
 			name: "updated after callback snapshot",
 			newerWrite: func(ctx context.Context, db *DB) error {
-				stored, err := db.storage.GetNode("source")
+				stored, err := db.storage.GetNode(ctx, "source")
 				if err != nil {
 					return err
 				}
 				newer := storage.CopyNode(stored)
 				newer.Properties["content"] = "bravoword"
-				return db.storage.UpdateNode(storage.NodeUpdateRequest{After: newer})
+				return db.storage.UpdateNode(ctx, storage.NodeUpdateRequest{After: newer})
 			},
 			hits: map[string]int{"bravoword": 1, "alphaword": 0},
 		},

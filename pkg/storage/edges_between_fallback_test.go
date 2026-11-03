@@ -18,21 +18,21 @@ func TestEdgesBetweenFallback_FindsEdgeFromEitherSide(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 	hub := testNode("fb-hub")
 	leaf := testNode("fb-leaf")
-	_, err := engine.CreateNode(hub)
+	_, err := engine.CreateNode(t.Context(), hub)
 	require.NoError(t, err)
-	_, err = engine.CreateNode(leaf)
+	_, err = engine.CreateNode(t.Context(), leaf)
 	require.NoError(t, err)
 	for i := 0; i < 50; i++ {
 		other := testNode(fmt.Sprintf("fb-other-%d", i))
-		_, err := engine.CreateNode(other)
+		_, err := engine.CreateNode(t.Context(), other)
 		require.NoError(t, err)
-		require.NoError(t, engine.CreateEdge(testEdge(fmt.Sprintf("fb-out-%d", i), hub.ID, other.ID, "HAS")))
-		require.NoError(t, engine.CreateEdge(testEdge(fmt.Sprintf("fb-in-%d", i), other.ID, leaf.ID, "HAS")))
+		require.NoError(t, engine.CreateEdge(t.Context(), testEdge(fmt.Sprintf("fb-out-%d", i), hub.ID, other.ID, "HAS")))
+		require.NoError(t, engine.CreateEdge(t.Context(), testEdge(fmt.Sprintf("fb-in-%d", i), other.ID, leaf.ID, "HAS")))
 	}
 	// hub -> leaf: the hub has 51 outgoing edges and the leaf 51 incoming ones.
 	edge := testEdge("fb-target", hub.ID, leaf.ID, "HAS")
-	require.NoError(t, engine.CreateEdge(edge))
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.CreateEdge(t.Context(), edge))
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		if err := txn.Delete(engine.edgeBetweenHeadKeyFromStringIDs(hub.ID, leaf.ID, "HAS")); err != nil {
 			return err
 		}
@@ -60,18 +60,18 @@ func TestEdgesBetweenFallback_CostIsTheSmallerDegree(t *testing.T) {
 	run := func(degree int) float64 {
 		engine := createTestBadgerEngine(t)
 		hub := testNode("deg-hub")
-		_, err := engine.CreateNode(hub)
+		_, err := engine.CreateNode(t.Context(), hub)
 		require.NoError(t, err)
 		edges := make([]*Edge, 0, degree)
 		for i := 0; i < degree; i++ {
 			n := testNode(fmt.Sprintf("deg-n-%d", i))
-			_, err := engine.CreateNode(n)
+			_, err := engine.CreateNode(t.Context(), n)
 			require.NoError(t, err)
 			edges = append(edges, testEdge(fmt.Sprintf("deg-e-%d", i), hub.ID, n.ID, "HAS"))
 		}
-		require.NoError(t, engine.BulkCreateEdges(edges))
+		require.NoError(t, engine.BulkCreateEdges(t.Context(), edges))
 		fresh := testNode("deg-fresh")
-		_, err = engine.CreateNode(fresh)
+		_, err = engine.CreateNode(t.Context(), fresh)
 		require.NoError(t, err)
 		return testing.AllocsPerRun(20, func() {
 			got, err := engine.edgesBetweenFromLegacyOutgoingIndex(context.Background(), hub.ID, fresh.ID, "HAS")

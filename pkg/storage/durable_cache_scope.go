@@ -51,15 +51,23 @@ func (state *durableCacheState) advanceFloorLocked() {
 // commitDurableWrite is the retained managed writer's physical action. Cache
 // revocation belongs inside the action, after successful durability and before
 // oracle completion. Preparation/replay pass a context with no semantic owner.
-func (m *managedBadgerDB) commitDurableWrite(txn *badger.Txn, ts uint64, scope cacheWriteScope, ctx context.Context) error {
-	return m.durableAction(ts, scope, ctx, func() error { return txn.CommitAt(ts, nil) })
+func (m *managedBadgerDB) commitDurableWrite(txn *badger.Txn, ts uint64, scope cacheWriteScope, ctx context.Context, journal *commitWriter) error {
+	return m.durableAction(ts, scope, ctx, journal, func() error { return txn.CommitAt(ts, nil) })
 }
 
 // durableAction also encloses Badger's raw restore/reset actions. Those APIs
 // have different physical calls, but share the same decision and revocation.
-func (m *managedBadgerDB) durableAction(ts uint64, scope cacheWriteScope, ctx context.Context, action func() error) error {
+func (m *managedBadgerDB) durableAction(ts uint64, scope cacheWriteScope, ctx context.Context, journal *commitWriter, action func() error) error {
 	return DecidePublication(ctx, func() error {
+		if journal != nil {
+			if err := journal.acceptNativeWAL(); err != nil {
+				return err
+			}
+		}
 		if err := action(); err != nil {
+			if journal != nil && journal.entityJournalAccepted {
+				return journal.acceptedNativeWALError(err)
+			}
 			return err
 		}
 		if m.cacheOwner != nil {

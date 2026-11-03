@@ -26,7 +26,7 @@ func TestPatternBindingPlanRemainsSyntaxOnly(t *testing.T) {
 	withPluginFunctions(t, map[string]interface{}{"inspection.planvalue": func() int64 { calls++; return calls }})
 	e := NewStorageExecutor(newTestMemoryEngine(t))
 	pattern := "(n:CanonicalPlanOwnership {id:inspection.planvalue()})"
-	plan := e.compilePatternRow(pattern, nil)
+	plan := e.compilePatternRow(t.Context(), pattern, nil)
 	require.NoError(t, plan.err)
 	require.Zero(t, calls)
 	ctx := withParams(context.Background(), map[string]interface{}{"__nornic_pattern_property_0": int64(99)})

@@ -54,12 +54,12 @@ func compilePipelineRowWith(ctx context.Context, clause string) (pipelineRowWith
 		return pipelineRowWith{}, false
 	}
 	for _, modifier := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if topLevelKeywordIndex(body, modifier) >= 0 {
+		if topLevelKeywordIndex(ctx, body, modifier) >= 0 {
 			return pipelineRowWith{}, false
 		}
 	}
 	plan := pipelineRowWith{clause: clause}
-	if index := topLevelKeywordIndex(body, "WHERE"); index >= 0 {
+	if index := topLevelKeywordIndex(ctx, body, "WHERE"); index >= 0 {
 		plan.where = strings.TrimSpace(body[index+len("WHERE"):])
 		body = strings.TrimSpace(body[:index])
 	}
@@ -88,8 +88,8 @@ func compilePipelineRowWith(ctx context.Context, clause string) (pipelineRowWith
 	return plan, true
 }
 
-func pipelineUnwindUsesRange(clause string) bool {
-	expression, _, ok := parsePipelineIteration(clause)
+func pipelineUnwindUsesRange(ctx context.Context, clause string) bool {
+	expression, _, ok := parsePipelineIteration(ctx, clause)
 	var callFacts1 functionCallFacts
 	call := inspectFunctionCall(strings.TrimSpace(expression), qualifiedFunctionCall, "", &callFacts1)
 	function := callFacts1.name
@@ -151,7 +151,7 @@ func (e *StorageExecutor) validatePipelineProjectionValues(ctx context.Context, 
 	}
 	for _, expression := range projectionExpressions(ctx, clause, keyword) {
 		for _, row := range rows {
-			if err := e.validateRowSubscriptTypes(expression, row); err != nil {
+			if err := e.validateRowSubscriptTypes(ctx, expression, row); err != nil {
 				return err
 			}
 		}
@@ -240,10 +240,10 @@ type pipelineNodeMatchSourcePlan struct {
 
 var pipelineNodeMatchSourcePlans = newBoundedCache[string, pipelineNodeMatchSourcePlan](4096, boundedCacheStringShardIndex)
 
-func (e *StorageExecutor) compilePipelineNodeMatchSource(clause string) pipelineNodeMatchSourcePlan {
+func (e *StorageExecutor) compilePipelineNodeMatchSource(ctx context.Context, clause string) pipelineNodeMatchSourcePlan {
 	plan := pipelineNodeMatchSourcePlan{earlyLimitSafe: true}
 	body := pipelineClauseBody(clause, "MATCH")
-	if topLevelKeywordIndex(body, "WHERE") >= 0 {
+	if topLevelKeywordIndex(ctx, body, "WHERE") >= 0 {
 		return plan
 	}
 	patterns := splitTopLevelComma(body)
@@ -257,7 +257,7 @@ func (e *StorageExecutor) compilePipelineNodeMatchSource(clause string) pipeline
 		if !strings.HasPrefix(pattern, "(") || findMatchingParen(pattern, 0) != len(pattern)-1 {
 			return plan
 		}
-		template := e.pipelineNodeMatchTemplateFor("MATCH " + pattern)
+		template := e.pipelineNodeMatchTemplateFor(ctx, "MATCH "+pattern)
 		if !template.usable {
 			return plan
 		}
@@ -290,7 +290,7 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 	}
 	plan, cached := pipelineNodeMatchSourcePlans.get(clause)
 	if !cached {
-		plan = e.compilePipelineNodeMatchSource(clause)
+		plan = e.compilePipelineNodeMatchSource(ctx, clause)
 		pipelineNodeMatchSourcePlans.put(clause, plan)
 	}
 	if !plan.supported {
@@ -593,11 +593,11 @@ func (e *StorageExecutor) pipelineWithRowSource(ctx context.Context, input pipel
 func (e *StorageExecutor) pipelineWithWindowSource(ctx context.Context, input pipelineRowSource, rows []pipelineRow, clause string) (pipelineRowSource, bool) {
 	end := len(clause)
 	for _, keyword := range []string{"SKIP", "LIMIT"} {
-		if index := topLevelKeywordIndex(clause, keyword); index >= 0 && index < end {
+		if index := topLevelKeywordIndex(ctx, clause, keyword); index >= 0 && index < end {
 			end = index
 		}
 	}
-	if end == len(clause) || topLevelKeywordIndex(clause, "WHERE") >= 0 {
+	if end == len(clause) || topLevelKeywordIndex(ctx, clause, "WHERE") >= 0 {
 		return nil, false
 	}
 	plan, ok := parsePipelineRowWith(ctx, clause[:end])
@@ -605,14 +605,14 @@ func (e *StorageExecutor) pipelineWithWindowSource(ctx context.Context, input pi
 		return nil, false
 	}
 	skip, limit := 0, -1
-	if topLevelKeywordIndex(clause, "SKIP") >= 0 {
-		skip, ok = e.evaluatePipelinePagination(ctx, pipelinePaginationExpression(clause, "SKIP"), rows)
+	if topLevelKeywordIndex(ctx, clause, "SKIP") >= 0 {
+		skip, ok = e.evaluatePipelinePagination(ctx, pipelinePaginationExpression(ctx, clause, "SKIP"), rows)
 		if !ok {
 			return nil, false
 		}
 	}
-	if topLevelKeywordIndex(clause, "LIMIT") >= 0 {
-		limit, ok = e.evaluatePipelinePagination(ctx, pipelinePaginationExpression(clause, "LIMIT"), rows)
+	if topLevelKeywordIndex(ctx, clause, "LIMIT") >= 0 {
+		limit, ok = e.evaluatePipelinePagination(ctx, pipelinePaginationExpression(ctx, clause, "LIMIT"), rows)
 		if !ok {
 			return nil, false
 		}
@@ -635,7 +635,11 @@ func (e *StorageExecutor) pipelineWithWindowSource(ctx context.Context, input pi
 }
 
 func (e *StorageExecutor) pipelineUnwindSource(ctx context.Context, rows []pipelineRow, clauses []pipelineClause) (pipelineRowSource, int, bool) {
-	expression, alias, ok := parsePipelineIteration(clauses[0].text)
+	expression, alias, ok := parsePipelineIteration(ctx, clauses[0].text)
+	if err := ctx.Err(); err != nil {
+		recordExpressionFailure(ctx, err)
+		return nil, 0, false
+	}
 	if !ok {
 		return nil, 0, false
 	}
@@ -702,7 +706,7 @@ func projectionExpressions(ctx context.Context, clause, keyword string) []string
 parse:
 	for {
 		if strings.EqualFold(keyword, "UNWIND") {
-			if expression, _, ok := parsePipelineIteration(clause); ok {
+			if expression, _, ok := parsePipelineIteration(ctx, clause); ok {
 				expressions = []string{expression}
 				break parse
 			}
@@ -712,7 +716,7 @@ parse:
 		if len(body) < len(keyword) || !strings.EqualFold(body[:len(keyword)], keyword) {
 			break parse
 		}
-		body, _ = projectionSemanticBodyAndTail(body, keyword)
+		body, _ = projectionSemanticBodyAndTail(ctx, body, keyword)
 		if body == "" || body == "*" {
 			break parse
 		}

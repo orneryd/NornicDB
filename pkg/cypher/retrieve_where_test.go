@@ -77,7 +77,7 @@ func TestDbRetrieveWhereFiltersVectorCandidates(t *testing.T) {
 		{ID: "pass", Labels: []string{"S"}, Properties: map[string]interface{}{"name": "pass", "state": "current"}, ChunkEmbeddings: [][]float32{{0.7, 0.7, 0}}},
 		{ID: "far", Labels: []string{"S"}, Properties: map[string]interface{}{"name": "far", "state": "current"}, ChunkEmbeddings: [][]float32{{0, 0, 1}}},
 	} {
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err, index)
 	}
 	service := search.NewService(store, 3, nil)
@@ -97,7 +97,7 @@ func TestDbRetrieveWherePagesCheckIt(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 	exec := NewStorageExecutor(store)
 	for _, id := range []string{"a1", "a2", "a3", "b1", "b2"} {
-		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "late fee clause", "group": id[:1]}})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(id), Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "late fee clause", "group": id[:1]}})
 		require.NoError(t, err)
 	}
 	service := search.NewService(store, search.DefaultVectorDimensions, nil)

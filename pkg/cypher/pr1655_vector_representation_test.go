@@ -17,7 +17,7 @@ func TestPR1655NoopVectorKeepsTypedResultWithoutMutation(t *testing.T) {
 			store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 			vector := []float64{0.12345678901234567, 0.9876543210987654}
 			for _, id := range []storage.NodeID{"a", "b"} {
-				_, err := store.CreateNode(&storage.Node{ID: id, Properties: map[string]any{"embedding": []any{vector[0], vector[1]}}})
+				_, err := store.CreateNode(t.Context(), &storage.Node{ID: id, Properties: map[string]any{"embedding": []any{vector[0], vector[1]}}})
 				require.NoError(t, err)
 			}
 			counting := &graphitiCopyCountingEngine{Engine: store}
@@ -25,13 +25,13 @@ func TestPR1655NoopVectorKeepsTypedResultWithoutMutation(t *testing.T) {
 			var entity any
 			var original map[string]any
 			if relationship {
-				require.NoError(t, store.CreateEdge(&storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "LINK", Properties: map[string]any{"embedding": []any{vector[0], vector[1]}}}))
-				edge, err := store.GetEdge("r")
+				require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "LINK", Properties: map[string]any{"embedding": []any{vector[0], vector[1]}}}))
+				edge, err := store.GetEdge(t.Context(), "r")
 				require.NoError(t, err)
 				entity = edge
 				original = edge.Properties
 			} else {
-				node, err := store.GetNode("a")
+				node, err := store.GetNode(t.Context(), "a")
 				require.NoError(t, err)
 				entity = node
 				original = node.Properties
