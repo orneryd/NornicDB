@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	gherkin "github.com/cucumber/gherkin/go/v26"
-	messages "github.com/cucumber/messages/go/v21"
+	messages "github.com/cucumber/messages/go/v34"
 )
 
 func TestParseValuePreservesCypherTypes(t *testing.T) {

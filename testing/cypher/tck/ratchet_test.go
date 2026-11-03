@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/cucumber/godog"
-	messages "github.com/cucumber/messages/go/v21"
+	messages "github.com/cucumber/messages/go/v34"
 )
 
 func TestScenarioExampleRowUsesExpandedBehaviorInsteadOfParserIDs(t *testing.T) {
