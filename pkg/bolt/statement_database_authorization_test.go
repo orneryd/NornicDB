@@ -35,9 +35,9 @@ func TestBoltEveryDatabaseAStatementSelectsIsAuthorized(t *testing.T) {
 	authCfg.SecurityEnabled = true
 	authenticator, err := auth.NewAuthenticator(authCfg, fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)))
 	require.NoError(t, err)
-	_, err = authenticator.CreateUser("admin", "admin-password", []auth.Role{auth.RoleAdmin})
+	_, err = authenticator.CreateUser(context.Background(), "admin", "admin-password", []auth.Role{auth.RoleAdmin})
 	require.NoError(t, err)
-	_, err = authenticator.CreateUser("limited", "limited-password", []auth.Role{auth.RoleEditor})
+	_, err = authenticator.CreateUser(context.Background(), "limited", "limited-password", []auth.Role{auth.RoleEditor})
 	require.NoError(t, err)
 
 	server := NewWithDatabaseManager(&Config{

@@ -28,7 +28,7 @@ func BenchmarkPendingEmbeddingClaim(b *testing.B) {
 					e.MarkNodeEmbedded(id)
 				}
 				for i := 0; i < pending; i++ {
-					_, err := e.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("test:candidate-%06d", i)), Labels: []string{"Doc"}, Properties: map[string]any{"content": fmt.Sprintf("document %d", i)}})
+					_, err := e.CreateNode(b.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("test:candidate-%06d", i)), Labels: []string{"Doc"}, Properties: map[string]any{"content": fmt.Sprintf("document %d", i)}})
 					if err != nil {
 						b.Fatal(err)
 					}
@@ -36,14 +36,19 @@ func BenchmarkPendingEmbeddingClaim(b *testing.B) {
 				if e.PendingEmbeddingsCount() != pending {
 					b.Fatal("invalid pending fixture")
 				}
-				if e.FindNodeNeedingEmbedding() == nil {
+				if node, err := e.FindNodeNeedingEmbedding(b.Context()); err != nil {
+					b.Fatal(err)
+				} else if node == nil {
 					b.Fatal("missing startup work")
 				}
 				completed := make([]storage.NodeID, 0, pending)
 				b.ReportAllocs()
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
-					node := e.FindNodeNeedingEmbedding()
+					node, err := e.FindNodeNeedingEmbedding(b.Context())
+					if err != nil {
+						b.Fatal(err)
+					}
 					if node == nil {
 						b.Fatal("lost pending work")
 					}

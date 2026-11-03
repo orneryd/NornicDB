@@ -28,12 +28,12 @@ func BenchmarkMetricsDatabaseReadAdmission(b *testing.B) {
 			require.NoError(b, s.roleEntitlementsStore.Set(ctx, role, []string{"read"}))
 			require.NoError(b, s.allowlistStore.SaveRoleDatabases(ctx, role, []string{"nornic"}))
 			require.NoError(b, s.privilegesStore.SavePrivilege(ctx, role, "nornic", true, false))
-			_, err := users.CreateUser(role, "password123", []auth.Role{auth.Role(role)})
+			_, err := users.CreateUser(context.Background(), role, "password123", []auth.Role{auth.Role(role)})
 			require.NoError(b, err)
 			for _, name := range []string{"nornic", "metrics_private"} {
 				engine, err := s.dbManager.GetStorage(name)
 				require.NoError(b, err)
-				_, err = engine.CreateNode(&storage.Node{ID: "node", Labels: []string{"Metric"}})
+				_, err = engine.CreateNode(b.Context(), &storage.Node{ID: "node", Labels: []string{"Metric"}})
 				require.NoError(b, err)
 			}
 			badger, ok := storage.UnwrapEngine(s.db.GetStorage()).(*storage.BadgerEngine)

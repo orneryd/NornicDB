@@ -12,16 +12,21 @@ import (
 // describes it, not its coordinates (#907).
 func TestTransactionHTTPVectorAndUUID(t *testing.T) {
 	s := &Server{}
-	value, meta := s.transactionHTTPValue(cypher.CypherVector{Type: cypher.VectorInteger64, Ints: []int64{1, 2}}, "neo4j")
+	value, meta, projectionErr1 := s.transactionHTTPValue(t.Context(), cypher.CypherVector{Type: cypher.VectorInteger64, Ints: []int64{1, 2}}, "neo4j")
+	require.NoError(t, projectionErr1)
 	encoded, err := json.Marshal(value)
 	require.NoError(t, err)
 	require.JSONEq(t, `{"typeName":"Int64Vector","incomparableType":true,"sequenceValue":false}`, string(encoded))
 	require.Equal(t, []interface{}{nil}, meta)
-	value, meta = s.transactionHTTPValue(cypher.CypherVector{Type: cypher.VectorFloat32, Floats: []float64{1}}, "neo4j")
+	var projectionErr2 error
+	value, meta, projectionErr2 = s.transactionHTTPValue(t.Context(), cypher.CypherVector{Type: cypher.VectorFloat32, Floats: []float64{1}}, "neo4j")
+	require.NoError(t, projectionErr2)
 	encoded, err = json.Marshal(value)
 	require.NoError(t, err)
 	require.JSONEq(t, `{"typeName":"Float32Vector","incomparableType":true,"sequenceValue":false}`, string(encoded))
-	value, meta = s.transactionHTTPValue(cypher.CypherUUID{}, "neo4j")
+	var projectionErr3 error
+	value, meta, projectionErr3 = s.transactionHTTPValue(t.Context(), cypher.CypherUUID{}, "neo4j")
+	require.NoError(t, projectionErr3)
 	require.Equal(t, "00000000-0000-0000-0000-000000000000", value)
 	require.Equal(t, []interface{}{nil}, meta)
 }

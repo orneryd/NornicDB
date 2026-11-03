@@ -4,8 +4,11 @@
 // and analyzing paths in graph queries.
 package path
 
+import "errors"
+
 import (
 	"container/list"
+	"context"
 
 	"github.com/orneryd/nornicdb/apoc/storage"
 )
@@ -49,7 +52,11 @@ type Config struct {
 // Example:
 //
 //	apoc.path.subgraphNodes(startNode, {maxLevel: 3})
-func (f *Functions) SubgraphNodes(start *Node, config Config) []*Node {
+func (f *Functions) SubgraphNodes(ctx context.Context, start *Node, config Config) ([]*Node, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	visited := make(map[int64]bool)
 	result := make([]*Node, 0)
 	queue := list.New()
@@ -58,6 +65,10 @@ func (f *Functions) SubgraphNodes(start *Node, config Config) []*Node {
 	visited[start.ID] = true
 
 	for queue.Len() > 0 {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		element := queue.Front()
 		state := element.Value.(*pathState)
 		queue.Remove(element)
@@ -67,9 +78,20 @@ func (f *Functions) SubgraphNodes(start *Node, config Config) []*Node {
 		}
 
 		if state.depth < config.MaxLevel {
-			neighbors, err := f.backend.GetNodeNeighbors(state.node.ID, config.RelationshipFilter, storage.DirectionBoth)
+			neighbors, err := f.backend.GetNodeNeighbors(ctx, state.node.ID, config.RelationshipFilter, storage.DirectionBoth)
+			if err != nil && !errors.Is(err, storage.ErrNodeNotFound) {
+				return nil, err
+			}
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
 			if err == nil {
 				for _, neighbor := range neighbors {
+					if operationError := ctx.Err(); operationError != nil {
+						return nil, operationError
+					}
+
 					if !visited[neighbor.ID] {
 						visited[neighbor.ID] = true
 						queue.PushBack(&pathState{node: neighbor, depth: state.depth + 1})
@@ -83,58 +105,78 @@ func (f *Functions) SubgraphNodes(start *Node, config Config) []*Node {
 		}
 	}
 
-	return result
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return result, nil
 }
 
-// SubgraphAll finds all nodes and relationships in a subgraph.
+// SubgraphAll returns nodes and relationships in the map keys "nodes" and "rels".
+// Cancellation and backend failures return no partial map.
 //
 // Example:
 //
 //	apoc.path.subgraphAll(startNode, {maxLevel: 3})
-func (f *Functions) SubgraphAll(start *Node, config Config) (nodes []*Node, rels []*Relationship) {
+func (f *Functions) SubgraphAll(ctx context.Context, start *Node, config Config) (map[string]interface{}, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	visited := make(map[int64]bool)
-	nodes = make([]*Node, 0)
-	rels = make([]*Relationship, 0)
+	nodes := make([]*Node, 0)
+	rels := make([]*Relationship, 0)
 	queue := list.New()
-
 	queue.PushBack(&pathState{node: start, depth: 0})
 	visited[start.ID] = true
-
 	for queue.Len() > 0 {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		element := queue.Front()
 		state := element.Value.(*pathState)
 		queue.Remove(element)
-
 		if state.depth >= config.MinLevel {
 			nodes = append(nodes, state.node)
 		}
-
 		if state.depth < config.MaxLevel {
-			relationships, err := f.backend.GetNodeRelationships(state.node.ID, config.RelationshipFilter, storage.DirectionBoth)
-			if err == nil {
-				for _, rel := range relationships {
-					rels = append(rels, rel)
-
-					var neighborID int64
-					if rel.StartNode == state.node.ID {
-						neighborID = rel.EndNode
-					} else {
-						neighborID = rel.StartNode
+			relationships, err := f.backend.GetNodeRelationships(ctx, state.node.ID, config.RelationshipFilter, storage.DirectionBoth)
+			if err != nil && !errors.Is(err, storage.ErrNodeNotFound) {
+				return nil, err
+			}
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			if err != nil {
+				continue // Ordinary misses never publish or traverse failed-read data.
+			}
+			for _, rel := range relationships {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+				rels = append(rels, rel)
+				neighborID := rel.StartNode
+				if rel.StartNode == state.node.ID {
+					neighborID = rel.EndNode
+				}
+				if !visited[neighborID] {
+					neighbor, err := f.backend.GetNode(ctx, neighborID)
+					if err != nil && !errors.Is(err, storage.ErrNodeNotFound) {
+						return nil, err
 					}
-
-					if !visited[neighborID] {
-						neighbor, err := f.backend.GetNode(neighborID)
-						if err == nil {
-							visited[neighborID] = true
-							queue.PushBack(&pathState{node: neighbor, depth: state.depth + 1})
-						}
+					if err := ctx.Err(); err != nil {
+						return nil, err
+					}
+					if err == nil {
+						visited[neighborID] = true
+						queue.PushBack(&pathState{node: neighbor, depth: state.depth + 1})
 					}
 				}
 			}
 		}
 	}
-
-	return nodes, rels
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{"nodes": nodes, "rels": rels}, nil
 }
 
 // ExpandConfig expands from a start node with configuration.
@@ -142,7 +184,11 @@ func (f *Functions) SubgraphAll(start *Node, config Config) (nodes []*Node, rels
 // Example:
 //
 //	apoc.path.expandConfig(startNode, {relationshipFilter: 'KNOWS>'})
-func (f *Functions) ExpandConfig(start *Node, config Config) []*Path {
+func (f *Functions) ExpandConfig(ctx context.Context, start *Node, config Config) ([]*Path, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	paths := make([]*Path, 0)
 	visited := make(map[int64]bool)
 
@@ -165,7 +211,7 @@ func (f *Functions) ExpandConfig(start *Node, config Config) []*Path {
 			return
 		}
 
-		relationships, err := f.backend.GetNodeRelationships(node.ID, config.RelationshipFilter, storage.DirectionBoth)
+		relationships, err := f.backend.GetNodeRelationships(ctx, node.ID, config.RelationshipFilter, storage.DirectionBoth)
 		if err == nil {
 			for _, rel := range relationships {
 				var neighborID int64
@@ -179,7 +225,7 @@ func (f *Functions) ExpandConfig(start *Node, config Config) []*Path {
 					continue
 				}
 
-				neighbor, err := f.backend.GetNode(neighborID)
+				neighbor, err := f.backend.GetNode(ctx, neighborID)
 				if err != nil {
 					continue
 				}
@@ -199,7 +245,10 @@ func (f *Functions) ExpandConfig(start *Node, config Config) []*Path {
 	visited[start.ID] = true
 	dfs(start, []*Node{start}, []*Relationship{}, 0)
 
-	return paths
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return paths, nil
 }
 
 // SpanningTree finds a spanning tree from a start node.
@@ -207,7 +256,11 @@ func (f *Functions) ExpandConfig(start *Node, config Config) []*Path {
 // Example:
 //
 //	apoc.path.spanningTree(startNode, {maxLevel: 5})
-func (f *Functions) SpanningTree(start *Node, config Config) []*Path {
+func (f *Functions) SpanningTree(ctx context.Context, start *Node, config Config) ([]*Path, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	visited := make(map[int64]bool)
 	paths := make([]*Path, 0)
 
@@ -226,7 +279,7 @@ func (f *Functions) SpanningTree(start *Node, config Config) []*Path {
 			return
 		}
 
-		relationships, err := f.backend.GetNodeRelationships(node.ID, config.RelationshipFilter, storage.DirectionBoth)
+		relationships, err := f.backend.GetNodeRelationships(ctx, node.ID, config.RelationshipFilter, storage.DirectionBoth)
 		if err == nil {
 			for _, rel := range relationships {
 				var neighborID int64
@@ -237,7 +290,7 @@ func (f *Functions) SpanningTree(start *Node, config Config) []*Path {
 				}
 
 				if !visited[neighborID] {
-					neighbor, err := f.backend.GetNode(neighborID)
+					neighbor, err := f.backend.GetNode(ctx, neighborID)
 					if err == nil {
 						visited[neighborID] = true
 						newNodes := append(nodes, neighbor)
@@ -252,7 +305,10 @@ func (f *Functions) SpanningTree(start *Node, config Config) []*Path {
 	visited[start.ID] = true
 	bfs(start, []*Node{start}, []*Relationship{}, 0)
 
-	return paths
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return paths, nil
 }
 
 // ShortestPath finds the shortest path between two nodes.
@@ -260,12 +316,29 @@ func (f *Functions) SpanningTree(start *Node, config Config) []*Path {
 // Example:
 //
 //	apoc.path.shortestPath(start, end, 'KNOWS>', 10)
-func (f *Functions) ShortestPath(start, end *Node, relFilter string, maxHops int) *Path {
-	path, err := f.backend.FindShortestPath(start.ID, end.ID, relFilter, maxHops)
-	if err != nil {
-		return nil
+func (f *Functions) ShortestPath(ctx context.Context, start, end *Node, relFilter string, maxHops int) (*Path, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
 	}
-	return path
+
+	path, err := f.backend.FindShortestPath(ctx, start.ID, end.ID, relFilter, maxHops)
+	if err != nil && !errors.Is(err, storage.ErrPathNotFound) {
+		return nil, err
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	if err != nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return nil, nil
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return path, nil
 }
 
 // AllShortestPaths finds all shortest paths between two nodes.
@@ -273,19 +346,40 @@ func (f *Functions) ShortestPath(start, end *Node, relFilter string, maxHops int
 // Example:
 //
 //	apoc.path.allShortestPaths(start, end, 'KNOWS>', 10)
-func (f *Functions) AllShortestPaths(start, end *Node, relFilter string, maxHops int) []*Path {
-	paths, err := f.backend.FindAllPaths(start.ID, end.ID, relFilter, maxHops)
+func (f *Functions) AllShortestPaths(ctx context.Context, start, end *Node, relFilter string, maxHops int) ([]*Path, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	paths, err := f.backend.FindAllPaths(ctx, start.ID, end.ID, relFilter, maxHops)
+	if err != nil && !errors.Is(err, storage.ErrPathNotFound) {
+		return nil, err
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	if err != nil {
-		return []*Path{}
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return []*Path{}, nil
 	}
 
 	// Filter to only shortest paths
 	if len(paths) == 0 {
-		return paths
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return paths, nil
 	}
 
 	minLength := paths[0].Length
 	for _, path := range paths {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		if path.Length < minLength {
 			minLength = path.Length
 		}
@@ -293,12 +387,19 @@ func (f *Functions) AllShortestPaths(start, end *Node, relFilter string, maxHops
 
 	shortestPaths := make([]*Path, 0)
 	for _, path := range paths {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		if path.Length == minLength {
 			shortestPaths = append(shortestPaths, path)
 		}
 	}
 
-	return shortestPaths
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return shortestPaths, nil
 }
 
 // Combine combines multiple paths into one.

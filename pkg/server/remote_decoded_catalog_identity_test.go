@@ -57,7 +57,7 @@ type decodedIdentityCatalog struct {
 func newDecodedIdentityCatalog(t *testing.T) *decodedIdentityCatalog {
 	t.Helper()
 	server, users := setupTestServer(t)
-	_, err := users.CreateUser("alias-identity-editor", "password123", []auth.Role{auth.RoleEditor})
+	_, err := users.CreateUser(context.Background(), "alias-identity-editor", "password123", []auth.Role{auth.RoleEditor})
 	require.NoError(t, err)
 	token := "Bearer " + getAuthToken(t, users, "alias-identity-editor")
 

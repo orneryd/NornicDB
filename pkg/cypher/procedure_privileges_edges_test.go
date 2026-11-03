@@ -39,16 +39,16 @@ var errSystemStorage = errors.New("system storage unavailable")
 // filter.
 func TestProcedurePrivilegeCommandEdges(t *testing.T) {
 	ctx := context.Background()
-	_, ok, _ := parseProcedurePrivilegeCommand("GRANT EXECUTE FUNCTION db.x ON DBMS TO r")
+	_, ok, _ := parseProcedurePrivilegeCommand(ctx, "GRANT EXECUTE FUNCTION db.x ON DBMS TO r")
 	require.False(t, ok)
-	_, ok, err := parseProcedurePrivilegeCommand("GRANT EXECUTE PROCEDURE db.x TO r")
+	_, ok, err := parseProcedurePrivilegeCommand(ctx, "GRANT EXECUTE PROCEDURE db.x TO r")
 	require.True(t, ok)
 	require.ErrorContains(t, err, "expected ON DBMS")
 
-	require.Equal(t, []string{"a", "b"}, showPrivilegeRoles("SHOW ROLES role_a, `b` PRIVILEGES"))
-	require.Equal(t, []string{"a"}, showPrivilegeRoles("SHOW ROLE a PRIVILEGE"))
-	require.Nil(t, showPrivilegeRoles("SHOW ROLE a"))
-	require.Nil(t, showPrivilegeRoles("SHOW PRIVILEGES"))
+	require.Equal(t, []string{"a", "b"}, showPrivilegeRoles(ctx, "SHOW ROLES role_a, `b` PRIVILEGES"))
+	require.Equal(t, []string{"a"}, showPrivilegeRoles(ctx, "SHOW ROLE a PRIVILEGE"))
+	require.Nil(t, showPrivilegeRoles(ctx, "SHOW ROLE a"))
+	require.Nil(t, showPrivilegeRoles(ctx, "SHOW PRIVILEGES"))
 
 	// A nil grant check attaches nothing.
 	require.Equal(t, ctx, WithProcedureGrantChecker(ctx, nil))

@@ -223,11 +223,11 @@ func TestAPOCNeighborsTypedContracts(t *testing.T) {
 func TestAPOCNeighborsTerminalErrors(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 	start := &storage.Node{ID: "start"}
-	_, err := store.CreateNode(start)
+	_, err := store.CreateNode(t.Context(), start)
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "end"})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "end"})
 	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "edge", StartNode: "start", EndNode: "end", Type: "KNOWS"}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "edge", StartNode: "start", EndNode: "end", Type: "KNOWS"}))
 	for _, procedure := range []struct {
 		name string
 		call func(*StorageExecutor, context.Context, []interface{}) (*ExecuteResult, error)

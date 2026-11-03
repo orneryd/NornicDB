@@ -105,9 +105,9 @@ func TestUnwindMultiMatchCreate_ElementIDEndpointsHitsBatchPath(t *testing.T) {
 	exec := testutil.SetupTestExecutorWithStore(t, store)
 	ctx := context.Background()
 
-	leftID, err := store.CreateNode(&storage.Node{ID: "left", Labels: []string{"Entity"}})
+	leftID, err := store.CreateNode(ctx, &storage.Node{ID: "left", Labels: []string{"Entity"}})
 	require.NoError(t, err)
-	rightID, err := store.CreateNode(&storage.Node{ID: "right", Labels: []string{"Entity"}})
+	rightID, err := store.CreateNode(ctx, &storage.Node{ID: "right", Labels: []string{"Entity"}})
 	require.NoError(t, err)
 
 	query := `
@@ -139,12 +139,15 @@ func TestNorthwindSeeder_ProductsIncompleteIndexedMatchBucketKeepsFastPath(t *te
 
 	schema := store.GetSchema()
 	require.NotNil(t, schema)
-	ids := schema.PropertyIndexLookup("Supplier", "supplierID", int64(2))
+	ids, lookupErr := schema.PropertyIndexLookup(ctx, "Supplier", "supplierID", int64(2))
+	require.NoError(t, lookupErr)
 	require.NotEmpty(t, ids)
 	for _, id := range ids {
 		require.NoError(t, schema.PropertyIndexDelete("Supplier", "supplierID", id, int64(2)))
 	}
-	require.Empty(t, schema.PropertyIndexLookup("Supplier", "supplierID", int64(2)))
+	missingIDs, lookupErr := schema.PropertyIndexLookup(ctx, "Supplier", "supplierID", int64(2))
+	require.NoError(t, lookupErr)
+	require.Empty(t, missingIDs)
 
 	rows := []interface{}{
 		map[string]interface{}{"productID": int64(101), "productName": "P101", "sku": "SKU-00101", "unitPrice": 1.25, "unitsInStock": int64(10), "discontinued": false, "description": "indexed supplier", "categoryID": int64(1), "supplierID": int64(1)},

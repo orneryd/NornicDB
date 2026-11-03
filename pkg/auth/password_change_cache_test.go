@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"testing"
@@ -21,7 +22,7 @@ func TestPasswordChangeForgetsCachedCredentials(t *testing.T) {
 	authenticator, err := NewAuthenticator(config, engine)
 	require.NoError(t, err)
 	for _, user := range []string{"bob", "carol"} {
-		_, err := authenticator.CreateUser(user, "password123", []Role{RoleViewer})
+		_, err := authenticator.CreateUser(context.Background(), user, "password123", []Role{RoleViewer})
 		require.NoError(t, err)
 	}
 	cache := NewBasicAuthCache(DefaultAuthCacheEntries, DefaultAuthCacheTTL)
@@ -32,11 +33,11 @@ func TestPasswordChangeForgetsCachedCredentials(t *testing.T) {
 	cache.SetFromHeaderAtGeneration("Basic Ym9iOnBhc3N3b3JkMTIz", &JWTClaims{Username: "bob"}, cache.Generation())
 	cache.SetAtGeneration("carol", "password123", &JWTClaims{Username: "carol"}, cache.Generation())
 
-	require.Error(t, authenticator.ChangePassword("bob", "wrong-password", "newPassword456"))
+	require.Error(t, authenticator.ChangePassword(context.Background(), "bob", "wrong-password", "newPassword456"))
 	_, cached := cache.Get("bob", "password123")
 	require.True(t, cached, "a refused change forgets nothing")
 
-	require.NoError(t, authenticator.ChangePassword("bob", "password123", "newPassword456"))
+	require.NoError(t, authenticator.ChangePassword(context.Background(), "bob", "password123", "newPassword456"))
 	_, cached = cache.Get("bob", "password123")
 	require.False(t, cached)
 	_, cached = cache.GetFromHeader("Basic Ym9iOnBhc3N3b3JkMTIz")

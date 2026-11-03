@@ -42,7 +42,10 @@ func TestAccessMetaCustomValuesRoundTripThroughFlush(t *testing.T) {
 			acc := knowledgepolicy.NewAccessAccumulator(true, 0)
 			flusher := knowledgepolicy.NewAccessFlusher(acc, engine, time.Hour)
 			for _, value := range values {
-				id := fmt.Sprintf("custom-%d", value)
+				id := fmt.Sprintf("test:custom-%d", value)
+				// A flush writes metadata only for an existing graph entity.
+				_, err := engine.CreateNode(t.Context(), &Node{ID: NodeID(id)})
+				require.NoError(t, err)
 
 				acc.IncrementCustom(id, "views", value)
 				acc.SetTimestamp(id, "seenAt", value)

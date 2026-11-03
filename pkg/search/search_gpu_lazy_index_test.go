@@ -131,7 +131,7 @@ func newGPUCompressedPipelineService(t *testing.T) *Service {
 	t.Setenv("NORNICDB_VECTOR_PQ_BITS", "4")
 	engine := newNamespacedEngine(t)
 	for i := 0; i < 600; i++ {
-		_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("n-%d", i)), ChunkEmbeddings: [][]float32{testVec4(i)}})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("n-%d", i)), ChunkEmbeddings: [][]float32{testVec4(i)}})
 		require.NoError(t, err)
 	}
 	svc := NewService(engine, 4, nil)
@@ -152,7 +152,7 @@ func TestGPUCompressedPipelineDoesNotAllocateUnusedBruteIndex(t *testing.T) {
 func TestGPUCompressedCanceledPipelineDoesNotUploadFallback(t *testing.T) {
 	svc := newGPUCompressedPipelineService(t)
 	for i := 0; i < 600; i++ {
-		node, err := svc.engine.GetNode(storage.NodeID(fmt.Sprintf("n-%d", i)))
+		node, err := svc.engine.GetNode(t.Context(), storage.NodeID(fmt.Sprintf("n-%d", i)))
 		require.NoError(t, err)
 		require.NoError(t, svc.IndexNode(node))
 	}

@@ -2,7 +2,7 @@ package storage
 
 import (
 	"container/heap"
-	"sync"
+	"context"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -13,7 +13,7 @@ import (
 // the catalog once avoids repeatedly walking old marker versions/tombstones
 // when a fresh Badger iterator rewinds (and prefetches a second live item).
 type pendingEmbeddingCandidates struct {
-	mu         sync.Mutex
+	mu         contextRWMutex
 	loaded     bool
 	generation uint64
 	ids        pendingEmbeddingHeap
@@ -65,7 +65,7 @@ func (p *pendingEmbeddingCandidates) removeFirst() {
 // load runs under mu. A concurrent commit publishes its additions under the
 // same lock, so an addition missed by this snapshot cannot be lost. Failed
 // loads leave the catalog unloaded and can be retried.
-func (p *pendingEmbeddingCandidates) load(b *BadgerEngine) error {
+func (p *pendingEmbeddingCandidates) load(ctx context.Context, b *BadgerEngine) error {
 	generation := b.pendingCandidatesGeneration.Load()
 	if p.loaded && p.generation == generation && len(p.ids) > 0 {
 		return nil
@@ -82,6 +82,9 @@ func (p *pendingEmbeddingCandidates) load(b *BadgerEngine) error {
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
 		for it.Rewind(); it.Valid(); it.Next() {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			key := it.Item().Key()
 			if len(key) <= 1 {
 				continue

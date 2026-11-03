@@ -36,7 +36,7 @@ func buildSearchProfileFixture(tb testing.TB, nodeCount int, dims int) (*Service
 			},
 			ChunkEmbeddings: [][]float32{emb},
 		}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(tb.Context(), node)
 		require.NoError(tb, err)
 		require.NoError(tb, svc.IndexNode(node))
 	}

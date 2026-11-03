@@ -24,7 +24,7 @@ func TestTypedNumericEngineContextRepros(t *testing.T) {
 		for _, input := range listinputs.NumericInputs() {
 			t.Run(fmt.Sprintf("programsDisabled=%t/%s", disabled, input.Name), func(t *testing.T) {
 				if !disabled {
-					_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(input.Name), Labels: []string{"NumericContext"}, Properties: map[string]interface{}{"name": input.Name, "xs": input.Property}})
+					_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(input.Name), Labels: []string{"NumericContext"}, Properties: map[string]interface{}{"name": input.Name, "xs": input.Property}})
 					require.NoError(t, err)
 				}
 				value := input.Scalar

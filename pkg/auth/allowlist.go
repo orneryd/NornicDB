@@ -114,7 +114,7 @@ func (a *AllowlistStore) SaveMappings(ctx context.Context, mappings map[string][
 					"databases": string(databasesJSON),
 				},
 			}
-			if err := putRoleRecord(view, node, false); err != nil {
+			if err := putRoleRecord(ctx, view, node, false); err != nil {
 				return err
 			}
 		}

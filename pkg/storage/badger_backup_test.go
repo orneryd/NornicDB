@@ -53,7 +53,7 @@ func TestBadgerEngine_Backup(t *testing.T) {
 				Labels:     []string{"TestNode"},
 				Properties: map[string]interface{}{"index": i, "name": "test"},
 			}
-			_, err := engine.CreateNode(node)
+			_, err := engine.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 		}
 
@@ -67,7 +67,7 @@ func TestBadgerEngine_Backup(t *testing.T) {
 				Type:       "CONNECTS",
 				Properties: map[string]interface{}{"weight": i},
 			}
-			require.NoError(t, engine.CreateEdge(edge))
+			require.NoError(t, engine.CreateEdge(t.Context(), edge))
 		}
 
 		// Create backup
@@ -115,13 +115,13 @@ func TestBadgerEngine_RestoreNativeStream(t *testing.T) {
 	defer source.Close()
 
 	nodeID := NodeID("backup:n1")
-	_, err = source.CreateNode(&Node{
+	_, err = source.CreateNode(t.Context(), &Node{
 		ID:         nodeID,
 		Labels:     []string{"Backup"},
 		Properties: map[string]interface{}{"name": "source"},
 	})
 	require.NoError(t, err)
-	require.NoError(t, source.CreateEdge(&Edge{
+	require.NoError(t, source.CreateEdge(t.Context(), &Edge{
 		ID:        EdgeID("backup:e1"),
 		StartNode: nodeID,
 		EndNode:   nodeID,
@@ -140,7 +140,7 @@ func TestBadgerEngine_RestoreNativeStream(t *testing.T) {
 	defer target.Close()
 	require.NoError(t, target.Restore(backupPath))
 
-	node, err := target.GetNode(nodeID)
+	node, err := target.GetNode(t.Context(), nodeID)
 	require.NoError(t, err)
 	require.Equal(t, "source", node.Properties["name"])
 	edges, err := target.GetOutgoingEdges(context.Background(), nodeID)
@@ -155,7 +155,7 @@ func TestBadgerEngine_RestoreReloadsSchema(t *testing.T) {
 
 	sourceSchema := source.GetSchemaForNamespace("nornic")
 	require.NoError(t, sourceSchema.AddUniqueConstraint("doc_key", "Doc", "key"))
-	_, err = source.CreateNode(&Node{
+	_, err = source.CreateNode(t.Context(), &Node{
 		ID: NodeID("nornic:doc1"), Labels: []string{"Doc"},
 		Properties: map[string]interface{}{"key": "k1"},
 	})
@@ -171,8 +171,8 @@ func TestBadgerEngine_RestoreReloadsSchema(t *testing.T) {
 	}
 	require.NoError(t, err)
 	require.NoError(t, target.Restore(backupPath))
-	require.Len(t, target.GetSchemaForNamespace("nornic").ExportDefinition().Constraints, 1)
-	_, err = target.CreateNode(&Node{
+	require.Len(t, schemaDefinitionForTest(t, target.GetSchemaForNamespace("nornic")).Constraints, 1)
+	_, err = target.CreateNode(t.Context(), &Node{
 		ID: NodeID("nornic:doc2"), Labels: []string{"Doc"},
 		Properties: map[string]interface{}{"key": "k1"},
 	})
@@ -182,14 +182,14 @@ func TestBadgerEngine_RestoreReloadsSchema(t *testing.T) {
 	reopened, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(targetDir))
 	require.NoError(t, err)
 	defer reopened.Close()
-	require.Len(t, reopened.GetSchemaForNamespace("nornic").ExportDefinition().Constraints, 1)
+	require.Len(t, schemaDefinitionForTest(t, reopened.GetSchemaForNamespace("nornic")).Constraints, 1)
 }
 
 func TestBadgerEngine_RestoreReplacesTargetSystemRecords(t *testing.T) {
 	source, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	defer source.Close()
-	_, err = source.CreateNode(&Node{
+	_, err = source.CreateNode(t.Context(), &Node{
 		ID: NodeID("system:source"), Properties: map[string]interface{}{"source_key": "source"},
 	})
 	require.NoError(t, err)
@@ -202,21 +202,21 @@ func TestBadgerEngine_RestoreReplacesTargetSystemRecords(t *testing.T) {
 		fixtureowner.Own(t, target)
 	}
 	require.NoError(t, err)
-	_, err = target.CreateNode(&Node{
+	_, err = target.CreateNode(t.Context(), &Node{
 		ID: NodeID("system:target"), Properties: map[string]interface{}{"target_key": "target"},
 	})
 	require.NoError(t, err)
 	require.NoError(t, target.Restore(backupPath))
-	_, err = target.GetNode(NodeID("system:target"))
+	_, err = target.GetNode(t.Context(), NodeID("system:target"))
 	require.ErrorIs(t, err, ErrNotFound)
 	require.NoError(t, target.Close())
 
 	reopened, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(targetDir))
 	require.NoError(t, err)
 	defer reopened.Close()
-	_, err = reopened.GetNode(NodeID("system:source"))
+	_, err = reopened.GetNode(t.Context(), NodeID("system:source"))
 	require.NoError(t, err)
-	_, err = reopened.GetNode(NodeID("system:target"))
+	_, err = reopened.GetNode(t.Context(), NodeID("system:target"))
 	require.ErrorIs(t, err, ErrNotFound)
 }
 

@@ -22,14 +22,14 @@ func BenchmarkBoundAnchorMultiHopTraversal(b *testing.B) {
 		file := &storage.Node{ID: storage.NodeID(fmt.Sprintf("file-%d", index)), Labels: []string{"File"}, Properties: map[string]interface{}{"relative_path": fmt.Sprintf("file-%d.go", index)}}
 		function := &storage.Node{ID: storage.NodeID(fmt.Sprintf("function-%d", index)), Labels: []string{"Function"}, Properties: map[string]interface{}{"active": true}}
 		for _, node := range []*storage.Node{repository, file, function} {
-			if _, err := store.CreateNode(node); err != nil {
+			if _, err := store.CreateNode(b.Context(), node); err != nil {
 				b.Fatal(err)
 			}
 		}
-		if err := store.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("repo-file-%d", index)), Type: "REPO_CONTAINS", StartNode: repository.ID, EndNode: file.ID}); err != nil {
+		if err := store.CreateEdge(b.Context(), &storage.Edge{ID: storage.EdgeID(fmt.Sprintf("repo-file-%d", index)), Type: "REPO_CONTAINS", StartNode: repository.ID, EndNode: file.ID}); err != nil {
 			b.Fatal(err)
 		}
-		if err := store.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("file-function-%d", index)), Type: "CONTAINS", StartNode: file.ID, EndNode: function.ID}); err != nil {
+		if err := store.CreateEdge(b.Context(), &storage.Edge{ID: storage.EdgeID(fmt.Sprintf("file-function-%d", index)), Type: "CONTAINS", StartNode: file.ID, EndNode: function.ID}); err != nil {
 			b.Fatal(err)
 		}
 	}

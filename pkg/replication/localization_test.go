@@ -80,7 +80,7 @@ func TestReplicationLocalizedStorageAdapterCause(t *testing.T) {
 		require.NoError(t, engine.Close())
 	})
 
-	err = adapter.ApplyCommand(&Command{Type: CmdCreateNode, Data: []byte{0x81, 0xa1, 'x'}, Timestamp: time.Now()})
+	err = applyQueued(t, adapter, &Command{Type: CmdCreateNode, Data: []byte{0x81, 0xa1, 'x'}, Timestamp: time.Now()})
 	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
 	requireReplicationLocalizedError(t, err, localization.MessageReplicationStorageDecodeNodeFailed, "decode node: invalid replication payload: unexpected EOF")
 }

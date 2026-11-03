@@ -3,11 +3,12 @@ package search
 import (
 	"context"
 	"errors"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sort"
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -85,7 +86,7 @@ type mmrGetNodeErrorEngine struct {
 	err error
 }
 
-func (e *mmrGetNodeErrorEngine) GetNode(storage.NodeID) (*storage.Node, error) {
+func (e *mmrGetNodeErrorEngine) GetNode(context.Context, storage.NodeID) (*storage.Node, error) {
 	return nil, e.err
 }
 
@@ -126,7 +127,7 @@ func TestSearchRerankExtraApplyMMRBranches(t *testing.T) {
 					{ID: "nornic:b", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{1, 0}}},
 					{ID: "nornic:c", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{0, 1}}},
 				} {
-					_, err := engine.CreateNode(node)
+					_, err := engine.CreateNode(t.Context(), node)
 					require.NoError(t, err)
 				}
 				svc := NewService(engine, 2, nil)
@@ -137,7 +138,7 @@ func TestSearchRerankExtraApplyMMRBranches(t *testing.T) {
 				require.NotEqual(t, diverse[0].ID, diverse[1].ID)
 
 				noEmbeddingResults := []rrfResult{{ID: "nornic:d", RRFScore: 0.6}}
-				_, err := engine.CreateNode(&storage.Node{ID: "nornic:d", Labels: []string{"Doc"}})
+				_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "nornic:d", Labels: []string{"Doc"}})
 				require.NoError(t, err)
 				require.Equal(t, noEmbeddingResults, svc.applyMMR(context.Background(), noEmbeddingResults, []float32{1, 0}, 3, 0.5, map[string]bool{}))
 			},
@@ -145,7 +146,7 @@ func TestSearchRerankExtraApplyMMRBranches(t *testing.T) {
 		{
 			name: "unreadable candidates are dropped as orphans",
 			run: func(t *testing.T, engine *storage.MemoryEngine) {
-				_, err := engine.CreateNode(&storage.Node{ID: "nornic:ok", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{1, 0}}})
+				_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "nornic:ok", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{1, 0}}})
 				require.NoError(t, err)
 				svc := NewService(engine, 2, nil)
 				seen := map[string]bool{}
@@ -194,11 +195,11 @@ func TestSearchRerankExtraApplyStage2Branches(t *testing.T) {
 	// No candidate has content to score yet: nothing reranks.
 	require.Equal(t, base, rerank(base, &SearchOptions{}, &coverageReranker{enabled: true}, SearchFallbackRerankNoCandidates))
 
-	_, err := engine.CreateNode(&storage.Node{ID: "nornic:a", Labels: []string{"Doc"}, Properties: map[string]interface{}{"title": "Alpha", "content": "alpha content"}})
+	_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "nornic:a", Labels: []string{"Doc"}, Properties: map[string]interface{}{"title": "Alpha", "content": "alpha content"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "nornic:b", Labels: []string{"Doc"}, Properties: map[string]interface{}{"title": "Beta", "content": "beta content"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "nornic:b", Labels: []string{"Doc"}, Properties: map[string]interface{}{"title": "Beta", "content": "beta content"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "nornic:c", Labels: []string{"Doc"}, Properties: map[string]interface{}{"title": "Gamma", "content": "gamma content"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "nornic:c", Labels: []string{"Doc"}, Properties: map[string]interface{}{"title": "Gamma", "content": "gamma content"}})
 	require.NoError(t, err)
 
 	failing := &coverageReranker{enabled: true, err: errors.New("rerank failed")}
@@ -246,7 +247,7 @@ func TestStage2RerankUsesWinningPassageAndBoundsFallbackContent(t *testing.T) {
 		},
 	}
 	for _, node := range nodes {
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 

@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/multidb"
@@ -62,7 +63,7 @@ type graphNeighborhoodStubEngine struct {
 	nodes map[storage.NodeID]*storage.Node
 }
 
-func (e *graphNeighborhoodStubEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
+func (e *graphNeighborhoodStubEngine) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	return e.nodes[id], nil
 }
 
@@ -75,11 +76,11 @@ type graphMVCCVisibilityOnlyEngine struct {
 	nodes map[storage.NodeID]*storage.Node
 }
 
-func (e *graphMVCCVisibilityOnlyEngine) GetNodeLatestVisible(id storage.NodeID) (*storage.Node, error) {
-	return e.GetNodeVisibleAt(id, storage.MVCCVersion{})
+func (e *graphMVCCVisibilityOnlyEngine) GetNodeLatestVisible(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
+	return e.GetNodeVisibleAt(ctx, id, storage.MVCCVersion{})
 }
 
-func (e *graphMVCCVisibilityOnlyEngine) GetNodeVisibleAt(id storage.NodeID, _ storage.MVCCVersion) (*storage.Node, error) {
+func (e *graphMVCCVisibilityOnlyEngine) GetNodeVisibleAt(ctx context.Context, id storage.NodeID, _ storage.MVCCVersion) (*storage.Node, error) {
 	node, ok := e.nodes[id]
 	if !ok {
 		return nil, nil
@@ -87,11 +88,11 @@ func (e *graphMVCCVisibilityOnlyEngine) GetNodeVisibleAt(id storage.NodeID, _ st
 	return node, nil
 }
 
-func (e *graphMVCCVisibilityOnlyEngine) GetEdgeLatestVisible(storage.EdgeID) (*storage.Edge, error) {
+func (e *graphMVCCVisibilityOnlyEngine) GetEdgeLatestVisible(context.Context, storage.EdgeID) (*storage.Edge, error) {
 	return nil, nil
 }
 
-func (e *graphMVCCVisibilityOnlyEngine) GetEdgeVisibleAt(storage.EdgeID, storage.MVCCVersion) (*storage.Edge, error) {
+func (e *graphMVCCVisibilityOnlyEngine) GetEdgeVisibleAt(context.Context, storage.EdgeID, storage.MVCCVersion) (*storage.Edge, error) {
 	return nil, nil
 }
 
@@ -107,7 +108,7 @@ func (e *graphSnapshotIndexedErrorEngine) GetEdgesByTypeVisibleAt(context.Contex
 func nodeHeadVersionOrNow(t *testing.T, engine storage.Engine, nodeID storage.NodeID) storage.MVCCVersion {
 	t.Helper()
 	if headEngine, ok := engine.(storage.MVCCHeadEngine); ok {
-		head, err := headEngine.GetNodeCurrentHead(nodeID)
+		head, err := headEngine.GetNodeCurrentHead(t.Context(), nodeID)
 		require.NoError(t, err)
 		return head.Version
 	}
@@ -117,7 +118,7 @@ func nodeHeadVersionOrNow(t *testing.T, engine storage.Engine, nodeID storage.No
 func edgeHeadVersionOrNow(t *testing.T, engine storage.Engine, edgeID storage.EdgeID) storage.MVCCVersion {
 	t.Helper()
 	if headEngine, ok := engine.(storage.MVCCHeadEngine); ok {
-		head, err := headEngine.GetEdgeCurrentHead(edgeID)
+		head, err := headEngine.GetEdgeCurrentHead(t.Context(), edgeID)
 		require.NoError(t, err)
 		return head.Version
 	}
@@ -140,7 +141,7 @@ func advanceMVCCClockPast(t *testing.T, engine storage.Engine, minTimestamp time
 	}
 
 	clockID := storage.NodeID(fmt.Sprintf("__mvcc-clock-%d", time.Now().UnixNano()))
-	_, err := engine.CreateNode(&storage.Node{
+	_, err := engine.CreateNode(t.Context(), &storage.Node{
 		ID:         clockID,
 		Labels:     []string{"Clock"},
 		Properties: map[string]interface{}{"tick": 0},
@@ -149,17 +150,17 @@ func advanceMVCCClockPast(t *testing.T, engine storage.Engine, minTimestamp time
 
 	waitDeadline := time.Now().Add(1 * time.Second)
 	for time.Now().Before(waitDeadline) {
-		head, err := headEngine.GetNodeCurrentHead(clockID)
+		head, err := headEngine.GetNodeCurrentHead(t.Context(), clockID)
 		require.NoError(t, err)
 		if head.Version.CommitTimestamp.After(minTimestamp) {
 			return
 		}
-		node, err := engine.GetNode(clockID)
+		node, err := engine.GetNode(t.Context(), clockID)
 		require.NoError(t, err)
 		require.NotNil(t, node)
-		require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: node}))
+		require.NoError(t, engine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
 	}
-	head, err := headEngine.GetNodeCurrentHead(clockID)
+	head, err := headEngine.GetNodeCurrentHead(t.Context(), clockID)
 	require.NoError(t, err)
 	require.True(t, head.Version.CommitTimestamp.After(minTimestamp), "mvcc clock did not advance beyond baseline timestamp")
 }
@@ -172,11 +173,11 @@ type graphSnapshotIndexEngine struct {
 	getEdgesBetweenCalls int
 }
 
-func (e *graphSnapshotIndexEngine) GetNodeLatestVisible(id storage.NodeID) (*storage.Node, error) {
-	return e.GetNodeVisibleAt(id, storage.MVCCVersion{})
+func (e *graphSnapshotIndexEngine) GetNodeLatestVisible(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
+	return e.GetNodeVisibleAt(ctx, id, storage.MVCCVersion{})
 }
 
-func (e *graphSnapshotIndexEngine) GetNodeVisibleAt(id storage.NodeID, _ storage.MVCCVersion) (*storage.Node, error) {
+func (e *graphSnapshotIndexEngine) GetNodeVisibleAt(ctx context.Context, id storage.NodeID, _ storage.MVCCVersion) (*storage.Node, error) {
 	node, ok := e.nodes[id]
 	if !ok {
 		return nil, nil
@@ -184,11 +185,11 @@ func (e *graphSnapshotIndexEngine) GetNodeVisibleAt(id storage.NodeID, _ storage
 	return node, nil
 }
 
-func (e *graphSnapshotIndexEngine) GetEdgeLatestVisible(id storage.EdgeID) (*storage.Edge, error) {
-	return e.GetEdgeVisibleAt(id, storage.MVCCVersion{})
+func (e *graphSnapshotIndexEngine) GetEdgeLatestVisible(ctx context.Context, id storage.EdgeID) (*storage.Edge, error) {
+	return e.GetEdgeVisibleAt(ctx, id, storage.MVCCVersion{})
 }
 
-func (e *graphSnapshotIndexEngine) GetEdgeVisibleAt(id storage.EdgeID, _ storage.MVCCVersion) (*storage.Edge, error) {
+func (e *graphSnapshotIndexEngine) GetEdgeVisibleAt(ctx context.Context, id storage.EdgeID, _ storage.MVCCVersion) (*storage.Edge, error) {
 	for _, edge := range e.edges {
 		if edge != nil && edge.ID == id {
 			return edge, nil
@@ -286,17 +287,17 @@ func TestGraphNeighborhoodEndpoint(t *testing.T) {
 	token := getAuthToken(t, authenticator, "admin")
 	engine := getDefaultStorage(t, server)
 
-	_, err := engine.CreateNode(&storage.Node{ID: "a", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}})
+	_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "b", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Bob"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Bob"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "c", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Carol"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "c", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Carol"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "d", Labels: []string{"Topic"}, Properties: map[string]interface{}{"name": "Databases"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "d", Labels: []string{"Topic"}, Properties: map[string]interface{}{"name": "Databases"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "KNOWS"}))
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "bc", StartNode: "b", EndNode: "c", Type: "KNOWS"}))
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "cd", StartNode: "c", EndNode: "d", Type: "LIKES"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "KNOWS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "bc", StartNode: "b", EndNode: "c", Type: "KNOWS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "cd", StartNode: "c", EndNode: "d", Type: "LIKES"}))
 
 	resp := makeRequest(t, server, "POST", defaultGraphPath(server, "neighborhood"), map[string]interface{}{
 		"node_ids":           []string{"a"},
@@ -329,11 +330,11 @@ func TestGraphNeighborhoodEndpoint_LimitPreservesEdgesBetweenIncludedNodes(t *te
 	token := getAuthToken(t, authenticator, "admin")
 	engine := getDefaultStorage(t, server)
 
-	_, err := engine.CreateNode(&storage.Node{ID: "a", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}})
+	_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "b", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Bob"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Bob"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "KNOWS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "KNOWS"}))
 
 	// limit=2 means only the two seed nodes are allowed in the node set.
 	// The connecting edge between those already-included nodes must still be returned.
@@ -356,7 +357,7 @@ func TestGraphNeighborhoodEndpoint_LimitTruncatesSeedNodes(t *testing.T) {
 	engine := getDefaultStorage(t, server)
 
 	for _, id := range []string{"a", "b", "c"} {
-		_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{"Person"}})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(id), Labels: []string{"Person"}})
 		require.NoError(t, err)
 	}
 
@@ -378,12 +379,12 @@ func TestGraphPathEndpoint(t *testing.T) {
 	engine := getDefaultStorage(t, server)
 
 	for _, id := range []string{"a", "b", "c", "z"} {
-		_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{"Node"}, Properties: map[string]interface{}{"name": id}})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(id), Labels: []string{"Node"}, Properties: map[string]interface{}{"name": id}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "LINKS"}))
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "bc", StartNode: "b", EndNode: "c", Type: "LINKS"}))
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "az", StartNode: "a", EndNode: "z", Type: "OTHER"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "LINKS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "bc", StartNode: "b", EndNode: "c", Type: "LINKS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "az", StartNode: "a", EndNode: "z", Type: "OTHER"}))
 
 	resp := makeRequest(t, server, "POST", defaultGraphPath(server, "path"), map[string]interface{}{
 		"source_node_id":     "a",
@@ -406,11 +407,11 @@ func TestGraphPathEndpoint_LimitExceededDoesNotReturnNotFound(t *testing.T) {
 	engine := getDefaultStorage(t, server)
 
 	for _, id := range []string{"a", "b", "c"} {
-		_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{"Node"}, Properties: map[string]interface{}{"name": id}})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(id), Labels: []string{"Node"}, Properties: map[string]interface{}{"name": id}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "LINKS"}))
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "bc", StartNode: "b", EndNode: "c", Type: "LINKS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "LINKS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "bc", StartNode: "b", EndNode: "c", Type: "LINKS"}))
 
 	resp := makeRequest(t, server, "POST", defaultGraphPath(server, "path"), map[string]interface{}{
 		"source_node_id":     "a",
@@ -427,17 +428,17 @@ func TestGraphTemporalEndpoint(t *testing.T) {
 	token := getAuthToken(t, authenticator, "admin")
 	engine := getDefaultStorage(t, server)
 
-	_, err := engine.CreateNode(&storage.Node{ID: "a", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice v1"}})
+	_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice v1"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "b", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Bob"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Bob"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "KNOWS", Properties: map[string]interface{}{"weight": 1}}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "KNOWS", Properties: map[string]interface{}{"weight": 1}}))
 	asOfVersion := edgeHeadVersionOrNow(t, engine, "ab")
 	asOf := asOfVersion.CommitTimestamp.UTC().Format(time.RFC3339Nano)
 
 	advanceMVCCClockPast(t, engine, asOfVersion.CommitTimestamp)
-	require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "a", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice v2"}}}))
-	require.NoError(t, engine.UpdateEdge(storage.EdgeUpdateRequest{After: &storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "LIKES", Properties: map[string]interface{}{"weight": 2}}}))
+	require.NoError(t, engine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: &storage.Node{ID: "a", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice v2"}}}))
+	require.NoError(t, engine.UpdateEdge(t.Context(), storage.EdgeUpdateRequest{After: &storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "LIKES", Properties: map[string]interface{}{"weight": 2}}}))
 
 	resp := makeRequest(t, server, "POST", defaultGraphPath(server, "temporal"), map[string]interface{}{
 		"node_ids": []string{"a", "b"},
@@ -469,27 +470,27 @@ func TestGraphDiffEndpoint(t *testing.T) {
 	token := getAuthToken(t, authenticator, "admin")
 	engine := getDefaultStorage(t, server)
 
-	_, err := engine.CreateNode(&storage.Node{ID: "a", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice v1"}})
+	_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice v1"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "b", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Bob"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Bob"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "KNOWS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "KNOWS"}))
 	asOfVersion := edgeHeadVersionOrNow(t, engine, "ab")
 	asOf := asOfVersion.CommitTimestamp.UTC().Format(time.RFC3339Nano)
 
 	advanceMVCCClockPast(t, engine, asOfVersion.CommitTimestamp)
-	require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "a", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice v2"}}}))
-	require.NoError(t, engine.DeleteEdge("ab"))
-	require.NoError(t, engine.DeleteNode("b"))
-	_, err = engine.CreateNode(&storage.Node{ID: "c", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Carol"}})
+	require.NoError(t, engine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: &storage.Node{ID: "a", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice v2"}}}))
+	require.NoError(t, engine.DeleteEdge(t.Context(), "ab"))
+	require.NoError(t, engine.DeleteNode(t.Context(), "b"))
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "c", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Carol"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "ac", StartNode: "a", EndNode: "c", Type: "KNOWS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "ac", StartNode: "a", EndNode: "c", Type: "KNOWS"}))
 
 	resp := makeRequest(t, server, "POST", defaultGraphPath(server, "diff"), map[string]interface{}{
 		"node_ids": []string{"a", "b", "c"},
 		"as_of":    asOf,
 	}, "Bearer "+token)
-	require.Equal(t, 200, resp.Code)
+	require.Equal(t, 200, resp.Code, resp.Body.String())
 
 	payload := decodeGraphPayload(t, resp.Body)
 	nodesByID := make(map[string]graphNodePayload, len(payload.Nodes))
@@ -520,7 +521,7 @@ func TestGraphNeighborhoodEndpoint_RespectsResolvedDatabaseReadAccess(t *testing
 	require.NoError(t, server.privilegesStore.SavePrivilege(context.Background(), "viewer", dbName, false, false))
 
 	engine := getDefaultStorage(t, server)
-	_, err := engine.CreateNode(&storage.Node{ID: "rbac-a", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}})
+	_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "rbac-a", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}})
 	require.NoError(t, err)
 
 	resp := makeRequest(t, server, "POST", defaultGraphPath(server, "neighborhood"), map[string]interface{}{
@@ -556,9 +557,9 @@ func TestGraphEdgesForNode_DedupesOutgoingAndIncoming(t *testing.T) {
 	server, _ := setupTestServer(t)
 	engine := getDefaultStorage(t, server)
 
-	_, err := engine.CreateNode(&storage.Node{ID: "self", Labels: []string{"Node"}})
+	_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "self", Labels: []string{"Node"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "self-loop", StartNode: "self", EndNode: "self", Type: "LOOPS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "self-loop", StartNode: "self", EndNode: "self", Type: "LOOPS"}))
 
 	edges, err := graphEdgesForNode(context.Background(), engine, "self", "both")
 	require.NoError(t, err)
@@ -571,11 +572,11 @@ func TestGraphEdgesForNode_DirectionFiltering(t *testing.T) {
 	engine := getDefaultStorage(t, server)
 
 	for _, id := range []storage.NodeID{"self", "out-neighbor", "in-neighbor"} {
-		_, err := engine.CreateNode(&storage.Node{ID: id, Labels: []string{"Node"}})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"Node"}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "out-edge", StartNode: "self", EndNode: "out-neighbor", Type: "CALLS"}))
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "in-edge", StartNode: "in-neighbor", EndNode: "self", Type: "CALLS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "out-edge", StartNode: "self", EndNode: "out-neighbor", Type: "CALLS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "in-edge", StartNode: "in-neighbor", EndNode: "self", Type: "CALLS"}))
 
 	outEdges, err := graphEdgesForNode(context.Background(), engine, "self", "out")
 	require.NoError(t, err)
@@ -642,11 +643,11 @@ func TestGraphExpandEndpoint_DelegatesToNeighborhood(t *testing.T) {
 	token := getAuthToken(t, authenticator, "admin")
 	engine := getDefaultStorage(t, server)
 
-	_, err := engine.CreateNode(&storage.Node{ID: "a", Labels: []string{"Person"}})
+	_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"Person"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "b", Labels: []string{"Person"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"Person"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "KNOWS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "KNOWS"}))
 
 	resp := makeRequest(t, server, "POST", defaultGraphPath(server, "expand"), map[string]interface{}{
 		"node_ids": []string{"a"},
@@ -663,9 +664,9 @@ func TestGraphPathEndpoint_NotFoundReturns404(t *testing.T) {
 	token := getAuthToken(t, authenticator, "admin")
 	engine := getDefaultStorage(t, server)
 
-	_, err := engine.CreateNode(&storage.Node{ID: "a", Labels: []string{"Node"}})
+	_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"Node"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "b", Labels: []string{"Node"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"Node"}})
 	require.NoError(t, err)
 
 	resp := makeRequest(t, server, "POST", defaultGraphPath(server, "path"), map[string]interface{}{
@@ -694,7 +695,7 @@ func TestGraphDiffEndpoint_WithCompareToUsesBaselineTimestamp(t *testing.T) {
 	token := getAuthToken(t, authenticator, "admin")
 	engine := getDefaultStorage(t, server)
 
-	_, err := engine.CreateNode(&storage.Node{
+	_, err := engine.CreateNode(t.Context(), &storage.Node{
 		ID:         "a",
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Alice v1"},
@@ -704,7 +705,7 @@ func TestGraphDiffEndpoint_WithCompareToUsesBaselineTimestamp(t *testing.T) {
 	baseline := baselineVersion.CommitTimestamp.UTC().Format(time.RFC3339Nano)
 
 	advanceMVCCClockPast(t, engine, baselineVersion.CommitTimestamp)
-	require.NoError(t, engine.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{
+	require.NoError(t, engine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: &storage.Node{
 		ID:         "a",
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Alice v2"},
@@ -972,7 +973,7 @@ func TestGraphTemporalAndDiff_RejectExcessiveNodeIDs(t *testing.T) {
 func TestCollectLatestNeighborhood_CanceledContext(t *testing.T) {
 	server, _ := setupTestServer(t)
 	engine := getDefaultStorage(t, server)
-	_, err := engine.CreateNode(&storage.Node{ID: "a", Labels: []string{"Node"}})
+	_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"Node"}})
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1058,7 +1059,7 @@ func TestCollectLatestPath_SourceEqualsTargetBranches(t *testing.T) {
 	_, err := server.collectLatestPath(context.Background(), engine, "missing", "missing", 0, newGraphFilterSet(nil, nil))
 	require.ErrorIs(t, err, storage.ErrNotFound)
 
-	_, err = engine.CreateNode(&storage.Node{ID: "a", Labels: []string{"Node"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"Node"}})
 	require.NoError(t, err)
 	collection, err := server.collectLatestPath(context.Background(), engine, "a", "a", 0, newGraphFilterSet(nil, nil))
 	require.NoError(t, err)
@@ -1069,7 +1070,7 @@ func TestCollectLatestInducedSubgraph_PropagatesOutgoingError(t *testing.T) {
 	server, _ := setupTestServer(t)
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	defer func() { _ = base.Close() }()
-	_, err := base.CreateNode(&storage.Node{ID: "nornic:a", Labels: []string{"Node"}})
+	_, err := base.CreateNode(t.Context(), &storage.Node{ID: "nornic:a", Labels: []string{"Node"}})
 	require.NoError(t, err)
 
 	engine := &graphOutgoingErrorEngine{Engine: base}
@@ -1290,16 +1291,16 @@ func TestCollectLatestInducedSubgraph_SkipsSelfAndOutsideEdges(t *testing.T) {
 	server, _ := setupTestServer(t)
 	engine := getDefaultStorage(t, server)
 
-	_, err := engine.CreateNode(&storage.Node{ID: "a", Labels: []string{"Node"}})
+	_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"Node"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "b", Labels: []string{"Node"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"Node"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "c", Labels: []string{"Node"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "c", Labels: []string{"Node"}})
 	require.NoError(t, err)
 
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "self", StartNode: "a", EndNode: "a", Type: "REL"}))
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "REL"}))
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "ac", StartNode: "a", EndNode: "c", Type: "REL"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "self", StartNode: "a", EndNode: "a", Type: "REL"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "REL"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "ac", StartNode: "a", EndNode: "c", Type: "REL"}))
 
 	collection, err := server.collectLatestInducedSubgraph(context.Background(), engine, []string{"a", "b"}, newGraphFilterSet(nil, nil))
 	require.NoError(t, err)
@@ -1508,7 +1509,7 @@ func TestGraphHandlers_ResolveAndCollectionErrorBranches(t *testing.T) {
 
 	// handleGraphNeighborhood: collection error branch via canceled context.
 	engine := getDefaultStorage(t, server)
-	_, err := engine.CreateNode(&storage.Node{ID: "a", Labels: []string{"Node"}})
+	_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"Node"}})
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

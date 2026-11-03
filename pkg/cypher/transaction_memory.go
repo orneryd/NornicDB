@@ -50,6 +50,22 @@ type TransactionMemoryLimits struct {
 	DatabaseTotalMax int64
 }
 
+// DatabaseTransactionMemoryLimits selects a database's own settings.
+// A nil field inherits the current process default for that setting; a pointer
+// to zero explicitly selects unlimited. Changes apply to new statements only.
+// SetDatabaseTransactionMemoryLimits reads these values without retaining the
+// pointers, so later caller edits cannot alter the installed configuration.
+//
+// Examples:
+//
+//	SetDatabaseTransactionMemoryLimits("analytics", DatabaseTransactionMemoryLimits{TransactionMax: new(int64(1 << 30))})
+//	SetDatabaseTransactionMemoryLimits("analytics", DatabaseTransactionMemoryLimits{}) // inherit both defaults
+//	SetDatabaseTransactionMemoryLimits("analytics", DatabaseTransactionMemoryLimits{TransactionMax: new(int64(0))}) // explicitly unlimited
+type DatabaseTransactionMemoryLimits struct {
+	TransactionMax   *int64
+	DatabaseTotalMax *int64
+}
+
 // memoryPool is a byte pool transactions reserve from.
 type memoryPool struct {
 	setting string
@@ -84,12 +100,13 @@ func (p *memoryPool) release(n int64) {
 	}
 }
 
-// databaseMemory is one database's limits: its own (explicit) or the
-// process defaults.
+// databaseMemory retains independent override presence for each setting and
+// the resolved numeric ceilings. Pool usage survives configuration changes.
 type databaseMemory struct {
-	explicit       bool // guarded by transactionMemoryRegistry.mu
-	transactionMax atomic.Int64
-	pool           memoryPool
+	transactionExplicit bool // guarded by transactionMemoryRegistry.mu
+	databaseExplicit    bool // guarded by transactionMemoryRegistry.mu
+	transactionMax      atomic.Int64
+	pool                memoryPool
 }
 
 type transactionMemoryRegistry struct {
@@ -111,7 +128,7 @@ var transactionMemoryActive atomic.Bool
 var transactionMemoryTracked atomic.Int64
 
 // ConfigureTransactionMemory sets dbms.memory.transaction.total.max (global)
-// and the limits of every database that has none of its own.
+// and refreshes each database setting that inherits its process default.
 func ConfigureTransactionMemory(global int64, defaults TransactionMemoryLimits) {
 	r := transactionMemory
 	r.mu.Lock()
@@ -119,25 +136,35 @@ func ConfigureTransactionMemory(global int64, defaults TransactionMemoryLimits) 
 	r.global.limit.Store(nonNegativeBytes(global))
 	r.defaults = TransactionMemoryLimits{TransactionMax: nonNegativeBytes(defaults.TransactionMax), DatabaseTotalMax: nonNegativeBytes(defaults.DatabaseTotalMax)}
 	for _, database := range r.databases {
-		if !database.explicit {
+		if !database.transactionExplicit {
 			database.transactionMax.Store(r.defaults.TransactionMax)
+		}
+		if !database.databaseExplicit {
 			database.pool.limit.Store(r.defaults.DatabaseTotalMax)
 		}
 	}
 	r.updateActiveLocked()
 }
 
-// SetDatabaseTransactionMemoryLimits sets a database's own limits
-// (db.memory.transaction.max, db.memory.transaction.total.max); they apply
-// to the statements that start after the call.
-func SetDatabaseTransactionMemoryLimits(database string, limits TransactionMemoryLimits) {
+// SetDatabaseTransactionMemoryLimits replaces a database's override selection
+// independently for each setting. Nil restores inheritance; a pointer to zero
+// selects unlimited. Existing pools and running-statement ceilings are retained.
+func SetDatabaseTransactionMemoryLimits(database string, limits DatabaseTransactionMemoryLimits) {
 	r := transactionMemory
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	memory := r.databaseLocked(database)
-	memory.explicit = true
-	memory.transactionMax.Store(nonNegativeBytes(limits.TransactionMax))
-	memory.pool.limit.Store(nonNegativeBytes(limits.DatabaseTotalMax))
+	memory.transactionExplicit = limits.TransactionMax != nil
+	memory.databaseExplicit = limits.DatabaseTotalMax != nil
+	transactionMax, databaseMax := r.defaults.TransactionMax, r.defaults.DatabaseTotalMax
+	if limits.TransactionMax != nil {
+		transactionMax = nonNegativeBytes(*limits.TransactionMax)
+	}
+	if limits.DatabaseTotalMax != nil {
+		databaseMax = nonNegativeBytes(*limits.DatabaseTotalMax)
+	}
+	memory.transactionMax.Store(transactionMax)
+	memory.pool.limit.Store(databaseMax)
 	r.updateActiveLocked()
 }
 
@@ -496,7 +523,7 @@ type memoryScopeKey struct{}
 // memoryScopeFromContext is the scope a statement's memory grows in, nil
 // when nothing is tracked.
 func memoryScopeFromContext(ctx context.Context) *memoryScope {
-	if ctx == nil || (!transactionMemoryActive.Load() && transactionMemoryTracked.Load() == 0) {
+	if !transactionMemoryActive.Load() && transactionMemoryTracked.Load() == 0 {
 		return nil
 	}
 	scope, _ := ctx.Value(memoryScopeKey{}).(*memoryScope)

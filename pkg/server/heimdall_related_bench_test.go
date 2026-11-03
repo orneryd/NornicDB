@@ -9,7 +9,7 @@ import (
 )
 
 func benchmarkServerRelatedNodes(b *testing.B, branches, leaves, want int) {
-	engine := relatedgraph.Fanout(b, branches, leaves)
+	engine := relatedgraph.Fanout(b.Context(), b, branches, leaves)
 	router := &heimdallDBRouter{}
 	var related []heimdall.RelatedNode
 
@@ -36,7 +36,7 @@ func BenchmarkServerRelatedNodesLarge(b *testing.B) {
 // with a cancelable context, so the amortized cancellation poll is included while
 // nothing cancels. A background context takes the nil-Done fastpath.
 func BenchmarkServerRelatedNodesLargeCancelableContext(b *testing.B) {
-	engine := relatedgraph.Fanout(b, 5, 9)
+	engine := relatedgraph.Fanout(b.Context(), b, 5, 9)
 	router := &heimdallDBRouter{}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

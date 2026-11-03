@@ -54,7 +54,7 @@ func TestTransactionQuotaRejectionLeavesWALIndexesAndSearchUnchanged(t *testing.
 					}
 				})
 				base.OnEdgeCreated(func(*storage.Edge) { published.Add(1) })
-				_, err = engine.CreateNode(&storage.Node{ID: "positive", Labels: []string{"Control"}, Properties: map[string]any{"content": "retainedtoken"}, ChunkEmbeddings: [][]float32{{1, 0, 0}}})
+				_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "positive", Labels: []string{"Control"}, Properties: map[string]any{"content": "retainedtoken"}, ChunkEmbeddings: [][]float32{{1, 0, 0}}})
 				require.NoError(t, err)
 				positive, err := svc.Search(ctx, "retainedtoken", nil, search.DefaultSearchOptions())
 				require.NoError(t, err)
@@ -74,10 +74,10 @@ func TestTransactionQuotaRejectionLeavesWALIndexesAndSearchUnchanged(t *testing.
 				require.Error(t, err)
 				require.Zero(t, published.Load(), "rejected writes must not emit indexing events")
 				verify := func(engine storage.Engine, svc *search.Service) {
-					nodes, err := engine.NodeCount()
+					nodes, err := engine.NodeCount(t.Context())
 					require.NoError(t, err)
 					require.EqualValues(t, 1, nodes)
-					edges, err := engine.EdgeCount()
+					edges, err := engine.EdgeCount(t.Context())
 					require.NoError(t, err)
 					require.Zero(t, edges)
 					result, err := NewStorageExecutor(engine).Execute(ctx, "MATCH (n:Quota) RETURN count(n)", nil)

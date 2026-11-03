@@ -26,7 +26,7 @@ func BenchmarkBuildIndexesWithRelationships(b *testing.B) {
 	for i := range nodes {
 		node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("nornic:n%d", i)), Labels: []string{"Doc"},
 			Properties: map[string]any{"text": fmt.Sprintf("node %d", i)}, NamedEmbeddings: map[string][]float32{"v": vec}}
-		if _, err := engine.CreateNode(node); err != nil {
+		if _, err := engine.CreateNode(b.Context(), node); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -34,7 +34,7 @@ func BenchmarkBuildIndexesWithRelationships(b *testing.B) {
 		edge := &storage.Edge{ID: storage.EdgeID(fmt.Sprintf("nornic:r%d", i)),
 			StartNode: storage.NodeID(fmt.Sprintf("nornic:n%d", i%nodes)), EndNode: storage.NodeID(fmt.Sprintf("nornic:n%d", (i+1)%nodes)),
 			Type: "REL", Properties: map[string]any{"v": vec, "note": strings.Repeat("text ", 40)}}
-		if err := engine.CreateEdge(edge); err != nil {
+		if err := engine.CreateEdge(b.Context(), edge); err != nil {
 			b.Fatal(err)
 		}
 	}

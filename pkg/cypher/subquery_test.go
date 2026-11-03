@@ -153,7 +153,7 @@ func TestCallSubquery_UseClauseInBodySwitchesNamespace(t *testing.T) {
 	exec := NewStorageExecutor(rootStore)
 	ctx := context.Background()
 
-	_, err := trStore.CreateNode(&storage.Node{
+	_, err := trStore.CreateNode(t.Context(), &storage.Node{
 		ID:         "t-1",
 		Labels:     []string{"Translation"},
 		Properties: map[string]interface{}{"id": "t-1", "textKey": "hello", "textKey128": "h128"},
@@ -184,20 +184,20 @@ func TestCallSubquery_ChainedUseWithImport(t *testing.T) {
 	exec := NewStorageExecutor(rootStore)
 	ctx := context.Background()
 
-	_, err := trStore.CreateNode(&storage.Node{
+	_, err := trStore.CreateNode(t.Context(), &storage.Node{
 		ID:         "tr-1",
 		Labels:     []string{"Translation"},
 		Properties: map[string]interface{}{"id": "t-1", "textKey": "k1", "textKey128": "k1-128"},
 	})
 	require.NoError(t, err)
-	_, err = trStore.CreateNode(&storage.Node{
+	_, err = trStore.CreateNode(t.Context(), &storage.Node{
 		ID:         "tr-2",
 		Labels:     []string{"Translation"},
 		Properties: map[string]interface{}{"id": "t-2", "textKey": "k2", "textKey128": "k2-128"},
 	})
 	require.NoError(t, err)
 
-	_, err = txtStore.CreateNode(&storage.Node{
+	_, err = txtStore.CreateNode(t.Context(), &storage.Node{
 		ID:     "txt-1",
 		Labels: []string{"TranslationText"},
 		Properties: map[string]interface{}{
@@ -206,7 +206,7 @@ func TestCallSubquery_ChainedUseWithImport(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	_, err = txtStore.CreateNode(&storage.Node{
+	_, err = txtStore.CreateNode(t.Context(), &storage.Node{
 		ID:     "txt-2",
 		Labels: []string{"TranslationText"},
 		Properties: map[string]interface{}{
@@ -2406,13 +2406,13 @@ func TestSubqueryHelpers_AddLimitSkipAndAfterCallProcessing(t *testing.T) {
 	// RETURN may read variables only the write clause binds.
 	assert.Equal(t,
 		"MATCH (n) RETURN 1",
-		exec.makeSubqueryReadOnly("MATCH (n) SET n.x = 1 RETURN n"),
+		exec.makeSubqueryReadOnly(ctx, "MATCH (n) SET n.x = 1 RETURN n"),
 	)
 	assert.Equal(t,
 		"MATCH (n) RETURN 1",
-		exec.makeSubqueryReadOnly("MATCH (n) CREATE (m) RETURN m.x"),
+		exec.makeSubqueryReadOnly(ctx, "MATCH (n) CREATE (m) RETURN m.x"),
 	)
-	assert.Equal(t, "", exec.makeSubqueryReadOnly("CALL db.labels()"))
+	assert.Equal(t, "", exec.makeSubqueryReadOnly(ctx, "CALL db.labels()"))
 
 	inner := &ExecuteResult{
 		Columns: []string{"name", "score"},
@@ -2487,9 +2487,9 @@ func TestSubqueryHelpers_ExecuteMatchWithCallSubquery_Branches(t *testing.T) {
 	assert.Equal(t, []string{"seed"}, emptyRes.Columns)
 	assert.Empty(t, emptyRes.Rows)
 
-	_, err = eng.CreateNode(&storage.Node{ID: "p1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "p1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "p2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob"}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "p2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob"}})
 	require.NoError(t, err)
 
 	// Empty CALL body branch.
@@ -2536,9 +2536,9 @@ func TestSubqueryHelpers_ExecuteMatchWithCallProcedure_Branches(t *testing.T) {
 	assert.Equal(t, []string{"node", "score"}, emptyVectorRes.Columns)
 	assert.Empty(t, emptyVectorRes.Rows)
 
-	_, err = eng.CreateNode(&storage.Node{ID: "p1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "p1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "p2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob"}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "p2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob"}})
 	require.NoError(t, err)
 
 	// Matched nodes + failing call path.
@@ -2558,11 +2558,11 @@ func TestSubqueryHelpers_BatchingAndResultModifiers_Branches(t *testing.T) {
 	exec := NewStorageExecutor(eng)
 	ctx := context.Background()
 
-	_, err := eng.CreateNode(&storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "a", "age": int64(10)}})
+	_, err := eng.CreateNode(t.Context(), &storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "a", "age": int64(10)}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "n2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "b", "age": int64(20)}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "n2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "b", "age": int64(20)}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "n3", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "c", "age": int64(30)}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "n3", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "c", "age": int64(30)}})
 	require.NoError(t, err)
 
 	readOnlyRes, err := exec.sharedCallTransactionsForTest(ctx, "MATCH (n:Person) RETURN n.name AS name", 0)
@@ -2805,7 +2805,7 @@ func TestExecute_MatchIDSeed_WithUnionVectorPipeline(t *testing.T) {
 	_, err := exec.Execute(ctx, "CREATE VECTOR INDEX idx_original_text FOR (n:OriginalText) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 3, `vector.similarity_function`: 'cosine'}}", nil)
 	require.NoError(t, err)
 
-	_, err = eng.CreateNode(&storage.Node{
+	_, err = eng.CreateNode(t.Context(), &storage.Node{
 		ID:     storage.NodeID("sp-fixed"),
 		Labels: []string{"SystemPrompt"},
 		Properties: map[string]interface{}{
@@ -3263,21 +3263,21 @@ RETURN
 	require.True(t, all)
 	require.Len(t, branches, 2)
 
-	withVars0, inner0, hasWith0, err := parseLeadingWithImports(branches[0])
+	withVars0, inner0, hasWith0, err := parseLeadingWithImports(t.Context(), branches[0])
 	require.NoError(t, err)
 	require.True(t, hasWith0)
 	require.Equal(t, []string{"p"}, withVars0)
-	assert.True(t, isCallSubqueryPureReturn(inner0), "first UNION branch should be pure RETURN projection")
+	assert.True(t, isCallSubqueryPureReturn(t.Context(), inner0), "first UNION branch should be pure RETURN projection")
 
-	withVars1, inner1, hasWith1, err := parseLeadingWithImports(branches[1])
+	withVars1, inner1, hasWith1, err := parseLeadingWithImports(t.Context(), branches[1])
 	require.NoError(t, err)
 	require.True(t, hasWith1)
 	require.Equal(t, []string{"p"}, withVars1)
-	assert.False(t, isCallSubqueryPureReturn(inner1), "second UNION branch should not be pure RETURN")
+	assert.False(t, isCallSubqueryPureReturn(t.Context(), inner1), "second UNION branch should not be pure RETURN")
 }
 
 func TestParseLeadingWithImports_WithWherePredicate(t *testing.T) {
-	withVars, inner, hasWith, err := parseLeadingWithImports(`
+	withVars, inner, hasWith, err := parseLeadingWithImports(t.Context(), `
 WITH o, t
 WHERE t IS NULL
 CREATE (n:Tmp)
@@ -3325,9 +3325,9 @@ func TestSubqueryHelpers_CallInTransactions_KnownBatchCountErrorBranch(t *testin
 	exec := NewStorageExecutor(eng)
 	ctx := context.Background()
 
-	_, err := eng.CreateNode(&storage.Node{ID: "p1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}})
+	_, err := eng.CreateNode(t.Context(), &storage.Node{ID: "p1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "p2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob"}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "p2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob"}})
 	require.NoError(t, err)
 	require.NoError(t, eng.GetSchema().AddConstraint(storage.Constraint{
 		Name:       "uq_person_email",
@@ -3368,11 +3368,11 @@ func TestSubqueryHelpers_CallInTransactions_IterativeBatchingWithMatchMerge(t *t
 	exec := NewStorageExecutor(eng)
 	ctx := context.Background()
 
-	_, err := eng.CreateNode(&storage.Node{ID: "p1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}})
+	_, err := eng.CreateNode(t.Context(), &storage.Node{ID: "p1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "p2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob"}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "p2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob"}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "p3", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "carol"}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "p3", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "carol"}})
 	require.NoError(t, err)
 
 	// makeSubqueryReadOnly cannot rewrite MATCH...MERGE, forcing iterative batching.
@@ -3424,9 +3424,9 @@ func TestSubqueryHelpers_ExecuteMatchWithCallProcedure_ParamAndWhereBranches(t *
 	eng := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(eng)
 
-	_, err := eng.CreateNode(&storage.Node{ID: "p1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice", "age": int64(30)}})
+	_, err := eng.CreateNode(t.Context(), &storage.Node{ID: "p1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice", "age": int64(30)}})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "p2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob", "age": int64(20)}})
+	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "p2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob", "age": int64(20)}})
 	require.NoError(t, err)
 
 	// Parameter substitution + WHERE filtering + MATCH without label (AllNodes branch).
@@ -3619,7 +3619,7 @@ func TestExecuteMatchWithCallProcedure_NodeLookupAndNilResultBranches(t *testing
 		}
 		exec := NewStorageExecutor(engine)
 
-		_, err := engine.CreateNode(&storage.Node{
+		_, err := engine.CreateNode(t.Context(), &storage.Node{
 			ID:     "sp-1",
 			Labels: []string{"SystemPrompt"},
 			Properties: map[string]interface{}{
@@ -3651,7 +3651,7 @@ func TestExecuteMatchWithCallProcedure_NodeLookupAndNilResultBranches(t *testing
 		base := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 		exec := NewStorageExecutor(base)
 
-		_, err := base.CreateNode(&storage.Node{
+		_, err := base.CreateNode(t.Context(), &storage.Node{
 			ID:     "p1",
 			Labels: []string{"Person"},
 			Properties: map[string]interface{}{
@@ -3687,7 +3687,7 @@ func TestExecuteCorrelatedCallWithSeedRows_BatchedLookup(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:     "o1",
 		Labels: []string{"MongoDocument"},
 		Properties: map[string]interface{}{
@@ -3697,7 +3697,7 @@ func TestExecuteCorrelatedCallWithSeedRows_BatchedLookup(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "o2",
 		Labels: []string{"MongoDocument"},
 		Properties: map[string]interface{}{
@@ -3707,7 +3707,7 @@ func TestExecuteCorrelatedCallWithSeedRows_BatchedLookup(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "i1",
 		Labels: []string{"MongoDocument"},
 		Properties: map[string]interface{}{
@@ -3717,7 +3717,7 @@ func TestExecuteCorrelatedCallWithSeedRows_BatchedLookup(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "i2",
 		Labels: []string{"MongoDocument"},
 		Properties: map[string]interface{}{
@@ -3727,7 +3727,7 @@ func TestExecuteCorrelatedCallWithSeedRows_BatchedLookup(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "i3",
 		Labels: []string{"MongoDocument"},
 		Properties: map[string]interface{}{

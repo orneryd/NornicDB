@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"sync"
@@ -22,11 +23,11 @@ func TestReviewR73QueuedOutcomeRevisionBarrier(t *testing.T) {
 			require.NoError(t, err)
 			defer disk.Close()
 			store := NewNamespacedEngine(disk, "queued")
-			_, err = store.CreateNode(&Node{ID: "doc", Properties: map[string]any{"id": "same", "text": "antiquecobalt"}})
+			_, err = store.CreateNode(t.Context(), &Node{ID: "doc", Properties: map[string]any{"id": "same", "text": "antiquecobalt"}})
 			require.NoError(t, err)
-			payload, err := store.GetNode("doc")
+			payload, err := store.GetNode(t.Context(), "doc")
 			require.NoError(t, err)
-			payload, err = SnapshotNodeForEmbedding(payload)
+			payload, err = SnapshotNodeForEmbedding(t.Context(), payload)
 			require.NoError(t, err)
 			payload.ChunkEmbeddings = [][]float32{{1, 0}}
 			payload.EmbedMeta = map[string]any{"chunk_count": 1, embeddingsource.MetaKey: (embeddingsource.Source{Properties: []string{"id"}}).Metadata()}
@@ -49,7 +50,7 @@ func TestReviewR73QueuedOutcomeRevisionBarrier(t *testing.T) {
 			store.OnNodeUpdated(func(node *Node) { mu.Lock(); events = append(events, node.Properties["text"].(string)); mu.Unlock() })
 			store.OnNodeDeleted(func(NodeID) { mu.Lock(); events = append(events, "deleted"); mu.Unlock() })
 			blockedDone := make(chan error, 1)
-			go func() { _, err := store.CreateNode(&Node{ID: "blocker"}); blockedDone <- err }()
+			go func() { _, err := store.CreateNode(t.Context(), &Node{ID: "blocker"}); blockedDone <- err }()
 			select {
 			case <-entered:
 			case <-time.After(3 * time.Second):
@@ -64,7 +65,7 @@ func TestReviewR73QueuedOutcomeRevisionBarrier(t *testing.T) {
 			})
 			defer restore()
 			done := make(chan error, 1)
-			go func() { done <- store.UpdateNodeEmbeddingSidecar(payload) }()
+			go func() { done <- store.UpdateNodeEmbeddingSidecar(context.Background(), payload) }()
 			select {
 			case <-committed:
 			case <-time.After(3 * time.Second):
@@ -72,12 +73,12 @@ func TestReviewR73QueuedOutcomeRevisionBarrier(t *testing.T) {
 			}
 			deletion := mode == "delete" || mode == "unbound_delete"
 			if deletion {
-				require.NoError(t, store.DeleteNode("doc"))
+				require.NoError(t, store.DeleteNode(t.Context(), "doc"))
 			} else {
-				current, err := store.GetNode("doc")
+				current, err := store.GetNode(t.Context(), "doc")
 				require.NoError(t, err)
 				current.Properties["text"] = "novelquartz"
-				require.NoError(t, store.UpdateNode(NodeUpdateRequest{After: current}))
+				require.NoError(t, store.UpdateNode(t.Context(), NodeUpdateRequest{After: current}))
 			}
 			unblock.Do(func() { close(resume) })
 			select {
@@ -97,7 +98,7 @@ func TestReviewR73QueuedOutcomeRevisionBarrier(t *testing.T) {
 			want := "novelquartz"
 			if deletion {
 				want = "deleted"
-				_, err = store.GetNode("doc")
+				_, err = store.GetNode(t.Context(), "doc")
 				require.ErrorIs(t, err, ErrNotFound)
 			}
 			require.Equal(t, []string{want}, observed, "the newer event must be the only published body")

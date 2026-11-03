@@ -357,7 +357,7 @@ func TestRecoverFromWALWithResultTracksErrors(t *testing.T) {
 	}
 
 	// Check that we got a valid node
-	n, err := engine.GetNode("valid-node")
+	n, err := engine.GetNode(t.Context(), "valid-node")
 	if err != nil || n == nil {
 		t.Error("Valid node should have been recovered")
 	}

@@ -2,6 +2,7 @@ package multidb
 
 import (
 	"context"
+
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"testing"
@@ -64,7 +65,7 @@ func TestDatabaseManager_CleanupLeakedSystemNodes_FromDefaultDatabase(t *testing
 	// Simulate the historical bug: system metadata stored under the default namespace
 	// (e.g., "nornic:system:databases:metadata"), which would appear as
 	// "system:databases:metadata" when querying the default DB.
-	_, err := engine.CreateNode(&storage.Node{
+	_, err := engine.CreateNode(t.Context(), &storage.Node{
 		ID:     storage.NodeID("nornic:system:databases:metadata"),
 		Labels: []string{"_System", "_Metadata"},
 		Properties: map[string]any{
@@ -72,7 +73,7 @@ func TestDatabaseManager_CleanupLeakedSystemNodes_FromDefaultDatabase(t *testing
 		},
 	})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{
+	_, err = engine.CreateNode(t.Context(), &storage.Node{
 		ID:     storage.NodeID("nornic:system:migration:legacy_data"),
 		Labels: []string{"_System", "_Migration"},
 		Properties: map[string]any{

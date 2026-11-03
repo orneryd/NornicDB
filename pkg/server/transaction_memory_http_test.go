@@ -32,7 +32,7 @@ const httpHeavyCollect = "UNWIND range(1, 200000) AS x RETURN size(collect(x)) A
 func TestTransactionMemoryYAMLOverrideActiveBeforeFirstProtocolExecutor(t *testing.T) {
 	cypher.ConfigureTransactionMemory(0, cypher.TransactionMemoryLimits{})
 	t.Cleanup(func() {
-		cypher.SetDatabaseTransactionMemoryLimits("nornic", cypher.TransactionMemoryLimits{})
+		cypher.SetDatabaseTransactionMemoryLimits("nornic", cypher.DatabaseTransactionMemoryLimits{})
 		cypher.ConfigureTransactionMemory(0, cypher.TransactionMemoryLimits{})
 	})
 	server, _ := setupTestServerWithConfig(t, func(config *Config) {
@@ -141,7 +141,7 @@ func startMemoryHTTPServer(t *testing.T) (*Server, memoryHTTPClient, string) {
 	t.Helper()
 	server, authenticator := setupTestServer(t)
 	t.Cleanup(func() {
-		cypher.SetDatabaseTransactionMemoryLimits("nornic", cypher.TransactionMemoryLimits{})
+		cypher.SetDatabaseTransactionMemoryLimits("nornic", cypher.DatabaseTransactionMemoryLimits{})
 		cypher.ConfigureTransactionMemory(0, cypher.TransactionMemoryLimits{})
 	})
 	local := httptest.NewServer(server.buildRouter())

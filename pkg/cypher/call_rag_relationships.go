@@ -32,13 +32,13 @@ func (e *StorageExecutor) callDbRetrieveRelationships(ctx context.Context, args 
 // relationshipSearchResult is a relationship search's rows: each matching
 // relationship with its start and end nodes (null when not visible), then
 // the same scores and search metadata as node results (#1065).
-func (e *StorageExecutor) relationshipSearchResult(response *search.SearchResponse) *ExecuteResult {
+func (e *StorageExecutor) relationshipSearchResult(ctx context.Context, response *search.SearchResponse) *ExecuteResult {
 	result := &ExecuteResult{
 		Columns: columnNames(dbRetrieveRelationshipsColumns),
 		Rows:    make([][]interface{}, 0, len(response.Results)),
 	}
 	endpoint := func(id storage.NodeID) interface{} {
-		if node, err := e.storage.GetNode(id); err == nil && node != nil {
+		if node, err := e.storage.GetNode(ctx, id); err == nil && node != nil {
 			return node
 		}
 		return nil

@@ -2,9 +2,10 @@ package search
 
 import (
 	"context"
+	"unsafe"
+
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
-	"unsafe"
 )
 
 // enrichResults converts RRF results to SearchResult with full node data.
@@ -142,7 +143,7 @@ func (s *Service) hitNodes(ctx context.Context, ids []storage.NodeID, seenOrphan
 		return nodes, true
 	}
 	for index, id := range ids {
-		node, err := s.getNodeWithoutEmbeddings(id)
+		node, err := s.getNodeWithoutEmbeddings(ctx, id)
 		if err != nil {
 			_ = s.handleOrphanedEmbedding(ctx, string(id), err, seenOrphans)
 			continue

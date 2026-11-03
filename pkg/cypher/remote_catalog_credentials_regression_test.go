@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -56,7 +57,7 @@ func TestRemoteQueryCredentialPublic(t *testing.T) {
 	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "probe", []multidb.ConstituentRef{{Alias: "r", DatabaseName: "remote", Type: "remote", AccessMode: "read", URI: "http://example.test/?" + query.String()}}))
 	system, err := manager.GetStorage("system")
 	require.NoError(t, err)
-	node, err := system.GetNode("databases:metadata")
+	node, err := system.GetNode(t.Context(), "databases:metadata")
 	require.NoError(t, err)
 	data, err := json.Marshal(node.Properties)
 	require.NoError(t, err)
@@ -145,4 +146,65 @@ func TestManagedRemoteCatalogWinnerPublic(t *testing.T) {
 	for _, database := range selected {
 		require.Equal(t, "winner", database)
 	}
+}
+
+// Empty remote headers are projected by the existing public metadata owner.
+// Configured authority must reach the server, never the returned labels/data.
+func TestCredentialedRemoteEmptyColumnsPublic(t *testing.T) {
+	forEachParser(t, func(t *testing.T) {
+		const password = "synthetic-fallback-column-password-582731 /?+"
+		const user = "fallback-reader"
+		var remote *httptest.Server
+		var calls atomic.Int32
+		remote = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls.Add(1)
+			actualUser, actualPassword, ok := r.BasicAuth()
+			if !ok || actualUser != user || actualPassword != password {
+				t.Error("remote runtime credential mismatch; capture withheld")
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"commit":%q,"results":[{"columns":[],"data":[{"row":["public-column"],"meta":[null]}]}],"errors":[]}`, remote.URL+"/db/remote/tx/commit")
+		}))
+		t.Cleanup(remote.Close)
+		cfg := multidb.DefaultConfig()
+		cfg.RemoteCredentialEncryptionKey = "synthetic-fallback-column-key-412897"
+		var factoryEngines []*storage.RemoteEngine
+		t.Cleanup(func() {
+			for _, engine := range factoryEngines {
+				require.NoError(t, engine.Close())
+			}
+		})
+		cfg.RemoteEngineFactory = func(ref multidb.ConstituentRef, token string) (storage.Engine, error) {
+			engine, err := storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: ref.URI, Database: ref.DatabaseName, User: ref.User, Password: ref.Password, AuthToken: token})
+			if engine != nil {
+				factoryEngines = append(factoryEngines, engine)
+			}
+			return engine, err
+		}
+		manager := newCompositeNativeManager(t, cfg)
+		t.Cleanup(func() { require.NoError(t, manager.Close()) })
+		require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "fallback", []multidb.ConstituentRef{{Alias: "r", DatabaseName: "remote", Type: "remote", AccessMode: "read", URI: remote.URL, AuthMode: "user_password", User: user, Password: password}}))
+		refs, err := manager.GetCompositeConstituents("fallback")
+		require.NoError(t, err)
+		require.Len(t, refs, 1)
+		require.NotEmpty(t, refs[0].ConnectionV1)
+		store, err := manager.GetStorage("nornic")
+		require.NoError(t, err)
+		exec := NewStorageExecutor(store)
+		exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
+		result, err := exec.Execute(t.Context(), "USE fallback.r MATCH (n) RETURN n.value AS marker", nil)
+		require.NoError(t, err)
+		require.Positive(t, calls.Load(), "actual credentialed remote request must occur")
+		require.Equal(t, []string{"marker"}, result.Columns)
+		require.Equal(t, [][]interface{}{{"public-column"}}, result.Rows)
+		output, err := json.Marshal(result)
+		require.NoError(t, err)
+		for _, hidden := range []string{password, url.QueryEscape(password), refs[0].ConnectionV1, "enc:v1:"} {
+			if strings.Contains(string(output), hidden) {
+				t.Error("configured credential/ciphertext in public projection; capture withheld")
+			}
+		}
+	})
 }

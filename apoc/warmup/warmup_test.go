@@ -8,28 +8,32 @@ import (
 )
 
 // setupTestStorage creates a mock storage with test data
-func setupTestStorage() (*Functions, storage.Storage) {
+func setupTestStorage(t *testing.T) (*Functions, storage.Storage) {
+	ctx := t.Context()
 	mockStore := storage.NewInMemoryStorage()
 
 	// Add test nodes using CreateNode
-	mockStore.CreateNode([]string{"Person"}, map[string]interface{}{"name": "Alice", "age": 30}) // ID 1
-	mockStore.CreateNode([]string{"Person"}, map[string]interface{}{"name": "Bob", "age": 25})   // ID 2
-	mockStore.CreateNode([]string{"Company"}, map[string]interface{}{"name": "Acme"})            // ID 3
+	mockStore.CreateNode(ctx, []string{"Person"}, map[string]interface{}{"name": "Alice", "age": 30}) // ID 1
+	mockStore.CreateNode(ctx, []string{"Person"}, map[string]interface{}{"name": "Bob", "age": 25})   // ID 2
+	mockStore.CreateNode(ctx, []string{"Company"}, map[string]interface{}{"name": "Acme"})            // ID 3
 
 	// Add test relationships using CreateRelationship
-	mockStore.CreateRelationship(1, 3, "WORKS_AT", map[string]interface{}{"since": 2020})
-	mockStore.CreateRelationship(2, 3, "WORKS_AT", map[string]interface{}{"since": 2021})
-	mockStore.CreateRelationship(1, 2, "KNOWS", map[string]interface{}{})
+	mockStore.CreateRelationship(ctx, 1, 3, "WORKS_AT", map[string]interface{}{"since": 2020})
+	mockStore.CreateRelationship(ctx, 2, 3, "WORKS_AT", map[string]interface{}{"since": 2021})
+	mockStore.CreateRelationship(ctx, 1, 2, "KNOWS", map[string]interface{}{})
 
 	// Bind one instance to this backend; the warmup cache belongs to it too.
 	return New(mockStore), mockStore
 }
 
 func TestRun(t *testing.T) {
-	functions, _ := setupTestStorage()
+	functions, _ := setupTestStorage(t)
 	functions.Clear()
 
-	result := functions.Run(context.Background())
+	result, apocCallError1 := functions.Run(context.Background())
+	if apocCallError1 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError1)
+	}
 
 	nodesLoaded, ok := result["nodesLoaded"].(int)
 	if !ok || nodesLoaded != 3 {
@@ -50,7 +54,7 @@ func TestRun(t *testing.T) {
 }
 
 func TestRunWithParams(t *testing.T) {
-	functions, _ := setupTestStorage()
+	functions, _ := setupTestStorage(t)
 	functions.Clear()
 
 	// Test with label filter
@@ -58,7 +62,10 @@ func TestRunWithParams(t *testing.T) {
 		"labels": []string{"Person"},
 	}
 
-	result := functions.RunWithParams(context.Background(), params)
+	result, apocCallError2 := functions.RunWithParams(context.Background(), params)
+	if apocCallError2 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError2)
+	}
 
 	nodesLoaded, ok := result["nodesLoaded"].(int)
 	if !ok || nodesLoaded != 2 {
@@ -72,7 +79,10 @@ func TestRunWithParams(t *testing.T) {
 		"types": []string{"WORKS_AT"},
 	}
 
-	result = functions.RunWithParams(context.Background(), params)
+	result, apocCallError3 := functions.RunWithParams(context.Background(), params)
+	if apocCallError3 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError3)
+	}
 
 	relsLoaded, ok := result["relationshipsLoaded"].(int)
 	if !ok || relsLoaded != 2 {
@@ -83,10 +93,13 @@ func TestRunWithParams(t *testing.T) {
 }
 
 func TestNodes(t *testing.T) {
-	functions, _ := setupTestStorage()
+	functions, _ := setupTestStorage(t)
 	functions.Clear()
 
-	result := functions.Nodes(context.Background(), []string{"Person"})
+	result, apocCallError4 := functions.Nodes(context.Background(), []string{"Person"})
+	if apocCallError4 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError4)
+	}
 
 	nodesLoaded, ok := result["nodesLoaded"].(int)
 	if !ok || nodesLoaded != 2 {
@@ -97,10 +110,13 @@ func TestNodes(t *testing.T) {
 }
 
 func TestRelationships(t *testing.T) {
-	functions, _ := setupTestStorage()
+	functions, _ := setupTestStorage(t)
 	functions.Clear()
 
-	result := functions.Relationships(context.Background(), []string{"KNOWS"})
+	result, apocCallError5 := functions.Relationships(context.Background(), []string{"KNOWS"})
+	if apocCallError5 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError5)
+	}
 
 	relsLoaded, ok := result["relationshipsLoaded"].(int)
 	if !ok || relsLoaded != 1 {
@@ -111,10 +127,13 @@ func TestRelationships(t *testing.T) {
 }
 
 func TestIndexes(t *testing.T) {
-	functions, _ := setupTestStorage()
+	functions, _ := setupTestStorage(t)
 	functions.Clear()
 
-	result := functions.Indexes(context.Background())
+	result, apocCallError6 := functions.Indexes(context.Background())
+	if apocCallError6 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError6)
+	}
 
 	if result == nil {
 		t.Error("Indexes() returned nil")
@@ -129,10 +148,13 @@ func TestIndexes(t *testing.T) {
 }
 
 func TestProperties(t *testing.T) {
-	functions, _ := setupTestStorage()
+	functions, _ := setupTestStorage(t)
 	functions.Clear()
 
-	result := functions.Properties(context.Background(), []string{"name", "age"})
+	result, apocCallError7 := functions.Properties(context.Background(), []string{"name", "age"})
+	if apocCallError7 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError7)
+	}
 
 	if result == nil {
 		t.Error("Properties() returned nil")
@@ -147,11 +169,14 @@ func TestProperties(t *testing.T) {
 }
 
 func TestStats(t *testing.T) {
-	functions, _ := setupTestStorage()
+	functions, _ := setupTestStorage(t)
 	functions.Clear()
 
 	// Run warmup first
-	functions.Run(context.Background())
+	_, apocCallError8 := functions.Run(context.Background())
+	if apocCallError8 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError8)
+	}
 
 	stats := functions.Stats()
 
@@ -176,8 +201,11 @@ func TestStats(t *testing.T) {
 }
 
 func TestClear(t *testing.T) {
-	functions, _ := setupTestStorage()
-	functions.Run(context.Background())
+	functions, _ := setupTestStorage(t)
+	_, apocCallError9 := functions.Run(context.Background())
+	if apocCallError9 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError9)
+	}
 
 	// Should have cached items
 	stats := functions.Stats()
@@ -199,7 +227,7 @@ func TestClear(t *testing.T) {
 }
 
 func TestStatus(t *testing.T) {
-	functions, _ := setupTestStorage()
+	functions, _ := setupTestStorage(t)
 	functions.Clear()
 
 	// Before warmup
@@ -209,7 +237,10 @@ func TestStatus(t *testing.T) {
 	}
 
 	// Run warmup
-	functions.Run(context.Background())
+	_, apocCallError10 := functions.Run(context.Background())
+	if apocCallError10 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError10)
+	}
 
 	// After warmup
 	status = functions.Status()
@@ -221,21 +252,32 @@ func TestStatus(t *testing.T) {
 }
 
 func TestProgress(t *testing.T) {
-	functions, _ := setupTestStorage()
+	functions, _ := setupTestStorage(t)
 	functions.Clear()
 
 	// Before warmup - 0%
-	progress := functions.Progress(context.Background())
+	progress, apocCallError11 := functions.Progress(context.Background())
+	if apocCallError11 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError11)
+	}
+
 	pct, ok := progress["percentage"].(float64)
 	if !ok || pct != 0 {
 		t.Errorf("Expected 0%% progress before warmup, got %v", progress["percentage"])
 	}
 
 	// Run warmup
-	functions.Run(context.Background())
+	_, apocCallError12 := functions.Run(context.Background())
+	if apocCallError12 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError12)
+	}
 
 	// After warmup - 100%
-	progress = functions.Progress(context.Background())
+	progress, apocCallError13 := functions.Progress(context.Background())
+	if apocCallError13 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError13)
+	}
+
 	pct, ok = progress["percentage"].(float64)
 	if !ok || pct != 100 {
 		t.Errorf("Expected 100%% progress after warmup, got %v", progress["percentage"])
@@ -245,7 +287,7 @@ func TestProgress(t *testing.T) {
 }
 
 func TestSchedule(t *testing.T) {
-	functions, _ := setupTestStorage()
+	functions, _ := setupTestStorage(t)
 	result := functions.Schedule("0 4 * * *")
 	if result == nil {
 		t.Error("Schedule() returned nil")
@@ -261,7 +303,7 @@ func TestSchedule(t *testing.T) {
 }
 
 func TestOptimize(t *testing.T) {
-	functions, _ := setupTestStorage()
+	functions, _ := setupTestStorage(t)
 	functions.Clear()
 
 	// Before warmup - should recommend running warmup
@@ -276,7 +318,11 @@ func TestOptimize(t *testing.T) {
 	}
 
 	// After warmup
-	functions.Run(context.Background())
+	_, apocCallError14 := functions.Run(context.Background())
+	if apocCallError14 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError14)
+	}
+
 	result = functions.Optimize()
 	if result["optimized"] != true {
 		t.Error("Optimize() should return optimized=true after warmup")
@@ -286,7 +332,7 @@ func TestOptimize(t *testing.T) {
 }
 
 func TestCache(t *testing.T) {
-	functions, _ := setupTestStorage()
+	functions, _ := setupTestStorage(t)
 	functions.Clear()
 
 	queries := []string{"MATCH (n:Person) RETURN n", "MATCH (n:Company) RETURN n"}
@@ -305,9 +351,12 @@ func TestCache(t *testing.T) {
 }
 
 func TestGetCachedNode(t *testing.T) {
-	functions, _ := setupTestStorage()
+	functions, _ := setupTestStorage(t)
 	functions.Clear()
-	functions.Run(context.Background())
+	_, apocCallError15 := functions.Run(context.Background())
+	if apocCallError15 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError15)
+	}
 
 	// Test hit
 	node, found := functions.GetCachedNode(1)
@@ -328,9 +377,12 @@ func TestGetCachedNode(t *testing.T) {
 }
 
 func TestGetCachedRelationship(t *testing.T) {
-	functions, _ := setupTestStorage()
+	functions, _ := setupTestStorage(t)
 	functions.Clear()
-	functions.Run(context.Background())
+	_, apocCallError16 := functions.Run(context.Background())
+	if apocCallError16 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError16)
+	}
 
 	// Test hit - relationship IDs are auto-generated starting at 1
 	rel, found := functions.GetCachedRelationship(1)
@@ -351,9 +403,12 @@ func TestGetCachedRelationship(t *testing.T) {
 }
 
 func TestGetNodesByLabel(t *testing.T) {
-	functions, _ := setupTestStorage()
+	functions, _ := setupTestStorage(t)
 	functions.Clear()
-	functions.Run(context.Background())
+	_, apocCallError17 := functions.Run(context.Background())
+	if apocCallError17 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError17)
+	}
 
 	nodes, found := functions.GetNodesByLabel("Person")
 	if !found {
@@ -373,9 +428,12 @@ func TestGetNodesByLabel(t *testing.T) {
 }
 
 func TestGetRelationshipsByType(t *testing.T) {
-	functions, _ := setupTestStorage()
+	functions, _ := setupTestStorage(t)
 	functions.Clear()
-	functions.Run(context.Background())
+	_, apocCallError18 := functions.Run(context.Background())
+	if apocCallError18 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError18)
+	}
 
 	rels, found := functions.GetRelationshipsByType("WORKS_AT")
 	if !found {
@@ -395,13 +453,16 @@ func TestGetRelationshipsByType(t *testing.T) {
 }
 
 func TestSubgraph(t *testing.T) {
-	functions, backend := setupTestStorage()
+	functions, backend := setupTestStorage(t)
 	functions.Clear()
 
 	// Get a node from storage to use as start node
 	nodes, _ := backend.AllNodes(context.Background())
 
-	result := functions.Subgraph(nodes[0], 2)
+	result, apocCallError19 := functions.Subgraph(t.Context(), nodes[0], 2)
+	if apocCallError19 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError19)
+	}
 
 	if result == nil {
 		t.Error("Subgraph() returned nil")
@@ -416,7 +477,7 @@ func TestSubgraph(t *testing.T) {
 }
 
 func TestPath(t *testing.T) {
-	functions, backend := setupTestStorage()
+	functions, backend := setupTestStorage(t)
 	functions.Clear()
 
 	nodes, _ := backend.AllNodes(context.Background())

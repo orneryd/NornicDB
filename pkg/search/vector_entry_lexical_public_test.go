@@ -46,7 +46,7 @@ func TestVectorEntryPublicLexicalOwnership(t *testing.T) {
 				{ID: "victim-peer", Properties: map[string]any{"text": "victimtoken victimtoken"}},
 				{ID: "marker-peer", Properties: map[string]any{"text": "markertoken markertoken"}},
 			} {
-				_, err := engine.CreateNode(node)
+				_, err := engine.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 			}
 			svc := NewService(engine, 2, nil)

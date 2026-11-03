@@ -35,7 +35,6 @@ func newLoopMultiRegionReplicator(t *testing.T, leader bool) (*MultiRegionReplic
 		config:      cfg,
 		storage:     store,
 		localRaft:   local,
-		stopCh:      make(chan struct{}),
 		remoteConns: map[string]PeerConnection{"eu-west": remote},
 	}
 	r.started.Store(true)
@@ -52,11 +51,11 @@ func TestMultiRegionReplicator_CrossRegionLoopStreamsWhileLeader(t *testing.T) {
 	store.walPosition = 2
 	store.mu.Unlock()
 
-	r.wg.Add(1)
-	go r.runCrossRegionReplication(context.Background())
+	loopDone := make(chan struct{})
+	go func() { defer close(loopDone); r.runCrossRegionReplication(context.Background()) }()
 	require.Eventually(t, func() bool { return remote.GetWALBatchCalls() >= 1 }, 5*time.Second, 10*time.Millisecond)
-	close(r.stopCh)
-	r.wg.Wait()
+	r.work.Cancel()
+	<-loopDone
 }
 
 // The cross-region loop stops when its context ends.
@@ -66,7 +65,6 @@ func TestMultiRegionReplicator_CrossRegionLoopStopsOnContext(t *testing.T) {
 	r, _, remote := newLoopMultiRegionReplicator(t, false)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	r.wg.Add(1)
 	r.runCrossRegionReplication(ctx)
 	require.Zero(t, remote.GetWALBatchCalls())
 }

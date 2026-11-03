@@ -22,7 +22,7 @@ func TestPR1655CommitFailureIdentityPrecedesCause(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			wrapped := fmt.Errorf("commit: %w", tc.failure)
 			require.True(t, stderrors.Is(wrapped, storage.ErrConflict), "causal identity remains available")
-			for _, mapStatus := range []func(error) (string, string){Neo4jStatus, Neo4jCommitStatus} {
+			for _, mapStatus := range []func(error) (string, string){Neo4jStatus, func(err error) (string, string) { return Neo4jStatus(TransactionControlFailure(TerminalCommit, err)) }} {
 				code, message := mapStatus(wrapped)
 				require.Equal(t, tc.code, code)
 				require.NotEmpty(t, message)

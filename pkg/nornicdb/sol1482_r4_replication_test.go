@@ -2,12 +2,13 @@ package nornicdb
 
 import (
 	"context"
+	"path/filepath"
+	"testing"
+
 	"github.com/orneryd/nornicdb/pkg/replication"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"path/filepath"
-	"testing"
 )
 
 func TestSol1482R4ReplicatedEventConsumption(t *testing.T) {
@@ -27,11 +28,12 @@ func TestSol1482R4ReplicatedEventConsumption(t *testing.T) {
 			db, err := Open(config.Database.DataDir, config)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = db.Close() })
-			db.bgWg.Wait()
+			waitDBWorkIdle(t, db)
 			require.NotNil(t, db.replicationAdapter)
 			apply := func(kind replication.CommandType, payload any) {
 				data := searchConsumerCommandData(t, kind, payload)
-				require.NoError(t, db.replicationAdapter.ApplyCommand(&replication.Command{Type: kind, Data: data}))
+				_, applyErr := db.replicationAdapter.ApplyCommand(t.Context(), &replication.Command{Type: kind, Data: data}, replication.WALQueued)
+				require.NoError(t, applyErr)
 			}
 			apply(replication.CmdCreateNode, &storage.Node{ID: "tenant:a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "oldword"}})
 			tenant := storage.NewNamespacedEngine(db.GetBaseStorageForManager(), "tenant")

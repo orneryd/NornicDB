@@ -86,7 +86,7 @@ func (e *ReplicatedEngine) SubmitEntityCommit(ctx context.Context, prepared *sto
 	if err := e.CheckEntityCommitAdmission(); err != nil {
 		return nil, err
 	}
-	if ctx != nil && ctx.Err() != nil {
+	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
 	submitter, ok := e.replicator.(AcceptedCommandSubmitter)
@@ -110,9 +110,6 @@ func (e *ReplicatedEngine) SubmitEntityCommit(ctx context.Context, prepared *sto
 
 	cmd := &Command{Type: CmdCommitTransaction, Data: payload, Timestamp: time.Now(), RequestID: prepared.LogicalID()}
 	cmd.accepted = &acceptedEntityCommand{owner: e.Engine, prepared: storage.NewAcceptedEntityCommitHandle(prepared), inner: inner.Submitter, nativeDone: make(chan struct{})}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	queueCtx, cancelQueue := context.WithTimeout(ctx, e.timeout)
 	defer cancelQueue()
 	var receipt *storage.CommitReceipt
@@ -135,16 +132,17 @@ func (e *ReplicatedEngine) SubmitEntityCommit(ctx context.Context, prepared *sto
 	return receipt, err
 }
 
-func submitAcceptedByApply(ctx context.Context, cmd *Command, settle func(storage.CommitOutcome), validate func() error, apply func(*Command, time.Duration) error, timeout time.Duration) (*storage.CommitReceipt, error) {
+func submitAcceptedByApply(ctx context.Context, cmd *Command, settle func(storage.CommitOutcome), validate func() error, apply func(context.Context, *Command, time.Duration) error, timeout time.Duration) (*storage.CommitReceipt, error) {
 	if err := validate(); err != nil {
 		return nil, err
 	}
-	if ctx != nil && ctx.Err() != nil {
+	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
 	receipt, resolve := storage.NewCommitReceipt(settle)
 	go func() {
-		err := apply(cmd, timeout)
+		completionCtx := context.WithoutCancel(ctx)
+		err := apply(completionCtx, cmd, timeout)
 		if cmd.accepted != nil && !cmd.accepted.started.Load() && (errors.Is(err, ErrClosed) || errors.Is(err, ErrNotReady) || errors.Is(err, ErrNotLeader) || errors.Is(err, ErrStandbyMode)) {
 			cmd.accepted.prepared.AbortNative()
 			_ = resolve.Resolve(storage.CommitOutcome{State: storage.CommitDiscarded, Err: err})
@@ -158,23 +156,38 @@ func (r *StandaloneReplicator) SubmitAcceptedCommand(ctx context.Context, cmd *C
 	return submitAcceptedByApply(ctx, cmd, settle, func() error {
 		r.mu.RLock()
 		defer r.mu.RUnlock()
-		return checkApplyReadiness(r.closed, r.started)
+		return checkApplyReadiness(r.work.Closing(), r.started)
 	}, r.Apply, 0)
 }
 func (r *HAStandbyReplicator) SubmitAcceptedCommand(ctx context.Context, cmd *Command, settle func(storage.CommitOutcome)) (*storage.CommitReceipt, error) {
+	apply := r.Apply
+	if r.config.HAStandby.SyncMode == SyncQuorum {
+		deadline, bounded := ctx.Deadline()
+		if !bounded {
+			deadline = time.Now().Add(r.quorumWaitTimeout(0))
+		}
+		apply = func(completionCtx context.Context, cmd *Command, _ time.Duration) error {
+			// Queue admission and caller cancellation do not own accepted native
+			// completion. Retain only the original publication+ACK deadline;
+			// never restart its budget when this goroutine begins execution.
+			waitCtx, cancel := context.WithDeadline(completionCtx, deadline)
+			defer cancel()
+			return r.applyCommand(waitCtx, cmd)
+		}
+	}
 	return submitAcceptedByApply(ctx, cmd, settle, func() error {
-		if err := checkApplyReadiness(r.closed.Load(), r.started.Load()); err != nil {
+		if err := checkApplyReadiness(r.work.Closing(), r.started.Load()); err != nil {
 			return err
 		}
 		if !r.isPrimary.Load() {
 			return ErrNotLeader
 		}
 		return nil
-	}, r.Apply, 0)
+	}, apply, 0)
 }
 
 func (r *MultiRegionReplicator) SubmitAcceptedCommand(ctx context.Context, cmd *Command, settle func(storage.CommitOutcome)) (*storage.CommitReceipt, error) {
-	if err := checkApplyReadiness(r.closed.Load(), r.started.Load()); err != nil {
+	if err := checkApplyReadiness(r.work.Closing(), r.started.Load()); err != nil {
 		return nil, err
 	}
 	if !r.IsLeader() {
@@ -194,19 +207,18 @@ func (e *ReplicatedEngine) ForwardEntityChanges(ctx context.Context, ops []stora
 	if len(ops) == 0 {
 		return nil
 	}
-	if ctx != nil && ctx.Err() != nil {
+	// This existing optional-context entry keeps its detached nil contract.
+	if ctx.Err() != nil {
 		return ctx.Err()
 	}
 	forward := *e
-	if ctx != nil {
-		if deadline, ok := ctx.Deadline(); ok {
-			remaining := time.Until(deadline)
-			if remaining <= 0 {
-				return context.DeadlineExceeded
-			}
-			if remaining < forward.timeout {
-				forward.timeout = remaining
-			}
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return context.DeadlineExceeded
+		}
+		if remaining < forward.timeout {
+			forward.timeout = remaining
 		}
 	}
 	if mode == storage.CommitModeDirect {
@@ -216,18 +228,18 @@ func (e *ReplicatedEngine) ForwardEntityChanges(ctx context.Context, ops []stora
 		op := ops[0]
 		switch op.Type {
 		case storage.OpCreateNode:
-			_, err := forward.CreateNode(op.Node)
+			_, err := forward.CreateNode(ctx, op.Node)
 			return err
 		case storage.OpUpdateNode:
-			return forward.UpdateNode(op.NodeUpdate())
+			return forward.UpdateNode(ctx, op.NodeUpdate())
 		case storage.OpDeleteNode:
-			return forward.DeleteNode(op.NodeID)
+			return forward.DeleteNode(ctx, op.NodeID)
 		case storage.OpCreateEdge:
-			return forward.CreateEdge(op.Edge)
+			return forward.CreateEdge(ctx, op.Edge)
 		case storage.OpUpdateEdge:
-			return forward.UpdateEdge(op.EdgeUpdate())
+			return forward.UpdateEdge(ctx, op.EdgeUpdate())
 		case storage.OpDeleteEdge:
-			return forward.DeleteEdge(op.EdgeID)
+			return forward.DeleteEdge(ctx, op.EdgeID)
 		}
 	}
 	if mode != storage.CommitModeImplicit {
@@ -245,25 +257,25 @@ func (e *ReplicatedEngine) ForwardEntityChanges(ctx context.Context, ops []stora
 		for i := range ops {
 			nodes[i] = ops[i].Node
 		}
-		return forward.BulkCreateNodes(nodes)
+		return forward.BulkCreateNodes(ctx, nodes)
 	case storage.OpCreateEdge:
 		edges := make([]*storage.Edge, len(ops))
 		for i := range ops {
 			edges[i] = ops[i].Edge
 		}
-		return forward.BulkCreateEdges(edges)
+		return forward.BulkCreateEdges(ctx, edges)
 	case storage.OpDeleteNode:
 		ids := make([]storage.NodeID, len(ops))
 		for i := range ops {
 			ids[i] = ops[i].NodeID
 		}
-		return forward.BulkDeleteNodes(ids)
+		return forward.BulkDeleteNodes(ctx, ids)
 	case storage.OpDeleteEdge:
 		ids := make([]storage.EdgeID, len(ops))
 		for i := range ops {
 			ids[i] = ops[i].EdgeID
 		}
-		return forward.BulkDeleteEdges(ids)
+		return forward.BulkDeleteEdges(ctx, ids)
 	}
 	return storage.ErrInvalidData
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"log/slog"
@@ -91,7 +92,7 @@ func TestFailedPopulationCannotPersistOrReplaceArtifacts(t *testing.T) {
 				e := &failedPopulationEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), mode: mode, entered: make(chan struct{}), release: make(chan struct{})}
 				t.Cleanup(func() { _ = e.Close() })
 				for i := 0; i < 3; i++ {
-					_, err := e.CreateNode(triageNode(fmt.Sprintf("nornic:original%d", i)))
+					_, err := e.CreateNode(t.Context(), triageNode(fmt.Sprintf("nornic:original%d", i)))
 					require.NoError(t, err)
 				}
 				dir := t.TempDir()
@@ -118,7 +119,7 @@ func TestFailedPopulationCannotPersistOrReplaceArtifacts(t *testing.T) {
 					t.Fatal("population did not reach failure boundary")
 				}
 				node := triageNode("nornic:acknowledged")
-				_, err := e.CreateNode(node)
+				_, err := e.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 				requireReturnsDuringBuild(t, "acknowledged write", func() error { return svc.IndexNode(node) })
 				// An already-fired timer or shutdown flush can enter while the
@@ -175,7 +176,7 @@ func TestCancelledWarmupPreservesCommittedPopulationAndRetries(t *testing.T) {
 	t.Setenv("NORNICDB_HNSW_BUILD_GPU_ENABLED", "false")
 	e := &triageSnapshotEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
 	t.Cleanup(func() { _ = e.Close() })
-	_, err := e.CreateNode(triageNode("nornic:original"))
+	_, err := e.CreateNode(t.Context(), triageNode("nornic:original"))
 	require.NoError(t, err)
 	dir := t.TempDir()
 	seed := newSearchPersistenceTestService(t, e, dir, true)
@@ -188,7 +189,7 @@ func TestCancelledWarmupPreservesCommittedPopulationAndRetries(t *testing.T) {
 	defer cancel()
 	svc.SetLogger(slog.New(&triageReplayLog{match: "starting vector pipeline warmup", during: func() {
 		n := triageNode("nornic:acknowledged")
-		_, err := e.CreateNode(n)
+		_, err := e.CreateNode(t.Context(), n)
 		require.NoError(t, err)
 		svc.SetPersistenceEnabled(true) // keep the acknowledged write in the final drain
 		require.NoError(t, svc.IndexNode(n))
@@ -210,7 +211,7 @@ func TestInterruptedPopulationRejectsPrebuildPersistenceAndSavedAdmission(t *tes
 	t.Setenv("NORNICDB_HNSW_BUILD_GPU_ENABLED", "false")
 	e := &triageSnapshotEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
 	t.Cleanup(func() { _ = e.Close() })
-	_, err := e.CreateNode(triageNode("nornic:original"))
+	_, err := e.CreateNode(t.Context(), triageNode("nornic:original"))
 	require.NoError(t, err)
 	dir := t.TempDir()
 	seed := newSearchPersistenceTestService(t, e, dir, true)
@@ -220,7 +221,7 @@ func TestInterruptedPopulationRejectsPrebuildPersistenceAndSavedAdmission(t *tes
 	// A process can stop after opening the population, before it returns.
 	require.NoError(t, writeMsgpackSnapshot(filepath.Join(dir, "build_settings.population"), &populationRecord{}))
 	n := triageNode("nornic:acknowledged")
-	_, err = e.CreateNode(n)
+	_, err = e.CreateNode(t.Context(), n)
 	require.NoError(t, err)
 	svc := newSearchPersistenceTestService(t, e, dir, true)
 	require.NoError(t, svc.IndexNode(n))
@@ -238,7 +239,7 @@ func TestFailedFinalReplayPreservesCommittedPopulationArtifacts(t *testing.T) {
 	t.Setenv("NORNICDB_HNSW_BUILD_GPU_ENABLED", "false")
 	e := &triageSnapshotEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
 	t.Cleanup(func() { _ = e.Close() })
-	_, err := e.CreateNode(triageNode("nornic:original"))
+	_, err := e.CreateNode(t.Context(), triageNode("nornic:original"))
 	require.NoError(t, err)
 	dir := t.TempDir()
 	seed := newSearchPersistenceTestService(t, e, dir, true)
@@ -254,7 +255,7 @@ func TestFailedFinalReplayPreservesCommittedPopulationArtifacts(t *testing.T) {
 		svc.vectorFileStore.mu.Unlock()
 		svc.SetPersistenceEnabled(true)
 		n := triageNode("nornic:acknowledged")
-		_, err := e.CreateNode(n)
+		_, err := e.CreateNode(t.Context(), n)
 		require.NoError(t, err)
 		require.NoError(t, svc.IndexNode(n))
 	}}))

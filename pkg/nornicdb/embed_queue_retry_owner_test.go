@@ -2,6 +2,7 @@ package nornicdb
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -28,7 +29,7 @@ func TestEmbedWorkerRetryOwnerAllowsFreshWork(t *testing.T) {
 	}
 	require.Equal(t, int64(1), worker.processed.Load(), "DLQ rejection cannot starve a fresh node")
 	require.Equal(t, 2, provider.GetEmbedCount())
-	saved, err := queue.GetNode("node-001")
+	saved, err := queue.GetNode(t.Context(), "node-001")
 	require.NoError(t, err)
 	require.NotEmpty(t, saved.ChunkEmbeddings)
 }
@@ -38,13 +39,16 @@ type unindexedRetryOwnerQueue struct {
 	queue *rejectingSidecarQueue
 }
 
-func (q *unindexedRetryOwnerQueue) FindNodeNeedingEmbedding() *storage.Node {
-	node, _ := q.Engine.GetNode("node-000")
-	return node // A generic scan cannot remove a DLQ candidate's marker.
+func (q *unindexedRetryOwnerQueue) FindNodeNeedingEmbedding(ctx context.Context) (*storage.Node, error) {
+	node, err := q.Engine.GetNode(ctx, "node-000")
+	if errors.Is(err, storage.ErrNotFound) {
+		return nil, nil
+	}
+	return node, err // A generic scan cannot remove a DLQ candidate's marker.
 }
 
-func (q *unindexedRetryOwnerQueue) UpdateNodeEmbeddingSidecar(node *storage.Node) error {
-	return q.queue.UpdateNodeEmbeddingSidecar(node)
+func (q *unindexedRetryOwnerQueue) UpdateNodeEmbeddingSidecar(ctx context.Context, node *storage.Node) error {
+	return q.queue.UpdateNodeEmbeddingSidecar(ctx, node)
 }
 
 func TestEmbedWorkerRetryOwnerAllowsFreshUnindexedWork(t *testing.T) {
@@ -54,7 +58,7 @@ func TestEmbedWorkerRetryOwnerAllowsFreshUnindexedWork(t *testing.T) {
 	require.True(t, worker.processNextBatch())
 	require.True(t, worker.processNextBatch())
 	require.Equal(t, int64(1), worker.processed.Load())
-	saved, err := queue.GetNode("node-001")
+	saved, err := queue.GetNode(t.Context(), "node-001")
 	require.NoError(t, err)
 	require.NotEmpty(t, saved.ChunkEmbeddings)
 }
@@ -130,7 +134,7 @@ func TestEmbedWorkerRetryOwnerRejectsChangedProvider(t *testing.T) {
 					worker.processNextBatch()
 					time.Sleep(time.Millisecond)
 				}
-				saved, err := queue.GetNode("node-000")
+				saved, err := queue.GetNode(t.Context(), "node-000")
 				require.NoError(t, err)
 				require.NotEmpty(t, saved.ChunkEmbeddings)
 				require.Equal(t, replacement.Model(), saved.EmbedMeta["embedding_model"])
@@ -177,7 +181,7 @@ func TestEmbedWorkerRetryOwnerRejectsInFlightOldProvider(t *testing.T) {
 	require.Zero(t, queue.attempts["node-000"], "a superseded provider result is now rejected before storage")
 	queue.rejections = 0
 	require.True(t, worker.processNextBatch())
-	saved, err := queue.GetNode("node-000")
+	saved, err := queue.GetNode(t.Context(), "node-000")
 	require.NoError(t, err)
 	require.Equal(t, "new-space", saved.EmbedMeta["embedding_model"])
 	require.Len(t, saved.ChunkEmbeddings[0], 3)
@@ -208,7 +212,7 @@ func TestEmbedWorkerRetryOwnerInvalidatesLiveSpace(t *testing.T) {
 	makeNodeSaveRetriesReady(worker)
 	require.True(t, worker.processNextBatch())
 	require.Equal(t, 2, plain.GetEmbedCount())
-	saved, err := queue.GetNode("node-000")
+	saved, err := queue.GetNode(t.Context(), "node-000")
 	require.NoError(t, err)
 	require.Equal(t, "after", saved.EmbedMeta["embedding_space"])
 }

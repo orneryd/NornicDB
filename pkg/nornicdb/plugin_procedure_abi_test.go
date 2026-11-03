@@ -5,10 +5,11 @@ import (
 
 	"context"
 	"errors"
+	"testing"
+
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestPluginCanonicalProcedureABI(t *testing.T) {
@@ -18,7 +19,7 @@ func TestPluginCanonicalProcedureABI(t *testing.T) {
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "plugin_abi")
 	e := cypher.NewStorageExecutor(store)
-	_, err := store.CreateNode(&storage.Node{ID: "committed", Labels: []string{"PluginABI"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "committed", Labels: []string{"PluginABI"}})
 	require.NoError(t, err)
 	wantCount := int64(1)
 	type key struct{}

@@ -72,12 +72,12 @@ func TestEmbedWorkerRetryStructuredMetadataInputs(t *testing.T) {
 						worker, queue, base := nodeSaveRetryFixture(t, "whole", count, 1)
 						ids := append([]storage.NodeID(nil), queue.pending...)
 						for _, id := range ids {
-							node, err := queue.GetNode(id)
+							node, err := queue.GetNode(t.Context(), id)
 							require.NoError(t, err)
 							if change != "add" {
 								node.Properties[key] = "old"
 							}
-							require.NoError(t, queue.UpdateNode(storage.NodeUpdateRequest{After: node}))
+							require.NoError(t, queue.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
 						}
 						structured := &retryMetadataPropertyEmbedder{mockEmbedder: base, key: key}
 						var provider embed.Embedder = structured
@@ -104,7 +104,7 @@ func TestEmbedWorkerRetryStructuredMetadataInputs(t *testing.T) {
 						require.Equal(t, count, base.GetEmbedCount())
 						require.Zero(t, worker.processed.Load())
 						for _, id := range ids {
-							node, err := queue.GetNode(id)
+							node, err := queue.GetNode(t.Context(), id)
 							require.NoError(t, err)
 							before := copyNodeForEmbedding(node)
 							if change == "remove" {
@@ -113,7 +113,7 @@ func TestEmbedWorkerRetryStructuredMetadataInputs(t *testing.T) {
 								node.Properties[key] = "new"
 							}
 							require.True(t, (storage.EmbeddingTextPolicy{IncludeLabels: true}).SameSource(before, node), "text policy omits this provider-visible input")
-							require.NoError(t, queue.UpdateNode(storage.NodeUpdateRequest{After: node}))
+							require.NoError(t, queue.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
 						}
 
 						// Every rejected save needs a fresh
@@ -131,7 +131,7 @@ func TestEmbedWorkerRetryStructuredMetadataInputs(t *testing.T) {
 							marker = 1
 						}
 						for _, id := range ids {
-							saved, err := queue.GetNode(id)
+							saved, err := queue.GetNode(t.Context(), id)
 							require.NoError(t, err)
 							require.Equal(t, marker, saved.ChunkEmbeddings[0][0], "stored vector must represent current structured inputs")
 						}

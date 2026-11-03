@@ -23,9 +23,6 @@ func startSessionSpan(remoteAddr string) (context.Context, trace.Span) {
 
 // startMessageSpan creates nornicdb.bolt.<op> as a child of the session span (TRC-13).
 func startMessageSpan(ctx context.Context, op string) (context.Context, trace.Span) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	ctx, span := otel.Tracer("nornicdb/bolt").Start(ctx, "nornicdb.bolt."+op,
 		trace.WithSpanKind(trace.SpanKindServer),
 	)
@@ -35,9 +32,6 @@ func startMessageSpan(ctx context.Context, op string) (context.Context, trace.Sp
 // extractTraceparent attempts to extract a W3C traceparent from Bolt message
 // metadata (TRC-14). Drivers may pass nornicdb.traceparent in BEGIN/RUN extras.
 func extractTraceparent(ctx context.Context, metadata map[string]any) context.Context {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if metadata == nil {
 		return ctx
 	}

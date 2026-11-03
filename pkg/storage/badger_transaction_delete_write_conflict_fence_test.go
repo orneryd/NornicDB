@@ -29,26 +29,26 @@ func TestTransactionDeletePreservesPostValidationPeerWrite(t *testing.T) {
 				t.Cleanup(func() { _ = engine.Close() })
 
 				nodeID := NodeID("test:delete-conflict")
-				_, err = engine.CreateNode(&Node{ID: nodeID, Properties: map[string]interface{}{"writer": "seed"}})
+				_, err = engine.CreateNode(t.Context(), &Node{ID: nodeID, Properties: map[string]interface{}{"writer": "seed"}})
 				require.NoError(t, err)
 				otherID := NodeID("test:delete-conflict-other")
-				_, err = engine.CreateNode(&Node{ID: otherID})
+				_, err = engine.CreateNode(t.Context(), &Node{ID: otherID})
 				require.NoError(t, err)
 				edgeID := EdgeID("test:delete-conflict-edge")
-				require.NoError(t, engine.CreateEdge(&Edge{ID: edgeID, StartNode: nodeID, EndNode: otherID, Type: "R", Properties: map[string]interface{}{"writer": "seed"}}))
+				require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: edgeID, StartNode: nodeID, EndNode: otherID, Type: "R", Properties: map[string]interface{}{"writer": "seed"}}))
 
-				deleter, err := engine.BeginTransaction()
+				deleter, err := engine.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = deleter.Rollback() })
 				switch target {
 				case "node":
-					require.NoError(t, deleter.DeleteEdge(edgeID))
-					require.NoError(t, deleter.DeleteGraphNode(nodeID, CascadeEdges))
+					require.NoError(t, deleter.DeleteEdge(t.Context(), edgeID))
+					require.NoError(t, deleter.DeleteGraphNode(t.Context(), nodeID, CascadeEdges))
 				case "connected_node":
-					require.NoError(t, deleter.DeleteGraphNode(nodeID, RejectConnected))
-					require.NoError(t, deleter.DeleteEdge(edgeID))
+					require.NoError(t, deleter.DeleteGraphNode(t.Context(), nodeID, RejectConnected))
+					require.NoError(t, deleter.DeleteEdge(t.Context(), edgeID))
 				case "relationship":
-					require.NoError(t, deleter.DeleteEdge(edgeID))
+					require.NoError(t, deleter.DeleteEdge(t.Context(), edgeID))
 				}
 				require.NoError(t, deleter.SetMetadata(map[string]interface{}{"validation_publication_control": true}))
 				barrier.target = deleter.ID
@@ -66,19 +66,19 @@ func TestTransactionDeletePreservesPostValidationPeerWrite(t *testing.T) {
 					t.Fatal("delete did not reach the post-validation barrier")
 				}
 
-				peer, err := engine.BeginTransaction()
+				peer, err := engine.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = peer.Rollback() })
 				if target == "relationship" {
-					edge, err := peer.GetEdge(edgeID)
+					edge, err := peer.GetEdge(t.Context(), edgeID)
 					require.NoError(t, err)
 					edge.Properties["writer"] = "peer"
-					require.NoError(t, peer.UpdateEdge(EdgeUpdateRequest{After: edge}))
+					require.NoError(t, peer.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge}))
 				} else {
-					node, err := peer.GetNode(nodeID)
+					node, err := peer.GetNode(t.Context(), nodeID)
 					require.NoError(t, err)
 					node.Properties["writer"] = "peer"
-					require.NoError(t, peer.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
+					require.NoError(t, peer.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 				}
 				require.NoError(t, peer.Commit())
 				unblock()
@@ -90,11 +90,11 @@ func TestTransactionDeletePreservesPostValidationPeerWrite(t *testing.T) {
 					t.Fatal("delete did not finish")
 				}
 				if target == "relationship" {
-					edge, err := engine.GetEdge(edgeID)
+					edge, err := engine.GetEdge(t.Context(), edgeID)
 					require.NoError(t, err)
 					require.Equal(t, "peer", edge.Properties["writer"])
 				} else {
-					node, err := engine.GetNode(nodeID)
+					node, err := engine.GetNode(t.Context(), nodeID)
 					require.NoError(t, err)
 					require.Equal(t, "peer", node.Properties["writer"])
 				}
@@ -113,31 +113,31 @@ func TestTransactionWriteFailsWhenConflictTrackingReadFails(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = engine.Close() })
 			nodeID, otherID, edgeID := NodeID("test:tracking"), NodeID("test:tracking-other"), EdgeID("test:tracking-edge")
-			_, err = engine.CreateNode(&Node{ID: nodeID, Properties: map[string]interface{}{"v": 1}})
+			_, err = engine.CreateNode(t.Context(), &Node{ID: nodeID, Properties: map[string]interface{}{"v": 1}})
 			require.NoError(t, err)
-			_, err = engine.CreateNode(&Node{ID: otherID})
+			_, err = engine.CreateNode(t.Context(), &Node{ID: otherID})
 			require.NoError(t, err)
-			require.NoError(t, engine.CreateEdge(&Edge{ID: edgeID, StartNode: nodeID, EndNode: otherID, Type: "R", Properties: map[string]interface{}{"v": 1}}))
+			require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: edgeID, StartNode: nodeID, EndNode: otherID, Type: "R", Properties: map[string]interface{}{"v": 1}}))
 
-			tx, err := engine.BeginTransaction()
+			tx, err := engine.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
-			node, err := tx.GetNode(nodeID)
+			node, err := tx.GetNode(t.Context(), nodeID)
 			require.NoError(t, err)
-			edge, err := tx.GetEdge(edgeID)
+			edge, err := tx.GetEdge(t.Context(), edgeID)
 			require.NoError(t, err)
 			tx.badgerTx.Discard()
 			switch op {
 			case "update node":
-				err = tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits})
+				err = tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node, Policy: ClientNodeEdits})
 			case "delete node":
-				err = tx.DeleteGraphNode(nodeID, CascadeEdges)
+				err = tx.DeleteGraphNode(t.Context(), nodeID, CascadeEdges)
 			case "delete connected node":
-				err = tx.DeleteGraphNode(nodeID, RejectConnected)
+				err = tx.DeleteGraphNode(t.Context(), nodeID, RejectConnected)
 			case "update relationship":
-				err = tx.UpdateEdge(EdgeUpdateRequest{After: edge})
+				err = tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge})
 			case "delete relationship":
-				err = tx.DeleteEdge(edgeID)
+				err = tx.DeleteEdge(t.Context(), edgeID)
 			}
 			require.ErrorIs(t, err, badger.ErrDiscardedTxn)
 			require.ErrorContains(t, err, "write conflict")

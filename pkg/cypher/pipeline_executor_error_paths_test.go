@@ -27,11 +27,11 @@ type createErrEngine struct {
 	err error
 }
 
-func (e *createErrEngine) CreateNode(node *storage.Node) (storage.NodeID, error) {
+func (e *createErrEngine) CreateNode(ctx context.Context, node *storage.Node) (storage.NodeID, error) {
 	return "", e.err
 }
 
-func (e *createErrEngine) BulkCreateNodes(nodes []*storage.Node) error {
+func (e *createErrEngine) BulkCreateNodes(ctx context.Context, nodes []*storage.Node) error {
 	return e.err
 }
 

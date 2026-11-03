@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"errors"
@@ -18,17 +19,17 @@ func TestCheckNodeCreateConflict_ConcurrentWriteAfterReadTS(t *testing.T) {
 	t.Cleanup(func() { _ = engine.Close() })
 
 	// tx1 is started BEFORE tx2 commits, so tx1.readTS < the new head.
-	tx1, err := engine.BeginTransaction()
+	tx1, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx1.Rollback() })
 
 	// tx2 (engine direct write here for simplicity) creates the node.
-	_, err = engine.CreateNode(&Node{ID: "test:contended", Labels: []string{"L"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:contended", Labels: []string{"L"}})
 	require.NoError(t, err)
 
 	// tx1 staging the same ID must fail at validateAllConstraints time —
 	// the node now exists with a head version newer than tx1.readTS.
-	_, err = tx1.CreateNode(&Node{ID: "test:contended", Labels: []string{"L"}})
+	_, err = tx1.CreateNode(t.Context(), &Node{ID: "test:contended", Labels: []string{"L"}})
 	if err == nil {
 		err = tx1.Commit()
 	}
@@ -45,19 +46,19 @@ func TestCheckEdgeCreateConflict_ConcurrentWriteAfterReadTS(t *testing.T) {
 	t.Cleanup(func() { _ = engine.Close() })
 
 	for _, id := range []NodeID{"test:a", "test:b"} {
-		_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"L"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"L"}})
 		require.NoError(t, err)
 	}
 
-	tx1, err := engine.BeginTransaction()
+	tx1, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx1.Rollback() })
 
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL",
 	}))
 
-	err = tx1.CreateEdge(&Edge{
+	err = tx1.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL",
 	})
 	if err == nil {
@@ -77,20 +78,20 @@ func TestGetCommittedEdgeLocked_SnapshotRead(t *testing.T) {
 	t.Cleanup(func() { _ = engine.Close() })
 
 	for _, id := range []NodeID{"test:a", "test:b"} {
-		_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"L"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"L"}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL",
 		Properties: map[string]any{"k": "v"},
 	}))
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
 	// Read via the public GetEdge — internally calls getCommittedEdgeLocked.
-	got, err := tx.GetEdge("test:e1")
+	got, err := tx.GetEdge(t.Context(), "test:e1")
 	require.NoError(t, err)
 	require.Equal(t, EdgeID("test:e1"), got.ID)
 	require.Equal(t, "REL", got.Type)
@@ -103,18 +104,18 @@ func TestCheckEdgeEndpointConflicts_TombstonedEndpointBranches(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = engine.Close() })
 
-		_, err = engine.CreateNode(&Node{ID: "test:start", Labels: []string{"L"}})
+		_, err = engine.CreateNode(t.Context(), &Node{ID: "test:start", Labels: []string{"L"}})
 		require.NoError(t, err)
-		_, err = engine.CreateNode(&Node{ID: "test:target", Labels: []string{"L"}})
+		_, err = engine.CreateNode(t.Context(), &Node{ID: "test:target", Labels: []string{"L"}})
 		require.NoError(t, err)
 
-		tx, err := engine.BeginTransaction()
+		tx, err := engine.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = tx.Rollback() })
 
-		require.NoError(t, engine.DeleteNode("test:target"))
+		require.NoError(t, engine.DeleteNode(t.Context(), "test:target"))
 
-		err = tx.checkEdgeEndpointConflicts(&Edge{ID: "test:e1", StartNode: "test:start", EndNode: "test:target", Type: "REL"})
+		err = tx.checkEdgeEndpointConflicts(context.Background(), &Edge{ID: "test:e1", StartNode: "test:start", EndNode: "test:target", Type: "REL"})
 		require.ErrorIs(t, err, ErrConflict)
 		require.Contains(t, err.Error(), "deleted after transaction start")
 	})
@@ -124,14 +125,14 @@ func TestCheckEdgeEndpointConflicts_TombstonedEndpointBranches(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = engine.Close() })
 
-		_, err = engine.CreateNode(&Node{ID: "test:start", Labels: []string{"L"}})
+		_, err = engine.CreateNode(t.Context(), &Node{ID: "test:start", Labels: []string{"L"}})
 		require.NoError(t, err)
 
-		tx, err := engine.BeginTransaction()
+		tx, err := engine.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = tx.Rollback() })
 
-		err = tx.checkEdgeEndpointConflicts(&Edge{ID: "test:e2", StartNode: "test:start", EndNode: "test:target", Type: "REL"})
+		err = tx.checkEdgeEndpointConflicts(context.Background(), &Edge{ID: "test:e2", StartNode: "test:start", EndNode: "test:target", Type: "REL"})
 		require.ErrorIs(t, err, ErrInvalidEdge)
 	})
 }
@@ -149,18 +150,18 @@ func TestClassifyUpdateConflictAsUniqueViolation(t *testing.T) {
 		Properties: []string{"name"},
 	}))
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
 	nodeID := NodeID("test:peer-owned")
-	_, err = engine.CreateNode(&Node{
+	_, err = engine.CreateNode(t.Context(), &Node{
 		ID:         nodeID,
 		Labels:     []string{"Person"},
 		Properties: map[string]any{"name": "Alice"},
 	})
 	require.NoError(t, err)
-	constraint := schema.uniqueConstraints["Person:name"]
+	constraint := schema.uniqueConstraints[nodePropertyKey{label: "Person", property: "name"}]
 	require.NotNil(t, constraint)
 	constraint.mu.Lock()
 	constraint.valuesCacheComplete = true
@@ -173,7 +174,7 @@ func TestClassifyUpdateConflictAsUniqueViolation(t *testing.T) {
 		Properties: map[string]any{"name": "Alice"},
 	}
 
-	err = tx.classifyUpdateConflictAsUniqueViolation(nodeID)
+	err = tx.classifyUpdateConflictAsUniqueViolation(t.Context(), nodeID)
 	require.Error(t, err)
 	var cve *ConstraintViolationError
 	require.ErrorAs(t, err, &cve)
@@ -183,8 +184,8 @@ func TestClassifyUpdateConflictAsUniqueViolation(t *testing.T) {
 	require.Contains(t, cve.Message, "claimed by concurrent commit")
 	require.ErrorIs(t, cve.Cause, ErrConflict)
 
-	schema.ApplyUniqueValue("Person", "name", "Alice", nodeID, RetiredUniqueClaim)
-	require.Nil(t, tx.classifyUpdateConflictAsUniqueViolation(nodeID))
+	schema.ApplyUniqueValue(context.Background(), "Person", "name", "Alice", nodeID, RetiredUniqueClaim)
+	require.Nil(t, tx.classifyUpdateConflictAsUniqueViolation(t.Context(), nodeID))
 }
 
 // TestTransactionEntityPolicyScenarios owns policy validation across committed
@@ -248,27 +249,27 @@ func TestTransactionEntityPolicyScenarios(t *testing.T) {
 				require.NoError(t, engine.GetSchemaForNamespace("test").AddConstraint(*tc.policy))
 			}
 			for _, node := range tc.committedNodes {
-				_, err = engine.CreateNode(node)
+				_, err = engine.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 			}
 			if tc.committedEdge != nil {
-				require.NoError(t, engine.CreateEdge(tc.committedEdge))
+				require.NoError(t, engine.CreateEdge(t.Context(), tc.committedEdge))
 			}
-			tx, err := engine.BeginTransaction()
+			tx, err := engine.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			for _, node := range tc.pendingNodes {
-				_, err = tx.CreateNode(node)
+				_, err = tx.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 			}
 			if tc.update != nil {
-				err = tx.UpdateGraphNode(NodeUpdateRequest{After: tc.update, Policy: ClientNodeEdits})
+				err = tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: tc.update, Policy: ClientNodeEdits})
 				if tc.violation == "" {
 					require.NoError(t, err)
 				}
 			}
 			if tc.pendingEdge != nil {
-				require.NoError(t, tx.CreateEdge(tc.pendingEdge))
+				require.NoError(t, tx.CreateEdge(t.Context(), tc.pendingEdge))
 			}
 			if err == nil {
 				err = tx.Commit()

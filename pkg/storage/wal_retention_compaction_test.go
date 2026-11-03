@@ -16,18 +16,28 @@ import (
 )
 
 // createdNodeIDs lists the node IDs (as the WAL records them, without the
-// database prefix) of the create_node entries readable in the WAL directory
+// database prefix) of raw and semantic create operations in the WAL directory
 // (sealed segments and the active WAL), as db.txlog reads them.
 func createdNodeIDs(t *testing.T, walDir string) []string {
 	t.Helper()
 	var ids []string
 	require.NoError(t, VisitWALEntriesAfterFromDir(walDir, 0, func(entry WALEntry) error {
-		if entry.Operation != OpCreateNode {
-			return nil
+		switch entry.Operation {
+		case OpCreateNode:
+			var data WALNodeData
+			require.NoError(t, decodeRecoveryPayload(entry.Data, &data))
+			ids = append(ids, string(data.Node.ID))
+		case OpEntityCommit:
+			var data walEntityCommitData
+			require.NoError(t, decodeRecoveryPayload(entry.Data, &data))
+			envelope, operations, err := DecodeEntityTransaction(data.Payload)
+			require.NoError(t, err)
+			for _, operation := range operations {
+				if operation.Type == OpCreateNode {
+					ids = append(ids, StripDatabasePrefix(envelope.Namespace, string(operation.Node.ID)))
+				}
+			}
 		}
-		var data WALNodeData
-		require.NoError(t, decodeRecoveryPayload(entry.Data, &data))
-		ids = append(ids, string(data.Node.ID))
 		return nil
 	}))
 	sort.Strings(ids)
@@ -49,7 +59,7 @@ func newRetentionWALEngine(t *testing.T, root string, maxAge time.Duration, maxS
 func createWALNodes(t *testing.T, walEngine *WALEngine, from, to int) {
 	t.Helper()
 	for i := from; i <= to; i++ {
-		_, err := walEngine.CreateNode(&Node{ID: NodeID(fmt.Sprintf("nornic:n%02d", i)), Labels: []string{"Doc"}})
+		_, err := walEngine.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("nornic:n%02d", i)), Labels: []string{"Doc"}})
 		require.NoError(t, err)
 	}
 }
@@ -74,9 +84,9 @@ func TestAutoCompactionHonoursWALRetention(t *testing.T) {
 		root := t.TempDir()
 		walEngine, wal := newRetentionWALEngine(t, root, time.Hour, 0)
 		createWALNodes(t, walEngine, 1, 3)
-		require.NoError(t, walEngine.createSnapshotAndCompact())
+		require.NoError(t, walEngine.createSnapshotAndCompact(walEngine.work.Context()))
 		createWALNodes(t, walEngine, 4, 5)
-		require.NoError(t, walEngine.createSnapshotAndCompact())
+		require.NoError(t, walEngine.createSnapshotAndCompact(walEngine.work.Context()))
 		createWALNodes(t, walEngine, 6, 6)
 		require.Equal(t, nodeIDRange(1, 6), createdNodeIDs(t, wal.config.Dir))
 
@@ -95,11 +105,11 @@ func TestAutoCompactionHonoursWALRetention(t *testing.T) {
 		root := t.TempDir()
 		walEngine, wal := newRetentionWALEngine(t, root, 0, 1)
 		createWALNodes(t, walEngine, 1, 2)
-		require.NoError(t, walEngine.createSnapshotAndCompact())
+		require.NoError(t, walEngine.createSnapshotAndCompact(walEngine.work.Context()))
 		createWALNodes(t, walEngine, 3, 4)
-		require.NoError(t, walEngine.createSnapshotAndCompact())
+		require.NoError(t, walEngine.createSnapshotAndCompact(walEngine.work.Context()))
 		createWALNodes(t, walEngine, 5, 5)
-		require.NoError(t, walEngine.createSnapshotAndCompact())
+		require.NoError(t, walEngine.createSnapshotAndCompact(walEngine.work.Context()))
 		// The first two compactions' segments are covered by the last
 		// snapshot; one is kept, the newest.
 		require.Equal(t, nodeIDRange(5, 5), createdNodeIDs(t, wal.config.Dir))
@@ -130,7 +140,7 @@ func TestAutoCompactionHonoursWALRetention(t *testing.T) {
 		root := t.TempDir()
 		walEngine, wal := newRetentionWALEngine(t, root, 0, 0)
 		createWALNodes(t, walEngine, 1, 3)
-		require.NoError(t, walEngine.createSnapshotAndCompact())
+		require.NoError(t, walEngine.createSnapshotAndCompact(walEngine.work.Context()))
 		createWALNodes(t, walEngine, 4, 4)
 		require.Equal(t, nodeIDRange(4, 4), createdNodeIDs(t, wal.config.Dir))
 	})

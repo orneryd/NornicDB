@@ -151,7 +151,7 @@ func requireRuntimeReaderGrammarDiagnostic(t *testing.T, query string, err error
 	}
 	grammarErr := cypherantlr.ValidateContext(t.Context(), source, cyphertext.RawSource)
 	require.Error(t, grammarErr)
-	_, want := (resultRestoration{source: rewrite}).restore(nil, syntaxAdmissionError(t.Context(), source, AcceptedSource, grammarErr), nil)
+	_, want := (resultRestoration{source: rewrite}).restore(t.Context(), nil, syntaxAdmissionError(t.Context(), source, AcceptedSource, grammarErr), nil)
 	require.EqualError(t, err, want.Error())
 }
 

@@ -53,7 +53,7 @@ func TestListInputUnsignedBoundaries(t *testing.T) {
 				list.Index(0).Set(reflect.ValueOf(input.Value))
 				boxed := []interface{}{input.Value}
 				if !disabled {
-					_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(input.Name), Labels: []string{"UnsignedInput"}, Properties: map[string]interface{}{"name": input.Name, "v": input.Value, "xs": boxed}})
+					_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(input.Name), Labels: []string{"UnsignedInput"}, Properties: map[string]interface{}{"name": input.Name, "v": input.Value, "xs": boxed}})
 					require.NoError(t, err)
 				}
 				params := map[string]interface{}{"n": input.Value, "xs": list.Interface(), "boxed": boxed, "name": input.Name}

@@ -30,15 +30,15 @@ func TestExistsSubqueryEvaluationOwnerLegacyAdapter(t *testing.T) {
 func TestExistsSubqueryEvaluationOwnerCompiledContextAndErrors(t *testing.T) {
 	e := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "exists_compiled"))
 	expression := "COLLECT { RETURN 1 / 0 AS invalid }"
-	root, _ := (&rowValueCompiler{}).compile(expression)
+	root, _ := (&rowValueCompiler{}).compile(t.Context(), expression)
 	row := map[string]any{}
-	want, wantOK, wantErr := e.evaluateRowValueText(expression, row)
-	value, resolved, err := root.eval(e, row, nil)
+	want, wantOK, wantErr := e.evaluateRowValueText(t.Context(), expression, row)
+	value, resolved, err := root.eval(t.Context(), e, row, nil)
 	require.Equal(t, want, value)
 	require.Equal(t, wantOK, resolved)
 	require.Equal(t, wantErr, err)
 	row[rowStatementContextKey] = withExpressionFailureSlot(context.Background())
-	_, _, err = root.eval(e, row, nil)
+	_, _, err = root.eval(t.Context(), e, row, nil)
 	require.Error(t, err, "an inner arithmetic error must reach the caller")
 }
 

@@ -29,7 +29,7 @@ func openPublicationBenchDB(b *testing.B, flushNodes int) (*DB, *dbSearchService
 	require.NotNil(b, entry)
 	entry.pendingFlushDelay = time.Millisecond
 	for i := range flushNodes {
-		_, err := db.storage.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("bench-%d", i)), Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "seed text"}})
+		_, err := db.storage.CreateNode(b.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("bench-%d", i)), Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "seed text"}})
 		require.NoError(b, err)
 	}
 	waitFlushIdle(b, entry)
@@ -61,7 +61,7 @@ func BenchmarkDeferredSearchFlushThroughput(b *testing.B) {
 	for n := range b.N {
 		for i := range nodes {
 			node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("bench-%d", i)), Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": fmt.Sprintf("update %d text", n)}}
-			require.NoError(b, db.storage.UpdateNode(storage.NodeUpdateRequest{After: node}))
+			require.NoError(b, db.storage.UpdateNode(b.Context(), storage.NodeUpdateRequest{After: node}))
 		}
 		waitFlushIdle(b, entry)
 	}

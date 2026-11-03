@@ -83,14 +83,14 @@ func (e *StorageExecutor) evaluatePipelinePercentile(ctx context.Context, rows [
 	return values[lower].numeric + (values[upper].numeric-values[lower].numeric)*fraction, true
 }
 
-func (e *StorageExecutor) validatePercentileCalls(expression string, row pipelineRow) error {
+func (e *StorageExecutor) validatePercentileCalls(ctx context.Context, expression string, row pipelineRow) error {
 	for _, function := range []string{"percentilecont", "percentiledisc"} {
 		for _, argumentText := range namedFunctionArguments(expression, function) {
 			arguments := e.splitFunctionArgs(argumentText)
 			if len(arguments) != 2 {
 				continue
 			}
-			value, resolved, err := e.evaluateRowValue(strings.TrimSpace(arguments[1]), row)
+			value, resolved, err := e.evaluateRowValue(ctx, strings.TrimSpace(arguments[1]), row)
 			if err != nil {
 				return err
 			}
@@ -121,7 +121,7 @@ func (e *StorageExecutor) validatePipelinePercentileArguments(ctx context.Contex
 		rows = []pipelineRow{{}}
 	}
 	for _, expression := range projectionExpressions(ctx, clause, keyword) {
-		if err := e.validatePercentileCalls(expression, rows[0]); err != nil {
+		if err := e.validatePercentileCalls(ctx, expression, rows[0]); err != nil {
 			return err
 		}
 	}

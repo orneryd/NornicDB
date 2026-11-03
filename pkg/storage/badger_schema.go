@@ -60,7 +60,9 @@ func (b *BadgerEngine) loadPersistedSchemas() error {
 			}
 
 			sm := NewSchemaManager()
-			if err := sm.ReplaceFromDefinition(&def); err != nil {
+			// Opening a namespace schema is startup work that owns its own
+			// lifetime; it has no caller context to cancel.
+			if err := sm.ReplaceFromDefinition(context.Background(), &def); err != nil {
 				return fmt.Errorf("schema: apply %q: %w", namespace, err)
 			}
 			b.bindNamespaceSchema(namespace, sm)
@@ -137,7 +139,7 @@ func (b *BadgerEngine) persistSchemaDefinition(namespace string, def *SchemaDefi
 
 	return b.commitEngineWrite(context.Background(), func(cw *commitWriter) error {
 		cw.publishKeys = []any{namespaceWriteKey(namespace)}
-		return cw.writeOnce(func(txn *badger.Txn) error { return txn.Set(schemaKey(namespace), blob) })
+		return cw.txn.Set(schemaKey(namespace), blob)
 	})
 }
 
@@ -203,7 +205,7 @@ func (b *BadgerEngine) rebuildUniqueConstraintValues(namespace string, sm *Schem
 				return err
 			}
 
-			node, err := b.decodeNode(namespace, raw)
+			node, err := b.decodeNodeProjected(txn, namespace, raw, nil)
 			if err != nil {
 				return fmt.Errorf("schema: rebuild unique values: decode node: %w", err)
 			}
@@ -211,10 +213,12 @@ func (b *BadgerEngine) rebuildUniqueConstraintValues(namespace string, sm *Schem
 			if hasUnique {
 				for _, label := range node.Labels {
 					for propName, propValue := range node.Properties {
-						if err := sm.CheckUniqueConstraint(label, propName, propValue, node.ID); err != nil {
+						if err := sm.CheckUniqueConstraint(context.Background(), label, propName, propValue, node.ID); err != nil {
 							return fmt.Errorf("schema: rebuild unique values: namespace=%q: %w", namespace, err)
 						}
-						sm.ApplyUniqueValue(label, propName, propValue, node.ID, ValidatedUniqueClaim)
+						if err := sm.ApplyUniqueValue(context.Background(), label, propName, propValue, node.ID, ValidatedUniqueClaim); err != nil {
+							return err
+						}
 					}
 				}
 			}
@@ -226,8 +230,10 @@ func (b *BadgerEngine) rebuildUniqueConstraintValues(namespace string, sm *Schem
 							continue
 						}
 						// IndexNode files arity-1 under values and arity-N
-						// under full/prefix, so one pass fills every index.
-						if err := idx.IndexNode(node.ID, node.Properties); err != nil {
+						// under full/prefix, so one pass fills every index. A
+						// rebuild carries no request: its keys have the rebuild's
+						// own lifetime.
+						if err := idx.IndexNode(context.Background(), node.ID, node.Properties); err != nil {
 							return fmt.Errorf("schema: rebuild composite indexes: namespace=%q index=%q: %w", namespace, idx.Name, err)
 						}
 					}

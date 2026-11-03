@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,15 +27,17 @@ type hiddenDeleteOutcome struct {
 	relationshipsCreated int
 	propertiesSet        int
 	code                 string
+	message              string
 }
 
 // hiddenDeleteServer is a server over a database directory that survives a
 // restart, run through Bolt or HTTP.
 type hiddenDeleteServer struct {
-	db     *nornicdb.DB
-	server *Server
-	run    func(t *testing.T, statement string) hiddenDeleteOutcome
-	close  func()
+	db           *nornicdb.DB
+	server       *Server
+	run          func(t *testing.T, statement string) hiddenDeleteOutcome
+	close        func()
+	beforeCommit func()
 }
 
 func openHiddenDeleteServer(t *testing.T, dir string, writeBehind bool, route string) *hiddenDeleteServer {
@@ -52,7 +55,7 @@ func openHiddenDeleteServer(t *testing.T, dir string, writeBehind bool, route st
 		JWTSecret:       []byte("test-secret-key-for-testing-only-32b"),
 	}, storage.NewNamespacedEngine(db.GetBaseStorageForManager(), "system"))
 	require.NoError(t, err)
-	if _, err := authenticator.CreateUser("admin", "password123", []auth.Role{auth.RoleAdmin}); err != nil {
+	if _, err := authenticator.CreateUser(context.Background(), "admin", "password123", []auth.Role{auth.RoleAdmin}); err != nil {
 		require.ErrorIs(t, err, auth.ErrUserExists)
 	}
 	serverConfig := DefaultConfig()
@@ -76,14 +79,26 @@ func openHiddenDeleteServer(t *testing.T, dir string, writeBehind bool, route st
 				require.NotEmpty(t, transaction.Commit)
 				endpoint = transaction.Commit
 			}
-			recorder := makeRequest(t, server, http.MethodPost, endpoint, map[string]any{
+			executionEndpoint := endpoint
+			if route == "http-explicit" && h.beforeCommit != nil {
+				executionEndpoint = strings.TrimSuffix(endpoint, "/commit")
+			}
+			recorder := makeRequest(t, server, http.MethodPost, executionEndpoint, map[string]any{
 				"statements": []map[string]any{{"statement": statement, "includeStats": true}},
 			}, token)
 			require.Contains(t, []int{http.StatusOK, http.StatusAccepted}, recorder.Code, recorder.Body.String())
 			var response TransactionResponse
 			require.NoError(t, json.NewDecoder(recorder.Body).Decode(&response))
+			if route == "http-explicit" && h.beforeCommit != nil && len(response.Errors) == 0 {
+				h.beforeCommit()
+				committed := makeRequest(t, server, http.MethodPost, endpoint, map[string]any{"statements": []any{}}, token)
+				require.Equal(t, http.StatusOK, committed.Code, committed.Body.String())
+				var terminal TransactionResponse
+				require.NoError(t, json.NewDecoder(committed.Body).Decode(&terminal))
+				response.Errors = terminal.Errors
+			}
 			if len(response.Errors) > 0 {
-				return hiddenDeleteOutcome{code: response.Errors[0].Code}
+				return hiddenDeleteOutcome{code: response.Errors[0].Code, message: response.Errors[0].Message}
 			}
 			var outcome hiddenDeleteOutcome
 			for _, row := range response.Results[0].Data {
@@ -143,12 +158,16 @@ func openHiddenDeleteServer(t *testing.T, dir string, writeBehind bool, route st
 				}
 			}
 			if err == nil && explicit != nil {
+				if h.beforeCommit != nil {
+					h.beforeCommit()
+				}
 				err = explicit.Commit(ctx)
 			}
 			if err != nil {
 				var status *neo4jdriver.Neo4jError
 				require.True(t, errors.As(err, &status), "%s: %v", statement, err)
 				outcome.code = status.Code
+				outcome.message = status.Msg
 			}
 			return outcome
 		}
@@ -182,7 +201,7 @@ func (h *hiddenDeleteServer) flush(t *testing.T) {
 	engine := h.db.GetBaseStorageForManager()
 	for {
 		if badger, ok := engine.(*storage.BadgerEngine); ok {
-			require.NoError(t, badger.FlushWriteBehind(nil))
+			require.NoError(t, badger.FlushWriteBehind(context.Background()))
 			return
 		}
 		wrapper, ok := engine.(storage.EngineUnwrapper)
@@ -294,13 +313,13 @@ func TestSuppressedRelationshipReMergeKeepsCounts(t *testing.T) {
 						physicalID = stored[0].ID
 					}
 					assert.Equal(t, physicalID, stored[0].ID)
-					for _, read := range []func() (int64, error){
+					for _, read := range []func(context.Context) (int64, error){
 						store.EdgeCount,
-						func() (int64, error) { return store.EdgeCountByType("INGEST") },
-						func() (int64, error) { return store.EdgeCountByStartLabel("Source", "INGEST") },
-						func() (int64, error) { return store.EdgeCountByEndLabel("Target", "INGEST") },
+						func(ctx context.Context) (int64, error) { return store.EdgeCountByType(ctx, "INGEST") },
+						func(ctx context.Context) (int64, error) { return store.EdgeCountByStartLabel(ctx, "Source", "INGEST") },
+						func(ctx context.Context) (int64, error) { return store.EdgeCountByEndLabel(ctx, "Target", "INGEST") },
 					} {
-						count, err := read()
+						count, err := read(t.Context())
 						require.NoError(t, err)
 						assert.EqualValues(t, 1, count, "stored counters must match the single physical record")
 					}

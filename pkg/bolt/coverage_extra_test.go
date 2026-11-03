@@ -94,7 +94,7 @@ func newBoltCoverageAuthenticator(t *testing.T) *auth.Authenticator {
 	authenticator, err := auth.NewAuthenticator(cfg, fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)))
 	require.NoError(t, err)
 
-	_, err = authenticator.CreateUser("tester", "secret-pass", []auth.Role{auth.RoleViewer})
+	_, err = authenticator.CreateUser(context.Background(), "tester", "secret-pass", []auth.Role{auth.RoleViewer})
 	require.NoError(t, err)
 
 	return authenticator
@@ -261,10 +261,10 @@ func TestBoltCoverage_SendRecordsBatched(t *testing.T) {
 	conn := &mockConn{}
 	session := newTestSession(conn, &mockExecutor{})
 
-	require.NoError(t, session.sendRecordsBatched(nil, "nornic"))
+	require.NoError(t, session.sendRecordsBatched(t.Context(), nil, "nornic"))
 
 	rows := [][]any{{"alpha", int64(1)}, {"beta", int64(2)}}
-	require.NoError(t, session.sendRecordsBatched(rows, "nornic"))
+	require.NoError(t, session.sendRecordsBatched(t.Context(), rows, "nornic"))
 	assert.Greater(t, session.writer.Buffered(), 0)
 	require.NoError(t, session.writer.Flush())
 	assert.NotEmpty(t, conn.writeData)
@@ -758,7 +758,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 		require.NoError(t, err)
 
 		t.Run("parse hello auth edge cases", func(t *testing.T) {
-			session := &Session{}
+			session := &Session{server: &Server{}}
 			params, err := session.parseHelloAuth(nil)
 			require.NoError(t, err)
 			assert.Empty(t, params["scheme"])
@@ -984,7 +984,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 		assert.Equal(t, int64(1), s.lastTxSequence)
 		s.server.txSequence = -1
 		assert.Equal(t, formatBookmark(0), s.currentBookmark())
-		assert.Equal(t, formatBookmark(0), (&Session{}).currentBookmark())
+		assert.Equal(t, formatBookmark(0), (&Session{server: &Server{}}).currentBookmark())
 		assert.Panics(t, func() { (&Session{}).generateBookmark() })
 	})
 
@@ -1075,7 +1075,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 			expectCode  string
 		}{
 			{name: "success", rollbackErr: nil, expectCode: ""},
-			{name: "failure", rollbackErr: io.ErrClosedPipe, expectCode: "Neo.ClientError.Transaction.TransactionRollbackFailed"},
+			{name: "failure", rollbackErr: io.ErrClosedPipe, expectCode: "Neo.DatabaseError.Transaction.TransactionRollbackFailed"},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				serverConn, clientConn := net.Pipe()
@@ -1136,7 +1136,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 	})
 
 	t.Run("database executor lookup and adapter execute", func(t *testing.T) {
-		session := &Session{}
+		session := &Session{server: &Server{}}
 		_, err := session.getExecutorForDatabase("graph")
 		require.ErrorContains(t, err, "database manager not available")
 

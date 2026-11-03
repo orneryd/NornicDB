@@ -3,10 +3,11 @@ package contract
 import (
 	"context"
 	"fmt"
+	"testing"
+
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 // The producer's widened prefilter must not consume final-qualified capacity.
@@ -35,7 +36,7 @@ func RunExactThresholdSlack(t *testing.T, factory func(*testing.T, int, Policy) 
 					v[1] = tc.other
 				}
 				node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("slack-%02d", i)), ChunkEmbeddings: [][]float32{v}}
-				_, err := f.Engine.CreateNode(node)
+				_, err := f.Engine.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 				require.NoError(t, f.Service.IndexNode(node))
 			}

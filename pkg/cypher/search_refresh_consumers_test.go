@@ -46,8 +46,8 @@ func newConsumerObservationBarrier(inner storage.Engine, observed func(*storage.
 	return &consumerObservationBarrier{Engine: inner, observed: observed, PauseGate: runtimeFixtureOwner.NewPauseGate()}
 }
 
-func (b *consumerObservationBarrier) GetNode(id storage.NodeID) (*storage.Node, error) {
-	node, err := b.Engine.GetNode(id)
+func (b *consumerObservationBarrier) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
+	node, err := b.Engine.GetNode(ctx, id)
 	if b.Armed.Load() && b.observed(node, err) {
 		b.Pause(b.Armed, b.Entered)
 	}
@@ -60,8 +60,8 @@ func (b *consumerObservationBarrier) GetNode(id storage.NodeID) (*storage.Node, 
 type consumerSuppressionBarrier struct{ *consumerObservationBarrier }
 
 // SetManualSuppression arms the barrier only when storage shows a node again.
-func (b consumerSuppressionBarrier) SetManualSuppression(kind storage.StoredEntityKind, id string, suppressed bool) error {
-	err := b.Engine.(storage.ManualSuppressionEngine).SetManualSuppression(kind, id, suppressed)
+func (b consumerSuppressionBarrier) SetManualSuppression(ctx context.Context, kind storage.StoredEntityKind, id string, suppressed bool) error {
+	err := b.Engine.(storage.ManualSuppressionEngine).SetManualSuppression(ctx, kind, id, suppressed)
 	if err == nil && kind == storage.StoredEntityNodeKind && !suppressed {
 		b.Armed.Store(true)
 	}
@@ -86,15 +86,15 @@ func consumerHits(t *testing.T, svc *search.Service, word string) int {
 }
 
 // newConsumerVectorStore stores one indexed node. The search service reads
-// through the returned barrier, as does an executor built on it: the barrier
-// pauses whichever read decides the older statement's index change.
+// through the returned barrier: the barrier pauses whichever refresh read
+// decides the older statement's index change.
 func newConsumerVectorStore(t *testing.T, observed func(*storage.Node, error) bool) (storage.Engine, *consumerObservationBarrier, *search.Service) {
 	t.Helper()
 	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")
 	node := &storage.Node{ID: "source", Labels: []string{"Doc"}, Properties: map[string]any{"content": "obsoleteword"}, ChunkEmbeddings: [][]float32{{1, 0}}}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	barrier := newConsumerObservationBarrier(store, observed)
 	t.Cleanup(barrier.ReleaseWrites)
@@ -121,7 +121,7 @@ func TestCypherDelayedSetCannotOverrideNewerWrite(t *testing.T) {
 			olderSet: "MATCH (n:Doc) SET n.content = 'currentword'",
 			newer:    "MATCH (n:Doc) DETACH DELETE n",
 			verify: func(t *testing.T, store storage.Engine, svc *search.Service) {
-				_, err := store.GetNode("source")
+				_, err := store.GetNode(t.Context(), "source")
 				require.ErrorIs(t, err, storage.ErrNotFound)
 				require.Zero(t, svc.EmbeddingCount(), "an older committed read resurrected a deleted vector")
 			},
@@ -132,7 +132,7 @@ func TestCypherDelayedSetCannotOverrideNewerWrite(t *testing.T) {
 			olderSet: "MATCH (n:Doc) SET n.content = 'olderword'",
 			newer:    "MATCH (n:Doc) SET n.content = 'newerword'",
 			verify: func(t *testing.T, store storage.Engine, svc *search.Service) {
-				stored, err := store.GetNode("source")
+				stored, err := store.GetNode(t.Context(), "source")
 				require.NoError(t, err)
 				require.Equal(t, "newerword", stored.Properties["content"])
 				require.Equal(t, 1, consumerHits(t, svc, "newerword"), "the stored content is not searchable")
@@ -143,7 +143,11 @@ func TestCypherDelayedSetCannotOverrideNewerWrite(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			store, barrier, svc := newConsumerVectorStore(t, consumerContent(tc.observed))
-			older := NewStorageExecutor(barrier)
+			// The older statement runs its supported atomic write path: the
+			// engine's native transaction owns its reads and its write. The
+			// barrier stays the search service's engine, so the paused read is
+			// still the older statement's own post-commit refresh read.
+			older := NewStorageExecutor(store)
 			older.SetSearchService(svc)
 			newer := NewStorageExecutor(store)
 			newer.SetSearchService(svc)
@@ -168,7 +172,7 @@ func TestCypherDelayedSetCannotOverrideNewerWrite(t *testing.T) {
 func TestCypherVectorOrphanKeepsNewerIndex(t *testing.T) {
 	ctx := context.Background()
 	store, barrier, svc := newConsumerVectorStore(t, func(_ *storage.Node, err error) bool { return errors.Is(err, storage.ErrNotFound) })
-	require.NoError(t, store.DeleteNode("source"))
+	require.NoError(t, store.DeleteNode(t.Context(), "source"))
 	exec := NewStorageExecutor(barrier)
 	exec.SetSearchService(svc)
 	barrier.Armed.Store(true)
@@ -179,7 +183,7 @@ func TestCypherVectorOrphanKeepsNewerIndex(t *testing.T) {
 	}()
 	runtimeFixtureOwner.WaitForBarrier(t, barrier.Entered, 5*time.Second, barrier.ReleaseWrites, "vector query did not reach its observation")
 	newer := &storage.Node{ID: "source", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{1, 0}}}
-	_, err := store.CreateNode(newer)
+	_, err := store.CreateNode(t.Context(), newer)
 	require.NoError(t, err)
 	require.NoError(t, svc.IndexNode(newer))
 	barrier.ReleaseWrites()

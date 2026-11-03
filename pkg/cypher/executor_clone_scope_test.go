@@ -70,7 +70,7 @@ func TestStatementModeBindingUsesIssuedStorageMembership(t *testing.T) {
 // owner's caches, while sharing the controller's runtime crosses databases.
 func TestFabricParticipantFragmentViewReusesIsolatedRuntime(t *testing.T) {
 	f := newFabricAtomicityFixture(t)
-	e := f.compositeSession(t)
+	e := newCompositeTestExecutor(t, f.mgr, "comp", f.exec.dbManager)
 	ctx := context.Background()
 	_, err := e.Execute(ctx, "BEGIN", nil)
 	require.NoError(t, err)

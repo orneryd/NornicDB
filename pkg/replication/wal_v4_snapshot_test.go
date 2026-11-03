@@ -33,11 +33,11 @@ func TestV4ReplicationSnapshotConversionRestoresHistoricalData(t *testing.T) {
 
 	baseline := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	for _, item := range want.Nodes {
-		_, err := baseline.CreateNode(item)
+		_, err := baseline.CreateNode(t.Context(), item)
 		require.NoError(t, err)
 	}
 	for _, item := range want.Edges {
-		require.NoError(t, baseline.CreateEdge(item))
+		require.NoError(t, baseline.CreateEdge(t.Context(), item))
 	}
 	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	adapter, err := NewStorageAdapterWithWAL(engine, t.TempDir())
@@ -47,15 +47,15 @@ func TestV4ReplicationSnapshotConversionRestoresHistoricalData(t *testing.T) {
 	position, err := adapter.GetWALPosition()
 	require.NoError(t, err)
 	require.Equal(t, uint64(42), position)
-	node, err := engine.GetNode(want.Nodes[0].ID)
+	node, err := engine.GetNode(t.Context(), want.Nodes[0].ID)
 	require.NoError(t, err)
-	wantNode, err := baseline.GetNode(want.Nodes[0].ID)
+	wantNode, err := baseline.GetNode(t.Context(), want.Nodes[0].ID)
 	require.NoError(t, err)
 	// Both engines apply their ordinary stored-value normalization after the
 	// exact historical snapshot has been decoded above.
 	require.Equal(t, wantNode.Properties, node.Properties)
 	require.Equal(t, wantNode.NamedEmbeddings, node.NamedEmbeddings)
-	edge, err := engine.GetEdge(want.Edges[0].ID)
+	edge, err := engine.GetEdge(t.Context(), want.Edges[0].ID)
 	require.NoError(t, err)
 	require.Equal(t, want.Edges[0].Properties, edge.Properties)
 	require.Equal(t, want.Edges[0].VisibilitySuppressed, edge.VisibilitySuppressed)

@@ -23,7 +23,7 @@ func TestSearchStreamDeliveryHTTPFlush(t *testing.T) {
 	store, err := s.dbManager.GetStorage(database)
 	require.NoError(t, err)
 	for _, id := range []storage.NodeID{"a", "b", "c"} {
-		_, err = store.CreateNode(&storage.Node{ID: id})
+		_, err = store.CreateNode(t.Context(), &storage.Node{ID: id})
 		require.NoError(t, err)
 	}
 	request := httptest.NewRequest(http.MethodPost, "/nornicdb/search", strings.NewReader(`{"mode":"id","n":1}`))
@@ -46,7 +46,7 @@ func TestSearchStreamDeliveryGraphQLHiddenPage(t *testing.T) {
 	store, err := s.dbManager.GetStorage(database)
 	require.NoError(t, err)
 	for _, id := range []storage.NodeID{"a", "b"} {
-		_, err = store.CreateNode(&storage.Node{ID: id})
+		_, err = store.CreateNode(t.Context(), &storage.Node{ID: id})
 		require.NoError(t, err)
 	}
 	for i := 0; i < 65; i++ {

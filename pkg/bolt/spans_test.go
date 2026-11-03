@@ -29,14 +29,14 @@ func TestStartSessionSpan(t *testing.T) {
 	assert.Equal(t, "nornicdb.bolt.session", spans[0].Name())
 }
 
-func TestStartMessageSpan_NilCtx(t *testing.T) {
+func TestStartMessageSpan(t *testing.T) {
 	recorder := tracetest.NewSpanRecorder()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
 	previous := otel.GetTracerProvider()
 	t.Cleanup(func() { otel.SetTracerProvider(previous) })
 	otel.SetTracerProvider(tp)
 
-	ctx, span := startMessageSpan(nil, "run")
+	ctx, span := startMessageSpan(t.Context(), "run")
 	require.NotNil(t, ctx)
 	require.NotNil(t, span)
 	span.End()
@@ -90,11 +90,6 @@ func TestExtractTraceparent(t *testing.T) {
 
 func TestExtractTraceparent_NilMetadata(t *testing.T) {
 	ctx := extractTraceparent(context.Background(), nil)
-	assert.NotNil(t, ctx)
-}
-
-func TestExtractTraceparent_NilCtx(t *testing.T) {
-	ctx := extractTraceparent(nil, map[string]any{"nornicdb.traceparent": "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"})
 	assert.NotNil(t, ctx)
 }
 

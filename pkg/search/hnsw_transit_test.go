@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"math/rand"
@@ -122,7 +123,7 @@ func TestContinuationAfterTombstoneRunsReturnsEveryLiveDocument(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	for i := 0; i < 30; i++ {
 		node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("doc-%d", i)), ChunkEmbeddings: [][]float32{{1, float32(i) / 30}}}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, service.IndexNode(node))
 	}
@@ -133,7 +134,7 @@ func TestContinuationAfterTombstoneRunsReturnsEveryLiveDocument(t *testing.T) {
 	for _, run := range [][2]int{{5, 10}, {15, 21}} {
 		for i := run[0]; i < run[1]; i++ {
 			id := fmt.Sprintf("doc-%d", i)
-			require.NoError(t, engine.DeleteNode(storage.NodeID(id)))
+			require.NoError(t, engine.DeleteNode(t.Context(), storage.NodeID(id)))
 			require.NoError(t, service.RemoveNode(storage.NodeID(id)))
 			removed[id] = true
 		}

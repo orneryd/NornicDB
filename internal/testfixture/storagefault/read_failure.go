@@ -52,41 +52,41 @@ func (e *ReadFailureEngine) SetFailure(operation ReadOperation) { e.operation.St
 
 // GetInnerEngine preserves transaction discovery through storage decorators.
 func (e *ReadFailureEngine) GetInnerEngine() storage.Engine { return e.ReadEngine }
-func (e *ReadFailureEngine) GetStoredNode(id storage.NodeID) (*storage.Node, error) {
+func (e *ReadFailureEngine) GetStoredNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	if e.operation.Load() == NodeRead {
 		return nil, e.failure
 	}
-	return e.StoredEntityReader.GetStoredNode(id)
+	return e.StoredEntityReader.GetStoredNode(ctx, id)
 }
-func (e *ReadFailureEngine) GetStoredEdge(id storage.EdgeID) (*storage.Edge, error) {
+func (e *ReadFailureEngine) GetStoredEdge(ctx context.Context, id storage.EdgeID) (*storage.Edge, error) {
 	if e.operation.Load() == EdgeRead {
 		return nil, e.failure
 	}
-	return e.StoredEntityReader.GetStoredEdge(id)
+	return e.StoredEntityReader.GetStoredEdge(ctx, id)
 }
-func (e *ReadFailureEngine) NodeCount() (int64, error) {
+func (e *ReadFailureEngine) NodeCount(ctx context.Context) (int64, error) {
 	if e.operation.Load() == NodeCountRead {
 		return 0, e.failure
 	}
-	return e.ReadEngine.NodeCount()
+	return e.ReadEngine.NodeCount(ctx)
 }
-func (e *ReadFailureEngine) EdgeCount() (int64, error) {
+func (e *ReadFailureEngine) EdgeCount(ctx context.Context) (int64, error) {
 	if e.operation.Load() == EdgeCountRead {
 		return 0, e.failure
 	}
-	return e.ReadEngine.EdgeCount()
+	return e.ReadEngine.EdgeCount(ctx)
 }
-func (e *ReadFailureEngine) NodeCountByPrefix(prefix string) (int64, error) {
+func (e *ReadFailureEngine) NodeCountByPrefix(ctx context.Context, prefix string) (int64, error) {
 	if e.operation.Load() == NodeCountRead {
 		return 0, e.failure
 	}
-	return e.ReadEngine.NodeCountByPrefix(prefix)
+	return e.ReadEngine.NodeCountByPrefix(ctx, prefix)
 }
-func (e *ReadFailureEngine) EdgeCountByPrefix(prefix string) (int64, error) {
+func (e *ReadFailureEngine) EdgeCountByPrefix(ctx context.Context, prefix string) (int64, error) {
 	if e.operation.Load() == EdgeCountRead {
 		return 0, e.failure
 	}
-	return e.ReadEngine.EdgeCountByPrefix(prefix)
+	return e.ReadEngine.EdgeCountByPrefix(ctx, prefix)
 }
 func (e *ReadFailureEngine) StreamNodes(ctx context.Context, visit func(*storage.Node) error) error {
 	if e.operation.Load() == NodeStreamRead {

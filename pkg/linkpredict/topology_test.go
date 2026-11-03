@@ -2,8 +2,9 @@ package linkpredict
 
 import (
 	"context"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -236,7 +237,7 @@ func TestBuildGraphFromEngine(t *testing.T) {
 	}
 
 	for _, node := range nodes {
-		if _, err := engine.CreateNode(node); err != nil {
+		if _, err := engine.CreateNode(t.Context(), node); err != nil {
 			t.Fatalf("Failed to create node: %v", err)
 		}
 	}
@@ -248,7 +249,7 @@ func TestBuildGraphFromEngine(t *testing.T) {
 	}
 
 	for _, edge := range edges {
-		if err := engine.CreateEdge(edge); err != nil {
+		if err := engine.CreateEdge(t.Context(), edge); err != nil {
 			t.Fatalf("Failed to create edge: %v", err)
 		}
 	}

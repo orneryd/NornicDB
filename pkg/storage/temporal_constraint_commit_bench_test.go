@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"fmt"
@@ -31,7 +32,7 @@ func BenchmarkTemporalConstraintCreate(b *testing.B) {
 				b.Cleanup(func() { require.NoError(b, inner.Close()) })
 				engine := NewNamespacedEngine(inner, "test")
 				c := Constraint{Name: "bench_temporal", Type: ConstraintTemporal, EntityType: ConstraintEntityNode, Label: "Period", Properties: append(append([]string(nil), keyProps...), "from", "to")}
-				require.NoError(b, ValidateConstraintOnCreationForEngine(engine, c))
+				require.NoError(b, ValidateConstraintOnCreationForEngine(context.Background(), engine, c))
 				require.NoError(b, engine.GetSchema().AddConstraint(c))
 				require.NoError(b, MarkNewTemporalConstraintsForEngine(engine, engine.GetSchema(), []Constraint{c}))
 				properties := func(key, slot int) map[string]interface{} {
@@ -42,7 +43,7 @@ func BenchmarkTemporalConstraintCreate(b *testing.B) {
 					return p
 				}
 				for i := 0; i < existing; i++ {
-					_, err := engine.CreateNode(&Node{ID: NodeID(fmt.Sprintf("seed%d", i)), Labels: []string{"Period"}, Properties: properties(i, 0)})
+					_, err := engine.CreateNode(b.Context(), &Node{ID: NodeID(fmt.Sprintf("seed%d", i)), Labels: []string{"Period"}, Properties: properties(i, 0)})
 					require.NoError(b, err)
 				}
 				b.ReportAllocs()
@@ -50,7 +51,7 @@ func BenchmarkTemporalConstraintCreate(b *testing.B) {
 				for i := 0; i < b.N; i++ {
 					node := &Node{ID: NodeID(fmt.Sprintf("new%d", i)), Labels: []string{"Period"}, Properties: properties(i%existing, 1+i/existing)}
 					b.StartTimer()
-					_, err := engine.CreateNode(node)
+					_, err := engine.CreateNode(b.Context(), node)
 					b.StopTimer()
 					require.NoError(b, err)
 				}

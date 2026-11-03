@@ -12,7 +12,8 @@ func TestBoltEntityProvenance(t *testing.T) {
 		node := &storage.Node{ID: "same"}
 		node.SetRuntimeMetadata(storage.NodeRuntimeMetadata{Database: database})
 		edge := &storage.Edge{ID: "rel", Database: database, StartNode: "same", EndNode: "target", Type: "R"}
-		nodeWire := encodeRecordValueInto(nil, node, true, true, "comp")
+		nodeWire, encodeErr := encodeRecordValueInto(t.Context(), nil, node, true, true, "comp")
+		require.NoError(t, encodeErr)
 		offset := 2
 		read := func(wire []byte) interface{} {
 			value, used, err := decodePackStreamValue(wire, offset)
@@ -24,7 +25,8 @@ func TestBoltEntityProvenance(t *testing.T) {
 			read(nodeWire)
 		}
 		require.Equal(t, "4:"+database+":same", read(nodeWire))
-		edgeWire := encodeRecordValueInto(nil, edge, true, true, "comp")
+		edgeWire, encodeErr := encodeRecordValueInto(t.Context(), nil, edge, true, true, "comp")
+		require.NoError(t, encodeErr)
 		offset = 2
 		for i := 0; i < 5; i++ {
 			read(edgeWire)

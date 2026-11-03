@@ -16,7 +16,7 @@ func TestSearchStreamLifecycleProcedures(t *testing.T) {
 			t.Run(procedure+"/"+mode, func(t *testing.T) {
 				store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 				for _, id := range []storage.NodeID{"a", "b", "c"} {
-					_, err := store.CreateNode(&storage.Node{ID: id, Properties: map[string]any{"content": "library transcript"}})
+					_, err := store.CreateNode(t.Context(), &storage.Node{ID: id, Properties: map[string]any{"content": "library transcript"}})
 					require.NoError(t, err)
 				}
 				svc := search.NewService(store, search.DefaultVectorDimensions, nil)

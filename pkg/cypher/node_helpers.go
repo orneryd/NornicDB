@@ -56,11 +56,11 @@ import (
 // (readOnlyQueryNodes); otherwise it reads the full node. Code that reads
 // vectors (link prediction, vector scoring, search indexing) reads with
 // GetNode.
-func (e *StorageExecutor) getQueryNode(store storage.Engine, id storage.NodeID) (*storage.Node, error) {
+func (e *StorageExecutor) getQueryNode(ctx context.Context, store storage.Engine, id storage.NodeID) (*storage.Node, error) {
 	if reader := e.queryNodeReader(store); reader != nil {
-		return reader.GetQueryNode(id)
+		return reader.GetQueryNode(ctx, id)
 	}
-	return store.GetNode(id)
+	return store.GetNode(ctx, id)
 }
 
 // queryNodeReader is the shared read decision for point reads and MATCH scans.

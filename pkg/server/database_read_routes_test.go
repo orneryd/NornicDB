@@ -37,7 +37,7 @@ func TestDirectReadRoutesRequireDatabaseReadPrivilege(t *testing.T) {
 		require.NoError(t, server.allowlistStore.SaveRoleDatabases(ctx, access.role, []string{"nornic"}))
 		require.NoError(t, server.privilegesStore.SavePrivilege(ctx, access.role, "nornic", access.read, true))
 		require.NoError(t, server.roleEntitlementsStore.Set(ctx, access.role, []string{"read", "write"}))
-		_, err := users.CreateUser(access.role+"1", "password123", []auth.Role{auth.Role(access.role)})
+		_, err := users.CreateUser(context.Background(), access.role+"1", "password123", []auth.Role{auth.Role(access.role)})
 		require.NoError(t, err)
 		tokens[access.role] = "Bearer " + getAuthToken(t, users, access.role+"1")
 	}
@@ -73,7 +73,7 @@ func TestDatabaseInfoRequiresDatabaseAndConstituentRead(t *testing.T) {
 	for _, database := range []string{"nornic", "named", "open_part", "closed_part"} {
 		engine, err := server.dbManager.GetStorage(database)
 		require.NoError(t, err)
-		_, err = engine.CreateNode(&storage.Node{ID: storage.NodeID(database + "-node"), Labels: []string{"Doc"}})
+		_, err = engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(database + "-node"), Labels: []string{"Doc"}})
 		require.NoError(t, err)
 	}
 
@@ -89,7 +89,7 @@ func TestDatabaseInfoRequiresDatabaseAndConstituentRead(t *testing.T) {
 		require.NoError(t, server.roleStore.CreateRole(ctx, role))
 		require.NoError(t, server.allowlistStore.SaveRoleDatabases(ctx, role, databases))
 		require.NoError(t, server.roleEntitlementsStore.Set(ctx, role, []string{"read", "write"}))
-		_, err = users.CreateUser(role, "password123", []auth.Role{auth.Role(role)})
+		_, err = users.CreateUser(context.Background(), role, "password123", []auth.Role{auth.Role(role)})
 		require.NoError(t, err)
 		tokens[role] = "Bearer " + getAuthToken(t, users, role)
 	}

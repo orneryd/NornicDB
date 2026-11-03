@@ -17,10 +17,10 @@ func TestNativeCompleteFootprintWaitsBeforePublication(t *testing.T) {
 		t.Run(operation, func(t *testing.T) {
 			b := newTestEngine(t)
 			for _, id := range []NodeID{"test:a", "test:b", "test:c"} {
-				_, err := b.CreateNode(&Node{ID: id})
+				_, err := b.CreateNode(t.Context(), &Node{ID: id})
 				require.NoError(t, err)
 			}
-			require.NoError(t, b.CreateEdge(&Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"value": "seed"}}))
+			require.NoError(t, b.CreateEdge(t.Context(), &Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"value": "seed"}}))
 			heldID, isEdge := "test:e", true
 			if operation == "move" {
 				heldID, isEdge = "test:a", false
@@ -66,9 +66,9 @@ func TestNativeCompleteFootprintWaitsBeforePublication(t *testing.T) {
 			go func() {
 				defer close(joined)
 				if operation == "move" {
-					done <- b.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:e", StartNode: "test:c", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"value": "moved"}}})
+					done <- b.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "test:e", StartNode: "test:c", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"value": "moved"}}})
 				} else {
-					done <- b.DeleteNode("test:a")
+					done <- b.DeleteNode(t.Context(), "test:a")
 				}
 			}()
 			select {
@@ -84,13 +84,13 @@ func TestNativeCompleteFootprintWaitsBeforePublication(t *testing.T) {
 			default:
 			}
 			require.Zero(t, publications.Load())
-			stored, err := b.GetStoredEdge("test:e")
+			stored, err := b.GetStoredEdge(t.Context(), "test:e")
 			require.NoError(t, err)
 			require.Equal(t, NodeID("test:a"), stored.StartNode)
 			require.Equal(t, "seed", stored.Properties["value"])
 			if operation == "delete-pair" {
 				peerStarted = true
-				go func() { defer close(peerJoined); peerDone <- b.DeleteEdge("test:e") }()
+				go func() { defer close(peerJoined); peerDone <- b.DeleteEdge(t.Context(), "test:e") }()
 				select {
 				case <-secondWait:
 				case err := <-peerDone:
@@ -113,7 +113,7 @@ func TestNativeCompleteFootprintWaitsBeforePublication(t *testing.T) {
 				})
 				go func() {
 					defer close(growthJoined)
-					growthDone <- b.CreateEdge(&Edge{ID: "test:f", StartNode: "test:a", EndNode: "test:c", Type: "NEW"})
+					growthDone <- b.CreateEdge(t.Context(), &Edge{ID: "test:f", StartNode: "test:a", EndNode: "test:c", Type: "NEW"})
 				}()
 				select {
 				case err := <-growthDone:
@@ -141,21 +141,21 @@ func TestNativeCompleteFootprintWaitsBeforePublication(t *testing.T) {
 					t.Fatal("peer delete did not complete")
 				}
 			}
-			nodes, err := b.NodeCount()
+			nodes, err := b.NodeCount(t.Context())
 			require.NoError(t, err)
-			edges, err := b.EdgeCount()
+			edges, err := b.EdgeCount(t.Context())
 			require.NoError(t, err)
 			switch operation {
 			case "delete", "delete-pair":
 				require.EqualValues(t, 2, publications.Load(), "one node and one edge deletion publish once each")
 				require.EqualValues(t, 2, nodes)
 				require.Zero(t, edges)
-				_, err = b.GetStoredEdge("test:e")
+				_, err = b.GetStoredEdge(t.Context(), "test:e")
 				require.ErrorIs(t, err, ErrNotFound)
 			case "move":
 				require.EqualValues(t, 3, nodes)
 				require.EqualValues(t, 1, edges)
-				stored, err = b.GetStoredEdge("test:e")
+				stored, err = b.GetStoredEdge(t.Context(), "test:e")
 				require.NoError(t, err)
 				require.Equal(t, NodeID("test:c"), stored.StartNode)
 				require.Equal(t, "moved", stored.Properties["value"])
@@ -163,12 +163,12 @@ func TestNativeCompleteFootprintWaitsBeforePublication(t *testing.T) {
 			case "growth":
 				require.EqualValues(t, 3, nodes)
 				require.EqualValues(t, 2, edges)
-				_, err = b.GetStoredNode("test:a")
+				_, err = b.GetStoredNode(t.Context(), "test:a")
 				require.NoError(t, err)
-				stored, err = b.GetStoredEdge("test:e")
+				stored, err = b.GetStoredEdge(t.Context(), "test:e")
 				require.NoError(t, err)
 				require.Equal(t, NodeID("test:a"), stored.StartNode)
-				_, err = b.GetStoredEdge("test:f")
+				_, err = b.GetStoredEdge(t.Context(), "test:f")
 				require.NoError(t, err)
 				require.Zero(t, publications.Load())
 			}
@@ -183,17 +183,17 @@ func TestNativeCompleteFootprintWaitsBeforePublication(t *testing.T) {
 func suppressedEdgeForCleanup(t *testing.T, b *BadgerEngine) *Edge {
 	t.Helper()
 	for _, id := range []NodeID{"test:a", "test:b"} {
-		_, err := b.CreateNode(&Node{ID: id})
+		_, err := b.CreateNode(t.Context(), &Node{ID: id})
 		require.NoError(t, err)
 	}
 	edge := &Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}
-	require.NoError(t, b.CreateEdge(edge))
-	require.NoError(t, b.SetManualSuppression(StoredEntityEdgeKind, string(edge.ID), true))
+	require.NoError(t, b.CreateEdge(t.Context(), edge))
+	require.NoError(t, b.SetManualSuppression(context.Background(), StoredEntityEdgeKind, string(edge.ID), true))
 	t.Cleanup(func() { b.manualSuppressionMu.Lock(); b.suppressionEnding = false; b.manualSuppressionMu.Unlock() })
 	b.manualSuppressionMu.Lock()
 	b.suppressionEnding = true
 	b.manualSuppressionMu.Unlock()
-	require.NoError(t, b.DeleteEdge(edge.ID))
+	require.NoError(t, b.DeleteEdge(t.Context(), edge.ID))
 	return edge
 }
 
@@ -261,7 +261,7 @@ func TestNativeCompleteFootprintWaitsForSuppressionCleanup(t *testing.T) {
 		t.Fatal("suppression waiter owner was not enrolled")
 	}
 	release()
-	require.NoError(t, b.CreateEdge(edge))
+	require.NoError(t, b.CreateEdge(t.Context(), edge))
 	b.suppressionWriteMu.Lock()
 	mutexHeld = true
 	resumeOnce.Do(func() { close(resume) })
@@ -285,7 +285,7 @@ func TestNativeCompleteFootprintWaitsForSuppressionCleanup(t *testing.T) {
 	var publications atomic.Int32
 	b.OnNodeDeleted(func(NodeID) { publications.Add(1) })
 	workerStarted = true
-	go func() { defer close(joined); done <- b.DeleteNode("test:a") }()
+	go func() { defer close(joined); done <- b.DeleteNode(t.Context(), "test:a") }()
 	select {
 	case <-foreground:
 	case err := <-done:
@@ -294,7 +294,7 @@ func TestNativeCompleteFootprintWaitsForSuppressionCleanup(t *testing.T) {
 		t.Fatal("foreground did not reach cleanup authority")
 	}
 	require.Zero(t, publications.Load())
-	stored, err := b.GetStoredEdge(edge.ID)
+	stored, err := b.GetStoredEdge(t.Context(), edge.ID)
 	require.NoError(t, err)
 	require.Equal(t, edge.StartNode, stored.StartNode)
 	b.suppressionWriteMu.Unlock()
@@ -314,10 +314,10 @@ func TestNativeCompleteFootprintWaitsForSuppressionCleanup(t *testing.T) {
 	require.NoError(t, fresh.loadManualSuppressions(b.db))
 	require.False(t, fresh.HasManualSuppressions(), "recreated/deleted edge does not retain its old persisted suppression")
 	require.EqualValues(t, 1, publications.Load())
-	nodes, err := b.NodeCount()
+	nodes, err := b.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.EqualValues(t, 1, nodes)
-	edges, err := b.EdgeCount()
+	edges, err := b.EdgeCount(t.Context())
 	require.NoError(t, err)
 	require.Zero(t, edges)
 }
@@ -339,9 +339,9 @@ func TestNativeCompleteFootprintCloseDrainsQueuedSuppression(t *testing.T) {
 	}
 	require.NoError(t, err)
 	require.False(t, reopened.HasManualSuppressions())
-	_, err = reopened.GetStoredEdge(edge.ID)
+	_, err = reopened.GetStoredEdge(t.Context(), edge.ID)
 	require.ErrorIs(t, err, ErrNotFound)
-	require.NoError(t, reopened.CreateEdge(edge))
-	_, err = reopened.GetEdge(edge.ID)
+	require.NoError(t, reopened.CreateEdge(t.Context(), edge))
+	_, err = reopened.GetEdge(t.Context(), edge.ID)
 	require.NoError(t, err, "same-ID recreation must not regain retired suppression")
 }

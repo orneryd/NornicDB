@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
@@ -12,7 +13,7 @@ func TestBadgerEngine_EnqueueDeindexIfSuppressed_DecayDisabledNoop(t *testing.T)
 	engine := createTestBadgerEngine(t)
 	engine.SetDecayEnabled(false)
 
-	changed, err := engine.EnqueueDeindexIfSuppressed("test:any", false)
+	changed, err := engine.EnqueueDeindexIfSuppressed(context.Background(), "test:any", false)
 	require.NoError(t, err)
 	require.False(t, changed)
 }
@@ -21,13 +22,13 @@ func TestClearTombstonesForEntityInTxn_Branches(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 
 	t.Run("missing catalog is no-op", func(t *testing.T) {
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			return clearTombstonesForEntityInTxn(txn, "test:missing")
 		}))
 	})
 
 	t.Run("corrupt catalog payload is no-op", func(t *testing.T) {
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			if err := txn.Set(indexEntryCatalogKey("test:corrupt"), []byte("not-msgpack")); err != nil {
 				return err
 			}
@@ -51,7 +52,7 @@ func TestClearTombstonesForEntityInTxn_Branches(t *testing.T) {
 		encCat, err := msgpack.Marshal(cat)
 		require.NoError(t, err)
 
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			if err := txn.Set(indexEntryCatalogKey(entityID), encCat); err != nil {
 				return err
 			}
@@ -67,7 +68,7 @@ func TestClearTombstonesForEntityInTxn_Branches(t *testing.T) {
 			return txn.Set(deindexWorkItemKey(workID), []byte{1})
 		}))
 
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			return clearTombstonesForEntityInTxn(txn, entityID)
 		}))
 

@@ -45,9 +45,6 @@ const (
 // rebuildRelationshipIndexes owns relationship lookup rebuilds and the complete
 // case-sensitive storage upgrade, including its ordered preparation and markers.
 func (b *BadgerEngine) rebuildRelationshipIndexes(ctx context.Context, selection relationshipIndexRebuild) (processed int, err error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
@@ -87,7 +84,7 @@ func (b *BadgerEngine) rebuildRelationshipIndexes(ctx context.Context, selection
 		if len(key) > 1 {
 			edgeID = EdgeID(key[1:])
 		}
-		edge, err := b.decodeEdgeBodyByID(val, edgeID)
+		edge, err := b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), val, edgeID)
 		if err == nil {
 			err = b.writeEdgeBetweenIndexesInTxn(txn, edge)
 		}
@@ -102,7 +99,7 @@ func (b *BadgerEngine) rebuildRelationshipIndexes(ctx context.Context, selection
 	if err := ctx.Err(); err != nil {
 		return processed, err
 	}
-	err = b.withUpdate(updateRequest{ctx: ctx, scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+	err = b.withUpdate(ctx, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		return txn.Set(edgeBetweenIndexReadyKey, []byte{1})
 	})
 	if err != nil {
@@ -116,7 +113,7 @@ func (b *BadgerEngine) rebuildRelationshipIndexes(ctx context.Context, selection
 		if err := b.rewriteIndexEntryCatalogs(ctx); err != nil {
 			return processed, fmt.Errorf("rewrite index entry catalogs: %w", err)
 		}
-		err = b.withUpdate(updateRequest{ctx: ctx, scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error { return txn.Delete(cleanShutdownMarkerKey) })
+		err = b.withUpdate(ctx, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error { return txn.Delete(cleanShutdownMarkerKey) })
 	}
 	return processed, err
 }

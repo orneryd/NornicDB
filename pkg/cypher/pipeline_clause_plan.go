@@ -105,9 +105,6 @@ func withPipelineClausePlans(ctx context.Context) context.Context {
 // pipelineClausePlanFor returns the plan of text, nil without plans in ctx
 // or past pipelineClausePlanLimit.
 func pipelineClausePlanFor(ctx context.Context, text string) *pipelineClausePlan {
-	if ctx == nil {
-		return nil
-	}
 	plans, _ := ctx.Value(pipelineClausePlansKey{}).(*pipelineClausePlans)
 	if plans == nil {
 		return nil

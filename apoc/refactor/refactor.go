@@ -4,6 +4,8 @@
 // and transforming graph data.
 package refactor
 
+import "errors"
+
 import (
 	"context"
 
@@ -97,24 +99,46 @@ func MergeRelationships(rels []*Relationship, config map[string]interface{}) *Re
 // Example:
 //
 //	apoc.refactor.cloneNodes([node1, node2]) => cloned nodes
-func (f *Functions) CloneNodes(nodes []*Node) []*Node {
+func (f *Functions) CloneNodes(ctx context.Context, nodes []*Node) ([]*Node, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	cloned := make([]*Node, len(nodes))
 
 	for i, node := range nodes {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		cloned[i] = &Node{
 			Labels:     make([]string, len(node.Labels)),
 			Properties: make(map[string]interface{}),
 		}
 		copy(cloned[i].Labels, node.Labels)
 		for k, v := range node.Properties {
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
 			cloned[i].Properties[k] = v
 		}
 
-		created, _ := f.backend.CreateNode(cloned[i].Labels, cloned[i].Properties)
+		created, storageError1 := f.backend.CreateNode(ctx, cloned[i].Labels, cloned[i].Properties)
+		if storageError1 != nil {
+			return nil, storageError1
+		}
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		cloned[i] = created
 	}
 
-	return cloned
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return cloned, nil
 }
 
 // CloneSubgraph clones a subgraph.
@@ -122,22 +146,41 @@ func (f *Functions) CloneNodes(nodes []*Node) []*Node {
 // Example:
 //
 //	apoc.refactor.cloneSubgraph([node1, node2], [rel1]) => {nodes: [...], rels: [...]}
-func (f *Functions) CloneSubgraph(nodes []*Node, rels []*Relationship) map[string]interface{} {
+func (f *Functions) CloneSubgraph(ctx context.Context, nodes []*Node, rels []*Relationship) (map[string]interface{}, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	idMap := make(map[int64]int64)
 
 	// Clone nodes
 	newNodes := make([]*Node, len(nodes))
 	for i, node := range nodes {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		newNodes[i] = &Node{
 			Labels:     make([]string, len(node.Labels)),
 			Properties: make(map[string]interface{}),
 		}
 		copy(newNodes[i].Labels, node.Labels)
 		for k, v := range node.Properties {
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
 			newNodes[i].Properties[k] = v
 		}
 
-		created, _ := f.backend.CreateNode(newNodes[i].Labels, newNodes[i].Properties)
+		created, storageError2 := f.backend.CreateNode(ctx, newNodes[i].Labels, newNodes[i].Properties)
+		if storageError2 != nil {
+			return nil, storageError2
+		}
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		newNodes[i] = created
 		idMap[node.ID] = created.ID
 	}
@@ -145,6 +188,10 @@ func (f *Functions) CloneSubgraph(nodes []*Node, rels []*Relationship) map[strin
 	// Clone relationships
 	newRels := make([]*Relationship, len(rels))
 	for i, rel := range rels {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		newRels[i] = &Relationship{
 			Type:       rel.Type,
 			StartNode:  idMap[rel.StartNode],
@@ -152,17 +199,31 @@ func (f *Functions) CloneSubgraph(nodes []*Node, rels []*Relationship) map[strin
 			Properties: make(map[string]interface{}),
 		}
 		for k, v := range rel.Properties {
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
 			newRels[i].Properties[k] = v
 		}
 
-		created, _ := f.backend.CreateRelationship(newRels[i].StartNode, newRels[i].EndNode, newRels[i].Type, newRels[i].Properties)
+		created, storageError3 := f.backend.CreateRelationship(ctx, newRels[i].StartNode, newRels[i].EndNode, newRels[i].Type, newRels[i].Properties)
+		if storageError3 != nil && !errors.Is(storageError3, storage.ErrNodeNotFound) {
+			return nil, storageError3
+		}
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		newRels[i] = created
 	}
 
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
 	return map[string]interface{}{
 		"nodes":         newNodes,
 		"relationships": newRels,
-	}
+	}, nil
 }
 
 // CollapseNode collapses a node by connecting its neighbors.
@@ -170,14 +231,39 @@ func (f *Functions) CloneSubgraph(nodes []*Node, rels []*Relationship) map[strin
 // Example:
 //
 //	apoc.refactor.collapseNode(node, 'CONNECTED') => relationships created
-func (f *Functions) CollapseNode(node *Node, relType string) []*Relationship {
-	incoming, _ := f.backend.GetNodeRelationships(node.ID, "", storage.DirectionIncoming)
-	outgoing, _ := f.backend.GetNodeRelationships(node.ID, "", storage.DirectionOutgoing)
+func (f *Functions) CollapseNode(ctx context.Context, node *Node, relType string) ([]*Relationship, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	incoming, storageError4 := f.backend.GetNodeRelationships(ctx, node.ID, "", storage.DirectionIncoming)
+	if storageError4 != nil && !errors.Is(storageError4, storage.ErrNodeNotFound) {
+		return nil, storageError4
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	outgoing, storageError5 := f.backend.GetNodeRelationships(ctx, node.ID, "", storage.DirectionOutgoing)
+	if storageError5 != nil && !errors.Is(storageError5, storage.ErrNodeNotFound) {
+		return nil, storageError5
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
 
 	newRels := make([]*Relationship, 0)
 
 	for _, in := range incoming {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		for _, out := range outgoing {
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
 			rel := &Relationship{
 				Type:       relType,
 				StartNode:  in.StartNode,
@@ -185,12 +271,22 @@ func (f *Functions) CollapseNode(node *Node, relType string) []*Relationship {
 				Properties: make(map[string]interface{}),
 			}
 
-			created, _ := f.backend.CreateRelationship(rel.StartNode, rel.EndNode, rel.Type, rel.Properties)
+			created, storageError6 := f.backend.CreateRelationship(ctx, rel.StartNode, rel.EndNode, rel.Type, rel.Properties)
+			if storageError6 != nil && !errors.Is(storageError6, storage.ErrNodeNotFound) {
+				return nil, storageError6
+			}
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
 			newRels = append(newRels, created)
 		}
 	}
 
-	return newRels
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return newRels, nil
 }
 
 // ExtractNode extracts a node from a relationship.
@@ -198,8 +294,18 @@ func (f *Functions) CollapseNode(node *Node, relType string) []*Relationship {
 // Example:
 //
 //	apoc.refactor.extractNode(rel, ['Person'], {name: 'Intermediate'}) => node
-func (f *Functions) ExtractNode(rel *Relationship, labels []string, props map[string]interface{}) *Node {
-	created, _ := f.backend.CreateNode(labels, props)
+func (f *Functions) ExtractNode(ctx context.Context, rel *Relationship, labels []string, props map[string]interface{}) (*Node, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	created, storageError7 := f.backend.CreateNode(ctx, labels, props)
+	if storageError7 != nil {
+		return nil, storageError7
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
 
 	// Create two new relationships
 	rel1 := &Relationship{
@@ -208,7 +314,16 @@ func (f *Functions) ExtractNode(rel *Relationship, labels []string, props map[st
 		EndNode:    created.ID,
 		Properties: make(map[string]interface{}),
 	}
-	f.backend.CreateRelationship(rel1.StartNode, rel1.EndNode, rel1.Type, rel1.Properties)
+	{
+		_, storageError8 := f.backend.CreateRelationship(ctx, rel1.StartNode, rel1.EndNode, rel1.Type, rel1.Properties)
+		if storageError8 != nil && !errors.Is(storageError8, storage.ErrNodeNotFound) {
+			return nil, storageError8
+		}
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
+	}
 
 	rel2 := &Relationship{
 		Type:       rel.Type,
@@ -216,9 +331,21 @@ func (f *Functions) ExtractNode(rel *Relationship, labels []string, props map[st
 		EndNode:    rel.EndNode,
 		Properties: make(map[string]interface{}),
 	}
-	f.backend.CreateRelationship(rel2.StartNode, rel2.EndNode, rel2.Type, rel2.Properties)
+	{
+		_, storageError9 := f.backend.CreateRelationship(ctx, rel2.StartNode, rel2.EndNode, rel2.Type, rel2.Properties)
+		if storageError9 != nil && !errors.Is(storageError9, storage.ErrNodeNotFound) {
+			return nil, storageError9
+		}
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
 
-	return created
+	}
+
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return created, nil
 }
 
 // NormalizeAsBoolean normalizes property to boolean.
@@ -279,25 +406,60 @@ func CategorizeProperty(node *Node, property, newProperty string, categories [][
 // Example:
 //
 //	apoc.refactor.rename.label('OldLabel', 'NewLabel') => count
-func (f *Functions) RenameLabel(ctx context.Context, oldLabel, newLabel string) int {
+func (f *Functions) RenameLabel(ctx context.Context, oldLabel, newLabel string) (int, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return 0, operationError
+	}
+
 	nodes, err := f.backend.AllNodes(ctx)
 	if err != nil {
-		return 0
+		return 0, err
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return 0, operationError
+	}
+
+	if err != nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return 0, operationError
+		}
+		return 0, nil
 	}
 
 	count := 0
 	for _, node := range nodes {
+		if operationError := ctx.Err(); operationError != nil {
+			return 0, operationError
+		}
+
 		for i, label := range node.Labels {
+			if operationError := ctx.Err(); operationError != nil {
+				return 0, operationError
+			}
+
 			if label == oldLabel {
 				node.Labels[i] = newLabel
-				if err := f.backend.UpdateNodeLabels(node.ID, node.Labels); err == nil {
-					count++
+				{
+					err := f.backend.UpdateNodeLabels(ctx, node.ID, node.Labels)
+					if err != nil && !errors.Is(err, storage.ErrNodeNotFound) {
+						return 0, err
+					}
+					if operationError := ctx.Err(); operationError != nil {
+						return 0, operationError
+					}
+
+					if err == nil {
+						count++
+					}
 				}
 				break
 			}
 		}
 	}
-	return count
+	if operationError := ctx.Err(); operationError != nil {
+		return 0, operationError
+	}
+	return count, nil
 }
 
 // RenameType renames a relationship type on all relationships.
@@ -305,21 +467,52 @@ func (f *Functions) RenameLabel(ctx context.Context, oldLabel, newLabel string) 
 // Example:
 //
 //	apoc.refactor.rename.type('OLD_TYPE', 'NEW_TYPE') => count
-func (f *Functions) RenameType(ctx context.Context, oldType, newType string) int {
+func (f *Functions) RenameType(ctx context.Context, oldType, newType string) (int, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return 0, operationError
+	}
+
 	rels, err := f.backend.AllRelationships(ctx)
 	if err != nil {
-		return 0
+		return 0, err
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return 0, operationError
+	}
+
+	if err != nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return 0, operationError
+		}
+		return 0, nil
 	}
 
 	count := 0
 	for _, rel := range rels {
+		if operationError := ctx.Err(); operationError != nil {
+			return 0, operationError
+		}
+
 		if rel.Type == oldType {
-			if err := f.backend.UpdateRelationshipType(rel.ID, newType); err == nil {
-				count++
+			{
+				err := f.backend.UpdateRelationshipType(ctx, rel.ID, newType)
+				if err != nil && !errors.Is(err, storage.ErrRelationshipNotFound) {
+					return 0, err
+				}
+				if operationError := ctx.Err(); operationError != nil {
+					return 0, operationError
+				}
+
+				if err == nil {
+					count++
+				}
 			}
 		}
 	}
-	return count
+	if operationError := ctx.Err(); operationError != nil {
+		return 0, operationError
+	}
+	return count, nil
 }
 
 // renameProperty owns the property-map transition for node and relationship
@@ -341,21 +534,52 @@ func renameProperty(properties map[string]interface{}, oldName, newName string) 
 // Example:
 //
 //	apoc.refactor.rename.nodeProperty('oldName', 'newName') => count
-func (f *Functions) RenameProperty(ctx context.Context, oldName, newName string) int {
+func (f *Functions) RenameProperty(ctx context.Context, oldName, newName string) (int, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return 0, operationError
+	}
+
 	nodes, err := f.backend.AllNodes(ctx)
 	if err != nil {
-		return 0
+		return 0, err
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return 0, operationError
+	}
+
+	if err != nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return 0, operationError
+		}
+		return 0, nil
 	}
 
 	count := 0
 	for _, node := range nodes {
+		if operationError := ctx.Err(); operationError != nil {
+			return 0, operationError
+		}
+
 		if renameProperty(node.Properties, oldName, newName) {
-			if err := f.backend.UpdateNode(node.ID, node.Properties); err == nil {
-				count++
+			{
+				err := f.backend.UpdateNode(ctx, node.ID, node.Properties)
+				if err != nil && !errors.Is(err, storage.ErrNodeNotFound) {
+					return 0, err
+				}
+				if operationError := ctx.Err(); operationError != nil {
+					return 0, operationError
+				}
+
+				if err == nil {
+					count++
+				}
 			}
 		}
 	}
-	return count
+	if operationError := ctx.Err(); operationError != nil {
+		return 0, operationError
+	}
+	return count, nil
 }
 
 // RenameRelProperty renames a property on all relationships that have it.
@@ -363,24 +587,54 @@ func (f *Functions) RenameProperty(ctx context.Context, oldName, newName string)
 // Example:
 //
 //	apoc.refactor.rename.relProperty('oldName', 'newName') => count
-func (f *Functions) RenameRelProperty(oldName, newName string) int {
-	// apoc/apoc.go registers no APOC name for this helper, so no statement and
-	// no apoc.Call reaches it: its only entry is a Go call, which carries no
-	// caller context, and its whole-graph read runs on the background lifetime.
-	rels, err := f.backend.AllRelationships(context.Background())
+func (f *Functions) RenameRelProperty(ctx context.Context, oldName, newName string) (int, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return 0, operationError
+	}
+
+	// The caller supplies the lifetime for storage work.
+
+	rels, err := f.backend.AllRelationships(ctx)
 	if err != nil {
-		return 0
+		return 0, err
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return 0, operationError
+	}
+
+	if err != nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return 0, operationError
+		}
+		return 0, nil
 	}
 
 	count := 0
 	for _, rel := range rels {
+		if operationError := ctx.Err(); operationError != nil {
+			return 0, operationError
+		}
+
 		if renameProperty(rel.Properties, oldName, newName) {
-			if err := f.backend.UpdateRelationship(rel.ID, rel.Properties); err == nil {
-				count++
+			{
+				err := f.backend.UpdateRelationship(ctx, rel.ID, rel.Properties)
+				if err != nil && !errors.Is(err, storage.ErrRelationshipNotFound) {
+					return 0, err
+				}
+				if operationError := ctx.Err(); operationError != nil {
+					return 0, operationError
+				}
+
+				if err == nil {
+					count++
+				}
 			}
 		}
 	}
-	return count
+	if operationError := ctx.Err(); operationError != nil {
+		return 0, operationError
+	}
+	return count, nil
 }
 
 // SetType changes relationship type.
@@ -428,20 +682,44 @@ func From(rel *Relationship, newStart *Node) *Relationship {
 // Example:
 //
 //	apoc.refactor.deleteAndReconnect([node1, node2], 'CONNECTED') => count
-func (f *Functions) DeleteAndReconnect(nodes []*Node, relType string) int {
+func (f *Functions) DeleteAndReconnect(ctx context.Context, nodes []*Node, relType string) (int, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return 0, operationError
+	}
+
 	count := 0
 
 	for _, node := range nodes {
+		if operationError := ctx.Err(); operationError != nil {
+			return 0, operationError
+		}
+
 		// Collapse node first
-		f.CollapseNode(node, relType)
+		_, helperError1 := f.CollapseNode(ctx, node, relType)
+		if helperError1 != nil {
+			return 0, helperError1
+		}
 
 		// Delete node
-		if err := f.backend.DeleteNode(node.ID); err == nil {
-			count++
+		{
+			err := f.backend.DeleteNode(ctx, node.ID)
+			if err != nil && !errors.Is(err, storage.ErrNodeNotFound) {
+				return 0, err
+			}
+			if operationError := ctx.Err(); operationError != nil {
+				return 0, operationError
+			}
+
+			if err == nil {
+				count++
+			}
 		}
 	}
 
-	return count
+	if operationError := ctx.Err(); operationError != nil {
+		return 0, operationError
+	}
+	return count, nil
 }
 
 // CloneSubgraphFromPaths clones subgraph from paths.
@@ -449,19 +727,35 @@ func (f *Functions) DeleteAndReconnect(nodes []*Node, relType string) int {
 // Example:
 //
 //	apoc.refactor.cloneSubgraphFromPaths(paths) => {nodes: [...], rels: [...]}
-func (f *Functions) CloneSubgraphFromPaths(paths []map[string]interface{}) map[string]interface{} {
+func (f *Functions) CloneSubgraphFromPaths(ctx context.Context, paths []map[string]interface{}) (map[string]interface{}, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	nodeSet := make(map[int64]*Node)
 	relSet := make(map[int64]*Relationship)
 
 	for _, path := range paths {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		if nodes, ok := path["nodes"].([]*Node); ok {
 			for _, node := range nodes {
+				if operationError := ctx.Err(); operationError != nil {
+					return nil, operationError
+				}
+
 				nodeSet[node.ID] = node
 			}
 		}
 
 		if rels, ok := path["relationships"].([]*Relationship); ok {
 			for _, rel := range rels {
+				if operationError := ctx.Err(); operationError != nil {
+					return nil, operationError
+				}
+
 				relSet[rel.ID] = rel
 			}
 		}
@@ -469,15 +763,26 @@ func (f *Functions) CloneSubgraphFromPaths(paths []map[string]interface{}) map[s
 
 	nodes := make([]*Node, 0, len(nodeSet))
 	for _, node := range nodeSet {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		nodes = append(nodes, node)
 	}
 
 	rels := make([]*Relationship, 0, len(relSet))
 	for _, rel := range relSet {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		rels = append(rels, rel)
 	}
 
-	return f.CloneSubgraph(nodes, rels)
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return f.CloneSubgraph(ctx, nodes, rels)
 }
 
 // ChangeType changes relationship type with properties.
@@ -504,7 +809,11 @@ func ChangeType(rel *Relationship, newType string, config map[string]interface{}
 // Example:
 //
 //	apoc.refactor.normalize(node, 'property', 'NewLabel', 'HAS') => normalized
-func (f *Functions) Normalize(node *Node, property, newLabel, relType string) map[string]interface{} {
+func (f *Functions) Normalize(ctx context.Context, node *Node, property, newLabel, relType string) (map[string]interface{}, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	if val, ok := node.Properties[property]; ok {
 		// Create new node for property value
 		newNode := &Node{
@@ -512,21 +821,39 @@ func (f *Functions) Normalize(node *Node, property, newLabel, relType string) ma
 			Properties: map[string]interface{}{"value": val},
 		}
 
-		created, _ := f.backend.CreateNode(newNode.Labels, newNode.Properties)
+		created, storageError19 := f.backend.CreateNode(ctx, newNode.Labels, newNode.Properties)
+		if storageError19 != nil {
+			return nil, storageError19
+		}
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
 
 		// Create relationship
-		createdRel, _ := f.backend.CreateRelationship(node.ID, created.ID, relType, make(map[string]interface{}))
+		createdRel, storageError20 := f.backend.CreateRelationship(ctx, node.ID, created.ID, relType, make(map[string]interface{}))
+		if storageError20 != nil && !errors.Is(storageError20, storage.ErrNodeNotFound) {
+			return nil, storageError20
+		}
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
 
 		// Remove property from original node
 		delete(node.Properties, property)
 
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
 		return map[string]interface{}{
 			"node":         created,
 			"relationship": createdRel,
-		}
+		}, nil
 	}
 
-	return map[string]interface{}{}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return map[string]interface{}{}, nil
 }
 
 // Denormalize denormalizes graph structure.
@@ -534,16 +861,43 @@ func (f *Functions) Normalize(node *Node, property, newLabel, relType string) ma
 // Example:
 //
 //	apoc.refactor.denormalize(node, 'HAS', 'property') => denormalized
-func (f *Functions) Denormalize(node *Node, relType, property string) *Node {
-	rels, _ := f.backend.GetNodeRelationships(node.ID, relType, storage.DirectionOutgoing)
+func (f *Functions) Denormalize(ctx context.Context, node *Node, relType, property string) (*Node, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	rels, storageError21 := f.backend.GetNodeRelationships(ctx, node.ID, relType, storage.DirectionOutgoing)
+	if storageError21 != nil && !errors.Is(storageError21, storage.ErrNodeNotFound) {
+		return nil, storageError21
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
 
 	for _, rel := range rels {
-		if targetNode, err := f.backend.GetNode(rel.EndNode); err == nil {
-			if val, ok := targetNode.Properties["value"]; ok {
-				node.Properties[property] = val
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
+		{
+			targetNode, err := f.backend.GetNode(ctx, rel.EndNode)
+			if err != nil && !errors.Is(err, storage.ErrNodeNotFound) {
+				return nil, err
+			}
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
+			if err == nil {
+				if val, ok := targetNode.Properties["value"]; ok {
+					node.Properties[property] = val
+				}
 			}
 		}
 	}
 
-	return node
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return node, nil
 }

@@ -39,7 +39,7 @@ func TestStoredPropertiesRejectForgedCollectionLengths(t *testing.T) {
 	}
 	var count [binary.MaxVarintLen64]byte
 	n := binary.PutUvarint(count[:], ^uint64(0))
-	_, err := (&BadgerEngine{}).decodeTokenizedProperties("test", count[:n])
+	_, err := (&BadgerEngine{}).decodeTokenizedPropertiesProjected(nil, "test", count[:n], nil)
 	require.Error(t, err)
 	_, err = newProjectedNodeDecoder(&BadgerEngine{}, StreamNodesOptions{}).decodeProperties(count[:n])
 	require.Error(t, err)
@@ -115,7 +115,7 @@ func BenchmarkStoredPropertiesTruncatedCollection(b *testing.B) {
 		read func([]byte) error
 	}{
 		{"tokenized", append([]byte(nil), count[:n]...), func(data []byte) error {
-			_, err := (&BadgerEngine{}).decodeTokenizedProperties("test", data)
+			_, err := (&BadgerEngine{}).decodeTokenizedPropertiesProjected(nil, "test", data, nil)
 			return err
 		}},
 		{"map", []byte{0xdf, 0, 1, 0x86, 0xa0}, func(data []byte) error {

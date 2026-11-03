@@ -3,9 +3,10 @@ package search
 import (
 	"context"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -31,16 +32,16 @@ func TestNodeMutationReservationsPreserveNewerWrites(t *testing.T) {
 				newer := storage.CopyNode(old)
 				newer.Properties["content"] = "current"
 				newer.ChunkEmbeddings = [][]float32{{0, 1}}
-				_, err := engine.CreateNode(newer)
+				_, err := engine.CreateNode(t.Context(), newer)
 				require.NoError(t, err)
-				require.NoError(t, svc.RefreshNode(newer.ID))
+				require.NoError(t, svc.RefreshNode(t.Context(), newer.ID))
 				if remove {
-					require.NoError(t, engine.DeleteNode(old.ID))
-					require.NoError(t, svc.RefreshNode(old.ID))
+					require.NoError(t, engine.DeleteNode(t.Context(), old.ID))
+					require.NoError(t, svc.RefreshNode(t.Context(), old.ID))
 				}
 				// A reserved write can arrive after the latest generation was applied
 				// and its bookkeeping retired. It must still remain obsolete.
-				require.NoError(t, svc.applyReservedNodeIndex(old, reservation))
+				require.NoError(t, svc.applyReservedNodeIndex(t.Context(), old, reservation))
 				require.NoError(t, svc.applyReservedNodeRemoval(reservation))
 				if remove {
 					require.Zero(t, svc.EmbeddingCount())
@@ -77,13 +78,13 @@ func TestNodeMutationReservationsPreserveNewerWrites(t *testing.T) {
 					node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("n%d", i%8)), ChunkEmbeddings: [][]float32{{1, 0}}}
 					reservation := svc.ReserveNodeMutation(node.ID)
 					if (writer+i)%2 == 0 {
-						_ = engine.DeleteNode(node.ID)
-					} else if err := engine.UpdateNode(storage.NodeUpdateRequest{After: node}); err != nil {
-						_, _ = engine.CreateNode(node)
+						_ = engine.DeleteNode(t.Context(), node.ID)
+					} else if err := engine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}); err != nil {
+						_, _ = engine.CreateNode(t.Context(), node)
 					}
-					_ = svc.RefreshNode(node.ID)
-					if stored, err := engine.GetNode(node.ID); err == nil {
-						_ = svc.applyReservedNodeIndex(stored, reservation)
+					_ = svc.RefreshNode(t.Context(), node.ID)
+					if stored, err := engine.GetNode(t.Context(), node.ID); err == nil {
+						_ = svc.applyReservedNodeIndex(t.Context(), stored, reservation)
 					} else {
 						_ = svc.applyReservedNodeRemoval(reservation)
 					}
@@ -94,11 +95,11 @@ func TestNodeMutationReservationsPreserveNewerWrites(t *testing.T) {
 		for i := range 8 {
 			id := storage.NodeID(fmt.Sprintf("n%d", i))
 			stale := svc.ReserveNodeMutation(id)
-			_ = engine.DeleteNode(id)
-			require.NoError(t, svc.RefreshNode(id))
+			_ = engine.DeleteNode(t.Context(), id)
+			require.NoError(t, svc.RefreshNode(t.Context(), id))
 			// The older reservation is obsolete: handing it a payload must not
 			// restore the deleted vector.
-			require.NoError(t, svc.applyReservedNodeIndex(&storage.Node{ID: id, ChunkEmbeddings: [][]float32{{1, 0}}}, stale))
+			require.NoError(t, svc.applyReservedNodeIndex(t.Context(), &storage.Node{ID: id, ChunkEmbeddings: [][]float32{{1, 0}}}, stale))
 		}
 		require.Zero(t, svc.EmbeddingCount())
 	})
@@ -115,7 +116,7 @@ func TestDiscardedReservationRestoresTheOneItSuperseded(t *testing.T) {
 	older := svc.ReserveNodeMutation("source")
 	rejected := svc.ReserveNodeMutation("source")
 	svc.DiscardNodeMutation(rejected)
-	require.NoError(t, svc.applyReservedNodeIndex(&storage.Node{ID: "source", ChunkEmbeddings: [][]float32{{1, 0}}}, older))
+	require.NoError(t, svc.applyReservedNodeIndex(t.Context(), &storage.Node{ID: "source", ChunkEmbeddings: [][]float32{{1, 0}}}, older))
 	require.Equal(t, 1, svc.EmbeddingCount(), "a rejected reservation superseded the older write")
 }
 
@@ -128,17 +129,17 @@ func TestRefreshNodeFollowsStorage(t *testing.T) {
 	svc := NewService(engine, 2, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	node := &storage.Node{ID: "source", Properties: map[string]any{"content": "alpha"}, ChunkEmbeddings: [][]float32{{1, 0}}}
-	_, err := engine.CreateNode(node)
+	_, err := engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	stale := svc.ReserveNodeMutation("source")
-	require.NoError(t, svc.RefreshNode("source"))
+	require.NoError(t, svc.RefreshNode(t.Context(), "source"))
 	require.Equal(t, 1, svc.EmbeddingCount())
-	require.NoError(t, engine.DeleteNode("source"))
-	require.NoError(t, svc.RefreshNode("source"))
+	require.NoError(t, engine.DeleteNode(t.Context(), "source"))
+	require.NoError(t, svc.RefreshNode(t.Context(), "source"))
 	require.Zero(t, svc.EmbeddingCount())
-	_, err = engine.CreateNode(node)
+	_, err = engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
-	require.NoError(t, svc.RefreshNodeWithMutation(stale))
+	require.NoError(t, svc.RefreshNodeWithMutation(t.Context(), stale))
 	require.Zero(t, svc.EmbeddingCount(), "a superseded refresh applied after the newer one retired")
 	svc.nodeMutationMu.Lock()
 	require.Empty(t, svc.nodeMutations.pending)
@@ -153,8 +154,8 @@ type edgeReadBarrier struct {
 	release chan struct{}
 }
 
-func (b *edgeReadBarrier) GetEdge(id storage.EdgeID) (*storage.Edge, error) {
-	edge, err := b.Engine.GetEdge(id)
+func (b *edgeReadBarrier) GetEdge(ctx context.Context, id storage.EdgeID) (*storage.Edge, error) {
+	edge, err := b.Engine.GetEdge(ctx, id)
 	if b.armed {
 		b.armed = false
 		close(b.entered)
@@ -170,23 +171,23 @@ func TestRefreshEdgeReadBeforeNewerDeleteCannotResurrect(t *testing.T) {
 	t.Cleanup(func() { _ = base.Close() })
 	engine := storage.NewNamespacedEngine(base, "test")
 	for _, id := range []storage.NodeID{"a", "b"} {
-		_, err := engine.CreateNode(&storage.Node{ID: id})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: id})
 		require.NoError(t, err)
 	}
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "r", Type: "CITES", StartNode: "a", EndNode: "b", Properties: map[string]any{"vec": []float32{1, 0}}}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "r", Type: "CITES", StartNode: "a", EndNode: "b", Properties: map[string]any{"vec": []float32{1, 0}}}))
 	barrier := &edgeReadBarrier{Engine: engine, armed: true, entered: make(chan struct{}), release: make(chan struct{})}
 	svc := NewService(barrier, 2, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	older := svc.ReserveEdgeMutation("r")
 	done := make(chan error, 1)
-	go func() { done <- svc.RefreshEdgeWithMutation(older) }()
+	go func() { done <- svc.RefreshEdgeWithMutation(t.Context(), older) }()
 	<-barrier.entered
-	require.NoError(t, engine.DeleteEdge("r"))
-	require.NoError(t, svc.RefreshEdge("r"))
+	require.NoError(t, engine.DeleteEdge(t.Context(), "r"))
+	require.NoError(t, svc.RefreshEdge(t.Context(), "r"))
 	close(barrier.release)
 	require.NoError(t, <-done)
 	require.False(t, svc.HasRelationshipVectorEntries("CITES", "vec"), "an older relationship refresh resurrected a deleted vector")
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "r", Type: "CITES", StartNode: "a", EndNode: "b", Properties: map[string]any{"vec": []float32{1, 0}}}))
-	require.NoError(t, svc.RefreshEdge("r"))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "r", Type: "CITES", StartNode: "a", EndNode: "b", Properties: map[string]any{"vec": []float32{1, 0}}}))
+	require.NoError(t, svc.RefreshEdge(t.Context(), "r"))
 	require.True(t, svc.HasRelationshipVectorEntries("CITES", "vec"), "a refreshed relationship is indexed")
 }

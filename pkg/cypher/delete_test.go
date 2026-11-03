@@ -433,10 +433,10 @@ func TestDeleteStreamingEligibility(t *testing.T) {
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	executor := NewStorageExecutor(engine)
 
-	assert.True(t, executor.isDeleteStreamingEligible("MATCH (n:Person)", "n", true))
-	assert.False(t, executor.isDeleteStreamingEligible("MATCH (n:Person) WITH n LIMIT 100", "n", true))
-	assert.False(t, executor.isDeleteStreamingEligible("MATCH (n:Person) ORDER BY n.createdAt DESC", "n", true))
-	assert.False(t, executor.isDeleteStreamingEligible("MATCH (n:Person)", "n", false))
+	assert.True(t, executor.isDeleteStreamingEligible(t.Context(), "MATCH (n:Person)", "n", true))
+	assert.False(t, executor.isDeleteStreamingEligible(t.Context(), "MATCH (n:Person) WITH n LIMIT 100", "n", true))
+	assert.False(t, executor.isDeleteStreamingEligible(t.Context(), "MATCH (n:Person) ORDER BY n.createdAt DESC", "n", true))
+	assert.False(t, executor.isDeleteStreamingEligible(t.Context(), "MATCH (n:Person)", "n", false))
 }
 
 func TestDetachDeleteStreaming_ReturnCountProjection(t *testing.T) {

@@ -23,7 +23,7 @@ func TestIDDict_CounterSurvivesRestart(t *testing.T) {
 	// through b.withUpdate → flushTxnCounters once per commit).
 	for i := 0; i < 3; i++ {
 		id := NodeID("t:n" + string(rune('0'+i)))
-		_, err := eng.CreateNode(&Node{ID: id, Labels: []string{"L"}})
+		_, err := eng.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"L"}})
 		require.NoError(t, err)
 	}
 	nodeMaxBefore, _ := eng.idDict.CounterUsage()
@@ -38,7 +38,7 @@ func TestIDDict_CounterSurvivesRestart(t *testing.T) {
 	require.Equal(t, nodeMaxBefore, nodeMaxAfter, "counter must persist across reopen despite batched writes")
 
 	// Next alloc continues from the loaded counter — no collision.
-	_, err = eng2.CreateNode(&Node{ID: "t:n9", Labels: []string{"L"}})
+	_, err = eng2.CreateNode(t.Context(), &Node{ID: "t:n9", Labels: []string{"L"}})
 	require.NoError(t, err)
 	got, ok := eng2.idDict.lookupNodeNumID("t:n9")
 	require.True(t, ok)
@@ -53,13 +53,13 @@ func TestIDDict_BulkTxnCommitsCounterOnce(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = eng.Close() })
 
-	tx, err := eng.BeginTransaction()
+	tx, err := eng.BeginTransaction(t.Context())
 	require.NoError(t, err)
 
 	const n = 10
 	for i := 0; i < n; i++ {
 		id := NodeID("t:b" + string(rune('0'+i)))
-		_, err := tx.CreateNode(&Node{ID: id, Labels: []string{"L"}})
+		_, err := tx.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"L"}})
 		require.NoError(t, err)
 	}
 	// Before commit: txnCounters should have a single entry tracking
@@ -91,14 +91,14 @@ func TestIDDict_RollbackDoesNotPersistCounter(t *testing.T) {
 	require.NoError(t, err)
 
 	// Commit one node so the persisted counter is 1.
-	_, err = eng.CreateNode(&Node{ID: "t:c1", Labels: []string{"L"}})
+	_, err = eng.CreateNode(t.Context(), &Node{ID: "t:c1", Labels: []string{"L"}})
 	require.NoError(t, err)
 
-	tx, err := eng.BeginTransaction()
+	tx, err := eng.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	for i := 0; i < 5; i++ {
 		id := NodeID("t:r" + string(rune('0'+i)))
-		_, err := tx.CreateNode(&Node{ID: id, Labels: []string{"L"}})
+		_, err := tx.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"L"}})
 		require.NoError(t, err)
 	}
 	require.NoError(t, tx.Rollback())

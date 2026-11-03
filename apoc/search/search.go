@@ -68,16 +68,17 @@ type resultScan struct {
 
 // newResultScan admits one read and discards failed-read rows, preserving the
 // helpers' empty-result contract. The returned state belongs to this call.
-func (f *Functions) newResultScan(ctx context.Context, label string) resultScan {
+func (f *Functions) newResultScan(ctx context.Context, label string) (resultScan, error) {
 	s := resultScan{ctx: ctx, label: label, matches: make([]*NodeType, 0)}
-	if ctx.Err() != nil {
-		return s
+	if err := ctx.Err(); err != nil {
+		return s, err
 	}
 	nodes, err := f.backend.AllNodes(ctx)
-	if err == nil {
-		s.nodes = nodes
+	if err != nil {
+		return s, err
 	}
-	return s
+	s.nodes = nodes
+	return s, nil
 }
 
 // each yields labeled records in source order and polls the real caller once
@@ -108,27 +109,31 @@ func (s *resultScan) add(node *NodeType) { s.matches = append(s.matches, node) }
 
 // result rejects publication after cancellation, including the final partial
 // block, while retaining a non-nil empty result.
-func (s *resultScan) result() []*NodeType {
-	if s.ctx.Err() != nil {
-		return []*NodeType{}
+func (s *resultScan) result() ([]*NodeType, error) {
+	if err := s.ctx.Err(); err != nil {
+		return nil, err
 	}
-	return s.matches
+	return s.matches, nil
 }
 
-// selectLabels keeps label order and duplicate matches across labels while
-// reusing each operation's canonical single-label implementation.
-func selectLabels(ctx context.Context, labels []string, selectOne func(string) []*NodeType) []*NodeType {
+// selectLabels preserves label order and multiplicity; a failed label read
+// returns its original error without publishing earlier labels' matches.
+func selectLabels(ctx context.Context, labels []string, selectOne func(string) ([]*NodeType, error)) ([]*NodeType, error) {
 	results := make([]*NodeType, 0)
 	for _, label := range labels {
-		if ctx.Err() != nil {
-			return []*NodeType{}
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
-		results = append(results, selectOne(label)...)
+		selected, err := selectOne(label)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, selected...)
 	}
-	if ctx.Err() != nil {
-		return []*NodeType{}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	return results
+	return results, nil
 }
 
 // equalValues is the one equality owner of this package: every apoc.search helper
@@ -216,8 +221,12 @@ func listedScalarIndex(values []interface{}) map[interface{}]struct{} {
 // Example:
 //
 //	apoc.search.node('Person', 'name', 'Alice') => matching nodes
-func (f *Functions) Node(ctx context.Context, label, property string, value interface{}) []*NodeType {
-	scan := f.newResultScan(ctx, label)
+func (f *Functions) Node(ctx context.Context, label, property string, value interface{}) ([]*NodeType, error) {
+
+	scan, scanError := f.newResultScan(ctx, label)
+	if scanError != nil {
+		return nil, scanError
+	}
 	matchProperty := property
 	matchValue := value
 	for node := range scan.each() {
@@ -225,6 +234,7 @@ func (f *Functions) Node(ctx context.Context, label, property string, value inte
 			scan.add(node)
 		}
 	}
+
 	return scan.result()
 }
 
@@ -233,8 +243,12 @@ func (f *Functions) Node(ctx context.Context, label, property string, value inte
 // Example:
 //
 //	apoc.search.nodeAll('Person', {name: 'Alice', age: 30}) => matching nodes
-func (f *Functions) NodeAll(ctx context.Context, label string, criteria map[string]interface{}) []*NodeType {
-	scan := f.newResultScan(ctx, label)
+func (f *Functions) NodeAll(ctx context.Context, label string, criteria map[string]interface{}) ([]*NodeType, error) {
+
+	scan, scanError := f.newResultScan(ctx, label)
+	if scanError != nil {
+		return nil, scanError
+	}
 	matchCriteria := criteria
 	for node := range scan.each() {
 		matched := true
@@ -249,6 +263,7 @@ func (f *Functions) NodeAll(ctx context.Context, label string, criteria map[stri
 			scan.add(node)
 		}
 	}
+
 	return scan.result()
 }
 
@@ -257,8 +272,12 @@ func (f *Functions) NodeAll(ctx context.Context, label string, criteria map[stri
 // Example:
 //
 //	apoc.search.nodeAny('Person', {name: 'Alice', status: 'active'}) => matching nodes
-func (f *Functions) NodeAny(ctx context.Context, label string, criteria map[string]interface{}) []*NodeType {
-	scan := f.newResultScan(ctx, label)
+func (f *Functions) NodeAny(ctx context.Context, label string, criteria map[string]interface{}) ([]*NodeType, error) {
+
+	scan, scanError := f.newResultScan(ctx, label)
+	if scanError != nil {
+		return nil, scanError
+	}
 	matchCriteria := criteria
 	for node := range scan.each() {
 		for key, value := range matchCriteria {
@@ -268,6 +287,7 @@ func (f *Functions) NodeAny(ctx context.Context, label string, criteria map[stri
 			}
 		}
 	}
+
 	return scan.result()
 }
 
@@ -278,12 +298,26 @@ func (f *Functions) NodeAny(ctx context.Context, label string, criteria map[stri
 // Example:
 //
 //	apoc.search.nodeReduced('Person', {status: 'active'}, 10) => top 10 matches
-func (f *Functions) NodeReduced(ctx context.Context, label string, criteria map[string]interface{}, limit int) []*NodeType {
-	nodes := f.NodeAll(ctx, label, criteria)
-	if len(nodes) > limit {
-		return nodes[:limit]
+func (f *Functions) NodeReduced(ctx context.Context, label string, criteria map[string]interface{}, limit int) ([]*NodeType, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
 	}
-	return nodes
+
+	helperValue1, helperError1 := f.NodeAll(ctx, label, criteria)
+	if helperError1 != nil {
+		return nil, helperError1
+	}
+	nodes := helperValue1
+	if len(nodes) > limit {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return nodes[:limit], nil
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return nodes, nil
 }
 
 // MultiSearchAll searches multiple labels with all-criteria matching. Every
@@ -293,8 +327,12 @@ func (f *Functions) NodeReduced(ctx context.Context, label string, criteria map[
 // Example:
 //
 //	apoc.search.multiSearchAll(['Person', 'Company'], {name: 'Alice'}) => matches
-func (f *Functions) MultiSearchAll(ctx context.Context, labels []string, criteria map[string]interface{}) []*NodeType {
-	return selectLabels(ctx, labels, func(label string) []*NodeType { return f.NodeAll(ctx, label, criteria) })
+func (f *Functions) MultiSearchAll(ctx context.Context, labels []string, criteria map[string]interface{}) ([]*NodeType, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	return selectLabels(ctx, labels, func(label string) ([]*NodeType, error) { return f.NodeAll(ctx, label, criteria) })
 }
 
 // MultiSearchAny searches multiple labels with any-criteria matching: a node
@@ -305,8 +343,12 @@ func (f *Functions) MultiSearchAll(ctx context.Context, labels []string, criteri
 // Example:
 //
 //	apoc.search.multiSearchAny(['Person', 'Company'], {name: 'Alice', status: 'active'}) => matches
-func (f *Functions) MultiSearchAny(ctx context.Context, labels []string, criteria map[string]interface{}) []*NodeType {
-	return selectLabels(ctx, labels, func(label string) []*NodeType { return f.NodeAny(ctx, label, criteria) })
+func (f *Functions) MultiSearchAny(ctx context.Context, labels []string, criteria map[string]interface{}) ([]*NodeType, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	return selectLabels(ctx, labels, func(label string) ([]*NodeType, error) { return f.NodeAny(ctx, label, criteria) })
 }
 
 // Parallel searches several labels for one property value, scanning each label
@@ -315,8 +357,12 @@ func (f *Functions) MultiSearchAny(ctx context.Context, labels []string, criteri
 // Example:
 //
 //	apoc.search.parallel(['Person', 'Company'], 'name', 'Alice') => matches
-func (f *Functions) Parallel(ctx context.Context, labels []string, property string, value interface{}) []*NodeType {
-	return selectLabels(ctx, labels, func(label string) []*NodeType { return f.Node(ctx, label, property, value) })
+func (f *Functions) Parallel(ctx context.Context, labels []string, property string, value interface{}) ([]*NodeType, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	return selectLabels(ctx, labels, func(label string) ([]*NodeType, error) { return f.Node(ctx, label, property, value) })
 }
 
 // FullText performs full-text search.
@@ -324,8 +370,12 @@ func (f *Functions) Parallel(ctx context.Context, labels []string, property stri
 // Example:
 //
 //	apoc.search.fullText('Person', 'name', 'Alice Bob') => matching nodes
-func (f *Functions) FullText(ctx context.Context, label, property, query string) []*NodeType {
-	scan := f.newResultScan(ctx, label)
+func (f *Functions) FullText(ctx context.Context, label, property, query string) ([]*NodeType, error) {
+
+	scan, scanError := f.newResultScan(ctx, label)
+	if scanError != nil {
+		return nil, scanError
+	}
 	matchProperty := property
 	matchWords := strings.Fields(strings.ToLower(query))
 	for node := range scan.each() {
@@ -341,6 +391,7 @@ func (f *Functions) FullText(ctx context.Context, label, property, query string)
 			}
 		}
 	}
+
 	return scan.result()
 }
 
@@ -349,8 +400,12 @@ func (f *Functions) FullText(ctx context.Context, label, property, query string)
 // Example:
 //
 //	apoc.search.fuzzy('Person', 'name', 'Alise', 2) => matches within edit distance 2
-func (f *Functions) Fuzzy(ctx context.Context, label, property, value string, maxDistance int) []*NodeType {
-	scan := f.newResultScan(ctx, label)
+func (f *Functions) Fuzzy(ctx context.Context, label, property, value string, maxDistance int) ([]*NodeType, error) {
+
+	scan, scanError := f.newResultScan(ctx, label)
+	if scanError != nil {
+		return nil, scanError
+	}
 	matchMaxDistance := maxDistance
 	matchNeedle := strings.ToLower(value)
 	matchProperty := property
@@ -359,6 +414,7 @@ func (f *Functions) Fuzzy(ctx context.Context, label, property, value string, ma
 			scan.add(node)
 		}
 	}
+
 	return scan.result()
 }
 
@@ -368,13 +424,20 @@ func (f *Functions) Fuzzy(ctx context.Context, label, property, value string, ma
 // Example:
 //
 //	apoc.search.regex('Person', 'email', '.*@example\\.com') => matching nodes
-func (f *Functions) Regex(ctx context.Context, label, property, pattern string) []*NodeType {
+func (f *Functions) Regex(ctx context.Context, label, property, pattern string) ([]*NodeType, error) {
+
 	compiled, err := regexp.Compile(pattern)
 	if err != nil {
-		return []*NodeType{}
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return []*NodeType{}, nil
 	}
 
-	scan := f.newResultScan(ctx, label)
+	scan, scanError := f.newResultScan(ctx, label)
+	if scanError != nil {
+		return nil, scanError
+	}
 	matchPattern := compiled
 	matchProperty := property
 	for node := range scan.each() {
@@ -382,6 +445,7 @@ func (f *Functions) Regex(ctx context.Context, label, property, pattern string) 
 			scan.add(node)
 		}
 	}
+
 	return scan.result()
 }
 
@@ -390,8 +454,12 @@ func (f *Functions) Regex(ctx context.Context, label, property, pattern string) 
 // Example:
 //
 //	apoc.search.prefix('Person', 'name', 'Ali') => names starting with 'Ali'
-func (f *Functions) Prefix(ctx context.Context, label, property, prefix string) []*NodeType {
-	scan := f.newResultScan(ctx, label)
+func (f *Functions) Prefix(ctx context.Context, label, property, prefix string) ([]*NodeType, error) {
+
+	scan, scanError := f.newResultScan(ctx, label)
+	if scanError != nil {
+		return nil, scanError
+	}
 	matchNeedle := strings.ToLower(prefix)
 	matchProperty := property
 	for node := range scan.each() {
@@ -399,6 +467,7 @@ func (f *Functions) Prefix(ctx context.Context, label, property, prefix string) 
 			scan.add(node)
 		}
 	}
+
 	return scan.result()
 }
 
@@ -407,8 +476,12 @@ func (f *Functions) Prefix(ctx context.Context, label, property, prefix string) 
 // Example:
 //
 //	apoc.search.suffix('Person', 'email', '@example.com') => emails ending with suffix
-func (f *Functions) Suffix(ctx context.Context, label, property, suffix string) []*NodeType {
-	scan := f.newResultScan(ctx, label)
+func (f *Functions) Suffix(ctx context.Context, label, property, suffix string) ([]*NodeType, error) {
+
+	scan, scanError := f.newResultScan(ctx, label)
+	if scanError != nil {
+		return nil, scanError
+	}
 	matchNeedle := strings.ToLower(suffix)
 	matchProperty := property
 	for node := range scan.each() {
@@ -416,6 +489,7 @@ func (f *Functions) Suffix(ctx context.Context, label, property, suffix string) 
 			scan.add(node)
 		}
 	}
+
 	return scan.result()
 }
 
@@ -424,8 +498,12 @@ func (f *Functions) Suffix(ctx context.Context, label, property, suffix string) 
 // Example:
 //
 //	apoc.search.contains('Person', 'name', 'lic') => names containing 'lic'
-func (f *Functions) Contains(ctx context.Context, label, property, substring string) []*NodeType {
-	scan := f.newResultScan(ctx, label)
+func (f *Functions) Contains(ctx context.Context, label, property, substring string) ([]*NodeType, error) {
+
+	scan, scanError := f.newResultScan(ctx, label)
+	if scanError != nil {
+		return nil, scanError
+	}
 	matchNeedle := strings.ToLower(substring)
 	matchProperty := property
 	for node := range scan.each() {
@@ -433,6 +511,7 @@ func (f *Functions) Contains(ctx context.Context, label, property, substring str
 			scan.add(node)
 		}
 	}
+
 	return scan.result()
 }
 
@@ -441,8 +520,12 @@ func (f *Functions) Contains(ctx context.Context, label, property, substring str
 // Example:
 //
 //	apoc.search.range('Person', 'age', 18, 65) => nodes with age 18-65
-func (f *Functions) Range(ctx context.Context, label, property string, minVal, maxVal interface{}) []*NodeType {
-	scan := f.newResultScan(ctx, label)
+func (f *Functions) Range(ctx context.Context, label, property string, minVal, maxVal interface{}) ([]*NodeType, error) {
+
+	scan, scanError := f.newResultScan(ctx, label)
+	if scanError != nil {
+		return nil, scanError
+	}
 	matchMaximum := maxVal
 	matchMinimum := minVal
 	matchProperty := property
@@ -451,6 +534,7 @@ func (f *Functions) Range(ctx context.Context, label, property string, minVal, m
 			scan.add(node)
 		}
 	}
+
 	return scan.result()
 }
 
@@ -491,8 +575,12 @@ func toFloat64(v interface{}) (float64, bool) {
 // Example:
 //
 //	apoc.search.in('Person', 'status', ['active', 'pending']) => matching nodes
-func (f *Functions) In(ctx context.Context, label, property string, values []interface{}) []*NodeType {
-	scan := f.newResultScan(ctx, label)
+func (f *Functions) In(ctx context.Context, label, property string, values []interface{}) ([]*NodeType, error) {
+
+	scan, scanError := f.newResultScan(ctx, label)
+	if scanError != nil {
+		return nil, scanError
+	}
 	matchIndex := membershipIndex(values)
 	matchProperty := property
 	matchValues := values
@@ -501,6 +589,7 @@ func (f *Functions) In(ctx context.Context, label, property string, values []int
 			scan.add(node)
 		}
 	}
+
 	return scan.result()
 }
 
@@ -512,8 +601,12 @@ func (f *Functions) In(ctx context.Context, label, property string, values []int
 // Example:
 //
 //	apoc.search.notIn('Person', 'status', ['deleted', 'banned']) => matching nodes
-func (f *Functions) NotIn(ctx context.Context, label, property string, values []interface{}) []*NodeType {
-	scan := f.newResultScan(ctx, label)
+func (f *Functions) NotIn(ctx context.Context, label, property string, values []interface{}) ([]*NodeType, error) {
+
+	scan, scanError := f.newResultScan(ctx, label)
+	if scanError != nil {
+		return nil, scanError
+	}
 	matchIndex := membershipIndex(values)
 	matchProperty := property
 	matchValues := values
@@ -522,6 +615,7 @@ func (f *Functions) NotIn(ctx context.Context, label, property string, values []
 			scan.add(node)
 		}
 	}
+
 	return scan.result()
 }
 
@@ -530,14 +624,19 @@ func (f *Functions) NotIn(ctx context.Context, label, property string, values []
 // Example:
 //
 //	apoc.search.exists('Person', 'email') => nodes with email property
-func (f *Functions) Exists(ctx context.Context, label, property string) []*NodeType {
-	scan := f.newResultScan(ctx, label)
+func (f *Functions) Exists(ctx context.Context, label, property string) ([]*NodeType, error) {
+
+	scan, scanError := f.newResultScan(ctx, label)
+	if scanError != nil {
+		return nil, scanError
+	}
 	matchProperty := property
 	for node := range scan.each() {
 		if _, present := node.Properties[matchProperty]; present {
 			scan.add(node)
 		}
 	}
+
 	return scan.result()
 }
 
@@ -546,14 +645,19 @@ func (f *Functions) Exists(ctx context.Context, label, property string) []*NodeT
 // Example:
 //
 //	apoc.search.missing('Person', 'email') => nodes without email
-func (f *Functions) Missing(ctx context.Context, label, property string) []*NodeType {
-	scan := f.newResultScan(ctx, label)
+func (f *Functions) Missing(ctx context.Context, label, property string) ([]*NodeType, error) {
+
+	scan, scanError := f.newResultScan(ctx, label)
+	if scanError != nil {
+		return nil, scanError
+	}
 	matchProperty := property
 	for node := range scan.each() {
 		if _, present := node.Properties[matchProperty]; !present {
 			scan.add(node)
 		}
 	}
+
 	return scan.result()
 }
 
@@ -562,14 +666,19 @@ func (f *Functions) Missing(ctx context.Context, label, property string) []*Node
 // Example:
 //
 //	apoc.search.null('Person', 'middleName') => nodes with null middleName
-func (f *Functions) Null(ctx context.Context, label, property string) []*NodeType {
-	scan := f.newResultScan(ctx, label)
+func (f *Functions) Null(ctx context.Context, label, property string) ([]*NodeType, error) {
+
+	scan, scanError := f.newResultScan(ctx, label)
+	if scanError != nil {
+		return nil, scanError
+	}
 	matchProperty := property
 	for node := range scan.each() {
 		if propertyValue, present := node.Properties[matchProperty]; present && propertyValue == nil {
 			scan.add(node)
 		}
 	}
+
 	return scan.result()
 }
 
@@ -578,14 +687,19 @@ func (f *Functions) Null(ctx context.Context, label, property string) []*NodeTyp
 // Example:
 //
 //	apoc.search.notNull('Person', 'email') => nodes with non-null email
-func (f *Functions) NotNull(ctx context.Context, label, property string) []*NodeType {
-	scan := f.newResultScan(ctx, label)
+func (f *Functions) NotNull(ctx context.Context, label, property string) ([]*NodeType, error) {
+
+	scan, scanError := f.newResultScan(ctx, label)
+	if scanError != nil {
+		return nil, scanError
+	}
 	matchProperty := property
 	for node := range scan.each() {
 		if propertyValue, present := node.Properties[matchProperty]; present && propertyValue != nil {
 			scan.add(node)
 		}
 	}
+
 	return scan.result()
 }
 
@@ -604,12 +718,19 @@ func hasLabel(node *NodeType, label string) bool {
 // Example:
 //
 //	apoc.search.match('Person', 'name', 'A*') => names matching pattern
-func (f *Functions) Match(ctx context.Context, label, property, pattern string) []*NodeType {
+func (f *Functions) Match(ctx context.Context, label, property, pattern string) ([]*NodeType, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	// Convert wildcard pattern to regex
 	regexPattern := strings.ReplaceAll(pattern, "*", ".*")
 	regexPattern = strings.ReplaceAll(regexPattern, "?", ".")
 	regexPattern = "^" + regexPattern + "$"
 
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
 	return f.Regex(ctx, label, property, regexPattern)
 }
 
@@ -739,12 +860,23 @@ const suggestionLimit = 10
 //
 //	apoc.search.suggest('Person', 'name', 'Ali', 5) => ['Alice', 'Alison', ...]
 //	apoc.search.autocomplete('Person', 'name', 'Ali') => up to 10 suggestions
-func (f *Functions) Suggest(ctx context.Context, label, property, prefix string, limit ...int) []string {
+func (f *Functions) Suggest(ctx context.Context, label, property, prefix string, limit ...int) ([]string, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	maximum := suggestionLimit
 	if len(limit) > 0 {
 		maximum = limit[0]
 	}
-	return collectStrings(ctx, f.Prefix(ctx, label, property, prefix), property, maximum)
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	helperValue2, helperError2 := f.Prefix(ctx, label, property, prefix)
+	if helperError2 != nil {
+		return nil, helperError2
+	}
+	return collectStrings(ctx, helperValue2, property, maximum), nil
 }
 
 // collectStrings is the one owner of the helpers that publish property strings
@@ -778,9 +910,18 @@ func collectStrings(ctx context.Context, nodes []*NodeType, property string, max
 // Example:
 //
 //	apoc.search.didYouMean('Person', 'name', 'Alise') => ['Alice']
-func (f *Functions) DidYouMean(ctx context.Context, label, property, query string) []string {
+func (f *Functions) DidYouMean(ctx context.Context, label, property, query string) ([]string, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	// Get fuzzy matches within distance 2
-	return collectStrings(ctx, f.Fuzzy(ctx, label, property, query, 2), property, -1)
+
+	helperValue3, helperError3 := f.Fuzzy(ctx, label, property, query, 2)
+	if helperError3 != nil {
+		return nil, helperError3
+	}
+	return collectStrings(ctx, helperValue3, property, -1), nil
 }
 
 // Index creates a search index.

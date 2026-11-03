@@ -60,17 +60,36 @@ func TestQuantizedFinalScoringCancellationReleasesReader(t *testing.T) {
 	}
 }
 
+// TestQuantizedFinalScoringPreCanceledDoesNotScore is the entry boundary of the
+// same three consumers: an already-canceled request must score nothing, pin
+// nothing, and leave the graph free for updates.
 func TestQuantizedFinalScoringPreCanceledDoesNotScore(t *testing.T) {
-	graph := NewHNSWIndex(2, DefaultHNSWConfig())
-	require.NoError(t, graph.Add("doc", []float32{1, 0}))
-	require.NoError(t, graph.SetQuantization(context.Background(), HNSWQuantizationConfig{Mode: HNSWQuantizationBinary}))
-	root, cancel := context.WithCancel(context.Background())
-	cancel()
-	ctx := context.WithValue(root, hnswQuantizationOptionsKey{}, hnswQuantizationOptions{rescore: false, oversampling: 1})
-	p := NewVectorSearchPipeline(NewHNSWCandidateGen(graph), NewCPUExactScorer(nil))
-	scored, err := p.scoreFinal(ctx, []float32{1, 0}, []Candidate{{ID: "doc"}})
-	require.ErrorIs(t, err, context.Canceled)
-	require.Empty(t, scored)
-	require.True(t, graph.mu.TryLock())
-	graph.mu.Unlock()
+	for _, path := range []string{"final", "completion", "stage"} {
+		t.Run(path, func(t *testing.T) {
+			graph := NewHNSWIndex(2, DefaultHNSWConfig())
+			require.NoError(t, graph.Add("doc", []float32{1, 0}))
+			require.NoError(t, graph.SetQuantization(context.Background(), HNSWQuantizationConfig{Mode: HNSWQuantizationBinary}))
+			root, cancel := context.WithCancel(context.Background())
+			cancel()
+			ctx := context.WithValue(root, hnswQuantizationOptionsKey{}, hnswQuantizationOptions{rescore: false, oversampling: 1})
+			p := NewVectorSearchPipeline(NewHNSWCandidateGen(graph), NewCPUExactScorer(nil))
+			pool := []Candidate{{ID: "doc"}}
+			switch path {
+			case "final":
+				scored, err := p.scoreFinal(ctx, []float32{1, 0}, pool)
+				require.ErrorIs(t, err, context.Canceled)
+				require.Empty(t, scored)
+			case "completion":
+				scored, err := p.scoreAllNodes(ctx, []float32{1, 0}, pool, 0)
+				require.ErrorIs(t, err, context.Canceled)
+				require.Empty(t, scored)
+			case "stage":
+				node := &stageNode{id: "doc", first: pool[0]}
+				require.ErrorIs(t, p.scoreStageBatch(ctx, []float32{1, 0}, []*stageNode{node}, nil), context.Canceled)
+				require.False(t, node.scored)
+			}
+			require.True(t, graph.mu.TryLock())
+			graph.mu.Unlock()
+		})
+	}
 }

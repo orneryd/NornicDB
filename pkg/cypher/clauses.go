@@ -48,7 +48,7 @@ func prevWordEqualsIgnoreCase(s string, pos int, word string) bool {
 // This is used to avoid matching keywords inside list comprehensions like [x IN list WHERE x > 2]
 // The keyword should be in the format " KEYWORD " with leading/trailing spaces.
 // This function normalizes whitespace (tabs, newlines) to match.
-func findKeywordNotInBrackets(s string, keyword string) int {
+func findKeywordNotInBrackets(ctx context.Context, s string, keyword string) int {
 	opts := defaultKeywordScanOpts()
 	opts.SkipBraces = false
 	opts.Boundary = keywordBoundaryWhitespace
@@ -57,7 +57,7 @@ func findKeywordNotInBrackets(s string, keyword string) int {
 	if keywordCore == "" {
 		return -1
 	}
-	return keywordIndexFrom(s, keywordCore, 0, opts)
+	return keywordIndexFrom(ctx, s, keywordCore, 0, opts)
 }
 
 // ========================================
@@ -409,15 +409,19 @@ func parseUnwindLookupClause(clause string) (unwindMergeChainLookupPlan, bool) {
 	}, true
 }
 
-func unwindLookupSetHasUniqueAnchor(schema *storage.SchemaManager, lookupPlan unwindMergeChainLookupPlan) bool {
+func unwindLookupSetHasUniqueAnchor(ctx context.Context, schema *storage.SchemaManager, lookupPlan unwindMergeChainLookupPlan) (bool, error) {
 	if schema == nil || lookupPlan.anyLabel || len(lookupPlan.labels) != 1 || len(lookupPlan.matchAssignments) == 0 {
-		return false
+		return false, nil
 	}
 	matchedProps := make(map[string]struct{}, len(lookupPlan.matchAssignments))
 	for _, assignment := range lookupPlan.matchAssignments {
 		matchedProps[assignment.prop] = struct{}{}
 	}
-	for _, constraint := range schema.GetConstraintsForLabels([]string{lookupPlan.labels[0]}) {
+	constraints, err := schema.GetConstraintsForLabels(ctx, []string{lookupPlan.labels[0]})
+	if err != nil {
+		return false, err
+	}
+	for _, constraint := range constraints {
 		if constraint.EffectiveEntityType() != storage.ConstraintEntityNode {
 			continue
 		}
@@ -435,23 +439,27 @@ func unwindLookupSetHasUniqueAnchor(schema *storage.SchemaManager, lookupPlan un
 			}
 		}
 		if allConstraintPropsMatched {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
-func unwindMergeChainMatchSetLookupsAreUnique(store storage.Engine, plan unwindMergeChainPlan) bool {
+func unwindMergeChainMatchSetLookupsAreUnique(ctx context.Context, store storage.Engine, plan unwindMergeChainPlan) (bool, error) {
 	schema := store.GetSchema()
 	for _, step := range plan.steps {
 		if step.lookup == nil || len(step.lookup.setAssignments) == 0 {
 			continue
 		}
-		if !unwindLookupSetHasUniqueAnchor(schema, *step.lookup) {
-			return false
+		anchored, err := unwindLookupSetHasUniqueAnchor(ctx, schema, *step.lookup)
+		if err != nil {
+			return false, err
+		}
+		if !anchored {
+			return false, nil
 		}
 	}
-	return true
+	return true, nil
 }
 
 func unwindMergeLabelsKey(labels []string) string {
@@ -593,7 +601,7 @@ func countResultRows(result *ExecuteResult) int64 {
 	return integer
 }
 
-func splitUnwindMergeChainClauses(input string) ([]string, bool) {
+func splitUnwindMergeChainClauses(ctx context.Context, input string) ([]string, bool) {
 	trimmed := strings.TrimSpace(input)
 	if trimmed == "" {
 		return nil, false
@@ -613,7 +621,7 @@ func splitUnwindMergeChainClauses(input string) ([]string, bool) {
 		}
 		next := len(trimmed)
 		for _, candidate := range keywords {
-			if idx := findKeywordIndexInContext(trimmed[len(keyword):], candidate); idx >= 0 {
+			if idx := findKeywordIndexInContext(ctx, trimmed[len(keyword):], candidate); idx >= 0 {
 				pos := len(keyword) + idx
 				if pos < next {
 					next = pos
@@ -710,7 +718,7 @@ func parseUnwindMergeRelationshipClause(clause string) (unwindMergeChainRelation
 	}, true
 }
 
-func splitUnwindCompoundMutationStages(restQuery, unwindParamName, unwindVar string) ([]string, bool) {
+func splitUnwindCompoundMutationStages(ctx context.Context, restQuery, unwindParamName, unwindVar string) ([]string, bool) {
 	trimmed := strings.TrimSpace(restQuery)
 	if trimmed == "" || unwindParamName == "" || unwindVar == "" {
 		return nil, false
@@ -726,7 +734,7 @@ func splitUnwindCompoundMutationStages(restQuery, unwindParamName, unwindVar str
 	start := 0
 	searchFrom := 0
 	for {
-		withIdx := keywordIndexFrom(trimmed, "WITH", searchFrom, defaultKeywordScanOpts())
+		withIdx := keywordIndexFrom(ctx, trimmed, "WITH", searchFrom, defaultKeywordScanOpts())
 		if withIdx < 0 {
 			break
 		}
@@ -803,7 +811,7 @@ func splitUnwindCompoundMutationStages(restQuery, unwindParamName, unwindVar str
 }
 
 func (e *StorageExecutor) executeUnwindCompoundMutationBatch(ctx context.Context, unwindVar, unwindParamName string, items []interface{}, restQuery string) (*ExecuteResult, bool, error) {
-	stages, ok := splitUnwindCompoundMutationStages(restQuery, unwindParamName, unwindVar)
+	stages, ok := splitUnwindCompoundMutationStages(ctx, restQuery, unwindParamName, unwindVar)
 	if !ok {
 		return nil, false, nil
 	}
@@ -835,16 +843,16 @@ func parseUnwindMergeChainPattern(ctx context.Context, mutationPart string) unwi
 	if !startsWithKeywordFold(mutation, "MERGE") && !startsWithKeywordFold(mutation, "MATCH") && !startsWithKeywordFold(mutation, "OPTIONAL MATCH") {
 		return plan
 	}
-	if findKeywordIndexInContext(mutation, "CALL") >= 0 ||
-		findKeywordIndexInContext(mutation, "DELETE") >= 0 ||
-		findKeywordIndexInContext(mutation, "DETACH") >= 0 ||
-		findKeywordIndexInContext(mutation, "REMOVE") >= 0 ||
-		findKeywordIndexInContext(mutation, "FOREACH") >= 0 ||
-		findKeywordIndexInContext(mutation, "UNWIND") >= 0 ||
-		findKeywordIndexInContext(mutation, "RETURN") >= 0 {
+	if findKeywordIndexInContext(ctx, mutation, "CALL") >= 0 ||
+		findKeywordIndexInContext(ctx, mutation, "DELETE") >= 0 ||
+		findKeywordIndexInContext(ctx, mutation, "DETACH") >= 0 ||
+		findKeywordIndexInContext(ctx, mutation, "REMOVE") >= 0 ||
+		findKeywordIndexInContext(ctx, mutation, "FOREACH") >= 0 ||
+		findKeywordIndexInContext(ctx, mutation, "UNWIND") >= 0 ||
+		findKeywordIndexInContext(ctx, mutation, "RETURN") >= 0 {
 		return plan
 	}
-	clauses, ok := splitUnwindMergeChainClauses(mutation)
+	clauses, ok := splitUnwindMergeChainClauses(ctx, mutation)
 	if !ok || len(clauses) == 0 {
 		return plan
 	}
@@ -1123,7 +1131,7 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 }
 
 func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, unwindVar string, items []interface{}, restQuery string) (*ExecuteResult, bool, error) {
-	returnIdx := topLevelKeywordIndex(restQuery, "RETURN")
+	returnIdx := topLevelKeywordIndex(ctx, restQuery, "RETURN")
 	if returnIdx <= 0 {
 		return nil, false, nil
 	}
@@ -1297,7 +1305,7 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 			}
 			next := len(trimmed)
 			for _, candidate := range []string{"MATCH", "MERGE"} {
-				if idx := findKeywordIndexInContext(trimmed[len(keyword):], candidate); idx >= 0 {
+				if idx := findKeywordIndexInContext(ctx, trimmed[len(keyword):], candidate); idx >= 0 {
 					pos := len(keyword) + idx
 					if pos < next {
 						next = pos
@@ -1579,18 +1587,18 @@ func isSimplePropertyReference(expr string) bool {
 	return true
 }
 
-func rewriteTopLevelMultiMatchToCartesianMatch(query string) string {
+func rewriteTopLevelMultiMatchToCartesianMatch(ctx context.Context, query string) string {
 	trimmed := strings.TrimSpace(query)
 	if !strings.HasPrefix(upperASCII(trimmed), "MATCH ") {
 		return query
 	}
-	returnIdx := topLevelKeywordIndex(trimmed, "RETURN")
+	returnIdx := topLevelKeywordIndex(ctx, trimmed, "RETURN")
 	if returnIdx <= 0 {
 		return query
 	}
 	body := strings.TrimSpace(trimmed[:returnIdx])
 	tail := strings.TrimSpace(trimmed[returnIdx:])
-	whereIdx := findKeywordIndex(body, "WHERE")
+	whereIdx := findKeywordIndex(ctx, body, "WHERE")
 	if whereIdx <= 0 {
 		return query
 	}
@@ -1598,7 +1606,7 @@ func rewriteTopLevelMultiMatchToCartesianMatch(query string) string {
 	whereAndMutations := strings.TrimSpace(body[whereIdx+len("WHERE"):])
 	whereClause := whereAndMutations
 	for _, keyword := range []string{"CREATE", "MERGE", "SET", "DELETE", "REMOVE"} {
-		if index := findKeywordIndexInContext(whereAndMutations, keyword); index >= 0 {
+		if index := findKeywordIndexInContext(ctx, whereAndMutations, keyword); index >= 0 {
 			whereClause = strings.TrimSpace(whereAndMutations[:index])
 			tail = strings.TrimSpace(whereAndMutations[index:]) + " " + tail
 			break
@@ -1613,7 +1621,7 @@ func rewriteTopLevelMultiMatchToCartesianMatch(query string) string {
 		return query
 	}
 	first := strings.TrimSpace(patterns[len("MATCH "):])
-	secondIdx := findKeywordIndex(first, "MATCH")
+	secondIdx := findKeywordIndex(ctx, first, "MATCH")
 	if secondIdx <= 0 {
 		return query
 	}
@@ -1625,7 +1633,7 @@ func rewriteTopLevelMultiMatchToCartesianMatch(query string) string {
 	return "MATCH " + left + ", " + right + " WHERE " + whereClause + " " + tail
 }
 
-func canApplySetBasedUnwindRewrite(query string, items []interface{}) bool {
+func canApplySetBasedUnwindRewrite(ctx context.Context, query string, items []interface{}) bool {
 	if strings.TrimSpace(query) == "" || len(items) == 0 {
 		return false
 	}
@@ -1633,11 +1641,11 @@ func canApplySetBasedUnwindRewrite(query string, items []interface{}) bool {
 	// Keep rewrite on read-only MATCH ... RETURN count(...) pipelines.
 	// Mutation clauses with correlated values (SET += row.props, MERGE/CREATE/DELETE/REMOVE)
 	// must execute per-row to preserve semantics.
-	if findKeywordIndex(query, "CREATE") >= 0 ||
-		findKeywordIndex(query, "MERGE") >= 0 ||
-		findKeywordIndex(query, "SET") >= 0 ||
-		findKeywordIndex(query, "DELETE") >= 0 ||
-		findKeywordIndex(query, "REMOVE") >= 0 {
+	if findKeywordIndex(ctx, query, "CREATE") >= 0 ||
+		findKeywordIndex(ctx, query, "MERGE") >= 0 ||
+		findKeywordIndex(ctx, query, "SET") >= 0 ||
+		findKeywordIndex(ctx, query, "DELETE") >= 0 ||
+		findKeywordIndex(ctx, query, "REMOVE") >= 0 {
 		return false
 	}
 	if !strings.Contains(upper, "RETURN") || !strings.Contains(upper, "COUNT(") {
@@ -1682,27 +1690,27 @@ func unwindItemsAreDistinctComparable(items []interface{}) bool {
 // predicate with a top-level OR or XOR is parenthesized so AND doesn't bind
 // into it. Anything but MATCH clauses before RETURN (OPTIONAL MATCH, WITH,
 // UNWIND, writes) leaves the query unchanged.
-func normalizeMultiMatchWhereClauses(query string) string {
+func normalizeMultiMatchWhereClauses(ctx context.Context, query string) string {
 	trimmed := strings.TrimSpace(query)
 	if !strings.HasPrefix(upperASCII(trimmed), "MATCH ") {
 		return query
 	}
 	// OPTIONAL MATCH has left-join semantics: its WHERE can't move.
-	if findKeywordIndex(trimmed, "OPTIONAL MATCH") >= 0 {
+	if findKeywordIndex(ctx, trimmed, "OPTIONAL MATCH") >= 0 {
 		return query
 	}
-	returnIdx := topLevelKeywordIndex(trimmed, "RETURN")
+	returnIdx := topLevelKeywordIndex(ctx, trimmed, "RETURN")
 	if returnIdx <= 0 {
 		return query
 	}
 	mainPart := strings.TrimSpace(trimmed[:returnIdx])
 	tailPart := strings.TrimSpace(trimmed[returnIdx:])
 	for _, keyword := range []string{"WITH", "UNWIND", "CREATE", "MERGE", "SET", "DELETE", "REMOVE", "CALL", "FOREACH"} {
-		if len(findAllTopLevelPipelineKeywordPositions(mainPart, keyword)) > 0 {
+		if len(findAllTopLevelPipelineKeywordPositions(ctx, mainPart, keyword)) > 0 {
 			return query
 		}
 	}
-	starts := findAllTopLevelPipelineKeywordPositions(mainPart, "MATCH")
+	starts := findAllTopLevelPipelineKeywordPositions(ctx, mainPart, "MATCH")
 	if len(starts) < 2 || starts[0] != 0 {
 		return query
 	}
@@ -1716,13 +1724,13 @@ func normalizeMultiMatchWhereClauses(query string) string {
 		}
 		clause := strings.TrimSpace(mainPart[start+len("MATCH") : end])
 		pattern := clause
-		if whereIdx := topLevelKeywordIndex(clause, "WHERE"); whereIdx >= 0 {
+		if whereIdx := topLevelKeywordIndex(ctx, clause, "WHERE"); whereIdx >= 0 {
 			pattern = strings.TrimSpace(clause[:whereIdx])
 			predicate := strings.TrimSpace(clause[whereIdx+len("WHERE"):])
 			if predicate == "" {
 				return query
 			}
-			if topLevelKeywordIndex(predicate, "OR") >= 0 || topLevelKeywordIndex(predicate, "XOR") >= 0 {
+			if topLevelKeywordIndex(ctx, predicate, "OR") >= 0 || topLevelKeywordIndex(ctx, predicate, "XOR") >= 0 {
 				predicate = "(" + predicate + ")"
 			}
 			predicates = append(predicates, predicate)

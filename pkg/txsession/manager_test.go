@@ -74,21 +74,21 @@ func newExecutorFactory(t *testing.T) ExecutorFactory {
 }
 
 func TestManagerOpenErrors(t *testing.T) {
-	mgr := NewManager(time.Second, nil)
+	mgr := NewManager(time.Second, nil, t.Context())
 	if _, err := mgr.Open(context.Background(), "neo4j"); err == nil {
 		t.Fatalf("expected error when factory is nil")
 	}
 
 	mgr = NewManager(time.Second, func(_ string) (*cypher.StorageExecutor, error) {
 		return nil, fmt.Errorf("factory failed")
-	})
+	}, t.Context())
 	if _, err := mgr.Open(context.Background(), "neo4j"); err == nil {
 		t.Fatalf("expected factory error")
 	}
 }
 
 func TestManagerLifecycle_ExecuteCommitAndDelete(t *testing.T) {
-	mgr := NewManager(time.Second, newExecutorFactory(t))
+	mgr := NewManager(time.Second, newExecutorFactory(t), t.Context())
 	baseTime := time.Unix(1700000000, 0)
 	mgr.lastID = 41
 	mgr.nowFunc = func() time.Time { return baseTime }
@@ -133,7 +133,7 @@ func TestManagerLifecycle_ExecuteCommitAndDelete(t *testing.T) {
 }
 
 func TestManagerTouchDoesNotReviveExpiredSession(t *testing.T) {
-	mgr := NewManager(time.Second, newExecutorFactory(t))
+	mgr := NewManager(time.Second, newExecutorFactory(t), t.Context())
 	base := time.Unix(1700000000, 0)
 	mgr.nowFunc = func() time.Time { return base }
 	session, err := mgr.Open(context.Background(), "neo4j")
@@ -154,7 +154,7 @@ func TestManagerTouchDoesNotReviveExpiredSession(t *testing.T) {
 }
 
 func TestManagerLifecycle_RollbackAndErrorGuards(t *testing.T) {
-	mgr := NewManager(time.Second, newExecutorFactory(t))
+	mgr := NewManager(time.Second, newExecutorFactory(t), t.Context())
 	session, err := mgr.Open(context.Background(), "neo4j")
 	if err != nil {
 		t.Fatalf("open failed: %v", err)
@@ -191,7 +191,7 @@ func TestManagerOpenWithExecutorScenarios(t *testing.T) {
 		{name: "nil executor rejected", nilExecutor: true},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
-			mgr := NewManager(time.Second, newExecutorFactory(t))
+			mgr := NewManager(time.Second, newExecutorFactory(t), t.Context())
 			var exec *cypher.StorageExecutor
 			if !scenario.nilExecutor {
 				store := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
@@ -228,7 +228,7 @@ func TestManagerOpenWithExecutorScenarios(t *testing.T) {
 }
 
 func TestManagerOwnerBoundSessions(t *testing.T) {
-	mgr := NewManager(time.Second, newExecutorFactory(t))
+	mgr := NewManager(time.Second, newExecutorFactory(t), t.Context())
 
 	session, err := mgr.OpenForOwner(context.Background(), "neo4j", "user:alice")
 	if err != nil {
@@ -251,7 +251,7 @@ func TestManagerOwnerBoundSessions(t *testing.T) {
 }
 
 func TestManagerNewManagerDefaultTTLAndTouchNil(t *testing.T) {
-	mgr := NewManager(0, newExecutorFactory(t))
+	mgr := NewManager(0, newExecutorFactory(t), t.Context())
 	if mgr.ttl != 30*time.Second {
 		t.Fatalf("expected default ttl 30s, got %v", mgr.ttl)
 	}
@@ -260,7 +260,7 @@ func TestManagerNewManagerDefaultTTLAndTouchNil(t *testing.T) {
 }
 
 func TestManagerOpenWithExecutorCompositeBeginSupported(t *testing.T) {
-	mgr := NewManager(time.Second, newExecutorFactory(t))
+	mgr := NewManager(time.Second, newExecutorFactory(t), t.Context())
 
 	// CompositeEngine explicit BEGIN is supported via Fabric transaction context.
 	c := storage.NewCompositeEngine(
@@ -284,7 +284,7 @@ func TestManagerCommitCompletionOutlivesRequest(t *testing.T) {
 	store := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { _ = store.Close() })
 	executor := cypher.NewStorageExecutor(storage.NewNamespacedEngine(store, "nornic"))
-	mgr := NewManager(time.Minute, func(string) (*cypher.StorageExecutor, error) { return executor, nil })
+	mgr := NewManager(time.Minute, func(string) (*cypher.StorageExecutor, error) { return executor, nil }, t.Context())
 	session, err := mgr.Open(context.Background(), "nornic")
 	if err != nil {
 		t.Fatal(err)

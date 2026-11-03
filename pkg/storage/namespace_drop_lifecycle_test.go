@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"sync/atomic"
@@ -15,7 +16,7 @@ import (
 func TestNamespaceDropPendingScopesRemainIndependent(t *testing.T) {
 	b := newTestEngine(t)
 	for _, id := range []NodeID{"first:n", "second:n", "peer:n"} {
-		_, err := b.CreateNode(&Node{ID: id})
+		_, err := b.CreateNode(t.Context(), &Node{ID: id})
 		require.NoError(t, err)
 	}
 	sentinel := errors.New("cleanup unavailable")
@@ -32,7 +33,7 @@ func TestNamespaceDropPendingScopesRemainIndependent(t *testing.T) {
 	require.EqualValues(t, 2, b.prefixDrops.pendingCount.Load())
 	_, _, err := b.DeleteByPrefix("peer:")
 	require.NoError(t, err, "a pending victim must not fence peer lifecycle work")
-	_, err = b.CreateNode(&Node{ID: "peer:after"})
+	_, err = b.CreateNode(t.Context(), &Node{ID: "peer:after"})
 	require.NoError(t, err)
 	_, _, err = b.DeleteByPrefix("first:partial")
 	require.ErrorIs(t, err, ErrConflict, "only the exact pending whole DROP may resume")
@@ -40,21 +41,21 @@ func TestNamespaceDropPendingScopesRemainIndependent(t *testing.T) {
 	_, _, err = b.DeleteByPrefix("first:")
 	require.NoError(t, err)
 	require.EqualValues(t, 1, b.prefixDrops.pendingCount.Load())
-	_, err = b.CreateNode(&Node{ID: "first:after"})
+	_, err = b.CreateNode(t.Context(), &Node{ID: "first:after"})
 	require.NoError(t, err)
-	_, err = b.CreateNode(&Node{ID: "second:blocked"})
+	_, err = b.CreateNode(t.Context(), &Node{ID: "second:blocked"})
 	require.ErrorIs(t, err, ErrConflict)
 	_, _, err = b.DeleteByPrefix("second:")
 	require.NoError(t, err)
 	require.Zero(t, b.prefixDrops.pendingCount.Load())
-	count, err := b.NodeCount()
+	count, err := b.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.EqualValues(t, 2, count)
 }
 
 func TestNamespaceDropSchemaWriterBeforeAndAfterFence(t *testing.T) {
 	b := newTestEngine(t)
-	_, err := b.CreateNode(&Node{ID: "victim:old"})
+	_, err := b.CreateNode(t.Context(), &Node{ID: "victim:old"})
 	require.NoError(t, err)
 	schema := b.GetSchemaForNamespace("victim")
 	entered, release := make(chan struct{}), make(chan struct{})
@@ -114,19 +115,19 @@ func TestNamespaceDropSchemaWriterBeforeAndAfterFence(t *testing.T) {
 	b.dropPrefixTailHook = nil
 	_, _, err = b.DeleteByPrefix("victim:")
 	require.NoError(t, err)
-	require.Empty(t, b.GetSchemaForNamespace("victim").ExportDefinition().Constraints)
+	require.Empty(t, schemaDefinitionForTest(t, b.GetSchemaForNamespace("victim")).Constraints)
 }
 
 func TestNamespaceDropSuccessUnfencesBeforeResetListener(t *testing.T) {
 	b := newTestEngine(t)
-	_, err := b.CreateNode(&Node{ID: "victim:old"})
+	_, err := b.CreateNode(t.Context(), &Node{ID: "victim:old"})
 	require.NoError(t, err)
 	var callbackErr error
 	var callbacks int
 	b.OnNamespaceReset(func(prefix string) {
 		if prefix == "victim:" {
 			callbacks++
-			_, callbackErr = b.CreateNode(&Node{ID: "victim:listener"})
+			_, callbackErr = b.CreateNode(t.Context(), &Node{ID: "victim:listener"})
 		}
 	})
 	_, _, err = b.DeleteByPrefix("victim:")
@@ -134,31 +135,34 @@ func TestNamespaceDropSuccessUnfencesBeforeResetListener(t *testing.T) {
 	require.Equal(t, 1, callbacks)
 	require.NoError(t, callbackErr)
 	require.NoError(t, b.pendingNamespaceConflict("victim"))
-	_, err = b.GetNode("victim:listener")
+	_, err = b.GetNode(t.Context(), "victim:listener")
 	require.NoError(t, err)
 }
 
 func TestNamespaceDropPendingMetadataWritersUseActualTarget(t *testing.T) {
 	b := newTestEngine(t)
 	for _, id := range []NodeID{"victim:n", "peer:n"} {
-		_, err := b.CreateNode(&Node{ID: id})
+		_, err := b.CreateNode(t.Context(), &Node{ID: id})
 		require.NoError(t, err)
 	}
 	sentinel := errors.New("intrinsic cleanup failed")
 	b.dropPrefixTailHook = func(string) error { return sentinel }
 	_, _, err := b.DeleteByPrefix("victim:")
 	require.ErrorIs(t, err, sentinel)
-	require.ErrorIs(t, b.PutAccessMeta("victim:n", &knowledgepolicy.AccessMetaEntry{TargetID: "victim:n"}), ErrConflict)
-	require.ErrorIs(t, b.DeleteAccessMeta("victim:n"), ErrConflict)
-	require.ErrorIs(t, b.PutDeindexWorkItem(&DeindexWorkItem{WorkItemID: "opaque-peer-looking", TargetID: "victim:n"}), ErrConflict)
-	require.NoError(t, b.PutDeindexWorkItem(&DeindexWorkItem{WorkItemID: "victim:opaque", TargetID: "peer:n"}))
-	require.NoError(t, b.DeleteDeindexWorkItem("victim:opaque"))
-	require.NoError(t, b.PutAccessMeta("peer:n", &knowledgepolicy.AccessMetaEntry{TargetID: "peer:n"}))
+	_, accessWriteErr1 := b.WriteAccessMeta(context.Background(), knowledgepolicy.AccessMetaWriteRequest{Mode: knowledgepolicy.RecordState, EntityID: "victim:n", Entry: &knowledgepolicy.AccessMetaEntry{TargetID: "victim:n"}})
+	require.ErrorIs(t, accessWriteErr1, ErrConflict)
+	require.ErrorIs(t, b.DeleteAccessMeta(context.Background(), "victim:n"), ErrConflict)
+	require.ErrorIs(t, b.PutDeindexWorkItem(t.Context(), &DeindexWorkItem{WorkItemID: "opaque-peer-looking", TargetID: "victim:n"}), ErrConflict)
+	require.NoError(t, b.PutDeindexWorkItem(t.Context(), &DeindexWorkItem{WorkItemID: "victim:opaque", TargetID: "peer:n"}))
+	require.NoError(t, b.DeleteDeindexWorkItem(t.Context(), "victim:opaque"))
+	_, accessWriteErr2 := b.WriteAccessMeta(context.Background(), knowledgepolicy.AccessMetaWriteRequest{Mode: knowledgepolicy.RecordState, EntityID: "peer:n", Entry: &knowledgepolicy.AccessMetaEntry{TargetID: "peer:n"}})
+	require.NoError(t, accessWriteErr2)
 	b.AddToPendingEmbeddings("victim:new")
 	err = b.withView(func(txn *badger.Txn) error { _, err := txn.Get(pendingEmbedKey("victim:new")); return err })
 	require.ErrorIs(t, err, badger.ErrKeyNotFound, "void pending producer must not leave durable work in an unfinished DROP")
 	b.dropPrefixTailHook = nil
 	_, _, err = b.DeleteByPrefix("victim:")
 	require.NoError(t, err)
-	require.NoError(t, b.PutAccessMeta("victim:n", &knowledgepolicy.AccessMetaEntry{TargetID: "victim:n"}))
+	_, accessWriteErr3 := b.WriteAccessMeta(context.Background(), knowledgepolicy.AccessMetaWriteRequest{Mode: knowledgepolicy.RecordState, EntityID: "victim:n", Entry: &knowledgepolicy.AccessMetaEntry{TargetID: "victim:n"}})
+	require.NoError(t, accessWriteErr3)
 }

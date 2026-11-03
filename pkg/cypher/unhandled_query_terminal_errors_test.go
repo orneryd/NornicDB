@@ -67,7 +67,7 @@ func TestUnhandledStatementsReturnClassifiedSyntaxErrors(t *testing.T) {
 					}
 
 					// The rejected statement leaves the graph unchanged.
-					count, err := exec.storage.NodeCount()
+					count, err := exec.storage.NodeCount(t.Context())
 					require.NoError(t, err)
 					require.Equal(t, int64(1), count, "unhandled statement must have no observable effects")
 				})

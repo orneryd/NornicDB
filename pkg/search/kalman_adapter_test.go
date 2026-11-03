@@ -189,7 +189,7 @@ func TestKalmanSearchAdapterPreservesCanonicalFallbackOrderThroughPublicSearch(t
 			Properties:      map[string]any{"content": "alpha document " + fmt.Sprint(index)},
 			ChunkEmbeddings: [][]float32{spec.vector},
 		}
-		if _, err := engine.CreateNode(node); err != nil {
+		if _, err := engine.CreateNode(t.Context(), node); err != nil {
 			t.Fatal(err)
 		}
 		if err := service.IndexNode(node); err != nil {
@@ -255,7 +255,7 @@ func TestConcurrentCachedKalmanReadersOwnTheirResponses(t *testing.T) {
 			Properties:      map[string]any{"content": "alpha document " + id},
 			ChunkEmbeddings: [][]float32{{1, 0}},
 		}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, service.IndexNode(node))
 	}
@@ -616,7 +616,7 @@ func TestKalmanSearchAdapter_Search_Integration(t *testing.T) {
 		for j := range embedding {
 			embedding[j] = float32(i*j) / 1024.0
 		}
-		_, _ = engine.CreateNode(&storage.Node{
+		_, _ = engine.CreateNode(t.Context(), &storage.Node{
 			Labels:          []string{"Document"},
 			Properties:      map[string]interface{}{"title": "Doc " + string(rune('A'+i))},
 			ChunkEmbeddings: [][]float32{embedding},

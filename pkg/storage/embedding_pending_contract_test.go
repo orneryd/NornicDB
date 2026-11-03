@@ -32,14 +32,14 @@ func TestEmbeddingPendingCounterPublicWrappers(t *testing.T) {
 			one := NewNamespacedEngine(base, "one")
 			two := NewNamespacedEngine(base, "two")
 			for _, store := range []*NamespacedEngine{one, two} {
-				_, err := store.CreateNode(&Node{ID: "a", Properties: map[string]any{"text": "pending"}})
+				_, err := store.CreateNode(t.Context(), &Node{ID: "a", Properties: map[string]any{"text": "pending"}})
 				require.NoError(t, err)
 			}
-			_, err := one.CreateNode(&Node{ID: "b", Properties: map[string]any{"text": "pending"}})
+			_, err := one.CreateNode(t.Context(), &Node{ID: "b", Properties: map[string]any{"text": "pending"}})
 			require.NoError(t, err)
-			_, err = one.CreateNode(&Node{ID: "embedded", ChunkEmbeddings: [][]float32{{1, 0}}, Properties: map[string]any{"text": "done"}})
+			_, err = one.CreateNode(t.Context(), &Node{ID: "embedded", ChunkEmbeddings: [][]float32{{1, 0}}, Properties: map[string]any{"text": "done"}})
 			require.NoError(t, err)
-			_, err = one.CreateNode(&Node{ID: "terminal", EmbedMeta: map[string]any{"embedding_failed": true}, Properties: map[string]any{"text": "parked"}})
+			_, err = one.CreateNode(t.Context(), &Node{ID: "terminal", EmbedMeta: map[string]any{"embedding_failed": true}, Properties: map[string]any{"text": "parked"}})
 			require.NoError(t, err)
 			wal := NewNamespacedEngine(NewWALEngine(base, nil), "one")
 			composite := NewCompositeEngine(map[string]Engine{"one": one, "two": two},
@@ -57,9 +57,9 @@ func TestEmbeddingPendingCounterPublicWrappers(t *testing.T) {
 						"IDs owned by claims or DLQ must not also count in MAIN")
 				})
 			}
-			require.NoError(t, one.DeleteNode("a"))
-			require.NoError(t, one.DeleteNode("b"))
-			require.NoError(t, two.DeleteNode("a"))
+			require.NoError(t, one.DeleteNode(t.Context(), "a"))
+			require.NoError(t, one.DeleteNode(t.Context(), "b"))
+			require.NoError(t, two.DeleteNode(t.Context(), "a"))
 			for _, view := range views {
 				require.Zero(t, CountPendingEmbeddingIDs(view.store, nil), view.name+": deletion must drain every representation")
 			}

@@ -72,9 +72,9 @@ func TestGraphQLSubscriptionsRequireSelectedDatabaseRead(t *testing.T) {
 	namedStorage, err := dbManager.GetStorage("named")
 	require.NoError(t, err)
 	for _, engine := range []storage.Engine{defaultStorage, namedStorage} {
-		_, err = engine.CreateNode(&storage.Node{ID: "left", Labels: []string{"Anchor"}})
+		_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "left", Labels: []string{"Anchor"}})
 		require.NoError(t, err)
-		_, err = engine.CreateNode(&storage.Node{ID: "right", Labels: []string{"Anchor"}})
+		_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "right", Labels: []string{"Anchor"}})
 		require.NoError(t, err)
 	}
 
@@ -93,25 +93,25 @@ func TestGraphQLSubscriptionsRequireSelectedDatabaseRead(t *testing.T) {
 	namedRelationships, err := subscriptions.subscriptionRelationshipCreated(namedCtx, nil)
 	require.NoError(t, err)
 
-	_, err = namedStorage.CreateNode(&storage.Node{
+	_, err = namedStorage.CreateNode(t.Context(), &storage.Node{
 		ID: "named-event", Labels: []string{"Secret"}, Properties: map[string]any{"secret": "named database payload"},
 	})
 	require.NoError(t, err)
 	requireNodeEvent(t, namedNodes, "named-event", "named database payload")
 	requireNoNodeEvent(t, defaultNodes)
-	require.NoError(t, namedStorage.CreateEdge(&storage.Edge{
+	require.NoError(t, namedStorage.CreateEdge(t.Context(), &storage.Edge{
 		ID: "named-edge", StartNode: "left", EndNode: "right", Type: "SECRET", Properties: map[string]any{"secret": "named relationship payload"},
 	}))
 	requireRelationshipEvent(t, namedRelationships, "named-edge", "named relationship payload")
 	requireNoRelationshipEvent(t, defaultRelationships)
 
-	_, err = defaultStorage.CreateNode(&storage.Node{
+	_, err = defaultStorage.CreateNode(t.Context(), &storage.Node{
 		ID: "default-event", Labels: []string{"Visible"}, Properties: map[string]any{"secret": "default database payload"},
 	})
 	require.NoError(t, err)
 	requireNodeEvent(t, defaultNodes, "default-event", "default database payload")
 	requireNoNodeEvent(t, namedNodes)
-	require.NoError(t, defaultStorage.CreateEdge(&storage.Edge{
+	require.NoError(t, defaultStorage.CreateEdge(t.Context(), &storage.Edge{
 		ID: "default-edge", StartNode: "left", EndNode: "right", Type: "VISIBLE", Properties: map[string]any{"secret": "default relationship payload"},
 	}))
 	requireRelationshipEvent(t, defaultRelationships, "default-edge", "default relationship payload")

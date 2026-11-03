@@ -21,12 +21,12 @@ func (e *StorageExecutor) executeCreateIndex(ctx context.Context, cypher string)
 	} else if _, ok := keywordSpanAt(query, 0, "CREATE RANGE INDEX"); ok {
 		prefix = "CREATE RANGE INDEX"
 	}
-	parsed, err := e.parseCreateIndexDDL(cypher, prefix)
+	parsed, err := e.parseCreateIndexDDL(ctx, cypher, prefix)
 	if err != nil {
 		if !vector {
 			// This is the supported Neo4j ON :Label(properties) grammar,
 			// retaining its property-index path and existing error contract.
-			if legacy, legacyErr := e.parseCreateIndexLegacyDDL(cypher, prefix); legacyErr == nil {
+			if legacy, legacyErr := e.parseCreateIndexLegacyDDL(ctx, cypher, prefix); legacyErr == nil {
 				name := legacy.indexName
 				if name == "" {
 					name = fmt.Sprintf("index_%s_%s", legacy.label, strings.Join(legacy.properties, "_"))
@@ -61,7 +61,7 @@ func (e *StorageExecutor) executeCreateIndex(ctx context.Context, cypher string)
 		kind = "VECTOR"
 		dimensions, similarity = parseVectorOptions(parsed.optionsClause, e.GetDefaultEmbeddingDimensions(), "cosine")
 	}
-	create, err := e.admitIndexCreation(cypher, name, kind, label, parsed.properties, entityType)
+	create, err := e.admitIndexCreation(ctx, cypher, name, kind, label, parsed.properties, entityType)
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +74,7 @@ func (e *StorageExecutor) executeCreateIndex(ctx context.Context, cypher string)
 				return nil, err
 			}
 			if svc := e.search(); !parsed.isRelationship && (svc == nil || svc.VectorEnabled()) {
-				if err := e.afterCommit(ctx, func() error {
+				if err := e.afterCommit(ctx, func(context.Context) error {
 					e.registerVectorSpace(name, label, property, dimensions, similarity)
 					return nil
 				}); err != nil {

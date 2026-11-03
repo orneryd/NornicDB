@@ -18,7 +18,7 @@ func TestCompositeAggregateReadsRequirePhysicalDatabaseAccess(t *testing.T) {
 	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "aggregate_child"}))
 	engine, err := server.dbManager.GetStorage("aggregate_child")
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "hidden-count", Labels: []string{"Private"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "hidden-count", Labels: []string{"Private"}})
 	require.NoError(t, err)
 	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "aggregate_root", []multidb.ConstituentRef{
 		{Alias: "part", DatabaseName: "aggregate_child", Type: "local", AccessMode: "read_write"},
@@ -28,7 +28,7 @@ func TestCompositeAggregateReadsRequirePhysicalDatabaseAccess(t *testing.T) {
 	require.NoError(t, server.roleEntitlementsStore.Set(ctx, role, []string{"read", "admin"}))
 	require.NoError(t, server.privilegesStore.SavePrivilege(ctx, role, "nornic", true, false))
 	require.NoError(t, server.privilegesStore.SavePrivilege(ctx, role, "aggregate_root", true, false))
-	_, err = users.CreateUser(role, "password123", []auth.Role{auth.Role(role)})
+	_, err = users.CreateUser(context.Background(), role, "password123", []auth.Role{auth.Role(role)})
 	require.NoError(t, err)
 	token := "Bearer " + getAuthToken(t, users, role)
 	for _, phase := range []struct {

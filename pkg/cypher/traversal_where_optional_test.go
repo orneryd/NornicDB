@@ -25,7 +25,7 @@ func TestTraversalWhere_NotRelationshipPattern(t *testing.T) {
 			"orderId": "ord-1",
 		},
 	}
-	_, err := store.CreateNode(o)
+	_, err := store.CreateNode(t.Context(), o)
 	require.NoError(t, err)
 
 	ph := &storage.Node{
@@ -33,11 +33,11 @@ func TestTraversalWhere_NotRelationshipPattern(t *testing.T) {
 		Labels:     []string{"Pharmacy"},
 		Properties: map[string]interface{}{"id": "ph-1"},
 	}
-	_, err = store.CreateNode(ph)
+	_, err = store.CreateNode(t.Context(), ph)
 	require.NoError(t, err)
 
 	edge := &storage.Edge{ID: "e1", Type: "FILLED_AT", StartNode: o.ID, EndNode: ph.ID, Properties: map[string]interface{}{}}
-	require.NoError(t, store.CreateEdge(edge))
+	require.NoError(t, store.CreateEdge(t.Context(), edge))
 
 	// Traversal query with WHERE: n.userId = 'u1' AND NOT (n)-[:SUPERSEDED_BY]->()
 	query := `MATCH (n:OrderStatus)-[:FILLED_AT]->(ph:Pharmacy) WHERE n.userId = 'u1' AND NOT (n)-[:SUPERSEDED_BY]->() RETURN n.orderId AS orderId, ph.id AS pharmacyId`
@@ -61,20 +61,20 @@ func TestTraversalWhere_NotRelationshipPattern_FiltersOut(t *testing.T) {
 		Labels:     []string{"OrderStatus"},
 		Properties: map[string]interface{}{"userId": "u1", "orderId": "ord-2"},
 	}
-	_, err := store.CreateNode(o)
+	_, err := store.CreateNode(t.Context(), o)
 	require.NoError(t, err)
 
 	ph := &storage.Node{ID: "ph-2", Labels: []string{"Pharmacy"}, Properties: map[string]interface{}{"id": "ph-2"}}
-	_, err = store.CreateNode(ph)
+	_, err = store.CreateNode(t.Context(), ph)
 	require.NoError(t, err)
 
 	// This order HAS SUPERSEDED_BY (superseded by another node)
 	sup := &storage.Node{ID: "ord-2-new", Labels: []string{"OrderStatus"}, Properties: map[string]interface{}{}}
-	_, err = store.CreateNode(sup)
+	_, err = store.CreateNode(t.Context(), sup)
 	require.NoError(t, err)
 
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "e1", Type: "FILLED_AT", StartNode: o.ID, EndNode: ph.ID, Properties: map[string]interface{}{}}))
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "e2", Type: "SUPERSEDED_BY", StartNode: o.ID, EndNode: sup.ID, Properties: map[string]interface{}{}}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "e1", Type: "FILLED_AT", StartNode: o.ID, EndNode: ph.ID, Properties: map[string]interface{}{}}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "e2", Type: "SUPERSEDED_BY", StartNode: o.ID, EndNode: sup.ID, Properties: map[string]interface{}{}}))
 
 	query := `MATCH (n:OrderStatus)-[:FILLED_AT]->(ph:Pharmacy) WHERE n.userId = 'u1' AND NOT (n)-[:SUPERSEDED_BY]->() RETURN n.orderId AS orderId, ph.id AS pharmacyId`
 	result, err := exec.Execute(ctx, query, nil)
@@ -88,7 +88,7 @@ func TestTraversalStartPropertyScanPushdown_Equality(t *testing.T) {
 	exec := NewStorageExecutor(store)
 
 	// Two starts share same label; only one matches WHERE equality.
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:     "o-1",
 		Labels: []string{"OriginalText"},
 		Properties: map[string]interface{}{
@@ -96,7 +96,7 @@ func TestTraversalStartPropertyScanPushdown_Equality(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "o-2",
 		Labels: []string{"OriginalText"},
 		Properties: map[string]interface{}{
@@ -121,7 +121,7 @@ func TestTraversalStartPropertyScanPushdown_IsNotNull(t *testing.T) {
 	store := storage.NewNamespacedEngine(base, "db")
 	exec := NewStorageExecutor(store)
 
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:     "o-1",
 		Labels: []string{"OriginalText"},
 		Properties: map[string]interface{}{
@@ -129,7 +129,7 @@ func TestTraversalStartPropertyScanPushdown_IsNotNull(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:         "o-2",
 		Labels:     []string{"OriginalText"},
 		Properties: map[string]interface{}{},

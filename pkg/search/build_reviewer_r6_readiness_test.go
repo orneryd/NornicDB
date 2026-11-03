@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"errors"
+
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 
@@ -17,7 +18,7 @@ import (
 func TestReviewerR6FinalDrainDoesNotPublishReadiness(t *testing.T) {
 	engine := &triageSnapshotEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
 	t.Cleanup(func() { _ = engine.Close() })
-	_, err := engine.CreateNode(triageNode("nornic:baseline"))
+	_, err := engine.CreateNode(t.Context(), triageNode("nornic:baseline"))
 	require.NoError(t, err)
 	svc := newSearchPersistenceTestService(t, engine, t.TempDir(), false)
 	injected := errors.New("reviewer final-drain I/O failure")
@@ -36,7 +37,7 @@ func TestReviewerR6FinalDrainDoesNotPublishReadiness(t *testing.T) {
 		svc.SetPersistenceEnabled(true) // atEnd: retain following writes for final drain
 		for _, id := range []string{"nornic:bad", "nornic:good"} {
 			node := triageNode(id)
-			_, err := engine.CreateNode(node)
+			_, err := engine.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 			require.NoError(t, svc.IndexNode(node))
 		}

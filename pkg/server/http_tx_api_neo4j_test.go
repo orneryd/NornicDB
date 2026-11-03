@@ -23,6 +23,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/txsession"
 	"github.com/stretchr/testify/require"
 )
 
@@ -849,7 +850,8 @@ func TestTransactionHTTPValueBoundaries(t *testing.T) {
 		{"path marker", map[string]interface{}{"_pathResult": &path}, []interface{}{map[string]interface{}{}, map[string]interface{}{}, map[string]interface{}{}}, 1},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			row, metadata := server.transactionHTTPValue(testCase.value, "nornic")
+			row, metadata, projectionErr1 := server.transactionHTTPValue(t.Context(), testCase.value, "nornic")
+			require.NoError(t, projectionErr1)
 			require.Equal(t, testCase.row, row)
 			require.Len(t, metadata, testCase.metaCount)
 		})
@@ -897,7 +899,7 @@ func TestGh668_HTTPNonfiniteRecursiveProperties(t *testing.T) {
 	path := cypher.PathResult{Nodes: []*storage.Node{node, node}, Relationships: []*storage.Edge{edge}}
 	for _, value := range []interface{}{values, properties, node, edge, path} {
 		response := TransactionResponse{}
-		server.appendStatementResult(&response, &cypher.ExecuteResult{Columns: []string{"value"}, Rows: [][]interface{}{{value}}}, "nornic", false, []string{"row", "graph"})
+		require.NoError(t, server.appendStatementResult(t.Context(), &response, &cypher.ExecuteResult{Columns: []string{"value"}, Rows: [][]interface{}{{value}}}, "nornic", false, []string{"row", "graph"}))
 		encoded, err := json.Marshal(response)
 		require.NoError(t, err)
 		require.True(t, json.Valid(encoded))
@@ -1879,6 +1881,51 @@ func TestHTTPExplicitTransactionEndsOnStatementError(t *testing.T) {
 			require.Zero(t, stored())
 		})
 	}
+}
+
+// Idle HTTP transactions expire and roll back, as they do in Neo4j's HTTP API.
+func TestHTTPExplicitTransactionExpiresWhenIdle(t *testing.T) {
+	server, authenticator := setupTestServer(t)
+	server.txSessions = txsession.NewManager(3*time.Second, server.newExecutorForDatabase, t.Context())
+	token := "Bearer " + getAuthToken(t, authenticator, "admin")
+	post := func(path string, statements ...string) (int, TransactionResponse) {
+		t.Helper()
+		body := make([]map[string]any, 0, len(statements))
+		for _, statement := range statements {
+			body = append(body, map[string]any{"statement": statement})
+		}
+		rec := makeRequest(t, server, http.MethodPost, path, map[string]any{"statements": body}, token)
+		var resp TransactionResponse
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp), rec.Body.String())
+		return rec.Code, resp
+	}
+
+	status, opened := post("/db/nornic/tx", "CREATE (:TxIdleExpiry)")
+	require.Equal(t, http.StatusCreated, status)
+	txPath := strings.TrimSuffix(opened.Commit, "/commit")
+
+	time.Sleep(time.Second)
+	status, active := post(txPath, "CREATE (:TxIdleExpiry {v: 2})")
+	require.Equal(t, http.StatusOK, status)
+	require.Empty(t, active.Errors)
+
+	time.Sleep(time.Second)
+	status, active = post(txPath, "RETURN 1 AS one")
+	require.Equal(t, http.StatusOK, status)
+	require.Empty(t, active.Errors)
+
+	time.Sleep(3500 * time.Millisecond)
+	status, expired := post(txPath, "RETURN 2 AS two")
+	require.Equal(t, http.StatusNotFound, status)
+	require.Equal(t, "Neo.ClientError.Transaction.TransactionNotFound", expired.Errors[0].Code)
+	status, expired = post(txPath + "/commit")
+	require.Equal(t, http.StatusNotFound, status)
+	require.Equal(t, "Neo.ClientError.Transaction.TransactionNotFound", expired.Errors[0].Code)
+
+	status, remaining := post("/db/nornic/tx/commit", "MATCH (n:TxIdleExpiry) RETURN count(n) AS count")
+	require.Equal(t, http.StatusOK, status)
+	require.Empty(t, remaining.Errors)
+	require.EqualValues(t, 0, remaining.Results[0].Data[0].Row[0])
 }
 
 // A statement that compiled and failed while running reports its columns with

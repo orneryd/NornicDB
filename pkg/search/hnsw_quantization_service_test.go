@@ -3,10 +3,11 @@ package search
 import (
 	"context"
 	"fmt"
-	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"math"
 	"path/filepath"
 	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/math/vector"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -23,7 +24,7 @@ func TestQuantizedHNSWPublicServicePreservesLexicalSeedsAndExactResults(t *testi
 			engine := newNamespacedEngine(t)
 			for i := 0; i < 256; i++ {
 				angle := float64(i) * 2 * math.Pi / 256
-				_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprint(i)), Properties: map[string]any{"text": "lexical alpha beta"}, NamedEmbeddings: map[string][]float32{"default": {float32(math.Cos(angle)), float32(math.Sin(angle))}}})
+				_, err := engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprint(i)), Properties: map[string]any{"text": "lexical alpha beta"}, NamedEmbeddings: map[string][]float32{"default": {float32(math.Cos(angle)), float32(math.Sin(angle))}}})
 				require.NoError(t, err)
 			}
 			svc := NewService(engine, 2, nil)
@@ -129,7 +130,7 @@ func TestQuantizationRescoreFalseReachesPropertySupplement(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
 	t.Setenv("NORNICDB_VECTOR_HNSW_QUANTIZATION", "binary")
 	engine := newNamespacedEngine(t)
-	_, err := engine.CreateNode(&storage.Node{ID: "property", Properties: map[string]any{"features": []float32{1, .1}}})
+	_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "property", Properties: map[string]any{"features": []float32{1, .1}}})
 	require.NoError(t, err)
 	svc := NewService(engine, 2, nil)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
@@ -152,28 +153,28 @@ func TestConfigureHNSWQuantizationAppliesDatabasePolicyAndInvalidatesPipeline(t 
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
 	t.Setenv("NORNICDB_VECTOR_HNSW_QUANTIZATION", "none")
 	engine := newNamespacedEngine(t)
-	_, err := engine.CreateNode(&storage.Node{ID: "one", NamedEmbeddings: map[string][]float32{"default": {1, .1}}})
+	_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "one", NamedEmbeddings: map[string][]float32{"default": {1, .1}}})
 	require.NoError(t, err)
 	svc := NewService(engine, 2, nil)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	cfg := HNSWQuantizationConfig{Mode: HNSWQuantizationScalar}
-	require.NoError(t, svc.ConfigureHNSWQuantization(nil, cfg))
+	require.NoError(t, svc.ConfigureHNSWQuantization(t.Context(), cfg))
 	require.NoError(t, svc.BuildIndexes(context.Background()))
 	hits, err := svc.VectorQueryNodesWithOptions(context.Background(), []float32{1, 0}, VectorQuerySpec{Property: "default", Limit: 1}, nil)
 	require.NoError(t, err)
 	require.Len(t, hits, 1)
 	require.Positive(t, svc.hnswIndex.QuantizationBytes())
 	previous := svc.vectorPipeline
-	require.NoError(t, svc.ConfigureHNSWQuantization(nil, cfg))
+	require.NoError(t, svc.ConfigureHNSWQuantization(t.Context(), cfg))
 	require.Same(t, previous, svc.vectorPipeline)
 	cfg = HNSWQuantizationConfig{Mode: HNSWQuantizationBinary}
-	require.NoError(t, svc.ConfigureHNSWQuantization(nil, cfg))
+	require.NoError(t, svc.ConfigureHNSWQuantization(t.Context(), cfg))
 	require.Nil(t, svc.vectorPipeline)
 	require.Equal(t, HNSWQuantizationBinary, svc.hnswConfig().Quantization.Mode)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	require.ErrorIs(t, svc.ConfigureHNSWQuantization(ctx, HNSWQuantizationConfig{}), context.Canceled)
-	require.Error(t, svc.ConfigureHNSWQuantization(nil, HNSWQuantizationConfig{Mode: "invalid"}))
+	require.Error(t, svc.ConfigureHNSWQuantization(t.Context(), HNSWQuantizationConfig{Mode: "invalid"}))
 	require.Equal(t, HNSWQuantizationBinary, svc.hnswConfig().Quantization.Mode)
 }
 
@@ -190,14 +191,14 @@ func TestQuantizationPendingPQPropertyQueryUsesApproximateScoresOnActivation(t *
 		nodes[i] = &storage.Node{ID: storage.NodeID(fmt.Sprint(i)), Properties: map[string]any{"features": []float32{float32(math.Cos(angle)), float32(math.Sin(angle))}}}
 	}
 	for _, node := range nodes[:255] {
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 	svc := NewService(engine, 2, nil)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	require.NoError(t, svc.BuildIndexes(ctx))
 	for _, node := range nodes[255:] {
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, svc.IndexNode(node))
 	}

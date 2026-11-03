@@ -72,7 +72,7 @@ func nor20Payload(index int) string {
 func nor20SeedItems(t *testing.T, store storage.Engine) {
 	t.Helper()
 	for index := 0; index < nor20Rows; index++ {
-		_, err := store.CreateNode(&storage.Node{
+		_, err := store.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("nor20-item-%06d", index)),
 			Labels: []string{"Item"},
 			Properties: map[string]interface{}{
@@ -491,7 +491,7 @@ func nor20OrderingFailureSlot() context.Context {
 // caller's cancellation is observed.
 func TestNor20MaterializedOrderingCheckpoints(t *testing.T) {
 	exec := nor20NewExecutor(t, storage.NewNamespacedEngine(newTestMemoryEngine(t), "nor20-ordering"))
-	terms := parseOrderByTerms("ORDER BY rank")
+	terms := parseOrderByTerms(t.Context(), "ORDER BY rank")
 
 	rows, scopes := nor20OrderingInput()
 	dry := newNor20CheckpointContext(nor20OrderingFailureSlot(), math.MaxInt64)
@@ -537,7 +537,7 @@ func TestNor20MaterializedOrderingCheckpoints(t *testing.T) {
 func TestNor20MaterializedOrderingStableTies(t *testing.T) {
 	exec := nor20NewExecutor(t, storage.NewNamespacedEngine(newTestMemoryEngine(t), "nor20-stable"))
 	for _, clause := range []string{"ORDER BY tie1, tie2 DESC", "ORDER BY tie2, rank DESC"} {
-		terms := parseOrderByTerms(clause)
+		terms := parseOrderByTerms(t.Context(), clause)
 		const size = 997
 		rows := make([]pipelineRow, size)
 		scopes := make([]pipelineRow, size)
@@ -620,7 +620,7 @@ func nor20ChargeInput(size int) ([]pipelineRow, []pipelineRow) {
 func TestNor20MaterializedOrderingMemoryCharge(t *testing.T) {
 	resetTransactionMemory(t)
 	exec := nor20NewExecutor(t, storage.NewNamespacedEngine(newTestMemoryEngine(t), "nor20-charge"))
-	terms := parseOrderByTerms("ORDER BY n.tie1, n.tie2, n.tie3, n.rank")
+	terms := parseOrderByTerms(t.Context(), "ORDER BY n.tie1, n.tie2, n.tie3, n.rank")
 	const size = 997
 	// Each keyed entry owns both a slice header and its own row reference.
 	entry := struct {

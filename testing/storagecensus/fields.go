@@ -52,7 +52,15 @@ var (
 // or a map, slice or array of them), and the non-numeric fields that hold
 // suppression state. A written numeric field with no row is a violation.
 var fieldClasses = map[string]fieldRow{
+	// Author: #1667 implementation lane (Codex). This is the dictionary
+	// number returned in a caller-owned snapshot reference, not stored count,
+	// quota, suppression or publication state. Future fields need their own row.
+	"pkg/storage.nodeRef.num":                    {class: "snapshot dictionary numeric reference (local value)"},
 	"pkg/storage.bufferedOrderResources.stripes": {class: "write-order stripes (the acquisition itself)"},
+	// The native commit writer retains the selected durability policy and its
+	// encoded journal payload only across one physical publication.
+	"pkg/storage.commitWriter.entityMode":        {class: "native commit policy snapshot", owners: []string{"pkg/storage.BadgerTransaction.PublishCommit"}, readers: []string{"pkg/storage.commitWriter.prepareNativeWAL"}},
+	"pkg/storage.commitWriter.entityJournalData": {class: "native commit journal payload", owners: []string{"pkg/storage.commitWriter.prepareNativeWAL", "pkg/storage.commitWriter.finish"}, readers: []string{"pkg/storage.commitWriter.acceptNativeWAL"}},
 	// Pending destructive cleanup is published by one lifecycle transition;
 	// point/scan/write owners consult the same scope fence.
 	"pkg/storage.prefixDrops.pendingCount": {class: "publication-order", owners: []string{"pkg/storage.BadgerEngine.transitionPending"}, readers: []string{"pkg/storage.BadgerEngine.pendingNamespaceConflict", "pkg/storage.BadgerEngine.pendingPrefixConflict", "pkg/storage.commitWriter.pendingNamespaceWriteConflict"}},
@@ -121,6 +129,18 @@ var fieldClasses = map[string]fieldRow{
 	// quota, suppression or publication-order value. Classify the exact field,
 	// so new state on the type still requires its own census decision.
 	"pkg/storage.bulkReadCancellation.remaining": {class: "request-local cancellation polling progress"},
+	// These offsets delimit equal-value groups in the privately owned ID result
+	// of readPropertyIndexSnapshot. They are query-result metadata, created by
+	// snapshotPropertyIndexLocked and consumed after the source leases end; they
+	// are not stored entity counts, quotas, suppression or publication state.
+	// Classify only this field so future fields still require their own review.
+	"pkg/storage.propertyIndexSnapshot.groupEnds": {class: "owned read-snapshot group boundaries"},
+	// IndexNode and relationshipUniqueIndex.put own this local prepared-key
+	// image until applyNodeKeysLocked copies its hashes into posting maps.
+	// appendPrefix advances only this scratch cursor; it is not an entity
+	// count, quota, suppression or publication-order field. No other field on
+	// preparedCompositeNodeKeys inherits this exact classification.
+	"pkg/storage.preparedCompositeNodeKeys.prefixCount": {class: "index-entry preparation prefix cursor"},
 	// This counter belongs to one synchronous constraint validation. It is
 	// neither an engine total nor quota/publication state; only counts changes
 	// it as the validation streams its selected edge images.
@@ -167,8 +187,8 @@ var fieldClasses = map[string]fieldRow{
 	"pkg/storage.durableCacheState.adjacency":                    {class: "adjacency cache revocation floors"},
 	"pkg/storage.durableCacheState.types":                        {class: "relationship type cache revocation floors"},
 	"pkg/storage.durableCacheState.labels":                       {class: "label cache revocation floors"},
-	"pkg/storage.trackedRWMutex.readers":                         {class: "write admission shared holds"},
-	"pkg/storage.trackedRWMutex.waitingWriters":                  {class: "write admission exclusive waiters"},
+	"pkg/storage.contextRWMutex.readers":                         {class: "write admission shared holds"},
+	"pkg/storage.contextRWMutex.waitingWriters":                  {class: "write admission exclusive waiters"},
 	"pkg/storage.BadgerEngine.nodeBodyCacheBytes":                {class: "read cache"},
 	"pkg/storage.BadgerEngine.mvccLegacyGlobalSeed":              {class: "MVCC sequence"},
 	"pkg/storage.BadgerEngine.storageVersion":                    {class: "store metadata"},

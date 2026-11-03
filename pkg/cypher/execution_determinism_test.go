@@ -67,7 +67,7 @@ func TestExecutionDeterminismRegisteredInputs(t *testing.T) {
 
 func TestExecutionDeterminismPublicPredicates(t *testing.T) {
 	exec := solR2CacheExecutor(t)
-	require.NoError(t, exec.storage.CreateEdge(&storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "CITES", Properties: map[string]any{"content": "library transcript"}}))
+	require.NoError(t, exec.storage.CreateEdge(t.Context(), &storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "CITES", Properties: map[string]any{"content": "library transcript"}}))
 	exec.search().EnableRelationshipSearch(nil)
 	exec.search().StartRelationshipIndex()
 	seen := map[string]bool{}

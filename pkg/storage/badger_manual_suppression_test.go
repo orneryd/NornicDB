@@ -21,23 +21,23 @@ func TestManualSuppression(t *testing.T) {
 	}
 	require.NoError(t, err)
 	for _, id := range []NodeID{"test:a", "test:b"} {
-		_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"Doc"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Doc"}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "CITES"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "CITES"}))
 	require.False(t, engine.HasManualSuppressions())
 	require.False(t, engine.visibilityFiltered())
 
-	require.ErrorIs(t, engine.SetManualSuppression(StoredEntityNodeKind, "test:missing", true), ErrNotFound)
-	require.ErrorIs(t, engine.SetManualSuppression(StoredEntityEdgeKind, "test:missing", true), ErrNotFound)
+	require.ErrorIs(t, engine.SetManualSuppression(context.Background(), StoredEntityNodeKind, "test:missing", true), ErrNotFound)
+	require.ErrorIs(t, engine.SetManualSuppression(context.Background(), StoredEntityEdgeKind, "test:missing", true), ErrNotFound)
 
-	require.NoError(t, engine.SetManualSuppression(StoredEntityNodeKind, "test:b", true))
-	require.NoError(t, engine.SetManualSuppression(StoredEntityEdgeKind, "test:r", true))
+	require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityNodeKind, "test:b", true))
+	require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityEdgeKind, "test:r", true))
 	require.True(t, engine.HasManualSuppressions())
 	require.True(t, engine.visibilityFiltered())
 	hidden := func(t *testing.T, engine *BadgerEngine) {
 		t.Helper()
-		_, err := engine.GetNode("test:b")
+		_, err := engine.GetNode(t.Context(), "test:b")
 		require.ErrorIs(t, err, ErrNotFound)
 		docs, err := engine.GetNodesByLabel(context.Background(), "Doc")
 		require.NoError(t, err)
@@ -57,31 +57,31 @@ func TestManualSuppression(t *testing.T) {
 
 	// Visible in a reveal scope.
 	end := engine.BeginQueryRevealScope(true)
-	_, err = engine.GetNode("test:b")
+	_, err = engine.GetNode(t.Context(), "test:b")
 	require.NoError(t, err)
 	require.False(t, engine.visibilityFiltered())
 	end()
 
 	// Shown again.
-	require.NoError(t, engine.SetManualSuppression(StoredEntityNodeKind, "test:b", false))
-	require.NoError(t, engine.SetManualSuppression(StoredEntityEdgeKind, "test:r", false))
+	require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityNodeKind, "test:b", false))
+	require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityEdgeKind, "test:r", false))
 	require.False(t, engine.HasManualSuppressions())
-	_, err = engine.GetNode("test:b")
+	_, err = engine.GetNode(t.Context(), "test:b")
 	require.NoError(t, err)
 	outgoing, err := engine.GetOutgoingEdges(context.Background(), "test:a")
 	require.NoError(t, err)
 	require.Len(t, outgoing, 1)
 
 	// Deleted, then created again with the same ID: not hidden.
-	require.NoError(t, engine.SetManualSuppression(StoredEntityEdgeKind, "test:r", true))
-	require.NoError(t, engine.DeleteEdge("test:r"))
+	require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityEdgeKind, "test:r", true))
+	require.NoError(t, engine.DeleteEdge(t.Context(), "test:r"))
 	require.False(t, engine.manuallySuppressed(manualSuppressionEdge, "test:r"))
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "CITES"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "CITES"}))
 	outgoing, err = engine.GetOutgoingEdges(context.Background(), "test:a")
 	require.NoError(t, err)
 	require.Len(t, outgoing, 1)
-	require.NoError(t, engine.SetManualSuppression(StoredEntityNodeKind, "test:a", true))
-	require.NoError(t, engine.DeleteNode("test:a"))
+	require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityNodeKind, "test:a", true))
+	require.NoError(t, engine.DeleteNode(t.Context(), "test:a"))
 	require.False(t, engine.manuallySuppressed(manualSuppressionNode, "test:a"))
 	// The key's delete runs on its own; a reopen doesn't bring it back.
 	require.Eventually(t, func() bool {
@@ -99,26 +99,26 @@ func TestManualSuppressionThroughWrappers(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = wal.Close() })
 	namespaced := NewNamespacedEngine(NewWALEngine(base, wal), "ns")
-	_, err = namespaced.CreateNode(&Node{ID: "a", Labels: []string{"Doc"}})
+	_, err = namespaced.CreateNode(t.Context(), &Node{ID: "a", Labels: []string{"Doc"}})
 	require.NoError(t, err)
-	_, err = namespaced.CreateNode(&Node{ID: "b", Labels: []string{"Doc"}})
+	_, err = namespaced.CreateNode(t.Context(), &Node{ID: "b", Labels: []string{"Doc"}})
 	require.NoError(t, err)
-	require.NoError(t, namespaced.CreateEdge(&Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "CITES"}))
+	require.NoError(t, namespaced.CreateEdge(t.Context(), &Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "CITES"}))
 
 	sequenceBefore := wal.sequence.Load()
 	var suppressor ManualSuppressionEngine = namespaced
-	require.NoError(t, suppressor.SetManualSuppression(StoredEntityNodeKind, "b", true))
-	require.NoError(t, suppressor.SetManualSuppression(StoredEntityEdgeKind, "r", true))
+	require.NoError(t, suppressor.SetManualSuppression(context.Background(), StoredEntityNodeKind, "b", true))
+	require.NoError(t, suppressor.SetManualSuppression(context.Background(), StoredEntityEdgeKind, "r", true))
 	require.True(t, base.manuallySuppressed(manualSuppressionNode, "ns:b"))
 	require.True(t, base.manuallySuppressed(manualSuppressionEdge, "ns:r"))
-	require.NoError(t, suppressor.SetManualSuppression(StoredEntityNodeKind, "b", false))
-	require.NoError(t, suppressor.SetManualSuppression(StoredEntityEdgeKind, "r", false))
+	require.NoError(t, suppressor.SetManualSuppression(context.Background(), StoredEntityNodeKind, "b", false))
+	require.NoError(t, suppressor.SetManualSuppression(context.Background(), StoredEntityEdgeKind, "r", false))
 	require.False(t, base.HasManualSuppressions())
 	require.Equal(t, sequenceBefore, wal.sequence.Load(), "manual metadata must not append graph WAL records")
 
 	// A namespace over an engine without suppression.
-	require.ErrorIs(t, NewNamespacedEngine(nil, "ns").SetManualSuppression(StoredEntityNodeKind, "x", true), ErrNotImplemented)
-	require.ErrorIs(t, NewNamespacedEngine(nil, "ns").SetManualSuppression(StoredEntityEdgeKind, "x", true), ErrNotImplemented)
+	require.ErrorIs(t, NewNamespacedEngine(nil, "ns").SetManualSuppression(context.Background(), StoredEntityNodeKind, "x", true), ErrNotImplemented)
+	require.ErrorIs(t, NewNamespacedEngine(nil, "ns").SetManualSuppression(context.Background(), StoredEntityEdgeKind, "x", true), ErrNotImplemented)
 }
 
 // unsuppressibleEngine exposes only the Engine interface: no on-demand
@@ -134,8 +134,8 @@ func TestManualSuppressionUnsupportedAndClosed(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = wal.Close() })
 	walEngine := NewWALEngine(memory, wal)
-	require.ErrorIs(t, walEngine.SetManualSuppression(StoredEntityNodeKind, "x", true), ErrNotImplemented)
-	require.ErrorIs(t, walEngine.SetManualSuppression(StoredEntityEdgeKind, "x", true), ErrNotImplemented)
+	require.ErrorIs(t, walEngine.SetManualSuppression(context.Background(), StoredEntityNodeKind, "x", true), ErrNotImplemented)
+	require.ErrorIs(t, walEngine.SetManualSuppression(context.Background(), StoredEntityEdgeKind, "x", true), ErrNotImplemented)
 
 	closed, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	if closed != nil {
@@ -143,7 +143,7 @@ func TestManualSuppressionUnsupportedAndClosed(t *testing.T) {
 	}
 	require.NoError(t, err)
 	require.NoError(t, closed.Close())
-	require.Error(t, closed.SetManualSuppression(StoredEntityNodeKind, "test:a", true))
+	require.Error(t, closed.SetManualSuppression(context.Background(), StoredEntityNodeKind, "test:a", true))
 }
 
 // Both public proxies preserve their actual wrapped capability and the existing
@@ -154,28 +154,28 @@ func TestManualSuppressionKindAndNamespacePolicy(t *testing.T) {
 			for _, id := range []string{"x", "ns:x", "other:x"} {
 				recorder := &manualSuppressionRecorder{}
 				scoped := NewNamespacedEngine(recorder, namespace)
-				require.NoError(t, scoped.SetManualSuppression(kind, id, true))
+				require.NoError(t, scoped.SetManualSuppression(context.Background(), kind, id, true))
 				require.Equal(t, qualifyEntityID(namespace+":", id), recorder.id)
 				require.Equal(t, kind, recorder.kind)
 				require.True(t, recorder.suppressed)
 				require.Equal(t, 1, recorder.calls)
-				require.ErrorIs(t, scoped.SetManualSuppression(StoredEntityKind(255), id, false), ErrInvalidData)
+				require.ErrorIs(t, scoped.SetManualSuppression(context.Background(), StoredEntityKind(255), id, false), ErrInvalidData)
 				require.Equal(t, 1, recorder.calls)
 			}
 		}
 	}
 	recorder := &manualSuppressionRecorder{}
 	wrapped := &WALEngine{engine: recorder}
-	require.NoError(t, wrapped.SetManualSuppression(StoredEntityEdgeKind, "other:x", true))
+	require.NoError(t, wrapped.SetManualSuppression(context.Background(), StoredEntityEdgeKind, "other:x", true))
 	require.Equal(t, "other:x", recorder.id)
-	require.ErrorIs(t, wrapped.SetManualSuppression(StoredEntityKind(255), "x", false), ErrInvalidData)
+	require.ErrorIs(t, wrapped.SetManualSuppression(context.Background(), StoredEntityKind(255), "x", false), ErrInvalidData)
 	require.Equal(t, 1, recorder.calls)
 	base := createTestBadgerEngine(t)
-	_, err := base.CreateNode(&Node{ID: "test:a"})
+	_, err := base.CreateNode(t.Context(), &Node{ID: "test:a"})
 	require.NoError(t, err)
-	require.ErrorIs(t, base.SetManualSuppression(StoredEntityKind(255), "test:a", true), ErrInvalidData)
+	require.ErrorIs(t, base.SetManualSuppression(context.Background(), StoredEntityKind(255), "test:a", true), ErrInvalidData)
 	require.False(t, base.HasManualSuppressions())
-	_, err = base.GetNode("test:a")
+	_, err = base.GetNode(t.Context(), "test:a")
 	require.NoError(t, err)
 	for _, tc := range []struct {
 		kind      StoredEntityKind
@@ -196,7 +196,7 @@ type manualSuppressionRecorder struct {
 	calls      int
 }
 
-func (r *manualSuppressionRecorder) SetManualSuppression(kind StoredEntityKind, id string, suppressed bool) error {
+func (r *manualSuppressionRecorder) SetManualSuppression(_ context.Context, kind StoredEntityKind, id string, suppressed bool) error {
 	r.kind, r.id, r.suppressed = kind, id, suppressed
 	r.calls++
 	return nil

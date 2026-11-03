@@ -12,7 +12,8 @@ import (
 func TestIndexValueKeyListsAndMaps(t *testing.T) {
 	key := func(value interface{}) interface{} {
 		t.Helper()
-		k, ok := indexValueKey(value)
+		k, ok, keyErr := indexValueKey(t.Context(), value)
+		require.NoError(t, keyErr)
 		require.True(t, ok, "%#v", value)
 		return k
 	}
@@ -34,7 +35,8 @@ func TestIndexValueKeyListsAndMaps(t *testing.T) {
 	require.NotEqual(t, listKey, key(string(listKey.(compositeIndexKey))))
 
 	for _, value := range []interface{}{nil, []byte("ab"), []interface{}{struct{ s []int }{}}, map[string]interface{}{"a": []byte("x")}} {
-		_, ok := indexValueKey(value)
+		_, ok, keyErr := indexValueKey(t.Context(), value)
+		require.NoError(t, keyErr)
 		require.False(t, ok, "%#v", value)
 	}
 }
@@ -46,13 +48,20 @@ func TestPropertyIndexFilesListsForEqualityOnly(t *testing.T) {
 	require.NoError(t, sm.PropertyIndexInsert("P", "tags", "n2", int64(5)))
 	require.NoError(t, sm.PropertyIndexInsert("P", "tags", "n3", []interface{}{"a"}))
 
-	require.Equal(t, []NodeID{"n1"}, sm.PropertyIndexLookup("P", "tags", []interface{}{1.0, 2.0}))
-	require.Equal(t, []NodeID{"n3"}, sm.PropertyIndexLookup("P", "tags", []string{"a"}))
-	require.Empty(t, sm.PropertyIndexLookup("P", "tags", []interface{}{int64(2), int64(1)}))
-	require.Equal(t, []NodeID{"n1"}, sm.PropertyIndexLookupAnyLabel("tags", []interface{}{int64(1), int64(2)}))
-	// Ordered scans read scalar keys only.
-	require.Equal(t, []NodeID{"n2"}, sm.PropertyIndexAllNonNil("P", "tags", false))
+	require.Equal(t, []NodeID{"n1"}, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "P", "tags", []interface{}{1.0, 2.0})))
+	require.Equal(t, []NodeID{"n3"}, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "P", "tags", []string{"a"})))
+	require.Empty(t, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "P", "tags", []interface{}{int64(2), int64(1)})))
+	require.Equal(t, []NodeID{"n1"}, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookupAnyLabel(t.Context(), "tags", []interface{}{int64(1), int64(2)})))
+	// Ordered reads cannot silently omit list memberships. Unordered nonnull
+	// candidates retain every member; the query owner sorts their actual values.
+	ids, err := sm.PropertyIndexAllNonNil(t.Context(), "P", "tags", false)
+	require.ErrorIs(t, err, ErrPropertyIndexValueOrderUnavailable)
+	require.Nil(t, ids)
+	ids, found, err := sm.PropertyIndexNonNilCandidates(t.Context(), "P", "tags")
+	require.NoError(t, err)
+	require.True(t, found)
+	require.ElementsMatch(t, []NodeID{"n1", "n2", "n3"}, ids)
 
 	require.NoError(t, sm.PropertyIndexDelete("P", "tags", "n1", []interface{}{int64(1), int64(2)}))
-	require.Empty(t, sm.PropertyIndexLookup("P", "tags", []interface{}{int64(1), int64(2)}))
+	require.Empty(t, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "P", "tags", []interface{}{int64(1), int64(2)})))
 }

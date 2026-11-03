@@ -87,7 +87,7 @@ func TestClusterIndexRestoreClusteringState(t *testing.T) {
 // current coordinates, without publishing.
 func TestClusterIndexAssignedClustering(t *testing.T) {
 	ci := NewClusterIndex(nil, embConfig(2), nil)
-	if _, err := ci.AssignedClustering(nil, [][]float32{{1, 0}}); err == nil {
+	if _, err := ci.AssignedClustering(t.Context(), [][]float32{{1, 0}}); err == nil {
 		t.Fatalf("expected error before embeddings are loaded")
 	}
 	requireNoError(t, ci.AddBatch([]string{"a", "b", "c"}, [][]float32{{1, 0}, {0, 1}, {0.9, 0.2}}))
@@ -221,7 +221,7 @@ func assertFloat32Near(t *testing.T, got, want float32) {
 func TestClusterIndexComputeThenPublishClustering(t *testing.T) {
 	t.Run("empty index computes nothing", func(t *testing.T) {
 		ci := NewClusterIndex(nil, embConfig(2), &KMeansConfig{NumClusters: 2, MaxIterations: 5, InitMethod: "random"})
-		clustering, err := ci.ComputeClustering(nil)
+		clustering, err := ci.ComputeClustering(context.Background())
 		requireNoError(t, err)
 		if clustering != nil {
 			t.Fatalf("ComputeClustering() on an empty index = %+v, want nil", clustering)

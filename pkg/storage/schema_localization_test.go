@@ -63,7 +63,7 @@ func TestStorageSchemaLocalizedErrorsHaveTypedIdentity(t *testing.T) {
 
 	t.Run("constraint contract violation", func(t *testing.T) {
 		engine := newTestMemoryEngine(t)
-		_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]any{"team": "ops"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]any{"team": "ops"}})
 		require.NoError(t, err)
 		contract := ConstraintContract{
 			Name:              "core_team",
@@ -75,7 +75,7 @@ func TestStorageSchemaLocalizedErrorsHaveTypedIdentity(t *testing.T) {
 			}},
 		}
 
-		err = ValidateConstraintContractOnCreationForEngine(engine, contract)
+		err = ValidateConstraintContractOnCreationForEngine(context.Background(), engine, contract)
 		localizedErr := requireStorageSchemaLocalizedError(t, err, localization.MessageStorageSchemaConstraintContractViolated, `constraint contract core_team violated: predicate "n.team IN ['core']" evaluated to false`)
 		require.Equal(t, "core_team", localizedErr.Message.Data["Name"])
 		require.Equal(t, "n.team IN ['core']", localizedErr.Message.Data["Predicate"])
@@ -89,7 +89,7 @@ func TestStorageSchemaLocalizedContractWrapperPreservesSentinel(t *testing.T) {
 			TargetEntityType:  string(ConstraintEntityNode),
 			TargetLabelOrType: "Person",
 		}
-		err := ValidateConstraintContractOnCreationForEngine(&schemaLocalizationScanErrorEngine{Engine: newTestMemoryEngine(t)}, contract)
+		err := ValidateConstraintContractOnCreationForEngine(context.Background(), &schemaLocalizationScanErrorEngine{Engine: newTestMemoryEngine(t)}, contract)
 		requireStorageSchemaLocalizedError(t, err, localization.MessageStorageSchemaScanNodesFailed, "scanning nodes: conflict")
 		require.ErrorIs(t, err, ErrConflict)
 	})
@@ -104,7 +104,7 @@ func TestStorageSchemaLocalizedContractWrapperPreservesSentinel(t *testing.T) {
 				Expression: "COUNT { (n)-[:KNOWS]->() } > 0",
 			}},
 		}
-		err := ValidateConstraintContractOnCreationForEngine(&schemaLocalizationPredicateErrorEngine{Engine: newTestMemoryEngine(t)}, contract)
+		err := ValidateConstraintContractOnCreationForEngine(context.Background(), &schemaLocalizationPredicateErrorEngine{Engine: newTestMemoryEngine(t)}, contract)
 		requireStorageSchemaLocalizedError(t, err, localization.MessageStorageSchemaConstraintContractInvalid, `constraint contract edge_count invalid: predicate "COUNT { (n)-[:KNOWS]->() } > 0": conflict`)
 		require.ErrorIs(t, err, ErrConflict)
 	})

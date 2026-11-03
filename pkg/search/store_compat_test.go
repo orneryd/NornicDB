@@ -6,10 +6,11 @@ package search
 
 import (
 	"context"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -69,13 +70,13 @@ func writeCompatStore(t *testing.T, dir string) {
 	}
 	require.NoError(t, err)
 	for _, n := range compatStoreNodes {
-		_, err := engine.CreateNode(storage.CopyNode(n))
+		_, err := engine.CreateNode(t.Context(), storage.CopyNode(n))
 		require.NoError(t, err)
 	}
 	svc := compatStoreService(engine, dir)
 	require.NoError(t, svc.BuildIndexes(context.Background()))
 	live := storage.CopyNode(compatStoreLiveNode)
-	_, err = engine.CreateNode(live)
+	_, err = engine.CreateNode(t.Context(), live)
 	require.NoError(t, err)
 	require.NoError(t, svc.IndexNode(live))
 	svc.PersistIndexesToDisk()

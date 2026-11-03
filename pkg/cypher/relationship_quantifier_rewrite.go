@@ -109,7 +109,7 @@ func (r *labelExpressionRewriter) quantifiedRelationship(open, close, at int, qu
 	}
 	q := r.query
 	insert := close
-	if where := elementWhereIndex(q, open, close); where >= 0 {
+	if where := elementWhereIndex(r.ctx, q, open, close); where >= 0 {
 		insert = where
 	}
 	if brace := indexOutsideQuotes(q[open+1:insert], '{'); brace >= 0 {

@@ -35,7 +35,7 @@ func TestCompositeEngineLocalizedRoutingErrors(t *testing.T) {
 	t.Run("write validation has typed identity", func(t *testing.T) {
 		composite := NewCompositeEngine(nil, nil, nil)
 
-		_, err := composite.CreateNode(&Node{})
+		_, err := composite.CreateNode(t.Context(), &Node{})
 		requireCompositeLocalizedError(t, err, localization.MessageStorageCompositeNoWritableConstituents, "no writable constituents available", nil)
 	})
 }
@@ -109,7 +109,7 @@ func TestCompositeEngineLocalizedBulkWrapperPreservesCause(t *testing.T) {
 		map[string]string{"tenant-a": "read_write"},
 	)
 
-	err := composite.BulkCreateNodes([]*Node{{ID: "node-1"}})
+	err := composite.BulkCreateNodes(t.Context(), []*Node{{ID: "node-1"}})
 	localizedErr := requireCompositeLocalizedError(t, err, localization.MessageStorageCompositeNodeBulkCreateFailed, "failed to create nodes in constituent 'tenant-a': bulk write failed", cause)
 	require.Equal(t, "tenant-a", localizedErr.Message.Data["Alias"])
 }

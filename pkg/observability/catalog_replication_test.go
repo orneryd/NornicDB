@@ -40,7 +40,7 @@ func TestReplicationMetrics_TenFamilies(t *testing.T) {
 	bag.LagEntries.WithLabelValues("peer-1").Set(10)
 	bag.LastContactSeconds.WithLabelValues("peer-1").Set(0.5)
 	bag.RTTSeconds.WithLabelValues("peer-1").Observe(0.001)
-	bag.ApplyDuration.Bind().Observe(nil, 0.005) //nolint:staticcheck // intentional nil ctx for cold-path Bind test
+	bag.ApplyDuration.Bind().Observe(t.Context(), 0.005)
 
 	mfs, err := te.Registry.Gather()
 	require.NoError(t, err)

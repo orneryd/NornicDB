@@ -1,6 +1,7 @@
 package fabric
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -40,7 +41,7 @@ func (p *lifecycleParticipant) bind(t *testing.T, tx *FabricTransaction) {
 		}
 		return nil
 	}
-	require.NoError(t, tx.BindParticipantCallbacks(p.name, ParticipantCallbacks{Commit: func(*SubTransaction) error { return run(p.commit, &p.commits) }, Rollback: func(*SubTransaction) error { return run(p.rollback, &p.rollbacks) }}))
+	require.NoError(t, tx.BindParticipantCallbacks(p.name, ParticipantCallbacks{Commit: func(context.Context, *SubTransaction) error { return run(p.commit, &p.commits) }, Rollback: func(context.Context, *SubTransaction) error { return run(p.rollback, &p.rollbacks) }}))
 }
 
 // endTransaction runs end and returns its error and the panic it raised.
@@ -80,7 +81,9 @@ func TestFabricTransactionLifecycleMatrix(t *testing.T) {
 							require.NoError(t, err)
 							writer.bind(t, tx)
 
-							err, panicked := endTransaction(func() error { return tx.Commit(nil, nil) })
+							err, panicked := endTransaction(func() error {
+								return tx.Commit(TerminalContexts{Commit: t.Context(), Cleanup: context.WithoutCancel(t.Context())}, nil, nil)
+							})
 							subs := tx.SubTransactions()
 							for _, sub := range subs {
 								require.NotEqual(t, "open", sub.State, "%s left open", sub.ShardName)
@@ -167,8 +170,8 @@ func TestFabricTransactionLifecycleMatrix(t *testing.T) {
 								require.Nil(t, panicked)
 							}
 							// The transaction is ended: neither end runs again.
-							require.Error(t, tx.Commit(nil, nil))
-							require.Error(t, tx.Rollback(nil))
+							require.Error(t, tx.Commit(TerminalContexts{Commit: t.Context(), Cleanup: context.WithoutCancel(t.Context())}, nil, nil))
+							require.Error(t, tx.Rollback(context.WithoutCancel(t.Context()), nil))
 						})
 					}
 				}
@@ -191,7 +194,7 @@ func TestFabricTransactionLifecycleMatrix(t *testing.T) {
 						require.NoError(t, err)
 						p.bind(t, tx)
 					}
-					err, panicked := endTransaction(func() error { return tx.Rollback(nil) })
+					err, panicked := endTransaction(func() error { return tx.Rollback(context.WithoutCancel(t.Context()), nil) })
 					subs := tx.SubTransactions()
 					anyPanic, failed := false, 0
 					for _, p := range participants {
@@ -231,11 +234,13 @@ func TestFabricTransactionWriterOutcomeReport(t *testing.T) {
 			require.NoError(t, err)
 			rollbacks := 0
 			require.NoError(t, tx.BindParticipantCallbacks("w", ParticipantCallbacks{
-				Commit:   func(*SubTransaction) error { panic("after storage commit") },
-				Rollback: func(*SubTransaction) error { rollbacks++; return nil },
+				Commit:   func(context.Context, *SubTransaction) error { panic("after storage commit") },
+				Rollback: func(context.Context, *SubTransaction) error { rollbacks++; return nil },
 				Outcome:  func() string { return reported },
 			}))
-			err, panicked := endTransaction(func() error { return tx.Commit(nil, nil) })
+			err, panicked := endTransaction(func() error {
+				return tx.Commit(TerminalContexts{Commit: t.Context(), Cleanup: context.WithoutCancel(t.Context())}, nil, nil)
+			})
 			require.NotNil(t, panicked)
 			require.NoError(t, err)
 			want := reported
@@ -256,8 +261,8 @@ func TestFabricTransactionCommitErrorKeepsCause(t *testing.T) {
 	tx := NewFabricTransaction("cause")
 	_, err := tx.GetOrOpen("w", true)
 	require.NoError(t, err)
-	require.NoError(t, tx.BindParticipantCallbacks("w", ParticipantCallbacks{Commit: func(*SubTransaction) error { return cause }, Rollback: func(*SubTransaction) error { return nil }}))
-	err = tx.Commit(nil, nil)
+	require.NoError(t, tx.BindParticipantCallbacks("w", ParticipantCallbacks{Commit: func(context.Context, *SubTransaction) error { return cause }, Rollback: func(context.Context, *SubTransaction) error { return nil }}))
+	err = tx.Commit(TerminalContexts{Commit: t.Context(), Cleanup: context.WithoutCancel(t.Context())}, nil, nil)
 	require.ErrorIs(t, err, cause)
 	require.ErrorIs(t, err, ErrCommitKeptNothing)
 	require.True(t, strings.Contains(err.Error(), "commit failed on shard 'w'"))

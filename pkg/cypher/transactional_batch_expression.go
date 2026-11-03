@@ -87,11 +87,11 @@ func (e *StorageExecutor) classifyTransactionalBatchExpression(ctx context.Conte
 		}
 		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", err.Error())
 	}
-	if shape.forbidden || len(expressionFreeVariables(spec.Expression)) != 0 {
+	if shape.forbidden || len(expressionFreeVariables(ctx, spec.Expression)) != 0 {
 		return callBatchSizeError(spec.Expression, "Neo.ClientError.Statement.SyntaxError")
 	}
 	checker := staticOperatorChecker{scope: staticTypeScope{cypher25: cypherVersionFromContext(ctx) == "25"}}
-	operand, err := checker.check(spec.Expression)
+	operand, err := checker.check(ctx, spec.Expression)
 	if err != nil {
 		return err
 	}
@@ -100,7 +100,7 @@ func (e *StorageExecutor) classifyTransactionalBatchExpression(ctx context.Conte
 	}
 	if params != nil {
 		checker.params = params
-		operand, err = checker.check(spec.Expression)
+		operand, err = checker.check(ctx, spec.Expression)
 		if err != nil {
 			return err
 		}

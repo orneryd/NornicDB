@@ -15,10 +15,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sort"
 	"sync"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -34,7 +35,7 @@ func newContinuationCatalogService(t *testing.T) (*Service, storage.Engine) {
 
 func createContinuationCatalogNode(t *testing.T, engine storage.Engine, node *storage.Node) {
 	t.Helper()
-	_, err := engine.CreateNode(node)
+	_, err := engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 }
 
@@ -209,14 +210,14 @@ func TestContinuationNodeEligibleTypePredicateContract(t *testing.T) {
 	sort.Strings(keys)
 	for _, key := range keys {
 		node := nodes[key]
-		eligible, err := service.continuationNodeEligible(node, options, wanted, nil, nil)
+		eligible, err := service.continuationNodeEligible(t.Context(), node, options, wanted, nil, nil)
 		require.NoError(t, err)
 		require.Equal(t, nodeMatchesType(node, wanted), eligible, "node %s", key)
 	}
 
 	// Empty Types leaves the wanted set empty, so no Type rejection applies.
 	unconstrained := &SearchOptions{}
-	eligible, err := service.continuationNodeEligible(nodes["other"], unconstrained, wantedTypesLower(unconstrained.Types), nil, nil)
+	eligible, err := service.continuationNodeEligible(t.Context(), nodes["other"], unconstrained, wantedTypesLower(unconstrained.Types), nil, nil)
 	require.NoError(t, err)
 	require.True(t, eligible)
 }
@@ -231,7 +232,7 @@ func TestContinuationCatalogCompilesWantedTypesOncePerBuild(t *testing.T) {
 	for index := range nodes {
 		nodes[index] = &storage.Node{ID: storage.NodeID(fmt.Sprintf("node-%02d", index)), Labels: []string{"document"}}
 	}
-	require.NoError(t, engine.BulkCreateNodes(nodes))
+	require.NoError(t, engine.BulkCreateNodes(t.Context(), nodes))
 	options := &SearchOptions{Types: []string{"DOCUMENT"}}
 	ids := pullContinuationCatalog(t, service, options, SearchContinuationRequest{
 		Owner: "alice", Database: "nornic", Mode: SearchContinuationID, N: nodeCount,
@@ -243,7 +244,7 @@ func TestContinuationCatalogCompilesWantedTypesOncePerBuild(t *testing.T) {
 	allocations := testing.AllocsPerRun(10, func() {
 		matched = 0
 		for _, node := range nodes {
-			admitted, err := service.continuationNodeEligible(node, options, wanted, nil, nil)
+			admitted, err := service.continuationNodeEligible(t.Context(), node, options, wanted, nil, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

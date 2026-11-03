@@ -45,16 +45,16 @@ func TestWriteBehindFlushClearsPendingIDEntries(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		bufferedCreate(t, engine, &Node{ID: NodeID(fmt.Sprintf("test:n%d", i)), Labels: []string{"L"}})
 	}
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, tx.CreateEdge(&Edge{ID: "test:e", StartNode: "test:n0", EndNode: "test:n1", Type: "R"}))
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:e", StartNode: "test:n0", EndNode: "test:n1", Type: "R"}))
 	require.NoError(t, tx.Commit())
 	require.Greater(t, engine.writeBehind.PendingOps(), 0, "the commits stay buffered")
 	require.Equal(t, 21, pendingEntries(), "buffered entries are pending until the flush")
 
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	require.Zero(t, pendingEntries())
 	engine.idDict.txnMu.Lock()
 	require.Empty(t, engine.idDict.txnCounters)

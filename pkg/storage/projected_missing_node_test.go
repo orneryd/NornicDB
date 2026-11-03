@@ -10,14 +10,14 @@ import (
 // the Badger engine, a namespaced view of it, and a composite over that view.
 func TestGetNodeProjectedMissingNode(t *testing.T) {
 	engine := createTestBadgerEngine(t)
-	_, err := engine.GetNodeProjected("test:missing", []string{"name"})
+	_, err := engine.GetNodeProjected(t.Context(), "test:missing", []string{"name"})
 	require.ErrorIs(t, err, ErrNotFound)
 
 	namespaced := NewNamespacedEngine(engine, "test")
-	_, err = namespaced.GetNodeProjected("missing", []string{"name"})
+	_, err = namespaced.GetNodeProjected(t.Context(), "missing", []string{"name"})
 	require.ErrorIs(t, err, ErrNotFound)
 
 	composite := NewCompositeEngine(map[string]Engine{"test": namespaced}, nil, map[string]string{"test": "read"})
-	_, err = composite.GetNodeProjected("missing", []string{"name"})
+	_, err = composite.GetNodeProjected(t.Context(), "missing", []string{"name"})
 	require.ErrorIs(t, err, ErrNotFound)
 }

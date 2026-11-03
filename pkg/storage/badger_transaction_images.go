@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"time"
 )
@@ -116,9 +117,12 @@ func (b *BadgerEngine) writtenEdgeImage(data []byte, edge *Edge) (*Edge, error) 
 	return b.decodeWrittenEdge(data, edge)
 }
 
-// decodeWrittenNode decodes data, the body encoded for node id.
+// decodeWrittenNode decodes data, the body encoded for node id. The body is
+// this write's own encoded image rather than a stored record read from a
+// snapshot, so its tokens are the writer's own claims: nil is the context-free
+// owned-image boundary.
 func (b *BadgerEngine) decodeWrittenNode(id NodeID, data []byte) (*Node, error) {
-	node, err := b.decodeNode(namespaceForNodeID(id), data)
+	node, err := b.decodeNodeProjected(nil, namespaceForNodeID(id), data, nil)
 	if err != nil {
 		return nil, fmt.Errorf("decode written node %s: %w", id, err)
 	}
@@ -128,7 +132,7 @@ func (b *BadgerEngine) decodeWrittenNode(id NodeID, data []byte) (*Node, error) 
 // decodeWrittenEdge is decodeWrittenNode for a relationship, whose endpoint IDs
 // come from source, the body data was encoded from.
 func (b *BadgerEngine) decodeWrittenEdge(data []byte, source *Edge) (*Edge, error) {
-	edge, _, _, err := b.decodeEdgeCompactV2(namespaceForEdgeID(source.ID), data)
+	edge, _, _, err := b.decodeEdgeCompactV2(nil, namespaceForEdgeID(source.ID), data)
 	if err != nil {
 		return nil, fmt.Errorf("decode written edge %s: %w", source.ID, err)
 	}
@@ -151,7 +155,7 @@ func writtenBodyKey(buf []byte, prefix byte, id string) []byte {
 // commit publishes to the write-behind overlay, the entity caches and its
 // callbacks what a read from storage returns. Earlier operations on the same
 // entity keep their intermediate values for ordered publication.
-func (b *BadgerEngine) storeWrittenBodies(writes map[string][]byte, ops []Operation) error {
+func (b *BadgerEngine) storeWrittenBodies(ctx context.Context, writes map[string][]byte, ops []Operation) error {
 	var keyBuf [64]byte
 	var lastNodeWrite map[NodeID]int
 	var lastEdgeWrite map[EdgeID]int
@@ -159,6 +163,9 @@ func (b *BadgerEngine) storeWrittenBodies(writes map[string][]byte, ops []Operat
 		lastNodeWrite = make(map[NodeID]int)
 		lastEdgeWrite = make(map[EdgeID]int)
 		for i, op := range ops {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if op.Node != nil {
 				lastNodeWrite[op.Node.ID] = i
 			}
@@ -168,6 +175,9 @@ func (b *BadgerEngine) storeWrittenBodies(writes map[string][]byte, ops []Operat
 		}
 	}
 	for i := range ops {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		op := &ops[i]
 		if op.Node != nil && (lastNodeWrite == nil || lastNodeWrite[op.Node.ID] == i) {
 			if data := writes[string(writtenBodyKey(keyBuf[:0], prefixNode, string(op.Node.ID)))]; len(data) != 0 {

@@ -32,16 +32,16 @@ func TestTransactionNodeUpdateChunkPersistence(t *testing.T) {
 				}
 				b := open()
 				original := &Node{ID: "test:chunks", Labels: []string{"Doc"}, Properties: map[string]any{"text": "same"}, CreatedAt: time.Unix(1700000000, 0).UTC(), UpdatedAt: time.Unix(1700000000, 1).UTC(), ChunkEmbeddings: [][]float32{vector(0.25), vector(0.5)}, EmbedMeta: map[string]any{"embedding_model": "original", "chunk_count": 2}}
-				_, err := b.CreateNode(original)
+				_, err := b.CreateNode(t.Context(), original)
 				require.NoError(t, err)
-				originalStored, err := b.GetStoredNode(original.ID)
+				originalStored, err := b.GetStoredNode(t.Context(), original.ID)
 				require.NoError(t, err)
-				tx, err := b.BeginTransaction()
+				tx, err := b.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				defer tx.Rollback()
 				require.NoError(t, tx.SetNamespace("test"))
 				update := func(node *Node) error {
-					return tx.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits})
+					return tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node, Policy: ClientNodeEdits})
 				}
 
 				first := CopyNode(originalStored)
@@ -75,7 +75,7 @@ func TestTransactionNodeUpdateChunkPersistence(t *testing.T) {
 				}
 				require.NoError(t, b.Close())
 				b = open()
-				got, err := b.GetStoredNode(original.ID)
+				got, err := b.GetStoredNode(t.Context(), original.ID)
 				require.NoError(t, err)
 				require.Equal(t, wantVectors, got.ChunkEmbeddings)
 				if wantModel == "" {
@@ -108,18 +108,18 @@ func BenchmarkTransactionNodeUpdateWithoutVectors(b *testing.B) {
 		b.Fatal(err)
 	}
 	b.Cleanup(func() { _ = engine.Close() })
-	_, err = engine.CreateNode(&Node{ID: "test:bench-node", Labels: []string{"L"}, Properties: map[string]any{"x": 0}})
+	_, err = engine.CreateNode(b.Context(), &Node{ID: "test:bench-node", Labels: []string{"L"}, Properties: map[string]any{"x": 0}})
 	if err != nil {
 		b.Fatal(err)
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		tx, err := engine.BeginTransaction()
+		tx, err := engine.BeginTransaction(b.Context())
 		if err != nil {
 			b.Fatal(err)
 		}
-		if err := tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:bench-node", Labels: []string{"L"}, Properties: map[string]any{"x": i}}, Policy: ClientNodeEdits}); err != nil {
+		if err := tx.UpdateGraphNode(b.Context(), NodeUpdateRequest{After: &Node{ID: "test:bench-node", Labels: []string{"L"}, Properties: map[string]any{"x": i}}, Policy: ClientNodeEdits}); err != nil {
 			b.Fatal(err)
 		}
 		if err := tx.Commit(); err != nil {

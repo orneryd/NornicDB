@@ -21,12 +21,16 @@ package storage
 //   - Errors are logged (via the engine logger) and NOT returned; a
 //     single bad write must not block an entire bulk CREATE. The caller
 //     can still detect failure via end-to-end correctness checks.
+//   - IndexNode's keys belong to the write the engine already accepted, so
+//     maintenance passes context.Background() rather than a request's
+//     context.
 //
 // This file deliberately stays storage-local — it references only
 // *BadgerEngine / *SchemaManager / *Node, no cypher / knowledgepolicy
 // imports.
 
 import (
+	"context"
 	"log/slog"
 )
 
@@ -52,7 +56,7 @@ func (b *BadgerEngine) maintainCompositeIndexesOnNodeCreated(node *Node, sm *Sch
 			if idx == nil {
 				continue
 			}
-			if err := idx.IndexNode(node.ID, node.Properties); err != nil {
+			if err := idx.IndexNode(context.Background(), node.ID, node.Properties); err != nil {
 				b.log.Warn("composite index insert failed",
 					slog.String("component", "storage"),
 					slog.String("label", label),
@@ -96,7 +100,7 @@ func (b *BadgerEngine) maintainCompositeIndexesOnNodeUpdated(node, oldNode *Node
 			if idx == nil {
 				continue
 			}
-			if err := idx.IndexNode(node.ID, node.Properties); err != nil {
+			if err := idx.IndexNode(context.Background(), node.ID, node.Properties); err != nil {
 				b.log.Warn("composite index insert (new) failed",
 					slog.String("component", "storage"),
 					slog.String("label", label),
@@ -152,18 +156,20 @@ func (b *BadgerEngine) schemaForNodeID(id NodeID) *SchemaManager {
 // All predecessor claims retire before any final claim is acquired, so key
 // transfers do not depend on mutation order. Recovery folds a bounded physical
 // batch; its historical claims cannot overwrite another current holder.
+// The accepted frame completes with Background; ApplyUniqueValue can only return
+// a preparation cancellation error, which this completion lifetime cannot have.
 func (b *BadgerEngine) publishUniqueValues(schema *SchemaManager, ops []Operation, action UniqueValueAction) {
 	if schema == nil || !schema.HasUniqueValueTracking() {
 		return
 	}
-	states := newCommitStates(ops)
+	states, _ := newCommitStates(context.Background(), ops) // applied publication cannot cancel
 	for id, old := range states.committedNodes {
 		if old == nil {
 			continue
 		}
 		for _, label := range old.Labels {
 			for property, value := range old.Properties {
-				schema.ApplyUniqueValue(label, property, value, id, RetiredUniqueClaim)
+				_ = schema.ApplyUniqueValue(context.Background(), label, property, value, id, RetiredUniqueClaim)
 			}
 		}
 	}
@@ -173,7 +179,7 @@ func (b *BadgerEngine) publishUniqueValues(schema *SchemaManager, ops []Operatio
 		}
 		for _, label := range written.Labels {
 			for property, value := range written.Properties {
-				schema.ApplyUniqueValue(label, property, value, id, action)
+				_ = schema.ApplyUniqueValue(context.Background(), label, property, value, id, action)
 			}
 		}
 	}

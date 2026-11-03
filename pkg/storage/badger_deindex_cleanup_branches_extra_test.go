@@ -27,7 +27,7 @@ func TestDeindexCleanupJob_AdditionalBranches(t *testing.T) {
 
 	t.Run("RunOnce returns context canceled mid-loop", func(t *testing.T) {
 		engine := createTestBadgerEngine(t)
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			return enqueueWorkItemInTxn(txn, "test:ctx-cancel", "NODE")
 		}))
 
@@ -47,7 +47,7 @@ func TestDeindexCleanupJob_AdditionalBranches(t *testing.T) {
 			TargetID:   "test:missing-cat",
 			Status:     "pending",
 		}
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			data, err := msgpack.Marshal(item)
 			if err != nil {
 				return err
@@ -55,7 +55,7 @@ func TestDeindexCleanupJob_AdditionalBranches(t *testing.T) {
 			return txn.Set(deindexWorkItemKey(item.WorkItemID), data)
 		}))
 
-		require.NoError(t, job.processWorkItem(item))
+		require.NoError(t, job.processWorkItem(context.Background(), item))
 		require.NoError(t, engine.withView(func(txn *badger.Txn) error {
 			_, err := txn.Get(deindexWorkItemKey(item.WorkItemID))
 			require.ErrorIs(t, err, badger.ErrKeyNotFound)
@@ -71,12 +71,12 @@ func TestDeindexCleanupJob_AdditionalBranches(t *testing.T) {
 			TargetID:   "test:already",
 			Status:     "pending",
 		}
-		require.NoError(t, engine.PutIndexEntryCatalog(item.TargetID, &IndexEntryCatalog{
+		require.NoError(t, engine.PutIndexEntryCatalog(context.Background(), item.TargetID, &IndexEntryCatalog{
 			TargetID:    item.TargetID,
 			TargetScope: "NODE",
 			Deindexed:   true,
 		}))
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			data, err := msgpack.Marshal(item)
 			if err != nil {
 				return err
@@ -84,7 +84,7 @@ func TestDeindexCleanupJob_AdditionalBranches(t *testing.T) {
 			return txn.Set(deindexWorkItemKey(item.WorkItemID), data)
 		}))
 
-		require.NoError(t, job.processWorkItem(item))
+		require.NoError(t, job.processWorkItem(context.Background(), item))
 		require.NoError(t, engine.withView(func(txn *badger.Txn) error {
 			_, err := txn.Get(deindexWorkItemKey(item.WorkItemID))
 			require.ErrorIs(t, err, badger.ErrKeyNotFound)
@@ -101,7 +101,7 @@ func TestDeindexCleanupJob_AdditionalBranches(t *testing.T) {
 			Status:     "pending",
 			RetryCount: 10,
 		}
-		job.retryWorkItem(item)
+		job.retryWorkItem(t.Context(), item)
 		require.Equal(t, "failed", item.Status)
 		require.Equal(t, 11, item.RetryCount)
 	})

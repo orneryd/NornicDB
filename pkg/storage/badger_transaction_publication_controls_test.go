@@ -26,13 +26,13 @@ func TestOversizedTransactionLeavesPersistentGraphIntact(t *testing.T) {
 	}
 	engine := open()
 	keepID := NodeID(prefixTestID("keep"))
-	_, err := engine.CreateNode(&Node{ID: keepID, Labels: []string{"Keep"}, Properties: map[string]interface{}{"value": "original"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: keepID, Labels: []string{"Keep"}, Properties: map[string]interface{}{"value": "original"}})
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	require.NoError(t, tx.DeleteGraphNode(keepID, CascadeEdges))
-	_, err = tx.CreateNode(&Node{ID: NodeID(prefixTestID("staged-0")), Labels: []string{"Staged"}})
+	require.NoError(t, tx.DeleteGraphNode(t.Context(), keepID, CascadeEdges))
+	_, err = tx.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("staged-0")), Labels: []string{"Staged"}})
 	require.NoError(t, err)
 	largeKeySuffix := strings.Repeat("k", 32<<10)
 	var oversizedErr error
@@ -52,12 +52,12 @@ func TestOversizedTransactionLeavesPersistentGraphIntact(t *testing.T) {
 
 	engine = open()
 	defer engine.Close()
-	kept, err := engine.GetNode(keepID)
+	kept, err := engine.GetNode(t.Context(), keepID)
 	require.NoError(t, err)
 	require.Equal(t, "original", kept.Properties["value"])
-	_, err = engine.GetNode(NodeID(prefixTestID("staged-0")))
+	_, err = engine.GetNode(t.Context(), NodeID(prefixTestID("staged-0")))
 	require.ErrorIs(t, err, ErrNotFound)
-	_, err = engine.CreateNode(&Node{ID: NodeID(prefixTestID("after")), Labels: []string{"Keep"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("after")), Labels: []string{"Keep"}})
 	require.NoError(t, err)
 }
 
@@ -67,12 +67,12 @@ func TestOversizedTransactionLeavesPersistentGraphIntact(t *testing.T) {
 // the same logical-reservation window as the regression.
 func stageReservedPublication(t *testing.T, peer *BadgerTransaction) {
 	t.Helper()
-	require.NoError(t, peer.validateSnapshotIsolationConflicts())
+	require.NoError(t, peer.validateSnapshotIsolationConflicts(t.Context()))
 	version, err := peer.engine.allocateMVCCVersion(peer.badgerTx, peer.namespace, time.Now())
 	require.NoError(t, err)
 	peer.CommitVersion = version
-	require.NoError(t, peer.engine.materializeMVCCCommit(singleBatchWriter(peer.badgerTx), version, peer.operations))
-	require.NoError(t, peer.flushBufferedWrites(singleBatchWriter(peer.badgerTx)))
+	require.NoError(t, peer.engine.materializeMVCCCommit(t.Context(), singleBatchWriter(peer.badgerTx), version, peer.operations))
+	require.NoError(t, peer.flushBufferedWrites(t.Context(), singleBatchWriter(peer.badgerTx)))
 }
 
 func publishReservedPublication(t *testing.T, peer *BadgerTransaction) {
@@ -97,43 +97,43 @@ func TestTransactionSnapshotReservedPeerMutation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			engine := createTestBadgerEngine(t)
 			source, _, edgeID := seedSnapshotAdjacencyGraph(t, engine, 0)
-			peer, err := engine.BeginTransaction()
+			peer, err := engine.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = peer.Rollback() })
 			switch {
 			case tc.node:
-				require.NoError(t, peer.DeleteGraphNode(source, CascadeEdges))
+				require.NoError(t, peer.DeleteGraphNode(t.Context(), source, CascadeEdges))
 			case tc.deletion:
-				require.NoError(t, peer.DeleteEdge(edgeID))
+				require.NoError(t, peer.DeleteEdge(t.Context(), edgeID))
 			default:
-				edge, err := peer.GetEdge(edgeID)
+				edge, err := peer.GetEdge(t.Context(), edgeID)
 				require.NoError(t, err)
 				edge.Properties = map[string]interface{}{"writer": "peer"}
-				require.NoError(t, peer.UpdateEdge(EdgeUpdateRequest{After: edge}))
+				require.NoError(t, peer.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge}))
 			}
 			stageReservedPublication(t, peer)
-			reader, err := engine.BeginTransaction()
+			reader, err := engine.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = reader.Rollback() })
 			require.NoError(t, reader.SetNamespace(peer.namespace))
 			var node *Node
 			var edge *Edge
 			if tc.node {
-				node, err = reader.GetNode(source)
+				node, err = reader.GetNode(t.Context(), source)
 				require.NoError(t, err)
 				require.Empty(t, node.Properties, tc.bodyMessage)
 			} else {
-				edge, err = reader.GetEdge(edgeID)
+				edge, err = reader.GetEdge(t.Context(), edgeID)
 				require.NoError(t, err)
 				require.Empty(t, edge.Properties, tc.bodyMessage)
 			}
 			stageUpdate := func() {
 				if tc.node {
 					node.Properties = map[string]interface{}{"writer": "reader"}
-					require.NoError(t, reader.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}), tc.stageMessage)
+					require.NoError(t, reader.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node, Policy: ClientNodeEdits}), tc.stageMessage)
 				} else {
 					edge.Properties = map[string]interface{}{"writer": "reader"}
-					require.NoError(t, reader.UpdateEdge(EdgeUpdateRequest{After: edge}), tc.stageMessage)
+					require.NoError(t, reader.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge}), tc.stageMessage)
 				}
 			}
 			if !tc.lateUpdate {
@@ -144,13 +144,13 @@ func TestTransactionSnapshotReservedPeerMutation(t *testing.T) {
 				if tc.node {
 					// Native bytes are published before normal cache maintenance.
 					// Each observation needs its own fresh durable snapshot.
-					fresh, err := engine.BeginTransaction()
+					fresh, err := engine.BeginTransaction(t.Context())
 					require.NoError(t, err)
 					t.Cleanup(func() { _ = fresh.Rollback() })
-					_, err = fresh.GetNode(source)
+					_, err = fresh.GetNode(t.Context(), source)
 					require.ErrorIs(t, err, ErrNotFound, message)
 				} else {
-					latest, err := engine.GetEdge(edgeID)
+					latest, err := engine.GetEdge(t.Context(), edgeID)
 					if tc.deletion {
 						require.ErrorIs(t, err, ErrNotFound, message)
 					} else {
@@ -172,13 +172,13 @@ func TestTransactionSnapshotReservedPeerMutation(t *testing.T) {
 func TestTransactionPinnedSnapshotDiscardedOnRollbackAndCommit(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 
-	rolledBack, err := engine.BeginTransaction()
+	rolledBack, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NotNil(t, rolledBack.snapshotTx)
 	require.NoError(t, rolledBack.Rollback())
 	require.Nil(t, rolledBack.snapshotTx)
 
-	committed, err := engine.BeginTransaction()
+	committed, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NotNil(t, committed.snapshotTx)
 	require.NoError(t, committed.Commit())

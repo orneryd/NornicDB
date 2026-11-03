@@ -22,7 +22,7 @@ func TestGH459_HiddenFunctionOrderKeyWithLimit(t *testing.T) {
 				{ID: "cid", Labels: []string{"P"}, Properties: map[string]interface{}{"name": "Cid", "age": 35}},
 				{ID: "dee", Labels: []string{"P"}, Properties: map[string]interface{}{"name": "Dee", "city": "Riga"}},
 			} {
-				_, err := store.CreateNode(node)
+				_, err := store.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 			}
 			exec := NewStorageExecutor(store)

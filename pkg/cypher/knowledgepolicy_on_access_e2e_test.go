@@ -32,8 +32,8 @@ func setupOnAccessE2E(t *testing.T, bundles map[string]*knowledgepolicy.DecayPro
 		be,
 		func(entityID string) { be.AddToPendingEmbeddings(storage.NodeID(entityID)) },
 	)
-	flusher.SetSuppressionRecheck(func(entityID string, meta knowledgepolicy.EntityMeta) {
-		becameSuppressed, err := be.EnqueueDeindexIfSuppressed(entityID, meta.Scope == knowledgepolicy.ScopeEdge)
+	flusher.SetSuppressionRecheck(func(ctx context.Context, entityID string, meta knowledgepolicy.EntityMeta) {
+		becameSuppressed, err := be.EnqueueDeindexIfSuppressed(ctx, entityID, meta.Scope == knowledgepolicy.ScopeEdge)
 		if err == nil && becameSuppressed {
 			tokens := append([]string(nil), meta.Labels...)
 			if meta.EdgeType != "" {
@@ -121,11 +121,11 @@ func TestE2E_OnAccessAcceleratesDecayUntilSuppressed(t *testing.T) {
 	be, acc, flusher, exec, ctx := setupOnAccessE2E(t, bundles, bindings, policies)
 
 	now := time.Now()
-	_, err := be.CreateNode(&storage.Node{ID: "test:source-1", Labels: []string{"DecaySource"}, Properties: map[string]interface{}{"title": "source", "body": "volatile"}, CreatedAt: now, UpdatedAt: now})
+	_, err := be.CreateNode(t.Context(), &storage.Node{ID: "test:source-1", Labels: []string{"DecaySource"}, Properties: map[string]interface{}{"title": "source", "body": "volatile"}, CreatedAt: now, UpdatedAt: now})
 	require.NoError(t, err)
-	_, err = be.CreateNode(&storage.Node{ID: "test:target-1", Labels: []string{"DecayTarget"}, Properties: map[string]interface{}{"title": "target"}, CreatedAt: now, UpdatedAt: now})
+	_, err = be.CreateNode(t.Context(), &storage.Node{ID: "test:target-1", Labels: []string{"DecayTarget"}, Properties: map[string]interface{}{"title": "target"}, CreatedAt: now, UpdatedAt: now})
 	require.NoError(t, err)
-	err = be.CreateEdge(&storage.Edge{ID: "test:edge-1", StartNode: "test:source-1", EndNode: "test:target-1", Type: "DECAYS_TO", Properties: map[string]interface{}{"summary": "edge text", "weight": int64(7)}, CreatedAt: now, UpdatedAt: now})
+	err = be.CreateEdge(t.Context(), &storage.Edge{ID: "test:edge-1", StartNode: "test:source-1", EndNode: "test:target-1", Type: "DECAYS_TO", Properties: map[string]interface{}{"summary": "edge text", "weight": int64(7)}, CreatedAt: now, UpdatedAt: now})
 	require.NoError(t, err)
 
 	query := `MATCH (s:DecaySource)-[r:DECAYS_TO]->(t:DecayTarget) RETURN s, r, t`
@@ -238,11 +238,11 @@ func TestE2E_OnAccessPropertyPreservationKeepsOnlyAllowedFields(t *testing.T) {
 	be, acc, flusher, exec, ctx := setupOnAccessE2E(t, bundles, bindings, policies)
 
 	now := time.Now()
-	_, err := be.CreateNode(&storage.Node{ID: "test:prop-source-1", Labels: []string{"PropertySource"}, Properties: map[string]interface{}{"title": "keep-me", "body": "hide-me"}, CreatedAt: now, UpdatedAt: now})
+	_, err := be.CreateNode(t.Context(), &storage.Node{ID: "test:prop-source-1", Labels: []string{"PropertySource"}, Properties: map[string]interface{}{"title": "keep-me", "body": "hide-me"}, CreatedAt: now, UpdatedAt: now})
 	require.NoError(t, err)
-	_, err = be.CreateNode(&storage.Node{ID: "test:prop-target-1", Labels: []string{"PropertyTarget"}, Properties: map[string]interface{}{"title": "target"}, CreatedAt: now, UpdatedAt: now})
+	_, err = be.CreateNode(t.Context(), &storage.Node{ID: "test:prop-target-1", Labels: []string{"PropertyTarget"}, Properties: map[string]interface{}{"title": "target"}, CreatedAt: now, UpdatedAt: now})
 	require.NoError(t, err)
-	err = be.CreateEdge(&storage.Edge{ID: "test:prop-edge-1", StartNode: "test:prop-source-1", EndNode: "test:prop-target-1", Type: "PRESERVES", Properties: map[string]interface{}{"summary": "drop-me", "weight": int64(42)}, CreatedAt: now, UpdatedAt: now})
+	err = be.CreateEdge(t.Context(), &storage.Edge{ID: "test:prop-edge-1", StartNode: "test:prop-source-1", EndNode: "test:prop-target-1", Type: "PRESERVES", Properties: map[string]interface{}{"summary": "drop-me", "weight": int64(42)}, CreatedAt: now, UpdatedAt: now})
 	require.NoError(t, err)
 
 	query := `MATCH (s:PropertySource)-[r:PRESERVES]->(t:PropertyTarget) RETURN s, r`
@@ -319,7 +319,7 @@ func TestE2E_OnAccessDoesNotTriggerForWhereOnlyEvaluation(t *testing.T) {
 	be, acc, flusher, exec, ctx := setupOnAccessE2E(t, bundles, bindings, policies)
 
 	now := time.Now()
-	_, err := be.CreateNode(&storage.Node{
+	_, err := be.CreateNode(t.Context(), &storage.Node{
 		ID:         "test:where-only-1",
 		Labels:     []string{"WhereOnlySource"},
 		Properties: map[string]interface{}{"title": "candidate", "kind": "ignore-me"},
@@ -327,7 +327,7 @@ func TestE2E_OnAccessDoesNotTriggerForWhereOnlyEvaluation(t *testing.T) {
 		UpdatedAt:  now,
 	})
 	require.NoError(t, err)
-	_, err = be.CreateNode(&storage.Node{
+	_, err = be.CreateNode(t.Context(), &storage.Node{
 		ID:         "test:where-only-2",
 		Labels:     []string{"WhereOnlySource"},
 		Properties: map[string]interface{}{"title": "other", "kind": "other-kind"},
@@ -411,7 +411,7 @@ func TestE2E_OnAccessDoesNotTriggerForScalarProjection(t *testing.T) {
 	be, acc, flusher, exec, ctx := setupOnAccessE2E(t, bundles, bindings, policies)
 
 	now := time.Now()
-	_, err := be.CreateNode(&storage.Node{
+	_, err := be.CreateNode(t.Context(), &storage.Node{
 		ID:         "test:scalar-only-1",
 		Labels:     []string{"WhereOnlySource"},
 		Properties: map[string]interface{}{"title": "candidate", "kind": "ignore-me"},
@@ -494,9 +494,9 @@ func TestE2E_OnAccessOnlyTriggersAfterScoringGate(t *testing.T) {
 
 	be, acc, flusher, exec, ctx := setupOnAccessE2E(t, bundles, bindings, policies)
 	now := time.Now()
-	_, err := be.CreateNode(&storage.Node{ID: "test:blocked-reverse", Labels: []string{"BlockedReverse"}, Properties: map[string]interface{}{"name": "blocked"}, CreatedAt: now, UpdatedAt: now})
+	_, err := be.CreateNode(t.Context(), &storage.Node{ID: "test:blocked-reverse", Labels: []string{"BlockedReverse"}, Properties: map[string]interface{}{"name": "blocked"}, CreatedAt: now, UpdatedAt: now})
 	require.NoError(t, err)
-	_, err = be.CreateNode(&storage.Node{ID: "test:passing-reverse", Labels: []string{"PassingReverse"}, Properties: map[string]interface{}{"name": "passing"}, CreatedAt: now, UpdatedAt: now})
+	_, err = be.CreateNode(t.Context(), &storage.Node{ID: "test:passing-reverse", Labels: []string{"PassingReverse"}, Properties: map[string]interface{}{"name": "passing"}, CreatedAt: now, UpdatedAt: now})
 	require.NoError(t, err)
 
 	result, err := exec.Execute(ctx, `MATCH (n:BlockedReverse) RETURN n`, nil)

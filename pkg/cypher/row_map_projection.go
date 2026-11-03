@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
@@ -59,12 +60,12 @@ func mapProjectionSplit(expression string, policy mapProjectionPolicy, scope *st
 	return variable, items, true
 }
 
-func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map[string]interface{}) (interface{}, bool, bool, error) {
+func (e *StorageExecutor) evaluateRowMapProjection(ctx context.Context, expression string, values map[string]interface{}) (interface{}, bool, bool, error) {
 	variable, inner, projection := mapProjectionSplit(expression, mapProjectionRuntime, nil)
 	if !projection {
 		return nil, false, false, nil
 	}
-	base, resolved, err := e.evaluateRowValue(variable, values)
+	base, resolved, err := e.evaluateRowValue(ctx, variable, values)
 	if err != nil {
 		return nil, true, false, err
 	}
@@ -115,7 +116,7 @@ func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map
 			separator := findTopLevelMapKeyValueSeparator(item)
 			if separator > 0 {
 				name := normalizePropertyKey(strings.TrimSpace(item[:separator]))
-				value, ok, err := e.evaluateRowValue(strings.TrimSpace(item[separator+1:]), values)
+				value, ok, err := e.evaluateRowValue(ctx, strings.TrimSpace(item[separator+1:]), values)
 				if err != nil {
 					return nil, true, false, err
 				}

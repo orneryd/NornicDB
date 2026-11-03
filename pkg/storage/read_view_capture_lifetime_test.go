@@ -19,7 +19,7 @@ func TestCaptureReadViewPanicReleasesReadView(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 
 	require.PanicsWithValue(t, "capture panic", func() {
-		_, _ = engine.captureReadView(func(*WriteBehindBuffer) { panic("capture panic") })
+		_, _ = engine.captureReadView(t.Context(), func(*WriteBehindBuffer) { panic("capture panic") })
 	})
 
 	closed := make(chan error, 1)

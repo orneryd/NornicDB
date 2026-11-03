@@ -145,9 +145,9 @@ func TestExtractSeedNodesFromResult_Branches(t *testing.T) {
 	store := storage.NewNamespacedEngine(base, "seed_extract")
 	exec := NewStorageExecutor(store)
 
-	_, err := store.CreateNode(&storage.Node{ID: "n1", Labels: []string{"N"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "n1", Labels: []string{"N"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "n2", Labels: []string{"N"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "n2", Labels: []string{"N"}})
 	require.NoError(t, err)
 
 	res := &ExecuteResult{
@@ -160,14 +160,14 @@ func TestExtractSeedNodesFromResult_Branches(t *testing.T) {
 			{[]interface{}{map[string]interface{}{"id": "n2"}}},
 		},
 	}
-	nodes, err := exec.extractSeedNodesFromResult(res, "seed")
+	nodes, err := exec.extractSeedNodesFromResult(t.Context(), res, "seed")
 	require.NoError(t, err)
 	require.Len(t, nodes, 4)
 
-	_, err = exec.extractSeedNodesFromResult(&ExecuteResult{Columns: []string{"other"}, Rows: [][]interface{}{{"n1"}}}, "seed")
+	_, err = exec.extractSeedNodesFromResult(t.Context(), &ExecuteResult{Columns: []string{"other"}, Rows: [][]interface{}{{"n1"}}}, "seed")
 	require.Error(t, err)
 
-	nodes, err = exec.extractSeedNodesFromResult(nil, "seed")
+	nodes, err = exec.extractSeedNodesFromResult(t.Context(), nil, "seed")
 	require.NoError(t, err)
 	require.Empty(t, nodes)
 }

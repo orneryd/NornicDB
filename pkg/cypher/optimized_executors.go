@@ -70,8 +70,8 @@ func (e *StorageExecutor) ExecuteOptimized(ctx context.Context, query string, pa
 					seenPairs[pairKey] = true
 
 					// Get node properties
-					startNode := e.getNodeCached(edge.StartNode, nodeCache)
-					endNode := e.getNodeCached(edge.EndNode, nodeCache)
+					startNode := e.getNodeCached(ctx, edge.StartNode, nodeCache)
+					endNode := e.getNodeCached(ctx, edge.EndNode, nodeCache)
 
 					if startNode != nil && endNode != nil {
 						startName := e.getPropertyString(startNode, "name")
@@ -173,7 +173,7 @@ func (e *StorageExecutor) executeRelationshipCountOptimized(ctx context.Context,
 	nodeCache := make(map[storage.NodeID]*storage.Node)
 	for i := 0; i < limit; i++ {
 		row := rows[i]
-		node := e.getNodeCached(row.nodeID, nodeCache)
+		node := e.getNodeCached(ctx, row.nodeID, nodeCache)
 		if node != nil {
 			name := e.getPropertyString(node, "name")
 			result.Rows = append(result.Rows, []interface{}{name, row.count})
@@ -282,7 +282,7 @@ func (e *StorageExecutor) executeEdgePropertyAggOptimized(ctx context.Context, q
 	nodeCache := make(map[storage.NodeID]*storage.Node)
 	for i := 0; i < limit; i++ {
 		row := rows[i]
-		node := e.getNodeCached(row.nodeID, nodeCache)
+		node := e.getNodeCached(ctx, row.nodeID, nodeCache)
 		if node == nil {
 			continue
 		}
@@ -314,7 +314,7 @@ func (e *StorageExecutor) executeEdgePropertyAggOptimized(ctx context.Context, q
 
 // extractReturnItemsFromQuery extracts RETURN items from a Cypher query
 func (e *StorageExecutor) extractReturnItemsFromQuery(ctx context.Context, query string) []returnItem {
-	returnIdx := findKeywordIndex(query, "RETURN")
+	returnIdx := findKeywordIndex(ctx, query, "RETURN")
 	if returnIdx == -1 {
 		return nil
 	}
@@ -324,11 +324,11 @@ func (e *StorageExecutor) extractReturnItemsFromQuery(ctx context.Context, query
 }
 
 // getNodeCached retrieves a node, using cache to avoid repeated lookups
-func (e *StorageExecutor) getNodeCached(id storage.NodeID, cache map[storage.NodeID]*storage.Node) *storage.Node {
+func (e *StorageExecutor) getNodeCached(ctx context.Context, id storage.NodeID, cache map[storage.NodeID]*storage.Node) *storage.Node {
 	if node, exists := cache[id]; exists {
 		return node
 	}
-	node, err := e.getQueryNode(e.storage, id)
+	node, err := e.getQueryNode(ctx, e.storage, id)
 	if err != nil {
 		return nil
 	}
@@ -350,11 +350,27 @@ func (e *StorageExecutor) getPropertyString(node *storage.Node, prop string) str
 // BatchGetNodes retrieves multiple nodes in a single operation
 // Used for large result set optimization
 func (e *StorageExecutor) BatchGetNodes(ctx context.Context, ids []storage.NodeID) map[storage.NodeID]*storage.Node {
+	if err := ctx.Err(); err != nil {
+		recordExpressionFailure(ctx, err)
+		return nil
+	}
 	result := make(map[storage.NodeID]*storage.Node, len(ids))
 	for _, id := range ids {
-		if node, err := e.storage.GetNode(id); err == nil && node != nil {
+		node, err := e.storage.GetNode(ctx, id)
+		if err != nil {
+			if canceled := ctx.Err(); canceled != nil {
+				recordExpressionFailure(ctx, canceled)
+				return nil
+			}
+			continue
+		}
+		if node != nil {
 			result[id] = node
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		recordExpressionFailure(ctx, err)
+		return nil
 	}
 	return result
 }

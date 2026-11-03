@@ -34,20 +34,17 @@ func withRepeatableElements(ctx context.Context) context.Context {
 // repeatableElements reports whether ctx runs a MATCH REPEATABLE ELEMENTS
 // clause, where a relationship may repeat.
 func repeatableElements(ctx context.Context) bool {
-	if ctx == nil {
-		return false
-	}
 	repeatable, _ := ctx.Value(repeatableElementsKey{}).(bool)
 	return repeatable
 }
 
 // stripRepeatableElements removes the match mode marker from a MATCH body
 // (pattern [WHERE …]); ok is false when the body has none.
-func stripRepeatableElements(body string) (string, bool) {
+func stripRepeatableElements(ctx context.Context, body string) (string, bool) {
 	if indexASCIIFold(body, repeatableElementsFunction) < 0 {
 		return body, false
 	}
-	where := topLevelKeywordIndex(body, "WHERE")
+	where := topLevelKeywordIndex(ctx, body, "WHERE")
 	if where < 0 {
 		return body, false
 	}

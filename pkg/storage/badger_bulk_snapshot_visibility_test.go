@@ -11,12 +11,12 @@ func TestBulkCreatedRelationshipPublishesVersionedAdjacency(t *testing.T) {
 	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 
-	require.NoError(t, engine.BulkCreateNodes([]*Node{
+	require.NoError(t, engine.BulkCreateNodes(t.Context(), []*Node{
 		{ID: "snapshot_bulk:owner", Labels: []string{"Owner"}},
 		{ID: "snapshot_bulk:item", Labels: []string{"Item"}},
 	}))
 
-	beforeCreate, err := engine.BeginTransaction()
+	beforeCreate, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, beforeCreate.SetNamespace("snapshot_bulk"))
 	t.Cleanup(func() {
@@ -25,7 +25,7 @@ func TestBulkCreatedRelationshipPublishesVersionedAdjacency(t *testing.T) {
 		}
 	})
 
-	require.NoError(t, engine.BulkCreateEdges([]*Edge{{
+	require.NoError(t, engine.BulkCreateEdges(t.Context(), []*Edge{{
 		ID:        "snapshot_bulk:relationship",
 		StartNode: "snapshot_bulk:owner",
 		EndNode:   "snapshot_bulk:item",
@@ -37,7 +37,7 @@ func TestBulkCreatedRelationshipPublishesVersionedAdjacency(t *testing.T) {
 	require.Empty(t, beforeOutgoing, "a snapshot opened before the create must not observe the relationship")
 	require.NoError(t, beforeCreate.Rollback())
 
-	afterCreate, err := engine.BeginTransaction()
+	afterCreate, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, afterCreate.SetNamespace("snapshot_bulk"))
 	t.Cleanup(func() {

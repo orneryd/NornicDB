@@ -79,9 +79,9 @@ func TestCallDbInfoWithoutIdentityMetadata(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	exec.SetDatabaseManager(newMockDatabaseManager(t))
 	ctx := context.Background()
-	_, err := exec.storage.CreateNode(&storage.Node{ID: "n1", Labels: []string{"A"}})
+	_, err := exec.storage.CreateNode(t.Context(), &storage.Node{ID: "n1", Labels: []string{"A"}})
 	require.NoError(t, err)
-	require.NoError(t, exec.storage.CreateEdge(&storage.Edge{ID: "e1", StartNode: "n1", EndNode: "n1", Type: "SELF"}))
+	require.NoError(t, exec.storage.CreateEdge(t.Context(), &storage.Edge{ID: "e1", StartNode: "n1", EndNode: "n1", Type: "SELF"}))
 
 	result, err := exec.Execute(ctx, `CALL db.info()`, nil)
 	require.NoError(t, err)

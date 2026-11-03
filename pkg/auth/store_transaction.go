@@ -36,7 +36,7 @@ func WithStoreTransaction(ctx context.Context, engine storage.Engine, mutate fun
 		break
 	}
 	beginner, ok := inner.(interface {
-		BeginTransaction() (*storage.BadgerTransaction, error)
+		BeginTransaction(context.Context) (*storage.BadgerTransaction, error)
 	})
 	if !ok {
 		return storage.ErrNotImplemented
@@ -46,7 +46,7 @@ func WithStoreTransaction(ctx context.Context, engine storage.Engine, mutate fun
 			return err
 		}
 	}
-	tx, err := beginner.BeginTransaction()
+	tx, err := beginner.BeginTransaction(ctx)
 	if err != nil {
 		return err
 	}
@@ -78,18 +78,18 @@ func (s *storeTransaction) WithStoreTransaction(ctx context.Context, mutate func
 	return mutate(s)
 }
 
-func (s *storeTransaction) CreateNode(node *storage.Node) (storage.NodeID, error) {
-	return s.tx.CreateNode(node)
+func (s *storeTransaction) CreateNode(ctx context.Context, node *storage.Node) (storage.NodeID, error) {
+	return s.tx.CreateNode(ctx, node)
 }
 
-func (s *storeTransaction) UpdateNode(updateRequest storage.NodeUpdateRequest) error {
-	return s.tx.UpdateGraphNode(updateRequest)
+func (s *storeTransaction) UpdateNode(ctx context.Context, updateRequest storage.NodeUpdateRequest) error {
+	return s.tx.UpdateGraphNode(ctx, updateRequest)
 }
-func (s *storeTransaction) DeleteNode(id storage.NodeID) error {
-	return s.tx.DeleteGraphNode(id, storage.CascadeEdges)
+func (s *storeTransaction) DeleteNode(ctx context.Context, id storage.NodeID) error {
+	return s.tx.DeleteGraphNode(ctx, id, storage.CascadeEdges)
 }
-func (s *storeTransaction) GetNode(id storage.NodeID) (*storage.Node, error) {
-	return s.tx.GetNode(id)
+func (s *storeTransaction) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
+	return s.tx.GetNode(ctx, id)
 }
 func (s *storeTransaction) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
 	return s.tx.GetNodesByLabel(ctx, label)

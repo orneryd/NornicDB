@@ -19,10 +19,10 @@ func TestSolCompositeRetiredIDCollectible(t *testing.T) {
 				props := map[string]any{"a": 1, "b": 2}
 				ref := func() weak.Pointer[byte] {
 					id := NodeID(strings.Repeat("retired-id", 8192))
-					if err := idx.IndexNode("test:kept", props); err != nil {
+					if err := idx.IndexNode(t.Context(), "test:kept", props); err != nil {
 						t.Fatal(err)
 					}
-					if err := idx.IndexNode(id, props); err != nil {
+					if err := idx.IndexNode(t.Context(), id, props); err != nil {
 						t.Fatal(err)
 					}
 					ref := weak.Make(unsafe.StringData(string(id)))
@@ -33,11 +33,11 @@ func TestSolCompositeRetiredIDCollectible(t *testing.T) {
 				if owner != "values" {
 					values = append(values, 2)
 				}
-				got := idx.LookupFull(values...)
+				got := checkedIndexRead[[]NodeID](t)(idx.LookupFull(t.Context(), values...))
 				if len(got) != 1 || got[0] != "test:kept" {
 					t.Fatalf("live index changed: %v", got)
 				}
-				prefix := idx.LookupPrefix(1)
+				prefix := checkedIndexRead[[]NodeID](t)(idx.LookupPrefix(t.Context(), 1))
 				if len(prefix) != 1 || prefix[0] != "test:kept" {
 					t.Fatalf("live prefix changed: %v", prefix)
 				}

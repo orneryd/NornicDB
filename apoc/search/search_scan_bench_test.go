@@ -84,65 +84,71 @@ func (s *scanBenchStorage) AllNodes(context.Context) ([]*apocstorage.Node, error
 	return s.nodes, nil
 }
 
-func (s *scanBenchStorage) GetNode(int64) (*apocstorage.Node, error) {
+func (s *scanBenchStorage) GetNode(context.Context, int64) (*apocstorage.Node, error) {
 	return nil, apocstorage.ErrNodeNotFound
 }
 
-func (s *scanBenchStorage) CreateNode([]string, map[string]interface{}) (*apocstorage.Node, error) {
+func (s *scanBenchStorage) CreateNode(context.Context, []string, map[string]interface{}) (*apocstorage.Node, error) {
 	return &apocstorage.Node{}, nil
 }
 
-func (s *scanBenchStorage) UpdateNode(int64, map[string]interface{}) error { return nil }
+func (s *scanBenchStorage) UpdateNode(context.Context, int64, map[string]interface{}) error {
+	return nil
+}
 
-func (s *scanBenchStorage) DeleteNode(int64) error { return nil }
+func (s *scanBenchStorage) DeleteNode(context.Context, int64) error { return nil }
 
-func (s *scanBenchStorage) AddLabels(int64, []string) error { return nil }
+func (s *scanBenchStorage) AddLabels(context.Context, int64, []string) error { return nil }
 
-func (s *scanBenchStorage) RemoveLabels(int64, []string) error { return nil }
+func (s *scanBenchStorage) RemoveLabels(context.Context, int64, []string) error { return nil }
 
-func (s *scanBenchStorage) UpdateNodeLabels(int64, []string) error { return nil }
+func (s *scanBenchStorage) UpdateNodeLabels(context.Context, int64, []string) error { return nil }
 
-func (s *scanBenchStorage) GetRelationship(int64) (*apocstorage.Relationship, error) {
+func (s *scanBenchStorage) GetRelationship(context.Context, int64) (*apocstorage.Relationship, error) {
 	return nil, apocstorage.ErrRelationshipNotFound
 }
 
-func (s *scanBenchStorage) CreateRelationship(int64, int64, string, map[string]interface{}) (*apocstorage.Relationship, error) {
+func (s *scanBenchStorage) CreateRelationship(context.Context, int64, int64, string, map[string]interface{}) (*apocstorage.Relationship, error) {
 	return &apocstorage.Relationship{}, nil
 }
 
-func (s *scanBenchStorage) UpdateRelationship(int64, map[string]interface{}) error { return nil }
+func (s *scanBenchStorage) UpdateRelationship(context.Context, int64, map[string]interface{}) error {
+	return nil
+}
 
-func (s *scanBenchStorage) DeleteRelationship(int64) error { return nil }
+func (s *scanBenchStorage) DeleteRelationship(context.Context, int64) error { return nil }
 
-func (s *scanBenchStorage) UpdateRelationshipType(int64, string) error { return nil }
+func (s *scanBenchStorage) UpdateRelationshipType(context.Context, int64, string) error { return nil }
 
 func (s *scanBenchStorage) AllRelationships(context.Context) ([]*apocstorage.Relationship, error) {
 	return nil, nil
 }
 
-func (s *scanBenchStorage) GetNodeRelationships(int64, string, apocstorage.Direction) ([]*apocstorage.Relationship, error) {
+func (s *scanBenchStorage) GetNodeRelationships(context.Context, int64, string, apocstorage.Direction) ([]*apocstorage.Relationship, error) {
 	return nil, nil
 }
 
-func (s *scanBenchStorage) GetNodeNeighbors(int64, string, apocstorage.Direction) ([]*apocstorage.Node, error) {
+func (s *scanBenchStorage) GetNodeNeighbors(context.Context, int64, string, apocstorage.Direction) ([]*apocstorage.Node, error) {
 	return nil, nil
 }
 
-func (s *scanBenchStorage) GetNodeDegree(int64, string, apocstorage.Direction) (int, error) {
+func (s *scanBenchStorage) GetNodeDegree(context.Context, int64, string, apocstorage.Direction) (int, error) {
 	return 0, nil
 }
 
-func (s *scanBenchStorage) FindShortestPath(int64, int64, string, int) (*apocstorage.Path, error) {
+func (s *scanBenchStorage) FindShortestPath(context.Context, int64, int64, string, int) (*apocstorage.Path, error) {
 	return nil, apocstorage.ErrPathNotFound
 }
 
-func (s *scanBenchStorage) FindAllPaths(int64, int64, string, int) ([]*apocstorage.Path, error) {
+func (s *scanBenchStorage) FindAllPaths(context.Context, int64, int64, string, int) ([]*apocstorage.Path, error) {
 	return nil, nil
 }
 
-func (s *scanBenchStorage) BFS(int64, string, int, func(*apocstorage.Node) bool) error { return nil }
+func (s *scanBenchStorage) BFS(context.Context, int64, string, int, func(*apocstorage.Node) bool) error {
+	return nil
+}
 
-func (s *scanBenchStorage) DFS(int64, string, int, func(*apocstorage.Node) bool) error {
+func (s *scanBenchStorage) DFS(context.Context, int64, string, int, func(*apocstorage.Node) bool) error {
 	return nil
 }
 
@@ -170,70 +176,150 @@ func BenchmarkAPOCSearchLabeledScan(b *testing.B) {
 			call func() []*search.NodeType
 		}{
 			{name: "prefix", call: func() []*search.NodeType {
-				return functions.Prefix(ctx, "Person", "name", "Al")
+				apocCallValue1, apocCallError1 := functions.Prefix(ctx, "Person", "name", "Al")
+				if apocCallError1 != nil {
+					b.Fatalf("APOC helper failed: %v", apocCallError1)
+				}
+				return apocCallValue1
 			}},
 			{name: "suffix", call: func() []*search.NodeType {
-				return functions.Suffix(ctx, "Person", "email", "@example.com")
+				apocCallValue2, apocCallError2 := functions.Suffix(ctx, "Person", "email", "@example.com")
+				if apocCallError2 != nil {
+					b.Fatalf("APOC helper failed: %v", apocCallError2)
+				}
+				return apocCallValue2
 			}},
 			{name: "contains", call: func() []*search.NodeType {
-				return functions.Contains(ctx, "Person", "name", "erson1")
+				apocCallValue3, apocCallError3 := functions.Contains(ctx, "Person", "name", "erson1")
+				if apocCallError3 != nil {
+					b.Fatalf("APOC helper failed: %v", apocCallError3)
+				}
+				return apocCallValue3
 			}},
 			{name: "fullText", call: func() []*search.NodeType {
-				return functions.FullText(ctx, "Person", "name", "Alice Person7")
+				apocCallValue4, apocCallError4 := functions.FullText(ctx, "Person", "name", "Alice Person7")
+				if apocCallError4 != nil {
+					b.Fatalf("APOC helper failed: %v", apocCallError4)
+				}
+				return apocCallValue4
 			}},
 			{name: "fuzzy", call: func() []*search.NodeType {
-				return functions.Fuzzy(ctx, "Person", "name", "Alise1", 2)
+				apocCallValue5, apocCallError5 := functions.Fuzzy(ctx, "Person", "name", "Alise1", 2)
+				if apocCallError5 != nil {
+					b.Fatalf("APOC helper failed: %v", apocCallError5)
+				}
+				return apocCallValue5
 			}},
 			{name: "regex", call: func() []*search.NodeType {
-				return functions.Regex(ctx, "Person", "email", `^person1.*@example\.com$`)
+				apocCallValue6, apocCallError6 := functions.Regex(ctx, "Person", "email", `^person1.*@example\.com$`)
+				if apocCallError6 != nil {
+					b.Fatalf("APOC helper failed: %v", apocCallError6)
+				}
+				return apocCallValue6
 			}},
 			{name: "match", call: func() []*search.NodeType {
-				return functions.Match(ctx, "Person", "name", "Alice*")
+				apocCallValue7, apocCallError7 := functions.Match(ctx, "Person", "name", "Alice*")
+				if apocCallError7 != nil {
+					b.Fatalf("APOC helper failed: %v", apocCallError7)
+				}
+				return apocCallValue7
 			}},
 			{name: "node", call: func() []*search.NodeType {
-				return functions.Node(ctx, "Person", "status", "active")
+				apocCallValue8, apocCallError8 := functions.Node(ctx, "Person", "status", "active")
+				if apocCallError8 != nil {
+					b.Fatalf("APOC helper failed: %v", apocCallError8)
+				}
+				return apocCallValue8
 			}},
 			{name: "nodeAll", call: func() []*search.NodeType {
-				return functions.NodeAll(ctx, "Person", map[string]interface{}{"status": "active", "age": int64(5)})
+				apocCallValue9, apocCallError9 := functions.NodeAll(ctx, "Person", map[string]interface{}{"status": "active", "age": int64(5)})
+				if apocCallError9 != nil {
+					b.Fatalf("APOC helper failed: %v", apocCallError9)
+				}
+				return apocCallValue9
 			}},
 			{name: "nodeAny", call: func() []*search.NodeType {
-				return functions.NodeAny(ctx, "Person", map[string]interface{}{"status": "active", "age": int64(7)})
+				apocCallValue10, apocCallError10 := functions.NodeAny(ctx, "Person", map[string]interface{}{"status": "active", "age": int64(7)})
+				if apocCallError10 != nil {
+					b.Fatalf("APOC helper failed: %v", apocCallError10)
+				}
+				return apocCallValue10
 			}},
 			{name: "range", call: func() []*search.NodeType {
-				return functions.Range(ctx, "Person", "age", int64(20), int64(30))
+				apocCallValue11, apocCallError11 := functions.Range(ctx, "Person", "age", int64(20), int64(30))
+				if apocCallError11 != nil {
+					b.Fatalf("APOC helper failed: %v", apocCallError11)
+				}
+				return apocCallValue11
 			}},
 			{name: "in2", call: func() []*search.NodeType {
-				return functions.In(ctx, "Person", "status", []interface{}{"active", "pending"})
+				apocCallValue12, apocCallError12 := functions.In(ctx, "Person", "status", []interface{}{"active", "pending"})
+				if apocCallError12 != nil {
+					b.Fatalf("APOC helper failed: %v", apocCallError12)
+				}
+				return apocCallValue12
 			}},
 			{name: "in4", call: func() []*search.NodeType {
-				return functions.In(ctx, "Person", "status", []interface{}{"v0", "v1", "v2", "active"})
+				apocCallValue13, apocCallError13 := functions.In(ctx, "Person", "status", []interface{}{"v0", "v1", "v2", "active"})
+				if apocCallError13 != nil {
+					b.Fatalf("APOC helper failed: %v", apocCallError13)
+				}
+				return apocCallValue13
 			}},
 			{name: "in8", call: func() []*search.NodeType {
-				return functions.In(ctx, "Person", "status", []interface{}{
+				apocCallValue14, apocCallError14 := functions.In(ctx, "Person", "status", []interface{}{
 					"v0", "v1", "v2", "v3", "v4", "v5", "v6", "active",
 				})
+				if apocCallError14 != nil {
+					b.Fatalf("APOC helper failed: %v", apocCallError14)
+				}
+				return apocCallValue14
 			}},
 			{name: "in16", call: func() []*search.NodeType {
-				return functions.In(ctx, "Person", "status", []interface{}{
+				apocCallValue15, apocCallError15 := functions.In(ctx, "Person", "status", []interface{}{
 					"v0", "v1", "v2", "v3", "v4", "v5", "v6", "v7",
 					"v8", "v9", "v10", "v11", "v12", "v13", "v14", "active",
 				})
+				if apocCallError15 != nil {
+					b.Fatalf("APOC helper failed: %v", apocCallError15)
+				}
+				return apocCallValue15
 			}},
 			{name: "notIn", call: func() []*search.NodeType {
-				return functions.NotIn(ctx, "Person", "status", []interface{}{"archived", "pending"})
+				apocCallValue16, apocCallError16 := functions.NotIn(ctx, "Person", "status", []interface{}{"archived", "pending"})
+				if apocCallError16 != nil {
+					b.Fatalf("APOC helper failed: %v", apocCallError16)
+				}
+				return apocCallValue16
 			}},
 			{name: "exists", call: func() []*search.NodeType {
-				return functions.Exists(ctx, "Person", "email")
+				apocCallValue17, apocCallError17 := functions.Exists(ctx, "Person", "email")
+				if apocCallError17 != nil {
+					b.Fatalf("APOC helper failed: %v", apocCallError17)
+				}
+				return apocCallValue17
 			}},
 
 			{name: "missing", call: func() []*search.NodeType {
-				return functions.Missing(ctx, "Person", "email")
+				apocCallValue18, apocCallError18 := functions.Missing(ctx, "Person", "email")
+				if apocCallError18 != nil {
+					b.Fatalf("APOC helper failed: %v", apocCallError18)
+				}
+				return apocCallValue18
 			}},
 			{name: "null", call: func() []*search.NodeType {
-				return functions.Null(ctx, "Person", "note")
+				apocCallValue19, apocCallError19 := functions.Null(ctx, "Person", "note")
+				if apocCallError19 != nil {
+					b.Fatalf("APOC helper failed: %v", apocCallError19)
+				}
+				return apocCallValue19
 			}},
 			{name: "notNull", call: func() []*search.NodeType {
-				return functions.NotNull(ctx, "Person", "email")
+				apocCallValue20, apocCallError20 := functions.NotNull(ctx, "Person", "email")
+				if apocCallError20 != nil {
+					b.Fatalf("APOC helper failed: %v", apocCallError20)
+				}
+				return apocCallValue20
 			}},
 		} {
 			b.Run(population.name+"/"+helper.name, func(b *testing.B) {
@@ -267,13 +353,25 @@ func BenchmarkAPOCSearchMultiLabel(b *testing.B) {
 			call func() []*search.NodeType
 		}{
 			{name: "multiSearchAll", call: func() []*search.NodeType {
-				return functions.MultiSearchAll(ctx, labels, map[string]interface{}{"status": "active"})
+				apocCallValue21, apocCallError21 := functions.MultiSearchAll(ctx, labels, map[string]interface{}{"status": "active"})
+				if apocCallError21 != nil {
+					b.Fatalf("APOC helper failed: %v", apocCallError21)
+				}
+				return apocCallValue21
 			}},
 			{name: "multiSearchAny", call: func() []*search.NodeType {
-				return functions.MultiSearchAny(ctx, labels, map[string]interface{}{"status": "active"})
+				apocCallValue22, apocCallError22 := functions.MultiSearchAny(ctx, labels, map[string]interface{}{"status": "active"})
+				if apocCallError22 != nil {
+					b.Fatalf("APOC helper failed: %v", apocCallError22)
+				}
+				return apocCallValue22
 			}},
 			{name: "parallel", call: func() []*search.NodeType {
-				return functions.Parallel(ctx, labels, "status", "active")
+				apocCallValue23, apocCallError23 := functions.Parallel(ctx, labels, "status", "active")
+				if apocCallError23 != nil {
+					b.Fatalf("APOC helper failed: %v", apocCallError23)
+				}
+				return apocCallValue23
 			}},
 		} {
 			b.Run(population.name+"/"+helper.name, func(b *testing.B) {
@@ -320,20 +418,43 @@ func TestAPOCSearchMembershipScanAllocatesLikePropertyPresence(t *testing.T) {
 	values := []interface{}{"active", "pending"}
 	absent := []interface{}{"absent"}
 
-	if matched := len(functions.Exists(ctx, "Person", "email")); matched != population {
+	apocCallValue24, apocCallError24 := functions.Exists(ctx, "Person", "email")
+	if apocCallError24 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError24)
+	}
+	if matched := len(apocCallValue24); matched != population {
 		t.Fatalf("property presence must match every node, matched %d", matched)
 	}
-	if matched := len(functions.In(ctx, "Person", "status", values)); matched != population {
+	apocCallValue25, apocCallError25 := functions.In(ctx, "Person", "status", values)
+	if apocCallError25 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError25)
+	}
+	if matched := len(apocCallValue25); matched != population {
 		t.Fatalf("membership must match every node, matched %d", matched)
 	}
 
-	presence := testing.AllocsPerRun(20, func() { functions.Exists(ctx, "Person", "email") })
+	presence := testing.AllocsPerRun(20, func() {
+		_, apocCallError26 := functions.Exists(ctx, "Person", "email")
+		if apocCallError26 != nil {
+			t.Fatalf("APOC helper failed: %v", apocCallError26)
+		}
+	})
 	for _, testCase := range []struct {
 		name string
 		call func()
 	}{
-		{name: "in", call: func() { functions.In(ctx, "Person", "status", values) }},
-		{name: "notIn", call: func() { functions.NotIn(ctx, "Person", "status", absent) }},
+		{name: "in", call: func() {
+			_, apocCallError27 := functions.In(ctx, "Person", "status", values)
+			if apocCallError27 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError27)
+			}
+		}},
+		{name: "notIn", call: func() {
+			_, apocCallError28 := functions.NotIn(ctx, "Person", "status", absent)
+			if apocCallError28 != nil {
+				t.Fatalf("APOC helper failed: %v", apocCallError28)
+			}
+		}},
 	} {
 		membership := testing.AllocsPerRun(20, testCase.call)
 		if membership != presence {
@@ -346,10 +467,19 @@ func TestAPOCSearchMembershipScanAllocatesLikePropertyPresence(t *testing.T) {
 		"v0", "v1", "v2", "v3", "v4", "v5", "v6", "v7",
 		"v8", "v9", "v10", "v11", "v12", "v13", "v14", "active",
 	}
-	if matched := len(functions.In(ctx, "Person", "status", long)); matched != population {
+	apocCallValue29, apocCallError29 := functions.In(ctx, "Person", "status", long)
+	if apocCallError29 != nil {
+		t.Fatalf("APOC helper failed: %v", apocCallError29)
+	}
+	if matched := len(apocCallValue29); matched != population {
 		t.Fatalf("a long membership list must match every node, matched %d", matched)
 	}
-	indexed := testing.AllocsPerRun(20, func() { functions.In(ctx, "Person", "status", long) })
+	indexed := testing.AllocsPerRun(20, func() {
+		_, apocCallError30 := functions.In(ctx, "Person", "status", long)
+		if apocCallError30 != nil {
+			t.Fatalf("APOC helper failed: %v", apocCallError30)
+		}
+	})
 	if indexed <= presence {
 		t.Fatalf("a long list builds its table once per call, so it allocates more than property presence (%.0f vs %.0f): "+
 			"the table is what keeps a long list's comparison constant-time", indexed, presence)

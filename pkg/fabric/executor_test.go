@@ -517,7 +517,7 @@ func TestFragmentContainsWrite(t *testing.T) {
 
 func TestRewriteLeadingWithImports_DeterministicClauseBoundary(t *testing.T) {
 	query := "WITH id, size([x IN [1,2,3] WHERE x > 1]) AS c MATCH (n) WHERE n.id = id RETURN n"
-	rewritten := rewriteLeadingWithImports(query, []string{"id"})
+	rewritten := rewriteLeadingWithImports(t.Context(), query, []string{"id"})
 	expected := "WITH $id AS id MATCH (n) WHERE n.id = id RETURN n"
 	if rewritten != expected {
 		t.Fatalf("expected %q, got %q", expected, rewritten)
@@ -526,7 +526,7 @@ func TestRewriteLeadingWithImports_DeterministicClauseBoundary(t *testing.T) {
 
 func TestRewriteLeadingWithImports_RespectsQuotedKeywords(t *testing.T) {
 	query := "WITH 'MATCH as text' AS txt, id RETURN txt, id"
-	rewritten := rewriteLeadingWithImports(query, []string{"id"})
+	rewritten := rewriteLeadingWithImports(t.Context(), query, []string{"id"})
 	expected := "WITH $id AS id RETURN txt, id"
 	if rewritten != expected {
 		t.Fatalf("expected %q, got %q", expected, rewritten)
@@ -535,7 +535,7 @@ func TestRewriteLeadingWithImports_RespectsQuotedKeywords(t *testing.T) {
 
 func TestRewriteLeadingWithImports_NoLeadingWith(t *testing.T) {
 	query := "MATCH (n) RETURN n"
-	rewritten := rewriteLeadingWithImports(query, []string{"id"})
+	rewritten := rewriteLeadingWithImports(t.Context(), query, []string{"id"})
 	if rewritten != query {
 		t.Fatalf("expected query unchanged, got %q", rewritten)
 	}
@@ -543,7 +543,7 @@ func TestRewriteLeadingWithImports_NoLeadingWith(t *testing.T) {
 
 func TestRewriteLeadingWithImports_NoLeadingWithReturn(t *testing.T) {
 	query := "RETURN id, name"
-	rewritten := rewriteLeadingWithImports(query, []string{"id", "name"})
+	rewritten := rewriteLeadingWithImports(t.Context(), query, []string{"id", "name"})
 	expected := "WITH $id AS id, $name AS name RETURN id, name"
 	if rewritten != expected {
 		t.Fatalf("expected %q, got %q", expected, rewritten)
@@ -579,7 +579,7 @@ func TestFabricImportRewriteHelpers(t *testing.T) {
 	if !fragmentHasStaticImports(apply) {
 		t.Fatal("expected fragmentHasStaticImports to detect static imports")
 	}
-	rewritten := rewriteFragmentWithImports(apply)
+	rewritten := rewriteFragmentWithImports(t.Context(), apply)
 	rewrittenApply, ok := rewritten.(*FragmentApply)
 	if !ok {
 		t.Fatalf("expected rewritten apply, got %T", rewritten)
@@ -596,7 +596,7 @@ func TestFabricImportRewriteHelpers(t *testing.T) {
 		t.Fatalf("expected rewritten query to contain parameterized import, got %q", lhsExec.Query)
 	}
 
-	rewrittenRuntime := rewriteFragmentWithRuntimeImports(&FragmentExec{
+	rewrittenRuntime := rewriteFragmentWithRuntimeImports(t.Context(), &FragmentExec{
 		Input:   &FragmentInit{ImportColumns: []string{"a"}},
 		Query:   "RETURN a, b",
 		Columns: []string{"a", "b"},
@@ -1154,7 +1154,7 @@ func TestLastAsIndexFold_ShortString(t *testing.T) {
 }
 
 func TestRewriteFragmentWithImports_NilFragment(t *testing.T) {
-	got := rewriteFragmentWithImports(nil)
+	got := rewriteFragmentWithImports(t.Context(), nil)
 	if got != nil {
 		t.Fatal("expected nil for nil fragment")
 	}
@@ -1162,14 +1162,14 @@ func TestRewriteFragmentWithImports_NilFragment(t *testing.T) {
 
 func TestRewriteFragmentWithImports_DefaultBranch(t *testing.T) {
 	init := &FragmentInit{Columns: []string{"a"}}
-	got := rewriteFragmentWithImports(init)
+	got := rewriteFragmentWithImports(t.Context(), init)
 	if got != init {
 		t.Fatal("expected init fragment to pass through unchanged")
 	}
 }
 
 func TestRewriteFragmentWithRuntimeImports_NilFragment(t *testing.T) {
-	got := rewriteFragmentWithRuntimeImports(nil, []string{"a"})
+	got := rewriteFragmentWithRuntimeImports(t.Context(), nil, []string{"a"})
 	if got != nil {
 		t.Fatal("expected nil for nil fragment")
 	}
@@ -1177,7 +1177,7 @@ func TestRewriteFragmentWithRuntimeImports_NilFragment(t *testing.T) {
 
 func TestRewriteFragmentWithRuntimeImports_DefaultBranch(t *testing.T) {
 	init := &FragmentInit{Columns: []string{"a"}}
-	got := rewriteFragmentWithRuntimeImports(init, []string{"a"})
+	got := rewriteFragmentWithRuntimeImports(t.Context(), init, []string{"a"})
 	if got != init {
 		t.Fatal("expected init fragment to pass through unchanged")
 	}
@@ -1194,7 +1194,7 @@ func TestRewriteFragmentWithRuntimeImports_Union(t *testing.T) {
 			Query: "RETURN 1 AS one",
 		},
 	}
-	got := rewriteFragmentWithRuntimeImports(union, []string{"b"})
+	got := rewriteFragmentWithRuntimeImports(t.Context(), union, []string{"b"})
 	result, ok := got.(*FragmentUnion)
 	if !ok {
 		t.Fatalf("expected *FragmentUnion, got %T", got)
@@ -1273,14 +1273,14 @@ func TestReplaceStandaloneVar_WithQuotes(t *testing.T) {
 }
 
 func TestFindLeadingWithClauseEnd_Empty(t *testing.T) {
-	pos, ok := findLeadingWithClauseEnd("", nil)
+	pos, ok := findLeadingWithClauseEnd(t.Context(), "", nil)
 	if ok || pos != 0 {
 		t.Fatalf("expected false for empty, got pos=%d ok=%v", pos, ok)
 	}
 }
 
 func TestFindLeadingWithClauseEnd_NotWith(t *testing.T) {
-	pos, ok := findLeadingWithClauseEnd("MATCH (n) RETURN n", nil)
+	pos, ok := findLeadingWithClauseEnd(t.Context(), "MATCH (n) RETURN n", nil)
 	if ok {
 		t.Fatalf("expected false for non-WITH query, got pos=%d", pos)
 	}
@@ -1288,7 +1288,7 @@ func TestFindLeadingWithClauseEnd_NotWith(t *testing.T) {
 
 func TestFindLeadingWithClauseEnd_WithQuotes(t *testing.T) {
 	// WITH clause containing single-quoted string with a keyword.
-	pos, ok := findLeadingWithClauseEnd("WITH 'MATCH stuff' AS x MATCH (n)", nil)
+	pos, ok := findLeadingWithClauseEnd(t.Context(), "WITH 'MATCH stuff' AS x MATCH (n)", nil)
 	if !ok {
 		t.Fatal("expected true for WITH with quotes")
 	}
@@ -1299,7 +1299,7 @@ func TestFindLeadingWithClauseEnd_WithQuotes(t *testing.T) {
 }
 
 func TestFindLeadingWithClauseEnd_WithDoubleQuotes(t *testing.T) {
-	pos, ok := findLeadingWithClauseEnd(`WITH "RETURN stuff" AS x RETURN y`, nil)
+	pos, ok := findLeadingWithClauseEnd(t.Context(), `WITH "RETURN stuff" AS x RETURN y`, nil)
 	if !ok {
 		t.Fatal("expected true for WITH with double quotes")
 	}
@@ -1310,7 +1310,7 @@ func TestFindLeadingWithClauseEnd_WithDoubleQuotes(t *testing.T) {
 }
 
 func TestFindLeadingWithClauseEnd_WithBackticks(t *testing.T) {
-	pos, ok := findLeadingWithClauseEnd("WITH `MATCH` AS x MATCH (n)", nil)
+	pos, ok := findLeadingWithClauseEnd(t.Context(), "WITH `MATCH` AS x MATCH (n)", nil)
 	if !ok {
 		t.Fatal("expected true for WITH with backticks")
 	}
@@ -1322,7 +1322,7 @@ func TestFindLeadingWithClauseEnd_WithBackticks(t *testing.T) {
 
 func TestFindLeadingWithClauseEnd_Nested(t *testing.T) {
 	// Brackets/braces/parens should be skipped.
-	pos, ok := findLeadingWithClauseEnd("WITH [MATCH, x] AS arr RETURN arr", nil)
+	pos, ok := findLeadingWithClauseEnd(t.Context(), "WITH [MATCH, x] AS arr RETURN arr", nil)
 	if !ok {
 		t.Fatal("expected true")
 	}
@@ -1335,7 +1335,7 @@ func TestFindLeadingWithClauseEnd_Nested(t *testing.T) {
 func TestFindLeadingWithClauseEnd_NoFollowingClause(t *testing.T) {
 	// WITH clause with no following keyword should return len(query).
 	query := "WITH a, b"
-	pos, ok := findLeadingWithClauseEnd(query, nil)
+	pos, ok := findLeadingWithClauseEnd(t.Context(), query, nil)
 	if !ok {
 		t.Fatal("expected true")
 	}
@@ -1457,11 +1457,11 @@ func TestExecuteExec_RecordBindingsMerged(t *testing.T) {
 
 func TestRewriteLeadingWithImports_EmptyImports(t *testing.T) {
 	query := "WITH a MATCH (n) RETURN n"
-	got := rewriteLeadingWithImports(query, nil)
+	got := rewriteLeadingWithImports(t.Context(), query, nil)
 	if got != query {
 		t.Fatalf("expected unchanged for nil imports, got %q", got)
 	}
-	got = rewriteLeadingWithImports(query, []string{})
+	got = rewriteLeadingWithImports(t.Context(), query, []string{})
 	if got != query {
 		t.Fatalf("expected unchanged for empty imports, got %q", got)
 	}
@@ -1469,7 +1469,7 @@ func TestRewriteLeadingWithImports_EmptyImports(t *testing.T) {
 
 func TestRewriteLeadingWithImports_WithOnly(t *testing.T) {
 	query := "WITH a"
-	got := rewriteLeadingWithImports(query, []string{"a"})
+	got := rewriteLeadingWithImports(t.Context(), query, []string{"a"})
 	if got != "WITH $a AS a" {
 		t.Fatalf("expected WITH-only rewrite, got %q", got)
 	}
@@ -1725,12 +1725,12 @@ func TestFabricTransaction_Rollback_WithBoundCallbacks(t *testing.T) {
 	_, _ = tx.GetOrOpen("shard_a", false)
 
 	rolledBack := false
-	_ = tx.BindParticipantCallbacks("shard_a", ParticipantCallbacks{Commit: func(_ *SubTransaction) error { return nil }, Rollback: func(_ *SubTransaction) error {
+	_ = tx.BindParticipantCallbacks("shard_a", ParticipantCallbacks{Commit: func(_ context.Context, _ *SubTransaction) error { return nil }, Rollback: func(_ context.Context, _ *SubTransaction) error {
 		rolledBack = true
 		return nil
 	}})
 
-	err := tx.Rollback(nil) // nil global rollback, uses bound callbacks.
+	err := tx.Rollback(context.WithoutCancel(t.Context()), nil) // nil global rollback, uses bound callbacks.
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1743,7 +1743,7 @@ func TestFabricTransaction_Rollback_Error(t *testing.T) {
 	tx := NewFabricTransaction("tx-rb-err")
 	_, _ = tx.GetOrOpen("shard_a", false)
 
-	err := tx.Rollback(func(_ *SubTransaction) error {
+	err := tx.Rollback(context.WithoutCancel(t.Context()), func(_ context.Context, _ *SubTransaction) error {
 		return fmt.Errorf("rollback failed")
 	})
 	if err == nil || !strings.Contains(err.Error(), "rollback failed") {
@@ -1758,7 +1758,7 @@ func TestFabricTransaction_Commit_NilCallbacksSkipsToCommitted(t *testing.T) {
 	tx := NewFabricTransaction("tx-nil-cb")
 	_, _ = tx.GetOrOpen("shard_a", false)
 
-	err := tx.Commit(nil, nil) // nil commit callback → auto-committed.
+	err := tx.Commit(TerminalContexts{Commit: t.Context(), Cleanup: context.WithoutCancel(t.Context())}, nil, nil) // nil commit callback → auto-committed.
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1777,15 +1777,15 @@ func TestFabricTransaction_Commit_CompensationError(t *testing.T) {
 	_, _ = tx.GetOrOpen("shard_b", false)
 
 	commitCount := 0
-	err := tx.Commit(
-		func(sub *SubTransaction) error {
+	err := tx.Commit(TerminalContexts{Commit: t.Context(), Cleanup: context.WithoutCancel(t.Context())},
+		func(_ context.Context, sub *SubTransaction) error {
 			commitCount++
 			if commitCount == 2 {
 				return fmt.Errorf("commit failed")
 			}
 			return nil
 		},
-		func(_ *SubTransaction) error {
+		func(_ context.Context, _ *SubTransaction) error {
 			return fmt.Errorf("compensation also failed")
 		},
 	)
@@ -1835,7 +1835,7 @@ func TestSanitizeOtherWhereForImportColumn(t *testing.T) {
 
 func TestRewriteLeadingWithImports_WithMatchSubstitution(t *testing.T) {
 	query := "WITH id MATCH (n) WHERE n.id = id RETURN n"
-	got := rewriteLeadingWithImports(query, []string{"id"})
+	got := rewriteLeadingWithImports(t.Context(), query, []string{"id"})
 	// Simple import WITH + MATCH → substitution path.
 	if !strings.Contains(got, "$id") {
 		t.Fatalf("expected substitution, got %q", got)
@@ -1844,7 +1844,7 @@ func TestRewriteLeadingWithImports_WithMatchSubstitution(t *testing.T) {
 
 func TestRewriteLeadingWithImports_WithOptionalMatch(t *testing.T) {
 	query := "WITH id OPTIONAL MATCH (n) WHERE n.id = id RETURN n"
-	got := rewriteLeadingWithImports(query, []string{"id"})
+	got := rewriteLeadingWithImports(t.Context(), query, []string{"id"})
 	if !strings.Contains(got, "$id") {
 		t.Fatalf("expected substitution for OPTIONAL MATCH, got %q", got)
 	}
@@ -1852,7 +1852,7 @@ func TestRewriteLeadingWithImports_WithOptionalMatch(t *testing.T) {
 
 func TestRewriteLeadingWithImports_WithNonMatchClause(t *testing.T) {
 	query := "WITH id, count(*) AS c RETURN id, c"
-	got := rewriteLeadingWithImports(query, []string{"id"})
+	got := rewriteLeadingWithImports(t.Context(), query, []string{"id"})
 	// Non-simple WITH clause → regular rewrite.
 	if !strings.Contains(got, "$id AS id") {
 		t.Fatalf("expected param rewrite, got %q", got)
@@ -1869,7 +1869,7 @@ func TestIsSimpleWithImportClause_EmptyParts(t *testing.T) {
 func TestFindLeadingWithClauseEnd_SingleQuoteEscape(t *testing.T) {
 	// Escaped single quote inside WITH clause.
 	query := "WITH 'it''s' AS x MATCH (n)"
-	pos, ok := findLeadingWithClauseEnd(query, nil)
+	pos, ok := findLeadingWithClauseEnd(t.Context(), query, nil)
 	if !ok {
 		t.Fatal("expected true")
 	}
@@ -2043,7 +2043,7 @@ func TestExecuteExec_RemoteWithTransaction(t *testing.T) {
 	if result.RowCount() != 1 {
 		t.Fatalf("expected 1 row, got %d", result.RowCount())
 	}
-	if err := tx.Commit(nil, nil); err != nil {
+	if err := tx.Commit(TerminalContexts{Commit: t.Context(), Cleanup: context.WithoutCancel(t.Context())}, nil, nil); err != nil {
 		t.Fatalf("commit failed: %v", err)
 	}
 }

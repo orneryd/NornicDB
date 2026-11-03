@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -38,6 +39,8 @@ func main() {
 		walSyncInt  = flag.Duration("wal-sync-interval", 50*time.Millisecond, "WAL batch sync interval")
 	)
 	flag.Parse()
+
+	ctx := context.Background()
 
 	if *clean {
 		if err := os.RemoveAll(*dataDir); err != nil {
@@ -78,19 +81,19 @@ func main() {
 	fmt.Println()
 
 	runTest("Single node create", func() []time.Duration {
-		return testSingleCreate(engine, *iterations)
+		return testSingleCreate(ctx, engine, *iterations)
 	})
 
 	runTest("Batch node create (BulkCreateNodes)", func() []time.Duration {
-		return testBatchCreate(engine, *iterations, *batchSize)
+		return testBatchCreate(ctx, engine, *iterations, *batchSize)
 	})
 
 	runTest("Node update", func() []time.Duration {
-		return testNodeUpdate(engine, *iterations)
+		return testNodeUpdate(ctx, engine, *iterations)
 	})
 
 	runTest("Relationship create", func() []time.Duration {
-		return testRelationshipCreate(engine, *iterations)
+		return testRelationshipCreate(ctx, engine, *iterations)
 	})
 
 	if err := base.Close(); err != nil {
@@ -118,7 +121,7 @@ func runTest(label string, fn func() []time.Duration) {
 	fmt.Println()
 }
 
-func testSingleCreate(engine storage.Engine, iterations int) []time.Duration {
+func testSingleCreate(ctx context.Context, engine storage.Engine, iterations int) []time.Duration {
 	var durations []time.Duration
 	for i := 1; i <= iterations; i++ {
 		node := &storage.Node{
@@ -127,7 +130,7 @@ func testSingleCreate(engine storage.Engine, iterations int) []time.Duration {
 			Properties: map[string]any{"id": i, "ts": time.Now().UnixNano()},
 		}
 		start := time.Now()
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(ctx, node)
 		if err != nil {
 			continue
 		}
@@ -136,7 +139,7 @@ func testSingleCreate(engine storage.Engine, iterations int) []time.Duration {
 	return durations
 }
 
-func testBatchCreate(engine storage.Engine, iterations, batchSize int) []time.Duration {
+func testBatchCreate(ctx context.Context, engine storage.Engine, iterations, batchSize int) []time.Duration {
 	if batchSize <= 0 {
 		return nil
 	}
@@ -154,7 +157,7 @@ func testBatchCreate(engine storage.Engine, iterations, batchSize int) []time.Du
 			})
 		}
 		start := time.Now()
-		if err := engine.BulkCreateNodes(nodes); err != nil {
+		if err := engine.BulkCreateNodes(ctx, nodes); err != nil {
 			continue
 		}
 		durations = append(durations, time.Since(start))
@@ -162,9 +165,9 @@ func testBatchCreate(engine storage.Engine, iterations, batchSize int) []time.Du
 	return durations
 }
 
-func testNodeUpdate(engine storage.Engine, iterations int) []time.Duration {
+func testNodeUpdate(ctx context.Context, engine storage.Engine, iterations int) []time.Duration {
 	seedID := storage.NodeID("update-seed")
-	actualID, _ := engine.CreateNode(&storage.Node{
+	actualID, _ := engine.CreateNode(ctx, &storage.Node{
 		ID:         seedID,
 		Labels:     []string{"TestNode"},
 		Properties: map[string]any{"id": "seed"},
@@ -175,7 +178,7 @@ func testNodeUpdate(engine storage.Engine, iterations int) []time.Duration {
 
 	var durations []time.Duration
 	for i := 1; i <= iterations; i++ {
-		node, err := engine.GetNode(seedID)
+		node, err := engine.GetNode(ctx, seedID)
 		if err != nil {
 			continue
 		}
@@ -183,7 +186,7 @@ func testNodeUpdate(engine storage.Engine, iterations int) []time.Duration {
 		before.Properties = maps.Clone(node.Properties)
 		node.Properties["value"] = i
 		start := time.Now()
-		if err := engine.UpdateNode(storage.NodeUpdateRequest{Before: &before, After: node}); err != nil {
+		if err := engine.UpdateNode(ctx, storage.NodeUpdateRequest{Before: &before, After: node}); err != nil {
 			continue
 		}
 		durations = append(durations, time.Since(start))
@@ -191,7 +194,7 @@ func testNodeUpdate(engine storage.Engine, iterations int) []time.Duration {
 	return durations
 }
 
-func testRelationshipCreate(engine storage.Engine, iterations int) []time.Duration {
+func testRelationshipCreate(ctx context.Context, engine storage.Engine, iterations int) []time.Duration {
 	startNode := &storage.Node{
 		ID:         storage.NodeID("rel-start"),
 		Labels:     []string{"TestNode"},
@@ -202,10 +205,10 @@ func testRelationshipCreate(engine storage.Engine, iterations int) []time.Durati
 		Labels:     []string{"TestNode"},
 		Properties: map[string]any{"id": "rel-end"},
 	}
-	if actualID, _ := engine.CreateNode(startNode); actualID != "" {
+	if actualID, _ := engine.CreateNode(ctx, startNode); actualID != "" {
 		startNode.ID = actualID
 	}
-	if actualID, _ := engine.CreateNode(endNode); actualID != "" {
+	if actualID, _ := engine.CreateNode(ctx, endNode); actualID != "" {
 		endNode.ID = actualID
 	}
 
@@ -219,7 +222,7 @@ func testRelationshipCreate(engine storage.Engine, iterations int) []time.Durati
 			Properties: map[string]any{"id": i},
 		}
 		start := time.Now()
-		if err := engine.CreateEdge(edge); err != nil {
+		if err := engine.CreateEdge(ctx, edge); err != nil {
 			continue
 		}
 		durations = append(durations, time.Since(start))

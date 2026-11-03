@@ -211,12 +211,14 @@ type HeimdallPlugin interface {
 }
 ```
 
-### SubsystemContext
+### SubsystemHost
 
-Provided during initialization:
+Host metadata, supplied by the embedding application through
+`SubsystemManager.SetContext` / `SetHostContext` or the plugin loaders:
 
 ```go
-type SubsystemContext struct {
+type SubsystemHost struct {
+    Lifetime *lifecycle.WorkLifetime // Host work owner; its stop signal cancels plugin work
     Config   Config          // Heimdall configuration
     Database DatabaseRouter  // Multi-database graph access ("" = default database)
     Metrics  MetricsReader   // Runtime metrics
@@ -225,6 +227,28 @@ type SubsystemContext struct {
     Heimdall HeimdallInvoker // Optional: invoke the SLM from plugins
 }
 ```
+
+`SubsystemHost` deliberately holds no `context.Context`. Setting host metadata
+never captures or retains the caller's context.
+
+### SubsystemContext
+
+Provided during initialization. It is the host metadata the plugin was
+registered under, together with the work context that registration was
+admitted under:
+
+```go
+type SubsystemContext struct {
+    Context context.Context // Work context of this initialization
+    SubsystemHost           // Lifetime, Config, Database, Metrics, Logger, Bifrost, Heimdall
+}
+```
+
+`Context` is the admitted work context for `Initialize`, with the registration
+caller's cancellation and the host stop signal. Registration completion also
+cancels it. The host joins initialization before disposing plugins. Retain the
+host metadata for later work, and use each action or lifecycle callback's own
+context rather than reusing the completed initialization context.
 
 ### SubsystemStatus Values
 
@@ -454,8 +478,10 @@ func TestMyPlugin_Actions(t *testing.T) {
 
     // Test initialization
     ctx := heimdall.SubsystemContext{
-        Config:  heimdall.DefaultConfig(),
-        Bifrost: &heimdall.NoOpBifrost{},
+        SubsystemHost: heimdall.SubsystemHost{
+            Config:  heimdall.DefaultConfig(),
+            Bifrost: &heimdall.NoOpBifrost{},
+        },
     }
     err := plugin.Initialize(ctx)
     require.NoError(t, err)
@@ -1173,7 +1199,8 @@ func (p *MyPlugin) Actions() map[string]heimdall.ActionFunc {
 }
 ```
 
-Save the `SubsystemContext` received by `Initialize` in `p.ctx`. The existing
+Save the `SubsystemContext` received by `Initialize` in `p.ctx` for its host
+metadata; use the action's `ctx` for work after initialization. The existing
 `HeimdallInvoker` uses the configured inference provider, including local
 llama.cpp; external tools do not create another model instance. Use `SendPrompt`
 when action routing is desired, or `SendRawPrompt` for direct inference.

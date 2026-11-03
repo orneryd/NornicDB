@@ -294,14 +294,14 @@ type algorithmCancelStorage struct {
 	probe *algorithmCancelProbe
 }
 
-func (s *algorithmCancelStorage) GetNode(id storage.NodeID) (*storage.Node, error) {
+func (s *algorithmCancelStorage) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	s.probe.observe("GetNode")
-	return s.MemoryEngine.GetNode(id)
+	return s.MemoryEngine.GetNode(ctx, id)
 }
 
-func (s *algorithmCancelStorage) GetEdge(id storage.EdgeID) (*storage.Edge, error) {
+func (s *algorithmCancelStorage) GetEdge(ctx context.Context, id storage.EdgeID) (*storage.Edge, error) {
 	s.probe.observe("GetEdge")
-	return s.MemoryEngine.GetEdge(id)
+	return s.MemoryEngine.GetEdge(ctx, id)
 }
 
 func (s *algorithmCancelStorage) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
@@ -309,9 +309,9 @@ func (s *algorithmCancelStorage) GetNodesByLabel(ctx context.Context, label stri
 	return s.MemoryEngine.GetNodesByLabel(ctx, label)
 }
 
-func (s *algorithmCancelStorage) GetFirstNodeByLabel(label string) (*storage.Node, error) {
+func (s *algorithmCancelStorage) GetFirstNodeByLabel(ctx context.Context, label string) (*storage.Node, error) {
 	s.probe.observe("GetFirstNodeByLabel")
-	return s.MemoryEngine.GetFirstNodeByLabel(label)
+	return s.MemoryEngine.GetFirstNodeByLabel(ctx, label)
 }
 
 func (s *algorithmCancelStorage) GetOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
@@ -408,7 +408,7 @@ func (f algorithmCancelFixture) seedRing(tb testing.TB, nodes int) {
 	tb.Helper()
 	for i := 0; i < nodes; i++ {
 		id := fmt.Sprintf("p-%03d", i)
-		_, err := f.engine.CreateNode(&storage.Node{
+		_, err := f.engine.CreateNode(tb.Context(), &storage.Node{
 			ID:         storage.NodeID(id),
 			Labels:     []string{"P"},
 			Properties: map[string]interface{}{"id": id},
@@ -425,7 +425,7 @@ func (f algorithmCancelFixture) seedRing(tb testing.TB, nodes int) {
 }
 
 func (f algorithmCancelFixture) createEdge(id, start, end string) error {
-	return f.engine.CreateEdge(&storage.Edge{
+	return f.engine.CreateEdge(context.Background(), &storage.Edge{
 		ID:        storage.EdgeID(id),
 		Type:      "K",
 		StartNode: storage.NodeID(start),
@@ -438,7 +438,7 @@ func (f algorithmCancelFixture) createEdge(id, start, end string) error {
 func (f algorithmCancelFixture) seedExactGraph(tb testing.TB) {
 	tb.Helper()
 	for _, id := range []string{"n-a", "n-b", "n-c", "n-d", "n-e", "n-f"} {
-		_, err := f.engine.CreateNode(&storage.Node{
+		_, err := f.engine.CreateNode(tb.Context(), &storage.Node{
 			ID:         storage.NodeID(id),
 			Labels:     []string{"P"},
 			Properties: map[string]interface{}{"id": id},

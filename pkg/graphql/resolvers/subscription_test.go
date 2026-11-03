@@ -2,9 +2,10 @@ package resolvers
 
 import (
 	"context"
-	"github.com/orneryd/nornicdb/internal/testutil"
 	"testing"
 	"time"
+
+	"github.com/orneryd/nornicdb/internal/testutil"
 
 	"github.com/orneryd/nornicdb/pkg/graphql/models"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -360,7 +361,7 @@ func TestSubscription_NodeCreated_Integration(t *testing.T) {
 			"name": "Alice",
 		},
 	}
-	_, err = storageEngine.CreateNode(node)
+	_, err = storageEngine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	// Verify subscription received the event
@@ -394,7 +395,7 @@ func TestSubscription_NodeUpdated_Integration(t *testing.T) {
 			"name": "Alice",
 		},
 	}
-	_, err = storageEngine.CreateNode(node)
+	_, err = storageEngine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	// Subscribe to node updated events
@@ -402,7 +403,7 @@ func TestSubscription_NodeUpdated_Integration(t *testing.T) {
 
 	// Update the node
 	node.Properties["age"] = 30
-	err = storageEngine.UpdateNode(storage.NodeUpdateRequest{After: node})
+	err = storageEngine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node})
 	require.NoError(t, err)
 
 	// Verify subscription received the event
@@ -433,14 +434,14 @@ func TestSubscription_NodeDeleted_Integration(t *testing.T) {
 		ID:     storage.NodeID("n1"),
 		Labels: []string{"Person"},
 	}
-	_, err = storageEngine.CreateNode(node)
+	_, err = storageEngine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	// Subscribe to node deleted events
 	ch := resolver.EventBroker.SubscribeNodeDeleted(ctx, nil)
 
 	// Delete the node
-	err = storageEngine.DeleteNode(storage.NodeID("n1"))
+	err = storageEngine.DeleteNode(t.Context(), storage.NodeID("n1"))
 	require.NoError(t, err)
 
 	// Verify subscription received the event
@@ -472,9 +473,9 @@ func TestSubscription_RelationshipCreated_Integration(t *testing.T) {
 		ID:     storage.NodeID("n2"),
 		Labels: []string{"Person"},
 	}
-	_, err = storageEngine.CreateNode(node1)
+	_, err = storageEngine.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
-	_, err = storageEngine.CreateNode(node2)
+	_, err = storageEngine.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
 
 	// Subscribe to relationship created events
@@ -490,7 +491,7 @@ func TestSubscription_RelationshipCreated_Integration(t *testing.T) {
 			"since": "2020",
 		},
 	}
-	err = storageEngine.CreateEdge(edge)
+	err = storageEngine.CreateEdge(t.Context(), edge)
 	require.NoError(t, err)
 
 	// Verify subscription received the event
@@ -519,9 +520,9 @@ func TestSubscription_RelationshipDeleted_Integration(t *testing.T) {
 
 	node1 := &storage.Node{ID: storage.NodeID("n1"), Labels: []string{"Person"}}
 	node2 := &storage.Node{ID: storage.NodeID("n2"), Labels: []string{"Person"}}
-	_, err = storageEngine.CreateNode(node1)
+	_, err = storageEngine.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
-	_, err = storageEngine.CreateNode(node2)
+	_, err = storageEngine.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
 
 	edge := &storage.Edge{
@@ -530,14 +531,14 @@ func TestSubscription_RelationshipDeleted_Integration(t *testing.T) {
 		StartNode: storage.NodeID("n1"),
 		EndNode:   storage.NodeID("n2"),
 	}
-	err = storageEngine.CreateEdge(edge)
+	err = storageEngine.CreateEdge(t.Context(), edge)
 	require.NoError(t, err)
 
 	// Subscribe to relationship deleted events
 	ch := resolver.EventBroker.SubscribeRelationshipDeleted(ctx, nil)
 
 	// Delete the relationship
-	err = storageEngine.DeleteEdge(storage.EdgeID("r1"))
+	err = storageEngine.DeleteEdge(t.Context(), storage.EdgeID("r1"))
 	require.NoError(t, err)
 
 	// Verify subscription received the event
@@ -582,7 +583,7 @@ func TestSubscriptionResolver_NodeCreated(t *testing.T) {
 			require.NotNil(t, ch)
 			storageEngine, err := resolver.getStorage()
 			require.NoError(t, err)
-			_, err = storageEngine.CreateNode(&storage.Node{ID: storage.NodeID("n1"), Labels: []string{"Person"}})
+			_, err = storageEngine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID("n1"), Labels: []string{"Person"}})
 			require.NoError(t, err)
 			select {
 			case event := <-ch:

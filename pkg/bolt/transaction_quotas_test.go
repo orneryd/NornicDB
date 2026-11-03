@@ -54,7 +54,7 @@ func TestBoltTransactionQuotas(t *testing.T) {
 				}
 				engine, err := manager.GetStorage("quota")
 				require.NoError(t, err)
-				count, err := engine.NodeCount()
+				count, err := engine.NodeCount(t.Context())
 				require.NoError(t, err)
 				require.Zero(t, count)
 			})

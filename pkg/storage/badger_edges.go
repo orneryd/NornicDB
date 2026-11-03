@@ -14,14 +14,14 @@ import (
 // ============================================================================
 
 // CreateEdge creates a new edge between two nodes.
-func (b *BadgerEngine) CreateEdge(edge *Edge) (err error) {
-	return b.createEdgeWithWriteContext(edge, nil)
+func (b *BadgerEngine) CreateEdge(ctx context.Context, edge *Edge) (err error) {
+	return b.createEdgeWithWriteContext(ctx, edge, nil)
 }
 
-func (b *BadgerEngine) createEdgeWithWriteContext(edge *Edge, inherited *entityWriteContext) (err error) {
+func (b *BadgerEngine) createEdgeWithWriteContext(ctx context.Context, edge *Edge, inherited *entityWriteContext) (err error) {
 	if edge != nil {
-		if handled, err := b.inMutationTransaction(string(edge.ID), false, func(tx *BadgerTransaction) error {
-			return tx.CreateEdge(edge)
+		if handled, err := b.inMutationTransaction(ctx, string(edge.ID), false, func(tx *BadgerTransaction) error {
+			return tx.CreateEdge(ctx, edge)
 		}); handled {
 			return err
 		}
@@ -30,7 +30,10 @@ func (b *BadgerEngine) createEdgeWithWriteContext(edge *Edge, inherited *entityW
 	// releases before the transaction owner classifies a physical-ID conflict.
 	defer func() {
 		if errors.Is(err, ErrAlreadyExists) && edge != nil && edge.ID != "" {
-			err = b.inBulkTransaction(namespaceForEdgeID(edge.ID), func(tx *BadgerTransaction) error { return tx.CreateEdge(edge) })
+			// The recovery frame is part of this same request: its BEGIN admission
+			// and the staged create run on the caller's ctx, so a canceled create
+			// cannot be completed by the recovery path behind it.
+			err = b.inBulkTransaction(ctx, namespaceForEdgeID(edge.ID), func(tx *BadgerTransaction) error { return tx.CreateEdge(ctx, edge) })
 		}
 	}()
 	start := time.Now()
@@ -41,7 +44,7 @@ func (b *BadgerEngine) createEdgeWithWriteContext(edge *Edge, inherited *entityW
 		entityID = string(edge.ID)
 		endpoints = []NodeID{edge.StartNode, edge.EndNode}
 	}
-	write, releaseWrite, barrierErr := b.beginEntityWrite(context.Background(), entityID, true, inherited, entityWritePlan{known: writtenEntities{nodes: endpoints}})
+	write, releaseWrite, barrierErr := b.beginEntityWrite(ctx, entityID, true, inherited, entityWritePlan{known: writtenEntities{nodes: endpoints}})
 	if barrierErr != nil {
 		return barrierErr
 	}
@@ -58,7 +61,11 @@ func (b *BadgerEngine) createEdgeWithWriteContext(edge *Edge, inherited *entityW
 		return err
 	}
 	schema := b.GetSchemaForNamespace(namespaceForEdgeID(edge.ID))
-	releaseConstraint, constraintErr := schema.acquireUniqueConstraintCommitLocks(write.ctx, write.owner, schema.appendConstraintValueKeys(nil, nil, []*Edge{edge}))
+	valueKeys, constraintErr := schema.appendConstraintValueKeys(write.ctx, nil, nil, []*Edge{edge})
+	if constraintErr != nil {
+		return constraintErr
+	}
+	releaseConstraint, constraintErr := schema.acquireUniqueConstraintCommitLocks(write.ctx, write.owner, valueKeys)
 	if constraintErr != nil {
 		return constraintErr
 	}
@@ -130,21 +137,24 @@ func (b *BadgerEngine) createEdgeWithWriteContext(edge *Edge, inherited *entityW
 	var publicationOps []Operation
 
 	// Capture before physical assembly can acquire the commit gate.
-	constraints := capturePublicationConstraintView(schema)
+	constraints, preparationErr := capturePublicationConstraintView(write.ctx, schema)
+	if preparationErr != nil {
+		return preparationErr
+	}
 	publish := func(images *commitCacheImages) {
 		b.publishCommitOperations(namespaceForEdgeID(edge.ID), schema, publicationOps, true, true, images)
 	}
-	keys := func() []any {
+	keys := func(preparationContext context.Context) ([]any, error) {
 		publicationOps = []Operation{{Type: OpCreateEdge, Edge: image}}
 		capturePublicationOperations(notification, publicationOps)
-		return appendOperationPublicationKeys(nil, &constraints, publicationOps)
+		return appendOperationPublicationKeys(preparationContext, nil, &constraints, publicationOps)
 	}
 	err = b.withPublishingUpdate(write.ctx, func(txn *badger.Txn) error {
 		// Validate relationship constraints before writing
 		dbName, _, _ := ParseDatabasePrefix(string(edge.ID))
 		schema := b.GetSchemaForNamespace(dbName)
 		if schema != nil {
-			if err := b.validateEdgeConstraintsInTxn(txn, edge, schema, dbName, ""); err != nil {
+			if err := b.validateEdgeConstraintsInTxn(write.ctx, txn, edge, schema, dbName, ""); err != nil {
 				return err
 			}
 		}
@@ -217,7 +227,7 @@ func (b *BadgerEngine) createEdgeWithWriteContext(edge *Edge, inherited *entityW
 		}
 		// Create-only: primary key IS the current head body.
 		return b.writeEdgeMVCCHeadInTxn(txn, edge.ID, version, false)
-	}, publish, keys, notification, write.stagePublication)
+	}, publish, keys, notification, &publicationOps, write.stagePublication)
 
 	return err
 }
@@ -249,17 +259,21 @@ func (b *BadgerEngine) readEdgeBodyInTxn(txn *badger.Txn, id EdgeID, v readVisib
 }
 
 // GetEdge retrieves an edge by ID.
-func (b *BadgerEngine) GetEdge(id EdgeID) (*Edge, error) {
-	return b.getEdge(id, visibleRead)
+func (b *BadgerEngine) GetEdge(ctx context.Context, id EdgeID) (*Edge, error) {
+	return b.getEdge(ctx, id, visibleRead)
 }
 
 // GetStoredEdge is GetEdge for integrity work: it also returns a relationship
 // the visibility layer hides (StoredEntityReader).
-func (b *BadgerEngine) GetStoredEdge(id EdgeID) (*Edge, error) {
-	return b.getEdge(id, storedRead)
+func (b *BadgerEngine) GetStoredEdge(ctx context.Context, id EdgeID) (*Edge, error) {
+	return b.getEdge(ctx, id, storedRead)
 }
 
-func (b *BadgerEngine) getEdge(id EdgeID, v readVisibility) (*Edge, error) {
+func (b *BadgerEngine) getEdge(ctx context.Context, id EdgeID, v readVisibility) (*Edge, error) {
+	// The caller's context owns admission and this read's materialization.
+	// The decoded image is returned to that caller; no accepted write or
+	// durable publication runs through this boundary.
+
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurGet)
 	if id == "" {
@@ -289,7 +303,7 @@ func (b *BadgerEngine) getEdge(id EdgeID, v readVisibility) (*Edge, error) {
 		// The adjacency body cache cannot establish record presence.
 		return false, nil
 	}
-	err := b.withReadView(func(w *WriteBehindBuffer) {
+	err := b.withReadView(ctx, func(w *WriteBehindBuffer) {
 		state = w.entityStateLocked(bufferedEdgeEntity, string(id), bufferedReadVisibility{engine: b, visibility: v})
 	}, func(txn *badger.Txn) error {
 		if state.found {
@@ -313,11 +327,11 @@ func (b *BadgerEngine) getEdge(id EdgeID, v readVisibility) (*Edge, error) {
 }
 
 // UpdateEdge updates an existing edge.
-func (b *BadgerEngine) UpdateEdge(updateRequest EdgeUpdateRequest) error {
+func (b *BadgerEngine) UpdateEdge(ctx context.Context, updateRequest EdgeUpdateRequest) error {
 	edge := updateRequest.After
 	if edge != nil {
-		if handled, err := b.inMutationTransaction(string(edge.ID), updateRequest.Before != nil, func(tx *BadgerTransaction) error {
-			return tx.UpdateEdge(updateRequest)
+		if handled, err := b.inMutationTransaction(ctx, string(edge.ID), updateRequest.Before != nil, func(tx *BadgerTransaction) error {
+			return tx.UpdateEdge(ctx, updateRequest)
 		}); handled {
 			return err
 		}
@@ -330,8 +344,8 @@ func (b *BadgerEngine) UpdateEdge(updateRequest EdgeUpdateRequest) error {
 		entityID = string(edge.ID)
 		endpoints = []NodeID{edge.StartNode, edge.EndNode}
 	}
-	write, releaseWrite, barrierErr := b.beginEntityWrite(context.Background(), entityID, true, nil, entityWritePlan{known: writtenEntities{nodes: endpoints}, read: func() (writtenEntities, error) {
-		stored, err := b.GetStoredEdge(EdgeID(entityID))
+	write, releaseWrite, barrierErr := b.beginEntityWrite(ctx, entityID, true, nil, entityWritePlan{known: writtenEntities{nodes: endpoints}, read: func() (writtenEntities, error) {
+		stored, err := b.GetStoredEdge(ctx, EdgeID(entityID))
 		if err != nil && !errors.Is(err, ErrNotFound) {
 			return writtenEntities{}, err
 		}
@@ -356,13 +370,17 @@ func (b *BadgerEngine) UpdateEdge(updateRequest EdgeUpdateRequest) error {
 		return err
 	}
 	schema := b.GetSchemaForNamespace(namespaceForEdgeID(edge.ID))
-	releaseConstraint, constraintErr := schema.acquireUniqueConstraintCommitLocks(write.ctx, write.owner, schema.appendConstraintValueKeys(nil, nil, []*Edge{edge}))
+	valueKeys, constraintErr := schema.appendConstraintValueKeys(write.ctx, nil, nil, []*Edge{edge})
+	if constraintErr != nil {
+		return constraintErr
+	}
+	releaseConstraint, constraintErr := schema.acquireUniqueConstraintCommitLocks(write.ctx, write.owner, valueKeys)
 	if constraintErr != nil {
 		return constraintErr
 	}
 	defer releaseConstraint()
 
-	storedBefore, lookupErr := b.GetStoredEdge(edge.ID)
+	storedBefore, lookupErr := b.GetStoredEdge(ctx, edge.ID)
 	if lookupErr == nil && storedBefore != nil {
 		if err := schema.requireEntityFootprint(write.owner, writtenEntities{nodes: []NodeID{storedBefore.StartNode, storedBefore.EndNode}}); err != nil {
 			return err
@@ -377,21 +395,24 @@ func (b *BadgerEngine) UpdateEdge(updateRequest EdgeUpdateRequest) error {
 	var order orderHold
 	if b.writeBehind != nil {
 		// The relationship's former endpoints too: a move rewrites their adjacency.
-		if err := b.orderCovering(write.ctx, &order, writtenEntities{edges: []EdgeID{edge.ID}, nodes: []NodeID{edge.StartNode, edge.EndNode}}, b.storedEdgeEndpoints(edge.ID, nil)); err != nil {
+		if err := b.orderCovering(write.ctx, &order, writtenEntities{edges: []EdgeID{edge.ID}, nodes: []NodeID{edge.StartNode, edge.EndNode}}, b.storedEdgeEndpoints(write.ctx, edge.ID, nil)); err != nil {
 			return err
 		}
 		defer order.release()
 	}
 	var publicationOps []Operation
 	// Capture before physical assembly can acquire the commit gate.
-	constraints := capturePublicationConstraintView(schema)
+	constraints, preparationErr := capturePublicationConstraintView(write.ctx, schema)
+	if preparationErr != nil {
+		return preparationErr
+	}
 	publish := func(images *commitCacheImages) {
 		b.publishCommitOperations(namespaceForEdgeID(edge.ID), schema, publicationOps, true, true, images)
 	}
-	keys := func() []any {
+	keys := func(preparationContext context.Context) ([]any, error) {
 		publicationOps = []Operation{{Type: OpUpdateEdge, Edge: image, OldEdge: oldEdge}}
 		capturePublicationOperations(notification, publicationOps)
-		return appendOperationPublicationKeys(nil, &constraints, publicationOps)
+		return appendOperationPublicationKeys(preparationContext, nil, &constraints, publicationOps)
 	}
 	err := b.withPublishingUpdate(write.ctx, func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForEdgeID(edge.ID), time.Now())
@@ -412,7 +433,7 @@ func (b *BadgerEngine) UpdateEdge(updateRequest EdgeUpdateRequest) error {
 		var existing *Edge
 		if err := item.Value(func(val []byte) error {
 			var decodeErr error
-			existing, decodeErr = b.decodeEdgeBodyByID(val, edge.ID)
+			existing, decodeErr = b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edge.ID), val, edge.ID)
 			return decodeErr
 		}); err != nil {
 			return err
@@ -424,7 +445,7 @@ func (b *BadgerEngine) UpdateEdge(updateRequest EdgeUpdateRequest) error {
 		dbName, _, _ := ParseDatabasePrefix(string(edge.ID))
 		schema := b.GetSchemaForNamespace(dbName)
 		if schema != nil {
-			if err := b.validateEdgeConstraintsInTxn(txn, edge, schema, dbName, edge.ID); err != nil {
+			if err := b.validateEdgeConstraintsInTxn(write.ctx, txn, edge, schema, dbName, edge.ID); err != nil {
 				return err
 			}
 		}
@@ -578,21 +599,21 @@ func (b *BadgerEngine) UpdateEdge(updateRequest EdgeUpdateRequest) error {
 		}
 		// Primary key now holds the new body; archival above handled history.
 		return b.writeEdgeMVCCHeadInTxn(txn, edge.ID, version, false)
-	}, publish, keys, notification, write.stagePublication)
+	}, publish, keys, notification, &publicationOps, write.stagePublication)
 
 	return err
 }
 
 // DeleteEdge removes an edge.
-func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
-	if handled, err := b.inMutationTransaction(string(id), false, func(tx *BadgerTransaction) error {
-		return tx.DeleteEdge(id)
+func (b *BadgerEngine) DeleteEdge(ctx context.Context, id EdgeID) error {
+	if handled, err := b.inMutationTransaction(ctx, string(id), false, func(tx *BadgerTransaction) error {
+		return tx.DeleteEdge(ctx, id)
 	}); handled {
 		return err
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurDelete)
-	write, releaseWrite, barrierErr := b.beginEntityWrite(context.Background(), string(id), true, nil, entityWritePlan{read: func() (writtenEntities, error) { return b.nativeDeletionFootprint(string(id), true) }})
+	write, releaseWrite, barrierErr := b.beginEntityWrite(ctx, string(id), true, nil, entityWritePlan{read: func() (writtenEntities, error) { return b.nativeDeletionFootprint(ctx, string(id), true) }})
 	if barrierErr != nil {
 		return barrierErr
 	}
@@ -617,25 +638,28 @@ func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
 	var edge *Edge
 	if b.writeBehind != nil {
 		// The stored image the order read last, after the order: the newest.
-		if err := b.orderCovering(write.ctx, &order, writtenEntities{edges: []EdgeID{id}}, b.storedEdgeEndpoints(id, &edge)); err != nil {
+		if err := b.orderCovering(write.ctx, &order, writtenEntities{edges: []EdgeID{id}}, b.storedEdgeEndpoints(write.ctx, id, &edge)); err != nil {
 			return err
 		}
 		defer order.release()
 	} else {
-		edge, _ = b.GetEdge(id)
+		edge, _ = b.GetEdge(ctx, id)
 	}
 
 	var publicationOps []Operation
 	schema := b.GetSchemaForNamespace(namespaceForEdgeID(id))
 	// Capture before physical assembly can acquire the commit gate.
-	constraints := capturePublicationConstraintView(schema)
+	constraints, preparationErr := capturePublicationConstraintView(write.ctx, schema)
+	if preparationErr != nil {
+		return preparationErr
+	}
 	publish := func(images *commitCacheImages) {
 		b.publishCommitOperations(namespaceForEdgeID(id), schema, publicationOps, true, true, images)
 	}
-	keys := func() []any {
+	keys := func(preparationContext context.Context) ([]any, error) {
 		publicationOps = []Operation{{Type: OpDeleteEdge, EdgeID: id, OldEdge: edge}}
 		capturePublicationOperations(notification, publicationOps)
-		return appendOperationPublicationKeys(nil, &constraints, publicationOps)
+		return appendOperationPublicationKeys(preparationContext, nil, &constraints, publicationOps)
 	}
 	err = b.withPublishingUpdate(write.ctx, func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForEdgeID(id), time.Now())
@@ -685,7 +709,7 @@ func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
 			return err
 		}
 		return b.writeEdgeMVCCHeadInTxn(txn, id, version, true)
-	}, publish, keys, notification, write.stagePublication)
+	}, publish, keys, notification, &publicationOps, write.stagePublication)
 
 	return err
 }
@@ -708,7 +732,7 @@ func (b *BadgerEngine) deleteEdgeInTxn(txn *badger.Txn, id EdgeID) error {
 	var edge *Edge
 	if err := item.Value(func(val []byte) error {
 		var decodeErr error
-		edge, decodeErr = b.decodeEdgeBodyByID(val, id)
+		edge, decodeErr = b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(id), val, id)
 		return decodeErr
 	}); err != nil {
 		return err
@@ -759,14 +783,14 @@ func (b *BadgerEngine) deleteEdgeInTxn(txn *badger.Txn, id EdgeID) error {
 // BulkDeleteNodes deletes nodes, with their relationships, as one
 // transaction of any size (#703). IDs that do not exist, or repeat within
 // the call, are skipped.
-func (b *BadgerEngine) BulkDeleteNodes(ids []NodeID) error {
-	return deleteBulkEntities(b, ids, func(tx *BadgerTransaction, id NodeID) error { return tx.DeleteGraphNode(id, CascadeEdges) })
+func (b *BadgerEngine) BulkDeleteNodes(ctx context.Context, ids []NodeID) error {
+	return deleteBulkEntities(ctx, b, ids, func(tx *BadgerTransaction, id NodeID) error { return tx.DeleteGraphNode(ctx, id, CascadeEdges) })
 }
 
 // BulkDeleteEdges deletes relationships as one transaction of any size
 // (#703). IDs that do not exist, or repeat within the call, are skipped.
-func (b *BadgerEngine) BulkDeleteEdges(ids []EdgeID) error {
-	return deleteBulkEntities(b, ids, (*BadgerTransaction).DeleteEdge)
+func (b *BadgerEngine) BulkDeleteEdges(ctx context.Context, ids []EdgeID) error {
+	return deleteBulkEntities(ctx, b, ids, func(tx *BadgerTransaction, id EdgeID) error { return tx.DeleteEdge(ctx, id) })
 }
 
 // ============================================================================

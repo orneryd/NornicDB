@@ -18,7 +18,7 @@ func TestReplicatedDeleteInvalidatesWarmLocalQuery(t *testing.T) {
 	base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	defer base.Close()
-	_, err = base.CreateNode(&storage.Node{ID: "library:item", Labels: []string{"Document"}})
+	_, err = base.CreateNode(t.Context(), &storage.Node{ID: "library:item", Labels: []string{"Document"}})
 	require.NoError(t, err)
 	// This test covers query-cache invalidation after a replicated delete, not
 	// default path resolution, so the WAL lives in a temp dir. Using the
@@ -37,10 +37,12 @@ func TestReplicatedDeleteInvalidatesWarmLocalQuery(t *testing.T) {
 
 	read(1)
 	read(1)
-	require.NoError(t, adapter.ApplyCommand(&replication.Command{
+	publication, err := adapter.ApplyCommand(context.Background(), &replication.Command{
 		Type:      replication.CmdDeleteNode,
 		Data:      []byte("library:item"),
 		Timestamp: time.Now(),
-	}))
+	}, replication.WALQueued)
+	require.NoError(t, err)
+	require.Zero(t, publication.Position, "WALQueued must not report a publication position")
 	read(0)
 }

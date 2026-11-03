@@ -38,7 +38,7 @@ func TestHNSWScalarDefaultUpgradesSavedFloatGraph(t *testing.T) {
 	stored := make([][]float32, count)
 	for i := range stored {
 		stored[i] = randomVector()
-		_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("doc-%03d", i)), Labels: []string{"Doc"},
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("doc-%03d", i)), Labels: []string{"Doc"},
 			Properties: map[string]any{"text": fmt.Sprintf("document %d", i)}, NamedEmbeddings: map[string][]float32{"default": stored[i]}})
 		require.NoError(t, err)
 	}

@@ -179,8 +179,10 @@ type compactEdgeProjection struct {
 }
 
 // decodeEdgeCompactV2 parses a V2 compact body and resolves tokenized
-// property keys via the per-namespace dictionary.
-func (b *BadgerEngine) decodeEdgeCompactV2(namespace string, data []byte, projection ...compactEdgeProjection) (*Edge, uint64, uint64, error) {
+// property keys through the view's name authority: txn is the Badger
+// transaction whose snapshot the body was read from (nil on the context-free
+// standalone boundary), as decodeTokenizedPropertiesProjected defines it.
+func (b *BadgerEngine) decodeEdgeCompactV2(txn *badger.Txn, namespace string, data []byte, projection ...compactEdgeProjection) (*Edge, uint64, uint64, error) {
 	edge := new(Edge)
 	startNum, endNum, offset, err := decodeEdgeCompactHeaderInto(data, edgeFormatCompactV2, edge)
 	if err != nil {
@@ -199,7 +201,7 @@ func (b *BadgerEngine) decodeEdgeCompactV2(namespace string, data []byte, projec
 		}
 	}
 	if offset < len(data) {
-		props, err = b.decodeTokenizedPropertiesProjected(namespace, data[offset:], include)
+		props, err = b.decodeTokenizedPropertiesProjected(txn, namespace, data[offset:], include)
 		if err != nil {
 			return nil, 0, 0, fmt.Errorf("compact edge v2: %w", err)
 		}
@@ -257,36 +259,38 @@ func (b *BadgerEngine) encodeEdgeInTxn(txn kvWriter, namespace string, edge *Edg
 	return b.encodeEdgeCompactV2(kvWriterTxn(txn), namespace, edge, startNum, endNum)
 }
 
-// decodeEdgeBody is the V2 hot-path decoder. It rejects any non-V2
-// body — V2 stores have been fully rewritten by the V1→V2 migration,
-// so a non-V2 body indicates corruption or a forgotten upgrade.
-func (b *BadgerEngine) decodeEdgeBody(namespace string, data []byte) (*Edge, error) {
-	return b.decodeEdgeBodyWithID(namespace, data, "")
-}
-
-// decodeEdgeBodyWithID is decodeEdgeBody with a caller-supplied edge
-// ID, populated on the returned Edge.
-func (b *BadgerEngine) decodeEdgeBodyWithID(namespace string, data []byte, id EdgeID) (*Edge, error) {
+// decodeEdgeBodyWithID decodes one V2 body in its physical view, resolves its
+// endpoint and property bindings in that view and attaches the supplied edge
+// ID. It rejects any non-V2 body — V2 stores have been fully rewritten by the
+// V1→V2 migration, so a non-V2 body indicates corruption or a forgotten
+// upgrade.
+func (b *BadgerEngine) decodeEdgeBodyWithID(txn *badger.Txn, namespace string, data []byte, id EdgeID) (*Edge, error) {
 	if len(data) < 1 {
 		return nil, fmt.Errorf("edge body empty")
 	}
 	if data[0] != edgeFormatCompactV2 {
 		return nil, fmt.Errorf("edge body has unexpected format byte 0x%02x; expected V2 (0x%02x)", data[0], edgeFormatCompactV2)
 	}
-	edge, startNum, endNum, err := b.decodeEdgeCompactV2(namespace, data)
+	edge, startNum, endNum, err := b.decodeEdgeCompactV2(txn, namespace, data)
 	if err != nil {
 		return nil, err
 	}
-	startID, ok := b.idDict.lookupNodeIDByNum(startNum)
+	startID, ok, err := b.readStoredBinding(txn, storedBinding{kind: nodeIdentityBinding, number: startNum})
+	if err != nil {
+		return nil, err
+	}
 	if !ok {
 		return nil, fmt.Errorf("compact edge: start numID %d not in dict", startNum)
 	}
-	endID, ok := b.idDict.lookupNodeIDByNum(endNum)
+	endID, ok, err := b.readStoredBinding(txn, storedBinding{kind: nodeIdentityBinding, number: endNum})
+	if err != nil {
+		return nil, err
+	}
 	if !ok {
 		return nil, fmt.Errorf("compact edge: end numID %d not in dict", endNum)
 	}
 	edge.ID = id
-	edge.StartNode = startID
-	edge.EndNode = endID
+	edge.StartNode = NodeID(startID)
+	edge.EndNode = NodeID(endID)
 	return edge, nil
 }

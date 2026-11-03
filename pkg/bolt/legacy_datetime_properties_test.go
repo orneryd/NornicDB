@@ -3,9 +3,10 @@ package bolt
 import (
 	"bytes"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -38,10 +39,10 @@ func TestLegacyDateTimeGraphPropertiesNeo4j526(t *testing.T) {
 				t.Cleanup(func() { require.NoError(t, inner.Close()) })
 				store := storage.NewNamespacedEngine(inner, "datetime")
 				for _, id := range []storage.NodeID{"a", "b"} {
-					_, err := store.CreateNode(&storage.Node{ID: id, Labels: []string{"DateTimeFixture"}, Properties: map[string]any{"id": string(id), "t": value}})
+					_, err := store.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"DateTimeFixture"}, Properties: map[string]any{"id": string(id), "t": value}})
 					require.NoError(t, err)
 				}
-				require.NoError(t, store.CreateEdge(&storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "DATETIME", Properties: map[string]any{"t": value}}))
+				require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "DATETIME", Properties: map[string]any{"t": value}}))
 				_, port := startBoltIntegrationServerWithExplicitTx(t, store)
 				conn := dateTimeWireConnect(t, fmt.Sprintf("127.0.0.1:%d", port), protocol.version, protocol.patch, false)
 				ref := dateTimeWireConnect(t, reference, protocol.version, protocol.patch, true)

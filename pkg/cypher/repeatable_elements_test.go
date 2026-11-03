@@ -76,7 +76,7 @@ func TestRepeatableElements(t *testing.T) {
 		require.ErrorContains(t, err, "a path selector or match mode can only be used in a MATCH pattern", call)
 	}
 
-	rewritten, _, err := desugarLabelExpressions("MATCH REPEATABLE ELEMENTS p = ANY 2 (a)-->{1,3}(b:A|B) WHERE a.x = 1 RETURN p", nil, false)
+	rewritten, _, err := desugarLabelExpressions(t.Context(), "MATCH REPEATABLE ELEMENTS p = ANY 2 (a)-->{1,3}(b:A|B) WHERE a.x = 1 RETURN p", nil, false)
 	require.NoError(t, err)
 	require.Equal(t, "MATCH  p = shortestPath((a)-[*1..3]->(b)) WHERE __nornic_repeatable_elements() AND __nornic_path_selector('ANY', 2, false, '', b:A|B) AND a.x = 1 RETURN p", rewritten)
 }
@@ -88,7 +88,7 @@ func TestStripRepeatableElements(t *testing.T) {
 		"(a)-->(b) WHERE __nornic_repeatable_elements() AND a.x = 1":   "(a)-->(b) WHERE a.x = 1",
 		"(a)-->(b) WHERE __nornic_repeatable_elements() and (a.x = 1)": "(a)-->(b) WHERE (a.x = 1)",
 	} {
-		stripped, ok := stripRepeatableElements(body)
+		stripped, ok := stripRepeatableElements(t.Context(), body)
 		require.True(t, ok, body)
 		require.Equal(t, want, stripped, body)
 	}
@@ -100,14 +100,12 @@ func TestStripRepeatableElements(t *testing.T) {
 		"(a)-->(b) WHERE __nornic_repeatable_elements() ANDx",
 		"(a)-->(b) WHERE __nornic_repeatable_elements() OR a.x = 1",
 	} {
-		stripped, ok := stripRepeatableElements(body)
+		stripped, ok := stripRepeatableElements(t.Context(), body)
 		require.False(t, ok, body)
 		require.Equal(t, body, stripped, body)
 	}
 	require.False(t, repeatableElements(context.Background()))
 	require.True(t, repeatableElements(withRepeatableElements(context.Background())))
-	var nilContext context.Context
-	require.False(t, repeatableElements(nilContext))
 
 	matchModes := map[string]bool{"DIFFERENT RELATIONSHIP (a)": false, "REPEATABLE ELEMENTS (a)": true, "REPEATABLE ELEMENT BINDINGS (a)": true}
 	for text, repeatable := range matchModes {
@@ -119,6 +117,6 @@ func TestStripRepeatableElements(t *testing.T) {
 		_, _, ok := matchModeAt(text, 0, len(text))
 		require.False(t, ok, text)
 	}
-	require.False(t, hasUnboundedRepetition("(a)-[r", 0, len("(a)-[r")))
-	require.False(t, hasUnboundedRepetition("(a {m: {k: 1}})-['x']->(b)", 0, len("(a {m: {k: 1}})-['x']->(b)")))
+	require.False(t, hasUnboundedRepetition(t.Context(), "(a)-[r", 0, len("(a)-[r")))
+	require.False(t, hasUnboundedRepetition(t.Context(), "(a {m: {k: 1}})-['x']->(b)", 0, len("(a {m: {k: 1}})-['x']->(b)")))
 }

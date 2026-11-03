@@ -56,7 +56,8 @@ var apocAliasBindings = []apocAliasBinding{
 		category:      "neighbors",
 		description:   "BFS neighbors",
 		example:       "apoc.neighbors.bfs(node, 'TYPE', 5) => nodes",
-		signature:     reflect.TypeOf((func(*apocstorage.Node, string, int) []*apocstorage.Node)(nil)),
+		signature:     reflect.TypeOf((func(context.Context, *apocstorage.Node, string, int) ([]*apocstorage.Node, error))(nil)),
+		contextFirst:  true,
 	},
 	{
 		name:          "apoc.meta.export",
@@ -66,7 +67,7 @@ var apocAliasBindings = []apocAliasBinding{
 		category:      "meta",
 		description:   "Export schema",
 		example:       "apoc.meta.export() => schema",
-		signature:     reflect.TypeOf((func(context.Context) map[string]interface{})(nil)),
+		signature:     reflect.TypeOf((func(context.Context) (map[string]interface{}, error))(nil)),
 		contextFirst:  true,
 	},
 	{
@@ -77,7 +78,7 @@ var apocAliasBindings = []apocAliasBinding{
 		category:      "meta",
 		description:   "Schema snapshot",
 		example:       "apoc.meta.snapshot() => snapshot",
-		signature:     reflect.TypeOf((func(context.Context) map[string]interface{})(nil)),
+		signature:     reflect.TypeOf((func(context.Context) (map[string]interface{}, error))(nil)),
 		contextFirst:  true,
 	},
 	{
@@ -88,7 +89,7 @@ var apocAliasBindings = []apocAliasBinding{
 		category:      "schema",
 		description:   "Export schema",
 		example:       "apoc.schema.export() => schema",
-		signature:     reflect.TypeOf((func(context.Context) map[string]interface{})(nil)),
+		signature:     reflect.TypeOf((func(context.Context) (map[string]interface{}, error))(nil)),
 		contextFirst:  true,
 	},
 	{
@@ -99,7 +100,7 @@ var apocAliasBindings = []apocAliasBinding{
 		category:      "schema",
 		description:   "Schema snapshot",
 		example:       "apoc.schema.snapshot() => snapshot",
-		signature:     reflect.TypeOf((func(context.Context) map[string]interface{})(nil)),
+		signature:     reflect.TypeOf((func(context.Context) (map[string]interface{}, error))(nil)),
 		contextFirst:  true,
 	},
 	{
@@ -292,23 +293,23 @@ func TestRetiredAliasNamesAnswerLikeTheirCanonicalOwner(t *testing.T) {
 	// The neighbor helper keeps the canonical owner's argument protocol: the
 	// arity and conversion errors a caller sees are the owner's own.
 	neighbor := &apocstorage.Node{ID: 1}
-	_, toHopArity := apocCallAliasHandler(t, "apoc.neighbors.toHop", neighbor, "KNOWS")
-	_, bfsArity := apocCallAliasHandler(t, "apoc.neighbors.bfs", neighbor, "KNOWS")
+	_, toHopArity := apocCallStatementHandler(t, "apoc.neighbors.toHop", ctx, neighbor, "KNOWS")
+	_, bfsArity := apocCallStatementHandler(t, "apoc.neighbors.bfs", ctx, neighbor, "KNOWS")
 	require.ErrorIs(t, bfsArity, registry.ErrUnsupportedSignature)
-	require.Contains(t, bfsArity.Error(), "expected 3 arguments, got 2")
+	require.Contains(t, bfsArity.Error(), "expected 4 arguments, got 3")
 	require.EqualError(t, bfsArity, toHopArity.Error())
 
-	_, toHopConversion := apocCallAliasHandler(t, "apoc.neighbors.toHop", neighbor, "KNOWS", "not-a-number")
-	_, bfsConversion := apocCallAliasHandler(t, "apoc.neighbors.bfs", neighbor, "KNOWS", "not-a-number")
+	_, toHopConversion := apocCallStatementHandler(t, "apoc.neighbors.toHop", ctx, neighbor, "KNOWS", "not-a-number")
+	_, bfsConversion := apocCallStatementHandler(t, "apoc.neighbors.bfs", ctx, neighbor, "KNOWS", "not-a-number")
 	require.ErrorIs(t, bfsConversion, registry.ErrUnsupportedSignature)
 	require.Equal(t, toHopConversion.Error(), bfsConversion.Error())
 
 	neighbors, err := apocInitializedBackend.AllNodes(ctx)
 	require.NoError(t, err)
 	require.Len(t, neighbors, 1)
-	toHopValue, err := apocCallAliasHandler(t, "apoc.neighbors.toHop", neighbors[0], "", 5)
+	toHopValue, err := apocCallStatementHandler(t, "apoc.neighbors.toHop", ctx, neighbors[0], "", 5)
 	require.NoError(t, err)
-	bfsValue, err := apocCallAliasHandler(t, "apoc.neighbors.bfs", neighbors[0], "", 5)
+	bfsValue, err := apocCallStatementHandler(t, "apoc.neighbors.bfs", ctx, neighbors[0], "", 5)
 	require.NoError(t, err)
 	require.Equal(t, toHopValue, bfsValue)
 	require.Len(t, bfsValue.([]*apocstorage.Node), 1,
@@ -323,9 +324,9 @@ func TestRetainedAliasHandlerKeepsItsBackend(t *testing.T) {
 	ctx := context.Background()
 
 	second := apocstorage.NewInMemoryStorage()
-	_, err := second.CreateNode([]string{"Person"}, map[string]interface{}{"name": "Bill"})
+	_, err := second.CreateNode(t.Context(), []string{"Person"}, map[string]interface{}{"name": "Bill"})
 	require.NoError(t, err)
-	_, err = second.CreateNode([]string{"Project"}, map[string]interface{}{"name": "Apollo"})
+	_, err = second.CreateNode(t.Context(), []string{"Project"}, map[string]interface{}{"name": "Apollo"})
 	require.NoError(t, err)
 
 	retained := apocRegisteredHandler(t, "apoc.meta.export")

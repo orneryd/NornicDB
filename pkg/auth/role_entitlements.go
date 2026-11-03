@@ -142,7 +142,7 @@ func (r *RoleEntitlementsStore) SetMappings(ctx context.Context, mappings map[st
 					"entitlements": string(entitlementsJSON),
 				},
 			}
-			if err := putRoleRecord(view, node, len(ids) == 0); err != nil {
+			if err := putRoleRecord(ctx, view, node, len(ids) == 0); err != nil {
 				return err
 			}
 		}

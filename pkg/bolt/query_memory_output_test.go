@@ -38,10 +38,10 @@ func TestQueryMemoryBoltPropertyVisibility(t *testing.T) {
 	be.SetDecayEnabled(true)
 	old := time.Now().Add(-time.Hour)
 	for _, id := range []storage.NodeID{"review:a", "review:b"} {
-		_, err = be.CreateNode(&storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]interface{}{"secret": "node-hidden", "title": string(id)}, CreatedAt: old, UpdatedAt: old})
+		_, err = be.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]interface{}{"secret": "node-hidden", "title": string(id)}, CreatedAt: old, UpdatedAt: old})
 		require.NoError(t, err)
 	}
-	require.NoError(t, be.CreateEdge(&storage.Edge{ID: "review:r", StartNode: "review:a", EndNode: "review:b", Type: "LINK", Properties: map[string]interface{}{"secret": "edge-hidden", "weight": int64(7)}, CreatedAt: old, UpdatedAt: old}))
+	require.NoError(t, be.CreateEdge(t.Context(), &storage.Edge{ID: "review:r", StartNode: "review:a", EndNode: "review:b", Type: "LINK", Properties: map[string]interface{}{"secret": "edge-hidden", "weight": int64(7)}, CreatedAt: old, UpdatedAt: old}))
 	_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(be, "review"))
 	ctx := context.Background()
 	driver, err := neo4j.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4j.NoAuth())
@@ -106,10 +106,10 @@ func TestQueryMemoryBoltPropertyVisibility(t *testing.T) {
 			})
 		}
 	}
-	raw, err := be.GetQueryNode("review:a")
+	raw, err := be.GetQueryNode(t.Context(), "review:a")
 	require.NoError(t, err)
 	require.Contains(t, raw.Properties, "secret")
-	edge, err := be.GetEdge("review:r")
+	edge, err := be.GetEdge(t.Context(), "review:r")
 	require.NoError(t, err)
 	require.Contains(t, edge.Properties, "secret")
 }

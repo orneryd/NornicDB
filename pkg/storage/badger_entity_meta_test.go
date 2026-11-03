@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"sort"
 	"testing"
 
@@ -11,7 +12,7 @@ import (
 func TestBadgerEngine_GetEntityMeta_NodeRoundTrip(t *testing.T) {
 	e := newTestMemoryEngine(t)
 
-	_, err := e.CreateNode(&Node{
+	_, err := e.CreateNode(t.Context(), &Node{
 		ID:     "test:n",
 		Labels: []string{"L1", "L2"},
 		Properties: map[string]any{
@@ -22,7 +23,7 @@ func TestBadgerEngine_GetEntityMeta_NodeRoundTrip(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	meta, err := e.GetEntityMeta("test:n")
+	meta, err := e.GetEntityMeta(context.Background(), "test:n")
 	require.NoError(t, err)
 	require.Equal(t, knowledgepolicy.ScopeNode, meta.Scope)
 	gotLabels := append([]string(nil), meta.Labels...)
@@ -43,16 +44,16 @@ func TestBadgerEngine_GetEntityMeta_NodeRoundTrip(t *testing.T) {
 func TestBadgerEngine_GetEntityMeta_EdgeRoundTrip(t *testing.T) {
 	e := newTestMemoryEngine(t)
 
-	_, err := e.CreateNode(&Node{ID: "test:a", Labels: []string{"L"}, Properties: map[string]any{}})
+	_, err := e.CreateNode(t.Context(), &Node{ID: "test:a", Labels: []string{"L"}, Properties: map[string]any{}})
 	require.NoError(t, err)
-	_, err = e.CreateNode(&Node{ID: "test:b", Labels: []string{"L"}, Properties: map[string]any{}})
+	_, err = e.CreateNode(t.Context(), &Node{ID: "test:b", Labels: []string{"L"}, Properties: map[string]any{}})
 	require.NoError(t, err)
-	require.NoError(t, e.CreateEdge(&Edge{
+	require.NoError(t, e.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b",
 		Type: "REL", Properties: map[string]any{"k1": "v1", "k2": int64(7)},
 	}))
 
-	meta, err := e.GetEntityMeta("test:e1")
+	meta, err := e.GetEntityMeta(context.Background(), "test:e1")
 	require.NoError(t, err)
 	require.Equal(t, knowledgepolicy.ScopeEdge, meta.Scope)
 	require.Equal(t, "REL", meta.EdgeType)
@@ -66,6 +67,6 @@ func TestBadgerEngine_GetEntityMeta_EdgeRoundTrip(t *testing.T) {
 func TestBadgerEngine_GetEntityMeta_NotFoundReturnsError(t *testing.T) {
 	e := newTestMemoryEngine(t)
 
-	_, err := e.GetEntityMeta("test:nonexistent")
+	_, err := e.GetEntityMeta(context.Background(), "test:nonexistent")
 	require.Error(t, err, "missing entity must error (looked up as edge after node miss)")
 }

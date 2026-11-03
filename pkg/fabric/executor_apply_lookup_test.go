@@ -289,7 +289,7 @@ func TestRewriteFragmentWithRuntimeImports_Apply(t *testing.T) {
 		Input: &FragmentInit{},
 		Inner: inner,
 	}
-	got := rewriteFragmentWithRuntimeImports(apply, []string{"b"})
+	got := rewriteFragmentWithRuntimeImports(t.Context(), apply, []string{"b"})
 	result, ok := got.(*FragmentApply)
 	if !ok {
 		t.Fatalf("expected *FragmentApply, got %T", got)

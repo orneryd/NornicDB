@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"errors"
+
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"path/filepath"
@@ -172,7 +173,7 @@ func TestIndexCapacityBudgetsRejectBeforeMutation(t *testing.T) {
 
 func TestBuildIndexesEnforcesCapacityBudgets(t *testing.T) {
 	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	_, err := engine.CreateNode(&storage.Node{ID: "nornic:document", Properties: map[string]any{"text": "larger than four bytes"}})
+	_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "nornic:document", Properties: map[string]any{"text": "larger than four bytes"}})
 	require.NoError(t, err)
 	service := NewService(engine, 3, &ServiceOptions{BM25MemoryMaxBytes: 4})
 

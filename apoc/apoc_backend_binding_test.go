@@ -23,11 +23,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// apocTestProcessContext is the initialization lifetime of this package's
+// static test backend. That backend is built while the package initializes,
+// before TestMain and before any test exists, so no statement and no *testing.T
+// can supply a lifetime at that boundary: it belongs to this test process.
+var apocTestProcessContext = context.Background()
+
 // apocInitializedBackend is the backend the process's first Initialize supplies.
 // It carries the pre-change reproduction's graph: one Person named Alice.
 var apocInitializedBackend = func() apocstorage.Storage {
 	backend := apocstorage.NewInMemoryStorage()
-	if _, err := backend.CreateNode([]string{"Person"}, map[string]interface{}{"name": "Alice"}); err != nil {
+	if _, err := backend.CreateNode(apocTestProcessContext, []string{"Person"}, map[string]interface{}{"name": "Alice"}); err != nil {
 		panic(err)
 	}
 	return backend
@@ -48,7 +54,7 @@ func apocBindingBackend(t *testing.T, names ...string) apocstorage.Storage {
 	t.Helper()
 	backend := apocstorage.NewInMemoryStorage()
 	for _, name := range names {
-		_, err := backend.CreateNode([]string{"Person"}, map[string]interface{}{"name": name})
+		_, err := backend.CreateNode(t.Context(), []string{"Person"}, map[string]interface{}{"name": name})
 		require.NoError(t, err)
 	}
 	return backend
@@ -160,7 +166,7 @@ func TestInstancesKeepSeparateWarmupCaches(t *testing.T) {
 	require.Equal(t, 1, firstStats["nodesCached"])
 
 	second := apocstorage.NewInMemoryStorage()
-	_, err = second.CreateNode([]string{"Company"}, map[string]interface{}{"name": "Acme"})
+	_, err = second.CreateNode(t.Context(), []string{"Company"}, map[string]interface{}{"name": "Acme"})
 	require.NoError(t, err)
 	require.NoError(t, SetStorage(second))
 
@@ -231,11 +237,13 @@ func TestRegisteredBoundHandlersReceiveTheCallersLifetime(t *testing.T) {
 			require.True(t, ctx.Err() != nil, "the lifetime must already be stopped")
 			require.ErrorIs(t, ctx.Err(), interrupted.want)
 
-			require.Empty(t, apocSearchPrefixNodes(t, ctx, "Ali"))
+			value, err := apocCallStatementHandler(t, "apoc.search.prefix", ctx, "Person", "name", "Ali")
+			require.ErrorIs(t, err, interrupted.want)
+			require.Nil(t, value)
 
-			value, err := apocCallStatementHandler(t, "apoc.warmup.run", ctx)
-			require.NoError(t, err)
-			require.Zero(t, value.(map[string]interface{})["nodesLoaded"])
+			value, err = apocCallStatementHandler(t, "apoc.warmup.run", ctx)
+			require.ErrorIs(t, err, interrupted.want)
+			require.Nil(t, value)
 		})
 	}
 }
@@ -279,12 +287,15 @@ func TestBoundHandlerAddsNoPerRowAllocations(t *testing.T) {
 	require.NoError(t, err)
 	secondHandler, err := registry.Compile(second)
 	require.NoError(t, err)
-	freeHandler, err := registry.Compile(apocrel.ID)
+	legacyHandler, err := registry.Compile(apocrel.ID)
+	require.NoError(t, err)
+	freeHandler, err := registry.Compile(func(context.Context, *apocstorage.Relationship) (*apocstorage.Node, error) { return nil, nil })
 	require.NoError(t, err)
 
 	relationship := &apocstorage.Relationship{ID: 1, StartNode: 1, EndNode: 2, Type: "KNOWS"}
-	values := []reflect.Value{reflect.ValueOf(relationship)}
-	freeValues := []reflect.Value{reflect.ValueOf(relationship)}
+	values := []reflect.Value{reflect.ValueOf(t.Context()), reflect.ValueOf(relationship)}
+	legacyValues := []reflect.Value{reflect.ValueOf(relationship)}
+	freeValues := values
 
 	measure := func(handler *registry.Callable, bound []reflect.Value) float64 {
 		return testing.AllocsPerRun(100, func() {
@@ -297,6 +308,8 @@ func TestBoundHandlerAddsNoPerRowAllocations(t *testing.T) {
 	firstAllocs := measure(firstHandler, values)
 	secondAllocs := measure(secondHandler, values)
 	freeAllocs := measure(freeHandler, freeValues)
+	legacyAllocs := measure(legacyHandler, legacyValues)
+	t.Logf("one-result legacy reflection reference: %v allocs; two-result reference: %v", legacyAllocs, freeAllocs)
 	t.Logf("per-row allocations: instance-bound %v, independent instance %v, free helper %v",
 		firstAllocs, secondAllocs, freeAllocs)
 

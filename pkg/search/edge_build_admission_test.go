@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"runtime"
@@ -95,11 +96,11 @@ func TestBuildRelationshipStreamDoesNotOvertakeLiveEdgeWrites(t *testing.T) {
 			release := sync.OnceFunc(func() { close(engine.release) })
 			t.Cleanup(func() { release(); _ = engine.MemoryEngine.Close() })
 			for _, id := range []storage.NodeID{"nornic:s", "nornic:e"} {
-				_, err := engine.CreateNode(&storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"text": "node"}})
+				_, err := engine.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"text": "node"}})
 				require.NoError(t, err)
 			}
 			edge := &storage.Edge{ID: "nornic:x", StartNode: "nornic:s", EndNode: "nornic:e", Type: "REL", Properties: map[string]any{"v": []float32{1, 0, 0}}}
-			require.NoError(t, engine.CreateEdge(edge))
+			require.NoError(t, engine.CreateEdge(t.Context(), edge))
 			svc := NewService(engine, 3, nil)
 			t.Cleanup(func() { release(); _ = svc.Close() })
 			// Fixed dimensions: with open ones the stream's stored edge chooses
@@ -119,11 +120,11 @@ func TestBuildRelationshipStreamDoesNotOvertakeLiveEdgeWrites(t *testing.T) {
 
 			live := make(chan error, 1)
 			if removal {
-				require.NoError(t, engine.DeleteEdge(edge.ID))
+				require.NoError(t, engine.DeleteEdge(t.Context(), edge.ID))
 				go func() { live <- svc.RemoveEdge(edge.ID) }()
 			} else {
 				updated := &storage.Edge{ID: edge.ID, StartNode: edge.StartNode, EndNode: edge.EndNode, Type: edge.Type, Properties: map[string]any{"v": []float32{0, 1, 0}}}
-				require.NoError(t, engine.UpdateEdge(storage.EdgeUpdateRequest{After: updated}))
+				require.NoError(t, engine.UpdateEdge(t.Context(), storage.EdgeUpdateRequest{After: updated}))
 				go func() { live <- svc.IndexEdge(updated) }()
 			}
 			time.Sleep(200 * time.Millisecond)

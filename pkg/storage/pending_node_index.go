@@ -1,8 +1,8 @@
 package storage
 
 import (
+	"context"
 	"slices"
-	"sort"
 )
 
 // pendingNodeIndex indexes the nodes an AsyncEngine holds in its write
@@ -29,16 +29,17 @@ type pendingNodeIndex struct {
 	tracked map[string]map[string]struct{}
 	// byValue: (label, property, value key) → pending node IDs, without
 	// duplicates. A value usually has one pending holder, so a slice is
-	// cheaper to build and read than a set.
+	// cheaper to build and read than a set. A private membership-only marker
+	// retains unkeyable nonnull values without treating them as equal.
 	byValue map[pendingValueKey][]NodeID
-	// byProperty: (label, property) → pending node ID → value key, for the
+	// byProperty: (label, property) → pending node ID → membership key, for the
 	// ordered and not-null scans of a property index.
-	byProperty map[pendingPropertyKey]map[NodeID]interface{}
+	byProperty map[nodePropertyKey]map[NodeID]interface{}
 }
 
-// pendingPropertyKey is a (label, property) pair; the label is as stored on
-// the node, as in the schema's property indexes.
-type pendingPropertyKey struct {
+// nodePropertyKey is the exact node label/property identity shared by schema
+// UNIQUE claims and pending property indexes. It is runtime-only, never encoded.
+type nodePropertyKey struct {
 	label    string
 	property string
 }
@@ -56,12 +57,12 @@ func newPendingNodeIndex() *pendingNodeIndex {
 		byLabel:    make(map[string]map[NodeID]bool),
 		tracked:    make(map[string]map[string]struct{}),
 		byValue:    make(map[pendingValueKey][]NodeID),
-		byProperty: make(map[pendingPropertyKey]map[NodeID]interface{}),
+		byProperty: make(map[nodePropertyKey]map[NodeID]interface{}),
 	}
 }
 
 // add lists node under its labels and each tracked (label, property) with a
-// comparable non-null value (the values the property indexes hold).
+// non-null membership (an equality key when the value is keyable).
 func (p *pendingNodeIndex) add(node *Node) {
 	if node == nil {
 		return
@@ -79,17 +80,19 @@ func (p *pendingNodeIndex) add(node *Node) {
 	}
 }
 
-// addValue indexes node's value of property under label.
+// addValue records node's nonnull property membership under label.
 func (p *pendingNodeIndex) addValue(node *Node, label, property string) {
-	valueKey, ok := indexValueKey(node.Properties[property])
-	if !ok {
+	// The pending index mirrors writes the engine already accepted, so the key
+	// has that write's lifetime: it cannot cancel.
+	valueKey, ok, err := indexNonNilMembershipKey(context.Background(), node.Properties[property])
+	if err != nil || !ok {
 		return
 	}
 	key := pendingValueKey{label: label, property: property, value: valueKey}
 	if valueIDs := p.byValue[key]; !slices.Contains(valueIDs, node.ID) {
 		p.byValue[key] = append(valueIDs, node.ID)
 	}
-	pair := pendingPropertyKey{label: label, property: property}
+	pair := nodePropertyKey{label: label, property: property}
 	propertyIDs := p.byProperty[pair]
 	if propertyIDs == nil {
 		propertyIDs = make(map[NodeID]interface{})
@@ -99,7 +102,8 @@ func (p *pendingNodeIndex) addValue(node *Node, label, property string) {
 }
 
 // remove drops the entries add made for node (the cached object being
-// replaced or retired).
+// replaced or retired). This apply step mirrors already-staged writes; it
+// cannot cancel midway and leave the index disagreeing with its node owner.
 func (p *pendingNodeIndex) remove(node *Node) {
 	if node == nil {
 		return
@@ -112,7 +116,8 @@ func (p *pendingNodeIndex) remove(node *Node) {
 			}
 		}
 		for property := range p.tracked[label] {
-			valueKey, ok := indexValueKey(node.Properties[property])
+			pair := nodePropertyKey{label: label, property: property}
+			valueKey, ok := p.byProperty[pair][node.ID]
 			if !ok {
 				continue
 			}
@@ -132,7 +137,6 @@ func (p *pendingNodeIndex) remove(node *Node) {
 				}
 				break
 			}
-			pair := pendingPropertyKey{label: label, property: property}
 			if propertyIDs := p.byProperty[pair]; propertyIDs != nil {
 				delete(propertyIDs, node.ID)
 				if len(propertyIDs) == 0 {
@@ -150,6 +154,7 @@ func (p *pendingNodeIndex) remove(node *Node) {
 // doesn't hold yet, and that version was never added here. Skipping the add
 // for it would leave the node superseded in the committed index and absent
 // from this one, so index lookups miss it until the flush (#1043).
+
 func (p *pendingNodeIndex) replace(prev, node *Node) {
 	if prev != nil && node != nil && prev.ID == node.ID && p.listed(prev) && p.sameEntries(prev, node) {
 		return
@@ -178,8 +183,14 @@ func (p *pendingNodeIndex) sameEntries(prev, node *Node) bool {
 	}
 	for _, label := range node.Labels {
 		for property := range p.tracked[label] {
-			before, beforeOK := indexValueKey(prev.Properties[property])
-			after, afterOK := indexValueKey(node.Properties[property])
+			before, beforeOK, err := indexNonNilMembershipKey(context.Background(), prev.Properties[property])
+			if err != nil {
+				return false
+			}
+			after, afterOK, err := indexNonNilMembershipKey(context.Background(), node.Properties[property])
+			if err != nil {
+				return false
+			}
 			if beforeOK != afterOK || before != after {
 				return false
 			}
@@ -197,21 +208,60 @@ func (p *pendingNodeIndex) empty() bool {
 
 // track indexes property by value for label's pending nodes from now on,
 // including the nodes already pending. cached looks a pending node up.
-func (p *pendingNodeIndex) track(label, property string, cached func(NodeID) *Node) {
-	properties := p.tracked[label]
-	if properties == nil {
-		properties = make(map[string]struct{})
-		p.tracked[label] = properties
+func (p *pendingNodeIndex) track(ctx context.Context, label, property string, cached func(NodeID) *Node) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	if _, already := properties[property]; already {
-		return
+	if _, already := p.tracked[label][property]; already {
+		return nil
+	}
+	// Build the new value population privately, including unchanged pairs. This
+	// keeps both tracking metadata and all buckets unpublished on cancellation.
+	values := make(map[pendingValueKey][]NodeID, len(p.byValue))
+	for key, ids := range p.byValue {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		values[key] = ids
+	}
+	propertyIDs := make(map[NodeID]interface{})
+	for id := range p.byLabel[label] {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		node := cached(id)
+		if node == nil || !hasLabel(node.Labels, label) {
+			continue
+		}
+		value, ok, err := indexNonNilMembershipKey(ctx, node.Properties[property])
+		if err != nil {
+			return err
+		}
+		if !ok {
+			continue
+		}
+		key := pendingValueKey{label: label, property: property, value: value}
+		values[key] = append(values[key], id)
+		propertyIDs[id] = value
+	}
+	properties := make(map[string]struct{}, len(p.tracked[label])+1)
+	for name := range p.tracked[label] {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		properties[name] = struct{}{}
 	}
 	properties[property] = struct{}{}
-	for id := range p.byLabel[label] {
-		if node := cached(id); node != nil && hasLabel(node.Labels, label) {
-			p.addValue(node, label, property)
-		}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
+	// Constant-size publication under the pending owner's write lock.
+	p.byValue = values
+	if len(propertyIDs) > 0 {
+		p.byProperty[nodePropertyKey{label: label, property: property}] = propertyIDs
+	}
+	p.tracked[label] = properties
+	return nil
 }
 
 // pendingWriteSource is the write cache of a layer above the engine that
@@ -222,11 +272,11 @@ type pendingWriteSource interface {
 	// unlockPendingWrites: a flush can't retire a pending node meanwhile, so
 	// a lookup that combines the index with the view sees each committed
 	// node once. The view is zero when nothing is pending.
-	lockPendingWrites() pendingWriteView
+	lockPendingWrites(context.Context) (pendingWriteView, error)
 	unlockPendingWrites()
 	// trackPendingValues indexes these (label, property) pairs of pending
 	// nodes by value.
-	trackPendingValues(pairs []pendingPropertyKey)
+	trackPendingValues(context.Context, []nodePropertyKey) error
 }
 
 // pendingWriteOwner reports a node with a pending create, update or delete,
@@ -270,29 +320,41 @@ func (v pendingWriteView) valueMatchSet(label, property string, valueKey interfa
 
 // valueMatches appends the namespace's pending nodes with label and
 // property = valueKey to out.
-func (v pendingWriteView) valueMatches(out []NodeID, label, property string, valueKey interface{}) []NodeID {
-	return v.appendInNamespace(out, v.valueMatchSet(label, property, valueKey))
+func (v pendingWriteView) valueMatches(ctx context.Context, out []NodeID, label, property string, valueKey interface{}) ([]NodeID, error) {
+	return v.appendInNamespace(ctx, out, v.valueMatchSet(label, property, valueKey))
 }
 
 // appendInNamespace appends the ids that belong to the view's namespace to
 // out.
-func (v pendingWriteView) appendInNamespace(out, ids []NodeID) []NodeID {
+func (v pendingWriteView) appendInNamespace(ctx context.Context, out, ids []NodeID) ([]NodeID, error) {
 	for _, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if v.inNamespace(id) {
 			out = append(out, id)
 		}
 	}
-	return out
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // propertyEntries returns the namespace's pending nodes with label and a
 // non-null property, grouped by value key.
-func (v pendingWriteView) propertyEntries(label, property string) map[interface{}][]NodeID {
+func (v pendingWriteView) propertyEntries(ctx context.Context, label, property string) (map[interface{}][]NodeID, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if v.index == nil {
-		return nil
+		return nil, nil
 	}
 	var entries map[interface{}][]NodeID
-	for id, valueKey := range v.index.byProperty[pendingPropertyKey{label: label, property: property}] {
+	for id, valueKey := range v.index.byProperty[nodePropertyKey{label: label, property: property}] {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if !v.inNamespace(id) {
 			continue
 		}
@@ -301,7 +363,10 @@ func (v pendingWriteView) propertyEntries(label, property string) map[interface{
 		}
 		entries[valueKey] = append(entries[valueKey], id)
 	}
-	return entries
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return entries, nil
 }
 
 // pendingWriteAttachment is a schema's attached pending-write source and
@@ -334,108 +399,49 @@ func (sm *SchemaManager) trackPendingPairs() {
 		return
 	}
 	sm.mu.RLock()
-	pairs := make([]pendingPropertyKey, 0, len(sm.compositeIndexes)+len(sm.uniqueConstraints))
+	pairs := make([]nodePropertyKey, 0, len(sm.compositeIndexes)+len(sm.uniqueConstraints))
 	for _, idx := range sm.compositeIndexes {
 		if len(idx.Properties) == 1 {
-			pairs = append(pairs, pendingPropertyKey{label: idx.Label, property: idx.Properties[0]})
+			pairs = append(pairs, nodePropertyKey{label: idx.Label, property: idx.Properties[0]})
 		}
 	}
 	for _, constraint := range sm.uniqueConstraints {
-		pairs = append(pairs, pendingPropertyKey{label: constraint.Label, property: constraint.Property})
+		pairs = append(pairs, nodePropertyKey{label: constraint.Label, property: constraint.Property})
 	}
 	for _, constraint := range sm.constraints {
 		if (constraint.Type == ConstraintUnique || constraint.Type == ConstraintNodeKey) && len(constraint.Properties) > 0 {
-			pairs = append(pairs, pendingPropertyKey{label: constraint.Label, property: constraint.Properties[0]})
+			pairs = append(pairs, nodePropertyKey{label: constraint.Label, property: constraint.Properties[0]})
 		}
 	}
 	sm.mu.RUnlock()
-	attachment.source.trackPendingValues(pairs)
+	// Schema attachment/DDL publishes accepted maintenance, with no request
+	// context in this existing context-free owner. A failure is an invariant.
+	if err := attachment.source.trackPendingValues(context.Background(), pairs); err != nil {
+		panic(err)
+	}
 }
 
 // beginPendingRead locks the attached source's pending writes and returns
 // their view for sm's namespace; endPendingRead unlocks them. Without an
 // attached source the view is zero and nothing is locked.
-func (sm *SchemaManager) beginPendingRead() (pendingWriteView, pendingWriteSource) {
+func (sm *SchemaManager) beginPendingRead(ctx context.Context) (pendingWriteView, pendingWriteSource, error) {
+	if err := ctx.Err(); err != nil {
+		return pendingWriteView{}, nil, err
+	}
 	attachment := sm.pendingWrites.Load()
 	if attachment == nil {
-		return pendingWriteView{}, nil
+		return pendingWriteView{}, nil, nil
 	}
-	view := attachment.source.lockPendingWrites()
+	view, err := attachment.source.lockPendingWrites(ctx)
+	if err != nil {
+		return pendingWriteView{}, nil, err
+	}
 	view.namespace = attachment.namespace
-	return view, attachment.source
+	return view, attachment.source, nil
 }
 
 func endPendingRead(source pendingWriteSource) {
 	if source != nil {
 		source.unlockPendingWrites()
 	}
-}
-
-// orderedIDsLocked lists an index's node IDs in value order (descending when
-// asked), skipping null values, merged with the pending view: stale engine
-// entries are dropped and pending nodes placed at their values. IDs with the
-// same value are in ID order. limit < 0 lists all. Caller holds idx.mu.
-// keep, when not nil, selects the index keys to list (PropertyIndexRange).
-func (idx *PropertyIndex) orderedIDsLocked(view pendingWriteView, property string, descending bool, limit int, bounds PropertyIndexBounds) []NodeID {
-	// Binary search narrows the keys to bounds where their kinds allow
-	// (sortedKeyRangeLocked); contains then checks every remaining key, so
-	// keys the search couldn't place are still filtered exactly.
-	inRange, _ := idx.sortedKeyRangeLocked(bounds)
-	keys := make([]interface{}, 0, len(inRange))
-	for _, key := range inRange {
-		if !bounds.bounded() || bounds.contains(key) {
-			keys = append(keys, key)
-		}
-	}
-	pending := view.propertyEntries(idx.Label, property)
-	if len(pending) > 0 {
-		for valueKey := range pending {
-			if valueKey == nil || (bounds.bounded() && !bounds.contains(valueKey)) {
-				continue
-			}
-			if ids := idx.values[valueKey]; len(ids) == 0 {
-				keys = append(keys, valueKey)
-			}
-		}
-		sort.SliceStable(keys, func(i, j int) bool { return compareSchemaIndexValues(keys[i], keys[j]) < 0 })
-	}
-	capacity := len(keys)
-	if limit >= 0 && limit < capacity {
-		capacity = limit
-	}
-	out := make([]NodeID, 0, capacity)
-	appendKey := func(valueKey interface{}) bool {
-		ids := make([]NodeID, 0, len(idx.values[valueKey])+len(pending[valueKey]))
-		for _, id := range idx.values[valueKey] {
-			if view.keep(id) {
-				ids = append(ids, id)
-			}
-		}
-		ids = append(ids, pending[valueKey]...)
-		sort.Slice(ids, func(i, j int) bool { return string(ids[i]) < string(ids[j]) })
-		for _, id := range ids {
-			out = append(out, id)
-			if limit >= 0 && len(out) >= limit {
-				return false
-			}
-		}
-		return true
-	}
-	if descending {
-		for i := len(keys) - 1; i >= 0; i-- {
-			if !appendKey(keys[i]) {
-				break
-			}
-		}
-	} else {
-		for _, valueKey := range keys {
-			if !appendKey(valueKey) {
-				break
-			}
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
 }

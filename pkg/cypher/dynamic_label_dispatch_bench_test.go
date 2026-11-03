@@ -27,7 +27,7 @@ func BenchmarkDynamicLabelDispatch(b *testing.B) {
 				if i%2 == 0 {
 					labels = append(labels, "B")
 				}
-				if _, err := store.CreateNode(&storage.Node{ID: storage.NodeID(strconv.Itoa(i)), Labels: labels}); err != nil {
+				if _, err := store.CreateNode(b.Context(), &storage.Node{ID: storage.NodeID(strconv.Itoa(i)), Labels: labels}); err != nil {
 					b.Fatal(err)
 				}
 			}

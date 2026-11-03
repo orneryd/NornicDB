@@ -180,7 +180,7 @@ func (s *Service) attachChunkMatches(ctx context.Context, results []SearchResult
 	for index, kept := range chunkScores {
 		spans, known := spansByHit[index]
 		if !known {
-			spans = s.readChunkSpans(nodes[index])
+			spans = s.readChunkSpans(ctx, nodes[index])
 		}
 		matches := make([]SearchMatch, 0, len(kept)+len(results[index].Matches))
 		for _, candidate := range kept {
@@ -246,12 +246,12 @@ func (s *Service) rememberChunkSpansLocked(nodeID string, node *storage.Node) {
 
 // readChunkSpans reads a hit's chunk places from its stored embedding
 // metadata, and remembers them unless the index changed meanwhile.
-func (s *Service) readChunkSpans(node *storage.Node) []embeddingutil.ChunkSpan {
+func (s *Service) readChunkSpans(ctx context.Context, node *storage.Node) []embeddingutil.ChunkSpan {
 	revision := s.IndexRevision()
 	s.mu.RLock()
 	opts := s.embedTextOptions
 	s.mu.RUnlock()
-	spans := chunkSpansFromMeta(node, s.hitEmbedMeta(node), opts)
+	spans := chunkSpansFromMeta(node, s.hitEmbedMeta(ctx, node), opts)
 	// nodeChunkSpans is written under indexMu, as index writes do.
 	s.indexMu.Lock()
 	if _, known := s.nodeChunkSpans[string(node.ID)]; !known && s.IndexRevision() == revision {
@@ -265,17 +265,17 @@ func (s *Service) readChunkSpans(node *storage.Node) []embeddingutil.ChunkSpan {
 // chunk places. The node was read without its embedding, which may leave the
 // metadata out (Badger keeps it in the embedding sidecar), so it is read on
 // its own, without the vectors, from an engine that can.
-func (s *Service) hitEmbedMeta(node *storage.Node) map[string]any {
+func (s *Service) hitEmbedMeta(ctx context.Context, node *storage.Node) map[string]any {
 	reader, canRead := s.engine.(storage.NodeEmbeddingMetaReader)
 	if canRead {
-		if meta, err := reader.GetNodeEmbeddingMeta(node.ID); err == nil && len(meta) > 0 {
+		if meta, err := reader.GetNodeEmbeddingMeta(ctx, node.ID); err == nil && len(meta) > 0 {
 			return meta
 		}
 	}
 	if len(node.EmbedMeta) > 0 || canRead {
 		return node.EmbedMeta
 	}
-	if full, err := s.engine.GetNode(node.ID); err == nil && full != nil {
+	if full, err := s.engine.GetNode(ctx, node.ID); err == nil && full != nil {
 		return full.EmbedMeta
 	}
 	return nil

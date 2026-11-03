@@ -2,10 +2,11 @@ package server
 
 import (
 	"context"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"net/http"
 	"path/filepath"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/qdrantgrpc"
@@ -27,7 +28,7 @@ func TestAllDatabaseGRPCSnapshotsIncludeSystemAdmission(t *testing.T) {
 	require.NoError(t, s.privilegesStore.SavePrivilege(ctx, role, "nornic", true, true))
 	system, err := s.dbManager.GetStorage("system")
 	require.NoError(t, err)
-	_, err = system.CreateNode(&storage.Node{ID: "grpc-system-sentinel", Labels: []string{"ReviewPrivate"}, Properties: map[string]any{"value": "review-owned-grpc-system-data"}})
+	_, err = system.CreateNode(t.Context(), &storage.Node{ID: "grpc-system-sentinel", Labels: []string{"ReviewPrivate"}, Properties: map[string]any{"value": "review-owned-grpc-system-data"}})
 	require.NoError(t, err)
 	cfg := qdrantgrpc.DefaultConfig()
 	cfg.ListenAddr = "127.0.0.1:0"
@@ -70,7 +71,7 @@ func TestAllDatabaseGRPCSnapshotsIncludeSystemAdmission(t *testing.T) {
 			}
 			require.NoError(t, err)
 			require.NoError(t, restored.Restore(filepath.Join(cfg.SnapshotDir, "full", description.GetName())))
-			node, err := restored.GetNode("system:grpc-system-sentinel")
+			node, err := restored.GetNode(t.Context(), "system:grpc-system-sentinel")
 			require.NoError(t, err)
 			require.Equal(t, "review-owned-grpc-system-data", node.Properties["value"])
 			require.NoError(t, restored.Close())

@@ -82,7 +82,7 @@ func (compiler *projectionCompilation) compileBound(ctx context.Context, incomin
 		return programFailure(resultmetadata.ReasonParserDecline, 0, nil)
 	}
 	start, end := query.Span()
-	if _, command, failure := parseProcedurePrivilegeCommand(compiler.source[start:end]); command {
+	if _, command, failure := parseProcedurePrivilegeCommand(ctx, compiler.source[start:end]); command {
 		if failure != nil {
 			return programFailure(resultmetadata.ReasonUnsupportedSyntax, start, failure)
 		}
@@ -94,7 +94,7 @@ func (compiler *projectionCompilation) compileBound(ctx context.Context, incomin
 	// owner. EXPLAIN reads that declaration without enumerating users.
 	show := query.ChildRule(cypherantlr.CypherParserRULE_showCommand)
 	if show.Valid() && !show.ChildRule(cypherantlr.CypherParserRULE_showTail).Valid() &&
-		(startsWithKeywords(show.Code(), "SHOW", "USERS") || startsWithKeywords(show.Code(), "SHOW", "CURRENT USER")) {
+		(startsWithKeywords(ctx, show.Code(), "SHOW", "USERS") || startsWithKeywords(ctx, show.Code(), "SHOW", "CURRENT USER")) {
 		names := resultmetadata.Known(showUsersColumns)
 		scope := projectionScope(names)
 		statement := resultmetadata.Statement{Start: start, End: end, Incoming: projectionScope(incoming), Retained: projectionScope(retained), After: scope, Columns: resultmetadata.KnownColumns(showUsersColumns), Clauses: []resultmetadata.Clause{{Kind: resultmetadata.ClauseOther, Start: start, End: end, Before: projectionScope(incoming), After: scope}}}
@@ -114,7 +114,7 @@ func (compiler *projectionCompilation) compileBound(ctx context.Context, incomin
 		body.incomingIDs[name] = compilation.define(name, -1, -1)
 	}
 	var effects pipelineClauseEffects
-	syntax.Walk(compilation.visitor(), compilation.metadataVisitor(&effects))
+	syntax.Walk(compilation.visitor(ctx), compilation.metadataVisitor(&effects))
 	if compilation.failure != nil {
 		return compilation.failure
 	}
@@ -266,7 +266,7 @@ func (compilation *boundCompilation) prepareClause(ctx context.Context, branch *
 				return
 			}
 		}
-		compilation.enterClause(clause)
+		compilation.enterClause(ctx, clause)
 		compilation.defineClause(clause)
 	})
 	compilation.event(source.syntax).leave = append(compilation.event(source.syntax).leave, func() {
@@ -335,7 +335,7 @@ func copyBindingNames(scope map[string]struct{}) map[string]struct{} {
 	return copy
 }
 
-func (compilation *boundCompilation) enterClause(clause *boundClause) {
+func (compilation *boundCompilation) enterClause(ctx context.Context, clause *boundClause) {
 	branch, source := clause.branch, clause.source
 	clause.before = copyBindingNames(branch.scope)
 	clause.after = copyBindingNames(branch.scope)
@@ -419,7 +419,7 @@ func (compilation *boundCompilation) enterClause(clause *boundClause) {
 		compilation.procedure(clause)
 	case pipelineClauseCallSubquery:
 		clause.step.Kind = resultmetadata.ClauseCallSubquery
-		compilation.callImports(clause)
+		compilation.callImports(ctx, clause)
 	case pipelineClauseForeach:
 		clause.step.Kind = resultmetadata.ClauseWrite
 		inner := copyBindingNames(clause.before)
@@ -530,7 +530,7 @@ func (compilation *boundCompilation) finishBody(body *boundBody) {
 	body.program = &projectedScopeFacts{after: names, outputs: names, statement: &statement}
 }
 
-func (compilation *boundCompilation) callImports(clause *boundClause) {
+func (compilation *boundCompilation) callImports(ctx context.Context, clause *boundClause) {
 	descriptor := scopeClauseFromSyntax(clause.source.syntax)
 	before := clause.before
 	var outer []string
@@ -549,7 +549,7 @@ func (compilation *boundCompilation) callImports(clause *boundClause) {
 		}
 	} else {
 		for _, branch := range clause.body.branches {
-			_, _, err := branchSyntaxImports(branch.shape, func(name string) bool { _, found := before[name]; return found }, false)
+			_, _, err := branchSyntaxImports(ctx, branch.shape, func(name string) bool { _, found := before[name]; return found }, false)
 			if err != nil {
 				compilation.fail(resultmetadata.ReasonInvalidImport, clause.source.start, err)
 				return
@@ -684,7 +684,7 @@ func (compilation *boundCompilation) procedure(clause *boundClause) {
 	clause.step.Projection = &resultmetadata.Projection{Names: outputs}
 }
 
-func (compilation *boundCompilation) visitor() cypherantlr.SyntaxVisitor {
+func (compilation *boundCompilation) visitor(ctx context.Context) cypherantlr.SyntaxVisitor {
 	return func(node cypherantlr.SyntaxNode) func() {
 		event := compilation.events[node.ID()]
 		if event != nil {
@@ -694,7 +694,7 @@ func (compilation *boundCompilation) visitor() cypherantlr.SyntaxVisitor {
 		}
 		clause := compilation.clause
 		if compilation.failure == nil && clause != nil {
-			compilation.bindSymbol(clause, node)
+			compilation.bindSymbol(ctx, clause, node)
 		}
 		return func() {
 			if compilation.failure == nil && clause != nil && node.Rule() == cypherantlr.CypherParserRULE_letItem {

@@ -228,7 +228,7 @@ func TestSizeTrackingEngine_ForEachNodeIDByLabel_Delegates(t *testing.T) {
 	t.Cleanup(func() { _ = base.Close() })
 
 	for i := 0; i < 5; i++ {
-		_, err := base.CreateNode(&storage.Node{
+		_, err := base.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID("tenant_a:n-" + string(rune('0'+i))),
 			Labels: []string{"Person"},
 		})

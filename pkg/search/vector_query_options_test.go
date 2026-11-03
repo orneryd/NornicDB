@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"math"
@@ -32,7 +33,7 @@ func newOptionsTestService(t *testing.T, dims int, nodes ...*storage.Node) *Serv
 	svc := NewService(engine, dims, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	for _, node := range nodes {
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, svc.IndexNode(node))
 	}

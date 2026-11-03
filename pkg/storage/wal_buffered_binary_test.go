@@ -57,16 +57,16 @@ func TestBufferedWALBinaryIndexPublicReplay(t *testing.T) {
 	dest := newTestEngine(t)
 	for i := 0; i < 140; i++ {
 		id := NodeID(fmt.Sprintf("test:n%d", i))
-		_, err := source.CreateNode(&Node{ID: id})
+		_, err := source.CreateNode(t.Context(), &Node{ID: id})
 		require.NoError(t, err)
-		_, err = dest.CreateNode(&Node{ID: id})
+		_, err = dest.CreateNode(t.Context(), &Node{ID: id})
 		require.NoError(t, err)
 	}
-	tx, err := source.BeginTransaction()
+	tx, err := source.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	require.NoError(t, tx.SetImplicit(true))
-	require.NoError(t, tx.CreateEdge(&Edge{ID: "test:r", StartNode: "test:n128", EndNode: "test:n139", Type: "LINK", Properties: map[string]any{"p": int64(1)}}))
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:r", StartNode: "test:n128", EndNode: "test:n139", Type: "LINK", Properties: map[string]any{"p": int64(1)}}))
 	var binaryKeys []string
 	for key := range tx.pendingWrites {
 		if !utf8.ValidString(key) {
@@ -87,7 +87,7 @@ func TestBufferedWALBinaryIndexPublicReplay(t *testing.T) {
 		require.Contains(t, decoded.Writes, key)
 	}
 	require.NoError(t, ReplayWALEntry(dest, entry))
-	edge, err := dest.GetEdge("test:r")
+	edge, err := dest.GetEdge(t.Context(), "test:r")
 	require.NoError(t, err)
 	require.Equal(t, EdgeID("test:r"), edge.ID)
 	outgoing, err := dest.GetOutgoingEdges(context.Background(), "test:n128")
@@ -104,27 +104,27 @@ func TestBufferedWALForeignNumericIDsPublicReplay(t *testing.T) {
 	source := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{wal: true, manualDrain: true})
 	dest := newTestEngine(t)
 	for i := 0; i < 140; i++ {
-		_, err := source.CreateNode(&Node{ID: NodeID(fmt.Sprintf("test:n%d", i))})
+		_, err := source.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("test:n%d", i))})
 		require.NoError(t, err)
 	}
 	for i := 139; i >= 0; i-- {
-		_, err := dest.CreateNode(&Node{ID: NodeID(fmt.Sprintf("test:n%d", i))})
+		_, err := dest.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("test:n%d", i))})
 		require.NoError(t, err)
 	}
 	// Give the target's first relationship a different logical identity so
 	// reusing the source's relationship number would corrupt an existing
 	// dictionary entry as well as misroute the imported relationship.
-	require.NoError(t, dest.CreateEdge(&Edge{ID: "test:existing", StartNode: "test:n10", EndNode: "test:n11", Type: "KEEP"}))
+	require.NoError(t, dest.CreateEdge(t.Context(), &Edge{ID: "test:existing", StartNode: "test:n10", EndNode: "test:n11", Type: "KEEP"}))
 	sourceID, sourceFound := source.idDict.lookupNodeNumID("test:n128")
 	destID, destFound := dest.idDict.lookupNodeNumID("test:n128")
 	require.True(t, sourceFound && destFound)
 	require.NotEqual(t, sourceID, destID)
 
-	tx, err := source.BeginTransaction()
+	tx, err := source.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	require.NoError(t, tx.SetImplicit(true))
-	require.NoError(t, tx.CreateEdge(&Edge{ID: "test:r", StartNode: "test:n128", EndNode: "test:n139", Type: "LINK", Properties: map[string]any{"p": int64(1)}}))
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:r", StartNode: "test:n128", EndNode: "test:n139", Type: "LINK", Properties: map[string]any{"p": int64(1)}}))
 	require.NoError(t, tx.Commit())
 	require.True(t, tx.AcknowledgedBuffered())
 	entries, err := ReadWALEntriesFromDir(source.bufferedCommitWAL.Config().Dir)
@@ -133,7 +133,7 @@ func TestBufferedWALForeignNumericIDsPublicReplay(t *testing.T) {
 	entry := entries[len(entries)-1]
 	require.Equal(t, OpBufferedCommit, entry.Operation)
 	require.NoError(t, ReplayWALEntry(dest, entry))
-	got, err := dest.GetEdge("test:r")
+	got, err := dest.GetEdge(t.Context(), "test:r")
 	require.NoError(t, err)
 	require.Equal(t, NodeID("test:n128"), got.StartNode)
 	require.Equal(t, NodeID("test:n139"), got.EndNode)
@@ -145,7 +145,7 @@ func TestBufferedWALForeignNumericIDsPublicReplay(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, incoming, 1)
 	require.Equal(t, EdgeID("test:r"), incoming[0].ID)
-	old, err := dest.GetEdge("test:existing")
+	old, err := dest.GetEdge(t.Context(), "test:existing")
 	require.NoError(t, err)
 	require.Equal(t, NodeID("test:n10"), old.StartNode)
 	require.Equal(t, NodeID("test:n11"), old.EndNode)

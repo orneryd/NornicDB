@@ -20,7 +20,7 @@ import (
 
 func TestReviewR8HTTPCommitEntries(t *testing.T) {
 	for _, native := range []bool{false, true} {
-		for _, mode := range []string{"timeout", "final_statement", "implicit", "implicit_single"} {
+		for _, mode := range []string{"timeout", "final_statement", "implicit", "implicit_single", "implicit_entities"} {
 			t.Run(fmt.Sprintf("native_%v/%s", native, mode), func(t *testing.T) {
 				if mode != "disconnect" {
 					t.Setenv("NORNICDB_HTTP_TX_TIMEOUT", "500ms")
@@ -32,7 +32,7 @@ func TestReviewR8HTTPCommitEntries(t *testing.T) {
 				require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "idleblocked"}))
 				leaf, err := server.dbManager.GetStorage("idleblocked")
 				require.NoError(t, err)
-				_, err = leaf.CreateNode(&storage.Node{ID: "seed", Labels: []string{"Seed"}})
+				_, err = leaf.CreateNode(t.Context(), &storage.Node{ID: "seed", Labels: []string{"Seed"}})
 				require.NoError(t, err)
 				require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "commitcomp", []multidb.ConstituentRef{{Alias: "l", DatabaseName: "idleblocked", Type: "local", AccessMode: "read_write"}}))
 				// Warm the public planner before measuring a sub-second COMMIT budget.
@@ -57,8 +57,7 @@ func TestReviewR8HTTPCommitEntries(t *testing.T) {
 				controller.mu.Lock()
 				var release sync.Once
 				defer release.Do(controller.mu.Unlock)
-				server.txSessions = txsession.NewManager(time.Minute, server.newExecutorForDatabase)
-				server.txSessions.SetLifetimeContext(server.requestsCtx)
+				server.txSessions = txsession.NewManager(time.Minute, server.newExecutorForDatabase, server.shutdown.work.Context())
 				// buildRouter includes the production middleware.
 				httpServer := httptest.NewServer(server.buildRouter())
 				defer func() { release.Do(controller.mu.Unlock); httpServer.Close() }()
@@ -105,6 +104,10 @@ func TestReviewR8HTTPCommitEntries(t *testing.T) {
 				if mode == "implicit_single" {
 					commitPath = "/db/commitcomp/tx/commit"
 					commitBody = `{"statements":[{"statement":"USE commitcomp.l CREATE (:ReviewR7Outcome {id:'late'}) RETURN 7 AS k"}]}`
+				}
+				if mode == "implicit_entities" {
+					commitPath = "/db/commitcomp/tx/commit"
+					commitBody = `{"statements":[{"statement":"USE commitcomp.l CREATE (n:ReviewR7Outcome {id:'late'})-[r:LINK]->(:ReviewPeer) RETURN n, r, [n, r] AS nested","resultDataContents":["row","graph","rest"]}]}`
 				}
 				go func() { r, e := post(reqCtx, commitPath, commitBody); done <- outcome{r, e} }()
 				select {
@@ -154,6 +157,21 @@ func TestReviewR8HTTPCommitEntries(t *testing.T) {
 						var result TransactionResponse
 						require.NoError(t, json.NewDecoder(out.response.Body).Decode(&result))
 						require.Empty(t, result.Errors)
+						if mode == "implicit_single" || mode == "implicit_entities" {
+							require.Len(t, result.Results, 1)
+							require.Len(t, result.Results[0].Data, 1)
+							if mode == "implicit_single" {
+								require.Equal(t, []interface{}{float64(7)}, result.Results[0].Data[0].Row)
+							} else {
+								row := result.Results[0].Data[0]
+								require.Len(t, row.Row, 3)
+								require.Len(t, row.Meta, 4)
+								require.Len(t, row.REST, 3)
+								require.NotNil(t, row.Graph)
+								require.Len(t, row.Graph.Relationships, 1)
+								require.NotEmpty(t, row.Graph.Nodes)
+							}
+						}
 					case <-time.After(5 * time.Second):
 						t.Fatal("COMMIT outcome not delivered after release")
 					}

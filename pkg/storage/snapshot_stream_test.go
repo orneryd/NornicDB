@@ -50,11 +50,11 @@ func (v *collectingSnapshotVisitor) VisitEdge(edge *Edge) error {
 
 func TestStreamingSnapshotRoundTripAndFooter(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	_, err := engine.CreateNode(&Node{ID: "nornic:n1", Labels: []string{"Doc"}, Properties: map[string]any{"name": "alpha"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "nornic:n1", Labels: []string{"Doc"}, Properties: map[string]any{"name": "alpha"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "nornic:n2"})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "nornic:n2"})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "nornic:e1", StartNode: "nornic:n1", EndNode: "nornic:n2", Type: "LINKS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "nornic:e1", StartNode: "nornic:n1", EndNode: "nornic:n2", Type: "LINKS"}))
 
 	var output bytes.Buffer
 	require.NoError(t, WriteSnapshot(context.Background(), engine, &output, SnapshotOptions{Sequence: 42}))
@@ -73,7 +73,7 @@ func TestStreamingSnapshotRoundTripAndFooter(t *testing.T) {
 func TestWriteSnapshotUsesEmbeddingFreeNodeStream(t *testing.T) {
 	engine := &embeddingFreeSnapshotSpy{MemoryEngine: newTestMemoryEngine(t)}
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
-	_, err := engine.CreateNode(&Node{
+	_, err := engine.CreateNode(t.Context(), &Node{
 		ID:              "nornic:document",
 		Labels:          []string{"Document"},
 		Properties:      map[string]any{"body": "preserved"},
@@ -223,11 +223,11 @@ func TestReadSnapshotRejectsInvalidStructure(t *testing.T) {
 
 func TestReadSnapshotPropagatesVisitorErrors(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	_, err := engine.CreateNode(&Node{ID: "nornic:n1"})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "nornic:n1"})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "nornic:n2"})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "nornic:n2"})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "nornic:e1", StartNode: "nornic:n1", EndNode: "nornic:n2", Type: "LINKS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "nornic:e1", StartNode: "nornic:n1", EndNode: "nornic:n2", Type: "LINKS"}))
 	var output bytes.Buffer
 	require.NoError(t, WriteSnapshot(context.Background(), engine, &output, SnapshotOptions{}))
 

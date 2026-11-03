@@ -356,7 +356,7 @@ func (b *BadgerEngine) loadEdgeForAdjacencyTombstoneInTxn(txn *badger.Txn, id Ed
 		var edge *Edge
 		if err := item.Value(func(val []byte) error {
 			var decodeErr error
-			edge, decodeErr = b.decodeEdgeBodyByID(val, id)
+			edge, decodeErr = b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(id), val, id)
 			return decodeErr
 		}); err != nil {
 			return nil, err
@@ -680,7 +680,7 @@ func (b *BadgerEngine) archiveEdgePrimaryIntoMVCCVersionInTxn(txn *badger.Txn, i
 	var edge *Edge
 	if err := item.Value(func(val []byte) error {
 		var decodeErr error
-		edge, decodeErr = b.decodeEdgeBodyByID(val, id)
+		edge, decodeErr = b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(id), val, id)
 		return decodeErr
 	}); err != nil {
 		return fmt.Errorf("archiving edge %s: decoding primary: %w", id, err)
@@ -1012,11 +1012,16 @@ func (b *BadgerEngine) latestEdgeMVCCVersionInTxn(txn *badger.Txn, id EdgeID) (m
 	return b.loadEdgeMVCCRecordAtOrBeforeInTxn(txn, id, maxMVCCVersion())
 }
 
+// The MVCCAppendEngine methods below are the exported, context-free append
+// contract: each is its own entry, so each passes its own explicit unbounded
+// lifetime rather than a caller's request context, which the interface does
+// not carry. Extending them to a request lifetime is a separate public
+// contract decision.
 func (b *BadgerEngine) AppendNodeVersion(node *Node, version MVCCVersion) error {
 	if node == nil {
 		return ErrInvalidData
 	}
-	return b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+	return b.withUpdate(context.Background(), updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		if err := b.writeNodeMVCCVersionInTxn(txn, node, version); err != nil {
 			return err
 		}
@@ -1025,7 +1030,7 @@ func (b *BadgerEngine) AppendNodeVersion(node *Node, version MVCCVersion) error 
 }
 
 func (b *BadgerEngine) AppendNodeTombstone(id NodeID, version MVCCVersion) error {
-	return b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+	return b.withUpdate(context.Background(), updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		if err := b.writeNodeMVCCTombstoneInTxn(txn, id, version); err != nil {
 			return err
 		}
@@ -1037,7 +1042,7 @@ func (b *BadgerEngine) AppendEdgeVersion(edge *Edge, version MVCCVersion) error 
 	if edge == nil {
 		return ErrInvalidData
 	}
-	return b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+	return b.withUpdate(context.Background(), updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		if err := b.writeEdgeMVCCVersionInTxn(txn, edge, version); err != nil {
 			return err
 		}
@@ -1046,7 +1051,7 @@ func (b *BadgerEngine) AppendEdgeVersion(edge *Edge, version MVCCVersion) error 
 }
 
 func (b *BadgerEngine) AppendEdgeTombstone(id EdgeID, version MVCCVersion) error {
-	return b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+	return b.withUpdate(context.Background(), updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		if err := b.writeEdgeMVCCTombstoneInTxn(txn, id, version); err != nil {
 			return err
 		}
@@ -1055,18 +1060,23 @@ func (b *BadgerEngine) AppendEdgeTombstone(id EdgeID, version MVCCVersion) error
 }
 
 func (b *BadgerEngine) UpdateNodeCurrentHead(id NodeID, version MVCCVersion, tombstoned bool) error {
-	return b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+	return b.withUpdate(context.Background(), updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		return b.writeNodeMVCCHeadInTxn(txn, id, version, tombstoned)
 	}, writtenEntities{nodes: []NodeID{id}})
 }
 
 func (b *BadgerEngine) UpdateEdgeCurrentHead(id EdgeID, version MVCCVersion, tombstoned bool) error {
-	return b.withUpdate(updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+	return b.withUpdate(context.Background(), updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		return b.writeEdgeMVCCHeadInTxn(txn, id, version, tombstoned)
 	}, writtenEntities{edges: []EdgeID{id}})
 }
 
-func (b *BadgerEngine) GetNodeCurrentHead(id NodeID) (MVCCHead, error) {
+// GetNodeCurrentHead reads the node's persisted head under the caller's
+// context, which owns admission of the point read.
+func (b *BadgerEngine) GetNodeCurrentHead(ctx context.Context, id NodeID) (MVCCHead, error) {
+	if err := ctx.Err(); err != nil {
+		return MVCCHead{}, err
+	}
 	if err := b.pendingNamespaceConflict(namespaceForNodeID(id)); err != nil {
 		return MVCCHead{}, err
 	}
@@ -1080,7 +1090,11 @@ func (b *BadgerEngine) GetNodeCurrentHead(id NodeID) (MVCCHead, error) {
 	return head, err
 }
 
-func (b *BadgerEngine) GetEdgeCurrentHead(id EdgeID) (MVCCHead, error) {
+// GetEdgeCurrentHead reads the edge's persisted head under the caller's context.
+func (b *BadgerEngine) GetEdgeCurrentHead(ctx context.Context, id EdgeID) (MVCCHead, error) {
+	if err := ctx.Err(); err != nil {
+		return MVCCHead{}, err
+	}
 	if err := b.pendingNamespaceConflict(namespaceForEdgeID(id)); err != nil {
 		return MVCCHead{}, err
 	}
@@ -1094,32 +1108,35 @@ func (b *BadgerEngine) GetEdgeCurrentHead(id EdgeID) (MVCCHead, error) {
 	return head, err
 }
 
-func (b *BadgerEngine) GetNodeLatestVisible(id NodeID) (*Node, error) {
-	node, _, err := b.readLatestEntity(string(id), false, visibleRead)
+func (b *BadgerEngine) GetNodeLatestVisible(ctx context.Context, id NodeID) (*Node, error) {
+	node, _, err := b.readLatestEntity(ctx, string(id), false, visibleRead)
 	return node, err
 }
 
-func (b *BadgerEngine) GetEdgeLatestVisible(id EdgeID) (*Edge, error) {
-	_, edge, err := b.readLatestEntity(string(id), true, visibleRead)
+func (b *BadgerEngine) GetEdgeLatestVisible(ctx context.Context, id EdgeID) (*Edge, error) {
+	_, edge, err := b.readLatestEntity(ctx, string(id), true, visibleRead)
 	return edge, err
 }
 
 // readLatestEntity first uses the captured current-body owner. Only a missing
 // body consults the committed MVCC head and its retained version records, as
 // required for older persisted stores. All paths apply the same read policy.
-func (b *BadgerEngine) readLatestEntity(id string, isEdge bool, v readVisibility) (*Node, *Edge, error) {
+func (b *BadgerEngine) readLatestEntity(ctx context.Context, id string, isEdge bool, v readVisibility) (*Node, *Edge, error) {
 	var node *Node
 	var edge *Edge
 	var err error
 	if isEdge {
-		edge, err = b.getEdge(EdgeID(id), v)
+		edge, err = b.getEdge(ctx, EdgeID(id), v)
 	} else {
-		node, err = b.getNode(NodeID(id), v)
+		node, err = b.getNode(ctx, NodeID(id), v)
 	}
 	if err == nil {
 		return node, edge, nil
 	}
 	if !errors.Is(err, ErrNotFound) {
+		return nil, nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
 	node, edge = nil, nil
@@ -1165,11 +1182,16 @@ func (b *BadgerEngine) readLatestEntity(id string, isEdge bool, v readVisibility
 		}
 		return nil
 	})
+	if err == nil {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+	}
 	return node, edge, err
 }
 
-func (b *BadgerEngine) GetEdgeVisibleAt(id EdgeID, version MVCCVersion) (*Edge, error) {
-	return readEntityAtWithView(b, id, version, mvccEntityRead{visibility: visibleRead}, b.withView, (*BadgerEngine).getEdgeAtInTxn)
+func (b *BadgerEngine) GetEdgeVisibleAt(ctx context.Context, id EdgeID, version MVCCVersion) (*Edge, error) {
+	return readEntityAtWithView(ctx, b, id, version, mvccEntityRead{visibility: visibleRead}, b.withView, (*BadgerEngine).getEdgeAtInTxn)
 }
 
 func (b *BadgerEngine) GetOutgoingEdgesVisibleAt(ctx context.Context, nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
@@ -1181,16 +1203,30 @@ func (b *BadgerEngine) GetIncomingEdgesVisibleAt(ctx context.Context, nodeID Nod
 }
 
 func (b *BadgerEngine) BatchGetNodesLatestVisible(ctx context.Context, ids []NodeID) (map[NodeID]*Node, error) {
-	if err := b.pendingReadConflict(readViewOptions{scopeKind: readNodeIDsScope, nodeIDs: ids}); err != nil {
+	// Author: storage-format-owners lane (Codex), 1 November 2026.
+	if err := b.pendingReadConflict(readNodeIDsScope, "", ids, ctx); err != nil {
 		return nil, err
 	}
 
 	result := make(map[NodeID]*Node, len(ids))
+	var cancel bulkReadCancellation
 	for _, id := range ids {
-		node, err := b.GetNodeLatestVisible(id)
-		if err == nil && node != nil {
+		if err := cancel.check(ctx); err != nil {
+			return nil, err
+		}
+		node, _, err := b.readLatestEntity(ctx, string(id), false, visibleRead)
+		if err != nil {
+			if cancellation := ctx.Err(); cancellation != nil {
+				return nil, cancellation
+			}
+			continue
+		}
+		if node != nil {
 			result[id] = node
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return result, nil
 }
@@ -1204,7 +1240,7 @@ func (b *BadgerEngine) iterateNodesVisibleAtInScopeInTxn(ctx context.Context, tx
 	// or after the current head version and the entity is live, the body
 	// comes from the primary nodeKey. Otherwise we fall back to historic
 	// mvccNodeVersionKey records (only present when retention > 0).
-	it := b.newNodeIndexReader(txn, scope, []byte{prefixMVCCNodeHead}, "")
+	it := b.newNodeIndexReader(ctx, txn, scope, []byte{prefixMVCCNodeHead}, "")
 	defer it.Close()
 
 	nowNanos := DecayScoringTime()
@@ -1362,7 +1398,7 @@ func (b *BadgerEngine) iterateEdgesAtInTxn(ctx context.Context, txn *badger.Txn,
 				return getErr
 			} else {
 				if err := item.Value(func(val []byte) error {
-					decoded, decodeErr := b.decodeEdgeBodyByID(val, edgeID)
+					decoded, decodeErr := b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), val, edgeID)
 					if decodeErr != nil {
 						return decodeErr
 					}
@@ -1413,9 +1449,6 @@ func nextScanStart(key []byte) []byte {
 // (beginMaintenanceWrite): no write runs across it, and every write-behind
 // commit acknowledged before it is applied first.
 func (b *BadgerEngine) RebuildMVCCHeads(ctx context.Context) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	lifecycle, err := b.beginMaintenanceWrite(ctx, nil)
 	if err != nil {
 		return err
@@ -1553,7 +1586,7 @@ func rebuildMVCCHeadsFromVersionsOf[ID ~string, M mvccHeadRebuildKind[ID]](b *Ba
 }
 
 func applyMVCCHeadBatch[ID ~string, M mvccHeadRebuildKind[ID]](b *BadgerEngine, ctx context.Context, batch []mvccHeadWrite[ID]) error {
-	return b.withUpdate(updateRequest{ctx: ctx, scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+	return b.withUpdate(ctx, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		for _, write := range batch {
 			if err := writeMVCCHeadWithFloorInTxn[M](b, txn, string(write.id), write.version, write.tombstoned, write.floorVersion); err != nil {
 				return err
@@ -1673,7 +1706,7 @@ type edgeMVCCBootstrapKind struct{}
 func (edgeMVCCBootstrapKind) entityKeyspacePrefix() byte { return prefixEdge }
 
 func (edgeMVCCBootstrapKind) decodeBody(b *BadgerEngine, txn *badger.Txn, data []byte, id EdgeID) (*Edge, bool, error) {
-	edge, err := b.decodeEdgeBodyByID(data, id)
+	edge, err := b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(id), data, id)
 	if err != nil || edge == nil {
 		return edge, edge == nil, err
 	}
@@ -1769,7 +1802,7 @@ func collectMVCCBootstrapBatch[E any, ID ~string, M mvccBootstrapKind[E, ID]](b 
 
 func applyMVCCBootstrapBatch[E any, ID ~string, M mvccBootstrapKind[E, ID]](b *BadgerEngine, ctx context.Context, entities []E) error {
 	var kind M
-	return b.withUpdate(updateRequest{ctx: ctx, scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+	return b.withUpdate(ctx, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 		for _, entity := range entities {
 			if kind.entityIsNil(entity) {
 				continue
@@ -1842,9 +1875,6 @@ func bootstrapMVCCFromCurrentStateInTxn[E any, ID ~string, M mvccBootstrapKind[E
 }
 
 func (b *BadgerEngine) PruneMVCCVersions(ctx context.Context, opts MVCCPruneOptions) (int64, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if err := b.mvccPruneMu.LockContext(ctx); err != nil {
 		return 0, err
 	}
@@ -1879,7 +1909,7 @@ func (b *BadgerEngine) PruneMVCCVersions(ctx context.Context, opts MVCCPruneOpti
 					// one not yet applied is drained first, so the prune reads the
 					// entity's latest head (a tombstone it would reclaim may have
 					// been written over), and none lands over it afterwards.
-					err = b.withUpdate(updateRequest{ctx: ctx, scope: cacheWriteScope{known: true}, metadata: true}, func(update *badger.Txn) error {
+					err = b.withUpdate(ctx, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(update *badger.Txn) error {
 						var pruneErr error
 						keyDeleted, pruneErr = b.pruneMVCCKeyspaceInTxn(ctx, update, previous, effectiveOpts, false)
 						return pruneErr

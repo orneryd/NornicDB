@@ -2,8 +2,9 @@ package search
 
 import (
 	"context"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -17,7 +18,7 @@ func TestSearchTextChunksProviderDeadlineKeepsLexicalFallback(t *testing.T) {
 			engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 			t.Cleanup(func() { _ = engine.Close() })
 			store := storage.NewNamespacedEngine(engine, "nornic")
-			_, err := store.CreateNode(&storage.Node{ID: "seed", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "needle"}})
+			_, err := store.CreateNode(t.Context(), &storage.Node{ID: "seed", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "needle"}})
 			require.NoError(t, err)
 			service := NewService(store, DefaultVectorDimensions, nil)
 			require.NoError(t, service.BuildIndexes(t.Context()))

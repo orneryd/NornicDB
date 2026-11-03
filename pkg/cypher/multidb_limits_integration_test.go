@@ -26,7 +26,7 @@ func TestDatabaseManagerStorageExposesQueryLimitsToExecutor(t *testing.T) {
 	engine, err := manager.GetStorage("nornic")
 	require.NoError(t, err)
 	for _, id := range []storage.NodeID{"one", "two"} {
-		_, err = engine.CreateNode(&storage.Node{ID: id, Labels: []string{"Item"}})
+		_, err = engine.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"Item"}})
 		require.NoError(t, err)
 	}
 	executor := cypher.NewStorageExecutor(engine)

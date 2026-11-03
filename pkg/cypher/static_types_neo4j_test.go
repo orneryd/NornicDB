@@ -149,7 +149,7 @@ func TestStaticOperatorCheckerScopedBranches(t *testing.T) {
 		{expr: "m{.a, b: 1}", want: "Map"},
 		{expr: "zz", fails: false, want: ""},
 	} {
-		got, err := checker.check(tc.expr)
+		got, err := checker.check(t.Context(), tc.expr)
 		if tc.fails {
 			require.Error(t, err, tc.expr)
 			continue
@@ -159,9 +159,9 @@ func TestStaticOperatorCheckerScopedBranches(t *testing.T) {
 	}
 	complete := checker
 	complete.scope.complete = true
-	_, err := complete.check("zz + 1")
+	_, err := complete.check(t.Context(), "zz + 1")
 	require.ErrorContains(t, err, "zz")
-	_, err = complete.check("null + 1")
+	_, err = complete.check(t.Context(), "null + 1")
 	require.NoError(t, err)
 }
 

@@ -42,7 +42,7 @@ func TestDeleteWithINQuery(t *testing.T) {
 				Labels:     []string{n.label},
 				Properties: map[string]interface{}{"name": n.name, "id": n.id},
 			}
-			_, err := store.CreateNode(node)
+			_, err := store.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 			nodeIds = append(nodeIds, n.id)
 		}
@@ -347,7 +347,7 @@ func TestMatchWithINQuery(t *testing.T) {
 				Labels:     []string{n.label},
 				Properties: map[string]interface{}{"name": n.name, "id": n.id},
 			}
-			_, err := store.CreateNode(node)
+			_, err := store.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 		}
 	}

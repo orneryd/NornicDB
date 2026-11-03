@@ -33,7 +33,7 @@ func TestSessionGraphAccessDataDatabase(t *testing.T) {
 		require.Equal(t, want, dataDatabase, graph)
 	}
 
-	noServer := &Session{}
+	noServer := &Session{server: &Server{}}
 	dataDatabase, allowed := noServer.graphAccess(nil, "cmp.a")
 	require.Equal(t, "cmp.a", dataDatabase)
 	require.True(t, allowed)
@@ -68,7 +68,7 @@ func TestSessionCanAccessGraph(t *testing.T) {
 	require.True(t, sessionAllows(session, auth.FullDatabaseAccessMode, "cmp.b"))
 	require.False(t, sessionAllows(session, auth.DenyAllDatabaseAccessMode, "da"))
 
-	noManager := &Session{}
+	noManager := &Session{server: &Server{}}
 	require.False(t, sessionAllows(noManager, withComposite, "cmp.a"), "without a manager cmp.a is checked by its own name")
 	require.True(t, sessionAllows(noManager, auth.NewAllowlistDatabaseAccessMode(map[string][]string{string(auth.RoleEditor): {"cmp.a"}}, editor), "cmp.a"))
 }

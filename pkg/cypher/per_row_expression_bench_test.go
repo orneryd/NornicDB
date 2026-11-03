@@ -46,10 +46,10 @@ func perRowDocGraph(b *testing.B) *StorageExecutor {
 			&storage.Edge{ID: storage.EdgeID("dc" + doc), Type: "REL", StartNode: storage.NodeID(doc), EndNode: "case", Properties: map[string]interface{}{"kind": "in_case", "origin": origin}},
 		)
 	}
-	if err := store.BulkCreateNodes(nodes); err != nil {
+	if err := store.BulkCreateNodes(b.Context(), nodes); err != nil {
 		b.Fatal(err)
 	}
-	if err := store.BulkCreateEdges(edges); err != nil {
+	if err := store.BulkCreateEdges(b.Context(), edges); err != nil {
 		b.Fatal(err)
 	}
 	return NewStorageExecutor(store)
@@ -72,10 +72,10 @@ func perRowWideGraph(b *testing.B) *StorageExecutor {
 			edges = append(edges, &storage.Edge{ID: storage.EdgeID(fmt.Sprintf("e%d_%d", i, j)), Type: "T", StartNode: storage.NodeID(fmt.Sprintf("n%d", i)), EndNode: storage.NodeID(fmt.Sprintf("n%d", (i+step)%n)), Properties: map[string]interface{}{"kind": fmt.Sprintf("k%d", i%5), "w": int64(i % 11), "origin": []string{"manual", "automatic"}[i%2], "stage": []string{"extraction", "interpretation", "review"}[i%3]}})
 		}
 	}
-	if err := store.BulkCreateNodes(nodes); err != nil {
+	if err := store.BulkCreateNodes(b.Context(), nodes); err != nil {
 		b.Fatal(err)
 	}
-	if err := store.BulkCreateEdges(edges); err != nil {
+	if err := store.BulkCreateEdges(b.Context(), edges); err != nil {
 		b.Fatal(err)
 	}
 	return NewStorageExecutor(store)
@@ -241,7 +241,7 @@ func BenchmarkPerRowExpression_Positions(b *testing.B) {
 func BenchmarkPerRowExpression_ContextEvaluatorQuantifier(b *testing.B) {
 	exec := perRowDocGraph(b)
 	ctx := withQueryParams(context.Background(), map[string]interface{}{"keys": perRowKeys()})
-	node, err := exec.storage.GetNode("d1")
+	node, err := exec.storage.GetNode(b.Context(), "d1")
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -294,7 +294,7 @@ func BenchmarkPerRowExpression_ListForms(b *testing.B) {
 // cost and allocations per evaluation, next to a property comparison.
 func BenchmarkPerRowExpression_Operation(b *testing.B) {
 	exec := perRowDocGraph(b)
-	edge, err := exec.storage.GetEdge("dmd1")
+	edge, err := exec.storage.GetEdge(b.Context(), "dmd1")
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -316,14 +316,14 @@ func BenchmarkPerRowExpression_Operation(b *testing.B) {
 		b.Run(tc.name, func(b *testing.B) {
 			// The first evaluation marks the text, the second compiles it.
 			for i := 0; i < 2; i++ {
-				if _, ok, err := exec.evaluateRowValue(tc.expr, row); !ok || err != nil {
+				if _, ok, err := exec.evaluateRowValue(b.Context(), tc.expr, row); !ok || err != nil {
 					b.Fatalf("%s: unresolved or %v", tc.expr, err)
 				}
 			}
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				exec.evaluateRowValue(tc.expr, row)
+				exec.evaluateRowValue(b.Context(), tc.expr, row)
 			}
 		})
 	}

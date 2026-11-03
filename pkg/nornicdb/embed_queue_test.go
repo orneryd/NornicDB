@@ -4,14 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -61,17 +63,17 @@ type sequenceEmbeddingEngine struct {
 	next  int
 }
 
-func (e *sequenceEmbeddingEngine) FindNodeNeedingEmbedding() *storage.Node {
+func (e *sequenceEmbeddingEngine) FindNodeNeedingEmbedding(ctx context.Context) (*storage.Node, error) {
 	if e.next >= len(e.nodes) {
-		return nil
+		return nil, nil
 	}
 	node := e.nodes[e.next]
 	e.next++
-	return storage.CopyNode(node)
+	return storage.CopyNode(node), nil
 }
 func (e *sequenceEmbeddingEngine) MarkNodeEmbedded(storage.NodeID) {}
-func (e *sequenceEmbeddingEngine) UpdateNodeEmbeddingSidecar(node *storage.Node) error {
-	return e.Engine.(storage.EmbeddingSidecarUpdater).UpdateNodeEmbeddingSidecar(node)
+func (e *sequenceEmbeddingEngine) UpdateNodeEmbeddingSidecar(ctx context.Context, node *storage.Node) error {
+	return e.Engine.(storage.EmbeddingSidecarUpdater).UpdateNodeEmbeddingSidecar(ctx, node)
 }
 
 func TestEmbedWorkerBatchesNodesThatResolveToTheSameProvider(t *testing.T) {
@@ -81,7 +83,7 @@ func TestEmbedWorkerBatchesNodesThatResolveToTheSameProvider(t *testing.T) {
 		{ID: "docs:second", Properties: map[string]any{"content": "second"}},
 	}
 	for _, node := range nodes {
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 	queue := &sequenceEmbeddingEngine{Engine: engine, nodes: nodes}
@@ -96,7 +98,7 @@ func TestEmbedWorkerBatchesNodesThatResolveToTheSameProvider(t *testing.T) {
 	require.True(t, worker.processNextBatch())
 	require.Equal(t, []int{2}, provider.batchSizes)
 	for _, node := range nodes {
-		stored, err := engine.GetNode(node.ID)
+		stored, err := engine.GetNode(t.Context(), node.ID)
 		require.NoError(t, err)
 		require.Equal(t, [][]float32{{1, 0}}, stored.ChunkEmbeddings)
 	}
@@ -134,7 +136,7 @@ func TestEmbedWorkerPassesStructuredNodeContentAndPersistsModelSpace(t *testing.
 	node := &storage.Node{ID: "visual:image", Labels: []string{"Image"}, Properties: map[string]any{
 		"_embedding_content": []any{map[string]any{"type": "image_url", "image_url": "https://example.invalid/image.png"}},
 	}}
-	_, err := engine.CreateNode(node)
+	_, err := engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	provider := &structuredDocumentEmbedder{}
@@ -415,7 +417,7 @@ func TestEmbedWorkerRecentlyProcessed(t *testing.T) {
 		worker.mu.Unlock()
 
 		// Create a node to trigger cleanup (cleanup happens during processing)
-		_, err := engine.CreateNode(&storage.Node{
+		_, err := engine.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID("trigger-node"),
 			Labels: []string{"Memory"},
 			Properties: map[string]any{
@@ -458,7 +460,7 @@ func TestEmbedWorkerPersistence(t *testing.T) {
 		embedder := newMockEmbedder()
 
 		// Create a node without embedding
-		_, err := engine.CreateNode(&storage.Node{
+		_, err := engine.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID("persist-test"),
 			Labels: []string{"Memory"},
 			Properties: map[string]any{
@@ -468,7 +470,7 @@ func TestEmbedWorkerPersistence(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify node has no embedding initially
-		node, err := engine.GetNode("persist-test")
+		node, err := engine.GetNode(t.Context(), "persist-test")
 		require.NoError(t, err)
 		assert.Empty(t, node.ChunkEmbeddings, "Node should have no embeddings initially")
 
@@ -505,7 +507,7 @@ func TestEmbedWorkerPersistence(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 
 		// Verify embedding was persisted
-		node, err = engine.GetNode("persist-test")
+		node, err = engine.GetNode(t.Context(), "persist-test")
 		require.NoError(t, err)
 
 		assert.NotEmpty(t, node.ChunkEmbeddings, "Node should have chunk embeddings after processing")
@@ -520,7 +522,7 @@ func TestEmbedWorkerPersistence(t *testing.T) {
 		embedder := newMockEmbedder()
 
 		// Create a node
-		_, err := engine.CreateNode(&storage.Node{
+		_, err := engine.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID("no-reprocess-test"),
 			Labels: []string{"Memory"},
 			Properties: map[string]any{
@@ -590,7 +592,7 @@ func TestEmbedWorkerSkipsExcludedNodeLabels(t *testing.T) {
 		{"audit", []string{"Document", "AuditLog"}},
 		{"job", []string{"Job"}},
 	} {
-		_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(testCase.id), Labels: testCase.labels, Properties: map[string]any{"content": testCase.id}})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(testCase.id), Labels: testCase.labels, Properties: map[string]any{"content": testCase.id}})
 		require.NoError(t, err)
 	}
 	base.RefreshPendingEmbeddingsIndex()
@@ -604,7 +606,7 @@ func TestEmbedWorkerSkipsExcludedNodeLabels(t *testing.T) {
 	require.Equal(t, 1, worker.Stats().Processed)
 	require.Equal(t, 0, base.PendingEmbeddingsCount())
 	for _, id := range []storage.NodeID{"audit", "job"} {
-		node, err := engine.GetNode(id)
+		node, err := engine.GetNode(t.Context(), id)
 		require.NoError(t, err)
 		require.Empty(t, node.ChunkEmbeddings)
 	}
@@ -620,7 +622,7 @@ func TestEmbedWorkerFindNodeWithoutEmbedding(t *testing.T) {
 		embedder := newMockEmbedder()
 
 		// Create node without embedding
-		_, err := engine.CreateNode(&storage.Node{
+		_, err := engine.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID("needs-embed"),
 			Labels: []string{"Memory"},
 			Properties: map[string]any{
@@ -632,7 +634,8 @@ func TestEmbedWorkerFindNodeWithoutEmbedding(t *testing.T) {
 		worker := NewEmbedWorker(embedder, engine, nil)
 		defer worker.Close()
 
-		node := worker.findNodeWithoutEmbedding()
+		node, findErr := worker.findNodeWithoutEmbedding(t.Context())
+		require.NoError(t, findErr)
 
 		assert.NotNil(t, node, "Should find node without embedding")
 		assert.Equal(t, storage.NodeID("needs-embed"), node.ID)
@@ -646,7 +649,7 @@ func TestEmbedWorkerFindNodeWithoutEmbedding(t *testing.T) {
 		embedder := newMockEmbedder()
 
 		// Create node WITH embedding
-		_, err := engine.CreateNode(&storage.Node{
+		_, err := engine.CreateNode(t.Context(), &storage.Node{
 			ID:              storage.NodeID("has-embed"),
 			Labels:          []string{"Memory"},
 			ChunkEmbeddings: [][]float32{make([]float32, 1024)}, // Pre-existing embedding
@@ -659,7 +662,8 @@ func TestEmbedWorkerFindNodeWithoutEmbedding(t *testing.T) {
 		worker := NewEmbedWorker(embedder, engine, nil)
 		defer worker.Close()
 
-		node := worker.findNodeWithoutEmbedding()
+		node, findErr := worker.findNodeWithoutEmbedding(t.Context())
+		require.NoError(t, findErr)
 
 		assert.Nil(t, node, "Should not find node that already has embedding")
 	})
@@ -672,7 +676,7 @@ func TestEmbedWorkerFindNodeWithoutEmbedding(t *testing.T) {
 		embedder := newMockEmbedder()
 
 		// Create internal node (starts with _)
-		_, err := engine.CreateNode(&storage.Node{
+		_, err := engine.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID("internal-node"),
 			Labels: []string{"_Internal"},
 			Properties: map[string]any{
@@ -684,7 +688,8 @@ func TestEmbedWorkerFindNodeWithoutEmbedding(t *testing.T) {
 		worker := NewEmbedWorker(embedder, engine, nil)
 		defer worker.Close()
 
-		node := worker.findNodeWithoutEmbedding()
+		node, findErr := worker.findNodeWithoutEmbedding(t.Context())
+		require.NoError(t, findErr)
 
 		assert.Nil(t, node, "Should skip internal nodes")
 	})
@@ -697,7 +702,7 @@ func TestEmbedWorkerFindNodeWithoutEmbedding(t *testing.T) {
 		embedder := newMockEmbedder()
 
 		// Create node without embedding
-		_, err := engine.CreateNode(&storage.Node{
+		_, err := engine.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID("to-delete"),
 			Labels: []string{"Test"},
 			Properties: map[string]any{
@@ -710,12 +715,13 @@ func TestEmbedWorkerFindNodeWithoutEmbedding(t *testing.T) {
 		defer worker.Close()
 
 		// Node should be found initially
-		node := worker.findNodeWithoutEmbedding()
+		node, findErr := worker.findNodeWithoutEmbedding(t.Context())
+		require.NoError(t, findErr)
 		require.NotNil(t, node, "Should find node before deletion")
 		assert.Equal(t, storage.NodeID("to-delete"), node.ID)
 
 		// Delete the node
-		err = engine.DeleteNode(storage.NodeID("to-delete"))
+		err = engine.DeleteNode(t.Context(), storage.NodeID("to-delete"))
 		require.NoError(t, err)
 
 		// DeleteNode already removed the pending marker, so this is a genuinely
@@ -1148,7 +1154,7 @@ func TestLargeContentEmbedding(t *testing.T) {
 		// Create a node with large content (like a source file)
 		largeContent := strings.Repeat("This is line of code with various tokens and symbols. ", 100)
 
-		_, err := engine.CreateNode(&storage.Node{
+		_, err := engine.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID("large-file-node"),
 			Labels: []string{"File"},
 			Properties: map[string]any{
@@ -1186,7 +1192,7 @@ func TestLargeContentEmbedding(t *testing.T) {
 		stats := worker.Stats()
 		require.Equal(t, 1, stats.Processed, "Should have processed the large file")
 
-		node, err := engine.GetNode("large-file-node")
+		node, err := engine.GetNode(t.Context(), "large-file-node")
 		require.NoError(t, err)
 
 		// Large content gets chunked and all chunk embeddings stored on the same node
@@ -1236,7 +1242,7 @@ func TestEmbedWorkerMicroBatching(t *testing.T) {
 		embedder := newRecordingBatchEmbedder()
 
 		largeContent := strings.Repeat("This content should produce many embedding chunks. ", 700)
-		_, err := engine.CreateNode(&storage.Node{
+		_, err := engine.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID("micro-batch-node"),
 			Labels: []string{"File"},
 			Properties: map[string]any{
@@ -1271,7 +1277,7 @@ func TestEmbedWorkerMicroBatching(t *testing.T) {
 		require.Equal(t, 1, stats.Processed, "node should be processed")
 		assert.LessOrEqual(t, embedder.MaxBatchSize(), config.EmbedBatchSize, "embed request should respect micro-batch cap")
 
-		node, err := engine.GetNode("micro-batch-node")
+		node, err := engine.GetNode(t.Context(), "micro-batch-node")
 		require.NoError(t, err)
 		assert.NotEmpty(t, node.ChunkEmbeddings, "chunk embeddings should be stored")
 	})
@@ -1288,7 +1294,7 @@ func TestEmbedWorkerConcurrency(t *testing.T) {
 
 		// Create multiple nodes
 		for i := 0; i < 10; i++ {
-			_, err := engine.CreateNode(&storage.Node{
+			_, err := engine.CreateNode(t.Context(), &storage.Node{
 				ID:     storage.NodeID("node-" + string(rune('0'+i))),
 				Labels: []string{"Memory"},
 				Properties: map[string]any{
@@ -1337,7 +1343,7 @@ func TestEmbedWorkerConcurrency(t *testing.T) {
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		embedder := newMockEmbedder()
 
-		_, err := engine.CreateNode(&storage.Node{
+		_, err := engine.CreateNode(t.Context(), &storage.Node{
 			ID:     "race-node-1",
 			Labels: []string{"Memory"},
 			Properties: map[string]any{
@@ -1386,7 +1392,7 @@ func TestRecentlyProcessedOnlyLogsOnce(t *testing.T) {
 		embedder := newMockEmbedder()
 
 		// Create a node that will be marked as recently processed but still found
-		_, err := engine.CreateNode(&storage.Node{
+		_, err := engine.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID("test-skip-logs"),
 			Labels: []string{"Memory"},
 			Properties: map[string]any{
@@ -1449,7 +1455,7 @@ func TestNoContentNodeDoesNotCauseInfiniteLoop(t *testing.T) {
 		// Create a node with NO labels and ONLY metadata fields (all skipped by buildEmbeddingText)
 		// This is a truly empty node - no labels, no embeddable properties
 		// Don't set has_embedding as that would prevent node discovery
-		_, err := engine.CreateNode(&storage.Node{
+		_, err := engine.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID("no-content-node"),
 			Labels: []string{}, // No labels - truly empty
 			Properties: map[string]any{
@@ -1493,7 +1499,7 @@ func TestNoContentNodeDoesNotCauseInfiniteLoop(t *testing.T) {
 		assert.Equal(t, 1, embedCount, "Empty node should be embedded with fallback text")
 
 		// Node should have been embedded (with "node" fallback text)
-		node, err := engine.GetNode("no-content-node")
+		node, err := engine.GetNode(t.Context(), "no-content-node")
 		require.NoError(t, err)
 		// With new behavior, empty nodes get embedded with "node" fallback
 		assert.NotEmpty(t, node.ChunkEmbeddings, "Node should have chunk embeddings (even empty nodes get embedded)")
@@ -1519,7 +1525,7 @@ func newEmbedWorkerPersistenceFixture(t *testing.T, nodeID storage.NodeID, conte
 	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	baseEngine.SetEmbeddingsEnabled(true)
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
-	_, err := engine.CreateNode(&storage.Node{
+	_, err := engine.CreateNode(t.Context(), &storage.Node{
 		ID:     nodeID,
 		Labels: []string{"Memory"},
 		Properties: map[string]any{
@@ -1597,7 +1603,7 @@ func TestEmbeddingPersistenceVerification(t *testing.T) {
 		worker.Close()
 
 		// Verify embedding is readable from storage
-		node, err := fixture.engine.GetNode(fixture.nodeID)
+		node, err := fixture.engine.GetNode(t.Context(), fixture.nodeID)
 		require.NoError(t, err)
 		require.NotEmpty(t, node.ChunkEmbeddings, "Chunk embeddings should be persisted and readable")
 
@@ -1605,7 +1611,8 @@ func TestEmbeddingPersistenceVerification(t *testing.T) {
 		worker2 := NewEmbedWorker(fixture.embedder, fixture.engine, fixture.config)
 		defer worker2.Close()
 
-		found := worker2.findNodeWithoutEmbedding()
+		found, findErr := worker2.findNodeWithoutEmbedding(t.Context())
+		require.NoError(t, findErr)
 		assert.Nil(t, found, "Node with embedding should NOT be found by findNodeWithoutEmbedding")
 	})
 
@@ -1616,7 +1623,7 @@ func TestEmbeddingPersistenceVerification(t *testing.T) {
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
 
 		// Create a node
-		_, err := engine.CreateNode(&storage.Node{
+		_, err := engine.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID("manual-embed"),
 			Labels: []string{"Test"},
 			Properties: map[string]any{
@@ -1626,7 +1633,7 @@ func TestEmbeddingPersistenceVerification(t *testing.T) {
 		require.NoError(t, err)
 
 		// Manually update with embedding
-		node, err := engine.GetNode("manual-embed")
+		node, err := engine.GetNode(t.Context(), "manual-embed")
 		require.NoError(t, err)
 
 		node.ChunkEmbeddings = [][]float32{make([]float32, 1024)}
@@ -1634,11 +1641,11 @@ func TestEmbeddingPersistenceVerification(t *testing.T) {
 			node.ChunkEmbeddings[0][i] = float32(i) * 0.001
 		}
 
-		err = engine.UpdateNode(storage.NodeUpdateRequest{After: node})
+		err = engine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node})
 		require.NoError(t, err)
 
 		// Read back and verify
-		node2, err := engine.GetNode("manual-embed")
+		node2, err := engine.GetNode(t.Context(), "manual-embed")
 		require.NoError(t, err)
 
 		assert.Equal(t, 1024, len(node2.ChunkEmbeddings[0]), "Embedding should have correct dimensions")
@@ -1657,7 +1664,7 @@ func TestRaceConditionPrevention(t *testing.T) {
 		embedder := newMockEmbedder()
 
 		// Create a node
-		_, err := engine.CreateNode(&storage.Node{
+		_, err := engine.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID("race-test"),
 			Labels: []string{"Memory"},
 			Properties: map[string]any{
@@ -1695,7 +1702,7 @@ func TestRaceConditionPrevention(t *testing.T) {
 					case <-stop:
 						return
 					default:
-						node, err := engine.GetNode("race-test")
+						node, err := engine.GetNode(t.Context(), "race-test")
 						if err == nil && node != nil {
 							// Iterate over properties (this is what caused the panic)
 							for k, v := range node.Properties {
@@ -1730,7 +1737,7 @@ func TestRaceConditionPrevention(t *testing.T) {
 		wg.Wait()
 
 		// Verify embedding was stored correctly
-		node, err := engine.GetNode("race-test")
+		node, err := engine.GetNode(t.Context(), "race-test")
 		require.NoError(t, err)
 		assert.NotEmpty(t, node.ChunkEmbeddings, "Node should have chunk embeddings")
 		assert.Equal(t, 1024, len(node.ChunkEmbeddings[0]), "Embedding should have correct dimensions")
@@ -1787,15 +1794,15 @@ type queueBranchEngine struct {
 	added              []storage.NodeID
 }
 
-func (e *queueBranchEngine) FindNodeNeedingEmbedding() *storage.Node {
+func (e *queueBranchEngine) FindNodeNeedingEmbedding(ctx context.Context) (*storage.Node, error) {
 	if e.findNode == nil || e.findReturned {
-		return nil
+		return nil, nil
 	}
 	e.findReturned = true
-	return storage.CopyNode(e.findNode)
+	return storage.CopyNode(e.findNode), nil
 }
 
-func (e *queueBranchEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
+func (e *queueBranchEngine) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	e.getNodeCalls++
 	if e.getNodeCalls == 1 && e.getNodeErr != nil {
 		return nil, e.getNodeErr
@@ -1806,7 +1813,7 @@ func (e *queueBranchEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
 	if e.getNodeCalls > 1 && e.secondGetNodeErr != nil {
 		return nil, e.secondGetNodeErr
 	}
-	return e.Engine.GetNode(id)
+	return e.Engine.GetNode(ctx, id)
 }
 
 func (e *queueBranchEngine) MarkNodeEmbedded(id storage.NodeID) {
@@ -1821,22 +1828,22 @@ func (e *queueBranchEngine) AddToPendingEmbeddings(id storage.NodeID) {
 	e.added = append(e.added, id)
 }
 
-func (e *queueBranchEngine) UpdateNodeEmbeddingSidecar(node *storage.Node) error {
+func (e *queueBranchEngine) UpdateNodeEmbeddingSidecar(ctx context.Context, node *storage.Node) error {
 	if e.updateEmbeddingErr != nil {
 		return e.updateEmbeddingErr
 	}
-	if err := e.Engine.(storage.EmbeddingSidecarUpdater).UpdateNodeEmbeddingSidecar(node); err != nil {
+	if err := e.Engine.(storage.EmbeddingSidecarUpdater).UpdateNodeEmbeddingSidecar(ctx, node); err != nil {
 		return err
 	}
 	e.updatedEmbedding = storage.CopyNode(node)
 	return nil
 }
 
-func (e *queueBranchEngine) UpdateNode(updateRequest storage.NodeUpdateRequest) error {
+func (e *queueBranchEngine) UpdateNode(ctx context.Context, updateRequest storage.NodeUpdateRequest) error {
 	if e.updateNodeErr != nil {
 		return e.updateNodeErr
 	}
-	return e.Engine.UpdateNode(updateRequest)
+	return e.Engine.UpdateNode(ctx, updateRequest)
 }
 
 // engineOnlyWrapper intentionally exposes only storage.Engine so optional
@@ -2042,7 +2049,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 			t.Fatal("expected debounced trigger signal")
 		}
 
-		worker.closed.Store(true)
+		worker.work.CloseAdmission()
 		worker.Trigger()
 		require.Zero(t, worker.QueueLen())
 	})
@@ -2059,20 +2066,32 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 			defer mu.Unlock()
 			return append([]int(nil), got...)
 		}
-		ew := &EmbedWorker{
-			config: &EmbedWorkerConfig{
-				ClusterDebounceDelay: 15 * time.Millisecond,
-				ClusterMinBatchSize:  2,
-			},
-			onQueueEmpty: func(processedCount int) {
-				mu.Lock()
-				got = append(got, processedCount)
-				mu.Unlock()
-			},
-		}
+		// The debounce timer is owned by the worker's lifetime, so the worker is
+		// built by its constructor; DeferWorkerStart keeps it free of goroutines.
+		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+		ew := NewEmbedWorker(newMockEmbedder(), storage.NewNamespacedEngine(base, "test"), &EmbedWorkerConfig{
+			NumWorkers:           1,
+			ScanInterval:         time.Second,
+			BatchDelay:           time.Millisecond,
+			MaxRetries:           1,
+			ChunkSize:            64,
+			ChunkOverlap:         8,
+			TriggerDebounceDelay: 10 * time.Millisecond,
+			ClusterDebounceDelay: 15 * time.Millisecond,
+			ClusterMinBatchSize:  2,
+			DeferWorkerStart:     true,
+			EmbedBatchSize:       1,
+			IncludeLabels:        true,
+		})
+		defer ew.Close()
+		ew.SetOnQueueEmpty(func(processedCount int) {
+			mu.Lock()
+			got = append(got, processedCount)
+			mu.Unlock()
+		})
 
-		ew.scheduleClusteringDebounced(1)
-		ew.scheduleClusteringDebounced(2)
+		ew.reconcileClusteringProgress(1, true)
+		ew.reconcileClusteringProgress(2, true)
 		require.Eventually(t, func() bool { return len(snapshot()) == 1 }, 300*time.Millisecond, 5*time.Millisecond)
 		require.Equal(t, []int{3}, snapshot())
 	})
@@ -2187,7 +2206,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 			Labels:     []string{"Doc"},
 			Properties: map[string]any{"content": "hello"},
 		}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 
 		qe := &queueBranchEngine{
@@ -2219,7 +2238,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 			Labels:     []string{"Doc"},
 			Properties: map[string]any{"content": "hello"},
 		}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 
 		emb := &permanentFailureEmbedder{dims: 3}
@@ -2267,7 +2286,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 			Labels:     []string{"Doc"},
 			Properties: map[string]any{"content": "hello"},
 		}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 
 		emb := &retryableDocumentFailureEmbedder{dims: 3, failing: true}
@@ -2309,7 +2328,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 			Labels:     []string{"Doc"},
 			Properties: map[string]any{"content": "hello world"},
 		}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 
 		emb := &deterministicChunkEmbedder{dims: 3, chunks: []string{"chunk-one", "chunk-two"}}
@@ -2340,7 +2359,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 			Labels:     []string{"Doc"},
 			Properties: map[string]any{"content": "hello"},
 		}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 
 		qe := &queueBranchEngine{
@@ -2375,7 +2394,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 			Labels:     []string{"Doc"},
 			Properties: map[string]any{"content": "hello"},
 		}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 
 		qe := &queueBranchEngine{
@@ -2404,7 +2423,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 			Labels:     []string{"Doc"},
 			Properties: map[string]any{"content": "hello"},
 		}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 
 		qe := &queueBranchEngine{
@@ -2444,11 +2463,11 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 		defer worker.Close()
 		require.Zero(t, worker.config.NumWorkers)
 
-		worker.closed.Store(true)
-		worker.StartWorkers()
-		require.False(t, worker.workersStarted)
+		closedWorker := NewEmbedWorker(newMockEmbedder(), engine, cfg)
+		closedWorker.Close()
+		closedWorker.StartWorkers()
+		require.False(t, closedWorker.workersStarted)
 
-		worker.closed.Store(false)
 		worker.StartWorkers()
 		require.True(t, worker.workersStarted)
 	})
@@ -2465,8 +2484,11 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 			ChunkOverlap:     8,
 			DeferWorkerStart: true,
 		})
+		worker.SetOnQueueEmpty(func(int) {})
+		worker.config.ClusterDebounceDelay = time.Hour
+		worker.reconcileClusteringProgress(1, true)
 		worker.clusterDebounceMu.Lock()
-		worker.clusterDebounceTimer = time.NewTimer(time.Hour)
+		require.NotNil(t, worker.clusterDebounceTimer, "Close must retire an actually armed clustering timer")
 		worker.clusterDebounceMu.Unlock()
 		worker.Close()
 
@@ -2476,14 +2498,16 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 	})
 
 	t.Run("trigger no-op when closed and non-blocking when already queued", func(t *testing.T) {
+		closedWorker := &EmbedWorker{
+			trigger: make(chan struct{}, 1),
+		}
+		closedWorker.work.CloseAdmission()
+		closedWorker.Trigger()
+		require.Len(t, closedWorker.trigger, 0)
+
 		worker := &EmbedWorker{
 			trigger: make(chan struct{}, 1),
 		}
-		worker.closed.Store(true)
-		worker.Trigger()
-		require.Len(t, worker.trigger, 0)
-
-		worker.closed.Store(false)
 		worker.Trigger()
 		require.Len(t, worker.trigger, 1)
 		worker.Trigger()
@@ -2516,7 +2540,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 		worker.SetEmbedder(newMockEmbedder())
 
 		// Create a node after activation and notify the sleeping worker.
-		_, err := engine.CreateNode(&storage.Node{
+		_, err := engine.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID("ticker-node"),
 			Labels: []string{"Doc"},
 			Properties: map[string]any{
@@ -2530,30 +2554,30 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 			return worker.Stats().Processed >= 1
 		}, 4*time.Second, 25*time.Millisecond)
 
-		n, err := engine.GetNode("ticker-node")
+		n, err := engine.GetNode(t.Context(), "ticker-node")
 		require.NoError(t, err)
 		require.NotEmpty(t, n.ChunkEmbeddings)
 	})
 
 	t.Run("worker exits promptly when closed before embedder is set", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
+		gen := lifecycle.NewWorkLifetime(context.Background())
 		ew := &EmbedWorker{
 			config:            DefaultEmbedWorkerConfig(),
-			ctx:               ctx,
-			cancel:            cancel,
+			ctx:               gen.Context(),
 			trigger:           make(chan struct{}, 1),
 			recentlyProcessed: make(map[string]recentNodeEmbedding),
 			loggedSkip:        make(map[string]bool),
 		}
+		ew.gen.Store(gen)
 		done := make(chan struct{}, 1)
-		ew.wg.Add(1)
+		require.True(t, gen.Enter())
 		go func() {
-			ew.worker()
+			ew.worker(gen)
 			done <- struct{}{}
 		}()
 
 		// Closed branch in the wait-for-embedder loop should exit quickly.
-		ew.closed.Store(true)
+		ew.work.CloseAdmission()
 		select {
 		case <-done:
 		case <-time.After(2 * time.Second):
@@ -2569,7 +2593,8 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 			findNode: &storage.Node{ID: storage.NodeID("fast-path")},
 		}
 		ew := &EmbedWorker{storage: qe}
-		n := ew.findNodeWithoutEmbedding()
+		n, findErr := ew.findNodeWithoutEmbedding(t.Context())
+		require.NoError(t, findErr)
 		require.NotNil(t, n)
 		require.Equal(t, storage.NodeID("fast-path"), n.ID)
 	})
@@ -2577,7 +2602,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 	t.Run("findNodeWithoutEmbedding falls back to storage helper", func(t *testing.T) {
 		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		engine := storage.NewNamespacedEngine(base, "test")
-		_, err := engine.CreateNode(&storage.Node{
+		_, err := engine.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID("fallback-node"),
 			Labels: []string{"Memory"},
 			Properties: map[string]any{
@@ -2587,7 +2612,8 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 		})
 		require.NoError(t, err)
 		ew := &EmbedWorker{storage: &engineOnlyWrapper{Engine: engine}}
-		n := ew.findNodeWithoutEmbedding()
+		n, findErr := ew.findNodeWithoutEmbedding(t.Context())
+		require.NoError(t, findErr)
 		require.NotNil(t, n)
 		require.Equal(t, storage.NodeID("fallback-node"), n.ID)
 	})
@@ -2615,7 +2641,7 @@ func TestEmbedWorker_ProcessNextBatch_YieldsUnderForegroundPressure(t *testing.T
 			Properties: map[string]any{"text": "hello"},
 		},
 	}
-	_, err := engine.Engine.CreateNode(storage.CopyNode(engine.findNode))
+	_, err := engine.Engine.CreateNode(t.Context(), storage.CopyNode(engine.findNode))
 	require.NoError(t, err)
 
 	worker := &EmbedWorker{
@@ -2647,16 +2673,23 @@ func TestEmbedWorker_ResetDrainsPendingTrigger(t *testing.T) {
 	t.Cleanup(worker.Close)
 
 	// Stop the worker goroutine so nothing consumes the trigger before Reset.
-	worker.cancel()
-	worker.wg.Wait()
+	stopEmbedGeneration(t, worker)
 	worker.trigger <- struct{}{}
 
 	worker.Reset()
 	require.Zero(t, len(worker.trigger))
 
 	// A reset with nothing pending leaves the channel empty too.
-	worker.cancel()
-	worker.wg.Wait()
+	stopEmbedGeneration(t, worker)
 	worker.Reset()
 	require.Zero(t, len(worker.trigger))
+}
+
+// stopEmbedGeneration stops the worker's current generation and waits for its
+// workers to return, without closing the worker: a later Reset publishes the
+// next generation.
+func stopEmbedGeneration(t testing.TB, worker *EmbedWorker) {
+	t.Helper()
+	worker.generation().Cancel()
+	require.Eventually(t, func() bool { return worker.generation().Active() == 0 }, 10*time.Second, time.Millisecond)
 }

@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
@@ -181,7 +182,7 @@ func TestAuthenticator_LoadUsers(t *testing.T) {
 	eng := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer eng.Close()
 
-	_, err := eng.CreateNode(&storage.Node{
+	_, err := eng.CreateNode(context.Background(), &storage.Node{
 		ID:     storage.NodeID("user:alice"),
 		Labels: []string{"_User", "_System"},
 		Properties: map[string]any{
@@ -193,7 +194,7 @@ func TestAuthenticator_LoadUsers(t *testing.T) {
 		},
 	})
 	assert.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{
+	_, err = eng.CreateNode(context.Background(), &storage.Node{
 		ID:     storage.NodeID("system:not-user"),
 		Labels: []string{"_System"},
 	})

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
@@ -37,11 +38,13 @@ func TestReplayNotificationRetiresGenerationBeforeConcurrentListenerFlush(t *tes
 			return
 		}
 		close(listenerEntered)
-		listenerDone <- b.FlushWriteBehind(nil)
+		listenerDone <- b.FlushWriteBehind(context.Background())
 	})
 	bufferedCreate(t, b, &Node{ID: "test:notification-retirement"})
-	b.writeBehind.rotate()
-	go func() { defer close(drained); originalFlushDone <- b.FlushWriteBehind(nil) }()
+	if _, rotateErr := b.writeBehind.rotate(t.Context()); rotateErr != nil {
+		t.Fatal(rotateErr)
+	}
+	go func() { defer close(drained); originalFlushDone <- b.FlushWriteBehind(context.Background()) }()
 	var generation *CommitBuffer
 	select {
 	case generation = <-applied:
@@ -106,7 +109,9 @@ func TestReplayFailedApplyKeepsGenerationForRetry(t *testing.T) {
 	notified := 0
 	b.OnNodeCreated(func(*Node) { notified++ })
 	bufferedCreate(t, b, &Node{ID: "test:retry-retirement"})
-	b.writeBehind.rotate()
+	if _, rotateErr := b.writeBehind.rotate(t.Context()); rotateErr != nil {
+		t.Fatal(rotateErr)
+	}
 	b.writeBehind.mu.RLock()
 	buf := b.writeBehind.draining[0]
 	b.writeBehind.mu.RUnlock()

@@ -59,7 +59,7 @@ func codecRoundTripNode(t *testing.T, n *Node) (*Node, error) {
 	eng := newTestEngine(t)
 	namespace := namespaceForNodeID(n.ID)
 	var data []byte
-	err := eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	err := eng.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		var encErr error
 		data, _, encErr = eng.encodeNodeInTxn(txn, namespace, n)
 		if encErr != nil {
@@ -71,7 +71,7 @@ func codecRoundTripNode(t *testing.T, n *Node) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	return eng.decodeNode(namespace, data)
+	return eng.decodeNodeProjected(nil, namespace, data, nil)
 }
 
 // buildV2NodeBody encodes a Node through the engine's V2 codec and
@@ -82,7 +82,7 @@ func buildV2NodeBody(t *testing.T, engine *BadgerEngine, n *Node) ([]byte, error
 	t.Helper()
 	namespace := namespaceForNodeID(n.ID)
 	var data []byte
-	err := engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	err := engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		var encErr error
 		data, _, encErr = engine.encodeNodeInTxn(txn, namespace, n)
 		if encErr != nil {
@@ -102,7 +102,7 @@ func codecRoundTripEdge(t *testing.T, e *Edge) (*Edge, error) {
 	eng := newTestEngine(t)
 	namespace := namespaceForEdgeID(e.ID)
 	var data []byte
-	err := eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	err := eng.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		var encErr error
 		data, encErr = eng.encodeEdgeInTxn(txn, namespace, e)
 		if encErr != nil {
@@ -115,7 +115,7 @@ func codecRoundTripEdge(t *testing.T, e *Edge) (*Edge, error) {
 	if err != nil {
 		return nil, err
 	}
-	return eng.decodeEdgeBodyWithID(namespace, data, e.ID)
+	return eng.decodeEdgeBodyWithID(nil, namespace, data, e.ID)
 }
 
 // testNode creates a test node with the given ID.
@@ -179,27 +179,27 @@ func TestBadgerEngine_CreateNode(t *testing.T) {
 
 	t.Run("creates node successfully", func(t *testing.T) {
 		node := testNode("n1")
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		assert.NoError(t, err)
 	})
 
 	t.Run("returns ErrAlreadyExists for duplicate", func(t *testing.T) {
 		node := testNode("n2")
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 
-		_, err = engine.CreateNode(node)
+		_, err = engine.CreateNode(t.Context(), node)
 		assert.ErrorIs(t, err, ErrAlreadyExists)
 	})
 
 	t.Run("returns ErrInvalidData for nil node", func(t *testing.T) {
-		_, err := engine.CreateNode(nil)
+		_, err := engine.CreateNode(t.Context(), nil)
 		assert.ErrorIs(t, err, ErrInvalidData)
 	})
 
 	t.Run("returns ErrInvalidID for empty ID", func(t *testing.T) {
 		node := &Node{ID: "", Labels: []string{"Test"}}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		assert.ErrorIs(t, err, ErrInvalidID)
 	})
 }
@@ -214,10 +214,10 @@ func TestBadgerEngine_GetNode(t *testing.T) {
 			Properties: map[string]any{"name": "Alice", "age": 30},
 			CreatedAt:  time.Now().Truncate(time.Second),
 		}
-		_, err := engine.CreateNode(original)
+		_, err := engine.CreateNode(t.Context(), original)
 		require.NoError(t, err)
 
-		retrieved, err := engine.GetNode(NodeID(prefixTestID("n1")))
+		retrieved, err := engine.GetNode(t.Context(), NodeID(prefixTestID("n1")))
 		require.NoError(t, err)
 
 		assert.Equal(t, original.ID, retrieved.ID)
@@ -226,12 +226,12 @@ func TestBadgerEngine_GetNode(t *testing.T) {
 	})
 
 	t.Run("returns ErrNotFound for missing node", func(t *testing.T) {
-		_, err := engine.GetNode(NodeID(prefixTestID("nonexistent")))
+		_, err := engine.GetNode(t.Context(), NodeID(prefixTestID("nonexistent")))
 		assert.ErrorIs(t, err, ErrNotFound)
 	})
 
 	t.Run("returns ErrInvalidID for empty ID", func(t *testing.T) {
-		_, err := engine.GetNode("")
+		_, err := engine.GetNode(t.Context(), "")
 		assert.ErrorIs(t, err, ErrInvalidID)
 	})
 }
@@ -241,15 +241,15 @@ func TestBadgerEngine_UpdateNode(t *testing.T) {
 
 	t.Run("updates existing node", func(t *testing.T) {
 		node := testNode("n1")
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 
 		node.Properties["name"] = "Updated"
 		node.Labels = []string{"UpdatedLabel"}
-		err = engine.UpdateNode(NodeUpdateRequest{After: node})
+		err = engine.UpdateNode(t.Context(), NodeUpdateRequest{After: node})
 		require.NoError(t, err)
 
-		retrieved, err := engine.GetNode(NodeID(prefixTestID("n1")))
+		retrieved, err := engine.GetNode(t.Context(), NodeID(prefixTestID("n1")))
 		require.NoError(t, err)
 		assert.Equal(t, "Updated", retrieved.Properties["name"])
 		assert.Equal(t, []string{"UpdatedLabel"}, retrieved.Labels)
@@ -257,7 +257,7 @@ func TestBadgerEngine_UpdateNode(t *testing.T) {
 
 	t.Run("updates label index correctly", func(t *testing.T) {
 		node := &Node{ID: NodeID(prefixTestID("n2")), Labels: []string{"OldLabel"}}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 
 		// Check old label
@@ -267,7 +267,7 @@ func TestBadgerEngine_UpdateNode(t *testing.T) {
 
 		// Update labels
 		node.Labels = []string{"NewLabel"}
-		err = engine.UpdateNode(NodeUpdateRequest{After: node})
+		err = engine.UpdateNode(t.Context(), NodeUpdateRequest{After: node})
 		require.NoError(t, err)
 
 		// Old label should be empty
@@ -285,11 +285,11 @@ func TestBadgerEngine_UpdateNode(t *testing.T) {
 		// UpdateNode now has upsert behavior - creates if not exists
 		node := testNode("upsert-test")
 		node.Properties["foo"] = "bar"
-		err := engine.UpdateNode(NodeUpdateRequest{After: node})
+		err := engine.UpdateNode(t.Context(), NodeUpdateRequest{After: node})
 		require.NoError(t, err, "UpdateNode should create if not exists")
 
 		// Verify node was created
-		retrieved, err := engine.GetNode(NodeID(prefixTestID("upsert-test")))
+		retrieved, err := engine.GetNode(t.Context(), NodeID(prefixTestID("upsert-test")))
 		require.NoError(t, err)
 		assert.Equal(t, "bar", retrieved.Properties["foo"])
 	})
@@ -300,26 +300,26 @@ func TestBadgerEngine_DeleteNode(t *testing.T) {
 
 	t.Run("deletes existing node", func(t *testing.T) {
 		node := testNode("n1")
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 
-		err = engine.DeleteNode(NodeID(prefixTestID("n1")))
+		err = engine.DeleteNode(t.Context(), NodeID(prefixTestID("n1")))
 		require.NoError(t, err)
 
-		_, err = engine.GetNode(NodeID(prefixTestID("n1")))
+		_, err = engine.GetNode(t.Context(), NodeID(prefixTestID("n1")))
 		assert.ErrorIs(t, err, ErrNotFound)
 	})
 
 	t.Run("removes from label index", func(t *testing.T) {
 		node := &Node{ID: NodeID(prefixTestID("n2")), Labels: []string{"DeleteTest"}}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 
 		nodes, err := engine.GetNodesByLabel(context.Background(), "DeleteTest")
 		require.NoError(t, err)
 		assert.Len(t, nodes, 1)
 
-		err = engine.DeleteNode(NodeID(prefixTestID("n2")))
+		err = engine.DeleteNode(t.Context(), NodeID(prefixTestID("n2")))
 		require.NoError(t, err)
 
 		nodes, err = engine.GetNodesByLabel(context.Background(), "DeleteTest")
@@ -331,27 +331,27 @@ func TestBadgerEngine_DeleteNode(t *testing.T) {
 		// Create nodes
 		n1 := testNode("source")
 		n2 := testNode("target")
-		_, err := engine.CreateNode(n1)
+		_, err := engine.CreateNode(t.Context(), n1)
 		require.NoError(t, err)
-		_, err = engine.CreateNode(n2)
+		_, err = engine.CreateNode(t.Context(), n2)
 		require.NoError(t, err)
 
 		// Create edge
 		edge := testEdge("e1", "source", "target", "CONNECTS")
-		err = engine.CreateEdge(edge)
+		err = engine.CreateEdge(t.Context(), edge)
 		require.NoError(t, err)
 
 		// Delete source node
-		err = engine.DeleteNode(NodeID(prefixTestID("source")))
+		err = engine.DeleteNode(t.Context(), NodeID(prefixTestID("source")))
 		require.NoError(t, err)
 
 		// Edge should be gone
-		_, err = engine.GetEdge(EdgeID(prefixTestID("e1")))
+		_, err = engine.GetEdge(t.Context(), EdgeID(prefixTestID("e1")))
 		assert.ErrorIs(t, err, ErrNotFound)
 	})
 
 	t.Run("returns ErrNotFound for missing node", func(t *testing.T) {
-		err := engine.DeleteNode(NodeID(prefixTestID("nonexistent")))
+		err := engine.DeleteNode(t.Context(), NodeID(prefixTestID("nonexistent")))
 		assert.ErrorIs(t, err, ErrNotFound)
 	})
 }
@@ -366,35 +366,35 @@ func TestBadgerEngine_CreateEdge(t *testing.T) {
 	// Create nodes first
 	n1 := testNode("n1")
 	n2 := testNode("n2")
-	_, err := engine.CreateNode(n1)
+	_, err := engine.CreateNode(t.Context(), n1)
 	require.NoError(t, err)
-	_, err = engine.CreateNode(n2)
+	_, err = engine.CreateNode(t.Context(), n2)
 	require.NoError(t, err)
 
 	t.Run("creates edge successfully", func(t *testing.T) {
 		edge := testEdge("e1", n1.ID, n2.ID, "KNOWS")
-		err := engine.CreateEdge(edge)
+		err := engine.CreateEdge(t.Context(), edge)
 		assert.NoError(t, err)
 	})
 
 	t.Run("returns ErrAlreadyExists for duplicate", func(t *testing.T) {
 		edge := testEdge("e2", n1.ID, n2.ID, "FOLLOWS")
-		err := engine.CreateEdge(edge)
+		err := engine.CreateEdge(t.Context(), edge)
 		require.NoError(t, err)
 
-		err = engine.CreateEdge(edge)
+		err = engine.CreateEdge(t.Context(), edge)
 		assert.ErrorIs(t, err, ErrAlreadyExists)
 	})
 
 	t.Run("returns ErrNotFound for missing start node", func(t *testing.T) {
 		edge := testEdge("e3", NodeID(prefixTestID("missing")), n2.ID, "TEST")
-		err := engine.CreateEdge(edge)
+		err := engine.CreateEdge(t.Context(), edge)
 		assert.ErrorIs(t, err, ErrNotFound)
 	})
 
 	t.Run("returns ErrNotFound for missing end node", func(t *testing.T) {
 		edge := testEdge("e4", n1.ID, NodeID(prefixTestID("missing")), "TEST")
-		err := engine.CreateEdge(edge)
+		err := engine.CreateEdge(t.Context(), edge)
 		assert.ErrorIs(t, err, ErrNotFound)
 	})
 }
@@ -404,9 +404,9 @@ func TestBadgerEngine_GetEdge(t *testing.T) {
 
 	n1 := testNode("n1")
 	n2 := testNode("n2")
-	_, err := engine.CreateNode(n1)
+	_, err := engine.CreateNode(t.Context(), n1)
 	require.NoError(t, err)
-	_, err = engine.CreateNode(n2)
+	_, err = engine.CreateNode(t.Context(), n2)
 	require.NoError(t, err)
 	t.Run("gets existing edge", func(t *testing.T) {
 		original := &Edge{
@@ -419,10 +419,10 @@ func TestBadgerEngine_GetEdge(t *testing.T) {
 			Confidence:    0.9,
 			AutoGenerated: true,
 		}
-		err := engine.CreateEdge(original)
+		err := engine.CreateEdge(t.Context(), original)
 		require.NoError(t, err)
 
-		retrieved, err := engine.GetEdge(EdgeID(prefixTestID("e1")))
+		retrieved, err := engine.GetEdge(t.Context(), EdgeID(prefixTestID("e1")))
 		require.NoError(t, err)
 
 		assert.Equal(t, original.ID, retrieved.ID)
@@ -434,7 +434,7 @@ func TestBadgerEngine_GetEdge(t *testing.T) {
 	})
 
 	t.Run("returns ErrNotFound for missing edge", func(t *testing.T) {
-		_, err := engine.GetEdge(EdgeID(prefixTestID("nonexistent")))
+		_, err := engine.GetEdge(t.Context(), EdgeID(prefixTestID("nonexistent")))
 		assert.ErrorIs(t, err, ErrNotFound)
 	})
 }
@@ -445,24 +445,24 @@ func TestBadgerEngine_UpdateEdge(t *testing.T) {
 	n1 := testNode("n1")
 	n2 := testNode("n2")
 	n3 := testNode("n3")
-	_, err := engine.CreateNode(n1)
+	_, err := engine.CreateNode(t.Context(), n1)
 	require.NoError(t, err)
-	_, err = engine.CreateNode(n2)
+	_, err = engine.CreateNode(t.Context(), n2)
 	require.NoError(t, err)
-	_, err = engine.CreateNode(n3)
+	_, err = engine.CreateNode(t.Context(), n3)
 	require.NoError(t, err)
 
 	t.Run("updates edge properties", func(t *testing.T) {
 		edge := testEdge("e1", n1.ID, n2.ID, "KNOWS")
-		err := engine.CreateEdge(edge)
+		err := engine.CreateEdge(t.Context(), edge)
 		require.NoError(t, err)
 
 		edge.Properties["strength"] = "strong"
 		edge.Confidence = 0.95
-		err = engine.UpdateEdge(EdgeUpdateRequest{After: edge})
+		err = engine.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge})
 		require.NoError(t, err)
 
-		retrieved, err := engine.GetEdge(EdgeID(prefixTestID("e1")))
+		retrieved, err := engine.GetEdge(t.Context(), EdgeID(prefixTestID("e1")))
 		require.NoError(t, err)
 		assert.Equal(t, "strong", retrieved.Properties["strength"])
 		assert.InDelta(t, 0.95, retrieved.Confidence, 0.001)
@@ -470,12 +470,12 @@ func TestBadgerEngine_UpdateEdge(t *testing.T) {
 
 	t.Run("updates edge endpoints", func(t *testing.T) {
 		edge := testEdge("e2", n1.ID, n2.ID, "FOLLOWS")
-		err := engine.CreateEdge(edge)
+		err := engine.CreateEdge(t.Context(), edge)
 		require.NoError(t, err)
 
 		// Change endpoint
 		edge.EndNode = n3.ID
-		err = engine.UpdateEdge(EdgeUpdateRequest{After: edge})
+		err = engine.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge})
 		require.NoError(t, err)
 
 		// Check indexes updated
@@ -495,7 +495,7 @@ func TestBadgerEngine_UpdateEdge(t *testing.T) {
 
 	t.Run("returns ErrNotFound for missing edge", func(t *testing.T) {
 		edge := testEdge("nonexistent", n1.ID, n2.ID, "TEST")
-		err := engine.UpdateEdge(EdgeUpdateRequest{After: edge})
+		err := engine.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge})
 		assert.ErrorIs(t, err, ErrNotFound)
 	})
 }
@@ -505,32 +505,32 @@ func TestBadgerEngine_DeleteEdge(t *testing.T) {
 
 	n1 := testNode("n1")
 	n2 := testNode("n2")
-	_, err := engine.CreateNode(n1)
+	_, err := engine.CreateNode(t.Context(), n1)
 	require.NoError(t, err)
-	_, err = engine.CreateNode(n2)
+	_, err = engine.CreateNode(t.Context(), n2)
 	require.NoError(t, err)
 
 	t.Run("deletes existing edge", func(t *testing.T) {
 		edge := testEdge("e1", n1.ID, n2.ID, "KNOWS")
-		err := engine.CreateEdge(edge)
+		err := engine.CreateEdge(t.Context(), edge)
 		require.NoError(t, err)
 
-		err = engine.DeleteEdge(edge.ID)
+		err = engine.DeleteEdge(t.Context(), edge.ID)
 		require.NoError(t, err)
 
-		_, err = engine.GetEdge(edge.ID)
+		_, err = engine.GetEdge(t.Context(), edge.ID)
 		assert.ErrorIs(t, err, ErrNotFound)
 	})
 
 	t.Run("removes from indexes", func(t *testing.T) {
 		edge := testEdge("e2", "n1", "n2", "FOLLOWS")
-		err := engine.CreateEdge(edge)
+		err := engine.CreateEdge(t.Context(), edge)
 		require.NoError(t, err)
 
 		outgoing, _ := engine.GetOutgoingEdges(context.Background(), NodeID(prefixTestID("n1")))
 		initialCount := len(outgoing)
 
-		err = engine.DeleteEdge(EdgeID(prefixTestID("e2")))
+		err = engine.DeleteEdge(t.Context(), EdgeID(prefixTestID("e2")))
 		require.NoError(t, err)
 
 		outgoing, _ = engine.GetOutgoingEdges(context.Background(), NodeID(prefixTestID("n1")))
@@ -538,7 +538,7 @@ func TestBadgerEngine_DeleteEdge(t *testing.T) {
 	})
 
 	t.Run("returns ErrNotFound for missing edge", func(t *testing.T) {
-		err := engine.DeleteEdge(EdgeID(prefixTestID("nonexistent")))
+		err := engine.DeleteEdge(t.Context(), EdgeID(prefixTestID("nonexistent")))
 		assert.ErrorIs(t, err, ErrNotFound)
 	})
 }
@@ -552,37 +552,37 @@ func TestBadgerEngine_BulkDeleteNodes(t *testing.T) {
 			ID:     NodeID(prefixTestID(fmt.Sprintf("bulk-del-node-%d", i))),
 			Labels: []string{"BulkTest"},
 		}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 
-	count, _ := engine.NodeCount()
+	count, _ := engine.NodeCount(t.Context())
 	assert.Equal(t, int64(10), count)
 
 	t.Run("deletes multiple nodes in single transaction", func(t *testing.T) {
 		ids := []NodeID{NodeID(prefixTestID("bulk-del-node-0")), NodeID(prefixTestID("bulk-del-node-1")), NodeID(prefixTestID("bulk-del-node-2"))}
-		err := engine.BulkDeleteNodes(ids)
+		err := engine.BulkDeleteNodes(t.Context(), ids)
 		require.NoError(t, err)
 
-		count, _ := engine.NodeCount()
+		count, _ := engine.NodeCount(t.Context())
 		assert.Equal(t, int64(7), count)
 
 		// Verify nodes are gone
-		_, err = engine.GetNode(NodeID(prefixTestID("bulk-del-node-0")))
+		_, err = engine.GetNode(t.Context(), NodeID(prefixTestID("bulk-del-node-0")))
 		assert.ErrorIs(t, err, ErrNotFound)
 	})
 
 	t.Run("handles empty slice", func(t *testing.T) {
-		err := engine.BulkDeleteNodes([]NodeID{})
+		err := engine.BulkDeleteNodes(t.Context(), []NodeID{})
 		require.NoError(t, err)
 	})
 
 	t.Run("continues on not found", func(t *testing.T) {
 		ids := []NodeID{NodeID(prefixTestID("nonexistent")), NodeID(prefixTestID("bulk-del-node-3")), NodeID(prefixTestID("also-nonexistent"))}
-		err := engine.BulkDeleteNodes(ids)
+		err := engine.BulkDeleteNodes(t.Context(), ids)
 		require.NoError(t, err) // Should not error
 
-		_, err = engine.GetNode(NodeID(prefixTestID("bulk-del-node-3")))
+		_, err = engine.GetNode(t.Context(), NodeID(prefixTestID("bulk-del-node-3")))
 		assert.ErrorIs(t, err, ErrNotFound)
 	})
 }
@@ -591,9 +591,9 @@ func TestBadgerEngine_BulkDeleteEdges(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 
 	// Create nodes
-	_, err := engine.CreateNode(&Node{ID: NodeID(prefixTestID("n1"))})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("n1"))})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: NodeID(prefixTestID("n2"))})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("n2"))})
 	require.NoError(t, err)
 
 	// Create multiple edges
@@ -604,23 +604,23 @@ func TestBadgerEngine_BulkDeleteEdges(t *testing.T) {
 			EndNode:   NodeID(prefixTestID("n2")),
 			Type:      "TEST",
 		}
-		require.NoError(t, engine.CreateEdge(edge))
+		require.NoError(t, engine.CreateEdge(t.Context(), edge))
 	}
 
-	count, _ := engine.EdgeCount()
+	count, _ := engine.EdgeCount(t.Context())
 	assert.Equal(t, int64(10), count)
 
 	t.Run("deletes multiple edges in single transaction", func(t *testing.T) {
 		ids := []EdgeID{EdgeID(prefixTestID("bulk-del-edge-0")), EdgeID(prefixTestID("bulk-del-edge-1")), EdgeID(prefixTestID("bulk-del-edge-2"))}
-		err := engine.BulkDeleteEdges(ids)
+		err := engine.BulkDeleteEdges(t.Context(), ids)
 		require.NoError(t, err)
 
-		count, _ := engine.EdgeCount()
+		count, _ := engine.EdgeCount(t.Context())
 		assert.Equal(t, int64(7), count)
 	})
 
 	t.Run("handles empty slice", func(t *testing.T) {
-		err := engine.BulkDeleteEdges([]EdgeID{})
+		err := engine.BulkDeleteEdges(t.Context(), []EdgeID{})
 		require.NoError(t, err)
 	})
 }
@@ -638,7 +638,7 @@ func TestBadgerEngine_GetNodesByLabel(t *testing.T) {
 			ID:     NodeID(prefixTestID("user-" + string(rune('0'+i)))),
 			Labels: []string{"User", "Person"},
 		}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 
@@ -647,7 +647,7 @@ func TestBadgerEngine_GetNodesByLabel(t *testing.T) {
 			ID:     NodeID(prefixTestID("org-" + string(rune('0'+i)))),
 			Labels: []string{"Organization"},
 		}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 
@@ -682,7 +682,7 @@ func TestBadgerEngine_AllNodes(t *testing.T) {
 	// Create several nodes
 	for i := 0; i < 10; i++ {
 		node := testNode("n" + string(rune('0'+i)))
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 
@@ -734,11 +734,11 @@ func runDirectionalEdgeCases(t *testing.T, edges []*Edge, read func(*BadgerEngin
 	t.Helper()
 	engine := createTestBadgerEngine(t)
 	for _, id := range []string{"n1", "n2", "n3"} {
-		_, err := engine.CreateNode(testNode(id))
+		_, err := engine.CreateNode(t.Context(), testNode(id))
 		require.NoError(t, err)
 	}
 	for _, edge := range edges {
-		require.NoError(t, engine.CreateEdge(edge))
+		require.NoError(t, engine.CreateEdge(t.Context(), edge))
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -754,13 +754,13 @@ func TestBadgerEngine_GetEdgesBetween(t *testing.T) {
 
 	n1 := testNode("n1")
 	n2 := testNode("n2")
-	_, err := engine.CreateNode(n1)
+	_, err := engine.CreateNode(t.Context(), n1)
 	require.NoError(t, err)
-	_, err = engine.CreateNode(n2)
+	_, err = engine.CreateNode(t.Context(), n2)
 	require.NoError(t, err)
 
-	require.NoError(t, engine.CreateEdge(testEdge("e1", n1.ID, n2.ID, "A")))
-	require.NoError(t, engine.CreateEdge(testEdge("e2", n1.ID, n2.ID, "B")))
+	require.NoError(t, engine.CreateEdge(t.Context(), testEdge("e1", n1.ID, n2.ID, "A")))
+	require.NoError(t, engine.CreateEdge(t.Context(), testEdge("e2", n1.ID, n2.ID, "B")))
 
 	t.Run("returns all edges between nodes", func(t *testing.T) {
 		edges, err := engine.GetEdgesBetween(context.Background(), n1.ID, n2.ID)
@@ -780,27 +780,30 @@ func TestBadgerEngine_GetEdgeBetween(t *testing.T) {
 
 	n1 := testNode("n1")
 	n2 := testNode("n2")
-	_, err := engine.CreateNode(n1)
+	_, err := engine.CreateNode(t.Context(), n1)
 	require.NoError(t, err)
-	_, err = engine.CreateNode(n2)
+	_, err = engine.CreateNode(t.Context(), n2)
 	require.NoError(t, err)
 
-	require.NoError(t, engine.CreateEdge(testEdge("e1", n1.ID, n2.ID, "KNOWS")))
-	require.NoError(t, engine.CreateEdge(testEdge("e2", n1.ID, n2.ID, "FOLLOWS")))
+	require.NoError(t, engine.CreateEdge(t.Context(), testEdge("e1", n1.ID, n2.ID, "KNOWS")))
+	require.NoError(t, engine.CreateEdge(t.Context(), testEdge("e2", n1.ID, n2.ID, "FOLLOWS")))
 
 	t.Run("returns edge with matching type", func(t *testing.T) {
-		edge := engine.GetEdgeBetween(n1.ID, n2.ID, "KNOWS")
+		edge, err := engine.GetEdgeBetween(t.Context(), n1.ID, n2.ID, "KNOWS")
+		require.NoError(t, err)
 		require.NotNil(t, edge)
 		assert.Equal(t, "KNOWS", edge.Type)
 	})
 
 	t.Run("returns any edge with empty type", func(t *testing.T) {
-		edge := engine.GetEdgeBetween(n1.ID, n2.ID, "")
+		edge, err := engine.GetEdgeBetween(t.Context(), n1.ID, n2.ID, "")
+		require.NoError(t, err)
 		require.NotNil(t, edge)
 	})
 
 	t.Run("returns nil for no matching type", func(t *testing.T) {
-		edge := engine.GetEdgeBetween(NodeID(prefixTestID("n1")), NodeID(prefixTestID("n2")), "BLOCKS")
+		edge, err := engine.GetEdgeBetween(t.Context(), NodeID(prefixTestID("n1")), NodeID(prefixTestID("n2")), "BLOCKS")
+		require.NoError(t, err)
 		assert.Nil(t, edge)
 	})
 }
@@ -811,30 +814,36 @@ func TestBadgerEngine_GetEdgeBetweenIndexMaintenance(t *testing.T) {
 	n1 := testNode("edge-index-n1")
 	n2 := testNode("edge-index-n2")
 	n3 := testNode("edge-index-n3")
-	_, err := engine.CreateNode(n1)
+	_, err := engine.CreateNode(t.Context(), n1)
 	require.NoError(t, err)
-	_, err = engine.CreateNode(n2)
+	_, err = engine.CreateNode(t.Context(), n2)
 	require.NoError(t, err)
-	_, err = engine.CreateNode(n3)
+	_, err = engine.CreateNode(t.Context(), n3)
 	require.NoError(t, err)
 
 	edge := testEdge("edge-index-e1", n1.ID, n2.ID, "KNOWS")
-	require.NoError(t, engine.CreateEdge(edge))
+	require.NoError(t, engine.CreateEdge(t.Context(), edge))
 	requireEdgeBetweenIndexEntry(t, engine, n1.ID, n2.ID, "KNOWS", edge.ID, true)
 
 	updated := copyEdge(edge)
 	updated.EndNode = n3.ID
 	updated.Type = "FOLLOWS"
-	require.NoError(t, engine.UpdateEdge(EdgeUpdateRequest{After: updated}))
+	require.NoError(t, engine.UpdateEdge(t.Context(), EdgeUpdateRequest{After: updated}))
 
 	requireEdgeBetweenIndexEntry(t, engine, n1.ID, n2.ID, "KNOWS", edge.ID, false)
 	requireEdgeBetweenIndexEntry(t, engine, n1.ID, n3.ID, "FOLLOWS", edge.ID, true)
-	assert.Nil(t, engine.GetEdgeBetween(n1.ID, n2.ID, "KNOWS"))
-	require.NotNil(t, engine.GetEdgeBetween(n1.ID, n3.ID, "FOLLOWS"))
+	edge, err = engine.GetEdgeBetween(t.Context(), n1.ID, n2.ID, "KNOWS")
+	require.NoError(t, err)
+	assert.Nil(t, edge)
+	edge, err = engine.GetEdgeBetween(t.Context(), n1.ID, n3.ID, "FOLLOWS")
+	require.NoError(t, err)
+	require.NotNil(t, edge)
 
-	require.NoError(t, engine.DeleteEdge(edge.ID))
+	require.NoError(t, engine.DeleteEdge(t.Context(), edge.ID))
 	requireEdgeBetweenIndexEntry(t, engine, n1.ID, n3.ID, "FOLLOWS", edge.ID, false)
-	assert.Nil(t, engine.GetEdgeBetween(n1.ID, n3.ID, "FOLLOWS"))
+	edge, err = engine.GetEdgeBetween(t.Context(), n1.ID, n3.ID, "FOLLOWS")
+	require.NoError(t, err)
+	assert.Nil(t, edge)
 }
 
 func TestBadgerEngine_GetEdgeBetweenHeadIndexSelfHealsFromLegacyScan(t *testing.T) {
@@ -842,14 +851,14 @@ func TestBadgerEngine_GetEdgeBetweenHeadIndexSelfHealsFromLegacyScan(t *testing.
 
 	n1 := testNode("edge-head-heal-n1")
 	n2 := testNode("edge-head-heal-n2")
-	_, err := engine.CreateNode(n1)
+	_, err := engine.CreateNode(t.Context(), n1)
 	require.NoError(t, err)
-	_, err = engine.CreateNode(n2)
+	_, err = engine.CreateNode(t.Context(), n2)
 	require.NoError(t, err)
 
 	edge := testEdge("edge-head-heal-e1", n1.ID, n2.ID, "KNOWS")
-	require.NoError(t, engine.CreateEdge(edge))
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.CreateEdge(t.Context(), edge))
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		if err := txn.Delete(engine.edgeBetweenHeadKeyFromStringIDs(n1.ID, n2.ID, "KNOWS")); err != nil {
 			return err
 		}
@@ -858,7 +867,8 @@ func TestBadgerEngine_GetEdgeBetweenHeadIndexSelfHealsFromLegacyScan(t *testing.
 
 	requireEdgeBetweenHeadEntry(t, engine, n1.ID, n2.ID, "KNOWS", edge.ID, false)
 	requireEdgeBetweenIndexEntry(t, engine, n1.ID, n2.ID, "KNOWS", edge.ID, false)
-	got := engine.GetEdgeBetween(n1.ID, n2.ID, "KNOWS")
+	got, err := engine.GetEdgeBetween(t.Context(), n1.ID, n2.ID, "KNOWS")
+	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, edge.ID, got.ID)
 	requireEdgeBetweenHeadEntry(t, engine, n1.ID, n2.ID, "KNOWS", edge.ID, true)
@@ -870,15 +880,15 @@ func TestBadgerEngine_GetEdgesBetweenKeepsSameTypeSetWithHead(t *testing.T) {
 
 	n1 := testNode("edge-head-set-n1")
 	n2 := testNode("edge-head-set-n2")
-	_, err := engine.CreateNode(n1)
+	_, err := engine.CreateNode(t.Context(), n1)
 	require.NoError(t, err)
-	_, err = engine.CreateNode(n2)
+	_, err = engine.CreateNode(t.Context(), n2)
 	require.NoError(t, err)
 
 	first := testEdge("edge-head-set-e1", n1.ID, n2.ID, "KNOWS")
 	second := testEdge("edge-head-set-e2", n1.ID, n2.ID, "KNOWS")
-	require.NoError(t, engine.CreateEdge(first))
-	require.NoError(t, engine.CreateEdge(second))
+	require.NoError(t, engine.CreateEdge(t.Context(), first))
+	require.NoError(t, engine.CreateEdge(t.Context(), second))
 
 	requireEdgeBetweenIndexEntry(t, engine, n1.ID, n2.ID, "KNOWS", first.ID, true)
 	requireEdgeBetweenIndexEntry(t, engine, n1.ID, n2.ID, "KNOWS", second.ID, true)
@@ -886,7 +896,9 @@ func TestBadgerEngine_GetEdgesBetweenKeepsSameTypeSetWithHead(t *testing.T) {
 	edges, err := engine.GetEdgesBetween(context.Background(), n1.ID, n2.ID)
 	require.NoError(t, err)
 	require.Len(t, edges, 2)
-	assert.NotNil(t, engine.GetEdgeBetween(n1.ID, n2.ID, "KNOWS"))
+	edge, err := engine.GetEdgeBetween(t.Context(), n1.ID, n2.ID, "KNOWS")
+	require.NoError(t, err)
+	assert.NotNil(t, edge)
 }
 
 func TestBadgerEngine_GetEdgesBetweenSelfHealIsBounded(t *testing.T) {
@@ -894,9 +906,9 @@ func TestBadgerEngine_GetEdgesBetweenSelfHealIsBounded(t *testing.T) {
 
 	n1 := testNode("edge-heal-bound-n1")
 	n2 := testNode("edge-heal-bound-n2")
-	_, err := engine.CreateNode(n1)
+	_, err := engine.CreateNode(t.Context(), n1)
 	require.NoError(t, err)
-	_, err = engine.CreateNode(n2)
+	_, err = engine.CreateNode(t.Context(), n2)
 	require.NoError(t, err)
 
 	edgeCount := edgeBetweenSelfHealMaxEdges + 5
@@ -907,8 +919,8 @@ func TestBadgerEngine_GetEdgesBetweenSelfHealIsBounded(t *testing.T) {
 			n2.ID,
 			fmt.Sprintf("REL_%03d", i),
 		)
-		require.NoError(t, engine.CreateEdge(edge))
-		require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+		require.NoError(t, engine.CreateEdge(t.Context(), edge))
+		require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 			if err := txn.Delete(engine.edgeBetweenHeadKeyFromStringIDs(edge.StartNode, edge.EndNode, edge.Type)); err != nil {
 				return err
 			}
@@ -928,17 +940,17 @@ func TestBadgerEngine_EdgeBetweenIndexBackfill(t *testing.T) {
 	n1 := testNode("edge-index-backfill-n1")
 	n2 := testNode("edge-index-backfill-n2")
 	n3 := testNode("edge-index-backfill-n3")
-	_, err := engine.CreateNode(n1)
+	_, err := engine.CreateNode(t.Context(), n1)
 	require.NoError(t, err)
-	_, err = engine.CreateNode(n2)
+	_, err = engine.CreateNode(t.Context(), n2)
 	require.NoError(t, err)
-	_, err = engine.CreateNode(n3)
+	_, err = engine.CreateNode(t.Context(), n3)
 	require.NoError(t, err)
 
 	edge := testEdge("edge-index-backfill-e1", n1.ID, n2.ID, "KNOWS")
 	staleEdgeID := EdgeID(prefixTestID("edge-index-backfill-stale"))
-	require.NoError(t, engine.CreateEdge(edge))
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.CreateEdge(t.Context(), edge))
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		if err := txn.Delete(engine.edgeBetweenIndexKeyFromStringIDs(n1.ID, n2.ID, "KNOWS", edge.ID)); err != nil {
 			return err
 		}
@@ -976,7 +988,9 @@ func TestBadgerEngine_EdgeBetweenIndexBackfill(t *testing.T) {
 	}, 2*time.Second, 20*time.Millisecond)
 	requireEdgeBetweenIndexEntry(t, engine, n1.ID, n2.ID, "KNOWS", edge.ID, true)
 	requireEdgeBetweenIndexEntry(t, engine, n1.ID, n3.ID, "STALE", staleEdgeID, false)
-	require.NotNil(t, engine.GetEdgeBetween(n1.ID, n2.ID, "KNOWS"))
+	edge, err = engine.GetEdgeBetween(t.Context(), n1.ID, n2.ID, "KNOWS")
+	require.NoError(t, err)
+	require.NotNil(t, edge)
 }
 
 func TestBadgerEngine_EdgeBetweenIndexBackfillRepairsStoreAsynchronously(t *testing.T) {
@@ -989,13 +1003,13 @@ func TestBadgerEngine_EdgeBetweenIndexBackfillRepairsStoreAsynchronously(t *test
 
 	n1 := testNode("edge-index-async-n1")
 	n2 := testNode("edge-index-async-n2")
-	_, err = engine.CreateNode(n1)
+	_, err = engine.CreateNode(t.Context(), n1)
 	require.NoError(t, err)
-	_, err = engine.CreateNode(n2)
+	_, err = engine.CreateNode(t.Context(), n2)
 	require.NoError(t, err)
 	edge := testEdge("edge-index-async-e1", n1.ID, n2.ID, "KNOWS")
-	require.NoError(t, engine.CreateEdge(edge))
-	require.NoError(t, engine.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, engine.CreateEdge(t.Context(), edge))
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		if err := txn.Delete(engine.edgeBetweenHeadKeyFromStringIDs(edge.StartNode, edge.EndNode, edge.Type)); err != nil {
 			return err
 		}
@@ -1010,7 +1024,8 @@ func TestBadgerEngine_EdgeBetweenIndexBackfillRepairsStoreAsynchronously(t *test
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reopened.Close() })
 
-	got := reopened.GetEdgeBetween(n1.ID, n2.ID, "KNOWS")
+	got, err := reopened.GetEdgeBetween(t.Context(), n1.ID, n2.ID, "KNOWS")
+	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, edge.ID, got.ID)
 	require.Eventually(t, func() bool {
@@ -1033,10 +1048,10 @@ func TestBadgerEngine_BulkCreateNodes(t *testing.T) {
 			nodes[i] = testNode("bulk-" + fmt.Sprintf("%03d", i))
 		}
 
-		err := engine.BulkCreateNodes(nodes)
+		err := engine.BulkCreateNodes(t.Context(), nodes)
 		require.NoError(t, err)
 
-		count, _ := engine.NodeCount()
+		count, _ := engine.NodeCount(t.Context())
 		assert.EqualValues(t, 100, count)
 	})
 
@@ -1045,7 +1060,7 @@ func TestBadgerEngine_BulkCreateNodes(t *testing.T) {
 
 		// First create a node
 		node := testNode("existing")
-		_, err := engine2.CreateNode(node)
+		_, err := engine2.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 
 		// Try to bulk create including a duplicate
@@ -1055,27 +1070,27 @@ func TestBadgerEngine_BulkCreateNodes(t *testing.T) {
 			testNode("new2"),
 		}
 
-		err = engine2.BulkCreateNodes(nodes)
+		err = engine2.BulkCreateNodes(t.Context(), nodes)
 		assert.ErrorIs(t, err, ErrAlreadyExists)
 
 		// Only the original node should exist
-		count, _ := engine2.NodeCount()
+		count, _ := engine2.NodeCount(t.Context())
 		assert.EqualValues(t, 1, count)
 	})
 
 	t.Run("rejects invalid inputs and closed engine", func(t *testing.T) {
-		err := engine.BulkCreateNodes([]*Node{nil})
+		err := engine.BulkCreateNodes(t.Context(), []*Node{nil})
 		assert.ErrorIs(t, err, ErrInvalidData)
 
-		err = engine.BulkCreateNodes([]*Node{{ID: ""}})
+		err = engine.BulkCreateNodes(t.Context(), []*Node{{ID: ""}})
 		assert.ErrorIs(t, err, ErrInvalidID)
 
-		err = engine.BulkCreateNodes([]*Node{{ID: "plain-id", Labels: []string{"Test"}}})
+		err = engine.BulkCreateNodes(t.Context(), []*Node{{ID: "plain-id", Labels: []string{"Test"}}})
 		require.ErrorContains(t, err, "node ID must be prefixed with namespace")
 
 		closed := createTestBadgerEngine(t)
 		require.NoError(t, closed.Close())
-		err = closed.BulkCreateNodes([]*Node{testNode("closed")})
+		err = closed.BulkCreateNodes(t.Context(), []*Node{testNode("closed")})
 		assert.ErrorIs(t, err, ErrStorageClosed)
 	})
 
@@ -1090,7 +1105,7 @@ func TestBadgerEngine_BulkCreateNodes(t *testing.T) {
 			testNode("notify-1"),
 			testNode("notify-2"),
 		}
-		require.NoError(t, engine2.BulkCreateNodes(nodes))
+		require.NoError(t, engine2.BulkCreateNodes(t.Context(), nodes))
 		assert.ElementsMatch(t, []NodeID{nodes[0].ID, nodes[1].ID}, created)
 	})
 }
@@ -1100,7 +1115,7 @@ func TestBadgerEngine_BulkCreateEdges(t *testing.T) {
 
 	// Create nodes first
 	for i := 0; i < 10; i++ {
-		_, err := engine.CreateNode(testNode(fmt.Sprintf("n%d", i)))
+		_, err := engine.CreateNode(t.Context(), testNode(fmt.Sprintf("n%d", i)))
 		require.NoError(t, err)
 	}
 
@@ -1112,21 +1127,21 @@ func TestBadgerEngine_BulkCreateEdges(t *testing.T) {
 			edges[i] = testEdge(fmt.Sprintf("e%02d", i), start, end, "CONNECTS")
 		}
 
-		err := engine.BulkCreateEdges(edges)
+		err := engine.BulkCreateEdges(t.Context(), edges)
 		require.NoError(t, err)
 
-		count, _ := engine.EdgeCount()
+		count, _ := engine.EdgeCount(t.Context())
 		assert.EqualValues(t, 20, count)
 	})
 
 	t.Run("rejects invalid inputs duplicates and missing nodes", func(t *testing.T) {
-		err := engine.BulkCreateEdges([]*Edge{nil})
+		err := engine.BulkCreateEdges(t.Context(), []*Edge{nil})
 		assert.ErrorIs(t, err, ErrInvalidData)
 
-		err = engine.BulkCreateEdges([]*Edge{{ID: ""}})
+		err = engine.BulkCreateEdges(t.Context(), []*Edge{{ID: ""}})
 		assert.ErrorIs(t, err, ErrInvalidID)
 
-		err = engine.BulkCreateEdges([]*Edge{{
+		err = engine.BulkCreateEdges(t.Context(), []*Edge{{
 			ID:        EdgeID(prefixTestID("missing-edge")),
 			StartNode: NodeID(prefixTestID("n0")),
 			EndNode:   NodeID(prefixTestID("does-not-exist")),
@@ -1134,7 +1149,7 @@ func TestBadgerEngine_BulkCreateEdges(t *testing.T) {
 		}})
 		assert.ErrorIs(t, err, ErrNotFound)
 
-		err = engine.BulkCreateEdges([]*Edge{{
+		err = engine.BulkCreateEdges(t.Context(), []*Edge{{
 			ID:        EdgeID(prefixTestID("e00")),
 			StartNode: NodeID(prefixTestID("n0")),
 			EndNode:   NodeID(prefixTestID("n1")),
@@ -1144,7 +1159,7 @@ func TestBadgerEngine_BulkCreateEdges(t *testing.T) {
 
 		closed := createTestBadgerEngine(t)
 		require.NoError(t, closed.Close())
-		err = closed.BulkCreateEdges([]*Edge{{
+		err = closed.BulkCreateEdges(t.Context(), []*Edge{{
 			ID:        EdgeID(prefixTestID("closed-edge")),
 			StartNode: NodeID(prefixTestID("n0")),
 			EndNode:   NodeID(prefixTestID("n1")),
@@ -1155,9 +1170,9 @@ func TestBadgerEngine_BulkCreateEdges(t *testing.T) {
 
 	t.Run("notifies edge created listeners", func(t *testing.T) {
 		engine2 := createTestBadgerEngine(t)
-		_, err := engine2.CreateNode(testNode("edge-notify-1"))
+		_, err := engine2.CreateNode(t.Context(), testNode("edge-notify-1"))
 		require.NoError(t, err)
-		_, err = engine2.CreateNode(testNode("edge-notify-2"))
+		_, err = engine2.CreateNode(t.Context(), testNode("edge-notify-2"))
 		require.NoError(t, err)
 
 		var created []EdgeID
@@ -1166,7 +1181,7 @@ func TestBadgerEngine_BulkCreateEdges(t *testing.T) {
 		})
 
 		edges := []*Edge{testEdge("edge-notify", "edge-notify-1", "edge-notify-2", "LINK")}
-		require.NoError(t, engine2.BulkCreateEdges(edges))
+		require.NoError(t, engine2.BulkCreateEdges(t.Context(), edges))
 		assert.Equal(t, []EdgeID{edges[0].ID}, created)
 	})
 }
@@ -1180,30 +1195,36 @@ func TestBadgerEngine_Degree(t *testing.T) {
 
 	// Create hub and spoke pattern
 	hub := testNode("hub")
-	_, err := engine.CreateNode(hub)
+	_, err := engine.CreateNode(t.Context(), hub)
 	require.NoError(t, err)
 
 	for i := 0; i < 5; i++ {
 		spoke := testNode("spoke-" + string(rune('0'+i)))
-		_, err := engine.CreateNode(spoke)
+		_, err := engine.CreateNode(t.Context(), spoke)
 		require.NoError(t, err)
-		require.NoError(t, engine.CreateEdge(testEdge("out-"+string(rune('0'+i)), hub.ID, spoke.ID, "OUT")))
-		require.NoError(t, engine.CreateEdge(testEdge("in-"+string(rune('0'+i)), spoke.ID, hub.ID, "IN")))
+		require.NoError(t, engine.CreateEdge(t.Context(), testEdge("out-"+string(rune('0'+i)), hub.ID, spoke.ID, "OUT")))
+		require.NoError(t, engine.CreateEdge(t.Context(), testEdge("in-"+string(rune('0'+i)), spoke.ID, hub.ID, "IN")))
 	}
 
 	t.Run("GetOutDegree", func(t *testing.T) {
-		degree := engine.GetOutDegree(NodeID(prefixTestID("hub")))
+		degree, err := engine.GetOutDegree(t.Context(), NodeID(prefixTestID("hub")))
+		require.NoError(t, err)
 		assert.Equal(t, 5, degree)
 	})
 
 	t.Run("GetInDegree", func(t *testing.T) {
-		degree := engine.GetInDegree(NodeID(prefixTestID("hub")))
+		degree, err := engine.GetInDegree(t.Context(), NodeID(prefixTestID("hub")))
+		require.NoError(t, err)
 		assert.Equal(t, 5, degree)
 	})
 
 	t.Run("returns 0 for non-existent node", func(t *testing.T) {
-		assert.Equal(t, 0, engine.GetOutDegree(NodeID(prefixTestID("nonexistent"))))
-		assert.Equal(t, 0, engine.GetInDegree(NodeID(prefixTestID("nonexistent"))))
+		degree, err := engine.GetOutDegree(t.Context(), NodeID(prefixTestID("nonexistent")))
+		require.NoError(t, err)
+		assert.Equal(t, 0, degree)
+		degree, err = engine.GetInDegree(t.Context(), NodeID(prefixTestID("nonexistent")))
+		require.NoError(t, err)
+		assert.Equal(t, 0, degree)
 	})
 }
 
@@ -1215,26 +1236,26 @@ func TestBadgerEngine_Stats(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 
 	t.Run("initial counts are zero", func(t *testing.T) {
-		nodeCount, err := engine.NodeCount()
+		nodeCount, err := engine.NodeCount(t.Context())
 		require.NoError(t, err)
 		assert.EqualValues(t, 0, nodeCount)
 
-		edgeCount, err := engine.EdgeCount()
+		edgeCount, err := engine.EdgeCount(t.Context())
 		require.NoError(t, err)
 		assert.EqualValues(t, 0, edgeCount)
 	})
 
 	t.Run("counts increase after inserts", func(t *testing.T) {
 		for i := 0; i < 10; i++ {
-			_, err := engine.CreateNode(testNode("n" + string(rune('0'+i))))
+			_, err := engine.CreateNode(t.Context(), testNode("n"+string(rune('0'+i))))
 			require.NoError(t, err)
 		}
 
-		require.NoError(t, engine.CreateEdge(testEdge("e1", "n0", "n1", "A")))
-		require.NoError(t, engine.CreateEdge(testEdge("e2", "n1", "n2", "B")))
+		require.NoError(t, engine.CreateEdge(t.Context(), testEdge("e1", "n0", "n1", "A")))
+		require.NoError(t, engine.CreateEdge(t.Context(), testEdge("e2", "n1", "n2", "B")))
 
-		nodeCount, _ := engine.NodeCount()
-		edgeCount, _ := engine.EdgeCount()
+		nodeCount, _ := engine.NodeCount(t.Context())
+		edgeCount, _ := engine.EdgeCount(t.Context())
 
 		assert.EqualValues(t, 10, nodeCount)
 		assert.EqualValues(t, 2, edgeCount)
@@ -1262,7 +1283,7 @@ func TestBadgerEngine_Persistence(t *testing.T) {
 			Properties: map[string]any{"value": "persisted"},
 			CreatedAt:  time.Now(),
 		}
-		_, err = engine1.CreateNode(node)
+		_, err = engine1.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 
 		// Close
@@ -1274,7 +1295,7 @@ func TestBadgerEngine_Persistence(t *testing.T) {
 		defer engine2.Close()
 
 		// Verify data persisted
-		retrieved, err := engine2.GetNode(NodeID(prefixTestID("persistent")))
+		retrieved, err := engine2.GetNode(t.Context(), NodeID(prefixTestID("persistent")))
 		require.NoError(t, err)
 		assert.Equal(t, "persisted", retrieved.Properties["value"])
 	})
@@ -1294,16 +1315,16 @@ func TestBadgerEngine_Persistence(t *testing.T) {
 				ID:     NodeID(prefixTestID("labeled-" + string(rune('0'+i)))),
 				Labels: []string{"PersistLabel"},
 			}
-			_, err := engine1.CreateNode(node)
+			_, err := engine1.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 		}
 
 		// Add edges
-		_, err = engine1.CreateNode(&Node{ID: NodeID(prefixTestID("target")), Labels: []string{"Target"}})
+		_, err = engine1.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("target")), Labels: []string{"Target"}})
 		require.NoError(t, err)
 		for i := 0; i < 3; i++ {
 			edge := testEdge("persist-edge-"+string(rune('0'+i)), NodeID(prefixTestID("labeled-"+string(rune('0'+i)))), "target", "POINTS")
-			require.NoError(t, engine1.CreateEdge(edge))
+			require.NoError(t, engine1.CreateEdge(t.Context(), edge))
 		}
 
 		require.NoError(t, engine1.Close())
@@ -1338,7 +1359,7 @@ func TestBadgerEngine_Persistence(t *testing.T) {
 			{ID: NodeID(prefixTestID("doc-3")), Labels: []string{"MongoDocument"}, Properties: map[string]any{"sourceId": "src-003"}},
 		}
 		for _, n := range nodes {
-			_, err := engine1.CreateNode(n)
+			_, err := engine1.CreateNode(t.Context(), n)
 			require.NoError(t, err)
 		}
 
@@ -1347,7 +1368,7 @@ func TestBadgerEngine_Persistence(t *testing.T) {
 		for _, n := range nodes {
 			require.NoError(t, schema1.PropertyIndexInsert("MongoDocument", "sourceId", n.ID, n.Properties["sourceId"]))
 		}
-		before := schema1.PropertyIndexLookup("MongoDocument", "sourceId", "src-002")
+		before := checkedIndexRead[[]NodeID](t)(schema1.PropertyIndexLookup(t.Context(), "MongoDocument", "sourceId", "src-002"))
 		require.Len(t, before, 1)
 		require.Equal(t, NodeID(prefixTestID("doc-2")), before[0])
 
@@ -1358,7 +1379,7 @@ func TestBadgerEngine_Persistence(t *testing.T) {
 		defer engine2.Close()
 
 		schema2 := engine2.GetSchemaForNamespace("test")
-		after := schema2.PropertyIndexLookup("MongoDocument", "sourceId", "src-002")
+		after := checkedIndexRead[[]NodeID](t)(schema2.PropertyIndexLookup(t.Context(), "MongoDocument", "sourceId", "src-002"))
 		require.Len(t, after, 1, "property index entries should be rebuilt on restart")
 		require.Equal(t, NodeID(prefixTestID("doc-2")), after[0])
 	})
@@ -1374,7 +1395,7 @@ func TestBadgerEngine_Concurrency(t *testing.T) {
 	t.Run("concurrent reads", func(t *testing.T) {
 		// Create some data with unique IDs
 		for i := 0; i < 100; i++ {
-			_, err := engine.CreateNode(testNode(fmt.Sprintf("conc-read-%03d", i)))
+			_, err := engine.CreateNode(t.Context(), testNode(fmt.Sprintf("conc-read-%03d", i)))
 			require.NoError(t, err)
 		}
 
@@ -1406,7 +1427,7 @@ func TestBadgerEngine_Concurrency(t *testing.T) {
 				defer wg.Done()
 				node := testNode(fmt.Sprintf("parallel-%03d", idx))
 
-				_, err := engine2.CreateNode(node)
+				_, err := engine2.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 				if err != nil {
 					errors <- err
@@ -1421,7 +1442,7 @@ func TestBadgerEngine_Concurrency(t *testing.T) {
 			t.Errorf("concurrent write error: %v", err)
 		}
 
-		count, _ := engine2.NodeCount()
+		count, _ := engine2.NodeCount(t.Context())
 		assert.EqualValues(t, 100, count)
 	})
 }
@@ -1435,12 +1456,12 @@ func TestBadgerEngine_ClosedOperations(t *testing.T) {
 	require.NoError(t, engine.Close())
 
 	t.Run("CreateNode returns ErrStorageClosed", func(t *testing.T) {
-		_, err := engine.CreateNode(testNode("test"))
+		_, err := engine.CreateNode(t.Context(), testNode("test"))
 		assert.ErrorIs(t, err, ErrStorageClosed)
 	})
 
 	t.Run("GetNode returns ErrStorageClosed", func(t *testing.T) {
-		_, err := engine.GetNode(NodeID(prefixTestID("test")))
+		_, err := engine.GetNode(t.Context(), NodeID(prefixTestID("test")))
 		assert.ErrorIs(t, err, ErrStorageClosed)
 	})
 
@@ -1450,7 +1471,7 @@ func TestBadgerEngine_ClosedOperations(t *testing.T) {
 	})
 
 	t.Run("NodeCount returns ErrStorageClosed", func(t *testing.T) {
-		_, err := engine.NodeCount()
+		_, err := engine.NodeCount(t.Context())
 		assert.ErrorIs(t, err, ErrStorageClosed)
 	})
 
@@ -1475,7 +1496,7 @@ func TestBadgerEngine_Size(t *testing.T) {
 			Labels:     []string{"SizeTest"},
 			Properties: map[string]any{"data": "some test data to increase size"},
 		}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 
@@ -1497,7 +1518,7 @@ func TestBadgerEngine_Sync(t *testing.T) {
 	defer engine.Close()
 
 	// Add data
-	_, err := engine.CreateNode(testNode("sync-test"))
+	_, err := engine.CreateNode(t.Context(), testNode("sync-test"))
 	require.NoError(t, err)
 
 	// Sync should not error
@@ -1512,13 +1533,13 @@ func TestBadgerEngine_RunGC(t *testing.T) {
 	// Add and delete some data to create garbage
 	for i := 0; i < 100; i++ {
 		node := testNode(fmt.Sprintf("gc-%03d", i))
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 
 	// Delete half
 	for i := 0; i < 50; i++ {
-		engine.DeleteNode(NodeID(prefixTestID(fmt.Sprintf("gc-%03d", i))))
+		engine.DeleteNode(t.Context(), NodeID(prefixTestID(fmt.Sprintf("gc-%03d", i))))
 	}
 
 	// GC may or may not run depending on amount of garbage
@@ -1563,7 +1584,7 @@ func TestNewBadgerEngineWithOptions(t *testing.T) {
 		defer engine.Close()
 
 		// Should work normally
-		_, err = engine.CreateNode(testNode("test"))
+		_, err = engine.CreateNode(t.Context(), testNode("test"))
 		require.NoError(t, err)
 	})
 
@@ -1577,7 +1598,7 @@ func TestNewBadgerEngineWithOptions(t *testing.T) {
 		defer engine.Close()
 
 		// Should work with sync writes
-		_, err = engine.CreateNode(testNode("test"))
+		_, err = engine.CreateNode(t.Context(), testNode("test"))
 		require.NoError(t, err)
 	})
 
@@ -1621,7 +1642,7 @@ func TestNewBadgerEngineWithOptions(t *testing.T) {
 		require.Equal(t, 11, engine.labelFirstCacheMax)
 		require.Equal(t, 7, engine.retentionPolicy.MaxVersionsPerKey)
 		require.Equal(t, time.Hour, engine.retentionPolicy.TTL)
-		_, err = engine.CreateNode(testNode("hp"))
+		_, err = engine.CreateNode(t.Context(), testNode("hp"))
 		require.NoError(t, err)
 	})
 
@@ -1633,7 +1654,7 @@ func TestNewBadgerEngineWithOptions(t *testing.T) {
 		require.NoError(t, err)
 		defer engine.Close()
 
-		_, err = engine.CreateNode(testNode("lm"))
+		_, err = engine.CreateNode(t.Context(), testNode("lm"))
 		require.NoError(t, err)
 	})
 }
@@ -1971,7 +1992,7 @@ func BenchmarkBadgerEngine_CreateNode(b *testing.B) {
 			Labels:     []string{"Benchmark"},
 			Properties: map[string]any{"index": i},
 		}
-		engine.CreateNode(node)
+		engine.CreateNode(b.Context(), node)
 	}
 }
 
@@ -1988,13 +2009,13 @@ func BenchmarkBadgerEngine_GetNode(b *testing.B) {
 			ID:     NodeID(prefixTestID(fmt.Sprintf("bench-%06d", i))),
 			Labels: []string{"Benchmark"},
 		}
-		engine.CreateNode(node)
+		engine.CreateNode(b.Context(), node)
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		idx := i % 10000
-		_, _ = engine.GetNode(NodeID(prefixTestID(fmt.Sprintf("bench-%06d", idx))))
+		_, _ = engine.GetNode(b.Context(), NodeID(prefixTestID(fmt.Sprintf("bench-%06d", idx))))
 	}
 }
 
@@ -2020,7 +2041,7 @@ func BenchmarkBadgerEngine_BulkCreateNodes(b *testing.B) {
 				// Reset engine between iterations
 				engine.Close()
 				engine, _ = fixtureowner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
-				engine.BulkCreateNodes(nodes)
+				engine.BulkCreateNodes(b.Context(), nodes)
 			}
 		})
 	}
@@ -2076,17 +2097,17 @@ func TestBadgerEngine_UpdateEdge_NotFound(t *testing.T) {
 		Type:       "REL",
 		Properties: map[string]interface{}{},
 	}
-	err := engine.UpdateEdge(EdgeUpdateRequest{After: updated})
+	err := engine.UpdateEdge(t.Context(), EdgeUpdateRequest{After: updated})
 	assert.ErrorIs(t, err, ErrNotFound)
 }
 
 func TestBadgerEngine_UpdateEdge_NilAndEmptyID(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 
-	err := engine.UpdateEdge(EdgeUpdateRequest{After: nil})
+	err := engine.UpdateEdge(t.Context(), EdgeUpdateRequest{After: nil})
 	assert.ErrorIs(t, err, ErrInvalidData)
 
-	err = engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: ""}})
+	err = engine.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: ""}})
 	assert.ErrorIs(t, err, ErrInvalidID)
 }
 
@@ -2099,31 +2120,31 @@ func TestBadgerEngine_ClosedEngineErrors(t *testing.T) {
 	require.NoError(t, engine.Close())
 
 	// All operations should return ErrStorageClosed on a closed engine
-	_, err = engine.CreateNode(testNode("x"))
+	_, err = engine.CreateNode(t.Context(), testNode("x"))
 	assert.ErrorIs(t, err, ErrStorageClosed)
 
-	err = engine.CreateEdge(testEdge("x", "a", "b", "R"))
+	err = engine.CreateEdge(t.Context(), testEdge("x", "a", "b", "R"))
 	assert.ErrorIs(t, err, ErrStorageClosed)
 
-	_, err = engine.GetNode(NodeID("x"))
+	_, err = engine.GetNode(t.Context(), NodeID("x"))
 	assert.ErrorIs(t, err, ErrStorageClosed)
 
-	_, err = engine.GetEdge(EdgeID("x"))
+	_, err = engine.GetEdge(t.Context(), EdgeID("x"))
 	assert.ErrorIs(t, err, ErrStorageClosed)
 
-	err = engine.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "x", StartNode: "a", EndNode: "b", Type: "R"}})
+	err = engine.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "x", StartNode: "a", EndNode: "b", Type: "R"}})
 	assert.ErrorIs(t, err, ErrStorageClosed)
 
-	err = engine.DeleteEdge(EdgeID("x"))
+	err = engine.DeleteEdge(t.Context(), EdgeID("x"))
 	assert.ErrorIs(t, err, ErrStorageClosed)
 
-	err = engine.DeleteNode(NodeID("x"))
+	err = engine.DeleteNode(t.Context(), NodeID("x"))
 	assert.ErrorIs(t, err, ErrStorageClosed)
 }
 
 func TestBadgerEngine_GetEdge_EmptyID(t *testing.T) {
 	engine := createTestBadgerEngine(t)
-	_, err := engine.GetEdge("")
+	_, err := engine.GetEdge(t.Context(), "")
 	assert.ErrorIs(t, err, ErrInvalidID)
 }
 
@@ -2133,12 +2154,12 @@ func TestBadgerEngine_UpdateEdge_MissingEndpoint(t *testing.T) {
 	// Create nodes and edge
 	n1 := testNode("me-n1")
 	n2 := testNode("me-n2")
-	_, err := engine.CreateNode(n1)
+	_, err := engine.CreateNode(t.Context(), n1)
 	require.NoError(t, err)
-	_, err = engine.CreateNode(n2)
+	_, err = engine.CreateNode(t.Context(), n2)
 	require.NoError(t, err)
 	e := testEdge("me-e1", "me-n1", "me-n2", "KNOWS")
-	require.NoError(t, engine.CreateEdge(e))
+	require.NoError(t, engine.CreateEdge(t.Context(), e))
 
 	// Try to update with a start node that doesn't exist
 	updated := &Edge{
@@ -2148,6 +2169,6 @@ func TestBadgerEngine_UpdateEdge_MissingEndpoint(t *testing.T) {
 		Type:       "KNOWS",
 		Properties: map[string]interface{}{},
 	}
-	err = engine.UpdateEdge(EdgeUpdateRequest{After: updated})
+	err = engine.UpdateEdge(t.Context(), EdgeUpdateRequest{After: updated})
 	assert.ErrorIs(t, err, ErrNotFound)
 }

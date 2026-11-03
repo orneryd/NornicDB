@@ -1,5 +1,7 @@
 package storage
 
+import "context"
+
 // transactionEntityState is selected only while tx.mu is held. Passing maps
 // before taking that lock would race with transaction completion.
 type transactionEntityState[ID ~string, T Node | Edge] struct {
@@ -18,8 +20,10 @@ func (tx *BadgerTransaction) edgeReadState() transactionEntityState[EdgeID, Edge
 // readTransactionEntity owns the native point-read lifecycle and overlay order.
 // Typed decoders retain node hydration/projection and relationship semantics;
 // neither state maps nor post-read filtering escape the operation lock.
-func readTransactionEntity[ID ~string, T Node | Edge, P any](tx *BadgerTransaction, id ID, state func(*BadgerTransaction) transactionEntityState[ID, T], clone func(*T, P) *T, load func(*BadgerTransaction, ID, P) (*T, error), finish func(*BadgerTransaction, *T, P, error) (*T, error), policy P) (*T, error) {
-	tx.mu.Lock()
+func readTransactionEntity[ID ~string, T Node | Edge, P any](ctx context.Context, tx *BadgerTransaction, id ID, state func(*BadgerTransaction) transactionEntityState[ID, T], clone func(*T, P) *T, load func(context.Context, *BadgerTransaction, ID, P) (*T, error), finish func(*BadgerTransaction, *T, P, error) (*T, error), policy P) (*T, error) {
+	if err := tx.mu.LockContext(ctx); err != nil {
+		return nil, err
+	}
 	defer tx.mu.Unlock()
 	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		return nil, err
@@ -37,7 +41,7 @@ func readTransactionEntity[ID ~string, T Node | Edge, P any](tx *BadgerTransacti
 	} else if pending, ok := owned.pending[id]; ok {
 		entity = clone(pending, policy)
 	} else {
-		entity, err = load(tx, id, policy)
+		entity, err = load(ctx, tx, id, policy)
 	}
 	if finish != nil {
 		return finish(tx, entity, policy, err)
@@ -60,10 +64,16 @@ func cloneTransactionNode(node *Node, policy transactionNodeRead) *Node {
 	}
 	return copyNode(node)
 }
-func loadTransactionNode(tx *BadgerTransaction, id NodeID, policy transactionNodeRead) (*Node, error) {
+func loadTransactionNode(ctx context.Context, tx *BadgerTransaction, id NodeID, policy transactionNodeRead) (*Node, error) {
 	if policy.projected {
-		return tx.getCommittedNodeProjectedLocked(id, policy.properties)
+		return tx.getCommittedNodeProjectedLocked(ctx, id, policy.properties)
 	}
-	return tx.getCommittedNodeReadLocked(id, policy.vectors, policy.visibility)
+	return tx.getCommittedNodeReadLocked(ctx, id, policy.vectors, policy.visibility)
 }
 func cloneTransactionEdge(edge *Edge, _ readVisibility) *Edge { return copyEdge(edge) }
+
+// loadTransactionEdge binds the committed edge read as a transaction entity
+// loader, so the caller's context reaches the underlying read.
+func loadTransactionEdge(ctx context.Context, tx *BadgerTransaction, id EdgeID, v readVisibility) (*Edge, error) {
+	return tx.getCommittedEdgeReadLocked(ctx, id, v)
+}

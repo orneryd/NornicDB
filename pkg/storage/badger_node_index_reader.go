@@ -1,9 +1,14 @@
 package storage
 
+// Context-owner and envelope-metadata convergence author: Claude (storage-format-owners lane), #1693, 30 October 2026.
+
 import (
+	"cmp"
+	"context"
 	"encoding/binary"
 	"errors"
-	"sort"
+
+	"github.com/orneryd/nornicdb/internal/ctxsort"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -19,6 +24,8 @@ import (
 // its original streaming cost. No node bodies, embeddings or unrelated
 // dictionary ranges are read while selecting candidates.
 type nodeIndexReader struct {
+	ctx        context.Context
+	cancel     bulkReadCancellation
 	engine     *BadgerEngine
 	txn        *badger.Txn
 	index      *badger.Iterator
@@ -39,39 +46,24 @@ type nodeIndexCandidate struct {
 	num uint64
 }
 
-func (b *BadgerEngine) newNodeIndexReader(txn *badger.Txn, scope string, prefix []byte, after NodeID) *nodeIndexReader {
-	r := &nodeIndexReader{engine: b, txn: txn, prefix: prefix, scope: scope}
-	r.index = txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-	if scope == "" {
-		if after != "" {
-			num, ok := b.idDict.lookupNodeNumID(after)
-			if !ok {
-				r.err = ErrNotFound
-				return r
-			}
-			r.key = append(append([]byte(nil), prefix...), encodeNumID(num)...)
-		}
+func (b *BadgerEngine) newNodeIndexReader(ctx context.Context, txn *badger.Txn, scope string, prefix []byte, after NodeID) *nodeIndexReader {
+	r := &nodeIndexReader{ctx: ctx, engine: b, txn: txn, prefix: prefix, scope: scope}
+	if r.err = ctx.Err(); r.err != nil {
 		return r
 	}
-
+	r.index = txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	if after != "" {
-		item, err := txn.Get(nodeIDForwardKey(after))
-		if errors.Is(err, badger.ErrKeyNotFound) {
+		// The cursor resolves through the stream's own snapshot, in either
+		// scope, and keeps snapshotNodeRef's malformed-value diagnostic.
+		ref, found, err := b.snapshotNodeRef(txn, after)
+		if err == nil && !found {
 			err = ErrNotFound
-		}
-		if err == nil {
-			err = item.Value(func(value []byte) error {
-				if len(value) != 8 {
-					return ErrInvalidData
-				}
-				r.afterNum = binary.BigEndian.Uint64(value)
-				return nil
-			})
 		}
 		if err != nil {
 			r.err = err
 			return r
 		}
+		r.afterNum = ref.num
 		r.key = append(append([]byte(nil), prefix...), encodeNumID(r.afterNum)...)
 	}
 	return r
@@ -89,12 +81,14 @@ func (r *nodeIndexReader) useScopedCandidates() {
 	entries := r.txn.NewIterator(badgerPrefixIteratorOptions(nodeIDForwardKey(NodeID(r.scope))))
 	defer entries.Close()
 	for entries.Rewind(); entries.Valid(); entries.Next() {
+		if r.err = r.cancel.check(r.ctx); r.err != nil {
+			return
+		}
 		item := entries.Item()
 		var num uint64
+		// A malformed forward entry is skipped here (num stays 0), as before.
 		if err := item.Value(func(value []byte) error {
-			if len(value) == 8 {
-				num = binary.BigEndian.Uint64(value)
-			}
+			num, _ = decodeNodeRefNum(value)
 			return nil
 		}); err != nil {
 			r.err = err
@@ -104,12 +98,17 @@ func (r *nodeIndexReader) useScopedCandidates() {
 			r.candidates = append(r.candidates, nodeIndexCandidate{id: NodeID(item.Key()[1:]), num: num})
 		}
 	}
-	sort.Slice(r.candidates, func(i, j int) bool { return r.candidates[i].num < r.candidates[j].num })
+	if r.err = ctxsort.Sort(r.ctx, r.candidates, func(a, b nodeIndexCandidate) int { return cmp.Compare(a.num, b.num) }, false); r.err != nil {
+		return
+	}
 	r.key = make([]byte, len(r.prefix)+8)
 	copy(r.key, r.prefix)
 }
 
 func (r *nodeIndexReader) Next() bool {
+	if r.err == nil {
+		r.err = r.cancel.check(r.ctx)
+	}
 	if r.err != nil {
 		return false
 	}
@@ -128,6 +127,9 @@ func (r *nodeIndexReader) Next() bool {
 			r.index.Next()
 		}
 		for ; r.index.Valid(); r.index.Next() {
+			if r.err = r.cancel.check(r.ctx); r.err != nil {
+				return false
+			}
 			item := r.index.Item()
 			key := item.Key()
 			if len(key) != len(r.prefix)+8 {
@@ -138,7 +140,15 @@ func (r *nodeIndexReader) Next() bool {
 				continue
 			}
 			num := binary.BigEndian.Uint64(key[len(r.prefix):])
-			id, ok := r.engine.idDict.lookupNodeIDByNum(num)
+			// The index entry stores a numeric identity; the name it stood
+			// for belongs to this snapshot, not to the current dictionary a
+			// later DROP may have rebuilt.
+			name, ok, err := r.engine.readStoredBinding(r.txn, storedBinding{kind: nodeIdentityBinding, number: num})
+			if err != nil {
+				r.err = err
+				return false
+			}
+			id := NodeID(name)
 			if r.scope != "" && (!ok || id == "" || !nodeIDInScope(id, r.scope)) {
 				r.useScopedCandidates()
 				return r.Next()
@@ -177,4 +187,16 @@ func (r *nodeIndexReader) Close() {
 
 func (r *nodeIndexReader) Item() *badger.Item { return r.item }
 func (r *nodeIndexReader) NodeID() NodeID     { return r.id }
-func (r *nodeIndexReader) Err() error         { return r.err }
+func (r *nodeIndexReader) Err() error {
+	if r.err != nil {
+		return r.err
+	}
+	return r.ctx.Err()
+}
+
+func (r *nodeIndexReader) IndexKey() []byte {
+	if r.item == nil {
+		return nil
+	}
+	return r.item.Key()
+}

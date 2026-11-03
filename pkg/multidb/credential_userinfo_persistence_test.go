@@ -41,12 +41,12 @@ func TestCredentialUsernameOnlyCatalogPersistence(t *testing.T) {
 				ref.User = username
 				mgr.databases["probe"] = &DatabaseInfo{Name: "probe", Type: "composite", Status: "online", Constituents: []ConstituentRef{ref}}
 				system := storage.NewNamespacedEngine(engine, "system")
-				node, err := system.GetNode(storage.NodeID(metadataNodeID))
+				node, err := system.GetNode(t.Context(), storage.NodeID(metadataNodeID))
 				require.NoError(t, err)
 				data, err := json.Marshal(mgr.databases)
 				require.NoError(t, err)
 				node.Properties["data"] = string(data)
-				require.NoError(t, system.UpdateNode(storage.NodeUpdateRequest{After: node}))
+				require.NoError(t, system.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
 			} else {
 				require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "probe", []ConstituentRef{ref}))
 			}
@@ -63,7 +63,7 @@ func TestCredentialUsernameOnlyCatalogPersistence(t *testing.T) {
 				require.NoError(t, err)
 				mgr, err = NewDatabaseManager(t.Context(), engine, cfg)
 				require.NoError(t, err)
-				node, err := storage.NewNamespacedEngine(engine, "system").GetNode(storage.NodeID(metadataNodeID))
+				node, err := storage.NewNamespacedEngine(engine, "system").GetNode(t.Context(), storage.NodeID(metadataNodeID))
 				require.NoError(t, err)
 				if strings.Contains(node.Properties["data"].(string), username) || strings.Contains(node.Properties["data"].(string), url.PathEscape(username)) {
 					t.Error("URL username credential copied into plaintext catalog user field; capture withheld")

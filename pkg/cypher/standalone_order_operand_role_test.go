@@ -10,11 +10,11 @@ import (
 func TestStandaloneOrderRetainsSortOperandRole(t *testing.T) {
 	for _, name := range []string{"call", "match", "finish"} {
 		projection := "WITH 7 AS " + name + " RETURN " + name + " ORDER BY " + name + " DESC SKIP 0 LIMIT 1"
-		got, rewrite := desugarStandaloneOrderClauses(projection)
+		got, rewrite := desugarStandaloneOrderClauses(t.Context(), projection)
 		require.Equal(t, projection, got, name)
 		require.Nil(t, rewrite, name)
 		standalone := "UNWIND [7] AS " + name + " ORDER BY " + name + " DESC SKIP 0 LIMIT 1 RETURN " + name
-		got, rewrite = desugarStandaloneOrderClauses(standalone)
+		got, rewrite = desugarStandaloneOrderClauses(t.Context(), standalone)
 		require.Equal(t, "UNWIND [7] AS "+name+" WITH * ORDER BY "+name+" DESC SKIP 0 LIMIT 1 RETURN "+name, got, name)
 		require.NotNil(t, rewrite, name)
 		require.Len(t, rewrite.Edits, 1, name)
@@ -22,7 +22,7 @@ func TestStandaloneOrderRetainsSortOperandRole(t *testing.T) {
 		require.Equal(t, rewrite.Edits[0].Original.Start, rewrite.Edits[0].Original.End, name)
 	}
 	query := "WITH 7 AS call RETURN call ORDER BY call DESC OFFSET 0 LIMIT 1"
-	got, rewrite := desugarStandaloneOrderClauses(query)
+	got, rewrite := desugarStandaloneOrderClauses(t.Context(), query)
 	require.Equal(t, "WITH 7 AS call RETURN call ORDER BY call DESC SKIP 0 LIMIT 1", got)
 	require.NotNil(t, rewrite)
 	require.Len(t, rewrite.Edits, 1)
@@ -32,7 +32,7 @@ func TestStandaloneOrderRetainsSortOperandRole(t *testing.T) {
 	require.Equal(t, "SKIP", got[rewrite.Edits[0].Accepted.Start:rewrite.Edits[0].Accepted.End])
 	const noEdit = "WITH 7 AS call RETURN call ORDER BY call DESC SKIP 0 LIMIT 1"
 	allocs := testing.AllocsPerRun(100, func() {
-		if got, rewrite := desugarStandaloneOrderClauses(noEdit); got != noEdit || rewrite != nil {
+		if got, rewrite := desugarStandaloneOrderClauses(t.Context(), noEdit); got != noEdit || rewrite != nil {
 			panic("unexpected sort rewrite")
 		}
 	})

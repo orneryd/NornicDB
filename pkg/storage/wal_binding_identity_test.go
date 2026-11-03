@@ -18,7 +18,7 @@ func TestWALPropertyIdentityForeignAndRestoreRotation(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			dir := t.TempDir()
 			b := reviewBindingEngine(t, dir)
-			_, err := b.CreateNode(&Node{ID: "perf:seed", Properties: map[string]any{"property_000": int64(0)}})
+			_, err := b.CreateNode(t.Context(), &Node{ID: "perf:seed", Properties: map[string]any{"property_000": int64(0)}})
 			require.NoError(t, err)
 			before := b.walPropertySource.identity
 			switch mode {

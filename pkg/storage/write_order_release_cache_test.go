@@ -16,11 +16,11 @@ import (
 func TestOrderReleaseEvictsCachedImages(t *testing.T) {
 	b := newWriteBehindTestEngine(t, time.Hour)
 	for _, id := range []NodeID{"test:a", "test:b"} {
-		_, err := b.CreateNode(&Node{ID: id})
+		_, err := b.CreateNode(t.Context(), &Node{ID: id})
 		require.NoError(t, err)
 	}
-	require.NoError(t, b.FlushWriteBehind(nil))
-	_, err := b.GetNode("test:b") // cache test:b's image
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
+	_, err := b.GetNode(t.Context(), "test:b") // cache test:b's image
 	require.NoError(t, err)
 
 	var once sync.Once
@@ -28,12 +28,12 @@ func TestOrderReleaseEvictsCachedImages(t *testing.T) {
 	restore := setCommitTailHook(func() {
 		once.Do(func() {
 			go func() {
-				tx, err := b.BeginTransaction()
+				tx, err := b.BeginTransaction(t.Context())
 				if err == nil {
 					err = tx.SetImplicit(true)
 				}
 				if err == nil {
-					err = tx.CreateEdge(&Edge{ID: "test:ab", StartNode: "test:a", EndNode: "test:b", Type: "LINK"})
+					err = tx.CreateEdge(t.Context(), &Edge{ID: "test:ab", StartNode: "test:a", EndNode: "test:b", Type: "LINK"})
 				}
 				if err == nil {
 					err = tx.Commit()
@@ -51,19 +51,19 @@ func TestOrderReleaseEvictsCachedImages(t *testing.T) {
 	})
 	defer restore()
 
-	tx, err := b.BeginTransaction()
+	tx, err := b.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	require.NoError(t, tx.DeleteGraphNode("test:b", CascadeEdges))
+	require.NoError(t, tx.DeleteGraphNode(t.Context(), "test:b", CascadeEdges))
 	require.NoError(t, tx.Commit())
 	restore()
 	createErr := <-created
 
-	require.NoError(t, b.FlushWriteBehind(nil))
+	require.NoError(t, b.FlushWriteBehind(context.Background()))
 	edges, err := b.AllEdges(context.Background())
 	require.NoError(t, err)
 	for _, e := range edges {
 		for _, id := range []NodeID{e.StartNode, e.EndNode} {
-			_, err := b.GetNode(id)
+			_, err := b.GetNode(t.Context(), id)
 			require.NoError(t, err, "relationship %s acknowledged (create error %v) to endpoint %s deleted before it", e.ID, createErr, id)
 		}
 	}

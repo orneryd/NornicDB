@@ -17,25 +17,25 @@ type relationshipMergeCreateEngine struct {
 	getEdgesBetween func(storage.NodeID, storage.NodeID) ([]*storage.Edge, error)
 }
 
-func (e *relationshipMergeCreateEngine) CreateEdge(edge *storage.Edge) error {
+func (e *relationshipMergeCreateEngine) CreateEdge(ctx context.Context, edge *storage.Edge) error {
 	return e.createEdge(edge)
 }
 
-func (e *relationshipMergeCreateEngine) GetEdge(id storage.EdgeID) (*storage.Edge, error) {
+func (e *relationshipMergeCreateEngine) GetEdge(ctx context.Context, id storage.EdgeID) (*storage.Edge, error) {
 	return e.getEdge(id)
 }
 
-func (e *relationshipMergeCreateEngine) GetEdgeBetween(
+func (e *relationshipMergeCreateEngine) GetEdgeBetween(ctx context.Context,
 	startID storage.NodeID,
 	endID storage.NodeID,
 	relType string,
-) *storage.Edge {
-	return e.getEdgeBetween(startID, endID, relType)
+) (*storage.Edge, error) {
+	return e.getEdgeBetween(startID, endID, relType), nil
 }
 
 // MatchEdgesBetween matches the fake's pair content (its GetEdgesBetween)
 // by type and pattern, as storage.MatchEdgesBetween does.
-func (e *relationshipMergeCreateEngine) MatchEdgesBetween(
+func (e *relationshipMergeCreateEngine) MatchEdgesBetween(ctx context.Context,
 	startID storage.NodeID,
 	endID storage.NodeID,
 	relType string,

@@ -2,10 +2,11 @@ package server
 
 import (
 	"errors"
-	"github.com/orneryd/nornicdb/internal/httpresponse"
 	"net/http"
 	"runtime"
 	"strings"
+
+	"github.com/orneryd/nornicdb/internal/httpresponse"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
@@ -38,8 +39,8 @@ func (s *Server) handleAdminStats(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		nodeCount, _ := storage.NodeCount()
-		edgeCount, _ := storage.EdgeCount()
+		nodeCount, _ := storage.NodeCount(r.Context())
+		edgeCount, _ := storage.EdgeCount(r.Context())
 
 		totalNodeCount += nodeCount
 		totalEdgeCount += edgeCount

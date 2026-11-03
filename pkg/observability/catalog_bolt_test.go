@@ -25,9 +25,9 @@ func TestBoltMetrics_RegistersSixFamilies(t *testing.T) {
 	// plain Gauge; SessionDuration has no labels and emits when observed.
 	bag.ConnectionsActive.WithLabelValues("tcp").Inc()
 	bag.ConnectionsTotal.WithLabelValues("success", "tcp").Inc()
-	bag.SessionDuration.Bind().Observe(nil, 0.001)
+	bag.SessionDuration.Bind().Observe(t.Context(), 0.001)
 	bag.MessagesTotal.WithLabelValues("run", "success").Inc()
-	bag.MessageDuration.Bind("run").Observe(nil, 0.001)
+	bag.MessageDuration.Bind("run").Observe(t.Context(), 0.001)
 	bag.PackstreamDecodeErrors.WithLabelValues("truncated").Inc()
 	bag.ConnectionsRejectedTotal.WithLabelValues("max_connections").Inc()
 	bag.WebSocketOversizedTotal.Inc()
@@ -115,7 +115,7 @@ func TestMetricCardinality_Bolt(t *testing.T) {
 			ceiling: 10,
 			drive: func(bag *BoltMetrics) {
 				for _, op := range AllowedBoltOps {
-					bag.MessageDuration.Bind(op).Observe(nil, 0.001)
+					bag.MessageDuration.Bind(op).Observe(t.Context(), 0.001)
 				}
 			},
 		},

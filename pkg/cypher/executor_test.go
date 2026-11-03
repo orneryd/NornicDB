@@ -284,9 +284,9 @@ func TestExecuteMatchWithLabel(t *testing.T) {
 		Labels:     []string{"Company"},
 		Properties: map[string]interface{}{"name": "Acme"},
 	}
-	_, err := store.CreateNode(node1)
+	_, err := store.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
-	_, err = store.CreateNode(node2)
+	_, err = store.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
 
 	// Match only Person nodes
@@ -311,10 +311,10 @@ func TestExecuteMatchAllNodes(t *testing.T) {
 		}
 		err := error(nil)
 		if i == 0 {
-			_, err = store.CreateNode(node)
+			_, err = store.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 		} else {
-			_, err = store.CreateNode(node)
+			_, err = store.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 		}
 	}
@@ -342,9 +342,9 @@ func TestExecuteMatchWithWhere(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Bob", "age": float64(25)},
 	}
-	_, err := store.CreateNode(node1)
+	_, err := store.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
-	_, err = store.CreateNode(node2)
+	_, err = store.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
 
 	// Test equality
@@ -379,10 +379,10 @@ func TestExecuteMatchWithCount(t *testing.T) {
 		}
 		err := error(nil)
 		if i == 0 {
-			_, err = store.CreateNode(node)
+			_, err = store.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 		} else {
-			_, err = store.CreateNode(node)
+			_, err = store.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 		}
 	}
@@ -408,7 +408,7 @@ func TestExecuteMatchWithLimit(t *testing.T) {
 			Labels:     []string{"Item"},
 			Properties: map[string]interface{}{},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -432,7 +432,7 @@ func TestExecuteMatchWithSkip(t *testing.T) {
 			Labels:     []string{"Item"},
 			Properties: map[string]interface{}{},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -467,7 +467,7 @@ func TestExecuteCreateMultipleNodes(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2, result.Stats.NodesCreated)
 
-	nodeCount, _ := store.NodeCount()
+	nodeCount, _ := store.NodeCount(t.Context())
 	assert.Equal(t, int64(2), nodeCount)
 }
 
@@ -483,7 +483,7 @@ func TestExecuteCreateRelationship(t *testing.T) {
 	assert.Equal(t, 2, result.Stats.NodesCreated)
 	assert.Equal(t, 1, result.Stats.RelationshipsCreated)
 
-	edgeCount, _ := store.EdgeCount()
+	edgeCount, _ := store.EdgeCount(t.Context())
 	assert.Equal(t, int64(1), edgeCount)
 }
 
@@ -518,7 +518,7 @@ func TestExecuteDelete(t *testing.T) {
 		Labels:     []string{"Temp"},
 		Properties: map[string]interface{}{},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -528,7 +528,7 @@ func TestExecuteDelete(t *testing.T) {
 	assert.Equal(t, 1, result.Stats.NodesDeleted)
 
 	// Verify deleted
-	nodeCount, _ := store.NodeCount()
+	nodeCount, _ := store.NodeCount(t.Context())
 	assert.Equal(t, int64(0), nodeCount)
 }
 
@@ -542,14 +542,14 @@ func TestExecuteDetachDelete(t *testing.T) {
 	// Create nodes with relationship
 	node1 := &storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{}}
 	node2 := &storage.Node{ID: "n2", Labels: []string{"Person"}, Properties: map[string]interface{}{}}
-	_, err := store.CreateNode(node1)
+	_, err := store.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
 	require.NoError(t, err)
-	_, err = store.CreateNode(node2)
+	_, err = store.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
 
 	edge := &storage.Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS"}
-	require.NoError(t, store.CreateEdge(edge))
+	require.NoError(t, store.CreateEdge(t.Context(), edge))
 
 	// Detach delete
 	result, err := exec.Execute(ctx, "MATCH (n:Person) DETACH DELETE n", nil)
@@ -566,7 +566,7 @@ func TestExecuteCallProcedure(t *testing.T) {
 
 	// Add some test data
 	node := &storage.Node{ID: "test", Labels: []string{"Memory"}, Properties: map[string]interface{}{}}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -600,7 +600,7 @@ func TestExecuteCallWithYieldWhere(t *testing.T) {
 		{ID: "n4", Labels: []string{"Memory", "Important"}, Properties: map[string]interface{}{}},
 	}
 	for _, n := range nodes {
-		_, err := store.CreateNode(n)
+		_, err := store.CreateNode(t.Context(), n)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -897,7 +897,7 @@ func TestExecuteWithParameters(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Alice"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -923,7 +923,7 @@ func TestExecuteReturnPropertyAccess(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Alice", "age": float64(30)},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -945,14 +945,14 @@ func TestExecuteMatchRelationship(t *testing.T) {
 	// Create nodes and relationship
 	node1 := &storage.Node{ID: "p1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}}
 	node2 := &storage.Node{ID: "p2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Bob"}}
-	_, err := store.CreateNode(node1)
+	_, err := store.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
 	require.NoError(t, err)
-	_, err = store.CreateNode(node2)
+	_, err = store.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
 
 	edge := &storage.Edge{ID: "e1", StartNode: "p1", EndNode: "p2", Type: "KNOWS"}
-	require.NoError(t, store.CreateEdge(edge))
+	require.NoError(t, store.CreateEdge(t.Context(), edge))
 
 	// Match with relationship pattern
 	result, err := exec.Execute(ctx, "MATCH (a)-[r:KNOWS]->(b) RETURN a, r, b", nil)
@@ -985,7 +985,7 @@ func TestExecuteWhereOperators(t *testing.T) {
 			Labels:     []string{"Person"},
 			Properties: map[string]interface{}{"name": n.name, "age": n.age},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -1027,7 +1027,7 @@ func TestExecuteContainsOperator(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Alice Smith"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1054,7 +1054,7 @@ func TestExecuteStartsWithOperator(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Alice Smith"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1076,7 +1076,7 @@ func TestExecuteEndsWithOperator(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Alice Smith"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1099,7 +1099,7 @@ func TestExecuteDistinct(t *testing.T) {
 			Labels:     []string{"Person"},
 			Properties: map[string]interface{}{"category": "A"},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -1134,7 +1134,7 @@ func TestExecuteOrderBy(t *testing.T) {
 			Labels:     []string{"Person"},
 			Properties: map[string]interface{}{"age": n.age},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -1199,7 +1199,7 @@ func TestExecuteSet(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Alice", "age": float64(25)},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1209,7 +1209,7 @@ func TestExecuteSet(t *testing.T) {
 	assert.Equal(t, 1, result.Stats.PropertiesSet)
 
 	// Verify update - integer values should be stored as int64 (Neo4j compatible)
-	updated, _ := store.GetNode("set-test")
+	updated, _ := store.GetNode(t.Context(), "set-test")
 	assert.Equal(t, int64(30), updated.Properties["age"])
 }
 
@@ -1226,7 +1226,7 @@ func TestExecuteSetWithReturn(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Bob"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1275,7 +1275,7 @@ func TestExecuteAggregationSum(t *testing.T) {
 			Labels:     []string{"Number"},
 			Properties: map[string]interface{}{"value": float64(i * 10)},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -1300,7 +1300,7 @@ func TestExecuteAggregationAvg(t *testing.T) {
 			Labels:     []string{"Score"},
 			Properties: map[string]interface{}{"value": float64(i * 25)}, // 25,50,75,100
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -1325,7 +1325,7 @@ func TestExecuteAggregationMinMax(t *testing.T) {
 			Labels:     []string{"Value"},
 			Properties: map[string]interface{}{"num": v},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -1355,7 +1355,7 @@ func TestExecuteAggregationCollect(t *testing.T) {
 			Labels:     []string{"Person"},
 			Properties: map[string]interface{}{"name": name},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -1394,7 +1394,7 @@ func TestExecuteInOperator(t *testing.T) {
 			Labels:     []string{"User"},
 			Properties: map[string]interface{}{"status": status},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -1422,10 +1422,10 @@ func TestExecuteIsNullOperator(t *testing.T) {
 		Labels:     []string{"Contact"},
 		Properties: map[string]interface{}{"name": "Bob"},
 	}
-	_, err := store.CreateNode(node1)
+	_, err := store.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
 	require.NoError(t, err)
-	_, err = store.CreateNode(node2)
+	_, err = store.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
 
 	// IS NULL
@@ -1454,7 +1454,7 @@ func TestExecuteRegexOperator(t *testing.T) {
 			Labels:     []string{"User"},
 			Properties: map[string]interface{}{"email": email},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -1976,7 +1976,7 @@ func TestExecuteMultipleMatchCreateBlocksWithDifferentCategories(t *testing.T) {
 		for _, edge := range edges {
 			if edge.Type == "PART_OF" {
 				// Get the target category
-				targetNode, _ := store.GetNode(edge.EndNode)
+				targetNode, _ := store.GetNode(t.Context(), edge.EndNode)
 				categoryID := targetNode.Properties["categoryID"]
 
 				// Product1 should link to Category1, Product2 to Category2, etc.
@@ -2045,7 +2045,7 @@ func TestExecuteAllProcedures(t *testing.T) {
 		Labels:     []string{"TestLabel"},
 		Properties: map[string]interface{}{"prop1": "value1"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -2112,7 +2112,7 @@ func TestExecuteAndOrOperators(t *testing.T) {
 			Labels:     []string{"Person"},
 			Properties: map[string]interface{}{"name": n.name, "age": n.age, "active": n.active},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -2143,7 +2143,7 @@ func TestExecuteOrderByDesc(t *testing.T) {
 			Labels:     []string{"Person"},
 			Properties: map[string]interface{}{"age": age},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -2169,7 +2169,7 @@ func TestExecuteSkipAndLimit(t *testing.T) {
 			Labels:     []string{"Item"},
 			Properties: map[string]interface{}{"index": float64(i)},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -2207,7 +2207,7 @@ func TestSubstituteParams(t *testing.T) {
 		Labels:     []string{"User"},
 		Properties: map[string]interface{}{"name": "Alice", "age": float64(30)},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -2249,7 +2249,7 @@ func TestResolveReturnItemVariants(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Alice", "age": float64(30)},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -2289,12 +2289,12 @@ func TestExecuteCountProperty(t *testing.T) {
 	node1 := &storage.Node{ID: "cp1", Labels: []string{"User"}, Properties: map[string]interface{}{"name": "Alice", "email": "a@b.com"}}
 	node2 := &storage.Node{ID: "cp2", Labels: []string{"User"}, Properties: map[string]interface{}{"name": "Bob"}}
 	node3 := &storage.Node{ID: "cp3", Labels: []string{"User"}, Properties: map[string]interface{}{"name": "Charlie", "email": "c@d.com"}}
-	_, err := store.CreateNode(node1)
+	_, err := store.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
 	require.NoError(t, err)
-	_, err = store.CreateNode(node2)
+	_, err = store.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
-	_, err = store.CreateNode(node3)
+	_, err = store.CreateNode(t.Context(), node3)
 	require.NoError(t, err)
 
 	// COUNT(n.email) should only count non-null
@@ -2322,7 +2322,7 @@ func TestToFloat64Variants(t *testing.T) {
 			"string":  "42.5",
 		},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 

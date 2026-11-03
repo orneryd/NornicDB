@@ -23,13 +23,13 @@ func TestCompositeIdentityPublicMutations(t *testing.T) {
 			require.NoError(t, err)
 			second, err := manager.GetStorage("two")
 			require.NoError(t, err)
-			node, err := first.GetNode("same")
+			node, err := first.GetNode(t.Context(), "same")
 			require.NoError(t, err)
 			require.Equal(t, int64(7), node.Properties["v"])
-			edge, err := first.GetEdge("same-rel")
+			edge, err := first.GetEdge(t.Context(), "same-rel")
 			require.NoError(t, err)
 			require.NotContains(t, edge.Properties, "value")
-			node, err = second.GetNode("same")
+			node, err = second.GetNode(t.Context(), "same")
 			if operation.name == "delete node" {
 				require.ErrorIs(t, err, storage.ErrNotFound)
 			} else {
@@ -38,7 +38,7 @@ func TestCompositeIdentityPublicMutations(t *testing.T) {
 					require.Equal(t, int64(99), node.Properties["v"])
 				}
 			}
-			edge, err = second.GetEdge("same-rel")
+			edge, err = second.GetEdge(t.Context(), "same-rel")
 			if operation.name == "delete node" || operation.name == "delete edge" {
 				require.ErrorIs(t, err, storage.ErrNotFound)
 			} else {

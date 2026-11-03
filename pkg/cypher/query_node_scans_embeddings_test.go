@@ -178,7 +178,7 @@ func TestQueryNodeLabelScanKeepsTransactionView(t *testing.T) {
 	for _, pending := range []bool{false, true} {
 		t.Run(fmt.Sprintf("pending=%v", pending), func(t *testing.T) {
 			g := newLargeEmbeddingGraph(t, 2)
-			_, err := g.engine.CreateNode(&storage.Node{ID: "other:foreign", Labels: []string{"Doc"}})
+			_, err := g.engine.CreateNode(t.Context(), &storage.Node{ID: "other:foreign", Labels: []string{"Doc"}})
 			require.NoError(t, err)
 			g.run(t, "BEGIN", nil)
 			defer g.run(t, "ROLLBACK", nil)
@@ -187,8 +187,8 @@ func TestQueryNodeLabelScanKeepsTransactionView(t *testing.T) {
 				g.run(t, "MATCH (n:Doc {k: 1}) DELETE n", nil)
 				g.run(t, "CREATE (:Doc {title: 'pending'})", nil)
 			} else {
-				require.NoError(t, g.store.DeleteNode("doc-1"))
-				_, err := g.store.CreateNode(&storage.Node{ID: "late", Labels: []string{"Doc"}, Properties: map[string]interface{}{"title": "late"}})
+				require.NoError(t, g.store.DeleteNode(t.Context(), "doc-1"))
+				_, err := g.store.CreateNode(t.Context(), &storage.Node{ID: "late", Labels: []string{"Doc"}, Properties: map[string]interface{}{"title": "late"}})
 				require.NoError(t, err)
 			}
 			result := g.run(t, "MATCH (n:Doc) RETURN n ORDER BY n.title", nil)
@@ -237,7 +237,7 @@ func BenchmarkQueryNodeScanReads(b *testing.B) {
 			g := newLargeEmbeddingGraph(b, 0)
 			for i := 0; i < 100; i++ {
 				id := storage.NodeID(fmt.Sprintf("doc-%d", i))
-				_, err := g.store.CreateNode(&storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]interface{}{"title": "title"}})
+				_, err := g.store.CreateNode(b.Context(), &storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]interface{}{"title": "title"}})
 				require.NoError(b, err)
 				if embedded {
 					g.embed(b, id, make([]float32, 2048))

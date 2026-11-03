@@ -39,7 +39,7 @@ func TestTypedNumericRebasedMapConfig(t *testing.T) {
 			if recursive {
 				delete(want["outer"].(map[string]interface{}), "drop")
 			}
-			_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(input.Name), Labels: []string{"RebasedNumeric"}, Properties: map[string]interface{}{"name": input.Name, "xs": input.Property}})
+			_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(input.Name), Labels: []string{"RebasedNumeric"}, Properties: map[string]interface{}{"name": input.Name, "xs": input.Property}})
 			require.NoError(t, err)
 			params := map[string]interface{}{"xs": input.List, "boxed": []interface{}{input.Scalar}, "name": input.Name}
 			for _, form := range []struct{ prefix, list string }{
@@ -71,7 +71,7 @@ func TestTypedNumericRebasedDigestBoundaries(t *testing.T) {
 			list := reflect.MakeSlice(reflect.SliceOf(reflect.TypeOf(tc.value)), 1, 1)
 			list.Index(0).Set(reflect.ValueOf(tc.value))
 			name := fmt.Sprint(i)
-			_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(name), Labels: []string{"RebasedDigest"}, Properties: map[string]interface{}{"name": name, "xs": []interface{}{tc.value}}})
+			_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(name), Labels: []string{"RebasedDigest"}, Properties: map[string]interface{}{"name": name, "xs": []interface{}{tc.value}}})
 			require.NoError(t, err)
 			for _, nameAndHash := range []struct{ name, hash string }{
 				{"md5", func() string { sum := md5.Sum([]byte(tc.text)); return hex.EncodeToString(sum[:]) }()},

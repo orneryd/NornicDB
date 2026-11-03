@@ -47,7 +47,7 @@ func (e *mcpRelatedProbeEngine) GetIncomingEdges(ctx context.Context, nodeID sto
 	return rows, err
 }
 
-func (e *mcpRelatedProbeEngine) GetNode(nodeID storage.NodeID) (*storage.Node, error) {
+func (e *mcpRelatedProbeEngine) GetNode(ctx context.Context, nodeID storage.NodeID) (*storage.Node, error) {
 	e.nodes = append(e.nodes, string(nodeID))
 	if e.onNode != nil {
 		e.onNode(len(e.nodes))
@@ -55,7 +55,7 @@ func (e *mcpRelatedProbeEngine) GetNode(nodeID storage.NodeID) (*storage.Node, e
 	if e.missing[string(nodeID)] {
 		return nil, storage.ErrNotFound
 	}
-	return e.Engine.GetNode(nodeID)
+	return e.Engine.GetNode(ctx, nodeID)
 }
 
 func newMCPRelatedProbe(t *testing.T) (*mcpRelatedProbeEngine, storage.Engine) {
@@ -70,7 +70,7 @@ func createMCPRelatedNode(t *testing.T, engine storage.Engine, id storage.NodeID
 	if len(labels) == 0 {
 		labels = []string{"Doc"}
 	}
-	_, err := engine.CreateNode(&storage.Node{ID: id, Labels: labels, Properties: props})
+	_, err := engine.CreateNode(t.Context(), &storage.Node{ID: id, Labels: labels, Properties: props})
 	require.NoError(t, err)
 }
 
@@ -85,9 +85,9 @@ func TestMCPRelatedNodesDepthBoundaryAndProjection(t *testing.T) {
 	createMCPRelatedNode(t, engine, "tenant:a", map[string]interface{}{"title": "A"}, "Child")
 	createMCPRelatedNode(t, engine, "tenant:b", map[string]interface{}{"title": "B"})
 	createMCPRelatedNode(t, engine, "tenant:c", map[string]interface{}{"name": "C Name"}, "Inbound")
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "tenant:e-ra", StartNode: "tenant:root", EndNode: "tenant:a", Type: "LINKS"}))
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "tenant:e-ab", StartNode: "tenant:a", EndNode: "tenant:b", Type: "LINKS"}))
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "tenant:e-cr", StartNode: "tenant:c", EndNode: "tenant:root", Type: "REFERENCES"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "tenant:e-ra", StartNode: "tenant:root", EndNode: "tenant:a", Type: "LINKS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "tenant:e-ab", StartNode: "tenant:a", EndNode: "tenant:b", Type: "LINKS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "tenant:e-cr", StartNode: "tenant:c", EndNode: "tenant:root", Type: "REFERENCES"}))
 
 	server := newMCPRelatedServer()
 	server.SetDatabaseScopedStorage(func(string) (storage.Engine, error) { return engine, nil })
@@ -124,8 +124,8 @@ func TestMCPRelatedNodesEmitsAndExpandsMissingNode(t *testing.T) {
 	createMCPRelatedNode(t, engine, "tenant:root", map[string]interface{}{"title": "Root"})
 	createMCPRelatedNode(t, engine, "tenant:gone", map[string]interface{}{"title": "Gone"})
 	createMCPRelatedNode(t, engine, "tenant:child", map[string]interface{}{"title": "Child"})
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "tenant:e-rg", StartNode: "tenant:root", EndNode: "tenant:gone", Type: "LINKS"}))
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "tenant:e-gc", StartNode: "tenant:gone", EndNode: "tenant:child", Type: "LINKS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "tenant:e-rg", StartNode: "tenant:root", EndNode: "tenant:gone", Type: "LINKS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "tenant:e-gc", StartNode: "tenant:gone", EndNode: "tenant:child", Type: "LINKS"}))
 	probe.missing["tenant:gone"] = true
 
 	server := newMCPRelatedServer()
@@ -150,8 +150,8 @@ func TestMCPRelatedNodesKeepsRowsAlongsideAdjacencyReadErrors(t *testing.T) {
 	createMCPRelatedNode(t, engine, "tenant:root", map[string]interface{}{"title": "Root"})
 	createMCPRelatedNode(t, engine, "tenant:a", map[string]interface{}{"title": "A"})
 	createMCPRelatedNode(t, engine, "tenant:c", map[string]interface{}{"title": "C"})
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "tenant:e-ra", StartNode: "tenant:root", EndNode: "tenant:a", Type: "LINKS"}))
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "tenant:e-cr", StartNode: "tenant:c", EndNode: "tenant:root", Type: "REFERENCES"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "tenant:e-ra", StartNode: "tenant:root", EndNode: "tenant:a", Type: "LINKS"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "tenant:e-cr", StartNode: "tenant:c", EndNode: "tenant:root", Type: "REFERENCES"}))
 	probe.outErr = errors.New("outgoing adjacency read failed")
 	probe.inErr = errors.New("incoming adjacency read failed")
 
@@ -181,7 +181,7 @@ func TestMCPRelatedNodesCapInsideOneAdjacency(t *testing.T) {
 	for i := 0; i < 60; i++ {
 		id := storage.NodeID(fmt.Sprintf("tenant:n-%02d", i))
 		createMCPRelatedNode(t, engine, id, map[string]interface{}{"title": string(id)})
-		require.NoError(t, engine.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("tenant:e-%02d", i)), StartNode: "tenant:root", EndNode: id, Type: "LINKS"}))
+		require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: storage.EdgeID(fmt.Sprintf("tenant:e-%02d", i)), StartNode: "tenant:root", EndNode: id, Type: "LINKS"}))
 	}
 
 	server := newMCPRelatedServer()
@@ -201,7 +201,7 @@ func TestMCPRelatedNodesCancellationPublishesNothing(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		id := storage.NodeID(fmt.Sprintf("tenant:n-%02d", i))
 		createMCPRelatedNode(t, engine, id, map[string]interface{}{"title": string(id)})
-		require.NoError(t, engine.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("tenant:e-%02d", i)), StartNode: "tenant:root", EndNode: id, Type: "LINKS"}))
+		require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: storage.EdgeID(fmt.Sprintf("tenant:e-%02d", i)), StartNode: "tenant:root", EndNode: id, Type: "LINKS"}))
 	}
 
 	ctx, cancel := context.WithCancel(ContextWithDatabase(context.Background(), "tenant"))

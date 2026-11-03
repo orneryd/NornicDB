@@ -64,13 +64,13 @@ func TestReleasePropertySuppressionQueryMaterialization(t *testing.T) {
 				if tc.name == "elapsed cache" {
 					old = time.Now()
 				}
-				_, err = be.CreateNode(&storage.Node{ID: "testns:doc", Labels: []string{"Doc"}, Properties: map[string]interface{}{"title": "visible", "body": "hidden", "secretNumber": int64(41)}, CreatedAt: old, UpdatedAt: old})
+				_, err = be.CreateNode(t.Context(), &storage.Node{ID: "testns:doc", Labels: []string{"Doc"}, Properties: map[string]interface{}{"title": "visible", "body": "hidden", "secretNumber": int64(41)}, CreatedAt: old, UpdatedAt: old})
 				require.NoError(t, err)
-				_, err = be.CreateNode(&storage.Node{ID: "testns:target", Labels: []string{"Target"}, Properties: map[string]interface{}{"title": "target"}, CreatedAt: old, UpdatedAt: old})
+				_, err = be.CreateNode(t.Context(), &storage.Node{ID: "testns:target", Labels: []string{"Target"}, Properties: map[string]interface{}{"title": "target"}, CreatedAt: old, UpdatedAt: old})
 				require.NoError(t, err)
-				require.NoError(t, be.CreateEdge(&storage.Edge{ID: "testns:link", StartNode: "testns:doc", EndNode: "testns:target", Type: "LINK", Properties: map[string]interface{}{"weight": int64(7), "summary": "edge-hidden", "secretWeight": int64(13), "title": "a"}, CreatedAt: old, UpdatedAt: old}))
+				require.NoError(t, be.CreateEdge(t.Context(), &storage.Edge{ID: "testns:link", StartNode: "testns:doc", EndNode: "testns:target", Type: "LINK", Properties: map[string]interface{}{"weight": int64(7), "summary": "edge-hidden", "secretWeight": int64(13), "title": "a"}, CreatedAt: old, UpdatedAt: old}))
 				if tc.name == "order hidden property" {
-					require.NoError(t, be.CreateEdge(&storage.Edge{ID: "testns:link-second", StartNode: "testns:doc", EndNode: "testns:target", Type: "LINK", Properties: map[string]interface{}{"secretWeight": int64(1), "title": "b"}, CreatedAt: old, UpdatedAt: old}))
+					require.NoError(t, be.CreateEdge(t.Context(), &storage.Edge{ID: "testns:link-second", StartNode: "testns:doc", EndNode: "testns:target", Type: "LINK", Properties: map[string]interface{}{"secretWeight": int64(1), "title": "b"}, CreatedAt: old, UpdatedAt: old}))
 				}
 				var engine storage.Engine = be
 				if route.scoped {
@@ -78,7 +78,7 @@ func TestReleasePropertySuppressionQueryMaterialization(t *testing.T) {
 				}
 				exec := NewStorageExecutor(engine, QueryCachePolicy{MaxEntries: 100, TTL: time.Minute})
 				if tc.name == "entity" {
-					raw, err := be.GetNode("testns:doc")
+					raw, err := be.GetNode(t.Context(), "testns:doc")
 					require.NoError(t, err)
 					projected := exec.projectVisiblePipelineNodeRead([]*storage.Node{raw}, []returnItem{{expr: "d", alias: "d"}, {expr: "d.body", alias: "body"}}, "d")
 					require.NotContains(t, projected.Rows[0][0].(*storage.Node).Properties, "body")
@@ -110,10 +110,10 @@ func TestReleasePropertySuppressionQueryMaterialization(t *testing.T) {
 				require.NoError(t, err)
 				require.Len(t, result.Rows, 1)
 				tc.check(t, result.Rows[0][0])
-				raw, err := be.GetNode("testns:doc")
+				raw, err := be.GetNode(t.Context(), "testns:doc")
 				require.NoError(t, err)
 				require.Equal(t, "hidden", raw.Properties["body"])
-				rawEdge, err := be.GetEdge("testns:link")
+				rawEdge, err := be.GetEdge(t.Context(), "testns:link")
 				require.NoError(t, err)
 				require.Equal(t, "edge-hidden", rawEdge.Properties["summary"])
 				require.Equal(t, int64(13), rawEdge.Properties["secretWeight"])

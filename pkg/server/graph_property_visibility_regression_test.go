@@ -4,11 +4,12 @@ import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"context"
+	"testing"
+	"time"
+
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
-	"testing"
-	"time"
 )
 
 func TestNormalGraphQueriesProjectSuppressedProperties(t *testing.T) {
@@ -30,10 +31,10 @@ func TestNormalGraphQueriesProjectSuppressedProperties(t *testing.T) {
 	engine := storage.NewNamespacedEngine(be, "tenant")
 	old := time.Now().Add(-time.Hour)
 	for _, id := range []storage.NodeID{"a", "b"} {
-		_, err = engine.CreateNode(&storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]interface{}{"public": "yes", "secret": "hidden"}, CreatedAt: old, UpdatedAt: old})
+		_, err = engine.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]interface{}{"public": "yes", "secret": "hidden"}, CreatedAt: old, UpdatedAt: old})
 		require.NoError(t, err)
 	}
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "LINK", Properties: map[string]interface{}{"public": "yes", "secret": "hidden"}, CreatedAt: old, UpdatedAt: old}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "LINK", Properties: map[string]interface{}{"public": "yes", "secret": "hidden"}, CreatedAt: old, UpdatedAt: old}))
 	s := &Server{}
 	for _, path := range []bool{false, true} {
 		t.Run(map[bool]string{false: "neighborhood and expand", true: "path"}[path], func(t *testing.T) {
@@ -60,7 +61,7 @@ func TestNormalGraphQueriesProjectSuppressedProperties(t *testing.T) {
 	zero, err := s.collectLatestPath(context.Background(), engine, "a", "a", 10, newGraphFilterSet(nil, nil))
 	require.NoError(t, err)
 	require.NotContains(t, zero.nodes["a"].Properties, "secret")
-	raw, err := engine.GetNode("a")
+	raw, err := engine.GetNode(t.Context(), "a")
 	require.NoError(t, err)
 	require.Equal(t, "hidden", raw.Properties["secret"])
 	history, err := s.collectLatestInducedSubgraph(context.Background(), engine, []string{"a", "b"}, newGraphFilterSet(nil, nil))

@@ -2,9 +2,10 @@ package nornicdb
 
 import (
 	"context"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -134,7 +135,7 @@ func TestE2E_AlterUnsuppressionInvalidatesCachedCypherReads(t *testing.T) {
 		TargetLabels: []string{"CachedDoc"},
 	}))
 
-	node, err := base.CreateNode(&storage.Node{
+	node, err := base.CreateNode(t.Context(), &storage.Node{
 		ID:         storage.NodeID("nornic:cached-doc-1"),
 		Labels:     []string{"CachedDoc"},
 		Properties: map[string]any{"title": "cached"},
@@ -143,7 +144,7 @@ func TestE2E_AlterUnsuppressionInvalidatesCachedCypherReads(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, node)
-	becameSuppressed, err := be.EnqueueDeindexIfSuppressed(string(node), false)
+	becameSuppressed, err := be.EnqueueDeindexIfSuppressed(context.Background(), string(node), false)
 	require.NoError(t, err)
 	require.True(t, becameSuppressed)
 

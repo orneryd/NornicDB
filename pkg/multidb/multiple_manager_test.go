@@ -3,11 +3,12 @@ package multidb
 import (
 	"context"
 	"fmt"
+	"strings"
+	"testing"
+
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
-	"strings"
-	"testing"
 )
 
 func TestReview1406SecondManagerMustNotStealPublicationOwner(t *testing.T) {
@@ -18,7 +19,7 @@ func TestReview1406SecondManagerMustNotStealPublicationOwner(t *testing.T) {
 	require.NoError(t, first.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "shared"}))
 	view, err := first.GetStorage("shared")
 	require.NoError(t, err)
-	_, err = view.CreateNode(&storage.Node{ID: "n", Properties: map[string]any{"v": "small"}})
+	_, err = view.CreateNode(t.Context(), &storage.Node{ID: "n", Properties: map[string]any{"v": "small"}})
 	require.NoError(t, err)
 	before, _, _ := first.GetStorageSize("shared")
 	require.Positive(t, before)
@@ -26,7 +27,7 @@ func TestReview1406SecondManagerMustNotStealPublicationOwner(t *testing.T) {
 	require.NoError(t, err)
 	other, _, _ := second.GetStorageSize("shared")
 	require.Equal(t, before, other)
-	require.NoError(t, view.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "n", Properties: map[string]any{"v": strings.Repeat("x", 4096)}}}))
+	require.NoError(t, view.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: &storage.Node{ID: "n", Properties: map[string]any{"v": strings.Repeat("x", 4096)}}}))
 	wantNodes, wantEdges, err := first.calculateStorageSizeFromEngine(view)
 	require.NoError(t, err)
 	tracked, _, _ := first.GetStorageSize("shared")
@@ -51,21 +52,21 @@ func TestManagedRuntimeSharedPolicyAndReservation(t *testing.T) {
 	limits, err := first.GetDatabaseLimits("shared")
 	require.NoError(t, err)
 	require.EqualValues(t, 1, limits.Storage.MaxNodes)
-	_, err = left.CreateNode(&storage.Node{ID: "n"})
+	_, err = left.CreateNode(t.Context(), &storage.Node{ID: "n"})
 	require.NoError(t, err)
-	_, err = right.CreateNode(&storage.Node{ID: "blocked"})
+	_, err = right.CreateNode(t.Context(), &storage.Node{ID: "blocked"})
 	require.ErrorIs(t, err, ErrStorageLimitExceeded)
 	require.NoError(t, first.SetDatabaseLimits(t.Context(), "shared", &Limits{Storage: StorageLimits{MaxNodes: 2}}))
 	// The shared pending allowance is held between native admission and terminal
 	// publication. A second manager must see it before its own public write.
 	info := first.databases["shared"]
 	require.NoError(t, info.reserveStorageUsage("shared", "pending", storageUsage{nodes: 1}, StorageLimits{MaxNodes: 2}))
-	_, err = right.CreateNode(&storage.Node{ID: "blocked"})
+	_, err = right.CreateNode(t.Context(), &storage.Node{ID: "blocked"})
 	require.ErrorIs(t, err, ErrStorageLimitExceeded)
 	info.discardStorageUsage("pending")
-	_, err = right.CreateNode(&storage.Node{ID: "allowed"})
+	_, err = right.CreateNode(t.Context(), &storage.Node{ID: "allowed"})
 	require.NoError(t, err)
-	count, err := base.NodeCount()
+	count, err := base.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, count, int64(2))
 	exactNodes, exactEdges, err := first.calculateStorageSizeFromEngine(storage.NewNamespacedEngine(base, "shared"))
@@ -83,7 +84,7 @@ func TestManagedRuntimeWholeResetAndRecreate(t *testing.T) {
 	view, err := manager.GetStorage("lifecycle")
 	require.NoError(t, err)
 	require.NoError(t, manager.SetDatabaseLimits(t.Context(), "lifecycle", &Limits{Storage: StorageLimits{MaxNodes: 1}}))
-	_, err = view.CreateNode(&storage.Node{ID: "before"})
+	_, err = view.CreateNode(t.Context(), &storage.Node{ID: "before"})
 	require.NoError(t, err)
 	_, _, _ = manager.GetStorageSize("lifecycle")
 	runtime := manager.databases["lifecycle"].managed.Load()
@@ -95,12 +96,12 @@ func TestManagedRuntimeWholeResetAndRecreate(t *testing.T) {
 	limits, err := manager.GetDatabaseLimits("lifecycle")
 	require.NoError(t, err)
 	require.EqualValues(t, 1, limits.Storage.MaxNodes)
-	_, err = view.CreateNode(&storage.Node{ID: "after-reset"})
+	_, err = view.CreateNode(t.Context(), &storage.Node{ID: "after-reset"})
 	require.NoError(t, err)
-	_, err = view.CreateNode(&storage.Node{ID: "quota"})
+	_, err = view.CreateNode(t.Context(), &storage.Node{ID: "quota"})
 	require.ErrorIs(t, err, ErrStorageLimitExceeded)
 	require.NoError(t, manager.DropDatabase(t.Context(), "lifecycle"))
-	_, err = view.CreateNode(&storage.Node{ID: "retired"})
+	_, err = view.CreateNode(t.Context(), &storage.Node{ID: "retired"})
 	require.ErrorIs(t, err, ErrDatabaseNotFound)
 	require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "lifecycle"}))
 	next, err := manager.GetStorage("lifecycle")
@@ -110,7 +111,7 @@ func TestManagedRuntimeWholeResetAndRecreate(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, limits)
 	for _, id := range []storage.NodeID{"new-a", "new-b"} {
-		_, err = next.CreateNode(&storage.Node{ID: id})
+		_, err = next.CreateNode(t.Context(), &storage.Node{ID: id})
 		require.NoError(t, err)
 	}
 	exactNodes, exactEdges, err := manager.calculateStorageSizeFromEngine(storage.NewNamespacedEngine(base, "lifecycle"))
@@ -194,9 +195,9 @@ func TestManagedRuntimeMetadataFailurePreservesPolicyAndRestoredDatabase(t *test
 	require.EqualValues(t, 1, limits.Storage.MaxNodes)
 	_, unchangedRate := runtime.policy.rateSnapshot(writeRate)
 	require.Same(t, oldRate, unchangedRate, "failed persistence preserves the shared rate token owner")
-	_, err = right.CreateNode(&storage.Node{ID: "before"})
+	_, err = right.CreateNode(t.Context(), &storage.Node{ID: "before"})
 	require.NoError(t, err)
-	_, err = left.CreateNode(&storage.Node{ID: "blocked"})
+	_, err = left.CreateNode(t.Context(), &storage.Node{ID: "blocked"})
 	require.ErrorIs(t, err, ErrStorageLimitExceeded)
 	require.ErrorIs(t, first.DropDatabase(t.Context(), "retained"), injected)
 	_, err = first.GetDatabase("retained")
@@ -205,14 +206,14 @@ func TestManagedRuntimeMetadataFailurePreservesPolicyAndRestoredDatabase(t *test
 	limits, err = second.GetDatabaseLimits("retained")
 	require.NoError(t, err)
 	require.EqualValues(t, 1, limits.Storage.MaxNodes)
-	count, err := storage.NewNamespacedEngine(base, "retained").NodeCount()
+	count, err := storage.NewNamespacedEngine(base, "retained").NodeCount(t.Context())
 	require.NoError(t, err)
 	require.EqualValues(t, 1, count, "a rejected catalog intent must preserve the existing data")
-	require.NoError(t, left.UpdateNode(storage.NodeUpdateRequest{After: &storage.Node{ID: "before", Properties: map[string]interface{}{"survives": "after"}}}))
-	retained, err := right.GetNode("before")
+	require.NoError(t, left.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: &storage.Node{ID: "before", Properties: map[string]interface{}{"survives": "after"}}}))
+	retained, err := right.GetNode(t.Context(), "before")
 	require.NoError(t, err)
 	require.Equal(t, "after", retained.Properties["survives"])
-	_, err = right.CreateNode(&storage.Node{ID: "blocked-again"})
+	_, err = right.CreateNode(t.Context(), &storage.Node{ID: "blocked-again"})
 	require.ErrorIs(t, err, ErrStorageLimitExceeded)
 	exactNodes, exactEdges, err := first.calculateStorageSizeFromEngine(storage.NewNamespacedEngine(base, "retained"))
 	require.NoError(t, err)

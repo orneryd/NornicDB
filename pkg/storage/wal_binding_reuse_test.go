@@ -20,7 +20,7 @@ func TestWALBindingReuseKeepsRecordAuthority(t *testing.T) {
 			original := bytes.Clone(data.PropertyBindings)
 			// Re-export another dependency set without modifying an already
 			// acknowledged table or including unrelated dictionary names.
-			_, err := source.CreateNode(&Node{ID: "perf:other", Properties: map[string]any{"other": "keep"}})
+			_, err := source.CreateNode(t.Context(), &Node{ID: "perf:other", Properties: map[string]any{"other": "keep"}})
 			require.NoError(t, err)
 			other, err := bufferedWALPropertyBindings(nil, source.propKeyDict)
 			require.NoError(t, err)
@@ -30,7 +30,7 @@ func TestWALBindingReuseKeepsRecordAuthority(t *testing.T) {
 			require.NoError(t, err)
 			require.ElementsMatch(t, legacyBindingEntries(t, original), legacyBindingEntries(t, exported))
 			destination := reviewBindingEngine(t, t.TempDir())
-			_, err = destination.CreateNode(&Node{ID: "warm:seed"})
+			_, err = destination.CreateNode(t.Context(), &Node{ID: "warm:seed"})
 			require.NoError(t, err)
 			play := func() error {
 				raw, err := json.Marshal(data)
@@ -44,14 +44,19 @@ func TestWALBindingReuseKeepsRecordAuthority(t *testing.T) {
 			data.PropertyBindings = nil
 			require.ErrorContains(t, play(), "missing property name binding")
 			data.PropertyBindings = original
-			// A namespace reset reuses numeric IDs for different names. Replaying
-			// the exact same complete record must resolve through the new mapping.
+			// Deletion retains accepted transaction history. A new intent must
+			// resolve the unchanged binding table through the new numeric mapping.
 			_, _, err = destination.DeleteByPrefix("perf:")
 			require.NoError(t, err)
-			_, err = destination.CreateNode(&Node{ID: "perf:sentinel", Properties: map[string]any{"other": "keep"}})
+			_, err = destination.CreateNode(t.Context(), &Node{ID: "perf:sentinel", Properties: map[string]any{"other": "keep"}})
 			require.NoError(t, err)
 			require.NoError(t, play())
-			node, err := destination.GetNode("perf:a")
+			_, err = destination.GetNode(t.Context(), "perf:a")
+			require.ErrorIs(t, err, ErrNotFound, "accepted history must not undo prefix deletion")
+			data.TxID = generateTxID()
+			require.Equal(t, original, data.PropertyBindings)
+			require.NoError(t, play())
+			node, err := destination.GetNode(t.Context(), "perf:a")
 			require.NoError(t, err)
 			require.Len(t, node.Properties, count)
 			for i := 0; i < count; i++ {
@@ -64,20 +69,20 @@ func TestWALBindingReuseKeepsRecordAuthority(t *testing.T) {
 			// Native restore replaces the dictionary in place. A prepared plan
 			// for the previous mapping must not survive that replacement.
 			donor := reviewBindingEngine(t, t.TempDir())
-			_, err = donor.CreateNode(&Node{ID: "perf:seed", Properties: map[string]any{"unused_a": 1, "unused_b": 2}})
+			_, err = donor.CreateNode(t.Context(), &Node{ID: "perf:seed", Properties: map[string]any{"unused_a": 1, "unused_b": 2}})
 			require.NoError(t, err)
 			before := *node
 			before.Properties = make(map[string]any, count)
 			for name := range node.Properties {
 				before.Properties[name] = int64(-1)
 			}
-			_, err = donor.CreateNode(&before)
+			_, err = donor.CreateNode(t.Context(), &before)
 			require.NoError(t, err)
 			backup := filepath.Join(t.TempDir(), "replacement.backup")
 			require.NoError(t, donor.Backup(backup))
 			require.NoError(t, destination.Restore(backup))
 			require.NoError(t, play())
-			restored, err := destination.GetNode("perf:a")
+			restored, err := destination.GetNode(t.Context(), "perf:a")
 			require.NoError(t, err)
 			require.Equal(t, node.Properties, restored.Properties)
 			assertPropertyDictionaryBijection(t, destination)

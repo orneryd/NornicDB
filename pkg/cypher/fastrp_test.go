@@ -63,7 +63,7 @@ func createSocialNetwork(t *testing.T, engine storage.Engine) {
 				"age":  p.age,
 			},
 		}
-		if _, err := engine.CreateNode(node); err != nil {
+		if _, err := engine.CreateNode(t.Context(), node); err != nil {
 			t.Fatalf("Failed to create node %s: %v", p.id, err)
 		}
 	}
@@ -95,7 +95,7 @@ func createSocialNetwork(t *testing.T, engine storage.Engine) {
 				"weight": e.weight,
 			},
 		}
-		if err := engine.CreateEdge(edge); err != nil {
+		if err := engine.CreateEdge(t.Context(), edge); err != nil {
 			t.Fatalf("Failed to create edge %s->%s: %v", e.from, e.to, err)
 		}
 	}
@@ -129,7 +129,7 @@ func createLargeGraph(t *testing.T, engine storage.Engine, numNodes, avgDegree i
 				"value": float64(i) / float64(numNodes),
 			},
 		}
-		if _, err := engine.CreateNode(node); err != nil {
+		if _, err := engine.CreateNode(t.Context(), node); err != nil {
 			t.Fatalf("Failed to create node n%d: %v", i, err)
 		}
 	}
@@ -151,7 +151,7 @@ func createLargeGraph(t *testing.T, engine storage.Engine, numNodes, avgDegree i
 					"weight": 1.0 + float64(j)*0.1,
 				},
 			}
-			if err := engine.CreateEdge(edge); err != nil {
+			if err := engine.CreateEdge(t.Context(), edge); err != nil {
 				t.Fatalf("Failed to create edge: %v", err)
 			}
 			edgeCount++
@@ -884,7 +884,7 @@ func TestFastRPIsolatedNodes(t *testing.T) {
 				"index": i,
 			},
 		}
-		if _, err := engine.CreateNode(node); err != nil {
+		if _, err := engine.CreateNode(t.Context(), node); err != nil {
 			t.Fatalf("Failed to create node: %v", err)
 		}
 	}
@@ -1239,26 +1239,26 @@ func TestCallGdsGraphProject_AdditionalBranches(t *testing.T) {
 	require.NoError(t, err)
 
 	// Missing graph name: the procedure's failure.
-	_, err = exec.callGdsGraphProject(nil)
+	_, err = exec.callGdsGraphProject(context.Background(), nil)
 	require.ErrorContains(t, err, "argument graphName is null")
 
 	// A name text listing several labels / types (NornicDB's kept form).
 	counts := func(res *ExecuteResult) []any { return res.Rows[0][2:5] }
-	res, err := exec.callGdsGraphProject([]interface{}{"g_parse", "Person:User:Memory", "KNOWS|RELATES_TO|REFERENCES"})
+	res, err := exec.callGdsGraphProject(context.Background(), []interface{}{"g_parse", "Person:User:Memory", "KNOWS|RELATES_TO|REFERENCES"})
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
 	assert.Equal(t, []any{"g_parse", int64(3), int64(3)}, counts(res))
 
 	// Lists, maps (an entry's label / type overrides its key) and '*'.
-	res, err = exec.callGdsGraphProject([]interface{}{"g_list", []interface{}{"Person", "User"}, map[string]interface{}{"K": map[string]interface{}{"type": "KNOWS"}}})
+	res, err = exec.callGdsGraphProject(context.Background(), []interface{}{"g_list", []interface{}{"Person", "User"}, map[string]interface{}{"K": map[string]interface{}{"type": "KNOWS"}}})
 	require.NoError(t, err)
 	assert.Equal(t, []any{"g_list", int64(2), int64(1)}, counts(res))
-	res, err = exec.callGdsGraphProject([]interface{}{"g_default", "*", "*"})
+	res, err = exec.callGdsGraphProject(context.Background(), []interface{}{"g_default", "*", "*"})
 	require.NoError(t, err)
 	assert.Equal(t, []any{"g_default", int64(3), int64(3)}, counts(res))
-	_, err = exec.callGdsGraphProject([]interface{}{"g_bad", int64(1), "*"})
+	_, err = exec.callGdsGraphProject(context.Background(), []interface{}{"g_bad", int64(1), "*"})
 	require.ErrorContains(t, err, "Cannot construct a node projection out of a java.lang.Long")
-	_, err = exec.callGdsGraphProject([]interface{}{"g_bad", []interface{}{"Person", int64(1)}, "*"})
+	_, err = exec.callGdsGraphProject(context.Background(), []interface{}{"g_bad", []interface{}{"Person", int64(1)}, "*"})
 	require.ErrorContains(t, err, "Cannot construct a node projection out of a java.lang.Long")
 
 	// Projections bound earlier in the statement.

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"expvar"
 	"testing"
 
@@ -10,23 +11,23 @@ import (
 
 func TestPendingCandidatesVerifiedEmptyAvoidsRepeatedScans(t *testing.T) {
 	e := newTestBadgerEngineForPending(t)
-	require.Nil(t, e.FindNodeNeedingEmbedding())
+	require.Nil(t, requireEmbeddingCandidate(t, e.FindNodeNeedingEmbedding))
 	metric := expvar.Get("badger_iterator_num_user").(*expvar.Int)
 	before := metric.Value()
 	for i := 0; i < 32; i++ {
-		require.Nil(t, e.FindNodeNeedingEmbedding())
+		require.Nil(t, requireEmbeddingCandidate(t, e.FindNodeNeedingEmbedding))
 	}
 	require.Zero(t, metric.Value()-before, "a verified empty published snapshot needs no repeated index scan")
 
 	// A non-marker commit also invalidates the empty snapshot. Reconcile it
 	// once, then reuse the new verified snapshot without retaining storage.
-	require.NoError(t, e.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.NoError(t, e.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		return txn.Set([]byte("empty-snapshot-probe"), []byte("published"))
 	}))
-	require.Nil(t, e.FindNodeNeedingEmbedding())
+	require.Nil(t, requireEmbeddingCandidate(t, e.FindNodeNeedingEmbedding))
 	require.EqualValues(t, 1, metric.Value()-before)
 	for i := 0; i < 32; i++ {
-		require.Nil(t, e.FindNodeNeedingEmbedding())
+		require.Nil(t, requireEmbeddingCandidate(t, e.FindNodeNeedingEmbedding))
 	}
 	require.EqualValues(t, 1, metric.Value()-before)
 	require.Zero(t, cap(e.pendingCandidates.ids))
@@ -37,11 +38,11 @@ func TestPendingCandidatesVerifiedEmptyAvoidsRepeatedScans(t *testing.T) {
 // committed pending marker. A pure cache must not make that marker invisible.
 func TestPendingCandidatesReviewLostHint(t *testing.T) {
 	e := newTestBadgerEngineForPending(t)
-	_, err := e.CreateNode(pendingCandidateNode(0))
+	_, err := e.CreateNode(t.Context(), pendingCandidateNode(0))
 	require.NoError(t, err)
 	e.MarkNodeEmbedded(pendingCandidateNode(0).ID)
-	require.Nil(t, e.FindNodeNeedingEmbedding())
-	require.NoError(t, e.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.Nil(t, requireEmbeddingCandidate(t, e.FindNodeNeedingEmbedding))
+	require.NoError(t, e.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		if err := e.setPendingEmbeddingInTxn(txn, pendingCandidateNode(0).ID); err != nil {
 			return err
 		}
@@ -51,7 +52,7 @@ func TestPendingCandidatesReviewLostHint(t *testing.T) {
 	require.Equal(t, 1, e.PendingEmbeddingsCount())
 	misses := 0
 	for i := 0; i < 32; i++ {
-		if e.FindNodeNeedingEmbedding() == nil {
+		if requireEmbeddingCandidate(t, e.FindNodeNeedingEmbedding) == nil {
 			misses++
 		}
 	}
@@ -60,18 +61,18 @@ func TestPendingCandidatesReviewLostHint(t *testing.T) {
 		t.Error("durable pending node remains invisible after a lost hint")
 	}
 	e.InvalidatePendingEmbeddingsIndex()
-	require.NotNil(t, e.FindNodeNeedingEmbedding(), "explicit invalidation alone recovers the marker")
+	require.NotNil(t, requireEmbeddingCandidate(t, e.FindNodeNeedingEmbedding), "explicit invalidation alone recovers the marker")
 }
 
 func TestPendingCandidatesLostHintAfterDrain(t *testing.T) {
 	e := newTestBadgerEngineForPending(t)
 	for i := 0; i < 3; i++ {
-		_, err := e.CreateNode(pendingCandidateNode(i))
+		_, err := e.CreateNode(t.Context(), pendingCandidateNode(i))
 		require.NoError(t, err)
 	}
 	e.MarkNodeEmbedded(pendingCandidateNode(2).ID)
-	require.Equal(t, pendingCandidateNode(0).ID, e.FindNodeNeedingEmbedding().ID)
-	require.NoError(t, e.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	require.Equal(t, pendingCandidateNode(0).ID, requireEmbeddingCandidate(t, e.FindNodeNeedingEmbedding).ID)
+	require.NoError(t, e.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		if err := e.setPendingEmbeddingInTxn(txn, pendingCandidateNode(2).ID); err != nil {
 			return err
 		}
@@ -79,32 +80,32 @@ func TestPendingCandidatesLostHintAfterDrain(t *testing.T) {
 		return nil
 	}))
 	for i := 0; i < 3; i++ {
-		node := e.FindNodeNeedingEmbedding()
+		node := requireEmbeddingCandidate(t, e.FindNodeNeedingEmbedding)
 		require.NotNil(t, node, "exhausting stale hints must reconcile before reporting an empty queue")
 		require.Equal(t, pendingCandidateNode(i).ID, node.ID)
 		e.MarkNodeEmbedded(node.ID)
 	}
-	require.Nil(t, e.FindNodeNeedingEmbedding())
+	require.Nil(t, requireEmbeddingCandidate(t, e.FindNodeNeedingEmbedding))
 }
 
 func TestPendingCandidatesDropPreservesOtherNamespace(t *testing.T) {
 	e := newTestBadgerEngineForPending(t)
-	_, err := e.CreateNode(pendingCandidateNode(0))
+	_, err := e.CreateNode(t.Context(), pendingCandidateNode(0))
 	require.NoError(t, err)
 	other := &Node{ID: "other:document", Labels: []string{"Doc"}, Properties: map[string]any{"content": "other namespace"}}
-	_, err = e.CreateNode(other)
+	_, err = e.CreateNode(t.Context(), other)
 	require.NoError(t, err)
-	require.NotNil(t, e.FindNodeNeedingEmbedding())
+	require.NotNil(t, requireEmbeddingCandidate(t, e.FindNodeNeedingEmbedding))
 	generation := e.pendingCandidatesGeneration.Load()
 	_, _, err = e.DeleteByPrefix("test:")
 	require.NoError(t, err)
 	require.Greater(t, e.pendingCandidatesGeneration.Load(), generation)
 	require.Equal(t, 1, e.PendingEmbeddingsCount())
-	node := e.FindNodeNeedingEmbedding()
+	node := requireEmbeddingCandidate(t, e.FindNodeNeedingEmbedding)
 	require.NotNil(t, node)
 	require.Equal(t, other.ID, node.ID)
 	e.MarkNodeEmbedded(node.ID)
-	require.Nil(t, e.FindNodeNeedingEmbedding())
+	require.Nil(t, requireEmbeddingCandidate(t, e.FindNodeNeedingEmbedding))
 }
 
 func TestPendingCandidatesReviewDrainReleasesStorage(t *testing.T) {
@@ -114,13 +115,13 @@ func TestPendingCandidatesReviewDrainReleasesStorage(t *testing.T) {
 	for i := range nodes {
 		nodes[i] = pendingCandidateNode(i)
 	}
-	require.NoError(t, e.BulkCreateNodes(nodes))
+	require.NoError(t, e.BulkCreateNodes(t.Context(), nodes))
 	for i := 0; i < n; i++ {
-		node := e.FindNodeNeedingEmbedding()
+		node := requireEmbeddingCandidate(t, e.FindNodeNeedingEmbedding)
 		require.NotNil(t, node)
 		e.MarkNodeEmbedded(node.ID)
 	}
-	require.Nil(t, e.FindNodeNeedingEmbedding())
+	require.Nil(t, requireEmbeddingCandidate(t, e.FindNodeNeedingEmbedding))
 	require.Zero(t, e.PendingEmbeddingsCount())
 	p := &e.pendingCandidates
 	p.mu.Lock()
@@ -139,8 +140,8 @@ func TestPendingCandidatesReviewDropInvalidates(t *testing.T) {
 	for i := range nodes {
 		nodes[i] = pendingCandidateNode(i)
 	}
-	require.NoError(t, e.BulkCreateNodes(nodes))
-	require.NotNil(t, e.FindNodeNeedingEmbedding())
+	require.NoError(t, e.BulkCreateNodes(t.Context(), nodes))
+	require.NotNil(t, requireEmbeddingCandidate(t, e.FindNodeNeedingEmbedding))
 	generation := e.pendingCandidatesGeneration.Load()
 	deleted, _, err := e.DeleteByPrefix("test:")
 	require.NoError(t, err)
@@ -154,13 +155,13 @@ func TestPendingCandidatesReviewDropInvalidates(t *testing.T) {
 	if unchanged {
 		t.Error("DROP DATABASE keeps the deleted namespace's candidate cache valid and populated")
 	}
-	require.Nil(t, e.FindNodeNeedingEmbedding(), "deleted nodes must never be returned")
+	require.Nil(t, requireEmbeddingCandidate(t, e.FindNodeNeedingEmbedding), "deleted nodes must never be returned")
 }
 
 func TestPendingCandidatesReviewDuplicateAndDelayedHints(t *testing.T) {
 	e := newTestBadgerEngineForPending(t)
-	require.Nil(t, e.FindNodeNeedingEmbedding())
-	_, err := e.CreateNode(pendingCandidateNode(0))
+	require.Nil(t, requireEmbeddingCandidate(t, e.FindNodeNeedingEmbedding))
+	_, err := e.CreateNode(t.Context(), pendingCandidateNode(0))
 	require.NoError(t, err)
 	cw := &commitWriter{engine: e, pendingEmbeddingIDs: map[NodeID]struct{}{pendingCandidateNode(0).ID: {}}}
 	for i := 0; i < 32; i++ {
@@ -168,10 +169,10 @@ func TestPendingCandidatesReviewDuplicateAndDelayedHints(t *testing.T) {
 		cw.publishPendingEmbeddingAdds()
 	}
 	require.Len(t, e.pendingCandidates.ids, 1)
-	require.NotNil(t, e.FindNodeNeedingEmbedding())
-	require.NoError(t, e.DeleteNode(pendingCandidateNode(0).ID))
+	require.NotNil(t, requireEmbeddingCandidate(t, e.FindNodeNeedingEmbedding))
+	require.NoError(t, e.DeleteNode(t.Context(), pendingCandidateNode(0).ID))
 	cw.pendingEmbeddingIDs = map[NodeID]struct{}{pendingCandidateNode(0).ID: {}}
 	cw.publishPendingEmbeddingAdds()
-	require.Nil(t, e.FindNodeNeedingEmbedding())
+	require.Nil(t, requireEmbeddingCandidate(t, e.FindNodeNeedingEmbedding))
 	require.Zero(t, e.PendingEmbeddingsCount())
 }

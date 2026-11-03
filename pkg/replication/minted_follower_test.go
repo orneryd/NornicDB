@@ -1,6 +1,7 @@
 package replication
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"errors"
@@ -32,25 +33,25 @@ func TestFollowerCreateMeetsHiddenPredecessor(t *testing.T) {
 			{ID: "test:b", Labels: []string{"B"}},
 			{ID: hiddenNode, Labels: []string{"Original"}},
 		} {
-			_, err := base.CreateNode(node)
+			_, err := base.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 		}
-		require.NoError(t, base.CreateEdge(&storage.Edge{ID: hiddenEdge, StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"key": "old"}}))
-		require.NoError(t, base.FlushWriteBehind(nil))
-		require.NoError(t, base.SetManualSuppression(storage.StoredEntityNodeKind, string(hiddenNode), true))
-		require.NoError(t, base.SetManualSuppression(storage.StoredEntityEdgeKind, string(hiddenEdge), true))
+		require.NoError(t, base.CreateEdge(t.Context(), &storage.Edge{ID: hiddenEdge, StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"key": "old"}}))
+		require.NoError(t, base.FlushWriteBehind(context.Background()))
+		require.NoError(t, base.SetManualSuppression(t.Context(), storage.StoredEntityNodeKind, string(hiddenNode), true))
+		require.NoError(t, base.SetManualSuppression(t.Context(), storage.StoredEntityEdgeKind, string(hiddenEdge), true))
 
-		err = adapter.ApplyCommand(&Command{Type: CmdCreateNode, Data: runtimeFixtureOwner.Encode(t, storage.EncodeNodePayload, &storage.Node{ID: hiddenNode, Labels: []string{"Replicated"}})})
+		err = applyQueued(t, adapter, &Command{Type: CmdCreateNode, Data: runtimeFixtureOwner.Encode(t, storage.EncodeNodePayload, &storage.Node{ID: hiddenNode, Labels: []string{"Replicated"}})})
 		require.ErrorIs(t, err, storage.ErrAlreadyExists, "write-behind=%v", buffered)
-		err = adapter.ApplyCommand(&Command{Type: CmdCreateEdge, Data: runtimeFixtureOwner.Encode(t, storage.EncodeEdgePayload, &storage.Edge{ID: hiddenEdge, StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"key": "new"}})})
+		err = applyQueued(t, adapter, &Command{Type: CmdCreateEdge, Data: runtimeFixtureOwner.Encode(t, storage.EncodeEdgePayload, &storage.Edge{ID: hiddenEdge, StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"key": "new"}})})
 		var conflict *storage.HiddenEdgeIdentityConflictError
 		require.True(t, errors.Is(err, storage.ErrAlreadyExists) || errors.As(err, &conflict), "write-behind=%v: %v", buffered, err)
 
-		require.NoError(t, base.FlushWriteBehind(nil))
-		node, err := base.GetStoredNode(hiddenNode)
+		require.NoError(t, base.FlushWriteBehind(context.Background()))
+		node, err := base.GetStoredNode(t.Context(), hiddenNode)
 		require.NoError(t, err)
 		require.Equal(t, []string{"Original"}, node.Labels)
-		edge, err := base.GetStoredEdge(hiddenEdge)
+		edge, err := base.GetStoredEdge(t.Context(), hiddenEdge)
 		require.NoError(t, err)
 		require.Equal(t, "old", edge.Properties["key"])
 	}

@@ -72,22 +72,22 @@ func TestCommitPublicationPublicOrder(t *testing.T) {
 					if entity == "node" {
 						require.NoError(t, sm.AddPropertyIndex("index_v", "L", []string{"v"}))
 						sm.MarkPropertyIndexesFilled()
-						_, err = b.CreateNode(node("A"))
+						_, err = b.CreateNode(t.Context(), node("A"))
 						require.NoError(t, err)
 					} else {
 						// Unlabelled endpoints have no positional label counter dependency;
 						// this isolates the entity publication contract from counter admission.
 						for _, id := range []NodeID{"db:a", "db:b"} {
-							_, err = b.CreateNode(&Node{ID: id})
+							_, err = b.CreateNode(t.Context(), &Node{ID: id})
 							require.NoError(t, err)
 						}
-						require.NoError(t, b.CreateEdge(edge("A")))
+						require.NoError(t, b.CreateEdge(t.Context(), edge("A")))
 					}
-					require.NoError(t, b.FlushWriteBehind(nil))
+					require.NoError(t, b.FlushWriteBehind(context.Background()))
 					if entity == "node" {
-						_, err = b.GetNode("db:n")
+						_, err = b.GetNode(t.Context(), "db:n")
 					} else {
-						_, err = b.GetEdge("db:e")
+						_, err = b.GetEdge(t.Context(), "db:e")
 					}
 					require.NoError(t, err)
 					var eventsMu sync.Mutex
@@ -111,24 +111,24 @@ func TestCommitPublicationPublicOrder(t *testing.T) {
 							if entity == "node" {
 								switch kind {
 								case "update":
-									return b.UpdateNode(NodeUpdateRequest{After: node(value)})
+									return b.UpdateNode(t.Context(), NodeUpdateRequest{After: node(value)})
 								case "delete":
-									return b.DeleteNode("db:n")
+									return b.DeleteNode(t.Context(), "db:n")
 								default:
-									_, e := b.CreateNode(node(value))
+									_, e := b.CreateNode(t.Context(), node(value))
 									return e
 								}
 							}
 							switch kind {
 							case "update":
-								return b.UpdateEdge(EdgeUpdateRequest{After: edge(value)})
+								return b.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge(value)})
 							case "delete":
-								return b.DeleteEdge("db:e")
+								return b.DeleteEdge(t.Context(), "db:e")
 							default:
-								return b.CreateEdge(edge(value))
+								return b.CreateEdge(t.Context(), edge(value))
 							}
 						}
-						tx, e := b.BeginTransaction()
+						tx, e := b.BeginTransaction(t.Context())
 						if e != nil {
 							return e
 						}
@@ -136,20 +136,20 @@ func TestCommitPublicationPublicOrder(t *testing.T) {
 						if entity == "node" {
 							switch kind {
 							case "update":
-								e = tx.UpdateGraphNode(NodeUpdateRequest{After: node(value), Policy: ClientNodeEdits})
+								e = tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node(value), Policy: ClientNodeEdits})
 							case "delete":
-								e = tx.DeleteGraphNode("db:n", CascadeEdges)
+								e = tx.DeleteGraphNode(t.Context(), "db:n", CascadeEdges)
 							default:
-								_, e = tx.CreateNode(node(value))
+								_, e = tx.CreateNode(t.Context(), node(value))
 							}
 						} else {
 							switch kind {
 							case "update":
-								e = tx.UpdateEdge(EdgeUpdateRequest{After: edge(value)})
+								e = tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge(value)})
 							case "delete":
-								e = tx.DeleteEdge("db:e")
+								e = tx.DeleteEdge(t.Context(), "db:e")
 							default:
-								e = tx.CreateEdge(edge(value))
+								e = tx.CreateEdge(t.Context(), edge(value))
 							}
 						}
 						if e != nil {
@@ -184,7 +184,7 @@ func TestCommitPublicationPublicOrder(t *testing.T) {
 					older.join(t)
 					require.NoError(t, older.err)
 					require.NoError(t, newer.err)
-					require.NoError(t, b.FlushWriteBehind(nil))
+					require.NoError(t, b.FlushWriteBehind(context.Background()))
 					if entity == "node" {
 						var physical *Node
 						require.NoError(t, b.withView(func(txn *badger.Txn) error {
@@ -195,13 +195,13 @@ func TestCommitPublicationPublicOrder(t *testing.T) {
 							return item.Value(func(data []byte) error { physical, e = b.decodeNodeWithEmbeddings(txn, data, "db:n"); return e })
 						}))
 						require.Equal(t, c.final, physical.Properties["v"], "physical committed body")
-						got, e := b.GetNode("db:n")
+						got, e := b.GetNode(t.Context(), "db:n")
 						require.NoError(t, e)
 						require.Equal(t, c.final, got.Properties["v"], "public cached body")
-						require.Equal(t, []NodeID{"db:n"}, sm.PropertyIndexLookup("L", "v", c.final), "latest value, including same-value recreation, remains indexed")
+						require.Equal(t, []NodeID{"db:n"}, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "L", "v", c.final)), "latest value, including same-value recreation, remains indexed")
 						for _, old := range []string{"A", "B"} {
 							if old != c.final {
-								require.Empty(t, sm.PropertyIndexLookup("L", "v", old), "superseded posting %s", old)
+								require.Empty(t, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "L", "v", old)), "superseded posting %s", old)
 							}
 						}
 						nodes, e := b.GetNodesByLabel(context.Background(), "L")
@@ -215,10 +215,13 @@ func TestCommitPublicationPublicOrder(t *testing.T) {
 							if e != nil {
 								return e
 							}
-							return item.Value(func(data []byte) error { physical, e = b.decodeEdgeBodyByID(data, "db:e"); return e })
+							return item.Value(func(data []byte) error {
+								physical, e = b.decodeEdgeBodyWithID(txn, namespaceForEdgeID("db:e"), data, "db:e")
+								return e
+							})
 						}))
 						require.Equal(t, c.final, physical.Properties["v"], "physical committed relationship")
-						got, e := b.GetEdge("db:e")
+						got, e := b.GetEdge(t.Context(), "db:e")
 						require.NoError(t, e)
 						require.Equal(t, c.final, got.Properties["v"], "public relationship cache")
 						for _, read := range []func() ([]*Edge, error){func() ([]*Edge, error) { return b.GetEdgesByType(context.Background(), "LINK") }, func() ([]*Edge, error) { return b.GetOutgoingEdges(context.Background(), "db:a") }, func() ([]*Edge, error) { return b.GetIncomingEdges(context.Background(), "db:b") }, func() ([]*Edge, error) { return b.GetEdgesBetween(context.Background(), "db:a", "db:b") }} {

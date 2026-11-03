@@ -60,9 +60,17 @@ func (b *BadgerEngine) SubmitEntityCommit(ctx context.Context, prepared *Prepare
 	if prepared == nil || prepared.engine != b {
 		return nil, ErrInvalidData
 	}
-	if ctx != nil && ctx.Err() != nil {
+	if ctx.Err() != nil {
 		prepared.Abort()
 		return nil, ctx.Err()
+	}
+	if admission, _ := ctx.Value(nativeWALKey{}).(*nativeWALAdmission); admission != nil {
+		if UnwrapEngine(admission.owner.engine) != b {
+			return nil, ErrTransactionClosed
+		}
+		// Transfer the already-held wrapper lease; reacquiring here can deadlock
+		// behind a queued restore. Submission owns its release on every outcome.
+		return admission.transfer(ctx, prepared, settle)
 	}
 	receipt, resolve := NewCommitReceipt(settle)
 	if err := DecidePublication(ctx, func() error {

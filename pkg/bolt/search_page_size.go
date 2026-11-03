@@ -1,18 +1,16 @@
+// Author: Codex, NOR-180 localized status diagnostics, 2026-10-27.
 package bolt
 
 import (
 	"errors"
 
-	"github.com/orneryd/nornicdb/pkg/localization"
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/resultstream"
 )
 
 func (s *Session) sendRunQueryFailure(err error, query string) error {
-	code, message := mapBoltQueryErrorForQuery(err, query)
-	var localized *localization.LocalizedError
-	if errors.As(err, &localized) && localized.Code == code {
-		message = s.localize(localized.Message)
-	}
+	err = nornicerrors.NormalizeTerminalOutcome(err)
+	code, message := nornicerrors.RenderStatusWithFallback(err, s.localize, boltResultStreamStatus)
 	var oversized *resultstream.PageSizeExceededError
 	if !errors.As(err, &oversized) {
 		return s.sendRunFailureWithDetail(code, message, boltErrorDetail(err))

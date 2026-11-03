@@ -13,7 +13,7 @@ func solR2CacheExecutor(t *testing.T) *StorageExecutor {
 	t.Helper()
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "solr2")
 	for _, id := range []storage.NodeID{"a", "b"} {
-		_, err := store.CreateNode(&storage.Node{ID: id, Properties: map[string]any{"content": "library transcript", "kind": string(id)}})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: id, Properties: map[string]any{"content": "library transcript", "kind": string(id)}})
 		require.NoError(t, err)
 	}
 	svc := search.NewService(store, search.DefaultVectorDimensions, nil)

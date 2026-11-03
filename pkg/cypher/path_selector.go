@@ -296,7 +296,7 @@ func (r *labelExpressionRewriter) pathPrefixes(start, end int) (pathPrefixRewrit
 			return rewrite, labelExpressionSyntaxError(localization.CypherMatchingPathSelectorMultiplePatterns())
 		}
 		patternEnd := trimRightIndex(q, prefix.end, part[1])
-		if prefix.mode != "" && hasVariableLengthRelationship(q, prefix.end, patternEnd) {
+		if prefix.mode != "" && hasVariableLengthRelationship(r.ctx, q, prefix.end, patternEnd) {
 			return rewrite, labelExpressionSyntaxError(localization.CypherMatchingPathModeVariableLength(prefix.mode))
 		}
 		switch {
@@ -337,7 +337,7 @@ func (r *labelExpressionRewriter) pathPrefixes(start, end int) (pathPrefixRewrit
 			r.edit(prefix.start, prefix.end, "")
 		}
 	}
-	if rewrite.repeatable && hasUnboundedRepetition(q, start, end) {
+	if rewrite.repeatable && hasUnboundedRepetition(r.ctx, q, start, end) {
 		return rewrite, labelExpressionSyntaxError(localization.CypherMatchingRepeatableElementsUnbounded())
 	}
 	return rewrite, nil
@@ -371,7 +371,7 @@ func (r *labelExpressionRewriter) parenthesisedPathWhere(start, end int, rewrite
 // rewrite's edits applied, for text that moves elsewhere in the statement.
 func (r *labelExpressionRewriter) rewrittenExpression(start, end int) (string, error) {
 	q := r.query
-	sub := &labelExpressionRewriter{query: q, generated: r.generated, named: r.named}
+	sub := &labelExpressionRewriter{ctx: r.ctx, query: q, generated: r.generated, named: r.named}
 	if err := sub.expression(start, end); err != nil {
 		return "", err
 	}
@@ -449,7 +449,7 @@ func (r *labelExpressionRewriter) plainParenthesisedPath(start, end int, rewrite
 			}
 			r.edit(i, open+1, "")
 			r.edit(last, close+1, "")
-			if where := topLevelKeywordIndex(q[open+1:last], "WHERE"); where >= 0 {
+			if where := topLevelKeywordIndex(r.ctx, q[open+1:last], "WHERE"); where >= 0 {
 				where += open + 1
 				r.edit(trimRightIndex(q, open+1, where), last, "")
 				text, err := r.rewrittenExpression(skipASCIISpaces(q, where+len("WHERE"), last), trimRightIndex(q, where+len("WHERE"), last))
@@ -505,7 +505,7 @@ func matchModeAt(q string, start, end int) (int, bool, bool) {
 // hasUnboundedRepetition reports whether the pattern q[start:end] repeats a
 // relationship without an upper bound: a quantifier (+, *, {m,}) or a
 // variable-length relationship (-[*]->, -[*2..]->).
-func hasUnboundedRepetition(q string, start, end int) bool {
+func hasUnboundedRepetition(ctx context.Context, q string, start, end int) bool {
 	for from := start; ; {
 		_, close, quantifier, ok := nextQuantifiedGroup(q[:end], from)
 		if !ok {
@@ -533,7 +533,7 @@ func hasUnboundedRepetition(q string, start, end int) bool {
 				return true
 			}
 			inner := close
-			if where := elementWhereIndex(q, i, close); where >= 0 {
+			if where := elementWhereIndex(ctx, q, i, close); where >= 0 {
 				inner = where
 			}
 			if brace := indexOutsideQuotes(q[i+1:inner], '{'); brace >= 0 {
@@ -562,7 +562,7 @@ func hasUnboundedRepetition(q string, start, end int) bool {
 // hasVariableLengthRelationship reports whether the pattern q[start:end]
 // writes a variable-length relationship (-[*]->, -[:R*1..3]->); a quantifier
 // after a relationship is not one.
-func hasVariableLengthRelationship(q string, start, end int) bool {
+func hasVariableLengthRelationship(ctx context.Context, q string, start, end int) bool {
 	for i := start; i < end; i++ {
 		switch c := q[i]; cypherLexicalByte(c) {
 		case cypherQuoteClass:
@@ -577,7 +577,7 @@ func hasVariableLengthRelationship(q string, start, end int) bool {
 				return false
 			}
 			inner := close
-			if where := elementWhereIndex(q, i, close); where >= 0 {
+			if where := elementWhereIndex(ctx, q, i, close); where >= 0 {
 				inner = where
 			}
 			if brace := indexOutsideQuotes(q[i+1:inner], '{'); brace >= 0 {

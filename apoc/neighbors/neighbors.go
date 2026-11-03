@@ -4,7 +4,10 @@
 // and analyzing node neighbors in graph queries.
 package neighbors
 
+import "errors"
+
 import (
+	"context"
 	"github.com/orneryd/nornicdb/apoc/storage"
 )
 
@@ -33,9 +36,16 @@ func New(backend storage.Storage) *Functions {
 // Example:
 //
 //	apoc.neighbors.atHop(node, 'KNOWS', 2) => nodes at distance 2
-func (f *Functions) AtHop(node *Node, relType string, hops int) []*Node {
+func (f *Functions) AtHop(ctx context.Context, node *Node, relType string, hops int) ([]*Node, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	if hops == 0 {
-		return []*Node{node}
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return []*Node{node}, nil
 	}
 
 	visited := make(map[int64]bool)
@@ -43,11 +53,30 @@ func (f *Functions) AtHop(node *Node, relType string, hops int) []*Node {
 	visited[node.ID] = true
 
 	for i := 0; i < hops; i++ {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		next := make([]*Node, 0)
 		for _, n := range current {
-			neighbors, err := f.backend.GetNodeNeighbors(n.ID, relType, storage.DirectionBoth)
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
+			neighbors, err := f.backend.GetNodeNeighbors(ctx, n.ID, relType, storage.DirectionBoth)
+			if err != nil && !errors.Is(err, storage.ErrNodeNotFound) {
+				return nil, err
+			}
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
 			if err == nil {
 				for _, neighbor := range neighbors {
+					if operationError := ctx.Err(); operationError != nil {
+						return nil, operationError
+					}
+
 					if !visited[neighbor.ID] {
 						visited[neighbor.ID] = true
 						next = append(next, neighbor)
@@ -58,7 +87,11 @@ func (f *Functions) AtHop(node *Node, relType string, hops int) []*Node {
 		current = next
 	}
 
-	return current
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	return current, nil
 }
 
 // ToHop returns all neighbors up to a specific hop distance.
@@ -66,7 +99,11 @@ func (f *Functions) AtHop(node *Node, relType string, hops int) []*Node {
 // Example:
 //
 //	apoc.neighbors.toHop(node, 'KNOWS', 3) => all nodes within 3 hops
-func (f *Functions) ToHop(node *Node, relType string, maxHops int) []*Node {
+func (f *Functions) ToHop(ctx context.Context, node *Node, relType string, maxHops int) ([]*Node, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	visited := make(map[int64]bool)
 	result := make([]*Node, 0)
 	queue := []*Node{node}
@@ -74,15 +111,34 @@ func (f *Functions) ToHop(node *Node, relType string, maxHops int) []*Node {
 	hops := 0
 
 	for len(queue) > 0 && hops < maxHops {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		levelSize := len(queue)
 		for i := 0; i < levelSize; i++ {
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
 			current := queue[0]
 			queue = queue[1:]
 			result = append(result, current)
 
-			neighbors, err := f.backend.GetNodeNeighbors(current.ID, relType, storage.DirectionBoth)
+			neighbors, err := f.backend.GetNodeNeighbors(ctx, current.ID, relType, storage.DirectionBoth)
+			if err != nil && !errors.Is(err, storage.ErrNodeNotFound) {
+				return nil, err
+			}
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
 			if err == nil {
 				for _, neighbor := range neighbors {
+					if operationError := ctx.Err(); operationError != nil {
+						return nil, operationError
+					}
+
 					if !visited[neighbor.ID] {
 						visited[neighbor.ID] = true
 						queue = append(queue, neighbor)
@@ -93,7 +149,11 @@ func (f *Functions) ToHop(node *Node, relType string, maxHops int) []*Node {
 		hops++
 	}
 
-	return result
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	return result, nil
 }
 
 // DFS performs depth-first search from a node.
@@ -101,7 +161,11 @@ func (f *Functions) ToHop(node *Node, relType string, maxHops int) []*Node {
 // Example:
 //
 //	apoc.neighbors.dfs(node, 'KNOWS', 5) => nodes in DFS order
-func (f *Functions) DFS(node *Node, relType string, maxDepth int) []*Node {
+func (f *Functions) DFS(ctx context.Context, node *Node, relType string, maxDepth int) ([]*Node, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	visited := make(map[int64]bool)
 	result := make([]*Node, 0)
 
@@ -114,7 +178,7 @@ func (f *Functions) DFS(node *Node, relType string, maxDepth int) []*Node {
 		visited[n.ID] = true
 		result = append(result, n)
 
-		neighbors, err := f.backend.GetNodeNeighbors(n.ID, relType, storage.DirectionBoth)
+		neighbors, err := f.backend.GetNodeNeighbors(ctx, n.ID, relType, storage.DirectionBoth)
 		if err == nil {
 			for _, neighbor := range neighbors {
 				dfs(neighbor, depth+1)
@@ -123,7 +187,11 @@ func (f *Functions) DFS(node *Node, relType string, maxDepth int) []*Node {
 	}
 
 	dfs(node, 0)
-	return result
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	return result, nil
 }
 
 // Count counts neighbors at a specific distance.
@@ -131,9 +199,20 @@ func (f *Functions) DFS(node *Node, relType string, maxDepth int) []*Node {
 // Example:
 //
 //	apoc.neighbors.count(node, 'KNOWS', 2) => count
-func (f *Functions) Count(node *Node, relType string, hops int) int {
-	neighbors := f.AtHop(node, relType, hops)
-	return len(neighbors)
+func (f *Functions) Count(ctx context.Context, node *Node, relType string, hops int) (int, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return 0, operationError
+	}
+
+	helperValue1, helperError1 := f.AtHop(ctx, node, relType, hops)
+	if helperError1 != nil {
+		return 0, helperError1
+	}
+	neighbors := helperValue1
+	if operationError := ctx.Err(); operationError != nil {
+		return 0, operationError
+	}
+	return len(neighbors), nil
 }
 
 // Exists checks if neighbors exist at a specific distance.
@@ -141,6 +220,14 @@ func (f *Functions) Count(node *Node, relType string, hops int) int {
 // Example:
 //
 //	apoc.neighbors.exists(node, 'KNOWS', 2) => true/false
-func (f *Functions) Exists(node *Node, relType string, hops int) bool {
-	return f.Count(node, relType, hops) > 0
+func (f *Functions) Exists(ctx context.Context, node *Node, relType string, hops int) (bool, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return false, operationError
+	}
+
+	helperValue2, helperError2 := f.Count(ctx, node, relType, hops)
+	if helperError2 != nil {
+		return false, helperError2
+	}
+	return helperValue2 > 0, nil
 }

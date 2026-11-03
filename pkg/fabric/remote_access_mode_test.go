@@ -98,65 +98,49 @@ func (r *accessModeRemote) sessions() string {
 	return strings.Join(parts, " ")
 }
 
-// A remote fragment that only reads runs in a read session, which ends with
-// a rollback when the statement commits: nothing run in it is kept, also on a
-// remote that doesn't enforce the access mode. A fragment that writes opens
-// the write session only once the remote is the statement's write
-// participant (GetOrOpen); the read session ends first, and every later
-// query on the remote runs in the write session, which commits.
-func TestRemoteParticipantOpensWriteSessionOnlyWhenItClaimsTheWrite(t *testing.T) {
-	remote := newAccessModeRemote(t)
-	re := NewRemoteFragmentExecutor()
-	defer func() { _ = re.Close() }()
-	loc := &LocationRemote{URI: remote.srv.URL, DBName: "tenant", AuthMode: "oidc_forwarding"}
-	tx := NewFabricTransaction("tx-remote-modes")
-	sub, err := tx.GetOrOpen(ParticipantKeyFromLocation(loc), false)
-	if err != nil {
-		t.Fatal(err)
+// A read-only participant rolls back its read session at statement commit.
+// Once it claims the write, it replaces that session and retains the write
+// session for later reads; only that session is committed.
+func TestRemoteParticipantSessionModeFollowsWriteClaim(t *testing.T) {
+	type request struct {
+		query  string
+		mode   storage.RemoteAccessMode
+		writer bool
 	}
-	ctx := WithSubTransaction(WithFabricTransaction(context.Background(), tx), sub)
-	for _, request := range []struct {
-		query string
-		mode  storage.RemoteAccessMode
+	for _, test := range []struct {
+		name     string
+		requests []request
+		sessions string
 	}{
-		{"MATCH (n) RETURN n", storage.RemoteAccessRead}, {"CREATE (n) RETURN n", storage.RemoteAccessWrite}, {"MATCH (n) RETURN n", storage.RemoteAccessRead},
+		{name: "read_only", requests: []request{{"MATCH (n) RETURN n", storage.RemoteAccessRead, false}}, sessions: "READ[MATCH (n) RETURN n]:rollback"},
+		{name: "claims_write_then_reads", requests: []request{
+			{"MATCH (n) RETURN n", storage.RemoteAccessRead, false},
+			{"CREATE (n) RETURN n", storage.RemoteAccessWrite, true},
+			{"MATCH (n) RETURN n", storage.RemoteAccessRead, true},
+		}, sessions: "READ[MATCH (n) RETURN n]:rollback WRITE[CREATE (n) RETURN n MATCH (n) RETURN n]:commit"},
 	} {
-		if _, err := re.Execute(ctx, loc, request.query, nil, "", request.mode); err != nil {
-			t.Fatalf("%s: %v", request.query, err)
-		}
-	}
-	if tx.WriteShard() != sub.ShardName {
-		t.Fatalf("the remote did not become the writer: %q", tx.WriteShard())
-	}
-	if err := tx.Commit(nil, nil); err != nil {
-		t.Fatal(err)
-	}
-	if got := remote.sessions(); got != "READ[MATCH (n) RETURN n]:rollback WRITE[CREATE (n) RETURN n MATCH (n) RETURN n]:commit" {
-		t.Fatalf("sessions: %s", got)
-	}
-}
-
-// A read-only remote participant ends with a rollback when the statement
-// commits.
-func TestRemoteReadParticipantKeepsNothing(t *testing.T) {
-	remote := newAccessModeRemote(t)
-	re := NewRemoteFragmentExecutor()
-	defer func() { _ = re.Close() }()
-	loc := &LocationRemote{URI: remote.srv.URL, DBName: "tenant", AuthMode: "oidc_forwarding"}
-	tx := NewFabricTransaction("tx-remote-read")
-	sub, err := tx.GetOrOpen(ParticipantKeyFromLocation(loc), false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx := WithSubTransaction(WithFabricTransaction(context.Background(), tx), sub)
-	if _, err := re.Execute(ctx, loc, "MATCH (n) RETURN n", nil, "", storage.RemoteAccessRead); err != nil {
-		t.Fatal(err)
-	}
-	if err := tx.Commit(nil, nil); err != nil {
-		t.Fatal(err)
-	}
-	if got := remote.sessions(); got != "READ[MATCH (n) RETURN n]:rollback" {
-		t.Fatalf("sessions: %s", got)
+		t.Run(test.name, func(t *testing.T) {
+			remote := newAccessModeRemote(t)
+			executor := NewRemoteFragmentExecutor()
+			defer func() { require.NoError(t, executor.Close()) }()
+			location := &LocationRemote{URI: remote.srv.URL, DBName: "tenant", AuthMode: "oidc_forwarding"}
+			tx := NewFabricTransaction(t.Name())
+			sub, err := tx.GetOrOpen(ParticipantKeyFromLocation(location), false)
+			require.NoError(t, err)
+			ctx := WithSubTransaction(WithFabricTransaction(context.Background(), tx), sub)
+			require.Empty(t, tx.WriteShard(), "opening a read participant must not claim the write")
+			for _, request := range test.requests {
+				_, err := executor.Execute(ctx, location, request.query, nil, "", request.mode)
+				require.NoError(t, err, request.query)
+				if request.writer {
+					require.Equal(t, sub.ShardName, tx.WriteShard(), request.query)
+				} else {
+					require.Empty(t, tx.WriteShard(), request.query)
+				}
+			}
+			require.NoError(t, tx.Commit(TerminalContexts{Commit: ctx, Cleanup: context.WithoutCancel(ctx)}, nil, nil))
+			require.Equal(t, test.sessions, remote.sessions())
+		})
 	}
 }
 
@@ -216,7 +200,7 @@ func TestRemoteUncertainModeClaimsFromTheResponse(t *testing.T) {
 					if err == nil || !strings.Contains(err.Error(), "Writing to more than one database") {
 						t.Fatalf("second writer was not refused: %v", err)
 					}
-					if err := tx.Rollback(nil); err != nil {
+					if err := tx.Rollback(context.WithoutCancel(ctx), nil); err != nil {
 						t.Fatal(err)
 					}
 				} else {
@@ -230,7 +214,7 @@ func TestRemoteUncertainModeClaimsFromTheResponse(t *testing.T) {
 					if got := tx.WriteShard(); got != wantWriter {
 						t.Fatalf("writer %q, want %q", got, wantWriter)
 					}
-					if err := tx.Commit(nil, nil); err != nil {
+					if err := tx.Commit(TerminalContexts{Commit: ctx, Cleanup: context.WithoutCancel(ctx)}, nil, nil); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -264,7 +248,7 @@ func TestRemoteDefiniteReadRefusesAReportedWrite(t *testing.T) {
 	if tx.WriteShard() != "" {
 		t.Fatal("a definite read claimed a writer")
 	}
-	if err := tx.Rollback(nil); err != nil {
+	if err := tx.Rollback(context.WithoutCancel(ctx), nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := remote.sessions(); got != "READ[MATCH (n) RETURN n]:rollback" {

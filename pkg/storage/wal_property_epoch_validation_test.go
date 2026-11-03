@@ -298,7 +298,7 @@ func TestWALPropertyEpochPlanSurvivesPartialDrainPersistence(t *testing.T) {
 	prepared, err := dest.importBufferedWALRecord(&data, walForeignImport)
 	require.NoError(t, err)
 	require.Len(t, prepared.propKeyDrain.pending, 160)
-	_, err = dest.CreateNode(&Node{ID: "perf:independent", Properties: map[string]any{"property_000": int64(0)}})
+	_, err = dest.CreateNode(t.Context(), &Node{ID: "perf:independent", Properties: map[string]any{"property_000": int64(0)}})
 	require.NoError(t, err)
 	remaining, err := dest.importBufferedWALRecord(&data, walForeignImport)
 	require.NoError(t, err)
@@ -306,7 +306,7 @@ func TestWALPropertyEpochPlanSurvivesPartialDrainPersistence(t *testing.T) {
 	require.Len(t, prepared.propKeyDrain.pending, 160, "a shared earlier drain stays immutable")
 	require.NoError(t, ReplayWALEntry(dest, entries[0]))
 	assertPropertyDictionaryBijection(t, dest)
-	node, err := dest.GetNode("perf:a")
+	node, err := dest.GetNode(t.Context(), "perf:a")
 	require.NoError(t, err)
 	require.Len(t, node.Properties, 160)
 }

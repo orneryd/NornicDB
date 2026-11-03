@@ -474,7 +474,7 @@ func TestAtomicWALFullRecovery(t *testing.T) {
 
 	// Verify all nodes recovered
 	for _, node := range nodes {
-		recovered, err := engine.GetNode(node.ID)
+		recovered, err := engine.GetNode(t.Context(), node.ID)
 		if err != nil {
 			t.Errorf("Failed to get node %s: %v", node.ID, err)
 			continue
@@ -519,8 +519,8 @@ func TestAtomicWALRecoveryWithPartialWrite(t *testing.T) {
 	}
 
 	// Verify data
-	n1, _ := engine.GetNode("n1")
-	n2, _ := engine.GetNode("n2")
+	n1, _ := engine.GetNode(t.Context(), "n1")
+	n2, _ := engine.GetNode(t.Context(), "n2")
 	if n1 == nil || n2 == nil {
 		t.Error("Valid nodes should be recovered")
 	}

@@ -130,9 +130,6 @@ func (g *IVFPQCandidateGen) searchCandidatesWithExhaustion(ctx context.Context, 
 // of the merged candidates: a wider limit probes the same lists. It is
 // exhausted only when, besides, every list was probed.
 func (g *IVFPQCandidateGen) searchCandidatesWithEvidence(ctx context.Context, query []float32, k int, minSimilarity float64) ([]Candidate, candidateEvidence, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if g == nil || g.index == nil {
 		return nil, candidateEvidence{}, localizedError(localization.SearchIVFPQIndexNotConfigured(), nil)
 	}

@@ -156,10 +156,10 @@ func TestIssue1226DeleteRejectsOrdinaryEntityMarkerMaps(t *testing.T) {
 		t.Run(query, func(t *testing.T) {
 			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "delete_marker")
 			for id, label := range map[string]string{"victim": "Victim", "left": "Left", "right": "Right"} {
-				_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{label}})
+				_, err := engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(id), Labels: []string{label}})
 				require.NoError(t, err)
 			}
-			require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "link", StartNode: "left", EndNode: "right", Type: "R"}))
+			require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "link", StartNode: "left", EndNode: "right", Type: "R"}))
 			_, err := NewStorageExecutor(engine).Execute(context.Background(), query, nil)
 			// Check survival even on the unfixed implementation: marker maps must
 			// not authorize mutations of the node or edge they happen to name.
@@ -170,9 +170,9 @@ func TestIssue1226DeleteRejectsOrdinaryEntityMarkerMaps(t *testing.T) {
 				require.True(t, errors.As(err, &classified), "%v", err)
 				require.Equal(t, "Neo.ClientError.Statement.TypeError", classified.BoltErrorCode(), "%v", err)
 			}
-			_, err = engine.GetNode("victim")
+			_, err = engine.GetNode(t.Context(), "victim")
 			require.NoError(t, err, "ordinary map deleted the node")
-			_, err = engine.GetEdge("link")
+			_, err = engine.GetEdge(t.Context(), "link")
 			require.NoError(t, err, "ordinary map deleted the relationship")
 		})
 	}
@@ -195,10 +195,10 @@ func TestIssue1226DeletePreservesEntityPathAndStringTargets(t *testing.T) {
 				t.Run(tc.name, func(t *testing.T) {
 					engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "delete_valid")
 					for id, label := range map[string]string{"victim": "Victim", "left": "Left", "right": "Right"} {
-						_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{label}})
+						_, err := engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(id), Labels: []string{label}})
 						require.NoError(t, err)
 					}
-					require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "link", StartNode: "left", EndNode: "right", Type: "R"}))
+					require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "link", StartNode: "left", EndNode: "right", Type: "R"}))
 					exec := NewStorageExecutor(engine)
 					ctx := context.Background()
 					if mode == "tx" {
@@ -216,14 +216,14 @@ func TestIssue1226DeletePreservesEntityPathAndStringTargets(t *testing.T) {
 						require.NoError(t, err)
 					}
 					for id, gone := range map[storage.NodeID]bool{"victim": tc.nodeGone, "left": tc.endpointsGone, "right": tc.endpointsGone} {
-						_, err = engine.GetNode(id)
+						_, err = engine.GetNode(t.Context(), id)
 						if gone {
 							require.ErrorIs(t, err, storage.ErrNotFound, "node %s must be deleted", id)
 						} else {
 							require.NoError(t, err, "node %s must survive", id)
 						}
 					}
-					_, err = engine.GetEdge("link")
+					_, err = engine.GetEdge(t.Context(), "link")
 					if tc.edgeGone {
 						require.ErrorIs(t, err, storage.ErrNotFound)
 					} else {

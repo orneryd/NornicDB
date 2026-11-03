@@ -131,7 +131,7 @@ func loadNodeMVCCHeadInViewTxn(t *testing.T, be *MemoryEngine, id NodeID) (MVCCH
 func TestBootstrapNodeMVCCFromCurrentStateInTxn_PopulatesHead(t *testing.T) {
 	be := newTestMemoryEngine(t)
 
-	_, err := be.CreateNode(&Node{
+	_, err := be.CreateNode(t.Context(), &Node{
 		ID:        "test:bootstrap-1",
 		Labels:    []string{"L"},
 		CreatedAt: time.Date(2025, 3, 1, 0, 0, 0, 0, time.UTC),
@@ -160,11 +160,11 @@ func TestBootstrapNodeMVCCFromCurrentStateInTxn_PopulatesHead(t *testing.T) {
 func TestBootstrapEdgeMVCCFromCurrentStateInTxn_PopulatesHead(t *testing.T) {
 	be := newTestMemoryEngine(t)
 
-	_, err := be.CreateNode(&Node{ID: "test:n-from", Labels: []string{"X"}})
+	_, err := be.CreateNode(t.Context(), &Node{ID: "test:n-from", Labels: []string{"X"}})
 	require.NoError(t, err)
-	_, err = be.CreateNode(&Node{ID: "test:n-to", Labels: []string{"X"}})
+	_, err = be.CreateNode(t.Context(), &Node{ID: "test:n-to", Labels: []string{"X"}})
 	require.NoError(t, err)
-	require.NoError(t, be.CreateEdge(&Edge{
+	require.NoError(t, be.CreateEdge(t.Context(), &Edge{
 		ID:        "test:e-1",
 		StartNode: "test:n-from",
 		EndNode:   "test:n-to",
@@ -198,7 +198,7 @@ func TestBootstrapEdgeMVCCFromCurrentStateInTxn_PopulatesHead(t *testing.T) {
 func TestBootstrapNodeMVCCFromCurrentStateInTxn_SkipsExistingHead(t *testing.T) {
 	be := newTestMemoryEngine(t)
 
-	_, err := be.CreateNode(&Node{ID: "test:skip-1", Labels: []string{"L"}})
+	_, err := be.CreateNode(t.Context(), &Node{ID: "test:skip-1", Labels: []string{"L"}})
 	require.NoError(t, err)
 
 	headBefore, err := loadNodeMVCCHeadInViewTxn(t, be, "test:skip-1")
@@ -217,9 +217,9 @@ func TestBootstrapNodeMVCCFromCurrentStateInTxn_SkipsExistingHead(t *testing.T) 
 func TestApplyEdgeBootstrapBatch_SkipsExistingHead(t *testing.T) {
 	be := newTestMemoryEngine(t)
 
-	_, err := be.CreateNode(&Node{ID: "test:n-from", Labels: []string{"X"}})
+	_, err := be.CreateNode(t.Context(), &Node{ID: "test:n-from", Labels: []string{"X"}})
 	require.NoError(t, err)
-	_, err = be.CreateNode(&Node{ID: "test:n-to", Labels: []string{"X"}})
+	_, err = be.CreateNode(t.Context(), &Node{ID: "test:n-to", Labels: []string{"X"}})
 	require.NoError(t, err)
 	edge := &Edge{
 		ID:        "test:e-batch",
@@ -227,7 +227,7 @@ func TestApplyEdgeBootstrapBatch_SkipsExistingHead(t *testing.T) {
 		EndNode:   "test:n-to",
 		Type:      "REL",
 	}
-	require.NoError(t, be.CreateEdge(edge))
+	require.NoError(t, be.CreateEdge(t.Context(), edge))
 
 	var before MVCCHead
 	require.NoError(t, be.db.View(func(txn *badger.Txn) error {
@@ -261,11 +261,11 @@ func TestApplyEdgeBootstrapBatch_NilAndEmpty(t *testing.T) {
 func TestBootstrapMVCCHeadsFromCurrentState_FullPath(t *testing.T) {
 	be := newTestMemoryEngine(t)
 
-	_, err := be.CreateNode(&Node{ID: "test:b-n1", Labels: []string{"L"}})
+	_, err := be.CreateNode(t.Context(), &Node{ID: "test:b-n1", Labels: []string{"L"}})
 	require.NoError(t, err)
-	_, err = be.CreateNode(&Node{ID: "test:b-n2", Labels: []string{"L"}})
+	_, err = be.CreateNode(t.Context(), &Node{ID: "test:b-n2", Labels: []string{"L"}})
 	require.NoError(t, err)
-	require.NoError(t, be.CreateEdge(&Edge{
+	require.NoError(t, be.CreateEdge(t.Context(), &Edge{
 		ID: "test:b-e1", StartNode: "test:b-n1", EndNode: "test:b-n2", Type: "REL",
 	}))
 

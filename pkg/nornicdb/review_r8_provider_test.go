@@ -67,7 +67,7 @@ func TestReviewProviderSnapshotPublicWorker(t *testing.T) {
 			worker.Close()
 			t.Logf("old inputs=%d replacement inputs=%d publications=%v processed=%d pending=%v epoch=%d", oldBase.GetEmbedCount(), replacement.GetEmbedCount(), published, worker.processed.Load(), queue.pending, worker.embeddingEpoch.Load())
 			for _, id := range []storage.NodeID{"node-000", "node-001"} {
-				node, err := queue.GetNode(id)
+				node, err := queue.GetNode(t.Context(), id)
 				require.NoError(t, err)
 				if len(node.ChunkEmbeddings) > 0 {
 					assertModel := node.EmbedMeta["embedding_model"]

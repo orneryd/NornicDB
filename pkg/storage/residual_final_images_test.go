@@ -24,12 +24,12 @@ func TestResidualFinalCacheImages(t *testing.T) {
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = b.Close() })
 				for _, id := range []NodeID{"test:a", "test:b", "test:middle"} {
-					_, err := b.CreateNode(&Node{ID: id})
+					_, err := b.CreateNode(t.Context(), &Node{ID: id})
 					require.NoError(t, err)
 				}
 				edge := &Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "T", Properties: map[string]any{"p": int64(0)}}
-				require.NoError(t, b.CreateEdge(edge))
-				tx, err := b.BeginTransaction()
+				require.NoError(t, b.CreateEdge(t.Context(), edge))
+				tx, err := b.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = tx.Rollback() })
 				require.NoError(t, tx.SetNamespace("test"))
@@ -38,19 +38,19 @@ func TestResidualFinalCacheImages(t *testing.T) {
 					stageLargeCreate(t, tx, largePopulation)
 				}
 				edge.Properties = map[string]any{"p": int64(1)}
-				require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: edge}))
-				require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:middle", Properties: map[string]any{"v": int64(1)}}, Policy: ClientNodeEdits}))
+				require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge}))
+				require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:middle", Properties: map[string]any{"v": int64(1)}}, Policy: ClientNodeEdits}))
 				edge.Properties = map[string]any{"p": int64(2)}
 				switch ending {
 				case "delete-edge":
-					require.NoError(t, tx.DeleteEdge(edge.ID))
+					require.NoError(t, tx.DeleteEdge(t.Context(), edge.ID))
 				case "cascade":
-					require.NoError(t, tx.DeleteGraphNode("test:a", CascadeEdges))
+					require.NoError(t, tx.DeleteGraphNode(t.Context(), "test:a", CascadeEdges))
 				case "move-type":
 					edge.StartNode, edge.EndNode, edge.Type = "test:b", "test:middle", "FINAL"
-					require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: edge}))
+					require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge}))
 				default:
-					require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: edge}))
+					require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge}))
 				}
 				deleted := ending == "delete-edge" || ending == "cascade"
 				observed := false
@@ -60,7 +60,7 @@ func TestResidualFinalCacheImages(t *testing.T) {
 						return
 					}
 					observed = true
-					point, err := b.GetStoredEdge("test:e")
+					point, err := b.GetStoredEdge(t.Context(), "test:e")
 					if deleted && errors.Is(err, ErrNotFound) {
 						point, err = nil, nil
 					}
@@ -136,10 +136,10 @@ func TestResidualFinalCacheImages(t *testing.T) {
 				} else {
 					require.NoError(t, tx.Commit())
 				}
-				require.NoError(t, b.FlushWriteBehind(nil))
+				require.NoError(t, b.FlushWriteBehind(context.Background()))
 				require.True(t, observed)
 				require.NoError(t, observationErr)
-				point, err := b.GetStoredEdge("test:e")
+				point, err := b.GetStoredEdge(t.Context(), "test:e")
 				if deleted {
 					require.ErrorIs(t, err, ErrNotFound)
 					return
@@ -158,13 +158,13 @@ func TestResidualUnrelatedCachesRemainWarm(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = b.Close() })
 			for _, id := range []NodeID{"test:keep-a", "test:keep-b"} {
-				_, err := b.CreateNode(&Node{ID: id, Properties: map[string]any{"v": int64(1)}})
+				_, err := b.CreateNode(t.Context(), &Node{ID: id, Properties: map[string]any{"v": int64(1)}})
 				require.NoError(t, err)
 			}
-			require.NoError(t, b.CreateEdge(&Edge{ID: "test:keep-e", StartNode: "test:keep-a", EndNode: "test:keep-b", Type: "KEEP"}))
+			require.NoError(t, b.CreateEdge(t.Context(), &Edge{ID: "test:keep-e", StartNode: "test:keep-a", EndNode: "test:keep-b", Type: "KEEP"}))
 			// Land the fixture before warming physical caches; overlay scans need not populate them.
-			require.NoError(t, b.FlushWriteBehind(nil))
-			_, err = b.GetStoredNode("test:keep-a")
+			require.NoError(t, b.FlushWriteBehind(context.Background()))
+			_, err = b.GetStoredNode(t.Context(), "test:keep-a")
 			require.NoError(t, err)
 			_, err = b.GetOutgoingEdges(context.Background(), "test:keep-a")
 			require.NoError(t, err)
@@ -203,10 +203,10 @@ func TestResidualUnrelatedCachesRemainWarm(t *testing.T) {
 				require.Equal(t, EdgeID("test:keep-e"), got[0].ID)
 			}
 			if buffered {
-				tx, err := b.BeginTransaction()
+				tx, err := b.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				require.NoError(t, tx.SetImplicit(true))
-				_, err = tx.CreateNode(&Node{ID: "other:new", Labels: []string{"OTHER"}, Properties: map[string]any{"fresh-property": int64(1)}})
+				_, err = tx.CreateNode(t.Context(), &Node{ID: "other:new", Labels: []string{"OTHER"}, Properties: map[string]any{"fresh-property": int64(1)}})
 				require.NoError(t, err)
 				for key, value := range tx.pendingWrites {
 					var projection physicalCacheProjection
@@ -217,9 +217,9 @@ func TestResidualUnrelatedCachesRemainWarm(t *testing.T) {
 				}
 				require.NoError(t, tx.Commit())
 				assertWarm() // ACK visibility must preserve unrelated caches before replay too.
-				require.NoError(t, b.FlushWriteBehind(nil))
+				require.NoError(t, b.FlushWriteBehind(context.Background()))
 			} else {
-				_, err := b.CreateNode(&Node{ID: "other:new", Labels: []string{"OTHER"}, Properties: map[string]any{"fresh-property": int64(1)}})
+				_, err := b.CreateNode(t.Context(), &Node{ID: "other:new", Labels: []string{"OTHER"}, Properties: map[string]any{"fresh-property": int64(1)}})
 				require.NoError(t, err)
 			}
 			if stack := globalIssuer.Load(); stack != nil {

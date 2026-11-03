@@ -168,7 +168,7 @@ func TestHeimdallRouterRefusesCompositeSearchAndStats(t *testing.T) {
 	}))
 	closed, err := server.dbManager.GetStorage("closed_part")
 	require.NoError(t, err)
-	_, err = closed.CreateNode(&storage.Node{ID: "closed-1", Labels: []string{"Document"}, Properties: map[string]interface{}{"title": "closed notes"}})
+	_, err = closed.CreateNode(t.Context(), &storage.Node{ID: "closed-1", Labels: []string{"Document"}, Properties: map[string]interface{}{"title": "closed notes"}})
 	require.NoError(t, err)
 
 	compositeOnly := heimdallPrincipal([]string{"portfolio"}, func(database string, permission auth.Permission) bool {
@@ -217,7 +217,7 @@ func TestHeimdallAsyncActionKeepsCallerPrincipal(t *testing.T) {
 	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "async_named"}))
 	named, err := server.dbManager.GetStorage("async_named")
 	require.NoError(t, err)
-	_, err = named.CreateNode(&storage.Node{ID: "async-named-node", Labels: []string{"Doc"}})
+	_, err = named.CreateNode(t.Context(), &storage.Node{ID: "async-named-node", Labels: []string{"Doc"}})
 	require.NoError(t, err)
 	type outcome struct {
 		rows []map[string]interface{}
@@ -291,9 +291,7 @@ func TestHeimdallRouterRefusesIncompletePrincipal(t *testing.T) {
 	server, _ := setupTestServer(t)
 	router := newHeimdallDBRouter(server.db, server.dbManager, nil)
 	resolverOnly := auth.WithRequestEntitlementResolver(context.Background(), func(string, auth.Permission) bool { return true })
-	var noContext context.Context
-
-	for _, ctx := range []context.Context{resolverOnly, noContext} {
+	for _, ctx := range []context.Context{resolverOnly} {
 		_, err := router.Query(ctx, "nornic", "RETURN 1 AS n", nil)
 		requireHeimdallForbidden(t, err)
 		_, err = router.Discover(ctx, "nornic", "x", nil, 5, 0)

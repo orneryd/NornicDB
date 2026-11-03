@@ -2,11 +2,10 @@ package storage
 
 import (
 	"context"
-	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
-
 	"fmt"
 	"testing"
 
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 )
 
@@ -19,9 +18,8 @@ func BenchmarkScopedLabelReaders(b *testing.B) {
 		foreignFirst      bool
 	}{{"own1000", 1000, 0, false}, {"own1000_foreign50000", 1000, 50000, false}, {"foreign50000_before_own1000", 1000, 50000, true}, {"own1000_sparse", 1, 0, false}} {
 		b.Run(fixture.name, func(b *testing.B) {
-			engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
+			engine, err := runtimeFixtureOwner.OwnResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 			require.NoError(b, err)
-			b.Cleanup(func() { _ = engine.Close() })
 			populations := []struct {
 				namespace string
 				count     int
@@ -38,29 +36,25 @@ func BenchmarkScopedLabelReaders(b *testing.B) {
 					}
 					nodes = append(nodes, &Node{ID: NodeID(fmt.Sprintf("%s:n%05d", population.namespace, index)), Labels: []string{label}, Properties: map[string]any{"age": int64(index)}})
 				}
-				require.NoError(b, engine.BulkCreateNodes(nodes))
+				require.NoError(b, engine.BulkCreateNodes(b.Context(), nodes))
 			}
 			namespace := NewNamespacedEngine(engine, "a")
 			for _, mode := range []string{"slice", "projected", "first", "snapshot_first", "id_first", "absent"} {
 				b.Run(mode, func(b *testing.B) {
+					if mode == "slice" || mode == "projected" {
+						benchmarkCompleteScopedLabelRead(b, engine, "a:", "Person", []string{"age"}, fixture.matching, mode)
+						return
+					}
 					b.ReportAllocs()
 					b.ResetTimer()
 					for iteration := 0; iteration < b.N; iteration++ {
 						switch mode {
-						case "slice":
-							nodes, err := engine.GetNodesByLabelInScope(context.Background(), "a:", "Person")
-							require.NoError(b, err)
-							require.Len(b, nodes, fixture.matching)
-						case "projected":
-							seen := 0
-							require.NoError(b, engine.StreamNodesByLabelProjectedInScope(context.Background(), "a:", "Person", []string{"age"}, func(*Node) error { seen++; return nil }))
-							require.Equal(b, fixture.matching, seen)
 						case "first":
-							node, err := engine.GetFirstNodeByLabelInScope("a:", "Person")
+							node, err := engine.GetFirstNodeByLabelInScope(b.Context(), "a:", "Person")
 							require.NoError(b, err)
 							require.Equal(b, NodeID("a:n00000"), node.ID)
 						case "snapshot_first":
-							tx, err := engine.BeginTransaction()
+							tx, err := engine.BeginTransaction(b.Context())
 							require.NoError(b, err)
 							require.NoError(b, tx.SetNamespace("a"))
 							err = tx.StreamNodesByLabelProjected(context.Background(), "Person", []string{"age"}, func(*Node) error { return ErrIterationStopped })
@@ -75,7 +69,7 @@ func BenchmarkScopedLabelReaders(b *testing.B) {
 							}))
 							require.Equal(b, 1, seen)
 						case "absent":
-							node, err := engine.GetFirstNodeByLabelInScope("a:", "Missing")
+							node, err := engine.GetFirstNodeByLabelInScope(b.Context(), "a:", "Missing")
 							require.NoError(b, err)
 							require.Nil(b, node)
 						}
@@ -83,5 +77,26 @@ func BenchmarkScopedLabelReaders(b *testing.B) {
 				})
 			}
 		})
+	}
+}
+
+// benchmarkCompleteScopedLabelRead is the shared measured full-read workload
+// for namespace scaling and ready-versus-building comparisons. Fixture setup
+// stays with each caller; both paths assert the complete population per read.
+func benchmarkCompleteScopedLabelRead(b *testing.B, engine *BadgerEngine, scope, label string, properties []string, expected int, mode string) {
+	b.Helper()
+	ctx := b.Context()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for iteration := 0; iteration < b.N; iteration++ {
+		if mode == "slice" {
+			nodes, err := engine.GetNodesByLabelInScope(ctx, scope, label)
+			require.NoError(b, err)
+			require.Len(b, nodes, expected)
+		} else {
+			seen := 0
+			require.NoError(b, engine.StreamNodesByLabelProjectedInScope(ctx, scope, label, properties, func(*Node) error { seen++; return nil }))
+			require.Equal(b, expected, seen)
+		}
 	}
 }

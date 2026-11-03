@@ -91,7 +91,7 @@ func bulkInsertEmbeddedNodes(t *testing.T, db *DB, count int) ([]storage.NodeID,
 	for i := 0; i < count; i++ {
 		id := storage.NodeID(fmt.Sprintf("nornic:bulk-%d", i))
 		vec := makeUnitVector(int64(i + 1))
-		_, err := db.storage.CreateNode(&storage.Node{
+		_, err := db.storage.CreateNode(t.Context(), &storage.Node{
 			ID:     id,
 			Labels: []string{"BulkDoc"},
 			Properties: map[string]any{
@@ -381,7 +381,7 @@ func TestBulkLoadVectorRecall_OperatorScenario(t *testing.T) {
 		for j, v := range vec {
 			propVec[j] = float64(v)
 		}
-		_, err := db1.storage.CreateNode(&storage.Node{
+		_, err := db1.storage.CreateNode(t.Context(), &storage.Node{
 			ID:     id,
 			Labels: []string{"Doc"},
 			Properties: map[string]any{
@@ -615,7 +615,7 @@ func TestDropVectorIndex_TearsDownInMemoryIndex(t *testing.T) {
 		for j, v := range vec {
 			propVec[j] = float64(v)
 		}
-		_, err := db.storage.CreateNode(&storage.Node{
+		_, err := db.storage.CreateNode(t.Context(), &storage.Node{
 			ID:     id,
 			Labels: []string{"Doc"},
 			Properties: map[string]any{

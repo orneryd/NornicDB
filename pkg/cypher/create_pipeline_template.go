@@ -52,18 +52,23 @@ var pipelineCreateTemplates = newBoundedCache[string, *pipelineCreateTemplate](5
 // property-map body. Anything else (path assignments, inline endpoint
 // definitions, parameter maps, dynamic labels/types, multiple types) makes
 // the template unusable and the general route stays authoritative.
-func (e *StorageExecutor) pipelineCreateTemplateFor(clause string) *pipelineCreateTemplate {
+func (e *StorageExecutor) pipelineCreateTemplateFor(ctx context.Context, clause string) *pipelineCreateTemplate {
+	if ctx.Err() != nil {
+		return &pipelineCreateTemplate{}
+	}
 	if template, ok := pipelineCreateTemplates.get(clause); ok {
 		return template
 	}
-	template := e.buildPipelineCreateTemplate(pipelineClauseBody(clause, "CREATE"))
-	pipelineCreateTemplates.put(clause, template)
+	template := e.buildPipelineCreateTemplate(ctx, pipelineClauseBody(clause, "CREATE"))
+	if ctx.Err() == nil {
+		pipelineCreateTemplates.put(clause, template)
+	}
 	return template
 }
 
 // buildPipelineCreateTemplate parses one CREATE pattern body into node and
 // edge templates. usable=false on any unsupported shape.
-func (e *StorageExecutor) buildPipelineCreateTemplate(pattern string) *pipelineCreateTemplate {
+func (e *StorageExecutor) buildPipelineCreateTemplate(ctx context.Context, pattern string) *pipelineCreateTemplate {
 	template := &pipelineCreateTemplate{}
 	fragments := splitTopLevelComma(pattern)
 	for _, raw := range fragments {
@@ -103,7 +108,7 @@ func (e *StorageExecutor) buildPipelineCreateTemplate(pattern string) *pipelineC
 		for _, expression := range node.properties {
 			keys[expression.key] = nil
 		}
-		if err := validateCreatePropertyKeys("", keys); err != nil {
+		if err := validateCreatePropertyKeys(ctx, "", keys); err != nil {
 			return template
 		}
 	}
@@ -112,7 +117,7 @@ func (e *StorageExecutor) buildPipelineCreateTemplate(pattern string) *pipelineC
 		for _, expression := range edge.properties {
 			keys[expression.key] = nil
 		}
-		if err := validateCreatePropertyKeys("", keys); err != nil {
+		if err := validateCreatePropertyKeys(ctx, "", keys); err != nil {
 			return template
 		}
 	}
@@ -228,6 +233,9 @@ func bareEndpointVariable(content string) (string, bool) {
 // declines before evaluation. Once selected, evaluation errors are terminal.
 // Planning is atomic: any error rolls back this call's staged nodes and edges.
 func (t *pipelineCreateTemplate) plan(ctx context.Context, e *StorageExecutor, row pipelineRow, nodes map[string]*storage.Node, edges map[string]*storage.Edge, plan *createPlan) (map[string]PathResult, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, true, err
+	}
 	if !t.usable {
 		return nil, false, nil
 	}

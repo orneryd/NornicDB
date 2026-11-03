@@ -26,7 +26,7 @@ func TestCensusRejectsSuppressionEvaluatorBypass(t *testing.T) {
 	text += `
 func(b *BadgerEngine)censusBypassSuppressionInTxn(txn *badger.Txn,input suppressionEvaluation)(suppressionMutation,error){
  id:=input.id;if input.node!=nil{id=string(input.node.ID)}
- edge,err:=b.GetStoredEdge(EdgeID(id))
+ edge,err:=b.GetStoredEdge(context.Background(),EdgeID(id))
  if err==nil { data,encodeErr:=b.encodeEdgeInTxn(txn,namespaceForEdgeID(EdgeID(id)),edge);if encodeErr!=nil{return suppressionMutation{},encodeErr};return suppressionMutation{edge:edge},txn.Set(edgeKey(EdgeID(id)),data) }
  return suppressionMutation{},err
 }

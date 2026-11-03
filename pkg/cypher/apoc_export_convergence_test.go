@@ -122,7 +122,7 @@ func pr1615ExportPath(dir, name string, createsParents bool) string {
 func pr1615SeedUnencodableGraph(t *testing.T, store storage.Engine) {
 	t.Helper()
 	for index := 0; index < pr1615ExportPopulation; index++ {
-		_, err := store.CreateNode(&storage.Node{
+		_, err := store.CreateNode(t.Context(), &storage.Node{
 			ID:         storage.NodeID(fmt.Sprintf("pr1615-node-%05d", index)),
 			Labels:     []string{"Export"},
 			Properties: map[string]interface{}{"value": math.NaN()},
@@ -189,7 +189,7 @@ func TestAPOCExportCallerCancellationStopsExport(t *testing.T) {
 		})
 		t.Run(export.name+"/live", func(t *testing.T) {
 			exec, dir := pr1615ExportExecutor(t)
-			_, seedErr := exec.storage.CreateNode(&storage.Node{
+			_, seedErr := exec.storage.CreateNode(t.Context(), &storage.Node{
 				ID:         "pr1615-node-live",
 				Labels:     []string{"Export"},
 				Properties: map[string]interface{}{"value": "pr1615"},
@@ -371,7 +371,7 @@ func TestAPOCExportReportsUnencodableValue(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			exec := NewStorageExecutor(pr1615NamespacedStore(t))
-			_, err := exec.storage.CreateNode(&storage.Node{
+			_, err := exec.storage.CreateNode(t.Context(), &storage.Node{
 				ID:         "pr1615-unencodable",
 				Labels:     []string{"Unencodable"},
 				Properties: map[string]interface{}{"value": math.NaN()},
@@ -434,15 +434,15 @@ func TestAPOCExportResultContract(t *testing.T) {
 	newExecutor := func(t *testing.T) *StorageExecutor {
 		t.Helper()
 		exec := NewStorageExecutor(pr1615NamespacedStore(t))
-		_, err := exec.storage.CreateNode(&storage.Node{
+		_, err := exec.storage.CreateNode(t.Context(), &storage.Node{
 			ID:         "n1",
 			Labels:     []string{"Person"},
 			Properties: map[string]interface{}{"name": "alice", "since": int64(2020)},
 		})
 		require.NoError(t, err)
-		_, err = exec.storage.CreateNode(&storage.Node{ID: "n2", Labels: []string{"Person"}})
+		_, err = exec.storage.CreateNode(t.Context(), &storage.Node{ID: "n2", Labels: []string{"Person"}})
 		require.NoError(t, err)
-		require.NoError(t, exec.storage.CreateEdge(&storage.Edge{
+		require.NoError(t, exec.storage.CreateEdge(t.Context(), &storage.Edge{
 			ID:         "e1",
 			Type:       "KNOWS",
 			StartNode:  "n1",
@@ -526,15 +526,15 @@ func TestAPOCExportResultContract(t *testing.T) {
 // relationship columns in their declared order, and both section headers.
 func TestAPOCExportCSVQuoting(t *testing.T) {
 	exec, dir := pr1615ExportExecutor(t)
-	_, err := exec.storage.CreateNode(&storage.Node{
+	_, err := exec.storage.CreateNode(t.Context(), &storage.Node{
 		ID:         "n1",
 		Labels:     []string{"Person", "Employee"},
 		Properties: map[string]interface{}{"name": `a "quoted" name`},
 	})
 	require.NoError(t, err)
-	_, err = exec.storage.CreateNode(&storage.Node{ID: "n2", Labels: []string{"Person"}})
+	_, err = exec.storage.CreateNode(t.Context(), &storage.Node{ID: "n2", Labels: []string{"Person"}})
 	require.NoError(t, err)
-	require.NoError(t, exec.storage.CreateEdge(&storage.Edge{
+	require.NoError(t, exec.storage.CreateEdge(t.Context(), &storage.Edge{
 		ID: "e1", Type: "KNOWS", StartNode: "n1", EndNode: "n2",
 		Properties: map[string]interface{}{"since": int64(2020)},
 	}))
@@ -623,11 +623,11 @@ func TestAPOCExportCSVQuotesIdentifiersAndHeaders(t *testing.T) {
 		t.Run("graph identifiers", func(t *testing.T) {
 			exec, dir := pr1615ExportExecutor(t)
 			first, second := storage.NodeID("node,one"), storage.NodeID("node\"two")
-			_, err := exec.storage.CreateNode(&storage.Node{ID: first, Labels: []string{"A\"B"}, Properties: map[string]interface{}{"name": "one"}})
+			_, err := exec.storage.CreateNode(t.Context(), &storage.Node{ID: first, Labels: []string{"A\"B"}, Properties: map[string]interface{}{"name": "one"}})
 			require.NoError(t, err)
-			_, err = exec.storage.CreateNode(&storage.Node{ID: second, Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "two"}})
+			_, err = exec.storage.CreateNode(t.Context(), &storage.Node{ID: second, Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "two"}})
 			require.NoError(t, err)
-			require.NoError(t, exec.storage.CreateEdge(&storage.Edge{ID: "edge,\"one", StartNode: first, EndNode: second, Type: "LINK,\"quoted", Properties: map[string]interface{}{"weight": int64(1)}}))
+			require.NoError(t, exec.storage.CreateEdge(t.Context(), &storage.Edge{ID: "edge,\"one", StartNode: first, EndNode: second, Type: "LINK,\"quoted", Properties: map[string]interface{}{"weight": int64(1)}}))
 			path := filepath.Join(dir, "graph.csv")
 			_, err = exec.Execute(context.Background(), "CALL apoc.export.csv.all($file,{})", map[string]interface{}{"file": path})
 			require.NoError(t, err)

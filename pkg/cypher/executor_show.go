@@ -229,7 +229,7 @@ func (e *StorageExecutor) executeShowConstraints(ctx context.Context, cypher str
 	if isCompositeRoot(e.storage) {
 		return nil, localizedError(localization.CypherResidualCompositeShowTargetRequired("SHOW CONSTRAINTS"), nil)
 	}
-	if isShowConstraintContractsCommand(cypher) {
+	if isShowConstraintContractsCommand(ctx, cypher) {
 		return e.executeShowConstraintContracts(ctx)
 	}
 	cypher25 := cypherVersionFromContext(ctx) == "25"
@@ -361,11 +361,11 @@ var showTailKeywords = []string{"YIELD", "WHERE", "RETURN", "ORDER BY", "SKIP", 
 
 // showCommandHead returns the SHOW command without its YIELD / WHERE /
 // RETURN / ORDER BY / SKIP / LIMIT tail, which applyShowTail handles.
-func showCommandHead(cypher string) string {
+func showCommandHead(ctx context.Context, cypher string) string {
 	query := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(cypher), ";"))
 	end := len(query)
 	for _, keyword := range showTailKeywords {
-		if index := findKeywordIndexInContext(query, keyword); index >= 0 && index < end {
+		if index := findKeywordIndexInContext(ctx, query, keyword); index >= 0 && index < end {
 			end = index
 		}
 	}
@@ -377,7 +377,7 @@ func showCommandHead(cypher string) string {
 // Every SHOW command goes through it, so YIELD, WHERE, RETURN, aggregation,
 // ORDER BY and SKIP / LIMIT behave the same for all of them.
 func (e *StorageExecutor) executeShowWithTail(ctx context.Context, cypher string, run func(context.Context, string) (*ExecuteResult, error)) (*ExecuteResult, error) {
-	result, err := run(ctx, showCommandHead(cypher))
+	result, err := run(ctx, showCommandHead(ctx, cypher))
 	if err != nil {
 		return nil, err
 	}
@@ -504,7 +504,7 @@ func projectShowColumns(result *ExecuteResult, columns []string) *ExecuteResult 
 // SKIP / LIMIT) is a SyntaxError, as in Neo4j.
 func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, result *ExecuteResult, defaults []string) (*ExecuteResult, error) {
 	query := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(cypher), ";"))
-	head := showCommandHead(query)
+	head := showCommandHead(ctx, query)
 	if len(head) == len(query) {
 		if defaults != nil {
 			return projectShowColumns(result, defaults), nil
@@ -522,7 +522,7 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 		}
 		where := strings.TrimSpace(tail[len("WHERE"):])
 		for _, keyword := range []string{"RETURN", "ORDER BY", "SKIP", "LIMIT", "WITH", "YIELD"} {
-			if topLevelKeywordIndex(where, keyword) >= 0 {
+			if topLevelKeywordIndex(ctx, where, keyword) >= 0 {
 				return nil, invalid()
 			}
 		}
@@ -545,7 +545,7 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 	positions := make([]int, len(segments))
 	itemsEnd := len(body)
 	for i, keyword := range segments {
-		positions[i] = topLevelKeywordIndex(body, keyword)
+		positions[i] = topLevelKeywordIndex(ctx, body, keyword)
 		if positions[i] >= 0 && positions[i] < itemsEnd {
 			itemsEnd = positions[i]
 		}
@@ -556,13 +556,13 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 		head4 = body[:returnIndex]
 	}
 	for _, keyword := range []string{"WITH", "MATCH", "UNWIND", "CALL", "CREATE", "MERGE", "SET", "DELETE", "REMOVE", "FOREACH", "OPTIONAL MATCH"} {
-		if topLevelKeywordIndex(head4, keyword) >= 0 {
+		if topLevelKeywordIndex(ctx, head4, keyword) >= 0 {
 			return nil, invalid()
 		}
 	}
 	last := -1
 	for i := 0; i < 4; i++ {
-		position := topLevelKeywordIndex(head4, segments[i])
+		position := topLevelKeywordIndex(ctx, head4, segments[i])
 		if position < 0 {
 			continue
 		}
@@ -572,13 +572,13 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 		last = position
 	}
 	segmentText := func(i int) string {
-		start := topLevelKeywordIndex(head4, segments[i])
+		start := topLevelKeywordIndex(ctx, head4, segments[i])
 		if start < 0 {
 			return ""
 		}
 		end := len(head4)
 		for j := 0; j < 4; j++ {
-			if position := topLevelKeywordIndex(head4, segments[j]); position > start && position < end {
+			if position := topLevelKeywordIndex(ctx, head4, segments[j]); position > start && position < end {
 				end = position
 			}
 		}
@@ -743,7 +743,10 @@ func (e *StorageExecutor) executeShowConstraintContracts(ctx context.Context) (*
 	schema := e.storage.GetSchema()
 	rows := [][]interface{}{}
 	if schema != nil {
-		contracts := schema.GetAllConstraintContracts()
+		contracts, err := schema.GetAllConstraintContracts(ctx)
+		if err != nil {
+			return nil, err
+		}
 		for _, contract := range contracts {
 			compiledCount := int64(0)
 			runtimeCount := int64(0)
@@ -960,8 +963,14 @@ func functionSignatureDescriptions(signature string) ([]interface{}, string) {
 
 // executeShowDatabase handles SHOW DATABASE command (singular - shows current database)
 func (e *StorageExecutor) executeShowDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	nodeCount, _ := e.storage.NodeCount()
-	edgeCount, _ := e.storage.EdgeCount()
+	nodeCount, err := e.storage.NodeCount(ctx)
+	if err != nil {
+		return nil, err
+	}
+	edgeCount, err := e.storage.EdgeCount(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	// Try to get database name from context or use default
 	dbName := "nornic" // Default fallback
@@ -1146,7 +1155,7 @@ func (e *StorageExecutor) executeDatabaseCreate(ctx context.Context, cypher stri
 		header = "OR REPLACE DATABASE"
 		first, second = "OR", "REPLACE"
 	}
-	at := findMultiWordKeywordIndex(cypher, first, second)
+	at := findMultiWordKeywordIndex(ctx, cypher, first, second)
 	if at < 0 {
 		return nil, localizedError(localization.CypherAdminInvalidSyntax("CREATE DATABASE"), nil)
 	}
@@ -1172,7 +1181,7 @@ func (e *StorageExecutor) executeDatabaseCreate(ctx context.Context, cypher stri
 			return nil, err
 		}
 		rawDBName = strings.TrimSpace(cypher[startPos:])
-		if clause := findMultiWordKeywordIndex(rawDBName, "IF", "NOT"); clause >= 0 {
+		if clause := findMultiWordKeywordIndex(ctx, rawDBName, "IF", "NOT"); clause >= 0 {
 			clauseEnd := keywordEndAt(rawDBName, clause, "IF NOT EXISTS")
 			if clauseEnd > clause {
 				if strings.TrimSpace(rawDBName[clauseEnd:]) != "" {
@@ -1240,7 +1249,7 @@ func (e *StorageExecutor) executeCreateAlias(ctx context.Context, cypher string)
 	}
 
 	// Find "CREATE ALIAS" keyword position
-	createAliasIdx := findMultiWordKeywordIndex(cypher, "CREATE", "ALIAS")
+	createAliasIdx := findMultiWordKeywordIndex(ctx, cypher, "CREATE", "ALIAS")
 	if createAliasIdx == -1 {
 		return nil, localizedError(localization.CypherAdminInvalidSyntax("CREATE ALIAS"), nil)
 	}
@@ -1263,7 +1272,7 @@ func (e *StorageExecutor) executeCreateAlias(ctx context.Context, cypher string)
 	}
 
 	// Find "FOR DATABASE" to separate alias name from database name
-	forIdx := findMultiWordKeywordIndex(cypher[startPos:], "FOR", "DATABASE")
+	forIdx := findMultiWordKeywordIndex(ctx, cypher[startPos:], "FOR", "DATABASE")
 	if forIdx == -1 {
 		return nil, localizedError(localization.CypherAdminTermExpected("CREATE ALIAS", "FOR DATABASE"), nil)
 	}
@@ -1355,8 +1364,11 @@ func (e *StorageExecutor) executeDropAlias(ctx context.Context, cypher string) (
 	}
 
 	// Admit the entire name and optional suffix before resolving or mutating it.
-	tokens, spans, tokenErr := tokenizeSource(cypher)
+	tokens, spans, tokenErr := tokenizeSource(ctx, cypher)
 	if tokenErr != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		return nil, &classifiedCypherError{cause: tokenErr, code: "Neo.ClientError.Statement.SyntaxError", detail: "InvalidAliasSyntax"}
 	}
 	invalid := func() error {
@@ -1535,7 +1547,7 @@ func (e *StorageExecutor) executeAlterDatabase(ctx context.Context, cypher strin
 	}
 
 	// Find "ALTER DATABASE" keyword position
-	alterDbIdx := findMultiWordKeywordIndex(cypher, "ALTER", "DATABASE")
+	alterDbIdx := findMultiWordKeywordIndex(ctx, cypher, "ALTER", "DATABASE")
 	if alterDbIdx == -1 {
 		return nil, localizedError(localization.CypherAdminInvalidSyntax("ALTER DATABASE"), nil)
 	}
@@ -1559,7 +1571,7 @@ func (e *StorageExecutor) executeAlterDatabase(ctx context.Context, cypher strin
 	}
 
 	// Find "SET LIMIT" keyword
-	setLimitIdx := findMultiWordKeywordIndex(cypher[startPos:], "SET", "LIMIT")
+	setLimitIdx := findMultiWordKeywordIndex(ctx, cypher[startPos:], "SET", "LIMIT")
 	if setLimitIdx == -1 {
 		return nil, localizedError(localization.CypherAdminClauseExpected("ALTER DATABASE", "SET LIMIT"), nil)
 	}
@@ -1760,7 +1772,7 @@ func (e *StorageExecutor) executeShowLimits(ctx context.Context, cypher string) 
 	}
 
 	// Find "SHOW LIMITS" keyword position
-	showLimitsIdx := findMultiWordKeywordIndex(cypher, "SHOW", "LIMITS")
+	showLimitsIdx := findMultiWordKeywordIndex(ctx, cypher, "SHOW", "LIMITS")
 	if showLimitsIdx == -1 {
 		return nil, localizedError(localization.CypherAdminInvalidSyntax("SHOW LIMITS"), nil)
 	}
@@ -1781,7 +1793,7 @@ func (e *StorageExecutor) executeShowLimits(ctx context.Context, cypher string) 
 	}
 
 	// Check for "FOR DATABASE" clause
-	forDbIdx := findMultiWordKeywordIndex(cypher[startPos:], "FOR", "DATABASE")
+	forDbIdx := findMultiWordKeywordIndex(ctx, cypher[startPos:], "FOR", "DATABASE")
 	if forDbIdx == -1 {
 		return nil, localizedError(localization.CypherAdminClauseExpected("SHOW LIMITS", "FOR DATABASE"), nil)
 	}

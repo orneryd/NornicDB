@@ -151,8 +151,7 @@ func materializePropertyEntries(ctx context.Context, expressions []pipelinePrope
 
 // rowMapContext preserves a row map's existing ordering/error metadata when
 // its compiled or text execution crosses into the shared materializer.
-func rowMapContext(values pipelineRow) context.Context {
-	ctx := rowStatementContextOrBackground(values)
+func rowMapContext(ctx context.Context, values pipelineRow) context.Context {
 	if failure, ok := values["\x00mapKeyOrders"].(*expressionFailure); ok && ctx.Value(expressionFailureKey{}) != failure {
 		return context.WithValue(ctx, expressionFailureKey{}, failure)
 	}

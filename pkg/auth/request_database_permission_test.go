@@ -13,7 +13,6 @@ func TestRequestDatabasePermissionUsesExistingResolvers(t *testing.T) {
 		permission Permission
 		allowed    bool
 	}{
-		{"nil request", nil, "nornic", PermRead, false},
 		{"embedded no auth", context.Background(), "nornic", PermRead, true},
 		{"auth disabled", WithRequestAuthenticationDisabled(context.Background()), "named", PermRead, true},
 		{"selection denied", WithRequestDatabaseScope(context.Background(), NewRequestDatabaseScope("nornic", map[string]string{"nornic": "nornic"})), "named", PermRead, false},

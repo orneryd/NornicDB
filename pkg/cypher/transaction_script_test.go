@@ -1,3 +1,4 @@
+// Author: Codex, NOR-180 private rollback context signature migration,29October2026.
 package cypher
 
 import (
@@ -238,7 +239,7 @@ func TestTransactionStatementHandlers_AdditionalBranches(t *testing.T) {
 	require.NotNil(t, exec.txContext)
 	assert.True(t, exec.txContext.active)
 
-	_, err = exec.handleBegin(nil)
+	_, err = exec.handleBegin(t.Context())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "transaction already active")
 
@@ -258,12 +259,12 @@ func TestTransactionStatementHandlers_AdditionalBranches(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown transaction type")
 
 	exec.txContext = &TransactionContext{tx: struct{}{}, active: true}
-	_, err = exec.handleRollback()
+	_, err = exec.handleRollback(context.Background(), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown transaction type")
 
 	exec.txContext = nil
-	_, err = exec.handleRollback()
+	_, err = exec.handleRollback(context.Background(), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no active transaction")
 }
@@ -312,7 +313,7 @@ func requireTransactionHandlerFailsAfterClosedTransaction(t *testing.T, finish f
 	store := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(store)
 
-	_, err := exec.handleBegin(nil)
+	_, err := exec.handleBegin(t.Context())
 	require.NoError(t, err)
 	require.NotNil(t, exec.txContext)
 
@@ -349,7 +350,7 @@ func TestTransactionHandleCommit_ErrorBranchAfterClosedTx_WithWAL(t *testing.T) 
 	store := storage.NewNamespacedEngine(walEngine, "test")
 	exec := NewStorageExecutor(store)
 
-	_, err = exec.handleBegin(nil)
+	_, err = exec.handleBegin(t.Context())
 	require.NoError(t, err)
 	require.NotNil(t, exec.txContext)
 	require.NotNil(t, exec.txContext.wal)
@@ -367,7 +368,9 @@ func TestTransactionHandleCommit_ErrorBranchAfterClosedTx_WithWAL(t *testing.T) 
 
 func TestTransactionHandleRollback_ErrorBranchAfterClosedTx(t *testing.T) {
 	requireTransactionHandlerFailsAfterClosedTransaction(t,
-		func(exec *StorageExecutor) (*ExecuteResult, error) { return exec.handleRollback() },
+		func(exec *StorageExecutor) (*ExecuteResult, error) {
+			return exec.handleRollback(context.Background(), nil)
+		},
 		"rollback failed")
 }
 
@@ -380,12 +383,12 @@ func requireExecuteInTransactionSucceeds(t *testing.T, exec *StorageExecutor, cy
 	t.Helper()
 	ctx := context.Background()
 
-	_, err := exec.handleBegin(nil)
+	_, err := exec.handleBegin(t.Context())
 	require.NoError(t, err)
 	require.NotNil(t, exec.txContext)
 	t.Cleanup(func() {
 		if exec.txContext != nil {
-			_, _ = exec.handleRollback()
+			_, _ = exec.handleRollback(context.Background(), nil)
 		}
 	})
 
@@ -409,7 +412,7 @@ func TestExecuteInTransaction_SuccessPath_NoNamespace(t *testing.T) {
 
 func TestTransactionHandleBegin_NoTransactionEngine(t *testing.T) {
 	exec := &StorageExecutor{} // no storage engine configured
-	_, err := exec.handleBegin(nil)
+	_, err := exec.handleBegin(t.Context())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "engine does not support transactions")
 }

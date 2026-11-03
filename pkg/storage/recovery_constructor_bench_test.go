@@ -44,7 +44,7 @@ func BenchmarkRecoveryConstructors(b *testing.B) {
 						if err != nil {
 							b.Fatal(err)
 						}
-						actual, err := engine.NodeCount()
+						actual, err := engine.NodeCount(b.Context())
 						if err != nil || actual != int64(count) {
 							b.Fatalf("recovered nodes=%d want=%d err=%v", actual, count, err)
 						}

@@ -24,7 +24,7 @@ func txEdgeConstraintFixture(t *testing.T, c Constraint) *BadgerEngine {
 	require.NoError(t, engine.GetSchemaForNamespace("test").AddConstraint(c))
 
 	for _, id := range []NodeID{"test:a", "test:b", "test:c", "test:d"} {
-		_, err := engine.CreateNode(&Node{
+		_, err := engine.CreateNode(t.Context(), &Node{
 			ID:         id,
 			Labels:     []string{"Endpoint"},
 			Properties: map[string]any{},
@@ -46,15 +46,15 @@ func TestTxCheckEdgeUniqueness_PendingDuplicate(t *testing.T) {
 		Properties: []string{"token"},
 	})
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b",
 		Type: "OWNS", Properties: map[string]any{"token": "abc"},
 	}))
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e2", StartNode: "test:c", EndNode: "test:d",
 		Type: "OWNS", Properties: map[string]any{"token": "abc"},
 	}))
@@ -77,15 +77,15 @@ func TestTxCheckEdgeUniqueness_AgainstCommitted(t *testing.T) {
 		Label:      "OWNS",
 		Properties: []string{"token"},
 	})
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b",
 		Type: "OWNS", Properties: map[string]any{"token": "abc"},
 	}))
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e2", StartNode: "test:c", EndNode: "test:d",
 		Type: "OWNS", Properties: map[string]any{"token": "abc"},
 	}))
@@ -110,13 +110,13 @@ func TestTxCheckEdgeUniqueness_NullValueAllowed(t *testing.T) {
 		Properties: []string{"token"},
 	})
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b",
 		Type: "OWNS", Properties: map[string]any{},
 	}))
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e2", StartNode: "test:c", EndNode: "test:d",
 		Type: "OWNS", Properties: map[string]any{},
 	}))
@@ -133,16 +133,16 @@ func TestTxCheckEdgeUniqueness_CompositeKey(t *testing.T) {
 		Properties: []string{"k1", "k2"},
 	})
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b",
 		Type: "TAG", Properties: map[string]any{"k1": "x", "k2": "y"},
 	}))
 	// Same composite — must violate.
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e2", StartNode: "test:c", EndNode: "test:d",
 		Type: "TAG", Properties: map[string]any{"k1": "x", "k2": "y"},
 	}))
@@ -164,13 +164,13 @@ func TestTxCheckEdgeUniqueness_CompositeKey_PartialNull(t *testing.T) {
 		Properties: []string{"k1", "k2"},
 	})
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b",
 		Type: "TAG", Properties: map[string]any{"k1": "x"}, // k2 missing
 	}))
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e2", StartNode: "test:c", EndNode: "test:d",
 		Type: "TAG", Properties: map[string]any{"k1": "x"}, // k2 missing
 	}))
@@ -198,18 +198,18 @@ func TestTxCheckEdgeTemporalConstraint_NoOverlap_Pending(t *testing.T) {
 	t3 := time.Date(2025, 3, 1, 0, 0, 0, 0, time.UTC)
 	t4 := time.Date(2025, 9, 1, 0, 0, 0, 0, time.UTC)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b",
 		Type: "ASSIGNED",
 		Properties: map[string]any{
 			"role": "captain", "valid_from": t1, "valid_to": t2,
 		},
 	}))
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e2", StartNode: "test:a", EndNode: "test:c",
 		Type: "ASSIGNED",
 		Properties: map[string]any{
@@ -238,16 +238,16 @@ func TestTxCheckEdgeTemporalConstraint_NoOverlap_DifferentKey(t *testing.T) {
 	t1 := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 12, 31, 0, 0, 0, 0, time.UTC)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b",
 		Type: "ASSIGNED",
 		Properties: map[string]any{
 			"role": "captain", "valid_from": t1, "valid_to": t2,
 		},
 	}))
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e2", StartNode: "test:a", EndNode: "test:c",
 		Type: "ASSIGNED",
 		Properties: map[string]any{
@@ -270,7 +270,7 @@ func TestTxCheckEdgeTemporalConstraint_AgainstCommitted(t *testing.T) {
 
 	t1 := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b",
 		Type: "ASSIGNED",
 		Properties: map[string]any{
@@ -278,13 +278,13 @@ func TestTxCheckEdgeTemporalConstraint_AgainstCommitted(t *testing.T) {
 		},
 	}))
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
 	t3 := time.Date(2025, 3, 1, 0, 0, 0, 0, time.UTC)
 	t4 := time.Date(2025, 9, 1, 0, 0, 0, 0, time.UTC)
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e2", StartNode: "test:c", EndNode: "test:d",
 		Type: "ASSIGNED",
 		Properties: map[string]any{
@@ -308,11 +308,11 @@ func TestTxCheckEdgeTemporalConstraint_NullKey(t *testing.T) {
 		Properties: []string{"role", "valid_from", "valid_to"},
 	})
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b",
 		Type: "ASSIGNED",
 		Properties: map[string]any{
@@ -339,11 +339,11 @@ func TestTxCheckEdgeTemporalConstraint_NonDateStart(t *testing.T) {
 		Properties: []string{"role", "valid_from", "valid_to"},
 	})
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b",
 		Type: "ASSIGNED",
 		Properties: map[string]any{
@@ -370,18 +370,18 @@ func TestTxCheckEdgeCardinality_OutgoingMaxExceeded(t *testing.T) {
 		MaxCount:   2,
 		Direction:  "OUTGOING",
 	})
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "X",
 	}))
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e2", StartNode: "test:a", EndNode: "test:c", Type: "X",
 	}))
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e3", StartNode: "test:a", EndNode: "test:d", Type: "X",
 	}))
 	err = tx.Commit()
@@ -405,14 +405,14 @@ func TestTxCheckEdgeCardinality_PendingCount(t *testing.T) {
 		Direction:  "OUTGOING",
 	})
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "X",
 	}))
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e2", StartNode: "test:a", EndNode: "test:c", Type: "X",
 	}))
 	err = tx.Commit()
@@ -434,15 +434,15 @@ func TestTxCheckEdgeCardinality_IncomingDirection(t *testing.T) {
 		Direction:  "INCOMING",
 	})
 
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "X",
 	}))
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e2", StartNode: "test:c", EndNode: "test:b", Type: "X",
 	}))
 	err = tx.Commit()
@@ -464,17 +464,17 @@ func TestTxCheckEdgeCardinality_DeletedExcluded(t *testing.T) {
 		MaxCount:   1,
 		Direction:  "OUTGOING",
 	})
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "X",
 	}))
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
 	// Drop the existing edge and add a fresh one — count stays at 1.
-	require.NoError(t, tx.DeleteEdge("test:e1"))
-	require.NoError(t, tx.CreateEdge(&Edge{
+	require.NoError(t, tx.DeleteEdge(t.Context(), "test:e1"))
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID: "test:e2", StartNode: "test:a", EndNode: "test:c", Type: "X",
 	}))
 	require.NoError(t, tx.Commit())
@@ -488,30 +488,30 @@ func TestTxGetNodeLabels_PendingCommittedDeleted(t *testing.T) {
 	t.Cleanup(func() { _ = engine.Close() })
 
 	for _, id := range []NodeID{"test:a"} {
-		_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"Endpoint"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Endpoint"}})
 		require.NoError(t, err)
 	}
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
 	// Committed branch: node "test:a" is already on disk.
-	got, err := tx.getNodeLabels("test:a")
+	got, err := tx.getNodeLabels(t.Context(), "test:a")
 	require.NoError(t, err)
 	require.Equal(t, []string{"Endpoint"}, got)
 
 	// Pending branch overrides committed.
-	_, err = tx.CreateNode(&Node{ID: "test:new1", Labels: []string{"Pending"}})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:new1", Labels: []string{"Pending"}})
 	require.NoError(t, err)
-	got, err = tx.getNodeLabels("test:new1")
+	got, err = tx.getNodeLabels(t.Context(), "test:new1")
 	require.NoError(t, err)
 	require.Equal(t, []string{"Pending"}, got)
 
 	// Deleted branch: even though "test:a" exists committed, after
 	// DeleteNode the lookup returns nil (deleted-set takes precedence).
-	require.NoError(t, tx.DeleteGraphNode("test:a", CascadeEdges))
-	got, err = tx.getNodeLabels("test:a")
+	require.NoError(t, tx.DeleteGraphNode(t.Context(), "test:a", CascadeEdges))
+	got, err = tx.getNodeLabels(t.Context(), "test:a")
 	require.NoError(t, err)
 	require.Nil(t, got)
 }

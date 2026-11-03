@@ -25,20 +25,20 @@ func TestMutationFailureEngineSelectsOneCallAndRollsBackStagedWrites(t *testing.
 	}
 
 	fixture := storagefault.NewMutationFailureEngine(system, storagefault.MutationCreate, injected, 2, auth.WithStoreTransaction)
-	_, err := fixture.CreateNode(node("first"))
+	_, err := fixture.CreateNode(ctx, node("first"))
 	require.NoError(t, err)
-	_, err = fixture.CreateNode(node("second"))
+	_, err = fixture.CreateNode(ctx, node("second"))
 	require.ErrorIs(t, err, injected, "the second create of the selection fails")
-	_, err = fixture.CreateNode(node("third"))
+	_, err = fixture.CreateNode(ctx, node("third"))
 	require.NoError(t, err, "later creates of the selection pass through")
 	created, err := system.AllNodes(ctx)
 	require.NoError(t, err)
 	require.Len(t, created, 2)
 
 	fixture.Select(storagefault.MutationGet, "first", 0)
-	_, err = fixture.GetNode("first")
+	_, err = fixture.GetNode(ctx, "first")
 	require.ErrorIs(t, err, injected)
-	nodeRead, err := fixture.GetNode("third")
+	nodeRead, err := fixture.GetNode(ctx, "third")
 	require.NoError(t, err, "an unselected ID is not a failure")
 	require.Equal(t, storage.NodeID("third"), nodeRead.ID, "the real engine's read passes through")
 
@@ -56,7 +56,7 @@ func TestMutationFailureEngineSelectsOneCallAndRollsBackStagedWrites(t *testing.
 	var staged int
 	err = fixture.WithStoreTransaction(ctx, func(view storage.Engine) error {
 		for _, id := range []string{"staged-a", "staged-b"} {
-			if _, err := view.CreateNode(node(id)); err != nil {
+			if _, err := view.CreateNode(ctx, node(id)); err != nil {
 				return err
 			}
 			staged++
@@ -71,25 +71,25 @@ func TestMutationFailureEngineSelectsOneCallAndRollsBackStagedWrites(t *testing.
 
 	fixture.Select(storagefault.MutationUpdate, "first", 0)
 	err = fixture.WithStoreTransaction(ctx, func(view storage.Engine) error {
-		if _, err := view.CreateNode(node("staged")); err != nil {
+		if _, err := view.CreateNode(ctx, node("staged")); err != nil {
 			return err
 		}
 		after := node("first")
 		after.Properties["changed"] = true
-		return view.UpdateNode(storage.NodeUpdateRequest{Before: node("first"), After: after})
+		return view.UpdateNode(ctx, storage.NodeUpdateRequest{Before: node("first"), After: after})
 	})
 	require.ErrorIs(t, err, injected, "the selected update fails inside the real transaction")
-	stored, err := system.GetNode("first")
+	stored, err := system.GetNode(ctx, "first")
 	require.NoError(t, err)
 	require.NotContains(t, stored.Properties, "changed", "the update before the failure rolled back")
-	_, err = system.GetNode("staged")
+	_, err = system.GetNode(ctx, "staged")
 	require.ErrorIs(t, err, storage.ErrNotFound)
 
 	fixture.Select(storagefault.MutationDelete, "third", 0)
 	err = fixture.WithStoreTransaction(ctx, func(view storage.Engine) error {
-		return view.DeleteNode("third")
+		return view.DeleteNode(ctx, "third")
 	})
 	require.ErrorIs(t, err, injected)
-	_, err = system.GetNode("third")
+	_, err = system.GetNode(ctx, "third")
 	require.NoError(t, err, "the selected delete rolled back")
 }

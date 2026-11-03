@@ -54,12 +54,12 @@ func TestPluginFunctionsMatchTheirNameAsWritten(t *testing.T) {
 	}
 
 	require.Equal(t, "camel:a", exec.evaluateExpressionWithContext(ctx, "zz.text.camelCase('a')", nil, nil))
-	value, ok, err := exec.evaluateRowValue("zz.text.camelCase('a')", nil)
+	value, ok, err := exec.evaluateRowValue(t.Context(), "zz.text.camelCase('a')", nil)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, "camel:a", value)
 	// An argument the row evaluator can't resolve leaves the call unresolved.
-	_, ok, err = exec.evaluateRowValue("zz.text.camelCase(missing)", nil)
+	_, ok, err = exec.evaluateRowValue(t.Context(), "zz.text.camelCase(missing)", nil)
 	require.NoError(t, err)
 	require.False(t, ok)
 }
@@ -85,7 +85,7 @@ func TestPluginFunctionsComeFirstAndBuiltInsAnswerWhatPluginsCantCall(t *testing
 		require.NoError(t, err, expression)
 		require.Equal(t, [][]interface{}{{want}}, result.Rows, expression)
 		require.Equal(t, want, exec.evaluateExpressionWithContext(ctx, expression, nil, nil), expression)
-		value, ok, err := exec.evaluateRowValue(expression, nil)
+		value, ok, err := exec.evaluateRowValue(t.Context(), expression, nil)
 		require.NoError(t, err, expression)
 		require.True(t, ok, expression)
 		require.Equal(t, want, value, expression)
@@ -93,7 +93,7 @@ func TestPluginFunctionsComeFirstAndBuiltInsAnswerWhatPluginsCantCall(t *testing
 
 	_, err := exec.Execute(ctx, "RETURN zz.only(1) AS v", nil)
 	require.ErrorContains(t, err, "unsupported function signature")
-	_, _, rowErr := exec.evaluateRowValue("zz.only(1)", nil)
+	_, _, rowErr := exec.evaluateRowValue(t.Context(), "zz.only(1)", nil)
 	require.ErrorContains(t, rowErr, "unsupported function signature")
 	failureCtx := withExpressionFailureSlot(ctx)
 	require.Nil(t, exec.evaluateExpressionWithContext(failureCtx, "zz.only(1)", nil, nil))

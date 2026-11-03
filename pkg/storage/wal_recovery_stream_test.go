@@ -17,7 +17,7 @@ func TestRecoverIntoEngineStreamsSnapshotAndWAL(t *testing.T) {
 
 	source := newTestMemoryEngine(t)
 	namespaced := NewNamespacedEngine(source, "test")
-	_, err := namespaced.CreateNode(&Node{ID: "snapshot-node", Labels: []string{"Doc"}})
+	_, err := namespaced.CreateNode(t.Context(), &Node{ID: "snapshot-node", Labels: []string{"Doc"}})
 	require.NoError(t, err)
 
 	root := t.TempDir()
@@ -40,16 +40,16 @@ func TestRecoverIntoEngineStreamsSnapshotAndWAL(t *testing.T) {
 	require.Equal(t, uint64(1), status.SnapshotNodes)
 	require.Equal(t, uint64(1), status.WALEntries)
 
-	_, err = destination.GetNode("test:snapshot-node")
+	_, err = destination.GetNode(t.Context(), "test:snapshot-node")
 	require.NoError(t, err)
-	_, err = destination.GetNode("test:wal-node")
+	_, err = destination.GetNode(t.Context(), "test:wal-node")
 	require.NoError(t, err)
 }
 
 func TestRecoverIntoEngineStreamsMixedNamespaces(t *testing.T) {
 	source := newTestMemoryEngine(t)
 	for _, namespace := range []string{"nornic", "system"} {
-		_, err := source.CreateNode(&Node{
+		_, err := source.CreateNode(t.Context(), &Node{
 			ID: NodeID(namespace + ":node"), Labels: []string{"Doc"},
 			Properties: map[string]interface{}{"name": namespace},
 		})
@@ -64,7 +64,7 @@ func TestRecoverIntoEngineStreamsMixedNamespaces(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint64(2), status.SnapshotNodes)
 	for _, namespace := range []string{"nornic", "system"} {
-		_, err := destination.GetNode(NodeID(namespace + ":node"))
+		_, err := destination.GetNode(t.Context(), NodeID(namespace+":node"))
 		require.NoError(t, err)
 	}
 }

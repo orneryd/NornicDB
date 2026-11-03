@@ -19,7 +19,7 @@ func TestStatementHTTPUseTarget(t *testing.T) {
 	require.NoError(t, server.allowlistStore.SaveRoleDatabases(ctx, "r2loader", []string{"nornic", "other"}))
 	require.NoError(t, server.privilegesStore.SavePrivilege(ctx, "r2loader", "nornic", true, false))
 	require.NoError(t, server.privilegesStore.SavePrivilege(ctx, "r2loader", "other", false, true))
-	_, err := users.CreateUser("r2loader", "password123", []auth.Role{"r2loader"})
+	_, err := users.CreateUser(context.Background(), "r2loader", "password123", []auth.Role{"r2loader"})
 	require.NoError(t, err)
 	token := getAuthToken(t, users, "r2loader")
 	for _, prefix := range []string{"USE other ", ":USE other\n", "/* comment */ USE other ", "EXPLAIN USE other ", "PROFILE USE other ", "\xef\xbb\xbf USE other "} {
@@ -75,7 +75,7 @@ func TestStatementHTTPFabricFragmentRequirements(t *testing.T) {
 	require.NoError(t, server.privilegesStore.SavePrivilege(ctx, "r2fabric", "r2cmp", true, false))
 	require.NoError(t, server.privilegesStore.SavePrivilege(ctx, "r2fabric", "r2source", true, false))
 	require.NoError(t, server.privilegesStore.SavePrivilege(ctx, "r2fabric", "r2target", false, true))
-	_, err = users.CreateUser("r2fabric", "password123", []auth.Role{"r2fabric"})
+	_, err = users.CreateUser(context.Background(), "r2fabric", "password123", []auth.Role{"r2fabric"})
 	require.NoError(t, err)
 	token := getAuthToken(t, users, "r2fabric")
 	query := "CALL { USE r2cmp.source MATCH (n:R2Source) RETURN n.v AS v } CALL { USE r2cmp.target WITH v CREATE (n:R2Loaded {v: v}) RETURN n.v AS loaded } RETURN loaded"

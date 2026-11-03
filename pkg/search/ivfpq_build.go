@@ -16,9 +16,6 @@ const ivfpqTrainSeed = 42
 
 // BuildIVFPQFromVectorStore builds a full IVF/PQ index from VectorFileStore.
 func BuildIVFPQFromVectorStore(ctx context.Context, vfs *VectorFileStore, profile IVFPQProfile, seedEntryIDs []string) (*IVFPQIndex, *IVFPQBuildStats, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if vfs == nil {
 		return nil, nil, localizedError(localization.SearchIVFPQVectorStoreRequired(), nil)
 	}

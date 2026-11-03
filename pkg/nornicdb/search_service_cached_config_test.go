@@ -143,7 +143,7 @@ func TestDisabledSearchEventsDoNotQueueAndRebuildAfterEnable(t *testing.T) {
 	t.Cleanup(func() { db.ResetSearchService(name) })
 	db.config.Memory.SearchBM25Enabled = false
 	db.config.Memory.SearchVectorEnabled = false
-	_, err := db.storage.CreateNode(&storage.Node{ID: "stored", Labels: []string{"Doc"}, Properties: map[string]any{"title": "retained quartz"}})
+	_, err := db.storage.CreateNode(t.Context(), &storage.Node{ID: "stored", Labels: []string{"Doc"}, Properties: map[string]any{"title": "retained quartz"}})
 	require.NoError(t, err)
 	var resolutions atomic.Int64
 	db.SetRerankerResolver(func(string) search.Reranker { resolutions.Add(1); return nil })
@@ -188,7 +188,7 @@ func TestSearchEventUsesCachedServiceAndQueryRefreshesReranker(t *testing.T) {
 	svc, err := db.EnsureSearchIndexes(context.Background(), name, nil, SearchIndexBuildWait)
 	require.NoError(t, err)
 	before := resolutions.Load()
-	_, err = db.storage.CreateNode(&storage.Node{ID: "stored", Labels: []string{"Doc"}, Properties: map[string]any{"title": "indexed quartz"}})
+	_, err = db.storage.CreateNode(t.Context(), &storage.Node{ID: "stored", Labels: []string{"Doc"}, Properties: map[string]any{"title": "indexed quartz"}})
 	require.NoError(t, err)
 	for range 5 {
 		db.queueSearchRefreshEvent(searchNodeWrite, "nornic:stored")

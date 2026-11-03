@@ -18,7 +18,7 @@ func TestStorageAdapterAsyncWALPublishesOnceBeforeApplyReturns(t *testing.T) {
 	command := &Command{Type: CmdCreateNode, Data: fixtureowner.Encode(t, storage.EncodeNodePayload, &storage.Node{ID: "once", Labels: []string{"Once"}}), Timestamp: time.Now()}
 	joined := make(chan struct{})
 	var applyErr error
-	go func() { defer close(joined); applyErr = adapter.ApplyCommand(command) }()
+	go func() { defer close(joined); applyErr = applyQueued(t, adapter, command) }()
 	t.Cleanup(func() {
 		releaseListener()
 		select {
@@ -51,7 +51,7 @@ func TestStorageAdapterAsyncWALPublishesOnceBeforeApplyReturns(t *testing.T) {
 	records, err := storage.ReadWALEntriesFromDir(adapter.wal.Config().Dir)
 	require.NoError(t, err)
 	require.Len(t, records, 1)
-	node, err := storage.GetStoredNode(adapter.engine, "once")
+	node, err := storage.GetStoredNode(t.Context(), adapter.engine, "once")
 	require.NoError(t, err)
 	require.Equal(t, []string{"Once"}, node.Labels)
 }

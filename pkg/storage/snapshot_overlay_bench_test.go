@@ -23,17 +23,17 @@ func BenchmarkSnapshotOverlayReads(b *testing.B) {
 			ids := make([]NodeID, 64)
 			for i := range ids {
 				ids[i] = NodeID(fmt.Sprintf("test:n%03d", i))
-				if _, err := engine.CreateNode(&Node{ID: ids[i], Labels: []string{"L"}, Properties: map[string]any{"v": int64(i)}}); err != nil {
+				if _, err := engine.CreateNode(b.Context(), &Node{ID: ids[i], Labels: []string{"L"}, Properties: map[string]any{"v": int64(i)}}); err != nil {
 					b.Fatal(err)
 				}
 			}
 			for i := 1; i < len(ids); i++ {
-				if err := engine.CreateEdge(&Edge{ID: EdgeID(fmt.Sprintf("test:r%03d", i)), StartNode: ids[0], EndNode: ids[i], Type: "REL"}); err != nil {
+				if err := engine.CreateEdge(b.Context(), &Edge{ID: EdgeID(fmt.Sprintf("test:r%03d", i)), StartNode: ids[0], EndNode: ids[i], Type: "REL"}); err != nil {
 					b.Fatal(err)
 				}
 			}
 			if pending {
-				tx, err := engine.BeginTransaction()
+				tx, err := engine.BeginTransaction(b.Context())
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -43,10 +43,10 @@ func BenchmarkSnapshotOverlayReads(b *testing.B) {
 				if err = tx.SetNamespace("test"); err != nil {
 					b.Fatal(err)
 				}
-				if err = tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: ids[1], Labels: []string{"L"}, Properties: map[string]any{"v": int64(100)}}, Policy: ClientNodeEdits}); err != nil {
+				if err = tx.UpdateGraphNode(b.Context(), NodeUpdateRequest{After: &Node{ID: ids[1], Labels: []string{"L"}, Properties: map[string]any{"v": int64(100)}}, Policy: ClientNodeEdits}); err != nil {
 					b.Fatal(err)
 				}
-				if err = tx.CreateEdge(&Edge{ID: "test:pending", StartNode: ids[0], EndNode: ids[1], Type: "REL"}); err != nil {
+				if err = tx.CreateEdge(b.Context(), &Edge{ID: "test:pending", StartNode: ids[0], EndNode: ids[1], Type: "REL"}); err != nil {
 					b.Fatal(err)
 				}
 				if err = tx.Commit(); err != nil {
@@ -57,13 +57,16 @@ func BenchmarkSnapshotOverlayReads(b *testing.B) {
 				name string
 				run  func() error
 			}{
-				{"point", func() error { _, err := engine.GetNode(ids[0]); return err }},
-				{"projection", func() error { _, err := engine.GetNodeProjected(ids[0], []string{"v"}); return err }},
+				{"point", func() error { _, err := engine.GetNode(b.Context(), ids[0]); return err }},
+				{"projection", func() error { _, err := engine.GetNodeProjected(b.Context(), ids[0], []string{"v"}); return err }},
 				{"batch", func() error { _, err := engine.BatchGetNodes(context.Background(), ids); return err }},
 				{"adjacency", func() error { _, err := engine.GetOutgoingEdges(context.Background(), ids[0]); return err }},
 				{"label", func() error { _, err := engine.GetNodesByLabel(context.Background(), "L"); return err }},
 				{"stream", func() error { return engine.StreamNodes(context.Background(), func(*Node) error { return nil }) }},
-				{"counter", func() error { _, err := engine.EdgeCountByTypeInNamespace("test", "REL"); return err }},
+				{"counter", func() error {
+					_, err := engine.EdgeCountByTypeInNamespace(context.Background(), "test", "REL")
+					return err
+				}},
 			}
 			for _, read := range reads {
 				b.Run(read.name, func(b *testing.B) {

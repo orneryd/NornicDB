@@ -20,7 +20,7 @@ func TestTemporalAssertNoOverlap(t *testing.T) {
 
 	start := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC)
-	_, err := engine.CreateNode(&storage.Node{
+	_, err := engine.CreateNode(t.Context(), &storage.Node{
 		ID:     "v1",
 		Labels: []string{"FactVersion"},
 		Properties: map[string]interface{}{
@@ -49,7 +49,7 @@ func TestTemporalProcedures_Arguments(t *testing.T) {
 	exec := NewStorageExecutor(engine)
 	ctx := context.Background()
 
-	_, err := engine.CreateNode(&storage.Node{
+	_, err := engine.CreateNode(t.Context(), &storage.Node{
 		ID:     "num-time",
 		Labels: []string{"Fv"},
 		Properties: map[string]interface{}{
@@ -112,7 +112,7 @@ func TestTemporalAsOf(t *testing.T) {
 
 	v1Start := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	v1End := time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC)
-	_, err := engine.CreateNode(&storage.Node{
+	_, err := engine.CreateNode(t.Context(), &storage.Node{
 		ID:     "v1",
 		Labels: []string{"FactVersion"},
 		Properties: map[string]interface{}{
@@ -124,7 +124,7 @@ func TestTemporalAsOf(t *testing.T) {
 	require.NoError(t, err)
 
 	v2Start := time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC)
-	_, err = engine.CreateNode(&storage.Node{
+	_, err = engine.CreateNode(t.Context(), &storage.Node{
 		ID:     "v2",
 		Labels: []string{"FactVersion"},
 		Properties: map[string]interface{}{
@@ -160,7 +160,7 @@ func TestTemporalAsOf_WithSnapshotVersion(t *testing.T) {
 
 	validFrom := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	validTo := time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC)
-	_, err := engine.CreateNode(&storage.Node{
+	_, err := engine.CreateNode(t.Context(), &storage.Node{
 		ID:     "snap-v1",
 		Labels: []string{"FactVersion"},
 		Properties: map[string]interface{}{
@@ -170,10 +170,10 @@ func TestTemporalAsOf_WithSnapshotVersion(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	head, err := engine.GetNodeCurrentHead("snap-v1")
+	head, err := engine.GetNodeCurrentHead(t.Context(), "snap-v1")
 	require.NoError(t, err)
 
-	require.NoError(t, engine.DeleteNode("snap-v1"))
+	require.NoError(t, engine.DeleteNode(t.Context(), "snap-v1"))
 
 	result, err := exec.Execute(ctx, "CALL db.temporal.asOf('FactVersion','fact_key','k1','valid_from','valid_to','2024-01-15T00:00:00Z') YIELD node", nil)
 	require.NoError(t, err)
@@ -213,7 +213,7 @@ func TestTemporalProcedures_ErrorAndSelectionBranches(t *testing.T) {
 	// Seed with mixed records:
 	// - one invalid existing start (ignored)
 	// - two valid intervals where latest matching start should be selected by asOf
-	_, err = engine.CreateNode(&storage.Node{
+	_, err = engine.CreateNode(t.Context(), &storage.Node{
 		ID:     "bad-start",
 		Labels: []string{"FactVersion"},
 		Properties: map[string]interface{}{
@@ -223,7 +223,7 @@ func TestTemporalProcedures_ErrorAndSelectionBranches(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{
+	_, err = engine.CreateNode(t.Context(), &storage.Node{
 		ID:     "v1",
 		Labels: []string{"FactVersion"},
 		Properties: map[string]interface{}{
@@ -233,7 +233,7 @@ func TestTemporalProcedures_ErrorAndSelectionBranches(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{
+	_, err = engine.CreateNode(t.Context(), &storage.Node{
 		ID:     "v2",
 		Labels: []string{"FactVersion"},
 		Properties: map[string]interface{}{

@@ -1,6 +1,7 @@
 package storage_test
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -103,7 +104,7 @@ func TestResidualSchemaIngressOwnership(t *testing.T) {
 	}
 	cases["tokens"] = func(t *testing.T, sm *storage.SchemaManager) func() {
 		labels, relationships := []string{"Before"}, []string{"BEFORE"}
-		require.NoError(t, sm.RegisterTokens(labels, relationships))
+		require.NoError(t, sm.RegisterTokens(t.Context(), labels, relationships))
 		return func() { labels[0], relationships[0] = "Changed", "CHANGED" }
 	}
 	for name, admit := range cases {
@@ -118,21 +119,21 @@ func TestResidualSchemaIngressOwnership(t *testing.T) {
 			mutate := admit(t, sm)
 			require.NotEmpty(t, persisted)
 			mutate()
-			live, err := json.Marshal(sm.ExportDefinition())
+			live, err := json.Marshal(schemaDefinitionForTest(t, sm))
 			require.NoError(t, err)
 			require.JSONEq(t, string(persisted), string(live), "caller mutation changed committed schema")
 			var def storage.SchemaDefinition
 			require.NoError(t, json.Unmarshal(persisted, &def))
 			reloaded := storage.NewSchemaManager()
-			require.NoError(t, reloaded.ReplaceFromDefinition(&def))
+			require.NoError(t, reloaded.ReplaceFromDefinition(context.Background(), &def))
 			// Mutate the imported image too: reload admission must own it.
 			mutateResidualSchemaDefinition(&def)
-			restored, err := json.Marshal(reloaded.ExportDefinition())
+			restored, err := json.Marshal(schemaDefinitionForTest(t, reloaded))
 			require.NoError(t, err)
 			require.JSONEq(t, string(persisted), string(restored), "reload retained its input")
-			exported := reloaded.ExportDefinition()
+			exported := schemaDefinitionForTest(t, reloaded)
 			mutateResidualSchemaDefinition(exported)
-			restored, err = json.Marshal(reloaded.ExportDefinition())
+			restored, err = json.Marshal(schemaDefinitionForTest(t, reloaded))
 			require.NoError(t, err)
 			require.JSONEq(t, string(persisted), string(restored), "export exposed committed containers")
 		})

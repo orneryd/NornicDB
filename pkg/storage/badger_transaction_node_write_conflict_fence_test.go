@@ -23,16 +23,16 @@ func TestTransactionNodeUpdatePreservesPostValidationPeerWrite(t *testing.T) {
 	t.Cleanup(func() { _ = engine.Close() })
 
 	nodeID := NodeID("test:node-write-conflict")
-	_, err = engine.CreateNode(&Node{ID: nodeID, Properties: map[string]interface{}{"writer": "seed"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: nodeID, Properties: map[string]interface{}{"writer": "seed"}})
 	require.NoError(t, err)
 
-	stale, err := engine.BeginTransaction()
+	stale, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = stale.Rollback() })
-	node, err := stale.GetNode(nodeID)
+	node, err := stale.GetNode(t.Context(), nodeID)
 	require.NoError(t, err)
 	node.Properties["writer"] = "stale"
-	require.NoError(t, stale.UpdateGraphNode(NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
+	require.NoError(t, stale.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
 	require.NoError(t, stale.SetMetadata(map[string]interface{}{"validation_publication_control": true}))
 	barrier.target = stale.ID
 	var release sync.Once
@@ -49,13 +49,13 @@ func TestTransactionNodeUpdatePreservesPostValidationPeerWrite(t *testing.T) {
 		t.Fatal("stale writer did not reach post-validation barrier")
 	}
 
-	peer, err := engine.BeginTransaction()
+	peer, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = peer.Rollback() })
-	peerNode, err := peer.GetNode(nodeID)
+	peerNode, err := peer.GetNode(t.Context(), nodeID)
 	require.NoError(t, err)
 	peerNode.Properties["writer"] = "peer"
-	require.NoError(t, peer.UpdateGraphNode(NodeUpdateRequest{After: peerNode, Policy: ClientNodeEdits}))
+	require.NoError(t, peer.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: peerNode, Policy: ClientNodeEdits}))
 	require.NoError(t, peer.Commit())
 	unblock()
 
@@ -66,7 +66,7 @@ func TestTransactionNodeUpdatePreservesPostValidationPeerWrite(t *testing.T) {
 		t.Fatal("stale writer did not finish")
 	}
 
-	latest, err := engine.GetNode(nodeID)
+	latest, err := engine.GetNode(t.Context(), nodeID)
 	require.NoError(t, err)
 	require.Equal(t, "peer", latest.Properties["writer"])
 }

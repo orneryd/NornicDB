@@ -26,14 +26,14 @@ func (e *retryOwnerReadBarrier) wait(err error) {
 	}
 }
 
-func (e *retryOwnerReadBarrier) GetNode(id storage.NodeID) (*storage.Node, error) {
-	node, err := e.retryOwnerReadWindow.GetNode(id)
+func (e *retryOwnerReadBarrier) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
+	node, err := e.retryOwnerReadWindow.GetNode(ctx, id)
 	e.wait(err)
 	return node, err
 }
 
-func (e *retryOwnerReadBarrier) GetEdge(id storage.EdgeID) (*storage.Edge, error) {
-	edge, err := e.retryOwnerReadWindow.GetEdge(id)
+func (e *retryOwnerReadBarrier) GetEdge(ctx context.Context, id storage.EdgeID) (*storage.Edge, error) {
+	edge, err := e.retryOwnerReadWindow.GetEdge(ctx, id)
 	e.wait(err)
 	return edge, err
 }
@@ -72,15 +72,15 @@ func openRetryOwnerOverlapFixture(t *testing.T, kind, namespace, word string) *r
 	})
 	svc, err := db.EnsureSearchIndexes(context.Background(), namespace, fault, SearchIndexBuildWait)
 	require.NoError(t, err)
-	_, err = tenant.CreateNode(&storage.Node{ID: "a", Properties: map[string]any{"content": word}})
+	_, err = tenant.CreateNode(t.Context(), &storage.Node{ID: "a", Properties: map[string]any{"content": word}})
 	require.NoError(t, err)
-	_, err = tenant.CreateNode(&storage.Node{ID: "b"})
+	_, err = tenant.CreateNode(t.Context(), &storage.Node{ID: "b"})
 	require.NoError(t, err)
 	vector := make([]float32, db.config.Memory.EmbeddingDimensions)
 	vector[0] = 1
-	require.NoError(t, tenant.CreateEdge(&storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "AFTER", Properties: map[string]any{"vec": vector}}))
-	require.NoError(t, svc.RefreshNode("a"))
-	require.NoError(t, svc.RefreshEdge("r"))
+	require.NoError(t, tenant.CreateEdge(t.Context(), &storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "AFTER", Properties: map[string]any{"vec": vector}}))
+	require.NoError(t, svc.RefreshNode(t.Context(), "a"))
+	require.NoError(t, svc.RefreshEdge(t.Context(), "r"))
 	settleQueuedRefreshes()
 	if kind == "node" {
 		require.NoError(t, svc.RemoveNode("a"))
@@ -104,9 +104,9 @@ func (f *retryOwnerOverlapFixture) startStaleRefresh(t *testing.T, pauseAtBarrie
 	f.fault.pause.Store(pauseAtBarrier)
 	go func() {
 		if f.kind == "node" {
-			f.readDone <- f.svc.RefreshNode("a")
+			f.readDone <- f.svc.RefreshNode(t.Context(), "a")
 		} else {
-			f.readDone <- f.svc.RefreshEdge("r")
+			f.readDone <- f.svc.RefreshEdge(t.Context(), "r")
 		}
 	}()
 }
@@ -176,9 +176,9 @@ func TestRefreshRetryOwnerOverlappingMutations(t *testing.T) {
 				runtimeFixtureOwner.WaitForBarrier(t, fixture.fault.blocked, 5*time.Second, nil, "older refresh did not reach its read barrier")
 				newer := fixture.reserveNewer()
 				if kind == "node" {
-					require.Error(t, fixture.svc.RefreshNodeWithMutation(newer.Node))
+					require.Error(t, fixture.svc.RefreshNodeWithMutation(t.Context(), newer.Node))
 				} else {
-					require.Error(t, fixture.svc.RefreshEdgeWithMutation(newer.Edge))
+					require.Error(t, fixture.svc.RefreshEdgeWithMutation(t.Context(), newer.Edge))
 				}
 				close(fixture.fault.release)
 				fixture.waitForStaleFailure(t, "older failed refresh")

@@ -1,6 +1,9 @@
 package storage
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
 // AdvanceImplicitSnapshot advances an unwritten implicit statement after an
 // independently committed child batch. For example, CALL IN TRANSACTIONS uses
@@ -15,7 +18,7 @@ func (tx *BadgerTransaction) AdvanceImplicitSnapshot() error {
 	if tx.commitMode != CommitModeImplicit || len(tx.operations) > 0 || len(tx.pendingWrites) > 0 || len(tx.pendingDeletes) > 0 || tx.knowledgeSchemaDirty || len(tx.mergeKeyReleases) > 0 {
 		return fmt.Errorf("cannot advance a written or explicit transaction snapshot: %w", ErrConflict)
 	}
-	if err := tx.advanceSnapshotLocked(false); err != nil {
+	if err := tx.advanceSnapshotLocked(context.Background(), false); err != nil {
 		return err
 	}
 	tx.observed = false

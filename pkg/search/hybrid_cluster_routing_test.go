@@ -93,7 +93,7 @@ func TestEnableClustering_DefaultMaxIterationsIsFive(t *testing.T) {
 	})
 
 	t.Run("nil vector index is ignored safely", func(t *testing.T) {
-		svc := &Service{}
+		svc := &Service{lifecycleCtx: t.Context()}
 		svc.EnableClustering(nil, 3)
 		require.Nil(t, svc.clusterIndex)
 		require.False(t, svc.clusterEnabled)

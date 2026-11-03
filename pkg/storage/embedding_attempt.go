@@ -1,6 +1,9 @@
 package storage
 
-import "sync/atomic"
+import (
+	"context"
+	"sync/atomic"
+)
 
 // EmbeddingRevision returns runtime snapshot identity without exposing it as
 // an exported Node field. Every serializer, including legacy gob, ignores it.
@@ -113,7 +116,7 @@ func (b *BadgerEngine) publishNodeOutcome(node *Node, outcome bool, publish func
 	state := node.runtimeState()
 	attempt := state.embeddingAttempt
 	if outcome {
-		same, err := b.embeddingRevisionIsCurrent(node.ID, state.embeddingRevision, state.embeddingPublication)
+		same, err := b.embeddingRevisionIsCurrent(context.WithoutCancel(b.work.Context()), node.ID, state.embeddingRevision, state.embeddingPublication)
 		if err != nil || !same {
 			deliverEmbeddingOutcome(attempt, nil)
 			return

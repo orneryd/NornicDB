@@ -670,7 +670,7 @@ func fnTrim(workCtx context.Context, ctx cypherfn.Context, args []string) (inter
 	expression := strings.TrimSpace(args[0])
 	leading, trailing := true, true
 	characterExpression := ""
-	if from := topLevelKeywordIndex(expression, "FROM"); from >= 0 {
+	if from := topLevelKeywordIndex(workCtx, expression, "FROM"); from >= 0 {
 		spec := strings.TrimSpace(expression[:from])
 		expression = strings.TrimSpace(expression[from+len("FROM"):])
 		for _, mode := range []string{"BOTH", "LEADING", "TRAILING"} {

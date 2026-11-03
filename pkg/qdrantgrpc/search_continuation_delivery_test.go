@@ -26,7 +26,7 @@ func TestSearchStreamLifecycleGRPCResponseSendFailure(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	store := storage.NewNamespacedEngine(base, "nornic")
 	for _, id := range []storage.NodeID{"a", "b"} {
-		_, err := store.CreateNode(&storage.Node{ID: id})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: id})
 		require.NoError(t, err)
 	}
 	svc := search.NewService(store, search.DefaultVectorDimensions, nil)

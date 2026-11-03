@@ -29,12 +29,12 @@ func TestHistoricalEdgeOverwriteWALKeepsCounts(t *testing.T) {
 	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 	wal := engine.bufferedCommitWAL
 	for _, id := range []NodeID{"test:a", "test:b"} {
-		_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"Doc"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Doc"}})
 		require.NoError(t, err)
 	}
 	edge := &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "INGEST"}
-	require.NoError(t, engine.CreateEdge(edge))
-	require.NoError(t, engine.SetManualSuppression(StoredEntityEdgeKind, string(edge.ID), true))
+	require.NoError(t, engine.CreateEdge(t.Context(), edge))
+	require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityEdgeKind, string(edge.ID), true))
 
 	var raw []byte
 	require.NoError(t, engine.db.View(func(tx *badger.Txn) error {
@@ -69,10 +69,10 @@ func TestHistoricalEdgeOverwriteWALKeepsCounts(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, read := range []func() (int64, error){
-		engine.EdgeCount,
-		func() (int64, error) { return engine.EdgeCountByType("INGEST") },
-		func() (int64, error) { return engine.EdgeCountByStartLabel("Doc", "INGEST") },
-		func() (int64, error) { return engine.EdgeCountByEndLabel("Doc", "INGEST") },
+		func() (int64, error) { return engine.EdgeCount(t.Context()) },
+		func() (int64, error) { return engine.EdgeCountByType(context.Background(), "INGEST") },
+		func() (int64, error) { return engine.EdgeCountByStartLabel(context.Background(), "Doc", "INGEST") },
+		func() (int64, error) { return engine.EdgeCountByEndLabel(context.Background(), "Doc", "INGEST") },
 	} {
 		count, err := read()
 		require.NoError(t, err)
@@ -81,7 +81,7 @@ func TestHistoricalEdgeOverwriteWALKeepsCounts(t *testing.T) {
 	edges, err := CollectStoredEdges(context.Background(), engine)
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
-	_, err = engine.GetEdge(edge.ID)
+	_, err = engine.GetEdge(t.Context(), edge.ID)
 	require.ErrorIs(t, err, ErrNotFound)
 	require.True(t, engine.manuallySuppressed(manualSuppressionEdge, string(edge.ID)))
 }
@@ -110,50 +110,50 @@ func TestEdgeUpdateKeepsPhysicalCounts(t *testing.T) {
 					{ID: "test:b", Labels: []string{"Target"}},
 					{ID: "test:c", Labels: []string{"Other"}},
 				} {
-					_, err := engine.CreateNode(node)
+					_, err := engine.CreateNode(t.Context(), node)
 					require.NoError(t, err)
 				}
 				edge := &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "INGEST"}
-				require.NoError(t, engine.CreateEdge(edge))
+				require.NoError(t, engine.CreateEdge(t.Context(), edge))
 				updated := copyEdge(edge)
 				if move {
 					updated.Type, updated.StartNode = "MOVED", "test:c"
 				}
-				tx, err := engine.BeginTransaction()
+				tx, err := engine.BeginTransaction(t.Context())
 				require.NoError(t, err)
 				require.NoError(t, tx.SetNamespace("test"))
 				require.NoError(t, tx.SetImplicit(true))
-				require.NoError(t, tx.UpdateEdge(EdgeUpdateRequest{After: updated}))
+				require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: updated}))
 				require.NoError(t, tx.Commit())
 				verify := func(stage string) {
 					t.Helper()
-					count, err := engine.EdgeCount()
+					count, err := engine.EdgeCount(t.Context())
 					require.NoError(t, err)
 					require.EqualValues(t, 1, count, stage)
-					count, err = engine.EdgeCountByType(updated.Type)
+					count, err = engine.EdgeCountByType(context.Background(), updated.Type)
 					require.NoError(t, err)
 					require.EqualValues(t, 1, count, stage)
 					label := "Source"
 					if move {
 						label = "Other"
 					}
-					count, err = engine.EdgeCountByStartLabel(label, updated.Type)
+					count, err = engine.EdgeCountByStartLabel(context.Background(), label, updated.Type)
 					require.NoError(t, err)
 					require.EqualValues(t, 1, count, stage)
-					count, err = engine.EdgeCountByEndLabel("Target", updated.Type)
+					count, err = engine.EdgeCountByEndLabel(context.Background(), "Target", updated.Type)
 					require.NoError(t, err)
 					require.EqualValues(t, 1, count, stage)
 					if move {
-						count, err = engine.EdgeCountByType("INGEST")
+						count, err = engine.EdgeCountByType(context.Background(), "INGEST")
 						require.NoError(t, err)
 						require.Zero(t, count, stage+": old type removed")
-						count, err = engine.EdgeCountByStartLabel("Source", "INGEST")
+						count, err = engine.EdgeCountByStartLabel(context.Background(), "Source", "INGEST")
 						require.NoError(t, err)
 						require.Zero(t, count, stage+": old positional entry removed")
 					}
 				}
 				verify("acknowledged")
-				require.NoError(t, engine.FlushWriteBehind(nil))
+				require.NoError(t, engine.FlushWriteBehind(context.Background()))
 				verify("flushed")
 			})
 		}

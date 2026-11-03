@@ -15,13 +15,13 @@ func TestNamespacedEntityProvenance(t *testing.T) {
 	for _, database := range []string{"one", "two"} {
 		store := NewNamespacedEngine(base, database)
 		for _, id := range []NodeID{"same", "target"} {
-			_, err := store.CreateNode(&Node{ID: id, Labels: []string{"P"}})
+			_, err := store.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"P"}})
 			require.NoError(t, err)
 		}
-		require.NoError(t, store.CreateEdge(&Edge{ID: "rel", StartNode: "same", EndNode: "target", Type: "R"}))
-		node, err := store.GetNode("same")
+		require.NoError(t, store.CreateEdge(t.Context(), &Edge{ID: "rel", StartNode: "same", EndNode: "target", Type: "R"}))
+		node, err := store.GetNode(t.Context(), "same")
 		require.NoError(t, err)
-		edge, err := store.GetEdge("rel")
+		edge, err := store.GetEdge(t.Context(), "rel")
 		require.NoError(t, err)
 		require.Equal(t, database, node.RuntimeMetadata().Database)
 		require.Equal(t, database, edge.Database)
@@ -32,7 +32,7 @@ func TestNamespacedEntityProvenance(t *testing.T) {
 		batch, err := store.BatchGetNodes(context.Background(), []NodeID{"same"})
 		require.NoError(t, err)
 		require.Equal(t, database, batch["same"].RuntimeMetadata().Database)
-		physical, err := base.GetNode(NodeID(database + ":same"))
+		physical, err := base.GetNode(t.Context(), NodeID(database+":same"))
 		require.NoError(t, err)
 		require.Empty(t, physical.RuntimeMetadata().Database, "query provenance must not mutate the underlying snapshot")
 	}
@@ -44,10 +44,10 @@ func TestCompositeScansKeepConstituentIdentities(t *testing.T) {
 	one, two := NewNamespacedEngine(base, "one"), NewNamespacedEngine(base, "two")
 	for _, store := range []*NamespacedEngine{one, two} {
 		for _, id := range []NodeID{"same", "target"} {
-			_, err := store.CreateNode(&Node{ID: id, Labels: []string{"P"}})
+			_, err := store.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"P"}})
 			require.NoError(t, err)
 		}
-		require.NoError(t, store.CreateEdge(&Edge{ID: "rel", StartNode: "same", EndNode: "target", Type: "R"}))
+		require.NoError(t, store.CreateEdge(t.Context(), &Edge{ID: "rel", StartNode: "same", EndNode: "target", Type: "R"}))
 	}
 	composite := NewCompositeEngine(
 		map[string]Engine{"one": one, "alias": one, "two": two},
@@ -79,24 +79,24 @@ func TestCompositeScansKeepConstituentIdentities(t *testing.T) {
 	var ids []NodeID
 	require.NoError(t, composite.ForEachNodeIDByLabel(context.Background(), "P", func(id NodeID) bool {
 		ids = append(ids, id)
-		node, err := composite.GetNode(id)
+		node, err := composite.GetNode(t.Context(), id)
 		require.NoError(t, err)
 		require.NotEmpty(t, node.RuntimeMetadata().Database)
 		return true
 	}))
 	require.ElementsMatch(t, []NodeID{"4:one:same", "4:one:target", "4:two:same", "4:two:target"}, ids)
 	for _, database := range []string{"one", "two"} {
-		node, err := composite.GetNode(NodeID("4:" + database + ":same"))
+		node, err := composite.GetNode(t.Context(), NodeID("4:"+database+":same"))
 		require.NoError(t, err)
 		require.Equal(t, database, node.RuntimeMetadata().Database)
-		node, err = composite.GetNodeProjected(NodeID("4:"+database+":same"), nil)
+		node, err = composite.GetNodeProjected(t.Context(), NodeID("4:"+database+":same"), nil)
 		require.NoError(t, err)
 		require.Equal(t, database, node.RuntimeMetadata().Database)
-		edge, err := composite.GetEdge(EdgeID("5:" + database + ":rel"))
+		edge, err := composite.GetEdge(t.Context(), EdgeID("5:"+database+":rel"))
 		require.NoError(t, err)
 		require.Equal(t, database, edge.Database)
 	}
-	_, err = composite.GetNode("4:missing:same")
+	_, err = composite.GetNode(t.Context(), "4:missing:same")
 	require.ErrorIs(t, err, ErrNotFound)
 }
 

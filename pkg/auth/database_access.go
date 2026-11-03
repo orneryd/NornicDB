@@ -80,9 +80,6 @@ func RequestDatabasePermissionAllowed(ctx context.Context, database string, perm
 		_, allows := BindRequestDatabaseRead(ctx, database)
 		return allows()
 	}
-	if ctx == nil {
-		return false
-	}
 	mode := RequestDatabaseAccessModeFromContext(ctx)
 	if mode != nil && !mode.CanAccessDatabase(database) {
 		return false
@@ -109,9 +106,6 @@ func RequestDatabasePermissionAllowed(ctx context.Context, database string, perm
 // Consumers can retain the canonical database and predicate for their lifetime.
 func BindRequestDatabaseRead(ctx context.Context, database string) (string, func() bool) {
 	refused := func() bool { return false }
-	if ctx == nil {
-		return database, refused
-	}
 	selection := database
 	scope := RequestDatabaseScopeFromContext(ctx)
 	if scope != nil {

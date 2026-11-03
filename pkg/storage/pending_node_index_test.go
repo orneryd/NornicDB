@@ -13,7 +13,7 @@ import (
 // is listed, such an update keeps the existing entries.
 func TestPendingNodeIndexReplaceAddsUnlistedPrev(t *testing.T) {
 	index := newPendingNodeIndex()
-	index.track("User", "id", func(NodeID) *Node { return nil })
+	require.NoError(t, index.track(t.Context(), "User", "id", func(NodeID) *Node { return nil }))
 	committed := &Node{ID: "u1", Labels: []string{"User"}, Properties: map[string]any{"id": int64(1), "v": int64(0)}}
 	updated := &Node{ID: "u1", Labels: []string{"User"}, Properties: map[string]any{"id": int64(1), "v": int64(1)}}
 
@@ -34,7 +34,8 @@ func TestPendingNodeIndexReplaceAddsUnlistedPrev(t *testing.T) {
 
 func mustIndexValueKey(t *testing.T, value any) interface{} {
 	t.Helper()
-	key, ok := indexValueKey(value)
+	key, ok, err := indexValueKey(t.Context(), value)
+	require.NoError(t, err)
 	require.True(t, ok)
 	return key
 }

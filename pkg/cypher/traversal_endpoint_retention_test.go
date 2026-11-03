@@ -56,13 +56,13 @@ func (s *endpointRetentionEngine) endpointBody(id storage.NodeID, node *storage.
 	return node, nil
 }
 
-func (s *endpointRetentionEngine) GetQueryNode(id storage.NodeID) (*storage.Node, error) {
-	node, err := s.NamespacedEngine.GetQueryNode(id)
+func (s *endpointRetentionEngine) GetQueryNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
+	node, err := s.NamespacedEngine.GetQueryNode(ctx, id)
 	return s.endpointBody(id, node, err)
 }
 
-func (s *endpointRetentionEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
-	node, err := s.NamespacedEngine.GetNode(id)
+func (s *endpointRetentionEngine) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
+	node, err := s.NamespacedEngine.GetNode(ctx, id)
 	return s.endpointBody(id, node, err)
 }
 
@@ -77,13 +77,13 @@ func TestTraversalEndpointRetentionDoesNotScaleWithUnrelatedProperties(t *testin
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := &endpointRetentionEngine{NamespacedEngine: storage.NewNamespacedEngine(newTestMemoryEngine(t), "retained")}
-			_, err := store.CreateNode(&storage.Node{ID: "root", Labels: []string{"Seed"}, Properties: map[string]interface{}{"rank": int64(0)}})
+			_, err := store.CreateNode(t.Context(), &storage.Node{ID: "root", Labels: []string{"Seed"}, Properties: map[string]interface{}{"rank": int64(0)}})
 			require.NoError(t, err)
 			for i := 1; i <= 128; i++ {
 				id := storage.NodeID(fmt.Sprintf("end-%03d", i))
-				_, err = store.CreateNode(&storage.Node{ID: id, Labels: []string{"Endpoint"}, Properties: map[string]interface{}{"rank": int64(i)}})
+				_, err = store.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"Endpoint"}, Properties: map[string]interface{}{"rank": int64(i)}})
 				require.NoError(t, err)
-				require.NoError(t, store.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("link-%03d", i)), StartNode: "root", EndNode: id, Type: "LINK"}))
+				require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: storage.EdgeID(fmt.Sprintf("link-%03d", i)), StartNode: "root", EndNode: id, Type: "LINK"}))
 			}
 			exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 			warm, err := exec.Execute(context.Background(), tc.query, nil)
@@ -154,7 +154,7 @@ func TestTraversalEndpointRetentionDoesNotScaleWithUnrelatedProperties(t *testin
 
 func TestTraversalEndpointRetentionPreservesRequestedValues(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "retained_values")
-	_, err := store.CreateNode(&storage.Node{ID: "a", Labels: []string{"Seed"}, Properties: map[string]interface{}{"rank": int64(0)}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"Seed"}, Properties: map[string]interface{}{"rank": int64(0)}})
 	require.NoError(t, err)
 	properties := map[string]interface{}{
 		"rank": int64(7), "nested": map[string]interface{}{"k": "kept"}, "unrelated": strings.Repeat("x", 32<<10),
@@ -162,10 +162,10 @@ func TestTraversalEndpointRetentionPreservesRequestedValues(t *testing.T) {
 	for i := 0; i < 16; i++ {
 		properties[fmt.Sprintf("extra-%02d", i)] = strings.Repeat("z", 32)
 	}
-	_, err = store.CreateNode(&storage.Node{ID: "b", Labels: []string{"Endpoint"}, Properties: properties,
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"Endpoint"}, Properties: properties,
 		ChunkEmbeddings: [][]float32{{1, 0}}, EmbedMeta: map[string]interface{}{"has_embedding": true}})
 	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "LINK"}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "LINK"}))
 	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	for _, length := range []string{"", "*1..2"} {
 		result, err := exec.Execute(context.Background(), "MATCH (:Seed)-[:LINK"+length+"]->(e:Endpoint) RETURN e.rank, e.nested.k, e.has_embedding, labels(e)", nil)

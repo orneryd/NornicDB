@@ -26,11 +26,11 @@ func newRejectedVectorReachFixture(t *testing.T) *rejectedVectorReachFixture {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 	exec := NewStorageExecutor(store)
 	for i := 0; i < 514; i++ {
-		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("x%d", i)), Labels: []string{"S"}, Properties: map[string]interface{}{"state": "retired"}, ChunkEmbeddings: [][]float32{{1, 0.1 + float32(i)*0.0002, 0, 0}}})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("x%d", i)), Labels: []string{"S"}, Properties: map[string]interface{}{"state": "retired"}, ChunkEmbeddings: [][]float32{{1, 0.1 + float32(i)*0.0002, 0, 0}}})
 		require.NoError(t, err)
 	}
 	for j := 0; j < 14; j++ {
-		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("e%d", j)), Labels: []string{"S"}, Properties: map[string]interface{}{"state": "current"}, ChunkEmbeddings: [][]float32{{1, 0.45 + float32(j)*0.01, 0, 0}}})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("e%d", j)), Labels: []string{"S"}, Properties: map[string]interface{}{"state": "current"}, ChunkEmbeddings: [][]float32{{1, 0.45 + float32(j)*0.01, 0, 0}}})
 		require.NoError(t, err)
 	}
 	service := search.NewService(store, 4, nil)

@@ -53,14 +53,14 @@ func waitDrained(entry *dbSearchService) {
 func BenchmarkSearchRefreshEdgeUpdatesRelationshipTextOff(b *testing.B) {
 	db, entry := openProducerBenchDB(b, false)
 	for _, id := range []storage.NodeID{"a", "b"} {
-		if _, err := db.storage.CreateNode(&storage.Node{ID: id}); err != nil {
+		if _, err := db.storage.CreateNode(b.Context(), &storage.Node{ID: id}); err != nil {
 			b.Fatal(err)
 		}
 	}
 	edges := make([]*storage.Edge, 256)
 	for i := range edges {
 		edges[i] = &storage.Edge{ID: storage.EdgeID(fmt.Sprintf("r%d", i)), Type: "CITES", StartNode: "a", EndNode: "b", Properties: map[string]any{"vec": []float32{1, 0, 0, float32(i)}}}
-		if err := db.storage.CreateEdge(edges[i]); err != nil {
+		if err := db.storage.CreateEdge(b.Context(), edges[i]); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -70,7 +70,7 @@ func BenchmarkSearchRefreshEdgeUpdatesRelationshipTextOff(b *testing.B) {
 	for n := range b.N {
 		for i, edge := range edges {
 			edge.Properties = map[string]any{"vec": []float32{1, float32(n % 2), 0, float32(i)}}
-			if err := db.storage.UpdateEdge(storage.EdgeUpdateRequest{After: edge}); err != nil {
+			if err := db.storage.UpdateEdge(b.Context(), storage.EdgeUpdateRequest{After: edge}); err != nil {
 				b.Fatal(err)
 			}
 		}
@@ -83,11 +83,11 @@ func BenchmarkSearchRefreshEdgeUpdatesRelationshipTextOff(b *testing.B) {
 func BenchmarkSearchRefreshSuppressionFlips(b *testing.B) {
 	db, entry := openProducerBenchDB(b, false)
 	for _, id := range []storage.NodeID{"a", "b"} {
-		if _, err := db.storage.CreateNode(&storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"content": "word " + string(id)}}); err != nil {
+		if _, err := db.storage.CreateNode(b.Context(), &storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"content": "word " + string(id)}}); err != nil {
 			b.Fatal(err)
 		}
 	}
-	if err := db.storage.CreateEdge(&storage.Edge{ID: "r", Type: "CITES", StartNode: "a", EndNode: "b", Properties: map[string]any{"vec": []float32{1, 0, 0, 0}}}); err != nil {
+	if err := db.storage.CreateEdge(b.Context(), &storage.Edge{ID: "r", Type: "CITES", StartNode: "a", EndNode: "b", Properties: map[string]any{"vec": []float32{1, 0, 0, 0}}}); err != nil {
 		b.Fatal(err)
 	}
 	waitDrained(entry)
@@ -96,10 +96,10 @@ func BenchmarkSearchRefreshSuppressionFlips(b *testing.B) {
 	b.ResetTimer()
 	for range b.N {
 		for _, hidden := range []bool{true, false} {
-			if err := suppressor.SetManualSuppression(storage.StoredEntityNodeKind, "a", hidden); err != nil {
+			if err := suppressor.SetManualSuppression(context.Background(), storage.StoredEntityNodeKind, "a", hidden); err != nil {
 				b.Fatal(err)
 			}
-			if err := suppressor.SetManualSuppression(storage.StoredEntityEdgeKind, "r", hidden); err != nil {
+			if err := suppressor.SetManualSuppression(context.Background(), storage.StoredEntityEdgeKind, "r", hidden); err != nil {
 				b.Fatal(err)
 			}
 			waitDrained(entry)
@@ -121,7 +121,7 @@ func BenchmarkSearchRefreshDecayFlips(b *testing.B) {
 		b.Fatal(err)
 	}
 	old := time.Now().Add(-72 * time.Hour)
-	if _, err := db.storage.CreateNode(&storage.Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "decayword"}, CreatedAt: old, UpdatedAt: old}); err != nil {
+	if _, err := db.storage.CreateNode(b.Context(), &storage.Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "decayword"}, CreatedAt: old, UpdatedAt: old}); err != nil {
 		b.Fatal(err)
 	}
 	id := db.defaultDatabaseName() + ":a"
@@ -133,7 +133,7 @@ func BenchmarkSearchRefreshDecayFlips(b *testing.B) {
 			if err := schema.AlterDecayProfile("short_doc", map[string]any{"decayEnabled": decay}); err != nil {
 				b.Fatal(err)
 			}
-			if _, err := be.EnqueueDeindexIfSuppressed(id, false); err != nil {
+			if _, err := be.EnqueueDeindexIfSuppressed(context.Background(), id, false); err != nil {
 				b.Fatal(err)
 			}
 			waitDrained(entry)

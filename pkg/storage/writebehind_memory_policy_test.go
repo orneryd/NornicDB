@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -21,15 +22,15 @@ func TestWriteBehindMemoryAdmissionRejectsBeforeWAL(t *testing.T) {
 	wal := engine.bufferedCommitWAL
 	engine.memoryPolicy = policy
 	t.Cleanup(func() { _ = engine.Close(); _ = wal.Close() })
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
-	_, err = tx.CreateNode(&Node{ID: "test:large", Labels: []string{"L"}, Properties: map[string]any{"payload": strings.Repeat("x", 1<<20)}})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:large", Labels: []string{"L"}, Properties: map[string]any{"payload": strings.Repeat("x", 1<<20)}})
 	require.NoError(t, err)
 	require.ErrorIs(t, tx.Commit(), memory.ErrLimitExceeded)
 	require.Zero(t, policy.Reserved())
-	_, err = engine.GetNode("test:large")
+	_, err = engine.GetNode(t.Context(), "test:large")
 	require.ErrorIs(t, err, ErrNotFound)
 	entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
 	require.NoError(t, err)
@@ -47,12 +48,12 @@ func TestRejectedBufferedCommitClearsDetachedDictionaryEntries(t *testing.T) {
 	wal := engine.bufferedCommitWAL
 	engine.memoryPolicy = policy
 	t.Cleanup(func() { _ = engine.Close(); _ = wal.Close() })
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
 	for i := 0; i < 256; i++ {
-		_, err = tx.CreateNode(&Node{ID: NodeID(fmt.Sprintf("test:rejected-%03d", i)), Labels: []string{"L"}})
+		_, err = tx.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("test:rejected-%03d", i)), Labels: []string{"L"}})
 		require.NoError(t, err)
 	}
 	require.ErrorIs(t, tx.Commit(), memory.ErrLimitExceeded)
@@ -92,18 +93,18 @@ func TestWriteBehindMemoryReservationEndsAfterFlush(t *testing.T) {
 	wal := engine.bufferedCommitWAL
 	engine.memoryPolicy = policy
 	t.Cleanup(func() { _ = engine.Close(); _ = wal.Close() })
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
-	_, err = tx.CreateNode(&Node{ID: "test:small", Labels: []string{"L"}, Properties: map[string]any{"v": int64(1)}})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:small", Labels: []string{"L"}, Properties: map[string]any{"v": int64(1)}})
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 	require.True(t, tx.AcknowledgedBuffered())
 	require.Positive(t, policy.Reserved(), "acknowledged generation still owns its forecast")
-	require.NoError(t, engine.FlushWriteBehind(nil))
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	require.Zero(t, policy.Reserved(), "retired generation must release its forecast")
-	got, err := engine.GetNode("test:small")
+	got, err := engine.GetNode(t.Context(), "test:small")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), got.Properties["v"])
 }
@@ -119,7 +120,9 @@ func TestWriteBehindMemoryReservationSurvivesReplayFailure(t *testing.T) {
 	buffer := NewWriteBehindBuffer(time.Hour, 0, func(*CommitBuffer) error { return applyErr })
 	defer buffer.Close()
 	buffer.AppendCommit(bufferedCommit{memoryLease: lease, ops: []Operation{{}}})
-	buffer.rotate()
+	if _, rotateErr := buffer.rotate(t.Context()); rotateErr != nil {
+		t.Fatal(rotateErr)
+	}
 	buffer.drainOne(true, nil)
 	require.ErrorIs(t, buffer.LastErr(), applyErr)
 	require.EqualValues(t, 1024, policy.Reserved(), "failed replay retains its payload")

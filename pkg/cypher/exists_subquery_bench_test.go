@@ -29,10 +29,10 @@ func existsBenchExecutor(b *testing.B) *StorageExecutor {
 			edges = append(edges, &storage.Edge{ID: storage.EdgeID(fmt.Sprintf("r%d", i)), Type: "R", StartNode: id, EndNode: storage.NodeID(fmt.Sprintf("q%d", i%20))})
 		}
 	}
-	if err := store.BulkCreateNodes(nodes); err != nil {
+	if err := store.BulkCreateNodes(b.Context(), nodes); err != nil {
 		b.Fatal(err)
 	}
-	if err := store.BulkCreateEdges(edges); err != nil {
+	if err := store.BulkCreateEdges(b.Context(), edges); err != nil {
 		b.Fatal(err)
 	}
 	return NewStorageExecutor(store)

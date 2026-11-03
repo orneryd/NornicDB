@@ -3,11 +3,12 @@ package search
 import (
 	"context"
 	"fmt"
+	"testing"
+
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 // The public stage deliberately widens the generator threshold by float32
@@ -39,7 +40,7 @@ func TestXhigh014fPublicThresholdSlackProbe(t *testing.T) {
 					v = tc.other
 				}
 				node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("v%02d", i)), ChunkEmbeddings: [][]float32{v}}
-				_, err := engine.CreateNode(node)
+				_, err := engine.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 				require.NoError(t, service.IndexNode(node))
 			}

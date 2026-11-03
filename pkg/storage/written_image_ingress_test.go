@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"fmt"
@@ -38,7 +39,7 @@ func TestEveryIngressPublishesStoredImage(t *testing.T) {
 	}
 	inTx := func(t *testing.T, engine *BadgerEngine, implicit bool, apply func(*BadgerTransaction) error) {
 		t.Helper()
-		tx, err := engine.BeginTransaction()
+		tx, err := engine.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		require.NoError(t, tx.SetNamespace("test"))
 		require.NoError(t, tx.SetImplicit(implicit))
@@ -54,49 +55,49 @@ func TestEveryIngressPublishesStoredImage(t *testing.T) {
 	routes := []route{
 		{"direct", func(t *testing.T, engine *BadgerEngine, round int) {
 			if round == 0 {
-				_, err := engine.CreateNode(node(round))
+				_, err := engine.CreateNode(t.Context(), node(round))
 				require.NoError(t, err)
-				require.NoError(t, engine.CreateEdge(edge(round)))
+				require.NoError(t, engine.CreateEdge(t.Context(), edge(round)))
 				return
 			}
-			require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: node(round)}))
-			require.NoError(t, engine.UpdateEdge(EdgeUpdateRequest{After: edge(round)}))
+			require.NoError(t, engine.UpdateNode(t.Context(), NodeUpdateRequest{After: node(round)}))
+			require.NoError(t, engine.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge(round)}))
 		}},
 		{"bulk", func(t *testing.T, engine *BadgerEngine, round int) {
 			if round == 0 {
-				require.NoError(t, engine.BulkCreateNodes([]*Node{node(round)}))
-				require.NoError(t, engine.BulkCreateEdges([]*Edge{edge(round)}))
+				require.NoError(t, engine.BulkCreateNodes(t.Context(), []*Node{node(round)}))
+				require.NoError(t, engine.BulkCreateEdges(t.Context(), []*Edge{edge(round)}))
 				return
 			}
-			require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: node(round)}))
-			require.NoError(t, engine.UpdateEdge(EdgeUpdateRequest{After: edge(round)}))
+			require.NoError(t, engine.UpdateNode(t.Context(), NodeUpdateRequest{After: node(round)}))
+			require.NoError(t, engine.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge(round)}))
 		}},
 		{"explicit transaction", func(t *testing.T, engine *BadgerEngine, round int) {
 			inTx(t, engine, false, func(tx *BadgerTransaction) error {
 				if round == 0 {
-					if _, err := tx.CreateNode(node(round)); err != nil {
+					if _, err := tx.CreateNode(t.Context(), node(round)); err != nil {
 						return err
 					}
-					return tx.CreateEdge(edge(round))
+					return tx.CreateEdge(t.Context(), edge(round))
 				}
-				if err := tx.UpdateGraphNode(NodeUpdateRequest{After: node(round), Policy: ClientNodeEdits}); err != nil {
+				if err := tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node(round), Policy: ClientNodeEdits}); err != nil {
 					return err
 				}
-				return tx.UpdateEdge(EdgeUpdateRequest{After: edge(round)})
+				return tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge(round)})
 			})
 		}},
 		{"implicit transaction", func(t *testing.T, engine *BadgerEngine, round int) {
 			inTx(t, engine, true, func(tx *BadgerTransaction) error {
 				if round == 0 {
-					if _, err := tx.CreateNode(node(round)); err != nil {
+					if _, err := tx.CreateNode(t.Context(), node(round)); err != nil {
 						return err
 					}
-					return tx.CreateEdge(edge(round))
+					return tx.CreateEdge(t.Context(), edge(round))
 				}
-				if err := tx.UpdateGraphNode(NodeUpdateRequest{After: node(round), Policy: ClientNodeEdits}); err != nil {
+				if err := tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node(round), Policy: ClientNodeEdits}); err != nil {
 					return err
 				}
-				return tx.UpdateEdge(EdgeUpdateRequest{After: edge(round)})
+				return tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge(round)})
 			})
 		}},
 	}
@@ -109,7 +110,7 @@ func TestEveryIngressPublishesStoredImage(t *testing.T) {
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = engine.Close() })
 				for _, endpoint := range []NodeID{"test:a", "test:b"} {
-					_, err := engine.CreateNode(&Node{ID: endpoint, Labels: []string{"E"}})
+					_, err := engine.CreateNode(t.Context(), &Node{ID: endpoint, Labels: []string{"E"}})
 					require.NoError(t, err)
 				}
 				type image struct {
@@ -120,13 +121,13 @@ func TestEveryIngressPublishesStoredImage(t *testing.T) {
 				read := func() image {
 					t.Helper()
 					var out image
-					out.stored, err = engine.GetStoredNode("test:n")
+					out.stored, err = engine.GetStoredNode(t.Context(), "test:n")
 					require.NoError(t, err)
-					out.visible, err = engine.GetNode("test:n")
+					out.visible, err = engine.GetNode(t.Context(), "test:n")
 					require.NoError(t, err)
-					out.storedEdge, err = engine.GetStoredEdge("test:e")
+					out.storedEdge, err = engine.GetStoredEdge(t.Context(), "test:e")
 					require.NoError(t, err)
-					out.visibleEdge, err = engine.GetEdge("test:e")
+					out.visibleEdge, err = engine.GetEdge(t.Context(), "test:e")
 					require.NoError(t, err)
 					out.stored, out.visible = publicNodeImage(out.stored), publicNodeImage(out.visible)
 					out.storedEdge, out.visibleEdge = comparableStoredEdge(out.storedEdge), comparableStoredEdge(out.visibleEdge)
@@ -135,7 +136,7 @@ func TestEveryIngressPublishesStoredImage(t *testing.T) {
 				for round := 0; round < 2; round++ {
 					r.write(t, engine, round)
 					published := read()
-					require.NoError(t, engine.FlushWriteBehind(nil))
+					require.NoError(t, engine.FlushWriteBehind(context.Background()))
 					engine.invalidateCachesAfterRestore()
 					decoded := read()
 					require.Equal(t, decoded, published, "round %d: published body differs from the stored one", round)

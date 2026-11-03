@@ -17,7 +17,7 @@ func TestGDSNativeImportRoundsWhereGDSConverts(t *testing.T) {
 	} {
 		e, run := newGDSEngineGraph(t, "nativerounding",
 			gdsNode("a", "N", map[string]interface{}{"v": values}), gdsNode("b", "N", nil))
-		require.NoError(t, e.storage.CreateEdge(&storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "R", Properties: map[string]interface{}{"w": int64(9007199254740993)}}))
+		require.NoError(t, e.storage.CreateEdge(t.Context(), &storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "R", Properties: map[string]interface{}{"w": int64(9007199254740993)}}))
 		_, err := run("CALL gds.graph.project('native',{N:{properties:'v'}},{R:{properties:'w'}},{readConcurrency:1})")
 		require.NoError(t, err)
 		projection, err := lookupGraphProjection("nativerounding", "native")
@@ -36,7 +36,7 @@ func TestGDSNativeImportRoundsWhereGDSConverts(t *testing.T) {
 func TestGDSRelationshipDefaultTypeBeforeValue(t *testing.T) {
 	gdsFollowUpCatalog(t)
 	e, run := newGDSEngineGraph(t, "relationshipdefaults", gdsNode("a", "N", nil), gdsNode("b", "N", nil))
-	require.NoError(t, e.storage.CreateEdge(&storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "R"}))
+	require.NoError(t, e.storage.CreateEdge(t.Context(), &storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "R"}))
 	for defaultValue, expected := range map[string]string{
 		"[]":    "Expected type of default value to be `Double`. But got `Object[]`.",
 		"{a:1}": "Expected type of default value to be `Double`. But got `HashMap`.",

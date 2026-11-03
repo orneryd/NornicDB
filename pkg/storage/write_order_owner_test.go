@@ -39,12 +39,12 @@ func TestWriteMVCCHeadNeverMovesBackwards(t *testing.T) {
 		t.Run(fmt.Sprintf("writeBehind=%v", writeBehind), func(t *testing.T) {
 			e := newOwnerTestEngine(t, writeBehind)
 			ctx := context.Background()
-			_, err := e.CreateNode(&Node{ID: "test:a", Properties: map[string]any{"v": int64(1)}})
+			_, err := e.CreateNode(t.Context(), &Node{ID: "test:a", Properties: map[string]any{"v": int64(1)}})
 			require.NoError(t, err)
-			_, err = e.CreateNode(&Node{ID: "test:b", Properties: map[string]any{"v": int64(1)}})
+			_, err = e.CreateNode(t.Context(), &Node{ID: "test:b", Properties: map[string]any{"v": int64(1)}})
 			require.NoError(t, err)
-			require.NoError(t, e.CreateEdge(&Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"v": int64(1)}}))
-			require.NoError(t, e.FlushWriteBehind(nil))
+			require.NoError(t, e.CreateEdge(t.Context(), &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"v": int64(1)}}))
+			require.NoError(t, e.FlushWriteBehind(context.Background()))
 
 			nodeNum, ok := e.idDict.nodeForwardLookup("test:a")
 			require.True(t, ok)
@@ -52,10 +52,10 @@ func TestWriteMVCCHeadNeverMovesBackwards(t *testing.T) {
 			require.True(t, ok)
 			update := map[string]func() error{
 				"node": func() error {
-					return e.UpdateNode(NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"v": int64(2)}}})
+					return e.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"v": int64(2)}}})
 				},
 				"relationship": func() error {
-					return e.UpdateEdge(EdgeUpdateRequest{After: &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"v": int64(2)}}})
+					return e.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"v": int64(2)}}})
 				},
 			}
 			for kind, logical := range map[string][]byte{
@@ -65,7 +65,7 @@ func TestWriteMVCCHeadNeverMovesBackwards(t *testing.T) {
 				read, err := e.ReadMVCCHead(ctx, logical)
 				require.NoError(t, err, kind)
 				require.NoError(t, update[kind](), kind)
-				require.NoError(t, e.FlushWriteBehind(nil))
+				require.NoError(t, e.FlushWriteBehind(context.Background()))
 				newer, err := e.ReadMVCCHead(ctx, logical)
 				require.NoError(t, err, kind)
 				require.Positive(t, newer.Version.Compare(read.Version), kind)
@@ -99,22 +99,22 @@ func TestWriteMVCCHeadNeverMovesBackwards(t *testing.T) {
 // over them.
 func TestMVCCWritersApplyAcknowledgedCommitsFirst(t *testing.T) {
 	e := newOwnerTestEngine(t, true)
-	_, err := e.CreateNode(&Node{ID: "test:a", Properties: map[string]any{"v": int64(1)}})
+	_, err := e.CreateNode(t.Context(), &Node{ID: "test:a", Properties: map[string]any{"v": int64(1)}})
 	require.NoError(t, err)
-	require.NoError(t, e.FlushWriteBehind(nil))
-	head, err := e.GetNodeCurrentHead("test:a")
+	require.NoError(t, e.FlushWriteBehind(context.Background()))
+	head, err := e.GetNodeCurrentHead(context.Background(), "test:a")
 	require.NoError(t, err)
 
-	tx, err := e.BeginTransaction()
+	tx, err := e.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
-	require.NoError(t, tx.UpdateGraphNode(NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"v": int64(2)}}, Policy: ClientNodeEdits}))
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"v": int64(2)}}, Policy: ClientNodeEdits}))
 	require.NoError(t, tx.Commit())
 	require.NotZero(t, e.writeBehind.PendingOps(), "the update is acknowledged, not applied")
 
 	require.NoError(t, e.UpdateNodeCurrentHead("test:a", head.Version, false))
 	require.Zero(t, e.writeBehind.PendingOps(), "the head write applied the acknowledged update first")
-	stored, err := e.GetStoredNode("test:a")
+	stored, err := e.GetStoredNode(t.Context(), "test:a")
 	require.NoError(t, err)
 	require.Equal(t, int64(2), stored.Properties["v"])
 }
@@ -124,27 +124,27 @@ func TestMVCCWritersApplyAcknowledgedCommitsFirst(t *testing.T) {
 func TestBufferedRelationshipDeleteConflictsWithLaterCommit(t *testing.T) {
 	e := newOwnerTestEngine(t, true)
 	for _, id := range []NodeID{"test:a", "test:b"} {
-		_, err := e.CreateNode(&Node{ID: id, Properties: map[string]any{"v": int64(1)}})
+		_, err := e.CreateNode(t.Context(), &Node{ID: id, Properties: map[string]any{"v": int64(1)}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, e.CreateEdge(&Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}))
-	require.NoError(t, e.FlushWriteBehind(nil))
+	require.NoError(t, e.CreateEdge(t.Context(), &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}))
+	require.NoError(t, e.FlushWriteBehind(context.Background()))
 
-	tx, err := e.BeginTransaction()
+	tx, err := e.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
-	require.NoError(t, tx.DeleteEdge("test:r"))
+	require.NoError(t, tx.DeleteEdge(t.Context(), "test:r"))
 
-	peer, err := e.BeginTransaction()
+	peer, err := e.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, peer.SetImplicit(true))
-	require.NoError(t, peer.DeleteEdge("test:r"))
+	require.NoError(t, peer.DeleteEdge(t.Context(), "test:r"))
 	require.NoError(t, peer.Commit())
 	require.NotZero(t, e.writeBehind.PendingOps())
 
 	require.ErrorIs(t, tx.Commit(), ErrConflict)
-	require.NoError(t, e.FlushWriteBehind(nil))
-	count, err := e.EdgeCount()
+	require.NoError(t, e.FlushWriteBehind(context.Background()))
+	count, err := e.EdgeCount(t.Context())
 	require.NoError(t, err)
 	require.Zero(t, count, "the relationship is deleted and counted once")
 }
@@ -152,10 +152,10 @@ func TestBufferedRelationshipDeleteConflictsWithLaterCommit(t *testing.T) {
 // A closed engine has nothing left to flush.
 func TestFlushWriteBehindAfterClose(t *testing.T) {
 	e := newOwnerTestEngine(t, true)
-	_, err := e.CreateNode(&Node{ID: "test:a"})
+	_, err := e.CreateNode(t.Context(), &Node{ID: "test:a"})
 	require.NoError(t, err)
 	require.NoError(t, e.Close())
-	require.NoError(t, e.FlushWriteBehind(nil))
+	require.NoError(t, e.FlushWriteBehind(context.Background()))
 }
 
 // A prefix delete of another namespace does not fail a transaction open
@@ -164,17 +164,17 @@ func TestPrefixDeleteOfAnotherNamespaceKeepsOpenTransaction(t *testing.T) {
 	for _, writeBehind := range []bool{false, true} {
 		t.Run(fmt.Sprintf("writeBehind=%v", writeBehind), func(t *testing.T) {
 			e := newOwnerTestEngine(t, writeBehind)
-			_, err := e.CreateNode(&Node{ID: "other:x"})
+			_, err := e.CreateNode(t.Context(), &Node{ID: "other:x"})
 			require.NoError(t, err)
-			tx, err := e.BeginTransaction()
+			tx, err := e.BeginTransaction(t.Context())
 			require.NoError(t, err)
-			_, err = tx.CreateNode(&Node{ID: "test:a", Properties: map[string]any{"v": int64(1)}})
+			_, err = tx.CreateNode(t.Context(), &Node{ID: "test:a", Properties: map[string]any{"v": int64(1)}})
 			require.NoError(t, err)
 			_, _, err = e.DeleteByPrefix("other:")
 			require.NoError(t, err)
 			require.NoError(t, tx.Commit())
-			require.NoError(t, e.FlushWriteBehind(nil))
-			_, err = e.GetStoredNode("test:a")
+			require.NoError(t, e.FlushWriteBehind(context.Background()))
+			_, err = e.GetStoredNode(t.Context(), "test:a")
 			require.NoError(t, err)
 		})
 	}

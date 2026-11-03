@@ -19,7 +19,7 @@ func TestExecutor_CacheReflectsExternalNodeDelete(t *testing.T) {
 	ctx := context.Background()
 	const query = `MATCH (n:CacheDelete) RETURN count(n)`
 
-	_, err := store.CreateNode(&storage.Node{ID: "node", Labels: []string{"CacheDelete"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "node", Labels: []string{"CacheDelete"}})
 	require.NoError(t, err)
 
 	result, err := exec.Execute(ctx, query, nil)
@@ -32,7 +32,7 @@ func TestExecutor_CacheReflectsExternalNodeDelete(t *testing.T) {
 	hits, _, _, _, _ := exec.cache.Stats()
 	require.Equal(t, int64(1), hits)
 
-	_, err = otherStore.CreateNode(&storage.Node{ID: "other-node", Labels: []string{"CacheDelete"}})
+	_, err = otherStore.CreateNode(t.Context(), &storage.Node{ID: "other-node", Labels: []string{"CacheDelete"}})
 	require.NoError(t, err)
 	result, err = exec.Execute(ctx, query, nil)
 	require.NoError(t, err)
@@ -40,7 +40,7 @@ func TestExecutor_CacheReflectsExternalNodeDelete(t *testing.T) {
 	hits, _, _, _, _ = exec.cache.Stats()
 	require.Equal(t, int64(2), hits, "another database must not invalidate this cache")
 
-	require.NoError(t, store.DeleteNode("node"))
+	require.NoError(t, store.DeleteNode(t.Context(), "node"))
 	result, err = exec.Execute(ctx, query, nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows)
@@ -53,11 +53,11 @@ func TestExecutor_CacheReflectsExternalEdgeDelete(t *testing.T) {
 	ctx := context.Background()
 	const query = `MATCH ()-[r:CONNECTS]->() RETURN count(r)`
 
-	_, err := store.CreateNode(&storage.Node{ID: "left"})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "left"})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "right"})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "right"})
 	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{
 		ID: "edge", StartNode: "left", EndNode: "right", Type: "CONNECTS",
 	}))
 
@@ -68,7 +68,7 @@ func TestExecutor_CacheReflectsExternalEdgeDelete(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
 
-	require.NoError(t, store.DeleteEdge("edge"))
+	require.NoError(t, store.DeleteEdge(t.Context(), "edge"))
 	result, err = exec.Execute(ctx, query, nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows)
@@ -76,18 +76,36 @@ func TestExecutor_CacheReflectsExternalEdgeDelete(t *testing.T) {
 
 type pausedLabelCountEngine struct {
 	*storage.NamespacedEngine
-	counted chan struct{}
-	resume  chan struct{}
+	counted      chan struct{}
+	resume       chan struct{}
+	countContext chan context.Context
+	scanContext  chan context.Context
 }
 
-func (s *pausedLabelCountEngine) NodeCountByLabel(label string) (int64, error) {
-	count, err := s.NamespacedEngine.NodeCountByLabel(label)
+func (s *pausedLabelCountEngine) NodeCountByLabel(ctx context.Context, label string) (int64, error) {
+	count, err := s.NamespacedEngine.NodeCountByLabel(ctx, label)
 	if s.counted != nil {
+		if s.countContext != nil {
+			s.countContext <- ctx
+		}
 		close(s.counted)
-		<-s.resume
+		select {
+		case <-s.resume:
+		case <-ctx.Done():
+		}
 		s.counted = nil
+		if err == nil && ctx.Err() != nil {
+			return 0, ctx.Err()
+		}
 	}
 	return count, err
+}
+
+func (s *pausedLabelCountEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
+	if s.scanContext != nil {
+		s.scanContext <- ctx
+	}
+	return s.NamespacedEngine.AllNodes(ctx)
 }
 
 func TestExecutor_CacheDoesNotPublishOverlappingReadAtNewRevision(t *testing.T) {
@@ -97,7 +115,7 @@ func TestExecutor_CacheDoesNotPublishOverlappingReadAtNewRevision(t *testing.T) 
 		counted:          make(chan struct{}),
 		resume:           make(chan struct{}),
 	}
-	_, err := store.CreateNode(&storage.Node{ID: "node", Labels: []string{"CacheDelete"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "node", Labels: []string{"CacheDelete"}})
 	require.NoError(t, err)
 	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 10, TTL: time.Minute})
 	const query = `MATCH (n:CacheDelete) RETURN count(n)`
@@ -108,7 +126,7 @@ func TestExecutor_CacheDoesNotPublishOverlappingReadAtNewRevision(t *testing.T) 
 		done <- executeErr
 	}()
 	<-store.counted
-	require.NoError(t, store.DeleteNode("node"))
+	require.NoError(t, store.DeleteNode(t.Context(), "node"))
 	close(store.resume)
 	require.NoError(t, <-done)
 
@@ -126,13 +144,13 @@ func TestExecutor_CacheReflectsExternalAsyncNodeDeleteBeforeFlush(t *testing.T) 
 	ctx := context.Background()
 	const query = `MATCH (n:CacheDelete) RETURN count(n)`
 
-	_, err := store.CreateNode(&storage.Node{ID: "node", Labels: []string{"CacheDelete"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "node", Labels: []string{"CacheDelete"}})
 	require.NoError(t, err)
 	result, err := exec.Execute(ctx, query, nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
 
-	require.NoError(t, store.DeleteNode("node"))
+	require.NoError(t, store.DeleteNode(t.Context(), "node"))
 	result, err = exec.Execute(ctx, query, nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows)
@@ -147,18 +165,18 @@ func TestExecutor_CacheReflectsExternalAsyncEdgeDeleteBeforeFlush(t *testing.T) 
 	ctx := context.Background()
 	const query = `MATCH ()-[r:CONNECTS]->() RETURN count(r)`
 
-	_, err := store.CreateNode(&storage.Node{ID: "left"})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "left"})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "right"})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "right"})
 	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{
 		ID: "edge", StartNode: "left", EndNode: "right", Type: "CONNECTS",
 	}))
 	result, err := exec.Execute(ctx, query, nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
 
-	require.NoError(t, store.DeleteEdge("edge"))
+	require.NoError(t, store.DeleteEdge(t.Context(), "edge"))
 	result, err = exec.Execute(ctx, query, nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows)
@@ -171,7 +189,7 @@ func TestExecutor_CacheReflectsExternalNamespaceDelete(t *testing.T) {
 	ctx := context.Background()
 	const query = `MATCH (n:CacheDelete) RETURN n`
 
-	_, err := store.CreateNode(&storage.Node{ID: "node", Labels: []string{"CacheDelete"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "node", Labels: []string{"CacheDelete"}})
 	require.NoError(t, err)
 	result, err := exec.Execute(ctx, query, nil)
 	require.NoError(t, err)
@@ -191,7 +209,7 @@ func TestExecutor_CacheReflectsExternalCompositeConstituentDelete(t *testing.T) 
 	ctx := context.Background()
 	const query = `USE comp.a MATCH (n:CompositeCache) RETURN count(n)`
 
-	_, err = constituent.CreateNode(&storage.Node{ID: "node", Labels: []string{"CompositeCache"}})
+	_, err = constituent.CreateNode(t.Context(), &storage.Node{ID: "node", Labels: []string{"CompositeCache"}})
 	require.NoError(t, err)
 	result, err := exec.Execute(ctx, query, nil)
 	require.NoError(t, err)
@@ -202,7 +220,7 @@ func TestExecutor_CacheReflectsExternalCompositeConstituentDelete(t *testing.T) 
 	hits, _, _, _, _ := exec.cache.Stats()
 	require.Equal(t, int64(1), hits)
 
-	require.NoError(t, constituent.DeleteNode("node"))
+	require.NoError(t, constituent.DeleteNode(t.Context(), "node"))
 	nodes, err := constituent.GetNodesByLabel(ctx, "CompositeCache")
 	require.NoError(t, err)
 	require.Empty(t, nodes)

@@ -2,9 +2,10 @@ package inference
 
 import (
 	"context"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
@@ -17,20 +18,20 @@ type trackingDecayEngine struct {
 	deleted []storage.EdgeID
 }
 
-func (e *trackingDecayEngine) UpdateEdge(updateRequest storage.EdgeUpdateRequest) error {
+func (e *trackingDecayEngine) UpdateEdge(ctx context.Context, updateRequest storage.EdgeUpdateRequest) error {
 	edge := updateRequest.After
 	e.updated = append(e.updated, edge.ID)
-	return e.MemoryEngine.UpdateEdge(updateRequest)
+	return e.MemoryEngine.UpdateEdge(ctx, updateRequest)
 }
 
-func (e *trackingDecayEngine) DeleteEdge(id storage.EdgeID) error {
+func (e *trackingDecayEngine) DeleteEdge(ctx context.Context, id storage.EdgeID) error {
 	e.deleted = append(e.deleted, id)
-	return e.MemoryEngine.DeleteEdge(id)
+	return e.MemoryEngine.DeleteEdge(ctx, id)
 }
 
 func createDecayFixtureEdge(t *testing.T, engine storage.Engine, edge *storage.Edge) {
 	t.Helper()
-	err := engine.CreateEdge(edge)
+	err := engine.CreateEdge(t.Context(), edge)
 	require.NoError(t, err)
 }
 
@@ -62,9 +63,9 @@ func TestDefaultEdgeDecayConfigAndHelpers(t *testing.T) {
 
 func TestEdgeDecay_StartStopAndTriggerScan(t *testing.T) {
 	store := &trackingDecayEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
-	_, err := store.CreateNode(&storage.Node{ID: "nornic:n1"})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "nornic:n1"})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "nornic:n2"})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "nornic:n2"})
 	require.NoError(t, err)
 
 	now := time.Now()
@@ -136,19 +137,19 @@ func TestEdgeDecay_StartStopAndTriggerScan(t *testing.T) {
 	assert.Contains(t, store.updated, storage.EdgeID("nornic:decay-me"))
 	assert.Contains(t, store.deleted, storage.EdgeID("nornic:delete-me"))
 
-	updatedEdge, err := store.GetEdge("nornic:decay-me")
+	updatedEdge, err := store.GetEdge(t.Context(), "nornic:decay-me")
 	require.NoError(t, err)
 	assert.Less(t, updatedEdge.Confidence, 0.9)
 	assert.Greater(t, updatedEdge.Confidence, 0.3)
 
-	_, err = store.GetEdge("nornic:delete-me")
+	_, err = store.GetEdge(t.Context(), "nornic:delete-me")
 	require.Error(t, err)
 
-	manualEdge, err := store.GetEdge("nornic:manual-edge")
+	manualEdge, err := store.GetEdge(t.Context(), "nornic:manual-edge")
 	require.NoError(t, err)
 	assert.Equal(t, 0.4, manualEdge.Confidence)
 
-	reinforcedEdge, err := store.GetEdge("nornic:reinforced-edge")
+	reinforcedEdge, err := store.GetEdge(t.Context(), "nornic:reinforced-edge")
 	require.NoError(t, err)
 	assert.InDelta(t, 0.4, reinforcedEdge.Confidence, 0.0001)
 
@@ -162,9 +163,9 @@ func TestEdgeDecay_StartStopAndTriggerScan(t *testing.T) {
 
 func TestEdgeDecay_DryRunAndDisabledModes(t *testing.T) {
 	store := &trackingDecayEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
-	_, err := store.CreateNode(&storage.Node{ID: "nornic:n1"})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "nornic:n1"})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "nornic:n2"})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "nornic:n2"})
 	require.NoError(t, err)
 
 	old := time.Now().Add(-24 * time.Hour)
@@ -196,7 +197,7 @@ func TestEdgeDecay_DryRunAndDisabledModes(t *testing.T) {
 	assert.Equal(t, 1, deleted)
 	assert.Empty(t, store.deleted)
 
-	edge, err := store.GetEdge("nornic:dry-run-delete")
+	edge, err := store.GetEdge(t.Context(), "nornic:dry-run-delete")
 	require.NoError(t, err)
 	assert.Equal(t, 0.4, edge.Confidence)
 

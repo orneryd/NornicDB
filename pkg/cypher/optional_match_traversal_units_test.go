@@ -365,9 +365,9 @@ func TestFirstParenGroup(t *testing.T) {
 }
 
 func TestEnsureLeadingNodeNamed(t *testing.T) {
-	require.Equal(t, "(a:L)-[:T]->(b)", ensureLeadingNodeNamed("(a:L)-[:T]->(b)"), "named pattern unchanged")
-	require.Equal(t, "("+traversalAnonVar+":L)-[:T]->(:M)", ensureLeadingNodeNamed("(:L)-[:T]->(:M)"), "anonymous pattern gets a synthetic variable")
-	require.Equal(t, "no parens", ensureLeadingNodeNamed("no parens"), "patterns without a node group pass through")
+	require.Equal(t, "(a:L)-[:T]->(b)", ensureLeadingNodeNamed(t.Context(), "(a:L)-[:T]->(b)"), "named pattern unchanged")
+	require.Equal(t, "("+traversalAnonVar+":L)-[:T]->(:M)", ensureLeadingNodeNamed(t.Context(), "(:L)-[:T]->(:M)"), "anonymous pattern gets a synthetic variable")
+	require.Equal(t, "no parens", ensureLeadingNodeNamed(t.Context(), "no parens"), "patterns without a node group pass through")
 }
 
 func TestCandidateAgreesWithRow(t *testing.T) {

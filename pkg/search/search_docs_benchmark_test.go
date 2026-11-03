@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
+
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"io/fs"
@@ -254,7 +255,7 @@ func buildDocsSearchFixture(tb testing.TB, chunks []docsCorpusChunk) *Service {
 			},
 			ChunkEmbeddings: [][]float32{chunk.vector},
 		}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(tb.Context(), node)
 		require.NoError(tb, err)
 		require.NoError(tb, svc.IndexNode(node))
 	}

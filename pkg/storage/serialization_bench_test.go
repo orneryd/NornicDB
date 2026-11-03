@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"testing"
@@ -28,7 +29,7 @@ func benchmarkEncodeInUpdate(b *testing.B, eng *BadgerEngine, encode func(*badge
 	b.Helper()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		if err := eng.withUpdate(updateRequest{}, encode); err != nil {
+		if err := eng.withUpdate(context.Background(), updateRequest{}, encode); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -39,7 +40,7 @@ func benchmarkEncodeInUpdate(b *testing.B, eng *BadgerEngine, encode func(*badge
 func benchmarkEncodedFixture(b *testing.B, eng *BadgerEngine, numericIDs bool, encode func(*badger.Txn) ([]byte, error)) []byte {
 	b.Helper()
 	var data []byte
-	if err := eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	if err := eng.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		var err error
 		data, err = encode(txn)
 		if err != nil {
@@ -77,7 +78,7 @@ func BenchmarkDeserializeNode(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		if _, err := eng.decodeNode(ns, data); err != nil {
+		if _, err := eng.decodeNodeProjected(nil, ns, data, nil); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -87,7 +88,7 @@ func BenchmarkDecodeTokenizedPropertiesGraphitiVector(b *testing.B) {
 	eng := benchEngine(b)
 	props := benchmarkGraphitiProperties()
 	var data []byte
-	if err := eng.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	if err := eng.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		var encErr error
 		data, encErr = eng.encodeTokenizedProperties(txn, "test", props)
 		if encErr != nil {
@@ -102,7 +103,7 @@ func BenchmarkDecodeTokenizedPropertiesGraphitiVector(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		out, err := eng.decodeTokenizedProperties("test", data)
+		out, err := eng.decodeTokenizedPropertiesProjected(nil, "test", data, nil)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -124,7 +125,7 @@ func BenchmarkDeserializeNodeGraphitiVector(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		out, err := eng.decodeNode(ns, data)
+		out, err := eng.decodeNodeProjected(nil, ns, data, nil)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -147,7 +148,7 @@ func BenchmarkDeserializeNodeGraphitiVectorProjectedScalars(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		out, err := eng.decodeNodeProjected(ns, data, include)
+		out, err := eng.decodeNodeProjected(nil, ns, data, include)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -178,7 +179,7 @@ func BenchmarkDeserializeEdge(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		if _, err := eng.decodeEdgeBodyWithID(ns, data, edge.ID); err != nil {
+		if _, err := eng.decodeEdgeBodyWithID(nil, ns, data, edge.ID); err != nil {
 			b.Fatal(err)
 		}
 	}

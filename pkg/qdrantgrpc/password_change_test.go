@@ -23,7 +23,7 @@ func TestChangedPasswordStopsWorkingOverGRPC(t *testing.T) {
 	t.Cleanup(func() { _ = authStore.Close() })
 	authenticator, err := auth.NewAuthenticator(config, authStore)
 	require.NoError(t, err)
-	_, err = authenticator.CreateUser("viewer4", "ViewerPass123!", []auth.Role{auth.RoleViewer})
+	_, err = authenticator.CreateUser(context.Background(), "viewer4", "ViewerPass123!", []auth.Role{auth.RoleViewer})
 	require.NoError(t, err)
 	serverStore := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = serverStore.Close() })
@@ -36,7 +36,7 @@ func TestChangedPasswordStopsWorkingOverGRPC(t *testing.T) {
 		_, err = server.handleBasicAuth(context.Background(), basic("ViewerPass123!"))
 		require.NoError(t, err)
 	}
-	require.NoError(t, authenticator.ChangePassword("viewer4", "ViewerPass123!", "NewViewerPass456!"))
+	require.NoError(t, authenticator.ChangePassword(context.Background(), "viewer4", "ViewerPass123!", "NewViewerPass456!"))
 	_, err = server.handleBasicAuth(context.Background(), basic("ViewerPass123!"))
 	require.Error(t, err)
 	_, err = server.handleBasicAuth(context.Background(), basic("NewViewerPass456!"))

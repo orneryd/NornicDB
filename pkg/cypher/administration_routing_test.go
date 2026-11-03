@@ -66,14 +66,14 @@ func TestAdministrationRoutingFailures(t *testing.T) {
 		t.Cleanup(func() { _ = base.Close() })
 		// nonTransactionalEngine (executor_misc_test.go) opens no transaction.
 		exec := routed(t, nonTransactionalEngine{Engine: storage.NewNamespacedEngine(base, "system")}, nil)
-		_, err := exec.handleBegin(nil)
+		_, err := exec.handleBegin(t.Context())
 		require.NoError(t, err)
 		_, err = exec.Execute(ctx, grant, nil)
 		require.Error(t, err)
 	})
 	t.Run("initial snapshot can't be released", func(t *testing.T) {
 		exec, system := administrationReviewExecutor(t, "nornic")
-		_, err := exec.handleBegin(nil)
+		_, err := exec.handleBegin(t.Context())
 		require.NoError(t, err)
 		require.NoError(t, exec.txContext.tx.(*storage.BadgerTransaction).Rollback())
 		_, err = exec.Execute(ctx, grant, nil)
@@ -97,7 +97,7 @@ func TestExecuteInternalAdmissionRoutingAndPolicy(t *testing.T) {
 	require.Len(t, grants, 1)
 
 	failed, _ := administrationReviewExecutor(t, "nornic")
-	_, err = failed.handleBegin(nil)
+	_, err = failed.handleBegin(t.Context())
 	require.NoError(t, err)
 	failed.txContext.failed = errors.New("an earlier statement failed")
 	_, err = failed.executeInternal(ctx, "RETURN 1 AS one", nil)
@@ -110,7 +110,7 @@ func TestExecuteInternalAdmissionRoutingAndPolicy(t *testing.T) {
 	// A procedure's administration command in an explicit transaction whose
 	// statement carries no storage wrapper (called directly).
 	tx, _ := administrationReviewExecutor(t, "nornic")
-	_, err = tx.handleBegin(nil)
+	_, err = tx.handleBegin(t.Context())
 	require.NoError(t, err)
 	_, err = tx.executeUserStatement(ctx, "GRANT EXECUTE PROCEDURE db.ping ON DBMS TO viewer", nil)
 	requireStatusCode(t, err, "Neo.ClientError.Transaction.ForbiddenDueToTransactionType")
@@ -147,7 +147,7 @@ func TestTransactionDatabaseError(t *testing.T) {
 func TestSystemProceduresSeeNoSystemRecords(t *testing.T) {
 	ctx := context.Background()
 	exec, system := administrationReviewExecutor(t, "system")
-	_, err := system.CreateNode(&storage.Node{ID: "user:probe", Labels: []string{"_User"}, Properties: map[string]any{"username": "probe"}})
+	_, err := system.CreateNode(t.Context(), &storage.Node{ID: "user:probe", Labels: []string{"_User"}, Properties: map[string]any{"username": "probe"}})
 	require.NoError(t, err)
 	for _, statement := range []string{"CALL db.labels() YIELD label RETURN label", "CALL db.propertyKeys() YIELD propertyKey RETURN propertyKey"} {
 		result, err := exec.Execute(ctx, statement, nil)
@@ -156,7 +156,7 @@ func TestSystemProceduresSeeNoSystemRecords(t *testing.T) {
 	}
 	// In an explicit transaction too: the statement's transaction storage
 	// is left out of the procedure's context.
-	_, err = exec.handleBegin(nil)
+	_, err = exec.handleBegin(t.Context())
 	require.NoError(t, err)
 	result, err := exec.Execute(ctx, "CALL db.labels() YIELD label RETURN label", nil)
 	require.NoError(t, err)
@@ -164,11 +164,11 @@ func TestSystemProceduresSeeNoSystemRecords(t *testing.T) {
 
 	view := systemGraphView{Engine: system}
 	require.Equal(t, "system", view.Namespace())
-	_, err = view.GetNode("user:probe")
+	_, err = view.GetNode(t.Context(), "user:probe")
 	require.ErrorIs(t, err, storage.ErrNotFound)
-	_, err = view.GetEdge("e")
+	_, err = view.GetEdge(t.Context(), "e")
 	require.ErrorIs(t, err, storage.ErrNotFound)
-	_, err = view.GetFirstNodeByLabel("_User")
+	_, err = view.GetFirstNodeByLabel(t.Context(), "_User")
 	require.ErrorIs(t, err, storage.ErrNotFound)
 	nodes, err := view.GetNodesByLabel(ctx, "_User")
 	require.NoError(t, err)
@@ -189,21 +189,27 @@ func TestSystemProceduresSeeNoSystemRecords(t *testing.T) {
 		require.NoError(t, err)
 		require.Empty(t, edges)
 	}
-	require.Nil(t, view.GetEdgeBetween("a", "b", "R"))
+	edge, err := view.GetEdgeBetween(t.Context(), "a", "b", "R")
+	require.NoError(t, err)
+	require.Nil(t, edge)
 	visited := 0
 	require.NoError(t, view.StreamNodesWithOptions(ctx, storage.StreamNodesOptions{}, func(*storage.Node) error { visited++; return nil }))
 	require.Zero(t, visited)
-	require.Zero(t, view.GetInDegree("user:probe"))
-	require.Zero(t, view.GetOutDegree("user:probe"))
+	inDegree, err := view.GetInDegree(t.Context(), "user:probe")
+	require.NoError(t, err)
+	require.Zero(t, inDegree)
+	outDegree, err := view.GetOutDegree(t.Context(), "user:probe")
+	require.NoError(t, err)
+	require.Zero(t, outDegree)
 	require.NotNil(t, view.GetSchema())
 	batch, err := view.BatchGetNodes(context.Background(), []storage.NodeID{"user:probe"})
 	require.NoError(t, err)
 	require.Empty(t, batch)
 	for _, count := range []func() (int64, error){
-		view.NodeCount, view.EdgeCount,
-		func() (int64, error) { return view.EdgeCountByType("R") },
-		func() (int64, error) { return view.EdgeCountByStartLabel("_User", "R") },
-		func() (int64, error) { return view.EdgeCountByEndLabel("_User", "R") },
+		func() (int64, error) { return view.NodeCount(t.Context()) }, func() (int64, error) { return view.EdgeCount(t.Context()) },
+		func() (int64, error) { return view.EdgeCountByType(t.Context(), "R") },
+		func() (int64, error) { return view.EdgeCountByStartLabel(t.Context(), "_User", "R") },
+		func() (int64, error) { return view.EdgeCountByEndLabel(t.Context(), "_User", "R") },
 	} {
 		n, err := count()
 		require.NoError(t, err)
@@ -225,9 +231,11 @@ func TestAdministrationTransactionTakeover(t *testing.T) {
 	grant := "GRANT EXECUTE PROCEDURE db.ping ON DBMS TO viewer"
 
 	exec, _ := administrationReviewExecutor(t, "nornic")
-	_, err := exec.handleBegin(nil)
+	_, err := exec.handleBegin(t.Context())
 	require.NoError(t, err)
-	exec.txContext.tx.(*storage.BadgerTransaction).Metadata = map[string]interface{}{"oversized": strings.Repeat("x", 4096)}
+	native := exec.txContext.tx.(*storage.BadgerTransaction)
+	require.NoError(t, native.SetMetadata(map[string]interface{}{"first": strings.Repeat("x", 1500)}))
+	require.NoError(t, native.SetMetadata(map[string]interface{}{"second": strings.Repeat("x", 1500)}))
 	_, err = exec.Execute(ctx, grant, nil)
 	require.Error(t, err)
 
@@ -237,7 +245,7 @@ func TestAdministrationTransactionTakeover(t *testing.T) {
 	require.ErrorIs(t, err, errSystemUnavailable)
 
 	admin, _ := administrationReviewExecutor(t, "nornic")
-	_, err = admin.handleBegin(nil)
+	_, err = admin.handleBegin(t.Context())
 	require.NoError(t, err)
 	_, err = admin.Execute(ctx, grant, nil)
 	require.NoError(t, err)

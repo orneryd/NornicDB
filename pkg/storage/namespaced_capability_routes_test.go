@@ -16,12 +16,12 @@ type prefixCountRouteFixture struct {
 	prefixes []string
 }
 
-func (f *prefixCountRouteFixture) NodeCountByPrefix(prefix string) (int64, error) {
+func (f *prefixCountRouteFixture) NodeCountByPrefix(ctx context.Context, prefix string) (int64, error) {
 	f.calls = append(f.calls, "nodes")
 	f.prefixes = append(f.prefixes, prefix)
 	return 11, f.err
 }
-func (f *prefixCountRouteFixture) EdgeCountByPrefix(prefix string) (int64, error) {
+func (f *prefixCountRouteFixture) EdgeCountByPrefix(ctx context.Context, prefix string) (int64, error) {
 	f.calls = append(f.calls, "edges")
 	f.prefixes = append(f.prefixes, prefix)
 	return 11, f.err
@@ -49,9 +49,9 @@ func TestNamespacedPrefixCountRoutingPreservesFallbacks(t *testing.T) {
 					engine = struct{ Engine }{f}
 				}
 				n := NewNamespacedEngine(engine, "tenant")
-				nodes, err := n.NodeCountByPrefix(prefix)
+				nodes, err := n.NodeCountByPrefix(context.Background(), prefix)
 				require.Equal(t, f.err, err)
-				edges, err := n.EdgeCountByPrefix(prefix)
+				edges, err := n.EdgeCountByPrefix(context.Background(), prefix)
 				require.Equal(t, f.err, err)
 				want := int64(1)
 				if prefix == "" {

@@ -33,7 +33,7 @@ func TestProcedurePrivilegeStoreEdges(t *testing.T) {
 
 	system := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = system.Close() })
-	_, err = system.CreateNode(&storage.Node{ID: "user:x", Labels: []string{"_User", "_System"}, Properties: map[string]any{"name": "x"}})
+	_, err = system.CreateNode(context.Background(), &storage.Node{ID: "user:x", Labels: []string{"_User", "_System"}, Properties: map[string]any{"name": "x"}})
 	require.NoError(t, err)
 	faults := storagefault.NewMutationFailureEngine(system, "", errPrivilegeStorage, 0, WithStoreTransaction)
 	store := NewProcedurePrivilegeStore(faults)

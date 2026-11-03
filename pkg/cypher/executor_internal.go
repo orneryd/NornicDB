@@ -37,7 +37,7 @@ func (e *StorageExecutor) executeUserStatement(ctx context.Context, statement st
 			}
 		}()
 	}
-	if err := internalFunctionCallError(statement); err != nil {
+	if err := internalFunctionCallError(ctx, statement); err != nil {
 		// Refused like any statement of the caller's transaction: it fails
 		// an explicit transaction (executeInternal fails it for the rest).
 		return nil, e.failTransaction(ctx, err)
@@ -78,7 +78,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	}
 	if cypher != source.Text {
 		normalized := sourceQueryRewrite(source)
-		defer func() { result, retErr = (resultRestoration{source: normalized}).restore(result, retErr, nil) }()
+		defer func() { result, retErr = (resultRestoration{source: normalized}).restore(ctx, result, retErr, nil) }()
 	}
 	cypher = source.Text
 	if config.IsCypherQueryNormalizationEnabled() {
@@ -104,9 +104,12 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 			ctx = withSourceRewrite(ctx, rewrite)
 		}
 	}
-	if canonical, rewrite := desugarStandaloneOrderClauses(cypher); rewrite != nil {
+	if canonical, rewrite := desugarStandaloneOrderClauses(ctx, cypher); rewrite != nil {
 		cypher = canonical
 		ctx = withSourceRewrite(ctx, rewrite)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	ctx, cypher = trimSourceText(ctx, cypher, trimSourceTerminator)
 	if err := e.validateStatementFraming(ctx, cypher); err != nil {
@@ -159,14 +162,14 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 
 	// Local fragments own their lowering and restore generated names before
 	// returning to Fabric or their containing expression.
-	desugared, labelRewrite, err := desugarLabelExpressions(cypher, params, cypherVersionFromContext(ctx) == "25")
+	desugared, labelRewrite, err := desugarLabelExpressions(ctx, cypher, params, cypherVersionFromContext(ctx) == "25")
 	if err != nil {
 		return nil, err
 	}
 	if labelRewrite != nil {
 		cypher = desugared
 		defer func() {
-			result, retErr = (resultRestoration{source: labelRewrite}).restore(withoutGeneratedColumns(result), retErr, nil)
+			result, retErr = (resultRestoration{source: labelRewrite}).restore(ctx, withoutGeneratedColumns(result), retErr, nil)
 		}()
 	}
 
@@ -190,7 +193,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	if err := e.validateBoundParameterExpressions(ctx, cypher, params); err != nil {
 		return nil, err
 	}
-	upper := e.cachedUpperQuery(cypher)
+	upper := e.cachedUpperQuery(ctx, cypher)
 	// This is executable, normalized statement text with its actual parameter
 	// values installed. Nested dynamic handlers return through this same gate;
 	// no admission parser attempts to reconstruct their arguments.
@@ -234,7 +237,7 @@ func (e *StorageExecutor) validateBoundParameterExpressions(ctx context.Context,
 	if err := validateStaticPropertyAccessParameters(ctx, cypher, params); err != nil {
 		return err
 	}
-	if err := validateStaticFunctionParameters(cypher, params, cypherVersionFromContext(ctx) == "25"); err != nil {
+	if err := validateStaticFunctionParameters(ctx, cypher, params, cypherVersionFromContext(ctx) == "25"); err != nil {
 		return err
 	}
 	// A transactional CALL commits independently before later runtime
@@ -245,5 +248,5 @@ func (e *StorageExecutor) validateBoundParameterExpressions(ctx context.Context,
 			return err
 		}
 	}
-	return validateListOperands(cypher, params)
+	return validateListOperands(ctx, cypher, params)
 }

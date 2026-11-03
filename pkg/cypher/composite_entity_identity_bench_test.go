@@ -25,7 +25,7 @@ func BenchmarkCompositeEntityIdentity(b *testing.B) {
 				require.NoError(b, mgr.CreateDatabase(b.Context(), multidb.DatabaseCreateRequest{Name: database}))
 				store, err := mgr.GetStorage(database)
 				require.NoError(b, err)
-				_, err = store.CreateNode(&storage.Node{ID: "same", Labels: []string{"P"}})
+				_, err = store.CreateNode(b.Context(), &storage.Node{ID: "same", Labels: []string{"P"}})
 				require.NoError(b, err)
 			}
 			require.NoError(b, mgr.CreateCompositeDatabase(b.Context(), "comp", []multidb.ConstituentRef{

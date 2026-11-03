@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"runtime"
 	"strings"
@@ -106,8 +107,8 @@ func TestRetiredWALBatchPayloadCollectible(t *testing.T) {
 
 type retiredSnapshotSink struct{ Engine }
 
-func (*retiredSnapshotSink) BulkCreateNodes([]*Node) error { return nil }
-func (*retiredSnapshotSink) BulkCreateEdges([]*Edge) error { return nil }
+func (*retiredSnapshotSink) BulkCreateNodes(context.Context, []*Node) error { return nil }
+func (*retiredSnapshotSink) BulkCreateEdges(context.Context, []*Edge) error { return nil }
 
 func TestRetiredRecoverySnapshotBatchesCollectible(t *testing.T) {
 	owner := &recoverySnapshotVisitor{engine: &retiredSnapshotSink{}}

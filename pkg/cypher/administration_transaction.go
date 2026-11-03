@@ -1,3 +1,4 @@
+// Author: Codex, NOR-180 terminal outcome context propagation,29October2026.
 package cypher
 
 import (
@@ -126,7 +127,7 @@ func (e *StorageExecutor) routeAdministrationStatement(ctx context.Context, quer
 	if tx, ok := e.txContext.tx.(*storage.BadgerTransaction); ok {
 		metadata = tx.GetMetadata()
 	}
-	if _, err := e.handleRollback(); err != nil {
+	if _, err := e.handleRollback(ctx, nil); err != nil {
 		return nil, err
 	}
 	owner := e.cloneWithStorage(system, selectedDatabaseStorage)

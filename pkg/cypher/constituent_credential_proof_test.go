@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"sync"
 	"testing"
 
@@ -49,7 +50,7 @@ func (proof *constituentCredentialProof) assertConnection(manager *multidb.Datab
 	require.Empty(t, stored.Password)
 	system, err := manager.GetStorage("system")
 	require.NoError(t, err)
-	node, err := system.GetNode("databases:metadata")
+	node, err := system.GetNode(context.Background(), "databases:metadata")
 	require.NoError(t, err)
 	data, ok := node.Properties["data"].(string)
 	require.True(t, ok)
