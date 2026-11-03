@@ -52,8 +52,9 @@ receipts. That original integrated uncached make test passed after dependency pi
 (121 packages); see the historical release checkpoint task receipt. It does not
 qualify the current numeric correction: PR #1665 records its own current-head
 gate, including focused float32 race checks on Go 1.27.3.
-Benchmarking is deferred until this major refactor is pushed; no comparative
-performance pass is claimed.
+The original major refactor deferred benchmarking until publication. The current
+numeric correction has separate [allocation and correctness-cost measurements](../docs/performance/pr1665-numeric-identity.md); they do not retroactively
+qualify the historical refactor.
 
 Review/reapply this small delta against every upstream upgrade and retain the
 license/tests. Prefer removing a maintained delta when upstream provides the

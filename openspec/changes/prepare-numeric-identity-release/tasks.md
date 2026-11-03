@@ -11,6 +11,6 @@
 - [x] Correct the JSON dependency's float32 extrema and double rounding in its existing owner; full dependency/race tests pass, pinned fork PR #2.
 - [x] Reduce whole-FLOAT text and indented-export allocations with one direct formatted writer and bounded geometric growth; matched release measurements also reduce retained heap. Preserve caller-owned buffers. Required Neo4j/correctness output bytes are accepted; avoidable overhead remains subject to review.
 - [x] Best-effort installed duplicate review hit its deadline; analysis is incomplete and informative. No checker/hook/rule changes.
-- [ ] Fresh make test on the final integrated source and final focused race controls. Broader make verify runs in CI.
-- [ ] Publish rebased PR head, evidence and updated PR/Linear descriptions; leave maintainer merge ownership.
-- [ ] Cleanup completed task worktrees/artifacts. Shared Go cache is explicitly excluded while another agent tests.
+- [x] Full make test passed on fdbf6568c; both current-head parser/reference runs and all seven focused race packages pass. Broader make verify remains CI-owned.
+- [x] Prepare the qualified rebased head, final evidence and PR/Linear publication descriptions; maintainer owns merge. Final publication is recorded on GitHub and Linear.
+- [x] Retire nine completed task/dependency worker worktrees and preserve source/review evidence; remove temporary reference container and probe binaries. Shared Go cache is explicitly excluded while another agent tests.

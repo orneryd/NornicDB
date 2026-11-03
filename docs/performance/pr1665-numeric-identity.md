@@ -2,7 +2,7 @@
 
 These measurements qualify the numeric JSON correction for NOR-68 against
 release `df07c94fb7df5bb05a0c854cdaa0b8b6eae8182a`. The measured implementation
-is the final buffer-growth correction following `89c6bad66`, on Go 1.27.3, darwin/arm64,
+is `fdbf6568c76e9602972230828e6020e5ba00963f`, on Go 1.27.3, darwin/arm64,
 Apple M2 Max. Local timing is nonblocking because this host is contended;
 allocation counts, allocated bytes and retained heap were examined separately.
 This report does not claim full release `make verify` qualification.
