@@ -342,8 +342,15 @@ func (b *BadgerEngine) StreamStoredNodesByLabelProjected(ctx context.Context, la
 	return b.streamNodesByLabelProjectedInScope(ctx, "", label, properties, storedRead, visit)
 }
 
-func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, scope, label string, properties []string, v readVisibility, visit func(*Node) error, queryRead ...bool) error {
-	queryNodes := len(queryRead) > 0 && queryRead[0]
+// The scan's own options, when the caller has them (StreamNodesWithOptions),
+// also select the one scan decoder that settles a property filter before a
+// candidate is materialized; without them the owner keeps its projected read.
+func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, scope, label string, properties []string, v readVisibility, visit func(*Node) error, readOptions ...StreamNodesOptions) error {
+	var options StreamNodesOptions
+	if len(readOptions) > 0 {
+		options = readOptions[0]
+	}
+	queryNodes := options.QueryNodes && !options.WithEmbeddings
 	if visit == nil {
 		return ErrInvalidData
 	}
@@ -373,30 +380,15 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 	include := propertyProjectionSet(properties)
 	nowNanos := DecayScoringTime()
 	checkTombstones := b.checksIndexTombstones(v)
-	// covers is computed lazily (see streamNodesByLabelFromPhysicalSnapshotAfter):
-	// the one-pass decision only matters after labelScanPointLookups lookups,
-	// and an eager decision pays two Badger count reads on every small or
-	// LIMIT-stopped scan.
+	// Unfiltered reads delay the density decision until labelScanPointLookups
+	// so small/LIMIT-stopped scans avoid the count reads. Filtered scans choose
+	// before reading candidates: a dense selective scan must not point-read
+	// and materialize thousands of bodies it will reject.
 	var covers bool
 	coversDecided := false
 	err := b.withReadView(ctx, capture, func(txn *badger.Txn) error {
 		if captureErr != nil {
 			return captureErr // the canceled capture retires the scan
-		}
-		readItem := func(nodeID NodeID, item *badger.Item) (*Node, error) {
-			if queryNodes {
-				return b.readNodeItemInTxn(txn, item, nodeID, nodeItemQueryMetadata)
-			}
-			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include, nodeBodyDetached)
-		}
-		cachedNode := func(nodeID NodeID) (*Node, bool) {
-			b.nodeCacheMu.RLock()
-			cached, ok := b.nodeCache[nodeID]
-			b.nodeCacheMu.RUnlock()
-			if !ok || b.writeBehind != nil {
-				return nil, false
-			}
-			return projectCachedNodeForRead(cached, properties, false, queryNodes), true
 		}
 		emit := func(node *Node) error {
 			if node == nil || b.filterEntityByDecay(v, node, nowNanos) {
@@ -406,6 +398,97 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 				return nil // the overlay shadows committed rows for this ID
 			}
 			return visit(node)
+		}
+		// A dense filtered label is cheaper as one sequential physical scan:
+		// collecting thousands of candidate IDs and point-reading every body
+		// defeats filter-before-materialization. Reuse the existing density
+		// decision and scanner; emit still enforces labels, overlay and visibility.
+		if options.scanDecodesFilter() {
+			var err error
+			covers, err = b.labelCoversScope(ctx, scope, label)
+			if err != nil {
+				return err
+			}
+			coversDecided = true
+			if covers {
+				// Match the index owner at this snapshot: an unfinished index
+				// discovers labels from bodies; a ready visible index also hides
+				// its tombstoned entries. No extra lookup is needed without policy.
+				denseTombstones := false
+				if checkTombstones {
+					denseTombstones, err = b.labelIndexReadyInTxn(txn)
+					if err != nil {
+						return err
+					}
+				}
+				physical := options
+				physical.Prefix = scope
+				physical.ApplyDecayFilter = false // emit owns visibility once
+				physical.StripEmbeddings = false  // the public options visitor owns stripping
+				stopped := false
+				err := b.streamNodesWithOptionsInTxn(ctx, txn, physical, func(node *Node) error {
+					if !hasLabel(node.Labels, label) || (denseTombstones && hasIndexTombstone(txn, b.labelIndexKeyStringLookup(label, node.ID))) {
+						return nil
+					}
+					err := emit(node)
+					stopped = err == ErrIterationStopped
+					return err
+				})
+				if err != nil {
+					return err
+				}
+				if stopped {
+					return ErrIterationStopped // do not visit the overlay after an early stop
+				}
+				return nil
+			}
+		}
+		// One scan decoder settles the property filter on a candidate's body
+		// before that candidate is materialized, exactly as the generic scan
+		// does (#857, #1682): the sparse index walk spares this scan another
+		// label's bodies, and the decoder spares it the row and the sidecar of a
+		// body the filter rejects. It resolves property tokens through this read
+		// snapshot, so the names it selects are the ones the bodies were written
+		// with.
+		var filtered *projectedNodeDecoder
+		if options.scanDecodesFilter() {
+			filtered = newProjectedNodeDecoder(b, txn, options)
+		}
+		readItem := func(nodeID NodeID, item *badger.Item) (*Node, error) {
+			if filtered != nil {
+				var node *Node
+				err := item.Value(func(val []byte) error {
+					var decodeErr error
+					node, decodeErr = filtered.decode(item.Key(), val)
+					return decodeErr
+				})
+				if err != nil {
+					// A decode failure is a scan error, just as in the generic scanner.
+					// The decoder may skip unneeded values on a rejected row; it
+					// never suppresses a failure while decoding a kept value.
+					return nil, fmt.Errorf("scanning node %q: %w", nodeID, err)
+				}
+				return node, nil
+			}
+			if queryNodes {
+				return b.readNodeItemInTxn(txn, item, nodeID, nodeItemQueryMetadata)
+			}
+			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include, nodeBodyDetached)
+		}
+		cachedNode := func(nodeID NodeID) (*Node, bool) {
+			if filtered != nil {
+				// Filtered scans read the encoded body instead of copying a full
+				// cached node, as the generic filtered scanner does. Rejected
+				// bodies avoid full materialization and sidecar reads.
+				return nil, false
+			}
+			b.nodeCacheMu.RLock()
+			cached, ok := b.nodeCache[nodeID]
+			b.nodeCacheMu.RUnlock()
+			if !ok || b.writeBehind != nil {
+				return nil, false
+			}
+			return projectCachedNodeForRead(cached, properties, false, queryNodes), true
 		}
 		readPoint := func(nodeID NodeID) error {
 			node, cached := cachedNode(nodeID)

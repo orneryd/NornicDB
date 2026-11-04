@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an incomplete population.
 - Batch Graphify relationship inventory by at most 200 source nodes per request,
   retaining complete fan-out, repository isolation and stale-deletion guards.
+- Honor the host's per-database result-cache size and TTL for Bolt, including
+  `--query-cache-size 0`, using the same executor configuration as HTTP.
 
 - Preserve runtime type errors for duration-plus-property expressions, avoid
   redundant reveal-lease and non-recording trace allocations, and honor optional
@@ -58,6 +60,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reduce per-record MessagePack metadata allocations using private decode state;
   failed decoders are discarded and large payloads remain supported without
   retaining their scratch buffers in the pool.
+- Reduce temporary path, binding and predicate-row allocations while preserving
+  retained path ownership and statement-context lifetimes.
+- Revoke large-commit cache facts once at final publication instead of repeating
+  the full projection for preparation batches; preserve snapshot and rollback
+  semantics and conservative invalidation for unknown scopes.
 
 - Go callers of `cypher.FormatFloat` now call the canonical `convert.FormatFloat` owner directly. Numeric JSON callers select the property or external-input domain; see [the numeric JSON contract](pkg/convert/numeric_wire_contract.md).
 

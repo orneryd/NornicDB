@@ -128,7 +128,7 @@ func (s *Server) newExecutorForDatabase(dbName string) (*cypher.StorageExecutor,
 	if err != nil {
 		return nil, err
 	}
-	executor, err := cypher.NewDatabaseScopedExecutor(s.databaseScopedExecutorOptions(dbName, ""))
+	executor, err := cypher.NewDatabaseScopedExecutor(s.DatabaseScopedExecutorOptions(dbName, ""))
 	if err != nil {
 		return nil, err
 	}
@@ -136,7 +136,19 @@ func (s *Server) newExecutorForDatabase(dbName string) (*cypher.StorageExecutor,
 	return executor, nil
 }
 
-func (s *Server) databaseScopedExecutorOptions(dbName, authToken string) cypher.DatabaseScopedExecutorOptions {
+// DatabaseScopedExecutorOptions is the canonical per-database executor
+// configuration both protocol servers publish from: it resolves the
+// database's configuration (global plus per-database overrides and
+// persisted values), applies the database's transaction memory limits and
+// returns the executor contract the caller constructs — query-result cache
+// policy, statement-cache owner, localization, base executor and the
+// runtime wiring (settings, catalog, search, logging, mutation callbacks).
+//
+// Bolt receives it through bolt.Config.DatabaseExecutorOptions
+// (cmd/nornicdb wires the two together), so both protocols build their
+// database-scoped executors from one configuration instead of each
+// deriving its own.
+func (s *Server) DatabaseScopedExecutorOptions(dbName, authToken string) cypher.DatabaseScopedExecutorOptions {
 	overrides := s.dbConfigStore.GetOverrides(dbName)
 	resolved := dbconfig.Resolve(s.processConfig, overrides)
 	s.applyTransactionMemoryLimits(dbName, overrides, resolved)
@@ -1375,7 +1387,7 @@ func (s *Server) autoCommitStatementRunner(authToken string) statementRunner {
 		var executor *cypher.StorageExecutor
 		var err error
 		if authToken != "" && s.databaseHasRemoteConstituent(dbName) {
-			executor, err = cypher.NewDatabaseScopedExecutor(s.databaseScopedExecutorOptions(dbName, authToken))
+			executor, err = cypher.NewDatabaseScopedExecutor(s.DatabaseScopedExecutorOptions(dbName, authToken))
 		} else {
 			executor, err = s.executorCache.Get(dbName)
 		}
@@ -1599,7 +1611,7 @@ func (s *Server) openRequestTransaction(r *http.Request, claims *auth.JWTClaims,
 	authToken := r.Header.Get("Authorization")
 	ownerKey := transactionOwnerKey(r, claims)
 	if authToken != "" && s.databaseHasRemoteConstituent(dbName) {
-		executor, execErr := cypher.NewDatabaseScopedExecutor(s.databaseScopedExecutorOptions(dbName, authToken))
+		executor, execErr := cypher.NewDatabaseScopedExecutor(s.DatabaseScopedExecutorOptions(dbName, authToken))
 		if execErr != nil {
 			code, message := nornicerrors.RenderStatus(nornicerrors.TransactionControlFailure(nornicerrors.TerminalBegin, execErr), localize)
 			return nil, &QueryError{Code: code, Message: message}

@@ -621,7 +621,7 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(ctx context.Context, la
 	if tx.snapshotTx != nil && tx.engine.writeBehind == nil {
 		err = tx.engine.streamNodesByLabelFromPhysicalSnapshotAfterRead(ctx, scope, label, tx.withSnapshotViewLocked, properties, afterNodeID, v, streamVisit, queryNodes)
 	} else if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
-		err = tx.engine.streamNodesByLabelProjectedInScope(ctx, scope, label, properties, v, streamVisit, queryNodes)
+		err = tx.engine.streamNodesByLabelProjectedInScope(ctx, scope, label, properties, v, streamVisit, StreamNodesOptions{QueryNodes: queryNodes})
 	} else {
 		err = tx.engine.streamNodesByLabelAtSnapshotWithView(
 			ctx,

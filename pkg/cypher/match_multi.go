@@ -738,6 +738,12 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 		}
 		if projection != nil {
 			opts.Projection = scanProjectionWithRequired(projection, keys)
+		} else {
+			// The row is the whole node, so name the properties the filter
+			// reads: the scan settles it on those and skips a node it rejects
+			// before decoding the rest of that node's body (#1682). A store may
+			// ignore the hint; collect still tests every node it receives.
+			opts.PropertyFilterProjection = keys
 		}
 		if len(labels) > 0 {
 			opts.Label = labels[0]

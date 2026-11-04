@@ -1919,27 +1919,27 @@ func (e *StorageExecutor) findPaths(
 
 		ctx.usedEdges[edge.Identity()] = true
 
-		// Recurse with optimized path copying (pre-allocate exact size)
+		// Reuse the DFS working path across siblings. Retained results above
+		// already copy their node/relationship slices, so copying each working
+		// prefix as well allocates twice for every successful branch.
 		nextNodesLen, ok := util.SafeIntAdd(len(pathNodes), 1)
 		if !ok {
 			ctx.usedEdges[edge.Identity()] = false
 			continue
 		}
-		newPathNodes := make([]*storage.Node, nextNodesLen)
-		copy(newPathNodes, pathNodes)
-		newPathNodes[len(pathNodes)] = nextNode
-
 		nextEdgesLen, ok := util.SafeIntAdd(len(pathEdges), 1)
 		if !ok {
 			ctx.usedEdges[edge.Identity()] = false
 			continue
 		}
-		newPathEdges := make([]*storage.Edge, nextEdgesLen)
-		copy(newPathEdges, pathEdges)
-		newPathEdges[len(pathEdges)] = edge
-
-		subPaths := e.findPaths(ctx, nextNode, newPathNodes, newPathEdges, depth+1, endPattern)
+		pathNodes = append(pathNodes, nextNode)
+		pathEdges = append(pathEdges, edge)
+		subPaths := e.findPaths(ctx, nextNode, pathNodes, pathEdges, depth+1, endPattern)
 		results = append(results, subPaths...)
+		pathNodes[nextNodesLen-1] = nil
+		pathEdges[nextEdgesLen-1] = nil
+		pathNodes = pathNodes[:nextNodesLen-1]
+		pathEdges = pathEdges[:nextEdgesLen-1]
 
 		// Unmark for sibling paths.
 		ctx.usedEdges[edge.Identity()] = false
@@ -1982,6 +1982,30 @@ type PathContext struct {
 	paths        map[string]*PathResult // Full paths by variable name for relationships(path), nodes(path)
 	allPathEdges []*storage.Edge        // All edges in the path (for variable-length patterns)
 	allPathNodes []*storage.Node        // All nodes in the path
+}
+
+// Binding insertion owns lazy allocation: an anonymous node, unnamed
+// relationship or absent path needs no binding map. The same insertion rule
+// applies when correlated WHERE evaluation adds outer entities.
+func (path *PathContext) bindNode(name string, node *storage.Node) {
+	if path.nodes == nil {
+		path.nodes = make(map[string]*storage.Node)
+	}
+	path.nodes[name] = node
+}
+
+func (path *PathContext) bindRelationship(name string, edge *storage.Edge) {
+	if path.rels == nil {
+		path.rels = make(map[string]*storage.Edge)
+	}
+	path.rels[name] = edge
+}
+
+func (path *PathContext) bindPath(name string, value *PathResult) {
+	if path.paths == nil {
+		path.paths = make(map[string]*PathResult)
+	}
+	path.paths[name] = value
 }
 
 // pathContextValues returns the path's variables as row values: nodes and
@@ -2051,9 +2075,6 @@ func (e *StorageExecutor) pathContextRowValue(ctx context.Context, path *PathRes
 // buildPathContext creates a context for evaluating expressions over a path
 func (e *StorageExecutor) buildPathContext(path PathResult, match *TraversalMatch) PathContext {
 	ctx := PathContext{
-		nodes:        make(map[string]*storage.Node),
-		rels:         make(map[string]*storage.Edge),
-		paths:        make(map[string]*PathResult),
 		pathLength:   path.Length,        // Store path length for length(path) function
 		allPathEdges: path.Relationships, // Store all edges for relationships(path)
 		allPathNodes: path.Nodes,         // Store all nodes for nodes(path)
@@ -2062,17 +2083,17 @@ func (e *StorageExecutor) buildPathContext(path PathResult, match *TraversalMatc
 	// Map the path variable if present (for path functions like relationships(path), nodes(path))
 	if match.PathVariable != "" {
 		pathCopy := path // Make a copy to store pointer
-		ctx.paths[match.PathVariable] = &pathCopy
+		ctx.bindPath(match.PathVariable, &pathCopy)
 	}
 
 	// Map start node
 	if match.StartNode.variable != "" && len(path.Nodes) > 0 {
-		ctx.nodes[match.StartNode.variable] = path.Nodes[0]
+		ctx.bindNode(match.StartNode.variable, path.Nodes[0])
 	}
 
 	// Map end node
 	if match.EndNode.variable != "" && len(path.Nodes) > 0 {
-		ctx.nodes[match.EndNode.variable] = path.Nodes[len(path.Nodes)-1]
+		ctx.bindNode(match.EndNode.variable, path.Nodes[len(path.Nodes)-1])
 	}
 
 	// For chained patterns, map intermediate nodes
@@ -2089,7 +2110,7 @@ func (e *StorageExecutor) buildPathContext(path PathResult, match *TraversalMatc
 			if intermediateInfo.variable != "" {
 				pathIdx := nodeOffset
 				if pathIdx < len(path.Nodes) {
-					ctx.nodes[intermediateInfo.variable] = path.Nodes[pathIdx]
+					ctx.bindNode(intermediateInfo.variable, path.Nodes[pathIdx])
 				}
 			}
 		}
@@ -2108,9 +2129,9 @@ func (e *StorageExecutor) buildPathContext(path PathResult, match *TraversalMatc
 			if seg.Relationship.Variable != "" {
 				if seg.Relationship.VariableLength {
 					relationships := append([]*storage.Edge{}, path.Relationships[relationshipOffset:segmentEnd]...)
-					ctx.paths[seg.Relationship.Variable] = &PathResult{Relationships: relationships}
+					ctx.bindPath(seg.Relationship.Variable, &PathResult{Relationships: relationships})
 				} else if relationshipOffset < segmentEnd {
-					ctx.rels[seg.Relationship.Variable] = path.Relationships[relationshipOffset]
+					ctx.bindRelationship(seg.Relationship.Variable, path.Relationships[relationshipOffset])
 				}
 			}
 			relationshipOffset = segmentEnd
@@ -2120,9 +2141,9 @@ func (e *StorageExecutor) buildPathContext(path PathResult, match *TraversalMatc
 		if match.Relationship.Variable != "" {
 			if match.Relationship.VariableLength {
 				relationships := append([]*storage.Edge{}, path.Relationships...)
-				ctx.paths[match.Relationship.Variable] = &PathResult{Relationships: relationships}
+				ctx.bindPath(match.Relationship.Variable, &PathResult{Relationships: relationships})
 			} else if len(path.Relationships) > 0 {
-				ctx.rels[match.Relationship.Variable] = path.Relationships[0]
+				ctx.bindRelationship(match.Relationship.Variable, path.Relationships[0])
 			}
 		}
 	}
@@ -2157,11 +2178,11 @@ func (e *StorageExecutor) filterPathsByWhere(ctx context.Context, paths []PathRe
 			switch v := value.(type) {
 			case *storage.Node:
 				if v != nil {
-					context.nodes[name] = v
+					context.bindNode(name, v)
 				}
 			case *storage.Edge:
 				if v != nil {
-					context.rels[name] = v
+					context.bindRelationship(name, v)
 				}
 			}
 		}

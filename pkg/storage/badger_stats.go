@@ -811,6 +811,13 @@ type StreamNodesOptions struct {
 	// (#824). It is a hint: an engine may ignore it, and pending writes are
 	// not filtered, so the caller still tests every node it receives.
 	PropertyFilter func(properties map[string]interface{}) bool
+	// PropertyFilterProjection names the properties PropertyFilter reads, so an
+	// engine can settle the filter before it decodes the rest of a body. It
+	// applies to a scan without a Projection, whose row is the whole node: a
+	// Projection already names what the filter reads. Like PropertyFilter it
+	// is a hint an engine may ignore, and pending writes are not filtered,
+	// so the caller still tests every node it receives.
+	PropertyFilterProjection []string
 	// PropertyStringEquals, for projected properties, lets the engine skip a
 	// node whose stored value of a property is not that string by comparing
 	// the stored bytes, without decoding the node (#857). A stored string
@@ -829,7 +836,11 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 	if err := b.ensureOpen(false); err != nil {
 		return err
 	}
-	if opts.QueryNodes && opts.Projection == nil && !opts.WithEmbeddings && opts.Label != "" && !opts.scanDecodesFilter() {
+	// A property filter does not disqualify the label route: the scoped label
+	// owner decodes each candidate through the scan's own decoder and settles the
+	// filter before it materializes the node (#1682), so this route keeps its
+	// label index and skips another label's bodies as well.
+	if opts.Projection == nil && opts.Label != "" && ((opts.QueryNodes && !opts.WithEmbeddings) || opts.scanDecodesFilter()) {
 		visit := func(node *Node) error {
 			if err := ctx.Err(); err != nil {
 				return err
@@ -839,7 +850,7 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 			}
 			return fn(node)
 		}
-		err := b.streamNodesByLabelProjectedInScope(ctx, opts.Prefix, opts.Label, nil, opts.readVisibility(), visit, true)
+		err := b.streamNodesByLabelProjectedInScope(ctx, opts.Prefix, opts.Label, nil, opts.readVisibility(), visit, opts)
 		if err == ErrIterationStopped {
 			return nil
 		}

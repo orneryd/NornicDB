@@ -30,23 +30,32 @@ import (
 //     holds the ID);
 //   - rejects a node whose property must equal a string
 //     (PropertyStringEquals) at the first stored value whose bytes differ,
-//     without decoding it or the properties after it.
+//     without decoding it or the properties after it;
+//   - when the caller names the properties its filter reads
+//     (PropertyFilterProjection) for a scan without a projection, decodes those
+//     and, in the same token walk, finds the encoded span of every other value
+//     without decoding it, so a body the filter rejects costs them alone
+//     (#1682).
 //
 // A scan without a projection decodes every property and filters before it
 // materializes the node, so a filter alone still spares a rejected node its
-// map and node. The kept node's sidecar is settled through the same snapshot:
-// metadata for QueryNodes, and vectors too for WithEmbeddings. txn is the scan's
-// read snapshot, so every
-// resolved name is the entry that snapshot holds: a database a DROP emptied
-// and re-created cannot rename the properties of a body stored before it. The memo covers every body of one
-// scan in one database, because bodies in one snapshot cannot disagree about a
-// token's name. Not safe for concurrent use; one per scan.
+// map and node; the required-property hint also spares a rejected body its
+// other values, and the body the filter keeps decodes the spans that walk
+// recorded, in stored order, through the same per-value owner. The kept node's
+// sidecar is settled through the same snapshot: metadata for QueryNodes, and
+// vectors too for WithEmbeddings. Resolved names belong to that read snapshot;
+// dropping and recreating a database cannot rename a previously stored body's
+// properties. The memo covers one scan in one database. Not concurrency-safe.
 type projectedNodeDecoder struct {
 	b       *BadgerEngine
 	txn     *badger.Txn
 	include map[string]struct{}
 	filter  func(map[string]interface{}) bool
 	equals  map[string]string
+	// filterSelection is the required-property hint of a scan without a
+	// projection: the names PropertyFilter reads, so a rejected body costs
+	// those properties only. nil decodes the whole body before the filter.
+	filterSelection map[string]struct{}
 	// hydration preserves the caller's body, query-metadata or full-vector
 	// read contract. Sidecars are read only after the filter keeps the body.
 	hydration nodeItemHydration
@@ -58,7 +67,14 @@ type projectedNodeDecoder struct {
 	bindings map[uint64]projectedProperty
 
 	scratch map[string]interface{}
-	reader  bytes.Reader
+	// deferred is this scan's one reusable slice of the stored values a hinted
+	// walk skipped: their encoded spans, borrowed from the body being decoded,
+	// which the filter's surviving body decodes in stored order. It is emptied
+	// before decode returns, on success and on error, so no body outlives its
+	// row. It grows with the properties a body actually carries, never with a
+	// count the body merely declares.
+	deferred []deferredProperty
+	reader   bytes.Reader
 	// dec reads reader directly (a bytes.Reader is an io.ByteScanner, so the
 	// decoder buffers nothing), so resetting reader starts the next body.
 	dec *msgpack.Decoder
@@ -74,6 +90,14 @@ type projectedProperty struct {
 	hasEquals bool
 }
 
+// deferredProperty is one stored property value a hinted walk skipped to its
+// span without decoding it: the resolved property it belongs to and the
+// msgpack bytes it occupies in the body being decoded.
+type deferredProperty struct {
+	property projectedProperty
+	encoded  []byte
+}
+
 // newProjectedNodeDecoder decodes opts.Projection, every property when it is
 // nil, rejecting nodes by opts.PropertyStringEquals and opts.PropertyFilter. txn is the read snapshot
 // of the scan whose bodies it decodes; nil is the context-free standalone
@@ -87,6 +111,9 @@ func newProjectedNodeDecoder(b *BadgerEngine, txn *badger.Txn, opts StreamNodesO
 		filter:  opts.PropertyFilter,
 		equals:  opts.PropertyStringEquals,
 		scratch: make(map[string]interface{}, len(opts.Projection)),
+	}
+	if opts.Projection == nil && opts.PropertyFilter != nil && len(opts.PropertyFilterProjection) > 0 {
+		d.filterSelection = propertyProjectionSet(opts.PropertyFilterProjection)
 	}
 	if opts.WithEmbeddings {
 		d.hydration = nodeItemFullEmbeddings
@@ -153,8 +180,8 @@ func (d *projectedNodeDecoder) resolveToken(token uint64) (projectedProperty, er
 
 // decode returns the node of body (the value of node key key) with only the
 // projected properties (every property when the scan has no projection), or nil
-// when the filter rejects it. Errors follow decodeNodeFiltered: a body that is
-// not V2 or is truncated.
+// when the filter rejects it. Invalid envelopes and values that must be read fail decoding; a rejected
+// body need not decode values outside the declared filter properties.
 func (d *projectedNodeDecoder) decode(key, data []byte) (*Node, error) {
 	if len(key) <= 1 {
 		return nil, nil
@@ -164,12 +191,36 @@ func (d *projectedNodeDecoder) decode(key, data []byte) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
+	// One token walk per body. A scan without a projection whose caller named
+	// the filter's properties (#1682) decodes those in that walk and records
+	// the encoded span of every other value without decoding it, so a rejected
+	// node costs its required properties, never its node, its remaining values
+	// or its sidecar; the body the filter keeps decodes those spans, in stored
+	// order, through the same per-value owner, so its values and value decode
+	// errors match the whole-body decode. Framing/skip errors remain errors even
+	// when the filter would reject the body.
+	// The spans borrow this body, which lives no longer than this call.
+	if d.filterSelection != nil {
+		defer d.releaseDeferred()
+	}
 	clear(d.scratch)
 	kept, err := d.decodeProperties(envelope.properties)
 	if err != nil {
 		return nil, err
 	}
-	if !kept || (d.filter != nil && !d.filter(d.scratch)) {
+	filterSettled := false
+	if d.filterSelection != nil {
+		if !kept || !d.filter(d.scratch) {
+			return nil, nil
+		}
+		// Keep the selected values: the deferred decode reads only the values
+		// the filter did not already decode, into the same map.
+		if kept, err = d.decodeDeferredProperties(); err != nil {
+			return nil, err
+		}
+		filterSettled = true
+	}
+	if !kept || (!filterSettled && d.filter != nil && !d.filter(d.scratch)) {
 		return nil, nil
 	}
 	node := &Node{}
@@ -190,10 +241,14 @@ func (d *projectedNodeDecoder) decode(key, data []byte) (*Node, error) {
 	return node, nil
 }
 
-// decodeProperties reads the tokenized property list (count, then per
-// property a key token and a msgpack value) into scratch, decoding only the
-// projected tokens. It returns false, leaving the rest unread, at a property
-// whose stored value is not the string the scan requires.
+// decodeProperties reads the tokenized property list (count, then per property
+// a key token and a msgpack value) into scratch in one walk of the stored
+// tokens. A property the scan selects, whether its projection wants it or the
+// hint says its filter reads it, is decoded here; an unselected value is
+// skipped, and a hinted walk records the span it occupies for
+// decodeDeferredProperties instead of decoding it. It returns false, leaving
+// the rest unread, at a property whose stored value is not the string the scan
+// requires.
 func (d *projectedNodeDecoder) decodeProperties(data []byte) (bool, error) {
 	if len(data) == 0 {
 		return true, nil
@@ -220,25 +275,78 @@ func (d *projectedNodeDecoder) decodeProperties(data []byte) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		if !property.wanted {
+		// The memoized selection is the projection's; a hinted scan reads the
+		// filter's names instead, and defers the rest.
+		selected := property.wanted
+		if d.filterSelection != nil {
+			_, selected = d.filterSelection[property.name]
+		}
+		if !selected {
+			// Skip the value to find the span it occupies. A hinted scan
+			// records that span for the body its filter keeps; a property its
+			// projection does not want is never decoded.
+			before := d.reader.Len()
 			if err := dec.Skip(); err != nil {
 				return false, fmt.Errorf("decoding tokenized properties: skip key %d value: %w", token, err)
 			}
+			if d.filterSelection != nil {
+				start := offset + n
+				d.deferred = append(d.deferred, deferredProperty{property: property, encoded: rest[start : start+before-d.reader.Len()]})
+			}
 			continue
 		}
-		if property.hasEquals && !msgpackStringEquals(rest[offset+n:], property.equals) {
-			return false, nil
+		kept, err := d.decodePropertyValue(dec, property, rest[offset+n:])
+		if err != nil || !kept {
+			return false, err
 		}
-		value, err := decodeStrictTypedValue(dec)
-		if err != nil {
-			return false, fmt.Errorf("decoding tokenized properties: key %q value: %w", property.name, err)
-		}
-		d.scratch[property.name] = restoreStoredTemporalValue(value)
 	}
 	if d.reader.Len() != 0 {
 		return false, fmt.Errorf("decoding tokenized properties: %d trailing bytes", d.reader.Len())
 	}
 	return true, nil
+}
+
+// decodePropertyValue decodes the stored value the decoder is positioned at,
+// which starts at raw, into scratch under the property's name. It is the one
+// owner of a kept value's semantics: the token walk and a hinted walk's
+// deferred decode both come through it, so a value's Go type, the
+// PropertyStringEquals rejection and the error it reports are the same
+// whichever walk read it.
+func (d *projectedNodeDecoder) decodePropertyValue(dec *msgpack.Decoder, property projectedProperty, raw []byte) (bool, error) {
+	if property.hasEquals && !msgpackStringEquals(raw, property.equals) {
+		return false, nil
+	}
+	value, err := decodeStrictTypedValue(dec)
+	if err != nil {
+		return false, fmt.Errorf("decoding tokenized properties: key %q value: %w", property.name, err)
+	}
+	d.scratch[property.name] = restoreStoredTemporalValue(value)
+	return true, nil
+}
+
+// decodeDeferredProperties decodes the stored values a hinted walk recorded, in
+// the order it recorded them, through the same per-value owner, so the body its
+// filter keeps is the row, and reports the errors, of a body decoded in one
+// pass.
+func (d *projectedNodeDecoder) decodeDeferredProperties() (bool, error) {
+	for _, deferred := range d.deferred {
+		d.reader.Reset(deferred.encoded)
+		kept, err := d.decodePropertyValue(d.dec, deferred.property, deferred.encoded)
+		if err != nil || !kept {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+// releaseDeferred drops the spans borrowed from the body just decoded, so no
+// hinted body outlives the call that read it and the next row starts from none. The
+// collected capacity stays with the scan, bounded by the properties its widest
+// kept-or-rejected body carried.
+func (d *projectedNodeDecoder) releaseDeferred() {
+	clear(d.deferred)
+	d.deferred = d.deferred[:0]
+	d.reader.Reset(nil)
 }
 
 // msgpackStringEquals reports whether raw starts with the msgpack encoding of
