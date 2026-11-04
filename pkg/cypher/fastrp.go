@@ -43,8 +43,6 @@ import (
 
 // Memory constants for streaming thresholds
 const (
-	// streamChunkSize is the batch size for streaming operations
-	streamChunkSize = 1000
 	// maxFastRPEmbeddingDimension prevents pathological embedding requests from
 	// forcing oversized exact-length allocations.
 	maxFastRPEmbeddingDimension = 8192

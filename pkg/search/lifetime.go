@@ -35,9 +35,28 @@ func (s *Service) beginRead(ctx context.Context) (context.Context, func(), error
 	if !accepted {
 		return nil, nil, context.Canceled
 	}
+	request := ctx
 	ctx, cancel := context.WithCancel(ctx)
 	stop := context.AfterFunc(s.lifecycleCtx, cancel)
-	return ctx, func() { stop(); cancel(); release() }, nil
+	return &readContext{Context: ctx, request: request, cancel: cancel}, func() { stop(); cancel(); release() }, nil
+}
+
+// A statement can observe its caller's cancellation in Err before its lazy
+// Done relay runs. WithCancel alone loses that synchronous observation. Poll
+// the request at this shared read boundary and close our own Done immediately;
+// the derived context still carries service-shutdown cancellation and values.
+type readContext struct {
+	context.Context
+	request context.Context
+	cancel  context.CancelFunc
+}
+
+func (c *readContext) Err() error {
+	if err := c.request.Err(); err != nil {
+		c.cancel()
+		return err
+	}
+	return c.Context.Err()
 }
 
 func (s *Service) retainBackground() (func(), bool) {

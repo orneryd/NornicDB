@@ -116,6 +116,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
+	"github.com/orneryd/nornicdb/pkg/memory"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/search/stemmer"
 	"github.com/orneryd/nornicdb/pkg/security"
@@ -830,6 +831,9 @@ func estimateSearchResponseBytes(response *SearchResponse) int64 {
 //		log.Printf("Failed to index: %v", err)
 //	}
 type Service struct {
+	fulltextDocumentsMu    sync.Mutex
+	fulltextDocuments      *fulltextDocumentOwner
+	memoryPolicy           *memory.Policy
 	engine                 storage.Engine
 	vectorIndex            *VectorIndex
 	vectorFileStore        *VectorFileStore // guarded by mu; snapshots retain a store whose methods check closure
@@ -1207,6 +1211,10 @@ const DefaultVectorDimensions = 1024
 
 // ServiceOptions configures database-specific search service resources.
 type ServiceOptions struct {
+	// MemoryPolicy is the existing database admission owner, shared with storage
+	// and transports. Nil leaves application admission disabled; retained copies
+	// still obey the already-applied Go runtime memory limit.
+	MemoryPolicy *memory.Policy
 	// SearchCursorMaxPageSize bounds pages when this service owns its registry.
 	SearchCursorMaxPageSize int
 
@@ -1291,6 +1299,7 @@ func NewService(engine storage.Engine, dimensions int, options *ServiceOptions) 
 	svc.setFulltext(fulltextIndex)
 	svc.completePolicy.Store(defaultCompleteContinuationPolicy())
 	if options != nil {
+		svc.memoryPolicy = options.MemoryPolicy
 		svc.bm25MemoryMaxBytes = options.BM25MemoryMaxBytes
 		svc.vectorMemoryMaxBytes = options.VectorMemoryMaxBytes
 		svc.metadataMemoryMaxBytes = options.MetadataMemoryMaxBytes
@@ -2290,6 +2299,12 @@ func (s *Service) signalStop() error {
 // closeResources is the owner's dispose: it runs once, after every accepted
 // read, build and timer callback actually returned.
 func (s *Service) closeResources() error {
+	s.fulltextDocumentsMu.Lock()
+	if s.fulltextDocuments != nil {
+		s.fulltextDocuments.cache.Close()
+		s.fulltextDocuments.retireDocuments()
+	}
+	s.fulltextDocumentsMu.Unlock()
 	relationshipErr := s.joinRelationshipIndex()
 
 	// Join the exclusive base build without excluding derived operations.
@@ -7173,7 +7188,12 @@ func (s *Service) SetReranker(r Reranker) {
 
 // RerankerName returns the configured Stage-2 reranker name, or an empty string.
 func (s *Service) RerankerName() string {
-	_, release, err := s.beginRead(context.Background())
+	if s == nil {
+		return ""
+	}
+	// This is service-owned metadata, not a request read: it belongs to the
+	// service's own lifetime, which also supplies the admission decision.
+	_, release, err := s.beginRead(s.LifetimeContext())
 	if err != nil {
 		return ""
 	}

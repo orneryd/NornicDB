@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/memory"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -160,7 +161,7 @@ func requireReturnsDuringBuild(t *testing.T, what string, write func() error) {
 	case err := <-done:
 		require.NoError(t, err, what)
 	case <-time.After(5 * time.Second):
-		t.Fatalf("%s waited for the build (memory headroom=%d)\n%s", what, memoryHeadroom(), serviceLockStacks())
+		t.Fatalf("%s waited for the build (memory headroom=%d)\n%s", what, memory.RuntimeLiveHeapHeadroom(), serviceLockStacks())
 	}
 }
 

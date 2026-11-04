@@ -3,15 +3,13 @@ package search
 import (
 	"context"
 	"errors"
-	"math"
 	"reflect"
-	"runtime/debug"
-	"runtime/metrics"
 	"slices"
 	"sync"
 	"sync/atomic"
 	"unsafe"
 
+	"github.com/orneryd/nornicdb/pkg/memory"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -124,7 +122,7 @@ func (s *Service) beginBuildWrites(deferring bool) {
 	q := &s.buildWrites
 	q.mu.Lock()
 	if q.owners == 0 {
-		q.headroom = memoryHeadroom()
+		q.headroom = int(memory.RuntimeLiveHeapHeadroom())
 		q.deferring.Store(deferring)
 	}
 	q.owners++
@@ -253,30 +251,6 @@ func (s *Service) queueBuildWrite(ctx context.Context, write deferredIndexWrite)
 // reservation. Caller holds q.mu.
 func (q *buildWriteQueue) fitsLocked(size int) bool {
 	return q.headroom < 0 || q.bytes+size <= q.headroom
-}
-
-// memoryHeadroom is what the Go runtime's soft memory limit
-// (memory.runtime_limit, GOMEMLIMIT), the process's configured memory budget,
-// leaves above the live heap: the reservation every copy the queue retains is
-// counted against, so the queue holds at most what the budget leaves and a
-// copy past it waits for the build, as every write did before writes were
-// handed to a build. -1 means no limit is configured: the queue is then not
-// bounded beyond the process's memory, as the runtime is not.
-func memoryHeadroom() int {
-	limit := debug.SetMemoryLimit(-1)
-	if limit == math.MaxInt64 {
-		return -1
-	}
-	sample := []metrics.Sample{{Name: "/gc/heap/live:bytes"}}
-	metrics.Read(sample)
-	if sample[0].Value.Kind() != metrics.KindUint64 {
-		return -1
-	}
-	live := sample[0].Value.Uint64()
-	if live >= uint64(limit) {
-		return 0
-	}
-	return int(uint64(limit) - live)
 }
 
 // orderIndexFlags is SetIndexFlags in the build sequence. changed is decided

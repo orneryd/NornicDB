@@ -195,7 +195,11 @@ type BadgerEngine struct {
 	notificationMu                     sync.Mutex
 	notificationHead, notificationTail *commitNotification
 	notificationDraining               bool
-	closeMu                            sync.Mutex
+	// notificationUnready is owned by reserve/readyCommitNotification under
+	// notificationMu. Logical publication ends before listener delivery, so
+	// a blocked callback does not make an already committed read view unstable.
+	notificationUnready uint64
+	closeMu             sync.Mutex
 	// work is the engine's one admission, completion and outcome owner.
 	// Helper transactions and reserved commit notifications are its accepted
 	// work; Close seals it after the last durable write published, and its

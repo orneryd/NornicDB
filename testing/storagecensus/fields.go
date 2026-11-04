@@ -70,6 +70,13 @@ var fieldClasses = map[string]fieldRow{
 
 	// Runtime publication order is assigned only by stage registration, not an entity MVCC field.
 	"pkg/storage.commitPublication.ts": {class: "publication-order", owners: []string{"pkg/storage.publicationStage.register"}},
+	// A reserved commit notification is unready from its reservation until it is
+	// made ready: reserveCommitNotification increments and readyCommitNotification
+	// decrements it under notificationMu, and ReadPublicationSettled reads it under
+	// the same lock. It certifies logical publication readiness, not completed
+	// listener delivery; this is publication-order state, not an entity count,
+	// quota or suppression field.
+	"pkg/storage.BadgerEngine.notificationUnready": {class: "publication-order", owners: []string{"pkg/storage.BadgerEngine.reserveCommitNotification", "pkg/storage.BadgerEngine.readyCommitNotification"}, readers: []string{"pkg/storage.BadgerEngine.readPublicationSettled"}},
 	// Entity counts: applied by the engine's count publication (after a
 	// direct write, a transaction commit and a write-behind replay), the
 	// prefix delete, the recount at open, and construction and close.

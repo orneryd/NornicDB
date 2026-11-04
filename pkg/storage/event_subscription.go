@@ -29,6 +29,84 @@ type EventSubscriber interface {
 	SubscribeEvents(handlers EventHandlers) error
 }
 
+// EventNotificationsSettledReporter is an EventSubscriber that also reports
+// when its events are a complete baseline. Subscribing is part of the contract:
+// an engine that cannot deliver the events has no baseline to certify. Every
+// storage wrapper forwards the report to the publisher it subscribes to, so a
+// caller holding any layer of the stack gets the publisher's answer.
+type EventNotificationsSettledReporter interface {
+	EventSubscriber
+	EventNotificationsSettled() bool
+}
+
+// EventNotificationsSettled reports whether every previously visible mutation
+// has finished delivering its events. An engine that cannot report it returns
+// false. Consumers may establish a new revision/event baseline only at such a
+// point, and must sample the graph revision again after sampling their event
+// counter. It never waits for callbacks, which may themselves be waiting on the
+// reader.
+func EventNotificationsSettled(engine Engine) bool {
+	reporter, ok := engine.(EventNotificationsSettledReporter)
+	return ok && reporter.EventNotificationsSettled()
+}
+
+// EventNotificationsSettled observes the canonical notification queue. Native
+// synchronous commits reserve their queue entry before publishing graph data.
+// Buffered commits acknowledge data before their per-operation events exist, and
+// one acknowledgement can stand for several events; those cannot certify this
+// baseline and conservatively return false.
+func (b *BadgerEngine) EventNotificationsSettled() bool {
+	if b.writeBehindEnabled() {
+		return false
+	}
+	b.notificationMu.Lock()
+	defer b.notificationMu.Unlock()
+	return b.notificationHead == nil && !b.notificationDraining
+}
+
+// ReadPublicationSettled reports the absence of an in-flight native logical
+// publication through a proven committed view. A ready notification has already
+// published its data and graph token; delivery to listeners may still be running
+// or blocked. Buffered ACKs reserve their hold before publishing the overlay and
+// release it after advancing the graph token.
+// This does not certify journal coverage: buffered event delivery still cannot
+// satisfy EventNotificationsSettled, because ACK/event counts are different.
+func ReadPublicationSettled(engine Engine) bool {
+	view, proven := resolveEventView(engine)
+	return proven && view.publisher.readPublicationSettled()
+}
+
+func (b *BadgerEngine) readPublicationSettled() bool {
+	b.notificationMu.Lock()
+	defer b.notificationMu.Unlock()
+	return b.notificationUnready == 0
+}
+
+// EventNotificationsSettled forwards the existing publisher's metadata.
+func (n *NamespacedEngine) EventNotificationsSettled() bool {
+	return EventNotificationsSettled(n.inner)
+}
+
+// EventNotificationsSettled forwards the existing publisher's metadata.
+func (w *WALEngine) EventNotificationsSettled() bool {
+	return EventNotificationsSettled(w.engine)
+}
+
+// EventNotificationsSettled forwards the existing publisher's metadata.
+func (t *TracedEngine) EventNotificationsSettled() bool {
+	return EventNotificationsSettled(t.Engine)
+}
+
+// Compile-time contract: a wrapper that forwards the subscription also forwards
+// the baseline report. MemoryEngine satisfies both through its embedded publisher.
+var (
+	_ EventNotificationsSettledReporter = (*BadgerEngine)(nil)
+	_ EventNotificationsSettledReporter = (*MemoryEngine)(nil)
+	_ EventNotificationsSettledReporter = (*NamespacedEngine)(nil)
+	_ EventNotificationsSettledReporter = (*WALEngine)(nil)
+	_ EventNotificationsSettledReporter = (*TracedEngine)(nil)
+)
+
 // SubscribeEvents subscribes handlers to engine, or reports that it cannot
 // deliver events. It checks engine only, never unwrapping it: a wrapper that
 // does not forward the capability is an error, not a silent gap.

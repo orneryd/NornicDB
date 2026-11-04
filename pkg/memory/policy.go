@@ -127,8 +127,10 @@ func (p *Policy) Run(ctx context.Context, ticks <-chan time.Time) {
 // recovery cooldowns for completed admitted work and unleased allocations.
 func (p *Policy) Refresh() error {
 	if err := p.refreshSample(); err != nil {
+		ReleaseRetainedCaches(p, 0)
 		return err
 	}
+	ReleaseRetainedCaches(p, 0)
 	if p.reclaimPressure() {
 		// A collection is not evidence of capacity. Only a new physical
 		// observation may reopen admission, including ancestor pressure.
@@ -196,6 +198,7 @@ func (p *Policy) Reserve(bytes int64) (*Lease, error) {
 	if p == nil || p.limit <= 0 || bytes <= 0 {
 		return disabledLease, nil
 	}
+	ReleaseRetainedCaches(p, bytes)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if err := p.reserveLocked(bytes); err != nil {
@@ -205,7 +208,8 @@ func (p *Policy) Reserve(bytes int64) (*Lease, error) {
 }
 
 // reservationCapacityLocked is the one admission arithmetic owner for new
-// requests and incremental wire growth. All callers hold p.mu.
+// requests, incremental wire growth and optional-retention observations.
+// All callers hold p.mu.
 func (p *Policy) reservationCapacityLocked() (int64, error) {
 	if p.sampledAt.IsZero() || p.freshness <= 0 || p.now().Sub(p.sampledAt) > p.freshness {
 		return 0, ErrStaleSample
@@ -269,6 +273,7 @@ func (l *Lease) GrowWireRequest(wireBytes, wireLimit int64) error {
 		return nil
 	}
 	p := l.policy
+	ReleaseRetainedCaches(p, wireRequestForecast(wireBytes, wireLimit))
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if l.released {
@@ -291,6 +296,7 @@ func (l *Lease) WireLimit() (int64, error) {
 		return 0, nil
 	}
 	p := l.policy
+	ReleaseRetainedCaches(p, 0)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if l.released {
