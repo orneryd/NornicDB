@@ -145,3 +145,45 @@ cost: more indexed documents and more matching results still require work.
 Workload sizes, cold/warm state and allocation results are reported separately in
 `docs/performance/pr1683-maintained-fulltext.md`. Full local readiness still
 requires the final integrated `make test` result.
+
+
+## Search-constructor reconciliation review
+
+The full integrated gate exposed one source-pinned reconciliation failure after
+constructor consolidation. `storage_reconciliation.json` still pinned
+`DB.GetOrCreateSearchService` as a four-call preflight wrapper that took `db.mu`
+and invoked `getOrCreateSearchService`. The canonical constructor now has that
+public name; the preflight wrapper is retired.
+
+The current implementation was reviewed through its callers and all construction
+phases: it enters DB work and the current constructor epoch under
+`searchServicesMu`, releases host locks before resolvers/construction, rechecks
+lifetime at publication, adopts exactly one registry service, and closes a losing
+candidate before releasing its accepted ownership. Callback callers may already
+hold `db.mu`, so restoring the old wrapper would reintroduce the locking problem.
+Service lifetime creation stays in `search.NewService`; lazy warming uses
+`DB.LifetimeContext`. The constructor itself has no fresh context-creation calls.
+The record includes the current 97 named call expressions, including closures.
+
+The re-reviewed function digest is
+`1dc0e332b932a9864034ae5598e7166b54758a64aaa92ea121e9d1f925e77b2b`,
+replacing the old wrapper digest
+`8804f6ddbbca5fe0199cacbd36b4ca2a5c24baa9a7ec4872b66b4d3fb677bf02`.
+Only that tombstone's source record changes. It grants no acceptance to replacement
+paths; the normal compiled census remains authoritative. Rules, assertions,
+retired-source counts, and nil-flow allowances remain unchanged. The unchanged
+`TestStorageReconciliationRecords` passes on the isolated current-source proposal;
+the main corrected untagged `make test` also passes all 147 packages, including
+this control and both blocking census packages.
+
+Evidence includes constructor/retirement reentry, actual-completion and closed-DB
+regressions, the full `pkg/nornicdb` runtime pass, and the strict nil-context checks.
+No runtime code, persisted format, or benchmark implementation changes are needed
+for this record correction.
+
+The operator approved the generated R14-shaped workload as release acceptance on
+4 November 2026. Private replay remains unavailable and is documented rather than
+required. The final local `make test` passes with both lint gates and all 147
+packages (8 fresh, 139 cached); its receipt records 8,317 unchanged
+repository/native/UI inputs. Broader
+`make verify` is not claimed by this gate.

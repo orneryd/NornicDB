@@ -41,9 +41,11 @@ revision and headers.
 
 ## Results
 
-Medians of five samples of five measured operations, baseline → candidate. This is
-workload-specific evidence, not a production SLO or a statistical-significance
-claim. Timed B/op and allocations do not represent retained heap or RSS.
+Medians of five samples of five measured operations, baseline → candidate. Other
+verification processes were active during parts of the paired runs; the machine
+was not globally isolated. These latencies are descriptive workload evidence, not
+a production SLO or a statistical-significance claim. Timed B/op and allocations
+do not represent retained heap or RSS.
 
 | Workload | ms/op | B/op | allocs/op |
 | --- | ---: | ---: | ---: |
@@ -163,3 +165,9 @@ Raw logs/profiles/fixture hashes are retained under
 `{baseline,candidate}-large-document.log`, `large-retention-{1gc,2gc}-top.txt`,
 and `crosshead-public/statistics-comparison.json`. Historical failed and
 superseded runs are preserved and do not establish final readiness.
+
+The operator approved the generated R14-shaped workload as release acceptance on
+4 November 2026, with private replay explicitly unavailable. The final untagged
+`make test` passes all 147 packages (8 fresh, 139 cached) in 1,375.58 s; 8,317 recorded inputs stayed
+unchanged. The reviewed follow-up changes only documentation and the constructor
+reconciliation record, so the measured runtime and benchmark source is unchanged.
