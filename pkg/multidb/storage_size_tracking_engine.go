@@ -644,6 +644,16 @@ func (t *sizeTrackingEngine) SubscribeEvents(handlers storage.EventHandlers) err
 	return storage.SubscribeEvents(t.Engine, handlers)
 }
 
+// EventNotificationsSettled forwards the tracked engine's report.
+func (t *sizeTrackingEngine) EventNotificationsSettled() bool {
+	return storage.EventNotificationsSettled(t.Engine)
+}
+
+// PreservesEventView declares that accounting changes no event, ID or committed read.
+func (t *sizeTrackingEngine) PreservesEventView() {}
+
+var _ storage.EventViewForwarder = (*sizeTrackingEngine)(nil)
+
 func (t *sizeTrackingEngine) initializeManagedUsage(ctx context.Context) error {
 	if t.runtimeErr != nil {
 		return t.runtimeErr

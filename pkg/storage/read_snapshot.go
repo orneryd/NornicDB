@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -23,6 +24,34 @@ type ReadSnapshotView interface {
 	IterateNodes(fn func(*Node) bool) error
 	StreamEdges(ctx context.Context, fn func(*Edge) error) error
 	Close()
+}
+
+// EntityReadSnapshot materializes procedure output from the same committed
+// capture as its admitted scoring inputs. It uses native stream hydration and
+// visibility, rather than current caches or a later live point read.
+type EntityReadSnapshot interface {
+	ReadSnapshotView
+	ReadNode(context.Context, NodeID) (*Node, error)
+	ReadEdge(context.Context, EdgeID) (*Edge, error)
+}
+
+type readSnapshotEntityKey struct{}
+
+// OpenEntityReadSnapshot opens the canonical snapshot for one entity kind.
+// Capturing a node request never constructs the relationship overlay, and vice
+// versa. Unsupported views leave their caller on its original acquisition.
+func OpenEntityReadSnapshot(ctx context.Context, engine any, relationships bool) (EntityReadSnapshot, error) {
+	ctx = context.WithValue(ctx, readSnapshotEntityKey{}, relationships)
+	snapshot, err := OpenReadSnapshot(ctx, engine)
+	if err != nil {
+		return nil, err
+	}
+	reader, ok := snapshot.(EntityReadSnapshot)
+	if !ok {
+		snapshot.Close()
+		return nil, ErrReadSnapshotUnsupported
+	}
+	return reader, nil
 }
 
 type readSnapshotPrefixKey struct{}
@@ -54,21 +83,26 @@ func (b *BadgerEngine) OpenReadSnapshot(ctx context.Context) (ReadSnapshotView, 
 	prefix, _ := ctx.Value(readSnapshotPrefixKey{}).(string)
 	snap := &badgerReadSnapshot{b: b, prefix: prefix}
 	var captureErr error
+	relationships, oneKind := ctx.Value(readSnapshotEntityKey{}).(bool)
 	view, err := b.captureReadView(ctx, func(w *WriteBehindBuffer) {
 		// Nodes are read whatever their visibility, relationships as visible
 		// reads see them, as their stored rows below.
-		pendingNodes, err := b.readBufferedEntities(ctx, w, storedRead, bufferedEntityRead{kind: bufferedNodes, prefix: prefix})
-		if err != nil {
-			captureErr = err
-			return
+		if !oneKind || !relationships {
+			pendingNodes, err := b.readBufferedEntities(ctx, w, storedRead, bufferedEntityRead{kind: bufferedNodes, prefix: prefix})
+			if err != nil {
+				captureErr = err
+				return
+			}
+			snap.overlayNodes, snap.nodesTouched = pendingNodes.nodes, pendingNodes.nodesTouched
 		}
-		snap.overlayNodes, snap.nodesTouched = pendingNodes.nodes, pendingNodes.nodesTouched
-		pendingEdges, err := b.readBufferedEntities(ctx, w, visibleRead, bufferedEntityRead{kind: bufferedEdges, prefix: prefix})
-		if err != nil {
-			captureErr = err
-			return
+		if !oneKind || relationships {
+			pendingEdges, err := b.readBufferedEntities(ctx, w, visibleRead, bufferedEntityRead{kind: bufferedEdges, prefix: prefix})
+			if err != nil {
+				captureErr = err
+				return
+			}
+			snap.overlayEdges, snap.edgesTouched = pendingEdges.edges, pendingEdges.edgesTouched
 		}
-		snap.overlayEdges, snap.edgesTouched = pendingEdges.edges, pendingEdges.edgesTouched
 	}, readViewOptions{longLived: true, scope: prefix, scopeKind: readPrefixScope})
 	if err != nil {
 		return nil, err
@@ -83,11 +117,14 @@ func (b *BadgerEngine) OpenReadSnapshot(ctx context.Context) (ReadSnapshotView, 
 
 // IterateNodes is BadgerEngine.IterateNodes at the snapshot, with the
 // write-behind overlay merged as StreamEdges merges it: a buffered node
-// shadows its committed row and is visited after the scan.
+// shadows its committed row and is visited after the scan. The rows are
+// hydrated by the native scan's own reader, so a captured image is the one
+// that scan would emit.
 func (s *badgerReadSnapshot) IterateNodes(fn func(*Node) bool) error {
 	// IterateNodes has no caller context; this synchronous public boundary
 	// owns the scan's non-cancellable completion lifetime.
 	ctx := context.Background()
+	opts := StreamNodesOptions{WithEmbeddings: true}
 	stopped := false
 	err := s.view.withView(ctx, func(txn *badger.Txn) error {
 		prefix := append([]byte{prefixNode}, s.prefix...)
@@ -102,13 +139,14 @@ func (s *badgerReadSnapshot) IterateNodes(fn func(*Node) bool) error {
 			if s.nodesTouched[nodeID] {
 				continue // the write-behind overlay shadows this committed row
 			}
-			var node *Node
-			if err := it.Item().Value(func(val []byte) error {
-				var decErr error
-				node, decErr = s.b.decodeNodeWithEmbeddings(txn, val, nodeID)
-				return decErr
-			}); err != nil {
-				continue // Skip invalid nodes, as IterateNodes does
+			node, err := s.b.readStreamNodeItem(ctx, txn, it.Item(), opts, nil, 0)
+			if err != nil {
+				// The native scan fails its read on a row it cannot decode;
+				// the capture must not report the rest as the whole population.
+				return fmt.Errorf("scanning node %q: %w", nodeID, err)
+			}
+			if node == nil {
+				continue
 			}
 			if !fn(node) {
 				stopped = true
@@ -148,13 +186,9 @@ func (s *badgerReadSnapshot) StreamEdges(ctx context.Context, fn func(*Edge) err
 			if s.edgesTouched[edgeID] {
 				continue // the write-behind overlay shadows this committed row
 			}
-			var edge *Edge
-			if err := it.Item().Value(func(val []byte) error {
-				var decErr error
-				edge, decErr = s.b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), val, edgeID)
-				return decErr
-			}); err != nil {
-				continue // Skip invalid edges, as StreamEdges does
+			edge, err := s.b.readStreamEdgeItem(txn, it.Item())
+			if err != nil {
+				return err
 			}
 			if edge == nil || s.b.filterEntityByDecay(visibleRead, edge, nowNanos) {
 				continue
@@ -208,6 +242,18 @@ func OpenReadSnapshot(ctx context.Context, engine any) (ReadSnapshotView, error)
 	if snapshotter, ok := engine.(ReadSnapshotter); ok {
 		return snapshotter.OpenReadSnapshot(ctx)
 	}
+	// Use the existing committed-view resolver, including its namespace and
+	// malformed-chain policy. Do not introduce another accessor walk here or
+	// in a consumer. The canonical namespace wrapper applies each translation.
+	if source, ok := engine.(Engine); ok {
+		if view, proven := resolveEventView(source); proven {
+			var captured Engine = view.publisher
+			for depth := view.depth - 1; depth >= 0; depth-- {
+				captured = NewNamespacedEngine(captured, view.namespaces[depth])
+			}
+			return OpenReadSnapshot(ctx, captured)
+		}
+	}
 	return nil, ErrReadSnapshotUnsupported
 }
 
@@ -233,7 +279,11 @@ func (n *NamespacedEngine) OpenReadSnapshot(ctx context.Context) (ReadSnapshotVi
 	if err != nil {
 		return nil, err
 	}
-	return &namespacedReadSnapshot{inner: inner, n: n}, nil
+	snapshot := &namespacedReadSnapshot{inner: inner, n: n}
+	if reader, ok := inner.(EntityReadSnapshot); ok {
+		return &namespacedEntityReadSnapshot{namespacedReadSnapshot: snapshot, reader: reader}, nil
+	}
+	return snapshot, nil
 }
 
 type namespacedReadSnapshot struct {
