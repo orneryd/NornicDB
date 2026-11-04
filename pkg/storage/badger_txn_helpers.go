@@ -28,6 +28,7 @@ func (b *BadgerEngine) ensureOpen(writing bool) error {
 // started yet cannot slip in between the check and the write.
 func (b *BadgerEngine) beginBarrierWrite(ctx context.Context, exclusive bool, publication bool) (writeBarrierLease, error) {
 	lease := writeBarrierLease{engine: b, exclusive: exclusive}
+	lease.embeddingDelivery, _ = ctx.Value(embeddingDeliveryKey{}).(*embeddingDelivery)
 	var err error
 	if exclusive {
 		err = b.writeBarrier.LockContext(ctx)
@@ -50,9 +51,10 @@ func (b *BadgerEngine) beginBarrierWrite(ctx context.Context, exclusive bool, pu
 // writeBarrierLease retains admission on the writer's stack. A function value
 // is needed only when a transaction stores its release for publication.
 type writeBarrierLease struct {
-	engine    *BadgerEngine
-	exclusive bool
-	held      *commitNotification
+	engine            *BadgerEngine
+	exclusive         bool
+	held              *commitNotification
+	embeddingDelivery *embeddingDelivery
 }
 
 func (lease writeBarrierLease) release() {
@@ -78,6 +80,10 @@ func (lease writeBarrierLease) releaseCallback() func() {
 // separately after all of their other locks have been released.
 func (lease writeBarrierLease) finish() {
 	lease.release()
+	if lease.embeddingDelivery != nil && lease.held != nil {
+		lease.embeddingDelivery.completions = append(lease.embeddingDelivery.completions, func() { lease.engine.completeCommitNotification(lease.held) })
+		return
+	}
 	lease.engine.completeCommitNotification(lease.held)
 }
 
