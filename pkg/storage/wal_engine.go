@@ -587,6 +587,12 @@ func cloneNodeForWAL(dbName string, node *Node) *Node {
 // EmbeddingSidecarUpdater (compile-time asserted); anything else is an
 // invariant violation, reported as an error rather than silently degraded.
 func (w *WALEngine) UpdateNodeEmbeddingSidecar(ctx context.Context, node *Node) error {
+	return PersistEmbeddingOutcome(ctx, node, func(ctx context.Context) error {
+		return w.persistEmbeddingOutcome(ctx, node)
+	})
+}
+
+func (w *WALEngine) persistEmbeddingOutcome(ctx context.Context, node *Node) error {
 	if err := w.mutationMu.RLockContext(ctx); err != nil {
 		return err
 	}

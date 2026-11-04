@@ -58,12 +58,43 @@ func NewEmbeddingAttempt(generation, epoch uint64, revision EmbeddingBodyRevisio
 	return &EmbeddingAttempt{ProviderGeneration: generation, ClaimEpoch: epoch, BodyRevision: revision, begin: begin, publish: publish, delivered: make(chan struct{})}
 }
 
+type embeddingDeliveryKey struct{}
+
+type embeddingDelivery struct {
+	completions []func()
+}
+
+func completeEmbeddingDelivery(ctx context.Context, complete func()) {
+	if delivery, ok := ctx.Value(embeddingDeliveryKey{}).(*embeddingDelivery); ok {
+		delivery.completions = append(delivery.completions, complete)
+		return
+	}
+	complete()
+}
+
+// PersistEmbeddingOutcome separates commit from callback delivery across the
+// outermost provider or WAL lease. Nested owners share the same boundary.
+func PersistEmbeddingOutcome(ctx context.Context, node *Node, persist func(context.Context) error) error {
+	if ctx.Value(embeddingDeliveryKey{}) != nil || node == nil {
+		return persist(ctx)
+	}
+	delivery := &embeddingDelivery{}
+	err := persist(context.WithValue(ctx, embeddingDeliveryKey{}, delivery))
+	for _, complete := range delivery.completions {
+		complete()
+	}
+	if err != nil {
+		return err
+	}
+	return waitEmbeddingOutcome(node.EmbeddingAttempt())
+}
+
 // commitEmbeddingOutcome is the single acceptance/publication boundary for
 // vectors, terminal markers and explicit resets. persist must conflict-check
 // the body read and return that authoritative body with only the payload applied.
 // A bound caller lends this private snapshot until delivery completes; notify
 // transfers it to the ordered queue instead of cloning the accepted payload.
-func commitEmbeddingOutcome(node *Node, persist func() error, notify func(*Node)) error {
+func commitEmbeddingOutcome(ctx context.Context, node *Node, persist func() error, notify func(*Node)) error {
 	attempt := node.EmbeddingAttempt()
 	if attempt != nil {
 		release, valid := attempt.begin()
@@ -77,14 +108,21 @@ func commitEmbeddingOutcome(node *Node, persist func() error, notify func(*Node)
 	} else if err := persist(); err != nil {
 		return err
 	}
-	// No queue mutex is held while calling listeners (listeners may read stats
-	// or enqueue). The provider write lease still covers both publications.
+	if ctx.Value(embeddingDeliveryKey{}) != nil {
+		completeEmbeddingDelivery(ctx, func() { notify(node) })
+		return nil
+	}
 	notify(node)
-	if attempt != nil {
-		<-attempt.delivered
-		if attempt.obsolete.Load() {
-			return ErrEmbeddingSourceChanged
-		}
+	return waitEmbeddingOutcome(attempt)
+}
+
+func waitEmbeddingOutcome(attempt *EmbeddingAttempt) error {
+	if attempt == nil {
+		return nil
+	}
+	<-attempt.delivered
+	if attempt.obsolete.Load() {
+		return ErrEmbeddingSourceChanged
 	}
 	return nil
 }
