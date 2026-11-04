@@ -66,3 +66,19 @@ The remote code graph is incomplete after a relationship-inventory timeout. The 
 Dense and sparse scans are physical strategies under the same scoped owner. The ready marker establishes index completeness, production writes update labels atomically with bodies, and both strategies use the same snapshot and overlay. The dense strategy reuses the existing generic scanner rather than collecting every candidate and point-reading its body (the rejected candidate used about 631 MB/op versus about 4.34 MB/op after correction). Sparse scans avoid unrelated bodies; dense filters may inspect other labels before residual label checks, as permitted by the optional hint contract. Full-node caches were already bypassed by generic filtered scans; this change does not introduce that behavior.
 
 A single task-owned background waiter may retry the release-head refresh when the remote becomes healthy. Do not remove its baseline checkout or overlap another ingest. Remote completion is not established by the importer unit tests.
+
+## Final audit correction checkpoint (2026-11-04)
+
+- [x] Preserve the retained-candidate full-run failure: numeric wire ownership, URL sink structure, installed rollback review and nil-context census; storage census itself passes (833.652 s).
+- [x] Review the three benchmark report writers and re-pin their unchanged JSON boundary after exact seed-population verification changed their enclosing bodies.
+- [x] Trace all three changed cache-fact expressions through `VisitAffectedFacts` and durable cache invalidation; replace the two obsolete graph-endpoint classifications with the three current exact expressions.
+- [x] Compare the rollback review's compiled static closure with parent `2d0362da`: all 197 members remain, 196 bodies are identical and only `physicalCacheProjection.add` changes. Preserve all thirteen source pins, two compensation callers and the existing human-approved phase boundary.
+- [x] Reproduce and correct the source-pinned audit records without changing audit implementations, checker rules, contexts, runtime code, storage formats or dependencies.
+- [x] Pass all four affected packages, including the installed rollback record's five mutation controls and the blocking nil-context census.
+- [ ] Pass fresh integrated `make test` after the manifest corrections. The operator requested an audit-only review checkpoint while this gate runs; do not report the full gate passed prematurely.
+
+Review evidence: `pr1682-retained-final/rollback-closure-delta.json`,
+`capture-corrections-before.log`, `audit-corrections-focused.log`,
+`audit-corrections-packages.log` and `audit-correction-rollback-runtime.log`
+under the persistent readiness evidence directory. Performance qualification
+remains tied to unchanged production Go/module inputs from `34614a39`.

@@ -488,20 +488,20 @@
     "sha256": "8fe5b5e94570b0c924721947aedd452edef1b64c4cc2792e571fdd6552c303d9"
   },
   "testing/benchmarks/northwind_power/falkor_driver.go:runFalkorReport": {
-    "reason": "Test/reference harness fixtures and comparison metadata, not runtime graph property transport.",
-    "sha256": "29e2f4eeaa3f965a50db61d4dd6374a436483624f4c17be340ddd7c78d37ec98"
+    "reason": "Serializes the benchmark Report to a local JSON result file, including timing/count statistics and bounded query samples; it does not encode a database response or persist graph properties. Reviewed change passes the existing seed relationship total to the shared exact population verifier; the JSON encoding and report schema are unchanged.",
+    "sha256": "f88239a1481a0ce12c004c36dcaebd6a9c0c7e5a629c010c348f20d713fee5da"
   },
   "testing/benchmarks/northwind_power/ladybug_driver.go:runLadybugReport": {
-    "reason": "Test/reference harness fixtures and comparison metadata, not runtime graph property transport.",
-    "sha256": "4c93c38602ee99a8d7da27defbaffe641794e6b89e7b148a8104307a52985997"
+    "reason": "Serializes the benchmark Report to a local JSON result file, including timing/count statistics and bounded query samples; it does not encode a database response or persist graph properties. Reviewed change passes the existing seed relationship total to the shared exact population verifier; the JSON encoding and report schema are unchanged.",
+    "sha256": "1c04c674f2027409853384c8ef0e6a3dbde9ddecb86aeb58f3be313cc53da8cc"
   },
   "testing/benchmarks/northwind_power/main.go:approxBytes": {
     "reason": "Test/reference harness fixtures and comparison metadata, not runtime graph property transport.",
     "sha256": "44bf3b3ca702aa124f25ab67782c0b897d31b1a840be4220fa49442b9574075f"
   },
   "testing/benchmarks/northwind_power/main.go:main": {
-    "reason": "Test/reference harness fixtures and comparison metadata, not runtime graph property transport.",
-    "sha256": "73567370f6037efa5479320a56b09b3055ec62ec09f26858dc6967fc56355e29"
+    "reason": "Serializes the benchmark Report to a local JSON result file, including timing/count statistics and bounded query samples; it does not encode a database response or persist graph properties. Reviewed change passes the existing seed relationship total to the shared exact population verifier; the JSON encoding and report schema are unchanged.",
+    "sha256": "3f83c70cd4ba7295c4d4f25b8d5d69464186c51e9dc62d0714aac006d65d019b"
   },
   "testing/cypher/differential/corpus.go:LoadIssues": {
     "reason": "Test/reference harness fixtures and comparison metadata, not runtime graph property transport.",
