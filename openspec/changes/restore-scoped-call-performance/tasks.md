@@ -18,21 +18,26 @@
 - [x] Use the existing Northwind seed/query owners and the Graphify inventory query; avoid a rewritten synthetic query suite.
 - [x] Finish dense/sparse focused race controls on the final integrated source (13.620 s).
 - [x] Pass full `make test` on the frozen integrated source: 147 package passes, 74 fresh and 73 cached; storage census 831.099 s. The earlier failed/superseded runs remain distinct from this passing gate.
-- [ ] Run the final isolated native Northwind matrix: synchronous default, adaptive write-behind and strict durability, each with default result caching and result caching disabled. Keep GC enabled and preserve all graph counts and 14 result fingerprints.
-- [ ] Report acknowledgement separately from completion. Graceful post-query drain is not an ingest-to-flush latency measurement; restart verification is not a crash-recovery proof.
-- [ ] Profile all 14 in-process execution queries for allocations and CPU, then repeat the pinned historical generated workload with alternating-order rounds. Establish remaining latency variance explicitly.
-- [ ] Publish complete benchmark tables, limits and AC evidence in the PR and Linear; push only after the `make test` gate passes.
+- [x] Run the isolated native Northwind matrix on pushed checkpoint `5a7c16e7`: synchronous default, adaptive write-behind and strict durability, each with default result caching and result caching disabled. Keep GC enabled and preserve all graph counts and 14 result fingerprints.
+- [x] Report acknowledgement separately from completion. Graceful post-query drain is not an ingest-to-flush latency measurement; restart verification is not a crash-recovery proof.
+- [x] Profile all 14 in-process execution queries and repeat historical controls with the same Go 1.27.3 toolchain. Indexed CALL is +1.17% versus the historical baseline; the other generated controls improve.
+- [x] Resolve initial positive allocation deltas using three-execution repeats and identical closed-database files. Every query uses fewer bytes/allocations than release f62. Retain the measured canonical DFS accumulator and active-edge cleanup;4096-child bytes−11.05%,allocations−6.70%,time−7.99%.
+- [ ] Re-run the applicable full `make test` gate after any retained production optimization.
+- [x] Publish candidate tables and limits in docs/performance/pr1682-read-query-results.md. The maintainer requested an immediate draft push for review while the follow-up full gate runs.
+- [ ] Finish follow-up full `make test`, completion-boundary evidence, final PR/Linear AC status and readiness.
 - [ ] Complete task-owned workspace cleanup after readiness, preserving active ingestion and required evidence.
 
 ## Source and measurement controls
 
-Target/base: `f62b1b137a87efa4d7d35a64a57a3c96f92e0c1d` (`release/v1.4.4`). Historical reference: `b6d8e762ab9a9bd1e954aca5dd4f4257805fa8c2`. Original PR reference: `bf091924889f1903fe05fd74bb2ca45e8e7b645f`. Pushed draft checkpoint: `7cde66b8ecefa33ff4ddfd93104a6717cdfd0438`; the later integrated source passes the full gate; isolated final performance qualification is still running.
+Target/base: `f62b1b137a87efa4d7d35a64a57a3c96f92e0c1d` (`release/v1.4.4`). Historical reference: `b6d8e762ab9a9bd1e954aca5dd4f4257805fa8c2`. Original PR reference: `bf091924889f1903fe05fd74bb2ca45e8e7b645f`. Pushed checkpoint: `5a7c16e7f4cf87ab5ad65457f24a85bf91b94821`. Its integrated source passes the full gate and the native matrix. The measured traversal follow-up is ready for a draft review checkpoint under the maintainer request; its full runtime gate is running.
 
 Historical comparisons before `pr1682-pinned-r17-qualification` auto-selected different Go toolchains and are diagnostic only. Controlled comparisons explicitly pin Go 1.27.3, identical documentation bytes, parser, normalization, CPU and GC settings. Generated data is 10K Readings with 1 KiB text and hourly datetimes plus 2K Records, in native in-memory Badger. Distinct statements prevent result-cache hits; warmed parser/process state is stated rather than called process-cold.
 
-The final native Northwind matrix reuses the script defaults: 96 categories, 144 suppliers, 1,200 customers, 48K products, 48K orders and 1–6 order lines; batch 2,000, parallel 4, seed 42. Expected population: 97,440 nodes and 312,050 relationships. Graph-only mode, nornic parser, normalization disabled, GOGC=400 and an 8 GiB bound remain identical. Only result-cache policy changes between cache cells. Synchronous default uses the existing batched WAL sync policy; strict mode additionally requires synchronous durability. Write-behind acknowledgement is not labelled durable completion.
+The final native Northwind matrix reuses the script defaults: 96 categories, 144 suppliers, 1,200 customers, 48K products, 48K orders and 1–6 order lines; batch 2,000, parallel 4, seed 42. Expected population: 97,440 nodes and 312,050 relationships. Graph-only mode, nornic parser, normalization disabled, GOGC=400 and GOMEMLIMIT=8GiB (a Go soft memory limit, not a hard RSS limit) remain identical. Only result-cache policy changes between cache cells. Synchronous default uses the existing batched WAL sync policy; strict mode additionally requires synchronous durability. Write-behind acknowledgement is not labelled durable completion.
 
 ## Current evidence and limits
+
+- `pr1682-native-post-traversal`:frozen follow-up native six-cell matrix and three reopen checks PASS; all14 fingerprints and9 counts agree. The follow-up full make-test gate is running. Complete tables:docs/performance/pr1682-read-query-results.md.
 
 Evidence lives under `/Users/timothysweet/.local/share/nornicdb-pr-readiness/`.
 
@@ -41,7 +46,7 @@ Evidence lives under `/Users/timothysweet/.local/share/nornicdb-pr-readiness/`.
 - `pr1682-final-profile/decoder.log`: 64 B through 64 KiB, integer/string predicates and 0/50/100% kept. Selective hints remove rejected-value allocations; all-kept allocation counts match unhinted decoding. Extra framing adds latency when all large values survive; this is not hidden as a universal win.
 - `pr1682-dense-visibility-fail-first.log`: dense scan wrongly returned the tombstoned row. `pr1682-dense-visibility-fixed.log` passes the correction and existing controls.
 - `pr1682-final-inventories-corrected.log`: lexical population, URL sink inventory and runtime-fixture ownership pass. An earlier attempted command named a nonexistent package; its failed log is retained and not counted.
-- `pr1682-native-final`: final matrix harness, source receipts and pending final results. Earlier `pr1682-server-matrix` checkpoint and `pr1682-server-candidate` rejected-experiment runs remain baseline/diagnostic evidence, not final-source qualification.
+- `pr1682-native-final`: completed six-cell matrix, source receipts, all 14 query tables, reopen checks, same-toolchain historical controls and current Graphify importer profiling. The initial six positive1x allocation deltas do not persist in repeated and identical-file controls; no allocation regression is established. Earlier `pr1682-server-matrix` checkpoint and `pr1682-server-candidate` rejected-experiment runs remain baseline/diagnostic evidence, not final-source qualification.
 
 No storage key/payload/version, third-party implementation, generated parser or checker rule changes are proposed. Broader `make verify` is deferred to CI under the maintainer's explicit gate.
 

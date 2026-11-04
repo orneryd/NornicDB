@@ -1435,7 +1435,7 @@ func (e *StorageExecutor) traverseGraphSequential(ctx context.Context, match *Tr
 			relationshipsNeedOnlyHeaders: traversalRelationshipsNeedOnlyHeaders(match),
 		}
 
-		paths := e.findPaths(traversalCtx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode)
+		paths := e.findPaths(traversalCtx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode, nil)
 		traversalCtx.memory.close()
 		results = append(results, paths...)
 		if remaining > 0 {
@@ -1508,7 +1508,7 @@ func (e *StorageExecutor) traverseGraphParallel(ctx context.Context, match *Trav
 					relationshipsNeedOnlyHeaders: traversalRelationshipsNeedOnlyHeaders(match),
 				}
 
-				paths := e.findPaths(traversalCtx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode)
+				paths := e.findPaths(traversalCtx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode, nil)
 				workerPaths = append(workerPaths, paths...)
 			}
 
@@ -1740,7 +1740,7 @@ func (e *StorageExecutor) traverseFromNode(traversalCtx context.Context, startNo
 	ctx.nodeProperties = match.endpointProperties
 	ctx.endpointsNeedOnlyLabels = traversalEndpointsNeedOnlyLabels(match)
 	ctx.relationshipsNeedOnlyHeaders = traversalRelationshipsNeedOnlyHeaders(match)
-	return e.findPaths(ctx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode)
+	return e.findPaths(ctx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode, nil)
 }
 
 // newTraversalContext is the depth-first search state for relationship
@@ -1799,7 +1799,9 @@ func (e *StorageExecutor) loadTraversalEndpointNode(ctx *TraversalContext, nextN
 	return nextNode, true
 }
 
-// findPaths performs DFS to find all paths matching the pattern
+// findPaths appends matching paths in DFS order to the traversal-owned result
+// accumulator. Retained paths copy their node/edge slices once at acceptance;
+// recursive frames do not allocate and copy intermediate result collections.
 func (e *StorageExecutor) findPaths(
 	ctx *TraversalContext,
 	currentNode *storage.Node,
@@ -1807,8 +1809,8 @@ func (e *StorageExecutor) findPaths(
 	pathEdges []*storage.Edge,
 	depth int,
 	endPattern *nodePatternInfo,
+	results []PathResult,
 ) []PathResult {
-	var results []PathResult
 
 	// Every frame and sibling expansion must observe cancellation. Sampling
 	// recursive entries alone leaves callers expanding the remaining siblings
@@ -1924,25 +1926,25 @@ func (e *StorageExecutor) findPaths(
 		// prefix as well allocates twice for every successful branch.
 		nextNodesLen, ok := util.SafeIntAdd(len(pathNodes), 1)
 		if !ok {
-			ctx.usedEdges[edge.Identity()] = false
+			delete(ctx.usedEdges, edge.Identity())
 			continue
 		}
 		nextEdgesLen, ok := util.SafeIntAdd(len(pathEdges), 1)
 		if !ok {
-			ctx.usedEdges[edge.Identity()] = false
+			delete(ctx.usedEdges, edge.Identity())
 			continue
 		}
 		pathNodes = append(pathNodes, nextNode)
 		pathEdges = append(pathEdges, edge)
-		subPaths := e.findPaths(ctx, nextNode, pathNodes, pathEdges, depth+1, endPattern)
-		results = append(results, subPaths...)
+		results = e.findPaths(ctx, nextNode, pathNodes, pathEdges, depth+1, endPattern, results)
 		pathNodes[nextNodesLen-1] = nil
 		pathEdges[nextEdgesLen-1] = nil
 		pathNodes = pathNodes[:nextNodesLen-1]
 		pathEdges = pathEdges[:nextEdgesLen-1]
 
-		// Unmark for sibling paths.
-		ctx.usedEdges[edge.Identity()] = false
+		// Only the active path owns marks. Keeping false entries retains every
+		// visited sibling identity and grows this map with fanout rather than depth.
+		delete(ctx.usedEdges, edge.Identity())
 	}
 
 	return results

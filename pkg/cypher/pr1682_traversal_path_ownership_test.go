@@ -35,8 +35,9 @@ func TestPR1682TraversalRetainedPathsOwnTheirSlices(t *testing.T) {
 		nodes := make([]*storage.Node, 1, 8)
 		nodes[0] = root
 		edges := make([]*storage.Edge, 0, 8)
-		paths := exec.findPaths(state, root, nodes, edges, 0, nil)
+		paths := exec.findPaths(state, root, nodes, edges, 0, nil, nil)
 		state.memory.close()
+		require.Empty(t, state.usedEdges, "completed sibling edges must not remain in active-path state")
 		// Even caller-owned spare capacity must never alias retained paths.
 		clear(nodes[:cap(nodes)])
 		clear(edges[:cap(edges)])
@@ -86,4 +87,58 @@ func TestPR1682AnonymousPathWhereBindsOuterEntities(t *testing.T) {
 			require.Len(t, got, check.want)
 		}
 	})
+}
+
+func TestPR1682TraversalResultOrderAndUnwind(t *testing.T) {
+	for _, scenario := range []struct {
+		name       string
+		limit      int
+		cancelAt   int
+		repeatable bool
+		want       []string
+	}{
+		{name: "ordered siblings", cancelAt: -1, want: []string{"root", "a", "b", "c"}},
+		{name: "limit within child", limit: 2, cancelAt: -1, want: []string{"root", "a"}},
+		{name: "cancel after accepted child", cancelAt: 2, want: []string{"root", "a"}},
+		{name: "repeatable cycle", cancelAt: -1, repeatable: true, want: []string{"root", "root", "root", "root"}},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			root := &storage.Node{ID: "root"}
+			engine := &cancellationTraversalEngine{
+				Engine: newTestMemoryEngine(t), nodes: map[storage.NodeID]*storage.Node{"root": root},
+				cancel: cancel, cancelAt: scenario.cancelAt,
+			}
+			if scenario.repeatable {
+				engine.edges = []*storage.Edge{{ID: "loop", StartNode: "root", EndNode: "root", Type: "R"}}
+			} else {
+				for _, id := range []storage.NodeID{"a", "b", "c"} {
+					engine.nodes[id] = &storage.Node{ID: id}
+					engine.edges = append(engine.edges, &storage.Edge{ID: storage.EdgeID(id), StartNode: "root", EndNode: id, Type: "R"})
+				}
+			}
+			exec := NewStorageExecutor(engine)
+			state := exec.newTraversalContext(ctx, root, &RelationshipPattern{Direction: "outgoing", MinHops: 0, MaxHops: 3})
+			state.limit, state.repeatable = scenario.limit, scenario.repeatable
+			paths := exec.findPaths(state, root, []*storage.Node{root}, nil, 0, nil, nil)
+			state.memory.close()
+			got := make([]string, len(paths))
+			for i, path := range paths {
+				got[i] = string(path.Nodes[len(path.Nodes)-1].ID)
+				require.Len(t, path.Nodes, path.Length+1)
+				require.Len(t, path.Relationships, path.Length)
+				if scenario.repeatable {
+					require.Equal(t, i, path.Length)
+				}
+			}
+			require.Equal(t, scenario.want, got, "DFS order and previously accepted paths survive unwind")
+			require.Empty(t, state.usedEdges)
+			if scenario.cancelAt > 0 {
+				require.ErrorIs(t, ctx.Err(), context.Canceled)
+			} else {
+				require.NoError(t, ctx.Err())
+			}
+		})
+	}
 }
