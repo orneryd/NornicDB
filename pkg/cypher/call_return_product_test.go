@@ -3,27 +3,43 @@ package cypher
 import (
 	"github.com/stretchr/testify/require"
 	"testing"
+
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 )
+
+// testRetainedCall is a CALL clause read from its own retained product, the
+// same node a statement split hands the executor.
+func testRetainedCall(t *testing.T, source string) (pipelineClause, queryBody) {
+	t.Helper()
+	syntax, err := cypherantlr.ParseSyntax(t.Context(), source, cypherantlr.FragmentEntry, false, cypherantlr.AcceptedSource)
+	require.NoError(t, err)
+	call, found := syntax.LeadingCall(0)
+	require.True(t, found, source)
+	clause := pipelineClause{kind: pipelineClauseCallSubquery, text: call.Text(), syntax: call}
+	body, retained := callBodyFromSyntax(clause)
+	require.True(t, retained, source)
+	return clause, body
+}
 
 func TestCallReturnClauseSurvivesUnknownTypes(t *testing.T) {
 	for _, tc := range []struct {
 		name, call, want string
-		branches         []string
 		unknown          bool
 	}{
-		{"USE no return", "CALL { USE g CREATE (n) }", "", []string{"USE g CREATE (n)"}, true},
-		{"USE opaque return", "CALL { USE g RETURN abs(-1) AS x }", "RETURN abs(-1) AS x", []string{"USE g RETURN abs(-1) AS x"}, true},
-		{"USE ordered wildcard", "CALL { USE g RETURN *, 1 AS k }", "RETURN *, 1 AS k", []string{"USE g RETURN *, 1 AS k"}, true},
-		{"USE first UNION", "CALL { USE g RETURN 1 AS z UNION RETURN 2 AS z }", "RETURN 1 AS z", []string{"USE g RETURN 1 AS z", "RETURN 2 AS z"}, false},
-		{"undefined implicit body", "CALL { RETURN missing AS k }", "RETURN missing AS k", []string{"RETURN missing AS k"}, true},
-		{"unknown later UNION", "CALL { RETURN 1 AS k UNION RETURN missing AS k }", "RETURN 1 AS k", []string{"RETURN 1 AS k", "RETURN missing AS k"}, true},
-		{"procedure wildcard", "CALL { CALL db.labels() YIELD * RETURN * }", "RETURN *", []string{"CALL db.labels() YIELD * RETURN *"}, true},
-		{"known ordered columns", "CALL { RETURN 1 AS z, 2 AS a }", "RETURN 1 AS z, 2 AS a", []string{"RETURN 1 AS z, 2 AS a"}, false},
-		{"mixed wildcard", "CALL { UNWIND [7] AS v RETURN *, 1 AS k }", "RETURN *, 1 AS k", []string{"UNWIND [7] AS v RETURN *, 1 AS k"}, false},
+		{"USE no return", "CALL { USE g CREATE (n) }", "", true},
+		{"USE opaque return", "CALL { USE g RETURN abs(-1) AS x }", "RETURN abs(-1) AS x", true},
+		{"USE ordered wildcard", "CALL { USE g RETURN *, 1 AS k }", "RETURN *, 1 AS k", true},
+		{"USE first UNION", "CALL { USE g RETURN 1 AS z UNION RETURN 2 AS z }", "RETURN 1 AS z", false},
+		{"undefined implicit body", "CALL { RETURN missing AS k }", "RETURN missing AS k", true},
+		{"unknown later UNION", "CALL { RETURN 1 AS k UNION RETURN missing AS k }", "RETURN 1 AS k", true},
+		{"procedure wildcard", "CALL { CALL db.labels() YIELD * RETURN * }", "RETURN *", true},
+		{"known ordered columns", "CALL { RETURN 1 AS z, 2 AS a }", "RETURN 1 AS z, 2 AS a", false},
+		{"mixed wildcard", "CALL { UNWIND [7] AS v RETURN *, 1 AS k }", "RETURN *, 1 AS k", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := NewStorageExecutor(newTestMemoryEngine(t))
-			types, clause, err := e.callSubqueryReturnTypes(t.Context(), tc.call, tc.branches, typeScope{}, false)
+			call, body := testRetainedCall(t, tc.call)
+			types, clause, err := e.callSubqueryReturnTypes(t.Context(), call, body, typeScope{}, false)
 			require.NoError(t, err)
 			require.Equal(t, tc.want, clause)
 			if tc.unknown {

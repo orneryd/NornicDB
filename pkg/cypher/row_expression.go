@@ -187,7 +187,7 @@ func (e *StorageExecutor) evaluateRowValueText(operationCtx context.Context, exp
 		}
 		if value, handled, callErr := e.evaluateTemporalConstructor(temporalContext, func(inner string) (interface{}, bool, error) {
 			return e.evaluateRowValue(operationCtx, inner, values)
-		}, expr); handled {
+		}, callFacts1); handled {
 			return value, callErr == nil, callErr
 		}
 		if value, matched, resolved, err := e.evaluateRowMathFunction(operationCtx, function, argument, values); matched {

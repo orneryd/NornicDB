@@ -100,7 +100,7 @@ func syntaxAdmissionError(ctx context.Context, source string, stage SourceStage,
 	}
 	if view.Err == nil {
 		source = view.Text
-		if err := malformedCallScopeError(ctx, source); err != nil {
+		if err := malformedCallScopeError(ctx, source, 0); err != nil {
 			return err
 		}
 	}

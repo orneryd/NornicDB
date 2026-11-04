@@ -80,7 +80,7 @@ type pipelineAggregateRun struct {
 func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pipelineRowSource, projections []returnProjection, rowsValidated bool) ([]*pipelineAggregateGroup, bool) {
 	templates := make([]pipelineAggregateProjection, len(projections))
 	memory := memoryScopeFromContext(ctx)
-	validationClauses := make([]string, 0)
+	validationExpressions := make([]string, 0)
 	allAggregates := pipelineProjectionHasOnlyAggregates(projections)
 	groupingCount := 0
 	for index, projection := range projections {
@@ -104,7 +104,7 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 		rewritten.WriteString(projection.expr[last:])
 		templates[index].expression = rewritten.String()
 		if !rowsValidated && (needsValidation || strings.ContainsAny(templates[index].expression, "([")) {
-			validationClauses = append(validationClauses, "WITH "+projection.expr)
+			validationExpressions = append(validationExpressions, projection.expr)
 		}
 	}
 	newGroup := func(row pipelineRow) *pipelineAggregateGroup {
@@ -130,12 +130,10 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 			run.valid = false
 			return false
 		}
-		for _, clause := range validationClauses {
-			if err := e.validatePipelineProjectionValues(ctx, []pipelineRow{row}, clause, "WITH"); err != nil {
-				recordExpressionFailure(ctx, err)
-				run.valid = false
-				return false
-			}
+		if err := e.validatePipelineProjectionExpressions(ctx, []pipelineRow{row}, validationExpressions); err != nil {
+			recordExpressionFailure(ctx, err)
+			run.valid = false
+			return false
 		}
 		values = values[:0]
 		if !allAggregates {

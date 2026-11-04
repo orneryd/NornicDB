@@ -16,11 +16,21 @@ type getNodesByLabelErrEngine struct {
 	err   error
 }
 
+// The chain's node patterns carry properties, so the pipeline reads each label
+// through the options scan; the fixture fails that read as well as the plain
+// label lookup, for whichever read the pipeline performs.
 func (e *getNodesByLabelErrEngine) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
 	if label == e.label {
 		return nil, e.err
 	}
 	return e.Engine.GetNodesByLabel(ctx, label)
+}
+
+func (e *getNodesByLabelErrEngine) StreamNodesWithOptions(ctx context.Context, opts storage.StreamNodesOptions, visit func(*storage.Node) error) error {
+	if opts.Label == e.label {
+		return e.err
+	}
+	return e.Engine.StreamNodesWithOptions(ctx, opts, visit)
 }
 
 type createEdgeErrEngine struct {

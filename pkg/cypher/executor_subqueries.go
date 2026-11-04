@@ -421,33 +421,19 @@ func (e *StorageExecutor) seedNodeFromIDString(ctx context.Context, id string) *
 	return nil
 }
 
-// parseCallSubquery is the compatibility adapter for body/plan consumers. The
-// shared grammar owns the body boundary and the complete transactional spec.
-func (e *StorageExecutor) parseCallSubquery(ctx context.Context, cypher string) (body, afterCall string, inTransactions bool, batch *transactionBatchSpec) {
-	call, err := readCallClause(ctx, cypher)
-	if err != nil {
-		return "", "", false, nil
-	}
-	body = call.Body
-	if stripped, finishes := stripUnionBranchFinishes(ctx, body); finishes && strings.TrimSpace(stripped) != "" {
-		body = stripped
-	}
-	return body, call.After, call.Batch != nil, call.Batch
-}
-
 // callSubqueryHasScopeClause reports whether a CALL subquery declares its
 // imports with a scope clause (CALL () { … }, CALL (x, y) { … }, CALL (*)
 // { … }). Its body's leading WITH is then an ordinary projection, never an
 // import list (parseLeadingWithImports): CALL () { WITH 1 AS x FINISH } is a
 // unit subquery whose body is just that WITH (#907).
 func callSubqueryHasScopeClause(ctx context.Context, cypher string) bool {
-	return readCallSubqueryScope(ctx, cypher).scoped
+	return readCallSubqueryScope(ctx, cypher, 0).scoped
 }
 
 // parseCallSubqueryImportVariables is the legacy names-only view. Scope and
 // result-schema consumers use StatementFacts, which preserves syntax errors.
 func parseCallSubqueryImportVariables(ctx context.Context, cypher string) ([]string, error) {
-	scope := readCallSubqueryScope(ctx, cypher)
+	scope := readCallSubqueryScope(ctx, cypher, 0)
 	if scope.invalid {
 		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport", "CALL imports must contain only variable names")
 	}
@@ -691,17 +677,16 @@ func isLeadingWithFollower(word string) bool {
 }
 
 // unscopedCallImports reads the importing WITHs of an unscoped CALL
-// subquery's body: whether any UNION branch (or the body, without UNION)
-// starts with an importing WITH (branchLeadingWithImport), and the
-// variables those WITHs list. A branch that imports nothing adds none,
-// whatever the other branches import (#907); it still reads outer variables
-// through NornicDB's implicit import (pipelineApplyCallSubqueryWithMetadata).
-// A CALL with a scope clause has no importing WITH
-// (callSubqueryHasScopeClause).
+// subquery's retained body (branchSyntaxImports): whether any UNION branch (or
+// the body, without UNION) starts with an importing WITH, and the variables
+// those WITHs list. A branch that imports nothing adds none, whatever the other
+// branches import (#907); it still reads outer variables through NornicDB's
+// implicit import (pipelineApplyCallSubqueryWithMetadata). A CALL with a scope
+// clause has no importing WITH (callSubqueryHasScopeClause). The body is the
+// statement's own retained product: no branch text is rebuilt and re-read here.
 //
 // names is filled only when collectNames.
-func unscopedCallImports(ctx context.Context, source string, outer func(string) bool, collectNames bool) (names []string, importing bool, err error) {
-	body := readQueryBody(ctx, source, 0, len(source))
+func unscopedCallImports(ctx context.Context, body queryBody, outer func(string) bool, collectNames bool) (names []string, importing bool, err error) {
 	for _, branch := range body.branches {
 		next, imports, failure := branchSyntaxImports(ctx, branch, outer, collectNames)
 		if failure != nil {
@@ -713,14 +698,6 @@ func unscopedCallImports(ctx context.Context, source string, outer func(string) 
 		}
 	}
 	return names, importing, nil
-}
-
-func branchLeadingWithImport(ctx context.Context, source string, outer func(string) bool, collectNames bool) ([]string, bool, error) {
-	body := readQueryBody(ctx, source, 0, len(source))
-	if len(body.branches) == 0 {
-		return nil, false, nil
-	}
-	return branchSyntaxImports(ctx, body.branches[0], outer, collectNames)
 }
 
 func branchSyntaxImports(ctx context.Context, branch queryBodyBranch, outer func(string) bool, collectNames bool) (names []string, importing bool, err error) {
@@ -757,11 +734,11 @@ func branchSyntaxImports(ctx context.Context, branch queryBodyBranch, outer func
 	return names, true, nil
 }
 
-// unscopedBranchLocals returns the outer variables (names) that one branch
-// of an unscoped CALL body declares itself (branchDeclaresVariable): the
+// unscopedBranchLocals returns the outer variables (names) that one retained
+// branch of an unscoped CALL body declares itself (branchDeclaresVariable): the
 // branch doesn't receive their outer values through NornicDB's implicit
 // import, so they are new variables there, as in Cypher (#907).
-func unscopedBranchLocals(ctx context.Context, branch string, names []string) []string {
+func unscopedBranchLocals(ctx context.Context, branch queryBodyBranch, names []string) []string {
 	var locals []string
 	for _, name := range names {
 		if branchDeclaresVariable(ctx, branch, name) {
@@ -771,31 +748,83 @@ func unscopedBranchLocals(ctx context.Context, branch string, names []string) []
 	return locals
 }
 
-// branchDeclaresVariable reports whether a branch of an unscoped CALL body
-// declares variable before it reads it: its first use is a node or
+// branchDeclaresVariable reports whether a retained branch of an unscoped CALL
+// body declares variable before it reads it: its first use is a node or
 // relationship variable of a MATCH, OPTIONAL MATCH, CREATE or MERGE pattern
-// (or the pattern's path name), or the name UNWIND … AS or WITH … AS binds.
+// (or the pattern's path name), or the name UNWIND ... AS or WITH ... AS binds.
 // Cypher gives such a branch a new variable; NornicDB's implicit import of an
-// outer variable applies only to a name the branch reads first (#907).
-func branchDeclaresVariable(ctx context.Context, branch, variable string) bool {
-	clauses, ok := splitPipelineClauses(ctx, strings.TrimSpace(branch))
-	if !ok {
+// outer variable applies only to a name the branch reads first (#907). The
+// branch's clauses are its own retained split (cachedPipelineClausesBranch):
+// its WITH and UNWIND bindings are read from their grammar tokens
+// (projectionItemsFromSyntax, iterationClauseFor), so the alias a comment or a
+// newline separates from AS binds the same name a printed alias does.
+func branchDeclaresVariable(ctx context.Context, branch queryBodyBranch, variable string) bool {
+	split := cachedPipelineClausesBranch(ctx, branch, false)
+	if !split.ok {
 		return false
 	}
-	for _, clause := range clauses {
-		index := firstVariableOccurrence(clause.text, variable)
-		if index < 0 {
-			continue
-		}
+	for _, clause := range split.clauses {
 		switch clause.kind {
 		case pipelineClauseMatch, pipelineClauseOptionalMatch, pipelineClauseCreate, pipelineClauseMerge:
+			index := firstVariableOccurrence(clause.text, variable)
+			if index < 0 {
+				continue
+			}
 			return index < patternPartEnd(ctx, clause) && isPatternVariableAt(clause.text, index, len(variable))
 		case pipelineClauseUnwind, pipelineClauseWith:
-			return precededByAS(clause.text, index)
+			// The clause decides: its binding declares the name, and its items or
+			// tail merely reading it do not.
+			declares, mentioned := clauseBindingDeclares(ctx, clause, variable)
+			if !mentioned {
+				continue
+			}
+			return declares
+		default:
+			// The branch reads the name here before any clause binds it.
+			if firstVariableOccurrence(clause.text, variable) >= 0 {
+				return false
+			}
 		}
-		return false
 	}
 	return false
+}
+
+// clauseBindingDeclares reports whether a WITH or UNWIND clause declares
+// variable, and whether the clause mentions it at all. A binding is the alias
+// its grammar item records after AS (projectionItemsFromSyntax) or the
+// variable the clause's UNWIND ... AS binds (iterationClauseFor), so a comment
+// or a newline between AS and the name changes nothing. A clause that reads the
+// name in an item's expression before the alias binding it, or only in its
+// WHERE / ORDER BY / SKIP / LIMIT tail, reads it first and declares nothing.
+func clauseBindingDeclares(ctx context.Context, clause pipelineClause, variable string) (declares, mentioned bool) {
+	switch clause.kind {
+	case pipelineClauseWith:
+		for _, item := range projectionItemsFromSyntax(clause.syntax) {
+			if item.star {
+				continue
+			}
+			if containsString(expressionFreeVariables(ctx, item.expression), variable) {
+				return false, true
+			}
+			if item.as >= 0 && item.alias == variable {
+				return true, true
+			}
+		}
+	case pipelineClauseUnwind:
+		iteration, ok := iterationClauseFor(clause)
+		if !ok {
+			break
+		}
+		if containsString(expressionFreeVariables(ctx, iteration.expression), variable) {
+			return false, true
+		}
+		// A shared-grammar FOR clause binds without AS: not a declaration here.
+		if !forIterationClause(clause) && iteration.variable == variable {
+			return true, true
+		}
+	}
+	// A mention left here is the clause's tail, after its bindings.
+	return false, firstVariableOccurrence(clause.text, variable) >= 0
 }
 
 // patternPartEnd is where a MATCH, CREATE or MERGE clause's pattern ends:
@@ -867,15 +896,6 @@ func isPatternVariableAt(text string, index, length int) bool {
 // follows: MATCH, CREATE, MERGE.
 func isPatternClauseKeyword(word string) bool {
 	return equalFoldASCII(word, "MATCH") || equalFoldASCII(word, "CREATE") || equalFoldASCII(word, "MERGE")
-}
-
-// precededByAS reports whether the word at index follows the keyword AS.
-func precededByAS(text string, index int) bool {
-	end := index
-	for end > 0 && cyphertext.IsWhitespaceAt(text, end-1) {
-		end--
-	}
-	return end >= 3 && equalFoldASCII(text[end-2:end], "AS") && !cyphertext.NamePartAt(text, end-3)
 }
 
 // previousNonSpace is the last non-space byte before index, 0 at the start.

@@ -1,25 +1,8 @@
-// Package server: NornicDB issue #563 defect 1 regression coverage.
-//
-// pkg/bolt/server.go's newDatabaseScopedCypherExecutor and cmd/nornicdb/main.go's
-// DBQueryExecutor.ConfigureDatabaseExecutor build per-database StorageExecutors
-// but historically never called SetLogger/SetSlowQueryThreshold on them — only
-// the primary (base) executor got them, threaded once from main.go's bootstrap.
-// The effect: every Bolt query and every HTTP /db/<name>/tx/commit query logs
-// to io.Discard, so NORNICDB_SLOW_QUERY_THRESHOLD emits no event="slow_query"
-// record for a slow database-scoped query.
-//
-// TestDatabaseScopedExecutor_InheritsLoggerAndSlowQueryThreshold exercises the
-// HTTP construction path (pkg/server/server_db.go's newExecutorForDatabase),
-// which had the identical gap: the "inherit from base executor" block that
-// function already carries for embedder/inference copied everything except
-// the logger and slow-query threshold.
-//
-// TestGetExecutorForDatabaseWithAuth_InheritsLoggerAndSlowQueryThreshold and
-// TestHeimdallRouter_ExecutorForDatabase_InheritsLoggerAndSlowQueryThreshold
-// cover the two other construction sites review finding C3 flagged as
-// untested: server_db.go's composite/remote-auth path and the Heimdall
-// router. Bolt's cmd/nornicdb/main.go ConfigureDatabaseExecutor site is
-// covered separately in cmd/nornicdb, since it lives in package main.
+// Package server covers issue #563: database-scoped executors must inherit
+// the base executor's logger and slow-query threshold. Both HTTP and Bolt
+// now use Server.DatabaseScopedExecutorOptions; cmd/nornicdb covers the
+// production Bolt host wiring. These tests also exercise authenticated
+// composite access and the Heimdall router.
 package server
 
 import (
@@ -141,7 +124,7 @@ func TestGetExecutorForDatabaseWithAuth_InheritsLoggerAndSlowQueryThreshold(t *t
 	}))
 
 	require.True(t, server.databaseHasRemoteConstituent("obs_comp_remote"))
-	exec, err := cypher.NewDatabaseScopedExecutor(server.databaseScopedExecutorOptions("obs_comp_remote", "Bearer remote-token"))
+	exec, err := cypher.NewDatabaseScopedExecutor(server.DatabaseScopedExecutorOptions("obs_comp_remote", "Bearer remote-token"))
 	require.NoError(t, err)
 	require.NotNil(t, exec)
 

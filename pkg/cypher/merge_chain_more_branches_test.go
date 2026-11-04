@@ -151,7 +151,7 @@ func TestApplyWithProjection_Populations(t *testing.T) {
 				if test.failure {
 					operationCtx = withExpressionFailureSlot(ctx)
 				}
-				projected, ok := exec.pipelineApplyWith(operationCtx, group.input, test.clause, nil, false)
+				projected, ok := exec.pipelineApplyWith(operationCtx, group.input, composedPipelineClause(operationCtx, pipelineClauseWith, test.clause), nil, false)
 				if test.failure {
 					require.False(t, ok)
 					require.Nil(t, projected)

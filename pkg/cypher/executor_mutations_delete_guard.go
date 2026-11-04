@@ -214,16 +214,6 @@ func appendUniquePipelineBinding(bindings []string, binding string) []string {
 	return append(bindings, binding)
 }
 
-func pipelineUnwindAlias(ctx context.Context, clause string) string {
-	if _, alias, ok := parsePipelineIteration(ctx, clause); ok {
-		return normalizeProjectionColumnName(alias)
-	}
-	if index := findKeywordIndexInContext(ctx, clause, "AS"); index >= 0 {
-		return strings.TrimSpace(clause[index+len("AS"):])
-	}
-	return ""
-}
-
 // validateNoResidualRelationships enforces openCypher/Neo4j DELETE
 // semantics: a non-DETACH DELETE of a node that still has relationships is
 // an error, not a silent cascade. NornicDB's storage layer

@@ -45,7 +45,7 @@ var (
 // staticAlternativesOf is the set of alternatives an operand's type names.
 func staticAlternativesOf(operand staticOperand) map[string]bool {
 	set := map[string]bool{}
-	for _, choice := range staticTypeChoices(operand.typeName()) {
+	for choice := range staticTypeChoices(operand.typeName()) {
 		set[choice] = true
 	}
 	return set
@@ -63,7 +63,7 @@ func TestStaticAlternativesNeverCollapse(t *testing.T) {
 			result, err := checker.check(t.Context(), expression)
 			require.NoError(t, err, "%s for v of %s", expression, name)
 			got := staticAlternativesOf(result)
-			for _, choice := range staticTypeChoices(input.typeName()) {
+			for choice := range staticTypeChoices(input.typeName()) {
 				require.True(t, got[choice], "%s for v of %s lost %s: %q", expression, name, choice, result.typeName())
 			}
 		}
@@ -71,7 +71,7 @@ func TestStaticAlternativesNeverCollapse(t *testing.T) {
 			result, err := checker.check(t.Context(), expression)
 			require.NoError(t, err, "%s for v of %s", expression, name)
 			got := staticAlternativesOf(result)
-			for _, choice := range staticTypeChoices(input.typeName()) {
+			for choice := range staticTypeChoices(input.typeName()) {
 				require.True(t, got["List<"+choice+">"], "%s for v of %s lost List<%s>: %q", expression, name, choice, result.typeName())
 			}
 		}

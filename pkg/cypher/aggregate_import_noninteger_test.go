@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -49,7 +50,7 @@ func TestJoinedOperandKeepsAgreedConstraints(t *testing.T) {
 	// Typed alternatives keep every one of their types.
 	joined := joinedOperand(constrained, signatureOperand([]string{"Float", "Integer"}))
 	require.False(t, joined.excludes(isIntegerOrNumberTypeName))
-	require.ElementsMatch(t, []string{"Duration", "Float", "Integer"}, staticTypeChoices(joined.typeName()))
+	require.ElementsMatch(t, []string{"Duration", "Float", "Integer"}, slices.Collect(staticTypeChoices(joined.typeName())))
 	nested := knownOperand("Map")
 	nested.members = map[string]staticOperand{"a": constrained}
 	require.True(t, joinedOperand(nested, nested).members["a"].excludes(isIntegerOrNumberTypeName))

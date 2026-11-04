@@ -298,7 +298,12 @@ func temporalClockValue(kind string, instant time.Time, zoneID string) (interfac
 // is false for any other expression. A call Neo4j rejects at run time
 // returns its error: an argument of a type the function doesn't take is
 // ProcedureCallFailed ("Invalid call signature for Truncate: …").
-func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, evaluate func(string) (interface{}, bool, error), expression string) (result interface{}, handled bool, err error) {
+//
+// callFacts is the call its caller already recognized (inspectFunctionCall):
+// its name and argument text are read from there, so evaluating a call does
+// not parse its expression again. A caller whose expression isn't a function
+// call passes the zero value, which is handled false.
+func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, evaluate func(string) (interface{}, bool, error), callFacts functionCallFacts) (result interface{}, handled bool, err error) {
 	var argumentErr error
 	var lastArgument interface{}
 	argumentEvaluated := false
@@ -316,19 +321,13 @@ func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, evalu
 			result, err = nil, argumentErr
 			return
 		}
-		if result == nil && handled && err == nil && argumentEvaluated && lastArgument != nil {
-			var callFacts1 functionCallFacts
-			if call := inspectFunctionCall(expression, qualifiedFunctionCall, "", &callFacts1); call && isTemporalConstructor(callFacts1.name) && strings.TrimSpace(callFacts1.inner) != "" && len(e.splitFunctionArgs(callFacts1.inner)) == 1 {
-				function := callFacts1.name
-
-				err = temporalConstructorError(function, lastArgument)
-			}
+		if result == nil && handled && err == nil && argumentEvaluated && lastArgument != nil &&
+			isTemporalConstructor(callFacts.name) && strings.TrimSpace(callFacts.inner) != "" && len(e.splitFunctionArgs(callFacts.inner)) == 1 {
+			err = temporalConstructorError(callFacts.name, lastArgument)
 		}
 	}()
-	var callFacts2 functionCallFacts
-	ok := inspectFunctionCall(expression, qualifiedFunctionCall, "", &callFacts2)
-	name, argument := callFacts2.name, callFacts2.inner
-	if !ok {
+	name, argument := callFacts.name, callFacts.inner
+	if name == "" {
 		return nil, false, nil
 	}
 	kind := lowerASCII(name)

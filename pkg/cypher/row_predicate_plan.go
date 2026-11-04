@@ -620,7 +620,14 @@ func (e *StorageExecutor) rowPredicatePartValue(ctx context.Context, part *rowPr
 	scope.executor = e
 	textValue := func() (interface{}, error) {
 		value, _, err := deferredExpressionValue(ctx, func(ctx context.Context) interface{} {
-			values := rowValuesInExpressionContext(ctx, scope.materialize())
+			// The operand's statement context is bound in place for this evaluation,
+			// as evaluateRowPredicate binds it for a whole predicate: rows belong to
+			// their evaluator, and only an operand whose functions, subqueries or
+			// graph expressions read statement state needs the binding at all.
+			values, contextBound := rowValuesWithStatementContext(ctx, part.text, scope.materialize())
+			if contextBound {
+				defer delete(values, rowStatementContextKey)
+			}
 			value, ok, err := e.evaluateRowValue(ctx, part.text, values)
 			if err != nil {
 				recordExpressionFailure(ctx, err)

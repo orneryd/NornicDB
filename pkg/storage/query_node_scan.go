@@ -62,6 +62,13 @@ func (opts StreamNodesOptions) readVisibility() readVisibility {
 	return storedRead
 }
 
+// scanDecodesFilter reports whether the scan's options carry a property filter,
+// so a whole-node metadata fast path must yield to the scan decoder that
+// applies it before the node is materialized.
+func (opts StreamNodesOptions) scanDecodesFilter() bool {
+	return opts.PropertyFilter != nil || len(opts.PropertyStringEquals) > 0
+}
+
 func (opts StreamNodesOptions) copyResidentNode(node *Node) *Node {
 	return projectCachedNodeForRead(node, opts.Projection, opts.StripEmbeddings, opts.QueryNodes && !opts.WithEmbeddings)
 }
