@@ -184,6 +184,17 @@ func (e *ReplicatedEngine) SubscribeEvents(handlers storage.EventHandlers) error
 	return storage.SubscribeEvents(e.Engine, handlers)
 }
 
+// PreservesEventView declares that local reads and replicated writes use the
+// wrapped engine's identifiers, committed rows and storage notifications.
+func (e *ReplicatedEngine) PreservesEventView() {}
+
+var _ storage.EventViewForwarder = (*ReplicatedEngine)(nil)
+
+// EventNotificationsSettled reports delivery from the same local publisher.
+func (e *ReplicatedEngine) EventNotificationsSettled() bool {
+	return storage.EventNotificationsSettled(e.Engine)
+}
+
 // applyEntityCommand keeps native direct/bulk wire kinds and their producer policy.
 func (e *ReplicatedEngine) applyEntityCommand(ctx context.Context, kind CommandType, value any) error {
 	if err := ctx.Err(); err != nil {

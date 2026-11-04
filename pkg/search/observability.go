@@ -174,8 +174,9 @@ func classifySearchResult(resp *SearchResponse, err error) string {
 //   - hnsw: HNSWIndex.Size() (vector count) × vector dimensions ×
 //     sizeof(float32). Captures the dominant memory cost of HNSW; node
 //     graph metadata is comparatively small.
-//   - bm25: 0 (no native size accessor on the BM25 index today; deferred
-//     to a future enhancement that exposes fulltextIndex.SizeBytes()).
+//   - bm25: the optional maintained procedure corpora's estimated retained
+//     bytes. A native BM25 size accessor is still unavailable; this component
+//     drops to zero when pressure releases the reconstructible copies.
 //
 // kind values outside AllowedSearchIndexKinds return 0 — defense in
 // depth even though the closed enum at the call site means this branch
@@ -196,7 +197,13 @@ func (s *Service) IndexSizeBytes(kind string) uint64 {
 		dims := DefaultVectorDimensions
 		return uint64(s.servingHNSW().Size()) * uint64(dims) * 4
 	case "bm25":
-		return 0 // BM25 index size accessor TBD; deferred future work.
+		var bytes uint64
+		for _, state := range s.FulltextRetention() {
+			if state.Retained {
+				bytes += uint64(state.Bytes)
+			}
+		}
+		return bytes
 	default:
 		return 0
 	}

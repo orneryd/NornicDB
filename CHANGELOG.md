@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Maintain scoped full-text scoring documents between queries instead of rebuilding
+  the entire corpus. Preserve exact case-sensitive indexed fields, deterministic
+  relationship-property order, per-field phrase matching, committed snapshots and
+  cancellation; release optional copies under the existing memory limits.
 - Northwind benchmark seeds now check terminal write results and every generated
   relationship population, and retry CREATE batches only for typed retriable
   server statuses. Unknown commit outcomes are surfaced without replay.

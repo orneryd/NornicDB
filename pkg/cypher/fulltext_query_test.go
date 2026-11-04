@@ -125,11 +125,9 @@ func TestFulltextTokenizer_RegexPositionDetection(t *testing.T) {
 // makeDoc canonicalizes a fixed doc into an ftDoc for evaluator tests.
 func makeDoc(props map[string]string, defaults ...string) *ftDoc {
 	p := make(map[string]string, len(props))
-	raw := make(map[string]string, len(props))
 	var content strings.Builder
 	for k, v := range props {
-		p[strings.ToLower(k)] = strings.ToLower(v)
-		raw[strings.ToLower(k)] = v
+		p[k] = strings.ToLower(v)
 	}
 	if len(defaults) == 0 {
 		for _, v := range props {
@@ -147,7 +145,6 @@ func makeDoc(props map[string]string, defaults ...string) *ftDoc {
 	c := strings.ToLower(strings.TrimSpace(content.String()))
 	return &ftDoc{
 		properties:    p,
-		rawProperties: raw,
 		contentLower:  c,
 		contentTokenN: len(strings.Fields(c)),
 	}

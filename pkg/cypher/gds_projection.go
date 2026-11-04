@@ -478,7 +478,7 @@ func (e *StorageExecutor) buildGraphProjection(ctx context.Context, name string,
 	labelsSeen := make(map[string]bool)
 	nodePropertySeen := make(map[string]bool)
 	nodePropertyType := make(map[string]string) // one builder per projected key, shared across labels
-	err := storage.StreamNodesWithFallback(ctx, e.storage, streamChunkSize, func(node *storage.Node) error {
+	err := storage.StreamNodesWithFallback(ctx, e.storage, storage.StreamChunkSize, func(node *storage.Node) error {
 		for _, label := range node.Labels {
 			labelsSeen[label] = true
 		}
@@ -561,7 +561,7 @@ func (e *StorageExecutor) buildGraphProjection(ctx context.Context, name string,
 	// with validateRelationships, those with an end outside the projection),
 	// so memory follows the projection, not the store.
 	var edges []*storage.Edge
-	err = storage.StreamEdgesWithFallback(ctx, e.storage, streamChunkSize, func(edge *storage.Edge) error {
+	err = storage.StreamEdgesWithFallback(ctx, e.storage, storage.StreamChunkSize, func(edge *storage.Edge) error {
 		typesSeen[edge.Type] = true
 		if !gdsTypeProjected(relSpecs, edge.Type) {
 			return nil

@@ -935,36 +935,7 @@ func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *bad
 	}
 
 	visit := func(txn *badger.Txn, item *badger.Item) error {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		var node *Node
-		var err error
-		if opts.QueryNodes && opts.Projection == nil && !opts.WithEmbeddings && !opts.scanDecodesFilter() {
-			node, err = b.readNodeItemInTxn(txn, item, NodeID(item.Key()[1:]), nodeItemQueryMetadata)
-		} else {
-			err = item.Value(func(val []byte) error {
-				key := item.Key()
-				if len(key) <= 1 {
-					return nil
-				}
-				if projected != nil {
-					var decodeErr error
-					node, decodeErr = projected.decode(key, val)
-					return decodeErr
-				}
-				nodeID := NodeID(key[1:])
-				var decodeErr error
-				if opts.WithEmbeddings {
-					node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
-				} else {
-					node, decodeErr = b.decodeNodeProjected(txn, namespaceForNodeID(nodeID), val, nil)
-				}
-				return decodeErr
-			})
-		}
+		node, err := b.readStreamNodeItem(ctx, txn, item, opts, projected, nowNanos)
 		if err != nil {
 			// A record this scan cannot decode fails the scan: skipping it would
 			// return the rest of the population as if it were all of it.
@@ -972,12 +943,6 @@ func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *bad
 		}
 		if node == nil {
 			return nil // the scan's decoder rejected this node
-		}
-		if opts.ApplyDecayFilter && b.filterEntityByDecay(visibleRead, node, nowNanos) {
-			return nil
-		}
-		if opts.StripEmbeddings {
-			node = copyNodeWithoutEmbeddings(node)
 		}
 		if err := fn(node); err != nil {
 			if err == ErrIterationStopped {
@@ -1013,6 +978,58 @@ func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *bad
 		}
 	}
 	return nil
+}
+
+// readStreamNodeItem is the one native node hydration, visibility and projection
+// policy. The streaming scan applies it to every committed row, and captured
+// output materialization applies the same reader to the row it selects, so an
+// emitted entity image is the one the native scan would emit. A nil node with no
+// error is a row the decoder rejected; a decode failure is returned to the
+// caller, which fails its read rather than publishing a partial population.
+func (b *BadgerEngine) readStreamNodeItem(ctx context.Context, txn *badger.Txn, item *badger.Item, opts StreamNodesOptions, projected *projectedNodeDecoder, nowNanos int64) (*Node, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+	var node *Node
+	var err error
+	if opts.QueryNodes && opts.Projection == nil && !opts.WithEmbeddings && !opts.scanDecodesFilter() {
+		node, err = b.readNodeItemInTxn(txn, item, NodeID(item.Key()[1:]), nodeItemQueryMetadata)
+	} else {
+		err = item.Value(func(val []byte) error {
+			key := item.Key()
+			if len(key) <= 1 {
+				return nil
+			}
+			if projected != nil {
+				var decodeErr error
+				node, decodeErr = projected.decode(key, val)
+				return decodeErr
+			}
+			nodeID := NodeID(key[1:])
+			var decodeErr error
+			if opts.WithEmbeddings {
+				node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
+			} else {
+				node, decodeErr = b.decodeNodeProjected(txn, namespaceForNodeID(nodeID), val, nil)
+			}
+			return decodeErr
+		})
+	}
+	if err != nil {
+		return nil, err
+	}
+	if node == nil {
+		return nil, nil
+	}
+	if opts.ApplyDecayFilter && b.filterEntityByDecay(visibleRead, node, nowNanos) {
+		return nil, nil
+	}
+	if opts.StripEmbeddings {
+		node = copyNodeWithoutEmbeddings(node)
+	}
+	return node, nil
 }
 
 // StreamNodes implements StreamingEngine.StreamNodes for memory-efficient iteration.
@@ -1104,18 +1121,7 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 			default:
 			}
 
-			item := it.Item()
-			key := item.Key()
-			var edgeID EdgeID
-			if len(key) > 1 {
-				edgeID = EdgeID(key[1:])
-			}
-			var edge *Edge
-			err := item.Value(func(val []byte) error {
-				var decErr error
-				edge, decErr = b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), val, edgeID)
-				return decErr
-			})
+			edge, err := b.readStreamEdgeItem(txn, it.Item())
 			if err != nil {
 				continue // Skip invalid edges
 			}
@@ -1302,4 +1308,27 @@ func (b *BadgerEngine) entityCountByPrefix(ctx context.Context, prefix string, k
 		count += delta
 	}
 	return count, nil
+}
+
+// readStreamEdgeItem is the one native relationship hydration policy: the
+// relationship stream and captured output materialization both read a committed
+// row through it. Renderable rows come back whole; a row this reader cannot
+// decode is absent from both populations, as the relationship stream omits it
+// today, so a captured image never differs from the streamed one.
+func (b *BadgerEngine) readStreamEdgeItem(txn *badger.Txn, item *badger.Item) (*Edge, error) {
+	key := item.Key()
+	var edgeID EdgeID
+	if len(key) > 1 {
+		edgeID = EdgeID(key[1:])
+	}
+	var edge *Edge
+	err := item.Value(func(value []byte) error {
+		var decodeErr error
+		edge, decodeErr = b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), value, edgeID)
+		return decodeErr
+	})
+	if err != nil {
+		return nil, nil // Skip invalid edges, as the release stream does.
+	}
+	return edge, nil
 }

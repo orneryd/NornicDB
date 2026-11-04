@@ -165,6 +165,7 @@ func (b *BadgerEngine) reserveCommitNotification(n *commitNotification) {
 	// The reservation holds its engine admission until delivery, so
 	// retirement never releases the state a listener runs against.
 	n.reserved = true
+	b.notificationUnready++
 	if b.notificationTail == nil {
 		b.notificationHead = n
 	} else {
@@ -237,7 +238,10 @@ func (b *BadgerEngine) readyCommitNotification(n *commitNotification) bool {
 		b.notificationMu.Unlock()
 		return false
 	}
-	n.ready = true
+	if !n.ready {
+		n.ready = true
+		b.notificationUnready--
+	}
 	b.notificationMu.Unlock()
 	return true
 }
