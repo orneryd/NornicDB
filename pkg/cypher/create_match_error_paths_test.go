@@ -14,7 +14,10 @@ import (
 )
 
 // The fixture injects an arbitrary read failure at the read a MATCH issues on
-// a store that exposes only storage.Engine (no streaming or query-node read).
+// a store that exposes only storage.Engine (no label reader or query-node
+// read): a labelled pattern restricted by a property equality reads through the
+// options scan, and an unrestricted label pattern through GetNodesByLabel, so
+// the fixture fails whichever of the two the pipeline performs for that label.
 // The statement's own transaction never calls such a store, so the injected
 // error can only be observed at the clause pipeline that builds the MATCH
 // rows - the component these tests drive. writes counts the write calls the
@@ -33,6 +36,13 @@ func (e *createMatchErrEngine) GetNodesByLabel(ctx context.Context, label string
 		return nil, err
 	}
 	return e.Engine.GetNodesByLabel(ctx, label)
+}
+
+func (e *createMatchErrEngine) StreamNodesWithOptions(ctx context.Context, opts storage.StreamNodesOptions, visit func(*storage.Node) error) error {
+	if err, ok := e.labelErrs[opts.Label]; ok && err != nil {
+		return err
+	}
+	return e.Engine.StreamNodesWithOptions(ctx, opts, visit)
 }
 
 func (e *createMatchErrEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {

@@ -206,8 +206,8 @@ func callSubqueryAt(ctx context.Context, query string, i int) bool {
 	}
 	// Classification consumes the same CALL frame as scope and execution.
 	// In particular, comments before or after imports are query trivia.
-	body := i + readCallSubqueryScope(ctx, query[i:]).bodyOffset
-	return body < len(query) && query[body] == '{'
+	body := readCallSubqueryScope(ctx, query, i).bodyOffset
+	return body > i && body < len(query) && query[body] == '{'
 }
 
 func hasNotExistsFollowedByBrace(query string) bool {

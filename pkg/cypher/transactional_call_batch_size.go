@@ -20,7 +20,6 @@ type boundTransactionBatch struct {
 }
 
 var transactionalStatementReads = newBoundedCache[string, []cypherantlr.CallClause](4096, boundedCacheStringShardIndex)
-var callClauseReads = newBoundedCache[string, cypherantlr.CallClause](4096, boundedCacheStringShardIndex)
 
 func readTransactionalStatement(ctx context.Context, query string) ([]cypherantlr.CallClause, error) {
 	// Only a cheap candidate filter: all classification and boundaries below
@@ -36,17 +35,6 @@ func readTransactionalStatement(ctx context.Context, query string) ([]cypherantl
 		transactionalStatementReads.put(query, calls)
 	}
 	return calls, err
-}
-
-func readCallClause(ctx context.Context, clause string) (cypherantlr.CallClause, error) {
-	if call, ok := callClauseReads.get(clause); ok {
-		return call, ctx.Err()
-	}
-	call, err := cypherantlr.ReadCallClause(ctx, clause, cypherantlr.AcceptedSource)
-	if err == nil {
-		callClauseReads.put(clause, call)
-	}
-	return call, err
 }
 
 // validateTransactionalCalls belongs to statement semantics, before EXPLAIN

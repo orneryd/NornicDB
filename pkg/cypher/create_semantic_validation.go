@@ -63,8 +63,8 @@ func (e *StorageExecutor) validateCreateSemanticScopes(ctx context.Context, cyph
 				return err
 			}
 		case pipelineClauseUnwind:
-			if alias := unwindBindingName(ctx, clause.text); alias != "" {
-				scope.bind(alias)
+			if iteration, found := iterationClauseFor(clause); found {
+				scope.bind(iteration.variable)
 			}
 		case pipelineClauseMerge:
 			for _, name := range extractNodeVariables(clause.text) {
@@ -103,34 +103,18 @@ func projectedBindingScope(ctx context.Context, input *semanticBindingScope, cla
 	return output
 }
 
-// validateUnwindAlias rejects an UNWIND clause whose alias isn't exactly one
-// variable, as Neo4j does: UNWIND takes no WHERE, so "UNWIND l AS x WHERE …"
-// and "UNWIND l AS x y" are SyntaxErrors (Invalid input 'WHERE').
-func validateUnwindAlias(ctx context.Context, clause string) error {
-	_, alias, ok := parsePipelineIteration(ctx, clause)
-	if !ok {
+// validateUnwindAlias rejects an iteration clause whose variable is followed
+// by more tokens, as Neo4j does: UNWIND takes no WHERE, so "UNWIND l AS x
+// WHERE …" is a SyntaxError (Invalid input 'WHERE').
+func validateUnwindAlias(iteration iterationClause, found bool) error {
+	if !found {
 		return sharedClauseSyntaxError("iteration requires a variable and an expression")
 	}
-	next, identifier := cyphertext.ScanIdentifier(alias, 0)
-	if !identifier {
-		return nil
-	}
-	if rest := strings.TrimSpace(alias[next.End:]); rest != "" {
-		token := strings.Fields(rest)[0]
+	if iteration.trailing != "" {
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
-			localization.CypherCoreInvalidInput(token))
+			localization.CypherCoreInvalidInput(iteration.trailing))
 	}
 	return nil
-}
-
-// unwindBindingName is the variable an UNWIND clause binds (splitUnwindBody).
-func unwindBindingName(ctx context.Context, clause string) string {
-	if _, alias, ok := parsePipelineIteration(ctx, clause); ok {
-		if name, _, symbolic := scanSymbolicName(alias, 0); symbolic {
-			return normalizeProjectionColumnName(name)
-		}
-	}
-	return ""
 }
 
 func (e *StorageExecutor) validateCreateClauseBindings(ctx context.Context, scope *semanticBindingScope, clause string, cypher25 bool) error {

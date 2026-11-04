@@ -318,7 +318,7 @@ func (e *StorageExecutor) semanticScopeWalk(ctx context.Context, clauses []pipel
 		}
 		var projectedTypes typeScope
 		if clause.kind == pipelineClauseWith {
-			projectedTypes = projectTypeScopeIn(ctx, types, view, clause.text)
+			projectedTypes = projectTypeScopeIn(ctx, types, view, clause)
 			// The projection reads the incoming variables; WITH … WHERE
 			// reads the projected ones.
 			projection := clause.text
@@ -363,14 +363,13 @@ func (e *StorageExecutor) semanticScopeWalk(ctx context.Context, clauses []pipel
 				}
 			}
 		case pipelineClauseCallSubquery:
-			body, _, _, _ := e.parseCallSubquery(ctx, clause.text)
-			branches := []string{body}
-			if unionBranches, _, _, union := parseTopLevelUnionBranches(ctx, body); union && len(unionBranches) > 0 {
-				branches = unionBranches
+			body, retained := callBodyFromSyntax(clause)
+			if !retained {
+				return types, false, unresolvedStatementError()
 			}
 			// The body is a query of its own, walked from the variables it
 			// imports; its subqueries see its scope.
-			returned, returnClause, err := e.callSubqueryReturnTypes(ctx, clause.text, branches, types, cypher25)
+			returned, returnClause, err := e.callSubqueryReturnTypes(ctx, clause, body, types, cypher25)
 			if err != nil {
 				return types, false, err
 			}
@@ -400,7 +399,7 @@ func (e *StorageExecutor) semanticScopeWalk(ctx context.Context, clauses []pipel
 					// (Neo4j 5.26.30's VariableAlreadyBound), unless every
 					// branch returns that outer variable itself, unchanged
 					// (callSubqueryReturnsOuterUnchanged).
-					if _, bound := scope[name]; bound && !callSubqueryReturnsOuterUnchanged(ctx, branches, name) {
+					if _, bound := scope[name]; bound && !callSubqueryReturnsOuterUnchanged(ctx, body.branches, name) {
 						return types, false, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound",
 							localization.CypherCoreVariableDeclaredInOuterScope(name))
 					}
@@ -511,7 +510,7 @@ func (e *StorageExecutor) semanticScopeWalk(ctx context.Context, clauses []pipel
 			if err := validateStaticFunctionVariables(ctx, projection, input); err != nil {
 				return types, false, err
 			}
-			if err := e.validateStaticOperatorTypes(ctx, clause, input, func() staticTypeScope { return projectionAliasScope(ctx, input, clause.text) }, nil); err != nil {
+			if err := e.validateStaticOperatorTypes(ctx, clause, input, func() staticTypeScope { return projectionAliasScope(ctx, input, clause) }, nil); err != nil {
 				return types, false, err
 			}
 			// Retain each import's current operand after a rebinding, using
@@ -536,38 +535,37 @@ func (e *StorageExecutor) semanticScopeWalk(ctx context.Context, clauses []pipel
 				return types, false, err
 			}
 		case pipelineClauseUnwind:
-			if err := validateUnwindAlias(ctx, clause.text); err != nil {
+			iteration, found := iterationClauseFor(clause)
+			if err := validateUnwindAlias(iteration, found); err != nil {
 				return types, false, err
 			}
-			if err := undefinedExpressionVariable(ctx, scope, unwindSourceExpression(ctx, clause.text)); err != nil {
+			if err := undefinedExpressionVariable(ctx, scope, iteration.expression); err != nil {
 				return types, false, err
 			}
 			if err := e.validateStaticClauseTypes(ctx, clause, staticTypeScope{kinds: scope, values: valueTypes, members: valueMembers, derived: view.derived, complete: true, cypher25: cypher25}); err != nil {
 				return types, false, err
 			}
-			if alias := unwindBindingName(ctx, clause.text); alias != "" {
-				// FOR is new syntax: unlike the pre-existing permissive UNWIND,
-				// it must not redeclare an already-bound variable, as in Neo4j.
-				if startsWithKeywordFold(clause.text, "FOR") {
-					if _, bound := scope[alias]; bound {
-						return types, false, newSemanticError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound",
-							fmt.Sprintf("variable %s is already declared", alias))
-					}
+			// FOR is new syntax: unlike the pre-existing permissive UNWIND,
+			// it must not redeclare an already-bound variable, as in Neo4j.
+			if forIterationClause(clause) {
+				if _, bound := scope[iteration.variable]; bound {
+					return types, false, newSemanticError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound",
+						fmt.Sprintf("variable %s is already declared", iteration.variable))
 				}
-				input := view
-				input.complete = false
-				// Neo4j types an element of a list UNWIND binds only when a
-				// procedure call runs; UNWIND 5 binds 5 statically.
-				source := projectedOperand(ctx, types, input, unwindSourceExpression(ctx, clause.text))
-				types[alias] = unwoundOperand(ctx, types, input, clause.text)
-				scope[alias] = types[alias].bindingKind()
-				delete(unwound, alias)
-				if types[alias].typeName() != "" && !source.excludes(isListTypeName) {
-					if unwound == nil {
-						unwound = make(map[string]struct{})
-					}
-					unwound[alias] = struct{}{}
+			}
+			input := view
+			input.complete = false
+			// Neo4j types an element of a list UNWIND binds only when a
+			// procedure call runs; UNWIND 5 binds 5 statically.
+			source := projectedOperand(ctx, types, input, iteration.expression)
+			types[iteration.variable] = listElementOperand(ctx, types, input, iteration.expression)
+			scope[iteration.variable] = types[iteration.variable].bindingKind()
+			delete(unwound, iteration.variable)
+			if types[iteration.variable].typeName() != "" && !source.excludes(isListTypeName) {
+				if unwound == nil {
+					unwound = make(map[string]struct{})
 				}
+				unwound[iteration.variable] = struct{}{}
 			}
 		case pipelineClauseReturn:
 			stale = false
@@ -1299,7 +1297,7 @@ func (e *StorageExecutor) validateStaticClauseTypes(ctx context.Context, clause 
 		var projected *staticTypeScope
 		projectedScope = func() staticTypeScope {
 			if projected == nil {
-				built := projectionAliasScope(ctx, scope, clause.text)
+				built := projectionAliasScope(ctx, scope, clause)
 				projected = &built
 			}
 			return *projected
@@ -1384,16 +1382,9 @@ func (e *StorageExecutor) validateQuantifiedGroupPredicates(ctx context.Context,
 // WITH projection: the incoming variables, with each projection alias
 // replacing the variable of the same name (RETURN n.num AS n ORDER BY n + 2
 // sees n as a number, not the node).
-func projectionAliasScope(ctx context.Context, input staticTypeScope, clause string) staticTypeScope {
-	body := strings.TrimSpace(clause)
-	for _, keyword := range []string{"RETURN", "WITH"} {
-		if startsWithKeywordFold(body, keyword) {
-			body = strings.TrimSpace(body[len(keyword):])
-			break
-		}
-	}
+func projectionAliasScope(ctx context.Context, input staticTypeScope, clause pipelineClause) staticTypeScope {
 	types := typeScopeOf(input)
-	for name, operand := range projectTypeScopeIn(ctx, types, input, "WITH "+body) {
+	for name, operand := range projectTypeScopeIn(ctx, types, input, clause) {
 		types[name] = operand
 	}
 	scope := types.static(input.cypher25)
@@ -1477,12 +1468,6 @@ func splitWithProjection(ctx context.Context, clause string) (projection, rest s
 		}
 	}
 	return clause[:end], clause[end:]
-}
-
-// unwindSourceExpression is the list expression of an UNWIND clause.
-func unwindSourceExpression(ctx context.Context, clause string) string {
-	expression, _, _ := parsePipelineIteration(ctx, clause)
-	return expression
 }
 
 func coalesceSemanticKind(expression string, scope matchSemanticScope) (matchBindingKind, bool) {
@@ -1654,9 +1639,10 @@ func isEntityPropertyAccess(expression, variable string) bool {
 // (#907; the implicit import is the same kind of extension). A branch that
 // rebinds name (WITH … AS name, UNWIND … AS name, YIELD name, a nested CALL
 // returning it) or returns another value under it is rejected.
-func callSubqueryReturnsOuterUnchanged(ctx context.Context, branches []string, name string) bool {
+func callSubqueryReturnsOuterUnchanged(ctx context.Context, branches []queryBodyBranch, name string) bool {
 	for _, branch := range branches {
-		clauses, ok := splitPipelineClausesAllowingProcedureCalls(ctx, branch)
+		split := cachedPipelineClausesBranch(ctx, branch, true)
+		clauses, ok := split.clauses, split.ok
 		if !ok || len(clauses) == 0 || clauses[len(clauses)-1].kind != pipelineClauseReturn {
 			return false
 		}
@@ -1677,13 +1663,24 @@ func callSubqueryReturnsOuterUnchanged(ctx context.Context, branches []string, n
 					}
 				}
 			case pipelineClauseUnwind:
-				if unwindBindingName(ctx, clause.text) == name {
+				if iteration, found := iterationClauseFor(clause); found && iteration.variable == name {
 					return false
 				}
 			case pipelineClauseCallSubquery:
-				inner, _, _, _ := (&StorageExecutor{}).parseCallSubquery(ctx, clause.text)
-				if returnIndex := topLevelKeywordIndex(ctx, inner, "RETURN"); returnIndex >= 0 {
-					for _, column := range pipelineReturnSourceColumns(ctx, inner[returnIndex:]) {
+				inner, retained := callBodyFromSyntax(clause)
+				if !retained {
+					return false
+				}
+				// A nested CALL's own RETURN columns, branch by branch.
+				for _, innerBranch := range inner.branches {
+					if len(innerBranch.clauses) == 0 {
+						continue
+					}
+					last := innerBranch.clauses[len(innerBranch.clauses)-1]
+					if last.kind != pipelineClauseReturn {
+						continue
+					}
+					for _, column := range pipelineReturnSourceColumns(ctx, strings.TrimSpace(last.text)) {
 						if column == name {
 							return false
 						}
@@ -1764,7 +1761,7 @@ func (e *StorageExecutor) validateClauseSubqueries(ctx context.Context, clause p
 	switch clause.kind {
 	case pipelineClauseWith, pipelineClauseCall:
 	case pipelineClauseReturn:
-		projected = projectTypeScopeIn(ctx, types, view, "WITH "+strings.TrimSpace(strings.TrimSpace(clause.text)[len("RETURN"):]))
+		projected = projectTypeScopeIn(ctx, types, view, clause)
 	default:
 		return e.validateSubqueryPatternBindings(ctx, view, clause.text)
 	}

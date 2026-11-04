@@ -1288,9 +1288,9 @@
     {
       "space": "prefixMVCCMetaLargeCommitIntent",
       "class": "store-metadata",
-      "origin": "pkg/storage/badger_managed.go:688",
-      "func": "pkg/storage.largeCommit.finish$1 pkg/storage/badger_managed.go:688",
-      "where": "pkg/storage.largeCommit.finish$1 pkg/storage/badger_managed.go:688"
+      "origin": "pkg/storage/badger_managed.go:705",
+      "func": "pkg/storage.largeCommit.finish$1 pkg/storage/badger_managed.go:705",
+      "where": "pkg/storage.largeCommit.finish$1 pkg/storage/badger_managed.go:705"
     },
     {
       "space": "prefixMVCCMetaManualSuppression",
@@ -3493,7 +3493,7 @@
       "field": "pkg/storage.commitWriter.durableVersion",
       "class": "writer physical publication cut",
       "func": "pkg/storage.largeCommit.finish",
-      "pos": "pkg/storage/badger_managed.go:705"
+      "pos": "pkg/storage/badger_managed.go:722"
     },
     {
       "field": "pkg/storage.commitWriter.entityJournalData",

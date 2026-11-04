@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -17,14 +16,35 @@ type pipelineCallMetadata struct {
 	batch   *boundTransactionBatch
 }
 
-func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Context, rows []pipelineRow, clause string, metadata *pipelineCallMetadata) ([]pipelineRow, *QueryStats, bool, error) {
-	body, afterCall, inTransactions, batchExpression := e.parseCallSubquery(ctx, clause)
-	if err := validateCallSubqueryBody(body); err != nil {
+func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Context, rows []pipelineRow, clause pipelineClause, metadata *pipelineCallMetadata) ([]pipelineRow, *QueryStats, bool, error) {
+	if err := ctx.Err(); err != nil {
 		return nil, nil, true, err
 	}
-	if strings.TrimSpace(afterCall) != "" {
-		return nil, nil, false, nil
+	call := cypherantlr.DescribeCall(clause.syntax)
+	inTransactions, batchExpression := call.Batch != nil, call.Batch
+	if err := validateCallSubqueryBody(strings.TrimSpace(queryBodyWindow(clause))); err != nil {
+		return nil, nil, true, err
 	}
+	body, retainedBody := callBodyFromSyntax(clause)
+	if !retainedBody {
+		return nil, nil, true, unresolvedStatementError()
+	}
+	// CALL's body text, projected from the retained product, serves the owners
+	// that still take source (USE admission, write detection, UNION execution
+	// and transaction batches). Imports and branch locals read the body itself:
+	// the retained clauses of the text those owners run.
+	bodyText := ""
+	bodyTextLoaded := false
+	text := func() string {
+		if !bodyTextLoaded {
+			bodyText, bodyTextLoaded = queryBodyText(body), true
+		}
+		return bodyText
+	}
+	importBody := body
+	// A transactional body keeps the text admission: its batch owner reads the
+	// CALL's text, and each batch runs the body's clauses from that text.
+	useBody := inTransactions
 	var batch *boundTransactionBatch
 	if inTransactions {
 		if metadata != nil {
@@ -40,13 +60,13 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	}
 	// An unscoped body imports through its branches' leading WITHs
 	// (unscopedCallImports, #907).
-	callScope := readCallSubqueryScope(ctx, clause)
+	callScope := scopeClauseFromSyntax(clause.syntax)
 	scopedImports, scoped := callScope.names, callScope.scoped
 	if metadata != nil {
 		declared := scopedImports
 		if declared == nil && !scoped {
 			var importErr error
-			declared, _, importErr = unscopedCallImports(ctx, body, func(name string) bool {
+			declared, _, importErr = unscopedCallImports(ctx, importBody, func(name string) bool {
 				_, exists := metadata.scope[name]
 				return exists
 			}, true)
@@ -61,25 +81,35 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 		}
 	}
 	targetExec := e
-	if use, remaining, hasUse, err := parseUseClause(ctx, body, true, cyphertext.AcceptedSource); hasUse || err != nil {
+	if body.branches[0].useStart >= 0 {
+		// A USE-bearing body keeps the explicit text admission: USE selects the
+		// graph its remaining clauses run on, and that remaining text stays the
+		// body the pipeline reads for this one form.
+		use, remaining, hasUse, err := parseUseClause(ctx, text(), true, cyphertext.AcceptedSource)
 		if err != nil {
 			return nil, nil, true, err
 		}
-		if err := e.dynamicUseError(use); err != nil {
-			return nil, nil, true, err
+		if hasUse {
+			if err := e.dynamicUseError(use); err != nil {
+				return nil, nil, true, err
+			}
+			scoped, scopedCtx, err := e.useDatabase(ctx, use.Name, remaining)
+			if err != nil {
+				return nil, nil, true, err
+			}
+			targetExec = scoped
+			ctx = scopedCtx
+			bodyText, bodyTextLoaded, useBody = remaining, true, true
+			// The remaining source is the body those clauses now are: it is admitted
+			// once, here, so the post-USE imports and branch-local keys describe the
+			// text that runs rather than the original USE-bearing statement.
+			importBody = readQueryBody(ctx, remaining, 0, len(remaining))
 		}
-		scoped, scopedCtx, err := e.useDatabase(ctx, use.Name, remaining)
-		if err != nil {
-			return nil, nil, true, err
-		}
-		targetExec = scoped
-		ctx = scopedCtx
-		body = remaining
 	}
 
 	if len(rows) == 0 {
 		if metadata != nil {
-			columns, err := e.ResultColumns(ctx, clause, resultmetadata.KnownScope(pipelineScopeColumns(metadata.scope)), cypherVersionFromContext(ctx) == "25", AcceptedSource)
+			columns, err := e.retainedClauseColumns(ctx, clause, metadata.scope)
 			if err != nil {
 				return nil, nil, true, err
 			}
@@ -94,7 +124,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	hasLegacyImports := false
 	if !scoped {
 		var importErr error
-		_, hasLegacyImports, importErr = unscopedCallImports(ctx, body, func(name string) bool {
+		_, hasLegacyImports, importErr = unscopedCallImports(ctx, importBody, func(name string) bool {
 			_, exists := rows[0][name]
 			return exists && !strings.HasPrefix(name, "$")
 		}, false)
@@ -111,14 +141,14 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	imports := scopedImports
 	if scopedImports == nil && (scoped || !hasLegacyImports) && len(rows) > 0 {
 		for name := range rows[0] {
-			if !strings.HasPrefix(name, "$") && (scoped || isIdentifierReferenced(body, name)) {
+			if !strings.HasPrefix(name, "$") && (scoped || isIdentifierReferenced(text(), name)) {
 				imports = append(imports, name)
 			}
 		}
 	}
-	write := callSubqueryQueryIsWrite(ctx, body)
+	write := callSubqueryQueryIsWrite(ctx, text())
 	independentRead := len(scopedImports) == 0 && !hasLegacyImports && len(imports) == 0 && !write
-	_, unionAll, _, isUnion := parseTopLevelUnionBranches(ctx, body)
+	_, unionAll, _, isUnion := parseTopLevelUnionBranches(ctx, text())
 
 	// A branch of an unscoped body that declares an outer variable's name
 	// itself (MATCH (n)-->(m)) gets a new variable, as in Cypher, not the
@@ -132,19 +162,24 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 			}
 		}
 		branchLocals = map[string][]string{}
-		branches := []string{body}
-		if unionBranches, _, _, union := parseTopLevelUnionBranches(ctx, body); union {
-			branches = unionBranches
-		}
-		for _, branch := range branches {
-			if locals := unscopedBranchLocals(ctx, branch, outerNames); len(locals) > 0 {
-				branchLocals[strings.TrimSpace(branch)] = locals
+		// Each retained branch is keyed by the text it runs as: its own projected
+		// bytes, which is the branch the UNION executor selects and, without
+		// UNION, the body itself.
+		branchTexts := queryBranchTexts(importBody)
+		for index, branch := range importBody.branches {
+			locals := unscopedBranchLocals(ctx, branch, outerNames)
+			if len(locals) == 0 || index >= len(branchTexts) {
+				continue
 			}
+			branchLocals[branchTexts[index]] = locals
 		}
 	}
 
 	run := func(runExec *StorageExecutor, runCtx context.Context, outerRows []pipelineRow) ([]pipelineRow, *QueryStats, bool, error) {
-		clauses, ok := pipelineClausesFor(runCtx, body)
+		clauses, ok := pipelineClausesForBody(runCtx, body)
+		if useBody {
+			clauses, ok = pipelineClausesFor(runCtx, text())
+		}
 		if !ok && !isUnion {
 			return nil, nil, false, nil
 		}
@@ -229,10 +264,17 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 			}
 			var inner *ExecuteResult
 			var execErr error
+			// A UNION body is executed branch by branch on its text; every other
+			// body runs the retained clauses. Only an unscoped body's branch-local
+			// filter is keyed by the branch text.
+			branchText := ""
+			if isUnion || len(branchLocals) > 0 {
+				branchText = text()
+			}
 			if isUnion {
-				inner, execErr = runExec.executeUnion(runCtx, body, unionAll, runBranch)
+				inner, execErr = runExec.executeUnion(runCtx, branchText, unionAll, runBranch)
 			} else {
-				inner, execErr = runBranch(body)
+				inner, execErr = runBranch(branchText)
 			}
 			memory.releaseSince(rowMark)
 			if memory != nil && execErr == nil && hasReturn && inner != nil {
@@ -305,7 +347,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 		batch := rows[start:end]
 		var batchRows []pipelineRow
 		var batchStats *QueryStats
-		_, err := targetExec.executeTransactionBatch(ctx, clause, func(txCtx context.Context, txExec *StorageExecutor) (*ExecuteResult, error) {
+		_, err := targetExec.executeTransactionBatch(ctx, clause.text, func(txCtx context.Context, txExec *StorageExecutor) (*ExecuteResult, error) {
 			var handled bool
 			var runErr error
 			batchRows, batchStats, handled, runErr = run(txExec, txCtx, batch)

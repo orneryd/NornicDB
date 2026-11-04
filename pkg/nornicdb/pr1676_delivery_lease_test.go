@@ -3,6 +3,7 @@ package nornicdb
 import (
 	"context"
 	"fmt"
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -19,7 +20,7 @@ func TestEmbedWorkerListenerCanChangeProvider(t *testing.T) {
 		for _, walWrapped := range []bool{false, true} {
 			for _, setter := range []string{"single", "resolver"} {
 				t.Run(fmt.Sprintf("buffered=%v/wal=%v/%s", buffered, walWrapped, setter), func(t *testing.T) {
-					b, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: t.TempDir(), WriteBehind: buffered, WriteBehindInterval: time.Hour})
+					b, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: t.TempDir(), WriteBehind: buffered, WriteBehindInterval: time.Hour}))
 					require.NoError(t, err)
 					defer b.Close()
 					b.SetEmbeddingsEnabled(true)

@@ -102,8 +102,8 @@ func (e *StorageExecutor) validateMergeSemanticScopes(ctx context.Context, cyphe
 				return err
 			}
 		case pipelineClauseUnwind:
-			if alias := unwindBindingName(ctx, clause.text); alias != "" {
-				scope.bind(alias)
+			if iteration, found := iterationClauseFor(clause); found {
+				scope.bind(iteration.variable)
 			}
 		case pipelineClauseMerge:
 			if err := e.validateMergeClause(ctx, scope, clause.text, cypher25); err != nil {

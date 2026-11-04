@@ -19,7 +19,7 @@ func TestStatementSyntaxConsumerWindowsAndNames(t *testing.T) {
 	require.True(t, found, "a statement window may omit its preamble without losing the original source")
 	require.Equal(t, CypherParserRULE_query, query.Rule())
 	require.Equal(t, source, query.Source())
-	_, found = syntax.LeadingCall()
+	_, found = syntax.LeadingCall(0)
 	require.False(t, found, "a CALL after a preamble is not the source-leading token")
 	var call SyntaxNode
 	syntax.Walk(func(node SyntaxNode) func() {
@@ -29,6 +29,9 @@ func TestStatementSyntaxConsumerWindowsAndNames(t *testing.T) {
 		return nil
 	})
 	require.True(t, call.Valid())
+	leadingWindow, found := syntax.LeadingCall(start)
+	require.True(t, found, "the CALL after a preamble is addressed by its original byte offset")
+	require.Equal(t, call.ID(), leadingWindow.ID())
 	from, to := call.Span()
 	window, found := syntax.Window(from, to, CypherParserRULE_callSubquery)
 	require.True(t, found)
@@ -60,7 +63,7 @@ func TestStatementSyntaxConsumerWindowsAndNames(t *testing.T) {
 
 	procedure, err := ParseSyntax(ctx, "/* é */ CALL `db`.`la``bels`() YIELD label RETURN label", StatementEntry, false, RawSource)
 	require.NoError(t, err)
-	leading, found := procedure.LeadingCall()
+	leading, found := procedure.LeadingCall(0)
 	require.True(t, found)
 	require.Equal(t, "db.la`bels", leading.ChildRule(CypherParserRULE_invocationName).QualifiedName())
 	_, found = leading.DirectToken(CypherLexerLBRACE)
@@ -68,7 +71,7 @@ func TestStatementSyntaxConsumerWindowsAndNames(t *testing.T) {
 
 	empty, err := ParseSyntax(ctx, "CALL () { /* empty body */ }", StatementEntry, false, RawSource)
 	require.NoError(t, err, "structure remains readable before semantic conclusion validation")
-	emptyCall, found := empty.LeadingCall()
+	emptyCall, found := empty.LeadingCall(0)
 	require.True(t, found)
 	left, found := emptyCall.DirectToken(CypherLexerLBRACE)
 	require.True(t, found)
@@ -80,7 +83,7 @@ func TestStatementSyntaxConsumerWindowsAndNames(t *testing.T) {
 	require.True(t, found)
 	from, to = emptyBody.Span()
 	require.Equal(t, from, to)
-	_, found = (StatementSyntax{}).LeadingCall()
+	_, found = (StatementSyntax{}).LeadingCall(0)
 	require.False(t, found)
 }
 

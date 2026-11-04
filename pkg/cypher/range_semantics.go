@@ -113,8 +113,11 @@ func (e *StorageExecutor) validateRangeCalls(ctx context.Context, expression str
 	return nil
 }
 
-func (e *StorageExecutor) validatePipelineRangeArguments(ctx context.Context, rows []pipelineRow, clause, keyword string) error {
-	expressions := projectionExpressions(ctx, clause, keyword)
+func (e *StorageExecutor) validatePipelineRangeArguments(ctx context.Context, rows []pipelineRow, clause pipelineClause, keyword string) error {
+	return e.validatePipelineRangeExpressions(ctx, rows, projectionExpressions(ctx, clause, keyword))
+}
+
+func (e *StorageExecutor) validatePipelineRangeExpressions(ctx context.Context, rows []pipelineRow, expressions []string) error {
 	if len(expressions) == 0 {
 		return nil
 	}

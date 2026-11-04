@@ -61,7 +61,7 @@ func extractProcedureName(ctx context.Context, source string) (string, error) {
 	if !syntax.Valid() {
 		return "", nil
 	}
-	call, found := syntax.LeadingCall()
+	call, found := syntax.LeadingCall(0)
 	if !found {
 		return "", nil
 	}

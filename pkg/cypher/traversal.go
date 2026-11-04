@@ -1435,7 +1435,7 @@ func (e *StorageExecutor) traverseGraphSequential(ctx context.Context, match *Tr
 			relationshipsNeedOnlyHeaders: traversalRelationshipsNeedOnlyHeaders(match),
 		}
 
-		paths := e.findPaths(traversalCtx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode)
+		paths := e.findPaths(traversalCtx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode, nil)
 		traversalCtx.memory.close()
 		results = append(results, paths...)
 		if remaining > 0 {
@@ -1508,7 +1508,7 @@ func (e *StorageExecutor) traverseGraphParallel(ctx context.Context, match *Trav
 					relationshipsNeedOnlyHeaders: traversalRelationshipsNeedOnlyHeaders(match),
 				}
 
-				paths := e.findPaths(traversalCtx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode)
+				paths := e.findPaths(traversalCtx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode, nil)
 				workerPaths = append(workerPaths, paths...)
 			}
 
@@ -1740,7 +1740,7 @@ func (e *StorageExecutor) traverseFromNode(traversalCtx context.Context, startNo
 	ctx.nodeProperties = match.endpointProperties
 	ctx.endpointsNeedOnlyLabels = traversalEndpointsNeedOnlyLabels(match)
 	ctx.relationshipsNeedOnlyHeaders = traversalRelationshipsNeedOnlyHeaders(match)
-	return e.findPaths(ctx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode)
+	return e.findPaths(ctx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode, nil)
 }
 
 // newTraversalContext is the depth-first search state for relationship
@@ -1799,7 +1799,9 @@ func (e *StorageExecutor) loadTraversalEndpointNode(ctx *TraversalContext, nextN
 	return nextNode, true
 }
 
-// findPaths performs DFS to find all paths matching the pattern
+// findPaths appends matching paths in DFS order to the traversal-owned result
+// accumulator. Retained paths copy their node/edge slices once at acceptance;
+// recursive frames do not allocate and copy intermediate result collections.
 func (e *StorageExecutor) findPaths(
 	ctx *TraversalContext,
 	currentNode *storage.Node,
@@ -1807,8 +1809,8 @@ func (e *StorageExecutor) findPaths(
 	pathEdges []*storage.Edge,
 	depth int,
 	endPattern *nodePatternInfo,
+	results []PathResult,
 ) []PathResult {
-	var results []PathResult
 
 	// Every frame and sibling expansion must observe cancellation. Sampling
 	// recursive entries alone leaves callers expanding the remaining siblings
@@ -1919,30 +1921,30 @@ func (e *StorageExecutor) findPaths(
 
 		ctx.usedEdges[edge.Identity()] = true
 
-		// Recurse with optimized path copying (pre-allocate exact size)
+		// Reuse the DFS working path across siblings. Retained results above
+		// already copy their node/relationship slices, so copying each working
+		// prefix as well allocates twice for every successful branch.
 		nextNodesLen, ok := util.SafeIntAdd(len(pathNodes), 1)
 		if !ok {
-			ctx.usedEdges[edge.Identity()] = false
+			delete(ctx.usedEdges, edge.Identity())
 			continue
 		}
-		newPathNodes := make([]*storage.Node, nextNodesLen)
-		copy(newPathNodes, pathNodes)
-		newPathNodes[len(pathNodes)] = nextNode
-
 		nextEdgesLen, ok := util.SafeIntAdd(len(pathEdges), 1)
 		if !ok {
-			ctx.usedEdges[edge.Identity()] = false
+			delete(ctx.usedEdges, edge.Identity())
 			continue
 		}
-		newPathEdges := make([]*storage.Edge, nextEdgesLen)
-		copy(newPathEdges, pathEdges)
-		newPathEdges[len(pathEdges)] = edge
+		pathNodes = append(pathNodes, nextNode)
+		pathEdges = append(pathEdges, edge)
+		results = e.findPaths(ctx, nextNode, pathNodes, pathEdges, depth+1, endPattern, results)
+		pathNodes[nextNodesLen-1] = nil
+		pathEdges[nextEdgesLen-1] = nil
+		pathNodes = pathNodes[:nextNodesLen-1]
+		pathEdges = pathEdges[:nextEdgesLen-1]
 
-		subPaths := e.findPaths(ctx, nextNode, newPathNodes, newPathEdges, depth+1, endPattern)
-		results = append(results, subPaths...)
-
-		// Unmark for sibling paths.
-		ctx.usedEdges[edge.Identity()] = false
+		// Only the active path owns marks. Keeping false entries retains every
+		// visited sibling identity and grows this map with fanout rather than depth.
+		delete(ctx.usedEdges, edge.Identity())
 	}
 
 	return results
@@ -1982,6 +1984,30 @@ type PathContext struct {
 	paths        map[string]*PathResult // Full paths by variable name for relationships(path), nodes(path)
 	allPathEdges []*storage.Edge        // All edges in the path (for variable-length patterns)
 	allPathNodes []*storage.Node        // All nodes in the path
+}
+
+// Binding insertion owns lazy allocation: an anonymous node, unnamed
+// relationship or absent path needs no binding map. The same insertion rule
+// applies when correlated WHERE evaluation adds outer entities.
+func (path *PathContext) bindNode(name string, node *storage.Node) {
+	if path.nodes == nil {
+		path.nodes = make(map[string]*storage.Node)
+	}
+	path.nodes[name] = node
+}
+
+func (path *PathContext) bindRelationship(name string, edge *storage.Edge) {
+	if path.rels == nil {
+		path.rels = make(map[string]*storage.Edge)
+	}
+	path.rels[name] = edge
+}
+
+func (path *PathContext) bindPath(name string, value *PathResult) {
+	if path.paths == nil {
+		path.paths = make(map[string]*PathResult)
+	}
+	path.paths[name] = value
 }
 
 // pathContextValues returns the path's variables as row values: nodes and
@@ -2051,9 +2077,6 @@ func (e *StorageExecutor) pathContextRowValue(ctx context.Context, path *PathRes
 // buildPathContext creates a context for evaluating expressions over a path
 func (e *StorageExecutor) buildPathContext(path PathResult, match *TraversalMatch) PathContext {
 	ctx := PathContext{
-		nodes:        make(map[string]*storage.Node),
-		rels:         make(map[string]*storage.Edge),
-		paths:        make(map[string]*PathResult),
 		pathLength:   path.Length,        // Store path length for length(path) function
 		allPathEdges: path.Relationships, // Store all edges for relationships(path)
 		allPathNodes: path.Nodes,         // Store all nodes for nodes(path)
@@ -2062,17 +2085,17 @@ func (e *StorageExecutor) buildPathContext(path PathResult, match *TraversalMatc
 	// Map the path variable if present (for path functions like relationships(path), nodes(path))
 	if match.PathVariable != "" {
 		pathCopy := path // Make a copy to store pointer
-		ctx.paths[match.PathVariable] = &pathCopy
+		ctx.bindPath(match.PathVariable, &pathCopy)
 	}
 
 	// Map start node
 	if match.StartNode.variable != "" && len(path.Nodes) > 0 {
-		ctx.nodes[match.StartNode.variable] = path.Nodes[0]
+		ctx.bindNode(match.StartNode.variable, path.Nodes[0])
 	}
 
 	// Map end node
 	if match.EndNode.variable != "" && len(path.Nodes) > 0 {
-		ctx.nodes[match.EndNode.variable] = path.Nodes[len(path.Nodes)-1]
+		ctx.bindNode(match.EndNode.variable, path.Nodes[len(path.Nodes)-1])
 	}
 
 	// For chained patterns, map intermediate nodes
@@ -2089,7 +2112,7 @@ func (e *StorageExecutor) buildPathContext(path PathResult, match *TraversalMatc
 			if intermediateInfo.variable != "" {
 				pathIdx := nodeOffset
 				if pathIdx < len(path.Nodes) {
-					ctx.nodes[intermediateInfo.variable] = path.Nodes[pathIdx]
+					ctx.bindNode(intermediateInfo.variable, path.Nodes[pathIdx])
 				}
 			}
 		}
@@ -2108,9 +2131,9 @@ func (e *StorageExecutor) buildPathContext(path PathResult, match *TraversalMatc
 			if seg.Relationship.Variable != "" {
 				if seg.Relationship.VariableLength {
 					relationships := append([]*storage.Edge{}, path.Relationships[relationshipOffset:segmentEnd]...)
-					ctx.paths[seg.Relationship.Variable] = &PathResult{Relationships: relationships}
+					ctx.bindPath(seg.Relationship.Variable, &PathResult{Relationships: relationships})
 				} else if relationshipOffset < segmentEnd {
-					ctx.rels[seg.Relationship.Variable] = path.Relationships[relationshipOffset]
+					ctx.bindRelationship(seg.Relationship.Variable, path.Relationships[relationshipOffset])
 				}
 			}
 			relationshipOffset = segmentEnd
@@ -2120,9 +2143,9 @@ func (e *StorageExecutor) buildPathContext(path PathResult, match *TraversalMatc
 		if match.Relationship.Variable != "" {
 			if match.Relationship.VariableLength {
 				relationships := append([]*storage.Edge{}, path.Relationships...)
-				ctx.paths[match.Relationship.Variable] = &PathResult{Relationships: relationships}
+				ctx.bindPath(match.Relationship.Variable, &PathResult{Relationships: relationships})
 			} else if len(path.Relationships) > 0 {
-				ctx.rels[match.Relationship.Variable] = path.Relationships[0]
+				ctx.bindRelationship(match.Relationship.Variable, path.Relationships[0])
 			}
 		}
 	}
@@ -2157,11 +2180,11 @@ func (e *StorageExecutor) filterPathsByWhere(ctx context.Context, paths []PathRe
 			switch v := value.(type) {
 			case *storage.Node:
 				if v != nil {
-					context.nodes[name] = v
+					context.bindNode(name, v)
 				}
 			case *storage.Edge:
 				if v != nil {
-					context.rels[name] = v
+					context.bindRelationship(name, v)
 				}
 			}
 		}

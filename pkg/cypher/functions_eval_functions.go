@@ -537,11 +537,13 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 	// ========================================
 	// Date/Time Functions (Neo4j compatible)
 	// ========================================
+	// callFacts1 is the call read above for the registry dispatch: the
+	// temporal evaluator reads the same facts instead of parsing expr again.
 	if value, handled, callErr := e.evaluateTemporalConstructor(ctx, func(argument string) (interface{}, bool, error) {
 		value := e.evaluateExpressionWithContextFull(ctx, argument, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		err := getExpressionFailure(ctx)
 		return value, err == nil, err
-	}, expr); handled {
+	}, callFacts1); handled {
 		recordExpressionFailure(ctx, callErr)
 		return value
 	}

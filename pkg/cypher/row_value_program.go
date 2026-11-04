@@ -475,10 +475,16 @@ func (c *rowValueCompiler) compileValue(ctx context.Context, expr string) (rowVa
 }
 
 // compileFunction compiles a function call evaluateRowValueText evaluates
-// itself; any other is read from the text. None of these names is a
-// temporal, math, extension, plugin (those have a dot) or GDS function,
-// which evaluateRowValueText tries first.
+// itself; any other is read from the text. A temporal constructor
+// (isTemporalConstructor: date, time, localtime, localdatetime, datetime and
+// duration) keeps the canonical evaluator, evaluateTemporalConstructor, and
+// compiles its arguments. None of the other names is a math, extension,
+// plugin (those have a dot) or GDS function, which evaluateRowValueText
+// tries first.
 func (c *rowValueCompiler) compileFunction(ctx context.Context, expr, name, argument string) (rowValueNode, rowValueInfo) {
+	if isTemporalConstructor(name) {
+		return c.compileTemporalFunction(ctx, expr, name, argument)
+	}
 	switch name {
 	case "startnode", "endnode":
 		variable := strings.TrimSpace(argument)
@@ -511,6 +517,42 @@ func (c *rowValueCompiler) compileFunction(ctx context.Context, expr, name, argu
 		return c.compileReduce(ctx, expr, form)
 	}
 	return rowTextValue(expr)
+}
+
+// compileTemporalFunction compiles a temporal constructor's arguments for
+// evaluateTemporalConstructor. The evaluator evaluates an argument by its
+// text: the trimmed whole argument, or one of the arguments splitFunctionArgs
+// returns. The node therefore keeps those texts with the parts compiled from
+// them and answers the evaluator from that slice, which is at most the call's
+// arguments plus its whole argument. A qualified temporal function
+// (X.truncate, the duration.between family, datetime.fromepoch*) is not a
+// temporal constructor and keeps the text path.
+func (c *rowValueCompiler) compileTemporalFunction(ctx context.Context, expr, name, argument string) (rowValueNode, rowValueInfo) {
+	arguments := splitTopLevelComma(argument)
+	texts := make([]string, 0, len(arguments)+1)
+	parts := make([]rowValueNode, 0, len(arguments)+1)
+	retain := func(text string) {
+		// An empty argument is unresolved however it is read, so it needs no
+		// part: the node answers an unmatched text as unresolved.
+		if text == "" {
+			return
+		}
+		for _, retained := range texts {
+			if retained == text {
+				return
+			}
+		}
+		part, _ := c.part(ctx, text)
+		texts, parts = append(texts, text), append(parts, part)
+	}
+	for _, text := range arguments {
+		retain(text)
+	}
+	retain(strings.TrimSpace(argument))
+	// The constructors' part arguments are impure: the result may read the
+	// statement's clock, and neither a clock nor an argument's error may be
+	// hoisted out of a list evaluation or kept across rows.
+	return bound(expr, &rowTemporalFunctionNode{function: name, argument: argument, texts: texts, parts: parts}, impureRowValue())
 }
 
 // compileLoopBody compiles a per-element part of a list evaluation over
@@ -691,6 +733,38 @@ type rowTextNode struct{ text string }
 
 func (n *rowTextNode) eval(ctx context.Context, e *StorageExecutor, values map[string]interface{}, _ [][]rowValueMemo) (interface{}, bool, error) {
 	return e.evaluateRowValueText(ctx, n.text, values)
+}
+
+// rowTemporalFunctionNode is a temporal constructor (date, time, localtime,
+// localdatetime, datetime, duration): evaluateTemporalConstructor owns its
+// semantics, and the node answers the argument texts that evaluator asks for
+// with the parts compiled for them (texts, parts). A text the evaluator asks
+// for that wasn't compiled is unresolved; it is never read from the text here.
+type rowTemporalFunctionNode struct {
+	function string
+	argument string
+	texts    []string
+	parts    []rowValueNode
+}
+
+func (n *rowTemporalFunctionNode) eval(ctx context.Context, e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error) {
+	// The constructors' clock and the arguments' evaluation use the row's
+	// statement context and the operation context, as evaluateRowValueText
+	// reads them.
+	temporalContext := ctx
+	if inherited := rowStatementContext(values); inherited != nil {
+		temporalContext = inherited
+	}
+	evaluate := func(argument string) (interface{}, bool, error) {
+		for index, text := range n.texts {
+			if text == argument {
+				return n.parts[index].eval(ctx, e, values, frames)
+			}
+		}
+		return nil, false, nil
+	}
+	value, handled, err := e.evaluateTemporalConstructor(temporalContext, evaluate, functionCallFacts{name: n.function, inner: n.argument})
+	return value, handled && err == nil, err
 }
 
 // rowBoundNode is values[text] when the row binds the text, else inner.

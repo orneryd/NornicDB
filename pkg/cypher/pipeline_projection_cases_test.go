@@ -59,7 +59,7 @@ func TestPipelineWithProjectionCases(t *testing.T) {
 					if tc.input != nil {
 						input = tc.input
 					}
-					out, ok := exec.pipelineApplyWith(context.Background(), input, tc.query, nil, false)
+					out, ok := exec.pipelineApplyWith(context.Background(), input, composedPipelineClause(context.Background(), pipelineClauseWith, tc.query), nil, false)
 					require.Equal(t, tc.recognized, ok)
 					if !tc.recognized {
 						require.Nil(t, out)

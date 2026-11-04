@@ -9,7 +9,6 @@ import (
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/orneryd/nornicdb/pkg/bolt"
-	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -65,13 +64,14 @@ func TestHybridSearchPicksUpEmbedderAfterStartup(t *testing.T) {
 			require.True(t, svc.IsReady())
 			require.Nil(t, db.GetCypherExecutor().GetEmbedder())
 
-			manager, err := multidb.NewDatabaseManager(t.Context(), db.GetBaseStorageForManager(), nil)
-			require.NoError(t, err)
-			t.Cleanup(func() {
-				_ = db.Close()
-				_ = manager.Close()
-			})
-			server := bolt.NewWithDatabaseManager(bolt.DefaultConfig(), NewDBQueryExecutor(db), manager)
+			// Bolt takes the host's canonical per-database executor factory and
+			// the database manager it shares with HTTP, exactly as runServe
+			// wires them, so the embedder published after startup reaches Bolt
+			// sessions through the wiring production uses.
+			httpServer := newBoltExecutorHost(t, db)
+			boltConfig := bolt.DefaultConfig()
+			boltConfig.DatabaseExecutorOptions = httpServer.DatabaseScopedExecutorOptions
+			server := bolt.NewWithDatabaseManager(boltConfig, NewDBQueryExecutor(db), httpServer.GetDatabaseManager())
 			listener, err := net.Listen("tcp", "127.0.0.1:0")
 			require.NoError(t, err)
 			served := make(chan error, 1)

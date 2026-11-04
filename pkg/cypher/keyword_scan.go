@@ -544,6 +544,15 @@ func labelWildcardAt(s string, i int) bool {
 }
 
 func lastLiveByte(text string, position int) int {
+	end := min(max(position, 0), len(text))
+	// Without quotes or comment introducers, a reverse whitespace scan has
+	// the same result as walking the whole prefix to track lexical state.
+	if strings.IndexAny(text[:end], "'\"`/") < 0 {
+		for end > 0 && cyphertext.IsWhitespaceAt(text, end-1) {
+			end--
+		}
+		return end - 1
+	}
 	last := -1
 	for index := 0; index < position && index < len(text); {
 		if end := cyphertext.CommentEnd(text, index); end >= 0 {

@@ -610,6 +610,21 @@ type Config struct {
 	// Localizer renders human-readable Bolt failures. Nil preserves en-US.
 	Localizer *localization.Manager
 
+	// DatabaseExecutorOptions, when set, is the host's canonical
+	// per-database executor factory: it returns the complete
+	// cypher.DatabaseScopedExecutorOptions the host publishes for dbName
+	// (query-result cache policy, statement-cache owner, localization, base
+	// executor and the runtime wiring such as settings, catalog, search and
+	// logging). cmd/nornicdb wires it directly to
+	// (*server.Server).DatabaseScopedExecutorOptions so HTTP and Bolt build
+	// database-scoped executors from one configuration.
+	//
+	// The callback runs once per executor construction, never per query.
+	// Bolt supplies its own database manager, resolved database name,
+	// forwarded auth token and authenticated-storage decision.
+	// Leave nil to keep a standalone server configuring its own executors.
+	DatabaseExecutorOptions func(dbName, authToken string) cypher.DatabaseScopedExecutorOptions
+
 	// TLSConfig, when non-nil, enables TLS-on-first-byte sniffing on the
 	// Bolt port. Mirrors Neo4j's sslContext + requiresEncryption pattern:
 	// one listener accepts plain bolt://, bolt+s://, ws://, and wss://
@@ -2236,6 +2251,20 @@ type baseCypherExecutorProvider interface {
 }
 
 func (s *Session) databaseScopedExecutorOptions(dbName string, useAuthScopedResolver bool) cypher.DatabaseScopedExecutorOptions {
+	// A host that owns the canonical per-database executor factory supplies
+	// the complete configuration (result-cache policy, statement-cache owner,
+	// settings, logger, search and mutation wiring), so this session neither
+	// re-derives it nor post-configures the executor afterwards. Bolt keeps
+	// its database manager and the session's resolved database name,
+	// forwarded auth token and authenticated-storage decision.
+	if s.server.config != nil && s.server.config.DatabaseExecutorOptions != nil {
+		options := s.server.config.DatabaseExecutorOptions(dbName, s.forwardedAuthHeader)
+		options.Name = dbName
+		options.Storage = s.server.dbManager
+		options.AuthToken = s.forwardedAuthHeader
+		options.UseAuthenticatedStorage = useAuthScopedResolver
+		return options
+	}
 	options := cypher.DatabaseScopedExecutorOptions{
 		Name: dbName, Storage: s.server.dbManager,
 		AuthToken: s.forwardedAuthHeader, UseAuthenticatedStorage: useAuthScopedResolver,
