@@ -18,6 +18,8 @@ func (r *subscriptionRecorder) SubscribeEvents(handlers EventHandlers) error {
 	return nil
 }
 
+func (r *subscriptionRecorder) EventNotificationsSettled() bool { return false }
+
 // A subscription reaches the publishing engine through each storage wrapper;
 // the namespaced view delivers its own namespace only, with stripped IDs, and
 // the resets that cover it. An engine that cannot deliver events is an error.

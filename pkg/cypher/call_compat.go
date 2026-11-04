@@ -1,3 +1,4 @@
+// Author: Codex implementation lane, 2026-10-26 (NOR-148).
 package cypher
 
 // Author: declared-list-owners lane (Claude), 2026-10-30: result headers come from procedure_result_columns.go.
@@ -238,7 +239,7 @@ func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(ctx context.Cont
 
 	// If the query asks for `<prop>:*` against a field the index didn't
 	// declare, mirror Neo4j-Lucene: empty result set (no postings list).
-	if isPresenceQuery && len(targetProperties) > 0 && !containsString(targetProperties, presenceProp) {
+	if fulltextPresenceOutsideIndex(isPresenceQuery, presenceProp, targetProperties) {
 		return result, nil
 	}
 
@@ -246,129 +247,20 @@ func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(ctx context.Cont
 		if opts.limit == 0 {
 			return result, nil
 		}
-		seen := 0
-		err := storage.StreamEdgesWithFallback(ctx, e.storage, streamChunkSize, func(edge *storage.Edge) error {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if !matchesRelationshipTypes(edge, targetTypes) {
-				return nil
-			}
-			if wildcard {
-				// As for nodes (and in Neo4j), a relationship with none of the
-				// indexed properties has no document, so the wildcard skips it
-				// (#547).
-				if len(targetProperties) > 0 && !edgeHasAnyNonEmptyProperty(edge, targetProperties) {
-					return nil
-				}
-				if appendFulltextOptionedRow(result, opts, &seen, []interface{}{e.procedureRelationship(edge), 1.0}) {
-					return storage.ErrIterationStopped
-				}
-				return nil
-			}
-			if edgeHasNonEmptyProperty(edge, presenceProp) {
-				if appendFulltextOptionedRow(result, opts, &seen, []interface{}{e.procedureRelationship(edge), 1.0}) {
-					return storage.ErrIterationStopped
-				}
-			}
-			return nil
-		})
-		if err != nil && err != storage.ErrIterationStopped {
+		if err := e.fulltextUnrankedRows(ctx, indexName, targetTypes, targetProperties, true, wildcard, presenceProp, opts, result); err != nil {
 			return nil, err
 		}
 		return result, nil
 	}
-
-	parsed, err := ParseFulltextQuery(query)
+	hits, err := e.fulltextHits(ctx, indexName, query, targetTypes, targetProperties, true, opts)
 	if err != nil {
 		return nil, err
 	}
-	if parsed.IsEmpty() {
-		return result, nil
+	for _, hit := range hits {
+		result.Rows = append(result.Rows, []interface{}{e.procedureRelationship(storage.CopyEdge(hit.edge)), hit.score})
 	}
-
-	type edgeDoc struct {
-		edge *storage.Edge
-		doc  *ftDoc
-	}
-	docs := make([]edgeDoc, 0)
-	docFreq := make(map[string]int, len(parsed.PrimaryTerms()))
-	var totalDocLen int64
-	if err := storage.StreamEdgesWithFallback(ctx, e.storage, streamChunkSize, func(edge *storage.Edge) error {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if !matchesRelationshipTypes(edge, targetTypes) {
-			return nil
-		}
-		doc := buildEdgeFulltextDoc(edge, targetProperties)
-		if doc == nil {
-			return nil
-		}
-		docs = append(docs, edgeDoc{edge: edge, doc: doc})
-		totalDocLen += int64(doc.contentTokenN)
-		for _, term := range parsed.PrimaryTerms() {
-			if strings.Contains(doc.contentLower, term) {
-				docFreq[term]++
-			}
-		}
-		return nil
-	}); err != nil {
-		return nil, err
-	}
-	totalDocs := len(docs)
-	avgDocLen := 100.0
-	if totalDocs > 0 {
-		avgDocLen = float64(totalDocLen) / float64(totalDocs)
-	}
-
-	evalCtx := &ftEvalCtx{
-		DefaultFields: targetProperties,
-		avgDocLen:     avgDocLen,
-		totalDocs:     totalDocs,
-		docFreq:       docFreq,
-	}
-
-	type scoredEdge struct {
-		edge  *storage.Edge
-		score float64
-	}
-	scored := make([]scoredEdge, 0, len(docs))
-	for _, d := range docs {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		matched, score := parsed.Match(evalCtx, d.doc)
-		if !matched {
-			continue
-		}
-		if score <= 0 {
-			score = 1.0
-		}
-		scored = append(scored, scoredEdge{edge: d.edge, score: score})
-	}
-
-	sort.Slice(scored, func(i, j int) bool {
-		if scored[i].score == scored[j].score {
-			return scored[i].edge.ID < scored[j].edge.ID
-		}
-		return scored[i].score > scored[j].score
-	})
-	result.Rows = make([][]interface{}, 0, len(scored))
-	for _, s := range scored {
-		result.Rows = append(result.Rows, []interface{}{e.procedureRelationship(s.edge), s.score})
-	}
-	applyFulltextOptions(result, opts)
 
 	return result, nil
-}
-
-// buildEdgeFulltextDoc mirrors buildNodeFulltextDoc for relationships.
-func buildEdgeFulltextDoc(edge *storage.Edge, properties []string) *ftDoc {
-	if edge == nil {
-		return nil
-	}
-	return buildFulltextDocFromProperties(edge.Properties, extractEdgeTextContent(edge, properties))
 }
 
 // edgeHasNonEmptyProperty mirrors nodeHasNonEmptyProperty: the
@@ -456,8 +348,15 @@ func extractEdgeTextContent(edge *storage.Edge, properties []string) string {
 		}
 		return strings.TrimSpace(content.String())
 	}
-	for _, val := range edge.Properties {
-		writeFulltextValue(&content, val)
+	// The all-property extension has no declared order. Sort exact property
+	// names so body statistics and phrase scoring never depend on Go map order.
+	keys := make([]string, 0, len(edge.Properties))
+	for key := range edge.Properties {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		writeFulltextValue(&content, edge.Properties[key])
 	}
 	return strings.TrimSpace(content.String())
 }
@@ -554,7 +453,7 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsWithVector(ctx cont
 	}
 	var scoredEdges []scoredEdge
 
-	if err := storage.StreamEdgesWithFallback(ctx, e.storage, streamChunkSize, func(edge *storage.Edge) error {
+	if err := storage.StreamEdgesWithFallback(ctx, e.storage, storage.StreamChunkSize, func(edge *storage.Edge) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
