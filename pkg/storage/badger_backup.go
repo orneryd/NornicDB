@@ -111,6 +111,10 @@ func (b *BadgerEngine) Restore(path string) (restoreErr error) {
 		return localizedError(localization.StorageClientRestoreBusy(restoreReadDrainTimeout.String()), nil)
 	}
 	defer db.oracle.releaseReads()
+	// A restore replaces every named-index document, even when the backup has the
+	// same entity count or loading later fails. Readers rebuild from the
+	// replacement store; queued pre-restore notifications cannot certify it.
+	defer b.graphMutationVersions.changedPrefix("")
 
 	b.rememberIndexReadiness(startupLabelIndex, false)
 	if err := db.DropAll(context.Background()); err != nil {
@@ -391,6 +395,11 @@ func (b *BadgerEngine) deleteByPrefixHeld(ctx context.Context, prefix string, li
 	if err := b.db.DropPrefix(context.Background(), prefixDropOptions{mode: mode}, dropPrefixes...); err != nil {
 		return 0, 0, nil, localizedError(localization.StorageClientDropPrefixFailed(prefixNode, err), err)
 	}
+	// Rows are gone from here on, whichever cleanup step below may fail. A retry
+	// counts nothing to delete, so only this attempt can move the revision.
+	if nodesDeleted > 0 || edgesDeleted > 0 {
+		defer b.graphMutationVersions.changedPrefix(prefix)
+	}
 	// A whole-namespace drop keeps admission fenced until its schema owner
 	// is retired after successful cleanup. Do not take that owner's mutex
 	// here: a pre-fence metadata writer may still hold it in its committed
@@ -550,9 +559,6 @@ func (b *BadgerEngine) deleteByPrefixHeld(ctx context.Context, prefix string, li
 		delete(b.propKeyDict.persisted, namespace)
 		delete(b.propKeyDict.nextID, namespace)
 		b.propKeyDict.mu.Unlock()
-	}
-	if nodesDeleted > 0 || edgesDeleted > 0 {
-		defer b.graphMutationVersions.changedPrefix(prefix)
 	}
 	// Clear/adjust caches and cached counters.
 	if wholeNamespace {

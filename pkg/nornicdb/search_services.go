@@ -120,16 +120,19 @@ func (e *dbSearchService) flushDelay() time.Duration {
 
 // DatabaseSearchStatus exposes per-database search service readiness/progress.
 type DatabaseSearchStatus struct {
-	Ready           bool    `json:"ready"`
-	Building        bool    `json:"building"`
-	Initialized     bool    `json:"initialized"`
-	Strategy        string  `json:"strategy,omitempty"`
-	Phase           string  `json:"phase,omitempty"`
-	Error           string  `json:"error,omitempty"`
-	ProcessedNodes  int64   `json:"processed_nodes,omitempty"`
-	TotalNodes      int64   `json:"total_nodes,omitempty"`
-	RateNodesPerSec float64 `json:"rate_nodes_per_sec,omitempty"`
-	ETASeconds      int64   `json:"eta_seconds,omitempty"`
+	// FulltextRetention reports optional procedure copies without changing
+	// readiness: released indexes continue searching through storage.
+	FulltextRetention []search.FulltextRetentionStatus `json:"fulltext_retention,omitempty"`
+	Ready             bool                             `json:"ready"`
+	Building          bool                             `json:"building"`
+	Initialized       bool                             `json:"initialized"`
+	Strategy          string                           `json:"strategy,omitempty"`
+	Phase             string                           `json:"phase,omitempty"`
+	Error             string                           `json:"error,omitempty"`
+	ProcessedNodes    int64                            `json:"processed_nodes,omitempty"`
+	TotalNodes        int64                            `json:"total_nodes,omitempty"`
+	RateNodesPerSec   float64                          `json:"rate_nodes_per_sec,omitempty"`
+	ETASeconds        int64                            `json:"eta_seconds,omitempty"`
 	// BM25Enabled / VectorEnabled mirror the resolved per-DB master switches.
 	// Search handler uses these to decide between 200-with-empty-half,
 	// 503 search_disabled_for_database (both off), and the lazy-trigger 503.
@@ -187,18 +190,10 @@ func (db *DB) ensureSearchClustering(svc *search.Service) {
 	svc.EnableClustering(mgr, db.kmeansNumClusters())
 }
 
-// GetOrCreateSearchService checks the DB lifetime before entering its existing search registry.
-func (db *DB) GetOrCreateSearchService(dbName string, storageEngine storage.Engine) (*search.Service, error) {
-	db.mu.RLock()
-	closed := db.work.Closing()
-	db.mu.RUnlock()
-	if closed {
-		return nil, ErrClosed
-	}
-	return db.getOrCreateSearchService(dbName, storageEngine)
-}
-
-func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engine) (service *search.Service, resultErr error) {
+// GetOrCreateSearchService admits construction under the database's search
+// registry and lifetime, or returns the already-owned service. Admission and
+// retirement are checked together without taking db.mu inside storage callbacks.
+func (db *DB) GetOrCreateSearchService(dbName string, storageEngine storage.Engine) (service *search.Service, resultErr error) {
 	// This path is also entered by storage callbacks while db.mu is held.
 	// Enroll in the DB owner and the current constructor epoch under the
 	// registry lock, before any resolver or construction.
@@ -305,6 +300,7 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 	// database managed by this service, including services created before the
 	// server installs its per-database options resolver.
 	resolvedOptions.DatabaseID = dbName
+	resolvedOptions.MemoryPolicy = db.memoryPolicy
 	if db.config != nil {
 		resolvedOptions.SearchCursorMaxPageSize = db.config.Memory.SearchCursorMaxPageSize
 	}
@@ -657,6 +653,7 @@ func (db *DB) GetDatabaseSearchStatus(dbName string) DatabaseSearchStatus {
 		!(bm25On == false && vectorOn == false)
 	return DatabaseSearchStatus{
 		Ready:             p.Ready,
+		FulltextRetention: entry.svc.FulltextRetention(),
 		Building:          p.Building,
 		Initialized:       true,
 		Strategy:          entry.svc.CurrentStrategy(),

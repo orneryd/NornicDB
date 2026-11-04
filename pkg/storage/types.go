@@ -1414,6 +1414,9 @@ func UnwrapEngine(engine Engine) Engine {
 	}
 }
 
+// StreamChunkSize is the batch size of a streaming read.
+const StreamChunkSize = 1000
+
 // StreamNodesWithFallback provides streaming iteration with fallback.
 // If the engine supports StreamingEngine, it uses that.
 // Otherwise, it loads all nodes but processes them in chunks.
