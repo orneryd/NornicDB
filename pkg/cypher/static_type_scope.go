@@ -96,20 +96,13 @@ func (types typeScope) adoptKinds(kinds matchSemanticScope) {
 	}
 }
 
-// projectTypeScope is the typeScope a WITH clause projects from types: each
-// item's operand by its alias, every variable for WITH *.
-func projectTypeScope(ctx context.Context, types typeScope, cypher25 bool, clause string) typeScope {
-	return projectTypeScopeIn(ctx, types, types.static(cypher25), clause)
-}
-
-// projectTypeScopeIn is projectTypeScope for a caller that holds types'
-// static view (input) already.
-func projectTypeScopeIn(ctx context.Context, types typeScope, input staticTypeScope, clause string) typeScope {
-	body, _ := projectionSemanticBodyAndTail(ctx, clause, "WITH")
+// projectTypeScopeIn reads a retained WITH or RETURN projection using the
+// incoming types and their already computed static view. It never rebuilds
+// each item as an independent RETURN statement.
+func projectTypeScopeIn(ctx context.Context, types typeScope, input staticTypeScope, clause pipelineClause) typeScope {
 	input.complete = false
 	projected := make(typeScope)
-	for _, raw := range splitTopLevelComma(body) {
-		itemSource := readProjectionItemSource(ctx, strings.TrimSpace(raw), projectionAdmitted)
+	for _, itemSource := range projectionItemsFromSyntax(clause.syntax) {
 		expression, alias := itemSource.expression, itemSource.alias
 		if expression == "*" {
 			for name, operand := range types {
@@ -161,14 +154,6 @@ func projectedOperand(ctx context.Context, types typeScope, input staticTypeScop
 	return input.operandOf(ctx, expression)
 }
 
-// unwoundOperand is the static type of the variable UNWIND binds from list:
-// a list's element type (a node of a List<Node>, an Integer of a
-// List<Integer>), a known non-list value itself (UNWIND 5), unknown for a
-// list of unknown elements.
-func unwoundOperand(ctx context.Context, types typeScope, input staticTypeScope, clause string) staticOperand {
-	return listElementOperand(ctx, types, input, unwindSourceExpression(ctx, clause))
-}
-
 // listElementOperand is the static type of an element of list (UNWIND's
 // variable, a comprehension's or quantifier's local; localBindingKind).
 func listElementOperand(ctx context.Context, types typeScope, input staticTypeScope, list string) staticOperand {
@@ -185,16 +170,11 @@ func listElementOperand(ctx context.Context, types typeScope, input staticTypeSc
 }
 
 // projectMatchSemanticScope is the binding-kind view of the variables a WITH
-// clause projects (projectTypeScope).
+// clause projects. This source-admission entry reads the whole clause once;
+// retained statement consumers call projectTypeScopeIn directly.
 func projectMatchSemanticScope(ctx context.Context, input matchSemanticScope, clause string) matchSemanticScope {
 	scope := staticTypeScope{kinds: input}
-	return projectTypeScopeIn(ctx, typeScopeOf(scope), scope, clause).kinds()
-}
-
-// projectStaticValueTypes is the value-type view of the variables a WITH
-// clause projects (projectTypeScope).
-func projectStaticValueTypes(ctx context.Context, scope staticTypeScope, clause string) map[string]string {
-	return projectTypeScopeIn(ctx, typeScopeOf(scope), scope, clause).static(scope.cypher25).values
+	return projectTypeScopeIn(ctx, typeScopeOf(scope), scope, composedPipelineClause(ctx, pipelineClauseWith, clause)).kinds()
 }
 
 // projectStaticValueMembers is, in a Cypher 25 statement, the member-type
@@ -203,22 +183,29 @@ func projectStaticValueMembers(ctx context.Context, scope staticTypeScope, claus
 	if !scope.cypher25 {
 		return nil
 	}
-	return projectTypeScopeIn(ctx, typeScopeOf(scope), scope, clause).static(true).members
+	return projectTypeScopeIn(ctx, typeScopeOf(scope), scope, composedPipelineClause(ctx, pipelineClauseWith, clause)).static(true).members
 }
 
 // callSubqueryImports is the scope a CALL subquery's body starts from: CALL
-// (a, b) { … } imports a and b, CALL (*) { … } and an old-style CALL { … }
-// every outer variable (the latter's leading WITH picks them). ok is false
-// for a CALL without a body; scoped is set for CALL (…) { }. A variable a
-// scope clause names that outer doesn't bind is Neo4j's compile-time
-// "Variable `x` not defined", reported here, where every statement is
-// checked before it plans or runs, on every route alike.
-func callSubqueryImports(ctx context.Context, callText string, outer typeScope) (typeScope, bool, bool, error) {
-	scope := readCallSubqueryScope(ctx, callText)
+// (a, b) { … } imports a and b, CALL (*) { … } and an old-style CALL { … } every
+// outer variable (the latter's leading WITH picks them). ok is false for a CALL
+// without a body; scoped is set for CALL (…) { }. The scope clause is read from
+// the clause's own retained node, never from a second parse of its text. A
+// variable a scope clause names that outer doesn't bind is Neo4j's compile-time
+// "Variable `x` not defined", reported here, where every statement is checked
+// before it plans or runs, on every route alike.
+func callSubqueryImports(ctx context.Context, clause pipelineClause, outer typeScope) (typeScope, bool, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, false, err
+	}
+	if clause.kind != pipelineClauseCallSubquery || !clause.syntax.Valid() {
+		return nil, false, false, nil
+	}
+	scope := scopeClauseFromSyntax(clause.syntax)
 	if scope.invalid {
 		return nil, false, false, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport", "CALL imports must contain only variable names")
 	}
-	if scope.bodyOffset == 0 || scope.bodyOffset >= len(callText) || callText[scope.bodyOffset] != '{' {
+	if _, body := callBodyFromSyntax(clause); !body {
 		return nil, false, false, nil
 	}
 	initial := make(typeScope)
@@ -238,25 +225,25 @@ func callSubqueryImports(ctx context.Context, callText string, outer typeScope) 
 	return initial, scope.scoped, true, nil
 }
 
-// callSubqueryReturnTypes walks a CALL subquery's body, each UNION branch
-// as a query of its own, with the one clause walk (semanticScopeWalk) from
-// the variables it imports (callSubqueryImports), and returns the static
-// type of each column a one-branch body returns. Its expression subqueries
-// see the body's scope, not the enclosing query's. A CALL (a, b) body sees
-// its imports through the whole body, after a WITH in it too, and may
-// declare them again (subqueryScope). A body whose walk stops early, or that
-// doesn't end in RETURN, gives no types; a scoped body's walk error is the
-// statement's.
-func (e *StorageExecutor) callSubqueryReturnTypes(ctx context.Context, callText string, branches []string, outer typeScope, cypher25 bool) (typeScope, string, error) {
-	initial, scoped, ok, err := callSubqueryImports(ctx, callText, outer)
+// callSubqueryReturnTypes walks a CALL subquery's body, each UNION branch as a
+// query of its own, with the one clause walk (semanticScopeWalk) from the
+// variables it imports (callSubqueryImports), and returns the static type of
+// each column a one-branch body returns. Its expression subqueries see the
+// body's scope, not the enclosing query's. A CALL (a, b) body sees its imports
+// through the whole body, after a WITH in it too, and may declare them again
+// (subqueryScope). A body whose walk stops early, or that doesn't end in RETURN,
+// gives no types; a scoped body's walk error is the statement's. The branches
+// are the retained body's own: no branch text is split or re-read here.
+func (e *StorageExecutor) callSubqueryReturnTypes(ctx context.Context, clause pipelineClause, body queryBody, outer typeScope, cypher25 bool) (typeScope, string, error) {
+	initial, scoped, ok, err := callSubqueryImports(ctx, clause, outer)
 	if err != nil || !ok {
 		return nil, "", err
 	}
 	var returned typeScope
 	firstReturn := ""
 	typedBranches := 0
-	for branchIndex, branch := range branches {
-		split := cachedPipelineClauses(ctx, branch, true)
+	for branchIndex, shape := range body.branches {
+		split := cachedPipelineClausesBranch(ctx, shape, true)
 		if branchIndex == 0 {
 			firstReturn = split.firstReturn
 		}
@@ -272,15 +259,16 @@ func (e *StorageExecutor) callSubqueryReturnTypes(ctx context.Context, callText 
 			// gh648 extension. A leading importing WITH explicitly projects its
 			// listed names (including *), so those names follow ordinary WITH
 			// scope instead. A branch's own declarations never become imports.
+			// Both are read from the retained branch: no branch text is rebuilt.
 			retained = maps.Clone(initial)
-			_, importing, _ = branchLeadingWithImport(ctx, branch, func(name string) bool { _, exists := initial[name]; return exists }, false)
+			_, importing, _ = branchSyntaxImports(ctx, shape, func(name string) bool { _, exists := initial[name]; return exists }, false)
 			if importing {
-				for name := range projectTypeScope(ctx, initial, cypher25, clauses[0].text) {
+				for name := range projectTypeScopeIn(ctx, initial, initial.static(cypher25), clauses[0]) {
 					delete(retained, name)
 				}
 			}
 			for name := range retained {
-				if branchDeclaresVariable(ctx, branch, name) {
+				if branchDeclaresVariable(ctx, shape, name) {
 					delete(retained, name)
 				}
 			}
@@ -301,8 +289,7 @@ func (e *StorageExecutor) callSubqueryReturnTypes(ctx context.Context, callText 
 		if !complete || last.kind != pipelineClauseReturn {
 			return nil, firstReturn, nil
 		}
-		returnClause := strings.TrimSpace(last.text)
-		branchTypes := projectTypeScope(ctx, final, cypher25, "WITH "+strings.TrimSpace(returnClause[len("RETURN"):]))
+		branchTypes := projectTypeScopeIn(ctx, final, final.static(cypher25), last)
 		if typedBranches == 0 {
 			returned = branchTypes
 		} else {

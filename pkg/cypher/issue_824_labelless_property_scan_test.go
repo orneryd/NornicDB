@@ -1,12 +1,14 @@
 package cypher
 
-// Coverage for #824: a property match without a label scans every node with
-// only the pattern's properties decoded, and reads the whole node only for a
-// match; the transaction view streams every node (it streamed none).
+// Coverage for #824: a property match without a label scans every node, decodes
+// the properties the row and the match need, and keeps the node the scan
+// supplied as the row's node; the transaction view streams every node (it
+// streamed none).
 
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -51,19 +53,25 @@ func TestIssue824LabellessPropertyMatch(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// vanishingNodeEngine fails or loses the full read of scanned nodes.
+// vanishingNodeEngine fails the full read of a node and counts the point reads
+// a statement performs: a property match supplies its row from the scan.
 type vanishingNodeEngine struct {
 	*storage.NamespacedEngine
 	getNodeErr error
+	reads      atomic.Int64
 }
 
 func (v *vanishingNodeEngine) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
+	v.reads.Add(1)
 	return nil, v.getNodeErr
 }
 
+// A label-less property match keeps the node the scan supplied. It reads no
+// second copy, so a store whose point read would lose or fail the node still
+// returns the scanned match, and a failing point read is never performed.
 func TestLabellessPropertyMatchFullReadOutcomes(t *testing.T) {
 	inner := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
-	_, err := inner.CreateNode(t.Context(), &storage.Node{ID: "n1", Properties: map[string]interface{}{"id": "a"}})
+	_, err := inner.CreateNode(t.Context(), &storage.Node{ID: "n1", Properties: map[string]interface{}{"id": "a", "body": "x"}})
 	require.NoError(t, err)
 
 	gone := &vanishingNodeEngine{NamespacedEngine: inner, getNodeErr: storage.ErrNotFound}
@@ -71,12 +79,17 @@ func TestLabellessPropertyMatchFullReadOutcomes(t *testing.T) {
 		context.Background(), nil, map[string]interface{}{"id": "a"}, "", "", -1, nil,
 	)
 	require.NoError(t, err)
-	require.Empty(t, nodes, "a node deleted between the scan and its read is not a match")
+	require.Len(t, nodes, 1, "the node the scan supplied is the match")
+	require.Equal(t, storage.NodeID("n1"), nodes[0].ID)
+	require.Equal(t, map[string]interface{}{"id": "a", "body": "x"}, nodes[0].Properties)
+	require.Zero(t, gone.reads.Load(), "the match costs no second read")
 
 	failure := errors.New("read failed")
 	failing := &vanishingNodeEngine{NamespacedEngine: inner, getNodeErr: failure}
-	_, err = NewStorageExecutor(failing).collectNodesWithStreamingProjection(
+	nodes, err = NewStorageExecutor(failing).collectNodesWithStreamingProjection(
 		context.Background(), nil, map[string]interface{}{"id": "a"}, "", "", -1, nil,
 	)
-	require.ErrorIs(t, err, failure)
+	require.NoError(t, err, "the failing point read is never performed")
+	require.Len(t, nodes, 1)
+	require.Zero(t, failing.reads.Load())
 }

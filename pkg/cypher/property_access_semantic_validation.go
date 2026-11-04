@@ -121,14 +121,15 @@ func validatePropertyAccessClauses(ctx context.Context, cypher string, outer map
 			}
 			types = next
 		case pipelineClauseUnwind:
-			expression, alias, ok := parsePipelineIteration(ctx, text)
-			if !ok {
+			iteration, found := iterationClauseFor(clause)
+			if !found {
 				continue
 			}
+			expression := iteration.expression
 			if err := checkExpressionPropertyAccesses(ctx, expression, types, params); err != nil {
 				return err
 			}
-			variable := normalizeProjectionColumnName(alias)
+			variable := iteration.variable
 			// The element type of each list alternative, from the one
 			// list-element reader; unknown for a list of unknown elements.
 			element := elementOfType(propertyAccessExpressionType(ctx, expression, types, params))

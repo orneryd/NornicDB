@@ -3,6 +3,8 @@ package cypher
 import (
 	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"iter"
+	"slices"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -202,7 +204,7 @@ func attachCypher25Arguments(name string, arguments []staticArgumentType) {
 		}
 		cypher25 := staticArgumentType{}
 		if accepted != "" {
-			cypher25 = staticArgumentType{expected: accepted, options: staticTypeChoices(accepted)}
+			cypher25 = staticArgumentType{expected: accepted, options: slices.Collect(staticTypeChoices(accepted))}
 		}
 		arguments[index].cypher25 = &cypher25
 	}
@@ -248,7 +250,7 @@ func staticArgumentTypesOf(name string, signatures [][]ProcedureParam) ([]static
 	checked := false
 	for index, options := range typed {
 		if override, ok := staticArgumentOverrides[name]; ok && index < len(override) {
-			options = staticTypeChoices(override[index])
+			options = slices.Collect(staticTypeChoices(override[index]))
 		} else if unchecked[index] {
 			continue
 		}
@@ -322,38 +324,66 @@ func lookupLowerASCII[V any](table map[string]V, name string) (V, bool) {
 // accepts reports whether an argument of static type typeName fits. Neo4j
 // coerces an Integer where a Float is expected, so that is accepted too; an
 // unknown type ("") always is.
-// staticTypeChoices splits a static type that names several possible types
-// ("Float, Integer, String or List<T>", the type of 1 + x for an unknown x)
-// into them; a single type is itself.
-func staticTypeChoices(typeName string) []string {
-	if !strings.Contains(typeName, ", ") && !strings.Contains(typeName, " or ") {
-		return []string{typeName}
+// staticTypeChoices yields each type a static type names, in order: a type
+// that names several possible types ("Float, Integer, String or List<T>",
+// the type of 1 + x for an unknown x) splits at its top-level separators,
+// and a single type is itself. It allocates nothing: a caller that stores,
+// indexes or rewrites the alternatives materializes its own slice
+// (slices.Collect).
+func staticTypeChoices(typeName string) iter.Seq[string] {
+	return func(yield func(string) bool) {
+		if !strings.Contains(typeName, ", ") && !strings.Contains(typeName, " or ") {
+			yield(typeName)
+			return
+		}
+		start, depth := 0, 0
+		for index := 0; index < len(typeName); index++ {
+			switch typeName[index] {
+			case '<':
+				depth++
+			case '>':
+				depth--
+			}
+			if depth != 0 {
+				continue
+			}
+			width := 0
+			if strings.HasPrefix(typeName[index:], ", ") {
+				width = 2
+			} else if strings.HasPrefix(typeName[index:], " or ") {
+				width = 4
+			}
+			if width > 0 {
+				if !yield(typeName[start:index]) {
+					return
+				}
+				start = index + width
+				index = start - 1
+			}
+		}
+		yield(typeName[start:])
 	}
-	var choices []string
-	start, depth := 0, 0
-	for index := 0; index < len(typeName); index++ {
-		switch typeName[index] {
-		case '<':
-			depth++
-		case '>':
-			depth--
-		}
-		if depth != 0 {
-			continue
-		}
-		width := 0
-		if strings.HasPrefix(typeName[index:], ", ") {
-			width = 2
-		} else if strings.HasPrefix(typeName[index:], " or ") {
-			width = 4
-		}
-		if width > 0 {
-			choices = append(choices, typeName[start:index])
-			start = index + width
-			index = start - 1
+}
+
+// staticTypeChoiceCount is how many types a static type names
+// (staticTypeChoices), without materializing them.
+func staticTypeChoiceCount(typeName string) int {
+	count := 0
+	for range staticTypeChoices(typeName) {
+		count++
+	}
+	return count
+}
+
+// staticTypeChoiceNamed reports whether a static type names name among its
+// alternatives, without materializing them.
+func staticTypeChoiceNamed(typeName, name string) bool {
+	for choice := range staticTypeChoices(typeName) {
+		if choice == name {
+			return true
 		}
 	}
-	return append(choices, typeName[start:])
+	return false
 }
 
 // staticArgumentMismatch is Neo4j's compile-time error for an argument of the
@@ -551,11 +581,11 @@ const staticFormatTemporalTypes = "Duration, Date, Time, LocalTime, LocalDateTim
 // format(date(…), 1) are Neo4j's compile-time type mismatch). The printf
 // form's values aren't checked.
 func staticFormatArguments(ctx context.Context, expressions []string) []staticArgumentType {
-	value := staticTypeChoices(staticFormatTemporalTypes + " or String")
+	value := slices.Collect(staticTypeChoices(staticFormatTemporalTypes + " or String"))
 	arguments := []staticArgumentType{{expected: staticFormatTemporalTypes, options: value}}
 	if len(expressions) == 2 {
 		typeName := staticTextType(ctx, expressions[0])
-		if typeName != "" && containsString(staticTypeChoices(staticFormatTemporalTypes), typeName) {
+		if typeName != "" && staticTypeChoiceNamed(staticFormatTemporalTypes, typeName) {
 			arguments = append(arguments, staticArgumentType{expected: "String", options: []string{"String"}})
 		}
 	}

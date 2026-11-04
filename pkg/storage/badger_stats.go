@@ -829,7 +829,7 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 	if err := b.ensureOpen(false); err != nil {
 		return err
 	}
-	if opts.QueryNodes && opts.Projection == nil && !opts.WithEmbeddings && opts.Label != "" {
+	if opts.QueryNodes && opts.Projection == nil && !opts.WithEmbeddings && opts.Label != "" && !opts.scanDecodesFilter() {
 		visit := func(node *Node) error {
 			if err := ctx.Err(); err != nil {
 				return err
@@ -914,10 +914,13 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 // from fn ends the scan and is not returned.
 func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *badger.Txn, opts StreamNodesOptions, fn func(node *Node) error) error {
 	nowNanos := DecayScoringTime()
-	// A projected scan decodes through one scan-scoped decoder (#857).
+	// A projected or filtered scan decodes through one scan-scoped decoder
+	// (#857). It resolves each stored property token through this read
+	// snapshot, so the names it selects are the ones the bodies were written
+	// with, and it applies the property filter before a node is materialized.
 	var projected *projectedNodeDecoder
-	if opts.Projection != nil && !opts.WithEmbeddings {
-		projected = newProjectedNodeDecoder(b, opts)
+	if opts.scanDecodesFilter() || (!opts.WithEmbeddings && opts.Projection != nil) {
+		projected = newProjectedNodeDecoder(b, txn, opts)
 	}
 
 	visit := func(txn *badger.Txn, item *badger.Item) error {
@@ -928,7 +931,7 @@ func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *bad
 		}
 		var node *Node
 		var err error
-		if opts.QueryNodes && opts.Projection == nil && !opts.WithEmbeddings {
+		if opts.QueryNodes && opts.Projection == nil && !opts.WithEmbeddings && !opts.scanDecodesFilter() {
 			node, err = b.readNodeItemInTxn(txn, item, NodeID(item.Key()[1:]), nodeItemQueryMetadata)
 		} else {
 			err = item.Value(func(val []byte) error {
@@ -951,8 +954,13 @@ func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *bad
 				return decodeErr
 			})
 		}
-		if err != nil || node == nil {
-			return nil // Skip invalid nodes
+		if err != nil {
+			// A record this scan cannot decode fails the scan: skipping it would
+			// return the rest of the population as if it were all of it.
+			return fmt.Errorf("scanning node %q: %w", NodeID(item.Key()[1:]), err)
+		}
+		if node == nil {
+			return nil // the scan's decoder rejected this node
 		}
 		if opts.ApplyDecayFilter && b.filterEntityByDecay(visibleRead, node, nowNanos) {
 			return nil

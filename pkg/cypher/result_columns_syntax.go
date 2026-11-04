@@ -39,7 +39,16 @@ func projectionPlanFromSyntax(clause cypherantlr.SyntaxNode, expressions ...func
 	if !body.Valid() {
 		return plan
 	}
-	_, plan.distinct = body.DirectToken(cypherantlr.CypherLexerDISTINCT)
+	// The projection body's modifier is read through its one owner, which
+	// reads the body's own text (projectionBodyDistinct): a body whose
+	// leading word the classifier reads as the DISTINCT keyword but whose
+	// retained items keep it as a name has no projection to plan, and the
+	// statement's validation reports the SyntaxError.
+	distinct, err := projectionBodyDistinct(body)
+	if err != nil {
+		return &returnProjectionPlan{}
+	}
+	plan.distinct = distinct
 	var modifiers []string
 	for i := 0; i < body.ChildCount(); i++ {
 		node := body.Child(i)
@@ -49,30 +58,25 @@ func projectionPlanFromSyntax(clause cypherantlr.SyntaxNode, expressions ...func
 		}
 	}
 	plan.modifiers = strings.Join(modifiers, " ")
-	items := body.ChildRule(cypherantlr.CypherParserRULE_projectionItems)
-	if !items.Valid() {
+	if !body.ChildRule(cypherantlr.CypherParserRULE_projectionItems).Valid() {
 		return plan
 	}
-	_, plan.star = items.DirectToken(cypherantlr.CypherLexerMULT)
-	for i := 0; i < items.ChildCount(); i++ {
-		item := items.Child(i)
-		if item.Rule() != cypherantlr.CypherParserRULE_projectionItem {
+	for _, itemSource := range projectionItemsFromSyntax(clause) {
+		if itemSource.star {
+			plan.star = true
 			continue
 		}
+		item := itemSource.syntax
 		expression := item.ChildRule(cypherantlr.CypherParserRULE_expression)
 		if !expression.Valid() {
 			return &returnProjectionPlan{}
 		}
 		definition := item.ChildRule(cypherantlr.CypherParserRULE_symbol)
-		alias := syntaxSymbolName(definition)
-		if !definition.Valid() {
-			alias = projectionNameFromSyntax(expression)
-		}
 		target := plan
 		if plan.star {
 			target = &returnProjectionPlan{}
 		}
-		target.addProjection(expression.Code(), alias)
+		target.addProjection(itemSource.expression, itemSource.alias)
 		projection := &target.projections[len(target.projections)-1]
 		projection.variable, projection.direct = projectionVariableFromSyntax(expression)
 		for _, visit := range expressions {

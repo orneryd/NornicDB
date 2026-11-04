@@ -76,7 +76,6 @@ func pipelineEffectVisitor(effects *pipelineClauseEffects) cypherantlr.SyntaxVis
 	}
 	return func(node cypherantlr.SyntaxNode) func() {
 		oldDepth, oldRead, oldWrite, oldCreate := depth, reading, writing, creating
-		restore := func() { depth, reading, writing, creating = oldDepth, oldRead, oldWrite, oldCreate }
 		switch node.Rule() {
 		case cypherantlr.CypherParserRULE_useClause, cypherantlr.CypherParserRULE_withSt, cypherantlr.CypherParserRULE_letSt:
 			// These operators inherit the effects of their children.
@@ -259,7 +258,10 @@ func pipelineEffectVisitor(effects *pipelineClauseEffects) cypherantlr.SyntaxVis
 				effects.barrier = true
 			}
 		}
-		return restore
+		if depth == oldDepth && reading == oldRead && writing == oldWrite && creating == oldCreate {
+			return nil
+		}
+		return func() { depth, reading, writing, creating = oldDepth, oldRead, oldWrite, oldCreate }
 	}
 }
 

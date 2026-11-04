@@ -265,21 +265,18 @@ func (e *StorageExecutor) boundTraversalLimitSafe(ctx context.Context, pattern s
 func (e *StorageExecutor) pipelineMatchHint(ctx context.Context, remaining []pipelineClause) pipelineMatchPhysicalHint {
 	hint := pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1, readTail: pipelineReadOnlyTail(remaining)}
 	if len(remaining) > 0 && remaining[0].kind == pipelineClauseWith {
-		clause := remaining[0].text
-		if topLevelKeywordIndex(ctx, clause, "WHERE") >= 0 {
+		clause := remaining[0]
+		if topLevelKeywordIndex(ctx, clause.text, "WHERE") >= 0 {
 			return hint
 		}
-		end := len(clause)
-		for _, keyword := range []string{"SKIP", "LIMIT"} {
-			if index := topLevelKeywordIndex(ctx, clause, keyword); index >= 0 && index < end {
-				end = index
-			}
-		}
-		if _, local := parsePipelineRowWith(ctx, clause[:end]); !local {
+		// The hint asks whether the clause's own items are locally planable.
+		// Its SKIP / LIMIT window is the projection's, read below, so the row
+		// plan is read without declining on it.
+		if _, local := compilePipelineRowWith(ctx, clause, true); !local {
 			return hint
 		}
-		limit, hasLimit := e.parseIntModifier(ctx, clause, "LIMIT")
-		skip, _ := e.parseIntModifier(ctx, clause, "SKIP")
+		limit, hasLimit := e.parseIntModifier(ctx, clause.text, "LIMIT")
+		skip, _ := e.parseIntModifier(ctx, clause.text, "SKIP")
 		if !hasLimit || limit <= 0 || skip < 0 || skip > int(^uint(0)>>1)-limit {
 			return hint
 		}

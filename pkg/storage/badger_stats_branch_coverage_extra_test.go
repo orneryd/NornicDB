@@ -141,45 +141,8 @@ func TestBadgerStats_IterateAndStreamDecodeBranches(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:n1", EndNode: "test:n2", Type: "REL"}))
 
-	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
-		// Trigger len(key)<=1 and decode-error branches in node/edge streaming methods.
-		require.NoError(t, txn.Set([]byte{prefixNode}, []byte{}))
-		require.NoError(t, txn.Set(nodeKey("test:bad-node"), []byte("bad-node-payload")))
-		require.NoError(t, txn.Set([]byte{prefixEdge}, []byte{}))
-		require.NoError(t, txn.Set(edgeKey("test:bad-edge"), []byte("bad-edge-payload")))
-		return nil
-	}))
-
-	t.Run("iterate nodes skips malformed entries", func(t *testing.T) {
-		seen := 0
-		err := engine.IterateNodes(func(*Node) bool {
-			seen++
-			return true
-		})
-		require.NoError(t, err)
-		require.GreaterOrEqual(t, seen, 2)
-	})
-
-	t.Run("stream nodes handles canceled context and malformed entries", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-		err := engine.StreamNodes(ctx, func(*Node) error { return nil })
-		require.ErrorIs(t, err, context.Canceled)
-
-		err = engine.StreamNodes(context.Background(), func(*Node) error { return nil })
-		require.NoError(t, err)
-	})
-
-	t.Run("stream edges handles canceled context and decode errors", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-		err := engine.StreamEdges(ctx, func(*Edge) error { return nil })
-		require.ErrorIs(t, err, context.Canceled)
-
-		err = engine.StreamEdges(context.Background(), func(*Edge) error { return nil })
-		require.NoError(t, err)
-	})
-
+	// Stop paths run on the intact population: a malformed body is an error for
+	// the scan that reads it (below), not a record it may pass over.
 	t.Run("stream node chunks stop paths", func(t *testing.T) {
 		// Stop on full chunk path (len(chunk) >= chunkSize).
 		err := engine.StreamNodeChunks(context.Background(), 1, func(nodes []*Node) error {
@@ -197,6 +160,43 @@ func TestBadgerStats_IterateAndStreamDecodeBranches(t *testing.T) {
 			}
 			return nil
 		})
+		require.NoError(t, err)
+	})
+
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
+		// Trigger len(key)<=1 and decode-error branches in node/edge streaming methods.
+		require.NoError(t, txn.Set([]byte{prefixNode}, []byte{}))
+		require.NoError(t, txn.Set(nodeKey("test:bad-node"), []byte("bad-node-payload")))
+		require.NoError(t, txn.Set([]byte{prefixEdge}, []byte{}))
+		require.NoError(t, txn.Set(edgeKey("test:bad-edge"), []byte("bad-edge-payload")))
+		return nil
+	}))
+
+	// A record the scan cannot decode fails the whole scan: the valid nodes
+	// before it are not a complete answer, so the scan cannot report success.
+	t.Run("iterate nodes reports malformed entries", func(t *testing.T) {
+		err := engine.IterateNodes(func(*Node) bool { return true })
+		require.ErrorContains(t, err, `scanning node "test:bad-node"`)
+		require.ErrorContains(t, err, "unexpected format byte")
+	})
+
+	t.Run("stream nodes handles canceled context and malformed entries", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		err := engine.StreamNodes(ctx, func(*Node) error { return nil })
+		require.ErrorIs(t, err, context.Canceled)
+
+		err = engine.StreamNodes(context.Background(), func(*Node) error { return nil })
+		require.ErrorContains(t, err, `scanning node "test:bad-node"`)
+	})
+
+	t.Run("stream edges handles canceled context and decode errors", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		err := engine.StreamEdges(ctx, func(*Edge) error { return nil })
+		require.ErrorIs(t, err, context.Canceled)
+
+		err = engine.StreamEdges(context.Background(), func(*Edge) error { return nil })
 		require.NoError(t, err)
 	})
 }

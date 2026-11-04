@@ -283,7 +283,7 @@ func (e *StorageExecutor) tryExecuteCallTailProcedurePipeline(
 	for _, row := range seed.Rows {
 		rows = append(rows, callTailRow(ctx, seed, row))
 	}
-	projected, ok := e.pipelineApplyWith(ctx, rows, prefix, nil, false)
+	projected, ok := e.pipelineApplyWith(ctx, rows, composedPipelineClause(ctx, pipelineClauseWith, prefix), nil, false)
 	if !ok {
 		return nil, false, nil
 	}
@@ -606,7 +606,7 @@ func (e *StorageExecutor) executeCallTailProjectionPlan(
 		projected = e.filterPipelineRows(ctx, rows, plan.withWhere)
 	} else {
 		var ok bool
-		projected, ok = e.pipelineApplyWith(ctx, rows, plan.withClause, nil, false)
+		projected, ok = e.pipelineApplyWith(ctx, rows, composedPipelineClause(ctx, pipelineClauseWith, plan.withClause), nil, false)
 		if !ok {
 			return nil, false
 		}
@@ -1209,7 +1209,7 @@ func (e *StorageExecutor) applyYieldFilter(ctx context.Context, result *ExecuteR
 		if yield.limit != "" {
 			with.WriteString(" LIMIT " + yield.limit)
 		}
-		ordered, ok := e.pipelineApplyWith(ctx, rows, with.String(), nil, false)
+		ordered, ok := e.pipelineApplyWith(ctx, rows, composedPipelineClause(ctx, pipelineClauseWith, with.String()), nil, false)
 		if !ok {
 			// SKIP / LIMIT passed the compile-time checks (validateYieldModifiers),
 			// so only a parameter can make them invalid here.

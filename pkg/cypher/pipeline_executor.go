@@ -82,6 +82,20 @@ type pipelineClause struct {
 	optional bool
 }
 
+// composedPipelineClause returns a clause the executor composes itself rather
+// than reading one from a statement: a CALL tail's WITH prefix, the WITH *
+// window of a YIELD, or the binding a WITH EMBEDDING candidate projects. Its
+// text is the clause; the grammar parses that text once so every canonical
+// reader sees the items, aliases and modifiers the composed clause has, the
+// same way it reads them from a retained clause.
+func composedPipelineClause(ctx context.Context, kind pipelineClauseKind, text string) pipelineClause {
+	clause := pipelineClause{kind: kind, text: text}
+	if node, ok := canonicalQueryClause(ctx, text); ok {
+		clause.syntax = node
+	}
+	return clause
+}
+
 // pipelineMatchPhysicalHint describes downstream row requirements that a
 // MATCH operator may safely push into candidate collection or traversal. The
 // logical pipeline remains N-ary; this is an operator property derived by
@@ -334,15 +348,22 @@ func cachedPipelineClauses(ctx context.Context, cypher string, procedureCalls bo
 	return split
 }
 
-// parsePipelineClauses projects the retained query-body product once. A final
-// RETURN remains available for semantic column export when USE or FINISH makes
-// the body unsupported by execution's pipeline; unsupported clauses stay nil.
+// parsePipelineClauses projects the retained query-body product of a source
+// once. A final RETURN remains available for semantic column export when USE or
+// FINISH makes the body unsupported by execution's pipeline; unsupported
+// clauses stay nil.
 func parsePipelineClauses(ctx context.Context, source string) pipelineClauseSplit {
 	body := readQueryBody(ctx, source, 0, len(source))
 	if body.status != queryBodyRead || len(body.branches) != 1 {
 		return pipelineClauseSplit{}
 	}
-	branch := body.branches[0]
+	return parsePipelineClauseBranch(body.branches[0])
+}
+
+// parsePipelineClauseBranch is the one split projection: a retained branch's
+// clauses, or the subset the pipeline can run. A final RETURN is still exported
+// when USE, FINISH or an unsupported clause makes the branch unrunnable.
+func parsePipelineClauseBranch(branch queryBodyBranch) pipelineClauseSplit {
 	split := pipelineClauseSplit{}
 	if len(branch.clauses) > 0 {
 		last := branch.clauses[len(branch.clauses)-1]
@@ -350,7 +371,7 @@ func parsePipelineClauses(ctx context.Context, source string) pipelineClauseSpli
 			split.firstReturn = strings.TrimSpace(last.text)
 		}
 	}
-	if branch.useStart >= 0 || branch.finished || len(branch.clauses) == 0 {
+	if branch.declined || branch.useStart >= 0 || branch.finished || len(branch.clauses) == 0 {
 		return split
 	}
 	for _, clause := range branch.clauses {
@@ -566,6 +587,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 	// Projections and effects are looked up by the executing clause's syntax.
 	// When whitespace normalization re-read the statement, bind that source.
 	if len(programClauses) == 0 || len(clauses) > 0 && clauses[0].syntax.Valid() && programClauses[0].syntax.Valid() &&
+		clauses[0].syntax.Identity() != programClauses[0].syntax.Identity() &&
 		clauses[0].syntax.Source() != programClauses[0].syntax.Source() {
 		programClauses = clauses
 	}
@@ -601,7 +623,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				break
 			}
 			if clause.kind == pipelineClauseWith {
-				if _, local := parsePipelineRowWith(ctx, clause.text); !local {
+				if _, local := parsePipelineRowWith(ctx, clause); !local {
 					break
 				}
 			}
@@ -658,7 +680,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 		}
 		var callBatch *boundTransactionBatch
 		if clause.kind == pipelineClauseCallSubquery {
-			_, _, inTransactions, _ := e.parseCallSubquery(ctx, clause.text)
+			inTransactions := cypherantlr.DescribeCall(clause.syntax).Batch != nil
 			if inTransactions {
 				if idx >= callChainEnd {
 					maximumRows := len(rows)
@@ -868,7 +890,9 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 					}
 					continue
 				} else {
-					clause.text = "WITH " + binding
+					// The candidate projects the binding the frame resolved, not
+					// the EMBEDDING name its own occurrence spells.
+					clause = composedPipelineClause(ctx, pipelineClauseWith, "WITH "+binding)
 				}
 			}
 			// Carry imports after an aggregating projection so they do not add
@@ -877,7 +901,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			carried := pipelineImports(ctx)
 			carryAfter := len(carried) > 0 && pipelineClauseAggregates(ctx, clause)
 			if source != nil && !carryAfter {
-				if windowed, supported := e.pipelineWithWindowSource(ctx, source, rows, clause.text); supported {
+				if windowed, supported := e.pipelineWithWindowSource(ctx, source, rows, clause); supported {
 					source = windowed
 					next, err := pipelineProjectionScope(ctx, scope, clause.text, pipelineImports(ctx))
 					if err != nil {
@@ -886,7 +910,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 					scope = next
 					continue
 				}
-				if plan, local := parsePipelineRowWith(ctx, clause.text); local {
+				if plan, local := parsePipelineRowWith(ctx, clause); local {
 					source = e.pipelineWithRowSource(ctx, source, plan)
 					next, err := pipelineProjectionScope(ctx, scope, clause.text, pipelineImports(ctx))
 					if err != nil {
@@ -906,7 +930,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 					}
 				}
 			}
-			if err := e.validatePipelineWithRows(ctx, rows, clause.text); err != nil {
+			if err := e.validatePipelineWithRows(ctx, rows, clause); err != nil {
 				return nil, true, err
 			}
 			// The rows just validated are the clause's input when no
@@ -915,7 +939,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			if source == nil {
 				source = pipelineRowsSource(rows)
 			}
-			newRows, ok := e.pipelineApplyWith(ctx, rows, clause.text, source, rowsValidated)
+			newRows, ok := e.pipelineApplyWith(ctx, rows, clause, source, rowsValidated)
 			source = nil
 			if !ok {
 				return pipelineDecline(ctx, wrote, clause.text)
@@ -933,16 +957,18 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				carryPipelineImports(rows, scope, carried)
 			}
 		case pipelineClauseUnwind:
-			if err := e.validatePipelineRangeArguments(ctx, rows, clause.text, "UNWIND"); err != nil {
+			iteration, found := iterationClauseFor(clause)
+			if !found {
+				return pipelineDecline(ctx, wrote, clause.text)
+			}
+			if err := e.validatePipelineRangeExpressions(ctx, rows, []string{iteration.expression}); err != nil {
 				return nil, true, err
 			}
 			unwound, consumed, ok := e.pipelineUnwindSource(ctx, rows, clauses[idx:])
 			if !ok {
 				return pipelineDecline(ctx, wrote, clause.text)
 			}
-			if alias := pipelineUnwindAlias(ctx, clause.text); alias != "" {
-				scope[alias] = struct{}{}
-			}
+			scope[iteration.variable] = struct{}{}
 			for offset := 1; offset <= consumed; offset++ {
 				next, err := pipelineProjectionScope(ctx, scope, clauses[idx+offset].text, pipelineImports(ctx))
 				if err != nil {
@@ -1010,12 +1036,12 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			if clause.optional && len(rows) > 0 {
 				stats = &QueryStats{}
 				newRows, err = pipelineApplyOptionally(rows, func(row []pipelineRow) ([]pipelineRow, []string, bool, error) {
-					rowsOut, rowStats, handled, err := e.pipelineApplyCallSubqueryWithMetadata(ctx, row, clause.text, callMetadata)
+					rowsOut, rowStats, handled, err := e.pipelineApplyCallSubqueryWithMetadata(ctx, row, clause, callMetadata)
 					addQueryStats(stats, rowStats)
 					return rowsOut, callMetadata.columns, handled, err
 				}, &ok)
 			} else {
-				newRows, stats, ok, err = e.pipelineApplyCallSubqueryWithMetadata(ctx, rows, clause.text, callMetadata)
+				newRows, stats, ok, err = e.pipelineApplyCallSubqueryWithMetadata(ctx, rows, clause, callMetadata)
 			}
 			addQueryStats(result.Stats, stats)
 			if err != nil {
@@ -1052,10 +1078,10 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				result.Columns, result.Rows = columns, streamedRows
 				return result, true, nil
 			}
-			if err := e.validatePipelinePercentileArguments(ctx, rows, clause.text, "RETURN"); err != nil {
+			if err := e.validatePipelinePercentileArguments(ctx, rows, clause, "RETURN"); err != nil {
 				return nil, true, err
 			}
-			if err := e.validatePipelineProjectionValues(ctx, rows, clause.text, "RETURN"); err != nil {
+			if err := e.validatePipelineProjectionValues(ctx, rows, clause, "RETURN"); err != nil {
 				return nil, true, err
 			}
 			// The rows just validated are the clause's input when no
@@ -1103,8 +1129,9 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 		output.wrote = wrote
 	}
 	if output == nil && len(clauses) > 0 && clauses[len(clauses)-1].kind == pipelineClauseCallSubquery {
-		body, _, _, _ := e.parseCallSubquery(ctx, clauses[len(clauses)-1].text)
-		if topLevelKeywordIndex(ctx, body, "RETURN") >= 0 {
+		// A terminal CALL contributes its columns only when its body returns.
+		body, retained := callBodyFromSyntax(clauses[len(clauses)-1])
+		if retained && queryBodyReturns(body) {
 			result = callPipelineResultFromRows(rows, nil, result.Stats, terminalCallColumns)
 		}
 	}
@@ -2022,7 +2049,7 @@ func (e *StorageExecutor) pipelineLabelScanArguments(ctx context.Context, nodePa
 		// The rows are filtered by the WHERE afterwards; its top-level
 		// equalities still let a label-less scan skip the nodes that can't
 		// match before decoding them (#857).
-		properties = e.labellessScanRequiredProperties(ctx, properties, nodePattern.variable, whereClause)
+		properties = e.scanRequiredProperties(ctx, properties, nodePattern.variable, whereClause)
 	}
 	projection, projected := pipelineLabelScanProjection(ctx, nodePattern, whereClause, hint.readTail)
 	if !projected {

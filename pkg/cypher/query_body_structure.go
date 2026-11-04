@@ -493,7 +493,7 @@ func callSubqueryBraces(ctx context.Context, source string) (open, end int, ok b
 	if err != nil {
 		return -1, -1, false
 	}
-	call, found := syntax.LeadingCall()
+	call, found := syntax.LeadingCall(0)
 	if !found || call.Rule() != cypherantlr.CypherParserRULE_callSubquery {
 		return -1, -1, false
 	}
@@ -508,6 +508,130 @@ func querySyntaxBraces(node cypherantlr.SyntaxNode) (open, end int, ok bool) {
 	open, _ = left.Span()
 	end, _ = right.Span()
 	return open, end, true
+}
+
+// callBodyFromSyntax is CALL's one retained body view: the subquery body of the
+// clause's own node. CALL executes a body without its trailing FINISH, so the
+// execution signal is cleared here while the retained finish span stays on the
+// branch for the text projection (queryBodyText). ok is false for any clause
+// that is not a CALL subquery with a retained body.
+func callBodyFromSyntax(clause pipelineClause) (queryBody, bool) {
+	if clause.kind != pipelineClauseCallSubquery || !clause.syntax.Valid() {
+		return queryBody{}, false
+	}
+	node := clause.syntax.ChildRule(cypherantlr.CypherParserRULE_subqueryBody)
+	if !node.Valid() {
+		return queryBody{}, false
+	}
+	body := queryBodyFromSyntax(node)
+	for index := range body.branches {
+		body.branches[index].finished = false
+	}
+	return body, true
+}
+
+// queryBodyWindow is a CALL clause's original body bytes between its braces.
+// It is the window every text consumer slices from, never a trimmed copy used as
+// an offset base.
+func queryBodyWindow(clause pipelineClause) string {
+	if !clause.syntax.Valid() {
+		return ""
+	}
+	open, close, ok := querySyntaxBraces(clause.syntax)
+	if !ok {
+		return ""
+	}
+	return clause.syntax.Source()[open+1 : close]
+}
+
+// queryBodySource is the original statement source a retained body's absolute
+// offsets index. When the source was rewritten before parsing, these are the
+// original coordinates, so consumers always slice this.
+func queryBodySource(body queryBody) (string, bool) {
+	for _, branch := range body.branches {
+		if len(branch.clauses) > 0 {
+			return branch.clauses[0].syntax.Source(), true
+		}
+	}
+	for _, branch := range body.branches {
+		if branch.useSyntax.Valid() {
+			return branch.useSyntax.Source(), true
+		}
+		if branch.finishSyntax.Valid() {
+			return branch.finishSyntax.Source(), true
+		}
+	}
+	return "", false
+}
+
+// queryBodyText renders a retained body as its remaining text owners read it:
+// each branch's original bytes, trimmed, without the FINISH the branch records
+// and excludes from its clauses, joined by the branch's UNION spelling. It is a
+// projection of the retained product, not a second parse.
+func queryBodyText(body queryBody) string {
+	source, ok := queryBodySource(body)
+	if !ok {
+		return ""
+	}
+	if len(body.branches) <= 1 {
+		if len(body.branches) == 0 {
+			return ""
+		}
+		return queryBranchText(body.branches[0], source)
+	}
+	var text strings.Builder
+	for index, branch := range body.branches {
+		if index > 0 {
+			if branch.unionAll {
+				text.WriteString(" UNION ALL ")
+			} else {
+				text.WriteString(" UNION ")
+			}
+		}
+		text.WriteString(queryBranchText(branch, source))
+	}
+	return strings.TrimSpace(text.String())
+}
+
+// queryBranchText is one retained branch's own bytes without its trailing
+// FINISH, which the branch already records as finishStart/finishEnd.
+func queryBranchText(branch queryBodyBranch, source string) string {
+	start, end := branch.start, branch.end
+	if start < 0 || end > len(source) || end < start {
+		return ""
+	}
+	text := source[start:end]
+	if branch.finishStart >= 0 && branch.finishEnd > branch.finishStart && branch.finishStart >= start && branch.finishEnd <= end {
+		text = source[start:branch.finishStart] + source[branch.finishEnd:end]
+	}
+	return strings.TrimSpace(text)
+}
+
+// queryBranchTexts is every retained branch's text, in body order.
+func queryBranchTexts(body queryBody) []string {
+	source, ok := queryBodySource(body)
+	if !ok {
+		return nil
+	}
+	texts := make([]string, 0, len(body.branches))
+	for _, branch := range body.branches {
+		texts = append(texts, queryBranchText(branch, source))
+	}
+	return texts
+}
+
+// queryBodyReturns reports whether any retained branch ends in a RETURN clause:
+// the body's own columns, read without scanning its text.
+func queryBodyReturns(body queryBody) bool {
+	for _, branch := range body.branches {
+		if len(branch.clauses) == 0 {
+			continue
+		}
+		if branch.clauses[len(branch.clauses)-1].kind == pipelineClauseReturn {
+			return true
+		}
+	}
+	return false
 }
 
 func callClauseBody(ctx context.Context, clause queryBodyClause) (start, end int, ok bool) {

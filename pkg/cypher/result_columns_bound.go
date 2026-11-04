@@ -34,6 +34,10 @@ type boundStatementProgram struct {
 	projections map[int]*returnProjectionPlan
 	effects     map[int]pipelineClauseEffects
 	scalars     map[int]scalarExpressionSyntax
+	// columns is the declared result columns of every compiled clause, by that
+	// clause's node ID in this product. CALL's empty-input metadata reads them
+	// through this program instead of recompiling the CALL on its own.
+	columns map[int]resultmetadata.Columns
 }
 
 func cloneBindingIDs(input map[string]statementBindingID) map[string]statementBindingID {

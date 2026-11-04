@@ -272,6 +272,13 @@ The native hook files are preserved.
 
 ## Verification and upstream alignment
 
+Existing relationships are inventoried in batches of at most 200 source nodes,
+anchored by their physical `elementId`. A smaller `--batch-size` lowers that
+source count as well. Every batch reads all adjacency for its sources, so a
+high-fan-out source can still return many rows. Hash-based skipping, both
+endpoints' repository checks and the stale-deletion guards apply to the complete
+inventory; batching does not truncate it or waive a deletion guard.
+
 `scripts/code-intelligence-upstream.json` records hashes of the reference importer
 and detector plus local adaptations. Matching logic is shared in `pr_duplicates.py`;
 `graphify_local.py` is the single importer used by both manual and hook paths.
@@ -283,7 +290,7 @@ isolates unrelated user-global Git configuration; global-hook tests install and
 exercise their own real global configuration in temporary repositories:
 
 ```sh
-GIT_CONFIG_GLOBAL=/dev/null "$(uv tool dir)/graphifyy/bin/python" -m unittest scripts.test_code_intelligence_hooks scripts.test_pr_duplicates scripts.test_graphify_local scripts.test_graphify_main scripts.test_graphify_comments scripts.test_graphify_errors scripts.test_graphify_embedding_cap scripts.test_graphify_http_auth scripts.test_graphify_divergence
+GIT_CONFIG_GLOBAL=/dev/null "$(uv tool dir)/graphifyy/bin/python" -m unittest scripts.test_code_intelligence_hooks scripts.test_pr_duplicates scripts.test_graphify_local scripts.test_graphify_edge_inventory scripts.test_graphify_main scripts.test_graphify_comments scripts.test_graphify_errors scripts.test_graphify_embedding_cap scripts.test_graphify_http_auth scripts.test_graphify_divergence
 ```
 
 ### Bounded-search live verification (2026-10-18)

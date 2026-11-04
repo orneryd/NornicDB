@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -30,7 +31,7 @@ func TestUnboundEmbeddingWALListenerOutsideMutationLease(t *testing.T) {
 }
 
 func TestBufferedReplayDeliveryOutsideEmbeddingLease(t *testing.T) {
-	b, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: true, WriteBehindInterval: time.Hour})
+	b, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: true, WriteBehindInterval: time.Hour}))
 	require.NoError(t, err)
 	defer b.Close()
 	ctx := context.Background()
@@ -67,7 +68,7 @@ func TestBufferedReplayDeliveryOutsideEmbeddingLease(t *testing.T) {
 }
 
 func TestInterleavedNotificationOutsideEmbeddingLease(t *testing.T) {
-	b, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: true, WriteBehindInterval: time.Hour})
+	b, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: true, WriteBehindInterval: time.Hour}))
 	require.NoError(t, err)
 	defer b.Close()
 	ctx := context.Background()

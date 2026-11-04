@@ -73,20 +73,20 @@ func newPoisonedQueryScanGraph(t *testing.T) *largeEmbeddingGraph {
 // must not decode stored vectors. Poisoning the chunks exposes hydration.
 func TestQueryNodeScansLeaveEmbeddingsInStorage(t *testing.T) {
 	g := newPoisonedQueryScanGraph(t)
-	docs, hubs := 0, 0
-	require.NoError(t, g.engine.StreamNodes(context.Background(), func(node *storage.Node) error {
+	// The poison is effective: a full read reports the unreadable chunk instead
+	// of passing the node over, so the property-only reads below prove they
+	// never reach it.
+	docs := 0
+	err := g.engine.StreamNodes(context.Background(), func(node *storage.Node) error {
 		for _, label := range node.Labels {
 			if label == "Doc" {
 				docs++
 			}
-			if label == "Hub" {
-				hubs++
-			}
 		}
 		return nil
-	}))
-	require.Zero(t, docs, "full hydration drops nodes with unreadable chunks")
-	require.Equal(t, 1, hubs)
+	})
+	require.ErrorContains(t, err, "embedding chunk 0")
+	require.Zero(t, docs, "a full read cannot deliver a document whose chunks are unreadable")
 	for _, explicit := range []bool{false, true} {
 		for _, tc := range []struct {
 			query string

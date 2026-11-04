@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
+	"slices"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -158,7 +159,7 @@ func temporalListUnion(operand staticOperand) bool {
 		return false
 	}
 	temporal, list := false, false
-	for _, choice := range staticTypeChoices(operand.typeName()) {
+	for choice := range staticTypeChoices(operand.typeName()) {
 		switch {
 		case choice == "List<T>":
 			list = true
@@ -636,9 +637,11 @@ func (checker staticOperatorChecker) checkCase(ctx context.Context, parsed *case
 			return nil
 		}
 		if choices == nil {
-			choices = staticTypeChoices(result.typeName())
+			// The CASE's alternatives are appended to: this gatherer's own
+			// slice.
+			choices = slices.Collect(staticTypeChoices(result.typeName()))
 		}
-		for _, choice := range staticTypeChoices(name) {
+		for choice := range staticTypeChoices(name) {
 			if !containsString(choices, choice) {
 				choices = append(choices, choice)
 			}
@@ -1028,7 +1031,7 @@ func staticMapProjectionReceiver(expression string) (receiver string, projected 
 // or duration too (Neo4j 5.26: date(…){.year}); Neo4j 2026.09 rejects
 // those in a Cypher 25 statement.
 func staticProjectable(typeName string, cypher25 bool) bool {
-	for _, choice := range staticTypeChoices(typeName) {
+	for choice := range staticTypeChoices(typeName) {
 		operand := knownOperand(strings.TrimSpace(choice))
 		switch {
 		case operand.is("Map"), operand.is("Node"), operand.is("Relationship"), operand.is("Null"),
@@ -1516,7 +1519,8 @@ func (e *StorageExecutor) forEachClauseOperatorExpression(ctx context.Context, c
 			}
 		}
 	case pipelineClauseUnwind:
-		return visit(unwindSourceExpression(ctx, text), false)
+		iteration, _ := iterationClauseFor(clause)
+		return visit(iteration.expression, false)
 	}
 	return nil
 }

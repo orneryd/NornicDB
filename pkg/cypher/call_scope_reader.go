@@ -19,20 +19,22 @@ type callSubqueryScopeClause struct {
 // readCallSubqueryScope is the shared static/runtime owner of CALL's scope
 // clause. scoped distinguishes CALL (*) from legacy CALL { ... }; a nil name
 // list means all outer variables, and a non-nil empty list means CALL ().
-// text and bodyOffset let validation use the same parsed clause. Legacy
+// from selects a window of the same statement; bodyOffset remains an absolute
+// original-source offset so routing never reparses a suffix. text and
+// bodyOffset let validation use the same parsed clause. Legacy
 // importing-WITH and implicit imports are resolved by their existing owners.
-func readCallSubqueryScope(ctx context.Context, source string) callSubqueryScopeClause {
+func readCallSubqueryScope(ctx context.Context, source string, from int) callSubqueryScopeClause {
 	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 	invalidScope := err != nil
 	if invalidScope && ctx.Err() == nil {
 		// Refine only an existing grammar rejection. Procedure arguments and
 		// a later syntax error do not constitute a malformed import scope.
-		invalidScope = malformedCallScopeError(ctx, source) != nil
+		invalidScope = malformedCallScopeError(ctx, source, from) != nil
 	}
 	if !syntax.Valid() {
 		return callSubqueryScopeClause{invalid: invalidScope}
 	}
-	first, _ := syntax.LeadingCall()
+	first, _ := syntax.LeadingCall(from)
 	if !first.Valid() {
 		return callSubqueryScopeClause{invalid: invalidScope}
 	}
@@ -52,10 +54,14 @@ func readCallSubqueryScope(ctx context.Context, source string) callSubqueryScope
 // malformedCallScopeError refines a grammar rejection using CALL's canonical
 // scope reader. Only a parenthesized scope followed by a subquery body qualifies;
 // procedure arguments and quoted/comment text cannot supply a scope clause.
-func malformedCallScopeError(ctx context.Context, source string) error {
+func malformedCallScopeError(ctx context.Context, source string, from int) error {
 	opts := defaultKeywordScanOpts()
 	opts.SkipParens, opts.SkipBrackets = false, false
-	for from := 0; from < len(source); {
+	if from < 0 || from > len(source) {
+		return nil
+	}
+	leading, leadingUnfinished := cyphertext.GapEnd(source, from)
+	for from < len(source) {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -70,8 +76,7 @@ func malformedCallScopeError(ctx context.Context, source string) error {
 		}
 		close := cyphertext.FindMatchingDelimiter(source, open, '(', ')', cyphertext.OpeningDelimiter)
 		if close < 0 {
-			leading, unfinished := cyphertext.GapEnd(source, 0)
-			if unfinished < 0 && call == leading {
+			if leadingUnfinished < 0 && call == leading {
 				return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport", localization.CypherResultMetadataImportVariablesRequired())
 			}
 			continue

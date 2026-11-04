@@ -40,7 +40,7 @@ func ReadCallClause(ctx context.Context, query string, stage SourceStage) (CallC
 	if err != nil {
 		return CallClause{}, err
 	}
-	call, found := syntax.LeadingCall()
+	call, found := syntax.LeadingCall(0)
 	if !found || call.Rule() != CypherParserRULE_callSubquery {
 		message := localization.CypherANTLRParseSyntaxError("expected a CALL subquery")
 		return CallClause{}, localization.NewLocalizedError(string(message.ID), message, nil)

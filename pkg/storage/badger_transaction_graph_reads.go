@@ -685,7 +685,7 @@ func (tx *BadgerTransaction) StreamNodesWithOptions(ctx context.Context, opts St
 	if visit == nil {
 		return ErrInvalidData
 	}
-	if opts.QueryNodes && opts.Projection == nil && !opts.WithEmbeddings && opts.Label != "" {
+	if opts.QueryNodes && opts.Projection == nil && !opts.WithEmbeddings && opts.Label != "" && !opts.scanDecodesFilter() {
 		queryVisit := borrowQueryNodeScanVisitor(ctx, opts, visit)
 		defer queryVisit.release()
 		err := tx.streamNodesByLabelProjected(ctx, opts.Label, nil, opts.readVisibility(), queryVisit.callback, opts)
@@ -785,7 +785,7 @@ func (tx *BadgerTransaction) StreamNodesWithOptions(ctx context.Context, opts St
 // view the transaction's other reads take (getAllCommittedNodesLocked),
 // scoped, projected and filtered after decoding.
 func (tx *BadgerTransaction) streamCommittedNodesLocked(ctx context.Context, opts StreamNodesOptions, inScope func(NodeID) bool, emit func(*Node) error) error {
-	if opts.QueryNodes && opts.Projection == nil && !opts.WithEmbeddings {
+	if opts.QueryNodes && opts.Projection == nil && !opts.WithEmbeddings && !opts.scanDecodesFilter() {
 		if tx.readTS.IsZero() {
 			return tx.engine.StreamNodesWithOptions(ctx, opts, emit)
 		}

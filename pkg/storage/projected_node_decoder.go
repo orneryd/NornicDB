@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"fmt"
 
+	"github.com/dgraph-io/badger/v4"
 	"github.com/vmihailenco/msgpack/v5"
 	"github.com/vmihailenco/msgpack/v5/msgpcode"
 )
@@ -18,8 +19,10 @@ import (
 // map, a bytes.Reader, the node ID string and a locked property-key dictionary
 // lookup for each of the node's properties. The scan decoder instead:
 //
-//   - resolves the projected names to their key tokens once per database, so
-//     each property is a token comparison and the others are skipped unread;
+//   - resolves a stored property token to its name through the scan's own
+//     Badger snapshot (readStoredBinding), once per token per database and
+//     whether or not the projection wants it, so each property is a memo
+//     lookup and the names are the ones the stored bodies were written with;
 //   - decodes the projected values into one map it clears per node, and
 //     copies them into the node's own map only for a node the filter keeps;
 //   - reuses one reader and one msgpack decoder reading from it, and reads
@@ -29,18 +32,30 @@ import (
 //     (PropertyStringEquals) at the first stored value whose bytes differ,
 //     without decoding it or the properties after it.
 //
-// Tokens resolved after the scan's read snapshot is open cover every body in
-// it: a body is written with tokens that already exist. Not safe for
-// concurrent use; one per scan.
+// A scan without a projection decodes every property and filters before it
+// materializes the node, so a filter alone still spares a rejected node its
+// map and node. The kept node's sidecar is settled through the same snapshot:
+// metadata for QueryNodes, and vectors too for WithEmbeddings. txn is the scan's
+// read snapshot, so every
+// resolved name is the entry that snapshot holds: a database a DROP emptied
+// and re-created cannot rename the properties of a body stored before it. The memo covers every body of one
+// scan in one database, because bodies in one snapshot cannot disagree about a
+// token's name. Not safe for concurrent use; one per scan.
 type projectedNodeDecoder struct {
 	b       *BadgerEngine
+	txn     *badger.Txn
 	include map[string]struct{}
 	filter  func(map[string]interface{}) bool
 	equals  map[string]string
+	// hydration preserves the caller's body, query-metadata or full-vector
+	// read contract. Sidecars are read only after the filter keeps the body.
+	hydration nodeItemHydration
 
 	namespace      string
 	namespaceBytes []byte
-	tokens         map[uint64]projectedProperty // projected key tokens of namespace
+	// bindings memoizes this scan's token resolutions for the current
+	// database, resolved through txn.
+	bindings map[uint64]projectedProperty
 
 	scratch map[string]interface{}
 	reader  bytes.Reader
@@ -49,52 +64,97 @@ type projectedNodeDecoder struct {
 	dec *msgpack.Decoder
 }
 
-// projectedProperty is a projected property's name and, when the scan
-// requires the property to equal a string (PropertyStringEquals), that string.
+// projectedProperty is a resolved property token: the name it was stored with,
+// whether the scan's projection wants it, and, when the scan requires the
+// property to equal a string (PropertyStringEquals), that string.
 type projectedProperty struct {
 	name      string
+	wanted    bool
 	equals    string
 	hasEquals bool
 }
 
-// newProjectedNodeDecoder decodes opts.Projection, rejecting nodes by
-// opts.PropertyStringEquals and opts.PropertyFilter.
-func newProjectedNodeDecoder(b *BadgerEngine, opts StreamNodesOptions) *projectedNodeDecoder {
+// newProjectedNodeDecoder decodes opts.Projection, every property when it is
+// nil, rejecting nodes by opts.PropertyStringEquals and opts.PropertyFilter. txn is the read snapshot
+// of the scan whose bodies it decodes; nil is the context-free standalone
+// boundary (a body that belongs to no stored snapshot), which resolves through
+// the in-memory dictionary.
+func newProjectedNodeDecoder(b *BadgerEngine, txn *badger.Txn, opts StreamNodesOptions) *projectedNodeDecoder {
 	d := &projectedNodeDecoder{
 		b:       b,
+		txn:     txn,
 		include: propertyProjectionSet(opts.Projection),
 		filter:  opts.PropertyFilter,
 		equals:  opts.PropertyStringEquals,
 		scratch: make(map[string]interface{}, len(opts.Projection)),
 	}
+	if opts.WithEmbeddings {
+		d.hydration = nodeItemFullEmbeddings
+	} else if opts.QueryNodes {
+		d.hydration = nodeItemQueryMetadata
+	}
 	d.dec = msgpack.NewDecoder(&d.reader)
 	return d
 }
 
-// useNamespace selects the database of a node key's ID ("db:id"), resolving
-// the projected tokens when it changes.
+// useNamespace selects the database of a node key's ID ("db:id"). A database
+// change starts a new token memo: a token number names a property per database.
 func (d *projectedNodeDecoder) useNamespace(id []byte) {
 	namespace := id[:0]
 	if idx := bytes.IndexByte(id, ':'); idx > 0 && idx < len(id)-1 {
 		namespace = id[:idx]
 	}
-	if d.tokens != nil && bytes.Equal(namespace, d.namespaceBytes) {
+	if d.bindings != nil && bytes.Equal(namespace, d.namespaceBytes) {
 		return
 	}
 	d.namespaceBytes = append(d.namespaceBytes[:0], namespace...)
 	d.namespace = string(namespace)
-	d.tokens = make(map[uint64]projectedProperty, len(d.include))
-	for name := range d.include {
-		if token, ok := d.b.propKeyDict.lookupID(d.namespace, name); ok {
-			equals, hasEquals := d.equals[name]
-			d.tokens[token] = projectedProperty{name: name, equals: equals, hasEquals: hasEquals}
-		}
+	if d.bindings == nil {
+		d.bindings = make(map[uint64]projectedProperty)
+	} else {
+		clear(d.bindings)
 	}
 }
 
+// resolveToken returns what this scan knows about one stored property token: the
+// name the body was written with, whether the scan wants it, and the required
+// string when it has one. The binding is resolved through the scan's snapshot
+// once per token; the memo is safe because every body of the scan is read from
+// the same snapshot. A nil include wants every property, so a token the
+// snapshot does not name is an error there, as it is for the full decoder
+// (decodeNodeProjected): the node would otherwise lose a property silently. A
+// projection that does not name the token selects nothing, as it did not
+// before, and its value is skipped unread.
+func (d *projectedNodeDecoder) resolveToken(token uint64) (projectedProperty, error) {
+	if property, resolved := d.bindings[token]; resolved {
+		return property, nil
+	}
+	property := projectedProperty{}
+	name, found, err := d.b.readStoredBinding(d.txn, storedBinding{kind: propertyNameBinding, namespace: d.namespace, number: token})
+	if err != nil {
+		return property, fmt.Errorf("reading property key id %d for namespace %q: %w", token, d.namespace, err)
+	}
+	if !found {
+		if d.include == nil {
+			return property, fmt.Errorf("property key id %d not in dictionary for namespace %q", token, d.namespace)
+		}
+		d.bindings[token] = property
+		return property, nil
+	}
+	property.name = name
+	property.wanted = d.include == nil
+	if !property.wanted {
+		_, property.wanted = d.include[name]
+	}
+	property.equals, property.hasEquals = d.equals[name]
+	d.bindings[token] = property
+	return property, nil
+}
+
 // decode returns the node of body (the value of node key key) with only the
-// projected properties, or nil when the filter rejects it. Errors follow
-// decodeNodeFiltered: a body that is not V2 or is truncated.
+// projected properties (every property when the scan has no projection), or nil
+// when the filter rejects it. Errors follow decodeNodeFiltered: a body that is
+// not V2 or is truncated.
 func (d *projectedNodeDecoder) decode(key, data []byte) (*Node, error) {
 	if len(key) <= 1 {
 		return nil, nil
@@ -119,6 +179,13 @@ func (d *projectedNodeDecoder) decode(key, data []byte) (*Node, error) {
 	node.Properties = make(map[string]interface{}, len(d.scratch))
 	for name, value := range d.scratch {
 		node.Properties[name] = value
+	}
+	if d.hydration != nodeItemBodyOnly {
+		// Settle the requested sidecar state from this scan's snapshot over
+		// the body already decoded, just as readNodeItemInTxn does. Full-read
+		// callers keep their vectors; query reads load metadata only. Rejected
+		// bodies pay for neither, and kept bodies need no second body read.
+		return d.b.loadNodeEmbeddingState(embeddingRecordReader{txn: d.txn}, node, NodeID(key[1:]), d.hydration == nodeItemFullEmbeddings)
 	}
 	return node, nil
 }
@@ -149,8 +216,11 @@ func (d *projectedNodeDecoder) decodeProperties(data []byte) (bool, error) {
 		}
 		// The value follows the token; offsets stay relative to rest.
 		d.reader.Reset(rest[offset+n:])
-		property, wanted := d.tokens[token]
-		if !wanted {
+		property, err := d.resolveToken(token)
+		if err != nil {
+			return false, err
+		}
+		if !property.wanted {
 			if err := dec.Skip(); err != nil {
 				return false, fmt.Errorf("decoding tokenized properties: skip key %d value: %w", token, err)
 			}

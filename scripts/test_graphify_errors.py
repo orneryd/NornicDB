@@ -39,7 +39,10 @@ class CheckStepErrors(unittest.TestCase):
     def serve(self, mode):
         FakeNornicDB.mode = mode
         server = HTTPServer(("127.0.0.1", 0), FakeNornicDB)
-        threading.Thread(target=server.serve_forever, daemon=True).start()
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(thread.join)
         self.addCleanup(server.shutdown)
         return f"http://127.0.0.1:{server.server_port}"
 
