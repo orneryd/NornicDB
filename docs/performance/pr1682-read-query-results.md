@@ -1,67 +1,67 @@
 # PR #1682 read-query performance checkpoint
 
-The reviewed source is checkpoint5a7c16e7 plus the private DFS result accumulator and active-edge cleanup. Full `make test` for this follow-up is running; the earlier5a7 head passed147 packages (74 fresh,73 cached). This is a review checkpoint, not a merge-ready declaration.
+The native tables below qualify the frozen retained follow-up to published `2d0362da`: compact cache facts and benchmark acknowledgement/count corrections. The published2d036 source passed full `make test`(147 packages,36 fresh/111 cached). The retained follow-up has completed performance qualification and its fresh full `make test` is running; it is not yet declared merge-ready.
 
 Apple M2 Max, Go1.27.3. Exact native script defaults:97,440 nodes,312,050 relationships,37,124,459 payload bytes; batch2,000,parallel4,seed42. Graph-only, nornic parser, normalization disabled. GC enabled: GOGC=400,GOMEMLIMIT=8GiB (a soft Go limit, not a hard RSS cap). No concurrent Go tests/builds, local-model generation or Docker workloads during the native timings.
 
 ## Native ingestion and persistence
 
-| Mode / result cache | Ingestion acknowledgement (s) | Wipe + indexes + ingestion (s) | GC cycles |
+| Mode / result cache | Ingestion acknowledgement(s) | Wipe + indexes + ingestion(s) | GC cycles |
 | --- | ---: | ---: | ---: |
-| durable / default | 8.527 | 8.591 | 20 |
-| durable / off | 8.349 | 8.420 | 98 |
-| wb / default | 8.500 | 8.561 | 17 |
-| wb / off | 9.095 | 9.156 | 67 |
-| strict / default | 8.553 | 8.719 | 22 |
-| strict / off | 8.618 | 8.787 | 97 |
+| durable / default | 8.252 | 8.313 | 21 |
+| durable / off | 8.464 | 8.539 | 95 |
+| wb / default | 9.742 | 9.801 | 17 |
+| wb / off | 9.748 | 9.807 | 72 |
+| strict / default | 8.491 | 8.661 | 21 |
+| strict / off | 8.576 | 8.738 | 97 |
 
-Synchronous default uses batched WAL sync; strict mode additionally enables immediate WAL sync and Badger synchronous writes. Adaptive write-behind acknowledgement is not durable completion. All six cells agree on9 graph counts and all14 fingerprints; all three write modes preserve these after graceful shutdown/reopen. This is not crash-recovery proof. Shutdown after the read suite is not ingest-to-flush latency; an immediate-postACK completion experiment remains pending. No write-behind ingest speedup is claimed.
+Synchronous default uses batched WAL sync; strict mode additionally enables immediate WAL sync and Badger synchronous writes. Write-behind acknowledgement is not durable completion. All six cells agree on9 seed counts and all14 row-count/result fingerprints. Graceful reopens are verified separately; neither post-query shutdown nor reopen proves crash recovery. The immediate-postACK controls below measure a complete-operation upper bound, including teardown.
 
 ## All14 native queries — result cache default
 
-Milliseconds:median(p95). Five warmups; 30 timed iterations. Only the existing result-cache policy differs; query text and normal statement/storage caches are unchanged.
+Milliseconds:median(p95). Five warmups;30 timed iterations. Only the existing result-cache policy differs; exact query text and normal statement/storage caches are unchanged.
 
 | Query | Synchronous default | Adaptive write-behind | Strict durability |
 | --- | ---: | ---: | ---: |
-| products_per_category | 0.202 (0.238) | 0.231 (0.271) | 0.224 (0.271) |
-| customer_category_distinct_orders | 0.142 (0.156) | 0.170 (0.193) | 0.180 (0.209) |
-| optional_match_orders_count | 0.197 (0.204) | 0.245 (0.267) | 0.248 (0.263) |
-| revenue_by_product | 0.171 (0.191) | 0.163 (0.180) | 0.163 (0.207) |
-| products_by_supplier | 0.159 (0.199) | 0.171 (0.207) | 0.180 (0.204) |
-| orders_by_customer | 0.169 (0.186) | 0.166 (0.183) | 0.171 (0.193) |
-| revenue_by_category | 0.238 (0.254) | 0.231 (0.263) | 0.251 (0.266) |
-| revenue_by_supplier | 0.170 (0.201) | 0.184 (0.206) | 0.196 (0.242) |
-| revenue_by_customer | 0.185 (0.206) | 0.170 (0.201) | 0.186 (0.208) |
-| order_line_sales_by_country | 0.169 (0.193) | 0.154 (0.173) | 0.166 (0.179) |
-| low_stock_products | 0.239 (0.277) | 0.248 (0.277) | 0.247 (0.268) |
-| products_in_category | 0.248 (0.270) | 0.242 (0.250) | 0.222 (0.248) |
-| order_line_quantity_distribution | 0.163 (0.187) | 0.161 (0.190) | 0.169 (0.198) |
-| customer_order_details | 0.248 (0.275) | 0.233 (0.266) | 0.245 (0.259) |
+| products_per_category | 0.207 (0.231) | 0.240 (0.264) | 0.235 (0.257) |
+| customer_category_distinct_orders | 0.176 (0.192) | 0.174 (0.190) | 0.176 (0.193) |
+| optional_match_orders_count | 0.241 (0.262) | 0.244 (0.278) | 0.249 (0.278) |
+| revenue_by_product | 0.170 (0.189) | 0.168 (0.200) | 0.168 (0.183) |
+| products_by_supplier | 0.170 (0.206) | 0.178 (0.200) | 0.169 (0.196) |
+| orders_by_customer | 0.154 (0.165) | 0.170 (0.202) | 0.171 (0.192) |
+| revenue_by_category | 0.240 (0.260) | 0.201 (0.212) | 0.222 (0.240) |
+| revenue_by_supplier | 0.155 (0.161) | 0.160 (0.177) | 0.175 (0.209) |
+| revenue_by_customer | 0.196 (0.223) | 0.153 (0.162) | 0.173 (0.194) |
+| order_line_sales_by_country | 0.144 (0.152) | 0.149 (0.167) | 0.160 (0.181) |
+| low_stock_products | 0.219 (0.241) | 0.226 (0.252) | 0.249 (0.275) |
+| products_in_category | 0.211 (0.232) | 0.219 (0.234) | 0.221 (0.231) |
+| order_line_quantity_distribution | 0.145 (0.156) | 0.143 (0.159) | 0.165 (0.203) |
+| customer_order_details | 0.228 (0.239) | 0.226 (0.242) | 0.240 (0.268) |
 
 ## All14 native queries — result cache off
 
-Milliseconds:median(p95). Five warmups; 5 timed iterations. Only the existing result-cache policy differs; query text and normal statement/storage caches are unchanged.
+Milliseconds:median(p95). Five warmups;5 timed iterations. Only the existing result-cache policy differs; exact query text and normal statement/storage caches are unchanged.
 
 | Query | Synchronous default | Adaptive write-behind | Strict durability |
 | --- | ---: | ---: | ---: |
-| products_per_category | 636.191 (649.513) | 610.372 (613.746) | 634.521 (650.312) |
-| customer_category_distinct_orders | 5353.503 (5380.152) | 5362.997 (5378.543) | 5292.525 (5330.683) |
-| optional_match_orders_count | 3589.646 (3620.473) | 3799.565 (3886.387) | 3570.867 (3618.521) |
-| revenue_by_product | 2255.118 (2268.981) | 2383.568 (2406.830) | 2254.484 (2262.787) |
-| products_by_supplier | 642.113 (660.249) | 619.326 (625.692) | 643.255 (649.133) |
-| orders_by_customer | 400.573 (416.833) | 435.953 (454.255) | 398.723 (409.284) |
-| revenue_by_category | 3423.121 (3455.926) | 3642.096 (3701.913) | 3423.455 (3490.722) |
-| revenue_by_supplier | 3378.884 (3399.424) | 3542.976 (3578.425) | 3385.438 (3396.109) |
-| revenue_by_customer | 3186.071 (3230.485) | 3106.287 (3119.088) | 3170.661 (3202.125) |
-| order_line_sales_by_country | 1972.486 (1982.004) | 1892.204 (1904.234) | 1954.386 (1990.376) |
-| low_stock_products | 216.782 (222.794) | 216.727 (217.705) | 216.055 (217.024) |
-| products_in_category | 2.474 (2.499) | 2.411 (2.570) | 2.362 (2.478) |
-| order_line_quantity_distribution | 1975.409 (1991.631) | 2371.756 (2385.485) | 1973.138 (2054.466) |
-| customer_order_details | 1.122 (1.155) | 1.105 (1.129) | 1.116 (1.136) |
+| products_per_category | 627.721 (648.068) | 634.564 (651.385) | 632.408 (659.901) |
+| customer_category_distinct_orders | 5258.662 (5293.184) | 5388.608 (5553.527) | 5301.360 (5406.910) |
+| optional_match_orders_count | 3573.922 (3628.025) | 3755.529 (3810.785) | 3550.244 (3574.095) |
+| revenue_by_product | 2263.777 (2267.744) | 2390.063 (2401.376) | 2236.317 (2239.259) |
+| products_by_supplier | 627.894 (645.455) | 623.291 (636.986) | 640.538 (646.219) |
+| orders_by_customer | 398.170 (416.000) | 439.478 (459.969) | 394.979 (410.032) |
+| revenue_by_category | 3345.327 (3379.129) | 3577.521 (3655.966) | 3376.258 (3435.102) |
+| revenue_by_supplier | 3335.653 (3400.776) | 3555.240 (3563.025) | 3329.987 (3380.781) |
+| revenue_by_customer | 3123.390 (3186.756) | 3185.833 (3208.544) | 3146.816 (3173.131) |
+| order_line_sales_by_country | 1971.581 (1977.967) | 1957.952 (1959.619) | 1952.451 (1959.903) |
+| low_stock_products | 215.443 (219.807) | 215.361 (216.854) | 215.882 (222.964) |
+| products_in_category | 2.377 (2.413) | 2.405 (2.543) | 2.341 (2.415) |
+| order_line_quantity_distribution | 1975.444 (1991.510) | 2451.247 (2451.948) | 1952.961 (1955.878) |
+| customer_order_details | 1.111 (1.268) | 1.139 (1.154) | 1.120 (1.136) |
 
 ## Matched-file allocation control
 
-All three binaries open copies of identical closed Badger files. One timed Execute after five warmups; no transport, seed or fingerprint calculation is timed. This is per-operation diagnostic evidence, not a statistical small-latency-delta claim. CPU and sampled allocation profiles cover all14 queries.
+This allocation control was executed on published2d036, not rerun as a fresh retained-follow-up result. The follow-up changes write-time cache facts and seed checks; its read execution owners are unchanged. All three binaries open copies of identical closed Badger files. One timed Execute after five warmups; no transport, seed or fingerprint calculation is timed. This is per-operation diagnostic evidence, not a statistical small-latency-delta claim. CPU and sampled allocation profiles cover all14 queries.
 
 | Query | Release f62 B/op | Follow-up B/op | Release allocs/op | Follow-up allocs/op |
 | --- | ---: | ---: | ---: | ---: |
@@ -100,24 +100,102 @@ At4096 children:time−7.99%,bytes−11.05%,allocations−6.70%. At16 children, 
 
 Original24-case application data is unavailable. The maintainer approved the generated10K Reading/2K Record substitute with1KiB documentation text and hourly datetimes; it does not qualify the unavailable original application suite. Both sides use Go1.27.3,GOGC=100,GOMEMLIMIT=8GiB,GOMAXPROCS=12. Statements are distinct text in warmed processes, not process-cold requests.
 
-| Shape | Historical b6 ms/op | Follow-up ms/op | Follow-up B/op | Follow-up allocs/op |
+| Shape | Historical b6 ms/op | Retained follow-up ms/op | Follow-up B/op | Follow-up allocs/op |
 | --- | ---: | ---: | ---: | ---: |
-| Scoped CALL preparation | 6.369 | 5.665 | 2,786,109 | 26,038 |
-| 25-ID lookup | 605.086 | 76.699 | 4,673,601 | 196,919 |
-| Unindexed20-CALL | 417.076 | 91.499 | 4,339,645 | 45,840 |
-| Indexed20-CALL | 5.774 | 5.804 | 3,682,516 | 41,912 |
-| Datetime scan | 39.526 | 36.365 | 30,526,194 | 274,520 |
+| Scoped CALL preparation | 6.369 | 5.883 | 2,786,185 | 26,038 |
+| 25-ID lookup | 605.086 | 77.566 | 4,609,198 | 193,624 |
+| Unindexed20-CALL | 417.076 | 89.438 | 4,336,381 | 45,837 |
+| Indexed20-CALL | 5.774 | 5.995 | 3,682,476 | 41,913 |
+| Datetime scan | 39.526 | 36.892 | 30,525,734 | 274,519 |
 
-Historical indexed/datetime baseline is the earlier ten alternating-order process pairs; this frozen follow-up has three samples per shape and keeps indexed CALL within the5% budget. Earlier mixed-compiler diagnostics are excluded. Exact results are asserted.
+Historical indexed/datetime baseline is the earlier ten alternating-order process pairs; the retained-source follow-up has three fresh samples per shape and keeps indexed CALL within the5% budget(5.995ms versus5.774ms,+3.8%). Earlier mixed-compiler diagnostics are excluded. Exact results are asserted.
 
 ## Current Graphify importer
 
-The earlier5a7 source was profiled using actual import_graph over loopback with generated11500nodes/30000edges:initial,unchanged,changed/stale refresh, exact owned-node/edge hashes and foreign-repository preservation. Temporary input/source files are removed. Its f62/current synchronous initial wall times are86.535/87.461s and write-behind86.123/86.973s; these single-run diagnostics do not establish a small-delta gain. The private traversal follow-up still needs its completion evidence; no remote ingest completion or successful duplicate-checker result is claimed.
+The retained source is profiled through actual `import_graph` over loopback, with generated11500nodes/30000edges. The three phases are initial import, unchanged refresh and changed/stale refresh(removing100 nodes and2000 edges). Each phase checks exact owned-node/edge hashes and preserves a foreign repository with colliding IDs. Both runs remove their temporary input/source fixtures. The recorded hashes agree with the preserved release-f62 fixture.
+
+| Phase | Release f62 sync s | Retained sync s | Release f62 WB s | Retained WB s |
+| --- | ---: | ---: | ---: | ---: |
+| initial | 86.535 | 88.249 | 86.123 | 87.789 |
+| unchanged | 5.677 | 5.670 | 5.663 | 5.699 |
+| changed_sync | 5.769 | 5.785 | 5.724 | 5.748 |
+
+These are single-run diagnostics, not statistical evidence for small timing deltas. The30-second CPU window is partial; allocation deltas include untimed verification. No remote code-graph ingest completion or successful duplicate-checker run is claimed.
 
 ## Verification and limits
 
 - Published5a7 full `make test`:PASS147 packages,74 fresh/73 cached.
-- This follow-up:focused/race tests and all native/correctness/performance controls above pass; full `make test` is running.
+- Published2d036 follow-up:full `make test` PASS147 packages,36 fresh/111 cached, including the blocking storage context census (710.772s).
+- Retained follow-up:integrated focused race checks pass(storage2.462s; benchmark client1.738s). Six native cells,3 reopens, all5 generated R17 controls and both actual Graphify importer modes pass. `make verify-list BASE=origin/release/v1.4.4` passes as a plan-only preview; the fresh full `make test` is running. Broader verification is not implied by the preview.
 - Broader `make verify` is deferred to CI under the maintainer gate.
 - The remote code graph remains unavailable/incomplete. The maintainer waived the checker this round; current-source reuse/ownership review found no unresolved candidate. No checker, hook, threshold or exclusion changes were made.
 - No Badger keys, persisted payloads, storage version or third-party code changes.
+
+
+## Write-behind overlap and retained allocation reduction
+
+Write-behind still prepares, validates and logs each recovery record before acknowledgement. Background replay adds work; moving Badger application off the foreground does not remove these costs. Both synchronous default and write-behind use non-strict batched WAL in these controls. Their performance difference cannot be explained by avoiding a strict fsync.
+
+The published15-second CPU windows include ingestion and early read warmups. Write-owned cumulative stacks show synchronous `PublishCommit`4.78CPU-seconds, write-behind foreground publication4.37CPU-seconds and replay an additional3.09CPU-seconds. These are sampled stacks, not additive percentages of ingest wall time. Replay physical-cache projection accounts for approximately0.77GiB of allocation traffic in the recorded write-behind run.
+
+The retained change stores key-derived cache facts in one ordered72-byte representation instead of104-byte `AffectedFact` values. Visitation reconstructs the exact same fields. Dictionary resolution, string ownership, malformed/ignored families and insertion order stay unchanged. No fact is skipped or deduplicated. Other producers retain the full public fact representation needed for their own fields; no public API or stored format changes.
+
+### Physical-cache projection benchmarks
+
+Apple M2 Max,Go1.27.3,GOGC=100,GOMAXPROCS=4. Key/fixture setup is excluded; add and ordered emission are timed. Five samples at100K facts:
+
+| Facts / mix | Before ns/op | After ns/op | Before B/op | After B/op | Before allocs/op | After allocs/op |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 100K node-heavy | 6,013,175 | 4,364,558 | 55,151,473 | 41,678,488 | 100,029 | 100,029 |
+| 100K edge-heavy | 7,602,767 | 5,517,658 | 54,151,880 | 40,678,884 | 25,029 | 25,029 |
+| 100K mixed | 6,994,058 | 5,007,075 | 54,551,934 | 41,078,886 | 50,030 | 50,030 |
+
+Allocation bytes fall24–25%, with counts unchanged. Five alternating-order process pairs at100K operations per sample qualify small commits. At16 facts, node-heavy medians improve590.2→531.6ns and3552→2560B; edge-heavy717.7→656.5ns and3456→2464B; mixed666.7→608.8ns and3488→2496B. Allocation counts stay21/9/13. At1 fact, bytes fall128→96(node/mixed) and112→80(edge), without extra allocations. Exact ordered-fact controls pass on both old/new representations, including malformed and ignored keys. The earlier split-slice candidate is excluded because it added small-commit allocations.
+
+### Buffer-reuse experiments excluded from this PR
+
+Two additional prototypes reused compressed WAL output and the final encoded frame. They preserved bytes and passed focused correctness/race controls, with strong microbenchmark allocation reductions:
+
+| Prototype workload | Before ns/op | After ns/op | Before B/op | After B/op | Before allocs/op | After allocs/op |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Compressed append,160 bindings | 18,924 | 19,068 | 4,555 | 2,508 | 12 | 11 |
+| Additional frame reuse,160 bindings | 18,238 | 18,464 | 2,509 | 1,612 | 11 | 10 |
+| Large frame codec,163840-byte Data | 16,611 | 3,937 | 172,333 | 402 | 4 | 3 |
+
+Append timing ranges overlap. The frame experiment's baseline already includes compression-output reuse, and no unnecessary ownership copy is added to inflate that baseline.
+
+Native memory did not establish a sufficiently stable gain for retaining these buffer prototypes. Three fresh-process comparisons per mode, without profiling, RSS sampling or forced collection during ingestion, recorded these kernel high-water maxima:
+
+| Mode | Published baseline MiB | Cache facts + compression buffer MiB | Plus frame buffer MiB |
+| --- | ---: | ---: | ---: |
+| Strict | 4061 | 4051 | 4538 |
+| Write-behind | 7563 | 8077 | 7518 |
+
+Medians and quiescent heaps often overlap. A separate two-GC diagnostic found live-heap medians around633/632/640MiB respectively. GC traces place the higher peaks after a collection saw a larger temporary in-flight batch, raising its next heap goal. This explains the timing sensitivity but does not waive the unexplained peak cost. Both buffer prototypes are excluded; the existing WAL compression and codec implementations are retained exactly. No new buffer-ownership contract, format, migration or retention policy ships.
+
+### Retained cache-fact candidate — kernel memory and completion controls
+
+Three alternating-order process pairs per mode, unchanged script-default payload, no in-ingest profiling/sampling/forced GC. Fresh controller processes obtain kernel child high-water RSS after reaping the server, and verify it exceeds the already-reaped seed-client peak so the attribution is unambiguous. Completion includes seed/wipe/index work, immediate-postACK handoff and graceful teardown; it is an upper bound, not earliest flush latency or crash-recovery proof.
+
+| Mode | Before ACK s | After ACK s | Before completion s | After completion s | Before peak RSS MiB(range) | After peak RSS MiB(range) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Strict | 8.662 | 8.577 | 9.245 | 9.161 | 3918(3880–4032) | 3912(3862–3922) |
+| Write-behind | 8.151 | 8.274 | 11.740 | 11.713 | 7499(7418–7678) | 7615(7551–7721) |
+
+Every reopened population matches all9 counts. Write-behind completed time is neutral; its worst measured RSS is0.6% above this paired baseline maximum, within the control variation, while strict peak decreases. The cache-fact representation introduces no additional retained buffer and structurally reduces its stored element width. No macro ingest-speed breakthrough or5-second result is claimed.
+
+### Benchmark acknowledgement and population correctness
+
+Seed batches now consume terminal summaries before counting success. Serial and parallel workers share that owner, and only typed retriable server statuses authorize CREATE replay. Controlled tests reproduce hidden terminal errors and unsafe message-only retry classification; this is not evidence of data loss in the previously verified benchmark populations.
+
+The shared count verifier checks the exact generated ORDERS population from the existing plan total. NornicDB/Neo4j, Falkor and Ladybug callers use that same verifier. Missing/duplicated order-line tests fail before correction and pass afterward. Optional external-engine runtimes were not exercised. Integrated focused race controls cover the retained storage and seed changes; the final full gate follows frozen-source performance qualification.
+
+Reproduce component measurements with GC enabled:
+
+```sh
+GOTOOLCHAIN=go1.27.3 GOGC=100 GOMAXPROCS=4 go test ./pkg/storage \
+  -run '^$' -bench '^BenchmarkPhysicalCacheProjectionStore$' \
+  -benchmem -benchtime=5x -count=5
+```
+
+The repository Northwind runner supplies the unchanged seed/query corpus; Graphify uses the actual importer. The native tables above are refreshed from the completed current-source matrix. Final verification is recorded after its gate finishes.

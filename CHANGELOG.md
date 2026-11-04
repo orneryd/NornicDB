@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Northwind benchmark seeds now check terminal write results and every generated
+  relationship population, and retry CREATE batches only for typed retriable
+  server statuses. Unknown commit outcomes are surfaced without replay.
 - Reuse retained syntax through CALL, projection and iteration readers to avoid
   repeatedly parsing generated query fragments. Preserve Neo4j DISTINCT
   rejection and comment/newline-separated projection aliases.
@@ -54,6 +57,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Reduce native ingestion allocations by compacting physical cache facts.
+  Preserve emitted facts and ordering, durability and storage formats.
 - Go grammar consumers now pass an original-source byte offset to
   `StatementSyntax.LeadingCall(from)`; standalone callers pass `0`. See
   [retained syntax](docs/architecture/cypher-parser-modes.md#retained-syntax-in-shared-readers).

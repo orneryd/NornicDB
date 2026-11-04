@@ -22,9 +22,18 @@
 - [x] Report acknowledgement separately from completion. Graceful post-query drain is not an ingest-to-flush latency measurement; restart verification is not a crash-recovery proof.
 - [x] Profile all 14 in-process execution queries and repeat historical controls with the same Go 1.27.3 toolchain. Indexed CALL is +1.17% versus the historical baseline; the other generated controls improve.
 - [x] Resolve initial positive allocation deltas using three-execution repeats and identical closed-database files. Every query uses fewer bytes/allocations than release f62. Retain the measured canonical DFS accumulator and active-edge cleanup;4096-child bytes−11.05%,allocations−6.70%,time−7.99%.
-- [ ] Re-run the applicable full `make test` gate after any retained production optimization.
+- [x] Pass full `make test` on published follow-up2d036:147 package passes,36 fresh and111 cached; blocking storage census710.772s. The frozen source receipt matches the pushed checkpoint. Any later retained tuning needs a new final gate.
 - [x] Publish candidate tables and limits in docs/performance/pr1682-read-query-results.md. The maintainer requested an immediate draft push for review while the follow-up full gate runs.
-- [ ] Finish follow-up full `make test`, completion-boundary evidence, final PR/Linear AC status and readiness.
+- [x] Finish write-behind tuning, completion-boundary evidence and the frozen performance qualification before starting the fresh full `make test`.
+- [ ] Publish the maintainer-requested review checkpoint with current PR/Linear AC evidence; full `make test` remains pending, so do not declare merge-ready.
+- [x] Retain one ordered compact cache-fact slice:24–25% fewer bytes at100K facts, unchanged allocation counts, exact old/new fact emission controls. Reject split slices for extra small-commit allocations.
+- [x] Finish independent current-source DeepSeek reviews. The initial immutable-snapshot review could not see uncommitted proposals and is not acceptance evidence.
+- [x] Exclude new WAL compression/frame buffer reuse after native kernel-memory comparisons exposed larger peak tails across strict/WB modes. Restore all8 experimental WAL source/test files to HEAD; preserve patches, measurements and format/race proof outside the checkout. Existing WAL behavior remains.
+- [x] Qualify retained cache-fact-only strict/WB native ACK/completion/kernel-RSS controls:12 alternating runs preserve all9 counts; completed times and peaks remain within baseline variation.
+- [x] Finish default-sync immediate completion controls, final6-cell native query matrix,3 reopens, all5 generated R17 controls and both actual Graphify importer modes. All counts/hashes match; indexed R17+3.8% remains within5%.
+- [ ] Pass the fresh full `make test` on the retained frozen source. It starts only after performance qualification completes; plan-only `make verify-list` passes. No new optimization experiments are planned.
+- [x] Correct the benchmark seed acknowledgement owner: consume terminal summaries and retry only typed retriable server statuses. Fail-first reproduction, fixed controls and focused race pass for serial/parallel errors and unknown commit outcomes.
+- [x] Reproduce and correct the shared seed verifier’s omitted ORDERS population check, using the exact existing plan total. Migrate all3 engine callers; focused race passes1.716s. Optional external-engine runtimes remain unexecuted.
 - [ ] Complete task-owned workspace cleanup after readiness, preserving active ingestion and required evidence.
 
 ## Source and measurement controls
@@ -37,7 +46,7 @@ The final native Northwind matrix reuses the script defaults: 96 categories, 144
 
 ## Current evidence and limits
 
-- `pr1682-native-post-traversal`:frozen follow-up native six-cell matrix and three reopen checks PASS; all14 fingerprints and9 counts agree. The follow-up full make-test gate is running. Complete tables:docs/performance/pr1682-read-query-results.md.
+- `pr1682-native-post-traversal`:frozen follow-up native six-cell matrix and three reopen checks PASS; all14 fingerprints and9 counts agree. The follow-up full make-test gate passed147 packages (36 fresh,111 cached). The later retained source is qualified separately under `pr1682-retained-final`; its full gate is running. Complete tables:docs/performance/pr1682-read-query-results.md.
 
 Evidence lives under `/Users/timothysweet/.local/share/nornicdb-pr-readiness/`.
 
