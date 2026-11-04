@@ -168,10 +168,20 @@ class GraphifyLocalTest(unittest.TestCase):
         }
         driver = RecordingDriver()
         driver.connection.responses = [
-            ("RETURN n.id AS id", [{"id": "a"}, {"id": "b"}, {"id": "stale-node"}]),
-            ("RETURN a.id AS src", [{"src": "a", "tgt": "b", "rel": "CALLS"},
-                                    {"src": "a", "tgt": "stale-node", "rel": "CALLS"},
-                                    {"src": "b", "tgt": "a", "rel": "CALLS"}]),
+            # a, b and stale-node are in this repo; only stale-node is missing from this graph
+            ("RETURN n.id AS id, n.props_hash AS hash, elementId(n) AS element",
+             [{"id": "a", "hash": "a-hash", "element": "e:a"},
+              {"id": "b", "hash": "b-hash", "element": "e:b"},
+              {"id": "stale-node", "hash": "s-hash", "element": "e:stale"}]),
+            # the sync's per-label inventory of the nodes this importer wrote
+            ("RETURN n.id AS id, elementId(n) AS element",
+             [{"id": "a", "element": "e:a"}, {"id": "b", "element": "e:b"},
+              {"id": "stale-node", "element": "e:stale"}]),
+            # stored relationships, answered for both inventories
+            ("RETURN a.id AS src, b.id AS tgt, type(r) AS rel",
+             [{"src": "a", "tgt": "b", "rel": "CALLS"},
+              {"src": "a", "tgt": "stale-node", "rel": "CALLS"},
+              {"src": "b", "tgt": "a", "rel": "CALLS"}]),
         ]
         ingest(graph, driver)
         queries = driver.connection.queries
@@ -184,19 +194,27 @@ class GraphifyLocalTest(unittest.TestCase):
         self.assertIn("MATCH (n:Code {id: id, repo: $repo})", delete_nodes[0][0])
         fetch_ids = [q for q, _ in queries if "MATCH (n:Code {repo: $repo})" in q and "RETURN n.id AS id" in q][0]
         self.assertIn("n.props_hash IS NOT NULL", fetch_ids)
+        # the sources of the batched inventory are named by physical id
+        self.assertIn("elementId(n) AS element", fetch_ids)
         delete_edges = [(q, params) for q, params in queries
                         if "MATCH (a:Code {id: row.src, repo: $repo})-[r:CALLS]->(b:Code {id: row.tgt, repo: $repo})" in q]
         # b->a is stale; a->stale-node goes with its node (DETACH DELETE) and is not deleted separately
         self.assertEqual([params["rows"] for _, params in delete_edges], [[{"src": "b", "tgt": "a"}]])
-        # the sync's own fetch (the last one) is restricted to nodes this importer wrote
-        fetch_edges = [q for q, _ in queries if "RETURN a.id AS src, b.id AS tgt, type(r) AS rel" in q][-1]
-        self.assertIn("MATCH (a:Code {repo: $repo})-[r]->(b)", fetch_edges)
-        self.assertIn("a.props_hash IS NOT NULL AND b.props_hash IS NOT NULL", fetch_edges)
+        # Two relationship inventories: the hash one, then the sync's. The sync's own is still
+        # restricted to nodes this importer wrote, and reads one bounded source batch per request.
+        fetch_edges = [q for q, _ in queries if "RETURN a.id AS src, b.id AS tgt, type(r) AS rel" in q]
+        self.assertEqual(len(fetch_edges), 2)
+        sync_inventory = fetch_edges[-1]
+        self.assertIn("MATCH (a) WHERE elementId(a) = element", sync_inventory)
+        self.assertIn("a.repo = $repo AND b.repo = $repo", sync_inventory)
+        self.assertIn("a.props_hash IS NOT NULL AND b.props_hash IS NOT NULL", sync_inventory)
+        self.assertNotIn("MATCH (a:Code {repo: $repo})-[r]->(b)", sync_inventory)
 
     def test_sync_refuses_a_mass_delete_before_deleting_anything(self):
         nodes = [{"id": f"n{i}", "file_type": "code"} for i in range(50)]
         graph = {"nodes": nodes, "links": []}
-        existing = [{"id": f"n{i}"} for i in range(300)]  # 250 of 300 are missing from this graph
+        existing = [{"id": f"n{i}", "hash": f"h{i}", "element": f"e:n{i}"}
+                    for i in range(300)]  # 250 of 300 are missing from this graph
         driver = RecordingDriver()
         driver.connection.responses = [("RETURN n.id AS id", existing)]
         with self.assertRaises(SystemExit) as raised:
@@ -242,7 +260,9 @@ class GraphifyLocalTest(unittest.TestCase):
         driver.connection.responses = [
             # a and b are already stored identically; c is stored with an outdated hash
             ("RETURN n.id AS id, n.props_hash AS hash",
-             [{"id": "a", "hash": node_hash("a")}, {"id": "b", "hash": node_hash("b")}, {"id": "c", "hash": "stale"}]),
+             [{"id": "a", "hash": node_hash("a"), "element": "e:a"},
+              {"id": "b", "hash": node_hash("b"), "element": "e:b"},
+              {"id": "c", "hash": "stale", "element": "e:c"}]),
             # a->b is stored identically; b->c is missing; a->c has an outdated hash
             ("type(r) AS rel, r.props_hash AS hash",
              [{"src": "a", "tgt": "b", "rel": "CALLS", "hash": edge_hash("calls")},

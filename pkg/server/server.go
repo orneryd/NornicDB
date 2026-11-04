@@ -1196,7 +1196,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (re
 	s.executorCache = cypher.NewDatabaseExecutorCache(&s.executorsMu, &s.executors,
 		(*cypher.StorageExecutor).StatementCacheSelectionValid,
 		func(name string) (*cypher.StorageExecutor, error) {
-			executor, err := cypher.NewDatabaseScopedExecutor(s.databaseScopedExecutorOptions(name, ""))
+			executor, err := cypher.NewDatabaseScopedExecutor(s.DatabaseScopedExecutorOptions(name, ""))
 			if err == nil {
 				executor.SetSharedExecutor(true)
 			}

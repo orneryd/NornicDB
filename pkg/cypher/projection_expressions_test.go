@@ -9,21 +9,23 @@ import (
 )
 
 // projectionExpressions is the one reading of a projection clause (its
-// expressions, aliases dropped) that the row validators share (#823).
+// expressions, aliases dropped) that the row validators share (#823). Each
+// clause carries the syntax its own text parses to, as an executing statement's
+// clause does.
 func TestProjectionExpressions(t *testing.T) {
 	for _, tc := range []struct {
+		kind            pipelineClauseKind
 		clause, keyword string
 		want            []string
 	}{
-		{"RETURN DISTINCT a.x AS x, count(b) ORDER BY x LIMIT 3", "RETURN", []string{"a.x", "count(b)"}},
-		{"WITH n, m WHERE n.v > 1", "WITH", []string{"n", "m"}},
-		{"WITH *", "WITH", nil},
-		{"UNWIND range(1, 3) AS i", "UNWIND", []string{"range(1, 3)"}},
-		{"UNWIND $list", "UNWIND", nil},
-		{"WITH n", "RETURN", nil},
-		{"RET", "RETURN", nil},
+		{pipelineClauseReturn, "RETURN DISTINCT a.x AS x, count(b) ORDER BY x LIMIT 3", "RETURN", []string{"a.x", "count(b)"}},
+		{pipelineClauseWith, "WITH n, m WHERE n.v > 1", "WITH", []string{"n", "m"}},
+		{pipelineClauseWith, "WITH *", "WITH", nil},
+		{pipelineClauseWith, "WITH n", "RETURN", nil},
+		{pipelineClauseReturn, "RET", "RETURN", nil},
 	} {
-		require.Equal(t, tc.want, projectionExpressions(t.Context(), tc.clause, tc.keyword), "%s / %s", tc.keyword, tc.clause)
+		clause := composedPipelineClause(t.Context(), tc.kind, tc.clause)
+		require.Equal(t, tc.want, projectionExpressions(t.Context(), clause, tc.keyword), "%s / %s", tc.keyword, tc.clause)
 	}
 }
 

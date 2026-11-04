@@ -2,11 +2,12 @@ package cypher
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -703,10 +704,67 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 		}
 		return err
 	}
-	// A label-indexed stream is the primary physical scan for every labelled
-	// MATCH. It preserves the shared row pipeline while keeping work
-	// proportional to the matching label, applies residual predicates before
-	// materialising rows, and lets LIMIT stop the storage iterator early.
+	// A property equality narrows the scan before a node is decoded (#824):
+	// decode only the properties the row and the equality need, let the engine
+	// skip a node that fails them before decoding the rest of it, and make the
+	// node the scan supplies the row's node. A required string is compared with
+	// the stored bytes, so a node without it is skipped undecoded (#857). A
+	// labelled scan passes its label as the engine's index hint; a store may
+	// ignore every hint, so collect still applies every residual label,
+	// property, WHERE, visibility and viewport check to the node it streams.
+	// The required properties are the pattern's and the WHERE's top-level
+	// equalities on the variable (WHERE n.id = $id, #857), which every match
+	// satisfies. Without a projection the scan decodes every property, so the
+	// row carries the whole node.
+	required := e.scanRequiredProperties(ctx, properties, whereVariable, whereClause)
+	if len(required) > 0 {
+		keys := make([]string, 0, len(required))
+		var stringEquals map[string]string
+		for key, value := range required {
+			keys = append(keys, key)
+			if text, ok := value.(string); ok {
+				if stringEquals == nil {
+					stringEquals = make(map[string]string, len(required))
+				}
+				stringEquals[key] = text
+			}
+		}
+		opts := storage.StreamNodesOptions{
+			ApplyDecayFilter: true,
+			PropertyFilter: func(props map[string]interface{}) bool {
+				return nodePropertiesMatch(&storage.Node{Properties: props}, required)
+			},
+			PropertyStringEquals: stringEquals,
+		}
+		if projection != nil {
+			opts.Projection = scanProjectionWithRequired(projection, keys)
+		} else {
+			// The row is the whole node, so name the properties the filter
+			// reads: the scan settles it on those and skips a node it rejects
+			// before decoding the rest of that node's body (#1682). A store may
+			// ignore the hint; collect still tests every node it receives.
+			opts.PropertyFilterProjection = keys
+		}
+		if len(labels) > 0 {
+			opts.Label = labels[0]
+		}
+		// A query row keeps its embedding metadata. The scan settles it from
+		// the same snapshot as the body it decoded, so the row costs no second
+		// node read (queryNodeReader is the row read contract).
+		opts.QueryNodes = queryReader != nil
+		opts.WithEmbeddings = queryReader == nil
+		err := store.StreamNodesWithOptions(ctx, opts, collect)
+		if err != nil && err != storage.ErrIterationStopped {
+			return err
+		}
+		return nil
+	}
+
+	// The label-indexed stream is the physical scan for a labelled MATCH the
+	// equality hint does not restrict. It preserves the shared row pipeline
+	// while keeping work proportional to the matching label, applies residual
+	// predicates before materialising rows, and lets LIMIT stop the storage
+	// iterator early.
 	if len(labels) > 0 {
 		if reader, ok := store.(storage.ProjectedLabelNodeReader); ok {
 			err := reader.StreamNodesByLabelProjected(ctx, labels[0], projection, collect)
@@ -755,52 +813,6 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 
 	var nodes []*storage.Node
 	var err error
-
-	// A label-less property match reads every node (#824): decode only the
-	// properties a match must have, let the engine skip a node that fails them
-	// before decoding the rest of it, and read the whole node only for a
-	// match. A required string is compared with the stored bytes, so a node
-	// without it is skipped undecoded (#857). The node then passes the same
-	// filters as on the full scan, including the whole WHERE. The required
-	// properties are the pattern's and the WHERE's top-level equalities on
-	// the variable (WHERE n.id = $id, #857), which every match satisfies.
-	var required map[string]interface{}
-	if len(labels) == 0 {
-		required = e.labellessScanRequiredProperties(ctx, properties, whereVariable, whereClause)
-	}
-	if len(required) > 0 {
-		keys := make([]string, 0, len(required))
-		var stringEquals map[string]string
-		for key, value := range required {
-			keys = append(keys, key)
-			if text, ok := value.(string); ok {
-				if stringEquals == nil {
-					stringEquals = make(map[string]string, len(required))
-				}
-				stringEquals[key] = text
-			}
-		}
-		matches := func(props map[string]interface{}) bool {
-			return nodePropertiesMatch(&storage.Node{Properties: props}, required)
-		}
-		err := store.StreamNodesWithOptions(ctx, storage.StreamNodesOptions{Projection: keys, ApplyDecayFilter: true, PropertyFilter: matches, PropertyStringEquals: stringEquals}, func(projected *storage.Node) error {
-			if projected == nil || !matches(projected.Properties) {
-				return nil
-			}
-			node, err := e.getQueryNode(ctx, store, projected.ID)
-			if errors.Is(err, storage.ErrNotFound) {
-				return nil
-			}
-			if err != nil {
-				return err
-			}
-			return collect(node)
-		})
-		if err != nil && err != storage.ErrIterationStopped {
-			return err
-		}
-		return nil
-	}
 
 	// Streaming is the shared scan primitive for the converged executor. Apply
 	// every residual filter in the visitor so both bounded and unbounded scans
@@ -886,13 +898,26 @@ func visitNodeList(nodes []*storage.Node, visit func(*storage.Node) error) error
 	return nil
 }
 
-// labellessScanRequiredProperties returns the property values every node a
-// label-less scan may match must have: the pattern's properties and the
-// WHERE's top-level equalities between variable.property and a constant
-// (parameter, literal or bound value; parseSimpleIndexedEquality). Over-
-// approximating the WHERE is safe because the caller still evaluates it on
-// every node the scan returns.
-func (e *StorageExecutor) labellessScanRequiredProperties(ctx context.Context, properties map[string]interface{}, variable, whereClause string) map[string]interface{} {
+// scanProjectionWithRequired returns the properties a narrowed scan decodes:
+// the row's projection plus the properties its equality filter tests, so a
+// filter never reads a property the node map does not have. The row keeps the
+// projection's properties; the required ones are decoded for the filter.
+func scanProjectionWithRequired(projection, required []string) []string {
+	union := make([]string, 0, len(projection)+len(required))
+	union = append(union, projection...)
+	union = append(union, required...)
+	sort.Strings(union)
+	return slices.Compact(union)
+}
+
+// scanRequiredProperties returns the property values every node a node scan
+// may match must have: the pattern's properties and the WHERE's top-level
+// equalities between variable.property and a constant (parameter, literal or
+// bound value; parseSimpleIndexedEquality). It serves a labelled and a
+// label-less scan alike: the label is only an engine hint, so both forms carry
+// the same required values. Over-approximating the WHERE is safe because the
+// caller still evaluates it on every node the scan returns.
+func (e *StorageExecutor) scanRequiredProperties(ctx context.Context, properties map[string]interface{}, variable, whereClause string) map[string]interface{} {
 	clause := unwrapOuterParens(strings.TrimSpace(whereClause))
 	if clause == "" || strings.TrimSpace(variable) == "" {
 		return properties

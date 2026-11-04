@@ -3,7 +3,10 @@ package cypher
 // NornicDB #857: a label-less match whose equality is in WHERE (MATCH (a)
 // WHERE a.id = $id), or that starts a relationship pattern
 // ((a {id: …})-[r]->(b {id: …}), graphify's stale-edge delete), decoded every
-// node in full; only the plain node pattern took the projected scan.
+// node in full; only the plain node pattern took the projected scan. A
+// label-less row carries the whole node, so the scan now decodes every property
+// (no projection) and skips a non-matching node through the equality filter
+// before it materializes the node.
 
 import (
 	"context"
@@ -16,25 +19,32 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// projectionProbeEngine records the projections of the node streams a
-// statement runs (nil for a full-decode stream).
+// projectionProbeScan is one node stream a statement ran: the projection it
+// carried (nil for a full-decode stream) and whether it carried an equality
+// filter the engine may skip a node with before decoding it.
+type projectionProbeScan struct {
+	projection []string
+	filtered   bool
+}
+
+// projectionProbeEngine records the node streams a statement runs.
 type projectionProbeEngine struct {
 	*storage.MemoryEngine
-	mu          sync.Mutex
-	projections [][]string
+	mu    sync.Mutex
+	scans []projectionProbeScan
 }
 
 func (e *projectionProbeEngine) StreamNodesWithOptions(ctx context.Context, opts storage.StreamNodesOptions, fn func(*storage.Node) error) error {
-	e.record(opts.Projection)
+	e.record(opts.Projection, opts.PropertyFilter != nil || len(opts.PropertyStringEquals) > 0)
 	return e.MemoryEngine.StreamNodesWithOptions(ctx, opts, fn)
 }
 
 func (e *projectionProbeEngine) StreamNodes(ctx context.Context, fn func(*storage.Node) error) error {
-	e.record(nil)
+	e.record(nil, false)
 	return e.MemoryEngine.StreamNodes(ctx, fn)
 }
 
-func (e *projectionProbeEngine) record(projection []string) {
+func (e *projectionProbeEngine) record(projection []string, filtered bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	sorted := append([]string(nil), projection...)
@@ -42,14 +52,14 @@ func (e *projectionProbeEngine) record(projection []string) {
 	if projection == nil {
 		sorted = nil
 	}
-	e.projections = append(e.projections, sorted)
+	e.scans = append(e.scans, projectionProbeScan{projection: sorted, filtered: filtered})
 }
 
-func (e *projectionProbeEngine) take() [][]string {
+func (e *projectionProbeEngine) take() []projectionProbeScan {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	out := e.projections
-	e.projections = nil
+	out := e.scans
+	e.scans = nil
 	return out
 }
 
@@ -63,30 +73,30 @@ func TestIssue857LabellessScansAreProjected(t *testing.T) {
 	probe.take()
 
 	for _, tc := range []struct {
-		query      string
-		params     map[string]interface{}
-		rows       [][]interface{}
-		projection []string // nil: a full-decode stream
+		query  string
+		params map[string]interface{}
+		rows   [][]interface{}
+		scan   projectionProbeScan // the equality hint scan, or the full stream the WHERE filters
 	}{
 		{query: "MATCH (a) WHERE a.id = $id RETURN a.name ORDER BY a.name", params: map[string]interface{}{"id": "c1"},
-			rows: [][]interface{}{{"one"}, {"unlabeled"}}, projection: []string{"id"}},
+			rows: [][]interface{}{{"one"}, {"unlabeled"}}, scan: projectionProbeScan{filtered: true}},
 		{query: "MATCH (a) WHERE a.id = $id AND a.name STARTS WITH 'u' RETURN a.name", params: map[string]interface{}{"id": "c1"},
-			rows: [][]interface{}{{"unlabeled"}}, projection: []string{"id"}},
-		{query: "MATCH (a {name: 'doc'}) WHERE a.id = 'd1' RETURN a.name", rows: [][]interface{}{{"doc"}}, projection: []string{"id", "name"}},
+			rows: [][]interface{}{{"unlabeled"}}, scan: projectionProbeScan{filtered: true}},
+		{query: "MATCH (a {name: 'doc'}) WHERE a.id = 'd1' RETURN a.name", rows: [][]interface{}{{"doc"}}, scan: projectionProbeScan{filtered: true}},
 		{query: "MATCH (a) WHERE a.id = $id RETURN count(a)", params: map[string]interface{}{"id": nil},
-			rows: [][]interface{}{{int64(0)}}, projection: []string{"id"}},
+			rows: [][]interface{}{{int64(0)}}, scan: projectionProbeScan{filtered: true}},
 		{query: "MATCH (a {id: $src})-[r]->(b {id: $tgt}) RETURN type(r)", params: map[string]interface{}{"src": "c1", "tgt": "c2"},
-			rows: [][]interface{}{{"IMPORTS"}}, projection: []string{"id"}},
+			rows: [][]interface{}{{"IMPORTS"}}, scan: projectionProbeScan{filtered: true}},
 		// An OR is not a top-level equality: the WHERE is evaluated on every node.
 		{query: "MATCH (a) WHERE a.id = 'c2' OR a.id = 'd1' RETURN a.name ORDER BY a.name",
-			rows: [][]interface{}{{"doc"}, {"two"}}, projection: nil},
+			rows: [][]interface{}{{"doc"}, {"two"}}},
 	} {
 		res, err := exec.Execute(ctx, tc.query, tc.params)
 		require.NoError(t, err, tc.query)
 		require.Equal(t, tc.rows, res.Rows, tc.query)
-		projections := probe.take()
-		require.NotEmpty(t, projections, tc.query)
-		require.Equal(t, tc.projection, projections[0], tc.query)
+		scans := probe.take()
+		require.NotEmpty(t, scans, tc.query)
+		require.Equal(t, tc.scan, scans[0], tc.query)
 	}
 }
 

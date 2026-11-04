@@ -254,7 +254,7 @@ func TestDatabaseScopedExecutorAuthBranches(t *testing.T) {
 	server.executors = make(map[string]*cypher.StorageExecutor)
 
 	require.True(t, server.databaseHasRemoteConstituent("comp_remote_exec"))
-	execRemote, err := cypher.NewDatabaseScopedExecutor(server.databaseScopedExecutorOptions("comp_remote_exec", "Bearer remote"))
+	execRemote, err := cypher.NewDatabaseScopedExecutor(server.DatabaseScopedExecutorOptions("comp_remote_exec", "Bearer remote"))
 	require.NoError(t, err)
 	require.NotNil(t, execRemote)
 	require.Equal(t, "Bearer remote", tokenSeen)
@@ -278,7 +278,7 @@ func TestDatabaseScopedExecutorAuthBranches(t *testing.T) {
 		},
 	}))
 	server.dbManager = badManager
-	_, err = cypher.NewDatabaseScopedExecutor(server.databaseScopedExecutorOptions("comp_remote_bad", "Bearer token"))
+	_, err = cypher.NewDatabaseScopedExecutor(server.DatabaseScopedExecutorOptions("comp_remote_bad", "Bearer token"))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "remote dial failed")
 }

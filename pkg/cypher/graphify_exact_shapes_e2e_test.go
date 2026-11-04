@@ -106,6 +106,42 @@ func (f *graphifyExactShapeFixture) run(t *testing.T, query string, params map[s
 	return res
 }
 
+// The repository importer inventories adjacency in bounded physical-source
+// batches. Pin its exact statements against the real executor as well as the
+// Python session tests: neither a source without a hash nor a foreign endpoint
+// may change the importer's skip/sync inventory contract.
+func TestGraphifyBatchedEdgeInventoryByElementID(t *testing.T) {
+	f := newGraphifyExactShapeFixture(t)
+	params := map[string]interface{}{"repo": "orneryd/NornicDB"}
+	f.run(t, "MATCH (n) SET n.repo = $repo, n.props_hash = 'node-hash'", params)
+	f.run(t, "MATCH ()-[r]->() SET r.props_hash = 'edge-hash'", nil)
+	f.run(t, "MATCH (n:Entity) REMOVE n.props_hash", nil)
+	f.run(t, "MATCH (n:Document) SET n.repo = 'other/repo'", nil)
+	f.run(t, "MATCH (a:Document), (b:Code {id: 'a.py::Foo'}) CREATE (a)-[:CALLS {props_hash: 'foreign'}]->(b)", nil)
+	sources := f.run(t, "MATCH (n) WHERE n.repo = $repo RETURN n.id AS id, n.props_hash AS hash, elementId(n) AS element", params)
+	require.Len(t, sources.Rows, 3)
+	var elements []interface{}
+	for _, row := range sources.Rows {
+		require.Len(t, row, 3)
+		elements = append(elements, row[2])
+	}
+	for _, batchSize := range []int{1, 2, 200} {
+		t.Run(fmt.Sprint(batchSize), func(t *testing.T) {
+			var inventory, managed [][]interface{}
+			for start := 0; start < len(elements); start += batchSize {
+				batch := map[string]interface{}{"repo": params["repo"], "elements": elements[start:min(start+batchSize, len(elements))]}
+				inventory = append(inventory, f.run(t, "UNWIND $elements AS element MATCH (a) WHERE elementId(a) = element MATCH (a)-[r]->(b) WHERE a.repo = $repo AND b.repo = $repo RETURN a.id AS src, b.id AS tgt, type(r) AS rel, r.props_hash AS hash", batch).Rows...)
+				managed = append(managed, f.run(t, "UNWIND $elements AS element MATCH (a) WHERE elementId(a) = element MATCH (a)-[r]->(b) WHERE a.repo = $repo AND b.repo = $repo AND a.props_hash IS NOT NULL AND b.props_hash IS NOT NULL RETURN a.id AS src, b.id AS tgt, type(r) AS rel", batch).Rows...)
+			}
+			require.ElementsMatch(t, [][]interface{}{
+				{"a.py::Foo", "b.py::Bar", "CALLS", "edge-hash"},
+				{"unknown::Thing", "a.py::Foo", "RELATES_TO", "edge-hash"},
+			}, inventory)
+			require.Equal(t, [][]interface{}{{"a.py::Foo", "b.py::Bar", "CALLS"}}, managed)
+		})
+	}
+}
+
 func graphifyToInt64(t *testing.T, v interface{}) int64 {
 	t.Helper()
 	switch x := v.(type) {

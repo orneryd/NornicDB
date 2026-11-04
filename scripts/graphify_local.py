@@ -58,6 +58,13 @@ import ijson
 # repository legitimately loses a big share of its symbols in one commit.
 MASS_DELETE_MIN_EXISTING = 200
 
+# Existing relationships are inventoried one batch of source nodes per request, anchored on their
+# physical elementId, so no response has to carry every relationship in the repository: a ~3.6M-edge
+# graph returned all of them in one response and the run timed out through its 12 retries. This cap
+# bounds how many sources one request anchors, not the rows their fan-out produces, and --batch-size
+# lowers it further. Nothing is truncated: the inventory is only split.
+EDGE_SOURCE_BATCH_SIZE = 200
+
 # NornicDB rejects HTTP request bodies over 10 MB; stay well under it.
 HTTP_MAX_REQUEST_BYTES = 8 * 1024 * 1024
 # Body plus comments larger than this, measured as they are serialized into the request (JSON-escaped,
@@ -123,6 +130,11 @@ def fit_http_body(body, comments, max_bytes):
     return cut_body, cut_comments, True
 
 
+def chunked(items, size):
+    """Yield ``items`` in consecutive slices of at most ``size``; the tail slice is kept whole."""
+    return (items[start:start + size] for start in range(0, len(items), size))
+
+
 class RetryableError(Exception):
     """Transient failure (MVCC conflict, load balancer 5xx, dropped connection)."""
 
@@ -174,7 +186,8 @@ class HttpSession:
             with urllib.request.urlopen(request, timeout=600) as response:
                 payload = json.load(response)
         except urllib.error.HTTPError as error:
-            detail = error.read().decode("utf-8", "replace")[:500]
+            with error:
+                detail = error.read().decode("utf-8", "replace")[:500]
             if error.code in (429, 502, 503, 504):
                 raise RetryableError(f"HTTP {error.code}: {detail}") from error
             raise RuntimeError(f"HTTP {error.code} from {self.url}: {detail}") from error
@@ -954,6 +967,8 @@ def import_graph(graph_path, uri, user, password, batch_size, repo_root, databas
     file_times = {**manifest_mtimes(graph_path), **git_file_times(repo_root)}
     max_body_bytes = HTTP_MAX_BODY_BYTES if is_http(uri) else None
     retry_on = retryable_errors()
+    # Source nodes per adjacency request: the caller's batch size, further bounded by the cap above.
+    source_batch = min(batch_size, EDGE_SOURCE_BATCH_SIZE)
 
     with connect(uri, user, password, token) as driver:
         ensure_database(driver, database)
@@ -1035,15 +1050,46 @@ def import_graph(graph_path, uri, user, password, batch_size, repo_root, databas
                 ).consume()
                 rows.clear()
 
+            def adjacency(elements, written_by_importer):
+                """Existing relationships of the named source nodes, one source batch per request.
+
+                Each request anchors a batch of source nodes on their physical elementId and expands
+                only those sources' adjacency, so no response carries the whole repository's
+                relationships (a ~3.6M-edge graph returned all of them at once and timed out).
+                Batching bounds how many sources a request anchors; the rows it returns still grow
+                with their fan-out. Both endpoints' repo is re-checked here, so another repository's
+                relationships never enter this repo's inventory. ``written_by_importer`` also
+                requires both endpoints to carry a props_hash, which is the stale-edge deletion
+                guard: only relationships this importer wrote are deletion candidates.
+                """
+                condition = "a.repo = $repo AND b.repo = $repo"
+                projection = "a.id AS src, b.id AS tgt, type(r) AS rel, r.props_hash AS hash"
+                if written_by_importer:
+                    condition += " AND a.props_hash IS NOT NULL AND b.props_hash IS NOT NULL"
+                    projection = "a.id AS src, b.id AS tgt, type(r) AS rel"
+                for batch in chunked(elements, source_batch):
+                    yield from run_retry(
+                        f"UNWIND $elements AS element MATCH (a) WHERE elementId(a) = element "
+                        f"MATCH (a)-[r]->(b) WHERE {condition} RETURN {projection}",
+                        elements=batch, repo=repo,
+                    )
+
             # What this importer already wrote for the repo: id -> content hash. A node whose hash is
             # unchanged is neither sent nor touched, so a re-run (or one that resumes an interrupted
             # run) moves only what is new or different instead of re-sending the whole graph.
+            # Every repo node is inventoried, including ones without a props_hash: a relationship
+            # whose source this importer has not hashed yet must still reach the edge inventory
+            # below, and a null hash never equals a row's hash. Each node's elementId is the physical
+            # identity that adjacency anchors its batches on.
             existing_nodes = {}
+            source_elements = []
             if skip_unchanged:
                 for record in run_retry(
-                    "MATCH (n) WHERE n.repo = $repo AND n.props_hash IS NOT NULL "
-                    "RETURN n.id AS id, n.props_hash AS hash", repo=repo,
+                    "MATCH (n) WHERE n.repo = $repo "
+                    "RETURN n.id AS id, n.props_hash AS hash, elementId(n) AS element", repo=repo,
                 ):
+                    if record.get("element"):
+                        source_elements.append(record["element"])
                     if record.get("id") is not None:
                         existing_nodes[record["id"]] = record.get("hash")
 
@@ -1173,10 +1219,7 @@ def import_graph(graph_path, uri, user, password, batch_size, repo_root, databas
 
             existing_edges_hash = {}
             if skip_unchanged:
-                for record in run_retry(
-                    "MATCH (a)-[r]->(b) WHERE a.repo = $repo AND b.repo = $repo "
-                    "RETURN a.id AS src, b.id AS tgt, type(r) AS rel, r.props_hash AS hash", repo=repo,
-                ):
+                for record in adjacency(source_elements, written_by_importer=False):
                     if record.get("src") is not None:
                         existing_edges_hash[(record["src"], record["tgt"], record["rel"])] = record.get("hash")
             incoming_edges = set()
@@ -1224,29 +1267,28 @@ def import_graph(graph_path, uri, user, password, batch_size, repo_root, databas
             # data from other pipelines are never touched.
             stale_ids, stale_edges = [], []
             if sync and labels:
-                # Every lookup below names its label, so it uses the (id) and (repo) indexes. An unlabelled
-                # `MATCH (n {id: ...})` is a scan of every node per row, which turned deleting a few
-                # thousand stale edges into minutes.
+                # Node lookups below name their label, so they use the (id) and (repo) indexes. An
+                # unlabelled `MATCH (n {id: ...})` is a scan of every node per row, which turned
+                # deleting a few thousand stale edges into minutes. The relationship inventory below
+                # anchors each batch on the physical elementId of the sources it names instead.
                 managed_labels = sorted(set(labels.values()))
                 existing_labels = {}  # id -> db label, for ids the importer wrote in this repo
+                written_elements = []  # their physical IDs, which the adjacency batches anchor on
                 for label in managed_labels:
                     for record in run_retry(
                         f"MATCH (n:{label} {{repo: $repo}}) WHERE n.id IS NOT NULL AND n.props_hash IS NOT NULL "
-                        f"RETURN n.id AS id",
+                        f"RETURN n.id AS id, elementId(n) AS element",
                         repo=repo,
                     ):
                         existing_labels[record.get("id")] = label
+                        if record.get("element"):
+                            written_elements.append(record["element"])
                 existing_ids = set(existing_labels)
                 stale_ids = [node_id for node_id in existing_ids if node_id not in labels]
+                # A node matched by two managed labels names its source once, not once per label.
                 existing_edges = set()
-                for label in managed_labels:
-                    for record in run_retry(
-                        f"MATCH (a:{label} {{repo: $repo}})-[r]->(b) WHERE b.repo = $repo "
-                        f"AND a.props_hash IS NOT NULL AND b.props_hash IS NOT NULL "
-                        f"RETURN a.id AS src, b.id AS tgt, type(r) AS rel",
-                        repo=repo,
-                    ):
-                        existing_edges.add((record.get("src"), record.get("tgt"), record.get("rel")))
+                for record in adjacency(list(dict.fromkeys(written_elements)), written_by_importer=True):
+                    existing_edges.add((record.get("src"), record.get("tgt"), record.get("rel")))
                 stale_edges = [edge for edge in existing_edges if edge not in incoming_edges]
 
                 # A truncated or failed extraction would otherwise delete most

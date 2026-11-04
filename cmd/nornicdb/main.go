@@ -940,6 +940,12 @@ func runServe(cmd *cobra.Command, args []string) (runErr error) {
 	// semantics are identical across protocols.
 	queryExecutor := NewDBQueryExecutor(db)
 	queryExecutor.localizer = localizer
+	// Bolt's database-scoped executors come from the HTTP server's canonical
+	// per-database factory, so both protocols share one configuration
+	// (query-result cache policy, statement-cache owner, settings, logger,
+	// search and mutation wiring). Wired before the server is created: the
+	// callback runs once per executor construction, never per query.
+	boltConfig.DatabaseExecutorOptions = httpServer.DatabaseScopedExecutorOptions
 	boltServer = bolt.NewWithDatabaseManager(boltConfig, queryExecutor, httpServer.GetDatabaseManager())
 	owned.bolt = boltServer
 	boltServer.SetMemoryPolicy(db.MemoryPolicy())
@@ -1586,45 +1592,20 @@ func (e *DBQueryExecutor) NewSessionExecutor() bolt.QueryExecutor {
 	return executor
 }
 
-// BaseCypherExecutor exposes the base executor used by DBQueryExecutor so
-// protocol adapters (for example Bolt database-scoped executors) can inherit
-// shared runtime services such as embedder/search configuration.
+// BaseCypherExecutor exposes the base executor behind DBQueryExecutor. Bolt
+// consumes it through its baseCypherExecutorProvider interface: a successful
+// COMMIT with writes invalidates the committed write caches of both the
+// database-scoped executor and this base executor
+// (pkg/bolt/committed_write_cache.go), and a standalone Bolt server that
+// supplies no Config.DatabaseExecutorOptions factory also inherits the base
+// embedder and inference manager here. Database-scoped executor configuration
+// itself comes from the host factory (bolt.Config.DatabaseExecutorOptions,
+// wired to the HTTP server by runServe).
 func (e *DBQueryExecutor) BaseCypherExecutor() *cypher.StorageExecutor {
 	if e == nil || e.db == nil {
 		return nil
 	}
 	return e.db.GetCypherExecutor()
-}
-
-// ConfigureDatabaseExecutor applies production runtime wiring to a DB-scoped
-// executor created by protocol adapters (for example Bolt multi-database
-// sessions), keeping behavior aligned with HTTP/GraphQL execution paths.
-func (e *DBQueryExecutor) ConfigureDatabaseExecutor(exec *cypher.StorageExecutor, dbName string, storageEngine storage.Engine) {
-	if e == nil || e.db == nil || exec == nil {
-		return
-	}
-	if baseExec := e.db.GetCypherExecutor(); baseExec != nil {
-		exec.ShareQueryStatisticsFrom(baseExec)
-		exec.ShareEmbedderFrom(baseExec)
-		exec.ShareInferenceManagerFrom(baseExec)
-		// NornicDB issue #563 defect 1: this is the sole wiring point for
-		// every Bolt database-scoped executor (pkg/bolt/server.go's
-		// newDatabaseScopedCypherExecutor calls it via the
-		// databaseExecutorConfigurator interface). Without it, every Bolt
-		// query — with or without an explicit database — logs to
-		// io.Discard and never emits a slow_query record, matching the gap
-		// newTxScopedExecutor below already closes for tx-scoped executors.
-		exec.SetLogger(baseExec.Logger())
-		exec.SetSlowQueryThreshold(baseExec.SlowQueryThreshold())
-	}
-	if _, err := e.db.GetOrCreateSearchService(dbName, storageEngine); err == nil {
-		exec.SetSearchServiceResolver(dbName, e.db.SearchServiceResolver())
-	}
-	if q := e.db.GetEmbedQueue(); q != nil {
-		exec.SetNodeMutatedCallback(func(nodeID string) {
-			q.Enqueue(nodeID)
-		})
-	}
 }
 
 // Execute runs a Cypher query against the database.

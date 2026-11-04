@@ -811,6 +811,13 @@ type StreamNodesOptions struct {
 	// (#824). It is a hint: an engine may ignore it, and pending writes are
 	// not filtered, so the caller still tests every node it receives.
 	PropertyFilter func(properties map[string]interface{}) bool
+	// PropertyFilterProjection names the properties PropertyFilter reads, so an
+	// engine can settle the filter before it decodes the rest of a body. It
+	// applies to a scan without a Projection, whose row is the whole node: a
+	// Projection already names what the filter reads. Like PropertyFilter it
+	// is a hint an engine may ignore, and pending writes are not filtered,
+	// so the caller still tests every node it receives.
+	PropertyFilterProjection []string
 	// PropertyStringEquals, for projected properties, lets the engine skip a
 	// node whose stored value of a property is not that string by comparing
 	// the stored bytes, without decoding the node (#857). A stored string
@@ -829,7 +836,11 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 	if err := b.ensureOpen(false); err != nil {
 		return err
 	}
-	if opts.QueryNodes && opts.Projection == nil && !opts.WithEmbeddings && opts.Label != "" {
+	// A property filter does not disqualify the label route: the scoped label
+	// owner decodes each candidate through the scan's own decoder and settles the
+	// filter before it materializes the node (#1682), so this route keeps its
+	// label index and skips another label's bodies as well.
+	if opts.Projection == nil && opts.Label != "" && ((opts.QueryNodes && !opts.WithEmbeddings) || opts.scanDecodesFilter()) {
 		visit := func(node *Node) error {
 			if err := ctx.Err(); err != nil {
 				return err
@@ -839,7 +850,7 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 			}
 			return fn(node)
 		}
-		err := b.streamNodesByLabelProjectedInScope(ctx, opts.Prefix, opts.Label, nil, opts.readVisibility(), visit, true)
+		err := b.streamNodesByLabelProjectedInScope(ctx, opts.Prefix, opts.Label, nil, opts.readVisibility(), visit, opts)
 		if err == ErrIterationStopped {
 			return nil
 		}
@@ -914,10 +925,13 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 // from fn ends the scan and is not returned.
 func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *badger.Txn, opts StreamNodesOptions, fn func(node *Node) error) error {
 	nowNanos := DecayScoringTime()
-	// A projected scan decodes through one scan-scoped decoder (#857).
+	// A projected or filtered scan decodes through one scan-scoped decoder
+	// (#857). It resolves each stored property token through this read
+	// snapshot, so the names it selects are the ones the bodies were written
+	// with, and it applies the property filter before a node is materialized.
 	var projected *projectedNodeDecoder
-	if opts.Projection != nil && !opts.WithEmbeddings {
-		projected = newProjectedNodeDecoder(b, opts)
+	if opts.scanDecodesFilter() || (!opts.WithEmbeddings && opts.Projection != nil) {
+		projected = newProjectedNodeDecoder(b, txn, opts)
 	}
 
 	visit := func(txn *badger.Txn, item *badger.Item) error {
@@ -928,7 +942,7 @@ func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *bad
 		}
 		var node *Node
 		var err error
-		if opts.QueryNodes && opts.Projection == nil && !opts.WithEmbeddings {
+		if opts.QueryNodes && opts.Projection == nil && !opts.WithEmbeddings && !opts.scanDecodesFilter() {
 			node, err = b.readNodeItemInTxn(txn, item, NodeID(item.Key()[1:]), nodeItemQueryMetadata)
 		} else {
 			err = item.Value(func(val []byte) error {
@@ -951,8 +965,13 @@ func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *bad
 				return decodeErr
 			})
 		}
-		if err != nil || node == nil {
-			return nil // Skip invalid nodes
+		if err != nil {
+			// A record this scan cannot decode fails the scan: skipping it would
+			// return the rest of the population as if it were all of it.
+			return fmt.Errorf("scanning node %q: %w", NodeID(item.Key()[1:]), err)
+		}
+		if node == nil {
+			return nil // the scan's decoder rejected this node
 		}
 		if opts.ApplyDecayFilter && b.filterEntityByDecay(visibleRead, node, nowNanos) {
 			return nil

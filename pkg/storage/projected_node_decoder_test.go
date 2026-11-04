@@ -79,7 +79,7 @@ func TestProjectedNodeDecoderRejectedNodeAllocations(t *testing.T) {
 		body, err = item.ValueCopy(nil)
 		return err
 	}))
-	decoder := newProjectedNodeDecoder(engine, StreamNodesOptions{Projection: []string{"id"}, PropertyFilter: func(props map[string]interface{}) bool { return props["id"] == int64(8) }})
+	decoder := newProjectedNodeDecoder(engine, nil, StreamNodesOptions{Projection: []string{"id"}, PropertyFilter: func(props map[string]interface{}) bool { return props["id"] == int64(8) }})
 	node, err := decoder.decode(key, body)
 	require.NoError(t, err)
 	require.Nil(t, node, "rejected")
@@ -192,7 +192,7 @@ func TestProjectedNodeDecoderPropertyStringEquals(t *testing.T) {
 		body, err = item.ValueCopy(nil)
 		return err
 	}))
-	decoder := newProjectedNodeDecoder(engine, equals("k1"))
+	decoder := newProjectedNodeDecoder(engine, nil, equals("k1"))
 	node, err := decoder.decode(key, body)
 	require.NoError(t, err)
 	require.Nil(t, node, "rejected")
