@@ -28,7 +28,7 @@ func TestStatementCacheFamilyHTTPMetadataRemoval(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			first, err := cypher.NewDatabaseScopedExecutor(server.databaseScopedExecutorOptions("cache_comp", "Bearer lifecycle-test"))
+			first, err := cypher.NewDatabaseScopedExecutor(server.DatabaseScopedExecutorOptions("cache_comp", "Bearer lifecycle-test"))
 			if err != nil {
 				t.Fatal(err)
 			}

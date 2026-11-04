@@ -268,8 +268,8 @@ func lastTopLevelClauseWord(ctx context.Context, s string) string {
 // forIterationClauseAt reports whether the FOR keyword at s[pos] starts a
 // shared-grammar iteration clause (FOR variable IN expression) rather than a
 // DDL FOR specifier (CREATE INDEX … FOR (n:Label), CREATE ALIAS … FOR
-// DATABASE …). It scans without allocating, mirroring parsePipelineIteration's
-// whitespace-only prefix.
+// DATABASE …). It scans without allocating: the FOR header's own admitter,
+// separate from the retained-node reader (iterationClauseFor).
 func forIterationClauseAt(s string, pos int) bool {
 	end := skipSpaces(s, pos+len("FOR"))
 	_, end, ok := scanSymbolicName(s, end)

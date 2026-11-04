@@ -9,13 +9,30 @@ import (
 // entity or visits property/embedding payloads. Logical metadata is produced by
 // appendOperationPublicationKeys; this projection adds raw maintenance aliases.
 type physicalCacheProjection struct {
-	facts   []AffectedFact
+	facts   []projectedCacheFact
 	unknown bool
+}
+
+// projectedCacheFact retains only the fields a physical key can name. Node
+// facts use id and labelOrStart; edge facts use id, labelOrStart, end and typ.
+// One ordered slice keeps small commits to one allocation while avoiding the
+// unused fields and flags in the wider public AffectedFact representation.
+// Strings are owned/resolved when add runs, as before; emission never reloads IDs.
+type projectedCacheFact struct {
+	id           string
+	labelOrStart string
+	end          NodeID
+	typ          string
+	node         bool
 }
 
 func (p *physicalCacheProjection) VisitAffectedFacts(visit func(AffectedFact)) {
 	for _, fact := range p.facts {
-		visit(fact)
+		if fact.node {
+			visit(AffectedFact{NodeID: NodeID(fact.id), Label: fact.labelOrStart})
+		} else {
+			visit(AffectedFact{EdgeID: EdgeID(fact.id), StartNode: NodeID(fact.labelOrStart), EndNode: fact.end, Type: fact.typ})
+		}
 	}
 }
 
@@ -27,10 +44,10 @@ func (p *physicalCacheProjection) add(b *BadgerEngine, key, value []byte) {
 	if b == nil || len(key) == 0 {
 		return
 	}
-	fact := AffectedFact{}
+	fact := projectedCacheFact{}
 	switch key[0] {
 	case prefixNode:
-		fact.NodeID = NodeID(string(key[1:]))
+		fact.id, fact.node = string(key[1:]), true
 	case prefixPendingEmbed:
 		// Queue membership does not change any stored body or embedding range.
 		return
@@ -40,9 +57,9 @@ func (p *physicalCacheProjection) add(b *BadgerEngine, key, value []byte) {
 			p.unknown = true
 			return
 		}
-		fact.NodeID = NodeID(string(key[1 : 1+separator]))
+		fact.id, fact.node = string(key[1:1+separator]), true
 	case prefixEdge:
-		fact.EdgeID = EdgeID(string(key[1:]))
+		fact.id = string(key[1:])
 		if len(value) > 0 {
 			var header Edge
 			start, end, _, err := decodeEdgeCompactHeaderInto(value, edgeFormatCompactV2, &header)
@@ -50,23 +67,25 @@ func (p *physicalCacheProjection) add(b *BadgerEngine, key, value []byte) {
 				p.unknown = true
 				return
 			}
-			fact.Type = header.Type
-			fact.StartNode, _ = b.idDict.lookupNodeIDByNum(start)
-			fact.EndNode, _ = b.idDict.lookupNodeIDByNum(end)
+			fact.typ = header.Type
+			startID, _ := b.idDict.lookupNodeIDByNum(start)
+			fact.labelOrStart = string(startID)
+			fact.end, _ = b.idDict.lookupNodeIDByNum(end)
 		}
 	case prefixOutgoingIndex, prefixIncomingIndex, prefixMVCCOutgoingAdj, prefixMVCCIncomingAdj:
 		if len(key) < 17 {
 			p.unknown = true
 			return
 		}
-		fact.EdgeID, _ = b.idDict.lookupEdgeIDByNum(binary.BigEndian.Uint64(key[9:17]))
+		edgeID, _ := b.idDict.lookupEdgeIDByNum(binary.BigEndian.Uint64(key[9:17]))
+		fact.id = string(edgeID)
 		endpoint, _ := b.idDict.lookupNodeIDByNum(binary.BigEndian.Uint64(key[1:9]))
 		if key[0] == prefixOutgoingIndex || key[0] == prefixMVCCOutgoingAdj {
-			fact.StartNode = endpoint
+			fact.labelOrStart = string(endpoint)
 		} else {
-			fact.EndNode = endpoint
+			fact.end = endpoint
 		}
-		if fact.EdgeID == "" {
+		if fact.id == "" {
 			p.unknown = true
 			return
 		}
@@ -75,9 +94,10 @@ func (p *physicalCacheProjection) add(b *BadgerEngine, key, value []byte) {
 			p.unknown = true
 			return
 		}
-		fact.Type = string(key[1 : len(key)-9])
-		fact.EdgeID, _ = b.idDict.lookupEdgeIDByNum(binary.BigEndian.Uint64(key[len(key)-8:]))
-		if fact.EdgeID == "" {
+		fact.typ = string(key[1 : len(key)-9])
+		edgeID, _ := b.idDict.lookupEdgeIDByNum(binary.BigEndian.Uint64(key[len(key)-8:]))
+		fact.id = string(edgeID)
+		if fact.id == "" {
 			p.unknown = true
 			return
 		}
@@ -86,9 +106,10 @@ func (p *physicalCacheProjection) add(b *BadgerEngine, key, value []byte) {
 			p.unknown = true
 			return
 		}
-		fact.Label = string(key[1 : len(key)-9])
-		fact.NodeID, _ = b.idDict.lookupNodeIDByNum(binary.BigEndian.Uint64(key[len(key)-8:]))
-		if fact.NodeID == "" {
+		fact.labelOrStart, fact.node = string(key[1:len(key)-9]), true
+		nodeID, _ := b.idDict.lookupNodeIDByNum(binary.BigEndian.Uint64(key[len(key)-8:]))
+		fact.id = string(nodeID)
+		if fact.id == "" {
 			p.unknown = true
 			return
 		}

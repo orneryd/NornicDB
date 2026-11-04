@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -3389,34 +3390,18 @@ func TestSubqueryHelpers_CallInTransactions_IterativeBatchingWithMatchMerge(t *t
 }
 
 func TestSubqueryHelpers_ParseCallSubquery_EdgeBranches(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-
-	body, after, inTx, batch := exec.parseCallSubquery(t.Context(), "CALL db.info()")
-	assert.Empty(t, body)
-	assert.Empty(t, after)
-	assert.False(t, inTx)
-	assert.Nil(t, batch)
-
-	body, after, inTx, batch = exec.parseCallSubquery(t.Context(), "CALL { RETURN 1 ")
-	assert.Empty(t, body)
-	assert.Empty(t, after)
-	assert.False(t, inTx)
-	assert.Nil(t, batch)
-
-	body, after, inTx, batch = exec.parseCallSubquery(t.Context(), "CALL { RETURN 1 AS x } IN TRANSACTIONS OF nope ROWS RETURN x")
-	assert.Equal(t, "RETURN 1 AS x", body)
-	assert.Equal(t, "RETURN x", after)
-	assert.True(t, inTx)
-	// Parsing preserves explicit text; execution validates it before writes.
-	require.NotNil(t, batch)
-	assert.Equal(t, "nope", batch.Expression)
-
-	body, after, inTx, batch = exec.parseCallSubquery(t.Context(), "CALL { RETURN 1 AS x } IN TRANSACTIONS OF 7 ROWS RETURN x")
-	assert.Equal(t, "RETURN 1 AS x", body)
-	assert.Equal(t, "RETURN x", after)
-	assert.True(t, inTx)
-	require.NotNil(t, batch)
-	assert.Equal(t, "7", batch.Expression)
+	for _, source := range []string{"CALL db.info()", "CALL { RETURN 1 "} {
+		_, err := cypherantlr.ReadCallClause(t.Context(), source, cypherantlr.AcceptedSource)
+		require.Error(t, err)
+	}
+	for _, expression := range []string{"nope", "7"} {
+		call, err := cypherantlr.ReadCallClause(t.Context(), "CALL { RETURN 1 AS x } IN TRANSACTIONS OF "+expression+" ROWS RETURN x", cypherantlr.AcceptedSource)
+		require.NoError(t, err)
+		assert.Equal(t, "RETURN 1 AS x", call.Body)
+		assert.Equal(t, "RETURN x", call.After)
+		require.NotNil(t, call.Batch)
+		assert.Equal(t, expression, call.Batch.Expression)
+	}
 }
 
 func TestSubqueryHelpers_ExecuteMatchWithCallProcedure_ParamAndWhereBranches(t *testing.T) {

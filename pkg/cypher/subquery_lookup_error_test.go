@@ -32,6 +32,20 @@ func singleShotLookup[T any](s *subqueryLookupFailureEngine, ctx context.Context
 	return read(ctx)
 }
 
+// The subquery's node pattern carries the row's key as a property, so the
+// pipeline reads its label through the options scan; the fixture fails that
+// read as well as the plain label lookup, for whichever read the pipeline
+// performs.
+func (s *subqueryLookupFailureEngine) StreamNodesWithOptions(ctx context.Context, opts storage.StreamNodesOptions, visit func(*storage.Node) error) error {
+	if opts.Label == "Source" {
+		_, err := singleShotLookup(s, ctx, s.operation == "node", func(ctx context.Context) (struct{}, error) {
+			return struct{}{}, s.Engine.StreamNodesWithOptions(ctx, opts, visit)
+		})
+		return err
+	}
+	return s.Engine.StreamNodesWithOptions(ctx, opts, visit)
+}
+
 func (s *subqueryLookupFailureEngine) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
 	return singleShotLookup(s, ctx, s.operation == "node" && label == "Source", func(ctx context.Context) ([]*storage.Node, error) { return s.Engine.GetNodesByLabel(ctx, label) })
 }

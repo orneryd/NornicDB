@@ -11,7 +11,7 @@ NornicDB supports two Cypher parser implementations that can be switched at runt
 %%{init: {'theme': 'dark', 'themeVariables': { 'primaryColor': '#1f6feb', 'primaryTextColor': '#c9d1d9', 'primaryBorderColor': '#30363d', 'lineColor': '#8b949e', 'secondaryColor': '#238636', 'tertiaryColor': '#21262d', 'background': '#0d1117', 'mainBkg': '#161b22'}}}%%
 
 flowchart TB
-    subgraph ENV["🔧 Configuration"]
+    subgraph ENV[" Configuration"]
         direction LR
         E1["NORNICDB_PARSER"]
         E2["nornic | antlr"]
@@ -24,7 +24,7 @@ flowchart TB
     VALIDATE --> |"NORNICDB_PARSER=nornic"| NORNIC
     VALIDATE --> |"NORNICDB_PARSER=antlr"| ANTLR
     
-    subgraph NORNIC["⚡ Nornic Parser (Default)"]
+    subgraph NORNIC[" Nornic Parser (Default)"]
         direction TB
         N1["Scannerless recursive descent"]
         N2["Top-level keyword/operator scans"]
@@ -51,7 +51,12 @@ flowchart TB
     style RESULT fill:#238636,stroke:#3fb950
 ```
 
-## Real-World Benchmarks (Northwind Database)
+## Historical Northwind measurements
+
+These recorded figures describe an earlier implementation. They do not qualify
+v1.4.4 or establish its current parser-mode ratios. Measure the complete query
+workload, including shared semantic and result-column compilation, on the
+revision and hardware being deployed.
 
 | Query |  Nornic |  ANTLR | Slowdown |
 |-------|----------|----------|----------|
@@ -77,7 +82,7 @@ flowchart TB
 | **Worst Case** | - | **4,753x slower** |
 | **Error Messages** | Classified with restored line/column positions | Detailed (line/column) |
 | **Syntax Validation** | Strict, TCK-vetted (see below) | Strict OpenCypher |
-| **Memory Usage** | Lowest (scannerless recursive descent, no parse tree) | Higher |
+| **Memory Usage** | Scannerless syntax path plus shared retained grammar products | Grammar syntax validation plus shared retained products |
 | **Best For** | **Production** | Development/Debugging |
 
 > **Note:** both modes share a single converged execution pipeline. There are no
@@ -85,6 +90,29 @@ flowchart TB
 > through the same typed router (`Handled` / `NotApplicable` / `ParseRejected` /
 > `Failed`), and unhandled statements fail with Neo4j's `Neo.ClientError.Statement.SyntaxError`
 > classification rather than being re-routed.
+
+### Retained syntax in shared readers
+
+The default Nornic parser remains scannerless recursive descent. Both modes also
+use the same grammar products for semantic scope, result columns, CALL imports,
+projection items and iteration bindings. Those shared readers can allocate a
+retained tree even when the Nornic syntax parser itself needs no lexer or tree.
+
+A reader that already holds a statement or clause consumes its original syntax
+node. It does not rebuild each WITH item as a RETURN statement or parse every
+CALL body and query suffix again. Genuine standalone source inputs still enter
+through the same grammar owner. SLL prediction retries with LL when required;
+the runtime and generated grammar remain unchanged.
+
+For Go consumers, `StatementSyntax.LeadingCall(from)` now takes an original-source
+byte offset. Pass `0` for a standalone source, or the clause's original offset
+to select its frame in a retained statement. Leading whitespace/comments are
+allowed; a window cutting a live token is refused, and a later CALL cannot
+replace the frame at that window. Returned spans remain absolute, including
+OPTIONAL CALL and rewritten Unicode source. For example, a standalone
+`CALL () { RETURN 1 AS value }` uses `syntax.LeadingCall(0)`. An admitted
+`MATCH (n) CALL (n) { RETURN n AS value } RETURN value` uses the retained
+CALL token's offset with `syntax.LeadingCall(offset)`.
 
 ### Cancellation granularity in the ANTLR runtime
 
@@ -155,13 +183,12 @@ config.SetParserType(config.ParserTypeNornic)
 
 **Pros:**
 - **Fastest execution** — 3,000-4,200 ops/sec
--  **Lowest memory** — No parse tree allocation
+-  **Scannerless syntax validation** — shared readers retain their own grammar products
 -  **Battle-tested** — Original implementation, converged single pipeline
--  **Zero parsing overhead** — scannerless recursive descent, no lexer or parse tree
+-  **Direct syntax path** — scannerless recursive descent without a separate lexer
 
 **Cons:**
--  **No structured parse tree** — debugging uses restored positions, not AST inspection
--  **Semantic scope checks** are clause-targeted rather than grammar-derived; the TCK ratchet gates the supported surface
+-  **Shared compilation still has a cost** — semantic and result-column readers use retained grammar products; measure the whole request
 
 ---
 

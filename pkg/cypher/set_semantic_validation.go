@@ -54,8 +54,8 @@ func (e *StorageExecutor) validateMutationClauseScopes(ctx context.Context, clau
 				return err
 			}
 		case pipelineClauseUnwind:
-			if alias := unwindBindingName(ctx, clause.text); alias != "" {
-				scope.bind(alias)
+			if iteration, found := iterationClauseFor(clause); found {
+				scope.bind(iteration.variable)
 			}
 		case pipelineClauseSet:
 			if err := e.validateSetClauseScope(ctx, scope, clause.text); err != nil {

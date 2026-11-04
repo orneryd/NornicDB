@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -16,7 +17,7 @@ func TestSuppressionBeforeCascadeNotificationOrder(t *testing.T) {
 	for _, buffered := range []bool{false, true} {
 		for _, producer := range []string{"manual", "decay"} {
 			t.Run(fmt.Sprintf("buffered=%v/%s", buffered, producer), func(t *testing.T) {
-				b, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: buffered, WriteBehindInterval: time.Hour})
+				b, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: buffered, WriteBehindInterval: time.Hour}))
 				require.NoError(t, err)
 				defer b.Close()
 				ctx := context.Background()

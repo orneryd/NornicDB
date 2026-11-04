@@ -5,6 +5,7 @@ import (
 	"github.com/orneryd/nornicdb/internal/contextslot"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	antlr4 "github.com/antlr4-go/antlr/v4"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
@@ -37,34 +38,81 @@ type StatementSyntax struct{ data *statementSyntaxData }
 // accepted by statement compilation.
 func (syntax StatementSyntax) Valid() bool { return syntax.data != nil }
 
-// LeadingCall returns the CALL clause that starts this source window. A later
-// CALL, or one inside a procedure argument, can never supply the frame.
-func (syntax StatementSyntax) LeadingCall() (SyntaxNode, bool) {
-	if !syntax.Valid() {
+// SyntaxIdentity is the retained product a statement or node was parsed into.
+// It is comparable and unique per successful parse: two products of the same
+// text (a different entry, dialect or source stage) never share one. Node IDs,
+// columns and effects are meaningful only inside one identity, and its zero
+// value matches nothing. It is a value, so a cache or key that holds one never
+// keeps a parse tree alive.
+type SyntaxIdentity struct{ id uint64 }
+
+// syntaxIdentitySequence numbers every product this process retains.
+var syntaxIdentitySequence atomic.Uint64
+
+// Identity reports the retained product this statement was read from.
+func (syntax StatementSyntax) Identity() SyntaxIdentity {
+	if syntax.data == nil {
+		return SyntaxIdentity{}
+	}
+	return SyntaxIdentity{id: syntax.data.identity}
+}
+
+// Identity reports the retained product this node belongs to.
+func (node SyntaxNode) Identity() SyntaxIdentity {
+	if node.data == nil {
+		return SyntaxIdentity{}
+	}
+	return SyntaxIdentity{id: node.data.identity}
+}
+
+// Statement is the retained product this node belongs to: one parse, whose
+// other nodes keep their own IDs, spans and original source.
+func (node SyntaxNode) Statement() StatementSyntax { return StatementSyntax{data: node.data} }
+
+// LeadingCall returns the CALL frame beginning the original-source window at
+// from, allowing leading trivia. A later CALL or one inside a procedure
+// argument cannot supply the frame. The offset may name OPTIONAL or its CALL
+// token, but cannot cut a live token. For example, LeadingCall(0) reads a
+// standalone CALL; LeadingCall(offset) reuses the same retained statement for
+// a clause beginning at offset without parsing a suffix.
+func (syntax StatementSyntax) LeadingCall(from int) (SyntaxNode, bool) {
+	if !syntax.Valid() || from < 0 || from >= len(syntax.Source()) {
 		return SyntaxNode{}, false
 	}
 	first := -1
-	for _, token := range syntax.data.tokens {
-		if token.channel == 0 && token.kind != -1 {
-			first = token.start
+	for index, token := range syntax.data.tokens {
+		if token.channel != 0 || token.kind == -1 {
+			continue
+		}
+		start, end := syntax.Token(index).Span()
+		if start < from && from < end {
+			return SyntaxNode{}, false
+		}
+		if start >= from {
+			first = start
 			break
 		}
 	}
-	var found SyntaxNode
-	syntax.Walk(func(node SyntaxNode) func() {
-		if found.Valid() {
-			return nil
-		}
-		switch node.Rule() {
+	if first < 0 {
+		return SyntaxNode{}, false
+	}
+	for id, item := range syntax.data.nodes {
+		switch item.rule {
 		case CypherParserRULE_callSubquery, CypherParserRULE_queryCallSt, CypherParserRULE_standaloneCall:
+			node := SyntaxNode{syntaxView[syntaxNode]{syntax.data, id}}
 			start, _ := node.Span()
 			if start == first {
-				found = node
+				return node, true
+			}
+			if call, ok := node.DirectToken(CypherLexerCALL); ok {
+				start, _ = call.Span()
+				if start == first {
+					return node, true
+				}
 			}
 		}
-		return nil
-	})
-	return found, found.Valid()
+	}
+	return SyntaxNode{}, false
 }
 
 // syntaxNode and syntaxToken close the node/token kind sets of syntaxView.
@@ -114,6 +162,7 @@ func (view syntaxView[nodeKind]) Text() string {
 type SyntaxVisitor func(SyntaxNode) func()
 
 type statementSyntaxData struct {
+	identity    uint64
 	source      string
 	view        *cyphertext.Source
 	effects     statementEffectsData
@@ -213,6 +262,10 @@ func ParseSyntax(ctx context.Context, source string, entry SyntaxEntry, cypher25
 // parseStatementSyntax relocates readBatchTree's lexer/parser entry owner.
 // Token filling uses that same lexer; retaining trivia does not lex again.
 func parseStatementSyntax(ctx context.Context, projection *cyphertext.Source, entry SyntaxEntry, observe func(antlr4.Tree)) (data *statementSyntaxData, err error) {
+	return parseStatementSyntaxWithMode(ctx, projection, entry, observe, antlr4.PredictionModeSLL, true)
+}
+
+func parseStatementSyntaxWithMode(ctx context.Context, projection *cyphertext.Source, entry SyntaxEntry, observe func(antlr4.Tree), mode int, caseResults bool) (data *statementSyntaxData, err error) {
 	defer recoverPredictionCancellation(&err)
 	if err = ctx.Err(); err != nil {
 		return nil, err
@@ -225,11 +278,34 @@ func parseStatementSyntax(ctx context.Context, projection *cyphertext.Source, en
 		message := localization.CypherANTLRParseSyntaxError("adjacent string literals")
 		return nil, localization.NewLocalizedError(string(message.ID), message, nil)
 	}
+	prediction := acquirePrediction()
+	defer prediction.release()
+	return parseStatementSyntaxAttempt(ctx, projection, entry, observe, mode, prediction, caseResults)
+}
+
+func parseStatementSyntaxAttempt(ctx context.Context, projection *cyphertext.Source, entry SyntaxEntry, observe func(antlr4.Tree), mode int, prediction *parserPrediction, caseResults bool) (data *statementSyntaxData, err error) {
+	defer func() {
+		if failure := recover(); failure != nil {
+			if _, retry := failure.(syntaxPredictionRetry); retry {
+				data, err = parseStatementSyntaxAttempt(ctx, projection, entry, observe, antlr4.PredictionModeLL, prediction, false)
+				return
+			}
+			panic(failure)
+		}
+	}()
+	if err = ctx.Err(); err != nil {
+		return nil, err
+	}
+	source := projection.Text
 	inputView, input := sourceInputStream(ctx, projection)
 	lexer := NewCypherLexer(input)
 	listener := &parseErrorListener{}
+	var errorListener antlr4.ErrorListener = listener
+	if mode == antlr4.PredictionModeSLL {
+		errorListener = &syntaxPredictionListener{parseErrorListener: listener}
+	}
 	lexer.RemoveErrorListeners()
-	lexer.AddErrorListener(listener)
+	lexer.AddErrorListener(errorListener)
 	tokens := antlr4.NewCommonTokenStream(lexer, antlr4.TokenDefaultChannel)
 	var stream antlr4.TokenStream = tokens
 	if ctx.Done() != nil {
@@ -237,10 +313,13 @@ func parseStatementSyntax(ctx context.Context, projection *cyphertext.Source, en
 	}
 	parser := NewCypherParser(stream)
 	parser.RemoveErrorListeners()
-	parser.AddErrorListener(listener)
-	prediction := acquirePrediction()
+	parser.AddErrorListener(errorListener)
 	usePrediction(parser, prediction)
-	defer func() { parser.Interpreter = nil; prediction.release() }()
+	defer func() { parser.Interpreter = nil }()
+	parser.Interpreter.SetPredictionMode(mode)
+	if mode == antlr4.PredictionModeSLL && caseResults {
+		parser.AddParseListener(&caseResultPrediction{parser: parser, mode: mode})
+	}
 	var tree antlr4.Tree
 	switch entry {
 	case UseEntry:
@@ -289,6 +368,9 @@ func parseStatementSyntax(ctx context.Context, projection *cyphertext.Source, en
 		listener.errors = append(listener.errors, localization.CypherANTLRUnexpectedInput(trailing.GetLine(), trailing.GetColumn()))
 	}
 	tokens.Fill()
+	if len(listener.errors) != 0 && mode == antlr4.PredictionModeSLL && ctx.Err() == nil {
+		return parseStatementSyntaxAttempt(ctx, projection, entry, observe, antlr4.PredictionModeLL, prediction, false)
+	}
 	for i, message := range listener.errors {
 		line, lineOK := message.Data["Line"].(int)
 		column, columnOK := message.Data["Column"].(int)
@@ -306,7 +388,7 @@ func parseStatementSyntax(ctx context.Context, projection *cyphertext.Source, en
 	if observe != nil {
 		observe(tree)
 	}
-	data = &statementSyntaxData{source: source, view: projection, diagnostics: append([]localization.Message(nil), listener.errors...)}
+	data = &statementSyntaxData{identity: syntaxIdentitySequence.Add(1), source: source, view: projection, diagnostics: append([]localization.Message(nil), listener.errors...)}
 	data.bytes = inputView.boundaries
 	if listener.useError != nil {
 		copy := *listener.useError
@@ -319,10 +401,29 @@ func parseStatementSyntax(ctx context.Context, projection *cyphertext.Source, en
 		start, end := data.byteSpan(token.GetStart(), token.GetStop()+1)
 		data.tokens = append(data.tokens, syntaxTokenData{kind: token.GetTokenType(), channel: token.GetChannel(), start: start, end: end})
 	}
+	// Reserve the exact arena size on larger trees. Without this pass, repeated
+	// slice growth copies the retained node arena several times for long queries.
+	var childArena []int
+	if tokens.Size() > 64 {
+		count, err := countSyntaxNodes(ctx, tree)
+		if err != nil {
+			return nil, err
+		}
+		data.nodes = make([]syntaxNodeData, 0, count)
+		if count > 0 {
+			childArena = make([]int, count-1)
+		}
+	}
 	parent := -1
 	walkSyntax(tree, func(node antlr4.Tree) []antlr4.Tree { return node.GetChildren() }, func(node antlr4.Tree) func() {
 		id := len(data.nodes)
 		item := syntaxNodeData{rule: -1, parent: parent, firstToken: -1, afterToken: -1}
+		if childArena != nil {
+			if children := node.GetChildCount(); children > 0 {
+				item.children = childArena[:0:children]
+				childArena = childArena[children:]
+			}
+		}
 		switch parsed := node.(type) {
 		case antlr4.ParserRuleContext:
 			item.rule = parsed.GetRuleIndex()
@@ -361,6 +462,36 @@ func parseStatementSyntax(ctx context.Context, projection *cyphertext.Source, en
 		data.effects = (StatementSyntax{data}).collectEffects()
 	}
 	return data, syntaxErr
+}
+
+func countSyntaxNodes(ctx context.Context, root antlr4.Tree) (int, error) {
+	count := 0
+	var visit func(antlr4.Tree) error
+	visit = func(node antlr4.Tree) error {
+		count++
+		if count&255 == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+		for i := 0; i < node.GetChildCount(); i++ {
+			if err := visit(node.GetChild(i)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := visit(root); err != nil {
+		return 0, err
+	}
+	return count, ctx.Err()
+}
+
+type syntaxPredictionRetry struct{}
+type syntaxPredictionListener struct{ *parseErrorListener }
+
+func (*syntaxPredictionListener) SyntaxError(antlr4.Recognizer, interface{}, int, int, string, antlr4.RecognitionException) {
+	panic(syntaxPredictionRetry{})
 }
 
 func (data *statementSyntaxData) byteSpan(start, end int) (int, int) {

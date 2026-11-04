@@ -100,7 +100,7 @@ func (compiler *projectionCompilation) compileBound(ctx context.Context, incomin
 		statement := resultmetadata.Statement{Start: start, End: end, Incoming: projectionScope(incoming), Retained: projectionScope(retained), After: scope, Columns: resultmetadata.KnownColumns(showUsersColumns), Clauses: []resultmetadata.Clause{{Kind: resultmetadata.ClauseOther, Start: start, End: end, Before: projectionScope(incoming), After: scope}}}
 		return &projectedScopeFacts{after: names, outputs: names, statement: &statement}
 	}
-	compilation := &boundCompilation{owner: compiler, events: map[int]*boundEvent{}, product: &boundStatementProgram{syntax: syntax, projections: map[int]*returnProjectionPlan{}, effects: map[int]pipelineClauseEffects{}, scalars: map[int]scalarExpressionSyntax{}}, locals: map[localIdentityKey]statementBindingID{}, clauses: map[int]queryBodyClause{}, localSyntax: map[int][]syntaxLocalBinding{}}
+	compilation := &boundCompilation{owner: compiler, events: map[int]*boundEvent{}, product: &boundStatementProgram{syntax: syntax, projections: map[int]*returnProjectionPlan{}, effects: map[int]pipelineClauseEffects{}, scalars: map[int]scalarExpressionSyntax{}, columns: map[int]resultmetadata.Columns{}}, locals: map[localIdentityKey]statementBindingID{}, clauses: map[int]queryBodyClause{}, localSyntax: map[int][]syntaxLocalBinding{}}
 	body := compilation.prepareBody(ctx, queryBodyFromSyntax(query), query, start, end)
 	body.incoming, body.retained = incoming, retained
 	body.incomingIDs = map[string]statementBindingID{}
@@ -488,6 +488,10 @@ func (compilation *boundCompilation) leaveClause(clause *boundClause) {
 			clause.branch.columns = resultmetadata.KnownColumnAlternatives(proc.Spec.ResultSchemas())
 		}
 	}
+	// The compiled columns of every clause are the one declared result schema a
+	// runtime consumer may read: CALL's empty-input metadata, for instance, is
+	// this clause's own header rather than a second compile of the CALL text.
+	compilation.product.columns[clause.source.syntax.ID()] = clause.branch.columns
 	clause.branch.ids = clause.afterIDs
 }
 
@@ -696,6 +700,9 @@ func (compilation *boundCompilation) visitor(ctx context.Context) cypherantlr.Sy
 		if compilation.failure == nil && clause != nil {
 			compilation.bindSymbol(ctx, clause, node)
 		}
+		if event == nil && (clause == nil || node.Rule() != cypherantlr.CypherParserRULE_letItem) {
+			return nil
+		}
 		return func() {
 			if compilation.failure == nil && clause != nil && node.Rule() == cypherantlr.CypherParserRULE_letItem {
 				symbol := node.ChildRule(cypherantlr.CypherParserRULE_symbol)
@@ -745,7 +752,10 @@ func (compilation *boundCompilation) expressionBindings(clause *boundClause, nod
 		}
 	}
 	start, _ := node.Span()
-	var ancestors []cypherantlr.SyntaxNode
+	// Ordinary expression ancestry fits on the stack. Deeper expressions
+	// still grow normally, without imposing a grammar depth limit.
+	var nearby [16]cypherantlr.SyntaxNode
+	ancestors := nearby[:0]
 	for parent, ok := node.Parent(); ok && parent.ID() != clause.source.syntax.ID(); parent, ok = parent.Parent() {
 		ancestors = append(ancestors, parent)
 	}

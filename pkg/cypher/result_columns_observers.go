@@ -27,15 +27,20 @@ func (compilation *boundCompilation) metadataVisitor(rootEffects *pipelineClause
 				scalarExpressionSyntaxCache.put(node.Text(), *shape)
 			}})
 		}
-		leaves := make([]func(), len(active))
-		for index, observer := range active {
-			leaves[index] = observer.enter(node)
+		var leaves []func()
+		for _, observer := range active {
+			if leave := observer.enter(node); leave != nil {
+				leaves = append(leaves, leave)
+			}
+		}
+		// Most grammar nodes neither change observer state nor finish an
+		// observer. They need no leave list or restoration closure.
+		if len(leaves) == 0 && (len(active) == 1 || active[len(active)-1].root != node.ID()) {
+			return nil
 		}
 		return func() {
 			for index := len(leaves) - 1; index >= 0; index-- {
-				if leaves[index] != nil {
-					leaves[index]()
-				}
+				leaves[index]()
 			}
 			for len(active) > 1 && active[len(active)-1].root == node.ID() {
 				observer := active[len(active)-1]

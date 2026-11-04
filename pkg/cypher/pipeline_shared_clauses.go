@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"strings"
 )
 
@@ -47,8 +48,7 @@ func usesSharedGrammarClauses(ctx context.Context, query string) bool {
 		return false
 	}
 	for _, clause := range clauses {
-		if clause.kind == pipelineClauseLet || clause.kind == pipelineClauseFilter ||
-			clause.kind == pipelineClauseUnwind && startsWithKeywordFold(clause.text, "FOR") {
+		if clause.kind == pipelineClauseLet || clause.kind == pipelineClauseFilter || forIterationClause(clause) {
 			return true
 		}
 		if clause.kind == pipelineClauseCallSubquery {
@@ -61,22 +61,83 @@ func usesSharedGrammarClauses(ctx context.Context, query string) bool {
 	return false
 }
 
-func parsePipelineIteration(ctx context.Context, clause string) (expression, alias string, ok bool) {
-	if !startsWithKeywordFold(strings.TrimSpace(clause), "FOR") {
-		product, found := splitUnwindBody(ctx, clause)
-		return product.expression, product.aliasTail, found
+// iterationClause is one UNWIND or shared-grammar FOR clause's binding, read
+// from the retained grammar node the clause was split from: the list
+// expression's own source bytes and the decoded name the clause binds.
+// trailing names the keyword an UNWIND form leaves after its variable, which
+// Neo4j rejects (UNWIND takes no WHERE).
+type iterationClause struct {
+	expression string
+	variable   string
+	trailing   string
+}
+
+// iterationClauseFor reads an iteration clause's binding from its retained
+// grammar node. It is the one reader of a parsed iteration clause; the native
+// scanner (splitUnwindBody) reads raw statement text only, for the top-level
+// dispatch that runs before a statement is split into clauses.
+func iterationClauseFor(clause pipelineClause) (iterationClause, bool) {
+	if clause.kind != pipelineClauseUnwind || !clause.syntax.Valid() {
+		return iterationClause{}, false
 	}
-	body := pipelineClauseBody(clause, "FOR")
-	name, end, found := scanSymbolicName(body, 0)
-	if !found {
-		return "", "", false
+	node := clause.syntax
+	symbol := node.ChildRule(cypherantlr.CypherParserRULE_symbol)
+	if !symbol.Valid() {
+		return iterationClause{}, false
 	}
-	rest := strings.TrimSpace(body[end:])
-	if !startsWithKeywordFold(rest, "IN") {
-		return "", "", false
+	variable, symbolic := symbol.Name()
+	if !symbolic {
+		return iterationClause{}, false
 	}
-	expression = strings.TrimSpace(rest[len("IN"):])
-	return expression, name, expression != ""
+	source := node.Source()
+	iteration := iterationClause{variable: variable}
+	switch node.Rule() {
+	case cypherantlr.CypherParserRULE_unwindSt:
+		if _, found := node.DirectToken(cypherantlr.CypherLexerUNWIND); !found {
+			return iterationClause{}, false
+		}
+		as, found := node.DirectToken(cypherantlr.CypherLexerAS)
+		if !found {
+			return iterationClause{}, false
+		}
+		list := node.ChildRule(cypherantlr.CypherParserRULE_expression)
+		if !list.Valid() {
+			return iterationClause{}, false
+		}
+		start, _ := list.Span()
+		boundary, _ := as.Span()
+		if boundary < start || boundary > len(source) {
+			return iterationClause{}, false
+		}
+		iteration.expression = strings.TrimSpace(source[start:boundary])
+		if node.ChildRule(cypherantlr.CypherParserRULE_where).Valid() {
+			iteration.trailing = "WHERE"
+		}
+	case cypherantlr.CypherParserRULE_forSt:
+		keyword, found := node.DirectToken(cypherantlr.CypherLexerIN)
+		if !found {
+			return iterationClause{}, false
+		}
+		_, start := keyword.Span()
+		_, end := node.Span()
+		if end < start || end > len(source) {
+			return iterationClause{}, false
+		}
+		iteration.expression = strings.TrimSpace(source[start:end])
+	default:
+		return iterationClause{}, false
+	}
+	if iteration.expression == "" {
+		return iterationClause{}, false
+	}
+	return iteration, true
+}
+
+// forIterationClause reports the shared-grammar FOR form of an iteration
+// clause from its retained node.
+func forIterationClause(clause pipelineClause) bool {
+	return clause.kind == pipelineClauseUnwind && clause.syntax.Valid() &&
+		clause.syntax.Rule() == cypherantlr.CypherParserRULE_forSt
 }
 
 func parsePipelineLet(clause string) ([]pipelineRowProjection, error) {

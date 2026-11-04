@@ -91,7 +91,7 @@ func TestNodeEnvelopeModes(t *testing.T) {
 			return err
 		},
 		"scan": func(data []byte) error {
-			d := newProjectedNodeDecoder(b, StreamNodesOptions{Projection: []string{"payload"}})
+			d := newProjectedNodeDecoder(b, nil, StreamNodesOptions{Projection: []string{"payload"}})
 			_, err := d.decode(nodeKey("test:metadata"), data)
 			return err
 		},

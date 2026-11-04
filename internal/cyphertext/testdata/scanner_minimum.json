@@ -208,7 +208,6 @@
     "createRelationshipPropertyMapBodies",
     "projectedBindingScope",
     "simpleCreatePropertyReference",
-    "unwindBindingName",
     "validateUnwindAlias"
   ],
   "pkg/cypher/cypher25_expression_rewrite.go": [
@@ -296,12 +295,12 @@
     "redactSpanErrorText"
   ],
   "pkg/cypher/executor_subqueries.go": [
+    "clauseBindingDeclares",
     "firstVariableOccurrence",
     "indexTopLevelKeywordCallSubquery",
     "isSimpleIdentifier",
     "leadingWithClause",
     "nextNonSpace",
-    "precededByAS",
     "previousNonSpace",
     "splitTopLevelEqualityCallSubquery"
   ],
@@ -644,7 +643,8 @@
   ],
   "pkg/cypher/pipeline_shared_clauses.go": [
     "cypherGrammarVersion",
-    "parsePipelineIteration",
+    "forIterationClause",
+    "iterationClauseFor",
     "parsePipelineLet"
   ],
   "pkg/cypher/pipeline_value_helpers.go": [

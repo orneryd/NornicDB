@@ -23,7 +23,11 @@ func expressionSubqueryClauseBindingError(ctx context.Context, clause pipelineCl
 	}
 	switch clause.kind {
 	case pipelineClauseUnwind:
-		return check("", unwindBindingName(ctx, clause.text))
+		iteration, found := iterationClauseFor(clause)
+		if !found {
+			return nil
+		}
+		return check("", iteration.variable)
 	case pipelineClauseWith, pipelineClauseReturn:
 		keyword := "WITH"
 		if clause.kind == pipelineClauseReturn {

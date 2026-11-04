@@ -643,6 +643,20 @@ func (lc *largeCommit) openBatch() *badger.Txn {
 
 // commitBatch writes txn as the next batch of the large commit. A conflict
 // on the first batch comes back as badger.ErrConflict.
+//
+// Cache-revocation phase boundary: every batch before finalTxn is a
+// preparation batch. It is durable but unpublished (intentTs stays
+// unfinished), so nothing it wrote is visible at the published timestamp and it
+// supersedes no cached body a reader may still hold. Its scope therefore names
+// no facts: readers keep the preimage they are entitled to, and the commit's
+// facts stay retained in the scope provider until the one batch that also
+// deletes the intent (finalTxn) revokes all of them. That batch runs after
+// every earlier batch is durable and before release finishes the intent
+// timestamp, so the single revocation carries the commit's latest data
+// timestamp: a fill that started before publication keeps an older source
+// timestamp and the durable floor rejects it. A large commit without a scope
+// provider keeps the zero (unknown) scope, so it still takes full invalidation;
+// nothing here narrows the invalidation of a commit that cannot name its facts.
 func (lc *largeCommit) commitBatch(ctx context.Context, txn *badger.Txn) error {
 	ts, err := lc.db.oracle.assign()
 	if err != nil {
@@ -652,7 +666,10 @@ func (lc *largeCommit) commitBatch(ctx context.Context, txn *badger.Txn) error {
 	lc.db.oracle.finish(ts)
 	var scope cacheWriteScope
 	if lc.cacheScope != nil {
-		scope = lc.cacheScope()
+		scope = cacheWriteScope{known: true}
+		if txn == lc.finalTxn {
+			scope = lc.cacheScope()
+		}
 	}
 	if txn != lc.finalTxn {
 		ctx = WithPublicationDecision(ctx, nil)

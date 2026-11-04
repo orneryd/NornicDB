@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"slices"
 	"strings"
 )
 
@@ -118,7 +119,11 @@ func signatureOperand(types []string) staticOperand {
 // everything else as given.
 func canonicalTypeOrder(types []string) []string {
 	ordered := make([]string, 0, len(types))
-	for _, name := range append([]string{"Any"}, staticTypeChoices(staticPropertyValueType)...) {
+	// Any comes before the property value's own types.
+	if containsString(types, "Any") {
+		ordered = append(ordered, "Any")
+	}
+	for name := range staticTypeChoices(staticPropertyValueType) {
 		if containsString(types, name) {
 			ordered = append(ordered, name)
 		}
@@ -173,7 +178,7 @@ func withoutTemporalListElements(choices []string) []string {
 // holdsPropertyValueTypes reports choices that hold every type a property
 // value may have, or a list of each (a union with n.k, [n.k]).
 func holdsPropertyValueTypes(choices []string) bool {
-	for _, name := range staticTypeChoices(staticPropertyValueType) {
+	for name := range staticTypeChoices(staticPropertyValueType) {
 		if !containsString(choices, name) && !containsString(choices, "List<"+name+">") {
 			return false
 		}
@@ -184,7 +189,7 @@ func holdsPropertyValueTypes(choices []string) bool {
 // hasAnyAlternative reports an operand one of whose alternatives is Any
 // (the least common type of values that differ).
 func (operand staticOperand) hasAnyAlternative() bool {
-	return containsString(staticTypeChoices(operand.typeName()), "Any")
+	return staticTypeChoiceNamed(operand.typeName(), "Any")
 }
 
 // staticMapMember is the operand a map with known members gives for key
@@ -216,7 +221,7 @@ func typedOperand(typeName string) staticOperand {
 	if !strings.Contains(typeName, ", ") && !strings.Contains(typeName, " or ") {
 		return knownOperand(typeName)
 	}
-	if choices := staticTypeChoices(typeName); len(choices) > 1 {
+	if staticTypeChoiceCount(typeName) > 1 {
 		// Existing numeric operands already have an operator category. Other
 		// unions retain their alternatives without claiming one scalar kind.
 		if operand := knownOperand(typeName); operand.numeric() {
@@ -224,7 +229,7 @@ func typedOperand(typeName string) staticOperand {
 		}
 		operand := staticOperand{display: typeName, union: true}
 		allLists, allNumbers, allMaps := true, true, true
-		for _, choice := range choices {
+		for choice := range staticTypeChoices(typeName) {
 			allLists = allLists && isListTypeName(choice)
 			allNumbers = allNumbers && isNumericTypeName(choice)
 			allMaps = allMaps && containsString(staticCatalogTypeNames["MAP"], choice)
@@ -274,7 +279,7 @@ func (operand staticOperand) fits(accepts func(typeName string) bool) bool {
 	if operand.proven && operand.isPropertyValue() {
 		// A property value (any type a property may hold): one of its
 		// display's types.
-		for _, choice := range staticTypeChoices(operand.display) {
+		for choice := range staticTypeChoices(operand.display) {
 			if accepts(choice) {
 				return true
 			}
@@ -291,7 +296,7 @@ func (operand staticOperand) fits(accepts func(typeName string) bool) bool {
 			return false
 		}
 	}
-	for _, choice := range staticTypeChoices(operand.typeName()) {
+	for choice := range staticTypeChoices(operand.typeName()) {
 		if accepts(choice) {
 			return true
 		}
@@ -333,7 +338,7 @@ func (operand staticOperand) listPart() staticOperand {
 		return staticOperand{}
 	}
 	var lists []string
-	for _, choice := range staticTypeChoices(operand.typeName()) {
+	for choice := range staticTypeChoices(operand.typeName()) {
 		if isListTypeName(choice) {
 			lists = append(lists, choice)
 		}
@@ -447,12 +452,11 @@ func staticLiteralType(ctx context.Context, expression string, policy staticLite
 // (UNWIND 5 binds 5); unknown when a list's elements aren't known.
 func (operand staticOperand) unwoundOperand() staticOperand {
 	typeName := operand.typeName()
-	choices := staticTypeChoices(typeName)
 	if typeName == "" || typeName == staticPropertyValueType {
 		return staticOperand{}
 	}
-	elements := make([]string, 0, len(choices))
-	for _, choice := range choices {
+	elements := make([]string, 0, staticTypeChoiceCount(typeName))
+	for choice := range staticTypeChoices(typeName) {
 		if !isListTypeName(choice) {
 			elements = appendTypeChoice(elements, choice)
 			continue
@@ -461,7 +465,7 @@ func (operand staticOperand) unwoundOperand() staticOperand {
 		if element == "" {
 			return staticOperand{}
 		}
-		for _, item := range staticTypeChoices(element) {
+		for item := range staticTypeChoices(element) {
 			elements = appendTypeChoice(elements, item)
 		}
 	}
@@ -477,8 +481,9 @@ func joinedOperand(left, right staticOperand) staticOperand {
 	if left.typeName() == "" || right.typeName() == "" || left.typeName() == right.typeName() {
 		return commonStaticOperand(left, right)
 	}
-	choices := staticTypeChoices(left.typeName())
-	for _, choice := range staticTypeChoices(right.typeName()) {
+	// joinedOperand appends to its own copy of left's alternatives.
+	choices := slices.Collect(staticTypeChoices(left.typeName()))
+	for choice := range staticTypeChoices(right.typeName()) {
 		choices = appendTypeChoice(choices, choice)
 	}
 	joined := typedOperand(joinTypeNames(choices))
@@ -497,7 +502,8 @@ func appendTypeChoice(choices []string, choice string) []string {
 // listOfType is the type of a list of typeName's values: List<X> for one
 // type, each choice's list for several ("List<A>, List<B> or List<C>").
 func listOfType(typeName string) string {
-	choices := staticTypeChoices(typeName)
+	// The alternatives are rewritten in place: this caller's own slice.
+	choices := slices.Collect(staticTypeChoices(typeName))
 	for index, choice := range choices {
 		choices[index] = "List<" + choice + ">"
 	}
@@ -508,12 +514,8 @@ func listOfType(typeName string) string {
 // typeName isn't a list of known elements): X of List<X>, each choice's
 // element for several list types.
 func elementOfType(typeName string) string {
-	choices := staticTypeChoices(typeName)
-	if len(choices) == 0 {
-		return ""
-	}
-	elements := make([]string, 0, len(choices))
-	for _, choice := range choices {
+	elements := make([]string, 0, staticTypeChoiceCount(typeName))
+	for choice := range staticTypeChoices(typeName) {
 		if !strings.HasPrefix(choice, "List<") || choice == "List<T>" {
 			return ""
 		}
@@ -605,7 +607,7 @@ func (operand staticOperand) bindingKind() matchBindingKind {
 			return matchBindingUnknown
 		}
 	}
-	for _, choice := range staticTypeChoices(operand.typeName()) {
+	for choice := range staticTypeChoices(operand.typeName()) {
 		if choice == "Node" || choice == "Relationship" || choice == "Null" {
 			// A null alternative is bound as anything (Neo4j admits
 			// MATCH (v) for v of null or 1).
@@ -621,9 +623,8 @@ func (operand staticOperand) alternatives() []staticOperand {
 	if !operand.union {
 		return []staticOperand{operand}
 	}
-	choices := staticTypeChoices(operand.display)
-	alternatives := make([]staticOperand, 0, len(choices))
-	for _, choice := range choices {
+	alternatives := make([]staticOperand, 0, staticTypeChoiceCount(operand.display))
+	for choice := range staticTypeChoices(operand.display) {
 		alternative := typedOperand(choice)
 		alternative.display, alternative.parameter = operand.display, operand.parameter
 		alternative.proven = operand.proven
@@ -666,9 +667,9 @@ func concatenatedOperand(left, right staticOperand) staticOperand {
 	}
 	elements := func(operand staticOperand) []string {
 		if !operand.list() {
-			return staticTypeChoices(operand.typeName())
+			return slices.Collect(staticTypeChoices(operand.typeName()))
 		}
-		return staticTypeChoices(elementOfType(operand.typeName()))
+		return slices.Collect(staticTypeChoices(elementOfType(operand.typeName())))
 	}
 	leftElements, rightElements := elements(left), elements(right)
 	if !composable(left, right) || containsString(leftElements, "") || containsString(rightElements, "") {
@@ -960,13 +961,12 @@ func (argument staticArgumentType) accepts(typeName string) bool {
 		// otherwise every alternative must be one whose list-element
 		// coercion Neo4j leaves to the row (apoc.map.fromPairs(n.xs) is
 		// rejected: a property may hold a string).
-		choices := staticTypeChoices(typeName)
-		for _, choice := range choices {
+		for choice := range staticTypeChoices(typeName) {
 			if strings.HasPrefix(choice, "List<List<") {
 				return true
 			}
 		}
-		for _, choice := range choices {
+		for choice := range staticTypeChoices(typeName) {
 			switch choice {
 			case "List<T>", "List<Boolean>", "List<Float>", "List<Integer>", "List<Number>", "Null":
 			default:
@@ -976,8 +976,8 @@ func (argument staticArgumentType) accepts(typeName string) bool {
 		return true
 	}
 	if strings.Contains(typeName, ", ") || strings.Contains(typeName, " or ") {
-		if choices := staticTypeChoices(typeName); len(choices) > 1 {
-			for _, choice := range choices {
+		if staticTypeChoiceCount(typeName) > 1 {
+			for choice := range staticTypeChoices(typeName) {
 				if argument.accepts(choice) {
 					return true
 				}
@@ -1033,7 +1033,7 @@ func procedureArgumentTypeName(typeName string) string {
 func accumulatorAccepts(initial staticOperand) func(string) bool {
 	accepted := staticTypeChoices(initial.typeName())
 	return func(choice string) bool {
-		for _, typeName := range accepted {
+		for typeName := range accepted {
 			if accumulatorTakes(typeName, choice) {
 				return true
 			}
@@ -1071,8 +1071,8 @@ func listElementsTaken(accumulator, step string) bool {
 	if accumulator == "" || step == "" {
 		return true
 	}
-	for _, element := range staticTypeChoices(step) {
-		for _, accepted := range staticTypeChoices(accumulator) {
+	for element := range staticTypeChoices(step) {
+		for accepted := range staticTypeChoices(accumulator) {
 			switch {
 			case accepted == element, accepted == "Any", element == "Any", accepted == "Number" && isNumericTypeName(element):
 				return true
@@ -1106,16 +1106,15 @@ func isDeleteTargetTypeName(typeName string) bool {
 // "Float or Integer".
 func unaryOperand(operand staticOperand) staticOperand {
 	var results []string
-	choices := staticTypeChoices(operand.typeName())
-	if len(choices) == 0 || operand.isPropertyValue() {
-		choices = []string{"Null"}
-	}
-	for _, choice := range choices {
-		switch choice {
-		case "Integer", "Float":
-			results = appendTypeChoice(results, choice)
-		case "Null", "Number":
-			results = appendTypeChoice(appendTypeChoice(results, "Float"), "Integer")
+	// A property value may be a number (-n.k is), read below as one.
+	if !operand.isPropertyValue() {
+		for choice := range staticTypeChoices(operand.typeName()) {
+			switch choice {
+			case "Integer", "Float":
+				results = appendTypeChoice(results, choice)
+			case "Null", "Number":
+				results = appendTypeChoice(appendTypeChoice(results, "Float"), "Integer")
+			}
 		}
 	}
 	if len(results) == 0 {
@@ -1140,7 +1139,7 @@ func unionListLiteralOperand(elements []staticOperand) staticOperand {
 	}
 	depth := -1
 	for _, element := range elements {
-		for _, choice := range staticTypeChoices(element.typeName()) {
+		for choice := range staticTypeChoices(element.typeName()) {
 			if levels := listDepth(choice); depth < 0 || levels < depth {
 				depth = levels
 			}
@@ -1155,14 +1154,14 @@ func unionListLiteralOperand(elements []staticOperand) staticOperand {
 	}
 	var types []string
 	for index, element := range elements {
-		choices := staticTypeChoices(element.typeName())
 		if index == 0 {
-			types = choices
+			// types is appended to below: this derivation's own slice.
+			types = slices.Collect(staticTypeChoices(element.typeName()))
 			continue
 		}
 		var combined []string
 		for _, left := range types {
-			for _, right := range choices {
+			for right := range staticTypeChoices(element.typeName()) {
 				combined = appendTypeChoice(combined, leastCommonTypeName(left, right))
 			}
 		}
@@ -1180,9 +1179,8 @@ func unionListLiteralOperand(elements []staticOperand) staticOperand {
 // back: a map alternative may be a node or a relationship
 // (labels(head([CASE … {a: 1} … 1 END])) is admitted, MATCH (v) binds it).
 func covariantElementTypeName(typeName string) string {
-	choices := staticTypeChoices(typeName)
-	widened := make([]string, 0, len(choices)+2)
-	for _, choice := range choices {
+	widened := make([]string, 0, staticTypeChoiceCount(typeName)+2)
+	for choice := range staticTypeChoices(typeName) {
 		if choice == "Map" {
 			for _, kind := range []string{"Map", "Node", "Relationship"} {
 				widened = appendTypeChoice(widened, kind)
@@ -1198,9 +1196,8 @@ func covariantElementTypeName(typeName string) string {
 // read as a list of unknown elements from that level down; "" when an
 // alternative is Any itself.
 func withoutAnyDepth(typeName string) string {
-	choices := staticTypeChoices(typeName)
-	kept := make([]string, 0, len(choices))
-	for _, choice := range choices {
+	kept := make([]string, 0, staticTypeChoiceCount(typeName))
+	for choice := range staticTypeChoices(typeName) {
 		switch {
 		case choice == "Any":
 			return ""
@@ -1232,7 +1229,7 @@ func leastUpperBoundName(left, right string) string {
 			// A list of elements of unknown type bounds a list of them.
 			return "List<T>"
 		}
-		if len(staticTypeChoices(leftElement)) > 1 || len(staticTypeChoices(rightElement)) > 1 {
+		if staticTypeChoiceCount(leftElement) > 1 || staticTypeChoiceCount(rightElement) > 1 {
 			return "List<Any>"
 		}
 		return listOfType(leastUpperBoundName(leftElement, rightElement))
@@ -1245,10 +1242,9 @@ func leastUpperBoundName(left, right string) string {
 // them in turn: an Integer or Boolean is "Any, Boolean or Integer", a Float
 // or Integer a "Float, Integer or Number".
 func leastUpperBoundClosure(typeName string) string {
-	choices := staticTypeChoices(typeName)
 	var closure []string
-	for _, left := range choices {
-		for _, right := range choices {
+	for left := range staticTypeChoices(typeName) {
+		for right := range staticTypeChoices(typeName) {
 			closure = appendTypeChoice(closure, leastUpperBoundName(left, right))
 		}
 	}
@@ -1275,7 +1271,7 @@ func (operand staticOperand) mayBeNull() bool {
 	if !operand.union {
 		return operand.operandCategory == "Null"
 	}
-	return containsString(staticTypeChoices(operand.typeName()), "Null")
+	return staticTypeChoiceNamed(operand.typeName(), "Null")
 }
 
 // isBooleanOrListTypeName is what a predicate position (WHERE, AND, OR, XOR,

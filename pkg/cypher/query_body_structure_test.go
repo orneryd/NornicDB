@@ -122,7 +122,7 @@ func TestReadQueryBodyCallFrame(t *testing.T) {
 		"CALL custom.proc({value: 1}) YIELD value RETURN value",
 		"CALL /* decoy { } */ db.labels() YIELD label RETURN label",
 	} {
-		frame := readCallSubqueryScope(t.Context(), query)
+		frame := readCallSubqueryScope(t.Context(), query, 0)
 		require.True(t, strings.HasPrefix(query[frame.bodyOffset:], "db.") || strings.HasPrefix(query[frame.bodyOffset:], "custom."))
 		_, _, body := callSubqueryBraces(t.Context(), query)
 		require.False(t, body, query)
@@ -132,7 +132,7 @@ func TestReadQueryBodyCallFrame(t *testing.T) {
 		"CALL () /* decoy { } */ { RETURN 1 AS value }",
 		"CALL (`name { decoy`) { RETURN 1 AS value }",
 	} {
-		frame := readCallSubqueryScope(t.Context(), query)
+		frame := readCallSubqueryScope(t.Context(), query, 0)
 		open, close, ok := callSubqueryBraces(t.Context(), query)
 		require.True(t, ok, query)
 		require.Equal(t, frame.bodyOffset, open)

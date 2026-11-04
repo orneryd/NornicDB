@@ -41,7 +41,7 @@ func TestStoredPropertiesRejectForgedCollectionLengths(t *testing.T) {
 	n := binary.PutUvarint(count[:], ^uint64(0))
 	_, err := (&BadgerEngine{}).decodeTokenizedPropertiesProjected(nil, "test", count[:n], nil)
 	require.Error(t, err)
-	_, err = newProjectedNodeDecoder(&BadgerEngine{}, StreamNodesOptions{}).decodeProperties(count[:n])
+	_, err = newProjectedNodeDecoder(&BadgerEngine{}, nil, StreamNodesOptions{}).decodeProperties(count[:n])
 	require.Error(t, err)
 }
 

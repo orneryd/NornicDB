@@ -118,7 +118,9 @@ func TestTemporalCallDefensiveReturns(t *testing.T) {
 		"date.realtime(1)",
 		"date.realtime('Not/AZone')",
 	} {
-		value, handled, err := exec.evaluateTemporalConstructor(context.Background(), eval, expression)
+		var facts functionCallFacts
+		require.True(t, inspectFunctionCall(expression, qualifiedFunctionCall, "", &facts), expression)
+		value, handled, err := exec.evaluateTemporalConstructor(context.Background(), eval, facts)
 		require.True(t, handled, expression)
 		require.NoError(t, err, expression)
 		require.Nil(t, value, expression)

@@ -25,12 +25,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"math/rand/v2"
 	"os"
 	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -516,7 +516,7 @@ func main() {
 			die("seed verification: %v", seedErr)
 		}
 		report.SeedCounts = sc
-		if mismatches := verifySeedCounts(sc, *categories, *suppliers, *customersN, *products, *ordersN); len(mismatches) > 0 {
+		if mismatches := verifySeedCounts(sc, *categories, *suppliers, *customersN, *products, *ordersN, report.SeedRelationships); len(mismatches) > 0 {
 			for _, m := range mismatches {
 				report.CorrectnessErrors = append(report.CorrectnessErrors, "seed: "+m)
 				log("[%s] SEED MISMATCH: %s", *label, m)
@@ -708,11 +708,16 @@ func wipeGraph(ctx context.Context, session neo4j.SessionWithContext, seedBatchS
 // head at commit time; Neo4j drivers retry these automatically and the
 // seeder mirrors that behavior.
 func isTransientConflict(err error) bool {
-	if err == nil {
+	var serverError *neo4j.Neo4jError
+	if !errors.As(err, &serverError) {
 		return false
 	}
-	msg := err.Error()
-	return strings.Contains(msg, "TransientError") || strings.Contains(msg, "conflict detected")
+	// Error text can mention an earlier conflict even when the final commit
+	// outcome is unknown. Only the driver's server-status classification can
+	// authorize replay of these non-idempotent CREATE batches. Classify a local
+	// code value: the driver's classifier caches parsed fields on its receiver.
+	classification := neo4j.Neo4jError{Code: serverError.Code}
+	return classification.IsRetriableTransient()
 }
 
 // runWithTransientRetry re-runs op with bounded backoff while it fails
@@ -748,8 +753,9 @@ func wipeGraphBatches(ctx context.Context, batchSize int, deleteBatch func(conte
 }
 
 // batchWrite splits rows into chunks of batchSize and issues one UNWIND query
-// per chunk. Logs chunk progress for long seeds so the operator can see the
-// seed is making forward progress.
+// per chunk, consuming that chunk's terminal summary before the batch counts as
+// written. Logs chunk progress for long seeds so the operator can see the seed
+// is making forward progress.
 func batchWrite(ctx context.Context, session neo4j.SessionWithContext, rows []map[string]any, batchSize int, cypher string) error {
 	if batchSize <= 0 {
 		batchSize = 1000
@@ -760,8 +766,19 @@ func batchWrite(ctx context.Context, session neo4j.SessionWithContext, rows []ma
 		if end > total {
 			end = total
 		}
+		// A batch is only acknowledged once its terminal summary has been
+		// consumed: the driver's Session.Close discards a pending auto-commit
+		// result and reports only explicit-transaction errors, so an unconsumed
+		// result silently drops a terminal statement error and the batch would
+		// be counted as written. Consume inside the retry op so that deferred
+		// terminal error is observed and judged by the same bounded retry policy
+		// as a Run error.
 		err := runWithTransientRetry(ctx, func() error {
-			_, err := session.Run(ctx, cypher, map[string]any{"rows": rows[start:end]})
+			result, err := session.Run(ctx, cypher, map[string]any{"rows": rows[start:end]})
+			if err != nil {
+				return err
+			}
+			_, err = result.Consume(ctx)
 			return err
 		})
 		if err != nil {
@@ -779,7 +796,8 @@ func batchWrite(ctx context.Context, session neo4j.SessionWithContext, rows []ma
 // Neo4j Go driver), claims batches via an atomic counter, and issues UNWIND
 // queries independently. The function blocks until every batch has been
 // acknowledged, preserving the phase-barrier semantics callers rely on for
-// MATCH referential integrity.
+// MATCH referential integrity. Each claimed chunk is written by batchWrite, so
+// the Run plus terminal-consume acknowledgement has a single owner.
 //
 // parallel <= 1 falls through to the serial batchWrite path so the default
 // behaviour is unchanged.
@@ -848,11 +866,12 @@ func batchWriteParallel(ctx context.Context, driver neo4j.DriverWithContext, dat
 					return
 				}
 				c := chunks[i]
-				err := runWithTransientRetry(ctx, func() error {
-					_, err := session.Run(ctx, cypher, map[string]any{"rows": rows[c.start:c.end]})
-					return err
-				})
-				if err != nil {
+				// Write the claimed chunk through the canonical serial owner so one
+				// implementation owns Run, the terminal Consume and the retry
+				// policy. batchWrite frames its own error against the chunk it was
+				// given, so the wrap below keeps the phase-absolute range operators
+				// already see.
+				if err := batchWrite(ctx, session, rows[c.start:c.end], c.end-c.start, cypher); err != nil {
 					setErr(fmt.Errorf("batch %d..%d: %w", c.start, c.end, err))
 					return
 				}
@@ -1132,11 +1151,10 @@ func countSeedGraph(ctx context.Context, driver neo4j.DriverWithContext, databas
 	return sc, nil
 }
 
-// verifySeedCounts asserts node counts match the claimed seed sizes. Edge
-// counts are ranges because the random ORDERS line count is variable
-// (ORDER_LINES_MIN..MAX) — we enforce the total ORDERS edges fall within
-// the derived window.
-func verifySeedCounts(sc SeedCounts, categories, suppliers, customers, products, orders int) []string {
+// verifySeedCounts checks every population against the generated seed plan.
+// Its total relationship count includes the exact random ORDERS population;
+// subtracting the three fixed-size families avoids regenerating the payload.
+func verifySeedCounts(sc SeedCounts, categories, suppliers, customers, products, orders, relationships int) []string {
 	var errs []string
 	check := func(name string, got int64, want int) {
 		if got != int64(want) {
@@ -1157,8 +1175,10 @@ func verifySeedCounts(sc SeedCounts, categories, suppliers, customers, products,
 	if sc.PurchasedEdges != int64(orders) {
 		errs = append(errs, fmt.Sprintf("PURCHASED count=%d expected=%d", sc.PurchasedEdges, orders))
 	}
-	// ORDERS edge count: each order has [min..max] lines; check inside that
-	// window rather than an exact value because our RNG is the only truth.
+	expectedOrderLines := int64(relationships) - 2*int64(products) - int64(orders)
+	if sc.OrdersEdges != expectedOrderLines {
+		errs = append(errs, fmt.Sprintf("ORDERS count=%d expected=%d", sc.OrdersEdges, expectedOrderLines))
+	}
 	return errs
 }
 

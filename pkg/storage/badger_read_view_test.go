@@ -9,9 +9,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func snapshotOverlayFixture(t *testing.T) *BadgerEngine {
+func snapshotOverlayFixture(t *testing.T, options ...writeBehindTestOptions) *BadgerEngine {
 	t.Helper()
-	b := newWriteBehindTestEngine(t, time.Hour)
+	b := newWriteBehindTestEngine(t, time.Hour, options...)
+	ctx := t.Context()
+	if len(options) > 0 && options[0].manualDrain {
+		// This fixture's writes belong to its explicit replay schedule. A
+		// noncancellable fixture write can finish without a background owner.
+		ctx = context.Background()
+	}
 	// Request-cancellable writes wait for the accepted replay owner. Keep it
 	// live, with the existing long delay retaining rows until an explicit flush.
 	b.writeBehind.SetDelayBounds(time.Hour, time.Hour)
@@ -19,15 +25,15 @@ func snapshotOverlayFixture(t *testing.T) *BadgerEngine {
 		bufferedCreate(t, b, &Node{ID: id, Labels: []string{"Old"}, Properties: map[string]any{"v": int64(1)}})
 	}
 	require.NoError(t, b.FlushWriteBehind(context.Background()))
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(ctx)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:a", Labels: []string{"Live"}, Properties: map[string]any{"v": int64(2)}}, Policy: ClientNodeEdits}))
-	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:new", Labels: []string{"Live"}, Properties: map[string]any{"v": int64(2)}})
+	require.NoError(t, tx.UpdateGraphNode(ctx, NodeUpdateRequest{After: &Node{ID: "test:a", Labels: []string{"Live"}, Properties: map[string]any{"v": int64(2)}}, Policy: ClientNodeEdits}))
+	_, err = tx.CreateNode(ctx, &Node{ID: "test:new", Labels: []string{"Live"}, Properties: map[string]any{"v": int64(2)}})
 	require.NoError(t, err)
-	require.NoError(t, tx.DeleteGraphNode(t.Context(), "test:gone", CascadeEdges))
-	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "REL", Properties: map[string]any{"v": int64(2)}}))
+	require.NoError(t, tx.DeleteGraphNode(ctx, "test:gone", CascadeEdges))
+	require.NoError(t, tx.CreateEdge(ctx, &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "REL", Properties: map[string]any{"v": int64(2)}}))
 	require.NoError(t, tx.Commit())
 	return b
 }
@@ -37,7 +43,10 @@ func snapshotOverlayFixture(t *testing.T) *BadgerEngine {
 func TestSnapshotOverlayCaptureClasses(t *testing.T) {
 	for _, class := range []string{"point", "batch-projection", "label", "all-nodes", "type", "all-edges", "outgoing", "incoming", "between", "node-edge-snapshot"} {
 		t.Run(class, func(t *testing.T) {
-			b := snapshotOverlayFixture(t)
+			// A delay does not exclude a queued flush wake from the initial
+			// flush. This schedule requires replay only after capture, so use
+			// the existing manual-drain fixture instead of racing its worker.
+			b := snapshotOverlayFixture(t, writeBehindTestOptions{manualDrain: true})
 			var nodes []*Node
 			var edges []*Edge
 			var point bufferedEntityState
