@@ -24,7 +24,8 @@ import (
 //
 // Uniqueness constraints belong in `sm.constraints` and `sm.uniqueConstraints`;
 // `sm.constraintContracts` is reserved for the block-form `REQUIRE { ... }`
-// syntax handled by `executeCreateConstraintContract` in `schema_contracts.go`.
+// syntax the contract owner parses (`parseCreateConstraintContractDDL`) and
+// executes (`executeCreateConstraintContract`) in `schema_contracts.go`.
 // This test pins that separation. If the assertion fires, somewhere in the
 // `CREATE CONSTRAINT ... REQUIRE n.X IS UNIQUE` execution path a contract is
 // being registered when it should not be, and the adjacency-walk early-out

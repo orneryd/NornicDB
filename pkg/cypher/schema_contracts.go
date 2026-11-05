@@ -135,21 +135,18 @@ func (e *StorageExecutor) parseCreateConstraintContractDDL(ctx context.Context, 
 	}, nil
 }
 
-func (e *StorageExecutor) executeCreateConstraintContract(ctx context.Context, cypher string, ifNotExists bool) (*ExecuteResult, bool, error) {
-	parsed, err := e.parseCreateConstraintContractDDL(ctx, cypher)
-	if err != nil {
-		return nil, false, nil
-	}
-	return e.createConstraintContractForTarget(ctx, cypher, parsed.name, parsed.entityType, parsed.variable, parsed.labelOrType, parsed.body, ifNotExists)
-}
-
-func (e *StorageExecutor) createConstraintContractForTarget(ctx context.Context, definition, name string, entityType storage.ConstraintEntityType, variable, labelOrType, body string, ifNotExists bool) (*ExecuteResult, bool, error) {
+// executeCreateConstraintContract executes the contract statement whose shape
+// parseCreateConstraintContractDDL admitted: admission is the parse's, so this
+// runs only for a statement the contract owner parses and decides no syntax of
+// its own.
+func (e *StorageExecutor) executeCreateConstraintContract(ctx context.Context, definition string, parsed parsedCreateConstraintContractDDL, ifNotExists bool) (*ExecuteResult, error) {
+	name, entityType, variable, labelOrType, body := parsed.name, parsed.entityType, parsed.variable, parsed.labelOrType, parsed.body
 	entriesRaw, err := splitConstraintContractEntries(body)
 	if err != nil {
-		return nil, true, err
+		return nil, err
 	}
 	if len(entriesRaw) == 0 {
-		return nil, true, localizedError(localization.CypherSchemaContractEntryRequired(), nil)
+		return nil, localizedError(localization.CypherSchemaContractEntryRequired(), nil)
 	}
 
 	contract := storage.ConstraintContract{
@@ -165,7 +162,7 @@ func (e *StorageExecutor) createConstraintContractForTarget(ctx context.Context,
 	for idx, rawEntry := range entriesRaw {
 		entry, compiledConstraint, compiledType, err := e.parseConstraintContractEntry(ctx, rawEntry, variable, entityType, labelOrType, name, idx)
 		if err != nil {
-			return nil, true, err
+			return nil, err
 		}
 		contract.Entries = append(contract.Entries, entry)
 		if compiledConstraint != nil {
@@ -178,16 +175,16 @@ func (e *StorageExecutor) createConstraintContractForTarget(ctx context.Context,
 
 	for _, constraint := range compiledConstraints {
 		if err := storage.ValidateConstraintOnCreationForEngine(ctx, e.storage, constraint); err != nil {
-			return nil, true, err
+			return nil, err
 		}
 	}
 	for _, constraint := range compiledTypes {
 		if err := storage.ValidatePropertyTypeConstraintOnCreationForEngine(ctx, e.storage, constraint); err != nil {
-			return nil, true, err
+			return nil, err
 		}
 	}
 	if err := storage.ValidateConstraintContractOnCreationForEngine(ctx, e.storage, contract); err != nil {
-		return nil, true, err
+		return nil, err
 	}
 	schema := e.storage.GetSchema()
 	newTemporal := make([]storage.Constraint, 0)
@@ -202,12 +199,12 @@ func (e *StorageExecutor) createConstraintContractForTarget(ctx context.Context,
 		}
 	}
 	if err := schema.AddConstraintContractBundle(contract, compiledConstraints, compiledTypes, ifNotExists); err != nil {
-		return nil, true, err
+		return nil, err
 	}
 	// See addSchemaConstraint: new temporal entries are authoritative on an
 	// empty label (#1126).
 	if err := storage.MarkNewTemporalConstraintsForEngine(e.storage, schema, newTemporal); err != nil {
-		return nil, true, err
+		return nil, err
 	}
 	// Fill the equality indexes the contract's UNIQUE / NODE KEY entries own,
 	// as a standalone constraint's DDL does (addSchemaConstraint): until an
@@ -216,7 +213,7 @@ func (e *StorageExecutor) createConstraintContractForTarget(ctx context.Context,
 	for _, name := range newNames {
 		if index, owned := schema.ConstraintPropertyIndex(name); owned {
 			if err := e.backfillCompositeIndex(ctx, index.Name, index.Label, index.Properties); err != nil {
-				return nil, true, err
+				return nil, err
 			}
 		}
 	}
@@ -224,10 +221,10 @@ func (e *StorageExecutor) createConstraintContractForTarget(ctx context.Context,
 	// their value cache built and marked complete; without it every write to
 	// the label falls back to scanning all of its nodes (#1120).
 	if err := storage.RefreshUniqueConstraintValuesForConstraintsForEngine(ctx, e.storage, schema, compiledConstraints); err != nil {
-		return nil, true, err
+		return nil, err
 	}
 
-	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, true, nil
+	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 }
 
 func splitConstraintContractEntries(body string) ([]string, error) {

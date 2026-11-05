@@ -129,11 +129,15 @@ func (tx *BadgerTransaction) getNodeFromBadgerSnapshotProjectedLocked(nodeID Nod
 }
 
 // RelationshipEndpointVisible implements RelationshipEndpointChecker with the
-// same answer GetNode gives inside this transaction. The transaction's own
-// delete or write decides first. A committed node is decided from its MVCC
-// head alone when the snapshot is at or after the head's version: visible
-// unless the head is a tombstone. An older snapshot, a node without a head,
-// a read error and decay filtering leave the answer to GetNode.
+// same answer GetNode gives inside this transaction. While the visibility layer
+// can hide an image (knowledge-policy decay or an entity suppressed on demand,
+// with no reveal scope open) the check declines, so GetNode keeps the answer:
+// its completion applies that filter to every image it can return, overlay
+// images included. Otherwise the transaction's own delete or write decides
+// first. A committed node is decided from its MVCC head alone when the
+// snapshot is at or after the head's version: visible unless the head is a
+// tombstone. An older snapshot, a node without a head and a read error also
+// leave the answer to GetNode.
 func (tx *BadgerTransaction) RelationshipEndpointVisible(id NodeID) (visible, answered bool) {
 	if id == "" {
 		return false, false
@@ -141,6 +145,12 @@ func (tx *BadgerTransaction) RelationshipEndpointVisible(id NodeID) (visible, an
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 	if tx.ensureOperationAllowedLocked(transactionRead) != nil || tx.pinNamespaceFromIDLocked(string(id)) != nil {
+		return false, false
+	}
+	// One guard for the whole visibility layer, ahead of every shortcut below:
+	// any of their images can be hidden at read time, and only the point read
+	// applies that filter, so it owns the answer while one is active.
+	if tx.engine.visibilityFiltered() {
 		return false, false
 	}
 	if _, connected := tx.connectedDeletes[id]; connected {
@@ -152,10 +162,10 @@ func (tx *BadgerTransaction) RelationshipEndpointVisible(id NodeID) (visible, an
 	if _, pending := tx.pendingNodes[id]; pending {
 		return true, true
 	}
-	if _, cached := tx.snapshotPrefixNodeByID[id]; cached && !tx.engine.visibilityFiltered() {
+	if _, cached := tx.snapshotPrefixNodeByID[id]; cached {
 		return true, true
 	}
-	if tx.readTS.IsZero() || tx.engine.visibilityFiltered() {
+	if tx.readTS.IsZero() {
 		return false, false
 	}
 	var head MVCCHead

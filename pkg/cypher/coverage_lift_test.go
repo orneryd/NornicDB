@@ -686,22 +686,36 @@ func TestCoverageLiftBindingWherePredicates(t *testing.T) {
 }
 
 func TestCoverageLiftSchemaDDLCompatibilityHelpers(t *testing.T) {
-	dimensions, similarity := parseVectorOptions("OPTIONS {indexConfig: {`vector.dimensions`: 1536, `vector.similarity_function`: 'euclidean'}}", 384, "cosine")
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
+	// A vector index's configuration is read from the OPTIONS payload the
+	// statement admitted, bound at execution and read by the shared options
+	// owner; the retired clause-substring scanners are gone.
+	options, err := schemaOptionsTail("OPTIONS {indexConfig: {`vector.dimensions`: 1536, `vector.similarity_function`: 'euclidean'}}")
+	require.NoError(t, err)
+	values, err := exec.schemaOptionMap(t.Context(), options, "vector index")
+	require.NoError(t, err)
+	dimensions, similarity, err := schemaVectorOptions(values, 384, "cosine")
+	require.NoError(t, err)
 	assert.Equal(t, 1536, dimensions)
 	assert.Equal(t, "euclidean", similarity)
-	dimensions, similarity = parseVectorOptions("OPTIONS {indexConfig: {vectorXdimensions: 99, vector.similarity_function_suffix: 'bad'}}", 384, "cosine")
+
+	// A key that isn't the vector configuration is not a configuration.
+	options, err = schemaOptionsTail("OPTIONS {indexConfig: {vectorXdimensions: 99, vector.similarity_function_suffix: 'bad'}}")
+	require.NoError(t, err)
+	values, err = exec.schemaOptionMap(t.Context(), options, "vector index")
+	require.NoError(t, err)
+	dimensions, similarity, err = schemaVectorOptions(values, 384, "cosine")
+	require.NoError(t, err)
 	assert.Equal(t, 384, dimensions)
 	assert.Equal(t, "cosine", similarity)
 
-	value, ok := extractVectorOptionValue("OPTIONS {indexConfig: {'vector.dimensions': 768}}", "vector.dimensions")
-	require.True(t, ok)
-	assert.Equal(t, "768", value)
-	_, ok = extractVectorOptionValue("OPTIONS {indexConfig: {vectorXdimensions: 768}}", "vector.dimensions")
-	assert.False(t, ok)
-	_, ok = extractVectorOptionValue("", "vector.dimensions")
-	assert.False(t, ok)
-	_, ok = extractVectorOptionValue("OPTIONS {indexConfig: {'vector.dimensions: 768}}", "vector.unknown")
-	assert.False(t, ok)
+	// No OPTIONS payload binds to no map, so both defaults stand.
+	values, err = exec.schemaOptionMap(t.Context(), schemaOptions{}, "vector index")
+	require.NoError(t, err)
+	dimensions, similarity, err = schemaVectorOptions(values, 384, "cosine")
+	require.NoError(t, err)
+	assert.Equal(t, 384, dimensions)
+	assert.Equal(t, "cosine", similarity)
 
 	label, relTypes, isRel, err := parseCreateFulltextForPattern("n:Article")
 	require.NoError(t, err)
@@ -799,7 +813,7 @@ func TestCoverageLiftSchemaDDLParserCompatibilityMatrix(t *testing.T) {
 	assert.True(t, parsedIndex.isRelationship)
 	assert.Equal(t, "KNOWS", parsedIndex.relationshipType)
 	assert.Equal(t, []string{"since", "weight"}, parsedIndex.properties)
-	assert.Equal(t, "OPTIONS {indexProvider: 'range-1.0'}", parsedIndex.optionsClause)
+	assert.Equal(t, "{indexProvider: 'range-1.0'}", parsedIndex.options.literal)
 	parsedIndex, err = exec.parseCreateIndexLegacyDDL(t.Context(), "CREATE INDEX legacy_person_idx ON :Person(name, `full name`) OPTIONS {indexProvider: 'native-btree-1.0'}", "CREATE INDEX")
 	require.NoError(t, err)
 	assert.Equal(t, "legacy_person_idx", parsedIndex.indexName)

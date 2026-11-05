@@ -22,7 +22,7 @@ reuse and storage delivery, with no migration or persisted-format change.
 - [x] AC2: paired time/Bop/alloc costs for primed reads and affected native selection/delivery. Use current release as primary baseline, preserve de70 historical comparison where reproducible; do not carry old-head gains forward. CPU profiles required; isolate timing from #1690 validation/other Go work.
 - [x] AC3: unchanged failing-then-passing realistic supported-type/vector mutation probes, plus snapshot/overlay/live visibility/write/rollback controls. Distinguish an old proposed CallerCopy API from an existing supported contract before treating dispatch as a defect.
 - [ ] AC4: focused/race and affected-package checks on current integrated source, with failures/skips/cache use reported. Local release gate is make test; broader verify remains CI per operator policy.
-- [ ] Run unchanged remote duplicate analysis; disposition each finding, consolidate actionable overlap, no checker/hook edits.
+- [x] Run unchanged remote duplicate analysis; disposition each finding, consolidate actionable overlap, no checker/hook edits. Graph baseline is stale; current-source review is recorded separately.
 - [ ] Update PR body with every Linear AC and exact evidence using write-pr-description; update Linear with actual verification/status using write-linear-ticket when rewriting its description.
 - [ ] Commit/push verified candidate for review; do not merge without the operator's instruction.
 - [ ] Cleanup task-owned completed resources via cleanup-pr-workspace, preserving active #1690 and other work; do not clear shared Go cache during active tests.
@@ -64,3 +64,49 @@ Do not run benchmarks or profiles while #1690 make test is active. Begin added r
 - [x] Reuse the existing cleanup-owned executor fixture for procedure entry tests; preserve distinct nonempty SET/required-WITH side-effect and empty-input metadata/error contracts.
 - [x] Final integrated convergence race checks and final matched cost run after all workers stop.
 - [ ] NOR-211 Enterprise 5.26.30 reference confirms plan/no rows/no columns/no mutation; resolve existing NornicDB name-column contract with maintainer before claiming exact metadata parity.
+
+## Post-gate corrections
+
+The frozen `b0c64a14904ba32b9ace7ac76f462dc6ddeb020f` full `make test`
+completed in 4,372.6 seconds with exit 2: 143 packages passed; five tests in
+four packages failed. Source fingerprints were unchanged during the run. This
+is a failed gate, not a pass or an interrupted run.
+
+- [x] Integrate endpoint capability visibility correction with point-read agreement and both-parser traversal controls. Native focused tests pass.
+- [x] Replace nondeterministic buffered-replay test scheduling with the existing manual-drain fixture; distinguish the actual replay and outcome callbacks, retaining the outer-lease assertions. Native integrated focused tests pass.
+- [x] Integrate and independently verify the context-initializer root correction: native TestNilResultCorrelationRealSources and TestStorageNilContextCensus pass (zero nil flows), without changing census rules or admitting nil contexts.
+- [x] Integrate schema OPTIONS binding/trivia correction; native focused both-parser cases pass. Review four new lexical members and two retired scanners, move the retired minimum scanner to its canonical replacement; strict 3,971-member population passes.
+- [x] Remove the measured extra 528 bytes/two allocations in shallow nested copies, preserving types, cycles and repeated-reference ownership. Native integrated copy tests pass; final isolated timing qualification remains below.
+- [ ] Regenerate and review the stored-entity source inventory after final source integration; keep ordering assertions blocking.
+- [ ] Repeat integrated runtime/race and isolated cost checks on the corrected source, then run the full frozen native make test again.
+
+The strict stored-entity check remains **failing**, not waived. A new per-copy
+cursor is now explicitly classified as traversal progress (not persisted or
+engine-retained state). The other finding follows schema OPTIONS binding from
+`executeCreateConstraint` into the general expression executor. DeepSeek job
+`2a498cee093b46e8877803b50e584847` is establishing the exact SSA condition and
+correcting any mixed parse/execution boundary in the existing contract owner;
+it may not edit census rules. Regenerate/review the inventory only after this
+source correction is integrated. The current generated inventory is an
+intermediate diagnostic containing the failures, not a readiness artifact.
+
+## Maintainer verification-policy update (2026-11-05)
+
+Candidates may now be committed and pushed for review before a local full gate.
+Run the exact `make test` command and advisory duplicate analysis in GitHub CI;
+remove the installed Codex Git hooks locally. This supersedes the earlier
+local-test-before-push instructions above, not the obligation to fix regressions
+before readiness. No full pass is claimed for this candidate until CI reports
+its exact checked head. The previous failed b0c gate remains preserved.
+
+The maintainer approved zero-column/zero-row results for both CREATE DATABASE
+and EXPLAIN CREATE DATABASE. DeepSeek job
+`f69a0ba6d4d643598f7c740e339f96ef` is implementing that result contract in an
+isolated worktree; this review checkpoint precedes its integration.
+
+- [x] Remove local Codex-installed Git hooks and hooksPath, without changing tracked hook/checker sources.
+- [x] Add an admin-gated exact make-test dispatch mode to the existing CI workflow.
+- [ ] Rebase review checkpoint onto the merged NOR-136 release head, preserving both corrections.
+- [ ] Push candidate; dispatch exact-SHA make test and authorize the advisory PR Graphify check.
+- [ ] Integrate approved database-command output alignment; update/cancel superseded CI runs.
+- [ ] Report actual CI outcomes and remaining AC without claiming pending checks pass.

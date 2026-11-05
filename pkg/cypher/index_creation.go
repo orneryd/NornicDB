@@ -10,8 +10,9 @@ import (
 )
 
 // executeCreateIndex owns RANGE and VECTOR index creation: parsing the target,
-// admitting the schema change and applying the kind-specific representation.
-// Explicit RANGE syntax uses its original input instead of rewriting the query.
+// binding the OPTIONS payload the statement declared, admitting the schema
+// change and applying the kind-specific representation. Explicit RANGE syntax
+// uses its original input instead of rewriting the query.
 func (e *StorageExecutor) executeCreateIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	prefix := "CREATE INDEX"
 	query := strings.TrimSpace(cypher)
@@ -27,6 +28,11 @@ func (e *StorageExecutor) executeCreateIndex(ctx context.Context, cypher string)
 			// This is the supported Neo4j ON :Label(properties) grammar,
 			// retaining its property-index path and existing error contract.
 			if legacy, legacyErr := e.parseCreateIndexLegacyDDL(ctx, cypher, prefix); legacyErr == nil {
+				// The legacy head admits the same OPTIONS payload, so the
+				// options it declares bind before the index exists.
+				if _, err := e.schemaOptionMap(ctx, legacy.options, "range index"); err != nil {
+					return nil, err
+				}
 				name := legacy.indexName
 				if name == "" {
 					name = fmt.Sprintf("index_%s_%s", legacy.label, strings.Join(legacy.properties, "_"))
@@ -56,10 +62,20 @@ func (e *StorageExecutor) executeCreateIndex(ctx context.Context, cypher string)
 		name = fmt.Sprintf("index_%s_%s", label, strings.Join(parsed.properties, "_"))
 	}
 	kind := "RANGE"
+	subject := "range index"
+	if vector {
+		kind, subject = "VECTOR", "vector index"
+	}
+	options, err := e.schemaOptionMap(ctx, parsed.options, subject)
+	if err != nil {
+		return nil, err
+	}
 	dimensions, similarity := 0, ""
 	if vector {
-		kind = "VECTOR"
-		dimensions, similarity = parseVectorOptions(parsed.optionsClause, e.GetDefaultEmbeddingDimensions(), "cosine")
+		dimensions, similarity, err = schemaVectorOptions(options, e.GetDefaultEmbeddingDimensions(), "cosine")
+		if err != nil {
+			return nil, err
+		}
 	}
 	create, err := e.admitIndexCreation(ctx, cypher, name, kind, label, parsed.properties, entityType)
 	if err != nil {

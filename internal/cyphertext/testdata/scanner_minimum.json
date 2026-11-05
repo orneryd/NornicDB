@@ -786,7 +786,6 @@
     "expressionTextAccepted"
   ],
   "pkg/cypher/schema.go": [
-    "extractVectorOptionValue",
     "parseDomainValueList",
     "parseDropSchemaName",
     "parseFulltextRelationshipTypes"
@@ -797,6 +796,9 @@
   ],
   "pkg/cypher/schema_lookup_index.go": [
     "cutSchemaName"
+  ],
+  "pkg/cypher/schema_options.go": [
+    "schemaOptionsTail"
   ],
   "pkg/cypher/semantic_validation.go": [
     "containsIllegalProjectedPatternExpression",

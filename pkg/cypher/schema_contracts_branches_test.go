@@ -25,7 +25,7 @@ func TestExecuteCreateConstraintContract_Branches(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "contract_cov"))
 	ctx := context.Background()
 
-	res, handled, err := exec.executeCreateConstraintContract(ctx, `
+	personContract := `
 		CREATE CONSTRAINT person_contract IF NOT EXISTS
 		FOR (n:Person)
 		REQUIRE {
@@ -34,12 +34,14 @@ func TestExecuteCreateConstraintContract_Branches(t *testing.T) {
 			n.age IS :: INTEGER;
 			(n.id, n.email) IS NODE KEY
 		}
-	`, true)
-	require.True(t, handled)
+	`
+	person, err := exec.parseCreateConstraintContractDDL(ctx, personContract)
+	require.NoError(t, err)
+	res, err := exec.executeCreateConstraintContract(ctx, personContract, person, true)
 	require.NoError(t, err)
 	require.NotNil(t, res)
 
-	res, handled, err = exec.executeCreateConstraintContract(ctx, `
+	relContract := `
 		CREATE CONSTRAINT rel_contract IF NOT EXISTS
 		FOR ()-[r:KNOWS]-()
 		REQUIRE {
@@ -48,23 +50,25 @@ func TestExecuteCreateConstraintContract_Branches(t *testing.T) {
 			r.since IS :: INTEGER;
 			(r.since, r.reason) IS RELATIONSHIP KEY
 		}
-	`, true)
-	require.True(t, handled)
+	`
+	rel, err := exec.parseCreateConstraintContractDDL(ctx, relContract)
+	require.NoError(t, err)
+	res, err = exec.executeCreateConstraintContract(ctx, relContract, rel, true)
 	require.NoError(t, err)
 	require.NotNil(t, res)
 
 	// Nested contract entries are rejected with deterministic guidance.
-	_, handled, err = exec.executeCreateConstraintContract(ctx, `
+	nested := `
 		CREATE CONSTRAINT bad_nested FOR (n:Person) REQUIRE {
 			FOR (m:Other) REQUIRE { m.id IS UNIQUE }
 		}
-	`, false)
-	require.True(t, handled)
+	`
+	nestedContract, err := exec.parseCreateConstraintContractDDL(ctx, nested)
+	require.NoError(t, err)
+	_, err = exec.executeCreateConstraintContract(ctx, nested, nestedContract, false)
 	require.ErrorContains(t, err, "nested FOR ... REQUIRE entries are not supported")
 
-	// Non-contract statements should not be handled here.
-	res, handled, err = exec.executeCreateConstraintContract(ctx, "CREATE CONSTRAINT x FOR (n:Person) REQUIRE n.id IS UNIQUE", false)
-	require.NoError(t, err)
-	require.False(t, handled)
-	require.Nil(t, res)
+	// Non-contract statements are not admitted by the contract owner.
+	_, err = exec.parseCreateConstraintContractDDL(ctx, "CREATE CONSTRAINT x FOR (n:Person) REQUIRE n.id IS UNIQUE")
+	require.Error(t, err)
 }

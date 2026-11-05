@@ -36,3 +36,18 @@ uses the same production source as this analysis. The inactive-visibility clock
 fast path was already present in its snapshot.
 Final full-suite verification and benchmark results are recorded on the PR;
 raw reports and receipts are retained outside Git with the task evidence.
+
+## Subsequent source convergence
+
+Later source changes extend the shared schema tail owner with typed execution-
+time map/parameter binding and replace the two vector substring readers. The
+constraint-contract router now selects its already parsed syntax before calling
+the single execution owner; the mixed result/handled/error forwarding entry
+point and redundant execution wrapper are retired. Copy traversal uses one
+per-call inline/spill visited-state owner shared by maps, lists and references.
+The endpoint capability checks live visibility before any positive shortcut.
+Integrated native focused and race tests, strict lexical membership and stored-
+entity ordering checks pass. The earlier inventory is not an analysis of this
+later source; a fresh advisory CI report is pending. No duplicate-analyzer rule,
+threshold or exclusion was changed. The explicitly requested removal concerns
+installed local Codex hooks only; tracked hook/checker source remains intact.

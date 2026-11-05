@@ -30,11 +30,32 @@ func ownedValueCopy(value any) any {
 	return walker.value(value)
 }
 
-// seen is allocated only for reference-bearing values. It preserves cycles and
-// shared references in caller-declared records without affecting scalar copies.
-type callerCopyWalker struct {
-	seen map[callerCopyReference]reflect.Value
+// callerCopyInlineReferences is how many reference-bearing values one copy
+// tracks without allocating. An ordinary property container - a map holding a
+// list or a record, a list holding a map - stays within it; only deeper or more
+// widely shared graphs spill into a map. Scalar values allocate no visited state
+// at all, because the walker never records them.
+const callerCopyInlineReferences = 4
+
+// callerCopyTracked pairs a reference-bearing source with the copy made for it,
+// so a cycle or a repeated reference resolves to that same copy.
+type callerCopyTracked struct {
+	key  callerCopyReference
+	copy reflect.Value
 }
+
+// callerCopyWalker owns the visited state of a single copy call. The inline
+// entries cover the common shallow container without allocating; the map is
+// created only when a graph outgrows them. The state never outlives the call, so
+// no copy shares visited state with another.
+type callerCopyWalker struct {
+	inline [callerCopyInlineReferences]callerCopyTracked
+	count  int
+	seen   map[callerCopyReference]reflect.Value
+}
+
+// callerCopyReference identifies one reference-bearing source. The length keeps
+// distinct slices over the same array apart, since only their headers differ.
 type callerCopyReference struct {
 	typ     reflect.Type
 	pointer uintptr
@@ -49,11 +70,32 @@ func (w *callerCopyWalker) referenceKey(value reflect.Value) callerCopyReference
 	return key
 }
 
-func (w *callerCopyWalker) remember(key callerCopyReference, value reflect.Value) {
-	if w.seen == nil {
-		w.seen = make(map[callerCopyReference]reflect.Value)
+// copied reports the copy already made for this reference, if any.
+func (w *callerCopyWalker) copied(key callerCopyReference) (reflect.Value, bool) {
+	for i := 0; i < w.count; i++ {
+		if w.inline[i].key == key {
+			return w.inline[i].copy, true
+		}
 	}
-	w.seen[key] = value
+	if w.seen == nil {
+		return reflect.Value{}, false
+	}
+	copied, ok := w.seen[key]
+	return copied, ok
+}
+
+// remember records the copy made for a reference before its contents are walked,
+// so a reference back to it is answered by this copy instead of recursing.
+func (w *callerCopyWalker) remember(key callerCopyReference, copied reflect.Value) {
+	if w.count < len(w.inline) {
+		w.inline[w.count] = callerCopyTracked{key: key, copy: copied}
+		w.count++
+		return
+	}
+	if w.seen == nil {
+		w.seen = make(map[callerCopyReference]reflect.Value, callerCopyInlineReferences)
+	}
+	w.seen[key] = copied
 }
 
 func (w *callerCopyWalker) value(value any) any {
@@ -102,7 +144,7 @@ func (w *callerCopyWalker) mapping(m map[string]any) map[string]any {
 		return nil
 	}
 	key := w.referenceKey(reflect.ValueOf(m))
-	if previous, ok := w.seen[key]; ok {
+	if previous, ok := w.copied(key); ok {
 		return previous.Interface().(map[string]any)
 	}
 	out := make(map[string]any, len(m))
@@ -119,7 +161,7 @@ func (w *callerCopyWalker) list(l []any) []any {
 		return nil
 	}
 	key := w.referenceKey(reflect.ValueOf(l))
-	if previous, ok := w.seen[key]; ok {
+	if previous, ok := w.copied(key); ok {
 		return previous.Interface().([]any)
 	}
 	out := make([]any, len(l))
@@ -130,19 +172,21 @@ func (w *callerCopyWalker) list(l []any) []any {
 	return out
 }
 
-var callerCopierType = reflect.TypeFor[callerCopier]()
-
 // copierCopy is the one protocol dispatch, and it invokes at most one
 // CallerCopy. A non-nil pointer whose element implements the protocol (a value
 // receiver) is copied through its element and pointed at the copy; any other
 // implementation is copied by its own CallerCopy. A result of another type is
 // never produced: the receiver is chosen before the call, so no copy is made and
-// discarded. Anything else is walked structurally.
+// discarded. Anything else is walked structurally. The protocol's runtime type
+// descriptor is bound here, at the dispatch, rather than in a package-level
+// initializer: TypeFor yields the same descriptor on every call and needs no
+// initialization order of its own.
 func copierCopy(value reflect.Value) (reflect.Value, bool) {
 	if !value.CanInterface() || value.Kind() == reflect.Interface || (value.Kind() == reflect.Pointer && value.IsNil()) {
 		return value, false
 	}
-	if value.Kind() == reflect.Pointer && value.Elem().Type().Implements(callerCopierType) && value.Elem().CanInterface() {
+	copierType := reflect.TypeFor[callerCopier]()
+	if value.Kind() == reflect.Pointer && value.Elem().Type().Implements(copierType) && value.Elem().CanInterface() {
 		result := value.Elem().Interface().(callerCopier).CallerCopy()
 		copied := reflect.ValueOf(result)
 		if !copied.IsValid() || copied.Type() != value.Elem().Type() {
@@ -152,7 +196,7 @@ func copierCopy(value reflect.Value) (reflect.Value, bool) {
 		out.Elem().Set(copied)
 		return out, true
 	}
-	if value.Type().Implements(callerCopierType) {
+	if value.Type().Implements(copierType) {
 		result := value.Interface().(callerCopier).CallerCopy()
 		copied := reflect.ValueOf(result)
 		if !copied.IsValid() || copied.Type() != value.Type() {
@@ -185,7 +229,7 @@ func (w *callerCopyWalker) reference(value reflect.Value) reflect.Value {
 			return value
 		}
 		key = w.referenceKey(value)
-		if previous, ok := w.seen[key]; ok {
+		if previous, ok := w.copied(key); ok {
 			return previous
 		}
 	}

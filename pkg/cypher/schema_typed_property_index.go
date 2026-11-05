@@ -20,6 +20,11 @@ func (e *StorageExecutor) executeCreateTypedPropertyIndex(ctx context.Context, c
 	if len(parsed.properties) != 1 {
 		return nil, localizedError(localization.CypherSchemaInvalidSyntax("CREATE "+string(kind)+" INDEX"), nil)
 	}
+	// The typed property index forms admit the same OPTIONS payload; it binds
+	// after the statement's syntax, before the index exists.
+	if _, err := e.schemaOptionMap(ctx, parsed.options, lowerASCII(string(kind))+" index"); err != nil {
+		return nil, err
+	}
 	entityType := storage.ConstraintEntityNode
 	label := parsed.label
 	if parsed.isRelationship {

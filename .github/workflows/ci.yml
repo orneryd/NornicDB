@@ -21,6 +21,11 @@ on:
         required: false
         default: ""
         type: string
+      test_only:
+        description: "Run the exact make test gate against the selected candidate"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -33,6 +38,7 @@ concurrency:
 jobs:
   test:
     name: Build
+    if: ${{ inputs.test_only != true }}
     # Manual and reusable runs wait for an administrator before allocating a runner.
     environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
     runs-on: ubuntu-latest
@@ -83,6 +89,7 @@ jobs:
 
   coverage:
     name: Test and Coverage
+    if: ${{ inputs.test_only != true }}
     # Manual and reusable runs wait for an administrator before allocating a runner.
     environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
     runs-on: ubuntu-latest
@@ -137,3 +144,43 @@ jobs:
             -coverprofile=coverage.out \
             -service=github \
             -repotoken="$COVERALLS_REPO_TOKEN"
+
+  make-test:
+    name: make test
+    if: ${{ inputs.test_only == true }}
+    environment: admin-approved-actions
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.branch || github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Record checked revision
+        run: git rev-parse HEAD | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: ui/package-lock.json
+      - name: Build UI assets
+        run: npm ci --prefix ui && npm run build --prefix ui
+      - name: Prepare llama CPU libs
+        run: bash scripts/hydrate-llama-cpu-libs.sh
+      - name: Run make test
+        run: |
+          set -o pipefail
+          make test 2>&1 | tee make-test.log
+      - name: Upload test log
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: make-test-${{ github.run_id }}-${{ github.run_attempt }}
+          path: make-test.log
+          if-no-files-found: warn

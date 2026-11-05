@@ -94,3 +94,13 @@ For profiles, use `NOR160_ROUNDS=1 NOR160_PROFILE=1` in a separate run. Raw logs
 binary hashes, source fingerprints, min/max values and the 161.1-second receipt
 with no changed inputs are retained in the task evidence. Default native focused
 race tests passed independently; full `make test` is the final local gate.
+
+## Review-candidate qualification status
+
+The tables above qualify the earlier b098-based transaction-read checkpoint.
+Later corrections restore shallow nested-copy costs from 1,400 B/9 allocations
+to 872 B/7 allocations while scalar copies stay at 496 B/3 allocations. These
+counts repeat across samples; their diagnostic timings were contended and do
+not replace the isolated latency qualification above. A new exact-head paired
+qualification after rebasing onto merged NOR-136 is pending. No new-head latency
+or full-suite pass is inferred from the earlier checkpoint.

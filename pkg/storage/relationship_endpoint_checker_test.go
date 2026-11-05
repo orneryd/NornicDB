@@ -142,7 +142,13 @@ func TestBadgerTransactionRelationshipEndpointVisible(t *testing.T) {
 
 	engine.SetDecayEnabled(true)
 	check("ns:kept", false, false)
-	check("ns:new", true, true)
+	// A filtered capability may defer even for a readable pending image.
+	// Preserve readability and require any actual answer to match GetNode.
+	visible, answered, getErr := endpointCheckMatchesGetNode(t, tx, "ns:new")
+	require.NoError(t, getErr)
+	if answered {
+		require.True(t, visible)
+	}
 	engine.SetDecayEnabled(false)
 
 	// A read version older than the node's head, or none, reads the node.
