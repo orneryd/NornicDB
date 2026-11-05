@@ -23,9 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and avoid copying already-owned relationship properties twice during namespace
   projection. Preserve caller-owned storage values and vectors; buffered
   relationship reads no longer expose acknowledged mutable property maps.
-- Return plans without catalog changes for EXPLAIN CREATE DATABASE, including
-  replacement forms. Reject bare OPTIONS on index and constraint creation
-  consistently across both parsers while retaining valid map forms.
+- Align CREATE DATABASE and EXPLAIN CREATE DATABASE with Neo4j's empty result
+  schema, including replacement and supported composite forms. EXPLAIN returns
+  a plan without catalog changes. Reject bare schema OPTIONS consistently,
+  bind map parameters, and apply typed vector options without substring parsing.
 - Maintain scoped full-text scoring documents between queries instead of rebuilding
   the entire corpus. Preserve exact case-sensitive indexed fields, deterministic
   relationship-property order, per-field phrase matching, committed snapshots and

@@ -3,6 +3,7 @@ package cypher
 import (
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/stretchr/testify/require"
 )
 
@@ -10,8 +11,9 @@ import (
 // result and the error "Cannot establish the statement scope and result
 // columns". An administration command declares its result schema in its
 // execute owner, and the system database runs administration commands, so
-// EXPLAIN must return that command's schema with no rows and leave the
-// catalog untouched — as it already does for CREATE COMPOSITE DATABASE.
+// EXPLAIN must return that command's declared (empty) schema with no rows and
+// leave the catalog untouched — as it already does for CREATE COMPOSITE
+// DATABASE.
 //
 // The parser is process-wide, so each parser's run is its own process.
 func TestExplainDatabaseCreationCommandsNOR211(t *testing.T) {
@@ -48,7 +50,7 @@ func TestExplainDatabaseCreationCommandsNOR211(t *testing.T) {
 						result, err := exec.Execute(ctx, "EXPLAIN "+command, nil)
 						require.NoError(t, err)
 						require.NotNil(t, result)
-						require.Equal(t, []string{"name"}, result.Columns, "EXPLAIN declares the command's result schema")
+						require.Equal(t, []string{}, result.Columns, "EXPLAIN declares the command's empty result schema")
 						require.Empty(t, result.Rows, "EXPLAIN runs nothing")
 						require.Equal(t, "EXPLAIN", result.Metadata["planType"], "EXPLAIN returns a plan")
 						require.Equal(t, before, catalogCreateDatabaseSnapshot(manager), "EXPLAIN must not create or replace a database")
@@ -59,17 +61,62 @@ func TestExplainDatabaseCreationCommandsNOR211(t *testing.T) {
 	})
 }
 
-// ExecuteResult columns are caller-owned; mutating one command result must not
-// change subsequent result-metadata declarations.
-func TestNOR211DatabaseColumnsAreCallerOwned(t *testing.T) {
-	exec, _, _ := newCreateDatabaseRegressionExecutor(t)
-	result, err := exec.Execute(t.Context(), "CREATE DATABASE nor211_column_one", nil)
-	require.NoError(t, err)
-	original := append([]string(nil), result.Columns...)
-	t.Cleanup(func() { copy(result.Columns, original) })
-	require.Equal(t, []string{"name"}, result.Columns)
-	result.Columns[0] = "caller_changed"
-	next, err := exec.Execute(t.Context(), "CREATE DATABASE nor211_column_two", nil)
-	require.NoError(t, err)
-	require.Equal(t, []string{"name"}, next.Columns)
+// Neo4j's database-creation commands return no columns and no records. The
+// created identity reaches transports through the typed AdministrationOutcome,
+// so every accepted form keeps that empty result schema while still creating,
+// replacing or skipping the catalog change the command admits.
+func TestDatabaseCreationOutputContractNOR211(t *testing.T) {
+	withCypherParsers(t, func(t *testing.T) {
+
+		t.Run("standard", func(t *testing.T) {
+			exec, manager, _ := newCreateDatabaseRegressionExecutor(t)
+			ctx := t.Context()
+			require.NoError(t, manager.CreateDatabase(ctx, multidb.DatabaseCreateRequest{Name: "nor211_existing"}))
+
+			for _, step := range []struct {
+				command string
+				name    string
+				// created is the identity the command reports, empty when it
+				// creates nothing.
+				created string
+			}{
+				{"CREATE DATABASE nor211_new", "nor211_new", "nor211_new"},
+				{"CREATE DATABASE nor211_new IF NOT EXISTS", "nor211_new", ""},
+				{"CREATE OR REPLACE DATABASE nor211_existing", "nor211_existing", "nor211_existing"},
+				{"CREATE OR REPLACE DATABASE nor211_replace_new", "nor211_replace_new", "nor211_replace_new"},
+			} {
+				t.Run(step.command, func(t *testing.T) {
+					result, err := exec.Execute(ctx, step.command, nil)
+					require.NoError(t, err)
+					require.Equal(t, []string{}, result.Columns, "CREATE DATABASE declares no result columns")
+					require.Empty(t, result.Rows, "CREATE DATABASE returns no records")
+					require.True(t, manager.Exists(step.name), step.command)
+					if step.created == "" {
+						require.Nil(t, result.Administration, "a no-op creates nothing")
+						return
+					}
+					require.NotNil(t, result.Administration, step.command)
+					require.Equal(t, step.created, result.Administration.CreatedDatabase, step.command)
+				})
+			}
+		})
+
+		t.Run("composite inline alias", func(t *testing.T) {
+			manager := newCompositeNativeManager(t, nil)
+			t.Cleanup(func() { require.NoError(t, manager.Close()) })
+			exec := newCompositeTestExecutor(t, manager, "nornic", &testDatabaseManagerAdapter{manager: manager})
+
+			result, err := exec.Execute(t.Context(), "CREATE COMPOSITE DATABASE nor211_composite ALIAS r FOR DATABASE nornic", nil)
+			require.NoError(t, err)
+			require.Equal(t, []string{}, result.Columns, "CREATE COMPOSITE DATABASE declares no result columns")
+			require.Empty(t, result.Rows, "CREATE COMPOSITE DATABASE returns no records")
+			require.NotNil(t, result.Administration)
+			require.Equal(t, "nor211_composite", result.Administration.CreatedDatabase)
+			require.True(t, manager.IsCompositeDatabase("nor211_composite"))
+
+			refs, err := manager.GetCompositeConstituents("nor211_composite")
+			require.NoError(t, err)
+			require.Len(t, refs, 1, "the inline ALIAS extension still adds its constituent")
+		})
+	})
 }

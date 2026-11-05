@@ -118,7 +118,7 @@ func TestCompositeRemoteCredentialOutput(t *testing.T) {
 				create := "CREATE COMPOSITE DATABASE output_test ALIAS seed" + declaration
 				result, err := executor.executeCompositeCommand(ctx, create, compositeCreateCommand)
 				check("CREATE result", result)
-				if err != nil || result == nil || len(result.Rows) != 1 {
+				if err != nil || result == nil || len(result.Columns) != 0 || len(result.Rows) != 0 {
 					t.Fatal("CREATE failed; details withheld")
 				}
 				alter := "ALTER COMPOSITE DATABASE output_test ADD ALIAS r" + declaration

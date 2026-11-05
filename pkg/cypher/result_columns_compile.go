@@ -104,12 +104,13 @@ func (compiler *projectionCompilation) compileBound(ctx context.Context, incomin
 		(startsWithKeywords(ctx, show.Code(), "SHOW", "USERS") || startsWithKeywords(ctx, show.Code(), "SHOW", "CURRENT USER")) {
 		return fixedCommandScopeFacts(start, end, incoming, retained, showUsersColumns, resultmetadata.ClauseOther)
 	}
-	// A database creation command declares its fixed result schema in its
-	// execute owner (createDatabaseResultColumn). The command's native syntax has
-	// no graph body to compose, so EXPLAIN reads that declaration instead.
+	// A database creation command declares an empty result schema in its execute
+	// owner: as in Neo4j, it returns no columns and no records. The command's
+	// native syntax has no graph body to compose, so EXPLAIN reads that
+	// declaration instead.
 	if administration := query.ChildRule(cypherantlr.CypherParserRULE_administrationCommand); administration.Valid() &&
 		(startsWithKeywords(ctx, administration.Code(), "CREATE", "DATABASE") || isCreateOrReplaceDatabaseQuery(ctx, administration.Code())) {
-		return fixedCommandScopeFacts(start, end, incoming, retained, []string{createDatabaseResultColumn}, resultmetadata.ClauseWrite)
+		return fixedCommandScopeFacts(start, end, incoming, retained, nil, resultmetadata.ClauseWrite)
 	}
 	compilation := &boundCompilation{owner: compiler, events: map[int]*boundEvent{}, product: &boundStatementProgram{syntax: syntax, projections: map[int]*returnProjectionPlan{}, effects: map[int]pipelineClauseEffects{}, scalars: map[int]scalarExpressionSyntax{}, columns: map[int]resultmetadata.Columns{}}, locals: map[localIdentityKey]statementBindingID{}, clauses: map[int]queryBodyClause{}, localSyntax: map[int][]syntaxLocalBinding{}}
 	body := compilation.prepareBody(ctx, queryBodyFromSyntax(query), query, start, end)

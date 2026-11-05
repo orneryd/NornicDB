@@ -106,7 +106,17 @@ isolated worktree; this review checkpoint precedes its integration.
 
 - [x] Remove local Codex-installed Git hooks and hooksPath, without changing tracked hook/checker sources.
 - [x] Add an admin-gated exact make-test dispatch mode to the existing CI workflow.
-- [ ] Rebase review checkpoint onto the merged NOR-136 release head, preserving both corrections.
-- [ ] Push candidate; dispatch exact-SHA make test and authorize the advisory PR Graphify check.
-- [ ] Integrate approved database-command output alignment; update/cancel superseded CI runs.
+- [x] Rebase review checkpoint onto the merged NOR-136 release head, preserving both corrections.
+- [x] Push candidate; dispatch exact-SHA make test and authorize the advisory PR Graphify check.
+- [x] Integrate approved zero-column/zero-record database-command output alignment; compile affected packages. Runtime verification is assigned to CI; replace superseded requests for this follow-up head.
 - [ ] Report actual CI outcomes and remaining AC without claiming pending checks pass.
+
+The approved CREATE/EXPLAIN output correction is integrated in the normal,
+replacement, IF NOT EXISTS and supported composite owners. ALTER/SHOW output is
+unchanged. Typed AdministrationOutcome still carries newly created identities
+for access grants. Existing consumers/tests are migrated; affected package/test
+binaries compile (`go test ./pkg/cypher ./pkg/server -run '^$'`: no tests run).
+The worker's full local Cypher run was canceled when verification moved to CI;
+it is incomplete and is not counted as a pass. The latest release inventory is
+regenerated with zero violations and no lexical membership changes. The first
+review CI request is superseded by the following pushed head.
