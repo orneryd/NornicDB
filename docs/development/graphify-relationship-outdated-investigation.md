@@ -69,6 +69,7 @@ SET r += row.props
 | One relationship repeated 1,000 times/request, three rounds | Pass, 0.13 s test | Duplicate pairs alone do not reproduce the failure; one final relationship and last-row values checked. |
 | Surrounding 2,000-row batch from local release extraction, three rounds | Pass, native 0.98 s and WAL-backed 0.92 s | Local captured scalar payload works on clean native and WAL-backed stores; final count checked. |
 | 1,550 rounds over 2,000 relationships, 3.1 million total updates | Pass, 336.34 s test | Accumulated sequential updates alone do not reproduce it in this fixture. This is not 3.1 million distinct relationships or the dogfood history. |
+| Six supported-history controls: memory, persistent retained/pruned history, edge deletion/recreation, endpoint deletion/recreation, reopen, head-only pruning with ID reuse | Parent independently passed 24-iteration matrix, 0.78 s test; source SHA-256 unchanged before/after | These supported serial histories do not reproduce the failure in the probe. They do not qualify dogfood history or concurrent writers. |
 
 The local release extraction contains 72,209 nodes and 3,734,421 edges. It places
 the watched relationship at processed edge 3,064,551, in the Code-to-Code
