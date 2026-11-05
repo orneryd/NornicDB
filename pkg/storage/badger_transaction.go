@@ -2353,13 +2353,12 @@ func (tx *BadgerTransaction) observedLocked() bool {
 
 // replayedSinceBeginLocked reports whether a write-behind generation may have
 // been replayed into Badger since the transaction's Badger snapshot: the
-// buffer generation has changed since, even if it was empty at begin. A
-// commit can enter and leave that initially empty buffer during preparation.
-// Its replay lands after the physical snapshot just like a drain by this tx;
-// the logical snapshot and mutation preimages still fence genuine conflicts.
+// buffer held one then and has changed since. A replay of a commit the
+// transaction already saw through the buffer lands after its snapshot like
+// one its own drain applied.
 func (tx *BadgerTransaction) replayedSinceBeginLocked() bool {
 	w := tx.engine.writeBehind
-	return w != nil && w.readEpoch.Load() != tx.bufferEpoch
+	return w != nil && tx.bufferEpoch&1 == 1 && w.readEpoch.Load() != tx.bufferEpoch
 }
 
 // rebaseBadgerAfterDrainLocked moves a committing transaction onto Badger

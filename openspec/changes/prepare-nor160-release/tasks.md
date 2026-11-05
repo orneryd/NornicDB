@@ -174,9 +174,20 @@ review CI request is superseded by the following pushed head.
 - [x] Preserve the Cypher source-audit failure caused by scanning the auxiliary workflow checkout; keep real-source duplicate rejection controls intact.
 - [x] Reproduce the mixed-mode progress defect on unchanged b8a83d72: 26/30 two-core six-mode runs exhaust the unchanged retry budget.
 - [x] Trace an accepted physical conflict after empty-BEGIN buffer replay (epochs 134→140); retain all genuine snapshot/preimage conflict checks.
-- [x] Correct the existing replay detector; 30/30 six-mode repeats and focused public/race conflict controls pass before integrating the independent ordering correction.
-- [x] Prove the deterministic empty-BEGIN/replay regression fails with the original predicate and passes with the correction.
+- [x] Evaluate the broader replay-detector experiment: increment controls passed, but CI exposed incorrect cascade counters. Withdraw the experiment and retain the canonical pre-acceptance ordering correction.
+- [x] Minimize CI counter seeds 68/73 to ten/eleven steps; replace the implementation-only detector assertion with two outcome-based schedules. They fail with the withdrawn experiment and pass with the retained ordering correction.
 - [x] Integrate DeepSeek's existing direct-write ordering phase before accepted preparation, without introducing another owner or fallback.
-- [x] Finish integrated focused and race checks: five normal repetitions (83.584s) and one race run (82.968s), including genuine peer conflicts and the new replay regression.
-- [ ] Push the correction and dispatch parallel make-test CI against its immutable head.
+- [x] Preserve earlier candidate focused/race evidence as historical, not final-combination qualification.
+- [x] Push candidate 6fd44b5d and dispatch parallel run 42123957134; it fails counters and both audits, not a passing gate.
 - [ ] Collect a complete passing exact-head CI result, update PR/Linear and clean completed task resources.
+
+## Current CI fallout correction
+
+- [x] Reproduce 6fd counter failures locally; preserve the original and minimized traces.
+- [x] Restore the original replay criteria, retain pre-WAL ordering, and pass the full generated model/named schedules in both modes (72.695s).
+- [x] Reproduce the write-order census failure (22.454s); prove repeated immutable-boolean control flow without function exemptions and retain all negative controls.
+- [x] Reuse the existing stable-SSA-value owner; retire the unused older graph traversal instead of leaving competing proofs.
+- [x] Pass the actual ordered-write census and regenerate only changed source positions/gate paths, retaining all field/decision records.
+- [x] Refresh the two unchanged accepted-completion context offsets; full context audit and stale-scope controls pass.
+- [x] Complete the full stored-write census (184.397s), final public/conflict/counter race controls (69.024s), and 30 repeated six-mode progress runs (144.715s).
+- [ ] Push the integrated fallout correction and run complete parallel CI on its exact head.

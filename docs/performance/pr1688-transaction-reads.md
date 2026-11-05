@@ -119,17 +119,35 @@ accepted preparation with an initially empty buffer (begin epoch 134, current
 replay epoch 140). A post-journal discard retains recovery authority, so later
 writers cannot make progress merely by retrying.
 
-The canonical replay detector now recognizes changes after an empty-buffer
-BEGIN. Direct commits also settle existing buffer ordering, rebase, and endpoint
-validation before handing preparation to the WAL acceptance owner. Logical
-snapshot and mutation-preimage checks remain in place; neither conflict
-semantics nor retry budgets are relaxed. No storage keys or formats change.
+The retained correction settles direct-commit ordering, rebase and endpoint
+validation before the WAL acceptance handoff. Snapshot and mutation-preimage
+checks remain in place. An additional experiment that broadened the replay
+detector passed the increment workload but failed relationship counters: seeds
+68 and 73 reduce to a stale staged cascade, a peer relationship deletion, and
+an unrelated buffered write. That experiment is withdrawn; the existing rebase
+criteria remain unchanged. The two minimized programs now live in the canonical
+write-order schedules and fail with the withdrawn experiment.
 
-The replay-detector correction passed 30 repetitions of that same public
-six-mode workload (111.578 seconds). Its public/race and genuine peer-conflict
-controls passed (69.647 seconds). The deterministic empty-BEGIN/replay test also
-fails with the original predicate and passes with the correction. These focused
-results do not establish a full-suite pass or new performance qualification;
-the integrated correction passed five normal repetitions (83.584 seconds) and
-one race run (82.968 seconds), including the new regression and genuine
-peer-conflict controls. The exact pushed head still requires complete CI.
+With only the ordering correction retained, the two original seeds passed five
+repetitions (2.591 seconds). The complete generated model and named schedules
+passed in both write-behind modes (72.695 seconds). The final ordering-only correction passed 30 repetitions of the six-mode
+public progress workload (144.715 seconds) and public/conflict/counter race
+controls (69.024 seconds). Complete exact-head CI remains required; the earlier
+detector-only and combined-candidate passes do not qualify this combination.
+
+CI also exposed a missing relational proof in the stored-write census: the same
+immutable boolean both gates acquisition and returns buffered commits before the
+direct-write tail. The proof now uses that exact SSA value and a dominating
+branch, reusing the context census's stability owner. Changed/reloaded values,
+loop definitions, missing/failed acquisitions and early release remain rejected.
+The actual module's ordered-write audit passes (23.039 seconds), and regenerated
+artifacts retain all 369 field-write records and eight decision records. Two
+existing accepted-completion context occurrences moved within PublishCommit;
+only their recorded offsets changed. The full context census passes (98.891
+seconds), as do stale-scope rejection controls (2.548 seconds). No duplicate
+checker rules, exemptions, thresholds or hooks changed.
+
+The complete stored-write census also passes (184.397 seconds), including its
+existing bypass and fail-closed controls. The separate full mutant package
+remains part of the required parallel CI gate; no local full-suite pass is
+claimed.
