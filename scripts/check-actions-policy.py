@@ -106,9 +106,9 @@ def violations(name, workflow):
         }
         expected_conditions = {
             "test": "${{ inputs.test_only != true }}", "coverage-groups": "${{ inputs.test_only != true }}",
-            "coverage": "${{ always() && needs.coverage-plan.result == 'success' && inputs.test_only != true }}",
+            "coverage": "${{ always() && inputs.test_only != true }}",
             "make-test-shards": "${{ inputs.test_only == true }}", "make-test-lint": "${{ inputs.test_only == true }}",
-            "make-test": "${{ always() && needs.coverage-plan.result == 'success' && inputs.test_only == true }}",
+            "make-test": "${{ always() && inputs.test_only == true }}",
         }
         if (set(jobs) != set(expected_needs) | {"coverage-plan"}
                 or jobs["coverage-plan"].get("environment") != GATE or jobs["coverage-plan"].get("needs")):
@@ -117,7 +117,8 @@ def violations(name, workflow):
             job = jobs.get(job_name, {})
             needs = job.get("needs", [])
             needs = [needs] if isinstance(needs, str) else needs
-            if set(needs) != expected_job_needs or job.get("if") != expected_conditions[job_name]:
+            if (set(needs) != expected_job_needs or job.get("if") != expected_conditions[job_name]
+                    or (job_name in ("coverage", "make-test") and job.get("environment") != GATE)):
                 errors.append(f"{name}/{job_name}: runner can bypass the approved CI plan")
         return errors
     for job_name, job in workflow.get("jobs", {}).items():

@@ -149,7 +149,8 @@ jobs:
   coverage:
     name: Test and Coverage
     needs: [coverage-plan, coverage-groups, test]
-    if: ${{ always() && needs.coverage-plan.result == 'success' && inputs.test_only != true }}
+    if: ${{ always() && inputs.test_only != true }}
+    environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
     runs-on: ubuntu-latest
     env:
       COVERALLS_REPO_TOKEN: ${{ secrets.COVERALLS_REPO_TOKEN }}
@@ -240,7 +241,8 @@ jobs:
   make-test:
     name: make test
     needs: [coverage-plan, make-test-shards, make-test-lint]
-    if: ${{ always() && needs.coverage-plan.result == 'success' && inputs.test_only == true }}
+    if: ${{ always() && inputs.test_only == true }}
+    environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
     runs-on: ubuntu-latest
     steps:
       - name: Require all shards and lint
