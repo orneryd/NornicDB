@@ -80,7 +80,7 @@ func newWriteBehindTestEngine(t testing.TB, interval time.Duration, options ...w
 	return engine
 }
 
-func bufferedWrite(t testing.TB, engine *BadgerEngine, write func(*BadgerTransaction) error) {
+func bufferedWrite(t testing.TB, engine *BadgerEngine, write func(*BadgerTransaction) error) *BadgerTransaction {
 	t.Helper()
 	tx, err := engine.BeginTransaction(context.Background())
 	require.NoError(t, err)
@@ -89,6 +89,7 @@ func bufferedWrite(t testing.TB, engine *BadgerEngine, write func(*BadgerTransac
 	require.NoError(t, tx.SetNamespace("test"))
 	require.NoError(t, write(tx))
 	require.NoError(t, tx.Commit())
+	return tx
 }
 
 func bufferedCreate(t testing.TB, engine *BadgerEngine, node *Node) {
