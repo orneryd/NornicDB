@@ -35,6 +35,8 @@ jobs:
     # Manual and reusable runs wait for an administrator before allocating a runner.
     environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
     runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "1"
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -90,6 +92,8 @@ jobs:
     # Manual and reusable runs wait for an administrator before allocating a runner.
     environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
     runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -104,6 +108,9 @@ jobs:
 
       - name: Download modules
         run: go mod download
+
+      - name: Prepare llama CPU libs
+        run: bash scripts/hydrate-llama-cpu-libs.sh
 
       - name: Verify pinned corpus and run conformance regressions
         run: |

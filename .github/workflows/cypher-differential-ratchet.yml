@@ -25,6 +25,8 @@ jobs:
     # Manual and reusable runs wait for an administrator before allocating a runner.
     environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
     runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "1"
     timeout-minutes: 60
     steps:
       - name: Checkout
@@ -40,6 +42,9 @@ jobs:
 
       - name: Download modules
         run: go mod download
+
+      - name: Prepare llama CPU libs
+        run: bash scripts/hydrate-llama-cpu-libs.sh
 
       - name: Compare the sweep and the issue reproductions with pinned Neo4j
         run: |

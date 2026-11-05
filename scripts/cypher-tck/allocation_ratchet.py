@@ -2,6 +2,7 @@ import argparse
 import json
 import math
 import os
+import platform
 from pathlib import Path
 import shutil
 import statistics
@@ -142,7 +143,7 @@ def run_benchmarks(checkout, flavor, artifacts, parser, operations, samples):
         stem = artifacts / f"{flavor}-{package}"
         selected = names + tuple(old for old, current in BENCHMARK_ALIASES.items() if current in names)
         command = [
-            "go", "-C", str(checkout), "test", "-json", "-tags=noui,nolocalllm",
+            "go", "-C", str(checkout), "test", "-json", "-tags=noui",
             f"./pkg/{package}", "-run=^$", "-bench=^(" + "|".join(selected) + ")$",
             "-benchmem", f"-benchtime={operations}x", f"-count={samples}", "-cpu=1",
             "-timeout=10m", f"-o={stem}.test",
@@ -314,6 +315,8 @@ def main():
     artifacts = arguments.artifacts.resolve()
     artifacts.mkdir(parents=True, exist_ok=True)
     for checkout in (arguments.base.resolve(), arguments.head.resolve()):
+        if platform.system() == "Linux" and platform.machine() in ("x86_64", "AMD64"):
+            subprocess.run(["bash", "scripts/hydrate-llama-cpu-libs.sh"], cwd=checkout, check=True)
         install_public_execute_fixture(checkout)
     base = run_benchmarks(arguments.base.resolve(), "base", artifacts, arguments.parser, arguments.operations, arguments.samples)
     head = run_benchmarks(arguments.head.resolve(), "head", artifacts, arguments.parser, arguments.operations, arguments.samples)

@@ -20,19 +20,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  verify:
-    name: Release verification (required)
+  prepare:
     if: ${{ github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'release/') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    outputs:
+      base: ${{ steps.revisions.outputs.base }}
+      groups: ${{ steps.groups.outputs.groups }}
     steps:
-      - name: Checkout exact requested revision
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
-
       - name: Record exact PR revisions
         id: revisions
         env:
@@ -40,16 +39,29 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
-          head=$(git rev-parse HEAD)
-          [[ "$head" == "$EXPECTED_HEAD" ]]
+          [[ "$(git rev-parse HEAD)" == "$EXPECTED_HEAD" ]]
           git cat-file -e "${BASE_SHA}^{commit}"
-          git merge-base --is-ancestor "$BASE_SHA" "$head" || {
+          git merge-base --is-ancestor "$BASE_SHA" HEAD || {
             echo "The main PR base is not an ancestor of the release head; sync main and request verification again." >&2
             exit 1
           }
           echo "base=$BASE_SHA" >> "$GITHUB_OUTPUT"
-          printf 'Verified head: %s\nPR base: %s\n' "$head" "$BASE_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
-
+      - name: Discover all existing coverage groups
+        id: groups
+        run: |
+          set -euo pipefail
+          bash scripts/ci/test-groups.sh --list > groups.txt
+          python3 -c 'import json,pathlib; g=pathlib.Path("groups.txt").read_text().splitlines(); assert g and len(g)==len(set(g)); print("groups="+json.dumps(g,separators=(",",":")))' >> "$GITHUB_OUTPUT"
+  build:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
@@ -60,29 +72,166 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
-
-      - name: Run every make verify check
-        id: full_verify
-        run: make verify ALL=1 BASE='${{ steps.revisions.outputs.base }}'
-
+      - name: Localization, UI, libraries and build
+        env:
+          BASE_SHA: ${{ needs.prepare.outputs.base }}
+        run: make verify ALL=1 ONLY='localization ui llama-libs build' BASE="$BASE_SHA"
       - name: Build the local GGUF provider
-        if: ${{ !cancelled() && steps.full_verify.outcome != 'skipped' }}
+        if: ${{ !cancelled() }}
         run: CGO_ENABLED=0 go build -tags 'noui,localllm,yzma' -o /tmp/nornicdb-yzma ./cmd/nornicdb
-
-      - name: Run the Cypher differential ratchet
-        if: ${{ !cancelled() && steps.full_verify.outcome != 'skipped' }}
+  coverage:
+    env:
+      CGO_ENABLED: "1"
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        group: ${{ fromJSON(needs.prepare.outputs.groups) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Prepare UI and llama libraries
+        run: |
+          (cd ui && npm ci && npm run build)
+          bash scripts/hydrate-llama-cpu-libs.sh
+      - name: Run coverage group
+        env:
+          BASE_SHA: ${{ needs.prepare.outputs.base }}
+          TEST_GROUP: ${{ matrix.group }}
+        run: make verify ALL=1 ONLY=tests GROUPS="$TEST_GROUP" BASE="$BASE_SHA"
+      - name: Upload coverage logs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-coverage-${{ matrix.group }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .verify/runs/
+          include-hidden-files: true
+          if-no-files-found: warn
+  make-test:
+    env:
+      CGO_ENABLED: "1"
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        shard: [cypher, storage, server, storagecensus, capturecensus, command, other]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check out trusted sharding helper
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .ci-workflow-tools
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Prepare UI and llama libraries
+        run: |
+          (cd ui && npm ci && npm run build)
+          bash scripts/hydrate-llama-cpu-libs.sh
+      - name: Run make test package shard
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: bash .ci-workflow-tools/scripts/ci/make-test-shard.sh "$SHARD"
+  lint:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - run: make lint-slog lint-cardinality
+  checks:
+    env:
+      CGO_ENABLED: "1"
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [allocations, conformance, differential, docs, differential-ratchet]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Prepare llama CPU libs for conformance and differential tests
+        if: ${{ matrix.check == 'conformance' || matrix.check == 'differential' || matrix.check == 'differential-ratchet' }}
+        run: bash scripts/hydrate-llama-cpu-libs.sh
+      - name: Run verification check
+        env:
+          BASE_SHA: ${{ needs.prepare.outputs.base }}
+          CHECK: ${{ matrix.check }}
         run: |
           set -o pipefail
-          mkdir -p .verify/ratchet
-          make cypher-differential-ratchet 2>&1 | tee .verify/ratchet/differential-ratchet.log
-
+          if [[ "$CHECK" == differential-ratchet ]]; then
+            mkdir -p .verify/ratchet
+            make cypher-differential-ratchet 2>&1 | tee .verify/ratchet/differential-ratchet.log
+          else
+            make verify ALL=1 ONLY="$CHECK" BASE="$BASE_SHA"
+          fi
       - name: Upload verification logs
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
-          name: release-verification-${{ github.run_id }}-${{ github.run_attempt }}
+          name: release-${{ matrix.check }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             .verify/runs/
             .verify/ratchet/
           if-no-files-found: warn
           include-hidden-files: true
+  verify:
+    name: Release verification (required)
+    needs: [prepare, build, coverage, make-test, lint, checks]
+    if: ${{ always() && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'release/') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every verification job
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: python3 -c 'import json,os,sys; results=json.loads(os.environ["RESULTS"]); failed={k:v["result"] for k,v in results.items() if v["result"] != "success"}; print("Verification results:", {k:v["result"] for k,v in results.items()}); sys.exit(bool(failed))'

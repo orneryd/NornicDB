@@ -1570,7 +1570,7 @@ graphify:
 .PHONY: cypher-tck-inventory cypher-tck cypher-tck-ratchet cypher-tck-vetted cypher-tck-update-ratchet cypher-conformance cypher-differential cypher-differential-ratchet cypher-sweep
 
 CYPHER_TCK_ZONEINFO := $(CURDIR)/pkg/cypher/temporal_zoneinfo.zip
-CYPHER_TCK_TAGS := noui,nolocalllm
+CYPHER_TCK_TAGS := noui
 
 cypher-tck-inventory:
 	go run -tags "$(CYPHER_TCK_TAGS)" ./testing/cypher/tck/cmd/inventory -check testing/cypher/tck/testdata/inventory.json
