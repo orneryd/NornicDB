@@ -52,6 +52,9 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 		return 0, err
 	}
 	defer b.work.Leave()
+	if err := b.FlushWriteBehind(context.Background()); err != nil {
+		return 0, fmt.Errorf("wal: complete preceding writes before recovery: %w", err)
+	}
 
 	// A kill -9 can leave a torn tail record at EOF. Truncate it back to
 	// the last good boundary before reading (the same conservative repair
@@ -161,17 +164,30 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 	if replayed == 0 {
 		return 0, err
 	}
+	return replayed, b.completeRecoveredCounts(context.Background(), err)
+}
 
+// completeRecoveredCounts is the completion owner for physical WAL recovery.
+// Transported records carry entity bodies, not destination-local count deltas.
+// Reconcile once per recovery batch, including a partially applied batch whose
+// later record failed, rather than scanning the store for every WAL record.
+func (b *BadgerEngine) completeRecoveredCounts(ctx context.Context, recoveryErr error) error {
+	// A final semantic bulk record may itself be acknowledged into the buffer.
+	// Count verification reads physical bodies, so finish those accepted writes
+	// before reconciling their derived metadata.
+	if err := b.FlushWriteBehind(ctx); err != nil {
+		return errors.Join(recoveryErr, fmt.Errorf("wal: complete recovered writes: %w", err))
+	}
 	// The replayed commits carried no count deltas; rebuild the derived
 	// counts from committed entities so readers never observe committed
 	// entities without their counts.
 	// Completed batches remain durable if a later record fails. Repair their
 	// counts as well, while preserving the original recovery failure.
-	if countErr := b.ensureLabelCounts(context.Background()); countErr != nil {
-		err = errors.Join(err, fmt.Errorf("wal: rebuild label counts after buffered replay: %w", countErr))
+	if countErr := b.ensureLabelCounts(ctx); countErr != nil {
+		recoveryErr = errors.Join(recoveryErr, fmt.Errorf("wal: rebuild label counts after recovery: %w", countErr))
 	}
-	if countErr := b.ensureEdgeTypeCounts(context.Background()); countErr != nil {
-		err = errors.Join(err, fmt.Errorf("wal: rebuild edge-type counts after buffered replay: %w", countErr))
+	if countErr := b.ensureEdgeTypeCounts(ctx); countErr != nil {
+		recoveryErr = errors.Join(recoveryErr, fmt.Errorf("wal: rebuild edge-type counts after recovery: %w", countErr))
 	}
-	return replayed, err
+	return recoveryErr
 }

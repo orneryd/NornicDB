@@ -2470,6 +2470,14 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 		if len(data.Ops) == 0 && len(data.Writes) == 0 && len(data.Deletes) == 0 {
 			return nil
 		}
+		// Earlier semantic WAL records can have acknowledged bulk writes into
+		// the destination buffer. Their completion must precede this physical
+		// record, just as snapshot completion precedes WAL replay.
+		if b.writeBehind != nil && b.writeBehind.PendingOps() > 0 {
+			if err := b.FlushWriteBehind(context.Background()); err != nil {
+				return fmt.Errorf("wal: complete preceding writes before buffered replay: %w", err)
+			}
+		}
 		c, err := b.importBufferedWALRecord(&data, walForeignImport)
 		if err != nil {
 			return err
@@ -2856,6 +2864,11 @@ func RecoverWithTransactions(walDir, snapshotPath string) (*MemoryEngine, *Trans
 		}
 		result.NonTxApplied++
 	}
+	if result.NonTxApplied > 0 || result.CommittedTransactions > 0 || result.RolledBackTransactions > 0 {
+		if err := engine.BadgerEngine.completeRecoveredCounts(context.Background(), nil); err != nil {
+			return nil, result, err
+		}
+	}
 
 	return store.release(), result, nil
 }
@@ -3036,6 +3049,11 @@ func RecoverFromWALWithResult(walDir, snapshotPath string) (*MemoryEngine, Repla
 	result.Errors = make([]ReplayError, 0)
 	for _, entry := range entries {
 		result.Record(entry, ReplayWALEntry(engine, entry))
+	}
+	if result.Applied > 0 {
+		if err := engine.BadgerEngine.completeRecoveredCounts(context.Background(), nil); err != nil {
+			return nil, result, err
+		}
 	}
 
 	return store.release(), result, nil

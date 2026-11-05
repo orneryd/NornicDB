@@ -203,10 +203,13 @@ func pr1655CorruptMVCCHead(t *testing.T, b *BadgerEngine, id NodeID) (decodeErr 
 	return decodeErr
 }
 
-// pr1655PhysicalBody reads the node's stored body straight from its record,
-// without consulting the MVCC head. It is how a test inspects what a failed
-// commit published while the fixture holds the faulty head.
-func pr1655PhysicalBody(t *testing.T, b *BadgerEngine, id NodeID) *Node {
+// ReadPhysicalNodeForTest reads the node's stored body straight from its record,
+// without consulting the MVCC head or the write-behind overlay. It is the one
+// canonical raw-body reader for tests inspecting what a failed commit published
+// while the fixture holds a faulty head, and the value a caller does not yet see
+// is an acknowledgement the flusher has not landed. It is test-only: no
+// production code path calls it.
+func ReadPhysicalNodeForTest(t *testing.T, b *BadgerEngine, id NodeID) *Node {
 	t.Helper()
 	var node *Node
 	err := b.db.View(func(txn *badger.Txn) error {
@@ -311,11 +314,11 @@ func TestPR1655CommitReadFixturesStayInert(t *testing.T) {
 }
 
 // TestPR1655CommitReadCorruptionIsRestorable anchors the fixture on the real
-// decoder and proves the saved bytes put a healthy head back: the commit path
-// re-reads exactly the malformed record and sees decodeMVCCHead's own error.
+// decoder: corruption leaves the physical body and publication state intact,
+// head reads report the exact decoder error, and saved bytes restore the head.
 func TestPR1655CommitReadCorruptionIsRestorable(t *testing.T) {
 	engine, fault := pr1655NewCommitReadFaultEngine(t, false)
-	pr1655SeedDoc(t, engine, "test:fixture-head", "before")
+	sequenced := pr1655SeedDoc(t, engine, "test:fixture-head", "before")
 
 	healthy, err := pr1655HeadBytes(engine, "test:fixture-head")
 	require.NoError(t, err)
@@ -333,6 +336,12 @@ func TestPR1655CommitReadCorruptionIsRestorable(t *testing.T) {
 	require.Error(t, headErr, "the commit-path head reload fails on the corrupted record")
 	require.ErrorContains(t, headErr, corruptionErr.Error())
 
+	// Head corruption must leave the existing body, barrier and publication
+	// state intact before the healthy head is restored.
+	require.Equal(t, "before", ReadPhysicalNodeForTest(t, engine, "test:fixture-head").Properties["body"])
+	pr1655AssertNoLeaks(t, engine, sequenced, "injected corruption")
+	require.False(t, fault.firedOnce(), "the fixture never arms the fault in this test")
+
 	// The saved bytes restore the healthy head, as the cleanup does, so the
 	// ordinary MVCC path reads the untouched body again.
 	require.NoError(t, pr1655WriteHeadBytes(engine, "test:fixture-head", healthy))
@@ -343,20 +352,6 @@ func TestPR1655CommitReadCorruptionIsRestorable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "before", node.Properties["body"])
 	require.False(t, fault.firedOnce(), "the fixture never arms the fault in this test")
-}
-
-// TestPR1655CommitReadCorruptionKeepsPublishedBody proves the corrupted head
-// only hides the head record: the body a previous commit stored is unchanged
-// and readable straight from its record, which is how the regression checks a
-// failed commit published nothing.
-func TestPR1655CommitReadCorruptionKeepsPublishedBody(t *testing.T) {
-	engine, fault := pr1655NewCommitReadFaultEngine(t, false)
-	sequenced := pr1655SeedDoc(t, engine, "test:direct", "before")
-
-	require.Error(t, pr1655CorruptMVCCHead(t, engine, "test:direct"))
-	require.Equal(t, "before", pr1655PhysicalBody(t, engine, "test:direct").Properties["body"])
-	pr1655AssertNoLeaks(t, engine, sequenced, "injected corruption")
-	require.False(t, fault.firedOnce())
 }
 
 // TestPR1655CommitReadSeedIsDurableForWriteBehind proves the seed helper the
@@ -371,7 +366,7 @@ func TestPR1655CommitReadSeedIsDurableForWriteBehind(t *testing.T) {
 	decoded, err := decodeMVCCHead(head)
 	require.NoError(t, err)
 	require.False(t, decoded.Tombstoned)
-	require.Equal(t, "before", pr1655PhysicalBody(t, engine, "test:seed-durable").Properties["body"])
+	require.Equal(t, "before", ReadPhysicalNodeForTest(t, engine, "test:seed-durable").Properties["body"])
 	current, err := engine.GetNodeCurrentHead(context.Background(), "test:seed-durable")
 	require.NoError(t, err)
 	require.Equal(t, decoded.Version, current.Version)

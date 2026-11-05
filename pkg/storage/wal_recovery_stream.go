@@ -83,6 +83,15 @@ func RecoverIntoEngine(destination Engine, walDir, snapshotPath string) (ReplayR
 				}
 			}
 		}
+		// Snapshot batches may only be acknowledged into a write-behind
+		// generation. Complete that phase before physical WAL replay: otherwise
+		// its older overlay masks replayed bodies and a later drain overwrites
+		// them. Recovery owns completion independently of a client request.
+		if flusher, ok := UnwrapEngine(destination).(interface{ FlushWriteBehind(context.Context) error }); ok {
+			if err := flusher.FlushWriteBehind(context.Background()); err != nil {
+				return result, status, fmt.Errorf("wal: failed to complete snapshot restore: %w", err)
+			}
+		}
 	}
 
 	activePath := walActivePath(walDir)
@@ -106,9 +115,14 @@ func RecoverIntoEngine(destination Engine, walDir, snapshotPath string) (ReplayR
 		return nil
 	})
 	if err != nil {
-		return result, status, fmt.Errorf("wal: failed to read WAL: %w", err)
+		err = fmt.Errorf("wal: failed to read WAL: %w", err)
 	}
-	return result, status, nil
+	if result.Applied > 0 {
+		if native, ok := UnwrapEngine(destination).(*BadgerEngine); ok {
+			err = native.completeRecoveredCounts(context.Background(), err)
+		}
+	}
+	return result, status, err
 }
 
 type recoverySnapshotVisitor struct {
