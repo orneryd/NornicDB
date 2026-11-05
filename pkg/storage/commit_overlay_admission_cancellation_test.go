@@ -199,7 +199,7 @@ func (c *bufferedOperationPollContext) Err() error {
 	builder, bulk := false, false
 	for {
 		f, more := frames.Next()
-		builder = builder || strings.HasSuffix(f.Function, ".bufferedDeleteConflictLocked.func1")
+		builder = builder || strings.HasSuffix(f.Function, ".bufferedWriteConflictLocked.func1")
 		bulk = bulk || (strings.Contains(f.Function, "bulkReadCancellation") && strings.HasSuffix(f.Function, ".check"))
 		if !more {
 			break

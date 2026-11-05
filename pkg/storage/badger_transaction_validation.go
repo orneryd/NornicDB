@@ -14,9 +14,9 @@ func (tx *BadgerTransaction) validateSnapshotIsolationConflicts(ctx context.Cont
 	// Metadata handlers can publish a peer commit between the optimistic and
 	// authoritative passes. Endpoint memoization belongs to one pass only.
 	tx.nodeHeadCache = nil
-	// The buffer first, the stored heads below after: a buffered delete
-	// applied in between is found in its heads.
-	if err := tx.bufferedDeleteConflictLocked(ctx); err != nil {
+	// Check the buffer first, then stored heads: an acknowledged peer write
+	// drained between these passes is still detected in its persisted head.
+	if err := tx.bufferedWriteConflictLocked(ctx); err != nil {
 		return err
 	}
 	// Idempotent hidden-edge CREATEs stage no writes. Re-read them at the

@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve acknowledged write-behind updates and increments by validating
+  unflushed competing writes. Complete snapshot/semantic WAL writes before
+  physical replay and reconcile recovered label/relationship counts, preventing
+  stale restore images and a later delete from making the database unreopenable.
+  Preserve UNIQUE, deletion and restart behavior without a storage format change.
 - Maintain scoped full-text scoring documents between queries instead of rebuilding
   the entire corpus. Preserve exact case-sensitive indexed fields, deterministic
   relationship-property order, per-field phrase matching, committed snapshots and

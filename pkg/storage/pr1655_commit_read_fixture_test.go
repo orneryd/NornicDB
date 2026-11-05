@@ -203,10 +203,13 @@ func pr1655CorruptMVCCHead(t *testing.T, b *BadgerEngine, id NodeID) (decodeErr 
 	return decodeErr
 }
 
-// pr1655PhysicalBody reads the node's stored body straight from its record,
-// without consulting the MVCC head. It is how a test inspects what a failed
-// commit published while the fixture holds the faulty head.
-func pr1655PhysicalBody(t *testing.T, b *BadgerEngine, id NodeID) *Node {
+// ReadPhysicalNodeForTest reads the node's stored body straight from its record,
+// without consulting the MVCC head or the write-behind overlay. It is the one
+// canonical raw-body reader for tests inspecting what a failed commit published
+// while the fixture holds a faulty head, and the value a caller does not yet see
+// is an acknowledgement the flusher has not landed. It is test-only: no
+// production code path calls it.
+func ReadPhysicalNodeForTest(t *testing.T, b *BadgerEngine, id NodeID) *Node {
 	t.Helper()
 	var node *Node
 	err := b.db.View(func(txn *badger.Txn) error {
@@ -354,7 +357,7 @@ func TestPR1655CommitReadCorruptionKeepsPublishedBody(t *testing.T) {
 	sequenced := pr1655SeedDoc(t, engine, "test:direct", "before")
 
 	require.Error(t, pr1655CorruptMVCCHead(t, engine, "test:direct"))
-	require.Equal(t, "before", pr1655PhysicalBody(t, engine, "test:direct").Properties["body"])
+	require.Equal(t, "before", ReadPhysicalNodeForTest(t, engine, "test:direct").Properties["body"])
 	pr1655AssertNoLeaks(t, engine, sequenced, "injected corruption")
 	require.False(t, fault.firedOnce())
 }
@@ -371,7 +374,7 @@ func TestPR1655CommitReadSeedIsDurableForWriteBehind(t *testing.T) {
 	decoded, err := decodeMVCCHead(head)
 	require.NoError(t, err)
 	require.False(t, decoded.Tombstoned)
-	require.Equal(t, "before", pr1655PhysicalBody(t, engine, "test:seed-durable").Properties["body"])
+	require.Equal(t, "before", ReadPhysicalNodeForTest(t, engine, "test:seed-durable").Properties["body"])
 	current, err := engine.GetNodeCurrentHead(context.Background(), "test:seed-durable")
 	require.NoError(t, err)
 	require.Equal(t, decoded.Version, current.Version)

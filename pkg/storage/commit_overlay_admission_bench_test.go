@@ -41,7 +41,7 @@ func BenchmarkBufferedConflictPreparationScan(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for range b.N {
-				if err := tx.bufferedDeleteConflictLocked(ctx); err != nil {
+				if err := tx.bufferedWriteConflictLocked(ctx); err != nil {
 					b.Fatal(err)
 				}
 			}

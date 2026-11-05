@@ -545,12 +545,11 @@ func (b *BadgerEngine) prefixDroppedSince(begin uint64, namespace string) bool {
 	return false
 }
 
-// bufferedDeleteConflictLocked fails a commit that writes an entity a
-// commit acknowledged after tx began deleted, while the write-behind buffer
-// still holds that delete: the stored head shows it only once it is applied.
-// Committing over it would bring the entity back without counting it, or
-// delete it, and count it, a second time.
-func (tx *BadgerTransaction) bufferedDeleteConflictLocked(ctx context.Context) error {
+// bufferedWriteConflictLocked validates every competing acknowledged write,
+// including updates whose MVCC heads have not reached Badger yet. Otherwise
+// two stale implicit writers can both be acknowledged and the later full image
+// silently discards the earlier writer's properties or counter increment.
+func (tx *BadgerTransaction) bufferedWriteConflictLocked(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -569,7 +568,7 @@ func (tx *BadgerTransaction) bufferedDeleteConflictLocked(ctx context.Context) e
 			}
 			op := &tx.operations[i]
 			switch op.Type {
-			case OpUpdateNode, OpDeleteNode, OpUpdateEmbedding:
+			case OpCreateNode, OpUpdateNode, OpDeleteNode, OpUpdateEmbedding:
 				nodes[op.NodeID] = struct{}{}
 				for _, id := range op.DeletedEdgeIDs {
 					if err := cancel.check(ctx); err != nil {
@@ -577,7 +576,7 @@ func (tx *BadgerTransaction) bufferedDeleteConflictLocked(ctx context.Context) e
 					}
 					edges[id] = struct{}{}
 				}
-			case OpUpdateEdge:
+			case OpCreateEdge, OpUpdateEdge:
 				if _, deleted := tx.deletedEdges[op.EdgeID]; !deleted {
 					edges[op.EdgeID] = struct{}{}
 				}
@@ -603,7 +602,7 @@ func (tx *BadgerTransaction) bufferedDeleteConflictLocked(ctx context.Context) e
 			}
 			op := &ops[j]
 			switch op.Type {
-			case OpDeleteNode:
+			case OpCreateNode, OpUpdateNode, OpUpdateEmbedding, OpDeleteNode:
 				if _, ok := nodes[op.NodeID]; ok {
 					node, version = op.NodeID, v
 					return false, nil
@@ -617,7 +616,7 @@ func (tx *BadgerTransaction) bufferedDeleteConflictLocked(ctx context.Context) e
 						return false, nil
 					}
 				}
-			case OpDeleteEdge:
+			case OpCreateEdge, OpUpdateEdge, OpDeleteEdge:
 				if _, ok := edges[op.EdgeID]; ok {
 					edge, version = op.EdgeID, v
 					return false, nil
