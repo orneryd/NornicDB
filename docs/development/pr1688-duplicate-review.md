@@ -51,3 +51,32 @@ entity ordering checks pass. The earlier inventory is not an analysis of this
 later source; a fresh advisory CI report is pending. No duplicate-analyzer rule,
 threshold or exclusion was changed. The explicitly requested removal concerns
 installed local Codex hooks only; tracked hook/checker source remains intact.
+
+## Release CI increment correction
+
+Release verification `42009807718` on `8f5835d7f` and PR make-test run
+`42011914534` failed the NOR-136 acknowledged-increment invariant. A deterministic
+observer-controlled test reproduces a reserved-but-unpublished peer version:
+BEGIN includes its sequence but reads the predecessor, then previously committed
+a stale update without conflict. The original stress assertion is unchanged.
+
+The correction extends `validateNodeMutationPreimagesLocked` (formerly the
+constraint-only preimage validator), retaining its first-mutation fold and single
+batch read cut. Write-behind compares predecessor properties with the existing
+`sameStoredValue` owner and labels with `sameLabelSet`; constraint-specific error
+classification still uses the existing owner. It introduces no parallel read,
+comparison, retry or flush implementation, forwarding wrapper, or storage format.
+The revision-only experiment was discarded: ordinary written cache images have
+no covered revision, so that experiment did not catch the reproduced failure.
+
+The existing stored-value comparator now treats an unchanged NaN bit pattern as
+the same stored value. Its numeric ordering remains unchanged for other values.
+The regression matrix covers implicit/native followers, peer images before and
+after replay, a healthy subsequent update, and preserved NaN payload bits.
+The broader checker/graph result is not claimed clean: configured Graphify
+retrieval still returns HTTP 400 (HTTP sent to an HTTPS port). Advisory duplicate
+analysis and the full suite must be evaluated on the pushed CI head.
+
+This validation adds full-property predecessor comparison for write-behind node
+updates; no allocation or latency improvement is claimed for this correctness
+fix. Non-write-behind unconstrained updates retain the previous early return.

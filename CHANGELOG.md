@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reject stale write-behind node updates when a peer reserved its version before
+  BEGIN but published its image afterward, preserving acknowledged increments.
+  Unchanged stored NaN properties remain valid mutation preimages.
+
 - Preserve acknowledged write-behind updates and increments by validating
   unflushed competing writes. Complete snapshot/semantic WAL writes before
   physical replay and reconcile recovered label/relationship counts, preventing

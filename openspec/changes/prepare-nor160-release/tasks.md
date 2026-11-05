@@ -120,3 +120,13 @@ The worker's full local Cypher run was canceled when verification moved to CI;
 it is incomplete and is not counted as a pass. The latest release inventory is
 regenerated with zero violations and no lexical membership changes. The first
 review CI request is superseded by the following pushed head.
+
+## Release CI failure correction (2026-11-05)
+
+- [x] Inspect release verification 42009807718 and PR CI 42011914534: NOR-136 acknowledged increments fail with write-behind enabled.
+- [x] Preserve a deterministic failing reserved-version/predecessor interleaving without adding production test hooks.
+- [x] Extend the canonical batch mutation-preimage validator; preserve uniqueness error classification, first-mutation folding and storage formats.
+- [x] Add implicit/native, buffered/replayed and healthy retry controls; preserve unchanged NaN payloads through the existing stored-value comparator.
+- [x] Finish the repeated focused checks on the integrated candidate: five repetitions passed (39.530s).
+- [ ] Push the correction, dispatch exact-head make test CI and request advisory duplicate analysis.
+- [ ] Report actual final CI outcomes; no pending, interrupted or skipped gate is a pass.

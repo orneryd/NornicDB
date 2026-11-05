@@ -83,11 +83,11 @@ func sameNodeUniqueClaim(ctx context.Context, before, after *Node, label, proper
 	return old == next, nil
 }
 
-// validateNodeClaimPreimagesLocked rejects a stale full image before it can
-// overwrite an acknowledged key change. Entity authority is already held by
-// PublishCommit. The current read bypasses unversioned caches and shares the
+// validateNodeMutationPreimagesLocked rejects a stale full image before it can
+// overwrite an acknowledged predecessor or constraint key change. Entity
+// authority is already held by PublishCommit. The current read bypasses unversioned caches and shares the
 // existing buffered/storage read cut and projected body decoder.
-func (tx *BadgerTransaction) validateNodeClaimPreimagesLocked(ctx context.Context) error {
+func (tx *BadgerTransaction) validateNodeMutationPreimagesLocked(ctx context.Context) error {
 	schema := tx.engine.GetSchemaForNamespace(tx.namespace)
 	if len(tx.pendingNodes) == 0 {
 		return nil
@@ -96,7 +96,8 @@ func (tx *BadgerTransaction) validateNodeClaimPreimagesLocked(ctx context.Contex
 	if err != nil {
 		return err
 	}
-	if len(constraints) == 0 {
+	validateBody := tx.engine.writeBehind != nil
+	if len(constraints) == 0 && !validateBody {
 		return nil
 	}
 	preimages, distinctUpdates, err := tx.nodeMutationPreimagesLocked(ctx)
@@ -114,6 +115,13 @@ func (tx *BadgerTransaction) validateNodeClaimPreimagesLocked(ctx context.Contex
 			include[constraint.Property] = struct{}{}
 			properties = append(properties, constraint.Property)
 		}
+	}
+	// A version is reserved before WAL/accounting preparation, so BEGIN may
+	// include a peer's version without having seen its image. For write-behind
+	// also compare the actual observed predecessor, not only constraint keys.
+	// This uses the same batch read cut and first-mutation preimage owner.
+	if validateBody {
+		properties, include = nil, nil
 	}
 	// One current read cut covers the whole mutation batch. Capture only
 	// matching buffered bodies; the usual physical-only case allocates no
@@ -181,6 +189,9 @@ func (tx *BadgerTransaction) validateNodeClaimPreimagesLocked(ctx context.Contex
 				}
 			}
 			changed := current == nil
+			if !changed && validateBody {
+				changed = !sameStoredValue(before.Properties, current.Properties) || !sameLabelSet(before.Labels, current.Labels)
+			}
 			for index := range constraints {
 				constraint := &constraints[index]
 				same, err := sameNodeUniqueClaim(ctx, before, current, constraint.Label, constraint.Property)

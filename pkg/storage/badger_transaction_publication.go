@@ -537,7 +537,7 @@ func (tx *BadgerTransaction) validateCommitLocked(ctx context.Context) error {
 		return err
 	}
 
-	if err := tx.validateNodeClaimPreimagesLocked(ctx); err != nil {
+	if err := tx.validateNodeMutationPreimagesLocked(ctx); err != nil {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
 		return err
 	}
