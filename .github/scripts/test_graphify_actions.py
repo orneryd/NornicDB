@@ -101,8 +101,9 @@ class AdvisoryTests(unittest.TestCase):
             with self.subTest(expected=expected), tempfile.TemporaryDirectory() as temp:
                 report = SimpleNamespace(findings=findings, skipped_by_cap=skipped, nothing_compared="")
                 engine = SimpleNamespace(git=lambda *args: "b" * 40, connection=lambda: ("https://example.test", "u", "p", ""))
+                analyze = mock.Mock(return_value=report)
                 duplicates = SimpleNamespace(parse_diff=lambda diff: diff, git_diff=lambda *args: "diff", NornicDB=lambda *args, **kw: None,
-                    analyze=lambda *args, **kw: report, render_summary=lambda *args, **kw: "summary", DEFAULT_IGNORE=())
+                    analyze=analyze, render_summary=lambda *args, **kw: "summary", DEFAULT_IGNORE=("scripts/*",))
                 api = FakeAPI()
                 env = {"PR_NUMBER": "17", "PR_BASE_SHA": "a" * 40, "PR_HEAD_SHA": "b" * 40,
                        "GITHUB_REPOSITORY": "org/repo", "GITHUB_API_URL": "https://example.test", "GITHUB_TOKEN": "test",
@@ -110,6 +111,12 @@ class AdvisoryTests(unittest.TestCase):
                 with mock.patch.dict(os.environ, env), mock.patch.object(ci, "snapshot"), mock.patch.object(ci, "tools", return_value=(Path(temp), engine, duplicates)), mock.patch.object(ci, "API", return_value=api), mock.patch.object(ci, "upsert") as upsert:
                     ci.check()
                     self.assertIn(expected, upsert.call_args.args[2])
+                    options = analyze.call_args.kwargs["options"]
+                    self.assertGreater(options["max_candidates"], 65)
+                    self.assertEqual(options["min_body_lines"], 1)
+                    self.assertEqual(options["min_tokens"], 0)
+                    self.assertEqual(options["min_added_fraction"], 0)
+                    self.assertEqual(analyze.call_args.kwargs["ignore"], ())
 
 class CommentTests(unittest.TestCase):
     def test_upsert_ignores_marker_from_untrusted_user(self):

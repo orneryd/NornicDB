@@ -72,7 +72,7 @@ jobs:
     needs: [authorize, extract]
     if: ${{ always() && needs.authorize.outputs.authorized == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     continue-on-error: true
     permissions:
       contents: read

@@ -10,6 +10,7 @@ import time
 from graphify_gate import API
 
 MARKER = "<!-- nornicdb-release-graphify -->"
+ANALYSIS_DEADLINE_SECONDS = 3000
 
 
 def upsert(api, number, body):
@@ -74,9 +75,12 @@ def check():
     source = directory / "source"
     graph = Path(os.environ["RUNNER_TEMP"]) / "graphify-artifact" / "graph.json"
     db = pd.NornicDB(uri, user, password, token, database, require_scores=True,
-                     repo=repo, deadline=time.monotonic() + 300)
+                     repo=repo, deadline=time.monotonic() + ANALYSIS_DEADLINE_SECONDS)
     report = pd.analyze(db, repo, graph, str(source), diff, head_sha=head,
-                        base_sha=merge_base, ignore=pd.DEFAULT_IGNORE)
+                        base_sha=merge_base, ignore=(), options={
+                            "max_candidates": sys.maxsize, "min_body_lines": 1,
+                            "min_tokens": 0, "min_added_fraction": 0,
+                            "deadline_seconds": ANALYSIS_DEADLINE_SECONDS})
     summary = pd.render_summary(report, server=os.environ.get("GITHUB_SERVER_URL", "https://github.com"))
     if report.nothing_compared:
         heading = "**Check incomplete:** no graph was available to compare."
