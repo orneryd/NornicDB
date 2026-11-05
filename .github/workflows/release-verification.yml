@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       base: ${{ steps.revisions.outputs.base }}
-      groups: ${{ steps.groups.outputs.groups }}
+      matrix: ${{ steps.groups.outputs.matrix }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -51,7 +51,7 @@ jobs:
         run: |
           set -euo pipefail
           bash scripts/ci/test-groups.sh --list > groups.txt
-          python3 -c 'import json,pathlib; g=pathlib.Path("groups.txt").read_text().splitlines(); assert g and len(g)==len(set(g)); print("groups="+json.dumps(g,separators=(",",":")))' >> "$GITHUB_OUTPUT"
+          python3 -c 'import json,pathlib; g=pathlib.Path("groups.txt").read_text().splitlines(); assert g and len(g)==len(set(g)); shards=["cypher","storage","server","storagecensus","capturecensus","command","other"]; print("matrix="+json.dumps({"include":[{"kind":"coverage","item":x} for x in g]+[{"kind":"make-test","item":x} for x in shards]},separators=(",",":")))' >> "$GITHUB_OUTPUT"
   build:
     needs: prepare
     runs-on: ubuntu-latest
@@ -79,7 +79,8 @@ jobs:
       - name: Build the local GGUF provider
         if: ${{ !cancelled() }}
         run: CGO_ENABLED=0 go build -tags 'noui,localllm,yzma' -o /tmp/nornicdb-yzma ./cmd/nornicdb
-  coverage:
+  tests:
+    name: ${{ matrix.kind }} / ${{ matrix.item }}
     env:
       CGO_ENABLED: "1"
     needs: prepare
@@ -88,8 +89,7 @@ jobs:
     strategy:
       fail-fast: false
       max-parallel: 6
-      matrix:
-        group: ${{ fromJSON(needs.prepare.outputs.groups) }}
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -111,59 +111,31 @@ jobs:
           (cd ui && npm ci && npm run build)
           bash scripts/hydrate-llama-cpu-libs.sh
       - name: Run coverage group
+        if: ${{ matrix.kind == 'coverage' }}
         env:
           BASE_SHA: ${{ needs.prepare.outputs.base }}
-          TEST_GROUP: ${{ matrix.group }}
+          TEST_GROUP: ${{ matrix.item }}
         run: make verify ALL=1 ONLY=tests GROUPS="$TEST_GROUP" BASE="$BASE_SHA"
-      - name: Upload coverage logs
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-coverage-${{ matrix.group }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .verify/runs/
-          include-hidden-files: true
-          if-no-files-found: warn
-  make-test:
-    env:
-      CGO_ENABLED: "1"
-    needs: prepare
-    runs-on: ubuntu-latest
-    timeout-minutes: 180
-    strategy:
-      fail-fast: false
-      max-parallel: 6
-      matrix:
-        shard: [cypher, storage, server, storagecensus, capturecensus, command, other]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 0
-          persist-credentials: false
       - name: Check out trusted sharding helper
+        if: ${{ matrix.kind == 'make-test' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.workflow_sha }}
           path: .ci-workflow-tools
           persist-credentials: false
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-          cache: false
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '20'
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.12'
-      - name: Prepare UI and llama libraries
-        run: |
-          (cd ui && npm ci && npm run build)
-          bash scripts/hydrate-llama-cpu-libs.sh
       - name: Run make test package shard
+        if: ${{ matrix.kind == 'make-test' }}
         env:
-          SHARD: ${{ matrix.shard }}
+          SHARD: ${{ matrix.item }}
         run: bash .ci-workflow-tools/scripts/ci/make-test-shard.sh "$SHARD"
+      - name: Upload coverage logs
+        if: ${{ !cancelled() && matrix.kind == 'coverage' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-coverage-${{ matrix.item }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .verify/runs/
+          include-hidden-files: true
+          if-no-files-found: warn
   lint:
     needs: prepare
     runs-on: ubuntu-latest
@@ -177,11 +149,13 @@ jobs:
   checks:
     env:
       CGO_ENABLED: "1"
-    needs: prepare
+    needs: [prepare, build, lint]
+    if: ${{ !cancelled() && needs.prepare.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         check: [allocations, conformance, differential, docs, differential-ratchet]
     steps:
@@ -227,7 +201,7 @@ jobs:
           include-hidden-files: true
   verify:
     name: Release verification (required)
-    needs: [prepare, build, coverage, make-test, lint, checks]
+    needs: [prepare, build, tests, lint, checks]
     if: ${{ always() && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'release/') }}
     runs-on: ubuntu-latest
     steps:
