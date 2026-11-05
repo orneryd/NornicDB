@@ -15,7 +15,7 @@ import graphify_ci as ci
 
 def pr(author="writer", branch="release/v1.4.4"):
     return {"number": 17, "state": "open", "user": {"login": author},
-            "base": {"ref": branch, "sha": "a" * 40}, "head": {"sha": "b" * 40}}
+            "base": {"ref": branch, "sha": "a" * 40}, "head": {"sha": "b" * 40, "repo": {"full_name": "org/repo"}}}
 
 
 class FakeAPI:
@@ -39,6 +39,18 @@ class GateTests(unittest.TestCase):
         result = gate.decide("pull_request_target", event, api)
         self.assertEqual(result["head"], "b" * 40)
         self.assertEqual(result["branch"], "release/v1.4.4")
+
+    def test_maintainer_fork_requires_explicit_approval(self):
+        api = FakeAPI({"maintainer"})
+        fork = pr("maintainer")
+        fork["head"]["repo"]["full_name"] = "maintainer/fork"
+        result = gate.decide("pull_request_target", {"pull_request": fork, "sender": {"login": "maintainer"}}, api)
+        self.assertIsNone(result)
+        self.assertIn("/graphify approve", api.notices[0][1])
+        api.pull = fork
+        event = {"issue": {"number": 17, "pull_request": {"url": "present"}},
+                 "comment": {"body": "/graphify approve " + "b" * 40, "user": {"login": "maintainer"}}}
+        self.assertEqual(gate.decide("issue_comment", event, api)["head"], "b" * 40)
 
     def test_untrusted_author_or_sender_requires_approval(self):
         for author, actor in (("writer", "writer"), ("maintainer", "writer")):

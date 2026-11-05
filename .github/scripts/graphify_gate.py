@@ -57,7 +57,9 @@ def decide(event_name, event, api):
             return None
         author = (pr.get("user") or {}).get("login")
         actor = (event.get("sender") or {}).get("login")
-        if not (api.maintainer(author) and api.maintainer(actor)):
+        head_repo = ((pr.get("head") or {}).get("repo") or {}).get("full_name", "")
+        same_repository = head_repo.lower() == api.repo.lower()
+        if not (same_repository and api.maintainer(author) and api.maintainer(actor)):
             api.notice(pr["number"], "Graphify is awaiting approval. A repository maintainer or administrator "
                        f"can comment `/graphify approve {pr['head']['sha']}` to approve this exact commit. The check is advisory.", create=True)
             return None
