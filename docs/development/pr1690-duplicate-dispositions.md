@@ -82,11 +82,46 @@ found no additional consumers of the retired test name.
 **Validation:** pending final integrated checks. Run `TestPR1655CommitRead*`
 and the existing PR1655 public protocol controls.
 
+## Finding 3: duplicated scalar/list relationship-UNIQUE race
+
+The follow-up staged check (tree
+`a4b53bd9ed1ca53febf3f704fcf7485a12901177`, published as `666aebcb8`)
+completed with seven functions analyzed and one additional reuse finding:
+`TestUniqueListConcurrentRelationshipCommits` in
+`pkg/storage/constraint_list_equality_regression_test.go:178` versus
+`TestRelationshipUniqueIndexConcurrentCommits` in
+`pkg/storage/relationship_unique_commit_index_test.go:161`. It was a behavior
+match with 0.412 code overlap. The shared fixture reuse was already verified;
+the remaining duplicated part was staging two equal-key writers, starting them
+together, collecting results and asserting one success plus a typed violation.
+
+**Disposition: consolidated.** Retire the standalone list race. Its case moves
+into the existing concurrency test, which now owns exactly the original three
+cases:
+
+| Case | Existing relationships | Extra seed | Value | Competing producers |
+| --- | ---: | --- | --- | --- |
+| scalar/transaction | 4 | id=100 | int64(999) | transaction / transaction |
+| scalar/direct | 4 | id=100 | int64(999) | transaction / direct write |
+| list/transaction | 2 | none | [float64(200)] | transaction / transaction |
+
+One staging/start/commit/result loop serves all rows. Per-edge property factories
+preserve the originals' independent map/list allocations. Each case still
+requires exactly one accepted write, with the losing result extracted through
+`asConstraintViolation`. No fourth case or production wrapper is introduced.
+The retired test name has no other repository consumers. Its now-unused `fmt`
+and `sync` imports are removed from the list test file.
+
+**Validation:** `TestRelationshipUniqueIndexConcurrentCommits` and all
+`TestUniqueList*` controls are run with `-race -count=5`; the final full-suite
+result is recorded in the PR. Production runtime remains byte-identical to the
+qualified correction.
+
 ## Scope of the result
 
-Both returned findings have concrete consolidation changes; neither is dismissed
+All three returned findings have concrete consolidation changes; none is dismissed
 as historical or merely similar. The production runtime, storage formats and
 measured cost harness are unchanged by these test consolidations. This inventory
-covers the completed report above, not an unbounded claim of no duplication
+covers the completed reports above, not an unbounded claim of no duplication
 anywhere in the repository. Final verification results belong in the PR result
 comment and the acceptance record.

@@ -47,3 +47,10 @@ extractor, and the complementary corruption controls now share one test setup.
 The superseded pre-disposition full run was canceled without observed failures
 after CLI/Cypher/ANTLR passed; its log and exact cancellation receipt are retained.
 The next full run uses the converged source and normal Go cache eligibility.
+
+Follow-up staged analysis completed on tree a4b53bd9 (published 666aebcb8):
+seven analyzed, one additional concurrency-test reuse finding. Its scalar and
+list cases now share the existing relationship-UNIQUE concurrency table, exactly
+preserving the original three schedules. The superseded converged sweep was
+canceled before edits; no full pass is claimed. Finish staged checker convergence
+before restarting the final full gate.

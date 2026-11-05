@@ -159,11 +159,29 @@ func TestRelationshipUniqueIndexPreservesTransactionSemantics(t *testing.T) {
 	}
 }
 func TestRelationshipUniqueIndexConcurrentCommits(t *testing.T) {
-	for _, direct := range []bool{false, true} {
-		t.Run(fmt.Sprintf("direct=%v", direct), func(t *testing.T) {
-			engine := relationshipUniqueCommitFixture(t, 4)
-			commitUniqueRelationships(t, engine, 100, 1)
-			edges := []*Edge{{ID: "test:writer0", Type: "T", StartNode: "test:a", EndNode: "test:b", Properties: map[string]interface{}{"id": int64(999)}}, {ID: "test:writer1", Type: "T", StartNode: "test:a", EndNode: "test:b", Properties: map[string]interface{}{"id": int64(999)}}}
+	for _, tc := range []struct {
+		name       string
+		existing   int
+		seed       bool
+		direct     bool
+		properties func() map[string]interface{}
+	}{
+		{name: "scalar/transaction", existing: 4, seed: true,
+			properties: func() map[string]interface{} { return map[string]interface{}{"id": int64(999)} }},
+		{name: "scalar/direct", existing: 4, seed: true, direct: true,
+			properties: func() map[string]interface{} { return map[string]interface{}{"id": int64(999)} }},
+		{name: "list/transaction", existing: 2,
+			properties: func() map[string]interface{} { return map[string]interface{}{"id": []interface{}{float64(200)}} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := relationshipUniqueCommitFixture(t, tc.existing)
+			if tc.seed {
+				commitUniqueRelationships(t, engine, 100, 1)
+			}
+			edges := []*Edge{
+				{ID: "test:writer0", Type: "T", StartNode: "test:a", EndNode: "test:b", Properties: tc.properties()},
+				{ID: "test:writer1", Type: "T", StartNode: "test:a", EndNode: "test:b", Properties: tc.properties()},
+			}
 			tx, err := engine.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			defer tx.Rollback()
@@ -171,7 +189,7 @@ func TestRelationshipUniqueIndexConcurrentCommits(t *testing.T) {
 			peer, err := engine.BeginTransaction(t.Context())
 			require.NoError(t, err)
 			defer peer.Rollback()
-			if !direct {
+			if !tc.direct {
 				require.NoError(t, peer.CreateEdge(t.Context(), edges[1]))
 			}
 			start := make(chan struct{})
@@ -182,7 +200,7 @@ func TestRelationshipUniqueIndexConcurrentCommits(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				<-start
-				if direct {
+				if tc.direct {
 					out <- engine.CreateEdge(t.Context(), edges[1])
 				} else {
 					out <- peer.Commit()
@@ -196,8 +214,7 @@ func TestRelationshipUniqueIndexConcurrentCommits(t *testing.T) {
 				if err == nil {
 					successes++
 				} else {
-					var violation *ConstraintViolationError
-					require.ErrorAs(t, err, &violation)
+					asConstraintViolation(t, err)
 				}
 			}
 			require.Equal(t, 1, successes)

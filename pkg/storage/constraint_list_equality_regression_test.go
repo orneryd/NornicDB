@@ -1,11 +1,9 @@
 package storage
 
 import (
-	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 	"math"
-	"sync"
 	"testing"
 	"time"
 )
@@ -175,32 +173,6 @@ func TestConstraintListEqualityCyclesAndBoundaries(t *testing.T) {
 		require.Equal(t, tc.eq, compareValues(tc.b, tc.a))
 	}
 }
-func TestUniqueListConcurrentRelationshipCommits(t *testing.T) {
-	engine := relationshipUniqueCommitFixture(t, 2)
-	var wg sync.WaitGroup
-	start := make(chan struct{})
-	results := make(chan error, 2)
-	for i := 0; i < 2; i++ {
-		tx, err := engine.BeginTransaction(t.Context())
-		require.NoError(t, err)
-		require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: EdgeID(fmt.Sprintf("test:list-peer%d", i)), Type: "T", StartNode: "test:a", EndNode: "test:b", Properties: map[string]interface{}{"id": []interface{}{float64(200)}}}))
-		wg.Add(1)
-		go func() { defer wg.Done(); defer tx.Rollback(); <-start; results <- tx.Commit() }()
-	}
-	close(start)
-	wg.Wait()
-	close(results)
-	success := 0
-	for err := range results {
-		if err == nil {
-			success++
-		} else {
-			asConstraintViolation(t, err)
-		}
-	}
-	require.Equal(t, 1, success)
-}
-
 func TestConstraintListCanonicalKeysPreserveEquality(t *testing.T) {
 	for _, pair := range []struct {
 		a, b interface{}
