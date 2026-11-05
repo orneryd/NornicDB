@@ -411,71 +411,168 @@ func TestBoltCypherIntegration(t *testing.T) {
 
 }
 
+// boltConstraintFamilyRow is one CREATE CONSTRAINT statement and the
+// SHOW CONSTRAINTS row shape the created constraint must report.
+type boltConstraintFamilyRow struct {
+	name         string
+	create       string
+	wantType     string
+	wantEntity   string
+	wantPropType string // empty when the family reports no property type
+}
+
+// boltNewerConstraintRows is the newer constraint-type population. It is the
+// single owner of these rows: boltAllConstraintFamilyRows is a strict
+// superset that reuses them unchanged.
+var boltNewerConstraintRows = []boltConstraintFamilyRow{
+	{
+		name:       "person_name_required",
+		create:     "CREATE CONSTRAINT person_name_required IF NOT EXISTS FOR (p:Person) REQUIRE p.name IS NOT NULL",
+		wantType:   "NODE_PROPERTY_EXISTENCE",
+		wantEntity: "NODE",
+	},
+	{
+		name:       "user_key",
+		create:     "CREATE CONSTRAINT user_key IF NOT EXISTS FOR (u:User) REQUIRE (u.username, u.domain) IS NODE KEY",
+		wantType:   "NODE_KEY",
+		wantEntity: "NODE",
+	},
+	{
+		name:       "fact_temporal",
+		create:     "CREATE CONSTRAINT fact_temporal IF NOT EXISTS FOR (v:FactVersion) REQUIRE (v.fact_key, v.valid_from, v.valid_to) IS TEMPORAL NO OVERLAP",
+		wantType:   "TEMPORAL_NO_OVERLAP",
+		wantEntity: "NODE",
+	},
+	{
+		name:       "rel_exists",
+		create:     "CREATE CONSTRAINT rel_exists IF NOT EXISTS FOR ()-[r:FOLLOWS]-() REQUIRE r.since IS NOT NULL",
+		wantType:   "RELATIONSHIP_PROPERTY_EXISTENCE",
+		wantEntity: "RELATIONSHIP",
+	},
+	{
+		name:       "rel_key",
+		create:     "CREATE CONSTRAINT rel_key IF NOT EXISTS FOR ()-[r:KNOWS]-() REQUIRE (r.since, r.how) IS RELATIONSHIP KEY",
+		wantType:   "RELATIONSHIP_KEY",
+		wantEntity: "RELATIONSHIP",
+	},
+}
+
+// boltAllConstraintFamilyRows is the complete constraint-family population:
+// the newer rows followed by the families that predate them.
+var boltAllConstraintFamilyRows = append(append([]boltConstraintFamilyRow{}, boltNewerConstraintRows...),
+	boltConstraintFamilyRow{
+		name:       "person_email_unique",
+		create:     "CREATE CONSTRAINT person_email_unique IF NOT EXISTS FOR (p:Person) REQUIRE p.email IS UNIQUE",
+		wantType:   "UNIQUENESS",
+		wantEntity: "NODE",
+	},
+	boltConstraintFamilyRow{
+		name:         "person_age_type",
+		create:       "CREATE CONSTRAINT person_age_type IF NOT EXISTS FOR (p:Person) REQUIRE p.age IS :: INTEGER",
+		wantType:     "NODE_PROPERTY_TYPE",
+		wantEntity:   "NODE",
+		wantPropType: "INTEGER",
+	},
+	boltConstraintFamilyRow{
+		name:       "person_status_domain",
+		create:     "CREATE CONSTRAINT person_status_domain IF NOT EXISTS FOR (p:Person) REQUIRE p.status IN ['active', 'inactive']",
+		wantType:   "DOMAIN",
+		wantEntity: "NODE",
+	},
+	boltConstraintFamilyRow{
+		name:         "rel_order_type",
+		create:       "CREATE CONSTRAINT rel_order_type IF NOT EXISTS FOR ()-[r:PART_OF]-() REQUIRE r.order IS :: INTEGER",
+		wantType:     "RELATIONSHIP_PROPERTY_TYPE",
+		wantEntity:   "RELATIONSHIP",
+		wantPropType: "INTEGER",
+	},
+	boltConstraintFamilyRow{
+		name:       "rel_role_domain",
+		create:     "CREATE CONSTRAINT rel_role_domain IF NOT EXISTS FOR ()-[r:WORKS_AT]-() REQUIRE r.role IN ['engineer', 'manager']",
+		wantType:   "DOMAIN",
+		wantEntity: "RELATIONSHIP",
+	},
+	boltConstraintFamilyRow{
+		name:       "max_jobs",
+		create:     "CREATE CONSTRAINT max_jobs IF NOT EXISTS FOR ()-[r:WORKS_AT]->() REQUIRE MAX COUNT 2",
+		wantType:   "CARDINALITY",
+		wantEntity: "RELATIONSHIP",
+	},
+	boltConstraintFamilyRow{
+		name:       "works_at_allowed",
+		create:     "CREATE CONSTRAINT works_at_allowed IF NOT EXISTS FOR (:Person)-[r:WORKS_AT]->(:Company) REQUIRE ALLOWED",
+		wantType:   "RELATIONSHIP_POLICY",
+		wantEntity: "RELATIONSHIP",
+	},
+	boltConstraintFamilyRow{
+		name:       "no_intern_exec",
+		create:     "CREATE CONSTRAINT no_intern_exec IF NOT EXISTS FOR (:Intern)-[r:REPORTS_TO]->(:Executive) REQUIRE DISALLOWED",
+		wantType:   "RELATIONSHIP_POLICY",
+		wantEntity: "RELATIONSHIP",
+	},
+)
+
+// runBoltConstraintFamilyMatrix creates every row's constraint over conn and
+// asserts the SHOW CONSTRAINTS row shape each row requires. It is the one
+// create-and-assert owner for the Bolt constraint-family integration tests.
+func runBoltConstraintFamilyMatrix(t *testing.T, conn net.Conn, rows []boltConstraintFamilyRow) {
+	t.Helper()
+	for _, row := range rows {
+		records := runBoltQueryWithParams(t, conn, row.create, nil)
+		if len(records) != 0 {
+			t.Fatalf("expected no records for schema mutation %q, got %d", row.create, len(records))
+		}
+	}
+
+	showRecords := runBoltQueryWithParams(t, conn, "SHOW CONSTRAINTS", nil)
+	if len(showRecords) < len(rows) {
+		t.Fatalf("expected at least %d constraints, got %d", len(rows), len(showRecords))
+	}
+
+	typesByName := map[string]string{}
+	entityTypesByName := map[string]string{}
+	propertyTypeByName := map[string]string{}
+	for _, record := range showRecords {
+		if len(record) < 8 {
+			continue
+		}
+		name, _ := record[1].(string)
+		constraintType, _ := record[2].(string)
+		entityType, _ := record[3].(string)
+		propertyType, _ := record[7].(string)
+		if name == "" {
+			continue
+		}
+		typesByName[name] = constraintType
+		entityTypesByName[name] = entityType
+		if propertyType != "" {
+			propertyTypeByName[name] = propertyType
+		}
+	}
+
+	for _, row := range rows {
+		if got := typesByName[row.name]; got != row.wantType {
+			t.Fatalf("expected SHOW CONSTRAINTS type %q for %q, got %q (all=%v)", row.wantType, row.name, got, typesByName)
+		}
+		if got := entityTypesByName[row.name]; got != row.wantEntity {
+			t.Fatalf("expected %s entity type for %q, got %q", row.wantEntity, row.name, got)
+		}
+		if row.wantPropType == "" {
+			continue
+		}
+		if got := propertyTypeByName[row.name]; got != row.wantPropType {
+			t.Fatalf("expected property type %q for %q, got %q", row.wantPropType, row.name, got)
+		}
+	}
+}
+
 func TestBoltConstraintIntegration_NewerConstraintTypes(t *testing.T) {
 	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 	conn := openBoltTestConn(t, port)
 
-	queries := []string{
-		"CREATE CONSTRAINT person_name_required IF NOT EXISTS FOR (p:Person) REQUIRE p.name IS NOT NULL",
-		"CREATE CONSTRAINT user_key IF NOT EXISTS FOR (u:User) REQUIRE (u.username, u.domain) IS NODE KEY",
-		"CREATE CONSTRAINT fact_temporal IF NOT EXISTS FOR (v:FactVersion) REQUIRE (v.fact_key, v.valid_from, v.valid_to) IS TEMPORAL NO OVERLAP",
-		"CREATE CONSTRAINT rel_exists IF NOT EXISTS FOR ()-[r:FOLLOWS]-() REQUIRE r.since IS NOT NULL",
-		"CREATE CONSTRAINT rel_key IF NOT EXISTS FOR ()-[r:KNOWS]-() REQUIRE (r.since, r.how) IS RELATIONSHIP KEY",
-	}
-
-	for _, query := range queries {
-		records := runBoltQueryWithParams(t, conn, query, nil)
-		if len(records) != 0 {
-			t.Fatalf("expected no records for schema mutation %q, got %d", query, len(records))
-		}
-	}
-
-	showRecords := runBoltQueryWithParams(t, conn, "SHOW CONSTRAINTS", nil)
-	if len(showRecords) < len(queries) {
-		t.Fatalf("expected at least %d constraints, got %d", len(queries), len(showRecords))
-	}
-
-	typesByName := map[string]string{}
-	entityTypesByName := map[string]string{}
-	for _, row := range showRecords {
-		if len(row) < 4 {
-			continue
-		}
-		name, _ := row[1].(string)
-		constraintType, ok := row[2].(string)
-		if ok && name != "" {
-			typesByName[name] = constraintType
-		}
-		entityType, ok := row[3].(string)
-		if ok && name != "" {
-			entityTypesByName[name] = entityType
-		}
-	}
-
-	wantTypes := map[string]string{
-		"person_name_required": "NODE_PROPERTY_EXISTENCE",
-		"user_key":             "NODE_KEY",
-		"fact_temporal":        "TEMPORAL_NO_OVERLAP",
-		"rel_exists":           "RELATIONSHIP_PROPERTY_EXISTENCE",
-		"rel_key":              "RELATIONSHIP_KEY",
-	}
-	for name, want := range wantTypes {
-		if got := typesByName[name]; got != want {
-			t.Fatalf("expected SHOW CONSTRAINTS type %q for %q, got %q (all=%v)", want, name, got, typesByName)
-		}
-	}
-
-	if entityTypesByName["person_name_required"] != "NODE" ||
-		entityTypesByName["user_key"] != "NODE" ||
-		entityTypesByName["fact_temporal"] != "NODE" {
-		t.Fatalf("unexpected node entity types in SHOW CONSTRAINTS: %v", entityTypesByName)
-	}
-	if entityTypesByName["rel_exists"] != "RELATIONSHIP" ||
-		entityTypesByName["rel_key"] != "RELATIONSHIP" {
-		t.Fatalf("unexpected relationship entity types in SHOW CONSTRAINTS: %v", entityTypesByName)
-	}
+	runBoltConstraintFamilyMatrix(t, conn, boltNewerConstraintRows)
 }
 
 func TestBoltConstraintIntegration_AllConstraintFamilies(t *testing.T) {
@@ -484,94 +581,7 @@ func TestBoltConstraintIntegration_AllConstraintFamilies(t *testing.T) {
 	_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 	conn := openBoltTestConn(t, port)
 
-	queries := []string{
-		"CREATE CONSTRAINT person_email_unique IF NOT EXISTS FOR (p:Person) REQUIRE p.email IS UNIQUE",
-		"CREATE CONSTRAINT person_name_required IF NOT EXISTS FOR (p:Person) REQUIRE p.name IS NOT NULL",
-		"CREATE CONSTRAINT user_key IF NOT EXISTS FOR (u:User) REQUIRE (u.username, u.domain) IS NODE KEY",
-		"CREATE CONSTRAINT person_age_type IF NOT EXISTS FOR (p:Person) REQUIRE p.age IS :: INTEGER",
-		"CREATE CONSTRAINT person_status_domain IF NOT EXISTS FOR (p:Person) REQUIRE p.status IN ['active', 'inactive']",
-		"CREATE CONSTRAINT fact_temporal IF NOT EXISTS FOR (v:FactVersion) REQUIRE (v.fact_key, v.valid_from, v.valid_to) IS TEMPORAL NO OVERLAP",
-		"CREATE CONSTRAINT rel_exists IF NOT EXISTS FOR ()-[r:FOLLOWS]-() REQUIRE r.since IS NOT NULL",
-		"CREATE CONSTRAINT rel_key IF NOT EXISTS FOR ()-[r:KNOWS]-() REQUIRE (r.since, r.how) IS RELATIONSHIP KEY",
-		"CREATE CONSTRAINT rel_order_type IF NOT EXISTS FOR ()-[r:PART_OF]-() REQUIRE r.order IS :: INTEGER",
-		"CREATE CONSTRAINT rel_role_domain IF NOT EXISTS FOR ()-[r:WORKS_AT]-() REQUIRE r.role IN ['engineer', 'manager']",
-		"CREATE CONSTRAINT max_jobs IF NOT EXISTS FOR ()-[r:WORKS_AT]->() REQUIRE MAX COUNT 2",
-		"CREATE CONSTRAINT works_at_allowed IF NOT EXISTS FOR (:Person)-[r:WORKS_AT]->(:Company) REQUIRE ALLOWED",
-		"CREATE CONSTRAINT no_intern_exec IF NOT EXISTS FOR (:Intern)-[r:REPORTS_TO]->(:Executive) REQUIRE DISALLOWED",
-	}
-
-	for _, query := range queries {
-		records := runBoltQueryWithParams(t, conn, query, nil)
-		if len(records) != 0 {
-			t.Fatalf("expected no records for schema mutation %q, got %d", query, len(records))
-		}
-	}
-
-	showRecords := runBoltQueryWithParams(t, conn, "SHOW CONSTRAINTS", nil)
-	if len(showRecords) < len(queries) {
-		t.Fatalf("expected at least %d constraints, got %d", len(queries), len(showRecords))
-	}
-
-	typesByName := map[string]string{}
-	entityTypesByName := map[string]string{}
-	propertyTypeByName := map[string]string{}
-	for _, row := range showRecords {
-		if len(row) < 8 {
-			continue
-		}
-		name, _ := row[1].(string)
-		constraintType, _ := row[2].(string)
-		entityType, _ := row[3].(string)
-		propType, _ := row[7].(string)
-		if name != "" {
-			typesByName[name] = constraintType
-			entityTypesByName[name] = entityType
-			if propType != "" {
-				propertyTypeByName[name] = propType
-			}
-		}
-	}
-
-	wantTypes := map[string]string{
-		"person_email_unique":  "UNIQUENESS",
-		"person_name_required": "NODE_PROPERTY_EXISTENCE",
-		"user_key":             "NODE_KEY",
-		"person_age_type":      "NODE_PROPERTY_TYPE",
-		"person_status_domain": "DOMAIN",
-		"fact_temporal":        "TEMPORAL_NO_OVERLAP",
-		"rel_exists":           "RELATIONSHIP_PROPERTY_EXISTENCE",
-		"rel_key":              "RELATIONSHIP_KEY",
-		"rel_order_type":       "RELATIONSHIP_PROPERTY_TYPE",
-		"rel_role_domain":      "DOMAIN",
-		"max_jobs":             "CARDINALITY",
-		"works_at_allowed":     "RELATIONSHIP_POLICY",
-		"no_intern_exec":       "RELATIONSHIP_POLICY",
-	}
-	for name, want := range wantTypes {
-		if got := typesByName[name]; got != want {
-			t.Fatalf("expected SHOW CONSTRAINTS type %q for %q, got %q (all=%v)", want, name, got, typesByName)
-		}
-	}
-
-	if propertyTypeByName["person_age_type"] != "INTEGER" {
-		t.Fatalf("expected property type INTEGER for person_age_type, got %q", propertyTypeByName["person_age_type"])
-	}
-	if propertyTypeByName["rel_order_type"] != "INTEGER" {
-		t.Fatalf("expected property type INTEGER for rel_order_type, got %q", propertyTypeByName["rel_order_type"])
-	}
-
-	nodeNames := []string{"person_email_unique", "person_name_required", "user_key", "person_age_type", "person_status_domain", "fact_temporal"}
-	for _, name := range nodeNames {
-		if entityTypesByName[name] != "NODE" {
-			t.Fatalf("expected NODE entity type for %q, got %q", name, entityTypesByName[name])
-		}
-	}
-	relNames := []string{"rel_exists", "rel_key", "rel_order_type", "rel_role_domain", "max_jobs", "works_at_allowed", "no_intern_exec"}
-	for _, name := range relNames {
-		if entityTypesByName[name] != "RELATIONSHIP" {
-			t.Fatalf("expected RELATIONSHIP entity type for %q, got %q", name, entityTypesByName[name])
-		}
-	}
+	runBoltConstraintFamilyMatrix(t, conn, boltAllConstraintFamilyRows)
 }
 
 func TestBoltConstraintIntegration_ConstraintContracts(t *testing.T) {
@@ -1084,6 +1094,93 @@ func TestBoltServerStress(t *testing.T) {
 	}
 }
 
+// boltSeedPropertyShape selects the property population the create/delete
+// relationship benchmark fixtures write on each seeded node.
+type boltSeedPropertyShape int
+
+const (
+	// boltSeedNameOnly seeds Actor{name} / Movie{title} only.
+	boltSeedNameOnly boltSeedPropertyShape = iota
+	// boltSeedBornReleased also seeds Actor{born} / Movie{released}.
+	boltSeedBornReleased
+)
+
+// boltBenchmarkSeed is the node population and property shape a
+// TestBoltBenchmarkCreateDeleteRelationship variant starts from.
+type boltBenchmarkSeed struct {
+	actors int
+	movies int
+	shape  boltSeedPropertyShape
+}
+
+// seedBoltCreateDeleteNodes writes seed's Actor/Movie population over conn and
+// requires every CREATE to complete its full RUN/PULL exchange.
+func seedBoltCreateDeleteNodes(t *testing.T, conn net.Conn, seed boltBenchmarkSeed) {
+	t.Helper()
+	t.Logf("Creating %d actors and %d movies...", seed.actors, seed.movies)
+	for i := 0; i < seed.actors; i++ {
+		properties := fmt.Sprintf("name: 'Actor_%d'", i)
+		if seed.shape == boltSeedBornReleased {
+			properties += fmt.Sprintf(", born: %d", 1950+i%50)
+		}
+		runBoltQueryWithParams(t, conn, fmt.Sprintf("CREATE (a:Actor {%s})", properties), nil)
+	}
+	for i := 0; i < seed.movies; i++ {
+		properties := fmt.Sprintf("title: 'Movie_%d'", i)
+		if seed.shape == boltSeedBornReleased {
+			properties += fmt.Sprintf(", released: %d", 1980+i%44)
+		}
+		runBoltQueryWithParams(t, conn, fmt.Sprintf("CREATE (m:Movie {%s})", properties), nil)
+	}
+}
+
+// requireBoltCount fails unless query's single count row equals want.
+func requireBoltCount(t *testing.T, conn net.Conn, query string, want int64) {
+	t.Helper()
+	records := runBoltQueryWithParams(t, conn, query, nil)
+	if len(records) != 1 || len(records[0]) != 1 {
+		t.Fatalf("expected exactly one count row for %q, got %v", query, records)
+	}
+	count, ok := records[0][0].(int64)
+	if !ok {
+		t.Fatalf("expected int64 count for %q, got %T (%v)", query, records[0][0], records[0][0])
+	}
+	if count != want {
+		t.Fatalf("expected %q count %d, got %d", query, want, count)
+	}
+}
+
+// requireBoltSeedPopulation fails unless conn observes exactly seed's
+// Actor/Movie population and no TEMP_REL relationship left by a prior run.
+func requireBoltSeedPopulation(t *testing.T, conn net.Conn, seed boltBenchmarkSeed) {
+	t.Helper()
+	requireBoltCount(t, conn, "MATCH (a:Actor) RETURN count(a)", int64(seed.actors))
+	requireBoltCount(t, conn, "MATCH (m:Movie) RETURN count(m)", int64(seed.movies))
+	requireBoltCount(t, conn, boltTemporaryRelationshipCountQuery, 0)
+}
+
+// boltCreateDeleteRelationshipQuery is the timed statement shared by every
+// TestBoltBenchmarkCreateDeleteRelationship variant.
+const boltTemporaryRelationshipCountQuery = "MATCH ()-[r:TEMP_REL]->() RETURN count(r)"
+
+const boltCreateDeleteRelationshipQuery = `MATCH (a:Actor), (m:Movie)
+			WITH a, m LIMIT 1
+			CREATE (a)-[r:TEMP_REL]->(m)
+			DELETE r`
+
+// runBoltCreateDeleteRelationshipIterations runs iterations of the shared
+// create/delete statement over conn and returns their elapsed time. Every wire
+// exchange is checked, so a failed exchange fails the test instead of
+// producing a throughput log.
+func runBoltCreateDeleteRelationshipIterations(t *testing.T, conn net.Conn, iterations int) time.Duration {
+	t.Helper()
+	start := time.Now()
+	for i := 0; i < iterations; i++ {
+		runBoltQueryWithParams(t, conn, boltCreateDeleteRelationshipQuery, nil)
+	}
+	return time.Since(start)
+}
+
 // TestBoltBenchmarkCreateDeleteRelationship measures real Bolt network performance
 // KEEP THIS TEST - this is the actual Bolt layer benchmark
 func TestBoltBenchmarkCreateDeleteRelationship(t *testing.T) {
@@ -1093,37 +1190,19 @@ func TestBoltBenchmarkCreateDeleteRelationship(t *testing.T) {
 	store := storage.NewNamespacedEngine(baseStore, "test")
 
 	_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
-
-	// Connect
 	conn := openBoltTestConn(t, port)
 
-	// Create test nodes
-	SendRun(t, conn, "CREATE (a:Actor {name: 'Test'})", nil, nil)
-	ReadSuccess(t, conn)
-	SendPull(t, conn, nil)
-	ReadSuccess(t, conn) // SUCCESS after PULL
+	seed := boltBenchmarkSeed{actors: 1, movies: 1, shape: boltSeedNameOnly}
+	// Preserve the original fixed small fixture; indexed multi-node inputs
+	// use the shared seed loop below.
+	runBoltQueryWithParams(t, conn, "CREATE (a:Actor {name: 'Test'})", nil)
+	runBoltQueryWithParams(t, conn, "CREATE (m:Movie {title: 'Test'})", nil)
+	requireBoltSeedPopulation(t, conn, seed)
 
-	SendRun(t, conn, "CREATE (m:Movie {title: 'Test'})", nil, nil)
-	ReadSuccess(t, conn)
-	SendPull(t, conn, nil)
-	ReadSuccess(t, conn)
-
-	// Benchmark the slow query
 	iterations := 100
 	t.Logf("Running %d iterations over Bolt (small dataset)", iterations)
 
-	start := time.Now()
-	for i := 0; i < iterations; i++ {
-		query := `MATCH (a:Actor), (m:Movie)
-			WITH a, m LIMIT 1
-			CREATE (a)-[r:TEMP_REL]->(m)
-			DELETE r`
-		SendRun(t, conn, query, nil, nil)
-		ReadSuccess(t, conn)
-		SendPull(t, conn, nil)
-		ReadSuccess(t, conn)
-	}
-	elapsed := time.Since(start)
+	elapsed := runBoltCreateDeleteRelationshipIterations(t, conn, iterations)
 
 	opsPerSec := float64(iterations) / elapsed.Seconds()
 	avgMs := elapsed.Seconds() * 1000 / float64(iterations)
@@ -1134,58 +1213,32 @@ func TestBoltBenchmarkCreateDeleteRelationship(t *testing.T) {
 	if opsPerSec < 500 {
 		t.Logf("WARNING: Bolt performance %.2f ops/sec is below 500 target", opsPerSec)
 	}
+
+	requireBoltCount(t, conn, boltTemporaryRelationshipCountQuery, 0)
 }
 
 // TestBoltBenchmarkCreateDeleteRelationship_LargeDataset simulates real benchmark conditions
 // KEEP THIS TEST - this shows performance with realistic data volume (100 actors, 150 movies)
 func TestBoltBenchmarkCreateDeleteRelationship_LargeDataset(t *testing.T) {
 	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	asyncBase := baseStore
-	store := storage.NewNamespacedEngine(asyncBase, "test")
-	cypherExec := cypher.NewStorageExecutor(store)
-	executor := &cypherQueryExecutor{executor: cypherExec}
+	store := storage.NewNamespacedEngine(baseStore, "test")
 
-	server := New(&Config{Port: 0, MaxConnections: 10}, executor)
-	port := serveBoltIntegrationServer(t, server)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 	conn := openBoltTestConn(t, port)
 
-	// Create 100 actors
-	t.Log("Creating 100 actors...")
-	for i := 0; i < 100; i++ {
-		SendRun(t, conn, fmt.Sprintf("CREATE (a:Actor {name: 'Actor_%d', born: %d})", i, 1950+i%50), nil, nil)
-		ReadSuccess(t, conn)
-		SendPull(t, conn, nil)
-		ReadSuccess(t, conn)
-	}
+	seed := boltBenchmarkSeed{actors: 100, movies: 150, shape: boltSeedBornReleased}
+	seedBoltCreateDeleteNodes(t, conn, seed)
+	requireBoltSeedPopulation(t, conn, seed)
 
-	// Create 150 movies
-	t.Log("Creating 150 movies...")
-	for i := 0; i < 150; i++ {
-		SendRun(t, conn, fmt.Sprintf("CREATE (m:Movie {title: 'Movie_%d', released: %d})", i, 1980+i%44), nil, nil)
-		ReadSuccess(t, conn)
-		SendPull(t, conn, nil)
-		ReadSuccess(t, conn)
-	}
-
-	// Benchmark
 	iterations := 100
 	t.Logf("Running %d iterations over Bolt (Memory, 100 actors + 150 movies)", iterations)
 
-	start := time.Now()
-	for i := 0; i < iterations; i++ {
-		query := `MATCH (a:Actor), (m:Movie)
-			WITH a, m LIMIT 1
-			CREATE (a)-[r:TEMP_REL]->(m)
-			DELETE r`
-		SendRun(t, conn, query, nil, nil)
-		ReadSuccess(t, conn)
-		SendPull(t, conn, nil)
-		ReadSuccess(t, conn)
-	}
-	elapsed := time.Since(start)
+	elapsed := runBoltCreateDeleteRelationshipIterations(t, conn, iterations)
 
 	opsPerSec := float64(iterations) / elapsed.Seconds()
 	t.Logf("Bolt Performance (Memory, large dataset): %.2f ops/sec, %.3f ms/op", opsPerSec, elapsed.Seconds()*1000/float64(iterations))
+
+	requireBoltCount(t, conn, boltTemporaryRelationshipCountQuery, 0)
 }
 
 // TestBoltBenchmarkCreateDeleteRelationship_Badger tests with BadgerDB (realistic)
@@ -1200,36 +1253,16 @@ func TestBoltBenchmarkCreateDeleteRelationship_Badger(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create BadgerEngine: %v", err)
 	}
-	defer badgerEngine.Close()
 
-	asyncBase := badgerEngine
-	store := storage.NewNamespacedEngine(asyncBase, "test")
-	cypherExec := cypher.NewStorageExecutor(store)
-	executor := &cypherQueryExecutor{executor: cypherExec}
+	store := storage.NewNamespacedEngine(badgerEngine, "test")
 
-	server := New(&Config{Port: 0, MaxConnections: 10}, executor)
-	port := serveBoltIntegrationServer(t, server)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 	conn := openBoltTestConn(t, port)
 
-	// Create 100 actors
-	t.Log("Creating 100 actors (BadgerDB)...")
-	for i := 0; i < 100; i++ {
-		SendRun(t, conn, fmt.Sprintf("CREATE (a:Actor {name: 'Actor_%d'})", i), nil, nil)
-		ReadSuccess(t, conn)
-		SendPull(t, conn, nil)
-		ReadSuccess(t, conn)
-	}
+	seed := boltBenchmarkSeed{actors: 100, movies: 150, shape: boltSeedNameOnly}
+	seedBoltCreateDeleteNodes(t, conn, seed)
+	requireBoltSeedPopulation(t, conn, seed)
 
-	// Create 150 movies
-	t.Log("Creating 150 movies (BadgerDB)...")
-	for i := 0; i < 150; i++ {
-		SendRun(t, conn, fmt.Sprintf("CREATE (m:Movie {title: 'Movie_%d'})", i), nil, nil)
-		ReadSuccess(t, conn)
-		SendPull(t, conn, nil)
-		ReadSuccess(t, conn)
-	}
-
-	// Benchmark
 	iterations := 100
 	if v := os.Getenv("BOLT_PROFILE_ITERATIONS"); v != "" {
 		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
@@ -1252,18 +1285,7 @@ func TestBoltBenchmarkCreateDeleteRelationship_Badger(t *testing.T) {
 		}
 	}
 
-	start := time.Now()
-	for i := 0; i < iterations; i++ {
-		query := `MATCH (a:Actor), (m:Movie)
-			WITH a, m LIMIT 1
-			CREATE (a)-[r:TEMP_REL]->(m)
-			DELETE r`
-		SendRun(t, conn, query, nil, nil)
-		ReadSuccess(t, conn)
-		SendPull(t, conn, nil)
-		ReadSuccess(t, conn)
-	}
-	elapsed := time.Since(start)
+	elapsed := runBoltCreateDeleteRelationshipIterations(t, conn, iterations)
 
 	if cpuFile != nil {
 		pprof.StopCPUProfile()
@@ -1285,6 +1307,8 @@ func TestBoltBenchmarkCreateDeleteRelationship_Badger(t *testing.T) {
 
 	opsPerSec := float64(iterations) / elapsed.Seconds()
 	t.Logf("Bolt Performance (BadgerDB, large dataset): %.2f ops/sec, %.3f ms/op", opsPerSec, elapsed.Seconds()*1000/float64(iterations))
+
+	requireBoltCount(t, conn, boltTemporaryRelationshipCountQuery, 0)
 }
 
 // TestBoltResponseMetadata verifies Neo4j-compatible metadata in responses

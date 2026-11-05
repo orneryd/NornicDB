@@ -840,8 +840,9 @@ else
 	# strips most of the noise. `go test ./...` always emits at least one
 	# `ok` or `FAIL` line per package, so grep never returns 1 in
 	# practice — pipefail's status is `go test`'s status. Flush results
-	# immediately so interrupted CI retains the last completed package.
-	@bash -c 'set -o pipefail; go test -p 1 -parallel 4 -timeout 30m ./... 2>&1 | grep --line-buffered -E "^(FAIL|ok|---[[:space:]]+FAIL)"'
+	# immediately so interrupted CI retains the last completed package. Keep
+	# raw diagnostics too: timeouts/compiler errors do not match this filter.
+	@bash -c 'set -o pipefail; go test -p 1 -parallel 4 -timeout 30m ./... 2>&1 | tee make-test-raw.log | grep --line-buffered -E "^(FAIL|ok|---[[:space:]]+FAIL)"'
 endif
 
 install-hooks:

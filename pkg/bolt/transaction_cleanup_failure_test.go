@@ -182,6 +182,43 @@ func requireBoltConnectionClosed(t *testing.T, conn net.Conn) {
 	}
 }
 
+// quarantineProbe is the Bolt statement a fresh connection attempts after a
+// cleanup failure quarantined the server's single executor.
+type quarantineProbe int
+
+const (
+	quarantineProbeBegin quarantineProbe = iota
+	quarantineProbeRun
+)
+
+// requireQuarantinedExecutorRejectsProbe proves the retired connection is fully
+// released and that the next connection is rejected before it can reuse the
+// quarantined executor. Callers keep their own executor counters and cleanup
+// statuses; this helper owns only the shared wait, fresh connection, probe,
+// failure and close ordering.
+func requireQuarantinedExecutorRejectsProbe(
+	t *testing.T,
+	server *Server,
+	port int,
+	probe quarantineProbe,
+) {
+	t.Helper()
+	require.Eventually(t, func() bool { return server.activeConnections.Load() == 0 },
+		time.Second, time.Millisecond)
+	fresh := openBoltTestConn(t, port)
+	switch probe {
+	case quarantineProbeBegin:
+		require.NoError(t, SendBegin(t, fresh, nil))
+	case quarantineProbeRun:
+		require.NoError(t, SendRun(t, fresh, "RETURN 1", nil, nil))
+	default:
+		t.Fatalf("unknown quarantine probe %d", probe)
+	}
+	_, _, err := AssertFailure(t, fresh)
+	require.NoError(t, err)
+	requireBoltConnectionClosed(t, fresh)
+}
+
 func TestBoltTimeoutCleanupFailureClosesConnectionWithoutReset(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -293,18 +330,12 @@ func TestBoltQuarantinesSingleConnectionRawExecutorAfterCleanupFailure(t *testin
 	_, _, err := AssertFailure(t, connA)
 	require.NoError(t, err)
 	requireBoltConnectionClosed(t, connA)
-	require.Eventually(t, func() bool { return server.activeConnections.Load() == 0 },
-		time.Second, time.Millisecond)
 
-	connB := openBoltTestConn(t, port)
-	require.NoError(t, SendRun(t, connB, "RETURN 1", nil, nil))
-	_, _, err = AssertFailure(t, connB)
-	require.NoError(t, err)
+	requireQuarantinedExecutorRejectsProbe(t, server, port, quarantineProbeRun)
 	require.Equal(t, int64(1), executor.beginCalls.Load(),
 		"quarantined executor must not receive another BEGIN")
 	require.Zero(t, executor.executeCalls.Load(),
 		"quarantined executor must not receive autocommit RUN")
-	requireBoltConnectionClosed(t, connB)
 }
 
 func TestBoltRejectsFactoryReturningNonTransactionalSessionExecutor(t *testing.T) {
@@ -347,13 +378,8 @@ func TestBoltBeginCleanupFailureClosesAndQuarantinesRawExecutor(t *testing.T) {
 	require.NoError(t, err)
 	requireBoltConnectionClosed(t, conn)
 	require.Equal(t, 1, executor.rollbackCalls)
-	require.Eventually(t, func() bool { return server.activeConnections.Load() == 0 },
-		time.Second, time.Millisecond)
 
-	fresh := openBoltTestConn(t, port)
-	require.NoError(t, SendBegin(t, fresh, nil))
-	_, _, err = AssertFailure(t, fresh)
-	require.NoError(t, err)
+	requireQuarantinedExecutorRejectsProbe(t, server, port, quarantineProbeBegin)
 	require.Equal(t, 1, executor.rollbackCalls, "quarantine must reject before executor reuse")
 }
 
@@ -378,13 +404,8 @@ func TestBoltCommitErrorClosesAndQuarantinesUnknownTransactionOutcome(t *testing
 	require.Zero(t, executor.rollbackCalls, "unknown commit outcome must not be rolled back as if commit failed")
 	require.Zero(t, executor.flushCalls, "unknown commit outcome must not be flushed")
 	executor.mu.Unlock()
-	require.Eventually(t, func() bool { return server.activeConnections.Load() == 0 },
-		time.Second, time.Millisecond)
 
-	fresh := openBoltTestConn(t, port)
-	require.NoError(t, SendBegin(t, fresh, nil))
-	_, _, err = AssertFailure(t, fresh)
-	require.NoError(t, err)
+	requireQuarantinedExecutorRejectsProbe(t, server, port, quarantineProbeBegin)
 	executor.mu.Lock()
 	defer executor.mu.Unlock()
 	require.Equal(t, 1, executor.beginCalls, "quarantine must reject before executor reuse")
@@ -409,14 +430,8 @@ func TestBoltCommitPanicClosesAndQuarantinesWithoutRollbackOrFlush(t *testing.T)
 	require.Zero(t, executor.rollbackCalls)
 	require.Zero(t, executor.flushCalls)
 	executor.mu.Unlock()
-	require.Eventually(t, func() bool { return server.activeConnections.Load() == 0 },
-		time.Second, time.Millisecond)
 
-	fresh := openBoltTestConn(t, port)
-	require.NoError(t, SendRun(t, fresh, "RETURN 1", nil, nil))
-	_, _, err := AssertFailure(t, fresh)
-	require.NoError(t, err)
-	requireBoltConnectionClosed(t, fresh)
+	requireQuarantinedExecutorRejectsProbe(t, server, port, quarantineProbeRun)
 	executor.mu.Lock()
 	defer executor.mu.Unlock()
 	require.Zero(t, executor.executeCalls, "quarantine must reject RUN before executor reuse")

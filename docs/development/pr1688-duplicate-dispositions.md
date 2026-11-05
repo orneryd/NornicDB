@@ -4,6 +4,8 @@ Inventory source: [the advisory comment](https://github.com/orneryd/NornicDB/pul
 
 The comment hides 70 refactor targets and 36 reuse candidates. Recovery used the same CI graph artifact (`13424277048`), unchanged analyzer, same source/base/thresholds and `ignore=()`, expanding only report/match presentation caps. It reproduces 400 analyzed functions, 80 refactor targets, 46 reuse candidates, zero cap skips and the same stale-baseline warning. All **126 candidate entries / 518 matched pairs**, **98 ownership proofs**, and **one AST owner call** are listed below. IDs refer to this expanded inventory; file/label/line identifies the corresponding comment entry.
 
+The later delivered-head advisory is accounted for in [the follow-up ledger](pr1688-duplicate-dispositions-followup.md), including its new matches and canonical test-fixture corrections. This original inventory remains preserved.
+
 ## Status and evidence
 
 Corrective-action codes are explicit work items, not assertions that pending implementation or CI passed. The integration checklist and final PR comment record which are applied and verified. No analyzer, threshold, exclusion or local hook change is part of this work. Source review is not a full-suite pass.

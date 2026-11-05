@@ -139,5 +139,14 @@ review CI request is superseded by the following pushed head.
 - [x] Converge fixed-command metadata construction while preserving command-specific scope transfer.
 - [x] Integrate and independently validate schema and Bolt convergence, including every retained scenario population; final schema tests cover both parsers, public admission/no-mutation and private error contracts.
 - [x] Preserve all 225 advisory records, including 518 matched pairs, in the disposition ledger. Add CI resource/log retention without changing the test gate.
-- [ ] Push the full disposition ledger and corrections; update the PR and Linear evidence and request corrected-head CI.
+- [x] Push the original full disposition ledger and corrections (2444cb481); update PR/Linear evidence and request corrected-head CI.
 - [ ] Evaluate actual full CI completion; exit 143 and skipped artifact upload are incomplete evidence, not a passing gate.
+
+## Frozen delivered-head advisory follow-up
+
+- [x] Expand the 2444cb481 advisory: account for all 129 recovered candidates / 515 pairs, 133 ownership records and one AST call (263 records); disclose two extra live-requery matches and stale baseline.
+- [x] Converge factory/raw database-pinning assertions, timeout barriers, quarantine probes, relationship workload seed/iteration owners, DB-manager session setup and constraint matrices without losing scenario populations.
+- [x] Share the zero-row aggregation seed/params/oracle across direct Cypher and Bolt public paths; retain both boundaries and all eight cases each.
+- [x] Independently validate the integrated follow-up under race (Bolt 22.412s; Cypher 13.923s) and normal lexical population (2.151s).
+- [x] Preserve raw Go diagnostics alongside resource samples without changing make-test flags/assertions.
+- [ ] Push the follow-up and report its exact-head CI result; do not call an in-progress or superseded run a pass.

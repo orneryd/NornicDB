@@ -202,5 +202,6 @@ jobs:
           name: make-test-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             make-test.log
+            make-test-raw.log
             make-test-resources.log
           if-no-files-found: warn

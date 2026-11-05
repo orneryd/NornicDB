@@ -297,16 +297,19 @@ func TestDatabaseScopedRollbackBoundaries(t *testing.T) {
 	}
 }
 
-func newDatabaseManagerBoltWriteSession(t *testing.T, mgr DatabaseManagerInterface) (context.Context, neo4jdriver.SessionWithContext) {
+// newDatabaseManagerBoltWriteSession serves a database-manager Bolt server and
+// returns a write session on its "nornic" database. maxConnections is an
+// explicit per-caller connection budget; serveBoltIntegrationServer owns server
+// shutdown, so this helper only closes the driver, after the caller's deferred
+// session close.
+func newDatabaseManagerBoltWriteSession(t *testing.T, mgr DatabaseManagerInterface, maxConnections int) (context.Context, neo4jdriver.SessionWithContext) {
 	t.Helper()
 	server := NewWithDatabaseManager(&Config{
 		Port:            0,
+		MaxConnections:  maxConnections,
 		ReadBufferSize:  8192,
 		WriteBufferSize: 8192,
 	}, &mockExecutor{}, mgr)
-	t.Cleanup(func() {
-		_ = server.Close()
-	})
 	port := serveBoltIntegrationServer(t, server)
 
 	ctx := context.Background()
@@ -316,7 +319,7 @@ func newDatabaseManagerBoltWriteSession(t *testing.T, mgr DatabaseManagerInterfa
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		_ = driver.Close(context.Background())
+		require.NoError(t, driver.Close(context.Background()))
 	})
 	require.NoError(t, driver.VerifyConnectivity(ctx))
 
@@ -335,7 +338,7 @@ func TestDatabaseManagerBoltNeo4jDriverExecuteWriteRollsBackPriorWrites(t *testi
 		},
 		defaultDB: "nornic",
 	}
-	ctx, session := newDatabaseManagerBoltWriteSession(t, mgr)
+	ctx, session := newDatabaseManagerBoltWriteSession(t, mgr, 0)
 	var err error
 	defer func() {
 		_ = session.Close(ctx)
@@ -370,7 +373,7 @@ func TestDatabaseManagerBoltNeo4jDriverExecuteWritePrefixesGeneratedNodeIDs(t *t
 		_ = mgr.Close()
 	})
 
-	ctx, session := newDatabaseManagerBoltWriteSession(t, mgr)
+	ctx, session := newDatabaseManagerBoltWriteSession(t, mgr, 0)
 	defer func() {
 		_ = session.Close(ctx)
 	}()
@@ -408,7 +411,7 @@ func TestDatabaseManagerBoltNeo4jDriverExecuteWritePrefixesCanonicalUnwindIDs(t 
 		_ = mgr.Close()
 	})
 
-	ctx, session := newDatabaseManagerBoltWriteSession(t, mgr)
+	ctx, session := newDatabaseManagerBoltWriteSession(t, mgr, 0)
 	defer func() {
 		_ = session.Close(ctx)
 	}()
