@@ -1,4 +1,8 @@
 import copy
+import json
+import os
+import subprocess
+import tempfile
 import runpy
 from pathlib import Path
 import unittest
@@ -25,6 +29,26 @@ class PolicyTests(unittest.TestCase):
             else:
                 broken['jobs']['verify']['needs'].remove('tests')
             self.assertTrue(policy['violations'](name, broken), mutate)
+
+    def test_release_matrix_keeps_every_coverage_group_and_make_test_shard(self):
+        workflow = self.load('release-verification.yml')
+        step = next(step for step in workflow['jobs']['prepare']['steps'] if step.get('id') == 'groups')
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / 'scripts/ci/test-groups.sh'
+            source.parent.mkdir(parents=True)
+            source.write_text("#!/usr/bin/env bash\nprintf '%s\\n' util-small cypher server-rest\n")
+            output = root / 'output'
+            env = dict(os.environ, GITHUB_OUTPUT=str(output))
+            subprocess.run([os.environ.get('TEST_BASH', 'bash'), '-c', step['run']], cwd=root, env=env, check=True)
+            matrix = json.loads(output.read_text().split('=', 1)[1])['include']
+        self.assertEqual([x['item'] for x in matrix if x['kind'] == 'coverage'], ['util-small', 'cypher', 'server-rest'])
+        self.assertEqual([x['item'] for x in matrix if x['kind'] == 'make-test'],
+                         ['cypher', 'storage', 'server', 'storagecensus', 'capturecensus', 'command', 'other'])
+        jobs = workflow['jobs']
+        self.assertEqual(jobs['tests']['strategy']['max-parallel'], 6)
+        self.assertEqual(jobs['checks']['strategy']['matrix']['check'],
+                         ['allocations', 'conformance', 'differential', 'docs', 'differential-ratchet'])
 
     def test_graphify_policy_requires_gate_and_secret_isolation(self):
         name = 'release-graphify-pr.yml'
