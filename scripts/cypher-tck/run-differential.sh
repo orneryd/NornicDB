@@ -48,14 +48,14 @@ if [[ "${mode}" == "ratchet" ]]; then
   # -timeout bounds each route's whole run; every statement also has its own
   # deadline (differential.DefaultOptions).
   NORNICDB_NEO4J_REFERENCE_URI="bolt://${published_address}" \
-    go test -tags 'noui,nolocalllm' ./testing/cypher/tck -run '^TestDifferentialRatchetBoltMatchesPinnedNeo4j$' -count=1 -timeout 45m -v
+    go test -tags 'noui' ./testing/cypher/tck -run '^TestDifferentialRatchetBoltMatchesPinnedNeo4j$' -count=1 -timeout 45m -v
   NORNICDB_NEO4J_REFERENCE_HTTP_URI="http://${published_http_address}" \
-    go test -tags 'noui,nolocalllm' ./pkg/server -run '^TestDifferentialRatchetHTTPMatchesPinnedNeo4j$' -count=1 -timeout 45m -v
+    go test -tags 'noui' ./pkg/server -run '^TestDifferentialRatchetHTTPMatchesPinnedNeo4j$' -count=1 -timeout 45m -v
   exit 0
 fi
 
 NORNICDB_NEO4J_REFERENCE_URI="bolt://${published_address}" \
-  go test -tags 'noui,nolocalllm' ./testing/cypher/tck -run '^(TestFixedDifferentialCorpusMatchesPinnedNeo4j|TestGh809_BoltTransactionIndexVisibility|TestGh810_NullPropertyMapsMatchPinnedNeo4j)$' -count=1 -v
+  go test -tags 'noui' ./testing/cypher/tck -run '^(TestFixedDifferentialCorpusMatchesPinnedNeo4j|TestGh809_BoltTransactionIndexVisibility|TestGh810_NullPropertyMapsMatchPinnedNeo4j)$' -count=1 -v
 
 NORNICDB_NEO4J_REFERENCE_HTTP_URI="http://${published_http_address}" \
-  go test -tags 'noui,nolocalllm' ./pkg/server -run '^(TestHTTPFixedDifferentialCorpusMatchesPinnedNeo4j|TestHTTPDifferentialResetClearsSchemaArtifacts|TestRemoteHTTPGraphRoundTrip|TestRemoteHTTPPinnedNeo4j|TestGh776_HTTPMalformedCommitRollback|TestGh809_HTTPTransactionIndexVisibility|TestGh810_HTTPNullPropertyMaps)$' -count=1 -v
+  go test -tags 'noui' ./pkg/server -run '^(TestHTTPFixedDifferentialCorpusMatchesPinnedNeo4j|TestHTTPDifferentialResetClearsSchemaArtifacts|TestRemoteHTTPGraphRoundTrip|TestRemoteHTTPPinnedNeo4j|TestGh776_HTTPMalformedCommitRollback|TestGh809_HTTPTransactionIndexVisibility|TestGh810_HTTPNullPropertyMaps)$' -count=1 -v
