@@ -49,6 +49,20 @@ class PolicyTests(unittest.TestCase):
         broken['jobs']['coverage']['if'] = "${{ always() }}"
         self.assertTrue(policy['violations'](name, broken))
 
+    def test_ci_test_jobs_enable_cgo_and_do_not_disable_local_llm(self):
+        for name, jobs in (("ci.yml", ("coverage-groups", "make-test-shards")),
+                           ("release-verification.yml", ("tests", "checks")),
+                           ("cypher-conformance.yml", ("allocations", "conformance")),
+                           ("cypher-differential-ratchet.yml", ("ratchet",))):
+            workflow = self.load(name)
+            for job in jobs:
+                self.assertEqual(str(workflow["jobs"][job]["env"]["CGO_ENABLED"]), "1", (name, job))
+        for path in ("scripts/cypher-tck/run-differential.sh", "scripts/cypher-tck/allocation_ratchet.py"):
+            self.assertNotIn("nolocalllm", (ROOT / path).read_text())
+        makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+        self.assertIn("CYPHER_TCK_TAGS := noui\n", makefile)
+        self.assertIn("./pkg/heimdall/...", (ROOT / "scripts/ci/test-groups.sh").read_text())
+
     def test_ingestion_policy_requires_authorization(self):
         name = 'release-graphify-ingest.yml'
         workflow = self.load(name)
