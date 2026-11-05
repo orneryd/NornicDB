@@ -13,17 +13,14 @@ var cleanShutdownMarkerKey = []byte{prefixMVCCMeta, prefixMVCCMetaCleanShutdown}
 // shutdown marker. Removing it before serving traffic makes an ungraceful exit
 // conservative: the next startup cannot mistake the crashed run for a clean one.
 func (b *BadgerEngine) ConsumeCleanShutdownMarker(ctx context.Context) (bool, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return false, err
 	}
 	clean := false
-	err := b.db.Update(func(txn *badger.Txn) error {
+	err := b.db.updateMetadataContext(ctx, func(txn *badger.Txn) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -67,16 +64,13 @@ func (b *BadgerEngine) ConsumeCleanShutdownMarker(ctx context.Context) (bool, er
 // MarkCleanShutdown durably records that all writers were stopped and flushed.
 // It must be called only at the end of an orderly owner shutdown.
 func (b *BadgerEngine) MarkCleanShutdown(ctx context.Context) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return err
 	}
-	if err := b.db.Update(func(txn *badger.Txn) error {
+	if err := b.db.updateMetadataContext(ctx, func(txn *badger.Txn) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}

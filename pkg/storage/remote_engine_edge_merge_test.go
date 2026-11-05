@@ -11,10 +11,10 @@ func TestRemoteEngineCreateEdgeMergesByID(t *testing.T) {
 	var params map[string]interface{}
 	engine := &RemoteEngine{
 		transport: &fakeRemoteTransport{
-			queryFn: func(_ context.Context, gotStatement string, gotParams map[string]interface{}) ([][]interface{}, error) {
+			queryFn: func(_ context.Context, gotStatement string, gotParams map[string]interface{}) ([]string, [][]interface{}, error) {
 				statement = gotStatement
 				params = gotParams
-				return [][]interface{}{{map[string]interface{}{"id": "merge-id"}}}, nil
+				return nil, [][]interface{}{{map[string]interface{}{"id": "merge-id"}}}, nil
 			},
 		},
 	}
@@ -28,7 +28,7 @@ func TestRemoteEngineCreateEdgeMergesByID(t *testing.T) {
 			"scope_id": "scope-a",
 		},
 	}
-	if err := engine.CreateEdge(edge); err != nil {
+	if err := engine.CreateEdge(t.Context(), edge); err != nil {
 		t.Fatalf("CreateEdge failed: %v", err)
 	}
 
@@ -49,7 +49,7 @@ func TestRemoteEngineCreateEdgeMergesByID(t *testing.T) {
 
 func TestRemoteEngineCreateEdgeRejectsNilInput(t *testing.T) {
 	engine := &RemoteEngine{transport: &fakeRemoteTransport{}}
-	if err := engine.CreateEdge(nil); err != ErrInvalidData {
+	if err := engine.CreateEdge(t.Context(), nil); err != ErrInvalidData {
 		t.Fatalf("expected ErrInvalidData for nil edge, got %v", err)
 	}
 }

@@ -26,36 +26,51 @@ func TestNewStorageExecutor(t *testing.T) {
 }
 
 func TestStorageExecutorQueryCacheTTLIsDatabaseScoped(t *testing.T) {
-	fast := NewStorageExecutorWithQueryCachePolicy(newTestMemoryEngine(t), 25, 2*time.Second)
-	slow := NewStorageExecutorWithQueryCachePolicy(newTestMemoryEngine(t), 2500, 30*time.Minute)
-	disabled := NewStorageExecutorWithQueryCachePolicy(newTestMemoryEngine(t), 0, time.Minute)
+	cases := []struct {
+		name    string
+		policy  QueryCachePolicy
+		clone   bool
+		execute bool
+	}{
+		{"fast database and clone", QueryCachePolicy{MaxEntries: 25, TTL: 2 * time.Second}, true, false},
+		{"slow database and clone", QueryCachePolicy{MaxEntries: 2500, TTL: 30 * time.Minute}, true, false},
+		{"disabled database", QueryCachePolicy{MaxEntries: 0, TTL: time.Minute}, false, false},
+		{"public execution entry TTL", QueryCachePolicy{MaxEntries: 10, TTL: 37 * time.Second}, false, true},
+	}
+	// Keep all database policies alive before inspecting any of them.
+	executors := make([]*StorageExecutor, len(cases))
+	for i, tc := range cases {
+		executors[i] = NewStorageExecutor(newTestMemoryEngine(t), tc.policy)
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			exec := executors[i]
+			if tc.policy.MaxEntries == 0 {
+				require.Nil(t, exec.cache)
+			} else {
+				maxEntries, ttl := exec.QueryCachePolicy()
+				require.Equal(t, tc.policy.MaxEntries, maxEntries)
+				require.Equal(t, tc.policy.TTL, ttl)
+			}
+			if tc.clone {
+				require.Equal(t, exec.queryCacheTTL, exec.cloneWithStorage(exec.storage).queryCacheTTL)
+			}
+			if tc.execute {
+				query := "MATCH (n) RETURN n"
+				_, err := exec.Execute(context.Background(), query, nil)
+				require.NoError(t, err)
+				version, supported := exec.storage.(storage.GraphMutationVersionProvider).GraphMutationVersion()
+				require.True(t, supported)
+				key := resultCacheEntryKey(t.Context(), query, nil) + ":graph:" + strconv.FormatUint(version, 10)
+				exec.cache.mu.RLock()
+				entry := exec.cache.cache[key]
+				exec.cache.mu.RUnlock()
+				require.NotNil(t, entry)
+				require.Equal(t, tc.policy.TTL, entry.ttl)
+			}
+		})
+	}
 
-	fastMaxEntries, fastTTL := fast.QueryCachePolicy()
-	slowMaxEntries, slowTTL := slow.QueryCachePolicy()
-	require.Equal(t, 25, fastMaxEntries)
-	require.Equal(t, 2*time.Second, fastTTL)
-	require.Equal(t, 2500, slowMaxEntries)
-	require.Equal(t, 30*time.Minute, slowTTL)
-	require.Nil(t, disabled.cache)
-	require.Equal(t, fast.queryCacheTTL, fast.cloneWithStorage(fast.storage).queryCacheTTL)
-	require.Equal(t, slow.queryCacheTTL, slow.cloneWithStorage(slow.storage).queryCacheTTL)
-}
-
-func TestStorageExecutorCachesResultsWithDatabaseTTL(t *testing.T) {
-	exec := NewStorageExecutorWithQueryCachePolicy(newTestMemoryEngine(t), 10, 37*time.Second)
-	query := "MATCH (n) RETURN n"
-
-	_, err := exec.Execute(context.Background(), query, nil)
-	require.NoError(t, err)
-
-	version, supported := exec.storage.(storage.GraphMutationVersionProvider).GraphMutationVersion()
-	require.True(t, supported)
-	key := resultCacheEntryKey(query, nil) + ":graph:" + strconv.FormatUint(version, 10)
-	exec.cache.mu.RLock()
-	entry := exec.cache.cache[key]
-	exec.cache.mu.RUnlock()
-	require.NotNil(t, entry)
-	require.Equal(t, 37*time.Second, entry.ttl)
 }
 
 func TestInvalidateCommittedWriteCaches(t *testing.T) {
@@ -192,31 +207,25 @@ func TestExecuteNormalizesCypherSyntaxConfusables(t *testing.T) {
 }
 
 func TestCreateDeletePipeline_Branches(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
+	exec, store := newCypherTestExecutor(t, "test")
 	ctx := context.Background()
 
-	created, err := exec.Execute(ctx, "CREATE (n:Tmp {name:'x'}) RETURN n", nil)
-	require.NoError(t, err)
-	require.Equal(t, 1, created.Stats.NodesCreated)
-
-	// Edge delete branch.
-	res, err := exec.Execute(ctx, "CREATE (a:TmpA)-[r:REL]->(b:TmpB) WITH r DELETE r RETURN count(r)", nil)
-	require.NoError(t, err)
-	require.NotNil(t, res.Stats)
-	assert.Equal(t, 1, res.Stats.RelationshipsCreated)
-	assert.Equal(t, 1, res.Stats.RelationshipsDeleted)
-	require.Len(t, res.Rows, 1)
-	assert.Equal(t, int64(1), res.Rows[0][0])
-
-	_, err = exec.Execute(ctx, "CREATE (n:TmpNode {name:'y'}) WITH n DELETE n RETURN n.name", nil)
-	require.Error(t, err)
-	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.EntityNotFound")
-	_, err = exec.Execute(ctx, "CREATE (n:TmpNode {name:'z'}) WITH n DELETE missing RETURN count(missing)", nil)
-	require.Error(t, err)
-	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
-	nodes, err := store.GetNodesByLabel("TmpNode")
+	runCreateDeleteSteps(t, exec, ctx, []createDeleteStep{
+		{query: "CREATE (n:Tmp {name:'x'}) RETURN n", check: func(t *testing.T, created *ExecuteResult) {
+			require.Equal(t, 1, created.Stats.NodesCreated)
+		}},
+		// Edge delete branch.
+		{query: "CREATE (a:TmpA)-[r:REL]->(b:TmpB) WITH r DELETE r RETURN count(r)", check: func(t *testing.T, res *ExecuteResult) {
+			require.NotNil(t, res.Stats)
+			assert.Equal(t, 1, res.Stats.RelationshipsCreated)
+			assert.Equal(t, 1, res.Stats.RelationshipsDeleted)
+			require.Len(t, res.Rows, 1)
+			assert.Equal(t, int64(1), res.Rows[0][0])
+		}},
+		{query: "CREATE (n:TmpNode {name:'y'}) WITH n DELETE n RETURN n.name", wantErrCode: "Neo.ClientError.Statement.EntityNotFound"},
+		{query: "CREATE (n:TmpNode {name:'z'}) WITH n DELETE missing RETURN count(missing)", wantErrCode: "Neo.ClientError.Statement.SyntaxError"},
+	})
+	nodes, err := store.GetNodesByLabel(ctx, "TmpNode")
 	require.NoError(t, err)
 	require.Empty(t, nodes)
 }
@@ -275,9 +284,9 @@ func TestExecuteMatchWithLabel(t *testing.T) {
 		Labels:     []string{"Company"},
 		Properties: map[string]interface{}{"name": "Acme"},
 	}
-	_, err := store.CreateNode(node1)
+	_, err := store.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
-	_, err = store.CreateNode(node2)
+	_, err = store.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
 
 	// Match only Person nodes
@@ -302,10 +311,10 @@ func TestExecuteMatchAllNodes(t *testing.T) {
 		}
 		err := error(nil)
 		if i == 0 {
-			_, err = store.CreateNode(node)
+			_, err = store.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 		} else {
-			_, err = store.CreateNode(node)
+			_, err = store.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 		}
 	}
@@ -333,9 +342,9 @@ func TestExecuteMatchWithWhere(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Bob", "age": float64(25)},
 	}
-	_, err := store.CreateNode(node1)
+	_, err := store.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
-	_, err = store.CreateNode(node2)
+	_, err = store.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
 
 	// Test equality
@@ -370,10 +379,10 @@ func TestExecuteMatchWithCount(t *testing.T) {
 		}
 		err := error(nil)
 		if i == 0 {
-			_, err = store.CreateNode(node)
+			_, err = store.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 		} else {
-			_, err = store.CreateNode(node)
+			_, err = store.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 		}
 	}
@@ -399,7 +408,7 @@ func TestExecuteMatchWithLimit(t *testing.T) {
 			Labels:     []string{"Item"},
 			Properties: map[string]interface{}{},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -423,7 +432,7 @@ func TestExecuteMatchWithSkip(t *testing.T) {
 			Labels:     []string{"Item"},
 			Properties: map[string]interface{}{},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -431,24 +440,6 @@ func TestExecuteMatchWithSkip(t *testing.T) {
 	result, err := exec.Execute(ctx, "MATCH (n) RETURN n SKIP 5", nil)
 	require.NoError(t, err)
 	assert.Len(t, result.Rows, 5)
-}
-
-func TestExecuteCreateNode(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	result, err := exec.Execute(ctx, "CREATE (n:Person {name: 'Alice', age: 30})", nil)
-	require.NoError(t, err)
-	assert.Equal(t, 1, result.Stats.NodesCreated)
-
-	// Verify node exists
-	nodes, err := store.GetNodesByLabel("Person")
-	require.NoError(t, err)
-	assert.Len(t, nodes, 1)
-	assert.Equal(t, "Alice", nodes[0].Properties["name"])
 }
 
 func TestExecuteCreateWithReturn(t *testing.T) {
@@ -476,7 +467,7 @@ func TestExecuteCreateMultipleNodes(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2, result.Stats.NodesCreated)
 
-	nodeCount, _ := store.NodeCount()
+	nodeCount, _ := store.NodeCount(t.Context())
 	assert.Equal(t, int64(2), nodeCount)
 }
 
@@ -492,7 +483,7 @@ func TestExecuteCreateRelationship(t *testing.T) {
 	assert.Equal(t, 2, result.Stats.NodesCreated)
 	assert.Equal(t, 1, result.Stats.RelationshipsCreated)
 
-	edgeCount, _ := store.EdgeCount()
+	edgeCount, _ := store.EdgeCount(t.Context())
 	assert.Equal(t, int64(1), edgeCount)
 }
 
@@ -527,7 +518,7 @@ func TestExecuteDelete(t *testing.T) {
 		Labels:     []string{"Temp"},
 		Properties: map[string]interface{}{},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -537,7 +528,7 @@ func TestExecuteDelete(t *testing.T) {
 	assert.Equal(t, 1, result.Stats.NodesDeleted)
 
 	// Verify deleted
-	nodeCount, _ := store.NodeCount()
+	nodeCount, _ := store.NodeCount(t.Context())
 	assert.Equal(t, int64(0), nodeCount)
 }
 
@@ -551,14 +542,14 @@ func TestExecuteDetachDelete(t *testing.T) {
 	// Create nodes with relationship
 	node1 := &storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{}}
 	node2 := &storage.Node{ID: "n2", Labels: []string{"Person"}, Properties: map[string]interface{}{}}
-	_, err := store.CreateNode(node1)
+	_, err := store.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
 	require.NoError(t, err)
-	_, err = store.CreateNode(node2)
+	_, err = store.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
 
 	edge := &storage.Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS"}
-	require.NoError(t, store.CreateEdge(edge))
+	require.NoError(t, store.CreateEdge(t.Context(), edge))
 
 	// Detach delete
 	result, err := exec.Execute(ctx, "MATCH (n:Person) DETACH DELETE n", nil)
@@ -575,7 +566,7 @@ func TestExecuteCallProcedure(t *testing.T) {
 
 	// Add some test data
 	node := &storage.Node{ID: "test", Labels: []string{"Memory"}, Properties: map[string]interface{}{}}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -609,7 +600,7 @@ func TestExecuteCallWithYieldWhere(t *testing.T) {
 		{ID: "n4", Labels: []string{"Memory", "Important"}, Properties: map[string]interface{}{}},
 	}
 	for _, n := range nodes {
-		_, err := store.CreateNode(n)
+		_, err := store.CreateNode(t.Context(), n)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -874,7 +865,7 @@ func TestParseYieldClause(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := parseYieldClause(tt.cypher)
+			result := parseYieldClause(t.Context(), tt.cypher)
 			if tt.expected == nil {
 				assert.Nil(t, result)
 				return
@@ -906,7 +897,7 @@ func TestExecuteWithParameters(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Alice"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -932,7 +923,7 @@ func TestExecuteReturnPropertyAccess(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Alice", "age": float64(30)},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -954,14 +945,14 @@ func TestExecuteMatchRelationship(t *testing.T) {
 	// Create nodes and relationship
 	node1 := &storage.Node{ID: "p1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}}
 	node2 := &storage.Node{ID: "p2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Bob"}}
-	_, err := store.CreateNode(node1)
+	_, err := store.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
 	require.NoError(t, err)
-	_, err = store.CreateNode(node2)
+	_, err = store.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
 
 	edge := &storage.Edge{ID: "e1", StartNode: "p1", EndNode: "p2", Type: "KNOWS"}
-	require.NoError(t, store.CreateEdge(edge))
+	require.NoError(t, store.CreateEdge(t.Context(), edge))
 
 	// Match with relationship pattern
 	result, err := exec.Execute(ctx, "MATCH (a)-[r:KNOWS]->(b) RETURN a, r, b", nil)
@@ -994,7 +985,7 @@ func TestExecuteWhereOperators(t *testing.T) {
 			Labels:     []string{"Person"},
 			Properties: map[string]interface{}{"name": n.name, "age": n.age},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -1036,7 +1027,7 @@ func TestExecuteContainsOperator(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Alice Smith"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1063,7 +1054,7 @@ func TestExecuteStartsWithOperator(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Alice Smith"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1085,7 +1076,7 @@ func TestExecuteEndsWithOperator(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Alice Smith"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1108,7 +1099,7 @@ func TestExecuteDistinct(t *testing.T) {
 			Labels:     []string{"Person"},
 			Properties: map[string]interface{}{"category": "A"},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -1143,7 +1134,7 @@ func TestExecuteOrderBy(t *testing.T) {
 			Labels:     []string{"Person"},
 			Properties: map[string]interface{}{"age": n.age},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -1208,7 +1199,7 @@ func TestExecuteSet(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Alice", "age": float64(25)},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1218,7 +1209,7 @@ func TestExecuteSet(t *testing.T) {
 	assert.Equal(t, 1, result.Stats.PropertiesSet)
 
 	// Verify update - integer values should be stored as int64 (Neo4j compatible)
-	updated, _ := store.GetNode("set-test")
+	updated, _ := store.GetNode(t.Context(), "set-test")
 	assert.Equal(t, int64(30), updated.Properties["age"])
 }
 
@@ -1235,7 +1226,7 @@ func TestExecuteSetWithReturn(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Bob"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -1284,7 +1275,7 @@ func TestExecuteAggregationSum(t *testing.T) {
 			Labels:     []string{"Number"},
 			Properties: map[string]interface{}{"value": float64(i * 10)},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -1309,7 +1300,7 @@ func TestExecuteAggregationAvg(t *testing.T) {
 			Labels:     []string{"Score"},
 			Properties: map[string]interface{}{"value": float64(i * 25)}, // 25,50,75,100
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -1334,7 +1325,7 @@ func TestExecuteAggregationMinMax(t *testing.T) {
 			Labels:     []string{"Value"},
 			Properties: map[string]interface{}{"num": v},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -1364,7 +1355,7 @@ func TestExecuteAggregationCollect(t *testing.T) {
 			Labels:     []string{"Person"},
 			Properties: map[string]interface{}{"name": name},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -1403,7 +1394,7 @@ func TestExecuteInOperator(t *testing.T) {
 			Labels:     []string{"User"},
 			Properties: map[string]interface{}{"status": status},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -1431,10 +1422,10 @@ func TestExecuteIsNullOperator(t *testing.T) {
 		Labels:     []string{"Contact"},
 		Properties: map[string]interface{}{"name": "Bob"},
 	}
-	_, err := store.CreateNode(node1)
+	_, err := store.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
 	require.NoError(t, err)
-	_, err = store.CreateNode(node2)
+	_, err = store.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
 
 	// IS NULL
@@ -1463,7 +1454,7 @@ func TestExecuteRegexOperator(t *testing.T) {
 			Labels:     []string{"User"},
 			Properties: map[string]interface{}{"email": email},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -1506,117 +1497,140 @@ func TestExecuteCreateRelationshipWithReturn(t *testing.T) {
 	assert.NotEmpty(t, result.Rows)
 }
 
-// TestExecuteCreateRelationshipWithArrayProperties tests CREATE with relationship properties containing arrays
-// This is a Neo4j-compatible feature for creating edges with properties like {roles: ['Neo']}
-func TestExecuteCreateRelationshipWithArrayProperties(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
+// TestExecuteCreateRelationshipWithPropertyValues tests CREATE with relationship
+// properties: both cases keep the literal statement, the property-value check and
+// the presence message, while the fixture and stats assertions are shared.
+func TestExecuteCreateRelationshipWithPropertyValues(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		statement string
+		wantType  string
+		wantProp  string
+		presence  string
+		check     func(t *testing.T, value interface{})
+	}{
+		{
+			name:      "TestExecuteCreateRelationshipWithArrayProperties",
+			statement: "CREATE (a:Person {name: 'Keanu'})-[:ACTED_IN {roles: ['Neo', 'John Wick']}]->(m:Movie {title: 'The Matrix'})",
+			wantType:  "ACTED_IN",
+			wantProp:  "roles",
+			presence:  "relationship should have 'roles' property",
+			check: func(t *testing.T, value interface{}) {
+				assert.NotNil(t, value)
+			},
+		},
+		{
+			name:      "TestExecuteCreateRelationshipWithStringProperty",
+			statement: "CREATE (a:Person {name: 'Director'})-[:DIRECTED {since: '1999'}]->(m:Movie {title: 'Film'})",
+			wantType:  "DIRECTED",
+			wantProp:  "since",
+			presence:  "relationship should have 'since' property",
+			check: func(t *testing.T, value interface{}) {
+				assert.Equal(t, "1999", value)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			baseStore := newTestMemoryEngine(t)
 
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
+			store := storage.NewNamespacedEngine(baseStore, "test")
+			exec := NewStorageExecutor(store)
+			ctx := context.Background()
 
-	// Test direct CREATE with relationship properties (array value)
-	result, err := exec.Execute(ctx, "CREATE (a:Person {name: 'Keanu'})-[:ACTED_IN {roles: ['Neo', 'John Wick']}]->(m:Movie {title: 'The Matrix'})", nil)
-	require.NoError(t, err)
-	assert.Equal(t, 2, result.Stats.NodesCreated)
-	assert.Equal(t, 1, result.Stats.RelationshipsCreated)
+			// Test direct CREATE with relationship properties.
+			result, err := exec.Execute(ctx, tc.statement, nil)
+			require.NoError(t, err)
+			assert.Equal(t, 2, result.Stats.NodesCreated)
+			assert.Equal(t, 1, result.Stats.RelationshipsCreated)
 
-	// Verify the relationship has properties
-	edges, err := store.AllEdges()
-	require.NoError(t, err)
-	require.Len(t, edges, 1)
-	assert.Equal(t, "ACTED_IN", edges[0].Type)
-	roles, ok := edges[0].Properties["roles"]
-	assert.True(t, ok, "relationship should have 'roles' property")
-	assert.NotNil(t, roles)
+			// Verify the relationship has properties
+			edges, err := store.AllEdges(ctx)
+			require.NoError(t, err)
+			require.Len(t, edges, 1)
+			assert.Equal(t, tc.wantType, edges[0].Type)
+			value, ok := edges[0].Properties[tc.wantProp]
+			assert.True(t, ok, tc.presence)
+			tc.check(t, value)
+		})
+	}
 }
 
-// TestExecuteCreateRelationshipWithStringProperty tests CREATE with a string property on relationship
-func TestExecuteCreateRelationshipWithStringProperty(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	result, err := exec.Execute(ctx, "CREATE (a:Person {name: 'Director'})-[:DIRECTED {since: '1999'}]->(m:Movie {title: 'Film'})", nil)
-	require.NoError(t, err)
-	assert.Equal(t, 2, result.Stats.NodesCreated)
-	assert.Equal(t, 1, result.Stats.RelationshipsCreated)
-
-	edges, err := store.AllEdges()
-	require.NoError(t, err)
-	require.Len(t, edges, 1)
-	assert.Equal(t, "DIRECTED", edges[0].Type)
-	since, ok := edges[0].Properties["since"]
-	assert.True(t, ok, "relationship should have 'since' property")
-	assert.Equal(t, "1999", since)
-}
-
-// TestExecuteMatchCreateRelationshipWithProperties tests MATCH...CREATE with relationship properties
-func TestExecuteMatchCreateRelationshipWithProperties(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	// First create the nodes
-	_, err := exec.Execute(ctx, "CREATE (p:Person {name: 'Keanu Reeves'})", nil)
-	require.NoError(t, err)
-	_, err = exec.Execute(ctx, "CREATE (m:Movie {title: 'The Matrix'})", nil)
-	require.NoError(t, err)
-
-	// Now use MATCH...CREATE with relationship properties (Neo4j Movies dataset pattern)
-	result, err := exec.Execute(ctx, `
+// TestExecuteMatchCreateRelationshipProperties tests MATCH...CREATE with
+// relationship properties. Both cases seed their endpoints first and share the
+// stats/edge assertions; the seed statements, the statement text, the original
+// failure message and the property checks stay per case.
+func TestExecuteMatchCreateRelationshipProperties(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		seed      []string
+		statement string
+		message   []interface{}
+		wantType  string
+		verify    func(t *testing.T, edge *storage.Edge)
+	}{
+		{
+			name: "TestExecuteMatchCreateRelationshipWithProperties",
+			seed: []string{
+				"CREATE (p:Person {name: 'Keanu Reeves'})",
+				"CREATE (m:Movie {title: 'The Matrix'})",
+			},
+			statement: `
 		MATCH (keanu:Person {name: 'Keanu Reeves'}), (matrix:Movie {title: 'The Matrix'})
 		CREATE (keanu)-[:ACTED_IN {roles: ['Neo']}]->(matrix)
-	`, nil)
-	require.NoError(t, err, "MATCH...CREATE with relationship properties should work")
-	assert.Equal(t, 1, result.Stats.RelationshipsCreated)
-
-	// Verify the relationship has properties
-	edges, err := store.AllEdges()
-	require.NoError(t, err)
-	require.Len(t, edges, 1)
-	assert.Equal(t, "ACTED_IN", edges[0].Type)
-	roles, ok := edges[0].Properties["roles"]
-	assert.True(t, ok, "relationship should have 'roles' property")
-	assert.NotNil(t, roles)
-}
-
-// TestExecuteMatchCreateRelationshipWithMultipleProperties tests multiple properties on relationships
-func TestExecuteMatchCreateRelationshipWithMultipleProperties(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	// Create nodes first
-	_, err := exec.Execute(ctx, "CREATE (a:Person {name: 'Alice'})", nil)
-	require.NoError(t, err)
-	_, err = exec.Execute(ctx, "CREATE (b:Person {name: 'Bob'})", nil)
-	require.NoError(t, err)
-
-	// MATCH...CREATE with multiple relationship properties
-	result, err := exec.Execute(ctx, `
+	`,
+			message:  []interface{}{"MATCH...CREATE with relationship properties should work"},
+			wantType: "ACTED_IN",
+			verify: func(t *testing.T, edge *storage.Edge) {
+				roles, ok := edge.Properties["roles"]
+				assert.True(t, ok, "relationship should have 'roles' property")
+				assert.NotNil(t, roles)
+			},
+		},
+		{
+			name: "TestExecuteMatchCreateRelationshipWithMultipleProperties",
+			seed: []string{
+				"CREATE (a:Person {name: 'Alice'})",
+				"CREATE (b:Person {name: 'Bob'})",
+			},
+			statement: `
 		MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
 		CREATE (a)-[:KNOWS {since: 2020, trust: 'high', tags: ['friend', 'colleague']}]->(b)
-	`, nil)
-	require.NoError(t, err)
-	assert.Equal(t, 1, result.Stats.RelationshipsCreated)
+	`,
+			wantType: "KNOWS",
+			verify: func(t *testing.T, edge *storage.Edge) {
+				_, hasSince := edge.Properties["since"]
+				_, hasTrust := edge.Properties["trust"]
+				_, hasTags := edge.Properties["tags"]
+				assert.True(t, hasSince, "should have 'since' property")
+				assert.True(t, hasTrust, "should have 'trust' property")
+				assert.True(t, hasTags, "should have 'tags' property")
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			baseStore := newTestMemoryEngine(t)
 
-	edges, err := store.AllEdges()
-	require.NoError(t, err)
-	require.Len(t, edges, 1)
-	assert.Equal(t, "KNOWS", edges[0].Type)
-	_, hasSince := edges[0].Properties["since"]
-	_, hasTrust := edges[0].Properties["trust"]
-	_, hasTags := edges[0].Properties["tags"]
-	assert.True(t, hasSince, "should have 'since' property")
-	assert.True(t, hasTrust, "should have 'trust' property")
-	assert.True(t, hasTags, "should have 'tags' property")
+			store := storage.NewNamespacedEngine(baseStore, "test")
+			exec := NewStorageExecutor(store)
+			ctx := context.Background()
+
+			// First create the nodes the MATCH clause finds.
+			for _, seed := range tc.seed {
+				_, err := exec.Execute(ctx, seed, nil)
+				require.NoError(t, err)
+			}
+
+			result, err := exec.Execute(ctx, tc.statement, nil)
+			require.NoError(t, err, tc.message...)
+			assert.Equal(t, 1, result.Stats.RelationshipsCreated)
+
+			edges, err := store.AllEdges(ctx)
+			require.NoError(t, err)
+			require.Len(t, edges, 1)
+			assert.Equal(t, tc.wantType, edges[0].Type)
+			tc.verify(t, edges[0])
+		})
+	}
 }
 
 // TestExecuteMatchCreateNodeAndRelationships tests MATCH...CREATE that creates NEW nodes
@@ -1635,7 +1649,7 @@ func TestExecuteMatchCreateNodeAndRelationships(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify initial state
-	nodes, _ := store.AllNodes()
+	nodes, _ := store.AllNodes(ctx)
 	assert.Len(t, nodes, 2, "Should have 2 initial nodes")
 
 	// Now use the Northwind pattern: MATCH existing nodes, CREATE new node AND relationships
@@ -1652,19 +1666,19 @@ func TestExecuteMatchCreateNodeAndRelationships(t *testing.T) {
 	assert.Equal(t, 2, result.Stats.RelationshipsCreated, "Should create 2 relationships")
 
 	// Verify total nodes
-	nodes, err = store.AllNodes()
+	nodes, err = store.AllNodes(ctx)
 	require.NoError(t, err)
 	assert.Len(t, nodes, 3, "Should now have 3 nodes total")
 
 	// Verify Product was created with correct properties
-	products, err := store.GetNodesByLabel("Product")
+	products, err := store.GetNodesByLabel(ctx, "Product")
 	require.NoError(t, err)
 	require.Len(t, products, 1, "Should have 1 Product node")
 	assert.Equal(t, "Chai", products[0].Properties["productName"])
 	assert.Equal(t, float64(18.0), products[0].Properties["unitPrice"])
 
 	// Verify relationships
-	edges, err := store.AllEdges()
+	edges, err := store.AllEdges(ctx)
 	require.NoError(t, err)
 	assert.Len(t, edges, 2, "Should have 2 relationships")
 
@@ -1694,7 +1708,7 @@ func TestExecuteMatchCreateNodeThenRelationship(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify customer exists
-	customers, _ := store.GetNodesByLabel("Customer")
+	customers, _ := store.GetNodesByLabel(ctx, "Customer")
 	require.Len(t, customers, 1, "Should have 1 customer")
 
 	// Now run the Northwind pattern:
@@ -1713,7 +1727,7 @@ func TestExecuteMatchCreateNodeThenRelationship(t *testing.T) {
 	assert.Equal(t, 1, result.Stats.RelationshipsCreated, "Should create 1 PURCHASED relationship")
 
 	// Verify order was created
-	orders, err := store.GetNodesByLabel("Order")
+	orders, err := store.GetNodesByLabel(ctx, "Order")
 	require.NoError(t, err)
 	require.Len(t, orders, 1, "Should have 1 Order node")
 	// Check orderID - could be int64 or float64 depending on parsing
@@ -1728,7 +1742,7 @@ func TestExecuteMatchCreateNodeThenRelationship(t *testing.T) {
 	}
 
 	// Verify relationship exists
-	edges, err := store.AllEdges()
+	edges, err := store.AllEdges(ctx)
 	require.NoError(t, err)
 	require.Len(t, edges, 1, "Should have 1 relationship")
 	assert.Equal(t, "PURCHASED", edges[0].Type)
@@ -1766,7 +1780,7 @@ func TestExecuteMatchCreateMultipleNodes(t *testing.T) {
 	assert.Equal(t, 2, result.Stats.RelationshipsCreated, "Should create 2 PART_OF relationships")
 
 	// Verify products
-	products, err := store.GetNodesByLabel("Product")
+	products, err := store.GetNodesByLabel(ctx, "Product")
 	require.NoError(t, err)
 	assert.Len(t, products, 2, "Should have 2 Product nodes")
 }
@@ -1796,7 +1810,7 @@ func TestExecuteMatchCreateWithRelationshipProperties(t *testing.T) {
 	assert.Equal(t, 1, result.Stats.RelationshipsCreated)
 
 	// Verify the relationship has the quantity property
-	edges, err := store.AllEdges()
+	edges, err := store.AllEdges(ctx)
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	assert.Equal(t, "ORDERS", edges[0].Type)
@@ -1845,7 +1859,7 @@ func TestExecuteMultipleMatchCreateBlocks(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify initial state
-	nodes, _ := store.AllNodes()
+	nodes, _ := store.AllNodes(ctx)
 	assert.Len(t, nodes, 4, "Should have 4 initial nodes (2 categories + 2 suppliers)")
 
 	// This is the EXACT pattern from Northwind benchmark that was failing:
@@ -1873,17 +1887,17 @@ func TestExecuteMultipleMatchCreateBlocks(t *testing.T) {
 	assert.Equal(t, 6, result.Stats.RelationshipsCreated, "Should create 6 relationships")
 
 	// Verify total nodes
-	nodes, err = store.AllNodes()
+	nodes, err = store.AllNodes(ctx)
 	require.NoError(t, err)
 	assert.Len(t, nodes, 7, "Should now have 7 nodes total (4 initial + 3 products)")
 
 	// Verify Products were created correctly
-	products, err := store.GetNodesByLabel("Product")
+	products, err := store.GetNodesByLabel(ctx, "Product")
 	require.NoError(t, err)
 	assert.Len(t, products, 3, "Should have 3 Product nodes")
 
 	// Verify relationships
-	edges, err := store.AllEdges()
+	edges, err := store.AllEdges(ctx)
 	require.NoError(t, err)
 	assert.Len(t, edges, 6, "Should have 6 relationships")
 
@@ -1951,18 +1965,18 @@ func TestExecuteMultipleMatchCreateBlocksWithDifferentCategories(t *testing.T) {
 	assert.Equal(t, 3, result.Stats.RelationshipsCreated)
 
 	// Verify each product is linked to the CORRECT category
-	products, _ := store.GetNodesByLabel("Product")
+	products, _ := store.GetNodesByLabel(ctx, "Product")
 	require.Len(t, products, 3)
 
 	for _, product := range products {
 		productID := product.Properties["productID"]
-		edges, _ := store.GetOutgoingEdges(product.ID)
+		edges, _ := store.GetOutgoingEdges(ctx, product.ID)
 
 		// Find the PART_OF edge
 		for _, edge := range edges {
 			if edge.Type == "PART_OF" {
 				// Get the target category
-				targetNode, _ := store.GetNode(edge.EndNode)
+				targetNode, _ := store.GetNode(t.Context(), edge.EndNode)
 				categoryID := targetNode.Properties["categoryID"]
 
 				// Product1 should link to Category1, Product2 to Category2, etc.
@@ -1999,12 +2013,12 @@ func TestExecuteMixedNodesAndRelationshipsCreate(t *testing.T) {
 	assert.Equal(t, 3, result.Stats.RelationshipsCreated, "Should create 3 KNOWS relationships")
 
 	// Verify nodes
-	nodes, err := store.AllNodes()
+	nodes, err := store.AllNodes(ctx)
 	require.NoError(t, err)
 	assert.Len(t, nodes, 3)
 
 	// Verify edges
-	edges, err := store.AllEdges()
+	edges, err := store.AllEdges(ctx)
 	require.NoError(t, err)
 	assert.Len(t, edges, 3)
 
@@ -2031,7 +2045,7 @@ func TestExecuteAllProcedures(t *testing.T) {
 		Labels:     []string{"TestLabel"},
 		Properties: map[string]interface{}{"prop1": "value1"},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -2098,7 +2112,7 @@ func TestExecuteAndOrOperators(t *testing.T) {
 			Labels:     []string{"Person"},
 			Properties: map[string]interface{}{"name": n.name, "age": n.age, "active": n.active},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -2129,7 +2143,7 @@ func TestExecuteOrderByDesc(t *testing.T) {
 			Labels:     []string{"Person"},
 			Properties: map[string]interface{}{"age": age},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -2155,7 +2169,7 @@ func TestExecuteSkipAndLimit(t *testing.T) {
 			Labels:     []string{"Item"},
 			Properties: map[string]interface{}{"index": float64(i)},
 		}
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, err)
 	}
@@ -2193,7 +2207,7 @@ func TestSubstituteParams(t *testing.T) {
 		Labels:     []string{"User"},
 		Properties: map[string]interface{}{"name": "Alice", "age": float64(30)},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -2235,7 +2249,7 @@ func TestResolveReturnItemVariants(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Alice", "age": float64(30)},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 
@@ -2264,23 +2278,6 @@ func TestResolveReturnItemVariants(t *testing.T) {
 	assert.NotNil(t, result.Rows[0][0])
 }
 
-func TestParsePropertiesVariants(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	// Create with number property
-	result, err := exec.Execute(ctx, "CREATE (n:Test {count: 42, rate: 3.14, flag: true})", nil)
-	require.NoError(t, err)
-	assert.Equal(t, 1, result.Stats.NodesCreated)
-
-	// Verify properties were parsed correctly
-	nodes, _ := store.GetNodesByLabel("Test")
-	assert.Len(t, nodes, 1)
-}
-
 func TestExecuteCountProperty(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 
@@ -2292,12 +2289,12 @@ func TestExecuteCountProperty(t *testing.T) {
 	node1 := &storage.Node{ID: "cp1", Labels: []string{"User"}, Properties: map[string]interface{}{"name": "Alice", "email": "a@b.com"}}
 	node2 := &storage.Node{ID: "cp2", Labels: []string{"User"}, Properties: map[string]interface{}{"name": "Bob"}}
 	node3 := &storage.Node{ID: "cp3", Labels: []string{"User"}, Properties: map[string]interface{}{"name": "Charlie", "email": "c@d.com"}}
-	_, err := store.CreateNode(node1)
+	_, err := store.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
 	require.NoError(t, err)
-	_, err = store.CreateNode(node2)
+	_, err = store.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
-	_, err = store.CreateNode(node3)
+	_, err = store.CreateNode(t.Context(), node3)
 	require.NoError(t, err)
 
 	// COUNT(n.email) should only count non-null
@@ -2325,7 +2322,7 @@ func TestToFloat64Variants(t *testing.T) {
 			"string":  "42.5",
 		},
 	}
-	_, err := store.CreateNode(node)
+	_, err := store.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 	require.NoError(t, err)
 

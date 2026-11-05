@@ -1,0 +1,17 @@
+File: storage.test
+Build ID: 8b156e4f3e520c397126a7ddf520dbbccaab865b
+Type: inuse_space
+Time: 2026-10-23 07:18:26 +08
+Showing nodes accounting for 185.61MB, 98.40% of 188.63MB total
+Dropped 17 nodes (cum <= 0.94MB)
+      flat  flat%   sum%        cum   cum%
+  111.57MB 59.15% 59.15%   122.07MB 64.72%  github.com/orneryd/nornicdb/pkg/storage.(*SchemaManager).PropertyIndexInsert
+   46.50MB 24.65% 83.80%    46.50MB 24.65%  github.com/orneryd/nornicdb/pkg/storage.spikeID
+   15.50MB  8.22% 92.02%   184.07MB 97.59%  github.com/orneryd/nornicdb/pkg/storage.TestUUIDMemorySpikeProbe
+   10.50MB  5.57% 97.59%    10.50MB  5.57%  github.com/orneryd/nornicdb/pkg/storage.appendUnique (inline)
+       1MB  0.53% 98.12%        1MB  0.53%  github.com/orneryd/nornicdb/pkg/cypher.newBoundedCache[go.shape.string,go.shape.struct { github.com/orneryd/nornicdb/pkg/cypher.plan github.com/orneryd/nornicdb/pkg/cypher.pipelineRowWith; github.com/orneryd/nornicdb/pkg/cypher.supported bool }]
+    0.54MB  0.29% 98.40%     3.54MB  1.88%  github.com/orneryd/nornicdb/pkg/cypher.init
+         0     0% 98.40%     4.05MB  2.15%  runtime.doInit (inline)
+         0     0% 98.40%     4.05MB  2.15%  runtime.doInit1
+         0     0% 98.40%     4.05MB  2.15%  runtime.main
+         0     0% 98.40%   184.07MB 97.59%  testing.tRunner

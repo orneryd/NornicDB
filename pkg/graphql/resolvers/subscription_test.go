@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/testutil"
+
 	"github.com/orneryd/nornicdb/pkg/graphql/models"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
@@ -337,7 +339,7 @@ func TestEventBroker_Close(t *testing.T) {
 
 func TestSubscription_NodeCreated_Integration(t *testing.T) {
 	db := testDB(t)
-	dbManager := testDBManager(t, db)
+	dbManager := testutil.DatabaseManager(t, db)
 	resolver := NewResolver(db, dbManager)
 
 	require.NotNil(t, resolver.EventBroker)
@@ -359,7 +361,7 @@ func TestSubscription_NodeCreated_Integration(t *testing.T) {
 			"name": "Alice",
 		},
 	}
-	_, err = storageEngine.CreateNode(node)
+	_, err = storageEngine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	// Verify subscription received the event
@@ -376,7 +378,7 @@ func TestSubscription_NodeCreated_Integration(t *testing.T) {
 
 func TestSubscription_NodeUpdated_Integration(t *testing.T) {
 	db := testDB(t)
-	dbManager := testDBManager(t, db)
+	dbManager := testutil.DatabaseManager(t, db)
 	resolver := NewResolver(db, dbManager)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -393,7 +395,7 @@ func TestSubscription_NodeUpdated_Integration(t *testing.T) {
 			"name": "Alice",
 		},
 	}
-	_, err = storageEngine.CreateNode(node)
+	_, err = storageEngine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	// Subscribe to node updated events
@@ -401,7 +403,7 @@ func TestSubscription_NodeUpdated_Integration(t *testing.T) {
 
 	// Update the node
 	node.Properties["age"] = 30
-	err = storageEngine.UpdateNode(node)
+	err = storageEngine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node})
 	require.NoError(t, err)
 
 	// Verify subscription received the event
@@ -409,7 +411,8 @@ func TestSubscription_NodeUpdated_Integration(t *testing.T) {
 	case event := <-ch:
 		assert.Equal(t, "n1", event.ID)
 		props := map[string]interface{}(event.Properties)
-		assert.Equal(t, 30, props["age"])
+		assert.Equal(t, int64(30), props["age"])
+		assert.Equal(t, 30, node.Properties["age"], "event normalization must not modify the caller input")
 	case <-time.After(2 * time.Second):
 		t.Fatal("Subscription did not receive node updated event")
 	}
@@ -417,7 +420,7 @@ func TestSubscription_NodeUpdated_Integration(t *testing.T) {
 
 func TestSubscription_NodeDeleted_Integration(t *testing.T) {
 	db := testDB(t)
-	dbManager := testDBManager(t, db)
+	dbManager := testutil.DatabaseManager(t, db)
 	resolver := NewResolver(db, dbManager)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -431,14 +434,14 @@ func TestSubscription_NodeDeleted_Integration(t *testing.T) {
 		ID:     storage.NodeID("n1"),
 		Labels: []string{"Person"},
 	}
-	_, err = storageEngine.CreateNode(node)
+	_, err = storageEngine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	// Subscribe to node deleted events
 	ch := resolver.EventBroker.SubscribeNodeDeleted(ctx, nil)
 
 	// Delete the node
-	err = storageEngine.DeleteNode(storage.NodeID("n1"))
+	err = storageEngine.DeleteNode(t.Context(), storage.NodeID("n1"))
 	require.NoError(t, err)
 
 	// Verify subscription received the event
@@ -452,7 +455,7 @@ func TestSubscription_NodeDeleted_Integration(t *testing.T) {
 
 func TestSubscription_RelationshipCreated_Integration(t *testing.T) {
 	db := testDB(t)
-	dbManager := testDBManager(t, db)
+	dbManager := testutil.DatabaseManager(t, db)
 	resolver := NewResolver(db, dbManager)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -470,9 +473,9 @@ func TestSubscription_RelationshipCreated_Integration(t *testing.T) {
 		ID:     storage.NodeID("n2"),
 		Labels: []string{"Person"},
 	}
-	_, err = storageEngine.CreateNode(node1)
+	_, err = storageEngine.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
-	_, err = storageEngine.CreateNode(node2)
+	_, err = storageEngine.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
 
 	// Subscribe to relationship created events
@@ -488,7 +491,7 @@ func TestSubscription_RelationshipCreated_Integration(t *testing.T) {
 			"since": "2020",
 		},
 	}
-	err = storageEngine.CreateEdge(edge)
+	err = storageEngine.CreateEdge(t.Context(), edge)
 	require.NoError(t, err)
 
 	// Verify subscription received the event
@@ -505,7 +508,7 @@ func TestSubscription_RelationshipCreated_Integration(t *testing.T) {
 
 func TestSubscription_RelationshipDeleted_Integration(t *testing.T) {
 	db := testDB(t)
-	dbManager := testDBManager(t, db)
+	dbManager := testutil.DatabaseManager(t, db)
 	resolver := NewResolver(db, dbManager)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -517,9 +520,9 @@ func TestSubscription_RelationshipDeleted_Integration(t *testing.T) {
 
 	node1 := &storage.Node{ID: storage.NodeID("n1"), Labels: []string{"Person"}}
 	node2 := &storage.Node{ID: storage.NodeID("n2"), Labels: []string{"Person"}}
-	_, err = storageEngine.CreateNode(node1)
+	_, err = storageEngine.CreateNode(t.Context(), node1)
 	require.NoError(t, err)
-	_, err = storageEngine.CreateNode(node2)
+	_, err = storageEngine.CreateNode(t.Context(), node2)
 	require.NoError(t, err)
 
 	edge := &storage.Edge{
@@ -528,14 +531,14 @@ func TestSubscription_RelationshipDeleted_Integration(t *testing.T) {
 		StartNode: storage.NodeID("n1"),
 		EndNode:   storage.NodeID("n2"),
 	}
-	err = storageEngine.CreateEdge(edge)
+	err = storageEngine.CreateEdge(t.Context(), edge)
 	require.NoError(t, err)
 
 	// Subscribe to relationship deleted events
 	ch := resolver.EventBroker.SubscribeRelationshipDeleted(ctx, nil)
 
 	// Delete the relationship
-	err = storageEngine.DeleteEdge(storage.EdgeID("r1"))
+	err = storageEngine.DeleteEdge(t.Context(), storage.EdgeID("r1"))
 	require.NoError(t, err)
 
 	// Verify subscription received the event
@@ -552,50 +555,42 @@ func TestSubscription_RelationshipDeleted_Integration(t *testing.T) {
 // =============================================================================
 
 func TestSubscriptionResolver_NodeCreated(t *testing.T) {
-	db := testDB(t)
-	dbManager := testDBManager(t, db)
-	resolver := NewResolver(db, dbManager)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	subResolver := &subscriptionResolver{Resolver: resolver}
-
-	// Subscribe
-	ch, err := subResolver.subscriptionNodeCreated(ctx, []string{"Person"})
-	require.NoError(t, err)
-	require.NotNil(t, ch)
-
-	// Create a node via storage
-	storageEngine, err := resolver.getStorage()
-	require.NoError(t, err)
-
-	node := &storage.Node{
-		ID:     storage.NodeID("n1"),
-		Labels: []string{"Person"},
+	for _, brokerAvailable := range []bool{true, false} {
+		name := "event broker available"
+		if !brokerAvailable {
+			name = "event broker missing"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			db := testDB(t)
+			resolver := NewResolver(db, testutil.DatabaseManager(t, db))
+			var labels []string
+			if brokerAvailable {
+				labels = []string{"Person"}
+			} else {
+				resolver.EventBroker = nil
+			}
+			subResolver := &subscriptionResolver{Resolver: resolver}
+			ch, err := subResolver.subscriptionNodeCreated(ctx, labels)
+			if !brokerAvailable {
+				require.Error(t, err)
+				assert.Nil(t, ch)
+				assert.Contains(t, err.Error(), "event broker not initialized")
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, ch)
+			storageEngine, err := resolver.getStorage()
+			require.NoError(t, err)
+			_, err = storageEngine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID("n1"), Labels: []string{"Person"}})
+			require.NoError(t, err)
+			select {
+			case event := <-ch:
+				assert.Equal(t, "n1", event.ID)
+			case <-time.After(2 * time.Second):
+				t.Fatal("Subscription did not receive event")
+			}
+		})
 	}
-	_, err = storageEngine.CreateNode(node)
-	require.NoError(t, err)
-
-	// Verify event received
-	select {
-	case event := <-ch:
-		assert.Equal(t, "n1", event.ID)
-	case <-time.After(2 * time.Second):
-		t.Fatal("Subscription did not receive event")
-	}
-}
-
-func TestSubscriptionResolver_NodeCreated_NoEventBroker(t *testing.T) {
-	resolver := &Resolver{
-		EventBroker: nil, // No event broker
-	}
-	subResolver := &subscriptionResolver{Resolver: resolver}
-
-	ctx := context.Background()
-	ch, err := subResolver.subscriptionNodeCreated(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, ch)
-	assert.Contains(t, err.Error(), "event broker not initialized")
 }

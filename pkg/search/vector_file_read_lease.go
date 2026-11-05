@@ -2,11 +2,13 @@ package search
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"sort"
-	"sync"
 	"unsafe"
+
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 )
 
 // vectorFileReadLease is an immutable snapshot used by HNSW construction.
@@ -18,15 +20,33 @@ type vectorFileReadLease struct {
 	idToOrdinal map[string]int64
 	data        []byte
 	unmap       func() error
-	closeOnce   sync.Once
-	closeErr    error
+	closeOnce   lifecycle.OnceCompletion
 }
+
+// errVectorFileUnmapped marks a readable file the platform would not map, for
+// example ENOMEM from a whole-file mapping. Its rows stay readable with ReadAt.
+var errVectorFileUnmapped = errors.New("vector file mapping unavailable")
 
 func (v *VectorFileStore) beginReadLease() (*vectorFileReadLease, error) {
 	v.appendMu.Lock()
 	defer v.appendMu.Unlock()
 	v.mu.RLock()
 	defer v.mu.RUnlock()
+	lease, err := v.newMappedReadLeaseLocked()
+	if err != nil {
+		return nil, err
+	}
+	ordinals := make(map[string]int64, len(v.idToOrdinal))
+	for id, ordinal := range v.idToOrdinal {
+		ordinals[id] = ordinal
+	}
+	lease.idToOrdinal = ordinals
+	return lease, nil
+}
+
+// newMappedReadLeaseLocked maps the current file. Callers own mu and decide
+// whether the ordinal table is borrowed under that lock or copied as a snapshot.
+func (v *VectorFileStore) newMappedReadLeaseLocked() (*vectorFileReadLease, error) {
 	if v.closed || v.file == nil {
 		return nil, errVecFileClosed
 	}
@@ -35,35 +55,27 @@ func (v *VectorFileStore) beginReadLease() (*vectorFileReadLease, error) {
 		return nil, err
 	}
 	if stat.Size() < 0 || uint64(stat.Size()) > uint64(^uint(0)>>1) {
-		return nil, fmt.Errorf("vector file size %d cannot be mapped on this platform", stat.Size())
+		return nil, fmt.Errorf("%w: vector file size %d cannot be mapped on this platform", errVectorFileUnmapped, stat.Size())
 	}
-	data, unmap, err := mapVectorFileReadOnly(v.file.File, int(stat.Size()))
+	data, unmap, err := v.mapFile(v.file.File, int(stat.Size()))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", errVectorFileUnmapped, err)
 	}
-	ordinals := make(map[string]int64, len(v.idToOrdinal))
-	for id, ordinal := range v.idToOrdinal {
-		ordinals[id] = ordinal
-	}
-	return &vectorFileReadLease{
-		dimensions:  v.dimensions,
-		idToOrdinal: ordinals,
-		data:        data,
-		unmap:       unmap,
-	}, nil
+	return &vectorFileReadLease{dimensions: v.dimensions, idToOrdinal: v.idToOrdinal, data: data, unmap: unmap}, nil
 }
 
 func (l *vectorFileReadLease) Close() error {
 	if l == nil {
 		return nil
 	}
-	l.closeOnce.Do(func() {
+	return l.closeOnce.Do(func() error {
+		var err error
 		if l.unmap != nil {
-			l.closeErr = l.unmap()
+			err = l.unmap()
 		}
 		l.data = nil
+		return err
 	})
-	return l.closeErr
 }
 
 func (l *vectorFileReadLease) Lookup(id string) ([]float32, bool) {

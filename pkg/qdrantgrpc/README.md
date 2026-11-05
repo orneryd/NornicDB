@@ -129,14 +129,21 @@ For production use, provide the `search.Service` to enable unified vector indexi
 package main
 
 import (
+    "context"
     "log"
-    
+    "os"
+    "os/signal"
+    "syscall"
+
+    "github.com/orneryd/nornicdb/pkg/multidb"
     "github.com/orneryd/nornicdb/pkg/qdrantgrpc"
-    "github.com/orneryd/nornicdb/pkg/search"
     "github.com/orneryd/nornicdb/pkg/storage"
 )
 
 func main() {
+    startupCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+    defer stop()
+
     // Create persistent base storage (Badger for production)
     base, err := storage.NewBadgerEngine("./data")
     if err != nil {
@@ -145,7 +152,7 @@ func main() {
     defer base.Close()
 
     // Create database manager (collections map to database namespaces)
-    dbManager, err := multidb.NewDatabaseManager(base, nil)
+    dbManager, err := multidb.NewDatabaseManager(startupCtx, base, nil)
     if err != nil {
         log.Fatal(err)
     }
@@ -167,8 +174,8 @@ func main() {
     
     log.Printf("Qdrant gRPC server listening on %s", server.Addr())
     
-    // Keep running...
-    select {}
+    // Keep the standalone owner alive until shutdown.
+    <-startupCtx.Done()
 }
 ```
 

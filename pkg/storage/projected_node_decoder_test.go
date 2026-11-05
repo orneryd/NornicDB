@@ -6,6 +6,8 @@ package storage
 // rejects a node whose stored value is not a required string by its bytes.
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"encoding/binary"
 	"sort"
@@ -19,7 +21,7 @@ import (
 )
 
 func TestProjectedNodeDecoderAcrossDatabases(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	day := time.Date(2026, 10, 4, 0, 0, 0, 0, time.UTC)
@@ -31,7 +33,7 @@ func TestProjectedNodeDecoderAcrossDatabases(t *testing.T) {
 		{ID: "b:1", Labels: []string{"P"}, Properties: map[string]interface{}{"id": "k1", "name": "z"}},
 		{ID: "c:1", Labels: []string{"P"}, Properties: map[string]interface{}{"name": "k1"}},
 	} {
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 	stream := func(opts StreamNodesOptions) map[NodeID]map[string]interface{} {
@@ -62,10 +64,10 @@ func TestProjectedNodeDecoderAcrossDatabases(t *testing.T) {
 }
 
 func TestProjectedNodeDecoderRejectedNodeAllocations(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
-	_, err = engine.CreateNode(&Node{ID: "a:1", Labels: []string{"P"}, Properties: map[string]interface{}{"id": 7, "name": "x", "body": "some body text"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "a:1", Labels: []string{"P"}, Properties: map[string]interface{}{"id": 7, "name": "x", "body": "some body text"}})
 	require.NoError(t, err)
 	var key, body []byte
 	require.NoError(t, engine.withView(func(txn *badger.Txn) error {
@@ -77,7 +79,7 @@ func TestProjectedNodeDecoderRejectedNodeAllocations(t *testing.T) {
 		body, err = item.ValueCopy(nil)
 		return err
 	}))
-	decoder := newProjectedNodeDecoder(engine, StreamNodesOptions{Projection: []string{"id"}, PropertyFilter: func(props map[string]interface{}) bool { return props["id"] == int64(8) }})
+	decoder := newProjectedNodeDecoder(engine, nil, StreamNodesOptions{Projection: []string{"id"}, PropertyFilter: func(props map[string]interface{}) bool { return props["id"] == int64(8) }})
 	node, err := decoder.decode(key, body)
 	require.NoError(t, err)
 	require.Nil(t, node, "rejected")
@@ -142,7 +144,7 @@ func TestMsgpackStringEquals(t *testing.T) {
 // whatever its type, without decoding it; a node without the property is left
 // to the PropertyFilter.
 func TestProjectedNodeDecoderPropertyStringEquals(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	long := strings.Repeat("k", 300)
@@ -158,7 +160,7 @@ func TestProjectedNodeDecoderPropertyStringEquals(t *testing.T) {
 		"b:hit":   {"id": "k1"},
 		"b:other": {"id": "k2"},
 	} {
-		_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"P"}, Properties: props})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"P"}, Properties: props})
 		require.NoError(t, err)
 	}
 	stream := func(opts StreamNodesOptions) []string {
@@ -190,7 +192,7 @@ func TestProjectedNodeDecoderPropertyStringEquals(t *testing.T) {
 		body, err = item.ValueCopy(nil)
 		return err
 	}))
-	decoder := newProjectedNodeDecoder(engine, equals("k1"))
+	decoder := newProjectedNodeDecoder(engine, nil, equals("k1"))
 	node, err := decoder.decode(key, body)
 	require.NoError(t, err)
 	require.Nil(t, node, "rejected")

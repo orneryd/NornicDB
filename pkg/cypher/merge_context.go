@@ -5,9 +5,12 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 
 	"strings"
 
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -31,13 +34,16 @@ import (
 // attempt to short-circuit when the residual filter is empty; the caller's
 // uniform `nodeMatchesProps` step keeps the post-condition trivially
 // correct even when the index narrows partially.
-func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nodePatternInfo, store storage.Engine) ([]*storage.Node, bool) {
+func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(ctx context.Context, nodeInfo nodePatternInfo, store storage.Engine) ([]*storage.Node, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
 	if len(nodeInfo.properties) == 0 {
-		return nil, false
+		return nil, false, nil
 	}
 	schema := store.GetSchema()
 	if schema == nil {
-		return nil, false
+		return nil, false, nil
 	}
 
 	// Collect per-property candidate ID sets, one per inline equality that an
@@ -51,7 +57,11 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 	// the leading k properties → LookupPrefix. The residual nodeMatchesProps
 	// step still enforces every non-indexed predicate.
 	if len(nodeInfo.labels) > 0 {
-		for _, idx := range schema.SeekableCompositeIndexesForLabel(nodeInfo.labels[0]) {
+		indexes, err := schema.SeekableCompositeIndexesForLabel(ctx, nodeInfo.labels[0])
+		if err != nil {
+			return nil, false, err
+		}
+		for _, idx := range indexes {
 			if idx == nil || len(idx.Properties) < 2 {
 				// Arity-1 indexes are served by the per-property loop below,
 				// whose authoritative-miss logic handles values an index can't
@@ -85,10 +95,16 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 			for i := 0; i < covered; i++ {
 				values[i] = nodeInfo.properties[idx.Properties[i]]
 			}
-			ids := compositeIndexLookup(store, idx, values, covered == len(idx.Properties))
+			ids, err := compositeIndexLookup(ctx, store, schema, idx, values, covered == len(idx.Properties))
+			if err != nil {
+				return nil, false, err
+			}
 			usedAnyIndex = true
 			set := make(map[storage.NodeID]struct{}, len(ids))
 			for _, id := range ids {
+				if err := ctx.Err(); err != nil {
+					return nil, false, err
+				}
 				set[id] = struct{}{}
 			}
 			idSets = append(idSets, set)
@@ -97,19 +113,30 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 
 	for prop, val := range nodeInfo.properties {
 		var ids []storage.NodeID
+		var err error
 		probed := false
 		if len(nodeInfo.labels) > 0 {
 			// Labelled: probe the (label, prop) index when one exists.
-			if _, ok := schema.GetPropertyIndex(nodeInfo.labels[0], prop); ok {
-				ids = propertyIndexLookup(store, schema, nodeInfo.labels[0], prop, val)
+			indexed, indexErr := schema.HasPropertyIndex(ctx, nodeInfo.labels[0], prop)
+			if indexErr != nil {
+				return nil, false, indexErr
+			}
+			if indexed {
+				ids, err = propertyIndexLookup(ctx, store, schema, nodeInfo.labels[0], prop, val)
 				probed = true
 			}
 		} else {
-			labels := e.indexCandidateLabels(schema, nil, prop)
-			if labellessPropertyIndexUsable(store, labels...) {
-				ids = schema.PropertyIndexLookupAnyLabel(prop, val)
+			labels, labelErr := e.indexCandidateLabels(ctx, schema, nil, prop)
+			if labelErr != nil {
+				return nil, false, labelErr
+			}
+			if labellessPropertyIndexUsable(ctx, store, labels...) {
+				ids, err = schema.PropertyIndexLookupAnyLabel(ctx, prop, val)
 				probed = true
 			}
+		}
+		if err != nil {
+			return nil, false, err
 		}
 		// Property has no covering index — record nothing for this prop.
 		// The residual `nodeMatchesProps` step still enforces it. A probe
@@ -121,13 +148,16 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 		usedAnyIndex = true
 		set := make(map[storage.NodeID]struct{}, len(ids))
 		for _, id := range ids {
+			if err := ctx.Err(); err != nil {
+				return nil, false, err
+			}
 			set[id] = struct{}{}
 		}
 		idSets = append(idSets, set)
 	}
 
 	if !usedAnyIndex || len(idSets) == 0 {
-		return nil, false
+		return nil, false, nil
 	}
 
 	// Intersect across all indexed-prop sets.
@@ -139,6 +169,9 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 	}
 	out := make([]*storage.Node, 0, len(idSets[smallest]))
 	for id := range idSets[smallest] {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		hit := true
 		for i, s := range idSets {
 			if i == smallest {
@@ -152,13 +185,16 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 		if !hit {
 			continue
 		}
-		n, err := store.GetNode(id)
+		n, err := e.getQueryNode(ctx, store, id)
 		if err != nil || n == nil {
 			continue
 		}
 		out = append(out, n)
 	}
-	return out, true
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	return out, true, nil
 }
 
 // propertyIndexMissIsAuthoritative reports whether a property index lookup
@@ -166,11 +202,9 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 // strings, booleans and numbers are filed under keys that are equal exactly
 // when the values are equal in Cypher (1 and 1.0 share a key).
 func propertyIndexMissIsAuthoritative(value interface{}) bool {
-	switch value.(type) {
-	case string, bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
-		return true
-	}
-	return false
+	// Null is not an authoritative property-index miss: it still needs the
+	// existing scan path. Primitive type recognition is shared with APOC search.
+	return value != nil && valueconvert.NativeScalar(value)
 }
 
 func splitTopLevelOrTerms(expr string) []string {
@@ -190,49 +224,14 @@ func splitTopLevelOrTerms(expr string) []string {
 	return out
 }
 
-// extractVariableNamesFromPattern extracts variable names from a Cypher pattern.
-// e.g., "(p:Person)<-[:REL]-(poc:POC)-[:BELONGS_TO]->(a:Area)" returns ["p", "poc", "a"]
-func (e *StorageExecutor) extractVariableNamesFromPattern(pattern string) []string {
-	var varNames []string
-	seen := make(map[string]bool)
-
-	// Find all node patterns (...)
-	inParen := false
-	inBracket := false
-	var current strings.Builder
-
-	for _, c := range pattern {
-		switch c {
-		case '(':
-			inParen = true
-			current.Reset()
-		case ')':
-			if inParen {
-				nodeContent := current.String()
-				// Extract variable name (before : or end)
-				varName, _, _ := splitNodeHead(nodeContent)
-				// Remove any property part
-				if idx := strings.Index(varName, "{"); idx > 0 {
-					varName = strings.TrimSpace(varName[:idx])
-				}
-				if varName != "" && !seen[varName] {
-					varNames = append(varNames, varName)
-					seen[varName] = true
-				}
-			}
-			inParen = false
-		case '[':
-			inBracket = true
-		case ']':
-			inBracket = false
-		default:
-			if inParen && !inBracket {
-				current.WriteRune(c)
-			}
-		}
-	}
-
-	return varNames
+// extractVariableNamesFromPattern returns the node variables pattern binds,
+// each once in order of first appearance: e.g.,
+// "(p:Person)<-[:REL]-(poc:POC)-[:BELONGS_TO]->(a:Area)" returns ["p", "poc", "a"].
+// The shared node-binding reader reads them from the pattern's structure, so a
+// dynamic label's $any(...), a property map, an element WHERE, a call such as
+// shortestPath(...) and a parenthesized or quantified path are not nodes.
+func (e *StorageExecutor) extractVariableNamesFromPattern(ctx context.Context, pattern string) []string {
+	return canonicalPatternVariables(ctx, pattern)
 }
 
 // mergeNodeAbsentKey marks a context whose caller has just scanned the
@@ -266,12 +265,102 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 
 	mergePattern := strings.TrimSpace(cypher)
 	if startsWithKeywordFold(mergePattern, "MERGE") {
-		mergePattern = strings.TrimSpace(mergePattern[len("MERGE"):])
+		mergePattern = pipelineClauseBody(mergePattern, "MERGE")
 	}
 
 	// A relationship pattern: (a)-[r:TYPE]->(b)
 	if containsRelationshipPattern(mergePattern) {
-		return e.executeMergeRelationshipWithContext(ctx, mergePattern, nodeContext, relContext)
+		parsedPattern, err := e.parseMergeRelationshipPattern(ctx, mergePattern, nodeContext, relContext)
+		if err != nil {
+			return nil, err
+		}
+		if err := validateMergePatternProperties(parsedPattern.startNodePattern.properties, "node"); err != nil {
+			return nil, err
+		}
+		if err := validateMergePatternProperties(parsedPattern.endNodePattern.properties, "node"); err != nil {
+			return nil, err
+		}
+		if err := validateMergePatternProperties(parsedPattern.properties, "relationship"); err != nil {
+			return nil, err
+		}
+
+		// Both endpoints are bound by earlier clauses: a pattern with an endpoint
+		// the row doesn't bind is a whole-path MERGE (pipelineMergePath), which
+		// matches every existing path or creates the whole pattern (#509, #640).
+		startNode := nodeContext[parsedPattern.startVariable]
+		endNode := nodeContext[parsedPattern.endVariable]
+		if startNode == nil {
+			return nil, localizedError(localization.CypherMergeStartVariableNotBound(parsedPattern.startVariable, getKeys(nodeContext)), nil)
+		}
+		if endNode == nil {
+			return nil, localizedError(localization.CypherMergeEndVariableNotBound(parsedPattern.endVariable, getKeys(nodeContext)), nil)
+		}
+		var existingEdge *storage.Edge
+		mergeStartNode, mergeEndNode := startNode, endNode
+		if parsedPattern.direction == mergeRelationshipIncoming {
+			mergeStartNode, mergeEndNode = endNode, startNode
+		}
+		// Cypher relationship properties inside the MERGE pattern are identity
+		// fields. Scan the bounded endpoint pair so same-type relationships with
+		// different property identities remain distinct.
+		if existingEdge == nil {
+			existingEdge, err = findRelationshipForMerge(ctx, store, mergeStartNode.ID, mergeEndNode.ID, parsedPattern.relType, parsedPattern.properties)
+			if err != nil {
+				return nil, localizedError(localization.CypherMergeFindRelationshipFailed(err), err)
+			}
+			if existingEdge == nil && parsedPattern.direction == mergeRelationshipUndirected {
+				existingEdge, err = findRelationshipForMerge(ctx, store, mergeEndNode.ID, mergeStartNode.ID, parsedPattern.relType, parsedPattern.properties)
+				if err != nil {
+					return nil, localizedError(localization.CypherMergeFindRelationshipFailed(err), err)
+				}
+			}
+		}
+
+		var edge *storage.Edge
+		if existingEdge != nil {
+			edge = existingEdge
+		} else {
+			// Create new relationship
+			edge = &storage.Edge{
+				Database:   storage.DatabaseOf(store),
+				ID:         e.newRelationshipMergeEdgeID(mergeStartNode.ID, mergeEndNode.ID, parsedPattern.relType, parsedPattern.properties),
+				Type:       parsedPattern.relType,
+				StartNode:  mergeStartNode.ID,
+				EndNode:    mergeEndNode.ID,
+				Properties: parsedPattern.properties,
+			}
+			if err := edge.SetEndpoints(mergeStartNode, mergeEndNode); err != nil {
+				return nil, err
+			}
+			createdEdge, created, createErr := createRelationshipForMerge(ctx, e, store, edge, parsedPattern.properties)
+			if createErr != nil {
+				return nil, localizedError(localization.CypherMergeCreateRelationshipFailed(createErr), createErr)
+			}
+			edge = createdEdge
+			if !created {
+				if reporter, ok := store.(interface {
+					EdgeCreateWasNoOp(storage.EdgeID) bool
+				}); ok && reporter.EdgeCreateWasNoOp(edge.ID) {
+					result.Stats.relationshipMergeNoOp = true
+				}
+			}
+			if created {
+				result.Stats.RelationshipsCreated = 1
+				countCreatedEntity(result.Stats, nil, edge.Properties)
+				e.notifyEdgeMutated(string(edge.ID))
+				e.notifyNodeMutated(string(edge.StartNode))
+				if edge.EndNode != edge.StartNode {
+					e.notifyNodeMutated(string(edge.EndNode))
+				}
+			}
+		}
+
+		// Store in context
+		if parsedPattern.relVariable != "" {
+			relContext[parsedPattern.relVariable] = edge
+		}
+		return result, nil
+
 	}
 
 	// Parse node pattern
@@ -293,10 +382,10 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 		existingNode = candidate
 	}
 	if existingNode == nil && !nodeKnownAbsent {
-		if err := prepareMergeKeys(ctx, store, labels, matchProps); err != nil {
+		if err := prepareMergeKeys(ctx, store, labels, matchProps, mergeNodeWritesFromContext(ctx).writes(varName)); err != nil {
 			return nil, err
 		}
-		existingNode, err = e.findMergeNode(store, labels, matchProps)
+		existingNode, err = e.findMergeNode(ctx, store, labels, matchProps)
 		if err != nil {
 			return nil, err
 		}
@@ -311,16 +400,17 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 			Labels:     labels,
 			Properties: matchProps,
 		}
+		node.SetRuntimeMetadata(storage.NodeRuntimeMetadata{Database: storage.DatabaseOf(store)})
 		if err := validatePropertyValues(node.Properties); err != nil {
 			return nil, err
 		}
-		actualID, err := store.CreateNode(node)
+		actualID, err := createMintedNode(ctx, store, node)
 		if err != nil {
 			if !mergeCreateConflict(err) {
 				return nil, localizedError(localization.CypherMergeCreateNodeFailed(err), err)
 			}
 			// A concurrent MERGE created it first: this MERGE matched it.
-			recoveredNode, findErr := e.findMergeNode(store, labels, matchProps)
+			recoveredNode, findErr := e.findMergeNode(ctx, store, labels, matchProps)
 			if findErr != nil {
 				return nil, findErr
 			}
@@ -351,37 +441,8 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 // the parser leaves as its own text and that reads a bound variable's
 // property (a.id) is evaluated against the bound entities. Null values remain
 // in the map so the shared MERGE validator rejects them before matching.
-func (e *StorageExecutor) parseMergeProperties(ctx context.Context, propsText string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) map[string]interface{} {
-	props := make(map[string]interface{})
-	propsText = strings.TrimSpace(propsText)
-	if strings.HasPrefix(propsText, "{") && strings.HasSuffix(propsText, "}") {
-		propsText = propsText[1 : len(propsText)-1]
-	}
-	if strings.TrimSpace(propsText) == "" {
-		return props
-	}
-	for _, pair := range e.splitPropertyPairs(propsText) {
-		colon := findTopLevelMapKeyValueSeparator(pair)
-		if colon <= 0 {
-			continue
-		}
-		key := normalizePropertyKey(strings.TrimSpace(pair[:colon]))
-		valueText := strings.TrimSpace(pair[colon+1:])
-		value := e.parsePropertyValue(ctx, valueText)
-		if text, unresolved := value.(string); unresolved && text == valueText && !isWholeCypherQuotedString(valueText) {
-			if dot := strings.Index(text, "."); dot > 0 {
-				variable := strings.TrimSpace(text[:dot])
-				_, boundNode := nodeContext[variable]
-				_, boundRel := relContext[variable]
-				_, boundValue := valueBindingsFromContext(ctx)[variable]
-				if boundNode || boundRel || boundValue {
-					value = e.evaluateExpressionWithContext(ctx, text, nodeContext, relContext)
-				}
-			}
-		}
-		props[key] = value
-	}
-	return props
+func (e *StorageExecutor) parseMergeProperties(ctx context.Context, propsText string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (map[string]interface{}, error) {
+	return e.materializePropertyMap(ctx, propsText, entityRow(ctx, nodeContext, relContext), true, false)
 }
 
 // parseMergeNodePattern is parseMergePattern with the property map read by
@@ -396,99 +457,8 @@ func (e *StorageExecutor) parseMergeNodePattern(ctx context.Context, pattern str
 	if labelErr != nil {
 		return "", nil, nil, labelErr
 	}
-	return variable, labels, e.parseMergeProperties(ctx, props, nodeContext, relContext), nil
-}
-
-// executeMergeRelationshipWithContext runs a relationship MERGE pattern (see
-// executeMergeWithContext): it binds the relationship it matched or created,
-// and the endpoints, into relContext / nodeContext.
-func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Context, pattern string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (*ExecuteResult, error) {
-	result := &ExecuteResult{
-		Columns: []string{},
-		Rows:    [][]interface{}{},
-		Stats:   &QueryStats{},
-	}
-	store := e.getStorage(ctx)
-
-	parsedPattern, err := e.parseMergeRelationshipPattern(ctx, pattern, nodeContext, relContext)
-	if err != nil {
-		return nil, err
-	}
-	if err := validateMergePatternProperties(parsedPattern.startNodePattern.properties, "node"); err != nil {
-		return nil, err
-	}
-	if err := validateMergePatternProperties(parsedPattern.endNodePattern.properties, "node"); err != nil {
-		return nil, err
-	}
-	if err := validateMergePatternProperties(parsedPattern.properties, "relationship"); err != nil {
-		return nil, err
-	}
-
-	// Both endpoints are bound by earlier clauses: a pattern with an endpoint
-	// the row doesn't bind is a whole-path MERGE (pipelineMergePath), which
-	// matches every existing path or creates the whole pattern (#509, #640).
-	startNode := nodeContext[parsedPattern.startVariable]
-	endNode := nodeContext[parsedPattern.endVariable]
-	if startNode == nil {
-		return nil, localizedError(localization.CypherMergeStartVariableNotBound(parsedPattern.startVariable, getKeys(nodeContext)), nil)
-	}
-	if endNode == nil {
-		return nil, localizedError(localization.CypherMergeEndVariableNotBound(parsedPattern.endVariable, getKeys(nodeContext)), nil)
-	}
-	var existingEdge *storage.Edge
-	mergeStartNode, mergeEndNode := startNode, endNode
-	if parsedPattern.direction == mergeRelationshipIncoming {
-		mergeStartNode, mergeEndNode = endNode, startNode
-	}
-	// Cypher relationship properties inside the MERGE pattern are identity
-	// fields. Scan the bounded endpoint pair so same-type relationships with
-	// different property identities remain distinct.
-	if existingEdge == nil {
-		existingEdge, err = findRelationshipForMerge(store, mergeStartNode.ID, mergeEndNode.ID, parsedPattern.relType, parsedPattern.properties)
-		if err != nil {
-			return nil, localizedError(localization.CypherMergeFindRelationshipFailed(err), err)
-		}
-		if existingEdge == nil && parsedPattern.direction == mergeRelationshipUndirected {
-			existingEdge, err = findRelationshipForMerge(store, mergeEndNode.ID, mergeStartNode.ID, parsedPattern.relType, parsedPattern.properties)
-			if err != nil {
-				return nil, localizedError(localization.CypherMergeFindRelationshipFailed(err), err)
-			}
-		}
-	}
-
-	var edge *storage.Edge
-	if existingEdge != nil {
-		edge = existingEdge
-	} else {
-		// Create new relationship
-		edge = &storage.Edge{
-			ID:         e.newRelationshipMergeEdgeID(mergeStartNode.ID, mergeEndNode.ID, parsedPattern.relType, parsedPattern.properties),
-			Type:       parsedPattern.relType,
-			StartNode:  mergeStartNode.ID,
-			EndNode:    mergeEndNode.ID,
-			Properties: parsedPattern.properties,
-		}
-		createdEdge, created, createErr := createRelationshipForMerge(e, store, edge, parsedPattern.properties)
-		if createErr != nil {
-			return nil, localizedError(localization.CypherMergeCreateRelationshipFailed(createErr), createErr)
-		}
-		edge = createdEdge
-		if created {
-			result.Stats.RelationshipsCreated = 1
-			countCreatedEntity(result.Stats, nil, edge.Properties)
-			e.notifyEdgeMutated(string(edge.ID))
-			e.notifyNodeMutated(string(edge.StartNode))
-			if edge.EndNode != edge.StartNode {
-				e.notifyNodeMutated(string(edge.EndNode))
-			}
-		}
-	}
-
-	// Store in context
-	if parsedPattern.relVariable != "" {
-		relContext[parsedPattern.relVariable] = edge
-	}
-	return result, nil
+	properties, err := e.parseMergeProperties(ctx, props, nodeContext, relContext)
+	return variable, labels, properties, err
 }
 
 // applySetToRelationshipWithContext is the single per-relationship SET
@@ -510,7 +480,7 @@ func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context,
 
 	writes := setWrites{known: propertyKeyLookup(e.getStorage(ctx))}
 	var run setPropertyRun
-	for segment, next, ok := nextChainedSetClause(setClause, 0); ok; segment, next, ok = nextChainedSetClause(setClause, next) {
+	for segment, next, ok := nextChainedSetClause(ctx, setClause, 0); ok; segment, next, ok = nextChainedSetClause(ctx, setClause, next) {
 		run.applyToRelationship(edge, &writes)
 		writes.endRun()
 		for _, assignment := range splitSetAssignments(segment) {
@@ -594,7 +564,7 @@ func (e *StorageExecutor) applySetToNodeWithContext(ctx context.Context, node *s
 
 	writes := setWrites{known: propertyKeyLookup(e.getStorage(ctx))}
 	var run setPropertyRun
-	for segment, next, ok := nextChainedSetClause(setClause, 0); ok; segment, next, ok = nextChainedSetClause(setClause, next) {
+	for segment, next, ok := nextChainedSetClause(ctx, setClause, 0); ok; segment, next, ok = nextChainedSetClause(ctx, setClause, next) {
 		writes.endRun()
 		if err := e.applyNodeSetClause(ctx, node, varName, segment, fullContext, relContext, &writes, &run); err != nil {
 			return writes.count, err
@@ -673,47 +643,25 @@ func (e *StorageExecutor) applyNodeSetClause(ctx context.Context, node *storage.
 // $param keeps its declared Go type. A map, entity or nested list is rejected
 // with a TypeError, as in Neo4j (storablePropertyValue).
 func (e *StorageExecutor) setPropertyValue(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, error) {
-	if err := requireSetParameter(ctx, expr); err != nil {
-		return nil, err
-	}
-	value, ok := resolveDirectParamRef(ctx, expr)
-	if !ok {
-		var err error
-		if value, err = e.evaluateSetExpressionWithContext(ctx, expr, nodes, rels); err != nil {
-			return nil, err
-		}
-	}
-	value, _, err := storablePropertyValue(value)
+	value, err := e.evaluateSetExpressionWithContext(ctx, expr, nodes, rels)
 	if err != nil {
 		return nil, err
 	}
-	return value, nil
+	value, _, err = storablePropertyValue(value)
+	return value, err
 }
 
 // setSourceMap evaluates the right-hand side of SET x = <expr> or
 // SET x += <expr> (operator): a map, or a node / relationship whose
 // properties are copied. Any other value, null included, is a TypeError
 // (setPropertyMapValue, #907), as is a map holding a value a property cannot
-// store. An inline literal the evaluator hands back unresolved, as its own
-// text, goes through the literal parser. Both operators read their source
-// the same way; every SET route (pipeline, MERGE actions, FOREACH, the UNWIND
+// store. Both operators evaluate their source through the checked boundary;
+// every SET route (pipeline, MERGE actions, FOREACH, the UNWIND
 // batch routes) calls this.
 func (e *StorageExecutor) setSourceMap(ctx context.Context, expr, operator string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (map[string]interface{}, error) {
-	if err := requireSetParameter(ctx, expr); err != nil {
+	value, err := e.evaluateSetExpressionWithContext(ctx, expr, nodes, rels)
+	if err != nil {
 		return nil, err
-	}
-	value, ok := resolveDirectParamRef(ctx, expr)
-	if !ok {
-		value, ok = resolveContextPathRef(ctx, expr)
-	}
-	if !ok {
-		var err error
-		if value, err = e.evaluateSetExpressionWithContext(ctx, expr, nodes, rels); err != nil {
-			return nil, err
-		}
-		if text, isText := value.(string); isText && strings.TrimSpace(text) == strings.TrimSpace(expr) {
-			value = e.parseValue(ctx, strings.TrimSpace(expr))
-		}
 	}
 	return setPropertyMapValue(value, operator)
 }
@@ -732,15 +680,11 @@ func (e *StorageExecutor) setSourceMap(ctx context.Context, expr, operator strin
 // yields an empty operator.
 func splitSetAssignment(assignment string) (target, property, operator, right string) {
 	assignment = strings.TrimSpace(assignment)
-	eq := strings.IndexByte(assignment, '=')
-	if bracket := strings.IndexByte(assignment, '['); bracket >= 0 && (eq < 0 || bracket < eq) {
-		// A dynamic key's brackets may hold an "=" of their own.
-		eq = findTopLevelByte(assignment, '=')
-	}
-	if colon := strings.IndexByte(assignment, ':'); colon > 0 && (eq < 0 || colon < eq) {
+	eq := findTopLevelOperator(assignment, "=", false, true)
+	if colon := findTopLevelOperator(assignment, ":", false, true); colon > 0 && (eq < 0 || colon < eq) {
 		// Label form x:L1:L2 / x:$(expr); a dynamic label expression may
 		// itself contain "=".
-		if target := strings.TrimSpace(assignment[:colon]); isValidIdentifier(target) {
+		if target := strings.TrimSpace(assignment[:colon]); cyphertext.IsIdentifier(target) {
 			return target, "", ":", strings.TrimSpace(assignment[colon+1:])
 		}
 	}
@@ -778,7 +722,7 @@ func requireSetParameter(ctx context.Context, expr string) error {
 		return nil
 	}
 	name := expr[1:]
-	if !isValidIdentifier(name) {
+	if !cyphertext.IsIdentifier(name) {
 		return nil
 	}
 	params := getParamsFromContext(ctx)
@@ -799,6 +743,7 @@ func requireSetParameter(ctx context.Context, expr string) error {
 // (storablePropertyValue), so a map entry is checked as SET x.p = v checks v;
 // the source map is copied only when one of them was rewritten.
 func setPropertyMapValue(value interface{}, operator string) (map[string]interface{}, error) {
+	value = cypherfn.RuntimeValue(value)
 	typeName := "NULL"
 	if value != nil {
 		typeName = cypherTypeName(value)
@@ -839,11 +784,16 @@ func setPropertyMapValue(value interface{}, operator string) (map[string]interfa
 // statement's error, which a check of the value it left (null is not a map,
 // a list may not hold null) must not replace.
 func (e *StorageExecutor) evaluateSetExpressionWithContext(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, error) {
-	value, _ := e.evaluateRowExpressionWithContext(ctx, expr, entityRow(ctx, nodes, rels))
-	if failure := getExpressionFailure(ctx); failure != nil {
-		return nil, failure
+	if err := requireSetParameter(ctx, expr); err != nil {
+		return nil, err
 	}
-	return value, nil
+	if value, resolved := resolveValueReference(ctx, expr, parameterName); resolved {
+		return checkedPropertyResult(ctx, expr, value, true, nil)
+	}
+	if value, resolved := resolveValueReference(ctx, expr, rowPath); resolved {
+		return checkedPropertyResult(ctx, expr, value, true, nil)
+	}
+	return e.checkedPropertyExpression(ctx, expr, entityRow(ctx, nodes, rels))
 }
 
 // mergeBindingRow is the row a MERGE's RETURN reads: the values bound in
@@ -892,7 +842,7 @@ func (e *StorageExecutor) projectMergeReturn(ctx context.Context, rows []pipelin
 
 func (e *StorageExecutor) projectMergeReturnSource(ctx context.Context, rows []pipelineRow, returnClause string, source pipelineRowSource, preparedGroups ...[]*pipelineAggregateGroup) (*ExecuteResult, error) {
 	returnClause = strings.TrimSpace(returnClause)
-	return e.projectMergeReturnPlan(ctx, rows, returnClause, returnProjectionPlanFor(returnClause), source, preparedGroups...)
+	return e.projectMergeReturnPlan(ctx, rows, returnClause, returnProjectionPlanFor(ctx, returnClause), source, preparedGroups...)
 }
 
 func (e *StorageExecutor) projectMergeReturnPlan(ctx context.Context, rows []pipelineRow, returnClause string, plan *returnProjectionPlan, source pipelineRowSource, preparedGroups ...[]*pipelineAggregateGroup) (*ExecuteResult, error) {
@@ -900,6 +850,9 @@ func (e *StorageExecutor) projectMergeReturnPlan(ctx context.Context, rows []pip
 	result, handled := e.pipelineApplyReturnPlan(ctx, rows, plan, source, false, preparedGroups...)
 	if failure := getExpressionFailure(ctx); failure != nil && (!handled || priorFailure == nil) {
 		return nil, failure
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	if handled {
 		return result, nil

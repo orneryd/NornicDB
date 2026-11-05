@@ -1,6 +1,8 @@
 package bolt
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"testing"
 	"time"
@@ -20,7 +22,7 @@ func TestBoltCountSubqueryCommentGap(t *testing.T) {
 		config.SetParserType(previousParser)
 		config.SetCypherQueryNormalizationEnabled(previousNormalization)
 	})
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(base, "neo4j"))
 	for _, parser := range []string{"nornic", "antlr"} {

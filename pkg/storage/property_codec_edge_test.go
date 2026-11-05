@@ -17,6 +17,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"math"
 	"testing"
 
@@ -32,7 +33,7 @@ import (
 func roundTripValueThroughCodec(t *testing.T, eng *BadgerEngine, key string, val any) any {
 	t.Helper()
 	var data []byte
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		var err error
 		data, err = eng.encodeTokenizedProperties(txn, "ns", map[string]any{key: val})
 		if err != nil {
@@ -41,7 +42,7 @@ func roundTripValueThroughCodec(t *testing.T, eng *BadgerEngine, key string, val
 		_ = eng.propKeyDict.flushTxnCounters(txn)
 		return nil
 	}))
-	out, err := eng.decodeTokenizedProperties("ns", data)
+	out, err := eng.decodeTokenizedPropertiesProjected(nil, "ns", data, nil)
 	require.NoError(t, err)
 	return out[key]
 }
@@ -65,12 +66,26 @@ func TestStrictTypedArray_PreservesHomogeneousInts(t *testing.T) {
 	assert.Equal(t, []int64{-1, 0, 1, math.MaxInt64}, got)
 }
 
-// TestStrictTypedArray_PreservesHomogeneousUints — []uint64 round-trip.
-func TestStrictTypedArray_PreservesHomogeneousUints(t *testing.T) {
+// TestStrictTypedArray_ReadsUnsignedAsInt64 — an unsigned list reads as
+// []int64 while every value fits; a value above MaxInt64 keeps uint64 and
+// its neighbours stay int64.
+func TestStrictTypedArray_ReadsUnsignedAsInt64(t *testing.T) {
 	eng := newTestEngine(t)
-	got := roundTripValueThroughCodec(t, eng, "uints", []uint64{0, 1, math.MaxUint64})
-	require.IsType(t, []uint64{}, got)
-	assert.Equal(t, []uint64{0, 1, math.MaxUint64}, got)
+	got := roundTripValueThroughCodec(t, eng, "uints", []uint64{0, 1, math.MaxInt64})
+	require.IsType(t, []int64{}, got)
+	assert.Equal(t, []int64{0, 1, math.MaxInt64}, got)
+	got = roundTripValueThroughCodec(t, eng, "uints", []uint64{0, 1, math.MaxUint64})
+	assert.Equal(t, []any{int64(0), int64(1), uint64(math.MaxUint64)}, got)
+}
+
+// TestStrictTypedArray_PreservesHomogeneousFloat32s — []float32 round-trip.
+func TestStrictTypedArray_PreservesHomogeneousFloat32s(t *testing.T) {
+	eng := newTestEngine(t)
+	got := roundTripValueThroughCodec(t, eng, "vec", []float32{0.1, 0.2, 0.3})
+	require.IsType(t, []float32{}, got)
+	assert.Equal(t, []float32{0.1, 0.2, 0.3}, got)
+	got = roundTripValueThroughCodec(t, eng, "mixed", []any{float32(0.5), 1.5})
+	assert.Equal(t, []any{float32(0.5), 1.5}, got)
 }
 
 // TestStrictTypedArray_PreservesHomogeneousStrings — []string round-trip.
@@ -208,8 +223,8 @@ func TestStrictTypedMap_EmptyMapIsNotNil(t *testing.T) {
 
 // TestNumericTypePreservation — exercise every numeric kind msgpack
 // can produce. Each one must round-trip with at least its informational
-// content preserved (small positives may narrow to int8/uint8 due to
-// msgpack's compact-int encoding; that's expected).
+// content preserved: fitting integers use int64 even with compact encoding;
+// unsigned values above MaxInt64 retain uint64.
 func TestNumericTypePreservation(t *testing.T) {
 	eng := newTestEngine(t)
 
@@ -233,6 +248,12 @@ func TestNumericTypePreservation(t *testing.T) {
 	bigNegGot := roundTripValueThroughCodec(t, eng, "bn", int64(math.MinInt64))
 	assert.Equal(t, int64(math.MinInt64), bigNegGot)
 
+	// The exact signed/unsigned boundary is preserved for scalar properties.
+	boundaryGot := roundTripValueThroughCodec(t, eng, "signed-boundary", uint64(math.MaxInt64))
+	assert.Equal(t, int64(math.MaxInt64), boundaryGot)
+	firstWideGot := roundTripValueThroughCodec(t, eng, "first-wide", uint64(math.MaxInt64)+1)
+	assert.Equal(t, uint64(math.MaxInt64)+1, firstWideGot)
+
 	// Large positive uint64 — same story.
 	bigPosGot := roundTripValueThroughCodec(t, eng, "bp", uint64(math.MaxUint64))
 	assert.Equal(t, uint64(math.MaxUint64), bigPosGot)
@@ -251,51 +272,43 @@ func TestRawByteSlice_RoundTripsAsBytes(t *testing.T) {
 	assert.Equal(t, payload, gotBytes)
 }
 
-// TestNamespaceIsolation_PropKeyDict — the same property name
-// allocated in two different namespaces gets two different IDs, and
-// payloads written under one namespace MUST refuse to decode under
-// the other. This is the storage-level invariant that prevents
-// cross-database key bleed.
+// TestNamespaceIsolation_PropKeyDict verifies namespace-local token meanings.
+// Token IDs may overlap between namespaces; callers must provide the namespace
+// of the body being decoded. Isolation belongs to namespace-qualified keys,
+// not a namespace tag embedded in each property payload.
 func TestNamespaceIsolation_PropKeyDict(t *testing.T) {
 	eng := newTestEngine(t)
 
-	var dataNs1, dataNs2 []byte
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	payloads := map[string]map[string]any{
+		"ns1": {"k": "v1"},
+		"ns2": {"k": "v2"},
+	}
+	data := map[string][]byte{}
+	inPropertyKeyTxn(t, eng, []string{"ns1", "ns2"}, func(txn *badger.Txn, namespace string) error {
 		var err error
-		dataNs1, err = eng.encodeTokenizedProperties(txn, "ns1", map[string]any{"k": "v1"})
-		if err != nil {
-			return err
-		}
-		dataNs2, err = eng.encodeTokenizedProperties(txn, "ns2", map[string]any{"k": "v2"})
-		if err != nil {
-			return err
-		}
-		_ = eng.propKeyDict.flushTxnCounters(txn)
-		return nil
-	}))
+		data[namespace], err = eng.encodeTokenizedProperties(txn, namespace, payloads[namespace])
+		return err
+	})
 
 	// Each namespace decodes its own payload correctly.
-	out1, err := eng.decodeTokenizedProperties("ns1", dataNs1)
+	out1, err := eng.decodeTokenizedPropertiesProjected(nil, "ns1", data["ns1"], nil)
 	require.NoError(t, err)
 	assert.Equal(t, "v1", out1["k"])
 
-	out2, err := eng.decodeTokenizedProperties("ns2", dataNs2)
+	out2, err := eng.decodeTokenizedPropertiesProjected(nil, "ns2", data["ns2"], nil)
 	require.NoError(t, err)
 	assert.Equal(t, "v2", out2["k"])
 
-	// If the IDs happened to collide (both got id 1, say), reading
-	// ns2's payload under ns1 would silently succeed with the wrong
-	// key name. Pin: cross-namespace decode either errors or produces
-	// the correct namespace-local key. We accept either: the contract
-	// is "cannot leak ns2 data into ns1 with ns1's key names".
-	cross, err := eng.decodeTokenizedProperties("ns1", dataNs2)
-	if err == nil {
-		// If decode succeeded, the key MUST resolve to ns1's name for
-		// that ID, not "k". Confirm by checking the value is whatever
-		// ns2 wrote (it has to be: that's the only payload), so the key
-		// it landed under is what the dict translated ID→name in ns1.
-		_ = cross
-	}
+	// Independently advancing one namespace must not rename the other namespace's
+	// existing token or change its decoded payload.
+	inPropertyKeyTxn(t, eng, []string{"ns1"}, func(txn *badger.Txn, namespace string) error {
+		_, err := eng.encodeTokenizedProperties(txn, namespace, map[string]any{"only_ns1": true})
+		return err
+	})
+	out2, err = eng.decodeTokenizedPropertiesProjected(nil, "ns2", data["ns2"], nil)
+	require.NoError(t, err)
+	assert.Equal(t, payloads["ns2"], out2)
+
 }
 
 // TestDecodeStrictTypedValue_UnreadableHeaderError — feeding a decoder
@@ -351,16 +364,11 @@ func TestDecodeStrictTypedMap_NonStringKeyErrors(t *testing.T) {
 // payload must take the "count=0, no entries" path instead.
 func TestEncodeTokenizedProperties_ZeroLengthBuffer(t *testing.T) {
 	eng := newTestEngine(t)
-	var data []byte
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
-		var err error
-		data, err = eng.encodeTokenizedProperties(txn, "ns", map[string]any{})
-		return err
-	}))
+	data := encodeTokenizedPropertiesForTest(t, eng, map[string]any{})
 	require.NotEmpty(t, data, "empty map must encode to a single-byte (count=0) payload, not zero bytes")
 	assert.Equal(t, byte(0x00), data[0], "first byte must be uvarint(0) for an empty map")
 
-	out, err := eng.decodeTokenizedProperties("ns", data)
+	out, err := eng.decodeTokenizedPropertiesProjected(nil, "ns", data, nil)
 	require.NoError(t, err)
 	assert.Empty(t, out)
 }
@@ -392,7 +400,7 @@ func TestDecodeTokenizedProperties_DuplicateKeyOverwrites(t *testing.T) {
 	eng := newTestEngine(t)
 	// Allocate "k" so the dict knows the id.
 	var keyID uint64
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		id, err := eng.propKeyDict.resolveOrAllocateInTxn(txn, "ns", "k")
 		require.NoError(t, err)
 		keyID = id
@@ -409,7 +417,7 @@ func TestDecodeTokenizedProperties_DuplicateKeyOverwrites(t *testing.T) {
 	body = appendUvarint(body, keyID) // id 2 (same id)
 	body = append(body, val2...)      // "second"
 
-	out, err := eng.decodeTokenizedProperties("ns", body)
+	out, err := eng.decodeTokenizedPropertiesProjected(nil, "ns", body, nil)
 	require.NoError(t, err)
 	require.Len(t, out, 1, "duplicate IDs must collapse into a single map entry")
 	assert.Equal(t, "second", out["k"], "last value wins on duplicate ID")
@@ -429,7 +437,7 @@ func TestRoundTrip_LargePropertyMap(t *testing.T) {
 	}
 
 	var data []byte
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		var err error
 		data, err = eng.encodeTokenizedProperties(txn, "ns", props)
 		if err != nil {
@@ -439,7 +447,7 @@ func TestRoundTrip_LargePropertyMap(t *testing.T) {
 		return nil
 	}))
 
-	out, err := eng.decodeTokenizedProperties("ns", data)
+	out, err := eng.decodeTokenizedPropertiesProjected(nil, "ns", data, nil)
 	require.NoError(t, err)
 	assert.Len(t, out, 1000)
 	for i := 0; i < 1000; i += 137 { // spot-check a sample

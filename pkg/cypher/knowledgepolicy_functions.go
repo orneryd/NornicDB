@@ -11,33 +11,84 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-// evaluateKnowledgePolicyFunction dispatches decayScore(), decay(), and policy()
-// calls. Returns (result, true) if the expression was handled, (nil, false) otherwise.
-func (e *StorageExecutor) evaluateKnowledgePolicyFunction(
-	ctx context.Context,
-	expr string,
-	lowerExpr string,
-	nodes map[string]*storage.Node,
-	rels map[string]*storage.Edge,
-) (interface{}, bool) {
-	if matchFuncStartAndSuffix(expr, "decayScore") || matchFuncStartAndSuffix(expr, "decayscore") {
-		return e.evalDecayScore(ctx, expr, nodes, rels), true
-	}
-	if matchFuncStartAndSuffix(expr, "decay") {
-		inner := extractFuncArgs(expr, "decay")
-		if inner == "" {
-			return nil, false
+// evaluateKnowledgePolicyFunction owns recognition, source selection and
+// result projection for policy(), decay() and decayScore().
+func (e *StorageExecutor) evaluateKnowledgePolicyFunction(ctx context.Context, expr, lowerExpr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, bool) {
+	handled := false
+	for _, name := range []string{"decayScore", "decayscore", "decay", "policy"} {
+		if matchFuncStartAndSuffix(expr, name) {
+			handled = true
+			break
 		}
-		return e.evalDecay(ctx, expr, nodes, rels), true
 	}
-	if matchFuncStartAndSuffix(expr, "policy") {
-		return e.evalPolicy(ctx, expr, nodes, rels), true
+	if !handled {
+		return nil, false
 	}
-	return nil, false
+
+	originalName, _, _ := strings.Cut(expr, "(")
+	name := strings.ToLower(strings.TrimSpace(originalName))
+	args := e.splitFunctionArgs(extractFuncArgs(expr, strings.TrimSpace(originalName)))
+	disabled := func(reason string) interface{} {
+		if name == "policy" {
+			return minimalPolicyMap("")
+		}
+		if name == "decayscore" {
+			return 1.0
+		}
+		return decayDisabledMap(reason)
+	}
+	if len(args) == 0 {
+		return disabled(localization.CypherKnowledgePolicyReasonNoEntityArgument().Fallback), true
+	}
+	ent, ok := e.resolveEntityForDecay(ctx, args[0], nodes, rels)
+	if !ok {
+		return disabled(localization.CypherKnowledgePolicyReasonEntityNotFound().Fallback), true
+	}
+	be, now, available := e.getDecayContext(ctx, ent.engine)
+	var meta *knowledgepolicy.AccessMetaEntry
+	if available {
+		result, _ := be.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: ent.entityID})
+		meta = result.Entry
+	}
+	if name == "policy" {
+		if meta != nil {
+			return accessMetaToMap(meta), true
+		}
+		scope := knowledgepolicy.ScopeNode
+		if ent.isEdge {
+			scope = knowledgepolicy.ScopeEdge
+		}
+		return map[string]interface{}{"targetId": ent.entityID, "targetScope": string(scope)}, true
+	}
+	if !available {
+		return disabled(localization.CypherKnowledgePolicyReasonNoBadgerEngine().Fallback), true
+	}
+	if !be.IsDecayEnabled() {
+		e.logDecayMismatchOnce()
+		return disabled(localization.CypherKnowledgePolicyReasonDecayDisabled().Fallback), true
+	}
+	scorer := be.ScorerForNamespace(storage.ExtractNamespaceFromID(ent.entityID))
+	if scorer == nil {
+		return disabled(localization.CypherKnowledgePolicyReasonNoDecayProfile().Fallback), true
+	}
+	property := ""
+	if len(args) >= 2 {
+		var err error
+		property, err = validateDecayOptions(ctx, args[1], nodes, rels, e)
+		if err != nil {
+			return nil, true
+		}
+	}
+	resolution := ent.score(scorer, meta, property, now)
+	if name == "decayscore" {
+		return resolution.FinalScore, true
+	}
+	return resolutionToMap(resolution), true
 }
 
 type resolvedEntity struct {
 	entityID       string
+	engine         storage.Engine
 	labels         []string
 	createdAtNanos int64
 	versionAtNanos int64
@@ -46,22 +97,35 @@ type resolvedEntity struct {
 }
 
 func (e *StorageExecutor) resolveEntityForDecay(
+	ctx context.Context,
 	argExpr string,
 	nodes map[string]*storage.Node,
 	rels map[string]*storage.Edge,
 ) (resolvedEntity, bool) {
 	arg := strings.TrimSpace(argExpr)
 	if node, ok := nodes[arg]; ok {
+		engine, _, err := e.knowledgePolicyContext(node.RuntimeMetadata().Database)
+		if err != nil {
+			recordExpressionFailure(ctx, err)
+			return resolvedEntity{}, false
+		}
 		return resolvedEntity{
-			entityID:       storage.QualifiedEntityID(e.storage, string(node.ID)),
+			engine:         engine,
+			entityID:       storage.QualifiedEntityID(engine, string(node.ID)),
 			labels:         node.Labels,
 			createdAtNanos: node.CreatedAt.UnixNano(),
 			versionAtNanos: node.UpdatedAt.UnixNano(),
 		}, true
 	}
 	if rel, ok := rels[arg]; ok {
+		engine, _, err := e.knowledgePolicyContext(rel.Database)
+		if err != nil {
+			recordExpressionFailure(ctx, err)
+			return resolvedEntity{}, false
+		}
 		return resolvedEntity{
-			entityID:       storage.QualifiedEntityID(e.storage, string(rel.ID)),
+			engine:         engine,
+			entityID:       storage.QualifiedEntityID(engine, string(rel.ID)),
 			isEdge:         true,
 			edgeType:       rel.Type,
 			createdAtNanos: rel.CreatedAt.UnixNano(),
@@ -90,8 +154,8 @@ func (ent resolvedEntity) score(scorer *knowledgepolicy.Scorer, accessMeta *know
 // time: the statement's clock (the instant datetime.statement() reads), so
 // every decay function of one statement scores at one instant (#866). Outside
 // a statement it is the current time.
-func (e *StorageExecutor) getDecayContext(ctx context.Context) (be *storage.BadgerEngine, nowNanos int64, ok bool) {
-	be = unwrapBadgerEngine(e.storage)
+func (e *StorageExecutor) getDecayContext(ctx context.Context, engine storage.Engine) (be *storage.BadgerEngine, nowNanos int64, ok bool) {
+	be = unwrapBadgerEngine(engine)
 	if be == nil {
 		return nil, 0, false
 	}
@@ -104,147 +168,6 @@ func (e *StorageExecutor) logDecayMismatchOnce() {
 	}
 	e.decayMismatchLogged = true
 	e.logEvent(slog.LevelWarn, localization.CypherDecaySubsystemDisabledEvent())
-}
-
-// evalDecayScore implements decayScore(entity) and decayScore(entity, {property: "key"}).
-func (e *StorageExecutor) evalDecayScore(
-	ctx context.Context,
-	expr string,
-	nodes map[string]*storage.Node,
-	rels map[string]*storage.Edge,
-) interface{} {
-	inner := extractFuncArgs(expr, "decayScore")
-	if inner == "" {
-		inner = extractFuncArgs(expr, "decayscore")
-	}
-	args := e.splitFunctionArgs(inner)
-	if len(args) == 0 {
-		return 1.0
-	}
-
-	ent, ok := e.resolveEntityForDecay(args[0], nodes, rels)
-	if !ok {
-		return 1.0
-	}
-
-	be, nowNanos, ok := e.getDecayContext(ctx)
-	if !ok {
-		return 1.0
-	}
-	if !be.IsDecayEnabled() {
-		e.logDecayMismatchOnce()
-		return 1.0
-	}
-
-	ns := storage.ExtractNamespaceFromID(ent.entityID)
-	scorer := be.ScorerForNamespace(ns)
-	if scorer == nil {
-		return 1.0
-	}
-
-	var accessMeta *knowledgepolicy.AccessMetaEntry
-	if meta, err := be.GetAccessMeta(ent.entityID); err == nil {
-		accessMeta = meta
-	}
-
-	var property string
-	if len(args) >= 2 {
-		var err error
-		property, err = validateDecayOptions(ctx, args[1], nodes, rels, e)
-		if err != nil {
-			return nil
-		}
-	}
-
-	return ent.score(scorer, accessMeta, property, nowNanos).FinalScore
-}
-
-// evalDecay implements decay(entity) and decay(entity, {property: "key"}).
-func (e *StorageExecutor) evalDecay(
-	ctx context.Context,
-	expr string,
-	nodes map[string]*storage.Node,
-	rels map[string]*storage.Edge,
-) interface{} {
-	inner := extractFuncArgs(expr, "decay")
-	args := e.splitFunctionArgs(inner)
-	if len(args) == 0 {
-		return decayDisabledMap(localization.CypherKnowledgePolicyReasonNoEntityArgument().Fallback)
-	}
-
-	ent, ok := e.resolveEntityForDecay(args[0], nodes, rels)
-	if !ok {
-		return decayDisabledMap(localization.CypherKnowledgePolicyReasonEntityNotFound().Fallback)
-	}
-
-	be, nowNanos, ok := e.getDecayContext(ctx)
-	if !ok {
-		return decayDisabledMap(localization.CypherKnowledgePolicyReasonNoBadgerEngine().Fallback)
-	}
-	if !be.IsDecayEnabled() {
-		e.logDecayMismatchOnce()
-		return decayDisabledMap(localization.CypherKnowledgePolicyReasonDecayDisabled().Fallback)
-	}
-
-	ns := storage.ExtractNamespaceFromID(ent.entityID)
-	scorer := be.ScorerForNamespace(ns)
-	if scorer == nil {
-		return decayDisabledMap(localization.CypherKnowledgePolicyReasonNoDecayProfile().Fallback)
-	}
-
-	var accessMeta *knowledgepolicy.AccessMetaEntry
-	if meta, err := be.GetAccessMeta(ent.entityID); err == nil {
-		accessMeta = meta
-	}
-
-	var property string
-	if len(args) >= 2 {
-		var err error
-		property, err = validateDecayOptions(ctx, args[1], nodes, rels, e)
-		if err != nil {
-			return nil
-		}
-	}
-
-	return resolutionToMap(ent.score(scorer, accessMeta, property, nowNanos))
-}
-
-// evalPolicy implements policy(entity) returning AccessMeta as a map.
-func (e *StorageExecutor) evalPolicy(
-	ctx context.Context,
-	expr string,
-	nodes map[string]*storage.Node,
-	rels map[string]*storage.Edge,
-) interface{} {
-	inner := extractFuncArgs(expr, "policy")
-	args := e.splitFunctionArgs(inner)
-	if len(args) == 0 {
-		return minimalPolicyMap("")
-	}
-
-	ent, ok := e.resolveEntityForDecay(args[0], nodes, rels)
-	if !ok {
-		return minimalPolicyMap("")
-	}
-
-	be, _, ok := e.getDecayContext(ctx)
-	if !ok {
-		return minimalPolicyMap(ent.entityID)
-	}
-
-	meta, err := be.GetAccessMeta(ent.entityID)
-	if err != nil || meta == nil {
-		scope := string(knowledgepolicy.ScopeNode)
-		if ent.isEdge {
-			scope = string(knowledgepolicy.ScopeEdge)
-		}
-		return map[string]interface{}{
-			"targetId":    ent.entityID,
-			"targetScope": scope,
-		}
-	}
-
-	return accessMetaToMap(meta)
 }
 
 func decayDisabledMap(reason string) map[string]interface{} {

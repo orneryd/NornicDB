@@ -32,7 +32,7 @@ func createTestNode(t *testing.T, e *StorageExecutor, id string, labels []string
 		Labels:     labels,
 		Properties: props,
 	}
-	if _, err := e.storage.CreateNode(node); err != nil {
+	if _, err := e.storage.CreateNode(t.Context(), node); err != nil {
 		t.Fatalf("Failed to create test node: %v", err)
 	}
 	return node
@@ -302,7 +302,9 @@ func TestFunctionEvaluator_ArrayIndexSliceAndMapLiteral(t *testing.T) {
 	// Array/string indexing paths
 	assertEqual(t, "labels(n)[0]", "Person", e.evaluateExpressionWithContext(ctx, "labels(n)[0]", nodes, nil))
 	assertEqual(t, "labels(n)[-1]", "Employee", e.evaluateExpressionWithContext(ctx, "labels(n)[-1]", nodes, nil))
-	assertEqual(t, "'abc'[1]", "b", e.evaluateExpressionWithContext(ctx, "'abc'[1]", nodes, nil))
+	assertEqual(t, "substring('abc',1,1)", "b", typedNumericRead(t, e, "RETURN substring('abc',1,1) AS v", nil))
+	_, err := e.Execute(ctx, "RETURN 'abc'[1] AS v", nil)
+	requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 
 	// Slice notation paths
 	s1 := e.evaluateExpressionWithContext(ctx, "labels(n)[..1]", nodes, nil)
@@ -345,7 +347,7 @@ func TestFunctionEvaluator_AdditionalBranches(t *testing.T) {
 		EndNode:    node.ID,
 		Properties: map[string]interface{}{"weight": int64(1)},
 	}
-	if err := e.storage.CreateEdge(rel); err != nil {
+	if err := e.storage.CreateEdge(t.Context(), rel); err != nil {
 		t.Fatalf("Failed to create test edge: %v", err)
 	}
 
@@ -800,7 +802,7 @@ func TestRelationshipFunctions(t *testing.T) {
 		EndNode:    node2.ID,
 		Properties: map[string]interface{}{"since": 2020},
 	}
-	e.storage.CreateEdge(rel)
+	e.storage.CreateEdge(t.Context(), rel)
 
 	nodes := map[string]*storage.Node{"a": node1, "b": node2}
 	rels := map[string]*storage.Edge{"r": rel}
@@ -1008,7 +1010,7 @@ func TestCountFunction(t *testing.T) {
 	ctx := context.Background()
 
 	// count(*) in expression context should NOT be evaluated here
-	// Aggregation functions must be handled by executeAggregation(ctx, ) or executeMatchWithRelationshipsWithPathSeeded()
+	// Aggregation functions must be handled by executeAggregation(ctx) or executeMatchWithRelationshipsWithPathSeeded()
 	result := e.evaluateExpressionWithContext(ctx, "count(*)", nil, nil)
 	if result != nil {
 		t.Errorf("count(*) in expression context should return nil, got %v", result)
@@ -1383,8 +1385,8 @@ func TestDegreeFunctions(t *testing.T) {
 	node3 := createTestNode(t, e, "node-3", []string{"Person"}, map[string]interface{}{"name": "Carol"})
 
 	// Create edges: Alice -> Bob, Carol -> Alice
-	e.storage.CreateEdge(&storage.Edge{ID: "e1", Type: "KNOWS", StartNode: node1.ID, EndNode: node2.ID})
-	e.storage.CreateEdge(&storage.Edge{ID: "e2", Type: "KNOWS", StartNode: node3.ID, EndNode: node1.ID})
+	e.storage.CreateEdge(t.Context(), &storage.Edge{ID: "e1", Type: "KNOWS", StartNode: node1.ID, EndNode: node2.ID})
+	e.storage.CreateEdge(t.Context(), &storage.Edge{ID: "e2", Type: "KNOWS", StartNode: node3.ID, EndNode: node1.ID})
 
 	nodes := map[string]*storage.Node{"a": node1, "b": node2, "c": node3}
 	ctx := context.Background()
@@ -2042,7 +2044,7 @@ func TestFunctionAdditionalListMapAndDegreeCoverage(t *testing.T) {
 		"cleanMap":       map[string]interface{}{"a": int64(1), "b": int64(2), "c": nil},
 	})
 	b := createTestNode(t, e, "fn-b", []string{"Person"}, map[string]interface{}{})
-	if err := e.storage.CreateEdge(&storage.Edge{
+	if err := e.storage.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "fn-rel-1",
 		Type:      "KNOWS",
 		StartNode: a.ID,
@@ -2121,7 +2123,7 @@ func TestFunctionAdditionalMathNilAndFallbackBranches(t *testing.T) {
 	a := createTestNode(t, e, "m-a", []string{"T"}, map[string]interface{}{"name": "a"})
 	b := createTestNode(t, e, "m-b", []string{"T"}, map[string]interface{}{"name": "b"})
 	rel := &storage.Edge{ID: "m-r1", Type: "REL", StartNode: a.ID, EndNode: b.ID}
-	if err := e.storage.CreateEdge(rel); err != nil {
+	if err := e.storage.CreateEdge(t.Context(), rel); err != nil {
 		t.Fatalf("create edge failed: %v", err)
 	}
 	nodes := map[string]*storage.Node{"a": a, "b": b}
@@ -2179,7 +2181,7 @@ func TestFunctionFullMathAdditionalCoverage(t *testing.T) {
 	a := createTestNode(t, e, "fm-a", []string{"T"}, map[string]interface{}{"name": "a"})
 	b := createTestNode(t, e, "fm-b", []string{"T"}, map[string]interface{}{"name": "b"})
 	rel := &storage.Edge{ID: "fm-r", Type: "REL", StartNode: a.ID, EndNode: b.ID, Properties: map[string]interface{}{"w": int64(2)}}
-	if err := e.storage.CreateEdge(rel); err != nil {
+	if err := e.storage.CreateEdge(t.Context(), rel); err != nil {
 		t.Fatalf("create edge failed: %v", err)
 	}
 
@@ -2322,10 +2324,10 @@ func TestFunctionFullMathAdditionalCoverage(t *testing.T) {
 	if got := eval("point.contains(polygon([point({x:0,y:0}), point({x:2,y:0}), point({x:2,y:2})]), point({x:1,y:1}))", nil, nil, 0); got != true {
 		t.Fatalf("point.contains(...) = %#v", got)
 	}
-	if got := eval("vector.similarity.cosine([1.0,0.0], [1.0,0.0])", nil, nil, 0); got == nil {
+	if got := e.evaluateExpressionWithContextFull(context.Background(), "vector.similarity.cosine([1.0,0.0], [1.0,0.0])", nodes, rels, paths, nil, nil, 0); got == nil {
 		t.Fatal("vector.similarity.cosine should not be nil")
 	}
-	if got := eval("vector.similarity.euclidean([1.0,0.0], [1.0,0.0])", nil, nil, 0); got == nil {
+	if got := e.evaluateExpressionWithContextFull(context.Background(), "vector.similarity.euclidean([1.0,0.0], [1.0,0.0])", nodes, rels, paths, nil, nil, 0); got == nil {
 		t.Fatal("vector.similarity.euclidean should not be nil")
 	}
 	if got := eval("all(x IN [1,2,3] WHERE x > 0)", nil, nil, 0); got != true {
@@ -2436,8 +2438,12 @@ func TestFunctionEvaluator_ArrayIndexingAdditionalBranches(t *testing.T) {
 	assertEqual(t, "n.arrAny[-1]", int64(9), e.evaluateExpressionWithContext(ctx, "n.arrAny[-1]", nodes, nil))
 	assertEqual(t, "n.arrStr[0]", "aa", e.evaluateExpressionWithContext(ctx, "n.arrStr[0]", nodes, nil))
 	assertEqual(t, "n.arrStr[-1]", "cc", e.evaluateExpressionWithContext(ctx, "n.arrStr[-1]", nodes, nil))
-	assertEqual(t, "n.text[1]", "e", e.evaluateExpressionWithContext(ctx, "n.text[1]", nodes, nil))
-	assertEqual(t, "n.text[-1]", "o", e.evaluateExpressionWithContext(ctx, "n.text[-1]", nodes, nil))
+	assertEqual(t, "substring(n.text,1,1)", "e", typedNumericRead(t, e, "MATCH (n:Person) RETURN substring(n.text,1,1) AS v", nil))
+	assertEqual(t, "right(n.text,1)", "o", typedNumericRead(t, e, "MATCH (n:Person) RETURN right(n.text,1) AS v", nil))
+	for _, expression := range []string{"n.text[1]", "n.text[-1]"} {
+		_, err := e.Execute(ctx, "MATCH (n:Person) RETURN "+expression+" AS v", nil)
+		requireStatusCode(t, err, "Neo.ClientError.Statement.TypeError")
+	}
 
 	if got := e.evaluateExpressionWithContext(ctx, "n.arrAny[99]", nodes, nil); got != nil {
 		t.Fatalf("n.arrAny[99] should be nil, got %#v", got)
@@ -2483,9 +2489,14 @@ func TestFunctionEvaluator_ConversionAndStringFallbackBranches(t *testing.T) {
 	if got := e.evaluateExpressionWithContext(ctx, "n.text[..1]", nodes, nil); !reflect.DeepEqual([]interface{}{"xy"}, got) {
 		t.Fatalf("n.text[..1] unexpected: %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "n.arrAny['2']", nodes, nil); got != int64(3) {
-		t.Fatalf("n.arrAny['2'] unexpected: %#v", got)
-	}
+	// Neo4j list indices are integers, without implicit numeric-string coercion.
+	// Preserve the successful selection with an explicit conversion and retain
+	// an error assertion for the original invalid expression.
+	assertEqual(t, "n.arrAny[toInteger('2')]", int64(3), typedNumericRead(t, e, "MATCH (n:Person) RETURN n.arrAny[toInteger('2')] AS v", nil))
+	_, err := e.Execute(ctx, "MATCH (n:Person) RETURN n.arrAny['2'] AS v", nil)
+	// The literal STRING index is rejected during statement validation;
+	// dynamic invalid indices are separately checked as runtime TypeErrors.
+	requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 
 	// Scalar conversions.
 	if got := e.evaluateExpressionWithContext(ctx, "toInteger(2.9)", nodes, nil); got != int64(2) {

@@ -1,6 +1,8 @@
 package bolt
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"net"
 	"testing"
 
@@ -9,7 +11,7 @@ import (
 )
 
 func TestExplicitTransactionStreamsResultsByQID(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	store := storage.NewNamespacedEngine(base, "nornic")
 	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
@@ -63,7 +65,7 @@ func TestExplicitTransactionStreamsResultsByQID(t *testing.T) {
 }
 
 func TestExplicitTransactionRejectsUnknownQIDUntilReset(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	store := storage.NewNamespacedEngine(base, "nornic")
 	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
@@ -103,11 +105,11 @@ func TestAddDurableQIDMetadataPreservesNumericQID(t *testing.T) {
 }
 
 func TestBoltRunEmitsDurableQIDForContinuation(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	store := storage.NewNamespacedEngine(base, "nornic")
 	for _, id := range []string{"bolt-a", "bolt-b"} {
-		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{"Document"}})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(id), Labels: []string{"Document"}})
 		require.NoError(t, err)
 	}
 	_, port := startBoltIntegrationServer(t, store)

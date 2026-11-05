@@ -1,5 +1,7 @@
 package cypher
 
+// Author: Codex NOR-184 lane: migrate fixtures to admitted callable publication.
+
 import (
 	"context"
 	"fmt"
@@ -41,7 +43,7 @@ func TestTemporalAccessorsBehaveAlikeInEveryClause(t *testing.T) {
 	} {
 		t.Run(mode.name, func(t *testing.T) {
 			previous := PluginFunctionLookup
-			PluginFunctionLookup = mode.lookup
+			PluginFunctionLookup = checkedTestLookup(mode.lookup)
 			t.Cleanup(func() { PluginFunctionLookup = previous })
 			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "temporal_accessors"))
 			ctx := context.Background()
@@ -60,7 +62,7 @@ func TestTemporalAccessorsBehaveAlikeInEveryClause(t *testing.T) {
 					}
 					// Both evaluators read the accessor alike.
 					require.Equal(t, want[index], exec.evaluateExpressionWithContext(ctx, call, nil, nil), call)
-					value, ok, err := exec.evaluateRowValue(call, nil)
+					value, ok, err := exec.evaluateRowValue(t.Context(), call, nil)
 					require.NoError(t, err, call)
 					require.True(t, ok, call)
 					require.Equal(t, want[index], value, call)
@@ -68,7 +70,7 @@ func TestTemporalAccessorsBehaveAlikeInEveryClause(t *testing.T) {
 			}
 			// A value that isn't temporal gives null in both.
 			require.Nil(t, exec.evaluateExpressionWithContext(ctx, "date.year(1)", nil, nil))
-			value, ok, err := exec.evaluateRowValue("date.year(1)", nil)
+			value, ok, err := exec.evaluateRowValue(t.Context(), "date.year(1)", nil)
 			require.NoError(t, err)
 			require.True(t, ok)
 			require.Nil(t, value)
@@ -79,7 +81,7 @@ func TestTemporalAccessorsBehaveAlikeInEveryClause(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "temporal_accessors_min"))
 	for _, call := range []string{"date.year('0001-01-01')", "datetime.year('0001-01-01T00:00:00Z')", "date.day('0001-01-01')"} {
 		require.Equal(t, int64(1), exec.evaluateExpressionWithContext(context.Background(), call, nil, nil), call)
-		value, ok, err := exec.evaluateRowValue(call, nil)
+		value, ok, err := exec.evaluateRowValue(t.Context(), call, nil)
 		require.NoError(t, err, call)
 		require.True(t, ok, call)
 		require.Equal(t, int64(1), value, call)

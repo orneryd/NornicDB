@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"testing"
@@ -10,11 +12,11 @@ import (
 
 func seedStreamBenchNodes(b *testing.B, count int) *BadgerEngine {
 	b.Helper()
-	badger, err := NewBadgerEngineInMemory()
+	badger, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(b, err)
 	b.Cleanup(func() { _ = badger.Close() })
 	for index := 0; index < count; index++ {
-		_, err := badger.CreateNode(&Node{
+		_, err := badger.CreateNode(b.Context(), &Node{
 			ID:         NodeID(fmt.Sprintf("db:n-%05d", index)),
 			Labels:     []string{"Doc"},
 			Properties: map[string]any{"a": int64(index), "b": "value"},

@@ -118,6 +118,7 @@ func TestAlgorithmRowsListANodeOnce(t *testing.T) {
 
 func TestRenumberInNodeOrderSkipsNodesWithoutCommunity(t *testing.T) {
 	a, b, c := &storage.Node{ID: "a"}, &storage.Node{ID: "b"}, &storage.Node{ID: "c"}
-	numbers := renumberInNodeOrder([]*storage.Node{c, a, b}, map[storage.NodeID]int{"a": 7, "b": 3})
+	numbers, err := renumberInNodeOrder(context.Background(), []*storage.Node{c, a, b}, map[storage.NodeID]int{"a": 7, "b": 3})
+	require.NoError(t, err)
 	require.Equal(t, map[storage.NodeID]int{"a": 0, "b": 1}, numbers)
 }

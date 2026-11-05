@@ -3,6 +3,7 @@ package bolt
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -16,17 +17,17 @@ import (
 func TestStatementBoltUseAndFabric(t *testing.T) {
 	ctx := context.Background()
 	users, _, fixture, stores := boltProductionFixture(t)
-	mgr, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), nil)
+	mgr, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = mgr.Close() })
 	for _, database := range []string{"other", "r2source", "r2target"} {
-		require.NoError(t, mgr.CreateDatabase(database))
+		require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: database}))
 	}
-	require.NoError(t, mgr.CreateCompositeDatabase("r2cmp", []multidb.ConstituentRef{
+	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "r2cmp", []multidb.ConstituentRef{
 		{Alias: "source", DatabaseName: "r2source", Type: "local", AccessMode: "read_write"},
 		{Alias: "target", DatabaseName: "r2target", Type: "local", AccessMode: "read_write"},
 	}))
-	require.NoError(t, mgr.CreateCompositeDatabase("r2blockedcmp", []multidb.ConstituentRef{
+	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "r2blockedcmp", []multidb.ConstituentRef{
 		{Alias: "source", DatabaseName: "nornic", Type: "local", AccessMode: "read_write"},
 	}))
 	source, err := mgr.GetStorage("r2source")
@@ -40,7 +41,7 @@ func TestStatementBoltUseAndFabric(t *testing.T) {
 	} {
 		require.NoError(t, stores.privileges.SavePrivilege(ctx, "r2loader", database, access.Read, access.Write))
 	}
-	_, err = users.CreateUser("r2loader", "password123", []auth.Role{"r2loader"})
+	_, err = users.CreateUser(context.Background(), "r2loader", "password123", []auth.Role{"r2loader"})
 	require.NoError(t, err)
 	config := fixture.config
 	config.Port = 0

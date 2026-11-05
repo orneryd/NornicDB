@@ -141,6 +141,15 @@ every candidate nearly the same) or `rerank_no_candidates` (no candidate had
 content to score). `db.rerank`, which has no fallback to report, fails with
 `rerank failed (<reranker>)` instead.
 
+A positive `rerankMinScore` is an inclusive floor that applies to rerank
+output and to `db.rerank` candidates. When the reranker ordered the results,
+rows below it aren't returned, even when that leaves none; a candidate the
+reranker didn't score is compared on its own score. `db.rerank` applies it on
+every path, comparing a candidate's `score` when no rerank score is used.
+Search fallbacks without rerank output (`rerank_failed`, `rerank_scores_flat`,
+`rerank_no_candidates`, or no reranker configured) are returned unfiltered,
+with their `fallback_reason`. The default minimum, 0, filters nothing.
+
 A long query is split into chunks of 512 characters, and each chunk is
 embedded and searched. At most `NORNICDB_SEARCH_QUERY_MAX_CHUNKS` chunks are
 searched (32 by default). When a query has more, the results are for its first
@@ -153,6 +162,11 @@ that matches nothing returns no rows; to learn its coverage anyway, continue it
 (`n`): a continued search always returns one `page`, with its chunk counts even
 when `results` is empty. With `NORNICDB_SEARCH_QUERY_CHUNK_OVERFLOW=error`, such
 a query fails instead (`search query has N chunks; at most M are searched`).
+
+The chunks' results are fused into one ranking: `score` and `rrf_score` are
+that fusion's score. A row's `vector_rank` and `bm25_rank` are the best rank
+any searched chunk gave it by that method, and 0 means no searched chunk found
+it that way, as for a query searched whole.
 
 ### What matched: `matches`
 

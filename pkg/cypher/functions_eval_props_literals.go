@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+
 	"context"
 	"strings"
 
@@ -30,12 +32,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 			}
 			// has_embedding is stored in EmbedMeta by the managed embedding system
 			if propName == "has_embedding" {
-				if node.EmbedMeta != nil {
-					if val, ok := node.EmbedMeta["has_embedding"]; ok {
-						return val
-					}
-				}
-				return len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0
+				return nodeHasEmbeddingValue(node)
 			}
 			if val, ok := e.queryEntityProperties(node)[propName]; ok {
 				return val
@@ -105,7 +102,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 
 	// String literal (single or double quotes)
 	if isWholeCypherQuotedString(expr) {
-		if decoded, ok := decodeCypherQuotedString(expr); ok {
+		if decoded, ok := cyphertext.DecodeString(expr, cyphertext.AcceptedSource); ok {
 			return decoded
 		}
 	}
@@ -118,64 +115,21 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 		return num
 	}
 
-	// List literal [a, b, c]: every element is an expression evaluated in the
-	// same context (as the row and path evaluators do), so [a.v, b.v] yields
-	// the property values rather than their text.
-	if inner, isList := stripEnclosingRowDelimiter(expr, '[', ']'); isList {
-		inner = strings.TrimSpace(inner)
-		if inner == "" {
-			return []interface{}{}
-		}
-		elements := e.splitArrayElements(inner)
-		result := make([]interface{}, len(elements))
-		for i, element := range elements {
-			result[i] = e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(element), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		}
-		return result
-	}
-	if strings.HasPrefix(expr, "[") && strings.HasSuffix(expr, "]") {
-		return e.parseArrayValue(ctx, expr)
+	// Only a complete list literal enters the checked list-value boundary.
+	// Subscripts and expressions over lists stay with the row evaluator.
+	if isListLiteral(expr) {
+		value, err := e.checkedPropertyExpression(ctx, expr, e.entityRowWithPaths(ctx, nodes, rels, paths))
+		recordExpressionFailure(ctx, err)
+		return value
 	}
 
 	// Map literal {key: value}
 	if strings.HasPrefix(expr, "{") && strings.HasSuffix(expr, "}") {
-		return e.parseProperties(ctx, expr)
+		value, err := e.parseProperties(ctx, expr)
+		recordExpressionFailure(ctx, err)
+		return value
 	}
 
-	// Check if this looks like a variable reference (identifier pattern)
-	// If it's a valid identifier and not found in nodes/rels, it should be null
-	// This handles cases like OPTIONAL MATCH where the variable might not exist
-	isValidIdentifier := true
-	for i, ch := range expr {
-		if i == 0 {
-			if !isIdentStartRune(ch) {
-				isValidIdentifier = false
-				break
-			}
-		} else {
-			if !isIdentRune(ch) {
-				isValidIdentifier = false
-				break
-			}
-		}
-	}
-	if isValidIdentifier && len(expr) > 0 {
-		// This looks like an unresolved variable reference - return null
-		return nil
-	}
-
-	// Check if this is an aggregation function - they should not be evaluated in expression context
-	exprLower := lowerASCII(expr)
-	if strings.HasPrefix(exprLower, "count(") ||
-		strings.HasPrefix(exprLower, "sum(") ||
-		strings.HasPrefix(exprLower, "avg(") ||
-		strings.HasPrefix(exprLower, "min(") ||
-		strings.HasPrefix(exprLower, "max(") ||
-		strings.HasPrefix(exprLower, "collect(") {
-		// Aggregation functions must be handled by aggregation logic, not per-row evaluation
-		return nil
-	}
-
-	// Unknown - return as string (for string literals without quotes, etc.)
-	return expr
+	recordExpressionFailure(ctx, unresolvedExpressionError(expr))
+	return nil
 }

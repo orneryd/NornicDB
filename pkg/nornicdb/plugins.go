@@ -6,8 +6,10 @@
 package nornicdb
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/apoc/registry"
 	"os"
 	"path/filepath"
 	"plugin"
@@ -18,6 +20,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/heimdall"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 // PluginType identifies the kind of plugin.
@@ -32,7 +35,7 @@ const (
 // PluginFunction represents a Cypher function provided by a plugin.
 type PluginFunction struct {
 	Name        string
-	Handler     interface{}
+	Handler     *registry.Callable
 	Description string
 	Category    string
 }
@@ -65,10 +68,11 @@ var (
 	pluginFunctions    = make(map[string]PluginFunction)
 	pluginProcedures   = make(map[string]PluginProcedure)
 	pluginsMu          sync.RWMutex
+	loadingPluginPaths = make(map[string]bool)
 	pluginsInitialized bool
 )
 
-var errHeimdallContextRequired = errors.New("heimdall plugin requires subsystem context (Heimdall disabled or not initialized)")
+var errHeimdallContextRequired = errors.New("heimdall plugin requires subsystem context (host context not initialized)")
 
 // LoadPluginsFromDir scans a directory for .so files and loads them.
 // Auto-detects plugin types and registers appropriately:
@@ -78,10 +82,20 @@ var errHeimdallContextRequired = errors.New("heimdall plugin requires subsystem 
 // A plugin that fails to load doesn't stop the others: every other plugin in
 // the directory still loads, and the failures are returned together, one
 // NornicDBCorePluginLoadFailed per file, after the directory is done. A
-// Heimdall plugin without a subsystem context is skipped, not a failure.
+// Heimdall plugin without host metadata is skipped, not a failure.
+//
+// heimdallHost carries the host metadata a Heimdall plugin is initialized with,
+// and ctx is the caller work context for those registrations: the plugin
+// itself receives the work context its own registration is admitted under,
+// never ctx itself.
+//
 // Callers treat the returned error as a warning; returning nil after a failed
 // file made a plugin that didn't load look like an empty directory (#867).
-func LoadPluginsFromDir(dir string, heimdallCtx *heimdall.SubsystemContext) error {
+func LoadPluginsFromDir(ctx context.Context, dir string, heimdallHost *heimdall.SubsystemHost) error {
+	diagnosticCredentials := observability.ClientCredentials(dir)
+	if heimdallHost != nil {
+		diagnosticCredentials = append(diagnosticCredentials, observability.ClientCredentials(heimdallHost.Config.APIURL, heimdallHost.Config.APIKey)...)
+	}
 	if dir == "" {
 		fmt.Printf("   [Plugin Debug] LoadPluginsFromDir called with empty directory\n")
 		return nil
@@ -90,34 +104,39 @@ func LoadPluginsFromDir(dir string, heimdallCtx *heimdall.SubsystemContext) erro
 	// Resolve relative paths to absolute
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
-		fmt.Printf("   [Plugin Debug] Failed to resolve path %s: %v\n", dir, err)
-		return fmt.Errorf("resolving plugins directory: %w", err)
+		safeDir := observability.RedactText(dir, diagnosticCredentials...)
+		safeErr := observability.RedactError(err, diagnosticCredentials...)
+		fmt.Printf("   [Plugin Debug] Failed to resolve path %s: %v\n", safeDir, safeErr)
+		return observability.RedactError(fmt.Errorf("resolving plugins directory: %w", err), diagnosticCredentials...)
 	}
-	fmt.Printf("   [Plugin Debug] Loading plugins from: %s (resolved from %s)\n", absDir, dir)
+	safeAbsDir := observability.RedactText(absDir, diagnosticCredentials...)
+	safeDir := observability.RedactText(dir, diagnosticCredentials...)
+	fmt.Printf("   [Plugin Debug] Loading plugins from: %s (resolved from %s)\n", safeAbsDir, safeDir)
 
 	info, err := os.Stat(absDir)
 	if os.IsNotExist(err) {
-		fmt.Printf("   [Plugin Debug] Directory does not exist: %s\n", absDir)
+		fmt.Printf("   [Plugin Debug] Directory does not exist: %s\n", safeAbsDir)
 		return nil // No plugins directory
 	}
 	if err != nil {
-		return fmt.Errorf("checking plugins directory: %w", err)
+		return observability.RedactError(fmt.Errorf("checking plugins directory '%s': %w", safeAbsDir, err), diagnosticCredentials...)
 	}
 	if !info.IsDir() {
-		return fmt.Errorf("not a directory: %s", absDir)
+		return fmt.Errorf("not a directory: %s", safeAbsDir)
 	}
 
 	matches, err := filepath.Glob(filepath.Join(absDir, "*.so"))
 	if err != nil {
-		return fmt.Errorf("scanning directory: %w", err)
+		return observability.RedactError(fmt.Errorf("scanning directory '%s': %w", safeAbsDir, err), diagnosticCredentials...)
 	}
-	fmt.Printf("   [Plugin Debug] Found %d .so files: %v\n", len(matches), matches)
+	safeMatches := make([]string, len(matches))
+	for i, match := range matches {
+		safeMatches[i] = observability.RedactText(match, diagnosticCredentials...)
+	}
+	fmt.Printf("   [Plugin Debug] Found %d .so files: %v\n", len(matches), safeMatches)
 	if len(matches) == 0 {
 		return nil
 	}
-
-	pluginsMu.Lock()
-	defer pluginsMu.Unlock()
 
 	fmt.Println("╔══════════════════════════════════════════════════════════════╗")
 	fmt.Println("║ Loading Plugins                                              ║")
@@ -135,53 +154,74 @@ func LoadPluginsFromDir(dir string, heimdallCtx *heimdall.SubsystemContext) erro
 
 	var failures []error
 	for _, path := range matches {
-		loaded, err := loadPluginFile(path, heimdallCtx)
+		// Reserve only the identity. Native constructors and lifecycle methods
+		// may reenter public registry readers, including from their stop signal.
+		pluginsMu.Lock()
+		loading := loadingPluginPaths[path]
+		if !loading {
+			loadingPluginPaths[path] = true
+		}
+		pluginsMu.Unlock()
+		if loading {
+			failures = append(failures, fmt.Errorf("plugin load already in progress: %s", path))
+			continue
+		}
+		loaded, err := loadPluginFile(path, heimdallHost, ctx)
+		pluginsMu.Lock()
+		delete(loadingPluginPaths, path)
+		pluginsMu.Unlock()
 		if err != nil {
-			// Heimdall plugins require an initialized subsystem context; when Heimdall is disabled
-			// (or not initialized yet), we skip loading them rather than treating as a failure.
+			// Embedded startup may scan plugins before a host context is supplied.
+			// Server plugin-only startup supplies that context even without inference.
 			if errors.Is(err, errHeimdallContextRequired) {
 				stats.skipped++
 				if loaded != nil && loaded.Name != "" {
-					fmt.Printf("║ - [HEIM] %-15s v%-8s skipped (Heimdall disabled)      ║\n",
-						loaded.Name, loaded.Version)
+					fmt.Printf("║ - [HEIM] %-15s v%-8s deferred (no host context)      ║\n",
+						observability.RedactText(loaded.Name, diagnosticCredentials...), observability.RedactText(loaded.Version, diagnosticCredentials...))
 				} else {
-					fmt.Printf("║ - [HEIM] %-47s skipped (Heimdall disabled) ║\n", filepath.Base(path))
+					fmt.Printf("║ - [HEIM] %-47s deferred (no host context) ║\n", observability.RedactText(filepath.Base(path), diagnosticCredentials...))
 				}
 				continue
 			}
 
-			fmt.Printf("║ ⚠️  %-56s ║\n", filepath.Base(path)+": "+err.Error())
+			safePath := observability.RedactText(filepath.Base(path), diagnosticCredentials...)
+			safeErr := observability.RedactError(err, diagnosticCredentials...)
+			fmt.Printf("║ ⚠️  %-56s ║\n", safePath+": "+safeErr.Error())
 			stats.failed++
-			failures = append(failures, localizedError(localization.NornicDBCorePluginLoadFailed(filepath.Base(path), err), err))
+			failures = append(failures, localizedError(localization.NornicDBCorePluginLoadFailed(safePath, safeErr), safeErr))
 			continue
 		}
 
+		pluginsMu.Lock()
 		loadedPlugins[loaded.Name] = loaded
-		stats.total++
-
-		switch loaded.Type {
-		case PluginTypeFunction:
-			stats.function++
-			stats.functions += len(loaded.Functions)
+		if loaded.Type == PluginTypeFunction {
 			for _, fn := range loaded.Functions {
 				pluginFunctions[fn.Name] = fn
 			}
 			for _, proc := range loaded.Procedures {
 				pluginProcedures[proc.Name] = proc
 			}
+		}
+		pluginsMu.Unlock()
+		stats.total++
+
+		switch loaded.Type {
+		case PluginTypeFunction:
+			stats.function++
+			stats.functions += len(loaded.Functions)
 			fmt.Printf("║ ✓ [FUNC] %-15s v%-8s %3d functions %12s ║\n",
-				loaded.Name, loaded.Version, len(loaded.Functions), "")
+				observability.RedactText(loaded.Name, diagnosticCredentials...), observability.RedactText(loaded.Version, diagnosticCredentials...), len(loaded.Functions), "")
 
 		case PluginTypeHeimdall:
 			stats.heimdall++
 			// Actions count comes from the registered plugin
-			if heimdallCtx != nil {
+			if heimdallHost != nil {
 				mgr := heimdall.GetSubsystemManager()
 				if p, ok := mgr.GetPlugin(loaded.Name); ok {
 					actionCount := len(p.Actions())
 					stats.actions += actionCount
 					fmt.Printf("║ ✓ [HEIM] %-15s v%-8s %3d actions  %12s ║\n",
-						loaded.Name, loaded.Version, actionCount, "")
+						observability.RedactText(loaded.Name, diagnosticCredentials...), observability.RedactText(loaded.Version, diagnosticCredentials...), actionCount, "")
 				}
 			}
 		}
@@ -191,7 +231,7 @@ func LoadPluginsFromDir(dir string, heimdallCtx *heimdall.SubsystemContext) erro
 	fmt.Printf("║ Loaded: %d plugins (%d function, %d heimdall) %15s ║\n",
 		stats.total, stats.function, stats.heimdall, "")
 	if stats.skipped > 0 {
-		fmt.Printf("║ Skipped: %d plugins (Heimdall disabled) %24s ║\n", stats.skipped, "")
+		fmt.Printf("║ Deferred: %d plugins (no host context) %24s ║\n", stats.skipped, "")
 	}
 	if stats.functions > 0 {
 		fmt.Printf("║         %d Cypher functions available %23s ║\n", stats.functions, "")
@@ -204,12 +244,14 @@ func LoadPluginsFromDir(dir string, heimdallCtx *heimdall.SubsystemContext) erro
 	}
 	fmt.Println("╚══════════════════════════════════════════════════════════════╝")
 
+	pluginsMu.Lock()
 	pluginsInitialized = true
+	pluginsMu.Unlock()
 	return errors.Join(failures...)
 }
 
 // loadPluginFile loads a single .so plugin and auto-detects its type.
-func loadPluginFile(path string, heimdallCtx *heimdall.SubsystemContext) (*LoadedPlugin, error) {
+func loadPluginFile(path string, host *heimdall.SubsystemHost, admissionCtx context.Context) (*LoadedPlugin, error) {
 	p, err := plugin.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open: %w", err)
@@ -227,7 +269,7 @@ func loadPluginFile(path string, heimdallCtx *heimdall.SubsystemContext) (*Loade
 	case PluginTypeFunction:
 		return loadFunctionPlugin(sym, path)
 	case PluginTypeHeimdall:
-		return loadHeimdallPlugin(sym, path, heimdallCtx)
+		return loadHeimdallPlugin(sym, path, host, admissionCtx)
 	default:
 		return nil, fmt.Errorf("unknown plugin type (missing Type() method?)")
 	}
@@ -301,15 +343,15 @@ func loadFunctionPlugin(sym interface{}, path string) (*LoadedPlugin, error) {
 }
 
 // loadHeimdallPlugin loads a Heimdall subsystem plugin.
-func loadHeimdallPlugin(sym interface{}, path string, ctx *heimdall.SubsystemContext) (*LoadedPlugin, error) {
+func loadHeimdallPlugin(sym interface{}, path string, host *heimdall.SubsystemHost, admissionCtx context.Context) (*LoadedPlugin, error) {
 	// Try direct type assertion first
 	if hp, ok := sym.(heimdall.HeimdallPlugin); ok {
-		return registerHeimdallPlugin(hp, path, ctx)
+		return registerHeimdallPlugin(hp, path, host, admissionCtx)
 	}
 
 	// Try pointer to interface
 	if hpp, ok := sym.(*heimdall.HeimdallPlugin); ok && hpp != nil {
-		return registerHeimdallPlugin(*hpp, path, ctx)
+		return registerHeimdallPlugin(*hpp, path, host, admissionCtx)
 	}
 
 	// Fall back to reflection wrapper
@@ -332,15 +374,14 @@ func loadHeimdallPlugin(sym interface{}, path string, ctx *heimdall.SubsystemCon
 
 	// Wrap in reflection adapter
 	wrapper := &reflectHeimdallWrapper{val: val}
-	return registerHeimdallPlugin(wrapper, path, ctx)
+	return registerHeimdallPlugin(wrapper, path, host, admissionCtx)
 }
 
 // registerHeimdallPlugin registers the plugin with Heimdall's subsystem manager.
-func registerHeimdallPlugin(hp heimdall.HeimdallPlugin, path string, ctx *heimdall.SubsystemContext) (*LoadedPlugin, error) {
-	// Heimdall plugins depend on an initialized Heimdall subsystem context (Bifrost, DB reader, etc).
-	// When Heimdall is disabled, we should *not* register/start Heimdall plugins — doing so can
-	// start background goroutines and make `heimdall.enabled: false` a no-op in practice.
-	if ctx == nil {
+func registerHeimdallPlugin(hp heimdall.HeimdallPlugin, path string, host *heimdall.SubsystemHost, admissionCtx context.Context) (*LoadedPlugin, error) {
+	// Host metadata is required; it can be plugin-only with no inference or chat.
+	// Embedded scans with nil host metadata defer initialization to the host.
+	if host == nil {
 		return &LoadedPlugin{
 			Name:    hp.Name(),
 			Version: hp.Version(),
@@ -351,17 +392,13 @@ func registerHeimdallPlugin(hp heimdall.HeimdallPlugin, path string, ctx *heimda
 
 	mgr := heimdall.GetSubsystemManager()
 
-	// Set context if provided
-	mgr.SetContext(*ctx)
+	// The manager publishes this metadata with the work context each
+	// registration is admitted under.
+	mgr.SetContext(*host)
 
-	// Register with Heimdall
-	if err := mgr.RegisterPlugin(hp, path, false); err != nil {
+	// Register with Heimdall under the caller supplied work context.
+	if err := mgr.RegisterStartedPlugin(admissionCtx, hp, path, false); err != nil {
 		return nil, fmt.Errorf("register: %w", err)
-	}
-
-	// Start the plugin
-	if err := hp.Start(); err != nil {
-		return nil, fmt.Errorf("start: %w", err)
 	}
 
 	return &LoadedPlugin{
@@ -379,13 +416,21 @@ func extractFunctions(val reflect.Value, pluginName string) ([]PluginFunction, e
 		return nil, fmt.Errorf("no Functions() method")
 	}
 
-	result := funcsMethod.Call(nil)
-	if len(result) != 1 {
-		return nil, fmt.Errorf("Functions() invalid return")
+	// Author: Codex NOR-184 lane. Admission errors and Functions() errors must
+	// survive plugin loading, just like errors from each published handler.
+	provider, err := registry.Compile(funcsMethod.Interface())
+	if err != nil {
+		return nil, fmt.Errorf("Functions() invalid return: %w", err)
 	}
-
+	result, err := provider.Call(nil)
+	if err != nil {
+		return nil, fmt.Errorf("Functions(): %w", err)
+	}
 	var functions []PluginFunction
-	mapVal := result[0]
+	mapVal := reflect.ValueOf(result)
+	if !mapVal.IsValid() {
+		return functions, nil
+	}
 	if mapVal.Kind() != reflect.Map {
 		return functions, nil
 	}
@@ -393,8 +438,13 @@ func extractFunctions(val reflect.Value, pluginName string) ([]PluginFunction, e
 	for _, key := range mapVal.MapKeys() {
 		funcName := key.String()
 		funcVal := mapVal.MapIndex(key)
+		for funcVal.Kind() == reflect.Interface && !funcVal.IsNil() {
+			funcVal = funcVal.Elem()
+		}
 
-		var handler interface{}
+		// Both direct functions and descriptor structs are supported plugin
+		// transports. Their result protocol is admitted below before publication.
+		handler := funcVal.Interface()
 		var desc string
 
 		if funcVal.Kind() == reflect.Struct {
@@ -412,9 +462,13 @@ func extractFunctions(val reflect.Value, pluginName string) ([]PluginFunction, e
 			fullName = fmt.Sprintf("apoc.%s.%s", pluginName, funcName)
 		}
 
+		checked, err := registry.Compile(handler)
+		if err != nil {
+			return nil, fmt.Errorf("function %s: %w", fullName, err)
+		}
 		functions = append(functions, PluginFunction{
 			Name:        fullName,
-			Handler:     handler,
+			Handler:     checked,
 			Description: desc,
 			Category:    pluginName,
 		})
@@ -647,8 +701,8 @@ func pluginFunctionInfos() []cypher.PluginFunctionInfo {
 // pluginFunctionSignature is a plugin function's signature in Neo4j's form,
 // name(arg1 :: T1, …) :: R, from its handler's Go type; a variadic last
 // parameter is a list.
-func pluginFunctionSignature(name string, handler interface{}) string {
-	t := reflect.TypeOf(handler)
+func pluginFunctionSignature(name string, handler *registry.Callable) string {
+	t := handler.Signature()
 	if t == nil || t.Kind() != reflect.Func {
 		return name + "() :: ANY"
 	}

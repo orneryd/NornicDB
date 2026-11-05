@@ -251,11 +251,13 @@ var (
 	vkEndCommandBuffer           func(commandBuffer VkCommandBuffer) VkResult
 	vkCmdBindPipeline            func(commandBuffer VkCommandBuffer, pipelineBindPoint uint32, pipeline VkPipeline)
 	vkCmdBindDescriptorSets      func(commandBuffer VkCommandBuffer, pipelineBindPoint uint32, layout VkPipelineLayout, firstSet uint32, descriptorSetCount uint32, pDescriptorSets *VkDescriptorSet, dynamicOffsetCount uint32, pDynamicOffsets uintptr)
-	vkCmdPushConstants           func(commandBuffer VkCommandBuffer, layout VkPipelineLayout, stageFlags uint32, offset uint32, size uint32, pValues uintptr)
-	vkCmdDispatch                func(commandBuffer VkCommandBuffer, groupCountX uint32, groupCountY uint32, groupCountZ uint32)
-	vkCmdPipelineBarrier         func(commandBuffer VkCommandBuffer, srcStageMask uint32, dstStageMask uint32, dependencyFlags uint32, memoryBarrierCount uint32, pMemoryBarriers *VkMemoryBarrier, bufferMemoryBarrierCount uint32, pBufferMemoryBarriers uintptr, imageMemoryBarrierCount uint32, pImageMemoryBarriers uintptr)
-	vkQueueSubmit                func(queue VkQueue, submitCount uint32, pSubmits *VkSubmitInfo, fence VkFence) VkResult
-	vkQueueWaitIdle              func(queue VkQueue) VkResult
+	// Keep Go-backed values as pointers through purego's reflection boundary:
+	// an integer address cannot retain or follow a moving Go stack allocation.
+	vkCmdPushConstants   func(commandBuffer VkCommandBuffer, layout VkPipelineLayout, stageFlags uint32, offset uint32, size uint32, pValues unsafe.Pointer)
+	vkCmdDispatch        func(commandBuffer VkCommandBuffer, groupCountX uint32, groupCountY uint32, groupCountZ uint32)
+	vkCmdPipelineBarrier func(commandBuffer VkCommandBuffer, srcStageMask uint32, dstStageMask uint32, dependencyFlags uint32, memoryBarrierCount uint32, pMemoryBarriers *VkMemoryBarrier, bufferMemoryBarrierCount uint32, pBufferMemoryBarriers uintptr, imageMemoryBarrierCount uint32, pImageMemoryBarriers uintptr)
+	vkQueueSubmit        func(queue VkQueue, submitCount uint32, pSubmits *VkSubmitInfo, fence VkFence) VkResult
+	vkQueueWaitIdle      func(queue VkQueue) VkResult
 
 	computeFunctionsRegistered bool
 	computeFunctionsMu         sync.Mutex
@@ -677,7 +679,7 @@ func (c *ComputeContext) dispatchCompute(pipelineType PipelineType, buffers []*B
 
 	// Push constants
 	if len(pushConstants) > 0 {
-		vkCmdPushConstants(commandBuffer, pipeline.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, uint32(len(pushConstants)*4), uintptr(unsafe.Pointer(&pushConstants[0])))
+		vkCmdPushConstants(commandBuffer, pipeline.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, uint32(len(pushConstants)*4), unsafe.Pointer(&pushConstants[0]))
 	}
 
 	// Dispatch compute
@@ -871,7 +873,7 @@ func (c *ComputeContext) HNSWBuildTopK(frontier, queries *Buffer, scoresBuf, ind
 	vkCmdBindPipeline(c.hnswCmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, cosinePipeline.pipeline)
 	vkCmdBindDescriptorSets(c.hnswCmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, cosinePipeline.pipelineLayout, 0, 1, &c.hnswCosineDescSet, 0, 0)
 	cosinePC := [3]uint32{frontierN, queryN, dimensions}
-	vkCmdPushConstants(c.hnswCmdBuffer, cosinePipeline.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 12, uintptr(unsafe.Pointer(&cosinePC[0])))
+	vkCmdPushConstants(c.hnswCmdBuffer, cosinePipeline.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 12, unsafe.Pointer(&cosinePC[0]))
 	vkCmdDispatch(c.hnswCmdBuffer, (frontierN+15)/16, (queryN+15)/16, 1)
 
 	// Barrier: cosine writes → topk reads
@@ -890,7 +892,7 @@ func (c *ComputeContext) HNSWBuildTopK(frontier, queries *Buffer, scoresBuf, ind
 		return fmt.Errorf("invalid top-k value: %d", k)
 	}
 	topkPC := [3]uint32{frontierN, queryN, k32}
-	vkCmdPushConstants(c.hnswCmdBuffer, topkPipeline.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 12, uintptr(unsafe.Pointer(&topkPC[0])))
+	vkCmdPushConstants(c.hnswCmdBuffer, topkPipeline.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 12, unsafe.Pointer(&topkPC[0]))
 	vkCmdDispatch(c.hnswCmdBuffer, (queryN+255)/256, 1, 1)
 
 	if result := vkEndCommandBuffer(c.hnswCmdBuffer); result != VK_SUCCESS {

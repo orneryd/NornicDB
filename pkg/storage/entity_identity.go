@@ -16,11 +16,7 @@ func QualifiedEntityID(engine Engine, id string) string {
 	for engine != nil {
 		if scoped, ok := engine.(interface{ Namespace() string }); ok {
 			if namespace := scoped.Namespace(); namespace != "" {
-				prefix := namespace + ":"
-				if strings.HasPrefix(id, prefix) {
-					return id
-				}
-				return prefix + id
+				return qualifyEntityID(namespace+":", id)
 			}
 		}
 		wrapper, ok := engine.(EngineUnwrapper)
@@ -34,4 +30,14 @@ func QualifiedEntityID(engine Engine, id string) string {
 		engine = inner
 	}
 	return id
+}
+
+// qualifyEntityID applies the physical scope supplied by its actual owner.
+// Discovery may skip an empty namespace, whereas a NamespacedEngine's explicit
+// relative-ID API still owns the literal colon scope in that case.
+func qualifyEntityID(scope, id string) string {
+	if strings.HasPrefix(id, scope) {
+		return id
+	}
+	return scope + id
 }

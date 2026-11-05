@@ -1,10 +1,12 @@
 // Package cypher implements APOC community detection algorithms.
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: result headers come from procedure_result_columns.go.
+
 import (
 	"context"
-	"sort"
 
+	"github.com/orneryd/nornicdb/pkg/louvain"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -20,230 +22,99 @@ import (
 // 1. Local optimization: Each node is moved to the community that yields the best modularity gain
 // 2. Network aggregation: Communities are aggregated into super-nodes
 // These phases repeat until no further improvement is possible.
+//
+// The statement context reaches the adjacency enumeration, both relationship
+// passes and the engine's own passes; a cancelled call returns ctx's error and
+// no rows, rather than a successful partial partition.
 func (e *StorageExecutor) callApocAlgoLouvain(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	nodes, err := e.algorithmNodes("apoc.algo.louvain", args)
+	graph, nodes, config, err := e.readAlgorithmGraph(ctx, "apoc.algo.louvain", args)
 	if err != nil {
 		return nil, err
 	}
 	// The config map may name the relationship weight property.
-	weightProp, _ := algorithmConfig(args)["weightProperty"].(string)
+	weightProp, _ := config["weightProperty"].(string)
 
 	// Run Louvain algorithm
-	communities := e.computeLouvain(nodes, weightProp)
+	communities, err := graph.computeLouvain(ctx, nodes, weightProp)
+	if err != nil {
+		return nil, err
+	}
 
 	// Build result
-	rows := algorithmRows(nodes, communities)
+	rows := graphAlgorithmRows(nodes, communities)
 
 	return &ExecuteResult{
-		Columns: []string{"node", "community"},
+		Columns: columnNames(nodeCommunityColumns),
 		Rows:    rows,
 	}, nil
 }
 
 // computeLouvain is Louvain community detection (#1184), as GDS's
 // gds.louvain computes it over an undirected graph: the relationships
-// between the given nodes, parallel ones adding their weights (weightProp's
+// between the given nodes, preserving parallel arcs (weightProp's
 // value, 1 without it). Each level moves nodes, in the given order, to the
 // neighbouring community with the best modularity gain until no move
-// helps (at most louvainMaxIterations passes), then merges each community
-// into one node; levels repeat until a level moves nothing (at most
-// louvainMaxLevels). Communities are numbered by their first node.
-func (e *StorageExecutor) computeLouvain(nodes []*storage.Node, weightProp string) map[storage.NodeID]int {
+// helps, then merges each community into one node; levels repeat until a
+// level moves nothing (louvain.Run, louvain.DefaultOptions). Communities are
+// numbered by their first node.
+//
+// Each adjacency read, relationship and output entry checks ctx, so a
+// cancelled call stops reading adjacency and returns ctx's error instead of a
+// partition.
+func (e *StorageExecutor) computeLouvain(ctx context.Context, nodes []*storage.Node, weightProp string) (map[storage.NodeID]int, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if len(nodes) == 0 {
-		return map[storage.NodeID]int{}
+		return map[storage.NodeID]int{}, nil
 	}
 	index := make(map[storage.NodeID]int, len(nodes))
 	unique := make([]*storage.Node, 0, len(nodes))
 	for _, node := range nodes {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if _, listed := index[node.ID]; !listed {
 			index[node.ID] = len(unique)
 			unique = append(unique, node)
 		}
 	}
-	graph := newLouvainGraph(len(unique))
-	for i, node := range unique {
-		for _, edge := range e.getNodeEdges(node.ID) {
-			// Each relationship once: from its start node.
-			if edge.StartNode != node.ID {
-				continue
-			}
-			j, ok := index[edge.EndNode]
-			if !ok {
-				continue
-			}
-			weight := 1.0
-			if weightProp != "" {
-				if w, ok := toFloat64(edge.Properties[weightProp]); ok {
-					weight = w
-				}
-			}
-			graph.link(i, j, weight)
+	var relationships []*storage.Edge
+	for _, node := range unique {
+		// A cancelled call must not keep enumerating adjacency.
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
+		// Enumerate physical relationships once. Undirected expansion and
+		// degree/weight accounting belong to louvain.RunUndirected;
+		// outgoing+incoming incidence lists repeat a physical self-loop.
+		edges, _ := e.storage.GetOutgoingEdges(ctx, node.ID)
+		relationships = append(relationships, edges...)
 	}
-
-	// membership[i] is node i's community at the current level.
-	membership := make([]int, len(unique))
-	for i := range membership {
-		membership[i] = i
-	}
-	for level := 0; level < louvainMaxLevels; level++ {
-		communities, moved := graph.moveNodes()
-		if !moved {
-			break
+	run, err := louvain.RunUndirected(ctx, len(unique), len(relationships), func(i int) (int, int, float64, bool) {
+		edge := relationships[i]
+		source, sourceFound := index[edge.StartNode]
+		target, targetFound := index[edge.EndNode]
+		weight := 1.0
+		if weightProp != "" {
+			if w, ok := toFloat64(edge.Properties[weightProp]); ok {
+				weight = w
+			}
 		}
-		count := renumberLouvainCommunities(communities)
-		for i := range membership {
-			membership[i] = communities[membership[i]]
-		}
-		graph = graph.aggregate(communities, count)
+		return source, target, weight, sourceFound && targetFound
+	}, louvain.DefaultOptions())
+	if err != nil {
+		return nil, err
 	}
-
+	membership := louvain.Final(run)
 	result := make(map[storage.NodeID]int, len(unique))
 	for i, node := range unique {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		result[node.ID] = membership[i]
 	}
-	return renumberInNodeOrder(unique, result)
-}
-
-const (
-	louvainMaxLevels     = 10 // GDS's maxLevels default
-	louvainMaxIterations = 10 // GDS's maxIterations default
-)
-
-// louvainGraph is one Louvain level's undirected weighted graph. weights[i]
-// maps each neighbour j to the weight between i and j; a self-loop is
-// counted twice (weights[i][i] = 2w), so degree[i] is the sum of weights[i]
-// and total, the sum of the degrees, is twice the graph's weight.
-type louvainGraph struct {
-	weights []map[int]float64
-	degree  []float64
-	total   float64
-}
-
-func newLouvainGraph(size int) *louvainGraph {
-	g := &louvainGraph{weights: make([]map[int]float64, size), degree: make([]float64, size)}
-	for i := range g.weights {
-		g.weights[i] = make(map[int]float64)
-	}
-	return g
-}
-
-// link adds a relationship of weight w between i and j.
-func (g *louvainGraph) link(i, j int, w float64) {
-	if i == j {
-		g.weights[i][i] += 2 * w
-		g.degree[i] += 2 * w
-	} else {
-		g.weights[i][j] += w
-		g.weights[j][i] += w
-		g.degree[i] += w
-		g.degree[j] += w
-	}
-	g.total += 2 * w
-}
-
-// moveNodes is a level's local moving phase: each node in turn joins the
-// neighbouring community with the largest modularity gain, kept by its own
-// community on a tie and by the smaller community between others, until a
-// pass moves nothing. It reports each node's community and whether any
-// node moved.
-func (g *louvainGraph) moveNodes() ([]int, bool) {
-	size := len(g.weights)
-	community := make([]int, size)
-	communityDegree := make([]float64, size)
-	for i := range community {
-		community[i] = i
-		communityDegree[i] = g.degree[i]
-	}
-	if g.total == 0 {
-		return community, false
-	}
-	neighbours := g.neighbours()
-	moved := false
-	for iteration := 0; iteration < louvainMaxIterations; iteration++ {
-		moves := 0
-		for i := 0; i < size; i++ {
-			current := community[i]
-			communityDegree[current] -= g.degree[i]
-			// The weight from i to each neighbouring community.
-			links := make(map[int]float64)
-			for _, j := range neighbours[i] {
-				if j != i {
-					links[community[j]] += g.weights[i][j]
-				}
-			}
-			candidates := make([]int, 0, len(links))
-			for c := range links {
-				candidates = append(candidates, c)
-			}
-			sort.Ints(candidates)
-			// The gain of i joining c, up to a constant factor:
-			// k_i,in(c) - Σtot(c)·k_i / 2m.
-			gain := func(c int) float64 {
-				return links[c] - communityDegree[c]*g.degree[i]/g.total
-			}
-			best, bestGain := current, gain(current)
-			for _, c := range candidates {
-				if candidateGain := gain(c); candidateGain > bestGain {
-					best, bestGain = c, candidateGain
-				}
-			}
-			communityDegree[best] += g.degree[i]
-			if best != current {
-				community[i] = best
-				moves++
-			}
-		}
-		if moves == 0 {
-			break
-		}
-		moved = true
-	}
-	return community, moved
-}
-
-// neighbours lists each node's neighbours in order, so sums over them don't
-// depend on map order.
-func (g *louvainGraph) neighbours() [][]int {
-	lists := make([][]int, len(g.weights))
-	for i, weights := range g.weights {
-		lists[i] = make([]int, 0, len(weights))
-		for j := range weights {
-			lists[i] = append(lists[i], j)
-		}
-		sort.Ints(lists[i])
-	}
-	return lists
-}
-
-// renumberLouvainCommunities numbers communities 0, 1, … by their first
-// node, in place, and returns how many there are.
-func renumberLouvainCommunities(community []int) int {
-	numbers := make(map[int]int)
-	for i, c := range community {
-		number, ok := numbers[c]
-		if !ok {
-			number = len(numbers)
-			numbers[c] = number
-		}
-		community[i] = number
-	}
-	return len(numbers)
-}
-
-// aggregate is the next level's graph: one node per community, the weights
-// between communities summed, and a community's inner weight its
-// self-loop.
-func (g *louvainGraph) aggregate(community []int, count int) *louvainGraph {
-	next := newLouvainGraph(count)
-	for i, neighbours := range g.neighbours() {
-		for _, j := range neighbours {
-			next.weights[community[i]][community[j]] += g.weights[i][j]
-		}
-		next.degree[community[i]] += g.degree[i]
-	}
-	next.total = g.total
-	return next
+	return result, nil
 }
 
 // =============================================================================
@@ -256,44 +127,70 @@ func (g *louvainGraph) aggregate(community []int, count int) *louvainGraph {
 // Label propagation is a simpler community detection algorithm where each node
 // adopts the label that most of its neighbors have.
 func (e *StorageExecutor) callApocAlgoLabelPropagation(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	nodes, err := e.algorithmNodes("apoc.algo.labelPropagation", args)
+	graph, nodes, _, err := e.readAlgorithmGraph(ctx, "apoc.algo.labelPropagation", args)
 	if err != nil {
 		return nil, err
 	}
 
-	communities := e.computeLabelPropagation(nodes)
+	communities, err := graph.computeLabelPropagation(ctx, nodes)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
-	rows := algorithmRows(nodes, communities)
+	rows := graphAlgorithmRows(nodes, communities)
 
 	return &ExecuteResult{
-		Columns: []string{"node", "community"},
+		Columns: columnNames(nodeCommunityColumns),
 		Rows:    rows,
 	}, nil
 }
 
-func (e *StorageExecutor) computeLabelPropagation(nodes []*storage.Node) map[storage.NodeID]int {
+// computeLabelPropagation settles each node on the label most of its neighbours
+// carry. The caller's context is observed per propagation round, per adjacency
+// read and every pipelineMaterializedCancelCheck units of a sweep (an initialized
+// label, an incident entry, a counted label or a numbered community), so a
+// canceled read retires the remaining rounds and the community numbering instead
+// of finishing them.
+func (e *StorageExecutor) computeLabelPropagation(ctx context.Context, nodes []*storage.Node) (map[storage.NodeID]int, error) {
 
 	if len(nodes) == 0 {
-		return map[storage.NodeID]int{}
+		return map[storage.NodeID]int{}, nil
 	}
+
+	work := algorithmWorkFor(ctx)
 
 	// Initialize: each node gets its own label
 	labels := make(map[storage.NodeID]int)
 	for i, node := range nodes {
+		if err := work.charge(); err != nil {
+			return nil, err
+		}
 		labels[node.ID] = i
 	}
 
 	// Iterate until convergence
 	maxIterations := 20
 	for iter := 0; iter < maxIterations; iter++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		changed := false
 
 		for _, node := range nodes {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			// Count neighbor labels
 			labelCount := make(map[int]int)
-			edges := e.getNodeEdges(node.ID)
+			edges := e.getNodeEdges(ctx, node.ID)
 
 			for _, edge := range edges {
+				if err := work.charge(); err != nil {
+					return nil, err
+				}
 				neighbor := edge.EndNode
 				if edge.StartNode != node.ID {
 					neighbor = edge.StartNode
@@ -311,6 +208,9 @@ func (e *StorageExecutor) computeLabelPropagation(nodes []*storage.Node) map[sto
 			maxCount := 0
 			bestLabel := labels[node.ID]
 			for l, count := range labelCount {
+				if err := work.charge(); err != nil {
+					return nil, err
+				}
 				if count > maxCount || (count == maxCount && l < bestLabel) {
 					maxCount = count
 					bestLabel = l
@@ -328,8 +228,12 @@ func (e *StorageExecutor) computeLabelPropagation(nodes []*storage.Node) map[sto
 		}
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	// Communities numbered by their first node in the given order (#1183).
-	return renumberInNodeOrder(nodes, labels)
+	return renumberInNodeOrder(ctx, nodes, labels)
 }
 
 // =============================================================================
@@ -339,32 +243,48 @@ func (e *StorageExecutor) computeLabelPropagation(nodes []*storage.Node) map[sto
 // callApocAlgoWCC implements Weakly Connected Components detection.
 // Syntax: CALL apoc.algo.wcc(['Label']) YIELD node, componentId
 func (e *StorageExecutor) callApocAlgoWCC(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	nodes, err := e.algorithmNodes("apoc.algo.wcc", args)
+	graph, nodes, _, err := e.readAlgorithmGraph(ctx, "apoc.algo.wcc", args)
 	if err != nil {
 		return nil, err
 	}
 
-	components := e.computeWCC(nodes)
+	components, err := graph.computeWCC(ctx, nodes)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
-	rows := algorithmRows(nodes, components)
+	rows := graphAlgorithmRows(nodes, components)
 
 	return &ExecuteResult{
-		Columns: []string{"node", "componentId"},
+		Columns: columnNames(apocAlgoWccColumns),
 		Rows:    rows,
 	}, nil
 }
 
-func (e *StorageExecutor) computeWCC(nodes []*storage.Node) map[storage.NodeID]int {
+// computeWCC groups the given nodes into weakly connected components. The
+// caller's context is observed per adjacency read, per component assignment and
+// every pipelineMaterializedCancelCheck units of a sweep (an initialized set or
+// an incident entry), so a canceled read retires the remaining pass and
+// numbering instead of finishing them.
+func (e *StorageExecutor) computeWCC(ctx context.Context, nodes []*storage.Node) (map[storage.NodeID]int, error) {
 
 	if len(nodes) == 0 {
-		return map[storage.NodeID]int{}
+		return map[storage.NodeID]int{}, nil
 	}
+
+	work := algorithmWorkFor(ctx)
 
 	// Union-Find structure
 	parent := make(map[storage.NodeID]storage.NodeID)
 	rank := make(map[storage.NodeID]int)
 
 	for _, node := range nodes {
+		if err := work.charge(); err != nil {
+			return nil, err
+		}
 		parent[node.ID] = node.ID
 		rank[node.ID] = 0
 	}
@@ -396,8 +316,14 @@ func (e *StorageExecutor) computeWCC(nodes []*storage.Node) map[storage.NodeID]i
 
 	// Process all edges
 	for _, node := range nodes {
-		edges := e.getNodeEdges(node.ID)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		edges := e.getNodeEdges(ctx, node.ID)
 		for _, edge := range edges {
+			if err := work.charge(); err != nil {
+				return nil, err
+			}
 			neighbor := edge.EndNode
 			if edge.StartNode != node.ID {
 				neighbor = edge.StartNode
@@ -414,6 +340,9 @@ func (e *StorageExecutor) computeWCC(nodes []*storage.Node) map[storage.NodeID]i
 	result := make(map[storage.NodeID]int)
 
 	for _, node := range nodes {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		root := find(node.ID)
 		if id, exists := componentMap[root]; exists {
 			result[node.ID] = id
@@ -424,5 +353,5 @@ func (e *StorageExecutor) computeWCC(nodes []*storage.Node) map[storage.NodeID]i
 		}
 	}
 
-	return result
+	return result, nil
 }

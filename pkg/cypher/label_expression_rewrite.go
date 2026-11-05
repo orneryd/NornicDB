@@ -1,6 +1,9 @@
 package cypher
 
 import (
+	"context"
+
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"sort"
 	"strconv"
 	"strings"
@@ -46,9 +49,14 @@ type labelRewriteEdit struct {
 }
 
 type labelExpressionRewriter struct {
+	// ctx is the caller's lifetime for the shortestPath calls a MATCH
+	// pattern may name: a canceled read returns the caller's own error.
+	ctx       context.Context
 	query     string
 	edits     []labelRewriteEdit
 	generated int
+	// The property phase reuses this element walk without label rewriting.
+	visitElement func(open, close int, relationship bool) error
 	// params are the statement's parameters: a dynamic label or type whose
 	// value is a literal or a parameter is resolved to names here
 	// (resolveConstant).
@@ -91,16 +99,17 @@ func (m labelPatternMode) clause() string {
 
 // desugarLabelExpressions returns query with its label expressions
 // rewritten (see above) and the rewrite that maps the result back, or query
-// and nil when nothing changes.
-func desugarLabelExpressions(query string, params map[string]interface{}, cypher25 bool) (string, *queryRewrite, error) {
-	if !mayUseLabelExpressions(query) && !mayUseRelationshipQuantifier(query) && !mayUsePatternPredicate(query) &&
+// and nil when nothing changes. ctx is the caller's lifetime; it is read by
+// the shortestPath binding check a MATCH pattern may reach.
+func desugarLabelExpressions(ctx context.Context, query string, params map[string]interface{}, cypher25 bool) (string, *queryRewrite, error) {
+	if !mayUseLabelExpressions(query) && !mayUseRelationshipQuantifier(query) && !mayUsePatternPredicate(ctx, query) &&
 		!mayAssignAnonymousNodePath(query) && !mayUsePathPatternPrefix(query) &&
 		!mayRepeatRelationshipVariable(query) && !mayUseQuantifiedGroup(query) &&
 		!mayUseParenthesisedPath(query) && !mayUseVectorCall(query) && !mayReadPatternInPropertyMap(query) &&
 		!mayTestExpressionLabels(query) {
 		return query, nil, nil
 	}
-	r := &labelExpressionRewriter{query: query, params: params, cypher25: cypher25}
+	r := &labelExpressionRewriter{ctx: ctx, query: query, params: params, cypher25: cypher25}
 	if err := r.statement(0, len(query)); err != nil {
 		return query, nil, err
 	}
@@ -116,7 +125,7 @@ func desugarLabelExpressions(query string, params map[string]interface{}, cypher
 // whose text the client wrote is kept as is).
 func applyLabelRewriteEdits(query string, edits []labelRewriteEdit, verbatimColumns bool) (string, *queryRewrite) {
 	sort.SliceStable(edits, func(i, j int) bool { return edits[i].start < edits[j].start })
-	rewrite := &queryRewrite{original: query, edits: make([]queryTextEdit, 0, len(edits)), verbatimColumns: verbatimColumns}
+	rewrite := &queryRewrite{Source: cyphertext.Source{Original: query, Edits: make([]cyphertext.SourceEdit, 0, len(edits))}, verbatimColumns: verbatimColumns}
 	var out strings.Builder
 	out.Grow(len(query) + 32*len(edits))
 	last := 0
@@ -124,12 +133,12 @@ func applyLabelRewriteEdits(query string, edits []labelRewriteEdit, verbatimColu
 		out.WriteString(query[last:edit.start])
 		canonStart := out.Len()
 		out.WriteString(edit.text)
-		rewrite.edits = append(rewrite.edits, queryTextEdit{origStart: edit.start, origEnd: edit.end, canonStart: canonStart, canonEnd: out.Len()})
+		rewrite.Edits = append(rewrite.Edits, cyphertext.SourceEdit{Original: cyphertext.Span{Start: edit.start, End: edit.end}, Accepted: cyphertext.Span{Start: canonStart, End: out.Len()}})
 		last = edit.end
 	}
 	out.WriteString(query[last:])
-	rewrite.canonical = out.String()
-	return rewrite.canonical, rewrite
+	rewrite.Text = out.String()
+	return rewrite.Text, rewrite
 }
 
 // mayTestExpressionLabels reports whether query may hold a colon label test
@@ -139,7 +148,7 @@ func applyLabelRewriteEdits(query string, edits []labelRewriteEdit, verbatimColu
 func mayTestExpressionLabels(query string) bool {
 	for i := strings.IndexByte(query, ')'); i >= 0; {
 		j := i + 1
-		for j < len(query) && isASCIISpace(query[j]) {
+		for j < len(query) && cyphertext.IsWhitespaceAt(query, j) {
 			j++
 		}
 		if j < len(query) && query[j] == ':' && (j+1 >= len(query) || query[j+1] != ':') {
@@ -165,8 +174,8 @@ func mayTestExpressionLabels(query string) bool {
 func mayReadPatternInPropertyMap(query string) bool {
 	var openers []byte
 	for i := 0; i < len(query); i++ {
-		switch c := query[i]; c {
-		case '\'', '"', '`':
+		switch c := query[i]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(query, i, c) - 1
 		case '(', '[':
 			openers = append(openers, c)
@@ -180,7 +189,7 @@ func mayReadPatternInPropertyMap(query string) bool {
 			if !inPattern {
 				continue
 			}
-			end := findMatchingDelimiter(query, i, '{', '}')
+			end := cyphertext.FindMatchingDelimiter(query, i, '{', '}', cyphertext.OpeningDelimiter)
 			if end < 0 {
 				return false
 			}
@@ -192,11 +201,11 @@ func mayReadPatternInPropertyMap(query string) bool {
 	return false
 }
 
-func mayUsePatternPredicate(query string) bool {
+func mayUsePatternPredicate(ctx context.Context, query string) bool {
 	var openers []int
 	for i := 0; i < len(query); i++ {
-		switch c := query[i]; c {
-		case '\'', '"', '`':
+		switch c := query[i]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(query, i, c) - 1
 		case '(', '[', '{':
 			openers = append(openers, i)
@@ -209,10 +218,10 @@ func mayUsePatternPredicate(query string) bool {
 				continue
 			}
 			open := openers[len(openers)-1]
-			if query[open] == '{' || query[open] == '(' && open > 0 && isIdentByte(query[open-1]) {
+			if query[open] == '{' || query[open] == '(' && open > 0 && cyphertext.NamePartAt(query, open-1) {
 				continue
 			}
-			if topLevelKeywordIndex(query[open+1:i], "IN") >= 0 {
+			if topLevelKeywordIndex(ctx, query[open+1:i], "IN") >= 0 {
 				continue
 			}
 			return true
@@ -229,8 +238,8 @@ func mayUsePatternPredicate(query string) bool {
 func mayUseLabelExpressions(query string) bool {
 	brackets := 0
 	for i := 0; i < len(query); i++ {
-		switch c := query[i]; c {
-		case '\'', '"', '`':
+		switch c := query[i]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(query, i, c) - 1
 		case '|', '&', '!', '%':
 			return true
@@ -250,18 +259,16 @@ func mayUseLabelExpressions(query string) bool {
 			// [:R:S], rejected (a relationship's types can't be joined).
 			if brackets > 0 && i+1 < len(query) && query[i+1] != ':' && i > 0 && query[i-1] != ':' {
 				j := i + 1
-				for j < len(query) && isIdentByte(query[j]) {
-					j++
-				}
+				j = cyphertext.NamePartEnd(query, j)
 				if j > i+1 && j+1 < len(query) && query[j] == ':' && query[j+1] != ':' {
 					return true
 				}
 			}
 		case 'I', 'i':
-			if i > 0 && isIdentByte(query[i-1]) || i+2 >= len(query) || query[i+1]|0x20 != 's' || isIdentByte(query[i+2]) {
+			if i > 0 && cyphertext.NamePartAt(query, i-1) || i+2 >= len(query) || query[i+1]|0x20 != 's' || cyphertext.NamePartAt(query, i+2) {
 				continue
 			}
-			if isLabelIsKeyword(query, i+2) {
+			if readLabelISOperand(query, i+2, labelAfterIS).label {
 				return true
 			}
 		}
@@ -269,52 +276,44 @@ func mayUseLabelExpressions(query string) bool {
 	return false
 }
 
-// isLabelIsKeyword reports whether the IS that ends at query[end] starts a
-// label test: what follows is not NULL, NOT, TYPED, NORMALIZED, a normal
-// form (NFC …) or ::.
-func isLabelIsKeyword(query string, end int) bool {
-	j := end
-	for j < len(query) && isASCIISpace(query[j]) {
-		j++
-	}
-	if j == end || j >= len(query) || query[j] == ':' {
-		return false
-	}
-	k := j
-	for k < len(query) && isIdentByte(query[k]) {
-		k++
-	}
-	switch strings.ToUpper(query[j:k]) {
-	case "NULL", "TYPED", "NORMALIZED", "NFC", "NFD", "NFKC", "NFKD":
-		return false
-	case "NOT":
-		// IS NOT NULL …, or IS NOT <label>, which is an error.
-		_, ok := isNotLabelOperand(query, k)
-		return ok
-	}
-	return true
+type labelISPosition uint8
+
+const (
+	labelAfterIS labelISPosition = iota
+	labelAfterISNot
+)
+
+type labelISOperand struct {
+	name  string
+	label bool
 }
 
-// isNotLabelOperand returns the word after IS NOT (which ends at
-// query[end]) when it is not one of the words IS NOT takes (NULL, TYPED,
-// NORMALIZED, a normal form, ::): Neo4j rejects n IS NOT <label>.
-func isNotLabelOperand(query string, end int) (string, bool) {
-	j := end
-	for j < len(query) && isASCIISpace(query[j]) {
-		j++
+// readLabelISOperand owns the operand boundary and reserved-word decision for
+// IS and IS NOT. IS NOT label operands retain their spelling for diagnostics.
+func readLabelISOperand(query string, end int, position labelISPosition) labelISOperand {
+	for {
+		start := end
+		for start < len(query) && cyphertext.IsWhitespaceAt(query, start) {
+			start++
+		}
+		if start == end || start >= len(query) || query[start] == ':' {
+			return labelISOperand{}
+		}
+		next := cyphertext.NamePartEnd(query, start)
+		word := query[start:next]
+		switch strings.ToUpper(word) {
+		case "NULL", "TYPED", "NORMALIZED", "NFC", "NFD", "NFKC", "NFKD":
+			return labelISOperand{}
+		case "NOT":
+			if position == labelAfterIS {
+				end, position = next, labelAfterISNot
+				continue
+			}
+		case "":
+			return labelISOperand{label: position == labelAfterIS}
+		}
+		return labelISOperand{name: word, label: true}
 	}
-	if j == end || j >= len(query) || query[j] == ':' {
-		return "", false
-	}
-	k := j
-	for k < len(query) && isIdentByte(query[k]) {
-		k++
-	}
-	switch strings.ToUpper(query[j:k]) {
-	case "", "NULL", "TYPED", "NORMALIZED", "NFC", "NFD", "NFKC", "NFKD":
-		return "", false
-	}
-	return query[j:k], true
 }
 
 func (r *labelExpressionRewriter) edit(start, end int, text string) {
@@ -435,7 +434,7 @@ func (r *labelExpressionRewriter) clauses(start, end int) []labelClause {
 	for i := start; i < end; i++ {
 		c := q[i]
 		switch {
-		case c == '\'' || c == '"' || c == '`':
+		case isCypherQuoteByte(c):
 			i = skipCypherQuotedText(q, i, c) - 1
 			continue
 		case c == '(' || c == '[' || c == '{':
@@ -445,15 +444,15 @@ func (r *labelExpressionRewriter) clauses(start, end int) []labelClause {
 			depth--
 			continue
 		}
-		if depth != 0 || !isIdentStartByte(c) || (i > start && isIdentByte(q[i-1])) {
+		if depth != 0 || !cyphertext.NameStartAt(q, i) || (i > start && cyphertext.NamePartAt(q, i-1)) {
 			continue
 		}
 		j := i
-		for j < end && isIdentByte(q[j]) {
+		for j < end && cyphertext.NamePartAt(q, j) {
 			j++
 		}
 		word := strings.ToUpper(q[i:j])
-		if !labelClauseKeywords[word] || clauseKeywordUsedAsName(q[start:end], i-start, j-start, word) {
+		if !labelClauseKeywords[word] || clauseKeywordUsedAsName(r.ctx, q[start:end], i-start, j-start, word) {
 			i = j - 1
 			continue
 		}
@@ -463,7 +462,7 @@ func (r *labelExpressionRewriter) clauses(start, end int) []labelClause {
 			// OPTIONAL MATCH; ON CREATE / ON MATCH inside MERGE.
 			k := skipASCIISpaces(q, j, end)
 			l := k
-			for l < end && isIdentByte(q[l]) {
+			for l < end && cyphertext.NamePartAt(q, l) {
 				l++
 			}
 			next := strings.ToUpper(q[k:l])
@@ -616,16 +615,16 @@ func (r *labelExpressionRewriter) patternElements(start, end int, mode labelPatt
 	q := r.query
 	for i := start; i < end; i++ {
 		c := q[i]
-		switch c {
-		case '\'', '"', '`':
+		switch cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(q, i, c) - 1
 		case '{':
 			// A quantifier ({1,3}) or a stray map: no labels in it.
-			if close := findMatchingDelimiter(q[:end], i, '{', '}'); close > i {
+			if close := cyphertext.FindMatchingDelimiter(q[:end], i, '{', '}', cyphertext.OpeningDelimiter); close > i {
 				i = close
 			}
 		case '(':
-			close := findMatchingDelimiter(q[:end], i, '(', ')')
+			close := cyphertext.FindMatchingDelimiter(q[:end], i, '(', ')', cyphertext.OpeningDelimiter)
 			if close < 0 {
 				return nil
 			}
@@ -635,36 +634,36 @@ func (r *labelExpressionRewriter) patternElements(start, end int, mode labelPatt
 				if err := r.quantifiedGroup(i, close); err != nil {
 					return err
 				}
-			} else if inner < close && q[inner] == '(' || i > start && isIdentByte(q[i-1]) {
+			} else if inner < close && q[inner] == '(' || i > start && cyphertext.NamePartAt(q, i-1) {
 				// A parenthesised path, a quantified group in a write
 				// pattern, or shortestPath(…): its elements are pattern
 				// elements, up to a parenthesised path's own WHERE (which
 				// pathPrefixes moves to the clause's).
 				stop := close
 				if inner < close && q[inner] == '(' {
-					if where := topLevelKeywordIndex(q[i+1:close], "WHERE"); where >= 0 {
+					if where := topLevelKeywordIndex(r.ctx, q[i+1:close], "WHERE"); where >= 0 {
 						stop = i + 1 + where
 					}
 				}
 				if err := r.patternElements(i+1, stop, mode, predicates); err != nil {
 					return err
 				}
-			} else if err := r.element(i, close, false, false, mode, predicates); err != nil {
+			} else if err := r.visitOrRewriteElement(i, close, false, false, mode, predicates); err != nil {
 				return err
 			}
 			i = close
 		case '[':
 			open := i
-			close := findMatchingDelimiter(q[:end], i, '[', ']')
+			close := cyphertext.FindMatchingDelimiter(q[:end], i, '[', ']', cyphertext.OpeningDelimiter)
 			if close < 0 {
 				return nil
 			}
 			quantifier, at, quantified := quantifierAfterArrow(q, close, end)
-			if err := r.element(open, close, true, quantified, mode, predicates); err != nil {
+			if err := r.visitOrRewriteElement(open, close, true, quantified, mode, predicates); err != nil {
 				return err
 			}
 			i = close
-			if quantified {
+			if quantified && r.visitElement == nil {
 				if err := r.quantifiedRelationship(open, close, at, quantifier, mode); err != nil {
 					return err
 				}
@@ -673,7 +672,7 @@ func (r *labelExpressionRewriter) patternElements(start, end int, mode labelPatt
 		case '-', '<':
 			// An abbreviated relationship (--, -->, <--) may be quantified.
 			arrowEnd := arrowRunEnd(q, i, end)
-			if next := skipASCIISpaces(q, arrowEnd, end); next < end && q[next] != '[' {
+			if next := skipASCIISpaces(q, arrowEnd, end); r.visitElement == nil && next < end && q[next] != '[' {
 				if quantifier, ok := relationshipQuantifierAt(q, next, end); ok {
 					if err := r.quantifiedArrow(i, arrowEnd, next, quantifier, mode); err != nil {
 						return err
@@ -688,6 +687,13 @@ func (r *labelExpressionRewriter) patternElements(start, end int, mode labelPatt
 	return nil
 }
 
+func (r *labelExpressionRewriter) visitOrRewriteElement(open, close int, relationship, quantified bool, mode labelPatternMode, predicates *[]string) error {
+	if r.visitElement != nil {
+		return r.visitElement(open, close, relationship)
+	}
+	return r.element(open, close, relationship, quantified, mode, predicates)
+}
+
 // element rewrites the node (or relationship) pattern query[open:close+1]:
 // its variable, then : or IS and a label chain, and its own WHERE (#878).
 // quantified marks a relationship followed by a quantifier (#864).
@@ -695,11 +701,11 @@ func (r *labelExpressionRewriter) element(open, close int, relationship, quantif
 	q := r.query
 	i := skipASCIISpaces(q, open+1, close)
 	variable, variableEnd := "", i
-	if written, end, ok := scanSymbolicName(q[:close], i); ok && !(strings.EqualFold(written, "IS") && end < close && isASCIISpace(q[end])) {
+	if written, end, ok := scanSymbolicName(q[:close], i); ok && !(strings.EqualFold(written, "IS") && end < close && cyphertext.IsWhitespaceAt(q, end)) {
 		variable, variableEnd = written, end
 		i = skipASCIISpaces(q, end, close)
 	}
-	if where := elementWhereIndex(q, open, close); where >= 0 {
+	if where := elementWhereIndex(r.ctx, q, open, close); where >= 0 {
 		if err := r.elementWhere(open, where, close, variable, relationship, quantified, mode, predicates); err != nil {
 			return err
 		}
@@ -715,7 +721,7 @@ func (r *labelExpressionRewriter) element(open, close int, relationship, quantif
 	switch {
 	case q[i] == ':':
 		textStart = i + 1
-	case i+2 < close && strings.EqualFold(q[i:i+2], "IS") && isASCIISpace(q[i+2]):
+	case i+2 < close && strings.EqualFold(q[i:i+2], "IS") && cyphertext.IsWhitespaceAt(q, i+2):
 		// n IS A is rewritten from the end of the variable: n:A.
 		chainStart, textStart, viaIS = variableEnd, i+2, true
 	default:
@@ -785,8 +791,8 @@ func (r *labelExpressionRewriter) samePatternMapReads(open, from, close int, var
 	q := r.query
 	brace := -1
 	for i := from; i < close; i++ {
-		switch c := q[i]; c {
-		case '\'', '"', '`':
+		switch c := q[i]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(q, i, c) - 1
 		case '*':
 			if relationship {
@@ -802,7 +808,7 @@ func (r *labelExpressionRewriter) samePatternMapReads(open, from, close int, var
 	if brace < 0 {
 		return
 	}
-	end := findMatchingDelimiter(q[:close+1], brace, '{', '}')
+	end := cyphertext.FindMatchingDelimiter(q[:close+1], brace, '{', '}', cyphertext.OpeningDelimiter)
 	if end < 0 {
 		return
 	}
@@ -841,7 +847,7 @@ func (r *labelExpressionRewriter) samePatternMapReads(open, from, close int, var
 func (r *labelExpressionRewriter) readsPatternVariable(expression string) bool {
 	for i := 0; i < len(expression); i++ {
 		c := expression[i]
-		if c == '\'' || c == '"' {
+		if isCypherStringQuoteByte(c) {
 			i = skipCypherQuotedText(expression, i, c) - 1
 			continue
 		}
@@ -849,13 +855,9 @@ func (r *labelExpressionRewriter) readsPatternVariable(expression string) bool {
 		if !ok {
 			continue
 		}
-		before := i - 1
-		for before >= 0 && isASCIISpace(expression[before]) {
-			before--
-		}
-		after := skipASCIISpaces(expression, end, len(expression))
-		if r.patternVariables[symbolicNameValue(name)] && (before < 0 || expression[before] != '.' && expression[before] != '$') &&
-			(after >= len(expression) || expression[after] != ':') {
+		before := cyphertext.NeighborByte(expression, i, cyphertext.Before)
+		after := cyphertext.NeighborByte(expression, end, cyphertext.AtOrAfter)
+		if r.patternVariables[symbolicNameValue(name)] && before != '.' && before != '$' && after != ':' {
 			return true
 		}
 		i = end - 1
@@ -869,8 +871,8 @@ func declaredPatternVariables(pattern string) map[string]bool {
 	var variables map[string]bool
 	depth := 0
 	for i := 0; i < len(pattern); i++ {
-		switch c := pattern[i]; c {
-		case '\'', '"', '`':
+		switch c := pattern[i]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(pattern, i, c) - 1
 		case '{':
 			depth++
@@ -896,12 +898,12 @@ func declaredPatternVariables(pattern string) map[string]bool {
 // elementWhereIndex is the index of the WHERE that starts the pattern
 // element query[open:close+1]'s own predicate (#878), or -1. The element's
 // variable comes first, so a variable named where isn't the keyword.
-func elementWhereIndex(q string, open, close int) int {
+func elementWhereIndex(ctx context.Context, q string, open, close int) int {
 	i := skipASCIISpaces(q, open+1, close)
 	if _, end, ok := scanSymbolicName(q[:close], i); ok {
 		i = end
 	}
-	if where := topLevelKeywordIndex(q[i:close], "WHERE"); where >= 0 {
+	if where := topLevelKeywordIndex(ctx, q[i:close], "WHERE"); where >= 0 {
 		return i + where
 	}
 	return -1
@@ -945,7 +947,7 @@ func (r *labelExpressionRewriter) elementWhere(open, where, close int, variable 
 // moves out of its element: the moved text isn't read again (#1181). Its
 // generated variables continue the statement's.
 func (r *labelExpressionRewriter) rewrittenPredicate(predicate string) (string, error) {
-	sub := &labelExpressionRewriter{query: predicate, params: r.params, cypher25: r.cypher25, generated: r.generated, syntax: r.syntax, named: map[int]string{}}
+	sub := &labelExpressionRewriter{ctx: r.ctx, query: predicate, params: r.params, cypher25: r.cypher25, generated: r.generated, syntax: r.syntax, named: map[int]string{}}
 	if err := sub.expression(0, len(predicate)); err != nil {
 		return "", err
 	}
@@ -1057,7 +1059,7 @@ func (r *labelExpressionRewriter) resolveDynamicChain(chain labelChain, mode lab
 // SyntaxError, staticDynamicTokenError) or a supplied parameter.
 func (r *labelExpressionRewriter) resolveConstant(expression string) (interface{}, bool, error) {
 	expression = strings.TrimSpace(expression)
-	if err := staticDynamicTokenError(expression, staticTypeScope{}, dynamicTokenLabel); err != nil {
+	if err := staticDynamicTokenError(r.ctx, expression, staticTypeScope{}, dynamicTokenLabel); err != nil {
 		return nil, false, err
 	}
 	if strings.HasPrefix(expression, "$") {
@@ -1082,7 +1084,7 @@ func (r *labelExpressionRewriter) writeItemHead(wordStart int) bool {
 	}
 	q := r.query
 	i := wordStart - 1
-	for i >= 0 && isASCIISpace(q[i]) {
+	for i >= 0 && cyphertext.IsWhitespaceAt(q, i) {
 		i--
 	}
 	if i < 0 {
@@ -1092,7 +1094,7 @@ func (r *labelExpressionRewriter) writeItemHead(wordStart int) bool {
 		return true
 	}
 	end := i + 1
-	for i >= 0 && isIdentByte(q[i]) {
+	for i >= 0 && cyphertext.NamePartAt(q, i) {
 		i--
 	}
 	word := q[i+1 : end]
@@ -1126,13 +1128,13 @@ func (r *labelExpressionRewriter) nameSingleNodePaths(start, end int) {
 	partStart := start
 	for i := start; i <= end; i++ {
 		if i < end {
-			switch c := q[i]; c {
-			case '\'', '"', '`':
+			switch c := q[i]; cypherLexicalByte(c) {
+			case cypherQuoteClass:
 				i = skipCypherQuotedText(q[:end], i, c) - 1
 				continue
 			case '(', '[', '{':
 				closer := map[byte]rune{'(': ')', '[': ']', '{': '}'}[c]
-				if close := findMatchingDelimiter(q[:end], i, rune(c), closer); close > i {
+				if close := cyphertext.FindMatchingDelimiter(q[:end], i, rune(c), closer, cyphertext.OpeningDelimiter); close > i {
 					i = close
 				}
 				continue
@@ -1144,7 +1146,7 @@ func (r *labelExpressionRewriter) nameSingleNodePaths(start, end int) {
 		first := skipASCIISpaces(q, partStart, i)
 		if startsPathAssignment(q, first, i) {
 			open := skipASCIISpaces(q, strings.IndexByte(q[first:i], '=')+first+1, i)
-			close := findMatchingDelimiter(q[:i], open, '(', ')')
+			close := cyphertext.FindMatchingDelimiter(q[:i], open, '(', ')', cyphertext.OpeningDelimiter)
 			inner := skipASCIISpaces(q, open+1, i)
 			// Nothing follows the node (a single-node path), and it has no
 			// variable: its text starts with ":", ")" or "{".
@@ -1182,7 +1184,7 @@ func (r *labelExpressionRewriter) foreach(start, end int) error {
 	if open >= end || q[open] != '(' {
 		return r.expression(start, end)
 	}
-	close := findMatchingDelimiter(q[:end], open, '(', ')')
+	close := cyphertext.FindMatchingDelimiter(q[:end], open, '(', ')', cyphertext.OpeningDelimiter)
 	if close < 0 {
 		return nil
 	}
@@ -1209,10 +1211,10 @@ func (r *labelExpressionRewriter) expression(start, end int) error {
 			return labelExpressionSyntaxError(localization.CypherMatchingQuantifierInExpressionPattern(string(c)))
 		}
 		switch {
-		case c == '\'' || c == '"' || c == '`':
+		case isCypherQuoteByte(c):
 			i = skipCypherQuotedText(q, i, c) - 1
 		case c == '{':
-			close := findMatchingDelimiter(q[:end], i, '{', '}')
+			close := cyphertext.FindMatchingDelimiter(q[:end], i, '{', '}', cyphertext.OpeningDelimiter)
 			if close < 0 {
 				return nil
 			}
@@ -1225,7 +1227,7 @@ func (r *labelExpressionRewriter) expression(start, end int) error {
 			}
 			i = close
 		case c == '[':
-			close := findMatchingDelimiter(q[:end], i, '[', ']')
+			close := cyphertext.FindMatchingDelimiter(q[:end], i, '[', ']', cyphertext.OpeningDelimiter)
 			if close < 0 {
 				return nil
 			}
@@ -1243,12 +1245,12 @@ func (r *labelExpressionRewriter) expression(start, end int) error {
 				return err
 			}
 			i = next - 1
-		case isIdentStartByte(c) || c == '_':
-			if i > start && (isIdentByte(q[i-1]) || q[i-1] == '.' || q[i-1] == '$') {
+		case cyphertext.NameStartAt(q, i) || c == '_':
+			if i > start && (cyphertext.NamePartAt(q, i-1) || q[i-1] == '.' || q[i-1] == '$') {
 				continue
 			}
 			j := i
-			for j < end && isIdentByte(q[j]) {
+			for j < end && cyphertext.NamePartAt(q, j) {
 				j++
 			}
 			if err := shortestPathExpressionError(q, i, j, end); err != nil {
@@ -1279,11 +1281,11 @@ func (r *labelExpressionRewriter) labelTest(wordStart, wordEnd, end int) error {
 	scan:
 		for ; chainEnd < end; chainEnd++ {
 			c := q[chainEnd]
-			if depth == 0 && (isASCIISpace(c) || strings.IndexByte(",]}=<>+-*/^", c) >= 0) {
+			if depth == 0 && (cyphertext.IsWhitespaceAt(q, chainEnd) || strings.IndexByte(",]}=<>+-*/^", c) >= 0) {
 				break
 			}
-			switch c {
-			case '\'', '"', '`':
+			switch cypherLexicalByte(c) {
+			case cypherQuoteClass:
 				chainEnd = skipCypherQuotedText(q, chainEnd, c) - 1
 			case '(':
 				depth++
@@ -1321,10 +1323,10 @@ func (r *labelExpressionRewriter) labelTest(wordStart, wordEnd, end int) error {
 	// label test (case IS Person), and CASE is WHEN … is a simple CASE over
 	// is.
 	if word := upperASCII(q[wordStart:wordEnd]); isExpressionBoundaryWord(word) {
-		skip := !wordIsName(q, wordStart)
+		skip := !wordIsName(r.ctx, q, wordStart)
 		switch word {
 		case "CASE":
-			skip = caseKeywordAt(q, wordStart, word) && caseWordAt(q, skipSpaces(q, min(is+2, len(q)))) == "when"
+			skip = caseKeywordAt(q, wordStart, word) && equalFoldASCII(caseWordAt(q, skipSpaces(q, min(is+2, len(q)))), "when")
 		case "WHEN", "THEN", "ELSE":
 			skip = caseKeywordAt(q, wordStart, word)
 		}
@@ -1332,15 +1334,15 @@ func (r *labelExpressionRewriter) labelTest(wordStart, wordEnd, end int) error {
 			return nil
 		}
 	}
-	if is == wordEnd || is+2 >= end || !strings.EqualFold(q[is:is+2], "IS") || isIdentByte(q[is+2]) || !isLabelIsKeyword(q[:end], is+2) {
+	if is == wordEnd || is+2 >= end || !strings.EqualFold(q[is:is+2], "IS") || cyphertext.NamePartAt(q, is+2) || !readLabelISOperand(q[:end], is+2, labelAfterIS).label {
 		return nil
 	}
 	if handled := r.isLabeledTest(wordStart, wordEnd, is+2, end); handled {
 		return nil
 	}
-	if not := skipASCIISpaces(q, is+2, end); not+3 <= end && strings.EqualFold(q[not:not+3], "NOT") && (not+3 == end || !isIdentByte(q[not+3])) {
-		// isLabelIsKeyword let IS NOT through: a label follows it.
-		operand, _ := isNotLabelOperand(q[:end], not+3)
+	if not := skipASCIISpaces(q, is+2, end); not+3 <= end && strings.EqualFold(q[not:not+3], "NOT") && (not+3 == end || !cyphertext.NamePartAt(q, not+3)) {
+		// The shared operand reader admitted IS NOT: a label follows it.
+		operand := readLabelISOperand(q[:end], not+3, labelAfterISNot).name
 		return labelExpressionSyntaxError(localization.CypherMatchingIsNotOperandInvalid(operand))
 	}
 	textStart := skipASCIISpaces(q, is+2, end)
@@ -1348,7 +1350,7 @@ func (r *labelExpressionRewriter) labelTest(wordStart, wordEnd, end int) error {
 		// A dynamic label: x IS $(e) is x:$(e), at a SET or REMOVE item's
 		// head only; IS takes one label, so a colon after it is an error as
 		// for a static chain.
-		closing := findMatchingDelimiter(q[:end], strings.IndexByte(q[textStart:end], '(')+textStart, '(', ')')
+		closing := cyphertext.FindMatchingDelimiter(q[:end], strings.IndexByte(q[textStart:end], '(')+textStart, '(', ')', cyphertext.OpeningDelimiter)
 		if !r.writeItemHead(labelTestWordStart(q, wordEnd)) {
 			if !r.cypher25 || closing < 0 {
 				return labelExpressionSyntaxError(localization.CypherCoreDynamicTokenPositionInvalid())
@@ -1414,7 +1416,7 @@ func (r *labelExpressionRewriter) isLabeledTest(wordStart, wordEnd, afterIs, end
 func (r *labelExpressionRewriter) opensSubquery(brace int) bool {
 	q, start := r.query, 0
 	i := brace - 1
-	for i >= start && isASCIISpace(q[i]) {
+	for i >= start && cyphertext.IsWhitespaceAt(q, i) {
 		i--
 	}
 	if i >= start && q[i] == ')' {
@@ -1430,24 +1432,20 @@ func (r *labelExpressionRewriter) opensSubquery(brace int) bool {
 			}
 		}
 		i--
-		for i >= start && isASCIISpace(q[i]) {
+		for i >= start && cyphertext.IsWhitespaceAt(q, i) {
 			i--
 		}
 		end := i + 1
-		for i >= start && isIdentByte(q[i]) {
+		for i >= start && cyphertext.NamePartAt(q, i) {
 			i--
 		}
 		return strings.EqualFold(q[i+1:end], "CALL")
 	}
 	end := i + 1
-	for i >= start && isIdentByte(q[i]) {
+	for i >= start && cyphertext.NamePartAt(q, i) {
 		i--
 	}
-	switch strings.ToUpper(q[i+1 : end]) {
-	case "EXISTS", "COUNT", "COLLECT", "CALL":
-		return true
-	}
-	return false
+	return queryBodyContainerKeyword(q[i+1 : end])
 }
 
 // subquery rewrites a subquery body query[start:end]: a statement, or a
@@ -1517,11 +1515,11 @@ func (r *labelExpressionRewriter) whereWithPredicates(start, end int, predicates
 // call whose inside is an expression. It returns where scanning resumes.
 func (r *labelExpressionRewriter) parenthesised(start, open, end int) (int, error) {
 	q := r.query
-	close := findMatchingDelimiter(q[:end], open, '(', ')')
+	close := cyphertext.FindMatchingDelimiter(q[:end], open, '(', ')', cyphertext.OpeningDelimiter)
 	if close < 0 {
 		return end, nil
 	}
-	call := open > start && isIdentByte(q[open-1])
+	call := open > start && cyphertext.NamePartAt(q, open-1)
 	if !call {
 		if chainEnd, ok := relationshipChainEnd(r.query, open, end); ok {
 			return chainEnd, r.patternPredicate(open, chainEnd, -1, -1)
@@ -1531,7 +1529,7 @@ func (r *labelExpressionRewriter) parenthesised(start, open, end int) (int, erro
 		}
 	} else {
 		subject := open - 1
-		for subject > start && (isIdentByte(q[subject-1]) || q[subject-1] == '.') {
+		for subject > start && (cyphertext.NamePartAt(q, subject-1) || q[subject-1] == '.') {
 			subject--
 		}
 		if next, handled, err := r.expressionLabelTest(subject, open, close, end); handled {
@@ -1539,7 +1537,7 @@ func (r *labelExpressionRewriter) parenthesised(start, open, end int) (int, erro
 		}
 		// exists((n)-->(m)): the argument as the predicate.
 		nameStart := open - 1
-		for nameStart > start && isIdentByte(q[nameStart-1]) {
+		for nameStart > start && cyphertext.NamePartAt(q, nameStart-1) {
 			nameStart--
 		}
 		inner := skipASCIISpaces(q, open+1, close)
@@ -1569,7 +1567,7 @@ func (r *labelExpressionRewriter) expressionLabelTest(subjectStart, open, close,
 	chainStart := -1
 	if colon := skipASCIISpaces(q, after, end); colon < end && q[colon] == ':' && (colon+1 >= end || q[colon+1] != ':') {
 		chainStart = skipASCIISpaces(q, colon+1, end)
-	} else if is := skipASCIISpaces(q, after, end); is > after && matchKeywordAt(q[:end], is, "IS") && isLabelIsKeyword(q[:end], is+2) {
+	} else if is := skipASCIISpaces(q, after, end); is > after && matchKeywordAt(q[:end], is, "IS") && readLabelISOperand(q[:end], is+2, labelAfterIS).label {
 		label := skipASCIISpaces(q, is+2, end)
 		if matchKeywordAt(q[:end], label, "NOT") || matchKeywordAt(q[:end], label, "LABELED") {
 			return 0, false, nil
@@ -1636,7 +1634,7 @@ func (r *labelExpressionRewriter) comprehension(open, close int) (bool, error) {
 	}
 	after := skipASCIISpaces(q, chainEnd, close)
 	whereStart := -1
-	if after+5 <= close && strings.EqualFold(q[after:after+5], "WHERE") && (after+5 == close || !isIdentByte(q[after+5])) {
+	if after+5 <= close && strings.EqualFold(q[after:after+5], "WHERE") && (after+5 == close || !cyphertext.NamePartAt(q, after+5)) {
 		whereStart = after + 5
 	}
 	bar := r.projectionBar(chainEnd, close)
@@ -1681,7 +1679,7 @@ func (r *labelExpressionRewriter) projectionBar(start, end int) int {
 // expression: the label-expression rewriter, the free-variable scan and the
 // pattern placement check use it.
 func relationshipChainEnd(q string, open, end int) (int, bool) {
-	close := findMatchingDelimiter(q[:end], open, '(', ')')
+	close := cyphertext.FindMatchingDelimiter(q[:end], open, '(', ')', cyphertext.OpeningDelimiter)
 	if close < 0 {
 		return 0, false
 	}
@@ -1700,7 +1698,7 @@ func relationshipChainEnd(q string, open, end int) (int, bool) {
 		}
 		i++
 		if i < end && q[i] == '[' {
-			bracket := findMatchingDelimiter(q[:end], i, '[', ']')
+			bracket := cyphertext.FindMatchingDelimiter(q[:end], i, '[', ']', cyphertext.OpeningDelimiter)
 			if bracket < 0 {
 				break
 			}
@@ -1721,7 +1719,7 @@ func relationshipChainEnd(q string, open, end int) (int, bool) {
 		if i >= end || q[i] != '(' {
 			break
 		}
-		node := findMatchingDelimiter(q[:end], i, '(', ')')
+		node := cyphertext.FindMatchingDelimiter(q[:end], i, '(', ')', cyphertext.OpeningDelimiter)
 		if node < 0 {
 			break
 		}
@@ -1752,8 +1750,8 @@ func topLevelByteIndex(q string, start, end int, b byte) int {
 	depth := 0
 	for i := start; i < end; i++ {
 		c := q[i]
-		switch c {
-		case '\'', '"', '`':
+		switch cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(q, i, c) - 1
 			continue
 		case '(', '[', '{':
@@ -1772,14 +1770,14 @@ func topLevelByteIndex(q string, start, end int, b byte) int {
 // query[bodyStart] starts.
 func clauseKeywordStart(q string, bodyStart int) int {
 	i := bodyStart
-	for i > 0 && isIdentByte(q[i-1]) {
+	for i > 0 && cyphertext.NamePartAt(q, i-1) {
 		i--
 	}
 	return i
 }
 
 func skipASCIISpaces(q string, i, end int) int {
-	for i < end && isASCIISpace(q[i]) {
+	for i < end && cyphertext.IsWhitespaceAt(q, i) {
 		i++
 	}
 	return i
@@ -1788,7 +1786,7 @@ func skipASCIISpaces(q string, i, end int) int {
 // trimRightIndex returns end moved back over trailing spaces, not before
 // start.
 func trimRightIndex(q string, start, end int) int {
-	for end > start && isASCIISpace(q[end-1]) {
+	for end > start && cyphertext.IsWhitespaceAt(q, end-1) {
 		end--
 	}
 	return end
@@ -1798,7 +1796,7 @@ func trimRightIndex(q string, start, end int) int {
 // query[wordEnd] starts.
 func labelTestWordStart(q string, wordEnd int) int {
 	start := wordEnd
-	for start > 0 && isIdentByte(q[start-1]) {
+	for start > 0 && cyphertext.NamePartAt(q, start-1) {
 		start--
 	}
 	return start

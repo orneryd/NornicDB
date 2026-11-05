@@ -26,8 +26,8 @@ func TestResolveCompressedANNProfile_ActiveWithValidSettings(t *testing.T) {
 	if p.IVFLists != 256 || p.PQSegments != 16 || p.PQBits != 8 {
 		t.Fatalf("unexpected profile values: %+v", p)
 	}
-	if p.RerankTopK != 2000 {
-		t.Fatalf("expected 2000 exact-rescore candidates by default, got %d", p.RerankTopK)
+	if p.RerankTopK != defaultIVFPQRerankTopK || defaultIVFPQRerankTopK != 200 {
+		t.Fatalf("expected %d exact-rescore candidates by default, got %d", defaultIVFPQRerankTopK, p.RerankTopK)
 	}
 }
 

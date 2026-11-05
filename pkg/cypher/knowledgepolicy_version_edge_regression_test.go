@@ -31,17 +31,17 @@ func TestKnowledgePolicyResolveRelationshipVersionUsesUpdatedTime(t *testing.T) 
 				Name: "links_version", TargetEdgeType: "LINKS", IsEdge: true, ProfileRef: "edge_version",
 			}))
 			for _, id := range []storage.NodeID{"a", "b"} {
-				_, err := store.CreateNode(&storage.Node{ID: id})
+				_, err := store.CreateNode(t.Context(), &storage.Node{ID: id})
 				require.NoError(t, err)
 			}
 			now := time.Now()
 			old := now.Add(-72 * time.Hour)
 			edge := &storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "LINKS", CreatedAt: old, UpdatedAt: now}
-			require.NoError(t, store.CreateEdge(edge))
+			require.NoError(t, store.CreateEdge(t.Context(), edge))
 			for _, recent := range []bool{true, false} {
 				if !recent {
 					edge.UpdatedAt = old
-					require.NoError(t, store.UpdateEdge(edge))
+					require.NoError(t, store.UpdateEdge(t.Context(), storage.EdgeUpdateRequest{After: edge}))
 				}
 				exec := NewStorageExecutor(store)
 				result, err := exec.Execute(context.Background(), "CALL kp.resolve('e', '', '')", nil)

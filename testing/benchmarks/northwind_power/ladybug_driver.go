@@ -97,7 +97,7 @@ func runLadybugReport(ctx context.Context, dataDir string, cfg seedConfig, label
 			return fmt.Errorf("seed verification: %w", countErr)
 		}
 		report.SeedCounts = sc
-		if mismatches := verifySeedCounts(sc, cfg.categories, cfg.suppliers, cfg.customers, cfg.products, cfg.orders); len(mismatches) > 0 {
+		if mismatches := verifySeedCounts(sc, cfg.categories, cfg.suppliers, cfg.customers, cfg.products, cfg.orders, report.SeedRelationships); len(mismatches) > 0 {
 			for _, m := range mismatches {
 				report.CorrectnessErrors = append(report.CorrectnessErrors, "seed: "+m)
 				log("[%s] SEED MISMATCH: %s", label, m)

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -19,27 +20,27 @@ type danglingTraversalEngine struct {
 	missingNodeIDs map[storage.NodeID]error
 }
 
-func (e *danglingTraversalEngine) GetOutgoingEdges(nodeID storage.NodeID) ([]*storage.Edge, error) {
+func (e *danglingTraversalEngine) GetOutgoingEdges(ctx context.Context, nodeID storage.NodeID) ([]*storage.Edge, error) {
 	if edges, ok := e.forcedOutgoing[nodeID]; ok {
 		return edges, nil
 	}
-	return e.MemoryEngine.GetOutgoingEdges(nodeID)
+	return e.MemoryEngine.GetOutgoingEdges(ctx, nodeID)
 }
 
 // OutgoingEdgeHeaders mirrors GetOutgoingEdges so the traversal's header fast
 // path (relationshipsNeedOnlyHeaders) sees the same forced adjacency.
-func (e *danglingTraversalEngine) OutgoingEdgeHeaders(nodeID storage.NodeID) ([]*storage.Edge, bool, error) {
+func (e *danglingTraversalEngine) OutgoingEdgeHeaders(ctx context.Context, nodeID storage.NodeID) ([]*storage.Edge, bool, error) {
 	if edges, ok := e.forcedOutgoing[nodeID]; ok {
 		return edges, true, nil
 	}
-	return e.MemoryEngine.OutgoingEdgeHeaders(nodeID)
+	return e.MemoryEngine.OutgoingEdgeHeaders(ctx, nodeID)
 }
 
-func (e *danglingTraversalEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
+func (e *danglingTraversalEngine) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	if err, ok := e.missingNodeIDs[id]; ok {
 		return nil, err
 	}
-	return e.MemoryEngine.GetNode(id)
+	return e.MemoryEngine.GetNode(ctx, id)
 }
 
 // setupChainedTestData creates a graph for testing chained traversals
@@ -82,10 +83,10 @@ func setupChainedTestData(t *testing.T, exec *StorageExecutor) {
 	require.NoError(t, err)
 
 	// Get all nodes by label
-	persons, _ := exec.storage.GetNodesByLabel("Person")
-	pocs, _ := exec.storage.GetNodesByLabel("POC")
-	areas, _ := exec.storage.GetNodesByLabel("Area")
-	managers, _ := exec.storage.GetNodesByLabel("Manager")
+	persons, _ := exec.storage.GetNodesByLabel(ctx, "Person")
+	pocs, _ := exec.storage.GetNodesByLabel(ctx, "POC")
+	areas, _ := exec.storage.GetNodesByLabel(ctx, "Area")
+	managers, _ := exec.storage.GetNodesByLabel(ctx, "Manager")
 
 	// Map nodes by name
 	nodeByName := make(map[string]*storage.Node)
@@ -103,19 +104,19 @@ func setupChainedTestData(t *testing.T, exec *StorageExecutor) {
 	}
 
 	// Create HAS_CONTACT relationships: POC -> Person
-	exec.storage.CreateEdge(&storage.Edge{
+	exec.storage.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "hc1",
 		Type:      "HAS_CONTACT",
 		StartNode: nodeByName["POC1"].ID,
 		EndNode:   nodeByName["Person1"].ID,
 	})
-	exec.storage.CreateEdge(&storage.Edge{
+	exec.storage.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "hc2",
 		Type:      "HAS_CONTACT",
 		StartNode: nodeByName["POC2"].ID,
 		EndNode:   nodeByName["Person2"].ID,
 	})
-	exec.storage.CreateEdge(&storage.Edge{
+	exec.storage.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "hc3",
 		Type:      "HAS_CONTACT",
 		StartNode: nodeByName["POC3"].ID,
@@ -123,19 +124,19 @@ func setupChainedTestData(t *testing.T, exec *StorageExecutor) {
 	})
 
 	// Create BELONGS_TO relationships: POC -> Area
-	exec.storage.CreateEdge(&storage.Edge{
+	exec.storage.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "bt1",
 		Type:      "BELONGS_TO",
 		StartNode: nodeByName["POC1"].ID,
 		EndNode:   nodeByName["Area1"].ID,
 	})
-	exec.storage.CreateEdge(&storage.Edge{
+	exec.storage.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "bt2",
 		Type:      "BELONGS_TO",
 		StartNode: nodeByName["POC2"].ID,
 		EndNode:   nodeByName["Area1"].ID,
 	})
-	exec.storage.CreateEdge(&storage.Edge{
+	exec.storage.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "bt3",
 		Type:      "BELONGS_TO",
 		StartNode: nodeByName["POC3"].ID,
@@ -143,13 +144,13 @@ func setupChainedTestData(t *testing.T, exec *StorageExecutor) {
 	})
 
 	// Create MANAGES relationships: Manager -> Area
-	exec.storage.CreateEdge(&storage.Edge{
+	exec.storage.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "mg1",
 		Type:      "MANAGES",
 		StartNode: nodeByName["Manager1"].ID,
 		EndNode:   nodeByName["Area1"].ID,
 	})
-	exec.storage.CreateEdge(&storage.Edge{
+	exec.storage.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "mg2",
 		Type:      "MANAGES",
 		StartNode: nodeByName["Manager2"].ID,
@@ -391,7 +392,7 @@ func TestTraverseFromNode(t *testing.T) {
 
 	t.Run("traverses from specific node", func(t *testing.T) {
 		// Get a POC node
-		pocs, _ := exec.storage.GetNodesByLabel("POC")
+		pocs, _ := exec.storage.GetNodesByLabel(context.Background(), "POC")
 		require.NotEmpty(t, pocs)
 
 		var poc1 *storage.Node
@@ -432,7 +433,7 @@ func TestTraverseFromNode(t *testing.T) {
 
 	t.Run("returns nil for non-matching label", func(t *testing.T) {
 		// Get a Person node
-		persons, _ := exec.storage.GetNodesByLabel("Person")
+		persons, _ := exec.storage.GetNodesByLabel(context.Background(), "Person")
 		require.NotEmpty(t, persons)
 
 		// Try to traverse from Person but require POC label
@@ -459,7 +460,7 @@ func TestTraverseFromNode(t *testing.T) {
 
 	t.Run("skips dangling adjacency endpoints instead of failing", func(t *testing.T) {
 		inner := &danglingTraversalEngine{
-			MemoryEngine:   storage.NewMemoryEngine(),
+			MemoryEngine:   fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)),
 			forcedOutgoing: make(map[storage.NodeID][]*storage.Edge),
 			missingNodeIDs: make(map[storage.NodeID]error),
 		}
@@ -467,9 +468,9 @@ func TestTraverseFromNode(t *testing.T) {
 		engine := storage.NewNamespacedEngine(inner, "test_traverse")
 
 		exec := NewStorageExecutor(engine)
-		_, err := engine.CreateNode(&storage.Node{ID: "poc-live", Labels: []string{"POC"}, Properties: map[string]interface{}{"name": "POC"}})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "poc-live", Labels: []string{"POC"}, Properties: map[string]interface{}{"name": "POC"}})
 		require.NoError(t, err)
-		_, err = engine.CreateNode(&storage.Node{ID: "area-live", Labels: []string{"Area"}, Properties: map[string]interface{}{"name": "Area"}})
+		_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "area-live", Labels: []string{"Area"}, Properties: map[string]interface{}{"name": "Area"}})
 		require.NoError(t, err)
 
 		inner.forcedOutgoing["test_traverse:poc-live"] = []*storage.Edge{
@@ -478,7 +479,7 @@ func TestTraverseFromNode(t *testing.T) {
 		}
 		inner.missingNodeIDs["test_traverse:area-missing"] = errors.New("missing endpoint")
 
-		start, err := engine.GetNode("poc-live")
+		start, err := engine.GetNode(t.Context(), "poc-live")
 		require.NoError(t, err)
 		require.NotNil(t, start)
 
@@ -737,21 +738,21 @@ func setupChainedBenchmarkData(b *testing.B, exec *StorageExecutor) {
 	}
 
 	// Get all nodes
-	persons, _ := exec.storage.GetNodesByLabel("Person")
-	pocs, _ := exec.storage.GetNodesByLabel("POC")
-	areas, _ := exec.storage.GetNodesByLabel("Area")
+	persons, _ := exec.storage.GetNodesByLabel(ctx, "Person")
+	pocs, _ := exec.storage.GetNodesByLabel(ctx, "POC")
+	areas, _ := exec.storage.GetNodesByLabel(ctx, "Area")
 
 	// Create relationships
 	for i, poc := range pocs {
 		if i < len(persons) {
-			exec.storage.CreateEdge(&storage.Edge{
+			exec.storage.CreateEdge(b.Context(), &storage.Edge{
 				ID:        storage.EdgeID(fmt.Sprintf("hc%d", i)),
 				Type:      "HAS_CONTACT",
 				StartNode: poc.ID,
 				EndNode:   persons[i].ID,
 			})
 		}
-		exec.storage.CreateEdge(&storage.Edge{
+		exec.storage.CreateEdge(b.Context(), &storage.Edge{
 			ID:        storage.EdgeID(fmt.Sprintf("bt%d", i)),
 			Type:      "BELONGS_TO",
 			StartNode: poc.ID,

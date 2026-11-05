@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"testing"
@@ -17,11 +19,11 @@ import (
 // nothing while the user writes were still buffered. The index seek must
 // merge acknowledged-but-unflushed nodes.
 func TestWriteBehind_IndexedMatchSeesBufferedNodes(t *testing.T) {
-	engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
+	engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
 		DataDir:             t.TempDir(),
 		WriteBehind:         true,
 		WriteBehindInterval: time.Hour, // nothing flushes during the test
-	})
+	}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -57,7 +59,7 @@ func TestWriteBehind_IndexedMatchSeesBufferedNodes(t *testing.T) {
 		"every friendship must be created while the user writes are still buffered")
 
 	// The same visibility must hold after the buffer drains.
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	res, err = exec.Execute(ctx, "MATCH ()-[r:Friend]->() RETURN count(r) AS c", nil)
 	require.NoError(t, err)
 	require.Equal(t, int64(len(pairs)), res.Rows[0][0])
@@ -67,11 +69,11 @@ func TestWriteBehind_IndexedMatchSeesBufferedNodes(t *testing.T) {
 // against the committed index after a flush, then again against a mix of
 // committed and buffered nodes.
 func TestWriteBehind_IndexedMatchReusesBufferedIndexAfterFlush(t *testing.T) {
-	engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
+	engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
 		DataDir:             t.TempDir(),
 		WriteBehind:         true,
 		WriteBehindInterval: time.Hour,
-	})
+	}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -84,7 +86,7 @@ func TestWriteBehind_IndexedMatchReusesBufferedIndexAfterFlush(t *testing.T) {
 	_, err = exec.Execute(ctx, "UNWIND $rows AS r CREATE (:User {id: r.id})",
 		map[string]any{"rows": []map[string]any{{"id": int64(1)}}})
 	require.NoError(t, err)
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 
 	_, err = exec.Execute(ctx, "UNWIND $rows AS r CREATE (:User {id: r.id})",
 		map[string]any{"rows": []map[string]any{{"id": int64(2)}}})
@@ -109,11 +111,11 @@ func TestWriteBehind_IndexedMatchReusesBufferedIndexAfterFlush(t *testing.T) {
 // buffered relationship, and DETACH DELETE must leave no orphan edges while
 // everything is still buffered.
 func TestWriteBehind_MergeAndDetachDeleteOverBufferedEdges(t *testing.T) {
-	engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
+	engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
 		DataDir:             t.TempDir(),
 		WriteBehind:         true,
 		WriteBehindInterval: time.Hour,
-	})
+	}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -139,7 +141,7 @@ func TestWriteBehind_MergeAndDetachDeleteOverBufferedEdges(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(0), res.Rows[0][0], "DETACH DELETE must remove buffered relationships")
 
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	res, err = exec.Execute(ctx, "MATCH ()-[r:Friend]->() RETURN count(r) AS c", nil)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), res.Rows[0][0], "no orphan may reappear after the flush")

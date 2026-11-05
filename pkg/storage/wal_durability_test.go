@@ -7,6 +7,8 @@
 package storage
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"errors"
 	"os"
 	"path/filepath"
@@ -227,7 +229,7 @@ func TestBatchMixedWithNonBatchOrdering(t *testing.T) {
 	wal.Close()
 
 	// Read back and verify order
-	entries, err := ReadWALEntries(filepath.Join(dir, "wal.log"))
+	entries, err := ReadWALEntries(filepath.Join(dir, "wal.log"), nil)
 	if err != nil {
 		t.Fatalf("Failed to read entries: %v", err)
 	}
@@ -360,7 +362,7 @@ func TestWALFullDurabilityPath(t *testing.T) {
 	wal.Close()
 
 	// Recover
-	baseEngine, result, err := RecoverFromWALWithResult(dir, "")
+	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(dir, ""))
 	if err != nil {
 		t.Fatalf("Recovery failed: %v", err)
 	}
@@ -373,7 +375,7 @@ func TestWALFullDurabilityPath(t *testing.T) {
 
 	// Verify data recovered
 	for _, node := range nodes {
-		recovered, err := engine.GetNode(node.ID)
+		recovered, err := engine.GetNode(t.Context(), node.ID)
 		if err != nil {
 			t.Errorf("Failed to get node %s: %v", node.ID, err)
 			continue

@@ -8,12 +8,23 @@ import (
 	"strings"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"github.com/orneryd/nornicdb/pkg/adminimport"
+	"github.com/orneryd/nornicdb/pkg/cli"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/text/language"
 )
+
+func newTestAdminRoot(manager *localization.Manager) *cobra.Command {
+	root := cli.NewRoot("nornicdb-admin", manager, localization.AdminCLIRootShort(), localization.Message{})
+	registerAdminCommands(root, manager)
+	localizeCobraHelp(root, manager)
+	return root
+}
 
 func TestExitCodeForError_UsesImportExitCode(t *testing.T) {
 	tests := []struct {
@@ -50,7 +61,7 @@ func TestRootHelp_LocalizesCommandAndFlagDescriptions(t *testing.T) {
 	manager, err := localization.NewManager([]language.Tag{language.EuropeanSpanish}, nil)
 	require.NoError(t, err)
 
-	command := newRootCmdWithManager(manager)
+	command := newTestAdminRoot(manager)
 	output := new(bytes.Buffer)
 	command.SetOut(output)
 	command.SetArgs([]string{"--help"})
@@ -69,7 +80,7 @@ func TestRootHelp_PreservesExactEnglish(t *testing.T) {
 	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
 	require.NoError(t, err)
 
-	command := newRootCmdWithManager(manager)
+	command := newTestAdminRoot(manager)
 	output := new(bytes.Buffer)
 	command.SetOut(output)
 	command.SetArgs([]string{"--help"})
@@ -100,7 +111,7 @@ func TestCommandHelp_PreservesMultilineAndFlagAlignment(t *testing.T) {
 	manager, err := localization.NewManager([]language.Tag{pseudoTag}, nil)
 	require.NoError(t, err)
 
-	command := newRootCmdWithManager(manager)
+	command := newTestAdminRoot(manager)
 	output := new(bytes.Buffer)
 	command.SetOut(output)
 	command.SetArgs([]string{"database", "import", "full", "--help"})
@@ -117,7 +128,7 @@ func TestCommandHelp_PreservesMultilineAndFlagAlignment(t *testing.T) {
 	relationshipsLine := lineContaining(t, help, "--relationships")
 	require.Equal(t, strings.Index(nodesLine, "[!!"), strings.Index(relationshipsLine, "[!!"), "translated flag descriptions must remain column-aligned")
 
-	command = newRootCmdWithManager(manager)
+	command = newTestAdminRoot(manager)
 	output.Reset()
 	command.SetOut(output)
 	command.SetArgs([]string{"help", "help"})
@@ -143,7 +154,7 @@ func TestCommandErrors_LocalizeWithoutChangingExitCodes(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			command := newRootCmdWithManager(manager)
+			command := newTestAdminRoot(manager)
 			command.SilenceErrors = true
 			command.SilenceUsage = true
 			command.SetArgs(test.args)
@@ -167,7 +178,7 @@ func TestCommandErrors_PreserveExactEnglish(t *testing.T) {
 		{args: []string{"server", "status", "extra"}, want: `unknown command "extra" for "nornicdb-admin server status"`},
 	}
 	for _, test := range tests {
-		command := newRootCmd()
+		command := newTestAdminRoot(nil)
 		command.SilenceErrors = true
 		command.SilenceUsage = true
 		command.SetArgs(test.args)
@@ -180,7 +191,7 @@ func TestCommandErrors_PreserveExactEnglish(t *testing.T) {
 }
 
 func TestRootCommand_PreservesUseSyntaxAndFlagNames(t *testing.T) {
-	command := newRootCmd()
+	command := newTestAdminRoot(nil)
 	require.Equal(t, "nornicdb-admin", command.Use)
 
 	full, _, err := command.Find([]string{"database", "import", "full"})
@@ -222,9 +233,12 @@ func (w *wrapped) Unwrap() error { return w.err }
 // entry; --repair adds what it restored (#907, I29).
 func TestCheckIDsCommand(t *testing.T) {
 	dir := t.TempDir()
-	engine, err := storage.NewBadgerEngine(dir)
+	engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{ID: "nornic:a", Labels: []string{"Doc"}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "nornic:a", Labels: []string{"Doc"}})
 	require.NoError(t, err)
 	require.NoError(t, engine.Close())
 
@@ -235,7 +249,7 @@ func TestCheckIDsCommand(t *testing.T) {
 		{[]string{"--data-dir", dir, "database", "check-ids"}, "0 nodes and 0 relationships have no ID-dictionary entry\n0 nodes and 0 relationships have an ID-dictionary entry their index keys don't use\n"},
 		{[]string{"--data-dir", dir, "database", "check-ids", "--repair"}, "0 nodes and 0 relationships have no ID-dictionary entry\n0 nodes and 0 relationships have an ID-dictionary entry their index keys don't use\nrestored 0 nodes and 0 relationships; 0 nodes and 0 relationships could not be identified and are unchanged\n"},
 	} {
-		command := newRootCmd()
+		command := newTestAdminRoot(nil)
 		output := new(bytes.Buffer)
 		command.SetOut(output)
 		command.SetArgs(tc.args)
@@ -266,7 +280,7 @@ func TestPrintIDDictionaryReport(t *testing.T) {
 	// A data directory that can't be opened is the command's error.
 	file := filepath.Join(t.TempDir(), "not-a-directory")
 	require.NoError(t, os.WriteFile(file, []byte("x"), 0o600))
-	command := newRootCmd()
+	command := newTestAdminRoot(nil)
 	command.SetOut(new(bytes.Buffer))
 	command.SetErr(new(bytes.Buffer))
 	command.SetArgs([]string{"--data-dir", file, "database", "check-ids"})

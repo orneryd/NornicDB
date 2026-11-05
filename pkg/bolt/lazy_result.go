@@ -1,3 +1,4 @@
+// Author: Codex, NOR-180 terminal error retention across lazy result consumers, 2026-10-27.
 package bolt
 
 import (
@@ -6,6 +7,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/cypher"
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 )
 
 // lazyResultThreshold is how many rows an auto-commit read produces before
@@ -40,6 +42,9 @@ type lazyResult struct {
 	result   *QueryResult
 	err      error
 	finished bool
+	// Author: Codex, NOR-180. PULL/DISCARD claims a returned error before
+	// teardown, so an abandoned result is handed to the next response only once.
+	errorConsumed bool
 }
 
 // errStatementAborted is the error a lazy result reports when its statement
@@ -58,6 +63,9 @@ func (s *Session) runStreamed(ctx context.Context, cancel context.CancelFunc, ex
 	lazy.stream = cypher.NewResultStream(lazyResultThreshold, lazy)
 	defer lazy.endStatement()
 	result, err = executor.Execute(cypher.WithResultStream(ctx, lazy.stream), query, params)
+	// Bolt owns this deadline, so it marks the timeout for any executor.
+	err = nornicerrors.MarkStatementTimeout(err, context.Cause(ctx))
+	err = nornicerrors.NormalizeTerminalOutcome(err)
 	lazy.result, lazy.err, lazy.finished = result, err, true
 	if lazy.helperDone == nil {
 		return result, false, err
@@ -148,10 +156,19 @@ func (s *Session) closeLazyResult() {
 		return
 	}
 	lazy := s.lastLazy
+	if s.lastDelivery != nil {
+		s.lastDelivery.Fail()
+		s.lastDelivery = nil
+	}
 	s.lastLazy = nil
+	s.lastResultMemoryLease.Release()
+	s.lastResultMemoryLease = nil
 	s.lastResult = nil
 	s.resultIndex = 0
 	lazy.close()
+	if !lazy.errorConsumed && nornicerrors.HasStatusDiagnostic(lazy.err) {
+		s.pendingResultFailure = &lazyStatementError{err: lazy.err, query: lazy.query, reason: s.activeRunReason()}
+	}
 	s.clearActiveRun()
 }
 
@@ -164,6 +181,7 @@ type lazyStatementError struct {
 }
 
 func (e *lazyStatementError) Error() string { return e.err.Error() }
+func (e *lazyStatementError) Unwrap() error { return e.err }
 
 // fillLazyResult refills stream's rows from its lazy result when PULL or
 // DISCARD has used the rows it holds. It returns a *lazyStatementError once
@@ -185,6 +203,7 @@ func (s *Session) fillLazyResult(stream *resultStream, n int) error {
 	lazy.cancel()
 	s.clearActiveRun()
 	if lazy.err != nil {
+		lazy.errorConsumed = true
 		s.logRunTiming("ERROR", stream.database, lazy.query, time.Since(lazy.start), lazy.rows, lazy.err)
 		return &lazyStatementError{err: lazy.err, query: lazy.query, reason: reason}
 	}
@@ -200,12 +219,11 @@ func (s *Session) fillLazyResult(stream *resultStream, n int) error {
 // error: IGNORED when RESET or GOODBYE cancelled the statement, otherwise
 // the statement's FAILURE, as RUN reports it.
 func (s *Session) sendLazyFailure(failure *lazyStatementError) error {
-	if errors.Is(failure.err, context.Canceled) && (failure.reason == MsgReset || failure.reason == MsgGoodbye) {
+	if errors.Is(failure.err, context.Canceled) && !nornicerrors.HasStatusDiagnostic(failure.err) && (failure.reason == MsgReset || failure.reason == MsgGoodbye) {
 		if err := s.sendIgnored(); err != nil {
 			return err
 		}
 		return s.flushIfPending()
 	}
-	code, message := mapBoltQueryErrorForQuery(failure.err, failure.query)
-	return s.sendRunFailureWithDetail(code, message, boltErrorDetail(failure.err))
+	return s.sendRunQueryFailure(failure.err, failure.query)
 }

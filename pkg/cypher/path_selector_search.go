@@ -3,6 +3,8 @@ package cypher
 import (
 	"context"
 	"encoding/binary"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"math"
 	"strconv"
 	"strings"
@@ -87,13 +89,6 @@ type pathPatternItem struct {
 	group int
 }
 
-// parsePathPatternItems reads a selected pattern into its elements. ok is
-// false for text that isn't a path pattern: node patterns joined by
-// relationship patterns, quantified groups and juxtapositions.
-func parsePathPatternItems(pattern string, nested bool) ([]pathPatternItem, bool) {
-	return parsePathPatternItemsContext(context.Background(), pattern, nested)
-}
-
 func parsePathPatternItemsContext(ctx context.Context, pattern string, nested bool) ([]pathPatternItem, bool) {
 	var items []pathPatternItem
 	for at := skipASCIISpaces(pattern, 0, len(pattern)); at < len(pattern); at = skipASCIISpaces(pattern, at, len(pattern)) {
@@ -112,7 +107,7 @@ func parsePathPatternItemsContext(ctx context.Context, pattern string, nested bo
 					return nil, false
 				}
 				inner, where := pattern[at+1:close], ""
-				if index := topLevelKeywordIndex(inner, "WHERE"); index >= 0 {
+				if index := topLevelKeywordIndex(ctx, inner, "WHERE"); index >= 0 {
 					inner, where = inner[:index], strings.TrimSpace(inner[index+len("WHERE"):])
 				}
 				members, ok := parsePathPatternItemsContext(ctx, inner, true)
@@ -123,7 +118,7 @@ func parsePathPatternItemsContext(ctx context.Context, pattern string, nested bo
 				at = quantifier.end
 				continue
 			}
-			item, ok := parsePathPatternNode(pattern[at : close+1])
+			item, ok := parsePathPatternNode(ctx, pattern[at:close+1])
 			if !ok || len(items) > 0 && items[len(items)-1].kind == pathPatternNode {
 				// Only a quantified group juxtaposes with a node pattern.
 				return nil, false
@@ -142,7 +137,7 @@ func parsePathPatternItemsContext(ctx context.Context, pattern string, nested bo
 				text = pattern[at:arrowEnd]
 				end = arrowEnd
 			}
-			item, ok := parsePathPatternRelationship(text)
+			item, ok := parsePathPatternRelationship(ctx, text)
 			if !ok || len(items) == 0 || items[len(items)-1].kind == pathPatternRelationship {
 				return nil, false
 			}
@@ -159,10 +154,10 @@ func parsePathPatternItemsContext(ctx context.Context, pattern string, nested bo
 }
 
 // parsePathPatternNode reads a node pattern (text is its parentheses).
-func parsePathPatternNode(text string) (pathPatternItem, bool) {
+func parsePathPatternNode(ctx context.Context, text string) (pathPatternItem, bool) {
 	item := pathPatternItem{kind: pathPatternNode, text: text}
 	inner := text[1 : len(text)-1]
-	if where := elementWhereIndex(text, 0, len(text)-1); where >= 0 {
+	if where := elementWhereIndex(ctx, text, 0, len(text)-1); where >= 0 {
 		item.predicates = append(item.predicates, strings.TrimSpace(text[where+len("WHERE"):len(text)-1]))
 		inner = text[1:where]
 		item.text = "(" + inner + ")"
@@ -184,7 +179,7 @@ func parsePathPatternNode(text string) (pathPatternItem, bool) {
 
 // parsePathPatternRelationship reads a relationship pattern with its
 // arrows (-->, <-[r:T*1..3]-, …).
-func parsePathPatternRelationship(text string) (pathPatternItem, bool) {
+func parsePathPatternRelationship(ctx context.Context, text string) (pathPatternItem, bool) {
 	item := pathPatternItem{kind: pathPatternRelationship, direction: "both", min: 1, max: 1}
 	incoming, outgoing := strings.HasPrefix(text, "<"), strings.HasSuffix(text, ">")
 	switch {
@@ -202,7 +197,7 @@ func parsePathPatternRelationship(text string) (pathPatternItem, bool) {
 		return item, false
 	}
 	inner := text[open+1 : close]
-	if where := elementWhereIndex(text, open, close); where >= 0 {
+	if where := elementWhereIndex(ctx, text, open, close); where >= 0 {
 		item.predicates = append(item.predicates, strings.TrimSpace(text[where+len("WHERE"):close]))
 		inner = text[open+1 : where]
 	}
@@ -243,14 +238,18 @@ func parsePathPatternRelationship(text string) (pathPatternItem, bool) {
 
 // atoiOr is the integer text holds, or fallback.
 func atoiOr(text string, fallback int) int {
-	number := 0
-	for _, c := range text {
-		if c < '0' || c > '9' || number > 1<<30 {
-			return fallback
-		}
-		number = number*10 + int(c-'0')
+	if text == "" {
+		return 0
 	}
-	return number
+	token, ok := cyphertext.ScanNumber(text, 0)
+	if !ok || token.Invalid || token.End != len(text) || token.Base != 10 || token.Fraction || token.Exponent || token.Grouped || token.Suffix != 0 {
+		return fallback
+	}
+	value, err := strconv.Atoi(text)
+	if err != nil || value > (1<<30)*10+9 {
+		return fallback
+	}
+	return value
 }
 
 // propertyMapPredicates writes a property map ({k: v, …}) of the element
@@ -262,13 +261,13 @@ func propertyMapPredicates(variable, properties string) []string {
 		return nil
 	}
 	var predicates []string
-	for _, pair := range (&StorageExecutor{}).splitPropertyPairs(strings.TrimSpace(properties[1 : len(properties)-1])) {
+	for _, pair := range splitTopLevelComma(strings.TrimSpace(properties[1 : len(properties)-1])) {
 		colon := findTopLevelMapKeyValueSeparator(pair)
 		if colon <= 0 {
 			continue
 		}
 		key := normalizePropertyKey(pair[:colon])
-		predicates = append(predicates, variable+".`"+strings.ReplaceAll(key, "`", "``")+"` = ("+strings.TrimSpace(pair[colon+1:])+")")
+		predicates = append(predicates, variable+"."+cyphertext.PrintIdentifier(key, nil, cyphertext.AcceptedSource)+" = ("+strings.TrimSpace(pair[colon+1:])+")")
 	}
 	return predicates
 }
@@ -708,7 +707,7 @@ func buildSelectedPathPlanContext(ctx context.Context, pattern, pathVariable, pr
 		case pathPatternGroup:
 			item.group = groups
 			groups++
-			plan.compileGroup(item, name)
+			plan.compileGroup(ctx, item, name)
 		}
 	}
 	// A relationship without a variable but with a property map needs one.
@@ -756,7 +755,7 @@ func buildSelectedPathPlanContext(ctx context.Context, pattern, pathVariable, pr
 	}
 	// A length bound among the pattern's predicates (shortestPath's WHERE)
 	// bounds the search too; each path is still checked against it.
-	for _, term := range splitTopLevelAndConjuncts(predicate) {
+	for _, term := range splitTopLevelAndConjuncts(ctx, predicate) {
 		if term = strings.TrimSpace(term); term != "" {
 			if bound, ok := pathLengthBoundOf(term, pathVariable); ok {
 				plan.lengthBounds = append(plan.lengthBounds, bound)
@@ -799,7 +798,7 @@ func buildSelectedPathPlanContext(ctx context.Context, pattern, pathVariable, pr
 // its WHERE: one that reads a single element of the group is checked on it
 // in each repetition, one that reads none of them on each of its
 // relationships, any other on each repetition of a path traced.
-func (plan *selectedPathPlan) compileGroup(group *pathPatternItem, name func() string) {
+func (plan *selectedPathPlan) compileGroup(ctx context.Context, group *pathPatternItem, name func() string) {
 	var elements []string
 	for index := range group.items {
 		item := &group.items[index]
@@ -812,7 +811,7 @@ func (plan *selectedPathPlan) compileGroup(group *pathPatternItem, name func() s
 			plan.listVariables = append(plan.listVariables, item.variable)
 		}
 	}
-	for _, term := range splitTopLevelAndConjuncts(group.where) {
+	for _, term := range splitTopLevelAndConjuncts(ctx, group.where) {
 		if term = strings.TrimSpace(term); term == "" {
 			continue
 		}
@@ -851,7 +850,7 @@ func readsPatternVariable(term, name string) bool {
 	var brackets []byte
 	for i := 0; i < len(term); i++ {
 		switch c := term[i]; {
-		case c == '\'' || c == '"' || c == '`':
+		case isCypherQuoteByte(c):
 			i = skipCypherQuotedText(term, i, c) - 1
 		case c == '(' || c == '[' || c == '{':
 			brackets = append(brackets, c)
@@ -859,13 +858,11 @@ func readsPatternVariable(term, name string) bool {
 			if len(brackets) > 0 {
 				brackets = brackets[:len(brackets)-1]
 			}
-		case isIdentByte(c):
+		case cyphertext.NamePartAt(term, i):
 			end := i + 1
-			for end < len(term) && isIdentByte(term[end]) {
-				end++
-			}
-			if term[i:end] == name && (i == 0 || !isIdentByte(term[i-1]) && term[i-1] != '$') && prevNonSpaceByte(term, i) != '.' &&
-				!(nextNonSpaceByte(term, end) == ':' && len(brackets) > 0 && brackets[len(brackets)-1] == '{') {
+			end = cyphertext.NamePartEnd(term, end)
+			if term[i:end] == name && (i == 0 || !cyphertext.NamePartAt(term, i-1) && term[i-1] != '$') && cyphertext.NeighborByte(term, i, cyphertext.Before) != '.' &&
+				!(cyphertext.NeighborByte(term, end, cyphertext.AtOrAfter) == ':' && len(brackets) > 0 && brackets[len(brackets)-1] == '{') {
 				return true
 			}
 			i = end - 1
@@ -921,8 +918,8 @@ func topLevelOperatorIndex(term, operator string) int {
 	found := -1
 	depth := 0
 	for i := 0; i < len(term); i++ {
-		switch c := term[i]; c {
-		case '\'', '"', '`':
+		switch c := term[i]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(term, i, c) - 1
 		case '(', '[', '{':
 			depth++
@@ -1051,10 +1048,39 @@ func (e *StorageExecutor) selectedPathLimit(ctx context.Context, plan *selectedP
 // of the count shortest paths (count lengths for groups) to each end node:
 // to target only when it is given, to the nodes of ends only when they are.
 func (e *StorageExecutor) searchSelectedPaths(ctx context.Context, plan *selectedPathPlan, a *pathSearchAutomaton, reversed bool, row pipelineRow, maxLength int, source, target *storage.Node, ends []*storage.Node, count int, groups bool) []pipelineRow {
+	// The search's ID-keyed state uses the same identity view as native graph
+	// algorithms. Expression evaluation and output keep the original entities.
+	searchExecutor := e
+	var view *graphIdentityStorage
+	if storage.CompositeDatabaseOf(e.getStorage(ctx)) != "" {
+		searchExecutor = e.graphIdentityExecutor(ctx)
+		view = searchExecutor.storage.(*graphIdentityStorage)
+		source, target = view.node(source), view.node(target)
+		if ends != nil {
+			selected := make([]*storage.Node, len(ends))
+			for i, node := range ends {
+				selected[i] = view.node(node)
+			}
+			ends = selected
+		}
+	}
 	bind := func(path pathSearchPath) (pipelineRow, bool) {
+		if view != nil {
+			path.start = graphIdentityNodeValue(path.start)
+			steps := make([]pathSearchPathStep, len(path.steps))
+			for i, step := range path.steps {
+				step.node = graphIdentityNodeValue(step.node)
+				step.edge = graphIdentityEdgeValue(step.edge)
+				steps[i] = step
+			}
+			path.steps = steps
+		}
 		return e.bindSelectedPath(ctx, plan, a, reversed, row, path)
 	}
-	s := e.newPathSearch(ctx, a, row, maxLength, source)
+	s := searchExecutor.newPathSearch(ctx, a, row, maxLength, source)
+	if view != nil {
+		s.native = e
+	}
 	if target != nil {
 		direct := len(plan.pathChecks) == 0 && len(plan.iterationChecks) == 0 && !plan.acyclic && !plan.repeated
 		for _, variable := range plan.listVariables {
@@ -1076,18 +1102,8 @@ func (e *StorageExecutor) searchSelectedPaths(ctx context.Context, plan *selecte
 // pathLengthLimit is the longest length a length(p) <= value (strict: <)
 // conjunct allows; known is false for a value that isn't a number.
 func pathLengthLimit(value interface{}, strict bool) (int, bool) {
-	var limit float64
-	switch typed := value.(type) {
-	case int64:
-		limit = float64(typed)
-	case int:
-		limit = float64(typed)
-	case float64:
-		if math.IsNaN(typed) {
-			return 0, false
-		}
-		limit = typed
-	default:
+	limit, numeric := valueconvert.NumericFloat64(value)
+	if !numeric || math.IsNaN(limit) {
 		return 0, false
 	}
 	if strict {
@@ -1098,7 +1114,7 @@ func pathLengthLimit(value interface{}, strict bool) (int, bool) {
 	if limit > float64(VarLengthUnboundedMaxHops) {
 		return -1, false
 	}
-	return int(limit), true
+	return valueconvert.ToInt(limit, valueconvert.IntegerFloat)
 }
 
 // boundSelectedEndpoint returns the node a row binds to an endpoint's
@@ -1271,10 +1287,10 @@ func sameSelectedEntity(a, b interface{}) bool {
 	switch left := a.(type) {
 	case *storage.Node:
 		right, ok := b.(*storage.Node)
-		return ok && left != nil && right != nil && left.ID == right.ID
+		return ok && left != nil && right != nil && left.Identity() == right.Identity()
 	case *storage.Edge:
 		right, ok := b.(*storage.Edge)
-		return ok && left != nil && right != nil && left.ID == right.ID
+		return ok && left != nil && right != nil && left.Identity() == right.Identity()
 	}
 	return false
 }

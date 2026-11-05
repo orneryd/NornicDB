@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -12,7 +13,7 @@ type allEdgesOverrideEngine struct {
 	err   error
 }
 
-func (e *allEdgesOverrideEngine) AllEdges() ([]*Edge, error) {
+func (e *allEdgesOverrideEngine) AllEdges(ctx context.Context) ([]*Edge, error) {
 	if e.err != nil {
 		return nil, e.err
 	}
@@ -22,7 +23,7 @@ func (e *allEdgesOverrideEngine) AllEdges() ([]*Edge, error) {
 // GetEdgesByType serves the injected edges to the typed read that
 // relationship-constraint validation uses (StreamEdgesByType falls back to it
 // for engines without EdgeTypeStreamer).
-func (e *allEdgesOverrideEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
+func (e *allEdgesOverrideEngine) GetEdgesByType(ctx context.Context, edgeType string) ([]*Edge, error) {
 	if e.err != nil {
 		return nil, e.err
 	}
@@ -38,12 +39,12 @@ func (e *allEdgesOverrideEngine) GetEdgesByType(edgeType string) ([]*Edge, error
 func TestValidateRelationshipConstraintOnCreationForEngine_Branches(t *testing.T) {
 	t.Run("all-edges scan error is propagated", func(t *testing.T) {
 		eng := &allEdgesOverrideEngine{
-			Engine: NewMemoryEngine(),
+			Engine: newTestMemoryEngine(t),
 			err:    errors.New("scan boom"),
 		}
 		t.Cleanup(func() { _ = eng.Engine.Close() })
 
-		err := validateRelationshipConstraintOnCreationForEngine(eng, Constraint{
+		err := validateRelationshipConstraintOnCreationForEngine(context.Background(), eng, Constraint{
 			Type:       ConstraintUnique,
 			EntityType: ConstraintEntityRelationship,
 			Label:      "REL",
@@ -56,14 +57,14 @@ func TestValidateRelationshipConstraintOnCreationForEngine_Branches(t *testing.T
 
 	t.Run("property type constraint is accepted in this path", func(t *testing.T) {
 		eng := &allEdgesOverrideEngine{
-			Engine: NewMemoryEngine(),
+			Engine: newTestMemoryEngine(t),
 			edges: []*Edge{
 				{ID: "test:e1", Type: "REL", Properties: map[string]interface{}{"k": 1}},
 			},
 		}
 		t.Cleanup(func() { _ = eng.Engine.Close() })
 
-		err := validateRelationshipConstraintOnCreationForEngine(eng, Constraint{
+		err := validateRelationshipConstraintOnCreationForEngine(context.Background(), eng, Constraint{
 			Type:       ConstraintPropertyType,
 			EntityType: ConstraintEntityRelationship,
 			Label:      "REL",
@@ -76,14 +77,14 @@ func TestValidateRelationshipConstraintOnCreationForEngine_Branches(t *testing.T
 
 	t.Run("relationship key first enforces existence", func(t *testing.T) {
 		eng := &allEdgesOverrideEngine{
-			Engine: NewMemoryEngine(),
+			Engine: newTestMemoryEngine(t),
 			edges: []*Edge{
 				{ID: "test:e1", Type: "REL", Properties: map[string]interface{}{"k1": "x"}},
 			},
 		}
 		t.Cleanup(func() { _ = eng.Engine.Close() })
 
-		err := validateRelationshipConstraintOnCreationForEngine(eng, Constraint{
+		err := validateRelationshipConstraintOnCreationForEngine(context.Background(), eng, Constraint{
 			Type:       ConstraintRelationshipKey,
 			EntityType: ConstraintEntityRelationship,
 			Label:      "REL",
@@ -96,14 +97,14 @@ func TestValidateRelationshipConstraintOnCreationForEngine_Branches(t *testing.T
 
 	t.Run("unsupported relationship constraint type returns explicit error", func(t *testing.T) {
 		eng := &allEdgesOverrideEngine{
-			Engine: NewMemoryEngine(),
+			Engine: newTestMemoryEngine(t),
 			edges: []*Edge{
 				{ID: "test:e1", Type: "REL", Properties: map[string]interface{}{"k": "x"}},
 			},
 		}
 		t.Cleanup(func() { _ = eng.Engine.Close() })
 
-		err := validateRelationshipConstraintOnCreationForEngine(eng, Constraint{
+		err := validateRelationshipConstraintOnCreationForEngine(context.Background(), eng, Constraint{
 			Type:       ConstraintType("nonexistent"),
 			EntityType: ConstraintEntityRelationship,
 			Label:      "REL",

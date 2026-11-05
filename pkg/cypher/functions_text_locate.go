@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -35,7 +36,7 @@ const textLocateTolerance = 3
 // line first; a line that isn't one of the text's is null); tolerance (3);
 // from and to, the code-point range the occurrence must lie in. Without line,
 // the first occurrence in the range wins. Null text or quote is null.
-func fnTextLocate(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnTextLocate(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	if len(args) < 2 || len(args) > 3 {
 		return nil, argumentCountError("text.locate", "2 or 3", len(args))
 	}

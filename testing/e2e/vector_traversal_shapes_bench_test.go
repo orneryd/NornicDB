@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 )
 
@@ -524,28 +525,21 @@ func traversalBenchConfigFromEnv() traversalBenchConfig {
 }
 
 func newTraversalHTTPClient(user, pass string) *http.Client {
+	base := http.DefaultTransport
 	return &http.Client{
-		Timeout:   15 * time.Second,
-		Transport: &traversalAuthTransport{base: http.DefaultTransport, user: user, pass: pass},
+		Timeout: 15 * time.Second,
+		Transport: testfixture.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			clone := req.Clone(req.Context())
+			if user != "" {
+				clone.SetBasicAuth(user, pass)
+			}
+			transport := base
+			if transport == nil {
+				transport = http.DefaultTransport
+			}
+			return transport.RoundTrip(clone)
+		}),
 	}
-}
-
-type traversalAuthTransport struct {
-	base http.RoundTripper
-	user string
-	pass string
-}
-
-func (t *traversalAuthTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	clone := req.Clone(req.Context())
-	if t.user != "" {
-		clone.SetBasicAuth(t.user, t.pass)
-	}
-	base := t.base
-	if base == nil {
-		base = http.DefaultTransport
-	}
-	return base.RoundTrip(clone)
 }
 
 func deriveBoltAddr(httpAddr string) string {

@@ -1,6 +1,8 @@
 package bolt
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 
@@ -15,7 +17,7 @@ import (
 // change to open sessions at once.
 func TestBoltSessionLosesDeletedRole(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	// The system database, as the server gives it to the auth stores.
 	engine := storage.NewNamespacedEngine(base, "system")
@@ -28,7 +30,7 @@ func TestBoltSessionLosesDeletedRole(t *testing.T) {
 	require.NoError(t, roles.CreateRole(ctx, "ops"))
 	entitlements := auth.NewRoleEntitlementsStore(engine)
 	require.NoError(t, entitlements.Set(ctx, "ops", []string{string(auth.PermRead), string(auth.PermAdmin)}))
-	_, err = authenticator.CreateUser("bob", "password123", []auth.Role{"ops"})
+	_, err = authenticator.CreateUser(context.Background(), "bob", "password123", []auth.Role{"ops"})
 	require.NoError(t, err)
 
 	adapter := NewAuthenticatorAdapter(authenticator)
@@ -64,7 +66,7 @@ func TestBoltSessionAuthenticationDisabled(t *testing.T) {
 	session.server = &Server{config: DefaultConfig(), sessions: map[string]*Session{}}
 	require.True(t, session.authenticationDisabled())
 	for _, enabled := range []bool{false, true} {
-		engine := storage.NewMemoryEngine()
+		engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = engine.Close() })
 		config := auth.DefaultAuthConfig()
 		config.SecurityEnabled = enabled
@@ -98,7 +100,7 @@ func boltAccountFixture(t *testing.T) (*auth.Authenticator, *AuthenticatorAdapte
 
 func boltProductionFixture(t *testing.T) (*auth.Authenticator, *AuthenticatorAdapter, *Server, boltStores) {
 	t.Helper()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	engine := storage.NewNamespacedEngine(base, "system")
 	config := auth.DefaultAuthConfig()
@@ -129,7 +131,7 @@ func TestBoltSessionOfRemovedAccountRunsNothing(t *testing.T) {
 	for _, change := range []string{"deleted", "disabled", "deleted and recreated"} {
 		t.Run(change, func(t *testing.T) {
 			authenticator, adapter, server := boltAccountFixture(t)
-			_, err := authenticator.CreateUser("bob", "password123", []auth.Role{auth.RoleAdmin})
+			_, err := authenticator.CreateUser(context.Background(), "bob", "password123", []auth.Role{auth.RoleAdmin})
 			require.NoError(t, err)
 			result, err := adapter.Authenticate("basic", "bob", "password123")
 			require.NoError(t, err)
@@ -141,12 +143,12 @@ func TestBoltSessionOfRemovedAccountRunsNothing(t *testing.T) {
 
 			switch change {
 			case "deleted":
-				require.NoError(t, authenticator.DeleteUser("bob"))
+				require.NoError(t, authenticator.DeleteUser(context.Background(), "bob"))
 			case "disabled":
-				require.NoError(t, authenticator.DisableUser("bob"))
+				require.NoError(t, authenticator.ChangeUserState(context.Background(), "bob", auth.UserDisable))
 			case "deleted and recreated":
-				require.NoError(t, authenticator.DeleteUser("bob"))
-				_, err = authenticator.CreateUser("bob", "password123", []auth.Role{auth.RoleAdmin})
+				require.NoError(t, authenticator.DeleteUser(context.Background(), "bob"))
+				_, err = authenticator.CreateUser(context.Background(), "bob", "password123", []auth.Role{auth.RoleAdmin})
 				require.NoError(t, err)
 			}
 			executed, code = run()

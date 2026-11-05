@@ -1,10 +1,13 @@
 package cypher
 
-import "strings"
+import (
+	"context"
+	"strings"
+)
 
 // parseQuantifierArguments splits the arguments of all / any / none /
 // single, "variable IN list WHERE predicate", for every evaluator.
-func parseQuantifierArguments(inner string) (variable, listExpression, predicate string, ok bool) {
+func parseQuantifierArguments(ctx context.Context, inner string) (variable, listExpression, predicate string, ok bool) {
 	// The declaration as every reader reads it (bindingDeclaration); WHERE at
 	// the top level: a list comprehension or subquery in the list expression
 	// has its own.
@@ -13,7 +16,7 @@ func parseQuantifierArguments(inner string) (variable, listExpression, predicate
 		return "", "", "", false
 	}
 	rest := inner[listStart:]
-	whereIndex := topLevelKeywordIndex(rest, "WHERE")
+	whereIndex := topLevelKeywordIndex(ctx, rest, "WHERE")
 	if whereIndex < 0 {
 		return "", "", "", false
 	}

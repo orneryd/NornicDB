@@ -1,7 +1,10 @@
 package replication_test
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -12,15 +15,19 @@ import (
 )
 
 func TestReplicatedDeleteInvalidatesWarmLocalQuery(t *testing.T) {
-	base, err := storage.NewBadgerEngine(t.TempDir())
+	base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	defer base.Close()
-	_, err = base.CreateNode(&storage.Node{ID: "library:item", Labels: []string{"Document"}})
+	_, err = base.CreateNode(t.Context(), &storage.Node{ID: "library:item", Labels: []string{"Document"}})
 	require.NoError(t, err)
-	adapter, err := replication.NewStorageAdapter(base)
+	// This test covers query-cache invalidation after a replicated delete, not
+	// default path resolution, so the WAL lives in a temp dir. Using the
+	// default directory would open whatever checkout-local WAL is present.
+	adapter, err := replication.NewStorageAdapterWithWAL(base, filepath.Join(t.TempDir(), "wal"))
 	require.NoError(t, err)
+	defer adapter.Close()
 	view := storage.NewNamespacedEngine(replication.NewReplicatedEngine(base, nil, 0), "library")
-	executor := cypher.NewStorageExecutorWithQueryCachePolicy(view, 10, time.Minute)
+	executor := cypher.NewStorageExecutor(view, cypher.QueryCachePolicy{MaxEntries: 10, TTL: time.Minute})
 	read := func(want int) {
 		t.Helper()
 		result, executeErr := executor.Execute(context.Background(), "MATCH (n) WHERE elementId(n)=$id RETURN n", map[string]interface{}{"id": "item"})
@@ -30,10 +37,12 @@ func TestReplicatedDeleteInvalidatesWarmLocalQuery(t *testing.T) {
 
 	read(1)
 	read(1)
-	require.NoError(t, adapter.ApplyCommand(&replication.Command{
+	publication, err := adapter.ApplyCommand(context.Background(), &replication.Command{
 		Type:      replication.CmdDeleteNode,
 		Data:      []byte("library:item"),
 		Timestamp: time.Now(),
-	}))
+	}, replication.WALQueued)
+	require.NoError(t, err)
+	require.Zero(t, publication.Position, "WALQueued must not report a publication position")
 	read(0)
 }

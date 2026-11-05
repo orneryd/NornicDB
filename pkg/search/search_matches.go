@@ -153,17 +153,21 @@ func (s *Service) attachChunkMatches(ctx context.Context, results []SearchResult
 	if len(candidates) == 0 || (vectors == nil && fileStore == nil) {
 		return
 	}
-	scored, err := s.resolveVectorExactScorer(exactScorerPolicyCPU, vectors, fileStore).ScoreCandidates(ctx, embedding, candidates)
+	scored, err := s.resolveVectorExactScorer(vectors, fileStore).ScoreCandidates(ctx, embedding, candidates)
 	if err != nil {
 		return
 	}
 	chunkScores := make(map[int][]ScoredCandidate, len(hits))
 	for _, candidate := range scored { // best first
-		index, ok := hitByNode[normalizeVectorResultIDToNodeID(candidate.ID)]
+		nodeID, ok := vectorEntryOwner(candidate.ID)
 		if !ok {
 			continue
 		}
-		chunk, ok := matchingChunkIndex(string(nodes[index].ID), candidate.ID)
+		index, ok := hitByNode[nodeID]
+		if !ok {
+			continue
+		}
+		chunk, ok := vectorEntryChunkIndex(string(nodes[index].ID), candidate.ID)
 		if !ok {
 			continue
 		}
@@ -176,11 +180,11 @@ func (s *Service) attachChunkMatches(ctx context.Context, results []SearchResult
 	for index, kept := range chunkScores {
 		spans, known := spansByHit[index]
 		if !known {
-			spans = s.readChunkSpans(nodes[index])
+			spans = s.readChunkSpans(ctx, nodes[index])
 		}
 		matches := make([]SearchMatch, 0, len(kept)+len(results[index].Matches))
 		for _, candidate := range kept {
-			chunk, _ := matchingChunkIndex(string(nodes[index].ID), candidate.ID)
+			chunk, _ := vectorEntryChunkIndex(string(nodes[index].ID), candidate.ID)
 			placed := false
 			for _, span := range spans {
 				if span.Chunk == chunk {
@@ -197,10 +201,10 @@ func (s *Service) attachChunkMatches(ctx context.Context, results []SearchResult
 }
 
 // keptChunk reports whether chunk is already among kept: chunk 0 is
-// indexed under the node's own ID.
+// indexed under the node's main key.
 func keptChunk(kept []ScoredCandidate, node *storage.Node, chunk int) bool {
 	for _, candidate := range kept {
-		if index, _ := matchingChunkIndex(string(node.ID), candidate.ID); index == chunk {
+		if index, _ := vectorEntryChunkIndex(string(node.ID), candidate.ID); index == chunk {
 			return true
 		}
 	}
@@ -242,12 +246,12 @@ func (s *Service) rememberChunkSpansLocked(nodeID string, node *storage.Node) {
 
 // readChunkSpans reads a hit's chunk places from its stored embedding
 // metadata, and remembers them unless the index changed meanwhile.
-func (s *Service) readChunkSpans(node *storage.Node) []embeddingutil.ChunkSpan {
+func (s *Service) readChunkSpans(ctx context.Context, node *storage.Node) []embeddingutil.ChunkSpan {
 	revision := s.IndexRevision()
 	s.mu.RLock()
 	opts := s.embedTextOptions
 	s.mu.RUnlock()
-	spans := chunkSpansFromMeta(node, s.hitEmbedMeta(node), opts)
+	spans := chunkSpansFromMeta(node, s.hitEmbedMeta(ctx, node), opts)
 	// nodeChunkSpans is written under indexMu, as index writes do.
 	s.indexMu.Lock()
 	if _, known := s.nodeChunkSpans[string(node.ID)]; !known && s.IndexRevision() == revision {
@@ -261,17 +265,17 @@ func (s *Service) readChunkSpans(node *storage.Node) []embeddingutil.ChunkSpan {
 // chunk places. The node was read without its embedding, which may leave the
 // metadata out (Badger keeps it in the embedding sidecar), so it is read on
 // its own, without the vectors, from an engine that can.
-func (s *Service) hitEmbedMeta(node *storage.Node) map[string]any {
+func (s *Service) hitEmbedMeta(ctx context.Context, node *storage.Node) map[string]any {
 	reader, canRead := s.engine.(storage.NodeEmbeddingMetaReader)
 	if canRead {
-		if meta, err := reader.GetNodeEmbeddingMeta(node.ID); err == nil && len(meta) > 0 {
+		if meta, err := reader.GetNodeEmbeddingMeta(ctx, node.ID); err == nil && len(meta) > 0 {
 			return meta
 		}
 	}
 	if len(node.EmbedMeta) > 0 || canRead {
 		return node.EmbedMeta
 	}
-	if full, err := s.engine.GetNode(node.ID); err == nil && full != nil {
+	if full, err := s.engine.GetNode(ctx, node.ID); err == nil && full != nil {
 		return full.EmbedMeta
 	}
 	return nil
@@ -282,9 +286,11 @@ func (s *Service) hitEmbedMeta(node *storage.Node) map[string]any {
 // chunks of an embedding made before chunk places were recorded can be
 // placed in the node's properties.
 func (s *Service) SetEmbedTextOptions(opts *embeddingutil.EmbedTextOptions) {
-	s.mu.Lock()
-	s.embedTextOptions = opts
-	s.mu.Unlock()
+	s.orderWithBuild(func() {
+		s.mu.Lock()
+		s.embedTextOptions = opts
+		s.mu.Unlock()
+	})
 }
 
 // termIDFReader is a BM25 index that can weigh a query term.

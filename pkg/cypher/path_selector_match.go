@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"strconv"
 	"strings"
 
@@ -27,11 +28,11 @@ type pathSelector struct {
 // selector, the selector's predicate (the pattern's own predicates) and the
 // clause's WHERE conjuncts. ok is false when where doesn't start with a
 // selector.
-func splitPathSelectorTerm(where string) (*pathSelector, string, []string, bool) {
+func splitPathSelectorTerm(ctx context.Context, where string) (*pathSelector, string, []string, bool) {
 	if len(where) < len(pathSelectorFunction) || !equalFoldASCII(where[:len(pathSelectorFunction)], pathSelectorFunction) {
 		return nil, "", nil, false
 	}
-	terms := splitTopLevelAndConjuncts(where)
+	terms := splitTopLevelAndConjuncts(ctx, where)
 	call := strings.TrimSpace(terms[0])
 	open := strings.IndexByte(call, '(')
 	if open < 0 || findMatchingParen(call, open) != len(call)-1 {
@@ -122,7 +123,7 @@ func (e *StorageExecutor) pipelineApplySelectedPathMatch(ctx context.Context, ro
 			found++
 		}
 		if optional && found == 0 {
-			out = append(out, m.unmatchedRow(row))
+			out = append(out, m.unmatchedRow(ctx, row))
 		}
 	}
 	return out, nil
@@ -138,21 +139,14 @@ func pathSelectorCount(ctx context.Context, count string) (int, error) {
 	} else {
 		value = pathSelectorCountLiteral(count)
 	}
-	var number int64
-	switch typed := value.(type) {
-	case int64:
-		number = typed
-	case int:
-		number = int64(typed)
-	case int32:
-		number = int64(typed)
-	default:
+	number, valid := valueconvert.ToInt(value, valueconvert.IntegerOnly)
+	if !valid {
 		return 0, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
 			localization.CypherMatchingPathSelectorCountType(pathSelectorCountTypeName(value)))
 	}
 	if number <= 0 {
 		return 0, localizedStatusError("Neo.ClientError.General.InvalidArguments", "InvalidArguments",
-			localization.CypherMatchingPathSelectorCountInvalid(strconv.FormatInt(number, 10)))
+			localization.CypherMatchingPathSelectorCountInvalid(strconv.FormatInt(int64(number), 10)))
 	}
 	return int(number), nil
 }

@@ -142,14 +142,14 @@ func TestNeo4jCompatStatsWithEmbeddings(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get the node and set its embedding directly
-	nodes, err := store.GetNodesByLabel("File")
+	nodes, err := store.GetNodesByLabel(ctx, "File")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 
 	// Set embedding on the node (this is what NornicDB's embed worker does)
 	nodes[0].ChunkEmbeddings = [][]float32{{0.1, 0.2, 0.3, 0.4}}
 	nodes[0].EmbedMeta = map[string]any{"has_embedding": true}
-	err = store.UpdateNode(nodes[0])
+	err = store.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: nodes[0]})
 	require.NoError(t, err)
 
 	t.Run("count files with embeddings using has_embedding property", func(t *testing.T) {

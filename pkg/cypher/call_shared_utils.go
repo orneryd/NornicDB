@@ -1,10 +1,9 @@
 package cypher
 
 import (
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"strconv"
 	"strings"
-
-	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // splitTopLevelComma splits a comma-separated string while respecting nested
@@ -26,35 +25,36 @@ func splitTopLevelComma(input string) []string {
 // fixed-size buffer (var buffer [8]string; buffer[:0]) splits without
 // allocating.
 func appendTopLevelComma(parts []string, input string) []string {
+	return appendTopLevelCommaParts(parts, input, false)
+}
+
+// splitTopLevelCommaKeepEmpty preserves the final empty entry for strict
+// grammar consumers, using the same tokens as every other comma reader.
+func splitTopLevelCommaKeepEmpty(input string) []string {
+	return appendTopLevelCommaParts(nil, input, true)
+}
+
+// appendTopLevelCommaParts separates expressions through the canonical token
+// reader used for operators. Quoted names, strings, comments and nested groups
+// have one lexical owner. Only the caller's trailing-entry policy differs.
+func appendTopLevelCommaParts(parts []string, input string, keepEmpty bool) []string {
+	if strings.Contains(input, "/") {
+		input = StripComments(input)
+	}
 	if strings.TrimSpace(input) == "" {
 		return parts
 	}
-
-	start := 0
-	depth := 0
-
-	for i := 0; i < len(input); i++ {
-		switch input[i] {
-		case '\'', '"', '`':
-			i = skipCypherQuotedText(input, i, input[i]) - 1
-		case '(', '[', '{':
-			depth++
-		case ')', ']', '}':
-			if depth > 0 {
-				depth--
+	for {
+		comma := findTopLevelOperator(input, ",", false, true)
+		if comma < 0 {
+			if last := strings.TrimSpace(input); last != "" || keepEmpty {
+				parts = append(parts, last)
 			}
-		case ',':
-			if depth == 0 {
-				parts = append(parts, strings.TrimSpace(input[start:i]))
-				start = i + 1
-			}
+			return parts
 		}
+		parts = append(parts, strings.TrimSpace(input[:comma]))
+		input = input[comma+1:]
 	}
-
-	if s := strings.TrimSpace(input[start:]); s != "" {
-		parts = append(parts, s)
-	}
-	return parts
 }
 
 func firstPresent(m map[string]interface{}, keys ...string) interface{} {
@@ -91,42 +91,26 @@ func toBool(v interface{}) (bool, bool) {
 }
 
 func toInt(v interface{}) (int, bool) {
-	switch t := v.(type) {
-	case int:
-		return t, true
-	case int64:
-		return util.SafeInt64ToInt(t)
-	case float64:
-		return util.SafeFloat64ToInt(t)
-	case string:
-		i, err := strconv.Atoi(strings.TrimSpace(t))
-		return i, err == nil
-	default:
-		return 0, false
-	}
+	return valueconvert.ToInt(v, valueconvert.IntegerFloat|valueconvert.IntegerStrings|valueconvert.IntegerTrimStrings)
 }
 
 func ragToFloat64(v interface{}) (float64, bool) {
-	switch t := v.(type) {
-	case float64:
-		return t, true
-	case float32:
-		return float64(t), true
-	case int:
-		return float64(t), true
-	case int64:
-		return float64(t), true
-	case string:
-		f, err := strconv.ParseFloat(strings.TrimSpace(t), 64)
-		return f, err == nil
-	default:
-		return 0, false
+	if text, ok := v.(string); ok {
+		v = strings.TrimSpace(text)
 	}
+	return valueconvert.ToFloat64(v)
 }
 
 func toFloat32(v interface{}) (float32, bool) {
-	f, ok := ragToFloat64(v)
-	return float32(f), ok
+	floating, ok := ragToFloat64(v)
+	if !ok {
+		return 0, false
+	}
+	number, numeric := valueconvert.ReadNumber(floating)
+	if !numeric {
+		return 0, false
+	}
+	return number.Float32()
 }
 
 func toStringSlice(v interface{}) []string {

@@ -16,7 +16,7 @@ import (
 // out of the context too, so the procedure reads the view, not the
 // transaction. On any other database the call runs as it is.
 func (e *StorageExecutor) systemProcedureScope(ctx context.Context) (context.Context, *StorageExecutor) {
-	if !strings.EqualFold(e.currentDatabaseName(), "system") {
+	if !strings.EqualFold(e.databaseName(), "system") {
 		return ctx, e
 	}
 	return withoutTransactionStorage{ctx}, e.cloneWithStorage(systemGraphView{Engine: e.storage})
@@ -40,60 +40,72 @@ type systemGraphView struct{ storage.Engine }
 
 func (systemGraphView) Namespace() string { return "system" }
 
-func (systemGraphView) GetNode(storage.NodeID) (*storage.Node, error) {
+func (systemGraphView) GetNode(ctx context.Context, _ storage.NodeID) (*storage.Node, error) {
 	return nil, storage.ErrNotFound
 }
 
-func (systemGraphView) GetEdge(storage.EdgeID) (*storage.Edge, error) {
+func (systemGraphView) GetEdge(ctx context.Context, _ storage.EdgeID) (*storage.Edge, error) {
 	return nil, storage.ErrNotFound
 }
 
-func (systemGraphView) GetNodesByLabel(string) ([]*storage.Node, error) { return nil, nil }
-
-func (systemGraphView) GetFirstNodeByLabel(string) (*storage.Node, error) {
-	return nil, storage.ErrNotFound
-}
-
-func (systemGraphView) GetOutgoingEdges(storage.NodeID) ([]*storage.Edge, error) { return nil, nil }
-
-func (systemGraphView) GetIncomingEdges(storage.NodeID) ([]*storage.Edge, error) { return nil, nil }
-
-func (systemGraphView) GetEdgesBetween(storage.NodeID, storage.NodeID) ([]*storage.Edge, error) {
+func (systemGraphView) GetNodesByLabel(ctx context.Context, _ string) ([]*storage.Node, error) {
 	return nil, nil
 }
 
-func (systemGraphView) GetEdgeBetween(storage.NodeID, storage.NodeID, string) *storage.Edge {
-	return nil
+func (systemGraphView) GetFirstNodeByLabel(ctx context.Context, _ string) (*storage.Node, error) {
+	return nil, storage.ErrNotFound
 }
 
-func (systemGraphView) GetEdgesByType(string) ([]*storage.Edge, error) { return nil, nil }
+func (systemGraphView) GetOutgoingEdges(ctx context.Context, _ storage.NodeID) ([]*storage.Edge, error) {
+	return nil, nil
+}
 
-func (systemGraphView) AllNodes() ([]*storage.Node, error) { return nil, nil }
+func (systemGraphView) GetIncomingEdges(ctx context.Context, _ storage.NodeID) ([]*storage.Edge, error) {
+	return nil, nil
+}
 
-func (systemGraphView) AllEdges() ([]*storage.Edge, error) { return nil, nil }
+func (systemGraphView) GetEdgesBetween(ctx context.Context, _, _ storage.NodeID) ([]*storage.Edge, error) {
+	return nil, nil
+}
 
-func (systemGraphView) GetAllNodes() []*storage.Node { return nil }
+func (systemGraphView) GetEdgeBetween(ctx context.Context, _ storage.NodeID, _ storage.NodeID, _ string) (*storage.Edge, error) {
+	return nil, nil
+}
+
+func (systemGraphView) GetEdgesByType(ctx context.Context, _ string) ([]*storage.Edge, error) {
+	return nil, nil
+}
+
+func (systemGraphView) AllNodes(ctx context.Context) ([]*storage.Node, error) { return nil, nil }
+
+func (systemGraphView) AllEdges(ctx context.Context) ([]*storage.Edge, error) { return nil, nil }
 
 func (systemGraphView) StreamNodesWithOptions(context.Context, storage.StreamNodesOptions, func(*storage.Node) error) error {
 	return nil
 }
 
-func (systemGraphView) GetInDegree(storage.NodeID) int { return 0 }
+func (systemGraphView) GetInDegree(ctx context.Context, _ storage.NodeID) (int, error) { return 0, nil }
 
-func (systemGraphView) GetOutDegree(storage.NodeID) int { return 0 }
+func (systemGraphView) GetOutDegree(ctx context.Context, _ storage.NodeID) (int, error) {
+	return 0, nil
+}
 
 func (systemGraphView) GetSchema() *storage.SchemaManager { return storage.NewSchemaManager() }
 
-func (systemGraphView) BatchGetNodes([]storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
+func (systemGraphView) BatchGetNodes(ctx context.Context, _ []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
 	return map[storage.NodeID]*storage.Node{}, nil
 }
 
-func (systemGraphView) NodeCount() (int64, error) { return 0, nil }
+func (systemGraphView) NodeCount(ctx context.Context) (int64, error) { return 0, nil }
 
-func (systemGraphView) EdgeCount() (int64, error) { return 0, nil }
+func (systemGraphView) EdgeCount(ctx context.Context) (int64, error) { return 0, nil }
 
-func (systemGraphView) EdgeCountByType(string) (int64, error) { return 0, nil }
+func (systemGraphView) EdgeCountByType(ctx context.Context, _ string) (int64, error) { return 0, nil }
 
-func (systemGraphView) EdgeCountByStartLabel(string, string) (int64, error) { return 0, nil }
+func (systemGraphView) EdgeCountByStartLabel(ctx context.Context, _ string, _ string) (int64, error) {
+	return 0, nil
+}
 
-func (systemGraphView) EdgeCountByEndLabel(string, string) (int64, error) { return 0, nil }
+func (systemGraphView) EdgeCountByEndLabel(ctx context.Context, _ string, _ string) (int64, error) {
+	return 0, nil
+}

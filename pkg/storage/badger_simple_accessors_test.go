@@ -17,8 +17,7 @@ func TestExtractNamespaceFromID_Variants(t *testing.T) {
 }
 
 func TestBadgerEngine_IsDecayEnabled_Toggle(t *testing.T) {
-	be := NewMemoryEngine()
-	t.Cleanup(func() { _ = be.Close() })
+	be := newTestMemoryEngine(t)
 
 	// Default: decay is off until explicitly enabled.
 	require.False(t, be.IsDecayEnabled())
@@ -31,8 +30,7 @@ func TestBadgerEngine_IsDecayEnabled_Toggle(t *testing.T) {
 }
 
 func TestBadgerEngine_IsEmbeddingsEnabled_Toggle(t *testing.T) {
-	be := NewMemoryEngine()
-	t.Cleanup(func() { _ = be.Close() })
+	be := newTestMemoryEngine(t)
 
 	// Default false on a fresh engine.
 	require.False(t, be.IsEmbeddingsEnabled())
@@ -45,8 +43,7 @@ func TestBadgerEngine_IsEmbeddingsEnabled_Toggle(t *testing.T) {
 }
 
 func TestBadgerEngine_DB_HandleNonNil(t *testing.T) {
-	be := NewMemoryEngine()
-	t.Cleanup(func() { _ = be.Close() })
+	be := newTestMemoryEngine(t)
 	require.NotNil(t, be.DB(), "DB() should return the live badger handle")
 }
 
@@ -56,56 +53,45 @@ func TestBytesMetricsSweeper_NameStable(t *testing.T) {
 }
 
 func TestBadgerEngine_InvalidatePendingEmbeddingsIndex_Noop(t *testing.T) {
-	be := NewMemoryEngine()
-	t.Cleanup(func() { _ = be.Close() })
+	be := newTestMemoryEngine(t)
 	require.NotPanics(t, func() {
 		be.InvalidatePendingEmbeddingsIndex()
 	})
 }
 
 func TestBadgerTransaction_HasPendingNodeMutations(t *testing.T) {
-	be := NewMemoryEngine()
-	t.Cleanup(func() { _ = be.Close() })
-
-	tx, err := be.BeginTransaction()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = tx.Rollback() })
-
-	// Brand-new tx: no pending mutations.
-	require.False(t, tx.HasPendingNodeMutations())
-
-	// Stage a create — pending now non-empty.
-	_, err = tx.CreateNode(&Node{
-		ID:     "test:pending-1",
-		Labels: []string{"L"},
-	})
-	require.NoError(t, err)
-	require.True(t, tx.HasPendingNodeMutations())
-}
-
-func TestBadgerTransaction_HasPendingNodeMutations_DeletionAlsoCounts(t *testing.T) {
-	be := NewMemoryEngine()
-	t.Cleanup(func() { _ = be.Close() })
-
-	// Seed a committed node so we can stage a delete in a fresh tx.
-	_, err := be.CreateNode(&Node{ID: "test:committed", Labels: []string{"L"}})
-	require.NoError(t, err)
-
-	tx, err := be.BeginTransaction()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = tx.Rollback() })
-
-	require.False(t, tx.HasPendingNodeMutations())
-	require.NoError(t, tx.DeleteNode("test:committed"))
-	require.True(t, tx.HasPendingNodeMutations(),
-		"a staged delete should also trigger HasPendingNodeMutations")
+	for _, deletion := range []bool{false, true} {
+		name := "create"
+		if deletion {
+			name = "DeletionAlsoCounts"
+		}
+		t.Run(name, func(t *testing.T) {
+			be := newTestMemoryEngine(t)
+			if deletion {
+				// Seed a committed node so we can stage a delete in a fresh tx.
+				_, err := be.CreateNode(t.Context(), &Node{ID: "test:committed", Labels: []string{"L"}})
+				require.NoError(t, err)
+			}
+			tx, err := be.BeginTransaction(t.Context())
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = tx.Rollback() })
+			require.False(t, tx.HasPendingNodeMutations())
+			if deletion {
+				require.NoError(t, tx.DeleteGraphNode(t.Context(), "test:committed", CascadeEdges))
+				require.True(t, tx.HasPendingNodeMutations(), "a staged delete should also trigger HasPendingNodeMutations")
+			} else {
+				_, err = tx.CreateNode(t.Context(), &Node{ID: "test:pending-1", Labels: []string{"L"}})
+				require.NoError(t, err)
+				require.True(t, tx.HasPendingNodeMutations())
+			}
+		})
+	}
 }
 
 func TestReadNodeLabelsInTxn_ReturnsLabels(t *testing.T) {
-	be := NewMemoryEngine()
-	t.Cleanup(func() { _ = be.Close() })
+	be := newTestMemoryEngine(t)
 
-	_, err := be.CreateNode(&Node{
+	_, err := be.CreateNode(t.Context(), &Node{
 		ID:     "test:ln",
 		Labels: []string{"Alpha", "Beta"},
 	})
@@ -120,8 +106,7 @@ func TestReadNodeLabelsInTxn_ReturnsLabels(t *testing.T) {
 }
 
 func TestReadNodeLabelsInTxn_MissingNode(t *testing.T) {
-	be := NewMemoryEngine()
-	t.Cleanup(func() { _ = be.Close() })
+	be := newTestMemoryEngine(t)
 
 	require.NoError(t, be.db.View(func(txn *badger.Txn) error {
 		_, err := be.readNodeLabelsInTxn(txn, "test:doesnotexist")

@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"bytes"
 	"context"
 	"os"
@@ -27,7 +29,7 @@ func TestLegacyRecoveryPreservesExactIntegerLexemes(t *testing.T) {
 }
 
 func TestLightweightSnapshotDoesNotAdvertiseOmittedVectors(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	vectors := make([][]float32, 16)
@@ -35,7 +37,7 @@ func TestLightweightSnapshotDoesNotAdvertiseOmittedVectors(t *testing.T) {
 		vectors[i] = make([]float32, 1536)
 		vectors[i][0] = 1
 	}
-	_, err = engine.CreateNode(&Node{ID: "test:large", Labels: []string{"Doc"}, Properties: map[string]interface{}{"title": "kept"}, ChunkEmbeddings: vectors, EmbedMeta: map[string]interface{}{"has_embedding": true, "has_chunks": true, "chunk_count": int64(16), "unrelated": "kept"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:large", Labels: []string{"Doc"}, Properties: map[string]interface{}{"title": "kept"}, ChunkEmbeddings: vectors, EmbedMeta: map[string]interface{}{"has_embedding": true, "has_chunks": true, "chunk_count": int64(16), "unrelated": "kept"}})
 	require.NoError(t, err)
 	var output bytes.Buffer
 	require.NoError(t, WriteSnapshot(context.Background(), engine, &output, SnapshotOptions{}))
@@ -45,12 +47,12 @@ func TestLightweightSnapshotDoesNotAdvertiseOmittedVectors(t *testing.T) {
 	require.Len(t, visitor.nodes, 1)
 	restored := visitor.nodes[0]
 	require.Empty(t, restored.ChunkEmbeddings)
-	require.False(t, restored.EmbeddingsStoredSeparately)
+	require.False(t, restored.RuntimeMetadata().EmbeddingsStoredSeparately)
 	require.NotEqual(t, true, restored.EmbedMeta["has_embedding"])
 	require.NotEqual(t, true, restored.EmbedMeta["has_chunks"])
 	require.NotContains(t, restored.EmbedMeta, "chunk_count")
 	require.Equal(t, "kept", restored.EmbedMeta["unrelated"])
-	original, err := engine.GetNode("test:large")
+	original, err := engine.GetNode(t.Context(), "test:large")
 	require.NoError(t, err)
 	require.True(t, original.EmbedMeta["has_embedding"].(bool), "snapshot must not mutate stored metadata")
 }
@@ -61,6 +63,9 @@ func TestLegacyRecoveryIntegerRangeAndMalformedValues(t *testing.T) {
 		want    interface{}
 		invalid bool
 	}{
+		// The release's legacy recovery reader already interpreted integer
+		// lexemes exactly; this PR must not reinterpret them through float64.
+		{"1152921504606847000", int64(1152921504606847000), false},
 		{"9223372036854775807", int64(9223372036854775807), false},
 		{"-9223372036854775808", int64(-9223372036854775808), false},
 		{"18446744073709551615", uint64(18446744073709551615), false},

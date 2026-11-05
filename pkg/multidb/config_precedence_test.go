@@ -1,6 +1,8 @@
 package multidb
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"os"
 	"testing"
 
@@ -15,7 +17,7 @@ import (
 // Note: The actual precedence logic is in pkg/config, but this test verifies
 // that DatabaseManager correctly uses the value that comes from the config system.
 func TestConfigurationPrecedence(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	// Save original env
@@ -42,7 +44,7 @@ func TestConfigurationPrecedence(t *testing.T) {
 		config := DefaultConfig()
 		assert.Equal(t, "nornic", config.DefaultDatabase)
 
-		manager, err := NewDatabaseManager(inner, config)
+		manager, err := NewDatabaseManager(t.Context(), inner, config)
 		require.NoError(t, err)
 		defer manager.Close()
 
@@ -52,14 +54,14 @@ func TestConfigurationPrecedence(t *testing.T) {
 
 	t.Run("from NewConfigFromDefaultDatabase", func(t *testing.T) {
 		// Use a fresh storage instance for this test
-		testInner := storage.NewMemoryEngine()
+		testInner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		defer testInner.Close()
 
 		// Simulate config file value
 		configFileValue := "from-config-file"
 		config := NewConfigFromDefaultDatabase(configFileValue)
 
-		manager, err := NewDatabaseManager(testInner, config)
+		manager, err := NewDatabaseManager(t.Context(), testInner, config)
 		require.NoError(t, err)
 		defer manager.Close()
 
@@ -69,7 +71,7 @@ func TestConfigurationPrecedence(t *testing.T) {
 
 	t.Run("env var NORNICDB_DEFAULT_DATABASE", func(t *testing.T) {
 		// Use a fresh storage instance for this test
-		testInner := storage.NewMemoryEngine()
+		testInner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		defer testInner.Close()
 
 		// Set env var (simulating what pkg/config would do)
@@ -79,7 +81,7 @@ func TestConfigurationPrecedence(t *testing.T) {
 		// Simulate config system reading env var and passing to DatabaseManager
 		config := NewConfigFromDefaultDatabase("env-database")
 
-		manager, err := NewDatabaseManager(testInner, config)
+		manager, err := NewDatabaseManager(t.Context(), testInner, config)
 		require.NoError(t, err)
 		defer manager.Close()
 
@@ -88,7 +90,7 @@ func TestConfigurationPrecedence(t *testing.T) {
 
 	t.Run("env var NEO4J_dbms_default__database (backwards compat)", func(t *testing.T) {
 		// Use a fresh storage instance for this test
-		testInner := storage.NewMemoryEngine()
+		testInner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		defer testInner.Close()
 
 		// Set Neo4j-compatible env var
@@ -98,7 +100,7 @@ func TestConfigurationPrecedence(t *testing.T) {
 		// Simulate config system reading Neo4j env var
 		config := NewConfigFromDefaultDatabase("neo4j-compat")
 
-		manager, err := NewDatabaseManager(testInner, config)
+		manager, err := NewDatabaseManager(t.Context(), testInner, config)
 		require.NoError(t, err)
 		defer manager.Close()
 
@@ -109,12 +111,12 @@ func TestConfigurationPrecedence(t *testing.T) {
 // TestBackwardsCompatibility verifies that existing code continues to work
 // after multi-database support is added.
 func TestBackwardsCompatibility(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	t.Run("default database works without specifying", func(t *testing.T) {
 		// Old code that didn't specify database should still work
-		manager, err := NewDatabaseManager(inner, nil)
+		manager, err := NewDatabaseManager(t.Context(), inner, nil)
 		require.NoError(t, err)
 		defer manager.Close()
 
@@ -128,18 +130,18 @@ func TestBackwardsCompatibility(t *testing.T) {
 			ID:     storage.NodeID("legacy-node"),
 			Labels: []string{"Legacy"},
 		}
-		_, err = store.CreateNode(node)
+		_, err = store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	})
 
 	t.Run("legacy nornicdb name still works", func(t *testing.T) {
 		// Use a fresh storage instance for this test
-		testInner := storage.NewMemoryEngine()
+		testInner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		defer testInner.Close()
 
 		// Support legacy "nornicdb" name
 		config := NewConfigFromDefaultDatabase("nornicdb")
-		manager, err := NewDatabaseManager(testInner, config)
+		manager, err := NewDatabaseManager(t.Context(), testInner, config)
 		require.NoError(t, err)
 		defer manager.Close()
 
@@ -149,11 +151,11 @@ func TestBackwardsCompatibility(t *testing.T) {
 
 	t.Run("existing data in default namespace accessible", func(t *testing.T) {
 		// Use a fresh storage instance for this test
-		testInner := storage.NewMemoryEngine()
+		testInner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		defer testInner.Close()
 
 		// Simulate existing data in "nornic" namespace
-		manager, err := NewDatabaseManager(testInner, nil)
+		manager, err := NewDatabaseManager(t.Context(), testInner, nil)
 		require.NoError(t, err)
 		defer manager.Close()
 
@@ -168,11 +170,11 @@ func TestBackwardsCompatibility(t *testing.T) {
 				"legacy": true,
 			},
 		}
-		_, err = store.CreateNode(node)
+		_, err = store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 
 		// Should be retrievable
-		retrieved, err := store.GetNode(storage.NodeID("existing-node"))
+		retrieved, err := store.GetNode(t.Context(), storage.NodeID("existing-node"))
 		require.NoError(t, err)
 		assert.True(t, retrieved.Properties["legacy"].(bool))
 	})

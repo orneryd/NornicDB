@@ -1,7 +1,9 @@
 package storage
 
 import (
+	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -15,7 +17,10 @@ import (
 func TestWriteBehindFlushClearsPendingIDEntries(t *testing.T) {
 	dir := t.TempDir()
 	open := func() *BadgerEngine {
-		engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour})
+		engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour}))
+		if engine != nil {
+			fixtureowner.Own(t, engine)
+		}
 		require.NoError(t, err)
 		return engine
 	}
@@ -40,16 +45,16 @@ func TestWriteBehindFlushClearsPendingIDEntries(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		bufferedCreate(t, engine, &Node{ID: NodeID(fmt.Sprintf("test:n%d", i)), Labels: []string{"L"}})
 	}
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, tx.CreateEdge(&Edge{ID: "test:e", StartNode: "test:n0", EndNode: "test:n1", Type: "R"}))
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:e", StartNode: "test:n0", EndNode: "test:n1", Type: "R"}))
 	require.NoError(t, tx.Commit())
 	require.Greater(t, engine.writeBehind.PendingOps(), 0, "the commits stay buffered")
 	require.Equal(t, 21, pendingEntries(), "buffered entries are pending until the flush")
 
-	require.NoError(t, engine.FlushWriteBehind())
+	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	require.Zero(t, pendingEntries())
 	engine.idDict.txnMu.Lock()
 	require.Empty(t, engine.idDict.txnCounters)
@@ -59,10 +64,10 @@ func TestWriteBehindFlushClearsPendingIDEntries(t *testing.T) {
 	require.NoError(t, engine.Close())
 	engine = open()
 	t.Cleanup(func() { _ = engine.Close() })
-	nodes, err := engine.GetNodesByLabel("L")
+	nodes, err := engine.GetNodesByLabel(context.Background(), "L")
 	require.NoError(t, err)
 	require.Len(t, nodes, 20)
-	edges, err := engine.GetOutgoingEdges("test:n0")
+	edges, err := engine.GetOutgoingEdges(context.Background(), "test:n0")
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 }
@@ -74,22 +79,29 @@ func TestClearPendingKeepsEntriesWrittenSince(t *testing.T) {
 	d := engine.idDict
 	newTxn := writeTxnFor(t, engine)
 	first := newTxn()
-	_, err := d.resolveOrAllocateNodeNumIDInTxn(first, "p:a")
+	_, err := resolveOrAllocateNumericIDInTxn(d, first, NodeID("p:a"))
 	require.NoError(t, err)
-	_, err = d.resolveOrAllocateNodeNumIDInTxn(first, "p:b")
+	oldNum, err := resolveOrAllocateNumericIDInTxn(d, first, NodeID("p:b"))
 	require.NoError(t, err)
 	d.flushTxnCounters(first)
 	written := d.takeTxnCommitting(first)
-	first.Discard()
+	require.NoError(t, engine.db.commit(context.Background(), first, nil))
 
+	// Reissue the same name as a distinct generation before completing the
+	// first commit's publication. A mere adopter of the original generation
+	// is already durable when the original writer commits.
+	_, removed, ok := removeIDPair(&d.nodes, nodeForwardShard, nodeReverseShard, NodeID("p:b"), 0, idPairByString)
+	require.True(t, ok)
+	require.Equal(t, oldNum, removed)
 	second := newTxn()
-	_, err = d.resolveOrAllocateNodeNumIDInTxn(second, "p:b")
+	newNum, err := resolveOrAllocateNumericIDInTxn(d, second, NodeID("p:b"))
 	require.NoError(t, err)
+	require.NotEqual(t, oldNum, newNum)
 	d.clearPending(written)
 	_, aPending := d.nodePendingWriter("p:a")
 	_, bPending := d.nodePendingWriter("p:b")
 	require.False(t, aPending)
-	require.True(t, bPending, "p:b's last writer is the second transaction")
+	require.True(t, bPending, "p:b's new generation belongs to the second transaction")
 	d.clearPending(nil)
 	d.discardTxnCounters(second)
 	second.Discard()

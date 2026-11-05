@@ -13,7 +13,7 @@ func seedTranslationQueryFamilyData(t *testing.T, store storage.Engine, idPrefix
 	for i := 0; i < frenchCount; i++ {
 		origID := storage.NodeID(fmt.Sprintf("%sorig-fr-%02d", idPrefix, i))
 		trID := storage.NodeID(fmt.Sprintf("%str-fr-%02d", idPrefix, i))
-		_, err := store.CreateNode(&storage.Node{
+		_, err := store.CreateNode(t.Context(), &storage.Node{
 			ID:     origID,
 			Labels: []string{"OriginalText"},
 			Properties: map[string]interface{}{
@@ -22,7 +22,7 @@ func seedTranslationQueryFamilyData(t *testing.T, store storage.Engine, idPrefix
 			},
 		})
 		require.NoError(t, err)
-		_, err = store.CreateNode(&storage.Node{
+		_, err = store.CreateNode(t.Context(), &storage.Node{
 			ID:     trID,
 			Labels: []string{"TranslatedText"},
 			Properties: map[string]interface{}{
@@ -32,7 +32,7 @@ func seedTranslationQueryFamilyData(t *testing.T, store storage.Engine, idPrefix
 			},
 		})
 		require.NoError(t, err)
-		require.NoError(t, store.CreateEdge(&storage.Edge{
+		require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{
 			ID:        storage.EdgeID(fmt.Sprintf("%sedge-fr-%02d", idPrefix, i)),
 			Type:      "TRANSLATES_TO",
 			StartNode: origID,
@@ -43,7 +43,7 @@ func seedTranslationQueryFamilyData(t *testing.T, store storage.Engine, idPrefix
 	for i := 0; i < secondaryCount; i++ {
 		origID := storage.NodeID(fmt.Sprintf("%sorig-es-%02d", idPrefix, i))
 		trID := storage.NodeID(fmt.Sprintf("%str-es-%02d", idPrefix, i))
-		_, err := store.CreateNode(&storage.Node{
+		_, err := store.CreateNode(t.Context(), &storage.Node{
 			ID:     origID,
 			Labels: []string{"OriginalText"},
 			Properties: map[string]interface{}{
@@ -52,7 +52,7 @@ func seedTranslationQueryFamilyData(t *testing.T, store storage.Engine, idPrefix
 			},
 		})
 		require.NoError(t, err)
-		_, err = store.CreateNode(&storage.Node{
+		_, err = store.CreateNode(t.Context(), &storage.Node{
 			ID:     trID,
 			Labels: []string{"TranslatedText"},
 			Properties: map[string]interface{}{
@@ -62,7 +62,7 @@ func seedTranslationQueryFamilyData(t *testing.T, store storage.Engine, idPrefix
 			},
 		})
 		require.NoError(t, err)
-		require.NoError(t, store.CreateEdge(&storage.Edge{
+		require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{
 			ID:        storage.EdgeID(fmt.Sprintf("%sedge-es-%02d", idPrefix, i)),
 			Type:      "TRANSLATES_TO",
 			StartNode: origID,

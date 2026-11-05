@@ -1,10 +1,14 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	badger "github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSchemaVersion_FreshDatabase(t *testing.T) {
@@ -60,7 +64,7 @@ func writeLegacyNodeBytes(t *testing.T, eng *BadgerEngine, id string, decayScore
 	if err != nil {
 		t.Fatal(err)
 	}
-	eng.withUpdate(func(txn *badger.Txn) error {
+	eng.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		return txn.Set(nodeKey(NodeID(id)), data)
 	})
 }
@@ -75,7 +79,8 @@ func TestRunOnStartMigrations_AppliesWhenVersionZero(t *testing.T) {
 	lastAccessed := time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)
 	writeLegacyNodeBytes(t, eng, "nornic:legacy1", 0.75, lastAccessed, 100)
 
-	if err := eng.RunOnStartMigrations(true); err != nil {
+	eng.catalogUpgradeV4 = graphOnlyCatalogUpgradeV4()
+	if err := eng.runOnStartMigrations(true, migrationStartupOpening); err != nil {
 		t.Fatal(err)
 	}
 
@@ -87,10 +92,11 @@ func TestRunOnStartMigrations_AppliesWhenVersionZero(t *testing.T) {
 		t.Errorf("expected version %d after migration, got %d", storageVersionCurrent, v)
 	}
 
-	meta, err := eng.GetAccessMeta("nornic:legacy1")
+	metaResult, err := eng.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: "nornic:legacy1"})
 	if err != nil {
 		t.Fatal(err)
 	}
+	meta := metaResult.Entry
 	if meta == nil {
 		t.Fatal("expected AccessMetaEntry after migration")
 	}
@@ -131,7 +137,8 @@ func TestSchemaVersion_LegacyEdgeBetweenReadyMarkerRecovers(t *testing.T) {
 		t.Fatalf("expected legacy one-byte marker to be treated as version 0, got %d", v)
 	}
 
-	if err := eng.RunOnStartMigrations(true); err != nil {
+	eng.catalogUpgradeV4 = graphOnlyCatalogUpgradeV4()
+	if err := eng.runOnStartMigrations(true, migrationStartupOpening); err != nil {
 		t.Fatal(err)
 	}
 
@@ -144,5 +151,28 @@ func TestSchemaVersion_LegacyEdgeBetweenReadyMarkerRecovers(t *testing.T) {
 	}
 	if edgeBetweenIndexReadyKey[1] == mvccSchemaVersionKey()[1] {
 		t.Fatal("edge-between ready key must not share schema-version subkey")
+	}
+}
+
+// The current V3 manual contract remains valid. The future V4 target must
+// refuse manual invocation before even an older V2-to-V3 arm changes state.
+func TestManualMigrationHonorsCatalogOpeningBoundary(t *testing.T) {
+	b := newTestEngine(t)
+	_, err := b.CreateNode(t.Context(), &Node{ID: "test:opening-boundary", Properties: map[string]interface{}{"value": "retained"}})
+	require.NoError(t, err)
+	require.NoError(t, b.writeSchemaVersion(storageVersionPropKeyDictV2))
+	before := catalogV4Snapshot(t, b)
+	err = b.RunOnStartMigrations(true)
+	if storageVersionCurrent >= storageVersionCatalogV4 {
+		assert.ErrorContains(t, err, "startup-only")
+		version, versionErr := b.readSchemaVersion()
+		require.NoError(t, versionErr)
+		assert.Equal(t, storageVersionPropKeyDictV2, version)
+		require.Equal(t, before, catalogV4Snapshot(t, b), "manual V4 rejection precedes every older arm")
+	} else {
+		require.NoError(t, err)
+		version, err := b.readSchemaVersion()
+		require.NoError(t, err)
+		require.Equal(t, storageVersionCurrent, version)
 	}
 }

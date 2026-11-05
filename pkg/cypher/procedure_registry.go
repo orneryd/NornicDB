@@ -1,11 +1,14 @@
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: procedure headers are read from their registration.
+
 import (
 	"context"
 	"fmt"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/util"
@@ -67,8 +70,22 @@ type ProcedureSpec struct {
 	DeprecatedBy       string
 	Params             []ProcedureParam
 	Returns            []ProcedureColumn
-	MinArgs            int
-	MaxArgs            int
+	// ResultSchemas declares a closed set of headers for a value-dependent procedure.
+	// Returns still describes every legal YIELD field; no runtime observation extends it.
+	ResultSchemas func() [][]string `json:"-"`
+	MinArgs       int
+	MaxArgs       int
+	// ResultCache declares execution dependencies; an undeclared handler is
+	// opaque to the determinism owner and cannot supply cached results.
+	ResultCache ProcedureResultCache
+	// ExecutesStatements requests a native statement rollback owner. Its
+	// handler resolves arguments normally; actual inner writes promote a
+	// Fabric participant at the shared execution boundary.
+	ExecutesStatements bool
+	// OwnsTransactions owns autocommit batch boundaries. Native explicit
+	// transactions retain shipped folding; Fabric-managed scopes reject it
+	// before invocation because their rollback cannot undo committed batches.
+	OwnsTransactions bool
 }
 
 // writes reports whether a call of the procedure changes the database: its
@@ -79,7 +96,7 @@ func (s ProcedureSpec) writes() bool {
 
 // ProcedureMetadataRenderer renders localized procedure metadata for a request context.
 type ProcedureMetadataRenderer interface {
-	Render(context.Context, localization.Message) (string, language.Tag, error)
+	Render(context.Context, localization.RenderRequest) (string, language.Tag, error)
 }
 
 // ProcedureHandler executes a registered procedure.
@@ -96,10 +113,11 @@ type registeredProcedure struct {
 // For example, "tenant.Report" and "tenant.report" are distinct registrations;
 // CALL tenant.REPORT() cannot select either.
 type ProcedureRegistry struct {
-	mu       sync.RWMutex
-	builtins map[string]registeredProcedure
-	user     map[string]registeredProcedure
-	userFold map[string]struct{}
+	mu         sync.RWMutex
+	generation atomic.Uint64
+	builtins   map[string]registeredProcedure
+	user       map[string]registeredProcedure
+	userFold   map[string]struct{}
 }
 
 func NewProcedureRegistry() *ProcedureRegistry {
@@ -121,6 +139,7 @@ func (r *ProcedureRegistry) RegisterBuiltIn(spec ProcedureSpec, handler Procedur
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.builtins[key] = registeredProcedure{Spec: spec, Handler: handler}
+	r.generation.Add(1)
 	return nil
 }
 
@@ -141,6 +160,7 @@ func (r *ProcedureRegistry) RegisterUser(spec ProcedureSpec, handler ProcedureHa
 	defer r.mu.Unlock()
 	r.user[key] = registeredProcedure{Spec: spec, Handler: handler, User: true}
 	r.userFold[lowerASCII(spec.Name)] = struct{}{}
+	r.generation.Add(1)
 	return nil
 }
 
@@ -161,7 +181,7 @@ func (r *ProcedureRegistry) Get(name string) (registeredProcedure, bool) {
 // the answer doesn't depend on how the registry keys a name; erring towards
 // "calls one" only skips the cache. It is false at once while none is
 // registered.
-func (r *ProcedureRegistry) callsUserProcedure(query string) bool {
+func (r *ProcedureRegistry) callsUserProcedure(ctx context.Context, query string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	if len(r.user) == 0 {
@@ -173,7 +193,7 @@ func (r *ProcedureRegistry) callsUserProcedure(query string) bool {
 	opts.SkipBraces = false
 	opts.SkipStrings = false
 	for from := 0; from < len(query); {
-		at := keywordIndexFrom(query, "CALL", from, opts)
+		at := keywordIndexFrom(ctx, query, "CALL", from, opts)
 		if at < 0 {
 			return false
 		}
@@ -217,6 +237,7 @@ func (r *ProcedureRegistry) ClearUser() {
 	defer r.mu.Unlock()
 	r.user = make(map[string]registeredProcedure)
 	r.userFold = make(map[string]struct{})
+	r.generation.Add(1)
 }
 
 func validateProcedureSpec(spec ProcedureSpec) error {
@@ -232,23 +253,16 @@ func validateProcedureSpec(spec ProcedureSpec) error {
 	return nil
 }
 
-func procedureOutputTypes(clause string) map[string]string {
-	procedure, found := globalProcedureRegistry.Get(extractProcedureName(clause))
+func procedureOutputTypes(ctx context.Context, clause string) map[string]string {
+	name, err := extractProcedureName(ctx, clause)
+	if err != nil {
+		return nil
+	}
+	procedure, found := globalProcedureRegistry.Get(name)
 	if !found {
 		return nil
 	}
-	outputs := procedure.Spec.Returns
-	if len(outputs) == 0 {
-		separator := strings.LastIndex(procedure.Spec.Signature, " :: (")
-		if separator < 0 || !strings.HasSuffix(procedure.Spec.Signature, ")") {
-			return nil
-		}
-		for _, output := range splitTopLevelComma(procedure.Spec.Signature[separator+5 : len(procedure.Spec.Signature)-1]) {
-			if name, typeName, ok := strings.Cut(output, "::"); ok {
-				outputs = append(outputs, ProcedureColumn{Name: strings.TrimSpace(name), Type: typeName})
-			}
-		}
-	}
+	outputs := procedureDeclaredReturns(procedure.Spec)
 	result := make(map[string]string, len(outputs))
 	for _, output := range outputs {
 		if typeName := procedureStaticType(output.Type); typeName != "" {
@@ -256,6 +270,24 @@ func procedureOutputTypes(clause string) map[string]string {
 		}
 	}
 	return result
+}
+
+// procedureDeclaredReturns is the registry's ordered output declaration,
+// shared by static type consumers and result-header analysis.
+func procedureDeclaredReturns(spec ProcedureSpec) []ProcedureColumn {
+	outputs := spec.Returns
+	if len(outputs) == 0 {
+		separator := strings.LastIndex(spec.Signature, " :: (")
+		if separator < 0 || !strings.HasSuffix(spec.Signature, ")") {
+			return nil
+		}
+		for _, output := range splitTopLevelComma(spec.Signature[separator+5 : len(spec.Signature)-1]) {
+			if name, typeName, ok := strings.Cut(output, "::"); ok {
+				outputs = append(outputs, ProcedureColumn{Name: strings.TrimSpace(name), Type: typeName})
+			}
+		}
+	}
+	return outputs
 }
 
 func procedureStaticType(typeName string) string {

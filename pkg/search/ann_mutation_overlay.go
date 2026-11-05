@@ -79,13 +79,11 @@ func (o *annMutationOverlay) Search(ctx context.Context, query []float32, limit 
 	o.mu.RLock()
 	candidates := make([]Candidate, 0, min(limit, len(o.vectors)))
 	for id, value := range o.vectors {
-		if ctx != nil {
-			select {
-			case <-ctx.Done():
-				o.mu.RUnlock()
-				return nil
-			default:
-			}
+		select {
+		case <-ctx.Done():
+			o.mu.RUnlock()
+			return nil
+		default:
 		}
 		score := float64(vector.DotProduct(normalizedQuery, value))
 		if score >= minSimilarity {
@@ -160,4 +158,14 @@ func (s annMutationOverlaySnapshot) matchesVectorStore(store *VectorFileStore) b
 	}
 	count, slots := store.stateVersion()
 	return count == s.VectorStoreCount && slots == s.VectorStoreSlots
+}
+
+// size is the number of vectors the overlay holds.
+func (o *annMutationOverlay) size() int {
+	if o == nil {
+		return 0
+	}
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	return len(o.vectors)
 }

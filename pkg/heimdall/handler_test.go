@@ -30,7 +30,7 @@ func (m *mockDBRouter) Query(ctx context.Context, database string, cypher string
 	return []map[string]interface{}{{"count": int64(42)}}, nil
 }
 
-func (m *mockDBRouter) Stats(database string) (DatabaseStats, error) {
+func (m *mockDBRouter) Stats(ctx context.Context, database string) (DatabaseStats, error) {
 	return DatabaseStats{NodeCount: 100, RelationshipCount: 50}, nil
 }
 
@@ -699,8 +699,8 @@ func TestHandler_Integration_BifrostToPlugin(t *testing.T) {
 	bridge := handler.Bifrost()
 	require.NotNil(t, bridge)
 
-	// Verify the bridge can be used in SubsystemContext
-	ctx := SubsystemContext{
+	// Verify the bridge can be used in the host metadata
+	ctx := SubsystemHost{
 		Config:  cfg,
 		Bifrost: bridge,
 	}
@@ -1352,6 +1352,7 @@ func TestPromptContext_BuildFinalPrompt(t *testing.T) {
 		{
 			name: "basic_prompt",
 			ctx: &PromptContext{
+				Context:      t.Context(),
 				ActionPrompt: "- status: Get status\n",
 				UserMessage:  "What's up?",
 			},
@@ -1365,6 +1366,7 @@ func TestPromptContext_BuildFinalPrompt(t *testing.T) {
 		{
 			name: "with_additional_instructions",
 			ctx: &PromptContext{
+				Context:                t.Context(),
 				ActionPrompt:           "- status: Get status\n",
 				AdditionalInstructions: "Be concise and helpful.",
 			},
@@ -1376,6 +1378,7 @@ func TestPromptContext_BuildFinalPrompt(t *testing.T) {
 		{
 			name: "with_examples",
 			ctx: &PromptContext{
+				Context:      t.Context(),
 				ActionPrompt: "- status: Get status\n",
 				Examples: []PromptExample{
 					{UserSays: "check status", ActionJSON: `{"action": "status"}`},
@@ -1402,6 +1405,7 @@ func TestPromptContext_BuildFinalPrompt(t *testing.T) {
 func TestPromptContext_ActionPromptImmutable(t *testing.T) {
 	// Verify ActionPrompt is always first in the final prompt
 	ctx := &PromptContext{
+		Context:                t.Context(),
 		ActionPrompt:           "- test_action: Test\n",
 		AdditionalInstructions: "Additional context here",
 		Examples: []PromptExample{
@@ -1431,6 +1435,7 @@ func TestDefaultExamples(t *testing.T) {
 func TestRequestLifecycle_Structure(t *testing.T) {
 	lifecycle := &requestLifecycle{
 		promptCtx: &PromptContext{
+			Context:      t.Context(),
 			RequestID:    "test-123",
 			ActionPrompt: "- test: Test action\n",
 			PluginData:   map[string]interface{}{"key": "value"},
@@ -1448,6 +1453,7 @@ func TestRequestLifecycle_Structure(t *testing.T) {
 
 func TestPreExecuteContext_Fields(t *testing.T) {
 	ctx := &PreExecuteContext{
+		Context:     t.Context(),
 		RequestID:   "req-456",
 		Action:      "heimdall_watcher_status",
 		Params:      map[string]interface{}{"param1": "value1"},
@@ -1499,6 +1505,7 @@ func TestPreExecuteResult_Continue(t *testing.T) {
 
 func TestPostExecuteContext_Duration(t *testing.T) {
 	ctx := &PostExecuteContext{
+		Context:   t.Context(),
 		RequestID: "req-789",
 		Action:    "heimdall_watcher_query",
 		Params:    map[string]interface{}{"cypher": "MATCH (n) RETURN n"},

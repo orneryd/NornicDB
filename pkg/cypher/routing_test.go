@@ -57,15 +57,17 @@ func TestGh713QuotedProjectionRoutes(t *testing.T) {
 }
 
 func TestGh713CallTailColumnsUseSharedReturnPlan(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "headers"))
 	for _, test := range []struct {
 		clause  string
 		columns []string
 	}{
 		{"RETURN", nil},
-		{"RETURN *", []string{"*"}},
-		{"CALL { RETURN 2 AS ignored }", nil},
+		{"RETURN *", nil},
+		{"CALL { RETURN 2 AS ignored }", []string{"ignored"}},
 		{"CALL { RETURN 2 AS ignored } RETURN ignored AS value ORDER BY value LIMIT 1", []string{"value"}},
-		{"RETURN DISTINCT value", []string{"value"}},
+		{"RETURN DISTINCT value", nil},
+		{"WITH 1 AS value RETURN DISTINCT value", []string{"value"}},
 		{"RETURN DISTINCT $value", []string{"$value"}},
 		{"RETURN 1 AS `left,right`", []string{"left,right"}},
 		{"RETURN 1 AS `a``b`", []string{"a`b"}},
@@ -73,12 +75,14 @@ func TestGh713CallTailColumnsUseSharedReturnPlan(t *testing.T) {
 		{"RETURN count(*) AS total ORDER BY total SKIP 0 LIMIT 1", []string{"total"}},
 	} {
 		t.Run(test.clause, func(t *testing.T) {
-			require.Equal(t, test.columns, expectedReturnColumnsFromTail(test.clause))
+			exec.StatementColumns(test.clause)
+			require.Equal(t, test.columns, exec.StatementColumns(test.clause))
 		})
 	}
-	columns := expectedReturnColumnsFromTail("RETURN 1 AS value")
+	exec.StatementColumns("RETURN 1 AS value")
+	columns := exec.StatementColumns("RETURN 1 AS value")
 	columns[0] = "changed"
-	require.Equal(t, []string{"value"}, expectedReturnColumnsFromTail("RETURN 1 AS value"))
+	require.Equal(t, []string{"value"}, exec.StatementColumns("RETURN 1 AS value"))
 }
 
 func TestGh713ProjectionSplittersShareQuotedLexing(t *testing.T) {
@@ -107,7 +111,7 @@ func TestGh713ProjectionSplittersShareQuotedLexing(t *testing.T) {
 func TestDeleteRouting_SimpleNode(t *testing.T) {
 	query := "MATCH (n:Person) DELETE n"
 
-	hasDelete := findKeywordIndex(query, "DELETE") > 0
+	hasDelete := findKeywordIndex(t.Context(), query, "DELETE") > 0
 	if !hasDelete {
 		t.Errorf("DELETE routing failed for query: %s", query)
 	}
@@ -118,7 +122,7 @@ func TestDeleteRouting_WithProperty(t *testing.T) {
 	// The word 'ToDelete' is inside a string literal and should be ignored
 	query := "MATCH (n:Temp {name: 'ToDelete'}) DELETE n"
 
-	deleteIdx := findKeywordIndex(query, "DELETE")
+	deleteIdx := findKeywordIndex(t.Context(), query, "DELETE")
 
 	// DELETE should be found OUTSIDE the string literal (after position 30)
 	if deleteIdx <= 30 {
@@ -136,7 +140,7 @@ func TestDeleteRouting_WithProperty(t *testing.T) {
 func TestDeleteRouting_Relationship(t *testing.T) {
 	query := "MATCH ()-[r:KNOWS]->() DELETE r"
 
-	hasDelete := findKeywordIndex(query, "DELETE") > 0
+	hasDelete := findKeywordIndex(t.Context(), query, "DELETE") > 0
 	if !hasDelete {
 		t.Errorf("DELETE routing failed for relationship query: %s", query)
 	}
@@ -146,7 +150,7 @@ func TestDeleteRouting_Relationship(t *testing.T) {
 func TestDeleteRouting_DetachDelete(t *testing.T) {
 	query := "MATCH (n:Person) DETACH DELETE n"
 
-	hasDetachDelete := containsKeywordOutsideStrings(query, "DETACH DELETE")
+	hasDetachDelete := containsKeywordOutsideStrings(t.Context(), query, "DETACH DELETE")
 	if !hasDetachDelete {
 		t.Errorf("DETACH DELETE routing failed for query: %s", query)
 	}
@@ -156,7 +160,7 @@ func TestDeleteRouting_DetachDelete(t *testing.T) {
 func TestDeleteRouting_MultipleVariables(t *testing.T) {
 	query := "MATCH (a)-[r]->(b) DELETE a, r, b"
 
-	hasDelete := findKeywordIndex(query, "DELETE") > 0
+	hasDelete := findKeywordIndex(t.Context(), query, "DELETE") > 0
 	if !hasDelete {
 		t.Errorf("DELETE routing failed for multi-variable query: %s", query)
 	}
@@ -166,7 +170,7 @@ func TestDeleteRouting_MultipleVariables(t *testing.T) {
 func TestDeleteRouting_WithWhere(t *testing.T) {
 	query := "MATCH (n:Person) WHERE n.age > 100 DELETE n"
 
-	hasDelete := findKeywordIndex(query, "DELETE") > 0
+	hasDelete := findKeywordIndex(t.Context(), query, "DELETE") > 0
 	if !hasDelete {
 		t.Errorf("DELETE routing failed for WHERE clause query: %s", query)
 	}
@@ -187,7 +191,7 @@ func TestDeleteRouting_NotConfusedByStringContent(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// The DELETE keyword for the actual delete operation should be found
 			// OUTSIDE any string literals
-			deleteIdx := findKeywordIndex(tc.query, "DELETE")
+			deleteIdx := findKeywordIndex(t.Context(), tc.query, "DELETE")
 			if deleteIdx <= 0 {
 				t.Errorf("DELETE keyword not found in: %s", tc.query)
 			}
@@ -220,8 +224,8 @@ func TestExecuteWithoutTransaction_DeleteRouting(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			hasDelete := findKeywordIndex(tc.query, "DELETE") > 0
-			hasDetachDelete := containsKeywordOutsideStrings(tc.query, "DETACH DELETE")
+			hasDelete := findKeywordIndex(t.Context(), tc.query, "DELETE") > 0
+			hasDetachDelete := containsKeywordOutsideStrings(t.Context(), tc.query, "DETACH DELETE")
 
 			wouldRouteToDelete := hasDelete || hasDetachDelete
 

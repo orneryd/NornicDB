@@ -3,11 +3,13 @@ package storage
 import (
 	"bytes"
 	"encoding/gob"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,11 +31,11 @@ func writeV1NodeBody(t *testing.T, eng *BadgerEngine, n *Node) {
 func writeV1CompactEdgeBody(t *testing.T, eng *BadgerEngine, edge *Edge) {
 	t.Helper()
 	require.NoError(t, eng.db.Update(func(txn *badger.Txn) error {
-		startNum, err := eng.idDict.resolveOrAllocateNodeNumIDInTxn(txn, edge.StartNode)
+		startNum, err := resolveOrAllocateNumericIDInTxn(eng.idDict, txn, NodeID(edge.StartNode))
 		if err != nil {
 			return err
 		}
-		endNum, err := eng.idDict.resolveOrAllocateNodeNumIDInTxn(txn, edge.EndNode)
+		endNum, err := resolveOrAllocateNumericIDInTxn(eng.idDict, txn, NodeID(edge.EndNode))
 		if err != nil {
 			return err
 		}
@@ -53,7 +55,7 @@ func writeV1CompactEdgeBody(t *testing.T, eng *BadgerEngine, edge *Edge) {
 func freshV1Engine(t *testing.T) *BadgerEngine {
 	t.Helper()
 	dir := t.TempDir()
-	eng, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+	eng, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 	require.NoError(t, err)
 	t.Cleanup(func() { eng.Close() })
 
@@ -114,11 +116,11 @@ func TestMigrateV1ToV2_RewritesAllEdges(t *testing.T) {
 
 	// Create a couple of nodes' numIDs so edges can resolve endpoints.
 	require.NoError(t, eng.db.Update(func(txn *badger.Txn) error {
-		_, err := eng.idDict.resolveOrAllocateNodeNumIDInTxn(txn, "test:start")
+		_, err := resolveOrAllocateNumericIDInTxn(eng.idDict, txn, NodeID("test:start"))
 		if err != nil {
 			return err
 		}
-		_, err = eng.idDict.resolveOrAllocateNodeNumIDInTxn(txn, "test:end")
+		_, err = resolveOrAllocateNumericIDInTxn(eng.idDict, txn, NodeID("test:end"))
 		if err != nil {
 			return err
 		}
@@ -192,7 +194,7 @@ func TestMigrateV1ToV2_PreservesPropertiesRoundTrip(t *testing.T) {
 		return err
 	}))
 
-	decoded, err := eng.decodeNode("test", data)
+	decoded, err := eng.decodeNodeProjected(nil, "test", data, nil)
 	require.NoError(t, err)
 	require.Equal(t, node.ID, decoded.ID)
 	require.Equal(t, node.Labels, decoded.Labels)
@@ -435,7 +437,10 @@ func TestRunOnStartMigrations_GatedRefuses(t *testing.T) {
 
 	// Build a V1 data directory: open, write a node, force version 1, close.
 	{
-		eng, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+		eng, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
+		if eng != nil {
+			fixtureowner.Own(t, eng)
+		}
 		require.NoError(t, err)
 		writeV1NodeBody(t, eng, &Node{
 			ID:         NodeID("test:gate"),
@@ -446,7 +451,7 @@ func TestRunOnStartMigrations_GatedRefuses(t *testing.T) {
 	}
 
 	// Reopen WITHOUT the upgrade flag — must refuse.
-	_, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, AllowStorageUpgrade: false})
+	_, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, AllowStorageUpgrade: false}))
 	require.Error(t, err)
 	var upgradeErr *ErrStorageUpgradeRequired
 	require.ErrorAs(t, err, &upgradeErr)
@@ -454,7 +459,7 @@ func TestRunOnStartMigrations_GatedRefuses(t *testing.T) {
 	require.Equal(t, storageVersionCurrent, upgradeErr.Current)
 
 	// Reopen WITH the upgrade flag — must succeed and finish at V2.
-	eng, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, AllowStorageUpgrade: true})
+	eng, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, AllowStorageUpgrade: true, CatalogUpgradeV4: graphOnlyCatalogUpgradeV4()}))
 	require.NoError(t, err)
 	t.Cleanup(func() { eng.Close() })
 	require.Equal(t, storageVersionCurrent, eng.storageVersion)
@@ -464,7 +469,7 @@ func TestRunOnStartMigrations_GatedRefuses(t *testing.T) {
 // fresh empty data directory works without the upgrade flag — there's
 // nothing to lose, so no operator decision is required.
 func TestRunOnStartMigrations_EmptyStoreSkipsGate(t *testing.T) {
-	eng, err := NewBadgerEngineWithOptions(BadgerOptions{InMemory: true})
+	eng, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{InMemory: true}))
 	require.NoError(t, err)
 	t.Cleanup(func() { eng.Close() })
 	require.Equal(t, storageVersionCurrent, eng.storageVersion)
@@ -479,7 +484,10 @@ func TestRunOnStartMigrations_ChainsV0ThroughV2(t *testing.T) {
 
 	// Build a V0 store: open, force version 0, write a legacy-shaped node.
 	{
-		eng, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+		eng, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
+		if eng != nil {
+			fixtureowner.Own(t, eng)
+		}
 		require.NoError(t, err)
 		require.NoError(t, eng.writeSchemaVersion(0))
 
@@ -488,17 +496,19 @@ func TestRunOnStartMigrations_ChainsV0ThroughV2(t *testing.T) {
 	}
 
 	// Reopen with the upgrade flag — both arms run.
-	eng, err := NewBadgerEngineWithOptions(BadgerOptions{
+	eng, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 		DataDir:             dir,
 		AllowStorageUpgrade: true,
-	})
+		CatalogUpgradeV4:    graphOnlyCatalogUpgradeV4(),
+	}))
 	require.NoError(t, err)
 	t.Cleanup(func() { eng.Close() })
 	require.Equal(t, storageVersionCurrent, eng.storageVersion)
 
 	// V0→V1 ran: access metadata for the legacy node must exist.
-	meta, err := eng.GetAccessMeta("test:legacy")
+	metaResult, err := eng.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: "test:legacy"})
 	require.NoError(t, err)
+	meta := metaResult.Entry
 	require.NotNil(t, meta)
 	require.Equal(t, int64(99), meta.Fixed.AccessCount)
 }

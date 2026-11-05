@@ -6,6 +6,8 @@ package cypher
 // then the items. Answers are Neo4j 5.26.30's.
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+
 	"context"
 	"fmt"
 	"strings"
@@ -137,10 +139,10 @@ func TestIssue883ReturnColumnHelpers(t *testing.T) {
 
 	// Without the statement's own text the columns stay as executed.
 	final := &ExecuteResult{Columns: []string{"a"}, Rows: [][]interface{}{{int64(1)}}}
-	pipelineNameReturnColumns(final, "RETURN a", "", nil)
+	require.NoError(t, verifyResultColumns(final.Columns, []string{"a"}))
 	require.Equal(t, []string{"a"}, final.Columns)
 
-	require.Equal(t, "a", projectionVariableText("a"))
-	require.Equal(t, "`x y`", projectionVariableText("x y"))
-	require.Equal(t, "`a``b`", projectionVariableText("a`b"))
+	require.Equal(t, "a", cyphertext.PrintIdentifier("a", cyphertext.IsIdentifier, cyphertext.RawSource))
+	require.Equal(t, "`x y`", cyphertext.PrintIdentifier("x y", cyphertext.IsIdentifier, cyphertext.RawSource))
+	require.Equal(t, "`a``b`", cyphertext.PrintIdentifier("a`b", cyphertext.IsIdentifier, cyphertext.RawSource))
 }

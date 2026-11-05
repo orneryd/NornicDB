@@ -4,10 +4,11 @@ package cypher
 
 import (
 	"context"
-	"reflect"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/convert"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -68,7 +69,7 @@ func evaluateStaticListForPipeline(expr string, row pipelineRow) ([]interface{},
 	// thing to do is wrap the literal and let the storage executor parse it
 	// as a value. Without plumbing a full parser here we only accept the
 	// `[...]` form and split top-level items.
-	if strings.HasPrefix(expr, "[") && strings.HasSuffix(expr, "]") {
+	if isListLiteral(expr) {
 		parsed, ok := parseLiteralValueForPipeline(expr)
 		if !ok {
 			return nil, false
@@ -82,104 +83,19 @@ func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context
 	if inner, wrapped := stripEnclosingExpressionParentheses(strings.TrimSpace(expr)); wrapped {
 		expr = inner
 	}
-	if mayContainSubqueryExpression(expr) {
-		if value, ok := e.evaluateRowExpressionWithContext(ctx, expr, row); ok {
-			return coerceToUnwindItems(value), true
-		}
-	}
 	if items, ok := evaluateStaticListForPipeline(expr, row); ok {
 		return items, true
 	}
-	if matchFuncStartAndSuffix(expr, "range") {
-		args := e.splitFunctionArgs(extractFuncArgs(expr, "range"))
-		if len(args) < 2 || len(args) > 3 {
-			return nil, false
-		}
-		arguments := make([]interface{}, len(args))
-		for index, argument := range args {
-			value, resolved := e.evaluateRowExpressionWithContext(ctx, strings.TrimSpace(argument), row)
-			if !resolved {
-				return nil, false
-			}
-			arguments[index] = value
-		}
-		items, err := evaluateCypherRange(arguments)
-		if err != nil {
-			recordExpressionFailure(ctx, err)
-			return nil, false
-		}
-		return items, true
-	}
-	if value, ok := e.evaluateRowExpressionWithContext(ctx, expr, row); ok {
-		return coerceToUnwindItems(value), true
-	}
-
-	value := e.evaluateExpressionWithContext(withValueBindings(ctx, row), expr, nil, nil)
-	if text, unresolved := value.(string); unresolved && text == expr && !isWholeCypherQuotedString(expr) {
-		return nil, false
-	}
-	if value == nil && !strings.EqualFold(strings.TrimSpace(expr), "null") && !looksLikeFunctionCall(expr) {
+	value, err := e.checkedPropertyExpression(ctx, expr, row)
+	if err != nil {
 		return nil, false
 	}
 	return coerceToUnwindItems(value), true
 }
 
 func toAnySlice(v interface{}) []interface{} {
-	switch s := v.(type) {
-	case []interface{}:
-		return s
-	case []map[string]interface{}:
-		out := make([]interface{}, len(s))
-		for i, m := range s {
-			out[i] = m
-		}
-		return out
-	case []string:
-		out := make([]interface{}, len(s))
-		for i := range s {
-			out[i] = s[i]
-		}
-		return out
-	case []int:
-		out := make([]interface{}, len(s))
-		for i := range s {
-			out[i] = int64(s[i])
-		}
-		return out
-	case []int64:
-		out := make([]interface{}, len(s))
-		for i := range s {
-			out[i] = s[i]
-		}
-		return out
-	case []float64:
-		out := make([]interface{}, len(s))
-		for i := range s {
-			out[i] = s[i]
-		}
-		return out
-	case []float32:
-		out := make([]interface{}, len(s))
-		for i := range s {
-			out[i] = float64(s[i])
-		}
-		return out
-	case []bool:
-		out := make([]interface{}, len(s))
-		for i := range s {
-			out[i] = s[i]
-		}
-		return out
-	}
-	rv := reflect.ValueOf(v)
-	if !rv.IsValid() || (rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array) {
-		return nil
-	}
-	out := make([]interface{}, rv.Len())
-	for i := 0; i < rv.Len(); i++ {
-		out[i] = rv.Index(i).Interface()
-	}
-	return out
+	items, _ := convert.ListValue(v)
+	return items
 }
 
 func parseLiteralMapForPipeline(s string) map[string]interface{} {
@@ -187,31 +103,23 @@ func parseLiteralMapForPipeline(s string) map[string]interface{} {
 	if !strings.HasPrefix(s, "{") || !strings.HasSuffix(s, "}") {
 		return nil
 	}
-	inner := strings.TrimSpace(s[1 : len(s)-1])
-	if inner == "" {
-		return map[string]interface{}{}
+	expressions, err := parsePropertyExpressions(s)
+	if err != nil {
+		return nil
 	}
-	pairs := splitTopLevelComma(inner)
-	out := make(map[string]interface{}, len(pairs))
-	for _, pair := range pairs {
-		colon := findTopLevelMapKeyValueSeparator(pair)
-		if colon <= 0 {
+	out := make(map[string]interface{}, len(expressions))
+	for _, expression := range expressions {
+		value, literal := parseLiteralValueForPipeline(expression.expr)
+		if !literal {
 			return nil
 		}
-		k := normalizePropertyKey(strings.TrimSpace(pair[:colon]))
-		vRaw := strings.TrimSpace(pair[colon+1:])
-		v, ok := parseLiteralValueForPipeline(vRaw)
-		if !ok {
-			return nil
-		}
-		out[k] = v
+		out[expression.key] = value
 	}
 	return out
 }
-
 func parseLiteralListForPipeline(s string) ([]interface{}, bool) {
 	s = strings.TrimSpace(s)
-	if !strings.HasPrefix(s, "[") || !strings.HasSuffix(s, "]") {
+	if !isListLiteral(s) {
 		return nil, false
 	}
 	inner := strings.TrimSpace(s[1 : len(s)-1])
@@ -242,7 +150,7 @@ func parseLiteralValueForPipeline(s string) (interface{}, bool) {
 		}
 		return m, true
 	}
-	if strings.HasPrefix(s, "[") && strings.HasSuffix(s, "]") {
+	if isListLiteral(s) {
 		return parseLiteralListForPipeline(s)
 	}
 	return parseLiteralScalarForPipeline(s)
@@ -255,7 +163,7 @@ func parseLiteralScalarForPipeline(s string) (interface{}, bool) {
 	}
 	// Quoted string.
 	if isWholeCypherQuotedString(s) {
-		return decodeCypherQuotedString(s)
+		return cyphertext.DecodeString(s, cyphertext.AcceptedSource)
 	}
 	// true, false, null, NaN, Infinity.
 	if value, ok := literalKeywordValue(s); ok {
@@ -287,25 +195,13 @@ func parseIntFast(s string) (int64, bool) {
 	if digits == len(s) {
 		return 0, false
 	}
-	base := 10
-	if digits+2 <= len(s) && s[digits] == '0' {
-		switch s[digits+1] {
-		case 'x', 'X':
-			base = 16
-			digits += 2
-		case 'o', 'O':
-			base = 8
-			digits += 2
-		}
+	token, ok := cyphertext.ScanNumber(s, digits)
+	if !ok || token.Invalid || token.End != len(s) || token.Grouped || token.Fraction || token.Exponent || token.Suffix != 0 {
+		return 0, false
 	}
+	base := token.Base
+	digits = token.DigitsStart
 	if base == 10 {
-		// Only digits can follow the sign; checking first keeps text that
-		// isn't a number (n.name, e.uuid) from building a parse error.
-		for i := digits; i < len(s); i++ {
-			if s[i] < '0' || s[i] > '9' {
-				return 0, false
-			}
-		}
 		value, err := strconv.ParseInt(s, 10, 64)
 		return value, err == nil
 	}
@@ -336,7 +232,7 @@ func startsLikeDecimalNumber(s string) bool {
 	if i < len(s) && s[i] == '.' {
 		i++
 	}
-	return i < len(s) && s[i] >= '0' && s[i] <= '9'
+	return i < len(s) && cyphertext.IsDigit(s[i])
 }
 
 func parseFloatFast(s string) (float64, bool) {

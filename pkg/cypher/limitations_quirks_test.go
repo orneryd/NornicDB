@@ -7,9 +7,16 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func newTestExecutor(t testing.TB) (*StorageExecutor, storage.Engine) {
+// newTestExecutor builds a cleanup-owned executor and its storage. Tests may
+// select a namespace; the ordinary fixture namespace is "test".
+func newTestExecutor(t testing.TB, namespaces ...string) (*StorageExecutor, storage.Engine) {
+	t.Helper()
+	namespace := "test"
+	if len(namespaces) != 0 {
+		namespace = namespaces[0]
+	}
 	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "test")
+	store := storage.NewNamespacedEngine(base, namespace)
 	return NewStorageExecutor(store), store
 }
 
@@ -17,7 +24,7 @@ func TestToLowerWithParameterInContains(t *testing.T) {
 	exec, store := newTestExecutor(t)
 	ctx := context.Background()
 
-	_, _ = store.CreateNode(&storage.Node{
+	_, _ = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "rx1",
 		Labels: []string{"Prescription"},
 		Properties: map[string]interface{}{
@@ -48,21 +55,21 @@ func TestOptionalMatchWithParameters(t *testing.T) {
 	exec, store := newTestExecutor(t)
 	ctx := context.Background()
 
-	_, _ = store.CreateNode(&storage.Node{
+	_, _ = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "m1",
 		Labels: []string{"Member"},
 		Properties: map[string]interface{}{
 			"memberId": "member-1",
 		},
 	})
-	_, _ = store.CreateNode(&storage.Node{
+	_, _ = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "o1",
 		Labels: []string{"Order"},
 		Properties: map[string]interface{}{
 			"orderId": "order-1",
 		},
 	})
-	_ = store.CreateEdge(&storage.Edge{
+	_ = store.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "e1",
 		StartNode: "m1",
 		EndNode:   "o1",
@@ -108,23 +115,23 @@ func TestDuplicateRowsAndDistinct(t *testing.T) {
 	exec, store := newTestExecutor(t)
 	ctx := context.Background()
 
-	_, _ = store.CreateNode(&storage.Node{
+	_, _ = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "m1",
 		Labels: []string{"Member"},
 		Properties: map[string]interface{}{
 			"memberId": "member-1",
 		},
 	})
-	_, _ = store.CreateNode(&storage.Node{ID: "o1", Labels: []string{"Order"}})
-	_, _ = store.CreateNode(&storage.Node{ID: "o2", Labels: []string{"Order"}})
-	_, _ = store.CreateNode(&storage.Node{
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "o1", Labels: []string{"Order"}})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "o2", Labels: []string{"Order"}})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "rx1",
 		Labels: []string{"Prescription"},
 		Properties: map[string]interface{}{
 			"drugName": "Amoxicillin",
 		},
 	})
-	_, _ = store.CreateNode(&storage.Node{
+	_, _ = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "p1",
 		Labels: []string{"Prescriber"},
 		Properties: map[string]interface{}{
@@ -132,11 +139,11 @@ func TestDuplicateRowsAndDistinct(t *testing.T) {
 		},
 	})
 
-	_ = store.CreateEdge(&storage.Edge{ID: "e1", StartNode: "m1", EndNode: "o1", Type: "PLACED_ORDER"})
-	_ = store.CreateEdge(&storage.Edge{ID: "e2", StartNode: "m1", EndNode: "o2", Type: "PLACED_ORDER"})
-	_ = store.CreateEdge(&storage.Edge{ID: "e3", StartNode: "o1", EndNode: "rx1", Type: "CONTAINS"})
-	_ = store.CreateEdge(&storage.Edge{ID: "e4", StartNode: "o2", EndNode: "rx1", Type: "CONTAINS"})
-	_ = store.CreateEdge(&storage.Edge{ID: "e5", StartNode: "rx1", EndNode: "p1", Type: "PRESCRIBED_BY"})
+	_ = store.CreateEdge(t.Context(), &storage.Edge{ID: "e1", StartNode: "m1", EndNode: "o1", Type: "PLACED_ORDER"})
+	_ = store.CreateEdge(t.Context(), &storage.Edge{ID: "e2", StartNode: "m1", EndNode: "o2", Type: "PLACED_ORDER"})
+	_ = store.CreateEdge(t.Context(), &storage.Edge{ID: "e3", StartNode: "o1", EndNode: "rx1", Type: "CONTAINS"})
+	_ = store.CreateEdge(t.Context(), &storage.Edge{ID: "e4", StartNode: "o2", EndNode: "rx1", Type: "CONTAINS"})
+	_ = store.CreateEdge(t.Context(), &storage.Edge{ID: "e5", StartNode: "rx1", EndNode: "p1", Type: "PRESCRIBED_BY"})
 
 	query := `
 MATCH (m:Member)-[:PLACED_ORDER]->(o:Order)-[:CONTAINS]->(rx:Prescription)-[:PRESCRIBED_BY]->(p:Prescriber)
@@ -169,15 +176,15 @@ func TestDoubleMatchClauses(t *testing.T) {
 	exec, store := newTestExecutor(t)
 	ctx := context.Background()
 
-	_, _ = store.CreateNode(&storage.Node{
+	_, _ = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "m1",
 		Labels: []string{"Member"},
 		Properties: map[string]interface{}{
 			"memberId": "member-1",
 		},
 	})
-	_, _ = store.CreateNode(&storage.Node{ID: "o1", Labels: []string{"Order"}})
-	_, _ = store.CreateNode(&storage.Node{
+	_, _ = store.CreateNode(t.Context(), &storage.Node{ID: "o1", Labels: []string{"Order"}})
+	_, _ = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "rx1",
 		Labels: []string{"Prescription"},
 		Properties: map[string]interface{}{
@@ -185,8 +192,8 @@ func TestDoubleMatchClauses(t *testing.T) {
 		},
 	})
 
-	_ = store.CreateEdge(&storage.Edge{ID: "e1", StartNode: "m1", EndNode: "o1", Type: "PLACED_ORDER"})
-	_ = store.CreateEdge(&storage.Edge{ID: "e2", StartNode: "o1", EndNode: "rx1", Type: "CONTAINS"})
+	_ = store.CreateEdge(t.Context(), &storage.Edge{ID: "e1", StartNode: "m1", EndNode: "o1", Type: "PLACED_ORDER"})
+	_ = store.CreateEdge(t.Context(), &storage.Edge{ID: "e2", StartNode: "o1", EndNode: "rx1", Type: "CONTAINS"})
 
 	query := `
 MATCH (m:Member)-[:PLACED_ORDER]->(o:Order)

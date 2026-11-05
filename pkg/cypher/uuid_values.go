@@ -100,9 +100,18 @@ func newVersion7UUID(now time.Time) CypherUUID {
 	for i := 0; i < 6; i++ {
 		u.bits[i] = byte(milliseconds >> (40 - 8*i))
 	}
-	u.bits[6] = u.bits[6]&0x0F | 0x70
-	u.bits[8] = u.bits[8]&0x3F | 0x80
-	return u
+	return uuidWithVersion(u, 7)
+}
+
+// uuidWithVersion is bits stamped as a UUID of the given version: the four
+// version bits of RFC 9562 section 4.2 in the seventh byte's high nibble and
+// the two variant bits of section 4.1 in the ninth byte's top two bits,
+// leaving every other bit as the generator set it. Every UUID this package
+// generates takes its version and variant from here.
+func uuidWithVersion(bits CypherUUID, version byte) CypherUUID {
+	bits.bits[6] = bits.bits[6]&0x0F | version<<4
+	bits.bits[8] = bits.bits[8]&0x3F | 0x80
+	return bits
 }
 
 // UnsupportedTypePlaceholder is what Neo4j sends a Bolt 5 client for a value

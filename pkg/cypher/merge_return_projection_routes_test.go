@@ -223,21 +223,21 @@ func TestReturnProjectionPlanIsParsedOncePerText(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, []string{"one", "two"}, first.Columns)
 	first.Columns[0] = "changed"
-	require.Same(t, returnProjectionPlanFor(clause), returnProjectionPlanFor(clause))
+	require.Same(t, returnProjectionPlanFor(t.Context(), clause), returnProjectionPlanFor(t.Context(), clause))
 
 	second, ok := exec.pipelineApplyReturn(ctx, []pipelineRow{{}}, clause)
 	require.True(t, ok)
 	require.Equal(t, []string{"one", "two"}, second.Columns)
 	require.Equal(t, [][]interface{}{{int64(1), "x"}}, second.Rows)
 
-	require.False(t, returnProjectionPlanFor("RETURN ").valid)
+	require.False(t, returnProjectionPlanFor(t.Context(), "RETURN ").valid)
 
 	returnProjectionPlans.Lock()
 	for index := len(returnProjectionPlans.plans); index < returnProjectionPlanLimit; index++ {
 		returnProjectionPlans.plans[fmt.Sprintf("RETURN %d", index)] = &returnProjectionPlan{}
 	}
 	returnProjectionPlans.Unlock()
-	returnProjectionPlanFor("RETURN 'after the limit'")
+	returnProjectionPlanFor(t.Context(), "RETURN 'after the limit'")
 	returnProjectionPlans.RLock()
 	size := len(returnProjectionPlans.plans)
 	returnProjectionPlans.RUnlock()

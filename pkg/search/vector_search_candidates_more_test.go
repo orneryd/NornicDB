@@ -3,6 +3,9 @@ package search
 import (
 	"context"
 	"errors"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -35,14 +38,14 @@ func (s testExactScorer) ScoreCandidates(context.Context, []float32, []Candidate
 
 func TestService_VectorSearchCandidates_MoreBranches(t *testing.T) {
 	t.Run("empty embedding returns error", func(t *testing.T) {
-		svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
+		svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3, nil)
 		_, err := svc.VectorSearchCandidates(context.Background(), nil, &SearchOptions{Limit: 2})
 		require.Error(t, err)
 		require.ErrorContains(t, err, "requires embedding")
 	})
 
 	t.Run("pipeline error is surfaced", func(t *testing.T) {
-		svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
+		svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3, nil)
 		svc.vectorPipeline = NewVectorSearchPipeline(
 			testCandidateGen{err: errors.New("candidate failure")},
 			testExactScorer{},
@@ -53,8 +56,8 @@ func TestService_VectorSearchCandidates_MoreBranches(t *testing.T) {
 	})
 
 	t.Run("nil opts uses defaults and returns collapsed candidates", func(t *testing.T) {
-		engine := storage.NewMemoryEngine()
-		svc := NewServiceWithDimensions(engine, 3)
+		engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+		svc := NewService(engine, 3, nil)
 		node := &storage.Node{
 			ID:     "nornic:doc-1",
 			Labels: []string{"Doc"},
@@ -63,7 +66,7 @@ func TestService_VectorSearchCandidates_MoreBranches(t *testing.T) {
 				{0, 1, 0},
 			},
 		}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, svc.IndexNode(node))
 
@@ -73,12 +76,12 @@ func TestService_VectorSearchCandidates_MoreBranches(t *testing.T) {
 	})
 
 	t.Run("type filtering and limit cap", func(t *testing.T) {
-		engine := storage.NewMemoryEngine()
-		svc := NewServiceWithDimensions(engine, 3)
+		engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+		svc := NewService(engine, 3, nil)
 
-		_, err := engine.CreateNode(&storage.Node{ID: "nornic:doc-1", Labels: []string{"Doc"}})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "nornic:doc-1", Labels: []string{"Doc"}})
 		require.NoError(t, err)
-		_, err = engine.CreateNode(&storage.Node{ID: "nornic:other-1", Labels: []string{"Other"}})
+		_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "nornic:other-1", Labels: []string{"Other"}})
 		require.NoError(t, err)
 
 		svc.vectorPipeline = NewVectorSearchPipeline(

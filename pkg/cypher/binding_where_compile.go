@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"reflect"
 	"strconv"
 	"strings"
@@ -304,13 +305,22 @@ func (e *StorageExecutor) tryCompileExecutorBindingWhereTruth(ctx context.Contex
 		}
 		return notTruth(inner), true
 	}
-	match, ok := e.parseBoundRelationshipPattern(ctx, clause)
+	match, ok := e.parseBoundRelationshipPatternStructure(ctx, clause)
 	if !ok {
 		return nil, false
 	}
+	// Without property maps the structural match is already complete. Keep
+	// its parsed shape in this executor-local closure, just as before row
+	// property evaluation was deferred; no row value can enter this plan.
+	if !strings.Contains(clause, "{") {
+		return func(b binding, params map[string]interface{}) cypherTruth {
+			return truthOf(e.evaluateParsedBoundRelationshipPattern(withParams(ctx, params), match, b))
+		}, true
+	}
 	return func(b binding, params map[string]interface{}) cypherTruth {
-		_ = params
-		return truthOf(e.evaluateParsedBoundRelationshipPattern(ctx, match, map[string]*storage.Node(b)))
+		rowCtx := withParams(ctx, params)
+		matched, _ := e.evaluateRowRelationshipPattern(rowCtx, clause, entityRow(rowCtx, map[string]*storage.Node(b), nil))
+		return truthOf(matched)
 	}, true
 }
 
@@ -810,6 +820,7 @@ func (cache *bindingParamMembershipCache) getValidated(items []interface{}) (map
 	if !unchanged {
 		cache.comparable, cache.nonComparable = buildComparableMembershipIndex(items)
 		cache.hasNull = listHasNull(items)
+		clear(cache.snapshot)
 		cache.snapshot = append(cache.snapshot[:0], items...)
 	}
 	return cache.comparable, cache.nonComparable, cache.hasNull
@@ -834,7 +845,7 @@ func (e *StorageExecutor) compareBindingValuesEqual(leftValue, rightValue interf
 
 func parseBindingLiteralList(raw string) ([]interface{}, bool) {
 	raw = strings.TrimSpace(raw)
-	if !strings.HasPrefix(raw, "[") || !strings.HasSuffix(raw, "]") {
+	if !isListLiteral(raw) {
 		return nil, false
 	}
 	inner := strings.TrimSpace(raw[1 : len(raw)-1])
@@ -879,7 +890,10 @@ func (e *StorageExecutor) compileBindingValueResolver(expr string) (bindingValue
 	// A supported function call compiles through the same shared helper the
 	// row evaluator applies (#728): the compiled fast path is a compiled form
 	// of the one evaluator, with identical results.
-	if function, argument, ok := parseFunctionCallWS(clause); ok {
+	var callFacts1 functionCallFacts
+	if ok := inspectFunctionCall(clause, qualifiedFunctionCall, "", &callFacts1); ok {
+		function, argument := callFacts1.name, callFacts1.inner
+
 		if inner, ok := e.compileBindingValueResolver(argument); ok {
 			switch lowerASCII(function) {
 			case "size":
@@ -905,7 +919,7 @@ func (e *StorageExecutor) compileBindingValueResolver(expr string) (bindingValue
 		// the caller falls back to the shared evaluator, which computes the
 		// arithmetic exactly (#692).
 		property, validProperty := isOneSymbolicName(propName)
-		if !validProperty || varName == "" || strings.ContainsAny(varName, " \t\r\n") {
+		if !validProperty || varName == "" || strings.IndexFunc(varName, cyphertext.IsWhitespace) >= 0 {
 			return nil, false
 		}
 		return func(b binding, params map[string]interface{}) (interface{}, bool) {
@@ -917,7 +931,7 @@ func (e *StorageExecutor) compileBindingValueResolver(expr string) (bindingValue
 			return getBindingNodeValue(e.queryVisibleValue(node).(*storage.Node), property)
 		}, true
 	}
-	if isValidIdentifier(clause) {
+	if cyphertext.IsIdentifier(clause) {
 		return func(b binding, params map[string]interface{}) (interface{}, bool) {
 			_ = params
 			node := b[clause]

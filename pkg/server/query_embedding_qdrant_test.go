@@ -6,6 +6,7 @@ import (
 	"time"
 
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
+	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	qpb "github.com/qdrant/go-client/qdrant"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -30,6 +31,12 @@ func TestQdrantRecommendKeepsProviderSnapshot(t *testing.T) {
 			client := qpb.NewPointsClient(conn)
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
+			// This fixture exercises provider snapshots after collection warmup.
+			// A new collection may still have an asynchronous index build running.
+			collectionStorage, _, err := server.qdrantCollectionStore.Open(ctx, collection)
+			require.NoError(t, err)
+			_, err = server.db.EnsureSearchIndexes(ctx, collection, collectionStorage, nornicdb.SearchIndexBuildWait)
+			require.NoError(t, err)
 			old := &nativeRequestEmbedder{}
 			replacement := &nativeRequestEmbedder{axis: 1}
 			base := server.db.GetCypherExecutor()
@@ -76,7 +83,7 @@ func TestQdrantRecommendKeepsProviderSnapshot(t *testing.T) {
 					}})
 					return err
 				default:
-					_, err := client.QueryBatch(ctx, &qpb.QueryBatchPoints{QueryPoints: []*qpb.QueryPoints{query("alpha"), query("beta")}})
+					_, err := client.QueryBatch(ctx, &qpb.QueryBatchPoints{CollectionName: collection, QueryPoints: []*qpb.QueryPoints{query("alpha"), query("beta")}})
 					return err
 				}
 			}

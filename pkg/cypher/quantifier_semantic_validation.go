@@ -1,21 +1,23 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 )
 
 // validateStaticQuantifierTypes rejects predicates that apply numeric
 // operators to statically non-numeric list elements. This is a compile-time
 // Cypher type error rather than a null-producing runtime expression.
-func validateStaticQuantifierTypes(cypher string) error {
+func validateStaticQuantifierTypes(ctx context.Context, cypher string) error {
 	options := defaultKeywordScanOpts()
 	options.SkipParens = false
 	options.SkipBrackets = false
 	options.SkipBraces = false
 	for _, name := range []string{"all", "any", "none", "single"} {
 		for from := 0; from < len(cypher); {
-			index := keywordIndexFrom(cypher, name, from, options)
+			index := keywordIndexFrom(ctx, cypher, name, from, options)
 			if index < 0 {
 				break
 			}
@@ -28,7 +30,7 @@ func validateStaticQuantifierTypes(cypher string) error {
 			if close < 0 {
 				continue
 			}
-			if err := validateStaticQuantifierCall(cypher[open+1 : close]); err != nil {
+			if err := validateStaticQuantifierCall(ctx, cypher[open+1:close]); err != nil {
 				return err
 			}
 		}
@@ -36,21 +38,21 @@ func validateStaticQuantifierTypes(cypher string) error {
 	return nil
 }
 
-func validateStaticQuantifierCall(inner string) error {
+func validateStaticQuantifierCall(ctx context.Context, inner string) error {
 	inner = StripComments(inner)
-	inIndex := findKeywordIndexInContext(inner, "IN")
+	inIndex := findKeywordIndexInContext(ctx, inner, "IN")
 	if inIndex <= 0 {
 		return nil
 	}
 	rest := inner[inIndex+len("IN"):]
-	whereIndex := findKeywordIndexInContext(rest, "WHERE")
+	whereIndex := findKeywordIndexInContext(ctx, rest, "WHERE")
 	if whereIndex < 0 {
 		return nil
 	}
 	variable := strings.TrimSpace(StripComments(inner[:inIndex]))
 	listExpression := strings.TrimSpace(StripComments(rest[:whereIndex]))
 	predicate := strings.TrimSpace(rest[whereIndex+len("WHERE"):])
-	if !isValidIdentifier(variable) || !quantifierPredicateRequiresNumbers(predicate, variable) {
+	if !cyphertext.IsIdentifier(variable) || !quantifierPredicateRequiresNumbers(predicate, variable) {
 		return nil
 	}
 	list, ok := parseLiteralValueForPipeline(listExpression)
@@ -75,8 +77,8 @@ func validateStaticQuantifierCall(inner string) error {
 func quantifierPredicateRequiresNumbers(predicate, variable string) bool {
 	var previous byte
 	for index := 0; index < len(predicate); index++ {
-		switch predicate[index] {
-		case '\'', '"', '`':
+		switch cypherLexicalByte(predicate[index]) {
+		case cypherQuoteClass:
 			previous = predicate[index]
 			index = skipQuotedSemanticText(predicate, index) - 1
 			continue
@@ -86,8 +88,8 @@ func quantifierPredicateRequiresNumbers(predicate, variable string) bool {
 				continue
 			}
 		}
-		if !identifierAt(predicate, index, variable) {
-			if !isWhitespace(predicate[index]) {
+		if cyphertext.FindIdentifier(predicate, variable, index, cyphertext.IdentifierFoldAt) != index {
+			if !cyphertext.IsWhitespaceAt(predicate, index) {
 				previous = predicate[index]
 			}
 			continue
@@ -100,14 +102,6 @@ func quantifierPredicateRequiresNumbers(predicate, variable string) bool {
 		index += len(variable) - 1
 	}
 	return false
-}
-
-func identifierAt(text string, index int, identifier string) bool {
-	if index < 0 || index+len(identifier) > len(text) || !strings.EqualFold(text[index:index+len(identifier)], identifier) {
-		return false
-	}
-	return (index == 0 || !isIdentByte(text[index-1])) &&
-		(index+len(identifier) == len(text) || !isIdentByte(text[index+len(identifier)]))
 }
 
 func isNumericOnlyOperatorByte(character byte) bool {

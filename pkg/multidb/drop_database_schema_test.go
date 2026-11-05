@@ -3,6 +3,8 @@ package multidb
 import (
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -16,8 +18,8 @@ func TestBug_DropDatabaseClearsSchema(t *testing.T) {
 		store, err := manager.GetStorage("tenant_a")
 		require.NoError(t, err)
 		require.NoError(t, store.GetSchema().AddUniqueConstraint("person_id_unique", "Person", "id"))
-		require.NoError(t, store.GetSchema().AddPropertyTypeConstraint("person_age_type", "Person", "age", storage.PropertyTypeInteger))
-		_, err = store.CreateNode(&storage.Node{ID: "p1", Labels: []string{"Person"}, Properties: map[string]any{"id": "p1", "age": int64(3)}})
+		require.NoError(t, store.GetSchema().AddPropertyTypeConstraint("person_age_type", "Person", "age", storage.PropertyTypeInteger, storage.PropertyTypeConstraintOptions{}))
+		_, err = store.CreateNode(t.Context(), &storage.Node{ID: "p1", Labels: []string{"Person"}, Properties: map[string]any{"id": "p1", "age": int64(3)}})
 		require.NoError(t, err)
 	}
 	requireEmptySchema := func(t *testing.T, store storage.Engine) {
@@ -25,28 +27,28 @@ func TestBug_DropDatabaseClearsSchema(t *testing.T) {
 		require.Empty(t, store.GetSchema().GetAllConstraints())
 		require.Empty(t, store.GetSchema().GetAllPropertyTypeConstraints())
 		// The dropped rules no longer apply: a duplicate id and a non-integer age both write.
-		_, err := store.CreateNode(&storage.Node{ID: "x1", Labels: []string{"Person"}, Properties: map[string]any{"id": "p1", "age": "old"}})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: "x1", Labels: []string{"Person"}, Properties: map[string]any{"id": "p1", "age": "old"}})
 		require.NoError(t, err)
-		_, err = store.CreateNode(&storage.Node{ID: "x2", Labels: []string{"Person"}, Properties: map[string]any{"id": "p1"}})
+		_, err = store.CreateNode(t.Context(), &storage.Node{ID: "x2", Labels: []string{"Person"}, Properties: map[string]any{"id": "p1"}})
 		require.NoError(t, err)
 	}
 
 	t.Run("drop then recreate", func(t *testing.T) {
-		inner := storage.NewMemoryEngine()
+		inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		defer inner.Close()
-		manager, err := NewDatabaseManager(inner, nil)
+		manager, err := NewDatabaseManager(t.Context(), inner, nil)
 		require.NoError(t, err)
 		defer manager.Close()
 
-		require.NoError(t, manager.CreateDatabase("tenant_a"))
-		require.NoError(t, manager.CreateDatabase("tenant_b"))
+		require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "tenant_a"}))
+		require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "tenant_b"}))
 		addSchema(t, manager)
 		other, err := manager.GetStorage("tenant_b")
 		require.NoError(t, err)
 		require.NoError(t, other.GetSchema().AddUniqueConstraint("keep_me", "Person", "id"))
 
-		require.NoError(t, manager.DropDatabase("tenant_a"))
-		require.NoError(t, manager.CreateDatabase("tenant_a"))
+		require.NoError(t, manager.DropDatabase(t.Context(), "tenant_a"))
+		require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "tenant_a"}))
 		store, err := manager.GetStorage("tenant_a")
 		require.NoError(t, err)
 		requireEmptySchema(t, store)
@@ -56,23 +58,26 @@ func TestBug_DropDatabaseClearsSchema(t *testing.T) {
 
 	t.Run("dropped schema is not reloaded after restart", func(t *testing.T) {
 		dir := t.TempDir()
-		inner, err := storage.NewBadgerEngine(dir)
+		inner, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+		if inner != nil {
+			fixtureowner.Own(t, inner)
+		}
 		require.NoError(t, err)
-		manager, err := NewDatabaseManager(inner, nil)
+		manager, err := NewDatabaseManager(t.Context(), inner, nil)
 		require.NoError(t, err)
-		require.NoError(t, manager.CreateDatabase("tenant_a"))
+		require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "tenant_a"}))
 		addSchema(t, manager)
-		require.NoError(t, manager.DropDatabase("tenant_a"))
+		require.NoError(t, manager.DropDatabase(t.Context(), "tenant_a"))
 		require.NoError(t, manager.Close())
 		require.NoError(t, inner.Close())
 
-		reopened, err := storage.NewBadgerEngine(dir)
+		reopened, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 		require.NoError(t, err)
 		defer reopened.Close()
-		manager, err = NewDatabaseManager(reopened, nil)
+		manager, err = NewDatabaseManager(t.Context(), reopened, nil)
 		require.NoError(t, err)
 		defer manager.Close()
-		require.NoError(t, manager.CreateDatabase("tenant_a"))
+		require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "tenant_a"}))
 		store, err := manager.GetStorage("tenant_a")
 		require.NoError(t, err)
 		requireEmptySchema(t, store)

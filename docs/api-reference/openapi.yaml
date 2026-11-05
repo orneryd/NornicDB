@@ -526,8 +526,7 @@ paths:
                 n:
                   type: integer
                   minimum: 1
-                  maximum: 500
-                  description: Maximum logical results returned by this START or PULL operation
+                  description: Maximum logical results returned by this START or PULL operation; bounded by memory.search_cursor_max_page_size (NORNICDB_SEARCH_CURSOR_MAX_PAGE_SIZE), default 500
                 discard:
                   type: boolean
                   description: Release the stream selected by qid without returning results
@@ -569,7 +568,7 @@ paths:
                       $ref: "#/components/schemas/SearchResult"
                   - $ref: "#/components/schemas/SearchContinuationPage"
         "400":
-          description: Invalid request or malformed/wrong-scope continuation qid (`continuation_invalid`)
+          description: Invalid request or malformed/wrong-scope continuation qid (`continuation_invalid`), or n above the configured page limit (`page_size_exceeded`, with max_page_size)
         "409":
           description: Durable continuation is disabled (`continuation_disabled`, non-retryable)
         "410":
@@ -1467,6 +1466,9 @@ components:
           format: uint64
         returned:
           type: integer
+        max_page_size:
+          type: integer
+          description: Effective maximum n, advertised on START and PULL pages; defaults to 500
         discovered:
           type: integer
         total:

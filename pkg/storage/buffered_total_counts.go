@@ -1,6 +1,10 @@
 package storage
 
-import "strings"
+// Author: storage-format-owners lane (Codex), 1 November 2026.
+import (
+	"context"
+	"strings"
+)
 
 // visitOperationTotalCounts describes only cardinality-changing operations.
 // An update's entity overlay is not a newly created entity. The same deltas
@@ -22,7 +26,7 @@ func visitOperationTotalCounts(op Operation, visit func(string, bool, int64)) {
 			visit(string(op.NodeID), true, -remaining)
 		}
 	case OpCreateEdge:
-		if op.Edge != nil {
+		if op.Edge != nil && !op.ReplacesExisting {
 			visit(string(op.Edge.ID), true, 1)
 		}
 	case OpDeleteEdge:
@@ -32,19 +36,23 @@ func visitOperationTotalCounts(op Operation, visit func(string, bool, int64)) {
 
 // Caller holds totalCountWriteMu until the matching countsApplied flag is set.
 func (b *BadgerEngine) publishBufferedTotalCounts(commits []bufferedCommit) {
-	visit := func(id string, edge bool, delta int64) {
-		if edge {
-			b.edgeCount.Add(delta)
-			b.addNamespaceEdgeCount(EdgeID(id), delta)
-		} else {
-			b.nodeCount.Add(delta)
-			b.addNamespaceNodeCount(NodeID(id), delta)
-		}
-	}
 	for _, commit := range commits {
 		for _, op := range commit.ops {
-			visitOperationTotalCounts(op, visit)
+			visitOperationTotalCounts(op, b.publishTotalCountChange)
 		}
+	}
+}
+
+// publishTotalCountChange is the cache delta sink for both synchronous
+// publication and buffered replay. Cardinality still follows the operation
+// stream; membership follows the commit's before/final images.
+func (b *BadgerEngine) publishTotalCountChange(id string, edge bool, delta int64) {
+	if edge {
+		b.edgeCount.Add(delta)
+		b.addNamespaceEdgeCount(EdgeID(id), delta)
+	} else {
+		b.nodeCount.Add(delta)
+		b.addNamespaceNodeCount(NodeID(id), delta)
 	}
 }
 
@@ -75,34 +83,47 @@ func (d *bufferedCardinalityDeltas) add(id string, edge bool, change int64) {
 	}
 }
 
-func (d *bufferedCardinalityDeltas) count(prefix string, edge bool) int64 {
+func (d *bufferedCardinalityDeltas) count(ctx context.Context, prefix string, edge bool) (int64, error) {
 	if prefix == "" {
 		if edge {
-			return d.edgeTotal
+			return d.edgeTotal, nil
 		}
-		return d.nodeTotal
+		return d.nodeTotal, nil
 	}
 	values := d.nodes
 	if edge {
 		values = d.edges
 	}
 	var count int64
+	var cancel bulkReadCancellation
 	for id, delta := range values {
+		if err := cancel.check(ctx); err != nil {
+			return 0, err
+		}
 		if strings.HasPrefix(id, prefix) {
 			count += delta
 		}
 	}
-	return count
+	return count, nil
 }
 
-func (w *WriteBehindBuffer) totalCountDeltaForPrefix(prefix string, edge bool) int64 {
-	w.mu.RLock()
+func (w *WriteBehindBuffer) totalCountDeltaForPrefix(ctx context.Context, prefix string, edge bool) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	if err := w.mu.RLockContext(ctx); err != nil {
+		return 0, err
+	}
 	defer w.mu.RUnlock()
 	var delta int64
 	for _, buf := range w.liveBuffers() {
 		if !buf.countsApplied.Load() {
-			delta += buf.totalCounts.count(prefix, edge)
+			count, err := buf.totalCounts.count(ctx, prefix, edge)
+			if err != nil {
+				return 0, err
+			}
+			delta += count
 		}
 	}
-	return delta
+	return delta, ctx.Err()
 }

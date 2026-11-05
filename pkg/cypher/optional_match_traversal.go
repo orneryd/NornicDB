@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -80,22 +81,22 @@ func (e *StorageExecutor) traversalOptionalWhereMatches(ctx context.Context, pre
 // individual clauses. Each clause's own WHERE predicate is separated from its
 // pattern. The first clause has no leading "OPTIONAL MATCH" keyword because
 // the caller consumed it.
-func splitOptionalMatchClauses(section string) []optionalMatchClause {
+func splitOptionalMatchClauses(ctx context.Context, section string) []optionalMatchClause {
 	var clauses []optionalMatchClause
 	rest := strings.TrimSpace(section)
 	for rest != "" {
 		clauseText := rest
-		next := findMultiWordKeywordIndex(rest, "OPTIONAL", "MATCH")
+		next := findMultiWordKeywordIndex(ctx, rest, "OPTIONAL", "MATCH")
 		if next > 0 {
 			clauseText = strings.TrimSpace(rest[:next])
 			after := rest[next:]
-			mIdx := findKeywordIndex(after, "MATCH")
+			mIdx := findKeywordIndex(ctx, after, "MATCH")
 			rest = strings.TrimSpace(after[mIdx+len("MATCH"):])
 		} else {
 			rest = ""
 		}
 		clause := optionalMatchClause{pattern: clauseText}
-		if wIdx := findKeywordIndex(clauseText, "WHERE"); wIdx > 0 {
+		if wIdx := findKeywordIndex(ctx, clauseText, "WHERE"); wIdx > 0 {
 			clause.where = strings.TrimSpace(clauseText[wIdx+len("WHERE"):])
 			clause.pattern = strings.TrimSpace(clauseText[:wIdx])
 		}
@@ -112,16 +113,16 @@ func splitOptionalMatchClauses(section string) []optionalMatchClause {
 // variable (`r r`) is returned as written.
 func extractRelationshipVariables(matchClause string) []string {
 	var vars []string
-	for i, end := nextRelationshipBracket(matchClause, 0); i >= 0; i, end = nextRelationshipBracket(matchClause, end+1) {
+	for i, end := readRelationshipBracket(matchClause, 0, requireClosedRelationship); i >= 0; i, end = readRelationshipBracket(matchClause, end+1, requireClosedRelationship) {
 		j := i + 1
-		for j < len(matchClause) && isWhitespace(matchClause[j]) {
+		for j < len(matchClause) && cyphertext.IsWhitespaceAt(matchClause, j) {
 			j++
 		}
 		name, next, ok := scanSymbolicName(matchClause, j)
 		if !ok {
 			continue
 		}
-		for next < len(matchClause) && isWhitespace(matchClause[next]) {
+		for next < len(matchClause) && cyphertext.IsWhitespaceAt(matchClause, next) {
 			next++
 		}
 		if next < len(matchClause) &&
@@ -149,10 +150,14 @@ func (e *StorageExecutor) parseOptionalClauseEndpoints(ctx context.Context, patt
 	if closeIdx < 0 {
 		return eps, localizedError(localization.CypherMatchingOptionalMatchNodeEndpointUnterminated(truncateQuery(pattern, 60)), nil)
 	}
-	eps.source = e.parseNodePattern(ctx, pattern[openIdx:closeIdx+1])
+	var parseErr error
+	eps.source, parseErr = e.parseNodePattern(ctx, pattern[openIdx:closeIdx+1])
+	if parseErr != nil {
+		return eps, parseErr
+	}
 
 	rest := pattern[closeIdx+1:]
-	if relOpen, relClose := firstRelationshipBracket(rest); relOpen >= 0 {
+	if relOpen, relClose := readRelationshipBracket(rest, 0, requireClosedRelationship); relOpen >= 0 {
 		// The arrows around the relationship give the direction.
 		if strings.HasSuffix(strings.TrimSpace(rest[:relOpen]), "<-") {
 			eps.direction = "in"
@@ -187,7 +192,10 @@ func (e *StorageExecutor) parseOptionalClauseEndpoints(ctx context.Context, patt
 	if tClose < 0 {
 		return eps, localizedError(localization.CypherMatchingOptionalMatchTargetEndpointUnterminated(truncateQuery(pattern, 60)), nil)
 	}
-	eps.target = e.parseNodePattern(ctx, rest[tOpen:tClose+1])
+	eps.target, parseErr = e.parseNodePattern(ctx, rest[tOpen:tClose+1])
+	if parseErr != nil {
+		return eps, parseErr
+	}
 	return eps, nil
 }
 
@@ -256,24 +264,7 @@ func (e *StorageExecutor) applyTraversalOptionalClause(ctx context.Context, rows
 // (letters, digits, underscores; not starting with a digit). Used to gate the
 // projection fast path so any richer expression falls back to the full
 // evaluator.
-func isSimpleTraversalIdentifier(s string) bool {
-	if s == "" {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		switch {
-		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c == '_':
-		case c >= '0' && c <= '9':
-			if i == 0 {
-				return false
-			}
-		default:
-			return false
-		}
-	}
-	return true
-}
+func isSimpleTraversalIdentifier(s string) bool { return cyphertext.IsIdentifier(s) }
 
 // fastTraversalExprValue resolves the two hot projection shapes — "var.prop"
 // and a bare bound variable — without walking the full expression evaluator's
@@ -295,12 +286,7 @@ func fastTraversalExprValue(expr string, row traversalOptRow) (interface{}, bool
 				return nil, true
 			}
 			if propName == "has_embedding" {
-				if node.EmbedMeta != nil {
-					if val, ok := node.EmbedMeta["has_embedding"]; ok {
-						return val, true
-					}
-				}
-				return len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0, true
+				return nodeHasEmbeddingValue(node), true
 			}
 			return node.Properties[propName], true
 		}

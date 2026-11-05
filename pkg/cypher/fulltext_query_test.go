@@ -125,11 +125,9 @@ func TestFulltextTokenizer_RegexPositionDetection(t *testing.T) {
 // makeDoc canonicalizes a fixed doc into an ftDoc for evaluator tests.
 func makeDoc(props map[string]string, defaults ...string) *ftDoc {
 	p := make(map[string]string, len(props))
-	raw := make(map[string]string, len(props))
 	var content strings.Builder
 	for k, v := range props {
-		p[strings.ToLower(k)] = strings.ToLower(v)
-		raw[strings.ToLower(k)] = v
+		p[k] = strings.ToLower(v)
 	}
 	if len(defaults) == 0 {
 		for _, v := range props {
@@ -147,7 +145,6 @@ func makeDoc(props map[string]string, defaults ...string) *ftDoc {
 	c := strings.ToLower(strings.TrimSpace(content.String()))
 	return &ftDoc{
 		properties:    p,
-		rawProperties: raw,
 		contentLower:  c,
 		contentTokenN: len(strings.Fields(c)),
 	}
@@ -697,7 +694,9 @@ func TestDecodeCypherStringLiteral(t *testing.T) {
 	}{
 		{`'foo'`, "foo"},
 		{`"foo"`, "foo"},
-		{`'it\\'s'`, `it\'s`}, // \\ -> \, then \' -> unknown, preserved as \'
+		{`'it\\'s'`, `'it\\'s'`}, // not one string token; preserve the invalid source
+		{`'it\'s'`, "it's"},      // a valid escaped quote decodes
+		{`'it''s'`, `'it''s'`},   // adjacent literals are not a single token
 		{`'has \\backslash'`, `has \backslash`},
 		{`'has \n newline'`, "has \n newline"},
 		{`'has \t tab'`, "has \t tab"},

@@ -18,7 +18,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/orneryd/nornicdb/pkg/internal/plugintest"
+	"github.com/orneryd/nornicdb/internal/pluginbuild"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -301,39 +302,43 @@ func setupHeimdallCoverageGlobals(t *testing.T) {
 		actions:    make(map[string]ActionFunc),
 		orderDirty: true,
 	}
-	globalManager.SetContext(SubsystemContext{
+	globalManager.SetContext(SubsystemHost{
 		Config:  DefaultConfig(),
 		Bifrost: &NoOpBifrost{},
 	})
 
 	globalPostExecutePool = &postExecuteWorkerPool{}
 	globalEventDispatcher = &dbEventDispatcher{
-		events:       make(chan *DatabaseEvent, 1000),
-		done:         make(chan struct{}),
+		events:       make(chan databaseEventWork, 1000),
+		gen:          &lifecycle.WorkLifetime{},
 		pluginQueues: make(map[string]*pluginEventQueue),
 	}
 }
 
 func buildCoverageHeimdallPlugin(t *testing.T, source string) string {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("Go buildmode=plugin is unsupported on Windows; run plugin loading on Linux or macOS")
+	}
 
 	wd, err := os.Getwd()
 	require.NoError(t, err)
 	repoRoot := filepath.Clean(filepath.Join(wd, "../.."))
-	pluginDir, err := os.MkdirTemp(repoRoot, "heimdall-plugin-*")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = os.RemoveAll(pluginDir)
-	})
+	// Other packages run Go package/export discovery concurrently. Generated
+	// plugin sources must stay outside this module's ./... package population.
+	pluginDir := t.TempDir()
 
 	srcPath := filepath.Join(pluginDir, "main.go")
 	soPath := filepath.Join(pluginDir, "plugin.so")
 	require.NoError(t, os.WriteFile(srcPath, []byte(source), 0o600))
 
-	args := append([]string{"build"}, plugintest.BuildFlags()...)
+	buildConfig, err := pluginbuild.Running()
+	require.NoError(t, err)
+	args := append([]string{"build"}, buildConfig.Flags...)
 	args = append(args, "-buildmode=plugin", "-o", soPath, srcPath)
 	cmd := exec.Command("go", args...)
 	cmd.Dir = repoRoot
+	cmd.Env = append(os.Environ(), buildConfig.Env...)
 	output, err := cmd.CombinedOutput()
 	require.NoErrorf(t, err, "failed to build plugin: %s", string(output))
 	return soPath
@@ -350,7 +355,7 @@ func TestHeimdallCoverage_ReflectPluginAndInvokers(t *testing.T) {
 
 	mockPlugin := NewMockPlugin("reflective")
 	adapter := &reflectHeimdallPlugin{val: reflect.ValueOf(mockPlugin)}
-	ctx := SubsystemContext{Config: DefaultConfig(), Bifrost: &NoOpBifrost{}}
+	ctx := SubsystemContext{SubsystemHost: SubsystemHost{Config: DefaultConfig(), Bifrost: &NoOpBifrost{}}}
 
 	assert.Equal(t, "reflective", adapter.Name())
 	assert.Equal(t, "1.0.0", adapter.Version())
@@ -367,16 +372,16 @@ func TestHeimdallCoverage_ReflectPluginAndInvokers(t *testing.T) {
 	assert.Contains(t, adapter.Actions(), "test_action")
 	assert.Equal(t, "Mock plugin summary", adapter.Summary())
 	assert.Len(t, adapter.RecentEvents(5), 0)
-	require.NoError(t, adapter.PrePrompt(&PromptContext{RequestID: "req-1"}))
+	require.NoError(t, adapter.PrePrompt(&PromptContext{Context: t.Context(), RequestID: "req-1"}))
 	done := make(chan PreExecuteResult, 1)
-	adapter.PreExecute(&PreExecuteContext{RequestID: "req-1"}, func(r PreExecuteResult) { done <- r })
+	adapter.PreExecute(&PreExecuteContext{Context: t.Context(), RequestID: "req-1"}, func(r PreExecuteResult) { done <- r })
 	assert.True(t, (<-done).Continue)
-	adapter.PostExecute(&PostExecuteContext{RequestID: "req-1"})
+	adapter.PostExecute(&PostExecuteContext{Context: t.Context(), RequestID: "req-1"})
 	require.NoError(t, adapter.Stop())
 	require.NoError(t, adapter.Shutdown())
 
 	noHooks := &reflectHeimdallPlugin{val: reflect.ValueOf(newCoverageMinimalPlugin("minimal"))}
-	require.NoError(t, noHooks.PrePrompt(&PromptContext{}))
+	require.NoError(t, noHooks.PrePrompt(&PromptContext{Context: t.Context()}))
 	done = make(chan PreExecuteResult, 1)
 	noHooks.PreExecute(&PreExecuteContext{}, func(r PreExecuteResult) { done <- r })
 	assert.True(t, (<-done).Continue)
@@ -406,8 +411,8 @@ func TestHeimdallCoverage_ReflectPluginAndInvokers(t *testing.T) {
 	result, err = noOp.SendRawPrompt(context.Background(), "hello")
 	require.NoError(t, err)
 	assert.False(t, result.Success)
-	noOp.InvokeActionAsync("ignored", nil)
-	noOp.SendPromptAsync("ignored")
+	noOp.InvokeActionAsync(context.Background(), "ignored", nil)
+	noOp.SendPromptAsync(context.Background(), "ignored")
 
 	RegisterBuiltinAction(ActionFunc{
 		Name:        "heimdall_cov_echo",
@@ -452,17 +457,17 @@ func TestHeimdallCoverage_ReflectPluginAndInvokers(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "raw-response", result.Message)
 
-	invoker.InvokeActionAsync("heimdall_cov_echo", map[string]interface{}{"mode": "async"})
+	invoker.InvokeActionAsync(context.Background(), "heimdall_cov_echo", map[string]interface{}{"mode": "async"})
 	require.Eventually(t, func() bool {
 		return notificationCount(bifrost) >= 1
 	}, time.Second, 10*time.Millisecond)
 
-	invoker.SendPromptAsync("hello async")
+	invoker.SendPromptAsync(context.Background(), "hello async")
 	require.Eventually(t, func() bool {
 		return notificationCount(bifrost) >= 2
 	}, time.Second, 10*time.Millisecond)
 
-	invoker.InvokeActionAsync("heimdall_missing_action", nil)
+	invoker.InvokeActionAsync(context.Background(), "heimdall_missing_action", nil)
 	require.Eventually(t, func() bool {
 		return notificationCount(bifrost) >= 3
 	}, time.Second, 10*time.Millisecond)
@@ -521,6 +526,7 @@ func TestHeimdallCoverage_HooksDispatcherAndActionInvoker(t *testing.T) {
 	require.NoError(t, manager.RegisterPlugin(eventer, "", true))
 
 	promptCtx := &PromptContext{
+		Context:     t.Context(),
 		RequestID:   "req-hooks",
 		RequestTime: time.Now(),
 		PluginData:  make(map[string]interface{}),
@@ -531,6 +537,7 @@ func TestHeimdallCoverage_HooksDispatcherAndActionInvoker(t *testing.T) {
 	assert.Equal(t, "alpha", promptCtx.AdditionalInstructions)
 
 	preExecCtx := &PreExecuteContext{
+		Context:     t.Context(),
 		RequestID:   "req-hooks",
 		RequestTime: time.Now(),
 		Action:      "heimdall_cov_echo",
@@ -541,7 +548,7 @@ func TestHeimdallCoverage_HooksDispatcherAndActionInvoker(t *testing.T) {
 	assert.Equal(t, "cancelled by beta", preResult.AbortMessage)
 	assert.Equal(t, "alpha", preExecCtx.Params["stage"])
 
-	postCtx := &PostExecuteContext{RequestID: "req-hooks", Action: "act"}
+	postCtx := &PostExecuteContext{Context: t.Context(), RequestID: "req-hooks", Action: "act"}
 	CallPostExecuteHooks(postCtx)
 	select {
 	case got := <-postExecuteCalled:
@@ -550,7 +557,7 @@ func TestHeimdallCoverage_HooksDispatcherAndActionInvoker(t *testing.T) {
 		t.Fatal("expected post execute hook to run")
 	}
 
-	synth := CallSynthesisHooks(&SynthesisContext{RequestID: "req-hooks"})
+	synth := CallSynthesisHooks(&SynthesisContext{Context: t.Context(), RequestID: "req-hooks"})
 	assert.Equal(t, "custom synthesis", synth)
 
 	RegisterBuiltinAction(ActionFunc{
@@ -667,10 +674,10 @@ func TestHeimdallCoverage_QueryExecutorAndLoggerHelpers(t *testing.T) {
 }
 
 func TestHeimdallCoverage_VLLMGeneratorBranches(t *testing.T) {
-	_, err := newVLLMGenerator(Config{})
+	_, err := newOpenAIGenerator(Config{Provider: "vllm"})
 	require.ErrorContains(t, err, "vllm provider requires")
 
-	gen, err := newVLLMGenerator(Config{Model: "mistral"})
+	gen, err := newOpenAIGenerator(Config{Provider: "vllm", Model: "mistral"})
 	require.NoError(t, err)
 	oag := gen.(*openAIGenerator)
 	assert.Equal(t, defaultVLLMBaseURL, oag.baseURL)
@@ -678,7 +685,7 @@ func TestHeimdallCoverage_VLLMGeneratorBranches(t *testing.T) {
 	assert.Equal(t, "mistral", oag.model)
 	assert.Equal(t, "openai:mistral", gen.ModelPath())
 
-	gen, err = newVLLMGenerator(Config{Model: "mixtral", APIURL: "http://vllm.local:9000/", APIKey: "sk-test"})
+	gen, err = newOpenAIGenerator(Config{Provider: "vllm", Model: "mixtral", APIURL: "http://vllm.local:9000/", APIKey: "sk-test"})
 	require.NoError(t, err)
 	oag = gen.(*openAIGenerator)
 	assert.Equal(t, "http://vllm.local:9000", oag.baseURL)
@@ -732,6 +739,7 @@ func TestHeimdallCoverage_ModelsEndpointDefaults(t *testing.T) {
 
 func TestHeimdallCoverage_PromptToolBudgetBranches(t *testing.T) {
 	ctx := &PromptContext{
+		Context:      t.Context(),
 		ActionPrompt: strings.Repeat("x", MaxSystemPromptTokens()*8),
 		UserMessage:  "test",
 	}
@@ -739,7 +747,7 @@ func TestHeimdallCoverage_PromptToolBudgetBranches(t *testing.T) {
 	assert.Contains(t, prompt, "ACTIONS:")
 	assert.NotContains(t, prompt, "RESPONSE RULES:")
 
-	toolCtx := &PromptContext{ExternalTools: []MCPTool{
+	toolCtx := &PromptContext{Context: t.Context(), ExternalTools: []MCPTool{
 		{Name: "", Description: "skip me"},
 		{Name: "real_tool"},
 		{Name: "schema_tool", Description: "schema desc", InputSchema: json.RawMessage(`{"type":"object"}`)},
@@ -753,6 +761,7 @@ func TestHeimdallCoverage_PromptToolBudgetBranches(t *testing.T) {
 	originalBudget := tokenBudget
 	t.Cleanup(func() { tokenBudget = originalBudget })
 	budgetCtx := &PromptContext{
+		Context:      t.Context(),
 		ActionPrompt: "act",
 		UserMessage:  strings.Repeat("u", 800),
 	}
@@ -814,7 +823,7 @@ func TestHeimdallCoverage_PostExecuteAndEventQueueBranches(t *testing.T) {
 		},
 	}
 	pool := &postExecuteWorkerPool{workers: 1}
-	pool.enqueue(postExecuteJob{pluginName: "post-hook", hook: hook, ctx: &PostExecuteContext{Action: "act"}})
+	pool.enqueue(postExecuteJob{pluginName: "post-hook", hook: hook, ctx: &PostExecuteContext{Context: t.Context(), Action: "act"}})
 	require.Eventually(t, func() bool {
 		select {
 		case got := <-postCalled:
@@ -827,10 +836,12 @@ func TestHeimdallCoverage_PostExecuteAndEventQueueBranches(t *testing.T) {
 
 	dropPool := &postExecuteWorkerPool{jobs: make(chan postExecuteJob)}
 	require.NotPanics(t, func() {
-		dropPool.enqueue(postExecuteJob{pluginName: "drop", hook: hook, ctx: &PostExecuteContext{Action: "drop"}})
+		dropPool.enqueue(postExecuteJob{pluginName: "drop", hook: hook, ctx: &PostExecuteContext{Context: t.Context(), Action: "drop"}})
 	})
 
-	dispatcher := &dbEventDispatcher{pluginQueues: make(map[string]*pluginEventQueue)}
+	dispatcher := &dbEventDispatcher{}
+	dispatcher.start()
+	t.Cleanup(dispatcher.stop)
 	dispatcher.ensurePluginQueueForPlugin(nil)
 	dispatcher.ensurePluginQueueForPlugin(&LoadedHeimdallPlugin{Plugin: newCoverageMinimalPlugin("plain")})
 	require.Empty(t, dispatcher.pluginQueues)
@@ -850,11 +861,7 @@ func TestHeimdallCoverage_PostExecuteAndEventQueueBranches(t *testing.T) {
 		}
 	}, time.Second, 10*time.Millisecond)
 
-	dispatcher.mu.Lock()
-	for _, queue := range dispatcher.pluginQueues {
-		close(queue.ch)
-	}
-	dispatcher.mu.Unlock()
+	dispatcher.stop()
 }
 
 func TestHeimdallCoverage_BifrostConfirmationNoClients(t *testing.T) {
@@ -1001,7 +1008,7 @@ func TestHeimdallCoverage_SchedulerToolHelpers(t *testing.T) {
 	assert.Equal(t, "tool-response", content)
 	assert.Len(t, toolCalls, 1)
 
-	manager.closed = true
+	manager.work.CloseAdmission()
 	_, _, err = manager.GenerateWithTools(context.Background(), nil, nil, DefaultGenerateParams())
 	require.ErrorContains(t, err, "closed")
 
@@ -1048,6 +1055,7 @@ func TestHeimdallCoverage_ToolLoopAndProviderGenerators(t *testing.T) {
 		handler := testHandler(manager, manager.config)
 		lifecycle := &requestLifecycle{
 			promptCtx: &PromptContext{
+				Context:     t.Context(),
 				RequestID:   "req-tools",
 				RequestTime: time.Now(),
 				UserMessage: "run a tool",
@@ -1417,6 +1425,7 @@ func TestHeimdallCoverage_PromptStreamingAndPluginLoading(t *testing.T) {
 		handler := testHandler(manager, manager.config)
 		lifecycle := &requestLifecycle{
 			promptCtx: &PromptContext{
+				Context:     t.Context(),
 				RequestID:   "req-prompt",
 				RequestTime: time.Now(),
 				UserMessage: "do prompt action",
@@ -1472,6 +1481,7 @@ func TestHeimdallCoverage_PromptStreamingAndPluginLoading(t *testing.T) {
 		handler := testHandler(manager, manager.config)
 		lifecycle := &requestLifecycle{
 			promptCtx: &PromptContext{
+				Context:     t.Context(),
 				RequestID:   "req-streaming",
 				RequestTime: time.Now(),
 				UserMessage: "do stream action",
@@ -1499,18 +1509,18 @@ func TestHeimdallCoverage_PromptStreamingAndPluginLoading(t *testing.T) {
 	t.Run("plugin loading errors", func(t *testing.T) {
 		setupHeimdallCoverageGlobals(t)
 
-		ctx := SubsystemContext{Config: DefaultConfig(), Bifrost: &NoOpBifrost{}}
+		ctx := SubsystemHost{Config: DefaultConfig(), Bifrost: &NoOpBifrost{}}
 		require.NoError(t, LoadHeimdallPluginsFromDir("", ctx))
 
 		tmpDir := t.TempDir()
 		require.NoError(t, LoadHeimdallPluginsFromDir(tmpDir, ctx))
 
-		notDir := tmpDir + "/file.txt"
+		notDir := filepath.Join(tmpDir, "file.txt")
 		require.NoError(t, os.WriteFile(notDir, []byte("not a dir"), 0o600))
 		require.ErrorContains(t, LoadHeimdallPluginsFromDir(notDir, ctx), "not a directory")
 
 		badPluginDir := t.TempDir()
-		badPluginPath := badPluginDir + "/bad.so"
+		badPluginPath := filepath.Join(badPluginDir, "bad.so")
 		require.NoError(t, os.WriteFile(badPluginPath, []byte("not a plugin"), 0o600))
 		require.NoError(t, LoadHeimdallPluginsFromDir(badPluginDir, ctx))
 
@@ -1611,7 +1621,7 @@ var Plugin = &pluginImpl{}
 		require.NoError(t, os.WriteFile(filepath.Join(pluginsDir, "iface.so"), interfaceBytes, 0o700))
 		require.NoError(t, os.WriteFile(filepath.Join(pluginsDir, "reflect.so"), reflectBytes, 0o700))
 
-		ctx := SubsystemContext{Config: DefaultConfig(), Bifrost: &NoOpBifrost{}}
+		ctx := SubsystemHost{Config: DefaultConfig(), Bifrost: &NoOpBifrost{}}
 		require.NoError(t, LoadHeimdallPluginsFromDir(pluginsDir, ctx))
 		assert.True(t, HeimdallPluginsInitialized())
 		assert.NotEmpty(t, ListHeimdallPlugins())
@@ -1670,6 +1680,7 @@ var Plugin = &pluginImpl{}
 		handler := testHandler(manager, manager.config)
 		lifecycle := &requestLifecycle{
 			promptCtx: &PromptContext{
+				Context:     t.Context(),
 				RequestID:   "req-branches",
 				RequestTime: time.Now(),
 				UserMessage: "run branchy prompts",
@@ -1751,6 +1762,7 @@ var Plugin = &pluginImpl{}
 		handler = testHandler(newTestManager(streamGen), Config{Enabled: true, Model: "test-model", BifrostEnabled: true})
 		lifecycle = &requestLifecycle{
 			promptCtx: &PromptContext{
+				Context:     t.Context(),
 				RequestID:   "req-stream-branches",
 				RequestTime: time.Now(),
 				UserMessage: "stream branches",
@@ -1836,6 +1848,7 @@ func TestHeimdallCoverage_StreamingResponseExtraBranches(t *testing.T) {
 		handler := testHandler(newTestManager(mockGen), Config{Enabled: true, Model: "test-model", BifrostEnabled: true})
 		lifecycle := &requestLifecycle{
 			promptCtx: &PromptContext{
+				Context:     t.Context(),
 				RequestID:   "req-cancel-stream",
 				RequestTime: time.Now(),
 				UserMessage: "cancel this",
@@ -1887,6 +1900,7 @@ func TestHeimdallCoverage_StreamingResponseExtraBranches(t *testing.T) {
 		}
 		lifecycle := &requestLifecycle{
 			promptCtx: &PromptContext{
+				Context:     t.Context(),
 				RequestID:   "req-memory-stream",
 				RequestTime: time.Now(),
 				UserMessage: "save memory",
@@ -1914,8 +1928,8 @@ func mustActionResultMessage(t *testing.T, result *ActionResult, err error) stri
 
 func TestCoverageExtra_NoOpAsyncAndDefaultLogger(t *testing.T) {
 	noop := &NoOpHeimdallInvoker{}
-	noop.InvokeActionAsync("ignored", map[string]interface{}{"k": "v"})
-	noop.SendPromptAsync("ignored")
+	noop.InvokeActionAsync(context.Background(), "ignored", map[string]interface{}{"k": "v"})
+	noop.SendPromptAsync(context.Background(), "ignored")
 
 	res, err := noop.InvokeAction(context.Background(), "ignored", nil)
 	require.NoError(t, err)
@@ -1972,6 +1986,7 @@ func TestHeimdallCoverage_HandlerToolAndPromptHelpers(t *testing.T) {
 	require.Contains(t, formatted, `"count": 2`)
 
 	prompt := &PromptContext{
+		Context:      t.Context(),
 		ActionPrompt: "- heimdall_status: status",
 		UserMessage:  "What is status?",
 		ExternalTools: []MCPTool{

@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // TestPipelineEvaluatesEveryProjectionItem: the pipeline evaluates the items
@@ -54,16 +56,16 @@ func TestPipelineEvaluatesEveryProjectionItem(t *testing.T) {
 func TestNormalizeMultiMatchWhereClausesMovesEveryWhere(t *testing.T) {
 	require.Equal(t,
 		"MATCH (a) MATCH (b) MATCH (a)-->(x), (b)-->(x) WHERE a.name = 'A' AND b.name = 'B' RETURN x",
-		normalizeMultiMatchWhereClauses("MATCH (a) WHERE a.name = 'A' MATCH (b) WHERE b.name = 'B' MATCH (a)-->(x), (b)-->(x) RETURN x"))
+		normalizeMultiMatchWhereClauses(t.Context(), "MATCH (a) WHERE a.name = 'A' MATCH (b) WHERE b.name = 'B' MATCH (a)-->(x), (b)-->(x) RETURN x"))
 	require.Equal(t,
 		"MATCH (a) MATCH (a)-->(x) WHERE (a.v = 1 OR a.v = 2) AND x.v = 3 RETURN x",
-		normalizeMultiMatchWhereClauses("MATCH (a) WHERE a.v = 1 OR a.v = 2 MATCH (a)-->(x) WHERE x.v = 3 RETURN x"))
+		normalizeMultiMatchWhereClauses(t.Context(), "MATCH (a) WHERE a.v = 1 OR a.v = 2 MATCH (a)-->(x) WHERE x.v = 3 RETURN x"))
 	for _, unchanged := range []string{
 		"MATCH (a) MATCH (b) WHERE b.v = 1 RETURN a",
 		"MATCH (a) WHERE a.v = 1 OPTIONAL MATCH (a)-->(x) RETURN x",
 		"MATCH (a) WHERE a.v = 1 WITH a MATCH (a)-->(x) RETURN x",
 	} {
-		require.Equal(t, unchanged, normalizeMultiMatchWhereClauses(unchanged))
+		require.Equal(t, unchanged, normalizeMultiMatchWhereClauses(t.Context(), unchanged))
 	}
 }
 
@@ -77,7 +79,7 @@ func TestReturnOfUndefinedVariableProperty(t *testing.T) {
 	_, err = exec.Execute(ctx, "MATCH (n:N) RETURN m.val", nil)
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
-	require.Contains(t, err.Error(), "variable m is not defined")
+	require.Contains(t, err.Error(), "Variable `m` not defined")
 }
 
 // TestCallSubqueryAfterProcedureYieldImportsTheRow: CALL { WITH x … } after
@@ -121,7 +123,44 @@ func TestUnwindAliasIsOneVariable(t *testing.T) {
 		_, err := exec.Execute(ctx, query, nil)
 		require.Error(t, err, query)
 		require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError", query)
-		require.Contains(t, err.Error(), "Invalid input '"+token+"'", query)
+		if token == "y" {
+			// The grammar admission owner rejects an extra identifier before
+			// the native UNWIND reader. Keep its precise structured position,
+			// rather than requiring that later reader's English diagnostic.
+			var localized *localization.LocalizedError
+			require.ErrorAs(t, err, &localized)
+			position := localization.CypherANTLRUnexpectedInput(1, 19)
+			want := localization.CypherANTLRParseSyntaxError(position.Fallback, position)
+			require.Equal(t, want.ID, localized.Message.ID)
+			require.Equal(t, want.Data, localized.Message.Data)
+			require.Equal(t, want.Fallback, localized.Message.Fallback)
+		} else {
+			require.Contains(t, err.Error(), "Invalid input '"+token+"'", query)
+		}
+	}
+}
+
+// Statement grammar errors keep the canonical parse identity through public
+// execution, including modes and subqueries, under either configured parser.
+// The standalone validator's separate diagnostic API is tested independently.
+func TestStatementSyntaxDiagnosticsHaveParserParity(t *testing.T) {
+	for _, query := range []string{
+		"UNWIND [1, 2] AS x y RETURN x",
+		"EXPLAIN UNWIND [1, 2] AS x y RETURN x",
+		"PROFILE UNWIND [1, 2] AS x y RETURN x",
+		"CALL { UNWIND [1, 2] AS x y RETURN x } RETURN x",
+	} {
+		t.Run(query, func(t *testing.T) {
+			exec, _ := newTestExecutor(t)
+			// A rejected statement must not become an accepted cache hit.
+			for attempt := 0; attempt < 2; attempt++ {
+				_, err := exec.Execute(t.Context(), query, nil)
+				require.Equal(t, "Neo.ClientError.Statement.SyntaxError", errorStatusCode(err))
+				var diagnostic *localization.LocalizedError
+				require.ErrorAs(t, err, &diagnostic)
+				require.Equal(t, localization.MessageCypherANTLRParseSyntaxError, diagnostic.Message.ID)
+			}
+		})
 	}
 }
 

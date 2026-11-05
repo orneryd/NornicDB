@@ -4,7 +4,10 @@
 // path finding and analysis (plural of path package).
 package paths
 
+import "errors"
+
 import (
+	"context"
 	"github.com/orneryd/nornicdb/apoc/storage"
 )
 
@@ -17,20 +20,48 @@ type Relationship = storage.Relationship
 // Path represents a path through the graph.
 type Path = storage.Path
 
-// Storage is the interface for database operations.
-var Storage storage.Storage = storage.NewInMemoryStorage()
+// Functions binds this package's storage-dependent helpers to one storage
+// backend. The backend is fixed when the instance is created, so a handler an
+// already-admitted caller holds keeps the backend it was built for.
+type Functions struct {
+	backend storage.Storage
+}
+
+// New returns this package's helpers bound to backend. One instance serves one
+// backend; a reconfiguration builds a new instance instead of rebinding this
+// one.
+func New(backend storage.Storage) *Functions {
+	return &Functions{backend: backend}
+}
 
 // All finds all paths between two nodes.
 //
 // Example:
 //
 //	apoc.paths.all(start, end, 'KNOWS', 5) => all paths
-func All(start, end *Node, relType string, maxLength int) []*Path {
-	paths, err := Storage.FindAllPaths(start.ID, end.ID, relType, maxLength)
-	if err != nil {
-		return []*Path{}
+func (f *Functions) All(ctx context.Context, start, end *Node, relType string, maxLength int) ([]*Path, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
 	}
-	return paths
+
+	paths, err := f.backend.FindAllPaths(ctx, start.ID, end.ID, relType, maxLength)
+	if err != nil && !errors.Is(err, storage.ErrPathNotFound) {
+		return nil, err
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	if err != nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return []*Path{}, nil
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return paths, nil
 }
 
 // Shortest finds shortest paths between two nodes.
@@ -38,15 +69,33 @@ func All(start, end *Node, relType string, maxLength int) []*Path {
 // Example:
 //
 //	apoc.paths.shortest(start, end, 'KNOWS', 10) => shortest paths
-func Shortest(start, end *Node, relType string, maxLength int) []*Path {
-	paths, err := Storage.FindAllPaths(start.ID, end.ID, relType, maxLength)
+func (f *Functions) Shortest(ctx context.Context, start, end *Node, relType string, maxLength int) ([]*Path, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	paths, err := f.backend.FindAllPaths(ctx, start.ID, end.ID, relType, maxLength)
+	if err != nil && !errors.Is(err, storage.ErrPathNotFound) {
+		return nil, err
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	if err != nil || len(paths) == 0 {
-		return []*Path{}
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return []*Path{}, nil
 	}
 
 	// Find minimum length
 	minLength := paths[0].Length
 	for _, path := range paths {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		if path.Length < minLength {
 			minLength = path.Length
 		}
@@ -55,12 +104,19 @@ func Shortest(start, end *Node, relType string, maxLength int) []*Path {
 	// Filter to shortest paths
 	shortest := make([]*Path, 0)
 	for _, path := range paths {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		if path.Length == minLength {
 			shortest = append(shortest, path)
 		}
 	}
 
-	return shortest
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return shortest, nil
 }
 
 // Longest finds longest paths between two nodes.
@@ -68,15 +124,33 @@ func Shortest(start, end *Node, relType string, maxLength int) []*Path {
 // Example:
 //
 //	apoc.paths.longest(start, end, 'KNOWS', 10) => longest paths
-func Longest(start, end *Node, relType string, maxLength int) []*Path {
-	paths, err := Storage.FindAllPaths(start.ID, end.ID, relType, maxLength)
+func (f *Functions) Longest(ctx context.Context, start, end *Node, relType string, maxLength int) ([]*Path, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	paths, err := f.backend.FindAllPaths(ctx, start.ID, end.ID, relType, maxLength)
+	if err != nil && !errors.Is(err, storage.ErrPathNotFound) {
+		return nil, err
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	if err != nil || len(paths) == 0 {
-		return []*Path{}
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return []*Path{}, nil
 	}
 
 	// Find maximum length
 	maxLen := paths[0].Length
 	for _, path := range paths {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		if path.Length > maxLen {
 			maxLen = path.Length
 		}
@@ -85,12 +159,19 @@ func Longest(start, end *Node, relType string, maxLength int) []*Path {
 	// Filter to longest paths
 	longest := make([]*Path, 0)
 	for _, path := range paths {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		if path.Length == maxLen {
 			longest = append(longest, path)
 		}
 	}
 
-	return longest
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return longest, nil
 }
 
 // Simple finds simple paths (no repeated nodes).
@@ -98,17 +179,32 @@ func Longest(start, end *Node, relType string, maxLength int) []*Path {
 // Example:
 //
 //	apoc.paths.simple(start, end, 'KNOWS', 10) => simple paths
-func Simple(start, end *Node, relType string, maxLength int) []*Path {
-	paths := All(start, end, relType, maxLength)
+func (f *Functions) Simple(ctx context.Context, start, end *Node, relType string, maxLength int) ([]*Path, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	helperValue1, helperError1 := f.All(ctx, start, end, relType, maxLength)
+	if helperError1 != nil {
+		return nil, helperError1
+	}
+	paths := helperValue1
 	simple := make([]*Path, 0)
 
 	for _, path := range paths {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		if isSimplePath(path) {
 			simple = append(simple, path)
 		}
 	}
 
-	return simple
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return simple, nil
 }
 
 // isSimplePath checks if a path has no repeated nodes.
@@ -128,17 +224,32 @@ func isSimplePath(path *Path) bool {
 // Example:
 //
 //	apoc.paths.elementary(start, end, 'KNOWS', 10) => elementary paths
-func Elementary(start, end *Node, relType string, maxLength int) []*Path {
-	paths := All(start, end, relType, maxLength)
+func (f *Functions) Elementary(ctx context.Context, start, end *Node, relType string, maxLength int) ([]*Path, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	helperValue2, helperError2 := f.All(ctx, start, end, relType, maxLength)
+	if helperError2 != nil {
+		return nil, helperError2
+	}
+	paths := helperValue2
 	elementary := make([]*Path, 0)
 
 	for _, path := range paths {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		if isElementaryPath(path) {
 			elementary = append(elementary, path)
 		}
 	}
 
-	return elementary
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return elementary, nil
 }
 
 // isElementaryPath checks if a path has no repeated edges.
@@ -158,8 +269,16 @@ func isElementaryPath(path *Path) bool {
 // Example:
 //
 //	apoc.paths.disjoint(start, end, 'KNOWS', 10, 3) => disjoint paths
-func Disjoint(start, end *Node, relType string, maxLength, count int) []*Path {
-	allPaths := All(start, end, relType, maxLength)
+func (f *Functions) Disjoint(ctx context.Context, start, end *Node, relType string, maxLength, count int) ([]*Path, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	helperValue3, helperError3 := f.All(ctx, start, end, relType, maxLength)
+	if helperError3 != nil {
+		return nil, helperError3
+	}
+	allPaths := helperValue3
 	disjoint := make([]*Path, 0)
 	usedNodes := make(map[int64]bool)
 
@@ -168,6 +287,10 @@ func Disjoint(start, end *Node, relType string, maxLength, count int) []*Path {
 	usedNodes[end.ID] = false
 
 	for _, path := range allPaths {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		if len(disjoint) >= count {
 			break
 		}
@@ -175,6 +298,10 @@ func Disjoint(start, end *Node, relType string, maxLength, count int) []*Path {
 		// Check if path uses any already-used nodes (except start/end)
 		canUse := true
 		for _, node := range path.Nodes {
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
 			if node.ID != start.ID && node.ID != end.ID && usedNodes[node.ID] {
 				canUse = false
 				break
@@ -185,12 +312,19 @@ func Disjoint(start, end *Node, relType string, maxLength, count int) []*Path {
 			disjoint = append(disjoint, path)
 			// Mark all nodes in this path as used
 			for _, node := range path.Nodes {
+				if operationError := ctx.Err(); operationError != nil {
+					return nil, operationError
+				}
+
 				usedNodes[node.ID] = true
 			}
 		}
 	}
 
-	return disjoint
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return disjoint, nil
 }
 
 // EdgeDisjoint finds edge-disjoint paths.
@@ -198,12 +332,24 @@ func Disjoint(start, end *Node, relType string, maxLength, count int) []*Path {
 // Example:
 //
 //	apoc.paths.edgeDisjoint(start, end, 'KNOWS', 10, 3) => edge-disjoint paths
-func EdgeDisjoint(start, end *Node, relType string, maxLength, count int) []*Path {
-	allPaths := All(start, end, relType, maxLength)
+func (f *Functions) EdgeDisjoint(ctx context.Context, start, end *Node, relType string, maxLength, count int) ([]*Path, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	helperValue4, helperError4 := f.All(ctx, start, end, relType, maxLength)
+	if helperError4 != nil {
+		return nil, helperError4
+	}
+	allPaths := helperValue4
 	edgeDisjoint := make([]*Path, 0)
 	usedEdges := make(map[int64]bool)
 
 	for _, path := range allPaths {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		if len(edgeDisjoint) >= count {
 			break
 		}
@@ -211,6 +357,10 @@ func EdgeDisjoint(start, end *Node, relType string, maxLength, count int) []*Pat
 		// Check if path uses any already-used edges
 		canUse := true
 		for _, rel := range path.Relationships {
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
 			if usedEdges[rel.ID] {
 				canUse = false
 				break
@@ -221,12 +371,19 @@ func EdgeDisjoint(start, end *Node, relType string, maxLength, count int) []*Pat
 			edgeDisjoint = append(edgeDisjoint, path)
 			// Mark all edges in this path as used
 			for _, rel := range path.Relationships {
+				if operationError := ctx.Err(); operationError != nil {
+					return nil, operationError
+				}
+
 				usedEdges[rel.ID] = true
 			}
 		}
 	}
 
-	return edgeDisjoint
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return edgeDisjoint, nil
 }
 
 // Cycles finds all cycles starting from a node.
@@ -234,9 +391,14 @@ func EdgeDisjoint(start, end *Node, relType string, maxLength, count int) []*Pat
 // Example:
 //
 //	apoc.paths.cycles(start, 'KNOWS', 10) => cycles
-func Cycles(start *Node, relType string, maxLength int) []*Path {
+func (f *Functions) Cycles(ctx context.Context, start *Node, relType string, maxLength int) ([]*Path, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	// Find paths that start and end at the same node
-	return All(start, start, relType, maxLength)
+
+	return f.All(ctx, start, start, relType, maxLength)
 }
 
 // Hamiltonian finds Hamiltonian paths (visiting all nodes once).
@@ -244,22 +406,40 @@ func Cycles(start *Node, relType string, maxLength int) []*Path {
 // Example:
 //
 //	apoc.paths.hamiltonian(nodes, start, end) => Hamiltonian paths
-func Hamiltonian(nodes []*Node, start, end *Node) []*Path {
+func (f *Functions) Hamiltonian(ctx context.Context, nodes []*Node, start, end *Node) ([]*Path, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
 	if len(nodes) == 0 {
-		return []*Path{}
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return []*Path{}, nil
 	}
 
 	targetCount := len(nodes)
-	paths := All(start, end, "", targetCount)
+	helperValue5, helperError5 := f.All(ctx, start, end, "", targetCount)
+	if helperError5 != nil {
+		return nil, helperError5
+	}
+	paths := helperValue5
 	hamiltonian := make([]*Path, 0)
 
 	for _, path := range paths {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		if len(path.Nodes) == targetCount && isSimplePath(path) {
 			hamiltonian = append(hamiltonian, path)
 		}
 	}
 
-	return hamiltonian
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return hamiltonian, nil
 }
 
 // Eulerian finds Eulerian paths (visiting all edges once).
@@ -277,12 +457,28 @@ func Eulerian(start, end *Node) []*Path {
 // Example:
 //
 //	apoc.paths.kShortest(start, end, 'KNOWS', 10, 5) => 5 shortest paths
-func KShortest(start, end *Node, relType string, maxLength, k int) []*Path {
-	allPaths := All(start, end, relType, maxLength)
+func (f *Functions) KShortest(ctx context.Context, start, end *Node, relType string, maxLength, k int) ([]*Path, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	helperValue6, helperError6 := f.All(ctx, start, end, relType, maxLength)
+	if helperError6 != nil {
+		return nil, helperError6
+	}
+	allPaths := helperValue6
 
 	// Sort by length
 	for i := 0; i < len(allPaths); i++ {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		for j := i + 1; j < len(allPaths); j++ {
+			if operationError := ctx.Err(); operationError != nil {
+				return nil, operationError
+			}
+
 			if allPaths[i].Length > allPaths[j].Length {
 				allPaths[i], allPaths[j] = allPaths[j], allPaths[i]
 			}
@@ -290,9 +486,15 @@ func KShortest(start, end *Node, relType string, maxLength, k int) []*Path {
 	}
 
 	if len(allPaths) > k {
-		return allPaths[:k]
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+		return allPaths[:k], nil
 	}
-	return allPaths
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return allPaths, nil
 }
 
 // WithLength finds paths of specific length.
@@ -300,17 +502,32 @@ func KShortest(start, end *Node, relType string, maxLength, k int) []*Path {
 // Example:
 //
 //	apoc.paths.withLength(start, end, 'KNOWS', 3) => paths of length 3
-func WithLength(start, end *Node, relType string, length int) []*Path {
-	paths := All(start, end, relType, length)
+func (f *Functions) WithLength(ctx context.Context, start, end *Node, relType string, length int) ([]*Path, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	helperValue7, helperError7 := f.All(ctx, start, end, relType, length)
+	if helperError7 != nil {
+		return nil, helperError7
+	}
+	paths := helperValue7
 	result := make([]*Path, 0)
 
 	for _, path := range paths {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		if path.Length == length {
 			result = append(result, path)
 		}
 	}
 
-	return result
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return result, nil
 }
 
 // WithinLength finds paths within length range.
@@ -318,17 +535,32 @@ func WithLength(start, end *Node, relType string, length int) []*Path {
 // Example:
 //
 //	apoc.paths.withinLength(start, end, 'KNOWS', 2, 5) => paths length 2-5
-func WithinLength(start, end *Node, relType string, minLength, maxLength int) []*Path {
-	paths := All(start, end, relType, maxLength)
+func (f *Functions) WithinLength(ctx context.Context, start, end *Node, relType string, minLength, maxLength int) ([]*Path, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+
+	helperValue8, helperError8 := f.All(ctx, start, end, relType, maxLength)
+	if helperError8 != nil {
+		return nil, helperError8
+	}
+	paths := helperValue8
 	result := make([]*Path, 0)
 
 	for _, path := range paths {
+		if operationError := ctx.Err(); operationError != nil {
+			return nil, operationError
+		}
+
 		if path.Length >= minLength && path.Length <= maxLength {
 			result = append(result, path)
 		}
 	}
 
-	return result
+	if operationError := ctx.Err(); operationError != nil {
+		return nil, operationError
+	}
+	return result, nil
 }
 
 // Count counts paths between nodes.
@@ -336,9 +568,20 @@ func WithinLength(start, end *Node, relType string, minLength, maxLength int) []
 // Example:
 //
 //	apoc.paths.count(start, end, 'KNOWS', 10) => count
-func Count(start, end *Node, relType string, maxLength int) int {
-	paths := All(start, end, relType, maxLength)
-	return len(paths)
+func (f *Functions) Count(ctx context.Context, start, end *Node, relType string, maxLength int) (int, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return 0, operationError
+	}
+
+	helperValue9, helperError9 := f.All(ctx, start, end, relType, maxLength)
+	if helperError9 != nil {
+		return 0, helperError9
+	}
+	paths := helperValue9
+	if operationError := ctx.Err(); operationError != nil {
+		return 0, operationError
+	}
+	return len(paths), nil
 }
 
 // Exists checks if any path exists.
@@ -346,9 +589,20 @@ func Count(start, end *Node, relType string, maxLength int) int {
 // Example:
 //
 //	apoc.paths.exists(start, end, 'KNOWS', 10) => true/false
-func Exists(start, end *Node, relType string, maxLength int) bool {
-	path, err := Storage.FindShortestPath(start.ID, end.ID, relType, maxLength)
-	return err == nil && path != nil
+func (f *Functions) Exists(ctx context.Context, start, end *Node, relType string, maxLength int) (bool, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return false, operationError
+	}
+
+	path, err := f.backend.FindShortestPath(ctx, start.ID, end.ID, relType, maxLength)
+	if err != nil && !errors.Is(err, storage.ErrPathNotFound) {
+		return false, err
+	}
+
+	if operationError := ctx.Err(); operationError != nil {
+		return false, operationError
+	}
+	return err == nil && path != nil, nil
 }
 
 // Distance calculates path distance (length).
@@ -356,12 +610,29 @@ func Exists(start, end *Node, relType string, maxLength int) bool {
 // Example:
 //
 //	apoc.paths.distance(start, end, 'KNOWS') => distance
-func Distance(start, end *Node, relType string) int {
-	path, err := Storage.FindShortestPath(start.ID, end.ID, relType, 100)
-	if err != nil || path == nil {
-		return -1
+func (f *Functions) Distance(ctx context.Context, start, end *Node, relType string) (int, error) {
+	if operationError := ctx.Err(); operationError != nil {
+		return 0, operationError
 	}
-	return path.Length
+
+	path, err := f.backend.FindShortestPath(ctx, start.ID, end.ID, relType, 100)
+	if err != nil && !errors.Is(err, storage.ErrPathNotFound) {
+		return 0, err
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return 0, operationError
+	}
+
+	if err != nil || path == nil {
+		if operationError := ctx.Err(); operationError != nil {
+			return 0, operationError
+		}
+		return -1, nil
+	}
+	if operationError := ctx.Err(); operationError != nil {
+		return 0, operationError
+	}
+	return path.Length, nil
 }
 
 // Common finds common nodes in multiple paths.

@@ -823,6 +823,7 @@ func (t *Tracker) evictOldest() {
 		return
 	}
 	oldest := t.accessOrder[0]
+	t.accessOrder[0] = ""
 	t.accessOrder = t.accessOrder[1:]
 	delete(t.nodes, oldest)
 }

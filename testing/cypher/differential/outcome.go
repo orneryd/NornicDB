@@ -1,10 +1,9 @@
 package differential
 
 import (
-	"encoding/json"
+	"github.com/orneryd/nornicdb/internal/jsontext"
 	"regexp"
 	"sort"
-	"strings"
 )
 
 // Outcome is one statement's answer through one route: its columns and rows,
@@ -45,14 +44,16 @@ var orderBy = regexp.MustCompile(`(?i)\bORDER\s+BY\b`)
 //   - a statement that keeps arbitrary rows (Arbitrary) compares its columns
 //     and its number of rows only.
 func Same(query string, reference, actual Outcome) bool {
-	if Arbitrary(query) && !reference.Failed() && !actual.Failed() {
+	_, masked := maskQuery(query, maskOpaqueSyntax)
+	facts := inspectClauseRoles(query)
+	if facts.arbitrary && !reference.Failed() && !actual.Failed() {
 		return equalStrings(reference.Columns, actual.Columns) && len(reference.Rows) == len(actual.Rows)
 	}
 	shape := returnShape(query, reference.Columns)
 	return sameRows(reference, actual, comparison{
-		ordered:        orderBy.MatchString(query),
+		ordered:        orderBy.MatchString(facts.roleMask(masked, true)),
 		tieKeys:        shape.sortKeys,
-		unorderedLists: unorderedCollect(query),
+		unorderedLists: unorderedCollect(facts.roleMask(masked, false)),
 		tokenColumns:   shape.tokenColumns,
 	})
 }
@@ -60,32 +61,20 @@ func Same(query string, reference, actual Outcome) bool {
 // OrderOnly reports whether two outcomes of query that don't agree (Same)
 // differ only in the order of their rows: the same rows, as a multiset.
 func OrderOnly(query string, reference, actual Outcome) bool {
-	if reference.Failed() || actual.Failed() || !orderBy.MatchString(query) {
+	_, masked := maskQuery(query, maskOpaqueSyntax)
+	facts := inspectClauseRoles(query)
+	if reference.Failed() || actual.Failed() || !orderBy.MatchString(facts.roleMask(masked, true)) {
 		return false
 	}
 	shape := returnShape(query, reference.Columns)
-	return sameRows(reference, actual, comparison{unorderedLists: unorderedCollect(query), tokenColumns: shape.tokenColumns})
+	return sameRows(reference, actual, comparison{unorderedLists: unorderedCollect(facts.roleMask(masked, false)), tokenColumns: shape.tokenColumns})
 }
-
-var (
-	rowLimit       = regexp.MustCompile(`(?i)\b(LIMIT|SKIP)\b`)
-	clauseKeywords = regexp.MustCompile(`(?i)\b(WITH|RETURN)\b`)
-)
 
 // Arbitrary reports whether query keeps arbitrary rows: a LIMIT or SKIP with
 // no ORDER BY since its clause's WITH or RETURN. Which rows such a clause keeps
 // isn't defined (in Neo4j either), so neither are its rows nor what it writes.
 func Arbitrary(query string) bool {
-	for _, limit := range rowLimit.FindAllStringIndex(query, -1) {
-		clauseStart := 0
-		for _, keyword := range clauseKeywords.FindAllStringIndex(query[:limit[0]], -1) {
-			clauseStart = keyword[0]
-		}
-		if !orderBy.MatchString(query[clauseStart:limit[0]]) {
-			return true
-		}
-	}
-	return false
+	return inspectClauseRoles(query).arbitrary
 }
 
 // SameGraphState reports whether two answers of a GraphStateQueries statement
@@ -175,9 +164,11 @@ func sortColumns(row []any, columns []int) []any {
 
 // unorderedCollect reports whether query's first collect( has no ORDER BY
 // before it.
+var collectCall = regexp.MustCompile(`(?i)(?:^|[^.\w$])collect\s*\(`)
+
 func unorderedCollect(query string) bool {
-	index := strings.Index(strings.ToLower(query), "collect(")
-	return index >= 0 && !orderBy.MatchString(query[:index])
+	match := collectCall.FindStringIndex(query)
+	return match != nil && !orderBy.MatchString(query[:match[0]])
 }
 
 // canonical is value's JSON with map keys sorted; with unorderedLists, the
@@ -186,7 +177,7 @@ func canonical(value any, unorderedLists bool) string {
 	if unorderedLists {
 		value = sortLists(value)
 	}
-	encoded, err := json.Marshal(value)
+	encoded, err := jsontext.Marshal(value)
 	if err != nil {
 		return "unencodable"
 	}
@@ -233,9 +224,10 @@ var GraphStateQueries = []string{
 	"MATCH (a)-[r]->(b) RETURN properties(a) AS start, type(r) AS type, properties(r) AS properties, properties(b) AS end",
 }
 
-var writeClause = regexp.MustCompile(`(?i)\b(CREATE|MERGE|SET|DELETE|REMOVE|FOREACH|DROP)\b`)
-
 // Writes reports whether query may change the graph in a defined way, so the
 // graph state after it is compared too: it writes, and doesn't write to
 // arbitrary rows (Arbitrary).
-func Writes(query string) bool { return writeClause.MatchString(query) && !Arbitrary(query) }
+func Writes(query string) bool {
+	facts := inspectClauseRoles(query)
+	return facts.writes && !facts.arbitrary
+}

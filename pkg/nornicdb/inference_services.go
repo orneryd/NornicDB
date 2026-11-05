@@ -115,7 +115,7 @@ func (db *DB) resolveDatabaseStorage(dbName string) (storage.Engine, error) {
 // GetOrCreateInferenceService is the public wrapper that checks closed state.
 func (db *DB) GetOrCreateInferenceService(dbName string, storageEngine storage.Engine) (*inference.Engine, error) {
 	db.mu.RLock()
-	closed := db.closed
+	closed := db.work.Closing()
 	db.mu.RUnlock()
 	if closed {
 		return nil, ErrClosed

@@ -22,19 +22,19 @@ type countingCallTailNodes struct {
 	reads int
 }
 
-func (engine *countingCallTailNodes) GetNode(id storage.NodeID) (*storage.Node, error) {
+func (engine *countingCallTailNodes) GetNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
 	engine.reads++
-	return engine.Engine.GetNode(id)
+	return engine.Engine.GetNode(ctx, id)
 }
 
 func TestCallTailRelationshipReusesEndpointsWithinExecution(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "calltailreuse")
-	_, err := store.CreateNode(&storage.Node{ID: "a", Labels: []string{"CT"}, Properties: map[string]interface{}{"name": "Alice"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"CT"}, Properties: map[string]interface{}{"name": "Alice"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "b", Labels: []string{"CT"}, Properties: map[string]interface{}{"name": "Bob"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"CT"}, Properties: map[string]interface{}{"name": "Bob"}})
 	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "edge", StartNode: "a", EndNode: "b", Type: "CTR", Properties: map[string]interface{}{"name": "shared"}}))
-	edge, err := store.GetEdge("edge")
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "edge", StartNode: "a", EndNode: "b", Type: "CTR", Properties: map[string]interface{}{"name": "shared"}}))
+	edge, err := store.GetEdge(t.Context(), "edge")
 	require.NoError(t, err)
 
 	counted := &countingCallTailNodes{Engine: store}
@@ -99,5 +99,63 @@ func TestCallTailPlansEvaluateLikeThePipeline(t *testing.T) {
 		} else {
 			require.ElementsMatch(t, tc.want, result.Rows, tc.query)
 		}
+	}
+}
+
+func TestCallTailCachedPlansResolveCurrentPagination(t *testing.T) {
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "calltail-current-pagination")
+	for _, id := range []storage.NodeID{"left", "right"} {
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"PageNode"}, Properties: map[string]interface{}{"name": string(id)}})
+		require.NoError(t, err)
+	}
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "page-edge", StartNode: "left", EndNode: "right", Type: "PageEdge", Properties: map[string]interface{}{"key": "one"}}))
+	edge, err := store.GetEdge(t.Context(), "page-edge")
+	require.NoError(t, err)
+	exec := NewStorageExecutor(store)
+	for _, tc := range []struct {
+		name, tail   string
+		seed         *ExecuteResult
+		relationship bool
+	}{
+		{"projection", "WITH name RETURN name LIMIT $page_limit", &ExecuteResult{Columns: []string{"name"}, Rows: [][]interface{}{{"left"}, {"right"}}}, false},
+		{"relationship", "MATCH (a:PageNode)-[r:PageEdge {key: relationship.key}]->(b:PageNode) WITH a, r, b RETURN a.name AS name LIMIT $page_limit", &ExecuteResult{Columns: []string{"relationship"}, Rows: [][]interface{}{{edge}, {edge}}}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, limit := range []interface{}{int64(1), "not-an-integer", int64(2), nil, int64(0)} {
+				ctx := withParams(context.Background(), map[string]interface{}{"page_limit": limit})
+				var result *ExecuteResult
+				var handled bool
+				var err error
+				if tc.relationship {
+					result, handled, err = exec.tryExecuteCallTailRelationshipMatchProjection(ctx, tc.seed, tc.tail, nil)
+				} else {
+					result, handled, err = exec.tryExecuteCallTailProjectionFilter(ctx, tc.seed, tc.tail, nil)
+				}
+				require.NoError(t, err)
+				wanted, integer := limit.(int64)
+				if !integer {
+					require.False(t, handled)
+					require.Nil(t, result)
+					continue
+				}
+				require.True(t, handled)
+				require.NotNil(t, result)
+				require.Len(t, result.Rows, int(wanted))
+				require.Equal(t, []string{"name"}, result.Columns)
+				for i, row := range result.Rows {
+					name := "left"
+					if !tc.relationship && i == 1 {
+						name = "right"
+					}
+					require.Equal(t, []interface{}{name}, row)
+				}
+				if tc.relationship {
+					result, handled, err = exec.tryExecuteCallTailProjectionFilter(ctx, tc.seed, tc.tail, nil)
+					require.NoError(t, err)
+					require.False(t, handled)
+					require.Nil(t, result)
+				}
+			}
+		})
 	}
 }

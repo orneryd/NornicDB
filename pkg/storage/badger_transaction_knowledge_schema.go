@@ -1,21 +1,31 @@
 package storage
 
 import (
-	"encoding/json"
+	"context"
 	"errors"
 	"fmt"
 
 	"github.com/dgraph-io/badger/v4"
 )
 
-// KnowledgePolicySchema returns the transaction's isolated native schema view.
-// Changes are persisted with the transaction and become visible on commit.
-// For example, view, err := tx.KnowledgePolicySchema() obtains the view for a
-// subsequent view.CreatePromotionPolicy(policy) call; rollback discards it.
-func (tx *BadgerTransaction) KnowledgePolicySchema() (*SchemaManager, error) {
+// Schema returns the transaction's isolated schema for purpose. Ordinary DDL
+// admits its writer before creating the view and cannot mix with entity writes.
+// Knowledge-policy reads claim no writer; persisting a policy change admits it.
+// For example, view, err := tx.Schema(KnowledgePolicyChanges) obtains a view
+// for view.CreatePromotionPolicy; rollback discards its persisted changes.
+// DDL uses tx.Schema(OrdinarySchemaChanges), then StageSchemaChanges and Commit.
+func (tx *BadgerTransaction) Schema(purpose SchemaPurpose) (*SchemaManager, error) {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	operation := transactionRead
+	switch purpose {
+	case OrdinarySchemaChanges:
+		operation = transactionSchemaWrite
+	case KnowledgePolicyChanges:
+	default:
+		return nil, fmt.Errorf("invalid transaction schema purpose: %d", purpose)
+	}
+	if err := tx.ensureOperationAllowedLocked(operation); err != nil {
 		return nil, err
 	}
 	if tx.knowledgeSchema != nil {
@@ -30,26 +40,33 @@ func (tx *BadgerTransaction) KnowledgePolicySchema() (*SchemaManager, error) {
 		return nil, err
 	}
 	if err == nil {
-		if err := item.Value(func(value []byte) error { return json.Unmarshal(value, definition) }); err != nil {
+		if err := item.Value(func(value []byte) error { return DecodeSchemaDefinition(value, definition) }); err != nil {
 			return nil, err
 		}
 	}
 	view := NewSchemaManager()
-	if err := view.ReplaceFromDefinition(definition); err != nil {
+	// The transaction's schema view is built as part of the transaction's own
+	// accepted lifetime, not a caller request.
+	if err := view.ReplaceFromDefinition(context.Background(), definition); err != nil {
 		return nil, err
 	}
 	view.SetPersister(func(updated *SchemaDefinition) error {
 		tx.mu.Lock()
 		defer tx.mu.Unlock()
-		if err := tx.ensureLifecycleActiveLocked(); err != nil {
+		if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 			return err
 		}
-		blob, err := json.Marshal(updated)
+		// The change is admitted before it is marshalled or written, so a
+		// refused admission leaves the view and the transaction unchanged.
+		if err := tx.admitWriteLocked(); err != nil {
+			return err
+		}
+		blob, err := EncodeSchemaDefinition(updated)
 		if err != nil {
 			return err
 		}
 		persisted := &SchemaDefinition{}
-		if err := json.Unmarshal(blob, persisted); err != nil {
+		if err := DecodeSchemaDefinition(blob, persisted); err != nil {
 			return err
 		}
 		if err := tx.badgerTx.Set(schemaKey(tx.namespace), blob); err != nil {
@@ -78,19 +95,20 @@ func (tx *BadgerTransaction) publishKnowledgePolicySchemaLocked() func() {
 	}
 	definition := tx.knowledgeSchemaDefinition
 	snapshot := NewSchemaManager()
-	if err := snapshot.ReplaceFromDefinition(definition); err != nil {
+	// Commit publication is accepted work; it completes under its own lifetime.
+	if err := snapshot.ReplaceFromDefinition(context.Background(), definition); err != nil {
 		return nil
 	}
 	committed := tx.engine.GetSchemaForNamespace(tx.namespace)
 	committed.mu.Lock()
 	if tx.schemaRuntime != nil {
-		committed.installTransactionSchemaLocked(tx.schemaRuntime)
+		committed.installSchemaLocked(tx.schemaRuntime, transactionSchemaInstallation)
 	}
 	committed.decayProfileBundles = snapshot.decayProfileBundles
 	committed.decayProfileBindings = snapshot.decayProfileBindings
 	committed.promotionProfiles = snapshot.promotionProfiles
 	committed.promotionPolicies = snapshot.promotionPolicies
-	committed.rebuildBindingTableLocked()
+	committed.bindingTable = snapshot.bindingTable
 	onChanged := committed.knowledgePolicyChanged
 	committed.mu.Unlock()
 	if tx.schemaRuntime != nil {

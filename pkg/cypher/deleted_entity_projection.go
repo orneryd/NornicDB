@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -16,23 +17,6 @@ import (
 type deletedEntities struct {
 	nodes map[storage.NodeID]struct{}
 	edges map[storage.EdgeID]struct{}
-}
-
-type deletedEntitiesKey struct{}
-
-// withDeletedEntities gives the statement a deletedEntities, unless ctx has
-// one: a subquery, FOREACH or row-at-a-time run shares the statement's.
-func withDeletedEntities(ctx context.Context) context.Context {
-	if deletedEntitiesOf(ctx) != nil {
-		return ctx
-	}
-	return context.WithValue(ctx, deletedEntitiesKey{}, &deletedEntities{})
-}
-
-// deletedEntitiesOf is the statement's deletedEntities, nil when it has none.
-func deletedEntitiesOf(ctx context.Context) *deletedEntities {
-	deleted, _ := ctx.Value(deletedEntitiesKey{}).(*deletedEntities)
-	return deleted
 }
 
 // pipelineClausesMayDelete reports whether clauses can delete: a DELETE, or
@@ -75,14 +59,14 @@ func (d *deletedEntities) empty() bool {
 // and endpoints (type(r) still answers). Paths and lists holding a deleted
 // entity are rebuilt with its view (#907). Reading a deleted entity's
 // property or labels is an error instead (validateDeletedEntityReads).
-func (e *StorageExecutor) replaceDeletedEntityViews(rows []pipelineRow, deleted *deletedEntities) {
+func (e *StorageExecutor) replaceDeletedEntityViews(ctx context.Context, rows []pipelineRow, deleted *deletedEntities) {
 	if deleted.empty() {
 		return
 	}
 	views := deletedEntityViews{executor: e, nodes: deleted.nodes, edges: deleted.edges}
 	for _, row := range rows {
 		for name, value := range row {
-			if replaced, changed := views.replace(value); changed {
+			if replaced, changed := views.replace(ctx, value); changed {
 				row[name] = replaced
 			}
 		}
@@ -100,26 +84,26 @@ type deletedEntityViews struct {
 
 // replace returns value with its deleted entities replaced by their views,
 // and whether anything was replaced.
-func (v *deletedEntityViews) replace(value interface{}) (interface{}, bool) {
+func (v *deletedEntityViews) replace(ctx context.Context, value interface{}) (interface{}, bool) {
 	switch typed := value.(type) {
 	case *storage.Node:
 		if typed == nil {
 			return value, false
 		}
-		if _, deleted := v.nodes[typed.ID]; deleted {
+		if _, deleted := v.nodes[storage.NodeID(typed.IdentityKey())]; deleted {
 			return v.node(typed), true
 		}
 	case *storage.Edge:
 		if typed == nil {
 			return value, false
 		}
-		if _, deleted := v.edges[typed.ID]; deleted {
+		if _, deleted := v.edges[storage.EdgeID(typed.IdentityKey())]; deleted {
 			return v.edge(typed), true
 		}
 	case []interface{}:
 		var replaced []interface{}
 		for index, item := range typed {
-			if view, changed := v.replace(item); changed {
+			if view, changed := v.replace(ctx, item); changed {
 				if replaced == nil {
 					replaced = append([]interface{}(nil), typed...)
 				}
@@ -146,31 +130,33 @@ func (v *deletedEntityViews) replace(value interface{}) (interface{}, bool) {
 		nodes := make([]*storage.Node, len(path.Nodes))
 		for index, node := range path.Nodes {
 			nodes[index] = node
-			if view, replaced := v.replace(node); replaced {
+			if view, replaced := v.replace(ctx, node); replaced {
 				nodes[index], changed = view.(*storage.Node), true
 			}
 		}
 		relationships := make([]*storage.Edge, len(path.Relationships))
 		for index, relationship := range path.Relationships {
 			relationships[index] = relationship
-			if view, replaced := v.replace(relationship); replaced {
+			if view, replaced := v.replace(ctx, relationship); replaced {
 				relationships[index], changed = view.(*storage.Edge), true
 			}
 		}
 		if changed {
 			path.Nodes, path.Relationships = nodes, relationships
-			return v.executor.pathToMap(path), true
+			return v.executor.pathToMapContext(ctx, path), true
 		}
 	}
 	return value, false
 }
 
 func (v *deletedEntityViews) node(node *storage.Node) *storage.Node {
-	return &storage.Node{ID: node.ID}
+	deleted := &storage.Node{ID: node.ID}
+	deleted.SetRuntimeMetadata(storage.NodeRuntimeMetadata{Database: node.RuntimeMetadata().Database})
+	return deleted
 }
 
 func (v *deletedEntityViews) edge(edge *storage.Edge) *storage.Edge {
-	return &storage.Edge{ID: edge.ID, Type: edge.Type, StartNode: edge.StartNode, EndNode: edge.EndNode}
+	return &storage.Edge{ID: edge.ID, Database: edge.Database, Type: edge.Type, StartNode: edge.StartNode, EndNode: edge.EndNode}
 }
 
 // validateDeletedEntityReads rejects a clause that, after a DELETE in the
@@ -219,22 +205,17 @@ type deletedEntityRead struct {
 func deletedEntityReadsIn(expression string) []deletedEntityRead {
 	var reads []deletedEntityRead
 	for index := 0; index < len(expression); {
-		switch character := expression[index]; {
-		case character == '\'' || character == '"' || character == '`':
-			end := strings.IndexByte(expression[index+1:], character)
-			if end < 0 {
-				return reads
-			}
-			index += end + 2
+		if end, quoted := skipCypherLexicalToken(expression, index); quoted {
+			index = end
 			continue
-		case !isIdentByte(character) || (index > 0 && (isIdentByte(expression[index-1]) || expression[index-1] == '.')):
+		}
+		switch {
+		case !cyphertext.NamePartAt(expression, index) || (index > 0 && (cyphertext.NamePartAt(expression, index-1) || expression[index-1] == '.')):
 			index++
 			continue
 		}
 		start := index
-		for index < len(expression) && isIdentByte(expression[index]) {
-			index++
-		}
+		index = cyphertext.NamePartEnd(expression, index)
 		word := expression[start:index]
 		next := skipSpaceIndex(expression, index)
 		switch {
@@ -245,9 +226,7 @@ func deletedEntityReadsIn(expression string) []deletedEntityRead {
 		case next < len(expression) && expression[next] == '(' && (strings.EqualFold(word, "labels") || strings.EqualFold(word, "keys") || strings.EqualFold(word, "properties")):
 			argumentStart := skipSpaceIndex(expression, next+1)
 			argumentEnd := argumentStart
-			for argumentEnd < len(expression) && isIdentByte(expression[argumentEnd]) {
-				argumentEnd++
-			}
+			argumentEnd = cyphertext.NamePartEnd(expression, argumentEnd)
 			if close := skipSpaceIndex(expression, argumentEnd); argumentEnd > argumentStart && close < len(expression) && expression[close] == ')' {
 				reads = append(reads, deletedEntityRead{variable: expression[argumentStart:argumentEnd], relationshipOnly: !strings.EqualFold(word, "labels")})
 			}
@@ -257,7 +236,7 @@ func deletedEntityReadsIn(expression string) []deletedEntityRead {
 }
 
 func skipSpaceIndex(text string, index int) int {
-	for index < len(text) && isASCIISpace(text[index]) {
+	for index < len(text) && cyphertext.IsWhitespaceAt(text, index) {
 		index++
 	}
 	return index
@@ -288,13 +267,13 @@ func (d *deletedEntities) holdsDeleted(value interface{}, relationshipOnly bool)
 		if relationshipOnly || entity == nil {
 			return false
 		}
-		_, found := d.nodes[entity.ID]
+		_, found := d.nodes[storage.NodeID(entity.IdentityKey())]
 		return found
 	case *storage.Edge:
 		if entity == nil {
 			return false
 		}
-		_, found := d.edges[entity.ID]
+		_, found := d.edges[storage.EdgeID(entity.IdentityKey())]
 		return found
 	default:
 		return false
@@ -305,16 +284,14 @@ func (d *deletedEntities) holdsDeleted(value interface{}, relationshipOnly bool)
 // index is followed by IS NULL or IS NOT NULL: Neo4j tests a deleted
 // entity's property for null without an error (it has none).
 func propertyNullTestFollows(expression string, index int) bool {
-	for index < len(expression) && isIdentByte(expression[index]) {
-		index++
-	}
+	index = cyphertext.NamePartEnd(expression, index)
 	rest := expression[skipSpaceIndex(expression, index):]
 	if !startsWithKeywordFold(rest, "IS") {
 		return false
 	}
-	rest = strings.TrimLeft(rest[len("IS"):], " \t\r\n")
+	rest = strings.TrimLeftFunc(rest[len("IS"):], cyphertext.IsWhitespace)
 	if startsWithKeywordFold(rest, "NOT") {
-		rest = strings.TrimLeft(rest[len("NOT"):], " \t\r\n")
+		rest = strings.TrimLeftFunc(rest[len("NOT"):], cyphertext.IsWhitespace)
 	}
 	return startsWithKeywordFold(rest, "NULL")
 }
@@ -324,7 +301,7 @@ func propertyNullTestFollows(expression string, index int) bool {
 // | …)), "" when variable iterates no row variable.
 func iterationSourceVariable(clause, variable string) string {
 	for offset := 0; offset < len(clause); {
-		index := indexIdentifierFold(clause[offset:], variable)
+		index := cyphertext.FindIdentifier(clause[offset:], variable, 0, cyphertext.IdentifierFold)
 		if index < 0 {
 			return ""
 		}
@@ -334,41 +311,14 @@ func iterationSourceVariable(clause, variable string) string {
 		if !startsWithKeywordFold(rest, "IN") {
 			continue
 		}
-		rest = strings.TrimLeft(rest[len("IN"):], " \t\r\n")
+		rest = strings.TrimLeftFunc(rest[len("IN"):], cyphertext.IsWhitespace)
 		end := 0
-		for end < len(rest) && isIdentByte(rest[end]) {
-			end++
-		}
+		end = cyphertext.NamePartEnd(rest, end)
 		if end > 0 {
 			return rest[:end]
 		}
 	}
 	return ""
-}
-
-// indexIdentifierFold is the index of identifier in text as a whole word
-// outside string literals, -1 when it isn't there.
-func indexIdentifierFold(text, identifier string) int {
-	for index := 0; index+len(identifier) <= len(text); {
-		switch character := text[index]; {
-		case character == '\'' || character == '"' || character == '`':
-			end := strings.IndexByte(text[index+1:], character)
-			if end < 0 {
-				return -1
-			}
-			index += end + 2
-			continue
-		case (index > 0 && isIdentByte(text[index-1])) || !strings.EqualFold(text[index:index+len(identifier)], identifier):
-			index++
-			continue
-		}
-		if end := index + len(identifier); end < len(text) && isIdentByte(text[end]) {
-			index++
-			continue
-		}
-		return index
-	}
-	return -1
 }
 
 // deletedEntityReadText is the part of clause that reads values, for
@@ -408,4 +358,35 @@ func deletedEntityReadText(clause pipelineClause) string {
 		return values.String()
 	}
 	return clause.text
+}
+
+// deleteEdgeLookupID uses the same identity translation as collected targets
+// for relationships discovered while validating or detaching a node.
+func deleteEdgeLookupID(store storage.Engine, edge *storage.Edge) storage.EdgeID {
+	id, _ := edge.Identity().LookupID(store, "5")
+	return storage.EdgeID(id)
+}
+
+// addFromStorage records identities rather than engine-relative lookup IDs.
+// The statement registry can span constituent calls, aliases and later clauses.
+func (d *deletedEntities) addFromStorage(store storage.Engine, nodes []storage.NodeID, edges map[storage.EdgeID]struct{}) {
+	key := func(kind, value string) string {
+		identity := storage.EntityIdentity{Database: storage.DatabaseOf(store), LocalID: value}
+		if storage.CompositeDatabaseOf(store) != "" {
+			actual, database, local, qualified := storage.ParseElementID(value)
+			if qualified && actual == kind {
+				identity = storage.EntityIdentity{Database: database, LocalID: local}
+			}
+		}
+		return identity.Key()
+	}
+	nodeKeys := make([]storage.NodeID, len(nodes))
+	for i, id := range nodes {
+		nodeKeys[i] = storage.NodeID(key("4", string(id)))
+	}
+	edgeKeys := make(map[storage.EdgeID]struct{}, len(edges))
+	for id := range edges {
+		edgeKeys[storage.EdgeID(key("5", string(id)))] = struct{}{}
+	}
+	d.add(nodeKeys, edgeKeys)
 }

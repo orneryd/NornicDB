@@ -2,6 +2,9 @@ package search
 
 import (
 	"context"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -10,7 +13,7 @@ import (
 
 // TestIndexRevisionAdvancesOnEveryIndexChange (#945).
 func TestIndexRevisionAdvancesOnEveryIndexChange(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 	var nilService *Service
 	require.Zero(t, nilService.IndexRevision())
 	node := &storage.Node{ID: "nornic:n", Labels: []string{"Doc"}, Properties: map[string]any{"content": "alpha"}, ChunkEmbeddings: [][]float32{{1, 0}}}
@@ -40,11 +43,11 @@ func TestIndexRevisionAdvancesOnEveryIndexChange(t *testing.T) {
 // indexing, so a search in between could cache the old result) is seen by
 // the next search (#945).
 func TestSearchResultCacheKeyedByIndexRevision(t *testing.T) {
-	store := storage.NewMemoryEngine()
-	svc := NewService(store)
+	store := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	svc := NewService(store, DefaultVectorDimensions, nil)
 	ctx := context.Background()
 	for _, id := range []string{"nornic:a", "nornic:b"} {
-		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{"Doc"}, Properties: map[string]any{"content": "alpha"}})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(id), Labels: []string{"Doc"}, Properties: map[string]any{"content": "alpha"}})
 		require.NoError(t, err)
 	}
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: "nornic:a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "alpha"}}))
@@ -55,7 +58,7 @@ func TestSearchResultCacheKeyedByIndexRevision(t *testing.T) {
 
 	// Index b without the cache invalidation IndexNode does, as a search
 	// that cached its result while b was being indexed would leave it.
-	svc.fulltext().Index("nornic:b", "alpha")
+	svc.fulltext().Index("nornic:b", "alpha", nil, nil, false)
 	svc.indexChanged()
 	second, err := svc.Search(ctx, "alpha", nil, opts)
 	require.NoError(t, err)

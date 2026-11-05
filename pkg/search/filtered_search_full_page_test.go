@@ -19,9 +19,9 @@ import (
 func filteredSearchFixture(t *testing.T) *Service {
 	t.Helper()
 	store := storage.NewNamespacedEngine(newNamespacedEngine(t), "test")
-	svc := NewServiceWithDimensions(store, 2)
+	svc := NewService(store, 2, nil)
 	add := func(node *storage.Node) {
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		require.NoError(t, svc.IndexNode(node))
 	}
@@ -131,22 +131,22 @@ func TestFilteredSearchFillsThePage(t *testing.T) {
 	})
 }
 
-// TestBM25SearchAllowedNeverScoresRejectedDocuments: both BM25 engines ask
-// allowed once per document and return only allowed ones, the best allowed
-// first, however many better documents they reject. The rejected documents
+// TestBM25SearchAllowedNeverScoresRejectedDocuments: the fulltext index asks
+// allowed once per document and returns only allowed ones, the best allowed
+// first, however many better documents it rejects. The rejected documents
 // match both query terms, one only by prefix ("alphabet"), so every scoring
 // loop meets rejected documents, and a removed document is never asked about;
-// the v2 index scores into a dense array below
-// 100,000 documents and a sparse map above.
+// the index scores into a dense array below 100,000 documents and a sparse map
+// above.
 func TestBM25SearchAllowedNeverScoresRejectedDocuments(t *testing.T) {
 	check := func(t *testing.T, index bm25Index) {
 		for i := 0; i < 300; i++ {
-			index.Index(fmt.Sprintf("other-%d", i), "alpha alpha alpha beta")
+			index.Index(fmt.Sprintf("other-%d", i), "alpha alpha alpha beta", nil, nil, false)
 		}
-		index.Index("other-prefix", "alphabet beta")
-		index.Index("doc-strong", "alpha alpha beta")
-		index.Index("doc-weak", "alpha beta gamma delta epsilon")
-		index.Index("doc-removed", "alpha alpha alpha alpha beta")
+		index.Index("other-prefix", "alphabet beta", nil, nil, false)
+		index.Index("doc-strong", "alpha alpha beta", nil, nil, false)
+		index.Index("doc-weak", "alpha beta gamma delta epsilon", nil, nil, false)
+		index.Index("doc-removed", "alpha alpha alpha alpha beta", nil, nil, false)
 		index.Remove("doc-removed")
 		asked := map[string]int{}
 		results := index.SearchAllowed("alpha beta", 2, func(id string) bool {
@@ -163,14 +163,11 @@ func TestBM25SearchAllowedNeverScoresRejectedDocuments(t *testing.T) {
 		require.Empty(t, index.SearchAllowed("alpha beta", 2, func(string) bool { return false }))
 		require.Len(t, index.Search("alpha beta", 2), 2, "Search allows every document")
 	}
-	for _, engine := range []string{BM25EngineV1, BM25EngineV2} {
-		t.Run(engine, func(t *testing.T) {
-			index, _ := newBM25Index(engine)
-			check(t, index)
-		})
-	}
-	t.Run("v2 sparse scores", func(t *testing.T) {
-		index := NewFulltextIndexV2()
+	t.Run("dense scores", func(t *testing.T) {
+		check(t, NewFulltextIndexV2WithAnalyzer(nil))
+	})
+	t.Run("sparse scores", func(t *testing.T) {
+		index := NewFulltextIndexV2WithAnalyzer(nil)
 		entries := make([]FulltextBatchEntry, bm25SparseMinDocSlots)
 		for i := range entries {
 			entries[i] = FulltextBatchEntry{ID: fmt.Sprintf("filler-%d", i), Text: "filler"}
@@ -188,11 +185,14 @@ func TestCompletingAPageStopsWhenCancelled(t *testing.T) {
 	opts := DefaultSearchOptions()
 	opts.MinSimilarity = nil
 
+	// An exact pipeline: getOrCreateVectorPipeline would start a background
+	// HNSW build that outlives the test.
+	pipeline := NewVectorSearchPipeline(NewBruteForceCandidateGen(svc.vectorIndex), NewCPUExactScorer(svc.vectorIndex))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancelling := func([]indexResult) []indexResult { cancel(); return nil }
-	_, _, err := svc.completeVectorSearch(ctx, []float32{1, 0}, opts, 50, cancelling, vectorOverfetchStats{})
+	_, _, err := svc.completeVectorSearch(ctx, pipeline, []float32{1, 0}, opts, 50, cancelling, vectorOverfetchStats{})
 	require.ErrorIs(t, err, context.Canceled)
-	_, _, err = svc.completeVectorSearch(ctx, []float32{1, 0}, opts, 50, cancelling, vectorOverfetchStats{})
+	_, _, err = svc.completeVectorSearch(ctx, pipeline, []float32{1, 0}, opts, 50, cancelling, vectorOverfetchStats{})
 	require.ErrorIs(t, err, context.Canceled, "cancelled before scoring")
 
 	ctx, cancel = context.WithCancel(context.Background())

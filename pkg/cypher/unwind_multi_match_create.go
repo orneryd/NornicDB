@@ -28,6 +28,8 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"strings"
 )
 
@@ -95,17 +97,17 @@ func (e *StorageExecutor) executeUnwindMultiMatchCreateBatch(
 
 	mutationPart := trimmed
 	returnPart := ""
-	if returnIdx := findKeywordIndexInContext(trimmed, "RETURN"); returnIdx >= 0 {
+	if returnIdx := findKeywordIndexInContext(ctx, trimmed, "RETURN"); returnIdx >= 0 {
 		mutationPart = strings.TrimSpace(trimmed[:returnIdx])
 		returnPart = strings.TrimSpace(trimmed[returnIdx:])
-		_, ok := parseUnwindBatchCountReturn(returnPart)
+		_, ok := parseUnwindBatchCountReturn(ctx, returnPart)
 		if !ok {
 			return nil, false, nil
 		}
 	}
-	if withIdx := findKeywordIndexInContext(mutationPart, "WITH"); withIdx >= 0 {
+	if withIdx := findKeywordIndexInContext(ctx, mutationPart, "WITH"); withIdx >= 0 {
 		withClause := strings.TrimSpace(mutationPart[withIdx+len("WITH"):])
-		if !isSimpleWithPassthroughClause(withClause) {
+		if !isSimpleWithPassthroughClause(ctx, withClause) {
 			return nil, false, nil
 		}
 		mutationPart = strings.TrimSpace(mutationPart[:withIdx])
@@ -119,16 +121,16 @@ func (e *StorageExecutor) executeUnwindMultiMatchCreateBatch(
 	// this fast path. RETURN and a simple passthrough WITH are handled above.
 	disqualifiers := []string{"SET", "MERGE", "DELETE", "REMOVE", "FOREACH", "OPTIONAL MATCH"}
 	for _, d := range disqualifiers {
-		if findKeywordIndex(upper, d) >= 0 {
+		if findKeywordIndex(ctx, upper, d) >= 0 {
 			return nil, false, nil
 		}
 	}
 	// Nested UNWIND.
-	if findKeywordIndex(upper, "UNWIND") >= 0 {
+	if findKeywordIndex(ctx, upper, "UNWIND") >= 0 {
 		return nil, false, nil
 	}
 
-	plan, ok := parseUnwindMultiMatchCreatePlan(mutationPart, unwindVar)
+	plan, ok := parseUnwindMultiMatchCreatePlan(ctx, mutationPart, unwindVar)
 	if !ok {
 		return nil, false, nil
 	}
@@ -142,7 +144,18 @@ func (e *StorageExecutor) executeUnwindMultiMatchCreateBatch(
 	}
 	schema := e.getStorage(ctx).GetSchema()
 	for _, match := range plan.matches {
-		if !match.byID && (schema == nil || !schema.HasPropertyIndex(match.label, match.propName)) {
+		if match.byID {
+			continue
+		}
+		indexed := false
+		if schema != nil {
+			var indexErr error
+			indexed, indexErr = schema.HasPropertyIndex(ctx, match.label, match.propName)
+			if indexErr != nil {
+				return nil, false, indexErr
+			}
+		}
+		if !indexed {
 			return nil, false, nil
 		}
 	}
@@ -162,7 +175,7 @@ func (e *StorageExecutor) executeUnwindMultiMatchCreateBatch(
 				matches = append(matches, match)
 			}
 		}
-		prefetched, unique, err := e.buildRelationshipBatchNodeMatchIndex(e.getStorage(ctx), rows, matches)
+		prefetched, unique, err := e.buildRelationshipBatchNodeMatchIndex(ctx, e.getStorage(ctx), rows, matches)
 		if err != nil {
 			return nil, true, err
 		}
@@ -179,7 +192,7 @@ func (e *StorageExecutor) executeUnwindMultiMatchCreateBatch(
 	return result, handled, err
 }
 
-func isSimpleWithPassthroughClause(clause string) bool {
+func isSimpleWithPassthroughClause(ctx context.Context, clause string) bool {
 	trimmed := strings.TrimSpace(clause)
 	if trimmed == "" || strings.HasPrefix(trimmed, ",") || strings.HasSuffix(trimmed, ",") {
 		return false
@@ -193,7 +206,7 @@ func isSimpleWithPassthroughClause(clause string) bool {
 		if token == "" {
 			return false
 		}
-		asIdx := findKeywordIndexInContext(token, "AS")
+		asIdx := findKeywordIndexInContext(ctx, token, "AS")
 		if asIdx >= 0 {
 			lhs := strings.TrimSpace(token[:asIdx])
 			rhs := strings.TrimSpace(token[asIdx+2:])
@@ -209,11 +222,11 @@ func isSimpleWithPassthroughClause(clause string) bool {
 	return true
 }
 
-func (e *StorageExecutor) evaluateUnwindBatchLookupExpr(match matchClauseSpec, row unwindBatchRow) (interface{}, bool) {
-	return e.evaluateBatchLookupExpr(match, row.item, row.itemMap)
+func (e *StorageExecutor) evaluateUnwindBatchLookupExpr(ctx context.Context, match matchClauseSpec, row unwindBatchRow) (interface{}, bool) {
+	return e.evaluateBatchLookupExpr(ctx, match, row.item, row.itemMap)
 }
 
-func (e *StorageExecutor) evaluateBatchLookupExpr(match matchClauseSpec, bindingValue interface{}, bindingMap map[string]interface{}) (interface{}, bool) {
+func (e *StorageExecutor) evaluateBatchLookupExpr(ctx context.Context, match matchClauseSpec, bindingValue interface{}, bindingMap map[string]interface{}) (interface{}, bool) {
 	if match.rowField != "" && bindingMap != nil {
 		if v, ok := bindingMap[match.rowField]; ok {
 			return normalizePropValue(v), true
@@ -231,14 +244,8 @@ func (e *StorageExecutor) evaluateBatchLookupExpr(match matchClauseSpec, binding
 	if match.bindingVar != "" {
 		values[match.bindingVar] = bindingValue
 	}
-	value := e.evaluateExpressionFromValues(expr, values)
-	if literal, ok := value.(string); ok && literal == expr {
-		if parsed, parsedOK := parseLiteralValueFromComputedRow(expr); parsedOK {
-			return normalizePropValue(parsed), true
-		}
-		return nil, false
-	}
-	return normalizePropValue(value), true
+	value, resolved, err := e.evaluateExpressionFromValuesResult(ctx, expr, values)
+	return normalizePropValue(value), resolved && err == nil
 }
 
 func (e *StorageExecutor) evaluateBatchLookupExprFast(expr, bindingVar string, bindingValue interface{}, bindingMap map[string]interface{}) (interface{}, bool) {
@@ -331,13 +338,13 @@ func buildPropsFromSpec(row map[string]any, rowRefs map[string]string, literals 
 // parseUnwindMultiMatchCreatePlan parses the mutation body into structured
 // clauses. Returns (plan, true) on success, (empty, false) if the shape is
 // unsupported (any ambiguity means fallback).
-func parseUnwindMultiMatchCreatePlan(restQuery, unwindVar string) (unwindMultiMatchCreatePlan, bool) {
+func parseUnwindMultiMatchCreatePlan(ctx context.Context, restQuery, unwindVar string) (unwindMultiMatchCreatePlan, bool) {
 	plan := unwindMultiMatchCreatePlan{}
 
 	// Split into clauses on MATCH/CREATE boundaries. We use the existing
 	// position-finder so word boundaries are respected.
-	matchPositions := findAllKeywordPositions(restQuery, "MATCH")
-	createPositions := findAllKeywordPositions(restQuery, "CREATE")
+	matchPositions := findAllTopLevelPipelineKeywordPositions(ctx, restQuery, "MATCH")
+	createPositions := findAllTopLevelPipelineKeywordPositions(ctx, restQuery, "CREATE")
 
 	type boundary struct {
 		pos  int
@@ -369,7 +376,7 @@ func parseUnwindMultiMatchCreatePlan(restQuery, unwindVar string) (unwindMultiMa
 		}
 		body := strings.TrimSpace(restQuery[b.pos:end])
 		if b.kind == 0 {
-			matches, ok := parseSimpleMatchClauseList(body, unwindVar)
+			matches, ok := parseSimpleMatchClauseList(ctx, body, unwindVar)
 			if !ok {
 				return unwindMultiMatchCreatePlan{}, false
 			}
@@ -403,11 +410,11 @@ func parseUnwindMultiMatchCreatePlan(restQuery, unwindVar string) (unwindMultiMa
 }
 
 // parseSimpleMatchClause parses `MATCH (var:Label {prop: unwindVar.field})`.
-func parseSimpleMatchClause(clause, unwindVar string) (matchClauseSpec, bool) {
+func parseSimpleMatchClause(ctx context.Context, clause, unwindVar string) (matchClauseSpec, bool) {
 	body := strings.TrimSpace(strings.TrimPrefix(clause, "MATCH"))
 	body = strings.TrimPrefix(body, "match")
 	body = strings.TrimSpace(body)
-	if whereIdx := findKeywordIndexInContext(body, "WHERE"); whereIdx >= 0 {
+	if whereIdx := findKeywordIndexInContext(ctx, body, "WHERE"); whereIdx >= 0 {
 		pattern := strings.TrimSpace(body[:whereIdx])
 		whereExpr := strings.TrimSpace(body[whereIdx+len("WHERE"):])
 		if !strings.HasPrefix(pattern, "(") || !strings.HasSuffix(pattern, ")") {
@@ -442,12 +449,12 @@ func parseSimpleMatchClause(clause, unwindVar string) (matchClauseSpec, bool) {
 // wiring shape `MATCH (n:L {id: p[0]}), (m:L {id: p[1]})`). A WHERE clause
 // only covers the single-pattern elementId form, which is delegated to
 // parseSimpleMatchClause.
-func parseSimpleMatchClauseList(clause, unwindVar string) ([]matchClauseSpec, bool) {
+func parseSimpleMatchClauseList(ctx context.Context, clause, unwindVar string) ([]matchClauseSpec, bool) {
 	body := strings.TrimSpace(strings.TrimPrefix(clause, "MATCH"))
 	body = strings.TrimPrefix(body, "match")
 	body = strings.TrimSpace(body)
-	if whereIdx := findKeywordIndexInContext(body, "WHERE"); whereIdx >= 0 {
-		m, ok := parseSimpleMatchClause(clause, unwindVar)
+	if whereIdx := findKeywordIndexInContext(ctx, body, "WHERE"); whereIdx >= 0 {
+		m, ok := parseSimpleMatchClause(ctx, clause, unwindVar)
 		if !ok {
 			return nil, false
 		}
@@ -546,13 +553,11 @@ func referencesUnwindBinding(expr, unwindVar string) bool {
 		return true
 	}
 	for i := 0; i < len(expr); {
-		ch := expr[i]
-		if isIdentStartByte(ch) {
+
+		if cyphertext.NameStartAt(expr, i) {
 			start := i
 			i++
-			for i < len(expr) && isIdentByte(expr[i]) {
-				i++
-			}
+			i = cyphertext.NamePartEnd(expr, i)
 			if expr[start:i] == unwindVar {
 				return true
 			}
@@ -761,40 +766,9 @@ func propEqKeyBatch(v interface{}) string {
 }
 
 func coerceInt64(v interface{}) (int64, bool) {
-	switch x := v.(type) {
-	case int:
-		return int64(x), true
-	case int8:
-		return int64(x), true
-	case int16:
-		return int64(x), true
-	case int32:
-		return int64(x), true
-	case int64:
-		return x, true
-	case uint:
-		return int64(x), true
-	case uint8:
-		return int64(x), true
-	case uint16:
-		return int64(x), true
-	case uint32:
-		return int64(x), true
-	case uint64:
-		return int64(x), true
-	}
-	return 0, false
+	return valueconvert.IntegerValue(v)
 }
 
 func coerceFloat64(v interface{}) (float64, bool) {
-	switch x := v.(type) {
-	case float32:
-		return float64(x), true
-	case float64:
-		return x, true
-	}
-	if i, ok := coerceInt64(v); ok {
-		return float64(i), true
-	}
-	return 0, false
+	return valueconvert.NumericFloat64(v)
 }

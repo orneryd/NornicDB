@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/orneryd/nornicdb/internal/testfixture/storagefault"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
@@ -18,12 +19,11 @@ type roleDeleteFailureEngine struct {
 	storage.Engine
 	deletes  int
 	failRole bool
+	failure  error
 }
 
 func (e *roleDeleteFailureEngine) GetInnerEngine() storage.Engine { return e.Engine }
 func (e *roleDeleteFailureEngine) Namespace() string              { return "system" }
-
-type userStatusFailureEngine struct{ storage.Engine }
 
 type roleRenameFailureEngine struct {
 	storage.Engine
@@ -39,12 +39,12 @@ func (e *roleRenameFailureEngine) WithStoreTransaction(ctx context.Context, muta
 	})
 }
 
-func (e *roleRenameFailureEngine) DeleteNode(id storage.NodeID) error {
+func (e *roleRenameFailureEngine) DeleteNode(ctx context.Context, id storage.NodeID) error {
 	if id == "role_entitlement:ops" {
 		*e.fired = true
 		return errors.New("injected role rename failure")
 	}
-	return e.Engine.DeleteNode(id)
+	return e.Engine.DeleteNode(ctx, id)
 }
 
 func TestRenamedRoleKeepsItsGrantsOverHTTP(t *testing.T) {
@@ -63,10 +63,10 @@ func TestRenamedRoleKeepsItsGrantsOverHTTP(t *testing.T) {
 			require.NoError(t, server.allowlistStore.SaveRoleDatabases(ctx, "ops", []string{"nornic"}))
 			require.NoError(t, server.privilegesStore.SavePrivilege(ctx, "ops", "nornic", true, true))
 			require.NoError(t, server.roleEntitlementsStore.Set(ctx, "ops", []string{"read", "write"}))
-			_, err = users.CreateUser("worker", "password123", []auth.Role{"ops"})
+			_, err = users.CreateUser(context.Background(), "worker", "password123", []auth.Role{"ops"})
 			require.NoError(t, err)
 			require.Empty(t, txErrorCode(t, server, "system", admin, "GRANT EXECUTE BOOSTED PROCEDURE db.cdc.* ON DBMS TO ops"))
-			before, err := system.AllNodes()
+			before, err := system.AllNodes(ctx)
 			require.NoError(t, err)
 			fired := false
 			if fail {
@@ -78,7 +78,7 @@ func TestRenamedRoleKeepsItsGrantsOverHTTP(t *testing.T) {
 			if fail {
 				require.Equal(t, http.StatusInternalServerError, resp.Code, resp.Body.String())
 				require.True(t, fired, resp.Body.String())
-				after, err := system.AllNodes()
+				after, err := system.AllNodes(ctx)
 				require.NoError(t, err)
 				require.ElementsMatch(t, before, after)
 				name = "ops"
@@ -118,10 +118,10 @@ func TestDeletedRoleStartsEmptyAfterRecreationOverHTTP(t *testing.T) {
 			require.NoError(t, server.allowlistStore.SaveRoleDatabases(ctx, "ops", []string{"nornic"}))
 			require.NoError(t, server.privilegesStore.SavePrivilege(ctx, "ops", "nornic", true, true))
 			require.NoError(t, server.roleEntitlementsStore.Set(ctx, "ops", []string{"read", "write"}))
-			_, err = users.CreateUser("worker", "password123", []auth.Role{"ops", auth.RoleViewer})
+			_, err = users.CreateUser(context.Background(), "worker", "password123", []auth.Role{"ops", auth.RoleViewer})
 			require.NoError(t, err)
 			require.Empty(t, txErrorCode(t, server, "system", admin, "GRANT EXECUTE BOOSTED PROCEDURE db.cdc.* ON DBMS TO ops"))
-			before, err := system.AllNodes()
+			before, err := system.AllNodes(ctx)
 			require.NoError(t, err)
 			fired := false
 			if fail {
@@ -134,7 +134,7 @@ func TestDeletedRoleStartsEmptyAfterRecreationOverHTTP(t *testing.T) {
 			if fail {
 				require.Equal(t, http.StatusInternalServerError, resp.Code, resp.Body.String())
 				require.True(t, fired, resp.Body.String())
-				after, err := system.AllNodes()
+				after, err := system.AllNodes(ctx)
 				require.NoError(t, err)
 				require.ElementsMatch(t, before, after)
 				require.True(t, server.roleStore.Exists("ops"))
@@ -157,40 +157,28 @@ func TestDeletedRoleStartsEmptyAfterRecreationOverHTTP(t *testing.T) {
 	}
 }
 
-func (e *userStatusFailureEngine) WithStoreTransaction(ctx context.Context, mutate func(storage.Engine) error) error {
-	return auth.WithStoreTransaction(ctx, e.Engine, func(view storage.Engine) error {
-		return mutate(&userStatusFailureEngine{Engine: view})
-	})
-}
-
-func (e *userStatusFailureEngine) UpdateNode(node *storage.Node) error {
-	if node.Properties["disabled"] == true {
-		return errors.New("injected user status failure")
-	}
-	return e.Engine.UpdateNode(node)
-}
-
 func TestCombinedUserChangeFailureChangesNothingOverHTTP(t *testing.T) {
 	server, _ := setupTestServer(t)
 	system, err := server.dbManager.GetStorage("system")
 	require.NoError(t, err)
-	fault := &userStatusFailureEngine{Engine: system}
+	fault := storagefault.NewMutationFailureEngine(system, "", errors.New("injected user status failure"), 0, auth.WithStoreTransaction)
+	fault.RejectUpdate = func(node *storage.Node) bool { return node.Properties["disabled"] == true }
 	config := auth.DefaultAuthConfig()
 	config.JWTSecret = []byte("test-secret-key-for-testing-only-32b")
 	config.BcryptCost, config.DefaultAdminUsername = 4, ""
 	users, err := auth.NewAuthenticator(config, fault)
 	require.NoError(t, err)
 	server.auth = users
-	_, err = users.CreateUser("worker", "password123", []auth.Role{auth.RoleViewer})
+	_, err = users.CreateUser(context.Background(), "worker", "password123", []auth.Role{auth.RoleViewer})
 	require.NoError(t, err)
-	before, err := system.GetNode("user:worker")
+	before, err := system.GetNode(t.Context(), "user:worker")
 	require.NoError(t, err)
 	admin := getAuthToken(t, users, "admin")
 	resp := makeRequest(t, server, "PUT", "/auth/users/worker", map[string]any{
 		"roles": []string{"admin"}, "disabled": true,
 	}, "Bearer "+admin)
 	assert.Equal(t, http.StatusBadRequest, resp.Code, resp.Body.String())
-	after, err := system.GetNode("user:worker")
+	after, err := system.GetNode(t.Context(), "user:worker")
 	require.NoError(t, err)
 	assert.Equal(t, before, after)
 	user, err := users.GetUser("worker")
@@ -207,7 +195,7 @@ func (e *roleDeleteFailureEngine) WithStoreTransaction(ctx context.Context, muta
 	})
 }
 
-func (e *roleDeleteFailureEngine) DeleteNode(id storage.NodeID) error {
+func (e *roleDeleteFailureEngine) DeleteNode(ctx context.Context, id storage.NodeID) error {
 	if strings.HasPrefix(string(id), "proc_priv:") {
 		e.deletes++
 		if !e.failRole && e.deletes == 2 {
@@ -215,20 +203,27 @@ func (e *roleDeleteFailureEngine) DeleteNode(id storage.NodeID) error {
 		}
 	}
 	if e.failRole && id == "role:ops" {
+		if e.failure != nil {
+			return e.failure
+		}
 		return errors.New("injected role deletion failure")
 	}
-	return e.Engine.DeleteNode(id)
+	return e.Engine.DeleteNode(ctx, id)
 }
 
 func TestDeleteRoleFailureChangesNothingOverHTTP(t *testing.T) {
-	for _, failRole := range []bool{false, true} {
-		t.Run(map[bool]string{false: "second grant", true: "role node"}[failRole], func(t *testing.T) {
+	for _, scenario := range []struct {
+		name     string
+		failRole bool
+		failure  error
+	}{{"second grant", false, nil}, {"role node", true, nil}, {"role-exists backend error", true, auth.ErrRoleExists}} {
+		t.Run(scenario.name, func(t *testing.T) {
 			ctx := context.Background()
 			server, users := setupTestServer(t)
 			admin := getAuthToken(t, users, "admin")
 			system, err := server.dbManager.GetStorage("system")
 			require.NoError(t, err)
-			fault := &roleDeleteFailureEngine{Engine: system, failRole: failRole}
+			fault := &roleDeleteFailureEngine{Engine: system, failRole: scenario.failRole, failure: scenario.failure}
 			server.roleStore = auth.NewRoleStore(fault)
 			require.NoError(t, server.roleStore.CreateRole(ctx, "ops"))
 			grants := auth.NewProcedurePrivilegeStore(system)
@@ -239,7 +234,7 @@ func TestDeleteRoleFailureChangesNothingOverHTTP(t *testing.T) {
 			resp := makeRequest(t, server, "DELETE", "/auth/roles/ops", nil, "Bearer "+admin)
 			require.Equal(t, http.StatusInternalServerError, resp.Code, resp.Body.String())
 			require.True(t, server.roleStore.Exists("ops"))
-			_, err = system.GetNode("role:ops")
+			_, err = system.GetNode(t.Context(), "role:ops")
 			require.NoError(t, err)
 			after, err := grants.List(ctx)
 			require.NoError(t, err)
@@ -306,4 +301,45 @@ func TestAdministrationRequestRoutesToSystemAndRollsBackOnRejection(t *testing.T
 			}
 		})
 	}
+}
+
+func TestRoleCatalogHTTPMetadataViews(t *testing.T) {
+	server, users := setupTestServer(t)
+	admin := getAuthToken(t, users, "admin")
+	system, err := server.dbManager.GetStorage("system")
+	require.NoError(t, err)
+	server.roleStore = auth.NewRoleStore(system)
+	server.roleEntitlementsStore = auth.NewRoleEntitlementsStore(system)
+	for _, role := range []string{"zeta", "alpha"} {
+		require.NoError(t, server.roleStore.CreateRole(context.Background(), role))
+	}
+	require.NoError(t, server.roleEntitlementsStore.Set(context.Background(), "alpha", []string{"read"}))
+
+	response := makeRequest(t, server, http.MethodGet, "/auth/roles", nil, "Bearer "+admin)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var names []string
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &names))
+	require.Equal(t, []string{"admin", "editor", "viewer", "alpha", "zeta"}, names)
+
+	response = makeRequest(t, server, http.MethodGet, "/auth/role-entitlements", nil, "Bearer "+admin)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var entries []struct {
+		Role         string   `json:"role"`
+		Entitlements []string `json:"entitlements"`
+	}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &entries))
+	byRole := make(map[string][]string, len(entries))
+	returnedNames := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		returnedNames = append(returnedNames, entry.Role)
+		_, duplicate := byRole[entry.Role]
+		require.False(t, duplicate)
+		byRole[entry.Role] = entry.Entitlements
+	}
+	require.Len(t, byRole, len(names))
+	require.Equal(t, names, returnedNames)
+	require.Equal(t, []string{"read"}, byRole["alpha"])
+	require.Nil(t, byRole["zeta"])
+	require.Contains(t, byRole["admin"], "admin")
+	require.Contains(t, byRole["viewer"], "read")
 }

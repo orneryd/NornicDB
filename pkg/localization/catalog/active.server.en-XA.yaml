@@ -1,3 +1,9 @@
+- id: server.application_memory_pressure
+  description: Pseudo-locale application memory pressure response.
+  other: "[!! Application memory soft limit reached; retry after memory is released. !!]"
+- id: server.application_memory_unavailable
+  description: Pseudo-locale unavailable memory reading response.
+  other: "[!! Memory usage readings are unavailable; retry when monitoring recovers. !!]"
 - id: server.role_entitlements_unavailable
   description: Pseudo-locale role entitlements unavailable.
   other: "[!! Role entitlements are not configured (auth disabled or system DB unavailable). !!]"
@@ -102,7 +108,7 @@
   other: "[!! graphql API enabled !!]"
 - id: server.log.heimdall_disabled
   description: Pseudo-locale Heimdall-disabled startup log.
-  other: "[!! heimdall AI assistant disabled !!]"
+  other: "[!! Heimdall agentic harness disabled; configured plugins remain available !!]"
 - id: server.log.search_rerank_disabled
   description: Pseudo-locale search rerank disabled log.
   other: "[!! search rerank disabled !!]"

@@ -1,0 +1,57 @@
+package bolt
+
+import (
+	"context"
+
+	"github.com/orneryd/nornicdb/pkg/resultstream"
+)
+
+// Each RUN owns a batch until its records are PULLed or DISCARDed. The
+// connection tracker retains failure ownership of every outstanding batch.
+func (s *Session) beginContinuationDelivery(ctx context.Context) context.Context {
+	if !s.inTransaction {
+		if s.lastDelivery != nil {
+			s.lastDelivery.Fail()
+		}
+		s.lastResultMemoryLease.Release()
+		s.lastResultMemoryLease = nil
+	}
+	s.lastDelivery = s.continuationDelivery.Fork()
+	return resultstream.WithDelivery(ctx, s.lastDelivery)
+}
+func (s *Session) abandonContinuationResults() {
+	s.lastResultMemoryLease.Release()
+	s.lastResultMemoryLease = nil
+	if s.lastDelivery != nil {
+		s.lastDelivery.Fail()
+		s.lastDelivery = nil
+	}
+	for _, lease := range s.resultMemoryLeases {
+		lease.Release()
+	}
+	s.resultMemoryLeases = nil
+	for _, stream := range s.resultStreams {
+		if stream.delivery != nil {
+			stream.delivery.Fail()
+		}
+	}
+}
+
+// DISCARD selects complete records without writing them. Use the same
+// PackStream encoder as PULL so reference ownership is independent of whether
+// a procedure page is returned as a map, JSON text or a nested Bolt value.
+func (s *Session) discardResultDelivery(ctx context.Context, stream resultStream, rows [][]any) error {
+	if stream.delivery == nil || !stream.delivery.Pending() {
+		return nil
+	}
+	resolver := s.recordEntityDatabaseResolver(stream.database)
+	for _, row := range rows {
+		buf, err := encodeRecordListInto(ctx, s.recordBuf[:0], row, s.useUTCDateTimeStructs(), s.boltV5(), stream.database, resolver)
+		if err != nil {
+			return err
+		}
+		stream.delivery.DiscardEncoded(buf)
+		s.recordBuf = buf[:0]
+	}
+	return nil
+}

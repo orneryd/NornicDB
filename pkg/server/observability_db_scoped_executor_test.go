@@ -1,25 +1,8 @@
-// Package server: NornicDB issue #563 defect 1 regression coverage.
-//
-// pkg/bolt/server.go's newDatabaseScopedCypherExecutor and cmd/nornicdb/main.go's
-// DBQueryExecutor.ConfigureDatabaseExecutor build per-database StorageExecutors
-// but historically never called SetLogger/SetSlowQueryThreshold on them — only
-// the primary (base) executor got them, threaded once from main.go's bootstrap.
-// The effect: every Bolt query and every HTTP /db/<name>/tx/commit query logs
-// to io.Discard, so NORNICDB_SLOW_QUERY_THRESHOLD emits no event="slow_query"
-// record for a slow database-scoped query.
-//
-// TestDatabaseScopedExecutor_InheritsLoggerAndSlowQueryThreshold exercises the
-// HTTP construction path (pkg/server/server_db.go's newExecutorForDatabase),
-// which had the identical gap: the "inherit from base executor" block that
-// function already carries for embedder/inference copied everything except
-// the logger and slow-query threshold.
-//
-// TestGetExecutorForDatabaseWithAuth_InheritsLoggerAndSlowQueryThreshold and
-// TestHeimdallRouter_ExecutorForDatabase_InheritsLoggerAndSlowQueryThreshold
-// cover the two other construction sites review finding C3 flagged as
-// untested: server_db.go's composite/remote-auth path and the Heimdall
-// router. Bolt's cmd/nornicdb/main.go ConfigureDatabaseExecutor site is
-// covered separately in cmd/nornicdb, since it lives in package main.
+// Package server covers issue #563: database-scoped executors must inherit
+// the base executor's logger and slow-query threshold. Both HTTP and Bolt
+// now use Server.DatabaseScopedExecutorOptions; cmd/nornicdb covers the
+// production Bolt host wiring. These tests also exercise authenticated
+// composite access and the Heimdall router.
 package server
 
 import (
@@ -28,6 +11,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/cypher"
+	"github.com/orneryd/nornicdb/pkg/cypher/testutil"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/stretchr/testify/require"
@@ -110,11 +94,8 @@ func executorEmitsSlowQueryLog(t *testing.T, te *observability.TestEnv, exec *cy
 
 // TestGetExecutorForDatabaseWithAuth_InheritsLoggerAndSlowQueryThreshold
 // covers the second of the 4 construction sites review finding C3 flagged
-// as untested: getExecutorForDatabaseWithAuth's composite/remote-auth
-// branch, which builds its own fresh *cypher.StorageExecutor rather than
-// delegating to newExecutorForDatabase. Verified by mutation: commenting
-// out either SetLogger or SetSlowQueryThreshold call in that function's
-// "inherit from base executor" block fails this test.
+// as untested: authenticated composite executor construction. It verifies
+// logger and threshold inheritance on the fresh remote-auth view.
 func TestGetExecutorForDatabaseWithAuth_InheritsLoggerAndSlowQueryThreshold(t *testing.T) {
 	server, _ := setupTestServer(t)
 
@@ -127,11 +108,11 @@ func TestGetExecutorForDatabaseWithAuth_InheritsLoggerAndSlowQueryThreshold(t *t
 
 	// A local constituent alongside a remote one: databaseHasRemoteConstituent
 	// only needs ONE remote constituent to route through
-	// getExecutorForDatabaseWithAuth's remote-auth branch (the code under
+	// the remote-auth storage selection (the code under
 	// test), but querying the LOCAL constituent below keeps this test
 	// in-process — no real dial to the remote constituent's URI needed.
-	require.NoError(t, server.dbManager.CreateDatabase("obs_local_shard"))
-	require.NoError(t, server.dbManager.CreateCompositeDatabase("obs_comp_remote", []multidb.ConstituentRef{
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "obs_local_shard"}))
+	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "obs_comp_remote", []multidb.ConstituentRef{
 		{Alias: "local1", DatabaseName: "obs_local_shard", Type: "local", AccessMode: "read_write"},
 		{
 			Alias:        "r1",
@@ -143,14 +124,14 @@ func TestGetExecutorForDatabaseWithAuth_InheritsLoggerAndSlowQueryThreshold(t *t
 	}))
 
 	require.True(t, server.databaseHasRemoteConstituent("obs_comp_remote"))
-	exec, err := server.getExecutorForDatabaseWithAuth("obs_comp_remote", "Bearer remote-token")
+	exec, err := cypher.NewDatabaseScopedExecutor(server.DatabaseScopedExecutorOptions("obs_comp_remote", "Bearer remote-token"))
 	require.NoError(t, err)
 	require.NotNil(t, exec)
 
 	// Composite databases refuse ungrounded queries; target the local
 	// constituent explicitly, same as TestCompositeExplicitTx_SecondWriteShardErrorCode.
-	require.True(t, executorEmitsSlowQueryLog(t, te, exec, "CALL { USE obs_comp_remote.local1 RETURN 1 AS x } RETURN x"),
-		"getExecutorForDatabaseWithAuth's composite/remote-auth executor did not inherit the base executor's logger/threshold (NornicDB issue #563 defect 1)")
+	require.True(t, executorEmitsSlowQueryLog(t, te, exec, "CALL { USE obs_comp_remote.local1 "+testutil.SlowQueryWorkload+" } RETURN total"),
+		"the composite/remote-auth executor did not inherit the base executor's logger/threshold (NornicDB issue #563 defect 1)")
 }
 
 // TestHeimdallRouter_ExecutorForDatabase_InheritsLoggerAndSlowQueryThreshold
@@ -175,6 +156,6 @@ func TestHeimdallRouter_ExecutorForDatabase_InheritsLoggerAndSlowQueryThreshold(
 	require.NotNil(t, exec)
 	require.Equal(t, "nornic", dbName)
 
-	require.True(t, executorEmitsSlowQueryLog(t, te, exec, "RETURN 1"),
+	require.True(t, executorEmitsSlowQueryLog(t, te, exec, testutil.SlowQueryWorkload),
 		"heimdallDBRouter.executorForDatabase's executor did not inherit the base executor's logger/threshold (NornicDB issue #563 defect 1)")
 }

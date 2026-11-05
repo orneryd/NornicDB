@@ -1,6 +1,8 @@
 package nornicdb
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"fmt"
@@ -16,7 +18,7 @@ import (
 
 func queryEmbeddingTestExecutor(t *testing.T, provider cypher.QueryEmbedder) *cypher.StorageExecutor {
 	t.Helper()
-	store := storage.NewMemoryEngine()
+	store := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = store.Close() })
 	executor := cypher.NewStorageExecutor(storage.NewNamespacedEngine(store, "snapshot"))
 	executor.SetEmbedder(provider)
@@ -107,7 +109,7 @@ func TestQueryEmbeddingSnapshotResolvesDatabaseOnce(t *testing.T) {
 			old := &snapshotQueryProvider{name: "old", vector: []float32{1, 0}}
 			replacement := &snapshotQueryProvider{name: "new", vector: []float32{0, 1}}
 			db := &DB{cypherExecutor: queryEmbeddingTestExecutor(t, old)}
-			db.SetDbConfigResolver(func(string) (int, float64, string) { return 3, 0, "" })
+			db.SetDbConfigResolver(func(string) (int, float64) { return 3, 0 })
 			cfg := &embed.Config{Provider: "ollama", Model: "database-model", Dimensions: 2}
 			key := embedConfigKey(cfg)
 			special := &coverageQueryEmbedder{chunks: []string{"special"}, embed: []float32{0.5, 0.5}}
@@ -117,7 +119,7 @@ func TestQueryEmbeddingSnapshotResolvesDatabaseOnce(t *testing.T) {
 			}
 			if mode == "factory error" {
 				db.embedderRegistry = nil
-				db.embedderFactory = func(*embed.Config) (embed.Embedder, error) { return nil, errors.New("unavailable") }
+				db.embedderFactory = func(context.Context, *embed.Config) (embed.Embedder, error) { return nil, errors.New("unavailable") }
 			}
 			var resolutions atomic.Int64
 			db.SetEmbedConfigForDB(func(name string) (*embed.Config, error) {

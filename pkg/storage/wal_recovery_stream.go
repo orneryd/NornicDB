@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -21,11 +22,18 @@ const recoveryBatchSize = 1000
 
 // RecoverIntoEngine restores a snapshot and subsequent WAL entries directly
 // into destination. Framed snapshots and WAL files are processed one record at
-// a time, so retained recovery memory is bounded by the largest record.
+// a time. Physical bodies and name authority are retained one record at a time.
+
 func RecoverIntoEngine(destination Engine, walDir, snapshotPath string) (ReplayResult, RecoveryStreamStatus, error) {
 	result := ReplayResult{Errors: make([]ReplayError, 0)}
 	status := RecoveryStreamStatus{}
+	if err := ValidateWALFormat(walDir, WALValidateCurrent); err != nil {
+		return result, status, err
+	}
 	var snapshotSeq uint64
+	if err := markRecoveryPropertyForeign(destination); err != nil {
+		return result, status, err
+	}
 
 	if snapshotPath != "" {
 		streaming, err := IsStreamingSnapshot(snapshotPath)
@@ -37,6 +45,10 @@ func RecoverIntoEngine(destination Engine, walDir, snapshotPath string) (ReplayR
 			file, err := os.Open(snapshotPath)
 			if err != nil {
 				return result, status, fmt.Errorf("wal: failed to open snapshot: %w", err)
+			}
+			if err := beginRecoveryPropertyRestore(destination); err != nil {
+				file.Close()
+				return result, status, err
 			}
 			visitor := newRecoverySnapshotVisitor(destination, recoveryBatchSize)
 			metadata, readErr := readSnapshot(file, visitor, nil, materializedSnapshotRecordSize)
@@ -60,12 +72,24 @@ func RecoverIntoEngine(destination Engine, walDir, snapshotPath string) (ReplayR
 					return result, status, fmt.Errorf("wal: failed to load snapshot: %w", err)
 				}
 			} else {
+				if err := beginRecoveryPropertyRestore(destination); err != nil {
+					return result, status, err
+				}
 				snapshotSeq = snapshot.Sequence
 				status.SnapshotNodes = uint64(len(snapshot.Nodes))
 				status.SnapshotEdges = uint64(len(snapshot.Edges))
 				if err := restoreLegacySnapshot(destination, snapshot); err != nil {
 					return result, status, err
 				}
+			}
+		}
+		// Snapshot batches may only be acknowledged into a write-behind
+		// generation. Complete that phase before physical WAL replay: otherwise
+		// its older overlay masks replayed bodies and a later drain overwrites
+		// them. Recovery owns completion independently of a client request.
+		if flusher, ok := UnwrapEngine(destination).(interface{ FlushWriteBehind(context.Context) error }); ok {
+			if err := flusher.FlushWriteBehind(context.Background()); err != nil {
+				return result, status, fmt.Errorf("wal: failed to complete snapshot restore: %w", err)
 			}
 		}
 	}
@@ -91,9 +115,14 @@ func RecoverIntoEngine(destination Engine, walDir, snapshotPath string) (ReplayR
 		return nil
 	})
 	if err != nil {
-		return result, status, fmt.Errorf("wal: failed to read WAL: %w", err)
+		err = fmt.Errorf("wal: failed to read WAL: %w", err)
 	}
-	return result, status, nil
+	if result.Applied > 0 {
+		if native, ok := UnwrapEngine(destination).(*BadgerEngine); ok {
+			err = native.completeRecoveredCounts(context.Background(), err)
+		}
+	}
+	return result, status, err
 }
 
 type recoverySnapshotVisitor struct {
@@ -162,9 +191,10 @@ func (v *recoverySnapshotVisitor) flushNodes() error {
 	if len(v.nodes) == 0 {
 		return nil
 	}
-	if err := v.engine.BulkCreateNodes(v.nodes); err != nil {
+	if err := v.engine.BulkCreateNodes(context.Background(), v.nodes); err != nil {
 		return fmt.Errorf("wal: failed to restore nodes: %w", err)
 	}
+	clear(v.nodes)
 	v.nodes = v.nodes[:0]
 	return nil
 }
@@ -173,9 +203,10 @@ func (v *recoverySnapshotVisitor) flushEdges() error {
 	if len(v.edges) == 0 {
 		return nil
 	}
-	if err := v.engine.BulkCreateEdges(v.edges); err != nil {
+	if err := v.engine.BulkCreateEdges(context.Background(), v.edges); err != nil {
 		return fmt.Errorf("wal: failed to restore edges: %w", err)
 	}
+	clear(v.edges)
 	v.edges = v.edges[:0]
 	return nil
 }
@@ -200,10 +231,10 @@ func restoreLegacySnapshot(destination Engine, snapshot *Snapshot) error {
 		edge.EndNode = NodeID(StripDatabasePrefix(dbName, string(edge.EndNode)))
 	}
 	namespaced := NewNamespacedEngine(destination, dbName)
-	if err := namespaced.BulkCreateNodes(snapshot.Nodes); err != nil {
+	if err := namespaced.BulkCreateNodes(context.Background(), snapshot.Nodes); err != nil {
 		return fmt.Errorf("wal: failed to restore nodes: %w", err)
 	}
-	if err := namespaced.BulkCreateEdges(snapshot.Edges); err != nil {
+	if err := namespaced.BulkCreateEdges(context.Background(), snapshot.Edges); err != nil {
 		return fmt.Errorf("wal: failed to restore edges: %w", err)
 	}
 	return nil

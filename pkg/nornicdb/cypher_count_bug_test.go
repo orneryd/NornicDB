@@ -40,12 +40,13 @@ func TestBug_CypherCountVsStorageCount(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Check storage.NodeCount()
-	storageCount, err := db.storage.NodeCount()
+	storageCount, err := db.storage.NodeCount(t.Context())
 	require.NoError(t, err)
 	t.Logf("storage.NodeCount(): %d", storageCount)
 
 	// Check db.Stats().NodeCount
-	stats := db.Stats()
+	stats, err := db.Stats(t.Context())
+	require.NoError(t, err)
 	t.Logf("db.Stats().NodeCount: %d", stats.NodeCount)
 
 	// Check MATCH (n:TestNode) RETURN count(n) - uses GetNodesByLabel
@@ -123,7 +124,7 @@ func TestBug_CypherCountAfterDeleteRecreate(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Check all count methods
-	storageCount, _ := db.storage.NodeCount()
+	storageCount, _ := db.storage.NodeCount(t.Context())
 	t.Logf("After RECREATE: storage.NodeCount() = %d", storageCount)
 
 	result, err = db.ExecuteCypher(ctx, "MATCH (n:NewNode) RETURN count(n) as cnt", nil)

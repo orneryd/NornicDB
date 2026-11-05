@@ -36,22 +36,22 @@ func TestCollectAfterCorrelatedRelationshipMatches(t *testing.T) {
 		Properties: map[string]interface{}{"id": "workload-1"},
 	}
 	for _, node := range []*storage.Node{function, cloudAction, secondCloudAction, workload} {
-		_, err := store.CreateNode(node)
+		_, err := store.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
-	require.NoError(t, store.CreateEdge(&storage.Edge{
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "fn-invokes-action",
 		Type:      "INVOKES_CLOUD_ACTION",
 		StartNode: function.ID,
 		EndNode:   cloudAction.ID,
 	}))
-	require.NoError(t, store.CreateEdge(&storage.Edge{
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "fn-invokes-second-action",
 		Type:      "INVOKES_CLOUD_ACTION",
 		StartNode: function.ID,
 		EndNode:   secondCloudAction.ID,
 	}))
-	require.NoError(t, store.CreateEdge(&storage.Edge{
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "fn-runs-in-workload",
 		Type:      "RUNS_IN",
 		StartNode: function.ID,

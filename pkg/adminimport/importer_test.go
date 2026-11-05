@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -32,7 +34,7 @@ u1,u2,KNOWS,2024
 	require.NoError(t, os.WriteFile(schemaPath, []byte(`CREATE CONSTRAINT person_name_unique IF NOT EXISTS FOR (n:Person) REQUIRE n.name IS UNIQUE;
 `), 0o600))
 
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	report, err := ImportFull(context.Background(), base, Options{
 		DatabaseName: "mydb",
 		NodeSources:  []string{"Imported=" + nodesPath},
@@ -49,18 +51,18 @@ u1,u2,KNOWS,2024
 	require.Equal(t, int64(1), report.RelationshipsImported)
 
 	engine := storage.NewNamespacedEngine(base, "mydb")
-	alice, err := engine.GetNode("u1")
+	alice, err := engine.GetNode(t.Context(), "u1")
 	require.NoError(t, err)
 	require.ElementsMatch(t, []string{"Imported", "Person", "User"}, alice.Labels)
 	require.Equal(t, "Alice", alice.Properties["name"])
 	require.Equal(t, int64(34), alice.Properties["age"])
 	require.Equal(t, true, alice.Properties["active"])
-	require.Equal(t, []any{"agent", "graph"}, alice.Properties["tags"])
+	require.Equal(t, []string{"agent", "graph"}, alice.Properties["tags"])
 	require.Equal(t, []float32{0.1, 0.2, 0.3}, alice.Properties["embedding"])
 	require.Equal(t, []float32{0.4, 0.5, 0.6}, alice.NamedEmbeddings["default"])
 	require.Equal(t, "u1", alice.Properties["id"])
 
-	edges, err := engine.GetOutgoingEdges("u1")
+	edges, err := engine.GetOutgoingEdges(context.Background(), "u1")
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	require.Equal(t, storage.NodeID("u1"), edges[0].StartNode)
@@ -71,7 +73,8 @@ u1,u2,KNOWS,2024
 	_, err = os.Stat(filepath.Join(dir, "search", "mydb", "hnsw"))
 	require.NoError(t, err)
 
-	constraints := engine.GetSchema().GetConstraintsForLabels([]string{"Person"})
+	constraints, err := engine.GetSchema().GetConstraintsForLabels(context.Background(), []string{"Person"})
+	require.NoError(t, err)
 	require.Len(t, constraints, 1)
 	require.Equal(t, "person_name_unique", constraints[0].Name)
 	require.Equal(t, storage.ConstraintUnique, constraints[0].Type)
@@ -89,7 +92,7 @@ n1,Alice
 n1,Bob
 `), 0o600))
 
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	report, err := ImportFull(context.Background(), base, Options{
 		DatabaseName:       "mydb",
 		NodeSources:        []string{nodesPath},
@@ -102,7 +105,7 @@ n1,Bob
 	require.Equal(t, int64(1), report.DuplicateNodesSkipped)
 
 	engine := storage.NewNamespacedEngine(base, "mydb")
-	node, err := engine.GetNode("n1")
+	node, err := engine.GetNode(t.Context(), "n1")
 	require.NoError(t, err)
 	require.NotNil(t, node)
 	require.Equal(t, "Alice", node.Properties["name"])
@@ -126,9 +129,9 @@ n1,n2,KNOWS,2024
 }
 
 func TestNeo4jCSVExportRoundTripsThroughImporter(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	source := storage.NewNamespacedEngine(base, "source")
-	_, err := source.CreateNode(&storage.Node{
+	_, err := source.CreateNode(t.Context(), &storage.Node{
 		ID:     "u1",
 		Labels: []string{"Person", "User"},
 		Properties: map[string]any{
@@ -140,7 +143,7 @@ func TestNeo4jCSVExportRoundTripsThroughImporter(t *testing.T) {
 		NamedEmbeddings: map[string][]float32{"default": {0.4, 0.5, 0.6}},
 	})
 	require.NoError(t, err)
-	_, err = source.CreateNode(&storage.Node{
+	_, err = source.CreateNode(t.Context(), &storage.Node{
 		ID:     "u2",
 		Labels: []string{"Person"},
 		Properties: map[string]any{
@@ -149,7 +152,7 @@ func TestNeo4jCSVExportRoundTripsThroughImporter(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	require.NoError(t, source.CreateEdge(&storage.Edge{
+	require.NoError(t, source.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "r1",
 		StartNode: "u1",
 		EndNode:   "u2",
@@ -173,7 +176,7 @@ func TestNeo4jCSVExportRoundTripsThroughImporter(t *testing.T) {
 	nodeSources, relSources, err := DiscoverNeo4jCSVSources(outDir, Options{})
 	require.NoError(t, err)
 
-	destBase := storage.NewMemoryEngine()
+	destBase := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	report, err := ImportFull(context.Background(), destBase, Options{
 		DatabaseName: "dest",
 		NodeSources:  nodeSources,
@@ -187,21 +190,22 @@ func TestNeo4jCSVExportRoundTripsThroughImporter(t *testing.T) {
 	require.Equal(t, int64(1), report.RelationshipsImported)
 
 	dest := storage.NewNamespacedEngine(destBase, "dest")
-	alice, err := dest.GetNode("u1")
+	alice, err := dest.GetNode(t.Context(), "u1")
 	require.NoError(t, err)
 	require.Equal(t, "Alice", alice.Properties["name"])
 	require.Equal(t, int64(34), alice.Properties["age"])
-	require.Equal(t, []any{"agent", "graph"}, alice.Properties["tags"])
+	require.Equal(t, []string{"agent", "graph"}, alice.Properties["tags"])
 	require.Equal(t, []float32{0.1, 0.2, 0.3}, alice.Properties["vec"])
 	require.Equal(t, []float32{0.4, 0.5, 0.6}, alice.NamedEmbeddings["default"])
 	require.ElementsMatch(t, []string{"Person", "User"}, alice.Labels)
 
-	edges, err := dest.GetOutgoingEdges("u1")
+	edges, err := dest.GetOutgoingEdges(context.Background(), "u1")
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	require.Equal(t, "KNOWS", edges[0].Type)
 	require.Equal(t, int64(2024), edges[0].Properties["since"])
-	constraints := dest.GetSchema().GetConstraintsForLabels([]string{"Person"})
+	constraints, err := dest.GetSchema().GetConstraintsForLabels(context.Background(), []string{"Person"})
+	require.NoError(t, err)
 	require.Len(t, constraints, 1)
 	require.Equal(t, "person_name_unique", constraints[0].Name)
 	indexes := dest.GetSchema().GetIndexes()
@@ -209,9 +213,9 @@ func TestNeo4jCSVExportRoundTripsThroughImporter(t *testing.T) {
 }
 
 func TestNeo4jCSVExportRoundTripsFullSchemaDefinition(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	source := storage.NewNamespacedEngine(base, "source")
-	_, err := source.CreateNode(&storage.Node{
+	_, err := source.CreateNode(t.Context(), &storage.Node{
 		ID:     "u1",
 		Labels: []string{"Person"},
 		Properties: map[string]any{
@@ -225,7 +229,7 @@ func TestNeo4jCSVExportRoundTripsFullSchemaDefinition(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	_, err = source.CreateNode(&storage.Node{
+	_, err = source.CreateNode(t.Context(), &storage.Node{
 		ID:     "u2",
 		Labels: []string{"Person"},
 		Properties: map[string]any{
@@ -238,7 +242,7 @@ func TestNeo4jCSVExportRoundTripsFullSchemaDefinition(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	require.NoError(t, source.CreateEdge(&storage.Edge{
+	require.NoError(t, source.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "r1",
 		StartNode: "u1",
 		EndNode:   "u2",
@@ -251,12 +255,12 @@ func TestNeo4jCSVExportRoundTripsFullSchemaDefinition(t *testing.T) {
 
 	schema := source.GetSchema()
 	require.NoError(t, schema.AddUniqueConstraint("person_email_unique", "Person", "email"))
-	require.NoError(t, schema.AddPropertyTypeConstraint("person_age_type", "Person", "age", storage.PropertyTypeInteger))
+	require.NoError(t, schema.AddPropertyTypeConstraint("person_age_type", "Person", "age", storage.PropertyTypeInteger, storage.PropertyTypeConstraintOptions{}))
 	require.NoError(t, schema.AddPropertyIndex("person_name_idx", "Person", []string{"name"}))
 	require.NoError(t, schema.AddCompositeIndex("person_location_idx", "Person", []string{"country", "city"}))
-	require.NoError(t, schema.AddFulltextIndex("person_search_idx", []string{"Person"}, []string{"name"}))
-	require.NoError(t, schema.AddFulltextRelationshipIndex("knows_note_idx", []string{"KNOWS"}, []string{"note"}))
-	require.NoError(t, schema.AddVectorIndex("person_embedding_idx", "Person", "embedding", 3, "cosine"))
+	require.NoError(t, schema.AddFulltextIndex("person_search_idx", []string{"Person"}, []string{"name"}, storage.ConstraintEntityNode))
+	require.NoError(t, schema.AddFulltextIndex("knows_note_idx", []string{"KNOWS"}, []string{"note"}, storage.ConstraintEntityRelationship))
+	require.NoError(t, schema.AddVectorIndex("person_embedding_idx", "Person", "embedding", 3, "cosine", storage.ConstraintEntityNode))
 	require.NoError(t, schema.AddRangeIndex("person_age_range", "Person", "age"))
 	require.NoError(t, schema.AddConstraintContractBundle(storage.ConstraintContract{
 		Name:              "person_name_contract",
@@ -316,7 +320,7 @@ func TestNeo4jCSVExportRoundTripsFullSchemaDefinition(t *testing.T) {
 	nodeSources, relSources, err := DiscoverNeo4jCSVSources(outDir, Options{})
 	require.NoError(t, err)
 
-	destBase := storage.NewMemoryEngine()
+	destBase := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	_, err = ImportFull(context.Background(), destBase, Options{
 		DatabaseName: "dest",
 		NodeSources:  nodeSources,
@@ -328,7 +332,7 @@ func TestNeo4jCSVExportRoundTripsFullSchemaDefinition(t *testing.T) {
 	require.NoError(t, err)
 
 	dest := storage.NewNamespacedEngine(destBase, "dest")
-	require.Equal(t, source.GetSchema().ExportDefinition(), dest.GetSchema().ExportDefinition())
+	require.Equal(t, schemaDefinitionForTest(t, source.GetSchema()), schemaDefinitionForTest(t, dest.GetSchema()))
 }
 
 func TestImporterReportsDuplicateIDs(t *testing.T) {
@@ -339,7 +343,7 @@ n1,Alice
 n1,Bob
 `), 0o600))
 
-	_, err := ImportFull(context.Background(), storage.NewMemoryEngine(), Options{
+	_, err := ImportFull(context.Background(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), Options{
 		DatabaseName: "mydb",
 		NodeSources:  []string{nodesPath},
 		BuildIndexes: false,
@@ -363,7 +367,7 @@ a,2,Bob
 a,1,a,2,KNOWS
 `), 0o600))
 
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	_, err := ImportFull(context.Background(), base, Options{
 		DatabaseName: "mydb",
 		NodeSources:  []string{nodesPath},
@@ -374,7 +378,7 @@ a,1,a,2,KNOWS
 	require.NoError(t, err)
 
 	engine := storage.NewNamespacedEngine(base, "mydb")
-	edges, err := engine.AllEdges()
+	edges, err := engine.AllEdges(context.Background())
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	require.Equal(t, storage.NodeID("a|1"), edges[0].StartNode)
@@ -392,7 +396,7 @@ n1,Alice
 n1,missing,KNOWS
 `), 0o600))
 
-	_, err := ImportFull(context.Background(), storage.NewMemoryEngine(), Options{
+	_, err := ImportFull(context.Background(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), Options{
 		DatabaseName:         "mydb",
 		NodeSources:          []string{nodesPath},
 		RelSources:           []string{relsPath},
@@ -405,7 +409,7 @@ n1,missing,KNOWS
 	require.ErrorAs(t, err, &importErr)
 	require.Equal(t, ExitBadRelationship, importErr.ExitCode)
 
-	report, err := ImportFull(context.Background(), storage.NewMemoryEngine(), Options{
+	report, err := ImportFull(context.Background(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), Options{
 		DatabaseName:         "mydb",
 		NodeSources:          []string{nodesPath},
 		RelSources:           []string{relsPath},
@@ -419,7 +423,7 @@ n1,missing,KNOWS
 }
 
 func TestImporterScenario_MissingSourceFolderFails(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
 	missingPath := filepath.Join(t.TempDir(), "missing", "nodes.csv")
@@ -443,7 +447,7 @@ func TestImporterScenario_MissingLaterSourceFailsBeforeWrites(t *testing.T) {
 	missingPath := filepath.Join(dir, "nodes_rows_missing.csv")
 	require.NoError(t, os.WriteFile(headerPath, []byte(":ID,name:string\nn1,Alice\n"), 0o600))
 
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
 	_, err := ImportFull(context.Background(), base, Options{
@@ -460,7 +464,7 @@ func TestImporterScenario_MissingLaterSourceFailsBeforeWrites(t *testing.T) {
 	require.ErrorIs(t, importErr.Err, os.ErrNotExist)
 
 	engine := storage.NewNamespacedEngine(base, "missingdb")
-	count, countErr := engine.NodeCount()
+	count, countErr := engine.NodeCount(t.Context())
 	require.NoError(t, countErr)
 	require.Equal(t, int64(0), count)
 }
@@ -472,7 +476,7 @@ func TestImporterPreservesEmptyStringPropertiesUnlessIgnored(t *testing.T) {
 	require.NoError(t, os.WriteFile(nodesPath, []byte(":ID,name:string,nickname:string,age:int\nn1,Alice,,34\nn2,Bob,builder,29\n"), 0o600))
 	require.NoError(t, os.WriteFile(relsPath, []byte(":START_ID,:END_ID,:TYPE,note:string,since:int\nn1,n2,KNOWS,,2024\n"), 0o600))
 
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
 	_, err := ImportFull(context.Background(), base, Options{
@@ -485,10 +489,10 @@ func TestImporterPreservesEmptyStringPropertiesUnlessIgnored(t *testing.T) {
 	require.NoError(t, err)
 
 	keep := storage.NewNamespacedEngine(base, "keepempty")
-	node, err := keep.GetNode("n1")
+	node, err := keep.GetNode(t.Context(), "n1")
 	require.NoError(t, err)
 	require.Equal(t, "", node.Properties["nickname"])
-	edges, err := keep.GetOutgoingEdges("n1")
+	edges, err := keep.GetOutgoingEdges(context.Background(), "n1")
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	require.Equal(t, "", edges[0].Properties["note"])
@@ -504,11 +508,11 @@ func TestImporterPreservesEmptyStringPropertiesUnlessIgnored(t *testing.T) {
 	require.NoError(t, err)
 
 	drop := storage.NewNamespacedEngine(base, "dropempty")
-	node, err = drop.GetNode("n1")
+	node, err = drop.GetNode(t.Context(), "n1")
 	require.NoError(t, err)
 	_, exists := node.Properties["nickname"]
 	require.False(t, exists)
-	edges, err = drop.GetOutgoingEdges("n1")
+	edges, err = drop.GetOutgoingEdges(context.Background(), "n1")
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	_, exists = edges[0].Properties["note"]
@@ -522,7 +526,7 @@ func TestImporterMultiFileAnonymousNodeIDsRemainUnique(t *testing.T) {
 	require.NoError(t, os.WriteFile(headerPath, []byte("name:string\nAlice\n"), 0o600))
 	require.NoError(t, os.WriteFile(rowsPath, []byte("Bob\n"), 0o600))
 
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
 	report, err := ImportFull(context.Background(), base, Options{
@@ -535,10 +539,10 @@ func TestImporterMultiFileAnonymousNodeIDsRemainUnique(t *testing.T) {
 	require.Equal(t, int64(2), report.NodesImported)
 
 	engine := storage.NewNamespacedEngine(base, "anon")
-	alice, err := engine.GetNode("_anon_0")
+	alice, err := engine.GetNode(t.Context(), "_anon_0")
 	require.NoError(t, err)
 	require.Equal(t, "Alice", alice.Properties["name"])
-	bob, err := engine.GetNode("_anon_1")
+	bob, err := engine.GetNode(t.Context(), "_anon_1")
 	require.NoError(t, err)
 	require.Equal(t, "Bob", bob.Properties["name"])
 }
@@ -552,7 +556,7 @@ func TestImporterMultiFileRelationshipIDsRemainUnique(t *testing.T) {
 	require.NoError(t, os.WriteFile(relsHeader, []byte(":START_ID,:END_ID,:TYPE\nn1,n2,KNOWS\n"), 0o600))
 	require.NoError(t, os.WriteFile(relsRows, []byte("n2,n3,KNOWS\n"), 0o600))
 
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
 	report, err := ImportFull(context.Background(), base, Options{
@@ -566,7 +570,7 @@ func TestImporterMultiFileRelationshipIDsRemainUnique(t *testing.T) {
 	require.Equal(t, int64(2), report.RelationshipsImported)
 
 	engine := storage.NewNamespacedEngine(base, "rels")
-	edges, err := engine.AllEdges()
+	edges, err := engine.AllEdges(context.Background())
 	require.NoError(t, err)
 	require.Len(t, edges, 2)
 	require.NotEqual(t, edges[0].ID, edges[1].ID)
@@ -577,7 +581,7 @@ func TestImporterBooleanParsingIsCaseInsensitiveAndRejectsInvalidValues(t *testi
 	nodesPath := filepath.Join(dir, "nodes.csv")
 	require.NoError(t, os.WriteFile(nodesPath, []byte(":ID,active:boolean\nn1,TRUE\nn2,False\n"), 0o600))
 
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
 	_, err := ImportFull(context.Background(), base, Options{
@@ -589,16 +593,16 @@ func TestImporterBooleanParsingIsCaseInsensitiveAndRejectsInvalidValues(t *testi
 	require.NoError(t, err)
 
 	engine := storage.NewNamespacedEngine(base, "bools")
-	n1, err := engine.GetNode("n1")
+	n1, err := engine.GetNode(t.Context(), "n1")
 	require.NoError(t, err)
 	require.Equal(t, true, n1.Properties["active"])
-	n2, err := engine.GetNode("n2")
+	n2, err := engine.GetNode(t.Context(), "n2")
 	require.NoError(t, err)
 	require.Equal(t, false, n2.Properties["active"])
 
 	invalidPath := filepath.Join(dir, "invalid_bool.csv")
 	require.NoError(t, os.WriteFile(invalidPath, []byte(":ID,active:boolean\nn1,notabool\n"), 0o600))
-	_, err = ImportFull(context.Background(), storage.NewMemoryEngine(), Options{
+	_, err = ImportFull(context.Background(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), Options{
 		DatabaseName: "badbool",
 		NodeSources:  []string{invalidPath},
 		BuildIndexes: false,
@@ -617,7 +621,7 @@ func TestImporterRelationshipEndpointIDsAreRequired(t *testing.T) {
 	require.NoError(t, os.WriteFile(nodesPath, []byte(":ID,name:string\nn1,Alice\nn2,Bob\n"), 0o600))
 	require.NoError(t, os.WriteFile(relsPath, []byte(":START_ID,:END_ID,:TYPE\n,n2,KNOWS\n"), 0o600))
 
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
 	_, err := ImportFull(context.Background(), base, Options{
@@ -642,7 +646,7 @@ func TestImporterNodeParseErrorsIncludeFilePath(t *testing.T) {
 	nodesPath := filepath.Join(dir, "invalid_nodes.csv")
 	require.NoError(t, os.WriteFile(nodesPath, []byte(":ID,active:boolean\nn1,notabool\n"), 0o600))
 
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
 	_, err := ImportFull(context.Background(), base, Options{
@@ -666,7 +670,7 @@ func TestImporterRelationshipParseErrorsIncludeFilePath(t *testing.T) {
 	require.NoError(t, os.WriteFile(nodesPath, []byte(":ID,name:string\nn1,Alice\nn2,Bob\n"), 0o600))
 	require.NoError(t, os.WriteFile(relsPath, []byte(":START_ID,:END_ID,:TYPE,since:int\nn1,n2,KNOWS,notanint\n"), 0o600))
 
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
 	_, err := ImportFull(context.Background(), base, Options{
@@ -689,7 +693,7 @@ func TestImporterNamedEmbeddingDimensionsAreInferredAndValidated(t *testing.T) {
 	nodesPath := filepath.Join(dir, "nodes.csv")
 	require.NoError(t, os.WriteFile(nodesPath, []byte(":ID,:EMBEDDING(image)\nn1,0.1;0.2\nn2,0.3;0.4;0.5\n"), 0o600))
 
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
 	_, err := ImportFull(context.Background(), base, Options{
@@ -734,7 +738,7 @@ u2,Dan,reader,Person
 u1,u2,WORKS_WITH,2025
 `), 0o600))
 
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
 	alphaReport, err := ImportFull(context.Background(), base, Options{
@@ -750,13 +754,13 @@ u1,u2,WORKS_WITH,2025
 	require.Equal(t, int64(1), alphaReport.RelationshipsImported)
 
 	alpha := storage.NewNamespacedEngine(base, "alpha")
-	alphaAlice, err := alpha.GetNode("u1")
+	alphaAlice, err := alpha.GetNode(t.Context(), "u1")
 	require.NoError(t, err)
 	require.Equal(t, "Alice", alphaAlice.Properties["name"])
 	require.Equal(t, "admin", alphaAlice.Properties["role"])
 	require.ElementsMatch(t, []string{"Imported", "Person", "User"}, alphaAlice.Labels)
 
-	alphaEdges, err := alpha.GetOutgoingEdges("u1")
+	alphaEdges, err := alpha.GetOutgoingEdges(context.Background(), "u1")
 	require.NoError(t, err)
 	require.Len(t, alphaEdges, 1)
 	require.Equal(t, storage.NodeID("u1"), alphaEdges[0].StartNode)
@@ -791,13 +795,13 @@ u1,u2,WORKS_WITH,2025
 	require.Equal(t, int64(1), betaReport.RelationshipsImported)
 
 	beta := storage.NewNamespacedEngine(base, "beta")
-	betaCarol, err := beta.GetNode("u1")
+	betaCarol, err := beta.GetNode(t.Context(), "u1")
 	require.NoError(t, err)
 	require.Equal(t, "Carol", betaCarol.Properties["name"])
 	require.Equal(t, "owner", betaCarol.Properties["role"])
 	require.ElementsMatch(t, []string{"Imported", "Person", "User"}, betaCarol.Labels)
 
-	betaEdges, err := beta.GetOutgoingEdges("u1")
+	betaEdges, err := beta.GetOutgoingEdges(context.Background(), "u1")
 	require.NoError(t, err)
 	require.Len(t, betaEdges, 1)
 	require.Equal(t, storage.NodeID("u1"), betaEdges[0].StartNode)
@@ -805,19 +809,19 @@ u1,u2,WORKS_WITH,2025
 	require.Equal(t, "WORKS_WITH", betaEdges[0].Type)
 	require.Equal(t, int64(2025), betaEdges[0].Properties["since"])
 
-	alphaAlice, err = alpha.GetNode("u1")
+	alphaAlice, err = alpha.GetNode(t.Context(), "u1")
 	require.NoError(t, err)
 	require.Equal(t, "Alice", alphaAlice.Properties["name"])
 	require.Equal(t, "admin", alphaAlice.Properties["role"])
 
-	alphaCount, err := alpha.NodeCount()
+	alphaCount, err := alpha.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, int64(2), alphaCount)
-	betaCount, err := beta.NodeCount()
+	betaCount, err := beta.NodeCount(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, int64(2), betaCount)
 
-	_, err = beta.GetNode("missing")
+	_, err = beta.GetNode(t.Context(), "missing")
 	require.Error(t, err)
 	require.True(t, errors.Is(err, storage.ErrNotFound))
 }
@@ -828,7 +832,7 @@ func TestImporterScenario_MissingSecondSourceAcrossFlagsFailsBeforeWrites(t *tes
 	missingPath := filepath.Join(dir, "nodes_missing.csv")
 	require.NoError(t, os.WriteFile(goodPath, []byte(":ID,name:string\nn1,Alice\n"), 0o600))
 
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
 	_, err := ImportFull(context.Background(), base, Options{
@@ -845,7 +849,7 @@ func TestImporterScenario_MissingSecondSourceAcrossFlagsFailsBeforeWrites(t *tes
 	require.ErrorIs(t, importErr.Err, os.ErrNotExist)
 
 	engine := storage.NewNamespacedEngine(base, "missingdb")
-	count, countErr := engine.NodeCount()
+	count, countErr := engine.NodeCount(t.Context())
 	require.NoError(t, countErr)
 	require.Equal(t, int64(0), count)
 }
@@ -857,7 +861,7 @@ func TestImporterBadRelationshipTolerance(t *testing.T) {
 	require.NoError(t, os.WriteFile(nodesPath, []byte(":ID,name\nn1,Alice\n"), 0o600))
 	require.NoError(t, os.WriteFile(relsPath, []byte(":START_ID,:END_ID,:TYPE\nn1,missing1,KNOWS\nn1,missing2,KNOWS\n"), 0o600))
 
-	_, err := ImportFull(context.Background(), storage.NewMemoryEngine(), Options{
+	_, err := ImportFull(context.Background(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), Options{
 		DatabaseName: "tol0",
 		NodeSources:  []string{nodesPath},
 		RelSources:   []string{relsPath},
@@ -866,7 +870,7 @@ func TestImporterBadRelationshipTolerance(t *testing.T) {
 	})
 	require.Error(t, err)
 
-	report, err := ImportFull(context.Background(), storage.NewMemoryEngine(), Options{
+	report, err := ImportFull(context.Background(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), Options{
 		DatabaseName: "tol2",
 		NodeSources:  []string{nodesPath},
 		RelSources:   []string{relsPath},
@@ -877,7 +881,7 @@ func TestImporterBadRelationshipTolerance(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(2), report.BadRelationships)
 
-	_, err = ImportFull(context.Background(), storage.NewMemoryEngine(), Options{
+	_, err = ImportFull(context.Background(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), Options{
 		DatabaseName: "tol1",
 		NodeSources:  []string{nodesPath},
 		RelSources:   []string{relsPath},
@@ -898,7 +902,7 @@ func TestImporterRelationshipIDColumnPreservedAndRoundTrips(t *testing.T) {
 	require.NoError(t, os.WriteFile(nodesPath, []byte(":ID,name:string\nn1,Alice\nn2,Bob\n"), 0o600))
 	require.NoError(t, os.WriteFile(relsPath, []byte(":ID,:START_ID,:END_ID,:TYPE\nrA,n1,n2,KNOWS\n"), 0o600))
 
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	_, err := ImportFull(context.Background(), base, Options{
 		DatabaseName: "rels-id",
@@ -910,7 +914,7 @@ func TestImporterRelationshipIDColumnPreservedAndRoundTrips(t *testing.T) {
 	require.NoError(t, err)
 
 	engine := storage.NewNamespacedEngine(base, "rels-id")
-	edges, err := engine.AllEdges()
+	edges, err := engine.AllEdges(context.Background())
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	require.Equal(t, storage.EdgeID("rA"), edges[0].ID)
@@ -930,7 +934,7 @@ func TestImporterReportsDuplicateRelationshipIDsAcrossChunks(t *testing.T) {
 	require.NoError(t, os.WriteFile(nodesPath, []byte(":ID,name:string\nn1,Alice\nn2,Bob\n"), 0o600))
 	require.NoError(t, os.WriteFile(relsPath, []byte(":ID,:START_ID,:END_ID,:TYPE\nrA,n1,n2,KNOWS\nrA,n1,n2,KNOWS\n"), 0o600))
 
-	_, err := ImportFull(context.Background(), storage.NewMemoryEngine(), Options{
+	_, err := ImportFull(context.Background(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), Options{
 		DatabaseName: "rels-dup",
 		NodeSources:  []string{nodesPath},
 		RelSources:   []string{relsPath},
@@ -946,13 +950,13 @@ func TestImporterReportsDuplicateRelationshipIDsAcrossChunks(t *testing.T) {
 }
 
 func TestNeo4jCSVExportSchemaCypher_IncludesRelationshipFulltextAndVectorIndexes(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	source := storage.NewNamespacedEngine(base, "source")
-	_, err := source.CreateNode(&storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]any{"name": "Alice"}})
+	_, err := source.CreateNode(t.Context(), &storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]any{"name": "Alice"}})
 	require.NoError(t, err)
-	_, err = source.CreateNode(&storage.Node{ID: "n2", Labels: []string{"Person"}, Properties: map[string]any{"name": "Bob"}})
+	_, err = source.CreateNode(t.Context(), &storage.Node{ID: "n2", Labels: []string{"Person"}, Properties: map[string]any{"name": "Bob"}})
 	require.NoError(t, err)
-	require.NoError(t, source.CreateEdge(&storage.Edge{
+	require.NoError(t, source.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "e1",
 		StartNode: "n1",
 		EndNode:   "n2",
@@ -964,8 +968,8 @@ func TestNeo4jCSVExportSchemaCypher_IncludesRelationshipFulltextAndVectorIndexes
 	}))
 
 	schema := source.GetSchema()
-	require.NoError(t, schema.AddFulltextRelationshipIndex("rel_fact_ft", []string{"RELATES_TO"}, []string{"fact"}))
-	require.NoError(t, schema.AddVectorIndexForEntity("rel_fact_vec", "RELATES_TO", "fact_embedding", 3, "cosine", storage.ConstraintEntityRelationship))
+	require.NoError(t, schema.AddFulltextIndex("rel_fact_ft", []string{"RELATES_TO"}, []string{"fact"}, storage.ConstraintEntityRelationship))
+	require.NoError(t, schema.AddVectorIndex("rel_fact_vec", "RELATES_TO", "fact_embedding", 3, "cosine", storage.ConstraintEntityRelationship))
 
 	outDir := filepath.Join(t.TempDir(), "schema-ddl")
 	require.NoError(t, ExportNeo4jCSV(source, Neo4jCSVExportOptions{OutputDir: outDir}))

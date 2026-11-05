@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 	"testing"
 
@@ -104,15 +105,15 @@ func TestLocalScopeOwners(t *testing.T) {
 	pattern := "shortestPath((s)((x)-[r:R WHERE r.id='r1']->(y))+(t))"
 	_, _, _, found := nextQuantifiedGroup(pattern, 0)
 	require.False(t, found)
-	require.Len(t, quantifiedGroups(pattern), 1)
-	require.Equal(t, []string{"x x", "y"}, quantifiedGroups("((`x x`)-->(y))+")[0].nodes)
+	require.Len(t, quantifiedGroups(t.Context(), pattern), 1)
+	require.Equal(t, []string{"x x", "y"}, quantifiedGroups(t.Context(), "((`x x`)-->(y))+")[0].nodes)
 
 	// The property-access check reads a local where it is bound.
 	types := map[string]string{"i": "Integer"}
-	require.NoError(t, checkExpressionPropertyAccesses("all(i IN [{p: 1}] WHERE i.p = 1)", types, nil))
-	require.Error(t, checkExpressionPropertyAccesses("i.p = 1 AND all(i IN [{p: 1}] WHERE i.p = 1)", types, nil))
-	require.NoError(t, checkExpressionPropertyAccesses("[i IN [{p: 1}] | [(n)-->(m) | i.p]]", types, nil))
-	require.Error(t, checkExpressionPropertyAccesses("[j IN [1] | [(n)-->(m) | i.p]]", types, nil))
+	require.NoError(t, checkExpressionPropertyAccesses(t.Context(), "all(i IN [{p: 1}] WHERE i.p = 1)", types, nil))
+	require.Error(t, checkExpressionPropertyAccesses(t.Context(), "i.p = 1 AND all(i IN [{p: 1}] WHERE i.p = 1)", types, nil))
+	require.NoError(t, checkExpressionPropertyAccesses(t.Context(), "[i IN [{p: 1}] | [(n)-->(m) | i.p]]", types, nil))
+	require.Error(t, checkExpressionPropertyAccesses(t.Context(), "[j IN [1] | [(n)-->(m) | i.p]]", types, nil))
 	require.Equal(t, types, newLocalReader("[i IN l | i]").withoutTypes(types, 0))
 }
 
@@ -167,14 +168,14 @@ func TestLocalScopeRound3(t *testing.T) {
 	})
 	scope := matchSemanticScope{"r": matchBindingRelationship}
 	text := "all(r IN [1] WHERE EXISTS { (r)-->() }) AND all(r IN [y] WHERE true)"
-	require.Equal(t, matchBindingValue, withLocalTypes(staticTypeScope{kinds: scope}, text, strings.Index(text, "EXISTS")).kinds["r"])
-	require.Equal(t, matchBindingPath, localBindingKind("[p = (a)-->(b) | p]", 17, "p", staticTypeScope{}))
-	require.Equal(t, matchBindingUnknown, localBindingKind("reduce(a = b, x IN l | a)", 23, "a", staticTypeScope{}))
-	require.Equal(t, matchBindingValue, localBindingKind("reduce(a = 0, x IN l | a)", 23, "a", staticTypeScope{}))
-	require.Equal(t, scope, withLocalTypes(staticTypeScope{kinds: scope}, "true", 0).kinds)
-	require.Equal(t, matchBindingUnknown, localBindingKind("x", 0, "x", staticTypeScope{}))
-	require.Equal(t, matchBindingUnknown, localBindingKind("[x IN| x]", 7, "x", staticTypeScope{}))
-	require.Equal(t, matchSemanticScope{"x": matchBindingValue}, withLocalTypes(staticTypeScope{}, "[x IN [1] | x]", 12).kinds)
+	require.Equal(t, matchBindingValue, withLocalTypes(t.Context(), staticTypeScope{kinds: scope}, text, strings.Index(text, "EXISTS")).kinds["r"])
+	require.Equal(t, matchBindingPath, localBindingKind(t.Context(), "[p = (a)-->(b) | p]", 17, "p", staticTypeScope{}))
+	require.Equal(t, matchBindingUnknown, localBindingKind(t.Context(), "reduce(a = b, x IN l | a)", 23, "a", staticTypeScope{}))
+	require.Equal(t, matchBindingValue, localBindingKind(t.Context(), "reduce(a = 0, x IN l | a)", 23, "a", staticTypeScope{}))
+	require.Equal(t, scope, withLocalTypes(t.Context(), staticTypeScope{kinds: scope}, "true", 0).kinds)
+	require.Equal(t, matchBindingUnknown, localBindingKind(t.Context(), "x", 0, "x", staticTypeScope{}))
+	require.Equal(t, matchBindingUnknown, localBindingKind(t.Context(), "[x IN| x]", 7, "x", staticTypeScope{}))
+	require.Equal(t, matchSemanticScope{"x": matchBindingValue}, withLocalTypes(t.Context(), staticTypeScope{}, "[x IN [1] | x]", 12).kinds)
 }
 
 // TestSubqueryBodiesWalkTheirOwnScope: an EXISTS / COUNT / COLLECT body and
@@ -232,7 +233,7 @@ func TestLocalOccurrencesWalkOnce(t *testing.T) {
 	} {
 		var occurrences []int
 		for at := 0; at < len(text); at++ {
-			if text[at] == 'x' && (at == 0 || !isIdentByte(text[at-1])) && (at+1 == len(text) || !isIdentByte(text[at+1])) {
+			if text[at] == 'x' && (at == 0 || !cyphertext.NamePartAt(text, at-1)) && (at+1 == len(text) || !cyphertext.NamePartAt(text, at+1)) {
 				occurrences = append(occurrences, at)
 			}
 		}
@@ -262,17 +263,20 @@ func TestLocalScopeRound4Edges(t *testing.T) {
 	local := localOccurrences{text: text}
 	require.Equal(t, "7 / 2 + [x IN l | x]", replaceIdentifierOutsideQuotesUnless(text, "x", "7", &local))
 
-	scope := withPatternComprehensionBindings(staticTypeScope{}, "[(a)-->(b) | b]", len("[(a)-->(b) | "))
+	scope := withPatternComprehensionBindings(t.Context(), staticTypeScope{}, "[(a)-->(b) | b]", len("[(a)-->(b) | "))
 	require.True(t, scope.bound("a"))
 	require.True(t, scope.bound("b"))
 
 	require.Equal(t, "CALL db.labels() YIELD label", maskNestedScopeBodies("CALL db.labels() YIELD label"))
 	require.Equal(t, "CALL { RETURN 1", maskNestedScopeBodies("CALL { RETURN 1"))
 
-	_, _, ok := callSubqueryImports("CALL db.labels()", typeScope{})
+	procedure, split := splitPipelineClausesAllowingProcedureCalls(t.Context(), "CALL db.labels() YIELD label")
+	require.True(t, split)
+	_, _, ok, err := callSubqueryImports(t.Context(), procedure[0], typeScope{})
+	require.NoError(t, err)
 	require.False(t, ok)
 	exec := &StorageExecutor{}
-	returned, err := exec.callSubqueryReturnTypes("CALL db.labels()", nil, typeScope{}, false)
+	returned, _, err := exec.callSubqueryReturnTypes(t.Context(), procedure[0], queryBody{}, typeScope{}, false)
 	require.NoError(t, err)
 	require.Nil(t, returned)
 }

@@ -327,8 +327,8 @@ SHOW LIMITS FOR DATABASE tenant_a
    - `max_nodes`: Maximum number of nodes (0 = unlimited)
    - `max_edges`: Maximum number of edges (0 = unlimited)
    - `max_bytes`: Maximum storage size in bytes (0 = unlimited)
-     - **Enforced with exact size calculation**: The actual serialized size of each node/edge is calculated using gob encoding (matching the storage format)
-     - **No estimation**: Storage size is tracked incrementally for accurate, O(1) limit checks
+     - **Logical entity sizing**: Each node or relationship is charged by its canonical MessagePack size, not by its physical disk footprint
+     - **Incremental accounting**: Usage is tracked for O(1) limit checks
      - **Clear error messages**: When exceeded, operations fail with: "would exceed max_bytes limit (current: X bytes, limit: Y bytes, new entity: Z bytes)"
 
 2. **Query Limits**:
@@ -360,6 +360,50 @@ Limits are **fully persisted** to disk as part of database metadata:
 
 All limits are enforced at runtime with clear, actionable error messages:
 
+Implicit and explicit transactions (HTTP and Bolt) check storage quotas against
+their cumulative final changes at commit. An over-quota transaction is rolled
+back in full. Quota checks and byte-accounted writes are admitted exclusively per
+database, so concurrent commits cannot jointly exceed a quota. Unlimited
+transactions with no initialized byte accounting share admission and can publish
+independently, including disjoint unique-key MERGEs. A first storage-size read
+initializes accounting exclusively; it cannot race an unaccounted publication.
+A transaction already holding a unique MERGE key receives a retryable storage
+conflict when an incompatible admission lease is busy, avoiding lock inversion.
+Admission waits honor the caller context. Canceled read-only commits also
+release transaction state without entering write admission. Once atomic
+publication begins, it completes; a later cancellation does not turn committed data into a rollback.
+Explicit Bolt COMMIT retains its existing terminal-owner/deadline arbitration;
+the claimed transaction/connection context still propagates to storage.
+
+Quota accounting finishes and admission releases before synchronous storage
+listeners are delivered. Transaction notifications preserve publication order;
+listener re-entry can read managed size or enqueue a managed write without
+retaining the outer transaction's admission or storage publication locks.
+
+These NornicDB quota status codes are consistent across HTTP and Bolt,
+autocommit and explicit transactions:
+
+| Condition | Status | Retry policy |
+| --- | --- | --- |
+| Node, relationship or byte capacity | `Neo.ClientError.General.ResourceLimit` | Change data/quota; retrying the same transaction cannot help. |
+| Query/write rate exhaustion | `Neo.TransientError.General.ResourceExhaustion` | Retry with bounded backoff after refill. |
+
+Commit-time quota rejection has a known rolled-back outcome and no receipt or
+indexing event. A Bolt connection remains reusable after `RESET`. An uncertain
+transport/commit failure is not a quota rejection and is not made safe to retry.
+
+Byte quotas use MessagePack logical entity accounting; they are not the
+physical Badger/WAL disk footprint. Empty and nil property
+maps have the same canonical quota size across staged writes, point reads and
+streaming initialization.
+
+The write-rate token bucket starts with `max_writes_per_second` tokens and refills
+at that rate, capped at that capacity. Transactions consume one token per buffered
+storage operation, including deletes, rather than one per statement or commit.
+The transaction engine can coalesce updates to a newly created entity into its
+create operation. Rejected attempts retain tokens already consumed, as ordinary
+writes do; rollback never retains storage usage.
+
 **MaxNodes/MaxEdges**: When the count limit is reached, create operations fail with:
 
 ```
@@ -375,11 +419,16 @@ storage limit exceeded: database 'tenant_a' would exceed max_bytes limit
 
 **MaxBytes Implementation Details**:
 
-- Uses **exact size calculation**, not estimation
-- Calculates the actual serialized size of each node/edge using gob encoding
+- Charges the MessagePack size of each canonical logical node or relationship;
+  this is a quota measure, not the physical size of Badger files or the WAL
 - Tracks storage size incrementally (initialized lazily on first access)
 - Provides O(1) limit checks without recalculating from all entities
 - Error messages include current size, limit, and the size of the entity being created
+
+In v1.4.4 the logical quota measure changes from gob to MessagePack. Existing
+`max_bytes` settings remain unchanged, but the reported usage and remaining
+headroom can change after upgrade. Review byte limits for databases close to
+their configured quota.
 
 ### Example: MaxBytes Enforcement
 

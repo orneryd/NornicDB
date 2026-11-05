@@ -3,8 +3,8 @@
 // RedactLiterals walks the Cypher token stream, replacing STRING_LITERAL,
 // CHAR_LITERAL (NornicDB's grammar accepts single-quoted strings as an
 // alternate spelling of STRING_LITERAL — see CHAR_LITERAL in
-// CypherLexer.g4), INTEGER, and FLOAT tokens with the constant
-// RedactedPlaceholder. Identifiers, keywords, and parameter REFERENCES
+// CypherLexer.g4), INTEGER, FLOAT, and DIGIT (hex, octal) tokens with the
+// constant RedactedPlaceholder. Identifiers, keywords, and parameter REFERENCES
 // ($name) are preserved verbatim because parameter VALUES bind separately at
 // execution time and never appear as inline literals in the query text.
 //
@@ -20,9 +20,11 @@
 package cypher
 
 import (
+	"context"
 	"strings"
 
 	antlr4 "github.com/antlr4-go/antlr/v4"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	cantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 )
 
@@ -30,20 +32,10 @@ import (
 // Stable string contract: operators searching slow-query logs grep for it.
 const RedactedPlaceholder = "<REDACTED>"
 
-// redactSentinelError is consumed by the silent error listener so a syntax
-// error short-circuits to fail-closed without printing to stderr.
-type redactSilentErrorListener struct {
-	*antlr4.DefaultErrorListener
-	hadError bool
-}
-
-func (l *redactSilentErrorListener) SyntaxError(_ antlr4.Recognizer, _ interface{}, _, _ int, _ string, _ antlr4.RecognitionException) {
-	l.hadError = true
-}
-
 // RedactLiterals returns the input query with literal tokens replaced by
 // RedactedPlaceholder. STRING_LITERAL, CHAR_LITERAL, INTEGER, and FLOAT
-// tokens are always replaced. Statements the grammar rejects also have
+// tokens, and DIGIT tokens (hex and octal integers such as 0xBEEF), are
+// always replaced. Statements the grammar rejects also have
 // their identifiers replaced (see below). Empty queries and malformed or
 // truncated input return RedactedPlaceholder (fail-closed).
 //
@@ -81,14 +73,16 @@ func (l *redactSilentErrorListener) SyntaxError(_ antlr4.Recognizer, _ interface
 // `ORDER BY n.x DESC NULLS LAST` and `CREATE CONSTRAINT ... IS :: ZONED
 // DATETIME` are redacted whole. That is the safe direction.
 //
-// Step 2 checks the statement against the grammar with cantlr.Validate.
+// Step 2 checks the statement against the grammar with cantlr.Validate,
+// but only when it is at most redactGrammarCheckMaxBytes long; a longer
+// statement is treated as one the grammar rejected, without parsing it.
 // When the grammar accepts it, the output keeps every identifier and
 // replaces only literals. When the grammar rejects it, the output keeps the
 // statement's shape but replaces every identifier as well as every literal,
 // because a bare word in text the grammar cannot place may be an unquoted
 // value. In that mode only these stay: keywords, punctuation, whitespace,
 // parameter names after `$`, and label or relationship-type names after `:`
-// directly inside a `(` or `[`. Comments and hex/octal numbers are replaced
+// directly inside a `(` or `[`. Comments are replaced
 // too. The executor accepts some statements the grammar rejects (CALL {
 // ... UNION ... } subqueries, `LIMIT $limit`, map projections, COUNT { }),
 // so those keep their clause structure, labels, and parameter names instead
@@ -98,18 +92,137 @@ func (l *redactSilentErrorListener) SyntaxError(_ antlr4.Recognizer, _ interface
 // readability; a false-open one leaks the exact PII/secret content this
 // redactor exists to protect.
 //
-// Performance: this is NOT on the production hot path — it fires only on the
-// slow-query log emission path (cypher.duration_ms >= SlowQueryThreshold),
-// so per-call cost (~1 lexer pass) is acceptable.
+// Performance: this fires on the slow-query log path, i.e. exactly when the
+// server is already under load, so its cost is bounded: one lexer pass over
+// the statement, plus a grammar parse only for statements of at most
+// redactGrammarCheckMaxBytes. A full parse of a large statement can allocate
+// hundreds of megabytes of prediction state, and the log keeps only its
+// first 500 characters. The executor's log sites go through
+// (*StorageExecutor).redactForLog, which also reuses the executor's cached
+// grammar verdict for the statement text, so the output is the same on both
+// parsers.
 func RedactLiterals(query string) string {
-	if strings.TrimSpace(query) == "" {
+	return redactLiterals(query, redactGrammarAccepts)
+}
+
+// redactGrammarCheckMaxBytes is the largest statement RedactLiterals checks
+// against the grammar. Larger statements keep only their structure (see
+// RedactLiterals): the safe direction, since it redacts more.
+const redactGrammarCheckMaxBytes = 8 << 10
+
+// redactGrammarValidate is cantlr.ValidateContext; tests replace it to count the
+// grammar parses the redactor runs.
+var redactGrammarValidate = func(ctx context.Context, query string) error {
+	return cantlr.ValidateContext(ctx, query, cyphertext.AcceptedSource)
+}
+
+// redactGrammarAccepts is the uncached grammar verdict RedactLiterals uses.
+func redactGrammarAccepts(query string) bool {
+	return len(query) <= redactGrammarCheckMaxBytes && redactGrammarValidate(context.Background(), query) == nil
+}
+
+// redactForLog is RedactLiterals for the executor's log sites. A statement
+// the executor's own ANTLR validation (or an earlier redaction) already
+// found grammar-valid is not parsed again; the verdict is the same either
+// way, so the output does not depend on the parser or the cache.
+func (e *StorageExecutor) redactForLog(ctx context.Context, query string) string {
+	if ctx.Err() != nil {
 		return RedactedPlaceholder
 	}
-	toks, ok := redactLexChecked(query)
+	redacted := redactLiteralsContext(ctx, query, true, func(query string) bool {
+		return e.redactGrammarAccepts(ctx, query)
+	})
+	if ctx.Err() != nil {
+		return RedactedPlaceholder
+	}
+	return redacted
+}
+
+func (e *StorageExecutor) redactGrammarAccepts(ctx context.Context, query string) bool {
+	if ctx.Err() != nil || len(query) > redactGrammarCheckMaxBytes {
+		return false
+	}
+	if e.hasCachedValidSyntax(query, syntaxGrammarAccepted) {
+		return true
+	}
+	if redactGrammarValidate(ctx, query) != nil {
+		return false
+	}
+	e.markCachedValidSyntax(ctx, query, syntaxGrammarAccepted)
+	return true
+}
+
+// redactLiterals is RedactLiterals with the grammar verdict supplied by the
+// caller; grammarAccepts runs only after the lexer checks passed.
+func redactLiterals(query string, grammarAccepts func(string) bool) string {
+	return redactLiteralsContext(context.Background(), query, false, grammarAccepts)
+}
+
+func redactLiteralsContext(ctx context.Context, query string, stripComments bool, grammarAccepts func(string) bool) string {
+	source := cyphertext.SourceFor(ctx, query)
+	query = source.Text
+	trimmed, err := cantlr.TrimSpaceContext(ctx, query)
+	if err != nil || trimmed == "" {
+		return RedactedPlaceholder
+	}
+	checked, ok := redactLexCheckedContext(ctx, query)
 	if !ok {
 		return RedactedPlaceholder
 	}
-	grammarValid := cantlr.Validate(query) == nil
+	toks := checked.tokens
+	// Strip comments from the same checked token stream; do not restart an
+	// unbounded comment/quoted-text scan before observing cancellation.
+	if stripComments && checked.hasComments {
+		var normalized strings.Builder
+		for i, tok := range toks {
+			if i&1023 == 0 && ctx.Err() != nil {
+				return RedactedPlaceholder
+			}
+			text := tok.GetText()
+			if tok.GetTokenType() == cantlr.CypherLexerCOMMENT || tok.GetTokenType() == cantlr.CypherLexerLINE_COMMENT {
+				var ok bool
+				text, ok = cyphertext.CommentReplacement(text, func() bool { return ctx.Err() != nil })
+				if !ok {
+					return RedactedPlaceholder
+				}
+			}
+			normalized.WriteString(text)
+		}
+		query = normalized.String()
+	}
+	grammarValid := grammarAccepts(query)
+	// Grammar acceptance does not make every identifier public: a remote
+	// credential may be an unquoted keyword or a quoted identifier. Consume
+	// the retained grammar's credential roles before preserving identifiers.
+	// A property named password remains ordinary query structure.
+	var credentialURLs [][2]int
+	if source.PasswordBoundary() >= 0 || grammarValid && checked.possibleCredentialRole {
+		if !grammarValid {
+			return RedactedPlaceholder
+		}
+		syntax, err := cantlr.ParseSyntax(ctx, source.Text, cantlr.StatementEntry, false, cyphertext.AcceptedSource)
+		if err != nil {
+			return RedactedPlaceholder
+		}
+		credential := false
+		syntax.Walk(func(node cantlr.SyntaxNode) func() {
+			if node.Rule() == cantlr.CypherParserRULE_credentialValue {
+				credential = true
+			}
+			if node.Rule() == cantlr.CypherParserRULE_credentialURL {
+				first, after := node.TokenRange()
+				// Parameters are references, not inline credentials. The grammar
+				// owns this role even when the URL is a quoted identifier.
+				if first >= 0 && after > first && first < len(toks) && toks[first].GetText() != "$" {
+					credentialURLs = append(credentialURLs, [2]int{first, after})
+				}
+			}
+			return nil
+		})
+		if credential {
+			return RedactedPlaceholder
+		}
+	}
 
 	var b strings.Builder
 	b.Grow(len(query))
@@ -117,9 +230,39 @@ func RedactLiterals(query string) string {
 	// inside a node or relationship pattern, never inside a map.
 	var stack []int
 	prev := noPrevToken
-	for _, tok := range toks {
+	acceptedCursor, originalCursor := 0, 0
+	urlIndex := 0
+	for i, tok := range toks {
+		if i&1023 == 0 && ctx.Err() != nil {
+			return RedactedPlaceholder
+		}
 		ttype := tok.GetTokenType()
 		text := tok.GetText()
+		acceptedCursor += len(text)
+		originalEnd, _ := source.OriginalOffset(acceptedCursor, false, cyphertext.SourceExtent)
+		originalText := source.Original[originalCursor:originalEnd]
+		originalCursor = originalEnd
+		for urlIndex < len(credentialURLs) && i >= credentialURLs[urlIndex][1] {
+			urlIndex++
+		}
+		if urlIndex < len(credentialURLs) && i >= credentialURLs[urlIndex][0] {
+			if i == credentialURLs[urlIndex][0] {
+				b.WriteString(RedactedPlaceholder)
+			}
+			if tok.GetChannel() == antlr4.TokenDefaultChannel {
+				prev = ttype
+			}
+			continue
+		}
+		if stripComments && (ttype == cantlr.CypherLexerCOMMENT || ttype == cantlr.CypherLexerLINE_COMMENT) {
+			var ok bool
+			text, ok = cyphertext.CommentReplacement(text, func() bool { return ctx.Err() != nil })
+			if !ok {
+				return RedactedPlaceholder
+			}
+			b.WriteString(text)
+			continue
+		}
 		switch ttype {
 		case cantlr.CypherLexerLPAREN, cantlr.CypherLexerLBRACE, cantlr.CypherLexerLBRACK:
 			stack = append(stack, ttype)
@@ -130,17 +273,19 @@ func RedactLiterals(query string) string {
 		case ttype == cantlr.CypherLexerSTRING_LITERAL,
 			ttype == cantlr.CypherLexerCHAR_LITERAL,
 			ttype == cantlr.CypherLexerINTEGER,
-			ttype == cantlr.CypherLexerFLOAT:
+			ttype == cantlr.CypherLexerFLOAT,
+			ttype == cantlr.CypherLexerDIGIT:
 			b.WriteString(RedactedPlaceholder)
 		case !grammarValid && redactStructuralOnly(ttype, prev, stack):
 			b.WriteString(RedactedPlaceholder)
 		default:
-			b.WriteString(text)
+			b.WriteString(originalText)
 		}
 		if tok.GetChannel() == antlr4.TokenDefaultChannel {
 			prev = ttype
 		}
 	}
+	b.WriteString(source.Original[originalCursor:])
 	out := b.String()
 	if out == "" {
 		return RedactedPlaceholder
@@ -152,51 +297,56 @@ func RedactLiterals(query string) string {
 // token types are >= 1), so it never collides with a real token type.
 const noPrevToken = -1
 
-// redactLexChecked lexes query and applies the step-1 fail-closed signals
-// documented on RedactLiterals. It returns ok=false when the statement must
-// be redacted whole.
-func redactLexChecked(query string) ([]antlr4.Token, bool) {
-	lexer := cantlr.NewCypherLexer(antlr4.NewInputStream(query))
-	listener := &redactSilentErrorListener{}
-	lexer.RemoveErrorListeners()
-	lexer.AddErrorListener(listener)
+type checkedRedactionTokens struct {
+	tokens                 []antlr4.Token
+	hasComments            bool
+	possibleCredentialRole bool
+}
 
-	var toks []antlr4.Token
+// redactLexCheckedContext applies the step-1 fail-closed signals and records
+// comments in that same pass, avoiding a separate scan of the checked tokens.
+func redactLexCheckedContext(ctx context.Context, query string) (checkedRedactionTokens, bool) {
+	toks, err := cantlr.LexContext(ctx, query, cyphertext.AcceptedSource)
+	if err != nil {
+		return checkedRedactionTokens{}, false
+	}
+	checked := checkedRedactionTokens{tokens: toks}
 	var stack []int
 	prev := noPrevToken
-	for {
-		tok := lexer.NextToken()
-		if tok == nil {
-			break
+	for i, tok := range toks {
+		if i&1023 == 0 && ctx.Err() != nil {
+			return checkedRedactionTokens{}, false
 		}
 		ttype := tok.GetTokenType()
-		if ttype == antlr4.TokenEOF {
-			break
+		if ttype == cantlr.CypherLexerID && (strings.EqualFold(tok.GetText(), "AT") || strings.EqualFold(tok.GetText(), "SECRET")) {
+			checked.possibleCredentialRole = true
 		}
-		if listener.hadError || ttype == cantlr.CypherLexerERRCHAR {
-			return nil, false
+		if ttype == cantlr.CypherLexerERRCHAR {
+			return checkedRedactionTokens{}, false
+		}
+		if ttype == cantlr.CypherLexerCOMMENT || ttype == cantlr.CypherLexerLINE_COMMENT {
+			checked.hasComments = true
 		}
 		switch ttype {
 		case cantlr.CypherLexerLPAREN, cantlr.CypherLexerLBRACE, cantlr.CypherLexerLBRACK:
 			stack = append(stack, ttype)
 		case cantlr.CypherLexerRPAREN, cantlr.CypherLexerRBRACE, cantlr.CypherLexerRBRACK:
 			if len(stack) == 0 || stack[len(stack)-1] != redactOpenerFor(ttype) {
-				return nil, false
+				return checkedRedactionTokens{}, false
 			}
 			stack = stack[:len(stack)-1]
 		}
 		if tok.GetChannel() == antlr4.TokenDefaultChannel {
 			if ttype == cantlr.CypherLexerID && prev == cantlr.CypherLexerID {
-				return nil, false
+				return checkedRedactionTokens{}, false
 			}
 			prev = ttype
 		}
-		toks = append(toks, tok)
 	}
-	if listener.hadError || len(stack) != 0 {
-		return nil, false
+	if len(stack) != 0 || ctx.Err() != nil {
+		return checkedRedactionTokens{}, false
 	}
-	return toks, true
+	return checked, true
 }
 
 // redactOpenerFor returns the opening bracket token type that closer must
@@ -226,7 +376,7 @@ func redactStructuralOnly(ttype, prev int, stack []int) bool {
 			return top != cantlr.CypherLexerLPAREN && top != cantlr.CypherLexerLBRACK
 		}
 		return true
-	case cantlr.CypherLexerDIGIT, cantlr.CypherLexerCOMMENT, cantlr.CypherLexerLINE_COMMENT:
+	case cantlr.CypherLexerCOMMENT, cantlr.CypherLexerLINE_COMMENT:
 		return true
 	}
 	return false

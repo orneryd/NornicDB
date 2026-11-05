@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"strings"
 )
 
@@ -13,19 +14,19 @@ import (
 // read other variables. Because WHERE keeps a row only when every conjunct is
 // true, filtering each variable's candidates by own[v] and the combinations
 // by rest gives the rows the whole clause gives.
-func splitWhereByVariable(where string, variables []string) (own map[string]string, rest string) {
+func splitWhereByVariable(ctx context.Context, where string, variables []string) (own map[string]string, rest string) {
 	known := make(map[string]bool, len(variables))
 	for _, variable := range variables {
 		known[variable] = true
 	}
 	parts := make(map[string][]string, len(variables))
 	var others []string
-	for _, conjunct := range splitTopLevelAndConjuncts(where) {
+	for _, conjunct := range splitTopLevelAndConjuncts(ctx, where) {
 		conjunct = strings.TrimSpace(conjunct)
 		if conjunct == "" {
 			continue
 		}
-		if variable, ok := singleFreeVariable(conjunct); ok && known[variable] {
+		if variable, ok := singleFreeVariable(ctx, conjunct); ok && known[variable] {
 			parts[variable] = append(parts[variable], conjunct)
 			continue
 		}
@@ -41,12 +42,12 @@ func splitWhereByVariable(where string, variables []string) (own map[string]stri
 // singleFreeVariable returns the one variable conjunct reads
 // (expressionFreeVariables), or false when it reads none or several, or holds
 // a pattern or subquery (hasPatternOrSubquery).
-func singleFreeVariable(conjunct string) (string, bool) {
+func singleFreeVariable(ctx context.Context, conjunct string) (string, bool) {
 	if hasPatternOrSubquery(conjunct) {
 		return "", false
 	}
 	variable := ""
-	for _, name := range expressionFreeVariables(conjunct) {
+	for _, name := range expressionFreeVariables(ctx, conjunct) {
 		if variable != "" && name != variable {
 			return "", false
 		}
@@ -74,8 +75,8 @@ func joinWhereConjuncts(conjuncts []string) string {
 func hasPatternOrSubquery(expression string) bool {
 	braces := newSubqueryBraceScanner(expression, 0)
 	for index := 0; index < len(expression); index++ {
-		switch character := expression[index]; character {
-		case '\'', '"', '`':
+		switch character := expression[index]; cypherLexicalByte(character) {
+		case cypherQuoteClass:
 			index = skipQuotedSemanticText(expression, index) - 1
 		case '-':
 			if index+1 < len(expression) && strings.IndexByte("->[", expression[index+1]) >= 0 {

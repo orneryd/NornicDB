@@ -82,6 +82,10 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
+	"github.com/orneryd/nornicdb/pkg/observability"
+	"github.com/orneryd/nornicdb/pkg/util/eventchannel"
 )
 
 // DefaultActionInputSchema is the MCP-compatible JSON Schema when an action
@@ -120,14 +124,18 @@ type HeimdallPlugin interface {
 
 	// === Lifecycle Management ===
 
-	// Initialize is called when the subsystem is loaded
-	// Receives context for accessing database, config, etc.
+	// Initialize is called when the subsystem is loaded. It receives the host
+	// metadata this registration was published under together with the work
+	// context the registration was admitted under.
 	Initialize(ctx SubsystemContext) error
 
 	// Start begins the subsystem's background operations (if any)
 	Start() error
 
 	// Stop halts the subsystem's background operations
+	// Stop must be safe before and during Initialize, and latch cancellation
+	// for initialization work which has not started yet. Shutdown follows only
+	// after the actual initializer and accepted callbacks have returned.
 	Stop() error
 
 	// Shutdown is called when the subsystem is being unloaded
@@ -183,8 +191,16 @@ type HeimdallPlugin interface {
 	// See types.go for interface definitions.
 }
 
-// SubsystemContext is provided to plugins during initialization.
-type SubsystemContext struct {
+// SubsystemHost is the host metadata a plugin subsystem is initialized from.
+//
+// It deliberately has no context: an initialization receives the work context
+// its registration was admitted under, so host metadata never carries a caller
+// context.
+type SubsystemHost struct {
+	// Lifetime is the host's work owner: plugin callbacks enroll in it, its
+	// context is their stop signal, and their outcomes are recorded in it. A
+	// manager given no host lifetime owns one itself; work is never untracked.
+	Lifetime *lifecycle.WorkLifetime
 	// Config is the Heimdall configuration
 	Config Config
 
@@ -207,6 +223,18 @@ type SubsystemContext struct {
 	// Plugins can use this to trigger actions or send prompts to the SLM
 	// based on accumulated events or other triggers.
 	Heimdall HeimdallInvoker
+}
+
+// SubsystemContext is provided to plugins during initialization. It is the host
+// metadata the registration published together with the work context that
+// registration was admitted under.
+type SubsystemContext struct {
+	// Context is valid for Initialize. Registration completion, caller
+	// cancellation, or host stop cancels it. Use callback contexts for later
+	// actions; this is never a context retained from a host setter.
+	Context context.Context
+
+	SubsystemHost
 }
 
 // HeimdallInvoker allows plugins to autonomously trigger SLM actions.
@@ -236,12 +264,16 @@ type HeimdallInvoker interface {
 
 	// InvokeActionAsync invokes an action without waiting for result.
 	// Use this for fire-and-forget scenarios where you don't need the result.
-	// Results will be broadcast via Bifrost to connected clients.
-	InvokeActionAsync(action string, params map[string]interface{})
+	// Results will be broadcast via Bifrost to connected clients. The action
+	// runs with ctx's values (such as the request principal the database
+	// router authorizes) but not its cancellation, so it can outlive the
+	// request.
+	InvokeActionAsync(ctx context.Context, action string, params map[string]interface{})
 
 	// SendPromptAsync sends a prompt without waiting for result.
-	// Results will be broadcast via Bifrost to connected clients.
-	SendPromptAsync(prompt string)
+	// Results will be broadcast via Bifrost to connected clients. Like
+	// InvokeActionAsync, it keeps ctx's values but not its cancellation.
+	SendPromptAsync(ctx context.Context, prompt string)
 
 	// SendRawPrompt sends a prompt directly to the LLM without action routing context.
 	// Use this for synthesis or direct question-answering where you don't want
@@ -267,8 +299,9 @@ func (n *NoOpHeimdallInvoker) SendRawPrompt(ctx context.Context, prompt string) 
 	_ = ctx
 	return &ActionResult{Success: false, Message: "Heimdall not available"}, nil
 }
-func (n *NoOpHeimdallInvoker) InvokeActionAsync(action string, params map[string]interface{}) {}
-func (n *NoOpHeimdallInvoker) SendPromptAsync(prompt string)                                  {}
+func (n *NoOpHeimdallInvoker) InvokeActionAsync(ctx context.Context, action string, params map[string]interface{}) {
+}
+func (n *NoOpHeimdallInvoker) SendPromptAsync(ctx context.Context, prompt string) {}
 
 // LiveHeimdallInvoker is the production implementation of HeimdallInvoker.
 // It uses the SubsystemManager to invoke actions and can optionally use
@@ -353,31 +386,53 @@ func (h *LiveHeimdallInvoker) SendRawPrompt(ctx context.Context, prompt string) 
 }
 
 // InvokeActionAsync invokes an action asynchronously, broadcasting results via Bifrost.
-func (h *LiveHeimdallInvoker) InvokeActionAsync(action string, params map[string]interface{}) {
+// The action runs with ctx's values but not its cancellation (detachedContext).
+func (h *LiveHeimdallInvoker) InvokeActionAsync(ctx context.Context, action string, params map[string]interface{}) {
+	ctx = detachedContext(ctx)
+	ctx, release, accepted := h.manager.acquireCallbackWork(ctx)
+	if !accepted {
+		return
+	}
 	go func() {
-		result, err := h.InvokeAction(context.Background(), action, params)
+		defer release()
+		result, err := h.InvokeAction(ctx, action, params)
+		h.manager.recordOutcome("async action "+action, err)
 		if h.bifrost != nil && h.bifrost.IsConnected() {
 			if err != nil {
-				h.bifrost.SendNotification("error", "Action Failed", err.Error())
+				h.manager.recordOutcome("async action notification", h.bifrost.SendNotification("error", "Action Failed", err.Error()))
 			} else if result != nil {
-				h.bifrost.SendNotification("info", "Action Complete", result.Message)
+				h.manager.recordOutcome("async action notification", h.bifrost.SendNotification("info", "Action Complete", result.Message))
 			}
 		}
 	}()
 }
 
 // SendPromptAsync sends a prompt asynchronously, broadcasting results via Bifrost.
-func (h *LiveHeimdallInvoker) SendPromptAsync(prompt string) {
+// The prompt runs with ctx's values but not its cancellation (detachedContext).
+func (h *LiveHeimdallInvoker) SendPromptAsync(ctx context.Context, prompt string) {
+	ctx = detachedContext(ctx)
+	ctx, release, accepted := h.manager.acquireCallbackWork(ctx)
+	if !accepted {
+		return
+	}
 	go func() {
-		result, err := h.SendPrompt(context.Background(), prompt)
+		defer release()
+		result, err := h.SendPrompt(ctx, prompt)
+		h.manager.recordOutcome("async prompt", err)
 		if h.bifrost != nil && h.bifrost.IsConnected() {
 			if err != nil {
-				h.bifrost.SendNotification("error", "Prompt Failed", err.Error())
+				h.manager.recordOutcome("async prompt notification", h.bifrost.SendNotification("error", "Prompt Failed", err.Error()))
 			} else if result != nil {
-				h.bifrost.SendNotification("info", "Heimdall Response", result.Message)
+				h.manager.recordOutcome("async prompt notification", h.bifrost.SendNotification("info", "Heimdall Response", result.Message))
 			}
 		}
 	}()
+}
+
+// detachedContext is ctx for work that outlives its caller: ctx's values,
+// such as the request principal, without its cancellation or deadline.
+func detachedContext(ctx context.Context) context.Context {
+	return context.WithoutCancel(ctx)
 }
 
 // parsedActionCmd is used internally to parse SLM action responses.
@@ -508,6 +563,8 @@ type SubsystemEvent struct {
 // Aligned with MCP (Model Context Protocol) tool format: name, description, inputSchema.
 // Invocation uses the same shape as MCP tools/call: action name + params (arguments).
 type ActionFunc struct {
+	// External opts this action into the public MCP server. False keeps it internal.
+	External    bool                                           `json:"external,omitempty"`
 	Name        string                                         // Full name: heimdall.{plugin}.{action} (MCP tool "name")
 	Handler     func(ctx ActionContext) (*ActionResult, error) // The action handler
 	Description string                                         // Human-readable description (MCP "description")
@@ -626,7 +683,7 @@ type DatabaseRouter interface {
 	Query(ctx context.Context, database string, cypher string, params map[string]interface{}) ([]map[string]interface{}, error)
 
 	// Stats returns database statistics for the specified logical database.
-	Stats(database string) (DatabaseStats, error)
+	Stats(ctx context.Context, database string) (DatabaseStats, error)
 
 	// Discover performs semantic search with graph traversal in the specified database.
 	// Returns search results with related nodes up to the specified depth.
@@ -716,21 +773,149 @@ type RuntimeMetrics struct {
 
 // LoadedHeimdallPlugin represents a loaded SLM plugin with full subsystem management.
 type LoadedHeimdallPlugin struct {
-	Plugin  HeimdallPlugin // The actual plugin implementing full interface
-	Path    string         // Path to .so file (empty for built-in)
-	Builtin bool           // True if this is a built-in plugin
+	Plugin       HeimdallPlugin // The actual plugin implementing full interface
+	Path         string         // Path to .so file (empty for built-in)
+	Builtin      bool           // True if this is a built-in plugin
+	actionNames  []string       // successfully registered actions owned by this plugin
+	stopOnce     lifecycle.OnceCompletion
+	disposeOnce  lifecycle.OnceCompletion
+	eventQueue   *pluginEventQueue // guarded by dbEventDispatcher.mu
+	eventRetired bool              // no captured dispatch may recreate a retired component's queue
 }
 
 // SubsystemManager manages all SLM plugins/subsystems.
 // Provides the SLM with full control over registered subsystems.
 type SubsystemManager struct {
-	mu             sync.RWMutex
-	plugins        map[string]*LoadedHeimdallPlugin // keyed by plugin name
-	actions        map[string]ActionFunc            // keyed by full name: slm.plugin.action
-	ctx            SubsystemContext                 // shared context for subsystems
-	initialized    bool
-	orderedPlugins []*LoadedHeimdallPlugin
-	orderDirty     bool
+	mu                    sync.RWMutex
+	plugins               map[string]*LoadedHeimdallPlugin // keyed by plugin name
+	actionOrder           []string                         // successful registrations, FIFO; sorted within each plugin
+	actions               map[string]ActionFunc            // keyed by full name: slm.plugin.action
+	host                  SubsystemHost                    // retained host metadata; never a caller context
+	diagnosticCredentials []string                         // host-owned; never included in the plugin context
+	initialized           bool
+	orderedPlugins        []*LoadedHeimdallPlugin
+	orderDirty            bool
+	orderGeneration       uint64
+	registering           map[string]struct{} // names reserved during initialization
+	actionRemovalHooks    []func([]string)
+	// registrations is this host generation's initialization population.
+	registrations *lifecycle.WorkLifetime
+	// owned is the lifetime of a manager whose context supplies none.
+	owned    *lifecycle.WorkLifetime
+	starting map[string]*LoadedHeimdallPlugin // initialized, not yet exposed to actions
+}
+
+// pluginContext publishes the retained host metadata with the admitted work
+// context the plugin's initialization was accepted under.
+func (h SubsystemHost) pluginContext(workCtx context.Context) SubsystemContext {
+	return SubsystemContext{Context: workCtx, SubsystemHost: h}
+}
+
+// acquireCallbackWork carries the actual callback ticket and host cancellation.
+// Explicit async entry points remove caller cancellation before calling here.
+func (m *SubsystemManager) acquireCallbackWork(ctx context.Context) (context.Context, func(), bool) {
+	ctx, release, accepted := m.acquireWork(ctx)
+	if !accepted {
+		return ctx, release, false
+	}
+	if m == nil {
+		m = GetSubsystemManager()
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(m.lifetime().Context(), cancel)
+	return ctx, func() { stop(); cancel(); release() }, true
+}
+
+func (m *SubsystemManager) recordOutcome(operation string, err error) {
+	if err == nil {
+		return
+	}
+	m.lifetime().RecordError("", m.redactOutcome(fmt.Errorf("%s: %w", operation, err)))
+}
+
+// lifetime returns the host's work owner, or this manager's own when its
+// context supplies none.
+func (m *SubsystemManager) lifetime() *lifecycle.WorkLifetime {
+	m.mu.RLock()
+	host := m.host.Lifetime
+	m.mu.RUnlock()
+	if host != nil {
+		return host
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.host.Lifetime != nil {
+		return m.host.Lifetime
+	}
+	if m.owned == nil {
+		m.owned = lifecycle.NewWorkLifetime(context.Background())
+	}
+	return m.owned
+}
+
+// registrationsLocked returns this host generation's initialization population.
+func (m *SubsystemManager) registrationsLocked() *lifecycle.WorkLifetime {
+	if m.registrations == nil {
+		m.registrations = lifecycle.NewWorkLifetime(context.Background())
+	}
+	return m.registrations
+}
+
+// Keep the host's error context when its public plugin view removes credentials.
+// Formatting and the canonical redactor run outside the publication mutex.
+func (m *SubsystemManager) redactOutcome(err error) error {
+	m.mu.RLock()
+	credentials := append([]string(nil), m.diagnosticCredentials...)
+	m.mu.RUnlock()
+	return observability.RedactError(err, credentials...)
+}
+
+func (m *SubsystemManager) setContext(host SubsystemHost, newHost bool) {
+	credentials := observability.ClientCredentials(host.Config.APIURL, host.Config.APIKey)
+	if newHost {
+		// A new host's registration epoch exists only after the previous one
+		// stopped: its accepted initializations are joined first.
+		m.mu.Lock()
+		previous := m.registrations
+		m.mu.Unlock()
+		if previous != nil {
+			previous.BeginStop(nil)
+			if err := previous.JoinStopped(); err != nil {
+				m.lifetime().RecordError("", m.redactOutcome(err))
+			}
+		}
+	}
+	m.mu.Lock()
+	m.host = host
+	// Retain prior keys while their accepted cleanup can still report. This is
+	// private diagnostic context, not a credential-bearing plugin configuration.
+	m.diagnosticCredentials = append(m.diagnosticCredentials, credentials...)
+	if newHost {
+		m.registrations = lifecycle.NewWorkLifetime(context.Background())
+	}
+	m.mu.Unlock()
+}
+
+// SetHostContext installs host metadata and starts a new host lifetime.
+// Ordinary SetContext does not reopen admission while an accepted plugin file
+// is still finishing initialization.
+func (m *SubsystemManager) SetHostContext(host SubsystemHost) {
+	m.setContext(host, true)
+}
+
+// CloseAdmission seals new registrations; accepted initialization remains joined.
+func (m *SubsystemManager) CloseAdmission() {
+	m.mu.Lock()
+	registrations := m.registrationsLocked()
+	m.mu.Unlock()
+	registrations.CloseAdmission()
+}
+
+func (m *SubsystemManager) acquireWork(ctx context.Context) (context.Context, func(), bool) {
+	if m == nil {
+		m = GetSubsystemManager()
+	}
+	return m.lifetime().Acquire(ctx)
 }
 
 var (
@@ -761,42 +946,124 @@ func GetSubsystemManager() *SubsystemManager {
 	return globalManager
 }
 
-// SetContext configures the shared context for all subsystems.
-func (m *SubsystemManager) SetContext(ctx SubsystemContext) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.ctx = ctx
+// SetContext reconfigures the shared host metadata for all subsystems without
+// starting a new host lifetime.
+func (m *SubsystemManager) SetContext(host SubsystemHost) {
+	m.setContext(host, false)
 }
 
 // RegisterPlugin registers an SLM plugin and initializes it.
 func (m *SubsystemManager) RegisterPlugin(p HeimdallPlugin, path string, builtin bool) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	return m.redactOutcome(m.registerPlugin(context.Background(), p, path, builtin, false))
+}
 
+// RegisterStartedPlugin publishes a constructed plugin only after Start succeeds.
+// A failed, unpublished instance runs stop/join/dispose before its error returns.
+func (m *SubsystemManager) RegisterStartedPlugin(ctx context.Context, p HeimdallPlugin, path string, builtin bool) error {
+	return m.redactOutcome(m.registerPlugin(ctx, p, path, builtin, true))
+}
+
+func (m *SubsystemManager) registerPlugin(callCtx context.Context, p HeimdallPlugin, path string, builtin, start bool) error {
+	m.mu.RLock()
+	host := m.host
+	m.mu.RUnlock()
+	lp := &LoadedHeimdallPlugin{Plugin: p, Path: path, Builtin: builtin}
+	// Every registration, started here or later by StartAll, carries the same
+	// obligations: it is signalled by StopAll from Initialize onward, and a
+	// failure stops and disposes what it constructed.
+	fail := func(err error, owned bool) error {
+		cleanup := cleanupUnpublishedPlugin(lp, host.Config)
+		if owned {
+			m.lifetime().RecordError("", m.redactOutcome(compose.Outcomes(err, cleanup)))
+		}
+		return compose.Outcomes(err, cleanup)
+	}
+	workCtx, release, accepted := m.acquireCallbackWork(callCtx)
+	if !accepted {
+		return fail(fmt.Errorf("plugin subsystem is stopping"), false)
+	}
+	defer release()
+	// Plugin methods may consult the manager, including during initialization.
 	name := p.Name()
-
-	// Verify it's an SLM plugin type
-	if p.Type() != PluginTypeHeimdall {
-		return fmt.Errorf("plugin %s has type %q, expected %q", name, p.Type(), PluginTypeHeimdall)
+	pluginType := p.Type()
+	if pluginType != PluginTypeHeimdall {
+		return fmt.Errorf("plugin %s has type %q, expected %q", name, pluginType, PluginTypeHeimdall)
 	}
 
-	if _, exists := m.plugins[name]; exists {
+	m.mu.Lock()
+	_, registered, admitted := m.registrationsLocked().Acquire(workCtx)
+	if !admitted {
+		m.mu.Unlock()
+		return fail(fmt.Errorf("plugin subsystem is stopping"), true)
+	}
+	_, exists := m.plugins[name]
+	_, registering := m.registering[name]
+	if exists || registering {
+		m.mu.Unlock()
+		registered()
 		return fmt.Errorf("plugin already registered: %s", name)
 	}
-
-	// Initialize the subsystem
-	if err := p.Initialize(m.ctx); err != nil {
-		return fmt.Errorf("failed to initialize %s: %w", name, err)
+	if m.registering == nil {
+		m.registering = make(map[string]struct{})
 	}
-
-	// Register plugin
-	lp := &LoadedHeimdallPlugin{
-		Plugin:  p,
-		Path:    path,
-		Builtin: builtin,
+	m.registering[name] = struct{}{}
+	// Stop is the cancellation contract from construction onward, including
+	// an Initialize which cannot finish until its private worker is signaled.
+	if m.starting == nil {
+		m.starting = make(map[string]*LoadedHeimdallPlugin)
 	}
+	m.starting[name] = lp
+	registrations := m.registrations
+	initializeHost := m.host
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		delete(m.registering, name)
+		delete(m.starting, name)
+		m.mu.Unlock()
+		registered()
+	}()
+
+	if err := p.Initialize(initializeHost.pluginContext(workCtx)); err != nil {
+		return fail(fmt.Errorf("failed to initialize %s: %w", name, err), true)
+	}
+	if registrations.Closing() {
+		return fail(fmt.Errorf("plugin subsystem is stopping"), true)
+	}
+	if start {
+		if err := p.Start(); err != nil {
+			return fail(fmt.Errorf("start %s: %w", name, err), true)
+		}
+	}
+	actions := p.Actions()
+
+	m.mu.Lock()
 	m.plugins[name] = lp
 	m.orderDirty = true
+	m.orderGeneration++
+	actionNames := make([]string, 0, len(actions))
+	for actionName := range actions {
+		actionNames = append(actionNames, actionName)
+	}
+	sort.Strings(actionNames)
+	var collisions []string
+	for _, actionName := range actionNames {
+		action := actions[actionName]
+		fullName := fmt.Sprintf("heimdall_%s_%s", name, actionName)
+		if _, exists := m.actions[fullName]; exists {
+			collisions = append(collisions, fullName)
+			continue
+		}
+		action.Name = fullName
+		m.actions[fullName] = action
+		m.actionOrder = append(m.actionOrder, fullName)
+		lp.actionNames = append(lp.actionNames, fullName)
+	}
+	m.initialized = true
+	m.mu.Unlock()
+	for _, tool := range collisions {
+		slog.Warn("Heimdall tool registration failed: name collision", "tool", tool, "plugin", name, "outcome", "kept first registration")
+	}
 
 	globalEventDispatcher.mu.RLock()
 	running := globalEventDispatcher.running
@@ -804,17 +1071,6 @@ func (m *SubsystemManager) RegisterPlugin(p HeimdallPlugin, path string, builtin
 	if running {
 		globalEventDispatcher.ensurePluginQueueForPlugin(lp)
 	}
-
-	// Register all actions from this plugin
-	for actionName, action := range p.Actions() {
-		fullName := fmt.Sprintf("heimdall_%s_%s", name, actionName)
-		action.Name = fullName
-		m.actions[fullName] = action
-	}
-
-	// Mark as initialized once we have at least one plugin
-	m.initialized = true
-
 	return nil
 }
 
@@ -837,13 +1093,27 @@ func (m *SubsystemManager) GetAction(name string) (ActionFunc, bool) {
 }
 
 // StartAll starts all registered subsystems.
+// Each Start is accepted work of the manager's lifetime and is refused once
+// registration admission is sealed, exactly as a start during registration.
 func (m *SubsystemManager) StartAll() error {
-	m.mu.RLock()
-	plugins := m.listOrderedPluginsLocked()
-	m.mu.RUnlock()
+	plugins := m.listOrderedPlugins()
 
 	for _, lp := range plugins {
-		if err := lp.Plugin.Start(); err != nil {
+		_, release, accepted := m.acquireCallbackWork(context.Background())
+		if !accepted {
+			return fmt.Errorf("plugin subsystem is stopping")
+		}
+		m.mu.Lock()
+		closing := m.registrationsLocked().Closing()
+		m.mu.Unlock()
+		var err error
+		if closing {
+			err = fmt.Errorf("plugin subsystem is stopping")
+		} else {
+			err = lp.Plugin.Start()
+		}
+		release()
+		if err != nil {
 			return fmt.Errorf("failed to start %s: %w", lp.Plugin.Name(), err)
 		}
 	}
@@ -852,43 +1122,121 @@ func (m *SubsystemManager) StartAll() error {
 
 // StopAll stops all registered subsystems.
 func (m *SubsystemManager) StopAll() error {
-	m.mu.RLock()
-	plugins := m.listOrderedPluginsLocked()
-	m.mu.RUnlock()
-
-	var lastErr error
-	for _, lp := range plugins {
-		if err := lp.Plugin.Stop(); err != nil {
-			lastErr = fmt.Errorf("failed to stop %s: %w", lp.Plugin.Name(), err)
+	m.mu.Lock()
+	registrations := m.registrationsLocked()
+	m.mu.Unlock()
+	closing := registrations.Closing()
+	type outcome struct{ err error }
+	var results []*outcome
+	var stopped sync.WaitGroup
+	seen := make(map[*LoadedHeimdallPlugin]bool)
+	signal := func(plugins []*LoadedHeimdallPlugin) {
+		for _, lp := range plugins {
+			if seen[lp] {
+				continue
+			}
+			seen[lp] = true
+			result := &outcome{}
+			results = append(results, result)
+			stopped.Add(1)
+			go func(p *LoadedHeimdallPlugin) {
+				defer stopped.Done()
+				if closing {
+					result.err = p.signalStop()
+				} else {
+					result.err = pluginStopError(p.Plugin)
+				}
+			}(lp)
 		}
 	}
-	return lastErr
+	signal(m.listOrderedPlugins())
+	m.mu.RLock()
+	var starting []*LoadedHeimdallPlugin
+	for _, lp := range m.starting {
+		starting = append(starting, lp)
+	}
+	m.mu.RUnlock()
+	signal(starting)
+	if closing {
+		// Signal installed peers before joining initialization: an initializer can
+		// be waiting on work released by one of those peers' Stop callbacks.
+		<-registrations.Quiescent()
+		signal(m.listOrderedPlugins())
+	}
+	stopped.Wait()
+	var joined error
+	for _, r := range results {
+		joined = compose.Outcomes(joined, r.err)
+	}
+	return m.redactOutcome(joined)
 }
 
 // ShutdownAll shuts down all registered subsystems.
 func (m *SubsystemManager) ShutdownAll() error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	var lastErr error
-	plugins := m.listOrderedPluginsLocked()
-	for _, lp := range plugins {
-		if err := lp.Plugin.Shutdown(); err != nil {
-			lastErr = fmt.Errorf("failed to shutdown %s: %w", lp.Plugin.Name(), err)
-		}
+	m.mu.RLock()
+	hosted := m.host.Lifetime != nil
+	m.mu.RUnlock()
+	if hosted {
+		// A host lifetime is joined by its host before it disposes plugins.
+		return m.redactOutcome(m.disposeAll())
 	}
-	m.plugins = make(map[string]*LoadedHeimdallPlugin)
-	m.actions = make(map[string]ActionFunc)
-	m.orderedPlugins = nil
-	m.orderDirty = true
-	return lastErr
+	// A manager that owns its lifetime is that lifetime's stop: accepted
+	// callbacks are joined first, then plugins are disposed exactly once. The
+	// next epoch exists only after this one has actually completed.
+	owned := m.lifetime()
+	owned.BeginStop(m.disposeAll)
+	err := owned.JoinStopped()
+	m.mu.Lock()
+	if m.owned == owned {
+		m.owned = lifecycle.NewWorkLifetime(context.Background())
+	}
+	m.mu.Unlock()
+	return m.redactOutcome(err)
+}
+
+// disposeAll detaches the installed generation and disposes its plugins.
+func (m *SubsystemManager) disposeAll() error {
+	var plugins []*LoadedHeimdallPlugin
+	for {
+		var generation uint64
+		plugins, generation = m.orderedPluginSnapshot()
+		m.mu.Lock()
+		if generation != m.orderGeneration {
+			m.mu.Unlock()
+			continue
+		}
+		// Ordering callbacks saw the installed peers. Detach that same generation
+		// before shutdown callbacks, preserving any registrations they perform.
+		names := make([]string, 0, len(m.actions))
+		for name := range m.actions {
+			names = append(names, name)
+		}
+		hooks := m.actionRemovalHooks
+		m.actionRemovalHooks = nil
+		m.actionOrder = nil
+		m.initialized = false
+		m.plugins = make(map[string]*LoadedHeimdallPlugin)
+		m.actions = make(map[string]ActionFunc)
+		m.orderedPlugins = nil
+		m.orderDirty = true
+		m.orderGeneration++
+		m.mu.Unlock()
+		for _, hook := range hooks {
+			hook(names)
+		}
+		break
+	}
+
+	var joined error
+	for _, lp := range plugins {
+		joined = compose.Outcomes(joined, lp.dispose())
+	}
+	return joined
 }
 
 // AllHealth returns health status of all subsystems.
 func (m *SubsystemManager) AllHealth() map[string]SubsystemHealth {
-	m.mu.RLock()
-	plugins := m.listOrderedPluginsLocked()
-	m.mu.RUnlock()
+	plugins := m.listOrderedPlugins()
 
 	result := make(map[string]SubsystemHealth)
 	for _, lp := range plugins {
@@ -899,9 +1247,7 @@ func (m *SubsystemManager) AllHealth() map[string]SubsystemHealth {
 
 // AllSummaries returns summaries of all subsystems (for SLM context).
 func (m *SubsystemManager) AllSummaries() map[string]string {
-	m.mu.RLock()
-	plugins := m.listOrderedPluginsLocked()
-	m.mu.RUnlock()
+	plugins := m.listOrderedPlugins()
 
 	result := make(map[string]string)
 	for _, lp := range plugins {
@@ -910,9 +1256,10 @@ func (m *SubsystemManager) AllSummaries() map[string]string {
 	return result
 }
 
-// LoadHeimdallPluginsFromDir scans a directory for .so files and loads them.
+// LoadHeimdallPluginsFromDir scans a directory for .so files and loads them
+// under the supplied host metadata.
 // Called at startup if NORNICDB_HEIMDALL_PLUGINS_DIR is set.
-func LoadHeimdallPluginsFromDir(dir string, ctx SubsystemContext) error {
+func LoadHeimdallPluginsFromDir(dir string, host SubsystemHost) error {
 	if dir == "" {
 		return nil
 	}
@@ -938,7 +1285,7 @@ func LoadHeimdallPluginsFromDir(dir string, ctx SubsystemContext) error {
 	}
 
 	manager := GetSubsystemManager()
-	manager.SetContext(ctx)
+	manager.SetContext(host)
 
 	logHeimdallPrintf(slog.LevelInfo, "╔══════════════════════════════════════════════════════════════╗")
 	logHeimdallPrintf(slog.LevelInfo, "║ Loading SLM Plugins                                          ║")
@@ -1033,7 +1380,7 @@ func decoratePluginOpenError(err error) error {
 	if !strings.Contains(msg, "different version of package") {
 		return err
 	}
-	return fmt.Errorf("%s; rebuild the plugin with the same Go toolchain (%s), CGO setting, architecture, and build tags as the NornicDB binary (for remote-provider-only Heimdall builds, match whether the host binary was built with -tags nolocalllm)", msg, runtime.Version())
+	return fmt.Errorf("%s; rebuild the plugin with the same Go toolchain (%s), CGO setting, architecture, and shared dependency build settings as the NornicDB binary; Heimdall-only plugins do not need to match the host nolocalllm tag", msg, runtime.Version())
 }
 
 // reflectHeimdallPlugin wraps a plugin loaded via reflection.
@@ -1191,20 +1538,39 @@ func ListHeimdallActions() []string {
 // ListHeimdallPlugins returns information about all loaded SLM plugins.
 func ListHeimdallPlugins() []*LoadedHeimdallPlugin {
 	m := GetSubsystemManager()
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.listOrderedPluginsLocked()
+	return m.listOrderedPlugins()
 }
 
-func (m *SubsystemManager) listOrderedPluginsLocked() []*LoadedHeimdallPlugin {
-	if !m.orderDirty && m.orderedPlugins != nil {
-		return append([]*LoadedHeimdallPlugin(nil), m.orderedPlugins...)
-	}
+// listOrderedPlugins computes ordering outside the manager lock: plugin ordering
+// callbacks may consult the manager. Publish only if the registry is unchanged.
+func (m *SubsystemManager) listOrderedPlugins() []*LoadedHeimdallPlugin {
+	plugins, _ := m.orderedPluginSnapshot()
+	return plugins
+}
 
-	ordered := orderPlugins(m.plugins)
-	m.orderedPlugins = ordered
-	m.orderDirty = false
-	return append([]*LoadedHeimdallPlugin(nil), ordered...)
+func (m *SubsystemManager) orderedPluginSnapshot() ([]*LoadedHeimdallPlugin, uint64) {
+	m.mu.RLock()
+	if !m.orderDirty && m.orderedPlugins != nil {
+		plugins := append([]*LoadedHeimdallPlugin(nil), m.orderedPlugins...)
+		generation := m.orderGeneration
+		m.mu.RUnlock()
+		return plugins, generation
+	}
+	generation := m.orderGeneration
+	plugins := make(map[string]*LoadedHeimdallPlugin, len(m.plugins))
+	for name, lp := range m.plugins {
+		plugins[name] = lp
+	}
+	m.mu.RUnlock()
+
+	ordered := orderPlugins(plugins)
+	m.mu.Lock()
+	if m.orderGeneration == generation {
+		m.orderedPlugins = ordered
+		m.orderDirty = false
+	}
+	m.mu.Unlock()
+	return append([]*LoadedHeimdallPlugin(nil), ordered...), generation
 }
 
 func orderPlugins(plugins map[string]*LoadedHeimdallPlugin) []*LoadedHeimdallPlugin {
@@ -1340,6 +1706,12 @@ func RegisterBuiltinAction(action ActionFunc) {
 // ExecuteAction executes an action by name with the given context.
 func ExecuteAction(name string, ctx ActionContext) (*ActionResult, error) {
 	m := GetSubsystemManager()
+	workCtx, release, accepted := m.acquireCallbackWork(ctx.Context)
+	if !accepted {
+		return nil, fmt.Errorf("Heimdall is stopping")
+	}
+	defer release()
+	ctx.Context = workCtx
 	m.mu.RLock()
 	action, ok := m.actions[name]
 	m.mu.RUnlock()
@@ -1465,6 +1837,14 @@ func (i *ActionInvoker) Invoke(ctx context.Context, parsed ParsedAction, userMes
 // Plugins that don't implement the hook are silently skipped.
 // Returns the first cancellation encountered, or nil if no cancellations.
 func CallPrePromptHooks(ctx *PromptContext) {
+	workCtx, release, accepted := GetSubsystemManager().acquireCallbackWork(ctx.Context)
+	if !accepted {
+		return
+	}
+	defer release()
+	original := ctx.Context
+	ctx.Context = workCtx
+	defer func() { ctx.Context = original }()
 	if !HeimdallPluginsInitialized() {
 		logHeimdallPrintf(slog.LevelWarn, "[Heimdall] PrePrompt hooks skipped: plugins not initialized (request=%s)", ctx.RequestID)
 		return
@@ -1482,6 +1862,7 @@ func CallPrePromptHooks(ctx *PromptContext) {
 		// Check if plugin implements PrePromptHook
 		if hook, ok := p.Plugin.(PrePromptHook); ok {
 			if err := hook.PrePrompt(ctx); err != nil {
+				GetSubsystemManager().recordOutcome("pre-prompt "+p.Plugin.Name(), err)
 				// Log warning but don't abort
 				logHeimdallPrintf(slog.LevelWarn, "[Heimdall] PrePrompt warning from %s: %v", p.Plugin.Name(), err)
 			}
@@ -1497,6 +1878,11 @@ func CallPrePromptHooks(ctx *PromptContext) {
 // Plugins that don't implement the hook are silently skipped.
 // This is synchronous - waits for each plugin with a timeout.
 func CallPreExecuteHooks(ctx *PreExecuteContext) PreExecuteResult {
+	workCtx, release, accepted := GetSubsystemManager().acquireCallbackWork(ctx.Context)
+	if !accepted {
+		return PreExecuteResult{Continue: false}
+	}
+	defer release()
 	if !HeimdallPluginsInitialized() {
 		logHeimdallPrintf(slog.LevelWarn, "[Heimdall] PreExecute hooks skipped: plugins not initialized (request=%s action=%s)", ctx.RequestID, ctx.Action)
 		return PreExecuteResult{Continue: true}
@@ -1515,13 +1901,24 @@ func CallPreExecuteHooks(ctx *PreExecuteContext) PreExecuteResult {
 	for _, p := range plugins {
 		// Check if plugin implements PreExecuteHook
 		if hook, ok := p.Plugin.(PreExecuteHook); ok {
+			callbackCtx, complete, accepted := GetSubsystemManager().acquireCallbackWork(detachedContext(workCtx))
+			if !accepted {
+				continue
+			}
+			view := ctx.withContext(callbackCtx)
 			done := make(chan PreExecuteResult, 1)
-			hook.PreExecute(ctx, func(r PreExecuteResult) {
-				done <- r
+			var once lifecycle.OnceCompletion
+			hook.PreExecute(view, func(r PreExecuteResult) {
+				once.Run(func() {
+					GetSubsystemManager().recordOutcome("pre-execute "+p.Plugin.Name(), r.Error)
+					done <- r
+					complete()
+				})
 			})
 
 			select {
 			case r := <-done:
+				ctx.Params, ctx.PluginData = view.Params, view.PluginData
 				if !r.Continue {
 					return r // Abort on first Continue=false
 				}
@@ -1546,6 +1943,11 @@ func CallPreExecuteHooks(ctx *PreExecuteContext) PreExecuteResult {
 // Plugins that don't implement the hook are silently skipped.
 // This is fire-and-forget - runs asynchronously using a bounded worker pool.
 func CallPostExecuteHooks(ctx *PostExecuteContext) {
+	workCtx, release, accepted := GetSubsystemManager().acquireWork(ctx.Context)
+	if !accepted {
+		return
+	}
+	defer release()
 	if !HeimdallPluginsInitialized() {
 		logHeimdallPrintf(slog.LevelWarn, "[Heimdall] PostExecute hooks skipped: plugins not initialized (request=%s action=%s)", ctx.RequestID, ctx.Action)
 		return
@@ -1562,16 +1964,22 @@ func CallPostExecuteHooks(ctx *PostExecuteContext) {
 	for _, p := range plugins {
 		// Check if plugin implements PostExecuteHook
 		if hook, ok := p.Plugin.(PostExecuteHook); ok {
+			callbackCtx, release, accepted := GetSubsystemManager().acquireCallbackWork(detachedContext(workCtx))
+			if !accepted {
+				continue
+			}
 			postExecutePool().enqueue(postExecuteJob{
 				pluginName: p.Plugin.Name(),
 				hook:       hook,
-				ctx:        ctx,
+				ctx:        ctx.WithContext(callbackCtx),
+				release:    release,
 			})
 		}
 	}
 }
 
 type postExecuteJob struct {
+	release    func()
 	pluginName string
 	hook       PostExecuteHook
 	ctx        *PostExecuteContext
@@ -1604,6 +2012,9 @@ func (p *postExecuteWorkerPool) start() {
 		go func() {
 			for job := range p.jobs {
 				func() {
+					if job.release != nil {
+						defer job.release()
+					}
 					defer func() {
 						if r := recover(); r != nil {
 							logHeimdallPrintf(slog.LevelError, "[Heimdall] PostExecute panic in %s: %v", job.pluginName, r)
@@ -1623,6 +2034,9 @@ func (p *postExecuteWorkerPool) enqueue(job postExecuteJob) {
 	select {
 	case p.jobs <- job:
 	default:
+		if job.release != nil {
+			job.release()
+		}
 		logHeimdallPrintf(slog.LevelWarn, "[Heimdall] PostExecute queue full, dropping job from %s", job.pluginName)
 	}
 }
@@ -1632,6 +2046,11 @@ func (p *postExecuteWorkerPool) enqueue(job postExecuteJob) {
 // If no plugin provides a response, returns empty string (caller should use default synthesis).
 // This is synchronous with a timeout to ensure responsive UX.
 func CallSynthesisHooks(ctx *SynthesisContext) string {
+	workCtx, release, accepted := GetSubsystemManager().acquireCallbackWork(ctx.Context)
+	if !accepted {
+		return ""
+	}
+	defer release()
 	if !HeimdallPluginsInitialized() {
 		return ""
 	}
@@ -1641,9 +2060,17 @@ func CallSynthesisHooks(ctx *SynthesisContext) string {
 	for _, p := range plugins {
 		// Check if plugin implements SynthesisHook
 		if hook, ok := p.Plugin.(SynthesisHook); ok {
+			callbackCtx, complete, accepted := GetSubsystemManager().acquireCallbackWork(detachedContext(workCtx))
+			if !accepted {
+				continue
+			}
+			view := &SynthesisContext{Context: callbackCtx, RequestID: ctx.RequestID,
+				UserQuestion: ctx.UserQuestion, Action: ctx.Action, Result: ctx.Result,
+				PluginData: cloneHookMap(ctx.PluginData), Database: ctx.Database}
 			done := make(chan string, 1)
-			hook.Synthesize(ctx, func(response string) {
-				done <- response
+			var once lifecycle.OnceCompletion
+			hook.Synthesize(view, func(response string) {
+				once.Run(func() { done <- response; complete() })
 			})
 
 			select {
@@ -1667,16 +2094,25 @@ func CallSynthesisHooks(ctx *SynthesisContext) string {
 
 // dbEventDispatcher manages asynchronous delivery of database events to plugins.
 type dbEventDispatcher struct {
-	mu           sync.RWMutex
-	running      bool
-	events       chan *DatabaseEvent
-	done         chan struct{}
+	// lifecycleMu keeps restart out until Stop has joined and swept its generation.
+	lifecycleMu sync.Mutex
+
+	mu      sync.RWMutex
+	running bool
+	events  chan databaseEventWork
+	// gen is the current dispatcher generation's owner: its pointer is the
+	// generation identity, its cancellation is the stop signal and the
+	// ingress loop is its accepted work, which stop joins.
+	gen          *lifecycle.WorkLifetime
 	pluginQueues map[string]*pluginEventQueue
+
+	// afterQueueSnapshot is a test barrier, set before starting publishers.
+	afterQueueSnapshot func()
 }
 
 var globalEventDispatcher = &dbEventDispatcher{
-	events:       make(chan *DatabaseEvent, 1000), // Buffer up to 1000 events
-	done:         make(chan struct{}),
+	events:       make(chan databaseEventWork, 1000), // Buffer up to 1000 events
+	gen:          &lifecycle.WorkLifetime{},
 	pluginQueues: make(map[string]*pluginEventQueue),
 }
 
@@ -1685,15 +2121,38 @@ const (
 )
 
 type pluginEventQueue struct {
-	name string
-	hook DatabaseEventHook
-	ch   chan *DatabaseEvent
+	name  string
+	hook  DatabaseEventHook
+	ch    *eventchannel.Channel[pluginEventDelivery]
+	owner *LoadedHeimdallPlugin
+	// worker is the queue worker's one completion; disposal joins it.
+	worker lifecycle.OnceCompletion
+}
+
+// A plugin's own queue buffers only what its worker reads: the published event
+// and the host-lifetime release its hook must return. Every subscriber receives
+// the original pointer and its own release obligation.
+type pluginEventDelivery struct {
+	event   *DatabaseEvent
+	release func()
+}
+
+// Ingress work additionally retains the admitted context. Its parent ticket is
+// what lets each plugin enroll its own delivery after host admission closes.
+type databaseEventWork struct {
+	pluginEventDelivery
+	ctx context.Context
 }
 
 // StartEventDispatcher starts the background event dispatcher.
 // This should be called when Heimdall is initialized.
 func StartEventDispatcher() {
-	d := globalEventDispatcher
+	globalEventDispatcher.start()
+}
+
+func (d *dbEventDispatcher) start() {
+	d.lifecycleMu.Lock()
+	defer d.lifecycleMu.Unlock()
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -1701,17 +2160,37 @@ func StartEventDispatcher() {
 		return
 	}
 
+	generation := &lifecycle.WorkLifetime{}
+	if !generation.Enter() {
+		return
+	}
 	d.running = true
-	d.events = make(chan *DatabaseEvent, 1000)
-	d.done = make(chan struct{})
+	d.events = make(chan databaseEventWork, 1000)
+	d.gen = generation
 	d.pluginQueues = make(map[string]*pluginEventQueue)
+	events, stopped := d.events, generation.Context().Done()
 
 	go func() {
+		defer generation.Leave()
+		defer func() {
+			// stop excludes publishers before closing this generation. Release
+			// retained ingress work that will no longer be dispatched.
+			for {
+				select {
+				case event := <-events:
+					if event.release != nil {
+						event.release()
+					}
+				default:
+					return
+				}
+			}
+		}()
 		for {
 			select {
-			case event := <-d.events:
-				dispatchEventToPlugins(event)
-			case <-d.done:
+			case event := <-events:
+				d.dispatchEventToPlugins(event, generation)
+			case <-stopped:
 				return
 			}
 		}
@@ -1720,24 +2199,39 @@ func StartEventDispatcher() {
 
 // StopEventDispatcher stops the background event dispatcher.
 func StopEventDispatcher() {
-	d := globalEventDispatcher
+	globalEventDispatcher.stop()
+}
+
+func (d *dbEventDispatcher) stop() {
+	d.lifecycleMu.Lock()
+	defer d.lifecycleMu.Unlock()
 	d.mu.Lock()
-	defer d.mu.Unlock()
 
 	if !d.running {
+		d.mu.Unlock()
 		return
 	}
 
 	d.running = false
-	close(d.done)
+	generation := d.gen
+	d.mu.Unlock()
+	// Retire the producer before sweeping its queues: the generation's stop
+	// seals and cancels it, then joins the ingress loop. An in-flight dispatch
+	// can finish, but its generation can no longer create a queue.
+	<-generation.BeginStop(nil)
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	for _, queue := range d.pluginQueues {
-		close(queue.ch)
+		queue.ch.Close()
 	}
 	d.pluginQueues = make(map[string]*pluginEventQueue)
 }
 
 // dispatchEventToPlugins sends an event to all plugins that implement DatabaseEventHook.
-func dispatchEventToPlugins(event *DatabaseEvent) {
+func (d *dbEventDispatcher) dispatchEventToPlugins(work databaseEventWork, generation *lifecycle.WorkLifetime) {
+	if work.release != nil {
+		defer work.release()
+	}
 	if !HeimdallPluginsInitialized() {
 		return
 	}
@@ -1746,7 +2240,7 @@ func dispatchEventToPlugins(event *DatabaseEvent) {
 	for _, p := range plugins {
 		// Check if plugin implements DatabaseEventHook
 		if hook, ok := p.Plugin.(DatabaseEventHook); ok {
-			globalEventDispatcher.enqueueEvent(p.Plugin.Name(), hook, event)
+			d.enqueueEventWorkForGeneration(p.Plugin.Name(), hook, work.event, work.ctx, generation, p)
 		}
 	}
 }
@@ -1756,53 +2250,91 @@ func (d *dbEventDispatcher) ensurePluginQueueForPlugin(lp *LoadedHeimdallPlugin)
 		return
 	}
 	if hook, ok := lp.Plugin.(DatabaseEventHook); ok {
-		d.ensurePluginQueue(lp.Plugin.Name(), hook)
+		d.mu.RLock()
+		generation := d.gen
+		d.mu.RUnlock()
+		d.ensurePluginQueue(lp.Plugin.Name(), hook, generation, lp)
 	}
 }
 
-func (d *dbEventDispatcher) ensurePluginQueue(name string, hook DatabaseEventHook) {
+func (d *dbEventDispatcher) ensurePluginQueue(name string, hook DatabaseEventHook, generation *lifecycle.WorkLifetime, owners ...*LoadedHeimdallPlugin) *pluginEventQueue {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	if _, ok := d.pluginQueues[name]; ok {
-		return
+	if !d.running || generation != d.gen {
+		return nil
+	}
+	var owner *LoadedHeimdallPlugin
+	if len(owners) > 0 {
+		owner = owners[0]
+	}
+	if owner != nil && owner.eventRetired {
+		return nil
+	}
+	if queue := d.pluginQueues[name]; queue != nil {
+		if owner == nil || queue.owner == owner {
+			return queue
+		}
+		queue.ch.Close() // a different loaded component owns the replacement
 	}
 
 	queue := &pluginEventQueue{
-		name: name,
-		hook: hook,
-		ch:   make(chan *DatabaseEvent, defaultDatabaseEventQueue),
+		name:  name,
+		hook:  hook,
+		ch:    eventchannel.New[pluginEventDelivery](defaultDatabaseEventQueue),
+		owner: owner,
 	}
 	d.pluginQueues[name] = queue
+	if owner != nil {
+		owner.eventQueue = queue
+	}
 
-	go func(q *pluginEventQueue) {
-		for event := range q.ch {
+	go queue.worker.Run(func() {
+		for work := range queue.ch.Events() {
 			func() {
+				if work.release != nil {
+					defer work.release()
+				}
 				defer func() {
 					if r := recover(); r != nil {
-						logHeimdallPrintf(slog.LevelError, "[Heimdall] DatabaseEventHook panic in %s: %v", q.name, r)
+						logHeimdallPrintf(slog.LevelError, "[Heimdall] DatabaseEventHook panic in %s: %v", queue.name, r)
 					}
 				}()
-				q.hook.OnDatabaseEvent(event)
+				queue.hook.OnDatabaseEvent(work.event)
 			}()
 		}
-	}(queue)
+	})
+	return queue
 }
 
 func (d *dbEventDispatcher) enqueueEvent(name string, hook DatabaseEventHook, event *DatabaseEvent) {
-	d.ensurePluginQueue(name, hook)
-
 	d.mu.RLock()
-	queue := d.pluginQueues[name]
+	generation := d.gen
 	d.mu.RUnlock()
+	d.enqueueEventForGeneration(name, hook, event, generation)
+}
+
+func (d *dbEventDispatcher) enqueueEventForGeneration(name string, hook DatabaseEventHook, event *DatabaseEvent, generation *lifecycle.WorkLifetime) {
+	d.enqueueEventWorkForGeneration(name, hook, event, context.Background(), generation)
+}
+
+func (d *dbEventDispatcher) enqueueEventWorkForGeneration(name string, hook DatabaseEventHook, event *DatabaseEvent, parent context.Context, generation *lifecycle.WorkLifetime, owners ...*LoadedHeimdallPlugin) {
+	queue := d.ensurePluginQueue(name, hook, generation, owners...)
 	if queue == nil {
 		return
 	}
-
-	select {
-	case queue.ch <- event:
-	default:
-		logHeimdallPrintf(slog.LevelWarn, "[Heimdall] DatabaseEvent queue full for %s, dropping event: %s", name, event.Type)
+	if d.afterQueueSnapshot != nil {
+		d.afterQueueSnapshot()
+	}
+	// Admission context belongs to ingress transport, not to delivery: the
+	// element carries the event and its release alone.
+	_, release, accepted := GetSubsystemManager().acquireWork(parent)
+	if !accepted {
+		return
+	}
+	if !queue.ch.TrySend(pluginEventDelivery{event: event, release: release}) {
+		release()
+		logHeimdallPrintf(slog.LevelWarn, "[Heimdall] DatabaseEvent queue full or closed for %s, dropping event: %s", name, event.Type)
 	}
 }
 
@@ -1812,11 +2344,16 @@ func (d *dbEventDispatcher) enqueueEvent(name string, hook DatabaseEventHook, ev
 func EmitDatabaseEvent(event *DatabaseEvent) {
 	d := globalEventDispatcher
 	d.mu.RLock()
+	defer d.mu.RUnlock()
 	running := d.running
-	d.mu.RUnlock()
+	events := d.events
 
 	if !running {
 		return // Dispatcher not running
+	}
+	ctx, release, accepted := GetSubsystemManager().acquireWork(context.Background())
+	if !accepted {
+		return
 	}
 
 	// Set timestamp if not already set
@@ -1826,9 +2363,13 @@ func EmitDatabaseEvent(event *DatabaseEvent) {
 
 	// Non-blocking send
 	select {
-	case d.events <- event:
+	case events <- databaseEventWork{
+		pluginEventDelivery: pluginEventDelivery{event: event, release: release},
+		ctx:                 ctx,
+	}:
 		// Event queued successfully
 	default:
+		release()
 		// Queue full - drop event with warning
 		logHeimdallPrintf(slog.LevelWarn, "[Heimdall] Event queue full, dropping event: %s", event.Type)
 	}

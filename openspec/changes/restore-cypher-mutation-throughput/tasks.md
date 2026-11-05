@@ -1,0 +1,8 @@
+- [x] Read #1472, #1407 and repository instructions; preserve immutable baselines.
+- [x] Run the floor test and profile both parsers; record that the worker failure is not reproduced locally.
+- [x] Reject the scanner-cache experiment after its distinct-text regression.
+- [x] Correct measured WITH scope waste; preserve the helper's ordered-WITH contract across all three consumers.
+- [x] Finish five-round confirmation: projection ~44% faster; mutation/predicate/distinct-text within noise; two fewer mutation allocations.
+- [x] Run both parser package suites, focused race checks and vet; attempt required verification and record mandatory-hook rejection of its temporary plan fixture. Downstream verification remains unexecuted.
+- [x] Publish source and measured evidence as draft #1538 targeting release/v1.4.4; link #1472 and record required-verifier blocker.
+- [x] Record maintainer direction to continue without unavailable original worker evidence; limit conclusions to reproducible local baselines.

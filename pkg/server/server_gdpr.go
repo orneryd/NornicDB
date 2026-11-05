@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/httpresponse"
 	"net/http"
 	"time"
 
@@ -36,6 +37,13 @@ func (s *Server) handleGDPRExport(w http.ResponseWriter, r *http.Request) {
 		s.writeGDPROwnDataExportOnly(w, r)
 		return
 	}
+	defaultDatabase := "nornic"
+	if s.dbManager != nil {
+		defaultDatabase = s.dbManager.DefaultDatabaseName()
+	}
+	if !s.authorizeDatabaseRead(w, r, defaultDatabase) {
+		return
+	}
 
 	data, err := s.db.ExportUserData(r.Context(), req.UserID, req.Format)
 	if err != nil {
@@ -57,6 +65,10 @@ func (s *Server) handleGDPRExport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGDPRDelete(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeDatabaseOperation(w, r, s.dbManager.DefaultDatabaseName(), auth.PermRead, auth.PermWrite) {
+		return
+	}
+
 	if r.Method != http.MethodPost {
 		s.writePostRequired(w, r)
 		return
@@ -121,7 +133,7 @@ func (s *Server) handleGDPRDelete(w http.ResponseWriter, r *http.Request) {
 
 	s.logAudit(r, req.UserID, "gdpr_delete", true, fmt.Sprintf("action: %s", action))
 
-	s.writeJSON(w, http.StatusOK, map[string]string{
+	httpresponse.WritePropertyJSON(w, http.StatusOK, map[string]string{
 		"status":  action,
 		"user_id": req.UserID,
 	})

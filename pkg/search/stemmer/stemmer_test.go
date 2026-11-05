@@ -2,9 +2,12 @@ package stemmer
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -102,7 +105,11 @@ func TestVerifyLibraryRejectsSymlink(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "outside.so")
 	require.NoError(t, os.WriteFile(target, []byte("fixture plugin bytes"), 0o644))
 	library := filepath.Join(dir, "linked.so")
-	require.NoError(t, os.Symlink(target, library))
+	linkErr := os.Symlink(target, library)
+	if runtime.GOOS == "windows" && errors.Is(linkErr, syscall.Errno(1314)) {
+		t.Skip("Windows account lacks symlink creation privilege; run on Linux or with Windows Developer Mode enabled")
+	}
+	require.NoError(t, linkErr)
 	digest, err := SHA256File(target)
 	require.NoError(t, err)
 

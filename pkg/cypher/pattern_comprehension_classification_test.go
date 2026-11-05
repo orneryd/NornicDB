@@ -16,7 +16,7 @@ func TestPatternComprehensionNestedListControls(t *testing.T) {
 	for _, depth := range []int{1, 10, 100, 1000} {
 		query := nestedListClassificationQuery(depth, "'|'")
 		require.False(t, singleNodePatternComprehension(query))
-		require.False(t, expressionReadsGraphText(query))
+		require.False(t, expressionReadsGraphText(t.Context(), query))
 		if depth <= 10 {
 			exec, ctx := newUnitExecutor(t)
 			result, err := exec.Execute(ctx, query, nil)

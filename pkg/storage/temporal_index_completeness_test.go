@@ -27,10 +27,10 @@ var factWindow = Constraint{
 
 func commitNodes(t *testing.T, engine *BadgerEngine, nodes ...*Node) {
 	t.Helper()
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	for _, n := range nodes {
-		_, err := tx.CreateNode(n)
+		_, err := tx.CreateNode(t.Context(), n)
 		require.NoError(t, err)
 	}
 	require.NoError(t, tx.Commit())
@@ -63,7 +63,7 @@ func TestTemporalIndexAuthoritative_Lifecycle(t *testing.T) {
 	require.NoError(t, sm.AddConstraint(other))
 	require.NoError(t, MarkNewTemporalConstraintsForEngine(engine, sm, []Constraint{other}))
 	require.True(t, engine.temporalIndexAuthoritative(sm, other), "nodes written before the constraint are backfilled")
-	role1, err := engine.GetNode(NodeID(prefixTestID("role-1")))
+	role1, err := engine.GetNode(t.Context(), NodeID(prefixTestID("role-1")))
 	require.NoError(t, err)
 	history, ok, err := engine.temporalKeyHistoryNodesLatest(context.Background(), "test", other, role1)
 	require.NoError(t, err)
@@ -104,31 +104,31 @@ func TestTemporalIndexAuthoritative_TransactionUsesKeyHistory(t *testing.T) {
 	commitNodes(t, engine, committed...)
 	scans := countTemporalScans(t)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	_, err = tx.CreateNode(temporalFact("overlap", int64(3), 5, 15))
+	_, err = tx.CreateNode(t.Context(), temporalFact("overlap", int64(3), 5, 15))
 	require.Error(t, err, "overlap with a committed window of the same key")
-	_, err = tx.CreateNode(temporalFact("numeric-overlap", float64(4), 5, 7))
+	_, err = tx.CreateNode(t.Context(), temporalFact("numeric-overlap", float64(4), 5, 7))
 	require.Error(t, err, "a numerically equal key of another type is the same key")
-	_, err = tx.CreateNode(temporalFact("other-key", int64(999), 5, 15))
+	_, err = tx.CreateNode(t.Context(), temporalFact("other-key", int64(999), 5, 15))
 	require.NoError(t, err, "another key does not overlap")
-	_, err = tx.CreateNode(temporalFact("after", int64(3), 20, 30))
+	_, err = tx.CreateNode(t.Context(), temporalFact("after", int64(3), 20, 30))
 	require.NoError(t, err, "an adjacent window does not overlap")
 	require.NoError(t, tx.Commit())
 
 	// A committed node the transaction moves away no longer blocks its old window.
-	tx, err = engine.BeginTransaction()
+	tx, err = engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	require.NoError(t, tx.UpdateNode(temporalFact("f-7-0", int64(7), 100, 110)))
-	_, err = tx.CreateNode(temporalFact("reuse-7", int64(7), 0, 10))
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: temporalFact("f-7-0", int64(7), 100, 110), Policy: ClientNodeEdits}))
+	_, err = tx.CreateNode(t.Context(), temporalFact("reuse-7", int64(7), 0, 10))
 	require.NoError(t, err, "the window a rewritten committed node gave up is free")
 	require.NoError(t, tx.Commit())
 
 	// ... and a deleted one neither.
-	tx, err = engine.BeginTransaction()
+	tx, err = engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	require.NoError(t, tx.DeleteNode(NodeID(prefixTestID("f-8-0"))))
-	_, err = tx.CreateNode(temporalFact("reuse-8", int64(8), 0, 10))
+	require.NoError(t, tx.DeleteGraphNode(t.Context(), NodeID(prefixTestID("f-8-0")), CascadeEdges))
+	_, err = tx.CreateNode(t.Context(), temporalFact("reuse-8", int64(8), 0, 10))
 	require.NoError(t, err, "the window of a deleted committed node is free")
 	require.NoError(t, tx.Commit())
 
@@ -147,9 +147,9 @@ func TestTemporalIndexAuthoritative_ConstraintOverExistingNodesIsBackfilled(t *t
 	require.NoError(t, MarkNewTemporalConstraintsForEngine(engine, sm, []Constraint{factWindow}))
 	scans := countTemporalScans(t)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	_, err = tx.CreateNode(temporalFact("overlap", int64(1), 5, 15))
+	_, err = tx.CreateNode(t.Context(), temporalFact("overlap", int64(1), 5, 15))
 	require.Error(t, err, "overlap with a node written before the constraint")
 	require.NoError(t, tx.Rollback())
 	require.Zero(t, scans.Load(), "the backfilled index answers without scanning")
@@ -165,18 +165,18 @@ func TestTemporalIndexAuthoritative_IncompleteIndexScans(t *testing.T) {
 	require.NoError(t, sm.AddConstraint(factWindow)) // registered without DDL marks: not trusted
 	scans := countTemporalScans(t)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	_, err = tx.CreateNode(temporalFact("overlap", int64(1), 5, 15))
+	_, err = tx.CreateNode(t.Context(), temporalFact("overlap", int64(1), 5, 15))
 	require.Error(t, err, "overlap with a node written before the constraint")
 	require.NoError(t, tx.Rollback())
 	require.NotZero(t, scans.Load(), "an untrusted index falls back to the label scan")
 
 	require.NoError(t, engine.RebuildTemporalIndexes(context.Background()))
 	before := scans.Load()
-	tx, err = engine.BeginTransaction()
+	tx, err = engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	_, err = tx.CreateNode(temporalFact("overlap2", int64(1), 5, 15))
+	_, err = tx.CreateNode(t.Context(), temporalFact("overlap2", int64(1), 5, 15))
 	require.Error(t, err, "after the rebuild the index lists the pre-existing node")
 	require.NoError(t, tx.Rollback())
 	require.Equal(t, before, scans.Load())
@@ -193,10 +193,10 @@ func TestTemporalIndexAuthoritative_EngineWriteNewKeyDoesNotScan(t *testing.T) {
 	scans := countTemporalScans(t)
 
 	for r := 0; r < 20; r++ {
-		_, err := engine.CreateNode(temporalFact(fmt.Sprintf("e-%d", r), int64(r), 0, 10))
+		_, err := engine.CreateNode(t.Context(), temporalFact(fmt.Sprintf("e-%d", r), int64(r), 0, 10))
 		require.NoError(t, err)
 	}
-	_, err := engine.CreateNode(temporalFact("e-overlap", float64(5), 5, 15))
+	_, err := engine.CreateNode(t.Context(), temporalFact("e-overlap", float64(5), 5, 15))
 	require.Error(t, err, "overlap through the history index, across numeric types")
 	require.Zero(t, scans.Load())
 }
@@ -215,10 +215,10 @@ func TestTemporalCurrentPointerRefresh_ScalesLinearly(t *testing.T) {
 		sm := engine.GetSchemaForNamespace("test")
 		require.NoError(t, sm.AddConstraint(factWindow))
 		require.NoError(t, MarkNewTemporalConstraintsForEngine(engine, sm, []Constraint{factWindow}))
-		tx, err := engine.BeginTransaction()
+		tx, err := engine.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		for i := 0; i < n; i++ {
-			_, err := tx.CreateNode(temporalFact(fmt.Sprintf("s-%d", i), int64(i), -10, 10000))
+			_, err := tx.CreateNode(t.Context(), temporalFact(fmt.Sprintf("s-%d", i), int64(i), -10, 10000))
 			require.NoError(t, err)
 		}
 		start := time.Now()
@@ -226,10 +226,12 @@ func TestTemporalCurrentPointerRefresh_ScalesLinearly(t *testing.T) {
 		return time.Since(start)
 	}
 	run(300)
-	small, large := run(1000), run(8000)
-	ratio := float64(large) / float64(small)
-	t.Logf("commit of 1000 temporal nodes: %v, 8000: %v, ratio %.1f (linear ~8)", small, large, ratio)
-	require.Less(t, ratio, 20.0)
+	var samples [3][2]time.Duration
+	for i := range samples {
+		samples[i] = [2]time.Duration{run(1000), run(8000)}
+		t.Logf("sample %d: commit of 1000 temporal nodes: %v, 8000: %v, ratio %.1f (linear ~8)", i+1, samples[i][0], samples[i][1], float64(samples[i][1])/float64(samples[i][0]))
+	}
+	require.Less(t, medianPairedScalingRatio(samples), 20.0)
 }
 
 // The current pointer follows the latest version valid now, whether that
@@ -250,9 +252,9 @@ func TestTemporalCurrentPointerRefresh_PointsAtCurrentVersion(t *testing.T) {
 		return &Node{ID: NodeID(prefixTestID(id)), Labels: []string{"Fact"}, Properties: props}
 	}
 	isCurrent := func(id string) bool {
-		n, err := engine.GetNode(NodeID(prefixTestID(id)))
+		n, err := engine.GetNode(t.Context(), NodeID(prefixTestID(id)))
 		require.NoError(t, err)
-		ok, err := engine.IsCurrentTemporalNode(n, now)
+		ok, err := engine.IsCurrentTemporalNode(context.Background(), n, now)
 		require.NoError(t, err)
 		return ok
 	}
@@ -262,10 +264,10 @@ func TestTemporalCurrentPointerRefresh_PointsAtCurrentVersion(t *testing.T) {
 	require.False(t, isCurrent("r1-v1"))
 
 	// A later commit closes v2 and adds v3: the pointer moves to v3.
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	require.NoError(t, tx.UpdateNode(at("r1-v2", 1, now.Add(-5*day), now.Add(-day), false)))
-	_, err = tx.CreateNode(at("r1-v3", 1, now.Add(-day), time.Time{}, true))
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: at("r1-v2", 1, now.Add(-5*day), now.Add(-day), false), Policy: ClientNodeEdits}))
+	_, err = tx.CreateNode(t.Context(), at("r1-v3", 1, now.Add(-day), time.Time{}, true))
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 	require.True(t, isCurrent("r1-v3"))

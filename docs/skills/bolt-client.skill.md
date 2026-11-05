@@ -35,7 +35,7 @@ delivered as `FAILURE` without closing the Bolt connection. The session remains
 in the normal failed-until-`RESET` state, so drivers can reset and retry on the
 same socket. A `COMMIT` rejected by a constraint check (`Neo.ClientError.Schema.ConstraintValidationFailed`)
 is found before anything is written, so it also keeps the connection: nothing of the
-transaction is stored. Non-retryable uncertain commit failures still close the connection.
+transaction is stored. Non-retryable uncertain commit failures still close the connection. Quota statuses are identical for implicit and explicit transactions over HTTP/Bolt; known rolled-back quota rejections keep the Bolt connection usable after `RESET`.
 
 Error messages don't repeat the code: the code is in the error's code field, the message is
 the text after it (Bolt and HTTP alike).
@@ -44,6 +44,7 @@ the text after it (Bolt and HTTP alike).
 
 | Wire shape | Code class | When |
 |---|---|---|
+| Write/query rate quota exceeded | `Neo.TransientError.General.ResourceExhaustion` | NornicDB quota status; retry with bounded backoff after refill. Commit-time rejection is pre-publication and fully rolled back. |
 | `commit failed: conflict: node <id> changed after transaction start` | `Neo.TransientError.Transaction.Outdated` | Optimistic write conflict on a node — another transaction committed first. |
 | `commit failed: conflict: edge <id> changed after transaction start` | `Neo.TransientError.Transaction.Outdated` | Same, for edges. |
 | `commit failed: conflict: node <id> has adjacent edge <eid> changed after transaction start` | `Neo.TransientError.Transaction.Outdated` | Same, propagated through an adjacent edge. |
@@ -75,6 +76,7 @@ if strings.Contains(err.Error(), "commit failed") &&
 
 - `Neo.ClientError.Statement.SyntaxError` / `Neo.ClientError.Statement.TypeError` / `Neo.ClientError.Schema.*` — fix the query or the data.
 - `Neo.ClientError.Schema.ConstraintValidationFailed` (`commit failed: constraint violation: ...`) on a `CREATE`/`SET` group, or against a value that was already stored when the transaction began — re-running fails the same way or double-applies. Surface to the caller.
+- `Neo.ClientError.General.ResourceLimit` — NornicDB node/relationship/byte capacity quota. Change the data or limit; retrying the same transaction cannot help.
 - Anything not in the transient table above.
 
 ## MERGE under concurrent writers

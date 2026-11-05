@@ -3,6 +3,7 @@ package nornicdb
 import (
 	"context"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -11,10 +12,9 @@ import (
 
 type unwrapOnlyEngine struct {
 	storage.Engine
-	inner storage.Engine
 }
 
-func (u unwrapOnlyEngine) GetInnerEngine() storage.Engine { return u.inner }
+func (unwrapOnlyEngine) GetInnerEngine() storage.Engine { return nil }
 
 func TestDB_Coverage_ResolveSearchFlagsLazyFromConfig(t *testing.T) {
 	cfg := DefaultConfig()
@@ -46,7 +46,7 @@ func TestDB_Coverage_EmbeddingCountErrorPaths(t *testing.T) {
 	})
 
 	t.Run("default path returns zero when default db service cannot be created", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = base.Close() })
 		db := &DB{
 			storage:             storage.NewNamespacedEngine(base, "system"),
@@ -89,15 +89,15 @@ func TestDB_Coverage_QueryChunkEmbeddingEdgeBranches(t *testing.T) {
 }
 
 func TestDB_Coverage_UnwrapToBadgerEngine_NonBadgerChain(t *testing.T) {
-	base := storage.NewMemoryEngine()
-	t.Cleanup(func() { _ = base.Close() })
-	wrapper := &unwrapOnlyEngine{Engine: base, inner: storage.NewMemoryEngine()}
-	t.Cleanup(func() { _ = wrapper.inner.Close() })
+	// This fixture intentionally exposes only the wrapper capability. MemoryEngine
+	// is Badger-backed, so using one here would no longer represent a non-Badger
+	// terminal engine after canonical unwrapping.
+	wrapper := &unwrapOnlyEngine{}
 	require.Nil(t, unwrapToBadgerEngine(wrapper))
 }
 
 func TestDB_Coverage_MaybeEnableReplication_DefaultDataDirBranch(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
 	t.Setenv("NORNICDB_CLUSTER_MODE", "invalid-mode")

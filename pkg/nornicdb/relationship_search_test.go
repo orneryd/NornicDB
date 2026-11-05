@@ -44,7 +44,7 @@ func TestRelationshipSearchEndToEnd(t *testing.T) {
 	require.Nil(t, embedding.Vectors)
 	hit := find("zephyrine")[0]
 	require.Equal(t, "CITES", hit.Relationship.Type)
-	start, err := db.GetStorage().GetNode(hit.Relationship.StartNode)
+	start, err := db.GetStorage().GetNode(t.Context(), hit.Relationship.StartNode)
 	require.NoError(t, err)
 	require.Equal(t, "a", start.Properties["name"])
 	require.Eventually(t, func() bool { return svc.RelationshipEmbeddingCount() == 1 }, 5*time.Second, 20*time.Millisecond)
@@ -58,9 +58,9 @@ func TestRelationshipSearchEndToEnd(t *testing.T) {
 	require.Equal(t, "zephyrine bridge", mapped[0].Relationship.Properties["reason"])
 
 	// Straight to storage: the storage event indexes it, and removes it.
-	require.NoError(t, db.GetStorage().CreateEdge(&storage.Edge{ID: "direct", StartNode: hit.Relationship.EndNode, EndNode: hit.Relationship.StartNode, Type: "CITES", Properties: map[string]any{"reason": "obsidian"}}))
+	require.NoError(t, db.GetStorage().CreateEdge(t.Context(), &storage.Edge{ID: "direct", StartNode: hit.Relationship.EndNode, EndNode: hit.Relationship.StartNode, Type: "CITES", Properties: map[string]any{"reason": "obsidian"}}))
 	require.Eventually(t, func() bool { return len(find("obsidian")) == 1 }, 5*time.Second, 20*time.Millisecond)
-	require.NoError(t, db.GetStorage().DeleteEdge("direct"))
+	require.NoError(t, db.GetStorage().DeleteEdge(t.Context(), "direct"))
 	require.Eventually(t, func() bool { return svc.RelationshipEmbeddingCount() == 1 }, 5*time.Second, 20*time.Millisecond)
 	require.Empty(t, find("obsidian"))
 }
@@ -97,7 +97,7 @@ func TestRelationshipSearchEmbedAndEventEdges(t *testing.T) {
 	db.indexRelationshipFromEvent(nil)
 	db.indexRelationshipFromEvent(&storage.Edge{ID: "unprefixed"})
 	db.indexRelationshipFromEvent(&storage.Edge{ID: "nornic:r", StartNode: "nornic:a", EndNode: "nornic:b"})
-	db.removeRelationshipFromEvent("unprefixed")
-	db.removeRelationshipFromEvent("nornic:r")
+	db.queueSearchRefreshEvent(searchRelationshipChange, "unprefixed")
+	db.queueSearchRefreshEvent(searchRelationshipChange, "nornic:r")
 	require.Nil(t, db.relationshipSearchService("nornic"))
 }

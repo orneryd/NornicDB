@@ -12,7 +12,7 @@ import (
 // :T shortcut from every tenth node), with the result cache off (#907).
 // results/op is the count each call returns.
 func BenchmarkApocPath(b *testing.B) {
-	exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(b), "test"), 0, 0)
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(b), "test"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	ctx := context.Background()
 	for _, statement := range []string{
 		"UNWIND range(0, 1999) AS i CREATE (:P {id: 'n' + toString(i), i: i})",

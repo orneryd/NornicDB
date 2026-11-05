@@ -21,106 +21,110 @@ func TestCompositeEngine_EmptyComposite(t *testing.T) {
 	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
 	// Operations should handle empty composite gracefully
-	nodes, err := composite.GetNodesByLabel("Person")
+	nodes, err := composite.GetNodesByLabel(context.Background(), "Person")
 	require.NoError(t, err)
 	assert.Equal(t, 0, len(nodes))
 
-	edges, err := composite.GetEdgesByType("KNOWS")
+	edges, err := composite.GetEdgesByType(context.Background(), "KNOWS")
 	require.NoError(t, err)
 	assert.Equal(t, 0, len(edges))
 
-	allNodes, err := composite.AllNodes()
+	allNodes, err := composite.AllNodes(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, 0, len(allNodes))
 
 	// Write operations should fail with clear error
 	node := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
-	_, err = composite.CreateNode(node)
+	_, err = composite.CreateNode(t.Context(), node)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no writable constituents available")
 }
 
-func TestCompositeEngine_OfflineConstituent(t *testing.T) {
-	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+// TestCompositeEngine_ClosedConstituentReads merges the offline-constituent cases.
+// Both share this fixture, the combined-read error expectation and the targeted
+// write; each case keeps its own seeding, close set and write expectation.
+func TestCompositeEngine_ClosedConstituentReads(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		seedDB1    bool
+		closeDB1   bool
+		closeDB2   bool
+		writeNode  *Node
+		checkWrite func(t *testing.T, err error)
+	}{
+		{
+			name:     "TestCompositeEngine_OfflineConstituent",
+			seedDB1:  true,
+			closeDB2: true,
+			writeNode: &Node{
+				ID:         NodeID(prefixTestID("node2")),
+				Labels:     []string{"Person"},
+				Properties: map[string]interface{}{"database_id": "db1"},
+			},
+			checkWrite: func(t *testing.T, err error) {
+				require.NoError(t, err)
+			},
+		},
+		{
+			name:     "TestCompositeEngine_AllConstituentsOffline",
+			closeDB1: true,
+			closeDB2: true,
+			writeNode: &Node{
+				ID:         NodeID(prefixTestID("node1")),
+				Labels:     []string{"Person"},
+				Properties: map[string]interface{}{"database_id": "db1"},
+			},
+			checkWrite: func(t *testing.T, err error) {
+				assert.Error(t, err)
+				assert.True(t, err.Error() == "storage closed" || containsSubstring(err.Error(), "storage closed"))
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create constituent engines
+			engine1 := newTestMemoryEngine(t)
+			engine2 := newTestMemoryEngine(t)
 
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
+			// Create composite engine
+			constituents := map[string]Engine{
+				"db1": engine1,
+				"db2": engine2,
+			}
+			constituentNames := map[string]string{
+				"db1": "db1",
+				"db2": "db2",
+			}
+			accessModes := map[string]string{
+				"db1": "read_write",
+				"db2": "read_write",
+			}
+			composite := NewCompositeEngine(constituents, constituentNames, accessModes)
+
+			if tc.seedDB1 {
+				// Create node in db1
+				node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
+				_, seedErr := engine1.CreateNode(t.Context(), node1)
+				require.NoError(t, seedErr)
+			}
+
+			// Close the constituents this case marks offline.
+			if tc.closeDB1 {
+				engine1.Close()
+			}
+			if tc.closeDB2 {
+				engine2.Close()
+			}
+
+			// A readable offline constituent makes the combined result incomplete.
+			nodes, err := composite.GetNodesByLabel(context.Background(), "Person")
+			require.ErrorIs(t, err, ErrStorageClosed)
+			require.Nil(t, nodes)
+
+			// Write expectations stay per case (online target vs all offline).
+			_, err = composite.CreateNode(t.Context(), tc.writeNode)
+			tc.checkWrite(t, err)
+		})
 	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
-
-	// Create node in db1
-	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
-	_, err := engine1.CreateNode(node1)
-	require.NoError(t, err)
-
-	// Close db2 (simulate offline)
-	engine2.Close()
-
-	// A readable offline constituent makes the combined result incomplete.
-	nodes, err := composite.GetNodesByLabel("Person")
-	require.ErrorIs(t, err, ErrStorageClosed)
-	require.Nil(t, nodes)
-
-	// Write should still work when explicitly targeted to online db1.
-	node2 := &Node{
-		ID:         NodeID(prefixTestID("node2")),
-		Labels:     []string{"Person"},
-		Properties: map[string]interface{}{"database_id": "db1"},
-	}
-	_, err = composite.CreateNode(node2)
-	require.NoError(t, err)
-}
-
-func TestCompositeEngine_AllConstituentsOffline(t *testing.T) {
-	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
-
-	// Close both engines (simulate all offline)
-	engine1.Close()
-	engine2.Close()
-
-	// Reads must report that the constituent data is unavailable.
-	nodes, err := composite.GetNodesByLabel("Person")
-	require.ErrorIs(t, err, ErrStorageClosed)
-	require.Nil(t, nodes)
-
-	// Write operations should fail with storage closed error when explicitly targeted.
-	node := &Node{
-		ID:         NodeID(prefixTestID("node1")),
-		Labels:     []string{"Person"},
-		Properties: map[string]interface{}{"database_id": "db1"},
-	}
-	_, err = composite.CreateNode(node)
-	assert.Error(t, err)
-	assert.True(t, err.Error() == "storage closed" || containsSubstring(err.Error(), "storage closed"))
 }
 
 func TestCompositeEngine_CircularDependencyPrevention(t *testing.T) {
@@ -131,7 +135,7 @@ func TestCompositeEngine_CircularDependencyPrevention(t *testing.T) {
 	t.Run("nested_composite_works", func(t *testing.T) {
 		// Test that nested composites work correctly (A -> B -> C where B is composite)
 		// This is not a cycle, just nesting
-		engineC := NewMemoryEngine()
+		engineC := newTestMemoryEngine(t)
 		defer engineC.Close()
 
 		// Create composite B with constituent C
@@ -148,7 +152,7 @@ func TestCompositeEngine_CircularDependencyPrevention(t *testing.T) {
 
 		// Create node in C
 		nodeC := &Node{ID: NodeID(prefixTestID("nodeC")), Labels: []string{"Person"}}
-		_, err := engineC.CreateNode(nodeC)
+		_, err := engineC.CreateNode(t.Context(), nodeC)
 		require.NoError(t, err)
 
 		// Create composite A with constituent B (which is itself a composite)
@@ -164,7 +168,7 @@ func TestCompositeEngine_CircularDependencyPrevention(t *testing.T) {
 		compositeA := NewCompositeEngine(constituentsA, constituentNamesA, accessModesA)
 
 		// Query A should find nodes from C (through B)
-		nodes, err := compositeA.GetNodesByLabel("Person")
+		nodes, err := compositeA.GetNodesByLabel(context.Background(), "Person")
 		require.NoError(t, err)
 		assert.GreaterOrEqual(t, len(nodes), 1, "Should find node from nested composite")
 	})
@@ -172,7 +176,7 @@ func TestCompositeEngine_CircularDependencyPrevention(t *testing.T) {
 	t.Run("direct_self_reference_detected", func(t *testing.T) {
 		// Test that direct self-reference (A -> A) is detected or handled gracefully
 		// In practice, this should be prevented by DatabaseManager, but we test the engine behavior
-		engine1 := NewMemoryEngine()
+		engine1 := newTestMemoryEngine(t)
 		defer engine1.Close()
 
 		// Create composite A
@@ -189,7 +193,7 @@ func TestCompositeEngine_CircularDependencyPrevention(t *testing.T) {
 
 		// Create node in engine1
 		node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
-		_, err := engine1.CreateNode(node1)
+		_, err := engine1.CreateNode(t.Context(), node1)
 		require.NoError(t, err)
 
 		// Manually create a composite that references itself (simulating a bug or bypass)
@@ -207,7 +211,7 @@ func TestCompositeEngine_CircularDependencyPrevention(t *testing.T) {
 
 		// Query should work (it will query compositeA, which queries engine1)
 		// The self-reference doesn't cause infinite loop because compositeA doesn't reference itself
-		nodes, err := compositeSelf.GetNodesByLabel("Person")
+		nodes, err := compositeSelf.GetNodesByLabel(context.Background(), "Person")
 		require.NoError(t, err)
 		assert.GreaterOrEqual(t, len(nodes), 1, "Should find node through self-referencing composite")
 	})
@@ -215,7 +219,7 @@ func TestCompositeEngine_CircularDependencyPrevention(t *testing.T) {
 	t.Run("indirect_cycle_handled", func(t *testing.T) {
 		// Test indirect cycle (A -> B -> A)
 		// This should be prevented by DatabaseManager, but we test engine behavior
-		engine1 := NewMemoryEngine()
+		engine1 := newTestMemoryEngine(t)
 		defer engine1.Close()
 
 		// Create composite A with engine1
@@ -260,14 +264,14 @@ func TestCompositeEngine_CircularDependencyPrevention(t *testing.T) {
 
 		// Create node in engine1
 		node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
-		_, err := engine1.CreateNode(node1)
+		_, err := engine1.CreateNode(t.Context(), node1)
 		require.NoError(t, err)
 
 		// Query should work - it will query engine1 and compositeB
 		// compositeB will query compositeA, which will query engine1 and compositeB
 		// This creates a cycle, but each CompositeEngine queries its constituents once per call
 		// So it should still work (though inefficient)
-		nodes, err := compositeAWithB.GetNodesByLabel("Person")
+		nodes, err := compositeAWithB.GetNodesByLabel(context.Background(), "Person")
 		require.NoError(t, err)
 		// Should find the node (may appear multiple times due to cycle, but that's expected)
 		assert.GreaterOrEqual(t, len(nodes), 1, "Should find node even with indirect cycle")
@@ -280,7 +284,7 @@ func TestCompositeEngine_CircularDependencyPrevention(t *testing.T) {
 		// Here we just verify that if someone manually creates a CompositeEngine with
 		// a composite as constituent, it still works (the engine doesn't prevent it)
 
-		engine1 := NewMemoryEngine()
+		engine1 := newTestMemoryEngine(t)
 		defer engine1.Close()
 
 		// Create first composite
@@ -297,7 +301,7 @@ func TestCompositeEngine_CircularDependencyPrevention(t *testing.T) {
 
 		// Create node in engine1
 		node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
-		_, err := engine1.CreateNode(node1)
+		_, err := engine1.CreateNode(t.Context(), node1)
 		require.NoError(t, err)
 
 		// Manually create second composite using first composite as constituent
@@ -314,7 +318,7 @@ func TestCompositeEngine_CircularDependencyPrevention(t *testing.T) {
 		composite2 := NewCompositeEngine(constituents2, constituentNames2, accessModes2)
 
 		// Query should work - composite2 queries composite1, which queries engine1
-		nodes, err := composite2.GetNodesByLabel("Person")
+		nodes, err := composite2.GetNodesByLabel(context.Background(), "Person")
 		require.NoError(t, err)
 		assert.GreaterOrEqual(t, len(nodes), 1, "Should find node through nested composite")
 
@@ -324,7 +328,7 @@ func TestCompositeEngine_CircularDependencyPrevention(t *testing.T) {
 }
 
 func TestCompositeEngine_GetConstituentByAlias(t *testing.T) {
-	engine1 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
 	defer engine1.Close()
 
 	constituents := map[string]Engine{"db1": engine1}
@@ -346,7 +350,7 @@ func TestCompositeEngine_GetConstituentByAlias(t *testing.T) {
 }
 
 func TestCompositeEngine_IsComposite(t *testing.T) {
-	engine1 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
 	defer engine1.Close()
 
 	composite := NewCompositeEngine(
@@ -366,8 +370,8 @@ func TestCompositeEngine_IsComposite(t *testing.T) {
 }
 
 func TestCompositeEngine_routeWrite_EmptyDatabaseID(t *testing.T) {
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 	defer engine1.Close()
 	defer engine2.Close()
 
@@ -385,8 +389,8 @@ func TestCompositeEngine_routeWrite_EmptyDatabaseID(t *testing.T) {
 }
 
 func TestCompositeEngine_routeWrite_ByConstituentName(t *testing.T) {
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 	defer engine1.Close()
 	defer engine2.Close()
 
@@ -404,7 +408,7 @@ func TestCompositeEngine_routeWrite_ByConstituentName(t *testing.T) {
 }
 
 func TestCompositeEngine_UpdateEdge_CrossConstituent(t *testing.T) {
-	engine1 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
 	defer engine1.Close()
 
 	composite := NewCompositeEngine(
@@ -416,25 +420,25 @@ func TestCompositeEngine_UpdateEdge_CrossConstituent(t *testing.T) {
 	// Create nodes and edge in db1 — IDs must be namespace-prefixed
 	n1 := &Node{ID: "db1:n1", Labels: []string{"A"}, Properties: map[string]interface{}{"database_id": "db1"}}
 	n2 := &Node{ID: "db1:n2", Labels: []string{"B"}, Properties: map[string]interface{}{"database_id": "db1"}}
-	_, err := engine1.CreateNode(n1)
+	_, err := engine1.CreateNode(t.Context(), n1)
 	require.NoError(t, err)
-	_, err = engine1.CreateNode(n2)
+	_, err = engine1.CreateNode(t.Context(), n2)
 	require.NoError(t, err)
-	require.NoError(t, engine1.CreateEdge(&Edge{ID: "db1:e1", StartNode: "db1:n1", EndNode: "db1:n2", Type: "KNOWS", Properties: map[string]interface{}{}}))
+	require.NoError(t, engine1.CreateEdge(t.Context(), &Edge{ID: "db1:e1", StartNode: "db1:n1", EndNode: "db1:n2", Type: "KNOWS", Properties: map[string]interface{}{}}))
 
 	// Update the edge through composite
 	updated := &Edge{ID: "db1:e1", StartNode: "db1:n1", EndNode: "db1:n2", Type: "LIKES", Properties: map[string]interface{}{"weight": 1}}
-	err = composite.UpdateEdge(updated)
+	err = composite.UpdateEdge(t.Context(), EdgeUpdateRequest{After: updated})
 	require.NoError(t, err)
 
 	// Verify through composite
-	edge, err := composite.GetEdge("db1:e1")
+	edge, err := composite.GetEdge(t.Context(), "db1:e1")
 	require.NoError(t, err)
 	assert.Equal(t, "LIKES", edge.Type)
 }
 
 func TestCompositeEngine_DeleteEdge_CrossConstituent(t *testing.T) {
-	engine1 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
 	defer engine1.Close()
 
 	composite := NewCompositeEngine(
@@ -445,34 +449,34 @@ func TestCompositeEngine_DeleteEdge_CrossConstituent(t *testing.T) {
 
 	n1 := &Node{ID: "db1:n1", Labels: []string{"A"}, Properties: map[string]interface{}{}}
 	n2 := &Node{ID: "db1:n2", Labels: []string{"B"}, Properties: map[string]interface{}{}}
-	_, err := engine1.CreateNode(n1)
+	_, err := engine1.CreateNode(t.Context(), n1)
 	require.NoError(t, err)
-	_, err = engine1.CreateNode(n2)
+	_, err = engine1.CreateNode(t.Context(), n2)
 	require.NoError(t, err)
-	require.NoError(t, engine1.CreateEdge(&Edge{ID: "db1:e1", StartNode: "db1:n1", EndNode: "db1:n2", Type: "KNOWS", Properties: map[string]interface{}{}}))
+	require.NoError(t, engine1.CreateEdge(t.Context(), &Edge{ID: "db1:e1", StartNode: "db1:n1", EndNode: "db1:n2", Type: "KNOWS", Properties: map[string]interface{}{}}))
 
 	// Delete through composite
-	err = composite.DeleteEdge("db1:e1")
+	err = composite.DeleteEdge(t.Context(), "db1:e1")
 	require.NoError(t, err)
 
 	// Verify gone
-	_, err = composite.GetEdge("db1:e1")
+	_, err = composite.GetEdge(t.Context(), "db1:e1")
 	assert.ErrorIs(t, err, ErrNotFound)
 }
 
 func TestCompositeEngine_StreamEdges_Fallback(t *testing.T) {
 	// Use a plain MemoryEngine which doesn't implement StreamingEngine
-	engine1 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
 	defer engine1.Close()
 
 	// Create test data — IDs must be namespace-prefixed
 	n1 := &Node{ID: "db1:n1", Labels: []string{"A"}, Properties: map[string]interface{}{}}
 	n2 := &Node{ID: "db1:n2", Labels: []string{"B"}, Properties: map[string]interface{}{}}
-	_, err := engine1.CreateNode(n1)
+	_, err := engine1.CreateNode(t.Context(), n1)
 	require.NoError(t, err)
-	_, err = engine1.CreateNode(n2)
+	_, err = engine1.CreateNode(t.Context(), n2)
 	require.NoError(t, err)
-	require.NoError(t, engine1.CreateEdge(&Edge{ID: "db1:e1", StartNode: "db1:n1", EndNode: "db1:n2", Type: "KNOWS", Properties: map[string]interface{}{}}))
+	require.NoError(t, engine1.CreateEdge(t.Context(), &Edge{ID: "db1:e1", StartNode: "db1:n1", EndNode: "db1:n2", Type: "KNOWS", Properties: map[string]interface{}{}}))
 
 	composite := NewCompositeEngine(
 		map[string]Engine{"db1": engine1},

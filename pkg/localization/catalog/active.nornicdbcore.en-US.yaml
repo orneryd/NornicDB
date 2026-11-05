@@ -166,6 +166,9 @@
 - id: nornicdbcore.search_database_not_initialized
   description: Per-database search state is unavailable. Database is an untranslated identifier.
   other: 'search service not initialized for database {{printf "%q" .Database}}'
+- id: nornicdbcore.search_index_build_mode_invalid
+  description: Unsupported search index build mode was requested. Mode is a technical value.
+  other: 'unsupported search index build mode {{.Mode}}'
 - id: nornicdbcore.inference_base_storage_unavailable
   description: Inference initialization lacks base storage. nil is a Go technical value.
   other: "inference unavailable: base storage is nil"

@@ -8,6 +8,8 @@
 package storage
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -24,7 +26,7 @@ import (
 
 // TestUndoCreateNode verifies that creating a node can be undone.
 func TestUndoCreateNode(t *testing.T) {
-	base := NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	defer base.Close()
 	engine := NewNamespacedEngine(base, "test")
 
@@ -44,7 +46,7 @@ func TestUndoCreateNode(t *testing.T) {
 	}
 
 	// Verify node exists
-	n, _ := engine.GetNode("n1")
+	n, _ := engine.GetNode(t.Context(), "n1")
 	if n == nil {
 		t.Fatal("Node should exist after redo")
 	}
@@ -55,7 +57,7 @@ func TestUndoCreateNode(t *testing.T) {
 	}
 
 	// Verify node is gone
-	n, _ = engine.GetNode("n1")
+	n, _ = engine.GetNode(t.Context(), "n1")
 	if n != nil {
 		t.Error("Node should not exist after undo")
 	}
@@ -63,13 +65,13 @@ func TestUndoCreateNode(t *testing.T) {
 
 // TestUndoUpdateNode verifies that updating a node can be undone.
 func TestUndoUpdateNode(t *testing.T) {
-	base := NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	defer base.Close()
 	engine := NewNamespacedEngine(base, "test")
 
 	// Create original node
 	oldNode := &Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}}
-	_, err := engine.CreateNode(oldNode)
+	_, err := engine.CreateNode(t.Context(), oldNode)
 	if err != nil {
 		t.Fatalf("failed to create original node: %v", err)
 	}
@@ -90,7 +92,7 @@ func TestUndoUpdateNode(t *testing.T) {
 	}
 
 	// Verify node was updated
-	n, _ := engine.GetNode("n1")
+	n, _ := engine.GetNode(t.Context(), "n1")
 	if n.Properties["name"] != "Bob" {
 		t.Error("Node should be updated after redo")
 	}
@@ -101,7 +103,7 @@ func TestUndoUpdateNode(t *testing.T) {
 	}
 
 	// Verify node is restored
-	n, _ = engine.GetNode("n1")
+	n, _ = engine.GetNode(t.Context(), "n1")
 	if n.Properties["name"] != "Alice" {
 		t.Errorf("Node should be restored after undo, got name=%v", n.Properties["name"])
 	}
@@ -109,13 +111,13 @@ func TestUndoUpdateNode(t *testing.T) {
 
 // TestUndoDeleteNode verifies that deleting a node can be undone.
 func TestUndoDeleteNode(t *testing.T) {
-	base := NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	defer base.Close()
 	engine := NewNamespacedEngine(base, "test")
 
 	// Create node to delete
 	oldNode := &Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}}
-	_, err := engine.CreateNode(oldNode)
+	_, err := engine.CreateNode(t.Context(), oldNode)
 	if err != nil {
 		t.Fatalf("failed to create node to delete: %v", err)
 	}
@@ -135,7 +137,7 @@ func TestUndoDeleteNode(t *testing.T) {
 	}
 
 	// Verify node is deleted
-	n, _ := engine.GetNode("n1")
+	n, _ := engine.GetNode(t.Context(), "n1")
 	if n != nil {
 		t.Error("Node should be deleted after redo")
 	}
@@ -146,7 +148,7 @@ func TestUndoDeleteNode(t *testing.T) {
 	}
 
 	// Verify node is restored
-	n, _ = engine.GetNode("n1")
+	n, _ = engine.GetNode(t.Context(), "n1")
 	if n == nil {
 		t.Fatal("Node should be restored after undo")
 	}
@@ -157,7 +159,7 @@ func TestUndoDeleteNode(t *testing.T) {
 
 // TestUndoWithoutBeforeImage verifies error on missing undo data.
 func TestUndoWithoutBeforeImage(t *testing.T) {
-	base := NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	defer base.Close()
 	engine := NewNamespacedEngine(base, "test")
 
@@ -203,7 +205,7 @@ func TestTxBoundaryMarkers(t *testing.T) {
 	wal.Close()
 
 	// Read back
-	entries, err := ReadWALEntries(filepath.Join(dir, "wal.log"))
+	entries, err := ReadWALEntries(filepath.Join(dir, "wal.log"), nil)
 	if err != nil {
 		t.Fatalf("Failed to read entries: %v", err)
 	}
@@ -335,7 +337,7 @@ func TestRecoverCommittedTransaction(t *testing.T) {
 	wal.Close()
 
 	// Recover
-	baseEngine, result, err := RecoverWithTransactions(dir, "")
+	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(dir, ""))
 	if err != nil {
 		t.Fatalf("Recovery failed: %v", err)
 	}
@@ -347,7 +349,7 @@ func TestRecoverCommittedTransaction(t *testing.T) {
 	}
 
 	// Verify node exists
-	n, _ := engine.GetNode("n1")
+	n, _ := engine.GetNode(t.Context(), "n1")
 	if n == nil {
 		t.Fatal("Node should exist after committed transaction recovery")
 	}
@@ -377,7 +379,7 @@ func TestRecoverIncompleteTransaction(t *testing.T) {
 	wal.Close()
 
 	// Recover
-	baseEngine, result, err := RecoverWithTransactions(dir, "")
+	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(dir, ""))
 	if err != nil {
 		t.Fatalf("Recovery failed: %v", err)
 	}
@@ -389,7 +391,7 @@ func TestRecoverIncompleteTransaction(t *testing.T) {
 	}
 
 	// Verify node does NOT exist (was rolled back)
-	n, _ := engine.GetNode("n1")
+	n, _ := engine.GetNode(t.Context(), "n1")
 	if n != nil {
 		t.Error("Node should NOT exist after rollback of incomplete transaction")
 	}
@@ -416,7 +418,7 @@ func TestRecoverAbortedTransaction(t *testing.T) {
 	wal.Close()
 
 	// Recover
-	baseEngine, result, err := RecoverWithTransactions(dir, "")
+	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(dir, ""))
 	if err != nil {
 		t.Fatalf("Recovery failed: %v", err)
 	}
@@ -428,7 +430,7 @@ func TestRecoverAbortedTransaction(t *testing.T) {
 	}
 
 	// Verify node does NOT exist (aborted transaction)
-	n, _ := engine.GetNode("n1")
+	n, _ := engine.GetNode(t.Context(), "n1")
 	if n != nil {
 		t.Error("Node should NOT exist from aborted transaction")
 	}
@@ -468,7 +470,7 @@ func TestRecoverMixedTransactions(t *testing.T) {
 	wal.Close()
 
 	// Recover
-	baseEngine, result, err := RecoverWithTransactions(dir, "")
+	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(dir, ""))
 	if err != nil {
 		t.Fatalf("Recovery failed: %v", err)
 	}
@@ -486,17 +488,17 @@ func TestRecoverMixedTransactions(t *testing.T) {
 	}
 
 	// Verify data
-	n1, _ := engine.GetNode("committed-node")
+	n1, _ := engine.GetNode(t.Context(), "committed-node")
 	if n1 == nil {
 		t.Error("Committed node should exist")
 	}
 
-	n2, _ := engine.GetNode("incomplete-node")
+	n2, _ := engine.GetNode(t.Context(), "incomplete-node")
 	if n2 != nil {
 		t.Error("Incomplete transaction node should NOT exist")
 	}
 
-	n3, _ := engine.GetNode("non-tx-node")
+	n3, _ := engine.GetNode(t.Context(), "non-tx-node")
 	if n3 == nil {
 		t.Error("Non-transactional node should exist")
 	}
@@ -548,7 +550,7 @@ func TestRecoverWithTransactions_ErrorAccountingPaths(t *testing.T) {
 
 	require.NoError(t, wal.Close())
 
-	baseEngine, result, err := RecoverWithTransactions(dir, "")
+	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(dir, ""))
 	require.NoError(t, err)
 	require.NotNil(t, baseEngine)
 
@@ -588,13 +590,13 @@ func TestRecoveryResultSummary(t *testing.T) {
 
 // TestUndoCreateEdge verifies edge creation can be undone.
 func TestUndoCreateEdge(t *testing.T) {
-	baseEngine := NewMemoryEngine()
+	baseEngine := newTestMemoryEngine(t)
 	engine := NewNamespacedEngine(baseEngine, "test")
 
 	// Create nodes first
-	_, err := engine.CreateNode(&Node{ID: "n1", Labels: []string{"Test"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "n1", Labels: []string{"Test"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "n2", Labels: []string{"Test"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "n2", Labels: []string{"Test"}})
 	require.NoError(t, err)
 
 	// Create edge via WAL
@@ -605,7 +607,7 @@ func TestUndoCreateEdge(t *testing.T) {
 	// Redo
 	require.NoError(t, ReplayWALEntry(engine, entry))
 
-	e, _ := engine.GetEdge("e1")
+	e, _ := engine.GetEdge(t.Context(), "e1")
 	if e == nil {
 		t.Fatal("Edge should exist after redo")
 	}
@@ -613,7 +615,7 @@ func TestUndoCreateEdge(t *testing.T) {
 	// Undo
 	require.NoError(t, UndoWALEntry(engine, entry))
 
-	e, _ = engine.GetEdge("e1")
+	e, _ = engine.GetEdge(t.Context(), "e1")
 	if e != nil {
 		t.Error("Edge should not exist after undo")
 	}
@@ -621,16 +623,16 @@ func TestUndoCreateEdge(t *testing.T) {
 
 // TestUndoDeleteEdge verifies edge deletion can be undone.
 func TestUndoDeleteEdge(t *testing.T) {
-	baseEngine := NewMemoryEngine()
+	baseEngine := newTestMemoryEngine(t)
 	engine := NewNamespacedEngine(baseEngine, "test")
 
 	// Create nodes and edge
-	_, err := engine.CreateNode(&Node{ID: "n1", Labels: []string{"Test"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "n1", Labels: []string{"Test"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "n2", Labels: []string{"Test"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "n2", Labels: []string{"Test"}})
 	require.NoError(t, err)
 	oldEdge := &Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS", Properties: map[string]interface{}{"since": 2020}}
-	require.NoError(t, engine.CreateEdge(oldEdge))
+	require.NoError(t, engine.CreateEdge(t.Context(), oldEdge))
 
 	// Delete edge via WAL with before image
 	data, _ := json.Marshal(WALDeleteData{ID: "e1", OldEdge: oldEdge})
@@ -639,7 +641,7 @@ func TestUndoDeleteEdge(t *testing.T) {
 	// Redo (delete)
 	require.NoError(t, ReplayWALEntry(engine, entry))
 
-	e, _ := engine.GetEdge("e1")
+	e, _ := engine.GetEdge(t.Context(), "e1")
 	if e != nil {
 		t.Fatal("Edge should be deleted after redo")
 	}
@@ -647,7 +649,7 @@ func TestUndoDeleteEdge(t *testing.T) {
 	// Undo (restore)
 	require.NoError(t, UndoWALEntry(engine, entry))
 
-	e, _ = engine.GetEdge("e1")
+	e, _ = engine.GetEdge(t.Context(), "e1")
 	if e == nil {
 		t.Fatal("Edge should be restored after undo")
 	}
@@ -659,28 +661,28 @@ func TestUndoDeleteEdge(t *testing.T) {
 }
 
 func TestUndoUpdateEdge(t *testing.T) {
-	baseEngine := NewMemoryEngine()
+	baseEngine := newTestMemoryEngine(t)
 	engine := NewNamespacedEngine(baseEngine, "test")
 
-	_, err := engine.CreateNode(&Node{ID: "n1", Labels: []string{"Test"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "n1", Labels: []string{"Test"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "n2", Labels: []string{"Test"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "n2", Labels: []string{"Test"}})
 	require.NoError(t, err)
 
 	oldEdge := &Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS", Properties: map[string]interface{}{"since": 2020}}
-	require.NoError(t, engine.CreateEdge(oldEdge))
+	require.NoError(t, engine.CreateEdge(t.Context(), oldEdge))
 	newEdge := &Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS", Properties: map[string]interface{}{"since": 2024}}
 
 	data, _ := json.Marshal(WALEdgeData{Edge: newEdge, OldEdge: oldEdge})
 	entry := WALEntry{Sequence: 3, Operation: OpUpdateEdge, Data: data, Checksum: crc32Checksum(data), Database: "test"}
 
 	require.NoError(t, ReplayWALEntry(engine, entry))
-	updated, _ := engine.GetEdge("e1")
+	updated, _ := engine.GetEdge(t.Context(), "e1")
 	require.NotNil(t, updated)
 	require.Equal(t, int64(2024), updated.Properties["since"])
 
 	require.NoError(t, UndoWALEntry(engine, entry))
-	restored, _ := engine.GetEdge("e1")
+	restored, _ := engine.GetEdge(t.Context(), "e1")
 	require.NotNil(t, restored)
 	require.Equal(t, int64(2020), restored.Properties["since"])
 }
@@ -695,71 +697,71 @@ func TestReplayAndUndoBulkWALEntries(t *testing.T) {
 	}
 
 	t.Run("bulk create nodes then undo", func(t *testing.T) {
-		baseEngine := NewMemoryEngine()
+		baseEngine := newTestMemoryEngine(t)
 		engine := NewNamespacedEngine(baseEngine, "test")
 		data, _ := json.Marshal(WALBulkNodesData{Nodes: nodes})
 		entry := WALEntry{Operation: OpBulkNodes, Data: data, Checksum: crc32Checksum(data), Database: "test"}
 		require.NoError(t, ReplayWALEntry(engine, entry))
-		require.NotNil(t, mustGetNodeForWALTest(t, engine, "n1"))
+		require.NotNil(t, mustReadNode(t, engine.GetNode, "n1"))
 		require.NoError(t, UndoWALEntry(engine, entry))
-		n, _ := engine.GetNode("n1")
+		n, _ := engine.GetNode(t.Context(), "n1")
 		require.Nil(t, n)
 	})
 
 	t.Run("bulk create edges then undo", func(t *testing.T) {
-		baseEngine := NewMemoryEngine()
+		baseEngine := newTestMemoryEngine(t)
 		engine := NewNamespacedEngine(baseEngine, "test")
 		for _, n := range nodes {
-			_, err := engine.CreateNode(n)
+			_, err := engine.CreateNode(t.Context(), n)
 			require.NoError(t, err)
 		}
 		data, _ := json.Marshal(WALBulkEdgesData{Edges: edges})
 		entry := WALEntry{Operation: OpBulkEdges, Data: data, Checksum: crc32Checksum(data), Database: "test"}
 		require.NoError(t, ReplayWALEntry(engine, entry))
-		e, _ := engine.GetEdge("e1")
+		e, _ := engine.GetEdge(t.Context(), "e1")
 		require.NotNil(t, e)
 		require.NoError(t, UndoWALEntry(engine, entry))
-		e, _ = engine.GetEdge("e1")
+		e, _ = engine.GetEdge(t.Context(), "e1")
 		require.Nil(t, e)
 	})
 
 	t.Run("bulk delete nodes then undo", func(t *testing.T) {
-		baseEngine := NewMemoryEngine()
+		baseEngine := newTestMemoryEngine(t)
 		engine := NewNamespacedEngine(baseEngine, "test")
 		for _, n := range nodes {
-			_, err := engine.CreateNode(n)
+			_, err := engine.CreateNode(t.Context(), n)
 			require.NoError(t, err)
 		}
 		data, _ := json.Marshal(WALBulkDeleteNodesData{IDs: []string{"n1", "n2"}, OldNodes: nodes})
 		entry := WALEntry{Operation: OpBulkDeleteNodes, Data: data, Checksum: crc32Checksum(data), Database: "test"}
 		require.NoError(t, ReplayWALEntry(engine, entry))
-		n, _ := engine.GetNode("n1")
+		n, _ := engine.GetNode(t.Context(), "n1")
 		require.Nil(t, n)
 		require.NoError(t, UndoWALEntry(engine, entry))
-		require.NotNil(t, mustGetNodeForWALTest(t, engine, "n1"))
+		require.NotNil(t, mustReadNode(t, engine.GetNode, "n1"))
 	})
 
 	t.Run("bulk delete edges then undo", func(t *testing.T) {
-		baseEngine := NewMemoryEngine()
+		baseEngine := newTestMemoryEngine(t)
 		engine := NewNamespacedEngine(baseEngine, "test")
 		for _, n := range nodes {
-			_, err := engine.CreateNode(n)
+			_, err := engine.CreateNode(t.Context(), n)
 			require.NoError(t, err)
 		}
-		require.NoError(t, engine.CreateEdge(edges[0]))
+		require.NoError(t, engine.CreateEdge(t.Context(), edges[0]))
 		data, _ := json.Marshal(WALBulkDeleteEdgesData{IDs: []string{"e1"}, OldEdges: edges})
 		entry := WALEntry{Operation: OpBulkDeleteEdges, Data: data, Checksum: crc32Checksum(data), Database: "test"}
 		require.NoError(t, ReplayWALEntry(engine, entry))
-		e, _ := engine.GetEdge("e1")
+		e, _ := engine.GetEdge(t.Context(), "e1")
 		require.Nil(t, e)
 		require.NoError(t, UndoWALEntry(engine, entry))
-		e, _ = engine.GetEdge("e1")
+		e, _ = engine.GetEdge(t.Context(), "e1")
 		require.NotNil(t, e)
 	})
 }
 
 func TestReplayAndUndoWALEntry_ErrorBranches(t *testing.T) {
-	baseEngine := NewMemoryEngine()
+	baseEngine := newTestMemoryEngine(t)
 	engine := NewNamespacedEngine(baseEngine, "test")
 
 	t.Run("marker operations are noops", func(t *testing.T) {
@@ -823,28 +825,37 @@ func TestRecoverWithTransactions_ErrorBranches(t *testing.T) {
 	defer config.DisableWAL()
 
 	t.Run("invalid snapshot returns load error", func(t *testing.T) {
+		requireRecoveryStoresClosed(t)
+
 		dir := t.TempDir()
 		snapshotPath := filepath.Join(dir, "snapshot.json")
 		require.NoError(t, os.WriteFile(snapshotPath, []byte("{bad-json"), 0644))
 
-		_, _, err := RecoverWithTransactions(filepath.Join(dir, "wal"), snapshotPath)
+		_, _, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(filepath.Join(dir, "wal"), snapshotPath))
 		require.ErrorContains(t, err, "failed to load snapshot")
 	})
 
 	t.Run("invalid wal manifest returns read error", func(t *testing.T) {
-		dir := t.TempDir()
-		require.NoError(t, writeWALManifest(dir, &WALManifest{
-			Version: walManifestVersion,
-			Segments: []WALSegment{
-				{FirstSeq: 1, LastSeq: 1, Path: "../bad-segment.wal"},
-			},
-		}))
+		requireRecoveryStoresClosed(t)
 
-		_, _, err := RecoverWithTransactions(dir, "")
+		dir := t.TempDir()
+		{
+			_, manifestErr := accessWALManifest(dir, walPublishManifest, &WALManifest{
+				Version: walManifestVersion,
+				Segments: []WALSegment{
+					{FirstSeq: 1, LastSeq: 1, Path: "../bad-segment.wal"},
+				},
+			})
+			require.NoError(t, manifestErr)
+		}
+
+		_, _, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(dir, ""))
 		require.ErrorContains(t, err, "failed to read WAL")
 	})
 
 	t.Run("snapshot restore succeeds with namespaced replay base", func(t *testing.T) {
+		requireRecoveryStoresClosed(t)
+
 		dir := t.TempDir()
 		snapshotPath := filepath.Join(dir, "snapshot.json")
 		require.NoError(t, SaveSnapshot(&Snapshot{
@@ -859,21 +870,23 @@ func TestRecoverWithTransactions_ErrorBranches(t *testing.T) {
 			Version: "1.0",
 		}, snapshotPath))
 
-		baseEngine, result, err := RecoverWithTransactions(filepath.Join(dir, "wal"), snapshotPath)
+		baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(filepath.Join(dir, "wal"), snapshotPath))
 		require.NoError(t, err)
 		require.NotNil(t, baseEngine)
 		require.Equal(t, uint64(7), result.SnapshotSeq)
 
 		ns := NewNamespacedEngine(baseEngine, "nornic")
-		node, getErr := ns.GetNode("tx-snap-n1")
+		node, getErr := ns.GetNode(t.Context(), "tx-snap-n1")
 		require.NoError(t, getErr)
 		require.NotNil(t, node)
-		edge, getErr := ns.GetEdge("tx-snap-e1")
+		edge, getErr := ns.GetEdge(t.Context(), "tx-snap-e1")
 		require.NoError(t, getErr)
 		require.NotNil(t, edge)
 	})
 
 	t.Run("snapshot restore returns node restore error", func(t *testing.T) {
+		requireRecoveryStoresClosed(t)
+
 		dir := t.TempDir()
 		snapshotPath := filepath.Join(dir, "snapshot-dupe.json")
 		// The current writer rejects nil entities. Keep the legacy loader's
@@ -884,11 +897,13 @@ func TestRecoverWithTransactions_ErrorBranches(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, os.WriteFile(snapshotPath, legacy, 0600))
 
-		_, _, err = RecoverWithTransactions(filepath.Join(dir, "wal"), snapshotPath)
+		_, _, err = fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(filepath.Join(dir, "wal"), snapshotPath))
 		require.ErrorContains(t, err, "failed to restore nodes")
 	})
 
 	t.Run("snapshot restore returns edge restore error", func(t *testing.T) {
+		requireRecoveryStoresClosed(t)
+
 		dir := t.TempDir()
 		snapshotPath := filepath.Join(dir, "snapshot-bad-edge.json")
 		require.NoError(t, SaveSnapshot(&Snapshot{
@@ -900,17 +915,9 @@ func TestRecoverWithTransactions_ErrorBranches(t *testing.T) {
 			Version: "1.0",
 		}, snapshotPath))
 
-		_, _, err := RecoverWithTransactions(filepath.Join(dir, "wal"), snapshotPath)
+		_, _, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(filepath.Join(dir, "wal"), snapshotPath))
 		require.ErrorContains(t, err, "failed to restore edges")
 	})
-}
-
-func mustGetNodeForWALTest(t *testing.T, engine *NamespacedEngine, id NodeID) *Node {
-	t.Helper()
-	n, err := engine.GetNode(id)
-	require.NoError(t, err)
-	require.NotNil(t, n)
-	return n
 }
 
 // =============================================================================

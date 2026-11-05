@@ -4,13 +4,15 @@ import (
 	"context"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // TestTopologyIntegrationBasic verifies basic topology integration.
 func TestTopologyIntegrationBasic(t *testing.T) {
 	// Create storage with test graph
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraph(t, engine)
@@ -51,7 +53,7 @@ func TestTopologyIntegrationBasic(t *testing.T) {
 
 // TestTopologyAlgorithms tests different topology algorithms.
 func TestTopologyAlgorithms(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraph(t, engine)
@@ -89,7 +91,7 @@ func TestTopologyAlgorithms(t *testing.T) {
 
 // TestCombinedSuggestions tests merging semantic + topological.
 func TestCombinedSuggestions(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraph(t, engine)
@@ -144,7 +146,7 @@ func TestCombinedSuggestions(t *testing.T) {
 
 // TestInferenceEngineIntegration tests full integration with Engine.
 func TestInferenceEngineIntegration(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraph(t, engine)
@@ -202,7 +204,7 @@ func TestInferenceEngineIntegration(t *testing.T) {
 
 // TestCacheInvalidation tests graph cache management.
 func TestCacheInvalidation(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraph(t, engine)
@@ -243,7 +245,7 @@ func TestCacheInvalidation(t *testing.T) {
 
 // TestDisabledTopology verifies topology can be disabled.
 func TestDisabledTopology(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraph(t, engine)
@@ -264,7 +266,7 @@ func TestDisabledTopology(t *testing.T) {
 
 // TestMinScoreThreshold tests filtering by minimum score.
 func TestMinScoreThreshold(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraph(t, engine)
@@ -304,7 +306,7 @@ func setupTestGraph(t *testing.T, engine storage.Engine) {
 	}
 
 	for _, node := range nodes {
-		if _, err := engine.CreateNode(node); err != nil {
+		if _, err := engine.CreateNode(t.Context(), node); err != nil {
 			t.Fatalf("Failed to create node: %v", err)
 		}
 	}
@@ -317,7 +319,7 @@ func setupTestGraph(t *testing.T, engine storage.Engine) {
 	}
 
 	for _, edge := range edges {
-		if err := engine.CreateEdge(edge); err != nil {
+		if err := engine.CreateEdge(t.Context(), edge); err != nil {
 			t.Fatalf("Failed to create edge: %v", err)
 		}
 	}
@@ -325,7 +327,7 @@ func setupTestGraph(t *testing.T, engine storage.Engine) {
 
 // BenchmarkTopologyIntegration benchmarks topology suggestion performance.
 func BenchmarkTopologyIntegration(b *testing.B) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 
@@ -335,7 +337,7 @@ func BenchmarkTopologyIntegration(b *testing.B) {
 			ID:     storage.NodeID("node-" + string(rune(i))),
 			Labels: []string{"Test"},
 		}
-		engine.CreateNode(node)
+		engine.CreateNode(b.Context(), node)
 	}
 
 	// Create edges
@@ -347,7 +349,7 @@ func BenchmarkTopologyIntegration(b *testing.B) {
 				EndNode:   storage.NodeID("node-" + string(rune(j))),
 				Type:      "CONNECTS",
 			}
-			engine.CreateEdge(edge)
+			engine.CreateEdge(b.Context(), edge)
 		}
 	}
 
@@ -367,25 +369,25 @@ func BenchmarkTopologyIntegration(b *testing.B) {
 // Normalization is now done in pkg/linkpredict/topology.go, not here.
 func TestNormalizeScoreEdgeCases(t *testing.T) {
 	// Build a simple graph to test normalization
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	ctx := context.Background()
 
 	// Create some nodes
-	engine.CreateNode(&storage.Node{ID: "a", Labels: []string{"Test"}})
-	engine.CreateNode(&storage.Node{ID: "b", Labels: []string{"Test"}})
-	engine.CreateNode(&storage.Node{ID: "c", Labels: []string{"Test"}})
-	engine.CreateNode(&storage.Node{ID: "d", Labels: []string{"Test"}})
-	engine.CreateNode(&storage.Node{ID: "e", Labels: []string{"Test"}})
+	engine.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"Test"}})
+	engine.CreateNode(t.Context(), &storage.Node{ID: "b", Labels: []string{"Test"}})
+	engine.CreateNode(t.Context(), &storage.Node{ID: "c", Labels: []string{"Test"}})
+	engine.CreateNode(t.Context(), &storage.Node{ID: "d", Labels: []string{"Test"}})
+	engine.CreateNode(t.Context(), &storage.Node{ID: "e", Labels: []string{"Test"}})
 
 	// Create edges: a-b, a-c, b-c, b-d, c-d, c-e (small connected graph)
-	engine.CreateEdge(&storage.Edge{ID: "e1", StartNode: "a", EndNode: "b", Type: "KNOWS"})
-	engine.CreateEdge(&storage.Edge{ID: "e2", StartNode: "a", EndNode: "c", Type: "KNOWS"})
-	engine.CreateEdge(&storage.Edge{ID: "e3", StartNode: "b", EndNode: "c", Type: "KNOWS"})
-	engine.CreateEdge(&storage.Edge{ID: "e4", StartNode: "b", EndNode: "d", Type: "KNOWS"})
-	engine.CreateEdge(&storage.Edge{ID: "e5", StartNode: "c", EndNode: "d", Type: "KNOWS"})
-	engine.CreateEdge(&storage.Edge{ID: "e6", StartNode: "c", EndNode: "e", Type: "KNOWS"})
+	engine.CreateEdge(t.Context(), &storage.Edge{ID: "e1", StartNode: "a", EndNode: "b", Type: "KNOWS"})
+	engine.CreateEdge(t.Context(), &storage.Edge{ID: "e2", StartNode: "a", EndNode: "c", Type: "KNOWS"})
+	engine.CreateEdge(t.Context(), &storage.Edge{ID: "e3", StartNode: "b", EndNode: "c", Type: "KNOWS"})
+	engine.CreateEdge(t.Context(), &storage.Edge{ID: "e4", StartNode: "b", EndNode: "d", Type: "KNOWS"})
+	engine.CreateEdge(t.Context(), &storage.Edge{ID: "e5", StartNode: "c", EndNode: "d", Type: "KNOWS"})
+	engine.CreateEdge(t.Context(), &storage.Edge{ID: "e6", StartNode: "c", EndNode: "e", Type: "KNOWS"})
 
 	config := DefaultTopologyConfig()
 	config.Enabled = true
@@ -414,7 +416,7 @@ func TestNormalizeScoreEdgeCases(t *testing.T) {
 
 // TestEmptyGraphHandling tests handling of empty suggestions
 func TestEmptyGraphHandling(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	// Empty graph
@@ -468,7 +470,7 @@ func TestCombinedSuggestionsEmpty(t *testing.T) {
 
 // TestInvalidateCache tests cache invalidation
 func TestInvalidateCache(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraph(t, engine)
@@ -501,7 +503,7 @@ func TestInvalidateCache(t *testing.T) {
 }
 
 func TestTopologyIntegration_OnNodeAdded(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	config := DefaultTopologyConfig()
@@ -525,7 +527,7 @@ func TestTopologyIntegration_OnNodeAdded(t *testing.T) {
 }
 
 func TestTopologyIntegration_OnNodeRemoved(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	config := DefaultTopologyConfig()
@@ -548,7 +550,7 @@ func TestTopologyIntegration_OnNodeRemoved(t *testing.T) {
 }
 
 func TestTopologyIntegration_OnEdgeAdded(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	config := DefaultTopologyConfig()
@@ -572,7 +574,7 @@ func TestTopologyIntegration_OnEdgeAdded(t *testing.T) {
 }
 
 func TestTopologyIntegration_OnEdgeRemoved(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	config := DefaultTopologyConfig()
@@ -596,7 +598,7 @@ func TestTopologyIntegration_OnEdgeRemoved(t *testing.T) {
 }
 
 func TestTopologyIntegration_Stats(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraph(t, engine)
@@ -639,7 +641,7 @@ func TestTopologyIntegration_Stats(t *testing.T) {
 }
 
 func TestTopologyIntegration_ApplyPendingDelta(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraph(t, engine)
@@ -686,7 +688,7 @@ func TestTopologyIntegration_ApplyPendingDelta(t *testing.T) {
 }
 
 func TestTopologyIntegration_ApplyPendingDelta_NoCachedGraph(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 

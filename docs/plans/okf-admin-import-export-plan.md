@@ -36,7 +36,7 @@ Already implemented:
 - `pkg/adminimport.ImportFull` already validates an empty target for CSV full import through the unexported `ensureEmpty`.
 - `pkg/adminimport.ImportFull` already writes chunks through `storage.Engine.BulkCreateNodes` and `storage.Engine.BulkCreateEdges`.
 - `pkg/adminimport.ImportFull` already applies schema files and builds search indexes once after the load.
-- The post-import search build currently uses `search.NewService(target)`, `SetPersistenceEnabled(true)`, `SetFulltextIndexPath`, `SetVectorIndexPath`, `SetHNSWIndexPath`, then `BuildIndexes(ctx)`.
+- The post-import search build currently uses `search.NewService(target, search.DefaultVectorDimensions, nil)`, `SetPersistenceEnabled(true)`, `SetFulltextIndexPath`, `SetVectorIndexPath`, `SetHNSWIndexPath`, then `BuildIndexes(ctx)`.
 - `pkg/adminimport.ExportNeo4jCSV` already exports a namespaced database through `storage.ExportableEngine` using `AllNodes`, `AllEdges`, and `GetSchema`.
 - `pkg/storage.Engine` already exposes `BulkDeleteNodes` and `BulkDeleteEdges`, which OKF `replace` mode can use.
 - Storage IDs are generated through the normal NornicDB/admin-import ID allocation path and then namespaced by `storage.NewNamespacedEngine`. OKF import must not synthesize semantic IDs such as `okf:<bundle>:concept:<hash>`.
@@ -210,7 +210,7 @@ This reuses existing storage APIs and avoids `ensureEmpty`, which remains specif
 1. Build all incoming OKF nodes and edges with stable OKF properties before writing.
 2. Build lookup maps from existing `target.AllNodes()` by `okf_concept_id`.
 3. Create missing nodes in batches with `target.BulkCreateNodes`.
-4. Update existing nodes with `target.UpdateNode`, replacing OKF-owned labels and properties from the bundle while preserving storage-managed timestamps as follows:
+4. Update existing nodes with `target.UpdateNode(storage.NodeUpdateRequest{Before: existing, After: updated})`, retaining the immutable node read in step 2 as `existing` and using an independent `updated` image with separate edited labels/properties, replacing OKF-owned labels and properties from the bundle while preserving storage-managed timestamps as follows:
    - Preserve the original `CreatedAt`.
    - Set `UpdatedAt` to the import time.
    - Preserve non-OKF user properties only when they do not conflict with incoming OKF frontmatter or heading-derived properties.

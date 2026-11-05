@@ -12,7 +12,7 @@ import (
 // Sessions opened at the same time on one database each get their own ID and
 // stay their own: committing one doesn't end another (#915).
 func TestManagerIssuesDistinctIDsToConcurrentSessions(t *testing.T) {
-	mgr := NewManager(time.Minute, newExecutorFactory(t))
+	mgr := NewManager(time.Minute, newExecutorFactory(t), t.Context())
 	const workers, perWorker = 16, 32
 	sessions := make(chan *Session, workers*perWorker)
 	var wg sync.WaitGroup
@@ -52,7 +52,7 @@ func TestManagerIssuesDistinctIDsToConcurrentSessions(t *testing.T) {
 // Transaction IDs don't depend on the clock: sessions opened while the
 // manager's clock stands still still get different IDs.
 func TestManagerIDsDontDependOnTheClock(t *testing.T) {
-	mgr := NewManager(time.Minute, newExecutorFactory(t))
+	mgr := NewManager(time.Minute, newExecutorFactory(t), t.Context())
 	frozen := time.Unix(1700000000, 0)
 	mgr.nowFunc = func() time.Time { return frozen }
 	first, err := mgr.Open(context.Background(), "neo4j")

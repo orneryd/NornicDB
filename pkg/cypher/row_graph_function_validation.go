@@ -21,117 +21,6 @@ func invalidFunctionArgument(function string, value interface{}) error {
 	)
 }
 
-// staticLiteralTypeName returns the Cypher type name of an expression whose
-// type is known without data, as Neo4j names it in type errors: String,
-// Integer, Float, Boolean, Map, List<…> for a list literal, and the result type
-// of arithmetic / string concatenation over such operands (1 + 1 is an
-// Integer, 'a' + 'b' a String). It returns "" for null, a list comprehension,
-// and any expression involving variables, parameters or function calls.
-func staticLiteralTypeName(expression string) string {
-	expression = strings.TrimSpace(expression)
-	for {
-		inner, ok := stripEnclosingExpressionParentheses(expression)
-		if !ok {
-			break
-		}
-		expression = strings.TrimSpace(inner)
-	}
-	if expression == "" || expression[0] == '$' {
-		return ""
-	}
-	// An expression that starts with a variable or a function call has no
-	// static type; only the boolean literals start with a letter.
-	if token, _, ok := scanIdentifierToken(expression, 0); ok &&
-		!strings.EqualFold(token, "true") && !strings.EqualFold(token, "false") {
-		return ""
-	}
-	if inner, isList := stripEnclosingRowDelimiter(expression, '[', ']'); isList {
-		if _, _, _, _, comprehension := parseListComprehension(inner); comprehension {
-			return ""
-		}
-		return staticListTypeName(inner)
-	}
-	if strings.HasPrefix(expression, "{") && strings.HasSuffix(expression, "}") &&
-		findMatchingDelimiter(expression, 0, '{', '}') == len(expression)-1 {
-		return "Map"
-	}
-	if typeName := staticArithmeticTypeName(expression); typeName != "" {
-		return typeName
-	}
-	value, literal := parseLiteralValueFromComputedRow(expression)
-	if !literal {
-		return ""
-	}
-	switch kind := cypherValueKindOf(value); kind {
-	case valueKindString, valueKindInteger, valueKindFloat, valueKindBoolean:
-		return valueTypeNames[kind].cypher
-	default:
-		return ""
-	}
-}
-
-// staticListTypeName names a list literal's type from its elements, as
-// Neo4j does: List<Integer>, List<List<String>>, …; List<T> when the list is
-// empty, holds null, or mixes unrelated types.
-func staticListTypeName(inner string) string {
-	if strings.TrimSpace(inner) == "" {
-		return "List<T>"
-	}
-	elementType := ""
-	numeric := false
-	for _, item := range splitTopLevelComma(inner) {
-		itemType := staticLiteralTypeName(item)
-		if itemType == "" {
-			return "List<T>"
-		}
-		switch {
-		case elementType == "" || elementType == itemType:
-			elementType = itemType
-		case (elementType == "Integer" || elementType == "Float") && (itemType == "Integer" || itemType == "Float"):
-			numeric = true
-		default:
-			return "List<T>"
-		}
-	}
-	if numeric {
-		return "List<Float>, List<Integer> or List<Number>"
-	}
-	if elementType == "Map" {
-		return "List<Map>, List<Node> or List<Relationship>"
-	}
-	return "List<" + elementType + ">"
-}
-
-// staticArithmeticTypeName types a top-level +, -, *, /, % or ^ over operands
-// with a static type: numbers give Integer (both Integer, except ^) or Float,
-// and + with a String operand gives String. It returns "" otherwise.
-func staticArithmeticTypeName(expression string) string {
-	for _, operator := range []string{"+", "-", "*", "/", "%", "^"} {
-		left, right, ok := splitByOperatorWithOptions(expression, operator, false, true)
-		if !ok || left == "" || right == "" {
-			continue
-		}
-		leftType, rightType := staticLiteralTypeName(left), staticLiteralTypeName(right)
-		if leftType == "" || rightType == "" {
-			return ""
-		}
-		numeric := func(typeName string) bool { return typeName == "Integer" || typeName == "Float" }
-		switch {
-		case operator == "+" && (leftType == "String" || rightType == "String") &&
-			(numeric(leftType) || leftType == "String") && (numeric(rightType) || rightType == "String"):
-			return "String"
-		case numeric(leftType) && numeric(rightType):
-			if leftType == "Integer" && rightType == "Integer" && operator != "^" {
-				return "Integer"
-			}
-			return "Float"
-		default:
-			return ""
-		}
-	}
-	return ""
-}
-
 // functionEvaluationFailure records an error returned by a registry function
 // as the expression failure of ctx, so it fails the statement instead of
 // evaluating to null.
@@ -169,37 +58,66 @@ func functionEvaluationError(err error) error {
 // evaluator can't resolve; the call is then unresolved, not an error.
 var errRowArgumentUnresolved = errors.New("row argument unresolved")
 
+// rowFunctionArgumentFailure aborts only the registry call whose Eval callback
+// could not produce a value. Some handlers discard callback errors; an abort
+// keeps that failure from becoming a successful result without a captured,
+// heap-allocated status cell on every successful function evaluation.
+type rowFunctionArgumentFailure struct{ err error }
+
 // evaluateRowGraphFunction evaluates graph.names() / graph.propertiesByName()
 // and GDS's functions (isGDSFunctionName) in the row evaluator with their one
 // implementation, the function registry (pkg/cypher/fn), and its errors as
-// the other evaluator reports them.
-func (e *StorageExecutor) evaluateRowGraphFunction(function, argument string, values map[string]interface{}) (interface{}, bool, error) {
+// the other evaluator reports them. The flags are (handled, resolved): a
+// registry miss never evaluates arguments; an unresolved registered call must
+// never be retried as another function implementation.
+func (e *StorageExecutor) evaluateRowGraphFunction(ctx context.Context, function, argument string, values map[string]interface{}) (value interface{}, handled, resolved bool, err error) {
+	defer func() {
+		if aborted := recover(); aborted != nil {
+			failure, ok := aborted.(rowFunctionArgumentFailure)
+			if !ok {
+				panic(aborted)
+			}
+			value, handled, resolved, err = nil, true, false, nil
+			if !errors.Is(failure.err, errRowArgumentUnresolved) {
+				err = functionEvaluationError(failure.err)
+			}
+		}
+	}()
 	var args []string
 	if strings.TrimSpace(argument) != "" {
 		args = splitTopLevelComma(argument)
 	}
-	value, found, err := cypherfn.EvaluateFunction(function, args, cypherfn.Context{
-		Storage:  e.storage,
-		Cypher25: rowIsCypher25(values),
-		Eval: func(expression string) (interface{}, error) {
-			value, resolved, err := e.evaluateRowValue(expression, values)
-			if err != nil {
-				return nil, err
-			}
-			if !resolved {
-				return nil, errRowArgumentUnresolved
-			}
-			return value, nil
-		},
-		Graphs: e,
+	statementCtx := ctx
+	metadataCtx := statementCtx
+	if inherited := rowStatementContext(values); inherited != nil {
+		metadataCtx = inherited
+	}
+	fnCtx := e.registryFunctionContext(metadataCtx, func(expression string) (interface{}, error) {
+		value, resolved, err := e.evaluateRowValue(statementCtx, expression, values)
+		if err != nil {
+			panic(rowFunctionArgumentFailure{err})
+		}
+		if !resolved {
+			panic(rowFunctionArgumentFailure{errRowArgumentUnresolved})
+		}
+		return value, nil
 	})
-	if !found || errors.Is(err, errRowArgumentUnresolved) {
-		return nil, false, nil
+	// Some internal row callers carry the language version as a binding rather
+	// than a statement context. Keep that binding authoritative when present.
+	if version, bound := values[cypher25RowKey].(bool); bound {
+		fnCtx.Cypher25 = version
+	}
+	value, found, err := cypherfn.EvaluateFunction(statementCtx, function, args, fnCtx)
+	if !found {
+		return nil, false, false, nil
+	}
+	if errors.Is(err, errRowArgumentUnresolved) {
+		return nil, true, false, nil
 	}
 	if err != nil {
-		return nil, false, functionEvaluationError(err)
+		return nil, true, false, functionEvaluationError(err)
 	}
-	return value, true, nil
+	return value, true, true, nil
 }
 
 // graphFunctionUnknownError is Neo4j's SyntaxError for a composite graph

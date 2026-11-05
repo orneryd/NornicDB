@@ -2,6 +2,7 @@ package bolt
 
 import (
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"net"
 	"testing"
 
@@ -51,7 +52,7 @@ func sendDiscard(t *testing.T, conn net.Conn, n int64) {
 
 func lazyResultTestConn(t *testing.T, items int) net.Conn {
 	t.Helper()
-	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
+	store := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test")
 	_, port := startBoltIntegrationServer(t, store)
 	conn := openBoltTestConn(t, port)
 	if items > 0 {

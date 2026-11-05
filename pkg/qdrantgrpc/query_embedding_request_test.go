@@ -9,7 +9,7 @@ import (
 )
 
 func TestPointsService_NumericAndIDQueriesDoNotBindEmbedding(t *testing.T) {
-	service, _, base := setupPointsService(t)
+	service, _, base := newPointsServiceFixture(t, pointsFixtureEmptyVectors)
 	t.Cleanup(func() { _ = base.Close() })
 	ctx := context.Background()
 	id := &qpb.PointId{PointIdOptions: &qpb.PointId_Uuid{Uuid: "snapshot-point"}}
@@ -33,7 +33,7 @@ func TestPointsService_NumericAndIDQueriesDoNotBindEmbedding(t *testing.T) {
 		query := &qpb.QueryPoints{CollectionName: "test_vectors", Query: &qpb.Query{Variant: &qpb.Query_Nearest{Nearest: input}}}
 		_, err := service.Query(ctx, query)
 		require.NoError(t, err)
-		_, err = service.QueryBatch(ctx, &qpb.QueryBatchPoints{QueryPoints: []*qpb.QueryPoints{query}})
+		_, err = service.QueryBatch(ctx, &qpb.QueryBatchPoints{CollectionName: "test_vectors", QueryPoints: []*qpb.QueryPoints{query}})
 		require.NoError(t, err)
 	}
 	for _, recommend := range []*qpb.RecommendPoints{

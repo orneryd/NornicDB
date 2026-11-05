@@ -15,6 +15,8 @@ package cypher
 //     nodes).
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"strings"
@@ -27,7 +29,7 @@ import (
 
 func newGh640Executor(t *testing.T) *StorageExecutor {
 	t.Helper()
-	base, err := storage.NewBadgerEngineInMemory()
+	base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, base.Close())
@@ -291,16 +293,16 @@ type gh640CountingEngine struct {
 	allNodesCalls atomic.Int64
 }
 
-func (e *gh640CountingEngine) AllNodes() ([]*storage.Node, error) {
+func (e *gh640CountingEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
 	e.allNodesCalls.Add(1)
-	return e.Engine.AllNodes()
+	return e.Engine.AllNodes(ctx)
 }
 
-func TestGh640_FindMergeNodeDoesNotScanAllNodes(t *testing.T) {
+func TestComponentGh640FindMergeNodeDoesNotScanAllNodes(t *testing.T) {
 	// A labelled, property-carrying MERGE lookup must stay on label/schema
 	// paths: the removed AllNodes() fallback made bulk creating-MERGE
 	// ingestion quadratic (85 ms per row at 20k nodes, issue measurement).
-	base, err := storage.NewBadgerEngineInMemory()
+	base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, base.Close())
@@ -311,13 +313,21 @@ func TestGh640_FindMergeNodeDoesNotScanAllNodes(t *testing.T) {
 
 	// Seed 200 unrelated nodes so a global scan would be detectable by count.
 	for i := 0; i < 200; i++ {
-		_, err := exec.Execute(ctx, "CREATE (:Unrelated {v: $v})", map[string]interface{}{"v": int64(i)})
+		_, err := NewStorageExecutor(counter.Engine).Execute(ctx, "CREATE (:Unrelated {v: $v})", map[string]interface{}{"v": int64(i)})
 		require.NoError(t, err)
 	}
 
+	// Prove the read counter is connected before asserting no global scans.
+	_, err = counter.AllNodes(ctx)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, counter.allNodesCalls.Load())
+	counter.allNodesCalls.Store(0)
+
+	// The canonical component uses the supplied read owner. Native implicit
+	// transactions instead use their own reader, beyond this engine counter.
 	// First run: all 50 rows create. Second run: all 50 rows match.
 	for run := 0; run < 2; run++ {
-		result, err := exec.Execute(ctx, "UNWIND range(1, 50) AS x MERGE (:M {v: x})", nil)
+		result, err := exec.executeRequiredPipeline(ctx, "UNWIND range(1, 50) AS x MERGE (:M {v: x})")
 		require.NoError(t, err)
 		expectedCreated := 50
 		if run == 1 {

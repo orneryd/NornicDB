@@ -13,7 +13,7 @@ type matchWithStage struct {
 	withClause  string
 }
 
-func parseMatchWithStages(cypher string) ([]matchWithStage, string, bool) {
+func parseMatchWithStages(ctx context.Context, cypher string) ([]matchWithStage, string, bool) {
 	query := strings.TrimSpace(cypher)
 	upper := upperASCII(query)
 	if !strings.HasPrefix(upper, "MATCH ") {
@@ -23,7 +23,7 @@ func parseMatchWithStages(cypher string) ([]matchWithStage, string, bool) {
 	var stages []matchWithStage
 	pos := 0
 	for {
-		matchIdxRel := findKeywordIndexInContext(query[pos:], "MATCH")
+		matchIdxRel := findKeywordIndexInContext(ctx, query[pos:], "MATCH")
 		if matchIdxRel < 0 {
 			return nil, "", false
 		}
@@ -32,7 +32,7 @@ func parseMatchWithStages(cypher string) ([]matchWithStage, string, bool) {
 			return nil, "", false
 		}
 
-		withIdxRel := findKeywordIndexInContext(query[matchIdx:], "WITH")
+		withIdxRel := findKeywordIndexInContext(ctx, query[matchIdx:], "WITH")
 		if withIdxRel < 0 {
 			return nil, "", false
 		}
@@ -42,8 +42,8 @@ func parseMatchWithStages(cypher string) ([]matchWithStage, string, bool) {
 			return nil, "", false
 		}
 
-		nextMatchRel := findKeywordIndexInContext(query[withIdx:], "MATCH")
-		nextReturnRel := findKeywordIndexInContext(query[withIdx:], "RETURN")
+		nextMatchRel := findKeywordIndexInContext(ctx, query[withIdx:], "MATCH")
+		nextReturnRel := findKeywordIndexInContext(ctx, query[withIdx:], "RETURN")
 		if nextReturnRel < 0 {
 			return nil, "", false
 		}
@@ -75,7 +75,7 @@ func parseMatchWithStages(cypher string) ([]matchWithStage, string, bool) {
 
 func (e *StorageExecutor) evaluateMatchClauseNodes(ctx context.Context, clause string) ([]*storage.Node, string, error) {
 	trimmed := strings.TrimSpace(clause)
-	whereIdx := findKeywordIndexInContext(trimmed, "WHERE")
+	whereIdx := findKeywordIndexInContext(ctx, trimmed, "WHERE")
 	patternPart := trimmed
 	whereClause := ""
 	if whereIdx > 0 {
@@ -83,7 +83,10 @@ func (e *StorageExecutor) evaluateMatchClauseNodes(ctx context.Context, clause s
 		whereClause = strings.TrimSpace(trimmed[whereIdx+5:])
 	}
 
-	pattern := e.parseNodePattern(ctx, patternPart)
+	pattern, parseErr := e.parseNodePattern(ctx, patternPart)
+	if parseErr != nil {
+		return nil, "", parseErr
+	}
 	if pattern.variable == "" {
 		return nil, "", localizedError(localization.CypherMatchingMatchPatternVariableMissing(clause), nil)
 	}
@@ -98,47 +101,6 @@ func (e *StorageExecutor) evaluateMatchClauseNodes(ctx context.Context, clause s
 		nodes = e.filterNodesByWhereClause(ctx, nodes, whereClause, pattern.variable)
 	}
 	return nodes, pattern.variable, nil
-}
-
-func parseProjectionExprAlias(item string) (string, string) {
-	trimmed := strings.TrimSpace(item)
-	if trimmed == "" {
-		return "", ""
-	}
-	asIdx := projectionAliasIndex(trimmed)
-	if asIdx < 0 {
-		// A projected variable is named by the variable itself: `x` is the
-		// column x, as in Neo4j. Other expressions are named by their text.
-		if name := simpleSemanticIdentifier(trimmed); name != "" {
-			return trimmed, name
-		}
-		return trimmed, trimmed
-	}
-	expr := strings.TrimSpace(trimmed[:asIdx])
-	alias := normalizeProjectionColumnName(trimmed[asIdx+len("AS"):])
-	return expr, alias
-}
-
-// projectionAliasIndex is the index of the AS that introduces item's alias:
-// the first AS outside strings, parentheses, brackets, braces and CASE … END
-// blocks, with whitespace on both sides. An AS inside a nested expression
-// (COLLECT { UNWIND l AS y RETURN y }, 'a AS b', CASE WHEN true THEN as END,
-// where as is a variable; #1162) is not the alias; -1 when there is none.
-func projectionAliasIndex(item string) int {
-	opts := defaultKeywordScanOpts()
-	opts.SkipBraces = true
-	for from := 0; from < len(item); {
-		index := keywordIndexFrom(item, "AS", from, opts)
-		if index < 0 {
-			return -1
-		}
-		end := index + len("AS")
-		if index > 0 && isWhitespace(item[index-1]) && end < len(item) && isWhitespace(item[end]) && !insideCaseBlock(item, index) {
-			return index
-		}
-		from = end
-	}
-	return -1
 }
 
 func countForExpr(nodes []*storage.Node, matchVar, inner string) (int64, bool) {

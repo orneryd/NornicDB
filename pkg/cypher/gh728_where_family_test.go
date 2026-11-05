@@ -7,6 +7,8 @@ package cypher
 // Pinned against neo4j:5.26.30-community (issue tables).
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"runtime"
@@ -18,7 +20,7 @@ import (
 
 func newGh728Executor(t *testing.T) *StorageExecutor {
 	t.Helper()
-	base, err := storage.NewBadgerEngineInMemory()
+	base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, base.Close())
@@ -38,7 +40,7 @@ func TestMonster728ProductAggregateAllocations(t *testing.T) {
 			"MATCH (a:Doc) WITH a MATCH (b:Doc) WITH a.id AS x, b RETURN count(*) AS c",
 		} {
 			t.Run(fmt.Sprint(explicit)+query, func(t *testing.T) {
-				exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "product"), 0, 0)
+				exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "product"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 				ctx := context.Background()
 				_, err := exec.Execute(ctx, "UNWIND range(0, 255) AS i CREATE (:Doc {id: i})", nil)
 				require.NoError(t, err)
@@ -116,7 +118,7 @@ func TestMonster728ProductSourceContracts(t *testing.T) {
 	source, supported, err := exec.pipelineNodeProductSource(ctx, []pipelineRow{{"$id": int64(1)}, {"$id": int64(2)}, {"$id": int64(1)}}, "MATCH (a:Doc {id: $id}), (b:Doc)")
 	require.NoError(t, err)
 	require.True(t, supported)
-	retained, completed := materializePipelineSource(source)
+	retained, completed := materializePipelineSource(context.Background(), source)
 	require.True(t, completed)
 	require.Len(t, retained, 6)
 	for _, row := range retained {
@@ -134,7 +136,7 @@ func TestMonster728ProductSourceContracts(t *testing.T) {
 	nullSource, supported, err := exec.pipelineNodeProductSource(ctx, []pipelineRow{{"a": nil}}, "MATCH (a:Doc), (b:Doc)")
 	require.NoError(t, err)
 	require.True(t, supported)
-	empty, completed := materializePipelineSource(nullSource)
+	empty, completed := materializePipelineSource(context.Background(), nullSource)
 	require.True(t, completed)
 	require.Empty(t, empty)
 	canceled, cancel := context.WithCancel(withExpressionFailureSlot(context.Background()))

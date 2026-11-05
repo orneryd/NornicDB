@@ -3,11 +3,13 @@ package search
 import (
 	"context"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"testing"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/observability"
-	"github.com/orneryd/nornicdb/pkg/storage"
+
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
@@ -15,10 +17,10 @@ import (
 )
 
 func TestServiceIndexSizeBytes(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { engine.Close() })
 
-	svc := NewServiceWithDimensions(engine, 4)
+	svc := NewService(engine, 4, nil)
 	require.Equal(t, uint64(0), (*Service)(nil).IndexSizeBytes("hnsw"))
 	require.Equal(t, uint64(0), svc.IndexSizeBytes("hnsw"))
 	require.Equal(t, uint64(0), svc.IndexSizeBytes("bm25"))
@@ -37,9 +39,9 @@ func TestServiceIndexSizeBytes(t *testing.T) {
 }
 
 func TestObserveSearchStageDirect(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { engine.Close() })
-	svc := NewServiceWithDimensions(engine, 4)
+	svc := NewService(engine, 4, nil)
 	reg := prometheus.NewRegistry()
 	svc.AttachMetrics(observability.NewSearchMetrics(reg, false, &nilSearchProbe{}))
 

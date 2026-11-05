@@ -61,7 +61,7 @@ func (fn rerankRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, erro
 	return fn(req)
 }
 
-func TestCallRerankAPILocalizedErrors(t *testing.T) {
+func TestCrossEncoderRerankLocalizedErrors(t *testing.T) {
 	candidates := []RerankCandidate{{ID: "1", Content: "document", Score: 0.5}}
 	requestCause := &rerankTestCause{}
 	tests := []struct {
@@ -75,8 +75,7 @@ func TestCallRerankAPILocalizedErrors(t *testing.T) {
 		{name: "create request", apiURL: "://bad-url", id: localization.MessageSearchRerankRequestCreationFailed, english: `failed to create request: parse "://bad-url": missing protocol scheme`},
 		{name: "send request", apiURL: "http://rerank.test", cause: requestCause, transport: func(*http.Request) (*http.Response, error) { return nil, requestCause }, id: localization.MessageSearchRerankRequestFailed, english: "rerank request failed: Post \"http://rerank.test\": backend unavailable"},
 		{name: "API status", apiURL: "http://rerank.test", transport: rerankResponse(http.StatusServiceUnavailable, `{}`), id: localization.MessageSearchRerankAPIStatus, english: "rerank API returned status 503"},
-		{name: "parse response", apiURL: "http://rerank.test", transport: rerankResponse(http.StatusOK, `{`), id: localization.MessageSearchRerankResponseParseFailed, english: "failed to parse response: unexpected EOF"},
-		{name: "unrecognized response", apiURL: "http://rerank.test", transport: rerankResponse(http.StatusOK, `{}`), id: localization.MessageSearchRerankResponseUnrecognized, english: "unable to parse rerank response"},
+		{name: "parse response", apiURL: "http://rerank.test", transport: rerankResponse(http.StatusOK, `{`), id: localization.MessageSearchRerankResponseParseFailed, english: "failed to parse response: rerank response does not contain exactly one JSON value: unexpected EOF"},
 	}
 
 	for _, tt := range tests {
@@ -85,7 +84,7 @@ func TestCallRerankAPILocalizedErrors(t *testing.T) {
 			if tt.transport != nil {
 				encoder.client.Transport = tt.transport
 			}
-			_, err := encoder.callRerankAPI(context.Background(), "query", candidates)
+			_, err := encoder.Rerank(context.Background(), "query", candidates)
 			require.EqualError(t, err, tt.english)
 			var localizedErr *nornicerrors.Localized
 			require.ErrorAs(t, err, &localizedErr)

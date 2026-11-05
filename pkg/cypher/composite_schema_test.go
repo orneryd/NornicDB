@@ -14,30 +14,20 @@ import (
 // (scoped to the default DB) wired with a DatabaseManager.
 func compositeTestFixture(t *testing.T) (*StorageExecutor, *multidb.DatabaseManager) {
 	t.Helper()
-	base := storage.NewMemoryEngine()
-	mgr, err := multidb.NewDatabaseManager(base, nil)
-	require.NoError(t, err)
-	t.Cleanup(func() { mgr.Close() })
-
-	require.NoError(t, mgr.CreateDatabase("shard_a"))
-	require.NoError(t, mgr.CreateCompositeDatabase("comp", []multidb.ConstituentRef{
+	mgr, adapter := createCompositeTestManager(t, "comp", []multidb.ConstituentRef{
 		{Alias: "a", DatabaseName: "shard_a", Type: "local", AccessMode: "read_write"},
-	}))
-
-	defaultStore, err := mgr.GetStorage(mgr.DefaultDatabaseName())
-	require.NoError(t, err)
-	exec := NewStorageExecutor(defaultStore)
-	exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: mgr})
-	return exec, mgr
+	})
+	return newCompositeTestExecutor(t, mgr, mgr.DefaultDatabaseName(), adapter), mgr
 }
 
-// compositeRootExecutor returns an executor scoped to the composite root engine.
-func compositeRootExecutor(t *testing.T, mgr *multidb.DatabaseManager) *StorageExecutor {
+// newCompositeTestExecutor constructs a fresh executor for one explicit graph
+// with the caller's exact adapter; it never inherits another executor's cache.
+func newCompositeTestExecutor(t *testing.T, mgr *multidb.DatabaseManager, graph string, adapter DatabaseManagerInterface) *StorageExecutor {
 	t.Helper()
-	compEngine, err := mgr.GetStorage("comp")
+	compEngine, err := mgr.GetStorage(graph)
 	require.NoError(t, err)
 	exec := NewStorageExecutor(compEngine)
-	exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: mgr})
+	exec.SetDatabaseManager(adapter)
 	return exec
 }
 
@@ -45,7 +35,7 @@ func compositeRootExecutor(t *testing.T, mgr *multidb.DatabaseManager) *StorageE
 
 func TestCompositeRoot_CreateIndex_Rejected(t *testing.T) {
 	_, mgr := compositeTestFixture(t)
-	exec := compositeRootExecutor(t, mgr)
+	exec := newCompositeTestExecutor(t, mgr, "comp", &testDatabaseManagerAdapter{manager: mgr})
 
 	_, err := exec.Execute(context.Background(),
 		"CREATE INDEX idx_test FOR (n:Label) ON (n.prop)", nil)
@@ -56,7 +46,7 @@ func TestCompositeRoot_CreateIndex_Rejected(t *testing.T) {
 
 func TestCompositeRoot_CreateFulltextIndex_Rejected(t *testing.T) {
 	_, mgr := compositeTestFixture(t)
-	exec := compositeRootExecutor(t, mgr)
+	exec := newCompositeTestExecutor(t, mgr, "comp", &testDatabaseManagerAdapter{manager: mgr})
 
 	_, err := exec.Execute(context.Background(),
 		"CREATE FULLTEXT INDEX ft_test FOR (n:Label) ON EACH [n.title]", nil)
@@ -66,7 +56,7 @@ func TestCompositeRoot_CreateFulltextIndex_Rejected(t *testing.T) {
 
 func TestCompositeRoot_CreateConstraint_Rejected(t *testing.T) {
 	_, mgr := compositeTestFixture(t)
-	exec := compositeRootExecutor(t, mgr)
+	exec := newCompositeTestExecutor(t, mgr, "comp", &testDatabaseManagerAdapter{manager: mgr})
 
 	_, err := exec.Execute(context.Background(),
 		"CREATE CONSTRAINT unique_id FOR (n:Node) REQUIRE n.id IS UNIQUE", nil)
@@ -76,18 +66,31 @@ func TestCompositeRoot_CreateConstraint_Rejected(t *testing.T) {
 }
 
 func TestCompositeRoot_DropIndex_Rejected(t *testing.T) {
-	_, mgr := compositeTestFixture(t)
-	exec := compositeRootExecutor(t, mgr)
-
-	_, err := exec.Execute(context.Background(), "DROP INDEX some_idx", nil)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "Neo.ClientError.Statement.NotAllowed")
-	require.Contains(t, err.Error(), "constituent target")
+	for _, tc := range []struct {
+		name, query, message string
+		nilResult            bool
+	}{
+		{"ddl", "DROP INDEX some_idx", "constituent target", false},
+		{"fulltext_procedure", "CALL db.index.fulltext.drop('" + indexDropFulltextName + "')", "explicit graph targeting", true},
+		{"vector_procedure", "CALL db.index.vector.drop('" + indexDropVectorName + "')", "explicit graph targeting", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, mgr := compositeTestFixture(t)
+			exec := newCompositeTestExecutor(t, mgr, "comp", &testDatabaseManagerAdapter{manager: mgr})
+			result, err := exec.Execute(context.Background(), tc.query, nil)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "Neo.ClientError.Statement.NotAllowed")
+			require.Contains(t, err.Error(), tc.message)
+			if tc.nilResult {
+				require.Nil(t, result)
+			}
+		})
+	}
 }
 
 func TestCompositeRoot_DropConstraint_Rejected(t *testing.T) {
 	_, mgr := compositeTestFixture(t)
-	exec := compositeRootExecutor(t, mgr)
+	exec := newCompositeTestExecutor(t, mgr, "comp", &testDatabaseManagerAdapter{manager: mgr})
 
 	_, err := exec.Execute(context.Background(), "DROP CONSTRAINT some_constraint", nil)
 	require.Error(t, err)
@@ -171,7 +174,7 @@ func TestDropIndex_BacktickQuoted(t *testing.T) {
 
 func TestCompositeRoot_ShowIndexes_Rejected(t *testing.T) {
 	_, mgr := compositeTestFixture(t)
-	exec := compositeRootExecutor(t, mgr)
+	exec := newCompositeTestExecutor(t, mgr, "comp", &testDatabaseManagerAdapter{manager: mgr})
 
 	_, err := exec.Execute(context.Background(), "SHOW INDEXES", nil)
 	require.Error(t, err)
@@ -181,7 +184,7 @@ func TestCompositeRoot_ShowIndexes_Rejected(t *testing.T) {
 
 func TestCompositeRoot_ShowFulltextIndexes_Rejected(t *testing.T) {
 	_, mgr := compositeTestFixture(t)
-	exec := compositeRootExecutor(t, mgr)
+	exec := newCompositeTestExecutor(t, mgr, "comp", &testDatabaseManagerAdapter{manager: mgr})
 
 	_, err := exec.Execute(context.Background(), "SHOW FULLTEXT INDEXES", nil)
 	require.Error(t, err)
@@ -190,7 +193,7 @@ func TestCompositeRoot_ShowFulltextIndexes_Rejected(t *testing.T) {
 
 func TestCompositeRoot_ShowConstraints_Rejected(t *testing.T) {
 	_, mgr := compositeTestFixture(t)
-	exec := compositeRootExecutor(t, mgr)
+	exec := newCompositeTestExecutor(t, mgr, "comp", &testDatabaseManagerAdapter{manager: mgr})
 
 	_, err := exec.Execute(context.Background(), "SHOW CONSTRAINTS", nil)
 	require.Error(t, err)
@@ -272,7 +275,7 @@ func TestConstituent_ShowConstraints_Success(t *testing.T) {
 
 func TestCompositeRoot_PlainMatch_Rejected(t *testing.T) {
 	_, mgr := compositeTestFixture(t)
-	exec := compositeRootExecutor(t, mgr)
+	exec := newCompositeTestExecutor(t, mgr, "comp", &testDatabaseManagerAdapter{manager: mgr})
 
 	_, err := exec.Execute(context.Background(), "MATCH (n) RETURN n", nil)
 	require.Error(t, err)
@@ -282,7 +285,7 @@ func TestCompositeRoot_PlainMatch_Rejected(t *testing.T) {
 
 func TestCompositeRoot_PlainCreate_Rejected(t *testing.T) {
 	_, mgr := compositeTestFixture(t)
-	exec := compositeRootExecutor(t, mgr)
+	exec := newCompositeTestExecutor(t, mgr, "comp", &testDatabaseManagerAdapter{manager: mgr})
 
 	_, err := exec.Execute(context.Background(), "CREATE (n:Test {id: '1'})", nil)
 	require.Error(t, err)
@@ -293,7 +296,7 @@ func TestCompositeRoot_PlainCreate_Rejected(t *testing.T) {
 // graph runs on the composite itself, as in Neo4j (#738).
 func TestCompositeRoot_PlainReturn_Runs(t *testing.T) {
 	_, mgr := compositeTestFixture(t)
-	exec := compositeRootExecutor(t, mgr)
+	exec := newCompositeTestExecutor(t, mgr, "comp", &testDatabaseManagerAdapter{manager: mgr})
 
 	result, err := exec.Execute(context.Background(), "RETURN 1 AS one", nil)
 	require.NoError(t, err)
@@ -311,23 +314,19 @@ func TestCompositeRoot_UseConstituent_Match_Succeeds(t *testing.T) {
 }
 
 func TestCompositeRoot_ShowDatabases_Allowed(t *testing.T) {
-	_, mgr := compositeTestFixture(t)
-	exec := compositeRootExecutor(t, mgr)
-
-	// System commands should still work on composite root.
-	res, err := exec.Execute(context.Background(), "SHOW DATABASES", nil)
-	require.NoError(t, err)
-	require.NotNil(t, res)
-	require.NotEmpty(t, res.Rows)
-}
-
-func TestCompositeRoot_ShowCompositeDatabases_Allowed(t *testing.T) {
-	_, mgr := compositeTestFixture(t)
-	exec := compositeRootExecutor(t, mgr)
-
-	res, err := exec.Execute(context.Background(), "SHOW COMPOSITE DATABASES", nil)
-	require.NoError(t, err)
-	require.NotNil(t, res)
+	for _, query := range []string{"SHOW DATABASES", "SHOW COMPOSITE DATABASES"} {
+		t.Run(query, func(t *testing.T) {
+			_, mgr := compositeTestFixture(t)
+			exec := newCompositeTestExecutor(t, mgr, "comp", &testDatabaseManagerAdapter{manager: mgr})
+			// System commands should still work on the composite root.
+			res, err := exec.Execute(context.Background(), query, nil)
+			require.NoError(t, err)
+			require.NotNil(t, res)
+			if query == "SHOW DATABASES" {
+				require.NotEmpty(t, res.Rows)
+			}
+		})
+	}
 }
 
 // --- Step 13: Search service not inherited by composite ---
@@ -337,15 +336,15 @@ func TestCompositeExecutor_SearchServiceNotInherited(t *testing.T) {
 	exec := NewStorageExecutor(base)
 	// Simulate having a search service on the base executor.
 	// (We can't set a real one without import cycles, but we can check
-	// the cloneForStorage behavior by verifying the field is nil on composite.)
+	// the selected-database clone policy by verifying the field is nil on composite.)
 	compositeEngine := storage.NewCompositeEngine(
 		map[string]storage.Engine{"a": newTestMemoryEngine(t)},
 		map[string]string{"a": "shard_a"},
 		map[string]string{"a": "read_write"},
 	)
-	cloned := exec.cloneForStorage(compositeEngine)
+	cloned := exec.cloneWithStorage(compositeEngine, selectedDatabaseStorage)
 	// The cloned executor for a composite engine must not inherit searchService.
-	if cloned.searchService != nil {
+	if cloned.search() != nil {
 		t.Fatal("expected searchService to be nil on composite-scoped executor")
 	}
 }
@@ -406,7 +405,7 @@ func TestDocExample_DropIndexOnConstituent(t *testing.T) {
 
 func TestDocExample_CompositeRootSchemaRejected(t *testing.T) {
 	_, mgr := compositeTestFixture(t)
-	exec := compositeRootExecutor(t, mgr)
+	exec := newCompositeTestExecutor(t, mgr, "comp", &testDatabaseManagerAdapter{manager: mgr})
 
 	// Doc example: "These are REJECTED on composite root"
 	tests := []struct {
@@ -443,7 +442,7 @@ func TestDocExample_DropIndexIfExistsOnConstituent(t *testing.T) {
 
 func TestDocExample_PlainQueryOnCompositeRejected(t *testing.T) {
 	_, mgr := compositeTestFixture(t)
-	exec := compositeRootExecutor(t, mgr)
+	exec := newCompositeTestExecutor(t, mgr, "comp", &testDatabaseManagerAdapter{manager: mgr})
 
 	// Doc example: plain MATCH on composite root is rejected
 	_, err := exec.Execute(context.Background(), "MATCH (n:Person) RETURN n", nil)
@@ -458,4 +457,24 @@ func TestDocExample_PlainQueryOnCompositeRejected(t *testing.T) {
 	// System commands (SHOW DATABASES) ARE allowed on composite root
 	_, err = exec.Execute(context.Background(), "SHOW DATABASES", nil)
 	require.NoError(t, err)
+}
+
+// Sessions must retain the exact graph/adapter while owning fresh executor
+// state; the calling fixture's disabled cache must not become a clone policy.
+func TestCompositeSessionFactoryPreservesGraphAdapterAndFreshCache(t *testing.T) {
+	caller, mgr := compositeTestFixture(t)
+	adapter := caller.dbManager
+	caller.cache = nil
+	first := newCompositeTestExecutor(t, mgr, "comp", adapter)
+	second := newCompositeTestExecutor(t, mgr, "comp", adapter)
+	require.NotSame(t, first, second)
+	require.Same(t, adapter, first.dbManager)
+	require.Same(t, adapter, second.dbManager)
+	require.IsType(t, &storage.CompositeEngine{}, first.storage)
+	expected := NewStorageExecutor(first.storage)
+	require.Equal(t, expected.cache == nil, first.cache == nil, "default constructor policy, not caller cache policy")
+	if first.cache != nil {
+		require.NotSame(t, first.cache, second.cache)
+	}
+	require.Nil(t, caller.cache)
 }

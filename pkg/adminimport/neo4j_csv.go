@@ -1,8 +1,12 @@
 package adminimport
 
 import (
-	"encoding/csv"
 	"encoding/json"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+
+	"bytes"
+	"context"
+	"encoding/csv"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -75,7 +79,7 @@ func DiscoverNeo4jCSVSources(dir string, opts Options) (nodeSources []string, re
 	return nodeSources, relSources, nil
 }
 
-func ExportNeo4jCSV(engine storage.ExportableEngine, opts Neo4jCSVExportOptions) error {
+func ExportNeo4jCSV(engine storage.Engine, opts Neo4jCSVExportOptions) error {
 	if opts.OutputDir == "" {
 		return unsupported(localization.AdminExportOutputDirectoryRequired())
 	}
@@ -98,11 +102,13 @@ func ExportNeo4jCSV(engine storage.ExportableEngine, opts Neo4jCSVExportOptions)
 		return err
 	}
 
-	nodes, err := engine.AllNodes()
+	// An export holds every stored entity, those the visibility layer hides
+	// from reads included.
+	nodes, err := storage.CollectStoredNodes(context.Background(), engine)
 	if err != nil {
 		return err
 	}
-	edges, err := engine.AllEdges()
+	edges, err := storage.CollectStoredEdges(context.Background(), engine)
 	if err != nil {
 		return err
 	}
@@ -496,14 +502,26 @@ func exportNornicSchemaDefinition(path string, schema *storage.SchemaManager) er
 	if schema == nil {
 		return nil
 	}
-	def := schema.ExportDefinition()
-	if !hasSchemaDefinitionContent(def) {
-		return nil
-	}
-	data, err := json.MarshalIndent(def, "", "  ")
+	// Admin export is an offline operation that owns its own lifetime, so the
+	// definition snapshot runs under it rather than a caller request.
+	def, err := schema.ExportDefinition(context.Background())
 	if err != nil {
 		return err
 	}
+	if !hasSchemaDefinitionContent(def) {
+		return nil
+	}
+	// jsontext.Marshal owns exact string identity; encoding/json.Indent reformats
+	// those valid bytes without decoding, so escaped lone UTF16 units survive.
+	data, err := storage.EncodeSchemaDefinition(def)
+	if err != nil {
+		return err
+	}
+	var indented bytes.Buffer
+	if err := json.Indent(&indented, data, "", "  "); err != nil {
+		return err
+	}
+	data = indented.Bytes()
 	data = append(data, '\n')
 	return os.WriteFile(path, data, 0o600)
 }
@@ -526,18 +544,36 @@ func hasSchemaDefinitionContent(def *storage.SchemaDefinition) bool {
 		len(def.PromotionPolicies) > 0
 }
 
+// constraintStatementRequest names one constraint origin for the canonical
+// renderer. general carries a stored general constraint and typeConstraint is
+// nil; typeConstraint carries a stored property-type constraint and general is
+// the zero value. The origins stay distinct because a general constraint of
+// type PROPERTY_TYPE carries no expected type to render.
+type constraintStatementRequest struct {
+	general        storage.Constraint
+	typeConstraint *storage.PropertyTypeConstraint
+}
+
+// constraintStatementFormat renders the maintained CREATE CONSTRAINT prefix
+// shared by every constraint kind.
+const constraintStatementFormat = "CREATE CONSTRAINT %s IF NOT EXISTS FOR %s REQUIRE %s"
+
+// constraintPropertyTypeSuffix completes a property-type requirement after the
+// rendered property reference with its IS :: type.
+const constraintPropertyTypeSuffix = " IS :: %s"
+
 func exportSchemaCypher(path string, schema *storage.SchemaManager) error {
 	if schema == nil {
 		return nil
 	}
 	statements := make([]string, 0)
 	for _, constraint := range schema.GetAllConstraints() {
-		if stmt, ok := renderConstraintStatement(constraint); ok {
+		if stmt, ok := renderConstraintStatement(constraintStatementRequest{general: constraint}); ok {
 			statements = append(statements, stmt)
 		}
 	}
 	for _, typeConstraint := range schema.GetAllPropertyTypeConstraints() {
-		if stmt, ok := renderPropertyTypeConstraintStatement(typeConstraint); ok {
+		if stmt, ok := renderConstraintStatement(constraintStatementRequest{typeConstraint: &typeConstraint}); ok {
 			statements = append(statements, stmt)
 		}
 	}
@@ -554,62 +590,78 @@ func exportSchemaCypher(path string, schema *storage.SchemaManager) error {
 	return os.WriteFile(path, []byte(contents), 0o600)
 }
 
-func renderConstraintStatement(c storage.Constraint) (string, bool) {
-	entity := c.EffectiveEntityType()
-	props := cypherPropertyRefs(entityVariable(entity), c.Properties)
-	var pattern string
-	var requirement string
-	switch c.Type {
-	case storage.ConstraintUnique:
-		if len(props) != 1 {
+// renderConstraintStatement renders the CREATE CONSTRAINT statement for one
+// constraint origin. A property-type request always renders, exactly as the
+// property-type export always has; a general request keeps every kind's
+// validation and admission rule and rejects PROPERTY_TYPE, which has no
+// expected type in the general constraint payload.
+func renderConstraintStatement(request constraintStatementRequest) (string, bool) {
+	var name, pattern, requirement string
+	format := constraintStatementFormat
+	var args [4]any
+	count := 3
+	if typeConstraint := request.typeConstraint; typeConstraint != nil {
+		entity := typeConstraint.EffectiveEntityType()
+		name = typeConstraint.Name
+		pattern = cypherPattern(entity, typeConstraint.Label)
+		requirement = entityVariable(entity) + "." + cyphertext.PrintIdentifier(typeConstraint.Property, nil, cyphertext.RawSource)
+		format = constraintStatementFormat + constraintPropertyTypeSuffix
+		args[3] = typeConstraint.ExpectedType
+		count = 4
+	} else {
+		c := request.general
+		entity := c.EffectiveEntityType()
+		props := cypherPropertyRefs(entityVariable(entity), c.Properties)
+		switch c.Type {
+		case storage.ConstraintUnique:
+			if len(props) != 1 {
+				return "", false
+			}
+			pattern = cypherPattern(entity, c.Label)
+			requirement = props[0] + " IS UNIQUE"
+		case storage.ConstraintNodeKey:
+			pattern = cypherPattern(entity, c.Label)
+			requirement = "(" + strings.Join(props, ", ") + ") IS NODE KEY"
+		case storage.ConstraintExists:
+			if len(props) != 1 {
+				return "", false
+			}
+			pattern = cypherPattern(entity, c.Label)
+			requirement = props[0] + " IS NOT NULL"
+		case storage.ConstraintRelationshipKey:
+			pattern = cypherPattern(entity, c.Label)
+			requirement = "(" + strings.Join(props, ", ") + ") IS RELATIONSHIP KEY"
+		case storage.ConstraintTemporal:
+			pattern = cypherPattern(entity, c.Label)
+			requirement = "(" + strings.Join(props, ", ") + ") IS TEMPORAL NO OVERLAP"
+		case storage.ConstraintDomain:
+			if len(props) != 1 {
+				return "", false
+			}
+			pattern = cypherPattern(entity, c.Label)
+			requirement = props[0] + " IN [" + strings.Join(formatConstraintValues(c.AllowedValues), ", ") + "]"
+		case storage.ConstraintCardinality:
+			if entity != storage.ConstraintEntityRelationship {
+				return "", false
+			}
+			pattern = cypherRelationshipPattern(c.Label, c.Direction, "", "")
+			requirement = fmt.Sprintf("MAX COUNT %d", c.MaxCount)
+		case storage.ConstraintPolicy:
+			if entity != storage.ConstraintEntityRelationship {
+				return "", false
+			}
+			pattern = cypherRelationshipPattern(c.Label, "OUTGOING", c.SourceLabel, c.TargetLabel)
+			requirement = c.PolicyMode
+		default:
 			return "", false
 		}
-		pattern = cypherPattern(entity, c.Label)
-		requirement = props[0] + " IS UNIQUE"
-	case storage.ConstraintNodeKey:
-		pattern = cypherPattern(entity, c.Label)
-		requirement = "(" + strings.Join(props, ", ") + ") IS NODE KEY"
-	case storage.ConstraintExists:
-		if len(props) != 1 {
-			return "", false
-		}
-		pattern = cypherPattern(entity, c.Label)
-		requirement = props[0] + " IS NOT NULL"
-	case storage.ConstraintRelationshipKey:
-		pattern = cypherPattern(entity, c.Label)
-		requirement = "(" + strings.Join(props, ", ") + ") IS RELATIONSHIP KEY"
-	case storage.ConstraintTemporal:
-		pattern = cypherPattern(entity, c.Label)
-		requirement = "(" + strings.Join(props, ", ") + ") IS TEMPORAL NO OVERLAP"
-	case storage.ConstraintDomain:
-		if len(props) != 1 {
-			return "", false
-		}
-		pattern = cypherPattern(entity, c.Label)
-		requirement = props[0] + " IN [" + strings.Join(formatConstraintValues(c.AllowedValues), ", ") + "]"
-	case storage.ConstraintCardinality:
-		if entity != storage.ConstraintEntityRelationship {
-			return "", false
-		}
-		pattern = cypherRelationshipPattern(c.Label, c.Direction, "", "")
-		requirement = fmt.Sprintf("MAX COUNT %d", c.MaxCount)
-	case storage.ConstraintPolicy:
-		if entity != storage.ConstraintEntityRelationship {
-			return "", false
-		}
-		pattern = cypherRelationshipPattern(c.Label, "OUTGOING", c.SourceLabel, c.TargetLabel)
-		requirement = c.PolicyMode
-	default:
-		return "", false
-	}
-	return fmt.Sprintf("CREATE CONSTRAINT %s IF NOT EXISTS FOR %s REQUIRE %s", quoteCypherIdent(c.Name), pattern, requirement), true
-}
 
-func renderPropertyTypeConstraintStatement(c storage.PropertyTypeConstraint) (string, bool) {
-	entity := c.EffectiveEntityType()
-	pattern := cypherPattern(entity, c.Label)
-	ref := entityVariable(entity) + "." + quoteCypherIdent(c.Property)
-	return fmt.Sprintf("CREATE CONSTRAINT %s IF NOT EXISTS FOR %s REQUIRE %s IS :: %s", quoteCypherIdent(c.Name), pattern, ref, c.ExpectedType), true
+		name = c.Name
+	}
+	args[0] = cyphertext.PrintIdentifier(name, nil, cyphertext.RawSource)
+	args[1] = pattern
+	args[2] = requirement
+	return fmt.Sprintf(format, args[:count]...), true
 }
 
 func renderIndexStatement(index any) (string, bool) {
@@ -626,7 +678,7 @@ func renderIndexStatement(index any) (string, bool) {
 		if len(properties) == 0 {
 			return "", false
 		}
-		return fmt.Sprintf("CREATE INDEX %s IF NOT EXISTS FOR %s ON (%s)", quoteCypherIdent(name), cypherPattern(storage.ConstraintEntityNode, label), strings.Join(cypherPropertyRefs("n", properties), ", ")), true
+		return fmt.Sprintf("CREATE INDEX %s IF NOT EXISTS FOR %s ON (%s)", cyphertext.PrintIdentifier(name, nil, cyphertext.RawSource), cypherPattern(storage.ConstraintEntityNode, label), strings.Join(cypherPropertyRefs("n", properties), ", ")), true
 	case "RANGE":
 		if owning, _ := m["owningConstraint"].(string); owning != "" {
 			return "", false
@@ -645,7 +697,7 @@ func renderIndexStatement(index any) (string, bool) {
 		if entityType == string(storage.ConstraintEntityRelationship) {
 			entity = storage.ConstraintEntityRelationship
 		}
-		return fmt.Sprintf("CREATE INDEX %s IF NOT EXISTS FOR %s ON (%s)", quoteCypherIdent(name), cypherPattern(entity, label), strings.Join(cypherPropertyRefs(entityVariable(entity), properties), ", ")), true
+		return fmt.Sprintf("CREATE INDEX %s IF NOT EXISTS FOR %s ON (%s)", cyphertext.PrintIdentifier(name, nil, cyphertext.RawSource), cypherPattern(entity, label), strings.Join(cypherPropertyRefs(entityVariable(entity), properties), ", ")), true
 	case "FULLTEXT":
 		properties := stringSliceValue(m["properties"])
 		labels := stringSliceValue(m["labels"])
@@ -656,16 +708,16 @@ func renderIndexStatement(index any) (string, bool) {
 		if len(labels) > 0 {
 			parts := make([]string, 0, len(labels))
 			for _, item := range labels {
-				parts = append(parts, quoteCypherIdent(item))
+				parts = append(parts, cyphertext.PrintIdentifier(item, nil, cyphertext.RawSource))
 			}
-			return fmt.Sprintf("CREATE FULLTEXT INDEX %s IF NOT EXISTS FOR (n:%s) ON EACH [%s]", quoteCypherIdent(name), strings.Join(parts, "|"), strings.Join(cypherPropertyRefs("n", properties), ", ")), true
+			return fmt.Sprintf("CREATE FULLTEXT INDEX %s IF NOT EXISTS FOR (n:%s) ON EACH [%s]", cyphertext.PrintIdentifier(name, nil, cyphertext.RawSource), strings.Join(parts, "|"), strings.Join(cypherPropertyRefs("n", properties), ", ")), true
 		}
 		if len(relationshipTypes) > 0 {
 			parts := make([]string, 0, len(relationshipTypes))
 			for _, item := range relationshipTypes {
-				parts = append(parts, quoteCypherIdent(item))
+				parts = append(parts, cyphertext.PrintIdentifier(item, nil, cyphertext.RawSource))
 			}
-			return fmt.Sprintf("CREATE FULLTEXT INDEX %s IF NOT EXISTS FOR ()-[r:%s]-() ON EACH [%s]", quoteCypherIdent(name), strings.Join(parts, "|"), strings.Join(cypherPropertyRefs("r", properties), ", ")), true
+			return fmt.Sprintf("CREATE FULLTEXT INDEX %s IF NOT EXISTS FOR ()-[r:%s]-() ON EACH [%s]", cyphertext.PrintIdentifier(name, nil, cyphertext.RawSource), strings.Join(parts, "|"), strings.Join(cypherPropertyRefs("r", properties), ", ")), true
 		}
 		return "", false
 	case "VECTOR":
@@ -692,7 +744,7 @@ func renderIndexStatement(index any) (string, bool) {
 			options += fmt.Sprintf(", `vector.similarity_function`: '%s'", strings.ToLower(similarity))
 		}
 		options += "}}"
-		return fmt.Sprintf("CREATE VECTOR INDEX %s IF NOT EXISTS FOR %s ON (%s) %s", quoteCypherIdent(name), cypherPattern(entity, label), strings.Join(cypherPropertyRefs(variable, []string{property}), ", "), options), true
+		return fmt.Sprintf("CREATE VECTOR INDEX %s IF NOT EXISTS FOR %s ON (%s) %s", cyphertext.PrintIdentifier(name, nil, cyphertext.RawSource), cypherPattern(entity, label), strings.Join(cypherPropertyRefs(variable, []string{property}), ", "), options), true
 	default:
 		return "", false
 	}
@@ -700,25 +752,25 @@ func renderIndexStatement(index any) (string, bool) {
 
 func cypherPattern(entity storage.ConstraintEntityType, label string) string {
 	if entity == storage.ConstraintEntityRelationship {
-		return fmt.Sprintf("()-[r:%s]-()", quoteCypherIdent(label))
+		return fmt.Sprintf("()-[r:%s]-()", cyphertext.PrintIdentifier(label, nil, cyphertext.RawSource))
 	}
-	return fmt.Sprintf("(n:%s)", quoteCypherIdent(label))
+	return fmt.Sprintf("(n:%s)", cyphertext.PrintIdentifier(label, nil, cyphertext.RawSource))
 }
 
 func cypherRelationshipPattern(label, direction, sourceLabel, targetLabel string) string {
 	left := "()"
 	right := "()"
 	if sourceLabel != "" {
-		left = fmt.Sprintf("(:%s)", quoteCypherIdent(sourceLabel))
+		left = fmt.Sprintf("(:%s)", cyphertext.PrintIdentifier(sourceLabel, nil, cyphertext.RawSource))
 	}
 	if targetLabel != "" {
-		right = fmt.Sprintf("(:%s)", quoteCypherIdent(targetLabel))
+		right = fmt.Sprintf("(:%s)", cyphertext.PrintIdentifier(targetLabel, nil, cyphertext.RawSource))
 	}
 	switch strings.ToUpper(direction) {
 	case "INCOMING":
-		return fmt.Sprintf("%s<-[r:%s]-%s", left, quoteCypherIdent(label), right)
+		return fmt.Sprintf("%s<-[r:%s]-%s", left, cyphertext.PrintIdentifier(label, nil, cyphertext.RawSource), right)
 	default:
-		return fmt.Sprintf("%s-[r:%s]->%s", left, quoteCypherIdent(label), right)
+		return fmt.Sprintf("%s-[r:%s]->%s", left, cyphertext.PrintIdentifier(label, nil, cyphertext.RawSource), right)
 	}
 }
 
@@ -732,13 +784,9 @@ func entityVariable(entity storage.ConstraintEntityType) string {
 func cypherPropertyRefs(variable string, properties []string) []string {
 	refs := make([]string, 0, len(properties))
 	for _, property := range properties {
-		refs = append(refs, variable+"."+quoteCypherIdent(property))
+		refs = append(refs, variable+"."+cyphertext.PrintIdentifier(property, nil, cyphertext.RawSource))
 	}
 	return refs
-}
-
-func quoteCypherIdent(value string) string {
-	return "`" + strings.ReplaceAll(value, "`", "``") + "`"
 }
 
 func formatConstraintValues(values []interface{}) []string {

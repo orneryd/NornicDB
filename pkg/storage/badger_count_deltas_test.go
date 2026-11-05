@@ -1,7 +1,9 @@
 package storage
 
 import (
+	"context"
 	"encoding/binary"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
@@ -34,21 +36,21 @@ func TestCountDeltaPrefixesDisjoint(t *testing.T) {
 // TestCountDeltaFoldCollapsesIntoBase pins the fold: persisted deltas sum into
 // the base key and are deleted, and reads agree before and after.
 func TestCountDeltaFoldCollapsesIntoBase(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
 	ns := "ns1"
-	_, err = engine.CreateNode(&Node{ID: NodeID(ns + ":a"), Labels: []string{"Fold"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: NodeID(ns + ":a"), Labels: []string{"Fold"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: NodeID(ns + ":b"), Labels: []string{"Fold"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: NodeID(ns + ":b"), Labels: []string{"Fold"}})
 	require.NoError(t, err)
 
-	before, err := engine.NodeCountByLabelInNamespace(ns, "Fold")
+	before, err := engine.NodeCountByLabelInNamespace(t.Context(), ns, "Fold")
 	require.NoError(t, err)
 	require.Equal(t, int64(2), before)
 
-	require.NoError(t, engine.foldLabelCountDeltas(ns, "Fold"))
+	require.NoError(t, engine.foldLabelCountDeltas(context.Background(), ns, "Fold"))
 
 	var baseCount, remainingDeltas int64
 	require.NoError(t, engine.db.View(func(txn *badger.Txn) error {
@@ -72,14 +74,14 @@ func TestCountDeltaFoldCollapsesIntoBase(t *testing.T) {
 	require.Equal(t, int64(2), baseCount)
 	require.Zero(t, remainingDeltas)
 
-	after, err := engine.NodeCountByLabelInNamespace(ns, "Fold")
+	after, err := engine.NodeCountByLabelInNamespace(t.Context(), ns, "Fold")
 	require.NoError(t, err)
 	require.Equal(t, int64(2), after)
 
 	// Further writes append fresh deltas on top of the folded base.
-	_, err = engine.CreateNode(&Node{ID: NodeID(ns + ":c"), Labels: []string{"Fold"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: NodeID(ns + ":c"), Labels: []string{"Fold"}})
 	require.NoError(t, err)
-	after, err = engine.NodeCountByLabelInNamespace(ns, "Fold")
+	after, err = engine.NodeCountByLabelInNamespace(t.Context(), ns, "Fold")
 	require.NoError(t, err)
 	require.Equal(t, int64(3), after)
 }
@@ -87,16 +89,16 @@ func TestCountDeltaFoldCollapsesIntoBase(t *testing.T) {
 // TestCountDeltaCrossNamespaceFastPath pins the by-name summation: deltas for
 // the same label in two namespaces both contribute to NodeCountByLabel.
 func TestCountDeltaCrossNamespaceFastPath(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
-	_, err = engine.CreateNode(&Node{ID: "ns1:a", Labels: []string{"Shared"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "ns1:a", Labels: []string{"Shared"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "ns2:b", Labels: []string{"Shared"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "ns2:b", Labels: []string{"Shared"}})
 	require.NoError(t, err)
 
-	total, err := engine.NodeCountByLabel("Shared")
+	total, err := engine.NodeCountByLabel(t.Context(), "Shared")
 	require.NoError(t, err)
 	require.Equal(t, int64(2), total)
 }
@@ -105,24 +107,24 @@ func TestCountDeltaCrossNamespaceFastPath(t *testing.T) {
 // malformed edge-type base count: the read recomputes from the edge-type
 // index and returns the correct count.
 func TestCountDeltaMalformedEdgeTypeBaseRepair(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		malformed := make([]byte, 4)
 		binary.BigEndian.PutUint32(malformed, 7)
 		return txn.Set(edgeTypeCountKey("ns1", "T"), malformed)
 	}))
 
-	_, err = engine.CreateNode(&Node{ID: "ns1:a"})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "ns1:a"})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "ns1:b"})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "ns1:b"})
 	require.NoError(t, err)
-	err = engine.CreateEdge(&Edge{ID: "ns1:e1", Type: "T", StartNode: "ns1:a", EndNode: "ns1:b"})
+	err = engine.CreateEdge(t.Context(), &Edge{ID: "ns1:e1", Type: "T", StartNode: "ns1:a", EndNode: "ns1:b"})
 	require.NoError(t, err)
 
-	count, err := engine.EdgeCountByTypeInNamespace("ns1", "T")
+	count, err := engine.EdgeCountByTypeInNamespace(context.Background(), "ns1", "T")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), count)
 }
@@ -132,14 +134,17 @@ func TestCountDeltaMalformedEdgeTypeBaseRepair(t *testing.T) {
 // the same counts.
 func TestCountDeltaFoldAtClose(t *testing.T) {
 	dir := t.TempDir()
-	engine, err := NewBadgerEngine(dir)
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 
-	_, err = engine.CreateNode(&Node{ID: "ns1:a", Labels: []string{"CloseFold"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "ns1:a", Labels: []string{"CloseFold"}})
 	require.NoError(t, err)
 	require.NoError(t, engine.Close())
 
-	reopened, err := NewBadgerEngine(dir)
+	reopened, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reopened.Close() })
 
@@ -165,7 +170,7 @@ func TestCountDeltaFoldAtClose(t *testing.T) {
 	require.Equal(t, int64(1), baseCount)
 	require.Zero(t, remainingDeltas)
 
-	count, err := reopened.NodeCountByLabelInNamespace("ns1", "CloseFold")
+	count, err := reopened.NodeCountByLabelInNamespace(t.Context(), "ns1", "CloseFold")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), count)
 }

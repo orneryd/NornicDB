@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strconv"
 	"strings"
 
@@ -77,17 +78,7 @@ func (r *labelExpressionRewriter) vectorCall(wordStart, wordEnd, end int) error 
 
 // isBareName reports whether text is a plain name (an identifier, as the
 // lexer reads one), not a literal or an expression.
-func isBareName(text string) bool {
-	if text == "" || !isIdentStartByte(text[0]) {
-		return false
-	}
-	for i := 0; i < len(text); i++ {
-		if !isIdentByte(text[i]) {
-			return false
-		}
-	}
-	return true
-}
+func isBareName(text string) bool { return cyphertext.IsIdentifier(text) }
 
 // topLevelArgumentSpans returns the [start, end) of each comma-separated
 // argument in query[start:end], spaces trimmed.
@@ -120,7 +111,7 @@ func mayUseVectorCall(query string) bool {
 		}
 		at += from
 		from = at + len("vector")
-		if at > 0 && (isIdentByte(query[at-1]) || query[at-1] == '.') {
+		if at > 0 && (cyphertext.NamePartAt(query, at-1) || query[at-1] == '.') {
 			continue
 		}
 		end := from

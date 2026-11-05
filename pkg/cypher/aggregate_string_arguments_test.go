@@ -10,7 +10,7 @@ import (
 
 // A ')' or an escaped quote in a string inside an aggregate's argument is
 // text: every scanner that matches a call's parentheses skips quoted text
-// (findMatchingDelimiter), as Neo4j 5.26.30 reads it (#907).
+// (cyphertext.FindMatchingDelimiter), as Neo4j 5.26.30 reads it (#907).
 func TestAggregateStringArguments(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "aggregate_strings"))
 	ctx := context.Background()

@@ -20,8 +20,9 @@ func TestShowVectorSimilaritySignaturesMatchNeo4j526(t *testing.T) {
 		arguments, ok := row[2].([]interface{})
 		require.True(t, ok, "%T", row[2])
 		require.Len(t, arguments, 2)
-		for _, argument := range arguments {
+		for index, argument := range arguments {
 			require.Equal(t, "LIST<INTEGER | FLOAT>", argument.(map[string]interface{})["type"])
+			require.Equal(t, []string{"A list representing the first vector.", "A list representing the second vector."}[index], argument.(map[string]interface{})["description"])
 		}
 	}
 }

@@ -2,7 +2,9 @@ package auth
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -26,7 +28,10 @@ func TestAdminPasswordChangeSurvivesBootstrapRestart(t *testing.T) {
 	authConfig.JWTSecret = []byte("test-jwt-secret-at-least-32-bytes")
 
 	openAndBootstrap := func() (*Authenticator, *storage.BadgerEngine, storage.Engine, error) {
-		engine, err := storage.NewBadgerEngine(dataDir)
+		engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dataDir))
+		if engine != nil {
+			fixtureowner.Own(t, engine)
+		}
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -36,16 +41,16 @@ func TestAdminPasswordChangeSurvivesBootstrapRestart(t *testing.T) {
 			_ = engine.Close()
 			return nil, nil, nil, err
 		}
-		_, bootstrapErr := authenticator.CreateUser(username, initialPassword, []Role{RoleAdmin})
+		_, bootstrapErr := authenticator.CreateUser(context.Background(), username, initialPassword, []Role{RoleAdmin})
 		return authenticator, engine, systemStorage, bootstrapErr
 	}
 
 	authenticator, engine, systemStorage, err := openAndBootstrap()
 	require.NoError(t, err)
-	_, _, err = authenticator.Authenticate(username, initialPassword, "127.0.0.1", "e2e")
+	_, _, err = authenticator.Authenticate(context.Background(), username, initialPassword, "127.0.0.1", "e2e")
 	require.NoError(t, err)
 
-	initialNode, err := systemStorage.GetNode(storage.NodeID("user:" + username))
+	initialNode, err := systemStorage.GetNode(context.Background(), storage.NodeID("user:"+username))
 	require.NoError(t, err)
 	require.NotContains(t, initialNode.Properties, "password")
 	for _, value := range initialNode.Properties {
@@ -62,8 +67,8 @@ func TestAdminPasswordChangeSurvivesBootstrapRestart(t *testing.T) {
 	require.NotEqual(t, initialHash[:29], string(independentHash[:29]),
 		"bcrypt must generate a distinct salt for each hash")
 
-	require.NoError(t, authenticator.ChangePassword(username, initialPassword, changedPassword))
-	changedNode, err := systemStorage.GetNode(storage.NodeID("user:" + username))
+	require.NoError(t, authenticator.ChangePassword(context.Background(), username, initialPassword, changedPassword))
+	changedNode, err := systemStorage.GetNode(context.Background(), storage.NodeID("user:"+username))
 	require.NoError(t, err)
 	changedHash, ok := changedNode.Properties["password_hash"].(string)
 	require.True(t, ok)
@@ -80,13 +85,13 @@ func TestAdminPasswordChangeSurvivesBootstrapRestart(t *testing.T) {
 	require.ErrorIs(t, bootstrapErr, ErrUserExists,
 		"bootstrap must not overwrite an existing admin user")
 
-	reloadedNode, err := reloadedStorage.GetNode(storage.NodeID("user:" + username))
+	reloadedNode, err := reloadedStorage.GetNode(context.Background(), storage.NodeID("user:"+username))
 	require.NoError(t, err)
 	require.Equal(t, changedHash, reloadedNode.Properties["password_hash"],
 		"restart bootstrap must preserve the password changed through the console")
-	_, _, err = reloadedAuth.Authenticate(username, initialPassword, "127.0.0.1", "e2e")
+	_, _, err = reloadedAuth.Authenticate(context.Background(), username, initialPassword, "127.0.0.1", "e2e")
 	require.ErrorIs(t, err, ErrInvalidCredentials)
-	_, _, err = reloadedAuth.Authenticate(username, changedPassword, "127.0.0.1", "e2e")
+	_, _, err = reloadedAuth.Authenticate(context.Background(), username, changedPassword, "127.0.0.1", "e2e")
 	require.NoError(t, err)
 }
 

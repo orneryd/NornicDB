@@ -1,17 +1,28 @@
 package cypher
 
+import (
+	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+)
+
 import "strings"
 
-func validateReturnOrderBySemanticScope(clause string) error {
+func validateReturnOrderBySemanticScope(ctx context.Context, clause string) error {
+	return validateReturnOrderBySemanticScopeIn(ctx, clause, nil)
+}
+
+// Retained imports are available throughout a subquery, including a DISTINCT
+// or aggregating horizon's ORDER BY. They remain outside its projection key.
+func validateReturnOrderBySemanticScopeIn(ctx context.Context, clause string, retained typeScope) error {
 	body := strings.TrimSpace(clause[len("RETURN"):])
-	orderIndex := topLevelKeywordIndex(body, "ORDER BY")
+	orderIndex := topLevelKeywordIndex(ctx, body, "ORDER BY")
 	if orderIndex < 0 {
 		return nil
 	}
 	projectionBody := strings.TrimSpace(body[:orderIndex])
-	orderBody := strings.TrimSpace(body[orderIndex+len("ORDER BY"):])
+	orderBody := strings.TrimSpace(body[keywordEndAt(body, orderIndex, "ORDER BY"):])
 	for _, keyword := range []string{"SKIP", "LIMIT"} {
-		if index := topLevelKeywordIndex(orderBody, keyword); index >= 0 {
+		if index := topLevelKeywordIndex(ctx, orderBody, keyword); index >= 0 {
 			orderBody = strings.TrimSpace(orderBody[:index])
 		}
 	}
@@ -26,7 +37,8 @@ func validateReturnOrderBySemanticScope(clause string) error {
 	// any of them (RETURN DISTINCT *, x AS y ORDER BY z, #883).
 	star := false
 	for _, item := range splitTopLevelComma(projectionBody) {
-		expression, alias := parseProjectionExprAlias(strings.TrimSpace(item))
+		itemSource := readProjectionItemSource(ctx, strings.TrimSpace(item), projectionAdmitted)
+		expression, alias := itemSource.expression, itemSource.alias
 		if expression == "*" {
 			star = true
 			continue
@@ -50,7 +62,7 @@ func validateReturnOrderBySemanticScope(clause string) error {
 		}
 	}
 
-	for _, term := range parseOrderByClause(orderBody) {
+	for _, term := range parseOrderByClause(ctx, orderBody) {
 		expression := term.column
 		hasOrderAggregate := containsAggregateFunc(expression)
 		if hasOrderAggregate && !hasProjectionAggregate {
@@ -91,6 +103,9 @@ func validateReturnOrderBySemanticScope(clause string) error {
 				continue
 			}
 			baseReference := strings.SplitN(reference, ".", 2)[0]
+			if _, global := retained[baseReference]; global {
+				continue
+			}
 			if _, projectedEntity := directExpressions[baseReference]; projectedEntity || star {
 				continue
 			}
@@ -123,27 +138,14 @@ func semanticAggregateCalls(expression string) []string {
 func canonicalSemanticExpression(expression string) string {
 	var normalized strings.Builder
 	normalized.Grow(len(expression))
-	var quote byte
 	for index := 0; index < len(expression); index++ {
+		if end, quoted := skipCypherLexicalToken(expression, index); quoted {
+			normalized.WriteString(expression[index:end])
+			index = end - 1
+			continue
+		}
 		current := expression[index]
-		if quote != 0 {
-			normalized.WriteByte(current)
-			if current == '\\' && quote != '`' && index+1 < len(expression) {
-				index++
-				normalized.WriteByte(expression[index])
-				continue
-			}
-			if current == quote {
-				quote = 0
-			}
-			continue
-		}
-		if current == '\'' || current == '"' || current == '`' {
-			quote = current
-			normalized.WriteByte(current)
-			continue
-		}
-		if isASCIIWhitespace(current) {
+		if cyphertext.IsWhitespaceAt(expression, index) {
 			continue
 		}
 		if current >= 'a' && current <= 'z' {
@@ -154,17 +156,17 @@ func canonicalSemanticExpression(expression string) string {
 	return normalized.String()
 }
 
-func validateReturnAggregationSemantics(body string) error {
-	return validateReturnAggregationSemanticsIn(body, nil)
+func validateReturnAggregationSemantics(ctx context.Context, body string) error {
+	return validateReturnAggregationSemanticsIn(ctx, body, nil)
 }
 
 // validateReturnAggregationSemanticsIn is validateReturnAggregationSemantics
 // with outer's variables constants: in an EXISTS / COUNT / COLLECT body the
 // enclosing query's variables aren't grouping keys.
-func validateReturnAggregationSemanticsIn(body string, outer typeScope) error {
+func validateReturnAggregationSemanticsIn(ctx context.Context, body string, outer typeScope) error {
 	end := len(body)
 	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if index := topLevelKeywordIndex(body, keyword); index >= 0 && index < end {
+		if index := topLevelKeywordIndex(ctx, body, keyword); index >= 0 && index < end {
 			end = index
 		}
 	}
@@ -174,7 +176,8 @@ func validateReturnAggregationSemanticsIn(body string, outer typeScope) error {
 	aliases := make(map[string]struct{})
 	expressions := make([]string, 0)
 	for _, item := range splitTopLevelComma(body) {
-		expression, alias := parseProjectionExprAlias(strings.TrimSpace(item))
+		itemSource := readProjectionItemSource(ctx, strings.TrimSpace(item), projectionAdmitted)
+		expression, alias := itemSource.expression, itemSource.alias
 		expressions = append(expressions, expression)
 		if alias != "" && alias != expression {
 			aliases[normalizeProjectionColumnName(alias)] = struct{}{}
@@ -245,42 +248,21 @@ func aggregateContains(expression string, predicate func(string) bool) bool {
 
 func containsFunctionCallNamed(expression, expected string) bool {
 	for index := 0; index < len(expression); {
-		name, next, ok := scanIdentifierToken(expression, index)
+		name, ok := cyphertext.ScanIdentifier(expression, index)
 		if !ok {
 			index++
 			continue
 		}
-		cursor := next
-		for cursor < len(expression) && isASCIIWhitespace(expression[cursor]) {
+		cursor := name.End
+		for cursor < len(expression) && cyphertext.IsWhitespaceAt(expression, cursor) {
 			cursor++
 		}
-		if strings.EqualFold(normalizeProjectionColumnName(name), expected) && cursor < len(expression) && expression[cursor] == '(' {
+		if strings.EqualFold(normalizeProjectionColumnName(name.Value), expected) && cursor < len(expression) && expression[cursor] == '(' {
 			return true
 		}
-		index = next
+		index = name.End
 	}
 	return false
-}
-
-func pipelineReturnSourceColumns(clause string) []string {
-	body := strings.TrimSpace(clause[len("RETURN"):])
-	end := len(body)
-	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if index := topLevelKeywordIndex(body, keyword); index >= 0 && index < end {
-			end = index
-		}
-	}
-	body = strings.TrimSpace(body[:end])
-	body, _ = cutDistinct(body)
-	if body == "*" || body == "" {
-		return nil
-	}
-	columns := make([]string, 0)
-	for _, item := range splitTopLevelComma(body) {
-		_, alias := parseProjectionExprAlias(strings.TrimSpace(item))
-		columns = append(columns, alias)
-	}
-	return columns
 }
 
 func directSemanticReference(expression string) string {
@@ -310,14 +292,14 @@ func forEachSemanticExpressionReference(expression string, visit func(reference 
 			index = end
 			continue
 		}
-		if expression[index] == '\'' || expression[index] == '"' {
+		if isCypherStringQuoteByte(expression[index]) {
 			index = skipQuotedSemanticText(expression, index)
 			continue
 		}
 		if expression[index] == '$' {
-			_, next, ok := scanIdentifierToken(expression, index+1)
+			next, ok := cyphertext.ScanIdentifier(expression, index+1)
 			if ok {
-				index = next
+				index = next.End
 				continue
 			}
 		}
@@ -331,7 +313,7 @@ func forEachSemanticExpressionReference(expression string, visit func(reference 
 		// head(xs).id), which the scan doesn't read as a reference itself.
 		start := index
 		before := index
-		for before > 0 && isASCIIWhitespace(expression[before-1]) {
+		for before > 0 && cyphertext.IsWhitespaceAt(expression, before-1) {
 			before--
 		}
 		index = next
@@ -339,7 +321,7 @@ func forEachSemanticExpressionReference(expression string, visit func(reference 
 			continue
 		}
 		cursor := next
-		for cursor < len(expression) && isASCIIWhitespace(expression[cursor]) {
+		for cursor < len(expression) && cyphertext.IsWhitespaceAt(expression, cursor) {
 			cursor++
 		}
 		if cursor < len(expression) && expression[cursor] == '(' {
@@ -358,7 +340,7 @@ func forEachSemanticExpressionReference(expression string, visit func(reference 
 		propertyAccess := cursor < len(expression) && expression[cursor] == '.'
 		// A keyword-named variable (where.id, #894) is still a variable when
 		// a property access follows it; a keyword is never followed by '.'.
-		if name[0] != '`' && !propertyAccess && isSemanticLiteralWord(normalized) {
+		if !isCypherBacktickByte(name[0]) && !propertyAccess && isSemanticLiteralWord(normalized) {
 			continue
 		}
 		if propertyAccess {
@@ -423,15 +405,15 @@ func maskSemanticBraceBodies(expression string) string {
 	expression = maskSubqueryBodies(expression)
 	masked := []byte(expression)
 	for index := 0; index < len(expression); index++ {
-		switch expression[index] {
-		case '\'', '"':
+		switch cypherStringLexicalByte(expression[index]) {
+		case cypherStringQuoteClass:
 			index = skipQuotedSemanticText(expression, index) - 1
 			continue
 		case '{':
 		default:
 			continue
 		}
-		close := findMatchingDelimiter(expression, index, '{', '}')
+		close := cyphertext.FindMatchingDelimiter(expression, index, '{', '}', cyphertext.OpeningDelimiter)
 		if close < 0 {
 			break
 		}
@@ -439,11 +421,11 @@ func maskSemanticBraceBodies(expression string) string {
 			masked[blank] = ' '
 		}
 		end := index
-		for end > 0 && isASCIIWhitespace(expression[end-1]) {
+		for end > 0 && cyphertext.IsWhitespaceAt(expression, end-1) {
 			end--
 		}
 		start := end
-		for start > 0 && isIdentByte(expression[start-1]) {
+		for start > 0 && cyphertext.NamePartAt(expression, start-1) {
 			start--
 		}
 		switch upperASCII(expression[start:end]) {

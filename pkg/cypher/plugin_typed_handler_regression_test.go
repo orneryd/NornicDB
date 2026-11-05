@@ -1,5 +1,7 @@
 package cypher
 
+// Author: Codex NOR-184 lane: migrate fixtures to admitted callable publication.
+
 import (
 	"context"
 	"errors"
@@ -7,6 +9,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/orneryd/nornicdb/apoc/registry"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -65,11 +68,12 @@ func TestTypedPluginPublicQueries(t *testing.T) {
 var pluginIdentityBenchmarkResult interface{}
 
 func BenchmarkPluginHandlerIdentity(b *testing.B) {
-	handler := func(x interface{}) interface{} { return x }
+	handler := mustCallableForTest(func(x interface{}) interface{} { return x })
 	args := []interface{}{"value"}
+	ctx := context.Background()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		v, err := callPluginHandler(handler, args)
+		v, err := callPluginHandlerContext(ctx, handler, args)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -107,11 +111,11 @@ func TestTypedPluginCheckedFailures(t *testing.T) {
 	require.ErrorIs(t, err, sentinel)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err = callPluginHandlerContext(ctx, func() string { panic("cancelled must not invoke") }, nil)
+	_, err = callTestPluginHandlerContext(ctx, func() string { panic("cancelled must not invoke") }, nil)
 	require.ErrorIs(t, err, context.Canceled)
 	type contextKey struct{}
 	ctx = context.WithValue(context.Background(), contextKey{}, "forwarded")
-	v, err := callPluginHandlerContext(ctx, func(ctx context.Context, n int64) (interface{}, error) {
+	v, err := callTestPluginHandlerContext(ctx, func(ctx context.Context, n int64) (interface{}, error) {
 		require.Equal(t, "forwarded", ctx.Value(contextKey{}))
 		return n, nil
 	}, []interface{}{int64(7)})
@@ -144,16 +148,16 @@ func TestTypedPluginConversionBoundaries(t *testing.T) {
 		{nil, map[string]int64{}, true}, {nil, []int64{}, true}, {nil, (*int)(nil), true},
 		{struct{}{}, int64(0), false},
 	} {
-		_, ok := convertPluginArgument(reflect.ValueOf(tc.value), reflect.TypeOf(tc.target))
+		_, ok := registry.BindArgument(reflect.ValueOf(tc.value), reflect.TypeOf(tc.target))
 		require.Equal(t, tc.ok, ok, "%T -> %T", tc.value, tc.target)
 	}
 	var iface interface{}
 	v := reflect.ValueOf(&iface).Elem()
-	_, ok := convertPluginArgument(v, reflect.TypeOf(map[string]int64{}))
+	_, ok := registry.BindArgument(v, reflect.TypeOf(map[string]int64{}))
 	require.True(t, ok)
 	iface = int64(7)
 	v = reflect.ValueOf(&iface).Elem()
-	converted, ok := convertPluginArgument(v, reflect.TypeOf(int8(0)))
+	converted, ok := registry.BindArgument(v, reflect.TypeOf(int8(0)))
 	require.True(t, ok)
 	require.Equal(t, int8(7), converted.Interface())
 	for _, fn := range []interface{}{func() {}, func() error { return nil }, func() (int64, error) { return 1, nil }, func(xs ...int64) int { return len(xs) }} {

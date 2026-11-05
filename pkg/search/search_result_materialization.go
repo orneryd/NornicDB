@@ -2,7 +2,10 @@ package search
 
 import (
 	"context"
+	"unsafe"
+
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // enrichResults converts RRF results to SearchResult with full node data.
@@ -49,7 +52,8 @@ func (s *Service) enrichResults(ctx context.Context, rrfResults []rrfResult, opt
 }
 
 // enrichIndexResults converts raw index results to SearchResult.
-// Maps chunk IDs (e.g., "node-id-chunk-0") back to the original node ID.
+// Every result ID is already an owning node ID: vector results were decoded
+// once at collapse, and fulltext document IDs are node IDs. Nothing here decodes.
 func (s *Service) enrichIndexResults(ctx context.Context, indexResults []indexResult, opts *SearchOptions, seenOrphans map[string]bool, query hitMatchQuery) []SearchResult {
 	resultLimit := boundedResultLimit(len(indexResults), opts.Limit)
 	if resultLimit == 0 {
@@ -67,7 +71,7 @@ func (s *Service) enrichIndexResults(ctx context.Context, indexResults []indexRe
 			break
 		}
 
-		nodeIDStr := normalizeVectorResultIDToNodeID(ir.ID)
+		nodeIDStr := ir.ID
 		if seen != nil {
 			if _, exists := seen[nodeIDStr]; exists {
 				continue
@@ -127,7 +131,7 @@ func (s *Service) enrichIndexResults(ctx context.Context, indexResults []indexRe
 func (s *Service) hitNodes(ctx context.Context, ids []storage.NodeID, seenOrphans map[string]bool) ([]*storage.Node, bool) {
 	nodes := make([]*storage.Node, len(ids))
 	if s.supportsBatchNodesWithoutEmbeddings() {
-		batch, err := s.batchGetNodesWithoutEmbeddings(ids)
+		batch, err := s.batchGetNodesWithoutEmbeddings(ctx, ids)
 		if err != nil {
 			return nil, false
 		}
@@ -139,7 +143,7 @@ func (s *Service) hitNodes(ctx context.Context, ids []storage.NodeID, seenOrphan
 		return nodes, true
 	}
 	for index, id := range ids {
-		node, err := s.getNodeWithoutEmbeddings(id)
+		node, err := s.getNodeWithoutEmbeddings(ctx, id)
 		if err != nil {
 			_ = s.handleOrphanedEmbedding(ctx, string(id), err, seenOrphans)
 			continue
@@ -158,6 +162,16 @@ func searchResultFromNode(id string, node *storage.Node, projection resultProper
 		Labels:     node.Labels,
 		Properties: projection.apply(node.Properties),
 	}
+	result.sourceNode = node
+	if len(node.ChunkEmbeddings) > 0 || len(node.NamedEmbeddings) > 0 || len(projection.include) > 0 || len(projection.exclude) > 0 {
+		// A fallback reader may return vectors; an explicit projection may leave
+		// large excluded properties behind. Retain metadata without either payload.
+		metadata := *node
+		metadata.Properties = nil
+		metadata.ChunkEmbeddings = nil
+		metadata.NamedEmbeddings = nil
+		result.sourceNode = &metadata
+	}
 	if t, ok := node.Properties["type"].(string); ok {
 		result.Type = t
 	}
@@ -173,4 +187,40 @@ func searchResultFromNode(id string, node *storage.Node, projection resultProper
 		result.ContentPreview = truncate(text, 200)
 	}
 	return result
+}
+
+// MaterializedNode returns a detached logical node for a search hit. Preserve
+// the source timestamps: later property-visibility checks must score the node
+// that was read, rather than a reconstruction with a zero creation time.
+// Managed vectors stay in storage; a user vector property remains a property.
+// A database context supplies provenance only when the result has no source
+// database, as with compact continuation results. Existing provenance wins.
+func (result SearchResult) MaterializedNode(database ...string) *storage.Node {
+	var node storage.Node
+	if result.sourceNode != nil {
+		node = *result.sourceNode
+	}
+	if node.RuntimeMetadata().Database == "" && len(database) > 0 {
+		{
+			metadata := node.RuntimeMetadata()
+			metadata.Database = database[0]
+			node.SetRuntimeMetadata(metadata)
+		}
+	}
+	node.ID = result.NodeID
+	if node.ID == "" {
+		node.ID = storage.NodeID(result.ID)
+	}
+	node.Labels = result.Labels
+	node.Properties = result.Properties
+	node.ChunkEmbeddings = nil
+	node.NamedEmbeddings = nil
+	return &node
+}
+
+func (result SearchResult) nodeMetadataBytes() int64 {
+	if result.sourceNode == nil {
+		return 0
+	}
+	return int64(unsafe.Sizeof(storage.Node{})) + util.EstimateValueBytes(result.sourceNode.EmbedMeta)
 }

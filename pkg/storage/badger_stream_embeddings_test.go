@@ -1,6 +1,8 @@
 package storage_test
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"strings"
 	"testing"
@@ -10,13 +12,13 @@ import (
 )
 
 func TestBadgerEngine_StreamNodes_LoadsSeparatelyStoredEmbeddings(t *testing.T) {
-	engine, err := storage.NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
 	// Force separate embedding storage by exceeding the inline node size threshold.
 	large := strings.Repeat("x", 60*1024)
-	_, err = engine.CreateNode(&storage.Node{
+	_, err = engine.CreateNode(t.Context(), &storage.Node{
 		ID:     storage.NodeID("nornic:big"),
 		Labels: []string{"Doc"},
 		Properties: map[string]any{
@@ -30,7 +32,7 @@ func TestBadgerEngine_StreamNodes_LoadsSeparatelyStoredEmbeddings(t *testing.T) 
 	require.NoError(t, err)
 
 	// Sanity check: GetNode loads embeddings.
-	got, err := engine.GetNode(storage.NodeID("nornic:big"))
+	got, err := engine.GetNode(t.Context(), storage.NodeID("nornic:big"))
 	require.NoError(t, err)
 	require.Len(t, got.ChunkEmbeddings, 2)
 	require.Len(t, got.ChunkEmbeddings[0], 3)
@@ -51,12 +53,12 @@ func TestBadgerEngine_StreamNodes_LoadsSeparatelyStoredEmbeddings(t *testing.T) 
 }
 
 func TestBadgerEngine_StreamNodeChunks_LoadsSeparatelyStoredEmbeddings(t *testing.T) {
-	engine, err := storage.NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
 	large := strings.Repeat("x", 60*1024)
-	_, err = engine.CreateNode(&storage.Node{
+	_, err = engine.CreateNode(t.Context(), &storage.Node{
 		ID:     storage.NodeID("nornic:big"),
 		Labels: []string{"Doc"},
 		Properties: map[string]any{

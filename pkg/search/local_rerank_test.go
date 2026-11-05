@@ -2,6 +2,8 @@ package search
 
 import (
 	"context"
+	"errors"
+	"math"
 	"testing"
 )
 
@@ -20,23 +22,23 @@ func TestLocalReranker_Enabled(t *testing.T) {
 	scorer := mockScorer{}
 	cfg := DefaultLocalRerankerConfig()
 	cfg.Enabled = false
-	r := NewLocalReranker(scorer, cfg)
+	r := NewLocalReranker(scorer, cfg, testRerankAdmission())
 	if r.Enabled() {
 		t.Error("expected disabled when config.Enabled=false")
 	}
 	cfg.Enabled = true
-	r = NewLocalReranker(scorer, cfg)
+	r = NewLocalReranker(scorer, cfg, testRerankAdmission())
 	if !r.Enabled() {
 		t.Error("expected enabled when config.Enabled=true and scorer non-nil")
 	}
-	r = NewLocalReranker(nil, cfg)
+	r = NewLocalReranker(nil, cfg, testRerankAdmission())
 	if r.Enabled() {
 		t.Error("expected disabled when scorer is nil")
 	}
 }
 
 func TestLocalReranker_Name(t *testing.T) {
-	r := NewLocalReranker(mockScorer{}, nil)
+	r := NewLocalReranker(mockScorer{}, nil, testRerankAdmission())
 	if got := r.Name(); got != "local_gguf" {
 		t.Errorf("Name() = %q, want local_gguf", got)
 	}
@@ -48,12 +50,12 @@ func TestLocalReranker_IsAvailable(t *testing.T) {
 
 	okReranker := NewLocalReranker(mockScorer{
 		"health|check": 0.9,
-	}, cfg)
+	}, cfg, testRerankAdmission())
 	if !okReranker.IsAvailable(context.Background()) {
 		t.Fatal("expected IsAvailable true when health check scoring succeeds")
 	}
 
-	badReranker := NewLocalReranker(failingScorer{}, cfg)
+	badReranker := NewLocalReranker(failingScorer{}, cfg, testRerankAdmission())
 	if badReranker.IsAvailable(context.Background()) {
 		t.Fatal("expected IsAvailable false when health check scoring fails")
 	}
@@ -78,7 +80,7 @@ func TestLocalReranker_RerankDisabledPassThrough(t *testing.T) {
 
 	cfg := DefaultLocalRerankerConfig()
 	cfg.Enabled = false
-	disabled := NewLocalReranker(mockScorer{}, cfg)
+	disabled := NewLocalReranker(mockScorer{}, cfg, testRerankAdmission())
 	results, err = disabled.Rerank(context.Background(), "query", candidates)
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +91,7 @@ func TestLocalReranker_RerankDisabledPassThrough(t *testing.T) {
 }
 
 func TestLocalReranker_Rerank_EmptyCandidates(t *testing.T) {
-	r := NewLocalReranker(mockScorer{}, DefaultLocalRerankerConfig())
+	r := NewLocalReranker(mockScorer{}, DefaultLocalRerankerConfig(), testRerankAdmission())
 	got, err := r.Rerank(context.Background(), "q", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -111,7 +113,7 @@ func TestLocalReranker_Rerank_ReordersByScore(t *testing.T) {
 	}
 	cfg := DefaultLocalRerankerConfig()
 	cfg.Enabled = true
-	r := NewLocalReranker(scorer, cfg)
+	r := NewLocalReranker(scorer, cfg, testRerankAdmission())
 
 	candidates := []RerankCandidate{
 		{ID: "a", Content: "docA", Score: 0.1},
@@ -143,7 +145,7 @@ func TestLocalReranker_Rerank_ScorerErrorIsReported(t *testing.T) {
 	scorer := &failingScorer{}
 	cfg := DefaultLocalRerankerConfig()
 	cfg.Enabled = true
-	r := NewLocalReranker(scorer, cfg)
+	r := NewLocalReranker(scorer, cfg, testRerankAdmission())
 	candidates := []RerankCandidate{
 		{ID: "a", Content: "docA", Score: 0.5},
 	}
@@ -168,13 +170,43 @@ type captureScorer struct {
 	score   float32
 }
 
+type contextScorer func(context.Context, string, string) (float32, error)
+
+func (s contextScorer) Score(ctx context.Context, query, document string) (float32, error) {
+	return s(ctx, query, document)
+}
+
+func TestLocalReranker_RetainsRequestContext(t *testing.T) {
+	type key struct{}
+	ctx, cancel := context.WithCancel(context.WithValue(t.Context(), key{}, "request"))
+	scorer := contextScorer(func(actual context.Context, _, _ string) (float32, error) {
+		if actual.Value(key{}) != "request" {
+			t.Fatal("scorer lost the request values")
+		}
+		cancel()
+		return 0, actual.Err()
+	})
+	admitted, finished := false, false
+	r := NewLocalReranker(scorer, DefaultLocalRerankerConfig(), func(actual context.Context) (context.Context, func(), error) {
+		if actual != ctx {
+			t.Fatal("admission replaced the request")
+		}
+		admitted = true
+		return actual, func() { finished = true }, nil
+	})
+	results, err := r.Rerank(ctx, "query", []RerankCandidate{{ID: "one", Content: "document"}})
+	if !errors.Is(err, context.Canceled) || results != nil || !admitted || !finished {
+		t.Fatalf("results=%v err=%v admitted=%v finished=%v", results, err, admitted, finished)
+	}
+}
+
 func (c *captureScorer) Score(ctx context.Context, query, document string) (float32, error) {
 	c.queries = append(c.queries, query)
 	c.docs = append(c.docs, document)
 	return c.score, nil
 }
 
-func TestLocalReranker_RerankNilContextCapsAndTruncates(t *testing.T) {
+func TestLocalReranker_RerankCapsAndTruncates(t *testing.T) {
 	scorer := &captureScorer{score: 0.75}
 	cfg := &LocalRerankerConfig{
 		Enabled:       true,
@@ -182,10 +214,9 @@ func TestLocalReranker_RerankNilContextCapsAndTruncates(t *testing.T) {
 		MaxCandidates: 1,
 		MaxDocChars:   3,
 	}
-	r := NewLocalReranker(scorer, cfg)
+	r := NewLocalReranker(scorer, cfg, testRerankAdmission())
 
-	var nilCtx context.Context
-	results, err := r.Rerank(nilCtx, " query ", []RerankCandidate{
+	results, err := r.Rerank(t.Context(), " query ", []RerankCandidate{
 		{ID: "a", Content: " abcdef ", Score: 0.1},
 		{ID: "b", Content: "second", Score: 0.2},
 	})
@@ -203,7 +234,7 @@ func TestLocalReranker_RerankNilContextCapsAndTruncates(t *testing.T) {
 	}
 }
 
-func TestLocalReranker_RerankAllFilteredFallsBack(t *testing.T) {
+func TestLocalReranker_RerankAllFilteredStaysVisibleForValidation(t *testing.T) {
 	cfg := &LocalRerankerConfig{
 		Enabled:       true,
 		Timeout:       0,
@@ -211,7 +242,7 @@ func TestLocalReranker_RerankAllFilteredFallsBack(t *testing.T) {
 		MaxDocChars:   0,
 		MinScore:      0.5,
 	}
-	r := NewLocalReranker(&captureScorer{score: 0.1}, cfg)
+	r := NewLocalReranker(&captureScorer{score: 0.1}, cfg, testRerankAdmission())
 	candidates := []RerankCandidate{
 		{ID: "a", Content: "alpha", Score: 0.9},
 		{ID: "b", Content: "beta", Score: 0.8},
@@ -221,10 +252,17 @@ func TestLocalReranker_RerankAllFilteredFallsBack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(results) != 2 || results[0].ID != "a" || results[1].ID != "b" {
-		t.Fatalf("expected pass-through results, got %#v", results)
+	if len(results) != 2 {
+		t.Fatalf("expected complete raw results, got %#v", results)
 	}
-	if results[0].FinalScore != candidates[0].Score || results[1].FinalScore != candidates[1].Score {
-		t.Fatalf("expected original scores preserved, got %#v", results)
+	seen := make(map[string]bool, len(results))
+	for _, result := range results {
+		seen[result.ID] = true
+		if !result.Filtered || math.Abs(result.FinalScore-0.1) > 1e-6 {
+			t.Fatalf("expected provider score and filter decision, got %#v", results)
+		}
+	}
+	if !seen["a"] || !seen["b"] {
+		t.Fatalf("expected both candidate identities, got %#v", results)
 	}
 }

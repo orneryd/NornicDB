@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"testing"
@@ -15,23 +17,21 @@ type relationshipScanGuardEngine struct {
 	outgoingCalls   int
 }
 
-func (e *relationshipScanGuardEngine) GetNodesByLabel(label string) ([]*storage.Node, error) {
-	if e.forbidLabelScan {
-		return nil, fmt.Errorf("GetNodesByLabel should not be called for indexed relationship start-node pruning")
-	}
-	return e.MemoryEngine.GetNodesByLabel(label)
+func (e *relationshipScanGuardEngine) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
+	return guardedNodeScan(e.forbidLabelScan, "GetNodesByLabel should not be called for indexed relationship start-node pruning", func() ([]*storage.Node, error) {
+		return e.MemoryEngine.GetNodesByLabel(ctx, label)
+	})
 }
 
-func (e *relationshipScanGuardEngine) AllNodes() ([]*storage.Node, error) {
-	if e.forbidLabelScan {
-		return nil, fmt.Errorf("AllNodes should not be called for indexed relationship start-node pruning")
-	}
-	return e.MemoryEngine.AllNodes()
+func (e *relationshipScanGuardEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
+	return guardedNodeScan(e.forbidLabelScan, "AllNodes should not be called for indexed relationship start-node pruning", func() ([]*storage.Node, error) {
+		return e.MemoryEngine.AllNodes(ctx)
+	})
 }
 
-func (e *relationshipScanGuardEngine) GetOutgoingEdges(nodeID storage.NodeID) ([]*storage.Edge, error) {
+func (e *relationshipScanGuardEngine) GetOutgoingEdges(ctx context.Context, nodeID storage.NodeID) ([]*storage.Edge, error) {
 	e.outgoingCalls++
-	return e.MemoryEngine.GetOutgoingEdges(nodeID)
+	return e.MemoryEngine.GetOutgoingEdges(ctx, nodeID)
 }
 
 func seedRelationshipLimitData(t *testing.T, eng *relationshipScanGuardEngine, count int) {
@@ -39,7 +39,7 @@ func seedRelationshipLimitData(t *testing.T, eng *relationshipScanGuardEngine, c
 	for i := 0; i < count; i++ {
 		origID := storage.NodeID(fmt.Sprintf("nornic:orig-%03d", i))
 		trID := storage.NodeID(fmt.Sprintf("nornic:tr-%03d", i))
-		_, err := eng.CreateNode(&storage.Node{
+		_, err := eng.CreateNode(t.Context(), &storage.Node{
 			ID:     origID,
 			Labels: []string{"OriginalText"},
 			Properties: map[string]interface{}{
@@ -47,7 +47,7 @@ func seedRelationshipLimitData(t *testing.T, eng *relationshipScanGuardEngine, c
 			},
 		})
 		require.NoError(t, err)
-		_, err = eng.CreateNode(&storage.Node{
+		_, err = eng.CreateNode(t.Context(), &storage.Node{
 			ID:     trID,
 			Labels: []string{"TranslatedText"},
 			Properties: map[string]interface{}{
@@ -56,7 +56,7 @@ func seedRelationshipLimitData(t *testing.T, eng *relationshipScanGuardEngine, c
 			},
 		})
 		require.NoError(t, err)
-		require.NoError(t, eng.CreateEdge(&storage.Edge{
+		require.NoError(t, eng.CreateEdge(t.Context(), &storage.Edge{
 			ID:        storage.EdgeID(fmt.Sprintf("nornic:edge-%03d", i)),
 			Type:      "TRANSLATES_TO",
 			StartNode: origID,
@@ -66,7 +66,7 @@ func seedRelationshipLimitData(t *testing.T, eng *relationshipScanGuardEngine, c
 }
 
 func TestRelationshipMatchLimitShortCircuitsTraversal(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &relationshipScanGuardEngine{MemoryEngine: base}
 	exec := NewStorageExecutor(eng)
@@ -85,7 +85,7 @@ LIMIT 1
 }
 
 func TestRelationshipMatchUsesIndexForIsNotNullStartNodeFilter(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &relationshipScanGuardEngine{MemoryEngine: base}
 	exec := NewStorageExecutor(eng)
@@ -129,7 +129,7 @@ LIMIT 1
 }
 
 func TestRelationshipMatchTranslationQueryFamily_EndNodeFilterOrderLimit(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &relationshipScanGuardEngine{MemoryEngine: base}
 	exec := NewStorageExecutor(eng)
@@ -181,7 +181,7 @@ LIMIT 3
 }
 
 func TestRelationshipMatchEndSeededTopKSupportsFixedMultiHop(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	exec := NewStorageExecutor(base)
 	ctx := context.Background()
@@ -190,14 +190,14 @@ func TestRelationshipMatchEndSeededTopKSupportsFixedMultiHop(t *testing.T) {
 		origID := storage.NodeID(fmt.Sprintf("nornic:o-hop-%d", i))
 		midID := storage.NodeID(fmt.Sprintf("nornic:m-hop-%d", i))
 		targetID := storage.NodeID(fmt.Sprintf("nornic:t-hop-%d", i))
-		_, err := base.CreateNode(&storage.Node{ID: origID, Labels: []string{"OriginalText"}, Properties: map[string]interface{}{"textKey": fmt.Sprintf("hop-%d", i)}})
+		_, err := base.CreateNode(t.Context(), &storage.Node{ID: origID, Labels: []string{"OriginalText"}, Properties: map[string]interface{}{"textKey": fmt.Sprintf("hop-%d", i)}})
 		require.NoError(t, err)
-		_, err = base.CreateNode(&storage.Node{ID: midID, Labels: []string{"Bridge"}, Properties: map[string]interface{}{"rank": i}})
+		_, err = base.CreateNode(t.Context(), &storage.Node{ID: midID, Labels: []string{"Bridge"}, Properties: map[string]interface{}{"rank": i}})
 		require.NoError(t, err)
-		_, err = base.CreateNode(&storage.Node{ID: targetID, Labels: []string{"TranslatedText"}, Properties: map[string]interface{}{"language": "fr", "createdAt": fmt.Sprintf("2026-04-%02dT12:00:00Z", i+1)}})
+		_, err = base.CreateNode(t.Context(), &storage.Node{ID: targetID, Labels: []string{"TranslatedText"}, Properties: map[string]interface{}{"language": "fr", "createdAt": fmt.Sprintf("2026-04-%02dT12:00:00Z", i+1)}})
 		require.NoError(t, err)
-		require.NoError(t, base.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("nornic:e-hop-a-%d", i)), Type: "STEP", StartNode: origID, EndNode: midID}))
-		require.NoError(t, base.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("nornic:e-hop-b-%d", i)), Type: "STEP", StartNode: midID, EndNode: targetID}))
+		require.NoError(t, base.CreateEdge(t.Context(), &storage.Edge{ID: storage.EdgeID(fmt.Sprintf("nornic:e-hop-a-%d", i)), Type: "STEP", StartNode: origID, EndNode: midID}))
+		require.NoError(t, base.CreateEdge(t.Context(), &storage.Edge{ID: storage.EdgeID(fmt.Sprintf("nornic:e-hop-b-%d", i)), Type: "STEP", StartNode: midID, EndNode: targetID}))
 	}
 
 	_, err := exec.Execute(ctx, "CREATE INDEX idx_hop_target_created_at FOR (t:TranslatedText) ON (t.createdAt)", nil)

@@ -52,7 +52,7 @@ func TestSchemaTypeProperties(t *testing.T) {
 	require.Equal(t, [][]interface{}{
 		{":`ZR`", "w", []string{"INTEGER NOT NULL"}, true},
 		{":`ZS`", nil, nil, false},
-	}, call("CYPHER 25 CALL db.schema.relTypeProperties() YIELD relType, propertyName, propertyTypes, mandatory RETURN *"))
+	}, call("CYPHER 25 CALL db.schema.relTypeProperties() YIELD relType, propertyName, propertyTypes, mandatory RETURN relType, propertyName, propertyTypes, mandatory"))
 
 	for value, want := range map[string][2]string{
 		"zoned datetime": {"DateTime", "ZONED DATETIME NOT NULL"},
@@ -80,8 +80,12 @@ type schemaTypePropertiesErrEngine struct {
 	err error
 }
 
-func (e *schemaTypePropertiesErrEngine) AllNodes() ([]*storage.Node, error) { return nil, e.err }
-func (e *schemaTypePropertiesErrEngine) AllEdges() ([]*storage.Edge, error) { return nil, e.err }
+func (e *schemaTypePropertiesErrEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
+	return nil, e.err
+}
+func (e *schemaTypePropertiesErrEngine) AllEdges(ctx context.Context) ([]*storage.Edge, error) {
+	return nil, e.err
+}
 
 func TestSchemaTypePropertiesStoreError(t *testing.T) {
 	scanErr := errors.New("scan failed")

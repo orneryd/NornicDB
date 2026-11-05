@@ -32,12 +32,18 @@ type relEdgeCheck struct {
 var errRelEdgeCheckStopped = errors.New("relationship constraint check stopped")
 
 // runRelEdgeCheck streams the edges of edgeType through engine into chk.
-func runRelEdgeCheck(engine Engine, edgeType string, chk relEdgeCheck) error {
+func runRelEdgeCheck(ctx context.Context, engine Engine, edgeType string, chk relEdgeCheck) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if chk.visit == nil {
 		return nil
 	}
 	var violation error
-	err := StreamEdgesByType(context.Background(), engine, edgeType, func(edge *Edge) error {
+	err := StreamStoredEdgesByType(ctx, engine, edgeType, func(edge *Edge) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err := chk.visit(edge); err != nil {
 			violation = err
 			return errRelEdgeCheckStopped
@@ -50,6 +56,9 @@ func runRelEdgeCheck(engine Engine, edgeType string, chk relEdgeCheck) error {
 	if err != nil {
 		return localizedError(localization.StorageValidationScanEdgesFailed(err), err)
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if chk.finish != nil {
 		return chk.finish()
 	}
@@ -57,14 +66,20 @@ func runRelEdgeCheck(engine Engine, edgeType string, chk relEdgeCheck) error {
 }
 
 // checkEdgeSlice runs chk over an in-memory slice of edges.
-func checkEdgeSlice(chk relEdgeCheck, edges []*Edge) error {
+func checkEdgeSlice(ctx context.Context, chk relEdgeCheck, edges []*Edge) error {
 	if chk.visit == nil {
 		return nil
 	}
 	for _, edge := range edges {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err := chk.visit(edge); err != nil {
 			return err
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if chk.finish != nil {
 		return chk.finish()
@@ -87,42 +102,42 @@ func ofType(edgeType string, visit func(*Edge) error) func(*Edge) error {
 // validateRelationshipConstraintOnCreationForEngine validates relationship
 // constraints using the Engine interface. It streams only the edges of the
 // constrained relationship type (c.Label).
-func validateRelationshipConstraintOnCreationForEngine(engine Engine, c Constraint) error {
-	chk, err := newRelationshipConstraintCheck(engine, c)
+func validateRelationshipConstraintOnCreationForEngine(ctx context.Context, engine Engine, c Constraint) error {
+	chk, err := newRelationshipConstraintCheck(ctx, engine, c)
 	if err != nil {
 		return err
 	}
-	return runRelEdgeCheck(engine, c.Label, chk)
+	return runRelEdgeCheck(ctx, engine, c.Label, chk)
 }
 
-func newRelationshipConstraintCheck(engine Engine, c Constraint) (relEdgeCheck, error) {
+func newRelationshipConstraintCheck(ctx context.Context, engine Engine, c Constraint) (relEdgeCheck, error) {
 	switch c.Type {
 	case ConstraintUnique:
-		return newRelUniquenessCheck(c), nil
+		return newRelUniquenessCheck(ctx, c), nil
 	case ConstraintExists:
 		return newRelExistenceCheck(c), nil
 	case ConstraintPropertyType:
 		// Handled separately via PropertyTypeConstraint path
 		return relEdgeCheck{}, nil
 	case ConstraintRelationshipKey:
-		return newRelKeyCheck(c), nil
+		return newRelKeyCheck(ctx, c), nil
 	case ConstraintTemporal:
-		return newRelTemporalCheck(c)
+		return newRelTemporalCheck(ctx, c)
 	case ConstraintDomain:
 		return newRelDomainCheck(c)
 	case ConstraintCardinality:
 		return newRelCardinalityCheck(c), nil
 	case ConstraintPolicy:
-		return newRelPolicyCheck(engine, c), nil
+		return newRelPolicyCheck(ctx, engine, c), nil
 	default:
 		return relEdgeCheck{}, localizedError(localization.StorageValidationRelationshipConstraintTypeUnsupported(string(c.Type)), nil)
 	}
 }
 
 // newRelUniquenessCheck checks uniqueness for relationship properties.
-func newRelUniquenessCheck(c Constraint) relEdgeCheck {
+func newRelUniquenessCheck(ctx context.Context, c Constraint) relEdgeCheck {
 	if len(c.Properties) != 1 {
-		return newRelCompositeUniquenessCheck(c)
+		return newRelCompositeUniquenessCheck(ctx, c)
 	}
 	property := c.Properties[0]
 	seen := make(constraintCreationValues)
@@ -131,7 +146,10 @@ func newRelUniquenessCheck(c Constraint) relEdgeCheck {
 		if value == nil {
 			return nil
 		}
-		if existingID, found := seen.add(string(edge.ID), []interface{}{value}); found {
+		// Constraint-creation validation is a context-free native Go API.
+		if existingID, found, err := seen.add(ctx, string(edge.ID), []interface{}{value}); err != nil {
+			return err
+		} else if found {
 			message := localization.StorageValidationRelationshipUniqueDuplicate(existingID, string(edge.ID), property, value)
 			return newLocalizedConstraintViolation(ConstraintUnique, c.Label, []string{property}, message, nil)
 		}
@@ -140,7 +158,7 @@ func newRelUniquenessCheck(c Constraint) relEdgeCheck {
 }
 
 // newRelCompositeUniquenessCheck checks composite uniqueness for relationship properties.
-func newRelCompositeUniquenessCheck(c Constraint) relEdgeCheck {
+func newRelCompositeUniquenessCheck(ctx context.Context, c Constraint) relEdgeCheck {
 	seen := make(constraintCreationValues)
 	return relEdgeCheck{visit: ofType(c.Label, func(edge *Edge) error {
 		values := make([]interface{}, len(c.Properties))
@@ -151,7 +169,10 @@ func newRelCompositeUniquenessCheck(c Constraint) relEdgeCheck {
 			}
 			values[i] = value
 		}
-		if existingID, found := seen.add(string(edge.ID), values); found {
+		// Constraint-creation validation is a context-free native Go API.
+		if existingID, found, err := seen.add(ctx, string(edge.ID), values); err != nil {
+			return err
+		} else if found {
 			parts := make([]string, len(values))
 			for i, value := range values {
 				parts[i] = fmt.Sprint(value)
@@ -181,9 +202,9 @@ func newRelExistenceCheck(c Constraint) relEdgeCheck {
 // the type (the order the two separate scans used to report them), so a
 // duplicate is remembered and reported only after the whole type passed the
 // existence check.
-func newRelKeyCheck(c Constraint) relEdgeCheck {
+func newRelKeyCheck(ctx context.Context, c Constraint) relEdgeCheck {
 	exists := newRelExistenceCheck(c)
-	unique := newRelCompositeUniquenessCheck(c)
+	unique := newRelCompositeUniquenessCheck(ctx, c)
 	var duplicate error
 	return relEdgeCheck{
 		visit: func(edge *Edge) error {
@@ -199,17 +220,14 @@ func newRelKeyCheck(c Constraint) relEdgeCheck {
 	}
 }
 
-// temporalCompositeKey builds a composite key string from multiple key property values on an edge.
-func temporalCompositeKey(edge *Edge, keyProps []string) (string, error) {
-	parts := make([]string, len(keyProps))
-	for i, prop := range keyProps {
-		val := edge.Properties[prop]
-		if val == nil {
-			return "", localizedError(localization.StorageValidationEdgeKeyNull(string(edge.ID), prop), nil)
-		}
-		parts[i] = fmt.Sprint(val)
+// temporalCompositeKey extracts the raw grouping value using the shared key spec.
+func temporalCompositeKey(edge *Edge, keyProps []string) (interface{}, error) {
+	spec := temporalKeySpec{keyProps: keyProps}
+	key, missing := spec.keyValue(edge.Properties)
+	if missing != "" {
+		return nil, localizedError(localization.StorageValidationEdgeKeyNull(string(edge.ID), missing), nil)
 	}
-	return strings.Join(parts, "\x00"), nil
+	return key, nil
 }
 
 // newRelTemporalCheck checks temporal no-overlap for relationship properties.
@@ -217,19 +235,21 @@ func temporalCompositeKey(edge *Edge, keyProps []string) (string, error) {
 // everything before that forms a composite key (e.g., from_id, to_id,
 // valid_from, valid_to). Intervals are kept per key; overlaps are reported
 // once the whole type has been read.
-func newRelTemporalCheck(c Constraint) (relEdgeCheck, error) {
+func newRelTemporalCheck(ctx context.Context, c Constraint) (relEdgeCheck, error) {
 	if len(c.Properties) < 3 {
 		return relEdgeCheck{}, localizedError(localization.StorageValidationTemporalPropertiesAtLeastThree(), nil)
 	}
-	keyProps := c.Properties[:len(c.Properties)-2]
-	startProp := c.Properties[len(c.Properties)-2]
-	endProp := c.Properties[len(c.Properties)-1]
+	spec, _ := splitTemporalKeySpec(c.Properties)
+	keyProps := spec.keyProps
+	startProp := spec.startProp
+	endProp := spec.endProp
 
 	type edgeInterval struct {
 		temporalInterval
 		edgeID EdgeID
 	}
-	byKey := make(map[string][]edgeInterval)
+	groups := temporalCreationGroups{spec: spec}
+	byKey := make(map[int][]edgeInterval)
 	visit := ofType(c.Label, func(edge *Edge) error {
 		key, err := temporalCompositeKey(edge, keyProps)
 		if err != nil {
@@ -242,7 +262,8 @@ func newRelTemporalCheck(c Constraint) (relEdgeCheck, error) {
 			return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties, message, nil)
 		}
 		end, hasEnd := CoerceTemporalTime(edge.Properties[endProp])
-		byKey[key] = append(byKey[key], edgeInterval{
+		group := groups.groupFor(key)
+		byKey[group] = append(byKey[group], edgeInterval{
 			temporalInterval: temporalInterval{start: start, end: end, hasEnd: hasEnd},
 			edgeID:           edge.ID,
 		})
@@ -250,10 +271,16 @@ func newRelTemporalCheck(c Constraint) (relEdgeCheck, error) {
 	})
 	finish := func() error {
 		for _, intervals := range byKey {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			sort.Slice(intervals, func(i, j int) bool {
 				return intervals[i].start.Before(intervals[j].start)
 			})
 			for i := 1; i < len(intervals); i++ {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
 				prev := intervals[i-1]
 				curr := intervals[i]
 				if intervalsOverlap(prev.temporalInterval, curr.temporalInterval) {
@@ -294,11 +321,7 @@ func newRelDomainCheck(c Constraint) (relEdgeCheck, error) {
 func newRelCardinalityCheck(c Constraint) relEdgeCheck {
 	counts := make(map[NodeID]int)
 	visit := ofType(c.Label, func(edge *Edge) error {
-		if c.Direction == "OUTGOING" {
-			counts[edge.StartNode]++
-		} else {
-			counts[edge.EndNode]++
-		}
+		counts[relationshipCardinalityAnchor(c.Direction, edge)]++
 		return nil
 	})
 	finish := func() error {
@@ -317,7 +340,7 @@ func newRelCardinalityCheck(c Constraint) relEdgeCheck {
 // For ALLOWED policies, the full set of ALLOWED policies for this
 // relationship type (existing ones from the schema plus the new one being
 // created) must cover every edge of the type.
-func newRelPolicyCheck(engine Engine, c Constraint) relEdgeCheck {
+func newRelPolicyCheck(ctx context.Context, engine Engine, c Constraint) relEdgeCheck {
 	var allowedSet []Constraint
 	if c.PolicyMode == "ALLOWED" {
 		if schema := engine.GetSchema(); schema != nil {
@@ -332,11 +355,11 @@ func newRelPolicyCheck(engine Engine, c Constraint) relEdgeCheck {
 	}
 
 	return relEdgeCheck{visit: ofType(c.Label, func(edge *Edge) error {
-		srcNode, err := engine.GetNode(edge.StartNode)
+		srcNode, err := GetStoredNode(ctx, engine, edge.StartNode)
 		if err != nil || srcNode == nil {
 			return nil
 		}
-		tgtNode, err := engine.GetNode(edge.EndNode)
+		tgtNode, err := GetStoredNode(ctx, engine, edge.EndNode)
 		if err != nil || tgtNode == nil {
 			return nil
 		}
@@ -373,38 +396,38 @@ func newRelPropertyTypeCheck(ptc PropertyTypeConstraint) relEdgeCheck {
 
 // Slice forms of the checks, for callers that already hold the edges.
 
-func validateRelUniquenessOnEdges(edges []*Edge, c Constraint) error {
-	return checkEdgeSlice(newRelUniquenessCheck(c), edges)
+func validateRelUniquenessOnEdges(ctx context.Context, edges []*Edge, c Constraint) error {
+	return checkEdgeSlice(ctx, newRelUniquenessCheck(ctx, c), edges)
 }
 
-func validateRelCompositeUniquenessOnEdges(edges []*Edge, c Constraint) error {
-	return checkEdgeSlice(newRelCompositeUniquenessCheck(c), edges)
+func validateRelCompositeUniquenessOnEdges(ctx context.Context, edges []*Edge, c Constraint) error {
+	return checkEdgeSlice(ctx, newRelCompositeUniquenessCheck(ctx, c), edges)
 }
 
-func validateRelExistenceOnEdges(edges []*Edge, c Constraint) error {
-	return checkEdgeSlice(newRelExistenceCheck(c), edges)
+func validateRelExistenceOnEdges(ctx context.Context, edges []*Edge, c Constraint) error {
+	return checkEdgeSlice(ctx, newRelExistenceCheck(c), edges)
 }
 
-func validateRelTemporalOnCreationForEngine(edges []*Edge, c Constraint) error {
-	chk, err := newRelTemporalCheck(c)
+func validateRelTemporalOnCreationForEngine(ctx context.Context, edges []*Edge, c Constraint) error {
+	chk, err := newRelTemporalCheck(ctx, c)
 	if err != nil {
 		return err
 	}
-	return checkEdgeSlice(chk, edges)
+	return checkEdgeSlice(ctx, chk, edges)
 }
 
-func validateRelDomainOnCreationForEngine(edges []*Edge, c Constraint) error {
+func validateRelDomainOnCreationForEngine(ctx context.Context, edges []*Edge, c Constraint) error {
 	chk, err := newRelDomainCheck(c)
 	if err != nil {
 		return err
 	}
-	return checkEdgeSlice(chk, edges)
+	return checkEdgeSlice(ctx, chk, edges)
 }
 
-func validateCardinalityOnCreationForEngine(edges []*Edge, c Constraint) error {
-	return checkEdgeSlice(newRelCardinalityCheck(c), edges)
+func validateCardinalityOnCreationForEngine(ctx context.Context, edges []*Edge, c Constraint) error {
+	return checkEdgeSlice(ctx, newRelCardinalityCheck(c), edges)
 }
 
-func validatePolicyOnCreationForEngine(engine Engine, edges []*Edge, c Constraint) error {
-	return checkEdgeSlice(newRelPolicyCheck(engine, c), edges)
+func validatePolicyOnCreationForEngine(ctx context.Context, engine Engine, edges []*Edge, c Constraint) error {
+	return checkEdgeSlice(ctx, newRelPolicyCheck(ctx, engine, c), edges)
 }

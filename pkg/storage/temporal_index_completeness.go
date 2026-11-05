@@ -46,6 +46,16 @@ func temporalIndexCompletenessKey(c Constraint) string {
 	return c.Label + "\x00" + strings.Join(c.Properties, "\x00")
 }
 
+// temporalIndexCompletenessSnapshot records which runtime completeness marks
+// a constraint key carried before they were forgotten, so a rejected drop
+// restores exactly those marks and nothing else.
+type temporalIndexCompletenessSnapshot struct {
+	key        string
+	applies    bool
+	complete   bool
+	incomplete bool
+}
+
 // temporalIndexAuthoritative reports whether c's history index covers every
 // stored node c applies to: c was created on an empty label (complete from
 // the start), or the engine's index was rebuilt and c was not created since
@@ -63,14 +73,37 @@ func (b *BadgerEngine) temporalIndexAuthoritative(sm *SchemaManager, c Constrain
 }
 
 // forgetTemporalIndexCompleteLocked drops c's runtime completeness marks: a
-// constraint that is (re)registered or dropped starts over.
-func (sm *SchemaManager) forgetTemporalIndexCompleteLocked(c Constraint) {
+// constraint that is (re)registered or dropped starts over. It returns the
+// marks it removed, for a rejected drop to put back.
+func (sm *SchemaManager) forgetTemporalIndexCompleteLocked(c Constraint) temporalIndexCompletenessSnapshot {
 	if c.Type != ConstraintTemporal {
+		return temporalIndexCompletenessSnapshot{}
+	}
+	snapshot := temporalIndexCompletenessSnapshot{key: temporalIndexCompletenessKey(c), applies: true}
+	_, snapshot.complete = sm.temporalIndexCompleteKeys[snapshot.key]
+	_, snapshot.incomplete = sm.temporalIndexIncompleteKeys[snapshot.key]
+	delete(sm.temporalIndexCompleteKeys, snapshot.key)
+	delete(sm.temporalIndexIncompleteKeys, snapshot.key)
+	return snapshot
+}
+
+// restoreTemporalIndexCompletenessLocked puts back exactly the marks snapshot
+// recorded, as forgetTemporalIndexCompleteLocked found them. Callers hold
+// sm.mu.
+func (sm *SchemaManager) restoreTemporalIndexCompletenessLocked(snapshot temporalIndexCompletenessSnapshot) {
+	if !snapshot.applies {
 		return
 	}
-	key := temporalIndexCompletenessKey(c)
-	delete(sm.temporalIndexCompleteKeys, key)
-	delete(sm.temporalIndexIncompleteKeys, key)
+	if snapshot.complete {
+		sm.temporalIndexCompleteKeys[snapshot.key] = struct{}{}
+	} else {
+		delete(sm.temporalIndexCompleteKeys, snapshot.key)
+	}
+	if snapshot.incomplete {
+		sm.temporalIndexIncompleteKeys[snapshot.key] = struct{}{}
+	} else {
+		delete(sm.temporalIndexIncompleteKeys, snapshot.key)
+	}
 }
 
 func (sm *SchemaManager) markTemporalIndexCreated(c Constraint, complete bool) {
@@ -113,25 +146,58 @@ func MarkNewTemporalConstraintsForEngine(engine Engine, schema *SchemaManager, c
 	if engine == nil || schema == nil {
 		return nil
 	}
+	badgerEngine, _ := UnwrapEngine(engine).(*BadgerEngine)
 	for _, c := range constraints {
 		if c.Type != ConstraintTemporal || c.EntityType == ConstraintEntityRelationship {
 			continue
 		}
-		empty, err := labelHasNoNodes(engine, c.Label)
-		if err != nil {
-			return err
-		}
-		if !empty {
-			badgerEngine, ok := UnwrapEngine(engine).(*BadgerEngine)
-			if !ok {
-				schema.markTemporalIndexCreated(c, false)
-				continue
-			}
-			if err := badgerEngine.backfillTemporalIndexForLabel(engine, c.Label); err != nil {
+		if badgerEngine == nil {
+			empty, err := labelHasNoNodes(engine, c.Label)
+			if err != nil {
 				return err
 			}
+			schema.markTemporalIndexCreated(c, empty)
+			continue
 		}
-		schema.markTemporalIndexCreated(c, true)
+		if err := func() error {
+
+			ctx := context.Background()
+			lifecycle, err := badgerEngine.beginMaintenanceWrite(ctx, engineScope(engine))
+			if err != nil {
+				return err
+			}
+			defer lifecycle.finish()
+			empty, err := labelHasNoNodes(engine, c.Label)
+			if err != nil {
+				return err
+			}
+			if !empty {
+				if err := badgerEngine.backfillTemporalIndexForLabel(ctx, engine, c.Label); err != nil {
+					return err
+				}
+			}
+			schema.markTemporalIndexCreated(c, true)
+			return nil
+
+		}(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// engineScope is the database a scoped wrapper of the engine serves, or nil
+// (the whole store) for an unscoped engine.
+func engineScope(engine Engine) []string {
+	for current := engine; current != nil; {
+		if scoped, ok := current.(interface{ Namespace() string }); ok {
+			return []string{scoped.Namespace()}
+		}
+		wrapper, ok := current.(EngineUnwrapper)
+		if !ok {
+			return nil
+		}
+		current = wrapper.GetInnerEngine()
 	}
 	return nil
 }
@@ -139,10 +205,12 @@ func MarkNewTemporalConstraintsForEngine(engine Engine, schema *SchemaManager, c
 // backfillTemporalIndexForLabel writes the temporal history entries (and
 // current pointers) of every stored node of label visible through engine (a
 // database-scoped wrapper of b), in chunks: the same per-node work as
-// RebuildTemporalIndexes, for one label instead of the whole store.
-func (b *BadgerEngine) backfillTemporalIndexForLabel(engine Engine, label string) error {
+// RebuildTemporalIndexes, for one label instead of the whole store. ctx is the
+// maintenance write's own lifetime, passed from the lease its caller holds
+// (MarkNewTemporalConstraintsForEngine), never a default chosen here.
+func (b *BadgerEngine) backfillTemporalIndexForLabel(ctx context.Context, engine Engine, label string) error {
 	var ids []NodeID
-	if err := streamNodesByLabelForValidation(engine, label, []string{}, func(node *Node) error {
+	if err := StreamStoredNodesByLabelProjected(ctx, engine, label, []string{}, func(node *Node) error {
 		if node != nil {
 			ids = append(ids, EnsureNodeIDDatabasePrefixForEngine(engine, node.ID))
 		}
@@ -154,13 +222,13 @@ func (b *BadgerEngine) backfillTemporalIndexForLabel(engine Engine, label string
 	const chunk = 500
 	for start := 0; start < len(ids); start += chunk {
 		part := ids[start:min(start+chunk, len(ids))]
-		if err := b.withUpdate(func(txn *badger.Txn) error {
+		if err := b.withUpdate(ctx, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
 			for _, id := range part {
 				node, err := b.loadNodeForTemporalTxn(txn, id, false)
 				if err != nil {
 					return err
 				}
-				if err := b.rebuildTemporalNodeInTxn(txn, node, asOf); err != nil {
+				if err := b.rebuildTemporalNodeInTxn(ctx, txn, node, asOf); err != nil {
 					return err
 				}
 			}
@@ -175,7 +243,9 @@ func (b *BadgerEngine) backfillTemporalIndexForLabel(engine Engine, label string
 var errStopLabelProbe = errors.New("label has nodes")
 
 func labelHasNoNodes(engine Engine, label string) (bool, error) {
-	err := streamNodesByLabelForValidation(engine, label, nil, func(node *Node) error {
+	// A label probe is a maintenance read: it runs on its own lifetime
+	// (context.Background), not on a statement read's context.
+	err := StreamStoredNodesByLabelProjected(context.Background(), engine, label, nil, func(node *Node) error {
 		if node == nil {
 			return nil
 		}
@@ -199,29 +269,27 @@ func (b *BadgerEngine) temporalKeyHistoryNodesLatest(ctx context.Context, namesp
 	if !ok {
 		return nil, false, nil
 	}
-	prefix := temporalHistoryPrefix(target.desc)
-	err = b.withView(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-		defer it.Close()
-		for it.Rewind(); it.Valid(); it.Next() {
-			if ctx != nil {
-				if err := ctx.Err(); err != nil {
-					return err
-				}
-			}
-			id := extractNodeIDFromTemporalHistoryKey(it.Item().KeyCopy(nil), len(prefix))
-			if id == "" {
-				continue
-			}
-			stored, err := b.loadNodeForTemporalTxn(txn, id, false)
-			if err != nil {
-				return err
-			}
-			if stored != nil {
-				nodes = append(nodes, stored)
-			}
+	var overlay []*Node
+	var touched map[NodeID]bool
+	var captureErr error
+	err = b.withReadView(ctx, func(w *WriteBehindBuffer) {
+		pendingNodes, err := b.readBufferedEntities(ctx, w, storedRead, bufferedEntityRead{kind: bufferedLabel, label: c.Label})
+		if err != nil {
+			captureErr = err
+			return
 		}
-		return nil
+		overlay, touched = pendingNodes.nodes, pendingNodes.nodesTouched
+	}, func(txn *badger.Txn) error {
+		if captureErr != nil {
+			return captureErr // the canceled capture retires the scan
+		}
+		_, _, err := b.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{ctx: ctx, touched: touched, latest: func(node *Node) (bool, error) { nodes = append(nodes, node); return true, nil }})
+		return err
 	})
+	for _, n := range overlay {
+		if namespace == "" || nodeIDInScope(n.ID, namespace+":") {
+			nodes = append(nodes, copyNode(n))
+		}
+	}
 	return nodes, true, err
 }

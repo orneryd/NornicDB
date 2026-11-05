@@ -47,11 +47,14 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/rerankwire"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/voyage"
 )
 
@@ -61,8 +64,8 @@ import (
 // response, timeout), Rerank returns an error instead of a pass-through
 // ranking. The Service owns the fail-open: a search keeps its fused order and
 // reports the fallback (SearchFallbackRerankFailed), and RerankCandidates
-// returns the candidates in their given order. A disabled reranker passes
-// candidates through unchanged.
+// returns that canonical failure through its existing error result. A disabled
+// reranker passes candidates through unchanged.
 type Reranker interface {
 	// Name identifies the reranker implementation for observability.
 	// Examples: "cross_encoder", "heimdall_llm".
@@ -75,7 +78,10 @@ type Reranker interface {
 	// cheap; Search() should not call it on the hot path.
 	IsAvailable(ctx context.Context) bool
 
-	// Rerank reorders candidates for a query.
+	// Rerank returns the raw provider-selected candidate indices in provider
+	// order. A unique in-range subset is valid. Implementations preserve every
+	// returned entry; search.Service alone validates it and completes a valid
+	// subset with omitted candidates in their original order.
 	Rerank(ctx context.Context, query string, candidates []RerankCandidate) ([]RerankResult, error)
 }
 
@@ -148,8 +154,24 @@ type RerankCandidate = voyage.Candidate
 // RerankResult is a reranked document with new score.
 type RerankResult = voyage.RankedCandidate
 
+func rerankResultForIndex(candidates []RerankCandidate, index, newRank int, score float64) RerankResult {
+	result := RerankResult{
+		OriginalRank: index + 1,
+		NewRank:      newRank,
+		CrossScore:   score,
+		FinalScore:   score,
+	}
+	if index >= 0 && index < len(candidates) {
+		candidate := candidates[index]
+		result.ID = candidate.ID
+		result.Content = candidate.Content
+		result.BiScore = candidate.Score
+	}
+	return result
+}
+
 // Rerank takes a query and candidates, returns reranked results.
-func (ce *CrossEncoder) Rerank(ctx context.Context, query string, candidates []RerankCandidate) ([]RerankResult, error) {
+func (ce *CrossEncoder) Rerank(ctx context.Context, query string, candidates []RerankCandidate) (_ []RerankResult, err error) {
 	if ce == nil || ce.config == nil || !ce.config.Enabled {
 		return voyage.PassThrough(candidates), nil
 	}
@@ -157,6 +179,10 @@ func (ce *CrossEncoder) Rerank(ctx context.Context, query string, candidates []R
 	if len(candidates) == 0 {
 		return []RerankResult{}, nil
 	}
+
+	defer func() {
+		err = observability.RedactClientError(err, ce.config.APIURL, ce.config.APIKey)
+	}()
 
 	// Limit candidates to TopK (if configured)
 	topK := ce.config.TopK
@@ -167,44 +193,6 @@ func (ce *CrossEncoder) Rerank(ctx context.Context, query string, candidates []R
 		candidates = candidates[:topK]
 	}
 
-	// Call reranking API
-	scores, err := ce.callRerankAPI(ctx, query, candidates)
-	if err != nil {
-		return nil, err
-	}
-
-	// Build results with new scores
-	results := make([]RerankResult, len(candidates))
-	for i, c := range candidates {
-		results[i] = RerankResult{
-			ID:           c.ID,
-			Content:      c.Content,
-			OriginalRank: i + 1,
-			BiScore:      c.Score,
-			CrossScore:   scores[i],
-			FinalScore:   scores[i], // Use cross-encoder score as final
-		}
-	}
-
-	// Sort by cross-encoder score descending
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].CrossScore > results[j].CrossScore
-	})
-
-	// Assign new ranks and filter by MinScore
-	filtered := make([]RerankResult, 0, len(results))
-	for i := range results {
-		results[i].NewRank = i + 1
-		if results[i].CrossScore >= ce.config.MinScore {
-			filtered = append(filtered, results[i])
-		}
-	}
-
-	return filtered, nil
-}
-
-// callRerankAPI calls the cross-encoder service.
-func (ce *CrossEncoder) callRerankAPI(ctx context.Context, query string, candidates []RerankCandidate) ([]float64, error) {
 	// Build request body - supports multiple formats
 	// Format 1: Cohere-style
 	// Format 2: HuggingFace TEI-style
@@ -228,7 +216,11 @@ func (ce *CrossEncoder) callRerankAPI(ctx context.Context, query string, candida
 		return nil, localizedError(localization.SearchRerankRequestMarshalFailed(err), err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", ce.config.APIURL, bytes.NewReader(body))
+	endpoint, err := observability.ComposeRequestURL(ce.config.APIURL, "", observability.AppendRequestRoute)
+	if err != nil {
+		return nil, localizedError(localization.SearchRerankRequestCreationFailed(err), err)
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, localizedError(localization.SearchRerankRequestCreationFailed(err), err)
 	}
@@ -251,54 +243,61 @@ func (ce *CrossEncoder) callRerankAPI(ctx context.Context, query string, candida
 	// Parse response - handle multiple formats
 	var result struct {
 		// Cohere format
-		Results []struct {
-			Index          int     `json:"index"`
-			RelevanceScore float64 `json:"relevance_score"`
-		} `json:"results"`
+		Results []rerankwire.IndexedResult `json:"results"`
 
 		// HuggingFace TEI format
-		Scores []float64 `json:"scores"`
+		Scores []rerankwire.Required[float64] `json:"scores"`
 
 		// Simple format
-		Rankings []struct {
-			Index int     `json:"index"`
-			Score float64 `json:"score"`
-		} `json:"rankings"`
+		Rankings []rerankwire.IndexedResult `json:"rankings"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := rerankwire.DecodeResponse(resp.Body, &result); err != nil {
 		return nil, localizedError(localization.SearchRerankResponseParseFailed(err), err)
 	}
 
-	scores := make([]float64, len(candidates))
-
-	// Handle Cohere format
-	if len(result.Results) > 0 {
-		for _, r := range result.Results {
-			if r.Index < len(scores) {
-				scores[r.Index] = r.RelevanceScore
-			}
-		}
-		return scores, nil
+	scores, err := acceptIndexedRerankScores(result.Results, result.Scores, result.Rankings, len(candidates))
+	if err != nil {
+		return nil, err
 	}
 
-	// Handle HuggingFace TEI format
-	if len(result.Scores) > 0 {
-		copy(scores, result.Scores)
-		return scores, nil
+	// Preserve every provider entry, including duplicates and invalid indices,
+	// for the shared Service validator.
+	results := make([]RerankResult, len(scores))
+	for i, score := range scores {
+		results[i] = rerankResultForIndex(candidates, score.index, i+1, score.score)
 	}
 
-	// Handle simple format
-	if len(result.Rankings) > 0 {
-		for _, r := range result.Rankings {
-			if r.Index < len(scores) {
-				scores[r.Index] = r.Score
-			}
-		}
-		return scores, nil
+	// Sort by cross-encoder score descending
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].CrossScore > results[j].CrossScore
+	})
+
+	// Assign new ranks and mark provider filtering. Service validates before it
+	// removes filtered entries, so malformed low-score entries cannot disappear.
+	for i := range results {
+		results[i].NewRank = i + 1
+		results[i].Filtered = results[i].CrossScore < ce.config.MinScore
 	}
 
-	return nil, localizedError(localization.SearchRerankResponseUnrecognized(), nil)
+	return results, nil
+}
+
+type indexedRerankScore struct {
+	index int
+	score float64
+}
+
+func acceptIndexedRerankScores(results []rerankwire.IndexedResult, scores []rerankwire.Required[float64], rankings []rerankwire.IndexedResult, population int) ([]indexedRerankScore, error) {
+	accepted, err := rerankwire.AcceptCrossEncoder(results, scores, rankings, population)
+	if err != nil {
+		return nil, err
+	}
+	normalized := make([]indexedRerankScore, len(accepted))
+	for index, result := range accepted {
+		normalized[index] = indexedRerankScore{index: result.Index, score: result.Score}
+	}
+	return normalized, nil
 }
 
 // IsAvailable checks if the reranking service is available.
@@ -311,7 +310,16 @@ func (ce *CrossEncoder) IsAvailable(ctx context.Context) bool {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, "GET", strings.TrimSuffix(ce.config.APIURL, "/rerank")+"/health", nil)
+	configured, err := url.Parse(ce.config.APIURL)
+	if err != nil {
+		return false
+	}
+	healthPath := strings.TrimSuffix(configured.EscapedPath(), "/rerank") + "/health"
+	healthURL, err := observability.ComposeRequestURL(ce.config.APIURL, healthPath, observability.MergeRequestFollowup)
+	if err != nil {
+		return false
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", healthURL, nil)
 	if err != nil {
 		return false
 	}

@@ -232,12 +232,12 @@ func TestErrors(t *testing.T) {
 }
 
 func TestCollectLabels(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
-	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"Person", "Employee"}, Properties: map[string]interface{}{}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:n1", Labels: []string{"Person", "Employee"}, Properties: map[string]interface{}{}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:n2", Labels: []string{"Person", "Manager"}, Properties: map[string]interface{}{}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:n2", Labels: []string{"Person", "Manager"}, Properties: map[string]interface{}{}})
 	require.NoError(t, err)
 
 	labels, err := CollectLabels(context.Background(), engine)
@@ -247,15 +247,15 @@ func TestCollectLabels(t *testing.T) {
 }
 
 func TestCollectEdgeTypes(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
-	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"A"}, Properties: map[string]interface{}{}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:n1", Labels: []string{"A"}, Properties: map[string]interface{}{}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:n2", Labels: []string{"B"}, Properties: map[string]interface{}{}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:n2", Labels: []string{"B"}, Properties: map[string]interface{}{}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:n1", EndNode: "test:n2", Type: "KNOWS", Properties: map[string]interface{}{}}))
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e2", StartNode: "test:n1", EndNode: "test:n2", Type: "LIKES", Properties: map[string]interface{}{}}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:n1", EndNode: "test:n2", Type: "KNOWS", Properties: map[string]interface{}{}}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e2", StartNode: "test:n1", EndNode: "test:n2", Type: "LIKES", Properties: map[string]interface{}{}}))
 
 	types, err := CollectEdgeTypes(context.Background(), engine)
 	require.NoError(t, err)
@@ -264,12 +264,12 @@ func TestCollectEdgeTypes(t *testing.T) {
 }
 
 func TestStreamNodesWithFallback(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
-	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"A"}, Properties: map[string]interface{}{}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:n1", Labels: []string{"A"}, Properties: map[string]interface{}{}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:n2", Labels: []string{"B"}, Properties: map[string]interface{}{}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:n2", Labels: []string{"B"}, Properties: map[string]interface{}{}})
 	require.NoError(t, err)
 
 	var count int
@@ -282,14 +282,14 @@ func TestStreamNodesWithFallback(t *testing.T) {
 }
 
 func TestStreamEdgesWithFallback(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
-	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"A"}, Properties: map[string]interface{}{}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:n1", Labels: []string{"A"}, Properties: map[string]interface{}{}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:n2", Labels: []string{"B"}, Properties: map[string]interface{}{}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:n2", Labels: []string{"B"}, Properties: map[string]interface{}{}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:n1", EndNode: "test:n2", Type: "R", Properties: map[string]interface{}{}}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:n1", EndNode: "test:n2", Type: "R", Properties: map[string]interface{}{}}))
 
 	var count int
 	err = StreamEdgesWithFallback(context.Background(), engine, 10, func(edge *Edge) error {

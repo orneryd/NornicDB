@@ -164,7 +164,8 @@ func TestDetectQueryPattern_MutualRelationship(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 
-			info := DetectQueryPattern(ctx, tt.query)
+			info, err := DetectQueryPattern(ctx, tt.query)
+			require.NoError(t, err)
 			if info.Pattern != tt.expected {
 				t.Errorf("Pattern = %v, want %v", info.Pattern, tt.expected)
 			}
@@ -216,7 +217,8 @@ func TestDetectQueryPattern_IncomingCountAgg(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 
-			info := DetectQueryPattern(ctx, tt.query)
+			info, err := DetectQueryPattern(ctx, tt.query)
+			require.NoError(t, err)
 			if info.Pattern != tt.expected {
 				t.Errorf("Pattern = %v, want %v", info.Pattern, tt.expected)
 			}
@@ -255,7 +257,8 @@ func TestDetectQueryPattern_OutgoingCountAgg(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 
-			info := DetectQueryPattern(ctx, tt.query)
+			info, err := DetectQueryPattern(ctx, tt.query)
+			require.NoError(t, err)
 			if info.Pattern != tt.expected {
 				t.Errorf("Pattern = %v, want %v", info.Pattern, tt.expected)
 			}
@@ -273,20 +276,20 @@ func TestExecuteEdgePropertyAggOptimized_Branches(t *testing.T) {
 	ctx := context.Background()
 
 	// End nodes (group targets)
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:         "p1",
 		Labels:     []string{"Product"},
 		Properties: map[string]interface{}{"name": "P1"},
 	})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:         "p2",
 		Labels:     []string{"Product"},
 		Properties: map[string]interface{}{"name": "P2"},
 	})
 	require.NoError(t, err)
 	// Start node just to make edges realistic.
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:         "c1",
 		Labels:     []string{"Customer"},
 		Properties: map[string]interface{}{"name": "C1"},
@@ -294,28 +297,28 @@ func TestExecuteEdgePropertyAggOptimized_Branches(t *testing.T) {
 	require.NoError(t, err)
 
 	// Numeric + int + missing + non-numeric + dangling end-node branches.
-	require.NoError(t, store.CreateEdge(&storage.Edge{
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{
 		ID:         "e1",
 		StartNode:  "c1",
 		EndNode:    "p1",
 		Type:       "REVIEWED",
 		Properties: map[string]interface{}{"rating": float64(4.5)},
 	}))
-	require.NoError(t, store.CreateEdge(&storage.Edge{
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{
 		ID:         "e2",
 		StartNode:  "c1",
 		EndNode:    "p1",
 		Type:       "REVIEWED",
 		Properties: map[string]interface{}{"rating": int64(5)},
 	}))
-	require.NoError(t, store.CreateEdge(&storage.Edge{
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{
 		ID:         "e3",
 		StartNode:  "c1",
 		EndNode:    "p2",
 		Type:       "REVIEWED",
 		Properties: map[string]interface{}{"other": 9}, // missing rating -> skipped
 	}))
-	require.NoError(t, store.CreateEdge(&storage.Edge{
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{
 		ID:         "e4",
 		StartNode:  "c1",
 		EndNode:    "p2",
@@ -347,7 +350,7 @@ func TestExecuteEdgePropertyAggOptimized_Branches(t *testing.T) {
 
 	// getNodeCached nil branch for missing node ID.
 	cache := map[storage.NodeID]*storage.Node{}
-	assert.Nil(t, exec.getNodeCached("missing-end", cache))
+	assert.Nil(t, exec.getNodeCached(t.Context(), "missing-end", cache))
 }
 
 func TestDetectQueryPattern_EdgePropertyAgg(t *testing.T) {
@@ -381,7 +384,8 @@ func TestDetectQueryPattern_EdgePropertyAgg(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 
-			info := DetectQueryPattern(ctx, tt.query)
+			info, err := DetectQueryPattern(ctx, tt.query)
+			require.NoError(t, err)
 			if info.Pattern != tt.expected {
 				t.Errorf("Pattern = %v, want %v", info.Pattern, tt.expected)
 			}
@@ -435,7 +439,8 @@ func TestDetectQueryPattern_LargeResultSet(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 
-			info := DetectQueryPattern(ctx, tt.query)
+			info, err := DetectQueryPattern(ctx, tt.query)
+			require.NoError(t, err)
 			if info.Pattern != tt.expected {
 				t.Errorf("Pattern = %v, want %v", info.Pattern, tt.expected)
 			}
@@ -499,7 +504,8 @@ func TestOptimizedMutualRelationship(t *testing.T) {
 	query := "MATCH (a:Person)-[:FOLLOWS]->(b:Person)-[:FOLLOWS]->(a) RETURN a.name, b.name"
 
 	// Detect pattern
-	info := DetectQueryPattern(ctx, query)
+	info, err := DetectQueryPattern(ctx, query)
+	require.NoError(t, err)
 	assert.Equal(t, PatternMutualRelationship, info.Pattern)
 	assert.Equal(t, "FOLLOWS", info.RelType)
 
@@ -530,7 +536,8 @@ func TestOptimizedMutualRelationshipWithLimit(t *testing.T) {
 
 	query := "MATCH (a:Person)-[:FOLLOWS]->(b:Person)-[:FOLLOWS]->(a) RETURN a.name, b.name LIMIT 1"
 
-	info := DetectQueryPattern(ctx, query)
+	info, err := DetectQueryPattern(ctx, query)
+	require.NoError(t, err)
 	result, ok := exec.ExecuteOptimized(ctx, query, info)
 	require.True(t, ok)
 	require.NotNil(t, result)
@@ -545,7 +552,8 @@ func TestOptimizedIncomingCount(t *testing.T) {
 
 	query := "MATCH (p:Person)<-[:FOLLOWS]-(follower:Person) RETURN p.name, count(follower) as followers ORDER BY followers DESC LIMIT 10"
 
-	info := DetectQueryPattern(ctx, query)
+	info, err := DetectQueryPattern(ctx, query)
+	require.NoError(t, err)
 	assert.Equal(t, PatternIncomingCountAgg, info.Pattern)
 
 	result, ok := exec.ExecuteOptimized(ctx, query, info)
@@ -569,7 +577,8 @@ func TestOptimizedOutgoingCount(t *testing.T) {
 
 	query := "MATCH (p:Person)-[:FOLLOWS]->(following:Person) RETURN p.name, count(following) as following"
 
-	info := DetectQueryPattern(ctx, query)
+	info, err := DetectQueryPattern(ctx, query)
+	require.NoError(t, err)
 	assert.Equal(t, PatternOutgoingCountAgg, info.Pattern)
 
 	result, ok := exec.ExecuteOptimized(ctx, query, info)
@@ -586,7 +595,8 @@ func TestOptimizedEdgePropertyAgg(t *testing.T) {
 
 	query := "MATCH (c:Customer)-[r:REVIEWED]->(p:Product) RETURN p.name, avg(r.rating) as avgRating, count(r) as reviewCount ORDER BY avgRating DESC LIMIT 10"
 
-	info := DetectQueryPattern(ctx, query)
+	info, err := DetectQueryPattern(ctx, query)
+	require.NoError(t, err)
 	assert.Equal(t, PatternEdgePropertyAgg, info.Pattern)
 	assert.Equal(t, "rating", info.AggProperty)
 
@@ -670,7 +680,8 @@ func TestOptimized_EmptyDatabase(t *testing.T) {
 
 	// Mutual relationship on empty DB
 	query := "MATCH (a)-[:FOLLOWS]->(b)-[:FOLLOWS]->(a) RETURN a, b"
-	info := DetectQueryPattern(ctx, query)
+	info, err := DetectQueryPattern(ctx, query)
+	require.NoError(t, err)
 
 	result, ok := exec.ExecuteOptimized(ctx, query, info)
 	if ok {
@@ -684,7 +695,8 @@ func TestOptimized_NoMatchingRelType(t *testing.T) {
 
 	// Query for relationship type that doesn't exist
 	query := "MATCH (a)-[:NONEXISTENT]->(b)-[:NONEXISTENT]->(a) RETURN a, b"
-	info := DetectQueryPattern(ctx, query)
+	info, err := DetectQueryPattern(ctx, query)
+	require.NoError(t, err)
 
 	result, ok := exec.ExecuteOptimized(ctx, query, info)
 	if ok {
@@ -699,7 +711,8 @@ func TestOptimized_ZeroLimit(t *testing.T) {
 	// LIMIT 0 is detected but falls through to generic execution
 	// since 0 is not > 100 (large result set threshold)
 	query := "MATCH (p:Person)<-[:FOLLOWS]-(f) RETURN p.name, count(f) LIMIT 0"
-	info := DetectQueryPattern(ctx, query)
+	info, err := DetectQueryPattern(ctx, query)
+	require.NoError(t, err)
 
 	// Verify pattern is detected correctly
 	assert.Equal(t, PatternIncomingCountAgg, info.Pattern)
@@ -730,7 +743,8 @@ func TestGetNodeCached(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get all nodes to find the ID
-	nodes := store.GetAllNodes()
+	nodes, err := store.AllNodes(ctx)
+	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	nodeID := nodes[0].ID
 
@@ -738,7 +752,7 @@ func TestGetNodeCached(t *testing.T) {
 	cache := make(map[storage.NodeID]*storage.Node)
 
 	// First call should fetch from storage
-	node1 := exec.getNodeCached(nodeID, cache)
+	node1 := exec.getNodeCached(t.Context(), nodeID, cache)
 	require.NotNil(t, node1)
 	assert.Equal(t, "TestNode", node1.Properties["name"])
 
@@ -746,7 +760,7 @@ func TestGetNodeCached(t *testing.T) {
 	assert.Contains(t, cache, nodeID)
 
 	// Second call should use cache
-	node2 := exec.getNodeCached(nodeID, cache)
+	node2 := exec.getNodeCached(t.Context(), nodeID, cache)
 	require.NotNil(t, node2)
 	assert.Equal(t, node1, node2, "Should return same cached node")
 }
@@ -787,14 +801,15 @@ func TestBatchGetNodes(t *testing.T) {
 	}
 
 	// Get all node IDs
-	allNodes := store.GetAllNodes()
+	allNodes, err := store.AllNodes(ctx)
+	require.NoError(t, err)
 	ids := make([]storage.NodeID, len(allNodes))
 	for i, n := range allNodes {
 		ids[i] = n.ID
 	}
 
 	// Batch get
-	result := exec.BatchGetNodes(ids)
+	result := exec.BatchGetNodes(ctx, ids)
 	assert.Len(t, result, 3, "Should return all 3 nodes")
 
 	for _, id := range ids {
@@ -874,5 +889,37 @@ func TestParallelTraversalConsistency(t *testing.T) {
 	// All runs should produce same count
 	for i := 1; i < len(results); i++ {
 		assert.Equal(t, results[0], results[i], "Parallel execution should be deterministic in count")
+	}
+}
+
+// TestOptimizedRelationshipDirectionContract pins the public dispatcher's actual
+// row values, rather than merely checking that a direction-specific path ran.
+func TestOptimizedRelationshipDirectionContract(t *testing.T) {
+	exec := setupSocialNetwork(t)
+	for _, tc := range []struct {
+		name, query string
+		want        [][]interface{}
+	}{
+		{"incoming", "MATCH (p:Person)<-[:FOLLOWS]-(follower:Person) RETURN p.name, count(follower) AS followers", [][]interface{}{{"User1", int64(3)}, {"User2", int64(2)}, {"User3", int64(1)}, {"User4", int64(1)}}},
+		{"outgoing", "MATCH (p:Person)-[:FOLLOWS]->(following:Person) RETURN p.name, count(following) AS following", [][]interface{}{{"User1", int64(2)}, {"User2", int64(1)}, {"User3", int64(1)}, {"User4", int64(1)}, {"User5", int64(2)}}},
+		{"incoming limit", "MATCH (p:Person)<-[:FOLLOWS]-(follower:Person) RETURN p.name, count(follower) AS followers ORDER BY followers DESC LIMIT 1", [][]interface{}{{"User1", int64(3)}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			info, err := DetectQueryPattern(ctx, tc.query)
+			require.NoError(t, err)
+			result, handled := exec.ExecuteOptimized(ctx, tc.query, info)
+			require.True(t, handled)
+			require.NotNil(t, result)
+			require.NotNil(t, result.Stats)
+			require.ElementsMatch(t, tc.want, result.Rows)
+			require.Len(t, result.Columns, 2)
+			require.Equal(t, "p.name", result.Columns[0])
+			if tc.name == "outgoing" {
+				require.Equal(t, "following", result.Columns[1])
+			} else {
+				require.Equal(t, "followers", result.Columns[1])
+			}
+		})
 	}
 }

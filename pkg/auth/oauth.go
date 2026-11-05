@@ -36,13 +36,15 @@
 //	state, authURL, err := oauthMgr.GenerateAuthURL("http://localhost:7474")
 //
 //	// Handle callback
-//	user, token, err := oauthMgr.HandleCallback(code, state)
+//	user, token, expiry, err := oauthMgr.HandleCallback(r.Context(), code, state)
 package auth
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/orneryd/nornicdb/pkg/security"
 	"io"
 	"net/http"
 	"net/url"
@@ -50,6 +52,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 // OAuthManager manages OAuth 2.0 authentication flow and token validation.
@@ -121,6 +125,9 @@ func (m *OAuthManager) GenerateAuthURL(baseURL string) (string, string, error) {
 	if !config.IsConfigured() {
 		return "", "", fmt.Errorf("OAuth not configured")
 	}
+	if err := security.ValidateURL(config.Issuer, security.URLPolicy{SchemePolicy: security.URLAbsoluteScheme, MaxLength: -1, HostPolicy: security.URLAnyHost, RejectCredentials: true}); err != nil {
+		return "", "", fmt.Errorf("invalid OAuth issuer: %w", err)
+	}
 
 	// Generate state parameter for CSRF protection
 	state := base64.URLEncoding.EncodeToString([]byte(fmt.Sprintf("%d", time.Now().UnixNano())))
@@ -134,8 +141,12 @@ func (m *OAuthManager) GenerateAuthURL(baseURL string) (string, string, error) {
 	go m.cleanupExpiredStates()
 
 	// Build OAuth authorization URL (URL-encode all query parameters)
-	authURL := fmt.Sprintf("%s/oauth2/v1/authorize?response_type=code&client_id=%s&redirect_uri=%s&state=%s&scope=%s",
-		config.Issuer, config.ClientID, url.QueryEscape(config.CallbackURL), url.QueryEscape(state), url.QueryEscape("openid profile email"))
+	authRoute := fmt.Sprintf("/oauth2/v1/authorize?response_type=code&client_id=%s&redirect_uri=%s&state=%s&scope=%s",
+		config.ClientID, url.QueryEscape(config.CallbackURL), url.QueryEscape(state), url.QueryEscape("openid profile email"))
+	authURL, err := observability.ComposeRequestURL(config.Issuer, authRoute, observability.AppendRequestRoute)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to compose OAuth authorization URL: %w", observability.RedactError(err, observability.ClientCredentials(config.Issuer, config.ClientSecret)...))
+	}
 
 	return state, authURL, nil
 }
@@ -175,14 +186,23 @@ func (m *OAuthManager) cleanupExpiredStates() {
 }
 
 // ExchangeCode exchanges an authorization code for an access token.
-func (m *OAuthManager) ExchangeCode(code string) (*OAuthTokenData, error) {
+func (m *OAuthManager) ExchangeCode(code string) (_ *OAuthTokenData, err error) {
 	config := GetOAuthConfig()
+	defer func() {
+		err = observability.RedactClientError(err, config.Issuer, config.ClientSecret, code)
+	}()
 	if !config.IsConfigured() {
 		return nil, fmt.Errorf("OAuth not configured")
 	}
+	if err := security.ValidateURL(config.Issuer, security.URLPolicy{SchemePolicy: security.URLAbsoluteScheme, MaxLength: -1, HostPolicy: security.URLAnyHost, RejectCredentials: true}); err != nil {
+		return nil, fmt.Errorf("invalid OAuth issuer: %w", err)
+	}
 
 	// Exchange authorization code for access token
-	tokenURL := fmt.Sprintf("%s/oauth2/v1/token", config.Issuer)
+	tokenURL, err := observability.ComposeRequestURL(config.Issuer, "/oauth2/v1/token", observability.AppendRequestRoute)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compose OAuth token URL: %w", observability.RedactError(err, observability.ClientCredentials(config.Issuer, config.ClientSecret, code)...))
+	}
 	reqBody := url.Values{}
 	reqBody.Set("grant_type", "authorization_code")
 	reqBody.Set("code", code)
@@ -192,52 +212,61 @@ func (m *OAuthManager) ExchangeCode(code string) (*OAuthTokenData, error) {
 
 	tokenResp, err := http.PostForm(tokenURL, reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("failed to exchange token: %w", err)
+		return nil, fmt.Errorf("failed to exchange token: %w", observability.RedactError(err, observability.ClientCredentials(config.Issuer, config.ClientSecret, code)...))
 	}
 	defer tokenResp.Body.Close()
 
 	if tokenResp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(tokenResp.Body)
-		return nil, fmt.Errorf("token exchange failed: status %d, body: %s", tokenResp.StatusCode, string(body))
+		return nil, fmt.Errorf("token exchange failed: status %d, body: %s", tokenResp.StatusCode, observability.RedactText(string(body), observability.ClientCredentials(config.Issuer, config.ClientSecret, code)...))
 	}
 
 	var tokenData OAuthTokenData
 	if err := json.NewDecoder(tokenResp.Body).Decode(&tokenData); err != nil {
-		return nil, fmt.Errorf("failed to parse token response: %w", err)
+		return nil, fmt.Errorf("failed to parse token response: %w", observability.RedactError(err, observability.ClientCredentials(config.Issuer, config.ClientSecret, code)...))
 	}
 
 	return &tokenData, nil
 }
 
 // GetUserInfo retrieves user information from the OAuth provider.
-func (m *OAuthManager) GetUserInfo(accessToken string) (*OAuthUserInfo, error) {
+func (m *OAuthManager) GetUserInfo(accessToken string) (_ *OAuthUserInfo, err error) {
 	config := GetOAuthConfig()
+	defer func() {
+		err = observability.RedactClientError(err, config.Issuer, config.ClientSecret, accessToken)
+	}()
 	if !config.IsConfigured() {
 		return nil, fmt.Errorf("OAuth not configured")
 	}
+	if err := security.ValidateURL(config.Issuer, security.URLPolicy{SchemePolicy: security.URLAbsoluteScheme, MaxLength: -1, HostPolicy: security.URLAnyHost, RejectCredentials: true}); err != nil {
+		return nil, fmt.Errorf("invalid OAuth issuer: %w", err)
+	}
 
 	// Get user info from OAuth provider
-	userinfoURL := fmt.Sprintf("%s/oauth2/v1/userinfo", config.Issuer)
+	userinfoURL, err := observability.ComposeRequestURL(config.Issuer, "/oauth2/v1/userinfo", observability.AppendRequestRoute)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compose OAuth userinfo URL: %w", observability.RedactError(err, observability.ClientCredentials(config.Issuer, config.ClientSecret, accessToken)...))
+	}
 	userinfoReq, err := http.NewRequest(http.MethodGet, userinfoURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create userinfo request: %w", err)
+		return nil, fmt.Errorf("failed to create userinfo request: %w", observability.RedactError(err, observability.ClientCredentials(config.Issuer, config.ClientSecret, accessToken)...))
 	}
 	userinfoReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", accessToken))
 
 	userinfoResp, err := http.DefaultClient.Do(userinfoReq)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get userinfo: %w", err)
+		return nil, fmt.Errorf("failed to get userinfo: %w", observability.RedactError(err, observability.ClientCredentials(config.Issuer, config.ClientSecret, accessToken)...))
 	}
 	defer userinfoResp.Body.Close()
 
 	if userinfoResp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(userinfoResp.Body)
-		return nil, fmt.Errorf("userinfo request failed: status %d, body: %s", userinfoResp.StatusCode, string(body))
+		return nil, fmt.Errorf("userinfo request failed: status %d, body: %s", userinfoResp.StatusCode, observability.RedactText(string(body), observability.ClientCredentials(config.Issuer, config.ClientSecret, accessToken)...))
 	}
 
 	var userInfo OAuthUserInfo
 	if err := json.NewDecoder(userinfoResp.Body).Decode(&userInfo); err != nil {
-		return nil, fmt.Errorf("failed to parse userinfo: %w", err)
+		return nil, fmt.Errorf("failed to parse userinfo: %w", observability.RedactError(err, observability.ClientCredentials(config.Issuer, config.ClientSecret, accessToken)...))
 	}
 
 	return &userInfo, nil
@@ -246,7 +275,12 @@ func (m *OAuthManager) GetUserInfo(accessToken string) (*OAuthUserInfo, error) {
 // HandleCallback handles the OAuth callback, exchanges code for token, gets user info,
 // and creates/updates the NornicDB user account.
 // Returns the user, NornicDB JWT token, and OAuth token expiry time.
-func (m *OAuthManager) HandleCallback(code, state string) (*User, string, time.Time, error) {
+//
+// ctx is the callback request's lifetime and reaches the account write it owns:
+// a canceled callback does not create an account or persist OAuth token
+// metadata. The metadata refresh after a successful account create stays
+// best-effort; the callback reports the account outcome, not that refresh.
+func (m *OAuthManager) HandleCallback(ctx context.Context, code, state string) (*User, string, time.Time, error) {
 	// Validate state
 	if err := m.ValidateState(state); err != nil {
 		return nil, "", time.Time{}, fmt.Errorf("invalid state: %w", err)
@@ -291,7 +325,7 @@ func (m *OAuthManager) HandleCallback(code, state string) (*User, string, time.T
 		// User doesn't exist - create them
 		// Use a random password since OAuth users don't need passwords
 		randomPassword := base64.URLEncoding.EncodeToString([]byte(fmt.Sprintf("%d", time.Now().UnixNano())))
-		user, err = m.authenticator.CreateUser(username, randomPassword, ConvertOAuthRoles(userInfo.Roles))
+		user, err = m.authenticator.CreateUser(ctx, username, randomPassword, ConvertOAuthRoles(userInfo.Roles))
 		if err != nil {
 			return nil, "", time.Time{}, fmt.Errorf("failed to create user: %w", err)
 		}
@@ -315,7 +349,7 @@ func (m *OAuthManager) HandleCallback(code, state string) (*User, string, time.T
 	}
 
 	// Persist OAuth token information to system database
-	if err := m.authenticator.UpdateUser(username, user.Email, oauthMetadata); err != nil {
+	if err := m.authenticator.UpdateUser(ctx, username, user.Email, oauthMetadata); err != nil {
 		// Log error but don't fail - user can still authenticate
 		// Token validation will work from the in-memory cache
 	}
@@ -395,14 +429,23 @@ func (m *OAuthManager) ValidateOAuthToken(user *User) error {
 }
 
 // RefreshOAuthToken attempts to refresh an expired OAuth access token using a refresh token.
-func (m *OAuthManager) RefreshOAuthToken(user *User, refreshToken string) error {
+func (m *OAuthManager) RefreshOAuthToken(user *User, refreshToken string) (err error) {
 	config := GetOAuthConfig()
+	defer func() {
+		err = observability.RedactClientError(err, config.Issuer, config.ClientSecret, refreshToken)
+	}()
 	if !config.IsConfigured() {
 		return fmt.Errorf("OAuth configuration incomplete")
 	}
+	if err := security.ValidateURL(config.Issuer, security.URLPolicy{SchemePolicy: security.URLAbsoluteScheme, MaxLength: -1, HostPolicy: security.URLAnyHost, RejectCredentials: true}); err != nil {
+		return fmt.Errorf("invalid OAuth issuer: %w", err)
+	}
 
 	// Request new access token using refresh token
-	tokenURL := fmt.Sprintf("%s/oauth2/v1/token", config.Issuer)
+	tokenURL, err := observability.ComposeRequestURL(config.Issuer, "/oauth2/v1/token", observability.AppendRequestRoute)
+	if err != nil {
+		return fmt.Errorf("failed to compose OAuth token URL: %w", observability.RedactError(err, observability.ClientCredentials(config.Issuer, config.ClientSecret, refreshToken)...))
+	}
 	reqBody := url.Values{}
 	reqBody.Set("grant_type", "refresh_token")
 	reqBody.Set("refresh_token", refreshToken)
@@ -411,18 +454,18 @@ func (m *OAuthManager) RefreshOAuthToken(user *User, refreshToken string) error 
 
 	tokenResp, err := http.PostForm(tokenURL, reqBody)
 	if err != nil {
-		return fmt.Errorf("failed to refresh OAuth token: %w", err)
+		return fmt.Errorf("failed to refresh OAuth token: %w", observability.RedactError(err, observability.ClientCredentials(config.Issuer, config.ClientSecret, refreshToken)...))
 	}
 	defer tokenResp.Body.Close()
 
 	if tokenResp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(tokenResp.Body)
-		return fmt.Errorf("OAuth token refresh failed: status %d, body: %s", tokenResp.StatusCode, string(body))
+		return fmt.Errorf("OAuth token refresh failed: status %d, body: %s", tokenResp.StatusCode, observability.RedactText(string(body), observability.ClientCredentials(config.Issuer, config.ClientSecret, refreshToken)...))
 	}
 
 	var tokenData OAuthTokenData
 	if err := json.NewDecoder(tokenResp.Body).Decode(&tokenData); err != nil {
-		return fmt.Errorf("failed to parse refresh token response: %w", err)
+		return fmt.Errorf("failed to parse refresh token response: %w", observability.RedactError(err, observability.ClientCredentials(config.Issuer, config.ClientSecret, refreshToken)...))
 	}
 
 	// Calculate new expiry

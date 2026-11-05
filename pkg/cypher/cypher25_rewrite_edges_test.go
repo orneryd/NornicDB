@@ -17,13 +17,13 @@ func TestQueryStructureRewriteEdges(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "structure_edges"))
 	columns := exec
 
-	rewritten, rewrite, err := desugarQueryStructure("RETURN 1 AS x /* NEXT */ NEXT RETURN x + 1 AS y", columns)
+	rewritten, rewrite, err := desugarQueryStructure(context.Background(), "RETURN 1 AS x /* NEXT */ NEXT RETURN x + 1 AS y", columns)
 	require.NoError(t, err)
 	require.NotNil(t, rewrite)
 	require.Contains(t, rewritten, "/* NEXT */")
 	require.Equal(t, 1, countSubstring(rewritten, "CALL (*)"), "the commented NEXT isn't one")
 
-	_, rewrite, err = desugarQueryStructure("WITH {next: 1} AS n RETURN n. next AS v", columns)
+	_, rewrite, err = desugarQueryStructure(context.Background(), "WITH {next: 1} AS n RETURN n. next AS v", columns)
 	require.NoError(t, err)
 	require.Nil(t, rewrite, "a property key named next isn't NEXT")
 
@@ -34,7 +34,7 @@ func TestQueryStructureRewriteEdges(t *testing.T) {
 		"WHEN true THEN { WHEN true THEN RETURN 1 AS x ELSE RETURN 1 AS y } ELSE RETURN 1 AS x",
 		"WHEN true THEN RETURN COUNT { WHEN true THEN RETURN 1 AS x ELSE RETURN 2 AS y } AS c ELSE RETURN 1 AS c",
 	} {
-		_, _, err := desugarQueryStructure(query, columns)
+		_, _, err := desugarQueryStructure(context.Background(), query, columns)
 		require.Error(t, err, query)
 		requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 	}
@@ -47,7 +47,7 @@ func TestQueryStructureRewriteEdges(t *testing.T) {
 		"WHEN true",
 		"WHEN true THEN RETURN 1 AS x ELSE RETURN 2 AS x WHEN false THEN RETURN 3 AS x",
 	} {
-		rewritten, _, err := desugarQueryStructure(query, columns)
+		rewritten, _, err := desugarQueryStructure(context.Background(), query, columns)
 		require.NoError(t, err, query)
 		require.NotContains(t, rewritten, whenBranchVariable, query)
 	}
@@ -91,7 +91,7 @@ func TestCypher25ExpressionRewriteEdges(t *testing.T) {
 		`RETURN s"a{ s'x{' }" AS v`,
 		`RETURN s"abc`,
 	} {
-		_, _, err := desugarCypher25Expressions(query, false)
+		_, _, err := desugarCypher25Expressions(t.Context(), query, false)
 		require.Error(t, err, query)
 		requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 	}
@@ -103,7 +103,7 @@ func TestCypher25ExpressionRewriteEdges(t *testing.T) {
 		"RETURN {k: v IN {a: 1} | : 1} AS m",
 		"RETURN 1 /* s'x */ AS v",
 	} {
-		rewritten, _, err := desugarCypher25Expressions(query, false)
+		rewritten, _, err := desugarCypher25Expressions(t.Context(), query, false)
 		require.NoError(t, err, query)
 		require.NotContains(t, rewritten, mapFromPairsFunction, query)
 	}
@@ -132,7 +132,7 @@ func TestGroupByRewriteEdges(t *testing.T) {
 		require.NoError(t, err, query)
 		require.ElementsMatch(t, want, result.Rows, query)
 	}
-	edits, err := groupByEdits("MATCH (n) GROUP BY n")
+	edits, err := groupByEdits(t.Context(), "MATCH (n) GROUP BY n")
 	require.NoError(t, err)
 	require.Empty(t, edits, "a GROUP BY with no RETURN or WITH before it is left to the parser")
 }
@@ -172,7 +172,7 @@ func TestCypher25BatchTwoEdges(t *testing.T) {
 	// A string list a Go caller stored ([]string) is read as a list.
 	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "string_lists")
 	stringLists := NewStorageExecutor(engine)
-	_, err = engine.CreateNode(&storage.Node{ID: "s1", Labels: []string{"Tagged"}, Properties: map[string]interface{}{"tags": []string{"a", "b"}}})
+	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "s1", Labels: []string{"Tagged"}, Properties: map[string]interface{}{"tags": []string{"a", "b"}}})
 	require.NoError(t, err)
 	result, err = stringLists.Execute(ctx, "MATCH (n:Tagged) SET n.copy = [x IN n.tags] RETURN n.copy AS c", nil)
 	require.NoError(t, err)
@@ -244,7 +244,7 @@ func TestCypher25BatchTwoSweepCases(t *testing.T) {
 		requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 	}
 	// Map comprehensions build their map without APOC, with Neo4j's answers.
-	rewritten, _, err := desugarCypher25Expressions("RETURN {k: v IN {a: 1} | k: v} AS r", false)
+	rewritten, _, err := desugarCypher25Expressions(t.Context(), "RETURN {k: v IN {a: 1} | k: v} AS r", false)
 	require.NoError(t, err)
 	require.NotContains(t, strings.ToLower(rewritten), "apoc")
 	for query, want := range map[string]interface{}{

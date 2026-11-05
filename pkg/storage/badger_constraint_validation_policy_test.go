@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
@@ -118,7 +120,7 @@ func TestCompareValues_NumericConstraintValue_WidenedTypes(t *testing.T) {
 // ============================================================================
 
 func TestValidatePolicyForEdgesWithPrefix_DisallowedViolation(t *testing.T) {
-	eng, err := NewBadgerEngineInMemory()
+	eng, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer eng.Close()
 
@@ -128,13 +130,13 @@ func TestValidatePolicyForEdgesWithPrefix_DisallowedViolation(t *testing.T) {
 	// Create nodes
 	src := &Node{ID: "test:src", Labels: []string{"Person"}, Properties: map[string]any{"name": "Alice"}}
 	tgt := &Node{ID: "test:tgt", Labels: []string{"Company"}, Properties: map[string]any{"name": "Acme"}}
-	_, err = eng.CreateNode(src)
+	_, err = eng.CreateNode(t.Context(), src)
 	require.NoError(t, err)
-	_, err = eng.CreateNode(tgt)
+	_, err = eng.CreateNode(t.Context(), tgt)
 	require.NoError(t, err)
 
 	// Create edge
-	err = eng.CreateEdge(&Edge{
+	err = eng.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:src", EndNode: "test:tgt",
 		Type: "WORKS_AT", Properties: map[string]any{},
 	})
@@ -159,7 +161,7 @@ func TestValidatePolicyForEdgesWithPrefix_DisallowedViolation(t *testing.T) {
 		if outPrefix == nil {
 			t.Fatal("expected non-nil outgoing prefix")
 		}
-		return eng.validatePolicyForEdgesWithPrefixInTxn(txn, outPrefix, src, true, sm, ns)
+		return eng.validatePolicyForEdgesWithPrefixInTxn(t.Context(), txn, outPrefix, src, true, sm, ns)
 	})
 	require.Error(t, err)
 	var cve *ConstraintViolationError
@@ -171,7 +173,7 @@ func TestValidatePolicyForEdgesWithPrefix_DisallowedViolation(t *testing.T) {
 }
 
 func TestValidatePolicyForEdgesWithPrefix_AllowedViolation(t *testing.T) {
-	eng, err := NewBadgerEngineInMemory()
+	eng, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer eng.Close()
 
@@ -181,13 +183,13 @@ func TestValidatePolicyForEdgesWithPrefix_AllowedViolation(t *testing.T) {
 	// Create nodes — src is a Robot, tgt is a Company
 	src := &Node{ID: "test:robot", Labels: []string{"Robot"}, Properties: map[string]any{}}
 	tgt := &Node{ID: "test:corp", Labels: []string{"Company"}, Properties: map[string]any{}}
-	_, err = eng.CreateNode(src)
+	_, err = eng.CreateNode(t.Context(), src)
 	require.NoError(t, err)
-	_, err = eng.CreateNode(tgt)
+	_, err = eng.CreateNode(t.Context(), tgt)
 	require.NoError(t, err)
 
 	// Create edge: Robot -[:WORKS_AT]-> Company
-	err = eng.CreateEdge(&Edge{
+	err = eng.CreateEdge(t.Context(), &Edge{
 		ID: "test:e2", StartNode: "test:robot", EndNode: "test:corp",
 		Type: "WORKS_AT", Properties: map[string]any{},
 	})
@@ -210,7 +212,7 @@ func TestValidatePolicyForEdgesWithPrefix_AllowedViolation(t *testing.T) {
 		if outPrefix == nil {
 			t.Fatal("expected non-nil outgoing prefix")
 		}
-		return eng.validatePolicyForEdgesWithPrefixInTxn(txn, outPrefix, src, true, sm, ns)
+		return eng.validatePolicyForEdgesWithPrefixInTxn(t.Context(), txn, outPrefix, src, true, sm, ns)
 	})
 	require.Error(t, err)
 	var cve *ConstraintViolationError
@@ -220,7 +222,7 @@ func TestValidatePolicyForEdgesWithPrefix_AllowedViolation(t *testing.T) {
 }
 
 func TestValidatePolicyForEdgesWithPrefix_NoPolicies_NoError(t *testing.T) {
-	eng, err := NewBadgerEngineInMemory()
+	eng, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer eng.Close()
 
@@ -229,12 +231,12 @@ func TestValidatePolicyForEdgesWithPrefix_NoPolicies_NoError(t *testing.T) {
 
 	src := &Node{ID: "test:a", Labels: []string{"X"}, Properties: map[string]any{}}
 	tgt := &Node{ID: "test:b", Labels: []string{"Y"}, Properties: map[string]any{}}
-	_, err = eng.CreateNode(src)
+	_, err = eng.CreateNode(t.Context(), src)
 	require.NoError(t, err)
-	_, err = eng.CreateNode(tgt)
+	_, err = eng.CreateNode(t.Context(), tgt)
 	require.NoError(t, err)
 
-	err = eng.CreateEdge(&Edge{
+	err = eng.CreateEdge(t.Context(), &Edge{
 		ID: "test:e3", StartNode: "test:a", EndNode: "test:b",
 		Type: "LIKES", Properties: map[string]any{},
 	})
@@ -246,13 +248,13 @@ func TestValidatePolicyForEdgesWithPrefix_NoPolicies_NoError(t *testing.T) {
 		if outPrefix == nil {
 			return nil
 		}
-		return eng.validatePolicyForEdgesWithPrefixInTxn(txn, outPrefix, src, true, sm, ns)
+		return eng.validatePolicyForEdgesWithPrefixInTxn(t.Context(), txn, outPrefix, src, true, sm, ns)
 	})
 	require.NoError(t, err)
 }
 
 func TestValidatePolicyForEdgesWithPrefix_AllowedMatch_NoError(t *testing.T) {
-	eng, err := NewBadgerEngineInMemory()
+	eng, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer eng.Close()
 
@@ -262,12 +264,12 @@ func TestValidatePolicyForEdgesWithPrefix_AllowedMatch_NoError(t *testing.T) {
 	// Person → Company is ALLOWED
 	src := &Node{ID: "test:person", Labels: []string{"Person"}, Properties: map[string]any{}}
 	tgt := &Node{ID: "test:company", Labels: []string{"Company"}, Properties: map[string]any{}}
-	_, err = eng.CreateNode(src)
+	_, err = eng.CreateNode(t.Context(), src)
 	require.NoError(t, err)
-	_, err = eng.CreateNode(tgt)
+	_, err = eng.CreateNode(t.Context(), tgt)
 	require.NoError(t, err)
 
-	err = eng.CreateEdge(&Edge{
+	err = eng.CreateEdge(t.Context(), &Edge{
 		ID: "test:e4", StartNode: "test:person", EndNode: "test:company",
 		Type: "WORKS_AT", Properties: map[string]any{},
 	})
@@ -289,13 +291,13 @@ func TestValidatePolicyForEdgesWithPrefix_AllowedMatch_NoError(t *testing.T) {
 		if outPrefix == nil {
 			t.Fatal("expected non-nil outgoing prefix")
 		}
-		return eng.validatePolicyForEdgesWithPrefixInTxn(txn, outPrefix, src, true, sm, ns)
+		return eng.validatePolicyForEdgesWithPrefixInTxn(t.Context(), txn, outPrefix, src, true, sm, ns)
 	})
 	require.NoError(t, err)
 }
 
 func TestValidatePolicyForEdgesWithPrefix_IncomingDirection(t *testing.T) {
-	eng, err := NewBadgerEngineInMemory()
+	eng, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer eng.Close()
 
@@ -305,12 +307,12 @@ func TestValidatePolicyForEdgesWithPrefix_IncomingDirection(t *testing.T) {
 	// src → tgt edge. We test from tgt's perspective (incoming).
 	src := &Node{ID: "test:emp", Labels: []string{"Employee"}, Properties: map[string]any{}}
 	tgt := &Node{ID: "test:dept", Labels: []string{"Department"}, Properties: map[string]any{}}
-	_, err = eng.CreateNode(src)
+	_, err = eng.CreateNode(t.Context(), src)
 	require.NoError(t, err)
-	_, err = eng.CreateNode(tgt)
+	_, err = eng.CreateNode(t.Context(), tgt)
 	require.NoError(t, err)
 
-	err = eng.CreateEdge(&Edge{
+	err = eng.CreateEdge(t.Context(), &Edge{
 		ID: "test:e5", StartNode: "test:emp", EndNode: "test:dept",
 		Type: "BELONGS_TO", Properties: map[string]any{},
 	})
@@ -334,7 +336,7 @@ func TestValidatePolicyForEdgesWithPrefix_IncomingDirection(t *testing.T) {
 		if inPrefix == nil {
 			t.Fatal("expected non-nil incoming prefix")
 		}
-		return eng.validatePolicyForEdgesWithPrefixInTxn(txn, inPrefix, tgt, false, sm, ns)
+		return eng.validatePolicyForEdgesWithPrefixInTxn(t.Context(), txn, inPrefix, tgt, false, sm, ns)
 	})
 	require.Error(t, err)
 	var cve *ConstraintViolationError
@@ -349,31 +351,31 @@ func TestValidatePolicyForEdgesWithPrefix_IncomingDirection(t *testing.T) {
 // ============================================================================
 
 func TestValidateEdgeConstraintsInTxn_NilArgs(t *testing.T) {
-	eng, err := NewBadgerEngineInMemory()
+	eng, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer eng.Close()
 
 	// nil edge, nil schema → no error (early return)
 	err = eng.withView(func(txn *badger.Txn) error {
-		return eng.validateEdgeConstraintsInTxn(txn, nil, nil, "", "")
+		return eng.validateEdgeConstraintsInTxn(t.Context(), txn, nil, nil, "", "")
 	})
 	require.NoError(t, err)
 
 	// nil schema → no error
 	err = eng.withView(func(txn *badger.Txn) error {
-		return eng.validateEdgeConstraintsInTxn(txn, &Edge{Type: "X"}, nil, "", "")
+		return eng.validateEdgeConstraintsInTxn(t.Context(), txn, &Edge{Type: "X"}, nil, "", "")
 	})
 	require.NoError(t, err)
 
 	// empty type → no error
 	err = eng.withView(func(txn *badger.Txn) error {
-		return eng.validateEdgeConstraintsInTxn(txn, &Edge{}, NewSchemaManager(), "", "")
+		return eng.validateEdgeConstraintsInTxn(t.Context(), txn, &Edge{}, NewSchemaManager(), "", "")
 	})
 	require.NoError(t, err)
 }
 
 func TestValidateEdgeConstraintsInTxn_ExistsViolation(t *testing.T) {
-	eng, err := NewBadgerEngineInMemory()
+	eng, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer eng.Close()
 
@@ -393,7 +395,7 @@ func TestValidateEdgeConstraintsInTxn_ExistsViolation(t *testing.T) {
 	}
 
 	err = eng.withView(func(txn *badger.Txn) error {
-		return eng.validateEdgeConstraintsInTxn(txn, edge, sm, "test", "")
+		return eng.validateEdgeConstraintsInTxn(t.Context(), txn, edge, sm, "test", "")
 	})
 	require.Error(t, err)
 	var cve *ConstraintViolationError
@@ -402,7 +404,7 @@ func TestValidateEdgeConstraintsInTxn_ExistsViolation(t *testing.T) {
 }
 
 func TestValidateEdgeConstraintsInTxn_DomainViolation(t *testing.T) {
-	eng, err := NewBadgerEngineInMemory()
+	eng, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer eng.Close()
 
@@ -423,7 +425,7 @@ func TestValidateEdgeConstraintsInTxn_DomainViolation(t *testing.T) {
 	}
 
 	err = eng.withView(func(txn *badger.Txn) error {
-		return eng.validateEdgeConstraintsInTxn(txn, edge, sm, "test", "")
+		return eng.validateEdgeConstraintsInTxn(t.Context(), txn, edge, sm, "test", "")
 	})
 	require.Error(t, err)
 	var cve *ConstraintViolationError
@@ -433,7 +435,7 @@ func TestValidateEdgeConstraintsInTxn_DomainViolation(t *testing.T) {
 }
 
 func TestValidateEdgeConstraintsInTxn_DomainPass(t *testing.T) {
-	eng, err := NewBadgerEngineInMemory()
+	eng, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer eng.Close()
 
@@ -454,13 +456,13 @@ func TestValidateEdgeConstraintsInTxn_DomainPass(t *testing.T) {
 	}
 
 	err = eng.withView(func(txn *badger.Txn) error {
-		return eng.validateEdgeConstraintsInTxn(txn, edge, sm, "test", "")
+		return eng.validateEdgeConstraintsInTxn(t.Context(), txn, edge, sm, "test", "")
 	})
 	require.NoError(t, err)
 }
 
 func TestValidateEdgeConstraintsInTxn_ExistsPass(t *testing.T) {
-	eng, err := NewBadgerEngineInMemory()
+	eng, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer eng.Close()
 
@@ -480,7 +482,7 @@ func TestValidateEdgeConstraintsInTxn_ExistsPass(t *testing.T) {
 	}
 
 	err = eng.withView(func(txn *badger.Txn) error {
-		return eng.validateEdgeConstraintsInTxn(txn, edge, sm, "test", "")
+		return eng.validateEdgeConstraintsInTxn(t.Context(), txn, edge, sm, "test", "")
 	})
 	require.NoError(t, err)
 }

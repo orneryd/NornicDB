@@ -30,6 +30,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
@@ -104,9 +105,8 @@ type PeerMetricsGC struct {
 	interval  time.Duration
 	staleness time.Duration
 
-	stopOnce sync.Once
-	stop     chan struct{}
-	done     chan struct{}
+	// work admits the running Start loop; Shutdown is its one stop.
+	work lifecycle.WorkLifetime
 }
 
 // NewPeerMetricsGC constructs the GC. interval ≤ 0 falls back to
@@ -125,8 +125,6 @@ func NewPeerMetricsGC(metrics *observability.ReplicationMetrics, interval, stale
 		tracker:   NewPeerTracker(),
 		interval:  interval,
 		staleness: staleness,
-		stop:      make(chan struct{}),
-		done:      make(chan struct{}),
 	}
 }
 
@@ -142,12 +140,16 @@ func (g *PeerMetricsGC) Name() string { return "replication_peer_metrics_gc" }
 // Shutdown is called. Does NOT perform an initial sweep — peer state at
 // startup is empty; sweeping immediately would be a no-op anyway.
 func (g *PeerMetricsGC) Start(ctx context.Context) error {
-	defer close(g.done)
+	if !g.work.Enter() {
+		return nil // already stopped
+	}
+	defer g.work.Leave()
+	stop := g.work.Context().Done()
 	if g.metrics == nil {
 		// Wait for cancellation but emit nothing.
 		select {
 		case <-ctx.Done():
-		case <-g.stop:
+		case <-stop:
 		}
 		return nil
 	}
@@ -157,7 +159,7 @@ func (g *PeerMetricsGC) Start(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-g.stop:
+		case <-stop:
 			return nil
 		case <-t.C:
 			g.sweep()
@@ -165,17 +167,10 @@ func (g *PeerMetricsGC) Start(ctx context.Context) error {
 	}
 }
 
-// Shutdown implements lifecycle.Component. Idempotent; subsequent calls
-// are no-ops.
+// Shutdown implements lifecycle.Component. It is the owner's one stop: every
+// caller joins the running loop's actual return; ctx bounds only the wait.
 func (g *PeerMetricsGC) Shutdown(ctx context.Context) error {
-	g.stopOnce.Do(func() {
-		close(g.stop)
-	})
-	select {
-	case <-g.done:
-	case <-ctx.Done():
-	}
-	return nil
+	return g.work.Shutdown(ctx, nil)
 }
 
 // sweep evicts stale peers from the per-peer GaugeVec families. Wrapped

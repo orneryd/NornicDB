@@ -28,12 +28,21 @@ func NewMockStorage() *MockStorage {
 	}
 }
 
-func (m *MockStorage) ApplyCommand(cmd *Command) error {
+// ApplyCommand models the adapter's input contract: the publication mode and
+// wait context are validated before any recorded effect, the native result is
+// returned unchanged, and a published record reports its own position.
+func (m *MockStorage) ApplyCommand(waitCtx context.Context, cmd *Command, publication WALPublicationMode) (CommandPublication, error) {
+	if waitCtx == nil {
+		return CommandPublication{}, fmt.Errorf("MockStorage: WAL publication wait context is required")
+	}
+	if publication != WALQueued && publication != WALPublished {
+		return CommandPublication{}, fmt.Errorf("MockStorage: unknown WAL publication mode %d", publication)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if m.applyErr != nil {
-		return m.applyErr
+		return CommandPublication{}, m.applyErr
 	}
 
 	m.commands = append(m.commands, cmd)
@@ -47,7 +56,10 @@ func (m *MockStorage) ApplyCommand(cmd *Command) error {
 		Command:   cmd,
 	})
 
-	return nil
+	if publication == WALQueued {
+		return CommandPublication{}, nil
+	}
+	return CommandPublication{Position: m.walPosition}, nil
 }
 
 func (m *MockStorage) GetWALPosition() (uint64, error) {
@@ -543,7 +555,7 @@ func TestStandaloneReplicator_Apply(t *testing.T) {
 		Timestamp: time.Now(),
 	}
 
-	err = replicator.Apply(cmd, time.Second)
+	err = replicator.Apply(t.Context(), cmd, time.Second)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, storage.GetApplyCount())
 }
@@ -559,7 +571,7 @@ func TestStandaloneReplicator_ApplyBeforeStart(t *testing.T) {
 		Data: []byte("test"),
 	}
 
-	err := replicator.Apply(cmd, time.Second)
+	err := replicator.Apply(t.Context(), cmd, time.Second)
 	assert.ErrorIs(t, err, ErrNotReady)
 }
 
@@ -578,7 +590,7 @@ func TestStandaloneReplicator_ApplyAfterShutdown(t *testing.T) {
 		Data: []byte("test"),
 	}
 
-	err := replicator.Apply(cmd, time.Second)
+	err := replicator.Apply(t.Context(), cmd, time.Second)
 	assert.ErrorIs(t, err, ErrClosed)
 }
 
@@ -597,7 +609,7 @@ func TestStandaloneReplicator_ApplyBatch(t *testing.T) {
 		{Type: CmdCreateNode, Data: []byte("3")},
 	}
 
-	err := replicator.ApplyBatch(cmds, time.Second)
+	err := replicator.ApplyBatch(t.Context(), cmds, time.Second)
 	assert.NoError(t, err)
 	assert.Equal(t, 3, storage.GetApplyCount())
 }
@@ -708,7 +720,7 @@ func TestHAStandbyReplicator_Primary_Apply(t *testing.T) {
 		Data: []byte("test"),
 	}
 
-	err = replicator.Apply(cmd, time.Second)
+	err = replicator.Apply(t.Context(), cmd, time.Second)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, storage.GetApplyCount())
 
@@ -754,7 +766,7 @@ func TestHAStandbyReplicator_Primary_Apply_SyncAck(t *testing.T) {
 	}
 
 	start := time.Now()
-	err = replicator.Apply(cmd, 500*time.Millisecond)
+	err = replicator.Apply(t.Context(), cmd, 500*time.Millisecond)
 	require.NoError(t, err)
 	assert.Equal(t, 1, storage.GetApplyCount())
 	assert.Less(t, time.Since(start), 500*time.Millisecond)
@@ -791,7 +803,7 @@ func TestHAStandbyReplicator_Standby_Apply_Rejected(t *testing.T) {
 		Data: []byte("test"),
 	}
 
-	err = replicator.Apply(cmd, time.Second)
+	err = replicator.Apply(t.Context(), cmd, time.Second)
 	assert.ErrorIs(t, err, ErrStandbyMode)
 	assert.Equal(t, 0, storage.GetApplyCount())
 
@@ -991,7 +1003,7 @@ func TestRaftReplicator_Apply(t *testing.T) {
 		Data: []byte("test"),
 	}
 
-	err = replicator.Apply(cmd, time.Second)
+	err = replicator.Apply(t.Context(), cmd, time.Second)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, storage.GetApplyCount())
 }
@@ -1131,7 +1143,7 @@ func TestMultiRegionReplicator_Apply(t *testing.T) {
 		Data: []byte("test"),
 	}
 
-	err = replicator.Apply(cmd, time.Second)
+	err = replicator.Apply(t.Context(), cmd, time.Second)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, storage.GetApplyCount())
 }
@@ -1210,7 +1222,7 @@ func TestWALStreamer_GetPendingEntries(t *testing.T) {
 
 	// Add some WAL entries
 	for i := 0; i < 5; i++ {
-		storage.ApplyCommand(&Command{Type: CmdCreateNode, Data: []byte{byte(i)}})
+		applyQueued(t, storage, &Command{Type: CmdCreateNode, Data: []byte{byte(i)}})
 	}
 
 	streamer := NewWALStreamer(storage, 100)
@@ -1226,7 +1238,7 @@ func TestWALStreamer_AcknowledgePosition(t *testing.T) {
 
 	// Add some WAL entries
 	for i := 0; i < 5; i++ {
-		storage.ApplyCommand(&Command{Type: CmdCreateNode, Data: []byte{byte(i)}})
+		applyQueued(t, storage, &Command{Type: CmdCreateNode, Data: []byte{byte(i)}})
 	}
 
 	streamer := NewWALStreamer(storage, 100)
@@ -1341,7 +1353,7 @@ func TestE2E_HAStandby_Failover(t *testing.T) {
 
 	// Write some data on primary
 	cmd := &Command{Type: CmdCreateNode, Data: []byte("test")}
-	require.NoError(t, primary.Apply(cmd, time.Second))
+	require.NoError(t, primary.Apply(t.Context(), cmd, time.Second))
 
 	// Simulate primary going down by fencing it
 	_, err = primary.HandleFence(&FenceRequest{Reason: "test"})
@@ -1354,7 +1366,7 @@ func TestE2E_HAStandby_Failover(t *testing.T) {
 
 	// Verify standby can now accept writes
 	cmd2 := &Command{Type: CmdCreateNode, Data: []byte("after failover")}
-	err = standby.Apply(cmd2, time.Second)
+	err = standby.Apply(t.Context(), cmd2, time.Second)
 	assert.NoError(t, err)
 
 	// Cleanup
@@ -1381,7 +1393,7 @@ func TestE2E_StandaloneToHA_Migration(t *testing.T) {
 	// Write some data
 	for i := 0; i < 5; i++ {
 		cmd := &Command{Type: CmdCreateNode, Data: []byte{byte(i)}}
-		require.NoError(t, standalone.Apply(cmd, time.Second))
+		require.NoError(t, standalone.Apply(ctx, cmd, time.Second))
 	}
 	require.NoError(t, standalone.Shutdown())
 
@@ -1404,7 +1416,7 @@ func TestE2E_StandaloneToHA_Migration(t *testing.T) {
 
 	// Should still be able to write
 	cmd := &Command{Type: CmdCreateNode, Data: []byte("after migration")}
-	require.NoError(t, ha.Apply(cmd, time.Second))
+	require.NoError(t, ha.Apply(t.Context(), cmd, time.Second))
 
 	assert.Equal(t, 6, storage.GetApplyCount())
 

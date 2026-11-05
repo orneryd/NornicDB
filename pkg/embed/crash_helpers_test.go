@@ -3,6 +3,7 @@
 package embed
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -154,7 +155,7 @@ func TestNewLocalGGUFReturnsError(t *testing.T) {
 		Dimensions: 1024,
 	}
 
-	_, err := NewLocalGGUF(config)
+	_, err := NewLocalGGUF(context.Background(), config)
 	if err == nil {
 		t.Error("expected error when localllm not built, got nil")
 	}

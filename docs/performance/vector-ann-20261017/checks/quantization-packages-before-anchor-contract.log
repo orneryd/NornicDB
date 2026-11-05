@@ -1,0 +1,77 @@
+# github.com/orneryd/nornicdb/pkg/qdrantgrpc.test
+ld: warning: ignoring duplicate libraries: '-lobjc'
+# github.com/orneryd/nornicdb/pkg/search.test
+ld: warning: ignoring duplicate libraries: '-lobjc'
+2026/10/17 00:01:12 INFO [HNSW] build batch=1 vectors=2 indexed=2 duration=77.334µs search=32.417µs link=44.917µs event_id=search.operator.67b528ca39a0c429 component=search message_template="[HNSW] build batch=%d vectors=%d indexed=%d duration=%s search=%s link=%s" arg_0=1 arg_1=2 arg_2=2 arg_3=77.334µs arg_4=32.417µs arg_5=44.917µs
+2026/10/17 00:01:12 INFO [HNSW] build batch=2 vectors=2 indexed=4 duration=85.917µs search=78.875µs link=7.042µs event_id=search.operator.67b528ca39a0c429 component=search message_template="[HNSW] build batch=%d vectors=%d indexed=%d duration=%s search=%s link=%s" arg_0=2 arg_1=2 arg_2=4 arg_3=85.917µs arg_4=78.875µs arg_5=7.042µs
+2026/10/17 00:01:12 INFO [HNSW] 🔨 Progress: 5 / 5 vectors event_id=search.operator.af73d7a98ff4ec74 component=search message_template="[HNSW] 🔨 Progress: %d / %d vectors" arg_0=5 arg_1=5
+2026/10/17 00:01:12 INFO [HNSW] build batch=3 vectors=1 indexed=5 duration=26.709µs search=17.209µs link=9.5µs event_id=search.operator.67b528ca39a0c429 component=search message_template="[HNSW] build batch=%d vectors=%d indexed=%d duration=%s search=%s link=%s" arg_0=3 arg_1=1 arg_2=5 arg_3=26.709µs arg_4=17.209µs arg_5=9.5µs
+2026/10/17 00:01:12 INFO [HNSW] 🧭 Lexical-seeded build order: 4 seeded vectors prioritized event_id=search.operator.b6d70edf59d6e015 component=search message_template="[HNSW] 🧭 Lexical-seeded build order: %d seeded vectors prioritized" arg_0=4
+2026/10/17 00:01:12 INFO [HNSW] build batch=1 vectors=2 indexed=2 duration=9.25µs search=4.708µs link=4.542µs event_id=search.operator.67b528ca39a0c429 component=search message_template="[HNSW] build batch=%d vectors=%d indexed=%d duration=%s search=%s link=%s" arg_0=1 arg_1=2 arg_2=2 arg_3=9.25µs arg_4=4.708µs arg_5=4.542µs
+2026/10/17 00:01:12 INFO [HNSW] build batch=2 vectors=2 indexed=4 duration=28.667µs search=17.208µs link=11.459µs event_id=search.operator.67b528ca39a0c429 component=search message_template="[HNSW] build batch=%d vectors=%d indexed=%d duration=%s search=%s link=%s" arg_0=2 arg_1=2 arg_2=4 arg_3=28.667µs arg_4=17.208µs arg_5=11.459µs
+2026/10/17 00:01:12 INFO [HNSW] 🔨 Progress: 5 / 5 vectors event_id=search.operator.af73d7a98ff4ec74 component=search message_template="[HNSW] 🔨 Progress: %d / %d vectors" arg_0=5 arg_1=5
+2026/10/17 00:01:12 INFO [HNSW] build batch=3 vectors=1 indexed=5 duration=12.833µs search=3.291µs link=9.542µs event_id=search.operator.67b528ca39a0c429 component=search message_template="[HNSW] build batch=%d vectors=%d indexed=%d duration=%s search=%s link=%s" arg_0=3 arg_1=1 arg_2=5 arg_3=12.833µs arg_4=3.291µs arg_5=9.542µs
+2026/10/17 00:01:12 INFO 📇 Search: BM25 engine selected: v2 event_id=search.bm25_engine.selected component=search bm25_engine=v2
+2026/10/17 00:01:12 INFO 📇 BuildIndexes: building from storage (vector index in memory) event_id=search.operator.d3969b1fbdb9749b component=search message_template="📇 BuildIndexes: building from storage (vector index in memory)"
+2026/10/17 00:01:12 INFO 📊 Indexed 2 total nodes event_id=search.operator.4ee13fb5f957c6ee component=search message_template="📊 Indexed %d total nodes" arg_0=2
+2026/10/17 00:01:12 INFO 📇 BuildIndexes: base index iteration complete (processed=2) event_id=search.operator.abfc7c66aa1aeeea component=search message_template="📇 BuildIndexes: base index iteration complete (processed=%d)" arg_0=2
+2026/10/17 00:01:12 INFO 📇 BuildIndexes: starting vector pipeline warmup (k-means may run)... event_id=search.operator.e5845b37ccd75386 component=search message_template="📇 BuildIndexes: starting vector pipeline warmup (k-means may run)..."
+2026/10/17 00:01:12 INFO 🔍 Warming up vector search pipeline (2 vectors)... event_id=search.operator.b35df112977624a0 component=search message_template="🔍 Warming up vector search pipeline (%d vectors)..." arg_0=2
+2026/10/17 00:01:12 INFO [HNSW] 🧭 Lexical build metadata: 4 ranked vector IDs event_id=search.operator.d63680830393d684 component=search message_template="[HNSW] 🧭 Lexical build metadata: %d ranked vector IDs" arg_0=4
+2026/10/17 00:01:12 INFO [HNSW] 🧭 Lexical-seeded build order: 2 seeded vectors prioritized event_id=search.operator.b6d70edf59d6e015 component=search message_template="[HNSW] 🧭 Lexical-seeded build order: %d seeded vectors prioritized" arg_0=2
+2026/10/17 00:01:12 INFO [HNSW] 🔨 Building from in-memory index: 2 vectors event_id=search.operator.607db6ed42a9c6fc component=search message_template="[HNSW] 🔨 Building from in-memory index: %d vectors" arg_0=2
+2026/10/17 00:01:12 INFO [HNSW] 🔨 Progress: 2 / 2 vectors event_id=search.operator.af73d7a98ff4ec74 component=search message_template="[HNSW] 🔨 Progress: %d / %d vectors" arg_0=2 arg_1=2
+2026/10/17 00:01:12 INFO [HNSW] build batch=1 vectors=2 indexed=2 duration=17.125µs search=5.584µs link=11.541µs event_id=search.operator.67b528ca39a0c429 component=search message_template="[HNSW] build batch=%d vectors=%d indexed=%d duration=%s search=%s link=%s" arg_0=1 arg_1=2 arg_2=2 arg_3=17.125µs arg_4=5.584µs arg_5=11.541µs
+2026/10/17 00:01:12 INFO [HNSW] 🔨 Built from memory: 2 vectors event_id=search.operator.8564e5103ad8d50e component=search message_template="[HNSW] 🔨 Built from memory: %d vectors" arg_0=2
+2026/10/17 00:01:12 INFO 🔍 HNSW index created: quality=fast M=16 efConstruction=100 efSearch=50 vectors=2 tombstone_ratio=0.00 build_strategy=batch_parallel build_backend=*search.CPUHNSWBuildAccelerator build_batches=1 build_kernel_errors=0 build_fallback=false build_duration=55.667µs event_id=search.operator.dce3aec02782896b component=search message_template="🔍 HNSW index created: quality=%s M=%d efConstruction=%d efSearch=%d vectors=%d tombstone_ratio=%.2f build_strategy=%s build_backend=%s build_batches=%d build_kernel_errors=%d build_fallback=%t build_duration=%s" arg_0=fast arg_1=16 arg_2=100 arg_3=50 arg_4=2 arg_5=0 arg_6=batch_parallel arg_7=*search.CPUHNSWBuildAccelerator arg_8=1 arg_9=0 arg_10=false arg_11=55.667µs
+2026/10/17 00:01:12 INFO 🔍 Vector search strategy: HNSW (N=2 vectors) event_id=search.operator.f7bec3cb91638398 component=search message_template="🔍 Vector search strategy: %s (N=%d vectors)" arg_0=HNSW arg_1=2
+2026/10/17 00:01:12 INFO 🔍 Vector search pipeline ready in 137.833µs event_id=search.operator.4cbb2bbd194dd189 component=search message_template="🔍 Vector search pipeline ready in %v" arg_0=137.833µs
+2026/10/17 00:01:12 INFO 📇 Search: BM25 engine selected: v2 event_id=search.bm25_engine.selected component=search bm25_engine=v2
+2026/10/17 00:01:12 INFO [K-MEANS] ✅ Clustering ENABLED | mode=CPU clusters=2 max_iter=5 init=kmeans++ event_id=search.operator.4b3a1e6f54727c19 component=search message_template="[K-MEANS] ✅ Clustering ENABLED | mode=%s clusters=%s max_iter=%d init=%s" arg_0=CPU arg_1=2 arg_2=5 arg_3=kmeans++
+2026/10/17 00:01:12 INFO 📇 BuildIndexes: building from storage (vector index in memory) event_id=search.operator.d3969b1fbdb9749b component=search message_template="📇 BuildIndexes: building from storage (vector index in memory)"
+2026/10/17 00:01:12 INFO 📊 Indexed 2 total nodes event_id=search.operator.4ee13fb5f957c6ee component=search message_template="📊 Indexed %d total nodes" arg_0=2
+2026/10/17 00:01:12 INFO 📇 BuildIndexes: base index iteration complete (processed=2) event_id=search.operator.abfc7c66aa1aeeea component=search message_template="📇 BuildIndexes: base index iteration complete (processed=%d)" arg_0=2
+2026/10/17 00:01:12 INFO 📇 BuildIndexes: starting vector pipeline warmup (k-means may run)... event_id=search.operator.e5845b37ccd75386 component=search message_template="📇 BuildIndexes: starting vector pipeline warmup (k-means may run)..."
+2026/10/17 00:01:12 INFO 🔍 Warming up vector search pipeline (2 vectors)... event_id=search.operator.b35df112977624a0 component=search message_template="🔍 Warming up vector search pipeline (%d vectors)..." arg_0=2
+2026/10/17 00:01:12 INFO [K-MEANS] 🔍 Applied BM25 seed hints: 2 preferred seeds event_id=search.operator.fd350190065b0e9d component=search message_template="[K-MEANS] 🔍 Applied BM25 seed hints: %d preferred seeds" arg_0=2
+2026/10/17 00:01:12 INFO [K-MEANS] 🔄 STARTING | embeddings=2 event_id=search.operator.5efb610dd2d769e8 component=search message_template="[K-MEANS] 🔄 STARTING | embeddings=%d" arg_0=2
+2026/10/17 00:01:12 🔬 K-means iteration 1 complete (reassignments: 1)
+2026/10/17 00:01:12 🔬 K-means iteration 2 complete (reassignments: 0)
+2026/10/17 00:01:12 INFO [K-MEANS] ✅ COMPLETE | clusters=2 embeddings=2 iterations=2 duration=3.584µs avg_cluster_size=1.0 event_id=search.operator.ba9dc54e71cf5b56 component=search message_template="[K-MEANS] ✅ COMPLETE | clusters=%d embeddings=%d iterations=%d duration=%v avg_cluster_size=%.1f" arg_0=2 arg_1=2 arg_2=2 arg_3=3.584µs arg_4=1
+2026/10/17 00:01:12 INFO 🔍 Hybrid routing lexical profiles built for 2 clusters event_id=search.operator.5db4bbea301bb08e component=search message_template="🔍 Hybrid routing lexical profiles built for %d clusters" arg_0=2
+2026/10/17 00:01:12 INFO 🔍 Vector search strategy: CPU k-means (cluster routing) (N=2 vectors) event_id=search.operator.f7bec3cb91638398 component=search message_template="🔍 Vector search strategy: %s (N=%d vectors)" arg_0="CPU k-means (cluster routing)" arg_1=2
+2026/10/17 00:01:12 INFO 🔍 Vector search pipeline ready in 65.042µs event_id=search.operator.4cbb2bbd194dd189 component=search message_template="🔍 Vector search pipeline ready in %v" arg_0=65.042µs
+2026/10/17 00:01:12 INFO [K-MEANS] 🔍 Applied BM25 seed hints: 2 preferred seeds event_id=search.operator.fd350190065b0e9d component=search message_template="[K-MEANS] 🔍 Applied BM25 seed hints: %d preferred seeds" arg_0=2
+2026/10/17 00:01:12 INFO 📇 Search: BM25 engine selected: v2 event_id=search.bm25_engine.selected component=search bm25_engine=v2
+2026/10/17 00:01:12 INFO 📇 Search: BM25 engine selected: v2 event_id=search.bm25_engine.selected component=search bm25_engine=v2
+2026/10/17 00:01:12 INFO 📇 Search: BM25 engine selected: v2 event_id=search.bm25_engine.selected component=search bm25_engine=v2
+2026/10/17 00:01:12 INFO 📇 Search: BM25 engine selected: v2 event_id=search.bm25_engine.selected component=search bm25_engine=v2
+2026/10/17 00:01:12 INFO 📇 Search: BM25 engine selected: v2 event_id=search.bm25_engine.selected component=search bm25_engine=v2
+2026/10/17 00:01:12 INFO 📇 Search: BM25 engine selected: v2 event_id=search.bm25_engine.selected component=search bm25_engine=v2
+2026/10/17 00:01:12 INFO 📇 Search: BM25 engine selected: v2 event_id=search.bm25_engine.selected component=search bm25_engine=v2
+2026/10/17 00:01:12 INFO ⚠️ Background persist: failed to save build settings metadata to /var/folders/72/0lxlwnts2_x8f823b1lbz9800000gn/T/TestBuildSettings_CurrentBM25AndPersistBranches4149888207/002/not-a-dir/build_settings: mkdirat private/var/folders/72/0lxlwnts2_x8f823b1lbz9800000gn/T/TestBuildSettings_CurrentBM25AndPersistBranches4149888207/002/not-a-dir: file exists event_id=search.operator.d1d12f832d1a6776 component=search message_template="⚠️ Background persist: failed to save build settings metadata to %s: %v" arg_0=/var/folders/72/0lxlwnts2_x8f823b1lbz9800000gn/T/TestBuildSettings_CurrentBM25AndPersistBranches4149888207/002/not-a-dir/build_settings arg_1="mkdirat private/var/folders/72/0lxlwnts2_x8f823b1lbz9800000gn/T/TestBuildSettings_CurrentBM25AndPersistBranches4149888207/002/not-a-dir: file exists"
+2026/10/17 00:01:12 INFO 📇 Search: BM25 engine selected: v2 event_id=search.bm25_engine.selected component=search bm25_engine=v2
+2026/10/17 00:01:12 INFO 📇 Search: BM25 engine selected: v2 event_id=search.bm25_engine.selected component=search bm25_engine=v2
+--- FAIL: TestHNSWBuildIteratorPrioritizesRankedDocumentsAndAnnotatesTheirChunks (0.00s)
+    lexical_seed_hints_test.go:101: 
+        	Error Trace:	/Users/timothysweet/src/NornicDB/pkg/search/lexical_seed_hints_test.go:101
+        	Error:      	Not equal: 
+        	            	expected: []string{"doc-b", "doc-a"}
+        	            	actual  : []string{"doc-b", "doc-b-chunk-1"}
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -2,3 +2,3 @@
+        	            	  (string) (len=5) "doc-b",
+        	            	- (string) (len=5) "doc-a"
+        	            	+ (string) (len=13) "doc-b-chunk-1"
+        	            	 }
+        	Test:       	TestHNSWBuildIteratorPrioritizesRankedDocumentsAndAnnotatesTheirChunks
+FAIL
+coverage: 90.2% of statements
+FAIL	github.com/orneryd/nornicdb/pkg/search	182.617s
+ok  	github.com/orneryd/nornicdb/pkg/qdrantgrpc	3.019s	coverage: 90.4% of statements
+ok  	github.com/orneryd/nornicdb/pkg/simd	0.819s	coverage: 95.7% of statements
+ok  	github.com/orneryd/nornicdb/pkg/localization	3.687s	coverage: 21.9% of statements
+FAIL

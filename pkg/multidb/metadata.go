@@ -2,8 +2,10 @@
 package multidb
 
 import (
-	"encoding/json"
+	"context"
 	"time"
+
+	"github.com/orneryd/nornicdb/internal/jsontext"
 
 	"github.com/google/uuid"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -15,24 +17,26 @@ const (
 )
 
 // loadMetadata loads database metadata from storage.
-func (m *DatabaseManager) loadMetadata() error {
+func (m *DatabaseManager) loadMetadata(ctx context.Context) (bool, error) {
 	// Use system namespace to load metadata
 	systemEngine := storage.NewNamespacedEngine(m.inner, m.config.SystemDatabase)
 
-	node, err := systemEngine.GetNode(storage.NodeID(metadataNodeID))
+	node, err := systemEngine.GetNode(ctx, storage.NodeID(metadataNodeID))
 	if err == storage.ErrNotFound {
 		// No existing metadata - start fresh
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	m.serverID, _ = node.Properties["server_id"].(string)
+	persistedTime := false
 	if createdAt, ok := node.Properties["server_created_at"].(string); ok {
+		persistedTime = true
 		parsed, err := time.Parse(time.RFC3339Nano, createdAt)
 		if err != nil {
-			return err
+			return false, err
 		}
 		m.serverCreatedAt = parsed
 	} else {
@@ -42,17 +46,36 @@ func (m *DatabaseManager) loadMetadata() error {
 	// Parse metadata from properties
 	if data, ok := node.Properties["data"].(string); ok {
 		var databases map[string]*DatabaseInfo
-		if err := json.Unmarshal([]byte(data), &databases); err != nil {
-			return localizedError(localization.MultidbMetadataParseFailed(err), err)
+		if err := jsontext.Unmarshal([]byte(data), &databases); err != nil {
+			return false, localizedError(localization.MultidbMetadataParseFailed(err), err)
 		}
 		m.databases = databases
 	}
+	if encoded, ok := node.Properties["pending_drops"].(string); ok {
+		var pending map[string]bool
+		if err := jsontext.Unmarshal([]byte(encoded), &pending); err != nil {
+			return false, err
+		}
+		for name, active := range pending {
+			if active {
+				m.transitionPendingDrop(name, true)
+			}
+		}
+	}
+	m.rebuildRuntimeConstituents()
 
-	return nil
+	complete := persistedTime && m.serverID != "" && !m.serverCreatedAt.IsZero()
+	for _, database := range m.databases {
+		if database == nil || database.ID == "" {
+			complete = false
+			break
+		}
+	}
+	return complete, nil
 }
 
-// persistMetadata saves database metadata to storage.
-func (m *DatabaseManager) persistMetadata() error {
+// catalogMetadataNode builds only the detached proposal's persisted image.
+func (m *DatabaseManager) catalogMetadataNode() (*storage.Node, error) {
 	if m.serverID == "" {
 		m.serverID = uuid.NewString()
 	}
@@ -65,19 +88,26 @@ func (m *DatabaseManager) persistMetadata() error {
 		}
 	}
 	// Serialize metadata
-	data, err := json.Marshal(m.databases)
+	snapshot := make(map[string]*DatabaseInfo, len(m.databases))
+	for name, info := range m.databases {
+		snapshot[name] = cloneDatabaseInfo(info, false, databaseSnapshotFull)
+	}
+	data, err := jsontext.Marshal(snapshot)
 	if err != nil {
-		return localizedError(localization.MultidbMetadataSerializeFailed(err), err)
+		return nil, localizedError(localization.MultidbMetadataSerializeFailed(err), err)
 	}
 
-	// Use system namespace to store metadata
-	systemEngine := storage.NewNamespacedEngine(m.inner, m.config.SystemDatabase)
+	pending, err := jsontext.Marshal(m.pendingDrops)
+	if err != nil {
+		return nil, err
+	}
 
 	node := &storage.Node{
 		ID:     storage.NodeID(metadataNodeID),
 		Labels: []string{"_System", "_Metadata"},
 		Properties: map[string]any{
 			"data":              string(data),
+			"pending_drops":     string(pending),
 			"type":              "databases",
 			"updated_at":        time.Now().Unix(),
 			"server_id":         m.serverID,
@@ -85,20 +115,7 @@ func (m *DatabaseManager) persistMetadata() error {
 		},
 	}
 
-	// Check if node exists
-	existing, err := systemEngine.GetNode(storage.NodeID(metadataNodeID))
-	if err == storage.ErrNotFound {
-		// Create new
-		_, err := systemEngine.CreateNode(node)
-		return err
-	}
-	if err != nil {
-		return err
-	}
-
-	// Update existing
-	node.CreatedAt = existing.CreatedAt
-	return systemEngine.UpdateNode(node)
+	return node, nil
 }
 
 // ServerIdentity returns the persisted installation UUID and creation time.

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -98,6 +97,7 @@ type catalogContinuationStream struct {
 	policy        *atomic.Uint64
 	policyID      uint64
 	metadata      map[string]any
+	completion    continuationStatus
 	retainedBytes int64
 	closed        bool
 	projection    resultPropertyProjection
@@ -109,7 +109,7 @@ type continuationGroup struct {
 }
 
 func (s *Service) newIDContinuationStream(ctx context.Context, options SearchOptions, request SearchContinuationRequest) (resultstream.Stream, error) {
-	return s.newCompleteContinuationStream(ctx, options, request, nil)
+	return s.newCompleteContinuationStream(ctx, options, request, nil, newContinuationExecution(options, request))
 }
 
 func (s *Service) streamCompleteContinuationNodes(ctx context.Context, options *SearchOptions, request SearchContinuationRequest, visit storage.NodeVisitor) error {
@@ -151,7 +151,7 @@ func (s *Service) completeContinuationProjectionProperties(options *SearchOption
 	return projected
 }
 
-func (s *Service) newCompleteContinuationStream(ctx context.Context, options SearchOptions, request SearchContinuationRequest, ranked *SearchResponse) (resultstream.Stream, error) {
+func (s *Service) newCompleteContinuationStream(ctx context.Context, options SearchOptions, request SearchContinuationRequest, ranked *SearchResponse, execution *continuationExecution) (resultstream.Stream, error) {
 	started := time.Now()
 	policy, policyID, admitted := s.acquireCompleteContinuationBuild()
 	if !admitted {
@@ -168,24 +168,33 @@ func (s *Service) newCompleteContinuationStream(ctx context.Context, options Sea
 		return nil, fmt.Errorf("complete continuation requires graph mutation revisions: %w", resultstream.ErrInvalidated)
 	}
 
+	// The wanted-type set is compiled once for this build. Every candidate
+	// node is tested against it by nodeMatchesType, the canonical predicate.
+	var wantedTypes map[string]struct{}
+	if len(options.Types) > 0 {
+		wantedTypes = wantedTypesLower(options.Types)
+	}
+
 	s.mu.RLock()
 	decayFilter := s.nodeDecayFilter
 	s.mu.RUnlock()
 	rankedByID := make(map[string]SearchResult)
+	rankedIDs := make([]string, 0)
 	searchMethod := "id"
 	fallbackTriggered := false
 	fallbackReason := SearchFallbackNone
-	rankedPoolExhausted := true
 	if ranked != nil {
 		searchMethod = ranked.SearchMethod
 		fallbackTriggered = ranked.FallbackTriggered
 		fallbackReason = ranked.FallbackReason
-		rankedPoolExhausted = ranked.RetrievalExhausted
 		for _, result := range ranked.Results {
 			result.Phase = SearchContinuationRankedPhase
-			rankedByID[searchResultID(result)] = result
+			id := searchResultID(result)
+			rankedByID[id] = result
+			rankedIDs = append(rankedIDs, id)
 		}
 	}
+	rankedSeen := make(map[string]struct{}, len(rankedByID))
 	var members map[string]*continuationGroup
 	var ungroupedChunks [][]SearchResult
 	if request.GroupBy != "" {
@@ -217,7 +226,7 @@ func (s *Service) newCompleteContinuationStream(ctx context.Context, options Sea
 		if scannedNodes > policy.MaxScannedNodes {
 			return resultstream.ErrCapacity
 		}
-		eligible, err := s.continuationNodeEligible(node, &options, decayFilter, request.AuthorizeNode)
+		eligible, err := s.continuationNodeEligible(ctx, node, &options, wantedTypes, decayFilter, request.AuthorizeNode)
 		if err != nil || !eligible {
 			return err
 		}
@@ -231,6 +240,11 @@ func (s *Service) newCompleteContinuationStream(ctx context.Context, options Sea
 			groupKey = value
 		}
 		id := string(node.ID)
+		if ranked != nil {
+			if _, excluded := ranked.rerankExcluded[id]; excluded {
+				return nil
+			}
+		}
 		logicalID := id
 		if groupKey != "" {
 			logicalID = groupKey
@@ -245,6 +259,10 @@ func (s *Service) newCompleteContinuationStream(ctx context.Context, options Sea
 			candidate.Phase = SearchContinuationCatalogPhase
 		}
 		candidate.GroupKey = groupKey
+		if candidate.Phase == SearchContinuationRankedPhase {
+			rankedByID[id] = candidate
+			rankedSeen[id] = struct{}{}
+		}
 		retainedBytes += compactContinuationResultBytes(candidate)
 		if retainedBytes > policy.MaxBuildBytes {
 			return resultstream.ErrCapacity
@@ -256,6 +274,9 @@ func (s *Service) newCompleteContinuationStream(ctx context.Context, options Sea
 			passageCount++
 			if passageCount > policy.MaxPassages {
 				return resultstream.ErrCapacity
+			}
+			if candidate.Phase == SearchContinuationRankedPhase {
+				return nil
 			}
 			if len(ungroupedChunks) == 0 || len(ungroupedChunks[len(ungroupedChunks)-1]) == cap(ungroupedChunks[len(ungroupedChunks)-1]) {
 				ungroupedChunks = append(ungroupedChunks, make([]SearchResult, 0, 1024))
@@ -300,22 +321,46 @@ func (s *Service) newCompleteContinuationStream(ctx context.Context, options Sea
 	var results []SearchResult
 	if request.GroupBy == "" {
 		results = make([]SearchResult, 0, memberCount)
+		// The ranked response is the canonical ordered list. Catalogue scanning
+		// decides membership and hydrates results, but never derives a new rank
+		// from provider or retrieval scores.
+		for _, id := range rankedIDs {
+			if candidate, ok := rankedByID[id]; ok {
+				if _, eligible := rankedSeen[id]; !eligible {
+					continue
+				}
+				results = append(results, candidate)
+			}
+		}
+		catalogStart := len(results)
 		for _, chunk := range ungroupedChunks {
 			results = append(results, chunk...)
 		}
+		sort.Slice(results[catalogStart:], func(i, j int) bool {
+			return results[catalogStart+i].ID < results[catalogStart+j].ID
+		})
 	}
 	if request.GroupBy != "" {
 		results = make([]SearchResult, 0, len(members))
 		for _, group := range members {
-			passages := group.catalog
-			if len(group.ranked) > 0 {
-				passages = group.ranked
-				sort.Slice(passages, func(i, j int) bool {
-					return betterContinuationRepresentative(passages[i], passages[j])
-				})
-			} else {
-				sort.Slice(passages, func(i, j int) bool { return passages[i].ID < passages[j].ID })
+			group.ranked = nil
+		}
+		rankedGroups := make([]string, 0, len(members))
+		for _, id := range rankedIDs {
+			if _, eligible := rankedSeen[id]; !eligible {
+				continue
 			}
+			passage, ok := rankedByID[id]
+			if !ok {
+				continue
+			}
+			group := members[passage.GroupKey]
+			if len(group.ranked) == 0 {
+				rankedGroups = append(rankedGroups, passage.GroupKey)
+			}
+			group.ranked = append(group.ranked, passage)
+		}
+		appendGroup := func(passages []SearchResult) {
 			representative := passages[0]
 			representative.Passages = make([]SearchPassage, len(passages))
 			for index := range passages {
@@ -323,28 +368,25 @@ func (s *Service) newCompleteContinuationStream(ctx context.Context, options Sea
 			}
 			results = append(results, representative)
 		}
+		for _, groupKey := range rankedGroups {
+			appendGroup(members[groupKey].ranked)
+		}
+		catalogGroups := make([]string, 0, len(members)-len(rankedGroups))
+		for groupKey, group := range members {
+			if len(group.ranked) == 0 {
+				catalogGroups = append(catalogGroups, groupKey)
+			}
+		}
+		sort.Strings(catalogGroups)
+		for _, groupKey := range catalogGroups {
+			passages := members[groupKey].catalog
+			sort.Slice(passages, func(i, j int) bool { return passages[i].ID < passages[j].ID })
+			appendGroup(passages)
+		}
 	}
-	sort.Slice(results, func(i, j int) bool {
-		if results[i].Phase != results[j].Phase {
-			return results[i].Phase == SearchContinuationRankedPhase
-		}
-		if results[i].Phase == SearchContinuationRankedPhase && results[i].Score != results[j].Score {
-			return results[i].Score > results[j].Score
-		}
-		left, right := results[i].ID, results[j].ID
-		if request.GroupBy != "" {
-			left, right = results[i].GroupKey, results[j].GroupKey
-		}
-		if left != right {
-			return left < right
-		}
-		return results[i].ID < results[j].ID
-	})
 	eligibleCount := len(results)
-	maxResultsReached := request.MaxResults > 0 && eligibleCount > request.MaxResults
-	if maxResultsReached {
-		results = results[:request.MaxResults]
-	}
+	execution.catalog(eligibleCount)
+	results = results[:execution.resultCount]
 	rankedCount := 0
 	for index := range results {
 		if results[index].Phase == SearchContinuationRankedPhase {
@@ -372,10 +414,10 @@ func (s *Service) newCompleteContinuationStream(ctx context.Context, options Sea
 			"mode":                  request.Mode,
 			"ranked_count":          rankedCount,
 			"eligible_count":        &eligibleCount,
-			"ranked_pool_exhausted": rankedPoolExhausted,
-			"max_results_reached":   maxResultsReached,
+			"ranked_pool_exhausted": execution.status.rankedExhausted,
 		},
 		retainedBytes: retainedBytes,
+		completion:    execution.status,
 		projection:    resultProjection,
 	}, nil
 }
@@ -391,6 +433,7 @@ func compactContinuationResult(result SearchResult) SearchResult {
 	result.Description = ""
 	result.ContentPreview = ""
 	result.Properties = nil
+	result.sourceNode = nil
 	result.Passages = nil
 	return result
 }
@@ -403,6 +446,7 @@ func hydrateContinuationResult(ranked, stored SearchResult) SearchResult {
 	ranked.Description = stored.Description
 	ranked.ContentPreview = stored.ContentPreview
 	ranked.Properties = stored.Properties
+	ranked.sourceNode = stored.sourceNode
 	return ranked
 }
 
@@ -412,27 +456,17 @@ func searchPassageFromResult(result SearchResult) SearchPassage {
 	return result
 }
 
-func betterContinuationRepresentative(candidate, current SearchResult) bool {
-	if candidate.Score != current.Score {
-		return candidate.Score > current.Score
-	}
-	if candidate.ID != current.ID {
-		return candidate.ID < current.ID
-	}
-	if candidate.RRFScore != current.RRFScore {
-		return candidate.RRFScore > current.RRFScore
-	}
-	if candidate.Similarity != current.Similarity {
-		return candidate.Similarity > current.Similarity
-	}
-	if candidate.VectorRank != current.VectorRank {
-		return candidate.VectorRank < current.VectorRank
-	}
-	return candidate.BM25Rank < current.BM25Rank
-}
-
-func (s *Service) continuationNodeEligible(node *storage.Node, options *SearchOptions, decayFilter NodeDecayFilterFunc, authorizeNode NodeAuthorizationFunc) (bool, error) {
-	if node == nil || node.VisibilitySuppressed || (decayFilter != nil && decayFilter(string(node.ID))) {
+// continuationNodeEligible is the single eligibility rule for a catalog
+// candidate, applied in this order: suppression and decay, then authorization
+// and its error, then the Types predicate, then the property filters and Where,
+// then whether the node is current enough to index (shouldIndexNode).
+//
+// wantedTypes is wantedTypesLower(options.Types), compiled once by the caller
+// for the whole build; its nil/empty value means Types doesn't constrain the
+// candidate. The membership test itself is nodeMatchesType, so every Type
+// decision on this path is the canonical one.
+func (s *Service) continuationNodeEligible(ctx context.Context, node *storage.Node, options *SearchOptions, wantedTypes map[string]struct{}, decayFilter NodeDecayFilterFunc, authorizeNode NodeAuthorizationFunc) (bool, error) {
+	if node == nil || node.RuntimeMetadata().VisibilitySuppressed || (decayFilter != nil && decayFilter(string(node.ID))) {
 		return false, nil
 	}
 	if authorizeNode != nil {
@@ -441,57 +475,38 @@ func (s *Service) continuationNodeEligible(node *storage.Node, options *SearchOp
 			return false, err
 		}
 	}
-	if len(options.Types) > 0 {
-		matched := false
-		for _, wanted := range options.Types {
-			wanted = strings.ToLower(wanted)
-			for _, label := range node.Labels {
-				if wanted == strings.ToLower(label) {
-					matched = true
-					break
-				}
-			}
-			if nodeType, ok := node.Properties["type"].(string); ok && wanted == strings.ToLower(nodeType) {
-				matched = true
-			}
-			if matched {
-				break
-			}
-		}
-		if !matched {
-			return false, nil
-		}
+	if len(options.Types) > 0 && !nodeMatchesType(node, wantedTypes) {
+		return false, nil
 	}
 	if !options.admitsNode(node) {
 		return false, nil
 	}
-	return s.shouldIndexNode(node)
+	return s.shouldIndexNode(ctx, node)
 }
 
 func searchResultFromContinuationNode(node *storage.Node, projection resultPropertyProjection) SearchResult {
-	result := SearchResult{
-		ID:         string(node.ID),
-		NodeID:     node.ID,
-		Labels:     append([]string(nil), node.Labels...),
-		Properties: projection.apply(node.Properties),
-	}
-	if t, ok := node.Properties["type"].(string); ok {
-		result.Type = t
-	} else if len(node.Labels) > 0 {
+	result := searchResultFromNode(string(node.ID), node, projection)
+	result.Labels = append([]string(nil), node.Labels...)
+	if _, typed := node.Properties["type"].(string); !typed && len(node.Labels) > 0 {
 		result.Type = node.Labels[0]
 	}
-	if title, ok := node.Properties["title"].(string); ok {
-		result.Title = title
-	}
-	if desc, ok := node.Properties["description"].(string); ok {
-		result.Description = desc
-	}
-	if content, ok := node.Properties["content"].(string); ok {
-		result.ContentPreview = truncate(content, 200)
-	} else if text, ok := node.Properties["text"].(string); ok {
-		result.ContentPreview = truncate(text, 200)
-	}
 	return result
+}
+
+// CheckValid is shared by pulls and registry cleanup of abandoned cursors.
+func (s *catalogContinuationStream) CheckValid() error {
+	provider, ok := s.engine.(graphMutationVersionProvider)
+	if !ok {
+		return resultstream.ErrInvalidated
+	}
+	version, supported := provider.GraphMutationVersion()
+	if !supported || version != s.version {
+		return resultstream.ErrInvalidated
+	}
+	if s.policy == nil || s.policy.Load() != s.policyID {
+		return resultstream.ErrInvalidated
+	}
+	return nil
 }
 
 func (s *catalogContinuationStream) Pull(ctx context.Context, position uint64, n int) (*resultstream.Page, error) {
@@ -501,16 +516,8 @@ func (s *catalogContinuationStream) Pull(ctx context.Context, position uint64, n
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	provider, ok := s.engine.(graphMutationVersionProvider)
-	if !ok {
-		return nil, resultstream.ErrInvalidated
-	}
-	version, supported := provider.GraphMutationVersion()
-	if !supported || version != s.version {
-		return nil, resultstream.ErrInvalidated
-	}
-	if s.policy == nil || s.policy.Load() != s.policyID {
-		return nil, resultstream.ErrInvalidated
+	if err := s.CheckValid(); err != nil {
+		return nil, err
 	}
 	s.mu.RLock()
 	if s.closed {
@@ -533,21 +540,13 @@ func (s *catalogContinuationStream) Pull(ctx context.Context, position uint64, n
 	for key, value := range metadataSource {
 		metadata[key] = value
 	}
-	maxResultsReached, _ := metadata["max_results_reached"].(bool)
+
 	results, err := hydrateContinuationResultsContext(ctx, s.engine, compact, s.authorizeNode, s.projection)
 	if err != nil {
 		return nil, err
 	}
-	if hasMore {
-		metadata["collection_exhausted"] = false
-		metadata["completion"] = SearchContinuationMoreResults
-	} else if maxResultsReached {
-		metadata["collection_exhausted"] = false
-		metadata["completion"] = SearchContinuationMaxResultsComplete
-	} else {
-		metadata["collection_exhausted"] = true
-		metadata["completion"] = SearchContinuationCollectionComplete
-	}
+	_, collectionExhausted, completion := s.completion.page(hasMore)
+	metadata["collection_exhausted"], metadata["completion"] = collectionExhausted, completion
 	return &resultstream.Page{
 		Rows:     continuationRows(results),
 		Position: position,
@@ -581,7 +580,7 @@ func hydrateContinuationResultsContext(ctx context.Context, engine storage.Engin
 			ids = append(ids, compact[index].Passages[passageIndex].NodeID)
 		}
 	}
-	nodes, err := batchContinuationNodesWithoutEmbeddings(engine, ids)
+	nodes, err := batchContinuationNodesWithoutEmbeddings(ctx, engine, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -641,9 +640,9 @@ func hydrateContinuationResultsContext(ctx context.Context, engine storage.Engin
 	return results, nil
 }
 
-func batchContinuationNodesWithoutEmbeddings(engine storage.Engine, ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
+func batchContinuationNodesWithoutEmbeddings(ctx context.Context, engine storage.Engine, ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
 	if reader, ok := engine.(storage.BatchNodeWithoutEmbeddingsReader); ok {
-		nodes, err := reader.BatchGetNodesWithoutEmbeddings(ids)
+		nodes, err := reader.BatchGetNodesWithoutEmbeddings(ctx, ids)
 		if err == nil {
 			return nodes, nil
 		}
@@ -651,7 +650,7 @@ func batchContinuationNodesWithoutEmbeddings(engine storage.Engine, ids []storag
 			return nil, err
 		}
 	}
-	return engine.BatchGetNodes(ids)
+	return engine.BatchGetNodes(ctx, ids)
 }
 
 func (s *catalogContinuationStream) Close() error {

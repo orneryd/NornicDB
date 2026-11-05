@@ -1,10 +1,12 @@
 package storage
 
 import (
+	"context"
 	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBadgerCache_LabelCacheLifecycle_Extra(t *testing.T) {
@@ -12,7 +14,7 @@ func TestBadgerCache_LabelCacheLifecycle_Extra(t *testing.T) {
 	nid := NodeID(prefixTestID("node-1"))
 
 	// set/get
-	b.labelCacheSetFirst(b.labelFirstCacheGen.current(), "Person", nid)
+	b.labelCacheSetFirst(b.labelFirstCacheGen.current(), "Person", nid, b.db.oracle.published.Load())
 	got, ok := b.labelCacheGetFirst("Person")
 	assert.True(t, ok)
 	assert.Equal(t, nid, got)
@@ -25,7 +27,7 @@ func TestBadgerCache_LabelCacheLifecycle_Extra(t *testing.T) {
 	assert.False(t, ok)
 
 	// re-add and invalidate removed labels
-	b.labelCacheSetFirst(b.labelFirstCacheGen.current(), "Employee", nid)
+	b.labelCacheSetFirst(b.labelFirstCacheGen.current(), "Employee", nid, b.db.oracle.published.Load())
 	b.labelCacheInvalidateForRemovedLabels([]string{"Employee", "Person"}, []string{"Person"}, nid)
 	_, ok = b.labelCacheGetFirst("Employee")
 	assert.False(t, ok)
@@ -33,33 +35,33 @@ func TestBadgerCache_LabelCacheLifecycle_Extra(t *testing.T) {
 
 func TestBadgerCache_NodeCreateUpdateDelete_Extra(t *testing.T) {
 	b := createTestBadgerEngine(t)
-	n := &Node{ID: NodeID(prefixTestID("ncache-1")), Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "a"}}
-
-	b.cacheOnNodeCreated(n)
+	n := &Node{ID: NodeID(prefixTestID("ncache-1")), Labels: []string{"Person", "Legacy"}, Properties: map[string]interface{}{"name": "a"}}
+	_, err := b.CreateNode(t.Context(), n)
+	require.NoError(t, err)
 	assert.EqualValues(t, 1, b.nodeCount.Load())
 	_, ok := b.nodeCache[n.ID]
 	assert.True(t, ok)
-
+	require.NoError(t, b.ForEachNodeIDByLabel(context.Background(), "Legacy", func(NodeID) bool { return true }))
 	n2 := &Node{ID: n.ID, Labels: []string{"Person", "Employee"}, Properties: map[string]interface{}{"name": "b"}}
-	b.cacheOnNodeUpdated(n2)
+	require.NoError(t, b.UpdateNode(t.Context(), NodeUpdateRequest{After: n2}))
 	assert.Equal(t, "b", b.nodeCache[n.ID].Properties["name"])
-
-	old := &Node{ID: n.ID, Labels: []string{"Person", "Legacy"}, Properties: map[string]interface{}{}}
-	b.labelCacheSetFirst(b.labelFirstCacheGen.current(), "Legacy", n.ID)
-	b.cacheOnNodeUpdatedWithOldNode(n2, old)
 	_, ok = b.labelCacheGetFirst("Legacy")
 	assert.False(t, ok)
-
-	b.cacheOnNodeDeleted(n.ID, 0)
+	require.NoError(t, b.DeleteNode(t.Context(), n.ID))
 	assert.EqualValues(t, 0, b.nodeCount.Load())
 	_, ok = b.nodeCache[n.ID]
 	assert.False(t, ok)
 
-	b.edgeCount.Store(3)
-	b.edgeTypeCache["KNOWS"] = []*Edge{{ID: EdgeID(prefixTestID("edge-del")), Type: "KNOWS"}}
-	b.cacheOnNodeCreated(&Node{ID: NodeID(prefixTestID("tenant_cache:n2")), Labels: []string{"Person"}, Properties: map[string]interface{}{}})
+	id := NodeID(prefixTestID("tenant_cache:n2"))
+	_, err = b.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Person"}})
+	require.NoError(t, err)
+	for _, edgeID := range []EdgeID{EdgeID(prefixTestID("cascade-1")), EdgeID(prefixTestID("cascade-2"))} {
+		require.NoError(t, b.CreateEdge(t.Context(), &Edge{ID: edgeID, StartNode: id, EndNode: id, Type: "KNOWS"}))
+	}
+	_, err = b.GetEdgesByType(context.Background(), "KNOWS")
+	require.NoError(t, err)
 	beforeEdges := b.edgeCount.Load()
-	b.cacheOnNodeDeleted(NodeID(prefixTestID("tenant_cache:n2")), 2)
+	require.NoError(t, b.DeleteNode(t.Context(), id))
 	assert.EqualValues(t, beforeEdges-2, b.edgeCount.Load())
 	_, ok = b.edgeTypeCache["KNOWS"]
 	assert.False(t, ok)
@@ -67,43 +69,58 @@ func TestBadgerCache_NodeCreateUpdateDelete_Extra(t *testing.T) {
 
 func TestBadgerCache_EdgeCreateUpdateDelete_Extra(t *testing.T) {
 	b := createTestBadgerEngine(t)
+	source, target := NodeID(prefixTestID("cache-source")), NodeID(prefixTestID("cache-target"))
+	for _, id := range []NodeID{source, target} {
+		_, err := b.CreateNode(t.Context(), &Node{ID: id})
+		require.NoError(t, err)
+	}
 	eid := EdgeID(prefixTestID("edge-1"))
-	e := &Edge{ID: eid, Type: "KNOWS"}
-
-	b.edgeTypeCache["KNOWS"] = []*Edge{{ID: eid, Type: "KNOWS"}}
-	b.cacheOnEdgeCreated(e)
+	e := &Edge{ID: eid, StartNode: source, EndNode: target, Type: "KNOWS"}
+	_, err := b.GetEdgesByType(context.Background(), "KNOWS")
+	require.NoError(t, err)
+	require.NoError(t, b.CreateEdge(t.Context(), e))
 	assert.EqualValues(t, 1, b.edgeCount.Load())
 	_, ok := b.edgeTypeCache["KNOWS"]
 	assert.False(t, ok)
 
-	b.edgeTypeCache["LIKES"] = []*Edge{{ID: eid, Type: "LIKES"}}
-	b.edgeTypeCache["HATES"] = []*Edge{{ID: eid, Type: "HATES"}}
-	b.cacheOnEdgeUpdated("LIKES", &Edge{ID: eid, Type: "HATES"})
+	e.Type = "LIKES"
+	require.NoError(t, b.UpdateEdge(t.Context(), EdgeUpdateRequest{After: e}))
+	_, err = b.GetEdgesByType(context.Background(), "LIKES")
+	require.NoError(t, err)
+	_, err = b.GetEdgesByType(context.Background(), "HATES")
+	require.NoError(t, err)
+	e.Type = "HATES"
+	require.NoError(t, b.UpdateEdge(t.Context(), EdgeUpdateRequest{After: e}))
 	_, ok = b.edgeTypeCache["LIKES"]
 	assert.False(t, ok)
 	_, ok = b.edgeTypeCache["HATES"]
 	assert.False(t, ok)
-
-	b.cacheOnEdgeDeleted(eid, "KNOWS")
+	require.NoError(t, b.DeleteEdge(t.Context(), eid))
 	assert.EqualValues(t, 0, b.edgeCount.Load())
 }
 
-func TestBadgerCache_BulkCacheHooks_Extra(t *testing.T) {
+func TestBadgerCommitPublicationCounts(t *testing.T) {
 	b := createTestBadgerEngine(t)
-
+	var images commitCacheImages
+	var creates []Operation
 	for _, id := range []NodeID{NodeID(prefixTestID("bn-1")), NodeID(prefixTestID("bn-2"))} {
-		b.cacheOnNodeCreated(&Node{ID: id, Labels: []string{"L"}, Properties: map[string]interface{}{}})
+		creates = append(creates, Operation{Type: OpCreateNode, Node: &Node{ID: id, Labels: []string{"L"}, Properties: map[string]interface{}{}}})
 	}
-	assert.EqualValues(t, 2, b.nodeCount.Load())
 	for _, id := range []EdgeID{EdgeID(prefixTestID("be-1")), EdgeID(prefixTestID("be-2")), EdgeID(prefixTestID("be-3"))} {
-		b.cacheOnEdgeCreated(&Edge{ID: id, Type: "REL"})
+		creates = append(creates, Operation{Type: OpCreateEdge, Edge: &Edge{ID: id, Type: "REL"}})
 	}
+	b.publishCommitOperations("", nil, creates, true, true, &images)
+	assert.EqualValues(t, 2, b.nodeCount.Load())
 	assert.EqualValues(t, 3, b.edgeCount.Load())
-
-	b.cacheOnEdgesDeleted([]EdgeID{EdgeID(prefixTestID("be-1")), EdgeID(prefixTestID("be-2"))})
+	b.publishCommitOperations("", nil, []Operation{
+		{Type: OpDeleteEdge, EdgeID: EdgeID(prefixTestID("be-1"))},
+		{Type: OpDeleteEdge, EdgeID: EdgeID(prefixTestID("be-2"))},
+	}, true, true, &images)
 	assert.EqualValues(t, 1, b.edgeCount.Load())
-
-	b.cacheOnNodesDeleted([]NodeID{NodeID(prefixTestID("bn-1")), NodeID(prefixTestID("bn-2"))}, 2, 1)
+	b.publishCommitOperations("", nil, []Operation{
+		{Type: OpDeleteNode, NodeID: NodeID(prefixTestID("bn-1")), EdgesDeleted: 1},
+		{Type: OpDeleteNode, NodeID: NodeID(prefixTestID("bn-2"))},
+	}, true, true, &images)
 	assert.EqualValues(t, 0, b.nodeCount.Load())
 	assert.EqualValues(t, 0, b.edgeCount.Load())
 }
@@ -112,16 +129,13 @@ func TestBadgerCache_NoopBranches_Extra(t *testing.T) {
 	b := createTestBadgerEngine(t)
 
 	// nil / empty guards
-	b.cacheStoreNode(nil)
-	b.cacheDeleteNode("")
-	b.labelCacheSetFirst(b.labelFirstCacheGen.current(), "", NodeID("x"))
-	b.labelCacheSetFirst(b.labelFirstCacheGen.current(), "L", "")
+	b.cacheStoreNode(nil, b.db.oracle.published.Load())
+	b.cacheDeleteNode("", nodeCacheAllForms)
+	b.labelCacheSetFirst(b.labelFirstCacheGen.current(), "", NodeID("x"), b.db.oracle.published.Load())
+	b.labelCacheSetFirst(b.labelFirstCacheGen.current(), "L", "", b.db.oracle.published.Load())
 	b.labelCacheInvalidateForNodeLabels(nil, NodeID("x"))
 	b.labelCacheInvalidateForRemovedLabels(nil, nil, NodeID("x"))
-	b.cacheOnEdgeCreated(nil)
-	b.cacheOnEdgeUpdated("", nil)
-	b.cacheOnEdgesDeleted(nil)
-	b.cacheOnNodesDeleted(nil, 0, 0)
+	b.publishCommitOperations("", nil, nil, true, true, &commitCacheImages{})
 
 	assert.EqualValues(t, 0, b.nodeCount.Load())
 	assert.EqualValues(t, 0, b.edgeCount.Load())
@@ -132,12 +146,12 @@ func TestBadgerCache_AdjacencyInvalidateAll_Extra(t *testing.T) {
 	b.adjCacheMu.Lock()
 	b.outgoingAdjCache[NodeID(prefixTestID("a"))] = []EdgeID{EdgeID(prefixTestID("e"))}
 	b.adjCacheMu.Unlock()
-	b.adjCacheInvalidateAll()
+	b.adjCacheInvalidate()
 	assert.Empty(t, b.outgoingAdjCache)
 	assert.Empty(t, b.incomingAdjCache)
 
 	// An empty cache is kept, not re-allocated.
 	before := reflect.ValueOf(b.outgoingAdjCache).Pointer()
-	b.adjCacheInvalidateAll()
+	b.adjCacheInvalidate()
 	assert.Equal(t, before, reflect.ValueOf(b.outgoingAdjCache).Pointer())
 }

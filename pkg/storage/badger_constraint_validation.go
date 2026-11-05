@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"reflect"
@@ -8,46 +9,20 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/convert"
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // compareValues compares two property values for equality.
-// This mirrors Cypher semantics for numeric comparisons across int/float types.
+// This mirrors Cypher semantics for numeric comparisons across int/float types:
+// numbers compare exactly, as list elements do, so adjacent integers above
+// 2^53 stay distinct instead of colliding through float64.
 func compareValues(a, b interface{}) bool {
-	if aNum, ok := numericConstraintValue(a); ok {
-		if bNum, ok := numericConstraintValue(b); ok {
-			return aNum == bNum
-		}
+	if equal, numeric := equalConstraintListNumbers(reflect.ValueOf(a), reflect.ValueOf(b)); numeric {
+		return equal
 	}
 
-	// Handle different numeric types
 	switch v1 := a.(type) {
-	case int:
-		switch v2 := b.(type) {
-		case int:
-			return v1 == v2
-		case int64:
-			return int64(v1) == v2
-		case float64:
-			return float64(v1) == v2
-		}
-	case int64:
-		switch v2 := b.(type) {
-		case int:
-			return v1 == int64(v2)
-		case int64:
-			return v1 == v2
-		case float64:
-			return float64(v1) == v2
-		}
-	case float64:
-		switch v2 := b.(type) {
-		case int:
-			return v1 == float64(v2)
-		case int64:
-			return v1 == float64(v2)
-		case float64:
-			return v1 == v2
-		}
 	case string:
 		if v2, ok := b.(string); ok {
 			return v1 == v2
@@ -72,57 +47,63 @@ func compareValues(a, b interface{}) bool {
 }
 
 func numericConstraintValue(value interface{}) (float64, bool) {
-	switch v := value.(type) {
-	case int:
-		return float64(v), true
-	case int8:
-		return float64(v), true
-	case int16:
-		return float64(v), true
-	case int32:
-		return float64(v), true
-	case int64:
-		return float64(v), true
-	case uint:
-		return float64(v), true
-	case uint8:
-		return float64(v), true
-	case uint16:
-		return float64(v), true
-	case uint32:
-		return float64(v), true
-	case uint64:
-		return float64(v), true
-	case float32:
-		return float64(v), true
-	case float64:
-		return v, true
-	default:
-		return 0, false
-	}
+	return convert.NumericFloat64(value)
 }
 
-func (b *BadgerEngine) validateNodeConstraintsInTxn(txn *badger.Txn, node *Node, schema *SchemaManager, namespace string, excludeNodeID NodeID) error {
+func (b *BadgerEngine) validateNodeConstraintsInTxn(ctx context.Context, txn *badger.Txn, node *Node, schema *SchemaManager, namespace string, excludeNodeID NodeID) error {
 	if node == nil || schema == nil {
 		return nil
 	}
+	// Before-durability native callbacks retain the write's preparation
+	// lifetime. Statement transaction validation uses the same owner with
+	// its actual request context.
+	return (nodeConstraintValidation{ctx: ctx, engine: b, native: txn, schema: schema, namespace: namespace, exclude: excludeNodeID}).validate(node)
+}
 
-	constraints := schema.GetConstraintsForLabels(node.Labels)
+// nodeConstraintValidation owns schema iteration, first-error ordering, DOMAIN
+// and property-type policy. Reads remain attached to their actual authority:
+// a transaction's pending/current view or the caller's physical publishing txn,
+// and to their own lifetime (ctx): the staging write's own for a context-free
+// transaction API, the commit's caller context for a commit, and the native
+// write's preparation lifetime before durability. The concrete
+// context avoids interface boxes and retains original error values.
+type nodeConstraintValidation struct {
+	ctx         context.Context
+	engine      *BadgerEngine
+	native      *badger.Txn
+	schema      *SchemaManager
+	namespace   string
+	exclude     NodeID
+	transaction *BadgerTransaction
+}
+
+func (v nodeConstraintValidation) validate(node *Node) error {
+	constraints, err := v.schema.GetConstraintsForLabels(v.ctx, node.Labels)
+	if err != nil {
+		return err
+	}
 	for _, c := range constraints {
+		if c.EffectiveEntityType() != ConstraintEntityNode {
+			continue
+		}
 		switch c.Type {
 		case ConstraintUnique:
-			if len(c.Properties) > 1 {
-				values := make([]interface{}, len(c.Properties))
-				complete := true
-				for index, property := range c.Properties {
-					values[index] = node.Properties[property]
-					if values[index] == nil {
-						complete = false
-						break
-					}
+			if v.transaction != nil {
+				var err error
+				if len(c.Properties) > 1 {
+					err = v.transaction.checkNodeKeyConstraint(v.ctx, node, c)
+				} else {
+					err = v.transaction.checkUniqueConstraint(v.ctx, node, c)
 				}
-				if complete {
-					if err := b.scanForNodeKeyViolationInTxn(txn, namespace, c.Label, c.Properties, values, excludeNodeID); err != nil {
+				if err != nil {
+					return err
+				}
+				continue
+			}
+			if len(c.Properties) > 1 {
+				values, missing := nodeConstraintKeyValues(node, c.Properties)
+				if missing < 0 {
+					if err := v.engine.scanForNodeKeyViolationInTxn(v.ctx, v.native, v.namespace, c.Label, c.Properties, values, v.exclude); err != nil {
 						if violation, ok := err.(*ConstraintViolationError); ok {
 							violation.Type = ConstraintUnique
 						}
@@ -139,45 +120,46 @@ func (b *BadgerEngine) validateNodeConstraintsInTxn(txn *badger.Txn, node *Node,
 			if value == nil {
 				continue
 			}
-			if existingNode, found, cacheComplete, constrained := schema.lookupUniqueConstraintValueForValidation(c.Label, prop, value); constrained && cacheComplete {
-				if found && existingNode != excludeNodeID {
+			if existingNode, found, constrained, cacheComplete, err := v.schema.LookupUniqueConstraintValue(v.ctx, c.Label, prop, value); err != nil {
+				return err
+			} else if constrained && cacheComplete {
+				if found && existingNode != v.exclude {
 					return uniqueConstraintViolation(c.Label, prop, value, existingNode)
 				}
 				continue
 			}
-			if err := b.scanForUniqueViolationInTxn(txn, namespace, c.Label, prop, value, excludeNodeID); err != nil {
+			if err := v.engine.scanForUniqueViolationInTxn(v.ctx, v.native, v.namespace, c.Label, prop, value, v.exclude); err != nil {
 				return err
 			}
 		case ConstraintNodeKey:
-			values := make([]interface{}, len(c.Properties))
-			for i, prop := range c.Properties {
-				values[i] = node.Properties[prop]
-				if values[i] == nil {
-					return &ConstraintViolationError{
-						Type:       ConstraintNodeKey,
-						Label:      c.Label,
-						Properties: c.Properties,
-						Message:    fmt.Sprintf("NODE KEY property %s cannot be null", prop),
-					}
+			if v.transaction != nil {
+				if err := v.transaction.checkNodeKeyConstraint(v.ctx, node, c); err != nil {
+					return err
+				}
+				continue
+			}
+			values, missing := nodeConstraintKeyValues(node, c.Properties)
+			if missing >= 0 {
+				return &ConstraintViolationError{
+					Type: ConstraintNodeKey, Label: c.Label, Properties: c.Properties,
+					Message: fmt.Sprintf("NODE KEY property %s cannot be null", c.Properties[missing]),
 				}
 			}
-			if err := b.scanForNodeKeyViolationInTxn(txn, namespace, c.Label, c.Properties, values, excludeNodeID); err != nil {
+			if err := v.engine.scanForNodeKeyViolationInTxn(v.ctx, v.native, v.namespace, c.Label, c.Properties, values, v.exclude); err != nil {
 				return err
 			}
 		case ConstraintExists:
+			if v.transaction != nil {
+				if err := v.transaction.checkExistenceConstraint(node, c); err != nil {
+					return err
+				}
+				continue
+			}
 			if len(c.Properties) != 1 {
 				continue
 			}
 			prop := c.Properties[0]
-			if node.Properties == nil {
-				return &ConstraintViolationError{
-					Type:       ConstraintExists,
-					Label:      c.Label,
-					Properties: []string{prop},
-					Message:    fmt.Sprintf("Required property %s is missing", prop),
-				}
-			}
-			if val, ok := node.Properties[prop]; !ok || val == nil {
+			if node.Properties[prop] == nil {
 				return &ConstraintViolationError{
 					Type:       ConstraintExists,
 					Label:      c.Label,
@@ -186,6 +168,12 @@ func (b *BadgerEngine) validateNodeConstraintsInTxn(txn *badger.Txn, node *Node,
 				}
 			}
 		case ConstraintTemporal:
+			if v.transaction != nil {
+				if err := v.transaction.checkTemporalConstraint(v.ctx, node, c); err != nil {
+					return err
+				}
+				continue
+			}
 			spec, ok := splitTemporalKeySpec(c.Properties)
 			if !ok {
 				return fmt.Errorf("TEMPORAL constraint requires at least 3 properties (key..., valid_from, valid_to)")
@@ -209,7 +197,7 @@ func (b *BadgerEngine) validateNodeConstraintsInTxn(txn *badger.Txn, node *Node,
 				}
 			}
 
-			if err := b.scanForTemporalOverlapInTxn(txn, namespace, c, keyVal, interval.start, interval.end, interval.hasEnd, excludeNodeID); err != nil {
+			if err := v.engine.scanForTemporalOverlapInTxn(v.ctx, v.native, v.namespace, c, keyVal, interval.start, interval.end, interval.hasEnd, v.exclude); err != nil {
 				return err
 			}
 		case ConstraintDomain:
@@ -217,6 +205,10 @@ func (b *BadgerEngine) validateNodeConstraintsInTxn(txn *badger.Txn, node *Node,
 				prop := c.Properties[0]
 				value := node.Properties[prop]
 				if value != nil && !isValueInAllowedList(value, c.AllowedValues) {
+					if v.transaction != nil {
+						message := localization.StorageValidationPropertyDomainInvalid(prop, value, c.AllowedValues)
+						return newLocalizedConstraintViolation(ConstraintDomain, c.Label, []string{prop}, message, nil)
+					}
 					return &ConstraintViolationError{
 						Type:       ConstraintDomain,
 						Label:      c.Label,
@@ -228,10 +220,14 @@ func (b *BadgerEngine) validateNodeConstraintsInTxn(txn *badger.Txn, node *Node,
 		}
 	}
 
-	typeConstraints := schema.GetPropertyTypeConstraintsForLabels(node.Labels)
+	typeConstraints := v.schema.GetPropertyTypeConstraintsForLabels(node.Labels)
 	for _, c := range typeConstraints {
 		value := node.Properties[c.Property]
 		if err := ValidatePropertyType(value, c.ExpectedType); err != nil {
+			if v.transaction != nil {
+				message := localization.StorageValidationPropertyTypeRequired(c.Property, string(c.ExpectedType), err)
+				return newLocalizedConstraintViolation(ConstraintPropertyType, c.Label, []string{c.Property}, message, err)
+			}
 			return &ConstraintViolationError{
 				Type:       ConstraintPropertyType,
 				Label:      c.Label,
@@ -244,52 +240,16 @@ func (b *BadgerEngine) validateNodeConstraintsInTxn(txn *badger.Txn, node *Node,
 	return nil
 }
 
-func (b *BadgerEngine) scanForUniqueViolationInTxn(txn *badger.Txn, namespace, label, property string, value interface{}, excludeNodeID NodeID) error {
+// scanForUniqueViolationInTxn is the direct writer's single-property UNIQUE
+// decision when the claim cache cannot be trusted for misses. Its candidate
+// population is the direct writer's stored-inclusive, coherent read authority;
+// an ACKed holder stays visible even if it drains after the writer began. ctx carries the write's own
+// admission lifetime; cancellation is returned without publishing the write.
+func (b *BadgerEngine) scanForUniqueViolationInTxn(ctx context.Context, txn *badger.Txn, namespace, label, property string, value interface{}, excludeNodeID NodeID) error {
 	if hook := getUniqueConstraintScanHook(); hook != nil {
 		hook()
 	}
-
-	prefix := labelIndexPrefix(label)
-	iter := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-	defer iter.Close()
-
-	labelLen := len(label)
-	nsPrefix := namespace + ":"
-	for iter.Seek(prefix); iter.ValidForPrefix(prefix); iter.Next() {
-		key := iter.Item().KeyCopy(nil)
-		nodeNum, ok := extractNodeNumIDFromLabelIndex(key, labelLen)
-		if !ok {
-			continue
-		}
-		nodeID, ok := b.idDict.lookupNodeIDByNum(nodeNum)
-		if !ok || nodeID == "" || nodeID == excludeNodeID {
-			continue
-		}
-		if !strings.HasPrefix(string(nodeID), nsPrefix) {
-			continue
-		}
-
-		item, err := txn.Get(nodeKey(nodeID))
-		if err != nil {
-			if errors.Is(err, badger.ErrKeyNotFound) {
-				continue
-			}
-			return err
-		}
-
-		var nodeBytes []byte
-		if err := item.Value(func(val []byte) error {
-			nodeBytes = append([]byte{}, val...)
-			return nil
-		}); err != nil {
-			return err
-		}
-
-		existingNode, err := b.decodeNode(namespace, nodeBytes)
-		if err != nil {
-			return err
-		}
-
+	return b.visitDirectConstraintNodes(ctx, txn, namespace, label, []string{property}, excludeNodeID, func(existingNode *Node) error {
 		if existingValue, ok := existingNode.Properties[property]; ok {
 			if compareValues(existingValue, value) {
 				return &ConstraintViolationError{
@@ -302,53 +262,16 @@ func (b *BadgerEngine) scanForUniqueViolationInTxn(txn *badger.Txn, namespace, l
 				}
 			}
 		}
-	}
 
-	return nil
+		return nil
+	})
 }
 
-func (b *BadgerEngine) scanForNodeKeyViolationInTxn(txn *badger.Txn, namespace, label string, properties []string, values []interface{}, excludeNodeID NodeID) error {
-	prefix := labelIndexPrefix(label)
-	iter := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-	defer iter.Close()
-
-	labelLen := len(label)
-	nsPrefix := namespace + ":"
-	for iter.Seek(prefix); iter.ValidForPrefix(prefix); iter.Next() {
-		key := iter.Item().KeyCopy(nil)
-		nodeNum, ok := extractNodeNumIDFromLabelIndex(key, labelLen)
-		if !ok {
-			continue
-		}
-		nodeID, ok := b.idDict.lookupNodeIDByNum(nodeNum)
-		if !ok || nodeID == "" || nodeID == excludeNodeID {
-			continue
-		}
-		if !strings.HasPrefix(string(nodeID), nsPrefix) {
-			continue
-		}
-
-		item, err := txn.Get(nodeKey(nodeID))
-		if err != nil {
-			if errors.Is(err, badger.ErrKeyNotFound) {
-				continue
-			}
-			return err
-		}
-
-		var nodeBytes []byte
-		if err := item.Value(func(val []byte) error {
-			nodeBytes = append([]byte{}, val...)
-			return nil
-		}); err != nil {
-			return err
-		}
-
-		existingNode, err := b.decodeNode(namespace, nodeBytes)
-		if err != nil {
-			return err
-		}
-
+// scanForNodeKeyViolationInTxn is the direct writer's composite key decision.
+// The direct writer's stored-inclusive read supplies a coherent physical and
+// acknowledged population; the complete key is compared here. ctx carries the write's own admission lifetime.
+func (b *BadgerEngine) scanForNodeKeyViolationInTxn(ctx context.Context, txn *badger.Txn, namespace, label string, properties []string, values []interface{}, excludeNodeID NodeID) error {
+	return b.visitDirectConstraintNodes(ctx, txn, namespace, label, properties, excludeNodeID, func(existingNode *Node) error {
 		match := true
 		for i, prop := range properties {
 			existingValue, ok := existingNode.Properties[prop]
@@ -367,9 +290,9 @@ func (b *BadgerEngine) scanForNodeKeyViolationInTxn(txn *badger.Txn, namespace, 
 				Message: fmt.Sprintf("Node with key %v=%v already exists (nodeID: %s)", properties, values, existingNode.ID),
 			}
 		}
-	}
 
-	return nil
+		return nil
+	})
 }
 
 // temporalOverlapViolation reports whether existing overlaps the interval for
@@ -399,145 +322,109 @@ func temporalOverlapViolation(c Constraint, spec temporalKeySpec, existing *Node
 	return nil
 }
 
-// legacyScanForTemporalOverlapInTxn scans every node of c.Label in namespace
-// for an interval overlapping [start, end) under the same grouping key. It is
-// the fallback when no temporal history index entries exist for the key.
-func (b *BadgerEngine) legacyScanForTemporalOverlapInTxn(txn *badger.Txn, namespace string, c Constraint, keyValue interface{}, start time.Time, end time.Time, hasEnd bool, excludeNodeID NodeID) error {
-	runTemporalConstraintScanHook()
+// temporalOverlapScan selects coverage, never a different equality or interval
+// contract. Explicit label coverage also supplies the complete-scan test oracle.
+type temporalOverlapScan uint8
+
+const (
+	temporalOverlapIndexed temporalOverlapScan = iota
+	temporalOverlapFullLabel
+)
+
+// scanForTemporalOverlapInTxn selects complete coverage for this key: indexed
+// neighbours only when disjoint scalar histories permit them, complete indexed
+// histories for canonical list keys, and the canonical label reader when an
+// index cannot establish completeness. Every route shares body decoding and
+// the same interval/equality violation owner.
+func (b *BadgerEngine) scanForTemporalOverlapInTxn(ctx context.Context, txn *badger.Txn, namespace string, c Constraint, keyValue interface{}, start, end time.Time, hasEnd bool, excludeNodeID NodeID, mode ...temporalOverlapScan) error {
 	spec, ok := splitTemporalKeySpec(c.Properties)
 	if !ok {
 		return nil
+	}
+	constraint := Constraint{Type: ConstraintTemporal, Label: c.Label, Properties: c.Properties}
+	target := temporalRefreshTarget{constraint: constraint, desc: makeTemporalDescriptor(namespace, constraint, keyValue), keyValue: keyValue}
+	prefix := temporalHistoryPrefix(target.desc)
+	fullLabel := len(mode) > 0 && mode[0] == temporalOverlapFullLabel
+	list := spec.listBearing(keyValue)
+	if !fullLabel {
+		if list {
+			fullLabel = b.writeBehindEnabled() || !b.temporalIndexAuthoritative(b.GetSchemaForNamespace(namespace), constraint)
+		} else {
+			it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+			it.Rewind()
+			hasHistory := it.Valid()
+			it.Close()
+			if !hasHistory {
+				if !b.writeBehindEnabled() && b.temporalIndexAuthoritative(b.GetSchemaForNamespace(namespace), constraint) {
+					return nil
+				}
+				fullLabel = true
+			}
+		}
 	}
 	interval := temporalInterval{start: start, end: end, hasEnd: hasEnd}
-	label := c.Label
-	prefix := labelIndexPrefix(label)
-	iter := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-	defer iter.Close()
-
-	labelLen := len(label)
-	nsPrefix := namespace + ":"
-	for iter.Seek(prefix); iter.ValidForPrefix(prefix); iter.Next() {
-		key := iter.Item().KeyCopy(nil)
-		nodeNum, ok := extractNodeNumIDFromLabelIndex(key, labelLen)
-		if !ok {
-			continue
-		}
-		nodeID, ok := b.idDict.lookupNodeIDByNum(nodeNum)
-		if !ok || nodeID == "" || nodeID == excludeNodeID {
-			continue
-		}
-		if !strings.HasPrefix(string(nodeID), nsPrefix) {
-			continue
-		}
-
-		item, err := txn.Get(nodeKey(nodeID))
+	if fullLabel {
+		runTemporalConstraintScanHook()
+		it, err := b.newLabelIndexReader(ctx, txn, namespace+":", c.Label, "", storedRead, false)
 		if err != nil {
-			if errors.Is(err, badger.ErrKeyNotFound) {
+			return err
+		}
+		defer it.Close()
+		for it.Next() {
+			id := it.NodeID()
+			if id == excludeNodeID {
 				continue
 			}
-			return err
+			node, err := b.loadNodeForTemporalTxn(txn, id, false)
+			if err != nil {
+				return err
+			}
+			if err := temporalOverlapViolation(constraint, spec, node, keyValue, interval); err != nil {
+				return err
+			}
 		}
-
-		var nodeBytes []byte
-		if err := item.Value(func(val []byte) error {
-			nodeBytes = append([]byte{}, val...)
-			return nil
-		}); err != nil {
-			return err
-		}
-
-		existingNode, err := b.decodeNode(namespace, nodeBytes)
-		if err != nil {
-			return err
-		}
-		if err := temporalOverlapViolation(c, spec, existingNode, keyValue, interval); err != nil {
-			return err
-		}
+		return it.Err()
 	}
-
-	return nil
-}
-
-// scanForTemporalOverlapInTxn checks the interval [start, end) for keyValue
-// against the temporal history index (its two neighbours by start time), or
-// falls back to a label scan when the key has no indexed history yet.
-func (b *BadgerEngine) scanForTemporalOverlapInTxn(txn *badger.Txn, namespace string, c Constraint, keyValue interface{}, start time.Time, end time.Time, hasEnd bool, excludeNodeID NodeID) error {
-	spec, ok := splitTemporalKeySpec(c.Properties)
-	if !ok {
-		return nil
+	if list {
+		historyConstraint := constraint
+		_, _, err := b.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{ctx: ctx, excludeNodeID: excludeNodeID, latest: func(node *Node) (bool, error) {
+			err := temporalOverlapViolation(historyConstraint, spec, node, keyValue, interval)
+			return err == nil, err
+		}})
+		return err
 	}
-	constraint := Constraint{
-		Type:       ConstraintTemporal,
-		Label:      c.Label,
-		Properties: c.Properties,
-	}
-	target := temporalRefreshTarget{
-		constraint: constraint,
-		desc:       makeTemporalDescriptor(namespace, constraint, keyValue),
-		keyValue:   keyValue,
-	}
-	prefix := temporalHistoryPrefix(target.desc)
-	hasIndexedEntries := false
-	it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-	for it.Rewind(); it.Valid(); it.Next() {
-		hasIndexedEntries = true
-		break
-	}
-	it.Close()
-	if !hasIndexedEntries {
-		// With a complete index, a key without history has no stored node to
-		// overlap; only an incomplete one needs the label scan (#1126).
-		// Under write-behind a buffered node has no entries yet, so only a
-		// synchronous engine may skip the scan.
-		if !b.writeBehindEnabled() && b.temporalIndexAuthoritative(b.GetSchemaForNamespace(namespace), constraint) {
-			return nil
-		}
-		return b.legacyScanForTemporalOverlapInTxn(txn, namespace, constraint, keyValue, start, end, hasEnd, excludeNodeID)
-	}
-
-	prevNode, nextNode, err := b.temporalAdjacentNodesInTxn(txn, target, start, excludeNodeID)
+	previous, next, err := b.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{ctx: ctx, at: start, excludeNodeID: excludeNodeID, adjacent: true})
 	if err != nil {
 		return err
 	}
-	interval := temporalInterval{start: start, end: end, hasEnd: hasEnd}
-	for _, neighbour := range []*Node{prevNode, nextNode} {
-		if neighbour == nil {
-			continue
-		}
-		if _, _, _, _, ok := temporalNodeState(neighbour, constraint); !ok {
-			continue
-		}
-		if err := temporalOverlapViolation(constraint, spec, neighbour, keyValue, interval); err != nil {
+	for _, node := range []*Node{previous, next} {
+		if err := temporalOverlapViolation(constraint, spec, node, keyValue, interval); err != nil {
 			return err
 		}
 	}
-
 	return nil
-}
-
-func constraintValueKey(value interface{}) string {
-	return NewCompositeKey(value).Hash
-}
-
-func constraintCompositeKey(values []interface{}) string {
-	return NewCompositeKey(values...).Hash
 }
 
 // validateEdgeConstraintsInTxn checks all relationship constraints for an edge within a transaction.
 // The excludeEdgeID allows excluding the edge being updated from uniqueness checks.
-func (b *BadgerEngine) validateEdgeConstraintsInTxn(txn *badger.Txn, edge *Edge, schema *SchemaManager, namespace string, excludeEdgeID EdgeID) error {
+func (b *BadgerEngine) validateEdgeConstraintsInTxn(ctx context.Context, txn *badger.Txn, edge *Edge, schema *SchemaManager, namespace string, excludeEdgeID EdgeID) error {
 	if edge == nil || schema == nil || edge.Type == "" {
 		return nil
 	}
 
-	constraints := schema.GetConstraintsForLabels([]string{edge.Type})
+	// Discovery retains the native write's preparation lifetime; it runs
+	// before durable publication, where cancellation may still reject it.
+	constraints, err := schema.GetConstraintsForLabels(ctx, []string{edge.Type})
+	if err != nil {
+		return err
+	}
 	for _, c := range constraints {
 		if c.EffectiveEntityType() != ConstraintEntityRelationship {
 			continue
 		}
 		switch c.Type {
 		case ConstraintUnique:
-			if err := b.checkEdgeUniquenessInTxn(txn, edge, c, namespace, excludeEdgeID); err != nil {
+			if err := b.checkEdgeUniquenessInTxn(ctx, txn, edge, c, namespace, excludeEdgeID); err != nil {
 				return err
 			}
 		case ConstraintExists:
@@ -549,7 +436,7 @@ func (b *BadgerEngine) validateEdgeConstraintsInTxn(txn *badger.Txn, edge *Edge,
 			if err := checkEdgeExistence(edge, c); err != nil {
 				return err
 			}
-			if err := b.checkEdgeUniquenessInTxn(txn, edge, c, namespace, excludeEdgeID); err != nil {
+			if err := b.checkEdgeUniquenessInTxn(ctx, txn, edge, c, namespace, excludeEdgeID); err != nil {
 				return err
 			}
 		case ConstraintTemporal:
@@ -577,7 +464,7 @@ func (b *BadgerEngine) validateEdgeConstraintsInTxn(txn *badger.Txn, edge *Edge,
 	}
 
 	// Policy constraints must be evaluated as a set (all ALLOWED policies form a union).
-	if err := b.checkEdgePolicyInTxn(txn, edge, schema, namespace); err != nil {
+	if err := b.checkEdgePolicyInTxn(ctx, txn, edge, schema, namespace); err != nil {
 		return err
 	}
 
@@ -623,50 +510,11 @@ func checkEdgeExistence(edge *Edge, c Constraint) error {
 	return nil
 }
 
-// checkEdgeUniquenessInTxn scans all edges of the same type to check for uniqueness violations.
-func (b *BadgerEngine) checkEdgeUniquenessInTxn(txn *badger.Txn, edge *Edge, c Constraint, namespace string, excludeEdgeID EdgeID) error {
-	// Scan via edge type index
-	prefix := edgeTypeIndexPrefix(edge.Type)
-	iter := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-	defer iter.Close()
-
-	nsPrefix := namespace + ":"
-
-	for iter.Seek(prefix); iter.ValidForPrefix(prefix); iter.Next() {
-		key := iter.Item().KeyCopy(nil)
-		edgeNum, ok := extractEdgeNumIDFromEdgeTypeKey(key)
-		if !ok {
-			continue
-		}
-		edgeID, ok := b.idDict.lookupEdgeIDByNum(edgeNum)
-		if !ok || edgeID == "" || edgeID == excludeEdgeID {
-			continue
-		}
-		if namespace != "" && !strings.HasPrefix(string(edgeID), nsPrefix) {
-			continue
-		}
-
-		item, err := txn.Get(edgeKey(edgeID))
-		if err != nil {
-			if errors.Is(err, badger.ErrKeyNotFound) {
-				continue
-			}
-			return err
-		}
-
-		var edgeBytes []byte
-		if err := item.Value(func(val []byte) error {
-			edgeBytes = append([]byte{}, val...)
-			return nil
-		}); err != nil {
-			return err
-		}
-
-		existingEdge, err := b.decodeEdgeBodyByID(edgeBytes, edgeID)
-		if err != nil {
-			return err
-		}
-
+// checkEdgeUniquenessInTxn is the direct writer's relationship UNIQUE and
+// RELATIONSHIP KEY decision. Its coherent stored-inclusive candidate stream
+// includes both durable and ACKed relationships without materializing the type. ctx carries the write's own admission lifetime.
+func (b *BadgerEngine) checkEdgeUniquenessInTxn(ctx context.Context, txn *badger.Txn, edge *Edge, c Constraint, namespace string, excludeEdgeID EdgeID) error {
+	return b.visitDirectConstraintEdges(ctx, txn, namespace, edge.Type, excludeEdgeID, func(existingEdge *Edge) error {
 		if len(c.Properties) == 1 {
 			prop := c.Properties[0]
 			newVal := edge.Properties[prop]
@@ -714,8 +562,9 @@ func (b *BadgerEngine) checkEdgeUniquenessInTxn(txn *badger.Txn, edge *Edge, c C
 				}
 			}
 		}
-	}
-	return nil
+
+		return nil
+	})
 }
 
 // edgeTemporalCompositeKeyMatch checks whether the existing edge has the same composite key values as keyVals.
@@ -804,7 +653,7 @@ func (b *BadgerEngine) checkEdgeTemporalInTxn(txn *badger.Txn, edge *Edge, c Con
 			return err
 		}
 
-		existingEdge, err := b.decodeEdgeBodyByID(edgeBytes, edgeID)
+		existingEdge, err := b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), edgeBytes, edgeID)
 		if err != nil {
 			return err
 		}
@@ -838,29 +687,28 @@ func (b *BadgerEngine) checkEdgeTemporalInTxn(txn *badger.Txn, edge *Edge, c Con
 // checkEdgeCardinalityInTxn counts edges of the given type connected to the anchor
 // node (determined by constraint direction) and rejects the new edge if adding it
 // would exceed MaxCount.
+//
+// Its input authority is the caller's own publishing transaction: the entries of
+// the anchor node's adjacency index are iterated and their bodies decoded inside
+// txn, so the count sees exactly the state this write is validating against.
+// Population selection is all this route keeps; the counter owns the population
+// predicate, the threshold and the violation that the staged-transaction route
+// uses as well, and this route stops at the first counted image that fills the
+// constraint instead of counting the rest.
 func (b *BadgerEngine) checkEdgeCardinalityInTxn(txn *badger.Txn, edge *Edge, c Constraint, namespace string, excludeEdgeID EdgeID) error {
-	// Determine anchor node based on direction.
-	var anchorNode NodeID
-	if c.Direction == "OUTGOING" {
-		anchorNode = NodeID(edge.StartNode)
-	} else {
-		anchorNode = NodeID(edge.EndNode)
-	}
+	counter := newEdgeCardinalityCounter(c, edge, namespace, excludeEdgeID)
 
 	// Choose the index prefix based on direction.
 	var prefix []byte
 	if c.Direction == "OUTGOING" {
-		prefix = b.outgoingIndexPrefixString(anchorNode)
+		prefix = b.outgoingIndexPrefixString(counter.anchor)
 	} else {
-		prefix = b.incomingIndexPrefixString(anchorNode)
+		prefix = b.incomingIndexPrefixString(counter.anchor)
 	}
 	if prefix == nil {
 		// Anchor node has no numID → no adjacent edges indexed.
 		return nil
 	}
-
-	count := 0
-	nsPrefix := namespace + ":"
 
 	iter := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	defer iter.Close()
@@ -871,10 +719,7 @@ func (b *BadgerEngine) checkEdgeCardinalityInTxn(txn *badger.Txn, edge *Edge, c 
 			continue
 		}
 		edgeID, ok := b.idDict.lookupEdgeIDByNum(edgeNum)
-		if !ok || edgeID == "" || edgeID == excludeEdgeID {
-			continue
-		}
-		if namespace != "" && !strings.HasPrefix(string(edgeID), nsPrefix) {
+		if !ok || edgeID == "" || !counter.admits(edgeID) {
 			continue
 		}
 
@@ -893,21 +738,15 @@ func (b *BadgerEngine) checkEdgeCardinalityInTxn(txn *badger.Txn, edge *Edge, c 
 		}); err != nil {
 			return err
 		}
-		existingEdge, err := b.decodeEdgeBodyByID(edgeBytes, edgeID)
+		existingEdge, err := b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), edgeBytes, edgeID)
 		if err != nil {
 			return err
 		}
-		if existingEdge.Type == c.Label {
-			count++
-			if count >= c.MaxCount {
-				dir := strings.ToLower(c.Direction)
-				return &ConstraintViolationError{
-					Type:  ConstraintCardinality,
-					Label: c.Label,
-					Message: fmt.Sprintf("Adding this edge would exceed max %s count of %d for relationship type %s on node %s (current: %d)",
-						dir, c.MaxCount, c.Label, anchorNode, count),
-				}
-			}
+		if !counter.counts(existingEdge.Type) {
+			continue
+		}
+		if counter.reached() {
+			return counter.violation()
 		}
 	}
 
@@ -917,8 +756,13 @@ func (b *BadgerEngine) checkEdgeCardinalityInTxn(txn *badger.Txn, edge *Edge, c 
 // checkEdgePolicyInTxn validates DISALLOWED and ALLOWED endpoint policies for an edge.
 // All policies for the edge type are evaluated as a set: DISALLOWED policies are checked
 // individually, while ALLOWED policies form a union (at least one must match).
-func (b *BadgerEngine) checkEdgePolicyInTxn(txn *badger.Txn, edge *Edge, schema *SchemaManager, namespace string) error {
-	constraints := schema.GetConstraintsForLabels([]string{edge.Type})
+func (b *BadgerEngine) checkEdgePolicyInTxn(ctx context.Context, txn *badger.Txn, edge *Edge, schema *SchemaManager, namespace string) error {
+	// Discovery retains the native write's preparation lifetime; it runs
+	// before durable publication, where cancellation may still reject it.
+	constraints, err := schema.GetConstraintsForLabels(ctx, []string{edge.Type})
+	if err != nil {
+		return err
+	}
 
 	var allowedPolicies []Constraint
 	var disallowedPolicies []Constraint
@@ -1002,7 +846,7 @@ func (b *BadgerEngine) readNodeLabelsInTxn(txn *badger.Txn, nodeID NodeID) ([]st
 	}); err != nil {
 		return nil, err
 	}
-	node, err := b.decodeNode(namespaceForNodeID(nodeID), nodeBytes)
+	node, err := b.decodeNodeProjected(txn, namespaceForNodeID(nodeID), nodeBytes, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1012,7 +856,7 @@ func (b *BadgerEngine) readNodeLabelsInTxn(txn *badger.Txn, nodeID NodeID) ([]st
 // validatePolicyOnNodeLabelChangeInTxn checks all policy constraints on edges connected
 // to a node whose labels are changing. This enforces that label mutations (SET n:Label,
 // REMOVE n:Label) don't violate endpoint policies.
-func (b *BadgerEngine) validatePolicyOnNodeLabelChangeInTxn(txn *badger.Txn, node *Node, oldNode *Node, schema *SchemaManager, namespace string) error {
+func (b *BadgerEngine) validatePolicyOnNodeLabelChangeInTxn(ctx context.Context, txn *badger.Txn, node *Node, oldNode *Node, schema *SchemaManager, namespace string) error {
 	if schema == nil || node == nil || oldNode == nil {
 		return nil
 	}
@@ -1022,19 +866,19 @@ func (b *BadgerEngine) validatePolicyOnNodeLabelChangeInTxn(txn *badger.Txn, nod
 	}
 
 	// Check all edges connected to this node.
-	return b.validatePolicyForAdjacentEdgesInTxn(txn, node, schema, namespace)
+	return b.validatePolicyForAdjacentEdgesInTxn(ctx, txn, node, schema, namespace)
 }
 
 // validatePolicyForAdjacentEdgesInTxn scans all outgoing and incoming edges for a node
 // and re-validates policy constraints with the node's current labels.
-func (b *BadgerEngine) validatePolicyForAdjacentEdgesInTxn(txn *badger.Txn, node *Node, schema *SchemaManager, namespace string) error {
+func (b *BadgerEngine) validatePolicyForAdjacentEdgesInTxn(ctx context.Context, txn *badger.Txn, node *Node, schema *SchemaManager, namespace string) error {
 	if outPrefix := b.outgoingIndexPrefixString(node.ID); outPrefix != nil {
-		if err := b.validatePolicyForEdgesWithPrefixInTxn(txn, outPrefix, node, true, schema, namespace); err != nil {
+		if err := b.validatePolicyForEdgesWithPrefixInTxn(ctx, txn, outPrefix, node, true, schema, namespace); err != nil {
 			return err
 		}
 	}
 	if inPrefix := b.incomingIndexPrefixString(node.ID); inPrefix != nil {
-		return b.validatePolicyForEdgesWithPrefixInTxn(txn, inPrefix, node, false, schema, namespace)
+		return b.validatePolicyForEdgesWithPrefixInTxn(ctx, txn, inPrefix, node, false, schema, namespace)
 	}
 	return nil
 }
@@ -1042,7 +886,7 @@ func (b *BadgerEngine) validatePolicyForAdjacentEdgesInTxn(txn *badger.Txn, node
 // validatePolicyForEdgesWithPrefixInTxn scans edges with the given index prefix and
 // validates policy constraints. isOutgoing indicates whether the node is the source (true)
 // or target (false) of the edges.
-func (b *BadgerEngine) validatePolicyForEdgesWithPrefixInTxn(txn *badger.Txn, prefix []byte, node *Node, isOutgoing bool, schema *SchemaManager, namespace string) error {
+func (b *BadgerEngine) validatePolicyForEdgesWithPrefixInTxn(ctx context.Context, txn *badger.Txn, prefix []byte, node *Node, isOutgoing bool, schema *SchemaManager, namespace string) error {
 	iter := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	defer iter.Close()
 
@@ -1075,7 +919,7 @@ func (b *BadgerEngine) validatePolicyForEdgesWithPrefixInTxn(txn *badger.Txn, pr
 		}); err != nil {
 			return err
 		}
-		edge, err := b.decodeEdgeBodyByID(edgeBytes, edgeID)
+		edge, err := b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(edgeID), edgeBytes, edgeID)
 		if err != nil {
 			return err
 		}
@@ -1106,7 +950,10 @@ func (b *BadgerEngine) validatePolicyForEdgesWithPrefixInTxn(txn *badger.Txn, pr
 		}
 
 		// Check policy constraints for this edge type.
-		constraints := schema.GetConstraintsForLabels([]string{edge.Type})
+		constraints, err := schema.GetConstraintsForLabels(ctx, []string{edge.Type})
+		if err != nil {
+			return err
+		}
 		var allowedPolicies []Constraint
 		var disallowedPolicies []Constraint
 		for _, c := range constraints {
@@ -1174,4 +1021,18 @@ func labelsEqual(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// nodeConstraintKeyValues projects a composite key once in declared property
+// order. A nonnegative index names its first null member; UNIQUE skips that
+// tuple while NODE KEY reports the original property-specific error.
+func nodeConstraintKeyValues(node *Node, properties []string) ([]interface{}, int) {
+	values := make([]interface{}, len(properties))
+	for index, property := range properties {
+		values[index] = node.Properties[property]
+		if values[index] == nil {
+			return values, index
+		}
+	}
+	return values, -1
 }

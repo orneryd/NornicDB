@@ -3,6 +3,7 @@ package kms
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -73,7 +74,7 @@ func TestNewProvider_GCPInvalidConfig(t *testing.T) {
 func TestNewProvider_WithAuditArchiver(t *testing.T) {
 	t.Parallel()
 	archiver, err := NewAuditArchiver(AuditArchiverConfig{
-		LocalPath: t.TempDir() + "/audit.jsonl",
+		LocalPath: filepath.Join(t.TempDir(), "audit.jsonl"),
 	})
 	require.NoError(t, err)
 

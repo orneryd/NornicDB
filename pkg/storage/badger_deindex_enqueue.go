@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -14,195 +15,177 @@ import (
 // suppressed, it clears the suppression and deletes any tombstones.
 // The returned bool is true only when the entity transitioned into the
 // suppressed state during this call.
-func (b *BadgerEngine) EnqueueDeindexIfSuppressed(entityID string, isEdge bool) (bool, error) {
+//
+// ctx belongs to the callback that owns the rescore: an accepted access write
+// or decay job passes its own admitted lifetime. ctx owns admission, the
+// buffered-order drain and the score/rewrite preparation; once the publishing
+// update is admitted, the transition, its work item and its publication
+// complete in the store, so a canceled ctx reports no transition.
+func (b *BadgerEngine) EnqueueDeindexIfSuppressed(ctx context.Context, entityID string, isEdge bool) (bool, error) {
 	if !b.decayEnabled {
 		return false, nil
 	}
 
-	becameSuppressed := false
-	nodeChanged := false
-	var edgeChanged *Edge
-	err := b.withUpdate(func(txn *badger.Txn) error {
+	write, releaseWrite, err := b.beginEntityWrite(ctx, entityID, isEdge, nil)
+	if err != nil {
+		return false, err
+	}
+	notification := b.queueCommitOperations(nil, nil, notificationAtCommit)
+	defer func() { releaseWrite(); b.completeCommitNotification(notification) }()
+
+	if b.writeBehind != nil {
+		// Its notifications are delivered once the order is released.
+		// The rewrite is ordered after the acknowledged commits of the
+		// entity (orderAfterBufferedCommits): it rescores the newest body.
+		entities := writtenEntities{nodes: []NodeID{NodeID(entityID)}}
 		if isEdge {
-			changed, mutation, err := b.evaluateEdgeSuppressionInTxn(txn, EdgeID(entityID))
-			edgeChanged = mutation
-			if changed {
-				becameSuppressed = true
-			}
-			return err
+			entities = writtenEntities{edges: []EdgeID{EdgeID(entityID)}}
 		}
-		changed, mutation, err := b.evaluateNodeSuppressionInTxn(txn, NodeID(entityID))
-		nodeChanged = mutation
-		if changed {
+		var order orderHold
+		_, err := b.orderAfterBufferedCommits(write.ctx, &order, entities)
+		if err != nil {
+			return false, err
+		}
+		defer order.release()
+	}
+	becameSuppressed := false
+	var nodeChanged *Node
+	var edgeChanged *Edge
+	var ops []Operation
+	publish := func(images *commitCacheImages) {
+		// The rewrite is admitted: its frame is selected and published on that
+		// write's completion lifetime, so the fold cannot cancel.
+		states, _ := newCommitStates(context.Background(), ops)
+		images.acceptStates(states)
+		b.publishIndexMembership(states)
+		b.prepareCommitOperations(ops, false)
+	}
+	keys := func(preparationContext context.Context) ([]any, error) {
+		if nodeChanged != nil {
+			ops = []Operation{{Type: OpUpdateNode, Node: nodeChanged}}
+		}
+		if edgeChanged != nil {
+			ops = []Operation{{Type: OpUpdateEdge, Edge: edgeChanged}}
+		}
+		capturePublicationOperations(notification, ops)
+		return appendOperationPublicationKeys(preparationContext, nil, nil, ops)
+	}
+	err = b.withPublishingUpdate(write.ctx, func(txn *badger.Txn) error {
+		mutation, err := b.evaluateSuppressionInTxn(txn, suppressionEvaluation{id: entityID, isEdge: isEdge})
+		nodeChanged, edgeChanged = mutation.node, mutation.edge
+		if mutation.suppressed {
 			becameSuppressed = true
 		}
 		return err
-	})
-	if err == nil && nodeChanged {
-		// Suppression rewrites the persisted body without UpdateNode. Drop both
-		// node caches with their generation guard before indexed reads reuse it.
-		b.cacheDeleteNode(NodeID(entityID))
-		b.graphMutationVersions.changed(namespaceForNodeID(NodeID(entityID)))
-	}
-	if err == nil && edgeChanged != nil {
-		// A policy transition rewrites the relationship body just like UpdateEdge.
-		// Publish it through the same cache lifecycle so adjacency/type reads do
-		// not retain a suppressed body or an empty filtered scan after relaxation.
-		b.cacheOnEdgeUpdated(edgeChanged.Type, edgeChanged)
-		b.graphMutationVersions.changed(namespaceForEdgeID(edgeChanged.ID))
-	}
-
+	}, publish, keys, notification, nil, write.stagePublication)
 	return becameSuppressed, err
 }
 
-func (b *BadgerEngine) evaluateNodeSuppressionInTxn(txn *badger.Txn, nodeID NodeID) (bool, bool, error) {
-	item, err := txn.Get(nodeKey(nodeID))
-	if err != nil {
-		return false, false, nil
-	}
+// suppressionEvaluation selects either the current stored body or the node
+// image a label update has just written in this same transaction.
+type suppressionEvaluation struct {
+	id     string
+	isEdge bool
+	staged bool
+	node   *Node
+}
+type suppressionMutation struct {
+	suppressed bool
+	node       *Node
+	edge       *Edge
+	written    []byte
+}
 
+// evaluateSuppressionInTxn is the sole entity suppression transition, including
+// label rebinding. It owns flag scoring, body/adjacency writes and work/tombstone
+// transitions. A staged image returns its rewritten bytes for MVCC publication.
+func (b *BadgerEngine) evaluateSuppressionInTxn(txn *badger.Txn, input suppressionEvaluation) (suppressionMutation, error) {
 	var node *Node
-	if err := item.Value(func(val []byte) error {
-		var decodeErr error
-		node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
-		return decodeErr
-	}); err != nil {
-		return false, false, nil
-	}
-
-	nowNanos := DecayScoringTime()
-	wasSuppressed := node.VisibilitySuppressed
-	node.VisibilitySuppressed = false
-	suppress := b.filterNodeByDecay(node, nowNanos)
-
-	if suppress && !wasSuppressed {
-		node.VisibilitySuppressed = true
-		data, _, err := b.encodeNodeInTxn(txn, namespaceForNodeID(nodeID), node)
-		if err != nil {
-			return false, false, err
-		}
-		if err := txn.Set(nodeKey(nodeID), data); err != nil {
-			return false, false, err
-		}
-		if err := enqueueWorkItemInTxn(txn, string(nodeID), "NODE"); err != nil {
-			return false, false, err
-		}
-		return true, true, nil
-	}
-
-	if !suppress && wasSuppressed {
-		data, _, err := b.encodeNodeInTxn(txn, namespaceForNodeID(nodeID), node)
-		if err != nil {
-			return false, false, err
-		}
-		if err := txn.Set(nodeKey(nodeID), data); err != nil {
-			return false, false, err
-		}
-		return false, true, clearTombstonesForEntityInTxn(txn, string(nodeID))
-	}
-
-	return false, false, nil
-}
-
-// rescoreSuppressionAfterLabelChangeInTxn re-evaluates a node's decay
-// suppression under its NEW labels and rewrites the persisted body so the
-// VisibilitySuppressed flag tracks the current binding. Called only from
-// the UpdateNode path when labels changed, before writeNodeMVCCHeadInTxn.
-//
-// Cypher SET/REMOVE-label semantics: a node that moves out of a suppressing
-// label binding must become visible on the next read; a node that moves
-// into one must become suppressed. The persisted flag is still the cheap
-// fallback when no scorer exists, so keep it aligned with the current
-// binding.
-//
-// When decay is disabled at the engine level, this is a no-op so the
-// codepath cost stays zero on operators who don't use the feature.
-func (b *BadgerEngine) rescoreSuppressionAfterLabelChangeInTxn(txn *badger.Txn, namespace string, node *Node) error {
-	if !b.decayEnabled || node == nil {
-		return nil
-	}
-	wasSuppressed := node.VisibilitySuppressed
-	// Score against the new labels and then persist the current visibility
-	// decision with the updated body.
-	node.VisibilitySuppressed = false
-	suppressNow := b.filterNodeByDecay(node, DecayScoringTime())
-	node.VisibilitySuppressed = suppressNow
-
-	if suppressNow == wasSuppressed {
-		// No state change — the body the caller is about to commit already
-		// has the correct flag set (we restored it above).
-		return nil
-	}
-
-	data, _, err := b.encodeNodeInTxn(txn, namespace, node)
-	if err != nil {
-		return err
-	}
-	if err := txn.Set(nodeKey(node.ID), data); err != nil {
-		return err
-	}
-
-	if suppressNow {
-		// Newly suppressed — enqueue deindex work.
-		return enqueueWorkItemInTxn(txn, string(node.ID), "NODE")
-	}
-	// Newly visible — drop any tombstones from a prior suppression cycle.
-	return clearTombstonesForEntityInTxn(txn, string(node.ID))
-}
-
-func (b *BadgerEngine) evaluateEdgeSuppressionInTxn(txn *badger.Txn, edgeID EdgeID) (bool, *Edge, error) {
-	item, err := txn.Get(edgeKey(edgeID))
-	if err != nil {
-		return false, nil, nil
-	}
-
 	var edge *Edge
-	if err := item.Value(func(val []byte) error {
-		var decodeErr error
-		edge, decodeErr = b.decodeEdgeBodyByID(val, edgeID)
-		return decodeErr
-	}); err != nil {
-		return false, nil, nil
+	id, isEdge := input.id, input.isEdge
+	if input.staged {
+		if !b.decayEnabled || input.node == nil {
+			return suppressionMutation{}, nil
+		}
+		node, id, isEdge = input.node, string(input.node.ID), false
 	}
-
-	nowNanos := DecayScoringTime()
-	wasSuppressed := edge.VisibilitySuppressed
-	edge.VisibilitySuppressed = false
-	suppress := b.filterEdgeByDecay(edge, nowNanos)
-
-	if suppress && !wasSuppressed {
-		edge.VisibilitySuppressed = true
-		data, err := b.encodeEdgeInTxn(txn, namespaceForEdgeID(edgeID), edge)
+	var key []byte
+	scope := "NODE"
+	if isEdge {
+		key, scope = edgeKey(EdgeID(id)), "EDGE"
+	} else {
+		key = nodeKey(NodeID(id))
+	}
+	if !input.staged {
+		item, err := txn.Get(key)
 		if err != nil {
-			return false, nil, err
+			return suppressionMutation{}, nil
 		}
-		if err := txn.Set(edgeKey(edgeID), data); err != nil {
-			return false, nil, err
-		}
-		if err := b.setAdjacencyValuesInTxn(txn, edge, data); err != nil {
-			return false, nil, err
-		}
-		if err := enqueueWorkItemInTxn(txn, string(edgeID), "EDGE"); err != nil {
-			return false, nil, err
-		}
-		return true, edge, nil
-	}
-
-	if !suppress && wasSuppressed {
-		data, err := b.encodeEdgeInTxn(txn, namespaceForEdgeID(edgeID), edge)
+		err = item.Value(func(val []byte) error {
+			var err error
+			if isEdge {
+				edge, err = b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(EdgeID(id)), val, EdgeID(id))
+			} else {
+				node, err = b.decodeNodeWithEmbeddings(txn, val, NodeID(id))
+			}
+			return err
+		})
 		if err != nil {
-			return false, nil, err
+			return suppressionMutation{}, nil
 		}
-		if err := txn.Set(edgeKey(edgeID), data); err != nil {
-			return false, nil, err
-		}
-		if err := b.setAdjacencyValuesInTxn(txn, edge, data); err != nil {
-			return false, nil, err
-		}
-		return false, edge, clearTombstonesForEntityInTxn(txn, string(edgeID))
 	}
-
-	return false, nil, nil
+	var entity any = node
+	var wasSuppressed bool
+	metadata := NodeRuntimeMetadata{}
+	if isEdge {
+		entity = edge
+		wasSuppressed = edge.VisibilitySuppressed
+		edge.VisibilitySuppressed = false
+	} else {
+		metadata = node.RuntimeMetadata()
+		wasSuppressed = metadata.VisibilitySuppressed
+		metadata.VisibilitySuppressed = false
+		node.SetRuntimeMetadata(metadata)
+	}
+	suppress := b.filterEntityByDecay(visibleRead, entity, DecayScoringTime())
+	if isEdge {
+		edge.VisibilitySuppressed = suppress
+	} else {
+		metadata.VisibilitySuppressed = suppress
+		node.SetRuntimeMetadata(metadata)
+	}
+	if suppress == wasSuppressed {
+		return suppressionMutation{}, nil
+	}
+	var data []byte
+	var err error
+	if isEdge {
+		data, err = b.encodeEdgeInTxn(txn, namespaceForEdgeID(EdgeID(id)), edge)
+	} else {
+		data, _, err = b.encodeNodeInTxn(txn, namespaceForNodeID(NodeID(id)), node)
+	}
+	if err != nil {
+		return suppressionMutation{}, err
+	}
+	if err := txn.Set(key, data); err != nil {
+		return suppressionMutation{}, err
+	}
+	if isEdge {
+		if err := b.setAdjacencyValuesInTxn(txn, edge, data); err != nil {
+			return suppressionMutation{}, err
+		}
+	}
+	mutation := suppressionMutation{suppressed: suppress, node: node, edge: edge, written: data}
+	if suppress {
+		if err := enqueueWorkItemInTxn(txn, id, scope); err != nil {
+			if input.staged {
+				return suppressionMutation{written: data}, err
+			}
+			return suppressionMutation{}, err
+		}
+		return mutation, nil
+	}
+	return mutation, clearTombstonesForEntityInTxn(txn, id)
 }
 
 func enqueueWorkItemInTxn(txn *badger.Txn, entityID, scope string) error {

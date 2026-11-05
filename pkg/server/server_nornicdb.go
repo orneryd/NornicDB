@@ -14,6 +14,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/httpresponse"
+
+	"github.com/orneryd/nornicdb/pkg/auth"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
@@ -31,6 +35,10 @@ import (
 
 // handleDecay returns memory decay information (NornicDB-specific)
 func (s *Server) handleDecay(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeDatabaseRead(w, r, s.dbManager.DefaultDatabaseName()) {
+		return
+	}
+
 	info := s.db.GetDecayInfo()
 
 	response := map[string]interface{}{
@@ -38,13 +46,17 @@ func (s *Server) handleDecay(w http.ResponseWriter, r *http.Request) {
 		"visibilityThreshold": info.VisibilityThreshold,
 		"flushInterval":       info.FlushInterval.String(),
 	}
-	s.writeJSON(w, http.StatusOK, response)
+	httpresponse.WritePropertyJSON(w, http.StatusOK, response)
 }
 
 // handleEmbedTrigger triggers the embedding worker to process nodes without embeddings.
 // Query params:
 //   - regenerate=true: Clear all existing embeddings first, then regenerate (async)
 func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeAllDatabaseOperation(w, r, auth.PermRead, auth.PermWrite) {
+		return
+	}
+
 	if r.Method != http.MethodPost {
 		s.writeNeo4jPostRequired(w, r, "Neo.ClientError.Request.Invalid")
 		return
@@ -60,16 +72,25 @@ func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
 	regenerate := r.URL.Query().Get("regenerate") == "true"
 
 	if regenerate {
+		// Regenerating clears embeddings, which /nornicdb/embed/clear reserves for admins;
+		// the route only requires write (enough to wake the worker), so check here.
+		if s.isRBACEnforced() {
+			claims := getClaims(r)
+			if claims == nil || !hasPermission(s, claims.Roles, auth.PermAdmin) {
+				s.writeNeo4jInsufficientPermissions(w, r)
+				return
+			}
+		}
 		// Return 202 Accepted immediately - clearing happens in background
 		response := map[string]interface{}{
 			"accepted":   true,
 			"regenerate": true,
 			"message":    s.localizedText(w, r, localization.EmbeddingRegenerationStarted()),
 		}
-		s.writeJSON(w, http.StatusAccepted, response)
+		httpresponse.WritePropertyJSON(w, http.StatusAccepted, response)
 
 		// Start background clearing and regeneration.
-		go func() {
+		s.runBackground(r.Context(), func(ctx context.Context) {
 			defer func() {
 				if rec := recover(); rec != nil {
 					// Background regeneration can race with DB shutdown in tests/teardown.
@@ -98,13 +119,12 @@ func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
 			s.logEvent(context.Background(), slog.LevelInfo, localization.ServerEmbedClearedEvent(cleared))
 
 			// Trigger embedding worker to regenerate (worker was already restarted by Reset)
-			ctx := context.Background()
 			if _, err := s.db.EmbedExisting(ctx); err != nil {
 				s.logEvent(ctx, slog.LevelError, localization.ServerEmbedWorkerTriggerFailedEvent(err))
 				return
 			}
 			s.logEvent(ctx, slog.LevelInfo, localization.ServerEmbedWorkerTriggeredEvent())
-		}()
+		})
 		return
 	}
 
@@ -135,19 +155,25 @@ func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
 		"message":        s.localizedText(w, r, message),
 		"stats":          stats,
 	}
-	s.writeJSON(w, http.StatusOK, response)
+	httpresponse.WritePropertyJSON(w, http.StatusOK, response)
 }
 
 // handleEmbedStats returns embedding worker statistics.
 func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeAllDatabaseOperation(w, r, auth.PermRead) {
+		return
+	}
+
 	stats := s.db.EmbedQueueStats()
 	// Keep contended stats reads bounded. total_embeddings uses authoritative
 	// aggregate count to avoid false zeros.
 	readIntWithTimeout := func(timeout time.Duration, fallback int, fn func() int) int {
 		done := make(chan int, 1)
-		go func() {
+		if !s.runBackground(r.Context(), func(context.Context) {
 			done <- fn()
-		}()
+		}) {
+			return fallback
+		}
 		select {
 		case v := <-done:
 			return v
@@ -177,7 +203,7 @@ func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
 			"configured_provider":     s.config.EmbeddingProvider,
 			"vector_index_dimensions": vectorIndexDims,
 		}
-		s.writeJSON(w, http.StatusOK, response)
+		httpresponse.WritePropertyJSON(w, http.StatusOK, response)
 		return
 	}
 	response := map[string]interface{}{
@@ -190,62 +216,82 @@ func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
 		"configured_provider":     s.config.EmbeddingProvider,
 		"vector_index_dimensions": vectorIndexDims,
 	}
-	s.writeJSON(w, http.StatusOK, response)
+	httpresponse.WritePropertyJSON(w, http.StatusOK, response)
 }
 
-// handleEmbedFailures lists durable terminal embedding failures without
-// returning node properties or embedding vectors.
-func (s *Server) handleEmbedFailures(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		s.writeNeo4jMethodNotAllowed(w, r, "Neo.ClientError.Request.Invalid")
+type embeddingFailureOperation uint8
+
+const (
+	embeddingFailureList embeddingFailureOperation = iota
+	embeddingFailureRetry
+)
+
+// handleEmbeddingFailures owns all-database admission and durable terminal
+// failure operations. Retry accepts an empty body or list to retry all failures.
+func (s *Server) handleEmbeddingFailures(w http.ResponseWriter, r *http.Request, operation embeddingFailureOperation) {
+	required := [2]auth.Permission{auth.PermRead, auth.PermWrite}
+	permissions := required[:1]
+	if operation == embeddingFailureRetry {
+		permissions = required[:]
+	}
+	if !s.authorizeAllDatabaseOperation(w, r, permissions...) {
 		return
 	}
-	limit := 100
-	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
-		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed < 1 || parsed > 1000 {
-			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.Request.Invalid", "limit must be between 1 and 1000")
+	switch operation {
+	case embeddingFailureList:
+		if r.Method != http.MethodGet {
+			s.writeNeo4jMethodNotAllowed(w, r, "Neo.ClientError.Request.Invalid")
 			return
 		}
-		limit = parsed
+		limit := 100
+		if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+			parsed, err := strconv.Atoi(raw)
+			if err != nil || parsed < 1 || parsed > 1000 {
+				s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.Request.Invalid", "limit must be between 1 and 1000")
+				return
+			}
+			limit = parsed
+		}
+		failures, err := s.db.EmbeddingFailures(r.Context(), limit)
+		if err != nil {
+			s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.DatabaseError.General.UnknownError", err)
+			return
+		}
+		total := len(failures)
+		if stats := s.db.EmbedQueueStats(); stats != nil {
+			total = stats.Parked
+		}
+		httpresponse.WritePropertyJSON(w, http.StatusOK, map[string]any{"failures": failures, "count": total, "returned": len(failures)})
+	case embeddingFailureRetry:
+		if r.Method != http.MethodPost {
+			s.writeNeo4jPostRequired(w, r, "Neo.ClientError.Request.Invalid")
+			return
+		}
+		var request struct {
+			NodeIDs []storage.NodeID `json:"node_ids"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil && !errors.Is(err, io.EOF) {
+			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.Request.Invalid", "invalid retry request")
+			return
+		}
+		retried, err := s.db.RetryEmbeddingFailures(r.Context(), request.NodeIDs)
+		if err != nil {
+			s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.DatabaseError.General.UnknownError", err)
+			return
+		}
+		httpresponse.WritePropertyJSON(w, http.StatusAccepted, map[string]any{"accepted": true, "retried": retried})
+	default:
+		s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.DatabaseError.General.UnknownError", errors.New("invalid embedding failure operation"))
 	}
-	failures, err := s.db.EmbeddingFailures(r.Context(), limit)
-	if err != nil {
-		s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.DatabaseError.General.UnknownError", err)
-		return
-	}
-	total := len(failures)
-	if stats := s.db.EmbedQueueStats(); stats != nil {
-		total = stats.Parked
-	}
-	s.writeJSON(w, http.StatusOK, map[string]any{"failures": failures, "count": total, "returned": len(failures)})
-}
-
-// handleEmbedFailureRetry restores selected terminal failures to the durable
-// pending queue. An empty request body or node_ids list retries all failures.
-func (s *Server) handleEmbedFailureRetry(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		s.writeNeo4jPostRequired(w, r, "Neo.ClientError.Request.Invalid")
-		return
-	}
-	var request struct {
-		NodeIDs []storage.NodeID `json:"node_ids"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil && !errors.Is(err, io.EOF) {
-		s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.Request.Invalid", "invalid retry request")
-		return
-	}
-	retried, err := s.db.RetryEmbeddingFailures(r.Context(), request.NodeIDs)
-	if err != nil {
-		s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.DatabaseError.General.UnknownError", err)
-		return
-	}
-	s.writeJSON(w, http.StatusAccepted, map[string]any{"accepted": true, "retried": retried})
 }
 
 // handleEmbedClear clears all embeddings from nodes (admin only).
 // This allows regeneration with a new model or fixing corrupted embeddings.
 func (s *Server) handleEmbedClear(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeDatabaseOperation(w, r, s.dbManager.DefaultDatabaseName(), auth.PermRead, auth.PermWrite, auth.PermAdmin) {
+		return
+	}
+
 	if r.Method != http.MethodPost && r.Method != http.MethodDelete {
 		s.writeNeo4jPostOrDeleteRequired(w, r)
 		return
@@ -262,7 +308,7 @@ func (s *Server) handleEmbedClear(w http.ResponseWriter, r *http.Request) {
 		"cleared": cleared,
 		"message": fmt.Sprintf("Cleared embeddings from %d nodes - use /nornicdb/embed/trigger to regenerate", cleared),
 	}
-	s.writeJSON(w, http.StatusOK, response)
+	httpresponse.WritePropertyJSON(w, http.StatusOK, response)
 }
 
 // handleSearchRebuild rebuilds search indexes from all nodes in the specified database.
@@ -287,19 +333,12 @@ func (s *Server) handleSearchRebuild(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Per-database RBAC: deny if principal may not access this database (Neo4j-aligned).
-	claims := getClaims(r)
-	if !s.getDatabaseAccessMode(claims).CanAccessDatabase(dbName) {
-		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
+	if !s.authorizeDatabaseOperation(w, r, dbName, auth.PermRead, auth.PermWrite) {
 		return
 	}
 	if s.dbManager.IsCompositeDatabase(dbName) {
 		s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.Statement.NotSupported",
 			fmt.Sprintf("Search rebuild on composite database '%s' is not supported; target a constituent database explicitly.", dbName))
-		return
-	}
-	// Rebuild is a write to the database; require ResolvedAccess.Write for this DB.
-	if !s.getResolvedAccess(claims, dbName).Write {
-		s.writeNeo4jDatabaseWriteDenied(w, r, dbName)
 		return
 	}
 
@@ -329,7 +368,7 @@ func (s *Server) handleSearchRebuild(w http.ResponseWriter, r *http.Request) {
 		"database": dbName,
 		"message":  fmt.Sprintf("Search indexes rebuilt for database '%s'", dbName),
 	}
-	s.writeJSON(w, http.StatusOK, response)
+	httpresponse.WritePropertyJSON(w, http.StatusOK, response)
 }
 
 // getOrCreateSearchService returns a cached search service for the database,
@@ -414,9 +453,17 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		vectorChunkQueries int
 	)
 
-	// Per-database RBAC: deny if principal may not access this database (Neo4j-aligned).
-	if !s.getDatabaseAccessMode(getClaims(r)).CanAccessDatabase(dbName) {
-		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
+	// Per-database RBAC: the principal must be allowed to use and to read
+	// this database (Neo4j-aligned).
+	if !s.authorizeDatabaseRead(w, r, dbName) {
+		return
+	}
+	if req.Discard && req.QID != "" {
+		if err := s.db.DiscardSearchContinuation(owner, req.QID, dbName); err != nil {
+			s.writeSearchContinuationError(w, r, err)
+			return
+		}
+		s.writeSearchContinuationPage(w, r, owner, dbName, &search.SearchContinuationPage{Released: true})
 		return
 	}
 	if s.dbManager.IsCompositeDatabase(dbName) {
@@ -444,7 +491,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	continuationResume := req.QID != ""
 	searchStatus := s.db.GetDatabaseSearchStatus(dbName)
 	if !req.Relationships && !continuationResume && !idStart && !searchStatus.BM25Enabled && !searchStatus.VectorEnabled {
-		s.writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+		httpresponse.WritePropertyJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
 			"error":          "search is disabled for this database",
 			"database":       dbName,
 			"bm25_enabled":   false,
@@ -485,7 +532,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	// services, so this is free for the steady-state hot path.
 	if !continuationResume && !idStart {
 		if err := searchSvc.EnsureWarm(ctx); err != nil {
-			s.writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+			httpresponse.WritePropertyJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
 				"error":          "search index warming did not complete: " + err.Error(),
 				"database":       dbName,
 				"bm25_enabled":   searchStatus.BM25Enabled,
@@ -526,7 +573,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			s.writeSearchContinuationError(w, r, continuationErr)
 			return
 		}
-		s.writeSearchContinuationPage(w, page)
+		s.writeSearchContinuationPage(w, r, owner, dbName, page)
 		return
 	}
 
@@ -666,32 +713,11 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Canonical mapping keeps DB and server adapters consistent.
-	results := nornicdb.MapSearchResponse(searchResponse)
 	if continuationPage != nil {
-		setSearchFallbackReasonHeader(w, continuationPage.FallbackReason)
-		body := map[string]any{
-			"results":               results,
-			"qid":                   continuationPage.QID,
-			"has_more":              continuationPage.HasMore,
-			"position":              continuationPage.Position,
-			"returned":              continuationPage.Returned,
-			"discovered":            continuationPage.Discovered,
-			"total":                 continuationPage.Total,
-			"expires_at":            continuationPage.ExpiresAt,
-			"search_method":         continuationPage.SearchMethod,
-			"fallback_triggered":    continuationPage.FallbackTriggered,
-			"fallback_reason":       continuationPage.FallbackReason,
-			"mode":                  continuationPage.Mode,
-			"ranked_count":          continuationPage.RankedCount,
-			"eligible_count":        continuationPage.EligibleCount,
-			"ranked_pool_exhausted": continuationPage.RankedPoolExhausted,
-			"collection_exhausted":  continuationPage.CollectionExhausted,
-			"completion":            continuationPage.Completion,
-		}
-		addQueryChunkCounts(body, continuationPage.QueryChunksSearched, continuationPage.QueryChunksTotal)
-		s.writeJSON(w, http.StatusOK, body)
+		s.writeSearchContinuationPage(w, r, owner, dbName, continuationPage)
 		return
 	}
+	results := nornicdb.MapSearchResponse(searchResponse)
 	setSearchFallbackReasonHeader(w, searchResponse.FallbackReason)
 	if searchDiagEnabled {
 		s.logEvent(ctx, slog.LevelInfo, localization.ServerSearchTimingEvent(localization.ServerSearchTimingFields{
@@ -714,7 +740,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		}))
 	}
 
-	s.writeJSON(w, http.StatusOK, results)
+	httpresponse.WritePropertyJSON(w, http.StatusOK, results)
 }
 
 func (s *Server) writeSearchContinuationError(w http.ResponseWriter, _ *http.Request, err error) {
@@ -734,13 +760,19 @@ func (s *Server) writeSearchContinuationError(w http.ResponseWriter, _ *http.Req
 		status = http.StatusGone
 		requestStatus = "continuation_gone"
 	}
-	s.writeJSON(w, status, map[string]any{
+	body := map[string]any{
 		"error": err.Error(), "retryable": retryable,
 		"http_code": status, "request_status": requestStatus,
-	})
+	}
+	var oversized *resultstream.PageSizeExceededError
+	if errors.As(err, &oversized) {
+		body["request_status"] = "page_size_exceeded"
+		body["max_page_size"] = oversized.MaxPageSize
+	}
+	httpresponse.WritePropertyJSON(w, status, body)
 }
 
-func (s *Server) writeSearchContinuationPage(w http.ResponseWriter, page *search.SearchContinuationPage) {
+func (s *Server) writeSearchContinuationPage(w http.ResponseWriter, r *http.Request, owner, database string, page *search.SearchContinuationPage) {
 	response := page.SearchResponse()
 	setSearchFallbackReasonHeader(w, page.FallbackReason)
 	if provider, ok := any(response).(interface{ ResponseHeaders() map[string]string }); ok {
@@ -767,13 +799,24 @@ func (s *Server) writeSearchContinuationPage(w http.ResponseWriter, page *search
 		"ranked_pool_exhausted": page.RankedPoolExhausted,
 		"collection_exhausted":  page.CollectionExhausted,
 		"completion":            page.Completion,
+		"max_page_size":         page.MaxPageSize,
 	}
 	if provider, ok := any(response).(interface{ ResultMetadata() map[string]any }); ok {
 		for key, value := range provider.ResultMetadata() {
 			body[key] = value
 		}
 	}
-	s.writeJSON(w, http.StatusOK, body)
+	addQueryChunkCounts(body, page.QueryChunksSearched, page.QueryChunksTotal)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	err := valueconvert.PropertyJSON.NewEncoder(w).Encode(body)
+	if err == nil {
+		err = r.Context().Err()
+	}
+	if err != nil && page.QID != "" {
+		_ = s.db.DiscardSearchContinuation(owner, page.QID, database)
+		s.logEvent(r.Context(), slog.LevelWarn, localization.ServerSearchStorageLookupFailedEvent(database, err))
+	}
 }
 
 // addQueryChunkCounts adds how many chunks of a long query were searched,
@@ -831,9 +874,9 @@ func (s *Server) handleSimilar(w http.ResponseWriter, r *http.Request) {
 		dbName = s.dbManager.DefaultDatabaseName()
 	}
 
-	// Per-database RBAC: deny if principal may not access this database (Neo4j-aligned).
-	if !s.getDatabaseAccessMode(getClaims(r)).CanAccessDatabase(dbName) {
-		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
+	// Per-database RBAC: the principal must be allowed to use and to read
+	// this database (Neo4j-aligned).
+	if !s.authorizeDatabaseRead(w, r, dbName) {
 		return
 	}
 	if s.dbManager.IsCompositeDatabase(dbName) {
@@ -853,7 +896,7 @@ func (s *Server) handleSimilar(w http.ResponseWriter, r *http.Request) {
 	defer releaseProjection()
 
 	// Get the target node from namespaced storage
-	targetNode, err := storageEngine.GetNode(storage.NodeID(req.NodeID))
+	targetNode, err := storageEngine.GetNode(ctx, storage.NodeID(req.NodeID))
 	if err != nil {
 		s.writeLocalizedError(w, r, http.StatusNotFound, localization.SearchNodeNotFound(req.NodeID), ErrNotFound)
 		return
@@ -928,5 +971,5 @@ func (s *Server) handleSimilar(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.writeJSON(w, http.StatusOK, searchResults)
+	httpresponse.WritePropertyJSON(w, http.StatusOK, searchResults)
 }

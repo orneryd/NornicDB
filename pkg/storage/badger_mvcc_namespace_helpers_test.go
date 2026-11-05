@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/binary"
 	"testing"
 	"time"
@@ -51,7 +52,7 @@ func TestEnsureNamespaceMVCC_WarmsColdStateWithPersistedAndRecoveredFloors(t *te
 	state.highWaterNanos.Store(0)
 
 	// Persisted namespace sequence floor.
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		buf := make([]byte, 8)
 		binary.BigEndian.PutUint64(buf, 7)
 		return txn.Set(mvccNamespaceSequenceKey(ns), buf)
@@ -59,10 +60,10 @@ func TestEnsureNamespaceMVCC_WarmsColdStateWithPersistedAndRecoveredFloors(t *te
 
 	// Recovered floor from existing node MVCC head.
 	n := &Node{ID: NodeID("tenant:n1"), Labels: []string{"L"}, Properties: map[string]any{"k": "v"}}
-	_, err = engine.CreateNode(n)
+	_, err = engine.CreateNode(t.Context(), n)
 	require.NoError(t, err)
 	n.Properties["k"] = "v2"
-	err = engine.UpdateNode(n)
+	err = engine.UpdateNode(t.Context(), NodeUpdateRequest{After: n})
 	require.NoError(t, err)
 
 	// Force cold state so EnsureNamespaceMVCC takes the recovery path.
@@ -91,7 +92,8 @@ func TestSnapshotNamespaceVersions_UsesHighWaterClamp(t *testing.T) {
 	engine.mvccByNamespace["tenant"] = state
 	engine.mvccByNamespaceMu.Unlock()
 
-	snap := engine.snapshotNamespaceVersions()
+	snap, err := engine.snapshotNamespaceVersions(t.Context())
+	require.NoError(t, err)
 	require.Contains(t, snap, "tenant")
 	require.Equal(t, uint64(11), snap["tenant"].CommitSequence)
 	require.GreaterOrEqual(t, snap["tenant"].CommitTimestamp.UnixNano(), future)

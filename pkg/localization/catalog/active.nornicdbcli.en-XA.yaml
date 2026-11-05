@@ -67,7 +67,7 @@
 - id: nornicdbcli.flag.search_vector_warming
   other: "[!! Véctór búíld tríggér: startup ór lazy. Défáúlt: startup. !!]"
 - id: nornicdbcli.flag.gpu_backend
-  other: "[!! GPU báckénd: vulkan, cuda, metal, opencl (émptý=áútó-détéct) !!]"
+  other: "[!! GPU báckénd: cpu, vulkan, cuda, metal, opencl (émptý=áútó-détéct) !!]"
 - id: nornicdbcli.flag.no_auth
   other: "[!! Dísáblé áúthéntícátíón !!]"
 - id: nornicdbcli.flag.admin_password
@@ -81,7 +81,9 @@
 - id: nornicdbcli.flag.parallel_batch_size
   other: "[!! Mín bátch sízé béfóré párállélízíng !!]"
 - id: nornicdbcli.flag.memory_limit
-  other: "[!! Mémórý límít ín MB ás án íntégér (é.g., 500, 0 únlímítéd) !!]"
+  other: "[!! Mémórý límít ín MB ás án íntégér (é.g., 500), 0 únlímítéd, ór áútó (85% óf thé cóntáínér límít) !!]"
+- id: nornicdbcli.flag.go_memory_limit
+  other: "[!! Gó rúntímé GC mémórý tárgét ín býtés (nón-négátívé íntégér) !!]"
 - id: nornicdbcli.flag.gc_percent
   other: "[!! GC ággréssívénéss (100= défáúlt, lówér=móré ággréssívé) !!]"
 - id: nornicdbcli.flag.pool_enabled
@@ -126,6 +128,16 @@
   other: "[!! Vísíbílítý súppréssíón thréshóld (défáúlt: 0.05) !!]"
 - id: nornicdbcli.validation.invalid_memory_limit
   other: '[!! Ínválíd --memory-limit válúé {{printf "%q" .Value}}: {{.Cause}} !!]'
+- id: nornicdbcli.validation.go_memory_limit_deprecated
+  other: "[!! --memory-limit ís déprécátéd; úsé --go-memory-limit-bytes (íntégér býtés) !!]"
+- id: nornicdbcli.validation.env_memory_limit_deprecated
+  other: "[!! NORNICDB_MEMORY_LIMIT ís déprécátéd; úsé NORNICDB_GO_MEMORY_LIMIT_BYTES (íntégér býtés) !!]"
+- id: nornicdbcli.validation.yaml_memory_limit_deprecated
+  other: "[!! memory.runtime_limit ís déprécátéd; úsé memory.go_runtime_limit_bytes (íntégér býtés) !!]"
+- id: nornicdbcli.validation.go_memory_limit_conflict
+  other: "[!! --memory-limit cónflícts wíth --go-memory-limit-bytes !!]"
+- id: nornicdbcli.validation.invalid_go_memory_limit
+  other: '[!! Ínválíd --go-memory-limit-bytes válúé {{printf "%q" .Value}}: {{.Cause}} !!]'
 - id: nornicdbcli.validation.invalid_stdio_interval
   other: "[!! Ínválíd stdio-log-compact-seconds {{.Value}}: múst bé >= 0 !!]"
 - id: nornicdbcli.config.not_found
@@ -160,6 +172,10 @@
   other: "[!! Párállél éxéc: ❌ dísábléd !!]"
 - id: nornicdbcli.serve.memory_limit
   other: "[!! Mémórý límít: {{.Value}} !!]"
+- id: nornicdbcli.serve.memory_limit_cgroup
+  other: "[!! Mémórý límít: {{.Value}} ({{.Percent}}% óf thé cóntáínér límít {{.Cgroup}}) !!]"
+- id: nornicdbcli.serve.memory_limit_clamped
+  other: "[!! ⚠️  Wárníng: mémórý límít {{.Configured}} ís ábóvé thé cóntáínér's mémórý límít {{.Cgroup}} ánd cóúld nót prévént án OOM kíll; úsíng {{.Value}} !!]"
 - id: nornicdbcli.serve.memory_unlimited
   other: "[!! Mémórý límít: únlímítéd !!]"
 - id: nornicdbcli.serve.gc_percent
@@ -315,3 +331,15 @@
   other: "[!! Réádíng ínpút: {{.Cause}} !!]"
 - id: nornicdbcli.decay.load_nodes_failed
   other: "[!! Lóádíng nódés: {{.Cause}} !!]"
+- id: nornicdbcli.stemmer.short
+  other: "[!! Stémmér plúgín ópérátíóns !!]"
+- id: nornicdbcli.stemmer.check.short
+  other: "[!! Chéck thát á stémmér plúgín lóáds íntó thís bínárý, ás ít wóúld át stártúp !!]"
+- id: nornicdbcli.flag.stemmer_check_timeout
+  other: "[!! Máxímúm tímé tó lóád thé plúgín !!]"
+- id: nornicdbcli.stemmer.check.ok
+  other: "[!! Stémmér plúgín {{.ID}} {{.Version}} lóáds: {{.Path}} !!]"
+- id: nornicdbcli.stemmer.check_failed
+  other: "[!! stémmér plúgín {{.Manifest}} dóés nót lóád: {{.Cause}} !!]"
+- id: nornicdbcli.stemmer.check_timed_out
+  other: "[!! stémmér plúgín {{.Manifest}} díd nót fínísh lóádíng wíthín {{.Timeout}} !!]"

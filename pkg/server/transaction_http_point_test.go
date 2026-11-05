@@ -12,20 +12,25 @@ import (
 // meta {"type":"point"} (#817).
 func TestTransactionHTTPPointMatchesNeo4j(t *testing.T) {
 	s := &Server{}
-	value, meta := s.transactionHTTPValue(cypher.CypherPoint{SRID: 7203, X: 1, Y: 2}, "neo4j")
+	value, meta, projectionErr1 := s.transactionHTTPValue(t.Context(), cypher.CypherPoint{SRID: 7203, X: 1, Y: 2}, "neo4j")
+	require.NoError(t, projectionErr1)
 	encoded, err := json.Marshal(value)
 	require.NoError(t, err)
 	require.JSONEq(t, `{"type":"Point","coordinates":[1.0,2.0],"crs":{"srid":7203,"name":"cartesian","type":"link","properties":{"href":"https://spatialreference.org/ref/sr-org/7203/ogcwkt/","type":"ogcwkt"}}}`, string(encoded))
 	require.Equal(t, `{"type":"Point","coordinates":[1.0,2.0],"crs":{"srid":7203,"name":"cartesian","type":"link","properties":{"href":"https://spatialreference.org/ref/sr-org/7203/ogcwkt/","type":"ogcwkt"}}}`, string(encoded))
 	require.Equal(t, []interface{}{map[string]interface{}{"type": "point"}}, meta)
 
-	value, meta = s.transactionHTTPValue(&cypher.CypherPoint{SRID: 4979, X: 2.5, Y: 1.5, Z: 3}, "neo4j")
+	var projectionErr2 error
+	value, meta, projectionErr2 = s.transactionHTTPValue(t.Context(), &cypher.CypherPoint{SRID: 4979, X: 2.5, Y: 1.5, Z: 3}, "neo4j")
+	require.NoError(t, projectionErr2)
 	encoded, err = json.Marshal(value)
 	require.NoError(t, err)
 	require.Equal(t, `{"type":"Point","coordinates":[2.5,1.5,3.0],"crs":{"srid":4979,"name":"wgs-84-3d","type":"link","properties":{"href":"https://spatialreference.org/ref/epsg/4979/ogcwkt/","type":"ogcwkt"}}}`, string(encoded))
 	require.Equal(t, []interface{}{map[string]interface{}{"type": "point"}}, meta)
 
-	value, meta = s.transactionHTTPValue((*cypher.CypherPoint)(nil), "neo4j")
+	var projectionErr3 error
+	value, meta, projectionErr3 = s.transactionHTTPValue(t.Context(), (*cypher.CypherPoint)(nil), "neo4j")
+	require.NoError(t, projectionErr3)
 	require.Nil(t, value)
 	require.Equal(t, []interface{}{nil}, meta)
 }

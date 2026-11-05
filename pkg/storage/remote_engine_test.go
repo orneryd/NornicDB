@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+
 	"bytes"
 	"context"
 	"encoding/json"
@@ -10,15 +12,13 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
 // Compile-time interface assertion (also in remote_engine.go, duplicated here per project convention).
 var _ Engine = (*RemoteEngine)(nil)
 
 func TestRemoteHTTPValueDecoding(t *testing.T) {
-	node := RemoteEntityValue{"elementId": "4:db:n", "properties": map[string]interface{}{"a": float64(1)}}
+	node := RemoteEntityValue{"elementId": "4:db:n", "properties": map[string]interface{}{"a": int64(1)}}
 	entities := map[string]interface{}{"4:db:n": map[string]interface{}(node)}
 	meta := map[string]interface{}{"elementId": "4:db:n", "type": "node"}
 	for _, testCase := range []struct {
@@ -29,22 +29,23 @@ func TestRemoteHTTPValueDecoding(t *testing.T) {
 		consumed  int
 		wantError bool
 	}{
-		{"legacy scalar", `1`, nil, nil, float64(1), 0, false},
-		{"scalar", `1`, []interface{}{nil}, entities, float64(1), 1, false},
+		{"legacy scalar", `1`, nil, nil, int64(1), 0, false},
+		{"float", `1.0`, nil, nil, float64(1), 0, false},
+		{"scalar", `1`, []interface{}{nil}, entities, int64(1), 1, false},
 		{"missing metadata", `null`, nil, entities, nil, 0, false},
 		{"node", `{"a":1}`, []interface{}{meta}, entities, node, 1, false},
-		{"wire ordered map", `{"node":{"a":1},"k":1}`, []interface{}{meta, nil}, entities, map[string]interface{}{"node": node, "k": float64(1)}, 2, false},
+		{"wire ordered map", `{"node":{"a":1},"k":1}`, []interface{}{meta, nil}, entities, map[string]interface{}{"node": node, "k": int64(1)}, 2, false},
 		{"entity wrapper is ordinary map", `{"node":{"a":1}}`, []interface{}{meta}, entities, map[string]interface{}{"node": node}, 1, false},
-		{"list", `[{"a":1},1]`, []interface{}{meta, nil}, entities, []interface{}{node, float64(1)}, 2, false},
+		{"list", `[{"a":1},1]`, []interface{}{meta, nil}, entities, []interface{}{node, int64(1)}, 2, false},
 		{"path", `[{"a":1}]`, []interface{}{[]interface{}{meta}}, entities, RemotePathValue{node}, 1, false},
-		{"unknown identity", `{"a":1}`, []interface{}{map[string]interface{}{"elementId": "missing"}}, entities, map[string]interface{}{"a": float64(1)}, 1, false},
+		{"unknown identity", `{"a":1}`, []interface{}{map[string]interface{}{"elementId": "missing"}}, entities, map[string]interface{}{"a": int64(1)}, 1, false},
 		{"empty map", `{}`, nil, entities, map[string]interface{}{}, 0, false},
 		{"empty list", `[]`, nil, entities, []interface{}{}, 0, false},
 		{"invalid JSON", `{`, nil, entities, nil, 0, true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			index := 0
-			value, err := decodeRemoteHTTPValue(json.RawMessage(testCase.raw), testCase.metadata, &index, testCase.entities)
+			value, err := decodeRemoteHTTPValue(json.RawMessage(testCase.raw), nil, testCase.metadata, &index, testCase.entities, remoteHTTPAuto)
 			if (err != nil) != testCase.wantError {
 				t.Fatalf("error: %v", err)
 			}
@@ -65,23 +66,18 @@ func (e *errReadCloser) Read(_ []byte) (int, error) { return 0, fmt.Errorf("read
 func (e *errReadCloser) Close() error               { return nil }
 
 type fakeRemoteTransport struct {
-	queryFn            func(context.Context, string, map[string]interface{}) ([][]interface{}, error)
-	queryWithColumnsFn func(context.Context, string, map[string]interface{}) ([]string, [][]interface{}, error)
-	queryBatchFn       func(context.Context, []remoteStatement) error
-	beginCypherTxFn    func(context.Context) (RemoteCypherTx, error)
-	closeFn            func() error
+	queryModeFn  func(context.Context, string, map[string]interface{}, RemoteAccessMode) ([]string, [][]interface{}, error)
+	queryFn      func(context.Context, string, map[string]interface{}) ([]string, [][]interface{}, error)
+	queryBatchFn func(context.Context, []remoteStatement) error
+	closeFn      func() error
 }
 
-func (f *fakeRemoteTransport) query(ctx context.Context, statement string, params map[string]interface{}) ([][]interface{}, error) {
+func (f *fakeRemoteTransport) query(ctx context.Context, statement string, params map[string]interface{}, mode RemoteAccessMode) ([]string, [][]interface{}, error) {
+	if f.queryModeFn != nil {
+		return f.queryModeFn(ctx, statement, params, mode)
+	}
 	if f.queryFn != nil {
 		return f.queryFn(ctx, statement, params)
-	}
-	return nil, nil
-}
-
-func (f *fakeRemoteTransport) queryWithColumns(ctx context.Context, statement string, params map[string]interface{}) ([]string, [][]interface{}, error) {
-	if f.queryWithColumnsFn != nil {
-		return f.queryWithColumnsFn(ctx, statement, params)
 	}
 	return nil, nil, nil
 }
@@ -91,13 +87,6 @@ func (f *fakeRemoteTransport) queryBatch(ctx context.Context, statements []remot
 		return f.queryBatchFn(ctx, statements)
 	}
 	return nil
-}
-
-func (f *fakeRemoteTransport) beginCypherTx(ctx context.Context) (RemoteCypherTx, error) {
-	if f.beginCypherTxFn != nil {
-		return f.beginCypherTxFn(ctx)
-	}
-	return nil, nil
 }
 
 func (f *fakeRemoteTransport) close() error {
@@ -143,9 +132,9 @@ func TestRemoteStreamNodesWithOptionsCancellation(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		calls := 0
-		engine := &RemoteEngine{transport: &fakeRemoteTransport{queryFn: func(context.Context, string, map[string]interface{}) ([][]interface{}, error) {
+		engine := &RemoteEngine{transport: &fakeRemoteTransport{queryFn: func(context.Context, string, map[string]interface{}) ([]string, [][]interface{}, error) {
 			calls++
-			return nil, nil
+			return nil, nil, nil
 		}}}
 		err := engine.StreamNodesWithOptions(ctx, StreamNodesOptions{}, func(*Node) error { return nil })
 		if err != context.Canceled || calls != 0 {
@@ -157,13 +146,13 @@ func TestRemoteStreamNodesWithOptionsCancellation(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		calls := 0
-		engine := &RemoteEngine{transport: &fakeRemoteTransport{queryFn: func(queryCtx context.Context, statement string, _ map[string]interface{}) ([][]interface{}, error) {
+		engine := &RemoteEngine{transport: &fakeRemoteTransport{queryFn: func(queryCtx context.Context, statement string, _ map[string]interface{}) ([]string, [][]interface{}, error) {
 			calls++
 			if statement != "MATCH (n) RETURN reveal(n)" {
 				t.Fatalf("query = %q", statement)
 			}
 			cancel()
-			return nil, queryCtx.Err()
+			return nil, nil, queryCtx.Err()
 		}}}
 		err := engine.StreamNodesWithOptions(ctx, StreamNodesOptions{}, func(*Node) error { return nil })
 		if err != context.Canceled || calls != 1 {
@@ -184,12 +173,12 @@ func TestRemoteStreamNodesWithOptionsDecayFilterMode(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			calls := 0
-			engine := &RemoteEngine{transport: &fakeRemoteTransport{queryFn: func(_ context.Context, statement string, _ map[string]interface{}) ([][]interface{}, error) {
+			engine := &RemoteEngine{transport: &fakeRemoteTransport{queryFn: func(_ context.Context, statement string, _ map[string]interface{}) ([]string, [][]interface{}, error) {
 				calls++
 				if statement != tt.wantStatement {
 					t.Fatalf("query = %q, want %q", statement, tt.wantStatement)
 				}
-				return [][]interface{}{{map[string]interface{}{
+				return nil, [][]interface{}{{map[string]interface{}{
 					"id": "db:1", "properties": map[string]interface{}{"keep": "visible"},
 				}}}, nil
 			}}}
@@ -210,12 +199,12 @@ func TestRemoteStreamNodesWithOptionsDecayFilterMode(t *testing.T) {
 
 func TestRemoteStreamNodesWithOptionsProjectionAndStop(t *testing.T) {
 	remoteCalls := 0
-	engine := &RemoteEngine{transport: &fakeRemoteTransport{queryFn: func(_ context.Context, statement string, _ map[string]interface{}) ([][]interface{}, error) {
+	engine := &RemoteEngine{transport: &fakeRemoteTransport{queryFn: func(_ context.Context, statement string, _ map[string]interface{}) ([]string, [][]interface{}, error) {
 		remoteCalls++
 		if statement != "MATCH (n) RETURN reveal(n)" {
 			t.Fatalf("query = %q", statement)
 		}
-		return [][]interface{}{
+		return nil, [][]interface{}{
 			{map[string]interface{}{"id": "other:1", "properties": map[string]interface{}{"keep": "skip"}}},
 			{map[string]interface{}{"id": "db:1", "properties": map[string]interface{}{"keep": "first", "drop": "private"}}},
 			{map[string]interface{}{"id": "db:2", "properties": map[string]interface{}{"keep": "second"}}},
@@ -363,17 +352,17 @@ func TestRemoteEngineConfigAndCommitURL(t *testing.T) {
 	if ht.client == nil {
 		t.Fatalf("expected default client")
 	}
-	if got := ht.commitURL(); got != "http://host/db/db/tx/commit" {
+	if got, err := ht.commitURL(); err != nil || got != "http://host/db/db/tx/commit" {
 		t.Fatalf("unexpected commit URL: %s", got)
 	}
 
 	e2, _ := NewRemoteEngine(RemoteEngineConfig{URI: "http://host/db/neo4j", Database: "x"})
-	if got := e2.transport.(*httpTransport).commitURL(); got != "http://host/db/neo4j/tx/commit" {
+	if got, err := e2.transport.(*httpTransport).commitURL(); err != nil || got != "http://host/db/neo4j/tx/commit" {
 		t.Fatalf("unexpected commit URL: %s", got)
 	}
 
 	e3, _ := NewRemoteEngine(RemoteEngineConfig{URI: "http://host/db/neo4j/tx/commit", Database: "x"})
-	if got := e3.transport.(*httpTransport).commitURL(); got != "http://host/db/neo4j/tx/commit" {
+	if got, err := e3.transport.(*httpTransport).commitURL(); err != nil || got != "http://host/db/neo4j/tx/commit" {
 		t.Fatalf("unexpected commit URL: %s", got)
 	}
 }
@@ -393,7 +382,7 @@ func TestRemoteEngineQueryBranches(t *testing.T) {
 		schema: NewSchemaManager(),
 	}
 	ctx := context.Background()
-	if _, err := badEngine.transport.query(ctx, "RETURN 1", map[string]interface{}{"bad": func() {}}); err == nil {
+	if _, _, err := badEngine.QueryCypher(ctx, "RETURN 1", map[string]interface{}{"bad": func() {}}, RemoteAccessRead); err == nil {
 		t.Fatalf("expected marshal error")
 	}
 
@@ -406,7 +395,7 @@ func TestRemoteEngineQueryBranches(t *testing.T) {
 		},
 		schema: NewSchemaManager(),
 	}
-	if _, err := badURLEngine.transport.query(ctx, "RETURN 1", nil); err == nil {
+	if _, _, err := badURLEngine.QueryCypher(ctx, "RETURN 1", nil, RemoteAccessRead); err == nil {
 		t.Fatalf("expected bad URL error")
 	}
 
@@ -414,7 +403,7 @@ func TestRemoteEngineQueryBranches(t *testing.T) {
 	eDoErr := makeEngineWithTransport(t, "http://host", func(_ *http.Request) (*http.Response, error) {
 		return nil, fmt.Errorf("network down")
 	})
-	if _, err := eDoErr.transport.query(ctx, "RETURN 1", nil); err == nil {
+	if _, _, err := eDoErr.QueryCypher(ctx, "RETURN 1", nil, RemoteAccessRead); err == nil {
 		t.Fatalf("expected network error")
 	}
 
@@ -426,7 +415,7 @@ func TestRemoteEngineQueryBranches(t *testing.T) {
 			Header:     make(http.Header),
 		}, nil
 	})
-	if _, err := eReadErr.transport.query(ctx, "RETURN 1", nil); err == nil {
+	if _, _, err := eReadErr.QueryCypher(ctx, "RETURN 1", nil, RemoteAccessRead); err == nil {
 		t.Fatalf("expected read body error")
 	}
 
@@ -438,7 +427,7 @@ func TestRemoteEngineQueryBranches(t *testing.T) {
 			Header:     make(http.Header),
 		}, nil
 	})
-	if _, err := eDecodeErr.transport.query(ctx, "RETURN 1", nil); err == nil {
+	if _, _, err := eDecodeErr.QueryCypher(ctx, "RETURN 1", nil, RemoteAccessRead); err == nil {
 		t.Fatalf("expected decode error")
 	}
 
@@ -452,7 +441,7 @@ func TestRemoteEngineQueryBranches(t *testing.T) {
 			Header: make(http.Header),
 		}, nil
 	})
-	if _, err := eCypherErr.transport.query(ctx, "RETURN 1", nil); err == nil || !strings.Contains(err.Error(), "bad statement") {
+	if _, _, err := eCypherErr.QueryCypher(ctx, "RETURN 1", nil, RemoteAccessRead); err == nil || !strings.Contains(err.Error(), "bad statement") {
 		t.Fatalf("expected cypher error, got: %v", err)
 	}
 
@@ -467,7 +456,7 @@ func TestRemoteEngineQueryBranches(t *testing.T) {
 			Header:     make(http.Header),
 		}, nil
 	})
-	rows, err := eOK.transport.query(ctx, "RETURN 1", nil)
+	_, rows, err := eOK.QueryCypher(ctx, "RETURN 1", nil, RemoteAccessRead)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -505,7 +494,7 @@ func TestRemoteEngineQueryBranches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error creating basic auth remote engine: %v", err)
 	}
-	if _, err := eBasic.transport.query(ctx, "RETURN 1", nil); err != nil {
+	if _, _, err := eBasic.QueryCypher(ctx, "RETURN 1", nil, RemoteAccessRead); err != nil {
 		t.Fatalf("unexpected error from basic auth query: %v", err)
 	}
 }
@@ -515,7 +504,7 @@ func TestRemoteEngineQueryBranches(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRemoteEngineHelperConversions(t *testing.T) {
-	if got := quoteIdent("a`b"); got != "`a``b`" {
+	if got := cyphertext.PrintIdentifier("a`b", nil, cyphertext.RawSource); got != "`a``b`" {
 		t.Fatalf("unexpected quoteIdent: %s", got)
 	}
 	if got := labelsExpr([]string{"Person", "", "User"}); got != ":`Person`:`User`" {
@@ -598,32 +587,6 @@ func TestNormalizeBoltValue(t *testing.T) {
 	}
 }
 
-func TestAccessModeForStatement(t *testing.T) {
-	tests := []struct {
-		name      string
-		statement string
-		wantWrite bool
-	}{
-		{name: "read", statement: "MATCH (n) RETURN n", wantWrite: false},
-		{name: "create", statement: "CREATE (n:Person)", wantWrite: true},
-		{name: "merge", statement: "MERGE (n:Person {id: 1})", wantWrite: true},
-		{name: "delete", statement: "MATCH (n) DELETE n", wantWrite: true},
-		{name: "set", statement: "MATCH (n) SET n.x = 1", wantWrite: true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := accessModeForStatement(tt.statement)
-			if tt.wantWrite && got != neo4j.AccessModeWrite {
-				t.Fatalf("expected write access mode, got %v", got)
-			}
-			if !tt.wantWrite && got != neo4j.AccessModeRead {
-				t.Fatalf("expected read access mode, got %v", got)
-			}
-		})
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Engine methods via HTTP transport mock
 // ---------------------------------------------------------------------------
@@ -634,164 +597,97 @@ func TestRemoteEngineEngineMethods(t *testing.T) {
 		if err := json.NewDecoder(req.Body).Decode(&txReq); err != nil {
 			t.Fatalf("failed to decode request: %v", err)
 		}
-		stmt := txReq.Statements[0].Statement
-		params := txReq.Statements[0].Parameters
-
-		switch {
-		case strings.HasPrefix(stmt, "CREATE (n"):
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{
-				{map[string]interface{}{"id": "n1", "labels": []interface{}{"Person"}, "properties": map[string]interface{}{"name": "Alice"}}},
-			}, nil)}, nil
-		case strings.Contains(stmt, "MATCH (n) WHERE n.id = $id RETURN n LIMIT 1"):
-			if params["id"] == "missing" {
-				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse(nil, nil)}, nil
-			}
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{
-				{map[string]interface{}{"id": params["id"], "labels": []interface{}{"Person"}, "properties": map[string]interface{}{"id": params["id"]}}},
-			}, nil)}, nil
-		case strings.Contains(stmt, "SET n += $props RETURN count(n)"):
-			if params["id"] == "missing" {
-				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{{float64(0)}}, nil)}, nil
-			}
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{{float64(1)}}, nil)}, nil
-		case strings.Contains(stmt, "MERGE (a)-[r"):
-			if params["start"] == "missing" {
-				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse(nil, nil)}, nil
-			}
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{{map[string]interface{}{"id": "e1"}}}, nil)}, nil
-		case strings.Contains(stmt, "WHERE r.id = $id RETURN r LIMIT 1"):
-			if params["id"] == "missing" {
-				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse(nil, nil)}, nil
-			}
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{
-				{map[string]interface{}{"id": params["id"], "type": "KNOWS", "startNodeElementId": "a", "endNodeElementId": "b", "properties": map[string]interface{}{"id": params["id"]}}},
-			}, nil)}, nil
-		case strings.Contains(stmt, "SET r += $props RETURN count(r)"):
-			if params["id"] == "missing" {
-				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{{float64(0)}}, nil)}, nil
-			}
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{{float64(1)}}, nil)}, nil
-		case strings.Contains(stmt, "RETURN n LIMIT 1"):
-			if strings.Contains(stmt, "`Missing`") {
-				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse(nil, nil)}, nil
-			}
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{
-				{map[string]interface{}{"id": "first", "labels": []interface{}{"Person"}, "properties": map[string]interface{}{"id": "first"}}},
-			}, nil)}, nil
-		case strings.Contains(stmt, "RETURN n"):
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{
-				{map[string]interface{}{"id": "n1", "labels": []interface{}{"Person"}, "properties": map[string]interface{}{"id": "n1"}}},
-				{map[string]interface{}{"id": "n2", "labels": []interface{}{"Person"}, "properties": map[string]interface{}{"id": "n2"}}},
-			}, nil)}, nil
-		case strings.Contains(stmt, "MATCH ()-[r]->() RETURN r"):
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{
-				{map[string]interface{}{"id": "e1", "type": "KNOWS", "startNodeElementId": "a", "endNodeElementId": "b", "properties": map[string]interface{}{"id": "e1"}}},
-			}, nil)}, nil
-		case strings.Contains(stmt, "WHERE n.id = $id RETURN r"):
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{
-				{map[string]interface{}{"id": "e2", "type": "KNOWS", "startNodeElementId": "a", "endNodeElementId": "b", "properties": map[string]interface{}{"id": "e2"}}},
-			}, nil)}, nil
-		case strings.Contains(stmt, "WHERE a.id = $start AND b.id = $end RETURN r LIMIT 1"):
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{
-				{map[string]interface{}{"id": "e3", "type": "KNOWS", "startNodeElementId": "a", "endNodeElementId": "b", "properties": map[string]interface{}{"id": "e3"}}},
-			}, nil)}, nil
-		case strings.Contains(stmt, "WHERE a.id = $start AND b.id = $end RETURN r"):
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{
-				{map[string]interface{}{"id": "e4", "type": "KNOWS", "startNodeElementId": "a", "endNodeElementId": "b", "properties": map[string]interface{}{"id": "e4"}}},
-			}, nil)}, nil
-		case strings.Contains(stmt, "MATCH ()-[r:`KNOWS`]->() RETURN r"):
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{
-				{map[string]interface{}{"id": "e5", "type": "KNOWS", "startNodeElementId": "a", "endNodeElementId": "b", "properties": map[string]interface{}{"id": "e5"}}},
-			}, nil)}, nil
-		case strings.Contains(stmt, "MATCH ()-[r]->(n) WHERE n.id = $id RETURN count(r)"):
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{{float64(2)}}, nil)}, nil
-		case strings.Contains(stmt, "MATCH (n)-[r]->() WHERE n.id = $id RETURN count(r)"):
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{{float64(3)}}, nil)}, nil
-		case strings.Contains(stmt, "RETURN count(n)"):
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{{float64(7)}}, nil)}, nil
-		case strings.Contains(stmt, "RETURN count(r)"):
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{{float64(8)}}, nil)}, nil
-		default:
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse(nil, nil)}, nil
-		}
+		return remoteEngineMethodReplyHTTPServed(txReq.Statements[0].Statement, txReq.Statements[0].Parameters), nil
 	})
 
-	if _, err := engine.CreateNode(&Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}}); err != nil {
+	if _, err := engine.CreateNode(t.Context(), &Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}}); err != nil {
 		t.Fatalf("CreateNode failed: %v", err)
 	}
-	if _, err := engine.GetNode("missing"); err != ErrNotFound {
+	if _, err := engine.GetNode(t.Context(), "missing"); err != ErrNotFound {
 		t.Fatalf("expected ErrNotFound for missing node, got: %v", err)
 	}
-	if _, err := engine.GetNode("n1"); err != nil {
+	if _, err := engine.GetNode(t.Context(), "n1"); err != nil {
 		t.Fatalf("GetNode failed: %v", err)
 	}
-	if err := engine.UpdateNode(&Node{ID: "missing", Properties: map[string]interface{}{"x": 1}}); err != ErrNotFound {
+	if err := engine.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "missing", Properties: map[string]interface{}{"x": 1}}}); err != ErrNotFound {
 		t.Fatalf("expected ErrNotFound from UpdateNode")
 	}
-	if err := engine.UpdateNode(&Node{ID: "n1", Properties: map[string]interface{}{"x": 1}}); err != nil {
+	if err := engine.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "n1", Properties: map[string]interface{}{"x": 1}}}); err != nil {
 		t.Fatalf("UpdateNode failed: %v", err)
 	}
-	if err := engine.DeleteNode("n1"); err != nil {
+	if err := engine.DeleteNode(t.Context(), "n1"); err != nil {
 		t.Fatalf("DeleteNode failed: %v", err)
 	}
 
-	if err := engine.CreateEdge(&Edge{ID: "e1", StartNode: "missing", EndNode: "n2", Type: "KNOWS"}); err != ErrNotFound {
+	if err := engine.CreateEdge(t.Context(), &Edge{ID: "e1", StartNode: "missing", EndNode: "n2", Type: "KNOWS"}); err != ErrNotFound {
 		t.Fatalf("expected ErrNotFound from CreateEdge")
 	}
-	if err := engine.CreateEdge(&Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS"}); err != nil {
+	if err := engine.CreateEdge(t.Context(), &Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS"}); err != nil {
 		t.Fatalf("CreateEdge failed: %v", err)
 	}
-	if _, err := engine.GetEdge("missing"); err != ErrNotFound {
+	if _, err := engine.GetEdge(t.Context(), "missing"); err != ErrNotFound {
 		t.Fatalf("expected ErrNotFound from GetEdge")
 	}
-	if _, err := engine.GetEdge("e1"); err != nil {
+	if _, err := engine.GetEdge(t.Context(), "e1"); err != nil {
 		t.Fatalf("GetEdge failed: %v", err)
 	}
-	if err := engine.UpdateEdge(&Edge{ID: "missing", Properties: map[string]interface{}{"w": 1}}); err != ErrNotFound {
+	if err := engine.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "missing", Properties: map[string]interface{}{"w": 1}}}); err != ErrNotFound {
 		t.Fatalf("expected ErrNotFound from UpdateEdge")
 	}
-	if err := engine.UpdateEdge(&Edge{ID: "e1", Properties: map[string]interface{}{"w": 1}}); err != nil {
+	if err := engine.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "e1", Properties: map[string]interface{}{"w": 1}}}); err != nil {
 		t.Fatalf("UpdateEdge failed: %v", err)
 	}
-	if err := engine.DeleteEdge("e1"); err != nil {
+	if err := engine.DeleteEdge(t.Context(), "e1"); err != nil {
 		t.Fatalf("DeleteEdge failed: %v", err)
 	}
 
-	if nodes, err := engine.GetNodesByLabel("Person"); err != nil || len(nodes) == 0 {
+	if nodes, err := engine.GetNodesByLabel(context.Background(), "Person"); err != nil || len(nodes) == 0 {
 		t.Fatalf("GetNodesByLabel failed: len=%d err=%v", len(nodes), err)
 	}
-	if _, err := engine.GetFirstNodeByLabel("Missing"); err != ErrNotFound {
+	if _, err := engine.GetFirstNodeByLabel(t.Context(), "Missing"); err != ErrNotFound {
 		t.Fatalf("expected ErrNotFound from GetFirstNodeByLabel")
 	}
-	if _, err := engine.GetFirstNodeByLabel("Person"); err != nil {
+	if _, err := engine.GetFirstNodeByLabel(t.Context(), "Person"); err != nil {
 		t.Fatalf("GetFirstNodeByLabel failed: %v", err)
 	}
-	if edges, err := engine.GetOutgoingEdges("n1"); err != nil || len(edges) == 0 {
+	if edges, err := engine.GetOutgoingEdges(context.Background(), "n1"); err != nil || len(edges) == 0 {
 		t.Fatalf("GetOutgoingEdges failed: len=%d err=%v", len(edges), err)
 	}
-	if edges, err := engine.GetIncomingEdges("n1"); err != nil || len(edges) == 0 {
+	if edges, err := engine.GetIncomingEdges(context.Background(), "n1"); err != nil || len(edges) == 0 {
 		t.Fatalf("GetIncomingEdges failed: len=%d err=%v", len(edges), err)
 	}
-	if edges, err := engine.GetEdgesBetween("n1", "n2"); err != nil || len(edges) == 0 {
+	if edges, err := engine.GetEdgesBetween(context.Background(), "n1", "n2"); err != nil || len(edges) == 0 {
 		t.Fatalf("GetEdgesBetween failed: len=%d err=%v", len(edges), err)
 	}
-	if edge := engine.GetEdgeBetween("n1", "n2", "KNOWS"); edge == nil {
+	edge, err := engine.GetEdgeBetween(t.Context(), "n1", "n2", "KNOWS")
+	if err != nil {
+		t.Fatalf("GetEdgeBetween failed: %v", err)
+	}
+	if edge == nil {
 		t.Fatalf("GetEdgeBetween failed")
 	}
-	if edges, err := engine.GetEdgesByType("KNOWS"); err != nil || len(edges) == 0 {
+	if edges, err := engine.GetEdgesByType(context.Background(), "KNOWS"); err != nil || len(edges) == 0 {
 		t.Fatalf("GetEdgesByType failed: len=%d err=%v", len(edges), err)
 	}
-	if allEdges, err := engine.AllEdges(); err != nil || len(allEdges) == 0 {
+	if allEdges, err := engine.AllEdges(context.Background()); err != nil || len(allEdges) == 0 {
 		t.Fatalf("AllEdges failed: len=%d err=%v", len(allEdges), err)
 	}
-	if allNodes := engine.GetAllNodes(); len(allNodes) == 0 {
-		t.Fatalf("GetAllNodes should return nodes")
+	if allNodes, err := engine.AllNodes(context.Background()); err != nil || len(allNodes) == 0 {
+		t.Fatalf("AllNodes failed: len=%d err=%v", len(allNodes), err)
 	}
-	if got := engine.GetInDegree("n1"); got != 2 {
-		t.Fatalf("GetInDegree mismatch: %d", got)
+	inDegree, err := engine.GetInDegree(t.Context(), "n1")
+	if err != nil {
+		t.Fatalf("GetInDegree failed: %v", err)
 	}
-	if got := engine.GetOutDegree("n1"); got != 3 {
-		t.Fatalf("GetOutDegree mismatch: %d", got)
+	if inDegree != 2 {
+		t.Fatalf("GetInDegree mismatch: %d", inDegree)
+	}
+	outDegree, err := engine.GetOutDegree(t.Context(), "n1")
+	if err != nil {
+		t.Fatalf("GetOutDegree failed: %v", err)
+	}
+	if outDegree != 3 {
+		t.Fatalf("GetOutDegree mismatch: %d", outDegree)
 	}
 	if got := engine.GetSchema(); got == nil {
 		t.Fatalf("expected schema")
@@ -799,10 +695,10 @@ func TestRemoteEngineEngineMethods(t *testing.T) {
 	if err := engine.Close(); err != nil {
 		t.Fatalf("Close should be nil, got: %v", err)
 	}
-	if n, err := engine.NodeCount(); err != nil || n != 7 {
+	if n, err := engine.NodeCount(t.Context()); err != nil || n != 7 {
 		t.Fatalf("NodeCount mismatch: n=%d err=%v", n, err)
 	}
-	if n, err := engine.EdgeCount(); err != nil || n != 8 {
+	if n, err := engine.EdgeCount(t.Context()); err != nil || n != 8 {
 		t.Fatalf("EdgeCount mismatch: n=%d err=%v", n, err)
 	}
 	if _, _, err := engine.DeleteByPrefix("x:"); err == nil {
@@ -834,7 +730,7 @@ func TestRemoteEngineBulkBatching(t *testing.T) {
 		{ID: "n3", Labels: []string{"X"}, Properties: map[string]interface{}{}},
 	}
 	batchCalls = 0
-	if err := engine.BulkCreateNodes(nodes); err != nil {
+	if err := engine.BulkCreateNodes(t.Context(), nodes); err != nil {
 		t.Fatalf("BulkCreateNodes failed: %v", err)
 	}
 	if batchCalls != 1 {
@@ -847,7 +743,7 @@ func TestRemoteEngineBulkBatching(t *testing.T) {
 		{ID: "e2", StartNode: "c", EndNode: "d", Type: "REL", Properties: map[string]interface{}{}},
 	}
 	batchCalls = 0
-	if err := engine.BulkCreateEdges(edges); err != nil {
+	if err := engine.BulkCreateEdges(t.Context(), edges); err != nil {
 		t.Fatalf("BulkCreateEdges failed: %v", err)
 	}
 	if batchCalls != 1 {
@@ -856,7 +752,7 @@ func TestRemoteEngineBulkBatching(t *testing.T) {
 
 	// Delete nodes in batch.
 	batchCalls = 0
-	if err := engine.BulkDeleteNodes([]NodeID{"n1", "n2"}); err != nil {
+	if err := engine.BulkDeleteNodes(t.Context(), []NodeID{"n1", "n2"}); err != nil {
 		t.Fatalf("BulkDeleteNodes failed: %v", err)
 	}
 	if batchCalls != 1 {
@@ -865,7 +761,7 @@ func TestRemoteEngineBulkBatching(t *testing.T) {
 
 	// Delete edges in batch.
 	batchCalls = 0
-	if err := engine.BulkDeleteEdges([]EdgeID{"e1", "e2"}); err != nil {
+	if err := engine.BulkDeleteEdges(t.Context(), []EdgeID{"e1", "e2"}); err != nil {
 		t.Fatalf("BulkDeleteEdges failed: %v", err)
 	}
 	if batchCalls != 1 {
@@ -895,31 +791,31 @@ func TestRemoteEngineBulkAndErrorFallbacks(t *testing.T) {
 		}, nil)}, nil
 	})
 
-	if err := engine.BulkCreateNodes([]*Node{{ID: "n1"}}); err == nil {
+	if err := engine.BulkCreateNodes(t.Context(), []*Node{{ID: "n1"}}); err == nil {
 		t.Fatalf("expected BulkCreateNodes error on first failure")
 	}
-	if err := engine.BulkCreateEdges([]*Edge{{ID: "e1", StartNode: "a", EndNode: "b", Type: "REL"}}); err != nil {
+	if err := engine.BulkCreateEdges(t.Context(), []*Edge{{ID: "e1", StartNode: "a", EndNode: "b", Type: "REL"}}); err != nil {
 		t.Fatalf("BulkCreateEdges failed: %v", err)
 	}
-	if err := engine.BulkDeleteNodes([]NodeID{"n1"}); err != nil {
+	if err := engine.BulkDeleteNodes(t.Context(), []NodeID{"n1"}); err != nil {
 		t.Fatalf("BulkDeleteNodes failed: %v", err)
 	}
-	if err := engine.BulkDeleteEdges([]EdgeID{"e1"}); err != nil {
+	if err := engine.BulkDeleteEdges(t.Context(), []EdgeID{"e1"}); err != nil {
 		t.Fatalf("BulkDeleteEdges failed: %v", err)
 	}
-	if got, err := engine.BatchGetNodes([]NodeID{"n1", "n2"}); err != nil {
+	if got, err := engine.BatchGetNodes(context.Background(), []NodeID{"n1", "n2"}); err != nil {
 		t.Fatalf("BatchGetNodes failed: %v", err)
 	} else if len(got) == 0 {
 		t.Fatalf("expected at least one batch node")
 	}
 
-	if nodes := engine.GetAllNodes(); len(nodes) != 0 {
-		t.Fatalf("GetAllNodes should swallow errors and return empty slice")
+	if nodes, err := engine.AllNodes(context.Background()); err == nil || len(nodes) != 0 {
+		t.Fatalf("AllNodes must report the failed read: len=%d err=%v", len(nodes), err)
 	}
-	if n, err := engine.NodeCount(); err != nil || n != 0 {
+	if n, err := engine.NodeCount(t.Context()); err != nil || n != 0 {
 		t.Fatalf("expected NodeCount fallback to zero with nil error; n=%d err=%v", n, err)
 	}
-	if n, err := engine.EdgeCount(); err != nil || n != 0 {
+	if n, err := engine.EdgeCount(t.Context()); err != nil || n != 0 {
 		t.Fatalf("expected EdgeCount fallback to zero with nil error; n=%d err=%v", n, err)
 	}
 }
@@ -969,44 +865,48 @@ func TestRemoteEngineAdditionalErrorBranches(t *testing.T) {
 		}
 	})
 
-	if _, err := engine.GetNode("bad"); err == nil {
+	if _, err := engine.GetNode(t.Context(), "bad"); err == nil {
 		t.Fatalf("expected node decode error")
 	}
-	if err := engine.DeleteNode("n1"); err == nil {
+	if err := engine.DeleteNode(t.Context(), "n1"); err == nil {
 		t.Fatalf("expected DeleteNode error")
 	}
-	if err := engine.DeleteEdge("e1"); err == nil {
+	if err := engine.DeleteEdge(t.Context(), "e1"); err == nil {
 		t.Fatalf("expected DeleteEdge error")
 	}
-	if err := engine.BulkCreateEdges([]*Edge{{ID: "e1", StartNode: "a", EndNode: "b", Type: "REL"}}); err == nil {
+	if err := engine.BulkCreateEdges(t.Context(), []*Edge{{ID: "e1", StartNode: "a", EndNode: "b", Type: "REL"}}); err == nil {
 		t.Fatalf("expected BulkCreateEdges error")
 	}
-	if err := engine.BulkDeleteNodes([]NodeID{"n1"}); err == nil {
+	if err := engine.BulkDeleteNodes(t.Context(), []NodeID{"n1"}); err == nil {
 		t.Fatalf("expected BulkDeleteNodes error")
 	}
-	if err := engine.BulkDeleteEdges([]EdgeID{"e1"}); err == nil {
+	if err := engine.BulkDeleteEdges(t.Context(), []EdgeID{"e1"}); err == nil {
 		t.Fatalf("expected BulkDeleteEdges error")
 	}
-	if _, err := engine.GetOutgoingEdges("n1"); err == nil {
+	if _, err := engine.GetOutgoingEdges(context.Background(), "n1"); err == nil {
 		t.Fatalf("expected GetOutgoingEdges conversion error")
 	}
-	if _, err := engine.GetIncomingEdges("n1"); err == nil {
+	if _, err := engine.GetIncomingEdges(context.Background(), "n1"); err == nil {
 		t.Fatalf("expected GetIncomingEdges conversion error")
 	}
-	if _, err := engine.GetEdgesBetween("a", "b"); err == nil {
+	if _, err := engine.GetEdgesBetween(context.Background(), "a", "b"); err == nil {
 		t.Fatalf("expected GetEdgesBetween conversion error")
 	}
-	if _, err := engine.GetEdgesByType("REL"); err == nil {
+	if _, err := engine.GetEdgesByType(context.Background(), "REL"); err == nil {
 		t.Fatalf("expected GetEdgesByType conversion error")
 	}
-	if _, err := engine.AllEdges(); err == nil {
+	if _, err := engine.AllEdges(context.Background()); err == nil {
 		t.Fatalf("expected AllEdges conversion error")
 	}
-	if edge := engine.GetEdgeBetween("a", "b", "REL"); edge != nil {
+	conversionEdge, err := engine.GetEdgeBetween(t.Context(), "a", "b", "REL")
+	if err != nil {
+		t.Fatalf("GetEdgeBetween failed: %v", err)
+	}
+	if conversionEdge != nil {
 		t.Fatalf("expected nil edge for conversion error")
 	}
 
-	got, err := engine.BatchGetNodes([]NodeID{"ok", "not-found", "bad"})
+	got, err := engine.BatchGetNodes(context.Background(), []NodeID{"ok", "not-found", "bad"})
 	if err == nil {
 		t.Fatalf("expected BatchGetNodes error")
 	}
@@ -1020,46 +920,49 @@ func TestRemoteEngineRemainingBranches(t *testing.T) {
 	queryErrEngine := makeEngineWithTransport(t, "http://remote.example", func(_ *http.Request) (*http.Response, error) {
 		return nil, fmt.Errorf("query boom")
 	})
-	if _, err := queryErrEngine.GetNode("n1"); err == nil {
+	if _, err := queryErrEngine.GetNode(t.Context(), "n1"); err == nil {
 		t.Fatalf("expected GetNode query error")
 	}
-	if err := queryErrEngine.UpdateNode(&Node{ID: "n1"}); err == nil {
+	if err := queryErrEngine.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "n1"}}); err == nil {
 		t.Fatalf("expected UpdateNode query error")
 	}
-	if _, err := queryErrEngine.GetEdge("e1"); err == nil {
+	if _, err := queryErrEngine.GetEdge(t.Context(), "e1"); err == nil {
 		t.Fatalf("expected GetEdge query error")
 	}
-	if err := queryErrEngine.UpdateEdge(&Edge{ID: "e1"}); err == nil {
+	if err := queryErrEngine.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "e1"}}); err == nil {
 		t.Fatalf("expected UpdateEdge query error")
 	}
-	if _, err := queryErrEngine.GetNodesByLabel("Person"); err == nil {
+	if _, err := queryErrEngine.GetNodesByLabel(context.Background(), "Person"); err == nil {
 		t.Fatalf("expected GetNodesByLabel query error")
 	}
-	if _, err := queryErrEngine.GetOutgoingEdges("n1"); err == nil {
+	if _, err := queryErrEngine.GetOutgoingEdges(context.Background(), "n1"); err == nil {
 		t.Fatalf("expected GetOutgoingEdges query error")
 	}
-	if _, err := queryErrEngine.GetIncomingEdges("n1"); err == nil {
+	if _, err := queryErrEngine.GetIncomingEdges(context.Background(), "n1"); err == nil {
 		t.Fatalf("expected GetIncomingEdges query error")
 	}
-	if _, err := queryErrEngine.GetEdgesBetween("a", "b"); err == nil {
+	if _, err := queryErrEngine.GetEdgesBetween(context.Background(), "a", "b"); err == nil {
 		t.Fatalf("expected GetEdgesBetween query error")
 	}
-	if _, err := queryErrEngine.GetEdgesByType("REL"); err == nil {
+	if _, err := queryErrEngine.GetEdgesByType(context.Background(), "REL"); err == nil {
 		t.Fatalf("expected GetEdgesByType query error")
 	}
-	if _, err := queryErrEngine.AllEdges(); err == nil {
+	if _, err := queryErrEngine.AllEdges(context.Background()); err == nil {
 		t.Fatalf("expected AllEdges query error")
 	}
-	if _, err := queryErrEngine.GetFirstNodeByLabel("Person"); err == nil {
+	if _, err := queryErrEngine.GetFirstNodeByLabel(t.Context(), "Person"); err == nil {
 		t.Fatalf("expected GetFirstNodeByLabel query error")
 	}
-	if got := queryErrEngine.GetInDegree("n1"); got != 0 {
+	queryErrInDegree, _ := queryErrEngine.GetInDegree(t.Context(), "n1")
+	if queryErrInDegree != 0 {
 		t.Fatalf("expected zero indegree on query error")
 	}
-	if got := queryErrEngine.GetOutDegree("n1"); got != 0 {
+	queryErrOutDegree, _ := queryErrEngine.GetOutDegree(t.Context(), "n1")
+	if queryErrOutDegree != 0 {
 		t.Fatalf("expected zero outdegree on query error")
 	}
-	if got := queryErrEngine.GetEdgeBetween("a", "b", "REL"); got != nil {
+	queryErrEdge, _ := queryErrEngine.GetEdgeBetween(t.Context(), "a", "b", "REL")
+	if queryErrEdge != nil {
 		t.Fatalf("expected nil edge on query error")
 	}
 
@@ -1073,7 +976,7 @@ func TestRemoteEngineRemainingBranches(t *testing.T) {
 		}
 		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{{float64(1)}}, nil)}, nil
 	})
-	if _, err := noRowsEngine.CreateNode(&Node{Labels: []string{"X"}}); err == nil {
+	if _, err := noRowsEngine.CreateNode(t.Context(), &Node{Labels: []string{"X"}}); err == nil {
 		t.Fatalf("expected CreateNode no-row error")
 	}
 	// Also cover BulkCreateNodes success path + node.ID empty branch in CreateNode.
@@ -1088,16 +991,16 @@ func TestRemoteEngineRemainingBranches(t *testing.T) {
 		}
 		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{{float64(1)}}, nil)}, nil
 	})
-	if err := successEngine.BulkCreateNodes([]*Node{{Labels: []string{"X"}, Properties: map[string]interface{}{}}}); err != nil {
+	if err := successEngine.BulkCreateNodes(t.Context(), []*Node{{Labels: []string{"X"}, Properties: map[string]interface{}{}}}); err != nil {
 		t.Fatalf("expected BulkCreateNodes success: %v", err)
 	}
-	if _, err := successEngine.CreateNode(&Node{Labels: []string{"X"}, Properties: map[string]interface{}{}}); err != nil {
+	if _, err := successEngine.CreateNode(t.Context(), &Node{Labels: []string{"X"}, Properties: map[string]interface{}{}}); err != nil {
 		t.Fatalf("expected CreateNode success with empty id: %v", err)
 	}
-	if err := successEngine.CreateEdge(&Edge{StartNode: "a", EndNode: "b", Type: "REL"}); err != nil {
+	if err := successEngine.CreateEdge(t.Context(), &Edge{StartNode: "a", EndNode: "b", Type: "REL"}); err != nil {
 		t.Fatalf("expected CreateEdge success with empty id: %v", err)
 	}
-	if err := successEngine.CreateEdge(&Edge{
+	if err := successEngine.CreateEdge(t.Context(), &Edge{
 		ID:         "edge-with-props",
 		StartNode:  "a",
 		EndNode:    "b",
@@ -1113,17 +1016,17 @@ func TestRemoteEngineRemainingBranches(t *testing.T) {
 			{1},
 		}, nil)}, nil
 	})
-	if _, err := mixedRowsEngine.GetNodesByLabel("Person"); err == nil {
+	if _, err := mixedRowsEngine.GetNodesByLabel(context.Background(), "Person"); err == nil {
 		t.Fatalf("expected GetNodesByLabel conversion error")
 	}
 
 	badRowEngine := makeEngineWithTransport(t, "http://remote.example", func(_ *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: makeTXResponse([][]interface{}{{1}}, nil)}, nil
 	})
-	if _, err := badRowEngine.CreateNode(&Node{ID: "n1"}); err == nil {
+	if _, err := badRowEngine.CreateNode(t.Context(), &Node{ID: "n1"}); err == nil {
 		t.Fatalf("expected CreateNode conversion error")
 	}
-	if _, err := badRowEngine.GetFirstNodeByLabel("Person"); err == nil {
+	if _, err := badRowEngine.GetFirstNodeByLabel(t.Context(), "Person"); err == nil {
 		t.Fatalf("expected GetFirstNodeByLabel conversion error")
 	}
 }
@@ -1164,131 +1067,49 @@ func TestRemoteEngineHTTPQueryBatch(t *testing.T) {
 	}
 }
 
+// TestRemoteEngineHTTPExplicitTxLifecycle runs both ends of an explicit
+// transaction over the shared explicit-transaction wire.
 func TestRemoteEngineHTTPExplicitTxLifecycle(t *testing.T) {
-	var opened bool
-	var executed bool
-	var committed bool
-	var rolledBack bool
-	engine := makeEngineWithTransport(t, "http://remote.example", func(req *http.Request) (*http.Response, error) {
-		switch {
-		case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/db/remote_db/tx"):
-			opened = true
-			return &http.Response{
-				StatusCode: 200,
-				Header:     make(http.Header),
-				Body: io.NopCloser(strings.NewReader(
-					`{"results":[],"errors":[],"commit":"http://remote.example/db/remote_db/tx/1/commit"}`,
-				)),
-			}, nil
-		case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/db/remote_db/tx/1"):
-			executed = true
-			return &http.Response{
-				StatusCode: 200,
-				Header:     make(http.Header),
-				Body: io.NopCloser(strings.NewReader(
-					`{"results":[{"columns":["n"],"data":[{"row":[1]}]}],"errors":[]}`,
-				)),
-			}, nil
-		case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/db/remote_db/tx/1/commit"):
-			committed = true
-			return &http.Response{
-				StatusCode: 200,
-				Header:     make(http.Header),
-				Body:       io.NopCloser(strings.NewReader(`{"results":[],"errors":[]}`)),
-			}, nil
-		case req.Method == http.MethodDelete && strings.HasSuffix(req.URL.Path, "/db/remote_db/tx/1"):
-			rolledBack = true
-			return &http.Response{
-				StatusCode: 200,
-				Header:     make(http.Header),
-				Body:       io.NopCloser(strings.NewReader(`{"results":[],"errors":[]}`)),
-			}, nil
-		default:
-			return &http.Response{
-				StatusCode: 404,
-				Header:     make(http.Header),
-				Body:       io.NopCloser(strings.NewReader(`{"results":[],"errors":[]}`)),
-			}, nil
-		}
-	})
-	tx, err := engine.BeginCypherTx(context.Background())
-	if err != nil {
-		t.Fatalf("BeginCypherTx failed: %v", err)
-	}
-	cols, rows, err := tx.QueryCypher(context.Background(), "RETURN 1 AS n", nil)
-	if err != nil {
-		t.Fatalf("QueryCypher failed: %v", err)
-	}
-	if len(cols) != 1 || cols[0] != "n" || len(rows) != 1 || len(rows[0]) != 1 {
-		t.Fatalf("unexpected query result: cols=%v rows=%v", cols, rows)
-	}
-	if err := tx.Commit(context.Background()); err != nil {
-		t.Fatalf("Commit failed: %v", err)
-	}
-	if !opened || !executed || !committed || rolledBack {
-		t.Fatalf("unexpected lifecycle flags opened=%v executed=%v committed=%v rolledBack=%v", opened, executed, committed, rolledBack)
-	}
-}
-
-func TestRemoteEngineHTTPExplicitTxRollbackLifecycle(t *testing.T) {
-	var opened bool
-	var executed bool
-	var committed bool
-	var rolledBack bool
-	engine := makeEngineWithTransport(t, "http://remote.example", func(req *http.Request) (*http.Response, error) {
-		switch {
-		case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/db/remote_db/tx"):
-			opened = true
-			return &http.Response{
-				StatusCode: 200,
-				Header:     make(http.Header),
-				Body: io.NopCloser(strings.NewReader(
-					`{"results":[],"errors":[],"commit":"http://remote.example/db/remote_db/tx/2/commit"}`,
-				)),
-			}, nil
-		case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/db/remote_db/tx/2"):
-			executed = true
-			return &http.Response{
-				StatusCode: 200,
-				Header:     make(http.Header),
-				Body: io.NopCloser(strings.NewReader(
-					`{"results":[{"columns":["n"],"data":[{"row":[1]}]}],"errors":[]}`,
-				)),
-			}, nil
-		case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/db/remote_db/tx/2/commit"):
-			committed = true
-			return &http.Response{
-				StatusCode: 200,
-				Header:     make(http.Header),
-				Body:       io.NopCloser(strings.NewReader(`{"results":[],"errors":[]}`)),
-			}, nil
-		case req.Method == http.MethodDelete && strings.HasSuffix(req.URL.Path, "/db/remote_db/tx/2"):
-			rolledBack = true
-			return &http.Response{
-				StatusCode: 200,
-				Header:     make(http.Header),
-				Body:       io.NopCloser(strings.NewReader(`{"results":[],"errors":[]}`)),
-			}, nil
-		default:
-			return &http.Response{
-				StatusCode: 404,
-				Header:     make(http.Header),
-				Body:       io.NopCloser(strings.NewReader(`{"results":[],"errors":[]}`)),
-			}, nil
-		}
-	})
-	tx, err := engine.BeginCypherTx(context.Background())
-	if err != nil {
-		t.Fatalf("BeginCypherTx failed: %v", err)
-	}
-	if _, _, err := tx.QueryCypher(context.Background(), "RETURN 1 AS n", nil); err != nil {
-		t.Fatalf("QueryCypher failed: %v", err)
-	}
-	if err := tx.Rollback(context.Background()); err != nil {
-		t.Fatalf("Rollback failed: %v", err)
-	}
-	if !opened || !executed || committed || !rolledBack {
-		t.Fatalf("unexpected lifecycle flags opened=%v executed=%v committed=%v rolledBack=%v", opened, executed, committed, rolledBack)
+	// The commit ends the transaction and the rollback ends it instead. Each
+	// lifecycle keeps the transaction number it always used and its own ledger,
+	// so neither sees the other's requests.
+	for _, testCase := range []struct {
+		name       string
+		txID       string
+		beginMode  RemoteAccessMode
+		commit     bool
+		wantCommit bool
+		wantRoll   bool
+	}{
+		{name: "commit ends the transaction", txID: "1", beginMode: RemoteAccessWrite, commit: true, wantCommit: true},
+		{name: "rollback ends the transaction", txID: "2", beginMode: RemoteAccessWrite, wantRoll: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			var ledger remoteTxWire
+			engine := makeEngineWithTransport(t, "http://remote.example", newRemoteExplicitTxWire(t, testCase.txID, &ledger))
+			tx, err := engine.BeginCypherTx(context.Background(), testCase.beginMode)
+			if err != nil {
+				t.Fatalf("BeginCypherTx failed: %v", err)
+			}
+			cols, rows, err := tx.QueryCypher(context.Background(), "RETURN 1 AS n", nil)
+			if err != nil {
+				t.Fatalf("QueryCypher failed: %v", err)
+			}
+			if len(cols) != 1 || cols[0] != "n" || len(rows) != 1 || len(rows[0]) != 1 || rows[0][0] != int64(1) {
+				t.Fatalf("unexpected query result: cols=%v rows=%v", cols, rows)
+			}
+			if testCase.commit {
+				if err := tx.Commit(context.Background()); err != nil {
+					t.Fatalf("Commit failed: %v", err)
+				}
+			} else if err := tx.Rollback(context.Background()); err != nil {
+				t.Fatalf("Rollback failed: %v", err)
+			}
+			if !ledger.opened || !ledger.executed || ledger.committed != testCase.wantCommit || ledger.rolledBack != testCase.wantRoll {
+				t.Fatalf("unexpected lifecycle flags opened=%v executed=%v committed=%v rolledBack=%v",
+					ledger.opened, ledger.executed, ledger.committed, ledger.rolledBack)
+			}
+		})
 	}
 }
 
@@ -1296,6 +1117,13 @@ func TestRemoteEngineQueryCypherAndHTTPClosedBranches(t *testing.T) {
 	engine := makeEngineWithTransport(t, "http://remote.example", func(req *http.Request) (*http.Response, error) {
 		switch {
 		case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/db/remote_db/tx/commit"):
+			var request remoteTxRequest
+			if err := json.NewDecoder(req.Body).Decode(&request); err != nil {
+				t.Fatalf("decode public query request: %v", err)
+			}
+			if len(request.Statements) != 1 || !request.Statements[0].IncludeStats || !reflect.DeepEqual(request.Statements[0].ResultDataContents, []string{"row", "graph", "rest"}) {
+				t.Fatalf("public query must retain stats and typed entity metadata: %#v", request.Statements)
+			}
 			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(
 				`{"results":[{"columns":["n"],"data":[{"row":[42]}]}],"errors":[]}`,
 			))}, nil
@@ -1310,18 +1138,23 @@ func TestRemoteEngineQueryCypherAndHTTPClosedBranches(t *testing.T) {
 		}
 	})
 
-	var nilCtx context.Context
-	cols, rows, err := engine.QueryCypher(nilCtx, "RETURN 42 AS n", nil)
+	ctx := t.Context()
+	cols, rows, err := engine.QueryCypher(ctx, "RETURN 42 AS n", nil, RemoteAccessRead)
 	if err != nil {
-		t.Fatalf("QueryCypher with nil context failed: %v", err)
+		t.Fatalf("QueryCypher failed: %v", err)
 	}
-	if len(cols) != 1 || cols[0] != "n" || len(rows) != 1 || rows[0][0].(float64) != 42 {
+	if len(cols) != 1 || cols[0] != "n" || len(rows) != 1 || rows[0][0].(int64) != 42 {
 		t.Fatalf("unexpected query result cols=%v rows=%v", cols, rows)
 	}
 
-	tx, err := engine.BeginCypherTx(nilCtx)
+	count, err := engine.NodeCount(t.Context())
+	if err != nil || count != 42 {
+		t.Fatalf("CRUD consumer of the column-bearing result failed: count=%d err=%v", count, err)
+	}
+
+	tx, err := engine.BeginCypherTx(ctx, RemoteAccessWrite)
 	if err != nil {
-		t.Fatalf("BeginCypherTx with nil context failed: %v", err)
+		t.Fatalf("BeginCypherTx failed: %v", err)
 	}
 	if err := tx.Commit(context.Background()); err != nil {
 		t.Fatalf("Commit failed: %v", err)
@@ -1342,7 +1175,7 @@ func TestRemoteEngineHTTPBeginCypherTx_ErrorPaths(t *testing.T) {
 		engine := makeEngineWithTransport(t, "http://remote.example", func(_ *http.Request) (*http.Response, error) {
 			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: &errReadCloser{}}, nil
 		})
-		_, err := engine.BeginCypherTx(context.Background())
+		_, err := engine.BeginCypherTx(context.Background(), RemoteAccessWrite)
 		if err == nil || !strings.Contains(err.Error(), "read failed") {
 			t.Fatalf("expected body read error, got: %v", err)
 		}
@@ -1356,7 +1189,7 @@ func TestRemoteEngineHTTPBeginCypherTx_ErrorPaths(t *testing.T) {
 				Body:       io.NopCloser(strings.NewReader(`{"commit":`)),
 			}, nil
 		})
-		_, err := engine.BeginCypherTx(context.Background())
+		_, err := engine.BeginCypherTx(context.Background(), RemoteAccessWrite)
 		if err == nil || !strings.Contains(err.Error(), "remote tx open decode failed") {
 			t.Fatalf("expected decode error, got: %v", err)
 		}
@@ -1372,7 +1205,7 @@ func TestRemoteEngineHTTPBeginCypherTx_ErrorPaths(t *testing.T) {
 				)),
 			}, nil
 		})
-		_, err := engine.BeginCypherTx(context.Background())
+		_, err := engine.BeginCypherTx(context.Background(), RemoteAccessWrite)
 		if err == nil || !strings.Contains(err.Error(), "InvalidSyntax") {
 			t.Fatalf("expected open payload error, got: %v", err)
 		}
@@ -1386,7 +1219,7 @@ func TestRemoteEngineHTTPBeginCypherTx_ErrorPaths(t *testing.T) {
 				Body:       io.NopCloser(strings.NewReader(`{"results":[],"errors":[],"commit":"   "}`)),
 			}, nil
 		})
-		_, err := engine.BeginCypherTx(context.Background())
+		_, err := engine.BeginCypherTx(context.Background(), RemoteAccessWrite)
 		if err == nil || !strings.Contains(err.Error(), "empty commit URL") {
 			t.Fatalf("expected empty commit URL error, got: %v", err)
 		}
@@ -1425,7 +1258,7 @@ func TestRemoteEngineHTTPQueryCypher_EmptyResultsBranches(t *testing.T) {
 		}
 	})
 
-	cols, rows, err := engine.QueryCypher(context.Background(), "RETURN 1", nil)
+	cols, rows, err := engine.QueryCypher(context.Background(), "RETURN 1", nil, RemoteAccessRead)
 	if err != nil {
 		t.Fatalf("QueryCypher failed: %v", err)
 	}
@@ -1433,7 +1266,7 @@ func TestRemoteEngineHTTPQueryCypher_EmptyResultsBranches(t *testing.T) {
 		t.Fatalf("expected empty result set, got cols=%v rows=%v", cols, rows)
 	}
 
-	tx, err := engine.BeginCypherTx(context.Background())
+	tx, err := engine.BeginCypherTx(context.Background(), RemoteAccessWrite)
 	if err != nil {
 		t.Fatalf("BeginCypherTx failed: %v", err)
 	}
@@ -1450,24 +1283,24 @@ func TestRemoteEngineBatchGetNodes_BranchCoverage(t *testing.T) {
 	t.Run("skip not found entries and keep valid node", func(t *testing.T) {
 		eng := &RemoteEngine{
 			transport: &fakeRemoteTransport{
-				queryFn: func(_ context.Context, _ string, params map[string]interface{}) ([][]interface{}, error) {
+				queryFn: func(_ context.Context, _ string, params map[string]interface{}) ([]string, [][]interface{}, error) {
 					id := params["id"].(string)
 					switch id {
 					case "n1":
-						return nil, ErrNotFound
+						return nil, nil, ErrNotFound
 					case "n2":
-						return [][]interface{}{
+						return nil, [][]interface{}{
 							{map[string]interface{}{"id": "n2", "labels": []interface{}{"Person"}, "properties": map[string]interface{}{"id": "n2"}}},
 						}, nil
 					default:
-						return nil, nil
+						return nil, nil, nil
 					}
 				},
 			},
 			schema: NewSchemaManager(),
 		}
 
-		nodes, err := eng.BatchGetNodes([]NodeID{"n1", "n2"})
+		nodes, err := eng.BatchGetNodes(context.Background(), []NodeID{"n1", "n2"})
 		if err != nil {
 			t.Fatalf("BatchGetNodes failed: %v", err)
 		}
@@ -1482,14 +1315,14 @@ func TestRemoteEngineBatchGetNodes_BranchCoverage(t *testing.T) {
 	t.Run("propagate non-notfound query error", func(t *testing.T) {
 		eng := &RemoteEngine{
 			transport: &fakeRemoteTransport{
-				queryFn: func(_ context.Context, _ string, _ map[string]interface{}) ([][]interface{}, error) {
-					return nil, fmt.Errorf("query exploded")
+				queryFn: func(_ context.Context, _ string, _ map[string]interface{}) ([]string, [][]interface{}, error) {
+					return nil, nil, fmt.Errorf("query exploded")
 				},
 			},
 			schema: NewSchemaManager(),
 		}
 
-		_, err := eng.BatchGetNodes([]NodeID{"n1"})
+		_, err := eng.BatchGetNodes(context.Background(), []NodeID{"n1"})
 		if err == nil || !strings.Contains(err.Error(), "query exploded") {
 			t.Fatalf("expected query error, got: %v", err)
 		}

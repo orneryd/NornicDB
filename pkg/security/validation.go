@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 const (
@@ -47,115 +49,199 @@ func ValidateToken(token string) error {
 	return nil
 }
 
-// ValidateURL validates URLs to prevent SSRF attacks.
-func ValidateURL(rawURL string, isDevelopment, allowHTTP bool) error {
-	if len(rawURL) > MaxURLLength {
-		return ErrURLTooLong
-	}
-	if rawURL == "" || strings.TrimSpace(rawURL) == "" {
-		return ErrURLInvalid
-	}
+// URLHostPolicy identifies an existing consumer's host access contract.
+type URLHostPolicy uint8
 
-	parsedURL, err := url.Parse(rawURL)
-	if err != nil {
-		return fmt.Errorf("%w: %v", ErrURLInvalid, err)
-	}
+const (
+	URLProductionHost URLHostPolicy = iota
+	URLDevelopmentHost
+	URLResolvedLoopback
+	URLAnyHost
+)
 
-	scheme := strings.ToLower(parsedURL.Scheme)
-	if scheme != "http" && scheme != "https" {
-		return ErrURLInvalidProtocol
-	}
+// URLSchemePolicy selects the existing consumer's URL syntax contract.
+type URLSchemePolicy uint8
 
-	if !isDevelopment && scheme == "http" && !allowHTTP {
-		return ErrURLHTTPNotAllowed
-	}
+const (
+	URLHTTPScheme URLSchemePolicy = iota
+	// URLAbsoluteScheme accepts any absolute scheme with an authority, as OAuth issuer configuration requires.
+	URLAbsoluteScheme
+)
 
-	hostname := parsedURL.Hostname()
-	if hostname == "" {
-		return ErrURLInvalid
-	}
-
-	if !isDevelopment {
-		lowercaseHost := strings.ToLower(hostname)
-		if lowercaseHost == "localhost" || lowercaseHost == "host.docker.internal" {
-			return ErrURLLocalhost
-		}
-	}
-
-	ip := net.ParseIP(hostname)
-	if ip != nil {
-		// In development mode, allow loopback IPs (127.x.x.x) only
-		if isDevelopment && ip.IsLoopback() {
-			return nil
-		}
-		// Block ALL private IPs (including in dev mode, except loopback)
-		if isPrivateIP(ip) {
-			return ErrURLPrivateIP
-		}
-	}
-
-	return nil
+// URLPolicy selects a consumer's URL access contract. Its zero value applies
+// production host restrictions, HTTPS, and MaxURLLength. A negative MaxLength
+// explicitly disables the length bound; HostRejected preserves consumer errors.
+type URLPolicy struct {
+	SchemePolicy      URLSchemePolicy
+	RejectCredentials bool
+	MaxLength         int
+	AllowHTTP         bool
+	RejectUserinfo    bool
+	HostPolicy        URLHostPolicy
+	HostRejected      func(string) error
 }
 
-// isPrivateIP checks if an IP address is in a private range.
-func isPrivateIP(ip net.IP) bool {
+// ValidateURL is the shared ordered URL validation owner.
+// Security configuration rejects private literal addresses; eval separately
+// requires all DNS answers to be loopback unless remote evaluation is enabled.
+// The zero policy retains production defaults; callers explicitly select other
+// contracts rather than relying on mode booleans or compatibility wrappers.
+func ValidateURL(rawURL string, policy URLPolicy) error {
+	maximum := policy.MaxLength
+	if maximum == 0 {
+		maximum = MaxURLLength
+	}
+	if maximum > 0 && len(rawURL) > maximum {
+		return ErrURLTooLong
+	}
+	if strings.TrimSpace(rawURL) == "" {
+		return ErrURLInvalid
+	}
+	parsed, err := ParseURL(rawURL)
+	if err != nil {
+		return err
+	}
+	hostname := parsed.Hostname()
+	switch policy.SchemePolicy {
+	case URLHTTPScheme:
+		scheme := strings.ToLower(parsed.Scheme)
+		if scheme != "http" && scheme != "https" {
+			return ErrURLInvalidProtocol
+		}
+		if scheme == "http" && !policy.AllowHTTP {
+			return ErrURLHTTPNotAllowed
+		}
+		if hostname == "" {
+			return ErrURLInvalid
+		}
+	case URLAbsoluteScheme:
+		if parsed.Scheme == "" || parsed.Host == "" {
+			return ErrURLInvalid
+		}
+	default:
+		return ErrURLInvalid
+	}
+	if policy.RejectCredentials && (parsed.User != nil || len(observability.ClientCredentials(rawURL)) != 0) {
+		return fmt.Errorf("URLs with credentials are not allowed")
+	}
+	if policy.RejectUserinfo && parsed.User != nil {
+		return fmt.Errorf("URLs with userinfo are not allowed")
+	}
+	switch policy.HostPolicy {
+	case URLAnyHost:
+		return nil
+	case URLResolvedLoopback:
+		if isLoopbackHost(hostname) {
+			return nil
+		}
+		if policy.HostRejected != nil {
+			return policy.HostRejected(hostname)
+		}
+		return ErrURLPrivateIP
+	case URLDevelopmentHost, URLProductionHost:
+		if policy.HostPolicy == URLProductionHost {
+			lower := strings.ToLower(hostname)
+			if lower == "localhost" || lower == "host.docker.internal" {
+				return ErrURLLocalhost
+			}
+		}
+		if ip := net.ParseIP(hostname); ip != nil {
+			if policy.HostPolicy == URLDevelopmentHost && ip.IsLoopback() {
+				return nil
+			}
+			if IsRestrictedIP(ip, IPPolicy{}) {
+				return ErrURLPrivateIP
+			}
+		}
+		return nil
+	default:
+		return ErrURLInvalid
+	}
+}
+
+// isLoopbackHost retains eval's all-address DNS rule without adding DNS
+// resolution to security configuration's literal-address policy.
+func isLoopbackHost(hostname string) bool {
+	if ip := net.ParseIP(hostname); ip != nil {
+		return ip.IsLoopback()
+	}
+	addresses, err := net.LookupIP(hostname)
+	if err != nil || len(addresses) == 0 {
+		return false
+	}
+	for _, address := range addresses {
+		if !address.IsLoopback() {
+			return false
+		}
+	}
+	return true
+}
+
+// ParseURL parses URL syntax and safely renders parse failures. It imposes no
+// protocol, hostname or network policy; ValidateURL applies the selected
+// consumer contract in its required order.
+func ParseURL(rawURL string) (*url.URL, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrURLInvalid, observability.RedactError(err, observability.ClientCredentials(rawURL)...))
+	}
+	return parsed, nil
+}
+
+// IPPolicy selects the additional address classes a consumer refuses. The zero
+// policy is the literal-address rule ValidateURL applies. Multicast and
+// unspecified addresses are separate flags because they stay permitted for a
+// consumer that never rejected them; enabling a flag only adds its class.
+type IPPolicy struct {
+	// RejectMulticast refuses multicast destination addresses.
+	RejectMulticast bool
+	// RejectUnspecified refuses unspecified addresses such as 0.0.0.0 and ::.
+	RejectUnspecified bool
+}
+
+// IsRestrictedIP is the one owner of IP address restriction. ValidateURL asks
+// it about a URL's literal host with the zero policy; APOC asks it about every
+// resolved and every dialled address with RejectMulticast and
+// RejectUnspecified enabled.
+//
+// The zero policy refuses loopback, private and link-local addresses: IPv4
+// 10/8, 172.16/12, 192.168/16 and 169.254/16, and IPv6 fc00::/7 and fe80::/10.
+// An IPv4-mapped IPv6 address is judged by its IPv4 address. A nil or malformed
+// address is not restricted here; a consumer that must not use an unjudgeable
+// address rejects it before asking this question.
+func IsRestrictedIP(ip net.IP, policy IPPolicy) bool {
 	if ip.IsLoopback() {
 		return true
 	}
 
-	if ip.To4() != nil {
-		privateRanges := []struct {
-			start net.IP
-			end   net.IP
-		}{
-			{net.ParseIP("10.0.0.0"), net.ParseIP("10.255.255.255")},
-			{net.ParseIP("172.16.0.0"), net.ParseIP("172.31.255.255")},
-			{net.ParseIP("192.168.0.0"), net.ParseIP("192.168.255.255")},
-			{net.ParseIP("169.254.0.0"), net.ParseIP("169.254.255.255")},
-		}
-
-		for _, r := range privateRanges {
-			if inRange(ip, r.start, r.end) {
-				return true
-			}
+	if v4 := ip.To4(); v4 != nil {
+		switch {
+		case v4[0] == 10:
+			return true
+		case v4[0] == 172 && v4[1]&0xf0 == 16:
+			return true
+		case v4[0] == 192 && v4[1] == 168:
+			return true
+		case v4[0] == 169 && v4[1] == 254:
+			return true
 		}
 	} else {
 		if ip.IsPrivate() {
 			return true
 		}
+		// fe80::/10 IPv6 link-local unicast.
 		if len(ip) == 16 && ip[0] == 0xfe && (ip[1]&0xc0) == 0x80 {
 			return true
 		}
 	}
 
+	if policy.RejectMulticast && ip.IsMulticast() {
+		return true
+	}
+	if policy.RejectUnspecified && ip.IsUnspecified() {
+		return true
+	}
 	return false
-}
-
-func inRange(ip, start, end net.IP) bool {
-	return bytesCompare(ip, start) >= 0 && bytesCompare(ip, end) <= 0
-}
-
-func bytesCompare(a, b net.IP) int {
-	a4 := a.To4()
-	b4 := b.To4()
-	if a4 != nil && b4 != nil {
-		for i := 0; i < len(a4); i++ {
-			if a4[i] < b4[i] {
-				return -1
-			}
-			if a4[i] > b4[i] {
-				return 1
-			}
-		}
-		return 0
-	}
-	if string(a) < string(b) {
-		return -1
-	}
-	if string(a) > string(b) {
-		return 1
-	}
-	return 0
 }
 
 // ValidateHeaderValue validates HTTP header values to prevent injection attacks.

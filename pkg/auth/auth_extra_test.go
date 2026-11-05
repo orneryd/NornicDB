@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -36,7 +38,7 @@ func TestAuthenticator_IsSecurityEnabled_True(t *testing.T) {
 		SecurityEnabled: true,
 		JWTSecret:       []byte("test-secret-that-is-long-enough-32chars"),
 	}
-	eng := storage.NewMemoryEngine()
+	eng := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	a, err := NewAuthenticator(cfg, eng)
 	if err != nil {
 		t.Skip("cannot create authenticator:", err)
@@ -49,7 +51,7 @@ func TestAuthenticator_IsSecurityEnabled_False(t *testing.T) {
 		SecurityEnabled: false,
 		JWTSecret:       []byte("test-secret-that-is-long-enough-32chars"),
 	}
-	eng := storage.NewMemoryEngine()
+	eng := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	a, err := NewAuthenticator(cfg, eng)
 	if err != nil {
 		t.Skip("cannot create authenticator:", err)
@@ -126,8 +128,7 @@ func TestAuthenticator_UserFromNode(t *testing.T) {
 	lastLogin := time.Unix(300, 0)
 	lockedUntil := time.Unix(400, 0)
 
-	a := &Authenticator{}
-	user, err := a.userFromNode(&storage.Node{
+	user := mapUserRecord(loadUserRecord, nil, &storage.Node{
 		ID:        storage.NodeID("user:alice"),
 		CreatedAt: createdAt,
 		UpdatedAt: updatedAt,
@@ -145,8 +146,8 @@ func TestAuthenticator_UserFromNode(t *testing.T) {
 			"disabled":      true,
 			"metadata":      `{"team":"graph"}`,
 		},
-	})
-	assert.NoError(t, err)
+	}).User
+	assert.NotNil(t, user)
 	assert.Equal(t, "user-1", user.ID)
 	assert.Equal(t, "alice", user.Username)
 	assert.Equal(t, "alice@example.com", user.Email)
@@ -160,7 +161,7 @@ func TestAuthenticator_UserFromNode(t *testing.T) {
 	assert.True(t, user.Disabled)
 	assert.Equal(t, map[string]string{"team": "graph"}, user.Metadata)
 
-	fallbackUser, err := a.userFromNode(&storage.Node{
+	fallbackUser := mapUserRecord(loadUserRecord, nil, &storage.Node{
 		ID:        storage.NodeID("user:bob"),
 		CreatedAt: createdAt,
 		UpdatedAt: updatedAt,
@@ -169,8 +170,8 @@ func TestAuthenticator_UserFromNode(t *testing.T) {
 			"roles":    `not-json`,
 			"metadata": `not-json`,
 		},
-	})
-	assert.NoError(t, err)
+	}).User
+	assert.NotNil(t, fallbackUser)
 	assert.Equal(t, createdAt, fallbackUser.CreatedAt)
 	assert.Equal(t, updatedAt, fallbackUser.UpdatedAt)
 	assert.Empty(t, fallbackUser.Roles)
@@ -178,10 +179,10 @@ func TestAuthenticator_UserFromNode(t *testing.T) {
 }
 
 func TestAuthenticator_LoadUsers(t *testing.T) {
-	eng := storage.NewMemoryEngine()
+	eng := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer eng.Close()
 
-	_, err := eng.CreateNode(&storage.Node{
+	_, err := eng.CreateNode(context.Background(), &storage.Node{
 		ID:     storage.NodeID("user:alice"),
 		Labels: []string{"_User", "_System"},
 		Properties: map[string]any{
@@ -193,7 +194,7 @@ func TestAuthenticator_LoadUsers(t *testing.T) {
 		},
 	})
 	assert.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{
+	_, err = eng.CreateNode(context.Background(), &storage.Node{
 		ID:     storage.NodeID("system:not-user"),
 		Labels: []string{"_System"},
 	})

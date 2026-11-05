@@ -21,7 +21,7 @@ func TestParseMergeProperties(t *testing.T) {
 		"r": {ID: "r1", Type: "REL", StartNode: "n1", EndNode: "n1", Properties: map[string]interface{}{"weight": int64(7)}},
 	}
 
-	out := exec.parseMergeProperties(ctx, "{number: 42, text: 'name', literal: 'n.name', from_node: n.name, from_rel: r.weight, gone: null}", nodeCtx, relCtx)
+	out := parsedTestValue(exec.parseMergeProperties(ctx, "{number: 42, text: 'name', literal: 'n.name', from_node: n.name, from_rel: r.weight, gone: null}", nodeCtx, relCtx))
 	require.EqualValues(t, int64(42), out["number"])
 	require.Equal(t, "name", out["text"])
 	require.Equal(t, "n.name", out["literal"])
@@ -31,8 +31,8 @@ func TestParseMergeProperties(t *testing.T) {
 	// matching (#810), which it can't do for a value that was dropped.
 	require.Contains(t, out, "gone")
 	require.Nil(t, out["gone"])
-	require.Empty(t, exec.parseMergeProperties(ctx, "{}", nodeCtx, relCtx))
-	require.Empty(t, exec.parseMergeProperties(ctx, "", nodeCtx, relCtx))
+	require.Empty(t, parsedTestValue(exec.parseMergeProperties(ctx, "{}", nodeCtx, relCtx)))
+	require.Empty(t, parsedTestValue(exec.parseMergeProperties(ctx, "", nodeCtx, relCtx)))
 }
 
 func TestExecuteMergeWithContext_AnonymousNodePatternAndChainedNoSpace(t *testing.T) {

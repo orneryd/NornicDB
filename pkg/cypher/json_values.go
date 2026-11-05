@@ -2,8 +2,11 @@ package cypher
 
 import (
 	"bytes"
-	"encoding/json"
+	"fmt"
 	"strings"
+
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 )
 
 // apocConvertToJSON is apoc.convert.toJson(value): value as JSON text, as
@@ -14,7 +17,7 @@ import (
 // escaped. ok is false for a value JSON can't hold.
 func apocConvertToJSON(value interface{}) (string, bool) {
 	var buffer bytes.Buffer
-	encoder := json.NewEncoder(&buffer)
+	encoder := valueconvert.PropertyJSON.NewEncoder(&buffer)
 	encoder.SetEscapeHTML(false)
 	if err := encoder.Encode(value); err != nil {
 		return "", false
@@ -47,56 +50,45 @@ func unescapeLineSeparators(encoded string) string {
 	return out.String()
 }
 
-// JSONNumbers converts the json.Number values of a value decoded with
-// UseNumber to Cypher numbers, as Neo4j's HTTP API and APOC read JSON: a
-// number without '.', 'e' or 'E' that fits int64 is an INTEGER, any other a
-// FLOAT. Lists and maps are converted in place.
-func JSONNumbers(value interface{}) interface{} {
-	switch v := value.(type) {
-	case json.Number:
-		if !strings.ContainsAny(string(v), ".eE") {
-			if i, err := v.Int64(); err == nil {
-				return i
-			}
-		}
-		if f, err := v.Float64(); err == nil {
-			return f
-		}
-		return string(v)
-	case []interface{}:
-		for i, item := range v {
-			v[i] = JSONNumbers(item)
-		}
-		return v
-	case map[string]interface{}:
-		for key, item := range v {
-			v[key] = JSONNumbers(item)
-		}
-		return v
-	default:
-		return value
-	}
-}
-
 // apocConvertFromJSON is apoc.convert.fromJsonMap / fromJsonList(text): the
-// JSON text's map or list with JSONNumbers' numbers; ok is false for a
+// JSON text's map or list with the canonical input-domain numbers; ok is false for a
 // value that isn't text, text that isn't JSON, or JSON of the other kind.
-func apocConvertFromJSON(wantMap bool, value interface{}) (interface{}, bool) {
-	text, isText := value.(string)
-	if !isText {
-		return nil, false
+func apocConvertFromJSON(wantMap bool, value interface{}) (interface{}, error) {
+	// APOC 5.26.30 JsonUtil.parse: null/empty input and decoded JSON null
+	// succeed with NULL; malformed JSON and the wrong root type throw.
+	if cypherfn.RuntimeValue(value) == nil {
+		return nil, nil
 	}
-	decoder := json.NewDecoder(bytes.NewReader([]byte(text)))
-	decoder.UseNumber()
+	text, isText := value.(string)
+	kind := "List"
+	if wantMap {
+		kind = "Map"
+	}
+	invalid := func(cause error) (interface{}, error) {
+		return nil, newSemanticError("Neo.ClientError.Procedure.ProcedureCallFailed", "InvalidArgumentValue", fmt.Sprintf("Can't convert %v to %s with path : %v", value, kind, cause))
+	}
+	if !isText {
+		return invalid(fmt.Errorf("expected String"))
+	}
+	if text == "" {
+		return nil, nil
+	}
+	decoder := valueconvert.CypherInputJSON.NewDecoder(strings.NewReader(text))
 	var decoded interface{}
 	if err := decoder.Decode(&decoded); err != nil {
-		return nil, false
+		return invalid(err)
 	}
-	decoded = JSONNumbers(decoded)
+	if decoded == nil {
+		return nil, nil
+	}
 	if wantMap {
-		result, isMap := decoded.(map[string]interface{})
-		return result, isMap
+		if result, ok := decoded.(map[string]interface{}); ok {
+			return result, nil
+		}
+	} else {
+		if result, ok := decoded.([]interface{}); ok {
+			return result, nil
+		}
 	}
-	result, isList := decoded.([]interface{})
-	return result, isList
+	return invalid(fmt.Errorf("unexpected JSON root type"))
 }

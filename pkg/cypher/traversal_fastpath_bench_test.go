@@ -17,10 +17,10 @@ func BenchmarkMatchRelationships_CountAll(b *testing.B) {
 	// if it were to materialize paths.
 	const nodes = 1000
 	for i := 0; i < nodes; i++ {
-		_, _ = store.CreateNode(&storage.Node{ID: storage.NodeID("n" + itoa(i))})
+		_, _ = store.CreateNode(b.Context(), &storage.Node{ID: storage.NodeID("n" + itoa(i))})
 	}
 	for i := 0; i < nodes-1; i++ {
-		_ = store.CreateEdge(&storage.Edge{
+		_ = store.CreateEdge(b.Context(), &storage.Edge{
 			ID:        storage.EdgeID("e" + itoa(i)),
 			StartNode: storage.NodeID("n" + itoa(i)),
 			EndNode:   storage.NodeID("n" + itoa(i+1)),

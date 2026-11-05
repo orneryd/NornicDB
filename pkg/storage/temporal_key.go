@@ -120,8 +120,18 @@ func (s temporalKeySpec) indexKeyProp() string {
 func (s temporalKeySpec) keyHash(keyValue interface{}) string {
 	if values, ok := keyValue.([]interface{}); ok && s.composite() {
 		normalized := make([]interface{}, len(values))
+		listBearing := s.listBearing(keyValue)
 		for i, v := range values {
 			normalized[i] = temporalKeyHashValue(v)
+			// Numeric constraint equality treats every zero representation as
+			// equal. Preserve the historical scalar and single-list digests,
+			// while making a complete composite/list-bearing key's scalar
+			// components obey that same equality rule.
+			if listBearing {
+				if numeric, numericOK := numericConstraintValue(v); numericOK && numeric == 0 {
+					normalized[i] = float64(0)
+				}
+			}
 		}
 		return stableTemporalKeyDigest(normalized...)
 	}
@@ -147,10 +157,17 @@ func stableTemporalKeyDigest(values ...interface{}) string {
 }
 
 // temporalKeyHashValue is the form of one key value that keyHash hashes:
-// numbers as float64 (numericConstraintValue), everything else unchanged.
+// numbers as float64 (numericConstraintValue), lists through the canonical
+// constraint-list token, everything else unchanged. Scalar digests stay stable.
+// The digest is persisted, so it stays float64: integers beyond 2^53 that
+// round together share a history bucket, and every reader of the history and
+// current-pointer keys re-checks the exact key (keyEqual / keyMatches).
 func temporalKeyHashValue(v interface{}) interface{} {
 	if numeric, ok := numericConstraintValue(v); ok {
 		return numeric
+	}
+	if list, ok := temporalListHashValue(v); ok {
+		return list
 	}
 	return v
 }

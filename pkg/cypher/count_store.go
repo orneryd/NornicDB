@@ -62,11 +62,11 @@ func (e *StorageExecutor) nodeCountFromStore(ctx context.Context, node nodePatte
 	if !countStoreDescribesReads(ctx, store) {
 		return 0, false, nil
 	}
-	counter, ok := store.(interface{ NodeCountByLabel(string) (int64, error) })
+	counter, ok := store.(storage.LabelStatsEngine)
 	if !ok {
 		return 0, false, nil
 	}
-	count, err := counter.NodeCountByLabel(node.labels[0])
+	count, err := counter.NodeCountByLabel(ctx, node.labels[0])
 	return count, true, err
 }
 
@@ -118,9 +118,9 @@ func (e *StorageExecutor) relationshipCountFromStore(ctx context.Context, matche
 			var n int64
 			var err error
 			if startTier {
-				n, err = store.EdgeCountByStartLabel(label, edgeType)
+				n, err = store.EdgeCountByStartLabel(ctx, label, edgeType)
 			} else {
-				n, err = store.EdgeCountByEndLabel(label, edgeType)
+				n, err = store.EdgeCountByEndLabel(ctx, label, edgeType)
 			}
 			if err != nil {
 				return 0, true, err
@@ -131,17 +131,17 @@ func (e *StorageExecutor) relationshipCountFromStore(ctx context.Context, matche
 	}
 
 	if direction == "both" {
-		return countUndirectedRelationshipMatches(store, types)
+		return countUndirectedRelationshipMatches(ctx, store, types)
 	}
 	if len(types) == 0 {
-		n, err := store.EdgeCount()
+		n, err := store.EdgeCount(ctx)
 		return n, true, err
 	}
 	// Every engine keeps a per-type counter (#638): typed counts are point
 	// reads.
 	var total int64
 	for _, edgeType := range types {
-		n, err := store.EdgeCountByType(edgeType)
+		n, err := store.EdgeCountByType(ctx, edgeType)
 		if err != nil {
 			return 0, true, err
 		}
@@ -153,18 +153,18 @@ func (e *StorageExecutor) relationshipCountFromStore(ctx context.Context, matche
 // countUndirectedRelationshipMatches is an undirected pattern's cardinality,
 // not the number of relationships: a relationship matches once from each
 // endpoint, a self-loop once.
-func countUndirectedRelationshipMatches(store storage.Engine, types []string) (int64, bool, error) {
+func countUndirectedRelationshipMatches(ctx context.Context, store storage.Engine, types []string) (int64, bool, error) {
 	var candidates []*storage.Edge
 	if len(types) == 0 {
-		edges, err := store.AllEdges()
+		edges, err := store.AllEdges(ctx)
 		if err != nil {
 			return 0, true, err
 		}
 		candidates = edges
 	} else {
-		seen := make(map[storage.EdgeID]struct{})
+		seen := make(map[storage.EntityIdentity]struct{})
 		for _, relationshipType := range types {
-			edges, err := store.GetEdgesByType(relationshipType)
+			edges, err := store.GetEdgesByType(ctx, relationshipType)
 			if err != nil {
 				return 0, true, err
 			}
@@ -172,10 +172,10 @@ func countUndirectedRelationshipMatches(store storage.Engine, types []string) (i
 				if edge == nil {
 					continue
 				}
-				if _, exists := seen[edge.ID]; exists {
+				if _, exists := seen[edge.Identity()]; exists {
 					continue
 				}
-				seen[edge.ID] = struct{}{}
+				seen[edge.Identity()] = struct{}{}
 				candidates = append(candidates, edge)
 			}
 		}

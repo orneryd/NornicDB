@@ -13,8 +13,7 @@ import (
 // Helper kept here so each test stays self-contained.
 func nsTestEngine(t *testing.T) (*MemoryEngine, *NamespacedEngine) {
 	t.Helper()
-	base := NewMemoryEngine()
-	t.Cleanup(func() { _ = base.Close() })
+	base := newTestMemoryEngine(t)
 	return base, NewNamespacedEngine(base, "ns")
 }
 
@@ -22,7 +21,7 @@ func TestNamespacedEngine_GetNodeLatestVisible_RoundTrip(t *testing.T) {
 	base, ns := nsTestEngine(t)
 
 	// Create through the namespaced engine so the prefix lands.
-	_, err := ns.CreateNode(&Node{
+	_, err := ns.CreateNode(t.Context(), &Node{
 		ID: "alice", Labels: []string{"Person"},
 		Properties: map[string]any{"name": "Alice"},
 	})
@@ -30,14 +29,14 @@ func TestNamespacedEngine_GetNodeLatestVisible_RoundTrip(t *testing.T) {
 
 	// Latest-visible by user-side ID; result must come back stripped
 	// of the namespace prefix.
-	got, err := ns.GetNodeLatestVisible("alice")
+	got, err := ns.GetNodeLatestVisible(t.Context(), "alice")
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	require.Equal(t, NodeID("alice"), got.ID, "result must be stripped of ns prefix")
 	require.Equal(t, "Alice", got.Properties["name"])
 
 	// Confirm the underlying engine has the prefixed form.
-	prefixed, err := base.GetNode("ns:alice")
+	prefixed, err := base.GetNode(t.Context(), "ns:alice")
 	require.NoError(t, err)
 	require.NotNil(t, prefixed)
 }
@@ -45,16 +44,16 @@ func TestNamespacedEngine_GetNodeLatestVisible_RoundTrip(t *testing.T) {
 func TestNamespacedEngine_GetEdgeLatestVisible_RoundTrip(t *testing.T) {
 	_, ns := nsTestEngine(t)
 
-	_, err := ns.CreateNode(&Node{ID: "a", Labels: []string{"L"}, Properties: map[string]any{}})
+	_, err := ns.CreateNode(t.Context(), &Node{ID: "a", Labels: []string{"L"}, Properties: map[string]any{}})
 	require.NoError(t, err)
-	_, err = ns.CreateNode(&Node{ID: "b", Labels: []string{"L"}, Properties: map[string]any{}})
+	_, err = ns.CreateNode(t.Context(), &Node{ID: "b", Labels: []string{"L"}, Properties: map[string]any{}})
 	require.NoError(t, err)
-	require.NoError(t, ns.CreateEdge(&Edge{
+	require.NoError(t, ns.CreateEdge(t.Context(), &Edge{
 		ID: "e1", StartNode: "a", EndNode: "b", Type: "REL",
 		Properties: map[string]any{"v": int64(1)},
 	}))
 
-	got, err := ns.GetEdgeLatestVisible("e1")
+	got, err := ns.GetEdgeLatestVisible(t.Context(), "e1")
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	require.Equal(t, EdgeID("e1"), got.ID, "user-side edge ID must be unprefixed")
@@ -65,30 +64,30 @@ func TestNamespacedEngine_GetEdgeLatestVisible_RoundTrip(t *testing.T) {
 func TestNamespacedEngine_GetNodeAndEdgeVisibleAt(t *testing.T) {
 	_, ns := nsTestEngine(t)
 
-	_, err := ns.CreateNode(&Node{ID: "x", Labels: []string{"L"}, Properties: map[string]any{}})
+	_, err := ns.CreateNode(t.Context(), &Node{ID: "x", Labels: []string{"L"}, Properties: map[string]any{}})
 	require.NoError(t, err)
-	_, err = ns.CreateNode(&Node{ID: "y", Labels: []string{"L"}, Properties: map[string]any{}})
+	_, err = ns.CreateNode(t.Context(), &Node{ID: "y", Labels: []string{"L"}, Properties: map[string]any{}})
 	require.NoError(t, err)
-	require.NoError(t, ns.CreateEdge(&Edge{
+	require.NoError(t, ns.CreateEdge(t.Context(), &Edge{
 		ID: "e", StartNode: "x", EndNode: "y", Type: "REL", Properties: map[string]any{},
 	}))
 
-	headNode, err := ns.GetNodeCurrentHead("x")
+	headNode, err := ns.GetNodeCurrentHead(context.Background(), "x")
 	require.NoError(t, err)
 	require.False(t, headNode.Tombstoned)
 	require.False(t, headNode.Version.IsZero())
 
-	headEdge, err := ns.GetEdgeCurrentHead("e")
+	headEdge, err := ns.GetEdgeCurrentHead(context.Background(), "e")
 	require.NoError(t, err)
 	require.False(t, headEdge.Tombstoned)
 
 	// Latest visible at the head version returns the body via the
 	// fast path.
-	gotNode, err := ns.GetNodeVisibleAt("x", headNode.Version)
+	gotNode, err := ns.GetNodeVisibleAt(t.Context(), "x", headNode.Version)
 	require.NoError(t, err)
 	require.Equal(t, NodeID("x"), gotNode.ID)
 
-	gotEdge, err := ns.GetEdgeVisibleAt("e", headEdge.Version)
+	gotEdge, err := ns.GetEdgeVisibleAt(t.Context(), "e", headEdge.Version)
 	require.NoError(t, err)
 	require.Equal(t, EdgeID("e"), gotEdge.ID)
 
@@ -97,7 +96,7 @@ func TestNamespacedEngine_GetNodeAndEdgeVisibleAt(t *testing.T) {
 		CommitTimestamp: time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC),
 		CommitSequence:  0,
 	}
-	_, err = ns.GetNodeVisibleAt("x", old)
+	_, err = ns.GetNodeVisibleAt(t.Context(), "x", old)
 	require.ErrorIs(t, err, ErrNotVisibleAtSnapshot)
 }
 
@@ -127,7 +126,7 @@ func TestNamespacedEngine_GetTemporalNodeAsOf_NotImplemented(t *testing.T) {
 	// With no temporal index data, the result is (nil, nil) — not an
 	// error. This exercises the wrapper's "delegate exists" branch.
 	_, ns := nsTestEngine(t)
-	got, err := ns.GetTemporalNodeAsOf("Order", "key", "k1", "valid_from", "valid_to", time.Now())
+	got, err := ns.GetTemporalNodeAsOf(context.Background(), "Order", "key", "k1", "valid_from", "valid_to", time.Now())
 	require.NoError(t, err)
 	require.Nil(t, got)
 }
@@ -139,7 +138,7 @@ func TestNamespacedEngine_IsCurrentTemporalNode_NoIndex(t *testing.T) {
 	// when nothing is being temporally indexed). This is the
 	// degenerate path; the wrapper just delegates.
 	node := &Node{ID: "test:x", Labels: []string{"L"}}
-	got, err := ns.IsCurrentTemporalNode(node, time.Now())
+	got, err := ns.IsCurrentTemporalNode(context.Background(), node, time.Now())
 	require.NoError(t, err)
 	// Either true (no index) or false (filtered out) is acceptable
 	// per the wrapper's spec — what matters is no error and no panic.

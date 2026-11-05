@@ -1,0 +1,209 @@
+{
+  "engine": "nornicdb",
+  "mode": "hnsw-fast",
+  "title": "HNSW fast (M=16, efConstruction=100, efSearch=50)",
+  "strategy": "HNSW",
+  "base_mode": "hnsw-fast",
+  "tag": "",
+  "gpu_requested": false,
+  "settings": {
+    "NORNICDB_CONFIG": "/private/tmp/nornic-ann-real-20261016-YeAi7Q/review4-data/nornicdb-hnsw-fast-eyswtzn6.empty-config.yaml",
+    "NORNICDB_EMBEDDING_ENABLED": "false",
+    "NORNICDB_MCP_ENABLED": "false",
+    "NORNICDB_HEIMDALL_ENABLED": "false",
+    "NORNICDB_QDRANT_GRPC_ENABLED": "true",
+    "NORNICDB_QDRANT_GRPC_LISTEN_ADDR": "127.0.0.1:16334",
+    "NORNICDB_QDRANT_GRPC_MAX_TOP_K": "10000",
+    "NORNICDB_VECTOR_CPU_BRUTE_MAX_N": "0",
+    "NORNICDB_KMEANS_CLUSTERING_ENABLED": "false",
+    "NORNICDB_TELEMETRY_LISTEN": "127.0.0.1:19190",
+    "NORNICDB_GPU_BACKEND": "cpu",
+    "NORNICDB_VECTOR_GPU_BRUTE_MAX_N": "0",
+    "NORNICDB_HNSW_BUILD_GPU_ENABLED": "false",
+    "NORNICDB_VECTOR_ANN_QUALITY": "fast"
+  },
+  "provenance": {
+    "binaries_sha256": {
+      "nornicdb": "3d198bcff4b42c17ec27d37504d6929e9f973d0237f66ea12f5256db39d95861",
+      "qdrant": "ee6f221283784b4c63fddfdb7ba02fb713211c86761f2b8e02f2605ca81bf90c"
+    },
+    "corpus_sha256": {
+      "vectors.npy": "ba1c6bb0c1907cdb3bc8e9b14d40109d68cd5ec0a01c667ef2a33a6b78da9729",
+      "queries.npy": "d295c6d9ce66c58869690c5bb202aa0a32fa1f812d8e72dff4ec55b3a880e2bb",
+      "truth.npy": "aafe231d65dbe0519fd3bdcbae21c5db1dfa09112907b5cde3b886056592e690",
+      "meta.json": "085567a1c6e9017f10867ae6a66956776ae8e9b06610baee20c0d09f885cc5e9"
+    },
+    "construction_input": "vectors only (legacy corpus has no payloads)",
+    "python": "3.14.7 (main, Aug  5 2026, 10:29:49) [Clang 21.0.0 (clang-2100.1.1.101)]",
+    "dependencies": [
+      "annotated-types==0.8.0",
+      "anyio==4.15.1",
+      "boto3==1.43.114",
+      "botocore==1.43.114",
+      "certifi==2026.7.22",
+      "charset-normalizer==3.5.2",
+      "grpcio==1.84.0",
+      "h11==0.16.0",
+      "h2==4.4.1",
+      "hpack==4.2.0",
+      "httpcore==1.0.9",
+      "httpx==0.28.1",
+      "hyperframe==6.1.0",
+      "idna==3.20",
+      "jmespath==1.1.0",
+      "numpy==2.5.4",
+      "portalocker==3.2.0",
+      "protobuf==7.36.2",
+      "psutil==7.2.2",
+      "pydantic==2.14.1",
+      "pydantic_core==2.50.1",
+      "python-dateutil==2.9.0.post0",
+      "qdrant-client==1.19.1",
+      "requests==2.34.2",
+      "s3transfer==0.19.2",
+      "six==1.17.0",
+      "typing-inspection==0.4.4",
+      "typing_extensions==4.16.0",
+      "urllib3==2.8.0"
+    ],
+    "nornic_build_settings": {
+      "-buildmode": "exe",
+      "-compiler": "gc",
+      "-tags": "noui,nolocalllm",
+      "CGO_ENABLED": "1",
+      "CGO_CFLAGS": "",
+      "CGO_CPPFLAGS": "",
+      "CGO_CXXFLAGS": "",
+      "CGO_LDFLAGS": "",
+      "GOARCH": "arm64",
+      "GOOS": "darwin",
+      "GOARM64": "v8.0",
+      "vcs": "git",
+      "vcs.revision": "ce38410589d30884699cf0a61b871f51dfe3f493",
+      "vcs.time": "2026-10-17T03:08:27Z",
+      "vcs.modified": "false"
+    },
+    "harness_commit": "4857dda33",
+    "checkout_dirty": false
+  },
+  "vectors": 88155,
+  "loaded_points": 88155,
+  "dimensions": 1024,
+  "k": 10,
+  "load_s": 12.508947849273682,
+  "load_vectors_per_s": 7047.355306155395,
+  "index_ready_s": 64.14801001548767,
+  "rss_bytes_after_load": 3744169984,
+  "disk_bytes": 1239003136,
+  "runs": [
+    {
+      "recall@1": 0.999,
+      "recall@10": 0.9964,
+      "mean_ms": 0.8644580952823162,
+      "p50_ms": 0.8228959050029516,
+      "p95_ms": 0.9914061985909938,
+      "p99_ms": 1.5626311767846126,
+      "qps": 5974.03237075022,
+      "concurrency": 8,
+      "queries": 1000,
+      "hnsw_ef": null,
+      "search_params": {}
+    },
+    {
+      "recall@1": 0.99,
+      "recall@10": 0.9731,
+      "mean_ms": 0.4945966792292893,
+      "p50_ms": 0.4718329291790724,
+      "p95_ms": 0.558546232059598,
+      "p99_ms": 0.6547322729602453,
+      "qps": 8575.618351816058,
+      "concurrency": 8,
+      "queries": 1000,
+      "hnsw_ef": 16,
+      "search_params": {
+        "hnsw_ef": "16"
+      }
+    },
+    {
+      "recall@1": 0.996,
+      "recall@10": 0.9909,
+      "mean_ms": 0.6535289972089231,
+      "p50_ms": 0.6245204713195562,
+      "p95_ms": 0.7421294692903757,
+      "p99_ms": 0.8576113451272247,
+      "qps": 6813.631015836325,
+      "concurrency": 8,
+      "queries": 1000,
+      "hnsw_ef": 32,
+      "search_params": {
+        "hnsw_ef": "32"
+      }
+    },
+    {
+      "recall@1": 0.999,
+      "recall@10": 0.9974,
+      "mean_ms": 0.9437963464297354,
+      "p50_ms": 0.9093126282095909,
+      "p95_ms": 1.1014505056664345,
+      "p99_ms": 1.2783259339630346,
+      "qps": 4553.0731834859425,
+      "concurrency": 8,
+      "queries": 1000,
+      "hnsw_ef": 64,
+      "search_params": {
+        "hnsw_ef": "64"
+      }
+    },
+    {
+      "recall@1": 1.0,
+      "recall@10": 0.999,
+      "mean_ms": 1.4468687856569886,
+      "p50_ms": 1.4060831163078547,
+      "p95_ms": 1.698854472488165,
+      "p99_ms": 4.355764831416308,
+      "qps": 3333.6958714449274,
+      "concurrency": 8,
+      "queries": 1000,
+      "hnsw_ef": 128,
+      "search_params": {
+        "hnsw_ef": "128"
+      }
+    },
+    {
+      "recall@1": 1.0,
+      "recall@10": 0.9996,
+      "mean_ms": 2.33193142618984,
+      "p50_ms": 2.275583101436496,
+      "p95_ms": 2.8440235881134868,
+      "p99_ms": 5.637483922764659,
+      "qps": 1963.225354223791,
+      "concurrency": 8,
+      "queries": 1000,
+      "hnsw_ef": 256,
+      "search_params": {
+        "hnsw_ef": "256"
+      }
+    },
+    {
+      "recall@1": 1.0,
+      "recall@10": 1.0,
+      "mean_ms": 3.9228525506332517,
+      "p50_ms": 3.889437299221754,
+      "p95_ms": 4.893904132768512,
+      "p99_ms": 6.687810691073536,
+      "qps": 1163.7734207275678,
+      "concurrency": 8,
+      "queries": 1000,
+      "hnsw_ef": 512,
+      "search_params": {
+        "hnsw_ef": "512"
+      }
+    }
+  ],
+  "rss_bytes_after_queries": 3744268288,
+  "footprint_phase": "snapshot after all queries and a final index-readiness check",
+  "footprint_unix_s": 1792207015.437145,
+  "build_backend": "CPU",
+  "collection_settings": null,
+  "wall_s": 94.85455799102783
+}

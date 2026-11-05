@@ -5,6 +5,8 @@ package cypher
 // wrapper's namespace or, without one, the whole store.
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"sort"
 	"testing"
@@ -14,15 +16,15 @@ import (
 )
 
 func TestTransactionStorageWrapperStreamNodesWithOptions(t *testing.T) {
-	engine, err := storage.NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	for _, id := range []storage.NodeID{"t:1", "u:1"} {
-		_, err := engine.CreateNode(&storage.Node{ID: id, Labels: []string{"P"}, Properties: map[string]interface{}{"k": "v"}})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"P"}, Properties: map[string]interface{}{"k": "v"}})
 		require.NoError(t, err)
 	}
 	stream := func(namespace string) []string {
-		tx, err := engine.BeginTransaction()
+		tx, err := engine.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		defer func() { _ = tx.Rollback() }()
 		w := &transactionStorageWrapper{tx: tx, underlying: engine, namespace: namespace, separator: ":", mutatedNodeIDs: map[string]struct{}{}}

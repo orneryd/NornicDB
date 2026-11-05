@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -12,7 +13,9 @@ import (
 // TestUniqueKeyLocksAreOwned covers the owner-aware constraint key locks
 // (#961): an owner takes a lock it holds again without waiting, another
 // owner waits until every hold is released, a wait ends with its context,
-// and a wait that would close a cycle fails with ErrDeadlock.
+// a wait that would close a cycle fails with ErrDeadlock, and a release
+// callback that outlives its transaction cannot release a newer owner's
+// locks when the request buffer is reused.
 func TestUniqueKeyLocksAreOwned(t *testing.T) {
 	sm := NewSchemaManager()
 	a := uniqueConstraintLockKey{label: "L", property: "k", value: "a"}
@@ -98,6 +101,41 @@ func TestUniqueKeyLocksAreOwned(t *testing.T) {
 		require.Empty(t, sm.uniqueConstraintLockWaits)
 		sm.uniqueConstraintCommitLocksMu.Unlock()
 	})
+
+	// A release callback can outlive its transaction. Calling it again after
+	// the request buffer is reused must never release a newer owner's locks.
+	t.Run("reused request buffer preserves ownership", func(t *testing.T) {
+		reuse := NewSchemaManager()
+		keys := make([]uniqueConstraintLockKey, 100)
+		for i := range keys {
+			keys[i] = uniqueConstraintLockKey{entityKind: 1, entityID: fmt.Sprintf("db:node-%d", i)}
+		}
+		first, err := reuse.acquireUniqueConstraintCommitLocks(context.Background(), "first", keys)
+		if err != nil {
+			t.Fatal(err)
+		}
+		first()
+		second, err := reuse.acquireUniqueConstraintCommitLocks(context.Background(), "second", keys)
+		if err != nil {
+			t.Fatal(err)
+		}
+		first() // Must not release any request subsequently acquired by second.
+		staleCtx, staleCancel := context.WithCancel(context.Background())
+		staleCancel()
+		if release, err := reuse.acquireUniqueConstraintCommitLocks(staleCtx, "third", keys[:1]); !errors.Is(err, context.Canceled) {
+			if release != nil {
+				release()
+			}
+			second()
+			t.Fatalf("third owner acquired an already held key: %v", err)
+		}
+		second()
+		third, err := reuse.acquireUniqueConstraintCommitLocks(context.Background(), "third", keys)
+		if err != nil {
+			t.Fatal(err)
+		}
+		third()
+	})
 }
 
 // TestUniqueMergeKey covers which MERGE lookups lock a key: a node's
@@ -105,7 +143,7 @@ func TestUniqueKeyLocksAreOwned(t *testing.T) {
 // value that has a key.
 func TestUniqueMergeKey(t *testing.T) {
 	var none *SchemaManager
-	_, ok := none.uniqueMergeKey("L", "k", 1)
+	_, ok := none.scalarMergeLockKey("L", "k", 1)
 	require.False(t, ok)
 	sm := NewSchemaManager()
 	require.NoError(t, sm.AddConstraint(Constraint{Name: "u", Type: ConstraintUnique, Label: "U", Properties: []string{"k"}}))
@@ -114,14 +152,14 @@ func TestUniqueMergeKey(t *testing.T) {
 	require.NoError(t, sm.AddConstraint(Constraint{Name: "r", Type: ConstraintUnique, EntityType: ConstraintEntityRelationship, Label: "R", Properties: []string{"k"}}))
 	require.NoError(t, sm.AddConstraint(Constraint{Name: "e", Type: ConstraintExists, Label: "E", Properties: []string{"k"}}))
 
-	key, ok := sm.uniqueMergeKey("U", "k", int64(7))
+	key, ok := sm.scalarMergeLockKey("U", "k", int64(7))
 	require.True(t, ok)
 	require.Equal(t, "U", key.label)
 	require.Equal(t, "k", key.property)
-	_, ok = sm.uniqueMergeKey("N", "k", "x")
+	_, ok = sm.scalarMergeLockKey("N", "k", "x")
 	require.True(t, ok)
 	// A list has a key, as for the commit locks (indexValueKey).
-	_, ok = sm.uniqueMergeKey("U", "k", []interface{}{int64(1)})
+	_, ok = sm.scalarMergeLockKey("U", "k", []interface{}{int64(1)})
 	require.True(t, ok)
 	for _, missing := range []struct {
 		label, property string
@@ -129,7 +167,7 @@ func TestUniqueMergeKey(t *testing.T) {
 	}{
 		{"U", "other", 1}, {"U", "k", nil}, {"P", "a", 1}, {"R", "k", 1}, {"E", "k", 1}, {"X", "k", 1},
 	} {
-		_, ok := sm.uniqueMergeKey(missing.label, missing.property, missing.value)
+		_, ok := sm.scalarMergeLockKey(missing.label, missing.property, missing.value)
 		require.False(t, ok, "%+v", missing)
 	}
 }
@@ -143,7 +181,7 @@ func TestUniqueKeyLockEdgeBranches(t *testing.T) {
 	heldByB := &uniqueConstraintCommitLock{owner: "b", holds: 1}
 	sm.uniqueConstraintLockWaits = map[string]*uniqueConstraintCommitLock{"a": heldByB, "b": heldByA}
 	sm.uniqueConstraintCommitLocksMu.Lock()
-	require.False(t, sm.uniqueConstraintLockWaitClosesCycleLocked("c", heldByA))
+	require.False(t, sm.uniqueConstraintLockWaitClosesCycleLocked("c", heldByA, false))
 	sm.uniqueConstraintCommitLocksMu.Unlock()
 
 	other := NewSchemaManager()
@@ -157,6 +195,18 @@ func TestUniqueKeyLockEdgeBranches(t *testing.T) {
 	other.uniqueConstraintCommitLocksMu.Unlock()
 
 	require.NoError(t, other.AddConstraint(Constraint{Name: "u", Type: ConstraintUnique, Label: "U", Properties: []string{"k"}}))
-	_, ok := other.uniqueMergeKey("U", "k", struct{ list []int }{list: []int{1}})
+	_, ok := other.scalarMergeLockKey("U", "k", struct{ list []int }{list: []int{1}})
 	require.False(t, ok)
+}
+
+// Keep the scalar regression matrix against the generalized key owner.
+func (sm *SchemaManager) scalarMergeLockKey(label, property string, value interface{}) (uniqueConstraintLockKey, bool) {
+	keys, err := sm.uniqueMergeKeys(context.Background(), []string{label}, map[string]interface{}{property: value})
+	if err != nil {
+		panic(err)
+	}
+	if len(keys) == 0 {
+		return uniqueConstraintLockKey{}, false
+	}
+	return keys[0].lock, true
 }

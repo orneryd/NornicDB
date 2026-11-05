@@ -1,9 +1,12 @@
 package cypher
 
+// Author: declared-list-owners lane (Claude), 2026-10-30: procedure headers are read from their registration.
+
 import (
 	"context"
 	"errors"
 	"fmt"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"math"
 	"sort"
 	"strconv"
@@ -145,7 +148,7 @@ func (spec gdsElementSpec) merges() bool {
 // '|' ('Person:User', 'KNOWS|REFERENCES'): NornicDB's kept form. Labels,
 // types and properties no stored element has, and a name already in use,
 // are refused with GDS's messages.
-func (e *StorageExecutor) callGdsGraphProject(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callGdsGraphProject(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	const procedure = "gds.graph.project"
 	started := time.Now()
 	graphName, err := requiredProcedureString(procedure, args, 0, "graphName")
@@ -164,7 +167,7 @@ func (e *StorageExecutor) callGdsGraphProject(args []interface{}) (*ExecuteResul
 	if err != nil {
 		return nil, err
 	}
-	projection, err := e.buildGraphProjection(graphName, nodeSpecs, relSpecs, configuration["validateRelationships"] == true)
+	projection, err := e.buildGraphProjection(ctx, graphName, nodeSpecs, relSpecs, configuration["validateRelationships"] == true)
 	if err != nil {
 		return nil, err
 	}
@@ -173,6 +176,11 @@ func (e *StorageExecutor) callGdsGraphProject(args []interface{}) (*ExecuteResul
 	projection.Configuration = configuration
 	projection.Database = e.databaseName()
 
+	// Observe cancellation after projection construction as well as during the
+	// streams, before making the completed projection visible in the catalog.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	key := gdsCatalogKey(projection.Database, graphName)
 	projectionsMu.Lock()
 	if _, exists := graphProjections[key]; exists {
@@ -183,7 +191,7 @@ func (e *StorageExecutor) callGdsGraphProject(args []interface{}) (*ExecuteResul
 	projectionsMu.Unlock()
 
 	return &ExecuteResult{
-		Columns: []string{"nodeProjection", "relationshipProjection", "graphName", "nodeCount", "relationshipCount", "projectMillis"},
+		Columns: columnNames(gdsGraphProjectColumns),
 		Rows: [][]any{{
 			projection.NodeProjection, projection.RelationshipProjection, graphName,
 			int64(projection.NodeCount), int64(projection.RelationshipCount), time.Since(started).Milliseconds(),
@@ -224,7 +232,7 @@ func gdsProjectConfiguration(procedure string, args []interface{}, nodeSpecs, re
 		specs []gdsElementSpec
 	}{{"nodeProperties", nodeSpecs}, {"relationshipProperties", relSpecs}} {
 		for i := range kind.specs {
-			properties, err := gdsPropertySpecs(c.value(kind.key), kind.specs[i].aggregation)
+			properties, err := gdsPropertySpecs(c.value(kind.key), kind.specs[i].aggregation, strings.TrimSuffix(kind.key, "Properties"))
 			if err != nil {
 				return nil, err
 			}
@@ -343,7 +351,7 @@ func (spec *gdsElementSpec) read(entry map[string]interface{}, kind, nameKey str
 			return err
 		}
 	}
-	properties, err := gdsPropertySpecs(config.value("properties"), spec.aggregation)
+	properties, err := gdsPropertySpecs(config.value("properties"), spec.aggregation, kind)
 	if err != nil {
 		return err
 	}
@@ -363,8 +371,8 @@ func gdsAggregation(text string) (string, error) {
 // gdsPropertySpecs reads a projection entry's properties: a name, a list of
 // names, or a map from the projected key to the stored property name or to
 // its settings (property, defaultValue, aggregation).
-func gdsPropertySpecs(value interface{}, aggregation string) ([]gdsPropertySpec, error) {
-	specs, err := readGDSPropertySpecs(value, aggregation)
+func gdsPropertySpecs(value interface{}, aggregation string, elementKinds ...string) ([]gdsPropertySpec, error) {
+	specs, err := readGDSPropertySpecs(value, aggregation, elementKinds...)
 	if err != nil {
 		return nil, err
 	}
@@ -377,7 +385,7 @@ func gdsPropertySpecs(value interface{}, aggregation string) ([]gdsPropertySpec,
 	return specs, nil
 }
 
-func readGDSPropertySpecs(value interface{}, aggregation string) ([]gdsPropertySpec, error) {
+func readGDSPropertySpecs(value interface{}, aggregation string, elementKinds ...string) ([]gdsPropertySpec, error) {
 	var specs []gdsPropertySpec
 	add := func(name string) {
 		specs = append(specs, gdsPropertySpec{key: name, property: name, aggregation: aggregation})
@@ -409,7 +417,11 @@ func readGDSPropertySpecs(value interface{}, aggregation string) ([]gdsPropertyS
 					spec.property = property
 				}
 				if config.value("defaultValue") != nil {
-					value, _, ok, err := gdsConvertPropertyValue(config.value("defaultValue"), "", false)
+					target := ""
+					if len(elementKinds) > 0 && elementKinds[0] == "relationship" {
+						target = "Default Relationship"
+					}
+					value, _, ok, err := gdsConvertPropertyValue(config.value("defaultValue"), target, false)
 					if err != nil {
 						return nil, err
 					}
@@ -447,10 +459,12 @@ func readGDSPropertySpecs(value interface{}, aggregation string) ([]gdsPropertyS
 }
 
 // buildGraphProjection reads the projected nodes and relationships from
-// storage, streaming both.
-func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs []gdsElementSpec, validateRelationships bool) (*GraphProjection, error) {
+// storage, streaming both on the statement's context, so a caller that
+// cancels ends the read where it stands.
+func (e *StorageExecutor) buildGraphProjection(ctx context.Context, name string, nodeSpecs, relSpecs []gdsElementSpec, validateRelationships bool) (*GraphProjection, error) {
 	projection := &GraphProjection{
 		Name:                     name,
+		Database:                 e.databaseName(),
 		NodeLabels:               make(map[string][]string),
 		NodeProperties:           make(map[string]map[string]interface{}),
 		NodePropertyTypes:        make(map[string]string),
@@ -460,12 +474,11 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 		RelationshipProjection:   make(map[string]interface{}),
 		CreatedAt:                time.Now(),
 	}
-	ctx := context.Background()
 
 	labelsSeen := make(map[string]bool)
 	nodePropertySeen := make(map[string]bool)
 	nodePropertyType := make(map[string]string) // one builder per projected key, shared across labels
-	err := storage.StreamNodesWithFallback(ctx, e.storage, streamChunkSize, func(node *storage.Node) error {
+	err := storage.StreamNodesWithFallback(ctx, e.storage, storage.StreamChunkSize, func(node *storage.Node) error {
 		for _, label := range node.Labels {
 			labelsSeen[label] = true
 		}
@@ -489,7 +502,7 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 				if !ok {
 					continue
 				}
-				id := string(node.ID)
+				id := projection.nodeIdentity(node.RuntimeMetadata().Database, node.ID)
 				if projection.NodeProperties[id] == nil {
 					projection.NodeProperties[id] = make(map[string]interface{})
 				}
@@ -497,12 +510,16 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 			}
 		}
 		if labels != nil {
-			projection.NodeIDs = append(projection.NodeIDs, string(node.ID))
-			projection.NodeLabels[string(node.ID)] = labels
+			id := projection.nodeIdentity(node.RuntimeMetadata().Database, node.ID)
+			projection.NodeIDs = append(projection.NodeIDs, id)
+			projection.NodeLabels[id] = labels
 		}
 		return nil
 	})
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
 		var localized *localization.LocalizedError
 		if errors.As(err, &localized) {
 			return nil, err
@@ -544,25 +561,28 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 	// with validateRelationships, those with an end outside the projection),
 	// so memory follows the projection, not the store.
 	var edges []*storage.Edge
-	err = storage.StreamEdgesWithFallback(ctx, e.storage, streamChunkSize, func(edge *storage.Edge) error {
+	err = storage.StreamEdgesWithFallback(ctx, e.storage, storage.StreamChunkSize, func(edge *storage.Edge) error {
 		typesSeen[edge.Type] = true
 		if !gdsTypeProjected(relSpecs, edge.Type) {
 			return nil
 		}
-		_, hasStart := projection.nodeIndex[string(edge.StartNode)]
-		_, hasEnd := projection.nodeIndex[string(edge.EndNode)]
+		_, hasStart := projection.nodeIndex[projection.nodeIdentity(edge.Database, edge.StartNode)]
+		_, hasEnd := projection.nodeIndex[projection.nodeIdentity(edge.Database, edge.EndNode)]
 		if hasStart && hasEnd || validateRelationships {
 			edges = append(edges, edge)
 		}
 		return nil
 	})
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
 		return nil, localizedError(localization.CypherGraphProceduresStreamEdgesFailed(err), err)
 	}
 	sort.Slice(edges, func(i, j int) bool { return edges[i].ID < edges[j].ID })
 	for _, edge := range edges {
 		typesSeen[edge.Type] = true
-		start, end := string(edge.StartNode), string(edge.EndNode)
+		start, end := projection.nodeIdentity(edge.Database, edge.StartNode), projection.nodeIdentity(edge.Database, edge.EndNode)
 		_, hasStart := projection.nodeIndex[start]
 		_, hasEnd := projection.nodeIndex[end]
 		if !hasStart || !hasEnd {
@@ -583,14 +603,14 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 				if property.property == "*" {
 					continue // counted, by its COUNT aggregation
 				}
-				if exact, _, ok, err := gdsConvertPropertyValue(edge.Properties[property.property], "Relationship", false); err != nil {
+				if exact, _, ok, err := gdsConvertPropertyValue(edge.Properties[property.property], "Relationship", true); err != nil {
 					return nil, err
 				} else if ok {
 					value := exact.(float64)
 					relPropertySeen[property.property] = true
 					properties[property.key] = value
 				} else if property.defaultValue != nil {
-					exact, _, _, err := gdsConvertPropertyValue(property.defaultValue, "Relationship", false)
+					exact, _, _, err := gdsConvertPropertyValue(property.defaultValue, "Default Relationship", false)
 					if err != nil {
 						return nil, err
 					}
@@ -605,7 +625,11 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 				directions = [][2]string{{start, end}, {end, start}}
 			}
 			for _, direction := range directions {
-				relationship := ProjectedRelationship{ID: string(edge.ID), Source: direction[0], Target: direction[1], Type: spec.name, Properties: properties}
+				id := string(edge.ID)
+				if edge.Database != "" && edge.Database != projection.Database {
+					id = edge.ElementID(projection.Database)
+				}
+				relationship := ProjectedRelationship{ID: id, Source: direction[0], Target: direction[1], Type: spec.name, Properties: properties}
 				if !spec.merges() {
 					projection.Relationships = append(projection.Relationships, relationship)
 					continue
@@ -777,7 +801,9 @@ func gdsGraphSchema(nodeSpecs, relSpecs []gdsElementSpec, nodePropertyTypes map[
 			default:
 				defaultText := "-9223372036854775808"
 				if property.defaultValue != nil {
-					defaultText = strconv.FormatInt(gdsInteger(property.defaultValue), 10)
+					if integer, fits := valueconvert.ToInt64(property.defaultValue); fits {
+						defaultText = strconv.FormatInt(integer, 10)
+					}
 				}
 				properties[property.key] = "Integer (DefaultValue(" + defaultText + "), PERSISTENT)"
 			}
@@ -843,13 +869,6 @@ func gdsGraphInfo(projection *GraphProjection) map[string]interface{} {
 		"schema":                map[string]interface{}{"graphProperties": schema["graphProperties"], "nodes": schema["nodes"], "relationships": schema["relationships"]},
 		"schemaWithOrientation": map[string]interface{}{"graphProperties": schema["graphProperties"], "nodes": schema["nodes"], "relationships": withOrientation},
 	}
-}
-
-// gdsDropColumns are gds.graph.drop's columns; gds.graph.list's add
-// degreeDistribution first.
-var gdsDropColumns = []string{
-	"graphName", "database", "databaseLocation", "memoryUsage", "sizeInBytes", "nodeCount", "relationshipCount",
-	"configuration", "density", "creationTime", "modificationTime", "schema", "schemaWithOrientation",
 }
 
 // gdsDegreeDistribution is the projection's out-degree distribution as GDS
@@ -918,7 +937,7 @@ func (e *StorageExecutor) callGdsGraphList(args []interface{}) (*ExecuteResult, 
 	if err != nil {
 		return nil, err
 	}
-	columns := append([]string{"degreeDistribution"}, gdsDropColumns...)
+	columns := columnNames(gdsGraphListColumns)
 	rows := make([][]any, 0)
 	for _, projection := range databaseProjections(e.databaseName()) {
 		if name != "" && projection.Name != name {
@@ -993,6 +1012,7 @@ func (e *StorageExecutor) callGdsGraphDrop(ctx context.Context, args []interface
 			}
 		}
 	}
+	columns := columnNames(gdsGraphDropColumns)
 	rows := make([][]any, 0, len(names))
 	for _, name := range names {
 		key := gdsCatalogKey(database, name)
@@ -1002,13 +1022,13 @@ func (e *StorageExecutor) callGdsGraphDrop(ctx context.Context, args []interface
 		}
 		delete(graphProjections, key)
 		info := gdsGraphInfo(projection)
-		row := make([]any, len(gdsDropColumns))
-		for i, column := range gdsDropColumns {
+		row := make([]any, len(columns))
+		for i, column := range columns {
 			row[i] = info[column]
 		}
 		rows = append(rows, row)
 	}
-	return &ExecuteResult{Columns: gdsDropColumns, Rows: rows}, nil
+	return &ExecuteResult{Columns: columns, Rows: rows}, nil
 }
 
 // callGdsGraphExists implements CALL gds.graph.exists(graphName) (#1161).
@@ -1018,7 +1038,7 @@ func (e *StorageExecutor) callGdsGraphExists(args []interface{}) (*ExecuteResult
 		return nil, err
 	}
 	_, missing := e.graphProjection(name)
-	return &ExecuteResult{Columns: []string{"graphName", "exists"}, Rows: [][]any{{name, missing == nil}}}, nil
+	return &ExecuteResult{Columns: columnNames(gdsGraphExistsColumns), Rows: [][]any{{name, missing == nil}}}, nil
 }
 
 // gdsConfig is a GDS configuration map, read as GDS reads it: keys match
@@ -1256,30 +1276,6 @@ func gdsJavaTypeTarget(kind string) string {
 // schema entries are per label; conversion builders are per projected key.
 func gdsPropertyTypeKey(label, key string) string {
 	return label + "\x00" + key
-}
-
-// gdsInteger is a value of any Go integer type as an int64 (the shared
-// converters skip the narrow and unsigned ones).
-func gdsInteger(value interface{}) int64 {
-	switch number := value.(type) {
-	case int8:
-		return int64(number)
-	case int16:
-		return int64(number)
-	case int32:
-		return int64(number)
-	case uint:
-		return int64(number)
-	case uint8:
-		return int64(number)
-	case uint16:
-		return int64(number)
-	case uint32:
-		return int64(number)
-	case uint64:
-		return int64(number)
-	}
-	return toInt64(value)
 }
 
 // gdsTypeProjected reports whether a relationship projection takes the type.

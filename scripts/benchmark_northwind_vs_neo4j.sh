@@ -79,8 +79,10 @@
 #                           CPU on every node/edge access (decay scoring was
 #                           profiled at ~29% of seed wall time when enabled)
 #                           without affecting query results. Set GRAPH_ONLY=0 to
-#                           include search index build + decay scoring cost in the
-#                           comparison.
+#                           include search index build cost. Each run uses an
+#                           explicit benchmark config; decay scoring is included
+#                           only with NORNICDB_MEMORY_DECAY_ENABLED=true and
+#                           GRAPH_ONLY=0.
 #   NORNIC_ASYNC_WRITES=1   (default 1) Enable the adaptive write-behind commit
 #                           buffer for the NornicDB run
 #                           (NORNICDB_ASYNC_WRITES_ENABLED=true): committed
@@ -90,6 +92,15 @@
 #                           and throughput. Durable synchronous commits are the
 #                           product default; set NORNIC_ASYNC_WRITES=0 to benchmark
 #                           the durable baseline instead.
+#   NORNICDB_CYPHER_QUERY_NORMALIZATION=false
+#                           (default false here; the server's default is true)
+#                           NornicDB's Cypher query normalization pass, which
+#                           strips comments and collapses whitespace in every
+#                           statement before it runs, as Neo4j ignores them.
+#                           The benchmark's queries carry neither, so the pass
+#                           is pure per-statement overhead here. Export
+#                           NORNICDB_CYPHER_QUERY_NORMALIZATION=true to include
+#                           its cost.
 #   NORTHWIND_GOGC=400      (default 400) GC percent for the NornicDB server
 #                           process. Write-path profiles show ~9-12% of CPU in GC
 #                           mark work; 400 measures +19-38% on batched writes at
@@ -467,7 +478,8 @@ run_nornic() {
   # and memory-decay access scoring. The Northwind benchmark performs zero
   # text/vector search and no decay-aware reads, so these are pure overhead
   # on every node/edge access. Toggle via GRAPH_ONLY (default 1); set
-  # GRAPH_ONLY=0 to include the index-build + decay-scoring cost.
+  # GRAPH_ONLY=0 to include index-build cost. Decay is off by default; the
+  # existing NORNICDB_MEMORY_DECAY_ENABLED setting explicitly opts into it.
   local nornic_extra_flags=()
   local nornic_extra_env=()
   if [[ "${GRAPH_ONLY}" == "1" ]]; then
@@ -480,6 +492,11 @@ run_nornic() {
     # for the default seed size) via per-entity AccessMeta reads + scoring.
     nornic_extra_env=(NORNICDB_MEMORY_DECAY_ENABLED=false)
   fi
+  # Query normalization (comment stripping + whitespace collapsing) is on by
+  # default in the server. The benchmark's statements have no comments and no
+  # unusual spacing, so the pass is skipped unless the caller exports
+  # NORNICDB_CYPHER_QUERY_NORMALIZATION=true.
+  nornic_extra_env+=(NORNICDB_CYPHER_QUERY_NORMALIZATION="${NORNICDB_CYPHER_QUERY_NORMALIZATION:-false}")
   # The benchmark measures the auto-scaling write-behind path: committed
   # statements are acknowledged in memory and replayed by a background
   # flusher whose rotation delay and buffer size adapt to measured drain
@@ -524,16 +541,23 @@ run_nornic() {
     fi
   fi
 
-  log "starting NornicDB (bolt=${NORNIC_BOLT_PORT} http=${NORNIC_HTTP_PORT}) graph_only=${GRAPH_ONLY} parser=${mode}"
+  log "starting NornicDB (bolt=${NORNIC_BOLT_PORT} http=${NORNIC_HTTP_PORT}) graph_only=${GRAPH_ONLY} query_normalization=${NORNICDB_CYPHER_QUERY_NORMALIZATION:-false} parser=${mode}"
   # Note: ${arr[@]+"${arr[@]}"} guards against `set -u` tripping on an empty
   # array expansion. macOS ships bash 3.2 which is strict here. Extra env
   # vars ride through `env` because bash does NOT recognize a word produced
   # by expansion as an assignment prefix — it would run it as a command.
   # NORNICDB_PARSER is set explicitly for every run so an ambient value in the
   # caller's environment can never leak into the "default" mode.
+  # Isolate the benchmark from ~/.nornicdb/config.yaml. In particular, an
+  # operator's decay setting must not silently change the search-enabled run.
+  # Explicit environment overrides still select the requested workload.
+  local nornic_config="${REPORT_DIR}/${label}.config.yaml"
+  printf 'server:\n  bolt_port: %s\n  http_port: %s\n' \
+    "${NORNIC_BOLT_PORT}" "${NORNIC_HTTP_PORT}" >"${nornic_config}"
   NORNICDB_NO_AUTH=true NORNICDB_EMBEDDING_ENABLED=false \
     env NORNICDB_PARSER="${mode}" ${nornic_extra_env[@]+"${nornic_extra_env[@]}"} \
     "${NORNIC_BIN}" serve \
+      --config "${nornic_config}" \
       --bolt-port "${NORNIC_BOLT_PORT}" \
       --http-port "${NORNIC_HTTP_PORT}" \
       --data-dir "${NORNIC_DATA_DIR}" \

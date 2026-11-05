@@ -1,0 +1,90 @@
+{
+  "result": "pass",
+  "cases": [
+    {
+      "file": "baseline-scalar/nornicdb-sq-int8.json",
+      "sha256": "81b2b035518322e217a14c5408b933603b89e4d9d9c7807d009432d16e91de6f",
+      "source": "c0dee89553de6ff0521433e2af6fd1fc9a457b56",
+      "queries": 1000,
+      "vectors": 88155
+    },
+    {
+      "file": "mapped-scalar/nornicdb-sq-int8.json",
+      "sha256": "a7e947903583b99b2ab4bbddb7de3f2bea716345b9c63fa71138f8ae395f3e0c",
+      "source": "ee2daadfb307172cceac3b5ba49a3e4d7636572b",
+      "queries": 1000,
+      "vectors": 88155
+    },
+    {
+      "file": "baseline-pq8/nornicdb-pq-x8.json",
+      "sha256": "6f40f8ff2bbf7ec2e7e2afbd0efaaa6f49d7c93ab1a53b684c1e05c1ee8e82ff",
+      "source": "c0dee89553de6ff0521433e2af6fd1fc9a457b56",
+      "queries": 1000,
+      "vectors": 88155
+    },
+    {
+      "file": "mapped-pq8-repeat/nornicdb-pq-x8.json",
+      "sha256": "3f940f28b31089d88d138bdf2e70a986259ce62802464afa5d0aa185d5fcb68e",
+      "source": "ee2daadfb307172cceac3b5ba49a3e4d7636572b",
+      "queries": 1000,
+      "vectors": 88155
+    },
+    {
+      "file": "mapped-compressed/nornicdb-bq-asym4.json",
+      "sha256": "1b3d7e90f70560ae62c6c393850f29f85899cd4cc8f3ce01f04677350b6cc66e",
+      "source": "ee2daadfb307172cceac3b5ba49a3e4d7636572b",
+      "queries": 1000,
+      "vectors": 88155
+    },
+    {
+      "file": "mapped-compressed/nornicdb-bq-asym8.json",
+      "sha256": "5cf48893d25362ce46fa59f201c325966f2b836712cb8d7ed0206a07fc3b746f",
+      "source": "ee2daadfb307172cceac3b5ba49a3e4d7636572b",
+      "queries": 1000,
+      "vectors": 88155
+    },
+    {
+      "file": "mapped-compressed/nornicdb-bq.json",
+      "sha256": "c4abadbe689d828e9c4e91aaa82dbb8409c7f8d4ad4fc86aaac3191b9aba27fe",
+      "source": "ee2daadfb307172cceac3b5ba49a3e4d7636572b",
+      "queries": 1000,
+      "vectors": 88155
+    },
+    {
+      "file": "mapped-compressed/nornicdb-pq-x16.json",
+      "sha256": "4250c43b86c223f99d007f322dc0366a78a45871d297f32345d782da67f79edb",
+      "source": "ee2daadfb307172cceac3b5ba49a3e4d7636572b",
+      "queries": 1000,
+      "vectors": 88155
+    },
+    {
+      "file": "mapped-compressed/nornicdb-pq-x32.json",
+      "sha256": "22e146540a565a0ee0d90ed021a515954fb95f92b755d2639f4f750bbff44dd0",
+      "source": "ee2daadfb307172cceac3b5ba49a3e4d7636572b",
+      "queries": 1000,
+      "vectors": 88155
+    },
+    {
+      "file": "mapped-compressed/nornicdb-pq-x4.json",
+      "sha256": "cb45a78b3f27fd12e5397a3bb163cf0743e3c8e47c37104a2e99a98b01a55ad1",
+      "source": "ee2daadfb307172cceac3b5ba49a3e4d7636572b",
+      "queries": 1000,
+      "vectors": 88155
+    },
+    {
+      "file": "mapped-compressed/nornicdb-pq-x64.json",
+      "sha256": "a599e99eb6c2ddb88c1ecdf9ec865f1258e6b54561146b60cf5eaf0def4cbb4d",
+      "source": "ee2daadfb307172cceac3b5ba49a3e4d7636572b",
+      "queries": 1000,
+      "vectors": 88155
+    },
+    {
+      "file": "mapped-compressed/nornicdb-pq-x8.json",
+      "sha256": "6462f6adc6527e8ec8c68a7a49f1bebdf2fd1c76314796f2bddc5f0d822f58d7",
+      "source": "ee2daadfb307172cceac3b5ba49a3e4d7636572b",
+      "queries": 1000,
+      "vectors": 88155
+    }
+  ],
+  "scope": "uninstrumented full-corpus cases only; first nine-mode pass plus fresh controls and PQ x8 repeat"
+}

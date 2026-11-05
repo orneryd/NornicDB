@@ -5,7 +5,10 @@ package storage
 // database, and a scan in a small database decoded a large one's nodes.
 
 import (
+	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"path/filepath"
 	"sort"
 	"testing"
 	"time"
@@ -26,9 +29,12 @@ func sortedIDs(nodes []*Node) []string {
 func serverStack(t *testing.T) (*BadgerEngine, *WALEngine) {
 	t.Helper()
 	dir := t.TempDir()
-	badger, err := NewBadgerEngine(dir)
+	badger, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	if badger != nil {
+		fixtureowner.Own(t, badger)
+	}
 	require.NoError(t, err)
-	wal, err := NewWAL(dir+"/wal", nil)
+	wal, err := NewWAL(filepath.Join(dir, "wal"), nil)
 	require.NoError(t, err)
 	engine := NewWALEngine(badger, wal)
 	t.Cleanup(func() {
@@ -43,94 +49,94 @@ func TestScopedLabelReadsReturnOneDatabase(t *testing.T) {
 	a := NewNamespacedEngine(engine, "a")
 	b := NewNamespacedEngine(engine, "b")
 	for i := 0; i < 3; i++ {
-		_, err := a.CreateNode(&Node{ID: NodeID(fmt.Sprintf("p%d", i)), Labels: []string{"Person"}, Properties: map[string]any{"age": int64(i)}})
+		_, err := a.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("p%d", i)), Labels: []string{"Person"}, Properties: map[string]any{"age": int64(i)}})
 		require.NoError(t, err)
-		_, err = b.CreateNode(&Node{ID: NodeID(fmt.Sprintf("p%d", i)), Labels: []string{"Person"}, Properties: map[string]any{"age": int64(10 + i)}})
+		_, err = b.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("p%d", i)), Labels: []string{"Person"}, Properties: map[string]any{"age": int64(10 + i)}})
 		require.NoError(t, err)
 	}
 	// Writes apply synchronously: a new node in each database, and b's p0
 	// deleted.
-	_, err := a.CreateNode(&Node{ID: "p9", Labels: []string{"Person"}})
+	_, err := a.CreateNode(t.Context(), &Node{ID: "p9", Labels: []string{"Person"}})
 	require.NoError(t, err)
-	_, err = b.CreateNode(&Node{ID: "p9", Labels: []string{"Person"}})
+	_, err = b.CreateNode(t.Context(), &Node{ID: "p9", Labels: []string{"Person"}})
 	require.NoError(t, err)
-	require.NoError(t, b.DeleteNode("p0"))
+	require.NoError(t, b.DeleteNode(t.Context(), "p0"))
 
 	want := []string{"a:p0", "a:p1", "a:p2", "a:p9"}
-	nodes, err := engine.GetNodesByLabelInScope("a:", "Person")
+	nodes, err := engine.GetNodesByLabelInScope(context.Background(), "a:", "Person")
 	require.NoError(t, err)
 	require.Equal(t, want, sortedIDs(nodes), "wal")
 	var streamed []*Node
-	require.NoError(t, engine.StreamNodesByLabelProjectedInScope("a:", "Person", []string{"age"}, func(node *Node) error {
+	require.NoError(t, engine.StreamNodesByLabelProjectedInScope(context.Background(), "a:", "Person", []string{"age"}, func(node *Node) error {
 		streamed = append(streamed, node)
 		return nil
 	}))
 	require.Equal(t, want, sortedIDs(streamed))
-	first, err := engine.GetFirstNodeByLabelInScope("b:", "Person")
+	first, err := engine.GetFirstNodeByLabelInScope(t.Context(), "b:", "Person")
 	require.NoError(t, err)
 	require.Contains(t, []NodeID{"b:p1", "b:p2", "b:p9"}, first.ID)
 
 	// Through the database wrapper: each database sees its own nodes.
-	nodes, err = b.GetNodesByLabel("Person")
+	nodes, err = b.GetNodesByLabel(context.Background(), "Person")
 	require.NoError(t, err)
 	require.Equal(t, []string{"p1", "p2", "p9"}, sortedIDs(nodes))
-	first, err = a.GetFirstNodeByLabel("Person")
+	first, err = a.GetFirstNodeByLabel(t.Context(), "Person")
 	require.NoError(t, err)
 	require.Contains(t, []NodeID{"p0", "p1", "p2", "p9"}, first.ID)
 
 	// The unscoped reads still return every database.
-	nodes, err = engine.GetNodesByLabel("Person")
+	nodes, err = engine.GetNodesByLabel(context.Background(), "Person")
 	require.NoError(t, err)
 	require.Len(t, nodes, 7)
 }
 
 func TestScopedLabelReadsVisibleAtAndInTransactions(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	for _, id := range []NodeID{"a:p1", "a:p2", "b:p1"} {
-		_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"Person"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Person"}})
 		require.NoError(t, err)
 	}
 	version := engine.currentMVCCReadVersion("a")
-	nodes, err := engine.GetNodesByLabelVisibleAtInScope("a:", "Person", version)
+	nodes, err := engine.GetNodesByLabelVisibleAtInScope(context.Background(), "a:", "Person", version)
 	require.NoError(t, err)
 	require.Equal(t, []string{"a:p1", "a:p2"}, sortedIDs(nodes))
-	nodes, err = NewNamespacedEngine(engine, "b").GetNodesByLabelVisibleAt("Person", engine.currentMVCCReadVersion("b"))
+	nodes, err = NewNamespacedEngine(engine, "b").GetNodesByLabelVisibleAt(context.Background(), "Person", engine.currentMVCCReadVersion("b"))
 	require.NoError(t, err)
 	require.Equal(t, []string{"p1"}, sortedIDs(nodes))
 
 	// A transaction pinned to a database scans only that database's label
 	// entries, from the snapshot and, without a read version, the engine.
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.Equal(t, "", tx.labelScanScopeLocked(), "unpinned")
 	require.NoError(t, tx.SetNamespace("a"))
 	var streamed []*Node
-	require.NoError(t, tx.StreamNodesByLabelProjected("Person", nil, func(node *Node) error {
+	require.NoError(t, tx.StreamNodesByLabelProjected(context.Background(), "Person", nil, func(node *Node) error {
 		streamed = append(streamed, node)
 		return nil
 	}))
 	require.Equal(t, []string{"a:p1", "a:p2"}, sortedIDs(streamed))
-	nodes, err = tx.getNodesByLabelLocked("Person")
+	nodes, err = tx.getNodesByLabelLocked(context.Background(), "Person")
 	require.NoError(t, err)
 	require.Equal(t, []string{"a:p1", "a:p2"}, sortedIDs(nodes))
 	tx.readTS = MVCCVersion{}
-	nodes, err = tx.getNodesByLabelLocked("Person")
+	nodes, err = tx.getNodesByLabelLocked(context.Background(), "Person")
 	require.NoError(t, err)
 	require.Equal(t, []string{"a:p1", "a:p2"}, sortedIDs(nodes))
 	tx.snapshotTx.Discard()
 	tx.snapshotTx = nil
 	streamed = nil
-	require.NoError(t, tx.StreamNodesByLabelProjected("Person", []string{"x"}, func(node *Node) error {
+	require.NoError(t, tx.StreamNodesByLabelProjected(context.Background(), "Person", []string{"x"}, func(node *Node) error {
 		streamed = append(streamed, node)
 		return nil
 	}))
 	require.Equal(t, []string{"a:p1", "a:p2"}, sortedIDs(streamed))
 	tx.readTS = engine.currentMVCCReadVersion("a")
 	streamed = nil
-	require.NoError(t, tx.StreamNodesByLabelProjected("Person", []string{"y"}, func(node *Node) error {
+	require.NoError(t, tx.StreamNodesByLabelProjected(context.Background(), "Person", []string{"y"}, func(node *Node) error {
 		streamed = append(streamed, node)
 		return nil
 	}))
@@ -140,13 +146,13 @@ func TestScopedLabelReadsVisibleAtAndInTransactions(t *testing.T) {
 // The cost of a label read follows its own database: 1,000 nodes in database
 // a are read in about the same time with 50,000 nodes of the label in b.
 func TestScopedLabelReadCostIgnoresOtherDatabases(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	a := NewNamespacedEngine(engine, "a")
 	b := NewNamespacedEngine(engine, "b")
 	for i := 0; i < 1000; i++ {
-		_, err := a.CreateNode(&Node{ID: NodeID(fmt.Sprintf("n%d", i)), Labels: []string{"Person"}, Properties: map[string]any{"age": int64(i)}})
+		_, err := a.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("n%d", i)), Labels: []string{"Person"}, Properties: map[string]any{"age": int64(i)}})
 		require.NoError(t, err)
 	}
 	scan := func() time.Duration {
@@ -156,9 +162,9 @@ func TestScopedLabelReadCostIgnoresOtherDatabases(t *testing.T) {
 		start := time.Now()
 		for r := 0; r < 5; r++ {
 			seen := 0
-			require.NoError(t, a.StreamNodesByLabelProjected("Person", []string{"age"}, func(*Node) error { seen++; return nil }))
+			require.NoError(t, a.StreamNodesByLabelProjected(context.Background(), "Person", []string{"age"}, func(*Node) error { seen++; return nil }))
 			require.Equal(t, 1000, seen)
-			nodes, err := a.GetNodesByLabel("Person")
+			nodes, err := a.GetNodesByLabel(context.Background(), "Person")
 			require.NoError(t, err)
 			require.Len(t, nodes, 1000)
 		}
@@ -166,9 +172,10 @@ func TestScopedLabelReadCostIgnoresOtherDatabases(t *testing.T) {
 	}
 	alone := scan()
 	for i := 0; i < 50_000; i++ {
-		_, err := b.CreateNode(&Node{ID: NodeID(fmt.Sprintf("n%d", i)), Labels: []string{"Person"}, Properties: map[string]any{"age": int64(i)}})
+		_, err := b.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("n%d", i)), Labels: []string{"Person"}, Properties: map[string]any{"age": int64(i)}})
 		require.NoError(t, err)
 	}
 	shared := scan()
+	t.Logf("scoped label read cost: alone=%s shared=%s bound=%s", alone, shared, 5*alone+200*time.Millisecond)
 	require.Less(t, shared, 5*alone+200*time.Millisecond, "alone %s, with 50,000 :Person in another database %s", alone, shared)
 }

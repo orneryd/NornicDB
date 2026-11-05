@@ -10,8 +10,9 @@
 package cypher
 
 import (
+	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
-	"unicode"
 )
 
 // =============================================================================
@@ -25,81 +26,18 @@ import (
 //
 //	SplitByKeyword("MATCH (a) MATCH (b)", "MATCH")
 //	// Returns: ["", "(a) ", "(b)"]
-func SplitByKeyword(s, keyword string) []string {
-	if s == "" {
-		return []string{s}
-	}
-
-	upper := upperASCII(s)
-	keywordUpper := upperASCII(keyword)
-	keywordLen := len(keyword)
-
-	var result []string
-	lastEnd := 0
-
-	for i := 0; i <= len(upper)-keywordLen; i++ {
-		// Check if keyword matches at this position
-		if upper[i:i+keywordLen] != keywordUpper {
-			continue
-		}
-
-		// Check word boundary before (start of string or non-alphanumeric)
-		if i > 0 && isIdentByte(s[i-1]) {
-			continue
-		}
-
-		// Check that there's whitespace after the keyword
-		afterIdx := i + keywordLen
-		if afterIdx >= len(s) || !unicode.IsSpace(rune(s[afterIdx])) {
-			continue
-		}
-
-		// Found a match - add the part before this keyword
-		result = append(result, s[lastEnd:i])
-
-		// Skip the keyword and following whitespace
-		lastEnd = afterIdx
-		for lastEnd < len(s) && unicode.IsSpace(rune(s[lastEnd])) {
-			lastEnd++
-		}
-		i = lastEnd - 1 // -1 because loop will increment
-	}
-
-	// Add the remaining part
-	result = append(result, s[lastEnd:])
-
-	return result
+func SplitByKeyword(ctx context.Context, s, keyword string) ([]string, error) {
+	return splitKeywordParts(ctx, s, keyword, keywordSplitGeneric)
 }
 
 // SplitByMatch splits by "MATCH " keyword. Convenience wrapper for hot path.
-func SplitByMatch(s string) []string {
-	return SplitByKeyword(s, "MATCH")
+func SplitByMatch(ctx context.Context, s string) ([]string, error) {
+	return SplitByKeyword(ctx, s, "MATCH")
 }
 
 // SplitByCreate splits by "CREATE " keyword. Convenience wrapper for hot path.
-func SplitByCreate(s string) []string {
-	if s == "" {
-		return []string{s}
-	}
-
-	opts := defaultKeywordScanOpts()
-	opts.SkipParens = false
-	opts.SkipBrackets = false
-	var result []string
-	lastEnd := 0
-	for searchFrom := 0; searchFrom < len(s); {
-		index := keywordIndexFrom(s, "CREATE", searchFrom, opts)
-		if index < 0 || index+len("CREATE") >= len(s) || !unicode.IsSpace(rune(s[index+len("CREATE")])) {
-			break
-		}
-		result = append(result, s[lastEnd:index])
-		lastEnd = index + len("CREATE")
-		for lastEnd < len(s) && unicode.IsSpace(rune(s[lastEnd])) {
-			lastEnd++
-		}
-		searchFrom = lastEnd
-	}
-	return append(result, s[lastEnd:])
+func SplitByCreate(ctx context.Context, s string) ([]string, error) {
+	return splitKeywordParts(ctx, s, "CREATE", keywordSplitCreate)
 }
 
 // =============================================================================
@@ -114,8 +52,9 @@ func SplitByCreate(s string) []string {
 //
 //	ExtractLimit("MATCH (n) RETURN n LIMIT 10")
 //	// Returns: 10, true
-func ExtractLimit(query string) (int, bool) {
-	return extractIntAfterKeyword(query, "LIMIT")
+func ExtractLimit(ctx context.Context, query string) (int, bool, error) {
+	_, value, found, err := decimalAfterKeyword(ctx, query, "LIMIT")
+	return value, found, err
 }
 
 // ExtractSkip extracts the SKIP value from a query string.
@@ -125,96 +64,47 @@ func ExtractLimit(query string) (int, bool) {
 //
 //	ExtractSkip("MATCH (n) RETURN n SKIP 5 LIMIT 10")
 //	// Returns: 5, true
-func ExtractSkip(query string) (int, bool) {
-	return extractIntAfterKeyword(query, "SKIP")
+func ExtractSkip(ctx context.Context, query string) (int, bool, error) {
+	_, value, found, err := decimalAfterKeyword(ctx, query, "SKIP")
+	return value, found, err
 }
 
 // ExtractLimitString extracts the LIMIT value as a string (for compatibility).
 // Returns empty string if not found.
-func ExtractLimitString(query string) string {
-	return extractStringAfterKeyword(query, "LIMIT")
+func ExtractLimitString(ctx context.Context, query string) (string, error) {
+	text, _, _, err := decimalAfterKeyword(ctx, query, "LIMIT")
+	return text, err
 }
 
 // ExtractSkipString extracts the SKIP value as a string (for compatibility).
 // Returns empty string if not found.
-func ExtractSkipString(query string) string {
-	return extractStringAfterKeyword(query, "SKIP")
+func ExtractSkipString(ctx context.Context, query string) (string, error) {
+	text, _, _, err := decimalAfterKeyword(ctx, query, "SKIP")
+	return text, err
 }
 
-// extractIntAfterKeyword finds a keyword and extracts the integer that follows.
-func extractIntAfterKeyword(s, keyword string) (int, bool) {
-	upper := upperASCII(s)
-	keywordUpper := upperASCII(keyword)
-
-	idx := strings.Index(upper, keywordUpper)
+// decimalAfterKeyword owns the shared decimal extent and conversion used by
+// the public LIMIT/SKIP observations. Text is a slice of the original source.
+func decimalAfterKeyword(ctx context.Context, s, keyword string) (text string, value int, found bool, err error) {
+	idx, err := FindKeywordIndex(ctx, s, keyword)
+	if err != nil {
+		return "", 0, false, err
+	}
 	if idx < 0 {
-		return 0, false
+		return "", 0, false, nil
 	}
-
-	// Move past the keyword
-	start := idx + len(keyword)
-
-	// Skip whitespace
-	for start < len(s) && unicode.IsSpace(rune(s[start])) {
-		start++
+	start, _ := cyphertext.GapEnd(s, idx+len(keyword))
+	token, ok := cyphertext.ScanNumber(s, start)
+	if !ok || token.Invalid || token.Base != 10 || token.Fraction || token.Exponent || token.Grouped || token.Suffix != 0 {
+		return "", 0, false, nil
 	}
-
-	if start >= len(s) {
-		return 0, false
+	for i := start; i < token.End; i++ {
+		value = value*10 + int(s[i]-'0')
 	}
-
-	// Parse the integer
-	end := start
-	for end < len(s) && s[end] >= '0' && s[end] <= '9' {
-		end++
+	if err := ctx.Err(); err != nil {
+		return "", 0, false, err
 	}
-
-	if end == start {
-		return 0, false
-	}
-
-	// Convert to int (simple, no error handling needed - we know it's digits)
-	result := 0
-	for i := start; i < end; i++ {
-		result = result*10 + int(s[i]-'0')
-	}
-
-	return result, true
-}
-
-// extractStringAfterKeyword finds a keyword and extracts the number string that follows.
-func extractStringAfterKeyword(s, keyword string) string {
-	upper := upperASCII(s)
-	keywordUpper := upperASCII(keyword)
-
-	idx := strings.Index(upper, keywordUpper)
-	if idx < 0 {
-		return ""
-	}
-
-	// Move past the keyword
-	start := idx + len(keyword)
-
-	// Skip whitespace
-	for start < len(s) && unicode.IsSpace(rune(s[start])) {
-		start++
-	}
-
-	if start >= len(s) {
-		return ""
-	}
-
-	// Find end of number
-	end := start
-	for end < len(s) && s[end] >= '0' && s[end] <= '9' {
-		end++
-	}
-
-	if end == start {
-		return ""
-	}
-
-	return s[start:end]
+	return s[start:token.End], value, true, nil
 }
 
 // =============================================================================
@@ -224,41 +114,24 @@ func extractStringAfterKeyword(s, keyword string) string {
 // FindKeywordIndex finds the position of a keyword in a query (case-insensitive).
 // Returns -1 if not found. Respects word boundaries.
 // This is faster than using regexp for simple keyword detection.
-func FindKeywordIndex(s, keyword string) int {
-	if s == "" || keyword == "" {
-		return -1
+func FindKeywordIndex(ctx context.Context, s, keyword string) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return -1, err
 	}
-
-	upper := upperASCII(s)
-	keywordUpper := upperASCII(keyword)
-	keywordLen := len(keyword)
-
-	for i := 0; i <= len(upper)-keywordLen; i++ {
-		if upper[i:i+keywordLen] != keywordUpper {
-			continue
-		}
-
-		// Check word boundary before
-		if i > 0 && isIdentByte(s[i-1]) {
-			continue
-		}
-
-		// Check word boundary after
-		afterIdx := i + keywordLen
-		if afterIdx < len(s) && isIdentByte(s[afterIdx]) {
-			continue
-		}
-
-		return i
+	opts := defaultKeywordScanOpts()
+	opts.SkipParens, opts.SkipBrackets, opts.SkipBraces = false, false, false
+	index := keywordIndexFrom(ctx, s, keyword, 0, opts)
+	if err := ctx.Err(); err != nil {
+		return -1, err
 	}
-
-	return -1
+	return index, nil
 }
 
 // ContainsKeyword checks if a query contains a keyword (case-insensitive).
 // Respects word boundaries.
-func ContainsKeyword(s, keyword string) bool {
-	return FindKeywordIndex(s, keyword) >= 0
+func ContainsKeyword(ctx context.Context, s, keyword string) (bool, error) {
+	index, err := FindKeywordIndex(ctx, s, keyword)
+	return index >= 0 && err == nil, err
 }
 
 // =============================================================================
@@ -337,7 +210,9 @@ func ParseAggregation(expr string) *AggregationResult {
 		return result
 	}
 
-	content, result.Distinct = cutDistinctArgument(content)
+	argumentSource := cyphertext.ReadFunctionArgumentSource(content, cyphertext.DistinctArgumentModifier, distinctFollowsAsName)
+	content = content[argumentSource.Arguments.Start:argumentSource.Arguments.End]
+	result.Distinct = argumentSource.Modifier == cyphertext.DistinctArgumentModifier
 
 	// Parse variable.property or just variable
 	dotIdx := strings.Index(content, ".")
@@ -346,7 +221,7 @@ func ParseAggregation(expr string) *AggregationResult {
 		varPart := content[:dotIdx]
 		propPart := content[dotIdx+1:]
 
-		if !isValidIdentifier(varPart) || !isValidIdentifier(propPart) {
+		if !cyphertext.IsIdentifier(varPart) || !cyphertext.IsIdentifier(propPart) {
 			return nil
 		}
 
@@ -354,7 +229,7 @@ func ParseAggregation(expr string) *AggregationResult {
 		result.Property = propPart
 	} else {
 		// Just variable: COUNT(n) or similar
-		if !isValidIdentifier(content) {
+		if !cyphertext.IsIdentifier(content) {
 			return nil
 		}
 		result.Variable = content
@@ -364,22 +239,6 @@ func ParseAggregation(expr string) *AggregationResult {
 }
 
 // isValidIdentifier checks if s is a valid Cypher identifier (alphanumeric + underscore, starts with letter/underscore).
-func isValidIdentifier(s string) bool {
-	if len(s) == 0 {
-		return false
-	}
-	first := s[0]
-	if !isIdentStartByte(first) {
-		return false
-	}
-	for i := 1; i < len(s); i++ {
-		c := s[i]
-		if !isIdentByte(c) {
-			return false
-		}
-	}
-	return true
-}
 
 // ParseAggregationProperty is a convenience function that returns just the variable and property.
 // Returns ("", "") if not a valid aggregation with a property.
@@ -405,45 +264,9 @@ func ParseAggregationProperty(expr string) (variable, property string) {
 //	ExtractParameters("MATCH (n) WHERE n.name = $name AND n.age > $minAge")
 //	// Returns: ["name", "minAge"]
 func ExtractParameters(query string) []string {
-	var params []string
-	i := 0
-	for i < len(query) {
-		// Find next $
-		dollarIdx := strings.IndexByte(query[i:], '$')
-		if dollarIdx < 0 {
-			break
-		}
-		dollarIdx += i
-		if !isParameterStart(query, dollarIdx) {
-			i = dollarIdx + 1
-			continue
-		}
-
-		// Check if there's a valid identifier after $
-		start := dollarIdx + 1
-		if start >= len(query) {
-			break
-		}
-
-		// First character must be letter or underscore
-		first := query[start]
-		if !isIdentStartByte(first) {
-			i = start
-			continue
-		}
-
-		// Find end of identifier
-		end := start + 1
-		for end < len(query) && isIdentByte(query[end]) {
-			end++
-		}
-
-		if !dynamicLabelStartsAt(query, dollarIdx) { // $all(e), $any(e) aren't parameters
-			params = append(params, query[start:end])
-		}
-		i = end
-	}
-	return params
+	var names []string
+	cyphertext.ParameterReferences(query, func(name string, _, _ int) { names = append(names, name) })
+	return names
 }
 
 // ReplaceParameters replaces all parameter references with their values.
@@ -459,4 +282,59 @@ func ReplaceParameters(query string, replacer func(paramName string) string) str
 	return replaceParameterReferences(query, func(name string, _ byte) (string, bool) {
 		return replacer(name), true
 	})
+}
+
+type keywordSplitPolicy uint8
+
+const (
+	keywordSplitGeneric keywordSplitPolicy = iota
+	keywordSplitCreate
+)
+
+// splitKeywordParts owns slicing and whitespace trimming for both public policies.
+func splitKeywordParts(ctx context.Context, s, keyword string, policy keywordSplitPolicy) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if s == "" || keyword == "" {
+		return []string{s}, nil
+	}
+	opts := defaultKeywordScanOpts()
+	opts.SkipParens, opts.SkipBrackets = false, false
+	if policy == keywordSplitGeneric {
+		opts.SkipBraces = false
+	}
+	var parts []string
+	last := 0
+	for from := 0; from < len(s); {
+		index := keywordIndexFrom(ctx, s, keyword, from, opts)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if index < 0 {
+			break
+		}
+		end := index + len(keyword)
+		if policy == keywordSplitGeneric {
+			var ok bool
+			end, ok = keywordMatchAt(s, index, keyword, 0, len(keyword))
+			if !ok {
+				break
+			}
+		}
+		from = end
+		if end == len(s) || !cyphertext.IsWhitespaceAt(s, end) {
+			if policy == keywordSplitCreate {
+				break
+			}
+			continue
+		}
+		parts = append(parts, s[last:index])
+		last = end
+		for last < len(s) && cyphertext.IsWhitespaceAt(s, last) {
+			last++
+		}
+		from = last
+	}
+	return append(parts, s[last:]), nil
 }

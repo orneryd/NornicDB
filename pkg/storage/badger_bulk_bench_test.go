@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"testing"
 )
@@ -13,7 +15,7 @@ func BenchmarkBadgerEngine_BulkOperations(b *testing.B) {
 			b.Run(fmt.Sprintf("%s/n=%d", op, n), func(b *testing.B) {
 				for i := 0; i < b.N; i++ {
 					b.StopTimer()
-					engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: b.TempDir()})
+					engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: b.TempDir()}))
 					if err != nil {
 						b.Fatal(err)
 					}
@@ -35,21 +37,21 @@ func BenchmarkBadgerEngine_BulkOperations(b *testing.B) {
 						}
 					}
 					if op != "create_nodes" {
-						run(engine.BulkCreateNodes(nodes))
+						run(engine.BulkCreateNodes(b.Context(), nodes))
 					}
 					if op == "delete_edges" || op == "delete_nodes" {
-						run(engine.BulkCreateEdges(edges))
+						run(engine.BulkCreateEdges(b.Context(), edges))
 					}
 					b.StartTimer()
 					switch op {
 					case "create_nodes":
-						run(engine.BulkCreateNodes(nodes))
+						run(engine.BulkCreateNodes(b.Context(), nodes))
 					case "create_edges":
-						run(engine.BulkCreateEdges(edges))
+						run(engine.BulkCreateEdges(b.Context(), edges))
 					case "delete_edges":
-						run(engine.BulkDeleteEdges(edgeIDs))
+						run(engine.BulkDeleteEdges(b.Context(), edgeIDs))
 					case "delete_nodes":
-						run(engine.BulkDeleteNodes(nodeIDs))
+						run(engine.BulkDeleteNodes(b.Context(), nodeIDs))
 					}
 					b.StopTimer()
 					run(engine.Close())

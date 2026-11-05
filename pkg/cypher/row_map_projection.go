@@ -1,8 +1,11 @@
 package cypher
 
 import (
+	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -20,43 +23,56 @@ import (
 // Items apply in order, a later one replacing an earlier key: {a: 1}{.a,
 // a: 2} is {a: 2}.
 
-// rowMapProjectionSplit splits variable{items} into the variable and the item
-// list. ok is false when expression is not a map projection: its brace
-// doesn't close it, or what precedes the brace isn't a variable (a map
-// literal, a subquery such as COUNT { … }).
-func rowMapProjectionSplit(expression string) (variable, items string, ok bool) {
-	trimmed := strings.TrimSpace(expression)
-	if !strings.HasSuffix(trimmed, "}") {
-		return "", "", false
-	}
-	open := strings.IndexByte(trimmed, '{')
-	if open <= 0 || findMatchingDelimiter(trimmed, open, '{', '}') != len(trimmed)-1 {
-		return "", "", false
-	}
-	variable = strings.TrimSpace(trimmed[:open])
-	if !isValidIdentifier(variable) && !isBacktickQuotedName(variable) {
-		return "", "", false
-	}
-	if precedingSubqueryExpressionKeyword(trimmed, open) {
-		return "", "", false
-	}
+type mapProjectionPolicy uint8
 
-	return variable, strings.TrimSpace(trimmed[open+1 : len(trimmed)-1]), true
+const (
+	mapProjectionRuntime mapProjectionPolicy = iota
+	mapProjectionStatic
+)
+
+// mapProjectionSplit owns the common variable{items} boundary. Runtime keeps
+// the submitted variable spelling and trims items; static analysis resolves the
+// symbolic name and admits a keyword name only when its supplied scope binds it.
+func mapProjectionSplit(expression string, policy mapProjectionPolicy, scope *staticTypeScope) (variable, items string, ok bool) {
+	if policy == mapProjectionRuntime {
+		expression = strings.TrimSpace(expression)
+	}
+	open := strings.IndexByte(expression, '{')
+	if open <= 0 || cyphertext.FindMatchingDelimiter(expression, open, '{', '}', cyphertext.OpeningDelimiter) != len(expression)-1 {
+		return "", "", false
+	}
+	variable = strings.TrimSpace(expression[:open])
+	if policy == mapProjectionRuntime {
+		if !cyphertext.IsIdentifier(variable) && !isBacktickQuotedName(variable) || precedingSubqueryExpressionKeyword(expression, open) {
+			return "", "", false
+		}
+	} else {
+		variable = simpleSemanticIdentifier(variable)
+		_, subqueryName := staticSubqueryExpressionTypes[upperASCII(variable)]
+		if variable == "" || isCypherKeyword(variable) && !subqueryName && !(scope != nil && scope.bound(variable)) || isSubqueryBrace(expression, open) {
+			return "", "", false
+		}
+	}
+	items = expression[open+1 : len(expression)-1]
+	if policy == mapProjectionRuntime {
+		items = strings.TrimSpace(items)
+	}
+	return variable, items, true
 }
 
-func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map[string]interface{}) (interface{}, bool, bool, error) {
-	variable, inner, projection := rowMapProjectionSplit(expression)
+func (e *StorageExecutor) evaluateRowMapProjection(ctx context.Context, expression string, values map[string]interface{}) (interface{}, bool, bool, error) {
+	variable, inner, projection := mapProjectionSplit(expression, mapProjectionRuntime, nil)
 	if !projection {
 		return nil, false, false, nil
 	}
-	base, resolved, err := e.evaluateRowValue(variable, values)
+	base, resolved, err := e.evaluateRowValue(ctx, variable, values)
 	if err != nil {
 		return nil, true, false, err
 	}
 	if !resolved {
 		return nil, true, false, nil
 	}
-	if base == nil || isNilRemoteEntity(base) {
+	if cypherfn.RuntimeValue(base) == nil {
 		return nil, true, true, nil
 	}
 	temporal := isRuntimeTemporal(base) || isRuntimeDuration(base)
@@ -100,7 +116,7 @@ func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map
 			separator := findTopLevelMapKeyValueSeparator(item)
 			if separator > 0 {
 				name := normalizePropertyKey(strings.TrimSpace(item[:separator]))
-				value, ok, err := e.evaluateRowValue(strings.TrimSpace(item[separator+1:]), values)
+				value, ok, err := e.evaluateRowValue(ctx, strings.TrimSpace(item[separator+1:]), values)
 				if err != nil {
 					return nil, true, false, err
 				}
@@ -110,17 +126,14 @@ func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map
 				result[name] = value
 				continue
 			}
-			if !isValidIdentifier(item) && !isBacktickQuotedName(item) {
+			if !cyphertext.IsIdentifier(item) && !isBacktickQuotedName(item) {
 				return nil, true, false, nil
 			}
-			value, ok, err := e.evaluateRowValue(item, values)
-			if err != nil {
-				return nil, true, false, err
-			}
+			value, ok := values[normalizePropertyKey(item)]
 			if !ok {
 				return nil, true, false, nil
 			}
-			result[normalizePropertyKey(item)] = value
+			result[normalizePropertyKey(item)] = cypherfn.RuntimeValue(value)
 		}
 	}
 	return result, true, true, nil
@@ -131,7 +144,7 @@ func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map
 func mapProjectionPropertySelector(item string) (string, bool) {
 	name := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(item), "."))
 	switch {
-	case isValidIdentifier(name):
+	case cyphertext.IsIdentifier(name):
 		return name, true
 	case isBacktickQuotedName(name):
 		return normalizePropertyKey(name), true

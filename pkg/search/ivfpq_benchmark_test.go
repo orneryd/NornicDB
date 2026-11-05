@@ -3,7 +3,9 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
+	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
@@ -42,11 +44,14 @@ func loadBenchmarkCorpus(tb testing.TB, syntheticCount, syntheticDims int) bench
 	maxVectors := clampInt(envInt("NORNICDB_IVFPQ_BENCH_MAX_VECTORS", 50000), 500, 500000)
 
 	if _, err := os.Stat(dataDir); err == nil {
-		baseEngine, err := storage.NewBadgerEngine(dataDir)
+		baseEngine, err := fixtureowner.TrackResult[*storage.BadgerEngine](tb, storage.ErrStorageClosed)(storage.NewBadgerEngine(dataDir))
+		if baseEngine != nil {
+			fixtureowner.Own(tb, baseEngine)
+		}
 		if err == nil {
 			tb.Cleanup(func() { _ = baseEngine.Close() })
 			engine := storage.NewNamespacedEngine(baseEngine, dbName)
-			nodes, err := engine.AllNodes()
+			nodes, err := engine.AllNodes(context.Background())
 			if err == nil && len(nodes) > 0 {
 				corpus := benchmarkVectorCorpus{
 					IDs:  make([]string, 0, maxVectors),
@@ -222,7 +227,7 @@ func measureQueryPressure(iterations int, runQuery func(i int) error) (queryMemo
 func BenchmarkIVFPQCandidateGen(b *testing.B) {
 	dir := b.TempDir()
 	corpus := loadBenchmarkCorpus(b, 10000, 32)
-	vfs, err := NewVectorFileStore(fmt.Sprintf("%s/vectors", dir), corpus.Dims)
+	vfs, err := NewVectorFileStore(filepath.Join(dir, "vectors"), corpus.Dims)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -295,7 +300,7 @@ func BenchmarkANNMutationOverlaySearch(b *testing.B) {
 func BenchmarkANNQualityMatrix(b *testing.B) {
 	dir := b.TempDir()
 	corpus := loadBenchmarkCorpus(b, 12000, 32)
-	vfs, err := NewVectorFileStore(fmt.Sprintf("%s/vectors", dir), corpus.Dims)
+	vfs, err := NewVectorFileStore(filepath.Join(dir, "vectors"), corpus.Dims)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -374,7 +379,7 @@ func BenchmarkANNQualityMatrixChunked(b *testing.B) {
 		corpus := baseCorpus.prefix(chunk.size)
 		b.Run(fmt.Sprintf("%s_n=%d", chunk.name, chunk.size), func(b *testing.B) {
 			dir := b.TempDir()
-			vfs, err := NewVectorFileStore(fmt.Sprintf("%s/vectors", dir), corpus.Dims)
+			vfs, err := NewVectorFileStore(filepath.Join(dir, "vectors"), corpus.Dims)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -502,7 +507,7 @@ func BenchmarkANNQueryPipelineChunked(b *testing.B) {
 
 		b.Run(fmt.Sprintf("%s_n=%d", chunk.name, chunk.size), func(b *testing.B) {
 			dir := b.TempDir()
-			vfs, err := NewVectorFileStore(fmt.Sprintf("%s/vectors", dir), corpus.Dims)
+			vfs, err := NewVectorFileStore(filepath.Join(dir, "vectors"), corpus.Dims)
 			if err != nil {
 				b.Fatal(err)
 			}

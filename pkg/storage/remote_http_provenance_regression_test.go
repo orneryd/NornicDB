@@ -30,7 +30,7 @@ func TestRemoteHTTPEmptyMapDoesNotStealEntityProvenance(t *testing.T) {
 				response := `{"results":[{"columns":["a","b"],"data":[{"row":` + row.values + `,"rest":` + row.rest + `,"meta":[{"elementId":"4:db:n","type":"node"}],"graph":{"nodes":[{"id":"1","elementId":"4:db:n","labels":["Doc"],"properties":{}}],"relationships":[]}}]}],"errors":[]}`
 				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(response))}, nil
 			})
-			_, rows, err := engine.QueryCypher(context.Background(), "RETURN ordinary, entity", nil)
+			_, rows, err := engine.QueryCypher(context.Background(), "RETURN ordinary, entity", nil, RemoteAccessRead)
 			require.NoError(t, err)
 			require.Len(t, rows, 1)
 			require.IsType(t, RemoteEntityValue{}, rows[0][row.entityColumn])
@@ -51,7 +51,7 @@ func TestRemoteHTTPRecordedEmptyEntityPositions(t *testing.T) {
 		require.Contains(t, submitted.Statements[0].ResultDataContents, "rest")
 		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(string(fixture)))}, nil
 	})
-	_, rows, err := engine.QueryCypher(context.Background(), "RETURN recorded_fixture", nil)
+	_, rows, err := engine.QueryCypher(context.Background(), "RETURN recorded_fixture", nil, RemoteAccessRead)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	row := rows[0]
@@ -104,7 +104,7 @@ func TestRemoteHTTPRejectsInconsistentRESTSidecars(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			index := 0
-			_, err := decodeRemoteHTTPValueWithREST(json.RawMessage(tc.row), json.RawMessage(tc.rest), []interface{}{nil}, &index, entities)
+			_, err := decodeRemoteHTTPValue(json.RawMessage(tc.row), json.RawMessage(tc.rest), []interface{}{nil}, &index, entities, remoteHTTPAuto)
 			require.Error(t, err)
 		})
 	}
@@ -118,7 +118,7 @@ func TestRemoteHTTPRejectsInconsistentTopLevelREST(t *testing.T) {
 				response := `{"results":[{"columns":["a","b"],"data":[{"row":[{},{}],"rest":` + rest + `,"meta":[{"elementId":"n","type":"node"}],"graph":{"nodes":[{"id":"1","elementId":"n","labels":[],"properties":{}}],"relationships":[]}}]}],"errors":[]}`
 				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(response))}, nil
 			})
-			_, _, err := engine.QueryCypher(context.Background(), "RETURN ordinary,entity", nil)
+			_, _, err := engine.QueryCypher(context.Background(), "RETURN ordinary,entity", nil, RemoteAccessRead)
 			require.Error(t, err)
 			var localized *localization.LocalizedError
 			require.True(t, errors.As(err, &localized))

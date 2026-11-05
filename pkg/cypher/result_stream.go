@@ -38,7 +38,7 @@ type ResultStream struct {
 
 	// Set by Execute before the statement runs; read by the statement.
 	statement    string
-	mapColumns   func([]string) []string
+	mapColumns   func(context.Context, []string) []string
 	recordAccess func([][]interface{})
 	frame        *pipelineClause
 	columns      []string
@@ -108,31 +108,29 @@ type armedResultStreamKey struct{}
 // the text Execute routes. mapColumns maps the statement's column names to
 // the ones the client sees; recordAccess records the access to the nodes
 // and relationships of rows handed to the client.
-func armResultStream(ctx context.Context, stream *ResultStream, statement string, mapColumns func([]string) []string, recordAccess func([][]interface{})) context.Context {
+func armResultStream(ctx context.Context, stream *ResultStream, statement string, mapColumns func(context.Context, []string) []string, recordAccess func([][]interface{})) context.Context {
 	stream.statement = statement
 	stream.mapColumns = mapColumns
 	stream.recordAccess = recordAccess
 	return context.WithValue(ctx, armedResultStreamKey{}, stream)
 }
 
-// bindResultStream binds the armed stream to the clause list the pipeline
+// bind binds the armed stream to the clause list the pipeline
 // runs for the statement itself, when cypher is the armed statement's text
 // and nothing has bound it yet. Subqueries and UNION branches run other
 // texts, so they never bind it.
-func bindResultStream(ctx context.Context, cypher string, clauses []pipelineClause) {
-	stream, _ := ctx.Value(armedResultStreamKey{}).(*ResultStream)
+func (stream *ResultStream) bind(cypher string, clauses []pipelineClause) {
 	if stream == nil || stream.frame != nil || stream.statement != cypher || len(clauses) == 0 {
 		return
 	}
 	stream.frame = &clauses[len(clauses)-1]
 }
 
-// boundResultStream returns the armed stream when clause is the last clause
+// forClause returns the armed stream when clause is the last clause
 // of the clause list it is bound to: the statement's own RETURN, not one of
 // a subquery the statement runs.
-func boundResultStream(ctx context.Context, clause *pipelineClause) *ResultStream {
-	stream, _ := ctx.Value(armedResultStreamKey{}).(*ResultStream)
-	if stream == nil || stream.frame == nil || stream.frame != clause {
+func (stream *ResultStream) forClause(ctx context.Context, clause *pipelineClause) *ResultStream {
+	if stream == nil || stream.frame == nil || stream.frame != clause || clause.kind != pipelineClauseReturn || !streamableReturnPlan(returnProjectionPlanFor(ctx, clause.text)) {
 		return nil
 	}
 	return stream
@@ -141,8 +139,7 @@ func boundResultStream(ctx context.Context, clause *pipelineClause) *ResultStrea
 // streamsScan reports whether the MATCH at clauses[index] belongs to the
 // statement the stream is bound to, so its scan may feed rows as they are
 // read: the statement only reads, and only reads what it streams.
-func streamsScan(ctx context.Context, clauses []pipelineClause) bool {
-	stream, _ := ctx.Value(armedResultStreamKey{}).(*ResultStream)
+func (stream *ResultStream) streamsScan(clauses []pipelineClause) bool {
 	return stream != nil && stream.frame != nil && len(clauses) > 0 && stream.frame == &clauses[len(clauses)-1]
 }
 
@@ -154,11 +151,14 @@ func (s *ResultStream) begin(columns []string) {
 // emit hands one RETURN row to the stream. It returns false when the
 // statement must stop: ctx was cancelled while the stream waited for the
 // consumer.
-func (s *ResultStream) emit(ctx context.Context, row []interface{}) bool {
+func (s *ResultStream) emit(ctx context.Context, owner *StorageExecutor, row []interface{}) bool {
+	// Every stream producer crosses the same visibility/lifetime boundary as
+	// a materialized result, before rows enter any consumer-owned buffer.
+	row = owner.publishQueryRow(row)
 	if !s.started {
 		s.buffered = append(s.buffered, row)
 		if len(s.buffered) > s.threshold {
-			s.start()
+			s.start(ctx)
 		}
 		return true
 	}
@@ -186,9 +186,9 @@ func (s *ResultStream) emit(ctx context.Context, row []interface{}) bool {
 	return true
 }
 
-func (s *ResultStream) start() {
+func (s *ResultStream) start(ctx context.Context) {
 	if s.mapColumns != nil {
-		s.columns = s.mapColumns(s.columns)
+		s.columns = s.mapColumns(ctx, s.columns)
 	}
 	s.recordBatch(s.buffered)
 	// The hand-over channels are only used once the statement streams;
@@ -226,9 +226,9 @@ func (s *ResultStream) end() ([][]interface{}, bool) {
 // threshold rows, the failure is past the first threshold rows: the stream
 // starts, so those rows reach the client and the error reaches the request
 // that asks past them, as an error after the stream started does (#939).
-func (s *ResultStream) fail() {
+func (s *ResultStream) fail(ctx context.Context) {
 	if !s.started && len(s.buffered) >= s.threshold {
-		s.start()
+		s.start(ctx)
 	}
 }
 
@@ -302,7 +302,9 @@ func (s *ResultStream) take(out, rows [][]interface{}, n int, rest *[][]interfac
 		room = n - len(out)
 	}
 	*rest = rows[room:]
-	return append(out, rows[:room:room]...)
+	out = append(out, rows[:room:room]...)
+	clear(rows[:room])
+	return out
 }
 
 // finishRows takes the statement's last partial batch once it finished.

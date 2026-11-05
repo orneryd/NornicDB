@@ -6,11 +6,13 @@ package apocimport
 
 import (
 	"encoding/csv"
-	"encoding/json"
 	"fmt"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"io"
 	"strconv"
 	"strings"
+
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 )
 
 // Node represents a graph node.
@@ -61,7 +63,7 @@ func Json(filePath string) (*ImportResult, error) {
 //	apoc.import.json.data('{"nodes": [...]}') => import result
 func JsonData(jsonStr string) (*ImportResult, error) {
 	var data map[string]interface{}
-	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+	if err := valueconvert.PropertyJSON.Unmarshal([]byte(jsonStr), &data); err != nil {
 		return nil, err
 	}
 
@@ -212,8 +214,7 @@ func Cypher(filePath string, config map[string]interface{}) (*ImportResult, erro
 //
 //	apoc.import.cypher.data('CREATE (n:Person {name: "Alice"})', {}) => import result
 func CypherData(cypherStr string, config map[string]interface{}) (*ImportResult, error) {
-	// Split by semicolon
-	statements := strings.Split(cypherStr, ";")
+	source := cyphertext.NormalizeSource(cypherStr)
 
 	result := &ImportResult{
 		Nodes:      0,
@@ -221,14 +222,10 @@ func CypherData(cypherStr string, config map[string]interface{}) (*ImportResult,
 		Errors:     []string{},
 	}
 
-	for _, stmt := range statements {
-		stmt = strings.TrimSpace(stmt)
-		if stmt == "" {
-			continue
-		}
-
-		// Simple parsing to count CREATE statements
-		if strings.HasPrefix(strings.ToUpper(stmt), "CREATE") {
+	for _, span := range source.StatementSpans() {
+		stmt := cypherStr[span.Start:span.End]
+		start, _ := cyphertext.GapEnd(stmt, 0)
+		if cyphertext.KeywordEnd(stmt, start, "CREATE", cyphertext.CypherWord) >= 0 {
 			result.Nodes++
 		}
 	}
@@ -340,7 +337,7 @@ func ParseCsvLine(line string, delimiter rune) []string {
 //	apoc.import.parseJsonLine('{"name":"Alice"}') => map
 func ParseJsonLine(line string) (map[string]interface{}, error) {
 	var data map[string]interface{}
-	if err := json.Unmarshal([]byte(line), &data); err != nil {
+	if err := valueconvert.PropertyJSON.Unmarshal([]byte(line), &data); err != nil {
 		return nil, err
 	}
 	return data, nil

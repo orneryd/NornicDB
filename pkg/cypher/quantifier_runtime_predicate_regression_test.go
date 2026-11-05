@@ -32,13 +32,16 @@ func TestQuantifierRuntimePredicateEvaluatorParity(t *testing.T) {
 	for _, function := range []string{"all", "any", "none", "single"} {
 		expression := fmt.Sprintf("%s(x IN [1,2] WHERE x+n.id)", function)
 		t.Run(function+"/text", func(t *testing.T) {
-			_, _, err := exec.evaluateRowValueText(expression, values)
+			_, _, err := exec.evaluateRowValueText(t.Context(), expression, values)
 			requireQuantifierRuntimeTypeError(t, err)
 		})
 		t.Run(function+"/compiled", func(t *testing.T) {
-			program := rowValueProgramFor(expression)
-			require.NotNil(t, program)
-			_, _, err := program.root.eval(exec, values, nil)
+			// Compile directly: rowValueProgramFor compiles a text only the
+			// second time the shared cache sees it, so its result depends on
+			// which tests ran before.
+			root, _ := (&rowValueCompiler{}).compile(t.Context(), expression)
+			require.Empty(t, firstRowTextNode(root), "the quantifier must not be read from the text")
+			_, _, err := root.eval(t.Context(), exec, values, nil)
 			requireQuantifierRuntimeTypeError(t, err)
 		})
 		t.Run(function+"/context", func(t *testing.T) {

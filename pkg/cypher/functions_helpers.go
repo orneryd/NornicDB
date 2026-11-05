@@ -1,24 +1,29 @@
 package cypher
 
+// Author: Codex NOR-184 lane: checked callable consumption, existing context policy.
+
 import (
 	"context"
 	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/orneryd/nornicdb/apoc/registry"
+
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // errUnsupportedPluginSignature is a plugin handler whose Go signature
 // callPluginHandler can't call.
-var errUnsupportedPluginSignature = errors.New("unsupported function signature")
+var errUnsupportedPluginSignature = registry.ErrUnsupportedSignature
 
 // pluginFunctionHandler is the one plugin function lookup, for the
 // unknown-function check and both evaluators: the loaded plugin's handler
 // for a dotted function name, matched as written. Plugin function names are
 // case-sensitive, as in Neo4j (apoc.text.camelCase, not apoc.text.camelcase;
 // #1163).
-func pluginFunctionHandler(name string) (interface{}, bool) {
+func pluginFunctionHandler(name string) (*PluginFunctionHandler, bool) {
 	if PluginFunctionLookup == nil || !strings.Contains(name, ".") {
 		return nil, false
 	}
@@ -31,9 +36,14 @@ func pluginFunctionHandler(name string) (interface{}, bool) {
 // with the statement error a failed call is. A plugin function overrides a
 // built-in of the same name; when its handler can't take a call, the
 // built-in answers instead: handled is false (#1163).
-func callPluginFunction(ctx context.Context, name string, handler interface{}, args []interface{}) (value interface{}, handled bool, err error) {
+func callPluginFunction(ctx context.Context, name string, handler *PluginFunctionHandler, args []interface{}) (value interface{}, handled bool, err error) {
 	if nativeAPOCForeignGraphHandler(name, handler) {
 		return nil, false, nil
+	}
+	if bundledAPOCMapHandler(name, handler, len(args)) {
+		if value, handled, err := apocMapNullResult(name, args); handled {
+			return value, true, err
+		}
 	}
 	result, err := callPluginHandlerContext(ctx, handler, args)
 	if errors.Is(err, errUnsupportedPluginSignature) {
@@ -52,7 +62,9 @@ func callPluginFunction(ctx context.Context, name string, handler interface{}, a
 // if no plugin has the function (or a built-in answers it instead). A call
 // the plugin fails is the statement's error, as in the row evaluator.
 func (e *StorageExecutor) tryCallPluginFunction(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) (interface{}, bool) {
-	funcName, argsStr, valid := parseFunctionCallWS(expr)
+	var callFacts1 functionCallFacts
+	valid := inspectFunctionCall(expr, qualifiedFunctionCall, "", &callFacts1)
+	funcName, argsStr := callFacts1.name, callFacts1.inner
 	if !valid {
 		return nil, false
 	}
@@ -65,10 +77,11 @@ func (e *StorageExecutor) tryCallPluginFunction(ctx context.Context, expr string
 	// Evaluate each argument
 	var evalArgs []interface{}
 	for _, arg := range args {
-		evalArgs = append(evalArgs, e.evaluateExpressionWithContextFull(ctx, arg, nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
-		if getExpressionFailure(ctx) != nil {
+		value, err := e.checkedPropertyExpression(ctx, arg, e.entityRowWithPaths(ctx, nodes, rels, paths))
+		if err != nil {
 			return nil, true
 		}
+		evalArgs = append(evalArgs, value)
 	}
 
 	var result interface{}
@@ -87,12 +100,7 @@ func (e *StorageExecutor) tryCallPluginFunction(ctx context.Context, expr string
 	return result, handled
 }
 
-// callPluginHandler invokes a plugin function handler with the given arguments.
-func callPluginHandler(handler interface{}, args []interface{}) (interface{}, error) {
-	return callPluginHandlerContext(context.Background(), handler, args)
-}
-
-func callPluginHandlerContext(ctx context.Context, handler interface{}, args []interface{}) (result interface{}, err error) {
+func callPluginHandlerContext(ctx context.Context, handler *PluginFunctionHandler, args []interface{}) (result interface{}, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -101,132 +109,13 @@ func callPluginHandlerContext(ctx context.Context, handler interface{}, args []i
 			result = nil
 			err = fmt.Errorf("plugin handler panic: %v", recovered)
 		}
+		result = cypherfn.FunctionResult(result)
 	}()
 
 	if handler == nil {
 		// Plugin dispatch consumes this registration invariant and falls back to
 		// built-in function handling; it is never returned by query execution.
 		return nil, fmt.Errorf("nil handler")
-	}
-
-	// Type-based dispatch for common function signatures
-	switch fn := handler.(type) {
-	// No args
-	case func() interface{}:
-		if len(args) == 0 {
-			return fn(), nil
-		}
-	case func() string:
-		if len(args) == 0 {
-			return fn(), nil
-		}
-	case func() int64:
-		if len(args) == 0 {
-			return fn(), nil
-		}
-	case func() float64:
-		if len(args) == 0 {
-			return fn(), nil
-		}
-
-	// Single arg functions
-	case func(interface{}) interface{}:
-		if len(args) == 1 {
-			return fn(args[0]), nil
-		}
-	case func([]interface{}) interface{}:
-		if len(args) == 1 {
-			if list, ok := args[0].([]interface{}); ok {
-				return fn(list), nil
-			}
-		}
-	case func([]interface{}) float64:
-		if len(args) == 1 {
-			if list, ok := args[0].([]interface{}); ok {
-				return fn(list), nil
-			}
-		}
-	case func(string) string:
-		if len(args) == 1 {
-			if s, ok := args[0].(string); ok {
-				return fn(s), nil
-			}
-		}
-	case func(float64) float64:
-		if len(args) == 1 {
-			if f, ok := toFloat64(args[0]); ok {
-				return fn(f), nil
-			}
-		}
-	case func([]float64) []float64:
-		if len(args) == 1 {
-			if list, ok := toFloat64Slice(args[0]); ok {
-				return fn(list), nil
-			}
-		}
-
-	// Two arg functions
-	case func(interface{}, interface{}) interface{}:
-		if len(args) == 2 {
-			return fn(args[0], args[1]), nil
-		}
-	case func([]interface{}, interface{}) bool:
-		if len(args) == 2 {
-			if list, ok := args[0].([]interface{}); ok {
-				return fn(list, args[1]), nil
-			}
-		}
-	case func([]interface{}, []interface{}) []interface{}:
-		if len(args) == 2 {
-			list1, ok1 := args[0].([]interface{})
-			list2, ok2 := args[1].([]interface{})
-			if ok1 && ok2 {
-				return fn(list1, list2), nil
-			}
-		}
-	case func(string, string) string:
-		if len(args) == 2 {
-			s1, ok1 := args[0].(string)
-			s2, ok2 := args[1].(string)
-			if ok1 && ok2 {
-				return fn(s1, s2), nil
-			}
-		}
-	case func(string, string) int:
-		if len(args) == 2 {
-			s1, ok1 := args[0].(string)
-			s2, ok2 := args[1].(string)
-			if ok1 && ok2 {
-				return fn(s1, s2), nil
-			}
-		}
-	case func(string, string) float64:
-		if len(args) == 2 {
-			s1, ok1 := args[0].(string)
-			s2, ok2 := args[1].(string)
-			if ok1 && ok2 {
-				return fn(s1, s2), nil
-			}
-		}
-	case func([]float64, []float64) float64:
-		if len(args) == 2 {
-			list1, ok1 := toFloat64Slice(args[0])
-			list2, ok2 := toFloat64Slice(args[1])
-			if ok1 && ok2 {
-				return fn(list1, list2), nil
-			}
-		}
-
-	// Three arg functions
-	case func(string, string, string) string:
-		if len(args) == 3 {
-			s1, ok1 := args[0].(string)
-			s2, ok2 := args[1].(string)
-			s3, ok3 := args[2].(string)
-			if ok1 && ok2 && ok3 {
-				return fn(s1, s2, s3), nil
-			}
-		}
 	}
 
 	return invokeTypedPlugin(ctx, handler, args)
@@ -242,48 +131,10 @@ func (e *StorageExecutor) evaluateMapLiteral(ctx context.Context, expr string, n
 
 // evaluateMapLiteralFull parses and evaluates a map literal with full path context
 func (e *StorageExecutor) evaluateMapLiteralFull(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) map[string]interface{} {
-	result := make(map[string]interface{})
-	keys := make([]string, 0)
-
-	expr = strings.TrimSpace(expr)
-	if !strings.HasPrefix(expr, "{") || !strings.HasSuffix(expr, "}") {
-		return result
+	value, err := e.materializePropertyMap(ctx, expr, e.entityRowWithPaths(ctx, nodes, rels, paths), true, true)
+	if err != nil {
+		recordExpressionFailure(ctx, err)
+		return nil
 	}
-
-	inner := strings.TrimSpace(expr[1 : len(expr)-1])
-	if inner == "" {
-		return result
-	}
-
-	// Split by commas, respecting nesting and quoted values.
-	pairs := splitTopLevelComma(inner)
-
-	for _, pair := range pairs {
-		pair = strings.TrimSpace(pair)
-		if pair == "" {
-			continue
-		}
-
-		colonIdx := findTopLevelMapKeyValueSeparator(pair)
-		if colonIdx == -1 {
-			continue
-		}
-
-		// Keep map-literal key normalization aligned with property/map parsing:
-		// supports backticked and quoted keys like `foo`, 'foo', "foo".
-		key := normalizePropertyKey(strings.TrimSpace(pair[:colonIdx]))
-		valueExpr := strings.TrimSpace(pair[colonIdx+1:])
-
-		// Evaluate the value expression in context with full path info
-		value := e.evaluateExpressionWithContextFull(ctx, valueExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if _, exists := result[key]; !exists {
-			keys = append(keys, key)
-		}
-		result[key] = value
-	}
-	if failure, ok := ctx.Value(expressionFailureKey{}).(*expressionFailure); ok {
-		failure.recordMapKeyOrder(result, keys)
-	}
-
-	return result
+	return value
 }

@@ -5,6 +5,8 @@ import (
 	"context"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -12,7 +14,7 @@ import (
 
 func newTestEngine(t *testing.T) storage.Engine {
 	t.Helper()
-	return storage.NewMemoryEngine()
+	return fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 }
 
 func TestGraphStreamer_StreamEdges(t *testing.T) {
@@ -21,13 +23,13 @@ func TestGraphStreamer_StreamEdges(t *testing.T) {
 
 	n1 := &storage.Node{ID: "nornic:n1", Labels: []string{"A"}, Properties: map[string]interface{}{}}
 	n2 := &storage.Node{ID: "nornic:n2", Labels: []string{"B"}, Properties: map[string]interface{}{}}
-	_, err := eng.CreateNode(n1)
+	_, err := eng.CreateNode(t.Context(), n1)
 	require.NoError(t, err)
-	_, err = eng.CreateNode(n2)
+	_, err = eng.CreateNode(t.Context(), n2)
 	require.NoError(t, err)
 
 	edge := &storage.Edge{ID: "nornic:e1", StartNode: "nornic:n1", EndNode: "nornic:n2", Type: "KNOWS", Properties: map[string]interface{}{}}
-	err = eng.CreateEdge(edge)
+	err = eng.CreateEdge(t.Context(), edge)
 	require.NoError(t, err)
 
 	streamer := NewGraphStreamer(eng, nil)
@@ -47,12 +49,12 @@ func TestGraphStreamer_StreamEdges_ContextCancelled(t *testing.T) {
 
 	n1 := &storage.Node{ID: "nornic:n1", Labels: []string{"A"}, Properties: map[string]interface{}{}}
 	n2 := &storage.Node{ID: "nornic:n2", Labels: []string{"B"}, Properties: map[string]interface{}{}}
-	_, err := eng.CreateNode(n1)
+	_, err := eng.CreateNode(t.Context(), n1)
 	require.NoError(t, err)
-	_, err = eng.CreateNode(n2)
+	_, err = eng.CreateNode(t.Context(), n2)
 	require.NoError(t, err)
 	edge := &storage.Edge{ID: "nornic:e1", StartNode: "nornic:n1", EndNode: "nornic:n2", Type: "KNOWS", Properties: map[string]interface{}{}}
-	err = eng.CreateEdge(edge)
+	err = eng.CreateEdge(t.Context(), edge)
 	require.NoError(t, err)
 
 	streamer := NewGraphStreamer(eng, nil)
@@ -69,7 +71,7 @@ func TestGraphStreamer_StreamEdges_ContextCancelled(t *testing.T) {
 func TestGraphStreamer_StreamEdges_Empty(t *testing.T) {
 	eng := newTestEngine(t)
 	n1 := &storage.Node{ID: "nornic:n1", Labels: []string{"A"}, Properties: map[string]interface{}{}}
-	_, err := eng.CreateNode(n1)
+	_, err := eng.CreateNode(t.Context(), n1)
 	require.NoError(t, err)
 
 	streamer := NewGraphStreamer(eng, nil)

@@ -17,7 +17,7 @@ func TestGH480_ChainedLabelSetMatchesCommaForm(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "gh480")
 			for _, id := range []int64{1, 2} {
-				_, err := store.CreateNode(&storage.Node{
+				_, err := store.CreateNode(t.Context(), &storage.Node{
 					ID: storage.NodeID(string(rune('0' + id))), Labels: []string{"A"},
 					Properties: map[string]interface{}{"id": id, "name": "n" + string(rune('0'+id))},
 				})

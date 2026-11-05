@@ -1,10 +1,18 @@
 package storage
 
 import (
+	"context"
+	"errors"
 	"fmt"
 )
 
-// RecoverBufferedCommits replays write-behind commits that were acknowledged
+// Recovery retains one batch plus the record currently being decoded, rather
+// than every unflushed commit in the WAL. A single larger commit remains atomic
+// and is applied alone; this is a batching target, not an allocator limit.
+const bufferedRecoveryBatchBytes int64 = 8 << 20
+
+// RecoverBufferedCommits replays accepted semantic transactions and write-behind
+// commits that were acknowledged
 // into the WAL but never reached Badger before a crash lost the in-memory
 // buffer. It runs at engine open, after both the engine and the WAL are
 // constructed and before the engine serves traffic.
@@ -19,9 +27,33 @@ import (
 // deltas: crash recovery is rare, and the authoritative rebuild is the same
 // recovery boundary the sync path uses.
 func RecoverBufferedCommits(engine Engine, wal *WAL) (int, error) {
+	return recoverAcceptedCommits(engine, wal, walForeignImport)
+}
+
+// RecoverBufferedCommitsAtOpen replays both accepted record kinds and is exclusively the constructor's recovery of a
+// store's own configured WAL directory, before traffic. That structural authority
+// preserves unstamped historical upgrades; a foreign-populated store cannot use it.
+func RecoverBufferedCommitsAtOpen(engine Engine, wal *WAL) (int, error) {
+	return recoverAcceptedCommits(engine, wal, walOwnDirectoryAtOpen)
+}
+
+func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthority) (int, error) {
 	b, ok := engine.(*BadgerEngine)
-	if !ok || b == nil || wal == nil || b.writeBehind == nil {
+	if !ok || b == nil || wal == nil {
 		return 0, nil
+	}
+	if err := ValidateWALFormat(wal.config.Dir, WALValidateCurrent); err != nil {
+		return 0, err
+	}
+	// The batch reader retains engine state through import, physical apply
+	// and count repair. Close rejects later admissions and waits for this lease.
+	_, err := b.beginHelperTxn()
+	if err != nil {
+		return 0, err
+	}
+	defer b.work.Leave()
+	if err := b.FlushWriteBehind(context.Background()); err != nil {
+		return 0, fmt.Errorf("wal: complete preceding writes before recovery: %w", err)
 	}
 
 	// A kill -9 can leave a torn tail record at EOF. Truncate it back to
@@ -31,68 +63,131 @@ func RecoverBufferedCommits(engine Engine, wal *WAL) (int, error) {
 	_, _, _ = repairWALTailIfNeeded(activePath, defaultWALLogger{})
 
 	var pending []bufferedCommit
-	err := VisitWALEntriesAfterFromDir(wal.config.Dir, 0, func(entry WALEntry) error {
+	var historicalNumericAliases map[walNumericToken]string
+	var pendingBytes int64
+	replayed := 0
+	flush := func() error {
+		if len(pending) == 0 {
+			return nil
+		}
+		if err := b.applyBufferedCommits(pending); err != nil {
+			return fmt.Errorf("wal: replaying %d buffered commits: %w", len(pending), err)
+		}
+		replayed += len(pending)
+		clear(pending)
+		pending = pending[:0]
+		pendingBytes = 0
+		return nil
+	}
+	err = VisitWALEntriesAfterFromDir(wal.config.Dir, 0, func(entry WALEntry) error {
+		if entry.Operation == OpEntityCommit {
+			// Keep the existing streaming replay owner: an earlier physical
+			// batch must finish before this semantic record can inspect its
+			// same-commit logical receipt.
+			if err := flush(); err != nil {
+				return err
+			}
+			var record walEntityCommitData
+			if err := decodeRecoveryPayload(entry.Data, &record); err != nil {
+				return err
+			}
+			envelope, ops, err := DecodeEntityTransaction(record.Payload)
+			if err != nil {
+				return err
+			}
+			// Both reads below are physical-only: the record's own marker,
+			// never the pending generations, which replay does not consult.
+			receipt, err := b.observeBufferedCommitReceipt(context.Background(), bufferedReceiptRead{namespace: envelope.Namespace, logicalID: envelope.LogicalTxID})
+			if err != nil {
+				return err
+			}
+			if receipt.present {
+				return nil
+			}
+			// Recovery applies an already accepted record physically, as the
+			// existing buffered replay does; it must not emit a fresh ACK or
+			// append another buffered record while visiting this WAL.
+			envelope.Mode = CommitModeDirect
+			accepted, err := SubmitAcceptedEntityTransaction(context.Background(), b, envelope, ops, nil)
+			if err != nil {
+				return err
+			}
+			if outcome := accepted.WaitOutcome(context.Background()); outcome.Err != nil {
+				return outcome.Err
+			}
+			replayed++
+			return nil
+		}
 		if entry.Operation != OpBufferedCommit {
 			return nil
 		}
-		var data WALBufferedCommitData
-		payload, err := decompressWALBufferedCommitPayload(entry.Data)
+		data, err := decodeBufferedWALRecord(entry)
 		if err != nil {
 			return err
-		}
-		if err := decodeRecoveryPayload(payload, &data); err != nil {
-			return fmt.Errorf("wal: failed to unmarshal buffered commit %d: %w", entry.Sequence, err)
 		}
 		if data.TxID == "" {
 			return nil
 		}
-		exists, err := b.bufferedFlushMarkerExists(data.TxID)
+		marker, err := b.observeBufferedCommitReceipt(context.Background(), bufferedReceiptRead{namespace: data.Namespace, txID: data.TxID, logicalID: data.LogicalTxID})
 		if err != nil {
 			return fmt.Errorf("wal: failed to check flush marker for %q: %w", data.TxID, err)
 		}
-		if exists {
-			return nil // already applied to Badger
+		if marker.present {
+			return nil // each remaining record supplies its own authority
 		}
-		c := bufferedCommit{
-			recovered:      true,
-			namespace:      data.Namespace,
-			txID:           data.TxID,
-			ops:            data.Ops,
-			writes:         data.Writes,
-			version:        data.Version,
-			counterNodeMax: data.NodeMax,
-			counterEdgeMax: data.EdgeMax,
-			hasCounters:    data.HasCounters,
-			propKeyDrain:   data.propKeyDrain(),
+		if authority == walOwnDirectoryAtOpen && len(data.NumericBindings) == 0 {
+			if historicalNumericAliases == nil {
+				historicalNumericAliases = make(map[walNumericToken]string)
+			}
+			data.numericAliases = historicalNumericAliases
 		}
-		if len(data.Deletes) > 0 {
-			c.deletes = make(map[string]bool, len(data.Deletes))
-			for _, key := range data.Deletes {
-				c.deletes[key] = true
+		c, err := b.importBufferedWALRecord(&data, authority)
+		if err != nil {
+			return err
+		}
+		bytes := estimateBufferedCommitBytes(&c)
+		if len(pending) > 0 && bytes > bufferedRecoveryBatchBytes-pendingBytes {
+			if err := flush(); err != nil {
+				return err
 			}
 		}
 		pending = append(pending, c)
+		pendingBytes += bytes
+		if pendingBytes >= bufferedRecoveryBatchBytes {
+			return flush()
+		}
 		return nil
 	})
-	if err != nil {
+	if err == nil {
+		err = flush()
+	}
+	if replayed == 0 {
 		return 0, err
 	}
-	if len(pending) == 0 {
-		return 0, nil
-	}
+	return replayed, b.completeRecoveredCounts(context.Background(), err)
+}
 
-	if err := b.applyBufferedCommits(pending); err != nil {
-		return 0, fmt.Errorf("wal: replaying %d buffered commits: %w", len(pending), err)
+// completeRecoveredCounts is the completion owner for physical WAL recovery.
+// Transported records carry entity bodies, not destination-local count deltas.
+// Reconcile once per recovery batch, including a partially applied batch whose
+// later record failed, rather than scanning the store for every WAL record.
+func (b *BadgerEngine) completeRecoveredCounts(ctx context.Context, recoveryErr error) error {
+	// A final semantic bulk record may itself be acknowledged into the buffer.
+	// Count verification reads physical bodies, so finish those accepted writes
+	// before reconciling their derived metadata.
+	if err := b.FlushWriteBehind(ctx); err != nil {
+		return errors.Join(recoveryErr, fmt.Errorf("wal: complete recovered writes: %w", err))
 	}
-
 	// The replayed commits carried no count deltas; rebuild the derived
 	// counts from committed entities so readers never observe committed
 	// entities without their counts.
-	if err := b.ensureLabelCounts(); err != nil {
-		return len(pending), fmt.Errorf("wal: rebuild label counts after buffered replay: %w", err)
+	// Completed batches remain durable if a later record fails. Repair their
+	// counts as well, while preserving the original recovery failure.
+	if countErr := b.ensureLabelCounts(ctx); countErr != nil {
+		recoveryErr = errors.Join(recoveryErr, fmt.Errorf("wal: rebuild label counts after recovery: %w", countErr))
 	}
-	if err := b.ensureEdgeTypeCounts(); err != nil {
-		return len(pending), fmt.Errorf("wal: rebuild edge-type counts after buffered replay: %w", err)
+	if countErr := b.ensureEdgeTypeCounts(ctx); countErr != nil {
+		recoveryErr = errors.Join(recoveryErr, fmt.Errorf("wal: rebuild edge-type counts after recovery: %w", countErr))
 	}
-	return len(pending), nil
+	return recoveryErr
 }

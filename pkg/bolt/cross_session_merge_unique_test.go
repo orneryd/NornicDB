@@ -3,6 +3,7 @@ package bolt
 import (
 	"bytes"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"net"
 	"sync"
 	"testing"
@@ -203,7 +204,7 @@ func runBoltExplicitTxAttempt(t *testing.T, port int, query string) (error, bool
 // stay coherent) and serves as the contract pin. The concurrent variant
 // below is the one that goes red.
 func TestBoltCrossSessionMergeUniqueConflict_Sequential(t *testing.T) {
-	baseStore := storage.NewMemoryEngine()
+	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	_, port := startBoltIntegrationServer(t, store)
 
@@ -244,7 +245,7 @@ func TestBoltCrossSessionMergeUniqueConflict_Sequential(t *testing.T) {
 // the loser; it must not silently create duplicates or rely on server-side
 // transaction replay.
 func TestBoltCrossSessionMergeUniqueConflict_Concurrent(t *testing.T) {
-	baseStore := storage.NewMemoryEngine()
+	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	_, port := startBoltIntegrationServer(t, store)
 
@@ -453,7 +454,7 @@ func runBoltUnwindMergeExplicitTxAttempt(t *testing.T, port int, label string, r
 // COMMIT envelopes. The helper retries only when the server returns a
 // Neo.TransientError.* response, mirroring neo4j-go-driver ExecuteWrite.
 func TestBoltCrossSessionMergeUniqueConflict_Concurrent_ExplicitTx(t *testing.T) {
-	baseStore := storage.NewMemoryEngine()
+	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
 
@@ -512,7 +513,7 @@ func TestBoltCrossSessionMergeUniqueConflict_Concurrent_ExplicitTx(t *testing.T)
 // transient race, not a ConstraintValidationFailed the driver gives up on
 // (#961).
 func TestBoltCrossSessionMultiMergeUniqueConflict_Concurrent_ExplicitTx(t *testing.T) {
-	baseStore := storage.NewMemoryEngine()
+	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
 
@@ -562,7 +563,7 @@ func TestBoltCrossSessionMultiMergeUniqueConflict_Concurrent_ExplicitTx(t *testi
 // production: many retry-aware Bolt sessions doing UNWIND $rows AS row
 // MERGE (...) SET ... on overlapping uid sets.
 func TestBoltCrossSessionMergeUniqueConflict_Concurrent_UnwindExplicitTx(t *testing.T) {
-	baseStore := storage.NewMemoryEngine()
+	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
 
@@ -633,7 +634,7 @@ func TestBoltCrossSessionMergeUniqueConflict_Concurrent_UnwindExplicitTx(t *test
 // every attempt (a CREATE, or a MERGE whose SET writes another node's value)
 // fails the statement with ConstraintValidationFailed and stores nothing.
 func TestBoltExplicitTxStatementUniqueViolationCode(t *testing.T) {
-	baseStore := storage.NewMemoryEngine()
+	baseStore := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() {
 		_ = baseStore.Close()
 	})

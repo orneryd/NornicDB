@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"io"
 	"net"
 	"net/http"
@@ -37,7 +38,7 @@ func startWSBoltServer(t *testing.T, cfg *Config) (*Server, int) {
 		cfg.WriteBufferSize = 8192
 	}
 
-	baseStore := storage.NewMemoryEngine()
+	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "wstest")
 	executor := &cypherQueryExecutor{executor: cypher.NewStorageExecutor(store)}
 	server := New(cfg, executor)
@@ -313,14 +314,14 @@ func startAuthEnabledWSBoltServer(t *testing.T) (port int, adminToken string, ba
 	authCfg := auth.DefaultAuthConfig()
 	authCfg.JWTSecret = []byte("test-secret-key-for-jwt-signing!!")
 	authCfg.SecurityEnabled = true
-	mem := storage.NewMemoryEngine()
+	mem := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authenticator, err := auth.NewAuthenticator(authCfg, mem)
 	requireNoError(t, err)
 
-	_, err = authenticator.CreateUser("admin", "admin-password", []auth.Role{auth.RoleAdmin})
+	_, err = authenticator.CreateUser(context.Background(), "admin", "admin-password", []auth.Role{auth.RoleAdmin})
 	requireNoError(t, err)
 
-	tokenResp, _, err := authenticator.Authenticate("admin", "admin-password", "127.0.0.1", "test")
+	tokenResp, _, err := authenticator.Authenticate(context.Background(), "admin", "admin-password", "127.0.0.1", "test")
 	requireNoError(t, err)
 	if tokenResp == nil || tokenResp.AccessToken == "" {
 		t.Fatal("expected admin token from Authenticate")

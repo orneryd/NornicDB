@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"sort"
@@ -23,18 +25,17 @@ func TestStreamNodesOptionsParityAcrossStacks(t *testing.T) {
 	}
 	stacks := []stackCase{
 		{name: "memory", prefix: "db:", count: 3, build: func(t *testing.T) Engine {
-			engine := NewMemoryEngine()
-			t.Cleanup(func() { _ = engine.Close() })
+			engine := newTestMemoryEngine(t)
 			return engine
 		}},
 		{name: "badger", prefix: "db:", count: 3, build: func(t *testing.T) Engine {
-			engine, err := NewBadgerEngineInMemory()
+			engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = engine.Close() })
 			return engine
 		}},
 		{name: "wal", prefix: "db:", count: 3, build: func(t *testing.T) Engine {
-			engine, err := NewBadgerEngineInMemory()
+			engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = engine.Close() })
 			wal, err := NewWAL(t.TempDir(), nil)
@@ -43,13 +44,13 @@ func TestStreamNodesOptionsParityAcrossStacks(t *testing.T) {
 			return NewWALEngine(engine, wal)
 		}},
 		{name: "namespaced", prefix: "n-", count: 3, build: func(t *testing.T) Engine {
-			engine, err := NewBadgerEngineInMemory()
+			engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = engine.Close() })
 			return NewNamespacedEngine(engine, "db")
 		}},
 		{name: "composite", prefix: "", count: 2, build: func(t *testing.T) Engine {
-			engine, err := NewBadgerEngineInMemory()
+			engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = engine.Close() })
 			nsA := NewNamespacedEngine(engine, "a")
@@ -69,24 +70,24 @@ func TestStreamNodesOptionsParityAcrossStacks(t *testing.T) {
 
 			switch e := engine.(type) {
 			case *NamespacedEngine:
-				_, err := e.CreateNode(&Node{ID: "n-1", Labels: []string{"Doc"}, Properties: map[string]any{"a": int64(1), "b": "two"}})
+				_, err := e.CreateNode(t.Context(), &Node{ID: "n-1", Labels: []string{"Doc"}, Properties: map[string]any{"a": int64(1), "b": "two"}})
 				require.NoError(t, err)
-				_, err = e.CreateNode(&Node{ID: "n-2", Labels: []string{"Doc"}, Properties: map[string]any{"a": int64(2)}})
+				_, err = e.CreateNode(t.Context(), &Node{ID: "n-2", Labels: []string{"Doc"}, Properties: map[string]any{"a": int64(2)}})
 				require.NoError(t, err)
-				_, err = e.CreateNode(&Node{ID: "n-3", Labels: []string{"Other"}, Properties: map[string]any{"a": int64(3)}})
+				_, err = e.CreateNode(t.Context(), &Node{ID: "n-3", Labels: []string{"Other"}, Properties: map[string]any{"a": int64(3)}})
 				require.NoError(t, err)
 			case *CompositeEngine:
 				nsA, err := e.GetConstituentByAlias("a")
 				require.NoError(t, err)
 				nsB, err := e.GetConstituentByAlias("b")
 				require.NoError(t, err)
-				_, err = nsA.CreateNode(&Node{ID: "n-1", Labels: []string{"Doc"}, Properties: map[string]any{"a": int64(1)}})
+				_, err = nsA.CreateNode(t.Context(), &Node{ID: "n-1", Labels: []string{"Doc"}, Properties: map[string]any{"a": int64(1)}})
 				require.NoError(t, err)
-				_, err = nsB.CreateNode(&Node{ID: "n-2", Labels: []string{"Doc"}, Properties: map[string]any{"a": int64(2)}})
+				_, err = nsB.CreateNode(t.Context(), &Node{ID: "n-2", Labels: []string{"Doc"}, Properties: map[string]any{"a": int64(2)}})
 				require.NoError(t, err)
 			default:
 				for index := int64(1); index <= 3; index++ {
-					_, err := engine.CreateNode(&Node{ID: NodeID(fmt.Sprintf("db:n-%d", index)), Labels: []string{"Doc"}, Properties: map[string]any{"a": index}})
+					_, err := engine.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("db:n-%d", index)), Labels: []string{"Doc"}, Properties: map[string]any{"a": index}})
 					require.NoError(t, err)
 				}
 			}

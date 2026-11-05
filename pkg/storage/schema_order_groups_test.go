@@ -26,8 +26,11 @@ func TestSchemaOrderExactIntegers(t *testing.T) {
 		{"signed below unsigned range", int64(9223372036854775807), ^uint64(0), -1},
 		{"negative unsigned", int64(-1), uint64(0), -1},
 		{"unsigned negative", uint64(0), int64(-1), 1},
-		{"mixed float widening", larger, float64(smaller), 0},
-		{"mixed float widening reverse", float64(smaller), larger, 0},
+		// An integer orders against a float exactly, as Cypher compares stored
+		// numbers (compareCypherNumbersExactly, #893), never widened to float64.
+		{"mixed float exact", larger, float64(smaller), 1},
+		{"mixed float exact reverse", float64(smaller), larger, -1},
+		{"mixed float equal", smaller, float64(smaller), 0},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			require.Equal(t, test.want, compareSchemaIndexValues(test.left, test.right))
@@ -37,22 +40,22 @@ func TestSchemaOrderExactIntegers(t *testing.T) {
 	t.Run("raw integer keys", func(t *testing.T) {
 		schema := NewSchemaManager()
 		require.NoError(t, schema.AddPropertyIndex("rank", "Item", []string{"rank"}))
-		index, _ := schema.GetPropertyIndex("Item", "rank")
+		index, _ := checkedIndexRange[*PropertyIndex](t)(schema.GetPropertyIndex(t.Context(), "Item", "rank"))
 		index.values[larger] = []NodeID{"a-larger"}
 		index.values[smaller] = []NodeID{"z-smaller"}
 		index.keysDirty = true
 		for _, descending := range []bool{false, true} {
 			var groups [][]NodeID
-			require.True(t, schema.VisitPropertyIndexGroups("Item", "rank", descending, func(ids []NodeID) bool {
+			require.True(t, checkedIndexRead[bool](t)(schema.VisitPropertyIndexGroups(t.Context(), "Item", "rank", descending, func(ids []NodeID) bool {
 				groups = append(groups, ids)
 				return true
-			}))
+			})))
 			want := [][]NodeID{{"z-smaller"}, {"a-larger"}}
 			if descending {
 				want = [][]NodeID{{"a-larger"}, {"z-smaller"}}
 			}
 			require.Equal(t, want, groups)
-			require.Equal(t, want[0], schema.PropertyIndexTopK("Item", "rank", 1, descending))
+			require.Equal(t, want[0], checkedIndexRead[[]NodeID](t)(schema.PropertyIndexTopK(t.Context(), "Item", "rank", 1, descending)))
 		}
 	})
 }
@@ -60,16 +63,16 @@ func TestSchemaOrderExactIntegers(t *testing.T) {
 func TestVisitPropertyIndexGroups(t *testing.T) {
 	sm := NewSchemaManager()
 	called := false
-	require.False(t, sm.VisitPropertyIndexGroups("Item", "rank", false, func([]NodeID) bool {
+	require.False(t, checkedIndexRead[bool](t)(sm.VisitPropertyIndexGroups(t.Context(), "Item", "rank", false, func([]NodeID) bool {
 		called = true
 		return true
-	}))
+	})))
 	require.False(t, called)
 	require.NoError(t, sm.AddPropertyIndex("rank", "Item", []string{"rank"}))
-	require.True(t, sm.VisitPropertyIndexGroups("Item", "rank", false, func([]NodeID) bool {
+	require.True(t, checkedIndexRead[bool](t)(sm.VisitPropertyIndexGroups(t.Context(), "Item", "rank", false, func([]NodeID) bool {
 		called = true
 		return true
-	}))
+	})))
 	require.False(t, called)
 	for _, entry := range []struct {
 		id    NodeID
@@ -81,12 +84,12 @@ func TestVisitPropertyIndexGroups(t *testing.T) {
 	}
 	for _, descending := range []bool{false, true} {
 		var groups [][]NodeID
-		require.True(t, sm.VisitPropertyIndexGroups("Item", "rank", descending, func(ids []NodeID) bool {
+		require.True(t, checkedIndexRead[bool](t)(sm.VisitPropertyIndexGroups(t.Context(), "Item", "rank", descending, func(ids []NodeID) bool {
 			groups = append(groups, ids)
 			// The callback can safely use the index API; no index lock is held.
-			require.Equal(t, []NodeID{"c"}, sm.PropertyIndexLookup("Item", "rank", int64(2)))
+			require.Equal(t, []NodeID{"c"}, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "Item", "rank", int64(2))))
 			return true
-		}))
+		})))
 		expected := [][]NodeID{{"a", "b"}, {"c"}}
 		if descending {
 			expected = [][]NodeID{{"c"}, {"a", "b"}}
@@ -94,11 +97,11 @@ func TestVisitPropertyIndexGroups(t *testing.T) {
 		require.Equal(t, expected, groups)
 	}
 	visits := 0
-	require.True(t, sm.VisitPropertyIndexGroups("Item", "rank", false, func(ids []NodeID) bool {
+	require.True(t, checkedIndexRead[bool](t)(sm.VisitPropertyIndexGroups(t.Context(), "Item", "rank", false, func(ids []NodeID) bool {
 		visits++
 		require.Equal(t, []NodeID{"a", "b"}, ids)
 		return false
-	}))
+	})))
 	require.Equal(t, 1, visits)
 }
 
@@ -110,7 +113,7 @@ func TestVisitPropertyIndexGroupsSnapshotsMembership(t *testing.T) {
 
 	var visited []NodeID
 	group := 0
-	require.True(t, sm.VisitPropertyIndexGroups("Item", "rank", false, func(ids []NodeID) bool {
+	require.True(t, checkedIndexRead[bool](t)(sm.VisitPropertyIndexGroups(t.Context(), "Item", "rank", false, func(ids []NodeID) bool {
 		visited = append(visited, ids...)
 		if group == 0 {
 			require.NoError(t, sm.PropertyIndexDelete("Item", "rank", "x", int64(1)))
@@ -118,6 +121,6 @@ func TestVisitPropertyIndexGroupsSnapshotsMembership(t *testing.T) {
 		}
 		group++
 		return true
-	}))
+	})))
 	require.Equal(t, []NodeID{"x", "y"}, visited)
 }

@@ -3,6 +3,7 @@ package auth
 
 import (
 	"encoding/json"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -61,7 +62,7 @@ func TestOAuthManager_GenerateAuthURL(t *testing.T) {
 
 	authConfig := DefaultAuthConfig()
 	authConfig.JWTSecret = []byte("test-secret-key-for-testing-only-32b")
-	memoryStorage := storage.NewMemoryEngine()
+	memoryStorage := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	auth, err := NewAuthenticator(authConfig, memoryStorage)
 	require.NoError(t, err)
 
@@ -86,7 +87,7 @@ func TestOAuthManager_ValidateState(t *testing.T) {
 
 	authConfig := DefaultAuthConfig()
 	authConfig.JWTSecret = []byte("test-secret-key-for-testing-only-32b")
-	memoryStorage := storage.NewMemoryEngine()
+	memoryStorage := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	auth, err := NewAuthenticator(authConfig, memoryStorage)
 	require.NoError(t, err)
 
@@ -144,7 +145,7 @@ func TestOAuthManager_ExchangeCode(t *testing.T) {
 
 	authConfig := DefaultAuthConfig()
 	authConfig.JWTSecret = []byte("test-secret-key-for-testing-only-32b")
-	memoryStorage := storage.NewMemoryEngine()
+	memoryStorage := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	auth, err := NewAuthenticator(authConfig, memoryStorage)
 	require.NoError(t, err)
 
@@ -192,7 +193,7 @@ func TestOAuthManager_GetUserInfo(t *testing.T) {
 
 	authConfig := DefaultAuthConfig()
 	authConfig.JWTSecret = []byte("test-secret-key-for-testing-only-32b")
-	memoryStorage := storage.NewMemoryEngine()
+	memoryStorage := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	auth, err := NewAuthenticator(authConfig, memoryStorage)
 	require.NoError(t, err)
 
@@ -237,7 +238,7 @@ func TestOAuthManager_ValidateOAuthToken(t *testing.T) {
 
 	authConfig := DefaultAuthConfig()
 	authConfig.JWTSecret = []byte("test-secret-key-for-testing-only-32b")
-	memoryStorage := storage.NewMemoryEngine()
+	memoryStorage := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	auth, err := NewAuthenticator(authConfig, memoryStorage)
 	require.NoError(t, err)
 

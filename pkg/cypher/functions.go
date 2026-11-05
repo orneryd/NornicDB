@@ -6,9 +6,12 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/apoc/registry"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strconv"
 	"strings"
 
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -41,10 +44,14 @@ var PluginFunctionList func() []PluginFunctionInfo
 // PluginFunctionLookup is a callback to look up functions from loaded plugins.
 // Set by pkg/nornicdb during database initialization.
 // Returns the function handler and true if found, nil and false otherwise.
-var PluginFunctionLookup func(name string) (handler interface{}, found bool)
+// PluginFunctionHandler is an admitted callable. Raw Go functions must pass
+// registry.Compile before lookup publication. Author: Codex NOR-184 lane.
+type PluginFunctionHandler = registry.Callable
+
+var PluginFunctionLookup func(name string) (handler *PluginFunctionHandler, found bool)
 
 func isFunctionCall(expr, funcName string) bool {
-	return isFunctionCallWS(expr, funcName)
+	return inspectFunctionCall(expr, namedFunctionCall, funcName, nil)
 }
 
 // evaluateExpression evaluates an expression for a single node context.
@@ -66,39 +73,28 @@ func (e *StorageExecutor) evaluateExpressionWithContext(ctx context.Context, exp
 // values must preserve that distinction instead of replacing null with the
 // original expression text or another fallback value.
 func (e *StorageExecutor) evaluateExpressionWithContextDefined(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, bool) {
-	value := e.evaluateExpressionWithContext(ctx, expr, nodes, rels)
-	if value != nil {
-		return value, true
-	}
-	expr = strings.TrimSpace(expr)
-	if strings.EqualFold(expr, "null") || isCaseExpression(expr) || looksLikeFunctionCall(expr) {
-		return nil, true
-	}
-	if dot := strings.IndexByte(expr, '.'); dot > 0 {
-		variable := expr[:dot]
-		if _, ok := nodes[variable]; ok {
-			return nil, true
-		}
-		if _, ok := rels[variable]; ok {
-			return nil, true
-		}
-	}
-	for _, operator := range []string{
-		" AND ", " OR ", " XOR ", " NOT IN ", " IN ", " STARTS WITH ", " ENDS WITH ", " CONTAINS ",
-		"<=", ">=", "<>", "!=", "=~", "=", "<", ">", "+", "-", "*", "/", "%", "^",
-	} {
-		if _, _, ok := splitByOperatorWithOptions(expr, operator, true, true); ok {
-			return nil, true
-		}
-	}
-	upper := upperASCII(expr)
-	if strings.HasPrefix(upper, "NOT ") || strings.HasSuffix(upper, " IS NULL") || strings.HasSuffix(upper, " IS NOT NULL") {
-		return nil, true
-	}
-	return nil, false
+	value, resolved, err := e.evaluateContextExpressionResult(ctx, expr, nodes, rels)
+	recordExpressionFailure(ctx, err)
+	return value, resolved
 }
 
-func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
+// Context dispatch's handled flag selects an implementation. Resolution belongs
+// to this result boundary; errors cannot be presented as successful NULL values.
+func (e *StorageExecutor) evaluateContextExpressionResult(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, bool, error) {
+	ctx = withExpressionFailureSlot(ctx)
+	if strings.TrimSpace(expr) == "" {
+		return nil, false, nil
+	}
+	value := e.evaluateExpressionWithContext(ctx, expr, nodes, rels)
+	err := getExpressionFailure(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	return value, true, nil
+}
+
+func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) (result interface{}) {
+	defer func() { result = cypherfn.RuntimeValue(result) }()
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
 		return nil
@@ -112,8 +108,11 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 			head = head[:len("allShortestPaths")]
 		}
 		if equalFoldASCII(head[:len("shortestPath")], "shortestpath") || equalFoldASCII(head, "allshortestpaths") {
-			if name, inner, ok := parseFunctionCallWS(expr); ok &&
-				(strings.EqualFold(name, "shortestPath") || strings.EqualFold(name, "allShortestPaths")) {
+			var callFacts1 functionCallFacts
+			if ok := inspectFunctionCall(expr, qualifiedFunctionCall, "", &callFacts1); ok &&
+				(strings.EqualFold(callFacts1.name, "shortestPath") || strings.EqualFold(callFacts1.name, "allShortestPaths")) {
+				name, inner := callFacts1.name, callFacts1.inner
+
 				if value, handled, err := e.evaluateShortestPathValue(ctx, name, inner, nodes); handled {
 					if err != nil {
 						recordExpressionFailure(ctx, err)
@@ -123,25 +122,36 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 			}
 		}
 	}
-	if expr[len(expr)-1] == '}' {
+	if expr[len(expr)-1] == '}' && !handedBackByRowEvaluator(ctx, expr) {
 		// A map projection (o {.s}, n {.*, k: 1}) has one implementation, the
 		// row evaluator's (evaluateRowMapProjection), whatever evaluates it:
 		// SET n = o {.s} among others (#907).
-		if _, _, projection := rowMapProjectionSplit(expr); projection {
-			value, _ := e.evaluateRowExpressionWithContext(ctx, expr, entityRow(ctx, nodes, rels))
+		if _, _, projection := mapProjectionSplit(expr, mapProjectionRuntime, nil); projection {
+			value, _ := e.checkedPropertyExpression(ctx, expr, entityRow(ctx, nodes, rels))
 			return value
 		}
 	}
-	if mayContainSubqueryExpression(expr) && len(findSubqueryExpressions(expr)) > 0 {
+	if mayContainSubqueryExpression(expr) && !handedBackByRowEvaluator(ctx, expr) && len(findSubqueryExpressions(expr)) > 0 {
 		// A subquery expression, alone or in a larger expression, is
 		// evaluated by the row evaluator where it stands, with this row's
 		// entities, paths and values (#1055).
-		value, _ := e.evaluateRowExpressionWithContext(ctx, expr, e.entityRowWithPaths(ctx, nodes, rels, paths))
+		value, _ := e.checkedPropertyExpression(ctx, expr, e.entityRowWithPaths(ctx, nodes, rels, paths))
 		return value
 	}
 	if pattern, projection, ok := splitPatternComprehension(expr); ok {
 		return e.evaluatePatternComprehension(ctx, pattern, projection, nodes, rels)
 	}
+	if open := rowSubscriptStart(expr); open > 0 {
+		value, _, err := e.evaluateCypherSubscript(expr[:open], strings.TrimSpace(expr[open+1:len(expr)-1]), func(part string) (interface{}, bool, error) {
+			value := e.evaluateExpressionWithContextFull(ctx, part, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			return value, true, getExpressionFailure(ctx)
+		})
+		if err != nil {
+			recordExpressionFailure(ctx, err)
+		}
+		return value
+	}
+
 	// Direct $param resolution preserves declared types end-to-end.
 	// substituteParams's type-preserving short-circuit leaves "$name" as
 	// a literal here for composite values; without this branch the
@@ -149,13 +159,13 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 	// it, []string / []float64 / map[string]any params keep their
 	// declared shape through reduce(), list comprehensions, SET, and
 	// every other expression context.
-	if v, ok := resolveDirectParamRef(ctx, expr); ok {
+	if v, ok := resolveValueReference(ctx, expr, parameterName); ok {
 		return v
 	}
 	// Resolve dotted/bracketed parameter map paths like $d.uuid and
 	// $d['uuid'] as typed values.
-	if v, ok := resolveParamPathRef(ctx, expr); ok {
-		return normalizePropValue(v)
+	if v, ok := resolveValueReference(ctx, expr, parameterPath); ok {
+		return normalizeExpressionValue(v)
 	}
 	if baseExpr, property, ok := splitPostfixPropertyAccess(expr); ok {
 		base := e.evaluateExpressionWithContextFull(ctx, baseExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
@@ -216,61 +226,14 @@ func (e *StorageExecutor) evaluateExpressionWithCASESubstituted(ctx context.Cont
 }
 
 func splitPostfixPropertyAccess(expr string) (string, string, bool) {
-	parenDepth, bracketDepth, braceDepth := 0, 0, 0
-	inSingle, inDouble, inBacktick := false, false, false
 	lastDot := -1
-	for index := 0; index < len(expr); index++ {
-		ch := expr[index]
-		if ch == '\\' && (inSingle || inDouble) {
-			index++
-			continue
+	for offset := 0; offset < len(expr); {
+		dot := findTopLevelOperator(expr[offset:], ".", false, true)
+		if dot < 0 {
+			break
 		}
-		// A backtick-quoted name may hold any character, dots included.
-		if ch == '`' && !inSingle && !inDouble {
-			inBacktick = !inBacktick
-			continue
-		}
-		if inBacktick {
-			continue
-		}
-		switch ch {
-		case '\'':
-			if !inDouble {
-				inSingle = !inSingle
-			}
-		case '"':
-			if !inSingle {
-				inDouble = !inDouble
-			}
-		case '(':
-			if !inSingle && !inDouble {
-				parenDepth++
-			}
-		case ')':
-			if !inSingle && !inDouble && parenDepth > 0 {
-				parenDepth--
-			}
-		case '[':
-			if !inSingle && !inDouble {
-				bracketDepth++
-			}
-		case ']':
-			if !inSingle && !inDouble && bracketDepth > 0 {
-				bracketDepth--
-			}
-		case '{':
-			if !inSingle && !inDouble {
-				braceDepth++
-			}
-		case '}':
-			if !inSingle && !inDouble && braceDepth > 0 {
-				braceDepth--
-			}
-		case '.':
-			if !inSingle && !inDouble && parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 {
-				lastDot = index
-			}
-		}
+		lastDot = offset + dot
+		offset = lastDot + 1
 	}
 	if lastDot <= 0 || lastDot == len(expr)-1 {
 		return "", "", false
@@ -278,7 +241,7 @@ func splitPostfixPropertyAccess(expr string) (string, string, bool) {
 	property := strings.TrimSpace(expr[lastDot+1:])
 	if isBacktickQuotedName(property) {
 		property = normalizePropertyKey(property)
-	} else if !isValidIdentifier(property) {
+	} else if !cyphertext.IsIdentifier(property) {
 		return "", "", false
 	}
 	base := strings.TrimSpace(expr[:lastDot])
@@ -304,9 +267,9 @@ func isSimpleIdentifierOrProperty(expr string) bool {
 				return false
 			}
 			expectIdentStart = true
-		case isIdentStartByte(c):
+		case cyphertext.NameStartAt(expr, i):
 			expectIdentStart = false
-		case c >= '0' && c <= '9':
+		case cyphertext.IsDigit(c):
 			if expectIdentStart {
 				return false
 			}
@@ -319,22 +282,16 @@ func isSimpleIdentifierOrProperty(expr string) bool {
 
 func (e *StorageExecutor) evaluateExpressionFastLeaf(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult) (interface{}, bool) {
 	if isWholeCypherQuotedString(expr) {
-		if decoded, ok := decodeCypherQuotedString(expr); ok {
+		if decoded, ok := cyphertext.DecodeString(expr, cyphertext.AcceptedSource); ok {
 			return decoded, true
 		}
 	}
 
-	if equalFoldASCII(expr, "null") {
-		return nil, false
-	}
-	if equalFoldASCII(expr, "true") {
-		return true, true
-	}
-	if equalFoldASCII(expr, "false") {
-		return false, true
+	if value, literal := literalKeywordValue(expr); literal {
+		return value, true
 	}
 
-	if exprCanBeNumber(expr) {
+	if numericExpressionAccepted(expr, numericValuePrefix) {
 		if num, err := strconv.ParseInt(expr, 10, 64); err == nil {
 			return num, true
 		}
@@ -409,16 +366,5 @@ func (e *StorageExecutor) evaluateExpressionFastLeaf(ctx context.Context, expr s
 		}
 	}
 
-	return nil, true
-}
-
-func exprCanBeNumber(expr string) bool {
-	if expr == "" {
-		return false
-	}
-	first := expr[0]
-	if first >= '0' && first <= '9' {
-		return true
-	}
-	return first == '-' && len(expr) > 1 && expr[1] >= '0' && expr[1] <= '9'
+	return nil, false
 }

@@ -7,8 +7,7 @@ import (
 )
 
 func TestReconcileDecaySuppression_NoOpWhenDisabled(t *testing.T) {
-	e := NewMemoryEngine()
-	t.Cleanup(func() { _ = e.Close() })
+	e := newTestMemoryEngine(t)
 
 	// Decay disabled by default → reconciliation is a no-op.
 	require.NoError(t, e.ReconcileDecaySuppression("test"))
@@ -19,8 +18,7 @@ func TestReconcileDecaySuppression_NoOpWhenDisabled(t *testing.T) {
 }
 
 func TestReconcileDecaySuppression_NoOpWhenEmptyNamespace(t *testing.T) {
-	e := NewMemoryEngine()
-	t.Cleanup(func() { _ = e.Close() })
+	e := newTestMemoryEngine(t)
 	e.SetDecayEnabled(true)
 
 	// Empty-namespace argument is rejected (no work to do).
@@ -31,18 +29,17 @@ func TestReconcileDecaySuppression_NoOpWhenEmptyNamespace(t *testing.T) {
 }
 
 func TestReconcileDecaySuppression_WithEntities(t *testing.T) {
-	e := NewMemoryEngine()
-	t.Cleanup(func() { _ = e.Close() })
+	e := newTestMemoryEngine(t)
 	e.SetDecayEnabled(true)
 
 	// Stage two nodes and one edge in namespace "test".
 	for _, id := range []NodeID{"test:a", "test:b"} {
-		_, err := e.CreateNode(&Node{
+		_, err := e.CreateNode(t.Context(), &Node{
 			ID: id, Labels: []string{"L"}, Properties: map[string]any{},
 		})
 		require.NoError(t, err)
 	}
-	require.NoError(t, e.CreateEdge(&Edge{
+	require.NoError(t, e.CreateEdge(t.Context(), &Edge{
 		ID: "test:e", StartNode: "test:a", EndNode: "test:b",
 		Type: "REL", Properties: map[string]any{},
 	}))
@@ -57,10 +54,9 @@ func TestReconcileDecaySuppression_WithEntities(t *testing.T) {
 }
 
 func TestReadNodeSuppressionState_RoundTrip(t *testing.T) {
-	e := NewMemoryEngine()
-	t.Cleanup(func() { _ = e.Close() })
+	e := newTestMemoryEngine(t)
 
-	_, err := e.CreateNode(&Node{
+	_, err := e.CreateNode(t.Context(), &Node{
 		ID: "test:n", Labels: []string{"L1", "L2"}, Properties: map[string]any{},
 	})
 	require.NoError(t, err)
@@ -76,14 +72,13 @@ func TestReadNodeSuppressionState_RoundTrip(t *testing.T) {
 }
 
 func TestReadEdgeSuppressionState_RoundTrip(t *testing.T) {
-	e := NewMemoryEngine()
-	t.Cleanup(func() { _ = e.Close() })
+	e := newTestMemoryEngine(t)
 
 	for _, id := range []NodeID{"test:a", "test:b"} {
-		_, err := e.CreateNode(&Node{ID: id, Labels: []string{"L"}, Properties: map[string]any{}})
+		_, err := e.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"L"}, Properties: map[string]any{}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, e.CreateEdge(&Edge{
+	require.NoError(t, e.CreateEdge(t.Context(), &Edge{
 		ID: "test:e", StartNode: "test:a", EndNode: "test:b",
 		Type: "REL_TYPE", Properties: map[string]any{},
 	}))
@@ -98,17 +93,16 @@ func TestReadEdgeSuppressionState_RoundTrip(t *testing.T) {
 }
 
 func TestCollectNamespaceNodeAndEdgeIDs(t *testing.T) {
-	e := NewMemoryEngine()
-	t.Cleanup(func() { _ = e.Close() })
+	e := newTestMemoryEngine(t)
 
 	for _, id := range []NodeID{"test:a", "test:b", "other:c"} {
-		_, err := e.CreateNode(&Node{ID: id, Labels: []string{"L"}, Properties: map[string]any{}})
+		_, err := e.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"L"}, Properties: map[string]any{}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, e.CreateEdge(&Edge{
+	require.NoError(t, e.CreateEdge(t.Context(), &Edge{
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "R", Properties: map[string]any{},
 	}))
-	require.NoError(t, e.CreateEdge(&Edge{
+	require.NoError(t, e.CreateEdge(t.Context(), &Edge{
 		ID: "other:e2", StartNode: "other:c", EndNode: "test:a", Type: "R", Properties: map[string]any{},
 	}))
 

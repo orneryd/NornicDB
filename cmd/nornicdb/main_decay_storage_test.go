@@ -3,6 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"math"
+	"regexp"
+	"strconv"
 	"testing"
 	"time"
 
@@ -34,9 +37,10 @@ func TestDecayCommandsReadAccessThroughWALStorage(t *testing.T) {
 			require.NoError(t, schema.CreateDecayProfileBinding(knowledgepolicy.DecayProfileBinding{Name: "recent_doc", TargetLabels: []string{"Doc"}, ProfileRef: "recent_access"}))
 			now := time.Now()
 			old := now.Add(-72 * time.Hour)
-			_, err = db.GetStorage().CreateNode(&storage.Node{ID: "recent:id", Labels: []string{"Doc"}, Properties: map[string]interface{}{"body": "still visible"}, CreatedAt: old, UpdatedAt: old})
+			_, err = db.GetStorage().CreateNode(t.Context(), &storage.Node{ID: "recent:id", Labels: []string{"Doc"}, Properties: map[string]interface{}{"body": "still visible"}, CreatedAt: old, UpdatedAt: old})
 			require.NoError(t, err)
-			require.NoError(t, base.PutAccessMeta("nornic:recent:id", &knowledgepolicy.AccessMetaEntry{TargetID: "nornic:recent:id", TargetScope: knowledgepolicy.ScopeNode, Fixed: knowledgepolicy.AccessMetaFixedFields{AccessCount: 3, LastAccessedAt: now.UnixNano()}}))
+			_, accessWriteErr1 := base.WriteAccessMeta(context.Background(), knowledgepolicy.AccessMetaWriteRequest{Mode: knowledgepolicy.RecordState, EntityID: "nornic:recent:id", Entry: &knowledgepolicy.AccessMetaEntry{TargetID: "nornic:recent:id", TargetScope: knowledgepolicy.ScopeNode, Fixed: knowledgepolicy.AccessMetaFixedFields{AccessCount: 3, LastAccessedAt: now.UnixNano()}}})
+			require.NoError(t, accessWriteErr1)
 			require.NoError(t, db.Close())
 
 			var output bytes.Buffer
@@ -51,7 +55,19 @@ func TestDecayCommandsReadAccessThroughWALStorage(t *testing.T) {
 			cmd.Flags().Float64("threshold", 0.1, "")
 			if name == "stats" {
 				require.NoError(t, runDecayStats(cmd, nil), output.String())
-				require.Contains(t, output.String(), "1.0000", "recent access must determine the reported average")
+				elapsed := time.Since(now)
+				// Recent access determines the average: it decays only over
+				// the time since `now` (a one-hour half-life), never from the
+				// node's creation 72 hours ago (about 2e-22). The test's own
+				// run time is real decay, so the average is bounded by it
+				// rather than expected to print as exactly 1.0000.
+				match := regexp.MustCompile(`Average score:\s+([0-9.]+)`).FindStringSubmatch(output.String())
+				require.Len(t, match, 2, output.String())
+				average, err := strconv.ParseFloat(match[1], 64)
+				require.NoError(t, err)
+				lowest := math.Exp(-math.Ln2 * elapsed.Seconds() / 3600)
+				require.GreaterOrEqual(t, average, lowest-0.00005, "average %v after %v of access-anchored decay", average, elapsed)
+				require.LessOrEqual(t, average, 1.0)
 			} else {
 				require.NoError(t, runDecaySuppress(cmd, nil), output.String())
 				require.Contains(t, output.String(), "Above threshold:      1")

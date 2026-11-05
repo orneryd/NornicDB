@@ -1,9 +1,11 @@
 package replication
 
 import (
-	"encoding/json"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"io"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -49,6 +51,8 @@ func TestReplicationLocalizedSentinelPreservesErrorsIs(t *testing.T) {
 
 func TestReplicationLocalizedTransportCause(t *testing.T) {
 	missingCert := filepath.Join(t.TempDir(), "missing.pem")
+	_, cause := os.Open(missingCert)
+	require.Error(t, cause)
 	config := DefaultConfig()
 	config.TLS.Enabled = true
 	config.TLS.CertFile = missingCert
@@ -56,7 +60,7 @@ func TestReplicationLocalizedTransportCause(t *testing.T) {
 
 	_, err := NewDefaultTransportFromConfig(config)
 	require.ErrorIs(t, err, fs.ErrNotExist)
-	localizedErr := requireReplicationLocalizedError(t, err, localization.MessageReplicationTransportLoadTLSCertKeyFailed, "load TLS cert/key: open "+missingCert+": no such file or directory")
+	localizedErr := requireReplicationLocalizedError(t, err, localization.MessageReplicationTransportLoadTLSCertKeyFailed, "load TLS cert/key: "+cause.Error())
 	require.Contains(t, localizedErr.Message.Data["Cause"], missingCert)
 }
 
@@ -68,7 +72,7 @@ func TestReplicationLocalizedRaftValidation(t *testing.T) {
 }
 
 func TestReplicationLocalizedStorageAdapterCause(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	adapter, err := NewStorageAdapterWithWAL(engine, t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -76,9 +80,7 @@ func TestReplicationLocalizedStorageAdapterCause(t *testing.T) {
 		require.NoError(t, engine.Close())
 	})
 
-	err = adapter.ApplyCommand(&Command{Type: CmdCreateNode, Data: []byte("{"), Timestamp: time.Now()})
-	var syntaxErr *json.SyntaxError
-	require.ErrorAs(t, err, &syntaxErr)
-	require.ErrorIs(t, err, syntaxErr)
-	requireReplicationLocalizedError(t, err, localization.MessageReplicationStorageDecodeNodeFailed, "decode node: unexpected end of JSON input")
+	err = applyQueued(t, adapter, &Command{Type: CmdCreateNode, Data: []byte{0x81, 0xa1, 'x'}, Timestamp: time.Now()})
+	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+	requireReplicationLocalizedError(t, err, localization.MessageReplicationStorageDecodeNodeFailed, "decode node: invalid replication payload: unexpected EOF")
 }

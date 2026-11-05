@@ -51,11 +51,13 @@ func TestStaticFunctionArgumentsFromCatalog(t *testing.T) {
 	require.Equal(t, "Float", joinTypeNames([]string{"Float"}))
 	require.Equal(t, "Float or Integer", joinTypeNames([]string{"Float", "Integer"}))
 
-	require.Equal(t, "Map, Node or Relationship", unwindStaticValueType("UNWIND [{k: 1}, {k: 2}] AS x"))
-	require.Equal(t, "Float, Integer or Number", unwindStaticValueType("UNWIND [1, 2.5] AS x"))
-	require.Equal(t, "Integer", unwindStaticValueType("UNWIND [1, 2] AS x"))
-	require.Equal(t, "", unwindStaticValueType("UNWIND [1, 'a'] AS x"))
-	require.Equal(t, "", unwindStaticValueType("UNWIND $list AS x"))
+	// The variable's static type is the list expression's element type; an
+	// UNWIND clause's retained node supplies that expression to the pipeline.
+	require.Equal(t, "Map, Node or Relationship", listElementOperand(t.Context(), typeScope{}, staticTypeScope{}, "[{k: 1}, {k: 2}]").typeName())
+	require.Equal(t, "Float, Integer or Number", listElementOperand(t.Context(), typeScope{}, staticTypeScope{}, "[1, 2.5]").typeName())
+	require.Equal(t, "Integer", listElementOperand(t.Context(), typeScope{}, staticTypeScope{}, "[1, 2]").typeName())
+	require.Equal(t, "", listElementOperand(t.Context(), typeScope{}, staticTypeScope{}, "[1, 'a']").typeName())
+	require.Equal(t, "", listElementOperand(t.Context(), typeScope{}, staticTypeScope{}, "$list").typeName())
 }
 
 // TestStaticFunctionArgumentTypesThroughExecute: an argument of a type no

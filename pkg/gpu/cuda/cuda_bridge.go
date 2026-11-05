@@ -230,17 +230,27 @@ int cuda_buffer_copy_to_host(CudaBuffer* buf, float* host_data, size_t count) {
 // norms: output array of n floats
 int cuda_compute_norms(CudaDevice* dev, CudaBuffer* vectors, CudaBuffer* norms,
                        unsigned int n, unsigned int dims) {
-    cublasStatus_t status;
+    // Snrm2 writes into a device buffer; the other operations use host scalars.
+    cublasStatus_t status = cublasSetPointerMode(dev->cublas_handle, CUBLAS_POINTER_MODE_DEVICE);
+    if (status != CUBLAS_STATUS_SUCCESS) {
+        cuda_set_error("Failed to select device output for cuBLAS norms");
+        return -1;
+    }
 
     for (unsigned int i = 0; i < n; i++) {
-        float* vec = vectors->data + i * dims;
+        float* vec = vectors->data + (size_t)i * dims;
         status = cublasSnrm2(dev->cublas_handle, dims, vec, 1, norms->data + i);
         if (status != CUBLAS_STATUS_SUCCESS) {
+            cublasSetPointerMode(dev->cublas_handle, CUBLAS_POINTER_MODE_HOST);
             cuda_set_error("cuBLAS norm computation failed");
             return -1;
         }
     }
 
+    if (cublasSetPointerMode(dev->cublas_handle, CUBLAS_POINTER_MODE_HOST) != CUBLAS_STATUS_SUCCESS) {
+        cuda_set_error("Failed to restore host scalars for cuBLAS");
+        return -1;
+    }
     cudaStreamSynchronize(dev->stream);
     return 0;
 }
@@ -277,7 +287,7 @@ int cuda_normalize_vectors(CudaDevice* dev, CudaBuffer* vectors,
         if (host_norms[i] > 1e-10f) {
             float scale = 1.0f / host_norms[i];
             cublasStatus_t status = cublasSscal(dev->cublas_handle, dims,
-                                                 &scale, vectors->data + i * dims, 1);
+                                                 &scale, vectors->data + (size_t)i * dims, 1);
             if (status != CUBLAS_STATUS_SUCCESS) {
                 cuda_set_error("cuBLAS scale failed");
                 free(host_norms);

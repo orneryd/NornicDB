@@ -5,8 +5,9 @@
 package json
 
 import (
-	"encoding/json"
 	"strings"
+
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 )
 
 // Path extracts a value from JSON using a path expression.
@@ -16,7 +17,7 @@ import (
 //	apoc.json.path('{"user":{"name":"Alice"}}', '$.user.name') => 'Alice'
 func Path(jsonStr, path string) interface{} {
 	var data interface{}
-	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+	if err := valueconvert.PropertyJSON.Unmarshal([]byte(jsonStr), &data); err != nil {
 		return nil
 	}
 
@@ -31,7 +32,7 @@ func Path(jsonStr, path string) interface{} {
 //	apoc.json.validate('{invalid}') => false
 func Validate(jsonStr string) bool {
 	var data interface{}
-	return json.Unmarshal([]byte(jsonStr), &data) == nil
+	return valueconvert.PropertyJSON.Unmarshal([]byte(jsonStr), &data) == nil
 }
 
 // Parse parses a JSON string into a value.
@@ -41,7 +42,7 @@ func Validate(jsonStr string) bool {
 //	apoc.json.parse('{"name":"Alice"}') => {name: 'Alice'}
 func Parse(jsonStr string) interface{} {
 	var data interface{}
-	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+	if err := valueconvert.PropertyJSON.Unmarshal([]byte(jsonStr), &data); err != nil {
 		return nil
 	}
 	return data
@@ -53,7 +54,7 @@ func Parse(jsonStr string) interface{} {
 //
 //	apoc.json.stringify({name: 'Alice'}) => '{"name":"Alice"}'
 func Stringify(value interface{}) string {
-	bytes, err := json.Marshal(value)
+	bytes, err := valueconvert.PropertyJSON.Marshal(value)
 	if err != nil {
 		return ""
 	}
@@ -67,11 +68,11 @@ func Stringify(value interface{}) string {
 //	apoc.json.pretty('{"name":"Alice"}') => formatted JSON
 func Pretty(jsonStr string) string {
 	var data interface{}
-	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+	if err := valueconvert.PropertyJSON.Unmarshal([]byte(jsonStr), &data); err != nil {
 		return jsonStr
 	}
 
-	bytes, err := json.MarshalIndent(data, "", "  ")
+	bytes, err := valueconvert.PropertyJSON.MarshalIndent(data, "", "  ")
 	if err != nil {
 		return jsonStr
 	}
@@ -85,11 +86,11 @@ func Pretty(jsonStr string) string {
 //	apoc.json.compact('{\n  "name": "Alice"\n}') => '{"name":"Alice"}'
 func Compact(jsonStr string) string {
 	var data interface{}
-	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+	if err := valueconvert.PropertyJSON.Unmarshal([]byte(jsonStr), &data); err != nil {
 		return jsonStr
 	}
 
-	bytes, err := json.Marshal(data)
+	bytes, err := valueconvert.PropertyJSON.Marshal(data)
 	if err != nil {
 		return jsonStr
 	}
@@ -103,7 +104,7 @@ func Compact(jsonStr string) string {
 //	apoc.json.keys('{"name":"Alice","age":30}') => ['name', 'age']
 func Keys(jsonStr string) []string {
 	var data map[string]interface{}
-	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+	if err := valueconvert.PropertyJSON.Unmarshal([]byte(jsonStr), &data); err != nil {
 		return []string{}
 	}
 
@@ -121,7 +122,7 @@ func Keys(jsonStr string) []string {
 //	apoc.json.values('{"name":"Alice","age":30}') => ['Alice', 30]
 func Values(jsonStr string) []interface{} {
 	var data map[string]interface{}
-	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+	if err := valueconvert.PropertyJSON.Unmarshal([]byte(jsonStr), &data); err != nil {
 		return []interface{}{}
 	}
 
@@ -140,7 +141,7 @@ func Values(jsonStr string) []interface{} {
 //	apoc.json.type('[1,2,3]') => 'array'
 func Type(jsonStr string) string {
 	var data interface{}
-	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+	if err := valueconvert.PropertyJSON.Unmarshal([]byte(jsonStr), &data); err != nil {
 		return "invalid"
 	}
 
@@ -151,13 +152,15 @@ func Type(jsonStr string) string {
 		return "array"
 	case string:
 		return "string"
-	case float64:
-		return "number"
+
 	case bool:
 		return "boolean"
 	case nil:
 		return "null"
 	default:
+		if _, numeric := valueconvert.ReadNumber(data); numeric {
+			return "number"
+		}
 		return "unknown"
 	}
 }
@@ -170,7 +173,7 @@ func Type(jsonStr string) string {
 //	apoc.json.size('[1,2,3,4,5]') => 5
 func Size(jsonStr string) int {
 	var data interface{}
-	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+	if err := valueconvert.PropertyJSON.Unmarshal([]byte(jsonStr), &data); err != nil {
 		return 0
 	}
 
@@ -194,7 +197,7 @@ func Merge(jsonStrs ...string) string {
 
 	for _, jsonStr := range jsonStrs {
 		var data map[string]interface{}
-		if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+		if err := valueconvert.PropertyJSON.Unmarshal([]byte(jsonStr), &data); err != nil {
 			continue
 		}
 
@@ -203,7 +206,7 @@ func Merge(jsonStrs ...string) string {
 		}
 	}
 
-	bytes, _ := json.Marshal(result)
+	bytes, _ := valueconvert.PropertyJSON.Marshal(result)
 	return string(bytes)
 }
 
@@ -215,13 +218,13 @@ func Merge(jsonStrs ...string) string {
 //	=> '{"user":{"name":"Alice"}}'
 func Set(jsonStr, path string, value interface{}) string {
 	var data interface{}
-	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+	if err := valueconvert.PropertyJSON.Unmarshal([]byte(jsonStr), &data); err != nil {
 		return jsonStr
 	}
 
 	setPath(data, parsePath(path), value)
 
-	bytes, _ := json.Marshal(data)
+	bytes, _ := valueconvert.PropertyJSON.Marshal(data)
 	return string(bytes)
 }
 
@@ -233,13 +236,13 @@ func Set(jsonStr, path string, value interface{}) string {
 //	=> '{"name":"Alice"}'
 func Delete(jsonStr, path string) string {
 	var data interface{}
-	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+	if err := valueconvert.PropertyJSON.Unmarshal([]byte(jsonStr), &data); err != nil {
 		return jsonStr
 	}
 
 	deletePath(data, parsePath(path))
 
-	bytes, _ := json.Marshal(data)
+	bytes, _ := valueconvert.PropertyJSON.Marshal(data)
 	return string(bytes)
 }
 
@@ -251,14 +254,14 @@ func Delete(jsonStr, path string) string {
 //	=> '{"user.name":"Alice"}'
 func Flatten(jsonStr string) string {
 	var data interface{}
-	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+	if err := valueconvert.PropertyJSON.Unmarshal([]byte(jsonStr), &data); err != nil {
 		return jsonStr
 	}
 
 	flattened := make(map[string]interface{})
 	flattenHelper(data, "", flattened)
 
-	bytes, _ := json.Marshal(flattened)
+	bytes, _ := valueconvert.PropertyJSON.Marshal(flattened)
 	return string(bytes)
 }
 
@@ -270,7 +273,7 @@ func Flatten(jsonStr string) string {
 //	=> '{"user":{"name":"Alice"}}'
 func Unflatten(jsonStr string) string {
 	var data map[string]interface{}
-	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+	if err := valueconvert.PropertyJSON.Unmarshal([]byte(jsonStr), &data); err != nil {
 		return jsonStr
 	}
 
@@ -289,7 +292,7 @@ func Unflatten(jsonStr string) string {
 		current[parts[len(parts)-1]] = value
 	}
 
-	bytes, _ := json.Marshal(unflattened)
+	bytes, _ := valueconvert.PropertyJSON.Marshal(unflattened)
 	return string(bytes)
 }
 
@@ -300,7 +303,7 @@ func Unflatten(jsonStr string) string {
 //	apoc.json.filter('[1,2,3,4,5]', 'x > 3') => '[4,5]'
 func Filter(jsonStr string, predicate func(interface{}) bool) string {
 	var data []interface{}
-	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+	if err := valueconvert.PropertyJSON.Unmarshal([]byte(jsonStr), &data); err != nil {
 		return jsonStr
 	}
 
@@ -311,7 +314,7 @@ func Filter(jsonStr string, predicate func(interface{}) bool) string {
 		}
 	}
 
-	bytes, _ := json.Marshal(filtered)
+	bytes, _ := valueconvert.PropertyJSON.Marshal(filtered)
 	return string(bytes)
 }
 
@@ -322,7 +325,7 @@ func Filter(jsonStr string, predicate func(interface{}) bool) string {
 //	apoc.json.map('[1,2,3]', 'x * 2') => '[2,4,6]'
 func Map(jsonStr string, transform func(interface{}) interface{}) string {
 	var data []interface{}
-	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+	if err := valueconvert.PropertyJSON.Unmarshal([]byte(jsonStr), &data); err != nil {
 		return jsonStr
 	}
 
@@ -331,7 +334,7 @@ func Map(jsonStr string, transform func(interface{}) interface{}) string {
 		mapped[i] = transform(item)
 	}
 
-	bytes, _ := json.Marshal(mapped)
+	bytes, _ := valueconvert.PropertyJSON.Marshal(mapped)
 	return string(bytes)
 }
 
@@ -342,7 +345,7 @@ func Map(jsonStr string, transform func(interface{}) interface{}) string {
 //	apoc.json.reduce('[1,2,3,4,5]', 0, 'acc + x') => 15
 func Reduce(jsonStr string, initial interface{}, reducer func(interface{}, interface{}) interface{}) interface{} {
 	var data []interface{}
-	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+	if err := valueconvert.PropertyJSON.Unmarshal([]byte(jsonStr), &data); err != nil {
 		return initial
 	}
 

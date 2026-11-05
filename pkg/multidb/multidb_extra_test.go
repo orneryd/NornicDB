@@ -1,6 +1,7 @@
 package multidb
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -8,10 +9,39 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestDatabaseManagerCreateAliasRejections(t *testing.T) {
+	cases := []struct {
+		name   string
+		alias  string
+		target string
+	}{
+		{
+			name:   "TestDatabaseManager_CreateAlias_TargetNotExist",
+			alias:  "badalias",
+			target: "doesnotexist",
+		},
+		{
+			// "nornic" is already a database name — alias must not shadow it
+			name:   "TestDatabaseManager_CreateAlias_ConflictsWithDBName",
+			alias:  "nornic",
+			target: "nornic",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newTestManager(t)
+
+			err := m.CreateAlias(t.Context(), tc.alias, tc.target)
+			assert.Error(t, err)
+		})
+	}
+}
+
 func newTestManager(t *testing.T) *DatabaseManager {
 	t.Helper()
-	inner := storage.NewMemoryEngine()
-	m, err := NewDatabaseManager(inner, nil)
+	inner := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	m, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { m.Close() })
 	return m
@@ -63,7 +93,7 @@ func TestDefaultConfig(t *testing.T) {
 
 func TestDatabaseManager_CreateDatabase_Extra(t *testing.T) {
 	m := newTestManager(t)
-	err := m.CreateDatabase("testdb1")
+	err := m.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "testdb1"})
 	require.NoError(t, err)
 
 	dbs := m.ListDatabases()
@@ -76,8 +106,8 @@ func TestDatabaseManager_CreateDatabase_Extra(t *testing.T) {
 
 func TestDatabaseManager_CreateDatabase_AlreadyExists(t *testing.T) {
 	m := newTestManager(t)
-	_ = m.CreateDatabase("dupdb")
-	err := m.CreateDatabase("dupdb")
+	_ = m.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "dupdb"})
+	err := m.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "dupdb"})
 	// Should either succeed (idempotent) or return an error
 	_ = err
 }
@@ -90,7 +120,7 @@ func TestDatabaseManager_ListDatabases_Extra(t *testing.T) {
 
 func TestDatabaseManager_GetDatabase(t *testing.T) {
 	m := newTestManager(t)
-	_ = m.CreateDatabase("getdb1")
+	_ = m.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "getdb1"})
 	db, err := m.GetDatabase("getdb1")
 	require.NoError(t, err)
 	assert.NotNil(t, db)
@@ -108,40 +138,23 @@ func TestDatabaseManager_GetDatabase_NotFound(t *testing.T) {
 
 func TestDatabaseManager_CreateAlias(t *testing.T) {
 	m := newTestManager(t)
-	err := m.CreateAlias("myalias", "nornic")
+	err := m.CreateAlias(t.Context(), "myalias", "nornic")
 	require.NoError(t, err)
-}
-
-func TestDatabaseManager_CreateAlias_TargetNotExist(t *testing.T) {
-	m := newTestManager(t)
-	err := m.CreateAlias("badalias", "doesnotexist")
-	assert.Error(t, err)
-}
-
-func TestDatabaseManager_CreateAlias_ConflictsWithDBName(t *testing.T) {
-	m := newTestManager(t)
-	// "nornic" is already a database name — alias must not shadow it
-	err := m.CreateAlias("nornic", "nornic")
-	assert.Error(t, err)
 }
 
 func TestDatabaseManager_DropAlias(t *testing.T) {
 	m := newTestManager(t)
-	require.NoError(t, m.CreateAlias("dropalias", "nornic"))
-	err := m.DropAlias("dropalias")
+	require.NoError(t, m.CreateAlias(t.Context(), "dropalias", "nornic"))
+	err := m.DropAlias(t.Context(), "dropalias")
 	require.NoError(t, err)
-}
-
-func TestDatabaseManager_DropAlias_NotExist(t *testing.T) {
-	m := newTestManager(t)
-	err := m.DropAlias("no-such-alias")
+	err = m.DropAlias(t.Context(), "no-such-alias")
 	assert.Error(t, err)
 }
 
 func TestDatabaseManager_ListAliases(t *testing.T) {
 	m := newTestManager(t)
-	require.NoError(t, m.CreateAlias("la1", "nornic"))
-	require.NoError(t, m.CreateAlias("la2", "nornic"))
+	require.NoError(t, m.CreateAlias(t.Context(), "la1", "nornic"))
+	require.NoError(t, m.CreateAlias(t.Context(), "la2", "nornic"))
 	aliases := m.ListAliases("nornic")
 	assert.Contains(t, aliases, "la1")
 	assert.Contains(t, aliases, "la2")
@@ -156,7 +169,7 @@ func TestDatabaseManager_ResolveDatabase_DirectName(t *testing.T) {
 
 func TestDatabaseManager_ResolveDatabase_ViaAlias(t *testing.T) {
 	m := newTestManager(t)
-	require.NoError(t, m.CreateAlias("resolve-alias", "nornic"))
+	require.NoError(t, m.CreateAlias(t.Context(), "resolve-alias", "nornic"))
 	resolved, err := m.ResolveDatabase("resolve-alias")
 	require.NoError(t, err)
 	assert.Equal(t, "nornic", resolved)

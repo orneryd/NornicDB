@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -23,7 +24,7 @@ func init() {
 // isn't temporal.
 const temporalFormatTypes = "Duration, Date, Time, LocalTime, LocalDateTime or DateTime"
 
-func fnFormat(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnFormat(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	if len(args) == 0 {
 		return nil, functionParameterCountError("format", false)
 	}

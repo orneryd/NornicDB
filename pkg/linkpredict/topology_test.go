@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -223,7 +225,7 @@ func TestIsolatedNode(t *testing.T) {
 // TestBuildGraphFromEngine verifies graph construction from storage.
 func TestBuildGraphFromEngine(t *testing.T) {
 	ctx := context.Background()
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 
@@ -235,7 +237,7 @@ func TestBuildGraphFromEngine(t *testing.T) {
 	}
 
 	for _, node := range nodes {
-		if _, err := engine.CreateNode(node); err != nil {
+		if _, err := engine.CreateNode(t.Context(), node); err != nil {
 			t.Fatalf("Failed to create node: %v", err)
 		}
 	}
@@ -247,7 +249,7 @@ func TestBuildGraphFromEngine(t *testing.T) {
 	}
 
 	for _, edge := range edges {
-		if err := engine.CreateEdge(edge); err != nil {
+		if err := engine.CreateEdge(t.Context(), edge); err != nil {
 			t.Fatalf("Failed to create edge: %v", err)
 		}
 	}
@@ -458,7 +460,7 @@ func TestBuildGraphErrors(t *testing.T) {
 	// (actual behavior depends on Engine interface implementation)
 
 	// Test with empty engine
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	graph, err := BuildGraphFromEngine(ctx, engine, true)

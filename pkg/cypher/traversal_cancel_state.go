@@ -1,5 +1,7 @@
 package cypher
 
+import "github.com/orneryd/nornicdb/internal/cancelprobe"
+
 // traversalCancelled caches the context channel once for the DFS state. A
 // nonblocking channel probe preserves prompt frame/sibling cancellation without
 // a Context.Err interface call and its context mutex on every candidate. Once
@@ -7,9 +9,6 @@ package cypher
 func (state *TraversalContext) traversalCancelled() bool {
 	if state.cancellationObserved {
 		return true
-	}
-	if state.cancelCtx == nil {
-		return false
 	}
 	if !state.cancelInitialized {
 		state.cancelInitialized = true
@@ -23,19 +22,22 @@ func (state *TraversalContext) traversalCancelled() bool {
 			return state.observeTraversalCancellation()
 		}
 	}
-	select {
-	case <-state.cancelDone:
+	// Short-circuit calls preserve two cheap single-channel probes, without
+	// introducing a general multi-channel scheduler select on every edge.
+	if cancelprobe.Ready(state.cancelDone) || cancelprobe.Ready(state.cancelParentDone) {
 		return state.observeTraversalCancellation()
-	default:
 	}
-	// Separate nonblocking receives retain Go's cheap single-channel probe;
-	// a multi-case select would enter the general scheduler on every edge.
-	select {
-	case <-state.cancelParentDone:
-		return state.observeTraversalCancellation()
-	default:
-		return false
+	return false
+}
+
+// memoryAccount is the traversal's account in the statement's memory
+// scope; it tracks nothing when no limit is configured.
+func (state *TraversalContext) memoryAccount() *memoryAccount {
+	if !state.memoryResolved {
+		state.memoryResolved = true
+		state.memory.scope = memoryScopeFromContext(state.cancelCtx)
 	}
+	return &state.memory
 }
 
 // Cancellation is an expression failure, so a partially built path set never

@@ -1,6 +1,9 @@
 package storage
 
 import (
+	"context"
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"math"
 	"testing"
@@ -712,10 +715,10 @@ func TestCreatePromotionPolicy_MissingProfileRef(t *testing.T) {
 	assert.Contains(t, err.Error(), "not found")
 }
 
-func TestKnowledgePolicySchemaTransactionErrorBoundaries(t *testing.T) {
+func TestPolicySchemaTransactionFailures(t *testing.T) {
 	for _, boundary := range []string{"namespace", "corrupt", "read", "write", "serialize"} {
 		t.Run(boundary, func(t *testing.T) {
-			engine, err := NewBadgerEngineInMemory()
+			engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = engine.Close() })
 			if boundary == "corrupt" {
@@ -723,16 +726,16 @@ func TestKnowledgePolicySchemaTransactionErrorBoundaries(t *testing.T) {
 					return transaction.Set(schemaKey("native"), []byte("{"))
 				}))
 			}
-			transaction, err := engine.BeginTransaction()
-			require.NoError(t, err)
-			t.Cleanup(func() { _ = transaction.Rollback() })
-			if boundary != "namespace" {
-				require.NoError(t, transaction.SetNamespace("native"))
+			namespace := "native"
+			if boundary == "namespace" {
+				namespace = ""
 			}
+			transaction := runtimeFixtureOwner.NamespaceTransaction(t, engine.BeginTransaction, namespace)
+
 			if boundary == "read" {
 				transaction.badgerTx.Discard()
 			}
-			view, err := transaction.KnowledgePolicySchema()
+			view, err := transaction.Schema(KnowledgePolicyChanges)
 			if boundary == "namespace" || boundary == "corrupt" || boundary == "read" {
 				require.Error(t, err)
 				return
@@ -753,14 +756,14 @@ func TestKnowledgePolicySchemaTransactionErrorBoundaries(t *testing.T) {
 }
 
 func TestKnowledgePolicySchemaPublishesPersistedSnapshot(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
-	transaction, err := engine.BeginTransaction()
+	transaction, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = transaction.Rollback() })
 	require.NoError(t, transaction.SetNamespace("native"))
-	view, err := transaction.KnowledgePolicySchema()
+	view, err := transaction.Schema(KnowledgePolicyChanges)
 	require.NoError(t, err)
 	require.NoError(t, view.CreatePromotionPolicy(knowledgepolicy.PromotionPolicyDef{
 		Name: "valid", TargetLabels: []string{"Fact"}, Enabled: true,
@@ -776,25 +779,25 @@ func TestKnowledgePolicySchemaPublishesPersistedSnapshot(t *testing.T) {
 
 func TestKnowledgePolicySchemaTransactionLifecycle(t *testing.T) {
 	directory := t.TempDir()
-	engine, err := NewBadgerEngine(directory)
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(directory))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	committed := engine.GetSchemaForNamespace("native")
 	require.NoError(t, committed.CreatePromotionProfile(validPromoProfile("boost")))
 	begin := func(namespace string) *BadgerTransaction {
-		transaction, err := engine.BeginTransaction()
+		transaction, err := engine.BeginTransaction(t.Context())
 		require.NoError(t, err)
 		require.NoError(t, transaction.SetNamespace(namespace))
 		t.Cleanup(func() { _ = transaction.Rollback() })
 		return transaction
 	}
 	first, second := begin("native"), begin("native")
-	firstView, err := first.KnowledgePolicySchema()
+	firstView, err := first.Schema(KnowledgePolicyChanges)
 	require.NoError(t, err)
-	repeatedView, err := first.KnowledgePolicySchema()
+	repeatedView, err := first.Schema(KnowledgePolicyChanges)
 	require.NoError(t, err)
 	require.Same(t, firstView, repeatedView)
-	secondView, err := second.KnowledgePolicySchema()
+	secondView, err := second.Schema(KnowledgePolicyChanges)
 	require.NoError(t, err)
 	require.False(t, first.HasKnowledgePolicyChanges())
 	require.NoError(t, firstView.CreatePromotionPolicy(knowledgepolicy.PromotionPolicyDef{
@@ -821,18 +824,18 @@ func TestKnowledgePolicySchemaTransactionLifecycle(t *testing.T) {
 	require.Error(t, second.Commit())
 	require.Len(t, committed.ShowPromotionPolicies(), 1)
 	require.Equal(t, "first", committed.ShowPromotionPolicies()[0].Name)
-	_, err = first.KnowledgePolicySchema()
+	_, err = first.Schema(KnowledgePolicyChanges)
 	require.Error(t, err)
 	require.Error(t, firstView.AlterPromotionPolicy("first", map[string]interface{}{"enabled": false}))
 	require.True(t, committed.ShowPromotionPolicies()[0].Enabled)
 	rolledBack := begin("native")
-	rollbackView, err := rolledBack.KnowledgePolicySchema()
+	rollbackView, err := rolledBack.Schema(KnowledgePolicyChanges)
 	require.NoError(t, err)
 	require.NoError(t, rollbackView.AlterPromotionPolicy("first", map[string]interface{}{"enabled": false}))
 	require.NoError(t, rolledBack.Rollback())
 	require.True(t, committed.ShowPromotionPolicies()[0].Enabled)
 	other := begin("other")
-	otherView, err := other.KnowledgePolicySchema()
+	otherView, err := other.Schema(KnowledgePolicyChanges)
 	require.NoError(t, err)
 	require.Empty(t, otherView.ShowPromotionPolicies())
 	require.NoError(t, otherView.CreatePromotionPolicy(knowledgepolicy.PromotionPolicyDef{
@@ -841,7 +844,7 @@ func TestKnowledgePolicySchemaTransactionLifecycle(t *testing.T) {
 	require.NoError(t, other.Commit())
 	require.Len(t, committed.ShowPromotionPolicies(), 1)
 	require.NoError(t, engine.Close())
-	reopened, err := NewBadgerEngine(directory)
+	reopened, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(directory))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reopened.Close() })
 	require.Equal(t, "first", reopened.GetSchemaForNamespace("native").ShowPromotionPolicies()[0].Name)
@@ -1018,19 +1021,12 @@ func TestDropPromotionProfile_MissingBranches(t *testing.T) {
 
 func TestSchemaManager_KnowledgePolicyPersistenceHook(t *testing.T) {
 	sm := NewSchemaManager()
-	sm.mu.Lock()
-	require.NoError(t, sm.persistIfSet())
-	sm.mu.Unlock()
-
+	require.NoError(t, sm.CreatePromotionProfile(validPromoProfile("without-hook")))
 	var persisted *SchemaDefinition
-	sm.persist = func(def *SchemaDefinition) error {
-		persisted = def
-		return nil
-	}
-	sm.mu.Lock()
-	require.NoError(t, sm.persistIfSet())
-	sm.mu.Unlock()
+	sm.SetPersister(func(def *SchemaDefinition) error { persisted = def; return nil })
+	require.NoError(t, sm.CreatePromotionProfile(validPromoProfile("with-hook")))
 	require.NotNil(t, persisted)
+	require.Len(t, persisted.PromotionProfiles, 2)
 }
 
 func TestKnowledgePolicyUpdateConversionsAndErrors(t *testing.T) {
@@ -1140,12 +1136,12 @@ func TestSchemaPersistenceRoundTrip(t *testing.T) {
 	require.NoError(t, sm.CreatePromotionPolicy(policy))
 
 	// Export.
-	def := sm.ExportDefinition()
+	def := schemaDefinitionForTest(t, sm)
 	require.NotNil(t, def)
 
 	// Restore into a fresh SchemaManager.
 	sm2 := NewSchemaManager()
-	require.NoError(t, sm2.ReplaceFromDefinition(def))
+	require.NoError(t, sm2.ReplaceFromDefinition(context.Background(), def))
 
 	// Verify bundles.
 	bundles2, bindings2 := sm2.ShowDecayProfiles()

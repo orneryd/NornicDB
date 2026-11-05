@@ -19,44 +19,49 @@ func (e *StorageExecutor) callKpSuppress(ctx context.Context, procedure string, 
 	if len(args) > 0 {
 		entity = args[0]
 	}
-	var apply func(storage.ManualSuppressionEngine) error
+	var apply func(context.Context, storage.ManualSuppressionEngine) error
 	switch value := entity.(type) {
 	case *storage.Node:
 		id := value.ID
-		apply = func(engine storage.ManualSuppressionEngine) error {
-			if err := engine.SetNodeManuallySuppressed(id, suppressed); err != nil {
+		apply = func(ctx context.Context, engine storage.ManualSuppressionEngine) error {
+			if err := engine.SetManualSuppression(ctx, storage.StoredEntityNodeKind, string(id), suppressed); err != nil {
 				return err
 			}
 			// Search drops a hidden node now rather than when a search can't
 			// load it, which also clears its cached results, and indexes a
 			// node shown again here too: the storage update event doesn't
 			// reach search while the server's GraphQL handler holds it.
-			if e.searchService == nil {
-				return nil
-			}
-			if suppressed {
-				_ = e.searchService.RemoveNode(id)
-			} else if reader, ok := engine.(storage.Engine); ok {
-				if node, err := reader.GetNode(id); err == nil {
-					_ = e.searchService.IndexNode(node)
-				}
+			// Storage hides a suppressed node, so the refresh removes it.
+			if svc := e.search(); svc != nil {
+				_ = svc.RefreshNode(context.WithoutCancel(ctx), id)
 			}
 			return nil
 		}
 	case *storage.Edge:
 		id := value.ID
-		apply = func(engine storage.ManualSuppressionEngine) error {
-			return engine.SetEdgeManuallySuppressed(id, suppressed)
+		apply = func(ctx context.Context, engine storage.ManualSuppressionEngine) error {
+			if err := engine.SetManualSuppression(ctx, storage.StoredEntityEdgeKind, string(id), suppressed); err != nil {
+				return err
+			}
+			// As for a node: a hidden relationship leaves search now, so its
+			// vector doesn't take a top-k place, and a shown one returns.
+			if svc := e.search(); svc != nil {
+				_ = svc.RefreshEdge(context.WithoutCancel(ctx), id)
+			}
+			return nil
 		}
 	default:
 		return nil, localizedError(localization.CypherKnowledgePolicyVisibilityEntityRequired(procedure), nil)
 	}
-	engine := manualSuppressionEngine(e.storage)
+	engine := manualSuppressionEngine(e.getStorage(ctx))
 	if engine == nil {
 		return nil, localizedError(localization.CypherKnowledgePolicyVisibilityUnsupported(procedure), nil)
 	}
-	run := func() error {
-		if err := apply(engine); errors.Is(err, storage.ErrNotImplemented) {
+	// The suppression write runs under the lifetime that executes it: this
+	// statement when it is autocommit, or the transaction's admitted commit when
+	// the change is deferred to COMMIT (see afterCommit).
+	run := func(runCtx context.Context) error {
+		if err := apply(runCtx, engine); errors.Is(err, storage.ErrNotImplemented) {
 			return localizedError(localization.CypherKnowledgePolicyVisibilityUnsupported(procedure), err)
 		} else if err != nil {
 			return err
@@ -64,10 +69,12 @@ func (e *StorageExecutor) callKpSuppress(ctx context.Context, procedure string, 
 		e.InvalidateCommittedWriteCaches()
 		return nil
 	}
-	if e.txContext != nil && e.txContext.active && e.txContext.storageWrapper != nil {
-		// An entity the transaction deleted is gone by then; nothing to do.
-		e.txContext.storageWrapper.schemaCommitActions = append(e.txContext.storageWrapper.schemaCommitActions, func() { _ = run() })
-	} else if err := run(); err != nil {
+	if wrapper := e.membership(ctx).storage; wrapper != nil {
+		if err := wrapper.tx.AdmitWrite(); err != nil {
+			return nil, err
+		}
+	}
+	if err := e.afterCommit(ctx, run); err != nil {
 		return nil, err
 	}
 	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil

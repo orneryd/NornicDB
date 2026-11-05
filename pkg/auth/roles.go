@@ -56,18 +56,6 @@ func (r *RoleStore) Load(ctx context.Context) error {
 	return nil
 }
 
-// AllRoles returns built-in role names plus all user-defined role names.
-func (r *RoleStore) AllRoles() []string {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	out := make([]string, 0, len(builtinRoleNames)+len(r.roles))
-	out = append(out, builtinRoleNames...)
-	for name := range r.roles {
-		out = append(out, name)
-	}
-	return out
-}
-
 // IsBuiltin returns true if the role name is a built-in (admin, editor, viewer).
 func IsBuiltinRole(name string) bool {
 	n := NormalizeRoleName(name)
@@ -101,7 +89,7 @@ func (r *RoleStore) CreateRole(ctx context.Context, name string) error {
 			"name": name,
 		},
 	}
-	_, err := r.storage.CreateNode(node)
+	_, err := r.storage.CreateNode(ctx, node)
 	if err != nil {
 		return err
 	}
@@ -156,7 +144,7 @@ func (r *RoleStore) LockRoleForGrant(ctx context.Context, name string) (bool, er
 	if IsBuiltinRole(name) {
 		return true, nil
 	}
-	node, err := r.storage.GetNode(storage.NodeID(rolePrefix + name))
+	node, err := r.storage.GetNode(ctx, storage.NodeID(rolePrefix+name))
 	if errors.Is(err, storage.ErrNotFound) {
 		return false, nil
 	}
@@ -165,7 +153,9 @@ func (r *RoleStore) LockRoleForGrant(ctx context.Context, name string) (bool, er
 	}
 	for _, label := range node.Labels {
 		if label == roleLabel {
-			return true, r.storage.UpdateNode(node)
+			// The role record is written back exactly as read, so the read
+			// image is both the immutable Before and the After.
+			return true, r.storage.UpdateNode(ctx, storage.NodeUpdateRequest{Before: node, After: node})
 		}
 	}
 	return false, nil

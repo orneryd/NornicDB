@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"fmt"
@@ -23,7 +25,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 			Properties:      map[string]interface{}{"name": "Alice"},
 			ChunkEmbeddings: nil,
 		}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 
 		// Check pending count
@@ -31,7 +33,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 		assert.Equal(t, 1, count, "node without embedding should be in pending index")
 
 		// FindNodeNeedingEmbedding should return this node
-		found := engine.FindNodeNeedingEmbedding()
+		found := requireEmbeddingCandidate(t, engine.FindNodeNeedingEmbedding)
 		require.NotNil(t, found)
 		assert.Equal(t, prefixTestID("pending-1"), string(found.ID))
 	})
@@ -46,7 +48,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 			Properties:      map[string]interface{}{"name": "Bob"},
 			ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}},
 		}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 
 		// Check pending count - should be 0
@@ -54,7 +56,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 		assert.Equal(t, 0, count, "node with embedding should NOT be in pending index")
 
 		// FindNodeNeedingEmbedding should return nil
-		found := engine.FindNodeNeedingEmbedding()
+		found := requireEmbeddingCandidate(t, engine.FindNodeNeedingEmbedding)
 		assert.Nil(t, found)
 	})
 
@@ -68,7 +70,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 			Properties:      map[string]interface{}{"name": "Charlie"},
 			ChunkEmbeddings: nil,
 		}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 
 		// Verify it's in pending
@@ -92,7 +94,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 				Properties:      map[string]interface{}{"index": i},
 				ChunkEmbeddings: nil,
 			}
-			_, err := engine.CreateNode(node)
+			_, err := engine.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 		}
 
@@ -122,7 +124,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 				Properties:      map[string]interface{}{"content": "test content"},
 				ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}},
 			}
-			_, err := engine.CreateNode(node)
+			_, err := engine.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 		}
 
@@ -138,7 +140,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 		assert.Equal(t, 3, engine.PendingEmbeddingsCount())
 
 		// FindNodeNeedingEmbedding should find them
-		found := engine.FindNodeNeedingEmbedding()
+		found := requireEmbeddingCandidate(t, engine.FindNodeNeedingEmbedding)
 		require.NotNil(t, found)
 	})
 
@@ -157,7 +159,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 			},
 			ChunkEmbeddings: nil, // But no actual embedding
 		}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 
 		// Should be in pending index because Embedding array is nil
@@ -165,7 +167,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 		assert.Equal(t, 1, count, "node with has_embedding=true but no embedding array should be pending")
 
 		// FindNodeNeedingEmbedding should return this node
-		found := engine.FindNodeNeedingEmbedding()
+		found := requireEmbeddingCandidate(t, engine.FindNodeNeedingEmbedding)
 		require.NotNil(t, found, "should find node that needs embedding")
 		assert.Equal(t, prefixTestID("regression-1"), string(found.ID))
 	})
@@ -180,7 +182,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 			Properties:      map[string]interface{}{"content": "Test content"},
 			ChunkEmbeddings: nil,
 		}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 
 		// Verify it's in the pending index
@@ -217,7 +219,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 			Properties:      map[string]interface{}{"content": "Test content"},
 			ChunkEmbeddings: nil,
 		}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 
 		// Verify it's in the pending index
@@ -226,7 +228,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 
 		// Add embedding to the node
 		node.ChunkEmbeddings = [][]float32{{0.1, 0.2, 0.3}}
-		err = engine.UpdateNode(node)
+		err = engine.UpdateNode(t.Context(), NodeUpdateRequest{After: node})
 		require.NoError(t, err)
 
 		// Manually add it back to pending index (simulating stale state)
@@ -258,7 +260,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 			Properties:      map[string]interface{}{"data": "internal"},
 			ChunkEmbeddings: nil,
 		}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 
 		// Should NOT be in pending index
@@ -278,7 +280,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 				Properties:      map[string]interface{}{"id": id},
 				ChunkEmbeddings: nil,
 			}
-			_, err := engine.CreateNode(node)
+			_, err := engine.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 		}
 
@@ -287,7 +289,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 		// Process each one
 		processed := make(map[string]bool)
 		for i := 0; i < 3; i++ {
-			found := engine.FindNodeNeedingEmbedding()
+			found := requireEmbeddingCandidate(t, engine.FindNodeNeedingEmbedding)
 			require.NotNil(t, found)
 			// found.ID is prefixed (e.g., "test:multi-a"), unprefix it for comparison
 			unprefixedID := string(found.ID)
@@ -307,7 +309,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 
 		// No more pending
 		assert.Equal(t, 0, engine.PendingEmbeddingsCount())
-		assert.Nil(t, engine.FindNodeNeedingEmbedding())
+		assert.Nil(t, requireEmbeddingCandidate(t, engine.FindNodeNeedingEmbedding))
 	})
 
 	t.Run("FindNodeNeedingEmbedding_skips_stale_entries", func(t *testing.T) {
@@ -320,7 +322,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 			Properties:      map[string]interface{}{"content": "Test content"},
 			ChunkEmbeddings: nil,
 		}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 
 		// Manually add stale entries to the pending index (simulating deleted nodes)
@@ -342,7 +344,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 
 		// FindNodeNeedingEmbedding should skip stale entries and find the valid one
 		// It should handle up to 100 stale entries before giving up
-		found := engine.FindNodeNeedingEmbedding()
+		found := requireEmbeddingCandidate(t, engine.FindNodeNeedingEmbedding)
 		require.NotNil(t, found, "should find valid node despite stale entries")
 		assert.Equal(t, prefixTestID("valid-node"), string(found.ID), "should find the valid node")
 
@@ -361,7 +363,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 			Properties:      map[string]interface{}{"content": "Test content"},
 			ChunkEmbeddings: nil,
 		}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 
 		// Add 50 stale entries (less than the 100 max attempts)
@@ -374,7 +376,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 		}
 
 		// FindNodeNeedingEmbedding should skip all stale entries and find the valid one
-		found := engine.FindNodeNeedingEmbedding()
+		found := requireEmbeddingCandidate(t, engine.FindNodeNeedingEmbedding)
 		require.NotNil(t, found, "should find valid node after skipping 50 stale entries")
 		assert.Equal(t, prefixTestID("valid-node"), string(found.ID))
 	})
@@ -392,7 +394,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 		}
 
 		// FindNodeNeedingEmbedding should clean stale entries and return nil.
-		found := engine.FindNodeNeedingEmbedding()
+		found := requireEmbeddingCandidate(t, engine.FindNodeNeedingEmbedding)
 		assert.Nil(t, found, "should return nil when only stale entries exist")
 		assert.Equal(t, 0, engine.PendingEmbeddingsCount(), "stale entries should be cleaned up")
 	})
@@ -412,7 +414,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 			return txn.Set(nodeKey(badID), []byte("not-a-node"))
 		}))
 
-		found := engine.FindNodeNeedingEmbedding()
+		found := requireEmbeddingCandidate(t, engine.FindNodeNeedingEmbedding)
 		assert.Nil(t, found)
 
 		// Corrupt entry should be removed; malformed key remains ignored.
@@ -433,11 +435,11 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 			Properties:      map[string]interface{}{"name": "already-clean"},
 			ChunkEmbeddings: [][]float32{{0.1, 0.2}},
 		}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 		engine.AddToPendingEmbeddings(node.ID)
 		assert.Equal(t, 1, engine.PendingEmbeddingsCount())
-		found := engine.FindNodeNeedingEmbedding()
+		found := requireEmbeddingCandidate(t, engine.FindNodeNeedingEmbedding)
 		assert.Nil(t, found)
 		assert.Equal(t, 0, engine.PendingEmbeddingsCount())
 	})
@@ -452,7 +454,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 			Properties:      map[string]interface{}{"content": "Test content"},
 			ChunkEmbeddings: nil,
 		}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 
 		// Add embedding to the node
@@ -465,11 +467,11 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 		}
 
 		// UpdateNodeEmbedding should succeed for existing node
-		err = engine.UpdateNodeEmbeddingSidecar(node)
+		err = engine.UpdateNodeEmbeddingSidecar(context.Background(), node)
 		require.NoError(t, err, "UpdateNodeEmbeddingSidecar should succeed for existing node")
 
 		// Verify embedding was saved
-		updated, err := engine.GetNode(node.ID)
+		updated, err := engine.GetNode(t.Context(), node.ID)
 		require.NoError(t, err)
 		assert.Equal(t, [][]float32{{0.1, 0.2, 0.3, 0.4}}, updated.ChunkEmbeddings)
 		assert.Equal(t, "test-model", updated.EmbedMeta["embedding_model"])
@@ -479,11 +481,11 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 			ID:              NodeID(prefixTestID("non-existent")),
 			ChunkEmbeddings: [][]float32{{0.5, 0.6}},
 		}
-		err = engine.UpdateNodeEmbeddingSidecar(nonExistent)
+		err = engine.UpdateNodeEmbeddingSidecar(context.Background(), nonExistent)
 		assert.Equal(t, ErrNotFound, err, "UpdateNodeEmbeddingSidecar should return ErrNotFound for non-existent node")
 
 		// Verify node was NOT created
-		_, err = engine.GetNode(NodeID(prefixTestID("non-existent")))
+		_, err = engine.GetNode(t.Context(), NodeID(prefixTestID("non-existent")))
 		assert.Equal(t, ErrNotFound, err, "node should not have been created")
 	})
 
@@ -500,7 +502,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 			},
 			ChunkEmbeddings: nil,
 		}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 
 		// Update only embedding-related fields
@@ -512,11 +514,11 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 			"chunk_count":          1,
 		}
 
-		err = engine.UpdateNodeEmbeddingSidecar(node)
+		err = engine.UpdateNodeEmbeddingSidecar(context.Background(), node)
 		require.NoError(t, err)
 
 		// Verify embedding was updated but other properties preserved
-		updated, err := engine.GetNode(node.ID)
+		updated, err := engine.GetNode(t.Context(), node.ID)
 		require.NoError(t, err)
 		assert.Equal(t, [][]float32{{0.1, 0.2, 0.3}}, updated.ChunkEmbeddings)
 		assert.Equal(t, "Original content", updated.Properties["content"], "non-embedding properties should be preserved")
@@ -533,7 +535,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 			Properties:      map[string]interface{}{"content": "Test content"},
 			ChunkEmbeddings: nil,
 		}
-		_, err := engine.CreateNode(node)
+		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 
 		// Verify it's in pending index
@@ -547,7 +549,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 			"has_embedding":        true,
 		}
 
-		err = engine.UpdateNodeEmbeddingSidecar(node)
+		err = engine.UpdateNodeEmbeddingSidecar(context.Background(), node)
 		require.NoError(t, err)
 
 		// Should be removed from pending index
@@ -566,14 +568,14 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 		added := engine.RefreshPendingEmbeddingsIndex()
 		assert.Equal(t, 0, added)
 		assert.Equal(t, 0, engine.PendingEmbeddingsCount())
-		assert.Nil(t, engine.FindNodeNeedingEmbedding())
+		assert.Nil(t, requireEmbeddingCandidate(t, engine.FindNodeNeedingEmbedding))
 	})
 
 	t.Run("StreamNodeChunks covers default size stop and cancellation", func(t *testing.T) {
 		engine := newTestBadgerEngineForPending(t)
 
 		for _, id := range []string{"chunk-a", "chunk-b", "chunk-c"} {
-			_, err := engine.CreateNode(&Node{
+			_, err := engine.CreateNode(t.Context(), &Node{
 				ID:              NodeID(prefixTestID(id)),
 				Labels:          []string{"Chunked"},
 				Properties:      map[string]interface{}{"name": id},
@@ -606,14 +608,14 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 	t.Run("ClearAllEmbeddingsForPrefix only clears matching namespace", func(t *testing.T) {
 		engine := newTestBadgerEngineForPending(t)
 
-		_, err := engine.CreateNode(&Node{
+		_, err := engine.CreateNode(t.Context(), &Node{
 			ID:              "tenant_a:doc-1",
 			Labels:          []string{"Doc"},
 			Properties:      map[string]interface{}{"content": "a"},
 			ChunkEmbeddings: [][]float32{{1, 2, 3}},
 		})
 		require.NoError(t, err)
-		_, err = engine.CreateNode(&Node{
+		_, err = engine.CreateNode(t.Context(), &Node{
 			ID:              "tenant_b:doc-1",
 			Labels:          []string{"Doc"},
 			Properties:      map[string]interface{}{"content": "b"},
@@ -626,11 +628,11 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 		assert.Equal(t, 1, cleared)
 		assert.Equal(t, 1, engine.PendingEmbeddingsCount())
 
-		tenantA, err := engine.GetNode("tenant_a:doc-1")
+		tenantA, err := engine.GetNode(t.Context(), "tenant_a:doc-1")
 		require.NoError(t, err)
 		assert.Nil(t, tenantA.ChunkEmbeddings)
 
-		tenantB, err := engine.GetNode("tenant_b:doc-1")
+		tenantB, err := engine.GetNode(t.Context(), "tenant_b:doc-1")
 		require.NoError(t, err)
 		require.Len(t, tenantB.ChunkEmbeddings, 1)
 		require.Len(t, tenantB.ChunkEmbeddings[0], 3)
@@ -644,13 +646,15 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 		require.Error(t, engine.RunGC())
 		assert.Equal(t, 0, engine.PendingEmbeddingsCount())
 		assert.Equal(t, 0, engine.RefreshPendingEmbeddingsIndex())
-		assert.Nil(t, engine.FindNodeNeedingEmbedding())
+		node, err := engine.FindNodeNeedingEmbedding(context.Background())
+		require.ErrorIs(t, err, ErrStorageClosed)
+		assert.Nil(t, node)
 
 		lsm, vlog := engine.Size()
 		assert.Equal(t, int64(0), lsm)
 		assert.Equal(t, int64(0), vlog)
 
-		_, err := engine.ClearAllEmbeddingsForPrefix("tenant_a:")
+		_, err = engine.ClearAllEmbeddingsForPrefix("tenant_a:")
 		require.Error(t, err)
 
 		err = engine.StreamNodeChunks(context.Background(), 2, func(nodes []*Node) error { return nil })
@@ -676,7 +680,7 @@ func TestPendingEmbeddingsRespectDatabaseLabelPolicy(t *testing.T) {
 		{"b:image", []string{"Image"}},
 		{"b:doc", []string{"Document"}},
 	} {
-		_, err := engine.CreateNode(&Node{ID: NodeID(tc.id), Labels: tc.labels, Properties: map[string]interface{}{"text": "value"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: NodeID(tc.id), Labels: tc.labels, Properties: map[string]interface{}{"text": "value"}})
 		require.NoError(t, err)
 	}
 	require.Equal(t, 3, engine.PendingEmbeddingsCount())
@@ -688,9 +692,9 @@ func TestPendingEmbeddingsRespectDatabaseLabelPolicy(t *testing.T) {
 	engine.AddToPendingEmbeddings("a:chunk")
 	require.Equal(t, 2, engine.PendingEmbeddingsCount())
 	engine.SetEmbeddingLabelPolicy("", []string{"Document"}, []string{"Job"})
-	_, err := engine.CreateNode(&Node{ID: "new:job", Labels: []string{"Document", "Job"}, Properties: map[string]interface{}{"text": "value"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "new:job", Labels: []string{"Document", "Job"}, Properties: map[string]interface{}{"text": "value"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "new:doc", Labels: []string{"Document"}, Properties: map[string]interface{}{"text": "value"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "new:doc", Labels: []string{"Document"}, Properties: map[string]interface{}{"text": "value"}})
 	require.NoError(t, err)
 	require.Equal(t, 3, engine.PendingEmbeddingsCount())
 }
@@ -698,7 +702,7 @@ func TestPendingEmbeddingsRespectDatabaseLabelPolicy(t *testing.T) {
 // newTestBadgerEngineForPending creates a BadgerEngine for pending embeddings tests
 func newTestBadgerEngineForPending(t *testing.T) *BadgerEngine {
 	t.Helper()
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { engine.Close() })
 	// These tests are specifically exercising the pending-embed index. The
@@ -718,7 +722,7 @@ func TestBadgerEngine_InvalidatePendingEmbeddingsIndex(t *testing.T) {
 		Labels:     []string{"TestNode"},
 		Properties: map[string]interface{}{"name": "test"},
 	}
-	_, err := engine.CreateNode(node)
+	_, err := engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	// Call the no-op — should not panic or error

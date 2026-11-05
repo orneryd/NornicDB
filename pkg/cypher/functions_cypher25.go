@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"regexp"
 	"strconv"
 	"strings"
@@ -51,7 +52,7 @@ func stringArguments(ctx cypherfn.Context, function string, args []string, count
 
 // fnStringIndexOf is string.indexOf(text, search): the character offset of
 // search's first occurrence in text, or -1.
-func fnStringIndexOf(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnStringIndexOf(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	texts, null, err := stringArguments(ctx, "string.indexOf", args, 2)
 	if err != nil || null {
 		return nil, err
@@ -63,7 +64,7 @@ func fnStringIndexOf(ctx cypherfn.Context, args []string) (interface{}, error) {
 	return int64(len([]rune(texts[0][:at]))), nil
 }
 
-func fnStringJoin(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnStringJoin(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	if len(args) != 2 {
 		return nil, argumentCountError("string.join", "2", len(args))
 	}
@@ -98,7 +99,7 @@ func fnStringJoin(ctx cypherfn.Context, args []string) (interface{}, error) {
 // every match of regex replaced, with Java's replacement syntax ($1, ${name},
 // \ escapes) as Neo4j uses. A replacement Java rejects is an error only when
 // regex matches, as in Neo4j.
-func fnStringRegexReplace(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnStringRegexReplace(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	texts, null, err := stringArguments(ctx, "string.regexReplace", args, 3)
 	if err != nil || null {
 		return nil, err
@@ -180,7 +181,7 @@ func javaReplacementTemplate(replacement string, re *regexp.Regexp) (string, err
 
 // fnCardinality is cardinality(value): a list's or map's number of items, a
 // path's number of nodes and relationships.
-func fnCardinality(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnCardinality(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	if len(args) != 1 {
 		return nil, argumentCountError("cardinality", "1", len(args))
 	}
@@ -204,7 +205,7 @@ func fnCardinality(ctx cypherfn.Context, args []string) (interface{}, error) {
 // PROPERTY_EXISTS(n, key), whose bare key canonicalizeFunctionAliases writes
 // as a string: whether a node or relationship has a (non-null) property of
 // that key. A null element gives null; anything else is a type mismatch.
-func fnPropertyExists(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnPropertyExists(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 	if len(args) != 2 {
 		return nil, argumentCountError("property_exists", "2", len(args))
 	}

@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 	"testing"
 
@@ -39,9 +40,10 @@ func TestSharedScannersConsumeCompleteFragments(t *testing.T) {
 	})
 
 	t.Run("quoted spans", func(t *testing.T) {
-		// Escaped quote and doubled quote both stay inside the span.
+		// Backslash escapes stay inside a string; doubled string delimiters
+		// close one token and begin another.
 		require.Equal(t, len(`'a\'b'`), skipCypherQuotedText(`'a\'b'`, 0, '\''))
-		require.Equal(t, len(`'a''b'`), skipCypherQuotedText(`'a''b'`, 0, '\''))
+		require.Equal(t, len("'a'"), skipCypherQuotedText(`'a''b'`, 0, '\''))
 		require.Equal(t, len(`"a\"b"`), skipCypherQuotedText(`"a\"b"`, 0, '"'))
 		// A backtick name escapes a backtick by doubling; a backslash does not
 		// escape, so the first backtick closes the name.
@@ -52,7 +54,7 @@ func TestSharedScannersConsumeCompleteFragments(t *testing.T) {
 	t.Run("forEachListOperand", func(t *testing.T) {
 		var visits []int
 		text := "' IN ' IN [1, 2] /* IN */ IN [3] // IN\n"
-		err := forEachListOperand(text, func(start, in int) error {
+		err := forEachListOperand(t.Context(), text, func(start, in int) error {
 			visits = append(visits, in)
 			return nil
 		})
@@ -60,22 +62,22 @@ func TestSharedScannersConsumeCompleteFragments(t *testing.T) {
 		require.Equal(t, []int{strings.Index(text, "IN [1"), strings.Index(text, "IN [3]")}, visits)
 	})
 
-	t.Run("findMatchingDelimiter", func(t *testing.T) {
+	t.Run("canonical delimiter owner", func(t *testing.T) {
 		text := "([a /* ] */ {k: ')'}])"
-		close := findMatchingDelimiter(text, 0, '(', ')')
+		close := cyphertext.FindMatchingDelimiter(text, 0, '(', ')', cyphertext.OpeningDelimiter)
 		require.Equal(t, len(text)-1, close)
-		require.Equal(t, len("[a /* ] */ ']']")-1, findMatchingDelimiter("[a /* ] */ ']']", 0, '[', ']'))
+		require.Equal(t, len("[a /* ] */ ']']")-1, cyphertext.FindMatchingDelimiter("[a /* ] */ ']']", 0, '[', ']', cyphertext.OpeningDelimiter))
 		// The ']' inside the quoted string cannot close the group.
-		require.Equal(t, -1, findMatchingDelimiter("[a /* ] */ ']'", 0, '[', ']'))
+		require.Equal(t, -1, cyphertext.FindMatchingDelimiter("[a /* ] */ ']'", 0, '[', ']', cyphertext.OpeningDelimiter))
 	})
 
 	t.Run("keyword scanners skip fragments", func(t *testing.T) {
 		query := "RETURN 'WITH' AS `x//y`, /* RETURN */ 1 // WITH\rWITH 2 AS z RETURN z"
 		want := strings.Index(query, "WITH 2")
-		require.Equal(t, want, keywordIndexFrom(query, "WITH", 0, defaultKeywordScanOpts()), "cached-default")
+		require.Equal(t, want, keywordIndexFrom(t.Context(), query, "WITH", 0, defaultKeywordScanOpts()), "cached-default")
 		opts := defaultKeywordScanOpts()
 		opts.SkipParens = false
-		require.Equal(t, want, keywordIndexFrom(query, "WITH", 0, opts), "general")
+		require.Equal(t, want, keywordIndexFrom(t.Context(), query, "WITH", 0, opts), "general")
 	})
 
 	t.Run("lastLiveByte", func(t *testing.T) {
@@ -99,10 +101,10 @@ func TestSharedScannersConsumeCompleteFragments(t *testing.T) {
 			"RETURN 1 /* WITH */ WITH 2 AS z RETURN z",
 		} {
 			want := strings.Index(query, "WITH 2")
-			require.Equal(t, want, keywordIndexFrom(query, "WITH", 0, defaultKeywordScanOpts()), "cached-default %q", query)
+			require.Equal(t, want, keywordIndexFrom(t.Context(), query, "WITH", 0, defaultKeywordScanOpts()), "cached-default %q", query)
 			opts := defaultKeywordScanOpts()
 			opts.SkipParens = false
-			require.Equal(t, want, keywordIndexFrom(query, "WITH", 0, opts), "general %q", query)
+			require.Equal(t, want, keywordIndexFrom(t.Context(), query, "WITH", 0, opts), "general %q", query)
 		}
 	})
 }

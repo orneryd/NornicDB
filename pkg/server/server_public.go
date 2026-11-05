@@ -5,8 +5,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/httpresponse"
+
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
@@ -65,7 +68,7 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request) {
 		response["default_database"] = s.dbManager.DefaultDatabaseName()
 	}
 
-	s.writeJSON(w, http.StatusOK, response)
+	httpresponse.WritePropertyJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -74,73 +77,22 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	response := map[string]interface{}{
 		"status": "healthy",
 	}
-	s.writeJSON(w, http.StatusOK, response)
+	httpresponse.WritePropertyJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	stats := s.Stats()
 
-	// Calculate stats across all user databases (excluding system).
-	// Primary source: storage-maintained cached per-namespace counters
-	// (NodeCountByPrefix/EdgeCountByPrefix), which are incrementally updated.
-	// Fallback: DatabaseManager metadata (may be stale).
-	var totalNodeCount, totalEdgeCount int64
-	databaseCount := 0
-
-	usedCachedPrefixCounts := false
-	if base := s.db.GetBaseStorageForManager(); base != nil {
-		if lister, ok := base.(interface{ ListNamespaces() []string }); ok {
-			if statsEngine, ok := base.(interface {
-				NodeCountByPrefix(prefix string) (int64, error)
-				EdgeCountByPrefix(prefix string) (int64, error)
-			}); ok {
-				for _, ns := range lister.ListNamespaces() {
-					select {
-					case <-r.Context().Done():
-						return
-					default:
-					}
-					if ns == "" || ns == "system" {
-						continue
-					}
-					databaseCount++
-					prefix := ns + ":"
-					if n, err := statsEngine.NodeCountByPrefix(prefix); err == nil {
-						totalNodeCount += n
-						usedCachedPrefixCounts = true
-					}
-					if e, err := statsEngine.EdgeCountByPrefix(prefix); err == nil {
-						totalEdgeCount += e
-						usedCachedPrefixCounts = true
-					}
-				}
-			}
-		}
-	}
-
-	// Fallback when cached prefix counters are not available.
-	if !usedCachedPrefixCounts && s.dbManager != nil {
-		databases := s.dbManager.ListDatabases()
-		for _, dbInfo := range databases {
-			select {
-			case <-r.Context().Done():
-				return
-			default:
-			}
-			dbName := dbInfo.Name
-			if dbName == "system" {
-				continue
-			}
-			databaseCount++
-			totalNodeCount += dbInfo.NodeCount
-		}
+	totalNodeCount, totalEdgeCount, databaseCount := s.readableDatabaseCounts(r, false, s.databaseReadPredicate(getClaims(r)))
+	if r.Context().Err() != nil {
+		return
 	}
 
 	// Build embedding info
 	embedInfo := map[string]interface{}{
 		"enabled": false,
 	}
-	if embedStats := s.db.EmbedQueueStats(); embedStats != nil {
+	if embedStats := s.db.EmbedQueueStats(); embedStats != nil && s.canReadAllDatabases(r) {
 		status := "idle"
 		if embedStats.Running {
 			status = "processing"
@@ -149,6 +101,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			"enabled":   true,
 			"status":    status,
 			"processed": embedStats.Processed,
+			"pending":   embedStats.Pending,
 			"failed":    embedStats.Failed,
 		}
 	}
@@ -158,6 +111,9 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if s.dbManager != nil {
 		for _, info := range s.dbManager.ListDatabases() {
 			if info.Name == "" || info.Name == "system" {
+				continue
+			}
+			if _, readable := s.databaseReadAccess(getClaims(r), info.Name); !readable {
 				continue
 			}
 			st := s.db.GetDatabaseSearchStatus(info.Name)
@@ -198,16 +154,16 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"embeddings": embedInfo,
 	}
 
-	s.writeJSON(w, http.StatusOK, response)
+	httpresponse.WritePropertyJSON(w, http.StatusOK, response)
 }
 
 // handleMetrics serves the legacy :7474/metrics endpoint by translating
 // the unified pkg/observability *prometheus.Registry through
 // observability.RenderLegacy (Phase 5 / Plan 05-04 D-01e). The body
-// stream is identical (byte-for-byte, locked by
-// pkg/observability/legacy_snapshot.golden) to the pre-Phase-5 hand-built
-// emit in this file — but every line now flows from the unified Phase 4
-// registry, eliminating the second source of truth (ROADMAP SC #1).
+// schema is locked by pkg/observability/legacy_snapshot.golden. With auth
+// enabled, storage counts and database-labelled samples use the caller's
+// databaseReadAccess decision. Unpartitioned database-derived counters require
+// access to their complete population. Auth-off retains the process-wide view.
 //
 // Three locked headers per MET-19/MET-20:
 //   - Content-Type: text/plain; version=0.0.4; charset=utf-8 (Prometheus exposition v0.0.4)
@@ -231,7 +187,28 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 //	      - targets: ['localhost:7474']
 //	    metrics_path: '/metrics'
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
-	body := observability.RenderLegacy(s.obsRegistryForHandler(), time.Now())
+	registry := s.obsRegistryForHandler()
+	var body []byte
+	if registry == nil || !s.isRBACEnforced() {
+		body = observability.RenderLegacy(registry, time.Now())
+	} else {
+		canRead := s.databaseReadPredicate(getClaims(r))
+		nodes, edges, databases := s.readableDatabaseCounts(r, true, canRead)
+		if r.Context().Err() != nil {
+			return
+		}
+		anyReadable, allReadable := auth.DatabasePopulationAccess(s.dbManager.ListDatabaseNames(), canRead)
+		anyReadable = anyReadable || databases > 0
+		if !anyReadable {
+			s.writeNeo4jDatabaseAccessDenied(w, r, "")
+			return
+		}
+		body = observability.RenderLegacyForRead(registry, time.Now(), observability.LegacyReadScope{
+			CanReadDatabase:      canRead,
+			AllDatabasesReadable: allReadable,
+			Nodes:                nodes, Edges: edges,
+		})
+	}
 	w.Header().Set("Content-Type", observability.LegacyContentType)
 	w.Header().Set("Deprecation", observability.LegacyDeprecation)
 	w.Header().Set("Sunset", observability.LegacySunset)
@@ -251,4 +228,84 @@ func (s *Server) obsRegistryForHandler() *prometheus.Registry {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.obsRegistry
+}
+
+// readableDatabaseCounts is the admitted aggregate population shared by
+// /status and legacy /metrics. Each namespace passes databaseReadAccess before
+// reading cached prefix counts; aliases/composites cannot double-count storage.
+// Status excludes system; metrics includes it only when the caller can read it.
+func (s *Server) readableDatabaseCounts(r *http.Request, includeSystem bool, canRead func(string) bool) (totalNodeCount, totalEdgeCount int64, databaseCount int) {
+	// Calculate stats across the caller's readable physical databases.
+	// Primary source: storage-maintained cached per-namespace counters
+	// (NodeCountByPrefix/EdgeCountByPrefix), which are incrementally updated.
+	// Fallback: physical database engines when prefix counts are unavailable.
+
+	usedCachedPrefixCounts := false
+	if base := s.db.GetBaseStorageForManager(); base != nil {
+		if lister, ok := base.(interface{ ListNamespaces() []string }); ok {
+			if statsEngine, ok := base.(interface {
+				NodeCountByPrefix(prefix string) (int64, error)
+				EdgeCountByPrefix(prefix string) (int64, error)
+			}); ok {
+				for _, ns := range lister.ListNamespaces() {
+					select {
+					case <-r.Context().Done():
+						return
+					default:
+					}
+					if ns == "" || (!includeSystem && ns == "system") {
+						continue
+					}
+					if !canRead(ns) {
+						continue
+					}
+					databaseCount++
+					prefix := ns + ":"
+					if n, err := statsEngine.NodeCountByPrefix(prefix); err == nil {
+						totalNodeCount += n
+						usedCachedPrefixCounts = true
+					}
+					if e, err := statsEngine.EdgeCountByPrefix(prefix); err == nil {
+						totalEdgeCount += e
+						usedCachedPrefixCounts = true
+					}
+				}
+			}
+		}
+	}
+
+	// Fallback when cached prefix counters are not available.
+	if !usedCachedPrefixCounts && s.dbManager != nil {
+		databases := s.dbManager.ListDatabases()
+		for _, dbInfo := range databases {
+			select {
+			case <-r.Context().Done():
+				return
+			default:
+			}
+			dbName := dbInfo.Name
+			if !includeSystem && dbName == "system" {
+				continue
+			}
+			if !canRead(dbName) {
+				continue
+			}
+			if dbInfo.Type == "composite" {
+				continue
+			}
+			engine, err := s.dbManager.GetStorage(dbName)
+			if err != nil {
+				continue
+			}
+			databaseCount++
+			if nodes, err := engine.NodeCount(r.Context()); err == nil {
+				totalNodeCount += nodes
+			}
+			if edges, err := engine.EdgeCount(r.Context()); err == nil {
+				totalEdgeCount += edges
+			}
+		}
+	}
+
+	return
 }

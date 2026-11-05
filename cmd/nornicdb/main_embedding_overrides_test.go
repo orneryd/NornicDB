@@ -43,7 +43,7 @@ func TestApplyServeEmbeddingOverrides(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			root := newRootCommand(nil)
+			root := newTestServerRoot(nil)
 			cmd, _, err := root.Find([]string{"serve"})
 			if err != nil {
 				t.Fatal(err)

@@ -1,8 +1,10 @@
 package storage
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
@@ -66,21 +68,24 @@ func rewindPersistedIDCounter(t *testing.T, engine *BadgerEngine, key []byte, va
 func TestIDDictionary_ReopenNeverReallocatesACommittedNumID(t *testing.T) {
 	dir := t.TempDir()
 
-	engine1, err := NewBadgerEngine(dir)
+	engine1, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	if engine1 != nil {
+		fixtureowner.Own(t, engine1)
+	}
 	require.NoError(t, err)
 
 	nodeCounterBefore := persistedIDCounter(t, engine1, idCounterNodeKey)
 	edgeCounterBefore := persistedIDCounter(t, engine1, idCounterEdgeKey)
 
 	for i := 1; i <= 3; i++ {
-		_, err := engine1.CreateNode(&Node{
+		_, err := engine1.CreateNode(t.Context(), &Node{
 			ID:         NodeID(fmt.Sprintf("tenant-a:%d", i)),
 			Labels:     []string{"Resource"},
 			Properties: map[string]any{"tenant": "a", "ordinal": int64(i)},
 		})
 		require.NoError(t, err)
 	}
-	require.NoError(t, engine1.CreateEdge(&Edge{
+	require.NoError(t, engine1.CreateEdge(t.Context(), &Edge{
 		ID: "tenant-a:e1", StartNode: "tenant-a:1", EndNode: "tenant-a:2",
 		Type: "CONTAINS", Properties: map[string]any{"tenant": "a"},
 	}))
@@ -94,19 +99,19 @@ func TestIDDictionary_ReopenNeverReallocatesACommittedNumID(t *testing.T) {
 	rewindPersistedIDCounter(t, engine1, idCounterEdgeKey, edgeCounterBefore)
 	require.NoError(t, engine1.Close())
 
-	engine2, err := NewBadgerEngine(dir)
+	engine2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine2.Close() })
 
 	for i := 1; i <= 3; i++ {
-		_, err := engine2.CreateNode(&Node{
+		_, err := engine2.CreateNode(t.Context(), &Node{
 			ID:         NodeID(fmt.Sprintf("tenant-b:%d", i)),
 			Labels:     []string{"Resource"},
 			Properties: map[string]any{"tenant": "b", "ordinal": int64(i)},
 		})
 		require.NoError(t, err)
 	}
-	require.NoError(t, engine2.CreateEdge(&Edge{
+	require.NoError(t, engine2.CreateEdge(t.Context(), &Edge{
 		ID: "tenant-b:e1", StartNode: "tenant-b:1", EndNode: "tenant-b:2",
 		Type: "CONTAINS", Properties: map[string]any{"tenant": "b"},
 	}))
@@ -122,13 +127,13 @@ func TestIDDictionary_ReopenNeverReallocatesACommittedNumID(t *testing.T) {
 
 	// The user-visible symptom: adjacency is keyed by numID, so an alias makes
 	// one tenant's relationships appear under the other tenant's node.
-	outA, err := engine2.GetOutgoingEdges("tenant-a:1")
+	outA, err := engine2.GetOutgoingEdges(context.Background(), "tenant-a:1")
 	require.NoError(t, err)
 	require.Len(t, outA, 1, "tenant-a:1 must own exactly its own relationship after reopen")
 	require.Equal(t, EdgeID("tenant-a:e1"), outA[0].ID)
 	require.Equal(t, NodeID("tenant-a:1"), outA[0].StartNode)
 
-	outB, err := engine2.GetOutgoingEdges("tenant-b:1")
+	outB, err := engine2.GetOutgoingEdges(context.Background(), "tenant-b:1")
 	require.NoError(t, err)
 	require.Len(t, outB, 1, "tenant-b:1 must own exactly its own relationship")
 	require.Equal(t, EdgeID("tenant-b:e1"), outB[0].ID)
@@ -146,9 +151,12 @@ func TestIDDictionary_ReopenNeverReallocatesACommittedNumID(t *testing.T) {
 func TestIDDictionary_ReopenKeepsAHigherPersistedCounter(t *testing.T) {
 	dir := t.TempDir()
 
-	engine1, err := NewBadgerEngine(dir)
+	engine1, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	if engine1 != nil {
+		fixtureowner.Own(t, engine1)
+	}
 	require.NoError(t, err)
-	_, err = engine1.CreateNode(&Node{ID: "solo:1", Labels: []string{"L"}})
+	_, err = engine1.CreateNode(t.Context(), &Node{ID: "solo:1", Labels: []string{"L"}})
 	require.NoError(t, err)
 	// Persist a counter well above anything the forward map holds, as if
 	// allocations had been rolled back after the counter write.
@@ -156,7 +164,7 @@ func TestIDDictionary_ReopenKeepsAHigherPersistedCounter(t *testing.T) {
 	rewindPersistedIDCounter(t, engine1, idCounterEdgeKey, 2_000)
 	require.NoError(t, engine1.Close())
 
-	engine2, err := NewBadgerEngine(dir)
+	engine2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine2.Close() })
 	require.Equal(t, uint64(1_000), engine2.idDict.nextNode.Load())

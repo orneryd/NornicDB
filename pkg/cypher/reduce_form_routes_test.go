@@ -59,10 +59,10 @@ func TestReduceFormRoutes(t *testing.T) {
 
 	// Guards for forms the statement checks reject first.
 	require.Nil(t, exec.evaluateExpressionWithContextFull(ctx, "reduce(a, x IN [1] | x)", nil, nil, nil, nil, nil, 0))
-	_, resolved, err := exec.evaluateRowReduce("reduce", "a, x IN [1] | x", map[string]interface{}{}, exec.evaluateRowValue)
+	_, resolved, err := exec.evaluateRowReduce(t.Context(), "reduce", "a, x IN [1] | x", map[string]interface{}{}, exec.evaluateRowValue)
 	require.NoError(t, err)
 	require.False(t, resolved)
-	_, resolved, err = exec.evaluateRowReduce("reduce", "a = 0, x IN [1] | a + $missing.p", map[string]interface{}{}, exec.evaluateRowValue)
+	_, resolved, err = exec.evaluateRowReduce(t.Context(), "reduce", "a = 0, x IN [1] | a + $missing.p", map[string]interface{}{}, exec.evaluateRowValue)
 	require.False(t, resolved, "a step the row evaluator can't resolve")
 	_ = err
 }
@@ -78,9 +78,9 @@ func TestReduceFormGuards(t *testing.T) {
 	require.Nil(t, exec.evaluateReduceForm(ctx, "reduce", "a = 1, x IN null | a + x", nil, nil, nil, nil, nil, 0))
 	edge := &storage.Edge{ID: "e1", Type: "R", Properties: map[string]interface{}{"w": int64(4)}}
 	require.Equal(t, int64(5), exec.evaluateReduceForm(ctx, "reduce", "a = 1, x IN [1] | a + r.w", nil, map[string]*storage.Edge{"r": edge}, nil, nil, nil, 0))
-	require.Error(t, checkExpressionPropertyAccesses("reduce(s = 0, x IN [1] | s + i.p)", map[string]string{"i": "Integer"}, nil))
-	require.Error(t, checkExpressionPropertyAccesses("reduce(s = i.p, x IN [1] | s)", map[string]string{"i": "Integer"}, nil))
-	require.NoError(t, checkExpressionPropertyAccesses("reduce(i = {p: 1}, x IN [1] | i.p)", map[string]string{"i": "Integer"}, nil))
+	require.Error(t, checkExpressionPropertyAccesses(t.Context(), "reduce(s = 0, x IN [1] | s + i.p)", map[string]string{"i": "Integer"}, nil))
+	require.Error(t, checkExpressionPropertyAccesses(t.Context(), "reduce(s = i.p, x IN [1] | s)", map[string]string{"i": "Integer"}, nil))
+	require.NoError(t, checkExpressionPropertyAccesses(t.Context(), "reduce(i = {p: 1}, x IN [1] | i.p)", map[string]string{"i": "Integer"}, nil))
 	rewritten, rewrite := canonicalizeFunctionAliases("RETURN /* ln(1) */ ceiling(1.2) AS v")
 	require.NotNil(t, rewrite)
 	require.Equal(t, "RETURN /* ln(1) */ ceil(1.2) AS v", rewritten)

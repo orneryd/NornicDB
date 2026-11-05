@@ -9,6 +9,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// countingStreamingEngine observes the executor's direct reads: streaming
+// scans, full loads and label scans. It adds no behavior of its own, so it is a
+// transparent decorator and declares the canonical storage.EngineUnwrapper
+// capability. The executor's implicit-transaction resolution therefore opens a
+// statement's write transaction on the engine underneath, while the wrapper
+// keeps counting the reads of every read-only statement that runs on it.
 type countingStreamingEngine struct {
 	storage.Engine
 	streamNodesCalls int
@@ -16,6 +22,9 @@ type countingStreamingEngine struct {
 	allEdgesCalls    int
 	labelCalls       int
 }
+
+// GetInnerEngine is the canonical EngineUnwrapper accessor.
+func (c *countingStreamingEngine) GetInnerEngine() storage.Engine { return c.Engine }
 
 func (c *countingStreamingEngine) StreamNodes(ctx context.Context, fn func(node *storage.Node) error) error {
 	c.streamNodesCalls++
@@ -39,19 +48,19 @@ func (c *countingStreamingEngine) StreamNodeChunks(ctx context.Context, chunkSiz
 	return fmt.Errorf("inner engine does not implement StreamingEngine")
 }
 
-func (c *countingStreamingEngine) AllNodes() ([]*storage.Node, error) {
+func (c *countingStreamingEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
 	c.allNodesCalls++
-	return c.Engine.AllNodes()
+	return c.Engine.AllNodes(ctx)
 }
 
-func (c *countingStreamingEngine) AllEdges() ([]*storage.Edge, error) {
+func (c *countingStreamingEngine) AllEdges(ctx context.Context) ([]*storage.Edge, error) {
 	c.allEdgesCalls++
-	return c.Engine.AllEdges()
+	return c.Engine.AllEdges(ctx)
 }
 
-func (c *countingStreamingEngine) GetNodesByLabel(label string) ([]*storage.Node, error) {
+func (c *countingStreamingEngine) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
 	c.labelCalls++
-	return c.Engine.GetNodesByLabel(label)
+	return c.Engine.GetNodesByLabel(ctx, label)
 }
 
 func TestGh713SimpleMatchLimitUsesSharedProjectionAndPagination(t *testing.T) {
@@ -117,7 +126,7 @@ func TestGh713SimpleNodeCompilerDeclinesUnsupportedPlans(t *testing.T) {
 		"n LIMIT 1", "n AS", "n.id", "N", "m AS node",
 	} {
 		t.Run(projection, func(t *testing.T) {
-			column, handled := parseSimpleReturnVariable(projection, "n")
+			column, handled := parseSimpleReturnVariable(t.Context(), projection, "n")
 			require.False(t, handled)
 			require.Empty(t, column)
 		})

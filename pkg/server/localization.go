@@ -1,8 +1,10 @@
+// Author: Codex, NOR-180 malformed-request cleanup diagnostics, 2026-10-27.
 package server
 
 import (
-	"context"
 	"errors"
+	"github.com/orneryd/nornicdb/internal/localizationboundary"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"net/http"
 
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
@@ -25,27 +27,13 @@ func (s *Server) localizationMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func (s *Server) renderMessage(ctx context.Context, message localization.Message) (string, language.Tag) {
-	if s.localizer == nil {
-		if message.Fallback != "" {
-			return message.Fallback, language.AmericanEnglish
-		}
-		return string(message.ID), language.AmericanEnglish
-	}
-	text, tag, err := s.localizer.Render(ctx, message)
-	if err != nil {
-		return s.localizer.MustRenderEnglish(message), language.AmericanEnglish
-	}
-	return text, tag
-}
-
 func (s *Server) writeLocalizedError(w http.ResponseWriter, r *http.Request, status int, message localization.Message, err error) {
 	text := s.localizedText(w, r, message)
 	s.writeError(w, status, text, err)
 }
 
 func (s *Server) localizedText(w http.ResponseWriter, r *http.Request, message localization.Message) string {
-	text, tag := s.renderMessage(r.Context(), message)
+	text, tag := localizationboundary.Render(r.Context(), s.localizer, message, localizationboundary.FallbackOrID, localizationboundary.SourceEnglish)
 	w.Header().Set("Content-Language", tag.String())
 	w.Header().Add("Vary", "Accept-Language")
 	return text
@@ -81,12 +69,32 @@ func (s *Server) writeNeo4jInvalidRequestBody(w http.ResponseWriter, r *http.Req
 	s.writeLocalizedNeo4jError(w, r, http.StatusBadRequest, code, localization.InvalidRequestBody())
 }
 
-func (s *Server) writeNeo4jInvalidTransactionBody(w http.ResponseWriter, r *http.Request, err error) {
+// writeNeo4jUnsupportedNumber reports a request parameter outside Neo4j's
+// numeric range as Neo4j 5.26 does, and reports whether it wrote the response.
+func (s *Server) writeNeo4jUnsupportedNumber(w http.ResponseWriter, err error, additional ...QueryError) bool {
+	var unsupported *valueconvert.UnsupportedNumberError
+	if !errors.As(err, &unsupported) {
+		return false
+	}
+	s.writeNeo4jError(w, http.StatusOK, "Neo.DatabaseError.Statement.ExecutionFailed", unsupported.Error(), additional...)
+	return true
+}
+
+func (s *Server) writeNeo4jInvalidTransactionBody(w http.ResponseWriter, r *http.Request, err error, cleanupErrors ...error) {
 	statusCode := http.StatusBadRequest
 	if errors.Is(err, errInvalidTransactionRequestFormat) {
 		statusCode = http.StatusOK
 	}
-	s.writeLocalizedNeo4jError(w, r, statusCode, "Neo.ClientError.Request.InvalidFormat", localization.InvalidRequestBody())
+	var additional []QueryError
+	for _, cleanupErr := range cleanupErrors {
+		if cleanupErr != nil {
+			additional = append(additional, s.transactionResponseError(r.Context(), cleanupErr))
+		}
+	}
+	if s.writeNeo4jUnsupportedNumber(w, err, additional...) {
+		return
+	}
+	s.writeNeo4jError(w, statusCode, "Neo.ClientError.Request.InvalidFormat", s.localizedText(w, r, localization.InvalidRequestBody()), additional...)
 }
 
 func (s *Server) writeNeo4jInvalidJSONBody(w http.ResponseWriter, r *http.Request) {

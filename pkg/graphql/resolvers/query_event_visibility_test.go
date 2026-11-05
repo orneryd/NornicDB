@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/testutil"
+
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -14,7 +16,7 @@ import (
 // must not inherit a mutation producer's REVEAL or the default database policy.
 func TestSubscriptionPropertiesHonorSourcePolicyDuringReveal(t *testing.T) {
 	db := testDB(t)
-	manager := testDBManager(t, db)
+	manager := testutil.DatabaseManager(t, db)
 	resolver := NewResolver(db, manager)
 	t.Cleanup(resolver.EventBroker.Close)
 	be, ok := storage.UnwrapEngine(db.GetStorage()).(*storage.BadgerEngine)
@@ -53,22 +55,18 @@ func TestSubscriptionPropertiesHonorSourcePolicyDuringReveal(t *testing.T) {
 		}
 		for _, id := range []storage.NodeID{"a", "b"} {
 			node := &storage.Node{ID: id, Labels: []string{"Doc"}, Properties: props, CreatedAt: old, UpdatedAt: old}
-			_, err := engine.CreateNode(node)
+			_, err := engine.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 			select {
 			case event := <-created:
 				require.NotContains(t, event.Properties, hidden)
-				expectedID := string(id)
-				if namespace == "foreign" {
-					expectedID = namespace + ":" + expectedID
-				}
-				require.Equal(t, expectedID, event.ID)
+				require.Equal(t, string(id), event.ID)
 				require.Equal(t, props[retained], event.Properties[retained])
 				require.Equal(t, "visible", event.Properties["public"])
 			case <-time.After(time.Second):
 				t.Fatal("missing synchronous created event")
 			}
-			require.NoError(t, engine.UpdateNode(node))
+			require.NoError(t, engine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
 			select {
 			case event := <-updated:
 				require.NotContains(t, event.Properties, hidden)
@@ -76,12 +74,12 @@ func TestSubscriptionPropertiesHonorSourcePolicyDuringReveal(t *testing.T) {
 				t.Fatal("missing synchronous updated event")
 			}
 			require.Contains(t, node.Properties, hidden)
-			raw, err := engine.GetNode(id)
+			raw, err := engine.GetNode(t.Context(), id)
 			require.NoError(t, err)
 			require.Contains(t, raw.Properties, hidden)
 		}
 		edge := &storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "LINK", Properties: props, CreatedAt: old, UpdatedAt: old}
-		require.NoError(t, engine.CreateEdge(edge))
+		require.NoError(t, engine.CreateEdge(t.Context(), edge))
 		select {
 		case event := <-edgeCreated:
 			require.NotContains(t, event.Properties, hidden)
@@ -89,7 +87,7 @@ func TestSubscriptionPropertiesHonorSourcePolicyDuringReveal(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Fatal("missing synchronous relationship created event")
 		}
-		require.NoError(t, engine.UpdateEdge(edge))
+		require.NoError(t, engine.UpdateEdge(t.Context(), storage.EdgeUpdateRequest{After: edge}))
 		select {
 		case event := <-edgeUpdated:
 			require.NotContains(t, event.Properties, hidden)
@@ -97,7 +95,7 @@ func TestSubscriptionPropertiesHonorSourcePolicyDuringReveal(t *testing.T) {
 			t.Fatal("missing synchronous relationship updated event")
 		}
 		require.Contains(t, edge.Properties, hidden)
-		raw, err := engine.GetEdge("ab")
+		raw, err := engine.GetEdge(t.Context(), "ab")
 		require.NoError(t, err)
 		require.Contains(t, raw.Properties, hidden)
 	}

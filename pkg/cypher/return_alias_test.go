@@ -207,7 +207,7 @@ func TestExtractReturnItemsFromQuery(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			items := exec.extractReturnItemsFromQuery(tt.query)
+			items := exec.extractReturnItemsFromQuery(t.Context(), tt.query)
 			columns := exec.buildColumnsFromReturnItems(items)
 			assert.Equal(t, tt.expectedColumns, columns)
 		})

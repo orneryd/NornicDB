@@ -1,7 +1,7 @@
 package storage
 
 import (
-	"sort"
+	"context"
 )
 
 // VisitPropertyIndexGroups visits non-null property-index entries in key order.
@@ -10,12 +10,14 @@ import (
 // IDs within a group are ordered by node identity. The callback runs without
 // schema/index locks so it can read nodes or perform index operations safely.
 // The return value reports whether the index exists, even when it is empty.
+// Unorderable memberships return ErrPropertyIndexValueOrderUnavailable before
+// any callback; candidate planners can then order actual values themselves.
 //
 // Query planners use this to finish a primary-key tie before selecting a page
 // by secondary ORDER BY keys. For example, a title index must visit every node
 // with the boundary title before choosing the smallest timestamp/ID tuple.
-func (sm *SchemaManager) VisitPropertyIndexGroups(label, property string, descending bool, visit func([]NodeID) bool) bool {
-	return sm.VisitPropertyIndexGroupsInRange(label, property, descending, PropertyIndexBounds{}, visit)
+func (sm *SchemaManager) VisitPropertyIndexGroups(ctx context.Context, label, property string, descending bool, visit func([]NodeID) bool) (bool, error) {
+	return sm.VisitPropertyIndexGroupsInRange(ctx, label, property, descending, PropertyIndexBounds{}, visit)
 }
 
 // VisitPropertyIndexGroupsInRange is VisitPropertyIndexGroups starting and
@@ -26,61 +28,23 @@ func (sm *SchemaManager) VisitPropertyIndexGroups(label, property string, descen
 // can't be searched. ORDER BY … LIMIT under a range or keyset predicate
 // (WHERE n.t > $last …) starts at the bound instead of reading the whole
 // index before it (#939).
-func (sm *SchemaManager) VisitPropertyIndexGroupsInRange(label, property string, descending bool, bounds PropertyIndexBounds, visit func([]NodeID) bool) bool {
-	sm.mu.RLock()
-	idx, exists := sm.seekablePropertyIndexLocked(label, property)
-	sm.mu.RUnlock()
+func (sm *SchemaManager) VisitPropertyIndexGroupsInRange(ctx context.Context, label, property string, descending bool, bounds PropertyIndexBounds, visit func([]NodeID) bool) (bool, error) {
+	snapshot, exists, err := sm.readPropertyIndexSnapshot(ctx, label, property, propertyIndexRead{descending: descending, limit: -1, bounds: bounds})
+	if err != nil {
+		return false, err
+	}
 	if !exists {
-		return false
+		return false, nil
 	}
-	// Snapshot group membership before invoking callbacks so index mutations
-	// cannot move an ID into a group that has yet to be visited.
-	idx.mu.Lock()
-	keys, _ := idx.sortedKeyRangeLocked(bounds)
-	totalIDs := 0
-	for _, key := range keys {
-		totalIDs += len(idx.values[key])
+	start := 0
+	for _, end := range snapshot.groupEnds {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		if !visit(snapshot.ids[start:end]) {
+			return true, ctx.Err()
+		}
+		start = end
 	}
-	ids := make([]NodeID, 0, totalIDs)
-	groupEnds := make([]int, 0, len(keys))
-	appendGroup := func(group []interface{}) {
-		groupStart := len(ids)
-		for _, key := range group {
-			ids = append(ids, idx.values[key]...)
-		}
-		if len(ids) > groupStart {
-			groupEnds = append(groupEnds, len(ids))
-		}
-	}
-	if descending {
-		for end := len(keys); end > 0; {
-			start := end - 1
-			for start > 0 && compareSchemaIndexValues(keys[start-1], keys[end-1]) == 0 {
-				start--
-			}
-			appendGroup(keys[start:end])
-			end = start
-		}
-	} else {
-		for start := 0; start < len(keys); {
-			end := start + 1
-			for end < len(keys) && compareSchemaIndexValues(keys[start], keys[end]) == 0 {
-				end++
-			}
-			appendGroup(keys[start:end])
-			start = end
-		}
-	}
-	idx.mu.Unlock()
-
-	groupStart := 0
-	for _, groupEnd := range groupEnds {
-		group := ids[groupStart:groupEnd]
-		sort.Slice(group, func(i, j int) bool { return group[i] < group[j] })
-		if !visit(group) {
-			break
-		}
-		groupStart = groupEnd
-	}
-	return true
+	return true, ctx.Err()
 }

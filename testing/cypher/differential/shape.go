@@ -1,6 +1,9 @@
 package differential
 
 import (
+	"context"
+
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"regexp"
 	"strings"
 )
@@ -28,7 +31,9 @@ var (
 // columns by position; a RETURN * or an item count that isn't the column
 // count gives an empty shape.
 func returnShape(query string, columns []string) shape {
-	query, masked := maskNested(query)
+	facts := inspectClauseRoles(query)
+	query, masked := maskQuery(query, maskNestedSyntax)
+	masked = facts.roleMask(masked, true)
 	returns := returnKeyword.FindAllStringIndex(masked, -1)
 	if len(returns) == 0 {
 		return shape{}
@@ -105,40 +110,60 @@ func splitTopLevel(text, masked string) []part {
 	return parts
 }
 
-// maskNested returns query with its // comments blanked out (clean), and clean
-// with every byte inside a quoted string, a quoted name or brackets replaced
-// by '_' (masked), so a keyword or comma left in masked is one of the
-// statement's own. Both are as long as query.
-func maskNested(query string) (clean, masked string) {
+type queryMaskPolicy uint8
+
+const (
+	maskOpaqueSyntax queryMaskPolicy = iota
+	maskNestedSyntax
+)
+
+// maskQuery owns the oracle's lexical views. It shares Unicode/quote/comment
+// primitives, not the executor or its syntax-confusable normalization. Opaque
+// tokens never contribute query effects; the shape view also hides nested text.
+// Offsets refer to the once-projected clean text returned alongside the mask.
+func maskQuery(raw string, policy queryMaskPolicy) (clean, masked string) {
+	source := cyphertext.ProjectUnicode(context.Background(), raw)
+	if source.Err != nil {
+		return "", ""
+	}
+	query := source.Text
 	blanked := []byte(query)
 	hidden := []byte(query)
 	depth := 0
-	var quote byte
 	for index := 0; index < len(query); index++ {
-		char := query[index]
-		switch {
-		case quote != 0:
-			if char == '\\' && quote != '`' && index+1 < len(query) {
-				hidden[index] = '_'
-				index++
-			} else if char == quote {
-				quote = 0
-			}
-		case char == '\'' || char == '"' || char == '`':
-			quote = char
-		case char == '/' && index+1 < len(query) && query[index+1] == '/':
-			for ; index < len(query) && query[index] != '\n'; index++ {
+		if end := cyphertext.CommentEnd(query, index); end >= 0 {
+			for ; index < end; index++ {
 				blanked[index], hidden[index] = ' ', ' '
 			}
-			continue
-		case char == '(' || char == '[' || char == '{':
-			depth++
-		case char == ')' || char == ']' || char == '}':
-			depth--
-			hidden[index] = '_'
+			index--
 			continue
 		}
-		if quote != 0 || depth > 0 {
+		if cyphertext.IsQuote(query[index]) {
+			end, _ := cyphertext.ScanQuotedText(query, index)
+			for ; index < end; index++ {
+				hidden[index] = '_'
+			}
+			index--
+			continue
+		}
+		if width := cyphertext.WhitespaceAt(query, index); width > 0 {
+			for end := index + width; index < end; index++ {
+				hidden[index] = ' '
+			}
+			index--
+			continue
+		}
+		switch query[index] {
+		case '(', '[', '{':
+			depth++
+		case ')', ']', '}':
+			depth--
+			if policy == maskNestedSyntax {
+				hidden[index] = '_'
+			}
+			continue
+		}
+		if depth > 0 && policy == maskNestedSyntax {
 			hidden[index] = '_'
 		}
 	}
@@ -149,7 +174,7 @@ func maskNested(query string) (clean, masked string) {
 // surrounding backticks removed.
 func normalizeText(text string) string {
 	text = strings.Join(strings.Fields(text), " ")
-	if len(text) >= 2 && text[0] == '`' && text[len(text)-1] == '`' {
+	if len(text) >= 2 && cyphertext.IsBacktick(text[0]) && cyphertext.IsBacktick(text[len(text)-1]) {
 		text = text[1 : len(text)-1]
 	}
 	return text

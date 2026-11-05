@@ -1,11 +1,18 @@
 # APOC procedure capability audit (v1.4.3)
 
-The Go APOC library catalog contains 983 names. Its historical list of 118
+The v1.4.3 Go APOC library catalog contained 983 names. Its historical list of 118
 procedure-only entries is **excluded from the optional plugin's scalar function
-exports**; the plugin exports the other 865 entries. Removing a false function
-declaration does not implement its `CALL` procedure. Genuine scalar functions,
-including `apoc.math.sigmoid`, remain function exports and are not promoted to
-procedures.
+exports**; the other 865 entries are scalar functions. The plugin exports 815:
+50 registered scalar names belong to the query engine's 52-name native APOC
+catalog and are left to their native implementations. `pkg/apocmeta` owns that
+catalog once; Cypher's function catalog and `apoc.PluginFunctionNames` both derive
+from it. The two native catalog names absent from the Go library do not
+change its export count. All ten native collection functions (`toSet`, `union`,
+`intersection`, `subtract`, `contains`, `containsAll`, `containsAny`, `indexOf`,
+`occurrences` and `frequencies`) are excluded from the real bundled plugin.
+Removing a false function declaration does not implement its `CALL` procedure.
+Genuine scalar functions, including `apoc.math.sigmoid`, remain function exports
+and are not promoted to procedures.
 
 Of those 118 historical entries, 16 have a registered native procedure contract
 (including the new `apoc.cypher.doIt`); 102 have no bundled procedure declaration.
@@ -209,3 +216,29 @@ The focused standalone command (also usable with `-race`) is:
 ```sh
 go test apoc/plugin-src/apoc/apoc_plugin.go apoc/plugin-src/apoc/apoc_plugin_test.go
 ```
+
+## v1.4.4 PageRank Go retirement
+
+The graph-free Go `algo.PageRank` stub and its scalar registration are retired;
+`CALL apoc.algo.pageRank` still uses the native graph implementation. The retired
+name was not in the 118-name procedure-only classifier, so that historical
+procedure population was unchanged by PageRank retirement. The separately approved
+GraphSample retirement below reduces the current procedure-only catalog to 117.
+Current measured catalog counts are 981 registrations, 864 scalar names and
+814 plugin exports after excluding 50 native
+scalar owners. The native function catalog remains 52.
+
+The historical 983-name totals and table above describe the v1.4.3 audit; they
+are not the current plugin-export totals.
+
+## v1.4.4 GraphSample Go retirement
+
+The exported `(*meta.BoundFunctions).GraphSample(sampleSize)` and
+`apoc.meta.graphSample` registry declaration are retired. The old helper ignored
+its limit and returned the entire graph; it did not implement sampling. Go
+callers requiring full metadata should call `meta.New(backend).Graph()`. The
+existing `apoc.meta.graph` registry binding stays on that owner; this does not
+add a new root-Call invocation plan or Cypher procedure. Rebuild Go callers;
+there is no compatibility forwarding wrapper. The unsupported Cypher procedure
+is not added, and Badger keys, persisted payloads, WAL and storage version stay
+unchanged. The historical v1.4.3 table above is retained as historical evidence.

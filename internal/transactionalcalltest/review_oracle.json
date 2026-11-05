@@ -1,0 +1,176 @@
+[
+  {
+    "case": "review_outer_rollback_",
+    "query": "UNWIND [1,2] AS x CALL { WITH x CREATE (:ReviewBatch {v:x}) } IN TRANSACTIONS OF 1 ROWS CREATE (:ReviewBatch {v:100+x}) RETURN 1/$d AS z",
+    "params": {
+      "d": 0
+    },
+    "explicit": false,
+    "unsupported": false,
+    "code": "Neo.ClientError.Statement.ArithmeticError",
+    "values": [
+      1,
+      2
+    ],
+    "reference": "Neo4j 5.26.30"
+  },
+  {
+    "case": "review_outer_rollback_PROFILE ",
+    "query": "PROFILE UNWIND [1,2] AS x CALL { WITH x CREATE (:ReviewBatch {v:x}) } IN TRANSACTIONS OF 1 ROWS CREATE (:ReviewBatch {v:100+x}) RETURN 1/$d AS z",
+    "params": {
+      "d": 0
+    },
+    "explicit": false,
+    "unsupported": false,
+    "code": "Neo.ClientError.Statement.ArithmeticError",
+    "values": [
+      1,
+      2
+    ],
+    "reference": "Neo4j 5.26.30"
+  },
+  {
+    "case": "review_runtime_skip_after_commit",
+    "query": "UNWIND [1,2] AS x CALL { WITH x CREATE (:ReviewBatch {v:x}) } IN TRANSACTIONS OF 1 ROWS WITH count(*) AS c SKIP $bad RETURN c",
+    "params": {
+      "bad": -1
+    },
+    "explicit": false,
+    "unsupported": false,
+    "code": "Neo.ClientError.Statement.ArgumentError",
+    "values": [
+      1,
+      2
+    ],
+    "reference": "Neo4j 5.26.30"
+  },
+  {
+    "case": "review_static_list_head(reverse(['bad']))",
+    "query": "UNWIND [1,2] AS x CALL { WITH x CREATE (:ReviewBatch {v:x}) } IN TRANSACTIONS OF 1 ROWS WITH count(*) AS c CALL { CREATE (:ReviewBatch {v:9}) } IN TRANSACTIONS OF head(reverse(['bad'])) ROWS",
+    "params": {},
+    "explicit": false,
+    "unsupported": false,
+    "code": "Neo.ClientError.Statement.SyntaxError",
+    "values": [],
+    "reference": "Neo4j 5.26.30"
+  },
+  {
+    "case": "review_static_list_head(tail(['bad','bad']))",
+    "query": "UNWIND [1,2] AS x CALL { WITH x CREATE (:ReviewBatch {v:x}) } IN TRANSACTIONS OF 1 ROWS WITH count(*) AS c CALL { CREATE (:ReviewBatch {v:9}) } IN TRANSACTIONS OF head(tail(['bad','bad'])) ROWS",
+    "params": {},
+    "explicit": false,
+    "unsupported": false,
+    "code": "Neo.ClientError.Statement.SyntaxError",
+    "values": [],
+    "reference": "Neo4j 5.26.30"
+  },
+  {
+    "case": "review_create_read_phases",
+    "query": "UNWIND [1,2] AS x CREATE (:ReviewBatch {v:1}) CREATE (:ReviewBatch {v: COUNT { MATCH (:ReviewBatch) }})",
+    "params": {},
+    "explicit": false,
+    "unsupported": false,
+    "code": "",
+    "values": [
+      1,
+      1,
+      2,
+      2
+    ],
+    "reference": "Neo4j 5.26.30"
+  },
+  {
+    "case": "review_create_self_reads_with",
+    "query": "UNWIND [1,2] AS x WITH x CREATE (:ReviewBatch {v: COUNT { MATCH (:ReviewBatch) }})",
+    "params": {},
+    "explicit": false,
+    "unsupported": false,
+    "code": "",
+    "values": [
+      0,
+      0
+    ],
+    "reference": "Neo4j 5.26.30"
+  },
+  {
+    "case": "review_pagination_plain_with",
+    "query": "UNWIND [1,2] AS x CALL { WITH x CREATE (:ReviewBatch {v:x}) } IN TRANSACTIONS OF 1 ROWS WITH x SKIP $bad RETURN x",
+    "params": {
+      "bad": -1
+    },
+    "explicit": false,
+    "unsupported": false,
+    "code": "Neo.ClientError.Statement.ArgumentError",
+    "values": [],
+    "reference": "Neo4j 5.26.30"
+  },
+  {
+    "case": "review_pagination_plain_return",
+    "query": "UNWIND [1,2] AS x CALL { WITH x CREATE (:ReviewBatch {v:x}) } IN TRANSACTIONS OF 1 ROWS RETURN x SKIP $bad",
+    "params": {
+      "bad": -1
+    },
+    "explicit": false,
+    "unsupported": false,
+    "code": "Neo.ClientError.Statement.ArgumentError",
+    "values": [],
+    "reference": "Neo4j 5.26.30"
+  },
+  {
+    "case": "review_pagination_sort",
+    "query": "UNWIND [1,2] AS x CALL { WITH x CREATE (:ReviewBatch {v:x}) } IN TRANSACTIONS OF 1 ROWS WITH x ORDER BY x SKIP $bad RETURN x",
+    "params": {
+      "bad": -1
+    },
+    "explicit": false,
+    "unsupported": false,
+    "code": "Neo.ClientError.Statement.ArgumentError",
+    "values": [
+      1,
+      2
+    ],
+    "reference": "Neo4j 5.26.30"
+  },
+  {
+    "case": "review_pagination_return_aggregate",
+    "query": "UNWIND [1,2] AS x CALL { WITH x CREATE (:ReviewBatch {v:x}) } IN TRANSACTIONS OF 1 ROWS RETURN count(*) SKIP $bad",
+    "params": {
+      "bad": -1
+    },
+    "explicit": false,
+    "unsupported": false,
+    "code": "Neo.ClientError.Statement.ArgumentError",
+    "values": [
+      1,
+      2
+    ],
+    "reference": "Neo4j 5.26.30"
+  },
+  {
+    "case": "review_pagination_same_clause_graph_read",
+    "query": "UNWIND [1,2] AS x CALL { WITH x CREATE (:ReviewBatch {v:x}) } IN TRANSACTIONS OF 1 ROWS WITH x, COUNT { MATCH (:ReviewBatch) } AS c SKIP $bad RETURN c",
+    "params": {
+      "bad": -1
+    },
+    "explicit": false,
+    "unsupported": false,
+    "code": "Neo.ClientError.Statement.ArgumentError",
+    "values": [],
+    "reference": "Neo4j 5.26.30"
+  },
+  {
+    "case": "review_pagination_earlier_graph_read",
+    "query": "UNWIND [1,2] AS x CALL { WITH x CREATE (:ReviewBatch {v:x}) } IN TRANSACTIONS OF 1 ROWS WITH x MATCH(n:ReviewBatch) RETURN n.v SKIP $bad",
+    "params": {
+      "bad": -1
+    },
+    "explicit": false,
+    "unsupported": false,
+    "code": "Neo.ClientError.Statement.ArgumentError",
+    "values": [
+      1,
+      2
+    ],
+    "reference": "Neo4j 5.26.30"
+  }
+]

@@ -2,8 +2,10 @@ package bolt
 
 import (
 	"bufio"
+	"context"
 	"crypto/tls"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"io"
 	"net"
 	"net/http"
@@ -41,7 +43,7 @@ func startTLSBoltServer(t *testing.T, modify func(*Config)) (port int, clientTLS
 		modify(cfg)
 	}
 
-	baseStore := storage.NewMemoryEngine()
+	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "wstls-test")
 	executor := &cypherQueryExecutor{executor: cypher.NewStorageExecutor(store)}
 	server := New(cfg, executor)
@@ -375,16 +377,16 @@ func TestWSBolt_CookieWinsOverHeader(t *testing.T) {
 	authCfg := auth.DefaultAuthConfig()
 	authCfg.JWTSecret = []byte("test-secret-key-for-jwt-signing!!")
 	authCfg.SecurityEnabled = true
-	mem := storage.NewMemoryEngine()
+	mem := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authenticator, err := auth.NewAuthenticator(authCfg, mem)
 	requireNoError(t, err)
-	_, err = authenticator.CreateUser("alice", "alice-password", []auth.Role{auth.RoleAdmin})
+	_, err = authenticator.CreateUser(context.Background(), "alice", "alice-password", []auth.Role{auth.RoleAdmin})
 	requireNoError(t, err)
-	_, err = authenticator.CreateUser("bob", "bob-password", []auth.Role{auth.RoleViewer})
+	_, err = authenticator.CreateUser(context.Background(), "bob", "bob-password", []auth.Role{auth.RoleViewer})
 	requireNoError(t, err)
-	aliceResp, _, err := authenticator.Authenticate("alice", "alice-password", "127.0.0.1", "test")
+	aliceResp, _, err := authenticator.Authenticate(context.Background(), "alice", "alice-password", "127.0.0.1", "test")
 	requireNoError(t, err)
-	bobResp, _, err := authenticator.Authenticate("bob", "bob-password", "127.0.0.1", "test")
+	bobResp, _, err := authenticator.Authenticate(context.Background(), "bob", "bob-password", "127.0.0.1", "test")
 	requireNoError(t, err)
 
 	cfg := DefaultConfig()

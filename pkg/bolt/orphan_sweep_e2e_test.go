@@ -1,6 +1,8 @@
 package bolt
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"testing"
@@ -17,7 +19,7 @@ import (
 // = 0 must agree, and a non-DETACH DELETE of a connected node must surface
 // a driver-visible error instead of silently cascading its edges.
 func TestBoltOrphanSweepRelationshipExistenceAndDeleteGuard(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() {
 		require.NoError(t, base.Close())
 	})

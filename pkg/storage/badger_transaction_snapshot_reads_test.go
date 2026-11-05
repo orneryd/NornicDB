@@ -1,6 +1,9 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
+	"context"
 	"fmt"
 	"testing"
 
@@ -8,25 +11,59 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestTransactionEdgeCollectionsRemainGlobalAfterNamespaceWrite(t *testing.T) {
+	engine := createMVCCBadgerEngine(t)
+	for _, namespace := range []string{"alpha", "beta"} {
+		for _, name := range []string{"start", "end"} {
+			_, err := engine.CreateNode(t.Context(), &Node{ID: NodeID(namespace + ":" + name)})
+			require.NoError(t, err)
+		}
+		require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: EdgeID(namespace + ":edge"), StartNode: NodeID(namespace + ":start"), EndNode: NodeID(namespace + ":end"), Type: "MATCHES"}))
+	}
+	reader, err := engine.BeginTransaction(t.Context())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = reader.Rollback() })
+	_, err = reader.CreateNode(t.Context(), &Node{ID: "alpha:pending"})
+	require.NoError(t, err)
+	require.NoError(t, reader.CreateEdge(t.Context(), &Edge{ID: "alpha:pending-edge", StartNode: "alpha:start", EndNode: "alpha:pending", Type: "OTHER"}))
+	all, err := reader.AllEdges(context.Background())
+	require.NoError(t, err)
+	ids := make([]EdgeID, 0, len(all))
+	for _, edge := range all {
+		ids = append(ids, edge.ID)
+	}
+	require.ElementsMatch(t, []EdgeID{"alpha:edge", "beta:edge", "alpha:pending-edge"}, ids)
+	typed, err := reader.GetEdgesByType(context.Background(), "MATCHES")
+	require.NoError(t, err)
+	ids = ids[:0]
+	for _, edge := range typed {
+		ids = append(ids, edge.ID)
+	}
+	require.ElementsMatch(t, []EdgeID{"alpha:edge", "beta:edge"}, ids)
+	emptyType, err := reader.GetEdgesByType(context.Background(), "")
+	require.NoError(t, err)
+	require.Empty(t, emptyType, "an empty type must not include differently typed pending edges")
+}
+
 func TestTransactionLabelLookupDoesNotDecodeUnrelatedNodes(t *testing.T) {
 	engine := createMVCCBadgerEngine(t)
 	targetID := NodeID(prefixTestID("indexed-label-target"))
 	unrelatedID := NodeID(prefixTestID("indexed-label-unrelated"))
 
-	_, err := engine.CreateNode(&Node{ID: targetID, Labels: []string{"Tiny"}, Properties: map[string]any{"k": 1}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: targetID, Labels: []string{"Tiny"}, Properties: map[string]any{"k": 1}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: unrelatedID, Labels: []string{"Bulk"}, Properties: map[string]any{"payload": "large"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: unrelatedID, Labels: []string{"Bulk"}, Properties: map[string]any{"payload": "large"}})
 	require.NoError(t, err)
 
 	require.NoError(t, engine.db.Update(func(txn *badger.Txn) error {
 		return txn.Set(nodeKey(unrelatedID), []byte{0xff})
 	}))
 
-	reader, err := engine.BeginTransaction()
+	reader, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reader.Rollback() })
 
-	nodes, err := reader.GetNodesByLabel("Tiny")
+	nodes, err := reader.GetNodesByLabel(context.Background(), "Tiny")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	require.Equal(t, targetID, nodes[0].ID)
@@ -39,22 +76,22 @@ func TestTransactionEdgeTypeLookupDoesNotDecodeUnrelatedEdges(t *testing.T) {
 	targetID := EdgeID(prefixTestID("indexed-type-target"))
 	unrelatedID := EdgeID(prefixTestID("indexed-type-unrelated"))
 
-	_, err := engine.CreateNode(&Node{ID: startID, Labels: []string{"Node"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: startID, Labels: []string{"Node"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: endID, Labels: []string{"Node"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: endID, Labels: []string{"Node"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: targetID, StartNode: startID, EndNode: endID, Type: "MATCHES"}))
-	require.NoError(t, engine.CreateEdge(&Edge{ID: unrelatedID, StartNode: startID, EndNode: endID, Type: "NOISE"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: targetID, StartNode: startID, EndNode: endID, Type: "MATCHES"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: unrelatedID, StartNode: startID, EndNode: endID, Type: "NOISE"}))
 
 	require.NoError(t, engine.db.Update(func(txn *badger.Txn) error {
 		return txn.Set(edgeKey(unrelatedID), []byte{0xff})
 	}))
 
-	reader, err := engine.BeginTransaction()
+	reader, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reader.Rollback() })
 
-	edges, err := reader.GetEdgesByType("MATCHES")
+	edges, err := reader.GetEdgesByType(context.Background(), "MATCHES")
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	require.Equal(t, targetID, edges[0].ID)
@@ -65,26 +102,26 @@ func TestTransactionIndexedLookupsReturnMatchingCandidateDecodeErrors(t *testing
 	nodeID := NodeID(prefixTestID("corrupt-indexed-node"))
 	endID := NodeID(prefixTestID("corrupt-indexed-end"))
 	edgeID := EdgeID(prefixTestID("corrupt-indexed-edge"))
-	_, err := engine.CreateNode(&Node{ID: nodeID, Labels: []string{"Target"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: nodeID, Labels: []string{"Target"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: endID, Labels: []string{"End"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: endID, Labels: []string{"End"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: edgeID, StartNode: nodeID, EndNode: endID, Type: "TARGET"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: edgeID, StartNode: nodeID, EndNode: endID, Type: "TARGET"}))
 	require.NoError(t, engine.db.Update(func(txn *badger.Txn) error {
 		if err := txn.Set(nodeKey(nodeID), []byte{0xff}); err != nil {
 			return err
 		}
 		return txn.Set(edgeKey(edgeID), []byte{0xff})
 	}))
-	engine.cacheDeleteNodeBody(nodeID)
+	engine.cacheDeleteNode(nodeID, nodeCacheBodyOnly)
 	engine.cacheDeleteEdge(edgeID)
 
-	reader, err := engine.BeginTransaction()
+	reader, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reader.Rollback() })
-	_, err = reader.GetNodesByLabel("Target")
+	_, err = reader.GetNodesByLabel(context.Background(), "Target")
 	require.Error(t, err)
-	_, err = reader.GetEdgesByType("TARGET")
+	_, err = reader.GetEdgesByType(context.Background(), "TARGET")
 	require.Error(t, err)
 }
 
@@ -92,14 +129,14 @@ func TestTransactionIndexedLookupsIgnoreMalformedAndStaleIndexEntries(t *testing
 	engine := createMVCCBadgerEngine(t)
 	targetNode := NodeID(prefixTestID("indexed-noise-target"))
 	mismatchNode := NodeID(prefixTestID("indexed-noise-mismatch"))
-	_, err := engine.CreateNode(&Node{ID: targetNode, Labels: []string{"Target"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: targetNode, Labels: []string{"Target"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: mismatchNode, Labels: []string{"Other"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: mismatchNode, Labels: []string{"Other"}})
 	require.NoError(t, err)
 	targetEdge := EdgeID(prefixTestID("indexed-noise-edge-target"))
 	mismatchEdge := EdgeID(prefixTestID("indexed-noise-edge-mismatch"))
-	require.NoError(t, engine.CreateEdge(&Edge{ID: targetEdge, StartNode: targetNode, EndNode: mismatchNode, Type: "MATCHES"}))
-	require.NoError(t, engine.CreateEdge(&Edge{ID: mismatchEdge, StartNode: targetNode, EndNode: mismatchNode, Type: "NOISE"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: targetEdge, StartNode: targetNode, EndNode: mismatchNode, Type: "MATCHES"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: mismatchEdge, StartNode: targetNode, EndNode: mismatchNode, Type: "NOISE"}))
 
 	mismatchNodeNum, ok := engine.idDict.lookupNodeNumID(mismatchNode)
 	require.True(t, ok)
@@ -121,18 +158,22 @@ func TestTransactionIndexedLookupsIgnoreMalformedAndStaleIndexEntries(t *testing
 		}
 		return nil
 	}))
-	allEdges, err := engine.getEdgesByTypeVisibleAtSnapshotWithView("", engine.currentMVCCReadVersion("test"), engine.withView)
+	var allEdges []*Edge
+	err = engine.streamEdgesByTypeAtSnapshotWithView(context.Background(), "", "", engine.currentMVCCReadVersion("test"), engine.withView, visibleRead, func(edge *Edge) error {
+		allEdges = append(allEdges, edge)
+		return nil
+	})
 	require.NoError(t, err)
 	require.Len(t, allEdges, 2)
 
-	reader, err := engine.BeginTransaction()
+	reader, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reader.Rollback() })
-	nodes, err := reader.GetNodesByLabel("Target")
+	nodes, err := reader.GetNodesByLabel(context.Background(), "Target")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	require.Equal(t, targetNode, nodes[0].ID)
-	edges, err := reader.GetEdgesByType("MATCHES")
+	edges, err := reader.GetEdgesByType(context.Background(), "MATCHES")
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	require.Equal(t, targetEdge, edges[0].ID)
@@ -151,20 +192,20 @@ func seedSnapshotAdjacencyGraph(tb testing.TB, engine *BadgerEngine, unrelatedEd
 	target := NodeID(prefixTestID("snap-adj-target"))
 	edgeID := EdgeID(prefixTestID("snap-adj-edge"))
 
-	_, err := engine.CreateNode(&Node{ID: start, Labels: []string{"Node"}})
+	_, err := engine.CreateNode(tb.Context(), &Node{ID: start, Labels: []string{"Node"}})
 	require.NoError(tb, err)
-	_, err = engine.CreateNode(&Node{ID: target, Labels: []string{"Node"}})
+	_, err = engine.CreateNode(tb.Context(), &Node{ID: target, Labels: []string{"Node"}})
 	require.NoError(tb, err)
-	require.NoError(tb, engine.CreateEdge(&Edge{ID: edgeID, StartNode: start, EndNode: target, Type: "LINKS"}))
+	require.NoError(tb, engine.CreateEdge(tb.Context(), &Edge{ID: edgeID, StartNode: start, EndNode: target, Type: "LINKS"}))
 
 	for i := 0; i < unrelatedEdges; i++ {
 		from := NodeID(prefixTestID(fmt.Sprintf("snap-adj-noise-from-%d", i)))
 		to := NodeID(prefixTestID(fmt.Sprintf("snap-adj-noise-to-%d", i)))
-		_, err := engine.CreateNode(&Node{ID: from, Labels: []string{"Noise"}})
+		_, err := engine.CreateNode(tb.Context(), &Node{ID: from, Labels: []string{"Noise"}})
 		require.NoError(tb, err)
-		_, err = engine.CreateNode(&Node{ID: to, Labels: []string{"Noise"}})
+		_, err = engine.CreateNode(tb.Context(), &Node{ID: to, Labels: []string{"Noise"}})
 		require.NoError(tb, err)
-		require.NoError(tb, engine.CreateEdge(&Edge{
+		require.NoError(tb, engine.CreateEdge(tb.Context(), &Edge{
 			ID:        EdgeID(prefixTestID(fmt.Sprintf("snap-adj-noise-edge-%d", i))),
 			StartNode: from,
 			EndNode:   to,
@@ -184,41 +225,41 @@ func TestTransaction_SnapshotAdjacencyIsNodeLocalAndConsistent(t *testing.T) {
 
 	start, target, edgeID := seedSnapshotAdjacencyGraph(t, engine, 200)
 
-	txRead, err := engine.BeginTransaction()
+	txRead, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer txRead.Rollback()
 	require.False(t, txRead.readTS.IsZero(), "read tx must pin a snapshot version")
 
-	outBefore, err := txRead.GetOutgoingEdges(start)
+	outBefore, err := txRead.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: start})
 	require.NoError(t, err)
 	require.Equal(t, []string{string(edgeID)}, sortedEdgeIDStrings(outBefore),
 		"outgoing adjacency must return only start's own edge, not the 200 unrelated edges")
 
-	inBefore, err := txRead.GetIncomingEdges(target)
+	inBefore, err := txRead.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadIncoming, Node: target})
 	require.NoError(t, err)
 	require.Equal(t, []string{string(edgeID)}, sortedEdgeIDStrings(inBefore))
 
 	// Commit a second edge from start in a concurrent transaction.
 	laterTarget := NodeID(prefixTestID("snap-adj-target-later"))
 	laterEdgeID := EdgeID(prefixTestID("snap-adj-edge-later"))
-	txInsert, err := engine.BeginTransaction()
+	txInsert, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	_, err = txInsert.CreateNode(&Node{ID: laterTarget, Labels: []string{"Node"}})
+	_, err = txInsert.CreateNode(t.Context(), &Node{ID: laterTarget, Labels: []string{"Node"}})
 	require.NoError(t, err)
-	require.NoError(t, txInsert.CreateEdge(&Edge{ID: laterEdgeID, StartNode: start, EndNode: laterTarget, Type: "LINKS"}))
+	require.NoError(t, txInsert.CreateEdge(t.Context(), &Edge{ID: laterEdgeID, StartNode: start, EndNode: laterTarget, Type: "LINKS"}))
 	require.NoError(t, txInsert.Commit())
 
 	// The read snapshot must not observe the post-begin edge.
-	outAfter, err := txRead.GetOutgoingEdges(start)
+	outAfter, err := txRead.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: start})
 	require.NoError(t, err)
 	require.Equal(t, sortedEdgeIDStrings(outBefore), sortedEdgeIDStrings(outAfter),
 		"snapshot read must be stable across a concurrent commit")
 
 	// A fresh transaction sees both edges.
-	txFresh, err := engine.BeginTransaction()
+	txFresh, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer txFresh.Rollback()
-	freshOut, err := txFresh.GetOutgoingEdges(start)
+	freshOut, err := txFresh.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: start})
 	require.NoError(t, err)
 	require.Equal(t, []string{string(edgeID), string(laterEdgeID)}, sortedEdgeIDStrings(freshOut))
 }
@@ -231,13 +272,13 @@ func TestTransaction_SnapshotAdjacencyRejectsUnknownDirection(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 	start, _, _ := seedSnapshotAdjacencyGraph(t, engine, 1)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.False(t, tx.readTS.IsZero(), "read tx must pin a snapshot version")
 
 	tx.mu.Lock()
-	_, err = tx.getCommittedAdjacentEdgesLocked(start, EdgeDirection(99))
+	_, err = tx.getCommittedAdjacentEdgesLocked(context.Background(), start, EdgeDirection(99))
 	tx.mu.Unlock()
 	require.ErrorIs(t, err, ErrInvalidData)
 }
@@ -250,7 +291,7 @@ func TestTransaction_CommittedAdjacencyNoSnapshotUsesCurrentIndex(t *testing.T) 
 	engine := createTestBadgerEngine(t)
 	start, target, edgeID := seedSnapshotAdjacencyGraph(t, engine, 1)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer tx.Rollback()
 
@@ -261,10 +302,10 @@ func TestTransaction_CommittedAdjacencyNoSnapshotUsesCurrentIndex(t *testing.T) 
 	tx.mu.Lock()
 	tx.readTS = MVCCVersion{} // force the no-snapshot path deterministically
 	zeroed := tx.readTS.IsZero()
-	out, outErr := tx.getCommittedAdjacentEdgesLocked(start, Outgoing)
-	in, inErr := tx.getCommittedAdjacentEdgesLocked(target, Incoming)
-	_, badDirErr := tx.getCommittedAdjacentEdgesLocked(start, EdgeDirection(99))
-	nodes, nodesErr := tx.getAllCommittedNodesLocked()
+	out, outErr := tx.getCommittedAdjacentEdgesLocked(context.Background(), start, Outgoing)
+	in, inErr := tx.getCommittedAdjacentEdgesLocked(context.Background(), target, Incoming)
+	_, badDirErr := tx.getCommittedAdjacentEdgesLocked(context.Background(), start, EdgeDirection(99))
+	nodes, nodesErr := tx.getAllCommittedNodesLocked(context.Background())
 	tx.mu.Unlock()
 
 	require.True(t, zeroed)
@@ -284,7 +325,7 @@ func TestTransaction_CommittedAdjacencyNoSnapshotUsesCurrentIndex(t *testing.T) 
 func BenchmarkTransaction_SnapshotAdjacency(b *testing.B) {
 	for _, unrelatedEdges := range []int{100, 1000, 5000} {
 		b.Run(fmt.Sprintf("edges=%d", unrelatedEdges), func(b *testing.B) {
-			engine, err := NewBadgerEngineInMemory()
+			engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 			require.NoError(b, err)
 			b.Cleanup(func() { engine.Close() })
 
@@ -293,11 +334,11 @@ func BenchmarkTransaction_SnapshotAdjacency(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				tx, err := engine.BeginTransaction()
+				tx, err := engine.BeginTransaction(b.Context())
 				if err != nil {
 					b.Fatal(err)
 				}
-				edges, err := tx.GetOutgoingEdges(start)
+				edges, err := tx.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: start})
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -314,7 +355,7 @@ func BenchmarkTransaction_SnapshotAdjacency(b *testing.B) {
 // with the explicit-transaction index path. The target label remains sparse as
 // database cardinality grows, matching selective Cypher label predicates.
 func BenchmarkTransaction_LabelLookup(b *testing.B) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(b, err)
 	b.Cleanup(func() { _ = engine.Close() })
 
@@ -333,7 +374,7 @@ func BenchmarkTransaction_LabelLookup(b *testing.B) {
 				Properties: map[string]any{"value": i},
 			})
 		}
-		require.NoError(b, engine.BulkCreateNodes(nodes))
+		require.NoError(b, engine.BulkCreateNodes(b.Context(), nodes))
 	}
 
 	b.Run("historical_full_scan", func(b *testing.B) {
@@ -341,7 +382,7 @@ func BenchmarkTransaction_LabelLookup(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			nodes, err := engine.GetNodesByLabelVisibleAt("Tiny", version)
+			nodes, err := engine.GetNodesByLabelVisibleAt(context.Background(), "Tiny", version)
 			if err != nil || len(nodes) != 3 {
 				b.Fatalf("lookup returned %d nodes: %v", len(nodes), err)
 			}
@@ -352,11 +393,11 @@ func BenchmarkTransaction_LabelLookup(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			tx, err := engine.BeginTransaction()
+			tx, err := engine.BeginTransaction(b.Context())
 			if err != nil {
 				b.Fatal(err)
 			}
-			nodes, err := tx.GetNodesByLabel("Tiny")
+			nodes, err := tx.GetNodesByLabel(context.Background(), "Tiny")
 			if err != nil || len(nodes) != 3 {
 				b.Fatalf("lookup returned %d nodes: %v", len(nodes), err)
 			}

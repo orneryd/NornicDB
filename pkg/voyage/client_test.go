@@ -147,7 +147,7 @@ func TestClientHonorsFalseTruncationOptions(t *testing.T) {
 			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{}}))
 		case "/v1/rerank":
 			gotRerank = got
-			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{}}))
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{{"index": 0, "relevance_score": 0.9}}}))
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}

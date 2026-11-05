@@ -1,6 +1,9 @@
 package cypher
 
-import "strings"
+import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"strings"
+)
 
 // Label expressions (#860).
 //
@@ -240,10 +243,10 @@ func (x *labelExpression) renderOperand(b *strings.Builder, parent labelExpressi
 // labelExpressionNameText is a label or type name as Cypher text: as is
 // when it is a plain identifier, backtick-quoted otherwise.
 func labelExpressionNameText(name string) string {
-	if isValidIdentifier(name) {
+	if cyphertext.IsIdentifier(name) {
 		return name
 	}
-	return quoteSchemaName(name)
+	return cyphertext.PrintIdentifier(name, nil, cyphertext.RawSource)
 }
 
 // labelChainText is the legacy pattern label chain for names (:A:B), empty
@@ -323,7 +326,7 @@ type labelExpressionParser struct {
 
 func (p *labelExpressionParser) skipSpaces() int {
 	i := p.pos
-	for i < len(p.text) && isASCIISpace(p.text[i]) {
+	for i < len(p.text) && cyphertext.IsWhitespaceAt(p.text, i) {
 		i++
 	}
 	return i
@@ -456,7 +459,7 @@ func (p *labelExpressionParser) parseUnary() (*labelExpression, bool) {
 		if open >= len(p.text) || p.text[open] != '(' {
 			return nil, false
 		}
-		closing := findMatchingDelimiter(p.text, open, '(', ')')
+		closing := cyphertext.FindMatchingDelimiter(p.text, open, '(', ')', cyphertext.OpeningDelimiter)
 		if closing < 0 {
 			return nil, false
 		}
@@ -492,12 +495,12 @@ func (p *labelExpressionParser) parseUnary() (*labelExpression, bool) {
 // hasLabelExpressionOperator reports whether a label chain uses the label
 // expression operators rather than the plain A:B form.
 func hasLabelExpressionOperator(chain string) bool {
-	inBacktick := false
 	for i := 0; i < len(chain); i++ {
+		if end, quoted := scanCypherQuotedText(chain, i, chain[i]); quoted {
+			i = end - 1
+			continue
+		}
 		switch c := chain[i]; {
-		case c == '`':
-			inBacktick = !inBacktick
-		case inBacktick:
 		case c == '|' || c == '&' || c == '!' || c == '%' || c == '(':
 			return true
 		}
@@ -515,22 +518,27 @@ func labelExpressionBarAt(s string, start, at int) bool {
 		return false
 	}
 	before, after := s[at-1], s[at+1]
-	if !(isIdentByte(before) || before == '`' || before == ')' || before == '%') ||
-		!(isIdentByte(after) || after == '`' || after == '(' || after == '!' || after == '%') {
+	if !(cyphertext.NamePartAt(s, at-1) || isCypherBacktickByte(before) || before == ')' || before == '%') ||
+		!(cyphertext.NamePartAt(s, at+1) || isCypherBacktickByte(after) || after == '(' || after == '!' || after == '%') {
 		return false
 	}
 	for i := at - 1; i >= start; i-- {
 		switch c := s[i]; {
-		case c == '`':
+		case isCypherBacktickByte(c):
 			// A quoted name: back to its opening backtick.
 			open := strings.LastIndexByte(s[start:i], '`')
 			if open < 0 {
 				return false
 			}
-			i = start + open
-		case isIdentByte(c) || c == '|' || c == '&' || c == '!' || c == '%' || c == '(' || c == ')':
+			open += start
+			end, ok := cyphertext.ScanIdentifier(s, open)
+			if !ok || end.End != i+1 {
+				return false
+			}
+			i = open
+		case cyphertext.NamePartAt(s, i) || c == '|' || c == '&' || c == '!' || c == '%' || c == '(' || c == ')':
 		case c == ':':
-			return i > start && isIdentByte(s[i-1])
+			return i > start && cyphertext.NamePartAt(s, i-1)
 		default:
 			return false
 		}

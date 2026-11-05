@@ -51,9 +51,9 @@ func TestExecuteMatchWithCallSubquery_ErrorAndHappyPaths(t *testing.T) {
 	require.Equal(t, []string{"name"}, emptyRes.Columns)
 	require.Empty(t, emptyRes.Rows)
 
-	_, err = store.CreateNode(&storage.Node{ID: "p1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "p1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "p2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "p2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob"}})
 	require.NoError(t, err)
 
 	res, err := exec.Execute(ctx,

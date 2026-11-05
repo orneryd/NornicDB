@@ -97,7 +97,7 @@
   other: "Vector build trigger: startup or lazy. Default: startup."
 - id: nornicdbcli.flag.gpu_backend
   description: GPU backend flag help. Backend names are machine values.
-  other: "GPU backend: vulkan, cuda, metal, opencl (empty=auto-detect)"
+  other: "GPU backend: cpu (disabled), vulkan, cuda, metal, opencl (empty=auto-detect)"
 - id: nornicdbcli.flag.no_auth
   description: Authentication disablement flag help.
   other: Disable authentication
@@ -118,7 +118,10 @@
   other: Min batch size before parallelizing
 - id: nornicdbcli.flag.memory_limit
   description: Runtime memory limit flag help.
-  other: "Memory limit in MB as an integer (e.g., 500, 0 for unlimited)"
+  other: "Memory limit in MB as an integer (e.g., 500), 0 for unlimited, or auto (the default: 85% of the container's memory limit)"
+- id: nornicdbcli.flag.go_memory_limit
+  description: Explicit Go runtime GC target flag help.
+  other: "Go runtime GC memory target in bytes (non-negative integer)"
 - id: nornicdbcli.flag.gc_percent
   description: Garbage collector aggressiveness flag help.
   other: GC aggressiveness (100=default, lower=more aggressive)
@@ -185,6 +188,19 @@
 - id: nornicdbcli.validation.invalid_memory_limit
   description: Invalid memory-limit flag. Value and Cause are untranslated diagnostics.
   other: 'invalid --memory-limit value {{printf "%q" .Value}}: {{.Cause}}'
+- id: nornicdbcli.validation.go_memory_limit_deprecated
+  description: Legacy Go runtime memory flag migration notice.
+  other: "--memory-limit is deprecated; use --go-memory-limit-bytes (integer bytes)"
+- id: nornicdbcli.validation.env_memory_limit_deprecated
+  other: "NORNICDB_MEMORY_LIMIT is deprecated; use NORNICDB_GO_MEMORY_LIMIT_BYTES (integer bytes)"
+- id: nornicdbcli.validation.yaml_memory_limit_deprecated
+  other: "memory.runtime_limit is deprecated; use memory.go_runtime_limit_bytes (integer bytes)"
+- id: nornicdbcli.validation.go_memory_limit_conflict
+  description: Conflicting Go runtime memory flag values.
+  other: "--memory-limit conflicts with --go-memory-limit-bytes"
+- id: nornicdbcli.validation.invalid_go_memory_limit
+  description: Invalid Go runtime memory flag. Value and Cause are untranslated diagnostics.
+  other: 'invalid --go-memory-limit-bytes value {{printf "%q" .Value}}: {{.Cause}}'
 - id: nornicdbcli.validation.invalid_stdio_interval
   other: "invalid stdio-log-compact-seconds {{.Value}}: must be >= 0"
 - id: nornicdbcli.config.not_found
@@ -220,6 +236,12 @@
   other: "   Parallel exec:   ❌ disabled"
 - id: nornicdbcli.serve.memory_limit
   other: "   Memory limit:    {{.Value}}"
+- id: nornicdbcli.serve.memory_limit_cgroup
+  description: Startup line when the runtime memory limit is derived from the container's cgroup memory limit.
+  other: "   Memory limit:    {{.Value}} ({{.Percent}}% of the container limit {{.Cgroup}})"
+- id: nornicdbcli.serve.memory_limit_clamped
+  description: Startup warning when the configured runtime memory limit is above the container's cgroup memory limit and is lowered.
+  other: "⚠️  Warning: memory limit {{.Configured}} is above the container's memory limit {{.Cgroup}} and could not prevent an OOM kill; using {{.Value}}"
 - id: nornicdbcli.serve.memory_unlimited
   other: "   Memory limit:    unlimited"
 - id: nornicdbcli.serve.gc_percent
@@ -379,3 +401,21 @@
   other: "reading input: {{.Cause}}"
 - id: nornicdbcli.decay.load_nodes_failed
   other: "loading nodes: {{.Cause}}"
+- id: nornicdbcli.stemmer.short
+  description: Stemmer command summary.
+  other: Stemmer plugin operations
+- id: nornicdbcli.stemmer.check.short
+  description: Stemmer check command summary.
+  other: Check that a stemmer plugin loads into this binary, as it would at startup
+- id: nornicdbcli.flag.stemmer_check_timeout
+  description: Stemmer check timeout flag help.
+  other: Maximum time to load the plugin
+- id: nornicdbcli.stemmer.check.ok
+  description: Stemmer check success. ID, Version and Path are untranslated plugin identifiers.
+  other: "Stemmer plugin {{.ID}} {{.Version}} loads: {{.Path}}"
+- id: nornicdbcli.stemmer.check_failed
+  description: Stemmer check failure. Manifest is a path; Cause is an untranslated loader diagnostic.
+  other: "stemmer plugin {{.Manifest}} does not load: {{.Cause}}"
+- id: nornicdbcli.stemmer.check_timed_out
+  description: Stemmer check timeout. Manifest is a path; Timeout is a Go duration.
+  other: "stemmer plugin {{.Manifest}} did not finish loading within {{.Timeout}}"

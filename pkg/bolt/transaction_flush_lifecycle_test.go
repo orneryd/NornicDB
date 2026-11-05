@@ -147,12 +147,13 @@ func TestPendingFlushJoinsTimeoutCleanupThatWonAdmission(t *testing.T) {
 		rollbackRelease: make(chan struct{}),
 	}
 	session := &Session{
+		server:        &Server{config: DefaultConfig()},
 		executor:      executor,
 		inTransaction: true,
 		pendingFlush:  true,
 	}
 	require.NoError(t, session.txLifecycle.begin(
-		context.Background(), transactionLifecycleShortTimeout, "nornic", executor, nil, nil))
+		context.Background(), testTxOwner(), transactionLifecycleShortTimeout, "nornic", executor, nil, nil))
 
 	select {
 	case <-executor.rollbackEntered:

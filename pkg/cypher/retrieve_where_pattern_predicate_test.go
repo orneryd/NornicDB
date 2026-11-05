@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 
@@ -14,11 +16,11 @@ import (
 // COUNT, with literals, parameters and the calling row's variables.
 func TestRetrieveWhereReadsPatternElementWhere(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(store)
-	svc := search.NewServiceWithDimensions(store, 3)
+	svc := search.NewService(store, 3, nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	exec.SetSearchService(svc)
 	_, err := exec.Execute(ctx, `CREATE (:Doc {id: 'a'}), (b:Doc {id: 'b'}), (:Src {id: 'sa', document_id: 'a', content: 'walrus notes'}),
@@ -52,14 +54,4 @@ func TestRetrieveWhereReadsPatternElementWhere(t *testing.T) {
 	result, err := exec.Execute(ctx, "MATCH (c:Coll {id: 'old'}) WITH c, [c.id] AS scope CALL (c, scope) { CALL db.retrieve({query: 'walrus', types: ['Src'], limit: 10, where: 'EXISTS { (:Doc {id: node.document_id})-[:MEMBER_OF]->(m:Coll WHERE m.id IN scope) }'}) YIELD node RETURN collect(node.id) AS ids } RETURN ids", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{[]interface{}{"sb"}}}, result.Rows)
-}
-
-// patternHasInlineWhere finds a WHERE inside a node or relationship pattern,
-// not one after it or inside a string.
-func TestPatternHasInlineWhere(t *testing.T) {
-	require.True(t, patternHasInlineWhere("MATCH (n)-->(m:C WHERE m.id = 1)"))
-	require.True(t, patternHasInlineWhere("MATCH (n)-[r WHERE r.w > 1]->(m)"))
-	require.False(t, patternHasInlineWhere("MATCH (n)-->(m:C) WHERE m.id = 1"))
-	require.False(t, patternHasInlineWhere("MATCH (n {s: '(x WHERE y)'})-->(m)"))
-	require.False(t, patternHasInlineWhere("MATCH (n)-->(m {elsewhere: 1})"))
 }

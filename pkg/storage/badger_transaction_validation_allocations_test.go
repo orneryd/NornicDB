@@ -2,6 +2,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"testing"
 
@@ -28,18 +30,18 @@ func seedHighDegreeValidationGraph(tb testing.TB, engine *BadgerEngine, edgesPer
 			&Edge{ID: EdgeID(fmt.Sprintf("test:validation-in-edge-%d", i)), StartNode: inNode, EndNode: center, Type: "LINKS"},
 		)
 	}
-	require.NoError(tb, engine.BulkCreateNodes(nodes))
-	require.NoError(tb, engine.BulkCreateEdges(edges))
+	require.NoError(tb, engine.BulkCreateNodes(tb.Context(), nodes))
+	require.NoError(tb, engine.BulkCreateEdges(tb.Context(), edges))
 	return center
 }
 
 func runHighDegreeDeleteValidation(tb testing.TB, engine *BadgerEngine, nodeID NodeID) {
 	tb.Helper()
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(tb.Context())
 	require.NoError(tb, err)
 	require.NoError(tb, tx.SetNamespace("test"))
 	tx.operations = append(tx.operations, Operation{Type: OpDeleteNode, NodeID: nodeID})
-	err = tx.validateSnapshotIsolationConflicts()
+	err = tx.validateSnapshotIsolationConflicts(tb.Context())
 	_ = tx.Rollback()
 	require.NoError(tb, err)
 }
@@ -65,7 +67,7 @@ func TestTransactionHighDegreeDeleteValidationMemoryBound(t *testing.T) {
 }
 
 func BenchmarkTransactionHighDegreeDeleteValidation(b *testing.B) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(b, err)
 	b.Cleanup(func() { _ = engine.Close() })
 	nodeID := seedHighDegreeValidationGraph(b, engine, highDegreeValidationEdgesPerDirection)

@@ -90,11 +90,11 @@ func (r *RoleStore) changeRole(ctx context.Context, oldName, newName string, rem
 		if users != nil && !sameSystemStore(r.storage, users.storage) {
 			return storage.ErrCrossNamespaceTransaction
 		}
-		records, err := roleOwnedRecords(view, oldName, newName)
+		records, err := roleOwnedRecords(ctx, view, oldName, newName)
 		if err != nil {
 			return err
 		}
-		stagedUsers, err = applyRoleRecords(view, records, oldName, newName, remove)
+		stagedUsers, err = applyRoleRecords(ctx, view, records, oldName, newName, remove)
 		if err != nil {
 			return err
 		}
@@ -159,15 +159,26 @@ type roleOwnedRecord struct {
 
 // roleOwnedRecords is the single enumerator for deletion and rename. Adding a
 // record type here includes it in both operations. The role node is last, so
-// its removal and every dependent record change commit together.
-func roleOwnedRecords(view storage.Engine, oldName, newName string) ([]roleOwnedRecord, error) {
+// its removal and every dependent record change commit together. Every label
+// read and the conversion of the nodes it returned run on ctx, the caller's
+// lifetime: a canceled role change stops at the storage reader, and one
+// canceled after a read returned stops at that label's first node, before any
+// record changes.
+func roleOwnedRecords(ctx context.Context, view storage.Engine, oldName, newName string) ([]roleOwnedRecord, error) {
 	var records []roleOwnedRecord
 	for _, label := range []string{procedurePrivilegeLabel, dbPrivLabel, roleDbAccessLabel, roleEntitlementLabel, "_User", roleLabel} {
-		nodes, err := view.GetNodesByLabel(label)
+		nodes, err := view.GetNodesByLabel(ctx, label)
 		if err != nil {
 			return nil, err
 		}
 		for _, node := range nodes {
+			// This label's rows are only a candidate population: deciding which
+			// of them the role owns is this enumerator's own work, so it watches
+			// the same caller lifetime instead of classifying rows a canceled
+			// caller no longer waits for.
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			record := roleOwnedRecord{node: node, replacementRole: newName, roleProperty: "role"}
 			switch label {
 			case procedurePrivilegeLabel:
@@ -195,7 +206,7 @@ func roleOwnedRecords(view storage.Engine, oldName, newName string) ([]roleOwned
 				}
 				record.replacementID = storage.NodeID(roleEntitlementPrefix + newName)
 			case "_User":
-				user, _ := (&Authenticator{}).userFromNode(node)
+				user := mapUserRecord(loadUserRecord, nil, node).User
 				if node.ID != storage.NodeID("user:"+user.Username) {
 					continue
 				}
@@ -226,7 +237,7 @@ func roleOwnedRecords(view storage.Engine, oldName, newName string) ([]roleOwned
 // applyRoleRecords uses exactly the enumerated records for either operation.
 // Rename preserves properties, including immutable grants. Deletion removes
 // owned nodes and detaches the role from shared user records.
-func applyRoleRecords(view storage.Engine, records []roleOwnedRecord, oldName, newName string, remove bool) (map[string]*User, error) {
+func applyRoleRecords(ctx context.Context, view storage.Engine, records []roleOwnedRecord, oldName, newName string, remove bool) (map[string]*User, error) {
 	changedUsers := make(map[string]*User)
 	for _, record := range records {
 		if user := record.user; user != nil {
@@ -242,14 +253,14 @@ func applyRoleRecords(view storage.Engine, records []roleOwnedRecord, oldName, n
 			}
 			user.Roles = roles
 			user.UpdatedAt = time.Now()
-			if err := (&Authenticator{storage: view}).saveUserInTransaction(user); err != nil {
+			if err := (&Authenticator{storage: view}).saveUser(ctx, user, view); err != nil {
 				return nil, err
 			}
 			changedUsers[user.Username] = user
 			continue
 		}
 		if !remove {
-			if _, err := view.GetNode(record.replacementID); err != storage.ErrNotFound {
+			if _, err := view.GetNode(ctx, record.replacementID); err != storage.ErrNotFound {
 				if err != nil {
 					return nil, err
 				}
@@ -262,11 +273,11 @@ func applyRoleRecords(view storage.Engine, records []roleOwnedRecord, oldName, n
 				copy.Properties[key] = value
 			}
 			copy.Properties[record.roleProperty] = record.replacementRole
-			if _, err := view.CreateNode(&copy); err != nil {
+			if _, err := view.CreateNode(ctx, &copy); err != nil {
 				return nil, err
 			}
 		}
-		if err := view.DeleteNode(record.node.ID); err != nil {
+		if err := view.DeleteNode(ctx, record.node.ID); err != nil {
 			return nil, err
 		}
 	}

@@ -88,7 +88,7 @@ func TestTypedListPropertyCoercionAndValidKinds(t *testing.T) {
 func TestTypedListPropertyExplicitTransactionRollsBack(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "list_props_tx"))
 	ctx := context.Background()
-	if _, err := exec.handleBegin(); err != nil {
+	if _, err := exec.handleBegin(t.Context()); err != nil {
 		t.Fatalf("begin: %v", err)
 	}
 	if _, err := exec.Execute(ctx, "CREATE (n:T {id: 1})", nil); err != nil {
@@ -98,7 +98,7 @@ func TestTypedListPropertyExplicitTransactionRollsBack(t *testing.T) {
 	require.Error(t, err)
 	code, _ := nornicerrors.Neo4jStatus(err)
 	require.Equal(t, "Neo.ClientError.Statement.TypeError", code)
-	if _, err := exec.handleCommit(); err != nil {
+	if _, err := exec.handleCommit(context.Background()); err != nil {
 		t.Logf("commit (expected failed tx): %v", err)
 	}
 	res, err := exec.Execute(ctx, "MATCH (n:T) RETURN count(n) AS c", nil)

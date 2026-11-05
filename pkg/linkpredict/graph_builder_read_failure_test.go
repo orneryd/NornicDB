@@ -1,14 +1,17 @@
 package linkpredict
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
-	"github.com/orneryd/nornicdb/pkg/storage"
-	"github.com/stretchr/testify/require"
 	"os"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
 )
 
 type graphBuilderReadEngine struct {
@@ -16,14 +19,14 @@ type graphBuilderReadEngine struct {
 	read func(storage.NodeID) ([]*storage.Edge, error)
 }
 
-func (e *graphBuilderReadEngine) GetOutgoingEdges(id storage.NodeID) ([]*storage.Edge, error) {
+func (e *graphBuilderReadEngine) GetOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
 	return e.read(id)
 }
 
 func TestGraphBuilderPropagatesRelationshipReadFailure(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	store := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer store.Close()
-	_, err := store.CreateNode(&storage.Node{ID: "test:a"})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "test:a"})
 	require.NoError(t, err)
 	failed := errors.New("relationship read unavailable")
 	engine := &graphBuilderReadEngine{Engine: store, read: func(storage.NodeID) ([]*storage.Edge, error) { return nil, failed }}
@@ -40,9 +43,9 @@ func TestGraphBuilderPropagatesRelationshipReadFailure(t *testing.T) {
 	require.True(t, os.IsNotExist(err), "a failed partial graph must not be cached")
 }
 func TestGraphBuilderReportsCancellationDuringLastChunk(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	store := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer store.Close()
-	_, err := store.CreateNode(&storage.Node{ID: "test:a"})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "test:a"})
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -58,10 +61,10 @@ func TestGraphBuilderReportsCancellationDuringLastChunk(t *testing.T) {
 }
 
 func TestGraphBuilderCancellationWaitsForOwnedWorkers(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	store := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer store.Close()
 	for _, id := range []storage.NodeID{"test:a", "test:b", "test:c"} {
-		_, err := store.CreateNode(&storage.Node{ID: id})
+		_, err := store.CreateNode(t.Context(), &storage.Node{ID: id})
 		require.NoError(t, err)
 	}
 	started, release := make(chan struct{}), make(chan struct{})

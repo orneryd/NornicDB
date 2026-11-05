@@ -23,14 +23,14 @@ func TestVectorAndUUIDFunctionPaths(t *testing.T) {
 		"RETURN toFloatList(vector('[1.5, 2]', 2, FLOAT))":                                        []interface{}{1.5, 2.0},
 		"RETURN vector_distance(vector([1, 2], 2, FLOAT), vector([2, 4], 2, FLOAT), HAMMING)":     2.0,
 		"RETURN vector_distance(vector([3, 1], 2, INTEGER), vector([1, 2], 2, INTEGER), HAMMING)": 2.0,
-		"RETURN uuid() IS :: UUID":                  true,
-		"RETURN size(toString(uuid()))":             int64(36),
-		"RETURN substring(toString(uuid()), 14, 1)": "7",
+		"RETURN uuid() IS :: UUID":                                                                           true,
+		"RETURN size(toString(uuid()))":                                                                      int64(36),
+		"RETURN substring(toString(uuid()), 14, 1)":                                                          "7",
 		"RETURN uuid.mostSignificantBits(uuid('00000000-0000-0001-0000-000000000002'))":                      int64(1),
 		"RETURN uuid.leastSignificantBits(uuid(1, 2))":                                                       int64(2),
 		"RETURN uuid.leastSignificantBits(null)":                                                             nil,
 		"RETURN uuid('550E8400-E29B-41D4-A716-446655440000') = uuid('550e8400-e29b-41d4-a716-446655440000')": true,
-		"RETURN uuid(null)": nil,
+		"RETURN uuid(null)":                                                                                  nil,
 	} {
 		result, err := exec.Execute(ctx, "CYPHER 25 "+query+" AS x", nil)
 		require.NoError(t, err, query)
@@ -47,35 +47,53 @@ func TestVectorAndUUIDFunctionPaths(t *testing.T) {
 		return values[expr], nil
 	}}
 	for name, run := range map[string]func() (interface{}, error){
-		"vector count":           func() (interface{}, error) { return fnVector(call, []string{"v", "i"}) },
-		"vector eval":            func() (interface{}, error) { return fnVector(call, []string{"fail", "i", "'INTEGER'"}) },
-		"vector dimension type":  func() (interface{}, error) { return fnVector(call, []string{"v", "s", "'INTEGER'"}) },
-		"vector dimension range": func() (interface{}, error) { return fnVector(call, []string{"v", "big", "'INTEGER'"}) },
-		"dimension count count":  func() (interface{}, error) { return fnVectorDimensionCount(call, nil) },
-		"dimension count eval":   func() (interface{}, error) { return fnVectorDimensionCount(call, []string{"fail"}) },
-		"dimension count type":   func() (interface{}, error) { return fnVectorDimensionCount(call, []string{"s"}) },
-		"distance count":         func() (interface{}, error) { return fnVectorDistance(call, []string{"v"}) },
-		"distance eval":          func() (interface{}, error) { return fnVectorDistance(call, []string{"fail", "v", "'COSINE'"}) },
-		"distance a":             func() (interface{}, error) { return fnVectorDistance(call, []string{"s", "v", "'COSINE'"}) },
-		"distance b":             func() (interface{}, error) { return fnVectorDistance(call, []string{"v", "s", "'COSINE'"}) },
-		"norm count":             func() (interface{}, error) { return fnVectorNorm(call, []string{"v"}) },
-		"norm eval":              func() (interface{}, error) { return fnVectorNorm(call, []string{"fail", "'EUCLIDEAN'"}) },
-		"norm type":              func() (interface{}, error) { return fnVectorNorm(call, []string{"s", "'EUCLIDEAN'"}) },
-		"uuid count":             func() (interface{}, error) { return fnUUID(call, []string{"i", "i", "i"}) },
-		"uuid eval":              func() (interface{}, error) { return fnUUID(call, []string{"fail"}) },
-		"uuid text type":         func() (interface{}, error) { return fnUUID(call, []string{"i"}) },
-		"uuid msb type":          func() (interface{}, error) { return fnUUID(call, []string{"s", "i"}) },
-		"uuid lsb type":          func() (interface{}, error) { return fnUUID(call, []string{"i", "s"}) },
-		"half count":             func() (interface{}, error) { return fnUUIDHalf(false)(call, nil) },
-		"half eval":              func() (interface{}, error) { return fnUUIDHalf(true)(call, []string{"fail"}) },
-		"half type":              func() (interface{}, error) { return fnUUIDHalf(false)(call, []string{"s"}) },
+		"vector count": func() (interface{}, error) { return fnVector(context.Background(), call, []string{"v", "i"}) },
+		"vector eval": func() (interface{}, error) {
+			return fnVector(context.Background(), call, []string{"fail", "i", "'INTEGER'"})
+		},
+		"vector dimension type": func() (interface{}, error) {
+			return fnVector(context.Background(), call, []string{"v", "s", "'INTEGER'"})
+		},
+		"vector dimension range": func() (interface{}, error) {
+			return fnVector(context.Background(), call, []string{"v", "big", "'INTEGER'"})
+		},
+		"dimension count count": func() (interface{}, error) { return fnVectorDimensionCount(context.Background(), call, nil) },
+		"dimension count eval": func() (interface{}, error) {
+			return fnVectorDimensionCount(context.Background(), call, []string{"fail"})
+		},
+		"dimension count type": func() (interface{}, error) { return fnVectorDimensionCount(context.Background(), call, []string{"s"}) },
+		"distance count":       func() (interface{}, error) { return fnVectorDistance(context.Background(), call, []string{"v"}) },
+		"distance eval": func() (interface{}, error) {
+			return fnVectorDistance(context.Background(), call, []string{"fail", "v", "'COSINE'"})
+		},
+		"distance a": func() (interface{}, error) {
+			return fnVectorDistance(context.Background(), call, []string{"s", "v", "'COSINE'"})
+		},
+		"distance b": func() (interface{}, error) {
+			return fnVectorDistance(context.Background(), call, []string{"v", "s", "'COSINE'"})
+		},
+		"norm count": func() (interface{}, error) { return fnVectorNorm(context.Background(), call, []string{"v"}) },
+		"norm eval": func() (interface{}, error) {
+			return fnVectorNorm(context.Background(), call, []string{"fail", "'EUCLIDEAN'"})
+		},
+		"norm type": func() (interface{}, error) {
+			return fnVectorNorm(context.Background(), call, []string{"s", "'EUCLIDEAN'"})
+		},
+		"uuid count":     func() (interface{}, error) { return fnUUID(context.Background(), call, []string{"i", "i", "i"}) },
+		"uuid eval":      func() (interface{}, error) { return fnUUID(context.Background(), call, []string{"fail"}) },
+		"uuid text type": func() (interface{}, error) { return fnUUID(context.Background(), call, []string{"i"}) },
+		"uuid msb type":  func() (interface{}, error) { return fnUUID(context.Background(), call, []string{"s", "i"}) },
+		"uuid lsb type":  func() (interface{}, error) { return fnUUID(context.Background(), call, []string{"i", "s"}) },
+		"half count":     func() (interface{}, error) { return fnUUIDHalf(false)(context.Background(), call, nil) },
+		"half eval":      func() (interface{}, error) { return fnUUIDHalf(true)(context.Background(), call, []string{"fail"}) },
+		"half type":      func() (interface{}, error) { return fnUUIDHalf(false)(context.Background(), call, []string{"s"}) },
 	} {
 		_, err := run()
 		require.Error(t, err, name)
 	}
-	_, err := fnUUIDHalf(false)(call, []string{"s"})
+	_, err := fnUUIDHalf(false)(context.Background(), call, []string{"s"})
 	require.ErrorContains(t, err, "uuid.leastSignificantBits", "each half names itself")
-	count, err := fnVectorDimensionCount(cypherfn.Context{Eval: func(string) (interface{}, error) {
+	count, err := fnVectorDimensionCount(context.Background(), cypherfn.Context{Eval: func(string) (interface{}, error) {
 		return &CypherVector{Type: VectorFloat32, Floats: []float64{1, 2, 3}}, nil
 	}}, []string{"p"})
 	require.NoError(t, err)
@@ -104,10 +122,10 @@ func TestVectorAndUUIDFunctionPaths(t *testing.T) {
 
 	// The rewrite leaves a namespaced name and an unclosed call alone, and
 	// takes only a bare name as a coordinate type.
-	rewritten, _, err := desugarLabelExpressions("RETURN vector([1], 1, INTEGER) AS a, gds.vector(1) AS b", nil, false)
+	rewritten, _, err := desugarLabelExpressions(t.Context(), "RETURN vector([1], 1, INTEGER) AS a, gds.vector(1) AS b", nil, false)
 	require.NoError(t, err)
 	require.Contains(t, rewritten, " gds.vector(1) AS b", "a namespaced vector is another function")
-	rewritten, _, _ = desugarLabelExpressions("RETURN vector([1], 1, INTEGER", nil, false)
+	rewritten, _, _ = desugarLabelExpressions(t.Context(), "RETURN vector([1], 1, INTEGER", nil, false)
 	require.NotContains(t, rewritten, vectorFunction, "an unclosed call is left to the parser")
 	require.False(t, isBareName("INT-8"))
 }

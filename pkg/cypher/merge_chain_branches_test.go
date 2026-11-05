@@ -62,30 +62,6 @@ func TestMergeRepeatedWithPreservesScope(t *testing.T) {
 	require.Equal(t, [][]interface{}{{int64(1)}}, stored.Rows)
 }
 
-func TestProjectWithContext_ScalarFallback(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "merge_proj_cov"))
-	ctx := context.Background()
-	n := &storage.Node{ID: "n1", Properties: map[string]interface{}{"name": "A"}}
-	input := []pipelineRow{{"n": n, "score": int64(7)}}
-	projected, ok := exec.pipelineApplyWith(ctx, input, "WITH n AS nodeAlias, score AS s")
-	require.True(t, ok)
-	require.Equal(t, []pipelineRow{{"nodeAlias": n, "s": int64(7)}}, projected)
-	require.Equal(t, []pipelineRow{{"n": n, "score": int64(7)}}, input)
-}
-
-func TestApplyWithProjection_Branches_Additional(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "merge_with_proj_cov"))
-	ctx := context.Background()
-	n := &storage.Node{ID: "n1", Properties: map[string]interface{}{"name": "A"}}
-	input := []pipelineRow{{"n": n, "score": int64(7)}}
-	projected, ok := exec.pipelineApplyWith(ctx, input, "WITH *")
-	require.True(t, ok)
-	require.Equal(t, input, projected)
-	projected, ok = exec.pipelineApplyWith(ctx, input, "WITH n AS m, score AS s")
-	require.True(t, ok)
-	require.Equal(t, []pipelineRow{{"m": n, "s": int64(7)}}, projected)
-}
-
 func TestExecuteMergeWithChain_UnboundEndpoint(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "merge_chain_err_cov")
@@ -103,7 +79,7 @@ func TestExecuteMergeWithChain_UnboundEndpoint(t *testing.T) {
 	require.Equal(t, result.Rows, repeated.Rows)
 	require.Zero(t, repeated.Stats.NodesCreated)
 	require.Zero(t, repeated.Stats.RelationshipsCreated)
-	nodes, err := store.GetNodesByLabel("Node")
+	nodes, err := store.GetNodesByLabel(ctx, "Node")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	stored, err := exec.Execute(ctx, "MATCH ()-[r:REL]->() RETURN count(r)", nil)

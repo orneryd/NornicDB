@@ -1,5 +1,7 @@
 package cypher
 
+// Author: Codex NOR-184 lane: migrate fixtures to admitted callable publication.
+
 import (
 	"context"
 	"strings"
@@ -14,7 +16,7 @@ import (
 // server without the APOC plugin (on Windows, plugins can't load).
 func TestExecutorImplementedFunctionsAreKnown(t *testing.T) {
 	previous := PluginFunctionLookup
-	PluginFunctionLookup = func(string) (interface{}, bool) { return nil, false }
+	PluginFunctionLookup = checkedTestLookup(func(string) (interface{}, bool) { return nil, false })
 	t.Cleanup(func() { PluginFunctionLookup = previous })
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "executor_functions_known"))
 	ctx := context.Background()
@@ -51,6 +53,7 @@ func TestExecutorImplementedFunctionsAreKnown(t *testing.T) {
 		"apoc.map.frompairs",
 		"apoc.map.merge",
 		"apoc.map.removekey",
+		"apoc.map.removekeys",
 		"apoc.map.setkey",
 		"apoc.meta.istype",
 		"apoc.meta.type",

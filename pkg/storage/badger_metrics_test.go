@@ -9,6 +9,9 @@
 package storage
 
 import (
+	"context"
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 	"time"
 
@@ -22,7 +25,7 @@ import (
 // setupAttachedEngine builds an engine with metrics attached.
 func setupAttachedEngine(t *testing.T) (*BadgerEngine, *prometheus.Registry, *observability.StorageMetrics, *observability.MVCCMetrics) {
 	t.Helper()
-	be, err := NewBadgerEngineInMemory()
+	be, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = be.Close() })
 
@@ -75,51 +78,68 @@ func findOpDurationSampleCount(t *testing.T, reg *prometheus.Registry, op string
 	return 0
 }
 
-// TestStorageOp_ObservesGet drives Get and confirms a sample is recorded
-// on op_duration_seconds{op="get"}.
-func TestStorageOp_ObservesGet(t *testing.T) {
-	be, reg, _, _ := setupAttachedEngine(t)
-	// Issue a Get even on missing data — observation runs before the
-	// not-found path returns.
-	_, _ = be.GetNode("nornic:nope")
-	require.GreaterOrEqual(t, findOpDurationSampleCount(t, reg, "get"), uint64(1))
+// TestStorageOp_ObservesReads pins the metric's operation label and sample
+// count for both point misses and whole-graph scans using one assertion owner.
+func TestStorageOp_ObservesReads(t *testing.T) {
+	for _, tc := range []struct {
+		name, operation string
+		read            func(*BadgerEngine)
+		minimum         uint64
+	}{
+		{name: "TestStorageOp_ObservesGet", operation: "get", minimum: 1,
+			read: func(be *BadgerEngine) { _, _ = be.GetNode(t.Context(), "nornic:nope") }},
+		{name: "TestStorageOp_ObservesScan", operation: "scan", minimum: 2,
+			read: func(be *BadgerEngine) {
+				_, _ = be.AllNodes(context.Background())
+				_, _ = be.AllEdges(context.Background())
+			}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			be, reg, _, _ := setupAttachedEngine(t)
+			tc.read(be)
+			require.GreaterOrEqual(t, findOpDurationSampleCount(t, reg, tc.operation), tc.minimum)
+		})
+	}
 }
 
 // TestStorageOp_ObservesPut drives CreateNode + UpdateNode and confirms
 // samples accumulate on op="put".
 func TestStorageOp_ObservesPut(t *testing.T) {
-	be, reg, _, _ := setupAttachedEngine(t)
-	node := &Node{ID: "nornic:n1", Labels: []string{"L"}}
-	_, err := be.CreateNode(node)
-	require.NoError(t, err)
-	require.NoError(t, be.UpdateNode(node))
-	require.GreaterOrEqual(t, findOpDurationSampleCount(t, reg, "put"), uint64(2))
+	runStorageOpObservationCase(t, physicalWriteObservationCase{
+		nodeID: "nornic:n1",
+		// CreateNode + UpdateNode both record on op="put".
+		write: func(be *BadgerEngine, node *Node) error {
+			if _, err := be.CreateNode(t.Context(), node); err != nil {
+				return err
+			}
+			return be.UpdateNode(t.Context(), NodeUpdateRequest{After: node})
+		},
+		op:       "put",
+		minCount: uint64(2),
+	})
 }
 
 // TestStorageOp_ObservesDelete drives DeleteNode and confirms a sample
 // on op="delete".
 func TestStorageOp_ObservesDelete(t *testing.T) {
-	be, reg, _, _ := setupAttachedEngine(t)
-	node := &Node{ID: "nornic:n2", Labels: []string{"L"}}
-	_, err := be.CreateNode(node)
-	require.NoError(t, err)
-	require.NoError(t, be.DeleteNode("nornic:n2"))
-	require.GreaterOrEqual(t, findOpDurationSampleCount(t, reg, "delete"), uint64(1))
-}
-
-// TestStorageOp_ObservesScan drives AllNodes / AllEdges and confirms
-// samples on op="scan".
-func TestStorageOp_ObservesScan(t *testing.T) {
-	be, reg, _, _ := setupAttachedEngine(t)
-	_, _ = be.AllNodes()
-	_, _ = be.AllEdges()
-	require.GreaterOrEqual(t, findOpDurationSampleCount(t, reg, "scan"), uint64(2))
+	runStorageOpObservationCase(t, physicalWriteObservationCase{
+		nodeID: "nornic:n2",
+		// CreateNode + DeleteNode record one sample on op="delete".
+		write: func(be *BadgerEngine, node *Node) error {
+			if _, err := be.CreateNode(t.Context(), node); err != nil {
+				return err
+			}
+			return be.DeleteNode(t.Context(), node.ID)
+		},
+		op:       "delete",
+		minCount: uint64(1),
+	})
 }
 
 // TestStorageOp_NoOpWithoutAttach: when metrics are not attached, no
 // observation runs and Gather() reports zero samples for the family.
 func TestStorageOp_NoOpWithoutAttach(t *testing.T) {
-	be, err := NewBadgerEngineInMemory()
+	be, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = be.Close() })
 
@@ -128,7 +148,7 @@ func TestStorageOp_NoOpWithoutAttach(t *testing.T) {
 	bag := observability.NewStorageMetrics(reg, false, probe)
 	_ = bag // bag exists in registry but is NOT attached to the engine
 
-	_, _ = be.GetNode("nornic:nope")
+	_, _ = be.GetNode(t.Context(), "nornic:nope")
 	// metricsAttached is still false so GetNode does not record on the bag.
 	require.Equal(t, uint64(0), findOpDurationSampleCount(t, reg, "get"))
 }
@@ -173,11 +193,11 @@ func TestPressureBand_UpdateBandRoundTrip(t *testing.T) {
 func TestStorageHotPath_NoNewAllocs(t *testing.T) {
 	be, _, _, _ := setupAttachedEngine(t)
 	node := &Node{ID: "nornic:hot", Labels: []string{"L"}}
-	_, err := be.CreateNode(node)
+	_, err := be.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	allocs := testing.AllocsPerRun(50, func() {
-		_, _ = be.GetNode("nornic:hot")
+		_, _ = be.GetNode(t.Context(), "nornic:hot")
 	})
 	// Hot-path budget after instrumentation: GetNode itself does some
 	// allocations (cache decode, copyNode); the instrumentation alone
@@ -188,4 +208,27 @@ func TestStorageHotPath_NoNewAllocs(t *testing.T) {
 
 	// Sanity: time.Now() / time.Since are zero-alloc on most archs.
 	_ = time.Now()
+}
+
+// physicalWriteObservationCase declares one storage operation whose metric
+// observation is asserted. The node seed and error handling stay shared; the
+// operation, its label and its minimum sample count stay explicit per case.
+type physicalWriteObservationCase struct {
+	nodeID string
+	// write performs the engine operation whose metric label is asserted.
+	write func(be *BadgerEngine, node *Node) error
+	// op is the op_duration_seconds label the operations must record under.
+	op string
+	// minCount is the minimum sample count the label must reach.
+	minCount uint64
+}
+
+// runStorageOpObservationCase attaches metrics, applies the case's writes and
+// asserts the labelled sample count.
+func runStorageOpObservationCase(t *testing.T, tc physicalWriteObservationCase) {
+	t.Helper()
+	be, reg, _, _ := setupAttachedEngine(t)
+	node := &Node{ID: NodeID(tc.nodeID), Labels: []string{"L"}}
+	require.NoError(t, tc.write(be, node))
+	require.GreaterOrEqual(t, findOpDurationSampleCount(t, reg, tc.op), tc.minCount)
 }

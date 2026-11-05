@@ -2,15 +2,21 @@
 //
 // This package implements all apoc.export.* functions for exporting
 // graph data to various formats (JSON, CSV, Cypher, GraphML).
+// Author: L6 / #1665 lane (Codex gpt-6.1-sol). Existing export producers delegate numeric text to its shared owner.
 package apocexport
 
 import (
 	"encoding/csv"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+
+	apocconvert "github.com/orneryd/nornicdb/apoc/convert"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
+	"github.com/orneryd/nornicdb/pkg/pool"
 )
 
 // Node represents a graph node.
@@ -40,7 +46,7 @@ func Json(nodes []*Node, rels []*Relationship) (string, error) {
 		"relationships": rels,
 	}
 
-	bytes, err := json.MarshalIndent(data, "", "  ")
+	bytes, err := valueconvert.PropertyJSON.MarshalIndent(data, "", "  ")
 	if err != nil {
 		return "", err
 	}
@@ -107,7 +113,7 @@ func Csv(nodes []*Node, filePath string) error {
 			}
 			for key := range nodes[0].Properties {
 				if val, ok := node.Properties[key]; ok {
-					row = append(row, fmt.Sprintf("%v", val))
+					row = append(row, apocconvert.ToString(val))
 				} else {
 					row = append(row, "")
 				}
@@ -155,7 +161,8 @@ func CsvData(nodes []*Node, filePath string) error {
 //
 //	apoc.export.cypher(nodes, rels) => Cypher statements
 func Cypher(nodes []*Node, rels []*Relationship) string {
-	var builder strings.Builder
+	builder := pool.GetStringBuilder()
+	defer pool.PutStringBuilder(builder)
 
 	// Export nodes
 	for _, node := range nodes {
@@ -174,7 +181,9 @@ func Cypher(nodes []*Node, rels []*Relationship) string {
 				if !first {
 					builder.WriteString(", ")
 				}
-				builder.WriteString(fmt.Sprintf("%s: %v", key, formatValue(val)))
+				builder.WriteString(key)
+				builder.WriteString(": ")
+				appendValue(builder, val)
 				first = false
 			}
 			builder.WriteString("}")
@@ -196,7 +205,9 @@ func Cypher(nodes []*Node, rels []*Relationship) string {
 				if !first {
 					builder.WriteString(", ")
 				}
-				builder.WriteString(fmt.Sprintf("%s: %v", key, formatValue(val)))
+				builder.WriteString(key)
+				builder.WriteString(": ")
+				appendValue(builder, val)
 				first = false
 			}
 			builder.WriteString("}")
@@ -248,7 +259,7 @@ func GraphML(nodes []*Node, rels []*Relationship) string {
 	for _, node := range nodes {
 		builder.WriteString(fmt.Sprintf("    <node id=\"n%d\">\n", node.ID))
 		for key, val := range node.Properties {
-			builder.WriteString(fmt.Sprintf("      <data key=\"%s\">%v</data>\n", key, val))
+			builder.WriteString(fmt.Sprintf("      <data key=\"%s\">%s</data>\n", key, apocconvert.ToString(val)))
 		}
 		builder.WriteString("    </node>\n")
 	}
@@ -258,7 +269,7 @@ func GraphML(nodes []*Node, rels []*Relationship) string {
 		builder.WriteString(fmt.Sprintf("    <edge source=\"n%d\" target=\"n%d\">\n", rel.StartNode, rel.EndNode))
 		builder.WriteString(fmt.Sprintf("      <data key=\"type\">%s</data>\n", rel.Type))
 		for key, val := range rel.Properties {
-			builder.WriteString(fmt.Sprintf("      <data key=\"%s\">%v</data>\n", key, val))
+			builder.WriteString(fmt.Sprintf("      <data key=\"%s\">%s</data>\n", key, apocconvert.ToString(val)))
 		}
 		builder.WriteString("    </edge>\n")
 	}
@@ -293,17 +304,52 @@ func GraphMLData(nodes []*Node, rels []*Relationship, filePath string) error {
 	return GraphMLAll(nodes, rels, filePath)
 }
 
-// formatValue formats a value for Cypher output.
-func formatValue(val interface{}) string {
+// appendValue owns Cypher literal structure. Every numeric leaf uses AppendNumericText;
+// a list or map must remain a container when the exported source is executed.
+func appendValue(out *pool.PooledStringBuilder, val interface{}) {
+	var number [40]byte
+	if text, numeric := valueconvert.AppendNumericText(number[:0], val); numeric {
+		out.Write(text)
+		return
+	}
+	if list, ok := valueconvert.ReadList(val); ok {
+		out.WriteByte('[')
+		for i := 0; i < list.Len(); i++ {
+			if i > 0 {
+				out.WriteString(", ")
+			}
+			appendValue(out, list.At(i))
+		}
+		out.WriteByte(']')
+		return
+	}
 	switch v := val.(type) {
+	case nil:
+		out.WriteString("null")
 	case string:
-		return fmt.Sprintf("'%s'", strings.ReplaceAll(v, "'", "\\'"))
-	case int, int64, float64:
-		return fmt.Sprintf("%v", v)
+		out.WriteByte('\'')
+		out.WriteString(strings.ReplaceAll(v, "'", "\\'"))
+		out.WriteByte('\'')
 	case bool:
-		return fmt.Sprintf("%t", v)
+		fmt.Fprint(out, v)
+	case map[string]interface{}:
+		keys := make([]string, 0, len(v))
+		for key := range v {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		out.WriteByte('{')
+		for i, key := range keys {
+			if i > 0 {
+				out.WriteString(", ")
+			}
+			out.WriteString(cyphertext.PrintIdentifier(key, nil, cyphertext.RawSource))
+			out.WriteString(": ")
+			appendValue(out, v[key])
+		}
+		out.WriteByte('}')
 	default:
-		return fmt.Sprintf("'%v'", v)
+		fmt.Fprintf(out, "'%v'", v)
 	}
 }
 

@@ -2,8 +2,8 @@ package search
 
 import (
 	"context"
-	"encoding/gob"
 	"errors"
+	"fmt"
 	"hash/fnv"
 	"math"
 	"os"
@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -75,9 +76,28 @@ type relationshipEntry struct {
 }
 
 type relationshipSearch struct {
+	// The lifecycle lock pairs worker startup with Close's join. These
+	// fields are separate from the loader's live-write ordering state.
+	workerMu      sync.Mutex
+	workerStarted bool
+	worker        lifecycle.OnceCompletion // the worker's one completion (embedding and its saves)
+	embedMu       sync.Mutex
+	saveErr       error
+	// staged belongs to the embedding worker. Failed saves keep the batch
+	// here so retrying persistence never buys the same embeddings again.
+	staged map[string]relationshipEntry
+
+	// beforeSave is a per-service persistence barrier used by tests.
+	beforeSave func()
+
+	// Directory durability follows storage's platform-specific contract.
+	// Tests can hold or fail this boundary without replacing file writes.
+	syncDirectory func(string) error
+
 	mu       sync.RWMutex
 	fulltext bm25Index
 	entries  map[string]*relationshipEntry
+	loadErr  error
 	embed    RelationshipEmbedFunc
 	// pending holds the relationships to embed, each with the copy its
 	// write reported, read in place of the stored one when that isn't
@@ -87,8 +107,14 @@ type relationshipSearch struct {
 	// every source; zero when none was set.
 	policy uint64
 	wake   chan struct{}
-	ready  chan struct{}
+	loaded lifecycle.OnceCompletion // the startup load has completed
 	start  sync.Once
+
+	// While the loader (runRelationshipIndex) applies the stored
+	// relationships, live writes record their IDs in live and the loader
+	// leaves those IDs to them: its stored copy may be older. Guarded by mu.
+	loading bool
+	live    map[string]struct{}
 }
 
 type relationshipVectorsFile struct {
@@ -104,14 +130,16 @@ func (s *Service) EnableRelationshipSearch(embed RelationshipEmbedFunc) {
 	if s == nil || s.relationships.Load() != nil {
 		return
 	}
-	fulltext, _ := newBM25IndexWithAnalyzer(s.bm25Engine, s.bm25Analyzer)
+	fulltext := NewFulltextIndexV2WithAnalyzer(s.bm25Analyzer)
 	s.relationships.Store(&relationshipSearch{
 		fulltext: fulltext,
 		entries:  make(map[string]*relationshipEntry),
 		embed:    embed,
 		pending:  make(map[string]*storage.Edge),
 		wake:     make(chan struct{}, 1),
-		ready:    make(chan struct{}),
+		staged:   make(map[string]relationshipEntry),
+
+		syncDirectory: storage.SyncDir,
 	})
 }
 
@@ -148,24 +176,48 @@ func (s *Service) relationshipSearch() *relationshipSearch {
 // StartRelationshipIndex builds the relationship keyword index from storage,
 // keeping the persisted vectors of relationships that haven't changed, then
 // embeds the others in the background until the service closes. It returns
-// at once; searches wait for the build.
+// at once; searches wait for the build. An unreadable or unconverted snapshot
+// is left untouched and reported by SearchRelationships and Close.
 func (s *Service) StartRelationshipIndex() {
 	rs := s.relationshipSearch()
 	if rs == nil {
 		return
 	}
+	rs.workerMu.Lock()
+	defer rs.workerMu.Unlock()
+	if s.lifecycleCtx.Err() != nil {
+		return
+	}
+	rs.workerStarted = true
 	rs.start.Do(func() {
-		go s.runRelationshipIndex(rs)
+		rs.mu.Lock()
+		rs.loading, rs.live = true, make(map[string]struct{})
+		rs.mu.Unlock()
+		if !s.RunBackgroundTask(func() {
+			rs.worker.Do(func() error { s.runRelationshipIndex(rs); return rs.saveErr })
+		}) {
+			rs.loaded.Do(func() error { return nil })
+			rs.worker.Do(func() error { return nil })
+		}
 	})
 }
 
 func (s *Service) runRelationshipIndex(rs *relationshipSearch) {
 	ctx := s.lifecycleCtx
-	persisted := s.loadRelationshipVectors()
+	persisted, err := s.loadRelationshipVectors()
+	if err != nil {
+		rs.mu.Lock()
+		rs.loading, rs.live = false, nil
+		rs.loadErr = err
+		rs.mu.Unlock()
+		rs.saveErr = err
+		rs.loaded.Do(func() error { return nil })
+		return
+	}
 	seen := make(map[string]bool)
-	err := storage.StreamEdgesWithFallback(ctx, s.engine, 0, func(edge *storage.Edge) error {
+	err = storage.StreamEdgesWithFallback(ctx, s.engine, 0, func(edge *storage.Edge) error {
 		seen[string(edge.ID)] = true
-		s.indexRelationship(rs, edge, persisted[string(edge.ID)])
+		s.indexRelationship(rs, edge, persisted[string(edge.ID)], true)
 		return nil
 	})
 	if err != nil && ctx.Err() == nil {
@@ -173,28 +225,54 @@ func (s *Service) runRelationshipIndex(rs *relationshipSearch) {
 	}
 	// A relationship indexed by a write during the build is kept; one only
 	// in the file is gone.
-	close(rs.ready)
+	rs.mu.Lock()
+	rs.loading, rs.live = false, nil
+	rs.mu.Unlock()
+	rs.loaded.Do(func() error { return nil })
 	s.embedRelationships(ctx, rs)
 }
 
 // IndexRelationship indexes or re-indexes a relationship for relationship
-// search; a no-op when it is off.
+// search; a no-op when it is off. During a build it is ordered with the build
+// sequence (queueBuildWrite).
 func (s *Service) IndexRelationship(edge *storage.Edge) {
 	if rs := s.relationshipSearch(); rs != nil && edge != nil && edge.ID != "" {
-		s.indexRelationship(rs, edge, nil)
+		s.orderRelationshipUpdate(deferredIndexWrite{edge: edge, relationship: true}, func() {
+			s.indexRelationship(rs, edge, nil, false)
+		})
 	}
 }
 
-func (s *Service) indexRelationship(rs *relationshipSearch, edge *storage.Edge, persisted *relationshipEntry) {
+// updateRelationshipNow applies a relationship-search update the build
+// sequence ordered.
+func (s *Service) updateRelationshipNow(write deferredIndexWrite) {
+	rs := s.relationshipSearch()
+	switch {
+	case rs == nil:
+	case write.edge != nil:
+		s.indexRelationship(rs, write.edge, nil, false)
+	default:
+		s.removeRelationship(rs, storage.EdgeID(write.edgeID))
+	}
+}
+
+func (s *Service) indexRelationship(rs *relationshipSearch, edge *storage.Edge, persisted *relationshipEntry, fromLoader bool) {
 	id := string(edge.ID)
 	text := s.relationshipSearchableText(edge)
 	source := rs.source(edge)
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
+	if fromLoader {
+		if _, live := rs.live[id]; live {
+			return
+		}
+	} else if rs.loading {
+		rs.live[id] = struct{}{}
+	}
 	if text == "" {
 		rs.fulltext.Remove(id)
 	} else {
-		rs.fulltext.Index(id, text)
+		rs.fulltext.Index(id, text, nil, nil, false)
 	}
 	entry := rs.entries[id]
 	if entry == nil && persisted != nil && persisted.Source == source {
@@ -227,13 +305,23 @@ func (s *Service) WakeRelationshipEmbedding() {
 }
 
 // RemoveRelationship drops a relationship from relationship search; a no-op
-// when it is off.
+// when it is off. During a build it is ordered with the build
+// sequence (queueBuildWrite).
 func (s *Service) RemoveRelationship(id storage.EdgeID) {
 	rs := s.relationshipSearch()
 	if rs == nil {
 		return
 	}
+	s.orderRelationshipUpdate(deferredIndexWrite{edgeID: string(id), relationship: true}, func() {
+		s.removeRelationship(rs, id)
+	})
+}
+
+func (s *Service) removeRelationship(rs *relationshipSearch, id storage.EdgeID) {
 	rs.mu.Lock()
+	if rs.loading {
+		rs.live[string(id)] = struct{}{}
+	}
 	rs.fulltext.Remove(string(id))
 	delete(rs.entries, string(id))
 	delete(rs.pending, string(id))
@@ -254,9 +342,11 @@ func (s *Service) SetRelationshipEmbedPolicy(policy string) {
 	}
 	hash := fnv.New64a()
 	_, _ = hash.Write([]byte(policy))
-	rs.mu.Lock()
-	rs.policy = hash.Sum64()
-	rs.mu.Unlock()
+	s.orderWithBuild(func() {
+		rs.mu.Lock()
+		rs.policy = hash.Sum64()
+		rs.mu.Unlock()
+	})
 }
 
 // source is edge's source under the embedding policy.
@@ -299,10 +389,7 @@ func (s *Service) embedRelationships(ctx context.Context, rs *relationshipSearch
 			return
 		case <-rs.wake:
 		}
-		changed, failed := s.embedPendingRelationships(ctx, rs)
-		if changed {
-			s.saveRelationshipVectors(rs)
-		}
+		_, failed := s.embedPendingRelationships(ctx, rs)
 		if failed {
 			// Retried after the delay, or sooner when woken: an embedder
 			// was loaded (WakeRelationshipEmbedding) or there is new work.
@@ -321,7 +408,37 @@ func (s *Service) embedRelationships(ctx context.Context, rs *relationshipSearch
 }
 
 func (s *Service) embedPendingRelationships(ctx context.Context, rs *relationshipSearch) (changed, failed bool) {
-	for ctx.Err() == nil {
+	rs.embedMu.Lock()
+	defer rs.embedMu.Unlock()
+	// Persist a completed batch even when cancellation or a provider failure
+	// ends its drain. No vector/count/search reader sees it before the save.
+	defer func() {
+		if len(rs.staged) == 0 {
+			return
+		}
+		rs.saveErr = s.saveRelationshipVectors(rs)
+		if rs.saveErr != nil {
+			failed = true
+			return
+		}
+		rs.mu.Lock()
+		for id, embedded := range rs.staged {
+			if current := rs.entries[id]; current != nil && current.Source == embedded.Source {
+				current.Vectors = embedded.Vectors
+				current.Spans = embedded.Spans
+				changed = true
+			}
+			delete(rs.staged, id)
+		}
+		rs.mu.Unlock()
+	}()
+	// A batch must finish even while writes keep arriving, otherwise its
+	// staged results would never reach persistence or become searchable.
+	// New writes leave a wake queued for the next batch.
+	rs.mu.RLock()
+	batchSize := len(rs.pending)
+	rs.mu.RUnlock()
+	for processed := 0; processed < batchSize && ctx.Err() == nil; processed++ {
 		rs.mu.Lock()
 		var id string
 		var reported *storage.Edge
@@ -334,6 +451,9 @@ func (s *Service) embedPendingRelationships(ctx context.Context, rs *relationshi
 		if id == "" {
 			return changed, false
 		}
+		if staged, ok := rs.staged[id]; ok && reported != nil && staged.Source == rs.source(reported) {
+			continue
+		}
 		// The copy the index took is the version its entry stands for: it
 		// is embedded even when a read of storage would still give an older
 		// version (the write not visible yet, or a stale cached copy), whose
@@ -345,7 +465,7 @@ func (s *Service) embedPendingRelationships(ctx context.Context, rs *relationshi
 		rs.mu.RUnlock()
 		edge := reported
 		if reported == nil || entry == nil || rs.source(reported) != entry.Source {
-			stored, err := s.engine.GetEdge(storage.EdgeID(id))
+			stored, err := s.engine.GetEdge(ctx, storage.EdgeID(id))
 			if err != nil {
 				if reported == nil {
 					continue
@@ -380,9 +500,7 @@ func (s *Service) embedPendingRelationships(ctx context.Context, rs *relationshi
 		rs.mu.Lock()
 		current := rs.entries[id]
 		if current != nil && current.Source == source {
-			current.Vectors = normalized
-			current.Spans = spans
-			changed = true
+			rs.staged[id] = relationshipEntry{Source: source, Vectors: normalized, Spans: spans}
 		}
 		rs.mu.Unlock()
 		if current != nil && current.Source != source {
@@ -409,60 +527,89 @@ func normalizeVectorCopy(vector []float32) []float32 {
 	return out
 }
 
-func (s *Service) relationshipVectorsPath() string {
+func (s *Service) relationshipVectorsPath() (string, error) {
 	if s == nil || !s.persistEnabled.Load() || s.fulltextIndexPath == "" {
-		return ""
+		return "", nil
 	}
-	return s.fulltextIndexPath + relationshipVectorsFileSuffix
+	return security.AbsCanonicalFilePath(s.fulltextIndexPath + relationshipVectorsFileSuffix)
 }
 
-func (s *Service) loadRelationshipVectors() map[string]*relationshipEntry {
-	path := s.relationshipVectorsPath()
+func (s *Service) loadRelationshipVectors() (map[string]*relationshipEntry, error) {
+	path, err := s.relationshipVectorsPath()
+	if err != nil {
+		return nil, err
+	}
 	if path == "" {
-		return nil
+		return nil, nil
 	}
 	file, err := security.OpenRootedFile(path, os.O_RDONLY, 0)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer file.Close()
-	var stored relationshipVectorsFile
-	if err := gob.NewDecoder(file).Decode(&stored); err != nil || stored.Format != relationshipVectorsFormat {
-		return nil
+	stored, already, err := decodeRelationshipSnapshot(file)
+	if err != nil {
+		return nil, fmt.Errorf("reading relationship snapshot: %w", err)
 	}
-	return stored.Entries
+	if !already {
+		return nil, fmt.Errorf("%w: %s", ErrRelationshipSnapshotUpgradeRequired, path)
+	}
+	if stored.Format != relationshipVectorsFormat {
+		return nil, nil
+	}
+	return stored.Entries, nil
 }
 
-func (s *Service) saveRelationshipVectors(rs *relationshipSearch) {
-	path := s.relationshipVectorsPath()
+func (s *Service) saveRelationshipVectors(rs *relationshipSearch) error {
+	path, err := s.relationshipVectorsPath()
+	if err != nil {
+		return err
+	}
 	if path == "" {
-		return
+		return nil
 	}
 	rs.mu.RLock()
 	entries := make(map[string]*relationshipEntry, len(rs.entries))
 	for id, entry := range rs.entries {
+		if staged, ok := rs.staged[id]; ok && staged.Source == entry.Source {
+			entry = &staged
+		}
 		if len(entry.Vectors) > 0 {
-			entries[id] = &relationshipEntry{Source: entry.Source, Vectors: entry.Vectors, Spans: entry.Spans}
+			// Live writes replace entries rather than mutate their vectors;
+			// the embedding owner cannot publish again until this save ends.
+			// Reuse these stable records instead of copying each one twice.
+			entries[id] = entry
 		}
 	}
 	rs.mu.RUnlock()
-	temp := path + ".tmp"
-	file, err := security.CreateRootedFile(temp, 0o600)
+	if rs.beforeSave != nil {
+		rs.beforeSave()
+	}
+	snapshot := relationshipVectorsFile{Format: relationshipVectorsFormat, Entries: entries}
+	err = writeRelationshipSnapshot(path, &snapshot, 0o600, rs.syncDirectory)
 	if err != nil {
 		s.logPrintf("⚠️ Relationship search: saving vectors to %s failed: %v", path, err)
-		return
 	}
-	err = gob.NewEncoder(file).Encode(relationshipVectorsFile{Format: relationshipVectorsFormat, Entries: entries})
-	if closeErr := file.Close(); err == nil {
-		err = closeErr
+	return err
+}
+
+// joinRelationshipIndex pairs startup with Close, including a startup racing
+// cancellation. The worker owns both embedding and its synchronous saves.
+func (s *Service) joinRelationshipIndex() error {
+	if rs := s.relationshipSearch(); rs != nil {
+		rs.workerMu.Lock()
+		started := rs.workerStarted
+		rs.workerMu.Unlock()
+		if started {
+			// Join the dispatched worker; never race it for its completion.
+			<-rs.worker.Done()
+			return rs.worker.Err()
+		}
 	}
-	if err == nil {
-		err = security.RenameRootedFile(temp, path)
-	}
-	if err != nil {
-		_ = security.RemoveRootedPath(temp)
-		s.logPrintf("⚠️ Relationship search: saving vectors to %s failed: %v", path, err)
-	}
+	return nil
 }
 
 type relationshipCandidate struct {
@@ -478,6 +625,11 @@ type relationshipCandidate struct {
 // Each result names the relationship, its type and both endpoints, with its
 // properties. Types filters by relationship type.
 func (s *Service) SearchRelationships(ctx context.Context, query string, embedding []float32, opts *SearchOptions) (*SearchResponse, error) {
+	ctx, finishRead, err := s.beginRead(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer finishRead()
 	rs := s.relationshipSearch()
 	if rs == nil {
 		return nil, localizedError(localization.SearchRelationshipsDisabled(), ErrRelationshipSearchDisabled)
@@ -486,9 +638,15 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 		opts = DefaultSearchOptions()
 	}
 	select {
-	case <-rs.ready:
+	case <-rs.loaded.Done():
 	case <-ctx.Done():
 		return nil, ctx.Err()
+	}
+	rs.mu.RLock()
+	loadErr := rs.loadErr
+	rs.mu.RUnlock()
+	if loadErr != nil {
+		return nil, loadErr
 	}
 	limit := opts.Limit
 	if limit <= 0 {
@@ -623,7 +781,7 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 		if len(admitted) >= limit {
 			break
 		}
-		edge, err := s.engine.GetEdge(storage.EdgeID(c.id))
+		edge, err := s.engine.GetEdge(ctx, storage.EdgeID(c.id))
 		if err != nil {
 			continue // deleted, or hidden from reads
 		}
@@ -632,10 +790,10 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 		}
 		if opts.RelationshipWhere != nil {
 			var start, end *storage.Node
-			if node, err := s.engine.GetNode(edge.StartNode); err == nil {
+			if node, err := s.engine.GetNode(ctx, edge.StartNode); err == nil {
 				start = node
 			}
-			if node, err := s.engine.GetNode(edge.EndNode); err == nil {
+			if node, err := s.engine.GetNode(ctx, edge.EndNode); err == nil {
 				end = node
 			}
 			if !opts.RelationshipWhere(edge, start, end) {
@@ -660,6 +818,7 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 			BM25Rank:   c.bm25Rank,
 			Relationship: &storage.Edge{
 				ID:         edge.ID,
+				Database:   edge.Database,
 				Type:       edge.Type,
 				StartNode:  edge.StartNode,
 				EndNode:    edge.EndNode,

@@ -268,7 +268,7 @@ func (h *Handler) writeLocalizedContextError(w http.ResponseWriter, ctx context.
 	text := message.Fallback
 	tag := language.AmericanEnglish
 	if h.localizer != nil {
-		if rendered, resolved, err := h.localizer.Render(ctx, message); err == nil {
+		if rendered, resolved, err := h.localizer.Render(ctx, localization.MessageRequest(message)); err == nil {
 			text = rendered
 			tag = resolved
 		}
@@ -363,6 +363,10 @@ func (h *Handler) handleEvents(w http.ResponseWriter, r *http.Request) {
 		h.writeLocalizedError(w, r, localization.HeimdallMethodNotAllowed(), http.StatusMethodNotAllowed)
 		return
 	}
+	if !h.canReadAllDatabases(r.Context()) {
+		h.writeLocalizedError(w, r, localization.ReadPermissionRequired(), http.StatusForbidden)
+		return
+	}
 
 	// Verify Bifrost is enabled
 	if h.bifrost == nil {
@@ -385,10 +389,6 @@ func (h *Handler) handleEvents(w http.ResponseWriter, r *http.Request) {
 	// Generate client ID
 	clientID := generateID()
 
-	// Register this connection with Bifrost
-	h.bifrost.RegisterClient(clientID, w, flusher)
-	defer h.bifrost.UnregisterClient(clientID)
-
 	// Send initial connection message
 	connMsg := BifrostMessage{
 		Type:      "connected",
@@ -398,12 +398,33 @@ func (h *Handler) handleEvents(w http.ResponseWriter, r *http.Request) {
 			"client_id": clientID,
 		},
 	}
-	data, _ := json.Marshal(connMsg)
-	fmt.Fprintf(w, "data: %s\n\n", string(data))
-	flusher.Flush()
+	if err := h.bifrost.registerClient(clientID, w, flusher, func() bool { return h.canReadAllDatabases(r.Context()) }, &connMsg); err != nil {
+		return
+	}
+	defer h.bifrost.UnregisterClient(clientID)
 
 	// Keep connection alive until client disconnects
 	<-r.Context().Done()
+}
+
+// Bifrost is a global result feed: its messages have no database selector.
+// Use the existing live principal resolver for every delivery, including
+// database additions and read/allowlist revocation during a connection.
+func (h *Handler) canReadAllDatabases(ctx context.Context) bool {
+	if h.database == nil || auth.RequestAuthenticationDisabledFromContext(ctx) {
+		return true
+	}
+	allows := auth.RequestEntitlementResolverFromContext(ctx)
+	if allows != nil && auth.RequestDatabaseScopeFromContext(ctx) == nil {
+		return false
+	}
+	_, all := auth.DatabasePopulationAccess(h.database.ListDatabases(), func(database string) bool {
+		if allows != nil {
+			return allows(database, auth.PermRead)
+		}
+		return auth.RequestDatabasePermissionAllowed(ctx, database, auth.PermRead)
+	})
+	return all
 }
 
 // handleAutocomplete provides Cypher query autocomplete suggestions.
@@ -1412,6 +1433,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, ctx context.Con
 
 		// === Phase 4: PreExecute hooks ===
 		preExecCtx := &PreExecuteContext{
+			Context:            ctx,
 			RequestID:          lifecycle.requestID,
 			RequestTime:        lifecycle.promptCtx.RequestTime,
 			Action:             parsedAction.Action,
@@ -1540,6 +1562,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, ctx context.Con
 				// === Phase 6: PostExecute hooks (optional) ===
 				// Plugins that implement PostExecuteHook get notified
 				postExecCtx := &PostExecuteContext{
+					Context:    ctx,
 					RequestID:  lifecycle.requestID,
 					Action:     parsedAction.Action,
 					Params:     parsedAction.Params,

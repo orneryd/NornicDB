@@ -58,6 +58,9 @@
 - id: replication.config.invalid_tls_min_version
   description: Versión mínima de TLS no válida. Las versiones no se traducen.
   other: "versión mínima de TLS no válida: {{.Version}} (debe ser '{{.TLS12}}' o '{{.TLS13}}')"
+- id: replication.config.invalid_boolean
+  description: Un ajuste de seguridad tiene un valor que no es booleano. EnvVar y Value no se traducen.
+  other: 'valor "{{.Value}}" no válido para {{.EnvVar}} (use true o false)'
 - id: replication.transport.closed
   description: Operación sobre un transporte cerrado.
   other: el transporte está cerrado

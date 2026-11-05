@@ -10,14 +10,14 @@ import (
 )
 
 func TestSplitWhereByVariable(t *testing.T) {
-	own, rest := splitWhereByVariable("id(a) = 'x' AND a.name STARTS WITH 'N' AND toLower(b.k) = 'y' AND a.k = b.k AND $flag AND c.k = 1 AND (a.v = 1 OR a.v = 2) AND a.s = 'p->q' AND EXISTS { (a)-->() } AND (a)-->(b)", []string{"a", "b"})
+	own, rest := splitWhereByVariable(t.Context(), "id(a) = 'x' AND a.name STARTS WITH 'N' AND toLower(b.k) = 'y' AND a.k = b.k AND $flag AND c.k = 1 AND (a.v = 1 OR a.v = 2) AND a.s = 'p->q' AND EXISTS { (a)-->() } AND (a)-->(b)", []string{"a", "b"})
 	require.Equal(t, map[string]string{
 		"a": "(id(a) = 'x') AND (a.name STARTS WITH 'N') AND ((a.v = 1 OR a.v = 2)) AND (a.s = 'p->q')",
 		"b": "toLower(b.k) = 'y'",
 	}, own)
 	require.Equal(t, "(a.k = b.k) AND ($flag) AND (c.k = 1) AND (EXISTS { (a)-->() }) AND ((a)-->(b))", rest)
 
-	own, rest = splitWhereByVariable("", []string{"a"})
+	own, rest = splitWhereByVariable(t.Context(), "", []string{"a"})
 	require.Empty(t, own)
 	require.Empty(t, rest)
 }
@@ -99,7 +99,7 @@ func TestCommaMatchByIDIndependentOfNodeCount(t *testing.T) {
 	} {
 		allocations := func(nodes int) float64 {
 			// No result cache: every run below executes the query.
-			exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"), 0, 0)
+			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 			ctx := context.Background()
 			_, err := exec.Execute(ctx, fmt.Sprintf("UNWIND range(1, %d) AS i CREATE (:P {k: i})", nodes), nil)
 			require.NoError(t, err)

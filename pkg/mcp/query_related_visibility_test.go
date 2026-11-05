@@ -1,6 +1,8 @@
 package mcp
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 	"time"
@@ -11,7 +13,7 @@ import (
 )
 
 func TestMCPRelatedNodesProjectSuppressedTitle(t *testing.T) {
-	be, err := storage.NewBadgerEngineInMemory()
+	be, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, be.Close()) })
 	schema := be.GetSchemaForNamespace("tenant")
@@ -20,11 +22,11 @@ func TestMCPRelatedNodesProjectSuppressedTitle(t *testing.T) {
 	engine := storage.NewNamespacedEngine(be, "tenant")
 	old := time.Now().Add(-time.Hour)
 	for _, id := range []storage.NodeID{"a", "b", "c"} {
-		_, err := engine.CreateNode(&storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]interface{}{"title": "private title", "name": "private fallback"}, CreatedAt: old, UpdatedAt: old})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]interface{}{"title": "private title", "name": "private fallback"}, CreatedAt: old, UpdatedAt: old})
 		require.NoError(t, err)
 	}
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "LINK"}))
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "ca", StartNode: "c", EndNode: "a", Type: "LINK"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "LINK"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "ca", StartNode: "c", EndNode: "a", Type: "LINK"}))
 	be.SetDecayEnabled(true)
 	router := NewServer(nil, nil)
 	router.SetDatabaseScopedStorage(func(string) (storage.Engine, error) { return engine, nil })
@@ -35,7 +37,7 @@ func TestMCPRelatedNodesProjectSuppressedTitle(t *testing.T) {
 		require.Empty(t, node.Title)
 	}
 	require.ElementsMatch(t, []string{"outgoing", "incoming"}, []string{related[0].Direction, related[1].Direction})
-	raw, err := engine.GetNode("b")
+	raw, err := engine.GetNode(t.Context(), "b")
 	require.NoError(t, err)
 	require.Equal(t, "private title", raw.Properties["title"])
 	// An already-owned REVEAL query preserves its own visibility without taking

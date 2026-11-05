@@ -62,6 +62,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"strings"
 
@@ -96,18 +97,49 @@ func hasSuffixFoldASCII(text, suffix string) bool {
 	return len(text) >= len(suffix) && equalFoldASCII(text[len(text)-len(suffix):], suffix)
 }
 
-func isASCIIWhitespace(b byte) bool {
-	return b == ' ' || b == '\t' || b == '\n' || b == '\r'
-}
-
 func hasKeywordPrefixFoldASCII(text, keyword string) bool {
 	if len(text) < len(keyword) || !equalFoldASCII(text[:len(keyword)], keyword) {
 		return false
 	}
-	return len(text) == len(keyword) || isASCIIWhitespace(text[len(keyword)])
+	return len(text) == len(keyword) || cyphertext.IsWhitespaceAt(text, len(keyword))
 }
 
 func operatorMatchesAt(expr, op string, idx int, caseInsensitive bool) bool {
+	if strings.HasPrefix(op, " ") && strings.HasSuffix(op, " ") {
+		word := strings.TrimSpace(op)
+		start := queryGapEnd(expr, idx)
+		if start > idx {
+			before := skipBackSpaces(expr, idx)
+			if before > 0 && strings.IndexByte(".:", expr[before-1]) >= 0 {
+				return false
+			}
+			end, ok := keywordMatchAt(expr, start, word, 0, len(word))
+			if !ok || !keywordBoundaryOK(expr, end, keywordBoundaryWord, keywordAfter) {
+				return false
+			}
+			if !caseInsensitive {
+				at := start
+				for index := 0; index < len(word); index++ {
+					if cyphertext.IsWhitespaceAt(word, index) {
+						for index+1 < len(word) && cyphertext.IsWhitespaceAt(word, index+1) {
+							index++
+						}
+						next, unfinished := cyphertext.GapEnd(expr, at)
+						if next <= at || unfinished >= 0 {
+							return false
+						}
+						at = next
+					} else {
+						if expr[at] != word[index] {
+							return false
+						}
+						at++
+					}
+				}
+			}
+			return true
+		}
+	}
 	for offset := 0; offset < len(op); offset++ {
 		exprByte := expr[idx+offset]
 		opByte := op[offset]
@@ -157,7 +189,7 @@ func findTopLevelOperator(expr, op string, caseInsensitive, trackBrackets bool) 
 			}
 		}
 		switch {
-		case c == '\'' || c == '"' || c == '`':
+		case isCypherQuoteByte(c):
 			i = skipCypherQuotedText(expr, i, c) - 1
 		case c == '(':
 			parenDepth++
@@ -229,7 +261,12 @@ func splitAtOperator(expr, op string, idx int) (string, string, bool) {
 		return "", "", false
 	}
 	left := strings.TrimSpace(expr[:idx])
-	right := strings.TrimSpace(expr[idx+len(op):])
+	end := idx + len(op)
+	if strings.HasPrefix(op, " ") && strings.HasSuffix(op, " ") ||
+		strings.IndexFunc(strings.TrimSpace(op), func(r rune) bool { return r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' }) >= 0 {
+		end = keywordEndAt(expr, queryGapEnd(expr, idx), strings.TrimSpace(op))
+	}
+	right := strings.TrimSpace(expr[end:])
 	return left, right, true
 }
 
@@ -250,8 +287,8 @@ func insideCaseBlock(s string, at int) bool {
 func bracketDepthAt(s string, at int) int {
 	depth := 0
 	for i := 0; i < at && i < len(s); i++ {
-		switch c := s[i]; c {
-		case '\'', '"', '`':
+		switch c := s[i]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(s, i, c) - 1
 		case '(', '[', '{':
 			depth++
@@ -268,21 +305,16 @@ func bracketDepthAt(s string, at int) int {
 // property access (n.case); an unterminated CASE extends to the end of expr.
 func enclosingCaseBlockEnd(expr string, at int) int {
 	depth, nest := 0, 0
-	var quote byte
 	for i := 0; i < len(expr); i++ {
 		if i >= at && depth == 0 {
 			return -1
 		}
-		c := expr[i]
-		if quote != 0 {
-			if c == quote && !isBackslashEscaped(expr, i) {
-				quote = 0
-			}
+		if end, quoted := skipCypherLexicalToken(expr, i); quoted {
+			i = end - 1
 			continue
 		}
+		c := expr[i]
 		switch c {
-		case '\'', '"', '`':
-			quote = c
 		case '(', '[', '{':
 			nest++
 		case ')', ']', '}':
@@ -589,7 +621,7 @@ func (e *StorageExecutor) hasArithmeticOperator(expr string) bool {
 func (e *StorageExecutor) evaluateArithmeticExpr(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) (interface{}, bool) {
 	// A relationship pattern or a map projection has - and * that aren't
 	// arithmetic.
-	if !isOperatorExpressionText(expr) {
+	if !expressionTextAccepted(expr, expressionTextOperator) {
 		return nil, false
 	}
 	operands := func(leftExpr, rightExpr string) (interface{}, interface{}) {
@@ -689,6 +721,16 @@ func (e *StorageExecutor) splitByOperator(expr, op string) []string {
 // Arithmetic Helper Functions
 // ========================================
 
+// appendListOperand appends what list + value adds to a list: a list
+// value's elements, any other value itself (value is not null). add and
+// reduce's in-place fold (reduceAppendPlan) both append through it.
+func appendListOperand(list []interface{}, value interface{}) []interface{} {
+	if items, isList := toInterfaceSlice(value); isList {
+		return append(list, items...)
+	}
+	return append(list, value)
+}
+
 // add handles addition including date + duration.
 //
 // This function supports:
@@ -733,17 +775,13 @@ func (e *StorageExecutor) add(left, right interface{}) interface{} {
 	// - scalar + list
 	leftList, leftIsList := toInterfaceSlice(left)
 	rightList, rightIsList := toInterfaceSlice(right)
-	if leftIsList && rightIsList {
-		out := make([]interface{}, 0, util.SafePreallocSum(len(leftList), len(rightList)))
-		out = append(out, leftList...)
-		out = append(out, rightList...)
-		return out
-	}
 	if leftIsList {
-		out := make([]interface{}, 0, util.SafePreallocSum(len(leftList), 1))
-		out = append(out, leftList...)
-		out = append(out, right)
-		return out
+		size := 1
+		if rightIsList {
+			size = len(rightList)
+		}
+		out := make([]interface{}, 0, util.SafePreallocSum(len(leftList), size))
+		return appendListOperand(append(out, leftList...), right)
 	}
 	if rightIsList {
 		out := make([]interface{}, 0, util.SafePreallocSum(len(rightList), 1))
@@ -963,4 +1001,12 @@ func (e *StorageExecutor) subtract(left, right interface{}) interface{} {
 //	hasStringPredicate("'CONTAINS' = n.name", " CONTAINS ")     // false (in quotes)
 func (e *StorageExecutor) hasStringPredicate(expr, predicate string) bool {
 	return findTopLevelOperator(expr, predicate, true, true) >= 0
+}
+
+func nullPredicateOperand(ctx context.Context, expression, keyword string) (string, bool) {
+	at := topLevelKeywordIndex(ctx, expression, keyword)
+	if at <= 0 || strings.TrimSpace(expression[keywordEndAt(expression, at, keyword):]) != "" {
+		return "", false
+	}
+	return strings.TrimSpace(expression[:at]), true
 }

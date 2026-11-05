@@ -2,7 +2,6 @@ package cypher
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -62,10 +61,8 @@ func TestExistsSubqueryRejectsUpdatingClauses(t *testing.T) {
 		WHERE EXISTS { MATCH (n)-->(m) SET m.value = 'invalid' }
 		RETURN n
 	`, nil)
-	require.Error(t, err)
-	var semanticError *SemanticError
-	require.True(t, errors.As(err, &semanticError))
-	require.Equal(t, "InvalidClauseComposition", semanticError.Detail)
+	requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
+	require.Contains(t, err.Error(), "An Exists Expression cannot contain any updates")
 }
 
 func TestExistsSubqueryAppliesPatternPropertiesAndIdentityPredicates(t *testing.T) {

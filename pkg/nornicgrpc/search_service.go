@@ -3,14 +3,17 @@ package nornicgrpc
 import (
 	"context"
 	"errors"
-	"strings"
+	"github.com/orneryd/nornicdb/internal/grpcresponse"
+	"strconv"
+
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	gen "github.com/orneryd/nornicdb/pkg/nornicgrpc/gen"
 	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"github.com/orneryd/nornicdb/pkg/search"
-	"golang.org/x/text/language"
+
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -58,6 +61,7 @@ type Service struct {
 	allowDatabase    func(context.Context, string) error
 	resolveDatabase  func(context.Context, string) (DatabaseDependencies, error)
 	resolveQID       func(owner, qid, requestedDatabase string) (string, error)
+	discardQID       func(owner, qid, database string) error
 
 	prepareQueryEmbedding func(context.Context, string) (EmbedQueryFunc, ChunkQueryFunc)
 }
@@ -80,6 +84,8 @@ type Config struct {
 	PrepareQueryEmbedding func(context.Context, string) (EmbedQueryFunc, ChunkQueryFunc)
 	// ResolveContinuationDatabase validates a qid and returns its database binding.
 	ResolveContinuationDatabase func(owner, qid, requestedDatabase string) (string, error)
+	// DiscardContinuation releases a cursor without reopening a dropped database.
+	DiscardContinuation func(owner, qid, database string) error
 }
 
 // NewService creates a NornicDB-native search service.
@@ -93,7 +99,7 @@ func NewService(cfg Config, embedQuery EmbedQueryFunc, chunkQuery ChunkQueryFunc
 	}
 	if searcher == nil {
 		service := &Service{localizer: cfg.Localizer}
-		return nil, service.localizedStatus(context.Background(), codes.InvalidArgument, localization.SearcherRequired())
+		return nil, grpcresponse.LocalizedStatus(context.Background(), service.localizer, codes.InvalidArgument, localization.SearcherRequired(), grpcresponse.NativeLiteralFallback)
 	}
 	if cfg.MaxLimit <= 0 {
 		cfg.MaxLimit = 1000
@@ -113,6 +119,7 @@ func NewService(cfg Config, embedQuery EmbedQueryFunc, chunkQuery ChunkQueryFunc
 		allowDatabase:    cfg.AllowDatabase,
 		resolveDatabase:  cfg.ResolveDatabase,
 		resolveQID:       cfg.ResolveContinuationDatabase,
+		discardQID:       cfg.DiscardContinuation,
 
 		prepareQueryEmbedding: cfg.PrepareQueryEmbedding,
 	}, nil
@@ -122,11 +129,11 @@ func (s *Service) SearchText(ctx context.Context, req *gen.SearchTextRequest) (*
 	start := time.Now()
 
 	if req == nil {
-		return nil, s.localizedStatus(ctx, codes.InvalidArgument, localization.RequestRequired())
+		return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.RequestRequired(), grpcresponse.NativeLiteralFallback)
 	}
 	continuationRequested := req.N > 0 || req.Qid != "" || req.Discard || req.Mode != "" || req.GroupBy != "" || req.RankedLimit != nil
 	if req.Query == "" && req.Qid == "" && req.Mode != string(search.SearchContinuationID) {
-		return nil, s.localizedStatus(ctx, codes.InvalidArgument, localization.QueryRequired())
+		return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QueryRequired(), grpcresponse.NativeLiteralFallback)
 	}
 	owner := "anonymous"
 	if s.ownerFromContext != nil {
@@ -148,18 +155,25 @@ func (s *Service) SearchText(ctx context.Context, req *gen.SearchTextRequest) (*
 			return nil, err
 		}
 	}
+	if req.Discard && req.Qid != "" && s.discardQID != nil {
+		if err := s.discardQID(owner, req.Qid, database); err != nil {
+			return nil, s.continuationStatus(ctx, err)
+		}
+		page := &search.SearchContinuationPage{Released: true}
+		return grpcContinuationResponse(page, page.SearchResponse(), time.Since(start)), nil
+	}
 	dependencies := DatabaseDependencies{Searcher: s.searcher, EmbedQuery: s.embedQuery, ChunkQuery: s.chunkQuery}
 	if s.resolveDatabase != nil {
 		var err error
 		dependencies, err = s.resolveDatabase(ctx, database)
 		if err != nil {
-			return nil, s.localizedStatus(ctx, codes.NotFound, localization.SearchFailed(err))
+			return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.NotFound, localization.SearchFailed(err), grpcresponse.NativeLiteralFallback)
 		}
 	} else if database != s.defaultDatabase {
-		return nil, s.localizedStatus(ctx, codes.InvalidArgument, localization.SearchFailed(errors.New("database-specific search is unavailable")))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.SearchFailed(errors.New("database-specific search is unavailable")), grpcresponse.NativeLiteralFallback)
 	}
 	if dependencies.Searcher == nil {
-		return nil, s.localizedStatus(ctx, codes.Unavailable, localization.SearcherRequired())
+		return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.Unavailable, localization.SearcherRequired(), grpcresponse.NativeLiteralFallback)
 	}
 	if s.prepareQueryEmbedding != nil && req.Qid == "" && !req.Discard && req.Mode != string(search.SearchContinuationID) {
 		dependencies.EmbedQuery, dependencies.ChunkQuery = s.prepareQueryEmbedding(ctx, database)
@@ -191,12 +205,12 @@ func (s *Service) SearchText(ctx context.Context, req *gen.SearchTextRequest) (*
 		if err != nil {
 			return nil, s.continuationStatus(ctx, err)
 		}
-		if provider, ok := any(page.SearchResponse()).(interface{ ResponseTrailers() map[string]string }); ok {
-			for key, value := range provider.ResponseTrailers() {
-				grpc.SetTrailer(ctx, metadata.Pairs(key, value))
-			}
+		if page.MaxPageSize > 0 {
+			_ = grpc.SetHeader(ctx, metadata.Pairs("max_page_size", strconv.Itoa(page.MaxPageSize)))
 		}
-		return grpcContinuationResponse(page, time.Since(start)), nil
+		projected := page.SearchResponse()
+		setSearchResponseTrailers(ctx, projected)
+		return grpcContinuationResponse(page, projected, time.Since(start)), nil
 	}
 
 	opts := searchOptions(req, s.maxLimit, s.rerankEnabled)
@@ -206,7 +220,7 @@ func (s *Service) SearchText(ctx context.Context, req *gen.SearchTextRequest) (*
 		chunkQuery = func(ctx context.Context, query string) ([]string, error) {
 			chunks, err := dependencies.ChunkQuery(ctx, query)
 			if err != nil {
-				return nil, s.localizedStatus(ctx, codes.InvalidArgument, localization.QueryChunkFailed(err))
+				return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QueryChunkFailed(err), grpcresponse.NativeLiteralFallback)
 			}
 			return chunks, nil
 		}
@@ -219,9 +233,10 @@ func (s *Service) SearchText(ctx context.Context, req *gen.SearchTextRequest) (*
 		if status.Code(err) != codes.Unknown {
 			return nil, err
 		}
-		return nil, s.localizedStatus(ctx, codes.Internal, localization.SearchFailed(err))
+		return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.Internal, localization.SearchFailed(err), grpcresponse.NativeLiteralFallback)
 	}
 
+	setSearchResponseTrailers(ctx, resp)
 	out := make([]*gen.SearchHit, 0, len(resp.Results))
 	for _, r := range resp.Results {
 		out = append(out, grpcSearchHit(r))
@@ -237,7 +252,25 @@ func (s *Service) SearchText(ctx context.Context, req *gen.SearchTextRequest) (*
 	}, nil
 }
 
+func setSearchResponseTrailers(ctx context.Context, response *search.SearchResponse) {
+	for key, value := range response.ResponseTrailers() {
+		grpc.SetTrailer(ctx, metadata.Pairs(key, value))
+	}
+}
+
 func (s *Service) continuationStatus(ctx context.Context, err error) error {
+	var oversized *resultstream.PageSizeExceededError
+	if errors.As(err, &oversized) {
+		localized := status.Convert(grpcresponse.LocalizedStatus(ctx, s.localizer, codes.InvalidArgument, oversized.Message, grpcresponse.NativeLiteralFallback))
+		detailed, detailErr := localized.WithDetails(&errdetails.ErrorInfo{
+			Reason: "PAGE_SIZE_EXCEEDED", Domain: "nornicdb.search",
+			Metadata: map[string]string{"request_status": "page_size_exceeded", "max_page_size": strconv.Itoa(oversized.MaxPageSize), "http_code": "400"},
+		})
+		if detailErr == nil {
+			return detailed.Err()
+		}
+		return localized.Err()
+	}
 	code := codes.InvalidArgument
 	switch {
 	case errors.Is(err, resultstream.ErrDisabled):
@@ -249,7 +282,7 @@ func (s *Service) continuationStatus(ctx context.Context, err error) error {
 	case errors.Is(err, resultstream.ErrClosed):
 		code = codes.Unavailable
 	}
-	return s.localizedStatus(ctx, code, localization.SearchFailed(err))
+	return grpcresponse.LocalizedStatus(ctx, s.localizer, code, localization.SearchFailed(err), grpcresponse.NativeLiteralFallback)
 }
 
 func searchOptions(req *gen.SearchTextRequest, maxLimit int, rerank bool) *search.SearchOptions {
@@ -273,10 +306,10 @@ func searchOptions(req *gen.SearchTextRequest, maxLimit int, rerank bool) *searc
 	return opts
 }
 
-func grpcContinuationResponse(page *search.SearchContinuationPage, elapsed time.Duration) *gen.SearchTextResponse {
+func grpcContinuationResponse(page *search.SearchContinuationPage, projected *search.SearchResponse, elapsed time.Duration) *gen.SearchTextResponse {
 	response := &gen.SearchTextResponse{
-		SearchMethod: page.SearchMethod, FallbackTriggered: page.FallbackTriggered,
-		FallbackReason: string(page.FallbackReason),
+		SearchMethod: projected.SearchMethod, FallbackTriggered: projected.FallbackTriggered,
+		FallbackReason: string(projected.FallbackReason),
 		Qid:            page.QID, HasMore: page.HasMore, Position: page.Position,
 		Returned: uint32(page.Returned), Released: page.Released, TimeSeconds: elapsed.Seconds(),
 		Mode: string(page.Mode), RankedCount: int64(page.RankedCount),
@@ -294,9 +327,9 @@ func grpcContinuationResponse(page *search.SearchContinuationPage, elapsed time.
 		eligibleCount := int64(*page.EligibleCount)
 		response.EligibleCount = &eligibleCount
 	}
-	response.Hits = make([]*gen.SearchHit, 0, len(page.Results))
-	for index := range page.Results {
-		response.Hits = append(response.Hits, grpcSearchHit(page.Results[index]))
+	response.Hits = make([]*gen.SearchHit, 0, len(projected.Results))
+	for _, result := range projected.Results {
+		response.Hits = append(response.Hits, grpcSearchHit(result))
 	}
 	return response
 }
@@ -332,23 +365,4 @@ func grpcSearchPassages(passages []search.SearchPassage) []*gen.SearchHit {
 		out[index] = grpcSearchHit(passage)
 	}
 	return out
-}
-
-func (s *Service) localizedStatus(ctx context.Context, code codes.Code, message localization.Message) error {
-	preferences := []language.Tag(nil)
-	if incoming, ok := metadata.FromIncomingContext(ctx); ok {
-		values := incoming.Get("accept-language")
-		if len(values) > 0 {
-			preferences, _, _ = language.ParseAcceptLanguage(strings.Join(values, ","))
-		}
-	}
-	if len(preferences) > 0 {
-		match := s.localizer.Resolve("grpc", preferences...)
-		ctx = localization.WithPreferences(ctx, match.Tag)
-	}
-	text, _, err := s.localizer.Render(ctx, message)
-	if err != nil {
-		text = message.Fallback
-	}
-	return status.Error(code, text)
 }

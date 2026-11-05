@@ -15,12 +15,12 @@ func newOptionsGraph(t *testing.T, nodes []string, edges [][4]interface{}) *Stor
 	t.Helper()
 	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 	for _, id := range nodes {
-		_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{"P"}, Properties: map[string]interface{}{"name": id, "age": int64(len(id) * 10)}})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(id), Labels: []string{"P"}, Properties: map[string]interface{}{"name": id, "age": int64(len(id) * 10)}})
 		require.NoError(t, err)
 	}
 	for i, edge := range edges {
 		w := edge[3].(float64)
-		require.NoError(t, engine.CreateEdge(&storage.Edge{
+		require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{
 			ID:         storage.EdgeID(fmt.Sprintf("e%d", i)),
 			StartNode:  storage.NodeID(edge[0].(string)),
 			Type:       edge[1].(string),

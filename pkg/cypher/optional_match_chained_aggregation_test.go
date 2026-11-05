@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -9,7 +10,7 @@ import (
 )
 
 func TestChainedOptionalMatchesPreserveEarlierBindingsForAggregation(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	defer func() { require.NoError(t, base.Close()) }()
 	store := storage.NewNamespacedEngine(base, "optional_aggregation")
 	exec := NewStorageExecutor(store)
@@ -50,7 +51,7 @@ RETURN collect(DISTINCT f.num) AS first, collect(DISTINCT n.num) AS missing, col
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			clauses, ok := canExecuteAsPipeline(tc.query)
+			clauses, ok := canExecuteAsPipeline(t.Context(), tc.query)
 			require.True(t, ok)
 			require.Len(t, clauses, tc.clauseCount)
 

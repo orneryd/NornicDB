@@ -73,7 +73,7 @@ func TestBug_CountReturnsZeroWhenNodesExist(t *testing.T) {
 	assert.Equal(t, int64(5), countStarInt, "count(*) should return 5")
 
 	// Test storage layer NodeCount
-	nodeCount, err := store.NodeCount()
+	nodeCount, err := store.NodeCount(t.Context())
 	require.NoError(t, err)
 	t.Logf("Storage NodeCount() returned: %d", nodeCount)
 	assert.Equal(t, int64(5), nodeCount, "Storage NodeCount should return 5")
@@ -95,7 +95,7 @@ func TestBug_CountAfterDeleteAndRecreate(t *testing.T) {
 	}
 
 	// Verify count
-	nodeCount, _ := store.NodeCount()
+	nodeCount, _ := store.NodeCount(t.Context())
 	t.Logf("After initial create: NodeCount = %d", nodeCount)
 	assert.Equal(t, int64(3), nodeCount)
 
@@ -103,7 +103,7 @@ func TestBug_CountAfterDeleteAndRecreate(t *testing.T) {
 	_, err := exec.Execute(ctx, "MATCH (n:CycleTest) DELETE n", nil)
 	require.NoError(t, err)
 
-	nodeCount, _ = store.NodeCount()
+	nodeCount, _ = store.NodeCount(t.Context())
 	t.Logf("After delete: NodeCount = %d", nodeCount)
 	assert.Equal(t, int64(0), nodeCount)
 
@@ -113,7 +113,7 @@ func TestBug_CountAfterDeleteAndRecreate(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	nodeCount, _ = store.NodeCount()
+	nodeCount, _ = store.NodeCount(t.Context())
 	t.Logf("After recreate: NodeCount = %d", nodeCount)
 	assert.Equal(t, int64(5), nodeCount, "NodeCount should be 5 after recreating nodes")
 

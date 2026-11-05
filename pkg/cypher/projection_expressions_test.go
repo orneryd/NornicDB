@@ -9,21 +9,23 @@ import (
 )
 
 // projectionExpressions is the one reading of a projection clause (its
-// expressions, aliases dropped) that the row validators share (#823).
+// expressions, aliases dropped) that the row validators share (#823). Each
+// clause carries the syntax its own text parses to, as an executing statement's
+// clause does.
 func TestProjectionExpressions(t *testing.T) {
 	for _, tc := range []struct {
+		kind            pipelineClauseKind
 		clause, keyword string
 		want            []string
 	}{
-		{"RETURN DISTINCT a.x AS x, count(b) ORDER BY x LIMIT 3", "RETURN", []string{"a.x", "count(b)"}},
-		{"WITH n, m WHERE n.v > 1", "WITH", []string{"n", "m"}},
-		{"WITH *", "WITH", nil},
-		{"UNWIND range(1, 3) AS i", "UNWIND", []string{"range(1, 3)"}},
-		{"UNWIND $list", "UNWIND", nil},
-		{"WITH n", "RETURN", nil},
-		{"RET", "RETURN", nil},
+		{pipelineClauseReturn, "RETURN DISTINCT a.x AS x, count(b) ORDER BY x LIMIT 3", "RETURN", []string{"a.x", "count(b)"}},
+		{pipelineClauseWith, "WITH n, m WHERE n.v > 1", "WITH", []string{"n", "m"}},
+		{pipelineClauseWith, "WITH *", "WITH", nil},
+		{pipelineClauseWith, "WITH n", "RETURN", nil},
+		{pipelineClauseReturn, "RET", "RETURN", nil},
 	} {
-		require.Equal(t, tc.want, projectionExpressions(tc.clause, tc.keyword), "%s / %s", tc.keyword, tc.clause)
+		clause := composedPipelineClause(t.Context(), tc.kind, tc.clause)
+		require.Equal(t, tc.want, projectionExpressions(t.Context(), clause, tc.keyword), "%s / %s", tc.keyword, tc.clause)
 	}
 }
 
@@ -39,7 +41,7 @@ func TestCallPipelineRowsFromNilResult(t *testing.T) {
 // Repeated statements skip validation they already passed (#823), and an
 // invalid statement is rejected every time it is sent.
 func TestRepeatedStatementValidation(t *testing.T) {
-	exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"), 0, 0)
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	ctx := context.Background()
 	for i := 0; i < 3; i++ {
 		result, err := exec.Execute(ctx, "UNWIND [1, 2] AS x RETURN x * 2 AS y", nil)
@@ -60,7 +62,7 @@ func TestRepeatedStatementValidation(t *testing.T) {
 // Every read binds parameters as the same row values: a typed list inside a
 // map parameter compares the same in a row read and a fused count (#823).
 func TestNestedTypedListParameterBindsAlike(t *testing.T) {
-	exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"), 0, 0)
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	ctx := context.Background()
 	_, err := exec.Execute(ctx, "CREATE (:Item {v: 'a'}), (:Item {v: 'b'}), (:Item {v: 'c'})", nil)
 	require.NoError(t, err)

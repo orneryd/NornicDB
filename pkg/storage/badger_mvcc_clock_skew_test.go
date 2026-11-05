@@ -24,8 +24,7 @@ import (
 // failure observed on Linux CI runners under
 // TestExecuteCypher_SetInvalidatesManagedEmbeddings.
 func TestCurrentMVCCReadVersion_ClampsToHighWater(t *testing.T) {
-	e := NewMemoryEngine()
-	t.Cleanup(func() { _ = e.Close() })
+	e := newTestMemoryEngine(t)
 
 	// Force one namespace's high-water mark to a timestamp ~1s in the
 	// future. This simulates a head being stamped with a clock that
@@ -42,8 +41,7 @@ func TestCurrentMVCCReadVersion_ClampsToHighWater(t *testing.T) {
 }
 
 func TestAllocateMVCCVersion_AdvancesHighWater(t *testing.T) {
-	e := NewMemoryEngine()
-	t.Cleanup(func() { _ = e.Close() })
+	e := newTestMemoryEngine(t)
 
 	commitAt := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 	require.NoError(t, e.db.Update(func(txn *badger.Txn) error {
@@ -72,10 +70,9 @@ func TestBeginTransaction_DoesNotConflictAfterClockSkew(t *testing.T) {
 	// then open a transaction and exercise the write path. Without
 	// the clamp, the SET would fail with a "changed after transaction
 	// start" conflict; with it, the tx commits cleanly.
-	e := NewMemoryEngine()
-	t.Cleanup(func() { _ = e.Close() })
+	e := newTestMemoryEngine(t)
 
-	_, err := e.CreateNode(&Node{
+	_, err := e.CreateNode(t.Context(), &Node{
 		ID:         "test:skew",
 		Labels:     []string{"L"},
 		Properties: map[string]any{"v": int64(1)},
@@ -88,16 +85,16 @@ func TestBeginTransaction_DoesNotConflictAfterClockSkew(t *testing.T) {
 	require.NoError(t, err)
 	state.highWaterNanos.Store(time.Now().Add(2 * time.Second).UnixNano())
 
-	tx, err := e.BeginTransaction()
+	tx, err := e.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	require.NoError(t, tx.UpdateNode(&Node{
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{
 		ID:         "test:skew",
 		Labels:     []string{"L"},
 		Properties: map[string]any{"v": int64(2)},
-	}))
+	}, Policy: ClientNodeEdits}))
 	require.NoError(t, tx.Commit(), "skewed clock must not cause a phantom conflict")
 
-	got, err := e.GetNode("test:skew")
+	got, err := e.GetNode(t.Context(), "test:skew")
 	require.NoError(t, err)
 	require.Equal(t, int64(2), got.Properties["v"])
 }

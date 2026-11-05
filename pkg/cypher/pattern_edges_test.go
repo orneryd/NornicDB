@@ -56,7 +56,7 @@ func TestPatternEdges(t *testing.T) {
 		require.NoError(t, err)
 		return result.Rows[0][0]
 	}
-	rewritten, _, err := desugarLabelExpressions("MATCH p = SHORTEST 2 (a)-->+(b) RETURN p", nil, false)
+	rewritten, _, err := desugarLabelExpressions(t.Context(), "MATCH p = SHORTEST 2 (a)-->+(b) RETURN p", nil, false)
 	require.NoError(t, err)
 	body := strings.TrimSuffix(strings.TrimPrefix(rewritten, "MATCH "), " RETURN p")
 	m, ok, err := exec.parseShortestPathMatch(ctx, body)
@@ -66,15 +66,15 @@ func TestPatternEdges(t *testing.T) {
 		_, err = exec.pipelineApplyShortestPathMatch(cancelled, []pipelineRow{row}, m, false)
 		require.ErrorIs(t, err, context.Canceled)
 	}
-	quantified, ok, err := parseQuantifiedPathMatch("(a:SP {id: 1})((x)-->(y))+(b)")
+	quantified, ok, err := parseQuantifiedPathMatch(ctx, "(a:SP {id: 1})((x)-->(y))+(b)")
 	require.NoError(t, err)
 	require.True(t, ok)
 	_, err = exec.pipelineApplyQuantifiedPathMatch(cancelled, []pipelineRow{{}}, quantified)
 	require.ErrorIs(t, err, context.Canceled)
 
 	for _, text := range []string{"(a WHERE a.s = '[*]')-->(b)", "(a)-[r WHERE r.w * 2 > 1]->(b)", "(a)-[r {w: 2}]->(b)"} {
-		require.False(t, hasVariableLengthRelationship(text, 0, len(text)), text)
-		require.False(t, hasUnboundedRepetition(text, 0, len(text)), text)
+		require.False(t, hasVariableLengthRelationship(ctx, text, 0, len(text)), text)
+		require.False(t, hasUnboundedRepetition(ctx, text, 0, len(text)), text)
 	}
 	for text, unbounded := range map[string]bool{
 		"(a)-[r*1..2 {w: 1}]->(b)":       false,
@@ -84,7 +84,7 @@ func TestPatternEdges(t *testing.T) {
 		"(a)((x)-->(y)){1,3}(b)":         false,
 		"(a)((x)-->(y))+(b)":             true,
 	} {
-		require.Equal(t, unbounded, hasUnboundedRepetition(text, 0, len(text)), text)
+		require.Equal(t, unbounded, hasUnboundedRepetition(ctx, text, 0, len(text)), text)
 	}
 	// A pattern the selected path search can't read fails the step.
 	_, _, err = exec.parseSelectedPathMatch("(a) (b)", "p", nil, &pathSelector{}, "", nil)

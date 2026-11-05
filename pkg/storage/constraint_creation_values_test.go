@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"testing"
@@ -12,20 +13,23 @@ import (
 func TestConstraintCreationValuesPreserveUnsupportedAndNumericForms(t *testing.T) {
 	seen := make(constraintCreationValues)
 	for _, value := range []interface{}{[]byte{1, 2}, time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)} {
-		_, duplicate := seen.add("first", []interface{}{value})
+		_, duplicate, keyErr := seen.add(t.Context(), "first", []interface{}{value})
+		require.NoError(t, keyErr)
 		require.False(t, duplicate)
-		id, duplicate := seen.add("second", []interface{}{value})
+		id, duplicate, keyErr := seen.add(t.Context(), "second", []interface{}{value})
+		require.NoError(t, keyErr)
 		require.True(t, duplicate)
 		require.Equal(t, "first", id)
 	}
 	for _, value := range []interface{}{[]byte{1, 3}, time.Date(2020, 1, 3, 3, 4, 5, 0, time.UTC)} {
-		_, duplicate := seen.add("distinct", []interface{}{value})
+		_, duplicate, keyErr := seen.add(t.Context(), "distinct", []interface{}{value})
+		require.NoError(t, keyErr)
 		require.False(t, duplicate)
 	}
 	for _, pair := range [][2]interface{}{{int64(math.MaxInt64), float64(math.MaxInt64)}, {uint64(math.MaxUint64), float64(math.MaxUint64)}} {
-		require.False(t, constraintCreationValueEqual(pair[0], pair[1]))
+		require.False(t, compareValues(pair[0], pair[1]))
 	}
-	require.True(t, constraintCreationValueEqual(nil, nil))
+	require.True(t, compareValues(nil, nil))
 }
 
 func TestUniqueConstraintCachePrecisionAndPendingCandidates(t *testing.T) {
@@ -37,7 +41,7 @@ func TestUniqueConstraintCachePrecisionAndPendingCandidates(t *testing.T) {
 	index.tracked["N"] = map[string]struct{}{"v": {}}
 	for i, value := range values {
 		id := NodeID([]string{"even", "odd", "uintmax", "negative", "platformuint"}[i])
-		schema.RegisterUniqueValue("N", "v", value, id)
+		schema.ApplyUniqueValue(context.Background(), "N", "v", value, id, ValidatedUniqueClaim)
 		node := &Node{ID: id, Labels: []string{"N"}, Properties: map[string]interface{}{"v": value}}
 		buffer.nodes[id] = node
 		index.add(node)
@@ -45,39 +49,121 @@ func TestUniqueConstraintCachePrecisionAndPendingCandidates(t *testing.T) {
 	view := pendingWriteView{index: index, owner: &WriteBehindBuffer{active: buffer}}
 	for i, value := range values {
 		want := NodeID([]string{"even", "odd", "uintmax", "negative", "platformuint"}[i])
-		got, found, _ := schema.LookupUniqueConstraintValue("N", "v", value)
+		got, found, _, _, uniqueLookupErr1 := schema.LookupUniqueConstraintValue(t.Context(), "N", "v", value)
+		if uniqueLookupErr1 != nil {
+			t.Errorf("unique index read failed: %v", uniqueLookupErr1)
+		}
 		require.True(t, found)
 		require.Equal(t, want, got)
-		key, ok := uniqueConstraintValueKey(value)
+		key, ok, keyErr := indexValueKey(t.Context(), value)
+		require.NoError(t, keyErr)
 		require.True(t, ok)
-		require.Equal(t, []NodeID{want}, view.uniqueValueMatches(nil, "N", "v", value, key))
+		require.Equal(t, []NodeID{want}, checkedIndexRead[[]NodeID](t)(view.valueMatches(t.Context(), nil, "N", "v", key)))
 	}
 	// A user string matching the printed exceptional-key tag is still an
 	// ordinary string key, not the private comparable integer-key type.
-	numericKey, ok := uniqueConstraintValueKey(values[1])
+	numericKey, ok, keyErr := indexValueKey(t.Context(), values[1])
+	require.NoError(t, keyErr)
 	require.True(t, ok)
 	lookalike := fmt.Sprint(numericKey)
-	schema.RegisterUniqueValue("N", "v", lookalike, "string-lookalike")
-	stringHolder, stringFound, _ := schema.LookupUniqueConstraintValue("N", "v", lookalike)
+	schema.ApplyUniqueValue(context.Background(), "N", "v", lookalike, "string-lookalike", ValidatedUniqueClaim)
+	stringHolder, stringFound, _, _, uniqueLookupErr2 := schema.LookupUniqueConstraintValue(t.Context(), "N", "v", lookalike)
+	if uniqueLookupErr2 != nil {
+		t.Errorf("unique index read failed: %v", uniqueLookupErr2)
+	}
 	require.True(t, stringFound)
 	require.Equal(t, NodeID("string-lookalike"), stringHolder)
-	numericHolder, numericFound, _ := schema.LookupUniqueConstraintValue("N", "v", values[1])
+	numericHolder, numericFound, _, _, uniqueLookupErr3 := schema.LookupUniqueConstraintValue(t.Context(), "N", "v", values[1])
+	if uniqueLookupErr3 != nil {
+		t.Errorf("unique index read failed: %v", uniqueLookupErr3)
+	}
 	require.True(t, numericFound)
 	require.Equal(t, NodeID("odd"), numericHolder)
-	// The old rounded property-index key remains byte-for-byte/type compatible;
-	// only the UNIQUE cache distinguishes the otherwise colliding exact integers.
-	a, _ := indexValueKey(values[0])
-	b, _ := indexValueKey(values[1])
-	require.Equal(t, a, b)
-	a, _ = uniqueConstraintValueKey(values[0])
-	b, _ = uniqueConstraintValueKey(values[1])
-	require.NotEqual(t, a, b)
-	schema.UnregisterUniqueValue("N", "v", values[1])
-	_, found, _ := schema.LookupUniqueConstraintValue("N", "v", values[1])
+	// One key for every index: a float64 holds 2^53 exactly, so its key is
+	// unchanged; 2^53+1 keeps its exact integer instead of colliding with it.
+	a, _, keyErr := indexValueKey(t.Context(), values[0])
+	require.NoError(t, keyErr)
+	b, _, keyErr := indexValueKey(t.Context(), values[1])
+	require.NoError(t, keyErr)
+	require.Equal(t, float64(9007199254740992), a)
+	require.Equal(t, uint64(9007199254740993), b)
+	schema.ApplyUniqueValue(context.Background(), "N", "v", values[1], "odd", RetiredUniqueClaim)
+	_, found, _, _, uniqueLookupErr4 := schema.LookupUniqueConstraintValue(t.Context(), "N", "v", values[1])
+	if uniqueLookupErr4 != nil {
+		t.Errorf("unique index read failed: %v", uniqueLookupErr4)
+	}
 	require.False(t, found)
-	got, found, _ := schema.LookupUniqueConstraintValue("N", "v", float64(9007199254740992))
+	got, found, _, _, uniqueLookupErr5 := schema.LookupUniqueConstraintValue(t.Context(), "N", "v", float64(9007199254740992))
+	if uniqueLookupErr5 != nil {
+		t.Errorf("unique index read failed: %v", uniqueLookupErr5)
+	}
 	require.True(t, found)
 	require.Equal(t, NodeID("even"), got)
+}
+
+// ApplyUniqueValue owns every canonical claim transition: a validated claim
+// takes the value unconditionally, a recovered claim keeps a different current
+// holder, a retirement leaves another owner intact, and an unknown action is a
+// programmer error rather than a publication mode.
+func TestApplyUniqueValueActionsPreserveOwnershipContract(t *testing.T) {
+	schema := NewSchemaManager()
+	require.NoError(t, schema.AddUniqueConstraint("apply_unique", "N", "v"))
+
+	schema.ApplyUniqueValue(context.Background(), "N", "v", "recovered", "node-1", RecoveredUniqueClaim)
+	holder, found, _, _, uniqueLookupErr6 := schema.LookupUniqueConstraintValue(t.Context(), "N", "v", "recovered")
+	if uniqueLookupErr6 != nil {
+		t.Errorf("unique index read failed: %v", uniqueLookupErr6)
+	}
+	require.True(t, found)
+	require.Equal(t, NodeID("node-1"), holder)
+
+	// A recovered claim must not overwrite a different current holder.
+	schema.ApplyUniqueValue(context.Background(), "N", "v", "recovered", "node-2", RecoveredUniqueClaim)
+	var uniqueLookupErr7 error
+	holder, found, _, _, uniqueLookupErr7 = schema.LookupUniqueConstraintValue(t.Context(), "N", "v", "recovered")
+	if uniqueLookupErr7 != nil {
+		t.Errorf("unique index read failed: %v", uniqueLookupErr7)
+	}
+	require.True(t, found)
+	require.Equal(t, NodeID("node-1"), holder)
+
+	// A validated claim is the authoritative owner.
+	schema.ApplyUniqueValue(context.Background(), "N", "v", "recovered", "node-2", ValidatedUniqueClaim)
+	var uniqueLookupErr8 error
+	holder, found, _, _, uniqueLookupErr8 = schema.LookupUniqueConstraintValue(t.Context(), "N", "v", "recovered")
+	if uniqueLookupErr8 != nil {
+		t.Errorf("unique index read failed: %v", uniqueLookupErr8)
+	}
+	require.True(t, found)
+	require.Equal(t, NodeID("node-2"), holder)
+
+	// A retirement from a stale owner cannot release the current holder.
+	schema.ApplyUniqueValue(context.Background(), "N", "v", "recovered", "node-1", RetiredUniqueClaim)
+	var uniqueLookupErr9 error
+	holder, found, _, _, uniqueLookupErr9 = schema.LookupUniqueConstraintValue(t.Context(), "N", "v", "recovered")
+	if uniqueLookupErr9 != nil {
+		t.Errorf("unique index read failed: %v", uniqueLookupErr9)
+	}
+	require.True(t, found)
+	require.Equal(t, NodeID("node-2"), holder)
+
+	schema.ApplyUniqueValue(context.Background(), "N", "v", "recovered", "node-2", RetiredUniqueClaim)
+	var uniqueLookupErr10 error
+	_, found, _, _, uniqueLookupErr10 = schema.LookupUniqueConstraintValue(t.Context(), "N", "v", "recovered")
+	if uniqueLookupErr10 != nil {
+		t.Errorf("unique index read failed: %v", uniqueLookupErr10)
+	}
+	require.False(t, found)
+
+	// Constraint and value-key no-ops stay silent for every action.
+	require.NotPanics(t, func() {
+		schema.ApplyUniqueValue(context.Background(), "N", "absent", "recovered", "node-3", ValidatedUniqueClaim)
+		schema.ApplyUniqueValue(context.Background(), "N", "v", []string{"unindexable"}, "node-3", RetiredUniqueClaim)
+	})
+
+	require.PanicsWithValue(t, "storage: ApplyUniqueValue: unknown UniqueValueAction 3", func() {
+		schema.ApplyUniqueValue(context.Background(), "N", "v", "recovered", "node-3", UniqueValueAction(3))
+	})
 }
 
 var uniqueCacheBenchmarkNode NodeID
@@ -92,11 +178,15 @@ func BenchmarkUniqueCachePrecision(b *testing.B) {
 			if err := schema.AddUniqueConstraint("bench", "N", "v"); err != nil {
 				b.Fatal(err)
 			}
-			schema.RegisterUniqueValue("N", "v", tc.value, "node")
+			schema.ApplyUniqueValue(context.Background(), "N", "v", tc.value, "node", ValidatedUniqueClaim)
+			ctx := b.Context()
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				node, found, _ := schema.LookupUniqueConstraintValue("N", "v", tc.value)
+				node, found, _, _, uniqueLookupErr11 := schema.LookupUniqueConstraintValue(ctx, "N", "v", tc.value)
+				if uniqueLookupErr11 != nil {
+					b.Fatalf("unique index read failed: %v", uniqueLookupErr11)
+				}
 				if !found {
 					b.Fatal("missing registered value")
 				}
@@ -106,7 +196,7 @@ func BenchmarkUniqueCachePrecision(b *testing.B) {
 	}
 }
 
-// A namespace view filters the buffer's shared rounded property-index bucket,
+// A namespace view filters the buffer's shared property-index bucket,
 // while unattached schemas and ordinary keys keep their existing behavior.
 func TestUniqueConstraintPendingNamespaceAndOrdinaryKeys(t *testing.T) {
 	buffer := newCommitBuffer()
@@ -141,17 +231,20 @@ func TestUniqueConstraintPendingNamespaceAndOrdinaryKeys(t *testing.T) {
 		{float64(42), "tenant:small"},
 		{"ordinary", "tenant:text"},
 	} {
-		key, ok := uniqueConstraintValueKey(tc.value)
+		key, ok, keyErr := indexValueKey(t.Context(), tc.value)
+		require.NoError(t, keyErr)
 		require.True(t, ok)
-		require.Equal(t, []NodeID{tc.want}, view.uniqueValueMatches(nil, "N", "v", tc.value, key))
+		require.Equal(t, []NodeID{tc.want}, checkedIndexRead[[]NodeID](t)(view.valueMatches(t.Context(), nil, "N", "v", key)))
 		// The same real value on a schema with no write-behind attachment must
 		// neither fabricate a pending holder nor allocate an index dependency.
-		require.Empty(t, (pendingWriteView{}).uniqueValueMatches(nil, "N", "v", tc.value, key))
+		require.Empty(t, checkedIndexRead[[]NodeID](t)((pendingWriteView{}).valueMatches(t.Context(), nil, "N", "v", key)))
 	}
 	// The platform int path must preserve equality with an integral float.
-	integerKey, ok := uniqueConstraintValueKey(int(42))
+	integerKey, ok, keyErr := indexValueKey(t.Context(), int(42))
+	require.NoError(t, keyErr)
 	require.True(t, ok)
-	floatKey, ok := uniqueConstraintValueKey(float64(42))
+	floatKey, ok, keyErr := indexValueKey(t.Context(), float64(42))
+	require.NoError(t, keyErr)
 	require.True(t, ok)
 	require.Equal(t, integerKey, floatKey)
 }
@@ -176,11 +269,13 @@ func TestConstraintCreationByteListEquivalenceBothOrders(t *testing.T) {
 	for _, tc := range cases {
 		for direction, pair := range [][2]interface{}{{tc.a, tc.b}, {tc.b, tc.a}} {
 			t.Run(fmt.Sprintf("%s/order%d", tc.name, direction), func(t *testing.T) {
-				require.Equal(t, tc.equal, constraintCreationValueEqual(pair[0], pair[1]), "pin existing shared equality semantics")
+				require.Equal(t, tc.equal, compareValues(pair[0], pair[1]), "pin existing shared equality semantics")
 				seen := make(constraintCreationValues)
-				_, duplicate := seen.add("first", []interface{}{pair[0]})
+				_, duplicate, keyErr := seen.add(t.Context(), "first", []interface{}{pair[0]})
+				require.NoError(t, keyErr)
 				require.False(t, duplicate)
-				id, duplicate := seen.add("second", []interface{}{pair[1]})
+				id, duplicate, keyErr := seen.add(t.Context(), "second", []interface{}{pair[1]})
+				require.NoError(t, keyErr)
 				require.Equal(t, tc.equal, duplicate)
 				if tc.equal {
 					require.Equal(t, "first", id)
@@ -189,9 +284,11 @@ func TestConstraintCreationByteListEquivalenceBothOrders(t *testing.T) {
 				// fallback key path; it must use the same normalized bucket.
 				stamp := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
 				composite := make(constraintCreationValues)
-				_, duplicate = composite.add("first", []interface{}{pair[0], stamp})
+				_, duplicate, keyErr = composite.add(t.Context(), "first", []interface{}{pair[0], stamp})
+				require.NoError(t, keyErr)
 				require.False(t, duplicate)
-				_, duplicate = composite.add("second", []interface{}{pair[1], stamp})
+				_, duplicate, keyErr = composite.add(t.Context(), "second", []interface{}{pair[1], stamp})
+				require.NoError(t, keyErr)
 				require.Equal(t, tc.equal, duplicate)
 
 			})

@@ -15,10 +15,7 @@ import (
 const ivfpqTrainSeed = 42
 
 // BuildIVFPQFromVectorStore builds a full IVF/PQ index from VectorFileStore.
-func BuildIVFPQFromVectorStore(ctx context.Context, vfs *VectorFileStore, profile IVFPQProfile, seedDocIDs []string) (*IVFPQIndex, *IVFPQBuildStats, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
+func BuildIVFPQFromVectorStore(ctx context.Context, vfs *VectorFileStore, profile IVFPQProfile, seedEntryIDs []string) (*IVFPQIndex, *IVFPQBuildStats, error) {
 	if vfs == nil {
 		return nil, nil, localizedError(localization.SearchIVFPQVectorStoreRequired(), nil)
 	}
@@ -31,7 +28,7 @@ func BuildIVFPQFromVectorStore(ctx context.Context, vfs *VectorFileStore, profil
 	start := time.Now()
 	rng := rand.New(rand.NewSource(ivfpqTrainSeed))
 
-	training, err := ivfpqCollectTrainingSample(ctx, vfs, profile.TrainingSampleMax, seedDocIDs, rng)
+	training, err := ivfpqCollectTrainingSample(ctx, vfs, profile.TrainingSampleMax, seedEntryIDs, rng)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -54,6 +51,8 @@ func BuildIVFPQFromVectorStore(ctx context.Context, vfs *VectorFileStore, profil
 		lists[i].CodeSize = profile.PQSegments
 	}
 	vectorCount := 0
+	maxResidual := 0.0
+	maxCoordinateError := make([]float64, profile.Dimensions)
 	overflowLimit := min(profile.OverflowMax, vfs.Count())
 	var overflowHeap *candidateMinHeap
 	if overflowLimit > 0 {
@@ -66,6 +65,7 @@ func BuildIVFPQFromVectorStore(ctx context.Context, vfs *VectorFileStore, profil
 		for i := range ids {
 			listID := nearestCentroidIndexNormalized(vecs[i], centroidNorm)
 			code := encodePQResidual(vecs[i], centroids[listID], codebooks)
+			maxResidual = max(maxResidual, pqResidualError(vecs[i], centroids[listID], codebooks, code, maxCoordinateError))
 			lists[listID].IDs = append(lists[listID].IDs, ids[i])
 			lists[listID].appendCode(code)
 			if overflowHeap != nil {
@@ -89,15 +89,19 @@ func BuildIVFPQFromVectorStore(ctx context.Context, vfs *VectorFileStore, profil
 		}
 	}
 	idx := &IVFPQIndex{
-		profile:         profile,
-		centroids:       centroids,
-		centroidNorm:    centroidNorm,
-		codebooks:       codebooks,
-		lists:           lists,
-		overflow:        overflow,
-		formatVersion:   ivfpqBundleFormatVersion,
-		builtAtUnixNano: time.Now().UnixNano(),
+		profile:            profile,
+		centroids:          centroids,
+		centroidNorm:       centroidNorm,
+		codebooks:          codebooks,
+		lists:              lists,
+		overflow:           overflow,
+		formatVersion:      ivfpqBundleFormatVersion,
+		builtAtUnixNano:    time.Now().UnixNano(),
+		maxResidual:        maxResidual,
+		residualKnown:      true,
+		maxCoordinateError: maxCoordinateError,
 	}
+	idx.population() // deduplicate the immutable union before publication
 	idx.initScratchPool()
 	stats := &IVFPQBuildStats{
 		VectorCount:         vectorCount,
@@ -118,13 +122,13 @@ func ivfpqOverflowBytesPerVector(overflowCount, vectorCount, dimensions int) flo
 	return float64(overflowCount*dimensions*4) / float64(vectorCount)
 }
 
-func ivfpqCollectTrainingSample(ctx context.Context, vfs *VectorFileStore, maxSample int, seedDocIDs []string, rng *rand.Rand) ([][]float32, error) {
+func ivfpqCollectTrainingSample(ctx context.Context, vfs *VectorFileStore, maxSample int, seedEntryIDs []string, rng *rand.Rand) ([][]float32, error) {
 	if maxSample <= 0 {
 		maxSample = 1000
 	}
 	sample := make([][]float32, 0, maxSample)
-	seenSeed := make(map[string]struct{}, len(seedDocIDs))
-	for _, id := range seedDocIDs {
+	seenSeed := make(map[string]struct{}, len(seedEntryIDs))
+	for _, id := range seedEntryIDs {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -205,7 +209,7 @@ func ivfpqTrainPQCodebooks(ctx context.Context, training [][]float32, centroids 
 				vectors = append(vectors, append([]float32(nil), vectors[rng.Intn(len(vectors))]...))
 			}
 		}
-		centers, err := ivfpqTrainKMeans(ctx, vectors, codewords, profile.KMeansMaxIterations, rng)
+		centers, err := ivfpqTrainPQCodebook(ctx, vectors, codewords, profile.KMeansMaxIterations, rng)
 		if err != nil {
 			return nil, err
 		}
@@ -215,6 +219,16 @@ func ivfpqTrainPQCodebooks(ctx context.Context, training [][]float32, centroids 
 }
 
 func ivfpqTrainKMeans(ctx context.Context, vectors [][]float32, k, maxIter int, rng *rand.Rand) ([][]float32, error) {
+	return trainVectorKMeans(ctx, vectors, k, maxIter, rng, true)
+}
+
+// Product encoding chooses Euclidean codewords. Normalizing its subvectors
+// during training discards magnitude, especially for small PQ chunks.
+func ivfpqTrainPQCodebook(ctx context.Context, vectors [][]float32, k, maxIter int, rng *rand.Rand) ([][]float32, error) {
+	return trainVectorKMeans(ctx, vectors, k, maxIter, rng, false)
+}
+
+func trainVectorKMeans(ctx context.Context, vectors [][]float32, k, maxIter int, rng *rand.Rand, spherical bool) ([][]float32, error) {
 	if len(vectors) == 0 {
 		return nil, fmt.Errorf("no vectors for kmeans")
 	}
@@ -243,18 +257,26 @@ func ivfpqTrainKMeans(ctx context.Context, vectors [][]float32, k, maxIter int, 
 	}
 
 	assign := make([]int, len(vectors))
-	vectorNorm := make([][]float32, len(vectors))
-	for i := range vectors {
-		vectorNorm[i] = vector.Normalize(vectors[i])
+	var vectorNorm, centroidNorm [][]float32
+	if spherical {
+		vectorNorm = make([][]float32, len(vectors))
+		for i := range vectors {
+			vectorNorm[i] = vector.Normalize(vectors[i])
+		}
+		centroidNorm = normalizeCentroids(centroids)
 	}
-	centroidNorm := normalizeCentroids(centroids)
 	for iter := 0; iter < maxIter; iter++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		changed := false
 		for i := range vectors {
-			best := nearestCentroidIndexFromNormalized(vectorNorm[i], centroidNorm)
+			best := 0
+			if spherical {
+				best = nearestCentroidIndexFromNormalized(vectorNorm[i], centroidNorm)
+			} else {
+				best = nearestPQCodeword(vectors[i], centroids)
+			}
 			if assign[i] != best {
 				assign[i] = best
 				changed = true
@@ -284,9 +306,43 @@ func ivfpqTrainKMeans(ctx context.Context, vectors [][]float32, k, maxIter int, 
 				centroids[c][d] = float32(sums[c][d] / float64(counts[c]))
 			}
 		}
-		centroidNorm = normalizeCentroids(centroids)
+		if spherical {
+			centroidNorm = normalizeCentroids(centroids)
+		}
 	}
 	return centroids, nil
+}
+
+func nearestPQCodeword(v []float32, centers [][]float32) int {
+	best, bestDistance := 0, float32(math.Inf(1))
+	for k, center := range centers {
+		var distance float32
+		for d, x := range v {
+			delta := x - center[d]
+			distance += delta * delta
+		}
+		if distance < bestDistance {
+			best, bestDistance = k, distance
+		}
+	}
+	return best
+}
+
+// pqResidualError is |r - PQ(r)| for vec's residual r against centroid,
+// encoded as code, also accumulating absolute per-coordinate maxima.
+func pqResidualError(vec []float32, centroid []float32, codebooks []ivfpqCodebook, code []byte, maxCoordinateError []float64) float64 {
+	var sum float64
+	offset := 0
+	for seg := range codebooks {
+		codeword := codebooks[seg].Codeword[code[seg]]
+		for d := 0; d < codebooks[seg].SubDim; d++ {
+			e := float64(vec[offset+d]) - float64(centroid[offset+d]) - float64(codeword[d])
+			maxCoordinateError[offset+d] = max(maxCoordinateError[offset+d], math.Abs(e))
+			sum += e * e
+		}
+		offset += codebooks[seg].SubDim
+	}
+	return math.Sqrt(sum)
 }
 
 func encodePQResidual(vec []float32, centroid []float32, codebooks []ivfpqCodebook) []byte {

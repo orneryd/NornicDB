@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"io"
 	"net"
 	"testing"
@@ -351,7 +352,7 @@ func TestSessionSendRecord_TimeEncodingRespectsNegotiatedCompatibility(t *testin
 		session := newTestSession(conn, nil)
 		session.version = BoltV4_4
 
-		err := session.sendRecord([]any{dt})
+		err := session.sendRecord(t.Context(), []any{dt})
 		if err != nil {
 			t.Fatalf("sendRecord() error = %v", err)
 		}
@@ -377,7 +378,7 @@ func TestSessionSendRecord_TimeEncodingRespectsNegotiatedCompatibility(t *testin
 		}
 		conn.writeData = nil
 
-		err = session.sendRecord([]any{dt})
+		err = session.sendRecord(t.Context(), []any{dt})
 		if err != nil {
 			t.Fatalf("sendRecord() error = %v", err)
 		}
@@ -391,7 +392,7 @@ func TestSessionSendRecord_TimeEncodingRespectsNegotiatedCompatibility(t *testin
 		session := newTestSession(conn, nil)
 		session.version = 0x0500
 
-		err := session.sendRecord([]any{dt})
+		err := session.sendRecord(t.Context(), []any{dt})
 		if err != nil {
 			t.Fatalf("sendRecord() error = %v", err)
 		}
@@ -1514,7 +1515,7 @@ func TestParseRunMessage(t *testing.T) {
 			0xA0, // Empty map for params
 		}
 
-		session := &Session{}
+		session := &Session{server: &Server{}}
 		query, params, metadata, err := session.parseRunMessage(data)
 
 		if err != nil {
@@ -1544,7 +1545,7 @@ func TestParseRunMessage(t *testing.T) {
 			0x85, 'A', 'l', 'i', 'c', 'e', // Value: "Alice"
 		}
 
-		session := &Session{}
+		session := &Session{server: &Server{}}
 		_, params, metadata, err := session.parseRunMessage(data)
 
 		if err != nil {
@@ -1559,7 +1560,7 @@ func TestParseRunMessage(t *testing.T) {
 	})
 
 	t.Run("empty data", func(t *testing.T) {
-		session := &Session{}
+		session := &Session{server: &Server{}}
 		_, _, _, err := session.parseRunMessage([]byte{})
 
 		if err == nil {
@@ -1580,7 +1581,7 @@ func TestParseRunMessage(t *testing.T) {
 
 		data := append(append(queryBytes, paramsBytes...), metadataBytes...)
 
-		session := &Session{}
+		session := &Session{server: &Server{}}
 		query, params, metadata, err := session.parseRunMessage(data)
 
 		if err != nil {
@@ -1688,8 +1689,8 @@ func TestParseRunMessage(t *testing.T) {
 func TestHandleRun_UsesRunMetadataDatabase(t *testing.T) {
 	manager := &mockDBManager{
 		stores: map[string]storage.Engine{
-			"nornic":       storage.NewMemoryEngine(),
-			"translations": storage.NewMemoryEngine(),
+			"nornic":       fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)),
+			"translations": fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)),
 		},
 		defaultDB: "nornic",
 	}
@@ -1733,8 +1734,8 @@ func TestHandleRun_UsesRunMetadataDatabase(t *testing.T) {
 func TestHandleRun_UsesBeginDatabaseWhenRunOmitsDatabase(t *testing.T) {
 	manager := &mockDBManager{
 		stores: map[string]storage.Engine{
-			"nornic":       storage.NewMemoryEngine(),
-			"translations": storage.NewMemoryEngine(),
+			"nornic":       fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)),
+			"translations": fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)),
 		},
 		defaultDB: "nornic",
 	}
@@ -1760,7 +1761,7 @@ func TestHandleRun_UsesBeginDatabaseWhenRunOmitsDatabase(t *testing.T) {
 	}
 
 	beginData := encodePackStreamMap(map[string]any{"db": "translations"})
-	if err := session.handleBegin(beginData); err != nil {
+	if err := session.dispatchInner(MsgBegin, beginData, "BEGIN", nil); err != nil {
 		t.Fatalf("handleBegin failed: %v", err)
 	}
 
@@ -2001,6 +2002,7 @@ func TestHandlePull(t *testing.T) {
 	defer client.Close()
 
 	session := &Session{
+		server:     &Server{config: DefaultConfig()},
 		conn:       server,
 		reader:     bufio.NewReaderSize(server, 8192),
 		writer:     bufio.NewWriterSize(server, 8192),
@@ -2054,6 +2056,7 @@ func TestHandleDiscard(t *testing.T) {
 	defer client.Close()
 
 	session := &Session{
+		server:     &Server{config: DefaultConfig()},
 		conn:       server,
 		reader:     bufio.NewReaderSize(server, 8192),
 		writer:     bufio.NewWriterSize(server, 8192),
@@ -2099,6 +2102,7 @@ func TestHandleRoute(t *testing.T) {
 	defer client.Close()
 
 	session := &Session{
+		server:     &Server{config: DefaultConfig()},
 		conn:       server,
 		reader:     bufio.NewReaderSize(server, 8192),
 		writer:     bufio.NewWriterSize(server, 8192),
@@ -2134,6 +2138,7 @@ func TestSendRecord(t *testing.T) {
 	defer client.Close()
 
 	session := &Session{
+		server:     &Server{config: DefaultConfig()},
 		conn:       server,
 		reader:     bufio.NewReaderSize(server, 8192),
 		writer:     bufio.NewWriterSize(server, 8192),
@@ -2143,7 +2148,7 @@ func TestSendRecord(t *testing.T) {
 	// Send a record
 	done := make(chan error, 1)
 	go func() {
-		err := session.sendRecord([]any{"Alice", 30, true, 3.14})
+		err := session.sendRecord(t.Context(), []any{"Alice", 30, true, 3.14})
 		done <- err
 	}()
 
@@ -2345,84 +2350,17 @@ func TestMapBoltCommitErrorCommitTimeUniqueConflictRequiresMerge(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			code, _ := mapBoltCommitError(err, tt.canRetry)
+			// The transaction marks a retry-safe MERGE race where its COMMIT
+			// fails (cypher MERGE retry classification); Bolt renders it.
+			in := err
+			if tt.canRetry {
+				in = nornicerrors.MarkMergeCommitTimeUniqueConflict(err)
+			}
+			code, _ := nornicerrors.RenderStatus(in, nil)
 			if code != tt.wantCode {
 				t.Fatalf("code = %q, want %q", code, tt.wantCode)
 			}
 		})
-	}
-}
-
-// uidUniqueViolation is a commit-time UNIQUE violation on TerraformResource.uid.
-var uidUniqueViolation = fmt.Errorf("commit failed: constraint violation: %w", &storage.ConstraintViolationError{
-	Type:       storage.ConstraintUnique,
-	Label:      "TerraformResource",
-	Properties: []string{"uid"},
-	Message:    "Node with uid=X already exists (nodeID: nornic:abc)",
-})
-
-// TestSessionMergeCommitConflictRetryRequiresMergeKeyClash covers #657: only
-// a clash on the MERGE key is a retry-safe race; a SET writing another value to
-// the constrained property fails on every retry, and what can't be decided is
-// not retried.
-func TestSessionMergeCommitConflictRetryRequiresMergeKeyClash(t *testing.T) {
-	props := map[string]any{"uid": "X", "props": map[string]any{"name": "n"}, "withUID": map[string]any{"uid": "X"}, "otherUID": map[string]any{"uid": "Y"}}
-	for query, retrySafe := range map[string]bool{
-		"MERGE (n:TerraformResource {uid: $uid}) SET n.name = $uid":          true,
-		"MERGE (n:TerraformResource {uid: $uid}) SET n += $props":            true,
-		"MERGE (n:TerraformResource {uid: $uid}) SET n += $withUID":          true,
-		"MERGE (n:TerraformResource {uid: $uid}) SET n.uid = 'X'":            true,
-		"MERGE (n:TerraformResource {uid: $uid}) SET n += $otherUID":         false,
-		"MERGE (n:TerraformResource {uid: $uid}) SET n += $missing":          false,
-		"MERGE (n:TerraformResource {uid: $uid}) SET n = m":                  false,
-		"MERGE (n:TerraformResource {name: $uid}) SET n.uid = $uid":          false,
-		"MERGE (n:TerraformResource {name: 'a'}) SET n += {uid: 'x'}":        false,
-		"MERGE (n:TerraformResource {name: 'a'}) ON CREATE SET n.uid = 'x'":  false,
-		"MERGE (n:TerraformResource {name: 'a'}) ON MATCH SET n.`uid` = 'x'": false,
-		"MERGE (n:TerraformResource {uid: $uid}) SET n.uid = toUpper($uid)":  false,
-	} {
-		session := &Session{inTransaction: true}
-		session.recordExplicitTransactionWrite(query, props, true)
-		if got := session.canRetryMergeCommitConflict(uidUniqueViolation); got != retrySafe {
-			t.Fatalf("%s: retry-safe = %v, want %v", query, got, retrySafe)
-		}
-	}
-}
-
-func TestSessionMergeCommitConflictRetryRequiresMergeOnlyTransaction(t *testing.T) {
-	session := &Session{inTransaction: true}
-	session.recordExplicitTransactionWrite("MERGE (n:TerraformResource {uid: $uid})", nil, true)
-	if !session.canRetryMergeCommitConflict(uidUniqueViolation) {
-		t.Fatal("MERGE-only transaction should allow commit-time UNIQUE conflict retry classification")
-	}
-
-	session.recordExplicitTransactionWrite("CREATE (n:TerraformResource {uid: $uid})", nil, true)
-	if session.canRetryMergeCommitConflict(uidUniqueViolation) {
-		t.Fatal("mixed MERGE and non-MERGE write transaction should keep commit-time UNIQUE conflict as a hard commit failure")
-	}
-}
-
-func TestSessionMergeCommitConflictRetryRejectsMixedSingleStatementWrite(t *testing.T) {
-	session := &Session{inTransaction: true}
-	session.recordExplicitTransactionWrite(
-		"CREATE (a:Audit {id: $id}) WITH a MERGE (n:TerraformResource {uid: $uid}) SET n.auditId = a.id",
-		nil,
-		true,
-	)
-	if session.canRetryMergeCommitConflict(uidUniqueViolation) {
-		t.Fatal("single statement mixing CREATE and MERGE should keep commit-time UNIQUE conflict as a hard commit failure")
-	}
-}
-
-func TestSessionMergeCommitConflictRetryRejectsCallWithMerge(t *testing.T) {
-	session := &Session{inTransaction: true}
-	session.recordExplicitTransactionWrite(
-		"CALL custom.writeProc() YIELD value MERGE (n:TerraformResource {uid: value.uid}) RETURN n",
-		nil,
-		true,
-	)
-	if session.canRetryMergeCommitConflict(uidUniqueViolation) {
-		t.Fatal("statement mixing CALL and MERGE should keep commit-time UNIQUE conflict as a hard commit failure")
 	}
 }
 

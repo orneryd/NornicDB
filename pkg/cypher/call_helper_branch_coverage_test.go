@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -8,47 +9,39 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type callGetNodeErrEngine struct {
+// directionalReadFaultEngine fails only the direction and optional node a case
+// arms. The other reads preserve the underlying engine's ordinary behavior.
+type directionalReadFaultEngine struct {
 	storage.Engine
-	err error
+	outgoingErr, incomingErr error
+	only                     storage.NodeID
 }
 
-func (e *callGetNodeErrEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
-	if e.err != nil {
-		return nil, e.err
+func (e *directionalReadFaultEngine) readEdges(ctx context.Context, id storage.NodeID, incoming bool) ([]*storage.Edge, error) {
+	fault := e.outgoingErr
+	if incoming {
+		fault = e.incomingErr
 	}
-	return e.Engine.GetNode(id)
-}
-
-type callOutgoingErrEngine struct {
-	storage.Engine
-	err error
-}
-
-func (e *callOutgoingErrEngine) GetOutgoingEdges(id storage.NodeID) ([]*storage.Edge, error) {
-	if e.err != nil {
-		return nil, e.err
+	if fault != nil && (e.only == "" || e.only == id) {
+		return nil, fault
 	}
-	return e.Engine.GetOutgoingEdges(id)
-}
-
-type callIncomingErrEngine struct {
-	storage.Engine
-	err error
-}
-
-func (e *callIncomingErrEngine) GetIncomingEdges(id storage.NodeID) ([]*storage.Edge, error) {
-	if e.err != nil {
-		return nil, e.err
+	if incoming {
+		return e.Engine.GetIncomingEdges(ctx, id)
 	}
-	return e.Engine.GetIncomingEdges(id)
+	return e.Engine.GetOutgoingEdges(ctx, id)
+}
+func (e *directionalReadFaultEngine) GetOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
+	return e.readEdges(ctx, id, false)
+}
+func (e *directionalReadFaultEngine) GetIncomingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
+	return e.readEdges(ctx, id, true)
 }
 
 func TestCallTailHelperParsersAndPredicates(t *testing.T) {
 	t.Run("relationship_type_constraint_detection", func(t *testing.T) {
 		assert.True(t, callTailHasRelationshipTypeConstraint("MATCH (a)-[:R]->(b) RETURN a"))
 		assert.False(t, callTailHasRelationshipTypeConstraint("MATCH (a)-[r]->(b) RETURN a"))
-		assert.True(t, callTailHasRelationshipTypeConstraint("MATCH (a)-[':R']->(b) RETURN a"))
+		assert.False(t, callTailHasRelationshipTypeConstraint("MATCH (a)-[':R']->(b) RETURN a"))
 		assert.False(t, callTailHasRelationshipTypeConstraint("MATCH (a)-[r:R->(b) RETURN a"))
 	})
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -40,7 +41,7 @@ func (db *DB) RecordConsent(ctx context.Context, consent *Consent) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return ErrClosed
 	}
 
@@ -60,7 +61,7 @@ func (db *DB) RecordConsent(ctx context.Context, consent *Consent) error {
 	consentID := storage.NodeID(fmt.Sprintf("consent:%s:%s", consent.UserID, consent.Purpose))
 
 	// Check if consent already exists
-	existingNode, err := db.storage.GetNode(consentID)
+	existingNode, err := db.storage.GetNode(ctx, consentID)
 	if err != nil && !errors.Is(err, storage.ErrNotFound) {
 		return localizedError(localization.NornicDBCoreConsentExistingCheckFailed(err), err)
 	}
@@ -75,8 +76,9 @@ func (db *DB) RecordConsent(ctx context.Context, consent *Consent) error {
 
 	if existingNode != nil {
 		// Update existing consent
+		before := *existingNode
 		existingNode.Properties = props
-		return db.storage.UpdateNode(existingNode)
+		return db.storage.UpdateNode(ctx, storage.NodeUpdateRequest{Before: &before, After: existingNode})
 	}
 
 	// Create new consent node
@@ -86,7 +88,7 @@ func (db *DB) RecordConsent(ctx context.Context, consent *Consent) error {
 		Properties: props,
 	}
 
-	_, err = db.storage.CreateNode(node)
+	_, err = db.storage.CreateNode(ctx, node)
 	return err
 }
 
@@ -106,12 +108,12 @@ func (db *DB) HasConsent(ctx context.Context, userID, purpose string) (bool, err
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return false, ErrClosed
 	}
 
 	consentID := storage.NodeID(fmt.Sprintf("consent:%s:%s", userID, purpose))
-	node, err := db.storage.GetNode(consentID)
+	node, err := db.storage.GetNode(ctx, consentID)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			return false, nil // No consent record = no consent given
@@ -137,12 +139,12 @@ func (db *DB) RevokeConsent(ctx context.Context, userID, purpose string) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return ErrClosed
 	}
 
 	consentID := storage.NodeID(fmt.Sprintf("consent:%s:%s", userID, purpose))
-	node, err := db.storage.GetNode(consentID)
+	node, err := db.storage.GetNode(ctx, consentID)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			// Create a revoked consent record for audit trail
@@ -157,18 +159,20 @@ func (db *DB) RevokeConsent(ctx context.Context, userID, purpose string) error {
 					"source":    "revocation",
 				},
 			}
-			_, err := db.storage.CreateNode(node)
+			_, err := db.storage.CreateNode(ctx, node)
 			return err
 		}
 		return localizedError(localization.NornicDBCoreConsentGetFailed(err), err)
 	}
 
 	// Update existing consent to revoked
+	before := *node
+	before.Properties = maps.Clone(node.Properties)
 	node.Properties["given"] = false
 	node.Properties["timestamp"] = time.Now().Format(time.RFC3339)
 	node.Properties["source"] = "revocation"
 
-	return db.storage.UpdateNode(node)
+	return db.storage.UpdateNode(ctx, storage.NodeUpdateRequest{Before: &before, After: node})
 }
 
 // GetUserConsents returns all consent records for a user.
@@ -177,7 +181,7 @@ func (db *DB) GetUserConsents(ctx context.Context, userID string) ([]Consent, er
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	if db.closed {
+	if db.work.Closing() {
 		return nil, ErrClosed
 	}
 

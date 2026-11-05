@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
 	"testing"
 
@@ -14,9 +15,9 @@ import (
 // while index builds reset it concurrently (#593). Run with -race to also
 // check the field is only read under pipelineMu.
 func TestGetOrCreateVectorPipelineConcurrentWithReset(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { _ = engine.Close() })
-	svc := NewServiceWithDimensions(engine, 4)
+	svc := NewService(engine, 4, nil)
 	for i := 0; i < 8; i++ {
 		require.NoError(t, svc.IndexNode(&storage.Node{
 			ID:         storage.NodeID(fmt.Sprintf("n-%d", i)),

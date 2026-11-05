@@ -5,11 +5,15 @@ import "maps"
 // A lightweight snapshot omits sidecar vectors. Keep metadata consistent with
 // the vectors actually exported without mutating the source entity or its map.
 func snapshotNodeVectorMetadata(node *Node) *Node {
-	if node == nil || !node.EmbeddingsStoredSeparately {
+	if node == nil || !node.RuntimeMetadata().EmbeddingsStoredSeparately {
 		return node
 	}
 	copy := *node
-	copy.EmbeddingsStoredSeparately = false
+	{
+		metadata := copy.RuntimeMetadata()
+		metadata.EmbeddingsStoredSeparately = false
+		copy.SetRuntimeMetadata(metadata)
+	}
 	copy.EmbedMeta = maps.Clone(node.EmbedMeta)
 	if copy.EmbedMeta != nil {
 		if len(copy.ChunkEmbeddings) == 0 {

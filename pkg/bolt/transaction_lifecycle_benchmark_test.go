@@ -1,6 +1,8 @@
 package bolt
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"net"
@@ -27,7 +29,7 @@ func BenchmarkTransactionLifecycleNoTimeout(b *testing.B) {
 					b.Fatal(err)
 				}
 				lifecycle := transactionLifecycle{}
-				if err := lifecycle.begin(context.Background(), timeout, "neo4j", nil, benchmark.metadata, nil); err != nil {
+				if err := lifecycle.begin(context.Background(), testTxOwner(), timeout, "neo4j", nil, benchmark.metadata, nil); err != nil {
 					b.Fatal(err)
 				}
 				if _, err := lifecycle.claimCommit(); err != nil {
@@ -44,7 +46,7 @@ func BenchmarkTransactionLifecycleDisjointTransactions(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			lifecycle := transactionLifecycle{}
-			if err := lifecycle.begin(context.Background(), 0, "neo4j", nil, nil, nil); err != nil {
+			if err := lifecycle.begin(context.Background(), testTxOwner(), 0, "neo4j", nil, nil, nil); err != nil {
 				b.Fatal(err)
 			}
 			if err := lifecycle.rollback(transactionTerminalRollback); err != nil {
@@ -92,7 +94,7 @@ func BenchmarkBoltExplicitTransactionDisjoint(b *testing.B) {
 
 func startBoltTransactionBenchmarkServer(b *testing.B) int {
 	b.Helper()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	b.Cleanup(func() {
 		if err := base.Close(); err != nil {
 			b.Errorf("close benchmark store: %v", err)

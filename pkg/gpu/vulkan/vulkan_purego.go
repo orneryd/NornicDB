@@ -215,7 +215,7 @@ var (
 	vkAllocateMemory                         func(device VkDevice, pAllocateInfo *VkMemoryAllocateInfo, pAllocator uintptr, pMemory *VkDeviceMemory) VkResult
 	vkFreeMemory                             func(device VkDevice, memory VkDeviceMemory, pAllocator uintptr)
 	vkBindBufferMemory                       func(device VkDevice, buffer VkBuffer, memory VkDeviceMemory, memoryOffset VkDeviceSize) VkResult
-	vkMapMemory                              func(device VkDevice, memory VkDeviceMemory, offset VkDeviceSize, size VkDeviceSize, flags uint32, ppData *uintptr) VkResult
+	vkMapMemory                              func(device VkDevice, memory VkDeviceMemory, offset VkDeviceSize, size VkDeviceSize, flags uint32, ppData *unsafe.Pointer) VkResult
 	vkUnmapMemory                            func(device VkDevice, memory VkDeviceMemory)
 	vkCreateCommandPool                      func(device VkDevice, pCreateInfo *VkCommandPoolCreateInfo, pAllocator uintptr, pCommandPool *VkCommandPool) VkResult
 	vkDestroyCommandPool                     func(device VkDevice, commandPool VkCommandPool, pAllocator uintptr)
@@ -619,7 +619,7 @@ func (d *Device) NewBuffer(data []float32) (*Buffer, error) {
 	}
 
 	// Map and copy data
-	var mappedPtr uintptr
+	var mappedPtr unsafe.Pointer
 	if result := vkMapMemory(d.device, memory, 0, size, 0, &mappedPtr); result != VK_SUCCESS {
 		vkFreeMemory(d.device, memory, 0)
 		vkDestroyBuffer(d.device, buffer, 0)
@@ -627,7 +627,7 @@ func (d *Device) NewBuffer(data []float32) (*Buffer, error) {
 	}
 
 	// Copy data to mapped memory
-	dst := unsafe.Slice((*float32)(unsafe.Pointer(mappedPtr)), len(data))
+	dst := unsafe.Slice((*float32)(mappedPtr), len(data))
 	copy(dst, data)
 
 	vkUnmapMemory(d.device, memory)
@@ -732,13 +732,13 @@ func (b *Buffer) ReadFloat32(count int) []float32 {
 	b.device.mu.Lock()
 	defer b.device.mu.Unlock()
 
-	var mappedPtr uintptr
+	var mappedPtr unsafe.Pointer
 	if result := vkMapMemory(b.device.device, b.memory, 0, VkDeviceSize(count*4), 0, &mappedPtr); result != VK_SUCCESS {
 		return nil
 	}
 
 	result := make([]float32, count)
-	src := unsafe.Slice((*float32)(unsafe.Pointer(mappedPtr)), count)
+	src := unsafe.Slice((*float32)(mappedPtr), count)
 	copy(result, src)
 
 	vkUnmapMemory(b.device.device, b.memory)
@@ -755,13 +755,13 @@ func (b *Buffer) ReadUint32(count int) []uint32 {
 	b.device.mu.Lock()
 	defer b.device.mu.Unlock()
 
-	var mappedPtr uintptr
+	var mappedPtr unsafe.Pointer
 	if result := vkMapMemory(b.device.device, b.memory, 0, VkDeviceSize(count*4), 0, &mappedPtr); result != VK_SUCCESS {
 		return nil
 	}
 
 	result := make([]uint32, count)
-	src := unsafe.Slice((*uint32)(unsafe.Pointer(mappedPtr)), count)
+	src := unsafe.Slice((*uint32)(mappedPtr), count)
 	copy(result, src)
 
 	vkUnmapMemory(b.device.device, b.memory)
@@ -778,12 +778,12 @@ func (b *Buffer) writeFloat32(data []float32) error {
 	b.device.mu.Lock()
 	defer b.device.mu.Unlock()
 
-	var mappedPtr uintptr
+	var mappedPtr unsafe.Pointer
 	if result := vkMapMemory(b.device.device, b.memory, 0, VkDeviceSize(len(data)*4), 0, &mappedPtr); result != VK_SUCCESS {
 		return fmt.Errorf("vulkan: failed to map memory (code %d)", result)
 	}
 
-	dst := unsafe.Slice((*float32)(unsafe.Pointer(mappedPtr)), len(data))
+	dst := unsafe.Slice((*float32)(mappedPtr), len(data))
 	copy(dst, data)
 
 	vkUnmapMemory(b.device.device, b.memory)

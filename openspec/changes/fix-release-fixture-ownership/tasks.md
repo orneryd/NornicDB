@@ -1,0 +1,11 @@
+- [x] Preserve the exact release-base reproduction: 38 constructor ownership violations at 1bd3be034.
+- [x] Route every reported constructor through the existing fixture lifetime owner without weakening close, crash, recovery or persistence assertions.
+- [x] Review cleanup ordering and closed-error handling for storage engines and raw Badger databases.
+- [x] Reproduce and exclude generated plugin sources from repository package discovery while preserving module build settings.
+- [x] Run the ownership guard and affected WAL, snapshot, replication and multidatabase tests.
+- [x] Run make test and preserve the complete result, including failures and cached packages.
+- [ ] Pass the unchanged mandatory duplicate check and publish a focused release/v1.4.4 fix PR.
+- [ ] Propagate the common correction into PR #1507 and revalidate the integrated source.
+- [x] Consolidate reported WAL upgrade extraction, marker lifecycle and replay lifetime test behavior while preserving all assertions.
+- [ ] Re-run make test and the mandatory duplicate check on the consolidated fixture source.
+- [x] Preserve the constraint-scaling failure and correct the single-sample oracle with paired sampling at unchanged populations and ratio threshold; verify sustained quadratic growth remains rejected.

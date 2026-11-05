@@ -6,11 +6,13 @@
 package community
 
 import (
+	"context"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"math/rand"
 	"sort"
 
 	"github.com/orneryd/nornicdb/apoc/storage"
+	"github.com/orneryd/nornicdb/pkg/louvain"
 )
 
 // Node represents a graph node.
@@ -18,9 +20,6 @@ type Node = storage.Node
 
 // Relationship represents a graph relationship.
 type Relationship = storage.Relationship
-
-// Storage is the interface for database operations.
-var Storage storage.Storage = storage.NewInMemoryStorage()
 
 // CommunityResult represents a community detection result.
 type CommunityResult struct {
@@ -62,12 +61,18 @@ func DefaultLouvainConfig() LouvainConfig {
 	}
 }
 
-// Louvain detects communities using the Louvain algorithm.
-func Louvain(nodes []*Node, rels []*Relationship, config LouvainConfig) []CommunityResult {
-	if len(nodes) == 0 {
-		return []CommunityResult{}
+// Louvain adapts APOC's nodes, undirected relationships and configuration to
+// the same engine as gds.louvain.stream and apoc.algo.louvain. Communities are
+// numbered by their first node in the supplied order. The adapter, the two
+// relationship passes and the output pass check ctx, and a run that ctx stopped
+// returns no result and ctx's error, never a partial partition.
+func Louvain(ctx context.Context, nodes []*Node, rels []*Relationship, config LouvainConfig) ([]CommunityResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-
+	if len(nodes) == 0 {
+		return []CommunityResult{}, nil
+	}
 	if config.MaxIterations == 0 {
 		config.MaxIterations = 100
 	}
@@ -75,119 +80,37 @@ func Louvain(nodes []*Node, rels []*Relationship, config LouvainConfig) []Commun
 		config.Threshold = 0.0001
 	}
 	if config.Resolution == 0 {
-		config.Resolution = 1.0
+		config.Resolution = 1
 	}
-
-	nodeIndex := make(map[int64]int)
+	index := make(map[int64]int, len(nodes))
 	for i, node := range nodes {
-		nodeIndex[node.ID] = i
-	}
-
-	community := make([]int64, len(nodes))
-	for i, node := range nodes {
-		community[i] = node.ID
-	}
-
-	weights := make(map[int64]map[int64]float64)
-	for _, node := range nodes {
-		weights[node.ID] = make(map[int64]float64)
-	}
-
-	totalWeight := 0.0
-	for _, rel := range rels {
-		weight := getRelWeight(rel)
-		if _, ok := nodeIndex[rel.StartNode]; !ok {
-			continue
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
-		if _, ok := nodeIndex[rel.EndNode]; !ok {
-			continue
-		}
-		weights[rel.StartNode][rel.EndNode] += weight
-		weights[rel.EndNode][rel.StartNode] += weight
-		totalWeight += 2 * weight
+		index[node.ID] = i
 	}
-
-	if totalWeight == 0 {
-		result := make([]CommunityResult, len(nodes))
-		for i, node := range nodes {
-			result[i] = CommunityResult{Node: node, CommunityID: node.ID}
-		}
-		return result
+	options := louvain.DefaultOptions()
+	options.MaxIterations = config.MaxIterations
+	options.Tolerance = config.Threshold
+	options.Resolution = config.Resolution
+	run, err := louvain.RunUndirected(ctx, len(nodes), len(rels), func(i int) (int, int, float64, bool) {
+		rel := rels[i]
+		source, sourceFound := index[rel.StartNode]
+		target, targetFound := index[rel.EndNode]
+		return source, target, getRelWeight(rel), sourceFound && targetFound
+	}, options)
+	if err != nil {
+		return nil, err
 	}
-
-	degree := make([]float64, len(nodes))
-	for i, node := range nodes {
-		for _, w := range weights[node.ID] {
-			degree[i] += w
-		}
-	}
-
-	communityWeight := make(map[int64]float64)
-	for i, node := range nodes {
-		communityWeight[node.ID] = degree[i]
-	}
-
-	for iter := 0; iter < config.MaxIterations; iter++ {
-		improved := false
-		nodeOrder := rand.Perm(len(nodes))
-
-		for _, i := range nodeOrder {
-			node := nodes[i]
-			currentCommunity := community[i]
-
-			neighborCommunities := make(map[int64]float64)
-			for neighborID, weight := range weights[node.ID] {
-				if idx, ok := nodeIndex[neighborID]; ok {
-					neighborCommunities[community[idx]] += weight
-				}
-			}
-
-			currentIn := neighborCommunities[currentCommunity]
-			currentTot := communityWeight[currentCommunity]
-
-			bestCommunity := currentCommunity
-			bestGain := 0.0
-			ki := degree[i]
-
-			for comm, kiin := range neighborCommunities {
-				if comm == currentCommunity {
-					continue
-				}
-				sigmaTot := communityWeight[comm]
-				gain := config.Resolution*(kiin-currentIn) - ki*(sigmaTot-(currentTot-ki))/(2*totalWeight)
-				if gain > bestGain {
-					bestGain = gain
-					bestCommunity = comm
-				}
-			}
-
-			if bestCommunity != currentCommunity {
-				communityWeight[currentCommunity] -= ki
-				communityWeight[bestCommunity] += ki
-				community[i] = bestCommunity
-				improved = true
-			}
-		}
-
-		if !improved {
-			break
-		}
-	}
-
-	communityRemap := make(map[int64]int64)
-	nextID := int64(0)
-	for _, comm := range community {
-		if _, ok := communityRemap[comm]; !ok {
-			communityRemap[comm] = nextID
-			nextID++
-		}
-	}
-
+	membership := louvain.Final(run)
 	result := make([]CommunityResult, len(nodes))
 	for i, node := range nodes {
-		result[i] = CommunityResult{Node: node, CommunityID: communityRemap[community[i]]}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		result[i] = CommunityResult{Node: node, CommunityID: int64(membership[i])}
 	}
-	return result
+	return result, nil
 }
 
 // LabelPropagation detects communities using label propagation.

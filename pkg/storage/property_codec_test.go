@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/binary"
 	"testing"
 
@@ -8,6 +9,19 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/vmihailenco/msgpack/v5"
 )
+
+// encodeTokenizedPropertiesForTest encodes props in one update transaction and
+// returns the tokenized body, the fixture both empty-map encoder contracts read.
+func encodeTokenizedPropertiesForTest(t *testing.T, eng *BadgerEngine, props map[string]any) []byte {
+	t.Helper()
+	var data []byte
+	require.NoError(t, eng.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
+		var err error
+		data, err = eng.encodeTokenizedProperties(txn, "ns", props)
+		return err
+	}))
+	return data
+}
 
 // TestEncodeTokenizedProperties_Empty covers the early-return path for
 // empty/nil property maps. Decoders must still see a well-formed
@@ -23,16 +37,11 @@ func TestEncodeTokenizedProperties_Empty(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var data []byte
-			require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
-				var err error
-				data, err = eng.encodeTokenizedProperties(txn, "ns", tc.props)
-				return err
-			}))
+			data := encodeTokenizedPropertiesForTest(t, eng, tc.props)
 			require.NotEmpty(t, data, "empty property map must still produce a msgpack body")
 
 			// Round-trip back to a string map and verify length 0.
-			out, err := eng.decodeTokenizedProperties("ns", data)
+			out, err := eng.decodeTokenizedPropertiesProjected(nil, "ns", data, nil)
 			require.NoError(t, err)
 			require.NotNil(t, out, "decode of empty map must return a non-nil map")
 			require.Empty(t, out)
@@ -46,7 +55,7 @@ func TestEncodeTokenizedProperties_Empty(t *testing.T) {
 // to the right place.
 func TestEncodeTokenizedProperties_AllocatesIDs(t *testing.T) {
 	eng := newTestEngine(t)
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		// Pre-allocate "name" so we can verify the encoder reuses its ID.
 		preID, err := eng.propKeyDict.resolveOrAllocateInTxn(txn, "ns", "name")
 		require.NoError(t, err)
@@ -64,7 +73,7 @@ func TestEncodeTokenizedProperties_AllocatesIDs(t *testing.T) {
 		require.Equal(t, "name", gotName)
 
 		// Round-trip and assert both keys decode correctly.
-		out, err := eng.decodeTokenizedProperties("ns", data)
+		out, err := eng.decodeTokenizedPropertiesProjected(nil, "ns", data, nil)
 		require.NoError(t, err)
 		require.Equal(t, "Alice", out["name"])
 		require.Equal(t, int64(7), out["newKey"])
@@ -80,7 +89,7 @@ func TestEncodeTokenizedProperties_AllocatesIDs(t *testing.T) {
 func TestDecodeTokenizedProperties_EmptyData(t *testing.T) {
 	eng := newTestEngine(t)
 	for _, data := range [][]byte{nil, {}} {
-		out, err := eng.decodeTokenizedProperties("ns", data)
+		out, err := eng.decodeTokenizedPropertiesProjected(nil, "ns", data, nil)
 		require.NoError(t, err)
 		require.NotNil(t, out)
 		require.Empty(t, out)
@@ -92,7 +101,7 @@ func TestDecodeTokenizedProperties_EmptyData(t *testing.T) {
 // data. The error message names the failure context.
 func TestDecodeTokenizedProperties_MalformedPayload(t *testing.T) {
 	eng := newTestEngine(t)
-	_, err := eng.decodeTokenizedProperties("ns", []byte{0xff, 0xff, 0xff})
+	_, err := eng.decodeTokenizedPropertiesProjected(nil, "ns", []byte{0xff, 0xff, 0xff}, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "decoding tokenized properties")
 }
@@ -117,7 +126,7 @@ func TestDecodeTokenizedProperties_UnknownIDErrors(t *testing.T) {
 	body = appendUvarint(body, 999) // id = 999
 	body = append(body, val...)
 
-	_, err = eng.decodeTokenizedProperties("ns", body)
+	_, err = eng.decodeTokenizedPropertiesProjected(nil, "ns", body, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "property key id 999 not in dictionary for namespace \"ns\"")
 }
@@ -127,7 +136,7 @@ func TestDecodeTokenizedProperties_UnknownIDErrors(t *testing.T) {
 func TestDecodeTokenizedProperties_EmptyTokenizedMap(t *testing.T) {
 	eng := newTestEngine(t)
 	body := appendUvarint(nil, 0) // count = 0
-	out, err := eng.decodeTokenizedProperties("ns", body)
+	out, err := eng.decodeTokenizedPropertiesProjected(nil, "ns", body, nil)
 	require.NoError(t, err)
 	require.NotNil(t, out)
 	require.Empty(t, out)
@@ -216,7 +225,7 @@ func TestDecodeTokenizedProperties_TruncatedID(t *testing.T) {
 	eng := newTestEngine(t)
 	body := appendUvarint(nil, 1) // count=1
 	body = append(body, 0x80)     // start of varint, but truncated
-	_, err := eng.decodeTokenizedProperties("ns", body)
+	_, err := eng.decodeTokenizedPropertiesProjected(nil, "ns", body, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "id varint")
 }
@@ -227,7 +236,7 @@ func TestDecodeTokenizedProperties_TruncatedID(t *testing.T) {
 func TestDecodeTokenizedProperties_CountExceedsPayload(t *testing.T) {
 	eng := newTestEngine(t)
 	body := appendUvarint(nil, 100) // count=100, but no entries follow
-	_, err := eng.decodeTokenizedProperties("ns", body)
+	_, err := eng.decodeTokenizedPropertiesProjected(nil, "ns", body, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "ran out of bytes")
 }
@@ -236,7 +245,7 @@ func TestDecodeTokenizedProperties_CountExceedsPayload(t *testing.T) {
 // where a value's msgpack stream is incomplete.
 func TestDecodeTokenizedProperties_TruncatedValue(t *testing.T) {
 	eng := newTestEngine(t)
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		_, err := eng.propKeyDict.resolveOrAllocateInTxn(txn, "ns", "k")
 		require.NoError(t, err)
 		_ = eng.propKeyDict.flushTxnCounters(txn)
@@ -248,7 +257,7 @@ func TestDecodeTokenizedProperties_TruncatedValue(t *testing.T) {
 	body = append(body, 0xc4)     // bin8 type tag, expects 1B length + bytes
 	// Truncated — no length byte follows.
 
-	_, err := eng.decodeTokenizedProperties("ns", body)
+	_, err := eng.decodeTokenizedPropertiesProjected(nil, "ns", body, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "decoding tokenized properties")
 }
@@ -259,7 +268,7 @@ func TestDecodeTokenizedProperties_TrailingBytes(t *testing.T) {
 	eng := newTestEngine(t)
 	body := appendUvarint(nil, 0) // count=0
 	body = append(body, 0xff, 0xff)
-	_, err := eng.decodeTokenizedProperties("ns", body)
+	_, err := eng.decodeTokenizedPropertiesProjected(nil, "ns", body, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "trailing bytes")
 }
@@ -268,7 +277,7 @@ func TestDecodeTokenizedProperties_TrailingBytes(t *testing.T) {
 // branch where msgpack.Marshal fails on a property value.
 func TestEncodeTokenizedProperties_RejectsUnencodableValue(t *testing.T) {
 	eng := newTestEngine(t)
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		_, err := eng.encodeTokenizedProperties(txn, "ns", map[string]any{
 			"badField": make(chan int),
 		})
@@ -341,20 +350,20 @@ func TestDecodeNode_RejectsNonV2Body(t *testing.T) {
 	eng := newTestEngine(t)
 
 	t.Run("empty body", func(t *testing.T) {
-		_, err := eng.decodeNode("ns", nil)
+		_, err := eng.decodeNodeProjected(nil, "ns", nil, nil)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "node body empty")
 	})
 
 	t.Run("wrong leading byte", func(t *testing.T) {
-		_, err := eng.decodeNode("ns", []byte{0xff, 0x00})
+		_, err := eng.decodeNodeProjected(nil, "ns", []byte{0xff, 0x00}, nil)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "unexpected format byte 0xff")
 		require.Contains(t, err.Error(), "expected V2 (0x10)")
 	})
 
 	t.Run("truncated props length varint", func(t *testing.T) {
-		_, err := eng.decodeNode("ns", []byte{nodeFormatTokenizedV1})
+		_, err := eng.decodeNodeProjected(nil, "ns", []byte{nodeFormatTokenizedV1}, nil)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "malformed properties length varint")
 	})
@@ -364,7 +373,7 @@ func TestDecodeNode_RejectsNonV2Body(t *testing.T) {
 		body := []byte{nodeFormatTokenizedV1}
 		body = append(body, 100) // varint(100)
 		body = append(body, 0xff)
-		_, err := eng.decodeNode("ns", body)
+		_, err := eng.decodeNodeProjected(nil, "ns", body, nil)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "properties payload truncated")
 	})
@@ -376,14 +385,14 @@ func TestDecodeEdge_RejectsNonV2Body(t *testing.T) {
 	eng := newTestEngine(t)
 
 	t.Run("empty body", func(t *testing.T) {
-		_, err := eng.decodeEdgeBodyWithID("ns", nil, "")
+		_, err := eng.decodeEdgeBodyWithID(nil, "ns", nil, "")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "edge body empty")
 	})
 
 	t.Run("V1 compact format byte rejected", func(t *testing.T) {
 		body := []byte{edgeFormatCompactV1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01}
-		_, err := eng.decodeEdgeBodyWithID("ns", body, "")
+		_, err := eng.decodeEdgeBodyWithID(nil, "ns", body, "")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "unexpected format byte 0x02")
 	})
@@ -397,7 +406,7 @@ func TestDecodeEdge_RejectsNonV2Body(t *testing.T) {
 		}
 		body, err := encodeEdgeCompactV2Direct(t, eng, fakeEdge, 9999, 9998)
 		require.NoError(t, err)
-		_, err = eng.decodeEdgeBodyWithID("ns", body, "test:edge-x")
+		_, err = eng.decodeEdgeBodyWithID(nil, "ns", body, "test:edge-x")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "numID")
 	})
@@ -409,7 +418,7 @@ func TestDecodeEdge_RejectsNonV2Body(t *testing.T) {
 func encodeEdgeCompactV2Direct(t *testing.T, eng *BadgerEngine, edge *Edge, startNum, endNum uint64) ([]byte, error) {
 	t.Helper()
 	var data []byte
-	err := eng.withUpdate(func(txn *badger.Txn) error {
+	err := eng.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		var err error
 		data, err = eng.encodeEdgeCompactV2(txn, "ns", edge, startNum, endNum)
 		if err != nil {
@@ -440,7 +449,7 @@ func TestEncodedBodySize_ReductionForRepeatedKeys(t *testing.T) {
 	}
 
 	var v2Total, v1Total int
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		for i := 0; i < 100; i++ {
 			node := &Node{
 				ID:         NodeID("test:product-" + string(rune('a'+i%26))),

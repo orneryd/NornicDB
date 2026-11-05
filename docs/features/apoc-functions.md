@@ -3,7 +3,7 @@
 NornicDB has `apoc.*` functions and procedures from two sources:
 
 - **Built into the executor**, always available: inspect `SHOW FUNCTIONS` and `SHOW PROCEDURES` for the current registered surface.
-- **The optional APOC plugin** (`apoc.so`, built from `apoc/plugin-src/apoc`) has an inventory of 983 names. Registered names preserve their exact case. Its supported Go handler bindings are described below; registration alone does not establish that a name implements Neo4j APOC semantics or can accept Cypher values.
+- **The optional APOC plugin** (`apoc.so`, built from `apoc/plugin-src/apoc`) has an inventory of 982 names. Registered names preserve their exact case. Its supported Go handler bindings are described below; registration alone does not establish that a name implements Neo4j APOC semantics or can accept Cypher values.
 
 Some of these names aren't APOC names at all: NornicDB adds its own under the `apoc.*` and `gds.*` namespaces. They are listed under [NornicDB extensions](#nornicdb-extensions); a query that uses them won't run on Neo4j with APOC or GDS.
 
@@ -82,8 +82,78 @@ and negative values for unsigned arguments. Lists and maps convert recursively
 to their declared element types. Null binds to nullable Go interfaces, pointers,
 slices, or maps; it does not silently become an integer or other scalar zero.
 
+### APOC I/O loaders: Go API migration
+
+Every bundled `apoc.load` handler that performs real network or file I/O is
+context-first and takes the caller's statement context as its first Go
+argument: `Json`, `JSONItems`, `JsonParams`, `Csv`, `Xml`, `Html`, `Rest`,
+`GraphQL`, `Binary` and `Stream`. `JSONItems(shape)` is the canonical row
+loader: `JSONItems(DocumentItems)` publishes an array's items or one item for
+any other document, and `JSONItems(RequireArray)` requires an array. There is
+no separate `JsonStream` or `JsonArray` Go function: the `apoc.load.jsonStream`
+and `apoc.load.jsonArray` Cypher names bind those two shapes. `CsvStream` and
+`XmlSimple` are likewise no longer separate Go functions: their Cypher names are
+registered against the canonical `Csv` and `Xml` handlers, so there is no
+forwarding alias to call. The remaining `apoc.load.*` plugin exports are
+placeholders that return fixed data and perform no I/O (see
+`apoc/apoc_load_inventory_test.go`).
+
+Admission belongs to one owner, `pkg/apocio`. The query executor derives one
+immutable `apocio.Policy` from its configuration and binds the matching
+`apocio.Capability` in the statement context, so native procedures and bundled
+plugin handlers read the same capability instead of rebuilding a policy per
+call. Denied-by-default import file access, export file access and remote URL
+access, the remote URL allowlist, the address checks, the import root, the HTTP
+client defaults remain the shared policy. The default transport also judges the
+socket's resolved address before connecting, so a later DNS answer cannot bypass
+the prohibited-address rule. Native JSON procedures consume the
+`JSONItems(DocumentItems)` handler rather than maintaining a second decoder or
+row-shape branch.
+
+Source admission and readers observe the caller context. A canceled read delivers
+no further bytes; an in-flight OS read may finish, and its primary I/O error is
+preserved. This does not promise preemption inside an OS call or the standard
+JSON decoder. `Binary` is the canonical byte loader, and both `apoc.load.binary` and
+`apoc.load.stream` register it: it reads the source, closes it inside the
+statement lifetime and returns the bytes, because a statement retires its
+context when `Execute` returns, so a reader returned as a query value could
+not be read afterwards. Both Cypher names accept the source and an optional
+config map; the map is accepted as before and has no other effect, and more
+than one is rejected before any I/O. `Stream` remains the Go reader API for
+callers that read the returned reader while their own context is live, and
+those callers close it. The API migration does not add XML or HTML decoding: those Go
+handlers retain their existing placeholder results.
+
+A Go caller that is not a query executor must bind a capability explicitly:
+
+```go
+policy := apocio.NewPolicy(apocio.Config{
+	AllowImportFileAccess: true,
+	FileAccessRoot:        "/var/lib/nornicdb/import",
+})
+ctx := apocio.WithCapability(context.Background(), policy.Capability())
+value, err := apocload.Json(ctx, "payload.json")
+```
+
+There is no unrestricted fallback: a context without a bound capability
+receives `apocio.ErrCapabilityMissing` and performs no I/O, and binding the zero
+`apocio.Capability` over an already-privileged context shadows that context's
+access rather than inheriting it.
+
+A Go caller that previously called `JsonStream` or `JsonArray` binds the
+factory once and keeps the returned handler:
+
+```go
+document := apocload.JSONItems(apocload.DocumentItems)
+items, err := document(ctx, "payload.json")
+```
+
+There is no forwarding alias and no test-only compatibility wrapper. A shape
+other than `DocumentItems` or `RequireArray` is rejected before any source is
+opened.
+
 This removes the previous 18-signature dispatcher ceiling, not every capability
-limitation in the 983-name inventory. Cypher does not supply Go callbacks,
+limitation in the 982-name inventory. Cypher does not supply Go callbacks,
 `io.Reader` instances, or private APOC entity structs. Multiple non-error return
 values and function/channel return types are unsupported handler contracts.
 Transporting an arbitrary Go object is not guaranteed by accepting its Go
@@ -91,6 +161,240 @@ signature. Such entries require explicit adapters and semantic tests before they
 can be described as supported Cypher functions. Procedure names require a real
 procedure declaration/implementation; scalar functions are not automatically
 promoted to `CALL`.
+
+### APOC whole-graph helpers: Go API migration
+
+`apoc/storage.Storage.AllNodes` and `apoc/storage.Storage.AllRelationships` are
+context-first bulk reads: each takes the caller's context as its first argument
+and stops, without a partial collection, when that context is canceled or past
+its deadline. Every bundled APOC helper that reaches either read from a
+statement -- the label, meta, schema, search, warmup and refactor helpers the
+plugin exports as scalar functions, together with the helpers those exports
+call -- takes the calling statement's context as its first Go argument and
+hands it to each whole-graph read it makes, node and relationship alike. The
+query executor already binds a context-first handler's first parameter (above),
+so a canceled statement stops those reads. `apoc/apoc_bulk_read_context_test.go`
+extracts and pins that population and drives every member through a real
+cancellation and an expired deadline, requiring each node and relationship read
+to receive that same lifetime. There is no `apoc/storage.LifetimeContext`
+forwarding helper: a reader either takes the caller's context or names its own
+lifetime at the read.
+
+Six procedure-classified names (`apoc.meta.graph`, `apoc.meta.graphSample`,
+`apoc.meta.stats`, `apoc.schema.nodes`, `apoc.schema.relationships` and
+`apoc.stats.degrees`) have no statement path: `apoc/plugin_exports.go`
+classifies them as procedures and
+[the capability audit](apoc-procedure-capabilities.md) records that the bundled
+runtime and plugin implement none of those procedures. Their Go entries
+(`apoc.Call` or a direct call) carry no caller context, so their whole-graph
+reads name an explicit `context.Background()` lifetime where they read, and
+their Go signatures stay unchanged. `apoc.refactor.RenameRelProperty` is the
+one whole-graph helper with no registered APOC name at all: `apoc/apoc.go`
+registers nothing for it, so no statement and no `apoc.Call` reaches it, and its
+relationship read names the same explicit background lifetime. Go callers of
+the remaining whole-graph helpers pass their own context first and rebuild
+against the new signatures; `(*warmup.Functions).GetNodesByLabel` reads only its
+instance's warmup cache, so it keeps its one-argument Go signature.
+
+`apoc.search.nodeReduced` is the exception among the procedure-classified names:
+it is still procedure-classified, but its Go entry no longer runs on an
+unstated background lifetime. `(*search.Functions).NodeReduced(ctx, label,
+criteria, limit)` takes the caller's context first like every other
+`apoc.search` helper, so a Go caller supplies the lifetime its read runs under.
+`apoc.Call(name, args)` binds no context, so it cannot reach a context-first
+helper: a Go caller that wants the registered name looks it up with
+`apoc.GetInfo` and binds its own context as the handler's first argument.
+`apoc/apoc_bulk_read_context_test.go` pins the whole population -- including the
+package's own scan owners, which no APOC name reaches directly -- and asserts
+that a caller that stopped before admission makes no whole-graph read at all,
+while an in-flight cancel stops the helper without publishing a partial result.
+
+### Backend-bound instances: Go API migration
+
+APOC helpers do not read a package-level storage default. Every module whose
+helper actually reaches storage -- `label`, `meta`, `schema`, `search`,
+`warmup`, `refactor`, `stats`, `neighbors`, `rel`, `path`, `paths`, `nodes` and
+`node` -- exposes one instance owner:
+
+```go
+// Functions is one module's helpers bound to one backend.
+type Functions struct { backend storage.Storage } // immutable, unexported
+func New(backend storage.Storage) *Functions
+```
+
+Helpers that reach storage, directly or through another helper of the package,
+are methods of that instance; helpers with no backend and no instance-state
+dependency stay free functions with unchanged signatures. `warmup` also owns its
+warmup cache in the instance, so a backend swap cannot read another backend's
+cached graph. Go callers build the instance for the backend they serve and keep
+it:
+
+```go
+search := apocsearch.New(backend)
+nodes := search.Prefix(ctx, "Person", "name", "Ali")
+```
+
+`apoc.Initialize(backend, cfg)` builds every instance for `backend` and
+publishes one complete function registry. Its once-only and configuration
+ownership are unchanged. A later `apoc.SetStorage(backend)` publishes a complete
+replacement registry for future lookups and returns an error instead of
+panicking; a handler that was already admitted -- a `*registry.Callable` an
+executor, plugin or test retained -- keeps the backend it was built for, because
+nothing rebinds it. A rejected rebuild (a registration that fails to compile)
+publishes nothing and leaves the previous registry authoritative.
+`apoc.GetStorage()` returns the published default registry's own backend. There
+is no compatibility wrapper, no rebindable module global and no per-lookup lock
+inside a helper.
+
+`schema.Properties` and `meta.PropertyKeys` were byte-identical Go duplicates of
+the same property-key union. `(*meta.BoundFunctions).PropertyKeys` is now the one
+owner, registered directly under both Cypher names (`apoc.meta.propertyKeys` and
+`apoc.schema.properties`); the schema duplicate is removed rather than aliased.
+`apoc/apoc_backend_binding_test.go` drives the registered handlers of a supplied
+backend, of a second backend, of a retained handler and of two independently
+warmed instances, and `apoc/apoc_bulk_read_context_test.go` keeps the
+whole-graph population pinned with the bound-helper evidence.
+
+Ten further Go helpers were one-line forwards of another helper in the same
+package. Each Cypher name keeps its exact spelling, category, description and
+example metadata and registers the canonical owner directly; the forwarding Go
+declaration is removed rather than kept as a wrapper, so several Cypher names
+answer from one implementation:
+
+| Cypher name | retired Go alias | canonical owner |
+|---|---|---|
+| `apoc.neighbors.bfs` | `(*neighbors.Functions).BFS` | `(*neighbors.Functions).ToHop` |
+| `apoc.meta.export` | `(*meta.BoundFunctions).Export` | `(*meta.BoundFunctions).Schema` |
+| `apoc.meta.snapshot` | `(*meta.BoundFunctions).Snapshot` | `(*meta.BoundFunctions).Schema` |
+| `apoc.schema.export` | `(*schema.Functions).Export` | `(*schema.Functions).Info` |
+| `apoc.schema.snapshot` | `(*schema.Functions).Snapshot` | `(*schema.Functions).Info` |
+| `apoc.meta.cypherType` | `meta.CypherType` | `meta.Type` |
+| `apoc.meta.cypherTypes` | `meta.CypherTypes` | `meta.Types` |
+| `apoc.meta.diff` | `meta.Diff` | `meta.Compare` |
+| `apoc.meta.restore` | `meta.Restore` | `meta.Import` |
+| `apoc.schema.restore` | `schema.Restore` | `schema.Import` |
+
+The canonical signatures are unchanged, so a caller sees the same arguments,
+results, arity and conversion errors. `apoc.neighbors.bfs` keeps the
+three-argument `ToHop` signature (its retained metadata example now shows all
+three arguments), and `meta.Import`/`schema.Import` keep their metadata-only
+admission. `apoc/apoc_alias_binding_test.go` pins each name to the canonical
+owner's symbol and signature, its unchanged registration metadata, its results
+and argument errors, and a retained handler's own backend lifetime.
+
+Those ten declarations are exported Go API removals -- `Functions.Export`,
+`Functions.Snapshot`, `BoundFunctions.Export`, `BoundFunctions.Snapshot`,
+`meta.CypherType`, `meta.CypherTypes`, `meta.Diff`, `meta.Restore`,
+`schema.Restore` and `neighbors.Functions.BFS`. Go code that called one of them
+must be rebuilt against this source, and so must a binary or plugin built
+against the previous export set, including `apoc.so` from
+`apoc/plugin-src/apoc`: a Go plugin is loadable only when host and plugin are
+built together, and there is no compatibility wrapper.
+
+The metadata instance is `*meta.BoundFunctions`. The pure list helper keeps its
+original Go name, `meta.Functions()`, because it reads no storage and has no
+instance: only the storage-dependent helper type needed a new name, so no Go
+caller of the value function has to change. The census resolves a registered
+name's owner from the handler's own runtime symbol and then from the parsed
+source, so `(*Functions)` receivers, `(*BoundFunctions)` receivers and free
+functions all resolve without assuming that every instance type shares one name.
+
+#### Converged `apoc.search` scan
+
+Storage-backed search methods share `newResultScan` for admission and one
+whole-graph read, `resultScan.each` for ordered label filtering and bounded
+cancellation, and `resultScan.result` for publication. Each public method states
+its own matching rule while ranging over that one traversal. Go 1.26.9 fully
+inlines both the iterator and each matching yield; there is no indirect callback
+or operation dispatch per node. The intermediate typed-request switch and cursor
+experiments are not retained.
+
+`multiSearchAll`, `multiSearchAny` and `parallel` use `selectLabels`, which calls
+their canonical single-label method once per label. It preserves input label
+order and the existing duplicate when a node belongs to several requested
+labels. There is no second graph traversal implementation for these methods.
+
+What the helpers agree on, they now share:
+
+* **Equality.** `equalValues` is the one comparison. Two scalars compare with
+  Go's `==`, so equality stays strict by dynamic type (`int64(7)`, `int(7)` and
+  `float64(7)` are three values, and NaN equals nothing); a list or a map
+  compares by contents, exactly as `coll.Contains` does. A graph that stores
+  list or map properties can therefore be searched instead of aborting the
+  statement with `comparing uncomparable type []interface {}`. Membership
+  (`in`, `notIn`) is the same owner applied to a list of values: one by one for
+  a short list, through a table of listed scalars for a longer one, and by
+  contents for a value the table cannot hold.
+* **Any versus all.** `multiSearchAny` selects a node that satisfies at least
+  one criterion and `multiSearchAll` one that satisfies every criterion;
+  `multiSearchAny` is not an alias of `multiSearchAll`.
+* **Suggestions.** `(*search.Functions).Suggest` is the one suggestion owner and
+  takes an optional limit: `apoc.search.suggest` passes the limit it was given
+  and `apoc.search.autocomplete` passes none and keeps its default of ten. The
+  Go `Autocomplete` wrapper is retired rather than kept as a forwarding alias.
+  `match` still transforms a glob into a regex, `parallel` still scans many
+  labels, and `didYouMean` still maps fuzzy matches -- none of them is a pure
+  alias, so nothing else was folded away.
+* **Caller lifetime.** The scan observes the caller before the read, at every
+  256-node boundary and once more before it publishes, so a caller that has
+  already stopped reads nothing and a caller that stops mid-scan receives the
+documented empty result instead of a partial collection. `selectLabels` observes
+the caller before each label, so a cancel after the first label returns nothing,
+and the string and score collections observe the caller before they publish.
+
+`apoc/search/search_convergence_test.go` and
+`apoc/search/search_registered_handler_test.go` pin these behaviours, the
+populations and the ordering. `apoc/search/search_scan_bench_test.go` and
+`apoc/search/search_postprocess_bench_test.go` carry the workloads the
+convergence is measured on, small (256 nodes) and large (16384 nodes).
+
+The performance comparison distinguishes convergence cost from the cost of the
+correctness fixes. The original per-helper bodies omitted the new cancellation
+checks and could panic when comparing list/map properties. On 256-node cheap
+predicates, the corrected iterator remains about 6–13% slower than those
+incomplete bodies in the six-pair series; this is disclosed rather than called
+neutral. Several comparisons also require a small fixed per-call allocation
+that the unsafe comparison avoided. No per-node allocation was added.
+
+Against separate loops with the **same cancellation and equality rules**, six
+paired runs of 256/16,384-node presence, absence, equality and four-value
+membership improve median time by about 1–9%, with equal allocation counts. A
+broader three-pair comparison covers all 52 labeled-scan/post-processing cases:
+allocation counts are equal throughout; one short `Exists` result is +5.2%,
+with a range crossing parity, while its longer six-pair run is −1.6%. The
+remaining cases stay within 5% or improve. These are matched local measurements
+on Apple M2 Max / Go 1.26.9, with ordinary machine activity and recorded
+variation, not a statistical or whole-system guarantee. CPU profiles and
+compiler diagnostics confirm the fused traversal and show property-map access
+as a major remaining cost. The slower local-accumulator and cursor variants
+were rejected.
+
+Cancellation tests retain real caller cancellation and the complete value/order
+populations. The deterministic in-block bound is proven on the iterator owner;
+registered-handler tests prove admission/post-read cancellation and actual owner
+reachability. They do not claim to inject an arbitrary mid-block public
+cancellation without a production hook or establish a wall-clock bound from a
+record-count assertion. No test is excluded from the integrated suite.
+
+### Retired Go PageRank stub (v1.4.4)
+
+The exported Go `apoc/algo.PageRank` function and its bundled scalar registration
+are removed. The function accepted no graph relationships and used empty incoming
+link/outdegree stubs, so it could not compute graph-dependent rankings. Rebuild Go
+consumers/plugins after removing that call; there is no compatibility wrapper.
+
+Use the supported native procedure through the query API:
+
+```cypher
+CALL apoc.algo.pageRank(['Person'], {iterations: 20, dampingFactor: 0.85})
+YIELD node, score
+RETURN node, score
+```
+
+The native procedure retains its existing graph, ranking and cancellation owner.
+The optional plugin catalog now contains 982 registrations: 118 procedure-only
+names, 864 scalar names, and 814 exported functions after 50 native-owner
+exclusions. The query engine's native APOC function catalog remains 52 names.
 
 ## Quick Start
 
@@ -208,7 +512,7 @@ plugins_dir: /opt/nornicdb/plugins
 # Enable/disable categories
 categories:
   coll: true
-  text: true
+  text: false # Enable selected text functions below
   math: true
   algo: false # Disable expensive algorithms
   create: false # Disable write operations
@@ -217,7 +521,7 @@ categories:
 functions:
   "apoc.export.*": false # Disable all export
   "apoc.import.*": false # Disable all import
-  "apoc.algo.pageRank": true # Re-enable specific algorithm
+  "apoc.text.camelCase": true # Enable one text function
 
 # Security
 security:
@@ -899,10 +1203,15 @@ CALL apoc.search.regex('Person', 'email', '.*@example\\.com')
 YIELD node
 RETURN node
 
-// Autocomplete
+// Suggestions (up to ten); apoc.search.suggest takes an explicit limit
 CALL apoc.search.autocomplete('Person', 'name', 'Al')
 YIELD suggestion
 RETURN suggestion
+
+// Any-criteria search across labels
+CALL apoc.search.multiSearchAny(['Person', 'Company'], {name: 'Alice', status: 'active'})
+YIELD node
+RETURN node
 ```
 
 ### Spatial Functions (`apoc.spatial.*`)
@@ -1119,7 +1428,7 @@ What carries over from Neo4j with APOC, and what doesn't:
 
 - **Built-in functions:** `SHOW FUNCTIONS` lists 48 built-in `apoc.*` functions (49 beside a loaded plugin's case-distinct `apoc.coll.SUM`). Of the original 36, 31 are real APOC functions, four are [NornicDB extensions](#nornicdb-extensions), and `apoc.coll.split` is an APOC procedure offered here as a function. The twelve [native graph, path and temporal functions](#native-graph-and-temporal-values) — `apoc.node.id`, `apoc.node.labels`, `apoc.node.degree`, `apoc.rel.id`, `apoc.rel.type`, `apoc.rel.startNode`, `apoc.rel.endNode`, `apoc.nodes.connected`, `apoc.path.elements`, `apoc.path.slice`, `apoc.path.combine`, and `apoc.temporal.format` — bring the total to 48. `apoc.node.id` and `apoc.rel.id` keep NornicDB's accepted string-ID design exception; they do not implement Neo4j's numeric internal IDs.
 - **Built-in procedures:** `SHOW PROCEDURES` lists the current registered surface. The GDS-named graph catalog — `gds.graph.list`, `gds.graph.drop`, `gds.graph.exists`, and `gds.graph.project` — now takes GDS's parameters and returns GDS's columns, as do `gds.fastRP.stream` / `gds.fastRP.stats` (#1161 closed); `gds.version` answers as a function. The `gds.linkPrediction.*.stream` names and the `apoc.algo.*` family remain [NornicDB extensions](#nornicdb-extensions). The remaining procedure capability gaps — the 102 of 118 historical procedure-only catalog entries with no bundled `CALL` contract — are tracked in the [versioned procedure capability audit](apoc-procedure-capabilities.md) and [#1318](https://github.com/orneryd/NornicDB/issues/1318).
-- **The APOC plugin:** the Go library catalog has 983 names, including genuine functions, procedure-only entries and NornicDB extensions. The plugin excludes the 118 confirmed procedure-only entries from scalar function exports, exporting the other 865. See the [versioned procedure capability audit](apoc-procedure-capabilities.md) for every entry, available native contracts, and remaining gaps; the typed handler dispatcher does not certify full APOC semantics. Loaded function metadata is available through `SHOW FUNCTIONS`.
+- **The APOC plugin:** the Go library catalog has 982 names, including genuine functions, procedure-only entries and NornicDB extensions. The plugin excludes the 118 confirmed procedure-only entries and 50 scalar names owned by native implementations, exporting 814 functions. See the [versioned procedure capability audit](apoc-procedure-capabilities.md) for every entry, available native contracts, and remaining gaps; the typed handler dispatcher does not certify full APOC semantics. Loaded function metadata is available through `SHOW FUNCTIONS`.
 - File operations respect security settings, and the plugin system allows custom extensions. Performance characteristics may differ.
 
 ## NornicDB extensions
@@ -1175,7 +1484,7 @@ These names are NornicDB's own: they don't exist in APOC Core, APOC Extended or 
 - `apoc.refactor` (9): categorizeProperty, changeType, denormalize, invertRelationship, normalize, redirectRelationship, renameLabel, renameProperty, renameType
 - `apoc.cypher` (8): explain, parse, profile, runFirstColumn, toJson, toList, toMap, validate
 - `apoc.diff` (7): deep, lists, maps, merge, patch, strings, summary
-- `apoc.algo` (6): allPairs, betweennessCentrality, closenessCentrality, community, degreeCentrality, pageRank
+- `apoc.algo` (5): allPairs, betweennessCentrality, closenessCentrality, community, degreeCentrality
 - `apoc.text` (6): bytesToString, fromCodePoint, **ltrim**, **reverse**, **rtrim**, **trim**
 - `apoc.agg` (5): frequencies, histogram, **mode**, percentile, **stdev**
 - `apoc.coll` (5): containsAny, isEmpty, isNotEmpty, reverse, slice

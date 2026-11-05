@@ -1,0 +1,248 @@
+# Replicated entity commits in v1.4.4
+
+Explicit entity write transactions commit on the current leader. A follower returns
+`NotALeader`; retry the complete transaction on the leader so its reads and writes
+share the correct snapshot. Ordinary direct writes retain follower forwarding.
+The leader prepares the mutation and checks its admission before recording it.
+
+Preparation preserves the originating write policy: direct writes retain native
+commit durability, implicit bulk writes retain configured write-behind eligibility
+even for a single item, and explicit transactions retain explicit commit durability.
+Receivers preserve that policy. WAL recovery physically applies already accepted
+writes without issuing another buffered acknowledgement or WAL record.
+
+Accepted work belongs to its commit coordinator. A caller cancellation or timeout
+does not prove rollback: the write can still apply. Pending work retains its quota
+reservation until application or a definite discard. Check the resulting data before
+issuing a new, non-idempotent request after an uncertain outcome.
+
+Direct Go writes expose errors after acceptance as `*storage.AcceptedCommitError`.
+Use `errors.As` to inspect `State` (`CommitApplied` or `CommitRecoveryPending`)
+and `LogicalID` when available. `errors.Is` still reaches the original error.
+An error from a failed forwarded reply is recovery-pending because the leader
+may have accepted the request. A definite pre-admission rejection remains an
+ordinary error. Do not roll back catalog admission on an accepted error.
+
+An outer WAL wrapper preserves the first authoritative commit submitter and its
+admission gate, even when that decorator inherits ordinary CRUD methods. Observed
+updates use the registered namespace preparer before journaling. Preparation and
+journal admission share one snapshot barrier; accepted submission owns its release.
+Ordinary native blind writes retain their existing staging path.
+
+Bulk deletion still skips absent and repeated IDs. Only actual deletions enter
+the accepted semantic record. Replaying a previously accepted transaction after
+prefix deletion does not resurrect its entities; a new write requires a new
+transaction identity.
+
+## Retired low-level replication commands
+
+The internal `CmdCypher`, `CmdSetProperty` and `CmdBatchWrite` entry points are
+removed. Their numeric wire slots remain reserved; historical commands in those
+slots fail explicitly instead of being interpreted as a different command or
+silently replayed. `StorageAdapter.SetExecutor` is removed with raw-query replay.
+
+Use the normal Cypher API over Bolt or HTTP for queries and property changes. For
+an atomic group of entity changes, use an explicit transaction through those APIs,
+or the Go transaction API and its prepared commit route. Do not submit raw query
+text or the retired batch payload directly to a replicator.
+
+Upgrade every cluster member before using the new atomic entity commit envelope.
+A node must understand the envelope and accepted semantic WAL record to replay
+those writes correctly. Do not downgrade a store containing those records to a
+version that cannot read them. Before upgrading an installation with outstanding
+retired raw-command records, drain them using the old version and verify its state;
+keep a backup. The new version does not automatically translate those records.
+
+## Custom Go storage adapters
+
+`NewDatabaseManager(ctx, storage.Engine, config)` and catalog mutations now require
+an explicit operation context; see [catalog API migration](catalog-context-api.md).
+An engine used for managed writes must expose `storage.ManagedEntityEngine`: native transactions,
+coherent stored-entity observation, commit submission, and the shared
+`storage.ManagedEntityRuntimeRegistry`. Native engines provide these capabilities.
+The registry keeps one accounting, reservation and limit-policy owner for each
+physical namespace across manager views.
+
+Count-store decorators also forward `storage.NamespaceEdgeTypeStatsProvider`.
+`NamespaceRelationshipCount` dispatches its typed tier to that provider; a
+missing capability is `ErrInvalidData`, never a global count or a scan.
+
+A transparent decorator implements `storage.EngineUnwrapper.GetInnerEngine()` to
+expose its actual backing engine. A decorator that applies write policy also
+implements `storage.EntityWriteBoundary.WithEntityChange`. It must reject the
+operation or invoke the supplied staging continuation exactly once, returning its
+result. It must not perform a separate write instead of that continuation.
+
+A read-policy decorator uses
+`storage.StoredEntityReadBoundary.WithStoredEntityRead` to wrap the supplied
+point-read or scan continuation exactly once. This preserves the transaction's
+actual snapshot; it must not substitute a later independent read.
+
+If required managed capabilities are absent, the requested entity mutation fails
+with a descriptive `storage.ErrInvalidData` before staging. Existing unlimited,
+uninitialized opaque-engine paths remain available; they do not supply the atomic
+managed-write contract merely by implementing `storage.Engine`.
+
+Go consumers applying a semantic replication payload now call
+`storage.DecodeEntityTransaction(payload)` first and pass its envelope and
+operations to `storage.SubmitAcceptedEntityTransaction(ctx, engine, envelope,
+operations, settle)`. This replaces the former byte-payload parameter and lets
+the replication owner reject malformed data before recording it without decoding
+the same transaction twice. Accepted transactions that later fail locally remain
+available for recovery.
+
+## Native image interpretation
+
+`BeginEntityTransaction(ctx, engine, mode)` binds the originating durability policy.
+Node updates use `tx.UpdateGraphNode(ctx, storage.NodeUpdateRequest{Before: before, After: after, Policy: policy})`.
+`Engine.UpdateNode` accepts the same request; relationship updates accept
+`storage.EdgeUpdateRequest{Before: before, After: after}`. `ClientNodeEdits` retains normal managed-embedding
+reconciliation; `StoredNodeImages` applies a complete authoritative stored image.
+The decoded accepted semantic coordinator selects the latter. Each operation
+supplies its policy, allowing a client edit and an authoritative image to share
+one transaction while preserving their different sidecar semantics. Both use
+one staging implementation. The old pointer-only update signatures are retired;
+Go integrations must migrate their callers and engine implementations.
+
+`Before` is the immutable image actually read by the writer. Keep it unchanged
+until the transaction ends, and construct an independent `After` image (copy only
+fields being modified). A peer deletion after that observation is a retryable
+conflict, rather than an absent-target error or an upsert. A nil `Before`
+deliberately selects a blind image write, used by restoration and replay owners.
+Read-only operations retain no observation map. Namespace adapters bind `After`
+while preserving the caller's observation; replicated observed writes carry both
+images to the leader, which validates and normalizes them before publication.
+
+An update carrying an unchanged UNIQUE key does not acquire that key again.
+If another writer wins, the losing non-key update returns `storage.ErrConflict`
+(`Neo.TransientError.Transaction.Outdated`), while a genuine newly claimed
+key retains `ConstraintValidationFailed`. Commit checks compare retained mutation
+preimages against the current merged stored state, bypassing unversioned caches.
+Buffered snapshots retain their begin-time target presence across generation
+retirement; commit, rollback and engine close release those pins and memory leases.
+
+Infrastructure failures while reading or decoding commit validation state return
+`*storage.CommitFailureError`. Its `Cause` remains in the error chain; the shared
+HTTP/Bolt mapper reports `Neo.DatabaseError.Transaction.TransactionCommitFailed`
+instead of a constraint violation, retryable conflict or syntax error. For example:
+
+```go
+err := tx.Commit()
+var readFailure *storage.CommitFailureError
+if errors.As(err, &readFailure) {
+    // Inspect readFailure.Cause or use errors.Is for the original storage error.
+    return err
+}
+```
+
+These checks and snapshot pins change no Badger keys, persisted payloads, WAL
+encoding or storage version.
+
+```go
+tx, err := storage.BeginEntityTransaction(ctx, engine, storage.CommitModeExplicit)
+if err != nil { return err }
+defer tx.Rollback()
+before, err := tx.GetNode(ctx, id)
+if err != nil { return err }
+after := *before
+after.Properties = map[string]any{"name": "updated"}
+if err := tx.UpdateGraphNode(ctx, storage.NodeUpdateRequest{
+    Before: before, After: &after, Policy: storage.ClientNodeEdits,
+}); err != nil { return err }
+return tx.Commit()
+```
+
+Transaction pending indexes mirror already-staged writes. Cancellation remains a
+preparation outcome; index retirement cannot abort halfway through an accepted
+staging step and leave point, label and property reads reporting different state.
+
+The redundant Go batch replay helper `ReplayWALEntries` is removed. Keep the
+single-entry `ReplayWALEntry` applier and accumulate its actual outcomes with
+`ReplayResult.Record`; see the [WAL migration example](../architecture/wal-property-bindings.md#go-batch-replay).
+
+## Namespace DROP and Restore accounting
+
+A whole-namespace DROP retains a durable cleanup intent until its intrinsic
+cleanup is complete. If cleanup fails, error-returning graph reads and writes for that namespace return
+`storage.ErrConflict`; global graph scans and counts also fail while they would
+include the unfinished namespace. Explicitly scoped reads and writes for other
+namespaces remain available. Retry the same DROP to finish cleanup. Opening the
+store or restoring a backup with an unfinished intent completes that cleanup before
+serving graph operations.
+
+`DatabaseManager.DropDatabase` also records its catalog intent before native
+deletion. A rejected intent write leaves the data and live catalog intact.
+After admission, an error keeps the database unavailable (`ErrDatabaseOffline`)
+until retry or writable manager startup completes removal. Catalog completion is
+synced before a successful DROP returns, so same-name recreation cannot inherit
+an old pending catalog intent. Read-only managers retain pending state without
+applying cleanup. Physical deletion continues through the native prefix owner.
+
+Successful Restore invalidates initialized managed usage in attached managers.
+The next managed write reads actual restored usage before admission, preserving
+the namespace's configured limits and outstanding reservations. Size reporting
+retains its existing last-known-value contract until refreshed; it is not an
+admission snapshot.
+
+
+## Typed Go admission and publication
+
+`PrepareEntityCommit(ctx, EntityCommitRequest{LogicalID: id})` prepares changes
+already staged by the caller. Replay passes its existing decoded `Operations`
+slice in that request. Admission observes the durable or acknowledged receipt
+once before applying the operations; an existing receipt skips them entirely.
+The request does not copy the slice or allocate a staging callback.
+
+`PublishCommit(ctx, CommitPublication{AfterPublication: callback})` is the single
+native publication implementation. The callback runs once after successful
+publication, after locks are released and before synchronous listeners. A
+canceled or rejected commit does not invoke it. Accepted preparation uses its
+private continuation; public callers cannot publish a detached transaction.
+
+These replace `PrepareLogicalCommitReceipt`, `CommitContextWithPublication` and
+the separate private preparation/publication implementation. Migrate Go callers
+to the typed requests; no compatibility forwarding entry points remain. Standard
+transaction-interface `Commit` and `CommitContext` remain supported. HTTP/Bolt
+behavior and persisted Badger keys and payloads are unchanged.
+
+
+Encoding also uses one typed `EntityTransactionRequest`: pass only `Prepared`
+for an accepted commit, or supply `Namespace`, `LogicalID`, `Operations` and
+`Mode` for decoded operations. Combining the two sources is rejected. Replication
+and WAL callers use the immutable prepared source directly, avoiding the public
+`Operations()` diagnostic copy. That diagnostic view now detaches before-images
+and cascading-deletion IDs as well as after-images; changing a returned image
+cannot mutate the accepted commit. The semantic transaction wire is unchanged.
+
+The [paired UNIQUE commit measurements](../performance/pr1655-unique-claims.md)
+record the workload, correctness boundary and allocation effects of these checks.
+
+### Context-bearing authority and drains
+
+`PreparedEntityCommit.RetainAcceptedAuthority(ctx)` is the single authority
+retention entry point. Replace calls to `RetainAcceptedAuthorityWithContext`
+with this name; former no-argument calls supply an explicit context, or `nil`
+when the existing durable owner's hold must not be canceled. Accepted native
+completion keeps its independent lifetime.
+
+`BadgerEngine.FlushWriteBehind(ctx)` replaces both former flush signatures.
+Callers waiting for admission pass their request context; recovery and snapshot
+owners that must finish after acceptance pass `nil`. Cancellation stops the
+waiter without discarding independently accepted replay. Implementations of
+optional flush capabilities must accept `context.Context` as well.
+
+
+### Individual buffered mutations and index visibility markers
+
+Use `WriteBehindBuffer.Append(BufferedMutation{Kind: BufferedOpNode, Node: node})`
+(and `BufferedOpEdge` or `BufferedOpDelete`) instead of the retired per-kind
+append methods. Check its error: invalid kind/payload combinations are rejected
+without changing the read epoch or the overlay. Node/edge payloads are copied
+before admission; their ID comes from the payload. Replay records remain private.
+Nil node/edge payloads still count as one operation, and an empty delete ID still
+names the wildcard scope.
+
+Use `BadgerEngine.SetIndexTombstones(keys, true)` to hide index entries and
+`SetIndexTombstones(keys, false)` to remove those visibility markers. This replaces
+`WriteIndexTombstones` and `DeleteIndexTombstones`; empty batches remain no-ops.
+These Go API changes do not change Badger keys, payloads, WAL, or storage version.

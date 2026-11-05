@@ -175,6 +175,13 @@ EACH       : 'EACH';
 EMBEDDING  : 'EMBEDDING';
 IF         : 'IF';
 TRANSACTIONS: 'TRANSACTIONS';
+CONCURRENT : 'CONCURRENT';
+ERROR      : 'ERROR';
+CONTINUE   : 'CONTINUE';
+BREAK      : 'BREAK';
+FAIL       : 'FAIL';
+REPORT     : 'REPORT';
+STATUS     : 'STATUS';
 ROWS       : 'ROWS';
 ROW        : 'ROW';
 TRIM       : 'TRIM';
@@ -228,6 +235,29 @@ DIGIT : HexInteger | OctalInteger | [0-9];
 // token numbers stay as they were.
 ALLREDUCE: 'ALLREDUCE';
 
+// Execution's path selectors and procedure-privilege commands share the
+// retained lexical product with statement facts.
+SHORTEST: 'SHORTEST';
+PATH: 'PATH';
+PATHS: 'PATHS';
+GROUP: 'GROUP';
+GROUPS: 'GROUPS';
+GRANT: 'GRANT';
+REVOKE: 'REVOKE';
+DENY: 'DENY';
+EXECUTE: 'EXECUTE';
+BOOSTED: 'BOOSTED';
+PROCEDURE: 'PROCEDURE';
+DBMS: 'DBMS';
+TO: 'TO';
+
+// The LOAD CSV reading clause keeps its words last among the keywords, so the
+// earlier token numbers stay as they were; `symbol` keeps them usable as
+// names, as it does for every other clause keyword.
+LOAD: 'LOAD';
+CSV: 'CSV';
+HEADERS: 'HEADERS';
+FIELDTERMINATOR: 'FIELDTERMINATOR';
 // ID must come after numbers so they aren't matched as IDs
 ID: Letter LetterOrDigit*;
 
@@ -237,12 +267,15 @@ ID: Letter LetterOrDigit*;
 DIGIT_NAME: [0-9]+ Letter LetterOrDigit*;
 
 ESC_LITERAL    : '`' ('``' | ~'`')* '`';
-// Single-quoted strings can contain any characters except unescaped quotes
-CHAR_LITERAL   : '\'' (~['\\] | EscapeSequence)* '\'';
-// Double-quoted strings can contain any characters except unescaped quotes
-STRING_LITERAL : '"' (~["\\] | EscapeSequence)* '"';
+// The generated lexer keeps doubled delimiters in one candidate token to
+// preserve its vocabulary. Public Parse/Validate entrypoints use the shared
+// token scanner to reject adjacent string literals; backslash escapes remain
+// the Cypher string-quote mechanism.
+CHAR_LITERAL   : '\'' ('\'' '\'' | ~['\\] | EscapeSequence)* '\'';
+STRING_LITERAL : '"' ('""' | ~["\\] | EscapeSequence)* '"';
 
-WS           : [ \t\r\n\u000C]+ -> channel(HIDDEN);
+// Keep direct syntax consumers aligned with public Unicode whitespace admission.
+WS           : [\p{White_Space}]+ -> channel(HIDDEN);
 COMMENT      : '/*' .*? '*/'    -> channel(COMMENTS);
 LINE_COMMENT : '//' ~[\r\n]*    -> channel(COMMENTS);
 // ERRCHAR catches unrecognized characters - keeps them visible to trigger errors
@@ -270,6 +303,6 @@ fragment LetterOrDigit: Letter | [0-9] | '$';
 
 Letter:
     [a-z_]
-    | ~[\u0000-\u007F\uD800-\uDBFF] // covers all characters above 0x7F which are not a surrogate
+    | ~[\u0000-\u007F\uD800-\uDBFF\p{White_Space}] // non-ASCII names exclude token whitespace
     | [\uD800-\uDBFF] [\uDC00-\uDFFF]
 ; // covers UTF-16 surrogate pairs encodings for U+10000 to U+10FFFF

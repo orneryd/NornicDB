@@ -1,8 +1,10 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
-	math "github.com/orneryd/nornicdb/pkg/math/libm"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"iter"
 	"strings"
 )
@@ -67,36 +69,7 @@ func (sequence cypherRange) values() iter.Seq[int64] {
 }
 
 func cypherIntegerValue(value interface{}) (int64, bool) {
-	switch number := value.(type) {
-	case int:
-		return int64(number), true
-	case int8:
-		return int64(number), true
-	case int16:
-		return int64(number), true
-	case int32:
-		return int64(number), true
-	case int64:
-		return number, true
-	case uint:
-		if uint64(number) > math.MaxInt64 {
-			return 0, false
-		}
-		return int64(number), true
-	case uint8:
-		return int64(number), true
-	case uint16:
-		return int64(number), true
-	case uint32:
-		return int64(number), true
-	case uint64:
-		if number > math.MaxInt64 {
-			return 0, false
-		}
-		return int64(number), true
-	default:
-		return 0, false
-	}
+	return valueconvert.IntegerValue(value)
 }
 
 // rangeBound is a range() start, end or step: an integer, or a float
@@ -104,14 +77,7 @@ func cypherIntegerValue(value interface{}) (int64, bool) {
 // -1), as Neo4j reads a float from a property; a float literal is the
 // static check's SyntaxError first. Anything else isn't a bound.
 func rangeBound(value interface{}) (int64, bool) {
-	if integer, ok := cypherIntegerValue(value); ok {
-		return integer, true
-	}
-	number, isFloat := cypherFloatValue(value)
-	if !isFloat || number != number || number >= 9.223372036854775807e18 || number <= -9.223372036854775808e18 {
-		return 0, false
-	}
-	return int64(number), true
+	return valueconvert.Int64(value, valueconvert.IntegerFloat)
 }
 
 func invalidRangeArgumentType(message string, value interface{}) error {
@@ -122,12 +88,12 @@ func invalidRangeArgumentType(message string, value interface{}) error {
 	)
 }
 
-func (e *StorageExecutor) validateRangeCalls(expression string, row pipelineRow) error {
+func (e *StorageExecutor) validateRangeCalls(ctx context.Context, expression string, row pipelineRow) error {
 	for _, argumentText := range namedFunctionArguments(expression, "range") {
 		parts := e.splitFunctionArgs(argumentText)
 		arguments := make([]interface{}, len(parts))
 		for index, part := range parts {
-			value, resolved, err := e.evaluateRowValue(strings.TrimSpace(part), row)
+			value, resolved, err := e.evaluateRowValue(ctx, strings.TrimSpace(part), row)
 			if err != nil {
 				return err
 			}
@@ -147,8 +113,11 @@ func (e *StorageExecutor) validateRangeCalls(expression string, row pipelineRow)
 	return nil
 }
 
-func (e *StorageExecutor) validatePipelineRangeArguments(rows []pipelineRow, clause, keyword string) error {
-	expressions := projectionExpressions(clause, keyword)
+func (e *StorageExecutor) validatePipelineRangeArguments(ctx context.Context, rows []pipelineRow, clause pipelineClause, keyword string) error {
+	return e.validatePipelineRangeExpressions(ctx, rows, projectionExpressions(ctx, clause, keyword))
+}
+
+func (e *StorageExecutor) validatePipelineRangeExpressions(ctx context.Context, rows []pipelineRow, expressions []string) error {
 	if len(expressions) == 0 {
 		return nil
 	}
@@ -157,7 +126,7 @@ func (e *StorageExecutor) validatePipelineRangeArguments(rows []pipelineRow, cla
 	}
 	for _, expression := range expressions {
 		for _, row := range rows {
-			if err := e.validateRangeCalls(expression, row); err != nil {
+			if err := e.validateRangeCalls(ctx, expression, row); err != nil {
 				return err
 			}
 		}
@@ -170,35 +139,33 @@ func namedFunctionArguments(expression, function string) []string {
 	function = lowerASCII(function)
 	arguments := make([]string, 0)
 	for index := 0; index < len(lower); {
-		quote := lower[index]
-		if quote == '\'' || quote == '"' || quote == '`' {
-			index++
-			for index < len(lower) {
-				if lower[index] == quote && !isBackslashEscaped(lower, index) {
-					index++
-					break
-				}
-				index++
-			}
+		if isCypherQuoteByte(lower[index]) {
+			index = skipCypherQuotedText(expression, index, expression[index])
 			continue
+		}
+		if lower[index] == '/' {
+			if end := queryCommentEnd(expression, index); end >= 0 {
+				index = end
+				continue
+			}
 		}
 		if !strings.HasPrefix(lower[index:], function) || !functionNameStartsAt(expression, index) {
 			index++
 			continue
 		}
 		open := index + len(function)
-		if open < len(lower) && isIdentByte(lower[open]) {
+		if open < len(lower) && cyphertext.NamePartAt(lower, open) {
 			index++
 			continue
 		}
-		for open < len(lower) && isWhitespace(lower[open]) {
+		for open < len(lower) && cyphertext.IsWhitespaceAt(lower, open) {
 			open++
 		}
 		if open >= len(lower) || lower[open] != '(' {
 			index++
 			continue
 		}
-		close := findMatchingDelimiter(expression, open, '(', ')')
+		close := cyphertext.FindMatchingDelimiter(expression, open, '(', ')', cyphertext.OpeningDelimiter)
 		if close < 0 {
 			return arguments
 		}

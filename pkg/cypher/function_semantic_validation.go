@@ -1,8 +1,12 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
+
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 )
 
 // validateKnownFunctions is the unknown-function check: every function a
@@ -12,12 +16,12 @@ import (
 // function calls; schema and administration commands declare rules, not
 // calls. A SHOW command's YIELD / WHERE / RETURN tail is checked, as in
 // Neo4j.
-func validateKnownFunctions(expression string) error {
+func validateKnownFunctions(ctx context.Context, expression string) error {
 	if !startsWithKeywordFold(strings.TrimSpace(expression), "SHOW") &&
-		(isSchemaCommandStatement(expression) || isCreateSchemaOrAdministrationCommand(expression)) {
+		(isSchemaCommandStatement(expression) || isMetadataCommand(ctx, expression, metadataCreateAdmission)) {
 		return nil
 	}
-	return forEachFunctionCall(expression, func(name, normalized string) error {
+	return forEachFunctionCall(ctx, expression, func(name, normalized string) error {
 		if _, known := builtInCypherFunctions[normalized]; known {
 			if nativeAPOCCaseMismatch(name) {
 				if _, found := pluginFunctionHandler(name); !found {
@@ -49,11 +53,11 @@ func validateKnownFunctions(expression string) error {
 // dynamic labels, path selectors), so the check reads the text before any
 // rewrite: Execute's statement and the statement text a procedure runs
 // (executeUserStatement).
-func internalFunctionCallError(text string) error {
+func internalFunctionCallError(ctx context.Context, text string) error {
 	if !containsInternalFunctionPrefix(text) {
 		return nil
 	}
-	return forEachFunctionCall(text, func(name, normalized string) error {
+	return forEachFunctionCall(ctx, text, func(name, normalized string) error {
 		if _, internal := builtInCypherFunctions[normalized]; internal && strings.HasPrefix(normalized, "__nornic_") {
 			return unknownFunctionError(name)
 		}
@@ -85,10 +89,26 @@ func unknownFunctionError(name string) error {
 // its name as written (dotted parts joined) and lower-cased, without
 // backticks. Strings and comments, a procedure a CALL names, the graph a USE
 // names and the keywords that can stand before a parenthesis are not calls.
-func forEachFunctionCall(text string, visit func(name, normalized string) error) error {
+// It stops at the caller's cancellation and returns that error.
+func forEachFunctionCall(ctx context.Context, text string, visit func(name, normalized string) error) error {
+	return forEachFunctionInvocation(ctx, text, func(name, normalized string, _ int) error { return visit(name, normalized) })
+}
+
+// forEachFunctionInvocation preserves the common semantic scanner and also
+// exposes the argument delimiter to consumers that need invocation semantics.
+// The scan belongs to the caller's request: it reads the caller's context at
+// each name and completion, returns the caller's cancellation, and the
+// USE grammar read it performs runs in the caller's context.
+func forEachFunctionInvocation(ctx context.Context, text string, visit func(name, normalized string, open int) error) error {
 	expression := text
 	for index := 0; index < len(expression); {
-		if expression[index] == '\'' || expression[index] == '"' {
+		if expression[index] >= 0x80 {
+			if width := queryWhitespaceAt(expression, index); width > 0 {
+				index += width
+				continue
+			}
+		}
+		if isCypherStringQuoteByte(expression[index]) {
 			index = skipQuotedSemanticText(expression, index)
 			continue
 		}
@@ -96,37 +116,71 @@ func forEachFunctionCall(text string, visit func(name, normalized string) error)
 			index = end
 			continue
 		}
-		name, next, ok := scanIdentifierToken(expression, index)
+		name, ok := cyphertext.ScanIdentifier(expression, index)
 		if !ok {
 			index++
 			continue
 		}
-		if expression[index] != '`' && (strings.EqualFold(name, "CALL") || strings.EqualFold(name, "USE")) {
-			index = skipCalledName(expression, next)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !isCypherBacktickByte(expression[index]) && isUseKeyword(name.Value) {
+			syntax, err := cypherantlr.ParseSyntax(ctx, expression[index:], cypherantlr.UseEntry, false, cypherantlr.AcceptedSource)
+			if err != nil {
+				// USE may also be an identifier in a fragment. Syntax validation
+				// owns invalid clauses; this scanner never guesses their extent.
+				// A canceled read is not an invalid clause: it is the caller's
+				// cancellation, and the scan reports it.
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return ctxErr
+				}
+				index = name.End
+				continue
+			}
+			reference := syntax.Root()
+			// The grammar owns the selector's invocationName and full extent.
+			// Only its argument expressions contain scalar function calls.
+			arguments := reference.ChildRule(cypherantlr.CypherParserRULE_useGraphArguments).ChildRule(cypherantlr.CypherParserRULE_expressionChain)
+			for i := 0; arguments.Valid() && i < arguments.ChildCount(); i++ {
+				argument := arguments.Child(i)
+				if argument.Rule() != cypherantlr.CypherParserRULE_expression {
+					continue
+				}
+				start, end := argument.Span()
+				if err := forEachFunctionInvocation(ctx, expression[index+start:index+end], func(name, normalized string, open int) error {
+					return visit(name, normalized, index+start+open)
+				}); err != nil {
+					return err
+				}
+			}
+			_, end := reference.Span()
+			index += end
 			continue
 		}
-		parts, cursor := dottedNameParts(expression, next, true)
-		name += parts
-		for cursor < len(expression) && isASCIIWhitespace(expression[cursor]) {
-			cursor++
+		if !isCypherBacktickByte(expression[index]) && strings.EqualFold(name.Value, "CALL") {
+			index = skipCalledName(expression, name.End)
+			continue
 		}
+		parts, cursor := dottedNameParts(expression, name.End, true)
+		name.Value += parts
+		cursor = queryGapEnd(expression, cursor)
 		if cursor >= len(expression) || expression[cursor] != '(' {
-			index = next
+			index = name.End
 			continue
 		}
 		index = cursor + 1
-		normalized := lowerASCII(normalizeProjectionColumnName(name))
+		normalized := lowerASCII(normalizeProjectionColumnName(name.Value))
 		// Clause and predicate keywords can legally be followed by a parenthesized
 		// pattern/expression (MATCH (n), STARTS WITH (...)). They are syntax, not
 		// function invocations.
 		if isNonFunctionSemanticKeyword(normalized) {
 			continue
 		}
-		if err := visit(name, normalized); err != nil {
+		if err := visit(name.Value, normalized, cursor); err != nil {
 			return err
 		}
 	}
-	return nil
+	return ctx.Err()
 }
 
 func isNonFunctionSemanticKeyword(name string) bool {
@@ -138,16 +192,16 @@ func isNonFunctionSemanticKeyword(name string) bool {
 	}
 }
 
-// skipCalledName returns where the name after CALL or USE ends: a procedure
-// or graph name, dotted, which is not a function call. Anything else after
+// skipCalledName returns where the procedure name after CALL ends. A procedure
+// name, dotted, is not a function call. Anything else after
 // the keyword (a subquery, its imports) is scanned on.
 func skipCalledName(expression string, start int) int {
-	_, end, ok := scanIdentifierToken(expression, skipSpaces(expression, start))
+	end, ok := cyphertext.ScanIdentifier(expression, skipSpaces(expression, start))
 	if !ok {
 		return start
 	}
-	_, end = dottedNameParts(expression, end, true)
-	return end
+	_, end.End = dottedNameParts(expression, end.End, true)
+	return end.End
 }
 
 // dottedNameParts returns the dotted parts (.b.c) following a name that ends
@@ -157,7 +211,7 @@ func skipCalledName(expression string, start int) int {
 // the source slice; only names containing trivia or quotes are normalized.
 func dottedNameParts(expression string, end int, spaced bool) (string, int) {
 	skip := func(index int) int {
-		if spaced && index < len(expression) && (isASCIIWhitespace(expression[index]) || expression[index] == '/' || expression[index] >= 0x80) {
+		if spaced && index < len(expression) && (cyphertext.IsWhitespaceAt(expression, index) || expression[index] == '/' || expression[index] >= 0x80) {
 			return queryGapEnd(expression, index)
 		}
 		return index
@@ -174,31 +228,25 @@ func dottedNameParts(expression string, end int, spaced bool) (string, int) {
 			return expression[origin:end], end
 		}
 		partStart := skip(dot + 1)
-		part, partEnd, ok := scanIdentifierToken(expression, partStart)
+		part, ok := cyphertext.ScanIdentifier(expression, partStart)
 		if !ok {
 			if normalizing {
 				return normalized.String(), end
 			}
 			return expression[origin:end], end
 		}
-		if !normalizing && (dot != end || partStart != dot+1 || expression[partStart] == '`') {
+		if !normalizing && (dot != end || partStart != dot+1 || isCypherBacktickByte(expression[partStart])) {
 			normalized.WriteString(expression[origin:end])
 			normalizing = true
 		}
 		if normalizing {
 			normalized.WriteByte('.')
-			normalized.WriteString(part)
+			normalized.WriteString(part.Value)
 		}
-		end = partEnd
+		end = part.End
 	}
 }
 
 func skipQuotedSemanticText(expression string, start int) int {
-	quote := expression[start]
-	for index := start + 1; index < len(expression); index++ {
-		if expression[index] == quote && !isBackslashEscaped(expression, index) {
-			return index + 1
-		}
-	}
-	return len(expression)
+	return skipCypherQuotedText(expression, start, expression[start])
 }

@@ -1,29 +1,21 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 )
 
-// Schema returns an isolated view for an ordinary schema-write transaction.
-// Ordinary schema changes cannot be mixed with entity writes. For example,
-// obtain view with tx.Schema(), call view.AddPropertyIndex and backfill it,
-// then tx.StageSchemaChanges() and tx.Commit(); rollback discards the changes.
-// Native knowledge-policy-only updates can instead use KnowledgePolicySchema.
-func (tx *BadgerTransaction) Schema() (*SchemaManager, error) {
-	tx.mu.Lock()
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
-		tx.mu.Unlock()
-		return nil, err
-	}
-	if len(tx.operations) > 0 {
-		tx.mu.Unlock()
-		return nil, mixedSchemaAndDataError(true)
-	}
-	tx.schemaTransaction = true
-	tx.mu.Unlock()
-	return tx.KnowledgePolicySchema()
-}
+// SchemaPurpose identifies the edits made through an isolated transaction schema.
+type SchemaPurpose uint8
+
+const (
+	// KnowledgePolicyChanges reads an isolated schema without claiming a writer;
+	// persisting a policy change performs admission before staging it.
+	KnowledgePolicyChanges SchemaPurpose = iota
+	// OrdinarySchemaChanges admits a schema writer and excludes entity writes.
+	OrdinarySchemaChanges
+)
 
 func mixedSchemaAndDataError(schemaAfterData bool) error {
 	message := "Tried to execute Write query after executing Schema modification"
@@ -33,18 +25,8 @@ func mixedSchemaAndDataError(schemaAfterData bool) error {
 	return fmt.Errorf("Neo.ClientError.Transaction.ForbiddenDueToTransactionType: %s", message)
 }
 
-func (tx *BadgerTransaction) ensureDataWriteAllowedLocked() error {
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
-		return err
-	}
-	if tx.schemaTransaction {
-		return mixedSchemaAndDataError(false)
-	}
-	return nil
-}
-
 // StageSchemaChanges captures ordinary DDL and its runtime backfills for commit.
-// Obtain the isolated view with Schema, apply and backfill the
+// Obtain the isolated view with Schema(OrdinarySchemaChanges), apply and backfill the
 // schema change, then call StageSchemaChanges before Commit. Rollback discards
 // the captured state; unchanged committed indexes keep their live caches.
 func (tx *BadgerTransaction) StageSchemaChanges() error {
@@ -58,18 +40,14 @@ func (tx *BadgerTransaction) StageSchemaChanges() error {
 	defer view.mu.RUnlock()
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureOperationAllowedLocked(transactionSchemaWrite); err != nil {
 		return err
 	}
-	if len(tx.operations) > 0 {
-		return mixedSchemaAndDataError(true)
-	}
-	tx.schemaTransaction = true
 	if !tx.knowledgeSchemaDirty {
 		return nil
 	}
 	snapshot := NewSchemaManager()
-	if err := snapshot.ReplaceFromDefinition(tx.knowledgeSchemaDefinition); err != nil {
+	if err := snapshot.ReplaceFromDefinition(context.Background(), tx.knowledgeSchemaDefinition); err != nil {
 		return err
 	}
 	for key, constraint := range snapshot.uniqueConstraints {
@@ -117,20 +95,38 @@ func cloneSchemaIndexValues[Key comparable](values map[Key][]NodeID) map[Key][]N
 	return cloned
 }
 
-func (sm *SchemaManager) installTransactionSchemaLocked(snapshot *SchemaManager) {
-	for key, constraint := range snapshot.uniqueConstraints {
-		if existing := sm.uniqueConstraints[key]; existing != nil && existing.Name == constraint.Name {
-			snapshot.uniqueConstraints[key] = existing
+// schemaInstallation selects preservation of unchanged live caches for a
+// transaction, or complete replacement by a validated detached definition.
+type schemaInstallation uint8
+
+const (
+	transactionSchemaInstallation schemaInstallation = iota
+	acceptedDefinitionInstallation
+)
+
+// installSchemaLocked is the canonical schema publication owner.
+// REQUIRES: caller holds sm.mu or exclusively owns sm.
+func (sm *SchemaManager) installSchemaLocked(snapshot *SchemaManager, installation schemaInstallation) {
+	// An ordinary schema transaction can replace the durable token order.
+	// Readers must stop using the previous accepted-token snapshot before
+	// installing it, just as they do for a definition replacement.
+	sm.tokenSnapshot.Store(nil)
+	defer sm.publishTokenSnapshotLocked(nil, nil)
+	if installation == transactionSchemaInstallation {
+		for key, constraint := range snapshot.uniqueConstraints {
+			if existing := sm.uniqueConstraints[key]; existing != nil && existing.Name == constraint.Name {
+				snapshot.uniqueConstraints[key] = existing
+			}
 		}
-	}
-	for name, index := range snapshot.compositeIndexes {
-		if existing := sm.compositeIndexes[name]; existing != nil && existing.Label == index.Label && reflect.DeepEqual(existing.Properties, index.Properties) {
-			snapshot.compositeIndexes[name] = existing
+		for name, index := range snapshot.compositeIndexes {
+			if existing := sm.compositeIndexes[name]; existing != nil && existing.Label == index.Label && reflect.DeepEqual(existing.Properties, index.Properties) {
+				snapshot.compositeIndexes[name] = existing
+			}
 		}
-	}
-	for name, index := range snapshot.rangeIndexes {
-		if existing := sm.rangeIndexes[name]; existing != nil && sameRangeIndexDefinition(index, existing) {
-			snapshot.rangeIndexes[name] = existing
+		for name, index := range snapshot.rangeIndexes {
+			if existing := sm.rangeIndexes[name]; existing != nil && sameRangeIndexDefinition(index, existing) {
+				snapshot.rangeIndexes[name] = existing
+			}
 		}
 	}
 	sm.tokenOrder = snapshot.tokenOrder
@@ -143,6 +139,17 @@ func (sm *SchemaManager) installTransactionSchemaLocked(snapshot *SchemaManager)
 	sm.vectorIndexes = snapshot.vectorIndexes
 	sm.rangeIndexes = snapshot.rangeIndexes
 	sm.lookupIndexes = snapshot.lookupIndexes
+	if installation == acceptedDefinitionInstallation {
+		// A replacement carries the knowledge layer too. Its bindings were
+		// compiled while the accepted definition loaded and are reused as that
+		// validated pointer instead of being compiled again after the durable
+		// write.
+		sm.decayProfileBundles = snapshot.decayProfileBundles
+		sm.decayProfileBindings = snapshot.decayProfileBindings
+		sm.promotionProfiles = snapshot.promotionProfiles
+		sm.promotionPolicies = snapshot.promotionPolicies
+		sm.bindingTable = snapshot.bindingTable
+	}
 }
 
 func sameRangeIndexDefinition(first, second *RangeIndex) bool {

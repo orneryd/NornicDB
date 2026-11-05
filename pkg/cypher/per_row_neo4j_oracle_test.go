@@ -187,10 +187,10 @@ func TestRowValueProgramsMatchNeo4j(t *testing.T) {
 				var ok bool
 				var err error
 				if text {
-					value, ok, err = exec.evaluateRowValueText(tc.expression, row)
+					value, ok, err = exec.evaluateRowValueText(t.Context(), tc.expression, row)
 				} else {
-					root, _ := (&rowValueCompiler{}).compile(tc.expression)
-					value, ok, err = root.eval(exec, row, nil)
+					root, _ := (&rowValueCompiler{}).compile(ctx, tc.expression)
+					value, ok, err = root.eval(t.Context(), exec, row, nil)
 				}
 				require.NoError(t, err)
 				require.NoError(t, getExpressionFailure(ctx))
@@ -215,7 +215,7 @@ func TestRowPredicateProgramsMatchNeo4j(t *testing.T) {
 				if text {
 					value = exec.evaluateRowPredicateText(ctx, tc.expression, row)
 				} else {
-					value = compileRowPredicateProgram(tc.expression).holds(exec, ctx, row)
+					value = compileRowPredicateProgram(ctx, tc.expression).holds(exec, ctx, row)
 				}
 				require.NoError(t, getExpressionFailure(ctx))
 				require.Equal(t, tc.want, value)

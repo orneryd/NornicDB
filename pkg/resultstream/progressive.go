@@ -109,7 +109,9 @@ func (s *Progressive) Pull(ctx context.Context, position uint64, n int) (*Page, 
 		rows, exhausted, err := expand(ctx, target)
 
 		s.mu.Lock()
-		if err == nil {
+		if s.closed {
+			err = ErrClosed
+		} else if err == nil {
 			if len(rows) < len(s.rows) {
 				err = ErrInvalidPosition
 			} else if s.growthOK != nil && !s.growthOK() {

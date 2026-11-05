@@ -3,10 +3,13 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/catalogadapter"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 func parseCypherValueToken(tok string) (string, error) {
@@ -14,10 +17,8 @@ func parseCypherValueToken(tok string) (string, error) {
 	if tok == "" {
 		return "", nil
 	}
-	if len(tok) >= 2 {
-		if (tok[0] == '\'' && tok[len(tok)-1] == '\'') || (tok[0] == '"' && tok[len(tok)-1] == '"') {
-			return tok[1 : len(tok)-1], nil
-		}
+	if decoded, quoted := cyphertext.DecodeString(tok, cyphertext.AcceptedSource); quoted {
+		return decoded, nil
 	}
 	if strings.HasPrefix(tok, "`") {
 		return unquoteBacktickIdentifier(tok)
@@ -25,9 +26,83 @@ func parseCypherValueToken(tok string) (string, error) {
 	return tok, nil
 }
 
-func parseConstituentFromTokens(tokens []string, idx *int) (map[string]interface{}, error) {
-	if *idx >= len(tokens) || !strings.EqualFold(tokens[*idx], "ALIAS") {
-		return nil, localizedError(localization.CypherCompositeConstituentAliasExpected(), nil)
+// compositeAdminPrefix consumes the fixed grammar of an administration head.
+// Lexical extents and keyword identity belong to cyphertext; this adapter
+// decides only which words the command requires and where its name begins.
+func compositeAdminPrefix(text string, words ...string) (int, bool) {
+	end := 0
+	for _, word := range words {
+		start, unfinished := cyphertext.GapEnd(text, end)
+		if unfinished >= 0 {
+			return start, false
+		}
+		wordEnd := cyphertext.KeywordEnd(text, start, word, cyphertext.CypherWord)
+		if wordEnd < 0 {
+			return start, false
+		}
+		end = wordEnd
+	}
+	end, unfinished := cyphertext.GapEnd(text, end)
+	return end, unfinished < 0
+}
+
+// compositeAdminName consumes one complete catalog name from a SHOW head.
+// The shared name owner supplies decoded identity. Dots and hyphens are the
+// native administration grammar; executeShowWithTail owns subsequent clauses.
+func compositeAdminName(text string) (string, bool) {
+	start, unfinished := cyphertext.GapEnd(text, 0)
+	if unfinished >= 0 || start == len(text) {
+		return "", false
+	}
+	if cyphertext.IsStringQuote(text[start]) {
+		end, closed := cyphertext.ScanQuotedText(text, start)
+		if !closed {
+			return "", false
+		}
+		name, quoted := cyphertext.DecodeString(text[start:end], cyphertext.AcceptedSource)
+		end, unfinished = cyphertext.GapEnd(text, end)
+		return name, quoted && name != "" && unfinished < 0 && end == len(text)
+	}
+	name, ok := cyphertext.ScanIdentifier(text, start)
+	if !ok {
+		return "", false
+	}
+	value := name.Value
+	end := name.End
+	for {
+		end, unfinished = cyphertext.GapEnd(text, end)
+		if unfinished >= 0 {
+			return "", false
+		}
+		if end == len(text) {
+			return value, value != ""
+		}
+		separator := text[end]
+		if separator != '.' && separator != '-' {
+			return "", false
+		}
+		start, unfinished = cyphertext.GapEnd(text, end+1)
+		if unfinished >= 0 || start == len(text) {
+			return "", false
+		}
+		value += string(separator)
+		if cyphertext.IsDigit(text[start]) {
+			end = cyphertext.NamePartEnd(text, start)
+			value += text[start:end]
+			continue
+		}
+		name, ok = cyphertext.ScanIdentifier(text, start)
+		if !ok {
+			return "", false
+		}
+		end = name.End
+		value += name.Value
+	}
+}
+
+func parseConstituentFromTokens(tokens []string, idx *int, readers ...*adminCredentialReader) (map[string]interface{}, error) {
+	if *idx >= len(tokens) || !equalFoldASCII(tokens[*idx], "ALIAS") {
+		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidConstituent", localization.CypherCompositeConstituentAliasExpected())
 	}
 	*idx = *idx + 1
 
@@ -43,7 +118,7 @@ func parseConstituentFromTokens(tokens []string, idx *int) (map[string]interface
 		return nil, localizedError(localization.CypherCompositeConstituentAliasNameEmpty(), nil)
 	}
 
-	if *idx+1 >= len(tokens) || !strings.EqualFold(tokens[*idx], "FOR") || !strings.EqualFold(tokens[*idx+1], "DATABASE") {
+	if *idx+1 >= len(tokens) || !equalFoldASCII(tokens[*idx], "FOR") || !equalFoldASCII(tokens[*idx+1], "DATABASE") {
 		return nil, localizedError(localization.CypherCompositeConstituentForDatabaseExpected(), nil)
 	}
 	*idx += 2
@@ -66,21 +141,26 @@ func parseConstituentFromTokens(tokens []string, idx *int) (map[string]interface
 		"type":          "local",
 		"access_mode":   "read_write",
 	}
+	var reader *adminCredentialReader
+	if len(readers) != 0 {
+		reader = readers[0]
+	}
 	hasUserPassword := false
 	hasOIDCForwarding := false
 
 	for *idx < len(tokens) {
-		if strings.EqualFold(tokens[*idx], "ALIAS") {
+		if equalFoldASCII(tokens[*idx], "ALIAS") {
 			break
 		}
 
 		switch {
-		case strings.EqualFold(tokens[*idx], "AT"):
+		case equalFoldASCII(tokens[*idx], "AT"):
 			*idx = *idx + 1
 			if *idx >= len(tokens) {
 				return nil, localizedError(localization.CypherCompositeConstituentRemoteURIExpected(), nil)
 			}
 			uri, err := parseCypherValueToken(tokens[*idx])
+			reader.record(*idx, uri, false)
 			if err != nil {
 				return nil, localizedError(localization.CypherCompositeConstituentRemoteURIInvalid(err), err)
 			}
@@ -91,7 +171,7 @@ func parseConstituentFromTokens(tokens []string, idx *int) (map[string]interface
 			ref["uri"] = uri
 			ref["type"] = "remote"
 
-		case strings.EqualFold(tokens[*idx], "USER"):
+		case equalFoldASCII(tokens[*idx], "USER"):
 			*idx = *idx + 1
 			if *idx >= len(tokens) {
 				return nil, localizedError(localization.CypherCompositeConstituentUserEmpty(), nil)
@@ -107,12 +187,13 @@ func parseConstituentFromTokens(tokens []string, idx *int) (map[string]interface
 			ref["user"] = user
 			hasUserPassword = true
 
-		case strings.EqualFold(tokens[*idx], "PASSWORD"):
+		case equalFoldASCII(tokens[*idx], "PASSWORD"):
 			*idx = *idx + 1
 			if *idx >= len(tokens) {
 				return nil, localizedError(localization.CypherCompositeConstituentPasswordEmpty(), nil)
 			}
 			password, err := parseCypherValueToken(tokens[*idx])
+			reader.record(*idx, password, true)
 			if err != nil {
 				return nil, localizedError(localization.CypherCompositeConstituentPasswordInvalid(err), err)
 			}
@@ -123,17 +204,17 @@ func parseConstituentFromTokens(tokens []string, idx *int) (map[string]interface
 			ref["password"] = password
 			hasUserPassword = true
 
-		case strings.EqualFold(tokens[*idx], "OIDC"):
+		case equalFoldASCII(tokens[*idx], "OIDC"):
 			*idx = *idx + 1
-			if *idx+1 >= len(tokens) || !strings.EqualFold(tokens[*idx], "CREDENTIAL") || !strings.EqualFold(tokens[*idx+1], "FORWARDING") {
+			if *idx+1 >= len(tokens) || !equalFoldASCII(tokens[*idx], "CREDENTIAL") || !equalFoldASCII(tokens[*idx+1], "FORWARDING") {
 				return nil, localizedError(localization.CypherCompositeConstituentOIDCCredentialExpected(), nil)
 			}
 			*idx += 2
 			hasOIDCForwarding = true
 
-		case strings.EqualFold(tokens[*idx], "SECRET"):
+		case equalFoldASCII(tokens[*idx], "SECRET"):
 			*idx = *idx + 1
-			if *idx >= len(tokens) || !strings.EqualFold(tokens[*idx], "REF") {
+			if *idx >= len(tokens) || !equalFoldASCII(tokens[*idx], "REF") {
 				return nil, localizedError(localization.CypherCompositeConstituentSecretRefExpected(), nil)
 			}
 			*idx = *idx + 1
@@ -141,6 +222,7 @@ func parseConstituentFromTokens(tokens []string, idx *int) (map[string]interface
 				return nil, localizedError(localization.CypherCompositeConstituentSecretRefEmpty(), nil)
 			}
 			secretRef, err := parseCypherValueToken(tokens[*idx])
+			reader.record(*idx, secretRef, true)
 			if err != nil {
 				return nil, localizedError(localization.CypherCompositeConstituentSecretRefInvalid(err), err)
 			}
@@ -150,7 +232,7 @@ func parseConstituentFromTokens(tokens []string, idx *int) (map[string]interface
 			}
 			ref["secret_ref"] = secretRef
 
-		case strings.EqualFold(tokens[*idx], "TYPE"):
+		case equalFoldASCII(tokens[*idx], "TYPE"):
 			*idx = *idx + 1
 			if *idx >= len(tokens) {
 				return nil, localizedError(localization.CypherCompositeConstituentTypeEmpty(), nil)
@@ -170,7 +252,7 @@ func parseConstituentFromTokens(tokens []string, idx *int) (map[string]interface
 			}
 			ref["type"] = typeVal
 
-		case strings.EqualFold(tokens[*idx], "ACCESS"):
+		case equalFoldASCII(tokens[*idx], "ACCESS"):
 			*idx = *idx + 1
 			if *idx >= len(tokens) {
 				return nil, localizedError(localization.CypherCompositeConstituentAccessModeEmpty(), nil)
@@ -189,6 +271,8 @@ func parseConstituentFromTokens(tokens []string, idx *int) (map[string]interface
 			}
 
 		default:
+			value, _ := parseCypherValueToken(tokens[*idx])
+			reader.record(*idx, value, false)
 			return nil, localizedError(localization.CypherCompositeConstituentUnexpectedToken(tokens[*idx]), nil)
 		}
 	}
@@ -216,201 +300,49 @@ func parseConstituentFromTokens(tokens []string, idx *int) (map[string]interface
 	return ref, nil
 }
 
-// executeCreateCompositeDatabase handles CREATE COMPOSITE DATABASE command.
-//
-// Syntax:
-//
-//	CREATE COMPOSITE DATABASE name [IF NOT EXISTS]
-//	  ALIAS alias1 FOR DATABASE db1
-//	  ALIAS alias2 FOR DATABASE db2
-//	  ...
-//
-// Example:
-//
-//	CREATE COMPOSITE DATABASE analytics
-//	  ALIAS tenant_a FOR DATABASE tenant_a
-//	  ALIAS tenant_b FOR DATABASE tenant_b
-//
-//	CREATE COMPOSITE DATABASE analytics IF NOT EXISTS
-//	  ALIAS tenant_a FOR DATABASE tenant_a
-func (e *StorageExecutor) executeCreateCompositeDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
+// compositeCommandFamily preserves the command selected by routing, including
+// family-specific diagnostics when a direct caller supplies malformed text.
+type compositeCommandFamily string
+
+const (
+	compositeCreateCommand compositeCommandFamily = "CREATE COMPOSITE DATABASE"
+	compositeAlterCommand  compositeCommandFamily = "ALTER COMPOSITE DATABASE"
+)
+
+// executeCompositeCommand owns CREATE/ALTER admission and effects. Preparation
+// remains shared with metadata and EXPLAIN; only this execution path mutates the
+// catalog. Manager availability takes precedence over parsing on both families.
+func (e *StorageExecutor) executeCompositeCommand(ctx context.Context, cypher string, family compositeCommandFamily) (_ *ExecuteResult, retErr error) {
+	ctx = withStatementCredentials(ctx, cypher)
+	defer redactAdminCommandError(cypher, &retErr, statementCredentials(ctx))
 	if e.dbManager == nil {
-		return nil, localizedError(localization.CypherCompositeDatabaseManagerUnavailable("CREATE COMPOSITE DATABASE"), nil)
+		return nil, localizedError(localization.CypherCompositeDatabaseManagerUnavailable(string(family)), nil)
 	}
-
-	// Find "CREATE COMPOSITE DATABASE" keyword position
-	createIdx := findMultiWordKeywordIndex(cypher, "CREATE", "COMPOSITE DATABASE")
-	if createIdx == -1 {
-		return nil, localizedError(localization.CypherCompositeCreateInvalidSyntax(), nil)
+	var command *preparedCompositeCommand
+	var err error
+	switch family {
+	case compositeCreateCommand:
+		command, err = e.prepareCreateCompositeDatabase(ctx, cypher)
+	case compositeAlterCommand:
+		command, err = e.prepareAlterCompositeDatabase(ctx, cypher)
 	}
-
-	// Skip "CREATE COMPOSITE DATABASE" and whitespace
-	startPos := createIdx + len("CREATE")
-	for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
-		startPos++
-	}
-	// Skip "COMPOSITE DATABASE"
-	if startPos+len("COMPOSITE DATABASE") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("COMPOSITE DATABASE")], "COMPOSITE DATABASE") {
-		startPos += len("COMPOSITE DATABASE")
-		for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
-			startPos++
-		}
-	} else {
-		// Try with flexible whitespace
-		if startPos+len("COMPOSITE") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("COMPOSITE")], "COMPOSITE") {
-			startPos += len("COMPOSITE")
-			for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
-				startPos++
-			}
-			if startPos+len("DATABASE") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("DATABASE")], "DATABASE") {
-				startPos += len("DATABASE")
-				for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
-					startPos++
-				}
-			}
-		}
-	}
-
-	if startPos >= len(cypher) {
-		return nil, localizedError(localization.CypherCompositeCreateDatabaseNameExpected(), nil)
-	}
-
-	// Extract composite database name (until newline or end)
-	dbNameEnd := startPos
-	for dbNameEnd < len(cypher) && !isWhitespace(cypher[dbNameEnd]) && cypher[dbNameEnd] != '\n' {
-		dbNameEnd++
-	}
-
-	dbName := strings.TrimSpace(cypher[startPos:dbNameEnd])
-	if dbName == "" {
-		return nil, localizedError(localization.CypherCompositeCreateDatabaseNameEmpty(), nil)
-	}
-
-	// Check for IF NOT EXISTS after database name.
-	ifNotExists := false
-	remaining := strings.TrimSpace(cypher[dbNameEnd:])
-	upperRemaining := upperASCII(remaining)
-	if strings.HasPrefix(upperRemaining, "IF NOT EXISTS") {
-		ifNotExists = true
-		remaining = strings.TrimSpace(remaining[len("IF NOT EXISTS"):])
-	}
-
-	// If IF NOT EXISTS and database already exists, return success silently.
-	if ifNotExists && e.dbManager != nil && e.dbManager.IsCompositeDatabase(dbName) {
-		return &ExecuteResult{
-			Columns: []string{"name"},
-			Rows:    [][]interface{}{{dbName}},
-		}, nil
-	}
-	// Also handle IF NOT EXISTS when a standard database with that name exists.
-	if ifNotExists && e.dbManager != nil && e.dbManager.Exists(dbName) {
-		return &ExecuteResult{
-			Columns: []string{"name"},
-			Rows:    [][]interface{}{{dbName}},
-		}, nil
-	}
-
-	// Parse constituents (ALIAS ... FOR DATABASE ... [AT ...] [SECRET REF ...])
-	constituents := []interface{}{}
-	if remaining != "" {
-		tokens, err := tokenize(remaining)
-		if err != nil {
-			return nil, localizedError(localization.CypherCompositeCreateTokenizeFailed(err), err)
-		}
-		idx := 0
-		for idx < len(tokens) {
-			ref, err := parseConstituentFromTokens(tokens, &idx)
-			if err != nil {
-				return nil, err
-			}
-			constituents = append(constituents, ref)
-		}
-	}
-
-	if len(constituents) == 0 {
-		return nil, localizedError(localization.CypherCompositeCreateConstituentRequired(), nil)
-	}
-
-	// Create composite database
-	err := e.dbManager.CreateCompositeDatabase(dbName, constituents)
 	if err != nil {
-		return nil, localizedError(localization.CypherCompositeCreateDatabaseFailed(dbName, err), err)
+		return nil, err
 	}
-
-	return &ExecuteResult{
-		Columns: []string{"name"},
-		Rows:    [][]interface{}{{dbName}},
-	}, nil
-}
-
-// executeDropCompositeDatabase handles DROP COMPOSITE DATABASE command.
-func (e *StorageExecutor) executeDropCompositeDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	if e.dbManager == nil {
-		return nil, localizedError(localization.CypherCompositeDatabaseManagerUnavailable("DROP COMPOSITE DATABASE"), nil)
-	}
-
-	// Find "DROP COMPOSITE DATABASE" keyword position
-	dropIdx := findMultiWordKeywordIndex(cypher, "DROP", "COMPOSITE DATABASE")
-	if dropIdx == -1 {
-		return nil, localizedError(localization.CypherCompositeDropInvalidSyntax(), nil)
-	}
-
-	// Skip "DROP COMPOSITE DATABASE" and whitespace
-	startPos := dropIdx + len("DROP")
-	for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
-		startPos++
-	}
-	// Skip "COMPOSITE DATABASE"
-	if startPos+len("COMPOSITE DATABASE") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("COMPOSITE DATABASE")], "COMPOSITE DATABASE") {
-		startPos += len("COMPOSITE DATABASE")
-		for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
-			startPos++
-		}
-	} else {
-		// Try with flexible whitespace
-		if startPos+len("COMPOSITE") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("COMPOSITE")], "COMPOSITE") {
-			startPos += len("COMPOSITE")
-			for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
-				startPos++
-			}
-			if startPos+len("DATABASE") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("DATABASE")], "DATABASE") {
-				startPos += len("DATABASE")
-				for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
-					startPos++
-				}
-			}
-		}
-	}
-
-	if startPos >= len(cypher) {
-		return nil, localizedError(localization.CypherCompositeDropDatabaseNameExpected(), nil)
-	}
-
-	// Extract database name
-	dbName := strings.TrimSpace(cypher[startPos:])
-	dbName = strings.ReplaceAll(dbName, " ", "")
-	dbName = strings.ReplaceAll(dbName, "\t", "")
-	dbName = strings.ReplaceAll(dbName, "\n", "")
-	dbName = strings.ReplaceAll(dbName, "\r", "")
-
-	if dbName == "" {
-		return nil, localizedError(localization.CypherCompositeDropDatabaseNameEmpty(), nil)
-	}
-
-	// Drop composite database
-	err := e.dbManager.DropCompositeDatabase(dbName)
-	if err != nil {
-		return nil, localizedError(localization.CypherCompositeDropDatabaseFailed(dbName, err), err)
-	}
-
-	return &ExecuteResult{
-		Columns: []string{"name"},
-		Rows:    [][]interface{}{{dbName}},
-	}, nil
+	return command.execute(ctx, e)
 }
 
 // executeShowCompositeDatabases handles SHOW COMPOSITE DATABASES command.
-func (e *StorageExecutor) executeShowCompositeDatabases(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeShowCompositeDatabases(ctx context.Context, cypher string) (_ *ExecuteResult, retErr error) {
+	ctx = withStatementCredentials(ctx, cypher)
+	defer redactAdminCommandError(cypher, &retErr, statementCredentials(ctx))
+	cypher = cyphertext.SourceFor(ctx, cypher).Text
+	// executeShowWithTail owns valid SHOW tails. Its head must contain only
+	// this command, including when an unknown suffix precedes a valid YIELD.
+	end, valid := compositeAdminPrefix(cypher, "SHOW", "COMPOSITE", "DATABASES")
+	if !valid || end != len(cypher) {
+		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "SyntaxError", localization.CypherAdminShowClauseInvalid())
+	}
 	if e.dbManager == nil {
 		return nil, localizedError(localization.CypherCompositeDatabaseManagerUnavailable("SHOW COMPOSITE DATABASES"), nil)
 	}
@@ -428,55 +360,45 @@ func (e *StorageExecutor) executeShowCompositeDatabases(ctx context.Context, cyp
 	}, nil
 }
 
+// compositeDisplayURI projects command output only. Keep nil local values and
+// stored/runtime URIs unchanged; the shared URL owner redacts remote userinfo.
+func compositeDisplayURI(value interface{}) interface{} {
+	if uri, ok := value.(string); ok {
+		return observability.RedactURL(uri)
+	}
+	return value
+}
+
+func compositeDisplayUser(value, mode interface{}) interface{} {
+	if user, ok := value.(string); ok {
+		authMode, _ := mode.(string)
+		return multidb.RemoteUserForDisplay(user, authMode)
+	}
+	return value
+}
+
 // executeShowConstituents handles SHOW CONSTITUENTS FOR COMPOSITE DATABASE command.
-func (e *StorageExecutor) executeShowConstituents(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeShowConstituents(ctx context.Context, cypher string) (_ *ExecuteResult, retErr error) {
+	ctx = withStatementCredentials(ctx, cypher)
+	defer redactAdminCommandError(cypher, &retErr, statementCredentials(ctx))
+	cypher = cyphertext.SourceFor(ctx, cypher).Text
 	if e.dbManager == nil {
 		return nil, localizedError(localization.CypherCompositeDatabaseManagerUnavailable("SHOW CONSTITUENTS"), nil)
 	}
 
-	// Find "SHOW CONSTITUENTS" keyword position
-	showIdx := findMultiWordKeywordIndex(cypher, "SHOW", "CONSTITUENTS")
-	if showIdx == -1 {
-		return nil, localizedError(localization.CypherCompositeShowConstituentsInvalidSyntax(), nil)
+	nameStart, validHead := compositeAdminPrefix(cypher, "SHOW", "CONSTITUENTS", "FOR", "COMPOSITE", "DATABASE")
+	if !validHead {
+		if prefixEnd, ok := compositeAdminPrefix(cypher, "SHOW", "CONSTITUENTS"); ok && prefixEnd == len(cypher) {
+			return nil, localizedError(localization.CypherCompositeShowConstituentsNameExpected(), nil)
+		}
+		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidShowClause", localization.CypherCompositeShowConstituentsInvalidSyntax())
 	}
-
-	// Check for "FOR COMPOSITE DATABASE"
-	forIdx := findMultiWordKeywordIndex(cypher, "FOR", "COMPOSITE DATABASE")
-	var compositeName string
-
-	if forIdx >= 0 {
-		// Extract composite database name
-		startPos := forIdx + len("FOR")
-		for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
-			startPos++
-		}
-		// Skip "COMPOSITE DATABASE"
-		if startPos+len("COMPOSITE DATABASE") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("COMPOSITE DATABASE")], "COMPOSITE DATABASE") {
-			startPos += len("COMPOSITE DATABASE")
-			for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
-				startPos++
-			}
-		} else {
-			// Try with flexible whitespace
-			if startPos+len("COMPOSITE") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("COMPOSITE")], "COMPOSITE") {
-				startPos += len("COMPOSITE")
-				for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
-					startPos++
-				}
-				if startPos+len("DATABASE") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("DATABASE")], "DATABASE") {
-					startPos += len("DATABASE")
-					for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
-						startPos++
-					}
-				}
-			}
-		}
-
-		compositeName = strings.TrimSpace(cypher[startPos:])
-		compositeName = strings.ReplaceAll(compositeName, " ", "")
-		compositeName = strings.ReplaceAll(compositeName, "\t", "")
-		compositeName = strings.ReplaceAll(compositeName, "\n", "")
-		compositeName = strings.ReplaceAll(compositeName, "\r", "")
+	if nameStart == len(cypher) {
+		return nil, localizedError(localization.CypherCompositeShowConstituentsNameExpected(), nil)
+	}
+	compositeName, validName := compositeAdminName(cypher[nameStart:])
+	if !validName {
+		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidShowClause", localization.CypherCompositeShowConstituentsInvalidSyntax())
 	}
 
 	if compositeName == "" {
@@ -491,17 +413,29 @@ func (e *StorageExecutor) executeShowConstituents(ctx context.Context, cypher st
 
 	rows := make([][]interface{}, len(constituents))
 	for i, c := range constituents {
-		// Handle ConstituentRef type
-		if ref, ok := c.(multidb.ConstituentRef); ok {
+		// A tagged map carries the same manager-owned connection authority as
+		// the typed adapter. Legacy map cells retain their existing output values.
+		ref, typed := c.(multidb.ConstituentRef)
+		if !typed {
+			if candidate, ok := catalogadapter.ConstituentRef(c, catalogadapter.StoredConstituentRecord); ok && candidate.ConnectionV1 != "" {
+				ref, typed = candidate, true
+			}
+		}
+		if typed {
+			var err error
+			ref, err = e.constituentDisplayView(ref)
+			if err != nil {
+				return nil, err
+			}
 			rows[i] = []interface{}{
 				ref.Alias,
 				ref.DatabaseName,
 				ref.Type,
 				ref.AccessMode,
-				ref.URI,
+				compositeDisplayURI(ref.URI),
 				ref.SecretRef,
 				ref.AuthMode,
-				ref.User,
+				multidb.RemoteUserForDisplay(ref.User, ref.AuthMode),
 			}
 		} else if m, ok := c.(map[string]interface{}); ok {
 			// Fallback for map format (if returned as map)
@@ -510,10 +444,10 @@ func (e *StorageExecutor) executeShowConstituents(ctx context.Context, cypher st
 				m["database_name"],
 				m["type"],
 				m["access_mode"],
-				m["uri"],
+				compositeDisplayURI(m["uri"]),
 				m["secret_ref"],
 				m["auth_mode"],
-				m["user"],
+				compositeDisplayUser(m["user"], m["auth_mode"]),
 			}
 		} else {
 			// Unknown type - return empty row
@@ -525,186 +459,4 @@ func (e *StorageExecutor) executeShowConstituents(ctx context.Context, cypher st
 		Columns: []string{"alias", "database", "type", "access_mode", "uri", "secret_ref", "auth_mode", "user"},
 		Rows:    rows,
 	}, nil
-}
-
-// executeAlterCompositeDatabase handles ALTER COMPOSITE DATABASE command.
-//
-// Syntax:
-//
-//	ALTER COMPOSITE DATABASE name
-//	  ADD ALIAS alias FOR DATABASE db
-//	ALTER COMPOSITE DATABASE name
-//	  DROP ALIAS alias
-//
-// Example:
-//
-//	ALTER COMPOSITE DATABASE analytics
-//	  ADD ALIAS tenant_d FOR DATABASE tenant_d
-//
-//	ALTER COMPOSITE DATABASE analytics
-//	  DROP ALIAS tenant_c
-func (e *StorageExecutor) executeAlterCompositeDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	if e.dbManager == nil {
-		return nil, localizedError(localization.CypherCompositeDatabaseManagerUnavailable("ALTER COMPOSITE DATABASE"), nil)
-	}
-
-	// Find "ALTER COMPOSITE DATABASE" keyword position
-	// First find "ALTER COMPOSITE", then check for "DATABASE"
-	alterIdx := findMultiWordKeywordIndex(cypher, "ALTER", "COMPOSITE")
-	if alterIdx == -1 {
-		return nil, localizedError(localization.CypherCompositeAlterInvalidSyntax(), nil)
-	}
-
-	// Check that "DATABASE" follows "COMPOSITE"
-	afterComposite := alterIdx + len("ALTER")
-	for afterComposite < len(cypher) && isWhitespace(cypher[afterComposite]) {
-		afterComposite++
-	}
-	if afterComposite+len("COMPOSITE") <= len(cypher) && strings.EqualFold(cypher[afterComposite:afterComposite+len("COMPOSITE")], "COMPOSITE") {
-		afterComposite += len("COMPOSITE")
-		for afterComposite < len(cypher) && isWhitespace(cypher[afterComposite]) {
-			afterComposite++
-		}
-		if afterComposite+len("DATABASE") > len(cypher) || !strings.EqualFold(cypher[afterComposite:afterComposite+len("DATABASE")], "DATABASE") {
-			return nil, localizedError(localization.CypherCompositeAlterDatabaseKeywordExpected(), nil)
-		}
-	} else {
-		return nil, localizedError(localization.CypherCompositeAlterInvalidSyntax(), nil)
-	}
-
-	// Skip "ALTER COMPOSITE DATABASE" and whitespace
-	startPos := alterIdx + len("ALTER")
-	for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
-		startPos++
-	}
-	// Skip "COMPOSITE DATABASE"
-	if startPos+len("COMPOSITE DATABASE") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("COMPOSITE DATABASE")], "COMPOSITE DATABASE") {
-		startPos += len("COMPOSITE DATABASE")
-		for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
-			startPos++
-		}
-	} else {
-		// Try with flexible whitespace
-		if startPos+len("COMPOSITE") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("COMPOSITE")], "COMPOSITE") {
-			startPos += len("COMPOSITE")
-			for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
-				startPos++
-			}
-			if startPos+len("DATABASE") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("DATABASE")], "DATABASE") {
-				startPos += len("DATABASE")
-				for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
-					startPos++
-				}
-			}
-		}
-	}
-
-	if startPos >= len(cypher) {
-		return nil, localizedError(localization.CypherCompositeAlterDatabaseNameExpected(), nil)
-	}
-
-	// Extract composite database name (until newline or whitespace)
-	dbNameEnd := startPos
-	for dbNameEnd < len(cypher) && !isWhitespace(cypher[dbNameEnd]) && cypher[dbNameEnd] != '\n' {
-		dbNameEnd++
-	}
-
-	dbName := strings.TrimSpace(cypher[startPos:dbNameEnd])
-	if dbName == "" {
-		return nil, localizedError(localization.CypherCompositeAlterDatabaseNameEmpty(), nil)
-	}
-
-	// Check for ADD or DROP
-	remaining := strings.TrimSpace(cypher[dbNameEnd:])
-	upperRemaining := upperASCII(remaining)
-
-	if strings.HasPrefix(upperRemaining, "ADD ALIAS") {
-		tokens, err := tokenize(remaining)
-		if err != nil {
-			return nil, localizedError(localization.CypherCompositeAlterTokenizeFailed(err), err)
-		}
-		if len(tokens) < 2 || !strings.EqualFold(tokens[0], "ADD") || !strings.EqualFold(tokens[1], "ALIAS") {
-			return nil, localizedError(localization.CypherCompositeAlterAddAliasExpected(), nil)
-		}
-		idx := 1
-		constituent, err := parseConstituentFromTokens(tokens, &idx)
-		if err != nil {
-			return nil, err
-		}
-		if idx != len(tokens) {
-			return nil, localizedError(localization.CypherCompositeAddAliasUnexpectedToken(tokens[idx]), nil)
-		}
-		aliasName, _ := constituent["alias"].(string)
-		constituentDbName, _ := constituent["database_name"].(string)
-
-		// Add constituent using the interface
-		err = e.dbManager.AddConstituent(dbName, constituent)
-		if err != nil {
-			return nil, localizedError(localization.CypherCompositeAddConstituentFailed(dbName, err), err)
-		}
-
-		return &ExecuteResult{
-			Columns: []string{"composite_database", "action", "alias", "database", "type", "uri", "secret_ref", "auth_mode", "user"},
-			Rows: [][]interface{}{{
-				dbName,
-				"ADD",
-				aliasName,
-				constituentDbName,
-				constituent["type"],
-				constituent["uri"],
-				constituent["secret_ref"],
-				constituent["auth_mode"],
-				constituent["user"],
-			}},
-		}, nil
-
-	} else if strings.HasPrefix(upperRemaining, "DROP ALIAS") {
-		// DROP ALIAS alias
-		dropIdx := findMultiWordKeywordIndex(remaining, "DROP", "ALIAS")
-		if dropIdx == -1 {
-			return nil, localizedError(localization.CypherCompositeAlterDropAliasExpected(), nil)
-		}
-
-		// Skip "DROP ALIAS" and whitespace
-		aliasStart := dropIdx + len("DROP")
-		for aliasStart < len(remaining) && isWhitespace(remaining[aliasStart]) {
-			aliasStart++
-		}
-		if aliasStart+len("ALIAS") <= len(remaining) && strings.EqualFold(remaining[aliasStart:aliasStart+len("ALIAS")], "ALIAS") {
-			aliasStart += len("ALIAS")
-			for aliasStart < len(remaining) && isWhitespace(remaining[aliasStart]) {
-				aliasStart++
-			}
-		}
-
-		// Extract alias name (until newline or end)
-		aliasNameEnd := aliasStart
-		for aliasNameEnd < len(remaining) && !isWhitespace(remaining[aliasNameEnd]) && remaining[aliasNameEnd] != '\n' {
-			aliasNameEnd++
-		}
-
-		aliasName := strings.TrimSpace(remaining[aliasStart:aliasNameEnd])
-		aliasName = strings.ReplaceAll(aliasName, " ", "")
-		aliasName = strings.ReplaceAll(aliasName, "\t", "")
-		aliasName = strings.ReplaceAll(aliasName, "\n", "")
-		aliasName = strings.ReplaceAll(aliasName, "\r", "")
-
-		if aliasName == "" {
-			return nil, localizedError(localization.CypherCompositeDropAliasNameEmpty(), nil)
-		}
-
-		// Remove constituent
-		err := e.dbManager.RemoveConstituent(dbName, aliasName)
-		if err != nil {
-			return nil, localizedError(localization.CypherCompositeRemoveConstituentFailed(dbName, err), err)
-		}
-
-		return &ExecuteResult{
-			Columns: []string{"composite_database", "action", "alias"},
-			Rows:    [][]interface{}{{dbName, "DROP", aliasName}},
-		}, nil
-
-	} else {
-		return nil, localizedError(localization.CypherCompositeAlterActionExpected(), nil)
-	}
 }

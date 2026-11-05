@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"io"
 	"net"
 	"testing"
@@ -45,9 +46,10 @@ func TestReplicationRPCReturnedErrorsAreLocalized(t *testing.T) {
 		transport := NewClusterTransport(nil)
 		RegisterClusterHandlers(transport, &coverageReplicator{})
 
-		_, err := transport.handlers[ClusterMsgHeartbeat](context.Background(), "peer", &ClusterMessage{Payload: []byte("bad")})
-		localizedErr := requireReplicationRPCError(t, err, "replication.rpc.decode_failed", "decode heartbeat: invalid character 'b' looking for beginning of value")
+		_, err := transport.handlers[ClusterMsgHeartbeat](context.Background(), "peer", &ClusterMessage{Payload: []byte{0x81, 0xa1, 'x'}})
+		localizedErr := requireReplicationRPCError(t, err, "replication.rpc.decode_failed", "decode heartbeat: invalid replication payload: unexpected EOF")
 		require.ErrorIs(t, err, localizedErr.Cause)
+		require.ErrorIs(t, err, io.ErrUnexpectedEOF)
 	})
 
 	t.Run("not connected", func(t *testing.T) {
@@ -60,16 +62,16 @@ func TestReplicationRPCReturnedErrorsAreLocalized(t *testing.T) {
 		cause := errors.New("forced write failure")
 		netConn := &replicationRPCFailingConn{writeErr: cause}
 		connection := &ClusterConnection{
-			conn:        netConn,
-			writer:      bufio.NewWriter(netConn),
-			closeCh:     make(chan struct{}),
-			pendingRPCs: make(map[uint64]chan *ClusterMessage),
+			clusterLifecycle: clusterLifecycle[connectionResources]{resources: connectionResources{conn: netConn}},
+			writer:           bufio.NewWriter(netConn),
+			rpcGate:          make(chan struct{}, 1),
 		}
 		connection.connected.Store(true)
 
 		_, err := connection.sendRPC(context.Background(), &ClusterMessage{})
 		requireReplicationRPCError(t, err, "replication.rpc.write_failed", "write: forced write failure")
 		require.ErrorIs(t, err, cause)
+		require.False(t, connection.IsConnected(), "a failed write cannot leave a partial frame reusable")
 	})
 
 	t.Run("authentication", func(t *testing.T) {
@@ -81,7 +83,7 @@ func TestReplicationRPCReturnedErrorsAreLocalized(t *testing.T) {
 	t.Run("read validation", func(t *testing.T) {
 		var wire bytes.Buffer
 		require.NoError(t, binary.Write(&wire, binary.BigEndian, uint32(65)))
-		_, err := readClusterMessage(bufio.NewReader(&wire), 64)
+		err := transferClusterMessage(new(ClusterMessage), bufio.NewReader(&wire), nil, 64)
 		requireReplicationRPCError(t, err, "replication.rpc.message_too_large", "message too large: 65 > 64")
 	})
 }
@@ -98,25 +100,25 @@ func TestReplicationRPCCatalogRendering(t *testing.T) {
 		},
 	}
 
-	spanish, tag, err := manager.Render(localization.WithPreferences(context.Background(), language.EuropeanSpanish), message)
+	spanish, tag, err := manager.Render(localization.WithPreferences(context.Background(), language.EuropeanSpanish), localization.MessageRequest(message))
 	require.NoError(t, err)
 	require.Equal(t, language.EuropeanSpanish, tag)
 	require.Equal(t, "no se pudo decodificar heartbeat: forced decode failure", spanish)
 
 	pseudoTag := language.MustParse("en-XA")
-	pseudo, tag, err := manager.Render(localization.WithPreferences(context.Background(), pseudoTag), message)
+	pseudo, tag, err := manager.Render(localization.WithPreferences(context.Background(), pseudoTag), localization.MessageRequest(message))
 	require.NoError(t, err)
 	require.Equal(t, pseudoTag, tag)
 	require.Equal(t, "[!! decode heartbeat: forced decode failure !!]", pseudo)
 }
 
 func TestReplicationRPCPrivateCodecGuardsRemainInternal(t *testing.T) {
-	_, nodeErr := encodeNodePayload(nil)
+	_, nodeErr := storage.EncodeNodePayload(nil)
 	require.EqualError(t, nodeErr, "nil node")
 	var nodeLocalizedErr *localization.LocalizedError
 	require.False(t, errors.As(nodeErr, &nodeLocalizedErr))
 
-	_, edgeErr := encodeEdgePayload(nil)
+	_, edgeErr := storage.EncodeEdgePayload(nil)
 	require.EqualError(t, edgeErr, "nil edge")
 	var edgeLocalizedErr *localization.LocalizedError
 	require.False(t, errors.As(edgeErr, &edgeLocalizedErr))

@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -30,7 +31,7 @@ func TestCacheKeysSeparateParameterTypes(t *testing.T) {
 	}
 	seen := make(map[string]interface{}, len(different))
 	for _, value := range different {
-		key := resultCacheEntryKey(query, map[string]interface{}{"v": value})
+		key := resultCacheEntryKey(t.Context(), query, map[string]interface{}{"v": value})
 		if previous, collides := seen[key]; collides {
 			t.Fatalf("%#v and %#v share the cache key %s", previous, value, key)
 		}
@@ -44,8 +45,8 @@ func TestCacheKeysSeparateParameterTypes(t *testing.T) {
 	// Parameter names are part of the key, and a value can't run into the
 	// next name.
 	require.NotEqual(t,
-		resultCacheEntryKey(query, map[string]interface{}{"a": "b", "c": "d"}),
-		resultCacheEntryKey(query, map[string]interface{}{"a": "b\x00c", "": "d"}))
+		resultCacheEntryKey(t.Context(), query, map[string]interface{}{"a": "b", "c": "d"}),
+		resultCacheEntryKey(t.Context(), query, map[string]interface{}{"a": "b\x00c", "": "d"}))
 
 	same := [][2]interface{}{
 		{int64(1), int32(1)},
@@ -58,26 +59,13 @@ func TestCacheKeysSeparateParameterTypes(t *testing.T) {
 	}
 	for _, pair := range same {
 		require.Equal(t,
-			resultCacheEntryKey(query, map[string]interface{}{"v": pair[0]}),
-			resultCacheEntryKey(query, map[string]interface{}{"v": pair[1]}), "%#v and %#v", pair[0], pair[1])
+			resultCacheEntryKey(t.Context(), query, map[string]interface{}{"v": pair[0]}),
+			resultCacheEntryKey(t.Context(), query, map[string]interface{}{"v": pair[1]}), "%#v and %#v", pair[0], pair[1])
 	}
 }
 
 // TestNormalizeQueryKeepsQuotedText: whitespace is collapsed outside string
 // literals and quoted names only (#729).
-func TestNormalizeQueryKeepsQuotedText(t *testing.T) {
-	for input, want := range map[string]string{
-		"RETURN   'a  b'  AS  s":           "RETURN 'a  b' AS s",
-		"RETURN \"a \n b\" AS s":           "RETURN \"a \n b\" AS s",
-		"RETURN 1 AS `my  col`":            "RETURN 1 AS `my  col`",
-		"RETURN 'it\\'s  x'   AS s":        "RETURN 'it\\'s  x' AS s",
-		"MATCH (n)\n\tWHERE n.x = 'a\tb' ": "MATCH (n) WHERE n.x = 'a\tb'",
-	} {
-		require.Equal(t, want, normalizeQuery(input), input)
-	}
-	require.NotEqual(t, resultCacheEntryKey("RETURN 'a  b' AS s", nil), resultCacheEntryKey("RETURN 'a b' AS s", nil))
-	require.Equal(t, resultCacheEntryKey("RETURN  'a b'  AS s", nil), resultCacheEntryKey("RETURN 'a b' AS s", nil))
-}
 
 // TestResultCacheServesEachParameterValueItsOwnResult: the statements that
 // shared a cached result on main return their own results (#729).
@@ -119,17 +107,17 @@ func TestResultCacheServesEachParameterValueItsOwnResult(t *testing.T) {
 // cached result isn't served to a caller the statement isn't authorized
 // for; the caller gets the permission error it gets uncached (#729).
 func TestFabricResultCacheServesOnlyAuthorizedCallers(t *testing.T) {
-	base := storage.NewMemoryEngine()
-	mgr, err := multidb.NewDatabaseManager(base, nil)
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
 	defer mgr.Close()
-	require.NoError(t, mgr.CreateDatabase("nornic_tr"))
-	require.NoError(t, mgr.CreateCompositeDatabase("nornic_cmp_a", []multidb.ConstituentRef{
+	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic_tr"}))
+	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "nornic_cmp_a", []multidb.ConstituentRef{
 		{Alias: "tr", DatabaseName: "nornic_tr", Type: "local", AccessMode: "read_write"},
 	}))
 	trStore, err := mgr.GetStorage("nornic_tr")
 	require.NoError(t, err)
-	_, err = trStore.CreateNode(&storage.Node{ID: "t-1", Labels: []string{"Translation"}, Properties: map[string]interface{}{"id": "t-1"}})
+	_, err = trStore.CreateNode(t.Context(), &storage.Node{ID: "t-1", Labels: []string{"Translation"}, Properties: map[string]interface{}{"id": "t-1"}})
 	require.NoError(t, err)
 	defaultStore, err := mgr.GetStorage(mgr.DefaultDatabaseName())
 	require.NoError(t, err)

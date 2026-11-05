@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -30,5 +31,19 @@ func TestQualifiedEntityIDPreservesDatabaseIdentity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			require.Equal(t, tc.want, QualifiedEntityID(tc.engine, tc.id))
 		})
+	}
+}
+
+func TestNamespacedIdentityKeepsExplicitEmptyScope(t *testing.T) {
+	for _, namespace := range []string{"", "tenant"} {
+		n := NewNamespacedEngine(NewNamespacedEngine(nil, "inner"), namespace)
+		for _, id := range []string{"", "plain", "a:b", namespace + ":plain", "other:id"} {
+			want := namespace + ":" + id
+			if strings.HasPrefix(id, namespace+":") {
+				want = id
+			}
+			require.Equal(t, NodeID(want), n.PrefixNodeID(NodeID(id)))
+			require.Equal(t, EdgeID(want), n.PrefixEdgeID(EdgeID(id)))
+		}
 	}
 }

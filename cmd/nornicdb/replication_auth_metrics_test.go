@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
@@ -154,10 +156,18 @@ func TestInitReplicationAuth_ReplicatorMetricsAware(t *testing.T) {
 // the cmd-package wiring tests.
 type cmdNullStorage struct{}
 
-func (cmdNullStorage) ApplyCommand(*replication.Command) error { return nil }
-func (cmdNullStorage) GetWALPosition() (uint64, error)         { return 0, nil }
+func (cmdNullStorage) ApplyCommand(waitCtx context.Context, _ *replication.Command, publication replication.WALPublicationMode) (replication.CommandPublication, error) {
+	if err := waitCtx.Err(); err != nil {
+		return replication.CommandPublication{}, err
+	}
+	if publication != replication.WALQueued {
+		return replication.CommandPublication{}, fmt.Errorf("wiring fixture only accepts queued commands")
+	}
+	return replication.CommandPublication{}, nil
+}
+func (cmdNullStorage) GetWALPosition() (uint64, error) { return 0, nil }
 func (cmdNullStorage) GetWALEntries(uint64, int) ([]*replication.WALEntry, error) {
 	return nil, nil
 }
-func (cmdNullStorage) WriteSnapshot(replication.SnapshotWriter) error  { return nil }
+func (cmdNullStorage) WriteSnapshot(replication.SnapshotWriter) error   { return nil }
 func (cmdNullStorage) RestoreSnapshot(replication.SnapshotReader) error { return nil }

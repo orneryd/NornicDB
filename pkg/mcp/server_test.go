@@ -1,6 +1,8 @@
 package mcp
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"bytes"
 	"context"
 	"encoding/json"
@@ -588,17 +590,17 @@ func TestServerStorageAndExecutorHelpers(t *testing.T) {
 
 	t.Run("database scoped storage and related nodes", func(t *testing.T) {
 		server := NewServer(nil, nil)
-		engine := storage.NewMemoryEngine()
+		engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = engine.Close() })
 
-		_, err := engine.CreateNode(&storage.Node{ID: "tenant_a:1", Labels: []string{"Memory"}, Properties: map[string]interface{}{"title": "Root"}})
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "tenant_a:1", Labels: []string{"Memory"}, Properties: map[string]interface{}{"title": "Root"}})
 		require.NoError(t, err)
-		_, err = engine.CreateNode(&storage.Node{ID: "tenant_a:2", Labels: []string{"Task"}, Properties: map[string]interface{}{"name": "Neighbor"}})
+		_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "tenant_a:2", Labels: []string{"Task"}, Properties: map[string]interface{}{"name": "Neighbor"}})
 		require.NoError(t, err)
-		_, err = engine.CreateNode(&storage.Node{ID: "tenant_a:3", Labels: []string{"Doc"}, Properties: map[string]interface{}{"title": "Incoming"}})
+		_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "tenant_a:3", Labels: []string{"Doc"}, Properties: map[string]interface{}{"title": "Incoming"}})
 		require.NoError(t, err)
-		require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "tenant_a:e1", StartNode: "tenant_a:1", EndNode: "tenant_a:2", Type: "RELATES_TO"}))
-		require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "tenant_a:e2", StartNode: "tenant_a:3", EndNode: "tenant_a:1", Type: "REFERENCES"}))
+		require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "tenant_a:e1", StartNode: "tenant_a:1", EndNode: "tenant_a:2", Type: "RELATES_TO"}))
+		require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "tenant_a:e2", StartNode: "tenant_a:3", EndNode: "tenant_a:1", Type: "REFERENCES"}))
 
 		var calledDB string
 		server.SetDatabaseScopedStorage(func(dbName string) (storage.Engine, error) {
@@ -1060,44 +1062,15 @@ func TestHandleDiscover_ChunksLongQueryForEmbedding(t *testing.T) {
 }
 
 func TestHandleDiscover_WithDBKeywordResults(t *testing.T) {
-	db, err := nornicdb.Open("", nil)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = db.Close() })
-
-	exec := db.GetCypherExecutor()
-	require.NotNil(t, exec)
-	ctx := context.Background()
-
-	rootResult, err := exec.Execute(ctx,
-		"CREATE (n:Memory {title: $title, content: $content}) RETURN elementId(n) AS id",
-		map[string]interface{}{"title": "Alpha Root", "content": "alpha unique keyword content"},
-	)
-	require.NoError(t, err)
-	rootID, _ := rootResult.Rows[0][0].(string)
-
-	neighborResult, err := exec.Execute(ctx,
-		"CREATE (n:Task {title: $title, content: $content}) RETURN elementId(n) AS id",
-		map[string]interface{}{"title": "Neighbor Task", "content": "supporting context"},
-	)
-	require.NoError(t, err)
-	neighborID, _ := neighborResult.Rows[0][0].(string)
-
-	_, err = exec.Execute(ctx,
-		"MATCH (a), (b) WHERE elementId(a) = $from AND elementId(b) = $to CREATE (a)-[:RELATES_TO]->(b)",
-		map[string]interface{}{"from": rootID, "to": neighborID},
-	)
-	require.NoError(t, err)
-	require.NoError(t, db.BuildSearchIndexes(context.Background()))
-
-	server := NewServer(db, nil)
-	result, err := server.handleDiscover(ctx, map[string]interface{}{
-		"query": "alpha unique keyword",
-		"depth": 2,
-		"limit": 5,
+	db, ids := seedMCPDiscoverGraph(t, []mcpDiscoverNodeSeed{
+		{label: "Memory", props: map[string]interface{}{"title": "Alpha Root", "content": "alpha unique keyword content"}},
+		{label: "Task", props: map[string]interface{}{"title": "Neighbor Task", "content": "supporting context"}},
+	}, []mcpDiscoverEdgeSeed{
+		{from: 0, to: 1, relType: "RELATES_TO"},
 	})
-	require.NoError(t, err)
+	require.Len(t, ids, 2, "this case keeps its own two-node population")
 
-	discover := result.(DiscoverResult)
+	discover := runMCPDiscoverDepth(t, db, "alpha unique keyword", 2)
 	require.Equal(t, "keyword", discover.Method)
 	require.NotZero(t, discover.Total)
 	require.NotEmpty(t, discover.Results)
@@ -1112,7 +1085,7 @@ func TestHandleDiscover_ReturnsEmbeddingFallbackReason(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	engine := db.GetStorage()
-	_, err = engine.CreateNode(&storage.Node{
+	_, err = engine.CreateNode(t.Context(), &storage.Node{
 		ID: "fallback-node", Labels: []string{"Memory"},
 		Properties: map[string]interface{}{"title": "Fallback", "content": "provider fallback document"},
 	})
@@ -1143,7 +1116,7 @@ func TestHandleDiscover_VectorBranchWithManualEmbeddings(t *testing.T) {
 	vector := make([]float32, 1024)
 	vector[0] = 1.0
 
-	_, err = engine.CreateNode(&storage.Node{
+	_, err = engine.CreateNode(t.Context(), &storage.Node{
 		ID:     "vector-node",
 		Labels: []string{"Memory"},
 		Properties: map[string]interface{}{
@@ -1199,7 +1172,7 @@ func TestHandleDiscover_SimilarityIsCosineNotRRF(t *testing.T) {
 	missVec := make([]float32, 1024)
 	missVec[1] = 1.0 // orthogonal to matchVec
 
-	_, err = engine.CreateNode(&storage.Node{
+	_, err = engine.CreateNode(t.Context(), &storage.Node{
 		ID:     "match-node",
 		Labels: []string{"Memory"},
 		Properties: map[string]interface{}{
@@ -1209,7 +1182,7 @@ func TestHandleDiscover_SimilarityIsCosineNotRRF(t *testing.T) {
 		ChunkEmbeddings: [][]float32{matchVec},
 	})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{
+	_, err = engine.CreateNode(t.Context(), &storage.Node{
 		ID:     "miss-node",
 		Labels: []string{"Memory"},
 		Properties: map[string]interface{}{

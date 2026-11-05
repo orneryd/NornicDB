@@ -20,7 +20,7 @@ func TestSessionLocalizesRunFailuresWithoutChangingFallback(t *testing.T) {
 	require.Equal(t, "Sin autenticar", spanish.localize(localization.NotAuthenticated()))
 	require.Equal(t, "La base de datos 'analytics' no existe", spanish.localize(localization.DatabaseNotFound("analytics")))
 
-	fallback := (&Session{}).localize(localization.WritePermissionRequired())
+	fallback := (&Session{server: &Server{}}).localize(localization.WritePermissionRequired())
 	require.Equal(t, "Write operations require write permission", fallback)
 }
 

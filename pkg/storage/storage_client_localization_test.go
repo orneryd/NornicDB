@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"testing"
@@ -77,7 +78,7 @@ func TestStorageClientReceiptValidationErrors(t *testing.T) {
 }
 
 func TestStorageClientNodeNamespaceValidation(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 
@@ -90,7 +91,7 @@ func TestStorageClientNodeNamespaceValidation(t *testing.T) {
 		{
 			name: "create",
 			operation: func() error {
-				_, err := engine.CreateNode(&Node{ID: "node-1"})
+				_, err := engine.CreateNode(t.Context(), &Node{ID: "node-1"})
 				return err
 			},
 			messageID: localization.MessageStorageClientNodeIDNamespaceUnprefixed,
@@ -98,13 +99,13 @@ func TestStorageClientNodeNamespaceValidation(t *testing.T) {
 		},
 		{
 			name:      "update",
-			operation: func() error { return engine.UpdateNode(&Node{ID: "node-2"}) },
+			operation: func() error { return engine.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "node-2"}}) },
 			messageID: localization.MessageStorageClientNodeIDNamespaceUnprefixed,
 			text:      "node ID must be prefixed with namespace (e.g., 'nornic:node-123'), got unprefixed ID: node-2",
 		},
 		{
 			name:      "bulk",
-			operation: func() error { return engine.BulkCreateNodes([]*Node{{ID: "node-3"}}) },
+			operation: func() error { return engine.BulkCreateNodes(t.Context(), []*Node{{ID: "node-3"}}) },
 			messageID: localization.MessageStorageClientNodeIDNamespaceRequired,
 			text:      "node ID must be prefixed with namespace (e.g., 'nornic:node-123'), got: node-3",
 		},
@@ -120,20 +121,25 @@ func TestStorageClientNodeNamespaceValidation(t *testing.T) {
 
 func TestStorageClientBackupAndDeletePrefixErrorsPreserveCauses(t *testing.T) {
 	t.Run("backup create file", func(t *testing.T) {
-		engine, err := NewBadgerEngineInMemory()
+		engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, engine.Close()) })
 
 		path := filepath.Join(t.TempDir(), "missing", "backup.bin")
+		_, cause := os.Open(filepath.Dir(path))
+		require.Error(t, cause)
 		err = engine.Backup(path)
-		localizedErr := requireStorageClientLocalizedError(t, err, localization.MessageStorageClientBackupFileCreateFailed, "failed to create backup file: open "+filepath.Dir(path)+": no such file or directory")
+		localizedErr := requireStorageClientLocalizedError(t, err, localization.MessageStorageClientBackupFileCreateFailed, "failed to create backup file: "+cause.Error())
 		require.Equal(t, path, localizedErr.Message.Data["Path"])
 		var pathErr *os.PathError
 		require.ErrorAs(t, err, &pathErr)
 	})
 
 	t.Run("closed backup", func(t *testing.T) {
-		engine, err := NewBadgerEngineInMemory()
+		engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+		if engine != nil {
+			fixtureowner.Own(t, engine)
+		}
 		require.NoError(t, err)
 		require.NoError(t, engine.Close())
 
@@ -143,7 +149,7 @@ func TestStorageClientBackupAndDeletePrefixErrorsPreserveCauses(t *testing.T) {
 	})
 
 	t.Run("empty delete prefix", func(t *testing.T) {
-		engine, err := NewBadgerEngineInMemory()
+		engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, engine.Close()) })
 
@@ -170,11 +176,11 @@ func TestStorageClientCatalogsRenderCountsIDsAndCauses(t *testing.T) {
 	require.Equal(t, 4, message.Data["DeletesFailed"])
 	require.Equal(t, "node tenant:42 failed", message.Data["Details"])
 
-	spanish, _, err := manager.Render(localization.WithPreferences(context.Background(), language.EuropeanSpanish), message)
+	spanish, _, err := manager.Render(localization.WithPreferences(context.Background(), language.EuropeanSpanish), localization.MessageRequest(message))
 	require.NoError(t, err)
 	require.Equal(t, "vaciado incompleto: fallaron 2 nodos, 3 relaciones y 4 eliminaciones (node tenant:42 failed)", spanish)
 
-	pseudo, _, err := manager.Render(localization.WithPreferences(context.Background(), language.MustParse("en-XA")), localization.StorageClientNodeIDNamespaceRequired("tenant:42"))
+	pseudo, _, err := manager.Render(localization.WithPreferences(context.Background(), language.MustParse("en-XA")), localization.MessageRequest(localization.StorageClientNodeIDNamespaceRequired("tenant:42")))
 	require.NoError(t, err)
 	require.Equal(t, "[!! node ID must be prefixed with namespace (e.g., 'nornic:node-123'), got: tenant:42 !!]", pseudo)
 }

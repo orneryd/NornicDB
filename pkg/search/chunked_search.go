@@ -61,7 +61,19 @@ func SearchTextChunksWithErrorPolicy(
 	embedQuery EmbedQueryFunc,
 	searchQuery SearchQueryFunc,
 	errorPolicy ChunkedSearchErrorPolicy,
-) (*SearchResponse, error) {
+) (response *SearchResponse, retErr error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	// Every selected search completes here, including lexical callbacks and
+	// result fusion. A canceled request/DB child cannot publish success just
+	// because its callback returned hits. A live request still permits the
+	// existing provider-timeout fallback.
+	defer func() {
+		if fatal := fatalChunkedSearchError(ctx, errorPolicy.FatalSearchError, retErr); fatal != nil {
+			response, retErr = nil, fatal
+		}
+	}()
 	if opts == nil {
 		defaults := defaultSearchOptionsValue()
 		opts = &defaults
@@ -132,8 +144,8 @@ func searchSingleQueryChunk(
 	errorPolicy ChunkedSearchErrorPolicy,
 ) (*SearchResponse, error) {
 	embedding, err := embedQuery(ctx, query)
-	if err != nil && isFatalChunkedSearchError(errorPolicy.FatalEmbeddingError, err) {
-		return nil, err
+	if fatal := fatalChunkedSearchError(ctx, errorPolicy.FatalEmbeddingError, err); fatal != nil {
+		return nil, fatal
 	}
 	fallbackReason := SearchFallbackNone
 	if err != nil {
@@ -144,11 +156,12 @@ func searchSingleQueryChunk(
 	}
 	if err == nil && len(embedding) > 0 {
 		response, searchErr := searchQuery(ctx, query, embedding, opts)
-		if searchErr != nil && isFatalChunkedSearchError(errorPolicy.FatalSearchError, searchErr) {
-			return nil, searchErr
-		}
 		if searchErr == nil && response != nil {
+			// The public completion boundary checks cancellation on success.
 			return response, nil
+		}
+		if fatal := fatalChunkedSearchError(ctx, errorPolicy.FatalSearchError, searchErr); fatal != nil {
+			return nil, fatal
 		}
 		fallbackReason = SearchFallbackNoHybridResults
 		if searchErr != nil {
@@ -171,9 +184,17 @@ func searchSeveralQueryChunks(
 	errorPolicy ChunkedSearchErrorPolicy,
 ) (*SearchResponse, int, error) {
 	searched := 0
+	// vectorRank and bm25Rank are the best (lowest positive) rank any chunk
+	// gave the result by that method; 0 means no chunk found it that way.
+	// vectorSimilarity is the best similarity of a chunk that found it by
+	// vector, valid while vectorRank is positive.
 	type fusedResult struct {
-		best  *SearchResult
-		score float64
+		best       *SearchResult
+		score      float64
+		vectorRank int
+		bm25Rank   int
+
+		vectorSimilarity float64
 	}
 
 	chunkOpts := *opts
@@ -185,16 +206,24 @@ func searchSeveralQueryChunks(
 	}
 	exhausted := true
 	var (
-		fusedIndexes   map[string]int
-		fused          []fusedResult
-		budgetReached  bool
-		fallbackReason SearchFallbackReason
-		embeddingErr   error
+		fusedIndexes     map[string]int
+		fused            []fusedResult
+		budgetReached    bool
+		fallbackReason   SearchFallbackReason
+		embeddingErr     error
+		rerankApplied    bool
+		rerankOrderOwned bool
+		rerankExcluded   map[string]struct{}
 	)
+	// Multi-chunk fusion creates a new candidate set, so it is a separate
+	// canonical outcome owner rather than a rerank consumer. Its explicit
+	// contract is: outer-RRF owns aggregate order, rerank is applied when any
+	// participating chunk applied it, and any participating fallback remains
+	// visible with the first reported reason.
 	for _, chunk := range chunks {
 		embedding, err := embedQuery(ctx, chunk)
-		if err != nil && isFatalChunkedSearchError(errorPolicy.FatalEmbeddingError, err) {
-			return nil, 0, err
+		if fatal := fatalChunkedSearchError(ctx, errorPolicy.FatalEmbeddingError, err); fatal != nil {
+			return nil, 0, fatal
 		}
 		if err != nil || len(embedding) == 0 {
 			// Unavailable preparation does not participate in the selected search;
@@ -212,8 +241,8 @@ func searchSeveralQueryChunks(
 			continue
 		}
 		response, err := searchQuery(ctx, chunk, embedding, &chunkOpts)
-		if err != nil && isFatalChunkedSearchError(errorPolicy.FatalSearchError, err) {
-			return nil, 0, err
+		if fatal := fatalChunkedSearchError(ctx, errorPolicy.FatalSearchError, err); fatal != nil {
+			return nil, 0, fatal
 		}
 		if err != nil || response == nil {
 			if fallbackReason == SearchFallbackNone {
@@ -225,6 +254,14 @@ func searchSeveralQueryChunks(
 			continue
 		}
 		searched++
+		rerankApplied = rerankApplied || response.rerankApplied
+		rerankOrderOwned = rerankOrderOwned || response.rerankOrderOwned
+		for id := range response.rerankExcluded {
+			if rerankExcluded == nil {
+				rerankExcluded = make(map[string]struct{})
+			}
+			rerankExcluded[id] = struct{}{}
+		}
 		if response.FallbackReason != SearchFallbackNone && fallbackReason == SearchFallbackNone {
 			fallbackReason = response.FallbackReason
 		}
@@ -239,8 +276,8 @@ func searchSeveralQueryChunks(
 			fusedIndexes = make(map[string]int, capacity)
 			fused = make([]fusedResult, 0, capacity)
 		}
-		for rank := range response.Results {
-			result := &response.Results[rank]
+		for rank, orderedResult := range response.Results {
+			result := &orderedResult
 			id := string(result.NodeID)
 			if id == "" {
 				// A relationship, or a node known by ID only; a graph
@@ -258,33 +295,16 @@ func searchSeveralQueryChunks(
 				fusedResult.best = result
 			}
 			fusedResult.score += 1.0 / (outerRRFK + float64(rank+1))
+			if result.VectorRank > 0 && (fusedResult.vectorRank == 0 || result.Similarity > fusedResult.vectorSimilarity) {
+				// This chunk found it by vector, so its Similarity is a vector score.
+				fusedResult.vectorSimilarity = result.Similarity
+			}
+			fusedResult.vectorRank = bestChunkRank(fusedResult.vectorRank, result.VectorRank)
+			fusedResult.bm25Rank = bestChunkRank(fusedResult.bm25Rank, result.BM25Rank)
 		}
 	}
 	if embeddingErr != nil {
 		logQueryEmbeddingFallback(ctx, errorPolicy.Transport, embeddingErr)
-	}
-
-	if len(fused) == 0 {
-		if opts.FallbackEnabled != nil && !*opts.FallbackEnabled {
-			return &SearchResponse{
-				RetrievalExhausted:     exhausted && !budgetReached,
-				CandidateBudgetReached: budgetReached,
-				Status:                 "success",
-				Query:                  query,
-				Results:                []SearchResult{},
-				SearchMethod:           "chunked_rrf_hybrid",
-				FallbackTriggered:      false,
-			}, searched, nil
-		}
-		response, err := searchQuery(ctx, query, nil, opts)
-		if response != nil {
-			// The callback may return a cached response shared with other callers.
-			copy := *response
-			copy.CandidateBudgetReached = budgetReached || response.CandidateBudgetReached
-			copy.RetrievalExhausted = exhausted && response.RetrievalExhausted && !copy.CandidateBudgetReached
-			response = &copy
-		}
-		return withSearchFallback(response, fallbackReason), searched, err
 	}
 
 	slices.SortFunc(fused, func(left, right fusedResult) int {
@@ -307,21 +327,69 @@ func searchSeveralQueryChunks(
 		TotalCandidates:        len(fusedIndexes),
 		Returned:               len(fused),
 		SearchMethod:           "chunked_rrf_hybrid",
+		rerankApplied:          rerankApplied,
+		rerankOrderOwned:       rerankOrderOwned,
 		FallbackTriggered:      false,
 		FallbackReason:         fallbackReason,
 	}
+	if rerankApplied {
+		response.SearchMethod += "+rerank"
+	}
 	if fallbackReason != SearchFallbackNone {
 		response.FallbackTriggered = true
+	}
+	for id := range rerankExcluded {
+		if _, included := fusedIndexes[id]; included {
+			delete(rerankExcluded, id)
+		}
+	}
+	if len(rerankExcluded) > 0 {
+		response.rerankExcluded = rerankExcluded
+	}
+	if len(fused) == 0 {
+		if response.selectionIsAuthoritative() {
+			return response, searched, nil
+		}
+		if opts.FallbackEnabled != nil && !*opts.FallbackEnabled {
+			response.FallbackTriggered = false
+			response.FallbackReason = SearchFallbackNone
+			return response, searched, nil
+		}
+		fallback, err := searchQuery(ctx, query, nil, opts)
+		if fallback != nil {
+			// The callback may return a cached response shared with other callers.
+			copy := *fallback
+			copy.CandidateBudgetReached = budgetReached || fallback.CandidateBudgetReached
+			copy.RetrievalExhausted = exhausted && fallback.RetrievalExhausted && !copy.CandidateBudgetReached
+			fallback = &copy
+		}
+		return withSearchFallback(fallback, fallbackReason), searched, err
 	}
 	for _, fusedResult := range fused {
 		result := *fusedResult.best
 		result.Score = fusedResult.score
 		result.RRFScore = fusedResult.score
-		result.VectorRank = 0
-		result.BM25Rank = 0
+		// A chunked result's ranks are its best per-chunk ranks, keeping
+		// SearchResult's meaning of 0 (not found by that method); the outer
+		// fusion score is not derivable from them alone.
+		result.VectorRank = fusedResult.vectorRank
+		result.BM25Rank = fusedResult.bm25Rank
+		if fusedResult.vectorRank > 0 {
+			// The representative chunk may have found it by keyword only;
+			// a vector-found result's Similarity is always a vector score.
+			result.Similarity = fusedResult.vectorSimilarity
+		}
 		response.Results = append(response.Results, result)
 	}
 	return response, searched, nil
+}
+
+// bestChunkRank is the better of two per-chunk ranks, where 0 means absent.
+func bestChunkRank(best, rank int) int {
+	if rank > 0 && (best == 0 || rank < best) {
+		return rank
+	}
+	return best
 }
 
 func withSearchFallback(response *SearchResponse, reason SearchFallbackReason) *SearchResponse {
@@ -385,8 +453,17 @@ func searchResultID(result SearchResult) string {
 	return result.ID
 }
 
-func isFatalChunkedSearchError(predicate func(error) bool, err error) bool {
-	return predicate != nil && predicate(err)
+// A DB-owned provider can be canceled while its transport's context is live.
+// That cancellation is fatal too. A provider timeout with a live request keeps
+// the adapter's ordinary outage/fallback policy.
+func fatalChunkedSearchError(ctx context.Context, predicate func(error) bool, err error) error {
+	if canceled := ctx.Err(); canceled != nil {
+		return canceled
+	}
+	if err != nil && (errors.Is(err, context.Canceled) || predicate != nil && predicate(err)) {
+		return err
+	}
+	return nil
 }
 
 // isQueryEmbeddingFallback reports whether reason says the query wasn't

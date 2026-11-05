@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -11,17 +13,18 @@ import (
 // a transaction's write even when rolled back, and an encoded write. Reads,
 // null values and other namespaces know nothing (PropertyKeyRegistry, #907).
 func TestPropertyKeyRegistryAcrossStack(t *testing.T) {
-	badger, err := NewBadgerEngineInMemory()
+	badger, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer badger.Close()
 	walBacking, err := NewWAL(t.TempDir(), nil)
 	require.NoError(t, err)
+	defer walBacking.Close()
 	wal := NewWALEngine(badger, walBacking)
 	namespaced := NewNamespacedEngine(wal, "ns")
 	other := NewNamespacedEngine(wal, "other")
 
 	require.False(t, namespaced.PropertyKeyKnown("a"))
-	_, err = namespaced.CreateNode(&Node{ID: "n1", Properties: map[string]any{"a": int64(1), "z": nil}})
+	_, err = namespaced.CreateNode(t.Context(), &Node{ID: "n1", Properties: map[string]any{"a": int64(1), "z": nil}})
 	require.NoError(t, err)
 	// Writes apply synchronously, so the name is known immediately. The direct
 	// path registers nil-valued property names too (the async overlay used to
@@ -32,38 +35,38 @@ func TestPropertyKeyRegistryAcrossStack(t *testing.T) {
 	require.True(t, wal.PropertyKeyKnownInNamespace("ns", "a"))
 	require.True(t, badger.PropertyKeyKnownInNamespace("ns", "a"))
 
-	node, err := namespaced.GetNode("n1")
+	node, err := namespaced.GetNode(t.Context(), "n1")
 	require.NoError(t, err)
 	node.Properties["b"] = "x"
-	require.NoError(t, namespaced.UpdateNode(node))
-	_, err = namespaced.CreateNode(&Node{ID: "n2"})
+	require.NoError(t, namespaced.UpdateNode(t.Context(), NodeUpdateRequest{After: node}))
+	_, err = namespaced.CreateNode(t.Context(), &Node{ID: "n2"})
 	require.NoError(t, err)
-	require.NoError(t, namespaced.CreateEdge(&Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "R", Properties: map[string]any{"c": true}}))
-	edge, err := namespaced.GetEdge("e1")
+	require.NoError(t, namespaced.CreateEdge(t.Context(), &Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "R", Properties: map[string]any{"c": true}}))
+	edge, err := namespaced.GetEdge(t.Context(), "e1")
 	require.NoError(t, err)
 	edge.Properties["d"] = int64(2)
-	require.NoError(t, namespaced.UpdateEdge(edge))
-	require.NoError(t, namespaced.BulkCreateNodes([]*Node{{ID: "n3", Properties: map[string]any{"e": 1.5}}}))
-	require.NoError(t, namespaced.BulkCreateEdges([]*Edge{{ID: "e2", StartNode: "n2", EndNode: "n3", Type: "R", Properties: map[string]any{"f": "y"}}}))
+	require.NoError(t, namespaced.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge}))
+	require.NoError(t, namespaced.BulkCreateNodes(t.Context(), []*Node{{ID: "n3", Properties: map[string]any{"e": 1.5}}}))
+	require.NoError(t, namespaced.BulkCreateEdges(t.Context(), []*Edge{{ID: "e2", StartNode: "n2", EndNode: "n3", Type: "R", Properties: map[string]any{"f": "y"}}}))
 	for _, name := range []string{"b", "c", "d", "e", "f"} {
 		require.True(t, namespaced.PropertyKeyKnown(name), name)
 	}
 
 	// A transaction's writes make their names known as they are taken, and a
 	// rollback keeps them, as Neo4j's tokens survive it.
-	tx, err := badger.BeginTransaction()
+	tx, err := badger.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	_, err = tx.CreateNode(&Node{ID: "ns:t1", Properties: map[string]any{"g": int64(1)}})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "ns:t1", Properties: map[string]any{"g": int64(1)}})
 	require.NoError(t, err)
-	committed, err := tx.GetNode("ns:n1")
+	committed, err := tx.GetNode(t.Context(), "ns:n1")
 	require.NoError(t, err)
 	committed.Properties["h"] = int64(1)
-	require.NoError(t, tx.UpdateNode(committed))
-	require.NoError(t, tx.CreateEdge(&Edge{ID: "ns:te1", StartNode: "ns:n1", EndNode: "ns:t1", Type: "R", Properties: map[string]any{"i": int64(1)}}))
-	committedEdge, err := tx.GetEdge("ns:e1")
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: committed, Policy: ClientNodeEdits}))
+	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "ns:te1", StartNode: "ns:n1", EndNode: "ns:t1", Type: "R", Properties: map[string]any{"i": int64(1)}}))
+	committedEdge, err := tx.GetEdge(t.Context(), "ns:e1")
 	require.NoError(t, err)
 	committedEdge.Properties["j"] = int64(1)
-	require.NoError(t, tx.UpdateEdge(committedEdge))
+	require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: committedEdge}))
 	require.NoError(t, tx.Rollback())
 	for _, name := range []string{"g", "h", "i", "j"} {
 		require.True(t, namespaced.PropertyKeyKnown(name), name)

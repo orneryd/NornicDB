@@ -7,8 +7,11 @@ package cypher
 // transactional route.
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
@@ -33,12 +36,12 @@ func BenchmarkZZAsyncStrip(b *testing.B) {
 				maxOps = n
 			}
 		}
-		badger, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
+		badger, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](b, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
 			DataDir:             dir,
 			WriteBehind:         writeBehind,
 			WriteBehindInterval: interval,
 			WriteBehindMaxOps:   maxOps,
-		})
+		}))
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -48,13 +51,13 @@ func BenchmarkZZAsyncStrip(b *testing.B) {
 		walCfg := storage.DefaultWALConfig()
 		walCfg.BatchSyncInterval = 50 * time.Millisecond
 		walCfg.DeferAppendFlush = writeBehind
-		wal, err := storage.NewWAL(dir+"/wal", walCfg)
+		wal, err := storage.NewWAL(filepath.Join(dir, "wal"), walCfg)
 		if err != nil {
 			b.Fatal(err)
 		}
 		engine := storage.NewWALEngine(badger, wal)
 		b.Cleanup(func() {
-			if err := badger.FlushWriteBehind(); err != nil {
+			if err := badger.FlushWriteBehind(context.Background()); err != nil {
 				b.Logf("flush on cleanup: %v", err)
 			}
 			_ = wal.Close()

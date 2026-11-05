@@ -15,6 +15,17 @@ NornicDB supports three replication modes to meet different availability and con
 | **Raft Cluster** | 3-5 | Strong | Production HA, consistent reads |
 | **Multi-Region** | 6+ | Configurable | Global distribution, disaster recovery |
 
+## Cluster upgrades
+
+Upgrade every node in a cluster before resuming replication with this version.
+Cluster messages now use MessagePack and signed messages require a nonce and
+`SignatureV2`; old gob messages and v1 or nonce-less signatures are rejected.
+During a mixed-version window, peers
+reject messages and close connections: heartbeats, WAL replication, Raft consensus
+and forwarded writes across the version boundary fail. Plan a coordinated upgrade
+with a replication interruption. See [Securing Replication Traffic](../user-guides/clustering.md#securing-replication-traffic)
+for the operator-visible errors and replay-cache behavior.
+
 ## Architecture Diagram
 
 ```
@@ -55,11 +66,11 @@ NornicDB supports three replication modes to meet different availability and con
 pkg/replication/
 ├── config.go           # Configuration loading and validation
 ├── replicator.go       # Core Replicator interface and factory
-├── transport.go        # ClusterTransport over TCP (gob-framed messages)
+├── transport.go        # ClusterTransport over TCP (MessagePack-framed messages)
 ├── ha_standby.go       # Hot Standby implementation
 ├── raft.go             # Raft consensus implementation
 ├── multi_region.go     # Multi-region coordinator
-├── codec.go            # Gob codecs (node/edge payloads, helpers)
+├── storage_adapter.go  # Entity application, replication WAL and snapshots
 ├── handlers.go         # Cluster message dispatch/handler registration
 ├── chaos_test.go       # Chaos testing infrastructure
 ├── scenario_test.go    # E2E scenario tests
@@ -108,7 +119,7 @@ type Replicator interface {
 
 ## Current Implementation Notes
 
-- **Transport**: `pkg/replication/transport.go` uses a plain TCP listener with framed **gob** messages for cluster RPCs (heartbeat, WAL batch, Raft messages).
+- **Transport**: `pkg/replication/transport.go` uses a TCP listener with framed MessagePack messages for cluster RPCs (heartbeat, WAL batch, Raft messages).
 - **Payloads**: `pkg/replication/codec.go` defines replication-safe payloads for nodes/edges. Node payloads include embeddings (`NamedEmbeddings`, `ChunkEmbeddings`) so embeddings replicate in HA mode.
 - **Write Path**: the base storage engine is wrapped by `pkg/replication/replicated_engine.go`, which converts writes into `replication.Command` and routes them through the active `Replicator`.
 - **WAL Streaming**: `pkg/replication/storage_adapter.go` maintains a persistent WAL (restart/recovery) plus an in-memory WAL slice to avoid repeated full-file scans during streaming, and uses an async WAL write queue for lower per-write latency.
@@ -147,26 +158,78 @@ type PeerConnection interface {
 
 ### Storage Interface
 
-Replication layer's view of storage:
+The replication coordinator depends on the command, WAL and snapshot contract
+in `pkg/replication/replicator.go`:
 
 ```go
 type Storage interface {
-    // Commands
-    ApplyCommand(cmd *Command) error
-    
-    // WAL position tracking
+    ApplyCommand(waitCtx context.Context, cmd *Command, publication WALPublicationMode) (CommandPublication, error)
     GetWALPosition() (uint64, error)
-    SetWALPosition(pos uint64) error
-    
-    // Node/Edge operations (used by WAL applier)
-    CreateNode(node *Node) error
-    UpdateNode(node *Node) error
-    DeleteNode(id NodeID) error
-    CreateEdge(edge *Edge) error
-    DeleteEdge(from, to NodeID, relType string) error
-    SetProperty(nodeID NodeID, key string, value interface{}) error
+    GetWALEntries(fromPosition uint64, maxEntries int) ([]*WALEntry, error)
+    WriteSnapshot(w SnapshotWriter) error
+    RestoreSnapshot(r SnapshotReader) error
 }
+
+type WALPublicationMode uint8
+
+const (
+    // Admit the record to the bounded replication WAL FIFO and return the
+    // native command result without waiting for publication.
+    WALQueued WALPublicationMode = iota + 1
+    // Wait until this exact record is appended and published, then report its
+    // physical sequence.
+    WALPublished
+)
+
+// CommandPublication reports this command's own published record. Position is
+// its exact physical WAL sequence; zero is never a successful published result.
+type CommandPublication struct{ Position uint64 }
 ```
+
+`ApplyCommand` validates `publication` and a non-nil `waitCtx` before any queue or
+native side effect. A valid command is transferred to the single FIFO WAL writer
+before its native application, and the native result stays the primary error.
+`WALQueued` keeps the nonwaiting asynchronous contract: no publication wait, no
+per-write timer, and a zero `Position`. `WALPublished` waits for the writer's
+typed outcome for that command's own record and returns its exact physical
+sequence; it is publication completion, not an additional durability guarantee.
+
+`waitCtx` bounds only the caller's wait. An expired or canceled wait never
+retracts accepted intent, suppresses native application, removes a queued record
+or implies rollback. A native application error is returned unchanged and never
+filters the accepted record. A publication failure or expired publication wait
+after native acceptance is reported without implying rejected or rolled-back
+native work.
+
+Graph mutations pass through the accepted entity-commit owner rather than raw
+property-update commands. Go adapters use
+`storage.NodeUpdateRequest{Before: before, After: after, Policy: policy}` and
+`storage.EdgeUpdateRequest{Before: before, After: after}`. `Before` preserves the
+actual read image; a deliberately blind authoritative replay supplies no caller
+observation. The requests are runtime inputs, not changes to persisted entity
+or WAL formats. See [replicated entity commits](../development/replicated-entity-commits.md)
+for preparation, publication and replay ownership.
+
+### Quorum Publication And Acknowledgement
+
+A quorum write resolves its existing default timeout once, builds one deadline,
+publishes its own record with `WALPublished` and waits for the standby to
+acknowledge that exact position under the same deadline. Publication delay
+consumes the acknowledgement budget; neither wait starts a second full timeout.
+Async mode uses `WALQueued`, reads no WAL position and acquires no timer.
+
+### Migrating A Custom Storage Implementation
+
+The `Storage` contract replaced `ApplyCommand(cmd *Command) error`; no forwarding
+wrapper remains, so every implementation and caller moves together. Callers that
+keep the asynchronous contract pass their owned lifetime context (or
+`context.Background()` where no lifetime exists) with `WALQueued` and discard the
+receipt. Quorum waits pass one deadline with `WALPublished` and use the returned
+position as the acknowledgement target. An implementation must validate the mode
+and context, validate and decode before any effect, return the native error
+unchanged, and report a nonzero position only for a record it actually
+published. No cluster wire message, replication WAL record or stored payload
+format changes.
 
 ## Network Protocol
 
@@ -180,11 +243,13 @@ type Storage interface {
 
 ### Wire Format
 
-The cluster protocol uses length-prefixed `gob`-encoded payloads over TCP. Encoder/decoder live in `pkg/replication/codec.go`.
+The cluster protocol uses length-prefixed MessagePack payloads over TCP. The
+transport is in `pkg/replication/transport.go` and the payload codec is in
+`pkg/storage/entity_payload_codec.go`.
 
 ```
 ┌─────────────┬─────────────────────────────────────┐
-│ Length (4B) │           gob Payload               │
+│ Length (4B) │       MessagePack Payload           │
 │ Big Endian  │                                     │
 └─────────────┴─────────────────────────────────────┘
 ```

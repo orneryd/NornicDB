@@ -1,9 +1,12 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -19,11 +22,11 @@ func TestCypher_CountAfterDeleteRecreate(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Create full stack: BadgerEngine -> WALEngine -> AsyncEngine
-	badger, err := storage.NewBadgerEngine(tmpDir)
+	badger, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(tmpDir))
 	require.NoError(t, err)
 	defer badger.Close()
 
-	wal, err := storage.NewWAL(tmpDir+"/wal", nil)
+	wal, err := storage.NewWAL(filepath.Join(tmpDir, "wal"), nil)
 	require.NoError(t, err)
 	defer wal.Close()
 
@@ -77,7 +80,7 @@ func TestCypher_CountAfterDeleteRecreate(t *testing.T) {
 	assert.Equal(t, int64(5), cnt3, "Should have 5 nodes after MERGE")
 
 	// Also check storage layer directly
-	storageCount, _ := asyncEngine.NodeCount()
+	storageCount, _ := asyncEngine.NodeCount(t.Context())
 	t.Logf("Storage NodeCount: %d", storageCount)
 	assert.Equal(t, int64(5), storageCount, "Storage should also report 5 nodes")
 }
@@ -89,11 +92,11 @@ func TestCypher_CountVsMatchCount(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
-	badger, err := storage.NewBadgerEngine(tmpDir)
+	badger, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(tmpDir))
 	require.NoError(t, err)
 	defer badger.Close()
 
-	wal, err := storage.NewWAL(tmpDir+"/wal", nil)
+	wal, err := storage.NewWAL(filepath.Join(tmpDir, "wal"), nil)
 	require.NoError(t, err)
 	defer wal.Close()
 
@@ -132,7 +135,7 @@ func TestCypher_CountVsMatchCount(t *testing.T) {
 	cnt2, _ := result2.Rows[0][0].(int64)
 	t.Logf("MATCH (n:NewTest) RETURN count(n): %d", cnt2)
 
-	storageCount, _ := asyncEngine.NodeCount()
+	storageCount, _ := asyncEngine.NodeCount(t.Context())
 	t.Logf("Storage NodeCount(): %d", storageCount)
 
 	assert.Equal(t, int64(5), cnt1, "MATCH (n) count should be 5")

@@ -19,10 +19,11 @@ import (
 // /livez, /readyz, /version) and orchestrates the OQ4 shutdown ordering
 // (Provider.Shutdown → HTTP listener close).
 type telemetryListener struct {
-	srv    *http.Server
-	ln     net.Listener
-	prov   *Provider
-	health *Health
+	srv        *http.Server
+	ln         net.Listener
+	prov       *Provider
+	health     *Health
+	retirement listenerLifetime
 }
 
 // Compile-time interface assertion.
@@ -107,7 +108,11 @@ func (l *telemetryListener) Name() string { return "telemetry" }
 // Start serves :9090 until ctx is cancelled or Serve returns a fatal
 // error. On ctx cancellation, Start initiates the OQ4 drain itself
 // (Provider.Shutdown then srv.Shutdown) so srv.Serve returns and the
-// supervisor's errgroup unblocks.
+// supervisor's errgroup unblocks. The shared owner keeps Start enrolled until
+// handlers and cleanup actually return, also after a Shutdown caller's deadline.
+//
+// A nil ctx means "no caller cancellation" and is normalized once by the
+// shared owner; the returned non-nil ctx bounds this entry only.
 //
 // Why initiate the drain here instead of relying on the supervisor's
 // reverse-iteration drain phase: lifecycle.Run only calls Shutdown
@@ -123,28 +128,8 @@ func (l *telemetryListener) Name() string { return "telemetry" }
 // http.ErrServerClosed is filtered to nil so the supervisor's errgroup
 // does not interpret a clean shutdown as a runtime failure (Pitfall 5).
 func (l *telemetryListener) Start(ctx context.Context) error {
-	serveErr := make(chan error, 1)
-	go func() {
-		serveErr <- l.srv.Serve(l.ln)
-	}()
-	select {
-	case <-ctx.Done():
-		// OQ4 drain: Provider.Shutdown FIRST (BSP flushes while listener
-		// is still serving), then srv.Shutdown.
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), lifecycle.ShutdownTimeout)
-		defer cancel()
-		_ = l.Shutdown(shutdownCtx)
-		err := <-serveErr
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
-		}
-		return err
-	case err := <-serveErr:
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
-		}
-		return err
-	}
+	ctx = l.retirement.init(ctx, l.srv, l.ln, l.prov.Shutdown)
+	return l.retirement.run(ctx)
 }
 
 // Shutdown drains the telemetry surface in this strict order (OQ4
@@ -162,13 +147,17 @@ func (l *telemetryListener) Start(ctx context.Context) error {
 // components) AND ensuring the BSP gets flushed (OBS-11 / TRC-02
 // foundation). Reversing the order would cause kubelet to record a 503
 // scrape during drain.
+//
+// A nil ctx means "no caller budget" and is normalized once by the shared
+// owner; a caller's own context keeps its values, deadline and cancellation.
 func (l *telemetryListener) Shutdown(ctx context.Context) error {
-	var errs error
-	if err := l.prov.Shutdown(ctx); err != nil {
-		errs = errors.Join(errs, fmt.Errorf("provider shutdown: %w", err))
-	}
-	if err := l.srv.Shutdown(ctx); err != nil {
-		errs = errors.Join(errs, fmt.Errorf("telemetry listener shutdown: %w", err))
-	}
-	return errs
+	ctx = l.retirement.init(ctx, l.srv, l.ln, l.prov.Shutdown)
+	return l.retirement.shutdown(ctx)
+}
+
+// WaitStopped observes actual component retirement without initiating it.
+// A nil ctx waits for retirement; a caller's own context bounds only that wait.
+func (l *telemetryListener) WaitStopped(ctx context.Context) error {
+	ctx = l.retirement.init(ctx, l.srv, l.ln, l.prov.Shutdown)
+	return l.retirement.wait(ctx)
 }

@@ -9,7 +9,7 @@ import (
 
 func TestOrderValueTypePrecedencePlacesPathsBetweenListsAndStrings(t *testing.T) {
 	executor := &StorageExecutor{}
-	path := executor.pathToMap(PathResult{
+	path := executor.pathToMapContext(t.Context(), PathResult{
 		Nodes: []*storage.Node{{ID: "start"}, {ID: "end"}},
 	})
 

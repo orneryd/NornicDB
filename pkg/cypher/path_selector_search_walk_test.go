@@ -13,7 +13,7 @@ type failingBatchEngine struct {
 	storage.Engine
 }
 
-func (e *failingBatchEngine) BatchGetNodes([]storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
+func (e *failingBatchEngine) BatchGetNodes(ctx context.Context, _ []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
 	return nil, errEdgeRead
 }
 
@@ -56,7 +56,7 @@ func TestSelectedPathSearchUniformWalks(t *testing.T) {
 		return result.Rows[0][0].(*storage.Node)
 	}
 	edge := func(exec *StorageExecutor, from, to *storage.Node) *storage.Edge {
-		edges, err := exec.storage.GetOutgoingEdges(from.ID)
+		edges, err := exec.storage.GetOutgoingEdges(ctx, from.ID)
 		require.NoError(t, err)
 		for _, candidate := range edges {
 			if candidate.EndNode == to.ID && candidate.Type == "T" {

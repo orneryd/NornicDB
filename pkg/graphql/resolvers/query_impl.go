@@ -2,7 +2,9 @@ package resolvers
 
 import (
 	"context"
+
 	"fmt"
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/graphql/models"
@@ -11,6 +13,10 @@ import (
 
 // QueryNode fetches a single node by ID
 func (r *queryResolver) queryNode(ctx context.Context, id string) (*models.Node, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead); err != nil {
+		return nil, err
+	}
+
 	node, err := r.getNode(ctx, id)
 	if err != nil {
 		return nil, nil // Return nil for not found
@@ -21,6 +27,10 @@ func (r *queryResolver) queryNode(ctx context.Context, id string) (*models.Node,
 // QueryNodes fetches multiple nodes by IDs
 // If ids is nil or empty, returns an empty array
 func (r *queryResolver) queryNodes(ctx context.Context, ids []string) ([]models.Node, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead); err != nil {
+		return nil, err
+	}
+
 	if ids == nil || len(ids) == 0 {
 		return []models.Node{}, nil
 	}
@@ -37,6 +47,10 @@ func (r *queryResolver) queryNodes(ctx context.Context, ids []string) ([]models.
 
 // QueryAllNodes fetches all nodes with optional label filter
 func (r *queryResolver) queryAllNodes(ctx context.Context, labels []string, limit *int, offset *int) ([]models.Node, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead); err != nil {
+		return nil, err
+	}
+
 	lim := 100
 	off := 0
 	if limit != nil {
@@ -74,11 +88,19 @@ func (r *queryResolver) queryAllNodes(ctx context.Context, labels []string, limi
 
 // QueryNodesByLabel fetches nodes by label
 func (r *queryResolver) queryNodesByLabel(ctx context.Context, label string, limit *int, offset *int) ([]models.Node, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead); err != nil {
+		return nil, err
+	}
+
 	return r.queryAllNodes(ctx, []string{label}, limit, offset)
 }
 
 // QueryNodeCount returns the count of nodes
 func (r *queryResolver) queryNodeCount(ctx context.Context, label *string) (int, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead); err != nil {
+		return 0, err
+	}
+
 	if label != nil {
 		nodes, err := r.listNodes(ctx, *label, 10000, 0)
 		if err != nil {
@@ -86,12 +108,19 @@ func (r *queryResolver) queryNodeCount(ctx context.Context, label *string) (int,
 		}
 		return len(nodes), nil
 	}
-	stats := r.stats()
+	_, stats, err := r.stats(ctx)
+	if err != nil {
+		return 0, err
+	}
 	return util.ClampInt64ToInt(stats.NodeCount), nil
 }
 
 // QueryRelationship fetches a single relationship by ID
 func (r *queryResolver) queryRelationship(ctx context.Context, id string) (*models.Relationship, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead); err != nil {
+		return nil, err
+	}
+
 	edge, err := r.getEdge(ctx, id)
 	if err != nil {
 		return nil, nil
@@ -101,6 +130,10 @@ func (r *queryResolver) queryRelationship(ctx context.Context, id string) (*mode
 
 // QueryAllRelationships fetches all relationships with optional type filter
 func (r *queryResolver) queryAllRelationships(ctx context.Context, types []string, limit *int, offset *int) ([]models.Relationship, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead); err != nil {
+		return nil, err
+	}
+
 	lim := 100
 	off := 0
 	if limit != nil {
@@ -138,11 +171,19 @@ func (r *queryResolver) queryAllRelationships(ctx context.Context, types []strin
 
 // QueryRelationshipsByType fetches relationships by type
 func (r *queryResolver) queryRelationshipsByType(ctx context.Context, typeArg string, limit *int, offset *int) ([]models.Relationship, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead); err != nil {
+		return nil, err
+	}
+
 	return r.queryAllRelationships(ctx, []string{typeArg}, limit, offset)
 }
 
 // QueryRelationshipsBetween fetches relationships between two nodes
 func (r *queryResolver) queryRelationshipsBetween(ctx context.Context, startNodeID string, endNodeID string) ([]models.Relationship, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead); err != nil {
+		return nil, err
+	}
+
 	edges, err := r.getEdgesForNode(ctx, startNodeID)
 	if err != nil {
 		return nil, err
@@ -159,6 +200,10 @@ func (r *queryResolver) queryRelationshipsBetween(ctx context.Context, startNode
 
 // QueryRelationshipCount returns the count of relationships
 func (r *queryResolver) queryRelationshipCount(ctx context.Context, typeArg *string) (int, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead); err != nil {
+		return 0, err
+	}
+
 	if typeArg != nil {
 		edges, err := r.listEdges(ctx, *typeArg, 10000, 0)
 		if err != nil {
@@ -166,12 +211,19 @@ func (r *queryResolver) queryRelationshipCount(ctx context.Context, typeArg *str
 		}
 		return len(edges), nil
 	}
-	stats := r.stats()
+	_, stats, err := r.stats(ctx)
+	if err != nil {
+		return 0, err
+	}
 	return util.ClampInt64ToInt(stats.EdgeCount), nil
 }
 
 // QuerySearch performs a search query
 func (r *queryResolver) querySearch(ctx context.Context, query string, options *models.SearchOptions) (*models.SearchResponse, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead); err != nil {
+		return nil, err
+	}
+
 	start := time.Now()
 
 	limit := 10
@@ -184,7 +236,11 @@ func (r *queryResolver) querySearch(ctx context.Context, query string, options *
 		labels = options.Labels
 	}
 
-	results, err := r.DB.Search(ctx, query, labels, limit)
+	database, engine, err := r.readDatabase(ctx)
+	if err != nil {
+		return nil, err
+	}
+	results, err := r.DB.SearchDatabase(ctx, database, engine, query, labels, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -220,13 +276,21 @@ func (r *queryResolver) querySearch(ctx context.Context, query string, options *
 
 // QuerySimilar finds similar nodes
 func (r *queryResolver) querySimilar(ctx context.Context, nodeID string, limit *int, threshold *float64) ([]models.SimilarNode, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead); err != nil {
+		return nil, err
+	}
+
 	lim := 10
 	if limit != nil {
 		lim = *limit
 	}
 	// threshold is ignored - FindSimilar doesn't support it
 
-	results, err := r.DB.FindSimilar(ctx, nodeID, lim)
+	_, engine, err := r.readDatabase(ctx)
+	if err != nil {
+		return nil, err
+	}
+	results, err := r.DB.FindSimilarInDatabase(ctx, engine, nodeID, lim)
 	if err != nil {
 		return nil, err
 	}
@@ -246,6 +310,10 @@ func (r *queryResolver) querySimilar(ctx context.Context, nodeID string, limit *
 
 // QuerySearchByProperty searches nodes by property
 func (r *queryResolver) querySearchByProperty(ctx context.Context, key string, value models.JSON, labels []string, limit *int) ([]models.Node, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead); err != nil {
+		return nil, err
+	}
+
 	cypher := fmt.Sprintf("MATCH (n) WHERE n.%s = $value RETURN n LIMIT $limit", key)
 	if len(labels) > 0 {
 		cypher = fmt.Sprintf("MATCH (n:%s) WHERE n.%s = $value RETURN n LIMIT $limit", labels[0], key)
@@ -306,9 +374,19 @@ func (r *queryResolver) queryCypher(ctx context.Context, input models.CypherInpu
 
 // QueryStats returns database statistics
 func (r *queryResolver) queryStats(ctx context.Context) (*models.DatabaseStats, error) {
-	stats := r.stats()
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead); err != nil {
+		return nil, err
+	}
 
-	labels, _ := r.getLabels(ctx)
+	database, stats, err := r.stats(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	labels, err := r.getLabels(ctx)
+	if err != nil {
+		return nil, err
+	}
 	labelStats := make([]*models.LabelStats, 0, len(labels))
 	for _, label := range labels {
 		// Use Cypher COUNT for accurate label counts
@@ -324,7 +402,10 @@ func (r *queryResolver) queryStats(ctx context.Context) (*models.DatabaseStats, 
 		labelStats = append(labelStats, &models.LabelStats{Label: label, Count: count})
 	}
 
-	relTypes, _ := r.getRelationshipTypes(ctx)
+	relTypes, err := r.getRelationshipTypes(ctx)
+	if err != nil {
+		return nil, err
+	}
 	typeStats := make([]*models.RelationshipTypeStats, 0, len(relTypes))
 	for _, typ := range relTypes {
 		// Use Cypher COUNT for accurate relationship counts
@@ -340,11 +421,7 @@ func (r *queryResolver) queryStats(ctx context.Context) (*models.DatabaseStats, 
 		typeStats = append(typeStats, &models.RelationshipTypeStats{Type: typ, Count: count})
 	}
 
-	searchStats := r.DB.GetSearchStats()
-	embeddedCount := 0
-	if searchStats != nil {
-		embeddedCount = searchStats.EmbeddingCount
-	}
+	embeddedCount, _, _ := r.DB.GetDatabaseManagedEmbeddingStats(database)
 
 	return &models.DatabaseStats{
 		NodeCount:         util.ClampInt64ToInt(stats.NodeCount),
@@ -358,6 +435,10 @@ func (r *queryResolver) queryStats(ctx context.Context) (*models.DatabaseStats, 
 
 // QuerySchema returns the graph schema
 func (r *queryResolver) querySchema(ctx context.Context) (*models.GraphSchema, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead); err != nil {
+		return nil, err
+	}
+
 	labels, _ := r.getLabels(ctx)
 	relTypes, _ := r.getRelationshipTypes(ctx)
 
@@ -372,16 +453,28 @@ func (r *queryResolver) querySchema(ctx context.Context) (*models.GraphSchema, e
 
 // QueryLabels returns all labels
 func (r *queryResolver) queryLabels(ctx context.Context) ([]string, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead); err != nil {
+		return nil, err
+	}
+
 	return r.getLabels(ctx)
 }
 
 // QueryRelationshipTypes returns all relationship types
 func (r *queryResolver) queryRelationshipTypes(ctx context.Context) ([]string, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead); err != nil {
+		return nil, err
+	}
+
 	return r.getRelationshipTypes(ctx)
 }
 
 // QueryShortestPath finds a shortest path, including paths at maxDepth.
 func (r *queryResolver) queryShortestPath(ctx context.Context, startNodeID string, endNodeID string, maxDepth *int, relationshipTypes []string) ([]models.Node, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead); err != nil {
+		return nil, err
+	}
+
 	depth := 10
 	if maxDepth != nil {
 		depth = *maxDepth
@@ -398,6 +491,10 @@ func (r *queryResolver) queryShortestPath(ctx context.Context, startNodeID strin
 
 // QueryAllPaths returns up to limit paths using the shared Cypher traversal owner.
 func (r *queryResolver) queryAllPaths(ctx context.Context, startNodeID string, endNodeID string, maxDepth *int, limit *int) ([][]models.Node, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead); err != nil {
+		return nil, err
+	}
+
 	depth, count := 5, 10
 	if maxDepth != nil {
 		depth = *maxDepth
@@ -410,6 +507,10 @@ func (r *queryResolver) queryAllPaths(ctx context.Context, startNodeID string, e
 
 // QueryNeighborhood returns the neighborhood subgraph
 func (r *queryResolver) queryNeighborhood(ctx context.Context, nodeID string, depth *int, relationshipTypes []string, labels []string, limit *int) (*models.Subgraph, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead); err != nil {
+		return nil, err
+	}
+
 	maxDepth := 2
 	if depth != nil {
 		maxDepth = *depth

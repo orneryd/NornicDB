@@ -5,9 +5,13 @@
 package multidb
 
 import (
+	"context"
+	"iter"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -19,6 +23,11 @@ type RemoteEngineFactory func(ref ConstituentRef, authToken string) (storage.Eng
 
 // ConstituentRef represents a reference to a constituent database within a composite database.
 type ConstituentRef struct {
+	// ConnectionV1 is the sole stored connection authority for the tagged V1
+	// format. Its ciphertext contains the original URI, credentials and origin;
+	// legacy URI/User/Password/AuthMode fields are absent in this representation.
+	ConnectionV1 string `json:"connection_v1,omitempty"`
+
 	// Alias is the name used within the composite database to reference this constituent.
 	Alias string `json:"alias"`
 
@@ -38,11 +47,11 @@ type ConstituentRef struct {
 	// The actual secret is resolved outside of metadata persistence.
 	SecretRef string `json:"secret_ref,omitempty"`
 
-	// User and Password implement Neo4j-style explicit remote auth:
-	// ... AT '<url>' USER <user> PASSWORD '<password>'
-	//
-	// Password is encrypted before persisting metadata to the system namespace.
-	// At runtime, DatabaseManager decrypts it before invoking RemoteEngineFactory.
+	// User and Password carry explicit authentication at admission/runtime.
+	// Legacy catalogs store Password in its historical encrypted field. Tagged
+	// catalogs store the original URI and these values only inside ConnectionV1;
+	// URI-origin fallback credentials are derived at runtime, retaining token
+	// precedence, rather than changing the meaning of persisted USER fields.
 	User     string `json:"user,omitempty"`
 	Password string `json:"password,omitempty"`
 
@@ -96,197 +105,177 @@ func (c *ConstituentRef) Validate() error {
 }
 
 // CreateCompositeDatabase creates a new composite database.
-//
-// A composite database is a virtual database that spans multiple constituent databases.
-// Queries against a composite database transparently access data from all constituents.
-//
-// Parameters:
-//   - name: The name of the composite database (must be unique)
-//   - constituents: List of constituent database references
-//
-// Returns ErrDatabaseExists if a database with this name already exists.
-// Returns ErrInvalidDatabaseName if the name is invalid.
-// Returns an error if any constituent database doesn't exist.
-func (m *DatabaseManager) CreateCompositeDatabase(name string, constituents []ConstituentRef) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+func (m *DatabaseManager) CreateCompositeDatabase(ctx context.Context, name string, constituents []ConstituentRef) error {
+	return m.transitionCatalog(ctx, catalogTransitionPolicy{}, func(m *DatabaseManager) error {
 
-	// Validate name
-	if name == "" {
-		return ErrInvalidDatabaseName
-	}
-
-	// Check if database already exists
-	if _, exists := m.databases[name]; exists {
-		return ErrDatabaseExists
-	}
-
-	// Validate all constituents
-	for i, ref := range constituents {
-		if err := ref.Validate(); err != nil {
-			return localizedError(localization.MultidbInvalidConstituent(i, err), err)
+		// Validate name
+		if name == "" {
+			return ErrInvalidDatabaseName
 		}
 
-		if ref.Type == "local" {
-			// Check if constituent database exists
-			// Resolve alias if needed
-			actualName, err := m.resolveDatabaseInternal(ref.DatabaseName)
+		// Check if database already exists
+		if _, exists := m.databases[name]; exists || m.pendingDrops[name] {
+			return ErrDatabaseExists
+		}
+
+		// Validate all constituents
+		for i, ref := range constituents {
+			if err := ref.Validate(); err != nil {
+				return localizedError(localization.MultidbInvalidConstituent(i, err), err)
+			}
+
+			if ref.Type == "local" {
+				// Check if constituent database exists
+				// Resolve alias if needed
+				actualName, err := m.resolveDatabaseInternal(ref.DatabaseName)
+				if err != nil {
+					return localizedError(localization.MultidbCompositeConstituentDatabaseNotFound(ref.DatabaseName, err), err)
+				}
+
+				// Cannot use composite database as constituent (prevent cycles)
+				if info, exists := m.databases[actualName]; exists && info.Type == "composite" {
+					return localizedError(localization.MultidbCompositeDatabaseAsConstituent(actualName), nil)
+				}
+			}
+		}
+
+		// Check for duplicate aliases
+		aliasMap := make(map[string]bool)
+		for _, ref := range constituents {
+			if aliasMap[ref.Alias] {
+				return localizedError(localization.MultidbCompositeDuplicateAlias(ref.Alias), nil)
+			}
+			aliasMap[ref.Alias] = true
+		}
+
+		// Prepare only new input; existing catalog records are never migrated here.
+		encrypted := make([]ConstituentRef, len(constituents))
+		copy(encrypted, constituents)
+		for i := range encrypted {
+			ref, err := m.prepareRemoteConnectionInput(encrypted[i])
 			if err != nil {
-				return localizedError(localization.MultidbCompositeConstituentDatabaseNotFound(ref.DatabaseName, err), err)
+				return err
 			}
-
-			// Cannot use composite database as constituent (prevent cycles)
-			if info, exists := m.databases[actualName]; exists && info.Type == "composite" {
-				return localizedError(localization.MultidbCompositeDatabaseAsConstituent(actualName), nil)
-			}
+			encrypted[i] = ref
 		}
-	}
 
-	// Check for duplicate aliases
-	aliasMap := make(map[string]bool)
-	for _, ref := range constituents {
-		if aliasMap[ref.Alias] {
-			return localizedError(localization.MultidbCompositeDuplicateAlias(ref.Alias), nil)
+		// Create composite database info
+		m.databases[name] = &DatabaseInfo{
+			Name:         name,
+			CreatedAt:    time.Now(),
+			Status:       "online",
+			Type:         "composite",
+			IsDefault:    false,
+			UpdatedAt:    time.Now(),
+			Constituents: encrypted,
 		}
-		aliasMap[ref.Alias] = true
-	}
 
-	// Encrypt remote user_password credentials before persistence.
-	encrypted := make([]ConstituentRef, len(constituents))
-	copy(encrypted, constituents)
-	for i := range encrypted {
-		ref := &encrypted[i]
-		if ref.Type == "remote" && strings.EqualFold(strings.TrimSpace(ref.AuthMode), "user_password") {
-			ciphertext, err := m.encryptRemotePassword(ref.Password)
-			if err != nil {
-				return localizedError(localization.MultidbCompositeSecureRemoteCredentialsFailed(ref.Alias, err), err)
-			}
-			ref.Password = ciphertext
-		}
-	}
+		return nil
 
-	// Create composite database info
-	m.databases[name] = &DatabaseInfo{
-		Name:         name,
-		CreatedAt:    time.Now(),
-		Status:       "online",
-		Type:         "composite",
-		IsDefault:    false,
-		UpdatedAt:    time.Now(),
-		Constituents: encrypted,
-	}
-
-	return m.persistMetadata()
+	})
 }
 
 // DropCompositeDatabase removes a composite database.
 //
 // This only removes the composite database metadata. The constituent databases
 // remain unchanged.
-func (m *DatabaseManager) DropCompositeDatabase(name string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+func (m *DatabaseManager) DropCompositeDatabase(ctx context.Context, name string) error {
+	return m.transitionCatalog(ctx, catalogTransitionPolicy{}, func(m *DatabaseManager) error {
 
-	info, exists := m.databases[name]
-	if !exists {
-		return ErrDatabaseNotFound
-	}
+		info, exists := m.databases[name]
+		if !exists {
+			return ErrDatabaseNotFound
+		}
 
-	if info.Type != "composite" {
-		return localizedError(localization.MultidbCompositeDatabaseNotComposite(name), nil)
-	}
+		if info.Type != "composite" {
+			return localizedError(localization.MultidbCompositeDatabaseNotComposite(name), nil)
+		}
 
-	// Remove from metadata
-	delete(m.databases, name)
-	delete(m.engines, name) // Clear cached engine
+		// Remove from metadata
+		delete(m.databases, name)
+		return nil
 
-	if err := m.persistMetadata(); err != nil {
-		// If persistence fails, restore the database to maintain consistency
-		// This prevents the database from being dropped in memory but still existing in storage
-		m.databases[name] = info
-		return localizedError(localization.MultidbCompositePersistMetadataAfterDropFailed(err), err)
-	}
-
-	return nil
+	})
 }
 
 // AddConstituent adds a constituent to an existing composite database.
-func (m *DatabaseManager) AddConstituent(compositeName string, constituent ConstituentRef) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+func (m *DatabaseManager) AddConstituent(ctx context.Context, compositeName string, constituent ConstituentRef) error {
+	return m.transitionCatalog(ctx, catalogTransitionPolicy{}, func(m *DatabaseManager) error {
 
-	info, exists := m.databases[compositeName]
-	if !exists {
-		return ErrDatabaseNotFound
-	}
+		info, exists := m.databases[compositeName]
+		if !exists {
+			return ErrDatabaseNotFound
+		}
 
-	if info.Type != "composite" {
-		return localizedError(localization.MultidbCompositeDatabaseNotComposite(compositeName), nil)
-	}
+		if info.Type != "composite" {
+			return localizedError(localization.MultidbCompositeDatabaseNotComposite(compositeName), nil)
+		}
 
-	// Validate constituent
-	if err := constituent.Validate(); err != nil {
-		return err
-	}
+		// Validate constituent
+		if err := constituent.Validate(); err != nil {
+			return err
+		}
 
-	// Check if constituent database exists for local constituents
-	if constituent.Type == "local" {
-		_, err := m.resolveDatabaseInternal(constituent.DatabaseName)
+		// Check if constituent database exists for local constituents
+		if constituent.Type == "local" {
+			_, err := m.resolveDatabaseInternal(constituent.DatabaseName)
+			if err != nil {
+				return localizedError(localization.MultidbCompositeConstituentDatabaseNotFound(constituent.DatabaseName, err), err)
+			}
+		}
+
+		// Check for duplicate alias
+		for _, existing := range info.Constituents {
+			if existing.Alias == constituent.Alias {
+				return localizedError(localization.MultidbCompositeAliasExists(constituent.Alias), nil)
+			}
+		}
+
+		encrypted, err := m.prepareRemoteConnectionInput(constituent)
 		if err != nil {
-			return localizedError(localization.MultidbCompositeConstituentDatabaseNotFound(constituent.DatabaseName, err), err)
+			return err
 		}
-	}
 
-	// Check for duplicate alias
-	for _, existing := range info.Constituents {
-		if existing.Alias == constituent.Alias {
-			return localizedError(localization.MultidbCompositeAliasExists(constituent.Alias), nil)
-		}
-	}
+		// Add constituent
+		info.Constituents = append(info.Constituents, encrypted)
+		info.UpdatedAt = time.Now()
 
-	encrypted := constituent
-	if encrypted.Type == "remote" && strings.EqualFold(strings.TrimSpace(encrypted.AuthMode), "user_password") {
-		ciphertext, err := m.encryptRemotePassword(encrypted.Password)
-		if err != nil {
-			return localizedError(localization.MultidbCompositeSecureRemoteCredentialsFailed(encrypted.Alias, err), err)
-		}
-		encrypted.Password = ciphertext
-	}
+		return nil
 
-	// Add constituent
-	info.Constituents = append(info.Constituents, encrypted)
-	info.UpdatedAt = time.Now()
-
-	return m.persistMetadata()
+	})
 }
 
 // RemoveConstituent removes a constituent from a composite database.
-func (m *DatabaseManager) RemoveConstituent(compositeName string, alias string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+func (m *DatabaseManager) RemoveConstituent(ctx context.Context, compositeName string, alias string) error {
+	return m.transitionCatalog(ctx, catalogTransitionPolicy{}, func(m *DatabaseManager) error {
 
-	info, exists := m.databases[compositeName]
-	if !exists {
-		return ErrDatabaseNotFound
-	}
-
-	if info.Type != "composite" {
-		return localizedError(localization.MultidbCompositeDatabaseNotComposite(compositeName), nil)
-	}
-
-	// Find and remove constituent
-	for i, ref := range info.Constituents {
-		if ref.Alias == alias {
-			info.Constituents = append(info.Constituents[:i], info.Constituents[i+1:]...)
-			info.UpdatedAt = time.Now()
-			return m.persistMetadata()
+		info, exists := m.databases[compositeName]
+		if !exists {
+			return ErrDatabaseNotFound
 		}
-	}
 
-	return localizedError(localization.MultidbCompositeAliasNotFound(alias), nil)
+		if info.Type != "composite" {
+			return localizedError(localization.MultidbCompositeDatabaseNotComposite(compositeName), nil)
+		}
+
+		// Remove the selected registration, using the same folded last-winner
+		// rule as catalog, execution and admission. Earlier registrations remain
+		// available if the winning registration is explicitly removed.
+		if i, _, found := findCanonicalConstituent(info.Constituents, alias); found {
+			info.Constituents = slices.Delete(info.Constituents, i, i+1)
+			info.UpdatedAt = time.Now()
+			return nil
+		}
+
+		return localizedError(localization.MultidbCompositeAliasNotFound(alias), nil)
+
+	})
 }
 
-// GetCompositeConstituents returns the list of constituents for a composite database.
+// GetCompositeConstituents returns stored registration snapshots for the visible
+// aliases. It never decrypts credentials. Resolve execution with GetStorage and
+// project metadata with RemoteConstituentForDisplay; tagged URI/User/Password
+// fields are absent because ConnectionV1 is their sole stored authority.
 func (m *DatabaseManager) GetCompositeConstituents(compositeName string) ([]ConstituentRef, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -300,10 +289,133 @@ func (m *DatabaseManager) GetCompositeConstituents(compositeName string) ([]Cons
 		return nil, localizedError(localization.MultidbCompositeDatabaseNotComposite(compositeName), nil)
 	}
 
-	// Return a copy
-	result := make([]ConstituentRef, len(info.Constituents))
-	copy(result, info.Constituents)
-	return result, nil
+	return snapshotConstituents(info.Constituents), nil
+}
+
+type constituentWalkPurpose uint8
+
+const (
+	constituentIndexLookup constituentWalkPurpose = iota
+	constituentKeyLookup
+	constituentEnumeration
+)
+
+// matchConstituentAlias owns the catalog's raw lowercase-key equivalence.
+// Lookup callers can omit the normalized key on the allocation-free ASCII path.
+func matchConstituentAlias(stored, wanted string, retainKey bool) (string, bool) {
+	if len(stored) != len(wanted) {
+		for i := 0; i < len(stored); i++ {
+			if stored[i] >= 128 {
+				goto normalized
+			}
+		}
+		for i := 0; i < len(wanted); i++ {
+			if wanted[i] >= 128 {
+				goto normalized
+			}
+		}
+		return "", false
+	}
+	for i := 0; i < len(stored); i++ {
+		a, b := stored[i], wanted[i]
+		if a >= 128 || b >= 128 {
+			goto normalized
+		}
+		if a >= 'A' && a <= 'Z' {
+			a += 'a' - 'A'
+		}
+		if b >= 'A' && b <= 'Z' {
+			b += 'a' - 'A'
+		}
+		if a != b {
+			return "", false
+		}
+	}
+	if retainKey {
+		return cyphertext.NameLower(stored), true
+	}
+	return "", true
+normalized:
+	key := cyphertext.NameLower(stored)
+	if key != cyphertext.NameLower(wanted) {
+		return "", false
+	}
+	if retainKey {
+		return key, true
+	}
+	return "", true
+}
+
+// walkCanonicalConstituents synchronously visits last-registered alias winners.
+// Enumeration alone tracks uniqueness; both lookup purposes stop at one match.
+func walkCanonicalConstituents(refs []ConstituentRef, wanted string, purpose constituentWalkPurpose, yield func(int, string, ConstituentRef) bool) {
+	var seen map[string]struct{}
+	if purpose == constituentEnumeration {
+		seen = make(map[string]struct{}, len(refs))
+	}
+	for i := len(refs) - 1; i >= 0; i-- {
+		ref := refs[i]
+		var key string
+		if purpose == constituentEnumeration {
+			key = cyphertext.NameLower(ref.Alias)
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+		} else {
+			var matched bool
+			key, matched = matchConstituentAlias(ref.Alias, wanted, purpose == constituentKeyLookup)
+			if !matched {
+				continue
+			}
+		}
+		if !yield(i, key, ref) || purpose != constituentEnumeration {
+			return
+		}
+	}
+}
+
+// canonicalConstituents enumerates winners when wanted is empty; otherwise it
+// yields the last matching alias and its normalized catalog key.
+func canonicalConstituents(refs []ConstituentRef, wanted string) iter.Seq2[string, ConstituentRef] {
+	return func(yield func(string, ConstituentRef) bool) {
+		purpose := constituentKeyLookup
+		if wanted == "" {
+			purpose = constituentEnumeration
+		}
+		walkCanonicalConstituents(refs, wanted, purpose, func(_ int, key string, ref ConstituentRef) bool {
+			return yield(key, ref)
+		})
+	}
+}
+
+// findCanonicalConstituent looks up even an empty alias without allocating a
+// uniqueness map or normalized ASCII keys.
+func findCanonicalConstituent(refs []ConstituentRef, wanted string) (int, ConstituentRef, bool) {
+	index, found := -1, false
+	var winner ConstituentRef
+	walkCanonicalConstituents(refs, wanted, constituentIndexLookup, func(i int, _ string, ref ConstituentRef) bool {
+		index, winner, found = i, ref, true
+		return false
+	})
+	return index, winner, found
+}
+
+// snapshotConstituents returns visible winners in their stored order for
+// public metadata/catalog readers. Full admitted-state persistence uses the
+// full purpose of cloneDatabaseInfo instead.
+func snapshotConstituents(refs []ConstituentRef) []ConstituentRef {
+	if refs == nil {
+		return nil
+	}
+	result := make([]ConstituentRef, 0, len(refs))
+	for _, ref := range canonicalConstituents(refs, "") {
+		result = append(result, ref)
+	}
+	for i, j := 0, len(result)-1; i < j; i, j = i+1, j-1 {
+		result[i], result[j] = result[j], result[i]
+	}
+	return result
 }
 
 // ListCompositeDatabases returns all composite databases.
@@ -314,7 +426,7 @@ func (m *DatabaseManager) ListCompositeDatabases() []*DatabaseInfo {
 	var result []*DatabaseInfo
 	for _, info := range m.databases {
 		if info.Type == "composite" {
-			result = append(result, cloneDatabaseInfo(info))
+			result = append(result, cloneDatabaseInfo(info, m.pendingDrops[info.Name], databaseSnapshotVisible))
 		}
 	}
 	return result
@@ -357,10 +469,8 @@ func (m *DatabaseManager) ExistsOrIsConstituent(name string) bool {
 		constituentAlias := name[dotIdx+1:]
 		info, exists := m.databases[compositeName]
 		if exists && info.Type == "composite" {
-			for _, ref := range info.Constituents {
-				if strings.EqualFold(ref.Alias, constituentAlias) {
-					return true
-				}
+			for range canonicalConstituents(info.Constituents, constituentAlias) {
+				return true
 			}
 		}
 	}

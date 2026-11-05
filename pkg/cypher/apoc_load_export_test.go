@@ -31,7 +31,7 @@ func TestApocLoadJson(t *testing.T) {
 		jsonBytes, _ := json.Marshal(data)
 		require.NoError(t, os.WriteFile(jsonFile, jsonBytes, 0644))
 
-		result, err := exec.Execute(ctx, "CALL apoc.load.json('"+jsonFile+"') YIELD value", nil)
+		result, err := exec.Execute(ctx, "CALL apoc.load.json($file) YIELD value", map[string]interface{}{"file": jsonFile})
 		require.NoError(t, err)
 		require.NotNil(t, result)
 
@@ -41,7 +41,7 @@ func TestApocLoadJson(t *testing.T) {
 		// Verify the loaded data
 		valueMap := result.Rows[0][0].(map[string]interface{})
 		assert.Equal(t, "Test", valueMap["name"])
-		assert.Equal(t, float64(42), valueMap["value"]) // JSON numbers are float64
+		assert.Equal(t, int64(42), valueMap["value"])
 	})
 
 	t.Run("load_json_array", func(t *testing.T) {
@@ -54,7 +54,7 @@ func TestApocLoadJson(t *testing.T) {
 		jsonBytes, _ := json.Marshal(data)
 		require.NoError(t, os.WriteFile(jsonFile, jsonBytes, 0644))
 
-		result, err := exec.Execute(ctx, "CALL apoc.load.json('"+jsonFile+"') YIELD value", nil)
+		result, err := exec.Execute(ctx, "CALL apoc.load.json($file) YIELD value", map[string]interface{}{"file": jsonFile})
 		require.NoError(t, err)
 		require.NotNil(t, result)
 
@@ -79,7 +79,7 @@ Alice,30,NYC
 Bob,25,LA`
 		require.NoError(t, os.WriteFile(csvFile, []byte(csvContent), 0644))
 
-		result, err := exec.Execute(ctx, "CALL apoc.load.csv('"+csvFile+"') YIELD lineNo, list, map", nil)
+		result, err := exec.Execute(ctx, "CALL apoc.load.csv($file) YIELD lineNo, list, map", map[string]interface{}{"file": csvFile})
 		require.NoError(t, err)
 		require.NotNil(t, result)
 
@@ -106,19 +106,19 @@ func TestApocExportJsonAll(t *testing.T) {
 	ctx := context.Background()
 
 	// Create test data
-	_, err := engine.CreateNode(&storage.Node{
+	_, err := engine.CreateNode(t.Context(), &storage.Node{
 		ID:         "n1",
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Alice"},
 	})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&storage.Node{
+	_, err = engine.CreateNode(t.Context(), &storage.Node{
 		ID:         "n2",
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Bob"},
 	})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&storage.Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{
 		ID:        "e1",
 		StartNode: "n1",
 		EndNode:   "n2",
@@ -129,7 +129,7 @@ func TestApocExportJsonAll(t *testing.T) {
 		tmpDir := t.TempDir()
 		jsonFile := filepath.Join(tmpDir, "export.json")
 
-		result, err := exec.Execute(ctx, "CALL apoc.export.json.all('"+jsonFile+"') YIELD file, nodes, relationships", nil)
+		result, err := exec.Execute(ctx, "CALL apoc.export.json.all($file) YIELD file, nodes, relationships", map[string]interface{}{"file": jsonFile})
 		require.NoError(t, err)
 		require.NotNil(t, result)
 
@@ -165,7 +165,7 @@ func TestApocExportCsvAll(t *testing.T) {
 	ctx := context.Background()
 
 	// Create test data
-	_, err := engine.CreateNode(&storage.Node{
+	_, err := engine.CreateNode(t.Context(), &storage.Node{
 		ID:         "n1",
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"name": "Alice"},
@@ -176,7 +176,7 @@ func TestApocExportCsvAll(t *testing.T) {
 		tmpDir := t.TempDir()
 		csvFile := filepath.Join(tmpDir, "export.csv")
 
-		result, err := exec.Execute(ctx, "CALL apoc.export.csv.all('"+csvFile+"') YIELD file, nodes, relationships", nil)
+		result, err := exec.Execute(ctx, "CALL apoc.export.csv.all($file) YIELD file, nodes, relationships", map[string]interface{}{"file": csvFile})
 		require.NoError(t, err)
 		require.NotNil(t, result)
 
@@ -228,7 +228,7 @@ func TestApocImportJson(t *testing.T) {
 		jsonBytes, _ := json.MarshalIndent(graphData, "", "  ")
 		require.NoError(t, os.WriteFile(jsonFile, jsonBytes, 0644))
 
-		result, err := exec.Execute(ctx, "CALL apoc.import.json('"+jsonFile+"') YIELD source, nodes, relationships", nil)
+		result, err := exec.Execute(ctx, "CALL apoc.import.json($file) YIELD source, nodes, relationships", map[string]interface{}{"file": jsonFile})
 		require.NoError(t, err)
 		require.NotNil(t, result)
 
@@ -238,16 +238,16 @@ func TestApocImportJson(t *testing.T) {
 		assert.Equal(t, 1, result.Rows[0][2]) // 1 relationship imported
 
 		// Verify nodes were imported
-		node1, err := engine.GetNode("imported1")
+		node1, err := engine.GetNode(t.Context(), "imported1")
 		require.NoError(t, err)
 		assert.Equal(t, "Charlie", node1.Properties["name"])
 
-		node2, err := engine.GetNode("imported2")
+		node2, err := engine.GetNode(t.Context(), "imported2")
 		require.NoError(t, err)
 		assert.Equal(t, "Diana", node2.Properties["name"])
 
 		// Verify relationship was imported
-		edge, err := engine.GetEdge("rel1")
+		edge, err := engine.GetEdge(t.Context(), "rel1")
 		require.NoError(t, err)
 		assert.Equal(t, "KNOWS", edge.Type)
 	})
@@ -268,7 +268,7 @@ func TestApocLoadJsonArray(t *testing.T) {
 		jsonBytes, _ := json.Marshal(data)
 		require.NoError(t, os.WriteFile(jsonFile, jsonBytes, 0644))
 
-		result, err := exec.Execute(ctx, "CALL apoc.load.jsonArray('"+jsonFile+"') YIELD value", nil)
+		result, err := exec.Execute(ctx, "CALL apoc.load.jsonArray($file) YIELD value", map[string]interface{}{"file": jsonFile})
 		require.NoError(t, err)
 		require.NotNil(t, result)
 

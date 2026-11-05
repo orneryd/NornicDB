@@ -43,8 +43,7 @@ func TestExtractEdgeNumIDAndMVCCVersionFromVersionKey(t *testing.T) {
 }
 
 func TestEngineEncodeNode_RequiresNamespacePrefix(t *testing.T) {
-	e := NewMemoryEngine()
-	t.Cleanup(func() { _ = e.Close() })
+	e := newTestMemoryEngine(t)
 
 	require.NoError(t, e.db.Update(func(txn *badger.Txn) error {
 		// Missing namespace prefix → error.
@@ -146,7 +145,7 @@ func TestEncodeNodeV1Body_LargeEmbeddingsAreExternalized(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, node.ID, decoded.ID)
 	require.Equal(t, node.Labels, decoded.Labels)
-	require.True(t, decoded.EmbeddingsStoredSeparately)
+	require.True(t, decoded.RuntimeMetadata().EmbeddingsStoredSeparately)
 	require.Nil(t, decoded.ChunkEmbeddings)
 	require.EqualValues(t, len(node.ChunkEmbeddings), decoded.EmbedMeta["chunk_count"])
 }
@@ -170,8 +169,7 @@ func TestEncodeNodeV1Body_PreservesExistingChunkCount(t *testing.T) {
 }
 
 func TestBadgerHelpers_DictionaryKeyWrappersAndLookups(t *testing.T) {
-	engine := NewMemoryEngine()
-	t.Cleanup(func() { _ = engine.Close() })
+	engine := newTestMemoryEngine(t)
 
 	version := MVCCVersion{
 		CommitTimestamp: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
@@ -227,8 +225,7 @@ func TestBadgerHelpers_DictionaryKeyWrappersAndLookups(t *testing.T) {
 }
 
 func TestBadgerHelpers_EdgeBetweenIndexWriteDeletePaths(t *testing.T) {
-	engine := NewMemoryEngine()
-	t.Cleanup(func() { _ = engine.Close() })
+	engine := newTestMemoryEngine(t)
 
 	edge := &Edge{ID: "test:e-between", StartNode: "test:start", EndNode: "test:end", Type: "REL"}
 	require.NoError(t, engine.db.Update(func(txn *badger.Txn) error {
@@ -306,15 +303,14 @@ func TestBadgerHelpers_EmbeddingShardMarkerHelpers(t *testing.T) {
 }
 
 func TestBadgerHelpers_MVCCIncomingAdjacencyKeyString_EdgeAllocationErrors(t *testing.T) {
-	engine := NewMemoryEngine()
-	t.Cleanup(func() { _ = engine.Close() })
+	engine := newTestMemoryEngine(t)
 
 	require.NoError(t, engine.db.Update(func(txn *badger.Txn) error {
 		_, err := engine.labelIndexKeyString(txn, "N", "test:node-only")
 		require.NoError(t, err)
 		readTxn := engine.db.testTxn(false)
 		defer readTxn.Discard()
-		_, err = engine.mvccIncomingAdjacencyKeyString(readTxn, "test:node-only", "test:missing-edge", MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 1})
+		_, err = engine.mvccAdjacencyKeyString(mvccAdjacencyIncoming, readTxn, "test:node-only", "test:missing-edge", MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 1})
 		require.Error(t, err)
 		return nil
 	}))

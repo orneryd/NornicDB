@@ -3,6 +3,7 @@ package embed
 import (
 	"errors"
 	"fmt"
+	"math"
 )
 
 // ProviderError reports a failed remote embedding request and whether retrying
@@ -38,22 +39,25 @@ func IsRetryableError(err error) bool {
 }
 
 // UnusableEmbeddingError reports a provider answer that isn't one usable
-// vector per input: a vector missing (Got < Want inputs), empty, or of
-// another dimension than the embedder's. It is a failed embedding, never a
+// vector per input: a vector missing (Got < Want inputs), empty, non-finite,
+// or of another dimension than the embedder's. It is a failed embedding, never a
 // result to search with or cache. It isn't
 // retryable, so the embed worker splits a batch down to the input the
 // provider can't embed instead of retrying the whole batch; a search asks
 // again on its next call, since nothing is cached.
 type UnusableEmbeddingError struct {
-	Input      int // the input's index; -1 when vectors are missing
-	Dimensions int // the vector's length
-	Want       int // the expected count (Input -1) or dimension
+	Input      int  // the input's index; -1 when vectors are missing
+	Dimensions int  // the vector's length
+	Want       int  // the expected count (Input -1) or dimension
+	NonFinite  bool // at least one coordinate is NaN or infinity
 }
 
 func (e *UnusableEmbeddingError) Error() string {
 	switch {
 	case e.Input < 0:
 		return fmt.Sprintf("embedding provider returned %d vectors for %d inputs", e.Dimensions, e.Want)
+	case e.NonFinite:
+		return fmt.Sprintf("embedding provider returned a non-finite value for input %d", e.Input)
 	case e.Dimensions == 0:
 		return fmt.Sprintf("embedding provider returned an empty vector for input %d", e.Input)
 	}
@@ -65,7 +69,7 @@ func (e *UnusableEmbeddingError) Error() string {
 func (e *UnusableEmbeddingError) Retryable() bool { return false }
 
 // CheckEmbeddings returns an *UnusableEmbeddingError unless vectors holds
-// count non-empty vectors, each of dimensions values when dimensions > 0.
+// count non-empty, finite vectors, each of dimensions values when dimensions > 0.
 func CheckEmbeddings(vectors [][]float32, count, dimensions int) error {
 	if len(vectors) != count {
 		return &UnusableEmbeddingError{Input: -1, Dimensions: len(vectors), Want: count}
@@ -76,6 +80,11 @@ func CheckEmbeddings(vectors [][]float32, count, dimensions int) error {
 		}
 		if dimensions > 0 && len(vector) != dimensions {
 			return &UnusableEmbeddingError{Input: index, Dimensions: len(vector), Want: dimensions}
+		}
+		for _, value := range vector {
+			if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {
+				return &UnusableEmbeddingError{Input: index, Dimensions: len(vector), Want: dimensions, NonFinite: true}
+			}
 		}
 	}
 	return nil

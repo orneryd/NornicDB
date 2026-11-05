@@ -6,6 +6,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"strings"
 	"testing"
@@ -58,7 +59,10 @@ func openRealDataIntegrationExecutor(t *testing.T, databaseName string) (*Storag
 		t.Skipf("real data dir unavailable: %s (%v)", dataDir, err)
 	}
 
-	base, err := storage.NewBadgerEngine(dataDir)
+	base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dataDir))
+	if base != nil {
+		fixtureowner.Own(t, base)
+	}
 	if err != nil {
 		t.Fatalf("open badger real data: %v", err)
 	}

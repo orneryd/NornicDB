@@ -1,10 +1,13 @@
 package search
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -28,8 +31,8 @@ func TestSearchBuildSettingsRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "build_settings")
 
-	engine := storage.NewMemoryEngine()
-	svc := NewServiceWithDimensions(engine, 384)
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	svc := NewService(engine, 384, nil)
 	snap := svc.currentSearchBuildSettings()
 
 	require.NoError(t, saveSearchBuildSettings(path, snap))
@@ -43,39 +46,37 @@ func TestSearchBuildSettingsRoundTrip(t *testing.T) {
 	require.Equal(t, snap.Routing, got.Routing)
 }
 
-func TestComposeRoutingBuildSettings_DoesNotEncodeSeedMode(t *testing.T) {
-	t.Setenv("NORNICDB_VECTOR_ROUTING_MODE", "hybrid")
-	t.Setenv("NORNICDB_KMEANS_MAX_ITERATIONS", "9")
-	t.Setenv("NORNICDB_KMEANS_SEED_MODE", "none")
+// An index built with different format settings must be rebuilt from storage.
+func TestSearchBuildSettingsRebuildsMismatchedFulltextCache(t *testing.T) {
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "nornic:current", Properties: map[string]any{"text": "freshlyindexed"}})
+	require.NoError(t, err)
+	svc := NewService(engine, 3, nil)
+	t.Cleanup(func() { _ = svc.Close() })
+	svc.SetIndexFlags(true, false)
+	path := filepath.Join(t.TempDir(), "bm25.v2")
+	svc.SetFulltextIndexPath(path)
+	svc.SetPersistenceEnabled(true)
 
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
-	routing := svc.composeRoutingBuildSettings()
+	stale := NewFulltextIndexV2WithAnalyzer(nil)
+	stale.Index("nornic:stale", "obsoleteonly", nil, nil, false)
+	require.NoError(t, stale.Save(path))
+	settings := svc.currentSearchBuildSettings()
+	settings.BM25 = strings.Replace(settings.BM25, "format="+bm25V2FormatVersion, "format=other", 1)
+	require.NoError(t, saveSearchBuildSettings(searchBuildSettingsPath(path, "", ""), settings))
 
-	require.NotEmpty(t, routing)
-	require.True(t, strings.Contains(routing, "kmeans_max_iter=9"))
-	require.False(t, strings.Contains(routing, "kmeans_seed="))
+	require.NoError(t, svc.BuildIndexes(context.Background()))
+	require.Len(t, svc.fulltext().Search("freshlyindexed", 10), 1)
+	require.Empty(t, svc.fulltext().Search("obsoleteonly", 10))
 }
 
 func TestComposeHNSWBuildSettingsTracksGraphConfiguration(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 	require.Contains(t, svc.composeHNSWBuildSettings(), "gpu_build=true")
 
 	t.Setenv("NORNICDB_HNSW_BUILD_GPU_ENABLED", "false")
 	require.Contains(t, svc.composeHNSWBuildSettings(), "gpu_build=false")
 	require.NotContains(t, svc.composeHNSWBuildSettings(), "lexical_seeding")
-}
-
-func TestComposeStrategyBuildSettings_CompressedIncludesFingerprint(t *testing.T) {
-	t.Setenv("NORNICDB_VECTOR_ANN_QUALITY", "compressed")
-	t.Setenv("NORNICDB_VECTOR_IVF_LISTS", "64")
-	t.Setenv("NORNICDB_VECTOR_PQ_SEGMENTS", "8")
-	t.Setenv("NORNICDB_VECTOR_PQ_BITS", "4")
-
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 64)
-	strategy := svc.composeStrategyBuildSettings()
-	require.True(t, strings.Contains(strategy, "quality=compressed"))
-	require.True(t, strings.Contains(strategy, "lists=64"))
-	require.True(t, strings.Contains(strategy, "segments=8"))
 }
 
 func TestLoadAndSaveSearchBuildSettings_EdgeBranches(t *testing.T) {
@@ -135,33 +136,88 @@ func TestLoadAndSaveSearchBuildSettings_EdgeBranches(t *testing.T) {
 	})
 }
 
-func TestComposeRoutingBuildSettings_ClampsAndDefaults(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
-
-	t.Setenv("NORNICDB_KMEANS_MAX_ITERATIONS", "1")
-	t.Setenv("NORNICDB_VECTOR_ROUTING_MODE", "")
-	routing := svc.composeRoutingBuildSettings()
-	require.Contains(t, routing, "mode=hybrid")
-	require.Contains(t, routing, "kmeans_max_iter=5")
-
-	t.Setenv("NORNICDB_KMEANS_MAX_ITERATIONS", "1000")
-	t.Setenv("NORNICDB_VECTOR_ROUTING_MODE", "  lexical  ")
-	routing = svc.composeRoutingBuildSettings()
-	require.Contains(t, routing, "mode=lexical")
-	require.Contains(t, routing, "kmeans_max_iter=500")
+func TestComposeBuildSettingsFingerprints(t *testing.T) {
+	type step struct {
+		env      [][2]string
+		strategy bool
+		notEmpty bool
+		contains []string
+		excludes []string
+	}
+	cases := []struct {
+		name   string
+		dims   int
+		before [][2]string
+		steps  []step
+	}{
+		{
+			name: "routing excludes seed mode",
+			dims: 2,
+			before: [][2]string{
+				{"NORNICDB_VECTOR_ROUTING_MODE", "hybrid"},
+				{"NORNICDB_KMEANS_MAX_ITERATIONS", "9"},
+				{"NORNICDB_KMEANS_SEED_MODE", "none"},
+			},
+			steps: []step{{notEmpty: true, contains: []string{"kmeans_max_iter=9"}, excludes: []string{"kmeans_seed="}}},
+		},
+		{
+			name: "compressed strategy",
+			dims: 64,
+			before: [][2]string{
+				{"NORNICDB_VECTOR_ANN_QUALITY", "compressed"},
+				{"NORNICDB_VECTOR_IVF_LISTS", "64"},
+				{"NORNICDB_VECTOR_PQ_SEGMENTS", "8"},
+				{"NORNICDB_VECTOR_PQ_BITS", "4"},
+			},
+			steps: []step{{strategy: true, contains: []string{"quality=compressed", "lists=64", "segments=8"}}},
+		},
+		{
+			name: "routing clamps and defaults",
+			dims: 2,
+			steps: []step{
+				{env: [][2]string{{"NORNICDB_KMEANS_MAX_ITERATIONS", "1"}, {"NORNICDB_VECTOR_ROUTING_MODE", ""}},
+					contains: []string{"mode=hybrid", "kmeans_max_iter=5"}},
+				{env: [][2]string{{"NORNICDB_KMEANS_MAX_ITERATIONS", "1000"}, {"NORNICDB_VECTOR_ROUTING_MODE", "  lexical  "}},
+					contains: []string{"mode=lexical", "kmeans_max_iter=500"}},
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, setting := range tc.before {
+				t.Setenv(setting[0], setting[1])
+			}
+			svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), tc.dims, nil)
+			for _, next := range tc.steps {
+				for _, setting := range next.env {
+					t.Setenv(setting[0], setting[1])
+				}
+				var got string
+				if next.strategy {
+					got = svc.composeStrategyBuildSettings()
+				} else {
+					got = svc.composeRoutingBuildSettings()
+				}
+				if next.notEmpty {
+					require.NotEmpty(t, got)
+				}
+				for _, value := range next.contains {
+					require.Contains(t, got, value)
+				}
+				for _, value := range next.excludes {
+					require.NotContains(t, got, value)
+				}
+			}
+		})
+	}
 }
 
-func TestBuildSettings_CurrentBM25AndPersistBranches(t *testing.T) {
-	engine := storage.NewMemoryEngine()
-	svc := NewServiceWithDimensions(engine, 384)
+func TestBuildSettings_BM25FormatAndPersistBranches(t *testing.T) {
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	svc := NewService(engine, 384, nil)
 
-	// Explicit v1 engine should use v1 format marker.
-	svc.bm25Engine = BM25EngineV1
-	require.Equal(t, fulltextIndexFormatVersion, svc.currentBM25FormatVersion())
-
-	// Explicit v2 engine should use v2 marker.
-	svc.bm25Engine = BM25EngineV2
-	require.Equal(t, bm25V2FormatVersion, svc.currentBM25FormatVersion())
+	// The single fulltext implementation stamps its own format marker.
+	require.Contains(t, svc.composeBM25BuildSettings(), "format="+bm25V2FormatVersion)
 
 	// Empty paths return early.
 	svc.persistSearchBuildSettings("", "", "")

@@ -54,22 +54,25 @@ func WithRoleRecords(ctx context.Context, system storage.Engine, roles []string,
 
 // putRoleRecord stores node, creating it or replacing the stored one with
 // its creation time kept; remove deletes the stored node instead (a missing
-// one is no change).
-func putRoleRecord(view storage.Engine, node *storage.Node, remove bool) error {
-	existing, err := view.GetNode(node.ID)
+// one is no change). The stored node read is the immutable Before image the
+// update reports, so it is retained unchanged and only node becomes After.
+// ctx is the lifetime of the caller's role-record operation, which already
+// holds that operation's transaction view.
+func putRoleRecord(ctx context.Context, view storage.Engine, node *storage.Node, remove bool) error {
+	existing, err := view.GetNode(ctx, node.ID)
 	if err == storage.ErrNotFound {
 		if remove {
 			return nil
 		}
-		_, err = view.CreateNode(node)
+		_, err = view.CreateNode(ctx, node)
 		return err
 	}
 	if err != nil {
 		return err
 	}
 	if remove {
-		return view.DeleteNode(node.ID)
+		return view.DeleteNode(ctx, node.ID)
 	}
 	node.CreatedAt = existing.CreatedAt
-	return view.UpdateNode(node)
+	return view.UpdateNode(ctx, storage.NodeUpdateRequest{Before: existing, After: node})
 }

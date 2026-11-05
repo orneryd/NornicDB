@@ -3,6 +3,7 @@ package bolt
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"io"
 	"net"
 	"testing"
@@ -90,10 +91,10 @@ func newBoltCoverageAuthenticator(t *testing.T) *auth.Authenticator {
 	cfg.JWTSecret = []byte("bolt-coverage-secret-key-123456789")
 	cfg.SecurityEnabled = true
 
-	authenticator, err := auth.NewAuthenticator(cfg, storage.NewMemoryEngine())
+	authenticator, err := auth.NewAuthenticator(cfg, fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)))
 	require.NoError(t, err)
 
-	_, err = authenticator.CreateUser("tester", "secret-pass", []auth.Role{auth.RoleViewer})
+	_, err = authenticator.CreateUser(context.Background(), "tester", "secret-pass", []auth.Role{auth.RoleViewer})
 	require.NoError(t, err)
 
 	return authenticator
@@ -187,7 +188,7 @@ func TestBoltCoverage_ServerSettersAndBookmarkHelpers(t *testing.T) {
 					s.lastResult = &QueryResult{Metadata: map[string]any{"receipt": tc.receipt}}
 				}
 
-				bookmark, ok := s.bookmarkFromReceipt()
+				bookmark, ok := s.bookmarkFromResultReceipt(s.lastResult)
 				assert.Equal(t, tc.ok, ok)
 				assert.Equal(t, tc.expected, bookmark)
 			})
@@ -260,10 +261,10 @@ func TestBoltCoverage_SendRecordsBatched(t *testing.T) {
 	conn := &mockConn{}
 	session := newTestSession(conn, &mockExecutor{})
 
-	require.NoError(t, session.sendRecordsBatched(nil, "nornic"))
+	require.NoError(t, session.sendRecordsBatched(t.Context(), nil, "nornic"))
 
 	rows := [][]any{{"alpha", int64(1)}, {"beta", int64(2)}}
-	require.NoError(t, session.sendRecordsBatched(rows, "nornic"))
+	require.NoError(t, session.sendRecordsBatched(t.Context(), rows, "nornic"))
 	assert.Greater(t, session.writer.Buffered(), 0)
 	require.NoError(t, session.writer.Flush())
 	assert.NotEmpty(t, conn.writeData)
@@ -757,7 +758,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 		require.NoError(t, err)
 
 		t.Run("parse hello auth edge cases", func(t *testing.T) {
-			session := &Session{}
+			session := &Session{server: &Server{}}
 			params, err := session.parseHelloAuth(nil)
 			require.NoError(t, err)
 			assert.Empty(t, params["scheme"])
@@ -824,7 +825,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 			defer clientConn.Close()
 			session.server.config.Authenticator = adapter
 			session.server.config.AllowAnonymous = true
-			session.server.dbManager = &overrideDBManager{store: storage.NewMemoryEngine(), defaultDB: "graph", exists: true}
+			session.server.dbManager = &overrideDBManager{store: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), defaultDB: "graph", exists: true}
 
 			done := make(chan error, 1)
 			go func() { done <- session.handleHello(encodePackStreamMap(map[string]any{"scheme": "none"})) }()
@@ -836,7 +837,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 			noAuthSession, noAuthServerConn, noAuthClientConn := makeHelloSession()
 			defer noAuthServerConn.Close()
 			defer noAuthClientConn.Close()
-			noAuthSession.server.dbManager = &overrideDBManager{store: storage.NewMemoryEngine(), defaultDB: "graph", exists: true}
+			noAuthSession.server.dbManager = &overrideDBManager{store: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), defaultDB: "graph", exists: true}
 
 			done = make(chan error, 1)
 			go func() { done <- noAuthSession.handleHello(encodePackStreamMap(map[string]any{"scheme": "none"})) }()
@@ -856,7 +857,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 			session.server = &Server{config: DefaultConfig(), sessions: map[string]*Session{}}
 			session.server.config.Authenticator = NewAuthenticatorAdapter(authenticator)
 			session.server.config.LogQueries = true
-			session.server.dbManager = &overrideDBManager{store: storage.NewMemoryEngine(), defaultDB: "graph", exists: true}
+			session.server.dbManager = &overrideDBManager{store: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), defaultDB: "graph", exists: true}
 
 			done = make(chan error, 1)
 			go func() {
@@ -926,7 +927,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 			defer serverConn.Close()
 			defer clientConn.Close()
 			session.server.config.Authenticator = NewAuthenticatorAdapter(authenticator)
-			session.server.dbManager = &overrideDBManager{store: storage.NewMemoryEngine(), defaultDB: "graph", exists: false}
+			session.server.dbManager = &overrideDBManager{store: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), defaultDB: "graph", exists: false}
 
 			done := make(chan error, 1)
 			go func() {
@@ -964,9 +965,13 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 
 		db, ok = databaseFromMetadata(map[string]any{"db": "  graph  "})
 		assert.True(t, ok)
-		assert.Equal(t, "graph", db)
+		assert.Equal(t, "  graph  ", db, "metadata contains a decoded identity, not raw Cypher whitespace")
 
 		db, ok = databaseFromMetadata(map[string]any{"db": " ", "database": "fallback"})
+		assert.True(t, ok)
+		assert.Equal(t, " ", db, "an explicit selection must not silently switch to another database")
+
+		db, ok = databaseFromMetadata(map[string]any{"db": "", "database": "fallback"})
 		assert.True(t, ok)
 		assert.Equal(t, "fallback", db)
 
@@ -979,7 +984,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 		assert.Equal(t, int64(1), s.lastTxSequence)
 		s.server.txSequence = -1
 		assert.Equal(t, formatBookmark(0), s.currentBookmark())
-		assert.Equal(t, formatBookmark(0), (&Session{}).currentBookmark())
+		assert.Equal(t, formatBookmark(0), (&Session{server: &Server{}}).currentBookmark())
 		assert.Panics(t, func() { (&Session{}).generateBookmark() })
 	})
 
@@ -1070,7 +1075,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 			expectCode  string
 		}{
 			{name: "success", rollbackErr: nil, expectCode: ""},
-			{name: "failure", rollbackErr: io.ErrClosedPipe, expectCode: "Neo.ClientError.Transaction.TransactionRollbackFailed"},
+			{name: "failure", rollbackErr: io.ErrClosedPipe, expectCode: "Neo.DatabaseError.Transaction.TransactionRollbackFailed"},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				serverConn, clientConn := net.Pipe()
@@ -1131,7 +1136,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 	})
 
 	t.Run("database executor lookup and adapter execute", func(t *testing.T) {
-		session := &Session{}
+		session := &Session{server: &Server{}}
 		_, err := session.getExecutorForDatabase("graph")
 		require.ErrorContains(t, err, "database manager not available")
 
@@ -1139,7 +1144,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 		_, err = session.getExecutorForDatabase("missing")
 		require.Error(t, err)
 
-		store := storage.NewMemoryEngine()
+		store := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		session = &Session{server: &Server{dbManager: &mockDBManager{stores: map[string]storage.Engine{"graph": store}, defaultDB: "graph"}}}
 		exec, err := session.getExecutorForDatabase("graph")
 		require.NoError(t, err)
@@ -1181,7 +1186,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 				{name: "schema", query: "CREATE INDEX ON :Person(name)", message: "Schema operations require schema permission"},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
-					session, serverConn, clientConn := makeSession(&cypherQueryExecutor{executor: cypher.NewStorageExecutor(storage.NewMemoryEngine())})
+					session, serverConn, clientConn := makeSession(&cypherQueryExecutor{executor: cypher.NewStorageExecutor(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)))})
 					defer serverConn.Close()
 					defer clientConn.Close()
 					session.authenticated = true
@@ -1225,7 +1230,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 				config:   DefaultConfig(),
 				sessions: map[string]*Session{},
 				dbManager: &mockDBManager{
-					stores:    map[string]storage.Engine{"graph": storage.NewMemoryEngine()},
+					stores:    map[string]storage.Engine{"graph": fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))},
 					defaultDB: "graph",
 				},
 			}
@@ -1278,7 +1283,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 			serverConn2, clientConn2 := net.Pipe()
 			defer serverConn2.Close()
 			defer clientConn2.Close()
-			session = newTestSession(serverConn2, &cypherQueryExecutor{executor: cypher.NewStorageExecutor(storage.NewMemoryEngine())})
+			session = newTestSession(serverConn2, &cypherQueryExecutor{executor: cypher.NewStorageExecutor(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)))})
 			session.server = &Server{config: DefaultConfig(), sessions: map[string]*Session{}}
 			session.authenticated = true
 			session.authResult = &BoltAuthResult{Authenticated: true, Username: "editor", Roles: []string{"editor"}, Permissions: []string{"read", "write"}}
@@ -1363,7 +1368,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 		})
 
 		t.Run("read permission secure default and db executor errors", func(t *testing.T) {
-			session, serverConn, clientConn := makeSession(&cypherQueryExecutor{executor: cypher.NewStorageExecutor(storage.NewMemoryEngine())})
+			session, serverConn, clientConn := makeSession(&cypherQueryExecutor{executor: cypher.NewStorageExecutor(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)))})
 			defer serverConn.Close()
 			defer clientConn.Close()
 			session.authenticated = true

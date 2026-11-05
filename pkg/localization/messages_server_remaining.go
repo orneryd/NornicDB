@@ -25,7 +25,17 @@ const (
 	MessageRetentionHoldReleased         MessageID = "server.retention_hold_released"
 	MessageRetentionSweepTriggered       MessageID = "server.retention_sweep_triggered"
 	MessageBackupComplete                MessageID = "server.backup_complete"
+	MessageApplicationMemoryPressure     MessageID = "server.application_memory_pressure"
+	MessageApplicationMemoryUnavailable  MessageID = "server.application_memory_unavailable"
 )
+
+func ApplicationMemoryPressure() Message {
+	return Message{ID: MessageApplicationMemoryPressure, Fallback: "Application memory soft limit reached; retry after memory is released."}
+}
+
+func ApplicationMemoryUnavailable() Message {
+	return Message{ID: MessageApplicationMemoryUnavailable, Fallback: "Memory usage readings are unavailable; retry when monitoring recovers."}
+}
 
 func RoleEntitlementsUnavailable() Message {
 	return Message{ID: MessageRoleEntitlementsUnavailable, Fallback: "Role entitlements are not configured (auth disabled or system DB unavailable)."}

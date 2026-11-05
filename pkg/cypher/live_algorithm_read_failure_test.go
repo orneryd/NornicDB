@@ -13,12 +13,12 @@ type liveAlgorithmReadFailureEngine struct {
 	failure error
 }
 
-func (e *liveAlgorithmReadFailureEngine) GetOutgoingEdges(id storage.NodeID) ([]*storage.Edge, error) {
+func (e *liveAlgorithmReadFailureEngine) GetOutgoingEdges(ctx context.Context, id storage.NodeID) ([]*storage.Edge, error) {
 	return nil, e.failure
 }
 func TestLiveLinkPredictionPropagatesGraphReadFailure(t *testing.T) {
 	store := newTestMemoryEngine(t)
-	_, err := store.CreateNode(&storage.Node{ID: "test:a"})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "test:a"})
 	require.NoError(t, err)
 	failure := errors.New("live relationships unavailable")
 	exec := NewStorageExecutor(&liveAlgorithmReadFailureEngine{Engine: store, failure: failure})

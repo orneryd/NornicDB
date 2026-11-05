@@ -9,8 +9,8 @@ import (
 
 func TestCompositeEngine_GetSchema_MergesIndexes(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Add indexes to engine1
 	schema1 := engine1.GetSchema()
@@ -18,9 +18,9 @@ func TestCompositeEngine_GetSchema_MergesIndexes(t *testing.T) {
 	require.NoError(t, err)
 	err = schema1.AddCompositeIndex("idx_person_location", "Person", []string{"country", "city"})
 	require.NoError(t, err)
-	err = schema1.AddFulltextIndex("idx_person_fulltext", []string{"Person"}, []string{"name", "bio"})
+	err = schema1.AddFulltextIndex("idx_person_fulltext", []string{"Person"}, []string{"name", "bio"}, ConstraintEntityNode)
 	require.NoError(t, err)
-	err = schema1.AddVectorIndex("idx_person_embedding", "Person", "embedding", 384, "cosine")
+	err = schema1.AddVectorIndex("idx_person_embedding", "Person", "embedding", 384, "cosine", ConstraintEntityNode)
 	require.NoError(t, err)
 	err = schema1.AddRangeIndex("idx_person_age", "Person", "age")
 	require.NoError(t, err)
@@ -88,8 +88,8 @@ func TestCompositeEngine_GetSchema_MergesIndexes(t *testing.T) {
 
 func TestCompositeEngine_GetSchema_DeduplicatesIndexes(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Add same index to both engines (same name)
 	schema1 := engine1.GetSchema()
@@ -134,8 +134,8 @@ func TestCompositeEngine_GetSchema_DeduplicatesIndexes(t *testing.T) {
 
 func TestCompositeEngine_GetSchema_MergesConstraints(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Add constraints to engine1
 	schema1 := engine1.GetSchema()
@@ -178,8 +178,10 @@ func TestCompositeEngine_GetSchema_MergesConstraints(t *testing.T) {
 
 	// Verify constraints are merged
 	// GetConstraintsForLabels with specific labels
-	personConstraints := mergedSchema.GetConstraintsForLabels([]string{"Person"})
-	companyConstraints := mergedSchema.GetConstraintsForLabels([]string{"Company"})
+	personConstraints, err := mergedSchema.GetConstraintsForLabels(t.Context(), []string{"Person"})
+	require.NoError(t, err)
+	companyConstraints, err := mergedSchema.GetConstraintsForLabels(t.Context(), []string{"Company"})
+	require.NoError(t, err)
 
 	// At least one constraint should be found
 	foundPerson := false
@@ -214,13 +216,14 @@ func TestCompositeEngine_GetSchema_EmptyComposite(t *testing.T) {
 	indexes := nonLookupIndexes(mergedSchema.GetIndexes())
 	assert.Equal(t, 0, len(indexes))
 
-	constraints := mergedSchema.GetConstraints()
+	constraints, discoveryErr := mergedSchema.GetConstraints(t.Context())
+	require.NoError(t, discoveryErr)
 	assert.Equal(t, 0, len(constraints))
 }
 
 func TestCompositeEngine_GetSchema_AllIndexTypes(t *testing.T) {
 	// Create constituent engine with all index types
-	engine1 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
 	schema1 := engine1.GetSchema()
 
 	// Add one of each index type
@@ -228,9 +231,9 @@ func TestCompositeEngine_GetSchema_AllIndexTypes(t *testing.T) {
 	require.NoError(t, err)
 	err = schema1.AddCompositeIndex("comp_idx", "Person", []string{"country", "city"})
 	require.NoError(t, err)
-	err = schema1.AddFulltextIndex("ft_idx", []string{"Person"}, []string{"bio"})
+	err = schema1.AddFulltextIndex("ft_idx", []string{"Person"}, []string{"bio"}, ConstraintEntityNode)
 	require.NoError(t, err)
-	err = schema1.AddVectorIndex("vec_idx", "Person", "embedding", 384, "cosine")
+	err = schema1.AddVectorIndex("vec_idx", "Person", "embedding", 384, "cosine", ConstraintEntityNode)
 	require.NoError(t, err)
 	err = schema1.AddRangeIndex("range_idx", "Person", "age")
 	require.NoError(t, err)
@@ -290,7 +293,7 @@ func TestAnyToStringSlice_DeterministicAcrossShapes(t *testing.T) {
 }
 
 func TestCompositeEngine_GetSchema_MergesRelationshipRangeIndexEntityType(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	require.NoError(t, engine.GetSchema().AddRangeIndexForEntity(
 		"rel_range_idx",
 		"RELATES_TO",
@@ -326,7 +329,7 @@ func TestCompositeEngine_GetSchema_MergesRelationshipRangeIndexEntityType(t *tes
 }
 
 func TestCompositeEngine_GetSchema_MergesLegacyScalarRangePropertyShape(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	sm := engine.GetSchema()
 	require.NoError(t, sm.AddRangeIndex("legacy_range_idx", "Person", "age"))
 	// Force legacy export shape: scalar "property" only.

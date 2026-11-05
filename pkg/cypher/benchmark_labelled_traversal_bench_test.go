@@ -7,6 +7,8 @@ package cypher
 // property on the leaves so the endpoint load cost is visible.
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"testing"
@@ -40,7 +42,7 @@ func seedLabelledTraversalBenchGraph(b *testing.B, exec *StorageExecutor, ctx co
 
 func newLabelledTraversalBenchmark(b *testing.B) (*StorageExecutor, context.Context) {
 	b.Helper()
-	base, err := storage.NewBadgerEngine(b.TempDir())
+	base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](b, storage.ErrStorageClosed)(storage.NewBadgerEngine(b.TempDir()))
 	if err != nil {
 		b.Fatalf("badger engine failed: %v", err)
 	}

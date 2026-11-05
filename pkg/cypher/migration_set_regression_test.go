@@ -3,10 +3,12 @@ package cypher
 import (
 	"context"
 	"encoding/binary"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 	"github.com/vmihailenco/msgpack/v5"
@@ -69,11 +71,14 @@ func TestBug_MigratedBadgerNode_MatchSetUpdatesExistingNode(t *testing.T) {
 	dir := t.TempDir()
 	ctx := context.Background()
 
-	base, err := storage.NewBadgerEngine(dir)
+	base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+	if base != nil {
+		fixtureowner.Own(t, base)
+	}
 	require.NoError(t, err)
 
 	namespaced := storage.NewNamespacedEngine(base, testNamespacedMigrationDB)
-	_, err = namespaced.CreateNode(&storage.Node{
+	_, err = namespaced.CreateNode(t.Context(), &storage.Node{
 		ID:     "session-1",
 		Labels: []string{"Session"},
 		Properties: map[string]interface{}{
@@ -86,7 +91,10 @@ func TestBug_MigratedBadgerNode_MatchSetUpdatesExistingNode(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, base.Close())
 
-	rawDB, err := badger.Open(badger.DefaultOptions(dir).WithLogger(nil))
+	rawDB, err := fixtureowner.TrackResult[*badger.DB](t, nil)(badger.Open(badger.DefaultOptions(dir).WithLogger(nil)))
+	if rawDB != nil {
+		fixtureowner.Own(t, rawDB)
+	}
 	require.NoError(t, err)
 
 	namespacedID := storage.NodeID(testNamespacedMigrationDB + ":session-1")
@@ -110,7 +118,9 @@ func TestBug_MigratedBadgerNode_MatchSetUpdatesExistingNode(t *testing.T) {
 	}))
 	require.NoError(t, rawDB.Close())
 
-	migrated, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, AllowStorageUpgrade: true})
+	plan, err := multidb.NewCatalogUpgradeV4("system", "")
+	require.NoError(t, err)
+	migrated, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, AllowStorageUpgrade: true, CatalogUpgradeV4: plan}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = migrated.Close() })
 
@@ -128,7 +138,7 @@ func TestBug_MigratedBadgerNode_MatchSetUpdatesExistingNode(t *testing.T) {
 	require.Len(t, setRes.Rows, 1)
 	require.Equal(t, "my-session-id", setRes.Rows[0][0])
 
-	node, err := store.GetNode("session-1")
+	node, err := store.GetNode(t.Context(), "session-1")
 	require.NoError(t, err)
 	require.Equal(t, "2026-06-02T01:00:00Z", node.Properties["finalized_at"])
 }

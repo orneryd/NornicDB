@@ -10,7 +10,8 @@ package multidb
 //	// Use default database name from main config
 //	mainConfig := config.LoadDefaults()
 //	dbConfig := multidb.NewConfigFromDefaultDatabase(mainConfig.Database.DefaultDatabase)
-//	manager := multidb.NewDatabaseManager(inner, dbConfig)
+//	// ctx belongs to the application startup operation.
+//	manager, err := multidb.NewDatabaseManager(ctx, inner, dbConfig)
 func NewConfigFromDefaultDatabase(defaultDatabase string) *Config {
 	if defaultDatabase == "" {
 		// Fall back to "nornic" if empty

@@ -2,32 +2,12 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
-
-func TestExecutorSubqueryHelpers_ExtraBranches(t *testing.T) {
-	lhs, rhs, ok := splitTopLevelEqualityCallSubquery("a = b")
-	require.True(t, ok)
-	require.Equal(t, "a", lhs)
-	require.Equal(t, "b", rhs)
-
-	_, _, ok = splitTopLevelEqualityCallSubquery("a = ")
-	require.False(t, ok)
-	_, _, ok = splitTopLevelEqualityCallSubquery("(a = b)")
-	require.False(t, ok)
-
-	idx := indexTopLevelKeywordCallSubquery("`RETURN` RETURN x", "RETURN")
-	require.Equal(t, 9, idx)
-	idx = indexTopLevelKeywordCallSubquery("[1,2,RETURN] RETURN x", "RETURN")
-	require.Equal(t, 13, idx)
-
-	require.True(t, containsStandaloneIdentifier("x + y", "x"))
-	require.False(t, containsStandaloneIdentifier("foo.x", "x"))
-	require.False(t, containsStandaloneIdentifier("xx", "x"))
-}
 
 func TestExecuteChainedCallSubquery_Branches(t *testing.T) {
 	base := newTestMemoryEngine(t)
@@ -76,9 +56,9 @@ func TestExecuteChainedCallSubquery_ImplicitScalarCorrelationOptionalAggregate(t
 	exec := NewStorageExecutor(store)
 	ctx := withParams(context.Background(), map[string]interface{}{"min_amount": int64(100)})
 
-	_, err := store.CreateNode(&storage.Node{ID: "o1", Labels: []string{"Order"}, Properties: map[string]interface{}{"owner_id": "a1", "order_id": "ORD-001", "amount": int64(125)}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "o1", Labels: []string{"Order"}, Properties: map[string]interface{}{"owner_id": "a1", "order_id": "ORD-001", "amount": int64(125)}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "o2", Labels: []string{"Order"}, Properties: map[string]interface{}{"owner_id": "a2", "order_id": "ORD-002", "amount": int64(90)}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "o2", Labels: []string{"Order"}, Properties: map[string]interface{}{"owner_id": "a2", "order_id": "ORD-002", "amount": int64(90)}})
 	require.NoError(t, err)
 
 	seed := &ExecuteResult{
@@ -122,7 +102,7 @@ func TestSeedNodesFromOuterMatch_Branches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{ID: "s1", Labels: []string{"Seed"}, Properties: map[string]interface{}{"name": "A"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "s1", Labels: []string{"Seed"}, Properties: map[string]interface{}{"name": "A"}})
 	require.NoError(t, err)
 
 	nodes, err := exec.seedNodesFromOuterMatch(ctx, "MATCH (seed:Seed {name:'A'})", "seed")
@@ -132,4 +112,57 @@ func TestSeedNodesFromOuterMatch_Branches(t *testing.T) {
 
 	_, err = exec.seedNodesFromOuterMatch(ctx, "MATCH (seed:Seed) RETURN 1", "missing")
 	require.Error(t, err)
+}
+
+func TestCallSubqueryScannerPopulations(t *testing.T) {
+	type equalityCase struct {
+		source, lhs, rhs string
+		ok               bool
+	}
+	type identifierCase struct {
+		source string
+		hit    bool
+	}
+	type keywordCase struct {
+		source string
+		index  int
+	}
+	for _, tc := range []struct {
+		name        string
+		equalities  []equalityCase
+		identifiers []identifierCase
+		keywords    []keywordCase
+	}{
+		{name: "TestExecutorSubqueryHelpers_ExtraBranches",
+			equalities:  []equalityCase{{"a = b", "a", "b", true}, {"a = ", "", "", false}, {"(a = b)", "", "", false}},
+			identifiers: []identifierCase{{"x + y", true}, {"foo.x", false}, {"xx", false}},
+			keywords:    []keywordCase{{"`RETURN` RETURN x", 9}, {"[1,2,RETURN] RETURN x", 13}}},
+		{name: "TestSubqueryIdentifierAndEqualitySplit_MoreBranches",
+			equalities:  []equalityCase{{"`a` = {x: [1,2], y: 'a=b'}", "`a`", "{x: [1,2], y: 'a=b'}", true}, {"x = ", "", "", false}},
+			identifiers: []identifierCase{{"coalesce(x, 0) + y", true}, {"obj.`x`", false}, {"'x' + \"x\"", false}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, test := range tc.equalities {
+				lhs, rhs, ok := splitTopLevelEqualityCallSubquery(test.source)
+				if test.ok {
+					require.True(t, ok)
+					require.Equal(t, test.lhs, lhs)
+					require.Equal(t, test.rhs, rhs)
+				} else {
+					require.False(t, ok)
+				}
+			}
+			for _, test := range tc.keywords {
+				require.Equal(t, test.index, indexTopLevelKeywordCallSubquery(t.Context(), test.source, "RETURN"))
+			}
+			for _, test := range tc.identifiers {
+				found := cyphertext.FindIdentifier(test.source, "x", 0, cyphertext.IdentifierUnqualifiedFold) >= 0
+				if test.hit {
+					require.True(t, found)
+				} else {
+					require.False(t, found)
+				}
+			}
+		})
+	}
 }

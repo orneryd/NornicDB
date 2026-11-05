@@ -20,11 +20,8 @@ func (m *Manager) Log(ctx context.Context, logger *slog.Logger, level slog.Level
 	if logger == nil {
 		return
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 
-	text, _, err := m.Render(ctx, event.Message)
+	text, _, err := m.Render(ctx, MessageRequest(event.Message))
 	if err != nil {
 		text = event.Message.Fallback
 		if text == "" {

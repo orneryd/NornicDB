@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
@@ -11,36 +12,36 @@ func TestBadgerTransaction_ReadEdgeAndAdjacency_ErrorPaths(t *testing.T) {
 	engine := newTestEngine(t)
 
 	// Seed a minimal graph for read helpers.
-	_, err := engine.CreateNode(&Node{ID: "test:a", Labels: []string{"N"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:a", Labels: []string{"N"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:b", Labels: []string{"N"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:b", Labels: []string{"N"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL"}))
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 
 	// pinNamespaceFromIDLocked failure through public read methods.
-	_, err = tx.GetOutgoingEdges("unprefixed")
+	_, err = tx.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "unprefixed"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "ID must be prefixed with namespace")
 
-	_, err = tx.GetIncomingEdges("also-unprefixed")
+	_, err = tx.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadIncoming, Node: "also-unprefixed"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "ID must be prefixed with namespace")
 
-	_, err = tx.GetEdgesBetween("test:a", "missingprefix")
+	_, err = tx.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadBetween, Node: "test:a", Other: "missingprefix"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "ID must be prefixed with namespace")
 
 	require.NoError(t, tx.Rollback())
 
-	// ensureLifecycleActiveLocked early-return path for closed tx.
-	_, err = tx.GetOutgoingEdges("test:a")
+	// ensureOperationAllowedLocked early-return path for closed tx.
+	_, err = tx.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadOutgoing, Node: "test:a"})
 	require.ErrorIs(t, err, ErrTransactionClosed)
-	_, err = tx.GetIncomingEdges("test:b")
+	_, err = tx.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadIncoming, Node: "test:b"})
 	require.ErrorIs(t, err, ErrTransactionClosed)
-	_, err = tx.GetEdgesBetween("test:a", "test:b")
+	_, err = tx.ReadEdges(context.Background(), TransactionEdgeRead{Kind: TransactionReadBetween, Node: "test:a", Other: "test:b"})
 	require.ErrorIs(t, err, ErrTransactionClosed)
 }
 
@@ -48,58 +49,88 @@ func TestBadgerTransaction_GetCommittedEdgeLocked_PrimaryDecodeError(t *testing.
 	engine := newTestEngine(t)
 
 	badEdgeID := EdgeID("test:bad-edge")
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		return txn.Set(edgeKey(badEdgeID), []byte("not-a-valid-edge-encoding"))
 	}))
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
 	tx.readTS = MVCCVersion{}
 
-	_, err = tx.getCommittedEdgeLocked(badEdgeID)
+	_, err = tx.getCommittedEdgeLocked(t.Context(), badEdgeID)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unexpected format")
 }
 
+// getNodesByLabelLockedReadTSCase is one readTS/namespace combination of
+// getNodesByLabelLocked: the transaction's namespace pin and snapshot version
+// decide which read branch the helper takes.
+type getNodesByLabelLockedReadTSCase struct {
+	name      string
+	nodeID    NodeID
+	label     string
+	namespace string // "" leaves the transaction unpinned
+	// readTS builds the snapshot version pinned on the transaction once the
+	// fixture is seeded; nil retains the version selected by BeginTransaction
+	// and SetNamespace, which need not be zero.
+	readTS func() MVCCVersion
+}
+
+// runGetNodesByLabelLockedReadTSCases is the shared fixture/read/assertion
+// kernel for the getNodesByLabelLocked readTS branches: it seeds one labelled
+// node, opens a transaction, applies the case's namespace pin and readTS, and
+// requires the label scan to succeed with at least one node before rolling the
+// transaction back.
+func runGetNodesByLabelLockedReadTSCases(t *testing.T, cases []getNodesByLabelLockedReadTSCase) {
+	t.Helper()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := newTestEngine(t)
+			_, err := engine.CreateNode(t.Context(), &Node{ID: tc.nodeID, Labels: []string{tc.label}})
+			require.NoError(t, err)
+
+			tx, err := engine.BeginTransaction(t.Context())
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, tx.Rollback()) })
+			if tc.namespace != "" {
+				require.NoError(t, tx.SetNamespace(tc.namespace))
+			}
+			if tc.readTS != nil {
+				tx.readTS = tc.readTS()
+			}
+
+			nodes, err := tx.getNodesByLabelLocked(context.Background(), tc.label)
+			require.NoError(t, err)
+			require.NotEmpty(t, nodes)
+		})
+	}
+}
+
 func TestBadgerTransaction_GetNodesByLabelLocked_ReadTSBranches(t *testing.T) {
-	engine := newTestEngine(t)
-	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"Person"}})
-	require.NoError(t, err)
-
-	txNoPin, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	nodes, err := txNoPin.getNodesByLabelLocked("Person")
-	require.NoError(t, err)
-	require.NotEmpty(t, nodes)
-	require.NoError(t, txNoPin.Rollback())
-
-	txPinned, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	require.NoError(t, txPinned.SetNamespace("test"))
-	nodes, err = txPinned.getNodesByLabelLocked("Person")
-	require.NoError(t, err)
-	require.NotEmpty(t, nodes)
-	require.NoError(t, txPinned.Rollback())
+	runGetNodesByLabelLockedReadTSCases(t, []getNodesByLabelLockedReadTSCase{
+		{name: "unpinned begin snapshot", nodeID: "test:n1", label: "Person"},
+		{name: "pinned begin snapshot", nodeID: "test:n1", label: "Person", namespace: "test"},
+	})
 }
 
 func TestBadgerTransaction_GetCommittedEdgeLocked_VisibleAtDecodeErrorPath(t *testing.T) {
 	engine := newTestEngine(t)
 
-	_, err := engine.CreateNode(&Node{ID: "test:a", Labels: []string{"N"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:a", Labels: []string{"N"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:b", Labels: []string{"N"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:b", Labels: []string{"N"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL"}))
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	defer func() { _ = tx.Rollback() }()
 
 	// Existing tests cover ErrNotVisibleAtSnapshot->ErrNotFound conversion.
 	// Corrupt the edge MVCC head so visible-at returns a different error.
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		headKey := engine.mvccEdgeHeadKeyStringLookup("test:e1")
 		if headKey == nil {
 			return ErrNotFound
@@ -108,14 +139,14 @@ func TestBadgerTransaction_GetCommittedEdgeLocked_VisibleAtDecodeErrorPath(t *te
 	}))
 
 	// The original physical snapshot predates the injected corruption.
-	_, err = tx.getCommittedEdgeLocked("test:e1")
+	_, err = tx.getCommittedEdgeLocked(t.Context(), "test:e1")
 	require.NoError(t, err)
 
-	corruptReader, err := engine.BeginTransaction()
+	corruptReader, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, corruptReader.SetNamespace("test"))
 	defer func() { _ = corruptReader.Rollback() }()
-	_, err = corruptReader.getCommittedEdgeLocked("test:e1")
+	_, err = corruptReader.getCommittedEdgeLocked(t.Context(), "test:e1")
 	require.Error(t, err)
 	require.NotErrorIs(t, err, ErrNotFound)
 }

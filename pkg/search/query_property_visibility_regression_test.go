@@ -1,19 +1,22 @@
 package search
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
+	"reflect"
+	"testing"
+	"time"
+
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
-	"reflect"
-	"testing"
-	"time"
 )
 
 func policySearchFixture(t *testing.T) (*storage.BadgerEngine, storage.Engine, *Service) {
 	t.Helper()
-	be, err := storage.NewBadgerEngineInMemory()
+	be, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { be.Close() })
 	schema := be.GetSchemaForNamespace("tenant")
@@ -39,11 +42,11 @@ func policySearchFixture(t *testing.T) (*storage.BadgerEngine, storage.Engine, *
 	old := time.Now().Add(-time.Hour)
 	props := map[string]interface{}{"public": "needle visible", "body": "needle hidden", "title": "hidden title", "description": "hidden description", "content": "needle hidden content", "type": "hidden type"}
 	for _, id := range []storage.NodeID{"a", "b"} {
-		_, err = engine.CreateNode(&storage.Node{ID: id, Labels: []string{"Doc"}, Properties: props, CreatedAt: old, UpdatedAt: old})
+		_, err = engine.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"Doc"}, Properties: props, CreatedAt: old, UpdatedAt: old})
 		require.NoError(t, err)
 	}
-	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "LINK", Properties: props, CreatedAt: old, UpdatedAt: old}))
-	svc := NewService(engine)
+	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "LINK", Properties: props, CreatedAt: old, UpdatedAt: old}))
+	svc := NewService(engine, DefaultVectorDimensions, nil)
 	t.Cleanup(func() { svc.Close() })
 	svc.SetFulltextProperties([]string{"public", "body", "title", "description", "content", "type"})
 	svc.SetSearchResultCachePolicy(10, time.Hour)
@@ -79,7 +82,7 @@ func TestNormalSearchProjectionBypassesWarmRawCache(t *testing.T) {
 	for _, r := range result.Results {
 		assertPolicyProjectedSearchResult(t, r)
 	}
-	raw, err := engine.GetNode("a")
+	raw, err := engine.GetNode(t.Context(), "a")
 	require.NoError(t, err)
 	require.Contains(t, raw.Properties, "body")
 }
@@ -128,10 +131,10 @@ func TestNormalContinuationPagesRefreshDecayProjection(t *testing.T) {
 func TestNormalGroupedContinuationCannotExposeSuppressedGroupKey(t *testing.T) {
 	be, engine, svc := policySearchFixture(t)
 	ctx := context.Background()
-	b, err := engine.GetNode("b")
+	b, err := engine.GetNode(t.Context(), "b")
 	require.NoError(t, err)
 	b.Properties["title"] = "second hidden"
-	require.NoError(t, engine.UpdateNode(b))
+	require.NoError(t, engine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: b}))
 	req := SearchContinuationRequest{Owner: "alice", Database: "tenant", Mode: SearchContinuationID, GroupBy: "title", N: 1}
 	first, err := svc.SearchTextContinuation(ctx, "", nil, req, nil, nil, nil, ChunkedSearchErrorPolicy{})
 	require.NoError(t, err)

@@ -23,7 +23,7 @@ func TestCustomProcedureWrappedCacheExclusion(t *testing.T) {
 		{"Fabric parameter", "CALL { USE pcomp.other CALL apoc.cypher.run($statement, {}) YIELD value RETURN value.v AS v } RETURN v", true},
 	} {
 		t.Run(route.name, func(t *testing.T) {
-			executor := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "cached"), 100, time.Minute)
+			executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "cached"), QueryCachePolicy{MaxEntries: 100, TTL: time.Minute})
 			if route.fabric {
 				executor = newCompositeFixture(t)
 			}

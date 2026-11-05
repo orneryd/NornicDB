@@ -18,7 +18,7 @@ func BenchmarkServerRouteTableRegistration(b *testing.B) {
 		{"/admin/stats", auth.PermAdmin, s.handleAdminStats},
 		{"/gdpr/export", auth.PermRead, s.handleGDPRExport},
 		{"/auth/me", auth.PermRead, s.handleMe},
-		{"/admin/retention/policies", auth.PermAdmin, s.handleRetentionPolicies},
+		{"/admin/retention/policies", auth.PermAdmin, func(w http.ResponseWriter, r *http.Request) { s.handleRetention(w, r, retentionPoliciesRoute) }},
 	}
 	b.ReportAllocs()
 	b.ResetTimer()

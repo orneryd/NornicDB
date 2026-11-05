@@ -40,16 +40,16 @@ func TestCompareSchemaIndexValues(t *testing.T) {
 
 func TestSchemaManagerPropertyIndexHelpers(t *testing.T) {
 	sm := NewSchemaManager()
-	require.False(t, sm.HasPropertyIndex("Doc", "rank"))
+	require.False(t, checkedIndexRead[bool](t)(sm.HasPropertyIndex(t.Context(), "Doc", "rank")))
 	require.False(t, sm.HasAnyPropertyIndexForLabel("Doc"))
-	require.Nil(t, sm.PropertyIndexAllNonNil("Doc", "rank", false))
+	require.Nil(t, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexAllNonNil(t.Context(), "Doc", "rank", false)))
 
 	require.NoError(t, sm.AddPropertyIndex("doc_rank", "Doc", []string{"rank"}))
-	require.True(t, sm.HasPropertyIndex("Doc", "rank"))
+	require.True(t, checkedIndexRead[bool](t)(sm.HasPropertyIndex(t.Context(), "Doc", "rank")))
 	require.True(t, sm.HasAnyPropertyIndexForLabel("Doc"))
 	require.False(t, sm.HasAnyPropertyIndexForLabel("Other"))
 
-	idx, _ := sm.GetPropertyIndex("Doc", "rank")
+	idx, _ := checkedIndexRange[*PropertyIndex](t)(sm.GetPropertyIndex(t.Context(), "Doc", "rank"))
 	idx.mu.Lock()
 	idx.values[2] = []NodeID{"n2b", "n2a"}
 	idx.values[1] = []NodeID{"n1"}
@@ -58,12 +58,12 @@ func TestSchemaManagerPropertyIndexHelpers(t *testing.T) {
 	idx.keysDirty = true
 	idx.mu.Unlock()
 
-	require.Equal(t, []NodeID{"n1", "n2a", "n2b"}, sm.PropertyIndexTopK("Doc", "rank", 3, false))
-	require.Equal(t, []NodeID{"n2a", "n2b"}, sm.PropertyIndexTopK("Doc", "rank", 2, true))
-	require.Equal(t, []NodeID{"n1", "n2a", "n2b"}, sm.PropertyIndexAllNonNil("Doc", "rank", false))
-	require.Equal(t, []NodeID{"n2a", "n2b", "n1"}, sm.PropertyIndexAllNonNil("Doc", "rank", true))
-	require.Nil(t, sm.PropertyIndexTopK("Doc", "rank", 0, false))
-	require.Nil(t, sm.PropertyIndexTopK("Missing", "rank", 1, false))
+	require.Equal(t, []NodeID{"n1", "n2a", "n2b"}, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexTopK(t.Context(), "Doc", "rank", 3, false)))
+	require.Equal(t, []NodeID{"n2a", "n2b"}, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexTopK(t.Context(), "Doc", "rank", 2, true)))
+	require.Equal(t, []NodeID{"n1", "n2a", "n2b"}, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexAllNonNil(t.Context(), "Doc", "rank", false)))
+	require.Equal(t, []NodeID{"n2a", "n2b", "n1"}, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexAllNonNil(t.Context(), "Doc", "rank", true)))
+	require.Nil(t, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexTopK(t.Context(), "Doc", "rank", 0, false)))
+	require.Nil(t, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexTopK(t.Context(), "Missing", "rank", 1, false)))
 }
 
 func TestSchemaManager_RemoveFromPropertyIndex_PartialRemovalRetainsBucket(t *testing.T) {
@@ -74,9 +74,9 @@ func TestSchemaManager_RemoveFromPropertyIndex_PartialRemovalRetainsBucket(t *te
 
 	require.NoError(t, sm.PropertyIndexDelete("Doc", "rank", "n1", int64(5)))
 
-	idx, _ := sm.GetPropertyIndex("Doc", "rank")
+	idx, _ := checkedIndexRange[*PropertyIndex](t)(sm.GetPropertyIndex(t.Context(), "Doc", "rank"))
 	require.NotNil(t, idx)
-	require.Equal(t, []NodeID{"n2"}, sm.PropertyIndexLookup("Doc", "rank", int64(5)))
+	require.Equal(t, []NodeID{"n2"}, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "Doc", "rank", int64(5))))
 }
 
 func TestSchemaManager_AddRangeIndexForEntity_RejectsEmptyProperties(t *testing.T) {

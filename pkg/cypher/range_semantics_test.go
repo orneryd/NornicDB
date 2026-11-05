@@ -1,3 +1,4 @@
+// Author: Codex, NOR-180 private rollback context signature migration,29October2026.
 package cypher
 
 import (
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -18,21 +20,54 @@ func TestRangeValidationDoesNotMaterializeValues(t *testing.T) {
 	executor := NewStorageExecutor(newTestMemoryEngine(t))
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
-	err := executor.validateRangeCalls("range(1, 200000)", pipelineRow{})
+	err := executor.validateRangeCalls(t.Context(), "range(1, 200000)", pipelineRow{})
 	runtime.ReadMemStats(&after)
 	require.NoError(t, err)
 	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(256*1024))
 }
 
-func TestUnwindRangeFiltersBeforeMaterializingRows(t *testing.T) {
-	executor := NewStorageExecutor(newTestMemoryEngine(t))
+// unwindRangeFilterQuery filters an UNWIND range before any row is
+// materialized: its WHERE excludes every row the range would produce.
+const unwindRangeFilterQuery = "UNWIND range(1, 30000) AS x WITH x WHERE x < 0 RETURN count(*) AS c"
+
+// requireUnwindRangeFiltersBeforeMaterializingRows runs the filter query through
+// run and requires the empty result plus the row-materialization budget only
+// filtering before materializing satisfies. run owns the entry point under test
+// and measures nothing but the execution: the auto-commit path in one caller,
+// an explicit transaction's executeInTransaction in the other.
+func requireUnwindRangeFiltersBeforeMaterializingRows(t *testing.T, run func() (*ExecuteResult, error)) {
+	t.Helper()
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
-	result, err := executor.Execute(context.Background(), "UNWIND range(1, 30000) AS x WITH x WHERE x < 0 RETURN count(*) AS c", nil)
+	result, err := run()
 	runtime.ReadMemStats(&after)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows)
 	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(4*1024*1024))
+}
+
+func TestUnwindRangeFiltersBeforeMaterializingRows(t *testing.T) {
+	query := unwindRangeFilterQuery
+	// Isolate row materialization from process-global recognizer initialization.
+	// In a fresh process the first Validate reports the cold parser cost; in a
+	// full suite earlier tests may already have initialized the recognizer.
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	err := cypherantlr.Validate(query)
+	runtime.ReadMemStats(&after)
+	require.NoError(t, err)
+	t.Logf("parser initialization evidence: first Validate allocated %d bytes (cold in a fresh focused process)", after.TotalAlloc-before.TotalAlloc)
+	runtime.ReadMemStats(&before)
+	err = cypherantlr.Validate(query)
+	runtime.ReadMemStats(&after)
+	require.NoError(t, err)
+	t.Logf("parser initialization evidence: warm Validate allocated %d bytes", after.TotalAlloc-before.TotalAlloc)
+
+	// Use a fresh executor and measure its first real Execute, never a cached result.
+	executor := NewStorageExecutor(newTestMemoryEngine(t))
+	requireUnwindRangeFiltersBeforeMaterializingRows(t, func() (*ExecuteResult, error) {
+		return executor.Execute(context.Background(), query, nil)
+	})
 }
 
 func TestUnwindRangeAggregationDoesNotRetainInputRows(t *testing.T) {
@@ -47,11 +82,19 @@ func TestUnwindRangeAggregationDoesNotRetainInputRows(t *testing.T) {
 			{"UNWIND range(1, 30000) AS x WITH sum(x) AS s RETURN s", 450015000},
 		} {
 			t.Run(fmt.Sprintf("explicit=%t/%s", explicit, test.query), func(t *testing.T) {
-				executor := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "stream_aggregate"), 0, 0)
+				// This budget detects retained input rows, independently of the
+				// process-global grammar's cold prediction initialization. Only
+				// syntax is prepared; the executor and its first result stay fresh.
+				var parserBefore, parserAfter runtime.MemStats
+				runtime.ReadMemStats(&parserBefore)
+				require.NoError(t, cypherantlr.Validate(test.query))
+				runtime.ReadMemStats(&parserAfter)
+				t.Logf("grammar setup allocated %d bytes outside row-retention measurement", parserAfter.TotalAlloc-parserBefore.TotalAlloc)
+				executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "stream_aggregate"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 				if explicit {
-					_, err := executor.handleBegin()
+					_, err := executor.handleBegin(t.Context())
 					require.NoError(t, err)
-					t.Cleanup(func() { _, _ = executor.handleRollback() })
+					t.Cleanup(func() { _, _ = executor.handleRollback(context.Background(), nil) })
 				}
 				var before, after runtime.MemStats
 				runtime.ReadMemStats(&before)
@@ -73,17 +116,12 @@ func TestUnwindRangeAggregationDoesNotRetainInputRows(t *testing.T) {
 
 func TestUnwindRangeExplicitTransactionFiltersBeforeMaterializingRows(t *testing.T) {
 	executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "range_explicit"))
-	_, err := executor.handleBegin()
+	_, err := executor.handleBegin(t.Context())
 	require.NoError(t, err)
-	t.Cleanup(func() { _, _ = executor.handleRollback() })
-	query := "UNWIND range(1, 30000) AS x WITH x WHERE x < 0 RETURN count(*) AS c"
-	var before, after runtime.MemStats
-	runtime.ReadMemStats(&before)
-	result, err := executor.executeInTransaction(context.Background(), query, query)
-	runtime.ReadMemStats(&after)
-	require.NoError(t, err)
-	require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows)
-	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(4*1024*1024))
+	t.Cleanup(func() { _, _ = executor.handleRollback(context.Background(), nil) })
+	requireUnwindRangeFiltersBeforeMaterializingRows(t, func() (*ExecuteResult, error) {
+		return executor.executeInTransaction(context.Background(), unwindRangeFilterQuery, unwindRangeFilterQuery)
+	})
 }
 
 func TestUnwindStreamingAggregateSemantics(t *testing.T) {
@@ -103,13 +141,13 @@ func TestUnwindStreamingAggregateSemantics(t *testing.T) {
 			{"UNWIND range(1, 2) AS x RETURN percentileCont(x, x)", [][]interface{}{{int64(2)}}},
 		} {
 			t.Run(fmt.Sprintf("explicit=%t/%s", explicit, test.query), func(t *testing.T) {
-				executor := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "aggregate_semantics"), 0, 0)
+				executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "aggregate_semantics"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 				var result *ExecuteResult
 				var err error
 				if explicit {
-					_, err = executor.handleBegin()
+					_, err = executor.handleBegin(t.Context())
 					require.NoError(t, err)
-					t.Cleanup(func() { _, _ = executor.handleRollback() })
+					t.Cleanup(func() { _, _ = executor.handleRollback(context.Background(), nil) })
 					result, err = executor.executeInTransaction(context.Background(), test.query, test.query)
 				} else {
 					result, err = executor.Execute(context.Background(), test.query, nil)
@@ -129,7 +167,7 @@ func TestUnwindStreamingAggregateArgumentErrors(t *testing.T) {
 	} {
 		for _, clause := range []string{"RETURN " + projection, "WITH " + projection + " AS result RETURN result"} {
 			t.Run(clause, func(t *testing.T) {
-				executor := NewStorageExecutorWithQueryCachePolicy(newTestMemoryEngine(t), 0, 0)
+				executor := NewStorageExecutor(newTestMemoryEngine(t), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 				result, err := executor.Execute(context.Background(), "UNWIND range(1, 2) AS x "+clause, nil)
 				require.Error(t, err)
 				require.Nil(t, result)
@@ -269,7 +307,7 @@ func TestPipelineUnwindIteratorStopsAndErrors(t *testing.T) {
 		"UNWIND range(1, 2) AS x WITH range(x, 2, 0) AS xs RETURN xs",
 	} {
 		ctx := withExpressionFailureSlot(context.Background())
-		clauses, parsed := canExecuteAsPipeline(query)
+		clauses, parsed := canExecuteAsPipeline(t.Context(), query)
 		require.True(t, parsed)
 		_, _, resolved := executor.pipelineApplyUnwindPrefix(ctx, []pipelineRow{{}}, clauses)
 		require.False(t, resolved)
@@ -277,7 +315,7 @@ func TestPipelineUnwindIteratorStopsAndErrors(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(withExpressionFailureSlot(context.Background()))
 	cancel()
-	clauses, parsed := canExecuteAsPipeline("UNWIND range(1, 2) AS x RETURN x")
+	clauses, parsed := canExecuteAsPipeline(t.Context(), "UNWIND range(1, 2) AS x RETURN x")
 	require.True(t, parsed)
 	_, _, resolved := executor.pipelineApplyUnwindPrefix(ctx, []pipelineRow{{}}, clauses)
 	require.False(t, resolved)
@@ -285,60 +323,63 @@ func TestPipelineUnwindIteratorStopsAndErrors(t *testing.T) {
 }
 
 func TestUnwindRangeReportedWorkload(t *testing.T) {
-	if os.Getenv("NORNICDB_RUN_LARGE_UNWIND_RANGE") != "1" {
-		t.Skip("large issue #772 workload")
-	}
-	for _, end := range []int64{3000000, 30000000, 300000000} {
-		t.Run(fmt.Sprint(end), func(t *testing.T) {
-			executor := NewStorageExecutor(newTestMemoryEngine(t))
-			query := fmt.Sprintf("UNWIND range(1, %d) AS x WITH x WHERE x < 0 RETURN count(*) AS c", end)
-			var before, after runtime.MemStats
-			runtime.ReadMemStats(&before)
-			started := time.Now()
-			result, err := executor.Execute(context.Background(), query, nil)
-			runtime.ReadMemStats(&after)
-			require.NoError(t, err)
-			require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows)
-			t.Logf("values=%d elapsed=%s total_alloc_bytes=%d heap_alloc_bytes=%d", end, time.Since(started), after.TotalAlloc-before.TotalAlloc, after.HeapAlloc)
-		})
-	}
-}
-
-func TestUnwindRangeReportedAggregateWorkload(t *testing.T) {
-	if os.Getenv("NORNICDB_RUN_LARGE_UNWIND_AGGREGATE") != "1" {
-		t.Skip("large issue #772 aggregate correctness workload")
-	}
-	for _, explicit := range []bool{false, true} {
-		for _, test := range []struct {
-			query string
-			want  int64
-		}{
-			{"UNWIND range(1, 30000000) AS x RETURN count(*) AS c", 30000000},
-			{"UNWIND range(1, 30000000) AS x RETURN sum(x) AS s", 450000015000000},
-			{"UNWIND range(1, 30000000) AS x WITH x RETURN count(*) AS c", 30000000},
-		} {
-			t.Run(fmt.Sprintf("explicit=%t/%s", explicit, test.query), func(t *testing.T) {
-				executor := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "large_aggregate"), 0, 0)
-				var result *ExecuteResult
-				var err error
-				if explicit {
-					_, err = executor.handleBegin()
-					require.NoError(t, err)
-					t.Cleanup(func() { _, _ = executor.handleRollback() })
-					result, err = executor.executeInTransaction(context.Background(), test.query, test.query)
-				} else {
-					result, err = executor.Execute(context.Background(), test.query, nil)
-				}
+	t.Run("filtered range allocation workload", func(t *testing.T) {
+		if os.Getenv("NORNICDB_RUN_LARGE_UNWIND_RANGE") != "1" {
+			t.Skip("large issue #772 workload")
+		}
+		for _, end := range []int64{3000000, 30000000, 300000000} {
+			t.Run(fmt.Sprint(end), func(t *testing.T) {
+				executor := NewStorageExecutor(newTestMemoryEngine(t))
+				query := fmt.Sprintf("UNWIND range(1, %d) AS x WITH x WHERE x < 0 RETURN count(*) AS c", end)
+				var before, after runtime.MemStats
+				runtime.ReadMemStats(&before)
+				started := time.Now()
+				result, err := executor.Execute(context.Background(), query, nil)
+				runtime.ReadMemStats(&after)
 				require.NoError(t, err)
-				require.Equal(t, [][]interface{}{{test.want}}, result.Rows)
+				require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows)
+				t.Logf("values=%d elapsed=%s total_alloc_bytes=%d heap_alloc_bytes=%d", end, time.Since(started), after.TotalAlloc-before.TotalAlloc, after.HeapAlloc)
 			})
 		}
-	}
+
+	})
+	t.Run("aggregate correctness implicit and explicit transactions", func(t *testing.T) {
+		if os.Getenv("NORNICDB_RUN_LARGE_UNWIND_AGGREGATE") != "1" {
+			t.Skip("large issue #772 aggregate correctness workload")
+		}
+		for _, explicit := range []bool{false, true} {
+			for _, test := range []struct {
+				query string
+				want  int64
+			}{
+				{"UNWIND range(1, 30000000) AS x RETURN count(*) AS c", 30000000},
+				{"UNWIND range(1, 30000000) AS x RETURN sum(x) AS s", 450000015000000},
+				{"UNWIND range(1, 30000000) AS x WITH x RETURN count(*) AS c", 30000000},
+			} {
+				t.Run(fmt.Sprintf("explicit=%t/%s", explicit, test.query), func(t *testing.T) {
+					executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "large_aggregate"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
+					var result *ExecuteResult
+					var err error
+					if explicit {
+						_, err = executor.handleBegin(t.Context())
+						require.NoError(t, err)
+						t.Cleanup(func() { _, _ = executor.handleRollback(context.Background(), nil) })
+						result, err = executor.executeInTransaction(context.Background(), test.query, test.query)
+					} else {
+						result, err = executor.Execute(context.Background(), test.query, nil)
+					}
+					require.NoError(t, err)
+					require.Equal(t, [][]interface{}{{test.want}}, result.Rows)
+				})
+			}
+		}
+
+	})
 }
 
 func TestPipelineAggregateSourceFailureDoesNotReturnPartialGroups(t *testing.T) {
 	executor := NewStorageExecutor(newTestMemoryEngine(t))
-	projections := returnProjectionPlanFor("RETURN count(*) AS total").projections
+	projections := returnProjectionPlanFor(t.Context(), "RETURN count(*) AS total").projections
 	for _, canceled := range []bool{false, true} {
 		t.Run(fmt.Sprintf("canceled=%t", canceled), func(t *testing.T) {
 			ctx, cancel := context.WithCancel(withExpressionFailureSlot(context.Background()))
@@ -365,26 +406,96 @@ func TestPipelineAggregateSourceFailureDoesNotReturnPartialGroups(t *testing.T) 
 	}
 }
 
+// pipelineVectorWriteQuery is the typed-vector write pipeline the PR1655
+// no-op-vector store cycle exercises: MERGE the row, copy it with SET n = row,
+// then hand the typed vector to db.create.setNodeVectorProperty.
+const pipelineVectorWriteQuery = `UNWIND $rows AS row
+MERGE (n:TypedVector {key: row.key}) SET n = row
+WITH n, row CALL db.create.setNodeVectorProperty(n, "embedding", row.embedding)
+RETURN n.embedding AS embedding`
+
+// pipelineVectorWriteRows builds the single-row parameter the pipeline expects.
+func pipelineVectorWriteRows(vector []float64) map[string]interface{} {
+	return map[string]interface{}{
+		"rows": []interface{}{map[string]interface{}{"key": "typed", "embedding": vector}},
+	}
+}
+
+// TestPipelineVectorWriteKeepsTypedValues is the PUBLIC native-transaction
+// proof that the typed vector survives the pipeline write. The statement runs
+// through StorageExecutor.Execute, which the atomic statement owner commits in
+// one native transaction.
+//
+// It asserts the stored and returned float64 slice, that re-running the
+// identical row creates no second entity, and that a genuinely different vector
+// replaces the stored one — so the typed-value assertion is not vacuous. It
+// makes no per-method update-count assertion: those calls happen inside the
+// native transaction and are not publicly observable; the original count is
+// kept by TestPipelineVectorWriteComponentPaysOneUpdate.
 func TestPipelineVectorWriteKeepsTypedValues(t *testing.T) {
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "typed_vector_write")
+	executor := NewStorageExecutor(store)
+	ctx := context.Background()
+	vector := []float64{0.12345678901234567, 0.9876543210987654}
+
+	result, err := executor.Execute(ctx, pipelineVectorWriteQuery, pipelineVectorWriteRows(vector))
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{vector}}, result.Rows)
+	require.Equal(t, 1, result.Stats.NodesCreated)
+
+	nodeID := storedNodeID(t, executor, ctx, "MATCH (n:TypedVector {key: 'typed'})", nil)
+	firstNode, err := store.GetNode(t.Context(), storage.NodeID(nodeID))
+	require.NoError(t, err)
+	require.Equal(t, vector, firstNode.Properties["embedding"], "storage must keep the precise typed vector")
+
+	reRun, err := executor.Execute(ctx, pipelineVectorWriteQuery, pipelineVectorWriteRows(vector))
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{vector}}, reRun.Rows)
+	require.Zero(t, reRun.Stats.NodesCreated, "re-running the identical row must not create a second entity")
+	require.Equal(t, int64(1), mustCountRows(t, executor, ctx, "MATCH (n:TypedVector) RETURN count(n)", nil))
+
+	changed := []float64{0.5, 0.5}
+	changedResult, err := executor.Execute(ctx, pipelineVectorWriteQuery, pipelineVectorWriteRows(changed))
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{changed}}, changedResult.Rows)
+	require.Zero(t, changedResult.Stats.NodesCreated, "a changed vector must update, not create")
+	changedNode, err := store.GetNode(t.Context(), storage.NodeID(nodeID))
+	require.NoError(t, err)
+	require.Equal(t, changed, changedNode.Properties["embedding"], "a changed vector must replace the stored vector")
+}
+
+// TestPipelineVectorWriteComponentPaysOneUpdate keeps the original
+// NodeUpdateCount assertion as an explicit COMPONENT test.
+//
+// graphitiCopyCountingEngine wraps the namespace engine opaquely (no
+// EngineUnwrapper), so the atomic statement owner rejects public write
+// statements against it rather than committing behind the wrapper; the count
+// below therefore comes from executeComponentStatement, the statement pipeline
+// the owner wraps, where the double really sees the storage calls. One update
+// per row is the whole cost: SET n = row pays it and
+// db.create.setNodeVectorProperty adds none, because it reuses the row's typed
+// vector. The changed-value control proves the count is not vacuous.
+func TestPipelineVectorWriteComponentPaysOneUpdate(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "typed_vector_write")
 	counting := &graphitiCopyCountingEngine{Engine: store}
 	executor := NewStorageExecutor(counting)
+	ctx := context.Background()
 	vector := []float64{0.12345678901234567, 0.9876543210987654}
-	result, err := executor.Execute(context.Background(), `UNWIND $rows AS row
-MERGE (n:TypedVector {key: row.key}) SET n = row
-WITH n, row CALL db.create.setNodeVectorProperty(n, "embedding", row.embedding)
-RETURN n.embedding AS embedding`, map[string]interface{}{
-		"rows": []interface{}{map[string]interface{}{"key": "typed", "embedding": vector}},
-	})
-	require.NoError(t, err)
+
+	result := executeComponentStatement(t, executor, ctx, pipelineVectorWriteQuery, pipelineVectorWriteRows(vector))
 	require.Equal(t, [][]interface{}{{vector}}, result.Rows)
 	require.Equal(t, int64(1), counting.NodeUpdateCount())
+
+	changed := []float64{0.5, 0.5}
+	changedResult := executeComponentStatement(t, executor, ctx, pipelineVectorWriteQuery, pipelineVectorWriteRows(changed))
+	require.Equal(t, [][]interface{}{{changed}}, changedResult.Rows)
+	require.Equal(t, int64(2), counting.NodeUpdateCount(), "a changed typed vector must produce exactly one more update")
 }
 
 func BenchmarkUnwindRangeFilteredCount(b *testing.B) {
 	for _, end := range []int64{3000, 30000} {
 		b.Run(fmt.Sprint(end), func(b *testing.B) {
-			executor := NewStorageExecutorWithQueryCachePolicy(newTestMemoryEngine(b), 0, 0)
+			executor := NewStorageExecutor(newTestMemoryEngine(b), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 			query := fmt.Sprintf("UNWIND range(1, %d) AS x WITH x WHERE x < 0 RETURN count(*) AS c", end)
 			b.ReportAllocs()
 			b.ResetTimer()

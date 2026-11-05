@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"testing"
@@ -16,7 +18,7 @@ import (
 // multidb.DatabaseManager.GetStorage, which wraps the namespaced engine in
 // an unexported sizeTrackingEngine. That wrapper embeds only storage.Engine,
 // so it must forward every optional storage interface explicitly; before it
-// forwarded storage.ProjectedLabelNodeReader, collectNodesWithStreaming's
+// forwarded storage.ProjectedLabelNodeReader, collectNodesWithStreamingProjection's
 // label-indexed fast path in match_multi.go silently fell through to a
 // whole-namespace storage.StreamNodes scan for every label-scoped MATCH. An
 // in-process StorageExecutor built directly over storage.NamespacedEngine
@@ -30,10 +32,10 @@ import (
 // label-indexed; without it, wall time scales with total store size (see
 // the "before" timings in the fix's commit message).
 func TestMultidbStack_LabelScanScalesWithLabelNotStore(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
-	manager, err := multidb.NewDatabaseManager(base, nil)
+	manager, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	if err != nil {
 		t.Fatalf("NewDatabaseManager: %v", err)
 	}
@@ -49,7 +51,7 @@ func TestMultidbStack_LabelScanScalesWithLabelNotStore(t *testing.T) {
 	// Disable the query-result cache (maxEntries=0): the whole point of this
 	// repro is to measure the storage scan, and a warm cache would return
 	// the prior result in ~1us regardless of engine behavior.
-	exec := NewStorageExecutorWithQueryCachePolicy(dbStore, 0, 0)
+	exec := NewStorageExecutor(dbStore, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	ctx := context.Background()
 
 	// 20 Repository nodes among a growing population of unrelated nodes.

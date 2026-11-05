@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"testing"
@@ -14,16 +16,16 @@ type allNodesForbiddenEngine struct {
 	forbidScan bool
 }
 
-func (e *allNodesForbiddenEngine) AllNodes() ([]*storage.Node, error) {
+func (e *allNodesForbiddenEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
 	if !e.forbidScan {
-		return e.MemoryEngine.AllNodes()
+		return e.MemoryEngine.AllNodes(ctx)
 	}
 	return nil, fmt.Errorf("AllNodes should not be called for indexed equality lookup")
 }
 
-func (e *allNodesForbiddenEngine) GetNodesByLabel(label string) ([]*storage.Node, error) {
+func (e *allNodesForbiddenEngine) GetNodesByLabel(ctx context.Context, label string) ([]*storage.Node, error) {
 	if !e.forbidScan {
-		return e.MemoryEngine.GetNodesByLabel(label)
+		return e.MemoryEngine.GetNodesByLabel(ctx, label)
 	}
 	return nil, fmt.Errorf("GetNodesByLabel should not be called for indexed fast path")
 }
@@ -256,11 +258,11 @@ func TestGh809_IndexedTransactionMixedRowsAndWrites(t *testing.T) {
 }
 
 func TestMatchUsesPropertyIndexForUnlabeledEquality(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &allNodesForbiddenEngine{MemoryEngine: base}
 
-	_, err := eng.CreateNode(&storage.Node{
+	_, err := eng.CreateNode(t.Context(), &storage.Node{
 		ID:     "nornic:doc-1",
 		Labels: []string{"MongoDocument"},
 		Properties: map[string]interface{}{
@@ -268,7 +270,7 @@ func TestMatchUsesPropertyIndexForUnlabeledEquality(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{
+	_, err = eng.CreateNode(t.Context(), &storage.Node{
 		ID:     "nornic:doc-2",
 		Labels: []string{"MongoDocument"},
 		Properties: map[string]interface{}{
@@ -289,11 +291,11 @@ func TestMatchUsesPropertyIndexForUnlabeledEquality(t *testing.T) {
 }
 
 func TestMatchUsesPropertyIndexForFabricRecordBindingEquality(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &allNodesForbiddenEngine{MemoryEngine: base}
 
-	_, err := eng.CreateNode(&storage.Node{
+	_, err := eng.CreateNode(t.Context(), &storage.Node{
 		ID:     "nornic:doc-a",
 		Labels: []string{"MongoDocument"},
 		Properties: map[string]interface{}{
@@ -301,7 +303,7 @@ func TestMatchUsesPropertyIndexForFabricRecordBindingEquality(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{
+	_, err = eng.CreateNode(t.Context(), &storage.Node{
 		ID:     "nornic:doc-b",
 		Labels: []string{"MongoDocument"},
 		Properties: map[string]interface{}{
@@ -326,11 +328,11 @@ func TestMatchUsesPropertyIndexForFabricRecordBindingEquality(t *testing.T) {
 }
 
 func TestMatchUsesPropertyIndexForInParamList(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &allNodesForbiddenEngine{MemoryEngine: base}
 
-	_, err := eng.CreateNode(&storage.Node{
+	_, err := eng.CreateNode(t.Context(), &storage.Node{
 		ID:     "nornic:doc-in-a",
 		Labels: []string{"MongoDocument"},
 		Properties: map[string]interface{}{
@@ -338,7 +340,7 @@ func TestMatchUsesPropertyIndexForInParamList(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{
+	_, err = eng.CreateNode(t.Context(), &storage.Node{
 		ID:     "nornic:doc-in-b",
 		Labels: []string{"MongoDocument"},
 		Properties: map[string]interface{}{
@@ -346,7 +348,7 @@ func TestMatchUsesPropertyIndexForInParamList(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{
+	_, err = eng.CreateNode(t.Context(), &storage.Node{
 		ID:     "nornic:doc-in-c",
 		Labels: []string{"MongoDocument"},
 		Properties: map[string]interface{}{
@@ -358,10 +360,11 @@ func TestMatchUsesPropertyIndexForInParamList(t *testing.T) {
 	exec := NewStorageExecutor(eng)
 	_, err = exec.Execute(context.Background(), "CREATE INDEX idx_translation_id FOR (n:MongoDocument) ON (n.translationId)", nil)
 	require.NoError(t, err)
-	lookup := eng.GetSchema().PropertyIndexLookup("MongoDocument", "translationId", "src-a")
+	lookup, lookupErr := eng.GetSchema().PropertyIndexLookup(context.Background(), "MongoDocument", "translationId", "src-a")
+	require.NoError(t, lookupErr)
 	require.NotEmpty(t, lookup)
 	nodePattern := nodePatternInfo{variable: "n", labels: []string{"MongoDocument"}}
-	nodes, used, idxErr := exec.tryCollectNodesFromPropertyIndexIn(nodePattern, "n.translationId IN $keys", map[string]interface{}{"keys": []interface{}{"src-a", "src-c"}})
+	nodes, used, idxErr := exec.tryCollectNodesFromPropertyIndexIn(context.Background(), nodePattern, "n.translationId IN $keys", map[string]interface{}{"keys": []interface{}{"src-a", "src-c"}})
 	require.NoError(t, idxErr)
 	require.True(t, used)
 	require.Len(t, nodes, 2)
@@ -379,11 +382,11 @@ func TestMatchUsesPropertyIndexForInParamList(t *testing.T) {
 }
 
 func TestMatchUsesPropertyIndexForOrInParamList_NoScan(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &allNodesForbiddenEngine{MemoryEngine: base}
 
-	_, err := eng.CreateNode(&storage.Node{
+	_, err := eng.CreateNode(t.Context(), &storage.Node{
 		ID:     "nornic:doc-or-a",
 		Labels: []string{"OriginalText"},
 		Properties: map[string]interface{}{
@@ -392,7 +395,7 @@ func TestMatchUsesPropertyIndexForOrInParamList_NoScan(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{
+	_, err = eng.CreateNode(t.Context(), &storage.Node{
 		ID:     "nornic:doc-or-b",
 		Labels: []string{"OriginalText"},
 		Properties: map[string]interface{}{
@@ -401,7 +404,7 @@ func TestMatchUsesPropertyIndexForOrInParamList_NoScan(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{
+	_, err = eng.CreateNode(t.Context(), &storage.Node{
 		ID:     "nornic:doc-or-c",
 		Labels: []string{"OriginalText"},
 		Properties: map[string]interface{}{
@@ -430,7 +433,7 @@ func TestMatchUsesPropertyIndexForOrInParamList_NoScan(t *testing.T) {
 
 func TestParseSimpleIndexedInParam(t *testing.T) {
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
-	prop, vals, ok := exec.parseSimpleIndexedInParam("n", "n.translationId IN $keys", map[string]interface{}{
+	prop, vals, ok := exec.parseSimpleIndexedInParam(t.Context(), "n", "n.translationId IN $keys", map[string]interface{}{
 		"keys": []interface{}{"src-a", "src-c"},
 	})
 	require.True(t, ok)
@@ -449,11 +452,11 @@ func TestParseSimpleIndexedInLiteral(t *testing.T) {
 }
 
 func TestMatchUsesPropertyIndexForInLiteralList(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &allNodesForbiddenEngine{MemoryEngine: base}
 
-	_, err := eng.CreateNode(&storage.Node{
+	_, err := eng.CreateNode(t.Context(), &storage.Node{
 		ID:     "nornic:doc-lit-a",
 		Labels: []string{"MongoDocument"},
 		Properties: map[string]interface{}{
@@ -461,7 +464,7 @@ func TestMatchUsesPropertyIndexForInLiteralList(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{
+	_, err = eng.CreateNode(t.Context(), &storage.Node{
 		ID:     "nornic:doc-lit-b",
 		Labels: []string{"MongoDocument"},
 		Properties: map[string]interface{}{
@@ -469,7 +472,7 @@ func TestMatchUsesPropertyIndexForInLiteralList(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{
+	_, err = eng.CreateNode(t.Context(), &storage.Node{
 		ID:     "nornic:doc-lit-c",
 		Labels: []string{"MongoDocument"},
 		Properties: map[string]interface{}{
@@ -496,12 +499,12 @@ func TestMatchUsesPropertyIndexForInLiteralList(t *testing.T) {
 }
 
 func TestMatchUsesPropertyIndexForIsNotNullOrderByLimit(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &allNodesForbiddenEngine{MemoryEngine: base}
 
 	for i := 0; i < 10; i++ {
-		_, err := eng.CreateNode(&storage.Node{
+		_, err := eng.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("nornic:doc-%d", i)),
 			Labels: []string{"MongoDocument"},
 			Properties: map[string]interface{}{
@@ -526,12 +529,12 @@ func TestMatchUsesPropertyIndexForIsNotNullOrderByLimit(t *testing.T) {
 }
 
 func TestMatchUsesPropertyIndexForIsNotNullOrderByLimit_WithConstantAndConjuncts(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &allNodesForbiddenEngine{MemoryEngine: base}
 
 	for i := 0; i < 10; i++ {
-		_, err := eng.CreateNode(&storage.Node{
+		_, err := eng.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID(fmt.Sprintf("nornic:doc-and-%d", i)),
 			Labels: []string{"MongoDocument"},
 			Properties: map[string]interface{}{
@@ -563,10 +566,10 @@ func TestMatchUsesPropertyIndexForIsNotNullOrderByLimit_WithConstantAndConjuncts
 // fills the index, so an index-backed ordered scan returns them (the index
 // is trusted; there is no scan fallback for an empty index result, #719).
 func TestMatchUsesIndexFilledFromExistingNodes(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
-	_, err := base.CreateNode(&storage.Node{
+	_, err := base.CreateNode(t.Context(), &storage.Node{
 		ID:     "nornic:doc-stale-1",
 		Labels: []string{"MongoDocument"},
 		Properties: map[string]interface{}{
@@ -576,7 +579,7 @@ func TestMatchUsesIndexFilledFromExistingNodes(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = base.CreateNode(&storage.Node{
+	_, err = base.CreateNode(t.Context(), &storage.Node{
 		ID:     "nornic:doc-stale-2",
 		Labels: []string{"MongoDocument"},
 		Properties: map[string]interface{}{

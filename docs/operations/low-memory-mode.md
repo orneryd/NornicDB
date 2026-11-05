@@ -116,6 +116,20 @@ Low memory mode trades some performance for reduced RAM usage:
 
 ## Docker Memory Limits
 
+`nornicdb serve` resolves its Go soft memory limit against the container's
+cgroup memory limit at startup. With `memory.runtime_limit`,
+`NORNICDB_MEMORY_LIMIT`, or `--memory-limit` unset or `auto`, it uses 85% of
+the cgroup limit, or an existing `GOMEMLIMIT` when that fits. A configured
+limit above the cgroup limit is lowered to 85% with a startup warning.
+An explicit `0` keeps the configured limit unlimited; without a cgroup
+limit, automatic sizing keeps `GOMEMLIMIT` or leaves the runtime unlimited.
+
+Detection supports cgroup v2 `memory.max` and v1 `memory.limit_in_bytes`,
+taking the tightest limit of the process's cgroup and its visible ancestors.
+The remaining 15% allows for memory outside Go's limit, including cgo
+allocations and kernel memory, plus brief GC overshoot. A large local model
+may require a lower explicit limit.
+
 Docker Desktop defaults to 2GB memory. With NornicDB's high-performance mode + embedding model (~1.2GB), this can cause OOM kills.
 
 ### Symptoms of OOM

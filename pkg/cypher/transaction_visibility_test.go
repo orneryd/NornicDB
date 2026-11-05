@@ -1,6 +1,9 @@
+// Author: Codex, NOR-180 private rollback context signature migration,29October2026.
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 	"time"
@@ -10,7 +13,7 @@ import (
 )
 
 func TestExplicitTransactionSchemaRollbackIsolation(t *testing.T) {
-	base, err := storage.NewBadgerEngineInMemory()
+	base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "schema_rollback")
@@ -21,7 +24,7 @@ func TestExplicitTransactionSchemaRollbackIsolation(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if executor.txContext != nil && executor.txContext.active {
-			_, _ = executor.handleRollback()
+			_, _ = executor.handleRollback(context.Background(), nil)
 		}
 	})
 	_, err = executor.Execute(ctx, "CREATE INDEX staged_index FOR (n:Account) ON (n.accountID)", nil)
@@ -40,7 +43,7 @@ func TestExplicitTransactionSchemaRollbackIsolation(t *testing.T) {
 }
 
 func TestExplicitTransactionSchemaCommitPublishesBackfill(t *testing.T) {
-	base, err := storage.NewBadgerEngineInMemory()
+	base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "schema_commit")
@@ -60,13 +63,14 @@ func TestExplicitTransactionSchemaCommitPublishesBackfill(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"staged_index"}}, visible.Rows)
 	for _, property := range []string{"accountID", "name"} {
-		indexed := store.GetSchema().PropertyIndexLookup("Account", property, map[string]string{"accountID": "seed", "name": "existing"}[property])
+		indexed, lookupErr := store.GetSchema().PropertyIndexLookup(ctx, "Account", property, map[string]string{"accountID": "seed", "name": "existing"}[property])
+		require.NoError(t, lookupErr)
 		require.Len(t, indexed, 1, property)
 	}
 }
 
 func TestExplicitTransactionSchemaBackfillConcurrentWrite(t *testing.T) {
-	base, err := storage.NewBadgerEngineInMemory()
+	base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "schema_concurrent")
@@ -88,7 +92,8 @@ func TestExplicitTransactionSchemaBackfillConcurrentWrite(t *testing.T) {
 		require.ErrorIs(t, err, storage.ErrConflict)
 		return
 	}
-	indexed := store.GetSchema().PropertyIndexLookup("Account", "accountID", "concurrent")
+	indexed, lookupErr := store.GetSchema().PropertyIndexLookup(ctx, "Account", "accountID", "concurrent")
+	require.NoError(t, lookupErr)
 	require.Len(t, indexed, 1, "schema commit must not publish a stale backfill")
 }
 
@@ -174,7 +179,7 @@ func TestExplicitTransactionSchemaProcedureAdmission(t *testing.T) {
 func TestExplicitTransactionRejectsMixedSchemaAndData(t *testing.T) {
 	for _, schemaFirst := range []bool{false, true} {
 		t.Run(map[bool]string{false: "data_then_schema", true: "schema_then_data"}[schemaFirst], func(t *testing.T) {
-			base, err := storage.NewBadgerEngineInMemory()
+			base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = base.Close() })
 			store := storage.NewNamespacedEngine(base, "mixed_schema")
@@ -192,29 +197,42 @@ func TestExplicitTransactionRejectsMixedSchemaAndData(t *testing.T) {
 			_, rollbackErr := executor.Execute(ctx, "ROLLBACK", nil)
 			require.NoError(t, rollbackErr)
 			require.ErrorContains(t, mixErr, "ForbiddenDueToTransactionType")
-			_, exists := store.GetSchema().GetPropertyIndex("Account", "accountID")
+			_, exists, indexErr := store.GetSchema().GetPropertyIndex(ctx, "Account", "accountID")
+			require.NoError(t, indexErr)
+
 			require.False(t, exists)
-			nodes, err := store.GetNodesByLabel("Account")
+			nodes, err := store.GetNodesByLabel(ctx, "Account")
 			require.NoError(t, err)
 			require.Empty(t, nodes)
 		})
 	}
 }
 
-func TestExplicitTransactionSeesAcknowledgedWrite(t *testing.T) {
+// acknowledgedWriteTransaction returns an executor over namespace that has had
+// an auto-commit write acknowledged and then opened an explicit transaction: the
+// starting point of the acknowledged-state visibility tests. How that
+// transaction ends stays with the caller, since it is what differs between
+// them: one rolls back on cleanup, the other commits dependent writes.
+func acknowledgedWriteTransaction(t *testing.T, namespace, write string) (*StorageExecutor, *ExecuteResult) {
+	t.Helper()
 	base := newTestMemoryEngine(t)
-	executor := NewStorageExecutor(storage.NewNamespacedEngine(base, "visibility"))
+	executor := NewStorageExecutor(storage.NewNamespacedEngine(base, namespace))
 
-	created, err := executor.Execute(context.Background(),
-		"CREATE (:Account {accountID: 'acknowledged'})", nil)
+	acknowledged, err := executor.Execute(context.Background(), write, nil)
 	require.NoError(t, err)
+	_, err = executor.handleBegin(t.Context())
+	require.NoError(t, err)
+	return executor, acknowledged
+}
+
+func TestExplicitTransactionSeesAcknowledgedWrite(t *testing.T) {
+	executor, created := acknowledgedWriteTransaction(t, "visibility",
+		"CREATE (:Account {accountID: 'acknowledged'})")
 	require.Equal(t, 1, created.Stats.NodesCreated)
 
-	_, err = executor.handleBegin()
-	require.NoError(t, err)
 	t.Cleanup(func() {
 		if executor.txContext != nil && executor.txContext.active {
-			_, _ = executor.handleRollback()
+			_, _ = executor.handleRollback(context.Background(), nil)
 		}
 	})
 
@@ -225,14 +243,8 @@ func TestExplicitTransactionSeesAcknowledgedWrite(t *testing.T) {
 }
 
 func TestExplicitTransactionCreatesDependentWritesFromAcknowledgedState(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	executor := NewStorageExecutor(storage.NewNamespacedEngine(base, "dependent"))
-
-	_, err := executor.Execute(context.Background(),
-		"CREATE (:Account {accountID: 'source'})", nil)
-	require.NoError(t, err)
-	_, err = executor.handleBegin()
-	require.NoError(t, err)
+	executor, _ := acknowledgedWriteTransaction(t, "dependent",
+		"CREATE (:Account {accountID: 'source'})")
 
 	created, err := executor.Execute(context.Background(), `
 		MATCH (source:Account {accountID: 'source'})
@@ -241,7 +253,7 @@ func TestExplicitTransactionCreatesDependentWritesFromAcknowledgedState(t *testi
 	`, nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, created.Stats.RelationshipsCreated)
-	_, err = executor.handleCommit()
+	_, err = executor.handleCommit(context.Background())
 	require.NoError(t, err)
 
 	result, err := executor.Execute(context.Background(),
@@ -256,19 +268,19 @@ func TestOpenExplicitTransactionDoesNotBlockAnotherBeginAfterAcknowledgedWrite(t
 	first := NewStorageExecutor(store)
 	second := NewStorageExecutor(store)
 
-	_, err := first.handleBegin()
+	_, err := first.handleBegin(t.Context())
 	require.NoError(t, err)
 	firstOpen := true
 	t.Cleanup(func() {
 		if firstOpen {
-			_, _ = first.handleRollback()
+			_, _ = first.handleRollback(context.Background(), nil)
 		}
 		if second.txContext != nil && second.txContext.active {
-			_, _ = second.handleRollback()
+			_, _ = second.handleRollback(context.Background(), nil)
 		}
 	})
 
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "concurrent_begin:pending",
 		Labels: []string{"Pending"},
 	})
@@ -277,7 +289,7 @@ func TestOpenExplicitTransactionDoesNotBlockAnotherBeginAfterAcknowledgedWrite(t
 
 	beginDone := make(chan error, 1)
 	go func() {
-		_, beginErr := second.handleBegin()
+		_, beginErr := second.handleBegin(t.Context())
 		beginDone <- beginErr
 	}()
 
@@ -291,7 +303,7 @@ func TestOpenExplicitTransactionDoesNotBlockAnotherBeginAfterAcknowledgedWrite(t
 
 	// Always release the first transaction before asserting so a regression
 	// cannot strand the second BEGIN goroutine or the async engine cleanup.
-	_, rollbackErr := first.handleRollback()
+	_, rollbackErr := first.handleRollback(context.Background(), nil)
 	require.NoError(t, rollbackErr)
 	firstOpen = false
 	if !beginCompletedPromptly {
@@ -311,18 +323,18 @@ func TestCountReadDoesNotStallWhileAnotherTransactionBegins(t *testing.T) {
 	first := NewStorageExecutor(store)
 	second := NewStorageExecutor(store)
 
-	_, err := first.handleBegin()
+	_, err := first.handleBegin(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if first.txContext != nil && first.txContext.active {
-			_, _ = first.handleRollback()
+			_, _ = first.handleRollback(context.Background(), nil)
 		}
 		if second.txContext != nil && second.txContext.active {
-			_, _ = second.handleRollback()
+			_, _ = second.handleRollback(context.Background(), nil)
 		}
 	})
 
-	_, err = store.CreateNode(&storage.Node{
+	_, err = store.CreateNode(t.Context(), &storage.Node{
 		ID:     "concurrent_count:pending",
 		Labels: []string{"Pending"},
 	})
@@ -330,13 +342,13 @@ func TestCountReadDoesNotStallWhileAnotherTransactionBegins(t *testing.T) {
 
 	beginDone := make(chan error, 1)
 	go func() {
-		_, beginErr := second.handleBegin()
+		_, beginErr := second.handleBegin(t.Context())
 		beginDone <- beginErr
 	}()
 
 	countDone := make(chan error, 1)
 	go func() {
-		_, countErr := store.NodeCount()
+		_, countErr := store.NodeCount(t.Context())
 		countDone <- countErr
 	}()
 

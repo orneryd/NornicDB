@@ -3,6 +3,7 @@ package bolt
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"reflect"
 	"sort"
 	"strings"
@@ -15,7 +16,7 @@ import (
 )
 
 func TestPackStream_FallbackTypes_CommonCypherQueries(t *testing.T) {
-	baseStore := storage.NewMemoryEngine()
+	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := cypher.NewStorageExecutor(store)
 	ctx := context.Background()

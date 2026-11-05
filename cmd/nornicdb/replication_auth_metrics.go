@@ -3,20 +3,21 @@
 // Construction order (CONTEXT D-02c init-order chokepoint, mirrors
 // Plans 04-01..04-05):
 //
-//   1. After observability provider is built (obs.Registry available)
-//      and the authenticator + boltServer are constructed.
-//   2. Construct AuthMetrics bag — single family, no probes.
-//   3. Construct ReplicationMetrics bag — 10 families, mode-aware (D-05a).
-//   4. Construct PeerMetricsGC lifecycle.Component (D-05b) and inject the
-//      bag + tracker into the Replicator (when replication is enabled).
-//   5. Inject AuthMetrics into:
-//        - bolt.Server via SetAuthMetrics (HELLO call site already wired
-//          by Plan 04-02; this lights it up).
-//        - auth.Authenticator via SetAuthMetrics (HTTP/gRPC adapter chokepoints
-//          consume the bag via authenticator.RecordAttempt).
+//  1. After observability provider is built (obs.Registry available)
+//     and the authenticator + boltServer are constructed.
+//  2. Construct AuthMetrics bag — single family, no probes.
+//  3. Construct ReplicationMetrics bag — 10 families, mode-aware (D-05a).
+//  4. Construct PeerMetricsGC lifecycle.Component (D-05b) and inject the
+//     bag + tracker into the Replicator (when replication is enabled).
+//  5. Inject AuthMetrics into:
+//     - bolt.Server via SetAuthMetrics (HELLO call site already wired
+//     by Plan 04-02; this lights it up).
+//     - auth.Authenticator via SetAuthMetrics (HTTP/gRPC adapter chokepoints
+//     consume the bag via authenticator.RecordAttempt).
 //
 // Component registration order:
-//   telemetry → pprof? → bytesSweeper? → peerMetricsGC? → workersC → boltC → httpC
+//
+//	telemetry → pprof? → bytesSweeper? → peerMetricsGC? → workersC → boltC → httpC
 //
 // peerMetricsGC sits between bytesSweeper and workersC per RESEARCH §Q4 —
 // it drains AFTER workers and BEFORE telemetry so the final scrape during
@@ -49,16 +50,16 @@ type replicationAuthWiring struct {
 // Parameters:
 //   - reg                 : telemetry registry (obs.Registry()).
 //   - replicationMode     : cfg.Replication.Mode equivalent — for D-05a
-//                           mode-aware ceiling. Defaults to "standalone"
-//                           when unset.
+//     mode-aware ceiling. Defaults to "standalone"
+//     when unset.
 //   - tenantLabelsEnabled : forwarded to NewReplicationMetrics for the
-//                           D-08a accepted-but-ignored flag.
+//     D-08a accepted-but-ignored flag.
 //   - authenticator       : *auth.Authenticator to inject the AuthMetrics
-//                           bag into (SetAuthMetrics). nil tolerated.
+//     bag into (SetAuthMetrics). nil tolerated.
 //   - boltServer          : bolt.Server to inject the AuthMetrics bag into
-//                           (SetAuthMetrics — Plan 04-02 call site).
+//     (SetAuthMetrics — Plan 04-02 call site).
 //   - replicator          : optional replication.Replicator (any concrete
-//                           type implementing MetricsAware). nil tolerated.
+//     type implementing MetricsAware). nil tolerated.
 //
 // The returned wiring may be appended to lifecycle.Components — the GC
 // component is non-nil even when replication is disabled (it just runs

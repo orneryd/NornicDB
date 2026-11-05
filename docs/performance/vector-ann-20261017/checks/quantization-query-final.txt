@@ -1,0 +1,23 @@
+# github.com/orneryd/nornicdb/pkg/search.test
+ld: warning: ignoring duplicate libraries: '-lobjc'
+goos: darwin
+goarch: arm64
+pkg: github.com/orneryd/nornicdb/pkg/search
+cpu: Apple M2 Max
+BenchmarkHNSWQuantizedQueryEncode/scalar/query0-12         	  220610	      1583 ns/op	       0 B/op	       0 allocs/op
+BenchmarkHNSWQuantizedQueryEncode/scalar/query0-12         	  225544	      1606 ns/op	       0 B/op	       0 allocs/op
+BenchmarkHNSWQuantizedQueryEncode/scalar/query0-12         	  224865	      1584 ns/op	       0 B/op	       0 allocs/op
+BenchmarkHNSWQuantizedQueryEncode/binary/query1-12         	  390232	       902.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkHNSWQuantizedQueryEncode/binary/query1-12         	  404685	       912.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkHNSWQuantizedQueryEncode/binary/query1-12         	  412407	       893.5 ns/op	       0 B/op	       0 allocs/op
+BenchmarkHNSWQuantizedQueryEncode/binary/query4-12         	   56788	      5791 ns/op	       0 B/op	       0 allocs/op
+BenchmarkHNSWQuantizedQueryEncode/binary/query4-12         	   62550	      5775 ns/op	       0 B/op	       0 allocs/op
+BenchmarkHNSWQuantizedQueryEncode/binary/query4-12         	   61514	      5797 ns/op	       0 B/op	       0 allocs/op
+BenchmarkHNSWQuantizedQueryEncode/binary/query8-12         	   40682	      8527 ns/op	       0 B/op	       0 allocs/op
+BenchmarkHNSWQuantizedQueryEncode/binary/query8-12         	   42532	      8634 ns/op	       0 B/op	       0 allocs/op
+BenchmarkHNSWQuantizedQueryEncode/binary/query8-12         	   42220	      8585 ns/op	       0 B/op	       0 allocs/op
+BenchmarkHNSWQuantizedQueryEncode/pq/query0-12             	    2138	    171672 ns/op	       0 B/op	       0 allocs/op
+BenchmarkHNSWQuantizedQueryEncode/pq/query0-12             	    2103	    172135 ns/op	       0 B/op	       0 allocs/op
+BenchmarkHNSWQuantizedQueryEncode/pq/query0-12             	    2084	    171461 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/search	6.667s

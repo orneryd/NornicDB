@@ -2,7 +2,10 @@ package fabric
 
 import (
 	"context"
+	"errors"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestResultStream_Empty(t *testing.T) {
@@ -138,6 +141,40 @@ func TestResultRowIterator(t *testing.T) {
 	}
 	if err := it.Err(); err != nil {
 		t.Fatalf("unexpected iterator err: %v", err)
+	}
+}
+
+func TestResultRowsRetainsExecutionOutcome(t *testing.T) {
+	failure := errors.New("execution rejected")
+	for _, tc := range []struct {
+		name    string
+		result  *ResultStream
+		err     error
+		columns []string
+		rows    [][]interface{}
+	}{
+		{name: "failed result", result: &ResultStream{Columns: []string{"discarded"}, Rows: [][]interface{}{{1}}}, err: failure},
+		{name: "nil result"},
+		{name: "empty result", result: &ResultStream{Columns: []string{"value"}}, columns: []string{"value"}},
+		{name: "rows", result: &ResultStream{Columns: []string{"value"}, Rows: [][]interface{}{{1}, {2}}}, columns: []string{"value"}, rows: [][]interface{}{{1}, {2}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			columns, iterator, err := resultRows(tc.result, tc.err)
+			require.ErrorIs(t, err, tc.err)
+			require.Equal(t, tc.columns, columns)
+			if tc.err != nil {
+				require.Nil(t, iterator)
+				return
+			}
+			require.NotNil(t, iterator)
+			var rows [][]interface{}
+			for iterator.Next() {
+				rows = append(rows, iterator.Row())
+			}
+			require.Equal(t, tc.rows, rows)
+			require.NoError(t, iterator.Err())
+			require.NoError(t, iterator.Close())
+		})
 	}
 }
 

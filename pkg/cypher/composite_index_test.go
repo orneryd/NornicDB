@@ -17,18 +17,18 @@ type updateErrorEngine struct {
 	edgeErr error
 }
 
-func (e *updateErrorEngine) UpdateNode(node *storage.Node) error {
+func (e *updateErrorEngine) UpdateNode(ctx context.Context, updateRequest storage.NodeUpdateRequest) error {
 	if e.nodeErr != nil {
 		return e.nodeErr
 	}
-	return e.Engine.UpdateNode(node)
+	return e.Engine.UpdateNode(ctx, updateRequest)
 }
 
-func (e *updateErrorEngine) UpdateEdge(edge *storage.Edge) error {
+func (e *updateErrorEngine) UpdateEdge(ctx context.Context, updateRequest storage.EdgeUpdateRequest) error {
 	if e.edgeErr != nil {
 		return e.edgeErr
 	}
-	return e.Engine.UpdateEdge(edge)
+	return e.Engine.UpdateEdge(ctx, updateRequest)
 }
 
 // TestCompositeIndex tests composite (multi-property) index creation
@@ -170,7 +170,7 @@ func TestVectorPropertyProcedureBranches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:         "n1",
 		Labels:     []string{"Node"},
 		Properties: map[string]interface{}{},
@@ -178,7 +178,7 @@ func TestVectorPropertyProcedureBranches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed node failed: %v", err)
 	}
-	err = store.CreateEdge(&storage.Edge{
+	err = store.CreateEdge(t.Context(), &storage.Edge{
 		ID:         "e1",
 		StartNode:  "n1",
 		EndNode:    "n1",
@@ -499,13 +499,8 @@ func TestCompositeIndexQueryOptimization(t *testing.T) {
 	}
 }
 
-// TestParseIndexProperties tests the parseIndexProperties helper function
+// TestParseIndexProperties tests the canonical ON-clause property reader
 func TestParseIndexProperties(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-
 	testCases := []struct {
 		name     string
 		input    string
@@ -520,7 +515,7 @@ func TestParseIndexProperties(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := exec.parseIndexProperties(tc.input)
+			result := indexPropertiesFromOnClause(tc.input, true)
 
 			if len(result) != len(tc.expected) {
 				t.Errorf("Expected %d properties, got %d", len(tc.expected), len(result))
@@ -559,7 +554,9 @@ func TestCompositeIndexEqualitySeekAndMerge(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, []string{"a", "b"}, idx.Properties)
 	// Backfilled and therefore seekable.
-	require.Len(t, schema.SeekableCompositeIndexesForLabel("L"), 1)
+	seekable, err := schema.SeekableCompositeIndexesForLabel(ctx, "L")
+	require.NoError(t, err)
+	require.Len(t, seekable, 1)
 
 	// MERGE resolves the full key through the composite index (no label scan).
 	result, err := exec.Execute(ctx, `MERGE (n:L {a: 1, b: 2}) ON CREATE SET n.created = true RETURN n.created`, nil)
@@ -581,7 +578,8 @@ func TestCompositeIndexEqualitySeekAndMerge(t *testing.T) {
 	// A single-property index is the same composite type at arity 1.
 	_, err = exec.Execute(ctx, `CREATE INDEX ix_a FOR (n:L) ON (n.a)`, nil)
 	require.NoError(t, err)
-	pi, ok := schema.GetPropertyIndex("L", "a")
+	pi, ok, indexErr := schema.GetPropertyIndex(ctx, "L", "a")
+	require.NoError(t, indexErr)
 	require.True(t, ok)
 	require.NotNil(t, pi)
 	_, isComposite := interface{}(pi).(*storage.CompositeIndex)

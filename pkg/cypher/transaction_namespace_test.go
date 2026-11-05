@@ -1,6 +1,9 @@
+// Author: Codex, NOR-180 private rollback context signature migration,29October2026.
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/pkg/multidb"
+
 	"context"
 	"strings"
 	"testing"
@@ -140,30 +143,30 @@ func TestTransactionStatementRoutingAndErrors(t *testing.T) {
 	exec := NewStorageExecutor(store)
 
 	// Unknown statement returns nil,nil (not a tx command).
-	res, err := exec.parseTransactionStatement("MATCH (n) RETURN n")
+	res, err := exec.parseTransactionStatement(context.Background(), "MATCH (n) RETURN n")
 	require.NoError(t, err)
 	assert.Nil(t, res)
 
 	// BEGIN route.
-	res, err = exec.parseTransactionStatement("BEGIN TRANSACTION")
+	res, err = exec.parseTransactionStatement(context.Background(), "BEGIN TRANSACTION")
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	assert.Equal(t, "Transaction started", res.Rows[0][0])
 
 	// Active transaction guard on BEGIN.
-	_, err = exec.parseTransactionStatement("BEGIN")
+	_, err = exec.parseTransactionStatement(context.Background(), "BEGIN")
 	require.Error(t, err)
 
 	// COMMIT route.
-	res, err = exec.parseTransactionStatement("COMMIT TRANSACTION")
+	res, err = exec.parseTransactionStatement(context.Background(), "COMMIT TRANSACTION")
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	assert.Equal(t, "Transaction committed", res.Rows[0][0])
 
 	// No active transaction for COMMIT and ROLLBACK.
-	_, err = exec.parseTransactionStatement("COMMIT")
+	_, err = exec.parseTransactionStatement(context.Background(), "COMMIT")
 	require.Error(t, err)
-	_, err = exec.parseTransactionStatement("ROLLBACK")
+	_, err = exec.parseTransactionStatement(context.Background(), "ROLLBACK")
 	require.Error(t, err)
 }
 
@@ -186,13 +189,13 @@ func TestTransactionUnknownTypeBranches(t *testing.T) {
 	// Force unknown type branches in commit/rollback handlers.
 	exec.txContext.active = true
 	exec.txContext.tx = 123
-	_, err = exec.handleCommit()
+	_, err = exec.handleCommit(context.Background())
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unknown transaction type")
 
 	exec.txContext.active = true
 	exec.txContext.tx = 123
-	_, err = exec.handleRollback()
+	_, err = exec.handleRollback(context.Background(), nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unknown transaction type")
 }
@@ -203,7 +206,7 @@ func TestExecuteQueryAgainstStorage_DispatchCoverage(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:         "dispatch-node",
 		Labels:     []string{"Dispatch"},
 		Properties: map[string]interface{}{"name": "n1"},
@@ -335,8 +338,8 @@ func TestExecuteQueryAgainstStorage_ShowDispatchWithDatabaseManager(t *testing.T
 	ctx := context.Background()
 
 	mockDBM := newMockDatabaseManager(t)
-	require.NoError(t, mockDBM.CreateDatabase("nornic"))
-	require.NoError(t, mockDBM.CreateDatabase("tenant_a"))
+	require.NoError(t, mockDBM.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic"}))
+	require.NoError(t, mockDBM.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant_a"}))
 	exec.SetDatabaseManager(mockDBM)
 
 	queries := []struct {

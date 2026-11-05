@@ -21,7 +21,8 @@ func TestMarkedRemoteGraphValuesUseEntityStructures(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, utc := range []bool{false, true} {
 				for _, v5 := range []bool{false, true} {
-					wire := encodeRecordValueInto(nil, tc.v, utc, v5, "local")
+					wire, encodeErr := encodeRecordValueInto(t.Context(), nil, tc.v, utc, v5, "local")
+					require.NoError(t, encodeErr)
 					require.GreaterOrEqual(t, len(wire), 2)
 					require.Equal(t, tc.tag, wire[1])
 					_, used, err := decodePackStreamValue(wire, 0)
@@ -45,7 +46,9 @@ func TestRemotePathWireDirectionsAndNulls(t *testing.T) {
 	for _, utc := range []bool{false, true} {
 		for _, v5 := range []bool{false, true} {
 			for _, p := range []storage.RemotePathValue{nil, {}, {a, r}} {
-				require.Equal(t, []byte{0xc0}, encodeRecordValueInto(nil, p, utc, v5, "local"))
+				nullWire, encodeErr := encodeRecordValueInto(t.Context(), nil, p, utc, v5, "local")
+				require.NoError(t, encodeErr)
+				require.Equal(t, []byte{0xc0}, nullWire)
 			}
 			for _, tc := range []struct {
 				p        storage.RemotePathValue
@@ -56,7 +59,8 @@ func TestRemotePathWireDirectionsAndNulls(t *testing.T) {
 				{storage.RemotePathValue{b, r, a}, []interface{}{int64(-1), int64(1)}},
 				{storage.RemotePathValue{a, r, b, r, a}, []interface{}{int64(1), int64(1), int64(-1), int64(0)}},
 			} {
-				wire := encodeRecordValueInto(nil, tc.p, utc, v5, "local")
+				wire, encodeErr := encodeRecordValueInto(t.Context(), nil, tc.p, utc, v5, "local")
+				require.NoError(t, encodeErr)
 				require.Equal(t, byte(0x50), wire[1])
 				value, used, err := decodePackStreamValue(wire, 0)
 				require.NoError(t, err)
@@ -64,9 +68,12 @@ func TestRemotePathWireDirectionsAndNulls(t *testing.T) {
 				require.Equal(t, tc.sequence, value.(map[string]interface{})["sequence"])
 			}
 			var nilEntity storage.RemoteEntityValue
-			require.Equal(t, []byte{0xc0}, encodeRecordValueInto(nil, nilEntity, utc, v5, "local"))
+			nullWire, encodeErr := encodeRecordValueInto(t.Context(), nil, nilEntity, utc, v5, "local")
+			require.NoError(t, encodeErr)
+			require.Equal(t, []byte{0xc0}, nullWire)
 			bare := storage.RemoteEntityValue{"elementId": "empty", "labels": []interface{}{}}
-			wire := encodeRecordValueInto(nil, bare, utc, v5, "local")
+			wire, encodeErr := encodeRecordValueInto(t.Context(), nil, bare, utc, v5, "local")
+			require.NoError(t, encodeErr)
 			require.Equal(t, byte(0x4e), wire[1])
 		}
 	}
@@ -83,7 +90,7 @@ func TestHTTPRemoteSourceIdentitySurvivesBoltEncoding(t *testing.T) {
 	remote, err := storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: source.URL, Database: "neo4j"})
 	require.NoError(t, err)
 	defer remote.Close()
-	_, rows, err := remote.QueryCypher(context.Background(), "RETURN recorded", nil)
+	_, rows, err := remote.QueryCypher(context.Background(), "RETURN recorded", nil, storage.RemoteAccessRead)
 	require.NoError(t, err)
 	node := rows[0][1].(storage.RemoteEntityValue)
 	edge := rows[0][3].(storage.RemoteEntityValue)
@@ -98,7 +105,8 @@ func TestHTTPRemoteSourceIdentitySurvivesBoltEncoding(t *testing.T) {
 	for _, utc := range []bool{false, true} {
 		for _, v5 := range []bool{false, true} {
 			for _, value := range []interface{}{ordinary, map[string]interface{}{"box": ordinary}} {
-				wire := encodeRecordValueInto(nil, value, utc, v5, "local")
+				wire, encodeErr := encodeRecordValueInto(t.Context(), nil, value, utc, v5, "local")
+				require.NoError(t, encodeErr)
 				decoded, _, err := decodePackStreamValue(wire, 0)
 				require.NoError(t, err)
 				require.IsType(t, map[string]interface{}{}, decoded)
@@ -110,7 +118,8 @@ func TestHTTPRemoteSourceIdentitySurvivesBoltEncoding(t *testing.T) {
 	for _, utc := range []bool{false, true} {
 		for _, v5 := range []bool{false, true} {
 			for _, entity := range []storage.RemoteEntityValue{node, edge} {
-				wire := encodeRecordValueInto(nil, entity, utc, v5, "local")
+				wire, encodeErr := encodeRecordValueInto(t.Context(), nil, entity, utc, v5, "local")
+				require.NoError(t, encodeErr)
 				value, _, err := decodePackStreamValue(wire, 0)
 				require.NoError(t, err)
 				decoded := value.(map[string]interface{})
@@ -128,11 +137,13 @@ func TestHTTPRemoteSourceIdentitySurvivesBoltEncoding(t *testing.T) {
 					}
 				}
 			}
-			wire := encodeRecordValueInto(nil, path, utc, v5, "local")
+			wire, encodeErr := encodeRecordValueInto(t.Context(), nil, path, utc, v5, "local")
+			require.NoError(t, encodeErr)
 			decoded, _, err := decodePackStreamValue(wire, 0)
 			require.NoError(t, err)
 			require.Equal(t, "Path", decoded.(map[string]interface{})["_type"])
-			wire = encodeRecordValueInto(nil, rows[0][0], utc, v5, "local")
+			wire, encodeErr = encodeRecordValueInto(t.Context(), nil, rows[0][0], utc, v5, "local")
+			require.NoError(t, encodeErr)
 			require.Equal(t, byte(0xa0), wire[0])
 		}
 	}

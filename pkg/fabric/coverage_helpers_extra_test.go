@@ -3,6 +3,7 @@ package fabric
 import (
 	"context"
 	"errors"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"strings"
 	"testing"
 
@@ -120,11 +121,18 @@ func TestIteratorErrorPropagationBranches(t *testing.T) {
 		err:      baseErr,
 		closeErr: closeErr,
 	}, 0)
+	t.Cleanup(func() { _ = prefetch.Close() })
 	require.True(t, prefetch.Next())
 	require.Equal(t, []interface{}{"x"}, prefetch.Row())
 	require.False(t, prefetch.Next())
 	require.ErrorIs(t, prefetch.Err(), baseErr)
-	require.NoError(t, prefetch.Close())
+	// Closing the lifetime retains both the producer and resource-close
+	// failures; repeated Close calls must retain that terminal outcome.
+	for range 2 {
+		terminal := prefetch.Close()
+		require.ErrorIs(t, terminal, baseErr)
+		require.ErrorIs(t, terminal, closeErr)
+	}
 
 	concat := NewConcatRowIterator(
 		&fabricErrorIterator{idx: -1, rows: [][]interface{}{{"a"}}},
@@ -134,7 +142,9 @@ func TestIteratorErrorPropagationBranches(t *testing.T) {
 	require.Equal(t, []interface{}{"a"}, concat.Row())
 	require.False(t, concat.Next())
 	require.ErrorIs(t, concat.Err(), baseErr)
-	require.NoError(t, concat.Close())
+	for range 2 {
+		require.ErrorIs(t, concat.Close(), baseErr)
+	}
 
 	concatWithCloseErr := NewConcatRowIterator(&fabricErrorIterator{idx: -1, closeErr: closeErr})
 	require.ErrorIs(t, concatWithCloseErr.Close(), closeErr)
@@ -225,7 +235,7 @@ func TestRemoteFragmentExecutorExecuteRowsErrorPath(t *testing.T) {
 	remote := NewRemoteFragmentExecutor()
 	defer func() { _ = remote.Close() }()
 
-	_, _, err := remote.ExecuteRows(context.Background(), &LocationRemote{DBName: "db", URI: "ftp://example.invalid"}, "RETURN 1", nil, "")
+	_, _, err := remote.ExecuteRows(context.Background(), &LocationRemote{DBName: "db", URI: "ftp://example.invalid"}, "RETURN 1", nil, "", storage.RemoteAccessRead)
 	require.Error(t, err)
 	require.True(t, strings.Contains(err.Error(), "failed to connect to remote") || strings.Contains(err.Error(), "unsupported"), err.Error())
 }
@@ -270,22 +280,34 @@ func TestFabricParserHelperExtraBranches(t *testing.T) {
 	require.Equal(t, -1, indexTopLevelKeyword("RETURN `MATCH` AS word", "MATCH"))
 	require.GreaterOrEqual(t, indexTopLevelKeyword("WITH x MATCH (n) RETURN n", "MATCH"), 0)
 
-	items, ok := parseSimpleBatchedLookupReturnItems("n.name AS name, n.age AS age", "n")
+	projection, ok := readApplyLookupProjection(applyLookupShapeRows, "n.name AS name, n.age AS age", "n")
 	require.True(t, ok)
-	require.Equal(t, []string{"name", "age"}, aliasesFromReturnItems(items))
-	require.False(t, func() bool { _, ok := parseSimpleBatchedLookupReturnItems("m.name AS name", "n"); return ok }())
-	require.False(t, func() bool { _, ok := parseSimpleBatchedLookupReturnItems("n.name AS bad-alias", "n"); return ok }())
+	require.Equal(t, []string{"name", "age"}, projection.aliases)
+	require.False(t, func() bool {
+		_, ok := readApplyLookupProjection(applyLookupShapeRows, "m.name AS name", "n")
+		return ok
+	}())
+	require.False(t, func() bool {
+		_, ok := readApplyLookupProjection(applyLookupShapeRows, "n.name AS bad-alias", "n")
+		return ok
+	}())
 
-	collectExpr, alias, ok := parseSimpleCollectReturnItem("collect(n) AS nodes")
+	collected, ok := readApplyLookupProjection(applyLookupShapeCollect, "collect(n) AS nodes", "")
 	require.True(t, ok)
-	require.Equal(t, "n", collectExpr)
-	require.Equal(t, "nodes", alias)
-	require.False(t, func() bool { _, _, ok := parseSimpleCollectReturnItem("count(n) AS c"); return ok }())
-	require.False(t, func() bool { _, _, ok := parseSimpleCollectReturnItem("collect() AS empty"); return ok }())
+	require.Equal(t, "n", collected.collectExpression)
+	require.Equal(t, "nodes", collected.collectAlias)
+	require.False(t, func() bool {
+		_, ok := readApplyLookupProjection(applyLookupShapeCollect, "count(n) AS c", "")
+		return ok
+	}())
+	require.False(t, func() bool {
+		_, ok := readApplyLookupProjection(applyLookupShapeCollect, "collect() AS empty", "")
+		return ok
+	}())
 
-	countItems, ok := parseSimpleBatchedCountReturnItems("count(*) AS total")
+	counted, ok := readApplyLookupProjection(applyLookupShapeCount, "count(*) AS total", "")
 	require.True(t, ok)
-	require.Equal(t, []string{"total"}, aliasesFromCountReturnItems(countItems))
+	require.Equal(t, []string{"total"}, counted.aliases)
 	require.Equal(t, []interface{}{int64(0), int64(0)}, zeroCountValues(2))
 
 	bindings := bindingsFromParentAndRow(map[string]interface{}{"parent": 1}, []string{"a", "", "c"}, []interface{}{2, 3})

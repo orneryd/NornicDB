@@ -1,6 +1,9 @@
 package storage
 
 import (
+	"context"
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"errors"
 	"fmt"
 	"testing"
@@ -13,12 +16,14 @@ import (
 func TestBadgerHelperTransactionsDrainOnFailure(t *testing.T) {
 	for _, name := range []string{"view", "update"} {
 		t.Run(name, func(t *testing.T) {
-			engine, err := NewBadgerEngineInMemory()
+			engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = engine.Close() })
 			helper := engine.withView
 			if name == "update" {
-				helper = engine.withUpdate
+				helper = func(fn func(*badger.Txn) error) error {
+					return engine.withUpdate(context.Background(), updateRequest{}, fn)
+				}
 			}
 			sentinel := errors.New("callback failed")
 			require.ErrorIs(t, helper(func(*badger.Txn) error { return sentinel }), sentinel)

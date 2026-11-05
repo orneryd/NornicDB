@@ -24,7 +24,7 @@ func TestProcedureCatalogMutationRecoversLegacyIdentity(t *testing.T) {
 					record := persistedProcedureRecord{Name: "custom.Report", Mode: "READ", Body: "RETURN 1 AS v", Signature: "custom.Report() :: (v :: INTEGER)"}
 					blob, err := msgpack.Marshal(record)
 					require.NoError(t, err)
-					_, err = base.CreateNode(&storage.Node{ID: procedureCatalogNodeID("custom.report"), Labels: []string{procedureCatalogLabel}, Properties: map[string]interface{}{"name": record.Name, "record": base64.StdEncoding.EncodeToString(blob)}})
+					_, err = base.CreateNode(t.Context(), &storage.Node{ID: procedureCatalogNodeID("custom.report"), Labels: []string{procedureCatalogLabel}, Properties: map[string]interface{}{"name": record.Name, "record": base64.StdEncoding.EncodeToString(blob)}})
 					require.NoError(t, err)
 				}
 				if arrival == "failed startup migration" {
@@ -34,6 +34,8 @@ func TestProcedureCatalogMutationRecoversLegacyIdentity(t *testing.T) {
 				exec := NewStorageExecutor(fault)
 				fault.createErr = nil
 				if arrival == "visible after construction" {
+					// Native public command sees legacy data arriving after construction.
+					exec = NewStorageExecutor(base)
 					seed()
 				}
 				var query string
@@ -45,15 +47,22 @@ func TestProcedureCatalogMutationRecoversLegacyIdentity(t *testing.T) {
 				case "drop exact":
 					query = "CALL apoc.custom.dropProcedure('Report')"
 				}
-				_, err := exec.Execute(context.Background(), query, nil)
+				var err error
+				if arrival == "failed startup migration" {
+					// Component proof retains the actual startup write-fault owner.
+					// Native statements cannot route writes through this decorator.
+					_, err = exec.executeCall(context.Background(), query)
+				} else {
+					_, err = exec.Execute(context.Background(), query, nil)
+				}
 				if operation == "drop lowercase" {
 					require.Error(t, err, "absent exact spelling must not delete a differently cased payload")
 				} else {
 					require.NoError(t, err)
 				}
 				ClearUserProcedures()
-				exec = NewStorageExecutor(fault)
-				nodes, err := base.GetNodesByLabel(procedureCatalogLabel)
+				exec = NewStorageExecutor(base)
+				nodes, err := base.GetNodesByLabel(context.Background(), procedureCatalogLabel)
 				require.NoError(t, err)
 				var names []string
 				for _, node := range nodes {
@@ -98,7 +107,7 @@ func TestProcedureCatalogMutationRecoveryFailureIsRetryable(t *testing.T) {
 				blob, err := msgpack.Marshal(original)
 				require.NoError(t, err)
 				legacy := procedureCatalogNodeID("custom.report")
-				_, err = base.CreateNode(&storage.Node{ID: legacy, Labels: []string{procedureCatalogLabel}, Properties: map[string]interface{}{"name": original.Name, "record": base64.StdEncoding.EncodeToString(blob)}})
+				_, err = base.CreateNode(t.Context(), &storage.Node{ID: legacy, Labels: []string{procedureCatalogLabel}, Properties: map[string]interface{}{"name": original.Name, "record": base64.StdEncoding.EncodeToString(blob)}})
 				require.NoError(t, err)
 				fault := errors.New("mutation catalog " + stage + " unavailable")
 				switch stage {
@@ -116,7 +125,7 @@ func TestProcedureCatalogMutationRecoveryFailureIsRetryable(t *testing.T) {
 					return exec.installPersistedProcedure(context.Background(), persistedProcedureRecord{Name: "custom.report", Mode: "READ", Body: "RETURN 2 AS v", Signature: "custom.report() :: (v :: INTEGER)"}, true)
 				}
 				require.ErrorIs(t, mutate(), fault)
-				preserved, err := base.GetNode(legacy)
+				preserved, err := base.GetNode(t.Context(), legacy)
 				require.NoError(t, err)
 				record, err := decodeProcedureCatalogRecord(preserved)
 				require.NoError(t, err)
@@ -128,7 +137,7 @@ func TestProcedureCatalogMutationRecoveryFailureIsRetryable(t *testing.T) {
 				require.NoError(t, mutate())
 				ClearUserProcedures()
 				exec = NewStorageExecutor(engine)
-				nodes, err := base.GetNodesByLabel(procedureCatalogLabel)
+				nodes, err := base.GetNodesByLabel(context.Background(), procedureCatalogLabel)
 				require.NoError(t, err)
 				if operation == "drop" {
 					require.Empty(t, nodes)
@@ -161,7 +170,7 @@ func TestProcedureCatalogMutationValidatesPayloadBeforeReuse(t *testing.T) {
 		valid   bool
 	}{
 		{"raw bytes", bytesFor(valid), true},
-		{"unsupported payload", 17, false},
+		{"unsupported payload", int64(17), false},
 		{"invalid msgpack", base64.StdEncoding.EncodeToString([]byte{0xc1}), false},
 		{"invalid definition", base64.StdEncoding.EncodeToString(bytesFor(persistedProcedureRecord{Name: "custom.Report", Mode: "INVALID", Body: "RETURN 1"})), false},
 		{"unrelated key payload", base64.StdEncoding.EncodeToString(bytesFor(persistedProcedureRecord{Name: "custom.Other", Mode: "READ", Body: "RETURN 1 AS v", Signature: "custom.Other() :: (v :: INTEGER)"})), false},
@@ -172,7 +181,7 @@ func TestProcedureCatalogMutationValidatesPayloadBeforeReuse(t *testing.T) {
 			store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 			exec := NewStorageExecutor(store)
 			id := procedureCatalogNodeID("custom.report")
-			_, err := store.CreateNode(&storage.Node{ID: id, Labels: []string{procedureCatalogLabel}, Properties: map[string]interface{}{"name": valid.Name, "record": tc.payload}})
+			_, err := store.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{procedureCatalogLabel}, Properties: map[string]interface{}{"name": valid.Name, "record": tc.payload}})
 			require.NoError(t, err)
 			err = exec.installPersistedProcedure(context.Background(), persistedProcedureRecord{Name: "custom.report", Mode: "READ", Body: "RETURN 2 AS v", Signature: "custom.report() :: (v :: INTEGER)"}, true)
 			if tc.valid {
@@ -184,7 +193,7 @@ func TestProcedureCatalogMutationValidatesPayloadBeforeReuse(t *testing.T) {
 				require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
 			} else {
 				require.Error(t, err)
-				node, getErr := store.GetNode(id)
+				node, getErr := store.GetNode(t.Context(), id)
 				require.NoError(t, getErr)
 				require.Equal(t, tc.payload, node.Properties["record"], "invalid or unrelated payload must not be replaced")
 			}

@@ -1,6 +1,8 @@
 package nornicdb
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"os"
@@ -22,18 +24,25 @@ type backupErrorEngine struct {
 	allEdgesErr error
 }
 
-func (e *backupErrorEngine) AllNodes() ([]*storage.Node, error) {
-	if e.allNodesErr != nil {
-		return nil, e.allNodesErr
-	}
-	return e.Engine.AllNodes()
+func (e *backupErrorEngine) AllNodes(ctx context.Context) ([]*storage.Node, error) {
+	return runtimeFixtureOwner.ReadWithFailure(ctx, e.allNodesErr, func(ctx context.Context) ([]*storage.Node, error) {
+		return e.Engine.AllNodes(ctx)
+	})
 }
 
-func (e *backupErrorEngine) AllEdges() ([]*storage.Edge, error) {
-	if e.allEdgesErr != nil {
-		return nil, e.allEdgesErr
+func (e *backupErrorEngine) AllEdges(ctx context.Context) ([]*storage.Edge, error) {
+	return runtimeFixtureOwner.ReadWithFailure(ctx, e.allEdgesErr, func(ctx context.Context) ([]*storage.Edge, error) {
+		return e.Engine.AllEdges(ctx)
+	})
+}
+
+// The backup fallback streams stored nodes; the fake fails that stream as it
+// fails AllNodes.
+func (e *backupErrorEngine) StreamNodesWithOptions(ctx context.Context, opts storage.StreamNodesOptions, visit func(*storage.Node) error) error {
+	if e.allNodesErr != nil {
+		return e.allNodesErr
 	}
-	return e.Engine.AllEdges()
+	return e.Engine.StreamNodesWithOptions(ctx, opts, visit)
 }
 
 func TestDB_GetIndexes(t *testing.T) {
@@ -80,7 +89,7 @@ func TestDB_GetIndexes(t *testing.T) {
 		require.Equal(t, "body", created[0].Property)
 		require.Equal(t, "fulltext", created[0].Type)
 
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = baseEngine.Close() })
 		nilSchema := &nilSchemaEngine{Engine: baseEngine}
 		minimal := &DB{storage: nilSchema, baseStorage: nilSchema, config: DefaultConfig()}
@@ -89,7 +98,7 @@ func TestDB_GetIndexes(t *testing.T) {
 		require.Empty(t, indexes)
 		require.ErrorContains(t, minimal.CreateIndex(context.Background(), "A", "b", "property"), "schema manager not initialized")
 
-		minimal.closed = true
+		minimal.work.CloseAdmission()
 		_, err = minimal.GetIndexes(context.Background())
 		require.ErrorIs(t, err, ErrClosed)
 		require.ErrorIs(t, minimal.CreateIndex(context.Background(), "A", "b", "property"), ErrClosed)
@@ -200,7 +209,7 @@ func TestDB_Backup(t *testing.T) {
 	})
 
 	t.Run("backup returns wrapped node read error", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = base.Close() })
 		db := &DB{
 			storage: &backupErrorEngine{
@@ -216,7 +225,7 @@ func TestDB_Backup(t *testing.T) {
 	})
 
 	t.Run("backup returns wrapped edge read error", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = base.Close() })
 		db := &DB{
 			storage: &backupErrorEngine{

@@ -1,6 +1,9 @@
 package storage
 
 import (
+	"context"
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"encoding/binary"
 	"fmt"
 	"sync"
@@ -11,77 +14,63 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestConcurrentTransactionsCreatingSameLabelCommitIndependently(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, engine.Close()) })
-
-	const rounds = 16
-	for round := 0; round < rounds; round++ {
-		transactions := make([]*BadgerTransaction, 2)
-		for writer := range transactions {
-			transactions[writer], err = engine.BeginTransaction()
+func TestConcurrentTransactionsSharingLabelCountCommitIndependently(t *testing.T) {
+	for _, tc := range []struct {
+		name, label string
+		rounds      int
+		relabel     bool
+	}{{"create", "Work", 16, false}, {"change labels", "Complete", 1, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 			require.NoError(t, err)
-			_, err = transactions[writer].CreateNode(&Node{
-				ID:     NodeID(fmt.Sprintf("db1:concurrent-%d-%d", round, writer)),
-				Labels: []string{"Work"},
-			})
+			t.Cleanup(func() { require.NoError(t, engine.Close()) })
+			if tc.relabel {
+				for i := 0; i < 2; i++ {
+					_, err = engine.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("db1:update-%d", i)), Labels: []string{"Pending"}})
+					require.NoError(t, err)
+				}
+			}
+			for round := 0; round < tc.rounds; round++ {
+				transactions := make([]*BadgerTransaction, 2)
+				for writer := range transactions {
+					transactions[writer], err = engine.BeginTransaction(t.Context())
+					require.NoError(t, err)
+					defer transactions[writer].Rollback()
+					if tc.relabel {
+						require.NoError(t, transactions[writer].UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: NodeID(fmt.Sprintf("db1:update-%d", writer)), Labels: []string{tc.label}}, Policy: ClientNodeEdits}))
+					} else {
+						_, err = transactions[writer].CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("db1:concurrent-%d-%d", round, writer)), Labels: []string{tc.label}})
+						require.NoError(t, err)
+					}
+				}
+				for _, commitErr := range commitTransactionsConcurrently(transactions) {
+					require.NoError(t, commitErr)
+				}
+			}
+			if tc.relabel {
+				pending, err := engine.NodeCountByLabelInNamespace(t.Context(), "db1", "Pending")
+				require.NoError(t, err)
+				require.Zero(t, pending)
+			}
+			count, err := engine.NodeCountByLabelInNamespace(t.Context(), "db1", tc.label)
 			require.NoError(t, err)
-		}
-
-		for _, commitErr := range commitTransactionsConcurrently(transactions) {
-			require.NoError(t, commitErr)
-		}
+			require.Equal(t, int64(tc.rounds*2), count)
+		})
 	}
-
-	count, err := engine.NodeCountByLabelInNamespace("db1", "Work")
-	require.NoError(t, err)
-	require.Equal(t, int64(rounds*2), count)
-}
-
-func TestConcurrentTransactionsChangingSameLabelsCommitIndependently(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, engine.Close()) })
-
-	for i := 0; i < 2; i++ {
-		_, err = engine.CreateNode(&Node{ID: NodeID(fmt.Sprintf("db1:update-%d", i)), Labels: []string{"Pending"}})
-		require.NoError(t, err)
-	}
-
-	transactions := make([]*BadgerTransaction, 2)
-	for writer := range transactions {
-		transactions[writer], err = engine.BeginTransaction()
-		require.NoError(t, err)
-		require.NoError(t, transactions[writer].UpdateNode(&Node{
-			ID:     NodeID(fmt.Sprintf("db1:update-%d", writer)),
-			Labels: []string{"Complete"},
-		}))
-	}
-	for _, commitErr := range commitTransactionsConcurrently(transactions) {
-		require.NoError(t, commitErr)
-	}
-
-	pending, err := engine.NodeCountByLabelInNamespace("db1", "Pending")
-	require.NoError(t, err)
-	require.Zero(t, pending)
-	complete, err := engine.NodeCountByLabelInNamespace("db1", "Complete")
-	require.NoError(t, err)
-	require.Equal(t, int64(2), complete)
 }
 
 func TestConflictingTransactionDoesNotPublishLabelCountDelta(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
-	_, err = engine.CreateNode(&Node{ID: "db1:same-node", Labels: []string{"Pending"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "db1:same-node", Labels: []string{"Pending"}})
 	require.NoError(t, err)
 
 	transactions := make([]*BadgerTransaction, 2)
 	for writer := range transactions {
-		transactions[writer], err = engine.BeginTransaction()
+		transactions[writer], err = engine.BeginTransaction(t.Context())
 		require.NoError(t, err)
-		require.NoError(t, transactions[writer].UpdateNode(&Node{ID: "db1:same-node", Labels: []string{"Complete"}}))
+		require.NoError(t, transactions[writer].UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "db1:same-node", Labels: []string{"Complete"}}, Policy: ClientNodeEdits}))
 	}
 
 	commitErrors := commitTransactionsConcurrently(transactions)
@@ -93,47 +82,47 @@ func TestConflictingTransactionDoesNotPublishLabelCountDelta(t *testing.T) {
 	}
 	require.Equal(t, 1, successes)
 
-	count, err := engine.NodeCountByLabelInNamespace("db1", "Pending")
+	count, err := engine.NodeCountByLabelInNamespace(t.Context(), "db1", "Pending")
 	require.NoError(t, err)
 	require.Zero(t, count)
-	count, err = engine.NodeCountByLabelInNamespace("db1", "Complete")
+	count, err = engine.NodeCountByLabelInNamespace(t.Context(), "db1", "Complete")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), count)
 }
 
 func TestTransactionRepairsMalformedDerivedLabelCountAfterCommit(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		malformed := make([]byte, 4)
 		binary.BigEndian.PutUint32(malformed, 99)
 		return txn.Set(labelCountKey("db1", "Work"), malformed)
 	}))
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	_, err = tx.CreateNode(&Node{ID: "db1:repair-count", Labels: []string{"Work"}})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "db1:repair-count", Labels: []string{"Work"}})
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 
-	count, err := engine.NodeCountByLabelInNamespace("db1", "Work")
+	count, err := engine.NodeCountByLabelInNamespace(t.Context(), "db1", "Work")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), count)
 }
 
 func TestRolledBackTransactionDoesNotPublishLabelCountDelta(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
-	_, err = tx.CreateNode(&Node{ID: "db1:rolled-back", Labels: []string{"Work"}})
+	_, err = tx.CreateNode(t.Context(), &Node{ID: "db1:rolled-back", Labels: []string{"Work"}})
 	require.NoError(t, err)
 	require.NoError(t, tx.Rollback())
 
-	count, err := engine.NodeCountByLabelInNamespace("db1", "Work")
+	count, err := engine.NodeCountByLabelInNamespace(t.Context(), "db1", "Work")
 	require.NoError(t, err)
 	require.Zero(t, count)
 }
@@ -156,7 +145,7 @@ func commitTransactionsConcurrently(transactions []*BadgerTransaction) []error {
 }
 
 func BenchmarkConcurrentTransactionsCreatingSameLabel(b *testing.B) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(b, err)
 	b.Cleanup(func() { require.NoError(b, engine.Close()) })
 
@@ -165,13 +154,13 @@ func BenchmarkConcurrentTransactionsCreatingSameLabel(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			tx, beginErr := engine.BeginTransaction()
+			tx, beginErr := engine.BeginTransaction(b.Context())
 			if beginErr != nil {
 				b.Error(beginErr)
 				continue
 			}
 			id := nextID.Add(1)
-			if _, createErr := tx.CreateNode(&Node{
+			if _, createErr := tx.CreateNode(b.Context(), &Node{
 				ID:     NodeID(fmt.Sprintf("db1:benchmark-%d", id)),
 				Labels: []string{"Work"},
 			}); createErr != nil {

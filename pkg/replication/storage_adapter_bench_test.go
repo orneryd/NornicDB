@@ -1,7 +1,9 @@
 package replication
 
 import (
+	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -9,7 +11,7 @@ import (
 )
 
 func BenchmarkStorageAdapter_GetWALEntries(b *testing.B) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	adapter, err := NewStorageAdapterWithWAL(engine, b.TempDir())
 	if err != nil {
 		b.Fatal(err)
@@ -19,9 +21,9 @@ func BenchmarkStorageAdapter_GetWALEntries(b *testing.B) {
 	const total = 20_000
 	for i := 0; i < total; i++ {
 		node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("nornic:n%d", i))}
-		data, _ := encodeNodePayload(node)
+		data, _ := storage.EncodeNodePayload(node)
 		cmd := &Command{Type: CmdCreateNode, Data: data, Timestamp: time.Now()}
-		if err := adapter.ApplyCommand(cmd); err != nil {
+		if _, err := adapter.ApplyCommand(context.Background(), cmd, WALQueued); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -44,7 +46,7 @@ func BenchmarkStorageAdapter_GetWALEntries(b *testing.B) {
 }
 
 func BenchmarkStorageAdapter_ApplyCommand_CreateNode(b *testing.B) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	adapter, err := NewStorageAdapterWithWAL(engine, b.TempDir())
 	if err != nil {
 		b.Fatal(err)
@@ -56,9 +58,9 @@ func BenchmarkStorageAdapter_ApplyCommand_CreateNode(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("nornic:n%d", i))}
-		data, _ := encodeNodePayload(node)
+		data, _ := storage.EncodeNodePayload(node)
 		cmd := &Command{Type: CmdCreateNode, Data: data, Timestamp: time.Now()}
-		if err := adapter.ApplyCommand(cmd); err != nil {
+		if _, err := adapter.ApplyCommand(context.Background(), cmd, WALQueued); err != nil {
 			b.Fatal(err)
 		}
 	}

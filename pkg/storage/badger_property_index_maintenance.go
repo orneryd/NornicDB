@@ -13,163 +13,88 @@ package storage
 //   - Walk each label on the node and each property present on the node.
 //   - Consult `MaintainsPropertyIndex(label, property)` to decide whether
 //     the (label, property) pair is indexed (filled or not, #875).
-//   - Call the schema's Insert / Delete helpers only when an index exists
-//     — the helpers are no-ops for unindexed pairs but an explicit gate
-//     avoids the unnecessary map lookup on every CREATE.
+//   - Every write moves the node from its old entries to its new ones with
+//     one CompositeIndex.ReplaceNode per index (replaceNodeIndexEntries), so
+//     a concurrent seek never misses a node in between, and an unchanged key
+//     is never removed.
 //   - Namespace is derived from the node ID prefix (see
 //     extractNamespaceFromID) so the correct SchemaManager is used.
-//   - Errors are logged (via the engine logger) and NOT returned; a
-//     single bad write must not block an entire bulk CREATE. The caller
-//     can still detect failure via end-to-end correctness checks.
+//   - A value with no index key (null, byte arrays, ...) is simply not
+//     filed, so a bulk CREATE is never blocked. A failed replacement is
+//     logged (via the engine logger) and NOT returned; the caller can still
+//     detect failure via end-to-end correctness checks.
+//   - ReplaceNode's keys belong to the write the engine already accepted, so
+//     maintenance passes context.Background() rather than a request's
+//     context.
 //
 // This file deliberately stays storage-local — it references only
 // *BadgerEngine / *SchemaManager / *Node, no cypher / knowledgepolicy
 // imports.
 
 import (
+	"context"
 	"log/slog"
+	"slices"
 )
 
-// maintainPropertyIndexesOnNodeCreated inserts the freshly-created node into
-// every equality index that covers one of its labels. Arity-1 indexes file
-// the node under its single-property key; arity-N indexes under full/prefix.
-func (b *BadgerEngine) maintainPropertyIndexesOnNodeCreated(node *Node) {
-	if node == nil {
-		return
-	}
-	sm := b.schemaForNodeID(node.ID)
-	if sm == nil {
-		return
-	}
-	b.maintainCompositeIndexesOnNodeCreated(node, sm)
-}
-
-// maintainCompositeIndexesOnNodeCreated indexes the node under every equality
-// index that covers one of its labels.
-func (b *BadgerEngine) maintainCompositeIndexesOnNodeCreated(node *Node, sm *SchemaManager) {
-	for _, label := range node.Labels {
-		for _, idx := range sm.GetCompositeIndexesForLabel(label) {
-			if idx == nil {
-				continue
-			}
-			if err := idx.IndexNode(node.ID, node.Properties); err != nil {
-				b.log.Warn("composite index insert failed",
-					slog.String("component", "storage"),
-					slog.String("label", label),
-					slog.String("index", idx.Name))
-			}
+// publishIndexMembership consumes the canonical before/final frame once per
+// entity. The operation stream is reserved for counts and notifications.
+func (b *BadgerEngine) publishIndexMembership(states commitStates) {
+	for id, pair := range states.nodes {
+		schema := b.schemaForNodeID(id)
+		if schema == nil {
+			continue
 		}
+		b.replaceNodeIndexEntries(id, pair.before, pair.after, schema)
 	}
+	b.publishRelationshipIndexMembership(states)
 }
 
-// maintainPropertyIndexesOnNodeUpdated removes old index entries (when the
-// oldNode snapshot is available) and inserts the current entries. Without
-// the oldNode snapshot we can only do the insert half, which keeps new
-// values findable but leaves any stale entries in place — correctness
-// fallout from a missing diff source is the caller's problem.
-func (b *BadgerEngine) maintainPropertyIndexesOnNodeUpdated(node, oldNode *Node) {
-	if node == nil {
-		return
-	}
-	sm := b.schemaForNodeID(node.ID)
-	if sm == nil {
-		return
-	}
-	b.maintainCompositeIndexesOnNodeUpdated(node, oldNode, sm)
-}
-
-// maintainCompositeIndexesOnNodeUpdated removes the node's stale entries
-// (from oldNode, when available) and inserts its current entries.
-func (b *BadgerEngine) maintainCompositeIndexesOnNodeUpdated(node, oldNode *Node, sm *SchemaManager) {
+// replaceNodeIndexEntries is the one index-maintenance step of every node
+// write: for each equality index covering a label of the old or the new body,
+// it replaces the node's old entries with its new ones in one
+// CompositeIndex.ReplaceNode. A nil body is no entries (create: no old body;
+// delete: no new body); an index whose label only one body carries gets only
+// that side.
+func (b *BadgerEngine) replaceNodeIndexEntries(id NodeID, oldNode, newNode *Node, sm *SchemaManager) {
+	var oldLabels, newLabels []string
+	var oldProperties, newProperties map[string]interface{}
 	if oldNode != nil {
-		for _, label := range oldNode.Labels {
-			for _, idx := range sm.GetCompositeIndexesForLabel(label) {
-				if idx == nil {
-					continue
-				}
-				idx.RemoveNode(oldNode.ID, oldNode.Properties)
-			}
-		}
+		oldLabels, oldProperties = oldNode.Labels, oldNode.Properties
 	}
-	for _, label := range node.Labels {
+	if newNode != nil {
+		newLabels, newProperties = newNode.Labels, newNode.Properties
+	}
+	replace := func(label string) {
+		before := oldProperties
+		if !slices.Contains(oldLabels, label) {
+			before = nil
+		}
+		after := newProperties
+		if !slices.Contains(newLabels, label) {
+			after = nil
+		}
 		for _, idx := range sm.GetCompositeIndexesForLabel(label) {
 			if idx == nil {
 				continue
 			}
-			if err := idx.IndexNode(node.ID, node.Properties); err != nil {
-				b.log.Warn("composite index insert (new) failed",
+			// The keys belong to a write the engine already accepted, so the
+			// replacement has that write's lifetime: it cannot cancel.
+			if err := idx.ReplaceNode(context.Background(), id, before, after); err != nil {
+				b.log.Warn("composite index replace failed",
 					slog.String("component", "storage"),
 					slog.String("label", label),
-					slog.String("index", idx.Name))
+					slog.String("index", idx.Name),
+					slog.String("error", err.Error()))
 			}
 		}
 	}
-}
-
-// maintainPropertyIndexesOnNodeDeletedWithNode removes index entries for a
-// deleted node using the caller's pre-delete snapshot. The replay path uses
-// it because a buffered node never entered the engine node cache, so the
-// cache-based variant would leave its committed index entries dangling.
-func (b *BadgerEngine) maintainPropertyIndexesOnNodeDeletedWithNode(nodeID NodeID, old *Node) {
-	if old == nil || len(old.Labels) == 0 {
-		return
+	for _, label := range newLabels {
+		replace(label)
 	}
-	sm := b.schemaForNodeID(nodeID)
-	if sm == nil {
-		return
-	}
-	b.maintainCompositeIndexesOnNodeDeleted(nodeID, old, sm)
-}
-
-// maintainPropertyIndexesOnNodeDeletedWithLabels removes index entries for
-// every equality index the deleted node touched. The caller provides the
-// labels (via cacheOnNodeDeletedWithLabels) because the node itself is
-// already gone from the cache; the cached copy supplies the property payload.
-func (b *BadgerEngine) maintainPropertyIndexesOnNodeDeletedWithLabels(id NodeID, labels []string) {
-	if len(labels) == 0 {
-		return
-	}
-	sm := b.schemaForNodeID(id)
-	if sm == nil {
-		return
-	}
-	// Only read the pre-delete snapshot when at least one indexed label
-	// applies to this node. If none of the labels declare an index, skip
-	// the read entirely.
-	anyIndexed := false
-	for _, label := range labels {
-		if len(sm.GetCompositeIndexesForLabel(label)) > 0 {
-			anyIndexed = true
-			break
-		}
-	}
-	if !anyIndexed {
-		return
-	}
-	// We no longer have the node — take the last-known cached copy, or
-	// skip if neither cache nor MVCC has a pre-delete view. Correctness
-	// note: if the cache was evicted AND the node is gone, a dangling
-	// index entry may persist until the next rebuild. That's a known
-	// limitation; avoid it by calling DeleteNode paths that surface the
-	// old node (UpdateNode equivalents already do).
-	b.nodeCacheMu.RLock()
-	cached, hit := b.nodeCache[id]
-	b.nodeCacheMu.RUnlock()
-	if !hit || cached == nil {
-		return
-	}
-	b.maintainCompositeIndexesOnNodeDeleted(id, cached, sm)
-}
-
-// maintainCompositeIndexesOnNodeDeleted removes the node from every equality
-// index its cached copy could have been filed under.
-func (b *BadgerEngine) maintainCompositeIndexesOnNodeDeleted(id NodeID, cached *Node, sm *SchemaManager) {
-	for _, label := range cached.Labels {
-		for _, idx := range sm.GetCompositeIndexesForLabel(label) {
-			if idx == nil {
-				continue
-			}
-			idx.RemoveNode(id, cached.Properties)
+	for _, label := range oldLabels {
+		if !slices.Contains(newLabels, label) {
+			replace(label)
 		}
 	}
 }
@@ -186,4 +111,72 @@ func (b *BadgerEngine) schemaForNodeID(id NodeID) *SchemaManager {
 	sm := b.schemas[ns]
 	b.schemasMu.RUnlock()
 	return sm
+}
+
+// publishUniqueValues projects one atomic frame into the canonical claims.
+// Changed predecessor claims retire before any final claim is acquired, so key
+// transfers do not depend on mutation order. Recovery folds a bounded physical
+// batch; its historical claims cannot overwrite another current holder.
+// The accepted frame is folded on the caller's completion lifetime and
+// completes with Background; ApplyUniqueValue can only return a preparation
+// cancellation error, which this completion lifetime cannot have.
+func (b *BadgerEngine) publishUniqueValues(schema *SchemaManager, states commitStates, action UniqueValueAction) {
+	if schema == nil || !schema.HasUniqueValueTracking() {
+		return
+	}
+	accepted := context.Background()
+	for id, pair := range states.nodes {
+		old := pair.before
+		if old == nil {
+			continue
+		}
+		for _, label := range old.Labels {
+			for property, value := range old.Properties {
+				// Keeping the claim is essential even when another constraint's
+				// publication blocks: trusted readers must never see it absent.
+				if retainsNodeUniqueClaim(accepted, schema, label, property, value, pair.after) {
+					continue
+				}
+				_ = schema.ApplyUniqueValue(accepted, label, property, value, id, RetiredUniqueClaim)
+			}
+		}
+	}
+	for id, pair := range states.nodes {
+		written := pair.after
+		if written == nil {
+			continue
+		}
+		for _, label := range written.Labels {
+			for property, value := range written.Properties {
+				_ = schema.ApplyUniqueValue(accepted, label, property, value, id, action)
+			}
+		}
+	}
+}
+
+// retainsNodeUniqueClaim compares the canonical claim identity, not Go value
+// identity: numeric widths, lists and temporal values use the same keys
+// as validation and publication. Unconstrained properties have no claim to retire.
+func retainsNodeUniqueClaim(ctx context.Context, schema *SchemaManager, label, property string, before any, after *Node) bool {
+	if err := schema.mu.RLockContext(ctx); err != nil {
+		return false
+	}
+	_, constrained := schema.uniqueConstraints[nodePropertyKey{label: label, property: property}]
+	schema.mu.RUnlock()
+	if !constrained {
+		return true
+	}
+	if after == nil || !slices.Contains(after.Labels, label) {
+		return false
+	}
+	next, exists := after.Properties[property]
+	if !exists {
+		return false
+	}
+	beforeKey, beforeOK, err := indexValueKey(ctx, before)
+	if err != nil || !beforeOK {
+		return false
+	}
+	afterKey, afterOK, err := indexValueKey(ctx, next)
+	return err == nil && afterOK && beforeKey == afterKey
 }

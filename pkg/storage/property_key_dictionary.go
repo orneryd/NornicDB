@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"sync"
@@ -39,6 +40,13 @@ const (
 // propertyKeyDictionary holds the per-namespace forward and reverse
 // indexes for property-key tokenization.
 type propertyKeyDictionary struct {
+	// WAL identity belongs to this physical dictionary, independent of names used.
+	walIdentity      atomic.Pointer[string]
+	walEpochRevision atomic.Uint64
+	// Under mu: invalidates prepared imports when mappings or durability change.
+	walBindingRevision uint64
+	walBindingDomain   uint64 // changes only when existing ID meanings can change
+
 	mu        sync.RWMutex
 	forward   map[string]map[string]uint64 // namespace -> (name -> id)
 	reverse   map[string]map[uint64]string // namespace -> (id -> name)
@@ -176,6 +184,8 @@ func (d *propertyKeyDictionary) resolveOrAllocateInTxn(txn *badger.Txn, namespac
 		id = d.nextID[namespace].Add(1)
 		d.forward[namespace][name] = id
 		d.reverse[namespace][id] = name
+		d.walBindingRevision++
+		d.walEpochRevision.Add(1)
 	}
 	d.mu.Unlock()
 
@@ -348,18 +358,19 @@ func (d *propertyKeyDictionary) flushTxnCounters(txn *badger.Txn) propKeyTxnDrai
 	return out
 }
 
-// persistTxnCounters writes the staged forward/reverse entries and
-// per-namespace counter keys out of the user transaction, as ordinary
-// commits of as many batches as they need.
-func (d *propertyKeyDictionary) persistTxnCounters(db *managedBadgerDB, drain propKeyTxnDrain) error {
+// persistTxnCounters makes one drain's forward/reverse tokens and namespace
+// counters durable through the commit owner's batch target, and only then marks
+// them persisted. Ordinary commits supply the managed database; replay holding the
+// large-commit gate supplies that existing largeCommit instead of reacquiring it.
+func (d *propertyKeyDictionary) persistTxnCounters(ctx context.Context, to batchTarget, drain propKeyTxnDrain) error {
 	if drain.empty() {
 		return nil
 	}
-	w := &batchWriter{to: db}
+	w := &batchWriter{to: to}
 	defer w.discard()
-	err := drain.writeTo(w)
+	err := drain.writeTo(ctx, w)
 	if err == nil {
-		err = w.flush()
+		err = w.flush(ctx)
 	}
 	if err != nil {
 		return err
@@ -377,7 +388,7 @@ func (drain propKeyTxnDrain) empty() bool {
 // w, one unit per token and per counter, so any number of them fits: a
 // statement introducing more property names than one Badger batch holds
 // commits like any other large statement (#703).
-func (drain propKeyTxnDrain) writeTo(w *batchWriter) error {
+func (drain propKeyTxnDrain) writeTo(ctx context.Context, w *batchWriter) error {
 	units := make([]func(txn *badger.Txn) error, 0, len(drain.pending)+len(drain.counters))
 	for _, entry := range drain.pending {
 		forward := propKeyForwardKey(entry.namespace, entry.name)
@@ -396,7 +407,7 @@ func (drain propKeyTxnDrain) writeTo(w *batchWriter) error {
 		units = append(units, func(txn *badger.Txn) error { return txn.Set(key, value) })
 	}
 	for _, unit := range units {
-		if err := w.write(unit); err != nil {
+		if err := w.write(ctx, unit); err != nil {
 			return err
 		}
 	}
@@ -410,8 +421,20 @@ func (drain propKeyTxnDrain) writeTo(w *batchWriter) error {
 // tokens into a fresh dictionary whose in-memory maps are otherwise empty.
 func (d *propertyKeyDictionary) markPersisted(drain propKeyTxnDrain) {
 	d.mu.Lock()
+	if len(drain.pending) != 0 {
+		d.walBindingRevision++
+	}
 	for _, entry := range drain.pending {
 		d.ensureNamespace(entry.namespace)
+		if id, exists := d.forward[entry.namespace][entry.name]; exists && id != entry.id {
+			d.walBindingDomain++
+		}
+		if name, exists := d.reverse[entry.namespace][entry.id]; exists && name != entry.name {
+			d.walBindingDomain++
+		}
+		if _, exists := d.forward[entry.namespace][entry.name]; !exists || d.reverse[entry.namespace][entry.id] != entry.name {
+			d.walEpochRevision.Add(1)
+		}
 		d.persisted[entry.namespace][entry.name] = true
 		if _, ok := d.forward[entry.namespace][entry.name]; !ok {
 			d.forward[entry.namespace][entry.name] = entry.id
@@ -436,6 +459,21 @@ func (d *propertyKeyDictionary) discardTxnCounters(txn *badger.Txn) {
 	d.txnMu.Lock()
 	delete(d.txnCounters, txn)
 	delete(d.txnPendingForward, txn)
+	d.txnMu.Unlock()
+}
+
+// moveTxnCounters preserves staged tokens when the same logical transaction
+// continues on a newer physical read view after an independently owned commit.
+func (d *propertyKeyDictionary) moveTxnCounters(from, to *badger.Txn) {
+	d.txnMu.Lock()
+	if counters, ok := d.txnCounters[from]; ok {
+		d.txnCounters[to] = counters
+		delete(d.txnCounters, from)
+	}
+	if pending, ok := d.txnPendingForward[from]; ok {
+		d.txnPendingForward[to] = pending
+		delete(d.txnPendingForward, from)
+	}
 	d.txnMu.Unlock()
 }
 
@@ -608,6 +646,9 @@ func isPropertyKeyDictionaryKey(key []byte) bool {
 // dropped with the store it belonged to.
 func (d *propertyKeyDictionary) replaceWith(fresh *propertyKeyDictionary) {
 	d.mu.Lock()
+	d.walBindingDomain++
+	d.walBindingRevision++
+	d.walEpochRevision.Add(1)
 	d.forward, d.reverse, d.persisted = fresh.forward, fresh.reverse, fresh.persisted
 	d.nextID, d.noted = fresh.nextID, fresh.noted
 	d.mu.Unlock()

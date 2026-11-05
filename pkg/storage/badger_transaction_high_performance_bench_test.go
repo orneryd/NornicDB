@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"sync"
 	"testing"
@@ -12,7 +14,7 @@ import (
 // are outside the timer; unexpected conflicts fail instead of being retried.
 func BenchmarkHighPerformanceDisjointEdgeUpdates(b *testing.B) {
 	const workers = 4
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: b.TempDir(), HighPerformance: true})
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: b.TempDir(), HighPerformance: true}))
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -22,14 +24,14 @@ func BenchmarkHighPerformanceDisjointEdgeUpdates(b *testing.B) {
 		}
 	})
 	for _, id := range []NodeID{"bench:from", "bench:to"} {
-		if _, err := engine.CreateNode(&Node{ID: id, Labels: []string{"Node"}}); err != nil {
+		if _, err := engine.CreateNode(b.Context(), &Node{ID: id, Labels: []string{"Node"}}); err != nil {
 			b.Fatal(err)
 		}
 	}
 	var ids [workers]EdgeID
 	for worker := range ids {
 		ids[worker] = EdgeID(fmt.Sprintf("bench:edge-%d", worker))
-		if err := engine.CreateEdge(&Edge{ID: ids[worker], StartNode: "bench:from", EndNode: "bench:to", Type: "LINKS", Properties: map[string]interface{}{"round": int64(-1)}}); err != nil {
+		if err := engine.CreateEdge(b.Context(), &Edge{ID: ids[worker], StartNode: "bench:from", EndNode: "bench:to", Type: "LINKS", Properties: map[string]interface{}{"round": int64(-1)}}); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -42,15 +44,15 @@ func BenchmarkHighPerformanceDisjointEdgeUpdates(b *testing.B) {
 		go func(worker int) {
 			defer wg.Done()
 			for round := worker; round < b.N; round += workers {
-				tx, err := engine.BeginTransaction()
+				tx, err := engine.BeginTransaction(b.Context())
 				if err != nil {
 					failures[worker] = err
 					return
 				}
-				edge, err := tx.GetEdge(ids[worker])
+				edge, err := tx.GetEdge(b.Context(), ids[worker])
 				if err == nil {
 					edge.Properties["round"] = int64(round)
-					err = tx.UpdateEdge(edge)
+					err = tx.UpdateEdge(b.Context(), EdgeUpdateRequest{After: edge})
 				}
 				if err == nil {
 					err = tx.Commit()
@@ -71,13 +73,13 @@ func BenchmarkHighPerformanceDisjointEdgeUpdates(b *testing.B) {
 			b.Fatalf("worker%d: %v", worker, err)
 		}
 	}
-	reader, err := engine.BeginTransaction()
+	reader, err := engine.BeginTransaction(b.Context())
 	if err != nil {
 		b.Fatal(err)
 	}
 	defer reader.Rollback()
 	for worker, id := range ids {
-		edge, err := reader.GetEdge(id)
+		edge, err := reader.GetEdge(b.Context(), id)
 		if err != nil {
 			b.Fatal(err)
 		}

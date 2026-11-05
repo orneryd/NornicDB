@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -38,7 +39,7 @@ func (r *labelExpressionRewriter) repeatedRelationshipVariables(start, end int, 
 	if indexASCIIFold(q[start:end], "shortestpath") >= 0 {
 		scope := matchSemanticScope{}
 		for _, part := range splitTopLevelComma(q[start:end]) {
-			if err := validateShortestCallBindings(part, scope); err != nil {
+			if err := validateShortestCallBindings(r.ctx, part, scope); err != nil {
 				return nil, err
 			}
 			for _, variable := range extractRelationshipVariables(part) {
@@ -49,15 +50,15 @@ func (r *labelExpressionRewriter) repeatedRelationshipVariables(start, end int, 
 	places := make(map[string][]relationshipPlace)
 	var order []string
 	for i := start; i < end; i++ {
-		switch c := q[i]; c {
-		case '\'', '"', '`':
+		switch c := q[i]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(q, i, c) - 1
 		case '{':
-			if close := findMatchingDelimiter(q[:end], i, '{', '}'); close > i {
+			if close := cyphertext.FindMatchingDelimiter(q[:end], i, '{', '}', cyphertext.OpeningDelimiter); close > i {
 				i = close
 			}
 		case '[':
-			close := findMatchingDelimiter(q[:end], i, '[', ']')
+			close := cyphertext.FindMatchingDelimiter(q[:end], i, '[', ']', cyphertext.OpeningDelimiter)
 			if close < 0 {
 				return nil, nil
 			}
@@ -65,7 +66,7 @@ func (r *labelExpressionRewriter) repeatedRelationshipVariables(start, end int, 
 			if ok && relationshipBracketAt(q, start, i) {
 				_, _, quantified := quantifierAfterArrow(q, close, end)
 				inner := close
-				if where := elementWhereIndex(q, i, close); where >= 0 {
+				if where := elementWhereIndex(r.ctx, q, i, close); where >= 0 {
 					inner = where
 				}
 				if brace := indexOutsideQuotes(q[i+1:inner], '{'); brace >= 0 {
@@ -147,7 +148,7 @@ func relationshipBracketAt(query string, start, i int) bool {
 // query[open]; IS followed by a space starts a type expression ([IS T]).
 func relationshipVariableAt(query string, open int) (string, int, bool) {
 	name, end, ok := scanSymbolicName(query, skipASCIISpaces(query, open+1, len(query)))
-	if ok && strings.EqualFold(name, "IS") && end < len(query) && isASCIISpace(query[end]) {
+	if ok && strings.EqualFold(name, "IS") && end < len(query) && cyphertext.IsWhitespaceAt(query, end) {
 		return "", end, false
 	}
 	return name, end, ok

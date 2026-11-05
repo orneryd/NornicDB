@@ -214,7 +214,7 @@ func (b *BadgerEngine) currentNodeAtHeadInTxn(txn *badger.Txn, id NodeID, versio
 	var node *Node
 	if err := item.Value(func(val []byte) error {
 		var decodeErr error
-		node, decodeErr = b.decodeNode(namespaceForNodeID(id), val)
+		node, decodeErr = b.decodeNodeProjected(txn, namespaceForNodeID(id), val, nil)
 		return decodeErr
 	}); err != nil {
 		return nil, err
@@ -270,7 +270,7 @@ func (b *BadgerEngine) currentEdgeAtHeadInTxn(txn *badger.Txn, id EdgeID, versio
 	var edge *Edge
 	if err := item.Value(func(val []byte) error {
 		var decodeErr error
-		edge, decodeErr = b.decodeEdgeBodyByID(val, id)
+		edge, decodeErr = b.decodeEdgeBodyWithID(txn, namespaceForEdgeID(id), val, id)
 		return decodeErr
 	}); err != nil {
 		return nil, err

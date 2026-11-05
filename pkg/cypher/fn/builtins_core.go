@@ -1,6 +1,7 @@
 package fn
 
 import (
+	"context"
 	"reflect"
 	"sort"
 	"strings"
@@ -12,42 +13,25 @@ import (
 )
 
 func init() {
-	Register("id", evalID)
-	Register("elementid", evalElementID)
-	Register("labels", evalLabels)
-	Register("type", evalType)
+	for _, name := range []string{"id", "elementid", "labels", "type"} {
+		Register(name, func(workCtx context.Context, ctx Context, args []string) (interface{}, error) {
+			return evaluateEntityScalar(ctx, name, args)
+		})
+	}
 	Register("keys", evalKeys)
 	Register("properties", evalProperties)
 	Register("size", evalSize)
-	Register("tolower", evalToLower)
-	Register("toupper", evalToUpper)
+	Register("tolower", CaseFunction("toLower", LowerCaseText, nil))
+	Register("toupper", CaseFunction("toUpper", UpperCaseText, nil))
 	Register("coalesce", evalCoalesce)
 	for _, name := range []string{"file", "linenumber"} {
-		Register(name, func(ctx Context, args []string) (interface{}, error) {
+		Register(name, func(workCtx context.Context, ctx Context, args []string) (interface{}, error) {
 			if argumentCount(args) != 0 {
 				return nil, &ParameterCountError{Function: name, TooMany: true}
 			}
 			return nil, nil
 		})
 	}
-}
-
-func evalID(ctx Context, args []string) (interface{}, error) {
-	if len(args) != 1 {
-		return nil, nil
-	}
-	inner := strings.TrimSpace(args[0])
-	if node, ok := ctx.Nodes[inner]; ok {
-		return entityID(node)
-	}
-	if edge, ok := ctx.Rels[inner]; ok {
-		return entityID(edge)
-	}
-	value, err := ctx.Eval(inner)
-	if err != nil {
-		return nil, err
-	}
-	return entityID(value)
 }
 
 // entityID returns an entity's existing identifier, null for null, or a type
@@ -80,25 +64,8 @@ func entityID(value interface{}) (interface{}, error) {
 	}
 }
 
-func evalElementID(ctx Context, args []string) (interface{}, error) {
-	if len(args) != 1 {
-		return nil, nil
-	}
-	inner := strings.TrimSpace(args[0])
-	if node, ok := ctx.Nodes[inner]; ok {
-		return entityElementID(node, ctx.Database)
-	}
-	if edge, ok := ctx.Rels[inner]; ok {
-		return entityElementID(edge, ctx.Database)
-	}
-	value, err := ctx.Eval(inner)
-	if err != nil {
-		return nil, err
-	}
-	return entityElementID(value, ctx.Database)
-}
-
-func entityElementID(value interface{}, database string) (interface{}, error) {
+// EntityElementID renders a native value using the caller's execution domain.
+func EntityElementID(ctx Context, value interface{}) (interface{}, error) {
 	switch entity := value.(type) {
 	case nil:
 		return nil, nil
@@ -106,32 +73,31 @@ func entityElementID(value interface{}, database string) (interface{}, error) {
 		if entity == nil {
 			return nil, nil
 		}
-		return storage.NodeElementID(database, entity.ID), nil
+		if resolver, ok := ctx.Graphs.(interface{ EntityElementIDDatabase(string, string) string }); ok {
+			copy := *entity
+			{
+				metadata := copy.RuntimeMetadata()
+				metadata.Database = resolver.EntityElementIDDatabase(entity.RuntimeMetadata().Database, ctx.Database)
+				copy.SetRuntimeMetadata(metadata)
+			}
+			return copy.ElementID(ctx.Database), nil
+		}
+		return entity.ElementID(ctx.Database), nil
 	case *storage.Edge:
 		if entity == nil {
 			return nil, nil
 		}
-		return storage.RelationshipElementID(database, entity.ID), nil
+		if resolver, ok := ctx.Graphs.(interface{ EntityElementIDDatabase(string, string) string }); ok {
+			copy := *entity
+			copy.Database = resolver.EntityElementIDDatabase(entity.Database, ctx.Database)
+			return copy.ElementID(ctx.Database), nil
+		}
+		return entity.ElementID(ctx.Database), nil
 	case storage.RemoteEntityValue:
 		return entity["elementId"], nil
 	default:
 		return nil, &ArgumentTypeError{Function: "elementid", Value: value}
 	}
-}
-
-func evalLabels(ctx Context, args []string) (interface{}, error) {
-	if len(args) != 1 {
-		return nil, nil
-	}
-	inner := strings.TrimSpace(args[0])
-	if node, ok := ctx.Nodes[inner]; ok {
-		return Labels(node)
-	}
-	value, err := ctx.Eval(inner)
-	if err != nil {
-		return nil, err
-	}
-	return Labels(value)
 }
 
 // Labels returns the labels of a node, null for null, or an argument error.
@@ -163,21 +129,6 @@ func Labels(value interface{}) (interface{}, error) {
 	return result, nil
 }
 
-func evalType(ctx Context, args []string) (interface{}, error) {
-	if len(args) != 1 {
-		return nil, nil
-	}
-	inner := strings.TrimSpace(args[0])
-	if edge, ok := ctx.Rels[inner]; ok {
-		return RelationshipType(edge)
-	}
-	value, err := ctx.Eval(inner)
-	if err != nil {
-		return nil, err
-	}
-	return RelationshipType(value)
-}
-
 // RelationshipType returns a relationship's type, null for null, or an argument
 // error. For example, RelationshipType(&storage.Edge{Type: "R"}) returns "R".
 func RelationshipType(value interface{}) (interface{}, error) {
@@ -203,7 +154,7 @@ func RelationshipType(value interface{}) (interface{}, error) {
 	return edge.Type, nil
 }
 
-func evalKeys(ctx Context, args []string) (interface{}, error) {
+func evalKeys(workCtx context.Context, ctx Context, args []string) (interface{}, error) {
 	if len(args) != 1 {
 		return nil, nil
 	}
@@ -264,7 +215,7 @@ func PropertyKeys(value interface{}) ([]interface{}, bool) {
 	return keys, true
 }
 
-func evalProperties(ctx Context, args []string) (interface{}, error) {
+func evalProperties(workCtx context.Context, ctx Context, args []string) (interface{}, error) {
 	if len(args) != 1 {
 		return nil, nil
 	}
@@ -276,6 +227,7 @@ func evalProperties(ctx Context, args []string) (interface{}, error) {
 		return EntityProperties(rel.Properties), nil
 	}
 	value, err := ctx.Eval(inner)
+	value = RuntimeValue(value)
 	if err != nil {
 		return nil, err
 	}
@@ -295,7 +247,7 @@ func evalProperties(ctx Context, args []string) (interface{}, error) {
 	return nil, nil
 }
 
-func evalSize(ctx Context, args []string) (interface{}, error) {
+func evalSize(workCtx context.Context, ctx Context, args []string) (interface{}, error) {
 	if len(args) != 1 {
 		return int64(0), nil
 	}
@@ -337,39 +289,62 @@ type Sized interface {
 // sizeArgumentTypes is size()'s accepted argument types as Neo4j names them.
 const sizeArgumentTypes = "String or List<T>"
 
-// evalToLower is toLower(string): a non-string is a type mismatch, as in
-// Neo4j (toLower(5) is not '5').
-func evalToLower(ctx Context, args []string) (interface{}, error) {
-	return evalStringCase(ctx, args, "toLower", lowerCaseText)
+// UpperCaseText and LowerCaseText are the Unicode case mappings upper/lower
+// and toUpper/toLower apply: one mapping for all four functions, as plain
+// functions so passing one doesn't allocate a bound method value per call.
+func UpperCaseText(text string) string { return cases.Upper(language.Und).String(text) }
+func LowerCaseText(text string) string { return cases.Lower(language.Und).String(text) }
+
+// WrongArityError builds a case function's wrong-argument-count error. upper
+// and lower reject a wrong count with their own error; a nil policy keeps
+// toUpper's and toLower's existing null result.
+type WrongArityError func(function, expected string, argumentCount int) error
+
+// caseArgumentCount is the one argument upper, lower, toUpper and toLower
+// accept.
+const caseArgumentCount = 1
+
+// CaseFunction owns upper/lower and toUpper/toLower: the Unicode case mapping
+// mapper of one string argument. A null argument is null and an argument of
+// another type is a type mismatch (toUpper(5) is not '5'), as in Neo4j.
+//
+// It owns cancellation at the argument and mapping boundaries: a canceled
+// statement returns the caller's error, never a mapped value. The library
+// mapping remains atomic; this does not claim preemption inside it.
+func CaseFunction(function string, mapper func(string) string, wrongArity WrongArityError) Func {
+	return func(workCtx context.Context, ctx Context, args []string) (interface{}, error) {
+		if len(args) != caseArgumentCount {
+			if wrongArity == nil {
+				return nil, nil
+			}
+			return nil, wrongArity(function, "1", len(args))
+		}
+		if err := workCtx.Err(); err != nil {
+			return nil, err
+		}
+		value, err := ctx.Eval(args[0])
+		if err != nil {
+			return nil, err
+		}
+		if err := workCtx.Err(); err != nil {
+			return nil, err
+		}
+		if value == nil {
+			return nil, nil
+		}
+		text, isString := value.(string)
+		if !isString {
+			return nil, &TypeMismatchError{Function: function, Expected: "String", Value: value}
+		}
+		mapped := mapper(text)
+		if err := workCtx.Err(); err != nil {
+			return nil, err
+		}
+		return mapped, nil
+	}
 }
 
-// evalToUpper is toUpper(string), as evalToLower.
-func evalToUpper(ctx Context, args []string) (interface{}, error) {
-	return evalStringCase(ctx, args, "toUpper", upperCaseText)
-}
-
-// lowerCaseText and upperCaseText are toLower's and toUpper's Unicode case
-// mappings, as plain functions so passing one doesn't allocate a bound
-// method value per call.
-func lowerCaseText(text string) string { return cases.Lower(language.Und).String(text) }
-func upperCaseText(text string) string { return cases.Upper(language.Und).String(text) }
-
-func evalStringCase(ctx Context, args []string, function string, convert func(string) string) (interface{}, error) {
-	if len(args) != 1 {
-		return nil, nil
-	}
-	v, err := ctx.Eval(args[0])
-	if err != nil || v == nil {
-		return nil, err
-	}
-	text, isString := v.(string)
-	if !isString {
-		return nil, &TypeMismatchError{Function: function, Expected: "String", Value: v}
-	}
-	return convert(text), nil
-}
-
-func evalCoalesce(ctx Context, args []string) (interface{}, error) {
+func evalCoalesce(workCtx context.Context, ctx Context, args []string) (interface{}, error) {
 	value, _, err := Coalesce(len(args), func(i int) (interface{}, bool, error) {
 		value, err := ctx.Eval(args[i])
 		return value, true, err
@@ -388,17 +363,57 @@ func EntityProperties(properties map[string]interface{}) map[string]interface{} 
 }
 
 // Coalesce is coalesce over n operands, operand i evaluated by eval(i):
-// the first resolved non-null value; an unresolved operand counts as null,
-// returning null when every operand is null or unresolved.
+// the first non-null value. An unresolved operand remains unresolved; only
+// a successfully evaluated NULL permits evaluation of the next operand.
 func Coalesce(n int, eval func(index int) (interface{}, bool, error)) (interface{}, bool, error) {
 	for index := 0; index < n; index++ {
 		value, resolved, err := eval(index)
 		if err != nil {
 			return nil, false, err
 		}
-		if resolved && value != nil {
+		if !resolved {
+			return nil, false, nil
+		}
+		if value = RuntimeValue(value); value != nil {
 			return value, true, nil
 		}
 	}
 	return nil, true, nil
+}
+
+// evaluateEntityScalar is the argument and binding owner for entity scalars.
+func evaluateEntityScalar(ctx Context, name string, args []string) (interface{}, error) {
+	if len(args) != 1 {
+		return nil, nil
+	}
+	argument := strings.TrimSpace(args[0])
+	var value interface{}
+	bound := false
+	if name != "type" {
+		if node, ok := ctx.Nodes[argument]; ok {
+			value, bound = node, true
+		}
+	}
+	if !bound && name != "labels" {
+		if edge, ok := ctx.Rels[argument]; ok {
+			value, bound = edge, true
+		}
+	}
+	if !bound {
+		var err error
+		value, err = ctx.Eval(argument)
+		if err != nil {
+			return nil, err
+		}
+	}
+	switch name {
+	case "id":
+		return entityID(value)
+	case "elementid":
+		return EntityElementID(ctx, value)
+	case "labels":
+		return Labels(value)
+	default:
+		return RelationshipType(value)
+	}
 }

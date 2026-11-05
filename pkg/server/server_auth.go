@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/httpresponse"
 	"log/slog"
 	"net/http"
 	"os"
@@ -49,6 +50,7 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 
 	// Authenticate
 	tokenResp, _, err := s.auth.Authenticate(
+		r.Context(),
 		req.Username,
 		req.Password,
 		getClientIP(r),
@@ -67,7 +69,7 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 	// Set an HTTP-only cookie for browser sessions.
 	http.SetCookie(w, sessionTokenCookie(r, tokenResp.AccessToken, 86400*7))
 
-	s.writeJSON(w, http.StatusOK, tokenResp)
+	httpresponse.WritePropertyJSON(w, http.StatusOK, tokenResp)
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -80,7 +82,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		s.logAudit(r, claims.Sub, "logout", true, "")
 	}
 
-	s.writeJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.LogoutComplete())})
+	httpresponse.WritePropertyJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.LogoutComplete())})
 }
 
 // handleGenerateAPIToken generates a stateless API token for MCP servers.
@@ -144,10 +146,7 @@ func (s *Server) handleGenerateAPIToken(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Create a user object from claims for token generation
-	roles := make([]auth.Role, len(claims.Roles))
-	for i, r := range claims.Roles {
-		roles[i] = auth.Role(r)
-	}
+	roles := authRoleValues(claims.Roles)
 	user := &auth.User{
 		ID:       claims.Sub,
 		Username: claims.Username,
@@ -185,7 +184,7 @@ func (s *Server) handleGenerateAPIToken(w http.ResponseWriter, r *http.Request) 
 		response.ExpiresIn = int64(expiry.Seconds())
 	}
 
-	s.writeJSON(w, http.StatusOK, response)
+	httpresponse.WritePropertyJSON(w, http.StatusOK, response)
 }
 
 // handleAuthConfig returns auth configuration for the UI
@@ -226,7 +225,7 @@ func (s *Server) handleAuthConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.writeJSON(w, http.StatusOK, config)
+	httpresponse.WritePropertyJSON(w, http.StatusOK, config)
 }
 
 // getBaseURL returns the base URL for the server from the request
@@ -348,7 +347,7 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Handle callback using OAuth manager
-	_, token, _, err := s.oauthManager.HandleCallback(code, state)
+	_, token, _, err := s.oauthManager.HandleCallback(r.Context(), code, state)
 	if err != nil {
 		s.logEvent(r.Context(), slog.LevelWarn, localization.ServerOAuthCallbackFailedEvent())
 		s.writeBoundaryError(w, r, http.StatusBadRequest, err, ErrBadRequest)
@@ -377,7 +376,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 
 	// If auth is disabled, return anonymous admin user (canonical role from auth)
 	if !s.isRBACEnforced() {
-		s.writeJSON(w, http.StatusOK, map[string]interface{}{
+		httpresponse.WritePropertyJSON(w, http.StatusOK, map[string]interface{}{
 			"id":       "anonymous",
 			"username": "anonymous",
 			"roles":    []string{string(auth.RoleAdmin)},
@@ -441,25 +440,13 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.writeJSON(w, http.StatusOK, response)
+	httpresponse.WritePropertyJSON(w, http.StatusOK, response)
 }
 
 // handleChangePassword allows users to change their own password.
 func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		s.writePostRequired(w, r)
-		return
-	}
-
-	if s.auth == nil {
-		s.writeAuthenticationNotConfigured(w, r)
-		return
-	}
-
-	// Get authenticated user
-	claims := getClaims(r)
+	claims := s.selfServiceClaims(w, r, http.MethodPost, localization.PostRequired())
 	if claims == nil {
-		s.writeNotAuthenticated(w, r)
 		return
 	}
 
@@ -468,25 +455,13 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		NewPassword string `json:"new_password"`
 	}
 
-	if err := s.readJSON(r, &req); err != nil {
-		s.writeInvalidRequestBody(w, r)
+	username, ok := s.readSelfServiceActor(w, r, &req, claims)
+	if !ok {
 		return
 	}
 
-	// Get username from claims
-	username := claims.Username
-	if username == "" {
-		// Fallback to subject if username not in claims
-		user, err := s.auth.GetUserByID(claims.Sub)
-		if err != nil {
-			s.writeUserNotFound(w, r)
-			return
-		}
-		username = user.Username
-	}
-
 	// Change password
-	if err := s.auth.ChangePassword(username, req.OldPassword, req.NewPassword); err != nil {
+	if err := s.auth.ChangePassword(r.Context(), username, req.OldPassword, req.NewPassword); err != nil {
 		if err == auth.ErrInvalidCredentials {
 			s.writeLocalizedError(w, r, http.StatusUnauthorized, localization.OldPasswordIncorrect(), ErrUnauthorized)
 			return
@@ -496,25 +471,13 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.logAudit(r, claims.Sub, "password_change", true, "user changed own password")
-	s.writeJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.PasswordChanged())})
+	httpresponse.WritePropertyJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.PasswordChanged())})
 }
 
 // handleUpdateProfile allows users to update their own profile information.
 func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPut {
-		s.writeLocalizedError(w, r, http.StatusMethodNotAllowed, localization.PutRequired(), ErrMethodNotAllowed)
-		return
-	}
-
-	if s.auth == nil {
-		s.writeAuthenticationNotConfigured(w, r)
-		return
-	}
-
-	// Get authenticated user
-	claims := getClaims(r)
+	claims := s.selfServiceClaims(w, r, http.MethodPut, localization.PutRequired())
 	if claims == nil {
-		s.writeNotAuthenticated(w, r)
 		return
 	}
 
@@ -523,31 +486,19 @@ func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 		Metadata map[string]string `json:"metadata,omitempty"`
 	}
 
-	if err := s.readJSON(r, &req); err != nil {
-		s.writeInvalidRequestBody(w, r)
+	username, ok := s.readSelfServiceActor(w, r, &req, claims)
+	if !ok {
 		return
 	}
 
-	// Get username from claims
-	username := claims.Username
-	if username == "" {
-		// Fallback to subject if username not in claims
-		user, err := s.auth.GetUserByID(claims.Sub)
-		if err != nil {
-			s.writeUserNotFound(w, r)
-			return
-		}
-		username = user.Username
-	}
-
 	// Update user profile
-	if err := s.auth.UpdateUser(username, req.Email, req.Metadata); err != nil {
+	if err := s.auth.UpdateUser(r.Context(), username, req.Email, req.Metadata); err != nil {
 		s.writeBoundaryError(w, r, http.StatusBadRequest, err, ErrBadRequest)
 		return
 	}
 
 	s.logAudit(r, claims.Sub, "profile_update", true, "user updated own profile")
-	s.writeJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.ProfileUpdated())})
+	httpresponse.WritePropertyJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.ProfileUpdated())})
 }
 
 func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
@@ -555,7 +506,7 @@ func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		// List users
 		users := s.auth.ListUsers()
-		s.writeJSON(w, http.StatusOK, users)
+		httpresponse.WritePropertyJSON(w, http.StatusOK, users)
 
 	case http.MethodPost:
 		// Create user
@@ -570,18 +521,15 @@ func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		roles := make([]auth.Role, len(req.Roles))
-		for i, r := range req.Roles {
-			roles[i] = auth.Role(r)
-		}
+		roles := authRoleValues(req.Roles)
 
-		user, err := s.auth.CreateUser(req.Username, req.Password, roles)
+		user, err := s.auth.CreateUser(r.Context(), req.Username, req.Password, roles)
 		if err != nil {
 			s.writeBoundaryError(w, r, http.StatusBadRequest, err, ErrBadRequest)
 			return
 		}
 
-		s.writeJSON(w, http.StatusCreated, user)
+		httpresponse.WritePropertyJSON(w, http.StatusCreated, user)
 
 	default:
 		s.writeGetOrPostRequired(w, r)
@@ -603,7 +551,7 @@ func (s *Server) handleUserByID(w http.ResponseWriter, r *http.Request) {
 			s.writeUserNotFound(w, r)
 			return
 		}
-		s.writeJSON(w, http.StatusOK, user)
+		httpresponse.WritePropertyJSON(w, http.StatusOK, user)
 
 	case http.MethodPut:
 		var req struct {
@@ -618,24 +566,21 @@ func (s *Server) handleUserByID(w http.ResponseWriter, r *http.Request) {
 
 		var roles []auth.Role
 		if len(req.Roles) > 0 {
-			roles = make([]auth.Role, len(req.Roles))
-			for i, r := range req.Roles {
-				roles[i] = auth.Role(r)
-			}
+			roles = authRoleValues(req.Roles)
 		}
 		if err := s.auth.UpdateRolesAndStatus(r.Context(), username, roles, req.Disabled); err != nil {
 			s.writeBoundaryError(w, r, http.StatusBadRequest, err, ErrBadRequest)
 			return
 		}
 
-		s.writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+		httpresponse.WritePropertyJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 
 	case http.MethodDelete:
-		if err := s.auth.DeleteUser(username); err != nil {
+		if err := s.auth.DeleteUser(r.Context(), username); err != nil {
 			s.writeUserNotFound(w, r)
 			return
 		}
-		s.writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+		httpresponse.WritePropertyJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 
 	default:
 		s.writeGetPutOrDeleteRequired(w, r)
@@ -648,7 +593,7 @@ func (s *Server) handleEntitlements(w http.ResponseWriter, r *http.Request) {
 		s.writeGetRequired(w, r)
 		return
 	}
-	s.writeJSON(w, http.StatusOK, auth.AllEntitlements())
+	httpresponse.WritePropertyJSON(w, http.StatusOK, auth.AllEntitlements())
 }
 
 // handleRoleEntitlements serves GET/PUT /auth/role-entitlements (per-role global entitlements, admin only).
@@ -663,7 +608,7 @@ func (s *Server) handleRoleEntitlements(w http.ResponseWriter, r *http.Request) 
 	case http.MethodGet:
 		var roles []string
 		if s.roleStore != nil {
-			roles = s.roleStore.AllRoles()
+			roles = auth.ReadRoleCatalog(s.roleStore, nil).RoleNames
 		}
 		out := make([]struct {
 			Role         string   `json:"role"`
@@ -676,7 +621,7 @@ func (s *Server) handleRoleEntitlements(w http.ResponseWriter, r *http.Request) 
 				Entitlements []string `json:"entitlements"`
 			}{Role: role, Entitlements: ent})
 		}
-		s.writeJSON(w, http.StatusOK, out)
+		httpresponse.WritePropertyJSON(w, http.StatusOK, out)
 	case http.MethodPut:
 		var body struct {
 			Role         string   `json:"role"`
@@ -744,110 +689,94 @@ func (s *Server) handleRoleEntitlements(w http.ResponseWriter, r *http.Request) 
 			s.writeRoleRecordError(w, r, err)
 			return
 		}
-		s.writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+		httpresponse.WritePropertyJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 	default:
 		s.writeGetOrPutRequired(w, r)
 	}
 }
 
-// handleRoles serves GET/POST /auth/roles (user-defined roles, admin only).
-// GET returns list of role names (built-in + user-defined). POST creates a user-defined role; body { "name": string }.
+// handleRoles owns the role resource: GET/POST /auth/roles and PATCH/DELETE
+// /auth/roles/:name. Both routes retain their administrator permission boundary.
+// Collection and item policies share admission, request validation, mutation
+// dispatch and responses while preserving their distinct wire error contracts.
 func (s *Server) handleRoles(w http.ResponseWriter, r *http.Request) {
+	roleName := strings.TrimSpace(strings.TrimPrefix(r.URL.Path, "/auth/roles/"))
+	if r.URL.Path == "/auth/roles" {
+		roleName = ""
+	}
+	collection := roleName == ""
 	if s.roleStore == nil {
-		s.writeLocalizedNeo4jError(w, r, http.StatusServiceUnavailable, "Neo.ClientError.General.Unavailable", localization.RolesUnavailableDetailed())
+		message := localization.RolesUnavailableDetailed()
+		if !collection {
+			message = localization.RolesUnavailable()
+		}
+		s.writeLocalizedNeo4jError(w, r, http.StatusServiceUnavailable, "Neo.ClientError.General.Unavailable", message)
 		return
 	}
-	switch r.Method {
-	case http.MethodGet:
-		s.writeJSON(w, http.StatusOK, s.roleStore.AllRoles())
-	case http.MethodPost:
-		var req struct {
-			Name string `json:"name"`
-		}
-		if err := s.readJSON(r, &req); err != nil {
-			s.writeNeo4jInvalidRequestBody(w, r, "Neo.ClientError.Request.InvalidFormat")
+	if collection {
+		if r.Method == http.MethodGet {
+			httpresponse.WritePropertyJSON(w, http.StatusOK, auth.ReadRoleCatalog(s.roleStore, nil).RoleNames)
 			return
 		}
-		if strings.TrimSpace(req.Name) == "" {
-			s.writeNeo4jRequestFieldRequired(w, r, "Neo.ClientError.Request.InvalidFormat", "name")
+		if r.Method != http.MethodPost {
+			s.writeGetOrPostRequired(w, r)
 			return
 		}
-		if err := s.roleStore.CreateRole(r.Context(), req.Name); err != nil {
-			if err == auth.ErrRoleExists {
-				s.writeLocalizedNeo4jError(w, r, http.StatusConflict, "Neo.ClientError.General.SchemaViolation", localization.RoleAlreadyExists())
-				return
-			}
-			if err == auth.ErrInvalidRoleName {
-				s.writeBoundaryNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.Request.InvalidFormat", err)
-				return
-			}
-			s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err)
-			return
-		}
-		s.writeJSON(w, http.StatusCreated, map[string]string{"name": strings.ToLower(strings.TrimSpace(req.Name))})
-	default:
-		s.writeGetOrPostRequired(w, r)
-	}
-}
-
-// handleRoleByID serves PATCH/DELETE /auth/roles/:name (rename or delete user-defined role, admin only).
-func (s *Server) handleRoleByID(w http.ResponseWriter, r *http.Request) {
-	roleName := strings.TrimPrefix(r.URL.Path, "/auth/roles/")
-	roleName = strings.TrimSpace(roleName)
-	if roleName == "" {
-		s.handleRoles(w, r)
-		return
-	}
-	if s.roleStore == nil {
-		s.writeLocalizedNeo4jError(w, r, http.StatusServiceUnavailable, "Neo.ClientError.General.Unavailable", localization.RolesUnavailable())
-		return
-	}
-	switch r.Method {
-	case http.MethodPatch:
-		var req struct {
-			Name string `json:"name"`
-		}
-		if err := s.readJSON(r, &req); err != nil {
-			s.writeNeo4jInvalidRequestBody(w, r, "Neo.ClientError.Request.InvalidFormat")
-			return
-		}
-		newName := strings.TrimSpace(req.Name)
-		if newName == "" {
-			s.writeNeo4jRequestFieldRequired(w, r, "Neo.ClientError.Request.InvalidFormat", "name")
-			return
-		}
-		if err := s.roleStore.RenameRoleWithStores(r.Context(), roleName, newName, auth.RoleMutationStores{
-			Allowlist: s.allowlistStore, Privileges: s.privilegesStore,
-			Entitlements: s.roleEntitlementsStore, Users: s.auth,
-		}); err != nil {
-			if err == auth.ErrCannotDeleteBuiltinRole || err == auth.ErrRoleNotFound {
-				s.writeBoundaryNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.General.SchemaViolation", err)
-				return
-			}
-			if err == auth.ErrRoleExists {
-				s.writeLocalizedNeo4jError(w, r, http.StatusConflict, "Neo.ClientError.General.SchemaViolation", localization.NewRoleNameAlreadyExists())
-				return
-			}
-			s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err)
-			return
-		}
-		s.writeJSON(w, http.StatusOK, map[string]string{"name": newName})
-	case http.MethodDelete:
-		if err := s.roleStore.DeleteRoleWithStores(r.Context(), roleName, auth.RoleMutationStores{
-			Allowlist: s.allowlistStore, Privileges: s.privilegesStore,
-			Entitlements: s.roleEntitlementsStore, Users: s.auth,
-		}); err != nil {
-			if err == auth.ErrCannotDeleteBuiltinRole || err == auth.ErrRoleNotFound {
-				s.writeBoundaryNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.General.SchemaViolation", err)
-				return
-			}
-			s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err)
-			return
-		}
-		s.writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
-	default:
+	} else if r.Method != http.MethodPatch && r.Method != http.MethodDelete {
 		s.writeLocalizedError(w, r, http.StatusMethodNotAllowed, localization.PatchOrDeleteRequired(), ErrMethodNotAllowed)
+		return
 	}
+	var body struct {
+		Name string `json:"name"`
+	}
+	name := ""
+	if r.Method != http.MethodDelete {
+		if err := s.readJSON(r, &body); err != nil {
+			s.writeNeo4jInvalidRequestBody(w, r, "Neo.ClientError.Request.InvalidFormat")
+			return
+		}
+		name = strings.TrimSpace(body.Name)
+		if name == "" {
+			s.writeNeo4jRequestFieldRequired(w, r, "Neo.ClientError.Request.InvalidFormat", "name")
+			return
+		}
+	}
+	stores := auth.RoleMutationStores{Allowlist: s.allowlistStore, Privileges: s.privilegesStore, Entitlements: s.roleEntitlementsStore, Users: s.auth}
+	var err error
+	switch r.Method {
+	case http.MethodPost:
+		err = s.roleStore.CreateRole(r.Context(), body.Name)
+	case http.MethodPatch:
+		err = s.roleStore.RenameRoleWithStores(r.Context(), roleName, name, stores)
+	case http.MethodDelete:
+		err = s.roleStore.DeleteRoleWithStores(r.Context(), roleName, stores)
+	}
+	if err != nil {
+		switch {
+		case !collection && (err == auth.ErrCannotDeleteBuiltinRole || err == auth.ErrRoleNotFound):
+			s.writeBoundaryNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.General.SchemaViolation", err)
+		case r.Method != http.MethodDelete && err == auth.ErrRoleExists:
+			message := localization.RoleAlreadyExists()
+			if !collection {
+				message = localization.NewRoleNameAlreadyExists()
+			}
+			s.writeLocalizedNeo4jError(w, r, http.StatusConflict, "Neo.ClientError.General.SchemaViolation", message)
+		case collection && err == auth.ErrInvalidRoleName:
+			s.writeBoundaryNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.Request.InvalidFormat", err)
+		default:
+			s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err)
+		}
+		return
+	}
+	status := http.StatusOK
+	field, value := "name", name
+	if collection {
+		status = http.StatusCreated
+		value = strings.ToLower(strings.TrimSpace(body.Name))
+	} else if r.Method == http.MethodDelete {
+		field, value = "status", "deleted"
+	}
+	httpresponse.WritePropertyJSON(w, status, map[string]string{field: value})
 }
 
 // handleAccessDatabases serves GET/PUT /auth/access/databases (per-database allowlist, admin only).
@@ -872,7 +801,7 @@ func (s *Server) handleAccessDatabases(w http.ResponseWriter, r *http.Request) {
 				Databases []string `json:"databases"`
 			}{Role: role, Databases: dbs})
 		}
-		s.writeJSON(w, http.StatusOK, out)
+		httpresponse.WritePropertyJSON(w, http.StatusOK, out)
 
 	case http.MethodPut:
 		var req struct {
@@ -908,7 +837,7 @@ func (s *Server) handleAccessDatabases(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		s.writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+		httpresponse.WritePropertyJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 
 	default:
 		s.writeGetOrPutRequired(w, r)
@@ -936,7 +865,7 @@ func (s *Server) handleAccessPrivileges(w http.ResponseWriter, r *http.Request) 
 	}
 	switch r.Method {
 	case http.MethodGet:
-		s.writeJSON(w, http.StatusOK, s.privilegesStore.Matrix())
+		httpresponse.WritePropertyJSON(w, http.StatusOK, s.privilegesStore.Matrix())
 	case http.MethodPut:
 		var entries []struct {
 			Role     string `json:"role"`
@@ -953,7 +882,7 @@ func (s *Server) handleAccessPrivileges(w http.ResponseWriter, r *http.Request) 
 			s.writeRoleRecordError(w, r, err)
 			return
 		}
-		s.writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+		httpresponse.WritePropertyJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 	default:
 		s.writeGetOrPutRequired(w, r)
 	}

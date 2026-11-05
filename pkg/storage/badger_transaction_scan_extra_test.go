@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -10,12 +11,12 @@ import (
 func TestBadgerTransaction_ScanForUniqueViolation_HookNamespaceAndExclude(t *testing.T) {
 	engine := newTestEngine(t)
 
-	_, err := engine.CreateNode(&Node{ID: "test:u1", Labels: []string{"User"}, Properties: map[string]any{"email": "a@example.com"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:u1", Labels: []string{"User"}, Properties: map[string]any{"email": "a@example.com"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "other:u2", Labels: []string{"User"}, Properties: map[string]any{"email": "a@example.com"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "other:u2", Labels: []string{"User"}, Properties: map[string]any{"email": "a@example.com"}})
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	defer tx.Rollback()
@@ -25,7 +26,7 @@ func TestBadgerTransaction_ScanForUniqueViolation_HookNamespaceAndExclude(t *tes
 	defer restore()
 
 	// Namespace-limited scan should hit test:u1 and return a violation.
-	err = tx.scanForUniqueViolation("test", "User", "email", "a@example.com", "")
+	err = tx.scanForUniqueViolation(context.Background(), "test", "User", "email", "a@example.com", "")
 	require.Error(t, err)
 	var cv *ConstraintViolationError
 	require.ErrorAs(t, err, &cv)
@@ -33,12 +34,12 @@ func TestBadgerTransaction_ScanForUniqueViolation_HookNamespaceAndExclude(t *tes
 	require.Equal(t, 1, hookCalls)
 
 	// Excluding the existing node ID should suppress the violation.
-	err = tx.scanForUniqueViolation("test", "User", "email", "a@example.com", "test:u1")
+	err = tx.scanForUniqueViolation(context.Background(), "test", "User", "email", "a@example.com", "test:u1")
 	require.NoError(t, err)
 	require.Equal(t, 2, hookCalls)
 
 	// Namespace mismatch should skip other:u2 and remain clean.
-	err = tx.scanForUniqueViolation("missing", "User", "email", "a@example.com", "")
+	err = tx.scanForUniqueViolation(context.Background(), "missing", "User", "email", "a@example.com", "")
 	require.NoError(t, err)
 	require.Equal(t, 3, hookCalls)
 }
@@ -46,16 +47,16 @@ func TestBadgerTransaction_ScanForUniqueViolation_HookNamespaceAndExclude(t *tes
 func TestBadgerTransaction_ScanForNodeKeyViolation_AndCheckNodeKeyConstraintBranches(t *testing.T) {
 	engine := newTestEngine(t)
 
-	_, err := engine.CreateNode(&Node{ID: "test:k1", Labels: []string{"Account"}, Properties: map[string]any{"tenant": "t1", "ext": "e1"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:k1", Labels: []string{"Account"}, Properties: map[string]any{"tenant": "t1", "ext": "e1"}})
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction()
+	tx, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	defer tx.Rollback()
 
 	// Direct scan branch: existing storage node violates composite key.
-	err = tx.scanForNodeKeyViolation("test", "Account", []string{"tenant", "ext"}, []any{"t1", "e1"}, "")
+	err = tx.scanForNodeKeyViolation(context.Background(), "test", "Account", []string{"tenant", "ext"}, []any{"t1", "e1"}, "")
 	require.Error(t, err)
 	var cv *ConstraintViolationError
 	require.ErrorAs(t, err, &cv)
@@ -68,13 +69,13 @@ func TestBadgerTransaction_ScanForNodeKeyViolation_AndCheckNodeKeyConstraintBran
 		Properties: map[string]any{"tenant": "t2", "ext": "e2"},
 	}
 	c := Constraint{Type: ConstraintNodeKey, Label: "Account", Properties: []string{"tenant", "ext"}}
-	err = tx.checkNodeKeyConstraint(&Node{ID: "test:new", Labels: []string{"Account"}, Properties: map[string]any{"tenant": "t2", "ext": "e2"}}, c)
+	err = tx.checkNodeKeyConstraint(context.Background(), &Node{ID: "test:new", Labels: []string{"Account"}, Properties: map[string]any{"tenant": "t2", "ext": "e2"}}, c)
 	require.Error(t, err)
 	require.ErrorAs(t, err, &cv)
 	require.Equal(t, ConstraintNodeKey, cv.Type)
 
 	// Null property branch.
-	err = tx.checkNodeKeyConstraint(&Node{ID: "test:null", Labels: []string{"Account"}, Properties: map[string]any{"tenant": "t2"}}, c)
+	err = tx.checkNodeKeyConstraint(context.Background(), &Node{ID: "test:null", Labels: []string{"Account"}, Properties: map[string]any{"tenant": "t2"}}, c)
 	require.Error(t, err)
 	require.ErrorAs(t, err, &cv)
 	require.Equal(t, ConstraintNodeKey, cv.Type)

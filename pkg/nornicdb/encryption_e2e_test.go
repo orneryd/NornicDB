@@ -2,12 +2,17 @@ package nornicdb
 
 import (
 	"context"
+	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/replication"
+
+	"github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -93,7 +98,7 @@ func TestEncryptionPersistsSalt(t *testing.T) {
 	db1.Close()
 
 	// Verify salt file was created
-	saltFile := tmpDir + "/db.salt"
+	saltFile := filepath.Join(tmpDir, "db.salt")
 	saltData, err := os.ReadFile(saltFile)
 	require.NoError(t, err)
 	assert.Len(t, saltData, 32, "salt should be 32 bytes")
@@ -113,72 +118,125 @@ func TestEncryptionPersistsSalt(t *testing.T) {
 
 func TestEncryptionOfPHIFields(t *testing.T) {
 	config := testEncryptionConfig("test-secure-password-12345!")
-
 	db, err := Open(t.TempDir(), config)
 	require.NoError(t, err)
 	defer db.Close()
-
 	ctx := context.Background()
-
-	// Test various PHI fields that should be encrypted
-	phiData := map[string]interface{}{
-		"name":                   "John Doe",            // Not PHI - should NOT be encrypted
-		"ssn":                    "123-45-6789",         // PHI
-		"social_security_number": "987-65-4321",         // PHI
-		"email":                  "john@example.com",    // PII
-		"phone":                  "555-123-4567",        // PII
-		"dob":                    "1990-01-15",          // PHI
-		"diagnosis":              "Type 2 Diabetes",     // PHI
-		"credit_card":            "4111-1111-1111-1111", // PCI
-		"api_key":                "sk-secret-key-123",   // Sensitive
-		"regular_field":          "not sensitive",       // Not sensitive
-		"count":                  42,                    // Non-string - not encrypted
+	cases := testfixture.EncryptionPropertyCases()
+	phiData := make(map[string]interface{})
+	for _, property := range cases {
+		if property.RoundTrip {
+			phiData[property.Name] = property.Value
+		}
 	}
-
 	node, err := db.CreateNode(ctx, []string{"Patient"}, phiData)
 	require.NoError(t, err)
-
-	// Retrieve and verify decryption
 	retrieved, err := db.GetNode(ctx, node.ID)
 	require.NoError(t, err)
-
-	// All string fields should be readable after decryption
-	assert.Equal(t, "John Doe", retrieved.Properties["name"])
-	assert.Equal(t, "123-45-6789", retrieved.Properties["ssn"])
-	assert.Equal(t, "987-65-4321", retrieved.Properties["social_security_number"])
-	assert.Equal(t, "john@example.com", retrieved.Properties["email"])
-	assert.Equal(t, "555-123-4567", retrieved.Properties["phone"])
-	assert.Equal(t, "1990-01-15", retrieved.Properties["dob"])
-	assert.Equal(t, "Type 2 Diabetes", retrieved.Properties["diagnosis"])
-	assert.Equal(t, "4111-1111-1111-1111", retrieved.Properties["credit_card"])
-	assert.Equal(t, "sk-secret-key-123", retrieved.Properties["api_key"])
-	assert.Equal(t, "not sensitive", retrieved.Properties["regular_field"])
-	assert.Equal(t, 42, retrieved.Properties["count"])
+	for _, property := range cases {
+		if !property.RoundTrip {
+			continue
+		}
+		if property.Name == "count" {
+			assert.EqualValues(t, property.Value, retrieved.Properties[property.Name])
+		} else {
+			assert.Equal(t, property.Value, retrieved.Properties[property.Name])
+		}
+	}
 }
 
 func TestEncryptionDataAtRest(t *testing.T) {
-	config := testEncryptionConfig("test-secure-password-12345!")
-
-	db, err := Open(t.TempDir(), config)
-	require.NoError(t, err)
-	defer db.Close()
-
-	ctx := context.Background()
-	sensitiveSSN := "123-45-6789"
-
-	node, err := db.CreateNode(ctx, []string{"Person"}, map[string]interface{}{
-		"name": "Jane Doe",
-		"ssn":  sensitiveSSN,
-	})
-	require.NoError(t, err)
-
-	// For full-database encryption we cannot inspect raw storage (Badger handles it).
-	// Instead, verify encryption is reported and data round-trips correctly.
-	assert.True(t, db.IsEncryptionEnabled(), "encryption should be enabled")
-
-	retrieved, err := db.GetNode(ctx, node.ID)
-	require.NoError(t, err)
-	assert.Equal(t, sensitiveSSN, retrieved.Properties["ssn"])
+	sensitiveData := []byte("password=secret123")
+	// Historical slot 7 remains reserved. This record is input data, never a
+	// request to apply the retired command or a claim of encrypted WAL bytes.
+	entry := &replication.WALEntry{Position: 1, Command: &replication.Command{Type: replication.CommandType(7), Data: sensitiveData}}
+	assert.Equal(t, sensitiveData, entry.Command.Data)
+	for _, test := range []struct {
+		name, property, secret string
+		replicated             bool
+	}{
+		{"native", "ssn", "123-45-6789", false},
+		{"ha-primary", "secret", string(entry.Command.Data), true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("NORNICDB_CLUSTER_MODE", "standalone")
+			if test.replicated {
+				// A local socket owner rejects connections, so this async-primary case
+				// needs no external standby service and cannot leave an RPC parked.
+				peer, err := net.Listen("tcp", "127.0.0.1:0")
+				require.NoError(t, err)
+				joined := make(chan struct{})
+				go func() {
+					defer close(joined)
+					for {
+						connection, err := peer.Accept()
+						if err != nil {
+							return
+						}
+						_ = connection.Close()
+					}
+				}()
+				t.Cleanup(func() {
+					_ = peer.Close()
+					select {
+					case <-joined:
+					case <-time.After(5 * time.Second):
+						t.Error("local peer worker did not join")
+					}
+				})
+				for key, value := range map[string]string{
+					"NORNICDB_CLUSTER_MODE": "ha_standby", "NORNICDB_CLUSTER_NODE_ID": "encryption-primary",
+					"NORNICDB_CLUSTER_DATA_DIR": filepath.Join(dir, "replication"), "NORNICDB_CLUSTER_BIND_ADDR": "127.0.0.1:0",
+					"NORNICDB_CLUSTER_ADVERTISE_ADDR":     "127.0.0.1:0",
+					"NORNICDB_CLUSTER_REPLICATION_SECRET": "",
+					"NORNICDB_CLUSTER_TLS_ENABLED":        "false",
+					"NORNICDB_CLUSTER_HA_ROLE":            "primary", "NORNICDB_CLUSTER_HA_PEER_ADDR": peer.Addr().String(),
+					"NORNICDB_CLUSTER_HA_SYNC_MODE": "async", "NORNICDB_CLUSTER_HA_AUTO_FAILOVER": "false",
+					"NORNICDB_CLUSTER_HA_HEARTBEAT_MS": "10", "NORNICDB_CLUSTER_HA_RECONNECT_INTERVAL": "10ms",
+					"NORNICDB_CLUSTER_HA_MAX_RECONNECT_BACKOFF": "10ms",
+				} {
+					t.Setenv(key, value)
+				}
+			}
+			config := testEncryptionConfig("test-secure-password-12345!")
+			config.Memory.EmbeddingEnabled = false
+			open := func() *DB {
+				db, err := Open(dir, config)
+				require.NoError(t, err)
+				t.Cleanup(func() { _ = db.Close() })
+				assert.True(t, db.IsEncryptionEnabled(), "encryption should be enabled")
+				native, ok := storage.UnwrapEngine(db.GetBaseStorageForManager()).(*storage.BadgerEngine)
+				require.True(t, ok, "encryption case must use actual Badger backing")
+				require.False(t, native.IsInMemory(), "at-rest case must persist on disk")
+				if test.replicated {
+					_, ok := db.GetBaseStorageForManager().(*replication.ReplicatedEngine)
+					require.True(t, ok, "replicated case must use the real public replication chain")
+				}
+				return db
+			}
+			db := open()
+			ctx := context.Background()
+			properties := map[string]any{test.property: test.secret}
+			var node *Node
+			var err error
+			if test.replicated {
+				node, err = db.CreateNodeWithID(ctx, "sensitive", nil, properties)
+			} else {
+				properties["name"] = "Jane Doe"
+				node, err = db.CreateNode(ctx, []string{"Person"}, properties)
+			}
+			require.NoError(t, err)
+			retrieved, err := db.GetNode(ctx, node.ID)
+			require.NoError(t, err)
+			assert.Equal(t, test.secret, retrieved.Properties[test.property])
+			require.NoError(t, db.Close())
+			reopened := open()
+			retrieved, err = reopened.GetNode(ctx, node.ID)
+			require.NoError(t, err)
+			assert.Equal(t, test.secret, retrieved.Properties[test.property], "encrypted value must survive a durable reopen")
+		})
+	}
 }
 
 func TestEncryptionWithCustomFields(t *testing.T) {
@@ -235,7 +293,7 @@ func TestEncryptionDoesNotBreakNonSensitiveFields(t *testing.T) {
 
 	assert.Equal(t, "My Document", retrieved.Properties["title"])
 	assert.Equal(t, "A test document", retrieved.Properties["description"])
-	assert.Equal(t, 100, retrieved.Properties["count"])
+	assert.EqualValues(t, 100, retrieved.Properties["count"])
 	assert.Equal(t, 4.5, retrieved.Properties["rating"])
 	assert.Equal(t, true, retrieved.Properties["active"])
 }
@@ -392,7 +450,7 @@ func TestEncryptionDisabledDoesNotEncrypt(t *testing.T) {
 	require.NoError(t, err)
 
 	// Raw storage should have plaintext
-	rawNode, err := db.storage.GetNode(storageNodeID(node.ID))
+	rawNode, err := db.storage.GetNode(t.Context(), storageNodeID(node.ID))
 	require.NoError(t, err)
 
 	rawSSN, _ := rawNode.Properties["ssn"].(string)

@@ -9,6 +9,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/retention"
+	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -21,8 +22,6 @@ func (db *DB) startRetentionSweep(ctx context.Context) {
 	if db.retentionManager == nil {
 		return
 	}
-	ctx = db.retentionContext(ctx)
-
 	interval := defaultRetentionSweepInterval
 	if db.config != nil {
 		if seconds := db.config.Retention.SweepIntervalSeconds; seconds > 0 {
@@ -30,7 +29,7 @@ func (db *DB) startRetentionSweep(ctx context.Context) {
 		}
 	}
 
-	started := db.startBackgroundTask(func() {
+	started := db.RunBackgroundTask(func(backgroundCtx context.Context) {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 
@@ -51,7 +50,6 @@ func (db *DB) startRetentionSweep(ctx context.Context) {
 }
 
 func (db *DB) runRetentionSweep(ctx context.Context) {
-	ctx = db.retentionContext(ctx)
 	rm := db.retentionManager
 	if rm == nil {
 		return
@@ -65,7 +63,7 @@ func (db *DB) runRetentionSweep(ctx context.Context) {
 	sweepStart := time.Now()
 	dbName := db.defaultDatabaseName()
 
-	err := storage.StreamNodesWithFallback(ctx, db.storage, 1000, func(node *storage.Node) error {
+	err := storage.StreamStoredNodes(ctx, db.storage, storage.StreamNodesOptions{WithEmbeddings: true}, func(node *storage.Node) error {
 		if processed >= budget {
 			return localizedError(localization.NornicDBRetentionSweepBudgetExhausted(budget), nil)
 		}
@@ -89,7 +87,7 @@ func (db *DB) runRetentionSweep(ctx context.Context) {
 				log.Printf("⚠️  Retention: failed to process %s: %v", node.ID, err)
 			} else {
 				deleted++
-				if idxErr := db.removeNodeFromSearchIndexes(ctx, dbName, db.storage, node.ID); idxErr != nil && !db.shouldIgnoreSearchIndexingError(idxErr) {
+				if idxErr := search.RefreshIndexes(ctx, dbRefreshScope{db: db, dbName: dbName, storage: db.storage}, search.RefreshRequest{Node: node.ID}); idxErr != nil && !db.shouldIgnoreSearchIndexingError(idxErr) {
 					log.Printf("⚠️  Retention: failed to remove %s from search indexes: %v", node.ID, idxErr)
 				}
 			}
@@ -113,21 +111,10 @@ func (db *DB) RunRetentionSweep(ctx context.Context) {
 	db.runRetentionSweep(ctx)
 }
 
-func (db *DB) retentionContext(ctx context.Context) context.Context {
-	if ctx != nil {
-		return ctx
-	}
-	if db != nil && db.buildCtx != nil {
-		return db.buildCtx
-	}
-	log.Printf("⚠️  Retention: no lifecycle context available, using background context")
-	return context.Background()
-}
-
 // CollectSubjectRetentionRecords returns retention records for all nodes owned by a subject.
 func (db *DB) CollectSubjectRetentionRecords(ctx context.Context, subjectID string) ([]*retention.DataRecord, error) {
 	var records []*retention.DataRecord
-	err := storage.StreamNodesWithFallback(ctx, db.storage, 1000, func(node *storage.Node) error {
+	err := storage.StreamStoredNodes(ctx, db.storage, storage.StreamNodesOptions{WithEmbeddings: true}, func(node *storage.Node) error {
 		if db.nodeMatchesSubject(node, subjectID) {
 			records = append(records, nodeToDataRecord(node, db.subjectIdentifierProperties()))
 		}

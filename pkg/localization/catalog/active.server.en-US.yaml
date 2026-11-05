@@ -1,3 +1,9 @@
+- id: server.application_memory_pressure
+  description: HTTP admission response when the configured application soft memory limit is reached.
+  other: Application memory soft limit reached; retry after memory is released.
+- id: server.application_memory_unavailable
+  description: HTTP admission response while an enabled memory sampler has no fresh reading.
+  other: Memory usage readings are unavailable; retry when monitoring recovers.
 - id: server.role_entitlements_unavailable
   description: Neo4j HTTP response when role entitlements cannot be configured.
   other: Role entitlements are not configured (auth disabled or system DB unavailable).
@@ -102,7 +108,7 @@
   other: graphql API enabled
 - id: server.log.heimdall_disabled
   description: Server startup log when the Heimdall AI assistant is disabled.
-  other: heimdall AI assistant disabled
+  other: Heimdall agentic harness disabled; configured plugins remain available
 - id: server.log.search_rerank_disabled
   description: Server startup log when stage-2 search reranking is disabled.
   other: search rerank disabled

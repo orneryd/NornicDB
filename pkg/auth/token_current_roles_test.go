@@ -1,6 +1,8 @@
 package auth
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 
@@ -10,7 +12,9 @@ import (
 
 func currentRolesAuthenticator(t testing.TB) (*Authenticator, *RoleStore) {
 	t.Helper()
-	engine := newSystemTestEngine(t)
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
+	t.Cleanup(func() { _ = base.Close() })
+	engine := storage.NewNamespacedEngine(base, "system")
 	config := DefaultAuthConfig()
 	config.DefaultAdminUsername = ""
 	config.JWTSecret = []byte("test-secret-key-for-testing-only-32b")
@@ -29,9 +33,9 @@ func TestTokenRolesFollowTheUsersCurrentRoles(t *testing.T) {
 		t.Run(change, func(t *testing.T) {
 			authenticator, roles := currentRolesAuthenticator(t)
 			require.NoError(t, roles.CreateRole(ctx, "ops"))
-			_, err := authenticator.CreateUser("bob", "password123", []Role{"ops", RoleViewer})
+			_, err := authenticator.CreateUser(context.Background(), "bob", "password123", []Role{"ops", RoleViewer})
 			require.NoError(t, err)
-			token, _, err := authenticator.Authenticate("bob", "password123", "", "")
+			token, _, err := authenticator.Authenticate(context.Background(), "bob", "password123", "", "")
 			require.NoError(t, err)
 			claims, err := authenticator.ValidateToken(token.AccessToken)
 			require.NoError(t, err)
@@ -43,7 +47,7 @@ func TestTokenRolesFollowTheUsersCurrentRoles(t *testing.T) {
 				require.NoError(t, roles.DeleteRoleWithStores(ctx, "ops", RoleMutationStores{Users: authenticator}))
 				require.NoError(t, roles.CreateRole(ctx, "ops"))
 			case "role removed from user":
-				require.NoError(t, authenticator.UpdateRoles("bob", []Role{RoleViewer}))
+				require.NoError(t, authenticator.UpdateRoles(context.Background(), "bob", []Role{RoleViewer}))
 			}
 			claims, err = authenticator.ValidateToken(token.AccessToken)
 			require.NoError(t, err)
@@ -66,7 +70,7 @@ func TestAuthenticationDisabledDefinition(t *testing.T) {
 	config.SecurityEnabled = false
 	config.DefaultAdminUsername = ""
 	config.JWTSecret = []byte("test-secret-key-for-testing-only-32b")
-	engine := storage.NewMemoryEngine()
+	engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = engine.Close() })
 	disabled, err := NewAuthenticator(config, engine)
 	require.NoError(t, err)
@@ -78,9 +82,9 @@ func TestAuthenticationDisabledDefinition(t *testing.T) {
 // cache lookup it adds to.
 func BenchmarkValidateTokenCurrentRoles(b *testing.B) {
 	authenticator, _ := currentRolesAuthenticator(b)
-	_, err := authenticator.CreateUser("bob", "password123", []Role{RoleEditor, RoleViewer})
+	_, err := authenticator.CreateUser(context.Background(), "bob", "password123", []Role{RoleEditor, RoleViewer})
 	require.NoError(b, err)
-	token, _, err := authenticator.Authenticate("bob", "password123", "", "")
+	token, _, err := authenticator.Authenticate(context.Background(), "bob", "password123", "", "")
 	require.NoError(b, err)
 	_, err = authenticator.ValidateToken(token.AccessToken)
 	require.NoError(b, err)
@@ -109,20 +113,20 @@ func TestTokenOfRemovedAccountAuthorizesNothing(t *testing.T) {
 	for _, change := range []string{"deleted", "disabled", "deleted and recreated"} {
 		t.Run(change, func(t *testing.T) {
 			authenticator, _ := currentRolesAuthenticator(t)
-			_, err := authenticator.CreateUser("carol", "password123", []Role{RoleAdmin})
+			_, err := authenticator.CreateUser(context.Background(), "carol", "password123", []Role{RoleAdmin})
 			require.NoError(t, err)
-			token, _, err := authenticator.Authenticate("carol", "password123", "", "")
+			token, _, err := authenticator.Authenticate(context.Background(), "carol", "password123", "", "")
 			require.NoError(t, err)
 			_, err = authenticator.ValidateToken(token.AccessToken)
 			require.NoError(t, err)
 			switch change {
 			case "deleted":
-				require.NoError(t, authenticator.DeleteUser("carol"))
+				require.NoError(t, authenticator.DeleteUser(context.Background(), "carol"))
 			case "disabled":
-				require.NoError(t, authenticator.DisableUser("carol"))
+				require.NoError(t, authenticator.ChangeUserState(context.Background(), "carol", UserDisable))
 			case "deleted and recreated":
-				require.NoError(t, authenticator.DeleteUser("carol"))
-				_, err = authenticator.CreateUser("carol", "password123", []Role{RoleAdmin})
+				require.NoError(t, authenticator.DeleteUser(context.Background(), "carol"))
+				_, err = authenticator.CreateUser(context.Background(), "carol", "password123", []Role{RoleAdmin})
 				require.NoError(t, err)
 			}
 			_, err = authenticator.ValidateToken(token.AccessToken)
@@ -131,7 +135,7 @@ func TestTokenOfRemovedAccountAuthorizesNothing(t *testing.T) {
 			_, err = authenticator.ValidateToken(token.AccessToken)
 			require.ErrorIs(t, err, ErrInvalidToken)
 			if change == "deleted and recreated" {
-				fresh, _, err := authenticator.Authenticate("carol", "password123", "", "")
+				fresh, _, err := authenticator.Authenticate(context.Background(), "carol", "password123", "", "")
 				require.NoError(t, err)
 				claims, err := authenticator.ValidateToken(fresh.AccessToken)
 				require.NoError(t, err)

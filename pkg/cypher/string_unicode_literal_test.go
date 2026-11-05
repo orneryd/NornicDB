@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+
 	"context"
 	"testing"
 )
@@ -26,7 +28,7 @@ func TestUnicodeEscapesInStringLiterals(t *testing.T) {
 }
 
 func TestStringLiteralControlEscapes(t *testing.T) {
-	value, ok := decodeCypherQuotedString(`'line\ncolumn\treturn\rback\bform\f'`)
+	value, ok := cyphertext.DecodeString(`'line\ncolumn\treturn\rback\bform\f'`, cyphertext.RawSource)
 	if !ok {
 		t.Fatal("control escape literal was not decoded")
 	}

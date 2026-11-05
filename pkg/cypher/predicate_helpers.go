@@ -1,7 +1,7 @@
 package cypher
 
 import (
-	math "github.com/orneryd/nornicdb/pkg/math/libm"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"reflect"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -12,15 +12,21 @@ func getNodePropertyValue(node *storage.Node, propName string) (any, bool) {
 		return nil, false
 	}
 	if propName == "has_embedding" {
-		if node.EmbedMeta != nil {
-			if val, ok := node.EmbedMeta["has_embedding"]; ok {
-				return val, true
-			}
-		}
-		return len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0, true
+		return nodeHasEmbeddingValue(node), true
 	}
 	val, ok := node.Properties[propName]
 	return val, ok
+}
+
+// nodeHasEmbeddingValue is n.has_embedding: the flag the managed embedding
+// system keeps in EmbedMeta, else whether the node has chunk embeddings,
+// counted from its metadata when a query read left the vectors in storage
+// (storage.Node.HasChunkEmbeddings).
+func nodeHasEmbeddingValue(node *storage.Node) any {
+	if val, ok := node.EmbedMeta["has_embedding"]; ok {
+		return val
+	}
+	return node.HasChunkEmbeddings()
 }
 
 func getBindingNodeValue(node *storage.Node, propName string) (any, bool) {
@@ -76,42 +82,21 @@ func evaluateComparableMembership(actual interface{}, comparableSet map[interfac
 // range, keys as int64; other floats key as float64. Integers keep their
 // exact value, including above 2^53.
 func membershipKey(v interface{}) interface{} {
-	switch n := v.(type) {
-	case int64:
-		return n
-	case int:
-		return int64(n)
-	case int32:
-		return int64(n)
-	case int16:
-		return int64(n)
-	case int8:
-		return int64(n)
-	case uint32:
-		return int64(n)
-	case uint16:
-		return int64(n)
-	case uint8:
-		return int64(n)
-	case uint:
-		if uint64(n) <= math.MaxInt64 {
-			return int64(n)
-		}
-	case uint64:
-		if n <= math.MaxInt64 {
-			return int64(n)
-		}
-	case float64:
-		return floatMembershipKey(n)
-	case float32:
-		return floatMembershipKey(float64(n))
+	if integer, ok := valueconvert.IntegerValue(v); ok {
+		return integer
+	}
+	if unsigned, ok := valueconvert.UnsignedInteger(v); ok {
+		return unsigned
+	}
+	if floating, ok := valueconvert.FloatValue(v); ok {
+		return floatMembershipKey(floating)
 	}
 	return v
 }
 
 func floatMembershipKey(f float64) interface{} {
-	if f == math.Trunc(f) && f >= math.MinInt64 && f < math.MaxInt64 {
-		return int64(f)
+	if integer, ok := valueconvert.Int64(f, valueconvert.IntegerFloat|valueconvert.IntegerWholeFloat); ok {
+		return integer
 	}
 	return f
 }

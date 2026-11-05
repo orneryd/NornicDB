@@ -6,6 +6,7 @@ package coll
 
 import (
 	"fmt"
+	"github.com/orneryd/nornicdb/pkg/convert"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"reflect"
 	"sort"
@@ -486,7 +487,7 @@ func Flatten(list []interface{}, recursive bool) []interface{} {
 	result := make([]interface{}, 0)
 
 	for _, item := range list {
-		if sublist, ok := item.([]interface{}); ok {
+		if sublist, ok := convert.ListValue(item); ok {
 			if recursive {
 				result = append(result, Flatten(sublist, true)...)
 			} else {
@@ -541,12 +542,7 @@ func FrequenciesAsMap(list []interface{}) map[string]interface{} {
 // frequencyKey groups items as APOC counts them: numbers by value (1 and
 // 1.0 alike), anything else by its type and text.
 func frequencyKey(item interface{}) string {
-	switch number := item.(type) {
-	case int:
-		return fmt.Sprint("n:", float64(number))
-	case int64:
-		return fmt.Sprint("n:", float64(number))
-	case float64:
+	if number, ok := convert.NumericFloat64(item); ok {
 		return fmt.Sprint("n:", number)
 	}
 	return fmt.Sprintf("%T:%v", item, item)
@@ -873,38 +869,15 @@ func UnionAll(lists ...[]interface{}) []interface{} {
 
 // Helper functions
 
+// Numeric collection consumers use the shared scalar conversion after selecting
+// numeric values. Strings remain nonnumeric here, as in the existing APOC API.
 func toFloat64(v interface{}) (float64, bool) {
-	switch val := v.(type) {
-	case float64:
-		return val, true
-	case float32:
-		return float64(val), true
-	case int:
-		return float64(val), true
-	case int64:
-		return float64(val), true
-	case int32:
-		return float64(val), true
-	}
-	return 0, false
+	return convert.NumericFloat64(v)
 }
 
 func toInt64(v interface{}) (int64, bool) {
-	switch val := v.(type) {
-	case int:
-		return int64(val), true
-	case int64:
-		return val, true
-	case int32:
-		return int64(val), true
-	case float64:
-		return int64(val), true
-	case float32:
-		return int64(val), true
-	}
-	return 0, false
+	return convert.Int64(v, convert.IntegerFloat)
 }
-
 func compare(a, b interface{}) int {
 	// Try numeric comparison
 	if na, oka := toFloat64(a); oka {

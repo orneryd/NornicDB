@@ -1,13 +1,18 @@
+// Checkpoint admission validation: Codex NOR-283 implementation lane, 29 October 2026.
 package search
 
 import (
+	"bufio"
+	"encoding/binary"
 	"errors"
-	math "github.com/orneryd/nornicdb/pkg/math/libm"
+	"io"
 	"os"
 	"sort"
+	"sync"
 
+	"github.com/cespare/xxhash/v2"
 	"github.com/orneryd/nornicdb/pkg/security"
-	"github.com/orneryd/nornicdb/pkg/util"
+	"github.com/vmihailenco/msgpack/v5"
 )
 
 type bm25V2Snapshot struct {
@@ -23,13 +28,47 @@ type bm25V2Snapshot struct {
 	TotalDocLength int64                     `msgpack:"total_doc_len"`
 }
 
-type bm25V1Snapshot struct {
-	Version       string
-	Documents     map[string]string
-	InvertedIndex map[string]map[string]int
-	DocLengths    map[string]int
-	AvgDocLength  float64
-	DocCount      int
+// EncodeMsgpack streams the snapshot and then its integrity trailer through
+// the existing atomic snapshot writer. The digest covers the exact encoded
+// MessagePack object, including its version and every map entry; it excludes
+// the trailer itself and unused file capacity. No second index or payload
+// buffer is built. Older, digest-free formats are rebuilt once by Load.
+func (s *bm25V2Snapshot) EncodeMsgpack(encoder *msgpack.Encoder) error {
+	type payload bm25V2Snapshot // Do not recursively invoke this encoder.
+	digest := xxhash.New()
+	if err := msgpack.NewEncoder(io.MultiWriter(encoder.Writer(), digest)).Encode((*payload)(s)); err != nil {
+		return err
+	}
+	var trailer [8]byte
+	binary.LittleEndian.PutUint64(trailer[:], digest.Sum64())
+	_, err := encoder.Writer().Write(trailer[:])
+	return err
+}
+
+var bm25IntegrityBuffers = sync.Pool{
+	New: func() any { return new([32 * 1024]byte) },
+}
+
+// validBM25Integrity hashes the same payload bytes that were decoded, without
+// re-encoding maps or tokenizing documents. The decoder's buffered position
+// locates the trailer, so preallocated file capacity is not snapshot content.
+func validBM25Integrity(file *os.File, reader *bufio.Reader) bool {
+	position, err := file.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return false
+	}
+	payloadBytes := position - int64(reader.Buffered())
+	var trailer [8]byte
+	if _, err := io.ReadFull(reader, trailer[:]); err != nil {
+		return false
+	}
+	buffer := bm25IntegrityBuffers.Get().(*[32 * 1024]byte)
+	defer bm25IntegrityBuffers.Put(buffer)
+	digest := xxhash.New()
+	if _, err := io.CopyBuffer(digest, io.NewSectionReader(file, 0, payloadBytes), buffer[:]); err != nil {
+		return false
+	}
+	return digest.Sum64() == binary.LittleEndian.Uint64(trailer[:])
 }
 
 func (f *FulltextIndexV2) Save(path string) error {
@@ -111,6 +150,11 @@ func saveBM25V2Snapshot(path string, snap bm25V2Snapshot, onSuccess func()) erro
 	return nil
 }
 
+// Load replaces the fulltext index with the one stored at path (msgpack format).
+// A missing file leaves the index as it is and no error is returned; a file
+// that is not a compatible BM25 snapshot empties the index so the caller
+// rebuilds it from graph storage. Only
+// unexpected I/O (e.g. permission denied) returns an error.
 func (f *FulltextIndexV2) Load(path string) error {
 	file, err := security.OpenRootedFile(path, os.O_RDONLY, 0)
 	if err != nil {
@@ -121,48 +165,134 @@ func (f *FulltextIndexV2) Load(path string) error {
 	}
 	defer file.Close()
 
-	var v2 bm25V2Snapshot
-	if err := util.DecodeMsgpackFile(file.File, &v2); err == nil && v2.Version != "" &&
-		searchIndexVersionCompatible(v2.Version, bm25V2FormatVersion, "BM25 V2") {
-		f.applyV2Snapshot(v2)
-		return nil
-	} else if err != nil {
-		logSearchPrintf("⚠️ BM25 V2 load: failed decoding %s as v2 snapshot: %v", path, err)
-	}
-
-	// Fallback: try legacy BM25 V1 file format and migrate to V2 in-memory.
-	fileLegacy, err := security.OpenRootedFile(path, os.O_RDONLY, 0)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return err
-	}
-	defer fileLegacy.Close()
-
-	var v1 bm25V1Snapshot
-	if err := util.DecodeMsgpackFile(fileLegacy.File, &v1); err != nil {
-		logSearchPrintf("⚠️ BM25 V2 load: failed decoding %s as legacy snapshot: %v", path, err)
+	var snap bm25V2Snapshot
+	reader := bufio.NewReader(file.File)
+	if err := msgpack.NewDecoder(reader).Decode(&snap); err != nil {
+		logSearchPrintf("⚠️ BM25 load: failed decoding %s as v2 snapshot: %v", path, err)
 		f.Clear()
 		return nil
 	}
-	if !searchIndexVersionCompatible(v1.Version, "1.0.0", "BM25") {
+	if snap.Version == "" || !searchIndexVersionCompatible(snap.Version, bm25V2FormatVersion, "BM25") {
 		f.Clear()
 		return nil
 	}
-	if v1.Documents == nil {
-		v1.Documents = make(map[string]string)
+	if !validBM25Integrity(file.File, reader) || !f.validV2Snapshot(snap) {
+		logSearchPrintf("⚠️ BM25 load: inconsistent checkpoint %s; rebuilding from storage", path)
+		f.Clear()
+		return nil
 	}
-	if v1.InvertedIndex == nil {
-		v1.InvertedIndex = make(map[string]map[string]int)
-	}
-	if v1.DocLengths == nil {
-		v1.DocLengths = make(map[string]int)
-	}
-	f.migrateFromV1Snapshot(v1)
+	f.applyV2Snapshot(snap)
 	return nil
 }
 
+// validV2Snapshot is the structural admission owner. The integrity trailer
+// binds term names/frequencies to the writer's payload, so loading never
+// re-analyzes stored text. One postings pass accumulates lengths and duplicate
+// stamps in a preallocated document-number array. SaveNoCopy's dead postings
+// and the writer's uint16 frequency cap remain valid.
+func (f *FulltextIndexV2) validV2Snapshot(s bm25V2Snapshot) bool {
+	if s.DocCount != len(s.Documents) || s.DocCount != len(s.DocIDToNum) ||
+		len(s.DocNumToID) != len(s.DocLengths) {
+		return false
+	}
+	live := 0
+	var total int64
+	for number, id := range s.DocNumToID {
+		length := s.DocLengths[number]
+		if id == "" {
+			if length != 0 {
+				return false
+			}
+			continue
+		}
+		mapped, ok := s.DocIDToNum[id]
+		if !ok || uint64(mapped) != uint64(number) || length == 0 {
+			return false
+		}
+		if _, ok := s.Documents[id]; !ok {
+			return false
+		}
+		live++
+		total += int64(length)
+	}
+	if live != s.DocCount || total != s.TotalDocLength {
+		return false
+	}
+	average := float64(0)
+	if live != 0 {
+		average = float64(total) / float64(live)
+	}
+	if s.AvgDocLength != average {
+		return false
+	}
+	for id, number := range s.DocIDToNum {
+		if id == "" || uint64(number) >= uint64(len(s.DocNumToID)) || s.DocNumToID[number] != id {
+			return false
+		}
+	}
+	if len(s.Lexicon) != len(s.TermIndex) {
+		return false
+	}
+	// Writers already sort the lexicon. Preserve equivalent reordered input
+	// without copying it; only that exceptional ordering needs normalization.
+	if !sort.StringsAreSorted(s.Lexicon) {
+		sort.Strings(s.Lexicon)
+	}
+	type documentCheck struct {
+		tokens uint64
+		term   int
+	}
+	checks := make([]documentCheck, len(s.DocLengths))
+	const capped = uint64(1) << 63
+	for termNumber, term := range s.Lexicon {
+		state := s.TermIndex[term]
+		if state == nil {
+			return false
+		}
+		if termNumber > 0 && s.Lexicon[termNumber-1] == term {
+			return false
+		}
+		ordered := true
+		for position, posting := range state.Postings {
+			if position > 0 && state.Postings[position-1].DocNum > posting.DocNum {
+				ordered = false
+			}
+			if uint64(posting.DocNum) >= uint64(len(s.DocLengths)) {
+				return false
+			}
+			if s.DocLengths[posting.DocNum] == 0 {
+				continue // Lazy deletion: applyV2Snapshot compacts these away.
+			}
+			check := &checks[posting.DocNum]
+			if posting.TF == 0 || check.term == termNumber+1 {
+				return false
+			}
+			check.term = termNumber + 1
+			check.tokens += uint64(posting.TF)
+			if posting.TF == ^uint16(0) {
+				check.tokens |= capped
+			}
+			if check.tokens & ^capped > uint64(s.DocLengths[posting.DocNum]) {
+				return false
+			}
+		}
+		if !ordered {
+			// Normal writers append document numbers in order. Equivalent
+			// reordered input is normalized in place, without another index.
+			sort.Slice(state.Postings, func(i, j int) bool { return state.Postings[i].DocNum < state.Postings[j].DocNum })
+		}
+	}
+	for number, check := range checks {
+		if s.DocLengths[number] != 0 {
+			if check.tokens == 0 || (check.tokens&capped == 0 && check.tokens != uint64(s.DocLengths[number])) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// applyV2Snapshot installs admitted content. Load is its sole production caller.
 func (f *FulltextIndexV2) applyV2Snapshot(s bm25V2Snapshot) {
 	if s.Documents == nil {
 		s.Documents = make(map[string]string)
@@ -218,79 +348,6 @@ func (f *FulltextIndexV2) applyV2Snapshot(s bm25V2Snapshot) {
 	f.persistedVersion = 1
 	f.queryPlanCache.Clear()
 	f.mu.Unlock()
-}
-
-func (f *FulltextIndexV2) migrateFromV1Snapshot(v1 bm25V1Snapshot) {
-	f.Clear()
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	f.documents = make(map[string]string, len(v1.Documents))
-	for id, text := range v1.Documents {
-		f.documents[id] = text
-	}
-
-	// Stable doc-number assignment for compact postings.
-	docIDs := make([]string, 0, len(v1.DocLengths))
-	for id := range v1.DocLengths {
-		docIDs = append(docIDs, id)
-	}
-	sort.Strings(docIDs)
-
-	f.docIDToNum = make(map[string]uint32, len(docIDs))
-	f.docNumToID = make([]string, len(docIDs))
-	f.docLengths = make([]uint32, len(docIDs))
-	f.docIDsLexicalByNum = true
-
-	var total int64
-	for i, id := range docIDs {
-		docNum := uint32(i)
-		f.docIDToNum[id] = docNum
-		f.docNumToID[docNum] = id
-		l := v1.DocLengths[id]
-		if l < 0 {
-			l = 0
-		}
-		f.docLengths[docNum] = uint32(l)
-		total += int64(l)
-	}
-	f.docCount = len(docIDs)
-	f.totalDocLength = total
-	if v1.DocCount > 0 {
-		f.docCount = v1.DocCount
-	}
-	f.updateAvgDocLengthLocked()
-
-	f.termIndex = make(map[string]*bm25TermState, len(v1.InvertedIndex))
-	f.lexicon = make([]string, 0, len(v1.InvertedIndex))
-	for term, docs := range v1.InvertedIndex {
-		if len(docs) == 0 {
-			continue
-		}
-		postings := make([]bm25Posting, 0, len(docs))
-		for id, tf := range docs {
-			docNum, ok := f.docIDToNum[id]
-			if !ok || tf <= 0 {
-				continue
-			}
-			postings = append(postings, bm25Posting{
-				DocNum: docNum,
-				TF:     uint16(minInt(tf, math.MaxUint16)),
-			})
-		}
-		if len(postings) == 0 {
-			continue
-		}
-		sort.Slice(postings, func(i, j int) bool { return postings[i].DocNum < postings[j].DocNum })
-		st := &bm25TermState{Postings: postings}
-		st.IDF = f.calculateIDFLocked(len(postings))
-		f.termIndex[term] = st
-		f.lexicon = append(f.lexicon, term)
-	}
-	sort.Strings(f.lexicon)
-	f.lexiconDirty = false
-	f.markDirtyLocked()
-	f.persistedVersion = f.version
 }
 
 func docIDsAreLexicalByNumber(docIDs []string) bool {

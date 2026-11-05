@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"cmp"
 	"math"
 	"reflect"
 	"strconv"
@@ -76,45 +77,96 @@ func constraintFloat(k reflect.Kind) bool    { return k == reflect.Float32 || k 
 // Compare integral list elements without float64 widening: adjacent int64 values
 // above 2^53 must stay distinct, including across typed/generic list boundaries.
 func equalConstraintListNumbers(a, b reflect.Value) (bool, bool) {
+	order, numeric, ordered := compareConstraintNumbers(a, b)
+	return numeric && ordered && order == 0, numeric
+}
+
+// compareConstraintNumbers is the exact numeric owner behind constraint
+// equality and ordering: integers never widen through float64, so values
+// above 2^53 keep their order and identity against each other and against
+// floats. numeric is false unless both values are numbers; ordered is false
+// when either is NaN. Either sign of zero compares equal.
+func compareConstraintNumbers(a, b reflect.Value) (order int, numeric, ordered bool) {
 	ak, bk := a.Kind(), b.Kind()
 	an := constraintSigned(ak) || constraintUnsigned(ak) || constraintFloat(ak)
 	bn := constraintSigned(bk) || constraintUnsigned(bk) || constraintFloat(bk)
 	if !an || !bn {
-		return false, false
+		return 0, false, false
 	}
-	if constraintSigned(ak) {
-		n := a.Int()
-		if constraintSigned(bk) {
-			return n == b.Int(), true
+	switch {
+	case constraintFloat(ak) && constraintFloat(bk):
+		x, y := a.Float(), b.Float()
+		if math.IsNaN(x) || math.IsNaN(y) {
+			return 0, true, false
 		}
-		if constraintUnsigned(bk) {
-			return n >= 0 && uint64(n) == b.Uint(), true
+		return cmp.Compare(x, y), true, true
+	case constraintFloat(ak):
+		order, _, ordered = compareConstraintNumbers(b, a)
+		return -order, true, ordered
+	case constraintSigned(ak) && constraintSigned(bk):
+		return cmp.Compare(a.Int(), b.Int()), true, true
+	case constraintUnsigned(ak) && constraintUnsigned(bk):
+		return cmp.Compare(a.Uint(), b.Uint()), true, true
+	case constraintSigned(ak) && constraintUnsigned(bk):
+		if a.Int() < 0 {
+			return -1, true, true
 		}
-		return constraintIntegerFloatEqual(n, b.Float()), true
-	}
-	if constraintUnsigned(ak) {
-		n := a.Uint()
-		if constraintUnsigned(bk) {
-			return n == b.Uint(), true
+		return cmp.Compare(uint64(a.Int()), b.Uint()), true, true
+	case constraintUnsigned(ak) && constraintSigned(bk):
+		if b.Int() < 0 {
+			return 1, true, true
 		}
-		if constraintSigned(bk) {
-			return b.Int() >= 0 && n == uint64(b.Int()), true
-		}
-		return constraintUnsignedFloatEqual(n, b.Float()), true
+		return cmp.Compare(a.Uint(), uint64(b.Int())), true, true
+	case constraintSigned(ak):
+		order, ordered = compareConstraintIntegerFloat(a.Int(), b.Float())
+		return order, true, ordered
+	default:
+		order, ordered = compareConstraintUnsignedFloat(a.Uint(), b.Float())
+		return order, true, ordered
 	}
-	if constraintSigned(bk) {
-		return constraintIntegerFloatEqual(b.Int(), a.Float()), true
-	}
-	if constraintUnsigned(bk) {
-		return constraintUnsignedFloatEqual(b.Uint(), a.Float()), true
-	}
-	return a.Float() == b.Float(), true // NaN remains unequal; either sign of zero is equal.
 }
+
+// compareConstraintIntegerFloat orders n against f exactly: by f's integral
+// part first, then by its fraction.
+func compareConstraintIntegerFloat(n int64, f float64) (int, bool) {
+	switch {
+	case math.IsNaN(f):
+		return 0, false
+	case f >= 0x1p63:
+		return -1, true
+	case f < -0x1p63:
+		return 1, true
+	}
+	t := math.Trunc(f)
+	if order := cmp.Compare(n, int64(t)); order != 0 {
+		return order, true
+	}
+	return cmp.Compare(t, f), true
+}
+
+func compareConstraintUnsignedFloat(n uint64, f float64) (int, bool) {
+	switch {
+	case math.IsNaN(f):
+		return 0, false
+	case f >= 0x1p64:
+		return -1, true
+	case f < 0:
+		return 1, true
+	}
+	t := math.Trunc(f)
+	if order := cmp.Compare(n, uint64(t)); order != 0 {
+		return order, true
+	}
+	return cmp.Compare(t, f), true
+}
+
 func constraintIntegerFloatEqual(n int64, f float64) bool {
-	return f >= -0x1p63 && f < 0x1p63 && f == math.Trunc(f) && int64(f) == n
+	order, ordered := compareConstraintIntegerFloat(n, f)
+	return ordered && order == 0
 }
 func constraintUnsignedFloatEqual(n uint64, f float64) bool {
-	return f >= 0 && f < 0x1p64 && f == math.Trunc(f) && uint64(f) == n
+	order, ordered := compareConstraintUnsignedFloat(n, f)
+	return ordered && order == 0
 }
 
 // writeConstraintListNumericKey is the canonical numeric element writer for

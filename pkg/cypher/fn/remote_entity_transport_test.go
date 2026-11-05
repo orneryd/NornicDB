@@ -24,7 +24,7 @@ func TestRemoteHTTPGraphFunctionTransportControls(t *testing.T) {
 	remote, err := storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: server.URL, Database: "remote"})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = remote.Close() })
-	columns, rows, err := remote.QueryCypher(context.Background(), "RETURN graph values", nil)
+	columns, rows, err := remote.QueryCypher(context.Background(), "RETURN graph values", nil, storage.RemoteAccessRead)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"node", "relationship", "ordinary"}, columns)
 	require.Len(t, rows, 1)
@@ -41,11 +41,11 @@ func TestRemoteHTTPGraphFunctionTransportControls(t *testing.T) {
 		{"keys", node, []any{"id", "name"}},
 		{"type", relationship, "LINKS"},
 		{"elementid", relationship, "5:remote:rel"},
-		{"properties", relationship, map[string]any{"id": "local-rel", "weight": float64(2)}},
+		{"properties", relationship, map[string]any{"id": "local-rel", "weight": int64(2)}},
 		{"keys", relationship, []any{"id", "weight"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			got, found, err := EvaluateFunction(tt.name, []string{"v"}, Context{Eval: func(string) (any, error) { return tt.value, nil }})
+			got, found, err := EvaluateFunction(context.Background(), tt.name, []string{"v"}, Context{Eval: func(string) (any, error) { return tt.value, nil }})
 			require.True(t, found)
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)

@@ -395,7 +395,7 @@ Receipts provide:
 - `wal_seq_end`
 - `hash`
 
-**HTTP:** `TransactionResponse.receipt` is returned for durable transactional mutations. Eventual async responses expose `optimistic` metadata instead and do not include a durable receipt until the write is flushed/committed through the durable path.  
+**HTTP:** Successful native transactional mutations return `TransactionResponse.receipt`, including write-behind acknowledgements. The receipt identifies the WAL transaction records; it does not by itself prove that a buffered write has been materialized into Badger. An actual buffered acknowledgement also produces HTTP `202 Accepted` with `X-NornicDB-Consistency: eventual`. Optimistic metadata is additional execution metadata and does not replace the receipt.
 **MCP:** `store`, `link`, `task` responses include `receipt`.
 
 You can use the receipt to fetch the associated WAL entries via `db.txlog.byTxId`.

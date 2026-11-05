@@ -1,6 +1,10 @@
 package server
 
 import (
+	"github.com/orneryd/nornicdb/pkg/multidb"
+
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"encoding/json"
 	"net/http"
@@ -22,14 +26,14 @@ func openPersistentDBConfigTestServer(t *testing.T, dataDir string) (*Server, *a
 	database, err := nornicdb.Open(dataDir, dbConfig)
 	require.NoError(t, err)
 
-	authStorage := storage.NewMemoryEngine()
+	authStorage := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = authStorage.Close() })
 	authenticator, err := auth.NewAuthenticator(auth.AuthConfig{
 		SecurityEnabled: true,
 		JWTSecret:       []byte("test-secret-key-for-testing-only-32b"),
 	}, authStorage)
 	require.NoError(t, err)
-	_, err = authenticator.CreateUser("admin", "password123", []auth.Role{auth.RoleAdmin})
+	_, err = authenticator.CreateUser(context.Background(), "admin", "password123", []auth.Role{auth.RoleAdmin})
 	require.NoError(t, err)
 
 	serverConfig := DefaultConfig()
@@ -76,7 +80,7 @@ func TestAdminPutRestartSettingReportsPendingRestart(t *testing.T) {
 func TestAdminEmbeddingLabelPoliciesApplyPerDatabaseAfterRestart(t *testing.T) {
 	dataDir := t.TempDir()
 	before, authenticator, database := openPersistentDBConfigTestServer(t, dataDir)
-	require.NoError(t, before.dbManager.CreateDatabase("images"))
+	require.NoError(t, before.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "images"}))
 	token := getAuthToken(t, authenticator, "admin")
 	for _, testCase := range []struct {
 		name, include, exclude string
@@ -130,7 +134,7 @@ func TestAdminEmbeddingLabelPoliciesApplyPerDatabaseAfterRestart(t *testing.T) {
 	} {
 		engineForDB, err := after.dbManager.GetStorage(testCase.database)
 		require.NoError(t, err)
-		_, err = engineForDB.CreateNode(&storage.Node{ID: storage.NodeID(testCase.id), Labels: testCase.labels, Properties: map[string]any{"text": "value"}})
+		_, err = engineForDB.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(testCase.id), Labels: testCase.labels, Properties: map[string]any{"text": "value"}})
 		require.NoError(t, err)
 	}
 	require.Equal(t, 2, engine.PendingEmbeddingsCount())
@@ -203,7 +207,7 @@ func TestAdminDatabaseConfigUsesInjectedProcessConfig(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, database.Close()) })
 
-	authStorage := storage.NewMemoryEngine()
+	authStorage := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = authStorage.Close() })
 	authenticator, err := auth.NewAuthenticator(auth.AuthConfig{SecurityEnabled: false}, authStorage)
 	require.NoError(t, err)
@@ -223,8 +227,8 @@ func TestAdminDatabaseConfigUsesInjectedProcessConfig(t *testing.T) {
 func TestNewExecutorForDatabaseUsesDatabaseQueryCacheTTL(t *testing.T) {
 	server, _ := setupTestServer(t)
 	ctx := context.Background()
-	require.NoError(t, server.dbManager.CreateDatabase("fast-cache"))
-	require.NoError(t, server.dbManager.CreateDatabase("slow-cache"))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "fast-cache"}))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "slow-cache"}))
 	require.NoError(t, server.dbConfigStore.SetOverrides(ctx, "fast-cache", map[string]string{
 		"db.nornic.query_cache.max_entries": "25",
 		"db.nornic.query_cache.ttl":         "2000",

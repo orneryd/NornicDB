@@ -1,11 +1,13 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j/dbtype"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 )
 
@@ -17,14 +19,14 @@ type adjacentFallbackEngine struct {
 	inErr    error
 }
 
-func (e *adjacentFallbackEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
+func (e *adjacentFallbackEngine) GetOutgoingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
 	if e.outErr != nil {
 		return nil, e.outErr
 	}
 	return e.outgoing, nil
 }
 
-func (e *adjacentFallbackEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
+func (e *adjacentFallbackEngine) GetIncomingEdges(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
 	if e.inErr != nil {
 		return nil, e.inErr
 	}
@@ -61,7 +63,7 @@ func (e *namespaceLifecycleRecorder) RecordMaterializedAccess(entityID string) {
 	e.accesses = append(e.accesses, entityID)
 }
 
-func (e *adjacentDirectEngine) GetAdjacentEdges(nodeID NodeID) ([]*Edge, []*Edge, error) {
+func (e *adjacentDirectEngine) GetAdjacentEdges(ctx context.Context, nodeID NodeID) ([]*Edge, []*Edge, error) {
 	if e.adjErr != nil {
 		return nil, nil, e.adjErr
 	}
@@ -90,9 +92,8 @@ func TestRemoteExtraNormalizeBoltValues(t *testing.T) {
 }
 
 func TestStorageExtraMVCCConstructorAndPendingNoop(t *testing.T) {
-	engine := NewMemoryEngineWithMVCCHistory()
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, NewMemoryEngineWithMVCCHistory(), ErrStorageClosed))
 	require.NotNil(t, engine)
-	t.Cleanup(func() { _ = engine.Close() })
 
 	badger := newIsolatedBadgerEngine(t)
 	badger.AddToPendingEmbeddings("nornic:n1")
@@ -103,7 +104,7 @@ func TestStorageExtraMVCCConstructorAndPendingNoop(t *testing.T) {
 
 func TestNamespacedExtraAdjacentEdgesBranches(t *testing.T) {
 	fallback := &adjacentFallbackEngine{
-		Engine: NewMemoryEngine(),
+		Engine: newTestMemoryEngine(t),
 		outgoing: []*Edge{
 			{ID: "tenant:e1", StartNode: "tenant:n1", EndNode: "tenant:n2"},
 			{ID: "other:e2", StartNode: "other:n1", EndNode: "other:n2"},
@@ -111,54 +112,55 @@ func TestNamespacedExtraAdjacentEdgesBranches(t *testing.T) {
 		incoming: []*Edge{{ID: "tenant:e3", StartNode: "tenant:n3", EndNode: "tenant:n1"}},
 	}
 	ns := NewNamespacedEngine(fallback, "tenant")
-	out, in, err := ns.GetAdjacentEdges("n1")
+	out, in, err := ns.GetAdjacentEdges(context.Background(), "n1")
 	require.NoError(t, err)
-	require.Equal(t, []*Edge{{ID: "e1", StartNode: "n1", EndNode: "n2"}}, out)
-	require.Equal(t, []*Edge{{ID: "e3", StartNode: "n3", EndNode: "n1"}}, in)
+	require.Equal(t, []*Edge{{Database: "tenant", ID: "e1", StartNode: "n1", EndNode: "n2"}}, out)
+	require.Equal(t, []*Edge{{Database: "tenant", ID: "e3", StartNode: "n3", EndNode: "n1"}}, in)
+	require.Empty(t, fallback.outgoing[0].Database, "source annotations must not mutate the stored input")
+	require.Empty(t, fallback.incoming[0].Database)
 
 	wantErr := errors.New("adjacent failed")
-	direct := &adjacentDirectEngine{adjacentFallbackEngine: &adjacentFallbackEngine{Engine: NewMemoryEngine()}, adjErr: wantErr}
+	direct := &adjacentDirectEngine{adjacentFallbackEngine: &adjacentFallbackEngine{Engine: newTestMemoryEngine(t)}, adjErr: wantErr}
 	ns = NewNamespacedEngine(direct, "tenant")
-	_, _, err = ns.GetAdjacentEdges("n1")
+	_, _, err = ns.GetAdjacentEdges(context.Background(), "n1")
 	require.ErrorIs(t, err, wantErr)
 
 	direct.adjErr = nil
 	direct.adjOut = []*Edge{{ID: "tenant:e4", StartNode: "tenant:n1", EndNode: "tenant:n4"}}
 	direct.adjIn = []*Edge{{ID: "other:e5", StartNode: "other:n5", EndNode: "other:n1"}}
-	out, in, err = ns.GetAdjacentEdges("n1")
+	out, in, err = ns.GetAdjacentEdges(context.Background(), "n1")
 	require.NoError(t, err)
-	require.Equal(t, []*Edge{{ID: "e4", StartNode: "n1", EndNode: "n4"}}, out)
+	require.Equal(t, []*Edge{{Database: "tenant", ID: "e4", StartNode: "n1", EndNode: "n4"}}, out)
 	require.Empty(t, in)
 
 	fallback.outErr = wantErr
 	ns = NewNamespacedEngine(fallback, "tenant")
-	_, _, err = ns.GetAdjacentEdges("n1")
+	_, _, err = ns.GetAdjacentEdges(context.Background(), "n1")
 	require.ErrorIs(t, err, wantErr)
 
 	fallback.outErr = nil
 	fallback.inErr = wantErr
-	_, _, err = ns.GetAdjacentEdges("n1")
+	_, _, err = ns.GetAdjacentEdges(context.Background(), "n1")
 	require.ErrorIs(t, err, wantErr)
 }
 
 func TestNamespacedExtraLifecycleLabelAndAccessBranches(t *testing.T) {
-	base := NewMemoryEngine()
-	t.Cleanup(func() { _ = base.Close() })
+	base := newTestMemoryEngine(t)
 	recorder := &namespaceLifecycleRecorder{
 		Engine:   base,
 		debtKeys: []MVCCLifecycleDebtKey{{LogicalKey: "tenant:n1", DebtBytes: 42}},
 	}
 	ns := NewNamespacedEngine(recorder, "tenant")
 
-	_, err := base.CreateNode(&Node{ID: "tenant:n1", Labels: []string{"Person", "User"}})
+	_, err := base.CreateNode(t.Context(), &Node{ID: "tenant:n1", Labels: []string{"Person", "User"}})
 	require.NoError(t, err)
-	_, err = base.CreateNode(&Node{ID: "tenant:n2", Labels: []string{"person"}})
+	_, err = base.CreateNode(t.Context(), &Node{ID: "tenant:n2", Labels: []string{"person"}})
 	require.NoError(t, err)
-	_, err = base.CreateNode(&Node{ID: "other:n3", Labels: []string{"Person"}})
+	_, err = base.CreateNode(t.Context(), &Node{ID: "other:n3", Labels: []string{"Person"}})
 	require.NoError(t, err)
 
 	// tenant:n2 is :person, another label (#862).
-	count, err := ns.NodeCountByLabel("Person")
+	count, err := ns.NodeCountByLabel(t.Context(), "Person")
 	require.NoError(t, err)
 	require.EqualValues(t, 1, count)
 

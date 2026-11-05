@@ -10,3 +10,6 @@
 - id: cypherantlr.validate_syntax_error
   description: ANTLR Validate syntax failure. Detail is an untranslated parser diagnostic.
   other: "syntax error: {{.Detail}}"
+- id: cypherantlr.unexpected_input
+  description: ANTLR syntax location without query tokens or lexer excerpts.
+  other: "line {{.Line}}:{{.Column}} unexpected input"

@@ -13,6 +13,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 )
 
@@ -76,8 +77,16 @@ type PatternInfo struct {
 }
 
 // DetectQueryPattern analyzes a Cypher query and returns pattern info
-func DetectQueryPattern(ctx context.Context, query string) PatternInfo {
-	info := PatternInfo{
+func DetectQueryPattern(ctx context.Context, query string) (info PatternInfo, err error) {
+	defer func() {
+		if cause := ctx.Err(); cause != nil {
+			info, err = PatternInfo{}, cause
+		}
+	}()
+	if err := ctx.Err(); err != nil {
+		return PatternInfo{}, err
+	}
+	info = PatternInfo{
 		Pattern: PatternGeneric,
 	}
 
@@ -86,18 +95,22 @@ func DetectQueryPattern(ctx context.Context, query string) PatternInfo {
 	// Don't optimize queries with WITH clause - they have complex aggregation
 	// semantics that the optimized executors don't handle (aliases, collect, etc.)
 	// Use word boundary check to avoid matching "STARTS WITH" or "ENDS WITH"
-	if containsKeywordOutsideStrings(query, "WITH") {
-		return info
+	if containsKeywordOutsideStrings(ctx, query, "WITH") {
+		return info, nil
 	}
 
 	// Extract LIMIT first (affects multiple patterns)
-	if limit, ok := ExtractLimit(query); ok {
+	limit, ok, err := ExtractLimit(ctx, query)
+	if err != nil {
+		return PatternInfo{}, err
+	}
+	if ok {
 		info.Limit = limit
 	}
 
 	// Check for mutual relationship pattern: (a)-[:T]->(b)-[:T]->(a)
 	if info.Pattern == PatternGeneric && detectMutualRelationship(ctx, query, &info) {
-		return info
+		return info, nil
 	}
 
 	// Check for incoming count aggregation
@@ -114,40 +127,40 @@ func DetectQueryPattern(ctx context.Context, query string) PatternInfo {
 			!strings.Contains(upperQuery, "MIN(") &&
 			!strings.Contains(upperQuery, "MAX(") &&
 			!strings.Contains(upperQuery, "COLLECT(") {
-			matchClause := extractMatchClause(query)
+			matchClause := extractMatchClause(ctx, query)
 			if countRelationshipPatterns(matchClause) == 1 {
 				if detectIncomingCountAgg(ctx, query, &info) {
-					return info
+					return info, nil
 				}
 				if detectOutgoingCountAgg(ctx, query, &info) {
-					return info
+					return info, nil
 				}
 			}
 		}
 	}
 
 	// Check for edge property aggregation
-	if info.Pattern == PatternGeneric && detectEdgePropertyAgg(query, &info) {
-		return info
+	if info.Pattern == PatternGeneric && detectEdgePropertyAgg(ctx, query, &info) {
+		return info, nil
 	}
 
 	// Check for large result set (LIMIT > 100)
 	if info.Limit > 100 && strings.Contains(upperQuery, "MATCH") {
 		info.Pattern = PatternLargeResultSet
-		return info
+		return info, nil
 	}
 
-	return info
+	return info, nil
 }
 
-func extractMatchClause(query string) string {
-	matchIdx := findKeywordIndex(query, "MATCH")
+func extractMatchClause(ctx context.Context, query string) string {
+	matchIdx := findKeywordIndex(ctx, query, "MATCH")
 	if matchIdx < 0 {
 		return ""
 	}
 	end := len(query)
 	for _, keyword := range []string{"WHERE", "RETURN", "WITH", "ORDER", "LIMIT", "SKIP"} {
-		if idx := findKeywordIndex(query[matchIdx:], keyword); idx > 0 {
+		if idx := findKeywordIndex(ctx, query[matchIdx:], keyword); idx > 0 {
 			if matchIdx+idx < end {
 				end = matchIdx + idx
 			}
@@ -157,45 +170,21 @@ func extractMatchClause(query string) string {
 }
 
 func countRelationshipPatterns(s string) int {
-	inQuote := false
-	quoteChar := byte(0)
 	count := 0
-
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-
-		if (c == '\'' || c == '"') && !isBackslashEscaped(s, i) {
-			if !inQuote {
-				inQuote = true
-				quoteChar = c
-			} else if c == quoteChar {
-				inQuote = false
-			}
+	for from := 0; from < len(s); {
+		_, close := readRelationshipBracket(s, from, requireClosedRelationship)
+		if close < 0 {
+			break
 		}
-		if inQuote {
-			continue
-		}
-
-		if c != '[' {
-			continue
-		}
-
-		// Relationship patterns are introduced by a preceding '-' (possibly with whitespace).
-		j := i - 1
-		for j >= 0 && isWhitespace(s[j]) {
-			j--
-		}
-		if j >= 0 && s[j] == '-' {
-			count++
-		}
+		count++
+		from = close + 1
 	}
-
 	return count
 }
 
 // detectMutualRelationship checks for (a)-[:T]->(b)-[:T]->(a) pattern
 func detectMutualRelationship(ctx context.Context, query string, info *PatternInfo) bool {
-	matchClause := extractMatchClause(query)
+	matchClause := extractMatchClause(ctx, query)
 	matchClause = strings.TrimSpace(matchClause)
 	if matchClause == "" {
 		return false
@@ -205,7 +194,7 @@ func detectMutualRelationship(ctx context.Context, query string, info *PatternIn
 	}
 
 	exec := &StorageExecutor{}
-	match := exec.parseTraversalPattern(ctx, matchClause)
+	match := exec.parseTraversalPatternStructure(ctx, matchClause)
 	if match == nil || !match.IsChained || len(match.Segments) != 2 {
 		return false
 	}
@@ -239,7 +228,7 @@ func detectMutualRelationship(ctx context.Context, query string, info *PatternIn
 
 // detectIncomingCountAgg checks for (x)<-[:T]-(y) ... count(y) pattern
 func detectIncomingCountAgg(ctx context.Context, query string, info *PatternInfo) bool {
-	startVar, relVar, relType, endVar, ok := parseDirectionalCountPattern(ctx, extractMatchClause(query), true)
+	startVar, relVar, relType, endVar, ok := parseDirectionalCountPattern(ctx, extractMatchClause(ctx, query), true)
 	if !ok {
 		return false
 	}
@@ -251,7 +240,7 @@ func detectIncomingCountAgg(ctx context.Context, query string, info *PatternInfo
 	countStarPattern := "COUNT(*)"
 
 	if (strings.Contains(upperQuery, countPattern) || strings.Contains(upperQuery, countStarPattern)) &&
-		isReturnNameCountShape(query, startVar, endVar) {
+		isReturnNameCountShape(ctx, query, startVar, endVar) {
 		info.Pattern = PatternIncomingCountAgg
 		info.StartVar = startVar
 		info.EndVar = endVar
@@ -266,7 +255,7 @@ func detectIncomingCountAgg(ctx context.Context, query string, info *PatternInfo
 
 // detectOutgoingCountAgg checks for (x)-[:T]->(y) ... count(y) pattern
 func detectOutgoingCountAgg(ctx context.Context, query string, info *PatternInfo) bool {
-	startVar, relVar, relType, endVar, ok := parseDirectionalCountPattern(ctx, extractMatchClause(query), false)
+	startVar, relVar, relType, endVar, ok := parseDirectionalCountPattern(ctx, extractMatchClause(ctx, query), false)
 	if !ok {
 		return false
 	}
@@ -276,7 +265,7 @@ func detectOutgoingCountAgg(ctx context.Context, query string, info *PatternInfo
 	upperQuery := upperASCII(query)
 	countPattern := "COUNT(" + upperASCII(endVar)
 
-	if strings.Contains(upperQuery, countPattern) && isReturnNameCountShape(query, startVar, endVar) {
+	if strings.Contains(upperQuery, countPattern) && isReturnNameCountShape(ctx, query, startVar, endVar) {
 		info.Pattern = PatternOutgoingCountAgg
 		info.StartVar = startVar
 		info.EndVar = endVar
@@ -289,41 +278,14 @@ func detectOutgoingCountAgg(ctx context.Context, query string, info *PatternInfo
 	return false
 }
 
-func isReturnNameCountShape(query string, startVar string, endVar string) bool {
-	returnIdx := findKeywordIndex(query, "RETURN")
-	if returnIdx < 0 {
-		return false
-	}
-
-	returnPart := strings.TrimSpace(query[returnIdx+6:])
-
-	// Strip ORDER BY / SKIP / LIMIT.
-	end := len(returnPart)
-	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if idx := findKeywordIndex(returnPart, keyword); idx >= 0 && idx < end {
-			end = idx
-		}
-	}
-	returnPart = strings.TrimSpace(returnPart[:end])
-	if returnPart == "" {
-		return false
-	}
-
-	parts := splitOutsideParens(returnPart, ',')
+func isReturnNameCountShape(ctx context.Context, query string, startVar string, endVar string) bool {
+	parts := returnShapeItems(ctx, query)
 	if len(parts) != 2 {
 		return false
 	}
 
-	left := strings.TrimSpace(parts[0])
-	right := strings.TrimSpace(parts[1])
-
-	// Handle "AS" aliases.
-	if asIdx := strings.Index(upperASCII(left), " AS "); asIdx > 0 {
-		left = strings.TrimSpace(left[:asIdx])
-	}
-	if asIdx := strings.Index(upperASCII(right), " AS "); asIdx > 0 {
-		right = strings.TrimSpace(right[:asIdx])
-	}
+	left := trimReturnItemAlias(parts[0])
+	right := trimReturnItemAlias(parts[1])
 
 	// Require "startVar.name" (the optimized executor currently uses the "name" property).
 	if !strings.EqualFold(left, startVar+".name") {
@@ -349,7 +311,7 @@ func parseDirectionalCountPattern(ctx context.Context, matchClause string, incom
 	}
 
 	exec := &StorageExecutor{}
-	match := exec.parseTraversalPattern(ctx, matchClause)
+	match := exec.parseTraversalPatternStructure(ctx, matchClause)
 	if match == nil || match.IsChained {
 		return "", "", "", "", false
 	}
@@ -370,50 +332,69 @@ func parseDirectionalCountPattern(ctx context.Context, matchClause string, incom
 	return match.StartNode.variable, match.Relationship.Variable, relType, match.EndNode.variable, true
 }
 
+// splitEdgeAggregationCall retains the existing first-open/last-close rule.
+func splitEdgeAggregationCall(u string) (function string, inner string, ok bool) {
+	open := strings.IndexByte(u, '(')
+	close := strings.LastIndexByte(u, ')')
+	if open <= 0 || close <= open {
+		return "", "", false
+	}
+	return u[:open], u[open+1 : close], true
+}
+
+// edgeAggregationProperty owns aggregate argument validation; empty-property policy stays at callers.
+func edgeAggregationProperty(function string, inner string, relVar string) (property string, valid bool) {
+	switch function {
+	case "COUNT":
+		if inner == "*" || strings.EqualFold(inner, relVar) {
+			return "", true
+		}
+		return "", false
+	case "SUM", "AVG", "MIN", "MAX":
+		wantPrefix := upperASCII(relVar) + "."
+		if !strings.HasPrefix(inner, wantPrefix) {
+			return "", false
+		}
+		return inner[len(wantPrefix):], true
+	default:
+		return "", false
+	}
+}
+
 // detectEdgePropertyAgg checks for avg(r.prop), sum(r.prop) patterns
-func detectEdgePropertyAgg(query string, info *PatternInfo) bool {
+func detectEdgePropertyAgg(ctx context.Context, query string, info *PatternInfo) bool {
 	// First, find relationship variable in MATCH
-	matchClause := extractMatchClause(query)
+	matchClause := extractMatchClause(ctx, query)
 	relVar := extractRelationshipVariable(matchClause)
 	if relVar == "" {
 		return false
 	}
 
 	exec := &StorageExecutor{}
-	returnIdx := findKeywordIndex(query, "RETURN")
+	returnIdx := findKeywordIndex(ctx, query, "RETURN")
 	if returnIdx < 0 {
 		return false
 	}
-	returnItems := exec.parseReturnItems(strings.TrimSpace(query[returnIdx+len("RETURN"):]))
+	returnItems := exec.parseReturnItems(ctx, strings.TrimSpace(query[returnIdx+len("RETURN"):]))
 	if len(returnItems) < 2 {
 		return false
 	}
 
 	for _, item := range returnItems[1:] {
-		expr, _ := parseProjectionExprAlias(item.expr)
+		expr := readProjectionItemSource(ctx, item.expr, projectionAdmitted).expression
 		u := upperASCII(strings.ReplaceAll(strings.TrimSpace(expr), " ", ""))
-		open := strings.IndexByte(u, '(')
-		close := strings.LastIndexByte(u, ')')
-		if open <= 0 || close <= open {
+		aggFunc, inner, ok := splitEdgeAggregationCall(u)
+		if !ok {
 			continue
 		}
-		aggFunc := lowerASCII(u[:open])
-		inner := u[open+1 : close]
 
-		if aggFunc == "count" {
-			if inner == "*" || strings.EqualFold(inner, upperASCII(relVar)) {
-				continue
-			}
+		propName, valid := edgeAggregationProperty(aggFunc, inner, relVar)
+		if !valid {
 			return false
 		}
-		if aggFunc != "sum" && aggFunc != "avg" && aggFunc != "min" && aggFunc != "max" {
-			return false
+		if aggFunc == "COUNT" {
+			continue
 		}
-		wantPrefix := upperASCII(relVar) + "."
-		if !strings.HasPrefix(inner, wantPrefix) {
-			return false
-		}
-		propName := inner[len(wantPrefix):]
 		if propName == "" {
 			return false
 		}
@@ -422,13 +403,13 @@ func detectEdgePropertyAgg(query string, info *PatternInfo) bool {
 		} else if !strings.EqualFold(info.AggProperty, propName) {
 			return false
 		}
-		info.AggFunctions = append(info.AggFunctions, aggFunc)
+		info.AggFunctions = append(info.AggFunctions, lowerASCII(aggFunc))
 	}
 
 	if info.AggProperty == "" {
 		return false
 	}
-	if !isReturnEdgePropertyAggNameShape(query, relVar, info.AggProperty) {
+	if !isReturnEdgePropertyAggNameShape(ctx, query, relVar, info.AggProperty) {
 		return false
 	}
 	info.Pattern = PatternEdgePropertyAgg
@@ -437,71 +418,48 @@ func detectEdgePropertyAgg(query string, info *PatternInfo) bool {
 	return true
 }
 
-func isReturnEdgePropertyAggNameShape(query string, relVar string, propName string) bool {
-	returnIdx := findKeywordIndex(query, "RETURN")
-	if returnIdx < 0 {
-		return false
-	}
-	returnPart := strings.TrimSpace(query[returnIdx+6:])
-
-	// Strip ORDER BY / SKIP / LIMIT.
-	end := len(returnPart)
-	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if idx := findKeywordIndex(returnPart, keyword); idx >= 0 && idx < end {
-			end = idx
-		}
-	}
-	returnPart = strings.TrimSpace(returnPart[:end])
-	if returnPart == "" {
-		return false
-	}
-
-	items := splitOutsideParens(returnPart, ',')
+func isReturnEdgePropertyAggNameShape(ctx context.Context, query string, relVar string, propName string) bool {
+	items := returnShapeItems(ctx, query)
 	if len(items) < 2 {
 		return false
 	}
 
-	first := strings.TrimSpace(items[0])
-	if asIdx := strings.Index(upperASCII(first), " AS "); asIdx > 0 {
-		first = strings.TrimSpace(first[:asIdx])
-	}
+	first := trimReturnItemAlias(items[0])
 	// Require "<var>.name" in first return position.
 	dot := strings.LastIndex(first, ".")
 	if dot < 0 || !strings.EqualFold(first[dot+1:], "name") {
 		return false
 	}
 
-	wantAggPrefix := upperASCII(relVar) + "."
 	wantAggProp := upperASCII(propName)
 
 	// Remaining items must be aggregations over relVar.prop (optionally plus count(r)).
 	for i := 1; i < len(items); i++ {
-		item := strings.TrimSpace(items[i])
-		if asIdx := strings.Index(upperASCII(item), " AS "); asIdx > 0 {
-			item = strings.TrimSpace(item[:asIdx])
-		}
+		item := trimReturnItemAlias(items[i])
 
 		u := upperASCII(strings.ReplaceAll(item, " ", ""))
 		switch {
 		case strings.HasPrefix(u, "COUNT(") && strings.HasSuffix(u, ")"):
-			// Allow COUNT(r) and COUNT(*).
-			inner := strings.TrimSuffix(strings.TrimPrefix(u, "COUNT("), ")")
-			if inner == "*" || strings.EqualFold(inner, relVar) {
-				continue
+			aggFunc, inner, ok := splitEdgeAggregationCall(u)
+			if !ok {
+				return false
 			}
-			return false
+			// Allow COUNT(r) and COUNT(*).
+			if _, valid := edgeAggregationProperty(aggFunc, inner, relVar); !valid {
+				return false
+			}
+			continue
 
 		case strings.HasPrefix(u, "SUM(") || strings.HasPrefix(u, "AVG(") || strings.HasPrefix(u, "MIN(") || strings.HasPrefix(u, "MAX("):
-			open := strings.IndexByte(u, '(')
-			close := strings.LastIndexByte(u, ')')
-			if open < 0 || close < 0 || close <= open+1 {
+			aggFunc, inner, ok := splitEdgeAggregationCall(u)
+			if !ok || inner == "" {
 				return false
 			}
-			inner := u[open+1 : close]
-			if !strings.HasPrefix(inner, wantAggPrefix) {
+			prop, valid := edgeAggregationProperty(aggFunc, inner, relVar)
+			if !valid {
 				return false
 			}
-			if !strings.EqualFold(inner[len(wantAggPrefix):], wantAggProp) {
+			if !strings.EqualFold(prop, wantAggProp) {
 				return false
 			}
 			continue
@@ -520,7 +478,7 @@ func isReturnEdgePropertyAggNameShape(query string, relVar string, propName stri
 func functionCallParenAt(text string, open int) bool {
 	end := open
 	start := end
-	for start > 0 && isIdentByte(text[start-1]) {
+	for start > 0 && cyphertext.NamePartAt(text, start-1) {
 		start--
 	}
 	if start == end {
@@ -540,19 +498,19 @@ func functionCallParenAt(text string, open int) bool {
 func extractNodeVariables(matchClause string) []string {
 	var vars []string
 	for i := 0; i < len(matchClause); i++ {
-		if matchClause[i] == '\'' || matchClause[i] == '"' {
+		if isCypherStringQuoteByte(matchClause[i]) {
 			i = skipQuotedSemanticText(matchClause, i) - 1
 			continue
 		}
 		if matchClause[i] == '{' {
-			if end := findMatchingDelimiter(matchClause, i, '{', '}'); end >= 0 {
+			if end := cyphertext.FindMatchingDelimiter(matchClause, i, '{', '}', cyphertext.OpeningDelimiter); end >= 0 {
 				i = end
 				continue
 			}
 		}
 		if dynamicLabelStartsAt(matchClause, i) {
 			// $(e): a dynamic label's expression, not a node.
-			if end := findMatchingDelimiter(matchClause, i+strings.IndexByte(matchClause[i:], '('), '(', ')'); end >= 0 {
+			if end := cyphertext.FindMatchingDelimiter(matchClause, i+strings.IndexByte(matchClause[i:], '('), '(', ')', cyphertext.OpeningDelimiter); end >= 0 {
 				i = end
 				continue
 			}
@@ -561,7 +519,7 @@ func extractNodeVariables(matchClause string) []string {
 			continue
 		}
 		j := i + 1
-		for j < len(matchClause) && isWhitespace(matchClause[j]) {
+		for j < len(matchClause) && cyphertext.IsWhitespaceAt(matchClause, j) {
 			j++
 		}
 		if _, _, subquery := subqueryExpressionKeywordAt(matchClause, j); subquery {
@@ -572,7 +530,7 @@ func extractNodeVariables(matchClause string) []string {
 			continue
 		}
 		if next < len(matchClause) {
-			for next < len(matchClause) && isWhitespace(matchClause[next]) {
+			for next < len(matchClause) && cyphertext.IsWhitespaceAt(matchClause, next) {
 				next++
 			}
 			if next < len(matchClause) && matchClause[next] != ':' && matchClause[next] != ')' && matchClause[next] != '{' && matchClause[next] != '$' {

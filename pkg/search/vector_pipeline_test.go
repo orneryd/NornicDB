@@ -3,6 +3,9 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -198,7 +201,7 @@ func TestVectorSearchPipeline_Timeout(t *testing.T) {
 		idx.Add(fmt.Sprintf("vec%d", i), vec)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 	defer cancel()
 
 	query := []float32{1, 0, 0, 0}
@@ -230,8 +233,8 @@ func TestBoundCandidateLimit(t *testing.T) {
 }
 
 func TestVectorSearchCandidates_UsesPipeline(t *testing.T) {
-	engine := storage.NewMemoryEngine()
-	svc := NewServiceWithDimensions(engine, 4)
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	svc := NewService(engine, 4, nil)
 
 	// Add test nodes
 	node1 := &storage.Node{
@@ -259,57 +262,48 @@ func TestVectorSearchCandidates_UsesPipeline(t *testing.T) {
 	assert.Greater(t, candidates[0].Score, 0.9)
 }
 
-func TestVectorSearchCandidates_AutoStrategyDefaultsToHNSW(t *testing.T) {
-	engine := storage.NewMemoryEngine()
-	svc := NewServiceWithDimensions(engine, 4)
-
-	for i := 0; i < 12; i++ {
-		node := &storage.Node{
-			ID:              storage.NodeID(fmt.Sprintf("node%d", i)),
-			ChunkEmbeddings: [][]float32{{float32(i % 4), float32((i + 1) % 4), 0, 0}},
-		}
-		require.NoError(t, svc.IndexNode(node))
+func TestVectorSearchCandidatesStrategySelection(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		bruteForce bool
+	}{
+		{name: "automatic strategy defaults to HNSW"},
+		{name: "CPU brute force threshold is opt-in", bruteForce: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.bruteForce {
+				t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "100")
+			}
+			engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+			svc := NewService(engine, 4, nil)
+			for i := 0; i < 12; i++ {
+				node := &storage.Node{
+					ID:              storage.NodeID(fmt.Sprintf("node%d", i)),
+					ChunkEmbeddings: [][]float32{{float32(i % 4), float32((i + 1) % 4), 0, 0}},
+				}
+				require.NoError(t, svc.IndexNode(node))
+			}
+			opts := DefaultSearchOptions()
+			opts.Limit = 10
+			candidates, err := svc.VectorSearchCandidates(context.Background(), []float32{1, 0, 0, 0}, opts)
+			require.NoError(t, err)
+			assert.GreaterOrEqual(t, len(candidates), 1)
+			if tc.bruteForce {
+				_, ok := svc.vectorPipeline.candidateGen.(*BruteForceCandidateGen)
+				require.True(t, ok)
+			} else {
+				requireHNSWReady(t, svc)
+				_, ok := svc.vectorPipeline.candidateGen.(*HNSWCandidateGen)
+				require.True(t, ok)
+			}
+		})
 	}
-
-	query := []float32{1, 0, 0, 0}
-	opts := DefaultSearchOptions()
-	opts.Limit = 10
-
-	candidates, err := svc.VectorSearchCandidates(context.Background(), query, opts)
-	require.NoError(t, err)
-	assert.GreaterOrEqual(t, len(candidates), 1)
-	_, ok := svc.vectorPipeline.candidateGen.(*HNSWCandidateGen)
-	require.True(t, ok)
-}
-
-func TestVectorSearchCandidates_CPUBruteForceThresholdOptIn(t *testing.T) {
-	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "100")
-	engine := storage.NewMemoryEngine()
-	svc := NewServiceWithDimensions(engine, 4)
-
-	for i := 0; i < 12; i++ {
-		node := &storage.Node{
-			ID:              storage.NodeID(fmt.Sprintf("node%d", i)),
-			ChunkEmbeddings: [][]float32{{float32(i % 4), float32((i + 1) % 4), 0, 0}},
-		}
-		require.NoError(t, svc.IndexNode(node))
-	}
-
-	query := []float32{1, 0, 0, 0}
-	opts := DefaultSearchOptions()
-	opts.Limit = 10
-
-	candidates, err := svc.VectorSearchCandidates(context.Background(), query, opts)
-	require.NoError(t, err)
-	assert.GreaterOrEqual(t, len(candidates), 1)
-	_, ok := svc.vectorPipeline.candidateGen.(*BruteForceCandidateGen)
-	require.True(t, ok)
 }
 
 func TestVectorSearchPipeline_UsesBruteForceWhenClusteredAndThresholdOptIn(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "50")
-	engine := storage.NewMemoryEngine()
-	svc := NewServiceWithDimensions(engine, 4)
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	svc := NewService(engine, 4, nil)
 
 	// Enable clustering and force it to cluster with a dataset below the CPU brute-force threshold.
 	svc.EnableClustering(nil, 2)
@@ -332,7 +326,7 @@ func TestVectorSearchPipeline_UsesBruteForceWhenClusteredAndThresholdOptIn(t *te
 }
 
 func TestFileStoreBruteForceCandidateGen_SearchAndCancel(t *testing.T) {
-	path := fmt.Sprintf("%s/vectors", t.TempDir())
+	path := filepath.Join(t.TempDir(), "vectors")
 	vfs, err := NewVectorFileStore(path, 3)
 	require.NoError(t, err)
 	defer vfs.Close()

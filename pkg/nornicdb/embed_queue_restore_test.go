@@ -1,6 +1,7 @@
 package nornicdb
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -17,12 +18,14 @@ type pendingReadEngine struct {
 	marked  []storage.NodeID
 }
 
-func (e *pendingReadEngine) FindNodeNeedingEmbedding() *storage.Node {
-	return &storage.Node{ID: e.pending}
+func (e *pendingReadEngine) FindNodeNeedingEmbedding(ctx context.Context) (*storage.Node, error) {
+	return &storage.Node{ID: e.pending}, nil
 }
-func (e *pendingReadEngine) GetNode(storage.NodeID) (*storage.Node, error) { return nil, e.getErr }
-func (e *pendingReadEngine) MarkNodeEmbedded(id storage.NodeID)            { e.marked = append(e.marked, id) }
-func (*pendingReadEngine) RefreshPendingEmbeddingsIndex() int              { return 0 }
+func (e *pendingReadEngine) GetNode(context.Context, storage.NodeID) (*storage.Node, error) {
+	return nil, e.getErr
+}
+func (e *pendingReadEngine) MarkNodeEmbedded(id storage.NodeID) { e.marked = append(e.marked, id) }
+func (*pendingReadEngine) RefreshPendingEmbeddingsIndex() int   { return 0 }
 
 func newHeldTestWorker(t *testing.T, engine storage.Engine) *EmbedWorker {
 	t.Helper()
@@ -35,11 +38,15 @@ func newHeldTestWorker(t *testing.T, engine storage.Engine) *EmbedWorker {
 // restore turning reads away must not drop it (#1020).
 func TestClaimNextNodeKeepsUnreadablePendingNode(t *testing.T) {
 	restoring := &pendingReadEngine{pending: "nornic:a", getErr: storage.ErrStorageRestoring}
-	require.Nil(t, newHeldTestWorker(t, restoring).claimNextNode())
+	node, err := newHeldTestWorker(t, restoring).claimNextNode()
+	require.Nil(t, node)
+	require.ErrorIs(t, err, storage.ErrStorageRestoring)
 	require.Empty(t, restoring.marked, "the node stays pending")
 
 	deleted := &pendingReadEngine{pending: "nornic:b", getErr: storage.ErrNotFound}
-	require.Nil(t, newHeldTestWorker(t, deleted).claimNextNode())
+	node, err = newHeldTestWorker(t, deleted).claimNextNode()
+	require.Nil(t, node)
+	require.NoError(t, err)
 	require.Equal(t, []storage.NodeID{"nornic:b"}, deleted.marked, "a deleted node leaves the pending index")
 }
 
@@ -47,11 +54,11 @@ func TestClaimNextNodeKeepsUnreadablePendingNode(t *testing.T) {
 // same way; a deleted one leaves the pending index.
 func TestMarkNodeEmbeddingFailedKeepsUnreadablePendingNode(t *testing.T) {
 	restoring := &pendingReadEngine{pending: "nornic:a", getErr: storage.ErrStorageRestoring}
-	newHeldTestWorker(t, restoring).markNodeEmbeddingFailed("nornic:a", errors.New("provider failed"))
+	newHeldTestWorker(t, restoring).markNodeEmbeddingFailed(t.Context(), "nornic:a", errors.New("provider failed"))
 	require.Empty(t, restoring.marked)
 
 	deleted := &pendingReadEngine{pending: "nornic:b", getErr: storage.ErrNotFound}
-	newHeldTestWorker(t, deleted).markNodeEmbeddingFailed("nornic:b", errors.New("provider failed"))
+	newHeldTestWorker(t, deleted).markNodeEmbeddingFailed(t.Context(), "nornic:b", errors.New("provider failed"))
 	require.Equal(t, []storage.NodeID{"nornic:b"}, deleted.marked)
 }
 

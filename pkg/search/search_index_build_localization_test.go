@@ -67,10 +67,10 @@ func TestSearchIndexBuildLocalizationDirectValidation(t *testing.T) {
 	err = NewCPUHNSWBuildAccelerator().Prepare(0, 0)
 	assertLocalizedSearchIndexBuildError(t, err, localization.MessageSearchHNSWGPUBuildDimensionInvalid, "invalid HNSW GPU build dimension 0")
 
-	err = (&Service{}).ensureGPUIndexSynced(nil, nil)
+	err = (&Service{lifecycleCtx: t.Context()}).ensureGPUIndexSynced(nil, nil)
 	assertLocalizedSearchIndexBuildError(t, err, localization.MessageSearchGPUNotEnabled, "gpu not enabled")
 
-	_, err = (&Service{}).getOrBuildIVFPQIndex(context.Background(), IVFPQProfile{}, nil)
+	_, err = (&Service{lifecycleCtx: t.Context()}).getOrBuildIVFPQIndex(context.Background(), IVFPQProfile{}, nil, nil)
 	assertLocalizedSearchIndexBuildError(t, err, localization.MessageSearchIVFPQVectorStoreUnavailable, "vector file store unavailable for IVFPQ build")
 }
 

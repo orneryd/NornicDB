@@ -1,6 +1,9 @@
 package search
 
-import "github.com/orneryd/nornicdb/pkg/envutil"
+import (
+	"github.com/orneryd/nornicdb/pkg/envutil"
+	"slices"
+)
 
 // LexicalSeedHint is compact build metadata derived directly from the BM25
 // inverted index. Rank preserves high-IDF selection order, while Signature is
@@ -101,4 +104,57 @@ func bm25SeedDocIDs(fulltext lexicalSeedProvider) []string {
 		perTerm = 1
 	}
 	return fulltext.LexicalSeedDocIDs(maxTerms, perTerm)
+}
+
+// bm25SeedEmbeddingIDs resolves ranked BM25 documents through the existing
+// index metadata. Cluster/PQ builders own embedding IDs, including named,
+// property and chunk embeddings, rather than full-text document IDs.
+// Live writes change the metadata under indexMu. Resolve these inputs before
+// expensive pipeline/model construction, without retaining its locks.
+func (s *Service) bm25SeedEmbeddingIDs(nodeIDs []string) []string {
+	s.indexMu.RLock()
+	defer s.indexMu.RUnlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ids := make([]string, 0, len(nodeIDs))
+	for _, nodeID := range nodeIDs {
+		chunks := s.nodeChunkVectors[nodeID]
+		if len(chunks) > 0 && chunks[0] == nodeMainVectorKey(nodeID) {
+			// Preserve the existing document anchor when it is indexed directly.
+			ids = append(ids, nodeMainVectorKey(nodeID))
+			continue
+		}
+		start := len(ids)
+		ids = append(ids, chunks...)
+		for _, id := range s.nodeNamedVector[nodeID] {
+			ids = append(ids, id)
+		}
+		for _, id := range s.nodePropVector[nodeID] {
+			ids = append(ids, id)
+		}
+		if len(ids) == start {
+			ids = append(ids, nodeMainVectorKey(nodeID))
+		}
+		// Map iteration must not change ranked construction order across backends.
+		slices.Sort(ids[start:])
+	}
+	return ids
+}
+
+// vectorBuildSeeds are the lexical inputs of ANN construction during pipeline
+// creation. Pipeline creation snapshots the node metadata under indexMu
+// before taking pipelineMu and passes those inputs down.
+type vectorBuildSeeds struct {
+	compressedIDs []string // IVF-PQ build seeds; nil unless compressed quality
+}
+
+func (s *Service) pipelineBuildSeeds() vectorBuildSeeds {
+	s.mu.RLock()
+	fulltext := s.fulltext()
+	s.mu.RUnlock()
+	var seeds vectorBuildSeeds
+	if ANNQualityFromEnv() == ANNQualityCompressed {
+		seeds.compressedIDs = s.bm25SeedEmbeddingIDs(bm25SeedDocIDs(fulltext))
+	}
+	return seeds
 }

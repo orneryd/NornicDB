@@ -1,6 +1,9 @@
 package storage
 
 import (
+	"context"
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"sync"
 	"testing"
@@ -11,7 +14,7 @@ import (
 func TestMonster531ConcurrentCompositeUnique(t *testing.T) {
 	for _, explicit := range []bool{false, true} {
 		t.Run(fmt.Sprintf("explicit=%t", explicit), func(t *testing.T) {
-			engine, err := NewBadgerEngine(t.TempDir())
+			engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, engine.Close()) })
 			require.NoError(t, engine.GetSchemaForNamespace("test").AddConstraint(Constraint{Name: "cu1", Type: ConstraintUnique, Label: "CU", Properties: []string{"a", "b"}}))
@@ -25,14 +28,14 @@ func TestMonster531ConcurrentCompositeUnique(t *testing.T) {
 						defer writers.Done()
 						node := &Node{ID: NodeID(fmt.Sprintf("test:%d-%d", iteration, writer)), Labels: []string{"CU"}, Properties: map[string]interface{}{"a": int64(iteration), "b": int64(1)}}
 						if explicit {
-							transaction, err := engine.BeginTransaction()
+							transaction, err := engine.BeginTransaction(t.Context())
 							if err != nil {
 								results <- err
 								return
 							}
 							defer transaction.Rollback()
 							<-start
-							_, err = transaction.CreateNode(node)
+							_, err = transaction.CreateNode(t.Context(), node)
 							if err == nil {
 								err = transaction.Commit()
 							}
@@ -40,7 +43,7 @@ func TestMonster531ConcurrentCompositeUnique(t *testing.T) {
 							return
 						}
 						<-start
-						_, err := engine.CreateNode(node)
+						_, err := engine.CreateNode(t.Context(), node)
 						results <- err
 					}(writer)
 				}
@@ -60,7 +63,7 @@ func TestMonster531ConcurrentCompositeUnique(t *testing.T) {
 }
 
 func TestMonster531CompositeUniqueStorage(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	constraint := Constraint{Name: "cu1", Type: ConstraintUnique, Label: "CU", Properties: []string{"a", "b"}}
@@ -69,41 +72,41 @@ func TestMonster531CompositeUniqueStorage(t *testing.T) {
 	node := func(id string, first, second interface{}) *Node {
 		return &Node{ID: NodeID(id), Labels: []string{"CU"}, Properties: map[string]interface{}{"a": first, "b": second}}
 	}
-	_, err = engine.CreateNode(node("test:first", int64(1), "two"))
+	_, err = engine.CreateNode(t.Context(), node("test:first", int64(1), "two"))
 	require.NoError(t, err)
-	_, err = engine.CreateNode(node("test:duplicate", float64(1), "two"))
+	_, err = engine.CreateNode(t.Context(), node("test:duplicate", float64(1), "two"))
 	var violation *ConstraintViolationError
 	require.ErrorAs(t, err, &violation)
 	require.Equal(t, ConstraintUnique, violation.Type)
-	_, err = engine.CreateNode(node("other:first", int64(1), "two"))
+	_, err = engine.CreateNode(t.Context(), node("other:first", int64(1), "two"))
 	require.NoError(t, err)
-	_, err = engine.CreateNode(node("test:string", "1", "two"))
+	_, err = engine.CreateNode(t.Context(), node("test:string", "1", "two"))
 	require.NoError(t, err)
-	_, err = engine.CreateNode(node("test:null1", int64(1), nil))
+	_, err = engine.CreateNode(t.Context(), node("test:null1", int64(1), nil))
 	require.NoError(t, err)
-	_, err = engine.CreateNode(node("test:null2", int64(1), nil))
+	_, err = engine.CreateNode(t.Context(), node("test:null2", int64(1), nil))
 	require.NoError(t, err)
-	require.NoError(t, ValidateConstraintOnCreationForEngine(NewNamespacedEngine(engine, "test"), constraint))
+	require.NoError(t, ValidateConstraintOnCreationForEngine(context.Background(), NewNamespacedEngine(engine, "test"), constraint))
 
-	transaction, err := engine.BeginTransaction()
+	transaction, err := engine.BeginTransaction(t.Context())
 	require.NoError(t, err)
 	defer transaction.Rollback()
-	_, err = transaction.CreateNode(node("test:tx_duplicate", int64(1), "two"))
+	_, err = transaction.CreateNode(t.Context(), node("test:tx_duplicate", int64(1), "two"))
 	require.ErrorAs(t, err, &violation)
 	require.Equal(t, ConstraintUnique, violation.Type)
-	_, err = transaction.CreateNode(node("test:pending1", "a b", "c"))
+	_, err = transaction.CreateNode(t.Context(), node("test:pending1", "a b", "c"))
 	require.NoError(t, err)
-	_, err = transaction.CreateNode(node("test:pending2", "a", "b c"))
+	_, err = transaction.CreateNode(t.Context(), node("test:pending2", "a", "b c"))
 	require.NoError(t, err)
-	_, err = transaction.CreateNode(node("test:pending_duplicate", "a b", "c"))
+	_, err = transaction.CreateNode(t.Context(), node("test:pending_duplicate", "a b", "c"))
 	require.ErrorAs(t, err, &violation)
 	require.Equal(t, ConstraintUnique, violation.Type)
-	_, err = transaction.CreateNode(node("test:pending_null1", nil, "c"))
+	_, err = transaction.CreateNode(t.Context(), node("test:pending_null1", nil, "c"))
 	require.NoError(t, err)
-	_, err = transaction.CreateNode(node("test:pending_null2", nil, "c"))
+	_, err = transaction.CreateNode(t.Context(), node("test:pending_null2", nil, "c"))
 	require.NoError(t, err)
 	require.NoError(t, transaction.Rollback())
-	_, err = engine.GetNode("test:pending1")
+	_, err = engine.GetNode(t.Context(), "test:pending1")
 	require.Error(t, err)
 }
 
@@ -116,8 +119,7 @@ func TestMonster531CompositeUniqueStorage(t *testing.T) {
 // See docs/plans/consumer-pinned-error-contract-plan.md §2.3. Do not relax
 // this test without coordinating with known consumers.
 func TestRefreshUniqueConstraint_KeepsPrefixedIDs_UnderNamespacedEngine(t *testing.T) {
-	inner := NewMemoryEngine()
-	t.Cleanup(func() { _ = inner.Close() })
+	inner := newTestMemoryEngine(t)
 
 	const namespace = "tenant_a"
 	ns := NewNamespacedEngine(inner, namespace)
@@ -134,7 +136,7 @@ func TestRefreshUniqueConstraint_KeepsPrefixedIDs_UnderNamespacedEngine(t *testi
 
 	// Drive through the namespaced wrapper so the storage ID acquires the
 	// namespace prefix the way real consumers do — NOT via the bare engine.
-	_, err := ns.CreateNode(&Node{
+	_, err := ns.CreateNode(t.Context(), &Node{
 		ID:         "n-1",
 		Labels:     []string{"T"},
 		Properties: map[string]any{"uid": "abc-123"},
@@ -144,7 +146,7 @@ func TestRefreshUniqueConstraint_KeepsPrefixedIDs_UnderNamespacedEngine(t *testi
 	// 2. Force the namespace-aware rebuild path. Pre-fix, this populated
 	//    the cache with unprefixed IDs because AllNodes-via-the-namespaced-
 	//    engine returns user-prefix-stripped nodes.
-	require.NoError(t, RefreshUniqueConstraintValuesForEngine(ns, schema))
+	require.NoError(t, RefreshUniqueConstraintValuesForEngine(context.Background(), ns, schema))
 
 	// 3. The cache must hold the storage-prefixed ID. CheckUniqueConstraint
 	//    against the SAME node's storage ID must NOT raise a violation —
@@ -152,10 +154,10 @@ func TestRefreshUniqueConstraint_KeepsPrefixedIDs_UnderNamespacedEngine(t *testi
 	storageID := EnsureNodeIDDatabasePrefixForEngine(ns, "n-1")
 	require.NoError(
 		t,
-		schema.CheckUniqueConstraint("T", "uid", "abc-123", storageID),
+		schema.CheckUniqueConstraint(context.Background(), "T", "uid", "abc-123", storageID),
 		"false UNIQUE on the matched node itself: see consumer-pinned-error-contract-plan.md §2.3",
 	)
 
 	// 4. A different storage ID claiming the same value MUST still violate.
-	require.Error(t, schema.CheckUniqueConstraint("T", "uid", "abc-123", NodeID(namespace+":n-2")))
+	require.Error(t, schema.CheckUniqueConstraint(context.Background(), "T", "uid", "abc-123", NodeID(namespace+":n-2")))
 }

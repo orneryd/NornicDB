@@ -193,7 +193,7 @@ func TestConstraintViolationStatusAndRolledBackCommit(t *testing.T) {
 	_, err = exec.Execute(ctx, "COMMIT", nil)
 	require.Error(t, err)
 	require.True(t, nornicerrors.IsCommitRolledBack(err))
-	code, message := nornicerrors.Neo4jCommitStatus(err)
+	code, message := nornicerrors.Neo4jStatus(err)
 	require.Equal(t, nornicerrors.ConstraintValidationFailed, code)
 	require.Contains(t, message, "commit failed: constraint violation")
 
@@ -225,9 +225,9 @@ func TestMergeUniqueConflictIsRetrySafe(t *testing.T) {
 		"MERGE (u:U {n: 1}) SET u = {k: 5, n: 1}":               false,
 		"MERGE (u:U {n: 1}) SET u.`k` = 5":                      false,
 	} {
-		require.Equal(t, want, MergeUniqueConflictIsRetrySafe([]CommitStatement{{Query: statement, Params: params}}, violation), statement)
+		require.Equal(t, want, MergeUniqueConflictIsRetrySafe(t.Context(), []CommitStatement{{Query: statement, Params: params}}, violation), statement)
 	}
-	require.False(t, MergeUniqueConflictIsRetrySafe([]CommitStatement{{Query: "MERGE (u:U {k: 7})"}}, stderrors.New("other")))
+	require.False(t, MergeUniqueConflictIsRetrySafe(t.Context(), []CommitStatement{{Query: "MERGE (u:U {k: 7})"}}, stderrors.New("other")))
 
 	// Only writes that can reach the violated label count, and only MERGE
 	// keys on that label (#961). A node its own MERGE created has exactly the
@@ -249,7 +249,7 @@ func TestMergeUniqueConflictIsRetrySafe(t *testing.T) {
 		"MERGE (v:V {id: $id}) SET v.id = $id":                                                            true,
 		"MERGE (v:V {id: $id})-[:R {id: $other}]->(w:W {id: 'x'}) ON CREATE SET w.id = 'y', v.name = 'n'": true,
 	} {
-		require.Equal(t, want, MergeUniqueConflictIsRetrySafe([]CommitStatement{{Query: statement, Params: versionParams}}, versionViolation), statement)
+		require.Equal(t, want, MergeUniqueConflictIsRetrySafe(t.Context(), []CommitStatement{{Query: statement, Params: versionParams}}, versionViolation), statement)
 	}
 
 	// The write shape is decided by the statement's clauses, not by keywords:
@@ -267,9 +267,9 @@ func TestMergeUniqueConflictIsRetrySafe(t *testing.T) {
 		"LOAD CSV FROM 'file:///x.csv' AS row MERGE (o:O {h: row[0]})":                false,
 		"MATCH (n) RETURN n":                                                          false,
 	} {
-		require.Equal(t, want, IsRetrySafeMergeCommitQuery(analyzeQuery(statement)), statement)
+		require.Equal(t, want, IsRetrySafeMergeCommitQuery(t.Context(), analyzeQuery(statement)), statement)
 	}
-	require.False(t, IsRetrySafeMergeCommitQuery(nil))
+	require.False(t, IsRetrySafeMergeCommitQuery(t.Context(), nil))
 }
 
 // TestErrorClassesMatchNeo4j covers the #657 error-class cases, each as Neo4j

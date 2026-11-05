@@ -2,6 +2,8 @@ package search
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -14,7 +16,7 @@ import (
 func TestVectorQueryRelationshipsNeo4jScale(t *testing.T) {
 	t.Parallel()
 
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 	for id, embedding := range map[string][]float32{"zero": {0, 0}, "same": {1, 0}, "opposite": {-1, 0}} {
 		require.NoError(t, svc.IndexEdge(&storage.Edge{
 			ID: storage.EdgeID(id), StartNode: "a", EndNode: "b", Type: "R",
@@ -37,7 +39,7 @@ func TestVectorQueryRelationshipsNeo4jScale(t *testing.T) {
 func TestVectorQueryRelationshipsExactOrderOnNearTies(t *testing.T) {
 	t.Parallel()
 
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
+	svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3, nil)
 	for id, embedding := range map[string][]float32{
 		"ranked-first": {-0.23, -0.64, 0.09},
 		"scored-first": {-0.3818, -1.0624, 0.1494},

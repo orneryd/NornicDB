@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -53,7 +54,7 @@ func (e *StorageExecutor) parseShortestPathMatch(ctx context.Context, body strin
 	}
 	pattern := strings.TrimSpace(body)
 	where := ""
-	if index := topLevelKeywordIndex(pattern, "WHERE"); index >= 0 {
+	if index := topLevelKeywordIndex(ctx, pattern, "WHERE"); index >= 0 {
 		where = strings.TrimSpace(pattern[index+len("WHERE"):])
 		pattern = strings.TrimSpace(pattern[:index])
 	}
@@ -77,12 +78,24 @@ func (e *StorageExecutor) parseShortestPathMatch(ctx context.Context, body strin
 		return nil, false, nil
 	}
 	funcName, inner, _, _ := extractShortestPathCall(call)
-	if selector, predicate, terms, ok := splitPathSelectorTerm(where); ok {
+	if selector, predicate, terms, ok := splitPathSelectorTerm(ctx, where); ok {
 		return e.parseSelectedPathMatchContext(ctx, inner, pathVariable, others, selector, predicate, terms)
 	}
 	startPattern, endPattern, ok := shortestPathEndpointPatterns(inner)
-	traversal := e.parseTraversalPattern(ctx, inner)
-	if !ok || traversal == nil || traversal.IsChained {
+	if !ok {
+		return nil, true, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "ShortestPathSingleRelationship",
+			localization.CypherMatchingShortestPathSingleRelationship(funcName))
+	}
+	// Planning reads only endpoint syntax. Their property expressions belong
+	// to shortestPathEndpointPairs, after the incoming row is bound.
+	startHead, _ := splitNodePatternProperties(startPattern)
+	endHead, _ := splitNodePatternProperties(endPattern)
+	relationship := inner[len(startPattern) : len(inner)-len(endPattern)]
+	traversal := e.parseTraversalPatternStructure(ctx, "("+startHead+")"+relationship+"("+endHead+")")
+	if err := getExpressionFailure(ctx); err != nil {
+		return nil, true, err
+	}
+	if traversal == nil || traversal.IsChained {
 		return nil, true, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "ShortestPathSingleRelationship",
 			localization.CypherMatchingShortestPathSingleRelationship(funcName))
 	}
@@ -114,7 +127,7 @@ func (e *StorageExecutor) parseShortestPathMatch(ctx context.Context, body strin
 	}
 	traversal.PathVariable = m.pathVariable
 	var endpointTerms, pathTerms []string
-	for _, term := range splitTopLevelAndConjuncts(where) {
+	for _, term := range splitTopLevelAndConjuncts(ctx, where) {
 		if term = strings.TrimSpace(term); term == "" {
 			continue
 		}
@@ -133,7 +146,7 @@ func (e *StorageExecutor) parseShortestPathMatch(ctx context.Context, body strin
 		}
 		return nil, true, errSelectedPathPattern(inner)
 	}
-	m.setOthersVariables()
+	m.setOthersVariables(ctx)
 	return m, true, nil
 }
 
@@ -150,10 +163,10 @@ func shortestPathPlanContext(ctx context.Context, pattern, startPattern, endPatt
 }
 
 // setOthersVariables lists the variables the clause's other patterns bind.
-func (m *shortestPathMatch) setOthersVariables() {
+func (m *shortestPathMatch) setOthersVariables(ctx context.Context) {
 	for _, part := range m.others {
-		m.othersVariables = append(m.othersVariables, extractNodeVariables(matchPatternStructure(part))...)
-		m.othersVariables = append(m.othersVariables, extractRelationshipVariables(matchPatternStructure(part))...)
+		m.othersVariables = append(m.othersVariables, extractNodeVariables(matchPatternStructure(ctx, part))...)
+		m.othersVariables = append(m.othersVariables, extractRelationshipVariables(matchPatternStructure(ctx, part))...)
 		if variable := extractPathAssignmentVariable(part); variable != "" {
 			m.othersVariables = append(m.othersVariables, variable)
 		}
@@ -282,7 +295,7 @@ func (e *StorageExecutor) pipelineApplyShortestPathMatch(ctx context.Context, ro
 			found += len(paths)
 		}
 		if optional && found == 0 {
-			out = append(out, m.unmatchedRow(row))
+			out = append(out, m.unmatchedRow(ctx, row))
 		}
 	}
 	return out, nil
@@ -308,14 +321,14 @@ func (e *StorageExecutor) shortestPathBases(ctx context.Context, m *shortestPath
 
 // unmatchedRow is an OPTIONAL MATCH's row for an input row that matches
 // nothing: the clause's new variables are null.
-func (m *shortestPathMatch) unmatchedRow(row pipelineRow) pipelineRow {
+func (m *shortestPathMatch) unmatchedRow(ctx context.Context, row pipelineRow) pipelineRow {
 	names := append([]string{m.startVariable, m.endVariable, m.pathVariable}, m.othersVariables...)
 	if m.traversal != nil {
 		names = append(names, m.traversal.Relationship.Variable)
 	}
 	if m.pattern != "" {
-		names = append(names, extractNodeVariables(matchPatternStructure(m.pattern))...)
-		names = append(names, extractRelationshipVariables(matchPatternStructure(m.pattern))...)
+		names = append(names, extractNodeVariables(matchPatternStructure(ctx, m.pattern))...)
+		names = append(names, extractRelationshipVariables(matchPatternStructure(ctx, m.pattern))...)
 	}
 	bound := make(pipelineRow, len(row)+len(names))
 	for name, value := range row {
@@ -400,34 +413,40 @@ func errBoundShortestRelationships(function string) error {
 
 // validateShortestCallBindings checks calls against the incoming semantic
 // scope. Subqueries are checked by their own scope walk, and selector calls
-// inserted by the rewrite have the selector's equality semantics instead.
-func validateShortestCallBindings(text string, scope matchSemanticScope) error {
+// inserted by the rewrite have the selector's equality semantics instead. ctx
+// is the caller's lifetime: a canceled pattern read returns its error rather
+// than reading as "not a pattern".
+func validateShortestCallBindings(ctx context.Context, text string, scope matchSemanticScope) error {
 	if indexASCIIFold(text, "shortestpath") < 0 {
 		return nil
 	}
-	if where := topLevelKeywordIndex(text, "WHERE"); where >= 0 {
-		if _, _, _, selected := splitPathSelectorTerm(strings.TrimSpace(text[where+len("WHERE"):])); selected {
+	if where := topLevelKeywordIndex(ctx, text, "WHERE"); where >= 0 {
+		if _, _, _, selected := splitPathSelectorTerm(ctx, strings.TrimSpace(text[where+len("WHERE"):])); selected {
 			return nil
 		}
 	}
 	text = maskSubqueryBodies(text)
 	for at := 0; at < len(text); at++ {
-		if text[at] == '\'' || text[at] == '"' || text[at] == '`' {
+		if isCypherQuoteByte(text[at]) {
 			at = skipCypherQuotedText(text, at, text[at]) - 1
 			continue
 		}
-		if !isIdentStartByte(text[at]) || !functionNameStartsAt(text, at) || at > 0 && text[at-1] == '$' {
+		if !cyphertext.NameStartAt(text, at) || !functionNameStartsAt(text, at) || at > 0 && text[at-1] == '$' {
 			continue
 		}
 		end := at + 1
-		for end < len(text) && isIdentByte(text[end]) {
-			end++
-		}
+		end = cyphertext.NamePartEnd(text, end)
 		word := text[at:end]
 		if equalFoldASCII(word, "shortestPath") || equalFoldASCII(word, "allShortestPaths") {
 			_, pattern, index, ok := extractShortestPathCall(text[at:])
 			if ok && index == 0 {
-				if items, ok := parsePathPatternItems(pattern, false); ok && len(items) == 3 && items[1].kind == pathPatternRelationship {
+				items, patternOK := parsePathPatternItemsContext(ctx, pattern, false)
+				if err := ctx.Err(); err != nil {
+					// A canceled read is not "not a pattern": the caller's
+					// own error ends the statement.
+					return err
+				}
+				if patternOK && len(items) == 3 && items[1].kind == pathPatternRelationship {
 					if items[0].variable != "" && items[0].variable == items[2].variable && items[1].min <= 1 {
 						return errShortestCommonEndpoints()
 					}

@@ -70,6 +70,81 @@ func TestCallDbInfoExtended(t *testing.T) {
 	}
 }
 
+// TestCallDbInfoWithoutIdentityMetadata pins the null identity and date
+// columns of a manager that supplies no administrative identity, and that
+// db.info() and dbms.info() agree about the columns they share.
+func TestCallDbInfoWithoutIdentityMetadata(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	exec := NewStorageExecutor(store)
+	exec.SetDatabaseManager(newMockDatabaseManager(t))
+	ctx := context.Background()
+	_, err := exec.storage.CreateNode(t.Context(), &storage.Node{ID: "n1", Labels: []string{"A"}})
+	require.NoError(t, err)
+	require.NoError(t, exec.storage.CreateEdge(t.Context(), &storage.Edge{ID: "e1", StartNode: "n1", EndNode: "n1", Type: "SELF"}))
+
+	result, err := exec.Execute(ctx, `CALL db.info()`, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"id", "name", "creationDate", "nodeCount", "relationshipCount"}, result.Columns)
+	require.Equal(t, [][]interface{}{{nil, "test", nil, int64(1), int64(1)}}, result.Rows)
+
+	result, err = exec.Execute(ctx, `CALL dbms.info()`, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"id", "name", "creationDate"}, result.Columns)
+	require.Equal(t, [][]interface{}{{nil, "system", nil}}, result.Rows)
+}
+
+// TestDbInfoUsesSelectedDatabase pins that db.info() reports the database the
+// statement selects, not the executor's own namespace, and counts its rows.
+func TestDbInfoUsesSelectedDatabase(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(baseStore, "own_db")
+	exec := NewStorageExecutor(store)
+	ctx := context.WithValue(context.Background(), ctxKeyUseDatabase, "selected_db")
+
+	result, err := exec.Execute(ctx, `CALL db.info()`, nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{nil, "selected_db", nil, int64(0), int64(0)}}, result.Rows)
+}
+
+// TestInfoCreationDateIsUTCTimestamp pins the creation date format both
+// procedures project: UTC, RFC 3339 with nanoseconds, even for a local time.
+func TestInfoCreationDateIsUTCTimestamp(t *testing.T) {
+	zone := time.FixedZone("offset", 3*60*60)
+	createdAt := time.Date(2025, time.April, 5, 9, 7, 8, 123, zone)
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "db"))
+	exec.SetDatabaseManager(&fixedIdentityDatabaseManager{
+		mockDatabaseManager: newMockDatabaseManager(t),
+		databaseID:          "db-uuid",
+		createdAt:           createdAt,
+	})
+
+	result, err := exec.Execute(context.Background(), `CALL db.info() YIELD id, creationDate`, nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"db-uuid", createdAt.UTC().Format(time.RFC3339Nano)}}, result.Rows)
+	require.Equal(t, "2025-04-05T06:07:08.000000123Z", result.Rows[0][1])
+
+	result, err = exec.Execute(context.Background(), `CALL dbms.info() YIELD id, creationDate`, nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"db-uuid", createdAt.UTC().Format(time.RFC3339Nano)}}, result.Rows)
+}
+
+// fixedIdentityDatabaseManager supplies one persisted identity for every
+// database and the DBMS, whatever name is asked for.
+type fixedIdentityDatabaseManager struct {
+	*mockDatabaseManager
+	databaseID string
+	createdAt  time.Time
+}
+
+func (m *fixedIdentityDatabaseManager) DatabaseIdentity(string) (string, time.Time) {
+	return m.databaseID, m.createdAt
+}
+
+func (m *fixedIdentityDatabaseManager) ServerIdentity() (string, time.Time) {
+	return "server-uuid", m.createdAt
+}
+
 func TestCallDbInfoYield(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 
@@ -396,7 +471,7 @@ func TestDbStatsCollectionBoundsAndClones(t *testing.T) {
 	_, err = transactionExecutor.Execute(ctx, "RETURN $value AS value", map[string]interface{}{"value": "other-sensitive-parameter"})
 	require.NoError(t, err)
 	started := time.Now()
-	generation := exec.queryStatistics.start("RETURN 1", started)
+	generation := exec.queryStatistics.start("RETURN 1", started, false)
 	for invocation := 0; invocation < 101; invocation++ {
 		exec.queryStatistics.record(generation, "RETURN 1", started, time.Duration(invocation+1)*time.Microsecond, true)
 	}
@@ -452,7 +527,7 @@ func TestDbStatsConcurrentCollectionAndRetrieval(t *testing.T) {
 			for invocation := 0; invocation < 32; invocation++ {
 				query := fmt.Sprintf("RETURN %d", worker)
 				started := time.Now()
-				generation := exec.queryStatistics.start(query, started)
+				generation := exec.queryStatistics.start(query, started, false)
 				exec.queryStatistics.record(generation, query, started, time.Microsecond, true)
 				if _, err := exec.callQueryStatistics(ctx, "retrieve", []interface{}{"QUERIES"}); err != nil {
 					failures <- err
@@ -480,7 +555,7 @@ func TestDbStatsConcurrentCollectionAndRetrieval(t *testing.T) {
 	data = result.Rows[0][1].(map[string]interface{})
 	require.Equal(t, int64(1), data["invocations"].([]interface{})[0].(map[string]interface{})["elapsedExecutionTimeInUs"])
 	started := time.Now()
-	generation := exec.queryStatistics.start("RETURN stale", started)
+	generation := exec.queryStatistics.start("RETURN stale", started, false)
 	// A query that started before stop and clear is not recorded after them.
 	_, err = exec.callQueryStatistics(ctx, "stop", nil)
 	require.NoError(t, err)
@@ -488,11 +563,11 @@ func TestDbStatsConcurrentCollectionAndRetrieval(t *testing.T) {
 	require.NoError(t, err)
 	exec.queryStatistics.record(generation, "RETURN stale", started, time.Microsecond, true)
 	exec.queryStatistics.record(generation, "RETURN failed", started, time.Microsecond, false)
-	require.Zero(t, exec.queryStatistics.start(strings.Repeat("x", 65537), started))
+	require.Zero(t, exec.queryStatistics.start(strings.Repeat("x", 65537), started, false))
 	exec.queryStatistics.mu.Lock()
 	exec.queryStatistics.deadline = started.Add(-time.Second)
 	exec.queryStatistics.mu.Unlock()
-	require.Zero(t, exec.queryStatistics.start("RETURN expired", started))
+	require.Zero(t, exec.queryStatistics.start("RETURN expired", started, false))
 	result, err = exec.callQueryStatistics(ctx, "retrieve", nil)
 	require.NoError(t, err)
 	require.Empty(t, result.Rows)

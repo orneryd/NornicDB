@@ -17,7 +17,7 @@ func TestSetChainedClausesWithMapMerge(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{
+	_, err := store.CreateNode(t.Context(), &storage.Node{
 		ID:     "file-1",
 		Labels: []string{"File", "Node"},
 		Properties: map[string]interface{}{

@@ -2,50 +2,21 @@ package search
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"path/filepath"
 	"testing"
 
-	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
-func TestDisabledBM25IndexMethods(t *testing.T) {
-	idx := disabledBM25Index{}
-
-	idx.Index("doc-1", "hello world")
-	idx.Remove("doc-1")
-	idx.Clear()
-	idx.IndexBatch([]FulltextBatchEntry{{ID: "doc-2", Text: "batch text"}})
-
-	require.Nil(t, idx.Search("hello", 5))
-	require.Nil(t, idx.SearchAllowed("hello", 5, nil))
-	require.Nil(t, idx.PhraseSearch("hello world", 5))
-	require.Nil(t, idx.LexicalSeedDocIDs(3, 2))
-	require.Equal(t, 0, idx.Count())
-	require.False(t, idx.IsDirty())
-
-	doc, ok := idx.GetDocument("doc-1")
-	require.False(t, ok)
-	require.Empty(t, doc)
-	require.NoError(t, idx.Save("ignored"))
-	require.NoError(t, idx.SaveNoCopy("ignored"))
-	require.NoError(t, idx.Load("ignored"))
-}
-
 func TestServiceWarmAndIntrospectionHelpers(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { engine.Close() })
 
-	svc := NewServiceWithDimensions(engine, 4)
+	svc := NewService(engine, 4, nil)
 	require.Equal(t, "unknown", svc.CurrentStrategy())
 	require.Equal(t, 0, svc.FulltextDocCount())
-
-	svc.MarkWarmDone()
-	svc.MarkWarmDone()
-	select {
-	case <-svc.warmDone:
-	default:
-		t.Fatal("MarkWarmDone should close warmDone")
-	}
 
 	svc.setFulltext(nil)
 	require.Equal(t, 0, svc.FulltextDocCount())
@@ -53,23 +24,22 @@ func TestServiceWarmAndIntrospectionHelpers(t *testing.T) {
 	svc.MarkReadyDisabled()
 	require.True(t, svc.IsReady())
 	require.Equal(t, 0, svc.FulltextDocCount())
-	require.Equal(t, "v2", svc.BM25Engine())
 }
 
 func TestPropertyVectorHelpers(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { engine.Close() })
 
-	svc := NewServiceWithDimensions(engine, 4)
+	svc := NewService(engine, 4, nil)
 	svc.buildInProgress.Store(true)
 	svc.nodePropVector = map[string]map[string]string{
-		"node-1": {"title": "node-1-prop-title", "body": "node-1-prop-body"},
-		"node-2": {"title": "node-2-prop-title"},
+		"node-1": {"title": nodePropertyVectorKey("node-1", "title"), "body": nodePropertyVectorKey("node-1", "body")},
+		"node-2": {"title": nodePropertyVectorKey("node-2", "title")},
 	}
 
-	require.NoError(t, svc.vectorIndex.Add("node-1-prop-title", []float32{1, 0, 0, 0}))
-	require.NoError(t, svc.vectorIndex.Add("node-1-prop-body", []float32{0, 1, 0, 0}))
-	require.NoError(t, svc.vectorIndex.Add("node-2-prop-title", []float32{0, 0, 1, 0}))
+	require.NoError(t, svc.vectorIndex.Add(nodePropertyVectorKey("node-1", "title"), []float32{1, 0, 0, 0}))
+	require.NoError(t, svc.vectorIndex.Add(nodePropertyVectorKey("node-1", "body"), []float32{0, 1, 0, 0}))
+	require.NoError(t, svc.vectorIndex.Add(nodePropertyVectorKey("node-2", "title"), []float32{0, 0, 1, 0}))
 
 	require.Equal(t, 2, svc.CountPropertyVectorEntries("title"))
 	require.Equal(t, 1, svc.CountPropertyVectorEntries("body"))
@@ -88,14 +58,14 @@ func TestPropertyVectorHelpers(t *testing.T) {
 
 	(*Service)(nil).RemovePropertyVectorIndex("body")
 
-	liveSvc := NewServiceWithDimensions(engine, 4)
-	liveSvc.resultCache.Put("cached", &SearchResponse{Query: "cached"})
+	liveSvc := NewService(engine, 4, nil)
+	liveSvc.resultCache.Put(context.Background(), "cached", &SearchResponse{Query: "cached"})
 	liveSvc.nodePropVector = map[string]map[string]string{
-		"node-1": {"body": "node-1-prop-body"},
-		"node-2": {"title": "node-2-prop-title"},
+		"node-1": {"body": nodePropertyVectorKey("node-1", "body")},
+		"node-2": {"title": nodePropertyVectorKey("node-2", "title")},
 	}
-	require.NoError(t, liveSvc.vectorIndex.Add("node-1-prop-body", []float32{0, 1, 0, 0}))
-	require.NoError(t, liveSvc.vectorIndex.Add("node-2-prop-title", []float32{0, 0, 1, 0}))
+	require.NoError(t, liveSvc.vectorIndex.Add(nodePropertyVectorKey("node-1", "body"), []float32{0, 1, 0, 0}))
+	require.NoError(t, liveSvc.vectorIndex.Add(nodePropertyVectorKey("node-2", "title"), []float32{0, 0, 1, 0}))
 
 	liveSvc.RemovePropertyVectorIndex("body")
 	require.Nil(t, liveSvc.resultCache.Get("cached"))
@@ -107,14 +77,14 @@ func TestPropertyVectorHelpers(t *testing.T) {
 }
 
 func TestScoreVectorIDDotBranches(t *testing.T) {
-	svc := &Service{}
+	svc := &Service{lifecycleCtx: t.Context()}
 	score, ok := svc.scoreVectorIDDot([]float32{1, 0}, "missing")
 	require.False(t, ok)
 	require.Equal(t, 0.0, score)
 
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { engine.Close() })
-	svc = NewServiceWithDimensions(engine, 2)
+	svc = NewService(engine, 2, nil)
 	score, ok = svc.scoreVectorIDDot([]float32{1, 0}, "missing")
 	require.False(t, ok)
 	require.Equal(t, 0.0, score)
@@ -126,20 +96,20 @@ func TestScoreVectorIDDotBranches(t *testing.T) {
 }
 
 func TestIVFPQBackgroundPersistenceNoopBranches(t *testing.T) {
-	svc := &Service{}
+	svc := &Service{lifecycleCtx: t.Context()}
 	require.Empty(t, svc.ivfpqPersistenceBasePath("", ""))
 	require.Equal(t, "hnsw-path", svc.ivfpqPersistenceBasePath("vector-path", "hnsw-path"))
 	require.Equal(t, "vector-path", svc.ivfpqPersistenceBasePath("vector-path", ""))
 
 	svc.persistIVFPQBackground("", "")
-	svc.persistIVFPQBackground(t.TempDir()+"/vectors", "")
+	svc.persistIVFPQBackground(filepath.Join(t.TempDir(), "vectors"), "")
 	svc.ivfpqIndex = &IVFPQIndex{}
-	svc.persistIVFPQBackground(t.TempDir()+"/vectors", "")
+	svc.persistIVFPQBackground(filepath.Join(t.TempDir(), "vectors"), "")
 }
 
 func TestFilterByPropertiesDirect(t *testing.T) {
 	eng := newFilterTestEngine(t)
-	svc := NewService(eng)
+	svc := NewService(eng, DefaultVectorDimensions, nil)
 	ctx := context.Background()
 
 	makeNode(t, eng, "nornic:n1", []string{"Doc"}, map[string]any{"color": "blue", "tag": "keep"})

@@ -1,6 +1,7 @@
 package storage_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/cypher"
@@ -13,7 +14,7 @@ import (
 // parseDDLAndApply parses a DDL statement and applies it to the SchemaManager.
 func parseDDLAndApply(t *testing.T, sm *storage.SchemaManager, stmt string) {
 	t.Helper()
-	cmd, ok, err := cypher.ParseKnowledgePolicyDDL(stmt)
+	cmd, ok, err := cypher.ParseKnowledgePolicyDDL(t.Context(), stmt, cypher.RawSource)
 	require.NoError(t, err, "parse error for: %s", stmt)
 	require.True(t, ok, "not recognized as DDL: %s", stmt)
 
@@ -616,7 +617,7 @@ func TestE2E_ShowDecayProfiles(t *testing.T) {
 		visibilityThreshold: 0.10
 	}`)
 
-	cmd, ok, err := cypher.ParseKnowledgePolicyDDL(`SHOW DECAY PROFILES`)
+	cmd, ok, err := cypher.ParseKnowledgePolicyDDL(t.Context(), `SHOW DECAY PROFILES`, cypher.RawSource)
 	require.NoError(t, err)
 	require.True(t, ok)
 	_, isShow := cmd.(*cypher.ShowDecayProfilesCmd)
@@ -643,7 +644,7 @@ APPLY {
   WHEN n.score > 0 APPLY PROFILE 'p1'
 }`)
 
-	cmd, ok, err := cypher.ParseKnowledgePolicyDDL(`SHOW PROMOTION POLICIES`)
+	cmd, ok, err := cypher.ParseKnowledgePolicyDDL(t.Context(), `SHOW PROMOTION POLICIES`, cypher.RawSource)
 	require.NoError(t, err)
 	require.True(t, ok)
 	_, isShow := cmd.(*cypher.ShowPromotionPoliciesCmd)
@@ -721,11 +722,11 @@ APPLY {
     APPLY PROFILE 'reinforced_tier'
 }`)
 
-	def := sm.ExportDefinition()
+	def := schemaDefinitionForTest(t, sm)
 	require.NotNil(t, def)
 
 	sm2 := storage.NewSchemaManager()
-	require.NoError(t, sm2.ReplaceFromDefinition(def))
+	require.NoError(t, sm2.ReplaceFromDefinition(context.Background(), def))
 
 	bundles2, bindings2 := sm2.ShowDecayProfiles()
 	assert.Len(t, bundles2, 2)

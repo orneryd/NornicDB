@@ -19,8 +19,8 @@ import (
 func TestGh745_HTTPCompositeQueryIdentities(t *testing.T) {
 	server, authenticator := setupTestServer(t)
 	token := "Bearer " + getAuthToken(t, authenticator, "admin")
-	require.NoError(t, server.dbManager.CreateDatabase("identity_leaf"))
-	require.NoError(t, server.dbManager.CreateCompositeDatabase("identity_root", []multidb.ConstituentRef{
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "identity_leaf"}))
+	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "identity_root", []multidb.ConstituentRef{
 		{Alias: "leaf", DatabaseName: "identity_leaf", Type: "local", AccessMode: "read_write"},
 	}))
 	created := makeRequest(t, server, http.MethodPost, "/db/identity_leaf/tx/commit", map[string]any{
@@ -76,9 +76,9 @@ func TestGh745_HTTPCanonicalRemoteEntityIdentities(t *testing.T) {
 	target := &storage.Node{ID: "4:remote:m", Properties: map[string]interface{}{"name": "b"}}
 	edge := &storage.Edge{ID: "5:remote:r", StartNode: node.ID, EndNode: target.ID, Properties: map[string]interface{}{"name": "r"}}
 	response := &TransactionResponse{}
-	server.appendStatementResult(response, &cypher.ExecuteResult{
+	require.NoError(t, server.appendStatementResult(t.Context(), response, &cypher.ExecuteResult{
 		Columns: []string{"nodes", "edge"}, Rows: [][]interface{}{{[]*storage.Node{node, target}, edge}},
-	}, "coordinator", false, []string{"row", "graph"})
+	}, "coordinator", false, []string{"row", "graph"}))
 	data := response.Results[0].Data[0]
 	require.Equal(t, "4:remote:n", data.Meta[0].(map[string]interface{})["elementId"])
 	require.Equal(t, "4:remote:m", data.Meta[1].(map[string]interface{})["elementId"])
@@ -94,7 +94,8 @@ func TestGh745_HTTPElementIDUsesRequestDatabase(t *testing.T) {
 	node := &storage.Node{ID: "n1", Labels: []string{"EI"}, Properties: map[string]interface{}{"k": int64(1)}}
 	edge := &storage.Edge{ID: "e1", Type: "R", StartNode: "n1", EndNode: "n2", Properties: map[string]interface{}{}}
 
-	converted := s.convertRowToNeo4jFormat([]interface{}{node, edge}, "otherdb")
+	converted, projectionErr2 := s.convertRowToNeo4jFormat(t.Context(), []interface{}{node, edge}, "otherdb")
+	require.NoError(t, projectionErr2)
 	require.Len(t, converted, 2)
 
 	nodeMap, ok := converted[0].(map[string]interface{})
@@ -106,8 +107,10 @@ func TestGh745_HTTPElementIDUsesRequestDatabase(t *testing.T) {
 	require.Equal(t, edge.Properties, edgeMap)
 
 	// The row meta echoes the same canonical element id.
-	_, nodeMetadata := s.transactionHTTPValue(node, "otherdb")
-	_, edgeMetadata := s.transactionHTTPValue(edge, "otherdb")
+	_, nodeMetadata, projectionErr3 := s.transactionHTTPValue(t.Context(), node, "otherdb")
+	require.NoError(t, projectionErr3)
+	_, edgeMetadata, projectionErr4 := s.transactionHTTPValue(t.Context(), edge, "otherdb")
+	require.NoError(t, projectionErr4)
 	meta := append(nodeMetadata, edgeMetadata...)
 	require.Len(t, meta, 2)
 	nodeMeta, ok := meta[0].(map[string]interface{})
@@ -124,25 +127,26 @@ func TestGh745_HTTPCompositeElementIDUsesConstituentDatabase(t *testing.T) {
 	// A composite request's row values and meta must name the constituent
 	// that actually holds each entity (#745 §3), not the composite root.
 	server, _ := setupTestServer(t)
-	require.NoError(t, server.dbManager.CreateDatabase("cmp_745_a"))
-	require.NoError(t, server.dbManager.CreateDatabase("cmp_745_b"))
-	require.NoError(t, server.dbManager.CreateCompositeDatabase("cmp_745", []multidb.ConstituentRef{
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "cmp_745_a"}))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "cmp_745_b"}))
+	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "cmp_745", []multidb.ConstituentRef{
 		{Alias: "a", DatabaseName: "cmp_745_a", Type: "local", AccessMode: "read_write"},
 		{Alias: "b", DatabaseName: "cmp_745_b", Type: "local", AccessMode: "read_write"},
 	}))
 
 	storeA, err := server.dbManager.GetStorage("cmp_745.a")
 	require.NoError(t, err)
-	_, err = storeA.CreateNode(&storage.Node{ID: "cmp_745_a:n1", Labels: []string{"L"}, Properties: map[string]interface{}{"k": int64(1)}})
+	_, err = storeA.CreateNode(t.Context(), &storage.Node{ID: "cmp_745_a:n1", Labels: []string{"L"}, Properties: map[string]interface{}{"k": int64(1)}})
 	require.NoError(t, err)
-	_, err = storeA.CreateNode(&storage.Node{ID: "cmp_745_a:n2", Labels: []string{"L"}, Properties: map[string]interface{}{"k": int64(2)}})
+	_, err = storeA.CreateNode(t.Context(), &storage.Node{ID: "cmp_745_a:n2", Labels: []string{"L"}, Properties: map[string]interface{}{"k": int64(2)}})
 	require.NoError(t, err)
-	require.NoError(t, storeA.CreateEdge(&storage.Edge{ID: "cmp_745_a:e1", Type: "R", StartNode: "cmp_745_a:n1", EndNode: "cmp_745_a:n2", Properties: map[string]interface{}{}}))
+	require.NoError(t, storeA.CreateEdge(t.Context(), &storage.Edge{ID: "cmp_745_a:e1", Type: "R", StartNode: "cmp_745_a:n1", EndNode: "cmp_745_a:n2", Properties: map[string]interface{}{}}))
 
 	node := &storage.Node{ID: "cmp_745_a:n1", Labels: []string{"L"}, Properties: map[string]interface{}{"k": int64(1)}}
 	edge := &storage.Edge{ID: "cmp_745_a:e1", Type: "R", StartNode: "cmp_745_a:n1", EndNode: "cmp_745_a:n2", Properties: map[string]interface{}{}}
 
-	converted := server.convertRowToNeo4jFormat([]interface{}{node, edge}, "cmp_745")
+	converted, projectionErr5 := server.convertRowToNeo4jFormat(t.Context(), []interface{}{node, edge}, "cmp_745")
+	require.NoError(t, projectionErr5)
 	require.Len(t, converted, 2)
 	nodeMap, ok := converted[0].(map[string]interface{})
 	require.True(t, ok)
@@ -151,14 +155,17 @@ func TestGh745_HTTPCompositeElementIDUsesConstituentDatabase(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, edge.Properties, edgeMap)
 
-	_, nodeMetadata := server.transactionHTTPValue(node, "cmp_745")
-	_, edgeMetadata := server.transactionHTTPValue(edge, "cmp_745")
+	_, nodeMetadata, projectionErr6 := server.transactionHTTPValue(t.Context(), node, "cmp_745")
+	require.NoError(t, projectionErr6)
+	_, edgeMetadata, projectionErr7 := server.transactionHTTPValue(t.Context(), edge, "cmp_745")
+	require.NoError(t, projectionErr7)
 	meta := append(nodeMetadata, edgeMetadata...)
 	require.Equal(t, "4:cmp_745_a:cmp_745_a:n1", meta[0].(map[string]interface{})["elementId"])
 	require.Equal(t, "5:cmp_745_a:cmp_745_a:e1", meta[1].(map[string]interface{})["elementId"])
 
 	// An entity no constituent holds falls back to the request database.
 	stray := &storage.Node{ID: "nobody:n1", Labels: []string{"L"}}
-	_, strayMetadata := server.transactionHTTPValue(stray, "cmp_745")
+	_, strayMetadata, projectionErr8 := server.transactionHTTPValue(t.Context(), stray, "cmp_745")
+	require.NoError(t, projectionErr8)
 	require.Equal(t, "4:cmp_745:nobody:n1", strayMetadata[0].(map[string]interface{})["elementId"])
 }

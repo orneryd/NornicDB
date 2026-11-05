@@ -70,7 +70,7 @@ func TestNativeSearchRequestKeepsProviderSnapshot(t *testing.T) {
 			require.NoError(t, err)
 			seed := make([]float32, 1024)
 			seed[0] = 1
-			_, err = store.CreateNode(&storage.Node{ID: "snapshot-doc", Labels: []string{"Doc"}, Properties: map[string]any{"content": "alpha beta"}, ChunkEmbeddings: [][]float32{seed}})
+			_, err = store.CreateNode(t.Context(), &storage.Node{ID: "snapshot-doc", Labels: []string{"Doc"}, Properties: map[string]any{"content": "alpha beta"}, ChunkEmbeddings: [][]float32{seed}})
 			require.NoError(t, err)
 			require.NoError(t, server.db.BuildSearchIndexes(context.Background()))
 			old := &nativeRequestEmbedder{}

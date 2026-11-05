@@ -1,7 +1,10 @@
 package multidb
 
 import (
+	"context"
 	"testing"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -13,11 +16,11 @@ import (
 // read the database name see them (#683). Without them in the wrapped
 // engine, the namespace is "" and the label is counted.
 func TestSizeTrackingEnginePassesLabelCounterAndNamespace(t *testing.T) {
-	base := storage.NewMemoryEngine()
-	mgr, err := NewDatabaseManager(base, nil)
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	mgr, err := NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
 	defer mgr.Close()
-	require.NoError(t, mgr.CreateDatabase("tracked"))
+	require.NoError(t, mgr.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "tracked"}))
 	store, err := mgr.GetStorage("tracked")
 	require.NoError(t, err)
 	tracker, ok := store.(*sizeTrackingEngine)
@@ -25,23 +28,25 @@ func TestSizeTrackingEnginePassesLabelCounterAndNamespace(t *testing.T) {
 	require.Equal(t, "tracked", tracker.Namespace())
 
 	for _, id := range []storage.NodeID{"n1", "n2", "n3"} {
-		_, err := tracker.CreateNode(&storage.Node{ID: id, Labels: []string{"L"}})
+		_, err := tracker.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"L"}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, tracker.DeleteNode("n2"))
-	inner, ok := tracker.Engine.(interface{ NodeCountByLabel(string) (int64, error) })
+	require.NoError(t, tracker.DeleteNode(t.Context(), "n2"))
+	inner, ok := tracker.Engine.(interface {
+		NodeCountByLabel(context.Context, string) (int64, error)
+	})
 	require.True(t, ok)
-	want, err := inner.NodeCountByLabel("L")
+	want, err := inner.NodeCountByLabel(t.Context(), "L")
 	require.NoError(t, err)
 	require.EqualValues(t, 2, want)
-	count, err := tracker.NodeCountByLabel("L")
+	count, err := tracker.NodeCountByLabel(t.Context(), "L")
 	require.NoError(t, err)
 	require.Equal(t, want, count)
 
 	// A wrapped engine with neither capability.
 	plain := newSizeTrackingEngine(&sizeTrackingStreamingInner{Engine: tracker.Engine}, &DatabaseManager{}, "plain").(*sizeTrackingEngine)
 	require.Equal(t, "", plain.Namespace())
-	count, err = plain.NodeCountByLabel("L")
+	count, err = plain.NodeCountByLabel(t.Context(), "L")
 	require.NoError(t, err)
 	require.EqualValues(t, 2, count)
 }

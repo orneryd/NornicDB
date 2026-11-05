@@ -103,7 +103,7 @@ func TestProcedurePipelinePreservesTypedRowArguments(t *testing.T) {
 	var calls [][]interface{}
 	require.NoError(t, RegisterUserProcedure(
 		ProcedureSpec{Name: "custom.pipeline_entities", Mode: ProcedureModeRead, MinArgs: 3, MaxArgs: 3},
-		func(_ context.Context, _ *StorageExecutor, _ string, arguments []interface{}) (*ExecuteResult, error) {
+		func(readerCtx context.Context, _ *StorageExecutor, _ string, arguments []interface{}) (*ExecuteResult, error) {
 			calls = append(calls, arguments)
 			return &ExecuteResult{Columns: []string{"name"}, Rows: [][]interface{}{{arguments[0].(*storage.Node).Properties["name"]}}}, nil
 		},
@@ -272,7 +272,7 @@ func TestCallSubqueryRefreshesOuterNodeAfterWrite(t *testing.T) {
 			require.NoError(t, err)
 
 			if explicitTx {
-				_, err = exec.handleBegin()
+				_, err = exec.handleBegin(t.Context())
 				require.NoError(t, err)
 			}
 			result, err := exec.Execute(ctx, "MATCH (n:C648Refresh {id:'a'}) CALL (n) { SET n.y = 2 } RETURN n.y AS y", nil)
@@ -293,7 +293,7 @@ func TestCallSubqueryRefreshesOuterNodeAfterWrite(t *testing.T) {
 			require.Equal(t, []string{"y", "id"}, result.Columns)
 			require.Equal(t, [][]interface{}{{int64(4), "b"}}, result.Rows)
 			if explicitTx {
-				_, err = exec.handleCommit()
+				_, err = exec.handleCommit(context.Background())
 				require.NoError(t, err)
 			}
 		})

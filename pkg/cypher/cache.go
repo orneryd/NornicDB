@@ -3,7 +3,11 @@ package cypher
 
 import (
 	"container/list"
+	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -275,6 +279,7 @@ func (qc *QueryCache) Get(cypher string, params map[string]interface{}) (*Execut
 //	Safe to call concurrently from multiple goroutines.
 func (qc *QueryCache) Put(cypher string, params map[string]interface{}, result *ExecuteResult, ttl time.Duration) {
 	key := qc.cacheKey(cypher, params)
+	result = cacheOwnedResult(result)
 
 	qc.mu.Lock()
 	defer qc.mu.Unlock()
@@ -291,6 +296,18 @@ func (qc *QueryCache) Put(cypher string, params map[string]interface{}, result *
 	}
 
 	qc.moveToFront(key)
+}
+
+// cacheOwnedResult gives a persistent cache its own visible outer row window.
+// The caller may still own a larger allocation, so neither its hidden row
+// headers nor the shared row contents may be cleared during publication.
+func cacheOwnedResult(result *ExecuteResult) *ExecuteResult {
+	if result == nil {
+		return nil
+	}
+	owned := *result
+	owned.Rows = slices.Clone(result.Rows)
+	return &owned
 }
 
 // Invalidate clears all cached query results.
@@ -354,6 +371,7 @@ func (qc *QueryCache) Invalidate() {
 	// Clear entire cache on write operations
 	// Future optimization: smart invalidation based on labels/patterns
 	qc.cache = make(map[string]*cachedResult)
+	clear(qc.lruList)
 	qc.lruList = qc.lruList[:0]
 }
 
@@ -435,6 +453,7 @@ func (qc *QueryCache) evictOldest() {
 
 	oldest := qc.lruList[len(qc.lruList)-1]
 	delete(qc.cache, oldest)
+	qc.lruList[len(qc.lruList)-1] = ""
 	qc.lruList = qc.lruList[:len(qc.lruList)-1]
 }
 
@@ -552,7 +571,7 @@ func (sc *SmartQueryCache) observeEviction(reason string) {
 
 // Get retrieves a cached result (same as QueryCache).
 func (sc *SmartQueryCache) Get(cypher string, params map[string]interface{}) (*ExecuteResult, bool) {
-	return sc.get(resultCacheEntryKey(cypher, params))
+	return sc.get(resultCacheEntryKey(context.Background(), cypher, params))
 }
 
 func (sc *SmartQueryCache) get(key string) (*ExecuteResult, bool) {
@@ -609,7 +628,7 @@ func (sc *SmartQueryCache) getWithTraceForEmbedding(key string, generation uint6
 
 // PutWithLabels stores a result with associated labels for smart invalidation.
 func (sc *SmartQueryCache) PutWithLabels(cypher string, params map[string]interface{}, result *ExecuteResult, ttl time.Duration, labels []string) {
-	sc.putWithLabels(resultCacheEntryKey(cypher, params), result, ttl, labels)
+	sc.putWithLabels(resultCacheEntryKey(context.Background(), cypher, params), result, ttl, labels)
 }
 
 func (sc *SmartQueryCache) putWithLabels(key string, result *ExecuteResult, ttl time.Duration, labels []string) {
@@ -621,6 +640,7 @@ func (sc *SmartQueryCache) putWithLabelsAndTrace(key string, result *ExecuteResu
 }
 
 func (sc *SmartQueryCache) putWithLabelsAndTraceForEmbedding(key string, result *ExecuteResult, ttl time.Duration, labels []string, trace HotPathTrace, generation uint64) {
+	result = cacheOwnedResult(result)
 	entities := resultHasMaterializedEntities(result)
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
@@ -775,21 +795,12 @@ func extractLabelsFromQuery(cypher string) []string {
 		labels = append(labels, label)
 	}
 
-	inSingle := false
-	inDouble := false
 	for i := 0; i < len(cypher); i++ {
+		if end, quoted := skipCypherLexicalToken(cypher, i); quoted {
+			i = end - 1
+			continue
+		}
 		ch := cypher[i]
-		if ch == '\'' && !inDouble && !isBackslashEscaped(cypher, i) {
-			inSingle = !inSingle
-			continue
-		}
-		if ch == '"' && !inSingle && !isBackslashEscaped(cypher, i) {
-			inDouble = !inDouble
-			continue
-		}
-		if inSingle || inDouble {
-			continue
-		}
 
 		if ch != ':' {
 			continue
@@ -807,14 +818,13 @@ func extractLabelsFromQuery(cypher string) []string {
 		if labelExpressionWidensMatch(first) || dynamicLabelStartsAt(cypher, start) {
 			return nil
 		}
-		if first < 'A' || first > 'Z' {
+		if !cyphertext.NameStartAt(cypher, start) {
 			continue
 		}
 
 		end := start + 1
 		for end < len(cypher) {
-			c := cypher[end]
-			if isIdentByte(c) {
+			if cyphertext.NamePartAt(cypher, end) {
 				end++
 				continue
 			}
@@ -825,14 +835,14 @@ func extractLabelsFromQuery(cypher string) []string {
 		scan := end
 		for scan < len(cypher) {
 			j := scan
-			for j < len(cypher) && (cypher[j] == ' ' || cypher[j] == '\t' || cypher[j] == '\n' || cypher[j] == '\r') {
+			for j < len(cypher) && (cyphertext.IsWhitespaceAt(cypher, j)) {
 				j++
 			}
 			if j >= len(cypher) || cypher[j] != '|' {
 				break
 			}
 			j++
-			for j < len(cypher) && (cypher[j] == ' ' || cypher[j] == '\t' || cypher[j] == '\n' || cypher[j] == '\r') {
+			for j < len(cypher) && (cyphertext.IsWhitespaceAt(cypher, j)) {
 				j++
 			}
 			if j < len(cypher) && cypher[j] == ':' {
@@ -845,14 +855,13 @@ func extractLabelsFromQuery(cypher string) []string {
 			if labelExpressionWidensMatch(first) || dynamicLabelStartsAt(cypher, j) {
 				return nil
 			}
-			if first < 'A' || first > 'Z' {
+			if !cyphertext.NameStartAt(cypher, j) {
 				break
 			}
 			altStart := j
 			j++
 			for j < len(cypher) {
-				c := cypher[j]
-				if isIdentByte(c) {
+				if cyphertext.NamePartAt(cypher, j) {
 					j++
 					continue
 				}
@@ -872,9 +881,19 @@ func extractLabelsFromQuery(cypher string) []string {
 // normalized statement text and the parameters, encoded in full
 // (statementCacheKey), so an entry is served only for the same statement
 // text and the same parameter values (#729). Normalizing the text keeps
-// formatting, whitespace and a trailing semicolon from defeating a hit.
-func resultCacheEntryKey(cypher string, params map[string]interface{}) string {
-	return statementCacheKey(normalizeQuery(trimTrailingStatementDelimiters(cypher)), params)
+// trivia outside expression-derived column names and a trailing semicolon
+// from defeating a hit. Column-name spelling remains part of the key.
+func resultCacheEntryKey(ctx context.Context, cypher string, params map[string]interface{}) string {
+	source := trimTrailingStatementDelimiters(cypher)
+	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
+	if ctx.Err() != nil {
+		return ""
+	}
+	var protected []statementPresentationSpan
+	if err == nil {
+		protected = statementExpressionNameSpans(syntax)
+	}
+	return statementCacheKey(normalizeQueryWithPresentation(source, protected), params)
 }
 
 // =============================================================================
@@ -894,7 +913,9 @@ func resultCacheEntryKey(cypher string, params map[string]interface{}) string {
 //	// First execution parses and caches
 //	plan, found := planCache.Get("MATCH (n:User) RETURN n")
 //	if !found {
-//	    plan = parser.Parse("MATCH (n:User) RETURN n")
+//	    var err error
+//	    plan, err = parser.Parse(ctx, "MATCH (n:User) RETURN n")
+//	    if err != nil { return err }
 //	    planCache.Put("MATCH (n:User) RETURN n", plan)
 //	}
 //
@@ -1057,7 +1078,9 @@ func (pc *QueryPlanCache) Clear() {
 
 // normalizeQuery normalizes a Cypher query for cache key generation.
 // Collapses whitespace and lowercases keywords for consistent matching.
-func normalizeQuery(cypher string) string {
+func normalizeQuery(cypher string) string { return normalizeQueryWithPresentation(cypher, nil) }
+
+func normalizeQueryWithPresentation(cypher string, protected []statementPresentationSpan) string {
 	// Collapse consecutive whitespace to a single ASCII space without allocating
 	// the intermediate []string created by strings.Fields. Text inside a
 	// string literal or a backtick-quoted name is kept as it is: 'a  b' and
@@ -1068,32 +1091,32 @@ func normalizeQuery(cypher string) string {
 	var b strings.Builder
 	b.Grow(len(cypher))
 	prevSpace := true
-	quote := byte(0)
 	for i := 0; i < len(cypher); i++ {
-		c := cypher[i]
-		if quote != 0 {
-			b.WriteByte(c)
-			switch {
-			case c == '\\' && quote != '`' && i+1 < len(cypher):
-				// A backslash escape in a string literal: the next byte (an
-				// escaped quote, too) is part of the literal.
-				i++
-				b.WriteByte(cypher[i])
-			case c == quote:
-				quote = 0
+		end := i
+		for _, span := range protected {
+			if span.start == i && span.end > end {
+				end = span.end
 			}
+		}
+		if end > i {
+			b.WriteString(cypher[i:end])
+			i = end - 1
+			prevSpace = false
 			continue
 		}
-		switch c {
-		case ' ', '\t', '\n', '\r', '\f', '\v':
+		if end, quoted := skipCypherLexicalToken(cypher, i); quoted {
+			b.WriteString(cypher[i:end])
+			i = end - 1
+			prevSpace = false
+			continue
+		}
+		c := cypher[i]
+		switch {
+		case cyphertext.IsWhitespaceAt(cypher, i):
 			if !prevSpace {
 				b.WriteByte(' ')
 				prevSpace = true
 			}
-		case '\'', '"', '`':
-			quote = c
-			b.WriteByte(c)
-			prevSpace = false
 		default:
 			b.WriteByte(c)
 			prevSpace = false

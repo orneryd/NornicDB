@@ -94,63 +94,65 @@ func TestNeo4j5FunctionImplementations(t *testing.T) {
 		"radians":       fnRadians,
 		"isNaN":         fnIsNaN,
 		"char_length":   fnCharLength,
-		"upper":         fnStringCase(func(s string) string { return s }, "upper"),
+		"upper":         cypherfn.CaseFunction("upper", func(s string) string { return s }, argumentCountError),
 		"toIntegerList": fnListConversion("toIntegerList", sameInEveryVersion(convertToIntegerOrNull)),
 		"valueType":     fnValueType,
 	}
 	for name, function := range oneArgument {
-		_, err := function(ctx, []string{"s", "s"})
+		_, err := function(context.Background(), ctx, []string{"s", "s"})
 		require.Error(t, err, name)
 		require.Contains(t, err.Error(), "argument(s), got 2", name)
 	}
 	// trim takes its FROM form or one to three positional arguments
 	// (trimSpecificationForm).
-	_, trimErr := fnTrim(ctx, []string{"s", "s", "s", "s"})
+	_, trimErr := fnTrim(context.Background(), ctx, []string{"s", "s", "s", "s"})
 	require.Error(t, trimErr)
 	require.Contains(t, trimErr.Error(), "argument(s), got 4")
 	for name, function := range map[string]cypherfn.Func{
 		"btrim":     fnTrimFunction("btrim", true, true),
 		"normalize": fnNormalize,
 	} {
-		_, err := function(ctx, nil)
+		_, err := function(context.Background(), ctx, nil)
 		require.Error(t, err, name)
 		require.Contains(t, err.Error(), "expects 1 or 2 argument(s), got 0", name)
 	}
-	_, err := fnNullIf(ctx, []string{"s"})
+	_, err := fnNullIf(context.Background(), ctx, []string{"s"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "nullIf() expects 2 argument(s), got 1")
 
 	// An argument that fails to evaluate fails the call.
 	for name, call := range map[string]func() (interface{}, error){
-		"radians":     func() (interface{}, error) { return fnRadians(ctx, []string{"boom"}) },
-		"isNaN":       func() (interface{}, error) { return fnIsNaN(ctx, []string{"boom"}) },
-		"char_length": func() (interface{}, error) { return fnCharLength(ctx, []string{"boom"}) },
+		"radians":     func() (interface{}, error) { return fnRadians(context.Background(), ctx, []string{"boom"}) },
+		"isNaN":       func() (interface{}, error) { return fnIsNaN(context.Background(), ctx, []string{"boom"}) },
+		"char_length": func() (interface{}, error) { return fnCharLength(context.Background(), ctx, []string{"boom"}) },
 		"upper": func() (interface{}, error) {
-			return fnStringCase(func(s string) string { return s }, "upper")(ctx, []string{"boom"})
+			return cypherfn.CaseFunction("upper", func(s string) string { return s }, argumentCountError)(context.Background(), ctx, []string{"boom"})
 		},
-		"btrim":     func() (interface{}, error) { return fnTrimFunction("btrim", true, true)(ctx, []string{"boom"}) },
-		"trim text": func() (interface{}, error) { return fnTrim(ctx, []string{"boom"}) },
-		"trim char": func() (interface{}, error) { return fnTrim(ctx, []string{"boom FROM s"}) },
-		"trim spec": func() (interface{}, error) { return fnTrim(ctx, []string{"s", "boom"}) },
-		"normalize": func() (interface{}, error) { return fnNormalize(ctx, []string{"boom"}) },
-		"nullIf":    func() (interface{}, error) { return fnNullIf(ctx, []string{"s", "boom"}) },
-		"valueType": func() (interface{}, error) { return fnValueType(ctx, []string{"boom"}) },
+		"btrim": func() (interface{}, error) {
+			return fnTrimFunction("btrim", true, true)(context.Background(), ctx, []string{"boom"})
+		},
+		"trim text": func() (interface{}, error) { return fnTrim(context.Background(), ctx, []string{"boom"}) },
+		"trim char": func() (interface{}, error) { return fnTrim(context.Background(), ctx, []string{"boom FROM s"}) },
+		"trim spec": func() (interface{}, error) { return fnTrim(context.Background(), ctx, []string{"s", "boom"}) },
+		"normalize": func() (interface{}, error) { return fnNormalize(context.Background(), ctx, []string{"boom"}) },
+		"nullIf":    func() (interface{}, error) { return fnNullIf(context.Background(), ctx, []string{"s", "boom"}) },
+		"valueType": func() (interface{}, error) { return fnValueType(context.Background(), ctx, []string{"boom"}) },
 	} {
 		_, err := call()
 		require.EqualError(t, err, "boom", name)
 	}
 
 	// A float32 argument is a float.
-	value, err := fnIsNaN(ctx, []string{"nan32"})
+	value, err := fnIsNaN(context.Background(), ctx, []string{"nan32"})
 	require.NoError(t, err)
 	require.Equal(t, true, value)
 
 	// trim's character must be a string.
-	_, err = fnTrim(ctx, []string{"LEADING one FROM s"})
+	_, err = fnTrim(context.Background(), ctx, []string{"LEADING one FROM s"})
 	var mismatch *cypherfn.TypeMismatchError
 	require.ErrorAs(t, err, &mismatch)
 	require.Equal(t, "String", mismatch.Expected)
-	value, err = fnTrim(ctx, []string{"LEADING x FROM s"})
+	value, err = fnTrim(context.Background(), ctx, []string{"LEADING x FROM s"})
 	require.NoError(t, err)
 	require.Equal(t, "ax", value)
 }

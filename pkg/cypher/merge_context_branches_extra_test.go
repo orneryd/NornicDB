@@ -14,7 +14,7 @@ func TestExecuteMergeWithContext_OnCreateOnMatchAndContextProps(t *testing.T) {
 	ctx := context.Background()
 
 	source := &storage.Node{ID: storage.NodeID("src"), Labels: []string{"Source"}, Properties: map[string]interface{}{"name": "source-name"}}
-	_, err := store.CreateNode(source)
+	_, err := store.CreateNode(t.Context(), source)
 	require.NoError(t, err)
 
 	q := "MATCH (s:Source) MERGE (n:Doc {k: s.name}) ON CREATE SET n.created = true ON MATCH SET n.seen = true RETURN n.k AS k, n.created AS created, n.seen AS seen"
@@ -48,7 +48,7 @@ func TestExecuteMergeWithContext_StandaloneSetAndRelationshipMerge(t *testing.T)
 	require.Equal(t, "Alice", res.Rows[0][0])
 
 	b := &storage.Node{ID: storage.NodeID("b"), Labels: []string{"Person"}, Properties: map[string]interface{}{"id": "b"}}
-	_, err = store.CreateNode(b)
+	_, err = store.CreateNode(t.Context(), b)
 	require.NoError(t, err)
 
 	res, err = exec.Execute(ctx, "MATCH (a:Person {id: 'a'}), (b:Person {id: 'b'}) MERGE (a)-[:KNOWS]->(b) RETURN count(*) AS c", nil)
@@ -64,7 +64,7 @@ func TestExecuteMergeWithContext_StandaloneSetAndRelationshipMerge(t *testing.T)
 
 func findNodeByProp(t *testing.T, store storage.Engine, label, prop string, value interface{}) *storage.Node {
 	t.Helper()
-	nodes, err := store.GetNodesByLabel(label)
+	nodes, err := store.GetNodesByLabel(context.Background(), label)
 	require.NoError(t, err)
 	for _, n := range nodes {
 		if n != nil && n.Properties[prop] == value {
@@ -108,7 +108,7 @@ func TestCompoundMatchMergeWithWindowPreservesBindings(t *testing.T) {
 					require.Equal(t, []interface{}{id, "WINDOW_EDGE", id}, result.Rows[index])
 				}
 			}
-			targets, err := store.GetNodesByLabel("WindowTarget")
+			targets, err := store.GetNodesByLabel(ctx, "WindowTarget")
 			require.NoError(t, err)
 			require.Len(t, targets, len(testCase.ids))
 			for _, id := range testCase.ids {

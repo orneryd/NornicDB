@@ -2,113 +2,59 @@ package auth
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/orneryd/nornicdb/internal/testfixture/storagefault"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
-// mutationFault keeps the same real storage transaction, failing a selected
-// operation after earlier operations have already been staged in that view.
-type mutationFault struct {
-	storage.Engine
-	failID     storage.NodeID
-	failOp     string
-	nth, calls int
-}
-
-func (e *mutationFault) WithStoreTransaction(ctx context.Context, mutate func(storage.Engine) error) error {
-	return WithStoreTransaction(ctx, e.Engine, func(view storage.Engine) error {
-		staged := *e
-		staged.Engine = view
-		return mutate(&staged)
-	})
-}
-
-func (e *mutationFault) fails(op string, id storage.NodeID) bool {
-	if op != e.failOp || (e.failID != "" && e.failID != id) {
-		return false
-	}
-	e.calls++
-	return e.nth == 0 || e.calls == e.nth
-}
-
-func (e *mutationFault) CreateNode(node *storage.Node) (storage.NodeID, error) {
-	if e.fails("create", node.ID) {
-		return "", errRoleMutation
-	}
-	return e.Engine.CreateNode(node)
-}
-func (e *mutationFault) UpdateNode(node *storage.Node) error {
-	if e.fails("update", node.ID) {
-		return errRoleMutation
-	}
-	return e.Engine.UpdateNode(node)
-}
-func (e *mutationFault) DeleteNode(id storage.NodeID) error {
-	if e.fails("delete", id) {
-		return errRoleMutation
-	}
-	return e.Engine.DeleteNode(id)
-}
-func (e *mutationFault) GetNodesByLabel(label string) ([]*storage.Node, error) {
-	if e.fails("scan", "") {
-		return nil, errRoleMutation
-	}
-	return e.Engine.GetNodesByLabel(label)
-}
-func (e *mutationFault) GetNode(id storage.NodeID) (*storage.Node, error) {
-	if e.fails("get", id) {
-		return nil, errRoleMutation
-	}
-	return e.Engine.GetNode(id)
-}
-
-func (e *mutationFault) AllNodes() ([]*storage.Node, error) {
-	if e.fails("allnodes", "") {
-		return nil, errRoleMutation
-	}
-	return e.Engine.AllNodes()
+// newSystemEngine is a system database as the server gives the auth stores
+// one: a namespaced engine, in which a role and its records share one
+// namespace, so one transaction can change them together.
+func newSystemEngine(t testing.TB) storage.Engine {
+	t.Helper()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	return storage.NewNamespacedEngine(base, "system")
 }
 
 func TestRoleAndAllowlistRenameFailureChangesNothing(t *testing.T) {
 	ctx := context.Background()
-	inner := storage.NewMemoryEngine()
-	base := storage.NewNamespacedEngine(inner, "system")
-	t.Cleanup(func() { _ = base.Close() })
-	fault := &mutationFault{Engine: base}
+	base := newSystemEngine(t)
+	fault := storagefault.NewMutationFailureEngine(base, "", errRoleMutation, 0, WithStoreTransaction)
 	roles := NewRoleStore(fault)
 	require.NoError(t, roles.CreateRole(ctx, "ops"))
 	allowlist := NewAllowlistStore(fault)
 	require.NoError(t, allowlist.SaveRoleDatabases(ctx, "ops", []string{"nornic"}))
-	fault.failOp, fault.failID = "delete", "role:ops"
+	fault.Operation, fault.ID = storagefault.MutationDelete, "role:ops"
 	require.ErrorIs(t, roles.RenameRole(ctx, "ops", "new"), errRoleMutation)
 	require.True(t, roles.Exists("ops"))
 	require.False(t, roles.Exists("new"))
-	_, err := base.GetNode("role:new")
+	_, err := base.GetNode(context.Background(), "role:new")
 	require.ErrorIs(t, err, storage.ErrNotFound)
-	fault.failID = "role_db_access:ops"
+	fault.ID = "role_db_access:ops"
 	require.ErrorIs(t, roles.RenameRoleWithStores(ctx, "ops", "new", RoleMutationStores{Allowlist: allowlist}), errRoleMutation)
 	require.Equal(t, map[string][]string{"ops": {"nornic"}}, allowlist.Allowlist())
-	_, err = base.GetNode("role_db_access:new")
+	_, err = base.GetNode(context.Background(), "role_db_access:new")
 	require.ErrorIs(t, err, storage.ErrNotFound)
 }
 
 func TestPrivilegeMatrixFailureChangesNothing(t *testing.T) {
-	for _, op := range []string{"scan", "delete", "create"} {
-		t.Run(op, func(t *testing.T) {
+	for _, operation := range []storagefault.MutationOperation{storagefault.MutationScan, storagefault.MutationDelete, storagefault.MutationCreate} {
+		t.Run(string(operation), func(t *testing.T) {
 			ctx := context.Background()
-			system := newSystemTestEngine(t)
-			fault := &mutationFault{Engine: system}
+			system := newSystemEngine(t)
+			fault := storagefault.NewMutationFailureEngine(system, "", errRoleMutation, 0, WithStoreTransaction)
 			require.NoError(t, NewRoleStore(system).CreateRole(ctx, "ops"))
 			require.NoError(t, NewRoleStore(system).CreateRole(ctx, "new"))
 			privileges := NewPrivilegesStore(fault)
 			require.NoError(t, privileges.SavePrivilege(ctx, "ops", "a", true, false))
 			require.NoError(t, privileges.SavePrivilege(ctx, "ops", "b", false, true))
 			before := privileges.Matrix()
-			fault.failOp, fault.nth = op, 2
-			if op == "scan" {
-				fault.nth = 1
+			fault.Operation, fault.Nth = operation, 2
+			if operation == storagefault.MutationScan {
+				fault.Nth = 1
 			}
 			entries := []struct {
 				Role     string `json:"role"`
@@ -126,57 +72,55 @@ func TestPrivilegeMatrixFailureChangesNothing(t *testing.T) {
 }
 
 func TestAllowlistBatchFailureChangesNothing(t *testing.T) {
-	system := newSystemTestEngine(t)
+	system := newSystemEngine(t)
 	for _, role := range []string{"a", "b"} {
 		require.NoError(t, NewRoleStore(system).CreateRole(context.Background(), role))
 	}
-	fault := &mutationFault{Engine: system, failOp: "create", nth: 2}
+	fault := storagefault.NewMutationFailureEngine(system, storagefault.MutationCreate, errRoleMutation, 2, WithStoreTransaction)
 	allowlist := NewAllowlistStore(fault)
 	require.ErrorIs(t, allowlist.SaveMappings(context.Background(), map[string][]string{"a": {"nornic"}, "b": {"system"}}), errRoleMutation)
 	require.Empty(t, allowlist.Allowlist())
-	nodes, err := system.GetNodesByLabel(roleDbAccessLabel)
+	nodes, err := system.GetNodesByLabel(context.Background(), roleDbAccessLabel)
 	require.NoError(t, err)
 	require.Empty(t, nodes)
 }
 
 func TestUserMutationFailureChangesNothing(t *testing.T) {
-	base := storage.NewMemoryEngine()
-	t.Cleanup(func() { _ = base.Close() })
-	fault := &mutationFault{Engine: base}
-	config := DefaultAuthConfig()
-	config.BcryptCost = 4
-	config.JWTSecret = []byte("test-secret-key-for-testing-only-32b")
-	config.DefaultAdminUsername = ""
-	users, err := NewAuthenticator(config, fault)
-	require.NoError(t, err)
-	fault.failOp, fault.failID = "create", "user:new"
-	_, err = users.CreateUser("new", "password123", []Role{RoleViewer})
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	fault := storagefault.NewMutationFailureEngine(base, "", errRoleMutation, 0, WithStoreTransaction)
+	users := newMutationTestAuthenticator(t, fault)
+	fault.Operation, fault.ID = storagefault.MutationCreate, "user:new"
+	_, err := users.CreateUser(context.Background(), "new", "password123", []Role{RoleViewer})
 	require.ErrorIs(t, err, errRoleMutation)
 	require.NotContains(t, users.users, "new")
-	_, err = base.GetNode("user:new")
+	_, err = base.GetNode(context.Background(), "user:new")
 	require.ErrorIs(t, err, storage.ErrNotFound)
-	fault.failOp = ""
-	_, err = users.CreateUser("worker", "password123", []Role{RoleViewer})
+	fault.Operation = ""
+	_, err = users.CreateUser(context.Background(), "worker", "password123", []Role{RoleViewer})
 	require.NoError(t, err)
 	for _, test := range []struct {
-		op     string
+		op     storagefault.MutationOperation
 		mutate func() error
 	}{
-		{"update", func() error { return users.UpdateRoles("worker", []Role{RoleAdmin}) }},
-		{"update", func() error { return users.DisableUser("worker") }},
-		{"update", func() error { return users.EnableUser("worker") }},
-		{"update", func() error { return users.UnlockUser("worker") }},
-		{"update", func() error { return users.UpdateUser("worker", "new@example.com", map[string]string{"key": "new"}) }},
-		{"update", func() error { return users.ChangePassword("worker", "password123", "newpassword123") }},
-		{"delete", func() error { return users.DeleteUser("worker") }},
+		{storagefault.MutationUpdate, func() error { return users.UpdateRoles(context.Background(), "worker", []Role{RoleAdmin}) }},
+		{storagefault.MutationUpdate, func() error { return users.ChangeUserState(context.Background(), "worker", UserDisable) }},
+		{storagefault.MutationUpdate, func() error { return users.ChangeUserState(context.Background(), "worker", UserEnable) }},
+		{storagefault.MutationUpdate, func() error { return users.ChangeUserState(context.Background(), "worker", UserUnlock) }},
+		{storagefault.MutationUpdate, func() error {
+			return users.UpdateUser(context.Background(), "worker", "new@example.com", map[string]string{"key": "new"})
+		}},
+		{storagefault.MutationUpdate, func() error {
+			return users.ChangePassword(context.Background(), "worker", "password123", "newpassword123")
+		}},
+		{storagefault.MutationDelete, func() error { return users.DeleteUser(context.Background(), "worker") }},
 	} {
 		before := cloneStoredUser(users.users["worker"])
-		beforeNode, err := base.GetNode("user:worker")
+		beforeNode, err := base.GetNode(context.Background(), "user:worker")
 		require.NoError(t, err)
-		fault.failID, fault.failOp = "user:worker", test.op
+		fault.ID, fault.Operation = "user:worker", test.op
 		require.ErrorIs(t, test.mutate(), errRoleMutation)
 		require.Equal(t, before, users.users["worker"])
-		node, err := base.GetNode("user:worker")
+		node, err := base.GetNode(context.Background(), "user:worker")
 		require.NoError(t, err)
 		require.Equal(t, beforeNode.Properties, node.Properties)
 	}
@@ -184,10 +128,8 @@ func TestUserMutationFailureChangesNothing(t *testing.T) {
 
 func TestCoordinatedRoleRenameFailureChangesNothing(t *testing.T) {
 	ctx := context.Background()
-	inner := storage.NewMemoryEngine()
-	base := storage.NewNamespacedEngine(inner, "system")
-	t.Cleanup(func() { _ = base.Close() })
-	fault := &mutationFault{Engine: base}
+	base := newSystemEngine(t)
+	fault := storagefault.NewMutationFailureEngine(base, "", errRoleMutation, 0, WithStoreTransaction)
 	roles := NewRoleStore(fault)
 	require.NoError(t, roles.CreateRole(ctx, "ops"))
 	allowlist := NewAllowlistStore(fault)
@@ -195,21 +137,21 @@ func TestCoordinatedRoleRenameFailureChangesNothing(t *testing.T) {
 	users := &Authenticator{storage: fault, users: map[string]*User{}}
 	for _, name := range []string{"alice", "bob"} {
 		user := &User{Username: name, Roles: []Role{"ops"}}
-		require.NoError(t, users.saveUser(user))
+		require.NoError(t, users.saveUser(context.Background(), user, nil))
 		users.users[name] = user
 	}
-	fault.failOp, fault.nth = "update", 2
+	fault.Operation, fault.Nth = storagefault.MutationUpdate, 2
 	require.ErrorIs(t, roles.RenameRoleWithUsers(ctx, "ops", "new", allowlist, users), errRoleMutation)
 	require.True(t, roles.Exists("ops"))
 	require.False(t, roles.Exists("new"))
 	require.Equal(t, map[string][]string{"ops": {"nornic"}}, allowlist.Allowlist())
 	for _, user := range users.users {
 		require.Equal(t, []Role{"ops"}, user.Roles)
-		node, err := base.GetNode(storage.NodeID("user:" + user.Username))
+		node, err := base.GetNode(context.Background(), storage.NodeID("user:"+user.Username))
 		require.NoError(t, err)
 		require.Equal(t, `["ops"]`, node.Properties["roles"])
 	}
-	fault.failOp = ""
+	fault.Operation = ""
 	require.NoError(t, roles.RenameRoleWithUsers(ctx, "ops", "new", allowlist, users))
 	require.True(t, roles.Exists("new"))
 	for _, user := range users.users {
@@ -219,7 +161,7 @@ func TestCoordinatedRoleRenameFailureChangesNothing(t *testing.T) {
 
 func TestWithStoreTransactionNamespaceAndFailures(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	system := storage.NewNamespacedEngine(base, "system")
 	roles := NewRoleStore(system)
@@ -230,37 +172,38 @@ func TestWithStoreTransactionNamespaceAndFailures(t *testing.T) {
 	listed, err := grants.List(ctx)
 	require.NoError(t, err)
 	require.Empty(t, listed)
-	_, err = base.GetNode("system:role:ops")
+	_, err = base.GetNode(context.Background(), "system:role:ops")
 	require.ErrorIs(t, err, storage.ErrNotFound)
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()
 	require.ErrorIs(t, WithStoreTransaction(canceled, base, func(view storage.Engine) error {
-		_, err := view.CreateNode(&storage.Node{ID: "role:cancel", Properties: map[string]any{}})
+		_, err := view.CreateNode(context.Background(), &storage.Node{ID: "role:cancel", Properties: map[string]any{}})
 		return err
 	}), context.Canceled)
-	_, err = base.GetNode("role:cancel")
+	_, err = base.GetNode(context.Background(), "role:cancel")
 	require.ErrorIs(t, err, storage.ErrNotFound)
 	require.ErrorIs(t, WithStoreTransaction(ctx, nil, func(storage.Engine) error { return nil }), storage.ErrNotImplemented)
-	closed := storage.NewMemoryEngine()
+	closed := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	require.NoError(t, closed.Close())
 	require.Error(t, WithStoreTransaction(ctx, closed, func(storage.Engine) error { return nil }))
 }
 
 type transactionStartEngine struct {
-	*storage.MemoryEngine
+	storage.Engine
+	memory          *storage.MemoryEngine
 	failFlush       bool
 	pinnedNamespace string
 }
 
-func (e *transactionStartEngine) FlushWriteBehind() error {
+func (e *transactionStartEngine) FlushWriteBehind(ctx context.Context) error {
 	if e.failFlush {
 		return errRoleMutation
 	}
-	return e.MemoryEngine.FlushWriteBehind()
+	return e.memory.FlushWriteBehind(ctx)
 }
 
-func (e *transactionStartEngine) BeginTransaction() (*storage.BadgerTransaction, error) {
-	tx, err := e.MemoryEngine.BeginTransaction()
+func (e *transactionStartEngine) BeginTransaction(ctx context.Context) (*storage.BadgerTransaction, error) {
+	tx, err := e.memory.BeginTransaction(ctx)
 	if err == nil && e.pinnedNamespace != "" {
 		err = tx.SetNamespace(e.pinnedNamespace)
 	}
@@ -269,12 +212,14 @@ func (e *transactionStartEngine) BeginTransaction() (*storage.BadgerTransaction,
 
 func TestStoreTransactionReadsItsOwnChangesAndStartFailures(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	require.NoError(t, WithStoreTransaction(ctx, base, func(view storage.Engine) error {
-		_, err := view.CreateNode(&storage.Node{ID: "role:ops", Labels: []string{roleLabel}, Properties: map[string]any{"name": "ops"}})
+		_, err := view.CreateNode(context.Background(), &storage.Node{ID: "role:ops", Labels: []string{roleLabel}, Properties: map[string]any{"name": "ops"}})
 		require.NoError(t, err)
-		require.Len(t, view.GetAllNodes(), 1)
+		nodes, readErr := view.AllNodes(ctx)
+		require.NoError(t, readErr)
+		require.Len(t, nodes, 1)
 		projected := 0
 		err = view.(*storeTransaction).StreamNodesWithOptions(ctx, storage.StreamNodesOptions{}, func(*storage.Node) error { projected++; return nil })
 		require.NoError(t, err)
@@ -284,7 +229,7 @@ func TestStoreTransactionReadsItsOwnChangesAndStartFailures(t *testing.T) {
 			return nil
 		})
 	}))
-	beginner := &transactionStartEngine{MemoryEngine: base, failFlush: true}
+	beginner := &transactionStartEngine{Engine: base, memory: base, failFlush: true}
 	require.ErrorIs(t, WithStoreTransaction(ctx, beginner, func(storage.Engine) error { return nil }), errRoleMutation)
 	beginner.failFlush = false
 	beginner.pinnedNamespace = "other"
@@ -293,7 +238,7 @@ func TestStoreTransactionReadsItsOwnChangesAndStartFailures(t *testing.T) {
 
 func TestCoordinatedRoleRenameRejectsDistinctStores(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	system := storage.NewNamespacedEngine(base, "system")
 	other := storage.NewNamespacedEngine(base, "other")
@@ -304,41 +249,41 @@ func TestCoordinatedRoleRenameRejectsDistinctStores(t *testing.T) {
 	users := &Authenticator{storage: other, users: map[string]*User{"worker": {Username: "worker", Roles: []Role{"ops"}}}}
 	require.ErrorIs(t, roles.RenameRoleWithUsers(ctx, "ops", "new", nil, users), storage.ErrCrossNamespaceTransaction)
 	require.True(t, roles.Exists("ops"))
-	_, err := system.GetNode("role:new")
+	_, err := system.GetNode(context.Background(), "role:new")
 	require.ErrorIs(t, err, storage.ErrNotFound)
-	separate := storage.NewMemoryEngine()
+	separate := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = separate.Close() })
 	require.False(t, sameSystemStore(system, separate))
 }
 
 func TestCoordinatedRoleRenameStagedFailuresChangeNothing(t *testing.T) {
 	for _, test := range []struct {
-		op  string
+		op  storagefault.MutationOperation
 		id  storage.NodeID
 		nth int
 	}{
-		{"allnodes", "", 1}, {"allnodes", "", 2},
-		{"create", "role:new", 1}, {"delete", "role:ops", 1},
-		{"create", "role_db_access:new", 1}, {"delete", "role_db_access:ops", 1},
-		{"get", "user:worker", 1}, {"update", "user:worker", 1},
+		{storagefault.MutationList, "", 1}, {storagefault.MutationList, "", 2},
+		{storagefault.MutationCreate, "role:new", 1}, {storagefault.MutationDelete, "role:ops", 1},
+		{storagefault.MutationCreate, "role_db_access:new", 1}, {storagefault.MutationDelete, "role_db_access:ops", 1},
+		{storagefault.MutationGet, "user:worker", 1}, {storagefault.MutationUpdate, "user:worker", 1},
 	} {
-		t.Run(test.op+string(test.id), func(t *testing.T) {
+		t.Run(string(test.op)+string(test.id), func(t *testing.T) {
 			ctx := context.Background()
-			base := storage.NewMemoryEngine()
+			base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { _ = base.Close() })
 			system := storage.NewNamespacedEngine(base, "system")
-			fault := &mutationFault{Engine: system}
+			fault := storagefault.NewMutationFailureEngine(system, "", errRoleMutation, 0, WithStoreTransaction)
 			roles := NewRoleStore(fault)
 			require.NoError(t, roles.CreateRole(ctx, "ops"))
 			allowlist := NewAllowlistStore(fault)
 			require.NoError(t, allowlist.SaveRoleDatabases(ctx, "ops", []string{"nornic"}))
 			users := &Authenticator{storage: fault, users: map[string]*User{"worker": {Username: "worker", Roles: []Role{"ops"}}}}
-			require.NoError(t, users.saveUser(users.users["worker"]))
-			before, err := system.AllNodes()
+			require.NoError(t, users.saveUser(context.Background(), users.users["worker"], nil))
+			before, err := system.AllNodes(ctx)
 			require.NoError(t, err)
-			fault.failOp, fault.failID, fault.nth = test.op, test.id, test.nth
+			fault.Operation, fault.ID, fault.Nth = test.op, test.id, test.nth
 			require.ErrorIs(t, roles.RenameRoleWithUsers(ctx, "ops", "new", allowlist, users), errRoleMutation)
-			after, err := system.AllNodes()
+			after, err := system.AllNodes(ctx)
 			require.NoError(t, err)
 			require.ElementsMatch(t, before, after)
 			require.True(t, roles.Exists("ops"))
@@ -350,23 +295,23 @@ func TestCoordinatedRoleRenameStagedFailuresChangeNothing(t *testing.T) {
 
 func TestEntitlementDeletionFailurePreservesState(t *testing.T) {
 	ctx := context.Background()
-	system := newSystemTestEngine(t)
-	fault := &mutationFault{Engine: system}
+	system := newSystemEngine(t)
+	fault := storagefault.NewMutationFailureEngine(system, "", errRoleMutation, 0, WithStoreTransaction)
 	require.NoError(t, NewRoleStore(system).CreateRole(ctx, "ops"))
 	store := NewRoleEntitlementsStore(fault)
 	require.NoError(t, store.Set(ctx, "ops", []string{"read"}))
-	fault.failOp = "delete"
+	fault.Operation = storagefault.MutationDelete
 	require.ErrorIs(t, store.Set(ctx, "ops", nil), errRoleMutation)
 	require.Equal(t, []string{"read"}, store.Get("ops"))
-	_, err := system.GetNode(storage.NodeID(roleEntitlementPrefix + "ops"))
+	_, err := system.GetNode(context.Background(), storage.NodeID(roleEntitlementPrefix+"ops"))
 	require.NoError(t, err)
 }
 
 func TestRoleGrantValidationUsesTheTransactionRecord(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
-	fault := &mutationFault{Engine: storage.NewNamespacedEngine(base, "system")}
+	fault := storagefault.NewMutationFailureEngine(storage.NewNamespacedEngine(base, "system"), "", errRoleMutation, 0, WithStoreTransaction)
 	roles := NewRoleStore(fault)
 	require.NoError(t, roles.CreateRole(ctx, "ops"))
 	for _, name := range []string{"viewer", "ops", "missing"} {
@@ -377,15 +322,15 @@ func TestRoleGrantValidationUsesTheTransactionRecord(t *testing.T) {
 			return nil
 		}))
 	}
-	for _, op := range []string{"get", "update"} {
-		fault.failOp = op
+	for _, operation := range []storagefault.MutationOperation{storagefault.MutationGet, storagefault.MutationUpdate} {
+		fault.Operation = operation
 		require.ErrorIs(t, WithStoreTransaction(ctx, fault, func(view storage.Engine) error {
 			_, err := NewRoleStore(view).LockRoleForGrant(ctx, "ops")
 			return err
 		}), errRoleMutation)
 	}
-	fault.failOp = ""
-	_, err := fault.CreateNode(&storage.Node{ID: "role:other", Labels: []string{"_User"}, Properties: map[string]any{}})
+	fault.Operation = ""
+	_, err := fault.CreateNode(context.Background(), &storage.Node{ID: "role:other", Labels: []string{"_User"}, Properties: map[string]any{}})
 	require.NoError(t, err)
 	found, err := roles.LockRoleForGrant(ctx, "other")
 	require.NoError(t, err)

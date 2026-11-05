@@ -1,11 +1,5 @@
 package localization
 
-import (
-	"context"
-
-	"golang.org/x/text/language"
-)
-
 // LocalizedError carries stable error identity and a localizable message separately.
 type LocalizedError struct {
 	Code    string
@@ -35,15 +29,4 @@ func (e *LocalizedError) Unwrap() error {
 		return nil
 	}
 	return e.Cause
-}
-
-// Render localizes the human-readable message at a boundary.
-func (e *LocalizedError) Render(ctx context.Context, manager *Manager) (string, language.Tag, error) {
-	if e == nil {
-		return "", language.AmericanEnglish, nil
-	}
-	if manager == nil {
-		return e.Error(), language.AmericanEnglish, nil
-	}
-	return manager.Render(ctx, e.Message)
 }

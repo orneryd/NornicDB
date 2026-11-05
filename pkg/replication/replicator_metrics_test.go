@@ -233,14 +233,16 @@ func TestRaftReplicator_BootstrapEmitsRole(t *testing.T) {
 // tests that do not exercise data-plane paths.
 type nullStorage struct{}
 
-func (nullStorage) ApplyCommand(*Command) error { return nil }
+func (nullStorage) ApplyCommand(context.Context, *Command, WALPublicationMode) (CommandPublication, error) {
+	return CommandPublication{}, nil
+}
 func (nullStorage) GetWALPosition() (uint64, error) {
 	return 0, nil
 }
 func (nullStorage) GetWALEntries(uint64, int) ([]*WALEntry, error) {
 	return nil, nil
 }
-func (nullStorage) WriteSnapshot(SnapshotWriter) error  { return nil }
+func (nullStorage) WriteSnapshot(SnapshotWriter) error   { return nil }
 func (nullStorage) RestoreSnapshot(SnapshotReader) error { return nil }
 
 // TestPerPeerRTTObservation asserts the RTT chokepoint records samples

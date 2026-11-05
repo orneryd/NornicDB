@@ -3,6 +3,9 @@ package search
 import (
 	"context"
 	"errors"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"path/filepath"
 	"testing"
 
@@ -12,7 +15,7 @@ import (
 
 func TestLiveVectorIndexingCreatesConfiguredFileStore(t *testing.T) {
 	vectorPath := filepath.Join(t.TempDir(), "vectors")
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	svc.SetVectorIndexPath(vectorPath)
 	svc.SetPersistenceEnabled(true)
@@ -38,7 +41,7 @@ func TestLiveVectorIndexingCreatesConfiguredFileStore(t *testing.T) {
 
 func TestEnablingVectorPersistenceMigratesExistingLiveVectors(t *testing.T) {
 	vectorPath := filepath.Join(t.TempDir(), "vectors")
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2, nil)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 
 	require.NoError(t, svc.IndexNode(&storage.Node{
@@ -74,13 +77,13 @@ func TestLiveVectorIndexSurvivesRestartWithoutStorageRebuild(t *testing.T) {
 			"embedding": []float32{1, 0},
 		},
 	}
-	_, err := engine.CreateNode(node)
+	_, err := engine.CreateNode(t.Context(), node)
 	require.NoError(t, err)
 
 	indexDir := t.TempDir()
 	fulltextPath := filepath.Join(indexDir, "bm25")
 	vectorPath := filepath.Join(indexDir, "vectors")
-	first := NewServiceWithDimensions(engine, 2)
+	first := NewService(engine, 2, nil)
 	first.SetFulltextIndexPath(fulltextPath)
 	first.SetVectorIndexPath(vectorPath)
 	first.SetPersistenceEnabled(true)
@@ -88,10 +91,10 @@ func TestLiveVectorIndexSurvivesRestartWithoutStorageRebuild(t *testing.T) {
 	first.PersistIndexesToDisk()
 	require.NoError(t, first.Close())
 
-	restarted := NewServiceWithDimensions(&iteratorEngine{
+	restarted := NewService(&iteratorEngine{
 		Engine:     engine,
 		iterateErr: errors.New("persisted live index must not rebuild from storage"),
-	}, 2)
+	}, 2, nil)
 	t.Cleanup(func() { require.NoError(t, restarted.Close()) })
 	restarted.SetFulltextIndexPath(fulltextPath)
 	restarted.SetVectorIndexPath(vectorPath)

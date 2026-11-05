@@ -10,9 +10,9 @@ import (
 
 func TestTraversalSeedHelpers_WhereExtractionAndReverse(t *testing.T) {
 	where := "d.filed_at IS NOT NULL AND r.name = 'root' AND id(d) = 'x' AND elementId(d) = 'x2'"
-	seedOnly := (&StorageExecutor{}).extractTraversalSeedWhereClause(where, "d", "r")
+	seedOnly := (&StorageExecutor{}).extractTraversalSeedWhereClause(t.Context(), where, "d", "r")
 	require.Equal(t, "d.filed_at IS NOT NULL AND id(d) = 'x' AND elementId(d) = 'x2'", seedOnly)
-	require.Equal(t, "", (&StorageExecutor{}).extractTraversalSeedWhereClause("", "d"))
+	require.Equal(t, "", (&StorageExecutor{}).extractTraversalSeedWhereClause(t.Context(), "", "d"))
 
 	orig := &TraversalMatch{
 		StartNode:    nodePatternInfo{variable: "a", labels: []string{"A"}},
@@ -37,14 +37,14 @@ func TestTraversalStartSeedOrderLimit_Deterministic(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{ID: "wing-1", Labels: []string{"Wing"}, Properties: map[string]interface{}{"name": "Wing"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "wing-1", Labels: []string{"Wing"}, Properties: map[string]interface{}{"name": "Wing"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "room-1", Labels: []string{"Room"}, Properties: map[string]interface{}{"name": "Room"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "room-1", Labels: []string{"Room"}, Properties: map[string]interface{}{"name": "Room"}})
 	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "room-wing", Type: "IN_WING", StartNode: "room-1", EndNode: "wing-1"}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "room-wing", Type: "IN_WING", StartNode: "room-1", EndNode: "wing-1"}))
 
 	for i, drawerID := range []string{"d-3", "d-1", "d-2"} {
-		_, err = store.CreateNode(&storage.Node{
+		_, err = store.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID(drawerID),
 			Labels: []string{"Drawer"},
 			Properties: map[string]interface{}{
@@ -53,7 +53,7 @@ func TestTraversalStartSeedOrderLimit_Deterministic(t *testing.T) {
 			},
 		})
 		require.NoError(t, err)
-		require.NoError(t, store.CreateEdge(&storage.Edge{ID: storage.EdgeID("e-" + drawerID), Type: "IN_ROOM", StartNode: storage.NodeID(drawerID), EndNode: "room-1"}))
+		require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: storage.EdgeID("e-" + drawerID), Type: "IN_ROOM", StartNode: storage.NodeID(drawerID), EndNode: "room-1"}))
 	}
 
 	_, err = exec.Execute(ctx, "CREATE INDEX idx_drawer_filed_at FOR (d:Drawer) ON (d.filed_at)", nil)
@@ -63,7 +63,7 @@ func TestTraversalStartSeedOrderLimit_Deterministic(t *testing.T) {
 		{expr: "d.drawer_id"},
 		{expr: "d.filed_at"},
 	}
-	res, used, err := exec.tryExecuteTraversalStartSeedOrderLimit(
+	res, used, err := exec.tryExecuteTraversalSeedOrderLimit(
 		ctx,
 		"(d:Drawer)-[:IN_ROOM]->(r:Room)",
 		"d.filed_at IS NOT NULL",
@@ -71,6 +71,7 @@ func TestTraversalStartSeedOrderLimit_Deterministic(t *testing.T) {
 		"",
 		"d.filed_at DESC",
 		2,
+		traversalStartSeed,
 	)
 	require.NoError(t, err)
 	require.True(t, used)
@@ -79,7 +80,7 @@ func TestTraversalStartSeedOrderLimit_Deterministic(t *testing.T) {
 	require.EqualValues(t, int64(100), res.Rows[0][1])
 	require.Equal(t, "d-1", res.Rows[1][0])
 
-	_, used, err = exec.tryExecuteTraversalStartSeedOrderLimit(ctx, "(d)-[:IN_ROOM]->(r)", "", returnItems, "", "", 2)
+	_, used, err = exec.tryExecuteTraversalSeedOrderLimit(ctx, "(d)-[:IN_ROOM]->(r)", "", returnItems, "", "", 2, traversalStartSeed)
 	require.NoError(t, err)
 	require.False(t, used)
 }
@@ -90,12 +91,12 @@ func TestTraversalEndSeedOrderLimit_Deterministic(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{ID: "room-1", Labels: []string{"Room"}, Properties: map[string]interface{}{"name": "A"}})
+	_, err := store.CreateNode(t.Context(), &storage.Node{ID: "room-1", Labels: []string{"Room"}, Properties: map[string]interface{}{"name": "A"}})
 	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "room-2", Labels: []string{"Room"}, Properties: map[string]interface{}{"name": "B"}})
+	_, err = store.CreateNode(t.Context(), &storage.Node{ID: "room-2", Labels: []string{"Room"}, Properties: map[string]interface{}{"name": "B"}})
 	require.NoError(t, err)
 	for i, drawerID := range []string{"d-1", "d-2", "d-3"} {
-		_, err = store.CreateNode(&storage.Node{
+		_, err = store.CreateNode(t.Context(), &storage.Node{
 			ID:     storage.NodeID(drawerID),
 			Labels: []string{"Drawer"},
 			Properties: map[string]interface{}{
@@ -105,15 +106,15 @@ func TestTraversalEndSeedOrderLimit_Deterministic(t *testing.T) {
 		})
 		require.NoError(t, err)
 	}
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "e-1", Type: "IN_ROOM", StartNode: "d-1", EndNode: "room-1"}))
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "e-2", Type: "IN_ROOM", StartNode: "d-2", EndNode: "room-1"}))
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "e-3", Type: "IN_ROOM", StartNode: "d-3", EndNode: "room-2"}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "e-1", Type: "IN_ROOM", StartNode: "d-1", EndNode: "room-1"}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "e-2", Type: "IN_ROOM", StartNode: "d-2", EndNode: "room-1"}))
+	require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "e-3", Type: "IN_ROOM", StartNode: "d-3", EndNode: "room-2"}))
 
 	_, err = exec.Execute(ctx, "CREATE INDEX idx_room_name FOR (r:Room) ON (r.name)", nil)
 	require.NoError(t, err)
 
 	returnItems := []returnItem{{expr: "d.drawer_id"}, {expr: "r.name"}}
-	res, used, err := exec.tryExecuteTraversalEndSeedOrderLimit(
+	res, used, err := exec.tryExecuteTraversalSeedOrderLimit(
 		ctx,
 		"(d:Drawer)-[:IN_ROOM]->(r:Room)",
 		"r.name IS NOT NULL",
@@ -121,6 +122,7 @@ func TestTraversalEndSeedOrderLimit_Deterministic(t *testing.T) {
 		"",
 		"r.name ASC",
 		2,
+		traversalEndSeed,
 	)
 	require.NoError(t, err)
 	require.True(t, used)

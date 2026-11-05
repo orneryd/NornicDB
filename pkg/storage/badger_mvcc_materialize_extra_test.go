@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -13,13 +14,13 @@ func TestBadgerEngine_MVCCArchiveHelpers_Branches(t *testing.T) {
 
 	a := NodeID(prefixTestID("mvcc-arch-a"))
 	b := NodeID(prefixTestID("mvcc-arch-b"))
-	_, err := engine.CreateNode(&Node{ID: a, Labels: []string{"N"}, Properties: map[string]any{"k": "v"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: a, Labels: []string{"N"}, Properties: map[string]any{"k": "v"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: b, Labels: []string{"N"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: b, Labels: []string{"N"}})
 	require.NoError(t, err)
 
 	eid := EdgeID(prefixTestID("mvcc-arch-e"))
-	require.NoError(t, engine.CreateEdge(&Edge{
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
 		ID:         eid,
 		StartNode:  a,
 		EndNode:    b,
@@ -27,18 +28,18 @@ func TestBadgerEngine_MVCCArchiveHelpers_Branches(t *testing.T) {
 		Properties: map[string]any{"w": int64(1)},
 	}))
 
-	nodeHead, err := engine.GetNodeCurrentHead(a)
+	nodeHead, err := engine.GetNodeCurrentHead(context.Background(), a)
 	require.NoError(t, err)
-	edgeHead, err := engine.GetEdgeCurrentHead(eid)
+	edgeHead, err := engine.GetEdgeCurrentHead(context.Background(), eid)
 	require.NoError(t, err)
 
-	nodeBody, err := engine.GetNode(a)
+	nodeBody, err := engine.GetNode(t.Context(), a)
 	require.NoError(t, err)
-	edgeBody, err := engine.GetEdge(eid)
+	edgeBody, err := engine.GetEdge(t.Context(), eid)
 	require.NoError(t, err)
 
 	// Exercise archive no-op branches (existing version, missing key, nil body).
-	err = engine.withUpdate(func(txn *badger.Txn) error {
+	err = engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		require.NoError(t, engine.archiveNodePrimaryIntoMVCCVersionInTxn(txn, a, nodeHead.Version, nil, MVCCVersion{}))
 		require.NoError(t, engine.archiveNodePrimaryIntoMVCCVersionInTxn(txn, a, nodeHead.Version, nil, MVCCVersion{}))
 		require.NoError(t, engine.archiveNodePrimaryIntoMVCCVersionInTxn(txn, NodeID(prefixTestID("mvcc-arch-missing-node")), nodeHead.Version, nil, MVCCVersion{}))
@@ -56,7 +57,7 @@ func TestBadgerEngine_MVCCArchiveHelpers_Branches(t *testing.T) {
 	require.NoError(t, err)
 
 	// Tombstoned heads should short-circuit archiveOnUpdate.
-	err = engine.withUpdate(func(txn *badger.Txn) error {
+	err = engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		tombV := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 1001}
 		require.NoError(t, engine.writeNodeMVCCHeadInTxn(txn, a, tombV, true))
 		require.NoError(t, engine.writeEdgeMVCCHeadInTxn(txn, eid, tombV, true))
@@ -67,7 +68,7 @@ func TestBadgerEngine_MVCCArchiveHelpers_Branches(t *testing.T) {
 	require.NoError(t, err)
 
 	// Malformed existing head should propagate decode errors from load*Head.
-	err = engine.withUpdate(func(txn *badger.Txn) error {
+	err = engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		badNodeID := NodeID(prefixTestID("mvcc-bad-head-node"))
 		badEdgeID := EdgeID(prefixTestID("mvcc-bad-head-edge"))
 		nodeHeadKey, keyErr := engine.mvccNodeHeadKeyString(txn, badNodeID)
@@ -80,7 +81,7 @@ func TestBadgerEngine_MVCCArchiveHelpers_Branches(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	err = engine.withUpdate(func(txn *badger.Txn) error {
+	err = engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		v := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 2001}
 		require.Error(t, engine.writeNodeMVCCHeadInTxn(txn, NodeID(prefixTestID("mvcc-bad-head-node")), v, false))
 		require.Error(t, engine.writeEdgeMVCCHeadInTxn(txn, EdgeID(prefixTestID("mvcc-bad-head-edge")), v, false))
@@ -95,23 +96,23 @@ func TestBadgerEngine_MaterializeMVCCCommitInTxn_OperationMatrix(t *testing.T) {
 	n1 := NodeID(prefixTestID("mvcc-mat-n1"))
 	n2 := NodeID(prefixTestID("mvcc-mat-n2"))
 	nDel := NodeID(prefixTestID("mvcc-mat-ndel"))
-	_, err := engine.CreateNode(&Node{ID: n1, Labels: []string{"N"}, Properties: map[string]any{"name": "before"}})
+	_, err := engine.CreateNode(t.Context(), &Node{ID: n1, Labels: []string{"N"}, Properties: map[string]any{"name": "before"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: n2, Labels: []string{"N"}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: n2, Labels: []string{"N"}})
 	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: nDel, Labels: []string{"N"}, Properties: map[string]any{"x": int64(1)}})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: nDel, Labels: []string{"N"}, Properties: map[string]any{"x": int64(1)}})
 	require.NoError(t, err)
 
 	eUpd := EdgeID(prefixTestID("mvcc-mat-eupd"))
 	eDel := EdgeID(prefixTestID("mvcc-mat-edel"))
-	require.NoError(t, engine.CreateEdge(&Edge{ID: eUpd, StartNode: n1, EndNode: n2, Type: "REL", Properties: map[string]any{"w": int64(1)}}))
-	require.NoError(t, engine.CreateEdge(&Edge{ID: eDel, StartNode: nDel, EndNode: n2, Type: "REL", Properties: map[string]any{"w": int64(2)}}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: eUpd, StartNode: n1, EndNode: n2, Type: "REL", Properties: map[string]any{"w": int64(1)}}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: eDel, StartNode: nDel, EndNode: n2, Type: "REL", Properties: map[string]any{"w": int64(2)}}))
 
-	oldNodeDel, err := engine.GetNode(nDel)
+	oldNodeDel, err := engine.GetNode(t.Context(), nDel)
 	require.NoError(t, err)
-	oldEdgeUpd, err := engine.GetEdge(eUpd)
+	oldEdgeUpd, err := engine.GetEdge(t.Context(), eUpd)
 	require.NoError(t, err)
-	oldEdgeDel, err := engine.GetEdge(eDel)
+	oldEdgeDel, err := engine.GetEdge(t.Context(), eDel)
 	require.NoError(t, err)
 
 	ops := []Operation{
@@ -129,27 +130,27 @@ func TestBadgerEngine_MaterializeMVCCCommitInTxn_OperationMatrix(t *testing.T) {
 	}
 
 	version := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 7777}
-	err = engine.withUpdate(func(txn *badger.Txn) error {
-		return engine.materializeMVCCCommit(singleBatchWriter(txn), version, ops)
+	err = engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
+		return engine.materializeMVCCCommit(t.Context(), singleBatchWriter(txn), version, ops)
 	})
 	require.NoError(t, err)
 
-	headNodeFresh, err := engine.GetNodeCurrentHead(NodeID(prefixTestID("mvcc-mat-create-fresh")))
+	headNodeFresh, err := engine.GetNodeCurrentHead(context.Background(), NodeID(prefixTestID("mvcc-mat-create-fresh")))
 	require.NoError(t, err)
 	require.False(t, headNodeFresh.Tombstoned)
 	require.Equal(t, version, headNodeFresh.Version)
 
-	headNodeDeleted, err := engine.GetNodeCurrentHead(nDel)
+	headNodeDeleted, err := engine.GetNodeCurrentHead(context.Background(), nDel)
 	require.NoError(t, err)
 	require.True(t, headNodeDeleted.Tombstoned)
 	require.Equal(t, version, headNodeDeleted.Version)
 
-	headEdgeFresh, err := engine.GetEdgeCurrentHead(EdgeID(prefixTestID("mvcc-mat-create-edge-fresh")))
+	headEdgeFresh, err := engine.GetEdgeCurrentHead(context.Background(), EdgeID(prefixTestID("mvcc-mat-create-edge-fresh")))
 	require.NoError(t, err)
 	require.False(t, headEdgeFresh.Tombstoned)
 	require.Equal(t, version, headEdgeFresh.Version)
 
-	headEdgeDeleted, err := engine.GetEdgeCurrentHead(eDel)
+	headEdgeDeleted, err := engine.GetEdgeCurrentHead(context.Background(), eDel)
 	require.NoError(t, err)
 	require.True(t, headEdgeDeleted.Tombstoned)
 	require.Equal(t, version, headEdgeDeleted.Version)
@@ -159,22 +160,22 @@ func TestBadgerEngine_MaterializeMVCCCommitInTxn_AdjacencyEffects(t *testing.T) 
 	engine := createMVCCBadgerEngine(t)
 
 	for _, nodeID := range []NodeID{"test:mat-a", "test:mat-b", "test:mat-c", "test:mat-d"} {
-		_, err := engine.CreateNode(&Node{ID: nodeID, Labels: []string{"N"}})
+		_, err := engine.CreateNode(t.Context(), &Node{ID: nodeID, Labels: []string{"N"}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:mat-update", StartNode: "test:mat-a", EndNode: "test:mat-b", Type: "REL"}))
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:mat-delete", StartNode: "test:mat-b", EndNode: "test:mat-c", Type: "REL"}))
-	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:mat-child", StartNode: "test:mat-d", EndNode: "test:mat-c", Type: "REL"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:mat-update", StartNode: "test:mat-a", EndNode: "test:mat-b", Type: "REL"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:mat-delete", StartNode: "test:mat-b", EndNode: "test:mat-c", Type: "REL"}))
+	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:mat-child", StartNode: "test:mat-d", EndNode: "test:mat-c", Type: "REL"}))
 
-	oldUpdate, err := engine.GetEdge("test:mat-update")
+	oldUpdate, err := engine.GetEdge(t.Context(), "test:mat-update")
 	require.NoError(t, err)
-	oldDelete, err := engine.GetEdge("test:mat-delete")
+	oldDelete, err := engine.GetEdge(t.Context(), "test:mat-delete")
 	require.NoError(t, err)
 	newCreate := &Edge{ID: "test:mat-create", StartNode: "test:mat-a", EndNode: "test:mat-d", Type: "REL"}
 	newUpdate := &Edge{ID: "test:mat-update", StartNode: "test:mat-a", EndNode: "test:mat-d", Type: "REL2"}
 
 	version := MVCCVersion{CommitTimestamp: time.Now().UTC().Add(2 * time.Second), CommitSequence: 8801}
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		createBody, err := engine.encodeEdgeInTxn(txn, namespaceForEdgeID(newCreate.ID), newCreate)
 		if err != nil {
 			return err
@@ -204,30 +205,30 @@ func TestBadgerEngine_MaterializeMVCCCommitInTxn_AdjacencyEffects(t *testing.T) 
 			{Type: OpUpdateEdge, Edge: newUpdate, OldEdge: oldUpdate},
 			{Type: OpDeleteEdge, EdgeID: "test:mat-delete", OldEdge: oldDelete},
 		}
-		return engine.materializeMVCCCommit(singleBatchWriter(txn), version, ops)
+		return engine.materializeMVCCCommit(t.Context(), singleBatchWriter(txn), version, ops)
 	}))
 
-	outA, err := engine.GetOutgoingEdgesVisibleAt("test:mat-a", version)
+	outA, err := engine.GetOutgoingEdgesVisibleAt(context.Background(), "test:mat-a", version)
 	require.NoError(t, err)
 	require.Len(t, outA, 2)
 
-	inD, err := engine.GetIncomingEdgesVisibleAt("test:mat-d", version)
+	inD, err := engine.GetIncomingEdgesVisibleAt(context.Background(), "test:mat-d", version)
 	require.NoError(t, err)
 	require.Len(t, inD, 2)
 
-	inB, err := engine.GetIncomingEdgesVisibleAt("test:mat-b", version)
+	inB, err := engine.GetIncomingEdgesVisibleAt(context.Background(), "test:mat-b", version)
 	require.NoError(t, err)
 	require.Empty(t, inB)
 
-	outB, err := engine.GetOutgoingEdgesVisibleAt("test:mat-b", version)
+	outB, err := engine.GetOutgoingEdgesVisibleAt(context.Background(), "test:mat-b", version)
 	require.NoError(t, err)
 	require.Empty(t, outB)
 
-	inC, err := engine.GetIncomingEdgesVisibleAt("test:mat-c", version)
+	inC, err := engine.GetIncomingEdgesVisibleAt(context.Background(), "test:mat-c", version)
 	require.NoError(t, err)
 	require.Empty(t, inC)
 
-	outD, err := engine.GetOutgoingEdgesVisibleAt("test:mat-d", version)
+	outD, err := engine.GetOutgoingEdgesVisibleAt(context.Background(), "test:mat-d", version)
 	require.NoError(t, err)
 	require.Empty(t, outD)
 }

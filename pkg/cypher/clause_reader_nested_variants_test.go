@@ -68,7 +68,7 @@ func TestNestedProjectionReadersKeepPatternMapErrors(t *testing.T) {
 		"MERGE (n {bad}) RETURN n",
 	} {
 		t.Run(q, func(t *testing.T) {
-			err := validateStaticMapKeys(q)
+			err := validateStaticMapKeys(t.Context(), q)
 			require.ErrorContains(t, err, "pattern property maps require key-value entries")
 			exec, ctx := newUnitExecutor(t)
 			_, executeErr := exec.Execute(ctx, q, nil)
@@ -94,7 +94,7 @@ func TestNestedProjectionReadersMalformedDelimiters(t *testing.T) {
 
 func TestNestedProjectionReadersQualifiedFunctionsKeepExpressions(t *testing.T) {
 	for _, name := range []string{"plugin.shortestPath", "plugin.allShortestPaths", "plugin.MATCH"} {
-		require.NoError(t, validateStaticMapKeys("WITH {a:1} AS m WHERE "+name+"(m {.a}) RETURN 1"))
+		require.NoError(t, validateStaticMapKeys(t.Context(), "WITH {a:1} AS m WHERE "+name+"(m {.a}) RETURN 1"))
 	}
 }
 
@@ -125,7 +125,7 @@ func BenchmarkNestedProjectionContext(b *testing.B) {
 				b.ReportAllocs()
 				for i := 0; i < b.N; i++ {
 					context := newMapPatternContext(query)
-					if context.insidePatternDelimiter(query, end) {
+					if context.insidePatternDelimiter(b.Context(), query, end) {
 						b.Fatal("projection classified as pattern map")
 					}
 				}
@@ -140,13 +140,13 @@ func TestNestedProjectionExistsPropertyExpression(t *testing.T) {
 		"WITH {a:1} AS m WHERE exists(((m {.a}).a)) RETURN 1",
 		"WITH {a:1} AS m WHERE plugin.EXISTS((m {.a}).a) RETURN 1",
 	} {
-		require.NoError(t, validateStaticMapKeys(q), q)
+		require.NoError(t, validateStaticMapKeys(t.Context(), q), q)
 	}
 }
 
 func TestNestedProjectionQualifiedCommentFunctions(t *testing.T) {
 	for _, name := range []string{"plugin. /* namespace */ shortestPath", "plugin. /* namespace */ allShortestPaths", "plugin. /* namespace */ EXISTS", "plugin. // namespace\n shortestPath"} {
-		require.NoError(t, validateStaticMapKeys("WITH {a:1} AS m WHERE "+name+"(m {.a}) RETURN 1"), name)
+		require.NoError(t, validateStaticMapKeys(t.Context(), "WITH {a:1} AS m WHERE "+name+"(m {.a}) RETURN 1"), name)
 	}
 }
 

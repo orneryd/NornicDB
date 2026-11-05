@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/math/angle"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"strings"
@@ -21,7 +23,8 @@ func toFloat64(v interface{}) (float64, bool) {
 	return convert.ToFloat64(v)
 }
 
-// toFloat64Slice is a package-level alias to convert.ToFloat64Slice for internal use.
+// toFloat64Slice keeps the numeric fast paths and reads other runtime lists
+// through the same input owner as collection functions.
 func toFloat64Slice(v interface{}) ([]float64, bool) {
 	return convert.ToFloat64Slice(v)
 }
@@ -30,127 +33,29 @@ func toFloat64Slice(v interface{}) ([]float64, bool) {
 // This prevents matching substrings like "RemoveReturn" when searching for "RETURN".
 // Also prevents matching labels like ":Return" as keywords.
 // Returns -1 if not found.
-func findKeywordIndex(s, keyword string) int {
-	return keywordIndex(s, keyword)
+func findKeywordIndex(ctx context.Context, s, keyword string) int {
+	return keywordIndex(ctx, s, keyword)
 }
 
 // containsKeywordOutsideStrings checks if a keyword exists in the string but NOT inside
 // string literals. This prevents matching keywords inside user data content.
-func containsKeywordOutsideStrings(s, keyword string) bool {
-	return findKeywordIndex(s, keyword) != -1
+func containsKeywordOutsideStrings(ctx context.Context, s, keyword string) bool {
+	return findKeywordIndex(ctx, s, keyword) != -1
 }
 
 // containsOutsideStrings checks if a substring exists in the string but NOT inside
 // string literals. Unlike containsKeywordOutsideStrings, this does exact substring matching
 // without word boundary checks (useful for symbols like -> and <-).
 func containsOutsideStrings(s, substr string) bool {
-	if substr == "" {
-		return false
-	}
-	first := substr[0]
+	found, _ := inspectOutsideStrings(s, substr)
+	return found
+}
 
-	var (
-		inSingleQuote  bool
-		inDoubleQuote  bool
-		inBacktick     bool
-		inLineComment  bool
-		inBlockComment bool
-	)
-
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-
-		if inLineComment {
-			if c == '\n' {
-				inLineComment = false
-			}
-			continue
-		}
-		if inBlockComment {
-			if c == '*' && i+1 < len(s) && s[i+1] == '/' {
-				inBlockComment = false
-				i++
-			}
-			continue
-		}
-
-		if inSingleQuote {
-			if c == '\\' && i+1 < len(s) {
-				i++
-				continue
-			}
-			if c == '\'' {
-				if i+1 < len(s) && s[i+1] == '\'' {
-					i++
-					continue
-				}
-				inSingleQuote = false
-			}
-			continue
-		}
-		if inDoubleQuote {
-			if c == '\\' && i+1 < len(s) {
-				i++
-				continue
-			}
-			if c == '"' {
-				if i+1 < len(s) && s[i+1] == '"' {
-					i++
-					continue
-				}
-				inDoubleQuote = false
-			}
-			continue
-		}
-		if inBacktick {
-			if c == '`' {
-				if i+1 < len(s) && s[i+1] == '`' {
-					i++
-					continue
-				}
-				inBacktick = false
-			}
-			continue
-		}
-
-		if c == '/' && i+1 < len(s) {
-			if s[i+1] == '/' {
-				inLineComment = true
-				i++
-				continue
-			}
-			if s[i+1] == '*' {
-				inBlockComment = true
-				i++
-				continue
-			}
-		}
-
-		if c == '\'' {
-			inSingleQuote = true
-			continue
-		}
-		if c == '"' {
-			inDoubleQuote = true
-			continue
-		}
-		if c == '`' {
-			inBacktick = true
-			continue
-		}
-
-		if c != first {
-			continue
-		}
-		if i+len(substr) > len(s) {
-			return false
-		}
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-
-	return false
+// inspectOutsideStrings also retains unfinished comments for statement admission.
+// It uses the same lexical walk as symbol lookup, including when normalization
+// is disabled, so admission does not add a second pass over ordinary statements.
+func inspectOutsideStrings(s, substr string) (bool, int) {
+	return cyphertext.FindOutside(s, substr)
 }
 
 // ========================================
@@ -282,30 +187,27 @@ func extractPolygonPoints(geom map[string]interface{}) []interface{} {
 // secondWord) == 0, checked at the start of s instead of by scanning all of
 // it (whitespace between the words; word boundaries; the first word not
 // used as a name, clauseKeywordUsedAsName).
-func startsWithKeywords(s, firstWord, secondWord string) bool {
+func startsWithKeywords(ctx context.Context, s, firstWord, secondWord string) bool {
 	firstStart, firstEnd := trimKeywordWSBounds(firstWord)
 	secondStart, secondEnd := trimKeywordWSBounds(secondWord)
 	if firstStart >= firstEnd || secondStart >= secondEnd {
 		return false
 	}
 	afterFirst, ok := keywordMatchAt(s, 0, firstWord, firstStart, firstEnd)
-	if !ok || !keywordRightBoundaryOK(s, afterFirst, keywordBoundaryWord) {
+	if !ok || !keywordBoundaryOK(s, afterFirst, keywordBoundaryWord, keywordAfter) {
 		return false
 	}
 	// (An operator WITH, as in STARTS WITH, needs a word before it, so
 	// it can't start the statement.)
-	if clauseKeywordUsedAsName(s, 0, afterFirst, firstWord[firstStart:firstEnd]) {
+	if clauseKeywordUsedAsName(ctx, s, 0, afterFirst, firstWord[firstStart:firstEnd]) {
 		return false
 	}
-	j := afterFirst
-	if j >= len(s) || !isASCIISpace(s[j]) {
+	j, unfinished := cyphertext.GapEnd(s, afterFirst)
+	if j <= afterFirst || unfinished >= 0 {
 		return false
-	}
-	for j < len(s) && isASCIISpace(s[j]) {
-		j++
 	}
 	afterSecond, ok := keywordMatchAt(s, j, secondWord, secondStart, secondEnd)
-	return ok && keywordRightBoundaryOK(s, afterSecond, keywordBoundaryWord)
+	return ok && keywordBoundaryOK(s, afterSecond, keywordBoundaryWord, keywordAfter)
 }
 
 // findMultiWordKeywordIndex finds a multi-word keyword with flexible whitespace.
@@ -318,7 +220,7 @@ func startsWithKeywords(s, firstWord, secondWord string) bool {
 //   - secondWord: Second word of the keyword (e.g., "DATABASES")
 //
 // Returns the position of the first word if the multi-word keyword is found, -1 otherwise.
-func findMultiWordKeywordIndex(s, firstWord, secondWord string) int {
+func findMultiWordKeywordIndex(ctx context.Context, s, firstWord, secondWord string) int {
 	opts := defaultKeywordScanOpts()
 
 	firstStart, firstEnd := trimKeywordWSBounds(firstWord)
@@ -329,7 +231,7 @@ func findMultiWordKeywordIndex(s, firstWord, secondWord string) int {
 
 	searchFrom := 0
 	for {
-		idx := keywordIndexFrom(s, firstWord[firstStart:firstEnd], searchFrom, opts)
+		idx := keywordIndexFrom(ctx, s, firstWord[firstStart:firstEnd], searchFrom, opts)
 		if idx == -1 {
 			return -1
 		}
@@ -340,13 +242,10 @@ func findMultiWordKeywordIndex(s, firstWord, secondWord string) int {
 			continue
 		}
 
-		j := afterFirst
-		if j >= len(s) || !isASCIISpace(s[j]) {
+		j, unfinished := cyphertext.GapEnd(s, afterFirst)
+		if j <= afterFirst || unfinished >= 0 {
 			searchFrom = idx + 1
 			continue
-		}
-		for j < len(s) && isASCIISpace(s[j]) {
-			j++
 		}
 
 		afterSecond, ok := keywordMatchAt(s, j, secondWord, secondStart, secondEnd)
@@ -355,7 +254,7 @@ func findMultiWordKeywordIndex(s, firstWord, secondWord string) int {
 			continue
 		}
 
-		if keywordRightBoundaryOK(s, afterSecond, opts.Boundary) {
+		if keywordBoundaryOK(s, afterSecond, opts.Boundary, keywordAfter) {
 			return idx
 		}
 

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 )
@@ -33,13 +34,16 @@ func transactionHTTPRESTEntity(kind, database string, identity, properties, fiel
 	return value
 }
 
-func (s *Server) transactionHTTPRESTPath(entities []interface{}, database string, state *transactionHTTPValueState) interface{} {
+func (s *Server) transactionHTTPRESTPath(ctx context.Context, entities []interface{}, database string, state *transactionHTTPValueState) (interface{}, error) {
 	nodes, relationships := make([]string, 0, (len(entities)+1)/2), make([]string, 0, len(entities)/2)
 	for index, entity := range entities {
-		value, _ := s.transactionHTTPValue(entity, database, state)
+		value, _, err := s.transactionHTTPValue(ctx, entity, database, state)
+		if err != nil {
+			return nil, err
+		}
 		envelope, ok := value.(map[string]interface{})
 		if !ok {
-			return nil
+			return nil, nil
 		}
 		self, _ := envelope["self"].(string)
 		if index%2 == 0 {
@@ -53,5 +57,5 @@ func (s *Server) transactionHTTPRESTPath(entities []interface{}, database string
 		result["start"] = nodes[0]
 		result["end"] = nodes[len(nodes)-1]
 	}
-	return result
+	return result, nil
 }

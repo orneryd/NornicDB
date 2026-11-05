@@ -43,14 +43,14 @@ func TestApocAlgoRanksTheGivenNodesAndDeclaresWhatItYields(t *testing.T) {
 	result, err = exec.Execute(ctx, "SHOW PROCEDURES YIELD name, signature WHERE name IN ['apoc.algo.wcc', 'apoc.algo.louvain'] RETURN name, signature ORDER BY name", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{
-		{"apoc.algo.louvain", "apoc.algo.louvain(nodes :: ANY, config :: MAP) :: (node :: NODE, community :: INTEGER)"},
-		{"apoc.algo.wcc", "apoc.algo.wcc(nodes :: ANY) :: (node :: NODE, componentId :: INTEGER)"},
+		{"apoc.algo.louvain", "apoc.algo.louvain(nodes :: ANY, relationshipTypesOrConfig :: ANY, config :: MAP) :: (node :: NODE, community :: INTEGER)"},
+		{"apoc.algo.wcc", "apoc.algo.wcc(nodes :: ANY, relationshipTypesOrConfig :: ANY, config :: MAP) :: (node :: NODE, componentId :: INTEGER)"},
 	}, result.Rows)
 	result, err = exec.Execute(ctx, "CALL apoc.algo.louvain('P', {weightProperty: 'w'}) YIELD node, community RETURN count(node) AS n", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(5)}}, result.Rows)
 
-	// A second argument that isn't a config map (the documented
+	// A second argument that is a relationship-type list (the documented
 	// relationship-type list, #1169) gives no config.
 	result, err = exec.Execute(ctx, "CALL apoc.algo.louvain(['P'], ['K']) YIELD node RETURN count(node) AS n", nil)
 	require.NoError(t, err)

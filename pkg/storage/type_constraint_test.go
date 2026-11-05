@@ -2,6 +2,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -87,8 +88,8 @@ func TestBadgerEngine_PropertyTypeConstraintValidation(t *testing.T) {
 	defer cleanup()
 
 	// Insert node with correct type
-	tx1, _ := engine.BeginTransaction()
-	tx1.CreateNode(&Node{
+	tx1, _ := engine.BeginTransaction(t.Context())
+	tx1.CreateNode(t.Context(), &Node{
 		ID:     NodeID(prefixTestID("user-1")),
 		Labels: []string{"User"},
 		Properties: map[string]interface{}{
@@ -98,8 +99,8 @@ func TestBadgerEngine_PropertyTypeConstraintValidation(t *testing.T) {
 	tx1.Commit()
 
 	// Insert node with WRONG type
-	tx2, _ := engine.BeginTransaction()
-	tx2.CreateNode(&Node{
+	tx2, _ := engine.BeginTransaction(t.Context())
+	tx2.CreateNode(t.Context(), &Node{
 		ID:     NodeID(prefixTestID("user-2")),
 		Labels: []string{"User"},
 		Properties: map[string]interface{}{
@@ -109,7 +110,7 @@ func TestBadgerEngine_PropertyTypeConstraintValidation(t *testing.T) {
 	tx2.Commit()
 
 	// Try to create type constraint (should fail - existing data violates)
-	err := engine.ValidatePropertyTypeConstraintOnCreation(PropertyTypeConstraint{
+	err := ValidatePropertyTypeConstraintOnCreationForEngine(context.Background(), engine, PropertyTypeConstraint{
 		Label:        "User",
 		Property:     "age",
 		ExpectedType: PropertyTypeInteger,
@@ -126,8 +127,8 @@ func TestBadgerEngine_PropertyTypeConstraintSuccess(t *testing.T) {
 	defer cleanup()
 
 	// Insert nodes with correct types
-	tx, _ := engine.BeginTransaction()
-	tx.CreateNode(&Node{
+	tx, _ := engine.BeginTransaction(t.Context())
+	tx.CreateNode(t.Context(), &Node{
 		ID:     "user-1",
 		Labels: []string{"User"},
 		Properties: map[string]interface{}{
@@ -135,7 +136,7 @@ func TestBadgerEngine_PropertyTypeConstraintSuccess(t *testing.T) {
 			"age":  25,      // INTEGER
 		},
 	})
-	tx.CreateNode(&Node{
+	tx.CreateNode(t.Context(), &Node{
 		ID:     "user-2",
 		Labels: []string{"User"},
 		Properties: map[string]interface{}{
@@ -146,7 +147,7 @@ func TestBadgerEngine_PropertyTypeConstraintSuccess(t *testing.T) {
 	tx.Commit()
 
 	// Validate STRING type constraint (should succeed)
-	err := engine.ValidatePropertyTypeConstraintOnCreation(PropertyTypeConstraint{
+	err := ValidatePropertyTypeConstraintOnCreationForEngine(context.Background(), engine, PropertyTypeConstraint{
 		Label:        "User",
 		Property:     "name",
 		ExpectedType: PropertyTypeString,
@@ -157,7 +158,7 @@ func TestBadgerEngine_PropertyTypeConstraintSuccess(t *testing.T) {
 	}
 
 	// Validate INTEGER type constraint (should succeed)
-	err = engine.ValidatePropertyTypeConstraintOnCreation(PropertyTypeConstraint{
+	err = ValidatePropertyTypeConstraintOnCreationForEngine(context.Background(), engine, PropertyTypeConstraint{
 		Label:        "User",
 		Property:     "age",
 		ExpectedType: PropertyTypeInteger,
@@ -173,15 +174,15 @@ func TestBadgerEngine_MixedNumericTypes(t *testing.T) {
 	engine, cleanup := setupTestBadgerEngine(t)
 	defer cleanup()
 
-	tx, _ := engine.BeginTransaction()
-	tx.CreateNode(&Node{
+	tx, _ := engine.BeginTransaction(t.Context())
+	tx.CreateNode(t.Context(), &Node{
 		ID:     "node-1",
 		Labels: []string{"Node"},
 		Properties: map[string]interface{}{
 			"count": 42, // int
 		},
 	})
-	tx.CreateNode(&Node{
+	tx.CreateNode(t.Context(), &Node{
 		ID:     "node-2",
 		Labels: []string{"Node"},
 		Properties: map[string]interface{}{
@@ -191,7 +192,7 @@ func TestBadgerEngine_MixedNumericTypes(t *testing.T) {
 	tx.Commit()
 
 	// Both should satisfy INTEGER constraint
-	err := engine.ValidatePropertyTypeConstraintOnCreation(PropertyTypeConstraint{
+	err := ValidatePropertyTypeConstraintOnCreationForEngine(context.Background(), engine, PropertyTypeConstraint{
 		Label:        "Node",
 		Property:     "count",
 		ExpectedType: PropertyTypeInteger,
@@ -207,15 +208,15 @@ func TestBadgerEngine_PropertyTypeConstraintWithNulls(t *testing.T) {
 	engine, cleanup := setupTestBadgerEngine(t)
 	defer cleanup()
 
-	tx, _ := engine.BeginTransaction()
-	tx.CreateNode(&Node{
+	tx, _ := engine.BeginTransaction(t.Context())
+	tx.CreateNode(t.Context(), &Node{
 		ID:     "person-1",
 		Labels: []string{"Person"},
 		Properties: map[string]interface{}{
 			"nickname": "Bob",
 		},
 	})
-	tx.CreateNode(&Node{
+	tx.CreateNode(t.Context(), &Node{
 		ID:         "person-2",
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{
@@ -225,7 +226,7 @@ func TestBadgerEngine_PropertyTypeConstraintWithNulls(t *testing.T) {
 	tx.Commit()
 
 	// STRING type constraint should allow NULL
-	err := engine.ValidatePropertyTypeConstraintOnCreation(PropertyTypeConstraint{
+	err := ValidatePropertyTypeConstraintOnCreationForEngine(context.Background(), engine, PropertyTypeConstraint{
 		Label:        "Person",
 		Property:     "nickname",
 		ExpectedType: PropertyTypeString,

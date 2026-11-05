@@ -12,13 +12,20 @@ import (
 )
 
 // wrappedDatabaseEngine is a database's engine behind another layer, as the
-// server's executors see theirs: not a *storage.NamespacedEngine itself.
+// server's executors see theirs: not a *storage.NamespacedEngine itself. The
+// layer only re-states the database's namespace, so it is a transparent
+// decorator and exposes the canonical storage.EngineUnwrapper accessor: the
+// query engine reaches the database engine that owns BeginTransaction through
+// it, and re-checks the namespace the wrapper reports.
 type wrappedDatabaseEngine struct {
 	storage.Engine
 	namespace string
 }
 
 func (w wrappedDatabaseEngine) Namespace() string { return w.namespace }
+
+// GetInnerEngine is the canonical EngineUnwrapper accessor.
+func (w wrappedDatabaseEngine) GetInnerEngine() storage.Engine { return w.Engine }
 
 type standardDBInfo struct{ name string }
 
@@ -66,7 +73,7 @@ func TestStatementTargetDatabase(t *testing.T) {
 	})
 	ctx := context.Background()
 	count := func(engine storage.Engine, label string) int {
-		nodes, err := engine.GetNodesByLabel(label)
+		nodes, err := engine.GetNodesByLabel(ctx, label)
 		require.NoError(t, err)
 		return len(nodes)
 	}

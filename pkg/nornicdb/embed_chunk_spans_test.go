@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -100,9 +102,9 @@ func TestEmbedWorkerRecordsChunkSpans(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			engine := storage.NewMemoryEngine()
+			engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 			node := &storage.Node{ID: "docs:a", Labels: []string{"Doc"}, Properties: map[string]any{"text": "Rent is due monthly. Notices go to Müller."}}
-			_, err := engine.CreateNode(node)
+			_, err := engine.CreateNode(t.Context(), node)
 			require.NoError(t, err)
 			worker := &EmbedWorker{
 				storage: &sequenceEmbeddingEngine{Engine: engine, nodes: []*storage.Node{node}},
@@ -111,7 +113,7 @@ func TestEmbedWorkerRecordsChunkSpans(t *testing.T) {
 			}
 			setup(worker)
 			require.True(t, worker.processNextBatch())
-			stored, err := engine.GetNode(node.ID)
+			stored, err := engine.GetNode(t.Context(), node.ID)
 			require.NoError(t, err)
 			require.Len(t, stored.ChunkEmbeddings, 2)
 			spans, ok := embeddingutil.StoredChunkSpans(stored.EmbedMeta)

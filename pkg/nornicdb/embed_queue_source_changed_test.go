@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -53,10 +55,10 @@ func (e *changingEmbedder) embedded(fragment string) bool {
 func TestEmbedWorkerReembedsNodeChangedWhileEmbedding(t *testing.T) {
 	for _, route := range []string{"UpdateNode keeping UpdatedAt", "UpdateNode with a new UpdatedAt", "Cypher SET"} {
 		t.Run(route, func(t *testing.T) {
-			base := storage.NewMemoryEngine()
+			base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 			base.SetEmbeddingsEnabled(true)
 			engine := storage.NewNamespacedEngine(base, "test")
-			_, err := engine.CreateNode(&storage.Node{ID: "doc", Labels: []string{"Memory"}, Properties: map[string]any{"content": "first version alpha"}})
+			_, err := engine.CreateNode(t.Context(), &storage.Node{ID: "doc", Labels: []string{"Memory"}, Properties: map[string]any{"content": "first version alpha"}})
 			require.NoError(t, err)
 
 			embedder := &changingEmbedder{mockEmbedder: newMockEmbedder()}
@@ -66,13 +68,13 @@ func TestEmbedWorkerReembedsNodeChangedWhileEmbedding(t *testing.T) {
 					require.NoError(t, err)
 					return
 				}
-				node, err := engine.GetNode("doc")
+				node, err := engine.GetNode(t.Context(), "doc")
 				require.NoError(t, err)
 				node.Properties = map[string]any{"content": "second version omega"}
 				if route == "UpdateNode with a new UpdatedAt" {
 					node.UpdatedAt = node.UpdatedAt.Add(time.Second)
 				}
-				require.NoError(t, engine.UpdateNode(node))
+				require.NoError(t, engine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
 			}
 			worker := NewEmbedWorker(embedder, engine, &EmbedWorkerConfig{NumWorkers: 1, ScanInterval: 50 * time.Millisecond, BatchDelay: time.Millisecond, MaxRetries: 1, ChunkSize: 512, ChunkOverlap: 50})
 			defer worker.Close()
@@ -82,12 +84,12 @@ func TestEmbedWorkerReembedsNodeChangedWhileEmbedding(t *testing.T) {
 			// recently-processed wait; age that wait instead of sleeping it.
 			deadline := time.Now().Add(10 * time.Second)
 			for time.Now().Before(deadline) && !embedder.embedded("omega") {
-				node, err := engine.GetNode("doc")
+				node, err := engine.GetNode(t.Context(), "doc")
 				require.NoError(t, err)
 				require.Empty(t, node.ChunkEmbeddings, "the first version's embedding must not be stored")
 				worker.mu.Lock()
 				for id := range worker.recentlyProcessed {
-					worker.recentlyProcessed[id] = time.Now().Add(-time.Minute)
+					worker.recentlyProcessed[id] = recentNodeEmbedding{at: time.Now().Add(-time.Minute)}
 				}
 				worker.mu.Unlock()
 				worker.Trigger()
@@ -95,7 +97,7 @@ func TestEmbedWorkerReembedsNodeChangedWhileEmbedding(t *testing.T) {
 			}
 			require.True(t, embedder.embedded("omega"), "the second version was never embedded")
 			require.Eventually(t, func() bool {
-				node, err := engine.GetNode("doc")
+				node, err := engine.GetNode(t.Context(), "doc")
 				return err == nil && len(node.ChunkEmbeddings) == 1 && node.EmbedMeta["has_embedding"] == true
 			}, 10*time.Second, 20*time.Millisecond)
 			require.Zero(t, base.PendingEmbeddingsCount())
@@ -106,7 +108,7 @@ func TestEmbedWorkerReembedsNodeChangedWhileEmbedding(t *testing.T) {
 // markRecentlyProcessed starts the wait on a worker whose map wasn't made yet.
 func TestEmbedWorkerMarkRecentlyProcessedStartsTheWait(t *testing.T) {
 	worker := &EmbedWorker{}
-	worker.markRecentlyProcessed("node")
+	worker.markRecentlyProcessed(&storage.Node{ID: "node"})
 	require.True(t, worker.wasRecentlyProcessed("node"))
 	require.False(t, worker.wasRecentlyProcessed("other"))
 }

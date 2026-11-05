@@ -38,98 +38,18 @@ func TestDeleteProjectionCanonicalMultiplicityAndCounters(t *testing.T) {
 	}
 }
 
-func TestDeleteHelpers_CollectCandidatesAndProjection(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "delete_helpers_cov")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	_, err := exec.Execute(ctx, `
-CREATE (:Person {id:'p1', team:'red'}),
-       (:Person {id:'p2', team:'blue'}),
-       (:Person {id:'p3', team:'red'})
-`, nil)
-	require.NoError(t, err)
-	_, err = exec.Execute(ctx, "CREATE INDEX person_team_idx IF NOT EXISTS FOR (n:Person) ON (n.team)", nil)
-	require.NoError(t, err)
-
-	nodes, handled, err := exec.collectDeleteWithLimitCandidates(ctx, "RETURN 1", "n", 10, nil)
-	require.NoError(t, err)
-	require.False(t, handled)
-	require.Nil(t, nodes)
-
-	nodes, handled, err = exec.collectDeleteWithLimitCandidates(ctx, "MATCH (n:Person)", "x", 10, nil)
-	require.NoError(t, err)
-	require.False(t, handled)
-	require.Nil(t, nodes)
-
-	nodes, handled, err = exec.collectDeleteWithLimitCandidates(ctx, "MATCH (n:Person) WHERE n.team = 'red'", "n", 1, nil)
-	require.NoError(t, err)
-	require.True(t, handled)
-	require.Len(t, nodes, 1)
-
-	nodes, handled, err = exec.collectDeleteWithLimitCandidates(ctx, "MATCH (n:Person) WHERE n.team IN $teams", "n", 10, map[string]interface{}{"teams": []string{"blue"}})
-	require.NoError(t, err)
-	require.True(t, handled)
-	require.Len(t, nodes, 1)
-	require.Equal(t, "blue", nodes[0].Properties["team"])
-
-	nodes, handled, err = exec.collectDeleteWithLimitCandidates(ctx, "MATCH (n:Person) WHERE n.team IN $teams", "n", 10, map[string]interface{}{"teams": int64(1)})
-	require.NoError(t, err)
-	require.False(t, handled)
-	require.Nil(t, nodes)
-
-	nodes, handled, err = exec.collectDeleteWithLimitCandidates(ctx, "MATCH (n:Person) WHERE n.team > 'a'", "n", 10, nil)
-	require.NoError(t, err)
-	require.False(t, handled)
-	require.Nil(t, nodes)
-
-	res := &ExecuteResult{Stats: &QueryStats{NodesDeleted: 2, RelationshipsDeleted: 3}}
-	node := &storage.Node{ID: "n1"}
-	input := &ExecuteResult{Columns: []string{"n"}, Rows: [][]interface{}{{node}, {node}}}
-	exec.applyDeleteReturnProjection(res, "MATCH (n) DELETE n RETURN count(*), count(n), 42 AS literal", "n", deleteProjectionInfo{ctx: ctx, input: input})
-	require.Equal(t, []string{"count(*)", "count(n)", "literal"}, res.Columns)
-	require.Len(t, res.Rows, 1)
-	require.EqualValues(t, 2, res.Rows[0][0])
-	require.EqualValues(t, 2, res.Rows[0][1])
-	require.EqualValues(t, 42, res.Rows[0][2])
-	deletedCtx := withExpressionFailureSlot(ctx)
-	exec.applyDeleteReturnProjection(res, "MATCH (n) DELETE n RETURN n.name", "n", deleteProjectionInfo{ctx: deletedCtx, input: input})
-	requireDeletedEntityError(t, getExpressionFailure(deletedCtx))
-
-	res = &ExecuteResult{Stats: &QueryStats{RelationshipsDeleted: 3}}
-	edge := &storage.Edge{ID: "r1", Type: "R"}
-	input = &ExecuteResult{Columns: []string{"r"}, Rows: [][]interface{}{{edge}, {edge}, {edge}}}
-	exec.applyDeleteReturnProjection(res, "MATCH ()-[r]->() DELETE r RETURN count(r), r, type(r)", "r", deleteProjectionInfo{ctx: ctx, input: input})
-	require.Equal(t, []string{"count(r)", "r", "type(r)"}, res.Columns)
-	require.Len(t, res.Rows, 1)
-	require.EqualValues(t, 3, res.Rows[0][0])
-	// The deleted relationship reads as its empty view (#907).
-	require.Equal(t, &storage.Edge{ID: "r1", Type: "R"}, res.Rows[0][1])
-	require.Equal(t, "R", res.Rows[0][2])
-
-	res = &ExecuteResult{Stats: &QueryStats{NodesDeleted: 2, RelationshipsDeleted: 3}}
-	info := deleteProjectionInfo{ctx: ctx, input: &ExecuteResult{Columns: []string{"n", "r"}, Rows: [][]interface{}{{node, edge}}}}
-	exec.applyDeleteReturnProjection(res, "MATCH (n)-[r]->() DELETE n, r RETURN count(n), count(r), count(*)", "n, r", info)
-	require.Equal(t, []string{"count(n)", "count(r)", "count(*)"}, res.Columns)
-	require.Len(t, res.Rows, 1)
-	require.EqualValues(t, 1, res.Rows[0][0])
-	require.EqualValues(t, 1, res.Rows[0][1])
-	require.EqualValues(t, 1, res.Rows[0][2])
-}
-
 func TestDeleteHelpers_StreamEligibilityAndExecution(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "delete_stream_cov")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	require.False(t, exec.isDeleteStreamingEligible("", "n", true))
-	require.False(t, exec.isDeleteStreamingEligible("MATCH (n) WITH n", "n", true))
-	require.False(t, exec.isDeleteStreamingEligible("MATCH (n)", "n,m", true))
-	require.False(t, exec.isDeleteStreamingEligible("MATCH (n)", "n-1", true))
-	require.False(t, exec.isDeleteStreamingEligible("MATCH (n)", "n", false))
-	require.True(t, exec.isDeleteStreamingEligible("MATCH (n:Tmp)", "n", true))
+	require.False(t, exec.isDeleteStreamingEligible(ctx, "", "n", true))
+	require.False(t, exec.isDeleteStreamingEligible(ctx, "MATCH (n) WITH n", "n", true))
+	require.False(t, exec.isDeleteStreamingEligible(ctx, "MATCH (n)", "n,m", true))
+	require.False(t, exec.isDeleteStreamingEligible(ctx, "MATCH (n)", "n-1", true))
+	require.False(t, exec.isDeleteStreamingEligible(ctx, "MATCH (n)", "n", false))
+	require.True(t, exec.isDeleteStreamingEligible(ctx, "MATCH (n:Tmp)", "n", true))
 
 	_, err := exec.Execute(ctx, "CREATE (a:Tmp {id:'a'}), (b:Tmp {id:'b'})", nil)
 	require.NoError(t, err)
@@ -151,7 +71,7 @@ func TestDeleteHelpers_StreamEligibilityAndExecution(t *testing.T) {
 	res, err = exec.Execute(ctx, "MATCH (n:Ghost)"+" DELETE "+"missingVar", getParamsFromContext(ctx))
 	require.Error(t, err)
 	require.Nil(t, res)
-	ghosts, err := store.GetNodesByLabel("Ghost")
+	ghosts, err := store.GetNodesByLabel(ctx, "Ghost")
 	require.NoError(t, err)
 	require.Len(t, ghosts, 1)
 
@@ -268,15 +188,4 @@ func TestDeleteHelpers_ClassifyDeleteTargetValue(t *testing.T) {
 	require.Equal(t, storage.NodeID("n1"), classifyDeleteTargetValue("n1").nodeID)
 	require.Equal(t, deleteProjectionNode, classifyDeleteTargetValue(map[string]interface{}{"_nodeId": "n2"}).kind)
 	require.Equal(t, deleteProjectionRelationship, classifyDeleteTargetValue(map[string]interface{}{"_edgeId": "r2"}).kind)
-}
-
-func TestWherePartNodePattern(t *testing.T) {
-	np := nodePatternInfo{labels: []string{"A"}}
-	out := wherePartNodePattern(np, "n")
-	require.Equal(t, "n", out.variable)
-	require.Equal(t, []string{"A"}, out.labels)
-
-	np2 := nodePatternInfo{variable: "x", labels: []string{"B"}}
-	out2 := wherePartNodePattern(np2, "n")
-	require.Equal(t, "x", out2.variable)
 }

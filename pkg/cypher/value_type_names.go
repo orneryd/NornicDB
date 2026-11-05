@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"fmt"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"reflect"
 	"strings"
 
@@ -91,10 +92,6 @@ func cypherValueKindOf(value interface{}) cypherValueKind {
 		return valueKindNull
 	case bool:
 		return valueKindBoolean
-	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
-		return valueKindInteger
-	case float32, float64:
-		return valueKindFloat
 	case string:
 		return valueKindString
 	case *storage.Node:
@@ -139,6 +136,15 @@ func cypherValueKindOf(value interface{}) cypherValueKind {
 			return valueKindPath
 		}
 		return valueKindMap
+	}
+	if number, numeric := valueconvert.ReadNumber(value); numeric {
+		if number.IsInteger() {
+			return valueKindInteger
+		}
+		return valueKindFloat
+	}
+	if _, list := valueconvert.ReadList(value); list {
+		return valueKindList
 	}
 	switch reflect.TypeOf(value).Kind() {
 	case reflect.Map:

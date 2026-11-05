@@ -58,7 +58,7 @@ func TestExecuteCreateSet_WithPipelineBranches(t *testing.T) {
 	require.EqualValues(t, 7, res.Rows[0][1])
 
 	// Direct API verification for deterministic assertions.
-	edges, err := store.GetEdgesByType("REL")
+	edges, err := store.GetEdgesByType(ctx, "REL")
 	require.NoError(t, err)
 	require.NotEmpty(t, edges)
 	foundWeight := false

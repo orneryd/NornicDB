@@ -189,11 +189,11 @@ func ensureLargeScaleFixture(tb testing.TB) *largeScaleFixture {
 	// bench wastes minutes querying an incomplete graph.
 	tb.Logf("verifying storage counts...")
 	t5a := time.Now()
-	gotNodes, err := ns.NodeCount()
+	gotNodes, err := ns.NodeCount(tb.Context())
 	if err != nil {
 		tb.Fatalf("NodeCount: %v", err)
 	}
-	gotEdges, err := ns.EdgeCount()
+	gotEdges, err := ns.EdgeCount(tb.Context())
 	if err != nil {
 		tb.Fatalf("EdgeCount: %v", err)
 	}
@@ -272,7 +272,7 @@ func bulkCreateNodesInChunks(eng storage.Engine, nodes []*storage.Node, chunk in
 		if end > len(nodes) {
 			end = len(nodes)
 		}
-		if err := eng.BulkCreateNodes(nodes[i:end]); err != nil {
+		if err := eng.BulkCreateNodes(context.Background(), nodes[i:end]); err != nil {
 			return fmt.Errorf("chunk [%d:%d]: %w", i, end, err)
 		}
 	}
@@ -285,7 +285,7 @@ func bulkCreateEdgesInChunks(eng storage.Engine, edges []*storage.Edge, chunk in
 		if end > len(edges) {
 			end = len(edges)
 		}
-		if err := eng.BulkCreateEdges(edges[i:end]); err != nil {
+		if err := eng.BulkCreateEdges(context.Background(), edges[i:end]); err != nil {
 			return fmt.Errorf("chunk [%d:%d]: %w", i, end, err)
 		}
 	}

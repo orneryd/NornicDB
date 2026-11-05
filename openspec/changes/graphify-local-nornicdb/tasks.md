@@ -12,3 +12,8 @@
 - [x] Reproduce local bge-m3 context initialization failure after import; rebuild matching llama.cpp headers/library and verify model embedding succeeds.
 - [x] Guard macOS builds against stale llama.cpp archives and package a corrected executable.
 - [ ] Install the rebuilt full package, start the service, and verify embedding workers start and coverage rises beyond 4%.
+- [x] Require explicit deletion of redundant forwarding/compatibility wrappers and migration of callers in blocked-commit instructions; real rejected-commit tests assert this guidance.
+- [x] Record all rewritten owners before candidate size filters so replaced old bodies are not treated as current duplicates; integration regression fails before fix and passes after.
+- [x] 71 hook/detector tests pass with isolated fixture Git configuration; standalone runtime updated with the tested source.
+
+- [x] Distinguish semantic matches to already-called owners using current extracted AST edges, report the proof, preserve code-copy blocking and comparison against other semantic targets; fail-first regression and 75 tests pass.

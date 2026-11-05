@@ -49,7 +49,7 @@ func TestShowCompositionMatchesNeo4j(t *testing.T) {
 		"SHOW FUNCTIONS YIELD name AS fn RETURN name":             "name",
 	} {
 		_, err := exec.Execute(ctx, "CYPHER 25 "+query, nil)
-		require.ErrorContains(t, err, "variable "+name+" is not defined", query)
+		require.ErrorContains(t, err, "Variable `"+name+"` not defined", query)
 		requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 	}
 	for _, query := range []string{

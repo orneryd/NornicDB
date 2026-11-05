@@ -1,4 +1,4 @@
-//go:build !cgo && !windows && !yzma
+//go:build (!cgo && !windows && !yzma) || nolocalllm
 
 // Package localllm - Generation API Stub
 //

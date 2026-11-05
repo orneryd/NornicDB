@@ -25,7 +25,7 @@ func mixedEntityOrderRemoteValues(t *testing.T, fixture string) []interface{} {
 	remote, err := storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: peer.URL, Database: "remote"})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = remote.Close() })
-	_, rows, err := remote.QueryCypher(context.Background(), "RETURN graph_values", nil)
+	_, rows, err := remote.QueryCypher(context.Background(), "RETURN graph_values", nil, storage.RemoteAccessRead)
 	require.NoError(t, err)
 	return rows[0]
 }
@@ -39,13 +39,13 @@ func TestMixedEntityOrderAllPublicPermutations(t *testing.T) {
 	exec, store := newTestExecutor(t)
 	a := &storage.Node{ID: "a", Properties: map[string]interface{}{"name": "a"}}
 	c := &storage.Node{ID: "c", Properties: map[string]interface{}{"name": "c"}}
-	_, err := store.CreateNode(a)
+	_, err := store.CreateNode(t.Context(), a)
 	require.NoError(t, err)
-	_, err = store.CreateNode(c)
+	_, err = store.CreateNode(t.Context(), c)
 	require.NoError(t, err)
-	a, err = store.GetNode("a")
+	a, err = store.GetNode(t.Context(), "a")
 	require.NoError(t, err)
-	c, err = store.GetNode("c")
+	c, err = store.GetNode(t.Context(), "c")
 	require.NoError(t, err)
 	remote := mixedEntityOrderRemote(t)
 	for _, values := range [][]interface{}{{c, remote, a}, {c, a, remote}, {remote, c, a}, {remote, a, c}, {a, c, remote}, {a, remote, c}} {
@@ -86,7 +86,7 @@ func mixedEntityOrderKnownRemote(t *testing.T, id int, element string) storage.R
 	remote, err := storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: peer.URL, Database: "remote"})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = remote.Close() })
-	_, rows, err := remote.QueryCypher(context.Background(), "RETURN n", nil)
+	_, rows, err := remote.QueryCypher(context.Background(), "RETURN n", nil, storage.RemoteAccessRead)
 	require.NoError(t, err)
 	node := rows[0][0].(storage.RemoteEntityValue)
 	legacy, _, _ := node.LegacyIDs()
@@ -232,7 +232,7 @@ func TestPathIdentityEqualityAndEquivalenceAcrossCarriers(t *testing.T) {
 	for _, left := range []interface{}{native, changed, wrapper} {
 		for _, right := range []interface{}{native, changed, wrapper} {
 			require.Equal(t, true, cypherEquality(left, right))
-			require.Equal(t, cypherEquivalenceKey(left), cypherEquivalenceKey(right))
+			require.Equal(t, cypherValueKey(left, cypherEquivalenceContract), cypherValueKey(right, cypherEquivalenceContract))
 		}
 	}
 	forged := map[string]interface{}{"_pathResult": "ordinary user property"}
@@ -274,7 +274,7 @@ func TestRemoteNilGraphCarriersKeepNullSortAndIdentity(t *testing.T) {
 		require.Nil(t, cypherEquality(value, value))
 		require.Zero(t, compareValuesForSort(value, nil))
 		require.Zero(t, compareValuesForSort(nil, value))
-		require.Equal(t, cypherEquivalenceKey(nil), cypherEquivalenceKey(value))
+		require.Equal(t, cypherValueKey(nil, cypherEquivalenceContract), cypherValueKey(value, cypherEquivalenceContract))
 	}
 }
 

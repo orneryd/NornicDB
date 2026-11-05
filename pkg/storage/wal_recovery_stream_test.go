@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"path/filepath"
 	"testing"
@@ -13,9 +15,9 @@ func TestRecoverIntoEngineStreamsSnapshotAndWAL(t *testing.T) {
 	cleanup := config.WithWALEnabled()
 	defer cleanup()
 
-	source := NewMemoryEngine()
+	source := newTestMemoryEngine(t)
 	namespaced := NewNamespacedEngine(source, "test")
-	_, err := namespaced.CreateNode(&Node{ID: "snapshot-node", Labels: []string{"Doc"}})
+	_, err := namespaced.CreateNode(t.Context(), &Node{ID: "snapshot-node", Labels: []string{"Doc"}})
 	require.NoError(t, err)
 
 	root := t.TempDir()
@@ -30,7 +32,7 @@ func TestRecoverIntoEngineStreamsSnapshotAndWAL(t *testing.T) {
 	}, "test"))
 	require.NoError(t, wal.Close())
 
-	destination := NewMemoryEngine()
+	destination := newTestMemoryEngine(t)
 	result, status, err := RecoverIntoEngine(destination, walDir, snapshotPath)
 	require.NoError(t, err)
 	require.Equal(t, 1, result.Applied)
@@ -38,16 +40,16 @@ func TestRecoverIntoEngineStreamsSnapshotAndWAL(t *testing.T) {
 	require.Equal(t, uint64(1), status.SnapshotNodes)
 	require.Equal(t, uint64(1), status.WALEntries)
 
-	_, err = destination.GetNode("test:snapshot-node")
+	_, err = destination.GetNode(t.Context(), "test:snapshot-node")
 	require.NoError(t, err)
-	_, err = destination.GetNode("test:wal-node")
+	_, err = destination.GetNode(t.Context(), "test:wal-node")
 	require.NoError(t, err)
 }
 
 func TestRecoverIntoEngineStreamsMixedNamespaces(t *testing.T) {
-	source := NewMemoryEngine()
+	source := newTestMemoryEngine(t)
 	for _, namespace := range []string{"nornic", "system"} {
-		_, err := source.CreateNode(&Node{
+		_, err := source.CreateNode(t.Context(), &Node{
 			ID: NodeID(namespace + ":node"), Labels: []string{"Doc"},
 			Properties: map[string]interface{}{"name": namespace},
 		})
@@ -55,14 +57,14 @@ func TestRecoverIntoEngineStreamsMixedNamespaces(t *testing.T) {
 	}
 	snapshotPath := filepath.Join(t.TempDir(), "mixed.nds")
 	require.NoError(t, SaveStreamingSnapshot(context.Background(), source, snapshotPath, SnapshotOptions{}))
-	destination, err := NewBadgerEngine(t.TempDir())
+	destination, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	defer destination.Close()
 	_, status, err := RecoverIntoEngine(destination, t.TempDir(), snapshotPath)
 	require.NoError(t, err)
 	require.Equal(t, uint64(2), status.SnapshotNodes)
 	for _, namespace := range []string{"nornic", "system"} {
-		_, err := destination.GetNode(NodeID(namespace + ":node"))
+		_, err := destination.GetNode(t.Context(), NodeID(namespace+":node"))
 		require.NoError(t, err)
 	}
 }
