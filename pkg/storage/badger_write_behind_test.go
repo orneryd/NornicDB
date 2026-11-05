@@ -580,3 +580,21 @@ func TestWriteBehind_DisabledCommitIsSynchronous(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), count, "disabled engine commits synchronously")
 }
+
+// An empty buffer at BEGIN is not proof that the transaction's physical
+// snapshot stays current: another implicit commit can enter and be replayed
+// while this transaction is preparing. The public mixed-protocol stress test
+// exercises the resulting commit/retry behavior; this isolates the boundary.
+func TestWriteBehind_ReplayAfterEmptyTransactionBegin(t *testing.T) {
+	engine := newWriteBehindTestEngine(t, time.Hour)
+	tx, err := engine.BeginTransaction(t.Context())
+	require.NoError(t, err)
+	defer tx.Rollback()
+	require.Zero(t, tx.bufferEpoch&1, "BEGIN captures an empty buffer")
+	require.False(t, tx.replayedSinceBeginLocked())
+
+	bufferedCreate(t, engine, &Node{ID: "test:later", Properties: map[string]interface{}{"value": int64(1)}})
+	require.NoError(t, engine.FlushWriteBehind(t.Context()))
+	require.Zero(t, engine.writeBehind.PendingOps(), "the peer already left the buffer")
+	require.True(t, tx.replayedSinceBeginLocked(), "a replay after an idle BEGIN must refresh the physical writer too")
+}

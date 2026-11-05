@@ -104,3 +104,32 @@ counts repeat across samples; their diagnostic timings were contended and do
 not replace the isolated latency qualification above. A new exact-head paired
 qualification after rebasing onto merged NOR-136 is pending. No new-head latency
 or full-suite pass is inferred from the earlier checkpoint.
+
+## Mixed write-behind retry correction
+
+Parallel CI uses the workflow from `main` and checks out the requested immutable
+PR head for tests. Its auxiliary `.ci-workflow-tools` checkout is a different
+revision and is excluded from the scanner-family source audit, like `.verify`.
+An injected duplicate declaration in the actual PR source still fails that audit.
+
+On `b8a83d72`, the public NOR-136 six-mode increment workload failed 26 of 30
+repetitions with `GOMAXPROCS=2`: mixed explicit/autocommit workers exhausted the
+unchanged 2,000-attempt budget. Diagnostics found a native Badger conflict after
+accepted preparation with an initially empty buffer (begin epoch 134, current
+replay epoch 140). A post-journal discard retains recovery authority, so later
+writers cannot make progress merely by retrying.
+
+The canonical replay detector now recognizes changes after an empty-buffer
+BEGIN. Direct commits also settle existing buffer ordering, rebase, and endpoint
+validation before handing preparation to the WAL acceptance owner. Logical
+snapshot and mutation-preimage checks remain in place; neither conflict
+semantics nor retry budgets are relaxed. No storage keys or formats change.
+
+The replay-detector correction passed 30 repetitions of that same public
+six-mode workload (111.578 seconds). Its public/race and genuine peer-conflict
+controls passed (69.647 seconds). The deterministic empty-BEGIN/replay test also
+fails with the original predicate and passes with the correction. These focused
+results do not establish a full-suite pass or new performance qualification;
+the integrated correction passed five normal repetitions (83.584 seconds) and
+one race run (82.968 seconds), including the new regression and genuine
+peer-conflict controls. The exact pushed head still requires complete CI.

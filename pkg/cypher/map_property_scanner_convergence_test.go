@@ -172,7 +172,7 @@ func TestPropertyScannerFamilyUsesCanonicalReaders(t *testing.T) {
 			return walkErr
 		}
 		if entry.IsDir() {
-			if entry.Name() == "vendor" || entry.Name() == "node_modules" || entry.Name() == ".git" || entry.Name() == ".verify" {
+			if entry.Name() == "vendor" || entry.Name() == "node_modules" || entry.Name() == ".git" || entry.Name() == ".verify" || entry.Name() == ".ci-workflow-tools" {
 				// Verification checkouts are copies of other revisions, not
 				// source files belonging to this revision's scanner family.
 				return filepath.SkipDir

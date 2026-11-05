@@ -167,3 +167,16 @@ review CI request is superseded by the following pushed head.
 - [x] Move the complete standalone mutant matrix to testing/storagecensusmutants, retaining inputs/edits/expectations byte-for-byte, using exported Census and slices.Contains. Both packages remain under unchanged make test and its original 30-minute per-package timeout.
 - [ ] Validate the complete moved mutant matrix and remaining audit package; replacement CI must pass both.
 - [ ] Push integrated audit corrections and obtain a complete exact-head make-test CI pass.
+
+## Parallel CI and mixed-mode progress correction
+
+- [x] Dispatch parallel workflow run 42119526395 from main for immutable PR head b8a83d72; confirm its actual target checkout in plan and shard logs.
+- [x] Preserve the Cypher source-audit failure caused by scanning the auxiliary workflow checkout; keep real-source duplicate rejection controls intact.
+- [x] Reproduce the mixed-mode progress defect on unchanged b8a83d72: 26/30 two-core six-mode runs exhaust the unchanged retry budget.
+- [x] Trace an accepted physical conflict after empty-BEGIN buffer replay (epochs 134→140); retain all genuine snapshot/preimage conflict checks.
+- [x] Correct the existing replay detector; 30/30 six-mode repeats and focused public/race conflict controls pass before integrating the independent ordering correction.
+- [x] Prove the deterministic empty-BEGIN/replay regression fails with the original predicate and passes with the correction.
+- [x] Integrate DeepSeek's existing direct-write ordering phase before accepted preparation, without introducing another owner or fallback.
+- [x] Finish integrated focused and race checks: five normal repetitions (83.584s) and one race run (82.968s), including genuine peer conflicts and the new replay regression.
+- [ ] Push the correction and dispatch parallel make-test CI against its immutable head.
+- [ ] Collect a complete passing exact-head CI result, update PR/Linear and clean completed task resources.
