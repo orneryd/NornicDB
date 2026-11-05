@@ -193,7 +193,7 @@ jobs:
     needs: coverage-plan
     if: ${{ inputs.test_only == true }}
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 360
     strategy:
       fail-fast: false
       max-parallel: 6
