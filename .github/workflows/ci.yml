@@ -101,11 +101,17 @@ jobs:
           ref: ${{ inputs.ref || inputs.branch || github.ref }}
           persist-credentials: false
       - id: groups
+        env:
+          TEST_ONLY: ${{ inputs.test_only }}
         run: |
           set -euo pipefail
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          bash scripts/ci/test-groups.sh --list > groups.txt
-          python3 -c 'import json,pathlib; g=pathlib.Path("groups.txt").read_text().splitlines(); assert g and len(g)==len(set(g)); print("groups="+json.dumps(g,separators=(",",":")))' >> "$GITHUB_OUTPUT"
+          if [[ "$TEST_ONLY" == 'true' ]]; then
+            echo 'groups=[]' >> "$GITHUB_OUTPUT"
+          else
+            bash scripts/ci/test-groups.sh --list > groups.txt
+            python3 -c 'import json,pathlib; g=pathlib.Path("groups.txt").read_text().splitlines(); assert g and len(g)==len(set(g)); print("groups="+json.dumps(g,separators=(",",":")))' >> "$GITHUB_OUTPUT"
+          fi
   coverage-groups:
     env:
       CGO_ENABLED: "1"
