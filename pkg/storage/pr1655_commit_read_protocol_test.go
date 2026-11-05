@@ -11,71 +11,31 @@ import (
 	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/bolt"
-	"github.com/orneryd/nornicdb/pkg/cypher"
-	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/server"
-	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
 const pr1655ProtocolUpdate = "MATCH (n:Doc {id: 'original'}) SET n.summary_input = 'changed'"
 
-// The protocol fixtures share the actual head corruption and metadata-boundary
-// handler used by Execute tests; they neither replace the error nor add hooks.
+// openPR1655ProtocolFixture adds the real head-corruption fault wiring and the
+// protocol seed on top of the shared protocolServerFixture owner: the fixture
+// supplies the fault logger, registers the head restore and seeds the original
+// Doc. Nothing in production is hooked or changed.
 func openPR1655ProtocolFixture(t *testing.T, writeBehind ...bool) (*server.Server, *pr1655ExecuteFault) {
 	t.Helper()
 	fault := &pr1655ExecuteFault{}
-	config := nornicdb.DefaultConfig()
-	config.Auth.Enabled = false
-	config.Memory.DecayEnabled = false
-	config.Memory.AutoLinksEnabled = false
-	config.Memory.EmbeddingEnabled = false
-	config.Database.AsyncWritesEnabled = len(writeBehind) > 0 && writeBehind[0]
-	config.Database.MVCCLifecycleEnabled = false
-	config.Database.WALAutoCompactionEnabled = false
-	config.Storage.Mode = "low"
-	config.Logger = slog.New(&pr1655ExecuteHandler{fault: fault, next: slog.DiscardHandler})
-	db, err := nornicdb.Open(t.TempDir(), config)
-	if err != nil && db != nil {
-		_ = db.Close()
-	}
-	require.NoError(t, err)
-	base := db.GetBaseStorageForManager()
-	for {
-		wrapper, ok := base.(storage.EngineUnwrapper)
-		if !ok {
-			break
-		}
-		base = wrapper.GetInnerEngine()
-	}
-	native, ok := base.(*storage.BadgerEngine)
-	if !ok {
-		_ = db.Close()
-		t.Fatalf("real Badger fixture required, got %T", base)
-	}
-	fixtureowner.Track(t, native, storage.ErrStorageClosed)
-	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	serverConfig := server.DefaultConfig()
-	serverConfig.Port = 0
-	serverConfig.Headless = true
-	serverConfig.EmbeddingEnabled = false
-	serverConfig.ProcessConfig = config
-	srv, err := server.New(db, nil, serverConfig)
-	require.NoError(t, err)
-	require.NoError(t, srv.Start())
-	t.Cleanup(func() { require.NoError(t, srv.Stop(context.Background())) })
-	fault.engine = native
+	f := openProtocolServerFixture(t, protocolServerOptions{
+		writeBehind: len(writeBehind) > 0 && writeBehind[0],
+		logger:      slog.New(&pr1655ExecuteHandler{fault: fault, next: slog.DiscardHandler}),
+	})
+	fault.engine = f.engine
 	t.Cleanup(func() { fault.restore(t) })
-	store, err := srv.GetDatabaseManager().GetStorage("nornic")
+	f.seed(t, "CREATE (:Doc {id:'original', summary_input:'before'})")
+	var err error
+	fault.nodeID, err = pr1655SingleDocID(f.engine)
 	require.NoError(t, err)
-	_, err = cypher.NewStorageExecutor(store).Execute(context.Background(), "CREATE (:Doc {id:'original', summary_input:'before'})", nil)
-	require.NoError(t, err)
-	require.NoError(t, native.FlushWriteBehind(context.Background()))
-	fault.nodeID, err = pr1655SingleDocID(native)
-	require.NoError(t, err)
-	return srv, fault
+	return f.server, fault
 }
 
 func assertPR1655ProtocolBodyUnchanged(t *testing.T, fault *pr1655ExecuteFault) {
