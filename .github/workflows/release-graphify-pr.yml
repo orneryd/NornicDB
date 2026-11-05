@@ -1,0 +1,135 @@
+name: Release PR Graphify (advisory)
+on:
+  pull_request_target:
+    branches: ['release/**']
+    types: [opened, reopened, synchronize, edited]
+  issue_comment:
+    types: [created]
+permissions: {}
+jobs:
+  authorize:
+    if: ${{ github.event_name != 'issue_comment' || (github.event.issue.pull_request && startsWith(github.event.comment.body, '/graphify approve ')) }}
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    outputs:
+      authorized: ${{ steps.gate.outputs.authorized }}
+      number: ${{ steps.gate.outputs.number }}
+      base: ${{ steps.gate.outputs.base }}
+      head: ${{ steps.gate.outputs.head }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - id: gate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python .github/scripts/graphify_gate.py
+  extract:
+    needs: authorize
+    if: ${{ needs.authorize.outputs.authorized == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    permissions:
+      contents: read
+    outputs:
+      outcome: ${{ steps.upload.outcome }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.authorize.outputs.base }}
+          path: release-tools
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r release-tools/scripts/requirements-code-intelligence.txt
+      - name: Extract PR source as data without database credentials
+        env:
+          TRUSTED_RELEASE_ROOT: ${{ github.workspace }}/release-tools
+          PR_NUMBER: ${{ needs.authorize.outputs.number }}
+          PR_BASE_SHA: ${{ needs.authorize.outputs.base }}
+          PR_HEAD_SHA: ${{ needs.authorize.outputs.head }}
+        run: python .github/scripts/graphify_ci.py prepare
+      - id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-graph
+          path: ${{ runner.temp }}/nornic-pr-graphify/extract/graphify-out/graph.json
+          if-no-files-found: error
+          retention-days: 1
+  check:
+    needs: [authorize, extract]
+    if: ${{ always() && needs.authorize.outputs.authorized == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Check out trusted release tools
+        if: ${{ needs.extract.outputs.outcome == 'success' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.authorize.outputs.base }}
+          path: release-tools
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        if: ${{ needs.extract.outputs.outcome == 'success' }}
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-go@v7
+        if: ${{ needs.extract.outputs.outcome == 'success' }}
+        with:
+          go-version-file: release-tools/go.mod
+          cache: false
+      - name: Install trusted release tooling
+        if: ${{ needs.extract.outputs.outcome == 'success' }}
+        run: python -m pip install -r release-tools/scripts/requirements-code-intelligence.txt
+      - uses: actions/download-artifact@v4
+        if: ${{ needs.extract.outputs.outcome == 'success' }}
+        with:
+          name: pr-graph
+          path: ${{ runner.temp }}/graphify-artifact
+      - name: Trust the configured database certificate
+        if: ${{ needs.extract.outputs.outcome == 'success' }}
+        env:
+          NORNICDB_CA_PEM: ${{ secrets.NORNICDB_CA_PEM }}
+        run: python .github/scripts/graphify_tls.py
+      - name: Analyze the PR and publish its advisory comment
+        id: check
+        if: ${{ needs.extract.outputs.outcome == 'success' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TRUSTED_RELEASE_ROOT: ${{ github.workspace }}/release-tools
+          PR_NUMBER: ${{ needs.authorize.outputs.number }}
+          PR_BASE_SHA: ${{ needs.authorize.outputs.base }}
+          PR_HEAD_SHA: ${{ needs.authorize.outputs.head }}
+          NORNICDB_URI: ${{ secrets.NORNICDB_URI }}
+          NORNICDB_USER: ${{ secrets.NORNICDB_USER }}
+          NORNICDB_PASSWORD: ${{ secrets.NORNICDB_PASSWORD }}
+          NORNICDB_DATABASE: ${{ vars.NORNICDB_DATABASE || 'nornicdbcode' }}
+        run: python .github/scripts/graphify_ci.py check
+      - name: Report an incomplete advisory check
+        if: ${{ always() && steps.check.outcome != 'success' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.authorize.outputs.number }}
+        run: python .github/scripts/graphify_ci.py failed
