@@ -157,3 +157,11 @@ review CI request is superseded by the following pushed head.
 - [x] Cover prepared receipt, plain update-preimage and plain create/conflict admissions in one matrix; preserve cancellation/no-publication/peer/receipt/healthy-retry assertions and add same-identity CREATE retry.
 - [x] Independently verify five normal repetitions (2.098s) and three integrated race repetitions (64.437s), retaining the acknowledged-increment correction.
 - [ ] Collect the complete c7cbdf481 CI result, then run the exact full make-test gate on the correction; no superseded or failed run is a pass.
+
+## Completed c7 full-suite audit correction
+
+- [x] Preserve full CI 42070124669 raw/resource logs: storage cancellation probe, stale census location, suppression-owner assertion and 30-minute storagecensus package timeout; this is a failed gate.
+- [x] Regenerate the unchanged census: only embedding-sidecar source location changes from line 206 to 207; no rule, ownership or write population change.
+- [x] Check suppression retirement at its current storage decision owner and assert the injected edge-body write is analyzed, rather than expecting the retired Cypher caller. Integrated census freshness/order/bypass checks pass (43.302s).
+- [ ] Reduce repeated audit work without skipping assertions or mutants; DeepSeek job 38489709d13543ca9d3d999288939eab investigates in an isolated worktree.
+- [ ] Push integrated audit corrections and obtain a complete exact-head make-test CI pass.
