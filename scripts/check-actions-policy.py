@@ -34,10 +34,12 @@ def violations(name, workflow):
     if name == "release-verification.yml":
         expected = {"pull_request_target": {"branches": ["main"], "types": ["opened", "reopened", "synchronize"]}}
         jobs = workflow.get("jobs", {})
-        expected_jobs = {"prepare", "build", "coverage", "make-test", "lint", "checks", "verify"}
+        expected_jobs = {"prepare", "build", "tests", "lint", "checks", "verify"}
         guard = "${{ github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'release/') }}"
         guarded = jobs.get("prepare", {}).get("if") == guard
-        dependents = all(jobs.get(name, {}).get("needs") == "prepare" for name in expected_jobs - {"prepare", "verify"})
+        dependents = (all(jobs.get(name, {}).get("needs") == "prepare" for name in ("build", "tests", "lint"))
+                      and set(jobs.get("checks", {}).get("needs", [])) == {"prepare", "build", "lint"}
+                      and jobs.get("checks", {}).get("if") == "${{ !cancelled() && needs.prepare.result == 'success' }}")
         final = jobs.get("verify", {})
         final_guard = final.get("if", "") == "${{ always() && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'release/') }}"
         final_needs = set(final.get("needs", [])) == expected_jobs - {"verify"}

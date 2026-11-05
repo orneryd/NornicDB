@@ -23,7 +23,7 @@ class PolicyTests(unittest.TestCase):
             elif mutate == 'dependency':
                 broken['jobs']['checks'].pop('needs')
             else:
-                broken['jobs']['verify']['needs'].remove('coverage')
+                broken['jobs']['verify']['needs'].remove('tests')
             self.assertTrue(policy['violations'](name, broken), mutate)
 
     def test_graphify_policy_requires_gate_and_secret_isolation(self):
