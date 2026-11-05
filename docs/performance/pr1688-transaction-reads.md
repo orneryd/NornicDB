@@ -151,3 +151,19 @@ The complete stored-write census also passes (184.397 seconds), including its
 existing bypass and fail-closed controls. The separate full mutant package
 remains part of the required parallel CI gate; no local full-suite pass is
 claimed.
+
+## Auxiliary verification checkout isolation
+
+The numeric-wire audit exposed the same extra-checkout population as the scanner
+audit. Both now use `internal/testfixture.WalkRepositoryTree`, which recognizes
+nested Git directories and worktree marker files. Existing nested modules and
+experiments remain audited; numeric path and exception inventories are unchanged.
+The earlier scanner-only directory-name exclusion is removed.
+
+Both audits pass with the foreign-checkout fixture and reject the same fixture
+at the same path when its Git marker is removed. The traversal tests also retain
+ordinary source under the CI-helper directory name, nested-module source,
+caller directory policy, and traversal/visitor errors. Temporary fixture files
+are removed. Fresh clean-tree checks pass: fixture traversal 0.606 seconds, numeric audit
+0.642 seconds, scanner audit 1.297 seconds, and census freshness/ordering
+11.317 seconds. Complete exact-head CI remains required.

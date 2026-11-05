@@ -190,4 +190,12 @@ review CI request is superseded by the following pushed head.
 - [x] Pass the actual ordered-write census and regenerate only changed source positions/gate paths, retaining all field/decision records.
 - [x] Refresh the two unchanged accepted-completion context offsets; full context audit and stale-scope controls pass.
 - [x] Complete the full stored-write census (184.397s), final public/conflict/counter race controls (69.024s), and 30 repeated six-mode progress runs (144.715s).
-- [ ] Push the integrated fallout correction and run complete parallel CI on its exact head.
+- [x] Push integrated fallout correction d1771d5e and dispatch parallel CI 42128104230; its storage census passes. Preserve the late numeric-audit auxiliary-checkout failure from the preceding run.
+
+## Shared source-audit checkout boundary
+
+- [x] Preserve the late numeric-wire failure and reproduce it locally with an auxiliary checkout fixture.
+- [x] Share repository-boundary traversal between numeric/scanner audits, preserve existing nested-module/experiment coverage, and retire the scanner-only CI directory-name exclusion.
+- [x] Prove both audits pass for the foreign checkout and reject its same-path contents when owned by the current checkout; preserve frozen numeric ownership inventories.
+- [x] Complete clean-tree audit and stored-census freshness checks (0.606s/0.642s/1.297s/11.317s); remove all temporary fixture files.
+- [ ] Replace the superseded CI run with complete parallel CI on the final immutable head.
