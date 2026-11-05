@@ -39,3 +39,11 @@ Explicit-ID create/create node and relationship cases reproduced on unmodified
 release and pass after including creates in the committing write set. Final
 both-parser race and fresh-cache make test are running. Operator requested a
 draft review push before their completion; readiness remains pending those gates.
+
+The completed remote run on pushed 332543ff5 analyzed 76 functions, returned two
+reuse findings, and skipped none. Both have consolidation changes and explicit
+dispositions; the parameterized UNIQUE assertion reuses the existing typed-error
+extractor, and the complementary corruption controls now share one test setup.
+The superseded pre-disposition full run was canceled without observed failures
+after CLI/Cypher/ANTLR passed; its log and exact cancellation receipt are retained.
+The next full run uses the converged source and normal Go cache eligibility.

@@ -101,7 +101,7 @@ func TestUniqueListDurableRoundTrip(t *testing.T) {
 					if err == nil {
 						err = tx.Commit()
 					}
-					requireConstraintListViolation(t, err)
+					asConstraintViolation(t, err)
 					return
 				}
 				require.NoError(t, create(nil, "one", first))
@@ -114,7 +114,7 @@ func TestUniqueListDurableRoundTrip(t *testing.T) {
 					require.NoError(t, err)
 				}
 				if mode == "direct" {
-					requireConstraintListViolation(t, create(nil, "two", first))
+					asConstraintViolation(t, create(nil, "two", first))
 					return
 				}
 				tx, err := engine.BeginTransaction(t.Context())
@@ -124,7 +124,7 @@ func TestUniqueListDurableRoundTrip(t *testing.T) {
 				if err == nil {
 					err = tx.Commit()
 				}
-				requireConstraintListViolation(t, err)
+				asConstraintViolation(t, err)
 			})
 		}
 	}
@@ -150,7 +150,7 @@ func TestUniqueListPreservesLargeIntegerIdentityAfterRestart(t *testing.T) {
 	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:distinct", Labels: []string{"LongList"}, Properties: map[string]interface{}{"id": []int64{1<<53 + 1}}})
 	require.NoError(t, err, "adjacent longs are different UNIQUE values, including after index rebuild")
 	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:duplicate", Labels: []string{"LongList"}, Properties: map[string]interface{}{"id": []interface{}{int64(1 << 53)}}})
-	requireConstraintListViolation(t, err)
+	asConstraintViolation(t, err)
 }
 func TestConstraintListEqualityCyclesAndBoundaries(t *testing.T) {
 	a := []interface{}{nil}
@@ -195,18 +195,12 @@ func TestUniqueListConcurrentRelationshipCommits(t *testing.T) {
 		if err == nil {
 			success++
 		} else {
-			var violation *ConstraintViolationError
-			require.ErrorAs(t, err, &violation)
+			asConstraintViolation(t, err)
 		}
 	}
 	require.Equal(t, 1, success)
 }
 
-func requireConstraintListViolation(t *testing.T, err error) {
-	t.Helper()
-	var violation *ConstraintViolationError
-	require.ErrorAs(t, err, &violation)
-}
 func TestConstraintListCanonicalKeysPreserveEquality(t *testing.T) {
 	for _, pair := range []struct {
 		a, b interface{}
@@ -258,7 +252,7 @@ func TestUniqueListRejectsDuplicateAfterBufferedRecovery(t *testing.T) {
 	require.NoError(t, err)
 	defer next.Rollback()
 	require.NoError(t, next.CreateEdge(t.Context(), &Edge{ID: "test:duplicate", Type: "T", StartNode: "test:a", EndNode: "test:b", Properties: map[string]interface{}{"id": []interface{}{float64(200)}}}))
-	requireConstraintListViolation(t, next.Commit())
+	asConstraintViolation(t, next.Commit())
 }
 
 var constraintEqualityBenchmarkResult bool

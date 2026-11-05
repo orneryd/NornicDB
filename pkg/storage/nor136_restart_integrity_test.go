@@ -684,18 +684,6 @@ func TestNOR143DeletedEntitiesCannotResurrect(t *testing.T) {
 	}
 }
 
-// nor136AssertUniqueViolation requires the canonical constraint violation the
-// Bolt classifier reports.
-func nor136AssertUniqueViolation(t *testing.T, err error, key string) {
-	t.Helper()
-	require.Error(t, err)
-	var violation *ConstraintViolationError
-	require.ErrorAs(t, err, &violation)
-	require.Equal(t, ConstraintUnique, violation.Type)
-	require.Contains(t, violation.Message, key)
-	require.Contains(t, err.Error(), key)
-}
-
 // TestNOR143UniqueLabelScopedHolderTransitions covers the UNIQUE controls:
 // an actual constrained-label holder rejects the duplicate key, the sole
 // holder relabeled away from the constrained label releases the key, and a
@@ -738,7 +726,7 @@ func TestNOR143UniqueLabelScopedHolderTransitions(t *testing.T) {
 
 				// An actual constrained-label holder rejects the duplicate key.
 				_, err := engine.CreateNode(ctx, &Node{ID: "test:duplicate-direct", Labels: []string{"Doc"}, Properties: map[string]any{"id": "k"}})
-				nor136AssertUniqueViolation(t, err, "k")
+				relatedViolation(t, err, ConstraintUnique, "k")
 				_, err = engine.GetNode(ctx, "test:duplicate-direct")
 				require.ErrorIs(t, err, ErrNotFound, "a rejected duplicate publishes no visible body")
 				_, err = engine.GetStoredNode(ctx, "test:duplicate-direct")
@@ -790,7 +778,7 @@ func TestNOR143UniqueLabelScopedHolderTransitions(t *testing.T) {
 				nor136AssertAcked(t, engine, cfg, replacement, before)
 				// It is now the actual holder, so the duplicate is rejected again.
 				_, err = engine.CreateNode(ctx, &Node{ID: "test:duplicate-again", Labels: []string{"Doc"}, Properties: map[string]any{"id": "k"}})
-				nor136AssertUniqueViolation(t, err, "k")
+				relatedViolation(t, err, ConstraintUnique, "k")
 				// The constraint is label-scoped: an unconstrained label may carry
 				// the same key.
 				_, err = engine.CreateNode(ctx, &Node{ID: "test:parked-peer", Labels: []string{"Parked"}, Properties: map[string]any{"id": "k"}})
@@ -811,7 +799,7 @@ func TestNOR143UniqueLabelScopedHolderTransitions(t *testing.T) {
 				// The restored constraint still rejects the actual holder's key
 				// and still permits the unconstrained label's key.
 				_, err = reopened.CreateNode(ctx, &Node{ID: "test:duplicate-after-restart", Labels: []string{"Doc"}, Properties: map[string]any{"id": "k"}})
-				nor136AssertUniqueViolation(t, err, "k")
+				relatedViolation(t, err, ConstraintUnique, "k")
 				_, err = reopened.CreateNode(ctx, &Node{ID: "test:parked-peer-after-restart", Labels: []string{"Parked"}, Properties: map[string]any{"id": "k"}})
 				require.NoError(t, err, "the restored UNIQUE constraint remains label-scoped")
 			})

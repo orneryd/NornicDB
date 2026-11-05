@@ -89,9 +89,7 @@ func relatedBufferedDeleteEdge(t *testing.T, engine *BadgerEngine, id EdgeID) {
 // match.
 func relatedViolation(t *testing.T, err error, wantType ConstraintType, wantMessage string) {
 	t.Helper()
-	require.Error(t, err, "the direct writer must reject the duplicate")
-	var violation *ConstraintViolationError
-	require.ErrorAs(t, err, &violation)
+	violation := asConstraintViolation(t, err)
 	require.Equal(t, wantType, violation.Type)
 	require.Contains(t, violation.Message, wantMessage)
 	require.Contains(t, err.Error(), wantMessage)

@@ -117,7 +117,7 @@ Native test commits reuse `bufferedWrite` or the existing bulk transaction owner
 No new local replay, publication, count-rebuild or transport implementation was
 introduced in the test fixtures.
 
-The advisory checker extracted the repository but timed out after 60 seconds;
+The initial advisory checker extracted the repository but timed out after 60 seconds;
 its graph revision was older than the release base. That is incomplete analysis,
 not a clean result. Manual ownership review above covers the changed causal
 owners; checker rules, hooks, thresholds and exclusions remain unchanged.
@@ -159,3 +159,14 @@ conflict owner now includes creates in both the committing write set and the
 accepted-peer scan. Tests require a conflict/already-exists error, unchanged
 buffer population after rejection, one peer-owned entity, exact counts and
 indexes, and only the peer relationship's adjacency before and after reopen.
+
+## Completed remote duplicate analysis
+
+The later unchanged checker completed against `192.168.1.30` for review commit
+`332543ff5`: 76 functions analyzed, two reuse findings, no refactor targets and
+no skipped candidates. Both were verified against current source despite the
+stale indexed baseline, then consolidated: UNIQUE checks share the existing
+parameterized assertion and typed extractor, and the corruption-fixture tests
+share one setup with the union of their assertions. The discovered list-error
+forwarder is retired as well. See [each disposition and its proof](pr1690-duplicate-dispositions.md).
+These are test-only consolidations; the qualified production runtime is unchanged.
