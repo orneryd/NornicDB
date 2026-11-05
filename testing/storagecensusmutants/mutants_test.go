@@ -1,11 +1,13 @@
-package storagecensus
+package storagecensusmutants
 
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/orneryd/nornicdb/testing/storagecensus"
 	"github.com/stretchr/testify/require"
 )
 
@@ -365,8 +367,12 @@ func TestCensusRejectsMutants(t *testing.T) {
 	if testing.Short() {
 		t.Skip("one full census per mutant")
 	}
+	root := filepath.Join("..", "..")
 	abs, err := filepath.Abs(root)
 	require.NoError(t, err)
+	base, err := storagecensus.Census(root, nil)
+	require.NoError(t, err)
+	require.Empty(t, base.Violations)
 	for _, m := range mutants {
 		t.Run(m.name, func(t *testing.T) {
 			path := filepath.Join(abs, filepath.FromSlash(m.file))
@@ -381,18 +387,17 @@ func TestCensusRejectsMutants(t *testing.T) {
 				}
 				src = []byte(text)
 			}
-			r, err := Census(root, map[string][]byte{path: src})
+			r, err := storagecensus.Census(root, map[string][]byte{path: src})
 			require.NoError(t, err)
 			// The violation must be the mutant's: absent from the census of
 			// the unchanged module.
-			base := census(t)
 			inBase := map[string]bool{}
 			for _, v := range base.Violations {
 				inBase[v] = true
 			}
-			baseRow := func(u UnorderedRow) bool {
+			baseRow := func(u storagecensus.UnorderedRow) bool {
 				for _, b := range base.Unordered {
-					if b.Origin == u.Origin && b.Space == u.Space && contains(b.Entries, m.entry) {
+					if b.Origin == u.Origin && b.Space == u.Space && slices.Contains(b.Entries, m.entry) {
 						return true
 					}
 				}
@@ -402,7 +407,7 @@ func TestCensusRejectsMutants(t *testing.T) {
 			if m.entry != "" {
 				// An unordered write the entry point reaches, of the space wanted.
 				for _, u := range r.Unordered {
-					found = found || (contains(u.Entries, m.entry) && strings.Contains(u.Space, m.want[len(m.want)-1]) && !baseRow(u))
+					found = found || (slices.Contains(u.Entries, m.entry) && strings.Contains(u.Space, m.want[len(m.want)-1]) && !baseRow(u))
 				}
 			} else {
 				for _, v := range r.Violations {

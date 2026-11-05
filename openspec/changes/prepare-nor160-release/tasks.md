@@ -163,5 +163,7 @@ review CI request is superseded by the following pushed head.
 - [x] Preserve full CI 42070124669 raw/resource logs: storage cancellation probe, stale census location, suppression-owner assertion and 30-minute storagecensus package timeout; this is a failed gate.
 - [x] Regenerate the unchanged census: only embedding-sidecar source location changes from line 206 to 207; no rule, ownership or write population change.
 - [x] Check suppression retirement at its current storage decision owner and assert the injected edge-body write is analyzed, rather than expecting the retired Cypher caller. Integrated census freshness/order/bypass checks pass (43.302s).
-- [ ] Reduce repeated audit work without skipping assertions or mutants; DeepSeek job 38489709d13543ca9d3d999288939eab investigates in an isolated worktree.
+- [x] Investigate repeated audit work with DeepSeek job 38489709d13543ca9d3d999288939eab; cancel experimental route after measurements in favor of independent test-package partitioning, with no experimental analyzer changes integrated.
+- [x] Move the complete standalone mutant matrix to testing/storagecensusmutants, retaining inputs/edits/expectations byte-for-byte, using exported Census and slices.Contains. Both packages remain under unchanged make test and its original 30-minute per-package timeout.
+- [ ] Validate the complete moved mutant matrix and remaining audit package; replacement CI must pass both.
 - [ ] Push integrated audit corrections and obtain a complete exact-head make-test CI pass.
