@@ -37,7 +37,7 @@ permissions:
 
 # A newer request for the same pull request or ref replaces a running one.
 concurrency:
-  group: ci-${{ inputs.ref || github.event.pull_request.number || github.ref }}
+  group: ci-${{ inputs.ref || inputs.branch || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
