@@ -14,15 +14,12 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: release-graphify-rolling-index
-  cancel-in-progress: false
-
 jobs:
-  ingest:
+  select:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    outputs:
+      branch: ${{ steps.gate.outputs.branch }}
     steps:
       - name: Check out trusted default-branch workflow code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -34,10 +31,23 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: python .github/scripts/graphify_ingest_gate.py
+  ingest:
+    needs: select
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    concurrency:
+      group: release-graphify-rolling-index
+      cancel-in-progress: true
+    steps:
+      - name: Check out trusted default-branch workflow code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
       - name: Check out the current release head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ steps.gate.outputs.branch }}
+          ref: ${{ needs.select.outputs.branch }}
           path: release-tools
           fetch-depth: 0
           persist-credentials: false
@@ -53,7 +63,7 @@ jobs:
       - name: Refresh the rolling release code graph
         env:
           TRUSTED_RELEASE_ROOT: ${{ github.workspace }}/release-tools
-          RELEASE_BRANCH: ${{ steps.gate.outputs.branch }}
+          RELEASE_BRANCH: ${{ needs.select.outputs.branch }}
           NORNICDB_URI: ${{ secrets.NORNICDB_URI }}
           NORNICDB_USER: ${{ secrets.NORNICDB_USER }}
           NORNICDB_PASSWORD: ${{ secrets.NORNICDB_PASSWORD }}
