@@ -164,28 +164,6 @@ func runStatementAndQID(t *testing.T, conn net.Conn, query string) int64 {
 	return qid
 }
 
-func pullStatement(t *testing.T, conn net.Conn, options map[string]any) ([][]any, map[string]any) {
-	t.Helper()
-	require.NoError(t, SendPull(t, conn, options))
-	var records [][]any
-	for {
-		messageType, data, err := ReadMessage(conn)
-		require.NoError(t, err)
-		switch messageType {
-		case MsgRecord:
-			record, _, err := decodePackStreamList(data, 0)
-			require.NoError(t, err)
-			records = append(records, record)
-		case MsgSuccess:
-			metadata, _, err := decodePackStreamMap(data, 0)
-			require.NoError(t, err)
-			return records, metadata
-		default:
-			t.Fatalf("unexpected Bolt message 0x%02x", messageType)
-		}
-	}
-}
-
 func buildDiscardMessage(options map[string]any) []byte {
 	message := []byte{0xB1, MsgDiscard}
 	return append(message, encodePackStreamMap(options)...)

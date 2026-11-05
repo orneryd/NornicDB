@@ -128,5 +128,16 @@ review CI request is superseded by the following pushed head.
 - [x] Extend the canonical batch mutation-preimage validator; preserve uniqueness error classification, first-mutation folding and storage formats.
 - [x] Add implicit/native, buffered/replayed and healthy retry controls; preserve unchanged NaN payloads through the existing stored-value comparator.
 - [x] Finish the repeated focused checks on the integrated candidate: five repetitions passed (39.530s).
-- [ ] Push the correction, dispatch exact-head make test CI and request advisory duplicate analysis.
+- [x] Push the reserved-version correction (38bd71f65), dispatch exact-head make test CI and request advisory duplicate analysis; that test run terminated and is not a pass.
 - [ ] Report actual final CI outcomes; no pending, interrupted or skipped gate is a pass.
+
+## Complete advisory inventory dispositions
+
+- [x] Recover the untruncated 38bd71f65 CI inventory: 126 findings / 518 matched pairs, 98 current-source ownership records, one AST owner call; no cap skips.
+- [x] Give every entry an explicit source-backed retention or corrective action in docs/development/pr1688-duplicate-dispositions.md; do not waive generated or historical matches without ownership review.
+- [x] Retire property forwarding aliases and inert overlay code; converge endpoint assertions using the existing owner.
+- [x] Converge fixed-command metadata construction while preserving command-specific scope transfer.
+- [x] Integrate and independently validate schema and Bolt convergence, including every retained scenario population; final schema tests cover both parsers, public admission/no-mutation and private error contracts.
+- [x] Preserve all 225 advisory records, including 518 matched pairs, in the disposition ledger. Add CI resource/log retention without changing the test gate.
+- [ ] Push the full disposition ledger and corrections; update the PR and Linear evidence and request corrected-head CI.
+- [ ] Evaluate actual full CI completion; exit 143 and skipped artifact upload are incomplete evidence, not a passing gate.

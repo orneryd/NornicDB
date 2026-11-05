@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Consolidate schema DDL readers and transaction property ownership without
+  changing admitted syntax or storage formats. Preserve parser-specific
+  rejection boundaries and command-specific result scope.
+
 - Reject stale write-behind node updates when a peer reserved its version before
   BEGIN but published its image afterward, preserving acknowledged increments.
   Unchanged stored NaN properties remain valid mutation preimages.

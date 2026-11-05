@@ -54,7 +54,7 @@ func TestMaterializedPathAccessBolt(t *testing.T) {
 				require.NoError(t, SendBegin(t, conn, nil))
 				require.NoError(t, ReadSuccess(t, conn))
 			}
-			rows := runBoltQueryAndCollectRecords(t, conn, "MATCH p=(:MaterializedPathAccess {id:'a'})-[:MATERIALIZED_PATH_ACCESS]->(:MaterializedPathAccess {id:'b'}) RETURN p")
+			rows := runBoltQueryWithParams(t, conn, "MATCH p=(:MaterializedPathAccess {id:'a'})-[:MATERIALIZED_PATH_ACCESS]->(:MaterializedPathAccess {id:'b'}) RETURN p", nil)
 			require.Len(t, rows, 1)
 			require.Equal(t, []string{"materialized:a", "materialized:b", "materialized:e"}, inner.take())
 			if explicit {

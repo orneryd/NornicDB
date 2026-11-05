@@ -241,7 +241,7 @@ func TestBoltRejectsSharedTransactionalExecutorBeforeCrossSessionBegin(t *testin
 		ReadBufferSize:  8192,
 		WriteBufferSize: 8192,
 	}, executor)
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
 	connA := openBoltTestConn(t, port)
 	connB := openBoltTestConn(t, port)
 
@@ -267,7 +267,7 @@ func TestBoltAllowsRawTransactionalExecutorForSingleConnectionServer(t *testing.
 		ReadBufferSize:  8192,
 		WriteBufferSize: 8192,
 	}, executor)
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
 	conn := openBoltTestConn(t, port)
 
 	beginExplicitTransaction(t, conn, nil)
@@ -286,7 +286,7 @@ func TestBoltQuarantinesSingleConnectionRawExecutorAfterCleanupFailure(t *testin
 		ReadBufferSize:  8192,
 		WriteBufferSize: 8192,
 	}, executor)
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
 	connA := openBoltTestConn(t, port)
 	beginExplicitTransaction(t, connA, nil)
 	require.NoError(t, SendRollback(t, connA))
@@ -317,7 +317,7 @@ func TestBoltRejectsFactoryReturningNonTransactionalSessionExecutor(t *testing.T
 		ReadBufferSize:  8192,
 		WriteBufferSize: 8192,
 	}, factory)
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
 	conn := openBoltTestConn(t, port)
 
 	require.NoError(t, SendBegin(t, conn, nil))
@@ -339,7 +339,7 @@ func TestBoltBeginCleanupFailureClosesAndQuarantinesRawExecutor(t *testing.T) {
 		ReadBufferSize:  8192,
 		WriteBufferSize: 8192,
 	}, executor)
-	port := startBoltTestServer(t, server, rollbackShutdownCheck(t, executor.rollbackErr, nil))
+	port := serveBoltIntegrationServer(t, server, rollbackShutdownCheck(t, executor.rollbackErr, nil))
 	conn := openBoltTestConn(t, port)
 
 	require.NoError(t, SendBegin(t, conn, nil))
@@ -365,7 +365,7 @@ func TestBoltCommitErrorClosesAndQuarantinesUnknownTransactionOutcome(t *testing
 		ReadBufferSize:  8192,
 		WriteBufferSize: 8192,
 	}, executor)
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
 	conn := openBoltTestConn(t, port)
 	beginExplicitTransaction(t, conn, nil)
 
@@ -398,7 +398,7 @@ func TestBoltCommitPanicClosesAndQuarantinesWithoutRollbackOrFlush(t *testing.T)
 		ReadBufferSize:  8192,
 		WriteBufferSize: 8192,
 	}, executor)
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
 	conn := openBoltTestConn(t, port)
 	beginExplicitTransaction(t, conn, nil)
 

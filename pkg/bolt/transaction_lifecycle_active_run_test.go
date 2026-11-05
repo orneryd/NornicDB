@@ -22,8 +22,8 @@ func TestBoltExplicitTransactionTimeoutCancelsActiveRunBeforeRollback(t *testing
 	port := startControlledTransactionServer(t, executor)
 
 	setup := openBoltTestConn(t, port)
-	runBoltQueryAndCollectRecords(t, setup,
-		"CREATE (r:Repository {repo_id: 'active-run-seed'})")
+	runBoltQueryWithParams(t, setup,
+		"CREATE (r:Repository {repo_id: 'active-run-seed'})", nil)
 	require.NoError(t, setup.Close())
 	baselineReaders := base.ActiveReaders()
 
@@ -65,8 +65,8 @@ func TestBoltExplicitTransactionTimeoutCancelsActiveRunBeforeRollback(t *testing
 		"deadline cancellation must unblock RUN, roll back, and release the snapshot")
 
 	fresh := openBoltTestConn(t, port)
-	records := runBoltQueryAndCollectRecords(t, fresh,
-		"MATCH (r:Repository {repo_id: 'active-run-abandoned'}) RETURN count(r)")
+	records := runBoltQueryWithParams(t, fresh,
+		"MATCH (r:Repository {repo_id: 'active-run-abandoned'}) RETURN count(r)", nil)
 	require.Equal(t, [][]any{{int64(0)}}, records,
 		"a deadline-canceled active RUN must not persist the transaction's buffered write")
 }
@@ -94,15 +94,15 @@ func TestBoltExplicitTransactionRunAfterTimeoutFailsUntilReset(t *testing.T) {
 	require.NoError(t, err)
 
 	fresh := openBoltTestConn(t, port)
-	require.Equal(t, [][]any{{int64(0)}}, runBoltQueryAndCollectRecords(t, fresh,
-		"MATCH (r:Repository) WHERE r.repo_id IN ['run-after-timeout', 'ignored-after-timeout'] RETURN count(r)"))
+	require.Equal(t, [][]any{{int64(0)}}, runBoltQueryWithParams(t, fresh,
+		"MATCH (r:Repository) WHERE r.repo_id IN ['run-after-timeout', 'ignored-after-timeout'] RETURN count(r)", nil))
 
 	require.NoError(t, SendReset(t, conn))
 	require.NoError(t, ReadSuccess(t, conn))
-	runBoltQueryAndCollectRecords(t, conn,
-		"CREATE (r:Repository {repo_id: 'run-after-reset'})")
-	require.Equal(t, [][]any{{int64(1)}}, runBoltQueryAndCollectRecords(t, fresh,
-		"MATCH (r:Repository {repo_id: 'run-after-reset'}) RETURN count(r)"))
+	runBoltQueryWithParams(t, conn,
+		"CREATE (r:Repository {repo_id: 'run-after-reset'})", nil)
+	require.Equal(t, [][]any{{int64(1)}}, runBoltQueryWithParams(t, fresh,
+		"MATCH (r:Repository {repo_id: 'run-after-reset'}) RETURN count(r)", nil))
 }
 
 func TestBoltExplicitTransactionTimeoutRejectsExecutorSuccessAfterCancel(t *testing.T) {
@@ -132,7 +132,7 @@ func TestBoltExplicitTransactionTimeoutRejectsExecutorSuccessAfterCancel(t *test
 	require.NoError(t, err)
 	require.NoError(t, SendReset(t, conn))
 	require.NoError(t, ReadSuccess(t, conn))
-	require.Equal(t, [][]any{{int64(1)}}, runBoltQueryAndCollectRecords(t, conn, "RETURN 1"))
+	require.Equal(t, [][]any{{int64(1)}}, runBoltQueryWithParams(t, conn, "RETURN 1", nil))
 }
 
 func TestTransactionLifecycleDefersCompletionTelemetryUntilRunOwnedRollback(t *testing.T) {

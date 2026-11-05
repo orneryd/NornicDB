@@ -21,7 +21,7 @@ type callerCopier interface {
 
 // ownedValueCopy returns a caller-owned copy of one storage value. It is the
 // generic copy owner: durable property normalization is a different contract and
-// belongs to canonicalPropertyValue (property_ownership.go). Concrete types,
+// belongs to ownRetainedValue (property_ownership.go). Concrete types,
 // pointer, map, slice and array shapes and Go scalar widths are preserved, nil
 // containers stay nil, and a caller-declared type that owns a copy protocol is
 // asked once, after which its own copy is used as is.

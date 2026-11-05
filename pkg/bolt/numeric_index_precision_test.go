@@ -40,7 +40,7 @@ func TestNumericPropertyIndexExactAroundFloatPrecision(t *testing.T) {
 			conn := openBoltTestConn(t, port)
 			defer conn.Close()
 			if index.ddl != "" {
-				runBoltQueryAndCollectRecords(t, conn, index.ddl)
+				runBoltQueryWithParams(t, conn, index.ddl, nil)
 			}
 			for k, value := range values {
 				runBoltQueryWithParams(t, conn, "CREATE (:PreciseNumber {k:$k, id:$id})", map[string]any{"k": int64(k), "id": value})

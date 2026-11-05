@@ -21,14 +21,14 @@ func TestTransactionOverlayBoltRoutes(t *testing.T) {
 		}
 		const create = `UNWIND range(1,64) AS i MERGE (a:Overlay {id:i % 7}) MERGE (b:Overlay {id:(i+1) % 7}) CREATE (a)-[:R {v:i}]->(b) RETURN count(*)`
 		for run := 0; run < 2; run++ {
-			require.Equal(t, [][]interface{}{{int64(64)}}, runBoltQueryAndCollectRecords(t, conn, create))
+			require.Equal(t, [][]interface{}{{int64(64)}}, runBoltQueryWithParams(t, conn, create, nil))
 		}
-		require.Equal(t, [][]interface{}{{int64(7)}}, runBoltQueryAndCollectRecords(t, conn, "MATCH (n:Overlay) DETACH DELETE n RETURN count(*)"))
+		require.Equal(t, [][]interface{}{{int64(7)}}, runBoltQueryWithParams(t, conn, "MATCH (n:Overlay) DETACH DELETE n RETURN count(*)", nil))
 		if explicit {
 			require.NoError(t, SendMessage(conn, []byte{0xB0, MsgCommit}))
 			require.NoError(t, ReadSuccess(t, conn))
 		}
-		require.Equal(t, [][]interface{}{{int64(0)}}, runBoltQueryAndCollectRecords(t, conn, "MATCH (n:Overlay) RETURN count(n)"))
+		require.Equal(t, [][]interface{}{{int64(0)}}, runBoltQueryWithParams(t, conn, "MATCH (n:Overlay) RETURN count(n)", nil))
 		edges, err := base.AllEdges(context.Background())
 		require.NoError(t, err)
 		require.Empty(t, edges)

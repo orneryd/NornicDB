@@ -18,7 +18,7 @@ func TestBoltTransactionalCallKeepsCommittedBatches(t *testing.T) {
 	_, _, err = AssertFailure(t, writer)
 	require.NoError(t, err)
 	reader := openBoltTestConn(t, port)
-	rows := runBoltQueryAndCollectRecords(t, reader, "MATCH (n:B) RETURN n.v ORDER BY n.v")
+	rows := runBoltQueryWithParams(t, reader, "MATCH (n:B) RETURN n.v ORDER BY n.v", nil)
 	require.Equal(t, [][]interface{}{{int64(5)}, {int64(10)}}, rows)
 }
 
@@ -69,7 +69,7 @@ func TestBoltTransactionalCallBatchSizeExpressionContract(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, code, actualCode)
 			reader := openBoltTestConn(t, port)
-			rows := runBoltQueryAndCollectRecords(t, reader, "MATCH (n:BatchSizeRecord) RETURN n.v ORDER BY n.v")
+			rows := runBoltQueryWithParams(t, reader, "MATCH (n:BatchSizeRecord) RETURN n.v ORDER BY n.v", nil)
 			if sample.invalid {
 				require.Empty(t, rows)
 			} else {

@@ -791,7 +791,6 @@
     "parseFulltextRelationshipTypes"
   ],
   "pkg/cypher/schema_contracts.go": [
-    "parseCurlySection",
     "splitConstraintContractEntries"
   ],
   "pkg/cypher/schema_lookup_index.go": [

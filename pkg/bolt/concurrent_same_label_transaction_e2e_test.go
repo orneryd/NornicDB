@@ -27,8 +27,8 @@ func TestBoltExplicitTransactionsCreateIndependentSameLabelNodes(t *testing.T) {
 		requireNoError(t, ReadSuccess(t, conn))
 	}
 
-	runBoltQueryAndCollectRecords(t, first, "CREATE (:Work {writer: 1})")
-	runBoltQueryAndCollectRecords(t, second, "CREATE (:Work {writer: 2})")
+	runBoltQueryWithParams(t, first, "CREATE (:Work {writer: 1})", nil)
+	runBoltQueryWithParams(t, second, "CREATE (:Work {writer: 2})", nil)
 
 	requireNoError(t, SendCommit(t, first))
 	requireNoError(t, ReadSuccess(t, first))
@@ -36,7 +36,7 @@ func TestBoltExplicitTransactionsCreateIndependentSameLabelNodes(t *testing.T) {
 	requireNoError(t, ReadSuccess(t, second))
 
 	verify := openBoltTestConn(t, port)
-	records := runBoltQueryAndCollectRecords(t, verify, "MATCH (n:Work) RETURN count(n)")
+	records := runBoltQueryWithParams(t, verify, "MATCH (n:Work) RETURN count(n)", nil)
 	if len(records) != 1 || len(records[0]) != 1 || records[0][0] != int64(2) {
 		t.Fatalf("expected two committed Work nodes, got %v", records)
 	}

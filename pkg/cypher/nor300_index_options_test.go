@@ -219,20 +219,19 @@ func TestNOR300CreateConstraintOptionsRequiresMap(t *testing.T) {
 			require.Equal(t, before, readSchemaNames(t, t.Context(), exec, "SHOW CONSTRAINTS YIELD name RETURN name ORDER BY name"))
 		})
 
-		// The legacy ON ... ASSERT branches are rejected by
-		// executeCreateConstraint before any parser runs (the entry refuses ON
-		// before FOR), so their OPTIONS admission is only observable through the
-		// parser itself. They read the OPTIONS tail through the same owner and
-		// must admit exactly the same tails as the FOR ... REQUIRE head.
+		// The three constraint shapes below read their one OPTIONS tail through the
+		// same owner, so they admit exactly the same tails: an absent tail, a
+		// payload, and a payload followed by trivia. A bare OPTIONS keyword has no
+		// payload and stays a SyntaxError for all three.
 		exec, _ := newTestExecutor(t)
-		legacy := []struct {
+		shapes := []struct {
 			owner string
 			base  string
 			parse func(string) (bool, error)
 		}{
 			{
 				owner: "node key",
-				base:  "CREATE CONSTRAINT ON (n:Legacy) ASSERT (n.tenant, n.id) IS NODE KEY",
+				base:  "CREATE CONSTRAINT nor300_node_key FOR (n:Legacy) REQUIRE (n.tenant, n.id) IS NODE KEY",
 				parse: func(query string) (bool, error) {
 					parsed, err := exec.parseCreateConstraintNodeKeyDDL(t.Context(), query)
 					return len(parsed.properties) == 2, err
@@ -240,7 +239,7 @@ func TestNOR300CreateConstraintOptionsRequiresMap(t *testing.T) {
 			},
 			{
 				owner: "property type",
-				base:  "CREATE CONSTRAINT ON (n:Legacy) ASSERT n.active IS TYPED BOOLEAN",
+				base:  "CREATE CONSTRAINT nor300_type FOR (n:Legacy) REQUIRE n.active IS TYPED BOOLEAN",
 				parse: func(query string) (bool, error) {
 					parsed, err := exec.parseCreateConstraintTypeDDL(t.Context(), query)
 					return parsed.property == "active", err
@@ -248,15 +247,15 @@ func TestNOR300CreateConstraintOptionsRequiresMap(t *testing.T) {
 			},
 			{
 				owner: "single property",
-				base:  "CREATE CONSTRAINT ON (n:Legacy) ASSERT EXISTS(n.email)",
+				base:  "CREATE CONSTRAINT nor300_unique FOR (n:Legacy) REQUIRE n.email IS UNIQUE",
 				parse: func(query string) (bool, error) {
 					parsed, err := exec.parseCreateConstraintSimplePropertyDDL(t.Context(), query)
 					return parsed.property == "email", err
 				},
 			},
 		}
-		for _, branch := range legacy {
-			t.Run(branch.owner+" legacy ASSERT tail", func(t *testing.T) {
+		for _, branch := range shapes {
+			t.Run(branch.owner+" OPTIONS tail", func(t *testing.T) {
 				_, err := branch.parse(branch.base + " OPTIONS")
 				requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", branch.base+" OPTIONS")
 				for _, tail := range []string{

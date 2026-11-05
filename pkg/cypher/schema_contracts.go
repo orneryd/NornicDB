@@ -3,7 +3,6 @@ package cypher
 import (
 	"context"
 	"fmt"
-	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -18,108 +17,39 @@ type parsedCreateConstraintContractDDL struct {
 	body        string
 }
 
+// parseConstraintContractForClause reads a constraint contract's FOR clause
+// with the shared FOR pattern reader and maps the entity it names to the
+// contract's entity type: the contract owns that mapping and its own rejection,
+// while the pattern reading itself stays in one place.
 func parseConstraintContractForClause(forClause string) (entityType storage.ConstraintEntityType, variable string, labelOrType string, ok bool) {
-	forClause = strings.TrimSpace(forClause)
-	if forClause == "" {
+	isRelationship, variable, labelOrType, ok := parseForPatternTarget(forClause)
+	if !ok {
 		return "", "", "", false
 	}
-
-	if strings.Contains(forClause, "[") {
-		bracketStart := strings.Index(forClause, "[")
-		if bracketStart < 0 {
-			return "", "", "", false
-		}
-		inside, rest, ok := extractBracketSection(forClause[bracketStart:])
-		if !ok {
-			return "", "", "", false
-		}
-		prefix := strings.TrimSpace(forClause[:bracketStart])
-		suffix := strings.TrimSpace(rest)
-		if !strings.Contains(prefix, "(") || !strings.Contains(suffix, "(") {
-			return "", "", "", false
-		}
-		colon := strings.Index(inside, ":")
-		if colon < 0 {
-			return "", "", "", false
-		}
-		variable = normalizeIdentifierToken(strings.TrimSpace(inside[:colon]))
-		labelOrType = normalizeIdentifierToken(strings.TrimSpace(inside[colon+1:]))
-		if labelOrType == "" {
-			return "", "", "", false
-		}
+	if isRelationship {
 		return storage.ConstraintEntityRelationship, variable, labelOrType, true
-	}
-
-	inside, rest, ok := extractParenSection(forClause)
-	if !ok || strings.TrimSpace(rest) != "" {
-		return "", "", "", false
-	}
-	colon := strings.Index(inside, ":")
-	if colon < 0 {
-		return "", "", "", false
-	}
-	variable = normalizeIdentifierToken(strings.TrimSpace(inside[:colon]))
-	labelOrType = normalizeIdentifierToken(strings.TrimSpace(inside[colon+1:]))
-	if labelOrType == "" {
-		return "", "", "", false
 	}
 	return storage.ConstraintEntityNode, variable, labelOrType, true
 }
 
-func parseCurlySection(s string) (inside string, rest string, ok bool) {
-	s = strings.TrimSpace(s)
-	if s == "" || s[0] != '{' {
-		return "", s, false
-	}
-	closing := cyphertext.FindMatchingDelimiter(s, 0, '{', '}', cyphertext.OpeningDelimiter)
-	if closing < 0 {
-		return "", s, false
-	}
-	return s[1:closing], strings.TrimSpace(s[closing+1:]), true
-}
-
 func (e *StorageExecutor) parseCreateConstraintContractDDL(ctx context.Context, cypher string) (parsedCreateConstraintContractDDL, error) {
-	q := strings.TrimSpace(cypher)
-	if q == "" {
-		return parsedCreateConstraintContractDDL{}, localizedError(localization.CypherSchemaEmptyStatement(), nil)
-	}
-	prefixPos := keywordIndexFrom(ctx, q, "CREATE CONSTRAINT", 0, defaultKeywordScanOpts())
-	if prefixPos != 0 {
-		return parsedCreateConstraintContractDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
-	}
-	prefixEnd, ok := keywordSpanAt(q, 0, "CREATE CONSTRAINT")
-	if !ok {
-		return parsedCreateConstraintContractDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
-	}
-	forPos := keywordIndexFrom(ctx, q, "FOR", prefixEnd, defaultKeywordScanOpts())
-	if forPos < 0 {
-		return parsedCreateConstraintContractDDL{}, localizedError(localization.CypherSchemaMissingKeyword("FOR"), nil)
-	}
-	forEnd, ok := keywordSpanAt(q, forPos, "FOR")
-	if !ok {
-		return parsedCreateConstraintContractDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("FOR"), nil)
-	}
-	reqPos := keywordIndexFrom(ctx, q, "REQUIRE", forEnd, defaultKeywordScanOpts())
-	if reqPos < 0 {
-		return parsedCreateConstraintContractDDL{}, localizedError(localization.CypherSchemaMissingKeyword("REQUIRE"), nil)
-	}
-	reqEnd, ok := keywordSpanAt(q, reqPos, "REQUIRE")
-	if !ok {
-		return parsedCreateConstraintContractDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("REQUIRE"), nil)
-	}
-
-	name, err := parseOptionalDDLName(ctx, q[prefixEnd:forPos])
+	// The contract statement shares the CREATE CONSTRAINT [name] FOR <pattern>
+	// REQUIRE prefix with every other shape, so it reads that prefix from the
+	// shared owner. Its REQUIRE is a block rather than a predicate, so it reads
+	// the REQUIRE tail itself: the whole tail must be the block, and a contract
+	// statement therefore admits no OPTIONS after it.
+	name, patternSpan, requireText, err := e.parseCreateConstraintForRequireParts(ctx, cypher)
 	if err != nil {
 		return parsedCreateConstraintContractDDL{}, err
 	}
 
-	entityType, variable, labelOrType, ok := parseConstraintContractForClause(q[forEnd:reqPos])
+	entityType, variable, labelOrType, ok := parseConstraintContractForClause(patternSpan)
 	if !ok {
 		return parsedCreateConstraintContractDDL{}, localizedError(localization.CypherSchemaInvalidPattern("FOR"), nil)
 	}
 
-	body, tail, ok := parseCurlySection(q[reqEnd:])
-	if !ok || tail != "" {
+	body, tail, ok := extractDelimitedSection(strings.TrimSpace(requireText), '{', '}')
+	if !ok || strings.TrimSpace(tail) != "" {
 		return parsedCreateConstraintContractDDL{}, localizedError(localization.CypherSchemaInvalidClause("REQUIRE block"), nil)
 	}
 
@@ -363,19 +293,17 @@ func (e *StorageExecutor) parseConstraintContractPrimitive(ctx context.Context, 
 	}
 
 	if entityType == storage.ConstraintEntityRelationship {
-		inside, rest, ok := extractParenSection(strings.TrimSpace(entryText))
-		if ok {
-			rest = strings.TrimSpace(rest)
-			if idx := keywordIndexFrom(ctx, rest, "IS RELATIONSHIP KEY", 0, defaultKeywordScanOpts()); idx == 0 {
-				end, spanOK := keywordSpanAt(rest, 0, "IS RELATIONSHIP KEY")
-				if spanOK && strings.TrimSpace(rest[end:]) == "" {
-					properties := indexPropertiesFromOnClause(inside, false)
-					if len(properties) == 0 {
-						return nil, storage.ConstraintContractEntry{}, true, localizedError(localization.CypherSchemaConstraintPropertiesRequired("RELATIONSHIP KEY"), nil)
-					}
-					constraint := &storage.Constraint{Name: entryName, Type: storage.ConstraintRelationshipKey, EntityType: entityType, Label: labelOrType, Properties: properties}
-					return constraint, storage.ConstraintContractEntry{Kind: storage.ConstraintContractKindPrimitiveRelationship, PrimitiveType: string(storage.ConstraintRelationshipKey), Properties: properties, Expression: entryText}, true, nil
+		// The shared relationship-key predicate also admits the unparenthesized
+		// r.k IS RELATIONSHIP KEY spelling. A contract entry admits only the
+		// parenthesized list, so it guards that shape first and then reads the
+		// predicate itself from the one owner.
+		if _, _, parenthesized := extractParenSection(strings.TrimSpace(entryText)); parenthesized {
+			if kind, properties, ok := e.parseRelationshipKeyOrCompositeUniquePredicate(ctx, entryText); ok && kind == "rel_key" {
+				if len(properties) == 0 {
+					return nil, storage.ConstraintContractEntry{}, true, localizedError(localization.CypherSchemaConstraintPropertiesRequired("RELATIONSHIP KEY"), nil)
 				}
+				constraint := &storage.Constraint{Name: entryName, Type: storage.ConstraintRelationshipKey, EntityType: entityType, Label: labelOrType, Properties: properties}
+				return constraint, storage.ConstraintContractEntry{Kind: storage.ConstraintContractKindPrimitiveRelationship, PrimitiveType: string(storage.ConstraintRelationshipKey), Properties: properties, Expression: entryText}, true, nil
 			}
 		}
 	}

@@ -10,7 +10,7 @@ import (
 func TestBoltZeroRowCorrelatedCallAggregation(t *testing.T) {
 	_, port := startTransactionLifecycleServer(t)
 	seed := openBoltTestConn(t, port)
-	runBoltQueryAndCollectRecords(t, seed, "CREATE (:RowAggregateNode:RowAggregateItem {id:'n0',origin:'automatic',group_id:'group0',source_key:'s0',name:'item',cite_start:[],cite_end:[],identifier_values:[],identifier_schemes:[],identifier_issuers:[],identifier_jurisdictions:[],identifier_periods:[],identifier_categories:[],alias_names:[],alias_types:[]}), (:RowAggregateSource {id:'s0',text:''})")
+	runBoltQueryWithParams(t, seed, "CREATE (:RowAggregateNode:RowAggregateItem {id:'n0',origin:'automatic',group_id:'group0',source_key:'s0',name:'item',cite_start:[],cite_end:[],identifier_values:[],identifier_schemes:[],identifier_issuers:[],identifier_jurisdictions:[],identifier_periods:[],identifier_categories:[],alias_names:[],alias_types:[]}), (:RowAggregateSource {id:'s0',text:''})", nil)
 	require.NoError(t, seed.Close())
 	for _, fixture := range []string{"row_zero_aggregate.cypher", "row_zero_aggregate_minimal.cypher"} {
 		query, err := os.ReadFile("../cypher/testdata/" + fixture)

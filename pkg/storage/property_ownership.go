@@ -18,18 +18,6 @@ type OwnedPropertyValue interface {
 	StoragePropertyValue() (value any, exact bool)
 }
 
-// canonicalPropertyValue owns retained property data at ingress and decode.
-// Numeric interpretation belongs to convert; typed scalars retain their codec
-// owner's representation, including pointer and timezone semantics.
-func canonicalPropertyValue(value any) any {
-	owned, _ := ownPropertyValue(value)
-	return owned
-}
-
-func ownPropertyValue(value any) (any, bool) {
-	return ownRetainedValue(value)
-}
-
 // ownedEntries copies src entries into dst, taking ownership of every value
 // through ownedValueCopy (property_copy.go, the generic copy owner). A nil dst
 // is allocated with room for src, so callers that return an independent image
@@ -45,6 +33,8 @@ func ownedEntries(dst, src map[string]any) map[string]any {
 	return dst
 }
 
+// ownRetainedValue returns value in the representation the durable decoder
+// returns, and whether that image is exact (see OwnedPropertyValue).
 func ownRetainedValue(value any) (any, bool) {
 	// These immutable scalar images already match the durable decoder. Keep
 	// their existing interface boxes instead of allocating a replacement on
@@ -118,22 +108,13 @@ func ownRetainedValue(value any) (any, bool) {
 		}
 		exact := true
 		result, _ := canonicalPropertyList(list.Len(), func(i int) (any, error) {
-			owned, ok := ownPropertyValue(list.At(i))
+			owned, ok := ownRetainedValue(list.At(i))
 			exact = exact && ok
 			return owned, nil
 		})
 		return result, exact
 	}
 	return value, false
-}
-
-func ownedProperties(properties map[string]any) map[string]any {
-	owned, _ := ownPropertyMap(properties)
-	return owned
-}
-
-func ownPropertyMap(properties map[string]any) (map[string]any, bool) {
-	return ownRetainedMap(properties)
 }
 
 func ownRetainedMap(properties map[string]any) (map[string]any, bool) {

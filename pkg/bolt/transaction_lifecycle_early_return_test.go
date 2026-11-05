@@ -73,7 +73,7 @@ func TestBoltTimeoutCleanupIsNotOwnedByPreExecutionFailurePath(t *testing.T) {
 		<-resolverRelease
 		return auth.DenyAllDatabaseAccessMode
 	}
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
 	conn := openBoltTestConn(t, port)
 	beginExplicitTransaction(t, conn, map[string]any{
 		"tx_timeout": int64(transactionLifecycleShortTimeout / time.Millisecond),
@@ -126,7 +126,7 @@ func TestBoltExpiryBeforeRunClaimNeverExecutesAndResetRecovers(t *testing.T) {
 		<-resolverRelease
 		return auth.FullDatabaseAccessMode
 	}
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
 	conn := openBoltTestConn(t, port)
 	beginExplicitTransaction(t, conn, map[string]any{
 		"tx_timeout": int64(transactionLifecycleShortTimeout / time.Millisecond),
@@ -181,7 +181,7 @@ func TestBoltExpiryBeforeRunClaimJoinsCleanupBeforeFailure(t *testing.T) {
 		<-resolverRelease
 		return auth.FullDatabaseAccessMode
 	}
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
 	conn := openBoltTestConn(t, port)
 	beginExplicitTransaction(t, conn, map[string]any{
 		"tx_timeout": int64(transactionLifecycleShortTimeout / time.Millisecond),
@@ -221,7 +221,7 @@ func TestBoltFactoryTransactionPinsBeginDatabaseAndRejectsCrossDatabaseRun(t *te
 			Level: slog.LevelDebug,
 		})),
 	}, fixedSessionExecutorFactory{QueryExecutor: executor})
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
 	conn := openBoltTestConn(t, port)
 	beginExplicitTransaction(t, conn, map[string]any{"db": "alpha"})
 
@@ -252,7 +252,7 @@ func TestBoltRawTransactionPinsBeginDatabaseAndRejectsCrossDatabaseRun(t *testin
 			Level: slog.LevelDebug,
 		})),
 	}, executor)
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
 	conn := openBoltTestConn(t, port)
 	beginExplicitTransaction(t, conn, map[string]any{"db": "alpha"})
 
@@ -291,8 +291,8 @@ func TestBoltFailedRunIgnoresCommitUntilResetAndRollsBack(t *testing.T) {
 	require.NoError(t, ReadSuccess(t, conn))
 
 	fresh := openBoltTestConn(t, port)
-	require.Equal(t, [][]any{{int64(0)}}, runBoltQueryAndCollectRecords(t, fresh,
-		"MATCH (n:TxFailedRunProbe {id: 'must-rollback'}) RETURN count(n)"))
+	require.Equal(t, [][]any{{int64(0)}}, runBoltQueryWithParams(t, fresh,
+		"MATCH (n:TxFailedRunProbe {id: 'must-rollback'}) RETURN count(n)", nil))
 }
 
 func TestBoltReturnRuntimeFailureKeepsConnectionAfterReset(t *testing.T) {
@@ -317,7 +317,7 @@ func TestBoltReturnRuntimeFailureKeepsConnectionAfterReset(t *testing.T) {
 			require.Equal(t, testCase.code, code)
 			require.NoError(t, SendReset(t, conn))
 			require.NoError(t, ReadSuccess(t, conn))
-			require.Equal(t, [][]any{{int64(1)}}, runBoltQueryAndCollectRecords(t, conn, "RETURN 1"))
+			require.Equal(t, [][]any{{int64(1)}}, runBoltQueryWithParams(t, conn, "RETURN 1", nil))
 		})
 	}
 }

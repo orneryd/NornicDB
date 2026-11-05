@@ -223,3 +223,34 @@ func TestResultHeaderOrdinaryCallUsesExecutionColumns(t *testing.T) {
 	_, cached = projectionFactsCache.get(keys[0])
 	require.True(t, cached, "EXPLAIN consumes the one cached owner program")
 }
+
+// Fixed schemas share one constructor while retaining each command's existing
+// execution-scope contract. Reading metadata must never execute the command.
+func TestStatementFactsFixedCommandScopePolicies(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "fixed-command-scopes"))
+	cases := []struct {
+		name, query    string
+		after, columns []string
+		kind           resultmetadata.ClauseKind
+	}{
+		{"privilege", "GRANT EXECUTE PROCEDURE db.labels ON DBMS TO reader", []string{"outer"}, nil, resultmetadata.ClauseWrite},
+		{"database", "CREATE DATABASE scope_never_created", nil, nil, resultmetadata.ClauseWrite},
+		{"composite", "CREATE COMPOSITE DATABASE composite_never_created ALIAS local FOR DATABASE nornic", nil, nil, resultmetadata.ClauseWrite},
+		{"show-users", "SHOW USERS", showUsersColumns, showUsersColumns, resultmetadata.ClauseOther},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			known := false
+			exec.StatementFacts(tc.query, resultmetadata.KnownScope([]string{"outer"}), false, RawSource).Visit(func(statement resultmetadata.Statement) {
+				known = true
+				statement.Incoming.Visit(func(names []string) { require.Equal(t, []string{"outer"}, names) }, func() { t.Fatal("incoming scope unknown") })
+				statement.After.Visit(func(names []string) { require.ElementsMatch(t, tc.after, names) }, func() { t.Fatal("after scope unknown") })
+				statement.Columns.Visit(func(names []string) { require.Equal(t, append([]string{}, tc.columns...), names) }, func() { t.Fatal("columns unknown") })
+				require.Len(t, statement.Clauses, 1)
+				require.Equal(t, tc.kind, statement.Clauses[0].Kind)
+				statement.Clauses[0].After.Visit(func(names []string) { require.ElementsMatch(t, tc.after, names) }, func() { t.Fatal("clause after scope unknown") })
+			}, func() { t.Fatal("owner declined fixed command") }, func(reason resultmetadata.Unresolved) { t.Fatal(reason.Err) })
+			require.True(t, known)
+		})
+	}
+}

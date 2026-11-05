@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"net"
 	"testing"
 	"time"
 
@@ -50,7 +49,7 @@ func TestBoltListConnectionsReportsLiveConnection(t *testing.T) {
 	t.Cleanup(func() { _ = manager.Close() })
 	server := NewWithDatabaseManager(&Config{Port: 0, ReadBufferSize: 8192, WriteBufferSize: 8192}, &mockExecutor{}, manager)
 	t.Cleanup(func() { _ = server.Close() })
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
 	ctx := context.Background()
 	driver, err := neo4jdriver.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4jdriver.NoAuth(), func(config *neo4jdriver.Config) {
 		config.UserAgent = "nornicdb-connections-test"
@@ -88,7 +87,7 @@ func TestGh738_BoltStatementAdmission(t *testing.T) {
 	t.Cleanup(func() { _ = manager.Close() })
 	server := NewWithDatabaseManager(&Config{Port: 0, ReadBufferSize: 8192, WriteBufferSize: 8192}, &mockExecutor{}, manager)
 	t.Cleanup(func() { _ = server.Close() })
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
 	ctx := context.Background()
 	driver, err := neo4jdriver.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4jdriver.NoAuth())
 	require.NoError(t, err)
@@ -171,7 +170,7 @@ func TestGh745_BoltCompositeSubqueryResults(t *testing.T) {
 		}
 	})
 
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
 	ctx := context.Background()
 	driver, err := neo4jdriver.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4jdriver.NoAuth())
 	require.NoError(t, err)
@@ -240,7 +239,7 @@ func TestGh683_BoltCompositeCommit(t *testing.T) {
 			}))
 			server := NewWithDatabaseManager(&Config{Port: 0, ReadBufferSize: 8192, WriteBufferSize: 8192}, &mockExecutor{}, manager)
 			t.Cleanup(func() { _ = server.Close() })
-			port := startBoltTestServer(t, server)
+			port := serveBoltIntegrationServer(t, server)
 			ctx := context.Background()
 			driver, err := neo4jdriver.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4jdriver.NoAuth())
 			require.NoError(t, err)
@@ -308,7 +307,7 @@ func newDatabaseManagerBoltWriteSession(t *testing.T, mgr DatabaseManagerInterfa
 	t.Cleanup(func() {
 		_ = server.Close()
 	})
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
 
 	ctx := context.Background()
 	driver, err := neo4jdriver.NewDriverWithContext(
@@ -490,38 +489,6 @@ func databaseScopedExecutor(t *testing.T, store storage.Engine, transaction ...b
 	exec, err := s.getExecutorForDatabase("nornic", transaction...)
 	require.NoError(t, err)
 	return exec
-}
-
-// startBoltTestServer pre-binds a loopback listener for the test server and
-// runs the accept loop directly, avoiding racy reads of server.listener and the
-// reserve-then-rebind TOCTOU window.
-func startBoltTestServer(t *testing.T, server *Server, shutdownChecks ...func(error)) int {
-	t.Helper()
-	require.LessOrEqual(t, len(shutdownChecks), 1)
-
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	addr, ok := listener.Addr().(*net.TCPAddr)
-	require.True(t, ok)
-	require.Greater(t, addr.Port, 0)
-	server.listener = listener
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- server.serve()
-	}()
-
-	t.Cleanup(func() {
-		shutdownErr := server.Close()
-		serveErr := <-errCh
-		if len(shutdownChecks) == 1 {
-			shutdownChecks[0](shutdownErr)
-		} else {
-			require.NoError(t, shutdownErr)
-		}
-		require.NoError(t, serveErr)
-	})
-	return addr.Port
 }
 
 func databaseScopedNodeCount(t *testing.T, exec QueryExecutor, id string) int64 {

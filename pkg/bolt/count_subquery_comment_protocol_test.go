@@ -42,7 +42,7 @@ func TestBoltCountSubqueryCommentGap(t *testing.T) {
 						if comment {
 							gap = " /*gap*/ "
 						}
-						records := runBoltQueryAndCollectRecords(t, conn, "RETURN (COUNT"+gap+"{ LIMIT 1 RETURN 1 AS x }) AS v")
+						records := runBoltQueryWithParams(t, conn, "RETURN (COUNT"+gap+"{ LIMIT 1 RETURN 1 AS x }) AS v", nil)
 						require.Equal(t, [][]any{{int64(1)}}, records)
 						if explicit {
 							require.NoError(t, SendRollback(t, conn))

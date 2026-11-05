@@ -658,7 +658,7 @@ func projectCachedNodeForRead(node *Node, properties []string, stripEmbeddings b
 	projected.Properties = make(map[string]any, len(properties))
 	for _, property := range properties {
 		if value, ok := node.Properties[property]; ok {
-			projected.Properties[property] = canonicalPropertyValue(value)
+			projected.Properties[property], _ = ownRetainedValue(value)
 		}
 	}
 	return projected

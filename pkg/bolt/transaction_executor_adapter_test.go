@@ -101,7 +101,7 @@ func TestBoltResetAfterExpressionErrorKeepsConnection(t *testing.T) {
 		Port: 0, MaxConnections: 8, ReadBufferSize: 8192, WriteBufferSize: 8192,
 		Logger: slog.New(slog.NewTextHandler(&logs, nil)),
 	}, &mockExecutor{}, mgr)
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
 	conn := openBoltTestConn(t, port)
 	for _, query := range []string{"RETURN 1 + {a: 1} AS x", "RETURN date('x') AS x"} {
 		beginExplicitTransaction(t, conn, nil)

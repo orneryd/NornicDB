@@ -176,11 +176,31 @@ jobs:
       - name: Run make test
         run: |
           set -o pipefail
+          # Preserve package/process RSS and cgroup OOM counters alongside the
+          # unchanged gate, including when the test process is terminated.
+          (
+            while true; do
+              date -u
+              free -m
+              ps -eo pid,ppid,rss,args --sort=-rss | sed -n '1,12p'
+              for metric in memory.current memory.peak memory.max memory.events; do
+                if [ -r "/sys/fs/cgroup/$metric" ]; then
+                  printf '%s: ' "$metric"
+                  cat "/sys/fs/cgroup/$metric"
+                fi
+              done
+              sleep 15
+            done
+          ) > make-test-resources.log 2>&1 &
+          monitor_pid=$!
+          trap 'kill "$monitor_pid" 2>/dev/null || true; wait "$monitor_pid" 2>/dev/null || true' EXIT
           make test 2>&1 | tee make-test.log
       - name: Upload test log
-        if: ${{ !cancelled() }}
+        if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: make-test-${{ github.run_id }}-${{ github.run_attempt }}
-          path: make-test.log
+          path: |
+            make-test.log
+            make-test-resources.log
           if-no-files-found: warn

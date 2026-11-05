@@ -31,7 +31,7 @@ func TestReview1477R2PublicBearerTransactions(t *testing.T) {
 	config := DefaultConfig()
 	config.Authenticator = review1477BearerAuthenticator{}
 	server := NewWithDatabaseManager(config, nil, manager)
-	port := startBoltTestServer(t, server)
+	port := serveBoltIntegrationServer(t, server)
 	driver, err := neo4j.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4j.BearerAuth("review-token"))
 	if err != nil {
 		t.Fatal(err)

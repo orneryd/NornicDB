@@ -505,32 +505,7 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(ctx context.Context, la
 	// buffered commit after the pinned snapshot, so the engine's latest
 	// (overlaid) stream is used and no extra overlay merge runs here.
 	engineOverlaid := tx.readTS.IsZero() || (tx.engine != nil && tx.engine.writeBehind != nil)
-	var overlay []*Node
-	var overlayTouched map[NodeID]bool
 
-	emitOverlay := func() error {
-		if engineOverlaid {
-			return nil // the engine stream already merged the overlay
-		}
-		scope := tx.labelScanScopeLocked(opts.Prefix)
-		nowNanos := DecayScoringTime()
-		var cancel bulkReadCancellation
-		for _, n := range overlay {
-			if err := cancel.check(ctx); err != nil {
-				return err
-			}
-			if !nodeIDInScope(n.ID, scope) || tx.engine.filterEntityByDecay(v, n, nowNanos) {
-				continue
-			}
-			if err := invokeVisit(projectCachedNodeForRead(n, properties, false)); err != nil {
-				if err == ErrIterationStopped {
-					return nil
-				}
-				return err
-			}
-		}
-		return nil
-	}
 	// A whole node the stream hands out is also the one a later write of
 	// the node takes as its old version (snapshotLabelNodeByID), so the
 	// caller gets a copy it may change (#965). A projected node is only
@@ -544,9 +519,6 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(ctx context.Context, la
 	emitCommitted := func(node *Node) error {
 		if node == nil {
 			return nil
-		}
-		if len(overlayTouched) > 0 && overlayTouched[node.ID] {
-			return nil // the write-behind overlay shadows this committed row
 		}
 		// Eagerly cache scanned labels within the byte/node bound. This is
 		// load-bearing for snapshot isolation: later label reads in this
@@ -593,9 +565,6 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(ctx context.Context, la
 			if err := emitCommitted(node); err != nil {
 				return err
 			}
-		}
-		if err := emitOverlay(); err != nil {
-			return err
 		}
 		return tx.streamPendingLabelNodesLocked(ctx, label, seen, properties, invokeVisit)
 	}
@@ -661,9 +630,6 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(ctx context.Context, la
 		}
 		tx.snapshotProjectedLabelNodes[cacheKey] = completed
 		tx.clearSnapshotLabelPrefixLocked(cacheKey)
-	}
-	if err := emitOverlay(); err != nil {
-		return err
 	}
 	return tx.streamPendingLabelNodesLocked(ctx, label, seen, properties, invokeVisit)
 }

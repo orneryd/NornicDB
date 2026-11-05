@@ -37,8 +37,8 @@ func TestBoltExplicitTxPeerCommittedEdgeUpdateIsTransientOutdated(t *testing.T) 
 
 	// Seed the endpoints before any contended transaction begins.
 	setup := openBoltTestConn(t, port)
-	runBoltQueryAndCollectRecords(t, setup, "CREATE (:A {key: 'a1'})")
-	runBoltQueryAndCollectRecords(t, setup, "CREATE (:B {key: 'b1'})")
+	runBoltQueryWithParams(t, setup, "CREATE (:A {key: 'a1'})", nil)
+	runBoltQueryWithParams(t, setup, "CREATE (:B {key: 'b1'})", nil)
 
 	// Writer session: BEGIN pins the snapshot before the peer's commit.
 	writer := openBoltTestConn(t, port)
@@ -48,7 +48,7 @@ func TestBoltExplicitTxPeerCommittedEdgeUpdateIsTransientOutdated(t *testing.T) 
 	// Peer session: autocommit MERGE of the same relationship with
 	// different property values, committed after the writer's BEGIN.
 	peer := openBoltTestConn(t, port)
-	runBoltQueryAndCollectRecords(t, peer, mergeSetPeer)
+	runBoltQueryWithParams(t, peer, mergeSetPeer, nil)
 
 	// Writer runs the same MERGE ... SET with different values. The
 	// relationship lookup sees the peer's edge (latest-committed read);
@@ -71,15 +71,15 @@ func TestBoltExplicitTxPeerCommittedEdgeUpdateIsTransientOutdated(t *testing.T) 
 	retry := openBoltTestConn(t, port)
 	requireNoError(t, SendBegin(t, retry, nil))
 	requireNoError(t, ReadSuccess(t, retry))
-	runBoltQueryAndCollectRecords(t, retry, mergeSetWriter)
+	runBoltQueryWithParams(t, retry, mergeSetWriter, nil)
 	requireNoError(t, SendCommit(t, retry))
 	requireNoError(t, ReadSuccess(t, retry))
 
 	// Converged state: exactly one relationship with the retrying
 	// writer's value — Neo4j's observable outcome for this interleaving.
 	verify := openBoltTestConn(t, port)
-	records := runBoltQueryAndCollectRecords(t, verify,
-		"MATCH (:A {key: 'a1'})-[rel:REL]->(:B {key: 'b1'}) RETURN count(rel), collect(rel.x)")
+	records := runBoltQueryWithParams(t, verify,
+		"MATCH (:A {key: 'a1'})-[rel:REL]->(:B {key: 'b1'}) RETURN count(rel), collect(rel.x)", nil)
 	if len(records) != 1 {
 		t.Fatalf("expected one row, got %d (%v)", len(records), records)
 	}

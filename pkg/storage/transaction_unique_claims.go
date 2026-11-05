@@ -107,22 +107,23 @@ func (tx *BadgerTransaction) validateNodeMutationPreimagesLocked(ctx context.Con
 	if len(preimages) == 0 && !distinctUpdates {
 		return nil
 	}
-	properties := make([]string, 0, len(constraints))
-	include := make(map[string]struct{}, len(constraints))
-	for index := range constraints {
-		constraint := &constraints[index]
-		if _, present := include[constraint.Property]; !present {
-			include[constraint.Property] = struct{}{}
-			properties = append(properties, constraint.Property)
+	var properties []string
+	var include map[string]struct{}
+	if !validateBody {
+		properties = make([]string, 0, len(constraints))
+		include = make(map[string]struct{}, len(constraints))
+		for index := range constraints {
+			constraint := &constraints[index]
+			if _, present := include[constraint.Property]; !present {
+				include[constraint.Property] = struct{}{}
+				properties = append(properties, constraint.Property)
+			}
 		}
 	}
 	// A version is reserved before WAL/accounting preparation, so BEGIN may
 	// include a peer's version without having seen its image. For write-behind
 	// also compare the actual observed predecessor, not only constraint keys.
 	// This uses the same batch read cut and first-mutation preimage owner.
-	if validateBody {
-		properties, include = nil, nil
-	}
 	// One current read cut covers the whole mutation batch. Capture only
 	// matching buffered bodies; the usual physical-only case allocates no
 	// overlay map and opens one Badger read transaction rather than one per node.

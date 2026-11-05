@@ -111,7 +111,7 @@ func roundTripLocalDateTimeScenario(t *testing.T, writeMessage []byte, readQuery
 	runBoltStatementNoRecords(t, conn, BuildRunMessage("MATCH (n:T) DETACH DELETE n", nil, nil))
 	runBoltStatementNoRecords(t, conn, writeMessage)
 
-	rows := runBoltQueryAndCollectRecords(t, conn, readQuery)
+	rows := runBoltQueryWithParams(t, conn, readQuery, nil)
 	if len(rows) != 1 || len(rows[0]) != 1 {
 		t.Fatalf("expected one row with one field, got %#v", rows)
 	}

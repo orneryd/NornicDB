@@ -149,7 +149,7 @@ const (
 
 // startBoltIntegrationServer is the one constructor for Bolt integration
 // servers: it selects the QueryExecutor and connection budget from mode, and
-// serveBoltIntegrationServer owns bind, serve and cleanup for every server.
+// serves each server it builds through serveBoltIntegrationServer.
 func startBoltIntegrationServer(t testing.TB, store storage.Engine, mode boltIntegrationMode) (*Server, int) {
 	t.Helper()
 	var executor QueryExecutor
@@ -173,13 +173,14 @@ func startBoltIntegrationServer(t testing.TB, store storage.Engine, mode boltInt
 	return server, serveBoltIntegrationServer(t, server)
 }
 
-// serveBoltIntegrationServer is the one bind/serve/cleanup owner for the Bolt
-// integration servers. It reserves an ephemeral port without a
-// close-and-rebind race, serves it through the public Serve entry (the private
-// serve is Serve of the published listener), and joins the serve goroutine
-// after Close. Callers keep their own executor and server config.
-func serveBoltIntegrationServer(t testing.TB, server *Server) int {
+// serveBoltIntegrationServer owns bind, public Serve and joined cleanup for
+// Bolt test servers. An optional shutdown observer preserves deliberate close
+// failure assertions; ordinary callers require a clean shutdown.
+func serveBoltIntegrationServer(t testing.TB, server *Server, shutdownChecks ...func(error)) int {
 	t.Helper()
+	if len(shutdownChecks) > 1 {
+		t.Fatal("at most one shutdown observer is supported")
+	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -193,11 +194,13 @@ func serveBoltIntegrationServer(t testing.TB, server *Server) int {
 	t.Cleanup(func() {
 		closeErr := server.Close()
 		serveErr := <-done
-		if closeErr != nil {
-			t.Fatalf("close server: %v", closeErr)
+		if len(shutdownChecks) == 1 {
+			shutdownChecks[0](closeErr)
+		} else if closeErr != nil {
+			t.Errorf("close server: %v", closeErr)
 		}
 		if serveErr != nil {
-			t.Fatalf("serve: %v", serveErr)
+			t.Errorf("serve: %v", serveErr)
 		}
 	})
 	return addr.Port
@@ -223,9 +226,12 @@ func requireNoError(t *testing.T, err error) {
 	}
 }
 
-func runBoltQueryAndCollectRecords(t *testing.T, conn net.Conn, query string) [][]any {
+// runBoltQueryWithParams runs query with params and collects every RECORD
+// until the statement SUCCESS. It is the one run-and-collect owner for Bolt
+// test statements.
+func runBoltQueryWithParams(t *testing.T, conn net.Conn, query string, params map[string]any) [][]any {
 	t.Helper()
-	requireNoError(t, SendRun(t, conn, query, nil, nil))
+	requireNoError(t, SendRun(t, conn, query, params, nil))
 	requireNoError(t, ReadSuccess(t, conn))
 	requireNoError(t, SendPull(t, conn, nil))
 
@@ -260,44 +266,11 @@ func TestBoltCypherIntegration(t *testing.T) {
 	// Wrap with NamespacedEngine to handle ID prefixing (required by BadgerEngine)
 	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "test")
-	cypherExec := cypher.NewStorageExecutor(store)
-	executor := &cypherQueryExecutor{executor: cypherExec}
 
-	// Start Bolt server on random port
-	config := &Config{
-		Port:            0, // Random port
-		MaxConnections:  10,
-		ReadBufferSize:  8192,
-		WriteBufferSize: 8192,
-	}
-
-	server := New(config, executor)
-	defer server.Close()
-
-	port := serveBoltIntegrationServer(t, server)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 
 	t.Run("create_and_query_node", func(t *testing.T) {
-		// Connect to server
-		conn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
-		if err != nil {
-			t.Fatalf("Failed to connect: %v", err)
-		}
-		defer conn.Close()
-
-		// Perform handshake
-		if err := PerformHandshakeWithTesting(t, conn); err != nil {
-			t.Fatalf("Handshake failed: %v", err)
-		}
-
-		// Send HELLO
-		if err := SendHello(t, conn, nil); err != nil {
-			t.Fatalf("HELLO failed: %v", err)
-		}
-
-		// Wait for SUCCESS response
-		if err := ReadSuccess(t, conn); err != nil {
-			t.Fatalf("Expected SUCCESS after HELLO: %v", err)
-		}
+		conn := openBoltTestConn(t, port)
 
 		// Send CREATE query
 		createQuery := "CREATE (n:Person {name: 'Alice', age: 30}) RETURN n"
@@ -337,27 +310,7 @@ func TestBoltCypherIntegration(t *testing.T) {
 	})
 
 	t.Run("match_query", func(t *testing.T) {
-		// Connect to server
-		conn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
-		if err != nil {
-			t.Fatalf("Failed to connect: %v", err)
-		}
-		defer conn.Close()
-
-		// Perform handshake
-		if err := PerformHandshakeWithTesting(t, conn); err != nil {
-			t.Fatalf("Handshake failed: %v", err)
-		}
-
-		// Send HELLO
-		if err := SendHello(t, conn, nil); err != nil {
-			t.Fatalf("HELLO failed: %v", err)
-		}
-
-		// Wait for SUCCESS
-		if err := ReadSuccess(t, conn); err != nil {
-			t.Fatalf("Expected SUCCESS: %v", err)
-		}
+		conn := openBoltTestConn(t, port)
 
 		// Send MATCH query
 		matchQuery := "MATCH (n:Person) WHERE n.name = 'Alice' RETURN n.name, n.age"
@@ -396,17 +349,7 @@ func TestBoltCypherIntegration(t *testing.T) {
 	})
 
 	t.Run("parameterized_query", func(t *testing.T) {
-		// Connect to server
-		conn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
-		if err != nil {
-			t.Fatalf("Failed to connect: %v", err)
-		}
-		defer conn.Close()
-
-		// Perform handshake and HELLO
-		PerformHandshakeWithTesting(t, conn)
-		SendHello(t, conn, nil)
-		ReadSuccess(t, conn)
+		conn := openBoltTestConn(t, port)
 
 		// Send parameterized query
 		query := "CREATE (n:Person {name: $name, age: $age}) RETURN n"
@@ -438,17 +381,7 @@ func TestBoltCypherIntegration(t *testing.T) {
 	})
 
 	t.Run("transaction_flow", func(t *testing.T) {
-		// Connect to server
-		conn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
-		if err != nil {
-			t.Fatalf("Failed to connect: %v", err)
-		}
-		defer conn.Close()
-
-		// Handshake and HELLO
-		PerformHandshakeWithTesting(t, conn)
-		SendHello(t, conn, nil)
-		ReadSuccess(t, conn)
+		conn := openBoltTestConn(t, port)
 
 		// Send BEGIN
 		if err := SendBegin(t, conn, nil); err != nil {
@@ -493,13 +426,13 @@ func TestBoltConstraintIntegration_NewerConstraintTypes(t *testing.T) {
 	}
 
 	for _, query := range queries {
-		records := runBoltQueryAndCollectRecords(t, conn, query)
+		records := runBoltQueryWithParams(t, conn, query, nil)
 		if len(records) != 0 {
 			t.Fatalf("expected no records for schema mutation %q, got %d", query, len(records))
 		}
 	}
 
-	showRecords := runBoltQueryAndCollectRecords(t, conn, "SHOW CONSTRAINTS")
+	showRecords := runBoltQueryWithParams(t, conn, "SHOW CONSTRAINTS", nil)
 	if len(showRecords) < len(queries) {
 		t.Fatalf("expected at least %d constraints, got %d", len(queries), len(showRecords))
 	}
@@ -568,13 +501,13 @@ func TestBoltConstraintIntegration_AllConstraintFamilies(t *testing.T) {
 	}
 
 	for _, query := range queries {
-		records := runBoltQueryAndCollectRecords(t, conn, query)
+		records := runBoltQueryWithParams(t, conn, query, nil)
 		if len(records) != 0 {
 			t.Fatalf("expected no records for schema mutation %q, got %d", query, len(records))
 		}
 	}
 
-	showRecords := runBoltQueryAndCollectRecords(t, conn, "SHOW CONSTRAINTS")
+	showRecords := runBoltQueryWithParams(t, conn, "SHOW CONSTRAINTS", nil)
 	if len(showRecords) < len(queries) {
 		t.Fatalf("expected at least %d constraints, got %d", len(queries), len(showRecords))
 	}
@@ -661,12 +594,12 @@ func TestBoltConstraintIntegration_ConstraintContracts(t *testing.T) {
 		  NOT EXISTS { (n)-[:FORBIDDEN_REL]->() }
 		}`
 
-	records := runBoltQueryAndCollectRecords(t, conn, createContract)
+	records := runBoltQueryWithParams(t, conn, createContract, nil)
 	if len(records) != 0 {
 		t.Fatalf("expected no records creating contract, got %d", len(records))
 	}
 
-	contracts := runBoltQueryAndCollectRecords(t, conn, "SHOW CONSTRAINT CONTRACTS")
+	contracts := runBoltQueryWithParams(t, conn, "SHOW CONSTRAINT CONTRACTS", nil)
 	if len(contracts) != 1 {
 		t.Fatalf("expected 1 contract row, got %d", len(contracts))
 	}
@@ -685,7 +618,7 @@ func TestBoltConstraintIntegration_ConstraintContracts(t *testing.T) {
 		t.Fatalf("expected non-empty contract definition, got %v", row[6])
 	}
 
-	records = runBoltQueryAndCollectRecords(t, conn, `
+	records = runBoltQueryWithParams(t, conn, `
 		CREATE CONSTRAINT works_at_contract
 		FOR ()-[r:WORKS_AT]-()
 		REQUIRE {
@@ -697,12 +630,12 @@ func TestBoltConstraintIntegration_ConstraintContracts(t *testing.T) {
 		  startNode(r).tenant = endNode(r).tenant
 		  r.status IN ['active', 'inactive']
 		  r.hoursPerWeek > 0
-		}`)
+		}`, nil)
 	if len(records) != 0 {
 		t.Fatalf("expected no records creating relationship contract, got %d", len(records))
 	}
 
-	contracts = runBoltQueryAndCollectRecords(t, conn, "SHOW CONSTRAINT CONTRACTS")
+	contracts = runBoltQueryWithParams(t, conn, "SHOW CONSTRAINT CONTRACTS", nil)
 	if len(contracts) != 2 {
 		t.Fatalf("expected 2 contract rows, got %d", len(contracts))
 	}
@@ -715,7 +648,7 @@ func TestBoltConstraintIntegration_EnforcementForNewFamilies(t *testing.T) {
 		_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 		conn := openBoltTestConn(t, port)
 
-		runBoltQueryAndCollectRecords(t, conn, "CREATE CONSTRAINT person_status_domain FOR (n:Person) REQUIRE n.status IN ['active', 'inactive']")
+		runBoltQueryWithParams(t, conn, "CREATE CONSTRAINT person_status_domain FOR (n:Person) REQUIRE n.status IN ['active', 'inactive']", nil)
 		_, msg := runBoltQueryExpectFailure(t, conn, "CREATE (:Person {id:'p1', status:'paused'})")
 		if !strings.Contains(msg, "allowed") && !strings.Contains(msg, "DOMAIN") && !strings.Contains(msg, "active") {
 			t.Fatalf("expected domain violation message, got %q", msg)
@@ -728,10 +661,10 @@ func TestBoltConstraintIntegration_EnforcementForNewFamilies(t *testing.T) {
 		_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 		conn := openBoltTestConn(t, port)
 
-		runBoltQueryAndCollectRecords(t, conn, "CREATE CONSTRAINT max_jobs FOR ()-[r:WORKS_AT]->() REQUIRE MAX COUNT 2")
-		runBoltQueryAndCollectRecords(t, conn, "CREATE (:Person {id:'p1'}), (:Company {id:'c1'}), (:Company {id:'c2'}), (:Company {id:'c3'})")
-		runBoltQueryAndCollectRecords(t, conn, "MATCH (p:Person {id:'p1'}), (c:Company {id:'c1'}) CREATE (p)-[:WORKS_AT]->(c)")
-		runBoltQueryAndCollectRecords(t, conn, "MATCH (p:Person {id:'p1'}), (c:Company {id:'c2'}) CREATE (p)-[:WORKS_AT]->(c)")
+		runBoltQueryWithParams(t, conn, "CREATE CONSTRAINT max_jobs FOR ()-[r:WORKS_AT]->() REQUIRE MAX COUNT 2", nil)
+		runBoltQueryWithParams(t, conn, "CREATE (:Person {id:'p1'}), (:Company {id:'c1'}), (:Company {id:'c2'}), (:Company {id:'c3'})", nil)
+		runBoltQueryWithParams(t, conn, "MATCH (p:Person {id:'p1'}), (c:Company {id:'c1'}) CREATE (p)-[:WORKS_AT]->(c)", nil)
+		runBoltQueryWithParams(t, conn, "MATCH (p:Person {id:'p1'}), (c:Company {id:'c2'}) CREATE (p)-[:WORKS_AT]->(c)", nil)
 		_, msg := runBoltQueryExpectFailure(t, conn, "MATCH (p:Person {id:'p1'}), (c:Company {id:'c3'}) CREATE (p)-[:WORKS_AT]->(c)")
 		if !strings.Contains(msg, "max count") && !strings.Contains(msg, "exceed") {
 			t.Fatalf("expected cardinality violation message, got %q", msg)
@@ -744,8 +677,8 @@ func TestBoltConstraintIntegration_EnforcementForNewFamilies(t *testing.T) {
 		_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 		conn := openBoltTestConn(t, port)
 
-		runBoltQueryAndCollectRecords(t, conn, "CREATE CONSTRAINT works_at_allowed FOR (:Person)-[r:WORKS_AT]->(:Company) REQUIRE ALLOWED")
-		runBoltQueryAndCollectRecords(t, conn, "CREATE (:Robot {id:'r1'}), (:Company {id:'c1'})")
+		runBoltQueryWithParams(t, conn, "CREATE CONSTRAINT works_at_allowed FOR (:Person)-[r:WORKS_AT]->(:Company) REQUIRE ALLOWED", nil)
+		runBoltQueryWithParams(t, conn, "CREATE (:Robot {id:'r1'}), (:Company {id:'c1'})", nil)
 		_, msg := runBoltQueryExpectFailure(t, conn, "MATCH (r:Robot {id:'r1'}), (c:Company {id:'c1'}) CREATE (r)-[:WORKS_AT]->(c)")
 		if !strings.Contains(msg, "ALLOWED") {
 			t.Fatalf("expected ALLOWED policy violation message, got %q", msg)
@@ -758,8 +691,8 @@ func TestBoltConstraintIntegration_EnforcementForNewFamilies(t *testing.T) {
 		_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 		conn := openBoltTestConn(t, port)
 
-		runBoltQueryAndCollectRecords(t, conn, "CREATE CONSTRAINT no_intern_exec FOR (:Intern)-[r:REPORTS_TO]->(:Executive) REQUIRE DISALLOWED")
-		runBoltQueryAndCollectRecords(t, conn, "CREATE (:Intern {id:'i1'}), (:Executive {id:'e1'})")
+		runBoltQueryWithParams(t, conn, "CREATE CONSTRAINT no_intern_exec FOR (:Intern)-[r:REPORTS_TO]->(:Executive) REQUIRE DISALLOWED", nil)
+		runBoltQueryWithParams(t, conn, "CREATE (:Intern {id:'i1'}), (:Executive {id:'e1'})", nil)
 		_, msg := runBoltQueryExpectFailure(t, conn, "MATCH (i:Intern {id:'i1'}), (e:Executive {id:'e1'}) CREATE (i)-[:REPORTS_TO]->(e)")
 		if !strings.Contains(msg, "DISALLOWED") {
 			t.Fatalf("expected DISALLOWED policy violation message, got %q", msg)
@@ -772,8 +705,8 @@ func TestBoltConstraintIntegration_EnforcementForNewFamilies(t *testing.T) {
 		_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 		conn := openBoltTestConn(t, port)
 
-		runBoltQueryAndCollectRecords(t, conn, "CREATE CONSTRAINT rel_role_domain FOR ()-[r:WORKS_AT]-() REQUIRE r.role IN ['engineer', 'manager']")
-		runBoltQueryAndCollectRecords(t, conn, "CREATE (:Person {id:'p1'}), (:Company {id:'c1'})")
+		runBoltQueryWithParams(t, conn, "CREATE CONSTRAINT rel_role_domain FOR ()-[r:WORKS_AT]-() REQUIRE r.role IN ['engineer', 'manager']", nil)
+		runBoltQueryWithParams(t, conn, "CREATE (:Person {id:'p1'}), (:Company {id:'c1'})", nil)
 		_, msg := runBoltQueryExpectFailure(t, conn, "MATCH (p:Person {id:'p1'}), (c:Company {id:'c1'}) CREATE (p)-[:WORKS_AT {role:'director'}]->(c)")
 		if !strings.Contains(msg, "allowed") && !strings.Contains(msg, "DOMAIN") && !strings.Contains(msg, "engineer") {
 			t.Fatalf("expected relationship domain violation message, got %q", msg)
@@ -786,7 +719,7 @@ func TestBoltConstraintIntegration_EnforcementForNewFamilies(t *testing.T) {
 		_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 		conn := openBoltTestConn(t, port)
 
-		runBoltQueryAndCollectRecords(t, conn, `
+		runBoltQueryWithParams(t, conn, `
 			CREATE CONSTRAINT person_contract
 			FOR (n:Person)
 			REQUIRE {
@@ -795,7 +728,7 @@ func TestBoltConstraintIntegration_EnforcementForNewFamilies(t *testing.T) {
 			  n.age IS :: INTEGER
 			  n.status IN ['active', 'inactive']
 			  (n.tenant, n.externalId) IS NODE KEY
-			}`)
+			}`, nil)
 		_, msg := runBoltQueryExpectFailure(t, conn, "CREATE (:Person {id:'bad', name:'Bob', age:40, status:'paused', tenant:'t1', externalId:'u2'})")
 		if !strings.Contains(msg, "constraint contract person_contract violated") {
 			t.Fatalf("expected contract violation message, got %q", msg)
@@ -808,8 +741,8 @@ func TestBoltConstraintIntegration_EnforcementForNewFamilies(t *testing.T) {
 		_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 		conn := openBoltTestConn(t, port)
 
-		runBoltQueryAndCollectRecords(t, conn, "CREATE (:Person {id:'p1', tenant:'t1'}), (:Person {id:'p2', tenant:'t2'}), (:Person {id:'p3', tenant:'t1'})")
-		runBoltQueryAndCollectRecords(t, conn, `
+		runBoltQueryWithParams(t, conn, "CREATE (:Person {id:'p1', tenant:'t1'}), (:Person {id:'p2', tenant:'t2'}), (:Person {id:'p3', tenant:'t1'})", nil)
+		runBoltQueryWithParams(t, conn, `
 			CREATE CONSTRAINT works_at_contract
 			FOR ()-[r:WORKS_AT]-()
 			REQUIRE {
@@ -821,7 +754,7 @@ func TestBoltConstraintIntegration_EnforcementForNewFamilies(t *testing.T) {
 			  startNode(r).tenant = endNode(r).tenant
 			  r.status IN ['active', 'inactive']
 			  r.hoursPerWeek > 0
-			}`)
+			}`, nil)
 		_, msg := runBoltQueryExpectFailure(t, conn, `
 			MATCH (a:Person {id:'p1'}), (b:Person {id:'p2'})
 			CREATE (a)-[:WORKS_AT {id:'w2', startedAt:'2024-01-01', role:'Engineer', tenant:'t1', externalId:'rel-2', status:'active', hoursPerWeek:40}]->(b)`)
@@ -862,7 +795,7 @@ func TestBoltIntegration_G2GVersionNodesFallbackRowShape_ServerStack(t *testing.
 		"CREATE CONSTRAINT g2g_factversion_valid_from_exists IF NOT EXISTS FOR (fv:FactVersion) REQUIRE fv.valid_from IS NOT NULL",
 	}
 	for _, query := range bootstrap {
-		records := runBoltQueryAndCollectRecords(t, conn, query)
+		records := runBoltQueryWithParams(t, conn, query, nil)
 		if len(records) != 0 {
 			t.Fatalf("expected no records for schema mutation %q, got %d", query, len(records))
 		}
@@ -975,7 +908,7 @@ FOREACH (_ IN CASE WHEN row.target_entity_id IS NULL OR row.target_entity_id = '
 		}
 	}
 
-	records := runBoltQueryAndCollectRecords(t, conn, "MATCH (:FactVersion:CodeState {state_id: 'cs-g2g-bolt-single'})-[:SOURCE]->(:Entity:CodeEntity {entity_id: 'symbol::repo::function::caller'}) RETURN count(*)")
+	records := runBoltQueryWithParams(t, conn, "MATCH (:FactVersion:CodeState {state_id: 'cs-g2g-bolt-single'})-[:SOURCE]->(:Entity:CodeEntity {entity_id: 'symbol::repo::function::caller'}) RETURN count(*)", nil)
 	if len(records) != 1 || len(records[0]) != 1 || records[0][0] != int64(1) {
 		t.Fatalf("expected exactly one SOURCE relationship, got %v", records)
 	}
@@ -986,26 +919,16 @@ func TestBoltExplicitTransactionRollbackRevertsCreate(t *testing.T) {
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	executor := newTxCapableCypherQueryExecutor(store)
 
-	config := &Config{
+	// This scenario keeps its own connection budget instead of the shared
+	// explicit-transaction mode's larger one.
+	server := New(&Config{
 		Port:            0,
 		MaxConnections:  10,
 		ReadBufferSize:  8192,
 		WriteBufferSize: 8192,
-	}
-
-	server := New(config, executor)
-	defer server.Close()
-
+	}, executor)
 	port := serveBoltIntegrationServer(t, server)
-	conn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
-	defer conn.Close()
-
-	PerformHandshakeWithTesting(t, conn)
-	SendHello(t, conn, nil)
-	ReadSuccess(t, conn)
+	conn := openBoltTestConn(t, port)
 
 	// Cleanup old test data outside transaction.
 	if err := SendRun(t, conn, "MATCH (n:Test {name: 'Transaction Test'}) DETACH DELETE n", nil, nil); err != nil {
@@ -1075,7 +998,6 @@ func TestBoltServerStress(t *testing.T) {
 	// Start server
 	config := &Config{Port: 0, MaxConnections: 50}
 	server := New(config, executor)
-	defer server.Close()
 
 	port := serveBoltIntegrationServer(t, server)
 
@@ -1168,34 +1090,12 @@ func TestBoltBenchmarkCreateDeleteRelationship(t *testing.T) {
 	// Create storage chain matching production: base -> async -> namespaced.
 	// AsyncEngine requires fully-qualified IDs; NamespacedEngine provides that for Cypher-generated IDs.
 	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	asyncBase := baseStore
-	store := storage.NewNamespacedEngine(asyncBase, "test")
-	cypherExec := cypher.NewStorageExecutor(store)
-	executor := &cypherQueryExecutor{executor: cypherExec}
+	store := storage.NewNamespacedEngine(baseStore, "test")
 
-	config := &Config{
-		Port:            0,
-		MaxConnections:  10,
-		ReadBufferSize:  8192,
-		WriteBufferSize: 8192,
-	}
-
-	server := New(config, executor)
-	defer server.Close()
-
-	port := serveBoltIntegrationServer(t, server)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 
 	// Connect
-	conn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
-	defer conn.Close()
-
-	// Handshake and HELLO
-	PerformHandshakeWithTesting(t, conn)
-	SendHello(t, conn, nil)
-	ReadSuccess(t, conn)
+	conn := openBoltTestConn(t, port)
 
 	// Create test nodes
 	SendRun(t, conn, "CREATE (a:Actor {name: 'Test'})", nil, nil)
@@ -1245,20 +1145,9 @@ func TestBoltBenchmarkCreateDeleteRelationship_LargeDataset(t *testing.T) {
 	cypherExec := cypher.NewStorageExecutor(store)
 	executor := &cypherQueryExecutor{executor: cypherExec}
 
-	config := &Config{Port: 0, MaxConnections: 10}
-	server := New(config, executor)
-	defer server.Close()
-
+	server := New(&Config{Port: 0, MaxConnections: 10}, executor)
 	port := serveBoltIntegrationServer(t, server)
-	conn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
-	defer conn.Close()
-
-	PerformHandshakeWithTesting(t, conn)
-	SendHello(t, conn, nil)
-	ReadSuccess(t, conn)
+	conn := openBoltTestConn(t, port)
 
 	// Create 100 actors
 	t.Log("Creating 100 actors...")
@@ -1318,20 +1207,9 @@ func TestBoltBenchmarkCreateDeleteRelationship_Badger(t *testing.T) {
 	cypherExec := cypher.NewStorageExecutor(store)
 	executor := &cypherQueryExecutor{executor: cypherExec}
 
-	config := &Config{Port: 0, MaxConnections: 10}
-	server := New(config, executor)
-	defer server.Close()
-
+	server := New(&Config{Port: 0, MaxConnections: 10}, executor)
 	port := serveBoltIntegrationServer(t, server)
-	conn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
-	defer conn.Close()
-
-	PerformHandshakeWithTesting(t, conn)
-	SendHello(t, conn, nil)
-	ReadSuccess(t, conn)
+	conn := openBoltTestConn(t, port)
 
 	// Create 100 actors
 	t.Log("Creating 100 actors (BadgerDB)...")
@@ -1420,23 +1298,9 @@ func TestBoltResponseMetadata(t *testing.T) {
 
 	config := &Config{Port: 0, MaxConnections: 10}
 	server := New(config, executor)
-	defer server.Close()
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	go func() { _ = server.Serve(listener) }()
-	conn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
-	defer conn.Close()
-
-	PerformHandshakeWithTesting(t, conn)
-	SendHello(t, conn, nil)
-	ReadSuccess(t, conn)
+	port := serveBoltIntegrationServer(t, server)
+	conn := openBoltTestConn(t, port)
 
 	// Test write query returns proper metadata
 	SendRun(t, conn, "CREATE (n:TestNode {name: 'test'})", nil, nil)
@@ -1463,23 +1327,9 @@ func TestBoltLatencyBreakdown(t *testing.T) {
 
 	config := &Config{Port: 0, MaxConnections: 10}
 	server := New(config, executor)
-	defer server.Close()
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	go func() { _ = server.Serve(listener) }()
-	conn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
-	defer conn.Close()
-
-	PerformHandshakeWithTesting(t, conn)
-	SendHello(t, conn, nil)
-	ReadSuccess(t, conn)
+	port := serveBoltIntegrationServer(t, server)
+	conn := openBoltTestConn(t, port)
 
 	// Create test data
 	SendRun(t, conn, "CREATE (a:Actor {name: 'Keanu'})", nil, nil)

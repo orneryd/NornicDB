@@ -782,10 +782,50 @@ func isValidDDLIdentifierSegment(s string) bool {
 	return len(strings.Fields(s)) == 1
 }
 
-func extractIndexPropertiesSegment(ctx context.Context, onClause string) (string, string, error) {
+// propertySyntax is the property-list syntax an index ON clause family admits.
+// The two families differ only there, so one reader owns the shape, the
+// delimiter reading and the OPTIONS split, and each caller names its syntax.
+type propertySyntax int
+
+const (
+	// propertySyntaxOrdinary is the range and vector index form: a parenthesized
+	// or bare property expression, with no EACH prefix and no bracketed list.
+	propertySyntaxOrdinary propertySyntax = iota
+	// propertySyntaxFulltext is the fulltext index form: an optional EACH prefix
+	// and a bracketed or parenthesized property list.
+	propertySyntaxFulltext
+)
+
+// propertiesSegment reads an index ON clause's property expression and the
+// OPTIONS tail that follows it: the one owner of that reading, shared by the
+// range/vector index forms and the fulltext form. The families differ only in
+// what they admit before the property list - fulltext also reads an EACH prefix
+// and a bracketed list, and names the bracketed form "ON EACH" in its error -
+// so the caller states its syntax while the shape, the delimiter reading and
+// the OPTIONS split stay here.
+func propertiesSegment(ctx context.Context, onClause string, syntax propertySyntax) (props string, tail string, err error) {
 	onClause = strings.TrimSpace(onClause)
 	if onClause == "" {
 		return "", "", localizedError(localization.CypherSchemaEmptyClause("ON"), nil)
+	}
+
+	if syntax == propertySyntaxFulltext && startsWithKeywordFold(onClause, "EACH") {
+		eachEnd, ok := keywordSpanAt(onClause, 0, "EACH")
+		if !ok {
+			return "", "", localizedError(localization.CypherSchemaInvalidClause("EACH"), nil)
+		}
+		onClause = strings.TrimSpace(onClause[eachEnd:])
+		if onClause == "" {
+			return "", "", localizedError(localization.CypherSchemaEmptyClause("ON"), nil)
+		}
+	}
+
+	if syntax == propertySyntaxFulltext && strings.HasPrefix(onClause, "[") {
+		inside, rest, ok := extractBracketSection(onClause)
+		if !ok {
+			return "", "", localizedError(localization.CypherSchemaInvalidClause("ON EACH"), nil)
+		}
+		return strings.TrimSpace(inside), strings.TrimSpace(rest), nil
 	}
 
 	if strings.HasPrefix(onClause, "(") {
@@ -796,11 +836,62 @@ func extractIndexPropertiesSegment(ctx context.Context, onClause string) (string
 		return strings.TrimSpace(inside), strings.TrimSpace(rest), nil
 	}
 
-	optionsPos := keywordIndexFrom(ctx, onClause, "OPTIONS", 0, defaultKeywordScanOpts())
-	if optionsPos < 0 {
-		return strings.TrimSpace(onClause), "", nil
+	// Without a delimiter the clause is the property expression up to an
+	// OPTIONS tail, which the shared DDL tail owner splits out.
+	props, tail = splitDDLOptionsTail(ctx, onClause)
+	return props, tail, nil
+}
+
+// parseForPatternTarget reads the entity a FOR pattern names and its
+// <variable>:<labelOrType> interior: a node pattern's (var:Label), or a
+// relationship pattern's (a)-[var:TYPE]-(b), whose label or type is the
+// bracketed section's. It is the one owner of that reading: the index pattern
+// parser, the constraint contract's FOR clause and the relationship-key DDL all
+// take the label, type and variable from it, and each keeps its own
+// statement-specific admission and error around it.
+func parseForPatternTarget(forClause string) (isRelationship bool, variable string, labelOrType string, ok bool) {
+	forClause = strings.TrimSpace(forClause)
+	if forClause == "" {
+		return false, "", "", false
 	}
-	return strings.TrimSpace(onClause[:optionsPos]), strings.TrimSpace(onClause[optionsPos:]), nil
+
+	if strings.Contains(forClause, "[") {
+		bracketStart := strings.Index(forClause, "[")
+		inside, rest, bracketed := extractBracketSection(forClause[bracketStart:])
+		if !bracketed {
+			return false, "", "", false
+		}
+		prefix := strings.TrimSpace(forClause[:bracketStart])
+		suffix := strings.TrimSpace(rest)
+		if !strings.Contains(prefix, "(") || !strings.Contains(suffix, "(") {
+			return false, "", "", false
+		}
+		colon := strings.Index(inside, ":")
+		if colon < 0 {
+			return false, "", "", false
+		}
+		variable = normalizeIdentifierToken(strings.TrimSpace(inside[:colon]))
+		labelOrType = normalizeIdentifierToken(strings.TrimSpace(inside[colon+1:]))
+		if labelOrType == "" {
+			return false, "", "", false
+		}
+		return true, variable, labelOrType, true
+	}
+
+	inside, rest, matched := extractParenSection(forClause)
+	if !matched || strings.TrimSpace(rest) != "" {
+		return false, "", "", false
+	}
+	colon := strings.Index(inside, ":")
+	if colon < 0 {
+		return false, "", "", false
+	}
+	variable = normalizeIdentifierToken(strings.TrimSpace(inside[:colon]))
+	labelOrType = normalizeIdentifierToken(strings.TrimSpace(inside[colon+1:]))
+	if labelOrType == "" {
+		return false, "", "", false
+	}
+	return false, variable, labelOrType, true
 }
 
 func parseCreateIndexForPattern(forClause string) (label string, relationshipType string, isRelationship bool, err error) {
@@ -809,52 +900,18 @@ func parseCreateIndexForPattern(forClause string) (label string, relationshipTyp
 		return "", "", false, localizedError(localization.CypherSchemaEmptyClause("FOR"), nil)
 	}
 
-	if strings.Contains(forClause, "[") {
-		bracketStart := strings.Index(forClause, "[")
-		if bracketStart < 0 {
-			return "", "", false, localizedError(localization.CypherSchemaInvalidClause("relationship FOR"), nil)
+	isRelationship, _, labelOrType, ok := parseForPatternTarget(forClause)
+	if !ok {
+		clause := "node FOR"
+		if strings.Contains(forClause, "[") {
+			clause = "relationship FOR"
 		}
-		inside, rest, ok := extractBracketSection(forClause[bracketStart:])
-		if !ok {
-			return "", "", false, localizedError(localization.CypherSchemaInvalidClause("relationship FOR"), nil)
-		}
-
-		prefix := strings.TrimSpace(forClause[:bracketStart])
-		suffix := strings.TrimSpace(rest)
-		if !strings.Contains(prefix, "(") || !strings.Contains(suffix, "(") {
-			return "", "", false, localizedError(localization.CypherSchemaInvalidClause("relationship FOR"), nil)
-		}
-
-		colon := strings.Index(inside, ":")
-		if colon < 0 {
-			return "", "", false, localizedError(localization.CypherSchemaInvalidClause("relationship FOR"), nil)
-		}
-		relRaw := strings.TrimSpace(inside[colon+1:])
-		if relRaw == "" {
-			return "", "", false, localizedError(localization.CypherSchemaInvalidClause("relationship FOR"), nil)
-		}
-		relType := normalizeIdentifierToken(relRaw)
-		if relType == "" {
-			return "", "", false, localizedError(localization.CypherSchemaInvalidClause("relationship FOR"), nil)
-		}
-		return "", relType, true, nil
+		return "", "", false, localizedError(localization.CypherSchemaInvalidClause(clause), nil)
 	}
-
-	inside, rest, ok := extractParenSection(forClause)
-	if !ok || strings.TrimSpace(rest) != "" {
-		return "", "", false, localizedError(localization.CypherSchemaInvalidClause("node FOR"), nil)
+	if isRelationship {
+		return "", labelOrType, true, nil
 	}
-
-	colon := strings.Index(inside, ":")
-	if colon < 0 {
-		return "", "", false, localizedError(localization.CypherSchemaInvalidClause("node FOR"), nil)
-	}
-	labelRaw := strings.TrimSpace(inside[colon+1:])
-	label = normalizeIdentifierToken(labelRaw)
-	if label == "" {
-		return "", "", false, localizedError(localization.CypherSchemaInvalidClause("node FOR"), nil)
-	}
-	return label, "", false, nil
+	return labelOrType, "", false, nil
 }
 
 func (e *StorageExecutor) parseCreateIndexDDL(ctx context.Context, cypher string, prefixKeyword string) (parsedCreateIndexDDL, error) {
@@ -900,7 +957,7 @@ func (e *StorageExecutor) parseCreateIndexDDL(ctx context.Context, cypher string
 		return parsedCreateIndexDDL{}, err
 	}
 
-	propsSegment, tail, err := extractIndexPropertiesSegment(ctx, q[onEnd:])
+	propsSegment, tail, err := propertiesSegment(ctx, q[onEnd:], propertySyntaxOrdinary)
 	if err != nil {
 		return parsedCreateIndexDDL{}, err
 	}
@@ -1033,47 +1090,6 @@ func parseCreateFulltextForPattern(forClause string) (label string, relationship
 	return "", relTypes, true, nil
 }
 
-func extractFulltextPropertiesSegment(ctx context.Context, onClause string) (string, string, error) {
-	onClause = strings.TrimSpace(onClause)
-	if onClause == "" {
-		return "", "", localizedError(localization.CypherSchemaEmptyClause("ON"), nil)
-	}
-
-	if startsWithKeywordFold(onClause, "EACH") {
-		eachEnd, ok := keywordSpanAt(onClause, 0, "EACH")
-		if !ok {
-			return "", "", localizedError(localization.CypherSchemaInvalidClause("EACH"), nil)
-		}
-		onClause = strings.TrimSpace(onClause[eachEnd:])
-	}
-
-	if onClause == "" {
-		return "", "", localizedError(localization.CypherSchemaEmptyClause("ON"), nil)
-	}
-
-	if strings.HasPrefix(onClause, "[") {
-		inside, rest, ok := extractBracketSection(onClause)
-		if !ok {
-			return "", "", localizedError(localization.CypherSchemaInvalidClause("ON EACH"), nil)
-		}
-		return strings.TrimSpace(inside), strings.TrimSpace(rest), nil
-	}
-
-	if strings.HasPrefix(onClause, "(") {
-		inside, rest, ok := extractParenSection(onClause)
-		if !ok {
-			return "", "", localizedError(localization.CypherSchemaInvalidClause("ON"), nil)
-		}
-		return strings.TrimSpace(inside), strings.TrimSpace(rest), nil
-	}
-
-	optionsPos := keywordIndexFrom(ctx, onClause, "OPTIONS", 0, defaultKeywordScanOpts())
-	if optionsPos < 0 {
-		return strings.TrimSpace(onClause), "", nil
-	}
-	return strings.TrimSpace(onClause[:optionsPos]), strings.TrimSpace(onClause[optionsPos:]), nil
-}
-
 func (e *StorageExecutor) parseCreateFulltextIndexDDL(ctx context.Context, cypher string) (parsedCreateFulltextIndexDDL, error) {
 	q := strings.TrimSpace(cypher)
 	if q == "" {
@@ -1132,7 +1148,7 @@ func (e *StorageExecutor) parseCreateFulltextIndexDDL(ctx context.Context, cyphe
 		}
 	}
 
-	propsSegment, tail, err := extractFulltextPropertiesSegment(ctx, q[onEnd:])
+	propsSegment, tail, err := propertiesSegment(ctx, q[onEnd:], propertySyntaxFulltext)
 	if err != nil {
 		return parsedCreateFulltextIndexDDL{}, err
 	}
@@ -1361,49 +1377,61 @@ func (e *StorageExecutor) parseNodeKeyPropertyList(ctx context.Context, expr str
 	return props, true
 }
 
-// parseCreateConstraintForRequireHead parses the shared CREATE CONSTRAINT
-// [name] FOR <pattern> REQUIRE prefix used by every constraint DDL shape.
-// It returns the parsed optional name, the FOR-pattern span, and the require
-// expression with any OPTIONS tail stripped. Error messages are shared so
-// every constraint shape rejects malformed prefixes identically.
-func (e *StorageExecutor) parseCreateConstraintForRequireHead(ctx context.Context, cypher string) (name string, patternSpan string, requireExpr string, options schemaOptions, err error) {
+// parseCreateConstraintForRequireParts parses the shared CREATE CONSTRAINT
+// [name] FOR <pattern> REQUIRE prefix used by every constraint DDL shape. It
+// returns the parsed optional name, the FOR-pattern span, and the REQUIRE tail
+// with any OPTIONS tail still attached, so a shape whose REQUIRE is not a
+// predicate reads that tail itself. Error messages are shared so every
+// constraint shape rejects malformed prefixes identically.
+func (e *StorageExecutor) parseCreateConstraintForRequireParts(ctx context.Context, cypher string) (name string, patternSpan string, requireText string, err error) {
 	q := strings.TrimSpace(cypher)
 	if q == "" {
-		return "", "", "", schemaOptions{}, localizedError(localization.CypherSchemaEmptyStatement(), nil)
+		return "", "", "", localizedError(localization.CypherSchemaEmptyStatement(), nil)
 	}
 	if keywordIndexFrom(ctx, q, "CREATE CONSTRAINT", 0, defaultKeywordScanOpts()) != 0 {
-		return "", "", "", schemaOptions{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
+		return "", "", "", localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
 	}
 	prefixEnd, ok := keywordSpanAt(q, 0, "CREATE CONSTRAINT")
 	if !ok {
-		return "", "", "", schemaOptions{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
+		return "", "", "", localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
 	}
 	forPos := keywordIndexFrom(ctx, q, "FOR", prefixEnd, defaultKeywordScanOpts())
 	if forPos < 0 {
-		return "", "", "", schemaOptions{}, localizedError(localization.CypherSchemaMissingKeyword("FOR"), nil)
+		return "", "", "", localizedError(localization.CypherSchemaMissingKeyword("FOR"), nil)
 	}
 	forEnd, ok := keywordSpanAt(q, forPos, "FOR")
 	if !ok {
-		return "", "", "", schemaOptions{}, localizedError(localization.CypherSchemaInvalidKeyword("FOR"), nil)
+		return "", "", "", localizedError(localization.CypherSchemaInvalidKeyword("FOR"), nil)
 	}
 	reqPos := keywordIndexFrom(ctx, q, "REQUIRE", forEnd, defaultKeywordScanOpts())
 	if reqPos < 0 {
-		return "", "", "", schemaOptions{}, localizedError(localization.CypherSchemaMissingKeyword("REQUIRE"), nil)
+		return "", "", "", localizedError(localization.CypherSchemaMissingKeyword("REQUIRE"), nil)
 	}
 	reqEnd, ok := keywordSpanAt(q, reqPos, "REQUIRE")
 	if !ok {
-		return "", "", "", schemaOptions{}, localizedError(localization.CypherSchemaInvalidKeyword("REQUIRE"), nil)
+		return "", "", "", localizedError(localization.CypherSchemaInvalidKeyword("REQUIRE"), nil)
 	}
 	name, err = parseOptionalDDLName(ctx, q[prefixEnd:forPos])
 	if err != nil {
+		return "", "", "", err
+	}
+	return name, q[forEnd:reqPos], q[reqEnd:], nil
+}
+
+// parseCreateConstraintForRequireHead parses that prefix and its one optional
+// OPTIONS tail: the predicate reading every constraint shape whose REQUIRE is a
+// predicate takes, with the tail admitted by the schema OPTIONS owner.
+func (e *StorageExecutor) parseCreateConstraintForRequireHead(ctx context.Context, cypher string) (name string, patternSpan string, requireExpr string, options schemaOptions, err error) {
+	name, patternSpan, requireText, err := e.parseCreateConstraintForRequireParts(ctx, cypher)
+	if err != nil {
 		return "", "", "", schemaOptions{}, err
 	}
-	requireExpr, tail := splitDDLOptionsTail(ctx, q[reqEnd:])
+	requireExpr, tail := splitDDLOptionsTail(ctx, requireText)
 	options, err = schemaOptionsTail(tail)
 	if err != nil {
 		return "", "", "", schemaOptions{}, err
 	}
-	return name, q[forEnd:reqPos], requireExpr, options, nil
+	return name, patternSpan, requireExpr, options, nil
 }
 
 func (e *StorageExecutor) parseCreateConstraintNodeKeyDDL(ctx context.Context, cypher string) (parsedNodeKeyConstraintDDL, error) {
@@ -1440,41 +1468,6 @@ func (e *StorageExecutor) parseCreateConstraintNodeKeyDDL(ctx context.Context, c
 			return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("NODE KEY"), nil)
 		}
 		return parsedNodeKeyConstraintDDL{name: name, label: label, properties: props, options: options}, nil
-	}
-
-	if onPos >= 0 {
-		onEnd, ok := keywordSpanAt(q, onPos, "ON")
-		if !ok {
-			return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("ON"), nil)
-		}
-		assertPos := keywordIndexFrom(ctx, q, "ASSERT", onEnd, defaultKeywordScanOpts())
-		if assertPos < 0 {
-			return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaMissingKeyword("ASSERT"), nil)
-		}
-		assertEnd, ok := keywordSpanAt(q, assertPos, "ASSERT")
-		if !ok {
-			return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("ASSERT"), nil)
-		}
-
-		_, err := parseOptionalDDLName(ctx, q[prefixEnd:onPos])
-		if err != nil {
-			return parsedNodeKeyConstraintDDL{}, err
-		}
-		label, _, isRelationship, err := parseCreateIndexForPattern(q[onEnd:assertPos])
-		if err != nil || isRelationship {
-			return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidPattern("ASSERT"), nil)
-		}
-
-		predicateExpr, tail := splitDDLOptionsTail(ctx, q[assertEnd:])
-		options, err := schemaOptionsTail(tail)
-		if err != nil {
-			return parsedNodeKeyConstraintDDL{}, err
-		}
-		props, ok := e.parseNodeKeyPropertyList(ctx, predicateExpr)
-		if !ok {
-			return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("NODE KEY"), nil)
-		}
-		return parsedNodeKeyConstraintDDL{name: "", label: label, properties: props, options: options}, nil
 	}
 
 	return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaUnsupportedCreateConstraintShape(), nil)
@@ -1815,18 +1808,12 @@ func (e *StorageExecutor) parseCreateConstraintRelationshipKeyOrCompositeUniqueD
 	if !ok || (!isRelationship && kind != "unique") {
 		return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("relationship key/unique"), nil)
 	}
-	patternExpr := strings.TrimSpace(patternSpan)
-	var patternInside string
-	if isRelationship {
-		patternInside, _, ok = extractBracketSection(patternExpr[strings.Index(patternExpr, "["):])
-	} else {
-		patternInside, _, ok = extractParenSection(patternExpr)
-	}
-	colon := strings.Index(patternInside, ":")
-	if !ok || colon < 0 {
+	// The FOR pattern reader is the one owner of the variable's position in the
+	// pattern; the label or type it also returns is the one read above.
+	_, variable, _, patternOK := parseForPatternTarget(patternSpan)
+	if !patternOK {
 		return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaInvalidPattern("constraint FOR"), nil)
 	}
-	variable := normalizeIdentifierToken(patternInside[:colon])
 	propertyExpr := requireExpr
 	if inside, _, wrapped := extractParenSection(requireExpr); wrapped {
 		propertyExpr = inside
@@ -1898,45 +1885,6 @@ func (e *StorageExecutor) parseCreateConstraintTypeDDL(ctx context.Context, cyph
 		return out, nil
 	}
 
-	if onPos >= 0 {
-		onEnd, ok := keywordSpanAt(q, onPos, "ON")
-		if !ok {
-			return parsedTypeConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("ON"), nil)
-		}
-		assertPos := keywordIndexFrom(ctx, q, "ASSERT", onEnd, defaultKeywordScanOpts())
-		if assertPos < 0 {
-			return parsedTypeConstraintDDL{}, localizedError(localization.CypherSchemaMissingKeyword("ASSERT"), nil)
-		}
-		assertEnd, ok := keywordSpanAt(q, assertPos, "ASSERT")
-		if !ok {
-			return parsedTypeConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("ASSERT"), nil)
-		}
-
-		name, err := parseOptionalDDLName(ctx, q[prefixEnd:onPos])
-		if err != nil {
-			return parsedTypeConstraintDDL{}, err
-		}
-		label, _, isRelationship, err := parseCreateIndexForPattern(q[onEnd:assertPos])
-		if err != nil || isRelationship {
-			return parsedTypeConstraintDDL{}, localizedError(localization.CypherSchemaInvalidPattern("ASSERT"), nil)
-		}
-
-		predicateExpr, tail := splitDDLOptionsTail(ctx, q[assertEnd:])
-		options, err := schemaOptionsTail(tail)
-		if err != nil {
-			return parsedTypeConstraintDDL{}, err
-		}
-		property, typeName, ok := parseConstraintTypePredicate(ctx, predicateExpr)
-		if !ok {
-			return parsedTypeConstraintDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("type"), nil)
-		}
-		expectedType, err := parsePropertyType(typeName)
-		if err != nil {
-			return parsedTypeConstraintDDL{}, err
-		}
-		return parsedTypeConstraintDDL{name: name, label: label, property: property, expectedType: expectedType, options: options}, nil
-	}
-
 	return parsedTypeConstraintDDL{}, localizedError(localization.CypherSchemaUnsupportedCreateConstraintShape(), nil)
 }
 
@@ -1981,42 +1929,6 @@ func (e *StorageExecutor) parseCreateConstraintSimplePropertyDDL(ctx context.Con
 			out.label = label
 		}
 		return out, nil
-	}
-
-	if onPos >= 0 {
-		onEnd, ok := keywordSpanAt(q, onPos, "ON")
-		if !ok {
-			return parsedSimplePropertyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("ON"), nil)
-		}
-		assertPos := keywordIndexFrom(ctx, q, "ASSERT", onEnd, defaultKeywordScanOpts())
-		if assertPos < 0 {
-			return parsedSimplePropertyConstraintDDL{}, localizedError(localization.CypherSchemaMissingKeyword("ASSERT"), nil)
-		}
-		assertEnd, ok := keywordSpanAt(q, assertPos, "ASSERT")
-		if !ok {
-			return parsedSimplePropertyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("ASSERT"), nil)
-		}
-
-		name, err := parseOptionalDDLName(ctx, q[prefixEnd:onPos])
-		if err != nil {
-			return parsedSimplePropertyConstraintDDL{}, err
-		}
-
-		label, _, isRelationship, err := parseCreateIndexForPattern(q[onEnd:assertPos])
-		if err != nil || isRelationship {
-			return parsedSimplePropertyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidPattern("ASSERT"), nil)
-		}
-
-		predicateExpr, tail := splitDDLOptionsTail(ctx, q[assertEnd:])
-		options, err := schemaOptionsTail(tail)
-		if err != nil {
-			return parsedSimplePropertyConstraintDDL{}, err
-		}
-		kind, property, ok := parseConstraintPredicate(ctx, predicateExpr)
-		if !ok {
-			return parsedSimplePropertyConstraintDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("constraint"), nil)
-		}
-		return parsedSimplePropertyConstraintDDL{name: name, label: label, property: property, kind: kind, isRelationship: false, options: options}, nil
 	}
 
 	return parsedSimplePropertyConstraintDDL{}, localizedError(localization.CypherSchemaUnsupportedCreateConstraintShape(), nil)
