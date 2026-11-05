@@ -150,3 +150,10 @@ review CI request is superseded by the following pushed head.
 - [x] Independently validate the integrated follow-up under race (Bolt 22.412s; Cypher 13.923s) and normal lexical population (2.151s).
 - [x] Preserve raw Go diagnostics alongside resource samples without changing make-test flags/assertions.
 - [ ] Push the follow-up and report its exact-head CI result; do not call an in-progress or superseded run a pass.
+
+## Full-suite cancellation admission correction
+
+- [x] Preserve the c7cbdf481 CI failure and local red reproduction: the old plain-commit probe expected conflict scanning before the new node-preimage read.
+- [x] Cover prepared receipt, plain update-preimage and plain create/conflict admissions in one matrix; preserve cancellation/no-publication/peer/receipt/healthy-retry assertions and add same-identity CREATE retry.
+- [x] Independently verify five normal repetitions (2.098s) and three integrated race repetitions (64.437s), retaining the acknowledged-increment correction.
+- [ ] Collect the complete c7cbdf481 CI result, then run the exact full make-test gate on the correction; no superseded or failed run is a pass.

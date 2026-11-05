@@ -1583,3 +1583,13 @@ All named corrective actions are integrated in the follow-up tree. Parent verifi
 - Shared zero-row seed/params/oracle runs through both public boundaries. The two fixture queries have no mutation clause; their nested CALL bodies are read-only.
 
 Full make test remains a CI gate, not an inferred pass from these ownership records. The earlier 2444cb481 test run was still in progress when these test-only corrections were prepared; any superseded run is incomplete, not a final-head pass. The original terminated run and stale index remain documented; no generated code or checker policy was changed. Fresh source review covers the added test owners, without opening an indefinite new analyzer cycle.
+
+## Full make-test follow-up: exact cancellation admission
+
+Run 42070124669 on c7cbdf481 reported `TestCommitPreparationBufferedConflictAdmissionCancellation/plain` failing its exact stack-owner assertion. The unchanged local reproduction fails at that same assertion; the prepared case passes. This is not a memory-kill diagnosis.
+
+The acknowledged-write correction added `validateNodeMutationPreimagesLocked` before the plain commit's buffered conflict scan. Holding the buffer mutex therefore stops an UPDATE at that earlier preimage read, before `commitsSince` can be reached. Prepared commits still first block at `observeBufferedCommitReceipt`.
+
+The corrected single matrix retains all three exact public admissions: prepared receipt observation, plain UPDATE preimage validation, and a plain CREATE (no update preimage) reaching the original conflict scan. Every case uses real cancellation while the mutex remains held, checks cancellation/no handoff/no receipt/unmodified target and peer, and retries successfully. The CREATE case additionally proves its unaccepted node is absent and the same identity succeeds on retry. No production path, timeout bound, assertion owner or checker policy is weakened or changed.
+
+Parent verification: five normal repetitions pass (2.098s); the integrated cancellation/receipt/bulk-poll/acknowledged-write race population passes three repetitions (64.437s). DeepSeek independently reproduced the same old assertion, traced the same three owners, and validated an equivalent matrix with discriminating swapped-owner negative controls. Parent retained the additional same-identity CREATE retry assertion. Full CI results remain separately required for the delivered correction.
