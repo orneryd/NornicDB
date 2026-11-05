@@ -2486,7 +2486,7 @@ func TestCypherHelpers_ExecuteUnwind_Branches(t *testing.T) {
 	require.Empty(t, matched.Rows)
 
 	_, err = exec.Execute(ctx, "UNWIND [1,2,3] RETURN x", nil)
-	requireSyntaxErrorStatus(t, err, "UNWIND [1,2,3] RETURN x")
+	requireErrorStatus(t, err, "Neo.ClientError.Statement.SyntaxError", "UNWIND [1,2,3] RETURN x")
 
 	keysRes, err := exec.Execute(ctx, "UNWIND keys({a:1}) AS k RETURN k", nil)
 	require.NoError(t, err)

@@ -1195,11 +1195,11 @@ func (b *BadgerEngine) GetEdgeVisibleAt(ctx context.Context, id EdgeID, version 
 }
 
 func (b *BadgerEngine) GetOutgoingEdgesVisibleAt(ctx context.Context, nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
-	return b.readAdjacentEdgesAtWithView(ctx, nodeID, version, Outgoing, b.withView)
+	return b.readAdjacentEdgesAtWithView(ctx, nodeID, version, Outgoing, "", b.withView)
 }
 
 func (b *BadgerEngine) GetIncomingEdgesVisibleAt(ctx context.Context, nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
-	return b.readAdjacentEdgesAtWithView(ctx, nodeID, version, Incoming, b.withView)
+	return b.readAdjacentEdgesAtWithView(ctx, nodeID, version, Incoming, "", b.withView)
 }
 
 func (b *BadgerEngine) BatchGetNodesLatestVisible(ctx context.Context, ids []NodeID) (map[NodeID]*Node, error) {
@@ -1317,11 +1317,7 @@ func (b *BadgerEngine) iterateNodesVisibleAtInScopeInTxn(ctx context.Context, tx
 			if record.Tombstoned || record.Node == nil {
 				continue
 			}
-			if opts.QueryNodes && !opts.WithEmbeddings {
-				body = copyNodeForCaller(record.Node)
-			} else {
-				body = copyNode(record.Node)
-			}
+			body = copyNode(record.Node)
 		}
 		if body == nil {
 			continue

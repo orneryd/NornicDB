@@ -28,7 +28,7 @@ func TestBoltDbRerankProviderFailuresReturnFailure(t *testing.T) {
 	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	store := storage.NewNamespacedEngine(base, "nornic")
-	server, port := startBoltIntegrationServer(t, store)
+	server, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 	service := search.NewService(store, search.DefaultVectorDimensions, nil)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	server.executor.(*cypherQueryExecutor).executor.SetSearchService(service)

@@ -17,7 +17,7 @@ import (
 func TestNumericWireBoltSignedAndReference(t *testing.T) {
 	store := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test")
 	t.Cleanup(func() { _ = store.Close() })
-	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationExplicitTx)
 	for _, uri := range []string{fmt.Sprintf("bolt://127.0.0.1:%d", port), os.Getenv("NORNICDB_NEO4J_REFERENCE_URI")} {
 		if uri == "" {
 			continue

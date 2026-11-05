@@ -32,7 +32,7 @@ func TestSearchStreamLifecycleBolt(t *testing.T) {
 			_, err := store.CreateNode(t.Context(), &storage.Node{ID: id})
 			require.NoError(t, err)
 		}
-		server, port := startBoltIntegrationServer(t, store)
+		server, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 		svc := search.NewService(store, search.DefaultVectorDimensions, nil)
 		t.Cleanup(func() { require.NoError(t, svc.Close()) })
 		registry, err := resultstream.NewRegistry(resultstream.Config{MaxStreams: 1, MaxStreamsPerOwner: 1})

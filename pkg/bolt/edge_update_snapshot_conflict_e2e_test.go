@@ -30,7 +30,7 @@ func TestBoltExplicitTxPeerCommittedEdgeUpdateIsTransientOutdated(t *testing.T) 
 	baseStore := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = baseStore.Close() })
 	store := storage.NewNamespacedEngine(baseStore, "neo4j")
-	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationExplicitTx)
 
 	const mergeSetWriter = "MATCH (a:A {key: 'a1'}) MATCH (b:B {key: 'b1'}) MERGE (a)-[rel:REL]->(b) SET rel.x = 'x-writer'"
 	const mergeSetPeer = "MATCH (a:A {key: 'a1'}) MATCH (b:B {key: 'b1'}) MERGE (a)-[rel:REL]->(b) SET rel.x = 'x-peer'"

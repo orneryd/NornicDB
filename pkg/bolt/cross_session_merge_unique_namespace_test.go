@@ -26,7 +26,7 @@ func TestBoltCrossSessionMergeUniqueConflict_EshuDefaultNamespaceExplicitTx(t *t
 		_ = baseStore.Close()
 	})
 	store := storage.NewNamespacedEngine(baseStore, "nornic")
-	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationExplicitTx)
 
 	setup := openBoltTestConn(t, port)
 	runBoltQueryAndCollectRecords(t, setup,

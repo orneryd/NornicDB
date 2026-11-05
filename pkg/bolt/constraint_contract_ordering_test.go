@@ -35,7 +35,7 @@ func TestConstraintContractOrderingIntegerPrecision(t *testing.T) {
 				t.Run(fmt.Sprintf("relationship=%v/backfill=%v/%d%s%d", relationship, backfill, tc.value, tc.op, tc.threshold), func(t *testing.T) {
 					base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 					t.Cleanup(func() { _ = base.Close() })
-					_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(base, "test"))
+					_, port := startBoltIntegrationServer(t, storage.NewNamespacedEngine(base, "test"), boltIntegrationExplicitTx)
 					conn := openBoltTestConn(t, port)
 					defer conn.Close()
 					pattern, create, variable := "(n:ContractOrdered)", "CREATE (:ContractOrdered {id:$id})", "n"

@@ -85,16 +85,16 @@ func TestIndexDropProcedureNativeExplicitTransactionSeesOwnStagedDrop(t *testing
 					require.NoError(t, err)
 					require.Equal(t, [][]interface{}{{procedure.dropped, true}}, dropped.Rows)
 
-					require.Equal(t, procedure.remaining, readIndexNames(t, ctx, fixture.exec, indexDropNamesQuery),
+					require.Equal(t, procedure.remaining, readSchemaNames(t, ctx, fixture.exec, indexDropNamesQuery),
 						"the transaction must see its own staged drop")
-					require.Equal(t, indexDropBothKinds(), readIndexNames(t, ctx, outside, indexDropNamesQuery),
+					require.Equal(t, indexDropBothKinds(), readSchemaNames(t, ctx, outside, indexDropNamesQuery),
 						"no reader outside the transaction may see the staged drop")
 
 					_, err = fixture.exec.Execute(ctx, "COMMIT", nil)
 					require.NoError(t, err)
-					require.Equal(t, procedure.remaining, readIndexNames(t, ctx, outside, indexDropNamesQuery),
+					require.Equal(t, procedure.remaining, readSchemaNames(t, ctx, outside, indexDropNamesQuery),
 						"COMMIT must publish the staged drop")
-					require.Equal(t, indexDropBothKinds(), readIndexNames(t, ctx, fixture.other, indexDropNamesQuery))
+					require.Equal(t, indexDropBothKinds(), readSchemaNames(t, ctx, fixture.other, indexDropNamesQuery))
 				})
 			}
 		})
@@ -170,7 +170,7 @@ func TestIndexDropProcedureExplicitTransactionRollbackKeepsStagedDrop(t *testing
 						require.NoError(t, err, cypher)
 						return result
 					}, func(*testing.T) []string {
-						return readIndexNames(t, ctx, outside, indexDropNamesQuery)
+						return readSchemaNames(t, ctx, outside, indexDropNamesQuery)
 					}, cancel
 			},
 			statement: "CALL db.index.fulltext.drop('" + indexDropFulltextName + "')",

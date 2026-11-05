@@ -228,23 +228,23 @@ func TestIndexDropProcedureCancellationPublishesNothing(t *testing.T) {
 
 					// No index mutation: the canceled statement published nothing,
 					// in its own namespace or in the other one.
-					require.Equal(t, indexDropBothKinds(), readIndexNames(t, healthy, fixture.exec, indexDropNamesQuery))
-					require.Equal(t, indexDropBothKinds(), readIndexNames(t, healthy, fixture.other, indexDropNamesQuery))
+					require.Equal(t, indexDropBothKinds(), readSchemaNames(t, healthy, fixture.exec, indexDropNamesQuery))
+					require.Equal(t, indexDropBothKinds(), readSchemaNames(t, healthy, fixture.other, indexDropNamesQuery))
 
 					// Healthy retry drops the kind it names, and only that kind.
 					fixture.owner.cancel = nil
 					retry, err := fixture.exec.Execute(healthy, procedure.query, nil)
 					require.NoError(t, err)
 					require.Equal(t, [][]interface{}{{procedure.dropped, true}}, retry.Rows)
-					require.Equal(t, procedure.remaining, readIndexNames(t, healthy, fixture.exec, indexDropNamesQuery))
+					require.Equal(t, procedure.remaining, readSchemaNames(t, healthy, fixture.exec, indexDropNamesQuery))
 
 					// The other kind still drops through its own procedure, and
 					// the other namespace keeps both of its indexes.
 					other, err := fixture.exec.Execute(healthy, procedure.otherQuery, nil)
 					require.NoError(t, err)
 					require.Len(t, other.Rows, 1)
-					require.Empty(t, readIndexNames(t, healthy, fixture.exec, indexDropNamesQuery))
-					require.Equal(t, indexDropBothKinds(), readIndexNames(t, healthy, fixture.other, indexDropNamesQuery))
+					require.Empty(t, readSchemaNames(t, healthy, fixture.exec, indexDropNamesQuery))
+					require.Equal(t, indexDropBothKinds(), readSchemaNames(t, healthy, fixture.other, indexDropNamesQuery))
 				})
 			}
 		})
@@ -278,8 +278,8 @@ func TestIndexDropProcedureAcceptedCommitPublishes(t *testing.T) {
 			require.ErrorIs(t, request.Err(), context.Canceled)
 			require.False(t, fixture.owner.released.IsZero(), "the fixture must release the cancellation at the commit owner")
 			require.Equal(t, [][]interface{}{{indexDropFulltextName, true}}, result.Rows)
-			require.Equal(t, []string{indexDropVectorName}, readIndexNames(t, healthy, fixture.exec, indexDropNamesQuery))
-			require.Equal(t, indexDropBothKinds(), readIndexNames(t, healthy, fixture.other, indexDropNamesQuery))
+			require.Equal(t, []string{indexDropVectorName}, readSchemaNames(t, healthy, fixture.exec, indexDropNamesQuery))
+			require.Equal(t, indexDropBothKinds(), readSchemaNames(t, healthy, fixture.other, indexDropNamesQuery))
 		})
 	}
 }
@@ -306,7 +306,7 @@ func TestIndexDropProcedurePreCanceledStopsBeforeAnyOwner(t *testing.T) {
 			require.True(t, errors.Is(err, context.Canceled), "got %v", err)
 			require.Nil(t, result)
 			require.Zero(t, fixture.owner.begins, "a pre-canceled drop opens no transaction")
-			require.Equal(t, indexDropBothKinds(), readIndexNames(t, healthy, fixture.exec, indexDropNamesQuery))
+			require.Equal(t, indexDropBothKinds(), readSchemaNames(t, healthy, fixture.exec, indexDropNamesQuery))
 		})
 	}
 }
@@ -323,17 +323,17 @@ func TestIndexDropProcedureCancellationControlKeepsNonCancellableContract(t *tes
 	result, err := fixture.exec.Execute(ctx, "CALL db.index.fulltext.drop('"+indexDropFulltextName+"')", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{indexDropFulltextName, true}}, result.Rows)
-	require.Equal(t, []string{indexDropVectorName}, readIndexNames(t, ctx, fixture.exec, indexDropNamesQuery))
+	require.Equal(t, []string{indexDropVectorName}, readSchemaNames(t, ctx, fixture.exec, indexDropNamesQuery))
 
 	result, err = fixture.exec.Execute(ctx, "CALL db.index.vector.drop('"+indexDropVectorName+"')", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{indexDropVectorName, true}}, result.Rows)
-	require.Empty(t, readIndexNames(t, ctx, fixture.exec, indexDropNamesQuery))
+	require.Empty(t, readSchemaNames(t, ctx, fixture.exec, indexDropNamesQuery))
 
 	_, err = fixture.exec.Execute(ctx, "CALL db.index.vector.drop('"+indexDropVectorName+"')", nil)
 	require.Error(t, err)
 	require.True(t, strings.Contains(err.Error(), "IndexDropFailed"), "got %v", err)
-	require.Equal(t, indexDropBothKinds(), readIndexNames(t, ctx, fixture.other, indexDropNamesQuery))
+	require.Equal(t, indexDropBothKinds(), readSchemaNames(t, ctx, fixture.other, indexDropNamesQuery))
 }
 
 // --- Explicit native transactions ---
@@ -346,100 +346,85 @@ func TestIndexDropProcedureCancellationControlKeepsNonCancellableContract(t *tes
 // cancellation is the caller's real CancelFunc and arrives while the
 // transaction still owns the staged drop.
 
-// TestIndexDropProcedureExplicitTransactionKeepsDropUntilCommit establishes the
-// isolation the cancellation cases rely on: inside the transaction the drop is
-// visible to its own statements, while nothing is published - the independent
-// view of the same namespace still lists both indexes - until COMMIT.
-func TestIndexDropProcedureExplicitTransactionKeepsDropUntilCommit(t *testing.T) {
-	for _, parser := range []struct {
-		name  string
-		setup func() func()
-	}{{"nornic", config.WithNornicParser}, {"antlr", config.WithANTLRParser}} {
-		t.Run(parser.name, func(t *testing.T) {
-			t.Cleanup(parser.setup())
-			for _, procedure := range []struct {
-				name, query string
-				remaining   []string
-			}{
-				{"fulltext", "CALL db.index.fulltext.drop('" + indexDropFulltextName + "')", []string{indexDropVectorName}},
-				{"vector", "CALL db.index.vector.drop('" + indexDropVectorName + "')", []string{indexDropFulltextName}},
-			} {
-				t.Run(procedure.name, func(t *testing.T) {
-					fixture := newIndexDropFixture(t)
-					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-					defer cancel()
-					fixture.indexDropCreateBothKinds(t, ctx)
-					published := fixture.indexDropOutside()
-
-					begun, err := fixture.exec.Execute(ctx, "BEGIN", nil)
-					require.NoError(t, err)
-					require.Equal(t, [][]interface{}{{"Transaction started"}}, begun.Rows)
-
-					dropped, err := fixture.exec.Execute(ctx, procedure.query, nil)
-					require.NoError(t, err)
-					require.Len(t, dropped.Rows, 1)
-
-					// The transaction sees the drop; no reader outside it does,
-					// and nothing reached the schema before COMMIT.
-					require.Equal(t, procedure.remaining, readIndexNames(t, ctx, fixture.exec, indexDropNamesQuery))
-					require.Equal(t, indexDropBothKinds(), readIndexNames(t, ctx, published, indexDropNamesQuery))
-					require.Equal(t, indexDropBothKinds(), readIndexNames(t, ctx, fixture.other, indexDropNamesQuery))
-
-					committed, err := fixture.exec.Execute(ctx, "COMMIT", nil)
-					require.NoError(t, err)
-					require.Equal(t, [][]interface{}{{"Transaction committed"}}, committed.Rows)
-					require.Equal(t, procedure.remaining, readIndexNames(t, ctx, published, indexDropNamesQuery))
-					require.Equal(t, indexDropBothKinds(), readIndexNames(t, ctx, fixture.other, indexDropNamesQuery))
-				})
-			}
-		})
+// TestIndexDropProcedureExplicitTransactionKeepsDropUntilEnd is the explicit
+// native transaction's whole lifecycle over both procedures and both ends: the
+// drop stages its change in the transaction's own schema view, so the
+// transaction sees the drop while no reader outside it does - the independent
+// view of the same namespace and the other namespace still list both indexes -
+// until the transaction ends. COMMIT publishes exactly the dropped kind;
+// ROLLBACK publishes nothing and leaves the namespace droppable, so the same
+// statement still drops exactly its own kind. The other namespace keeps both
+// same-named indexes through either end.
+func TestIndexDropProcedureExplicitTransactionKeepsDropUntilEnd(t *testing.T) {
+	procedures := []struct {
+		name, query string
+		remaining   []string
+	}{
+		{"fulltext", "CALL db.index.fulltext.drop('" + indexDropFulltextName + "')", []string{indexDropVectorName}},
+		{"vector", "CALL db.index.vector.drop('" + indexDropVectorName + "')", []string{indexDropFulltextName}},
 	}
-}
-
-// TestIndexDropProcedureExplicitTransactionRollbackPublishesNothing: a
-// transaction that staged the drop and then rolled back publishes nothing, and
-// the namespace stays droppable afterwards.
-func TestIndexDropProcedureExplicitTransactionRollbackPublishesNothing(t *testing.T) {
-	for _, parser := range []struct {
-		name  string
-		setup func() func()
-	}{{"nornic", config.WithNornicParser}, {"antlr", config.WithANTLRParser}} {
-		t.Run(parser.name, func(t *testing.T) {
-			t.Cleanup(parser.setup())
-			for _, procedure := range []struct {
-				name, query string
-			}{
-				{"fulltext", "CALL db.index.fulltext.drop('" + indexDropFulltextName + "')"},
-				{"vector", "CALL db.index.vector.drop('" + indexDropVectorName + "')"},
-			} {
-				t.Run(procedure.name, func(t *testing.T) {
-					fixture := newIndexDropFixture(t)
-					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-					defer cancel()
-					fixture.indexDropCreateBothKinds(t, ctx)
-					published := fixture.indexDropOutside()
-
-					_, err := fixture.exec.Execute(ctx, "BEGIN", nil)
-					require.NoError(t, err)
-					_, err = fixture.exec.Execute(ctx, procedure.query, nil)
-					require.NoError(t, err)
-					rolledBack, err := fixture.exec.Execute(ctx, "ROLLBACK", nil)
-					require.NoError(t, err)
-					require.Equal(t, [][]interface{}{{"Transaction rolled back"}}, rolledBack.Rows)
-
-					require.Equal(t, indexDropBothKinds(), readIndexNames(t, ctx, published, indexDropNamesQuery))
-					require.Equal(t, indexDropBothKinds(), readIndexNames(t, ctx, fixture.other, indexDropNamesQuery))
-
-					// The route still works after the rollback.
-					retry, err := fixture.exec.Execute(ctx, procedure.query, nil)
-					require.NoError(t, err)
-					require.Len(t, retry.Rows, 1)
-					require.Len(t, readIndexNames(t, ctx, published, indexDropNamesQuery), 1)
-					require.Equal(t, indexDropBothKinds(), readIndexNames(t, ctx, fixture.other, indexDropNamesQuery))
-				})
-			}
-		})
+	ends := []struct {
+		name    string
+		command string
+		result  [][]interface{}
+		// publishes is what the end admits: COMMIT publishes the staged
+		// drop, ROLLBACK publishes nothing and leaves it to be retried.
+		publishes bool
+	}{
+		{"commit", "COMMIT", [][]interface{}{{"Transaction committed"}}, true},
+		{"rollback", "ROLLBACK", [][]interface{}{{"Transaction rolled back"}}, false},
 	}
+
+	withCypherParsers(t, func(t *testing.T) {
+		for _, procedure := range procedures {
+			t.Run(procedure.name, func(t *testing.T) {
+				for _, end := range ends {
+					t.Run(end.name, func(t *testing.T) {
+						fixture := newIndexDropFixture(t)
+						ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+						defer cancel()
+						fixture.indexDropCreateBothKinds(t, ctx)
+						published := fixture.indexDropOutside()
+
+						begun, err := fixture.exec.Execute(ctx, "BEGIN", nil)
+						require.NoError(t, err)
+						require.Equal(t, [][]interface{}{{"Transaction started"}}, begun.Rows)
+
+						dropped, err := fixture.exec.Execute(ctx, procedure.query, nil)
+						require.NoError(t, err)
+						require.Len(t, dropped.Rows, 1)
+
+						// The transaction sees the drop; no reader outside it does,
+						// and nothing reached the schema before the end.
+						require.Equal(t, procedure.remaining, readSchemaNames(t, ctx, fixture.exec, indexDropNamesQuery))
+						require.Equal(t, indexDropBothKinds(), readSchemaNames(t, ctx, published, indexDropNamesQuery))
+						require.Equal(t, indexDropBothKinds(), readSchemaNames(t, ctx, fixture.other, indexDropNamesQuery))
+
+						ended, err := fixture.exec.Execute(ctx, end.command, nil)
+						require.NoError(t, err)
+						require.Equal(t, end.result, ended.Rows)
+						want := indexDropBothKinds()
+						if end.publishes {
+							want = procedure.remaining
+						}
+						require.Equal(t, want, readSchemaNames(t, ctx, published, indexDropNamesQuery))
+						require.Equal(t, indexDropBothKinds(), readSchemaNames(t, ctx, fixture.other, indexDropNamesQuery))
+
+						if end.publishes {
+							return
+						}
+						// A rolled-back transaction left the namespace droppable:
+						// the same statement still drops exactly its own kind.
+						retry, err := fixture.exec.Execute(ctx, procedure.query, nil)
+						require.NoError(t, err)
+						require.Len(t, retry.Rows, 1)
+						require.Equal(t, procedure.remaining, readSchemaNames(t, ctx, published, indexDropNamesQuery))
+						require.Equal(t, indexDropBothKinds(), readSchemaNames(t, ctx, fixture.other, indexDropNamesQuery))
+					})
+				}
+			})
+		}
+	})
 }
 
 // TestIndexDropProcedureExplicitTransactionCancelledCommitPublishesNothing is
@@ -472,7 +457,7 @@ func TestIndexDropProcedureExplicitTransactionCancelledCommitPublishesNothing(t 
 					staged, err := fixture.exec.Execute(healthy, procedure.query, nil)
 					require.NoError(t, err)
 					require.Equal(t, [][]interface{}{{procedure.dropped, true}}, staged.Rows)
-					require.Equal(t, indexDropBothKinds(), readIndexNames(t, healthy, published, indexDropNamesQuery))
+					require.Equal(t, indexDropBothKinds(), readSchemaNames(t, healthy, published, indexDropNamesQuery))
 
 					request, cancel := context.WithCancel(context.Background())
 					defer cancel()
@@ -495,11 +480,11 @@ func TestIndexDropProcedureExplicitTransactionCancelledCommitPublishesNothing(t 
 					// Nothing was published, and the transaction is over: no
 					// later COMMIT can publish the staged drop.
 					fixture.owner.cancel = nil
-					require.Equal(t, indexDropBothKinds(), readIndexNames(t, healthy, published, indexDropNamesQuery))
-					require.Equal(t, indexDropBothKinds(), readIndexNames(t, healthy, fixture.other, indexDropNamesQuery))
+					require.Equal(t, indexDropBothKinds(), readSchemaNames(t, healthy, published, indexDropNamesQuery))
+					require.Equal(t, indexDropBothKinds(), readSchemaNames(t, healthy, fixture.other, indexDropNamesQuery))
 					_, err = fixture.exec.Execute(healthy, "COMMIT", nil)
 					require.Error(t, err, "a canceled COMMIT ends the transaction")
-					require.Equal(t, indexDropBothKinds(), readIndexNames(t, healthy, published, indexDropNamesQuery))
+					require.Equal(t, indexDropBothKinds(), readSchemaNames(t, healthy, published, indexDropNamesQuery))
 
 					// A healthy transaction on the same route still publishes
 					// exactly the drop it names.
@@ -509,8 +494,8 @@ func TestIndexDropProcedureExplicitTransactionCancelledCommitPublishesNothing(t 
 					require.NoError(t, err)
 					_, err = fixture.exec.Execute(healthy, "COMMIT", nil)
 					require.NoError(t, err)
-					require.Len(t, readIndexNames(t, healthy, published, indexDropNamesQuery), 1)
-					require.Equal(t, indexDropBothKinds(), readIndexNames(t, healthy, fixture.other, indexDropNamesQuery))
+					require.Len(t, readSchemaNames(t, healthy, published, indexDropNamesQuery), 1)
+					require.Equal(t, indexDropBothKinds(), readSchemaNames(t, healthy, fixture.other, indexDropNamesQuery))
 				})
 			}
 		})
@@ -538,13 +523,13 @@ func TestIndexDropProcedureExplicitTransactionPreCanceledStatementPublishesNothi
 	require.ErrorIs(t, err, context.Canceled)
 	require.Nil(t, result)
 	require.Zero(t, fixture.owner.commits, "a rejected statement inside the transaction publishes nothing itself")
-	require.Equal(t, indexDropBothKinds(), readIndexNames(t, healthy, published, indexDropNamesQuery))
+	require.Equal(t, indexDropBothKinds(), readSchemaNames(t, healthy, published, indexDropNamesQuery))
 
 	rolledBack, err := fixture.exec.Execute(healthy, "ROLLBACK", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"Transaction rolled back"}}, rolledBack.Rows)
-	require.Equal(t, indexDropBothKinds(), readIndexNames(t, healthy, published, indexDropNamesQuery))
-	require.Equal(t, indexDropBothKinds(), readIndexNames(t, healthy, fixture.other, indexDropNamesQuery))
+	require.Equal(t, indexDropBothKinds(), readSchemaNames(t, healthy, published, indexDropNamesQuery))
+	require.Equal(t, indexDropBothKinds(), readSchemaNames(t, healthy, fixture.other, indexDropNamesQuery))
 }
 
 // --- Supported Fabric constituent routes ---

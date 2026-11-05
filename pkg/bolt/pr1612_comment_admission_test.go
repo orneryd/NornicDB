@@ -16,7 +16,7 @@ func TestPR1612BoltCommentAdmission(t *testing.T) {
 	restore := config.WithCypherQueryNormalizationDisabled()
 	defer restore()
 	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(engine, "tenant"))
+	_, port := startBoltIntegrationServer(t, storage.NewNamespacedEngine(engine, "tenant"), boltIntegrationExplicitTx)
 	driver, err := neo4j.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4j.NoAuth())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, driver.Close(ctx)) })

@@ -822,6 +822,37 @@ func parseCreateIndexForPattern(forClause string) (label string, relationshipTyp
 	return label, "", false, nil
 }
 
+// schemaOptionsTail admits the OPTIONS tail shared by every CREATE INDEX and
+// CREATE CONSTRAINT form: the one owner of tail admission that both statement
+// families used to repeat. Neo4j's grammar is OPTIONS and one map literal, so
+// the keyword alone, or the keyword followed by anything other than a single
+// (possibly empty) map, is a syntax error. The native parser previously checked
+// only that the tail started with the keyword, so a bare OPTIONS built the
+// index, and kept the constraint, that the ANTLR grammar rejects (NOR-300). The
+// tail itself is returned unchanged because option readers scan its source
+// text.
+func schemaOptionsTail(tail string) (string, error) {
+	tail = strings.TrimSpace(tail)
+	if tail == "" {
+		return "", nil
+	}
+	if !startsWithKeywordFold(tail, "OPTIONS") {
+		return "", localizedError(localization.CypherSchemaInvalidTrailingSyntax(), nil)
+	}
+	keywordEnd, ok := keywordSpanAt(tail, 0, "OPTIONS")
+	if !ok {
+		return "", localizedError(localization.CypherSchemaInvalidClause("OPTIONS"), nil)
+	}
+	remainder := trimTrailingStatementDelimiters(tail[queryGapEnd(tail, keywordEnd):])
+	if !strings.HasPrefix(remainder, "{") {
+		return "", localizedError(localization.CypherSchemaInvalidClause("OPTIONS"), nil)
+	}
+	if _, rest, matched := extractDelimitedSection(remainder, '{', '}'); !matched || strings.TrimSpace(rest) != "" {
+		return "", localizedError(localization.CypherSchemaInvalidClause("OPTIONS"), nil)
+	}
+	return tail, nil
+}
+
 func (e *StorageExecutor) parseCreateIndexDDL(ctx context.Context, cypher string, prefixKeyword string) (parsedCreateIndexDDL, error) {
 	q := strings.TrimSpace(cypher)
 	if q == "" {
@@ -869,8 +900,9 @@ func (e *StorageExecutor) parseCreateIndexDDL(ctx context.Context, cypher string
 	if err != nil {
 		return parsedCreateIndexDDL{}, err
 	}
-	if tail != "" && !startsWithKeywordFold(tail, "OPTIONS") {
-		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidTrailingSyntax(), nil)
+	tail, err = schemaOptionsTail(tail)
+	if err != nil {
+		return parsedCreateIndexDDL{}, err
 	}
 	// ON EACH [...] is fulltext-index syntax; for CREATE [RANGE|VECTOR] INDEX
 	// every item must be a plain variable.property reference, otherwise the
@@ -944,8 +976,9 @@ func (e *StorageExecutor) parseCreateIndexLegacyDDL(ctx context.Context, cypher,
 		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidClause("legacy ON"), nil)
 	}
 	tail = strings.TrimSpace(tail)
-	if tail != "" && !startsWithKeywordFold(tail, "OPTIONS") {
-		return parsedCreateIndexDDL{}, localizedError(localization.CypherSchemaInvalidTrailingSyntax(), nil)
+	tail, err = schemaOptionsTail(tail)
+	if err != nil {
+		return parsedCreateIndexDDL{}, err
 	}
 
 	properties := indexPropertiesFromOnClause(inside, true)
@@ -1177,8 +1210,9 @@ func (e *StorageExecutor) parseCreateFulltextIndexDDL(ctx context.Context, cyphe
 	if err != nil {
 		return parsedCreateFulltextIndexDDL{}, err
 	}
-	if tail != "" && !startsWithKeywordFold(tail, "OPTIONS") {
-		return parsedCreateFulltextIndexDDL{}, localizedError(localization.CypherSchemaInvalidTrailingSyntax(), nil)
+	tail, err = schemaOptionsTail(tail)
+	if err != nil {
+		return parsedCreateFulltextIndexDDL{}, err
 	}
 
 	properties := indexPropertiesFromOnClause(propsSegment, false)
@@ -1429,8 +1463,8 @@ func (e *StorageExecutor) parseCreateConstraintForRequireHead(ctx context.Contex
 		return "", "", "", err
 	}
 	requireExpr, tail := splitDDLOptionsTail(ctx, q[reqEnd:])
-	if tail != "" && !startsWithKeywordFold(tail, "OPTIONS") {
-		return "", "", "", localizedError(localization.CypherSchemaInvalidTrailingSyntax(), nil)
+	if _, err := schemaOptionsTail(tail); err != nil {
+		return "", "", "", err
 	}
 	return name, q[forEnd:reqPos], requireExpr, nil
 }
@@ -1495,8 +1529,8 @@ func (e *StorageExecutor) parseCreateConstraintNodeKeyDDL(ctx context.Context, c
 		}
 
 		predicateExpr, tail := splitDDLOptionsTail(ctx, q[assertEnd:])
-		if tail != "" && !startsWithKeywordFold(tail, "OPTIONS") {
-			return parsedNodeKeyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidTrailingSyntax(), nil)
+		if _, err := schemaOptionsTail(tail); err != nil {
+			return parsedNodeKeyConstraintDDL{}, err
 		}
 		props, ok := e.parseNodeKeyPropertyList(ctx, predicateExpr)
 		if !ok {
@@ -1950,8 +1984,8 @@ func (e *StorageExecutor) parseCreateConstraintTypeDDL(ctx context.Context, cyph
 		}
 
 		predicateExpr, tail := splitDDLOptionsTail(ctx, q[assertEnd:])
-		if tail != "" && !startsWithKeywordFold(tail, "OPTIONS") {
-			return parsedTypeConstraintDDL{}, localizedError(localization.CypherSchemaInvalidTrailingSyntax(), nil)
+		if _, err := schemaOptionsTail(tail); err != nil {
+			return parsedTypeConstraintDDL{}, err
 		}
 		property, typeName, ok := parseConstraintTypePredicate(ctx, predicateExpr)
 		if !ok {
@@ -2035,8 +2069,8 @@ func (e *StorageExecutor) parseCreateConstraintSimplePropertyDDL(ctx context.Con
 		}
 
 		predicateExpr, tail := splitDDLOptionsTail(ctx, q[assertEnd:])
-		if tail != "" && !startsWithKeywordFold(tail, "OPTIONS") {
-			return parsedSimplePropertyConstraintDDL{}, localizedError(localization.CypherSchemaInvalidTrailingSyntax(), nil)
+		if _, err := schemaOptionsTail(tail); err != nil {
+			return parsedSimplePropertyConstraintDDL{}, err
 		}
 		kind, property, ok := parseConstraintPredicate(ctx, predicateExpr)
 		if !ok {

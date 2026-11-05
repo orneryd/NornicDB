@@ -1,0 +1,96 @@
+# PR #1688 matched cost qualification
+
+Baseline b098f7e708b4c701a743ffb0310a9b179a84c8f2; Apple M2 Max; GOMAXPROCS=4, GOGC=100; matched noui,nolocalllm binaries. Sequential ABBA, six samples per public cell and four per native cell. Setup and snapshot priming are untimed. Full row multiset is asserted on every public sample. Values below are medians; raw min/max and counts are in qualification-summary.json. No concurrent tests, builds or other task profiling.
+
+| Parser / query / mode | Baseline ms | Candidate ms | Baseline / candidate MB | Baseline / candidate allocations |
+| --- | ---: | ---: | ---: | ---: |
+| nornic / original / explicit | 958.54 | 275.55 | 606.374 / 243.218 | 8,371,689 / 1,896,074 |
+| nornic / original / autocommit | 249.54 | 249.69 | 185.423 / 185.423 | 1,527,236 / 1,527,233 |
+| nornic / bound / explicit | 869.56 | 240.69 | 588.146 / 236.027 | 8,318,332 / 2,056,619 |
+| nornic / bound / autocommit | 204.11 | 205.36 | 177.108 / 177.105 | 1,680,093 / 1,680,070 |
+| antlr / original / explicit | 955.95 | 277.85 | 606.398 / 243.220 | 8,372,094 / 1,896,087 |
+| antlr / original / autocommit | 251.80 | 252.93 | 185.424 / 185.423 | 1,527,244 / 1,527,239 |
+| antlr / bound / explicit | 875.13 | 240.49 | 588.175 / 236.028 | 8,318,874 / 2,056,622 |
+| antlr / bound / autocommit | 209.58 | 209.20 | 177.107 / 177.106 | 1,680,078 / 1,680,076 |
+
+| Native path | Baseline ns/op | Candidate ns/op | Baseline / candidate B/op | Baseline / candidate allocs/op |
+| --- | ---: | ---: | ---: | ---: |
+| BenchmarkNOR160EdgeReads/list | 667,400.5 | 664,947.0 | 1,183,424 / 1,183,424 | 11,779 / 11,779 |
+| BenchmarkNOR160EdgeReads/stream | 669,824.0 | 666,661.0 | 1,135,175 / 1,135,176 | 11,766 / 11,766 |
+| BenchmarkNOR160EdgeReads/between-current | 9,470.0 | 9,618.0 | 11,504 / 11,504 | 195 / 195 |
+| BenchmarkNOR160EdgeReads/between-snapshot | 1,852,398.5 | 16,714.5 | 1,965,424 / 15,136 | 29,771 / 271 |
+| BenchmarkNativeTransactionPointRead/node | 1,596.5 | 225.3 | 1,720 / 496 | 32 / 4 |
+| BenchmarkNativeTransactionPointRead/query-node | 1,627.5 | 226.2 | 1,720 / 496 | 32 / 4 |
+| BenchmarkNativeTransactionPointRead/projected-node | 1,877.0 | 194.7 | 1,920 / 496 | 41 / 4 |
+| BenchmarkNativeTransactionPointRead/edge | 1,195.0 | 1,202.5 | 1,120 / 1,120 | 25 / 25 |
+| BenchmarkNativeTransactionPointRead/cold-node | 2,995.5 | 3,035.0 | 4,920 / 4,920 | 62 / 62 |
+
+Historical de70 runs are separate context on another lineage; they do not isolate this PR. The generated fixture matches the original cardinalities, not a private saved database. Timed profiles run separately from cost samples. Normal make test skips the optional full performance profile; correctness coverage runs independently.
+
+
+## Workload and interpretation
+
+The generated original-PR fixture contains 70,802 nodes, 96,160 relationships,
+5,101 input pairs and 1,390 expected complete result rows. Parameter SHA-256 is
+`b1755d394fe831e85f4f7cdd16786f683f878def387bddc919f95202d2c2524a`.
+Each original/bound and explicit/autocommit cell compares its complete sorted
+record-value multiset, not just counts. An unused changing parameter invalidates
+the result-cache key, so these are execution measurements. Both modes use durable
+writes for untimed setup (`SYNC=true`, write-behind off).
+
+Repeated small node images use the existing 128-node/256-KiB snapshot cache;
+partial projections, sidecars, vectors, large images and write-behind overlays
+retain their selection rules. Namespace edge projection stops cloning an already
+caller-owned property map. Current one-off point reads and edge list/stream
+paths retain the same allocation counts; sub-percent byte differences in the
+large samples reflect runtime sampling, not an added per-record allocation.
+The historical between read now selects MVCC adjacency instead of decoding the
+whole graph. Its ten edge identities, directions and property values are
+asserted in every native benchmark iteration.
+
+CPU profiles were captured separately for original/bound explicit/autocommit
+queries on each parser. An additional native point-edge profile exposed scoring
+clock work even with visibility inactive. The final owner checks the existing
+visibility policy before reading that clock; live suppression and decay still
+filter pending and cached results through the same completion owner. All native
+latency medians are faster or within 1.6% of baseline, with no extra allocations.
+This workload does not qualify every schema, degree distribution, sidecar/vector
+size, write-behind configuration or private production database.
+
+## Historical parent context (not an isolated change comparison)
+
+The original PR parent `de70c0e8375e9c74800d5ab6d7da5a6505650cb8` is on a
+different release lineage from b098. Its preserved original harness ran against
+the same generated shape and full-row oracle. Three samples per cell establish
+context, not the primary A/B evidence or a claim about one historical merge.
+
+| Parser / query / mode | Historical median ms | Historical MB | Historical allocations |
+| --- | ---: | ---: | ---: |
+| nornic / original / explicit | 870.04 | 620.328 | 8,634,363 |
+| nornic / original / autocommit | 188.42 | 203.224 | 1,816,776 |
+| nornic / bound / explicit | 822.56 | 602.664 | 8,560,341 |
+| nornic / bound / autocommit | 153.36 | 195.246 | 1,947,804 |
+| antlr / original / explicit | 912.24 | 620.331 | 8,634,381 |
+| antlr / original / autocommit | 195.04 | 203.225 | 1,816,776 |
+| antlr / bound / explicit | 834.99 | 602.659 | 8,560,343 |
+| antlr / bound / autocommit | 152.58 | 195.247 | 1,947,807 |
+
+## Reproduction
+
+Run the opt-in full generated fixture once per parser, before `make test`:
+
+```sh
+GOMAXPROCS=4 GOGC=100 NORNICDB_PARSER=nornic NOR160_FULL=1 NOR160_ROUNDS=3 NOR160_PROFILE=0 go test -tags noui,nolocalllm ./pkg/bolt -run '^TestNOR160RelationshipReadProfile$' -count=1 -v
+GOMAXPROCS=4 GOGC=100 NORNICDB_PARSER=antlr NOR160_FULL=1 NOR160_ROUNDS=3 NOR160_PROFILE=0 go test -tags noui,nolocalllm ./pkg/bolt -run '^TestNOR160RelationshipReadProfile$' -count=1 -v
+GOMAXPROCS=4 GOGC=100 go test -tags noui,nolocalllm ./pkg/storage -run '^$' -bench '^(BenchmarkNativeTransactionPointRead|BenchmarkNOR160EdgeReads)$' -benchmem -benchtime=500ms -count=2
+```
+
+For the primary baseline, apply only this PR's `pkg/bolt` test diff and the two
+storage benchmark files to an isolated b098 checkout. They use the same public
+APIs on both revisions; production sources stay unchanged. Build both binaries
+before measurements, alternate baseline/candidate/candidate/baseline, and run no
+other tests, compilation, containers or local inference during that window.
+For profiles, use `NOR160_ROUNDS=1 NOR160_PROFILE=1` in a separate run. Raw logs,
+binary hashes, source fingerprints, min/max values and the 161.1-second receipt
+with no changed inputs are retained in the task evidence. Default native focused
+race tests passed independently; full `make test` is the final local gate.

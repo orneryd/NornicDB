@@ -69,12 +69,7 @@ func (b *BadgerEngine) getNodeAtInTxn(txn *badger.Txn, id NodeID, version MVCCVe
 	if record.Tombstoned || record.Node == nil {
 		return nil, ErrNotFound
 	}
-	var node *Node
-	if vectors {
-		node = copyNode(record.Node)
-	} else {
-		node = copyNodeForCaller(record.Node)
-	}
+	node := copyNode(record.Node)
 	if b.filterEntityByDecay(v, node, DecayScoringTime()) {
 		return nil, ErrNotFound
 	}
@@ -270,7 +265,7 @@ func (b *BadgerEngine) streamNodesByLabelAtSnapshotWithView(
 				}
 			}
 			if matched {
-				if err := visit(projectCachedNodeForRead(node, properties, false, queryNodes)); err != nil {
+				if err := visit(projectCachedNodeForRead(node, properties, false)); err != nil {
 					return err
 				}
 			}
@@ -461,41 +456,17 @@ func (b *BadgerEngine) GetEdgesByTypeVisibleAt(ctx context.Context, edgeType str
 }
 
 func (b *BadgerEngine) GetEdgesBetweenVisibleAt(ctx context.Context, startID, endID NodeID, version MVCCVersion) ([]*Edge, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if err := b.pendingNamespaceConflict(namespaceForNodeID(endID)); err != nil {
-		return nil, err
-	}
-
-	if err := b.pendingNamespaceConflict(namespaceForNodeID(startID)); err != nil {
+	if err := b.pendingReadConflict(readNodePairScope, "", []NodeID{endID, startID}, ctx); err != nil {
 		return nil, err
 	}
 
 	if startID == "" || endID == "" {
 		return nil, ErrInvalidID
 	}
-	deregister, err := b.beginMVCCSnapshotRead(version)
-	if err != nil {
-		return nil, err
-	}
-	defer deregister()
-	var edges []*Edge
-	err = b.withView(func(txn *badger.Txn) error {
-		return b.iterateEdgesAtInTxn(ctx, txn, version, visibleRead, func(edge *Edge) error {
-			if edge == nil {
-				return nil
-			}
-			if edge.StartNode == startID && edge.EndNode == endID {
-				edges = append(edges, edge)
-			}
-			return nil
-		})
-	})
-	if err != nil {
-		return nil, err
-	}
-	return edges, nil
+	// The shared MVCC adjacency owner selects this pair before retaining
+	// output, rather than scanning and materializing unrelated graph edges.
+	// Latest reads keep their current between index and acknowledged overlay.
+	return b.readAdjacentEdgesAtWithView(ctx, startID, version, Outgoing, endID, b.withView)
 }
 
 // yieldLatestVisible is the one owner of the latest-visible enumeration

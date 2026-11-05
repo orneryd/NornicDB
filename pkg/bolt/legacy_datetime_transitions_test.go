@@ -13,7 +13,7 @@ import (
 func TestLegacyDateTimeWireNamedZoneTransitions(t *testing.T) {
 	store := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
-	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationExplicitTx)
 	testDateTimeWireNamedZoneTransitions(t, fmt.Sprintf("127.0.0.1:%d", port), false)
 }
 

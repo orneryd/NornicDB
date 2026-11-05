@@ -12,47 +12,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-// startBoltIntegrationServerWithExplicitTx wires the test Bolt server with a
-// SessionExecutorFactory + TransactionalExecutor (txCapableCypherQueryExecutor)
-// so BEGIN/RUN/COMMIT messages route to a real explicit BadgerTransaction
-// instead of being protocol-acknowledged-but-ignored. This matches the
-// runtime shape neo4j-go-driver session.ExecuteWrite emits from Eshu.
-func startBoltIntegrationServerWithExplicitTx(t *testing.T, store storage.Engine) (*Server, int) {
-	t.Helper()
-	executor := newTxCapableCypherQueryExecutor(store)
-	server := New(&Config{
-		Port:            0,
-		MaxConnections:  32,
-		ReadBufferSize:  8192,
-		WriteBufferSize: 8192,
-	}, executor)
-
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	addr, ok := listener.Addr().(*net.TCPAddr)
-	if !ok || addr.Port == 0 {
-		t.Fatalf("expected TCP listener with assigned port, got %T %v", listener.Addr(), listener.Addr())
-	}
-	server.listener = listener
-
-	errCh := make(chan error, 1)
-	t.Cleanup(func() {
-		if err := server.Close(); err != nil {
-			t.Fatalf("close server: %v", err)
-		}
-		if err := <-errCh; err != nil {
-			t.Fatalf("serve: %v", err)
-		}
-	})
-
-	go func() {
-		errCh <- server.serve()
-	}()
-	return server, addr.Port
-}
-
 // driverRetryBudget mirrors neo4j-go-driver's default session.ExecuteWrite
 // retry budget. The driver retries TransientError-coded failures with
 // exponential backoff and bounded jitter for ~30s cumulative before
@@ -206,7 +165,7 @@ func runBoltExplicitTxAttempt(t *testing.T, port int, query string) (error, bool
 func TestBoltCrossSessionMergeUniqueConflict_Sequential(t *testing.T) {
 	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "test")
-	_, port := startBoltIntegrationServer(t, store)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 
 	// Session 1: declare constraint, create the node, then disconnect.
 	session1 := openBoltTestConn(t, port)
@@ -247,7 +206,7 @@ func TestBoltCrossSessionMergeUniqueConflict_Sequential(t *testing.T) {
 func TestBoltCrossSessionMergeUniqueConflict_Concurrent(t *testing.T) {
 	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "test")
-	_, port := startBoltIntegrationServer(t, store)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 
 	// Schema setup on a throwaway connection.
 	setup := openBoltTestConn(t, port)
@@ -456,7 +415,7 @@ func runBoltUnwindMergeExplicitTxAttempt(t *testing.T, port int, label string, r
 func TestBoltCrossSessionMergeUniqueConflict_Concurrent_ExplicitTx(t *testing.T) {
 	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "test")
-	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationExplicitTx)
 
 	// Schema setup on a throwaway connection.
 	setup := openBoltTestConn(t, port)
@@ -515,7 +474,7 @@ func TestBoltCrossSessionMergeUniqueConflict_Concurrent_ExplicitTx(t *testing.T)
 func TestBoltCrossSessionMultiMergeUniqueConflict_Concurrent_ExplicitTx(t *testing.T) {
 	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "test")
-	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationExplicitTx)
 
 	setup := openBoltTestConn(t, port)
 	runBoltQueryAndCollectRecords(t, setup, "CREATE CONSTRAINT o_hash IF NOT EXISTS FOR (o:O) REQUIRE o.hash IS UNIQUE")
@@ -565,7 +524,7 @@ func TestBoltCrossSessionMultiMergeUniqueConflict_Concurrent_ExplicitTx(t *testi
 func TestBoltCrossSessionMergeUniqueConflict_Concurrent_UnwindExplicitTx(t *testing.T) {
 	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "test")
-	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationExplicitTx)
 
 	setup := openBoltTestConn(t, port)
 	runBoltQueryAndCollectRecords(t, setup,
@@ -639,7 +598,7 @@ func TestBoltExplicitTxStatementUniqueViolationCode(t *testing.T) {
 		_ = baseStore.Close()
 	})
 	store := storage.NewNamespacedEngine(baseStore, "test")
-	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationExplicitTx)
 
 	setup := openBoltTestConn(t, port)
 	runBoltQueryAndCollectRecords(t, setup,

@@ -42,7 +42,7 @@ func TestQueryMemoryBoltPropertyVisibility(t *testing.T) {
 		require.NoError(t, err)
 	}
 	require.NoError(t, be.CreateEdge(t.Context(), &storage.Edge{ID: "review:r", StartNode: "review:a", EndNode: "review:b", Type: "LINK", Properties: map[string]interface{}{"secret": "edge-hidden", "weight": int64(7)}, CreatedAt: old, UpdatedAt: old}))
-	_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(be, "review"))
+	_, port := startBoltIntegrationServer(t, storage.NewNamespacedEngine(be, "review"), boltIntegrationExplicitTx)
 	ctx := context.Background()
 	driver, err := neo4j.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4j.NoAuth())
 	require.NoError(t, err)

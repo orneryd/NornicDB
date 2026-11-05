@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -62,9 +63,23 @@ func runCreateDeleteSteps(t *testing.T, exec *StorageExecutor, ctx context.Conte
 	}
 }
 
-// readIndexNames owns ordered schema-name projection; callers retain their
-// original namespace, context, exact filter query and residual-state assertions.
-func readIndexNames(t *testing.T, ctx context.Context, exec *StorageExecutor, query string) []string {
+// requireErrorStatus owns the status classification every client-facing
+// failure assertion checks: err must be present and must report exactly
+// wantCode to Bolt and HTTP clients, with the caller's statement or context
+// plus the reported message and error in the diagnostic. Callers pass their
+// own expected code, so a syntax failure and a constraint failure stay
+// distinct data instead of one forwarded default.
+func requireErrorStatus(t *testing.T, err error, wantCode, statement string) {
+	t.Helper()
+	require.Error(t, err, statement)
+	code, message := nornicerrors.Neo4jStatus(err)
+	require.Equal(t, wantCode, code, "%s: %s: %v", statement, message, err)
+}
+
+// readSchemaNames owns ordered schema-name projection; callers retain their
+// original namespace, context, own ordered SHOW query and residual-state
+// assertions.
+func readSchemaNames(t *testing.T, ctx context.Context, exec *StorageExecutor, query string) []string {
 	t.Helper()
 	result, err := exec.Execute(ctx, query, nil)
 	require.NoError(t, err)

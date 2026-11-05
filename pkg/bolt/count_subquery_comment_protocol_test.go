@@ -24,7 +24,7 @@ func TestBoltCountSubqueryCommentGap(t *testing.T) {
 	})
 	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
-	_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(base, "neo4j"))
+	_, port := startBoltIntegrationServer(t, storage.NewNamespacedEngine(base, "neo4j"), boltIntegrationExplicitTx)
 	for _, parser := range []string{"nornic", "antlr"} {
 		for _, normalize := range []bool{false, true} {
 			for _, explicit := range []bool{false, true} {

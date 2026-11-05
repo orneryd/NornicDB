@@ -36,7 +36,7 @@ func TestNumericPropertyIndexExactAroundFloatPrecision(t *testing.T) {
 		t.Run(index.name, func(t *testing.T) {
 			base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { _ = base.Close() })
-			_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(base, "test"))
+			_, port := startBoltIntegrationServer(t, storage.NewNamespacedEngine(base, "test"), boltIntegrationExplicitTx)
 			conn := openBoltTestConn(t, port)
 			defer conn.Close()
 			if index.ddl != "" {

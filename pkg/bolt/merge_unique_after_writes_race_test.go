@@ -19,7 +19,7 @@ import (
 func TestBoltConcurrentMergeOfUniqueKeyAfterOtherWrites(t *testing.T) {
 	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "test")
-	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationExplicitTx)
 
 	setup := openBoltTestConn(t, port)
 	runBoltQueryAndCollectRecords(t, setup, "CREATE CONSTRAINT race_key_id IF NOT EXISTS FOR (k:RaceKey) REQUIRE k.id IS UNIQUE")

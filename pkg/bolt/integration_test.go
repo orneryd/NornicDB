@@ -131,52 +131,76 @@ func (e *txCapableCypherQueryExecutor) RollbackTransaction(ctx context.Context) 
 	return err
 }
 
-func startBoltIntegrationServer(t *testing.T, store storage.Engine) (*Server, int) {
+// boltIntegrationMode selects the QueryExecutor and connection budget the Bolt
+// integration server under test is wired with.
+type boltIntegrationMode int
+
+const (
+	// boltIntegrationAutocommit wires the plain cypherQueryExecutor with the
+	// auto-commit connection budget.
+	boltIntegrationAutocommit boltIntegrationMode = iota
+	// boltIntegrationExplicitTx wires a SessionExecutorFactory +
+	// TransactionalExecutor (txCapableCypherQueryExecutor) so BEGIN/RUN/COMMIT
+	// messages route to a real explicit transaction instead of being
+	// protocol-acknowledged-but-ignored. This matches the runtime shape
+	// neo4j-go-driver session.ExecuteWrite emits from Eshu.
+	boltIntegrationExplicitTx
+)
+
+// startBoltIntegrationServer is the one constructor for Bolt integration
+// servers: it selects the QueryExecutor and connection budget from mode, and
+// serveBoltIntegrationServer owns bind, serve and cleanup for every server.
+func startBoltIntegrationServer(t testing.TB, store storage.Engine, mode boltIntegrationMode) (*Server, int) {
 	t.Helper()
-	executor := &cypherQueryExecutor{executor: cypher.NewStorageExecutor(store)}
+	var executor QueryExecutor
+	maxConnections := 0
+	switch mode {
+	case boltIntegrationAutocommit:
+		executor = &cypherQueryExecutor{executor: cypher.NewStorageExecutor(store)}
+		maxConnections = 10
+	case boltIntegrationExplicitTx:
+		executor = newTxCapableCypherQueryExecutor(store)
+		maxConnections = 32
+	default:
+		t.Fatalf("unknown bolt integration mode %d", mode)
+	}
 	server := New(&Config{
 		Port:            0,
-		MaxConnections:  10,
+		MaxConnections:  maxConnections,
 		ReadBufferSize:  8192,
 		WriteBufferSize: 8192,
 	}, executor)
+	return server, serveBoltIntegrationServer(t, server)
+}
 
+// serveBoltIntegrationServer is the one bind/serve/cleanup owner for the Bolt
+// integration servers. It reserves an ephemeral port without a
+// close-and-rebind race, serves it through the public Serve entry (the private
+// serve is Serve of the published listener), and joins the serve goroutine
+// after Close. Callers keep their own executor and server config.
+func serveBoltIntegrationServer(t testing.TB, server *Server) int {
+	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	requireNoError(t, err)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
 	addr, ok := listener.Addr().(*net.TCPAddr)
 	if !ok || addr.Port == 0 {
 		t.Fatalf("expected TCP listener with assigned port, got %T %v", listener.Addr(), listener.Addr())
 	}
-	server.listener = listener
-
-	errCh := make(chan error, 1)
-	t.Cleanup(func() {
-		if err := server.Close(); err != nil {
-			t.Fatalf("close server: %v", err)
-		}
-		if err := <-errCh; err != nil {
-			t.Fatalf("serve: %v", err)
-		}
-	})
-
-	go func() {
-		errCh <- server.serve()
-	}()
-	return server, addr.Port
-}
-
-func serveBoltIntegrationServer(t *testing.T, server *Server) int {
-	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	requireNoError(t, err)
-	port := listener.Addr().(*net.TCPAddr).Port
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
 	t.Cleanup(func() {
-		_ = server.Close()
-		requireNoError(t, <-done)
+		closeErr := server.Close()
+		serveErr := <-done
+		if closeErr != nil {
+			t.Fatalf("close server: %v", closeErr)
+		}
+		if serveErr != nil {
+			t.Fatalf("serve: %v", serveErr)
+		}
 	})
-	return port
+	return addr.Port
 }
 
 func openBoltTestConn(t *testing.T, port int) net.Conn {
@@ -457,7 +481,7 @@ func TestBoltCypherIntegration(t *testing.T) {
 func TestBoltConstraintIntegration_NewerConstraintTypes(t *testing.T) {
 	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "test")
-	_, port := startBoltIntegrationServer(t, store)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 	conn := openBoltTestConn(t, port)
 
 	queries := []string{
@@ -524,7 +548,7 @@ func TestBoltConstraintIntegration_NewerConstraintTypes(t *testing.T) {
 func TestBoltConstraintIntegration_AllConstraintFamilies(t *testing.T) {
 	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "test")
-	_, port := startBoltIntegrationServer(t, store)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 	conn := openBoltTestConn(t, port)
 
 	queries := []string{
@@ -620,7 +644,7 @@ func TestBoltConstraintIntegration_AllConstraintFamilies(t *testing.T) {
 func TestBoltConstraintIntegration_ConstraintContracts(t *testing.T) {
 	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "test")
-	_, port := startBoltIntegrationServer(t, store)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 	conn := openBoltTestConn(t, port)
 
 	createContract := `
@@ -688,7 +712,7 @@ func TestBoltConstraintIntegration_EnforcementForNewFamilies(t *testing.T) {
 	t.Run("domain", func(t *testing.T) {
 		baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		store := storage.NewNamespacedEngine(baseStore, "test")
-		_, port := startBoltIntegrationServer(t, store)
+		_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 		conn := openBoltTestConn(t, port)
 
 		runBoltQueryAndCollectRecords(t, conn, "CREATE CONSTRAINT person_status_domain FOR (n:Person) REQUIRE n.status IN ['active', 'inactive']")
@@ -701,7 +725,7 @@ func TestBoltConstraintIntegration_EnforcementForNewFamilies(t *testing.T) {
 	t.Run("cardinality", func(t *testing.T) {
 		baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		store := storage.NewNamespacedEngine(baseStore, "test")
-		_, port := startBoltIntegrationServer(t, store)
+		_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 		conn := openBoltTestConn(t, port)
 
 		runBoltQueryAndCollectRecords(t, conn, "CREATE CONSTRAINT max_jobs FOR ()-[r:WORKS_AT]->() REQUIRE MAX COUNT 2")
@@ -717,7 +741,7 @@ func TestBoltConstraintIntegration_EnforcementForNewFamilies(t *testing.T) {
 	t.Run("policy", func(t *testing.T) {
 		baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		store := storage.NewNamespacedEngine(baseStore, "test")
-		_, port := startBoltIntegrationServer(t, store)
+		_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 		conn := openBoltTestConn(t, port)
 
 		runBoltQueryAndCollectRecords(t, conn, "CREATE CONSTRAINT works_at_allowed FOR (:Person)-[r:WORKS_AT]->(:Company) REQUIRE ALLOWED")
@@ -731,7 +755,7 @@ func TestBoltConstraintIntegration_EnforcementForNewFamilies(t *testing.T) {
 	t.Run("policy_disallowed", func(t *testing.T) {
 		baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		store := storage.NewNamespacedEngine(baseStore, "test")
-		_, port := startBoltIntegrationServer(t, store)
+		_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 		conn := openBoltTestConn(t, port)
 
 		runBoltQueryAndCollectRecords(t, conn, "CREATE CONSTRAINT no_intern_exec FOR (:Intern)-[r:REPORTS_TO]->(:Executive) REQUIRE DISALLOWED")
@@ -745,7 +769,7 @@ func TestBoltConstraintIntegration_EnforcementForNewFamilies(t *testing.T) {
 	t.Run("relationship_domain", func(t *testing.T) {
 		baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		store := storage.NewNamespacedEngine(baseStore, "test")
-		_, port := startBoltIntegrationServer(t, store)
+		_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 		conn := openBoltTestConn(t, port)
 
 		runBoltQueryAndCollectRecords(t, conn, "CREATE CONSTRAINT rel_role_domain FOR ()-[r:WORKS_AT]-() REQUIRE r.role IN ['engineer', 'manager']")
@@ -759,7 +783,7 @@ func TestBoltConstraintIntegration_EnforcementForNewFamilies(t *testing.T) {
 	t.Run("contract_runtime", func(t *testing.T) {
 		baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		store := storage.NewNamespacedEngine(baseStore, "test")
-		_, port := startBoltIntegrationServer(t, store)
+		_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 		conn := openBoltTestConn(t, port)
 
 		runBoltQueryAndCollectRecords(t, conn, `
@@ -781,7 +805,7 @@ func TestBoltConstraintIntegration_EnforcementForNewFamilies(t *testing.T) {
 	t.Run("contract_relationship_runtime", func(t *testing.T) {
 		baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		store := storage.NewNamespacedEngine(baseStore, "test")
-		_, port := startBoltIntegrationServer(t, store)
+		_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 		conn := openBoltTestConn(t, port)
 
 		runBoltQueryAndCollectRecords(t, conn, "CREATE (:Person {id:'p1', tenant:'t1'}), (:Person {id:'p2', tenant:'t2'}), (:Person {id:'p3', tenant:'t1'})")
@@ -824,7 +848,7 @@ func TestBoltIntegration_G2GVersionNodesFallbackRowShape_ServerStack(t *testing.
 		requireNoError(t, baseStore.Close())
 	})
 
-	_, port := startBoltIntegrationServer(t, store)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 	conn := openBoltTestConn(t, port)
 
 	bootstrap := []string{

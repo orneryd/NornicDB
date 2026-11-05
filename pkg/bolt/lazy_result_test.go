@@ -53,7 +53,7 @@ func sendDiscard(t *testing.T, conn net.Conn, n int64) {
 func lazyResultTestConn(t *testing.T, items int) net.Conn {
 	t.Helper()
 	store := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test")
-	_, port := startBoltIntegrationServer(t, store)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 	conn := openBoltTestConn(t, port)
 	if items > 0 {
 		runBoltQueryAndCollectRecords(t, conn, fmt.Sprintf("UNWIND range(0, %d) AS i CREATE (:Item {k: i})", items-1))

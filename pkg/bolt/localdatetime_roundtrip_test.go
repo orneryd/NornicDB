@@ -105,7 +105,7 @@ func roundTripLocalDateTimeScenario(t *testing.T, writeMessage []byte, readQuery
 
 	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "bolt_localdatetime_roundtrip")
-	_, port := startBoltIntegrationServer(t, store)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 	conn := openBoltTestConn(t, port)
 
 	runBoltStatementNoRecords(t, conn, BuildRunMessage("MATCH (n:T) DETACH DELETE n", nil, nil))

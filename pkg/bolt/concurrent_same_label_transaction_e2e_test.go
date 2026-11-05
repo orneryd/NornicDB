@@ -18,7 +18,7 @@ func TestBoltExplicitTransactionsCreateIndependentSameLabelNodes(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = baseStore.Close() })
 	store := storage.NewNamespacedEngine(baseStore, "neo4j")
-	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationExplicitTx)
 
 	first := openBoltTestConn(t, port)
 	second := openBoltTestConn(t, port)

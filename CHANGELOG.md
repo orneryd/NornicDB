@@ -19,6 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   physical replay and reconcile recovered label/relationship counts, preventing
   stale restore images and a later delete from making the database unreopenable.
   Preserve UNIQUE, deletion and restart behavior without a storage format change.
+- Reuse bounded complete node snapshots for repeated explicit-transaction reads,
+  and avoid copying already-owned relationship properties twice during namespace
+  projection. Preserve caller-owned storage values and vectors; buffered
+  relationship reads no longer expose acknowledged mutable property maps.
+- Return plans without catalog changes for EXPLAIN CREATE DATABASE, including
+  replacement forms. Reject bare OPTIONS on index and constraint creation
+  consistently across both parsers while retaining valid map forms.
 - Maintain scoped full-text scoring documents between queries instead of rebuilding
   the entire corpus. Preserve exact case-sensitive indexed fields, deterministic
   relationship-property order, per-field phrase matching, committed snapshots and

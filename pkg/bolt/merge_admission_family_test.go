@@ -31,7 +31,7 @@ func TestMergeAdmissionFamilyAfterPriorWrite(t *testing.T) {
 			t.Run(constraint.name+"/"+route.name, func(t *testing.T) {
 				base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 				t.Cleanup(func() { _ = base.Close() })
-				_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(base, "test"))
+				_, port := startBoltIntegrationServer(t, storage.NewNamespacedEngine(base, "test"), boltIntegrationExplicitTx)
 				peer := openBoltTestConn(t, port)
 				defer peer.Close()
 				runBoltQueryAndCollectRecords(t, peer, "CREATE CONSTRAINT admission_key FOR (k:AdmissionKey) REQUIRE "+constraint.expression)
@@ -65,7 +65,7 @@ func TestMergeAdmissionTupleIntegerPrecision(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { _ = base.Close() })
-			_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(base, "test"))
+			_, port := startBoltIntegrationServer(t, storage.NewNamespacedEngine(base, "test"), boltIntegrationExplicitTx)
 			peer := openBoltTestConn(t, port)
 			defer peer.Close()
 			runBoltQueryAndCollectRecords(t, peer, "CREATE CONSTRAINT precise_tuple FOR (k:PreciseTuple) REQUIRE (k.tenant, k.id) IS "+kind)

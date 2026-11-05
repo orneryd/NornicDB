@@ -41,9 +41,9 @@ node.SetRuntimeMetadata(metadata)
 
 ## What copies and caches keep
 
-- `copyNode`, `CopyNode`, `copyNodeForCaller` and `copyNodeWithoutEmbeddings`
+- `copyNode`, `CopyNode` and `copyNodeWithoutEmbeddings`
   share the immutable record with the source and therefore preserve metadata and
-  embedding identity. The embedding-free shapes differ only in vectors.
+  embedding identity. Full and query images own any vectors present; embedding-free projections omit vectors.
 - `cacheStoreNode` (a written image) keeps the written metadata, owner and any
   existing publication proof. Revision is zeroed and the worker attempt is
   cleared, as before. A cache hit is still the caller's own image.

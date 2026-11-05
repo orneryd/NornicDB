@@ -286,7 +286,7 @@ func TestEngineGetQueryNodeReadsNoChunk(t *testing.T) {
 
 // TestEngineGetQueryNodeMatchesGetNode: apart from the vectors, the query-node
 // read returns what GetNode returns: from the node cache (in-memory vectors
-// shared, not copied), and from the write-behind overlay before a flush,
+// detached for the caller), and from the write-behind overlay before a flush,
 // buffered deletes included.
 func TestEngineGetQueryNodeMatchesGetNode(t *testing.T) {
 	stripVectors := func(n *Node) *Node {
@@ -302,7 +302,7 @@ func TestEngineGetQueryNodeMatchesGetNode(t *testing.T) {
 		full, err := b.GetNode(t.Context(), id) // fills the node cache
 		require.NoError(t, err)
 		node := mustReadNode(t, b.GetQueryNode, id)
-		require.Equal(t, chunks, node.ChunkEmbeddings, "a cached node's vectors are shared")
+		require.Equal(t, chunks, node.ChunkEmbeddings, "a cached node's vectors remain available")
 		require.Equal(t, stripVectors(full), stripVectors(node))
 	})
 	t.Run("write-behind", func(t *testing.T) {

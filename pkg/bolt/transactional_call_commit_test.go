@@ -12,7 +12,7 @@ func TestBoltTransactionalCallKeepsCommittedBatches(t *testing.T) {
 	base, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
-	_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(base, "tenant"))
+	_, port := startBoltIntegrationServer(t, storage.NewNamespacedEngine(base, "tenant"), boltIntegrationExplicitTx)
 	writer := openBoltTestConn(t, port)
 	require.NoError(t, SendRun(t, writer, "UNWIND [1,2,0] AS x CALL { WITH x CREATE (:B {v: 10/x}) } IN TRANSACTIONS OF 1 ROW", nil, nil))
 	_, _, err = AssertFailure(t, writer)
@@ -51,7 +51,7 @@ func TestBoltTransactionalCallBatchSizeExpressionContract(t *testing.T) {
 			base, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, base.Close()) })
-			_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(base, "tenant"))
+			_, port := startBoltIntegrationServer(t, storage.NewNamespacedEngine(base, "tenant"), boltIntegrationExplicitTx)
 			writer := openBoltTestConn(t, port)
 			input := "[1,2,0,4]"
 			code := "Neo.ClientError.Statement.ArithmeticError"

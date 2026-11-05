@@ -83,7 +83,7 @@ func TestCompositeExplicitTx_FailureRollsBackRemoteParticipant(t *testing.T) {
 				config.SetParserType(mode)
 				t.Cleanup(func() { config.SetParserType(previous) })
 
-				_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "remote"))
+				_, port := startBoltIntegrationServer(t, storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "remote"), boltIntegrationExplicitTx)
 				runBoltQueryAndCollectRecords(t, openBoltTestConn(t, port), "CREATE CONSTRAINT rk_u FOR (u:U) REQUIRE u.k IS UNIQUE")
 
 				mgr, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), &multidb.Config{
@@ -257,7 +257,7 @@ func TestCompositeExplicitTx_FailureDoesNotWaitOnUnresponsiveRemote(t *testing.T
 			t.Cleanup(func() { config.SetParserType(previous) })
 			ctx := context.Background()
 
-			_, remotePort := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "remote"))
+			_, remotePort := startBoltIntegrationServer(t, storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "remote"), boltIntegrationExplicitTx)
 			proxy, port := startStallingProxy(t, remotePort)
 			mgr, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), &multidb.Config{
 				DefaultDatabase: "nornic",

@@ -81,7 +81,7 @@ func (engine expiredDatabaseLimitEngine) GetQueryLimitChecker() interface {
 // that won, the server's, with its message (sol-r2-1392 P2).
 func TestBoltDatabaseDeadlineWinsAfterBothExpired(t *testing.T) {
 	store := expiredDatabaseLimitEngine{storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "deadline_winner")}
-	_, port := startBoltIntegrationServer(t, store)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 	conn := openBoltTestConn(t, port)
 	require.NoError(t, conn.SetReadDeadline(time.Now().Add(10*time.Second)))
 	require.NoError(t, SendRun(t, conn, "UNWIND range(1, 100000000) AS x WITH x WHERE x < 0 RETURN count(x) AS c", nil, map[string]any{"tx_timeout": int64(2000)}))

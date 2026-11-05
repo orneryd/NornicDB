@@ -1050,6 +1050,11 @@ func (e *StorageExecutor) executeShowDatabases(ctx context.Context, cypher strin
 	}, showDatabasesDefaultColumns), nil
 }
 
+// createDatabaseResultColumn is CREATE DATABASE's result column: the name of
+// the database the command created. Its execute owner declares it, so EXPLAIN
+// can report the command's header without running it.
+const createDatabaseResultColumn = "name"
+
 // showDatabasesColumns is SHOW DATABASES' full column set, in Neo4j's order.
 var showDatabasesColumns = []string{"name", "type", "aliases", "access", "databaseID", "serverID", "address", "role", "writer", "requestedStatus", "currentStatus", "statusMessage", "default", "home", "currentPrimariesCount", "currentSecondariesCount", "requestedPrimariesCount", "requestedSecondariesCount", "creationTime", "lastStartTime", "lastStopTime", "store", "lastCommittedTxn", "replicationLag", "constituents", "options"}
 
@@ -1208,7 +1213,7 @@ func (e *StorageExecutor) executeDatabaseCreate(ctx context.Context, cypher stri
 				return nil, localizedError(localization.CypherAdminDropDatabaseFailed(dbName, err), err)
 			}
 		} else if ifNotExists {
-			return &ExecuteResult{Columns: []string{"name"}, Rows: [][]interface{}{{dbName}}}, nil
+			return &ExecuteResult{Columns: []string{createDatabaseResultColumn}, Rows: [][]interface{}{{dbName}}}, nil
 		} else {
 			return nil, localizedError(localization.CypherAdminDatabaseAlreadyExists(dbName), nil)
 		}
@@ -1218,7 +1223,7 @@ func (e *StorageExecutor) executeDatabaseCreate(ctx context.Context, cypher stri
 		return nil, localizedError(localization.CypherAdminCreateDatabaseFailed(dbName, err), err)
 	}
 	e.logEvent(slog.LevelInfo, localization.CypherCreateDatabaseSucceededEvent())
-	return &ExecuteResult{Administration: &AdministrationOutcome{CreatedDatabase: dbName}, Columns: []string{"name"}, Rows: [][]interface{}{{dbName}}}, nil
+	return &ExecuteResult{Administration: &AdministrationOutcome{CreatedDatabase: dbName}, Columns: []string{createDatabaseResultColumn}, Rows: [][]interface{}{{dbName}}}, nil
 }
 
 // executeCreateAlias handles CREATE ALIAS command (Neo4j-compatible).

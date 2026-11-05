@@ -25,7 +25,7 @@ func TestBoltRetrieveCanceledEmbeddingReturnsFailure(t *testing.T) {
 	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	store := storage.NewNamespacedEngine(base, "nornic")
-	server, port := startBoltIntegrationServer(t, store)
+	server, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)
 	exec := server.executor.(*cypherQueryExecutor).executor
 	exec.SetEmbedder(canceledSearchEmbedder{})
 	svc := search.NewService(store, search.DefaultVectorDimensions, nil)

@@ -70,5 +70,5 @@ func (opts StreamNodesOptions) scanDecodesFilter() bool {
 }
 
 func (opts StreamNodesOptions) copyResidentNode(node *Node) *Node {
-	return projectCachedNodeForRead(node, opts.Projection, opts.StripEmbeddings, opts.QueryNodes && !opts.WithEmbeddings)
+	return projectCachedNodeForRead(node, opts.Projection, opts.StripEmbeddings)
 }

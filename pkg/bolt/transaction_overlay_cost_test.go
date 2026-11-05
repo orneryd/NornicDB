@@ -12,7 +12,7 @@ func TestTransactionOverlayBoltRoutes(t *testing.T) {
 	for _, explicit := range []bool{false, true} {
 		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		t.Cleanup(func() { require.NoError(t, base.Close()) })
-		_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(base, "test"))
+		_, port := startBoltIntegrationServer(t, storage.NewNamespacedEngine(base, "test"), boltIntegrationExplicitTx)
 		conn := openBoltTestConn(t, port)
 		defer conn.Close()
 		if explicit {
