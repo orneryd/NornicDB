@@ -11,7 +11,6 @@ package cypher
 // null, and a label test on a number, list or null is null.
 
 import (
-	"context"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/config"
@@ -120,10 +119,9 @@ func TestLabelExpressionRewriterKeepsMixingRejections(t *testing.T) {
 // null (hasLabels' answer for a value that is no entity), so an aggregate
 // entry keeps its key and gains no error.
 func TestLabelTestInMapEntriesPublic(t *testing.T) {
-	restoreParserTypeAfter(t)
-	ctx := context.Background()
-	for _, parser := range []string{config.ParserTypeNornic, config.ParserTypeANTLR} {
-		config.SetParserType(parser)
+	forEachCypherParserSetting(t, func(t *testing.T) {
+		ctx := t.Context()
+		parser := config.GetParserType()
 		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "nor27_label_map"))
 		_, err := exec.Execute(ctx, "CREATE (:A {id: 'a'})", nil)
 		require.NoError(t, err, parser)
@@ -136,6 +134,8 @@ func TestLabelTestInMapEntriesPublic(t *testing.T) {
 				[][]interface{}{{map[string]interface{}{"c": int64(2), "valid": nil}}},
 			},
 			{"RETURN head([null]):A AS v", [][]interface{}{{nil}}},
+			{"MATCH (n:A) RETURN `head`([n]):A AS v", [][]interface{}{{true}}},
+			{"MATCH (n:A) RETURN head /* gap */ ([n]):A AS v", [][]interface{}{{true}}},
 			{"RETURN {valid:head([null]):A} AS v", [][]interface{}{{map[string]interface{}{"valid": nil}}}},
 			{"RETURN {`odd key`:head([null]):A} AS v", [][]interface{}{{map[string]interface{}{"odd key": nil}}}},
 			{
@@ -171,5 +171,5 @@ func TestLabelTestInMapEntriesPublic(t *testing.T) {
 		// The MATCH pattern's own rejection is unchanged.
 		_, err = exec.Execute(ctx, "MATCH (n:A|B:C) RETURN n", nil)
 		require.ErrorContains(t, err, "Mixing label expression symbols", parser)
-	}
+	})
 }

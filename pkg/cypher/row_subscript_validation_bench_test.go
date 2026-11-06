@@ -26,3 +26,19 @@ func BenchmarkPostfixReceiverBoundary(b *testing.B) {
 		}
 	}
 }
+
+// Ordinary list literals must not trigger a prefix walk for every '['.
+// Fourfold input growth exposes the former quadratic receiver-admission cost.
+func BenchmarkStaticSubscriptListPopulation(b *testing.B) {
+	for _, size := range []int{256, 1024, 4096} {
+		query := "RETURN [" + strings.Repeat("[1],", size-1) + "[1]] AS v"
+		b.Run(strconv.Itoa(size), func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				if err := validateStaticPropertySubscripts(b.Context(), query, staticTypeScope{}); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}

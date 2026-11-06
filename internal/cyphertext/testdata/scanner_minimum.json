@@ -464,7 +464,6 @@
     "samePatternMapReads",
     "skipASCIISpaces",
     "startsPathAssignment",
-    "topLevelByteIndex",
     "trimRightIndex",
     "writeItemHead"
   ],

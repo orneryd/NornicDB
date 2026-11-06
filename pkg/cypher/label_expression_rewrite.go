@@ -1185,7 +1185,10 @@ func (r *labelExpressionRewriter) foreach(start, end int) error {
 	if close < 0 {
 		return nil
 	}
-	bar := topLevelByteIndex(q, open+1, close, '|')
+	bar := findTopLevelOperator(q[open+1:close], "|", false, true)
+	if bar >= 0 {
+		bar += open + 1
+	}
 	if bar < 0 {
 		return r.expression(open+1, close)
 	}
@@ -1288,7 +1291,10 @@ func (r *labelExpressionRewriter) mapLiteral(start, close int) error {
 		if entry >= close {
 			return nil
 		}
-		end := topLevelByteIndex(r.query, entry, close, ',')
+		end := findTopLevelOperator(r.query[entry:close], ",", false, true)
+		if end >= 0 {
+			end += entry
+		}
 		if end < 0 {
 			end = close
 		}
@@ -1572,7 +1578,8 @@ func (r *labelExpressionRewriter) parenthesised(start, open, end int) (int, erro
 	if close < 0 {
 		return end, nil
 	}
-	call := open > start && cyphertext.NamePartAt(q, open-1)
+	subject := callableReceiverStart(q, open)
+	call := subject >= start && subject < open
 	if !call {
 		if chainEnd, ok := relationshipChainEnd(r.query, open, end); ok {
 			return chainEnd, r.patternPredicate(open, chainEnd, -1, -1)
@@ -1581,22 +1588,15 @@ func (r *labelExpressionRewriter) parenthesised(start, open, end int) (int, erro
 			return next, err
 		}
 	} else {
-		subject := open - 1
-		for subject > start && (cyphertext.NamePartAt(q, subject-1) || q[subject-1] == '.') {
-			subject--
-		}
 		if next, handled, err := r.expressionLabelTest(start, subject, open, close, end); handled {
 			return next, err
 		}
 		// exists((n)-->(m)): the argument as the predicate.
-		nameStart := open - 1
-		for nameStart > start && cyphertext.NamePartAt(q, nameStart-1) {
-			nameStart--
-		}
+
 		inner := skipASCIISpaces(q, open+1, close)
-		if strings.EqualFold(q[nameStart:open], "exists") {
+		if name, ok := canonicalCallableName(q[subject:open]); ok && strings.EqualFold(name, "exists") {
 			if chainEnd, ok := relationshipChainEnd(r.query, inner, close); ok && skipASCIISpaces(q, chainEnd, close) == close {
-				return close + 1, r.patternPredicate(inner, chainEnd, nameStart, close)
+				return close + 1, r.patternPredicate(inner, chainEnd, subject, close)
 			}
 		}
 	}
@@ -1720,7 +1720,10 @@ func (r *labelExpressionRewriter) comprehension(open, close int) (bool, error) {
 func (r *labelExpressionRewriter) projectionBar(start, end int) int {
 	q := r.query
 	for i := start; ; {
-		bar := topLevelByteIndex(q, i, end, '|')
+		bar := findTopLevelOperator(q[i:end], "|", false, true)
+		if bar >= 0 {
+			bar += i
+		}
 		if bar < 0 || !labelExpressionBarAt(q[:end], start, bar) {
 			return bar
 		}
@@ -1797,34 +1800,6 @@ func startsPathAssignment(q string, i, end int) bool {
 	}
 	paren := skipASCIISpaces(q, eq+1, end)
 	return paren < end && q[paren] == '('
-}
-
-// topLevelByteIndex returns the index of the first b in q[start:end] outside
-// quotes and brackets, -1 when there is none.
-func topLevelByteIndex(q string, start, end int, b byte) int {
-	depth := 0
-	for i := start; i < end; i++ {
-		c := q[i]
-		if c == '/' {
-			if next := queryCommentEnd(q[:end], i); next > i {
-				i = next - 1
-				continue
-			}
-		}
-		switch cypherLexicalByte(c) {
-		case cypherQuoteClass:
-			i = skipCypherQuotedText(q, i, c) - 1
-			continue
-		case '(', '[', '{':
-			depth++
-		case ')', ']', '}':
-			depth--
-		}
-		if c == b && depth == 0 {
-			return i
-		}
-	}
-	return -1
 }
 
 // clauseKeywordStart returns where the clause keyword that ends at

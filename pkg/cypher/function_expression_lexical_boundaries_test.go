@@ -19,6 +19,8 @@ func TestFunctionAndSubqueryPostfixLexicalBoundaries(t *testing.T) {
 			{"map-aggregate", "UNWIND [1,2] AS x RETURN {c:count(x)} AS value", [][]interface{}{{map[string]interface{}{"c": int64(2)}}}, false},
 			{"slice-bound-aggregate", "UNWIND [1,2] AS x RETURN {c:[1,2,3][..count(x)]} AS v", [][]interface{}{{map[string]interface{}{"c": []interface{}{int64(1), int64(2)}}}}, false},
 			{"leading-block-comment", "/* } { ' \" */ RETURN 'ok' AS v", [][]interface{}{{"ok"}}, false},
+			{"commented-invalid-list-access", "RETURN /* [1]['bad'] */ 1 AS v", [][]interface{}{{int64(1)}}, false},
+			{"commented-invalid-map-access", "RETURN /* {a:1}[2] */ 1 AS v", [][]interface{}{{int64(1)}}, false},
 			{"leading-line-comment", "// } { ' \"\nRETURN 'ok' AS v", [][]interface{}{{"ok"}}, false},
 			{"comment-before-paren-list-access", "RETURN keys /*gap*/ ({a:1})[0] AS v", [][]interface{}{{"a"}}, false},
 			{"quoted-comment-markers", "RETURN keys /* '/*' ) [0] { */ ({a:1})[0] AS v", [][]interface{}{{"a"}}, false},
@@ -30,14 +32,14 @@ func TestFunctionAndSubqueryPostfixLexicalBoundaries(t *testing.T) {
 			{"keyword-named-receiver", "WITH [5] AS count RETURN count[0] AS v", [][]interface{}{{int64(5)}}, false},
 			{"prefix-not-integer-empty-input", "UNWIND [] AS r MATCH (n) WITH n, 1 AS v RETURN NOT v AS a", nil, true},
 		}
-		prior := config.IsCypherQueryNormalizationEnabled()
-		t.Cleanup(func() { config.SetCypherQueryNormalizationEnabled(prior) })
 		for _, normalize := range []bool{false, true} {
 			name := "raw"
 			if normalize {
 				name = "normalized"
 			}
 			t.Run(name, func(t *testing.T) {
+				prior := config.IsCypherQueryNormalizationEnabled()
+				t.Cleanup(func() { config.SetCypherQueryNormalizationEnabled(prior) })
 				config.SetCypherQueryNormalizationEnabled(normalize)
 				for _, c := range cases {
 					c := c

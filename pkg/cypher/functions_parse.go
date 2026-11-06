@@ -83,8 +83,17 @@ func expressionPredecessor(expression string, limit int) (last, quotedStart int)
 	if last < 0 {
 		return -1, -1
 	}
+	// Horizontal ASCII gaps cannot terminate a line comment. Resolve this
+	// common boundary without entering the full lexical-span walk; a slash,
+	// quote, line break or Unicode gap still goes through that owner.
+	for last >= 0 && (expression[last] == ' ' || expression[last] == '\t') {
+		last--
+	}
+	if last < 0 {
+		return -1, -1
+	}
 	character := expression[last]
-	if character > ' ' && character < 0x80 && character != '/' && character != '\'' && character != '"' {
+	if character > ' ' && character < 0x80 && character != '/' && !isCypherQuoteByte(character) {
 		return last, -1
 	}
 	return scanExpressionPredecessor(expression, limit)
@@ -105,7 +114,7 @@ func scanExpressionPredecessor(expression string, limit int) (last, quotedStart 
 			return -1, -1
 		}
 	}
-	if expression[last] != '/' && !isCypherStringQuoteByte(expression[last]) &&
+	if expression[last] != '/' && !isCypherQuoteByte(expression[last]) &&
 		!strings.ContainsAny(expression[last+1:limit], "\r\n\u0085\u2028\u2029") {
 		return last, -1
 	}
@@ -141,6 +150,29 @@ func scanExpressionPredecessor(expression string, limit int) (last, quotedStart 
 		index++
 	}
 	return last, quotedStart
+}
+
+// callableReceiverStart reads the callable immediately before an argument
+// group, or returns open when it is a group rather than a call. Receiver and
+// label-expression consumers share the semantic keyword boundary and trivia
+// owner instead of independently absorbing NOT, IN or comment text.
+func callableReceiverStart(expression string, open int) int {
+	end, quoted := expressionPredecessor(expression, open)
+	if end < 0 || !isRowReceiverIdentifierAt(expression, end) {
+		return open
+	}
+	start := end
+	if quoted >= 0 && isCypherBacktickByte(expression[quoted]) {
+		start = quoted
+	} else {
+		for start > 0 && isRowReceiverIdentifierAt(expression, start-1) {
+			start--
+		}
+	}
+	if isNonFunctionSemanticKeyword(lowerASCII(expression[start : end+1])) {
+		return open
+	}
+	return start
 }
 
 // canonicalCallableName shares the qualified identifier reader used by semantic

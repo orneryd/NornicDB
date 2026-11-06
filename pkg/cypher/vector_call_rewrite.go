@@ -89,14 +89,17 @@ func isBareName(text string) bool { return cyphertext.IsIdentifier(text) }
 func topLevelArgumentSpans(query string, start, end int) [][2]int {
 	var spans [][2]int
 	for from := start; from <= end; {
-		comma := topLevelByteIndex(query, from, end, ',')
+		comma := findTopLevelOperator(query[from:end], ",", false, true)
+		if comma >= 0 {
+			comma += from
+		}
 		stop := end
 		if comma >= 0 {
 			stop = comma
 		}
 		argStart := queryGapEnd(query[:stop], from)
-		last, _ := expressionPredecessor(query, stop)
-		argEnd := last + 1
+		last, _ := expressionPredecessor(query[argStart:stop], stop-argStart)
+		argEnd := argStart + last + 1
 		if argEnd < argStart {
 			argEnd = argStart
 		}

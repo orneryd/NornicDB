@@ -209,18 +209,7 @@ func rowSubscriptReceiverStart(expression string, open int) int {
 		if start < 0 {
 			return -1
 		}
-		if name, _ := expressionPredecessor(expression, start); name >= 0 && isRowReceiverIdentifierAt(expression, name) {
-			nameStart := name
-			for nameStart > 0 && isRowReceiverIdentifierAt(expression, nameStart-1) {
-				nameStart--
-			}
-			// The semantic function walker owns the same distinction: NOT
-			// (list) is a predicate, while keys /* gap */ (map) is a call.
-			if !isNonFunctionSemanticKeyword(lowerASCII(expression[nameStart : name+1])) {
-				start = nameStart
-			}
-		}
-		return start
+		return callableReceiverStart(expression, start)
 	case '}':
 		open := cyphertext.FindMatchingDelimiter(expression, end, '{', '}', cyphertext.ClosingDelimiter)
 		if open < 0 {
