@@ -314,6 +314,17 @@ func TestSearchContinuationFirstPageAwaitsItsIssuedDepthPool(t *testing.T) {
 	if page.HasMore {
 		qid = page.QID
 	}
+	seen := make(map[string]struct{}, eligible)
+	recordPage := func(results []SearchResult) {
+		for _, result := range results {
+			id := searchResultID(result)
+			if _, duplicate := seen[id]; duplicate {
+				t.Fatalf("duplicate result across pages: %s", id)
+			}
+			seen[id] = struct{}{}
+		}
+	}
+	recordPage(page.Results)
 	totalRows := page.Returned
 	drains := 0
 	for qid != "" {
@@ -321,6 +332,7 @@ func TestSearchContinuationFirstPageAwaitsItsIssuedDepthPool(t *testing.T) {
 		if err != nil {
 			t.Fatalf("pull: %v", err)
 		}
+		recordPage(pulled.Results)
 		totalRows += pulled.Returned
 		drains++
 		qid = ""
@@ -338,15 +350,15 @@ func TestSearchContinuationFirstPageAwaitsItsIssuedDepthPool(t *testing.T) {
 		depths = append(depths, step.depth)
 	}
 	t.Logf("drained: pulls=%d rows=%d issuedDepths=%v searches=%d", drains, totalRows, depths, calls.Load())
-	if totalRows > eligible {
-		t.Fatalf("drained rows = %d, above the eligible population %d", totalRows, eligible)
+	if totalRows != eligible {
+		t.Fatalf("drained rows = %d, want complete eligible population %d", totalRows, eligible)
 	}
 }
 
-// TestSearchContinuationPullLookaheadIssuesDeeperDepth pins the current pull-side
-// dependency: pulls served from the buffered rows issue no search, and the pull
-// that consumes the last buffered row issues a deeper one.
-func TestSearchContinuationPullLookaheadIssuesDeeperDepth(t *testing.T) {
+// TestSearchContinuationExpandsOnlyAfterBufferedPageIsConsumed pins the pull-side
+// contract: every full buffered page returns without another search. The next
+// pull that needs new rows issues a deeper retrieval.
+func TestSearchContinuationExpandsOnlyAfterBufferedPageIsConsumed(t *testing.T) {
 	t.Setenv(EnvSearchResultCacheEnabled, "false")
 	population := newNOR406Population(t, 1000, 0)
 	recorder := &nor406Recorder{}
@@ -372,7 +384,7 @@ func TestSearchContinuationPullLookaheadIssuesDeeperDepth(t *testing.T) {
 	}
 	position := page.Returned
 	bufferedPulls := 0
-	for qid != "" && position+nor406PageSize < buffered {
+	for qid != "" && position+nor406PageSize <= buffered {
 		page, err = population.pull(ctx, recorder, nor406ProbeOwner, qid, nor406PageSize)
 		if err != nil {
 			t.Fatalf("buffered pull: %v", err)

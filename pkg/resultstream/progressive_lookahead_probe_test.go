@@ -1,18 +1,23 @@
 package resultstream
 
-// Author: NOR-406 retrieval-profile lane, 2026-11-01: instrumentation only.
-// These probes characterize the Progressive stream's per-pull lookahead
-// (expansion targets, buffered pulls, in-flight coalescing) without any
-// storage, network, clock or sleep dependency. They do not change behavior.
+// These probes characterize the Progressive stream's demand-driven page
+// contract without storage, network, clocks, timers or sleeps: a pull always
+// publishes the rows it can already serve, and expansion runs only for a
+// request the buffered rows cannot fill. Every ordering is established with
+// channels, so each test is deterministic.
 
 import (
 	"context"
 	"fmt"
 	"sync"
 	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
-// probeRows returns a deterministic row prefix of the given depth.
+// probeRows returns a deterministic row prefix of the given depth. It is shared
+// with the other resultstream tests.
 func probeRows(depth int) [][]any {
 	rows := make([][]any, depth)
 	for index := range rows {
@@ -21,27 +26,73 @@ func probeRows(depth int) [][]any {
 	return rows
 }
 
-// probeExpander records every requested expansion depth.
-//
-// An expansion runs inside a pull, not on the test goroutine, so the recorded
-// depths are guarded. The two gate channels are written only at construction:
-// entered is closed once, by whichever expansion enters first, and release is
-// closed by the test to let that expansion finish.
+// probeGate parks one expansion until the test releases it, so a test can
+// observe what other pulls do while that expansion is unfinished. entered is
+// closed once, by the first expansion that reaches the gate; release is closed
+// once by the test. Cleanup also releases the gate, so a failing test never
+// leaves a pull blocked inside the expander.
+type probeGate struct {
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+	open    sync.Once
+}
+
+func newProbeGate(t *testing.T) *probeGate {
+	t.Helper()
+	gate := &probeGate{
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	t.Cleanup(gate.releaseGate)
+	return gate
+}
+
+// wait blocks the expansion until the test releases the gate or the pull's
+// context ends.
+func (g *probeGate) wait(ctx context.Context) error {
+	g.once.Do(func() { close(g.entered) })
+	select {
+	case <-g.release:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// releaseGate unblocks the gated expansion. Repeated calls are no-ops, so the
+// test may release explicitly and the cleanup release stays safe.
+func (g *probeGate) releaseGate() {
+	g.open.Do(func() { close(g.release) })
+}
+
+// waitEntered blocks until an expansion is provably parked at the gate.
+func (g *probeGate) waitEntered(ctx context.Context, t *testing.T) {
+	t.Helper()
+	select {
+	case <-g.entered:
+	case <-ctx.Done():
+		t.Fatalf("no expansion reached the gate: %v", ctx.Err())
+	}
+}
+
+// probeExpander records every requested expansion depth and optionally parks
+// the expansion at a gate. A pull runs the expansion on its own goroutine, not
+// on the test goroutine, so the recorded depths are guarded.
 type probeExpander struct {
 	mu        sync.Mutex
 	requested []int
-	entered   chan struct{}
-	release   chan struct{}
-	gate      sync.Once
+	gate      *probeGate
 }
 
-func (e *probeExpander) expand(_ context.Context, depth int) ([][]any, bool, error) {
+func (e *probeExpander) expand(ctx context.Context, depth int) ([][]any, bool, error) {
 	e.mu.Lock()
 	e.requested = append(e.requested, depth)
 	e.mu.Unlock()
-	if e.entered != nil {
-		e.gate.Do(func() { close(e.entered) })
-		<-e.release
+	if e.gate != nil {
+		if err := e.gate.wait(ctx); err != nil {
+			return nil, false, err
+		}
 	}
 	return probeRows(depth), false, nil
 }
@@ -53,124 +104,190 @@ func (e *probeExpander) depths() []int {
 	return append([]int(nil), e.requested...)
 }
 
-// expansions returns how many expansions have been requested.
-func (e *probeExpander) expansions() int {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return len(e.requested)
+// newProbeStream builds a non-exhausted stream whose rows are buffered to depth
+// and closes it when the test ends.
+func newProbeStream(t *testing.T, rows [][]any, depth int, expander *probeExpander) *Progressive {
+	t.Helper()
+	stream, err := NewProgressive(rows, false, depth, expander.expand)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = stream.Close() })
+	return stream
 }
 
-// TestProgressiveLookaheadExpandsOnlyAtTheBufferedEdge pins the current
-// per-pull lookahead: a pull that ends before the buffered rows' end expands
-// nothing, and a pull whose end is exactly the buffered length expands to
-// max(depth*2, end+1).
-func TestProgressiveLookaheadExpandsOnlyAtTheBufferedEdge(t *testing.T) {
+// TestProgressiveBoundaryPageDoesNotExpand pins that a page the buffered rows
+// already fill is published immediately, including the page that ends exactly
+// at the buffered end. HasMore reports the unfinished search, so the stream does
+// not have to discover the next row before answering.
+func TestProgressiveBoundaryPageDoesNotExpand(t *testing.T) {
 	expander := &probeExpander{}
-	stream, err := NewProgressive(probeRows(20), false, 20, expander.expand)
-	if err != nil {
-		t.Fatalf("NewProgressive: %v", err)
-	}
-	t.Cleanup(func() { _ = stream.Close() })
-	ctx := context.Background()
+	stream := newProbeStream(t, probeRows(20), 20, expander)
+	ctx := t.Context()
 
-	// Ends 5 and 10 are inside the initial 20-row buffer: no expansion.
-	for _, position := range []uint64{0, 5} {
-		page, pullErr := stream.Pull(ctx, position, 5)
-		if pullErr != nil {
-			t.Fatalf("buffered pull at %d: %v", position, pullErr)
-		}
-		if len(page.Rows) != 5 || !page.HasMore {
-			t.Fatalf("buffered pull at %d: rows=%d hasMore=%t", position, len(page.Rows), page.HasMore)
-		}
+	for _, pull := range []struct {
+		position uint64
+		n        int
+	}{
+		{position: 0, n: 20},
+		{position: 15, n: 5},
+		{position: 0, n: 5},
+	} {
+		page, err := stream.Pull(ctx, pull.position, pull.n)
+		require.NoError(t, err, "position %d", pull.position)
+		require.Equal(t, probeRows(20)[pull.position:pull.position+uint64(pull.n)], page.Rows)
+		require.Equal(t, pull.position, page.Position)
+		require.Equal(t, pull.position+uint64(pull.n), page.Next)
+		require.True(t, page.HasMore, "search is not exhausted at position %d", pull.position)
+		require.Nil(t, page.Total)
 	}
-	if depths := expander.depths(); len(depths) != 0 {
-		t.Fatalf("buffered pulls expanded: %v", depths)
-	}
-
-	// end == buffered length && !exhausted: this pull must know whether the
-	// next row exists, so it expands geometrically (20 -> 40 -> 80 -> 160).
-	for _, expected := range []int{40, 80, 160} {
-		position := uint64(expected/2 - 5)
-		page, pullErr := stream.Pull(ctx, position, 5)
-		if pullErr != nil {
-			t.Fatalf("edge pull at %d: %v", position, pullErr)
-		}
-		if len(page.Rows) != 5 || !page.HasMore {
-			t.Fatalf("edge pull at %d: rows=%d hasMore=%t", position, len(page.Rows), page.HasMore)
-		}
-	}
-	if got := fmt.Sprint(expander.depths()); got != "[40 80 160]" {
-		t.Fatalf("expansion targets = %s, want [40 80 160]", got)
-	}
-
-	// A pull strictly inside the deepened buffer still expands nothing.
-	before := expander.expansions()
-	if _, err := stream.Pull(ctx, 45, 5); err != nil {
-		t.Fatalf("interior pull: %v", err)
-	}
-	if depths := expander.depths(); len(depths) != before {
-		t.Fatalf("interior pull expanded: %v", depths)
-	}
+	require.Empty(t, expander.depths(), "ready pages must not expand")
 }
 
-// TestProgressiveLookaheadCoalescesConcurrentEdgePulls pins the other half of
-// the per-pull lookahead: two pulls that need the same edge expansion while one
-// is running produce one expansion, and the second pull is served from the
-// buffer the first one published.
-func TestProgressiveLookaheadCoalescesConcurrentEdgePulls(t *testing.T) {
-	expander := &probeExpander{entered: make(chan struct{}), release: make(chan struct{})}
-	stream, err := NewProgressive(probeRows(20), false, 20, expander.expand)
-	if err != nil {
-		t.Fatalf("NewProgressive: %v", err)
+// TestProgressiveInsufficientPageExpandsToDoublingDepth pins the demand-driven
+// expansion: a request that starts at the buffered end needs rows the buffer
+// does not hold, so the stream expands to max(depth*2, end+1) and then
+// publishes the page.
+func TestProgressiveInsufficientPageExpandsToDoublingDepth(t *testing.T) {
+	expander := &probeExpander{}
+	stream := newProbeStream(t, probeRows(20), 20, expander)
+	ctx := t.Context()
+
+	for index, step := range []struct {
+		position uint64
+		depth    int
+	}{
+		{position: 20, depth: 40},
+		{position: 40, depth: 80},
+		{position: 80, depth: 160},
+	} {
+		page, err := stream.Pull(ctx, step.position, 5)
+		require.NoError(t, err, "position %d", step.position)
+		require.Equal(t, probeRows(step.depth)[step.position:step.position+5], page.Rows)
+		require.Equal(t, step.position, page.Position)
+		require.Equal(t, step.position+5, page.Next)
+		require.True(t, page.HasMore)
+		require.Nil(t, page.Total)
+		require.Equal(t, []int{40, 80, 160}[:index+1], expander.depths())
 	}
-	t.Cleanup(func() { _ = stream.Close() })
-	ctx := context.Background()
 
-	firstDone := make(chan error, 1)
+	// A full page inside the deepened rows is ready and expands nothing.
+	page, err := stream.Pull(ctx, 100, 5)
+	require.NoError(t, err)
+	require.Equal(t, probeRows(160)[100:105], page.Rows)
+	require.True(t, page.HasMore)
+	require.Len(t, expander.depths(), 3, "ready pages must not expand")
+}
+
+// TestProgressiveServesReadyPageDuringExpansion pins that a pull waits only for
+// the expansion its own request needs: rows buffered before an unfinished
+// expansion are still published as a full page.
+func TestProgressiveServesReadyPageDuringExpansion(t *testing.T) {
+	gate := newProbeGate(t)
+	defer gate.releaseGate()
+	expander := &probeExpander{gate: gate}
+	stream := newProbeStream(t, probeRows(20), 20, expander)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+
+	type outcome struct {
+		page *Page
+		err  error
+	}
+	expanding := make(chan outcome, 1)
 	go func() {
-		_, pullErr := stream.Pull(ctx, 15, 5)
-		firstDone <- pullErr
+		page, err := stream.Pull(ctx, 20, 5)
+		expanding <- outcome{page: page, err: err}
 	}()
-	// The first pull is provably inside expand: it closed entered before blocking.
-	<-expander.entered
+	gate.waitEntered(ctx, t)
 
-	secondDone := make(chan error, 1)
-	go func() {
-		_, pullErr := stream.Pull(ctx, 15, 5)
-		secondDone <- pullErr
-	}()
+	// Rows 15..20 are replayable before the gated expansion publishes, so this
+	// pull must answer without waiting for that expansion.
+	page, err := stream.Pull(ctx, 15, 5)
+	require.NoError(t, err, "ready page must not wait for the unfinished expansion")
+	require.Equal(t, probeRows(20)[15:20], page.Rows)
+	require.True(t, page.HasMore)
+	require.Nil(t, page.Total)
 
-	// Non-blocking observation only: the second pull has not published a page
-	// while the expansion it depends on is still running.
 	select {
-	case err := <-secondDone:
-		t.Fatalf("second edge pull returned while the expansion it needs was running: %v", err)
+	case result := <-expanding:
+		t.Fatalf("gated pull returned before its expansion was released: %v", result.err)
 	default:
 	}
-	close(expander.release)
-	if err := <-firstDone; err != nil {
-		t.Fatalf("first edge pull: %v", err)
-	}
-	if err := <-secondDone; err != nil {
-		t.Fatalf("second edge pull: %v", err)
-	}
-	if depths := expander.depths(); len(depths) != 1 {
-		t.Fatalf("expansion targets = %v, want one expansion for concurrent edge pulls", depths)
+	require.Equal(t, []int{40}, expander.depths())
+
+	gate.releaseGate()
+	select {
+	case result := <-expanding:
+		require.NoError(t, result.err)
+		require.Equal(t, probeRows(40)[20:25], result.page.Rows)
+		require.True(t, result.page.HasMore)
+	case <-ctx.Done():
+		t.Fatalf("gated pull did not complete: %v", ctx.Err())
 	}
 }
 
-// BenchmarkProgressiveLookaheadExpansion measures one pull that consumes the
-// last buffered row, so each operation pays one expansion of max(depth*2,
-// end+1) rows. It isolates the stream's own lookahead cost (no storage, no
-// ranking); the retrieval-side cost of that expansion is measured in
-// pkg/search.
-func BenchmarkProgressiveLookaheadExpansion(b *testing.B) {
+// TestProgressiveCoalescesConcurrentInsufficientPulls pins that pulls needing
+// the same expansion share one: the second pull waits for the in-flight
+// expansion and is then served from the rows it published.
+func TestProgressiveCoalescesConcurrentInsufficientPulls(t *testing.T) {
+	gate := newProbeGate(t)
+	defer gate.releaseGate()
+	expander := &probeExpander{gate: gate}
+	stream := newProbeStream(t, probeRows(20), 20, expander)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+
+	type outcome struct {
+		page *Page
+		err  error
+	}
+	startPull := func() chan outcome {
+		done := make(chan outcome, 1)
+		go func() {
+			page, err := stream.Pull(ctx, 20, 5)
+			done <- outcome{page: page, err: err}
+		}()
+		return done
+	}
+
+	first := startPull()
+	gate.waitEntered(ctx, t)
+	second := startPull()
+
+	// Neither pull can publish rows 20..25 until the gated expansion does.
+	select {
+	case result := <-second:
+		t.Fatalf("second insufficient pull returned while the shared expansion was unfinished: %v", result.err)
+	default:
+	}
+
+	gate.releaseGate()
+	for _, done := range []chan outcome{first, second} {
+		select {
+		case result := <-done:
+			require.NoError(t, result.err)
+			require.Equal(t, probeRows(40)[20:25], result.page.Rows)
+			require.True(t, result.page.HasMore)
+			require.Nil(t, result.page.Total)
+		case <-ctx.Done():
+			t.Fatalf("insufficient pull did not complete: %v", ctx.Err())
+		}
+	}
+	require.Equal(t, []int{40}, expander.depths(), "concurrent insufficient pulls must share one expansion")
+}
+
+// BenchmarkProgressiveExpansionPerPull measures one pull that requests a row
+// starting at the buffered end, so each operation must expand to
+// max(depth*2, end+1) before it can publish. It isolates the stream's own
+// expansion cost (no storage, no ranking); the retrieval-side cost of that
+// expansion is measured in pkg/search.
+func BenchmarkProgressiveExpansionPerPull(b *testing.B) {
 	for _, startDepth := range []int{10, 50, 100, 400, 1600} {
 		b.Run(fmt.Sprintf("depth=%d", startDepth), func(b *testing.B) {
 			initial := probeRows(startDepth)
 			expander := &probeExpander{}
 			ctx := context.Background()
-			position := uint64(startDepth - 1)
+			position := uint64(startDepth)
+			var last *Page
 			b.ReportAllocs()
 			b.ResetTimer()
 			for index := 0; index < b.N; index++ {
@@ -178,9 +295,11 @@ func BenchmarkProgressiveLookaheadExpansion(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
-				if _, err := stream.Pull(ctx, position, 1); err != nil {
+				page, err := stream.Pull(ctx, position, 1)
+				if err != nil {
 					b.Fatal(err)
 				}
+				last = page
 				_ = stream.Close()
 			}
 			b.StopTimer()
@@ -188,7 +307,13 @@ func BenchmarkProgressiveLookaheadExpansion(b *testing.B) {
 			if len(depths) != b.N {
 				b.Fatalf("expansions = %d, want %d", len(depths), b.N)
 			}
-			b.ReportMetric(float64(depths[len(depths)-1]), "final-depth")
+			if want := 2 * startDepth; depths[len(depths)-1] != want {
+				b.Fatalf("expansion depth = %d, want %d", depths[len(depths)-1], want)
+			}
+			if last == nil || len(last.Rows) != 1 || last.Rows[0][0] != startDepth {
+				b.Fatalf("published page = %v, want the single row at the buffered end", last)
+			}
+			b.ReportMetric(float64(depths[len(depths)-1]), "expansion-depth")
 		})
 	}
 }
