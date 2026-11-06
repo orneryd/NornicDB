@@ -913,9 +913,11 @@ func containsIdentifierWord(text, name string) bool {
 // boundDegreePattern is a COUNT body that is one directed hop from a bound
 // node to an anonymous, unlabelled node with no properties and no WHERE:
 // [MATCH] (v)-[:T|U]->(), (v)<-[:T]-(), ()-[:T]->(v), with the arrows in
-// either spelling (-->, -[r]->). Its count is the node's degree, unless the
-// relationship variable is bound in the row (boundDegreeCount).
-var boundDegreePattern = regexp.MustCompile(`^(?i:MATCH\s+)?(?:\(\s*([A-Za-z_]\w*)\s*\)\s*(<?)-(?:\[\s*([A-Za-z_]\w*)?\s*(?::\s*([A-Za-z_\w|\s` + "`" + `]+?))?\s*\])?-(>?)\s*\(\s*\)|\(\s*\)\s*(<?)-(?:\[\s*([A-Za-z_]\w*)?\s*(?::\s*([A-Za-z_\w|\s` + "`" + `]+?))?\s*\])?-(>?)\s*\(\s*([A-Za-z_]\w*)\s*\))\s*$`)
+// either spelling (-->, -[r]->). The hop's inside is read as CREATE, MERGE
+// and MATCH read it (relationshipDeclarationOf), so its types are the
+// identities they were created with; its count is the node's degree, unless
+// the relationship variable is bound in the row (boundDegreeCount).
+var boundDegreePattern = regexp.MustCompile(`^(?i:MATCH\s+)?(?:\(\s*([A-Za-z_]\w*)\s*\)\s*(<?)-(\[[^\[\]]*\])?-(>?)\s*\(\s*\)|\(\s*\)\s*(<?)-(\[[^\[\]]*\])?-(>?)\s*\(\s*([A-Za-z_]\w*)\s*\))\s*$`)
 
 // boundDegreeShape is a parsed boundDegreePattern body: the bound variable,
 // the hop's direction from it and its relationship types. ok is false for any
@@ -942,34 +944,56 @@ func parseBoundDegreeShape(body string) boundDegreeShape {
 	return shape
 }
 
+// parseBoundDegreeShapeText reads a boundDegreePattern body. The hop's
+// relationship inside is relationshipDeclarationOf's, so a type keeps the
+// identity it was created with: a '|' inside a backtick-quoted type is part of
+// that type and not an alternation, and a doubled backtick is one backtick
+// (#1486). A length, a property map, a dynamic type or a declaration naming no
+// type is not a degree, and the traversal kernel applies it.
 func parseBoundDegreeShapeText(body string) boundDegreeShape {
 	trimmed := strings.TrimSpace(body)
 	if len(trimmed) == 0 || strings.ContainsAny(trimmed, "{*,") {
 		return boundDegreeShape{}
 	}
-	match := boundDegreePattern.FindStringSubmatch(trimmed)
+	match := boundDegreePattern.FindStringSubmatchIndex(trimmed)
 	if match == nil {
 		return boundDegreeShape{}
 	}
-	variable, relationship, types := match[1], match[3], match[4]
-	outgoing := match[2] == "" && match[5] == ">"
-	incoming := match[2] == "<" && match[5] == ""
+	// Keep captures as source spans: materializing the regexp's string-slice
+	// duplicates every capture even though the degree shape retains only two.
+	capture := func(group int) string {
+		start, end := match[2*group], match[2*group+1]
+		if start < 0 {
+			return ""
+		}
+		return trimmed[start:end]
+	}
+	variable, declaration := capture(1), capture(3)
+	outgoing := capture(2) == "" && capture(4) == ">"
+	incoming := capture(2) == "<" && capture(4) == ""
 	if variable == "" {
 		// ()-[:T]->(v) is an incoming hop of v.
-		variable, relationship, types = match[10], match[7], match[8]
-		outgoing = match[6] == "<" && match[9] == ""
-		incoming = match[6] == "" && match[9] == ">"
+		variable, declaration = capture(8), capture(6)
+		outgoing = capture(5) == "<" && capture(7) == ""
+		incoming = capture(5) == "" && capture(7) == ">"
 	}
 	if outgoing == incoming {
 		return boundDegreeShape{}
 	}
-	var relTypes []string
-	for _, relType := range strings.Split(types, "|") {
-		if relType = strings.Trim(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(relType), ":")), "`"); relType != "" {
-			relTypes = append(relTypes, relType)
-		}
+	shape := boundDegreeShape{variable: variable, outgoing: outgoing, ok: true}
+	if declaration == "" {
+		return shape
 	}
-	return boundDegreeShape{variable: variable, relationship: relationship, outgoing: outgoing, types: relTypes, ok: true}
+	read := relationshipDeclarationOf(declaration[1 : len(declaration)-1])
+	if read.hasLength || read.lengthInvalid || read.properties != "" ||
+		read.invalidType != "" || hasDynamicToken(read.typeText) ||
+		read.hasColon && len(read.types) == 0 ||
+		read.variable != "" && !cyphertext.IsIdentifier(read.variable) {
+		return boundDegreeShape{}
+	}
+	shape.relationship = read.variable
+	shape.types = read.types
+	return shape
 }
 
 // boundDegreeCount counts COUNT { (v)-[:T]->() } for a node bound in values
